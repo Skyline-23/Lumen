@@ -86,8 +86,6 @@ namespace system_tray {
 
   void tray_restart_cb([[maybe_unused]] struct tray_menu *item) {
     BOOST_LOG(info) << "Restarting from system tray"sv;
-
-    proc::proc.terminate();
     platf::restart();
   }
 

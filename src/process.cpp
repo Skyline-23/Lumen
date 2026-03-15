@@ -652,6 +652,7 @@ namespace proc {
   void proc_t::on_stream_disconnected() {
 #ifdef __APPLE__
     wake_physical_displays_if_needed();
+    platf::restore_virtual_display_isolation();
 #endif
   }
 
