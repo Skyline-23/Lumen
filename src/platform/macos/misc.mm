@@ -13,6 +13,7 @@
 #include <ifaddrs.h>
 
 // platform includes
+#include <ApplicationServices/ApplicationServices.h>
 #include <arpa/inet.h>
 #include <dlfcn.h>
 #include <Foundation/Foundation.h>
@@ -692,6 +693,91 @@ namespace platf {
     virtual_display_layout_snapshot.clear();
     virtual_display_layout_active = false;
     BOOST_LOG(info) << "Restored macOS display layout after virtual session"sv;
+  }
+
+  void focus_virtual_display_workspace(CGDirectDisplayID virtual_display_id) {
+    const auto bounds = CGDisplayBounds(virtual_display_id);
+    if (CGRectIsEmpty(bounds)) {
+      BOOST_LOG(warning) << "Unable to focus macOS virtual display "sv << virtual_display_id << " because its bounds were empty"sv;
+      return;
+    }
+
+    const CGPoint center = CGPointMake(CGRectGetMidX(bounds), CGRectGetMidY(bounds));
+    CGDisplayMoveCursorToPoint(virtual_display_id, center);
+    CGWarpMouseCursorPosition(center);
+
+    const auto trusted = AXIsProcessTrusted();
+    if (!trusted) {
+      BOOST_LOG(warning) << "Skipping macOS window migration to virtual display because Accessibility permission is not granted"sv;
+      return;
+    }
+
+    const CFArrayRef window_info = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID);
+    if (window_info == nullptr) {
+      BOOST_LOG(warning) << "Unable to enumerate macOS windows for virtual display focus"sv;
+      return;
+    }
+
+    const auto target_origin = CGPointMake(bounds.origin.x + 80.0, bounds.origin.y + 80.0);
+    const auto entry_count = CFArrayGetCount(window_info);
+    CFIndex moved_windows = 0;
+    for (CFIndex index = 0; index < entry_count; ++index) {
+      const auto entry = static_cast<CFDictionaryRef>(CFArrayGetValueAtIndex(window_info, index));
+      if (entry == nullptr) {
+        continue;
+      }
+
+      const auto owner_name = static_cast<CFStringRef>(CFDictionaryGetValue(entry, kCGWindowOwnerName));
+      if (owner_name != nullptr) {
+        if (CFStringCompare(owner_name, CFSTR("Window Server"), 0) == kCFCompareEqualTo ||
+            CFStringCompare(owner_name, CFSTR("Dock"), 0) == kCFCompareEqualTo) {
+          continue;
+        }
+      }
+
+      const auto pid_number = static_cast<CFNumberRef>(CFDictionaryGetValue(entry, kCGWindowOwnerPID));
+      if (pid_number == nullptr) {
+        continue;
+      }
+
+      pid_t pid = 0;
+      if (!CFNumberGetValue(pid_number, kCFNumberIntType, &pid) || pid <= 0 || pid == getpid()) {
+        continue;
+      }
+
+      const auto app = AXUIElementCreateApplication(pid);
+      if (app == nullptr) {
+        continue;
+      }
+
+      CFArrayRef windows = nullptr;
+      if (AXUIElementCopyAttributeValue(app, kAXWindowsAttribute, reinterpret_cast<CFTypeRef *>(&windows)) != kAXErrorSuccess || windows == nullptr) {
+        CFRelease(app);
+        continue;
+      }
+
+      const auto window_count = CFArrayGetCount(windows);
+      for (CFIndex window_index = 0; window_index < window_count; ++window_index) {
+        const auto window = static_cast<AXUIElementRef>(CFArrayGetValueAtIndex(windows, window_index));
+        if (window == nullptr) {
+          continue;
+        }
+
+        auto position = AXValueCreate(static_cast<AXValueType>(kAXValueCGPointType), &target_origin);
+        if (position != nullptr) {
+          if (AXUIElementSetAttributeValue(window, kAXPositionAttribute, position) == kAXErrorSuccess) {
+            ++moved_windows;
+          }
+          CFRelease(position);
+        }
+      }
+
+      CFRelease(windows);
+      CFRelease(app);
+    }
+
+    CFRelease(window_info);
+    BOOST_LOG(info) << "Focused macOS virtual display workspace around display "sv << virtual_display_id << " moved_windows="sv << moved_windows;
   }
 
   bool sleep_physical_displays() {

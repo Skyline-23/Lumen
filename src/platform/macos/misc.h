@@ -16,6 +16,7 @@ namespace platf {
   void arm_display_wake_watchdog();
   bool isolate_virtual_display(CGDirectDisplayID virtual_display_id);
   void restore_virtual_display_isolation();
+  void focus_virtual_display_workspace(CGDirectDisplayID virtual_display_id);
   bool sleep_physical_displays();
   bool wake_physical_displays();
 }

@@ -367,9 +367,11 @@ namespace proc {
         this->virtual_display_key = device_key;
         this->display_name = virtual_display_name;
         config::video.output_name = this->display_name;
-        if (!platf::isolate_virtual_display(static_cast<CGDirectDisplayID>(std::strtoul(virtual_display_name.c_str(), nullptr, 10)))) {
+        const auto virtual_display_id = static_cast<CGDirectDisplayID>(std::strtoul(virtual_display_name.c_str(), nullptr, 10));
+        if (!platf::isolate_virtual_display(virtual_display_id)) {
           BOOST_LOG(warning) << "Failed to isolate macOS virtual display layout"sv;
         }
+        platf::focus_virtual_display_workspace(virtual_display_id);
       } else {
         BOOST_LOG(warning) << "Virtual Display creation failed on macOS"sv;
       }
