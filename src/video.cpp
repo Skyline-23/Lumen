@@ -2720,6 +2720,7 @@ namespace video {
     std::chrono::steady_clock::time_point encode_frame_timestamp;
     uint64_t received_capture_frames = 0;
     uint64_t capture_wait_timeouts = 0;
+    bool logged_waiting_for_first_native_vt_frame = false;
     BOOST_LOG(info) << "Async encode loop starting"sv;
 
     while (true) {
@@ -2793,6 +2794,14 @@ namespace video {
             BOOST_LOG(info) << "Async encode timed out waiting for a captured frame #"sv << timeout_count;
           }
         }
+      }
+
+      if (native_vt_session && received_capture_frames == 0 && !frame_timestamp) {
+        if (!logged_waiting_for_first_native_vt_frame) {
+          BOOST_LOG(info) << "Native VT waiting for first captured frame before encoding"sv;
+          logged_waiting_for_first_native_vt_frame = true;
+        }
+        continue;
       }
 
       if (encode(frame_nr++, *session, packets, channel_data, frame_timestamp)) {
