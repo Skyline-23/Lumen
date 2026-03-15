@@ -2967,8 +2967,6 @@ namespace video {
     auto ec = platf::capture_e::ok;
     while (encode_session_ctx_queue.running()) {
       auto push_captured_image_callback = [&](std::shared_ptr<platf::img_t> &&img, bool frame_captured) -> bool {
-        BOOST_LOG(info) << "push_captured_image_callback frame_captured="sv << frame_captured;
-        BOOST_LOG(info) << "push_captured_image_callback before pending session drain"sv;
         while (encode_session_ctx_queue.peek()) {
           auto encode_session_ctx = encode_session_ctx_queue.pop();
           if (!encode_session_ctx) {
@@ -2985,12 +2983,9 @@ namespace video {
 
           synced_sessions.emplace_back(std::move(*encode_session));
         }
-        BOOST_LOG(info) << "push_captured_image_callback after pending session drain"sv;
-        BOOST_LOG(info) << "push_captured_image_callback synced_sessions="sv << synced_sessions.size();
 
         KITTY_WHILE_LOOP(auto pos = std::begin(synced_sessions), pos != std::end(synced_sessions), {
           auto ctx = pos->ctx;
-          BOOST_LOG(info) << "Processing synced video session frame_nr="sv << ctx->frame_nr;
           if (ctx->shutdown_event->peek()) {
             // Let waiting thread know it can delete shutdown_event
             ctx->join_event->raise(true);
@@ -3018,23 +3013,18 @@ namespace video {
 
             continue;
           }
-          if (frame_captured) {
-            BOOST_LOG(info) << "Converted captured image for synced session"sv;
-          }
 
           std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
           if (img) {
             frame_timestamp = img->frame_timestamp;
           }
 
-          BOOST_LOG(info) << "About to encode synced video packet frame_nr="sv << ctx->frame_nr;
           if (encode(ctx->frame_nr++, *pos->session, ctx->packets, ctx->channel_data, frame_timestamp)) {
             BOOST_LOG(error) << "Could not encode video packet"sv;
             ctx->shutdown_event->raise(true);
 
             continue;
           }
-          BOOST_LOG(info) << "Encoded video packet for synced session"sv;
 
           pos->session->request_normal_frame();
 
