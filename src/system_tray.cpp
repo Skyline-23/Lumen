@@ -25,6 +25,7 @@
     #define TRAY_ICON_PAUSING WEB_DIR "images/apollo-pausing-16.png"
     #define TRAY_ICON_LOCKED WEB_DIR "images/apollo-locked-16.png"
     #include <dispatch/dispatch.h>
+    #include <mach-o/dyld.h>
   #endif
 
   #define TRAY_MSG_NO_APP_RUNNING "Reload Apps"
@@ -37,6 +38,7 @@
   #include <atomic>
   #include <chrono>
   #include <csignal>
+  #include <filesystem>
   #include <format>
   #include <string>
   #include <thread>
@@ -61,6 +63,54 @@ using namespace std::literals;
 // system_tray namespace
 namespace system_tray {
   static std::atomic tray_initialized = false;
+
+  namespace {
+#ifdef __APPLE__
+    const char *resolved_tray_icon_path(const char *relative_icon_path) {
+      static std::string default_icon;
+      static std::string locked_icon;
+      static std::string playing_icon;
+      static std::string pausing_icon;
+
+      auto resolve_icon = [](const char *icon_path) -> std::string {
+        uint32_t executable_path_size = 0;
+        _NSGetExecutablePath(nullptr, &executable_path_size);
+
+        std::string executable_path(executable_path_size, '\0');
+        if (_NSGetExecutablePath(executable_path.data(), &executable_path_size) != 0) {
+          return icon_path;
+        }
+
+        executable_path.resize(std::strlen(executable_path.c_str()));
+        const auto macos_dir = std::filesystem::path(executable_path).parent_path();
+        const auto resource_icon_path = macos_dir.parent_path() / "Resources" / "assets" / "web" / "images" / std::filesystem::path(icon_path).filename();
+        return resource_icon_path.string();
+      };
+
+      if (default_icon.empty()) {
+        default_icon = resolve_icon(TRAY_ICON);
+        locked_icon = resolve_icon(TRAY_ICON_LOCKED);
+        playing_icon = resolve_icon(TRAY_ICON_PLAYING);
+        pausing_icon = resolve_icon(TRAY_ICON_PAUSING);
+      }
+
+      if (std::strcmp(relative_icon_path, TRAY_ICON_LOCKED) == 0) {
+        return locked_icon.c_str();
+      }
+      if (std::strcmp(relative_icon_path, TRAY_ICON_PLAYING) == 0) {
+        return playing_icon.c_str();
+      }
+      if (std::strcmp(relative_icon_path, TRAY_ICON_PAUSING) == 0) {
+        return pausing_icon.c_str();
+      }
+      return default_icon.c_str();
+    }
+#else
+    const char *resolved_tray_icon_path(const char *icon_path) {
+      return icon_path;
+    }
+#endif
+  }  // namespace
 
   // Threading variables for all platforms
   static std::thread tray_thread;
@@ -108,7 +158,11 @@ namespace system_tray {
 
   // Tray menu
   static struct tray tray = {
+#ifdef __APPLE__
+    .icon = nullptr,
+#else
     .icon = TRAY_ICON,
+#endif
     .tooltip = PROJECT_NAME,
     .menu =
       (struct tray_menu[]) {
@@ -135,10 +189,27 @@ namespace system_tray {
         {.text = nullptr}
       },
     .iconPathCount = 4,
+#ifdef __APPLE__
+    .allIconPaths = {nullptr, nullptr, nullptr, nullptr},
+#else
     .allIconPaths = {TRAY_ICON, TRAY_ICON_LOCKED, TRAY_ICON_PLAYING, TRAY_ICON_PAUSING},
+#endif
   };
 
+  void assign_tray_icon_paths() {
+#ifdef __APPLE__
+    tray.icon = resolved_tray_icon_path(TRAY_ICON);
+    tray.allIconPaths[0] = resolved_tray_icon_path(TRAY_ICON);
+    tray.allIconPaths[1] = resolved_tray_icon_path(TRAY_ICON_LOCKED);
+    tray.allIconPaths[2] = resolved_tray_icon_path(TRAY_ICON_PLAYING);
+    tray.allIconPaths[3] = resolved_tray_icon_path(TRAY_ICON_PAUSING);
+#endif
+  }
+
   int init_tray() {
+#ifdef __APPLE__
+    assign_tray_icon_paths();
+#endif
   #ifdef _WIN32
     // If we're running as SYSTEM, Explorer.exe will not have permission to open our thread handle
     // to monitor for thread termination. If Explorer fails to open our thread, our tray icon
@@ -242,10 +313,10 @@ namespace system_tray {
     tray.notification_text = nullptr;
     tray.notification_cb = nullptr;
     tray.notification_icon = nullptr;
-    tray.icon = TRAY_ICON_PLAYING;
+    tray.icon = resolved_tray_icon_path(TRAY_ICON_PLAYING);
 
     tray_update(&tray);
-    tray.icon = TRAY_ICON_PLAYING;
+    tray.icon = resolved_tray_icon_path(TRAY_ICON_PLAYING);
     tray.notification_title = "App launched";
     char msg[256];
     static char force_close_msg[256];
@@ -256,7 +327,7 @@ namespace system_tray {
     strncpy(force_close_msg, utf8ToAcp(force_close_msg).c_str(), std::size(force_close_msg) - 1);
   #endif
     tray.notification_text = msg;
-    tray.notification_icon = TRAY_ICON_PLAYING;
+    tray.notification_icon = resolved_tray_icon_path(TRAY_ICON_PLAYING);
     tray.tooltip = PROJECT_NAME;
     tray.menu[2].text = force_close_msg;
     tray_update(&tray);
@@ -271,17 +342,17 @@ namespace system_tray {
     tray.notification_text = nullptr;
     tray.notification_cb = nullptr;
     tray.notification_icon = nullptr;
-    tray.icon = TRAY_ICON_PAUSING;
+    tray.icon = resolved_tray_icon_path(TRAY_ICON_PAUSING);
     tray_update(&tray);
     char msg[256];
     snprintf(msg, std::size(msg), "Streaming paused for %s", app_name.c_str());
   #ifdef _WIN32
     strncpy(msg, utf8ToAcp(msg).c_str(), std::size(msg) - 1);
   #endif
-    tray.icon = TRAY_ICON_PAUSING;
+    tray.icon = resolved_tray_icon_path(TRAY_ICON_PAUSING);
     tray.notification_title = "Stream Paused";
     tray.notification_text = msg;
-    tray.notification_icon = TRAY_ICON_PAUSING;
+    tray.notification_icon = resolved_tray_icon_path(TRAY_ICON_PAUSING);
     tray.tooltip = PROJECT_NAME;
     tray_update(&tray);
   }
@@ -295,15 +366,15 @@ namespace system_tray {
     tray.notification_text = nullptr;
     tray.notification_cb = nullptr;
     tray.notification_icon = nullptr;
-    tray.icon = TRAY_ICON;
+    tray.icon = resolved_tray_icon_path(TRAY_ICON);
     tray_update(&tray);
     char msg[256];
     snprintf(msg, std::size(msg), "Streaming stopped for %s", app_name.c_str());
   #ifdef _WIN32
     strncpy(msg, utf8ToAcp(msg).c_str(), std::size(msg) - 1);
   #endif
-    tray.icon = TRAY_ICON;
-    tray.notification_icon = TRAY_ICON;
+    tray.icon = resolved_tray_icon_path(TRAY_ICON);
+    tray.notification_icon = resolved_tray_icon_path(TRAY_ICON);
     tray.notification_title = "Application Stopped";
     tray.notification_text = msg;
     tray.tooltip = PROJECT_NAME;
@@ -321,15 +392,15 @@ namespace system_tray {
     tray.notification_text = NULL;
     tray.notification_cb = NULL;
     tray.notification_icon = NULL;
-    tray.icon = TRAY_ICON;
+    tray.icon = resolved_tray_icon_path(TRAY_ICON);
     tray_update(&tray);
     char msg[256];
     snprintf(msg, std::size(msg), "Application %s exited too fast with code %d. Click here to terminate the stream.", app_name.c_str(), exit_code);
   #ifdef _WIN32
     strncpy(msg, utf8ToAcp(msg).c_str(), std::size(msg) - 1);
   #endif
-    tray.icon = TRAY_ICON;
-    tray.notification_icon = TRAY_ICON;
+    tray.icon = resolved_tray_icon_path(TRAY_ICON);
+    tray.notification_icon = resolved_tray_icon_path(TRAY_ICON);
     tray.notification_title = "Launch Error";
     tray.notification_text = msg;
     tray.notification_cb = []() {
@@ -349,12 +420,12 @@ namespace system_tray {
     tray.notification_text = nullptr;
     tray.notification_cb = nullptr;
     tray.notification_icon = nullptr;
-    tray.icon = TRAY_ICON;
+    tray.icon = resolved_tray_icon_path(TRAY_ICON);
     tray_update(&tray);
-    tray.icon = TRAY_ICON;
+    tray.icon = resolved_tray_icon_path(TRAY_ICON);
     tray.notification_title = "Incoming Pairing Request";
     tray.notification_text = "Click here to complete the pairing process";
-    tray.notification_icon = TRAY_ICON_LOCKED;
+    tray.notification_icon = resolved_tray_icon_path(TRAY_ICON_LOCKED);
     tray.tooltip = PROJECT_NAME;
     tray.notification_cb = []() {
       launch_ui("/pin#PIN");
@@ -380,7 +451,7 @@ namespace system_tray {
   #endif
     tray.notification_title = "Device Paired Succesfully";
     tray.notification_text = msg;
-    tray.notification_icon = TRAY_ICON;
+    tray.notification_icon = resolved_tray_icon_path(TRAY_ICON);
     tray.tooltip = PROJECT_NAME;
     tray_update(&tray);
   }
@@ -395,7 +466,7 @@ namespace system_tray {
     tray.notification_text = NULL;
     tray.notification_cb = NULL;
     tray.notification_icon = NULL;
-    tray.icon = TRAY_ICON;
+    tray.icon = resolved_tray_icon_path(TRAY_ICON);
     tray_update(&tray);
     char msg[256];
     snprintf(msg, std::size(msg), "%s has connected to the session.", client_name.c_str());
@@ -404,7 +475,7 @@ namespace system_tray {
   #endif
     tray.notification_title = "Client Connected";
     tray.notification_text = msg;
-    tray.notification_icon = TRAY_ICON;
+    tray.notification_icon = resolved_tray_icon_path(TRAY_ICON);
     tray.tooltip = PROJECT_NAME;
     tray_update(&tray);
   }
