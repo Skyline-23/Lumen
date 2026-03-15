@@ -32,6 +32,8 @@
 
 #ifdef _WIN32
   #include "platform/windows/virtual_display.h"
+#elif defined(__APPLE__)
+  #include "platform/macos/virtual_display.h"
 #endif
 
 #define VIRTUAL_DISPLAY_UUID "8902CB19-674A-403D-A587-41B092E900BA"
@@ -105,6 +107,7 @@ namespace proc {
     KITTY_DEFAULT_CONSTR_MOVE_THROW(proc_t)
 
     std::string display_name;
+    std::string virtual_display_key;
     std::string initial_display;
     std::string mode_changed_display;
     bool initial_hdr = false;

@@ -342,6 +342,38 @@ namespace proc {
       display_device::reset_persistence();
     }
 
+#elif defined(__APPLE__)
+
+    if (launch_session->virtual_display || _app.virtual_display) {
+      std::string device_name = _app.use_app_identity ? _app.name : launch_session->device_name;
+      std::string device_key = _app.use_app_identity ? _app.uuid : launch_session->unique_id;
+
+      auto virtual_display_name = VDISPLAY::createVirtualDisplay(
+        device_key.c_str(),
+        device_name.c_str(),
+        render_width,
+        render_height,
+        launch_session->fps ? static_cast<std::uint32_t>(launch_session->fps) : 60000u
+      );
+
+      launch_session->virtual_display = !virtual_display_name.empty();
+      if (!virtual_display_name.empty()) {
+        BOOST_LOG(info) << "Virtual Display created at "sv << virtual_display_name;
+        this->virtual_display = true;
+        this->virtual_display_key = device_key;
+        this->display_name = virtual_display_name;
+        config::video.output_name = display_device::map_display_name(this->display_name);
+      } else {
+        BOOST_LOG(warning) << "Virtual Display creation failed on macOS"sv;
+      }
+    }
+
+    display_device::configure_display(config::video, *launch_session);
+
+    if (this->virtual_display) {
+      display_device::reset_persistence();
+    }
+
 #else
 
     display_device::configure_display(config::video, *launch_session);
@@ -775,6 +807,22 @@ namespace proc {
       } else {
         display_device::revert_configuration();
       }
+#elif defined(__APPLE__)
+    bool used_virtual_display = _launch_session && _launch_session->virtual_display && !virtual_display_key.empty();
+    if (used_virtual_display) {
+      if (VDISPLAY::removeVirtualDisplay(virtual_display_key)) {
+        BOOST_LOG(info) << "Virtual Display removed successfully";
+      } else if (this->virtual_display) {
+        BOOST_LOG(warning) << "Virtual Display remove failed";
+      }
+    }
+
+    if (proc::proc.get_last_run_app_name().length() > 0 && has_run) {
+      if (used_virtual_display) {
+        display_device::reset_persistence();
+      } else {
+        display_device::revert_configuration();
+      }
 #else
     if (proc::proc.get_last_run_app_name().length() > 0 && has_run) {
       display_device::revert_configuration();
@@ -798,6 +846,7 @@ namespace proc {
     _app_name.clear();
     _app = {};
     display_name.clear();
+    virtual_display_key.clear();
     initial_display.clear();
     mode_changed_display.clear();
     _launch_session.reset();

@@ -30,6 +30,7 @@
 
 #ifdef __APPLE__
   #include "platform/macos/misc.h"
+  #include "platform/macos/virtual_display.h"
 #endif
 
 #define PROBE_DISPLAY_UUID "38F72B96-B00C-4F21-8B6C-E1BFF1602B0E"
