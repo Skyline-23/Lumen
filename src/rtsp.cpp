@@ -819,7 +819,7 @@ namespace rtsp_stream {
       ss << "sprop-parameter-sets=AAAAAU"sv << std::endl;
     }
 
-    if (video::active_av1_mode != 1) {
+    if (video::active_av1_mode != 1 || video::native_macos_vt_av1_supported()) {
       ss << "a=rtpmap:98 AV1/90000"sv << std::endl;
     }
 
@@ -1139,7 +1139,7 @@ namespace rtsp_stream {
       return;
     }
 
-    if (config.monitor.videoFormat == 2 && video::active_av1_mode == 1) {
+    if (config.monitor.videoFormat == 2 && video::active_av1_mode == 1 && !video::native_macos_vt_av1_supported()) {
       BOOST_LOG(warning) << "AV1 is disabled, yet the client requested AV1"sv;
 
       respond(sock, session, &option, 400, "BAD REQUEST", req->sequenceNumber, {});

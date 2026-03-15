@@ -14,6 +14,7 @@
 #include "src/platform/macos/av_video.h"
 #include "src/platform/macos/misc.h"
 #include "src/platform/macos/nv12_zero_device.h"
+#include "src/process.h"
 
 // Avoid conflict between AVFoundation and libavutil both defining AVMediaType
 #define AVMediaType AVMediaType_FFmpeg
@@ -90,6 +91,20 @@ namespace platf {
       return true;
     }
 
+    bool generic_virtual_hdr_metadata(SS_HDR_METADATA &metadata) {
+      std::memset(&metadata, 0, sizeof(metadata));
+      metadata.displayPrimaries[0] = {34000, 16000};
+      metadata.displayPrimaries[1] = {13250, 34500};
+      metadata.displayPrimaries[2] = {7500, 3000};
+      metadata.whitePoint = {15635, 16450};
+      metadata.maxDisplayLuminance = 1000;
+      metadata.maxFullFrameLuminance = 1000;
+      metadata.minDisplayLuminance = 1;
+      metadata.maxContentLightLevel = 1000;
+      metadata.maxFrameAverageLightLevel = 400;
+      return true;
+    }
+
     struct display_capture_context_t {
       const display_t::push_captured_image_cb_t *push_cb;
       const display_t::pull_free_image_cb_t *pull_cb;
@@ -143,10 +158,16 @@ namespace platf {
     }
 
     bool is_hdr() override {
+      if (proc::proc.virtual_display) {
+        return true;
+      }
       return screen_is_hdr_active(screen_for_display_id(display_id));
     }
 
     bool get_hdr_metadata(SS_HDR_METADATA &metadata) override {
+      if (proc::proc.virtual_display) {
+        return generic_virtual_hdr_metadata(metadata);
+      }
       return fallback_hdr_metadata_for_screen(screen_for_display_id(display_id), metadata);
     }
 

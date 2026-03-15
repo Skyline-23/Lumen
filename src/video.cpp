@@ -485,6 +485,14 @@ namespace video {
     }
   }  // namespace
 
+  bool native_macos_vt_hevc_main10_supported() {
+    return native_macos_vt_codec_supported(kCMVideoCodecType_HEVC);
+  }
+
+  bool native_macos_vt_av1_supported() {
+    return native_macos_vt_codec_supported(kCMVideoCodecType_AV1);
+  }
+
   class vt_compression_encode_session_t: public encode_session_t {
   public:
     struct hdr_metadata_state_t {
@@ -1128,6 +1136,14 @@ namespace video {
 
     BOOST_LOG(info) << "Native VTCompressionSession path selected"sv;
     return session;
+  }
+#else
+  bool native_macos_vt_hevc_main10_supported() {
+    return false;
+  }
+
+  bool native_macos_vt_av1_supported() {
+    return false;
   }
 #endif
 

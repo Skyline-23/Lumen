@@ -80,6 +80,10 @@ namespace nvhttp {
       return video::active_hevc_mode >= 3 || macos_virtual_display_main10_capable();
     }
 
+    bool advertise_av1_support() {
+      return video::active_av1_mode >= 2 || video::native_macos_vt_av1_supported();
+    }
+
     bool advertise_hdr_app_support() {
       return advertise_hevc_main10_support() || video::active_av1_mode >= 3;
     }
@@ -1033,7 +1037,7 @@ namespace nvhttp {
         codec_mode_flags |= SCM_HEVC_REXT10_444;
       }
     }
-    if (video::active_av1_mode >= 2) {
+    if (advertise_av1_support()) {
       codec_mode_flags |= SCM_AV1_MAIN8;
       if (video::last_encoder_probe_supported_yuv444_for_codec[2]) {
         codec_mode_flags |= SCM_AV1_HIGH8_444;
