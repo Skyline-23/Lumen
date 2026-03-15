@@ -637,11 +637,6 @@ namespace proc {
   }
 
   void proc_t::on_stream_connected() {
-#ifdef __APPLE__
-    if (virtual_display && !physical_displays_asleep) {
-      physical_displays_asleep = platf::sleep_physical_displays();
-    }
-#endif
   }
 
   void proc_t::on_stream_disconnected() {
