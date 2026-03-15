@@ -6,6 +6,7 @@
 #import "av_video.h"
 
 static NSString *const kSunshineVideoCaptureQueue = @"dev.lizardbyte.sunshine.video.capture";
+static NSUInteger const kScreenCaptureQueueCompactionThreshold = 64;
 
 @implementation AVVideo
 
@@ -136,6 +137,7 @@ static NSString *const kSunshineVideoCaptureQueue = @"dev.lizardbyte.sunshine.vi
   }
 #endif
   self.pendingSampleBuffers = [[NSMutableArray alloc] init];
+  self.pendingSampleBufferHead = 0;
 
   CFRelease(mode);
 
@@ -185,6 +187,7 @@ static NSString *const kSunshineVideoCaptureQueue = @"dev.lizardbyte.sunshine.vi
 #endif
 
   [self.pendingSampleBuffers removeAllObjects];
+  self.pendingSampleBufferHead = 0;
 
   [self.captureCallback release];
   [self.pendingSampleBuffers release];
@@ -342,6 +345,7 @@ static NSString *const kSunshineVideoCaptureQueue = @"dev.lizardbyte.sunshine.vi
   self.captureCallback = nil;
   self.screenCaptureFrameCount = 0;
   [self.pendingSampleBuffers removeAllObjects];
+  self.pendingSampleBufferHead = 0;
 
   if (![self startScreenCaptureKitStream:error]) {
     self.frameAvailableSignal = nil;
@@ -371,10 +375,17 @@ static NSString *const kSunshineVideoCaptureQueue = @"dev.lizardbyte.sunshine.vi
     CMSampleBufferRef sampleBuffer = nil;
     BOOL captureStopped = NO;
     @synchronized(self) {
-      if (self.pendingSampleBuffers.count > 0) {
-        id queuedSample = [self.pendingSampleBuffers objectAtIndex:0];
+      if (self.pendingSampleBufferHead < self.pendingSampleBuffers.count) {
+        id queuedSample = [self.pendingSampleBuffers objectAtIndex:self.pendingSampleBufferHead];
         sampleBuffer = (CMSampleBufferRef) CFRetain((__bridge CFTypeRef) queuedSample);
-        [self.pendingSampleBuffers removeObjectAtIndex:0];
+        self.pendingSampleBufferHead += 1;
+
+        if (self.pendingSampleBufferHead >= kScreenCaptureQueueCompactionThreshold &&
+            self.pendingSampleBufferHead * 2 >= self.pendingSampleBuffers.count) {
+          NSRange consumedRange = NSMakeRange(0, self.pendingSampleBufferHead);
+          [self.pendingSampleBuffers removeObjectsInRange:consumedRange];
+          self.pendingSampleBufferHead = 0;
+        }
       }
       captureStopped = self.captureStopped;
     }
@@ -396,6 +407,7 @@ static NSString *const kSunshineVideoCaptureQueue = @"dev.lizardbyte.sunshine.vi
   @synchronized(self) {
     self.captureStopped = YES;
     [self.pendingSampleBuffers removeAllObjects];
+    self.pendingSampleBufferHead = 0;
   }
   if (frameSignal != nil) {
     dispatch_semaphore_signal(frameSignal);
@@ -461,10 +473,19 @@ static NSString *const kSunshineVideoCaptureQueue = @"dev.lizardbyte.sunshine.vi
 
   @synchronized(self) {
     static const NSUInteger kMaxPendingScreenCaptureSamples = 16;
-    if (self.pendingSampleBuffers.count >= kMaxPendingScreenCaptureSamples) {
-      [self.pendingSampleBuffers removeObjectAtIndex:0];
+    NSUInteger pendingCount = self.pendingSampleBuffers.count - self.pendingSampleBufferHead;
+    if (pendingCount >= kMaxPendingScreenCaptureSamples) {
+      self.pendingSampleBufferHead += 1;
     }
     [self.pendingSampleBuffers addObject:(__bridge id) sampleBuffer];
+
+    if (self.pendingSampleBufferHead >= kScreenCaptureQueueCompactionThreshold &&
+        self.pendingSampleBufferHead * 2 >= self.pendingSampleBuffers.count) {
+      NSRange consumedRange = NSMakeRange(0, self.pendingSampleBufferHead);
+      [self.pendingSampleBuffers removeObjectsInRange:consumedRange];
+      self.pendingSampleBufferHead = 0;
+    }
+
     self.screenCaptureFrameCount += 1;
   }
   if (self.screenCaptureFrameCount <= 5 || (self.screenCaptureFrameCount % 120) == 0) {
@@ -479,6 +500,7 @@ static NSString *const kSunshineVideoCaptureQueue = @"dev.lizardbyte.sunshine.vi
   @synchronized(self) {
     self.captureStopped = YES;
     [self.pendingSampleBuffers removeAllObjects];
+    self.pendingSampleBufferHead = 0;
   }
 
   if (frameSignal != nil) {
