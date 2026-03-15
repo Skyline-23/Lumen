@@ -5,7 +5,9 @@
 // standard includes
 #include <atomic>
 #include <bitset>
+#include <condition_variable>
 #include <list>
+#include <mutex>
 #include <thread>
 
 // lib includes
@@ -36,6 +38,7 @@ extern "C" {
   #include <CoreMedia/CoreMedia.h>
   #include <VideoToolbox/VideoToolbox.h>
   #include "platform/macos/av_img_t.h"
+  #include "platform/macos/vt_metal_context.h"
 #endif
 
 #ifdef _WIN32
@@ -454,14 +457,17 @@ namespace video {
       int width,
       int height,
       int bitrate,
-      int framerate
+      int framerate,
+      bool ten_bit
     ):
         device(std::move(encode_device)),
         codec_type(codec_type),
         width(width),
         height(height),
         bitrate(bitrate),
-        framerate(framerate) {
+        framerate(framerate),
+        metal_context(std::make_unique<platf::vt_metal_context_t>()),
+        ten_bit(ten_bit) {
     }
 
     ~vt_compression_encode_session_t() override {
@@ -476,13 +482,15 @@ namespace video {
     }
 
     int init() {
+      cf_dict_t source_attrs = make_source_image_buffer_attributes();
+
       auto status = VTCompressionSessionCreate(
         nullptr,
         width,
         height,
         codec_type,
         nullptr,
-        nullptr,
+        source_attrs.get(),
         nullptr,
         &vt_compression_encode_session_t::compression_output_callback,
         this,
@@ -495,6 +503,10 @@ namespace video {
 
       VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_RealTime, kCFBooleanTrue);
       VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_AllowFrameReordering, kCFBooleanFalse);
+      auto max_frame_delay_count = cfnumber_from_int(1);
+      if (max_frame_delay_count) {
+        VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_MaxFrameDelayCount, max_frame_delay_count.get());
+      }
 
       auto expected_framerate = cfnumber_from_int(framerate);
       if (expected_framerate) {
@@ -505,6 +517,10 @@ namespace video {
       if (average_bitrate) {
         VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_AverageBitRate, average_bitrate.get());
       }
+      auto data_rate_limit = cfarray_from_ints({bitrate * 2 / 8, 1});
+      if (data_rate_limit) {
+        VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_DataRateLimits, data_rate_limit.get());
+      }
 
       auto max_keyframe_interval = cfnumber_from_int(std::numeric_limits<int>::max());
       if (max_keyframe_interval) {
@@ -514,7 +530,7 @@ namespace video {
       if (codec_type == kCMVideoCodecType_H264) {
         VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_ProfileLevel, kVTProfileLevel_H264_High_AutoLevel);
       } else if (codec_type == kCMVideoCodecType_HEVC) {
-        VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_ProfileLevel, kVTProfileLevel_HEVC_Main_AutoLevel);
+        VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_ProfileLevel, ten_bit ? kVTProfileLevel_HEVC_Main10_AutoLevel : kVTProfileLevel_HEVC_Main_AutoLevel);
       }
 
       status = VTCompressionSessionPrepareToEncodeFrames(compression_session);
@@ -528,14 +544,14 @@ namespace video {
 
     int convert(platf::img_t &img) override {
       auto *av_img = dynamic_cast<platf::av_img_t *>(&img);
-      if (!av_img || !av_img->pixel_buffer || !av_img->pixel_buffer->buf) {
+      if (!av_img || !av_img->pixel_buffer_ref || !av_img->pixel_buffer_ref->buf) {
         return -1;
       }
 
       if (current_pixel_buffer) {
         CVPixelBufferRelease(current_pixel_buffer);
       }
-      current_pixel_buffer = (CVPixelBufferRef) CFRetain(av_img->pixel_buffer->buf);
+      current_pixel_buffer = (CVPixelBufferRef) CFRetain(av_img->pixel_buffer_ref->buf);
       return 0;
     }
 
@@ -555,12 +571,32 @@ namespace video {
       if (!compression_session || !current_pixel_buffer) {
         return -1;
       }
+      if (fatal_error.load(std::memory_order_acquire)) {
+        BOOST_LOG(error) << "Native VT session is in a failed state"sv;
+        return -1;
+      }
+      if (metal_context && !metal_context->prepare_pixel_buffer(current_pixel_buffer)) {
+        BOOST_LOG(debug) << "Metal pixel buffer preparation was skipped for current frame"sv;
+      }
 
-      pending_done = false;
-      pending_status = noErr;
-      pending_data.clear();
-      pending_idr = false;
-      pending_frame_index = frame_nr;
+      {
+        std::unique_lock<std::mutex> lock(inflight_mutex);
+        inflight_cv.wait(lock, [&] {
+          return inflight_frames < max_inflight_frames || fatal_error.load(std::memory_order_acquire);
+        });
+      }
+      if (fatal_error.load(std::memory_order_acquire)) {
+        BOOST_LOG(error) << "Native VT session entered failed state while throttling in-flight frames"sv;
+        return -1;
+      }
+
+      auto *frame_context = new vt_frame_context_t {
+        packets,
+        channel_data,
+        frame_timestamp,
+        frame_nr,
+        (CVPixelBufferRef) CFRetain(current_pixel_buffer),
+      };
 
       cf_dict_t frame_properties;
       if (force_idr) {
@@ -570,40 +606,43 @@ namespace video {
       }
 
       CMTime pts = CMTimeMake(frame_nr, framerate > 0 ? framerate : 60);
+      {
+        std::lock_guard<std::mutex> lock(inflight_mutex);
+        ++inflight_frames;
+      }
       auto status = VTCompressionSessionEncodeFrame(
         compression_session,
-        current_pixel_buffer,
+        frame_context->pixel_buffer,
         pts,
         kCMTimeInvalid,
         frame_properties.get(),
-        nullptr,
+        frame_context,
         nullptr
       );
       if (status != noErr) {
+        release_frame_context(frame_context);
+        {
+          std::lock_guard<std::mutex> lock(inflight_mutex);
+          --inflight_frames;
+        }
+        inflight_cv.notify_one();
         BOOST_LOG(error) << "VTCompressionSessionEncodeFrame failed: "sv << status;
         return -1;
       }
 
-      std::unique_lock<std::mutex> lock(pending_mutex);
-      pending_cv.wait(lock, [&] { return pending_done; });
-      if (pending_status != noErr) {
-        BOOST_LOG(error) << "VT encode callback failed: "sv << pending_status;
-        return -1;
-      }
-      if (pending_data.empty()) {
-        BOOST_LOG(error) << "VT encode callback returned empty payload"sv;
-        return -1;
-      }
-
-      auto packet = std::make_unique<packet_raw_generic>(std::move(pending_data), frame_nr, pending_idr);
-      packet->channel_data = channel_data;
-      packet->frame_timestamp = frame_timestamp;
-      packets->raise(std::move(packet));
       force_idr = false;
       return 0;
     }
 
   private:
+    struct vt_frame_context_t {
+      safe::mail_raw_t::queue_t<packet_t> packets;
+      void *channel_data;
+      std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
+      int64_t frame_index;
+      CVPixelBufferRef pixel_buffer;
+    };
+
     struct cfnumber_deleter {
       void operator()(CFNumberRef value) const {
         if (value) {
@@ -612,8 +651,9 @@ namespace video {
       }
     };
 
-    struct cfdict_deleter {
-      void operator()(CFDictionaryRef value) const {
+    struct cf_releaser {
+      template<class T>
+      void operator()(T value) const {
         if (value) {
           CFRelease(value);
         }
@@ -621,11 +661,64 @@ namespace video {
     };
 
     using cfnumber_t = std::unique_ptr<std::remove_pointer_t<CFNumberRef>, cfnumber_deleter>;
-    using cf_dict_t = std::unique_ptr<std::remove_pointer_t<CFDictionaryRef>, cfdict_deleter>;
+    using cf_dict_t = std::unique_ptr<std::remove_pointer_t<CFDictionaryRef>, cf_releaser>;
+    using cf_array_t = std::unique_ptr<std::remove_pointer_t<CFArrayRef>, cf_releaser>;
 
     static cfnumber_t cfnumber_from_int(int value) {
       auto number = CFNumberCreate(nullptr, kCFNumberIntType, &value);
       return cfnumber_t(number);
+    }
+
+    static cf_array_t cfarray_from_ints(std::initializer_list<int> values) {
+      std::vector<CFNumberRef> numbers;
+      numbers.reserve(values.size());
+      for (int value : values) {
+        numbers.push_back(CFNumberCreate(nullptr, kCFNumberIntType, &value));
+      }
+
+      auto array = CFArrayCreate(nullptr, reinterpret_cast<const void **>(numbers.data()), (CFIndex) numbers.size(), &kCFTypeArrayCallBacks);
+      for (auto *number : numbers) {
+        if (number) {
+          CFRelease(number);
+        }
+      }
+      return cf_array_t(array);
+    }
+
+    cf_dict_t make_source_image_buffer_attributes() const {
+      int pixel_format = ten_bit ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
+      auto pixel_format_number = cfnumber_from_int(pixel_format);
+      auto width_number = cfnumber_from_int(width);
+      auto height_number = cfnumber_from_int(height);
+      const void *surface_keys[] = {};
+      const void *surface_values[] = {};
+      cf_dict_t empty_surface_dictionary(CFDictionaryCreate(nullptr, surface_keys, surface_values, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks));
+
+      const void *keys[] = {
+        kCVPixelBufferPixelFormatTypeKey,
+        kCVPixelBufferWidthKey,
+        kCVPixelBufferHeightKey,
+        kCVPixelBufferMetalCompatibilityKey,
+        kCVPixelBufferIOSurfacePropertiesKey,
+      };
+      const void *values[] = {
+        pixel_format_number.get(),
+        width_number.get(),
+        height_number.get(),
+        kCFBooleanTrue,
+        empty_surface_dictionary.get(),
+      };
+      return cf_dict_t(CFDictionaryCreate(nullptr, keys, values, 5, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks));
+    }
+
+    static void release_frame_context(vt_frame_context_t *frame_context) {
+      if (!frame_context) {
+        return;
+      }
+      if (frame_context->pixel_buffer) {
+        CVPixelBufferRelease(frame_context->pixel_buffer);
+      }
+      delete frame_context;
     }
 
     static void compression_output_callback(
@@ -635,25 +728,45 @@ namespace video {
       VTEncodeInfoFlags infoFlags,
       CMSampleBufferRef sampleBuffer
     ) {
-      static_cast<vt_compression_encode_session_t *>(outputCallbackRefCon)->handle_compression_output(status, sampleBuffer);
+      static_cast<vt_compression_encode_session_t *>(outputCallbackRefCon)->handle_compression_output(status, static_cast<vt_frame_context_t *>(sourceFrameRefCon), sampleBuffer);
     }
 
-    void handle_compression_output(OSStatus status, CMSampleBufferRef sampleBuffer) {
-      std::lock_guard<std::mutex> lock(pending_mutex);
-      pending_status = status;
-      pending_done = true;
-      pending_data.clear();
-      pending_idr = false;
-
-      if (status == noErr && sampleBuffer && CMSampleBufferDataIsReady(sampleBuffer)) {
-        pending_idr = sample_buffer_is_idr(sampleBuffer);
-        if (pending_idr) {
-          append_parameter_sets(sampleBuffer, pending_data);
+    void handle_compression_output(OSStatus status, vt_frame_context_t *frame_context, CMSampleBufferRef sampleBuffer) {
+      auto inflight_guard = util::fail_guard([&] {
+        {
+          std::lock_guard<std::mutex> lock(inflight_mutex);
+          --inflight_frames;
         }
-        append_sample_buffer_nals(sampleBuffer, pending_data);
+        inflight_cv.notify_one();
+        release_frame_context(frame_context);
+      });
+
+      if (status != noErr) {
+        fatal_error.store(true, std::memory_order_release);
+        BOOST_LOG(error) << "Native VT callback failed: "sv << status;
+        return;
       }
 
-      pending_cv.notify_one();
+      if (!sampleBuffer || !CMSampleBufferDataIsReady(sampleBuffer)) {
+        BOOST_LOG(error) << "Native VT callback produced no ready sample buffer"sv;
+        return;
+      }
+
+      std::vector<uint8_t> packet_data;
+      const bool packet_is_idr = sample_buffer_is_idr(sampleBuffer);
+      if (packet_is_idr) {
+        append_parameter_sets(sampleBuffer, packet_data);
+      }
+      append_sample_buffer_nals(sampleBuffer, packet_data);
+      if (packet_data.empty()) {
+        BOOST_LOG(error) << "Native VT callback produced empty payload"sv;
+        return;
+      }
+
+      auto packet = std::make_unique<packet_raw_generic>(std::move(packet_data), frame_context->frame_index, packet_is_idr);
+      packet->channel_data = frame_context->channel_data;
+      packet->frame_timestamp = frame_context->frame_timestamp;
+      frame_context->packets->raise(std::move(packet));
     }
 
     static bool sample_buffer_is_idr(CMSampleBufferRef sampleBuffer) {
@@ -675,7 +788,7 @@ namespace video {
 
       if (codec_type == kCMVideoCodecType_H264) {
         size_t set_count = 0;
-        size_t header_length = 0;
+        int header_length = 0;
         OSStatus status = CMVideoFormatDescriptionGetH264ParameterSetAtIndex(format_description, 0, nullptr, nullptr, &set_count, &header_length);
         if (status != noErr) {
           return;
@@ -691,8 +804,8 @@ namespace video {
         }
       } else if (codec_type == kCMVideoCodecType_HEVC) {
         size_t set_count = 0;
-        size_t header_length = 0;
-        OSStatus status = CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(format_description, 0, nullptr, nullptr, &set_count, &header_length, nullptr);
+        int header_length = 0;
+        OSStatus status = CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(format_description, 0, nullptr, nullptr, &set_count, &header_length);
         if (status != noErr) {
           return;
         }
@@ -700,7 +813,7 @@ namespace video {
         for (size_t index = 0; index < set_count; ++index) {
           const uint8_t *set_ptr = nullptr;
           size_t set_size = 0;
-          if (CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(format_description, index, &set_ptr, &set_size, nullptr, nullptr, nullptr) == noErr && set_ptr && set_size > 0) {
+          if (CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(format_description, index, &set_ptr, &set_size, nullptr, nullptr) == noErr && set_ptr && set_size > 0) {
             output.insert(output.end(), {0, 0, 0, 1});
             output.insert(output.end(), set_ptr, set_ptr + set_size);
           }
@@ -734,6 +847,7 @@ namespace video {
     }
 
     std::unique_ptr<platf::avcodec_encode_device_t> device;
+    std::unique_ptr<platf::vt_metal_context_t> metal_context;
     VTCompressionSessionRef compression_session {nullptr};
     CVPixelBufferRef current_pixel_buffer {nullptr};
     CMVideoCodecType codec_type {};
@@ -741,14 +855,13 @@ namespace video {
     int height {};
     int bitrate {};
     int framerate {};
+    bool ten_bit {false};
     bool force_idr {false};
-    int64_t pending_frame_index {0};
-    std::mutex pending_mutex;
-    std::condition_variable pending_cv;
-    bool pending_done {false};
-    OSStatus pending_status {noErr};
-    std::vector<uint8_t> pending_data;
-    bool pending_idr {false};
+    std::mutex inflight_mutex;
+    std::condition_variable inflight_cv;
+    std::size_t inflight_frames {0};
+    static constexpr std::size_t max_inflight_frames = 4;
+    std::atomic<bool> fatal_error {false};
   };
 
   std::unique_ptr<encode_session_t> make_vtcompression_encode_session(
@@ -758,6 +871,7 @@ namespace video {
     int height,
     std::unique_ptr<platf::avcodec_encode_device_t> encode_device
   ) {
+    BOOST_LOG(info) << "Attempting native VTCompressionSession path"sv;
     CMVideoCodecType codec_type {};
     switch (config.videoFormat) {
       case 0:
@@ -776,13 +890,16 @@ namespace video {
       width,
       height,
       config.bitrate * 1000,
-      config.framerate
+      config.framerate,
+      config.dynamicRange > 0
     );
 
     if (session->init()) {
+      BOOST_LOG(error) << "Native VTCompressionSession init failed"sv;
       return nullptr;
     }
 
+    BOOST_LOG(info) << "Native VTCompressionSession path selected"sv;
     return session;
   }
 #endif
@@ -1379,7 +1496,7 @@ namespace video {
       },
       "h264_videotoolbox"s,
     },
-    DEFAULT
+    PARALLEL_ENCODING
   };
 #endif
 
@@ -1872,6 +1989,10 @@ namespace video {
       return encode_avcodec(frame_nr, *avcodec_session, packets, channel_data, frame_timestamp);
     } else if (auto nvenc_session = dynamic_cast<nvenc_encode_session_t *>(&session)) {
       return encode_nvenc(frame_nr, *nvenc_session, packets, channel_data, frame_timestamp);
+#ifdef __APPLE__
+    } else if (auto vt_session = dynamic_cast<vt_compression_encode_session_t *>(&session)) {
+      return vt_session->encode_frame(frame_nr, packets, channel_data, frame_timestamp);
+#endif
     }
 
     return -1;
@@ -2306,7 +2427,17 @@ namespace video {
 
   std::unique_ptr<encode_session_t> make_encode_session(platf::display_t *disp, const encoder_t &encoder, const config_t &config, int width, int height, std::unique_ptr<platf::encode_device_t> encode_device, bool prepare_frame = true) {
     if (dynamic_cast<platf::avcodec_encode_device_t *>(encode_device.get())) {
+      BOOST_LOG(info) << "make_encode_session avcodec device path encoder="sv << encoder.name << " videoFormat="sv << config.videoFormat;
       auto avcodec_encode_device = boost::dynamic_pointer_cast<platf::avcodec_encode_device_t>(std::move(encode_device));
+#ifdef __APPLE__
+      if (encoder.name == "videotoolbox"sv) {
+        if (config.videoFormat > 1) {
+          BOOST_LOG(error) << "Native macOS VideoToolbox path does not support AV1 yet"sv;
+          return nullptr;
+        }
+        return make_vtcompression_encode_session(encoder, config, width, height, std::move(avcodec_encode_device));
+      }
+#endif
       return make_avcodec_encode_session(disp, encoder, config, width, height, std::move(avcodec_encode_device), prepare_frame);
     } else if (dynamic_cast<platf::nvenc_encode_device_t *>(encode_device.get())) {
       auto nvenc_encode_device = boost::dynamic_pointer_cast<platf::nvenc_encode_device_t>(std::move(encode_device));
@@ -2926,9 +3057,23 @@ namespace video {
     session->request_idr_frame();
 
     auto packets = mail::man->queue<packet_t>(mail::video_packets);
-    while (!packets->peek()) {
-      if (encode(1, *session, packets, nullptr, {})) {
+    if (auto *vt_session = dynamic_cast<vt_compression_encode_session_t *>(session.get())) {
+      if (encode(1, *vt_session, packets, nullptr, {})) {
         return -1;
+      }
+
+      for (int attempt = 0; attempt < 50 && !packets->peek(); ++attempt) {
+        std::this_thread::sleep_for(10ms);
+      }
+      if (!packets->peek()) {
+        BOOST_LOG(error) << "Timed out waiting for native VT probe packet"sv;
+        return -1;
+      }
+    } else {
+      while (!packets->peek()) {
+        if (encode(1, *session, packets, nullptr, {})) {
+          return -1;
+        }
       }
     }
 

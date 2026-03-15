@@ -26,45 +26,63 @@ namespace platf {
     }
   };
 
-  struct av_pixel_buf_t {
+  struct av_pixel_ref_t {
     CVPixelBufferRef buf;
 
-    // Constructor
-    explicit av_pixel_buf_t(CMSampleBufferRef sb):
-        buf(
-          CMSampleBufferGetImageBuffer(sb)
-        ) {
-      CVPixelBufferLockBaseAddress(buf, kCVPixelBufferLock_ReadOnly);
+    explicit av_pixel_ref_t(CMSampleBufferRef sb):
+        buf((CVPixelBufferRef) CFRetain(CMSampleBufferGetImageBuffer(sb))) {
+    }
+
+    explicit av_pixel_ref_t(CVPixelBufferRef pixel_buf):
+        buf((CVPixelBufferRef) CFRetain(pixel_buf)) {
+    }
+
+    ~av_pixel_ref_t() {
+      if (buf != nullptr) {
+        CFRelease(buf);
+      }
+    }
+  };
+
+  struct av_pixel_buf_t {
+    std::shared_ptr<av_pixel_ref_t> ref;
+
+    explicit av_pixel_buf_t(std::shared_ptr<av_pixel_ref_t> ref):
+        ref(std::move(ref)) {
+      CVPixelBufferLockBaseAddress(this->ref->buf, kCVPixelBufferLock_ReadOnly);
     }
 
     [[nodiscard]] uint8_t *data() const {
-      return static_cast<uint8_t *>(CVPixelBufferGetBaseAddress(buf));
+      return static_cast<uint8_t *>(CVPixelBufferGetBaseAddress(ref->buf));
     }
 
-    // Destructor
     ~av_pixel_buf_t() {
-      if (buf != nullptr) {
-        CVPixelBufferUnlockBaseAddress(buf, kCVPixelBufferLock_ReadOnly);
+      if (ref && ref->buf != nullptr) {
+        CVPixelBufferUnlockBaseAddress(ref->buf, kCVPixelBufferLock_ReadOnly);
       }
     }
   };
 
   struct av_img_t: img_t {
     std::shared_ptr<av_sample_buf_t> sample_buffer;
+    std::shared_ptr<av_pixel_ref_t> pixel_buffer_ref;
     std::shared_ptr<av_pixel_buf_t> pixel_buffer;
   };
 
   struct temp_retain_av_img_t {
     std::shared_ptr<av_sample_buf_t> sample_buffer;
+    std::shared_ptr<av_pixel_ref_t> pixel_buffer_ref;
     std::shared_ptr<av_pixel_buf_t> pixel_buffer;
     uint8_t *data;
 
     temp_retain_av_img_t(
       std::shared_ptr<av_sample_buf_t> sb,
+      std::shared_ptr<av_pixel_ref_t> pr,
       std::shared_ptr<av_pixel_buf_t> pb,
       uint8_t *dt
     ):
         sample_buffer(std::move(sb)),
+        pixel_buffer_ref(std::move(pr)),
         pixel_buffer(std::move(pb)),
         data(dt) {
     }

@@ -29,26 +29,37 @@ namespace platf {
 
     bool materialize_captured_frame(
       std::shared_ptr<img_t> &img_out,
-      CMSampleBufferRef sampleBuffer
+      CMSampleBufferRef sampleBuffer,
+      bool map_cpu_memory
     ) {
       auto new_sample_buffer = std::make_shared<av_sample_buf_t>(sampleBuffer);
-      auto new_pixel_buffer = std::make_shared<av_pixel_buf_t>(new_sample_buffer->buf);
+      auto new_pixel_buffer_ref = std::make_shared<av_pixel_ref_t>(new_sample_buffer->buf);
       auto av_img = std::static_pointer_cast<av_img_t>(img_out);
 
       auto old_data_retainer = std::make_shared<temp_retain_av_img_t>(
         av_img->sample_buffer,
+        av_img->pixel_buffer_ref,
         av_img->pixel_buffer,
         img_out->data
       );
 
       av_img->sample_buffer = new_sample_buffer;
-      av_img->pixel_buffer = new_pixel_buffer;
-      img_out->data = new_pixel_buffer->data();
+      av_img->pixel_buffer_ref = new_pixel_buffer_ref;
+      img_out->width = (int) CVPixelBufferGetWidth(new_pixel_buffer_ref->buf);
+      img_out->height = (int) CVPixelBufferGetHeight(new_pixel_buffer_ref->buf);
 
-      img_out->width = (int) CVPixelBufferGetWidth(new_pixel_buffer->buf);
-      img_out->height = (int) CVPixelBufferGetHeight(new_pixel_buffer->buf);
-      img_out->row_pitch = (int) CVPixelBufferGetBytesPerRow(new_pixel_buffer->buf);
-      img_out->pixel_pitch = img_out->row_pitch / img_out->width;
+      if (map_cpu_memory) {
+        auto new_pixel_buffer = std::make_shared<av_pixel_buf_t>(new_pixel_buffer_ref);
+        av_img->pixel_buffer = new_pixel_buffer;
+        img_out->data = new_pixel_buffer->data();
+        img_out->row_pitch = (int) CVPixelBufferGetBytesPerRow(new_pixel_buffer_ref->buf);
+        img_out->pixel_pitch = img_out->row_pitch / img_out->width;
+      } else {
+        av_img->pixel_buffer.reset();
+        img_out->data = nullptr;
+        img_out->row_pitch = 0;
+        img_out->pixel_pitch = 0;
+      }
 
       return true;
     }
@@ -57,6 +68,7 @@ namespace platf {
   struct av_display_t: public display_t {
     AVVideo *av_capture {};
     CGDirectDisplayID display_id {};
+    bool direct_videotoolbox_frames = false;
 
     ~av_display_t() override {
       [av_capture release];
@@ -83,7 +95,7 @@ namespace platf {
             [av_capture finishScreenCaptureKitCapture];
             return capture_e::ok;
           }
-          materialize_captured_frame(img_out, sampleBuffer);
+          materialize_captured_frame(img_out, sampleBuffer, !direct_videotoolbox_frames);
 
           const bool keep_capturing = push_captured_image_cb(std::move(img_out), true);
           CFRelease(sampleBuffer);
@@ -111,7 +123,7 @@ namespace platf {
           // returning false here stops capture backend
           return false;
         }
-        materialize_captured_frame(img_out, sampleBuffer);
+        materialize_captured_frame(img_out, sampleBuffer, !direct_videotoolbox_frames);
 
         if (!(*capture_context->push_cb)(std::move(img_out), true)) {
           // got interrupt signal
@@ -179,7 +191,7 @@ namespace platf {
           return 1;
         }
         std::shared_ptr<img_t> img_out(img, [](img_t *) {});
-        materialize_captured_frame(img_out, sampleBuffer);
+        materialize_captured_frame(img_out, sampleBuffer, !direct_videotoolbox_frames);
 
         CFRelease(sampleBuffer);
         [av_capture finishScreenCaptureKitCapture];
@@ -189,23 +201,26 @@ namespace platf {
 
       auto signal = [av_capture capture:^(CMSampleBufferRef sampleBuffer) {
         auto new_sample_buffer = std::make_shared<av_sample_buf_t>(sampleBuffer);
-        auto new_pixel_buffer = std::make_shared<av_pixel_buf_t>(new_sample_buffer->buf);
+        auto new_pixel_buffer_ref = std::make_shared<av_pixel_ref_t>(new_sample_buffer->buf);
+        auto new_pixel_buffer = std::make_shared<av_pixel_buf_t>(new_pixel_buffer_ref);
 
         auto av_img = (av_img_t *) img;
 
         auto old_data_retainer = std::make_shared<temp_retain_av_img_t>(
           av_img->sample_buffer,
+          av_img->pixel_buffer_ref,
           av_img->pixel_buffer,
           img->data
         );
 
         av_img->sample_buffer = new_sample_buffer;
+        av_img->pixel_buffer_ref = new_pixel_buffer_ref;
         av_img->pixel_buffer = new_pixel_buffer;
         img->data = new_pixel_buffer->data();
 
-        img->width = (int) CVPixelBufferGetWidth(new_pixel_buffer->buf);
-        img->height = (int) CVPixelBufferGetHeight(new_pixel_buffer->buf);
-        img->row_pitch = (int) CVPixelBufferGetBytesPerRow(new_pixel_buffer->buf);
+        img->width = (int) CVPixelBufferGetWidth(new_pixel_buffer_ref->buf);
+        img->height = (int) CVPixelBufferGetHeight(new_pixel_buffer_ref->buf);
+        img->row_pitch = (int) CVPixelBufferGetBytesPerRow(new_pixel_buffer_ref->buf);
         img->pixel_pitch = img->row_pitch / img->width;
 
         // returning false here stops capture backend
@@ -245,6 +260,7 @@ namespace platf {
     }
 
     auto display = std::make_shared<av_display_t>();
+    display->direct_videotoolbox_frames = hwdevice_type == platf::mem_type_e::videotoolbox;
 
     // Default to main display
     display->display_id = CGMainDisplayID();
