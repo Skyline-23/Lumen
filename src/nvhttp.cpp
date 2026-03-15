@@ -68,6 +68,22 @@ namespace nvhttp {
   static std::chrono::time_point<std::chrono::steady_clock> otp_creation_time;
 
   namespace {
+    bool macos_virtual_display_main10_capable() {
+#ifdef __APPLE__
+      return VDISPLAY::openVDisplayDevice() == VDISPLAY::DRIVER_STATUS::OK && video::active_hevc_mode >= 2;
+#else
+      return false;
+#endif
+    }
+
+    bool advertise_hevc_main10_support() {
+      return video::active_hevc_mode >= 3 || macos_virtual_display_main10_capable();
+    }
+
+    bool advertise_hdr_app_support() {
+      return advertise_hevc_main10_support() || video::active_av1_mode >= 3;
+    }
+
     std::optional<fs::path> find_legacy_state_file() {
 #ifdef __APPLE__
       if (const char *home = getenv("HOME")) {
@@ -1011,7 +1027,7 @@ namespace nvhttp {
         codec_mode_flags |= SCM_HEVC_REXT8_444;
       }
     }
-    if (video::active_hevc_mode >= 3) {
+    if (advertise_hevc_main10_support()) {
       codec_mode_flags |= SCM_HEVC_MAIN10;
       if (video::last_encoder_probe_supported_yuv444_for_codec[1]) {
         codec_mode_flags |= SCM_HEVC_REXT10_444;
@@ -1165,7 +1181,7 @@ namespace nvhttp {
 
         pt::ptree app_node;
 
-        app_node.put("IsHdrSupported"s, video::active_hevc_mode == 3 ? 1 : 0);
+        app_node.put("IsHdrSupported"s, advertise_hdr_app_support() ? 1 : 0);
         app_node.put("AppTitle"s, app_name);
         app_node.put("UUID", app.uuid);
         app_node.put("IDX", app.idx);
