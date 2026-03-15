@@ -2751,6 +2751,7 @@ namespace video {
       return;
     }
     const bool native_vt_session = dynamic_cast<vt_compression_encode_session_t *>(session.get()) != nullptr;
+    constexpr uint64_t macos_display_sleep_threshold_frames = 120;
 
     // As a workaround for NVENC hangs and to generally speed up encoder reinit,
     // we will complete the encoder teardown in a separate thread if supported.
@@ -2859,9 +2860,12 @@ namespace video {
         if (auto img = images->pop(wait_timeout)) {
           has_captured_frame = true;
           auto received = ++received_capture_frames;
-          if (!notified_capture_ready) {
+          if (!notified_capture_ready && (!native_vt_session || received >= macos_display_sleep_threshold_frames)) {
             proc::proc.on_video_capture_ready();
             notified_capture_ready = true;
+            if (native_vt_session) {
+              BOOST_LOG(info) << "macOS delaying physical display sleep until native capture reached frame #"sv << received;
+            }
           }
           if (received <= 5 || (received % 120) == 0) {
             BOOST_LOG(info) << "Async encode received captured frame #"sv << received;
