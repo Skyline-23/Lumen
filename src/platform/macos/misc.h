@@ -13,6 +13,8 @@
 namespace platf {
   void prepare_app_bundle_environment();
   bool is_screen_capture_allowed();
+  bool sleep_physical_displays();
+  bool wake_physical_displays();
 }
 
 namespace dyn {

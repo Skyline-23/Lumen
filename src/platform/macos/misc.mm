@@ -557,6 +557,46 @@ namespace platf {
     // Placeholder
     return false;
   }
+
+  bool sleep_physical_displays() {
+    boost::filesystem::path working_dir;
+    boost::process::v1::environment env = boost::this_process::environment();
+    std::error_code ec;
+    auto child = run_command(false, false, "/usr/bin/pmset displaysleepnow", working_dir, env, nullptr, ec, nullptr);
+    if (ec) {
+      BOOST_LOG(warning) << "Failed to sleep physical displays: "sv << ec.message();
+      return false;
+    }
+
+    child.wait();
+    if (child.exit_code() != 0) {
+      BOOST_LOG(warning) << "pmset displaysleepnow exited with code "sv << child.exit_code();
+      return false;
+    }
+
+    BOOST_LOG(info) << "Requested macOS physical displays to sleep"sv;
+    return true;
+  }
+
+  bool wake_physical_displays() {
+    boost::filesystem::path working_dir;
+    boost::process::v1::environment env = boost::this_process::environment();
+    std::error_code ec;
+    auto child = run_command(false, false, "/usr/bin/caffeinate -u -t 1", working_dir, env, nullptr, ec, nullptr);
+    if (ec) {
+      BOOST_LOG(warning) << "Failed to wake physical displays: "sv << ec.message();
+      return false;
+    }
+
+    child.wait();
+    if (child.exit_code() != 0) {
+      BOOST_LOG(warning) << "caffeinate wake request exited with code "sv << child.exit_code();
+      return false;
+    }
+
+    BOOST_LOG(info) << "Requested macOS physical displays to wake"sv;
+    return true;
+  }
 }  // namespace platf
 
 namespace dyn {

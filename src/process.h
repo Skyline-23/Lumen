@@ -112,6 +112,7 @@ namespace proc {
     std::string mode_changed_display;
     bool initial_hdr = false;
     bool virtual_display = false;
+    bool physical_displays_asleep = false;
     bool allow_client_commands = false;
 
     proc_t(

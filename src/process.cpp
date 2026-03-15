@@ -30,6 +30,9 @@
 #include "file_handler.h"
 #include "logging.h"
 #include "platform/common.h"
+#ifdef __APPLE__
+  #include "platform/macos/misc.h"
+#endif
 #include "process.h"
 #include "httpcommon.h"
 #include "system_tray.h"
@@ -372,6 +375,7 @@ namespace proc {
 
     if (this->virtual_display) {
       display_device::reset_persistence();
+      physical_displays_asleep = platf::sleep_physical_displays();
     }
 
 #else
@@ -809,6 +813,10 @@ namespace proc {
       }
 #elif defined(__APPLE__)
     bool used_virtual_display = _launch_session && _launch_session->virtual_display && !virtual_display_key.empty();
+    if (physical_displays_asleep) {
+      platf::wake_physical_displays();
+      physical_displays_asleep = false;
+    }
     if (used_virtual_display) {
       if (VDISPLAY::removeVirtualDisplay(virtual_display_key)) {
         BOOST_LOG(info) << "Virtual Display removed successfully";
@@ -851,6 +859,7 @@ namespace proc {
     mode_changed_display.clear();
     _launch_session.reset();
     virtual_display = false;
+    physical_displays_asleep = false;
     allow_client_commands = false;
 
     if (_saved_input_config) {
