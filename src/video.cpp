@@ -3084,6 +3084,7 @@ namespace video {
     const auto &encoder = *chosen_encoder;
 
     std::shared_ptr<platf::display_t> disp;
+    std::string preferred_display_name = proc::proc.display_name;
 
     auto switch_display_event = mail::man->event<int>(mail::switch_display);
 
@@ -3096,9 +3097,18 @@ namespace video {
       synced_session_ctxs.emplace_back(std::make_unique<sync_session_ctx_t>(std::move(*ctx)));
     }
 
+    if (!preferred_display_name.empty()) {
+      disp = platf::display(encoder.platform_formats->dev_type, preferred_display_name, synced_session_ctxs.front()->config);
+    }
+
     while (encode_session_ctx_queue.running()) {
+      if (disp) {
+        proc::proc.display_name = preferred_display_name;
+        break;
+      }
+
       // Refresh display names since a display removal might have caused the reinitialization
-      refresh_displays(encoder.platform_formats->dev_type, display_names, display_p);
+      refresh_displays(encoder.platform_formats->dev_type, display_names, display_p, preferred_display_name);
 
       // Process any pending display switch with the new list of displays
       if (switch_display_event->peek()) {
@@ -3108,6 +3118,7 @@ namespace video {
       // reset_display() will sleep between retries
       reset_display(disp, encoder.platform_formats->dev_type, display_names[display_p], synced_session_ctxs.front()->config);
       if (disp) {
+        proc::proc.display_name = display_names[display_p];
         break;
       }
     }
