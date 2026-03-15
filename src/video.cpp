@@ -3872,6 +3872,9 @@ namespace video {
 
   void end_capture_async(capture_thread_async_ctx_t &capture_thread_ctx) {
     capture_thread_ctx.capture_ctx_queue->stop();
+    if (auto display = capture_thread_ctx.display_wp->lock()) {
+      display->interrupt();
+    }
 
     capture_thread_ctx.capture_thread.join();
   }

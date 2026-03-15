@@ -27,11 +27,14 @@ The first supported macOS release should allow a user to:
 The first DMG release should not block on these:
 
 - gamepad support
-- virtual display support
 - Windows feature parity in display device management
 - AV1 as the default codec path
 - complex multi-display orchestration
 - legacy macOS support below the chosen minimum target
+
+Note:
+
+- long-term macOS streaming correctness will likely require a dedicated virtual display path rather than capturing the user's primary physical monitor directly
 
 ## Architectural Direction
 
@@ -100,6 +103,29 @@ Distribution expectations:
 - future-ready for codesign and notarization
 
 ## Workstreams
+
+## 0. Virtual Display Track
+
+### Objective
+
+Add a macOS-only virtual display mode so Apollo can stream from a dedicated desktop surface without depending on the state of the user's main physical monitor.
+
+### Why
+
+The current physical-monitor capture model is sufficient to bootstrap native `ScreenCaptureKit` + `VTCompressionSession`, but it is not the ideal long-term path for:
+
+- deterministic framerate and resolution
+- deterministic HDR behavior
+- avoiding host desktop UI interference
+- isolating streaming resolution / refresh rate from the user's active monitor state
+- future display management features comparable to Apollo's Windows virtual monitor workflow
+
+### Scope
+
+- investigate macOS virtual display creation options
+- expose a dedicated "stream display" mode in configuration
+- allow the user's primary monitor to remain separate or be disabled for the streaming workflow
+- make HDR negotiation and metadata derive from the virtual stream display instead of the active primary screen
 
 ## 1. Capture Backend Rewrite
 

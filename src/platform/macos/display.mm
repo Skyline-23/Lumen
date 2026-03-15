@@ -150,6 +150,18 @@ namespace platf {
       return fallback_hdr_metadata_for_screen(screen_for_display_id(display_id), metadata);
     }
 
+    void interrupt() override {
+#if SUNSHINE_HAVE_SCREENCAPTUREKIT
+      if ([av_capture screenCaptureKitAvailableForDisplay]) {
+        [av_capture finishScreenCaptureKitCapture];
+        return;
+      }
+#endif
+      if (av_capture.session != nil) {
+        [av_capture.session stopRunning];
+      }
+    }
+
     capture_e capture(const push_captured_image_cb_t &push_captured_image_cb, const pull_free_image_cb_t &pull_free_image_cb, bool *cursor) override {
 #if SUNSHINE_HAVE_SCREENCAPTUREKIT
       if ([av_capture screenCaptureKitAvailableForDisplay]) {

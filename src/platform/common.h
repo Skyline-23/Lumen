@@ -522,6 +522,9 @@ namespace platf {
       return false;
     }
 
+    virtual void interrupt() {
+    }
+
     /**
      * @brief Check that a given codec is supported by the display device.
      * @param name The FFmpeg codec name (or similar for non-FFmpeg codecs).
