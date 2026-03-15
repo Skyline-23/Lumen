@@ -7,6 +7,8 @@
 
 static NSString *const kSunshineVideoCaptureQueue = @"dev.lizardbyte.sunshine.video.capture";
 static NSUInteger const kScreenCaptureQueueCompactionThreshold = 64;
+static CFTimeInterval const kScreenCaptureKitStartupTimeoutSeconds = 1.5;
+static NSUInteger const kScreenCaptureKitShareableDisplayRefreshAttempts = 20;
 
 #if SUNSHINE_HAVE_SCREENCAPTUREKIT
 @interface AVVideo (ScreenCaptureKitPrivate)
@@ -353,6 +355,30 @@ static NSUInteger const kScreenCaptureQueueCompactionThreshold = 64;
   return YES;
 }
 
+- (BOOL)refreshShareableDisplay:(NSError **)error API_AVAILABLE(macos(12.3)) {
+  NSError *refreshError = nil;
+  SCDisplay *display = nil;
+
+  for (NSUInteger attempt = 0; attempt < kScreenCaptureKitShareableDisplayRefreshAttempts; ++attempt) {
+    display = [AVVideo shareableDisplayWithID:self.displayID error:&refreshError];
+    if (display != nil) {
+      break;
+    }
+
+    [NSThread sleepForTimeInterval:0.1];
+  }
+
+  if (display == nil) {
+    if (error != NULL) {
+      *error = refreshError;
+    }
+    return NO;
+  }
+
+  self.shareableDisplay = display;
+  return YES;
+}
+
 - (void)stopScreenCaptureKitStream API_AVAILABLE(macos(12.3)) {
   if (self.stream == nil) {
     return;
@@ -381,8 +407,18 @@ static NSUInteger const kScreenCaptureQueueCompactionThreshold = 64;
   self.captureSignal = nil;
   self.captureCallback = nil;
   self.screenCaptureFrameCount = 0;
+  self.screenCaptureStartTime = CFAbsoluteTimeGetCurrent();
   [self.pendingSampleBuffers removeAllObjects];
   self.pendingSampleBufferHead = 0;
+
+  NSError *refreshError = nil;
+  if (![self refreshShareableDisplay:&refreshError]) {
+    if (error != NULL) {
+      *error = refreshError;
+    }
+    self.frameAvailableSignal = nil;
+    return NO;
+  }
 
   if (![self startScreenCaptureKitStream:error]) {
     self.frameAvailableSignal = nil;
@@ -404,6 +440,11 @@ static NSUInteger const kScreenCaptureQueueCompactionThreshold = 64;
       @synchronized(self) {
         if (self.captureStopped || self.frameAvailableSignal == nil) {
           break;
+        }
+        if (self.screenCaptureFrameCount == 0 &&
+            (CFAbsoluteTimeGetCurrent() - self.screenCaptureStartTime) >= kScreenCaptureKitStartupTimeoutSeconds) {
+          NSLog(@"AVVideo ScreenCaptureKit did not produce an initial frame within %.1fs", kScreenCaptureKitStartupTimeoutSeconds);
+          return nil;
         }
       }
       continue;

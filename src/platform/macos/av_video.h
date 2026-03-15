@@ -50,6 +50,7 @@ typedef bool (^FrameCallbackBlock)(CMSampleBufferRef);
 @property (nonatomic, assign) NSUInteger pendingSampleBufferHead;
 @property (nonatomic, assign) BOOL captureStopped;
 @property (nonatomic, assign) uint64_t screenCaptureFrameCount;
+@property (nonatomic, assign) CFAbsoluteTime screenCaptureStartTime;
 
 #if SUNSHINE_HAVE_SCREENCAPTUREKIT
 @property (nonatomic, retain) SCDisplay *shareableDisplay;
@@ -57,6 +58,7 @@ typedef bool (^FrameCallbackBlock)(CMSampleBufferRef);
 @property (nonatomic, retain) AVVideoScreenStreamOutput *streamOutput;
 @property (nonatomic, assign) dispatch_queue_t sampleHandlerQueue;
 
+- (BOOL)refreshShareableDisplay:(NSError **)error API_AVAILABLE(macos(12.3));
 - (BOOL)screenCaptureKitAvailableForDisplay API_AVAILABLE(macos(12.3));
 - (BOOL)beginScreenCaptureKitCapture:(NSError **)error API_AVAILABLE(macos(12.3));
 - (CMSampleBufferRef)copyNextScreenCaptureKitSampleBuffer API_AVAILABLE(macos(12.3));
