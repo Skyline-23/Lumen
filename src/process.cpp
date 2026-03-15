@@ -367,6 +367,9 @@ namespace proc {
         this->virtual_display_key = device_key;
         this->display_name = virtual_display_name;
         config::video.output_name = this->display_name;
+        if (!platf::isolate_virtual_display(static_cast<CGDirectDisplayID>(std::strtoul(virtual_display_name.c_str(), nullptr, 10)))) {
+          BOOST_LOG(warning) << "Failed to isolate macOS virtual display layout"sv;
+        }
       } else {
         BOOST_LOG(warning) << "Virtual Display creation failed on macOS"sv;
       }
@@ -854,6 +857,9 @@ namespace proc {
 #elif defined(__APPLE__)
     bool used_virtual_display = _launch_session && _launch_session->virtual_display && !virtual_display_key.empty();
     wake_physical_displays_if_needed();
+    if (used_virtual_display) {
+      platf::restore_virtual_display_isolation();
+    }
     if (used_virtual_display) {
       if (VDISPLAY::removeVirtualDisplay(virtual_display_key)) {
         BOOST_LOG(info) << "Virtual Display removed successfully";

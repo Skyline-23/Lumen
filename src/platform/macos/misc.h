@@ -14,6 +14,8 @@ namespace platf {
   void prepare_app_bundle_environment();
   bool is_screen_capture_allowed();
   void arm_display_wake_watchdog();
+  bool isolate_virtual_display(CGDirectDisplayID virtual_display_id);
+  void restore_virtual_display_isolation();
   bool sleep_physical_displays();
   bool wake_physical_displays();
 }

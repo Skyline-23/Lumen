@@ -49,6 +49,15 @@ namespace platf {
   namespace {
     auto screen_capture_allowed = std::atomic<bool> {false};
     auto screen_capture_warning_logged = std::atomic<bool> {false};
+    struct display_layout_entry_t {
+      CGDirectDisplayID display_id;
+      CGPoint origin;
+      CGDirectDisplayID mirror_master;
+    };
+
+    std::mutex virtual_display_layout_mutex;
+    std::vector<display_layout_entry_t> virtual_display_layout_snapshot;
+    bool virtual_display_layout_active = false;
 
     bool refresh_screen_capture_permission_state() {
 #pragma clang diagnostic push
@@ -572,6 +581,117 @@ namespace platf {
 
     child.detach();
     BOOST_LOG(info) << "Armed macOS display wake watchdog for pid="sv << pid;
+  }
+
+  bool isolate_virtual_display(CGDirectDisplayID virtual_display_id) {
+    std::lock_guard lock(virtual_display_layout_mutex);
+    if (virtual_display_layout_active) {
+      return true;
+    }
+
+    uint32_t display_count = 0;
+    if (CGGetActiveDisplayList(0, nullptr, &display_count) != kCGErrorSuccess || display_count == 0) {
+      BOOST_LOG(warning) << "Failed to enumerate active macOS displays for virtual layout isolation"sv;
+      return false;
+    }
+
+    std::vector<CGDirectDisplayID> display_ids(display_count);
+    if (CGGetActiveDisplayList(display_count, display_ids.data(), &display_count) != kCGErrorSuccess) {
+      BOOST_LOG(warning) << "Failed to read active macOS display list for virtual layout isolation"sv;
+      return false;
+    }
+
+    bool found_virtual_display = false;
+    virtual_display_layout_snapshot.clear();
+    virtual_display_layout_snapshot.reserve(display_count);
+    for (uint32_t index = 0; index < display_count; ++index) {
+      const auto display_id = display_ids[index];
+      const auto bounds = CGDisplayBounds(display_id);
+      virtual_display_layout_snapshot.push_back({
+        display_id,
+        bounds.origin,
+        CGDisplayMirrorsDisplay(display_id)
+      });
+      found_virtual_display = found_virtual_display || display_id == virtual_display_id;
+    }
+
+    if (!found_virtual_display) {
+      BOOST_LOG(warning) << "Virtual display "sv << virtual_display_id << " was not active during layout isolation"sv;
+      virtual_display_layout_snapshot.clear();
+      return false;
+    }
+
+    CGDisplayConfigRef config = nullptr;
+    if (CGBeginDisplayConfiguration(&config) != kCGErrorSuccess || config == nullptr) {
+      BOOST_LOG(warning) << "Failed to begin macOS display configuration for virtual layout isolation"sv;
+      virtual_display_layout_snapshot.clear();
+      return false;
+    }
+
+    bool configuration_ok = true;
+    configuration_ok = configuration_ok && (CGConfigureDisplayMirrorOfDisplay(config, virtual_display_id, kCGNullDirectDisplay) == kCGErrorSuccess);
+    configuration_ok = configuration_ok && (CGConfigureDisplayOrigin(config, virtual_display_id, 0, 0) == kCGErrorSuccess);
+
+    int32_t next_x = static_cast<int32_t>(CGRectGetWidth(CGDisplayBounds(virtual_display_id)));
+    for (const auto &entry : virtual_display_layout_snapshot) {
+      if (entry.display_id == virtual_display_id) {
+        continue;
+      }
+
+      const auto bounds = CGDisplayBounds(entry.display_id);
+      if (CGConfigureDisplayMirrorOfDisplay(config, entry.display_id, virtual_display_id) != kCGErrorSuccess) {
+        configuration_ok = configuration_ok &&
+                           (CGConfigureDisplayOrigin(config, entry.display_id, next_x, 0) == kCGErrorSuccess);
+        next_x += static_cast<int32_t>(CGRectGetWidth(bounds));
+      }
+    }
+
+    if (!configuration_ok || CGCompleteDisplayConfiguration(config, kCGConfigureForSession) != kCGErrorSuccess) {
+      CGCancelDisplayConfiguration(config);
+      BOOST_LOG(warning) << "Failed to isolate macOS virtual display layout"sv;
+      virtual_display_layout_snapshot.clear();
+      return false;
+    }
+
+    virtual_display_layout_active = true;
+    BOOST_LOG(info) << "Isolated macOS virtual display layout around display "sv << virtual_display_id;
+    return true;
+  }
+
+  void restore_virtual_display_isolation() {
+    std::lock_guard lock(virtual_display_layout_mutex);
+    if (!virtual_display_layout_active || virtual_display_layout_snapshot.empty()) {
+      return;
+    }
+
+    CGDisplayConfigRef config = nullptr;
+    if (CGBeginDisplayConfiguration(&config) != kCGErrorSuccess || config == nullptr) {
+      BOOST_LOG(warning) << "Failed to begin macOS display configuration for layout restore"sv;
+      return;
+    }
+
+    bool configuration_ok = true;
+    for (const auto &entry : virtual_display_layout_snapshot) {
+      configuration_ok = configuration_ok &&
+                         (CGConfigureDisplayMirrorOfDisplay(config, entry.display_id, entry.mirror_master) == kCGErrorSuccess);
+      configuration_ok = configuration_ok &&
+                         (CGConfigureDisplayOrigin(
+                           config,
+                           entry.display_id,
+                           static_cast<int32_t>(entry.origin.x),
+                           static_cast<int32_t>(entry.origin.y)
+                         ) == kCGErrorSuccess);
+    }
+
+    if (!configuration_ok || CGCompleteDisplayConfiguration(config, kCGConfigureForSession) != kCGErrorSuccess) {
+      CGCancelDisplayConfiguration(config);
+      BOOST_LOG(warning) << "Failed to restore macOS display layout after virtual session"sv;
+      return;
+    }
+
+    virtual_display_layout_snapshot.clear();
+    virtual_display_layout_active = false;
+    BOOST_LOG(info) << "Restored macOS display layout after virtual session"sv;
   }
 
   bool sleep_physical_displays() {
