@@ -356,7 +356,8 @@ namespace proc {
         device_name.c_str(),
         render_width,
         render_height,
-        launch_session->fps ? static_cast<std::uint32_t>(launch_session->fps) : 60000u
+        launch_session->fps ? static_cast<std::uint32_t>(launch_session->fps) : 60000u,
+        launch_session->enable_hdr
       );
 
       launch_session->virtual_display = !virtual_display_name.empty();

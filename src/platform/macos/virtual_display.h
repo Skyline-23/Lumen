@@ -18,7 +18,8 @@ namespace VDISPLAY {
     const char *client_name,
     std::uint32_t width,
     std::uint32_t height,
-    std::uint32_t fps_millihz
+    std::uint32_t fps_millihz,
+    bool hdr_enabled
   );
 
   bool removeVirtualDisplay(const std::string &client_uid);

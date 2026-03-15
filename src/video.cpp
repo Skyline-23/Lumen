@@ -450,6 +450,41 @@ namespace video {
   };
 
 #ifdef __APPLE__
+  namespace {
+    CMVideoCodecType native_macos_vt_codec_type_for_video_format(int video_format) {
+      switch (video_format) {
+        case 0:
+          return kCMVideoCodecType_H264;
+        case 1:
+          return kCMVideoCodecType_HEVC;
+        case 2:
+          return kCMVideoCodecType_AV1;
+        default:
+          return 0;
+      }
+    }
+
+    bool native_macos_vt_codec_supported(CMVideoCodecType codec_type, int width = 1920, int height = 1080) {
+      if (codec_type == 0) {
+        return false;
+      }
+
+      CFDictionaryRef supported_properties = nullptr;
+      auto status = VTCopySupportedPropertyDictionaryForEncoder(
+        width,
+        height,
+        codec_type,
+        nullptr,
+        nullptr,
+        &supported_properties
+      );
+      if (supported_properties != nullptr) {
+        CFRelease(supported_properties);
+      }
+      return status == noErr;
+    }
+  }  // namespace
+
   class vt_compression_encode_session_t: public encode_session_t {
   public:
     struct hdr_metadata_state_t {
@@ -914,7 +949,7 @@ namespace video {
       if (packet_is_idr) {
         append_parameter_sets(sampleBuffer, packet_data);
       }
-      append_sample_buffer_nals(sampleBuffer, packet_data);
+      append_sample_buffer_payload(sampleBuffer, packet_data);
       if (packet_data.empty()) {
         BOOST_LOG(error) << "Native VT callback produced empty payload"sv;
         return;
@@ -1000,7 +1035,7 @@ namespace video {
       return scratch.data();
     }
 
-    static void append_sample_buffer_nals(CMSampleBufferRef sampleBuffer, std::vector<uint8_t> &output) {
+    void append_sample_buffer_payload(CMSampleBufferRef sampleBuffer, std::vector<uint8_t> &output) {
       auto data_buffer = CMSampleBufferGetDataBuffer(sampleBuffer);
       if (!data_buffer) {
         return;
@@ -1010,6 +1045,11 @@ namespace video {
       std::vector<uint8_t> scratch;
       const uint8_t *buffer = copy_or_map_sample_bytes(data_buffer, scratch, total_length);
       if (!buffer) {
+        return;
+      }
+
+      if (codec_type == kCMVideoCodecType_AV1) {
+        output.insert(output.end(), buffer, buffer + total_length);
         return;
       }
 
@@ -1058,16 +1098,9 @@ namespace video {
     std::unique_ptr<platf::avcodec_encode_device_t> encode_device
   ) {
     BOOST_LOG(info) << "Attempting native VTCompressionSession path"sv;
-    CMVideoCodecType codec_type {};
-    switch (config.videoFormat) {
-      case 0:
-        codec_type = kCMVideoCodecType_H264;
-        break;
-      case 1:
-        codec_type = kCMVideoCodecType_HEVC;
-        break;
-      default:
-        return nullptr;
+    CMVideoCodecType codec_type = native_macos_vt_codec_type_for_video_format(config.videoFormat);
+    if (codec_type == 0) {
+      return nullptr;
     }
 
     typename vt_compression_encode_session_t::hdr_metadata_state_t hdr_metadata_state;
@@ -2635,10 +2668,6 @@ namespace video {
       auto avcodec_encode_device = boost::dynamic_pointer_cast<platf::avcodec_encode_device_t>(std::move(encode_device));
 #ifdef __APPLE__
       if (encoder.name == "videotoolbox"sv) {
-        if (config.videoFormat > 1) {
-          BOOST_LOG(error) << "Native macOS VideoToolbox path does not support AV1 yet"sv;
-          return nullptr;
-        }
         return make_vtcompression_encode_session(disp, config, width, height, std::move(avcodec_encode_device));
       }
 #endif
@@ -3405,22 +3434,28 @@ namespace video {
     }
 
     if (is_macos_videotoolbox) {
+      const bool native_h264_supported = native_macos_vt_codec_supported(kCMVideoCodecType_H264);
+      const bool native_hevc_supported = native_macos_vt_codec_supported(kCMVideoCodecType_HEVC);
+      const bool native_av1_supported = native_macos_vt_codec_supported(kCMVideoCodecType_AV1);
+
       encoder.h264[encoder_t::VUI_PARAMETERS] = true;
       encoder.h264[encoder_t::REF_FRAMES_RESTRICT] = false;
-      encoder.h264[encoder_t::PASSED] = true;
+      encoder.h264[encoder_t::PASSED] = native_h264_supported;
 
-      if (test_hevc && disp->is_codec_supported(encoder.hevc.name, config_autoselect)) {
+      if (test_hevc && native_hevc_supported) {
         encoder.hevc[encoder_t::VUI_PARAMETERS] = true;
         encoder.hevc[encoder_t::REF_FRAMES_RESTRICT] = false;
         encoder.hevc[encoder_t::PASSED] = validate_config(disp, encoder, config_t {1920, 1080, 60, 1000, 1, 0, 1, 1, 0, 0}) >= 0;
+        encoder.hevc[encoder_t::DYNAMIC_RANGE] = encoder.hevc[encoder_t::PASSED];
       } else {
         encoder.hevc.capabilities.reset();
       }
 
-      if (test_av1 && disp->is_codec_supported(encoder.av1.name, config_autoselect)) {
+      if (test_av1 && native_av1_supported) {
         encoder.av1[encoder_t::VUI_PARAMETERS] = true;
         encoder.av1[encoder_t::REF_FRAMES_RESTRICT] = false;
         encoder.av1[encoder_t::PASSED] = validate_config(disp, encoder, config_t {1920, 1080, 60, 1000, 1, 0, 1, 2, 0, 0}) >= 0;
+        encoder.av1[encoder_t::DYNAMIC_RANGE] = encoder.av1[encoder_t::PASSED];
       } else {
         encoder.av1.capabilities.reset();
       }
@@ -3429,8 +3464,6 @@ namespace video {
       encoder.hevc[encoder_t::YUV444] = false;
       encoder.av1[encoder_t::YUV444] = false;
       encoder.h264[encoder_t::DYNAMIC_RANGE] = false;
-      encoder.hevc[encoder_t::DYNAMIC_RANGE] = false;
-      encoder.av1[encoder_t::DYNAMIC_RANGE] = false;
 
       fg.disable();
       BOOST_LOG(info) << "Encoder ["sv << encoder.name << "] validated with macOS-conservative probing"sv;

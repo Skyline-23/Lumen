@@ -92,7 +92,8 @@ namespace VDISPLAY {
     const char *client_name,
     std::uint32_t width,
     std::uint32_t height,
-    std::uint32_t fps_millihz
+    std::uint32_t fps_millihz,
+    bool hdr_enabled
   ) {
     const std::string display_key = client_uid ? client_uid : "";
     if (display_key.empty()) {
@@ -134,10 +135,17 @@ namespace VDISPLAY {
     [handle->descriptor setValue:[NSValue valueWithSize:NSMakeSize(600.0, 340.0)] forKey:@"sizeInMillimeters"];
     [handle->descriptor setValue:@(width) forKey:@"maxPixelsWide"];
     [handle->descriptor setValue:@(height) forKey:@"maxPixelsHigh"];
-    [handle->descriptor setValue:[NSValue valueWithPoint:NSMakePoint(0.68, 0.32)] forKey:@"redPrimary"];
-    [handle->descriptor setValue:[NSValue valueWithPoint:NSMakePoint(0.265, 0.69)] forKey:@"greenPrimary"];
-    [handle->descriptor setValue:[NSValue valueWithPoint:NSMakePoint(0.15, 0.06)] forKey:@"bluePrimary"];
-    [handle->descriptor setValue:[NSValue valueWithPoint:NSMakePoint(0.3127, 0.3290)] forKey:@"whitePoint"];
+    if (hdr_enabled) {
+      [handle->descriptor setValue:[NSValue valueWithPoint:NSMakePoint(0.708, 0.292)] forKey:@"redPrimary"];
+      [handle->descriptor setValue:[NSValue valueWithPoint:NSMakePoint(0.170, 0.797)] forKey:@"greenPrimary"];
+      [handle->descriptor setValue:[NSValue valueWithPoint:NSMakePoint(0.131, 0.046)] forKey:@"bluePrimary"];
+      [handle->descriptor setValue:[NSValue valueWithPoint:NSMakePoint(0.3127, 0.3290)] forKey:@"whitePoint"];
+    } else {
+      [handle->descriptor setValue:[NSValue valueWithPoint:NSMakePoint(0.68, 0.32)] forKey:@"redPrimary"];
+      [handle->descriptor setValue:[NSValue valueWithPoint:NSMakePoint(0.265, 0.69)] forKey:@"greenPrimary"];
+      [handle->descriptor setValue:[NSValue valueWithPoint:NSMakePoint(0.15, 0.06)] forKey:@"bluePrimary"];
+      [handle->descriptor setValue:[NSValue valueWithPoint:NSMakePoint(0.3127, 0.3290)] forKey:@"whitePoint"];
+    }
     [handle->descriptor setValue:handle->queue forKey:@"queue"];
 
     handle->mode = ((init_mode_t) objc_msgSend)(
