@@ -626,6 +626,7 @@ namespace video {
         std::lock_guard<std::mutex> lock(inflight_mutex);
         ++inflight_frames;
       }
+      const auto submitted_pixel_format = CVPixelBufferGetPixelFormatType(frame_context->pixel_buffer);
       auto status = VTCompressionSessionEncodeFrame(
         compression_session,
         frame_context->pixel_buffer,
@@ -650,7 +651,7 @@ namespace video {
       if (submitted <= 5 || submitted % 120 == 0) {
         BOOST_LOG(info) << "Native VT submitted frame #"sv << submitted
                         << " index="sv << frame_nr
-                        << " pixelFormat="sv << CVPixelBufferGetPixelFormatType(frame_context->pixel_buffer);
+                        << " pixelFormat="sv << submitted_pixel_format;
       }
 
       force_idr = false;
