@@ -1841,7 +1841,7 @@ namespace video {
 
     display_wp = disp;
 
-    constexpr auto capture_buffer_size = 12;
+    constexpr auto capture_buffer_size = 24;
     std::list<std::shared_ptr<platf::img_t>> imgs(capture_buffer_size);
 
     std::vector<std::optional<std::chrono::steady_clock::time_point>> imgs_used_timestamps;

@@ -237,7 +237,7 @@ static NSString *const kSunshineVideoCaptureQueue = @"dev.lizardbyte.sunshine.vi
   configuration.minimumFrameInterval = self.minFrameDuration;
   configuration.pixelFormat = self.pixelFormat;
   configuration.showsCursor = YES;
-  configuration.queueDepth = 8;
+  configuration.queueDepth = 12;
 
   if (@available(macOS 13.0, *)) {
     configuration.capturesAudio = NO;
@@ -433,7 +433,7 @@ static NSString *const kSunshineVideoCaptureQueue = @"dev.lizardbyte.sunshine.vi
   }
 
   @synchronized(self) {
-    static const NSUInteger kMaxPendingScreenCaptureSamples = 8;
+    static const NSUInteger kMaxPendingScreenCaptureSamples = 16;
     if (self.pendingSampleBuffers.count >= kMaxPendingScreenCaptureSamples) {
       [self.pendingSampleBuffers removeObjectAtIndex:0];
     }
