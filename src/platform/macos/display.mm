@@ -457,8 +457,16 @@ namespace platf {
 
     display_names.reserve([display_array count]);
     [display_array enumerateObjectsUsingBlock:^(NSDictionary *_Nonnull obj, NSUInteger idx, BOOL *_Nonnull stop) {
+      NSNumber *display_id = obj[@"id"];
+      if (display_id != nil) {
+        display_names.emplace_back(std::to_string(display_id.unsignedIntValue));
+        return;
+      }
+
       NSString *name = obj[@"name"];
-      display_names.emplace_back(name.UTF8String);
+      if (name != nil) {
+        display_names.emplace_back(name.UTF8String);
+      }
     }];
 
     return display_names;
