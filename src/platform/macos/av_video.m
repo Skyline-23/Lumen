@@ -244,6 +244,9 @@ static NSUInteger const kScreenCaptureQueueCompactionThreshold = 64;
   if (sampleBuffer == nil || !CMSampleBufferIsValid(sampleBuffer)) {
     return NO;
   }
+  if (CMSampleBufferGetImageBuffer(sampleBuffer) == nil) {
+    return NO;
+  }
 
   CFArrayRef attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, false);
   if (attachments == nil || CFArrayGetCount(attachments) == 0) {
@@ -257,7 +260,7 @@ static NSUInteger const kScreenCaptureQueueCompactionThreshold = 64;
   }
 
   NSInteger status = [(__bridge NSNumber *) statusValue integerValue];
-  return status == SCFrameStatusComplete || status == SCFrameStatusStarted || status == SCFrameStatusIdle;
+  return status == SCFrameStatusComplete || status == SCFrameStatusStarted;
 }
 
 - (BOOL)startScreenCaptureKitStream:(NSError **)error API_AVAILABLE(macos(12.3)) {
