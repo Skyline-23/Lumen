@@ -3,9 +3,19 @@
 <plist version="1.0">
 <dict>
   <key>CFBundleIdentifier</key>
-  <string>dev.lizardbyte.sunshine</string>
+  <string>com.skyline23.apollo</string>
+  <key>CFBundleDisplayName</key>
+  <string>Apollo</string>
+  <key>CFBundleExecutable</key>
+  <string>Apollo</string>
   <key>CFBundleName</key>
-  <string>Sunshine</string>
+  <string>Apollo</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>LSUIElement</key>
+  <true/>
+  <key>NSAudioCaptureUsageDescription</key>
+  <string>This app requires access to system audio to stream your Mac's sound to connected clients.</string>
   <key>NSMicrophoneUsageDescription</key>
   <string>This app requires access to your microphone to stream audio.</string>
 </dict>

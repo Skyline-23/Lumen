@@ -545,7 +545,7 @@ namespace config {
     CERTIFICATE_FILE,
 
     platf::get_host_name(),  // sunshine_name,
-    "sunshine_state.json"s,  // file_state
+    "apollo_state.json"s,  // file_state
     {},  // external_ip
   };
 
@@ -590,11 +590,11 @@ namespace config {
     {},  // Username
     {},  // Password
     {},  // Password Salt
-    platf::appdata().string() + "/sunshine.conf",  // config file
+    platf::appdata().string() + "/apollo.conf",  // config file
     {},  // cmd args
     47989,  // Base port number
     "ipv4",  // Address family
-    platf::appdata().string() + "/sunshine.log",  // log file
+    platf::appdata().string() + "/apollo.log",  // log file
     false,  // notify_pre_releases
     false,  // legacy_ordering
     true,  // system_tray

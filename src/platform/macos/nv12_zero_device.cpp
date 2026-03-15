@@ -24,31 +24,30 @@ namespace platf {
     CVPixelBufferRelease((CVPixelBufferRef) data);
   }
 
-  util::safe_ptr<AVFrame, free_frame> av_frame;
-
   int nv12_zero_device::convert(platf::img_t &img) {
     auto *av_img = (av_img_t *) &img;
+    if (!this->frame) {
+      return -1;
+    }
 
     // Release any existing CVPixelBuffer previously retained for encoding
-    av_buffer_unref(&av_frame->buf[0]);
+    av_buffer_unref(&this->frame->buf[0]);
 
     // Attach an AVBufferRef to this frame which will retain ownership of the CVPixelBuffer
     // until av_buffer_unref() is called (above) or the frame is freed with av_frame_free().
     //
     // The presence of the AVBufferRef allows FFmpeg to simply add a reference to the buffer
     // rather than having to perform a deep copy of the data buffers in avcodec_send_frame().
-    av_frame->buf[0] = av_buffer_create((uint8_t *) CFRetain(av_img->pixel_buffer->buf), 0, free_buffer, nullptr, 0);
+    this->frame->buf[0] = av_buffer_create((uint8_t *) CFRetain(av_img->pixel_buffer->buf), 0, free_buffer, nullptr, 0);
 
     // Place a CVPixelBufferRef at data[3] as required by AV_PIX_FMT_VIDEOTOOLBOX
-    av_frame->data[3] = (uint8_t *) av_img->pixel_buffer->buf;
+    this->frame->data[3] = (uint8_t *) av_img->pixel_buffer->buf;
 
     return 0;
   }
 
   int nv12_zero_device::set_frame(AVFrame *frame, AVBufferRef *hw_frames_ctx) {
     this->frame = frame;
-
-    av_frame.reset(frame);
 
     resolution_fn(this->display, frame->width, frame->height);
 

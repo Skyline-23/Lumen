@@ -2,6 +2,10 @@
 
 add_compile_definitions(SUNSHINE_PLATFORM="macos")
 
+if(SUNSHINE_PACKAGE_MACOS)
+    set(SUNSHINE_ASSETS_DIR "assets")
+endif()
+
 set(MACOS_LINK_DIRECTORIES
         /opt/homebrew/lib
         /opt/local/lib
@@ -25,6 +29,11 @@ list(APPEND SUNSHINE_EXTERNAL_LIBRARIES
         ${CORE_VIDEO_LIBRARY}
         ${FOUNDATION_LIBRARY}
         ${VIDEO_TOOLBOX_LIBRARY})
+
+if(SCREEN_CAPTURE_KIT_LIBRARY)
+    list(APPEND SUNSHINE_EXTERNAL_LIBRARIES
+            ${SCREEN_CAPTURE_KIT_LIBRARY})
+endif()
 
 set(APPLE_PLIST_FILE "${SUNSHINE_SOURCE_ASSETS_DIR}/macos/assets/Info.plist")
 

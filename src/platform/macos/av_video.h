@@ -7,13 +7,18 @@
 // platform includes
 #import <AppKit/AppKit.h>
 #import <AVFoundation/AVFoundation.h>
+#if __has_include(<ScreenCaptureKit/ScreenCaptureKit.h>)
+  #import <ScreenCaptureKit/ScreenCaptureKit.h>
+  #define SUNSHINE_HAVE_SCREENCAPTUREKIT 1
+#else
+  #define SUNSHINE_HAVE_SCREENCAPTUREKIT 0
+#endif
 
-struct CaptureSession {
-  AVCaptureVideoDataOutput *output;
-  NSCondition *captureStopped;
-};
-
-@interface AVVideo: NSObject <AVCaptureVideoDataOutputSampleBufferDelegate>
+@interface AVVideo: NSObject <AVCaptureVideoDataOutputSampleBufferDelegate
+#if SUNSHINE_HAVE_SCREENCAPTUREKIT
+, SCStreamDelegate, SCStreamOutput
+#endif
+>
 
 #define kMaxDisplays 32
 
@@ -26,9 +31,17 @@ struct CaptureSession {
 typedef bool (^FrameCallbackBlock)(CMSampleBufferRef);
 
 @property (nonatomic, assign) AVCaptureSession *session;
-@property (nonatomic, assign) NSMapTable<AVCaptureConnection *, AVCaptureVideoDataOutput *> *videoOutputs;
-@property (nonatomic, assign) NSMapTable<AVCaptureConnection *, FrameCallbackBlock> *captureCallbacks;
-@property (nonatomic, assign) NSMapTable<AVCaptureConnection *, dispatch_semaphore_t> *captureSignals;
+@property (nonatomic, assign) NSMapTable<AVCaptureConnection *, AVCaptureVideoDataOutput *> *legacyVideoOutputs;
+@property (nonatomic, assign) NSMapTable<AVCaptureConnection *, FrameCallbackBlock> *legacyCaptureCallbacks;
+@property (nonatomic, assign) NSMapTable<AVCaptureConnection *, dispatch_semaphore_t> *legacyCaptureSignals;
+@property (nonatomic, copy) FrameCallbackBlock captureCallback;
+@property (nonatomic, assign) dispatch_semaphore_t captureSignal;
+
+#if SUNSHINE_HAVE_SCREENCAPTUREKIT
+@property (nonatomic, assign) SCDisplay *shareableDisplay;
+@property (nonatomic, assign) SCStream *stream;
+@property (nonatomic, assign) dispatch_queue_t sampleHandlerQueue;
+#endif
 
 + (NSArray<NSDictionary *> *)displayNames;
 + (NSString *)getDisplayName:(CGDirectDisplayID)displayID;

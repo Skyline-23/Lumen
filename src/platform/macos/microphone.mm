@@ -3,6 +3,10 @@
  * @brief Definitions for microphone capture on macOS.
  */
 // local includes
+#include <algorithm>
+#include <cctype>
+#include <CoreGraphics/CoreGraphics.h>
+#include <cstdlib>
 #include "src/config.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
@@ -10,6 +14,29 @@
 
 namespace platf {
   using namespace std::literals;
+
+  namespace {
+    bool is_system_audio_sink(std::string sink) {
+      std::transform(sink.begin(), sink.end(), sink.begin(), [](unsigned char c) {
+        return (char) std::tolower(c);
+      });
+
+      return sink.empty()
+        || sink == "system"
+        || sink == "system audio"
+        || sink == "host"
+        || sink == "default";
+    }
+
+    CGDirectDisplayID selected_display_id() {
+      if (config::video.output_name.empty()) {
+        return CGMainDisplayID();
+      }
+
+      const auto display_id = std::strtoul(config::video.output_name.c_str(), nullptr, 10);
+      return display_id == 0 ? CGMainDisplayID() : (CGDirectDisplayID) display_id;
+    }
+  }  // namespace
 
   struct av_mic_t: public mic_t {
     AVAudio *av_audio_capture {};
@@ -45,19 +72,27 @@ namespace platf {
 
   public:
     int set_sink(const std::string &sink) override {
-      BOOST_LOG(warning) << "audio_control_t::set_sink() unimplemented: "sv << sink;
+      (void) sink;
       return 0;
     }
 
     std::unique_ptr<mic_t> microphone(const std::uint8_t *mapping, int channels, std::uint32_t sample_rate, std::uint32_t frame_size) override {
       auto mic = std::make_unique<av_mic_t>();
-      const char *audio_sink = "";
+      const std::string audio_sink = config::audio.sink;
 
-      if (!config::audio.sink.empty()) {
-        audio_sink = config::audio.sink.c_str();
+      mic->av_audio_capture = [[AVAudio alloc] init];
+
+      if (is_system_audio_sink(audio_sink)) {
+        if ([mic->av_audio_capture setupSystemAudioWithDisplayID:selected_display_id() sampleRate:sample_rate frameSize:frame_size channels:channels]) {
+          BOOST_LOG(error) << "Failed to setup native macOS system audio capture."sv;
+          return nullptr;
+        }
+
+        BOOST_LOG(info) << "Using native macOS system audio capture."sv;
+        return mic;
       }
 
-      if ((audio_capture_device = [AVAudio findMicrophone:[NSString stringWithUTF8String:audio_sink]]) == nullptr) {
+      if ((audio_capture_device = [AVAudio findMicrophone:[NSString stringWithUTF8String:audio_sink.c_str()]]) == nullptr) {
         BOOST_LOG(error) << "opening microphone '"sv << audio_sink << "' failed. Please set a valid input source in the Sunshine config."sv;
         BOOST_LOG(error) << "Available inputs:"sv;
 
@@ -68,8 +103,6 @@ namespace platf {
         return nullptr;
       }
 
-      mic->av_audio_capture = [[AVAudio alloc] init];
-
       if ([mic->av_audio_capture setupMicrophone:audio_capture_device sampleRate:sample_rate frameSize:frame_size channels:channels]) {
         BOOST_LOG(error) << "Failed to setup microphone."sv;
         return nullptr;
@@ -79,12 +112,16 @@ namespace platf {
     }
 
     bool is_sink_available(const std::string &sink) override {
-      BOOST_LOG(warning) << "audio_control_t::is_sink_available() unimplemented: "sv << sink;
-      return true;
+      if (is_system_audio_sink(sink)) {
+        return true;
+      }
+
+      return [AVAudio findMicrophone:[NSString stringWithUTF8String:sink.c_str()]] != nullptr;
     }
 
     std::optional<sink_t> sink_info() override {
       sink_t sink;
+      sink.host = "System Audio";
 
       return sink;
     }

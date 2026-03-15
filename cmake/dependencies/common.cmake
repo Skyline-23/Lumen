@@ -10,6 +10,9 @@ set(ENET_NO_INSTALL ON CACHE BOOL "Don't install any libraries built for enet")
 add_subdirectory("${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/enet")
 
 # web server
+if(APPLE)
+    set(USE_STANDALONE_ASIO ON CACHE BOOL "Use standalone Asio for the bundled Simple-Web-Server on macOS" FORCE)
+endif()
 add_subdirectory("${CMAKE_SOURCE_DIR}/third-party/Simple-Web-Server")
 
 # libdisplaydevice

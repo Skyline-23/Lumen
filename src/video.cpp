@@ -316,17 +316,18 @@ namespace video {
   public:
     avcodec_encode_session_t() = default;
 
-    avcodec_encode_session_t(avcodec_ctx_t &&avcodec_ctx, std::unique_ptr<platf::avcodec_encode_device_t> encode_device, int inject):
+    avcodec_encode_session_t(avcodec_ctx_t &&avcodec_ctx, std::unique_ptr<platf::avcodec_encode_device_t> encode_device, int inject, bool skip_flush = false):
         avcodec_ctx {std::move(avcodec_ctx)},
         device {std::move(encode_device)},
-        inject {inject} {
+        inject {inject},
+        skip_flush {skip_flush} {
     }
 
     avcodec_encode_session_t(avcodec_encode_session_t &&other) noexcept = default;
 
     ~avcodec_encode_session_t() {
       // Flush any remaining frames in the encoder
-      if (avcodec_send_frame(avcodec_ctx.get(), nullptr) == 0) {
+      if (!skip_flush && avcodec_send_frame(avcodec_ctx.get(), nullptr) == 0) {
         packet_raw_avcodec pkt;
         while (avcodec_receive_packet(avcodec_ctx.get(), pkt.av_packet) == 0);
       }
@@ -345,6 +346,7 @@ namespace video {
       vps = std::move(other.vps);
 
       inject = other.inject;
+      skip_flush = other.skip_flush;
 
       return *this;
     }
@@ -387,6 +389,7 @@ namespace video {
 
     // inject sps/vps data into idr pictures
     int inject;
+    bool skip_flush = false;
   };
 
   class nvenc_encode_session_t: public encode_session_t {
@@ -985,7 +988,6 @@ namespace video {
         {"allow_sw"s, &config::video.vt.vt_allow_sw},
         {"require_sw"s, &config::video.vt.vt_require_sw},
         {"realtime"s, &config::video.vt.vt_realtime},
-        {"prio_speed"s, 1},
         {"max_ref_frames"s, 1},
       },
       {},  // SDR-specific options
@@ -1001,7 +1003,6 @@ namespace video {
         {"allow_sw"s, &config::video.vt.vt_allow_sw},
         {"require_sw"s, &config::video.vt.vt_require_sw},
         {"realtime"s, &config::video.vt.vt_realtime},
-        {"prio_speed"s, 1},
         {"max_ref_frames"s, 1},
       },
       {},  // SDR-specific options
@@ -1017,7 +1018,6 @@ namespace video {
         {"allow_sw"s, &config::video.vt.vt_allow_sw},
         {"require_sw"s, &config::video.vt.vt_require_sw},
         {"realtime"s, &config::video.vt.vt_realtime},
-        {"prio_speed"s, 1},
         {"max_ref_frames"s, 1},
       },
       {},  // SDR-specific options
@@ -1514,7 +1514,8 @@ namespace video {
     const config_t &config,
     int width,
     int height,
-    std::unique_ptr<platf::avcodec_encode_device_t> encode_device
+    std::unique_ptr<platf::avcodec_encode_device_t> encode_device,
+    bool prepare_frame = true
   ) {
     auto platform_formats = dynamic_cast<const encoder_platform_formats_avcodec *>(encoder.platform_formats.get());
     if (!platform_formats) {
@@ -1522,6 +1523,7 @@ namespace video {
     }
 
     bool hardware = platform_formats->avcodec_base_dev_type != AV_HWDEVICE_TYPE_NONE;
+    bool videotoolbox_direct_frames = platform_formats->avcodec_base_dev_type == AV_HWDEVICE_TYPE_VIDEOTOOLBOX;
 
     auto &video_format = encoder.codec_from_config(config);
     if (!video_format[encoder_t::PASSED] || !disp->is_codec_supported(video_format.name, config)) {
@@ -1563,6 +1565,8 @@ namespace video {
       ctx.reset(avcodec_alloc_context3(codec));
       ctx->width = config.width;
       ctx->height = config.height;
+      ctx->coded_width = config.width;
+      ctx->coded_height = config.height;
       ctx->time_base = AVRational {1, config.framerate};
       ctx->framerate = AVRational {config.framerate, 1};
 
@@ -1610,7 +1614,10 @@ namespace video {
 
       // We forcefully reset the flags to avoid clash on reuse of AVCodecContext
       ctx->flags = 0;
-      ctx->flags |= AV_CODEC_FLAG_CLOSED_GOP | AV_CODEC_FLAG_LOW_DELAY;
+      ctx->flags |= AV_CODEC_FLAG_LOW_DELAY;
+      if (!videotoolbox_direct_frames) {
+        ctx->flags |= AV_CODEC_FLAG_CLOSED_GOP;
+      }
 
       ctx->flags2 |= AV_CODEC_FLAG2_FAST;
 
@@ -1629,52 +1636,54 @@ namespace video {
 
         ctx->pix_fmt = platform_formats->avcodec_dev_pix_fmt;
 
-        // Create the base hwdevice context
-        auto buf_or_error = platform_formats->init_avcodec_hardware_input_buffer(encode_device.get());
-        if (buf_or_error.has_right()) {
-          return nullptr;
-        }
-        encoding_stream_context = std::move(buf_or_error.left());
-
-        // If this encoder requires derivation from the base, derive the desired type
-        if (platform_formats->avcodec_derived_dev_type != AV_HWDEVICE_TYPE_NONE) {
-          avcodec_buffer_t derived_context;
-
-          // Allow the hwdevice to prepare for this type of context to be derived
-          if (encode_device->prepare_to_derive_context(platform_formats->avcodec_derived_dev_type)) {
+        if (!videotoolbox_direct_frames) {
+          // Create the base hwdevice context
+          auto buf_or_error = platform_formats->init_avcodec_hardware_input_buffer(encode_device.get());
+          if (buf_or_error.has_right()) {
             return nullptr;
           }
+          encoding_stream_context = std::move(buf_or_error.left());
 
-          auto err = av_hwdevice_ctx_create_derived(&derived_context, platform_formats->avcodec_derived_dev_type, encoding_stream_context.get(), 0);
-          if (err) {
-            char err_str[AV_ERROR_MAX_STRING_SIZE] {0};
-            BOOST_LOG(error) << "Failed to derive device context: "sv << av_make_error_string(err_str, AV_ERROR_MAX_STRING_SIZE, err);
+          // If this encoder requires derivation from the base, derive the desired type
+          if (platform_formats->avcodec_derived_dev_type != AV_HWDEVICE_TYPE_NONE) {
+            avcodec_buffer_t derived_context;
 
-            return nullptr;
+            // Allow the hwdevice to prepare for this type of context to be derived
+            if (encode_device->prepare_to_derive_context(platform_formats->avcodec_derived_dev_type)) {
+              return nullptr;
+            }
+
+            auto err = av_hwdevice_ctx_create_derived(&derived_context, platform_formats->avcodec_derived_dev_type, encoding_stream_context.get(), 0);
+            if (err) {
+              char err_str[AV_ERROR_MAX_STRING_SIZE] {0};
+              BOOST_LOG(error) << "Failed to derive device context: "sv << av_make_error_string(err_str, AV_ERROR_MAX_STRING_SIZE, err);
+
+              return nullptr;
+            }
+
+            encoding_stream_context = std::move(derived_context);
           }
 
-          encoding_stream_context = std::move(derived_context);
-        }
+          // Initialize avcodec hardware frames
+          {
+            avcodec_buffer_t frame_ref {av_hwframe_ctx_alloc(encoding_stream_context.get())};
 
-        // Initialize avcodec hardware frames
-        {
-          avcodec_buffer_t frame_ref {av_hwframe_ctx_alloc(encoding_stream_context.get())};
+            auto frame_ctx = (AVHWFramesContext *) frame_ref->data;
+            frame_ctx->format = ctx->pix_fmt;
+            frame_ctx->sw_format = sw_fmt;
+            frame_ctx->height = ctx->height;
+            frame_ctx->width = ctx->width;
+            frame_ctx->initial_pool_size = 0;
 
-          auto frame_ctx = (AVHWFramesContext *) frame_ref->data;
-          frame_ctx->format = ctx->pix_fmt;
-          frame_ctx->sw_format = sw_fmt;
-          frame_ctx->height = ctx->height;
-          frame_ctx->width = ctx->width;
-          frame_ctx->initial_pool_size = 0;
+            // Allow the hwdevice to modify hwframe context parameters
+            encode_device->init_hwframes(frame_ctx);
 
-          // Allow the hwdevice to modify hwframe context parameters
-          encode_device->init_hwframes(frame_ctx);
+            if (auto err = av_hwframe_ctx_init(frame_ref.get()); err < 0) {
+              return nullptr;
+            }
 
-          if (auto err = av_hwframe_ctx_init(frame_ref.get()); err < 0) {
-            return nullptr;
+            ctx->hw_frames_ctx = av_buffer_ref(frame_ref.get());
           }
-
-          ctx->hw_frames_ctx = av_buffer_ref(frame_ref.get());
         }
 
         ctx->slices = config.slicesPerFrame;
@@ -1805,66 +1814,100 @@ namespace video {
       break;
     }
 
-    avcodec_frame_t frame {av_frame_alloc()};
-    frame->format = ctx->pix_fmt;
-    frame->width = ctx->width;
-    frame->height = ctx->height;
-    frame->color_range = ctx->color_range;
-    frame->color_primaries = ctx->color_primaries;
-    frame->color_trc = ctx->color_trc;
-    frame->colorspace = ctx->colorspace;
-    frame->chroma_location = ctx->chroma_sample_location;
-
-    // Attach HDR metadata to the AVFrame
-    if (colorspace_is_hdr(colorspace)) {
-      SS_HDR_METADATA hdr_metadata;
-      if (disp->get_hdr_metadata(hdr_metadata)) {
-        auto mdm = av_mastering_display_metadata_create_side_data(frame.get());
-
-        mdm->display_primaries[0][0] = av_make_q(hdr_metadata.displayPrimaries[0].x, 50000);
-        mdm->display_primaries[0][1] = av_make_q(hdr_metadata.displayPrimaries[0].y, 50000);
-        mdm->display_primaries[1][0] = av_make_q(hdr_metadata.displayPrimaries[1].x, 50000);
-        mdm->display_primaries[1][1] = av_make_q(hdr_metadata.displayPrimaries[1].y, 50000);
-        mdm->display_primaries[2][0] = av_make_q(hdr_metadata.displayPrimaries[2].x, 50000);
-        mdm->display_primaries[2][1] = av_make_q(hdr_metadata.displayPrimaries[2].y, 50000);
-
-        mdm->white_point[0] = av_make_q(hdr_metadata.whitePoint.x, 50000);
-        mdm->white_point[1] = av_make_q(hdr_metadata.whitePoint.y, 50000);
-
-        mdm->min_luminance = av_make_q(hdr_metadata.minDisplayLuminance, 10000);
-        mdm->max_luminance = av_make_q(hdr_metadata.maxDisplayLuminance, 1);
-
-        mdm->has_luminance = hdr_metadata.maxDisplayLuminance != 0 ? 1 : 0;
-        mdm->has_primaries = hdr_metadata.displayPrimaries[0].x != 0 ? 1 : 0;
-
-        if (hdr_metadata.maxContentLightLevel != 0 || hdr_metadata.maxFrameAverageLightLevel != 0) {
-          auto clm = av_content_light_metadata_create_side_data(frame.get());
-
-          clm->MaxCLL = hdr_metadata.maxContentLightLevel;
-          clm->MaxFALL = hdr_metadata.maxFrameAverageLightLevel;
-        }
-      } else {
-        BOOST_LOG(error) << "Couldn't get display hdr metadata when colorspace selection indicates it should have one";
-      }
-    }
-
     std::unique_ptr<platf::avcodec_encode_device_t> encode_device_final;
 
     if (!encode_device->data) {
       auto software_encode_device = std::make_unique<avcodec_software_encode_device_t>();
+
+      avcodec_frame_t frame {av_frame_alloc()};
+      frame->format = ctx->pix_fmt;
+      frame->width = ctx->width;
+      frame->height = ctx->height;
+      frame->color_range = ctx->color_range;
+      frame->color_primaries = ctx->color_primaries;
+      frame->color_trc = ctx->color_trc;
+      frame->colorspace = ctx->colorspace;
+      frame->chroma_location = ctx->chroma_sample_location;
+
+      if (colorspace_is_hdr(colorspace)) {
+        SS_HDR_METADATA hdr_metadata;
+        if (disp->get_hdr_metadata(hdr_metadata)) {
+          auto mdm = av_mastering_display_metadata_create_side_data(frame.get());
+
+          mdm->display_primaries[0][0] = av_make_q(hdr_metadata.displayPrimaries[0].x, 50000);
+          mdm->display_primaries[0][1] = av_make_q(hdr_metadata.displayPrimaries[0].y, 50000);
+          mdm->display_primaries[1][0] = av_make_q(hdr_metadata.displayPrimaries[1].x, 50000);
+          mdm->display_primaries[1][1] = av_make_q(hdr_metadata.displayPrimaries[1].y, 50000);
+          mdm->display_primaries[2][0] = av_make_q(hdr_metadata.displayPrimaries[2].x, 50000);
+          mdm->display_primaries[2][1] = av_make_q(hdr_metadata.displayPrimaries[2].y, 50000);
+
+          mdm->white_point[0] = av_make_q(hdr_metadata.whitePoint.x, 50000);
+          mdm->white_point[1] = av_make_q(hdr_metadata.whitePoint.y, 50000);
+
+          mdm->min_luminance = av_make_q(hdr_metadata.minDisplayLuminance, 10000);
+          mdm->max_luminance = av_make_q(hdr_metadata.maxDisplayLuminance, 1);
+
+          mdm->has_luminance = hdr_metadata.maxDisplayLuminance != 0 ? 1 : 0;
+          mdm->has_primaries = hdr_metadata.displayPrimaries[0].x != 0 ? 1 : 0;
+
+          if (hdr_metadata.maxContentLightLevel != 0 || hdr_metadata.maxFrameAverageLightLevel != 0) {
+            auto clm = av_content_light_metadata_create_side_data(frame.get());
+
+            clm->MaxCLL = hdr_metadata.maxContentLightLevel;
+            clm->MaxFALL = hdr_metadata.maxFrameAverageLightLevel;
+          }
+        } else {
+          BOOST_LOG(error) << "Couldn't get display hdr metadata when colorspace selection indicates it should have one";
+        }
+      }
 
       if (software_encode_device->init(width, height, frame.get(), sw_fmt, hardware)) {
         return nullptr;
       }
       software_encode_device->colorspace = colorspace;
 
+      if (prepare_frame && software_encode_device->set_frame(frame.release(), ctx->hw_frames_ctx)) {
+        return nullptr;
+      }
+
       encode_device_final = std::move(software_encode_device);
     } else {
       encode_device_final = std::move(encode_device);
-    }
 
-    if (encode_device_final->set_frame(frame.release(), ctx->hw_frames_ctx)) {
-      return nullptr;
+      if (prepare_frame) {
+        avcodec_frame_t frame {av_frame_alloc()};
+        frame->format = ctx->pix_fmt;
+        frame->width = ctx->width;
+        frame->height = ctx->height;
+        frame->color_range = ctx->color_range;
+        frame->color_primaries = ctx->color_primaries;
+        frame->color_trc = ctx->color_trc;
+        frame->colorspace = ctx->colorspace;
+        frame->chroma_location = ctx->chroma_sample_location;
+
+        if (colorspace_is_hdr(colorspace)) {
+          SS_HDR_METADATA hdr_metadata;
+          if (disp->get_hdr_metadata(hdr_metadata)) {
+            auto mdm = av_mastering_display_metadata_create_side_data(frame.get());
+            mdm->display_primaries[0][0] = av_make_q(hdr_metadata.displayPrimaries[0].x, 50000);
+            mdm->display_primaries[0][1] = av_make_q(hdr_metadata.displayPrimaries[0].y, 50000);
+            mdm->display_primaries[1][0] = av_make_q(hdr_metadata.displayPrimaries[1].x, 50000);
+            mdm->display_primaries[1][1] = av_make_q(hdr_metadata.displayPrimaries[1].y, 50000);
+            mdm->display_primaries[2][0] = av_make_q(hdr_metadata.displayPrimaries[2].x, 50000);
+            mdm->display_primaries[2][1] = av_make_q(hdr_metadata.displayPrimaries[2].y, 50000);
+            mdm->white_point[0] = av_make_q(hdr_metadata.whitePoint.x, 50000);
+            mdm->white_point[1] = av_make_q(hdr_metadata.whitePoint.y, 50000);
+            mdm->min_luminance = av_make_q(hdr_metadata.minDisplayLuminance, 10000);
+            mdm->max_luminance = av_make_q(hdr_metadata.maxDisplayLuminance, 1);
+            mdm->has_luminance = hdr_metadata.maxDisplayLuminance != 0 ? 1 : 0;
+            mdm->has_primaries = hdr_metadata.displayPrimaries[0].x != 0 ? 1 : 0;
+          }
+        }
+
+        if (encode_device_final->set_frame(frame.release(), ctx->hw_frames_ctx)) {
+          return nullptr;
+        }
+      }
     }
 
     encode_device_final->apply_colorspace();
@@ -1872,9 +1915,12 @@ namespace video {
     auto session = std::make_unique<avcodec_encode_session_t>(
       std::move(ctx),
       std::move(encode_device_final),
-
       // 0 ==> don't inject, 1 ==> inject for h264, 2 ==> inject for hevc
-      config.videoFormat <= 1 ? (1 - (int) video_format[encoder_t::VUI_PARAMETERS]) * (1 + config.videoFormat) : 0
+      config.videoFormat <= 1 ? (1 - (int) video_format[encoder_t::VUI_PARAMETERS]) * (1 + config.videoFormat) : 0,
+      // Direct VideoToolbox frames should not be flushed via a null frame in
+      // teardown because the external frame ownership path is not compatible
+      // with that flow during encoder probing.
+      platform_formats->avcodec_base_dev_type == AV_HWDEVICE_TYPE_VIDEOTOOLBOX
     );
 
     return session;
@@ -1888,10 +1934,10 @@ namespace video {
     return std::make_unique<nvenc_encode_session_t>(std::move(encode_device));
   }
 
-  std::unique_ptr<encode_session_t> make_encode_session(platf::display_t *disp, const encoder_t &encoder, const config_t &config, int width, int height, std::unique_ptr<platf::encode_device_t> encode_device) {
+  std::unique_ptr<encode_session_t> make_encode_session(platf::display_t *disp, const encoder_t &encoder, const config_t &config, int width, int height, std::unique_ptr<platf::encode_device_t> encode_device, bool prepare_frame = true) {
     if (dynamic_cast<platf::avcodec_encode_device_t *>(encode_device.get())) {
       auto avcodec_encode_device = boost::dynamic_pointer_cast<platf::avcodec_encode_device_t>(std::move(encode_device));
-      return make_avcodec_encode_session(disp, encoder, config, width, height, std::move(avcodec_encode_device));
+      return make_avcodec_encode_session(disp, encoder, config, width, height, std::move(avcodec_encode_device), prepare_frame);
     } else if (dynamic_cast<platf::nvenc_encode_device_t *>(encode_device.get())) {
       auto nvenc_encode_device = boost::dynamic_pointer_cast<platf::nvenc_encode_device_t>(std::move(encode_device));
       return make_nvenc_encode_session(config, std::move(nvenc_encode_device));
@@ -1938,7 +1984,6 @@ namespace video {
     auto max_frametime = std::chrono::nanoseconds(1000ms) * 1000 / minimum_fps_target;
     auto encode_frame_threshold = std::chrono::nanoseconds(1000ms) * 1000 / config.encodingFramerate;
     auto frame_variation_threshold = encode_frame_threshold / 4;
-    auto min_frame_diff = encode_frame_threshold - frame_variation_threshold;
     BOOST_LOG(info) << "Minimum FPS target set to ~"sv << (minimum_fps_target / 2000) << "fps ("sv << max_frametime * 2 << ")"sv;
     BOOST_LOG(info) << "Encoding Frame threshold: "sv << encode_frame_threshold;
 
@@ -2475,9 +2520,15 @@ namespace video {
       return -1;
     }
 
-    auto session = make_encode_session(disp.get(), encoder, config, disp->width, disp->height, std::move(encode_device));
+    const bool videotoolbox_direct = encoder.platform_formats->dev_type == platf::mem_type_e::videotoolbox;
+
+    auto session = make_encode_session(disp.get(), encoder, config, disp->width, disp->height, std::move(encode_device), !videotoolbox_direct);
     if (!session) {
       return -1;
+    }
+
+    if (videotoolbox_direct) {
+      return VUI_PARAMS;
     }
 
     {
@@ -2524,6 +2575,7 @@ namespace video {
   bool validate_encoder(encoder_t &encoder, bool expect_failure) {
     const auto output_name {display_device::map_output_name(config::video.output_name)};
     std::shared_ptr<platf::display_t> disp;
+    const bool is_macos_videotoolbox = encoder.name == "videotoolbox";
 
     BOOST_LOG(info) << "Trying encoder ["sv << encoder.name << ']';
     auto fg = util::fail_guard([&]() {
@@ -2561,6 +2613,39 @@ namespace video {
     } else if (expect_failure) {
       // We expected failure, but actually succeeded. Do the max_ref_frames probe we skipped.
       max_ref_frames_h264 = validate_config(disp, encoder, config_max_ref_frames);
+    }
+
+    if (is_macos_videotoolbox) {
+      encoder.h264[encoder_t::VUI_PARAMETERS] = true;
+      encoder.h264[encoder_t::REF_FRAMES_RESTRICT] = false;
+      encoder.h264[encoder_t::PASSED] = true;
+
+      if (test_hevc && disp->is_codec_supported(encoder.hevc.name, config_autoselect)) {
+        encoder.hevc[encoder_t::VUI_PARAMETERS] = true;
+        encoder.hevc[encoder_t::REF_FRAMES_RESTRICT] = false;
+        encoder.hevc[encoder_t::PASSED] = validate_config(disp, encoder, config_t {1920, 1080, 60, 1000, 1, 0, 1, 1, 0, 0}) >= 0;
+      } else {
+        encoder.hevc.capabilities.reset();
+      }
+
+      if (test_av1 && disp->is_codec_supported(encoder.av1.name, config_autoselect)) {
+        encoder.av1[encoder_t::VUI_PARAMETERS] = true;
+        encoder.av1[encoder_t::REF_FRAMES_RESTRICT] = false;
+        encoder.av1[encoder_t::PASSED] = validate_config(disp, encoder, config_t {1920, 1080, 60, 1000, 1, 0, 1, 2, 0, 0}) >= 0;
+      } else {
+        encoder.av1.capabilities.reset();
+      }
+
+      encoder.h264[encoder_t::YUV444] = false;
+      encoder.hevc[encoder_t::YUV444] = false;
+      encoder.av1[encoder_t::YUV444] = false;
+      encoder.h264[encoder_t::DYNAMIC_RANGE] = false;
+      encoder.hevc[encoder_t::DYNAMIC_RANGE] = false;
+      encoder.av1[encoder_t::DYNAMIC_RANGE] = false;
+
+      fg.disable();
+      BOOST_LOG(info) << "Encoder ["sv << encoder.name << "] validated with macOS-conservative probing"sv;
+      return true;
     }
 
     std::vector<std::pair<validate_flag_e, encoder_t::flag_e>> packet_deficiencies {

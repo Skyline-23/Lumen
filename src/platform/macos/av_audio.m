@@ -5,7 +5,19 @@
 // local includes
 #import "av_audio.h"
 
+static NSString *const kSunshineAudioCaptureQueue = @"dev.lizardbyte.sunshine.audio.capture";
+
 @implementation AVAudio
+
++ (BOOL)shouldUseScreenCaptureKitAudio {
+#if __has_include(<ScreenCaptureKit/ScreenCaptureKit.h>)
+  if (@available(macOS 13.0, *)) {
+    return YES;
+  }
+#endif
+
+  return NO;
+}
 
 + (NSArray<AVCaptureDevice *> *)microphones {
   if ([[NSProcessInfo processInfo] isOperatingSystemAtLeastVersion:((NSOperatingSystemVersion) {10, 15, 0})]) {
@@ -17,6 +29,7 @@
     // a different method.
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunguarded-availability-new"
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
     AVCaptureDeviceDiscoverySession *discoverySession = [AVCaptureDeviceDiscoverySession discoverySessionWithDeviceTypes:@[AVCaptureDeviceTypeBuiltInMicrophone, AVCaptureDeviceTypeExternalUnknown]
                                                                                                                mediaType:AVMediaTypeAudio
                                                                                                                 position:AVCaptureDevicePositionUnspecified];
@@ -53,9 +66,72 @@
   return nil;
 }
 
+#if __has_include(<ScreenCaptureKit/ScreenCaptureKit.h>)
++ (SCShareableContent *)shareableContent:(NSError **)error API_AVAILABLE(macos(12.3)) {
+  __block SCShareableContent *shareableContent = nil;
+  __block NSError *shareableContentError = nil;
+  dispatch_semaphore_t signal = dispatch_semaphore_create(0);
+
+  [SCShareableContent getShareableContentExcludingDesktopWindows:NO
+                                            onScreenWindowsOnly:NO
+                                              completionHandler:^(SCShareableContent *content, NSError *contentError) {
+                                                shareableContent = [content retain];
+                                                shareableContentError = [contentError retain];
+                                                dispatch_semaphore_signal(signal);
+                                              }];
+
+  dispatch_semaphore_wait(signal, DISPATCH_TIME_FOREVER);
+
+  if (error != NULL) {
+    *error = [shareableContentError autorelease];
+  } else if (shareableContentError != nil) {
+    [shareableContentError release];
+  }
+
+  return [shareableContent autorelease];
+}
+
++ (SCDisplay *)shareableDisplayWithID:(CGDirectDisplayID)displayID error:(NSError **)error API_AVAILABLE(macos(12.3)) {
+  SCShareableContent *content = [self shareableContent:error];
+  if (content == nil) {
+    return nil;
+  }
+
+  for (SCDisplay *display in content.displays) {
+    if (display.displayID == displayID) {
+      return display;
+    }
+  }
+
+  return nil;
+}
+#endif
+
+- (void)prepareAudioBuffer {
+  self.samplesArrivedSignal = [[NSCondition alloc] init];
+  TPCircularBufferInit(&self->audioSampleBuffer, kBufferLength * self.channels * sizeof(float));
+}
+
 - (void)dealloc {
   // make sure we don't process any further samples
   self.audioConnection = nil;
+
+#if __has_include(<ScreenCaptureKit/ScreenCaptureKit.h>)
+  if (self.stream != nil) {
+    dispatch_semaphore_t stopSignal = dispatch_semaphore_create(0);
+    [self.stream stopCaptureWithCompletionHandler:^(__unused NSError *stopError) {
+      dispatch_semaphore_signal(stopSignal);
+    }];
+    dispatch_semaphore_wait(stopSignal, DISPATCH_TIME_FOREVER);
+  }
+
+  [self.shareableDisplay release];
+  [self.stream release];
+#endif
+
+  [self.audioCaptureSession stopRunning];
+  [self.audioCaptureSession release];
+
   // make sure nothing gets stuck on this signal
   [self.samplesArrivedSignal signal];
   [self.samplesArrivedSignal release];
@@ -64,6 +140,9 @@
 }
 
 - (int)setupMicrophone:(AVCaptureDevice *)device sampleRate:(UInt32)sampleRate frameSize:(UInt32)frameSize channels:(UInt8)channels {
+  self.sampleRate = sampleRate;
+  self.frameSize = frameSize;
+  self.channels = channels;
   self.audioCaptureSession = [[AVCaptureSession alloc] init];
 
   NSError *error;
@@ -91,7 +170,7 @@
   }];
 
   dispatch_queue_attr_t qos = dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_CONCURRENT, QOS_CLASS_USER_INITIATED, DISPATCH_QUEUE_PRIORITY_HIGH);
-  dispatch_queue_t recordingQueue = dispatch_queue_create("audioSamplingQueue", qos);
+  dispatch_queue_t recordingQueue = dispatch_queue_create(kSunshineAudioCaptureQueue.UTF8String, qos);
 
   [audioOutput setSampleBufferDelegate:self queue:recordingQueue];
 
@@ -110,30 +189,177 @@
   [audioInput release];
   [audioOutput release];
 
-  self.samplesArrivedSignal = [[NSCondition alloc] init];
-  TPCircularBufferInit(&self->audioSampleBuffer, kBufferLength * channels);
+  [self prepareAudioBuffer];
 
   return 0;
+}
+
+- (void)appendInterleavedFloatSamples:(const float *)samples sampleCount:(UInt32)sampleCount {
+  if (samples == NULL || sampleCount == 0) {
+    return;
+  }
+
+  TPCircularBufferProduceBytes(&self->audioSampleBuffer, samples, sampleCount * sizeof(float));
+  [self.samplesArrivedSignal signal];
+}
+
+- (void)appendSamplesFromBufferList:(const AudioBufferList *)audioBufferList
+                         frameCount:(UInt32)frameCount
+                              asbd:(const AudioStreamBasicDescription *)streamDescription {
+  static BOOL warnedUnsupportedFormat = NO;
+
+  if (audioBufferList == NULL || streamDescription == NULL || frameCount == 0) {
+    return;
+  }
+
+  BOOL isFloat = (streamDescription->mFormatFlags & kAudioFormatFlagIsFloat) != 0;
+  BOOL isNonInterleaved = (streamDescription->mFormatFlags & kAudioFormatFlagIsNonInterleaved) != 0;
+
+  if (!isFloat || streamDescription->mBitsPerChannel != 32) {
+    if (!warnedUnsupportedFormat) {
+      warnedUnsupportedFormat = YES;
+      NSLog(@"Unsupported macOS audio capture format. Expected 32-bit float PCM.");
+    }
+    return;
+  }
+
+  if (!isNonInterleaved && audioBufferList->mNumberBuffers == 1) {
+    const AudioBuffer audioBuffer = audioBufferList->mBuffers[0];
+    [self appendInterleavedFloatSamples:(const float *) audioBuffer.mData
+                            sampleCount:frameCount * self.channels];
+    return;
+  }
+
+  if (isNonInterleaved && audioBufferList->mNumberBuffers >= self.channels) {
+    NSMutableData *interleavedSamples = [NSMutableData dataWithLength:frameCount * self.channels * sizeof(float)];
+    float *interleaved = (float *) interleavedSamples.mutableBytes;
+
+    for (UInt32 frame = 0; frame < frameCount; frame++) {
+      for (UInt32 channel = 0; channel < self.channels; channel++) {
+        const AudioBuffer audioBuffer = audioBufferList->mBuffers[channel];
+        const float *channelSamples = (const float *) audioBuffer.mData;
+        interleaved[(frame * self.channels) + channel] = channelSamples[frame];
+      }
+    }
+
+    [self appendInterleavedFloatSamples:interleaved sampleCount:frameCount * self.channels];
+  }
+}
+
+- (void)handleCapturedSampleBuffer:(CMSampleBufferRef)sampleBuffer {
+  if (sampleBuffer == nil || !CMSampleBufferIsValid(sampleBuffer)) {
+    return;
+  }
+
+  CMAudioFormatDescriptionRef formatDescription = CMSampleBufferGetFormatDescription(sampleBuffer);
+  const AudioStreamBasicDescription *streamDescription = CMAudioFormatDescriptionGetStreamBasicDescription(formatDescription);
+  if (streamDescription == NULL) {
+    return;
+  }
+
+  AudioBufferList audioBufferList;
+  CMBlockBufferRef blockBuffer = nil;
+  if (CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(sampleBuffer, NULL, &audioBufferList, sizeof(audioBufferList), NULL, NULL, 0, &blockBuffer) != noErr) {
+    return;
+  }
+
+  UInt32 frameCount = (UInt32) CMSampleBufferGetNumSamples(sampleBuffer);
+  [self appendSamplesFromBufferList:&audioBufferList frameCount:frameCount asbd:streamDescription];
+
+  if (blockBuffer != nil) {
+    CFRelease(blockBuffer);
+  }
+}
+
+- (int)setupSystemAudioWithDisplayID:(CGDirectDisplayID)displayID sampleRate:(UInt32)sampleRate frameSize:(UInt32)frameSize channels:(UInt8)channels {
+#if __has_include(<ScreenCaptureKit/ScreenCaptureKit.h>)
+  if (![AVAudio shouldUseScreenCaptureKitAudio]) {
+    return -1;
+  }
+
+  self.sampleRate = sampleRate;
+  self.frameSize = frameSize;
+  self.channels = channels;
+
+  NSError *error = nil;
+  self.shareableDisplay = [[AVAudio shareableDisplayWithID:displayID error:&error] retain];
+  if (self.shareableDisplay == nil) {
+    return -1;
+  }
+
+  [self prepareAudioBuffer];
+
+  if (@available(macOS 13.0, *)) {
+    SCContentFilter *filter = [[SCContentFilter alloc] initWithDisplay:self.shareableDisplay
+                                                 excludingApplications:@[]
+                                                      exceptingWindows:@[]];
+    SCStreamConfiguration *configuration = [[SCStreamConfiguration alloc] init];
+    configuration.width = 2;
+    configuration.height = 2;
+    configuration.minimumFrameInterval = kCMTimeZero;
+    configuration.queueDepth = 3;
+    configuration.showsCursor = NO;
+    configuration.capturesAudio = YES;
+    configuration.sampleRate = sampleRate;
+    configuration.channelCount = channels;
+    configuration.excludesCurrentProcessAudio = YES;
+
+    self.sampleHandlerQueue = dispatch_queue_create(kSunshineAudioCaptureQueue.UTF8String, DISPATCH_QUEUE_SERIAL);
+    self.stream = [[SCStream alloc] initWithFilter:filter configuration:configuration delegate:self];
+
+    NSError *streamError = nil;
+    if (![self.stream addStreamOutput:self type:SCStreamOutputTypeAudio sampleHandlerQueue:self.sampleHandlerQueue error:&streamError]) {
+      [self.stream release];
+      self.stream = nil;
+      [configuration release];
+      [filter release];
+      return -1;
+    }
+
+    dispatch_semaphore_t signal = dispatch_semaphore_create(0);
+    __block NSError *startError = nil;
+    [self.stream startCaptureWithCompletionHandler:^(NSError *captureError) {
+      startError = [captureError retain];
+      dispatch_semaphore_signal(signal);
+    }];
+    dispatch_semaphore_wait(signal, DISPATCH_TIME_FOREVER);
+
+    [configuration release];
+    [filter release];
+
+    if (startError != nil) {
+      NSError *removeError = nil;
+      [self.stream removeStreamOutput:self type:SCStreamOutputTypeAudio error:&removeError];
+      [self.stream release];
+      self.stream = nil;
+      [startError release];
+      return -1;
+    }
+
+    return 0;
+  }
+#endif
+
+  return -1;
 }
 
 - (void)captureOutput:(AVCaptureOutput *)output
   didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
          fromConnection:(AVCaptureConnection *)connection {
   if (connection == self.audioConnection) {
-    AudioBufferList audioBufferList;
-    CMBlockBufferRef blockBuffer;
-
-    CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(sampleBuffer, NULL, &audioBufferList, sizeof(audioBufferList), NULL, NULL, 0, &blockBuffer);
-
-    // NSAssert(audioBufferList.mNumberBuffers == 1, @"Expected interleaved PCM format but buffer contained %u streams", audioBufferList.mNumberBuffers);
-
-    // this is safe, because an interleaved PCM stream has exactly one buffer,
-    // and we don't want to do sanity checks in a performance critical exec path
-    AudioBuffer audioBuffer = audioBufferList.mBuffers[0];
-
-    TPCircularBufferProduceBytes(&self->audioSampleBuffer, audioBuffer.mData, audioBuffer.mDataByteSize);
-    [self.samplesArrivedSignal signal];
+    [self handleCapturedSampleBuffer:sampleBuffer];
   }
 }
+
+#if __has_include(<ScreenCaptureKit/ScreenCaptureKit.h>)
+- (void)stream:(SCStream *)stream didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer ofType:(SCStreamOutputType)type API_AVAILABLE(macos(12.3)) {
+  if (type == SCStreamOutputTypeAudio) {
+    [self handleCapturedSampleBuffer:sampleBuffer];
+  }
+}
+
+- (void)stream:(SCStream *)stream didStopWithError:(NSError *)error API_AVAILABLE(macos(12.3)) {
+}
+#endif
 
 @end

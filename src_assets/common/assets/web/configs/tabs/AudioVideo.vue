@@ -60,8 +60,8 @@ const validateFallbackMode = (event) => {
             <pre>pactl info | grep Source</pre>
           </template>
           <template #macos>
-            <a href="https://github.com/mattingalls/Soundflower" target="_blank">Soundflower</a><br>
-            <a href="https://github.com/ExistentialAudio/BlackHole" target="_blank">BlackHole</a>.
+            Native system audio capture is used by default on supported macOS versions.<br>
+            Leave this field empty for system audio, or enter a microphone name to capture a specific input device.
           </template>
         </PlatformLayout>
       </div>

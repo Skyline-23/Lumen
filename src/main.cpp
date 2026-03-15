@@ -28,6 +28,10 @@
   #include "platform/windows/virtual_display.h"
 #endif
 
+#ifdef __APPLE__
+  #include "platform/macos/misc.h"
+#endif
+
 #define PROBE_DISPLAY_UUID "38F72B96-B00C-4F21-8B6C-E1BFF1602B0E"
 
 extern "C" {
@@ -157,6 +161,10 @@ int main(int argc, char *argv[]) {
 #pragma GCC diagnostic pop
 
   mail::man = std::make_shared<safe::mail_raw_t>();
+
+#ifdef __APPLE__
+  platf::prepare_app_bundle_environment();
+#endif
 
   // parse config file
   if (config::parse(argc, argv)) {
@@ -352,7 +360,20 @@ int main(int argc, char *argv[]) {
   auto input_deinit_guard = input::init();
 
   if (input::probe_gamepads()) {
+#ifdef __APPLE__
+    BOOST_LOG(info) << "No gamepad input is available"sv;
+#else
     BOOST_LOG(warning) << "No gamepad input is available"sv;
+#endif
+  }
+
+  if (tray_is_enabled && config::sunshine.system_tray) {
+    BOOST_LOG(info) << "Starting system tray"sv;
+#ifdef _WIN32
+    system_tray::init_tray_threaded();
+#else
+    system_tray::init_tray();
+#endif
   }
 
   if (video::probe_encoders()) {
@@ -438,20 +459,6 @@ int main(int argc, char *argv[]) {
     BOOST_LOG(fatal) << "Disable GameStream on the SHIELD tab in GeForce Experience or change the Port setting on the Advanced tab in the Apollo Web UI."sv;
   }
 #endif
-
-  if (tray_is_enabled && config::sunshine.system_tray) {
-    BOOST_LOG(info) << "Starting system tray"sv;
-#ifdef _WIN32
-    // TODO: Windows has a weird bug where when running as a service and on the first Windows boot,
-    // he tray icon would not appear even though Sunshine is running correctly otherwise.
-    // Restarting the service would allow the icon to appear normally.
-    // For now we will keep the Windows tray icon on a separate thread.
-    // Ideally, we would run the system tray on the main thread for all platforms.
-    system_tray::init_tray_threaded();
-#else
-    system_tray::init_tray();
-#endif
-  }
 
   mainThreadLoop(shutdown_event);
 

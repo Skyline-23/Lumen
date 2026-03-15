@@ -68,6 +68,11 @@ namespace platf {
         return true;
       }];
 
+      if (signal == nullptr) {
+        BOOST_LOG(error) << "Failed to start macOS display capture."sv;
+        return capture_e::error;
+      }
+
       // FIXME: We should time out if an image isn't returned for a while
       dispatch_semaphore_wait(signal, DISPATCH_TIME_FOREVER);
 
@@ -129,6 +134,11 @@ namespace platf {
         // returning false here stops capture backend
         return false;
       }];
+
+      if (signal == nullptr) {
+        BOOST_LOG(error) << "Failed to start macOS dummy capture frame."sv;
+        return 1;
+      }
 
       dispatch_semaphore_wait(signal, DISPATCH_TIME_FOREVER);
 

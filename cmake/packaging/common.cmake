@@ -16,9 +16,15 @@ set(CPACK_PACKAGE_ICON ${PROJECT_SOURCE_DIR}/apollo.png)
 set(CPACK_PACKAGE_FILE_NAME "${CMAKE_PROJECT_NAME}")
 set(CPACK_STRIP_FILES YES)
 
+if(APPLE AND SUNSHINE_PACKAGE_MACOS)
+    set(SUNSHINE_PACKAGE_ASSETS_DIR "${CMAKE_PROJECT_NAME}.app/Contents/Resources/assets")
+else()
+    set(SUNSHINE_PACKAGE_ASSETS_DIR "${SUNSHINE_ASSETS_DIR}")
+endif()
+
 # install common assets
 install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/"
-        DESTINATION "${SUNSHINE_ASSETS_DIR}"
+        DESTINATION "${SUNSHINE_PACKAGE_ASSETS_DIR}"
         PATTERN "web" EXCLUDE)
 # copy assets to build directory, for running without install
 file(GLOB_RECURSE ALL_ASSETS
@@ -31,7 +37,7 @@ endforeach()
 
 # install built vite assets
 install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/assets/web"
-        DESTINATION "${SUNSHINE_ASSETS_DIR}")
+        DESTINATION "${SUNSHINE_PACKAGE_ASSETS_DIR}")
 
 # platform specific packaging
 if(WIN32)

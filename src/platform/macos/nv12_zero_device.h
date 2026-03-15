@@ -28,9 +28,6 @@ namespace platf {
 
     int convert(img_t &img) override;
     int set_frame(AVFrame *frame, AVBufferRef *hw_frames_ctx) override;
-
-  private:
-    util::safe_ptr<AVFrame, free_frame> av_frame;
   };
 
 }  // namespace platf

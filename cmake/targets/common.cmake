@@ -27,9 +27,26 @@ endif()
 
 target_link_libraries(sunshine ${SUNSHINE_EXTERNAL_LIBRARIES} ${EXTRA_LIBS})
 target_compile_definitions(sunshine PUBLIC ${SUNSHINE_DEFINITIONS})
-set_target_properties(sunshine PROPERTIES CXX_STANDARD 23
-        VERSION ${PROJECT_VERSION}
-        SOVERSION ${PROJECT_VERSION_MAJOR})
+set_target_properties(sunshine PROPERTIES CXX_STANDARD 23)
+
+if(NOT APPLE)
+    set_target_properties(sunshine PROPERTIES
+            VERSION ${PROJECT_VERSION}
+            SOVERSION ${PROJECT_VERSION_MAJOR})
+endif()
+
+if(APPLE)
+    set_target_properties(sunshine PROPERTIES
+            OUTPUT_NAME "${CMAKE_PROJECT_NAME}")
+endif()
+
+if(APPLE AND SUNSHINE_PACKAGE_MACOS)
+    set_target_properties(sunshine PROPERTIES
+            MACOSX_BUNDLE TRUE
+            MACOSX_BUNDLE_INFO_PLIST "${APPLE_PLIST_FILE}"
+            MACOSX_BUNDLE_BUNDLE_NAME "${CMAKE_PROJECT_NAME}"
+            MACOSX_BUNDLE_GUI_IDENTIFIER "com.skyline23.apollo")
+endif()
 
 # CLion complains about unknown flags after running cmake, and cannot add symbols to the index for cuda files
 if(CUDA_INHERIT_COMPILE_OPTIONS)
