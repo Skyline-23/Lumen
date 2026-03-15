@@ -466,8 +466,7 @@ namespace video {
       int framerate,
       bool ten_bit,
       video::sunshine_colorspace_t colorspace,
-      hdr_metadata_state_t hdr_metadata_state,
-      int reference_frame_count
+      hdr_metadata_state_t hdr_metadata_state
     ):
         device(std::move(encode_device)),
         metal_context(std::make_unique<platf::vt_metal_context_t>()),
@@ -478,8 +477,7 @@ namespace video {
         framerate(framerate),
         ten_bit(ten_bit),
         colorspace(colorspace),
-        hdr_metadata_state(std::move(hdr_metadata_state)),
-        reference_frame_count(reference_frame_count) {
+        hdr_metadata_state(std::move(hdr_metadata_state)) {
     }
 
     ~vt_compression_encode_session_t() override {
@@ -531,7 +529,6 @@ namespace video {
       auto expected_framerate = cfnumber_from_int(framerate);
       if (expected_framerate) {
         VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_ExpectedFrameRate, expected_framerate.get());
-        VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_BaseLayerFrameRate, expected_framerate.get());
       }
 
       auto average_bitrate = cfnumber_from_int(bitrate);
@@ -542,16 +539,9 @@ namespace video {
       if (data_rate_limit) {
         VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_DataRateLimits, data_rate_limit.get());
       }
-      if (auto constant_bitrate = cfnumber_from_int(bitrate)) {
-        VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_ConstantBitRate, constant_bitrate.get());
-      }
-
       auto max_keyframe_interval = cfnumber_from_int(std::numeric_limits<int>::max());
       if (max_keyframe_interval) {
         VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_MaxKeyFrameInterval, max_keyframe_interval.get());
-      }
-      if (auto ref_count = cfnumber_from_int(std::max(1, reference_frame_count))) {
-        VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_ReferenceBufferCount, ref_count.get());
       }
 
       apply_color_properties();
@@ -875,10 +865,10 @@ namespace video {
       VTEncodeInfoFlags infoFlags,
       CMSampleBufferRef sampleBuffer
     ) {
-      static_cast<vt_compression_encode_session_t *>(outputCallbackRefCon)->handle_compression_output(status, static_cast<vt_frame_context_t *>(sourceFrameRefCon), sampleBuffer);
+      static_cast<vt_compression_encode_session_t *>(outputCallbackRefCon)->handle_compression_output(status, infoFlags, static_cast<vt_frame_context_t *>(sourceFrameRefCon), sampleBuffer);
     }
 
-    void handle_compression_output(OSStatus status, vt_frame_context_t *frame_context, CMSampleBufferRef sampleBuffer) {
+    void handle_compression_output(OSStatus status, VTEncodeInfoFlags infoFlags, vt_frame_context_t *frame_context, CMSampleBufferRef sampleBuffer) {
       auto inflight_guard = util::fail_guard([&] {
         {
           std::lock_guard<std::mutex> lock(inflight_mutex);
@@ -894,9 +884,26 @@ namespace video {
         return;
       }
 
-      if (!sampleBuffer || !CMSampleBufferDataIsReady(sampleBuffer)) {
-        BOOST_LOG(error) << "Native VT callback produced no ready sample buffer"sv;
+      if (!sampleBuffer) {
+        if (infoFlags & kVTEncodeInfo_FrameDropped) {
+          auto dropped = dropped_frames.fetch_add(1, std::memory_order_relaxed) + 1;
+          if (dropped <= 5 || dropped % 120 == 0) {
+            BOOST_LOG(warning) << "Native VT dropped frame #"sv << dropped << " frame_index="sv << frame_context->frame_index << " infoFlags="sv << infoFlags;
+          }
+          return;
+        }
+        BOOST_LOG(error) << "Native VT callback produced no sample buffer"sv;
         return;
+      }
+
+      if (!CMSampleBufferDataIsReady(sampleBuffer)) {
+        auto make_ready_status = CMSampleBufferMakeDataReady(sampleBuffer);
+        if (make_ready_status != noErr || !CMSampleBufferDataIsReady(sampleBuffer)) {
+          BOOST_LOG(error) << "Native VT callback produced no ready sample buffer"
+                           << " infoFlags="sv << infoFlags
+                           << " makeReadyStatus="sv << make_ready_status;
+          return;
+        }
       }
 
       std::vector<uint8_t> packet_data;
@@ -1029,7 +1036,6 @@ namespace video {
     bool ten_bit {false};
     video::sunshine_colorspace_t colorspace;
     hdr_metadata_state_t hdr_metadata_state;
-    int reference_frame_count {1};
     bool force_idr {false};
     std::mutex inflight_mutex;
     std::condition_variable inflight_cv;
@@ -1038,6 +1044,7 @@ namespace video {
     std::atomic<bool> fatal_error {false};
     std::atomic<uint64_t> submitted_frames {0};
     std::atomic<uint64_t> emitted_packets {0};
+    std::atomic<uint64_t> dropped_frames {0};
   };
 
   std::unique_ptr<encode_session_t> make_vtcompression_encode_session(
@@ -1075,8 +1082,7 @@ namespace video {
       std::max(config.encodingFramerate, config.framerate),
       config.dynamicRange > 0,
       native_colorspace,
-      hdr_metadata_state,
-      config.numRefFrames
+      hdr_metadata_state
     );
 
     if (session->init()) {
