@@ -238,13 +238,14 @@ static NSString *const kSunshineVideoCaptureQueue = @"dev.lizardbyte.sunshine.vi
   configuration.minimumFrameInterval = self.minFrameDuration;
   configuration.pixelFormat = self.pixelFormat;
   configuration.showsCursor = YES;
-  configuration.queueDepth = 3;
+  configuration.queueDepth = 8;
 
   if (@available(macOS 13.0, *)) {
     configuration.capturesAudio = NO;
   }
 
-  self.sampleHandlerQueue = dispatch_queue_create(kSunshineVideoCaptureQueue.UTF8String, DISPATCH_QUEUE_SERIAL);
+  dispatch_queue_attr_t captureQos = dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INTERACTIVE, 0);
+  self.sampleHandlerQueue = dispatch_queue_create(kSunshineVideoCaptureQueue.UTF8String, captureQos);
   self.stream = [[SCStream alloc] initWithFilter:filter configuration:configuration delegate:self];
 
   NSError *streamError = nil;
@@ -313,6 +314,7 @@ static NSString *const kSunshineVideoCaptureQueue = @"dev.lizardbyte.sunshine.vi
   self.captureStopped = NO;
   self.captureSignal = nil;
   self.captureCallback = nil;
+  self.screenCaptureFrameCount = 0;
   if (self.pendingSampleBuffer != nil) {
     CFRelease(self.pendingSampleBuffer);
     self.pendingSampleBuffer = nil;
@@ -340,13 +342,10 @@ static NSString *const kSunshineVideoCaptureQueue = @"dev.lizardbyte.sunshine.vi
 
     if (sampleBuffer == nil) {
       if (captureStopped) {
-        NSLog(@"AVVideo ScreenCaptureKit capture loop stopping because captureStopped=YES");
         break;
       }
-      NSLog(@"AVVideo ScreenCaptureKit capture loop woke without sample buffer");
       continue;
     }
-    NSLog(@"AVVideo ScreenCaptureKit produced sample buffer");
     return sampleBuffer;
   }
 
@@ -357,7 +356,6 @@ static NSString *const kSunshineVideoCaptureQueue = @"dev.lizardbyte.sunshine.vi
   @synchronized(self) {
     self.captureStopped = YES;
   }
-  NSLog(@"AVVideo finishScreenCaptureKitCapture called");
   [self stopScreenCaptureKitStream];
   self.frameAvailableSignal = nil;
 }
@@ -422,14 +420,19 @@ static NSString *const kSunshineVideoCaptureQueue = @"dev.lizardbyte.sunshine.vi
       CFRelease(self.pendingSampleBuffer);
     }
     self.pendingSampleBuffer = (CMSampleBufferRef) CFRetain(sampleBuffer);
+    self.screenCaptureFrameCount += 1;
   }
-  NSLog(@"AVVideo didOutputSampleBuffer queued screen sample");
+  if (self.screenCaptureFrameCount <= 5 || (self.screenCaptureFrameCount % 120) == 0) {
+    NSLog(@"AVVideo ScreenCaptureKit queued frame #%llu", self.screenCaptureFrameCount);
+  }
   dispatch_semaphore_signal(frameSignal);
 }
 
 - (void)stream:(SCStream *)stream didStopWithError:(NSError *)error API_AVAILABLE(macos(12.3)) {
   dispatch_semaphore_t frameSignal = self.frameAvailableSignal;
-  NSLog(@"AVVideo ScreenCaptureKit stream stopped with error: %@", error);
+  if (error != nil) {
+    NSLog(@"AVVideo ScreenCaptureKit stream stopped with error: %@", error);
+  }
   @synchronized(self) {
     self.captureStopped = YES;
     if (self.pendingSampleBuffer != nil) {

@@ -3,6 +3,7 @@
  * @brief Definitions for video.
  */
 // standard includes
+#include <array>
 #include <atomic>
 #include <bitset>
 #include <condition_variable>
@@ -451,6 +452,11 @@ namespace video {
 #ifdef __APPLE__
   class vt_compression_encode_session_t: public encode_session_t {
   public:
+    struct hdr_metadata_state_t {
+      bool valid {false};
+      SS_HDR_METADATA metadata {};
+    };
+
     vt_compression_encode_session_t(
       std::unique_ptr<platf::avcodec_encode_device_t> encode_device,
       CMVideoCodecType codec_type,
@@ -458,16 +464,22 @@ namespace video {
       int height,
       int bitrate,
       int framerate,
-      bool ten_bit
+      bool ten_bit,
+      video::sunshine_colorspace_t colorspace,
+      hdr_metadata_state_t hdr_metadata_state,
+      int reference_frame_count
     ):
         device(std::move(encode_device)),
+        metal_context(std::make_unique<platf::vt_metal_context_t>()),
         codec_type(codec_type),
         width(width),
         height(height),
         bitrate(bitrate),
         framerate(framerate),
-        metal_context(std::make_unique<platf::vt_metal_context_t>()),
-        ten_bit(ten_bit) {
+        ten_bit(ten_bit),
+        colorspace(colorspace),
+        hdr_metadata_state(std::move(hdr_metadata_state)),
+        reference_frame_count(reference_frame_count) {
     }
 
     ~vt_compression_encode_session_t() override {
@@ -482,6 +494,7 @@ namespace video {
     }
 
     int init() {
+      cf_dict_t encoder_specification = make_encoder_specification();
       cf_dict_t source_attrs = make_source_image_buffer_attributes();
 
       auto status = VTCompressionSessionCreate(
@@ -489,7 +502,7 @@ namespace video {
         width,
         height,
         codec_type,
-        nullptr,
+        encoder_specification.get(),
         source_attrs.get(),
         nullptr,
         &vt_compression_encode_session_t::compression_output_callback,
@@ -502,15 +515,23 @@ namespace video {
       }
 
       VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_RealTime, kCFBooleanTrue);
+      VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_ProgressiveScan, kCFBooleanTrue);
       VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_AllowFrameReordering, kCFBooleanFalse);
+      VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_AllowOpenGOP, kCFBooleanFalse);
+      VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality, kCFBooleanTrue);
+      VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_MaximizePowerEfficiency, kCFBooleanFalse);
       auto max_frame_delay_count = cfnumber_from_int(1);
       if (max_frame_delay_count) {
         VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_MaxFrameDelayCount, max_frame_delay_count.get());
+      }
+      if (auto expected_duration = cfnumber_from_double(1.0 / std::max(framerate, 1))) {
+        VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_ExpectedDuration, expected_duration.get());
       }
 
       auto expected_framerate = cfnumber_from_int(framerate);
       if (expected_framerate) {
         VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_ExpectedFrameRate, expected_framerate.get());
+        VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_BaseLayerFrameRate, expected_framerate.get());
       }
 
       auto average_bitrate = cfnumber_from_int(bitrate);
@@ -521,11 +542,20 @@ namespace video {
       if (data_rate_limit) {
         VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_DataRateLimits, data_rate_limit.get());
       }
+      if (auto constant_bitrate = cfnumber_from_int(bitrate)) {
+        VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_ConstantBitRate, constant_bitrate.get());
+      }
 
       auto max_keyframe_interval = cfnumber_from_int(std::numeric_limits<int>::max());
       if (max_keyframe_interval) {
         VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_MaxKeyFrameInterval, max_keyframe_interval.get());
       }
+      if (auto ref_count = cfnumber_from_int(std::max(1, reference_frame_count))) {
+        VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_ReferenceBufferCount, ref_count.get());
+      }
+
+      apply_color_properties();
+      apply_hdr_properties();
 
       if (codec_type == kCMVideoCodecType_H264) {
         VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_ProfileLevel, kVTProfileLevel_H264_High_AutoLevel);
@@ -575,10 +605,6 @@ namespace video {
         BOOST_LOG(error) << "Native VT session is in a failed state"sv;
         return -1;
       }
-      if (metal_context && !metal_context->prepare_pixel_buffer(current_pixel_buffer)) {
-        BOOST_LOG(debug) << "Metal pixel buffer preparation was skipped for current frame"sv;
-      }
-
       {
         std::unique_lock<std::mutex> lock(inflight_mutex);
         inflight_cv.wait(lock, [&] {
@@ -630,6 +656,11 @@ namespace video {
         return -1;
       }
 
+      auto submitted = submitted_frames.fetch_add(1, std::memory_order_relaxed) + 1;
+      if (submitted <= 5 || submitted % 120 == 0) {
+        BOOST_LOG(info) << "Native VT submitted frame #"sv << submitted << " index="sv << frame_nr;
+      }
+
       force_idr = false;
       return 0;
     }
@@ -663,9 +694,15 @@ namespace video {
     using cfnumber_t = std::unique_ptr<std::remove_pointer_t<CFNumberRef>, cfnumber_deleter>;
     using cf_dict_t = std::unique_ptr<std::remove_pointer_t<CFDictionaryRef>, cf_releaser>;
     using cf_array_t = std::unique_ptr<std::remove_pointer_t<CFArrayRef>, cf_releaser>;
+    using cf_data_t = std::unique_ptr<std::remove_pointer_t<CFDataRef>, cf_releaser>;
 
     static cfnumber_t cfnumber_from_int(int value) {
       auto number = CFNumberCreate(nullptr, kCFNumberIntType, &value);
+      return cfnumber_t(number);
+    }
+
+    static cfnumber_t cfnumber_from_double(double value) {
+      auto number = CFNumberCreate(nullptr, kCFNumberDoubleType, &value);
       return cfnumber_t(number);
     }
 
@@ -683,6 +720,28 @@ namespace video {
         }
       }
       return cf_array_t(array);
+    }
+
+    static void write_be16(uint8_t *dst, uint16_t value) {
+      dst[0] = (uint8_t) ((value >> 8) & 0xFF);
+      dst[1] = (uint8_t) (value & 0xFF);
+    }
+
+    static void write_be32(uint8_t *dst, uint32_t value) {
+      dst[0] = (uint8_t) ((value >> 24) & 0xFF);
+      dst[1] = (uint8_t) ((value >> 16) & 0xFF);
+      dst[2] = (uint8_t) ((value >> 8) & 0xFF);
+      dst[3] = (uint8_t) (value & 0xFF);
+    }
+
+    cf_dict_t make_encoder_specification() const {
+      const void *keys[] = {
+        kVTVideoEncoderSpecification_EnableLowLatencyRateControl,
+      };
+      const void *values[] = {
+        kCFBooleanTrue,
+      };
+      return cf_dict_t(CFDictionaryCreate(nullptr, keys, values, 1, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks));
     }
 
     cf_dict_t make_source_image_buffer_attributes() const {
@@ -709,6 +768,94 @@ namespace video {
         empty_surface_dictionary.get(),
       };
       return cf_dict_t(CFDictionaryCreate(nullptr, keys, values, 5, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks));
+    }
+
+    static CFStringRef color_primaries_for_colorspace(const video::sunshine_colorspace_t &colorspace) {
+      switch (colorspace.colorspace) {
+        case video::colorspace_e::rec601:
+          return kCVImageBufferColorPrimaries_SMPTE_C;
+        case video::colorspace_e::rec709:
+          return kCVImageBufferColorPrimaries_ITU_R_709_2;
+        case video::colorspace_e::bt2020sdr:
+        case video::colorspace_e::bt2020:
+          return kCVImageBufferColorPrimaries_ITU_R_2020;
+      }
+    }
+
+    static CFStringRef transfer_function_for_colorspace(const video::sunshine_colorspace_t &colorspace) {
+      switch (colorspace.colorspace) {
+        case video::colorspace_e::rec601:
+        case video::colorspace_e::rec709:
+          return kCVImageBufferTransferFunction_ITU_R_709_2;
+        case video::colorspace_e::bt2020sdr:
+          return kCVImageBufferTransferFunction_ITU_R_2020;
+        case video::colorspace_e::bt2020:
+          return kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ;
+      }
+    }
+
+    static CFStringRef ycbcr_matrix_for_colorspace(const video::sunshine_colorspace_t &colorspace) {
+      switch (colorspace.colorspace) {
+        case video::colorspace_e::rec601:
+          return kCVImageBufferYCbCrMatrix_ITU_R_601_4;
+        case video::colorspace_e::rec709:
+          return kCVImageBufferYCbCrMatrix_ITU_R_709_2;
+        case video::colorspace_e::bt2020sdr:
+        case video::colorspace_e::bt2020:
+          return kCVImageBufferYCbCrMatrix_ITU_R_2020;
+      }
+    }
+
+    void apply_color_properties() const {
+      VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_ColorPrimaries, color_primaries_for_colorspace(colorspace));
+      VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_TransferFunction, transfer_function_for_colorspace(colorspace));
+      VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_YCbCrMatrix, ycbcr_matrix_for_colorspace(colorspace));
+    }
+
+    cf_data_t make_mastering_display_color_volume() const {
+      if (!hdr_metadata_state.valid) {
+        return cf_data_t(nullptr);
+      }
+
+      std::array<uint8_t, 24> payload {};
+      write_be16(payload.data() + 0, (uint16_t) hdr_metadata_state.metadata.displayPrimaries[0].x);
+      write_be16(payload.data() + 2, (uint16_t) hdr_metadata_state.metadata.displayPrimaries[0].y);
+      write_be16(payload.data() + 4, (uint16_t) hdr_metadata_state.metadata.displayPrimaries[1].x);
+      write_be16(payload.data() + 6, (uint16_t) hdr_metadata_state.metadata.displayPrimaries[1].y);
+      write_be16(payload.data() + 8, (uint16_t) hdr_metadata_state.metadata.displayPrimaries[2].x);
+      write_be16(payload.data() + 10, (uint16_t) hdr_metadata_state.metadata.displayPrimaries[2].y);
+      write_be16(payload.data() + 12, (uint16_t) hdr_metadata_state.metadata.whitePoint.x);
+      write_be16(payload.data() + 14, (uint16_t) hdr_metadata_state.metadata.whitePoint.y);
+      write_be32(payload.data() + 16, hdr_metadata_state.metadata.maxDisplayLuminance);
+      write_be32(payload.data() + 20, hdr_metadata_state.metadata.minDisplayLuminance);
+      return cf_data_t(CFDataCreate(nullptr, payload.data(), (CFIndex) payload.size()));
+    }
+
+    cf_data_t make_content_light_level_info() const {
+      if (!hdr_metadata_state.valid) {
+        return cf_data_t(nullptr);
+      }
+
+      std::array<uint8_t, 4> payload {};
+      write_be16(payload.data() + 0, (uint16_t) hdr_metadata_state.metadata.maxContentLightLevel);
+      write_be16(payload.data() + 2, (uint16_t) hdr_metadata_state.metadata.maxFrameAverageLightLevel);
+      return cf_data_t(CFDataCreate(nullptr, payload.data(), (CFIndex) payload.size()));
+    }
+
+    void apply_hdr_properties() const {
+      if (!video::colorspace_is_hdr(colorspace)) {
+        return;
+      }
+
+      VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_HDRMetadataInsertionMode, kVTHDRMetadataInsertionMode_Auto);
+      VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_PreserveDynamicHDRMetadata, kCFBooleanTrue);
+
+      if (auto mastering_display = make_mastering_display_color_volume()) {
+        VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_MasteringDisplayColorVolume, mastering_display.get());
+      }
+      if (auto content_light = make_content_light_level_info()) {
+        VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_ContentLightLevelInfo, content_light.get());
+      }
     }
 
     static void release_frame_context(vt_frame_context_t *frame_context) {
@@ -767,6 +914,11 @@ namespace video {
       packet->channel_data = frame_context->channel_data;
       packet->frame_timestamp = frame_context->frame_timestamp;
       frame_context->packets->raise(std::move(packet));
+
+      auto emitted = emitted_packets.fetch_add(1, std::memory_order_relaxed) + 1;
+      if (emitted <= 5 || emitted % 120 == 0) {
+        BOOST_LOG(info) << "Native VT emitted packet #"sv << emitted << " frame_index="sv << frame_context->frame_index << " idr="sv << packet_is_idr;
+      }
     }
 
     static bool sample_buffer_is_idr(CMSampleBufferRef sampleBuffer) {
@@ -821,27 +973,46 @@ namespace video {
       }
     }
 
+    static const uint8_t *copy_or_map_sample_bytes(CMBlockBufferRef data_buffer, std::vector<uint8_t> &scratch, size_t &total_length) {
+      total_length = (size_t) CMBlockBufferGetDataLength(data_buffer);
+      size_t contiguous_length = 0;
+      char *contiguous_ptr = nullptr;
+      if (CMBlockBufferGetDataPointer(data_buffer, 0, &contiguous_length, nullptr, &contiguous_ptr) == kCMBlockBufferNoErr &&
+          contiguous_ptr != nullptr &&
+          contiguous_length >= total_length) {
+        return reinterpret_cast<const uint8_t *>(contiguous_ptr);
+      }
+
+      scratch.resize(total_length);
+      if (CMBlockBufferCopyDataBytes(data_buffer, 0, total_length, scratch.data()) != noErr) {
+        return nullptr;
+      }
+      return scratch.data();
+    }
+
     static void append_sample_buffer_nals(CMSampleBufferRef sampleBuffer, std::vector<uint8_t> &output) {
       auto data_buffer = CMSampleBufferGetDataBuffer(sampleBuffer);
       if (!data_buffer) {
         return;
       }
 
-      size_t total_length = (size_t) CMBlockBufferGetDataLength(data_buffer);
-      std::vector<uint8_t> buffer(total_length);
-      if (CMBlockBufferCopyDataBytes(data_buffer, 0, total_length, buffer.data()) != noErr) {
+      size_t total_length = 0;
+      std::vector<uint8_t> scratch;
+      const uint8_t *buffer = copy_or_map_sample_bytes(data_buffer, scratch, total_length);
+      if (!buffer) {
         return;
       }
 
+      output.reserve(output.size() + total_length + (total_length / 32) + 16);
       size_t offset = 0;
-      while (offset + 4 <= buffer.size()) {
+      while (offset + 4 <= total_length) {
         uint32_t nal_length = (uint32_t(buffer[offset]) << 24) | (uint32_t(buffer[offset + 1]) << 16) | (uint32_t(buffer[offset + 2]) << 8) | uint32_t(buffer[offset + 3]);
         offset += 4;
-        if (offset + nal_length > buffer.size()) {
+        if (offset + nal_length > total_length) {
           break;
         }
         output.insert(output.end(), {0, 0, 0, 1});
-        output.insert(output.end(), buffer.begin() + (long) offset, buffer.begin() + (long) (offset + nal_length));
+        output.insert(output.end(), buffer + offset, buffer + offset + nal_length);
         offset += nal_length;
       }
     }
@@ -856,16 +1027,21 @@ namespace video {
     int bitrate {};
     int framerate {};
     bool ten_bit {false};
+    video::sunshine_colorspace_t colorspace;
+    hdr_metadata_state_t hdr_metadata_state;
+    int reference_frame_count {1};
     bool force_idr {false};
     std::mutex inflight_mutex;
     std::condition_variable inflight_cv;
     std::size_t inflight_frames {0};
-    static constexpr std::size_t max_inflight_frames = 4;
+    static constexpr std::size_t max_inflight_frames = 12;
     std::atomic<bool> fatal_error {false};
+    std::atomic<uint64_t> submitted_frames {0};
+    std::atomic<uint64_t> emitted_packets {0};
   };
 
   std::unique_ptr<encode_session_t> make_vtcompression_encode_session(
-    const encoder_t &encoder,
+    platf::display_t *disp,
     const config_t &config,
     int width,
     int height,
@@ -884,14 +1060,23 @@ namespace video {
         return nullptr;
     }
 
+    typename vt_compression_encode_session_t::hdr_metadata_state_t hdr_metadata_state;
+    auto native_colorspace = encode_device->colorspace;
+    if (video::colorspace_is_hdr(native_colorspace)) {
+      hdr_metadata_state.valid = disp != nullptr && disp->get_hdr_metadata(hdr_metadata_state.metadata);
+    }
+
     auto session = std::make_unique<vt_compression_encode_session_t>(
       std::move(encode_device),
       codec_type,
       width,
       height,
       config.bitrate * 1000,
-      config.framerate,
-      config.dynamicRange > 0
+      std::max(config.encodingFramerate, config.framerate),
+      config.dynamicRange > 0,
+      native_colorspace,
+      hdr_metadata_state,
+      config.numRefFrames
     );
 
     if (session->init()) {
@@ -2435,7 +2620,7 @@ namespace video {
           BOOST_LOG(error) << "Native macOS VideoToolbox path does not support AV1 yet"sv;
           return nullptr;
         }
-        return make_vtcompression_encode_session(encoder, config, width, height, std::move(avcodec_encode_device));
+        return make_vtcompression_encode_session(disp, config, width, height, std::move(avcodec_encode_device));
       }
 #endif
       return make_avcodec_encode_session(disp, encoder, config, width, height, std::move(avcodec_encode_device), prepare_frame);

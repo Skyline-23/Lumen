@@ -39,6 +39,7 @@ typedef bool (^FrameCallbackBlock)(CMSampleBufferRef);
 @property (nonatomic, assign) dispatch_semaphore_t frameAvailableSignal;
 @property (nonatomic, assign) CMSampleBufferRef pendingSampleBuffer;
 @property (nonatomic, assign) BOOL captureStopped;
+@property (nonatomic, assign) uint64_t screenCaptureFrameCount;
 
 #if SUNSHINE_HAVE_SCREENCAPTUREKIT
 @property (nonatomic, assign) SCDisplay *shareableDisplay;
