@@ -8,6 +8,7 @@
 #include <array>
 #include <atomic>
 #include <condition_variable>
+#include <deque>
 #include <functional>
 #include <map>
 #include <mutex>
@@ -267,7 +268,7 @@ namespace safe {
       }
 
       if (_queue.size() == _max_elements) {
-        _queue.clear();
+        _queue.pop_front();
       }
 
       _queue.emplace_back(std::forward<Args>(args)...);
@@ -294,7 +295,7 @@ namespace safe {
       }
 
       auto val = std::move(_queue.front());
-      _queue.erase(std::begin(_queue));
+      _queue.pop_front();
 
       return val;
     }
@@ -315,12 +316,12 @@ namespace safe {
       }
 
       auto val = std::move(_queue.front());
-      _queue.erase(std::begin(_queue));
+      _queue.pop_front();
 
       return val;
     }
 
-    std::vector<T> &unsafe() {
+    std::deque<T> &unsafe() {
       return _queue;
     }
 
@@ -343,7 +344,7 @@ namespace safe {
     std::mutex _lock;
     std::condition_variable _cv;
 
-    std::vector<T> _queue;
+    std::deque<T> _queue;
   };
 
   template<class T>

@@ -3159,7 +3159,7 @@ namespace video {
   ) {
     auto shutdown_event = mail->event<bool>(mail::shutdown);
 
-    auto images = std::make_shared<img_event_t::element_type>();
+    auto images = std::make_shared<img_event_t::element_type>(256);
     auto lg = util::fail_guard([&]() {
       images->stop();
       shutdown_event->raise(true);
