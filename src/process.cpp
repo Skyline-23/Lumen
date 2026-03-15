@@ -638,6 +638,9 @@ namespace proc {
   }
 
   void proc_t::on_stream_connected() {
+  }
+
+  void proc_t::on_video_capture_ready() {
 #ifdef __APPLE__
     sleep_physical_displays_if_needed();
 #endif

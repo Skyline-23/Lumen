@@ -2818,6 +2818,7 @@ namespace video {
     uint64_t received_capture_frames = 0;
     uint64_t capture_wait_timeouts = 0;
     bool logged_waiting_for_first_native_vt_frame = false;
+    bool notified_capture_ready = false;
     BOOST_LOG(info) << "Async encode loop starting"sv;
 
     while (true) {
@@ -2858,6 +2859,10 @@ namespace video {
         if (auto img = images->pop(wait_timeout)) {
           has_captured_frame = true;
           auto received = ++received_capture_frames;
+          if (!notified_capture_ready) {
+            proc::proc.on_video_capture_ready();
+            notified_capture_ready = true;
+          }
           if (received <= 5 || (received % 120) == 0) {
             BOOST_LOG(info) << "Async encode received captured frame #"sv << received;
           }

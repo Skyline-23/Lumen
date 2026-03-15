@@ -144,6 +144,7 @@ namespace proc {
     void pause();
     void terminate(bool immediate = false, bool needs_refresh = true);
     void on_stream_connected();
+    void on_video_capture_ready();
     void on_stream_disconnected();
 
   private:
