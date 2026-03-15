@@ -346,6 +346,9 @@ static NSString *const kSunshineVideoCaptureQueue = @"dev.lizardbyte.sunshine.vi
       }
       continue;
     }
+
+    while (dispatch_semaphore_wait(self.frameAvailableSignal, DISPATCH_TIME_NOW) == 0) {
+    }
     return sampleBuffer;
   }
 
@@ -415,7 +418,9 @@ static NSString *const kSunshineVideoCaptureQueue = @"dev.lizardbyte.sunshine.vi
     return;
   }
 
+  BOOL shouldSignal = NO;
   @synchronized(self) {
+    shouldSignal = self.pendingSampleBuffer == nil;
     if (self.pendingSampleBuffer != nil) {
       CFRelease(self.pendingSampleBuffer);
     }
@@ -425,7 +430,9 @@ static NSString *const kSunshineVideoCaptureQueue = @"dev.lizardbyte.sunshine.vi
   if (self.screenCaptureFrameCount <= 5 || (self.screenCaptureFrameCount % 120) == 0) {
     NSLog(@"AVVideo ScreenCaptureKit queued frame #%llu", self.screenCaptureFrameCount);
   }
-  dispatch_semaphore_signal(frameSignal);
+  if (shouldSignal) {
+    dispatch_semaphore_signal(frameSignal);
+  }
 }
 
 - (void)stream:(SCStream *)stream didStopWithError:(NSError *)error API_AVAILABLE(macos(12.3)) {
