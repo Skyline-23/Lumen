@@ -2654,6 +2654,7 @@ namespace video {
     if (!session) {
       return;
     }
+    const bool native_vt_session = dynamic_cast<vt_compression_encode_session_t *>(session.get()) != nullptr;
 
     // As a workaround for NVENC hangs and to generally speed up encoder reinit,
     // we will complete the encoder teardown in a separate thread if supported.
@@ -2685,7 +2686,7 @@ namespace video {
     auto idr_events = mail->event<bool>(mail::idr);
     auto invalidate_ref_frames_events = mail->event<std::pair<int64_t, int64_t>>(mail::invalidate_ref_frames);
 
-    {
+    if (!native_vt_session) {
       // Load a dummy image into the AVFrame to ensure we have something to encode
       // even if we timeout waiting on the first frame. This is a relatively large
       // allocation which can be freed immediately after convert(), so we do this
@@ -2694,6 +2695,8 @@ namespace video {
       if (!dummy_img || disp->dummy_img(dummy_img.get()) || session->convert(*dummy_img)) {
         return;
       }
+    } else {
+      BOOST_LOG(info) << "Native VT skipping dummy frame bootstrap"sv;
     }
 
     if (config.input_only) {
@@ -2717,6 +2720,7 @@ namespace video {
     std::chrono::steady_clock::time_point encode_frame_timestamp;
     uint64_t received_capture_frames = 0;
     uint64_t capture_wait_timeouts = 0;
+    BOOST_LOG(info) << "Async encode loop starting"sv;
 
     while (true) {
       // Break out of the encoding loop if any of the following are true:
