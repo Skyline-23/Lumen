@@ -59,6 +59,7 @@ namespace platf {
     std::mutex virtual_display_layout_mutex;
     std::vector<display_layout_entry_t> virtual_display_layout_snapshot;
     bool virtual_display_layout_active = false;
+    std::atomic<bool> accessibility_prompt_requested = false;
 
     bool refresh_screen_capture_permission_state() {
 #pragma clang diagnostic push
@@ -711,6 +712,22 @@ namespace platf {
 
     const auto trusted = AXIsProcessTrusted();
     if (!trusted) {
+      if (!accessibility_prompt_requested.exchange(true)) {
+        CFTypeRef keys[] = {kAXTrustedCheckOptionPrompt};
+        CFTypeRef values[] = {kCFBooleanTrue};
+        CFDictionaryRef options = CFDictionaryCreate(
+          kCFAllocatorDefault,
+          keys,
+          values,
+          1,
+          &kCFCopyStringDictionaryKeyCallBacks,
+          &kCFTypeDictionaryValueCallBacks
+        );
+        if (options != nullptr) {
+          AXIsProcessTrustedWithOptions(options);
+          CFRelease(options);
+        }
+      }
       BOOST_LOG(warning) << "Skipping macOS window migration to virtual display because Accessibility permission is not granted"sv;
       return;
     }
