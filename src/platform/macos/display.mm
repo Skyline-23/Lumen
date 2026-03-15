@@ -2,6 +2,10 @@
  * @file src/platform/macos/display.mm
  * @brief Definitions for display capture on macOS.
  */
+// standard includes
+#include <algorithm>
+#include <cmath>
+
 // local includes
 #include "src/config.h"
 #include "src/logging.h"
@@ -22,6 +26,70 @@ namespace platf {
   using namespace std::literals;
 
   namespace {
+    constexpr double hdr_edr_threshold = 1.001;
+
+    NSScreen *screen_for_display_id(CGDirectDisplayID display_id) {
+      for (NSScreen *screen in [NSScreen screens]) {
+        NSNumber *screen_number = screen.deviceDescription[@"NSScreenNumber"];
+        if (screen_number != nil && screen_number.unsignedIntValue == display_id) {
+          return screen;
+        }
+      }
+
+      return nil;
+    }
+
+    bool screen_is_hdr_capable(NSScreen *screen) {
+      if (screen == nil) {
+        return false;
+      }
+
+      if (@available(macOS 10.15, *)) {
+        return screen.maximumPotentialExtendedDynamicRangeColorComponentValue > hdr_edr_threshold
+          || screen.maximumExtendedDynamicRangeColorComponentValue > hdr_edr_threshold;
+      }
+
+      return false;
+    }
+
+    bool screen_is_hdr_active(NSScreen *screen) {
+      if (screen == nil) {
+        return false;
+      }
+
+      if (@available(macOS 10.11, *)) {
+        return screen.maximumExtendedDynamicRangeColorComponentValue > hdr_edr_threshold;
+      }
+
+      return false;
+    }
+
+    bool fallback_hdr_metadata_for_screen(NSScreen *screen, SS_HDR_METADATA &metadata) {
+      std::memset(&metadata, 0, sizeof(metadata));
+      if (!screen_is_hdr_capable(screen)) {
+        return false;
+      }
+
+      metadata.displayPrimaries[0] = {34000, 16000};
+      metadata.displayPrimaries[1] = {13250, 34500};
+      metadata.displayPrimaries[2] = {7500, 3000};
+      metadata.whitePoint = {15635, 16450};
+
+      double peak_edr = 1.0;
+      if (@available(macOS 10.15, *)) {
+        peak_edr = std::max(screen.maximumPotentialExtendedDynamicRangeColorComponentValue,
+                            screen.maximumExtendedDynamicRangeColorComponentValue);
+      }
+
+      const auto estimated_peak_nits = static_cast<uint16_t>(std::clamp(std::lround(peak_edr * 1000.0), 400l, 2000l));
+      metadata.maxDisplayLuminance = estimated_peak_nits;
+      metadata.maxFullFrameLuminance = estimated_peak_nits;
+      metadata.minDisplayLuminance = 1;
+      metadata.maxContentLightLevel = estimated_peak_nits;
+      metadata.maxFrameAverageLightLevel = estimated_peak_nits;
+      return true;
+    }
+
     struct display_capture_context_t {
       const display_t::push_captured_image_cb_t *push_cb;
       const display_t::pull_free_image_cb_t *pull_cb;
@@ -72,6 +140,14 @@ namespace platf {
 
     ~av_display_t() override {
       [av_capture release];
+    }
+
+    bool is_hdr() override {
+      return screen_is_hdr_active(screen_for_display_id(display_id));
+    }
+
+    bool get_hdr_metadata(SS_HDR_METADATA &metadata) override {
+      return fallback_hdr_metadata_for_screen(screen_for_display_id(display_id), metadata);
     }
 
     capture_e capture(const push_captured_image_cb_t &push_captured_image_cb, const pull_free_image_cb_t &pull_free_image_cb, bool *cursor) override {

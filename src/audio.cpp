@@ -209,10 +209,17 @@ namespace audio {
 
     auto samples = std::make_shared<sample_queue_t::element_type>(30);
     std::thread thread {encodeThread, samples, config, channel_data};
+    std::thread shutdown_interrupt_thread {[shutdown_event, mic_ptr = mic.get()]() {
+      shutdown_event->view();
+      mic_ptr->interrupt();
+    }};
 
     auto fg = util::fail_guard([&]() {
       samples->stop();
       thread.join();
+      if (shutdown_interrupt_thread.joinable()) {
+        shutdown_interrupt_thread.join();
+      }
 
       shutdown_event->view();
     });
@@ -242,6 +249,8 @@ namespace audio {
           }
 
           continue;
+        case platf::capture_e::interrupted:
+          return;
         default:
           return;
       }

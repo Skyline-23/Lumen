@@ -42,6 +42,7 @@ namespace platf {
     AVAudio *av_audio_capture {};
 
     ~av_mic_t() override {
+      [av_audio_capture stopCapture];
       [av_audio_capture release];
     }
 
@@ -52,7 +53,14 @@ namespace platf {
       void *byteSampleBuffer = TPCircularBufferTail(&av_audio_capture->audioSampleBuffer, &length);
 
       while (length < sample_size * sizeof(float)) {
-        [av_audio_capture.samplesArrivedSignal wait];
+        if (av_audio_capture.captureStopped) {
+          return capture_e::interrupted;
+        }
+
+        [av_audio_capture.samplesArrivedSignal lock];
+        [av_audio_capture.samplesArrivedSignal waitUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
+        [av_audio_capture.samplesArrivedSignal unlock];
+
         byteSampleBuffer = TPCircularBufferTail(&av_audio_capture->audioSampleBuffer, &length);
       }
 
@@ -64,6 +72,10 @@ namespace platf {
       TPCircularBufferConsume(&av_audio_capture->audioSampleBuffer, sample_size * sizeof(float));
 
       return capture_e::ok;
+    }
+
+    void interrupt() override {
+      [av_audio_capture stopCapture];
     }
   };
 

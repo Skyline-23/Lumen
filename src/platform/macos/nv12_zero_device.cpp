@@ -15,6 +15,15 @@ extern "C" {
 }
 
 namespace platf {
+  namespace {
+    OSType cv_pixel_format_for_config(pix_fmt_e pix_fmt, bool full_range) {
+      if (pix_fmt == pix_fmt_e::nv12) {
+        return full_range ? kCVPixelFormatType_420YpCbCr8BiPlanarFullRange : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
+      }
+
+      return full_range ? kCVPixelFormatType_420YpCbCr10BiPlanarFullRange : kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange;
+    }
+  }  // namespace
 
   void free_frame(AVFrame *frame) {
     av_frame_free(&frame);
@@ -55,16 +64,21 @@ namespace platf {
   }
 
   int nv12_zero_device::init(void *display, pix_fmt_e pix_fmt, resolution_fn_t resolution_fn, const pixel_format_fn_t &pixel_format_fn) {
-    pixel_format_fn(display, pix_fmt == pix_fmt_e::nv12 ? kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange : kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange);
-
     this->display = display;
+    this->pixel_format = pix_fmt;
     this->resolution_fn = std::move(resolution_fn);
+    this->pixel_format_fn = pixel_format_fn;
+    pixel_format_fn(display, cv_pixel_format_for_config(pix_fmt, false));
 
     // we never use this pointer, but its existence is checked/used
     // by the platform independent code
     data = this;
 
     return 0;
+  }
+
+  void nv12_zero_device::apply_colorspace() {
+    pixel_format_fn(display, cv_pixel_format_for_config(pixel_format, colorspace.full_range));
   }
 
 }  // namespace platf

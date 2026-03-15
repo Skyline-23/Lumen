@@ -16,6 +16,7 @@ namespace platf {
     // display holds a pointer to an av_video object. Since the namespaces of AVFoundation
     // and FFMPEG collide, we need this opaque pointer and cannot use the definition
     void *display;
+    pix_fmt_e pixel_format;
 
   public:
     // this function is used to set the resolution on an av_video object that we cannot
@@ -23,11 +24,13 @@ namespace platf {
     using resolution_fn_t = std::function<void(void *display, int width, int height)>;
     resolution_fn_t resolution_fn;
     using pixel_format_fn_t = std::function<void(void *display, int pixelFormat)>;
+    pixel_format_fn_t pixel_format_fn;
 
     int init(void *display, pix_fmt_e pix_fmt, resolution_fn_t resolution_fn, const pixel_format_fn_t &pixel_format_fn);
 
     int convert(img_t &img) override;
     int set_frame(AVFrame *frame, AVBufferRef *hw_frames_ctx) override;
+    void apply_colorspace() override;
   };
 
 }  // namespace platf

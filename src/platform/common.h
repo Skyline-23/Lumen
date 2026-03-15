@@ -548,6 +548,7 @@ namespace platf {
   class mic_t {
   public:
     virtual capture_e sample(std::vector<float> &frame_buffer) = 0;
+    virtual void interrupt() {}
 
     virtual ~mic_t() = default;
   };

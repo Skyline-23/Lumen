@@ -109,12 +109,16 @@ static NSString *const kSunshineAudioCaptureQueue = @"dev.lizardbyte.sunshine.au
 
 - (void)prepareAudioBuffer {
   self.samplesArrivedSignal = [[NSCondition alloc] init];
+  self.captureStopped = NO;
   TPCircularBufferInit(&self->audioSampleBuffer, kBufferLength * self.channels * sizeof(float));
 }
 
-- (void)dealloc {
-  // make sure we don't process any further samples
-  self.audioConnection = nil;
+- (void)stopCapture {
+  self.captureStopped = YES;
+
+  [self.samplesArrivedSignal lock];
+  [self.samplesArrivedSignal signal];
+  [self.samplesArrivedSignal unlock];
 
 #if __has_include(<ScreenCaptureKit/ScreenCaptureKit.h>)
   if (self.stream != nil) {
@@ -123,17 +127,28 @@ static NSString *const kSunshineAudioCaptureQueue = @"dev.lizardbyte.sunshine.au
       dispatch_semaphore_signal(stopSignal);
     }];
     dispatch_semaphore_wait(stopSignal, DISPATCH_TIME_FOREVER);
+    [self.stream release];
+    self.stream = nil;
   }
-
-  [self.shareableDisplay release];
-  [self.stream release];
 #endif
 
-  [self.audioCaptureSession stopRunning];
+  if (self.audioCaptureSession != nil) {
+    [self.audioCaptureSession stopRunning];
+  }
+}
+
+- (void)dealloc {
+  // make sure we don't process any further samples
+  self.audioConnection = nil;
+  [self stopCapture];
+
+#if __has_include(<ScreenCaptureKit/ScreenCaptureKit.h>)
+  [self.shareableDisplay release];
+#endif
+
   [self.audioCaptureSession release];
 
   // make sure nothing gets stuck on this signal
-  [self.samplesArrivedSignal signal];
   [self.samplesArrivedSignal release];
   TPCircularBufferCleanup(&audioSampleBuffer);
   [super dealloc];
@@ -200,7 +215,9 @@ static NSString *const kSunshineAudioCaptureQueue = @"dev.lizardbyte.sunshine.au
   }
 
   TPCircularBufferProduceBytes(&self->audioSampleBuffer, samples, sampleCount * sizeof(float));
+  [self.samplesArrivedSignal lock];
   [self.samplesArrivedSignal signal];
+  [self.samplesArrivedSignal unlock];
 }
 
 - (void)appendSamplesFromBufferList:(const AudioBufferList *)audioBufferList

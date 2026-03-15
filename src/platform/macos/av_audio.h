@@ -31,6 +31,7 @@
 @property (nonatomic, assign) UInt32 sampleRate;
 @property (nonatomic, assign) UInt32 frameSize;
 @property (nonatomic, assign) UInt8 channels;
+@property (nonatomic, assign) BOOL captureStopped;
 
 #if __has_include(<ScreenCaptureKit/ScreenCaptureKit.h>)
 @property (nonatomic, assign) SCDisplay *shareableDisplay;
@@ -43,5 +44,6 @@
 
 - (int)setupMicrophone:(AVCaptureDevice *)device sampleRate:(UInt32)sampleRate frameSize:(UInt32)frameSize channels:(UInt8)channels;
 - (int)setupSystemAudioWithDisplayID:(CGDirectDisplayID)displayID sampleRate:(UInt32)sampleRate frameSize:(UInt32)frameSize channels:(UInt8)channels;
+- (void)stopCapture;
 
 @end
