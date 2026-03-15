@@ -147,6 +147,9 @@ namespace proc {
     void on_stream_disconnected();
 
   private:
+    void sleep_physical_displays_if_needed();
+    void wake_physical_displays_if_needed();
+
     int _app_id = 0;
     std::string _app_name;
 

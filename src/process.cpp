@@ -638,16 +638,41 @@ namespace proc {
   }
 
   void proc_t::on_stream_connected() {
+#ifdef __APPLE__
+    sleep_physical_displays_if_needed();
+#endif
   }
 
   void proc_t::on_stream_disconnected() {
 #ifdef __APPLE__
-    if (physical_displays_asleep) {
-      platf::wake_physical_displays();
-      physical_displays_asleep = false;
-    }
+    wake_physical_displays_if_needed();
 #endif
   }
+
+#ifdef __APPLE__
+  void proc_t::sleep_physical_displays_if_needed() {
+    if (physical_displays_asleep) {
+      return;
+    }
+
+    if (!_launch_session || !_launch_session->virtual_display) {
+      return;
+    }
+
+    if (platf::sleep_physical_displays()) {
+      physical_displays_asleep = true;
+    }
+  }
+
+  void proc_t::wake_physical_displays_if_needed() {
+    if (!physical_displays_asleep) {
+      return;
+    }
+
+    platf::wake_physical_displays();
+    physical_displays_asleep = false;
+  }
+#endif
 
   void proc_t::resume() {
     BOOST_LOG(info) << "Session resuming for app [" << _app_name << "].";
@@ -825,10 +850,7 @@ namespace proc {
       }
 #elif defined(__APPLE__)
     bool used_virtual_display = _launch_session && _launch_session->virtual_display && !virtual_display_key.empty();
-    if (physical_displays_asleep) {
-      platf::wake_physical_displays();
-      physical_displays_asleep = false;
-    }
+    wake_physical_displays_if_needed();
     if (used_virtual_display) {
       if (VDISPLAY::removeVirtualDisplay(virtual_display_key)) {
         BOOST_LOG(info) << "Virtual Display removed successfully";

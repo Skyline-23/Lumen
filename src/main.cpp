@@ -54,6 +54,14 @@ void on_signal(int sig, FN &&fn) {
   std::signal(sig, on_signal_forwarder);
 }
 
+#ifdef __APPLE__
+void wake_displays_for_fatal_signal(int sig) {
+  platf::wake_physical_displays();
+  std::signal(sig, SIG_DFL);
+  std::raise(sig);
+}
+#endif
+
 std::map<std::string_view, std::function<int(const char *name, int argc, char **argv)>> cmd_to_func {
   {"creds"sv, [](const char *name, int argc, char **argv) {
      return args::creds(name, argc, argv);
@@ -309,6 +317,10 @@ int main(int argc, char *argv[]) {
   on_signal(SIGINT, [&force_shutdown, &display_device_deinit_guard, shutdown_event]() {
     BOOST_LOG(info) << "Interrupt handler called"sv;
 
+#ifdef __APPLE__
+    platf::wake_physical_displays();
+#endif
+
     auto task = []() {
       BOOST_LOG(fatal) << "10 seconds passed, yet Sunshine's still running: Forcing shutdown"sv;
       logging::log_flush();
@@ -326,6 +338,10 @@ int main(int argc, char *argv[]) {
   on_signal(SIGTERM, [&force_shutdown, &display_device_deinit_guard, shutdown_event]() {
     BOOST_LOG(info) << "Terminate handler called"sv;
 
+#ifdef __APPLE__
+    platf::wake_physical_displays();
+#endif
+
     auto task = []() {
       BOOST_LOG(fatal) << "10 seconds passed, yet Sunshine's still running: Forcing shutdown"sv;
       logging::log_flush();
@@ -336,6 +352,21 @@ int main(int argc, char *argv[]) {
     shutdown_event->raise(true);
     display_device_deinit_guard = nullptr;
   });
+
+#ifdef __APPLE__
+  on_signal(SIGABRT, []() {
+    wake_displays_for_fatal_signal(SIGABRT);
+  });
+  on_signal(SIGSEGV, []() {
+    wake_displays_for_fatal_signal(SIGSEGV);
+  });
+  on_signal(SIGBUS, []() {
+    wake_displays_for_fatal_signal(SIGBUS);
+  });
+  on_signal(SIGILL, []() {
+    wake_displays_for_fatal_signal(SIGILL);
+  });
+#endif
 
 #ifdef _WIN32
   // Terminate gracefully on Windows when console window is closed
