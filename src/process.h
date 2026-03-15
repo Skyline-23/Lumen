@@ -143,6 +143,8 @@ namespace proc {
     void resume();
     void pause();
     void terminate(bool immediate = false, bool needs_refresh = true);
+    void on_stream_connected();
+    void on_stream_disconnected();
 
   private:
     int _app_id = 0;

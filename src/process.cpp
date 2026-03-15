@@ -365,7 +365,7 @@ namespace proc {
         this->virtual_display = true;
         this->virtual_display_key = device_key;
         this->display_name = virtual_display_name;
-        config::video.output_name = display_device::map_display_name(this->display_name);
+        config::video.output_name = this->display_name;
       } else {
         BOOST_LOG(warning) << "Virtual Display creation failed on macOS"sv;
       }
@@ -375,7 +375,6 @@ namespace proc {
 
     if (this->virtual_display) {
       display_device::reset_persistence();
-      physical_displays_asleep = platf::sleep_physical_displays();
     }
 
 #else
@@ -635,6 +634,23 @@ namespace proc {
     }
 
     return 0;
+  }
+
+  void proc_t::on_stream_connected() {
+#ifdef __APPLE__
+    if (virtual_display && !physical_displays_asleep) {
+      physical_displays_asleep = platf::sleep_physical_displays();
+    }
+#endif
+  }
+
+  void proc_t::on_stream_disconnected() {
+#ifdef __APPLE__
+    if (physical_displays_asleep) {
+      platf::wake_physical_displays();
+      physical_displays_asleep = false;
+    }
+#endif
   }
 
   void proc_t::resume() {

@@ -558,6 +558,22 @@ namespace platf {
     return false;
   }
 
+  void arm_display_wake_watchdog() {
+    boost::filesystem::path working_dir;
+    boost::process::v1::environment env = boost::this_process::environment();
+    std::error_code ec;
+    const auto pid = static_cast<long>(getpid());
+    std::string cmd = "/bin/sh -c 'while kill -0 " + std::to_string(pid) + " 2>/dev/null; do sleep 1; done; /usr/bin/caffeinate -u -t 1 >/dev/null 2>&1'";
+    auto child = run_command(false, false, cmd, working_dir, env, nullptr, ec, nullptr);
+    if (ec) {
+      BOOST_LOG(warning) << "Failed to arm macOS display wake watchdog: "sv << ec.message();
+      return;
+    }
+
+    child.detach();
+    BOOST_LOG(info) << "Armed macOS display wake watchdog for pid="sv << pid;
+  }
+
   bool sleep_physical_displays() {
     boost::filesystem::path working_dir;
     boost::process::v1::environment env = boost::this_process::environment();
@@ -574,6 +590,7 @@ namespace platf {
       return false;
     }
 
+    arm_display_wake_watchdog();
     BOOST_LOG(info) << "Requested macOS physical displays to sleep"sv;
     return true;
   }

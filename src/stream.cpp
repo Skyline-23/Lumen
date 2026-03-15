@@ -601,9 +601,11 @@ namespace stream {
           break;
         case ENET_EVENT_TYPE_CONNECT:
           BOOST_LOG(info) << "CLIENT CONNECTED"sv;
+          proc::proc.on_stream_connected();
           break;
         case ENET_EVENT_TYPE_DISCONNECT:
           BOOST_LOG(info) << "CLIENT DISCONNECTED"sv;
+          proc::proc.on_stream_disconnected();
           // No more clients to send video data to ^_^
           if (session->state == session::state_e::RUNNING) {
             session::stop(*session);
