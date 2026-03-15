@@ -31,6 +31,13 @@ extern "C" {
 #include "sync.h"
 #include "video.h"
 
+#ifdef __APPLE__
+  #include <CoreFoundation/CoreFoundation.h>
+  #include <CoreMedia/CoreMedia.h>
+  #include <VideoToolbox/VideoToolbox.h>
+  #include "platform/macos/av_img_t.h"
+#endif
+
 #ifdef _WIN32
   #include "platform/windows/virtual_display.h"
 extern "C" {
@@ -437,6 +444,348 @@ namespace video {
     std::unique_ptr<platf::nvenc_encode_device_t> device;
     bool force_idr = false;
   };
+
+#ifdef __APPLE__
+  class vt_compression_encode_session_t: public encode_session_t {
+  public:
+    vt_compression_encode_session_t(
+      std::unique_ptr<platf::avcodec_encode_device_t> encode_device,
+      CMVideoCodecType codec_type,
+      int width,
+      int height,
+      int bitrate,
+      int framerate
+    ):
+        device(std::move(encode_device)),
+        codec_type(codec_type),
+        width(width),
+        height(height),
+        bitrate(bitrate),
+        framerate(framerate) {
+    }
+
+    ~vt_compression_encode_session_t() override {
+      if (compression_session) {
+        VTCompressionSessionCompleteFrames(compression_session, kCMTimeInvalid);
+        VTCompressionSessionInvalidate(compression_session);
+        CFRelease(compression_session);
+      }
+      if (current_pixel_buffer) {
+        CVPixelBufferRelease(current_pixel_buffer);
+      }
+    }
+
+    int init() {
+      auto status = VTCompressionSessionCreate(
+        nullptr,
+        width,
+        height,
+        codec_type,
+        nullptr,
+        nullptr,
+        nullptr,
+        &vt_compression_encode_session_t::compression_output_callback,
+        this,
+        &compression_session
+      );
+      if (status != noErr) {
+        BOOST_LOG(error) << "VTCompressionSessionCreate failed: "sv << status;
+        return -1;
+      }
+
+      VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_RealTime, kCFBooleanTrue);
+      VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_AllowFrameReordering, kCFBooleanFalse);
+
+      auto expected_framerate = cfnumber_from_int(framerate);
+      if (expected_framerate) {
+        VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_ExpectedFrameRate, expected_framerate.get());
+      }
+
+      auto average_bitrate = cfnumber_from_int(bitrate);
+      if (average_bitrate) {
+        VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_AverageBitRate, average_bitrate.get());
+      }
+
+      auto max_keyframe_interval = cfnumber_from_int(std::numeric_limits<int>::max());
+      if (max_keyframe_interval) {
+        VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_MaxKeyFrameInterval, max_keyframe_interval.get());
+      }
+
+      if (codec_type == kCMVideoCodecType_H264) {
+        VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_ProfileLevel, kVTProfileLevel_H264_High_AutoLevel);
+      } else if (codec_type == kCMVideoCodecType_HEVC) {
+        VTSessionSetProperty(compression_session, kVTCompressionPropertyKey_ProfileLevel, kVTProfileLevel_HEVC_Main_AutoLevel);
+      }
+
+      status = VTCompressionSessionPrepareToEncodeFrames(compression_session);
+      if (status != noErr) {
+        BOOST_LOG(error) << "VTCompressionSessionPrepareToEncodeFrames failed: "sv << status;
+        return -1;
+      }
+
+      return 0;
+    }
+
+    int convert(platf::img_t &img) override {
+      auto *av_img = dynamic_cast<platf::av_img_t *>(&img);
+      if (!av_img || !av_img->pixel_buffer || !av_img->pixel_buffer->buf) {
+        return -1;
+      }
+
+      if (current_pixel_buffer) {
+        CVPixelBufferRelease(current_pixel_buffer);
+      }
+      current_pixel_buffer = (CVPixelBufferRef) CFRetain(av_img->pixel_buffer->buf);
+      return 0;
+    }
+
+    void request_idr_frame() override {
+      force_idr = true;
+    }
+
+    void request_normal_frame() override {
+      force_idr = false;
+    }
+
+    void invalidate_ref_frames(int64_t first_frame, int64_t last_frame) override {
+      force_idr = true;
+    }
+
+    int encode_frame(int64_t frame_nr, safe::mail_raw_t::queue_t<packet_t> &packets, void *channel_data, std::optional<std::chrono::steady_clock::time_point> frame_timestamp) {
+      if (!compression_session || !current_pixel_buffer) {
+        return -1;
+      }
+
+      pending_done = false;
+      pending_status = noErr;
+      pending_data.clear();
+      pending_idr = false;
+      pending_frame_index = frame_nr;
+
+      cf_dict_t frame_properties;
+      if (force_idr) {
+        const void *keys[] = {kVTEncodeFrameOptionKey_ForceKeyFrame};
+        const void *values[] = {kCFBooleanTrue};
+        frame_properties.reset(CFDictionaryCreate(nullptr, keys, values, 1, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks));
+      }
+
+      CMTime pts = CMTimeMake(frame_nr, framerate > 0 ? framerate : 60);
+      auto status = VTCompressionSessionEncodeFrame(
+        compression_session,
+        current_pixel_buffer,
+        pts,
+        kCMTimeInvalid,
+        frame_properties.get(),
+        nullptr,
+        nullptr
+      );
+      if (status != noErr) {
+        BOOST_LOG(error) << "VTCompressionSessionEncodeFrame failed: "sv << status;
+        return -1;
+      }
+
+      std::unique_lock<std::mutex> lock(pending_mutex);
+      pending_cv.wait(lock, [&] { return pending_done; });
+      if (pending_status != noErr) {
+        BOOST_LOG(error) << "VT encode callback failed: "sv << pending_status;
+        return -1;
+      }
+      if (pending_data.empty()) {
+        BOOST_LOG(error) << "VT encode callback returned empty payload"sv;
+        return -1;
+      }
+
+      auto packet = std::make_unique<packet_raw_generic>(std::move(pending_data), frame_nr, pending_idr);
+      packet->channel_data = channel_data;
+      packet->frame_timestamp = frame_timestamp;
+      packets->raise(std::move(packet));
+      force_idr = false;
+      return 0;
+    }
+
+  private:
+    struct cfnumber_deleter {
+      void operator()(CFNumberRef value) const {
+        if (value) {
+          CFRelease(value);
+        }
+      }
+    };
+
+    struct cfdict_deleter {
+      void operator()(CFDictionaryRef value) const {
+        if (value) {
+          CFRelease(value);
+        }
+      }
+    };
+
+    using cfnumber_t = std::unique_ptr<std::remove_pointer_t<CFNumberRef>, cfnumber_deleter>;
+    using cf_dict_t = std::unique_ptr<std::remove_pointer_t<CFDictionaryRef>, cfdict_deleter>;
+
+    static cfnumber_t cfnumber_from_int(int value) {
+      auto number = CFNumberCreate(nullptr, kCFNumberIntType, &value);
+      return cfnumber_t(number);
+    }
+
+    static void compression_output_callback(
+      void *outputCallbackRefCon,
+      void *sourceFrameRefCon,
+      OSStatus status,
+      VTEncodeInfoFlags infoFlags,
+      CMSampleBufferRef sampleBuffer
+    ) {
+      static_cast<vt_compression_encode_session_t *>(outputCallbackRefCon)->handle_compression_output(status, sampleBuffer);
+    }
+
+    void handle_compression_output(OSStatus status, CMSampleBufferRef sampleBuffer) {
+      std::lock_guard<std::mutex> lock(pending_mutex);
+      pending_status = status;
+      pending_done = true;
+      pending_data.clear();
+      pending_idr = false;
+
+      if (status == noErr && sampleBuffer && CMSampleBufferDataIsReady(sampleBuffer)) {
+        pending_idr = sample_buffer_is_idr(sampleBuffer);
+        if (pending_idr) {
+          append_parameter_sets(sampleBuffer, pending_data);
+        }
+        append_sample_buffer_nals(sampleBuffer, pending_data);
+      }
+
+      pending_cv.notify_one();
+    }
+
+    static bool sample_buffer_is_idr(CMSampleBufferRef sampleBuffer) {
+      CFArrayRef attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, false);
+      if (!attachments || CFArrayGetCount(attachments) == 0) {
+        return true;
+      }
+
+      CFDictionaryRef attachment = (CFDictionaryRef) CFArrayGetValueAtIndex(attachments, 0);
+      CFBooleanRef not_sync = (CFBooleanRef) CFDictionaryGetValue(attachment, kCMSampleAttachmentKey_NotSync);
+      return not_sync == nullptr || not_sync == kCFBooleanFalse;
+    }
+
+    void append_parameter_sets(CMSampleBufferRef sampleBuffer, std::vector<uint8_t> &output) {
+      auto format_description = CMSampleBufferGetFormatDescription(sampleBuffer);
+      if (!format_description) {
+        return;
+      }
+
+      if (codec_type == kCMVideoCodecType_H264) {
+        size_t set_count = 0;
+        size_t header_length = 0;
+        OSStatus status = CMVideoFormatDescriptionGetH264ParameterSetAtIndex(format_description, 0, nullptr, nullptr, &set_count, &header_length);
+        if (status != noErr) {
+          return;
+        }
+
+        for (size_t index = 0; index < set_count; ++index) {
+          const uint8_t *set_ptr = nullptr;
+          size_t set_size = 0;
+          if (CMVideoFormatDescriptionGetH264ParameterSetAtIndex(format_description, index, &set_ptr, &set_size, nullptr, nullptr) == noErr && set_ptr && set_size > 0) {
+            output.insert(output.end(), {0, 0, 0, 1});
+            output.insert(output.end(), set_ptr, set_ptr + set_size);
+          }
+        }
+      } else if (codec_type == kCMVideoCodecType_HEVC) {
+        size_t set_count = 0;
+        size_t header_length = 0;
+        OSStatus status = CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(format_description, 0, nullptr, nullptr, &set_count, &header_length, nullptr);
+        if (status != noErr) {
+          return;
+        }
+
+        for (size_t index = 0; index < set_count; ++index) {
+          const uint8_t *set_ptr = nullptr;
+          size_t set_size = 0;
+          if (CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(format_description, index, &set_ptr, &set_size, nullptr, nullptr, nullptr) == noErr && set_ptr && set_size > 0) {
+            output.insert(output.end(), {0, 0, 0, 1});
+            output.insert(output.end(), set_ptr, set_ptr + set_size);
+          }
+        }
+      }
+    }
+
+    static void append_sample_buffer_nals(CMSampleBufferRef sampleBuffer, std::vector<uint8_t> &output) {
+      auto data_buffer = CMSampleBufferGetDataBuffer(sampleBuffer);
+      if (!data_buffer) {
+        return;
+      }
+
+      size_t total_length = (size_t) CMBlockBufferGetDataLength(data_buffer);
+      std::vector<uint8_t> buffer(total_length);
+      if (CMBlockBufferCopyDataBytes(data_buffer, 0, total_length, buffer.data()) != noErr) {
+        return;
+      }
+
+      size_t offset = 0;
+      while (offset + 4 <= buffer.size()) {
+        uint32_t nal_length = (uint32_t(buffer[offset]) << 24) | (uint32_t(buffer[offset + 1]) << 16) | (uint32_t(buffer[offset + 2]) << 8) | uint32_t(buffer[offset + 3]);
+        offset += 4;
+        if (offset + nal_length > buffer.size()) {
+          break;
+        }
+        output.insert(output.end(), {0, 0, 0, 1});
+        output.insert(output.end(), buffer.begin() + (long) offset, buffer.begin() + (long) (offset + nal_length));
+        offset += nal_length;
+      }
+    }
+
+    std::unique_ptr<platf::avcodec_encode_device_t> device;
+    VTCompressionSessionRef compression_session {nullptr};
+    CVPixelBufferRef current_pixel_buffer {nullptr};
+    CMVideoCodecType codec_type {};
+    int width {};
+    int height {};
+    int bitrate {};
+    int framerate {};
+    bool force_idr {false};
+    int64_t pending_frame_index {0};
+    std::mutex pending_mutex;
+    std::condition_variable pending_cv;
+    bool pending_done {false};
+    OSStatus pending_status {noErr};
+    std::vector<uint8_t> pending_data;
+    bool pending_idr {false};
+  };
+
+  std::unique_ptr<encode_session_t> make_vtcompression_encode_session(
+    const encoder_t &encoder,
+    const config_t &config,
+    int width,
+    int height,
+    std::unique_ptr<platf::avcodec_encode_device_t> encode_device
+  ) {
+    CMVideoCodecType codec_type {};
+    switch (config.videoFormat) {
+      case 0:
+        codec_type = kCMVideoCodecType_H264;
+        break;
+      case 1:
+        codec_type = kCMVideoCodecType_HEVC;
+        break;
+      default:
+        return nullptr;
+    }
+
+    auto session = std::make_unique<vt_compression_encode_session_t>(
+      std::move(encode_device),
+      codec_type,
+      width,
+      height,
+      config.bitrate * 1000,
+      config.framerate
+    );
+
+    if (session->init()) {
+      return nullptr;
+    }
+
+    return session;
+  }
+#endif
 
   struct sync_session_ctx_t {
     safe::signal_t *join_event;
@@ -1414,7 +1763,25 @@ namespace video {
     auto &vps = session.vps;
 
     // send the frame to the encoder
+    BOOST_LOG(info) << "encode_avcodec send_frame start frame_nr="sv << frame_nr << " codec="sv << ctx->codec->name;
+    BOOST_LOG(info) << "encode_avcodec frame format="sv << frame->format
+                     << " width="sv << frame->width
+                     << " height="sv << frame->height
+                     << " key="sv << ((frame->flags & AV_FRAME_FLAG_KEY) ? 1 : 0)
+                     << " pict_type="sv << frame->pict_type
+                     << " color_range="sv << frame->color_range
+                     << " color_primaries="sv << frame->color_primaries
+                     << " color_trc="sv << frame->color_trc
+                     << " colorspace="sv << frame->colorspace
+                     << " chroma_location="sv << frame->chroma_location
+                     << " hw_frames_ctx="sv << (frame->hw_frames_ctx ? "set" : "null");
+    BOOST_LOG(info) << "encode_avcodec ctx pix_fmt="sv << ctx->pix_fmt
+                     << " sw_pix_fmt="sv << ctx->sw_pix_fmt
+                     << " width="sv << ctx->width
+                     << " height="sv << ctx->height
+                     << " hw_frames_ctx="sv << (ctx->hw_frames_ctx ? "set" : "null");
     auto ret = avcodec_send_frame(ctx.get(), frame);
+    BOOST_LOG(info) << "encode_avcodec send_frame returned "sv << ret;
     if (ret < 0) {
       char err_str[AV_ERROR_MAX_STRING_SIZE] {0};
       BOOST_LOG(error) << "Could not send a frame for encoding: "sv << av_make_error_string(err_str, AV_ERROR_MAX_STRING_SIZE, ret);
@@ -1426,7 +1793,9 @@ namespace video {
       auto packet = std::make_unique<packet_raw_avcodec>();
       auto av_packet = packet.get()->av_packet;
 
+      BOOST_LOG(info) << "encode_avcodec receive_packet start frame_nr="sv << frame_nr;
       ret = avcodec_receive_packet(ctx.get(), av_packet);
+      BOOST_LOG(info) << "encode_avcodec receive_packet returned "sv << ret;
       if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
         return 0;
       } else if (ret < 0) {
@@ -1904,7 +2273,8 @@ namespace video {
           }
         }
 
-        if (encode_device_final->set_frame(frame.release(), ctx->hw_frames_ctx)) {
+        AVBufferRef *frame_hw_frames_ctx = videotoolbox_direct_frames ? nullptr : ctx->hw_frames_ctx;
+        if (encode_device_final->set_frame(frame.release(), frame_hw_frames_ctx)) {
           return nullptr;
         }
       }
@@ -2203,14 +2573,17 @@ namespace video {
 
     auto session = make_encode_session(disp, encoder, ctx.config, img.width, img.height, std::move(encode_device));
     if (!session) {
+      BOOST_LOG(error) << "Failed to create synced encode session"sv;
       return std::nullopt;
     }
 
     // Load the initial image to prepare for encoding
+    BOOST_LOG(info) << "Preparing initial video frame for synced session"sv;
     if (session->convert(img)) {
       BOOST_LOG(error) << "Could not convert initial image"sv;
       return std::nullopt;
     }
+    BOOST_LOG(info) << "Initial video frame prepared for synced session"sv;
 
     encode_session.session = std::move(session);
 
@@ -2276,6 +2649,8 @@ namespace video {
     auto ec = platf::capture_e::ok;
     while (encode_session_ctx_queue.running()) {
       auto push_captured_image_callback = [&](std::shared_ptr<platf::img_t> &&img, bool frame_captured) -> bool {
+        BOOST_LOG(info) << "push_captured_image_callback frame_captured="sv << frame_captured;
+        BOOST_LOG(info) << "push_captured_image_callback before pending session drain"sv;
         while (encode_session_ctx_queue.peek()) {
           auto encode_session_ctx = encode_session_ctx_queue.pop();
           if (!encode_session_ctx) {
@@ -2292,9 +2667,12 @@ namespace video {
 
           synced_sessions.emplace_back(std::move(*encode_session));
         }
+        BOOST_LOG(info) << "push_captured_image_callback after pending session drain"sv;
+        BOOST_LOG(info) << "push_captured_image_callback synced_sessions="sv << synced_sessions.size();
 
         KITTY_WHILE_LOOP(auto pos = std::begin(synced_sessions), pos != std::end(synced_sessions), {
           auto ctx = pos->ctx;
+          BOOST_LOG(info) << "Processing synced video session frame_nr="sv << ctx->frame_nr;
           if (ctx->shutdown_event->peek()) {
             // Let waiting thread know it can delete shutdown_event
             ctx->join_event->raise(true);
@@ -2322,18 +2700,23 @@ namespace video {
 
             continue;
           }
+          if (frame_captured) {
+            BOOST_LOG(info) << "Converted captured image for synced session"sv;
+          }
 
           std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
           if (img) {
             frame_timestamp = img->frame_timestamp;
           }
 
+          BOOST_LOG(info) << "About to encode synced video packet frame_nr="sv << ctx->frame_nr;
           if (encode(ctx->frame_nr++, *pos->session, ctx->packets, ctx->channel_data, frame_timestamp)) {
             BOOST_LOG(error) << "Could not encode video packet"sv;
             ctx->shutdown_event->raise(true);
 
             continue;
           }
+          BOOST_LOG(info) << "Encoded video packet for synced session"sv;
 
           pos->session->request_normal_frame();
 
@@ -2355,6 +2738,7 @@ namespace video {
       };
 
       auto status = disp->capture(push_captured_image_callback, pull_free_image_callback, &display_cursor);
+      BOOST_LOG(info) << "Display capture loop exited with status "sv << static_cast<int>(status);
       switch (status) {
         case platf::capture_e::reinit:
         case platf::capture_e::error:

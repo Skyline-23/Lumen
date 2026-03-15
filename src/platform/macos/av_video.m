@@ -176,6 +176,11 @@ static NSString *const kSunshineVideoCaptureQueue = @"dev.lizardbyte.sunshine.vi
   [self.stream release];
 #endif
 
+  if (self.pendingSampleBuffer != nil) {
+    CFRelease(self.pendingSampleBuffer);
+    self.pendingSampleBuffer = nil;
+  }
+
   [self.captureCallback release];
   [self.legacyVideoOutputs release];
   [self.legacyCaptureCallbacks release];
@@ -303,25 +308,65 @@ static NSString *const kSunshineVideoCaptureQueue = @"dev.lizardbyte.sunshine.vi
   [stream release];
 }
 
-- (dispatch_semaphore_t)captureWithScreenCaptureKit:(FrameCallbackBlock)frameCallback API_AVAILABLE(macos(12.3)) {
-  self.captureSignal = dispatch_semaphore_create(0);
-  self.captureCallback = frameCallback;
-
-  NSError *error = nil;
-  if (![self startScreenCaptureKitStream:&error]) {
-    self.captureCallback = nil;
-    self.captureSignal = nil;
-    return nil;
+- (BOOL)beginScreenCaptureKitCapture:(NSError **)error API_AVAILABLE(macos(12.3)) {
+  self.frameAvailableSignal = dispatch_semaphore_create(0);
+  self.captureStopped = NO;
+  self.captureSignal = nil;
+  self.captureCallback = nil;
+  if (self.pendingSampleBuffer != nil) {
+    CFRelease(self.pendingSampleBuffer);
+    self.pendingSampleBuffer = nil;
   }
 
-  return self.captureSignal;
+  if (![self startScreenCaptureKitStream:error]) {
+    self.frameAvailableSignal = nil;
+    return NO;
+  }
+
+  return YES;
+}
+
+- (CMSampleBufferRef)copyNextScreenCaptureKitSampleBuffer API_AVAILABLE(macos(12.3)) {
+  while (true) {
+    dispatch_semaphore_wait(self.frameAvailableSignal, DISPATCH_TIME_FOREVER);
+
+    CMSampleBufferRef sampleBuffer = nil;
+    BOOL captureStopped = NO;
+    @synchronized(self) {
+      sampleBuffer = self.pendingSampleBuffer;
+      self.pendingSampleBuffer = nil;
+      captureStopped = self.captureStopped;
+    }
+
+    if (sampleBuffer == nil) {
+      if (captureStopped) {
+        NSLog(@"AVVideo ScreenCaptureKit capture loop stopping because captureStopped=YES");
+        break;
+      }
+      NSLog(@"AVVideo ScreenCaptureKit capture loop woke without sample buffer");
+      continue;
+    }
+    NSLog(@"AVVideo ScreenCaptureKit produced sample buffer");
+    return sampleBuffer;
+  }
+
+  return nil;
+}
+
+- (void)finishScreenCaptureKitCapture API_AVAILABLE(macos(12.3)) {
+  @synchronized(self) {
+    self.captureStopped = YES;
+  }
+  NSLog(@"AVVideo finishScreenCaptureKitCapture called");
+  [self stopScreenCaptureKitStream];
+  self.frameAvailableSignal = nil;
 }
 #endif
 
 - (dispatch_semaphore_t)capture:(FrameCallbackBlock)frameCallback {
 #if SUNSHINE_HAVE_SCREENCAPTUREKIT
   if ([self screenCaptureKitAvailableForDisplay]) {
-    return [self captureWithScreenCaptureKit:frameCallback];
+    return nil;
   }
 #endif
 
@@ -367,35 +412,34 @@ static NSString *const kSunshineVideoCaptureQueue = @"dev.lizardbyte.sunshine.vi
     return;
   }
 
-  FrameCallbackBlock callback = self.captureCallback;
-  if (callback == nil) {
+  dispatch_semaphore_t frameSignal = self.frameAvailableSignal;
+  if (frameSignal == nil) {
     return;
   }
 
-  if (!callback(sampleBuffer)) {
-    dispatch_semaphore_t signal = self.captureSignal;
-    self.captureCallback = nil;
-    self.captureSignal = nil;
-
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-      @synchronized(self) {
-        [self stopScreenCaptureKitStream];
-      }
-    });
-
-    if (signal != nil) {
-      dispatch_semaphore_signal(signal);
+  @synchronized(self) {
+    if (self.pendingSampleBuffer != nil) {
+      CFRelease(self.pendingSampleBuffer);
     }
+    self.pendingSampleBuffer = (CMSampleBufferRef) CFRetain(sampleBuffer);
   }
+  NSLog(@"AVVideo didOutputSampleBuffer queued screen sample");
+  dispatch_semaphore_signal(frameSignal);
 }
 
 - (void)stream:(SCStream *)stream didStopWithError:(NSError *)error API_AVAILABLE(macos(12.3)) {
-  dispatch_semaphore_t signal = self.captureSignal;
-  self.captureCallback = nil;
-  self.captureSignal = nil;
+  dispatch_semaphore_t frameSignal = self.frameAvailableSignal;
+  NSLog(@"AVVideo ScreenCaptureKit stream stopped with error: %@", error);
+  @synchronized(self) {
+    self.captureStopped = YES;
+    if (self.pendingSampleBuffer != nil) {
+      CFRelease(self.pendingSampleBuffer);
+      self.pendingSampleBuffer = nil;
+    }
+  }
 
-  if (signal != nil) {
-    dispatch_semaphore_signal(signal);
+  if (frameSignal != nil) {
+    dispatch_semaphore_signal(frameSignal);
   }
 }
 #endif

@@ -36,11 +36,19 @@ typedef bool (^FrameCallbackBlock)(CMSampleBufferRef);
 @property (nonatomic, assign) NSMapTable<AVCaptureConnection *, dispatch_semaphore_t> *legacyCaptureSignals;
 @property (nonatomic, copy) FrameCallbackBlock captureCallback;
 @property (nonatomic, assign) dispatch_semaphore_t captureSignal;
+@property (nonatomic, assign) dispatch_semaphore_t frameAvailableSignal;
+@property (nonatomic, assign) CMSampleBufferRef pendingSampleBuffer;
+@property (nonatomic, assign) BOOL captureStopped;
 
 #if SUNSHINE_HAVE_SCREENCAPTUREKIT
 @property (nonatomic, assign) SCDisplay *shareableDisplay;
 @property (nonatomic, assign) SCStream *stream;
 @property (nonatomic, assign) dispatch_queue_t sampleHandlerQueue;
+
+- (BOOL)screenCaptureKitAvailableForDisplay API_AVAILABLE(macos(12.3));
+- (BOOL)beginScreenCaptureKitCapture:(NSError **)error API_AVAILABLE(macos(12.3));
+- (CMSampleBufferRef)copyNextScreenCaptureKitSampleBuffer API_AVAILABLE(macos(12.3));
+- (void)finishScreenCaptureKitCapture API_AVAILABLE(macos(12.3));
 #endif
 
 + (NSArray<NSDictionary *> *)displayNames;

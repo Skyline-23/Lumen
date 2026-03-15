@@ -43,8 +43,7 @@ These parts already provide value and should remain the base of the fork:
 - RTSP / streaming control flow
 - web UI and configuration system
 - app launching / process management
-- FFmpeg integration
-- VideoToolbox encoder path
+- FFmpeg integration for non-macOS paths and general media utilities
 - platform abstraction in `src/platform/common.h`
 
 ### Replace
@@ -55,6 +54,7 @@ These macOS-specific parts should be considered rewrite targets:
 - `src/platform/macos/av_audio.m`
 - `src/platform/macos/microphone.mm`
 - portions of `src/platform/macos/display.mm`
+- macOS FFmpeg `videotoolbox` encode bridge inside `src/video.cpp`
 - permission handling in `src/platform/macos/misc.mm`
 - macOS packaging in `cmake/packaging/macos.cmake`
 
@@ -63,12 +63,13 @@ These macOS-specific parts should be considered rewrite targets:
 The macOS pipeline for the DMG release should be:
 
 - capture backend: `ScreenCaptureKit`
+- frame processing: `Metal`
 - system audio capture: `ScreenCaptureKit` audio output
 - microphone capture: `ScreenCaptureKit` microphone path or AVFoundation fallback
-- hardware video encode: `VideoToolbox`
+- hardware video encode: native `VTCompressionSession`
 - audio encode: existing Opus path in `src/audio.cpp`
 
-This keeps the current core encoding and transport stack while replacing only the macOS ingestion path.
+This keeps the current session/control/audio stack while replacing the macOS video path end-to-end.
 
 ## Platform Strategy
 
@@ -108,7 +109,7 @@ Replace the current macOS screen capture implementation with `ScreenCaptureKit`.
 
 ### Why
 
-Current code uses `AVCaptureScreenInput`, which is the wrong long-term foundation for the fork's macOS direction.
+The old Objective-C screen capture path and the FFmpeg `hevc_videotoolbox` wrapper have both proven too fragile for a product-quality macOS host.
 
 ### Scope
 
@@ -136,9 +137,10 @@ Likely modified files:
 
 - keep `display_t` as the platform-facing contract
 - move Objective-C / Objective-C++ stream lifecycle into a dedicated `capture_sck` object
-- keep `display.mm` thin, mostly adapting `ScreenCaptureKit` output to `img_t`
+- keep `display.mm` thin and focused on frame handoff
 - prefer latest-frame behavior over deep buffering
 - start with single-display capture only
+- do not rely on FFmpeg `*_videotoolbox` encoders for the macOS host path
 
 ### Acceptance Criteria
 
@@ -147,7 +149,47 @@ Likely modified files:
 - frames reach the existing encode path
 - no indefinite hangs on permission denial
 
-## 2. Native System Audio Capture
+## 2. Native Video Encode Path
+
+### Objective
+
+Replace the macOS FFmpeg `videotoolbox` wrapper path with a native `VTCompressionSession` implementation.
+
+### Why
+
+The current macOS host can negotiate RTSP/audio/control successfully, but the first real HEVC frame consistently crashes inside FFmpeg's `hevc_videotoolbox` `avcodec_send_frame()` path. That makes the wrapper path an unreliable foundation for the DMG release.
+
+### Scope
+
+- create a macOS-only encoder implementation backed by `VTCompressionSession`
+- feed it frames sourced from `ScreenCaptureKit`, with optional `Metal` preprocessing
+- extract VPS/SPS/PPS / sample attachments required by the current packetization logic
+- preserve existing Apollo session/control/transport behavior
+- keep H.264 and HEVC support; AV1 remains non-goal for v1
+
+### Files
+
+Likely new files:
+
+- `src/platform/macos/vt_encode.h`
+- `src/platform/macos/vt_encode.mm`
+- `src/platform/macos/metal_convert.h`
+- `src/platform/macos/metal_convert.mm`
+
+Likely modified files:
+
+- `src/video.cpp`
+- `src/video.h`
+- `src/platform/macos/display.mm`
+
+### Acceptance Criteria
+
+- first HEVC frame no longer crashes
+- repeated stream start/stop works
+- H.264 and HEVC both encode through native `VTCompressionSession`
+- Apollo continues using the current transport/session stack
+
+## 3. Native System Audio Capture
 
 ### Objective
 
@@ -196,7 +238,7 @@ This is better than overloading `audio_sink` with meanings that no longer fit a 
 - user can enable or disable microphone separately
 - audio starts and stops cleanly across repeated sessions
 
-## 3. Permission and Onboarding UX
+## 4. Permission and Onboarding UX
 
 ### Objective
 

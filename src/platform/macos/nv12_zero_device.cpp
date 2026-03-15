@@ -38,16 +38,23 @@ namespace platf {
     //
     // The presence of the AVBufferRef allows FFmpeg to simply add a reference to the buffer
     // rather than having to perform a deep copy of the data buffers in avcodec_send_frame().
-    this->frame->buf[0] = av_buffer_create((uint8_t *) CFRetain(av_img->pixel_buffer->buf), 0, free_buffer, nullptr, 0);
+    this->frame->buf[0] = av_buffer_create((uint8_t *) CFRetain(av_img->pixel_buffer->buf), 1, free_buffer, nullptr, 0);
 
     // Place a CVPixelBufferRef at data[3] as required by AV_PIX_FMT_VIDEOTOOLBOX
-    this->frame->data[3] = (uint8_t *) av_img->pixel_buffer->buf;
+    this->frame->data[3] = this->frame->buf[0]->data;
+
+    BOOST_LOG(info) << "nv12_zero_device convert frame hw_frames_ctx="sv << (this->frame->hw_frames_ctx ? "set" : "null")
+                    << " buf0="sv << (this->frame->buf[0] ? "set" : "null")
+                    << " data3="sv << (this->frame->data[3] ? "set" : "null");
 
     return 0;
   }
 
   int nv12_zero_device::set_frame(AVFrame *frame, AVBufferRef *hw_frames_ctx) {
     this->frame = frame;
+
+    BOOST_LOG(info) << "nv12_zero_device set_frame incoming hw_frames_ctx="sv << (hw_frames_ctx ? "set" : "null")
+                    << " frame hw_frames_ctx="sv << (this->frame->hw_frames_ctx ? "set" : "null");
 
     resolution_fn(this->display, frame->width, frame->height);
 

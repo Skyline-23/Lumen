@@ -1907,17 +1907,21 @@ namespace stream {
     while_starting_do_nothing(session->state);
 
     auto ref = broadcast.ref();
-    auto error = recv_ping(session, ref, socket_e::video, session->video.ping_payload, session->video.peer, config::stream.ping_timeout);
-    if (error < 0) {
+    BOOST_LOG(info) << "Video thread waiting for initial UDP ping"sv;
+    auto ping_result = recv_ping(session, ref, socket_e::video, session->video.ping_payload, session->video.peer, config::stream.ping_timeout);
+    if (ping_result < 0) {
+      BOOST_LOG(error) << "Video thread failed while waiting for initial UDP ping"sv;
       return;
     }
+    BOOST_LOG(info) << "Video thread established UDP peer ["sv << session->video.peer.address().to_string() << ':' << session->video.peer.port() << ']';
 
     // Enable local prioritization and QoS tagging on video traffic if requested by the client
     auto address = session->video.peer.address();
     session->video.qos = platf::enable_socket_qos(ref->video_sock.native_handle(), address, session->video.peer.port(), platf::qos_data_type_e::video, session->config.videoQosType != 0);
 
-    BOOST_LOG(debug) << "Start capturing Video"sv;
+    BOOST_LOG(info) << "Starting video capture"sv;
     video::capture(session->mail, session->config.monitor, session);
+    BOOST_LOG(info) << "Video capture ended"sv;
   }
 
   void audioThread(session_t *session) {

@@ -21,6 +21,39 @@ namespace fs = std::filesystem;
 namespace platf {
   using namespace std::literals;
 
+  namespace {
+    struct display_capture_context_t {
+      const display_t::push_captured_image_cb_t *push_cb;
+      const display_t::pull_free_image_cb_t *pull_cb;
+    };
+
+    bool materialize_captured_frame(
+      std::shared_ptr<img_t> &img_out,
+      CMSampleBufferRef sampleBuffer
+    ) {
+      auto new_sample_buffer = std::make_shared<av_sample_buf_t>(sampleBuffer);
+      auto new_pixel_buffer = std::make_shared<av_pixel_buf_t>(new_sample_buffer->buf);
+      auto av_img = std::static_pointer_cast<av_img_t>(img_out);
+
+      auto old_data_retainer = std::make_shared<temp_retain_av_img_t>(
+        av_img->sample_buffer,
+        av_img->pixel_buffer,
+        img_out->data
+      );
+
+      av_img->sample_buffer = new_sample_buffer;
+      av_img->pixel_buffer = new_pixel_buffer;
+      img_out->data = new_pixel_buffer->data();
+
+      img_out->width = (int) CVPixelBufferGetWidth(new_pixel_buffer->buf);
+      img_out->height = (int) CVPixelBufferGetHeight(new_pixel_buffer->buf);
+      img_out->row_pitch = (int) CVPixelBufferGetBytesPerRow(new_pixel_buffer->buf);
+      img_out->pixel_pitch = img_out->row_pitch / img_out->width;
+
+      return true;
+    }
+  }  // namespace
+
   struct av_display_t: public display_t {
     AVVideo *av_capture {};
     CGDirectDisplayID display_id {};
@@ -30,36 +63,57 @@ namespace platf {
     }
 
     capture_e capture(const push_captured_image_cb_t &push_captured_image_cb, const pull_free_image_cb_t &pull_free_image_cb, bool *cursor) override {
-      auto signal = [av_capture capture:^(CMSampleBufferRef sampleBuffer) {
-        auto new_sample_buffer = std::make_shared<av_sample_buf_t>(sampleBuffer);
-        auto new_pixel_buffer = std::make_shared<av_pixel_buf_t>(new_sample_buffer->buf);
+#if SUNSHINE_HAVE_SCREENCAPTUREKIT
+      if ([av_capture screenCaptureKitAvailableForDisplay]) {
+        NSError *capture_error = nil;
+        if (![av_capture beginScreenCaptureKitCapture:&capture_error]) {
+          BOOST_LOG(error) << "Failed to start macOS display capture."sv;
+          return capture_e::error;
+        }
 
+        while (true) {
+          CMSampleBufferRef sampleBuffer = [av_capture copyNextScreenCaptureKitSampleBuffer];
+          if (sampleBuffer == nil) {
+            break;
+          }
+
+          std::shared_ptr<img_t> img_out;
+          if (!pull_free_image_cb(img_out)) {
+            CFRelease(sampleBuffer);
+            [av_capture finishScreenCaptureKitCapture];
+            return capture_e::ok;
+          }
+          materialize_captured_frame(img_out, sampleBuffer);
+
+          const bool keep_capturing = push_captured_image_cb(std::move(img_out), true);
+          CFRelease(sampleBuffer);
+
+          if (!keep_capturing) {
+            [av_capture finishScreenCaptureKitCapture];
+            return capture_e::ok;
+          }
+        }
+
+        [av_capture finishScreenCaptureKitCapture];
+        return capture_e::ok;
+      }
+#endif
+
+      auto *capture_context = new display_capture_context_t {
+        &push_captured_image_cb,
+        &pull_free_image_cb,
+      };
+
+      auto signal = [av_capture capture:^bool(CMSampleBufferRef sampleBuffer) {
         std::shared_ptr<img_t> img_out;
-        if (!pull_free_image_cb(img_out)) {
+        if (!(*capture_context->pull_cb)(img_out)) {
           // got interrupt signal
           // returning false here stops capture backend
           return false;
         }
-        auto av_img = std::static_pointer_cast<av_img_t>(img_out);
+        materialize_captured_frame(img_out, sampleBuffer);
 
-        auto old_data_retainer = std::make_shared<temp_retain_av_img_t>(
-          av_img->sample_buffer,
-          av_img->pixel_buffer,
-          img_out->data
-        );
-
-        av_img->sample_buffer = new_sample_buffer;
-        av_img->pixel_buffer = new_pixel_buffer;
-        img_out->data = new_pixel_buffer->data();
-
-        img_out->width = (int) CVPixelBufferGetWidth(new_pixel_buffer->buf);
-        img_out->height = (int) CVPixelBufferGetHeight(new_pixel_buffer->buf);
-        img_out->row_pitch = (int) CVPixelBufferGetBytesPerRow(new_pixel_buffer->buf);
-        img_out->pixel_pitch = img_out->row_pitch / img_out->width;
-
-        old_data_retainer = nullptr;
-
-        if (!push_captured_image_cb(std::move(img_out), true)) {
+        if (!(*capture_context->push_cb)(std::move(img_out), true)) {
           // got interrupt signal
           // returning false here stops capture backend
           return false;
@@ -69,12 +123,14 @@ namespace platf {
       }];
 
       if (signal == nullptr) {
+        delete capture_context;
         BOOST_LOG(error) << "Failed to start macOS display capture."sv;
         return capture_e::error;
       }
 
       // FIXME: We should time out if an image isn't returned for a while
       dispatch_semaphore_wait(signal, DISPATCH_TIME_FOREVER);
+      delete capture_context;
 
       return capture_e::ok;
     }
@@ -108,6 +164,29 @@ namespace platf {
         return 1;
       }
 
+#if SUNSHINE_HAVE_SCREENCAPTUREKIT
+      if ([av_capture screenCaptureKitAvailableForDisplay]) {
+        NSError *capture_error = nil;
+        if (![av_capture beginScreenCaptureKitCapture:&capture_error]) {
+          BOOST_LOG(error) << "Failed to start macOS dummy capture frame."sv;
+          return 1;
+        }
+
+        CMSampleBufferRef sampleBuffer = [av_capture copyNextScreenCaptureKitSampleBuffer];
+        if (sampleBuffer == nil) {
+          [av_capture finishScreenCaptureKitCapture];
+          BOOST_LOG(error) << "Failed to receive macOS dummy capture frame."sv;
+          return 1;
+        }
+        std::shared_ptr<img_t> img_out(img, [](img_t *) {});
+        materialize_captured_frame(img_out, sampleBuffer);
+
+        CFRelease(sampleBuffer);
+        [av_capture finishScreenCaptureKitCapture];
+        return 0;
+      }
+#endif
+
       auto signal = [av_capture capture:^(CMSampleBufferRef sampleBuffer) {
         auto new_sample_buffer = std::make_shared<av_sample_buf_t>(sampleBuffer);
         auto new_pixel_buffer = std::make_shared<av_pixel_buf_t>(new_sample_buffer->buf);
@@ -128,8 +207,6 @@ namespace platf {
         img->height = (int) CVPixelBufferGetHeight(new_pixel_buffer->buf);
         img->row_pitch = (int) CVPixelBufferGetBytesPerRow(new_pixel_buffer->buf);
         img->pixel_pitch = img->row_pitch / img->width;
-
-        old_data_retainer = nullptr;
 
         // returning false here stops capture backend
         return false;
