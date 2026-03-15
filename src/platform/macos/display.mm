@@ -77,37 +77,50 @@ namespace platf {
     capture_e capture(const push_captured_image_cb_t &push_captured_image_cb, const pull_free_image_cb_t &pull_free_image_cb, bool *cursor) override {
 #if SUNSHINE_HAVE_SCREENCAPTUREKIT
       if ([av_capture screenCaptureKitAvailableForDisplay]) {
-        NSError *capture_error = nil;
-        if (![av_capture beginScreenCaptureKitCapture:&capture_error]) {
-          BOOST_LOG(error) << "Failed to start macOS display capture."sv;
-          return capture_e::error;
-        }
-
+        bool allow_restart_without_frames = true;
         while (true) {
-          CMSampleBufferRef sampleBuffer = [av_capture copyNextScreenCaptureKitSampleBuffer];
-          if (sampleBuffer == nil) {
-            break;
+          NSError *capture_error = nil;
+          if (![av_capture beginScreenCaptureKitCapture:&capture_error]) {
+            BOOST_LOG(error) << "Failed to start macOS display capture."sv;
+            return capture_e::error;
           }
 
-          std::shared_ptr<img_t> img_out;
-          if (!pull_free_image_cb(img_out)) {
+          bool restart_capture = false;
+          while (true) {
+            CMSampleBufferRef sampleBuffer = [av_capture copyNextScreenCaptureKitSampleBuffer];
+            if (sampleBuffer == nil) {
+              auto queued_frames = av_capture.screenCaptureFrameCount;
+              if (allow_restart_without_frames && queued_frames == 0) {
+                BOOST_LOG(warning) << "ScreenCaptureKit stopped before delivering a frame; retrying capture startup once"sv;
+                restart_capture = true;
+              }
+              break;
+            }
+
+            std::shared_ptr<img_t> img_out;
+            if (!pull_free_image_cb(img_out)) {
+              CFRelease(sampleBuffer);
+              [av_capture finishScreenCaptureKitCapture];
+              return capture_e::ok;
+            }
+            materialize_captured_frame(img_out, sampleBuffer, !direct_videotoolbox_frames);
+
+            const bool keep_capturing = push_captured_image_cb(std::move(img_out), true);
             CFRelease(sampleBuffer);
-            [av_capture finishScreenCaptureKitCapture];
+
+            if (!keep_capturing) {
+              [av_capture finishScreenCaptureKitCapture];
+              return capture_e::ok;
+            }
+          }
+
+          [av_capture finishScreenCaptureKitCapture];
+          if (!restart_capture) {
             return capture_e::ok;
           }
-          materialize_captured_frame(img_out, sampleBuffer, !direct_videotoolbox_frames);
 
-          const bool keep_capturing = push_captured_image_cb(std::move(img_out), true);
-          CFRelease(sampleBuffer);
-
-          if (!keep_capturing) {
-            [av_capture finishScreenCaptureKitCapture];
-            return capture_e::ok;
-          }
+          allow_restart_without_frames = false;
         }
-
-        [av_capture finishScreenCaptureKitCapture];
-        return capture_e::ok;
       }
 #endif
 

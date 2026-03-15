@@ -437,9 +437,7 @@ static NSString *const kSunshineVideoCaptureQueue = @"dev.lizardbyte.sunshine.vi
 
 - (void)stream:(SCStream *)stream didStopWithError:(NSError *)error API_AVAILABLE(macos(12.3)) {
   dispatch_semaphore_t frameSignal = self.frameAvailableSignal;
-  if (error != nil) {
-    NSLog(@"AVVideo ScreenCaptureKit stream stopped with error: %@", error);
-  }
+  NSLog(@"AVVideo ScreenCaptureKit stream stopped with error: %@", error);
   @synchronized(self) {
     self.captureStopped = YES;
     if (self.pendingSampleBuffer != nil) {
