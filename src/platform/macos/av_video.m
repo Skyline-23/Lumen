@@ -330,7 +330,20 @@ static NSString *const kSunshineVideoCaptureQueue = @"dev.lizardbyte.sunshine.vi
 
 - (CMSampleBufferRef)copyNextScreenCaptureKitSampleBuffer API_AVAILABLE(macos(12.3)) {
   while (true) {
-    dispatch_semaphore_wait(self.frameAvailableSignal, DISPATCH_TIME_FOREVER);
+    dispatch_semaphore_t frameSignal = self.frameAvailableSignal;
+    if (frameSignal == nil) {
+      return nil;
+    }
+
+    dispatch_time_t wakeDeadline = dispatch_time(DISPATCH_TIME_NOW, 100 * NSEC_PER_MSEC);
+    if (dispatch_semaphore_wait(frameSignal, wakeDeadline) != 0) {
+      @synchronized(self) {
+        if (self.captureStopped || self.frameAvailableSignal == nil) {
+          break;
+        }
+      }
+      continue;
+    }
 
     CMSampleBufferRef sampleBuffer = nil;
     BOOL captureStopped = NO;
@@ -356,8 +369,16 @@ static NSString *const kSunshineVideoCaptureQueue = @"dev.lizardbyte.sunshine.vi
 }
 
 - (void)finishScreenCaptureKitCapture API_AVAILABLE(macos(12.3)) {
+  dispatch_semaphore_t frameSignal = self.frameAvailableSignal;
   @synchronized(self) {
     self.captureStopped = YES;
+    if (self.pendingSampleBuffer != nil) {
+      CFRelease(self.pendingSampleBuffer);
+      self.pendingSampleBuffer = nil;
+    }
+  }
+  if (frameSignal != nil) {
+    dispatch_semaphore_signal(frameSignal);
   }
   [self stopScreenCaptureKitStream];
   self.frameAvailableSignal = nil;
