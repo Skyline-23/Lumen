@@ -482,7 +482,13 @@ namespace video {
 
     ~vt_compression_encode_session_t() override {
       if (compression_session) {
-        VTCompressionSessionCompleteFrames(compression_session, kCMTimeInvalid);
+        if (inflight_frames == 0) {
+          VTCompressionSessionCompleteFrames(compression_session, kCMTimeInvalid);
+        } else {
+          BOOST_LOG(info) << "Skipping VTCompressionSessionCompleteFrames during teardown with "sv
+                          << inflight_frames
+                          << " frames still in flight"sv;
+        }
         VTCompressionSessionInvalidate(compression_session);
         CFRelease(compression_session);
       }
@@ -2724,6 +2730,7 @@ namespace video {
     }
 
     std::chrono::steady_clock::time_point encode_frame_timestamp;
+    bool encode_frame_timestamp_initialized = false;
     uint64_t received_capture_frames = 0;
     uint64_t capture_wait_timeouts = 0;
     bool logged_waiting_for_first_native_vt_frame = false;
@@ -2759,10 +2766,13 @@ namespace video {
       }
 
       std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
+      bool has_captured_frame = false;
 
       // Encode at a minimum FPS to avoid image quality issues with static content
       if (!requested_idr_frame || images->peek()) {
-        if (auto img = images->pop(max_frametime)) {
+        auto wait_timeout = native_vt_session ? 250ms : max_frametime;
+        if (auto img = images->pop(wait_timeout)) {
+          has_captured_frame = true;
           auto received = ++received_capture_frames;
           if (received <= 5 || (received % 120) == 0) {
             BOOST_LOG(info) << "Async encode received captured frame #"sv << received;
@@ -2772,26 +2782,31 @@ namespace video {
             frame_timestamp = std::chrono::steady_clock::now();
           }
 
-          auto current_timestamp = *frame_timestamp;
-          auto time_diff = current_timestamp - encode_frame_timestamp;
-
-          // If new frame comes in way too fast, just drop
-          if (time_diff < -frame_variation_threshold) {
-            continue;
-          }
-
           if (session->convert(*img)) {
             BOOST_LOG(error) << "Could not convert image"sv;
             break;
           }
+          if (!native_vt_session) {
+            auto current_timestamp = *frame_timestamp;
+            if (!encode_frame_timestamp_initialized) {
+              encode_frame_timestamp = current_timestamp;
+              encode_frame_timestamp_initialized = true;
+            }
+            auto time_diff = current_timestamp - encode_frame_timestamp;
 
-          if (time_diff < frame_variation_threshold) {
-            *frame_timestamp = encode_frame_timestamp;
-          } else {
-            encode_frame_timestamp = current_timestamp;
+            // If new frame comes in way too fast, just drop
+            if (time_diff < -frame_variation_threshold) {
+              continue;
+            }
+
+            if (time_diff < frame_variation_threshold) {
+              *frame_timestamp = encode_frame_timestamp;
+            } else {
+              encode_frame_timestamp = current_timestamp;
+            }
+
+            encode_frame_timestamp += encode_frame_threshold;
           }
-
-          encode_frame_timestamp += encode_frame_threshold;
         } else if (!images->running()) {
           break;
         } else {
@@ -2807,6 +2822,9 @@ namespace video {
           BOOST_LOG(info) << "Native VT waiting for first captured frame before encoding"sv;
           logged_waiting_for_first_native_vt_frame = true;
         }
+        continue;
+      }
+      if (native_vt_session && !has_captured_frame) {
         continue;
       }
 
