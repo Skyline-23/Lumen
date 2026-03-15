@@ -127,7 +127,14 @@ static NSString *const kSunshineVideoCaptureQueue = @"dev.lizardbyte.sunshine.vi
   self.pixelFormat = kCVPixelFormatType_32BGRA;
   self.frameWidth = (int) CGDisplayModeGetPixelWidth(mode);
   self.frameHeight = (int) CGDisplayModeGetPixelHeight(mode);
-  self.minFrameDuration = CMTimeMake(1, frameRate);
+  self.minFrameDuration = frameRate > 60 ? kCMTimeZero : CMTimeMake(1, frameRate);
+  self.colorMatrix = kCVImageBufferYCbCrMatrix_ITU_R_709_2;
+  self.colorSpaceName = kCGColorSpaceITUR_709;
+#if SUNSHINE_HAVE_SCREENCAPTUREKIT
+  if (@available(macOS 15.0, *)) {
+    self.captureDynamicRange = SCCaptureDynamicRangeSDR;
+  }
+#endif
   self.pendingSampleBuffers = [[NSMutableArray alloc] init];
 
   CFRelease(mode);
@@ -231,16 +238,36 @@ static NSString *const kSunshineVideoCaptureQueue = @"dev.lizardbyte.sunshine.vi
   SCContentFilter *filter = [[SCContentFilter alloc] initWithDisplay:self.shareableDisplay
                                                excludingApplications:@[]
                                                     exceptingWindows:@[]];
-  SCStreamConfiguration *configuration = [[SCStreamConfiguration alloc] init];
+  SCStreamConfiguration *configuration = nil;
+  if (@available(macOS 15.0, *)) {
+    if (self.captureDynamicRange != SCCaptureDynamicRangeSDR) {
+      configuration = [[SCStreamConfiguration streamConfigurationWithPreset:SCStreamConfigurationPresetCaptureHDRStreamCanonicalDisplay] retain];
+    }
+  }
+  if (configuration == nil) {
+    configuration = [[SCStreamConfiguration alloc] init];
+  }
+
   configuration.width = (size_t) MAX(self.frameWidth, 1);
   configuration.height = (size_t) MAX(self.frameHeight, 1);
   configuration.minimumFrameInterval = self.minFrameDuration;
   configuration.pixelFormat = self.pixelFormat;
   configuration.showsCursor = YES;
-  configuration.queueDepth = 12;
+  configuration.queueDepth = 8;
+  configuration.colorMatrix = self.colorMatrix;
+  configuration.colorSpaceName = self.colorSpaceName;
 
   if (@available(macOS 13.0, *)) {
     configuration.capturesAudio = NO;
+  }
+
+  if (@available(macOS 14.0, *)) {
+    configuration.captureResolution = SCCaptureResolutionBest;
+    configuration.ignoreShadowsDisplay = YES;
+  }
+
+  if (@available(macOS 15.0, *)) {
+    configuration.captureDynamicRange = self.captureDynamicRange;
   }
 
   dispatch_queue_attr_t captureQos = dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INTERACTIVE, 0);

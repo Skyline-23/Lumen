@@ -25,8 +25,10 @@ namespace platf {
     resolution_fn_t resolution_fn;
     using pixel_format_fn_t = std::function<void(void *display, int pixelFormat)>;
     pixel_format_fn_t pixel_format_fn;
+    using colorspace_fn_t = std::function<void(void *display, const video::sunshine_colorspace_t &)>;
+    colorspace_fn_t colorspace_fn;
 
-    int init(void *display, pix_fmt_e pix_fmt, resolution_fn_t resolution_fn, const pixel_format_fn_t &pixel_format_fn);
+    int init(void *display, pix_fmt_e pix_fmt, resolution_fn_t resolution_fn, const pixel_format_fn_t &pixel_format_fn, const colorspace_fn_t &colorspace_fn);
 
     int convert(img_t &img) override;
     int set_frame(AVFrame *frame, AVBufferRef *hw_frames_ctx) override;

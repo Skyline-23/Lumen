@@ -249,7 +249,7 @@ namespace platf {
       } else if (pix_fmt == pix_fmt_e::nv12 || pix_fmt == pix_fmt_e::p010) {
         auto device = std::make_unique<nv12_zero_device>();
 
-        device->init(static_cast<void *>(av_capture), pix_fmt, setResolution, setPixelFormat);
+        device->init(static_cast<void *>(av_capture), pix_fmt, setResolution, setPixelFormat, setCaptureColorspace);
 
         return device;
       } else {
@@ -340,6 +340,37 @@ namespace platf {
 
     static void setPixelFormat(void *display, OSType pixelFormat) {
       static_cast<AVVideo *>(display).pixelFormat = pixelFormat;
+    }
+
+    static void setCaptureColorspace(void *display, const video::sunshine_colorspace_t &colorspace) {
+      auto *av_video = static_cast<AVVideo *>(display);
+
+      switch (colorspace.colorspace) {
+        case video::colorspace_e::rec601:
+          av_video.colorMatrix = kCVImageBufferYCbCrMatrix_ITU_R_601_4;
+          av_video.colorSpaceName = kCGColorSpaceITUR_709;
+          break;
+        case video::colorspace_e::rec709:
+          av_video.colorMatrix = kCVImageBufferYCbCrMatrix_ITU_R_709_2;
+          av_video.colorSpaceName = kCGColorSpaceITUR_709;
+          break;
+        case video::colorspace_e::bt2020sdr:
+          av_video.colorMatrix = kCVImageBufferYCbCrMatrix_ITU_R_2020;
+          av_video.colorSpaceName = kCGColorSpaceITUR_2020;
+          break;
+        case video::colorspace_e::bt2020:
+          av_video.colorMatrix = kCVImageBufferYCbCrMatrix_ITU_R_2020;
+          av_video.colorSpaceName = kCGColorSpaceITUR_2100_PQ;
+          break;
+      }
+
+#if SUNSHINE_HAVE_SCREENCAPTUREKIT
+      if (@available(macOS 15.0, *)) {
+        av_video.captureDynamicRange = video::colorspace_is_hdr(colorspace) ?
+                                         SCCaptureDynamicRangeHDRCanonicalDisplay :
+                                         SCCaptureDynamicRangeSDR;
+      }
+#endif
     }
   };
 

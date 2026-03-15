@@ -27,6 +27,11 @@
 @property (nonatomic, assign) OSType pixelFormat;
 @property (nonatomic, assign) int frameWidth;
 @property (nonatomic, assign) int frameHeight;
+@property (nonatomic, assign) CFStringRef colorMatrix;
+@property (nonatomic, assign) CFStringRef colorSpaceName;
+#if SUNSHINE_HAVE_SCREENCAPTUREKIT
+@property (nonatomic, assign) SCCaptureDynamicRange captureDynamicRange API_AVAILABLE(macos(15.0));
+#endif
 
 typedef bool (^FrameCallbackBlock)(CMSampleBufferRef);
 

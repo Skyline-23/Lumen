@@ -23,6 +23,7 @@ namespace platf {
 
       return full_range ? kCVPixelFormatType_420YpCbCr10BiPlanarFullRange : kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange;
     }
+
   }  // namespace
 
   void free_frame(AVFrame *frame) {
@@ -63,11 +64,12 @@ namespace platf {
     return 0;
   }
 
-  int nv12_zero_device::init(void *display, pix_fmt_e pix_fmt, resolution_fn_t resolution_fn, const pixel_format_fn_t &pixel_format_fn) {
+  int nv12_zero_device::init(void *display, pix_fmt_e pix_fmt, resolution_fn_t resolution_fn, const pixel_format_fn_t &pixel_format_fn, const colorspace_fn_t &colorspace_fn) {
     this->display = display;
     this->pixel_format = pix_fmt;
     this->resolution_fn = std::move(resolution_fn);
     this->pixel_format_fn = pixel_format_fn;
+    this->colorspace_fn = colorspace_fn;
     pixel_format_fn(display, cv_pixel_format_for_config(pix_fmt, false));
 
     // we never use this pointer, but its existence is checked/used
@@ -79,6 +81,7 @@ namespace platf {
 
   void nv12_zero_device::apply_colorspace() {
     pixel_format_fn(display, cv_pixel_format_for_config(pixel_format, colorspace.full_range));
+    colorspace_fn(display, colorspace);
   }
 
 }  // namespace platf
