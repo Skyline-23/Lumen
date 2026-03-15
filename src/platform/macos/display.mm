@@ -418,6 +418,15 @@ namespace platf {
 
     // Default to main display
     display->display_id = CGMainDisplayID();
+    bool requested_numeric_display = false;
+    if (!display_name.empty()) {
+      char *end_ptr = nullptr;
+      const auto requested_display_id = std::strtoul(display_name.c_str(), &end_ptr, 10);
+      if (end_ptr != nullptr && *end_ptr == '\0' && requested_display_id != 0) {
+        display->display_id = static_cast<CGDirectDisplayID>(requested_display_id);
+        requested_numeric_display = true;
+      }
+    }
 
     // Print all displays available with it's name and id
     auto display_array = [AVVideo displayNames];
@@ -431,6 +440,9 @@ namespace platf {
       if (!display_name.empty() && std::atoi(display_name.c_str()) == [display_id unsignedIntValue]) {
         display->display_id = [display_id unsignedIntValue];
       }
+    }
+    if (requested_numeric_display) {
+      BOOST_LOG(info) << "Retaining requested macOS display id ("sv << display->display_id << ") for capture startup"sv;
     }
     BOOST_LOG(info) << "Configuring selected display ("sv << display->display_id << ") to stream"sv;
 
