@@ -128,6 +128,7 @@ static NSString *const kSunshineVideoCaptureQueue = @"dev.lizardbyte.sunshine.vi
   self.frameWidth = (int) CGDisplayModeGetPixelWidth(mode);
   self.frameHeight = (int) CGDisplayModeGetPixelHeight(mode);
   self.minFrameDuration = CMTimeMake(1, frameRate);
+  self.pendingSampleBuffers = [[NSMutableArray alloc] init];
 
   CFRelease(mode);
 
@@ -176,12 +177,10 @@ static NSString *const kSunshineVideoCaptureQueue = @"dev.lizardbyte.sunshine.vi
   [self.stream release];
 #endif
 
-  if (self.pendingSampleBuffer != nil) {
-    CFRelease(self.pendingSampleBuffer);
-    self.pendingSampleBuffer = nil;
-  }
+  [self.pendingSampleBuffers removeAllObjects];
 
   [self.captureCallback release];
+  [self.pendingSampleBuffers release];
   [self.legacyVideoOutputs release];
   [self.legacyCaptureCallbacks release];
   [self.legacyCaptureSignals release];
@@ -315,10 +314,7 @@ static NSString *const kSunshineVideoCaptureQueue = @"dev.lizardbyte.sunshine.vi
   self.captureSignal = nil;
   self.captureCallback = nil;
   self.screenCaptureFrameCount = 0;
-  if (self.pendingSampleBuffer != nil) {
-    CFRelease(self.pendingSampleBuffer);
-    self.pendingSampleBuffer = nil;
-  }
+  [self.pendingSampleBuffers removeAllObjects];
 
   if (![self startScreenCaptureKitStream:error]) {
     self.frameAvailableSignal = nil;
@@ -348,8 +344,11 @@ static NSString *const kSunshineVideoCaptureQueue = @"dev.lizardbyte.sunshine.vi
     CMSampleBufferRef sampleBuffer = nil;
     BOOL captureStopped = NO;
     @synchronized(self) {
-      sampleBuffer = self.pendingSampleBuffer;
-      self.pendingSampleBuffer = nil;
+      if (self.pendingSampleBuffers.count > 0) {
+        id queuedSample = [self.pendingSampleBuffers objectAtIndex:0];
+        sampleBuffer = (CMSampleBufferRef) CFRetain((__bridge CFTypeRef) queuedSample);
+        [self.pendingSampleBuffers removeObjectAtIndex:0];
+      }
       captureStopped = self.captureStopped;
     }
 
@@ -358,9 +357,6 @@ static NSString *const kSunshineVideoCaptureQueue = @"dev.lizardbyte.sunshine.vi
         break;
       }
       continue;
-    }
-
-    while (dispatch_semaphore_wait(self.frameAvailableSignal, DISPATCH_TIME_NOW) == 0) {
     }
     return sampleBuffer;
   }
@@ -372,10 +368,7 @@ static NSString *const kSunshineVideoCaptureQueue = @"dev.lizardbyte.sunshine.vi
   dispatch_semaphore_t frameSignal = self.frameAvailableSignal;
   @synchronized(self) {
     self.captureStopped = YES;
-    if (self.pendingSampleBuffer != nil) {
-      CFRelease(self.pendingSampleBuffer);
-      self.pendingSampleBuffer = nil;
-    }
+    [self.pendingSampleBuffers removeAllObjects];
   }
   if (frameSignal != nil) {
     dispatch_semaphore_signal(frameSignal);
@@ -439,21 +432,18 @@ static NSString *const kSunshineVideoCaptureQueue = @"dev.lizardbyte.sunshine.vi
     return;
   }
 
-  BOOL shouldSignal = NO;
   @synchronized(self) {
-    shouldSignal = self.pendingSampleBuffer == nil;
-    if (self.pendingSampleBuffer != nil) {
-      CFRelease(self.pendingSampleBuffer);
+    static const NSUInteger kMaxPendingScreenCaptureSamples = 8;
+    if (self.pendingSampleBuffers.count >= kMaxPendingScreenCaptureSamples) {
+      [self.pendingSampleBuffers removeObjectAtIndex:0];
     }
-    self.pendingSampleBuffer = (CMSampleBufferRef) CFRetain(sampleBuffer);
+    [self.pendingSampleBuffers addObject:(__bridge id) sampleBuffer];
     self.screenCaptureFrameCount += 1;
   }
   if (self.screenCaptureFrameCount <= 5 || (self.screenCaptureFrameCount % 120) == 0) {
     NSLog(@"AVVideo ScreenCaptureKit queued frame #%llu", self.screenCaptureFrameCount);
   }
-  if (shouldSignal) {
-    dispatch_semaphore_signal(frameSignal);
-  }
+  dispatch_semaphore_signal(frameSignal);
 }
 
 - (void)stream:(SCStream *)stream didStopWithError:(NSError *)error API_AVAILABLE(macos(12.3)) {
@@ -461,10 +451,7 @@ static NSString *const kSunshineVideoCaptureQueue = @"dev.lizardbyte.sunshine.vi
   NSLog(@"AVVideo ScreenCaptureKit stream stopped with error: %@", error);
   @synchronized(self) {
     self.captureStopped = YES;
-    if (self.pendingSampleBuffer != nil) {
-      CFRelease(self.pendingSampleBuffer);
-      self.pendingSampleBuffer = nil;
-    }
+    [self.pendingSampleBuffers removeAllObjects];
   }
 
   if (frameSignal != nil) {
