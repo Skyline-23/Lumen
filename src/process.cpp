@@ -665,9 +665,7 @@ namespace proc {
       return;
     }
 
-    if (platf::sleep_physical_displays()) {
-      physical_displays_asleep = true;
-    }
+    BOOST_LOG(info) << "Skipping macOS physical display sleep during virtual session; layout isolation remains active"sv;
   }
 
   void proc_t::wake_physical_displays_if_needed() {
