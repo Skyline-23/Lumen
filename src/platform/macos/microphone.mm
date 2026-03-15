@@ -5,7 +5,6 @@
 // local includes
 #include <algorithm>
 #include <cctype>
-#include <CoreGraphics/CoreGraphics.h>
 #include <cstdlib>
 #include "src/config.h"
 #include "src/logging.h"
@@ -28,14 +27,6 @@ namespace platf {
         || sink == "default";
     }
 
-    CGDirectDisplayID selected_display_id() {
-      if (config::video.output_name.empty()) {
-        return CGMainDisplayID();
-      }
-
-      const auto display_id = std::strtoul(config::video.output_name.c_str(), nullptr, 10);
-      return display_id == 0 ? CGMainDisplayID() : (CGDirectDisplayID) display_id;
-    }
   }  // namespace
 
   struct av_mic_t: public mic_t {
@@ -95,13 +86,11 @@ namespace platf {
       mic->av_audio_capture = [[AVAudio alloc] init];
 
       if (is_system_audio_sink(audio_sink)) {
-        if ([mic->av_audio_capture setupSystemAudioWithDisplayID:selected_display_id() sampleRate:sample_rate frameSize:frame_size channels:channels]) {
-          BOOST_LOG(error) << "Failed to setup native macOS system audio capture."sv;
-          return nullptr;
-        }
-
-        BOOST_LOG(info) << "Using native macOS system audio capture."sv;
-        return mic;
+        // ScreenCaptureKit-backed system-audio capture currently starves the
+        // separate video stream after a few frames on macOS. Prefer a stable
+        // video session over host-audio capture until the streams are unified.
+        BOOST_LOG(warning) << "Temporarily disabling native macOS system audio capture to preserve video cadence."sv;
+        return nullptr;
       }
 
       if ((audio_capture_device = [AVAudio findMicrophone:[NSString stringWithUTF8String:audio_sink.c_str()]]) == nullptr) {
