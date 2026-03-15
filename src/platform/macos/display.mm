@@ -77,7 +77,7 @@ namespace platf {
     capture_e capture(const push_captured_image_cb_t &push_captured_image_cb, const pull_free_image_cb_t &pull_free_image_cb, bool *cursor) override {
 #if SUNSHINE_HAVE_SCREENCAPTUREKIT
       if ([av_capture screenCaptureKitAvailableForDisplay]) {
-        bool allow_restart_without_frames = true;
+        bool allow_restart_on_early_stop = true;
         while (true) {
           NSError *capture_error = nil;
           if (![av_capture beginScreenCaptureKitCapture:&capture_error]) {
@@ -90,8 +90,8 @@ namespace platf {
             CMSampleBufferRef sampleBuffer = [av_capture copyNextScreenCaptureKitSampleBuffer];
             if (sampleBuffer == nil) {
               auto queued_frames = av_capture.screenCaptureFrameCount;
-              if (allow_restart_without_frames && queued_frames == 0) {
-                BOOST_LOG(warning) << "ScreenCaptureKit stopped before delivering a frame; retrying capture startup once"sv;
+              if (allow_restart_on_early_stop && queued_frames < 5) {
+                BOOST_LOG(warning) << "ScreenCaptureKit stopped too early (queued_frames="sv << queued_frames << "); retrying capture startup once"sv;
                 restart_capture = true;
               }
               break;
@@ -119,7 +119,8 @@ namespace platf {
             return capture_e::ok;
           }
 
-          allow_restart_without_frames = false;
+          allow_restart_on_early_stop = false;
+          std::this_thread::sleep_for(100ms);
         }
       }
 #endif

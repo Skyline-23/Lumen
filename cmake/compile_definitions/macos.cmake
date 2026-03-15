@@ -3,7 +3,7 @@
 add_compile_definitions(SUNSHINE_PLATFORM="macos")
 
 if(SUNSHINE_PACKAGE_MACOS)
-    set(SUNSHINE_ASSETS_DIR "assets")
+    set(SUNSHINE_ASSETS_DIR "../Resources/assets")
 endif()
 
 set(MACOS_LINK_DIRECTORIES

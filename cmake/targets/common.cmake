@@ -46,6 +46,11 @@ if(APPLE AND SUNSHINE_PACKAGE_MACOS)
             MACOSX_BUNDLE_INFO_PLIST "${APPLE_PLIST_FILE}"
             MACOSX_BUNDLE_BUNDLE_NAME "${CMAKE_PROJECT_NAME}"
             MACOSX_BUNDLE_GUI_IDENTIFIER "com.skyline23.apollo")
+
+    add_custom_command(TARGET sunshine POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_BUNDLE_CONTENT_DIR:sunshine>/Resources/assets"
+            COMMAND "${CMAKE_COMMAND}" -E copy_directory "${CMAKE_BINARY_DIR}/assets" "$<TARGET_BUNDLE_CONTENT_DIR:sunshine>/Resources/assets"
+            VERBATIM)
 endif()
 
 # CLion complains about unknown flags after running cmake, and cannot add symbols to the index for cuda files
