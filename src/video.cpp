@@ -451,6 +451,20 @@ namespace video {
 
 #ifdef __APPLE__
   namespace {
+    void native_macos_vt_probe_callback(
+      void *outputCallbackRefCon,
+      void *sourceFrameRefCon,
+      OSStatus status,
+      VTEncodeInfoFlags infoFlags,
+      CMSampleBufferRef sampleBuffer
+    ) {
+      (void) outputCallbackRefCon;
+      (void) sourceFrameRefCon;
+      (void) status;
+      (void) infoFlags;
+      (void) sampleBuffer;
+    }
+
     CMVideoCodecType native_macos_vt_codec_type_for_video_format(int video_format) {
       switch (video_format) {
         case 0:
@@ -462,6 +476,27 @@ namespace video {
         default:
           return 0;
       }
+    }
+
+    bool native_macos_vt_codec_session_creatable(CMVideoCodecType codec_type, int width = 1920, int height = 1080) {
+      VTCompressionSessionRef session = nullptr;
+      auto status = VTCompressionSessionCreate(
+        kCFAllocatorDefault,
+        width,
+        height,
+        codec_type,
+        nullptr,
+        nullptr,
+        nullptr,
+        native_macos_vt_probe_callback,
+        nullptr,
+        &session
+      );
+      if (session != nullptr) {
+        VTCompressionSessionInvalidate(session);
+        CFRelease(session);
+      }
+      return status == noErr;
     }
 
     bool native_macos_vt_codec_supported(CMVideoCodecType codec_type, int width = 1920, int height = 1080) {
@@ -481,7 +516,11 @@ namespace video {
       if (supported_properties != nullptr) {
         CFRelease(supported_properties);
       }
-      return status == noErr;
+      if (status == noErr) {
+        return true;
+      }
+
+      return native_macos_vt_codec_session_creatable(codec_type, width, height);
     }
   }  // namespace
 
