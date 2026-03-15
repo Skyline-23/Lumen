@@ -11,6 +11,10 @@
   #import <ScreenCaptureKit/ScreenCaptureKit.h>
 #endif
 
+#if __has_include(<ScreenCaptureKit/ScreenCaptureKit.h>)
+@class AVAudioStreamOutput;
+#endif
+
 // lib includes
 #include "third-party/TPCircularBuffer/TPCircularBuffer.h"
 
@@ -25,17 +29,18 @@
   TPCircularBuffer audioSampleBuffer;
 }
 
-@property (nonatomic, assign) AVCaptureSession *audioCaptureSession;
-@property (nonatomic, assign) AVCaptureConnection *audioConnection;
-@property (nonatomic, assign) NSCondition *samplesArrivedSignal;
+@property (nonatomic, retain) AVCaptureSession *audioCaptureSession;
+@property (nonatomic, retain) AVCaptureConnection *audioConnection;
+@property (nonatomic, retain) NSCondition *samplesArrivedSignal;
 @property (nonatomic, assign) UInt32 sampleRate;
 @property (nonatomic, assign) UInt32 frameSize;
 @property (nonatomic, assign) UInt8 channels;
 @property (nonatomic, assign) BOOL captureStopped;
 
 #if __has_include(<ScreenCaptureKit/ScreenCaptureKit.h>)
-@property (nonatomic, assign) SCDisplay *shareableDisplay;
-@property (nonatomic, assign) SCStream *stream;
+@property (nonatomic, retain) SCDisplay *shareableDisplay;
+@property (nonatomic, retain) SCStream *stream;
+@property (nonatomic, retain) AVAudioStreamOutput *streamOutput;
 @property (nonatomic, assign) dispatch_queue_t sampleHandlerQueue;
 #endif
 

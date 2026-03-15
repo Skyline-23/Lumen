@@ -7,6 +7,36 @@
 
 static NSString *const kSunshineAudioCaptureQueue = @"dev.lizardbyte.sunshine.audio.capture";
 
+#if __has_include(<ScreenCaptureKit/ScreenCaptureKit.h>)
+@interface AVAudio (ScreenCaptureKitPrivate)
+- (void)handleScreenCaptureKitSampleBuffer:(CMSampleBufferRef)sampleBuffer ofType:(SCStreamOutputType)type API_AVAILABLE(macos(12.3));
+@end
+
+@interface AVAudioStreamOutput: NSObject <SCStreamOutput>
+@property (nonatomic, assign) AVAudio *owner;
+- (instancetype)initWithOwner:(AVAudio *)owner;
+@end
+
+@implementation AVAudioStreamOutput
+
+- (instancetype)initWithOwner:(AVAudio *)owner {
+  self = [super init];
+  if (self != nil) {
+    self.owner = owner;
+  }
+  return self;
+}
+
+- (void)stream:(SCStream *)stream didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer ofType:(SCStreamOutputType)type API_AVAILABLE(macos(12.3)) {
+  AVAudio *owner = self.owner;
+  if (owner != nil) {
+    [owner handleScreenCaptureKitSampleBuffer:sampleBuffer ofType:type];
+  }
+}
+
+@end
+#endif
+
 @implementation AVAudio
 
 + (BOOL)shouldUseScreenCaptureKitAudio {
@@ -108,7 +138,7 @@ static NSString *const kSunshineAudioCaptureQueue = @"dev.lizardbyte.sunshine.au
 #endif
 
 - (void)prepareAudioBuffer {
-  self.samplesArrivedSignal = [[NSCondition alloc] init];
+  self.samplesArrivedSignal = [[[NSCondition alloc] init] autorelease];
   self.captureStopped = NO;
   TPCircularBufferInit(&self->audioSampleBuffer, kBufferLength * self.channels * sizeof(float));
 }
@@ -123,12 +153,19 @@ static NSString *const kSunshineAudioCaptureQueue = @"dev.lizardbyte.sunshine.au
 #if __has_include(<ScreenCaptureKit/ScreenCaptureKit.h>)
   if (self.stream != nil) {
     dispatch_semaphore_t stopSignal = dispatch_semaphore_create(0);
-    [self.stream stopCaptureWithCompletionHandler:^(__unused NSError *stopError) {
+    SCStream *stream = [self.stream retain];
+    AVAudioStreamOutput *streamOutput = [self.streamOutput retain];
+    self.stream = nil;
+    self.streamOutput = nil;
+    self.sampleHandlerQueue = nil;
+
+    [stream stopCaptureWithCompletionHandler:^(__unused NSError *stopError) {
       dispatch_semaphore_signal(stopSignal);
     }];
     dispatch_semaphore_wait(stopSignal, DISPATCH_TIME_FOREVER);
-    [self.stream release];
-    self.stream = nil;
+    streamOutput.owner = nil;
+    [streamOutput release];
+    [stream release];
   }
 #endif
 
@@ -143,6 +180,7 @@ static NSString *const kSunshineAudioCaptureQueue = @"dev.lizardbyte.sunshine.au
   [self stopCapture];
 
 #if __has_include(<ScreenCaptureKit/ScreenCaptureKit.h>)
+  [self.streamOutput release];
   [self.shareableDisplay release];
 #endif
 
@@ -158,7 +196,7 @@ static NSString *const kSunshineAudioCaptureQueue = @"dev.lizardbyte.sunshine.au
   self.sampleRate = sampleRate;
   self.frameSize = frameSize;
   self.channels = channels;
-  self.audioCaptureSession = [[AVCaptureSession alloc] init];
+  self.audioCaptureSession = [[[AVCaptureSession alloc] init] autorelease];
 
   NSError *error;
   AVCaptureDeviceInput *audioInput = [AVCaptureDeviceInput deviceInputWithDevice:device error:&error];
@@ -299,7 +337,7 @@ static NSString *const kSunshineAudioCaptureQueue = @"dev.lizardbyte.sunshine.au
   self.channels = channels;
 
   NSError *error = nil;
-  self.shareableDisplay = [[AVAudio shareableDisplayWithID:displayID error:&error] retain];
+  self.shareableDisplay = [AVAudio shareableDisplayWithID:displayID error:&error];
   if (self.shareableDisplay == nil) {
     return -1;
   }
@@ -322,12 +360,13 @@ static NSString *const kSunshineAudioCaptureQueue = @"dev.lizardbyte.sunshine.au
     configuration.excludesCurrentProcessAudio = YES;
 
     self.sampleHandlerQueue = dispatch_queue_create(kSunshineAudioCaptureQueue.UTF8String, DISPATCH_QUEUE_SERIAL);
-    self.stream = [[SCStream alloc] initWithFilter:filter configuration:configuration delegate:self];
+    self.streamOutput = [[[AVAudioStreamOutput alloc] initWithOwner:self] autorelease];
+    self.stream = [[[SCStream alloc] initWithFilter:filter configuration:configuration delegate:self] autorelease];
 
     NSError *streamError = nil;
-    if (![self.stream addStreamOutput:self type:SCStreamOutputTypeAudio sampleHandlerQueue:self.sampleHandlerQueue error:&streamError]) {
-      [self.stream release];
+    if (![self.stream addStreamOutput:self.streamOutput type:SCStreamOutputTypeAudio sampleHandlerQueue:self.sampleHandlerQueue error:&streamError]) {
       self.stream = nil;
+      self.streamOutput = nil;
       [configuration release];
       [filter release];
       return -1;
@@ -345,10 +384,10 @@ static NSString *const kSunshineAudioCaptureQueue = @"dev.lizardbyte.sunshine.au
     [filter release];
 
     if (startError != nil) {
-      NSError *removeError = nil;
-      [self.stream removeStreamOutput:self type:SCStreamOutputTypeAudio error:&removeError];
-      [self.stream release];
+      [self.stream stopCaptureWithCompletionHandler:^(__unused NSError *stopError) {
+      }];
       self.stream = nil;
+      self.streamOutput = nil;
       [startError release];
       return -1;
     }
@@ -369,10 +408,14 @@ static NSString *const kSunshineAudioCaptureQueue = @"dev.lizardbyte.sunshine.au
 }
 
 #if __has_include(<ScreenCaptureKit/ScreenCaptureKit.h>)
-- (void)stream:(SCStream *)stream didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer ofType:(SCStreamOutputType)type API_AVAILABLE(macos(12.3)) {
+- (void)handleScreenCaptureKitSampleBuffer:(CMSampleBufferRef)sampleBuffer ofType:(SCStreamOutputType)type API_AVAILABLE(macos(12.3)) {
   if (type == SCStreamOutputTypeAudio) {
     [self handleCapturedSampleBuffer:sampleBuffer];
   }
+}
+
+- (void)stream:(SCStream *)stream didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer ofType:(SCStreamOutputType)type API_AVAILABLE(macos(12.3)) {
+  [self handleScreenCaptureKitSampleBuffer:sampleBuffer ofType:type];
 }
 
 - (void)stream:(SCStream *)stream didStopWithError:(NSError *)error API_AVAILABLE(macos(12.3)) {

@@ -14,6 +14,10 @@
   #define SUNSHINE_HAVE_SCREENCAPTUREKIT 0
 #endif
 
+#if SUNSHINE_HAVE_SCREENCAPTUREKIT
+@class AVVideoScreenStreamOutput;
+#endif
+
 @interface AVVideo: NSObject <AVCaptureVideoDataOutputSampleBufferDelegate
 #if SUNSHINE_HAVE_SCREENCAPTUREKIT
 , SCStreamDelegate, SCStreamOutput
@@ -35,10 +39,10 @@
 
 typedef bool (^FrameCallbackBlock)(CMSampleBufferRef);
 
-@property (nonatomic, assign) AVCaptureSession *session;
-@property (nonatomic, assign) NSMapTable<AVCaptureConnection *, AVCaptureVideoDataOutput *> *legacyVideoOutputs;
-@property (nonatomic, assign) NSMapTable<AVCaptureConnection *, FrameCallbackBlock> *legacyCaptureCallbacks;
-@property (nonatomic, assign) NSMapTable<AVCaptureConnection *, dispatch_semaphore_t> *legacyCaptureSignals;
+@property (nonatomic, retain) AVCaptureSession *session;
+@property (nonatomic, retain) NSMapTable<AVCaptureConnection *, AVCaptureVideoDataOutput *> *legacyVideoOutputs;
+@property (nonatomic, retain) NSMapTable<AVCaptureConnection *, FrameCallbackBlock> *legacyCaptureCallbacks;
+@property (nonatomic, retain) NSMapTable<AVCaptureConnection *, dispatch_semaphore_t> *legacyCaptureSignals;
 @property (nonatomic, copy) FrameCallbackBlock captureCallback;
 @property (nonatomic, assign) dispatch_semaphore_t captureSignal;
 @property (nonatomic, assign) dispatch_semaphore_t frameAvailableSignal;
@@ -48,8 +52,9 @@ typedef bool (^FrameCallbackBlock)(CMSampleBufferRef);
 @property (nonatomic, assign) uint64_t screenCaptureFrameCount;
 
 #if SUNSHINE_HAVE_SCREENCAPTUREKIT
-@property (nonatomic, assign) SCDisplay *shareableDisplay;
-@property (nonatomic, assign) SCStream *stream;
+@property (nonatomic, retain) SCDisplay *shareableDisplay;
+@property (nonatomic, retain) SCStream *stream;
+@property (nonatomic, retain) AVVideoScreenStreamOutput *streamOutput;
 @property (nonatomic, assign) dispatch_queue_t sampleHandlerQueue;
 
 - (BOOL)screenCaptureKitAvailableForDisplay API_AVAILABLE(macos(12.3));

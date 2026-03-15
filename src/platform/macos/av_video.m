@@ -8,6 +8,36 @@
 static NSString *const kSunshineVideoCaptureQueue = @"dev.lizardbyte.sunshine.video.capture";
 static NSUInteger const kScreenCaptureQueueCompactionThreshold = 64;
 
+#if SUNSHINE_HAVE_SCREENCAPTUREKIT
+@interface AVVideo (ScreenCaptureKitPrivate)
+- (void)handleScreenCaptureKitSampleBuffer:(CMSampleBufferRef)sampleBuffer ofType:(SCStreamOutputType)type API_AVAILABLE(macos(12.3));
+@end
+
+@interface AVVideoScreenStreamOutput: NSObject <SCStreamOutput>
+@property (nonatomic, assign) AVVideo *owner;
+- (instancetype)initWithOwner:(AVVideo *)owner;
+@end
+
+@implementation AVVideoScreenStreamOutput
+
+- (instancetype)initWithOwner:(AVVideo *)owner {
+  self = [super init];
+  if (self != nil) {
+    self.owner = owner;
+  }
+  return self;
+}
+
+- (void)stream:(SCStream *)stream didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer ofType:(SCStreamOutputType)type API_AVAILABLE(macos(12.3)) {
+  AVVideo *owner = self.owner;
+  if (owner != nil) {
+    [owner handleScreenCaptureKitSampleBuffer:sampleBuffer ofType:type];
+  }
+}
+
+@end
+#endif
+
 @implementation AVVideo
 
 + (BOOL)shouldUseScreenCaptureKit {
@@ -136,7 +166,7 @@ static NSUInteger const kScreenCaptureQueueCompactionThreshold = 64;
     self.captureDynamicRange = SCCaptureDynamicRangeSDR;
   }
 #endif
-  self.pendingSampleBuffers = [[NSMutableArray alloc] init];
+  self.pendingSampleBuffers = [[[NSMutableArray alloc] init] autorelease];
   self.pendingSampleBufferHead = 0;
 
   CFRelease(mode);
@@ -144,17 +174,17 @@ static NSUInteger const kScreenCaptureQueueCompactionThreshold = 64;
 #if SUNSHINE_HAVE_SCREENCAPTUREKIT
   if ([AVVideo shouldUseScreenCaptureKit]) {
     NSError *error = nil;
-    self.shareableDisplay = [[AVVideo shareableDisplayWithID:self.displayID error:&error] retain];
+    self.shareableDisplay = [AVVideo shareableDisplayWithID:self.displayID error:&error];
     if (self.shareableDisplay != nil) {
       return self;
     }
   }
 #endif
 
-  self.session = [[AVCaptureSession alloc] init];
-  self.legacyVideoOutputs = [[NSMapTable alloc] init];
-  self.legacyCaptureCallbacks = [[NSMapTable alloc] init];
-  self.legacyCaptureSignals = [[NSMapTable alloc] init];
+  self.session = [[[AVCaptureSession alloc] init] autorelease];
+  self.legacyVideoOutputs = [[[NSMapTable alloc] init] autorelease];
+  self.legacyCaptureCallbacks = [[[NSMapTable alloc] init] autorelease];
+  self.legacyCaptureSignals = [[[NSMapTable alloc] init] autorelease];
 
   AVCaptureScreenInput *screenInput = [[AVCaptureScreenInput alloc] initWithDisplayID:self.displayID];
   [screenInput setMinFrameDuration:self.minFrameDuration];
@@ -175,15 +205,12 @@ static NSUInteger const kScreenCaptureQueueCompactionThreshold = 64;
 - (void)dealloc {
 #if SUNSHINE_HAVE_SCREENCAPTUREKIT
   if (self.stream != nil) {
-    dispatch_semaphore_t stopSignal = dispatch_semaphore_create(0);
-    [self.stream stopCaptureWithCompletionHandler:^(__unused NSError *stopError) {
-      dispatch_semaphore_signal(stopSignal);
-    }];
-    dispatch_semaphore_wait(stopSignal, DISPATCH_TIME_FOREVER);
+    [self stopScreenCaptureKitStream];
   }
 
   [self.shareableDisplay release];
   [self.stream release];
+  [self.streamOutput release];
 #endif
 
   [self.pendingSampleBuffers removeAllObjects];
@@ -238,6 +265,10 @@ static NSUInteger const kScreenCaptureQueueCompactionThreshold = 64;
     return NO;
   }
 
+  if (self.stream != nil) {
+    [self stopScreenCaptureKitStream];
+  }
+
   SCContentFilter *filter = [[SCContentFilter alloc] initWithDisplay:self.shareableDisplay
                                                excludingApplications:@[]
                                                     exceptingWindows:@[]];
@@ -275,16 +306,17 @@ static NSUInteger const kScreenCaptureQueueCompactionThreshold = 64;
 
   dispatch_queue_attr_t captureQos = dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INTERACTIVE, 0);
   self.sampleHandlerQueue = dispatch_queue_create(kSunshineVideoCaptureQueue.UTF8String, captureQos);
-  self.stream = [[SCStream alloc] initWithFilter:filter configuration:configuration delegate:self];
+  self.streamOutput = [[[AVVideoScreenStreamOutput alloc] initWithOwner:self] autorelease];
+  self.stream = [[[SCStream alloc] initWithFilter:filter configuration:configuration delegate:self] autorelease];
 
   NSError *streamError = nil;
-  if (![self.stream addStreamOutput:self type:SCStreamOutputTypeScreen sampleHandlerQueue:self.sampleHandlerQueue error:&streamError]) {
+  if (![self.stream addStreamOutput:self.streamOutput type:SCStreamOutputTypeScreen sampleHandlerQueue:self.sampleHandlerQueue error:&streamError]) {
     if (error != NULL) {
       *error = streamError;
     }
 
-    [self.stream release];
     self.stream = nil;
+    self.streamOutput = nil;
     [configuration release];
     [filter release];
     return NO;
@@ -308,10 +340,10 @@ static NSUInteger const kScreenCaptureQueueCompactionThreshold = 64;
       [startError release];
     }
 
-    NSError *removeError = nil;
-    [self.stream removeStreamOutput:self type:SCStreamOutputTypeScreen error:&removeError];
-    [self.stream release];
+    [self.stream stopCaptureWithCompletionHandler:^(__unused NSError *stopError) {
+    }];
     self.stream = nil;
+    self.streamOutput = nil;
     return NO;
   }
 
@@ -323,18 +355,20 @@ static NSUInteger const kScreenCaptureQueueCompactionThreshold = 64;
     return;
   }
 
-  NSError *removeError = nil;
-  [self.stream removeStreamOutput:self type:SCStreamOutputTypeScreen error:&removeError];
-
   dispatch_semaphore_t signal = dispatch_semaphore_create(0);
   SCStream *stream = [self.stream retain];
+  AVVideoScreenStreamOutput *streamOutput = [self.streamOutput retain];
   self.stream = nil;
+  self.streamOutput = nil;
+  self.sampleHandlerQueue = nil;
 
   [stream stopCaptureWithCompletionHandler:^(__unused NSError *stopError) {
     dispatch_semaphore_signal(signal);
   }];
   dispatch_semaphore_wait(signal, DISPATCH_TIME_FOREVER);
 
+  streamOutput.owner = nil;
+  [streamOutput release];
   [stream release];
 }
 
@@ -415,6 +449,39 @@ static NSUInteger const kScreenCaptureQueueCompactionThreshold = 64;
   [self stopScreenCaptureKitStream];
   self.frameAvailableSignal = nil;
 }
+
+- (void)handleScreenCaptureKitSampleBuffer:(CMSampleBufferRef)sampleBuffer ofType:(SCStreamOutputType)type API_AVAILABLE(macos(12.3)) {
+  if (type != SCStreamOutputTypeScreen || ![self sampleBufferIsComplete:sampleBuffer]) {
+    return;
+  }
+
+  dispatch_semaphore_t frameSignal = self.frameAvailableSignal;
+  if (frameSignal == nil) {
+    return;
+  }
+
+  @synchronized(self) {
+    static const NSUInteger kMaxPendingScreenCaptureSamples = 16;
+    NSUInteger pendingCount = self.pendingSampleBuffers.count - self.pendingSampleBufferHead;
+    if (pendingCount >= kMaxPendingScreenCaptureSamples) {
+      self.pendingSampleBufferHead += 1;
+    }
+    [self.pendingSampleBuffers addObject:(__bridge id) sampleBuffer];
+
+    if (self.pendingSampleBufferHead >= kScreenCaptureQueueCompactionThreshold &&
+        self.pendingSampleBufferHead * 2 >= self.pendingSampleBuffers.count) {
+      NSRange consumedRange = NSMakeRange(0, self.pendingSampleBufferHead);
+      [self.pendingSampleBuffers removeObjectsInRange:consumedRange];
+      self.pendingSampleBufferHead = 0;
+    }
+
+    self.screenCaptureFrameCount += 1;
+  }
+  if (self.screenCaptureFrameCount <= 5 || (self.screenCaptureFrameCount % 120) == 0) {
+    NSLog(@"AVVideo ScreenCaptureKit queued frame #%llu", self.screenCaptureFrameCount);
+  }
+  dispatch_semaphore_signal(frameSignal);
+}
 #endif
 
 - (dispatch_semaphore_t)capture:(FrameCallbackBlock)frameCallback {
@@ -462,36 +529,7 @@ static NSUInteger const kScreenCaptureQueueCompactionThreshold = 64;
 
 #if SUNSHINE_HAVE_SCREENCAPTUREKIT
 - (void)stream:(SCStream *)stream didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer ofType:(SCStreamOutputType)type API_AVAILABLE(macos(12.3)) {
-  if (type != SCStreamOutputTypeScreen || ![self sampleBufferIsComplete:sampleBuffer]) {
-    return;
-  }
-
-  dispatch_semaphore_t frameSignal = self.frameAvailableSignal;
-  if (frameSignal == nil) {
-    return;
-  }
-
-  @synchronized(self) {
-    static const NSUInteger kMaxPendingScreenCaptureSamples = 16;
-    NSUInteger pendingCount = self.pendingSampleBuffers.count - self.pendingSampleBufferHead;
-    if (pendingCount >= kMaxPendingScreenCaptureSamples) {
-      self.pendingSampleBufferHead += 1;
-    }
-    [self.pendingSampleBuffers addObject:(__bridge id) sampleBuffer];
-
-    if (self.pendingSampleBufferHead >= kScreenCaptureQueueCompactionThreshold &&
-        self.pendingSampleBufferHead * 2 >= self.pendingSampleBuffers.count) {
-      NSRange consumedRange = NSMakeRange(0, self.pendingSampleBufferHead);
-      [self.pendingSampleBuffers removeObjectsInRange:consumedRange];
-      self.pendingSampleBufferHead = 0;
-    }
-
-    self.screenCaptureFrameCount += 1;
-  }
-  if (self.screenCaptureFrameCount <= 5 || (self.screenCaptureFrameCount % 120) == 0) {
-    NSLog(@"AVVideo ScreenCaptureKit queued frame #%llu", self.screenCaptureFrameCount);
-  }
-  dispatch_semaphore_signal(frameSignal);
+  [self handleScreenCaptureKitSampleBuffer:sampleBuffer ofType:type];
 }
 
 - (void)stream:(SCStream *)stream didStopWithError:(NSError *)error API_AVAILABLE(macos(12.3)) {
