@@ -633,17 +633,20 @@ namespace platf {
     configuration_ok = configuration_ok && (CGConfigureDisplayMirrorOfDisplay(config, virtual_display_id, kCGNullDirectDisplay) == kCGErrorSuccess);
     configuration_ok = configuration_ok && (CGConfigureDisplayOrigin(config, virtual_display_id, 0, 0) == kCGErrorSuccess);
 
-    int32_t next_x = static_cast<int32_t>(CGRectGetWidth(CGDisplayBounds(virtual_display_id)));
     for (const auto &entry : virtual_display_layout_snapshot) {
       if (entry.display_id == virtual_display_id) {
         continue;
       }
 
-      const auto bounds = CGDisplayBounds(entry.display_id);
       if (CGConfigureDisplayMirrorOfDisplay(config, entry.display_id, virtual_display_id) != kCGErrorSuccess) {
+        BOOST_LOG(warning) << "Failed to mirror macOS display "sv << entry.display_id << " onto virtual display "sv << virtual_display_id << "; overlapping it instead of extending the desktop"sv;
         configuration_ok = configuration_ok &&
-                           (CGConfigureDisplayOrigin(config, entry.display_id, next_x, 0) == kCGErrorSuccess);
-        next_x += static_cast<int32_t>(CGRectGetWidth(bounds));
+                           (CGConfigureDisplayOrigin(
+                              config,
+                              entry.display_id,
+                              static_cast<int32_t>(CGDisplayBounds(virtual_display_id).origin.x),
+                              static_cast<int32_t>(CGDisplayBounds(virtual_display_id).origin.y)
+                            ) == kCGErrorSuccess);
       }
     }
 
