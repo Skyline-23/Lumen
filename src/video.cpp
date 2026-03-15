@@ -1130,6 +1130,7 @@ namespace video {
     encode_session_ctx_queue_t encode_session_ctx_queue {30};
   };
 
+  void configure_capture_format_for_encoder(platf::display_t &disp, const encoder_t &encoder, const config_t &config);
   int start_capture_sync(capture_thread_sync_ctx_t &ctx);
   void end_capture_sync(capture_thread_sync_ctx_t &ctx);
   int start_capture_async(capture_thread_async_ctx_t &ctx);
@@ -1942,6 +1943,10 @@ namespace video {
     uint64_t forwarded_capture_frames = 0;
 
     while (capture_ctx_queue->running()) {
+      if (!capture_ctxs.empty()) {
+        configure_capture_format_for_encoder(*disp, encoder, capture_ctxs.front().config);
+      }
+
       bool artificial_reinit = false;
 
       auto push_captured_image_callback = [&](std::shared_ptr<platf::img_t> &&img, bool frame_captured) -> bool {
@@ -2892,6 +2897,36 @@ namespace video {
     }
 
     return result;
+  }
+
+  void configure_capture_format_for_encoder(platf::display_t &disp, const encoder_t &encoder, const config_t &config) {
+    auto colorspace = colorspace_from_client_config(config, disp.is_hdr());
+
+    platf::pix_fmt_e pix_fmt;
+    if (config.chromaSamplingType == 1) {
+      if (!(encoder.flags & YUV444_SUPPORT)) {
+        return;
+      }
+      pix_fmt = (colorspace.bit_depth == 10) ?
+                  encoder.platform_formats->pix_fmt_yuv444_10bit :
+                  encoder.platform_formats->pix_fmt_yuv444_8bit;
+    } else {
+      pix_fmt = (colorspace.bit_depth == 10) ?
+                  encoder.platform_formats->pix_fmt_10bit :
+                  encoder.platform_formats->pix_fmt_8bit;
+    }
+
+    if (dynamic_cast<const encoder_platform_formats_avcodec *>(encoder.platform_formats.get())) {
+      auto capture_device = disp.make_avcodec_encode_device(pix_fmt);
+      if (capture_device) {
+        capture_device->colorspace = colorspace;
+        capture_device->apply_colorspace();
+        BOOST_LOG(info) << "Configured capture format for encoder ["sv << encoder.name
+                        << "] pix_fmt="sv << static_cast<int>(pix_fmt)
+                        << " full_range="sv << colorspace.full_range
+                        << " bit_depth="sv << colorspace.bit_depth;
+      }
+    }
   }
 
   std::optional<sync_session_t> make_synced_session(platf::display_t *disp, const encoder_t &encoder, platf::img_t &img, sync_session_ctx_t &ctx) {
