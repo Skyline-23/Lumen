@@ -648,7 +648,9 @@ namespace video {
 
       auto submitted = submitted_frames.fetch_add(1, std::memory_order_relaxed) + 1;
       if (submitted <= 5 || submitted % 120 == 0) {
-        BOOST_LOG(info) << "Native VT submitted frame #"sv << submitted << " index="sv << frame_nr;
+        BOOST_LOG(info) << "Native VT submitted frame #"sv << submitted
+                        << " index="sv << frame_nr
+                        << " pixelFormat="sv << CVPixelBufferGetPixelFormatType(frame_context->pixel_buffer);
       }
 
       force_idr = false;
@@ -725,13 +727,7 @@ namespace video {
     }
 
     cf_dict_t make_encoder_specification() const {
-      const void *keys[] = {
-        kVTVideoEncoderSpecification_EnableLowLatencyRateControl,
-      };
-      const void *values[] = {
-        kCFBooleanTrue,
-      };
-      return cf_dict_t(CFDictionaryCreate(nullptr, keys, values, 1, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks));
+      return cf_dict_t(CFDictionaryCreate(nullptr, nullptr, nullptr, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks));
     }
 
     cf_dict_t make_source_image_buffer_attributes() const {
