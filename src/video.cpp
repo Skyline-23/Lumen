@@ -1939,6 +1939,7 @@ namespace video {
 
     // Capture takes place on this thread
     platf::adjust_thread_priority(platf::thread_priority_e::critical);
+    uint64_t forwarded_capture_frames = 0;
 
     while (capture_ctx_queue->running()) {
       bool artificial_reinit = false;
@@ -1952,6 +1953,10 @@ namespace video {
           }
 
           if (frame_captured) {
+            auto forwarded = ++forwarded_capture_frames;
+            if (forwarded <= 5 || (forwarded % 120) == 0) {
+              BOOST_LOG(info) << "Async capture forwarded frame #"sv << forwarded;
+            }
             capture_ctx->images->raise(img);
           }
 
@@ -2710,6 +2715,8 @@ namespace video {
     }
 
     std::chrono::steady_clock::time_point encode_frame_timestamp;
+    uint64_t received_capture_frames = 0;
+    uint64_t capture_wait_timeouts = 0;
 
     while (true) {
       // Break out of the encoding loop if any of the following are true:
@@ -2745,6 +2752,10 @@ namespace video {
       // Encode at a minimum FPS to avoid image quality issues with static content
       if (!requested_idr_frame || images->peek()) {
         if (auto img = images->pop(max_frametime)) {
+          auto received = ++received_capture_frames;
+          if (received <= 5 || (received % 120) == 0) {
+            BOOST_LOG(info) << "Async encode received captured frame #"sv << received;
+          }
           frame_timestamp = img->frame_timestamp;
           if (!frame_timestamp) {
             frame_timestamp = std::chrono::steady_clock::now();
@@ -2772,6 +2783,11 @@ namespace video {
           encode_frame_timestamp += encode_frame_threshold;
         } else if (!images->running()) {
           break;
+        } else {
+          auto timeout_count = ++capture_wait_timeouts;
+          if (timeout_count <= 5 || (timeout_count % 60) == 0) {
+            BOOST_LOG(info) << "Async encode timed out waiting for a captured frame #"sv << timeout_count;
+          }
         }
       }
 

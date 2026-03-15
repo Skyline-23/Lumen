@@ -7,7 +7,9 @@
 
 // standard includes
 #include <filesystem>
+#include <array>
 #include <format>
+#include <optional>
 #include <string>
 #include <utility>
 #include <string>
@@ -64,6 +66,45 @@ namespace nvhttp {
   static std::string otp_passphrase;
   static std::string otp_device_name;
   static std::chrono::time_point<std::chrono::steady_clock> otp_creation_time;
+
+  namespace {
+    std::optional<fs::path> find_legacy_state_file() {
+#ifdef __APPLE__
+      if (const char *home = getenv("HOME")) {
+        std::array<fs::path, 2> legacy_candidates {
+          fs::path {home} / ".config/sunshine/sunshine_state.json",
+          fs::path {home} / "Library/Application Support/Sunshine/sunshine_state.json",
+        };
+
+        for (const auto &candidate : legacy_candidates) {
+          if (fs::exists(candidate)) {
+            return candidate;
+          }
+        }
+      }
+#endif
+      return std::nullopt;
+    }
+
+    void migrate_legacy_state_if_needed() {
+      if (fs::exists(config::nvhttp.file_state)) {
+        return;
+      }
+
+      auto legacy_state = find_legacy_state_file();
+      if (!legacy_state) {
+        return;
+      }
+
+      try {
+        fs::create_directories(fs::path(config::nvhttp.file_state).parent_path());
+        fs::copy_file(*legacy_state, config::nvhttp.file_state, fs::copy_options::overwrite_existing);
+        BOOST_LOG(info) << "Migrated legacy state file from ["sv << legacy_state->string() << "] to ["sv << config::nvhttp.file_state << ']';
+      } catch (std::exception &e) {
+        BOOST_LOG(error) << "Couldn't migrate legacy state file from ["sv << legacy_state->string() << "] to ["sv << config::nvhttp.file_state << "]: "sv << e.what();
+      }
+    }
+  }  // namespace
 
   class SunshineHTTPSServer: public SimpleWeb::ServerBase<SunshineHTTPS> {
   public:
@@ -287,6 +328,8 @@ namespace nvhttp {
   }
 
   void load_state() {
+    migrate_legacy_state_if_needed();
+
     if (!fs::exists(config::nvhttp.file_state)) {
       BOOST_LOG(info) << "File "sv << config::nvhttp.file_state << " doesn't exist"sv;
       http::unique_id = uuid_util::uuid_t::generate().string();
