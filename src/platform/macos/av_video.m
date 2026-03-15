@@ -257,7 +257,7 @@ static NSUInteger const kScreenCaptureQueueCompactionThreshold = 64;
   }
 
   NSInteger status = [(__bridge NSNumber *) statusValue integerValue];
-  return status == SCFrameStatusComplete || status == SCFrameStatusStarted;
+  return status == SCFrameStatusComplete || status == SCFrameStatusStarted || status == SCFrameStatusIdle;
 }
 
 - (BOOL)startScreenCaptureKitStream:(NSError **)error API_AVAILABLE(macos(12.3)) {
@@ -451,7 +451,25 @@ static NSUInteger const kScreenCaptureQueueCompactionThreshold = 64;
 }
 
 - (void)handleScreenCaptureKitSampleBuffer:(CMSampleBufferRef)sampleBuffer ofType:(SCStreamOutputType)type API_AVAILABLE(macos(12.3)) {
-  if (type != SCStreamOutputTypeScreen || ![self sampleBufferIsComplete:sampleBuffer]) {
+  if (type != SCStreamOutputTypeScreen) {
+    return;
+  }
+
+  if (![self sampleBufferIsComplete:sampleBuffer]) {
+    static uint64_t droppedSampleCount = 0;
+    droppedSampleCount += 1;
+    if (droppedSampleCount <= 5 || (droppedSampleCount % 120) == 0) {
+      NSInteger status = -1;
+      CFArrayRef attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, false);
+      if (attachments != nil && CFArrayGetCount(attachments) > 0) {
+        CFDictionaryRef attachment = (CFDictionaryRef) CFArrayGetValueAtIndex(attachments, 0);
+        CFTypeRef statusValue = CFDictionaryGetValue(attachment, SCStreamFrameInfoStatus);
+        if (statusValue != nil) {
+          status = [(__bridge NSNumber *) statusValue integerValue];
+        }
+      }
+      NSLog(@"AVVideo ScreenCaptureKit dropped frame status=%ld dropped=%llu", (long) status, droppedSampleCount);
+    }
     return;
   }
 
