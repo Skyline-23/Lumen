@@ -371,6 +371,13 @@ static NSString *const kSunshineAudioCaptureQueue = @"dev.lizardbyte.sunshine.au
       [filter release];
       return -1;
     }
+    if (![self.stream addStreamOutput:self.streamOutput type:SCStreamOutputTypeScreen sampleHandlerQueue:self.sampleHandlerQueue error:&streamError]) {
+      self.stream = nil;
+      self.streamOutput = nil;
+      [configuration release];
+      [filter release];
+      return -1;
+    }
 
     dispatch_semaphore_t signal = dispatch_semaphore_create(0);
     __block NSError *startError = nil;
