@@ -247,20 +247,7 @@ static NSUInteger const kScreenCaptureQueueCompactionThreshold = 64;
   if (CMSampleBufferGetImageBuffer(sampleBuffer) == nil) {
     return NO;
   }
-
-  CFArrayRef attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, false);
-  if (attachments == nil || CFArrayGetCount(attachments) == 0) {
-    return YES;
-  }
-
-  CFDictionaryRef attachment = (CFDictionaryRef) CFArrayGetValueAtIndex(attachments, 0);
-  CFTypeRef statusValue = CFDictionaryGetValue(attachment, SCStreamFrameInfoStatus);
-  if (statusValue == nil) {
-    return YES;
-  }
-
-  NSInteger status = [(__bridge NSNumber *) statusValue integerValue];
-  return status == SCFrameStatusComplete || status == SCFrameStatusStarted;
+  return YES;
 }
 
 - (BOOL)startScreenCaptureKitStream:(NSError **)error API_AVAILABLE(macos(12.3)) {
