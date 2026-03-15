@@ -13,6 +13,7 @@
 #include <ifaddrs.h>
 
 // platform includes
+#include <AppKit/AppKit.h>
 #include <ApplicationServices/ApplicationServices.h>
 #include <arpa/inet.h>
 #include <dlfcn.h>
@@ -60,6 +61,17 @@ namespace platf {
     std::vector<display_layout_entry_t> virtual_display_layout_snapshot;
     bool virtual_display_layout_active = false;
     std::atomic<bool> accessibility_prompt_requested = false;
+
+    void open_accessibility_settings() {
+      NSURL *settings_url = [NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"];
+      if (settings_url == nil) {
+        return;
+      }
+
+      dispatch_async(dispatch_get_main_queue(), ^{
+        [[NSWorkspace sharedWorkspace] openURL:settings_url];
+      });
+    }
 
     bool refresh_screen_capture_permission_state() {
 #pragma clang diagnostic push
@@ -727,6 +739,7 @@ namespace platf {
           AXIsProcessTrustedWithOptions(options);
           CFRelease(options);
         }
+        open_accessibility_settings();
       }
       BOOST_LOG(warning) << "Skipping macOS window migration to virtual display because Accessibility permission is not granted"sv;
       return;
