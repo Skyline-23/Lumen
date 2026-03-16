@@ -262,7 +262,9 @@ static NSUInteger const kScreenCaptureKitShareableDisplayRefreshAttempts = 20;
   }
 
   NSInteger status = [(__bridge NSNumber *) statusValue integerValue];
-  return status == SCFrameStatusComplete || status == SCFrameStatusStarted;
+  return status == SCFrameStatusComplete ||
+         status == SCFrameStatusStarted ||
+         status == SCFrameStatusIdle;
 }
 
 - (BOOL)startScreenCaptureKitStream:(NSError **)error API_AVAILABLE(macos(12.3)) {
