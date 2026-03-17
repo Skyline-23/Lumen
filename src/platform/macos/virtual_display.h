@@ -34,6 +34,7 @@ namespace VDISPLAY {
     std::uint32_t width,
     std::uint32_t height,
     std::uint32_t fps_millihz,
+    int scale_factor,
     bool hdr_enabled,
     int client_display_gamut,
     int client_display_transfer

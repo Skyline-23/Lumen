@@ -216,6 +216,9 @@ namespace proc {
 
     launch_session->width = render_width;
     launch_session->height = render_height;
+    this->client_scale_factor = scale_factor;
+    this->client_render_width = static_cast<int>(render_width);
+    this->client_render_height = static_cast<int>(render_height);
 
     this->initial_display = config::video.output_name;
     // Executed when returning from function
@@ -357,6 +360,7 @@ namespace proc {
         render_width,
         render_height,
         launch_session->fps ? static_cast<std::uint32_t>(launch_session->fps) : 60000u,
+        scale_factor,
         launch_session->enable_hdr,
         launch_session->client_display_gamut,
         launch_session->client_display_transfer

@@ -103,6 +103,13 @@ namespace VDISPLAY {
       return NSMakeSize(width_mm, height_mm);
     }
 
+    std::uint32_t logical_dimension_for_scale_factor(std::uint32_t pixel_dimension, int scale_factor) {
+      const auto clamped_scale = std::max(scale_factor, 100);
+      const auto scaled_dimension = (static_cast<std::uint64_t>(std::max(pixel_dimension, 1u)) * 100u) / static_cast<std::uint64_t>(clamped_scale);
+      const auto clamped_dimension = std::min<std::uint32_t>(pixel_dimension, std::max<std::uint32_t>(2u, static_cast<std::uint32_t>(scaled_dimension)));
+      return clamped_dimension & ~1u;
+    }
+
     int virtual_display_transfer_function(bool hdr_enabled, int client_display_transfer) {
       switch (static_cast<video::client_display_transfer_e>(client_display_transfer)) {
         case video::client_display_transfer_e::pq:
@@ -293,6 +300,7 @@ namespace VDISPLAY {
     std::uint32_t width,
     std::uint32_t height,
     std::uint32_t fps_millihz,
+    int scale_factor,
     bool hdr_enabled,
     int client_display_gamut,
     int client_display_transfer
@@ -326,8 +334,8 @@ namespace VDISPLAY {
     const auto host_profile = probeHostDisplayColorProfile(hdr_enabled, client_display_gamut, client_display_transfer);
     const auto physical_size = virtual_display_size_for_pixels(width, height);
     const auto transfer_function = virtual_display_transfer_function(hdr_enabled, client_display_transfer);
-    const auto logical_width = std::max(width / 2u, 1u);
-    const auto logical_height = std::max(height / 2u, 1u);
+    const auto logical_width = logical_dimension_for_scale_factor(width, scale_factor);
+    const auto logical_height = logical_dimension_for_scale_factor(height, scale_factor);
     handle->queue = dispatch_queue_create("dev.lizardbyte.sunshine.virtual-display", DISPATCH_QUEUE_SERIAL);
     handle->descriptor = [[descriptor_class alloc] init];
     handle->settings = [[settings_class alloc] init];

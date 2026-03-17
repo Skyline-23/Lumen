@@ -116,6 +116,9 @@ namespace proc {
     bool allow_client_commands = false;
     int client_display_gamut = 0;
     int client_display_transfer = 0;
+    int client_scale_factor = 100;
+    int client_render_width = 0;
+    int client_render_height = 0;
 
     proc_t(
       boost::process::v1::environment &&env,
