@@ -50,7 +50,10 @@ typedef bool (^FrameCallbackBlock)(CMSampleBufferRef);
 @property (nonatomic, assign) NSUInteger pendingSampleBufferHead;
 @property (nonatomic, assign) BOOL captureStopped;
 @property (nonatomic, assign) uint64_t screenCaptureFrameCount;
+@property (nonatomic, assign) uint64_t screenCaptureCallbackCount;
+@property (nonatomic, assign) uint64_t screenCaptureDroppedFrameCount;
 @property (nonatomic, assign) CFAbsoluteTime screenCaptureStartTime;
+@property (nonatomic, assign) CFAbsoluteTime screenCaptureLastFrameTime;
 
 #if SUNSHINE_HAVE_SCREENCAPTUREKIT
 @property (nonatomic, retain) SCDisplay *shareableDisplay;

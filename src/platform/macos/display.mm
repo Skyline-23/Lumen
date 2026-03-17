@@ -199,8 +199,11 @@ namespace platf {
             CMSampleBufferRef sampleBuffer = [av_capture copyNextScreenCaptureKitSampleBuffer];
             if (sampleBuffer == nil) {
               auto queued_frames = av_capture.screenCaptureFrameCount;
-              if (allow_restart_on_early_stop && queued_frames < 5) {
+              if (allow_restart_on_early_stop && queued_frames < 60) {
                 BOOST_LOG(warning) << "ScreenCaptureKit stopped too early (queued_frames="sv << queued_frames << "); retrying capture startup once"sv;
+                if (proc::proc.virtual_display) {
+                  focus_virtual_display_workspace(display_id);
+                }
                 restart_capture = true;
               }
               break;

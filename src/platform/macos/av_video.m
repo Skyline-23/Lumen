@@ -8,6 +8,7 @@
 static NSString *const kSunshineVideoCaptureQueue = @"dev.lizardbyte.sunshine.video.capture";
 static NSUInteger const kScreenCaptureQueueCompactionThreshold = 64;
 static CFTimeInterval const kScreenCaptureKitStartupTimeoutSeconds = 1.5;
+static CFTimeInterval const kScreenCaptureKitStallTimeoutSeconds = 0.75;
 static NSUInteger const kScreenCaptureKitShareableDisplayRefreshAttempts = 20;
 
 #if SUNSHINE_HAVE_SCREENCAPTUREKIT
@@ -409,7 +410,10 @@ static NSUInteger const kScreenCaptureKitShareableDisplayRefreshAttempts = 20;
   self.captureSignal = nil;
   self.captureCallback = nil;
   self.screenCaptureFrameCount = 0;
+  self.screenCaptureCallbackCount = 0;
+  self.screenCaptureDroppedFrameCount = 0;
   self.screenCaptureStartTime = CFAbsoluteTimeGetCurrent();
+  self.screenCaptureLastFrameTime = self.screenCaptureStartTime;
   [self.pendingSampleBuffers removeAllObjects];
   self.pendingSampleBufferHead = 0;
 
@@ -442,6 +446,11 @@ static NSUInteger const kScreenCaptureKitShareableDisplayRefreshAttempts = 20;
       @synchronized(self) {
         if (self.captureStopped || self.frameAvailableSignal == nil) {
           break;
+        }
+        if (self.screenCaptureFrameCount > 0 &&
+            (CFAbsoluteTimeGetCurrent() - self.screenCaptureLastFrameTime) >= kScreenCaptureKitStallTimeoutSeconds) {
+          NSLog(@"AVVideo ScreenCaptureKit stalled after %llu queued frames; restarting capture", self.screenCaptureFrameCount);
+          return nil;
         }
         if (self.screenCaptureFrameCount == 0 &&
             (CFAbsoluteTimeGetCurrent() - self.screenCaptureStartTime) >= kScreenCaptureKitStartupTimeoutSeconds) {
@@ -501,10 +510,17 @@ static NSUInteger const kScreenCaptureKitShareableDisplayRefreshAttempts = 20;
     return;
   }
 
+  self.screenCaptureCallbackCount += 1;
+  if (self.screenCaptureCallbackCount <= 10 || (self.screenCaptureCallbackCount % 120) == 0) {
+    CVImageBufferRef imageBuffer = sampleBuffer != nil ? CMSampleBufferGetImageBuffer(sampleBuffer) : nil;
+    NSLog(@"AVVideo ScreenCaptureKit callback #%llu imageBuffer=%s",
+          self.screenCaptureCallbackCount,
+          imageBuffer != nil ? "yes" : "no");
+  }
+
   if (![self sampleBufferIsComplete:sampleBuffer]) {
-    static uint64_t droppedSampleCount = 0;
-    droppedSampleCount += 1;
-    if (droppedSampleCount <= 5 || (droppedSampleCount % 120) == 0) {
+    self.screenCaptureDroppedFrameCount += 1;
+    if (self.screenCaptureDroppedFrameCount <= 10 || (self.screenCaptureDroppedFrameCount % 120) == 0) {
       NSInteger status = -1;
       CFArrayRef attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, false);
       if (attachments != nil && CFArrayGetCount(attachments) > 0) {
@@ -514,7 +530,10 @@ static NSUInteger const kScreenCaptureKitShareableDisplayRefreshAttempts = 20;
           status = [(__bridge NSNumber *) statusValue integerValue];
         }
       }
-      NSLog(@"AVVideo ScreenCaptureKit dropped frame status=%ld dropped=%llu", (long) status, droppedSampleCount);
+      NSLog(@"AVVideo ScreenCaptureKit dropped frame status=%ld dropped=%llu callbacks=%llu",
+            (long) status,
+            self.screenCaptureDroppedFrameCount,
+            self.screenCaptureCallbackCount);
     }
     return;
   }
@@ -540,9 +559,13 @@ static NSUInteger const kScreenCaptureKitShareableDisplayRefreshAttempts = 20;
     }
 
     self.screenCaptureFrameCount += 1;
+    self.screenCaptureLastFrameTime = CFAbsoluteTimeGetCurrent();
   }
   if (self.screenCaptureFrameCount <= 5 || (self.screenCaptureFrameCount % 120) == 0) {
-    NSLog(@"AVVideo ScreenCaptureKit queued frame #%llu", self.screenCaptureFrameCount);
+    NSLog(@"AVVideo ScreenCaptureKit queued frame #%llu callbacks=%llu pending=%lu",
+          self.screenCaptureFrameCount,
+          self.screenCaptureCallbackCount,
+          (unsigned long) (self.pendingSampleBuffers.count - self.pendingSampleBufferHead));
   }
   dispatch_semaphore_signal(frameSignal);
 }
