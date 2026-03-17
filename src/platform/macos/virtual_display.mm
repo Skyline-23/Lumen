@@ -49,6 +49,10 @@ namespace VDISPLAY {
       id display {nil};
       dispatch_queue_t queue {nil};
       std::string display_id;
+      std::uint32_t pixel_width {0};
+      std::uint32_t pixel_height {0};
+      std::uint32_t logical_width {0};
+      std::uint32_t logical_height {0};
 
       ~virtual_display_handle_t() {
         if (display != nil) {
@@ -162,6 +166,21 @@ namespace VDISPLAY {
 
       CFRelease(display_modes);
       return success;
+    }
+
+    bool is_reasonable_hidpi_logical_size(const virtual_display_handle_t &handle, std::uint32_t logical_width, std::uint32_t logical_height) {
+      if (logical_width == 0 || logical_height == 0 || handle.pixel_width == 0 || handle.pixel_height == 0) {
+        return false;
+      }
+
+      if (logical_width >= handle.pixel_width || logical_height >= handle.pixel_height) {
+        return false;
+      }
+
+      const auto backing_aspect = static_cast<double>(handle.pixel_width) / static_cast<double>(handle.pixel_height);
+      const auto logical_aspect = static_cast<double>(logical_width) / static_cast<double>(logical_height);
+      const auto aspect_delta = std::fabs(logical_aspect - backing_aspect) / backing_aspect;
+      return aspect_delta <= 0.02;
     }
 
     NSString *display_name_for_client(const char *client_name) {
@@ -382,6 +401,10 @@ namespace VDISPLAY {
     }
 
     handle->display_id = std::to_string(display_id_number.unsignedIntValue);
+    handle->pixel_width = width;
+    handle->pixel_height = height;
+    handle->logical_width = logical_width;
+    handle->logical_height = logical_height;
     BOOST_LOG(info) << "macOS virtual display created displayID="sv << handle->display_id;
     force_virtual_display_mode(display_id_number.unsignedIntValue, logical_width, logical_height, normalize_refresh_rate(fps_millihz));
 
@@ -417,6 +440,13 @@ namespace VDISPLAY {
     }
 
     auto &handle = *it->second;
+    if (!is_reasonable_hidpi_logical_size(handle, logical_width, logical_height)) {
+      BOOST_LOG(info) << "Ignoring macOS virtual display mode update for displayID="sv << handle.display_id
+                      << " logical="sv << logical_width << "x"sv << logical_height
+                      << " backing="sv << handle.pixel_width << "x"sv << handle.pixel_height;
+      return false;
+    }
+
     const auto transfer_function = virtual_display_transfer_function(
       static_cast<video::client_display_transfer_e>(client_display_transfer) != video::client_display_transfer_e::sdr,
       client_display_transfer
@@ -463,6 +493,8 @@ namespace VDISPLAY {
     BOOST_LOG(info) << "Updated macOS virtual display mode for displayID="sv << handle.display_id
                     << " logical="sv << logical_width << "x"sv << logical_height
                     << " transfer-function="sv << transfer_function;
+    handle.logical_width = logical_width;
+    handle.logical_height = logical_height;
     force_virtual_display_mode(static_cast<CGDirectDisplayID>(std::strtoul(handle.display_id.c_str(), nullptr, 10)), logical_width, logical_height, normalize_refresh_rate(fps_millihz));
     return true;
   }
