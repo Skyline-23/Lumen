@@ -14,6 +14,7 @@
 #include "src/platform/macos/av_video.h"
 #include "src/platform/macos/misc.h"
 #include "src/platform/macos/nv12_zero_device.h"
+#include "src/platform/macos/virtual_display.h"
 #include "src/process.h"
 
 // Avoid conflict between AVFoundation and libavutil both defining AVMediaType
@@ -93,11 +94,16 @@ namespace platf {
     }
 
     bool generic_virtual_hdr_metadata(SS_HDR_METADATA &metadata) {
+      const auto host_profile = VDISPLAY::probeHostDisplayColorProfile(true);
+      const auto scale = [](double value) -> uint16_t {
+        return static_cast<uint16_t>(std::clamp(std::lround(value * 50000.0), 0l, 50000l));
+      };
+
       std::memset(&metadata, 0, sizeof(metadata));
-      metadata.displayPrimaries[0] = {35400, 14600};
-      metadata.displayPrimaries[1] = {8500, 39850};
-      metadata.displayPrimaries[2] = {6550, 2300};
-      metadata.whitePoint = {15635, 16450};
+      metadata.displayPrimaries[0] = {scale(host_profile.red.x), scale(host_profile.red.y)};
+      metadata.displayPrimaries[1] = {scale(host_profile.green.x), scale(host_profile.green.y)};
+      metadata.displayPrimaries[2] = {scale(host_profile.blue.x), scale(host_profile.blue.y)};
+      metadata.whitePoint = {scale(host_profile.white.x), scale(host_profile.white.y)};
       metadata.maxDisplayLuminance = 1000;
       metadata.maxFullFrameLuminance = 1000;
       metadata.minDisplayLuminance = 1;
