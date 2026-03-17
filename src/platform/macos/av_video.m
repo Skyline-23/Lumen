@@ -464,17 +464,11 @@ static NSUInteger const kScreenCaptureKitShareableDisplayRefreshAttempts = 20;
     CMSampleBufferRef sampleBuffer = nil;
     BOOL captureStopped = NO;
     @synchronized(self) {
-      if (self.pendingSampleBufferHead < self.pendingSampleBuffers.count) {
-        id queuedSample = [self.pendingSampleBuffers objectAtIndex:self.pendingSampleBufferHead];
+      if (self.pendingSampleBuffers.count > 0) {
+        id queuedSample = [self.pendingSampleBuffers objectAtIndex:0];
         sampleBuffer = (CMSampleBufferRef) CFRetain((__bridge CFTypeRef) queuedSample);
-        self.pendingSampleBufferHead += 1;
-
-        if (self.pendingSampleBufferHead >= kScreenCaptureQueueCompactionThreshold &&
-            self.pendingSampleBufferHead * 2 >= self.pendingSampleBuffers.count) {
-          NSRange consumedRange = NSMakeRange(0, self.pendingSampleBufferHead);
-          [self.pendingSampleBuffers removeObjectsInRange:consumedRange];
-          self.pendingSampleBufferHead = 0;
-        }
+        [self.pendingSampleBuffers removeObjectAtIndex:0];
+        self.pendingSampleBufferHead = 0;
       }
       captureStopped = self.captureStopped;
     }
@@ -545,18 +539,11 @@ static NSUInteger const kScreenCaptureKitShareableDisplayRefreshAttempts = 20;
 
   @synchronized(self) {
     static const NSUInteger kMaxPendingScreenCaptureSamples = 16;
-    NSUInteger pendingCount = self.pendingSampleBuffers.count - self.pendingSampleBufferHead;
+    NSUInteger pendingCount = self.pendingSampleBuffers.count;
     if (pendingCount >= kMaxPendingScreenCaptureSamples) {
-      self.pendingSampleBufferHead += 1;
+      [self.pendingSampleBuffers removeObjectAtIndex:0];
     }
     [self.pendingSampleBuffers addObject:(__bridge id) sampleBuffer];
-
-    if (self.pendingSampleBufferHead >= kScreenCaptureQueueCompactionThreshold &&
-        self.pendingSampleBufferHead * 2 >= self.pendingSampleBuffers.count) {
-      NSRange consumedRange = NSMakeRange(0, self.pendingSampleBufferHead);
-      [self.pendingSampleBuffers removeObjectsInRange:consumedRange];
-      self.pendingSampleBufferHead = 0;
-    }
 
     self.screenCaptureFrameCount += 1;
     self.screenCaptureLastFrameTime = CFAbsoluteTimeGetCurrent();
@@ -565,7 +552,7 @@ static NSUInteger const kScreenCaptureKitShareableDisplayRefreshAttempts = 20;
     NSLog(@"AVVideo ScreenCaptureKit queued frame #%llu callbacks=%llu pending=%lu",
           self.screenCaptureFrameCount,
           self.screenCaptureCallbackCount,
-          (unsigned long) (self.pendingSampleBuffers.count - self.pendingSampleBufferHead));
+          (unsigned long) self.pendingSampleBuffers.count);
   }
   dispatch_semaphore_signal(frameSignal);
 }
