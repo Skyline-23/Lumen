@@ -342,6 +342,82 @@ namespace VDISPLAY {
     return active_displays[display_key]->display_id;
   }
 
+  bool updateVirtualDisplayMode(
+    const std::string &client_uid,
+    std::uint32_t logical_width,
+    std::uint32_t logical_height,
+    std::uint32_t fps_millihz,
+    int client_display_transfer
+  ) {
+    if (client_uid.empty()) {
+      return false;
+    }
+
+    using init_mode_t = id (*)(id, SEL, NSUInteger, NSUInteger, double);
+    using init_mode_with_transfer_t = id (*)(id, SEL, NSUInteger, NSUInteger, double, unsigned int);
+    using apply_settings_t = BOOL (*)(id, SEL, id);
+
+    Class mode_class = NSClassFromString(@"CGVirtualDisplayMode");
+    if (mode_class == nil) {
+      return false;
+    }
+
+    std::lock_guard lock(display_mutex);
+    auto it = active_displays.find(client_uid);
+    if (it == active_displays.end() || it->second->display == nil || it->second->settings == nil) {
+      return false;
+    }
+
+    auto &handle = *it->second;
+    const auto transfer_function = virtual_display_transfer_function(
+      static_cast<video::client_display_transfer_e>(client_display_transfer) != video::client_display_transfer_e::sdr,
+      client_display_transfer
+    );
+
+    id new_mode = nil;
+    if ([mode_class instancesRespondToSelector:sel_registerName("initWithWidth:height:refreshRate:transferFunction:")]) {
+      new_mode = ((init_mode_with_transfer_t) objc_msgSend)(
+        [mode_class alloc],
+        sel_registerName("initWithWidth:height:refreshRate:transferFunction:"),
+        static_cast<NSUInteger>(std::max(logical_width, 1u)),
+        static_cast<NSUInteger>(std::max(logical_height, 1u)),
+        normalize_refresh_rate(fps_millihz),
+        static_cast<unsigned int>(std::max(transfer_function, 0))
+      );
+    } else {
+      new_mode = ((init_mode_t) objc_msgSend)(
+        [mode_class alloc],
+        sel_registerName("initWithWidth:height:refreshRate:"),
+        static_cast<NSUInteger>(std::max(logical_width, 1u)),
+        static_cast<NSUInteger>(std::max(logical_height, 1u)),
+        normalize_refresh_rate(fps_millihz)
+      );
+    }
+
+    if (new_mode == nil) {
+      BOOST_LOG(warning) << "macOS virtual display mode update failed to create a new mode"sv;
+      return false;
+    }
+
+    [handle.settings setValue:@[new_mode] forKey:@"modes"];
+    [handle.settings setValue:@(1) forKey:@"hiDPI"];
+    const auto ok = ((apply_settings_t) objc_msgSend)(handle.display, sel_registerName("applySettings:"), handle.settings);
+    if (!ok) {
+      [new_mode release];
+      BOOST_LOG(warning) << "macOS virtual display mode update failed for displayID="sv << handle.display_id;
+      return false;
+    }
+
+    [handle.mode release];
+    handle.mode = [new_mode retain];
+    [new_mode release];
+
+    BOOST_LOG(info) << "Updated macOS virtual display mode for displayID="sv << handle.display_id
+                    << " logical="sv << logical_width << "x"sv << logical_height
+                    << " transfer-function="sv << transfer_function;
+    return true;
+  }
+
   bool removeVirtualDisplay(const std::string &client_uid) {
     std::lock_guard lock(display_mutex);
     auto it = active_displays.find(client_uid);

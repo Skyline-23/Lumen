@@ -428,6 +428,19 @@ namespace platf {
     auto display = std::make_shared<av_display_t>();
     display->direct_videotoolbox_frames = hwdevice_type == platf::mem_type_e::videotoolbox;
 
+    if (proc::proc.virtual_display && !proc::proc.virtual_display_key.empty() && config.width > 0 && config.height > 0) {
+      const auto updated = VDISPLAY::updateVirtualDisplayMode(
+        proc::proc.virtual_display_key,
+        static_cast<std::uint32_t>(config.width),
+        static_cast<std::uint32_t>(config.height),
+        config.encodingFramerate > 0 ? static_cast<std::uint32_t>(config.encodingFramerate) : static_cast<std::uint32_t>(config.framerate),
+        config.clientDisplayTransfer
+      );
+      BOOST_LOG(info) << "macOS virtual display viewport apply logical="sv
+                      << config.width << "x"sv << config.height
+                      << " updated="sv << updated;
+    }
+
     // Default to main display
     display->display_id = CGMainDisplayID();
     bool requested_numeric_display = false;

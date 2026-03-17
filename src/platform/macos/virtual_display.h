@@ -39,5 +39,13 @@ namespace VDISPLAY {
     int client_display_transfer
   );
 
+  bool updateVirtualDisplayMode(
+    const std::string &client_uid,
+    std::uint32_t logical_width,
+    std::uint32_t logical_height,
+    std::uint32_t fps_millihz,
+    int client_display_transfer
+  );
+
   bool removeVirtualDisplay(const std::string &client_uid);
 }
