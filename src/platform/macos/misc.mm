@@ -55,15 +55,7 @@ namespace platf {
       CGDirectDisplayID display_id;
       CGPoint origin;
       CGDirectDisplayID mirror_master;
-      uint64_t current_space;
     };
-
-    using cgs_connection_id_t = int32_t;
-    using cgs_space_id_t = uint64_t;
-    using cgs_default_connection_fn = cgs_connection_id_t (*)();
-    using cgs_managed_display_get_current_space_fn = cgs_space_id_t (*)(cgs_connection_id_t, CGDirectDisplayID);
-    using cgs_managed_display_set_current_space_fn = int32_t (*)(cgs_connection_id_t, CGDirectDisplayID, cgs_space_id_t);
-    using cgs_get_active_space_fn = cgs_space_id_t (*)(cgs_connection_id_t);
 
     std::mutex virtual_display_layout_mutex;
     std::vector<display_layout_entry_t> virtual_display_layout_snapshot;
@@ -97,37 +89,6 @@ namespace platf {
       return true;
     }
 
-    cgs_connection_id_t cgs_default_connection() {
-      static const auto fn = reinterpret_cast<cgs_default_connection_fn>(dlsym(RTLD_DEFAULT, "_CGSDefaultConnection"));
-      return fn != nullptr ? fn() : 0;
-    }
-
-    cgs_space_id_t cgs_managed_display_get_current_space(CGDirectDisplayID display_id) {
-      static const auto fn = reinterpret_cast<cgs_managed_display_get_current_space_fn>(dlsym(RTLD_DEFAULT, "CGSManagedDisplayGetCurrentSpace"));
-      const auto connection = cgs_default_connection();
-      if (fn == nullptr || connection == 0) {
-        return 0;
-      }
-      return fn(connection, display_id);
-    }
-
-    bool cgs_managed_display_set_current_space(CGDirectDisplayID display_id, cgs_space_id_t space_id) {
-      static const auto fn = reinterpret_cast<cgs_managed_display_set_current_space_fn>(dlsym(RTLD_DEFAULT, "CGSManagedDisplaySetCurrentSpace"));
-      const auto connection = cgs_default_connection();
-      if (fn == nullptr || connection == 0 || space_id == 0) {
-        return false;
-      }
-      return fn(connection, display_id, space_id) == 0;
-    }
-
-    cgs_space_id_t cgs_get_active_space() {
-      static const auto fn = reinterpret_cast<cgs_get_active_space_fn>(dlsym(RTLD_DEFAULT, "CGSGetActiveSpace"));
-      const auto connection = cgs_default_connection();
-      if (fn == nullptr || connection == 0) {
-        return 0;
-      }
-      return fn(connection);
-    }
   }  // namespace
 
   // Return whether screen capture is allowed for this process.
@@ -664,8 +625,7 @@ namespace platf {
       virtual_display_layout_snapshot.push_back({
         display_id,
         bounds.origin,
-        CGDisplayMirrorsDisplay(display_id),
-        cgs_managed_display_get_current_space(display_id)
+        CGDisplayMirrorsDisplay(display_id)
       });
       found_virtual_display = found_virtual_display || display_id == virtual_display_id;
     }
@@ -711,14 +671,6 @@ namespace platf {
     }
 
     virtual_display_layout_active = true;
-    const auto active_space = cgs_get_active_space();
-    if (active_space != 0) {
-      if (cgs_managed_display_set_current_space(virtual_display_id, active_space)) {
-        BOOST_LOG(info) << "Pinned macOS virtual display "sv << virtual_display_id << " to active space "sv << active_space;
-      } else {
-        BOOST_LOG(warning) << "Failed to pin macOS virtual display "sv << virtual_display_id << " to active space "sv << active_space;
-      }
-    }
     BOOST_LOG(info) << "Isolated macOS virtual display layout around display "sv << virtual_display_id;
     return true;
   }
@@ -754,12 +706,6 @@ namespace platf {
       return;
     }
 
-    for (const auto &entry : virtual_display_layout_snapshot) {
-      if (entry.current_space != 0) {
-        cgs_managed_display_set_current_space(entry.display_id, entry.current_space);
-      }
-    }
-
     virtual_display_layout_snapshot.clear();
     virtual_display_layout_active = false;
     BOOST_LOG(info) << "Restored macOS display layout after virtual session"sv;
@@ -773,10 +719,6 @@ namespace platf {
     }
 
     const CGPoint center = CGPointMake(CGRectGetMidX(bounds), CGRectGetMidY(bounds));
-    const auto active_space = cgs_get_active_space();
-    if (active_space != 0) {
-      cgs_managed_display_set_current_space(virtual_display_id, active_space);
-    }
     CGDisplayMoveCursorToPoint(virtual_display_id, center);
     CGWarpMouseCursorPosition(center);
 
