@@ -205,8 +205,13 @@ namespace proc {
     }
 
     if (scale_factor != 100) {
+#ifdef __APPLE__
+      render_width = static_cast<std::uint32_t>(std::max(2.0, std::floor((static_cast<double>(client_width) * 100.0) / static_cast<double>(scale_factor))));
+      render_height = static_cast<std::uint32_t>(std::max(2.0, std::floor((static_cast<double>(client_height) * 100.0) / static_cast<double>(scale_factor))));
+#else
       render_width *= ((float)scale_factor / 100);
       render_height *= ((float)scale_factor / 100);
+#endif
 
       // Chop the last bit to ensure the scaled resolution is even numbered
       // Most odd resolutions won't work well
@@ -217,8 +222,8 @@ namespace proc {
     launch_session->width = render_width;
     launch_session->height = render_height;
     this->client_scale_factor = scale_factor;
-    this->client_render_width = static_cast<int>(render_width);
-    this->client_render_height = static_cast<int>(render_height);
+    this->client_render_width = static_cast<int>(client_width);
+    this->client_render_height = static_cast<int>(client_height);
 
     this->initial_display = config::video.output_name;
     // Executed when returning from function
@@ -357,8 +362,8 @@ namespace proc {
       auto virtual_display_name = VDISPLAY::createVirtualDisplay(
         device_key.c_str(),
         device_name.c_str(),
-        render_width,
-        render_height,
+        client_width,
+        client_height,
         launch_session->fps ? static_cast<std::uint32_t>(launch_session->fps) : 60000u,
         scale_factor,
         launch_session->enable_hdr,

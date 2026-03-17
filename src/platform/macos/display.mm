@@ -16,6 +16,7 @@
 #include "src/platform/macos/nv12_zero_device.h"
 #include "src/platform/macos/virtual_display.h"
 #include "src/process.h"
+#include "src/rtsp.h"
 
 // Avoid conflict between AVFoundation and libavutil both defining AVMediaType
 #define AVMediaType AVMediaType_FFmpeg
@@ -430,6 +431,7 @@ namespace platf {
 
     if (proc::proc.virtual_display &&
         !proc::proc.virtual_display_key.empty() &&
+        rtsp_stream::session_count() > 0 &&
         config.width > 0 &&
         config.height > 0 &&
         config.width == proc::proc.client_render_width &&

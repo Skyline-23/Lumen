@@ -593,7 +593,9 @@ namespace nvhttp {
                     << " transfer="sv
                     << client_display_transfer_to_string(launch_session->client_display_transfer)
                     << " hdr="sv
-                    << launch_session->enable_hdr;
+                    << launch_session->enable_hdr
+                    << " scale-factor="sv
+                    << launch_session->scale_factor;
 
     launch_session->client_do_cmds = named_cert_p->do_cmds;
     launch_session->client_undo_cmds = named_cert_p->undo_cmds;
