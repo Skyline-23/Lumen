@@ -33,6 +33,7 @@ extern char **environ;
 
 // local includes
 #include "misc.h"
+#include "src/config.h"
 #include "src/entry_handler.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
@@ -63,6 +64,8 @@ namespace platf {
     std::mutex virtual_display_layout_mutex;
     std::vector<display_layout_entry_t> virtual_display_layout_snapshot;
     bool virtual_display_layout_active = false;
+    bool private_display_set_active = false;
+    int private_display_set_previous = 0;
     std::atomic<bool> accessibility_prompt_requested = false;
     std::once_flag private_display_control_log_once;
     constexpr int32_t kVirtualIsolationParkOriginX = -32768;
@@ -117,6 +120,69 @@ namespace platf {
       api.ws_display_is_canonical_mirror_master = load_private_symbol(api.handle, "WSDisplayIsCanonicalMirrorMaster");
       api.cgx_vfb_select_online_state = load_private_symbol(api.handle, "CGXVFBSelectOnlineState");
       return api;
+    }
+
+    using cgx_current_display_set_t = int (*)();
+    using cgx_select_display_set_t = int (*)(int);
+    using cgx_set_display_set_t = int (*)(int);
+    using cgx_vfb_select_online_state_t = int (*)(int);
+
+    bool apply_private_virtual_display_set(int requested_set) {
+      const auto api = load_private_display_control_api();
+      if (!api.handle) {
+        return false;
+      }
+
+      int previous_set = requested_set;
+      if (api.cgx_current_display_set != nullptr) {
+        previous_set = reinterpret_cast<cgx_current_display_set_t>(api.cgx_current_display_set)();
+      }
+
+      bool any_call_succeeded = false;
+      if (api.cgx_select_display_set != nullptr) {
+        const auto rc = reinterpret_cast<cgx_select_display_set_t>(api.cgx_select_display_set)(requested_set);
+        BOOST_LOG(info) << "macOS private display set select requested="sv << requested_set << " previous="sv << previous_set << " rc="sv << rc;
+        any_call_succeeded = true;
+      } else if (api.cgx_set_display_set != nullptr) {
+        const auto rc = reinterpret_cast<cgx_set_display_set_t>(api.cgx_set_display_set)(requested_set);
+        BOOST_LOG(info) << "macOS private display set apply requested="sv << requested_set << " previous="sv << previous_set << " rc="sv << rc;
+        any_call_succeeded = true;
+      }
+
+      if (api.cgx_vfb_select_online_state != nullptr) {
+        const auto rc = reinterpret_cast<cgx_vfb_select_online_state_t>(api.cgx_vfb_select_online_state)(requested_set);
+        BOOST_LOG(info) << "macOS private VFB online state requested="sv << requested_set << " rc="sv << rc;
+        any_call_succeeded = true;
+      }
+
+      if (!any_call_succeeded) {
+        return false;
+      }
+
+      if (requested_set != 0) {
+        private_display_set_previous = previous_set;
+        private_display_set_active = true;
+      } else {
+        private_display_set_active = false;
+      }
+
+      return true;
+    }
+
+    uint32_t refresh_active_display_ids(std::vector<CGDirectDisplayID> &display_ids) {
+      uint32_t active_count = 0;
+      if (CGGetActiveDisplayList(0, nullptr, &active_count) != kCGErrorSuccess || active_count == 0) {
+        return 0;
+      }
+
+      display_ids.assign(active_count, kCGNullDirectDisplay);
+      if (CGGetActiveDisplayList(active_count, display_ids.data(), &active_count) != kCGErrorSuccess) {
+        display_ids.clear();
+        return 0;
+      }
+
+      display_ids.resize(active_count);
+      return active_count;
     }
 
     void open_accessibility_settings() {
@@ -671,15 +737,10 @@ namespace platf {
       return true;
     }
 
-    uint32_t display_count = 0;
-    if (CGGetActiveDisplayList(0, nullptr, &display_count) != kCGErrorSuccess || display_count == 0) {
+    std::vector<CGDirectDisplayID> display_ids;
+    auto display_count = refresh_active_display_ids(display_ids);
+    if (display_count == 0) {
       BOOST_LOG(warning) << "Failed to enumerate active macOS displays for virtual layout isolation"sv;
-      return false;
-    }
-
-    std::vector<CGDirectDisplayID> display_ids(display_count);
-    if (CGGetActiveDisplayList(display_count, display_ids.data(), &display_count) != kCGErrorSuccess) {
-      BOOST_LOG(warning) << "Failed to read active macOS display list for virtual layout isolation"sv;
       return false;
     }
 
@@ -703,9 +764,23 @@ namespace platf {
       return false;
     }
 
+    if (config::video.isolated_virtual_display_option) {
+      apply_private_virtual_display_set(1);
+      display_count = refresh_active_display_ids(display_ids);
+      if (display_count == 0) {
+        BOOST_LOG(warning) << "Active macOS displays disappeared after private display set selection"sv;
+        apply_private_virtual_display_set(0);
+        virtual_display_layout_snapshot.clear();
+        return false;
+      }
+    }
+
     CGDisplayConfigRef config = nullptr;
     if (CGBeginDisplayConfiguration(&config) != kCGErrorSuccess || config == nullptr) {
       BOOST_LOG(warning) << "Failed to begin macOS display configuration for virtual layout isolation"sv;
+      if (private_display_set_active) {
+        apply_private_virtual_display_set(0);
+      }
       virtual_display_layout_snapshot.clear();
       return false;
     }
@@ -734,6 +809,9 @@ namespace platf {
     if (!configuration_ok || CGCompleteDisplayConfiguration(config, kCGConfigureForSession) != kCGErrorSuccess) {
       CGCancelDisplayConfiguration(config);
       BOOST_LOG(warning) << "Failed to isolate macOS virtual display layout"sv;
+      if (private_display_set_active) {
+        apply_private_virtual_display_set(0);
+      }
       virtual_display_layout_snapshot.clear();
       return false;
     }
@@ -762,6 +840,16 @@ namespace platf {
 
   void restore_virtual_display_isolation() {
     std::lock_guard lock(virtual_display_layout_mutex);
+    if ((!virtual_display_layout_active || virtual_display_layout_snapshot.empty()) && !private_display_set_active) {
+      return;
+    }
+
+    if (private_display_set_active) {
+      const auto requested_restore_set = private_display_set_previous;
+      apply_private_virtual_display_set(requested_restore_set);
+      BOOST_LOG(info) << "Restored macOS private display set to "sv << requested_restore_set;
+    }
+
     if (!virtual_display_layout_active || virtual_display_layout_snapshot.empty()) {
       return;
     }
