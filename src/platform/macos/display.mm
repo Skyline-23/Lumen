@@ -28,6 +28,7 @@ namespace platf {
 
   namespace {
     constexpr double hdr_edr_threshold = 1.001;
+    constexpr unsigned int kMaxVirtualDisplayCaptureRestarts = 6;
 
     NSScreen *screen_for_display_id(CGDirectDisplayID display_id) {
       for (NSScreen *screen in [NSScreen screens]) {
@@ -186,7 +187,7 @@ namespace platf {
     capture_e capture(const push_captured_image_cb_t &push_captured_image_cb, const pull_free_image_cb_t &pull_free_image_cb, bool *cursor) override {
 #if SUNSHINE_HAVE_SCREENCAPTUREKIT
       if ([av_capture screenCaptureKitAvailableForDisplay]) {
-        bool allow_restart_on_early_stop = true;
+        unsigned int restart_attempt = 0;
         while (true) {
           NSError *capture_error = nil;
           if (![av_capture beginScreenCaptureKitCapture:&capture_error]) {
@@ -199,8 +200,10 @@ namespace platf {
             CMSampleBufferRef sampleBuffer = [av_capture copyNextScreenCaptureKitSampleBuffer];
             if (sampleBuffer == nil) {
               auto queued_frames = av_capture.screenCaptureFrameCount;
-              if (allow_restart_on_early_stop && queued_frames < 60) {
-                BOOST_LOG(warning) << "ScreenCaptureKit stopped too early (queued_frames="sv << queued_frames << "); retrying capture startup once"sv;
+              if (queued_frames < 60 && restart_attempt < kMaxVirtualDisplayCaptureRestarts) {
+                BOOST_LOG(warning) << "ScreenCaptureKit stopped too early (queued_frames="sv << queued_frames
+                                   << "); restarting capture attempt "sv << (restart_attempt + 1) << "/"
+                                   << kMaxVirtualDisplayCaptureRestarts;
                 if (proc::proc.virtual_display) {
                   focus_virtual_display_workspace(display_id);
                 }
@@ -231,7 +234,7 @@ namespace platf {
             return capture_e::ok;
           }
 
-          allow_restart_on_early_stop = false;
+          restart_attempt += 1;
           std::this_thread::sleep_for(100ms);
         }
       }
