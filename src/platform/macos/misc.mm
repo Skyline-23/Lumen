@@ -64,9 +64,43 @@ namespace platf {
     std::vector<display_layout_entry_t> virtual_display_layout_snapshot;
     bool virtual_display_layout_active = false;
     std::atomic<bool> accessibility_prompt_requested = false;
+    std::once_flag private_display_control_log_once;
     constexpr int32_t kVirtualIsolationParkOriginX = -32768;
     constexpr int32_t kVirtualIsolationParkOriginY = 0;
     constexpr int32_t kVirtualIsolationParkSpacingY = 4096;
+
+    struct private_display_control_api_t {
+      void *handle = nullptr;
+      dyn::apiproc cgx_current_display_set = nullptr;
+      dyn::apiproc cgx_select_display_set = nullptr;
+      dyn::apiproc cgx_set_display_set = nullptr;
+      dyn::apiproc coredisplay_display_is_main = nullptr;
+      dyn::apiproc ws_canonical_mirror_master_for_display_device = nullptr;
+      dyn::apiproc ws_display_is_canonical_mirror_master = nullptr;
+      dyn::apiproc cgx_vfb_select_online_state = nullptr;
+    };
+
+    private_display_control_api_t load_private_display_control_api() {
+      private_display_control_api_t api;
+      api.handle = dyn::handle({
+        "/System/Library/Frameworks/CoreDisplay.framework/CoreDisplay",
+      });
+      if (!api.handle) {
+        return api;
+      }
+
+      std::vector<std::tuple<dyn::apiproc *, const char *>> funcs {
+        {&api.cgx_current_display_set, "_CGXCurrentDisplaySet"},
+        {&api.cgx_select_display_set, "_CGXSelectDisplaySet"},
+        {&api.cgx_set_display_set, "_CGXSetDisplaySet"},
+        {&api.coredisplay_display_is_main, "_CoreDisplay_Display_IsMain"},
+        {&api.ws_canonical_mirror_master_for_display_device, "_WSCanonicalMirrorMasterForDisplayDevice"},
+        {&api.ws_display_is_canonical_mirror_master, "_WSDisplayIsCanonicalMirrorMaster"},
+        {&api.cgx_vfb_select_online_state, "_CGXVFBSelectOnlineState"},
+      };
+      dyn::load(api.handle, funcs, false);
+      return api;
+    }
 
     void open_accessibility_settings() {
       NSURL *settings_url = [NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"];
@@ -612,6 +646,9 @@ namespace platf {
   }
 
   bool isolate_virtual_display(CGDirectDisplayID virtual_display_id) {
+    std::call_once(private_display_control_log_once, []() {
+      log_private_display_control_availability();
+    });
     std::lock_guard lock(virtual_display_layout_mutex);
     if (virtual_display_layout_active) {
       return true;
@@ -687,6 +724,23 @@ namespace platf {
     virtual_display_layout_active = true;
     BOOST_LOG(info) << "Isolated macOS virtual display layout around display "sv << virtual_display_id;
     return true;
+  }
+
+  void log_private_display_control_availability() {
+    const auto api = load_private_display_control_api();
+    if (!api.handle) {
+      BOOST_LOG(warning) << "CoreDisplay private framework was not available for macOS display isolation probing"sv;
+      return;
+    }
+
+    BOOST_LOG(info) << "macOS private display control candidates: "
+                    << "CGXCurrentDisplaySet="sv << (api.cgx_current_display_set ? "yes"sv : "no"sv)
+                    << " CGXSelectDisplaySet="sv << (api.cgx_select_display_set ? "yes"sv : "no"sv)
+                    << " CGXSetDisplaySet="sv << (api.cgx_set_display_set ? "yes"sv : "no"sv)
+                    << " CoreDisplay_Display_IsMain="sv << (api.coredisplay_display_is_main ? "yes"sv : "no"sv)
+                    << " WSCanonicalMirrorMasterForDisplayDevice="sv << (api.ws_canonical_mirror_master_for_display_device ? "yes"sv : "no"sv)
+                    << " WSDisplayIsCanonicalMirrorMaster="sv << (api.ws_display_is_canonical_mirror_master ? "yes"sv : "no"sv)
+                    << " CGXVFBSelectOnlineState="sv << (api.cgx_vfb_select_online_state ? "yes"sv : "no"sv);
   }
 
   void restore_virtual_display_isolation() {
