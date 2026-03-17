@@ -260,6 +260,8 @@ namespace VDISPLAY {
     const auto host_profile = probeHostDisplayColorProfile(hdr_enabled, client_display_gamut, client_display_transfer);
     const auto physical_size = virtual_display_size_for_pixels(width, height);
     const auto transfer_function = virtual_display_transfer_function(hdr_enabled, client_display_transfer);
+    const auto logical_width = std::max(width / 2u, 1u);
+    const auto logical_height = std::max(height / 2u, 1u);
     handle->queue = dispatch_queue_create("dev.lizardbyte.sunshine.virtual-display", DISPATCH_QUEUE_SERIAL);
     handle->descriptor = [[descriptor_class alloc] init];
     handle->settings = [[settings_class alloc] init];
@@ -285,8 +287,8 @@ namespace VDISPLAY {
       handle->mode = ((init_mode_with_transfer_t) objc_msgSend)(
         [mode_class alloc],
         sel_registerName("initWithWidth:height:refreshRate:transferFunction:"),
-        static_cast<NSUInteger>(std::max(width, 1u)),
-        static_cast<NSUInteger>(std::max(height, 1u)),
+        static_cast<NSUInteger>(logical_width),
+        static_cast<NSUInteger>(logical_height),
         normalize_refresh_rate(fps_millihz),
         static_cast<unsigned int>(std::max(transfer_function, 0))
       );
@@ -294,8 +296,8 @@ namespace VDISPLAY {
       handle->mode = ((init_mode_t) objc_msgSend)(
         [mode_class alloc],
         sel_registerName("initWithWidth:height:refreshRate:"),
-        static_cast<NSUInteger>(std::max(width, 1u)),
-        static_cast<NSUInteger>(std::max(height, 1u)),
+        static_cast<NSUInteger>(logical_width),
+        static_cast<NSUInteger>(logical_height),
         normalize_refresh_rate(fps_millihz)
       );
     }
@@ -307,6 +309,7 @@ namespace VDISPLAY {
     [handle->settings setValue:@[handle->mode] forKey:@"modes"];
     [handle->settings setValue:@(1) forKey:@"hiDPI"];
     BOOST_LOG(info) << "macOS virtual display mode: pixels="sv << width << "x"sv << height
+                    << " logical="sv << logical_width << "x"sv << logical_height
                     << " physical-mm="sv << physical_size.width << "x"sv << physical_size.height
                     << " transfer-function="sv << transfer_function;
 
