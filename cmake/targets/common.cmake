@@ -41,9 +41,14 @@ if(APPLE)
 endif()
 
 if(APPLE AND SUNSHINE_PACKAGE_MACOS)
+    set_source_files_properties("${PROJECT_SOURCE_DIR}/apollo.icns"
+            PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
+    target_sources(sunshine PRIVATE "${PROJECT_SOURCE_DIR}/apollo.icns")
+
     set_target_properties(sunshine PROPERTIES
             MACOSX_BUNDLE TRUE
             MACOSX_BUNDLE_INFO_PLIST "${APPLE_PLIST_FILE}"
+            MACOSX_BUNDLE_ICON_FILE "apollo.icns"
             MACOSX_BUNDLE_BUNDLE_NAME "${CMAKE_PROJECT_NAME}"
             MACOSX_BUNDLE_GUI_IDENTIFIER "com.skyline23.apollo")
 

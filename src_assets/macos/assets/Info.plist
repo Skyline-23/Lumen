@@ -8,6 +8,8 @@
   <string>Apollo</string>
   <key>CFBundleExecutable</key>
   <string>Apollo</string>
+  <key>CFBundleIconFile</key>
+  <string>apollo.icns</string>
   <key>CFBundleName</key>
   <string>Apollo</string>
   <key>CFBundlePackageType</key>
