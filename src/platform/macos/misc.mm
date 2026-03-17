@@ -20,8 +20,11 @@
 #include <Foundation/Foundation.h>
 #include <mach-o/dyld.h>
 #include <net/if_dl.h>
+#include <spawn.h>
 #include <pwd.h>
 #include <unistd.h>
+
+extern char **environ;
 
 // lib includes
 #include <boost/asio/ip/address.hpp>
@@ -264,30 +267,37 @@ namespace platf {
     // Nothing to do
   }
 
-  void restart_on_exit() {
+  bool spawn_restart_process() {
     char executable[2048];
     uint32_t size = sizeof(executable);
     if (_NSGetExecutablePath(executable, &size) < 0) {
       BOOST_LOG(fatal) << "NSGetExecutablePath() failed: "sv << errno;
-      return;
+      return false;
     }
 
-    // ASIO doesn't use O_CLOEXEC, so we have to close all fds ourselves
-    int openmax = (int) sysconf(_SC_OPEN_MAX);
-    for (int fd = STDERR_FILENO + 1; fd < openmax; fd++) {
-      close(fd);
+    posix_spawnattr_t attr;
+    if (posix_spawnattr_init(&attr) != 0) {
+      BOOST_LOG(fatal) << "posix_spawnattr_init() failed: "sv << errno;
+      return false;
     }
 
-    // Re-exec ourselves with the same arguments
-    if (execv(executable, lifetime::get_argv()) < 0) {
-      BOOST_LOG(fatal) << "execv() failed: "sv << errno;
-      return;
+    pid_t child_pid = 0;
+    const int spawn_status = posix_spawn(&child_pid, executable, nullptr, &attr, lifetime::get_argv(), ::environ);
+    posix_spawnattr_destroy(&attr);
+    if (spawn_status != 0) {
+      BOOST_LOG(fatal) << "posix_spawn() failed: "sv << spawn_status;
+      return false;
     }
+
+    BOOST_LOG(info) << "Spawned replacement Apollo process pid="sv << child_pid;
+    return true;
   }
 
   void restart() {
-    // Gracefully clean up and restart ourselves instead of exiting
-    atexit(restart_on_exit);
+    if (!spawn_restart_process()) {
+      BOOST_LOG(error) << "Failed to spawn replacement Apollo process during restart."sv;
+      return;
+    }
     lifetime::exit_sunshine(0, true);
   }
 
