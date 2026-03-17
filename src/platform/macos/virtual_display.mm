@@ -117,6 +117,53 @@ namespace VDISPLAY {
                CVTransferFunctionGetIntegerCodePointForString(kCVImageBufferTransferFunction_ITU_R_709_2);
     }
 
+    bool force_virtual_display_mode(CGDirectDisplayID display_id, std::uint32_t logical_width, std::uint32_t logical_height, double refresh_rate) {
+      CFArrayRef display_modes = CGDisplayCopyAllDisplayModes(display_id, nullptr);
+      if (display_modes == nullptr) {
+        BOOST_LOG(warning) << "Unable to enumerate macOS display modes for virtual display "sv << display_id;
+        return false;
+      }
+
+      CGDisplayModeRef selected_mode = nullptr;
+      double best_refresh_delta = std::numeric_limits<double>::max();
+      const auto requested_refresh = refresh_rate > 0.0 ? refresh_rate : 60.0;
+
+      const auto mode_count = CFArrayGetCount(display_modes);
+      for (CFIndex index = 0; index < mode_count; ++index) {
+        auto mode = static_cast<CGDisplayModeRef>(const_cast<void *>(CFArrayGetValueAtIndex(display_modes, index)));
+        if (mode == nullptr) {
+          continue;
+        }
+
+        if (CGDisplayModeGetWidth(mode) != logical_width || CGDisplayModeGetHeight(mode) != logical_height) {
+          continue;
+        }
+
+        const auto candidate_refresh = CGDisplayModeGetRefreshRate(mode);
+        const auto refresh_delta = std::fabs((candidate_refresh > 0.0 ? candidate_refresh : requested_refresh) - requested_refresh);
+        if (selected_mode == nullptr || refresh_delta < best_refresh_delta) {
+          selected_mode = mode;
+          best_refresh_delta = refresh_delta;
+        }
+      }
+
+      bool success = false;
+      if (selected_mode != nullptr) {
+        const auto result = CGDisplaySetDisplayMode(display_id, selected_mode, nullptr);
+        success = result == kCGErrorSuccess;
+        BOOST_LOG(info) << "Forced macOS display mode selection displayID="sv << display_id
+                        << " logical="sv << logical_width << "x"sv << logical_height
+                        << " refresh="sv << requested_refresh
+                        << " success="sv << success;
+      } else {
+        BOOST_LOG(warning) << "No matching macOS display mode found for virtual display "sv << display_id
+                           << " logical="sv << logical_width << "x"sv << logical_height;
+      }
+
+      CFRelease(display_modes);
+      return success;
+    }
+
     NSString *display_name_for_client(const char *client_name) {
       if (client_name && client_name[0] != '\0') {
         return [NSString stringWithFormat:@"Apollo (%s)", client_name];
@@ -336,6 +383,7 @@ namespace VDISPLAY {
 
     handle->display_id = std::to_string(display_id_number.unsignedIntValue);
     BOOST_LOG(info) << "macOS virtual display created displayID="sv << handle->display_id;
+    force_virtual_display_mode(display_id_number.unsignedIntValue, logical_width, logical_height, normalize_refresh_rate(fps_millihz));
 
     std::lock_guard lock(display_mutex);
     active_displays[display_key] = std::move(handle);
@@ -415,6 +463,7 @@ namespace VDISPLAY {
     BOOST_LOG(info) << "Updated macOS virtual display mode for displayID="sv << handle.display_id
                     << " logical="sv << logical_width << "x"sv << logical_height
                     << " transfer-function="sv << transfer_function;
+    force_virtual_display_mode(static_cast<CGDirectDisplayID>(std::strtoul(handle.display_id.c_str(), nullptr, 10)), logical_width, logical_height, normalize_refresh_rate(fps_millihz));
     return true;
   }
 
