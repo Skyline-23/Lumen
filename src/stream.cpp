@@ -2075,6 +2075,8 @@ namespace stream {
       // If this is the last session, invoke the platform callbacks
       if (--running_sessions == 0) {
         bool revert_display_config {config::video.dd.config_revert_on_disconnect};
+        proc::proc.on_stream_disconnected();
+
         if (proc::proc.running()) {
           proc::proc.pause();
         } else {
