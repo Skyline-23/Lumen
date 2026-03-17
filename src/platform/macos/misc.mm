@@ -61,6 +61,9 @@ namespace platf {
     std::vector<display_layout_entry_t> virtual_display_layout_snapshot;
     bool virtual_display_layout_active = false;
     std::atomic<bool> accessibility_prompt_requested = false;
+    constexpr int32_t kVirtualIsolationParkOriginX = -32768;
+    constexpr int32_t kVirtualIsolationParkOriginY = 0;
+    constexpr int32_t kVirtualIsolationParkSpacingY = 4096;
 
     void open_accessibility_settings() {
       NSURL *settings_url = [NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"];
@@ -647,6 +650,7 @@ namespace platf {
     configuration_ok = configuration_ok && (CGConfigureDisplayMirrorOfDisplay(config, virtual_display_id, kCGNullDirectDisplay) == kCGErrorSuccess);
     configuration_ok = configuration_ok && (CGConfigureDisplayOrigin(config, virtual_display_id, 0, 0) == kCGErrorSuccess);
 
+    int32_t parked_display_index = 0;
     for (const auto &entry : virtual_display_layout_snapshot) {
       if (entry.display_id == virtual_display_id) {
         continue;
@@ -658,8 +662,8 @@ namespace platf {
                          (CGConfigureDisplayOrigin(
                            config,
                            entry.display_id,
-                           static_cast<int32_t>(CGDisplayBounds(virtual_display_id).origin.x),
-                           static_cast<int32_t>(CGDisplayBounds(virtual_display_id).origin.y)
+                           kVirtualIsolationParkOriginX,
+                           kVirtualIsolationParkOriginY + (parked_display_index++ * kVirtualIsolationParkSpacingY)
                          ) == kCGErrorSuccess);
     }
 
