@@ -41,7 +41,7 @@
 @property (nonatomic, retain) SCDisplay *shareableDisplay;
 @property (nonatomic, retain) SCStream *stream;
 @property (nonatomic, retain) AVAudioStreamOutput *streamOutput;
-@property (nonatomic, assign) dispatch_queue_t sampleHandlerQueue;
+@property (nonatomic, retain) dispatch_queue_t sampleHandlerQueue;
 #endif
 
 + (NSArray *)microphoneNames;
