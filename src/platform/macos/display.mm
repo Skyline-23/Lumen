@@ -94,9 +94,9 @@ namespace platf {
 
     bool generic_virtual_hdr_metadata(SS_HDR_METADATA &metadata) {
       std::memset(&metadata, 0, sizeof(metadata));
-      metadata.displayPrimaries[0] = {34000, 16000};
-      metadata.displayPrimaries[1] = {13250, 34500};
-      metadata.displayPrimaries[2] = {7500, 3000};
+      metadata.displayPrimaries[0] = {35400, 14600};
+      metadata.displayPrimaries[1] = {8500, 39850};
+      metadata.displayPrimaries[2] = {6550, 2300};
       metadata.whitePoint = {15635, 16450};
       metadata.maxDisplayLuminance = 1000;
       metadata.maxFullFrameLuminance = 1000;
