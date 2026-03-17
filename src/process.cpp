@@ -224,6 +224,10 @@ namespace proc {
     this->client_scale_factor = scale_factor;
     this->client_render_width = static_cast<int>(client_width);
     this->client_render_height = static_cast<int>(client_height);
+    BOOST_LOG(info) << "Client launch geometry resolved: backing="sv
+                    << client_width << "x"sv << client_height
+                    << " scale-factor="sv << scale_factor
+                    << " logical="sv << render_width << "x"sv << render_height;
 
     this->initial_display = config::video.output_name;
     // Executed when returning from function

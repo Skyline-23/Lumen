@@ -1081,7 +1081,12 @@ namespace rtsp_stream {
                       << " transfer="sv
                       << client_display_transfer_to_string(config.monitor.clientDisplayTransfer)
                       << " hdr="sv
-                      << config.monitor.dynamicRange;
+                      << config.monitor.dynamicRange
+                      << " viewport="sv
+                      << config.monitor.width << "x"sv
+                      << config.monitor.height
+                      << " fps="sv
+                      << config.monitor.framerate;
 
       if (config::video.limit_framerate) {
         config.monitor.encodingFramerate = session.fps;

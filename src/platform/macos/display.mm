@@ -449,6 +449,11 @@ namespace platf {
       BOOST_LOG(info) << "macOS virtual display viewport apply logical="sv
                       << logical_width << "x"sv << logical_height
                       << " updated="sv << updated;
+    } else if (proc::proc.virtual_display && !proc::proc.virtual_display_key.empty()) {
+      BOOST_LOG(info) << "Skipping macOS virtual display viewport apply: session-count="sv
+                      << rtsp_stream::session_count()
+                      << " config="sv << config.width << "x"sv << config.height
+                      << " backing="sv << proc::proc.client_render_width << "x"sv << proc::proc.client_render_height;
     }
 
     // Default to main display
