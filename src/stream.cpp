@@ -85,6 +85,7 @@ using asio::ip::udp;
 using namespace std::literals;
 
 namespace stream {
+  struct session_t;
 
   enum class socket_e : int {
     video,  ///< Video
@@ -250,7 +251,13 @@ namespace stream {
 
   using av_session_id_t = std::variant<asio::ip::address, std::string>;  // IP address or SS-Ping-Payload from RTSP handshake
   using message_queue_t = std::shared_ptr<safe::queue_t<std::pair<udp::endpoint, std::string>>>;
-  using message_queue_queue_t = std::shared_ptr<safe::queue_t<std::tuple<socket_e, av_session_id_t, message_queue_t>>>;
+  struct message_queue_registration_t {
+    socket_e socket_type;
+    av_session_id_t session_id;
+    message_queue_t message_queue;
+    session_t *session;
+  };
+  using message_queue_queue_t = std::shared_ptr<safe::queue_t<message_queue_registration_t>>;
 
   // return bytes written on success
   // return -1 on error
@@ -1236,6 +1243,8 @@ namespace stream {
   void recvThread(broadcast_ctx_t &ctx) {
     std::map<av_session_id_t, message_queue_t> peer_to_video_session;
     std::map<av_session_id_t, message_queue_t> peer_to_audio_session;
+    std::map<av_session_id_t, session_t *> peer_to_video_session_owner;
+    std::map<av_session_id_t, session_t *> peer_to_audio_session_owner;
 
     auto &video_sock = ctx.video_sock;
     auto &audio_sock = ctx.audio_sock;
@@ -1253,28 +1262,32 @@ namespace stream {
     auto populate_peer_to_session = [&]() {
       while (message_queue_queue->peek()) {
         auto message_queue_opt = message_queue_queue->pop();
-        TUPLE_3D_REF(socket_type, session_id, message_queue, *message_queue_opt);
+        auto &[socket_type, session_id, message_queue, session] = *message_queue_opt;
 
         switch (socket_type) {
           case socket_e::video:
             if (message_queue) {
               peer_to_video_session.emplace(session_id, message_queue);
+              peer_to_video_session_owner[session_id] = session;
             } else {
               peer_to_video_session.erase(session_id);
+              peer_to_video_session_owner.erase(session_id);
             }
             break;
           case socket_e::audio:
             if (message_queue) {
               peer_to_audio_session.emplace(session_id, message_queue);
+              peer_to_audio_session_owner[session_id] = session;
             } else {
               peer_to_audio_session.erase(session_id);
+              peer_to_audio_session_owner.erase(session_id);
             }
             break;
         }
       }
     };
 
-    auto recv_func_init = [&](udp::socket &sock, int buf_elem, std::map<av_session_id_t, message_queue_t> &peer_to_session) {
+    auto recv_func_init = [&](udp::socket &sock, int buf_elem, std::map<av_session_id_t, message_queue_t> &peer_to_session, std::map<av_session_id_t, session_t *> &peer_to_session_owner) {
       recv_func[buf_elem] = [&, buf_elem](const boost::system::error_code &ec, size_t bytes) {
         auto fg = util::fail_guard([&]() {
           sock.async_receive_from(asio::buffer(buf[buf_elem]), peer, 0, recv_func[buf_elem]);
@@ -1299,6 +1312,9 @@ namespace stream {
           // For legacy PING packets, find the matching session by address.
           auto it = peer_to_session.find(peer.address());
           if (it != std::end(peer_to_session)) {
+            if (auto owner_it = peer_to_session_owner.find(peer.address()); owner_it != std::end(peer_to_session_owner) && owner_it->second) {
+              owner_it->second->pingTimeout = std::chrono::steady_clock::now() + config::stream.ping_timeout;
+            }
             BOOST_LOG(debug) << "RAISE: "sv << peer.address().to_string() << ':' << peer.port() << " :: " << type_str;
             it->second->raise(peer, std::string {buf[buf_elem].data(), bytes});
           }
@@ -1308,6 +1324,9 @@ namespace stream {
           // For new PING packets that include a client identifier, search by payload.
           auto it = peer_to_session.find(std::string {ping->payload, sizeof(ping->payload)});
           if (it != std::end(peer_to_session)) {
+            if (auto owner_it = peer_to_session_owner.find(std::string {ping->payload, sizeof(ping->payload)}); owner_it != std::end(peer_to_session_owner) && owner_it->second) {
+              owner_it->second->pingTimeout = std::chrono::steady_clock::now() + config::stream.ping_timeout;
+            }
             BOOST_LOG(debug) << "RAISE: "sv << peer.address().to_string() << ':' << peer.port() << " :: " << type_str;
             it->second->raise(peer, std::string {buf[buf_elem].data(), bytes});
           }
@@ -1315,8 +1334,8 @@ namespace stream {
       };
     };
 
-    recv_func_init(video_sock, 0, peer_to_video_session);
-    recv_func_init(audio_sock, 1, peer_to_audio_session);
+    recv_func_init(video_sock, 0, peer_to_video_session, peer_to_video_session_owner);
+    recv_func_init(audio_sock, 1, peer_to_audio_session, peer_to_audio_session_owner);
 
     video_sock.async_receive_from(asio::buffer(buf[0]), peer, 0, recv_func[0]);
     audio_sock.async_receive_from(asio::buffer(buf[1]), peer, 0, recv_func[1]);
@@ -1854,18 +1873,18 @@ namespace stream {
 
     // Only allow matches on the peer address for legacy clients
     if (!(session->config.mlFeatureFlags & ML_FF_SESSION_ID_V1)) {
-      ref->message_queue_queue->raise(type, peer.address(), messages);
+      ref->message_queue_queue->raise(message_queue_registration_t {type, peer.address(), messages, session});
     }
-    ref->message_queue_queue->raise(type, session_id, messages);
+    ref->message_queue_queue->raise(message_queue_registration_t {type, session_id, messages, session});
 
     auto fg = util::fail_guard([&]() {
       messages->stop();
 
       // remove message queue from session
       if (!(session->config.mlFeatureFlags & ML_FF_SESSION_ID_V1)) {
-        ref->message_queue_queue->raise(type, peer.address(), nullptr);
+        ref->message_queue_queue->raise(message_queue_registration_t {type, peer.address(), nullptr, nullptr});
       }
-      ref->message_queue_queue->raise(type, session_id, nullptr);
+      ref->message_queue_queue->raise(message_queue_registration_t {type, session_id, nullptr, nullptr});
     });
 
     auto start_time = std::chrono::steady_clock::now();
