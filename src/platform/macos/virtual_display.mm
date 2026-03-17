@@ -141,8 +141,8 @@ namespace VDISPLAY {
       [handle->descriptor setValue:[NSValue valueWithPoint:NSMakePoint(0.131, 0.046)] forKey:@"bluePrimary"];
       [handle->descriptor setValue:[NSValue valueWithPoint:NSMakePoint(0.3127, 0.3290)] forKey:@"whitePoint"];
     } else {
-      [handle->descriptor setValue:[NSValue valueWithPoint:NSMakePoint(0.68, 0.32)] forKey:@"redPrimary"];
-      [handle->descriptor setValue:[NSValue valueWithPoint:NSMakePoint(0.265, 0.69)] forKey:@"greenPrimary"];
+      [handle->descriptor setValue:[NSValue valueWithPoint:NSMakePoint(0.64, 0.33)] forKey:@"redPrimary"];
+      [handle->descriptor setValue:[NSValue valueWithPoint:NSMakePoint(0.30, 0.60)] forKey:@"greenPrimary"];
       [handle->descriptor setValue:[NSValue valueWithPoint:NSMakePoint(0.15, 0.06)] forKey:@"bluePrimary"];
       [handle->descriptor setValue:[NSValue valueWithPoint:NSMakePoint(0.3127, 0.3290)] forKey:@"whitePoint"];
     }
