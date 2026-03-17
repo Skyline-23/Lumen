@@ -449,6 +449,7 @@ const KeyCodeMap kKeyCodesMap[] = {
     const float y
   ) {
     const auto macos_input = static_cast<macos_input_t *>(input.get());
+    refresh_display_context(macos_input);
     const auto scaling = macos_input->displayScaling;
     const auto display = macos_input->display;
 
