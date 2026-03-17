@@ -4,6 +4,7 @@
  */
 // standard includes
 #include <chrono>
+#include <cstdlib>
 #include <iostream>
 #include <thread>
 
@@ -44,6 +45,55 @@ namespace platf {
     bool mouse_down[3] {};  // mouse button status
     std::chrono::steady_clock::steady_clock::time_point last_mouse_event[3][2];  // timestamp of last mouse events
   };
+
+  namespace {
+    [[nodiscard]] auto current_output_name() {
+      return display_device::map_output_name(config::video.output_name);
+    }
+
+    [[nodiscard]] bool refresh_display_context(macos_input_t *macos_input) {
+      const auto output_name = current_output_name();
+      if (output_name.empty()) {
+        return false;
+      }
+
+      char *parse_end = nullptr;
+      const auto requested_display = static_cast<CGDirectDisplayID>(std::strtoul(output_name.c_str(), &parse_end, 10));
+      if (parse_end == output_name.c_str() || *parse_end != '\0') {
+        return false;
+      }
+
+      uint32_t display_count = 0;
+      CGDirectDisplayID displays[32] {};
+      if (CGGetActiveDisplayList(32, displays, &display_count) != kCGErrorSuccess) {
+        BOOST_LOG(error) << "Unable to refresh active display list for macOS input."sv;
+        return false;
+      }
+
+      const auto it = std::find(displays, displays + display_count, requested_display);
+      if (it == displays + display_count) {
+        return false;
+      }
+
+      if (macos_input->display == requested_display && macos_input->displayScaling > 0.0) {
+        return true;
+      }
+
+      const auto mode = CGDisplayCopyDisplayMode(requested_display);
+      if (!mode) {
+        return false;
+      }
+
+      macos_input->display = requested_display;
+      macos_input->displayScaling =
+        static_cast<CGFloat>(CGDisplayPixelsWide(requested_display)) /
+        static_cast<CGFloat>(CGDisplayModeGetPixelWidth(mode));
+      CFRelease(mode);
+
+      BOOST_LOG(debug) << "Updated macOS input target display to "sv << macos_input->display;
+      return true;
+    }
+  }  // namespace
 
   // A struct to hold a Windows keycode to Mac virtual keycode mapping.
   struct KeyCodeMap {
@@ -315,6 +365,7 @@ const KeyCodeMap kKeyCodesMap[] = {
   util::point_t get_mouse_loc(input_t &input) {
     // Creating a new event every time to avoid any reuse risk
     const auto macos_input = static_cast<macos_input_t *>(input.get());
+    refresh_display_context(macos_input);
     const auto snapshot_event = CGEventCreate(macos_input->source);
     const auto current = CGEventGetLocation(snapshot_event);
     CFRelease(snapshot_event);
@@ -335,6 +386,7 @@ const KeyCodeMap kKeyCodesMap[] = {
     BOOST_LOG(debug) << "mouse_event: "sv << button << ", type: "sv << type << ", location:"sv << raw_location.x << ":"sv << raw_location.y << " click_count: "sv << click_count;
 
     const auto macos_input = static_cast<macos_input_t *>(input.get());
+    refresh_display_context(macos_input);
     const auto display = macos_input->display;
     const auto event = macos_input->mouse_event;
 
@@ -529,23 +581,7 @@ const KeyCodeMap kKeyCodesMap[] = {
     // Default to main display
     macos_input->display = CGMainDisplayID();
 
-    auto output_name = display_device::map_output_name(config::video.output_name);
-    // If output_name is set, try to find the display with that display id
-    if (!output_name.empty()) {
-      uint32_t max_display = 32;
-      uint32_t display_count;
-      CGDirectDisplayID displays[max_display];
-      if (CGGetActiveDisplayList(max_display, displays, &display_count) != kCGErrorSuccess) {
-        BOOST_LOG(error) << "Unable to get active display list , error: "sv << std::endl;
-      } else {
-        for (int i = 0; i < display_count; i++) {
-          CGDirectDisplayID display_id = displays[i];
-          if (display_id == std::atoi(output_name.c_str())) {
-            macos_input->display = display_id;
-          }
-        }
-      }
-    }
+    refresh_display_context(macos_input);
 
     // Input coordinates are based on the virtual resolution not the physical, so we need the scaling factor
     const CGDisplayModeRef mode = CGDisplayCopyDisplayMode(macos_input->display);
