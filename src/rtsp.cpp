@@ -974,6 +974,8 @@ namespace rtsp_stream {
     args.try_emplace("x-nv-video[0].encoderCscMode"sv, "0"sv);
     args.try_emplace("x-nv-vqos[0].bitStreamFormat"sv, "0"sv);
     args.try_emplace("x-nv-video[0].dynamicRangeMode"sv, "0"sv);
+    args.try_emplace("x-apollo-video[0].clientDisplayGamut"sv, "unknown"sv);
+    args.try_emplace("x-apollo-video[0].clientDisplayTransfer"sv, "unknown"sv);
     args.try_emplace("x-nv-aqos.packetDuration"sv, "5"sv);
     args.try_emplace("x-nv-general.useReliableUdp"sv, "1"sv);
     args.try_emplace("x-nv-vqos[0].fec.minRequiredFecPackets"sv, "0"sv);
@@ -1022,6 +1024,28 @@ namespace rtsp_stream {
       config.monitor.dynamicRange = util::from_view(args.at("x-nv-video[0].dynamicRangeMode"sv));
       config.monitor.chromaSamplingType = util::from_view(args.at("x-ss-video[0].chromaSamplingType"sv));
       config.monitor.enableIntraRefresh = util::from_view(args.at("x-ss-video[0].intraRefresh"sv));
+      const auto client_display_gamut = args.at("x-apollo-video[0].clientDisplayGamut"sv);
+      if (client_display_gamut == "display-p3"sv || client_display_gamut == "display_p3"sv || client_display_gamut == "p3"sv) {
+        config.monitor.clientDisplayGamut = static_cast<int>(video::client_display_gamut_e::display_p3);
+      } else if (client_display_gamut == "rec2020"sv || client_display_gamut == "bt2020"sv || client_display_gamut == "2020"sv) {
+        config.monitor.clientDisplayGamut = static_cast<int>(video::client_display_gamut_e::rec2020);
+      } else if (client_display_gamut == "srgb"sv || client_display_gamut == "rec709"sv || client_display_gamut == "709"sv) {
+        config.monitor.clientDisplayGamut = static_cast<int>(video::client_display_gamut_e::srgb);
+      } else {
+        config.monitor.clientDisplayGamut = static_cast<int>(video::client_display_gamut_e::unknown);
+      }
+      const auto client_display_transfer = args.at("x-apollo-video[0].clientDisplayTransfer"sv);
+      if (client_display_transfer == "pq"sv || client_display_transfer == "hdr-pq"sv || client_display_transfer == "st2084"sv || client_display_transfer == "smpte2084"sv) {
+        config.monitor.clientDisplayTransfer = static_cast<int>(video::client_display_transfer_e::pq);
+      } else if (client_display_transfer == "hlg"sv || client_display_transfer == "hdr-hlg"sv) {
+        config.monitor.clientDisplayTransfer = static_cast<int>(video::client_display_transfer_e::hlg);
+      } else if (client_display_transfer == "sdr"sv || client_display_transfer == "gamma"sv) {
+        config.monitor.clientDisplayTransfer = static_cast<int>(video::client_display_transfer_e::sdr);
+      } else {
+        config.monitor.clientDisplayTransfer = config.monitor.dynamicRange > 0 ?
+          static_cast<int>(video::client_display_transfer_e::pq) :
+          static_cast<int>(video::client_display_transfer_e::sdr);
+      }
 
       if (config::video.limit_framerate) {
         config.monitor.encodingFramerate = session.fps;

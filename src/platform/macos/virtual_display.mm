@@ -3,6 +3,7 @@
 #import <objc/message.h>
 
 #include "src/logging.h"
+#include "src/video.h"
 #include "src/platform/macos/virtual_display.h"
 
 #include <mutex>
@@ -27,6 +28,15 @@ namespace VDISPLAY {
       {0.1500, 0.0600},
       {0.3127, 0.3290},
       true,
+      true,
+    };
+
+    constexpr VDISPLAY::color_profile_t kRec2020ColorProfile {
+      {0.7080, 0.2920},
+      {0.1700, 0.7970},
+      {0.1310, 0.0460},
+      {0.3127, 0.3290},
+      false,
       true,
     };
 
@@ -143,20 +153,27 @@ namespace VDISPLAY {
     driver_status = DRIVER_STATUS::UNKNOWN;
   }
 
-  color_profile_t probeHostDisplayColorProfile(bool hdr_enabled) {
+  color_profile_t probeHostDisplayColorProfile(bool hdr_enabled, int client_display_gamut) {
     NSScreen *reference_screen = [NSScreen mainScreen];
     if (reference_screen == nil && [NSScreen screens].count > 0) {
       reference_screen = [NSScreen screens].firstObject;
     }
 
-    const bool use_display_p3 = screen_prefers_display_p3(reference_screen);
-    color_profile_t profile = use_display_p3 ? kDisplayP3ColorProfile : kSrgbColorProfile;
+    const bool use_display_p3 =
+      client_display_gamut == static_cast<int>(video::client_display_gamut_e::display_p3) ? true :
+      client_display_gamut == static_cast<int>(video::client_display_gamut_e::srgb) ? false :
+      screen_prefers_display_p3(reference_screen);
+    color_profile_t profile =
+      client_display_gamut == static_cast<int>(video::client_display_gamut_e::rec2020) ? kRec2020ColorProfile :
+      use_display_p3 ? kDisplayP3ColorProfile :
+      kSrgbColorProfile;
     profile.hdr_capable = screen_is_hdr_capable(reference_screen);
 
     BOOST_LOG(info) << "macOS host display color profile: gamut="sv
                     << (profile.display_p3 ? "display-p3"sv : "srgb"sv)
                     << " hdr_capable="sv << profile.hdr_capable
-                    << " hdr_intent="sv << hdr_enabled;
+                    << " hdr_intent="sv << hdr_enabled
+                    << " client_gamut="sv << client_display_gamut;
 
     return profile;
   }
@@ -167,7 +184,8 @@ namespace VDISPLAY {
     std::uint32_t width,
     std::uint32_t height,
     std::uint32_t fps_millihz,
-    bool hdr_enabled
+    bool hdr_enabled,
+    int client_display_gamut
   ) {
     const std::string display_key = client_uid ? client_uid : "";
     if (display_key.empty()) {
@@ -194,7 +212,7 @@ namespace VDISPLAY {
     using apply_settings_t = BOOL (*)(id, SEL, id);
 
     auto handle = std::make_unique<virtual_display_handle_t>();
-    const auto host_profile = probeHostDisplayColorProfile(hdr_enabled);
+    const auto host_profile = probeHostDisplayColorProfile(hdr_enabled, client_display_gamut);
     handle->queue = dispatch_queue_create("dev.lizardbyte.sunshine.virtual-display", DISPATCH_QUEUE_SERIAL);
     handle->descriptor = [[descriptor_class alloc] init];
     handle->settings = [[settings_class alloc] init];

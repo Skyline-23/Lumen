@@ -357,7 +357,8 @@ namespace proc {
         render_width,
         render_height,
         launch_session->fps ? static_cast<std::uint32_t>(launch_session->fps) : 60000u,
-        launch_session->enable_hdr
+        launch_session->enable_hdr,
+        launch_session->client_display_gamut
       );
 
       launch_session->virtual_display = !virtual_display_name.empty();
@@ -366,6 +367,8 @@ namespace proc {
         this->virtual_display = true;
         this->virtual_display_key = device_key;
         this->display_name = virtual_display_name;
+        this->client_display_gamut = launch_session->client_display_gamut;
+        this->client_display_transfer = launch_session->client_display_transfer;
         config::video.output_name = this->display_name;
         const auto virtual_display_id = static_cast<CGDirectDisplayID>(std::strtoul(virtual_display_name.c_str(), nullptr, 10));
         if (!platf::isolate_virtual_display(virtual_display_id)) {
@@ -431,6 +434,36 @@ namespace proc {
     _env["APOLLO_CLIENT_SCALE_FACTOR"] = std::to_string(scale_factor);
     _env["APOLLO_CLIENT_FPS"] = fps_str;
     _env["APOLLO_CLIENT_HDR"] = launch_session->enable_hdr ? "true" : "false";
+    switch (static_cast<video::client_display_gamut_e>(launch_session->client_display_gamut)) {
+      case video::client_display_gamut_e::display_p3:
+        _env["APOLLO_CLIENT_DISPLAY_GAMUT"] = "display-p3";
+        break;
+      case video::client_display_gamut_e::rec2020:
+        _env["APOLLO_CLIENT_DISPLAY_GAMUT"] = "rec2020";
+        break;
+      case video::client_display_gamut_e::srgb:
+        _env["APOLLO_CLIENT_DISPLAY_GAMUT"] = "srgb";
+        break;
+      case video::client_display_gamut_e::unknown:
+      default:
+        _env["APOLLO_CLIENT_DISPLAY_GAMUT"] = "unknown";
+        break;
+    }
+    switch (static_cast<video::client_display_transfer_e>(launch_session->client_display_transfer)) {
+      case video::client_display_transfer_e::pq:
+        _env["APOLLO_CLIENT_DISPLAY_TRANSFER"] = "pq";
+        break;
+      case video::client_display_transfer_e::hlg:
+        _env["APOLLO_CLIENT_DISPLAY_TRANSFER"] = "hlg";
+        break;
+      case video::client_display_transfer_e::sdr:
+        _env["APOLLO_CLIENT_DISPLAY_TRANSFER"] = "sdr";
+        break;
+      case video::client_display_transfer_e::unknown:
+      default:
+        _env["APOLLO_CLIENT_DISPLAY_TRANSFER"] = "unknown";
+        break;
+    }
     _env["APOLLO_CLIENT_GCMAP"] = std::to_string(launch_session->gcmap);
     _env["APOLLO_CLIENT_HOST_AUDIO"] = launch_session->host_audio ? "true" : "false";
     _env["APOLLO_CLIENT_ENABLE_SOPS"] = launch_session->enable_sops ? "true" : "false";
@@ -905,6 +938,8 @@ namespace proc {
     virtual_display = false;
     physical_displays_asleep = false;
     allow_client_commands = false;
+    client_display_gamut = static_cast<int>(video::client_display_gamut_e::unknown);
+    client_display_transfer = static_cast<int>(video::client_display_transfer_e::unknown);
 
     if (_saved_input_config) {
       config::input = *_saved_input_config;

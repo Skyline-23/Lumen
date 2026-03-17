@@ -68,6 +68,36 @@ namespace nvhttp {
   static std::chrono::time_point<std::chrono::steady_clock> otp_creation_time;
 
   namespace {
+    int parse_client_display_gamut(const std::string_view value) {
+      if (value == "display-p3"sv || value == "display_p3"sv || value == "p3"sv) {
+        return static_cast<int>(video::client_display_gamut_e::display_p3);
+      }
+      if (value == "rec2020"sv || value == "bt2020"sv || value == "2020"sv) {
+        return static_cast<int>(video::client_display_gamut_e::rec2020);
+      }
+      if (value == "srgb"sv || value == "rec709"sv || value == "709"sv) {
+        return static_cast<int>(video::client_display_gamut_e::srgb);
+      }
+
+      return static_cast<int>(video::client_display_gamut_e::unknown);
+    }
+
+    int parse_client_display_transfer(const std::string_view value, bool hdr_enabled) {
+      if (value == "pq"sv || value == "hdr-pq"sv || value == "st2084"sv || value == "smpte2084"sv) {
+        return static_cast<int>(video::client_display_transfer_e::pq);
+      }
+      if (value == "hlg"sv || value == "hdr-hlg"sv) {
+        return static_cast<int>(video::client_display_transfer_e::hlg);
+      }
+      if (value == "sdr"sv || value == "gamma"sv) {
+        return static_cast<int>(video::client_display_transfer_e::sdr);
+      }
+
+      return hdr_enabled ?
+        static_cast<int>(video::client_display_transfer_e::pq) :
+        static_cast<int>(video::client_display_transfer_e::sdr);
+    }
+
     bool macos_virtual_display_main10_capable() {
 #ifdef __APPLE__
       return VDISPLAY::openVDisplayDevice() == VDISPLAY::DRIVER_STATUS::OK && video::active_hevc_mode >= 2;
@@ -528,6 +558,8 @@ namespace nvhttp {
     launch_session->enable_hdr = util::from_view(get_arg(args, "hdrMode", "0"));
     launch_session->virtual_display = util::from_view(get_arg(args, "virtualDisplay", "0")) || named_cert_p->always_use_virtual_display;
     launch_session->scale_factor = util::from_view(get_arg(args, "scaleFactor", "100"));
+    launch_session->client_display_gamut = parse_client_display_gamut(get_arg(args, "clientDisplayGamut", ""));
+    launch_session->client_display_transfer = parse_client_display_transfer(get_arg(args, "clientDisplayTransfer", ""), launch_session->enable_hdr);
 
     launch_session->client_do_cmds = named_cert_p->do_cmds;
     launch_session->client_undo_cmds = named_cert_p->undo_cmds;

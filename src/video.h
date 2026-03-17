@@ -18,6 +18,19 @@ extern "C" {
 struct AVPacket;
 
 namespace video {
+  enum class client_display_gamut_e : int {
+    unknown = 0,
+    srgb = 1,
+    display_p3 = 2,
+    rec2020 = 3,
+  };
+
+  enum class client_display_transfer_e : int {
+    unknown = 0,
+    sdr = 1,
+    pq = 2,
+    hlg = 3,
+  };
 
   /* Encoding configuration requested by remote client */
   struct config_t {
@@ -48,6 +61,8 @@ namespace video {
 
     int encodingFramerate; // Requested display framerate
     bool input_only;
+    int clientDisplayGamut;  // 0 - unknown, 1 - sRGB, 2 - Display P3, 3 - Rec.2020
+    int clientDisplayTransfer;  // 0 - unknown, 1 - SDR, 2 - PQ, 3 - HLG
   };
 
   platf::mem_type_e map_base_dev_type(AVHWDeviceType type);

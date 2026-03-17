@@ -114,6 +114,8 @@ namespace proc {
     bool virtual_display = false;
     bool physical_displays_asleep = false;
     bool allow_client_commands = false;
+    int client_display_gamut = 0;
+    int client_display_transfer = 0;
 
     proc_t(
       boost::process::v1::environment &&env,

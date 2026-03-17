@@ -94,7 +94,7 @@ namespace platf {
     }
 
     bool generic_virtual_hdr_metadata(SS_HDR_METADATA &metadata) {
-      const auto host_profile = VDISPLAY::probeHostDisplayColorProfile(true);
+      const auto host_profile = VDISPLAY::probeHostDisplayColorProfile(true, proc::proc.client_display_gamut);
       const auto scale = [](double value) -> uint16_t {
         return static_cast<uint16_t>(std::clamp(std::lround(value * 50000.0), 0l, 50000l));
       };
