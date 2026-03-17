@@ -68,6 +68,34 @@ namespace nvhttp {
   static std::chrono::time_point<std::chrono::steady_clock> otp_creation_time;
 
   namespace {
+    const char *client_display_gamut_to_string(const int gamut) {
+      switch (static_cast<video::client_display_gamut_e>(gamut)) {
+        case video::client_display_gamut_e::srgb:
+          return "srgb";
+        case video::client_display_gamut_e::display_p3:
+          return "display-p3";
+        case video::client_display_gamut_e::rec2020:
+          return "rec2020";
+        case video::client_display_gamut_e::unknown:
+        default:
+          return "unknown";
+      }
+    }
+
+    const char *client_display_transfer_to_string(const int transfer) {
+      switch (static_cast<video::client_display_transfer_e>(transfer)) {
+        case video::client_display_transfer_e::sdr:
+          return "sdr";
+        case video::client_display_transfer_e::pq:
+          return "pq";
+        case video::client_display_transfer_e::hlg:
+          return "hlg";
+        case video::client_display_transfer_e::unknown:
+        default:
+          return "unknown";
+      }
+    }
+
     int parse_client_display_gamut(const std::string_view value) {
       if (value == "display-p3"sv || value == "display_p3"sv || value == "p3"sv) {
         return static_cast<int>(video::client_display_gamut_e::display_p3);
@@ -560,6 +588,12 @@ namespace nvhttp {
     launch_session->scale_factor = util::from_view(get_arg(args, "scaleFactor", "100"));
     launch_session->client_display_gamut = parse_client_display_gamut(get_arg(args, "clientDisplayGamut", ""));
     launch_session->client_display_transfer = parse_client_display_transfer(get_arg(args, "clientDisplayTransfer", ""), launch_session->enable_hdr);
+    BOOST_LOG(info) << "Client display profile from launch: gamut="sv
+                    << client_display_gamut_to_string(launch_session->client_display_gamut)
+                    << " transfer="sv
+                    << client_display_transfer_to_string(launch_session->client_display_transfer)
+                    << " hdr="sv
+                    << launch_session->enable_hdr;
 
     launch_session->client_do_cmds = named_cert_p->do_cmds;
     launch_session->client_undo_cmds = named_cert_p->undo_cmds;

@@ -40,6 +40,36 @@ using asio::ip::udp;
 using namespace std::literals;
 
 namespace rtsp_stream {
+  namespace {
+    const char *client_display_gamut_to_string(const int gamut) {
+      switch (static_cast<video::client_display_gamut_e>(gamut)) {
+        case video::client_display_gamut_e::srgb:
+          return "srgb";
+        case video::client_display_gamut_e::display_p3:
+          return "display-p3";
+        case video::client_display_gamut_e::rec2020:
+          return "rec2020";
+        case video::client_display_gamut_e::unknown:
+        default:
+          return "unknown";
+      }
+    }
+
+    const char *client_display_transfer_to_string(const int transfer) {
+      switch (static_cast<video::client_display_transfer_e>(transfer)) {
+        case video::client_display_transfer_e::sdr:
+          return "sdr";
+        case video::client_display_transfer_e::pq:
+          return "pq";
+        case video::client_display_transfer_e::hlg:
+          return "hlg";
+        case video::client_display_transfer_e::unknown:
+        default:
+          return "unknown";
+      }
+    }
+  }  // namespace
+
   void free_msg(PRTSP_MESSAGE msg) {
     freeMessage(msg);
 
@@ -1046,6 +1076,12 @@ namespace rtsp_stream {
           static_cast<int>(video::client_display_transfer_e::pq) :
           static_cast<int>(video::client_display_transfer_e::sdr);
       }
+      BOOST_LOG(info) << "Client display profile from RTSP: gamut="sv
+                      << client_display_gamut_to_string(config.monitor.clientDisplayGamut)
+                      << " transfer="sv
+                      << client_display_transfer_to_string(config.monitor.clientDisplayTransfer)
+                      << " hdr="sv
+                      << config.monitor.dynamicRange;
 
       if (config::video.limit_framerate) {
         config.monitor.encodingFramerate = session.fps;

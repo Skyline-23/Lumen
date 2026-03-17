@@ -169,8 +169,12 @@ namespace VDISPLAY {
       kSrgbColorProfile;
     profile.hdr_capable = screen_is_hdr_capable(reference_screen);
 
-    BOOST_LOG(info) << "macOS host display color profile: gamut="sv
-                    << (profile.display_p3 ? "display-p3"sv : "srgb"sv)
+    const auto profile_gamut =
+      client_display_gamut == static_cast<int>(video::client_display_gamut_e::rec2020) ? "rec2020"sv :
+      profile.display_p3 ? "display-p3"sv :
+      "srgb"sv;
+    BOOST_LOG(info) << "macOS virtual display color profile: gamut="sv
+                    << profile_gamut
                     << " hdr_capable="sv << profile.hdr_capable
                     << " hdr_intent="sv << hdr_enabled
                     << " client_gamut="sv << client_display_gamut;
