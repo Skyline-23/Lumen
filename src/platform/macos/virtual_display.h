@@ -26,7 +26,7 @@ namespace VDISPLAY {
 
   DRIVER_STATUS openVDisplayDevice();
   void closeVDisplayDevice();
-  color_profile_t probeHostDisplayColorProfile(bool hdr_enabled, int client_display_gamut = 0);
+  color_profile_t probeHostDisplayColorProfile(bool hdr_enabled, int client_display_gamut = 0, int client_display_transfer = 0);
 
   std::string createVirtualDisplay(
     const char *client_uid,
@@ -35,7 +35,8 @@ namespace VDISPLAY {
     std::uint32_t height,
     std::uint32_t fps_millihz,
     bool hdr_enabled,
-    int client_display_gamut
+    int client_display_gamut,
+    int client_display_transfer
   );
 
   bool removeVirtualDisplay(const std::string &client_uid);

@@ -1,4 +1,5 @@
 #import <AppKit/AppKit.h>
+#import <CoreVideo/CoreVideo.h>
 #import <Foundation/Foundation.h>
 #import <objc/message.h>
 
@@ -6,6 +7,7 @@
 #include "src/video.h"
 #include "src/platform/macos/virtual_display.h"
 
+#include <algorithm>
 #include <mutex>
 #include <unordered_map>
 
@@ -88,6 +90,33 @@ namespace VDISPLAY {
       return static_cast<double>(fps_millihz);
     }
 
+    NSSize virtual_display_size_for_pixels(std::uint32_t width, std::uint32_t height) {
+      constexpr double kRetinaPixelsPerInch = 218.0;
+      constexpr double kMillimetersPerInch = 25.4;
+
+      const auto width_mm = std::clamp((static_cast<double>(std::max(width, 1u)) / kRetinaPixelsPerInch) * kMillimetersPerInch, 120.0, 1200.0);
+      const auto height_mm = std::clamp((static_cast<double>(std::max(height, 1u)) / kRetinaPixelsPerInch) * kMillimetersPerInch, 80.0, 900.0);
+      return NSMakeSize(width_mm, height_mm);
+    }
+
+    int virtual_display_transfer_function(bool hdr_enabled, int client_display_transfer) {
+      switch (static_cast<video::client_display_transfer_e>(client_display_transfer)) {
+        case video::client_display_transfer_e::pq:
+          return CVTransferFunctionGetIntegerCodePointForString(kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ);
+        case video::client_display_transfer_e::hlg:
+          return CVTransferFunctionGetIntegerCodePointForString(kCVImageBufferTransferFunction_ITU_R_2100_HLG);
+        case video::client_display_transfer_e::sdr:
+          return CVTransferFunctionGetIntegerCodePointForString(kCVImageBufferTransferFunction_ITU_R_709_2);
+        case video::client_display_transfer_e::unknown:
+        default:
+          break;
+      }
+
+      return hdr_enabled ?
+               CVTransferFunctionGetIntegerCodePointForString(kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ) :
+               CVTransferFunctionGetIntegerCodePointForString(kCVImageBufferTransferFunction_ITU_R_709_2);
+    }
+
     NSString *display_name_for_client(const char *client_name) {
       if (client_name && client_name[0] != '\0') {
         return [NSString stringWithFormat:@"Apollo (%s)", client_name];
@@ -153,7 +182,7 @@ namespace VDISPLAY {
     driver_status = DRIVER_STATUS::UNKNOWN;
   }
 
-  color_profile_t probeHostDisplayColorProfile(bool hdr_enabled, int client_display_gamut) {
+  color_profile_t probeHostDisplayColorProfile(bool hdr_enabled, int client_display_gamut, int client_display_transfer) {
     NSScreen *reference_screen = [NSScreen mainScreen];
     if (reference_screen == nil && [NSScreen screens].count > 0) {
       reference_screen = [NSScreen screens].firstObject;
@@ -167,17 +196,27 @@ namespace VDISPLAY {
       client_display_gamut == static_cast<int>(video::client_display_gamut_e::rec2020) ? kRec2020ColorProfile :
       use_display_p3 ? kDisplayP3ColorProfile :
       kSrgbColorProfile;
-    profile.hdr_capable = screen_is_hdr_capable(reference_screen);
+    const bool client_wants_hdr =
+      hdr_enabled ||
+      static_cast<video::client_display_transfer_e>(client_display_transfer) == video::client_display_transfer_e::pq ||
+      static_cast<video::client_display_transfer_e>(client_display_transfer) == video::client_display_transfer_e::hlg;
+    profile.hdr_capable = client_wants_hdr || screen_is_hdr_capable(reference_screen);
 
     const auto profile_gamut =
       client_display_gamut == static_cast<int>(video::client_display_gamut_e::rec2020) ? "rec2020"sv :
       profile.display_p3 ? "display-p3"sv :
       "srgb"sv;
+    const auto transfer_name =
+      static_cast<video::client_display_transfer_e>(client_display_transfer) == video::client_display_transfer_e::pq ? "pq"sv :
+      static_cast<video::client_display_transfer_e>(client_display_transfer) == video::client_display_transfer_e::hlg ? "hlg"sv :
+      static_cast<video::client_display_transfer_e>(client_display_transfer) == video::client_display_transfer_e::sdr ? "sdr"sv :
+      "unknown"sv;
     BOOST_LOG(info) << "macOS virtual display color profile: gamut="sv
                     << profile_gamut
                     << " hdr_capable="sv << profile.hdr_capable
                     << " hdr_intent="sv << hdr_enabled
-                    << " client_gamut="sv << client_display_gamut;
+                    << " client_gamut="sv << client_display_gamut
+                    << " client_transfer="sv << transfer_name;
 
     return profile;
   }
@@ -189,7 +228,8 @@ namespace VDISPLAY {
     std::uint32_t height,
     std::uint32_t fps_millihz,
     bool hdr_enabled,
-    int client_display_gamut
+    int client_display_gamut,
+    int client_display_transfer
   ) {
     const std::string display_key = client_uid ? client_uid : "";
     if (display_key.empty()) {
@@ -213,10 +253,13 @@ namespace VDISPLAY {
 
     using init_with_descriptor_t = id (*)(id, SEL, id);
     using init_mode_t = id (*)(id, SEL, NSUInteger, NSUInteger, double);
+    using init_mode_with_transfer_t = id (*)(id, SEL, NSUInteger, NSUInteger, double, unsigned int);
     using apply_settings_t = BOOL (*)(id, SEL, id);
 
     auto handle = std::make_unique<virtual_display_handle_t>();
-    const auto host_profile = probeHostDisplayColorProfile(hdr_enabled, client_display_gamut);
+    const auto host_profile = probeHostDisplayColorProfile(hdr_enabled, client_display_gamut, client_display_transfer);
+    const auto physical_size = virtual_display_size_for_pixels(width, height);
+    const auto transfer_function = virtual_display_transfer_function(hdr_enabled, client_display_transfer);
     handle->queue = dispatch_queue_create("dev.lizardbyte.sunshine.virtual-display", DISPATCH_QUEUE_SERIAL);
     handle->descriptor = [[descriptor_class alloc] init];
     handle->settings = [[settings_class alloc] init];
@@ -229,7 +272,7 @@ namespace VDISPLAY {
     [handle->descriptor setValue:@(static_cast<unsigned int>(width ^ height ^ 0xA901u)) forKey:@"productID"];
     [handle->descriptor setValue:@(1u) forKey:@"serialNumber"];
     [handle->descriptor setValue:display_name_for_client(client_name) forKey:@"name"];
-    [handle->descriptor setValue:[NSValue valueWithSize:NSMakeSize(600.0, 340.0)] forKey:@"sizeInMillimeters"];
+    [handle->descriptor setValue:[NSValue valueWithSize:physical_size] forKey:@"sizeInMillimeters"];
     [handle->descriptor setValue:@(width) forKey:@"maxPixelsWide"];
     [handle->descriptor setValue:@(height) forKey:@"maxPixelsHigh"];
     [handle->descriptor setValue:[NSValue valueWithPoint:NSMakePoint(host_profile.red.x, host_profile.red.y)] forKey:@"redPrimary"];
@@ -238,13 +281,24 @@ namespace VDISPLAY {
     [handle->descriptor setValue:[NSValue valueWithPoint:NSMakePoint(host_profile.white.x, host_profile.white.y)] forKey:@"whitePoint"];
     [handle->descriptor setValue:handle->queue forKey:@"queue"];
 
-    handle->mode = ((init_mode_t) objc_msgSend)(
-      [mode_class alloc],
-      sel_registerName("initWithWidth:height:refreshRate:"),
-      static_cast<NSUInteger>(std::max(width, 1u)),
-      static_cast<NSUInteger>(std::max(height, 1u)),
-      normalize_refresh_rate(fps_millihz)
-    );
+    if ([mode_class instancesRespondToSelector:sel_registerName("initWithWidth:height:refreshRate:transferFunction:")]) {
+      handle->mode = ((init_mode_with_transfer_t) objc_msgSend)(
+        [mode_class alloc],
+        sel_registerName("initWithWidth:height:refreshRate:transferFunction:"),
+        static_cast<NSUInteger>(std::max(width, 1u)),
+        static_cast<NSUInteger>(std::max(height, 1u)),
+        normalize_refresh_rate(fps_millihz),
+        static_cast<unsigned int>(std::max(transfer_function, 0))
+      );
+    } else {
+      handle->mode = ((init_mode_t) objc_msgSend)(
+        [mode_class alloc],
+        sel_registerName("initWithWidth:height:refreshRate:"),
+        static_cast<NSUInteger>(std::max(width, 1u)),
+        static_cast<NSUInteger>(std::max(height, 1u)),
+        normalize_refresh_rate(fps_millihz)
+      );
+    }
     if (handle->mode == nil) {
       BOOST_LOG(error) << "macOS virtual display mode creation failed"sv;
       return {};
@@ -252,6 +306,9 @@ namespace VDISPLAY {
 
     [handle->settings setValue:@[handle->mode] forKey:@"modes"];
     [handle->settings setValue:@(1) forKey:@"hiDPI"];
+    BOOST_LOG(info) << "macOS virtual display mode: pixels="sv << width << "x"sv << height
+                    << " physical-mm="sv << physical_size.width << "x"sv << physical_size.height
+                    << " transfer-function="sv << transfer_function;
 
     handle->display = ((init_with_descriptor_t) objc_msgSend)(
       [display_class alloc],
