@@ -80,6 +80,26 @@ namespace platf {
       dyn::apiproc cgx_vfb_select_online_state = nullptr;
     };
 
+    dyn::apiproc load_private_symbol(void *handle, const char *symbol_name) {
+      if (handle == nullptr || symbol_name == nullptr || symbol_name[0] == '\0') {
+        return nullptr;
+      }
+
+      if (auto *symbol = reinterpret_cast<dyn::apiproc>(dlsym(handle, symbol_name)); symbol != nullptr) {
+        return symbol;
+      }
+
+      if (symbol_name[0] == '_') {
+        if (auto *symbol = reinterpret_cast<dyn::apiproc>(dlsym(handle, symbol_name + 1)); symbol != nullptr) {
+          return symbol;
+        }
+      }
+
+      std::string underscored_name = "_";
+      underscored_name += symbol_name;
+      return reinterpret_cast<dyn::apiproc>(dlsym(handle, underscored_name.c_str()));
+    }
+
     private_display_control_api_t load_private_display_control_api() {
       private_display_control_api_t api;
       api.handle = dyn::handle({
@@ -89,16 +109,13 @@ namespace platf {
         return api;
       }
 
-      std::vector<std::tuple<dyn::apiproc *, const char *>> funcs {
-        {&api.cgx_current_display_set, "_CGXCurrentDisplaySet"},
-        {&api.cgx_select_display_set, "_CGXSelectDisplaySet"},
-        {&api.cgx_set_display_set, "_CGXSetDisplaySet"},
-        {&api.coredisplay_display_is_main, "_CoreDisplay_Display_IsMain"},
-        {&api.ws_canonical_mirror_master_for_display_device, "_WSCanonicalMirrorMasterForDisplayDevice"},
-        {&api.ws_display_is_canonical_mirror_master, "_WSDisplayIsCanonicalMirrorMaster"},
-        {&api.cgx_vfb_select_online_state, "_CGXVFBSelectOnlineState"},
-      };
-      dyn::load(api.handle, funcs, false);
+      api.cgx_current_display_set = load_private_symbol(api.handle, "CGXCurrentDisplaySet");
+      api.cgx_select_display_set = load_private_symbol(api.handle, "CGXSelectDisplaySet");
+      api.cgx_set_display_set = load_private_symbol(api.handle, "CGXSetDisplaySet");
+      api.coredisplay_display_is_main = load_private_symbol(api.handle, "CoreDisplay_Display_IsMain");
+      api.ws_canonical_mirror_master_for_display_device = load_private_symbol(api.handle, "WSCanonicalMirrorMasterForDisplayDevice");
+      api.ws_display_is_canonical_mirror_master = load_private_symbol(api.handle, "WSDisplayIsCanonicalMirrorMaster");
+      api.cgx_vfb_select_online_state = load_private_symbol(api.handle, "CGXVFBSelectOnlineState");
       return api;
     }
 
