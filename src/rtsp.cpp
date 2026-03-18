@@ -1076,12 +1076,35 @@ namespace rtsp_stream {
           static_cast<int>(video::client_display_transfer_e::pq) :
           static_cast<int>(video::client_display_transfer_e::sdr);
       }
+      config.monitor.clientDisplayScalePercent = session.scale_factor;
+      config.monitor.clientDisplayHiDPI = session.client_display_hidpi ? 1 : 0;
+      if (const auto it = args.find("x-apollo-video[0].clientDisplayScalePercent"sv); it != args.end()) {
+        config.monitor.clientDisplayScalePercent = util::from_view(it->second);
+      }
+      if (const auto it = args.find("x-apollo-video[0].clientDisplayHiDPI"sv); it != args.end()) {
+        config.monitor.clientDisplayHiDPI = util::from_view(it->second);
+      }
+      if (config.monitor.clientDisplayScalePercent != static_cast<int>(session.scale_factor) ||
+          config.monitor.clientDisplayHiDPI != (session.client_display_hidpi ? 1 : 0)) {
+        BOOST_LOG(warning) << "Client display scale contract mismatch between launch and RTSP: launch-scale="sv
+                           << session.scale_factor
+                           << " launch-hidpi="sv
+                           << session.client_display_hidpi
+                           << " rtsp-scale="sv
+                           << config.monitor.clientDisplayScalePercent
+                           << " rtsp-hidpi="sv
+                           << config.monitor.clientDisplayHiDPI;
+      }
       BOOST_LOG(info) << "Client display profile from RTSP: gamut="sv
                       << client_display_gamut_to_string(config.monitor.clientDisplayGamut)
                       << " transfer="sv
                       << client_display_transfer_to_string(config.monitor.clientDisplayTransfer)
                       << " hdr="sv
                       << config.monitor.dynamicRange
+                      << " scale-percent="sv
+                      << config.monitor.clientDisplayScalePercent
+                      << " hidpi="sv
+                      << config.monitor.clientDisplayHiDPI
                       << " viewport="sv
                       << config.monitor.width << "x"sv
                       << config.monitor.height

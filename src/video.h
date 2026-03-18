@@ -63,6 +63,8 @@ namespace video {
     bool input_only;
     int clientDisplayGamut;  // 0 - unknown, 1 - sRGB, 2 - Display P3, 3 - Rec.2020
     int clientDisplayTransfer;  // 0 - unknown, 1 - SDR, 2 - PQ, 3 - HLG
+    int clientDisplayScalePercent;  // Requested display scale in percent
+    int clientDisplayHiDPI;  // 0 - disabled, 1 - enabled
   };
 
   platf::mem_type_e map_base_dev_type(AVHWDeviceType type);
