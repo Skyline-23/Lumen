@@ -50,6 +50,7 @@ namespace rtsp_stream {
     bool enable_sops;
     bool virtual_display;
     bool client_display_hidpi;
+    bool client_display_scale_explicit;
     bool client_display_mode_is_logical;
     uint32_t scale_factor;
     int client_display_gamut;

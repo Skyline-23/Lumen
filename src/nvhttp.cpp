@@ -591,7 +591,8 @@ namespace nvhttp {
     launch_session->virtual_display = util::from_view(get_arg(args, "virtualDisplay", "0")) || named_cert_p->always_use_virtual_display;
     const bool has_display_scale_percent = has_arg(args, "clientDisplayScalePercent");
     const bool has_display_hidpi = has_arg(args, "clientDisplayHiDPI");
-    launch_session->client_display_mode_is_logical = has_display_scale_percent || has_display_hidpi;
+    launch_session->client_display_scale_explicit = has_display_scale_percent || has_display_hidpi;
+    launch_session->client_display_mode_is_logical = util::from_view(get_arg(args, "clientDisplayModeIsLogical", "0"));
     launch_session->scale_factor = has_display_scale_percent ?
       util::from_view(get_arg(args, "clientDisplayScalePercent", "100")) :
       util::from_view(get_arg(args, "scaleFactor", "100"));
@@ -610,6 +611,8 @@ namespace nvhttp {
                     << launch_session->scale_factor
                     << " hidpi="sv
                     << launch_session->client_display_hidpi
+                    << " explicit-scale="sv
+                    << launch_session->client_display_scale_explicit
                     << " mode-is-logical="sv
                     << launch_session->client_display_mode_is_logical;
 

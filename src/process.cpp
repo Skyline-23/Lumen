@@ -218,8 +218,10 @@ namespace proc {
       render_width = static_cast<std::uint32_t>(std::max(2.0, std::floor((static_cast<double>(requested_width) * 100.0) / static_cast<double>(scale_factor))));
       render_height = static_cast<std::uint32_t>(std::max(2.0, std::floor((static_cast<double>(requested_height) * 100.0) / static_cast<double>(scale_factor))));
 #else
-      render_width *= ((float) scale_factor / 100);
-      render_height *= ((float) scale_factor / 100);
+      if (!launch_session->client_display_scale_explicit) {
+        render_width *= ((float) scale_factor / 100);
+        render_height *= ((float) scale_factor / 100);
+      }
 #endif
 
       // Chop the last bit to ensure the scaled resolution is even numbered
