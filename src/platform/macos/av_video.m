@@ -464,11 +464,20 @@ static NSUInteger const kScreenCaptureKitShareableDisplayRefreshAttempts = 20;
     CMSampleBufferRef sampleBuffer = nil;
     BOOL captureStopped = NO;
     @synchronized(self) {
-      if (self.pendingSampleBuffers.count > 0) {
-        id queuedSample = [self.pendingSampleBuffers objectAtIndex:0];
+      NSUInteger pendingCount = self.pendingSampleBuffers.count;
+      if (self.pendingSampleBufferHead < pendingCount) {
+        id queuedSample = [self.pendingSampleBuffers objectAtIndex:self.pendingSampleBufferHead];
         sampleBuffer = (CMSampleBufferRef) CFRetain((__bridge CFTypeRef) queuedSample);
-        [self.pendingSampleBuffers removeObjectAtIndex:0];
-        self.pendingSampleBufferHead = 0;
+        self.pendingSampleBufferHead += 1;
+
+        if (self.pendingSampleBufferHead >= pendingCount) {
+          [self.pendingSampleBuffers removeAllObjects];
+          self.pendingSampleBufferHead = 0;
+        } else if (self.pendingSampleBufferHead >= kScreenCaptureQueueCompactionThreshold) {
+          NSRange consumedRange = NSMakeRange(0, self.pendingSampleBufferHead);
+          [self.pendingSampleBuffers removeObjectsInRange:consumedRange];
+          self.pendingSampleBufferHead = 0;
+        }
       }
       captureStopped = self.captureStopped;
     }
@@ -539,9 +548,17 @@ static NSUInteger const kScreenCaptureKitShareableDisplayRefreshAttempts = 20;
 
   @synchronized(self) {
     static const NSUInteger kMaxPendingScreenCaptureSamples = 16;
-    NSUInteger pendingCount = self.pendingSampleBuffers.count;
-    if (pendingCount >= kMaxPendingScreenCaptureSamples) {
-      [self.pendingSampleBuffers removeObjectAtIndex:0];
+    NSUInteger unreadCount = self.pendingSampleBuffers.count - self.pendingSampleBufferHead;
+    if (unreadCount >= kMaxPendingScreenCaptureSamples) {
+      if (self.pendingSampleBufferHead > 0) {
+        NSRange consumedRange = NSMakeRange(0, self.pendingSampleBufferHead);
+        [self.pendingSampleBuffers removeObjectsInRange:consumedRange];
+        self.pendingSampleBufferHead = 0;
+      }
+
+      if (self.pendingSampleBuffers.count >= kMaxPendingScreenCaptureSamples) {
+        [self.pendingSampleBuffers removeObjectAtIndex:0];
+      }
     }
     [self.pendingSampleBuffers addObject:(__bridge id) sampleBuffer];
 
