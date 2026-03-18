@@ -39,7 +39,6 @@ extern "C" {
   #include <CoreMedia/CoreMedia.h>
   #include <VideoToolbox/VideoToolbox.h>
   #include "platform/macos/av_img_t.h"
-  #include "platform/macos/vt_metal_context.h"
 #endif
 
 #ifdef _WIN32
@@ -551,7 +550,6 @@ namespace video {
       hdr_metadata_state_t hdr_metadata_state
     ):
         device(std::move(encode_device)),
-        metal_context(std::make_unique<platf::vt_metal_context_t>()),
         codec_type(codec_type),
         width(width),
         height(height),
@@ -1115,7 +1113,6 @@ namespace video {
     }
 
     std::unique_ptr<platf::avcodec_encode_device_t> device;
-    std::unique_ptr<platf::vt_metal_context_t> metal_context;
     VTCompressionSessionRef compression_session {nullptr};
     CVPixelBufferRef current_pixel_buffer {nullptr};
     CMVideoCodecType codec_type {};
