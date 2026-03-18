@@ -1078,15 +1078,14 @@ namespace nvhttp {
       tree.put("root.Permission", "0");
     }
 
-    // Moonlight clients track LAN IPv6 addresses separately from LocalIP which is expected to
-    // always be an IPv4 address. If we return that same IPv6 address here, it will clobber the
-    // stored LAN IPv4 address. To avoid this, we need to return an IPv4 address in this field
-    // when we get a request over IPv6.
+    // Moonlight-compatible clients treat LocalIP as an IPv4-only hint even when the serverinfo
+    // request itself arrived over IPv6. Returning the active IPv6 socket address here would
+    // overwrite the previously learned LAN IPv4 route and can destabilize host routing.
     //
-    // HACK: We should return the IPv4 address of local interface here, but we don't currently
-    // have that implemented. For now, we will emulate the behavior of GFE+GS-IPv6-Forwarder,
-    // which returns 127.0.0.1 as LocalIP for IPv6 connections. Moonlight clients with IPv6
-    // support know to ignore this bogus address.
+    // We do not currently resolve the matching LAN IPv4 address for the IPv6-local interface, so
+    // for IPv6 requests we intentionally preserve the legacy GFE/GS-IPv6-Forwarder behavior and
+    // publish 127.0.0.1 instead. This value is a non-route sentinel and clients are expected to
+    // ignore it when constructing reconnect or discovery candidates.
     if (local_endpoint.address().is_v6() && !local_endpoint.address().to_v6().is_v4_mapped()) {
       tree.put("root.LocalIP", "127.0.0.1");
     } else {
