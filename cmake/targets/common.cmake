@@ -6,6 +6,8 @@ foreach(dep ${SUNSHINE_TARGET_DEPENDENCIES})
     add_dependencies(sunshine ${dep})  # compile these before sunshine
 endforeach()
 
+target_include_directories(sunshine SYSTEM BEFORE PRIVATE ${FFMPEG_INCLUDE_DIRS})
+
 # platform specific target definitions
 if(WIN32)
     include(${CMAKE_MODULE_PATH}/targets/windows.cmake)
