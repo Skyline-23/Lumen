@@ -193,24 +193,33 @@ namespace proc {
     _launch_session = launch_session;
     allow_client_commands = app.allow_client_commands;
 
-    uint32_t client_width = launch_session->width ? launch_session->width : 1920;
-    uint32_t client_height = launch_session->height ? launch_session->height : 1080;
+    uint32_t requested_width = launch_session->width ? launch_session->width : 1920;
+    uint32_t requested_height = launch_session->height ? launch_session->height : 1080;
 
-    uint32_t render_width = client_width;
-    uint32_t render_height = client_height;
+    uint32_t render_width = requested_width;
+    uint32_t render_height = requested_height;
+    uint32_t backing_width = requested_width;
+    uint32_t backing_height = requested_height;
 
     int scale_factor = launch_session->scale_factor;
     if (_app.scale_factor != 100) {
       scale_factor = _app.scale_factor;
     }
 
-    if (scale_factor != 100) {
+    if (launch_session->client_display_mode_is_logical) {
+      if (launch_session->client_display_hidpi && scale_factor > 100) {
+        backing_width = static_cast<std::uint32_t>(std::max(2.0, std::floor((static_cast<double>(requested_width) * static_cast<double>(scale_factor)) / 100.0)));
+        backing_height = static_cast<std::uint32_t>(std::max(2.0, std::floor((static_cast<double>(requested_height) * static_cast<double>(scale_factor)) / 100.0)));
+        backing_width &= ~1;
+        backing_height &= ~1;
+      }
+    } else if (scale_factor != 100) {
 #ifdef __APPLE__
-      render_width = static_cast<std::uint32_t>(std::max(2.0, std::floor((static_cast<double>(client_width) * 100.0) / static_cast<double>(scale_factor))));
-      render_height = static_cast<std::uint32_t>(std::max(2.0, std::floor((static_cast<double>(client_height) * 100.0) / static_cast<double>(scale_factor))));
+      render_width = static_cast<std::uint32_t>(std::max(2.0, std::floor((static_cast<double>(requested_width) * 100.0) / static_cast<double>(scale_factor))));
+      render_height = static_cast<std::uint32_t>(std::max(2.0, std::floor((static_cast<double>(requested_height) * 100.0) / static_cast<double>(scale_factor))));
 #else
-      render_width *= ((float)scale_factor / 100);
-      render_height *= ((float)scale_factor / 100);
+      render_width *= ((float) scale_factor / 100);
+      render_height *= ((float) scale_factor / 100);
 #endif
 
       // Chop the last bit to ensure the scaled resolution is even numbered
@@ -222,11 +231,17 @@ namespace proc {
     launch_session->width = render_width;
     launch_session->height = render_height;
     this->client_scale_factor = scale_factor;
-    this->client_render_width = static_cast<int>(client_width);
-    this->client_render_height = static_cast<int>(client_height);
-    BOOST_LOG(info) << "Client launch geometry resolved: backing="sv
-                    << client_width << "x"sv << client_height
-                    << " scale-factor="sv << scale_factor
+    this->client_display_hidpi = launch_session->client_display_hidpi;
+    this->client_logical_width = static_cast<int>(render_width);
+    this->client_logical_height = static_cast<int>(render_height);
+    this->client_render_width = static_cast<int>(backing_width);
+    this->client_render_height = static_cast<int>(backing_height);
+    BOOST_LOG(info) << "Client launch geometry resolved: mode="sv
+                    << requested_width << "x"sv << requested_height
+                    << " scale-percent="sv << scale_factor
+                    << " hidpi="sv << launch_session->client_display_hidpi
+                    << " backing="sv
+                    << backing_width << "x"sv << backing_height
                     << " logical="sv << render_width << "x"sv << render_height;
 
     this->initial_display = config::video.output_name;
@@ -366,10 +381,11 @@ namespace proc {
       auto virtual_display_name = VDISPLAY::createVirtualDisplay(
         device_key.c_str(),
         device_name.c_str(),
-        client_width,
-        client_height,
+        render_width,
+        render_height,
         launch_session->fps ? static_cast<std::uint32_t>(launch_session->fps) : 60000u,
         scale_factor,
+        launch_session->client_display_hidpi,
         launch_session->enable_hdr,
         launch_session->client_display_gamut,
         launch_session->client_display_transfer
@@ -952,8 +968,14 @@ namespace proc {
     virtual_display = false;
     physical_displays_asleep = false;
     allow_client_commands = false;
+    client_display_hidpi = false;
     client_display_gamut = static_cast<int>(video::client_display_gamut_e::unknown);
     client_display_transfer = static_cast<int>(video::client_display_transfer_e::unknown);
+    client_scale_factor = 100;
+    client_logical_width = 0;
+    client_logical_height = 0;
+    client_render_width = 0;
+    client_render_height = 0;
 
     if (_saved_input_config) {
       config::input = *_saved_input_config;

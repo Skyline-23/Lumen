@@ -114,9 +114,12 @@ namespace proc {
     bool virtual_display = false;
     bool physical_displays_asleep = false;
     bool allow_client_commands = false;
+    bool client_display_hidpi = false;
     int client_display_gamut = 0;
     int client_display_transfer = 0;
     int client_scale_factor = 100;
+    int client_logical_width = 0;
+    int client_logical_height = 0;
     int client_render_width = 0;
     int client_render_height = 0;
 

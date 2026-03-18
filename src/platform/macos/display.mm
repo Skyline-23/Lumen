@@ -434,15 +434,14 @@ namespace platf {
         rtsp_stream::session_count() > 0 &&
         config.width > 0 &&
         config.height > 0 &&
-        config.width == proc::proc.client_render_width &&
-        config.height == proc::proc.client_render_height) {
-      const auto scale_factor = std::max(proc::proc.client_scale_factor, 100);
-      const auto logical_width = std::max(2, (config.width * 100) / scale_factor) & ~1;
-      const auto logical_height = std::max(2, (config.height * 100) / scale_factor) & ~1;
+        config.width == proc::proc.client_logical_width &&
+        config.height == proc::proc.client_logical_height) {
+      const auto logical_width = static_cast<std::uint32_t>(config.width);
+      const auto logical_height = static_cast<std::uint32_t>(config.height);
       const auto updated = VDISPLAY::updateVirtualDisplayMode(
         proc::proc.virtual_display_key,
-        static_cast<std::uint32_t>(logical_width),
-        static_cast<std::uint32_t>(logical_height),
+        logical_width,
+        logical_height,
         config.encodingFramerate > 0 ? static_cast<std::uint32_t>(config.encodingFramerate) : static_cast<std::uint32_t>(config.framerate),
         config.clientDisplayTransfer
       );
@@ -453,6 +452,7 @@ namespace platf {
       BOOST_LOG(info) << "Skipping macOS virtual display viewport apply: session-count="sv
                       << rtsp_stream::session_count()
                       << " config="sv << config.width << "x"sv << config.height
+                      << " logical="sv << proc::proc.client_logical_width << "x"sv << proc::proc.client_logical_height
                       << " backing="sv << proc::proc.client_render_width << "x"sv << proc::proc.client_render_height;
     }
 

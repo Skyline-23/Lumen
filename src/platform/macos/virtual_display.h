@@ -31,10 +31,11 @@ namespace VDISPLAY {
   std::string createVirtualDisplay(
     const char *client_uid,
     const char *client_name,
-    std::uint32_t width,
-    std::uint32_t height,
+    std::uint32_t logical_width,
+    std::uint32_t logical_height,
     std::uint32_t fps_millihz,
     int scale_factor,
+    bool hi_dpi,
     bool hdr_enabled,
     int client_display_gamut,
     int client_display_transfer

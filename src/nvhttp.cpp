@@ -284,8 +284,8 @@ namespace nvhttp {
     REMOVE  ///< Remove certificate
   };
 
-  std::string get_arg(const args_t &args, const char *name, const char *default_value) {
-    auto it = args.find(name);
+    std::string get_arg(const args_t &args, const char *name, const char *default_value) {
+      auto it = args.find(name);
     if (it == std::end(args)) {
       if (default_value != nullptr) {
         return std::string(default_value);
@@ -293,8 +293,12 @@ namespace nvhttp {
 
       throw std::out_of_range(name);
     }
-    return it->second;
-  }
+      return it->second;
+    }
+
+    bool has_arg(const args_t &args, const char *name) {
+      return args.find(name) != std::end(args);
+    }
 
   // Helper function to extract command entries from a JSON object.
   cmd_list_t extract_command_entries(const nlohmann::json& j, const std::string& key) {
@@ -585,7 +589,15 @@ namespace nvhttp {
     launch_session->gcmap = util::from_view(get_arg(args, "gcmap", "0"));
     launch_session->enable_hdr = util::from_view(get_arg(args, "hdrMode", "0"));
     launch_session->virtual_display = util::from_view(get_arg(args, "virtualDisplay", "0")) || named_cert_p->always_use_virtual_display;
-    launch_session->scale_factor = util::from_view(get_arg(args, "scaleFactor", "100"));
+    const bool has_display_scale_percent = has_arg(args, "clientDisplayScalePercent");
+    const bool has_display_hidpi = has_arg(args, "clientDisplayHiDPI");
+    launch_session->client_display_mode_is_logical = has_display_scale_percent || has_display_hidpi;
+    launch_session->scale_factor = has_display_scale_percent ?
+      util::from_view(get_arg(args, "clientDisplayScalePercent", "100")) :
+      util::from_view(get_arg(args, "scaleFactor", "100"));
+    launch_session->client_display_hidpi = has_display_hidpi ?
+      util::from_view(get_arg(args, "clientDisplayHiDPI", "0")) :
+      launch_session->scale_factor > 100;
     launch_session->client_display_gamut = parse_client_display_gamut(get_arg(args, "clientDisplayGamut", ""));
     launch_session->client_display_transfer = parse_client_display_transfer(get_arg(args, "clientDisplayTransfer", ""), launch_session->enable_hdr);
     BOOST_LOG(info) << "Client display profile from launch: gamut="sv
@@ -594,8 +606,12 @@ namespace nvhttp {
                     << client_display_transfer_to_string(launch_session->client_display_transfer)
                     << " hdr="sv
                     << launch_session->enable_hdr
-                    << " scale-factor="sv
-                    << launch_session->scale_factor;
+                    << " scale-percent="sv
+                    << launch_session->scale_factor
+                    << " hidpi="sv
+                    << launch_session->client_display_hidpi
+                    << " mode-is-logical="sv
+                    << launch_session->client_display_mode_is_logical;
 
     launch_session->client_do_cmds = named_cert_p->do_cmds;
     launch_session->client_undo_cmds = named_cert_p->undo_cmds;

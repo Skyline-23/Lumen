@@ -103,11 +103,14 @@ namespace VDISPLAY {
       return NSMakeSize(width_mm, height_mm);
     }
 
-    std::uint32_t logical_dimension_for_scale_factor(std::uint32_t pixel_dimension, int scale_factor) {
+    std::uint32_t backing_dimension_for_scale_factor(std::uint32_t logical_dimension, int scale_factor, bool hi_dpi) {
+      if (!hi_dpi) {
+        return std::max<std::uint32_t>(2u, logical_dimension) & ~1u;
+      }
+
       const auto clamped_scale = std::max(scale_factor, 100);
-      const auto scaled_dimension = (static_cast<std::uint64_t>(std::max(pixel_dimension, 1u)) * 100u) / static_cast<std::uint64_t>(clamped_scale);
-      const auto clamped_dimension = std::min<std::uint32_t>(pixel_dimension, std::max<std::uint32_t>(2u, static_cast<std::uint32_t>(scaled_dimension)));
-      return clamped_dimension & ~1u;
+      const auto scaled_dimension = (static_cast<std::uint64_t>(std::max(logical_dimension, 1u)) * static_cast<std::uint64_t>(clamped_scale)) / 100u;
+      return std::max<std::uint32_t>(2u, static_cast<std::uint32_t>(scaled_dimension)) & ~1u;
     }
 
     int virtual_display_transfer_function(bool hdr_enabled, int client_display_transfer) {
@@ -297,10 +300,11 @@ namespace VDISPLAY {
   std::string createVirtualDisplay(
     const char *client_uid,
     const char *client_name,
-    std::uint32_t width,
-    std::uint32_t height,
+    std::uint32_t logical_width,
+    std::uint32_t logical_height,
     std::uint32_t fps_millihz,
     int scale_factor,
+    bool hi_dpi,
     bool hdr_enabled,
     int client_display_gamut,
     int client_display_transfer
@@ -331,11 +335,11 @@ namespace VDISPLAY {
     using apply_settings_t = BOOL (*)(id, SEL, id);
 
     auto handle = std::make_unique<virtual_display_handle_t>();
+    const auto width = backing_dimension_for_scale_factor(logical_width, scale_factor, hi_dpi);
+    const auto height = backing_dimension_for_scale_factor(logical_height, scale_factor, hi_dpi);
     const auto host_profile = probeHostDisplayColorProfile(hdr_enabled, client_display_gamut, client_display_transfer);
     const auto physical_size = virtual_display_size_for_pixels(width, height);
     const auto transfer_function = virtual_display_transfer_function(hdr_enabled, client_display_transfer);
-    const auto logical_width = logical_dimension_for_scale_factor(width, scale_factor);
-    const auto logical_height = logical_dimension_for_scale_factor(height, scale_factor);
     handle->queue = dispatch_queue_create("dev.lizardbyte.sunshine.virtual-display", DISPATCH_QUEUE_SERIAL);
     handle->descriptor = [[descriptor_class alloc] init];
     handle->settings = [[settings_class alloc] init];
@@ -381,7 +385,7 @@ namespace VDISPLAY {
     }
 
     [handle->settings setValue:@[handle->mode] forKey:@"modes"];
-    [handle->settings setValue:@(1) forKey:@"hiDPI"];
+    [handle->settings setValue:@(hi_dpi ? 1 : 0) forKey:@"hiDPI"];
     BOOST_LOG(info) << "macOS virtual display mode: pixels="sv << width << "x"sv << height
                     << " logical="sv << logical_width << "x"sv << logical_height
                     << " physical-mm="sv << physical_size.width << "x"sv << physical_size.height
