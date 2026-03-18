@@ -27,6 +27,7 @@ extern "C" {
 #include "input.h"
 #include "logging.h"
 #include "network.h"
+#include "process.h"
 #include "rtsp.h"
 #include "stream.h"
 #include "sync.h"
@@ -1110,6 +1111,11 @@ namespace rtsp_stream {
                       << config.monitor.height
                       << " fps="sv
                       << config.monitor.framerate;
+
+      proc::proc.client_display_gamut = config.monitor.clientDisplayGamut;
+      proc::proc.client_display_transfer = config.monitor.clientDisplayTransfer;
+      proc::proc.client_scale_factor = config.monitor.clientDisplayScalePercent;
+      proc::proc.client_display_hidpi = config.monitor.clientDisplayHiDPI != 0;
 
       if (config::video.limit_framerate) {
         config.monitor.encodingFramerate = session.fps;

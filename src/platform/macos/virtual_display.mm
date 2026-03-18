@@ -264,18 +264,20 @@ namespace VDISPLAY {
       reference_screen = [NSScreen screens].firstObject;
     }
 
+    const auto client_transfer = static_cast<video::client_display_transfer_e>(client_display_transfer);
+    const bool client_wants_hdr =
+      hdr_enabled ||
+      client_transfer == video::client_display_transfer_e::pq ||
+      client_transfer == video::client_display_transfer_e::hlg;
     const bool use_display_p3 =
       client_display_gamut == static_cast<int>(video::client_display_gamut_e::display_p3) ? true :
       client_display_gamut == static_cast<int>(video::client_display_gamut_e::srgb) ? false :
+      client_wants_hdr ? true :
       screen_prefers_display_p3(reference_screen);
     color_profile_t profile =
       client_display_gamut == static_cast<int>(video::client_display_gamut_e::rec2020) ? kRec2020ColorProfile :
       use_display_p3 ? kDisplayP3ColorProfile :
       kSrgbColorProfile;
-    const bool client_wants_hdr =
-      hdr_enabled ||
-      static_cast<video::client_display_transfer_e>(client_display_transfer) == video::client_display_transfer_e::pq ||
-      static_cast<video::client_display_transfer_e>(client_display_transfer) == video::client_display_transfer_e::hlg;
     profile.hdr_capable = client_wants_hdr || screen_is_hdr_capable(reference_screen);
 
     const auto profile_gamut =
@@ -283,9 +285,9 @@ namespace VDISPLAY {
       profile.display_p3 ? "display-p3"sv :
       "srgb"sv;
     const auto transfer_name =
-      static_cast<video::client_display_transfer_e>(client_display_transfer) == video::client_display_transfer_e::pq ? "pq"sv :
-      static_cast<video::client_display_transfer_e>(client_display_transfer) == video::client_display_transfer_e::hlg ? "hlg"sv :
-      static_cast<video::client_display_transfer_e>(client_display_transfer) == video::client_display_transfer_e::sdr ? "sdr"sv :
+      client_transfer == video::client_display_transfer_e::pq ? "pq"sv :
+      client_transfer == video::client_display_transfer_e::hlg ? "hlg"sv :
+      client_transfer == video::client_display_transfer_e::sdr ? "sdr"sv :
       "unknown"sv;
     BOOST_LOG(info) << "macOS virtual display color profile: gamut="sv
                     << profile_gamut
