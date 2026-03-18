@@ -3,6 +3,8 @@
 #import <Foundation/Foundation.h>
 #import <objc/message.h>
 
+#include <dlfcn.h>
+
 #include "src/logging.h"
 #include "src/video.h"
 #include "src/platform/macos/virtual_display.h"
@@ -111,6 +113,69 @@ namespace VDISPLAY {
       const auto clamped_scale = std::max(scale_factor, 100);
       const auto scaled_dimension = (static_cast<std::uint64_t>(std::max(logical_dimension, 1u)) * static_cast<std::uint64_t>(clamped_scale)) / 100u;
       return std::max<std::uint32_t>(2u, static_cast<std::uint32_t>(scaled_dimension)) & ~1u;
+    }
+
+    NSString *core_display_string_constant(const char *symbol_name) {
+      if (symbol_name == nullptr || symbol_name[0] == '\0') {
+        return nil;
+      }
+
+      static void *core_display_handle = dlopen("/System/Library/Frameworks/CoreDisplay.framework/CoreDisplay", RTLD_LAZY | RTLD_LOCAL);
+      if (core_display_handle == nullptr) {
+        return nil;
+      }
+
+      auto *symbol = dlsym(core_display_handle, symbol_name);
+      if (symbol == nullptr) {
+        return nil;
+      }
+
+      auto *constant_ptr = reinterpret_cast<const void * const *>(symbol);
+      if (constant_ptr == nullptr || *constant_ptr == nullptr) {
+        return nil;
+      }
+
+      return (__bridge NSString *) *constant_ptr;
+    }
+
+    void configure_hdr_display_info(id descriptor, bool hdr_enabled, const color_profile_t &host_profile) {
+      if (!hdr_enabled || descriptor == nil) {
+        return;
+      }
+
+      const auto set_display_info = sel_registerName("setDisplayInfoValue:forKey:");
+      if (![descriptor respondsToSelector:set_display_info]) {
+        return;
+      }
+
+      const auto max_hdr_luminance_key = core_display_string_constant("kCDDisplayPresetMaxHDRLuminanceKey");
+      const auto max_sdr_luminance_key = core_display_string_constant("kCDDisplayPresetMaxSDRLuminanceKey");
+      const auto min_luminance_key = core_display_string_constant("kCDDisplayPresetMinLuminanceKey");
+      const auto expected_luminance_key = core_display_string_constant("kCDDisplayUserAdjustmentExpectedLuminanceKey");
+
+      const auto peak_luminance = host_profile.hdr_capable ? 1000.0 : 600.0;
+      const auto sdr_luminance = host_profile.display_p3 ? 300.0 : 200.0;
+      const auto minimum_luminance = 0.001;
+
+      if (max_hdr_luminance_key != nil) {
+        [descriptor performSelector:set_display_info withObject:@(peak_luminance) withObject:max_hdr_luminance_key];
+      }
+      if (max_sdr_luminance_key != nil) {
+        [descriptor performSelector:set_display_info withObject:@(sdr_luminance) withObject:max_sdr_luminance_key];
+      }
+      if (min_luminance_key != nil) {
+        [descriptor performSelector:set_display_info withObject:@(minimum_luminance) withObject:min_luminance_key];
+      }
+      if (expected_luminance_key != nil) {
+        [descriptor performSelector:set_display_info withObject:@(peak_luminance) withObject:expected_luminance_key];
+      }
+
+      BOOST_LOG(info) << "macOS virtual display HDR displayInfo configured peak="sv
+                      << peak_luminance
+                      << " sdr="sv
+                      << sdr_luminance
+                      << " min="sv
+                      << minimum_luminance;
     }
 
     int virtual_display_transfer_function(bool hdr_enabled, int client_display_transfer) {
@@ -362,6 +427,7 @@ namespace VDISPLAY {
     [handle->descriptor setValue:[NSValue valueWithPoint:NSMakePoint(host_profile.blue.x, host_profile.blue.y)] forKey:@"bluePrimary"];
     [handle->descriptor setValue:[NSValue valueWithPoint:NSMakePoint(host_profile.white.x, host_profile.white.y)] forKey:@"whitePoint"];
     [handle->descriptor setValue:handle->queue forKey:@"queue"];
+    configure_hdr_display_info(handle->descriptor, hdr_enabled, host_profile);
 
     if ([mode_class instancesRespondToSelector:sel_registerName("initWithWidth:height:refreshRate:transferFunction:")]) {
       handle->mode = ((init_mode_with_transfer_t) objc_msgSend)(
