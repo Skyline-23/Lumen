@@ -50,6 +50,7 @@ namespace VDISPLAY {
       id settings {nil};
       id display {nil};
       dispatch_queue_t queue {nil};
+      bool uses_skylight_backend {false};
       std::string display_id;
       std::uint32_t pixel_width {0};
       std::uint32_t pixel_height {0};
@@ -57,6 +58,9 @@ namespace VDISPLAY {
       std::uint32_t logical_height {0};
 
       ~virtual_display_handle_t() {
+        if (display != nil && [display respondsToSelector:sel_registerName("destroy")]) {
+          ((void (*)(id, SEL)) objc_msgSend)(display, sel_registerName("destroy"));
+        }
         if (display != nil) {
           [display release];
           display = nil;
@@ -273,6 +277,13 @@ namespace VDISPLAY {
              NSClassFromString(@"CGVirtualDisplayDescriptor") != nil;
     }
 
+    bool skylight_classes_available() {
+      return NSClassFromString(@"SLVirtualDisplay") != nil &&
+             NSClassFromString(@"SLVirtualDisplayMode") != nil &&
+             NSClassFromString(@"SLVirtualDisplaySettings") != nil &&
+             NSClassFromString(@"SLVirtualDisplayConfiguration") != nil;
+    }
+
     bool screen_is_hdr_capable(NSScreen *screen) {
       if (screen == nil) {
         return false;
@@ -313,7 +324,7 @@ namespace VDISPLAY {
   }  // namespace
 
   DRIVER_STATUS openVDisplayDevice() {
-    driver_status = classes_available() ? DRIVER_STATUS::OK : DRIVER_STATUS::FAILED;
+    driver_status = (skylight_classes_available() || classes_available()) ? DRIVER_STATUS::OK : DRIVER_STATUS::FAILED;
     return driver_status;
   }
 
@@ -391,7 +402,16 @@ namespace VDISPLAY {
     Class mode_class = NSClassFromString(@"CGVirtualDisplayMode");
     Class settings_class = NSClassFromString(@"CGVirtualDisplaySettings");
     Class display_class = NSClassFromString(@"CGVirtualDisplay");
-    if (!descriptor_class || !mode_class || !settings_class || !display_class) {
+    Class skylight_descriptor_class = NSClassFromString(@"SLVirtualDisplayConfiguration");
+    Class skylight_mode_class = NSClassFromString(@"SLVirtualDisplayMode");
+    Class skylight_settings_class = NSClassFromString(@"SLVirtualDisplaySettings");
+    Class skylight_display_class = NSClassFromString(@"SLVirtualDisplay");
+    const bool use_skylight_backend =
+      skylight_descriptor_class != nil &&
+      skylight_mode_class != nil &&
+      skylight_settings_class != nil &&
+      skylight_display_class != nil;
+    if (!use_skylight_backend && (!descriptor_class || !mode_class || !settings_class || !display_class)) {
       BOOST_LOG(error) << "macOS virtual display runtime lookup failed"sv;
       return {};
     }
@@ -400,6 +420,29 @@ namespace VDISPLAY {
     using init_mode_t = id (*)(id, SEL, NSUInteger, NSUInteger, double);
     using init_mode_with_transfer_t = id (*)(id, SEL, NSUInteger, NSUInteger, double, unsigned int);
     using apply_settings_t = BOOL (*)(id, SEL, id);
+    using skylight_size_t = struct {
+      float width;
+      float height;
+    };
+    using skylight_pixels_t = struct {
+      unsigned int width;
+      unsigned int height;
+    };
+    using skylight_point_t = struct {
+      float x;
+      float y;
+    };
+    using skylight_chromaticities_t = struct {
+      skylight_point_t red;
+      skylight_point_t green;
+      skylight_point_t blue;
+      skylight_point_t white;
+    };
+    using init_skylight_config_t = id (*)(id, SEL, id, unsigned long long, unsigned long long, unsigned long long, skylight_size_t, skylight_pixels_t, skylight_chromaticities_t, NSError **);
+    using init_skylight_mode_t = id (*)(id, SEL, skylight_pixels_t, skylight_pixels_t, float, NSError **);
+    using init_skylight_settings_t = id (*)(id, SEL, id, id, id, unsigned long long, NSError **);
+    using init_skylight_display_t = id (*)(id, SEL, id, NSError **);
+    using apply_skylight_settings_t = BOOL (*)(id, SEL, id, NSError **);
 
     auto handle = std::make_unique<virtual_display_handle_t>();
     const auto width = backing_dimension_for_scale_factor(logical_width, scale_factor, hi_dpi);
@@ -407,71 +450,168 @@ namespace VDISPLAY {
     const auto host_profile = probeHostDisplayColorProfile(hdr_enabled, client_display_gamut, client_display_transfer);
     const auto physical_size = virtual_display_size_for_pixels(width, height);
     const auto transfer_function = virtual_display_transfer_function(hdr_enabled, client_display_transfer);
-    handle->queue = dispatch_queue_create("dev.lizardbyte.sunshine.virtual-display", DISPATCH_QUEUE_SERIAL);
-    handle->descriptor = [[descriptor_class alloc] init];
-    handle->settings = [[settings_class alloc] init];
-    if (handle->queue == nil || handle->descriptor == nil || handle->settings == nil) {
-      BOOST_LOG(error) << "macOS virtual display bootstrap allocation failed"sv;
-      return {};
-    }
+    if (use_skylight_backend) {
+      NSError *ns_error = nil;
+      const auto serial_number = static_cast<unsigned long long>(1u);
+      const auto product_id = static_cast<unsigned long long>(width ^ height ^ 0xA901u);
+      const auto vendor_id = static_cast<unsigned long long>(6973u);
+      const skylight_size_t millimeters {
+        static_cast<float>(physical_size.width),
+        static_cast<float>(physical_size.height),
+      };
+      const skylight_pixels_t maximum_pixels {width, height};
+      const skylight_pixels_t size_in_pixels {width, height};
+      const skylight_pixels_t size_in_points {std::max(logical_width, 1u), std::max(logical_height, 1u)};
+      const skylight_chromaticities_t chromaticities {
+        {static_cast<float>(host_profile.red.x), static_cast<float>(host_profile.red.y)},
+        {static_cast<float>(host_profile.green.x), static_cast<float>(host_profile.green.y)},
+        {static_cast<float>(host_profile.blue.x), static_cast<float>(host_profile.blue.y)},
+        {static_cast<float>(host_profile.white.x), static_cast<float>(host_profile.white.y)},
+      };
 
-    [handle->descriptor setValue:@(6973u) forKey:@"vendorID"];
-    [handle->descriptor setValue:@(static_cast<unsigned int>(width ^ height ^ 0xA901u)) forKey:@"productID"];
-    [handle->descriptor setValue:@(1u) forKey:@"serialNumber"];
-    [handle->descriptor setValue:display_name_for_client(client_name) forKey:@"name"];
-    [handle->descriptor setValue:[NSValue valueWithSize:physical_size] forKey:@"sizeInMillimeters"];
-    [handle->descriptor setValue:@(width) forKey:@"maxPixelsWide"];
-    [handle->descriptor setValue:@(height) forKey:@"maxPixelsHigh"];
-    [handle->descriptor setValue:[NSValue valueWithPoint:NSMakePoint(host_profile.red.x, host_profile.red.y)] forKey:@"redPrimary"];
-    [handle->descriptor setValue:[NSValue valueWithPoint:NSMakePoint(host_profile.green.x, host_profile.green.y)] forKey:@"greenPrimary"];
-    [handle->descriptor setValue:[NSValue valueWithPoint:NSMakePoint(host_profile.blue.x, host_profile.blue.y)] forKey:@"bluePrimary"];
-    [handle->descriptor setValue:[NSValue valueWithPoint:NSMakePoint(host_profile.white.x, host_profile.white.y)] forKey:@"whitePoint"];
-    [handle->descriptor setValue:handle->queue forKey:@"queue"];
-    configure_hdr_display_info(handle->descriptor, hdr_enabled, host_profile);
-
-    if ([mode_class instancesRespondToSelector:sel_registerName("initWithWidth:height:refreshRate:transferFunction:")]) {
-      handle->mode = ((init_mode_with_transfer_t) objc_msgSend)(
-        [mode_class alloc],
-        sel_registerName("initWithWidth:height:refreshRate:transferFunction:"),
-        static_cast<NSUInteger>(logical_width),
-        static_cast<NSUInteger>(logical_height),
-        normalize_refresh_rate(fps_millihz),
-        static_cast<unsigned int>(std::max(transfer_function, 0))
+      handle->descriptor = ((init_skylight_config_t) objc_msgSend)(
+        [skylight_descriptor_class alloc],
+        sel_registerName("initWithName:vendorID:productID:serialNumber:sizeInMillimeters:maximumSizeInPixels:chromaticities:error:"),
+        display_name_for_client(client_name),
+        vendor_id,
+        product_id,
+        serial_number,
+        millimeters,
+        maximum_pixels,
+        chromaticities,
+        &ns_error
       );
+      if (handle->descriptor == nil) {
+        BOOST_LOG(error) << "SkyLight virtual display configuration creation failed: "sv
+                         << (ns_error.localizedDescription.UTF8String ? ns_error.localizedDescription.UTF8String : "unknown");
+        return {};
+      }
+
+      handle->mode = ((init_skylight_mode_t) objc_msgSend)(
+        [skylight_mode_class alloc],
+        sel_registerName("initWithSizeInPixels:sizeInPoints:refreshRate:error:"),
+        size_in_pixels,
+        size_in_points,
+        static_cast<float>(normalize_refresh_rate(fps_millihz)),
+        &ns_error
+      );
+      if (handle->mode == nil) {
+        BOOST_LOG(error) << "SkyLight virtual display mode creation failed: "sv
+                         << (ns_error.localizedDescription.UTF8String ? ns_error.localizedDescription.UTF8String : "unknown");
+        return {};
+      }
+
+      const auto skylight_eotf =
+        hdr_enabled || static_cast<video::client_display_transfer_e>(client_display_transfer) != video::client_display_transfer_e::sdr ?
+          1u :
+          0u;
+      ((void (*)(id, SEL, NSUInteger)) objc_msgSend)(handle->mode, sel_registerName("setEotf:"), skylight_eotf);
+
+      handle->settings = ((init_skylight_settings_t) objc_msgSend)(
+        [skylight_settings_class alloc],
+        sel_registerName("initWithNativeMode:preferredMode:optionalModes:rotations:error:"),
+        handle->mode,
+        handle->mode,
+        @[],
+        0ULL,
+        &ns_error
+      );
+      if (handle->settings == nil) {
+        BOOST_LOG(error) << "SkyLight virtual display settings creation failed: "sv
+                         << (ns_error.localizedDescription.UTF8String ? ns_error.localizedDescription.UTF8String : "unknown");
+        return {};
+      }
+
+      handle->display = ((init_skylight_display_t) objc_msgSend)(
+        [skylight_display_class alloc],
+        sel_registerName("initWithConfiguration:error:"),
+        handle->descriptor,
+        &ns_error
+      );
+      if (handle->display == nil) {
+        BOOST_LOG(error) << "SkyLight virtual display initWithConfiguration failed: "sv
+                         << (ns_error.localizedDescription.UTF8String ? ns_error.localizedDescription.UTF8String : "unknown");
+        return {};
+      }
+
+      if (!((apply_skylight_settings_t) objc_msgSend)(handle->display, sel_registerName("applySettings:error:"), handle->settings, &ns_error)) {
+        BOOST_LOG(error) << "SkyLight virtual display applySettings failed: "sv
+                         << (ns_error.localizedDescription.UTF8String ? ns_error.localizedDescription.UTF8String : "unknown");
+        return {};
+      }
+
+      handle->uses_skylight_backend = true;
+      BOOST_LOG(info) << "SkyLight virtual display mode: pixels="sv << width << "x"sv << height
+                      << " logical="sv << logical_width << "x"sv << logical_height
+                      << " physical-mm="sv << physical_size.width << "x"sv << physical_size.height
+                      << " eotf="sv << skylight_eotf;
     } else {
-      handle->mode = ((init_mode_t) objc_msgSend)(
-        [mode_class alloc],
-        sel_registerName("initWithWidth:height:refreshRate:"),
-        static_cast<NSUInteger>(logical_width),
-        static_cast<NSUInteger>(logical_height),
-        normalize_refresh_rate(fps_millihz)
+      handle->queue = dispatch_queue_create("dev.lizardbyte.sunshine.virtual-display", DISPATCH_QUEUE_SERIAL);
+      handle->descriptor = [[descriptor_class alloc] init];
+      handle->settings = [[settings_class alloc] init];
+      if (handle->queue == nil || handle->descriptor == nil || handle->settings == nil) {
+        BOOST_LOG(error) << "macOS virtual display bootstrap allocation failed"sv;
+        return {};
+      }
+
+      [handle->descriptor setValue:@(6973u) forKey:@"vendorID"];
+      [handle->descriptor setValue:@(static_cast<unsigned int>(width ^ height ^ 0xA901u)) forKey:@"productID"];
+      [handle->descriptor setValue:@(1u) forKey:@"serialNumber"];
+      [handle->descriptor setValue:display_name_for_client(client_name) forKey:@"name"];
+      [handle->descriptor setValue:[NSValue valueWithSize:physical_size] forKey:@"sizeInMillimeters"];
+      [handle->descriptor setValue:@(width) forKey:@"maxPixelsWide"];
+      [handle->descriptor setValue:@(height) forKey:@"maxPixelsHigh"];
+      [handle->descriptor setValue:[NSValue valueWithPoint:NSMakePoint(host_profile.red.x, host_profile.red.y)] forKey:@"redPrimary"];
+      [handle->descriptor setValue:[NSValue valueWithPoint:NSMakePoint(host_profile.green.x, host_profile.green.y)] forKey:@"greenPrimary"];
+      [handle->descriptor setValue:[NSValue valueWithPoint:NSMakePoint(host_profile.blue.x, host_profile.blue.y)] forKey:@"bluePrimary"];
+      [handle->descriptor setValue:[NSValue valueWithPoint:NSMakePoint(host_profile.white.x, host_profile.white.y)] forKey:@"whitePoint"];
+      [handle->descriptor setValue:handle->queue forKey:@"queue"];
+      configure_hdr_display_info(handle->descriptor, hdr_enabled, host_profile);
+
+      if ([mode_class instancesRespondToSelector:sel_registerName("initWithWidth:height:refreshRate:transferFunction:")]) {
+        handle->mode = ((init_mode_with_transfer_t) objc_msgSend)(
+          [mode_class alloc],
+          sel_registerName("initWithWidth:height:refreshRate:transferFunction:"),
+          static_cast<NSUInteger>(logical_width),
+          static_cast<NSUInteger>(logical_height),
+          normalize_refresh_rate(fps_millihz),
+          static_cast<unsigned int>(std::max(transfer_function, 0))
+        );
+      } else {
+        handle->mode = ((init_mode_t) objc_msgSend)(
+          [mode_class alloc],
+          sel_registerName("initWithWidth:height:refreshRate:"),
+          static_cast<NSUInteger>(logical_width),
+          static_cast<NSUInteger>(logical_height),
+          normalize_refresh_rate(fps_millihz)
+        );
+      }
+      if (handle->mode == nil) {
+        BOOST_LOG(error) << "macOS virtual display mode creation failed"sv;
+        return {};
+      }
+
+      [handle->settings setValue:@[handle->mode] forKey:@"modes"];
+      [handle->settings setValue:@(hi_dpi ? 1 : 0) forKey:@"hiDPI"];
+      BOOST_LOG(info) << "macOS virtual display mode: pixels="sv << width << "x"sv << height
+                      << " logical="sv << logical_width << "x"sv << logical_height
+                      << " physical-mm="sv << physical_size.width << "x"sv << physical_size.height
+                      << " transfer-function="sv << transfer_function;
+
+      handle->display = ((init_with_descriptor_t) objc_msgSend)(
+        [display_class alloc],
+        sel_registerName("initWithDescriptor:"),
+        handle->descriptor
       );
-    }
-    if (handle->mode == nil) {
-      BOOST_LOG(error) << "macOS virtual display mode creation failed"sv;
-      return {};
-    }
+      if (handle->display == nil) {
+        BOOST_LOG(error) << "macOS virtual display initWithDescriptor failed"sv;
+        return {};
+      }
 
-    [handle->settings setValue:@[handle->mode] forKey:@"modes"];
-    [handle->settings setValue:@(hi_dpi ? 1 : 0) forKey:@"hiDPI"];
-    BOOST_LOG(info) << "macOS virtual display mode: pixels="sv << width << "x"sv << height
-                    << " logical="sv << logical_width << "x"sv << logical_height
-                    << " physical-mm="sv << physical_size.width << "x"sv << physical_size.height
-                    << " transfer-function="sv << transfer_function;
-
-    handle->display = ((init_with_descriptor_t) objc_msgSend)(
-      [display_class alloc],
-      sel_registerName("initWithDescriptor:"),
-      handle->descriptor
-    );
-    if (handle->display == nil) {
-      BOOST_LOG(error) << "macOS virtual display initWithDescriptor failed"sv;
-      return {};
-    }
-
-    if (!((apply_settings_t) objc_msgSend)(handle->display, sel_registerName("applySettings:"), handle->settings)) {
-      BOOST_LOG(error) << "macOS virtual display applySettings failed"sv;
-      return {};
+      if (!((apply_settings_t) objc_msgSend)(handle->display, sel_registerName("applySettings:"), handle->settings)) {
+        BOOST_LOG(error) << "macOS virtual display applySettings failed"sv;
+        return {};
+      }
     }
 
     NSNumber *display_id_number = [handle->display valueForKey:@"displayID"];
@@ -507,9 +647,18 @@ namespace VDISPLAY {
     using init_mode_t = id (*)(id, SEL, NSUInteger, NSUInteger, double);
     using init_mode_with_transfer_t = id (*)(id, SEL, NSUInteger, NSUInteger, double, unsigned int);
     using apply_settings_t = BOOL (*)(id, SEL, id);
+    using skylight_pixels_t = struct {
+      unsigned int width;
+      unsigned int height;
+    };
+    using init_skylight_mode_t = id (*)(id, SEL, skylight_pixels_t, skylight_pixels_t, float, NSError **);
+    using init_skylight_settings_t = id (*)(id, SEL, id, id, id, unsigned long long, NSError **);
+    using apply_skylight_settings_t = BOOL (*)(id, SEL, id, NSError **);
 
     Class mode_class = NSClassFromString(@"CGVirtualDisplayMode");
-    if (mode_class == nil) {
+    Class skylight_mode_class = NSClassFromString(@"SLVirtualDisplayMode");
+    Class skylight_settings_class = NSClassFromString(@"SLVirtualDisplaySettings");
+    if (mode_class == nil && skylight_mode_class == nil) {
       return false;
     }
 
@@ -527,52 +676,116 @@ namespace VDISPLAY {
       return false;
     }
 
-    const auto transfer_function = virtual_display_transfer_function(
-      static_cast<video::client_display_transfer_e>(client_display_transfer) != video::client_display_transfer_e::sdr,
-      client_display_transfer
-    );
+    if (handle.uses_skylight_backend) {
+      NSError *ns_error = nil;
+      const skylight_pixels_t size_in_pixels {handle.pixel_width, handle.pixel_height};
+      const skylight_pixels_t size_in_points {std::max(logical_width, 1u), std::max(logical_height, 1u)};
+      const auto skylight_eotf =
+        static_cast<video::client_display_transfer_e>(client_display_transfer) != video::client_display_transfer_e::sdr ?
+          1u :
+          0u;
 
-    id new_mode = nil;
-    if ([mode_class instancesRespondToSelector:sel_registerName("initWithWidth:height:refreshRate:transferFunction:")]) {
-      new_mode = ((init_mode_with_transfer_t) objc_msgSend)(
-        [mode_class alloc],
-        sel_registerName("initWithWidth:height:refreshRate:transferFunction:"),
-        static_cast<NSUInteger>(std::max(logical_width, 1u)),
-        static_cast<NSUInteger>(std::max(logical_height, 1u)),
-        normalize_refresh_rate(fps_millihz),
-        static_cast<unsigned int>(std::max(transfer_function, 0))
+      id new_mode = ((init_skylight_mode_t) objc_msgSend)(
+        [skylight_mode_class alloc],
+        sel_registerName("initWithSizeInPixels:sizeInPoints:refreshRate:error:"),
+        size_in_pixels,
+        size_in_points,
+        static_cast<float>(normalize_refresh_rate(fps_millihz)),
+        &ns_error
       );
-    } else {
-      new_mode = ((init_mode_t) objc_msgSend)(
-        [mode_class alloc],
-        sel_registerName("initWithWidth:height:refreshRate:"),
-        static_cast<NSUInteger>(std::max(logical_width, 1u)),
-        static_cast<NSUInteger>(std::max(logical_height, 1u)),
-        normalize_refresh_rate(fps_millihz)
+      if (new_mode == nil) {
+        BOOST_LOG(warning) << "SkyLight virtual display mode update failed to create a new mode: "sv
+                           << (ns_error.localizedDescription.UTF8String ? ns_error.localizedDescription.UTF8String : "unknown");
+        return false;
+      }
+
+      ((void (*)(id, SEL, NSUInteger)) objc_msgSend)(new_mode, sel_registerName("setEotf:"), skylight_eotf);
+
+      id new_settings = ((init_skylight_settings_t) objc_msgSend)(
+        [skylight_settings_class alloc],
+        sel_registerName("initWithNativeMode:preferredMode:optionalModes:rotations:error:"),
+        new_mode,
+        new_mode,
+        @[],
+        0ULL,
+        &ns_error
       );
-    }
+      if (new_settings == nil) {
+        [new_mode release];
+        BOOST_LOG(warning) << "SkyLight virtual display settings update failed: "sv
+                           << (ns_error.localizedDescription.UTF8String ? ns_error.localizedDescription.UTF8String : "unknown");
+        return false;
+      }
 
-    if (new_mode == nil) {
-      BOOST_LOG(warning) << "macOS virtual display mode update failed to create a new mode"sv;
-      return false;
-    }
+      const auto ok = ((apply_skylight_settings_t) objc_msgSend)(handle.display, sel_registerName("applySettings:error:"), new_settings, &ns_error);
+      if (!ok) {
+        [new_settings release];
+        [new_mode release];
+        BOOST_LOG(warning) << "SkyLight virtual display mode update failed for displayID="sv << handle.display_id
+                           << " error="sv
+                           << (ns_error.localizedDescription.UTF8String ? ns_error.localizedDescription.UTF8String : "unknown");
+        return false;
+      }
 
-    [handle.settings setValue:@[new_mode] forKey:@"modes"];
-    [handle.settings setValue:@(1) forKey:@"hiDPI"];
-    const auto ok = ((apply_settings_t) objc_msgSend)(handle.display, sel_registerName("applySettings:"), handle.settings);
-    if (!ok) {
+      [handle.mode release];
+      [handle.settings release];
+      handle.mode = [new_mode retain];
+      handle.settings = [new_settings retain];
+      [new_settings release];
       [new_mode release];
-      BOOST_LOG(warning) << "macOS virtual display mode update failed for displayID="sv << handle.display_id;
-      return false;
+
+      BOOST_LOG(info) << "Updated SkyLight virtual display mode for displayID="sv << handle.display_id
+                      << " logical="sv << logical_width << "x"sv << logical_height
+                      << " eotf="sv << skylight_eotf;
+    } else {
+      const auto transfer_function = virtual_display_transfer_function(
+        static_cast<video::client_display_transfer_e>(client_display_transfer) != video::client_display_transfer_e::sdr,
+        client_display_transfer
+      );
+
+      id new_mode = nil;
+      if ([mode_class instancesRespondToSelector:sel_registerName("initWithWidth:height:refreshRate:transferFunction:")]) {
+        new_mode = ((init_mode_with_transfer_t) objc_msgSend)(
+          [mode_class alloc],
+          sel_registerName("initWithWidth:height:refreshRate:transferFunction:"),
+          static_cast<NSUInteger>(std::max(logical_width, 1u)),
+          static_cast<NSUInteger>(std::max(logical_height, 1u)),
+          normalize_refresh_rate(fps_millihz),
+          static_cast<unsigned int>(std::max(transfer_function, 0))
+        );
+      } else {
+        new_mode = ((init_mode_t) objc_msgSend)(
+          [mode_class alloc],
+          sel_registerName("initWithWidth:height:refreshRate:"),
+          static_cast<NSUInteger>(std::max(logical_width, 1u)),
+          static_cast<NSUInteger>(std::max(logical_height, 1u)),
+          normalize_refresh_rate(fps_millihz)
+        );
+      }
+
+      if (new_mode == nil) {
+        BOOST_LOG(warning) << "macOS virtual display mode update failed to create a new mode"sv;
+        return false;
+      }
+
+      [handle.settings setValue:@[new_mode] forKey:@"modes"];
+      [handle.settings setValue:@(1) forKey:@"hiDPI"];
+      const auto ok = ((apply_settings_t) objc_msgSend)(handle.display, sel_registerName("applySettings:"), handle.settings);
+      if (!ok) {
+        [new_mode release];
+        BOOST_LOG(warning) << "macOS virtual display mode update failed for displayID="sv << handle.display_id;
+        return false;
+      }
+
+      [handle.mode release];
+      handle.mode = [new_mode retain];
+      [new_mode release];
+
+      BOOST_LOG(info) << "Updated macOS virtual display mode for displayID="sv << handle.display_id
+                      << " logical="sv << logical_width << "x"sv << logical_height
+                      << " transfer-function="sv << transfer_function;
     }
 
-    [handle.mode release];
-    handle.mode = [new_mode retain];
-    [new_mode release];
-
-    BOOST_LOG(info) << "Updated macOS virtual display mode for displayID="sv << handle.display_id
-                    << " logical="sv << logical_width << "x"sv << logical_height
-                    << " transfer-function="sv << transfer_function;
     handle.logical_width = logical_width;
     handle.logical_height = logical_height;
     force_virtual_display_mode(static_cast<CGDirectDisplayID>(std::strtoul(handle.display_id.c_str(), nullptr, 10)), logical_width, logical_height, normalize_refresh_rate(fps_millihz));
