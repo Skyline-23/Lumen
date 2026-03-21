@@ -43,6 +43,25 @@ typedef struct ApolloMacBridgeStatusSnapshot {
   char integration_status[512];
 } ApolloMacBridgeStatusSnapshot;
 
+typedef void (*ApolloMacBridgeEncodedFrameHandler)(
+  void *context,
+  ApolloCoreEncodedCaptureFrameRecord record,
+  CMSampleBufferRef retained_sample_buffer
+);
+
+typedef void (*ApolloMacBridgeCaptureEventHandler)(
+  void *context,
+  ApolloCoreEncodedCaptureEventRecord record,
+  const char *message
+);
+
+typedef struct ApolloMacBridgeForwardingCallbacks {
+  void *context;
+  /* The bridge releases retained_sample_buffer after the callback returns. */
+  ApolloMacBridgeEncodedFrameHandler encoded_frame_handler;
+  ApolloMacBridgeCaptureEventHandler capture_event_handler;
+} ApolloMacBridgeForwardingCallbacks;
+
 typedef struct ApolloMacBridgeController ApolloMacBridgeController;
 
 ApolloMacBridgeController *ApolloMacBridgeControllerCreate(void);
@@ -91,6 +110,18 @@ ApolloCoreEncodedCaptureEventRecord ApolloMacBridgeControllerPopNextForwardedEve
   ApolloMacBridgeController *controller,
   char *message_destination,
   size_t message_capacity
+);
+
+bool ApolloMacBridgeControllerStartCoreForwardingPump(
+  ApolloMacBridgeController *controller,
+  ApolloMacBridgeForwardingCallbacks callbacks,
+  uint32_t idle_sleep_milliseconds,
+  char *error_destination,
+  size_t error_capacity
+);
+
+void ApolloMacBridgeControllerStopCoreForwardingPump(
+  ApolloMacBridgeController *controller
 );
 
 #ifdef __cplusplus
@@ -256,6 +287,28 @@ class Controller {
       record,
       std::string(message_buffer)
     };
+  }
+
+  [[nodiscard]] auto start_core_forwarding_pump(
+    ApolloMacBridgeForwardingCallbacks callbacks,
+    uint32_t idle_sleep_milliseconds = 1
+  ) const -> StartCaptureResult {
+    char error_buffer[512] = {};
+    const bool started = ApolloMacBridgeControllerStartCoreForwardingPump(
+      controller_,
+      callbacks,
+      idle_sleep_milliseconds,
+      error_buffer,
+      sizeof(error_buffer)
+    );
+    return {
+      started,
+      std::string(error_buffer)
+    };
+  }
+
+  void stop_core_forwarding_pump() const {
+    ApolloMacBridgeControllerStopCoreForwardingPump(controller_);
   }
 
  private:

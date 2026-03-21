@@ -31,7 +31,7 @@ This bootstrap introduces a parallel Apple-platform structure without disturbing
 ## Current Bridge Shape
 
 - `ApolloMacBridge`
-  Owns `MacDisplayKit` session startup, forwards encoded sample buffers into `ApolloCore`, and exposes the queued ingress through bridge-owned drain methods plus a mixed-language C/C++ wrapper surface.
+  Owns `MacDisplayKit` session startup, forwards encoded sample buffers into `ApolloCore`, and exposes the queued ingress through bridge-owned drain methods, a mixed-language C/C++ wrapper surface, and a callback pump for native consumers.
 - `ApolloCore`
   Exposes a C ABI encoded-capture ingress that retains `CMSampleBuffer` frames, queues bounded frame/event backlogs, and lets the next native consumer drain them without flattening them to copied payload bytes first.
 - `ApolloTuistTests`

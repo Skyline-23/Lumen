@@ -1,5 +1,9 @@
 #import <XCTest/XCTest.h>
 
+#import <atomic>
+#import <chrono>
+#import <thread>
+
 #import <ApolloCore/ApolloCore.h>
 #import <ApolloMacBridge/ApolloMacBridge.h>
 
@@ -80,6 +84,49 @@
 
   auto event = controller.pop_next_forwarded_event();
   XCTAssertFalse(event.has_value());
+}
+
+- (void)testApolloMacBridgeForwardingPumpSmoke {
+  ApolloMacBridgeController *controller = ApolloMacBridgeControllerCreate();
+  XCTAssertNotEqual(controller, nullptr);
+
+  struct CallbackCounts {
+    std::atomic<int> frame_count {0};
+    std::atomic<int> event_count {0};
+  } callbackCounts;
+
+  ApolloMacBridgeForwardingCallbacks callbacks {};
+  callbacks.context = &callbackCounts;
+  callbacks.encoded_frame_handler = [](void *context,
+                                       ApolloCoreEncodedCaptureFrameRecord,
+                                       CMSampleBufferRef) {
+    auto *counts = static_cast<CallbackCounts *>(context);
+    counts->frame_count.fetch_add(1, std::memory_order_relaxed);
+  };
+  callbacks.capture_event_handler = [](void *context,
+                                       ApolloCoreEncodedCaptureEventRecord,
+                                       const char *) {
+    auto *counts = static_cast<CallbackCounts *>(context);
+    counts->event_count.fetch_add(1, std::memory_order_relaxed);
+  };
+
+  char error[256] = {};
+  XCTAssertTrue(ApolloMacBridgeControllerStartCoreForwardingPump(
+    controller,
+    callbacks,
+    1,
+    error,
+    sizeof(error)
+  ));
+  XCTAssertEqual(strcmp(error, ""), 0);
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  ApolloMacBridgeControllerStopCoreForwardingPump(controller);
+
+  XCTAssertEqual(callbackCounts.frame_count.load(std::memory_order_relaxed), 0);
+  XCTAssertEqual(callbackCounts.event_count.load(std::memory_order_relaxed), 0);
+
+  ApolloMacBridgeControllerDestroy(controller);
 }
 
 @end

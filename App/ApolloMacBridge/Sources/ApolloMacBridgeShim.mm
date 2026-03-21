@@ -2,13 +2,71 @@
 
 #import <ApolloMacBridge/ApolloMacBridge-Swift.h>
 #import <CoreFoundation/CoreFoundation.h>
+#import <algorithm>
+#import <atomic>
+#import <chrono>
 #import <cstring>
+#import <memory>
+#import <thread>
+
+class ApolloMacBridgeForwardingPump {
+ public:
+  ApolloMacBridgeForwardingPump(
+    ApolloBridgeObjCFacade *facade,
+    ApolloMacBridgeForwardingCallbacks callbacks,
+    uint32_t idle_sleep_milliseconds
+  );
+
+  ~ApolloMacBridgeForwardingPump();
+
+  ApolloMacBridgeForwardingPump(const ApolloMacBridgeForwardingPump &) = delete;
+  auto operator=(const ApolloMacBridgeForwardingPump &) -> ApolloMacBridgeForwardingPump & = delete;
+
+  void stop();
+
+ private:
+  ApolloBridgeObjCFacade *facade_ = nil;
+  ApolloMacBridgeForwardingCallbacks callbacks_ {};
+  uint32_t idle_sleep_milliseconds_ = 1;
+  std::atomic<bool> running_ {false};
+  std::thread worker_;
+
+  void run();
+};
 
 struct ApolloMacBridgeController {
   ApolloBridgeObjCFacade *facade = nil;
+  std::unique_ptr<ApolloMacBridgeForwardingPump> forwarding_pump;
 };
 
 namespace {
+  ApolloCoreEncodedCaptureFrameRecord to_frame_record(ApolloBridgeDrainedFrameBox *box) {
+    ApolloCoreEncodedCaptureFrameRecord record {};
+    record.has_value = true;
+    record.codec = static_cast<ApolloCoreCaptureCodec>(box.codecRawValue);
+    record.payload_size = static_cast<size_t>(box.payloadSize);
+    record.source_sequence_number = box.sourceSequenceNumber;
+    record.source_display_time = box.sourceDisplayTime;
+    record.has_output_callback_latency_milliseconds = box.hasOutputCallbackLatencyMilliseconds;
+    record.output_callback_latency_milliseconds = box.outputCallbackLatencyMilliseconds;
+    record.is_key_frame = box.isKeyFrame;
+    record.is_hdr_signaled = box.isHDRSignaled;
+    return record;
+  }
+
+  ApolloCoreEncodedCaptureEventRecord to_event_record(ApolloBridgeDrainedEventBox *box) {
+    ApolloCoreEncodedCaptureEventRecord record {};
+    record.has_value = true;
+    record.kind = static_cast<ApolloCoreCaptureEventKind>(box.kindRawValue);
+    record.has_stop_status = box.hasStopStatus;
+    record.stop_status = box.stopStatus;
+    record.has_automatic_restart_count = box.hasAutomaticRestartCount;
+    record.automatic_restart_count = box.automaticRestartCount;
+    record.has_source_display_time = box.hasSourceDisplayTime;
+    record.source_display_time = box.sourceDisplayTime;
+    return record;
+  }
+
   void copy_string_to_buffer(NSString *string, char *destination, std::size_t capacity) {
     if (!destination || capacity == 0) {
       return;
@@ -53,6 +111,66 @@ namespace {
               showCursor:configuration.show_cursor
           targetFrameRate:static_cast<NSInteger>(configuration.target_frame_rate)];
   }
+
+}
+
+ApolloMacBridgeForwardingPump::ApolloMacBridgeForwardingPump(
+  ApolloBridgeObjCFacade *facade,
+  ApolloMacBridgeForwardingCallbacks callbacks,
+  uint32_t idle_sleep_milliseconds
+):
+    facade_(facade),
+    callbacks_(callbacks),
+    idle_sleep_milliseconds_(std::max<uint32_t>(1, idle_sleep_milliseconds)),
+    running_(true),
+    worker_([this]() { run(); }) {
+}
+
+ApolloMacBridgeForwardingPump::~ApolloMacBridgeForwardingPump() {
+  stop();
+}
+
+void ApolloMacBridgeForwardingPump::stop() {
+  if (!running_.exchange(false)) {
+    return;
+  }
+  if (worker_.joinable()) {
+    worker_.join();
+  }
+}
+
+void ApolloMacBridgeForwardingPump::run() {
+  while (running_.load(std::memory_order_acquire)) {
+    bool delivered = false;
+
+    @autoreleasepool {
+      if (callbacks_.encoded_frame_handler) {
+        ApolloBridgeDrainedFrameBox *frame_box = [facade_ popNextCoreForwardedFrameSync];
+        if (frame_box) {
+          ApolloCoreEncodedCaptureFrameRecord record = to_frame_record(frame_box);
+          CMSampleBufferRef retained_sample_buffer =
+            reinterpret_cast<CMSampleBufferRef>(const_cast<void *>(CFRetain(frame_box.sampleBuffer)));
+          callbacks_.encoded_frame_handler(callbacks_.context, record, retained_sample_buffer);
+          CFRelease(retained_sample_buffer);
+          delivered = true;
+        }
+      }
+
+      if (callbacks_.capture_event_handler) {
+        ApolloBridgeDrainedEventBox *event_box = [facade_ popNextCoreForwardedEventSync];
+        if (event_box) {
+          ApolloCoreEncodedCaptureEventRecord record = to_event_record(event_box);
+          const char *message = event_box.message.UTF8String ?: "";
+          callbacks_.capture_event_handler(callbacks_.context, record, message);
+          delivered = true;
+        }
+      }
+    }
+
+    if (!delivered) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(idle_sleep_milliseconds_));
+    }
+  }
 }
 
 ApolloMacBridgeController *ApolloMacBridgeControllerCreate(void) {
@@ -66,6 +184,7 @@ void ApolloMacBridgeControllerDestroy(ApolloMacBridgeController *controller) {
     return;
   }
 
+  controller->forwarding_pump.reset();
   controller->facade = nil;
   delete controller;
 }
@@ -241,4 +360,46 @@ ApolloCoreEncodedCaptureEventRecord ApolloMacBridgeControllerPopNextForwardedEve
   record.source_display_time = box.sourceDisplayTime;
   copy_string_to_buffer(box.message, message_destination, message_capacity);
   return record;
+}
+
+bool ApolloMacBridgeControllerStartCoreForwardingPump(
+  ApolloMacBridgeController *controller,
+  ApolloMacBridgeForwardingCallbacks callbacks,
+  uint32_t idle_sleep_milliseconds,
+  char *error_destination,
+  size_t error_capacity
+) {
+  copy_string_to_buffer(nil, error_destination, error_capacity);
+
+  if (!controller) {
+    copy_string_to_buffer(@"ApolloMacBridgeControllerStartCoreForwardingPump called with a null controller.",
+                          error_destination,
+                          error_capacity);
+    return false;
+  }
+
+  if (!callbacks.encoded_frame_handler && !callbacks.capture_event_handler) {
+    copy_string_to_buffer(@"ApolloMacBridgeControllerStartCoreForwardingPump requires at least one callback.",
+                          error_destination,
+                          error_capacity);
+    return false;
+  }
+
+  controller->forwarding_pump.reset();
+  controller->forwarding_pump = std::make_unique<ApolloMacBridgeForwardingPump>(
+    controller->facade,
+    callbacks,
+    idle_sleep_milliseconds
+  );
+  return true;
+}
+
+void ApolloMacBridgeControllerStopCoreForwardingPump(
+  ApolloMacBridgeController *controller
+) {
+  if (!controller) {
+    return;
+  }
+
+  controller->forwarding_pump.reset();
 }
