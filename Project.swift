@@ -53,8 +53,11 @@ let project = Project(
             deploymentTargets: .macOS("13.0"),
             infoPlist: .default,
             sources: [
-                "App/ApolloMacBridge/Sources/**/*.swift"
+                "App/ApolloMacBridge/Sources/**/*.{swift,m,mm}"
             ],
+            headers: .headers(
+                public: "App/ApolloMacBridge/include/ApolloMacBridge.h"
+            ),
             dependencies: [
                 .target(name: "ApolloCore"),
                 .package(product: "MacDisplayCaptureKit", type: .runtime)
@@ -64,7 +67,10 @@ let project = Project(
                     "DEFINES_MODULE": "YES",
                     "PRODUCT_NAME": "ApolloMacBridge",
                     "BUILD_LIBRARY_FOR_DISTRIBUTION": "YES",
-                    "SWIFT_ENABLE_LIBRARY_EVOLUTION": "YES"
+                    "SWIFT_ENABLE_LIBRARY_EVOLUTION": "YES",
+                    "HEADER_SEARCH_PATHS": [
+                        "$(SRCROOT)/App/ApolloMacBridge/include"
+                    ]
                 ]
             )
         ),
@@ -101,7 +107,7 @@ let project = Project(
             deploymentTargets: .macOS("13.0"),
             infoPlist: .default,
             sources: [
-                "App/ApolloTuistTests/**/*.swift"
+                "App/ApolloTuistTests/**/*.{swift,m,mm}"
             ],
             dependencies: [
                 .target(name: "ApolloMacBridge")

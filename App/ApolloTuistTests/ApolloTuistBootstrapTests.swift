@@ -232,7 +232,7 @@ final class ApolloTuistBootstrapTests: XCTestCase {
     func testBridgeForwardingDropsOldestFramesWhenCapacityIsExceeded() async throws {
         let runtime = ApolloBridgeRuntime()
         await runtime.debugResetCoreForwarding()
-        await runtime.debugSetCoreForwardingCapacities(frameCapacity: 1, eventCapacity: 1)
+        await runtime.configureCoreForwarding(frameCapacity: 1, eventCapacity: 1)
 
         let firstSampleBuffer = try Self.makeEncodedSampleBuffer(
             payload: Data([0x01]),
@@ -265,7 +265,7 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(snapshot.queuedFrameCount, 1)
         XCTAssertEqual(snapshot.droppedFrameCount, 1)
 
-        let drainedFrame = await runtime.debugDrainNextForwardedFrame()
+        let drainedFrame = await runtime.drainNextCoreForwardedFrame()
         XCTAssertEqual(drainedFrame?.sourceSequenceNumber, 2)
         XCTAssertEqual(try Self.payloadBytes(from: try XCTUnwrap(drainedFrame?.sampleBuffer)), Data([0x02]))
     }

@@ -37,23 +37,23 @@ public struct ApolloBridgeCoreForwardingSnapshot: Equatable, Sendable {
     }
 }
 
-struct ApolloBridgeCoreDrainedFrame: @unchecked Sendable {
-    let codec: ApolloCaptureCodec
-    let payloadSize: Int
-    let sourceSequenceNumber: UInt64
-    let sourceDisplayTime: UInt64
-    let outputCallbackLatencyMilliseconds: Double?
-    let isKeyFrame: Bool
-    let isHDRSignaled: Bool
-    let sampleBuffer: CMSampleBuffer
+public struct ApolloBridgeCoreDrainedFrame: @unchecked Sendable {
+    public let codec: ApolloCaptureCodec
+    public let payloadSize: Int
+    public let sourceSequenceNumber: UInt64
+    public let sourceDisplayTime: UInt64
+    public let outputCallbackLatencyMilliseconds: Double?
+    public let isKeyFrame: Bool
+    public let isHDRSignaled: Bool
+    public let sampleBuffer: CMSampleBuffer
 }
 
-struct ApolloBridgeCoreDrainedEvent: Equatable, Sendable {
-    let kind: ApolloBridgeCaptureEventKind
-    let message: String?
-    let stopStatus: Int32?
-    let automaticRestartCount: UInt64?
-    let sourceDisplayTime: UInt64?
+public struct ApolloBridgeCoreDrainedEvent: Equatable, Sendable {
+    public let kind: ApolloBridgeCaptureEventKind
+    public let message: String?
+    public let stopStatus: Int32?
+    public let automaticRestartCount: UInt64?
+    public let sourceDisplayTime: UInt64?
 }
 
 final class ApolloCoreCaptureForwarder: @unchecked Sendable {

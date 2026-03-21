@@ -240,6 +240,22 @@ public actor ApolloBridgeRuntime {
         coreForwarder.snapshot()
     }
 
+    public func configureCoreForwarding(
+        frameCapacity: Int,
+        eventCapacity: Int
+    ) {
+        coreForwarder.setFrameCapacity(frameCapacity)
+        coreForwarder.setEventCapacity(eventCapacity)
+    }
+
+    public func drainNextCoreForwardedFrame() -> ApolloBridgeCoreDrainedFrame? {
+        coreForwarder.popNextFrame()
+    }
+
+    public func drainNextCoreForwardedEvent() -> ApolloBridgeCoreDrainedEvent? {
+        coreForwarder.popNextEvent()
+    }
+
     public func statusSnapshot() -> ApolloBridgeStatus {
         ApolloBridgeStatus(
             coreVersion: String(cString: ApolloCoreBootstrapVersionString()),
@@ -265,8 +281,7 @@ public actor ApolloBridgeRuntime {
     }
 
     func debugSetCoreForwardingCapacities(frameCapacity: Int, eventCapacity: Int) {
-        coreForwarder.setFrameCapacity(frameCapacity)
-        coreForwarder.setEventCapacity(eventCapacity)
+        configureCoreForwarding(frameCapacity: frameCapacity, eventCapacity: eventCapacity)
     }
 
     func debugForwardSyntheticFrame(
@@ -307,11 +322,11 @@ public actor ApolloBridgeRuntime {
     }
 
     func debugDrainNextForwardedFrame() -> ApolloBridgeCoreDrainedFrame? {
-        coreForwarder.popNextFrame()
+        drainNextCoreForwardedFrame()
     }
 
     func debugDrainNextForwardedEvent() -> ApolloBridgeCoreDrainedEvent? {
-        coreForwarder.popNextEvent()
+        drainNextCoreForwardedEvent()
     }
 
 }
