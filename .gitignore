@@ -41,6 +41,9 @@
 build/
 cmake-*/
 docs/doxyconfig*
+Derived/
+*.xcodeproj/
+*.xcworkspace/
 
 # npm
 node_modules/
