@@ -44,6 +44,7 @@ docs/doxyconfig*
 Derived/
 *.xcodeproj/
 *.xcworkspace/
+Tuist/.build/
 
 # npm
 node_modules/

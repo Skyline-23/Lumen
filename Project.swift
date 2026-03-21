@@ -12,6 +12,9 @@ let baseSettings: SettingsDictionary = [
 
 let project = Project(
     name: "Apollo",
+    packages: [
+        .package(path: "../MacDisplayKit")
+    ],
     settings: .settings(base: baseSettings),
     targets: [
         .target(
@@ -49,7 +52,8 @@ let project = Project(
                 "App/ApolloMacBridge/Sources/**/*.swift"
             ],
             dependencies: [
-                .target(name: "ApolloCore")
+                .target(name: "ApolloCore"),
+                .package(product: "MacDisplayCaptureKit", type: .runtime)
             ],
             settings: .settings(
                 base: [

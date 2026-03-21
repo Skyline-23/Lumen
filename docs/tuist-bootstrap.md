@@ -24,6 +24,6 @@ This bootstrap introduces a parallel Apple-platform structure without disturbing
 
 ## Next Slice
 
-1. Link `MacDisplayKit` into `ApolloMacBridge`.
-2. Add a callback-fed encoded-frame adapter from `ApolloMacBridge` into Apollo's native VideoToolbox path.
-3. Incrementally migrate macOS capture control out of the legacy Objective-C runtime and into the bridge target.
+1. Add an ObjC++ callback bridge from `ApolloMacBridge` into Apollo's native C++ encode/session runtime.
+2. Move the current macOS encoded-frame consumer out of the legacy Objective-C runtime and behind the bridge target.
+3. Reuse the local `MacDisplayKit` package dependency for callback-only capture startup and native Apollo adapter wiring.
