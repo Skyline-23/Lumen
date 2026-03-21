@@ -117,11 +117,20 @@ public struct ApolloBridgeEncodedFrameSnapshot: Equatable, Sendable {
     }
 }
 
+public enum ApolloBridgeCaptureEventKind: String, Codable, Equatable, Sendable {
+    case started
+    case stopped
+    case restarted
+    case failed
+    case droppedFrame
+}
+
 public struct ApolloBridgeCaptureSnapshot: Equatable, Sendable {
     public let configuration: ApolloMacDisplayKitCaptureConfiguration
     public let statistics: MDKEncodedCaptureSessionStatistics
     public let latestFrame: ApolloBridgeEncodedFrameSnapshot?
     public let recentEvents: [MDKEncodedCaptureSessionEvent]
+    public let coreForwarding: ApolloBridgeCoreForwardingSnapshot
 }
 
 public struct ApolloBridgeStatus: Equatable, Sendable {
@@ -147,6 +156,7 @@ public actor ApolloBridgeRuntime {
     public static let shared = ApolloBridgeRuntime()
 
     private var preferredCaptureBackend: ApolloCaptureBackend = .macDisplayKit
+    private let coreForwarder = ApolloCoreCaptureForwarder()
     private var encodedCaptureSession: MDKEncodedCaptureSession?
     private var activeCaptureConfiguration: ApolloMacDisplayKitCaptureConfiguration?
     private var latestFrame: ApolloBridgeEncodedFrameSnapshot?
@@ -169,18 +179,31 @@ public actor ApolloBridgeRuntime {
     ) async throws {
         await stopMacDisplayKitCapture()
 
+        coreForwarder.reset()
         latestFrame = nil
         recentEvents = []
 
         let session = MDKEncodedCaptureSession(configuration: configuration.mdkValue)
         let runtime = self
+        let coreForwarder = self.coreForwarder
         let callbacks = MDKEncodedCaptureCallbacks(
             frameHandler: { frame in
+                do {
+                    try coreForwarder.consume(frame: frame)
+                } catch {
+                    coreForwarder.consume(
+                        event: MDKEncodedCaptureSessionEvent(
+                            kind: .failed,
+                            message: "ApolloMacBridge failed to extract a contiguous encoded payload: \(error.localizedDescription)"
+                        )
+                    )
+                }
                 Task {
                     await runtime.recordEncodedFrame(frame)
                 }
             },
             eventHandler: { event in
+                coreForwarder.consume(event: event)
                 Task {
                     await runtime.recordEncodedCaptureEvent(event)
                 }
@@ -216,8 +239,13 @@ public actor ApolloBridgeRuntime {
             configuration: configuration,
             statistics: await session.statisticsSnapshot(),
             latestFrame: latestFrame,
-            recentEvents: recentEvents
+            recentEvents: recentEvents,
+            coreForwarding: coreForwarder.snapshot()
         )
+    }
+
+    public func coreForwardingSnapshot() -> ApolloBridgeCoreForwardingSnapshot {
+        coreForwarder.snapshot()
     }
 
     public func statusSnapshot() -> ApolloBridgeStatus {
@@ -225,7 +253,7 @@ public actor ApolloBridgeRuntime {
             coreVersion: String(cString: ApolloCoreBootstrapVersionString()),
             runtimeDescription: String(cString: ApolloCoreBootstrapRuntimeDescription()),
             preferredCaptureBackend: preferredCaptureBackend,
-            integrationStatus: "Swift shell, C/C++ core, and bridge targets are ready. ApolloMacBridge now links MacDisplayCaptureKit and can own callback-only encoded capture sessions."
+            integrationStatus: "Swift shell, C/C++ core, and bridge targets are ready. ApolloMacBridge now links MacDisplayCaptureKit, owns callback-only encoded capture sessions, and forwards encoded payloads into ApolloCore's C ABI consumer surface."
         )
     }
 
@@ -238,6 +266,51 @@ public actor ApolloBridgeRuntime {
         if recentEvents.count > 16 {
             recentEvents.removeFirst(recentEvents.count - 16)
         }
+    }
+
+    func debugResetCoreForwarding() {
+        coreForwarder.reset()
+    }
+
+    func debugForwardSyntheticFrame(
+        payload: Data,
+        codec: ApolloCaptureCodec = .hevc,
+        sourceSequenceNumber: UInt64 = 1,
+        sourceDisplayTime: UInt64 = 1,
+        outputCallbackLatencyMilliseconds: Double? = nil,
+        isKeyFrame: Bool = true,
+        isHDRSignaled: Bool = false
+    ) {
+        coreForwarder.consume(
+            codec: codec,
+            payload: payload,
+            sourceSequenceNumber: sourceSequenceNumber,
+            sourceDisplayTime: sourceDisplayTime,
+            outputCallbackLatencyMilliseconds: outputCallbackLatencyMilliseconds,
+            isKeyFrame: isKeyFrame,
+            isHDRSignaled: isHDRSignaled
+        )
+    }
+
+    func debugForwardSyntheticEvent(
+        kind: MDKEncodedCaptureSessionEventKind,
+        message: String? = nil,
+        stopStatus: Int32? = nil,
+        automaticRestartCount: UInt64? = nil,
+        sourceDisplayTime: UInt64? = nil
+    ) {
+        let event = MDKEncodedCaptureSessionEvent(
+            kind: kind,
+            message: message,
+            stopStatus: stopStatus,
+            automaticRestartCount: automaticRestartCount,
+            sourceDisplayTime: sourceDisplayTime
+        )
+        coreForwarder.consume(event: event)
+    }
+
+    func debugLastForwardedPayload() -> Data {
+        coreForwarder.copyLastFramePayload()
     }
 }
 

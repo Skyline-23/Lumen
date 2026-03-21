@@ -24,6 +24,15 @@ This bootstrap introduces a parallel Apple-platform structure without disturbing
 
 ## Next Slice
 
-1. Add an ObjC++ callback bridge from `ApolloMacBridge` into Apollo's native C++ encode/session runtime.
+1. Replace the bootstrap `ApolloCore` capture sink with Apollo's real encoded-frame consumer.
 2. Move the current macOS encoded-frame consumer out of the legacy Objective-C runtime and behind the bridge target.
-3. Reuse the local `MacDisplayKit` package dependency for callback-only capture startup and native Apollo adapter wiring.
+3. Keep `MacDisplayKit` callback-only startup in `ApolloMacBridge`, but let `ApolloCore` own the final packet/session handoff.
+
+## Current Bridge Shape
+
+- `ApolloMacBridge`
+  Owns `MacDisplayKit` session startup and forwards encoded frame payloads into `ApolloCore`.
+- `ApolloCore`
+  Exposes a C ABI encoded-capture consumer that stores payload bytes, frame metadata, and lifecycle events.
+- `ApolloTuistTests`
+  Verifies both the C ABI consumer and the Swift-to-core forwarding path with synthetic payloads.
