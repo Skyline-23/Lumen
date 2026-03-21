@@ -1,6 +1,7 @@
 #ifndef APOLLO_CORE_H
 #define APOLLO_CORE_H
 
+#include <CoreMedia/CoreMedia.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -25,12 +26,17 @@ typedef enum ApolloCoreCaptureEventKind {
   ApolloCoreCaptureEventKindDroppedFrame = 4
 } ApolloCoreCaptureEventKind;
 
-typedef struct ApolloCoreEncodedCaptureConsumer ApolloCoreEncodedCaptureConsumer;
+typedef struct ApolloCoreEncodedCaptureIngress ApolloCoreEncodedCaptureIngress;
 
-typedef struct ApolloCoreEncodedCaptureConsumerSnapshot {
+typedef struct ApolloCoreEncodedCaptureIngressSnapshot {
   uint64_t frame_count;
   uint64_t event_count;
+  uint64_t queued_frame_count;
+  uint64_t queued_event_count;
+  uint64_t dropped_frame_count;
+  uint64_t dropped_event_count;
   bool has_last_frame;
+  bool has_last_sample_buffer;
   ApolloCoreCaptureCodec last_frame_codec;
   size_t last_frame_payload_size;
   uint64_t last_frame_source_sequence_number;
@@ -45,16 +51,47 @@ typedef struct ApolloCoreEncodedCaptureConsumerSnapshot {
   uint64_t last_event_automatic_restart_count;
   bool last_event_has_source_display_time;
   uint64_t last_event_source_display_time;
-} ApolloCoreEncodedCaptureConsumerSnapshot;
+} ApolloCoreEncodedCaptureIngressSnapshot;
+
+typedef struct ApolloCoreEncodedCaptureFrameRecord {
+  bool has_value;
+  ApolloCoreCaptureCodec codec;
+  size_t payload_size;
+  uint64_t source_sequence_number;
+  uint64_t source_display_time;
+  bool has_output_callback_latency_milliseconds;
+  double output_callback_latency_milliseconds;
+  bool is_key_frame;
+  bool is_hdr_signaled;
+} ApolloCoreEncodedCaptureFrameRecord;
+
+typedef struct ApolloCoreEncodedCaptureEventRecord {
+  bool has_value;
+  ApolloCoreCaptureEventKind kind;
+  bool has_stop_status;
+  int32_t stop_status;
+  bool has_automatic_restart_count;
+  uint64_t automatic_restart_count;
+  bool has_source_display_time;
+  uint64_t source_display_time;
+} ApolloCoreEncodedCaptureEventRecord;
 
 const char *ApolloCoreBootstrapVersionString(void);
 const char *ApolloCoreBootstrapRuntimeDescription(void);
 
-ApolloCoreEncodedCaptureConsumer *ApolloCoreEncodedCaptureConsumerCreate(void);
-void ApolloCoreEncodedCaptureConsumerDestroy(ApolloCoreEncodedCaptureConsumer *consumer);
-void ApolloCoreEncodedCaptureConsumerReset(ApolloCoreEncodedCaptureConsumer *consumer);
-void ApolloCoreEncodedCaptureConsumerConsumeFrame(
-  ApolloCoreEncodedCaptureConsumer *consumer,
+ApolloCoreEncodedCaptureIngress *ApolloCoreEncodedCaptureIngressCreate(void);
+void ApolloCoreEncodedCaptureIngressDestroy(ApolloCoreEncodedCaptureIngress *ingress);
+void ApolloCoreEncodedCaptureIngressReset(ApolloCoreEncodedCaptureIngress *ingress);
+void ApolloCoreEncodedCaptureIngressSetFrameCapacity(
+  ApolloCoreEncodedCaptureIngress *ingress,
+  size_t capacity
+);
+void ApolloCoreEncodedCaptureIngressSetEventCapacity(
+  ApolloCoreEncodedCaptureIngress *ingress,
+  size_t capacity
+);
+void ApolloCoreEncodedCaptureIngressConsumeSampleBuffer(
+  ApolloCoreEncodedCaptureIngress *ingress,
   ApolloCoreCaptureCodec codec,
   uint64_t source_sequence_number,
   uint64_t source_display_time,
@@ -62,11 +99,10 @@ void ApolloCoreEncodedCaptureConsumerConsumeFrame(
   double output_callback_latency_milliseconds,
   bool is_key_frame,
   bool is_hdr_signaled,
-  const uint8_t *payload_bytes,
-  size_t payload_size
+  CMSampleBufferRef sample_buffer
 );
-void ApolloCoreEncodedCaptureConsumerConsumeEvent(
-  ApolloCoreEncodedCaptureConsumer *consumer,
+void ApolloCoreEncodedCaptureIngressConsumeEvent(
+  ApolloCoreEncodedCaptureIngress *ingress,
   ApolloCoreCaptureEventKind kind,
   const char *message,
   bool has_stop_status,
@@ -76,16 +112,23 @@ void ApolloCoreEncodedCaptureConsumerConsumeEvent(
   bool has_source_display_time,
   uint64_t source_display_time
 );
-ApolloCoreEncodedCaptureConsumerSnapshot ApolloCoreEncodedCaptureConsumerCopySnapshot(
-  const ApolloCoreEncodedCaptureConsumer *consumer
+ApolloCoreEncodedCaptureIngressSnapshot ApolloCoreEncodedCaptureIngressCopySnapshot(
+  const ApolloCoreEncodedCaptureIngress *ingress
 );
-size_t ApolloCoreEncodedCaptureConsumerCopyLastFramePayload(
-  const ApolloCoreEncodedCaptureConsumer *consumer,
-  uint8_t *destination,
-  size_t capacity
+CMSampleBufferRef ApolloCoreEncodedCaptureIngressCreateRetainedLastSampleBuffer(
+  const ApolloCoreEncodedCaptureIngress *ingress
 );
-size_t ApolloCoreEncodedCaptureConsumerCopyLastEventMessage(
-  const ApolloCoreEncodedCaptureConsumer *consumer,
+ApolloCoreEncodedCaptureFrameRecord ApolloCoreEncodedCaptureIngressPopNextFrame(
+  ApolloCoreEncodedCaptureIngress *ingress,
+  CMSampleBufferRef *retained_sample_buffer_out
+);
+ApolloCoreEncodedCaptureEventRecord ApolloCoreEncodedCaptureIngressPopNextEvent(
+  ApolloCoreEncodedCaptureIngress *ingress,
+  char *message_destination,
+  size_t message_capacity
+);
+size_t ApolloCoreEncodedCaptureIngressCopyLastEventMessage(
+  const ApolloCoreEncodedCaptureIngress *ingress,
   char *destination,
   size_t capacity
 );

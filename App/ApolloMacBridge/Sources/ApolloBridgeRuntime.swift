@@ -1,4 +1,5 @@
 import ApolloCore
+import CoreMedia
 import Foundation
 import MacDisplayCaptureKit
 
@@ -188,16 +189,7 @@ public actor ApolloBridgeRuntime {
         let coreForwarder = self.coreForwarder
         let callbacks = MDKEncodedCaptureCallbacks(
             frameHandler: { frame in
-                do {
-                    try coreForwarder.consume(frame: frame)
-                } catch {
-                    coreForwarder.consume(
-                        event: MDKEncodedCaptureSessionEvent(
-                            kind: .failed,
-                            message: "ApolloMacBridge failed to extract a contiguous encoded payload: \(error.localizedDescription)"
-                        )
-                    )
-                }
+                coreForwarder.consume(frame: frame)
                 Task {
                     await runtime.recordEncodedFrame(frame)
                 }
@@ -253,7 +245,7 @@ public actor ApolloBridgeRuntime {
             coreVersion: String(cString: ApolloCoreBootstrapVersionString()),
             runtimeDescription: String(cString: ApolloCoreBootstrapRuntimeDescription()),
             preferredCaptureBackend: preferredCaptureBackend,
-            integrationStatus: "Swift shell, C/C++ core, and bridge targets are ready. ApolloMacBridge now links MacDisplayCaptureKit, owns callback-only encoded capture sessions, and forwards encoded payloads into ApolloCore's C ABI consumer surface."
+            integrationStatus: "Swift shell, C/C++ core, and bridge targets are ready. ApolloMacBridge now links MacDisplayCaptureKit, owns callback-only encoded capture sessions, and forwards encoded sample buffers into ApolloCore's C ABI ingress surface."
         )
     }
 
@@ -272,8 +264,13 @@ public actor ApolloBridgeRuntime {
         coreForwarder.reset()
     }
 
+    func debugSetCoreForwardingCapacities(frameCapacity: Int, eventCapacity: Int) {
+        coreForwarder.setFrameCapacity(frameCapacity)
+        coreForwarder.setEventCapacity(eventCapacity)
+    }
+
     func debugForwardSyntheticFrame(
-        payload: Data,
+        sampleBuffer: CMSampleBuffer,
         codec: ApolloCaptureCodec = .hevc,
         sourceSequenceNumber: UInt64 = 1,
         sourceDisplayTime: UInt64 = 1,
@@ -282,8 +279,8 @@ public actor ApolloBridgeRuntime {
         isHDRSignaled: Bool = false
     ) {
         coreForwarder.consume(
+            sampleBuffer: sampleBuffer,
             codec: codec,
-            payload: payload,
             sourceSequenceNumber: sourceSequenceNumber,
             sourceDisplayTime: sourceDisplayTime,
             outputCallbackLatencyMilliseconds: outputCallbackLatencyMilliseconds,
@@ -309,9 +306,14 @@ public actor ApolloBridgeRuntime {
         coreForwarder.consume(event: event)
     }
 
-    func debugLastForwardedPayload() -> Data {
-        coreForwarder.copyLastFramePayload()
+    func debugDrainNextForwardedFrame() -> ApolloBridgeCoreDrainedFrame? {
+        coreForwarder.popNextFrame()
     }
+
+    func debugDrainNextForwardedEvent() -> ApolloBridgeCoreDrainedEvent? {
+        coreForwarder.popNextEvent()
+    }
+
 }
 
 private extension ApolloCaptureCodec {

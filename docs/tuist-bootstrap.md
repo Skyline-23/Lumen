@@ -24,15 +24,15 @@ This bootstrap introduces a parallel Apple-platform structure without disturbing
 
 ## Next Slice
 
-1. Replace the bootstrap `ApolloCore` capture sink with Apollo's real encoded-frame consumer.
+1. Replace the bootstrap `ApolloCore` sample-buffer ingress with Apollo's real encoded-frame consumer.
 2. Move the current macOS encoded-frame consumer out of the legacy Objective-C runtime and behind the bridge target.
 3. Keep `MacDisplayKit` callback-only startup in `ApolloMacBridge`, but let `ApolloCore` own the final packet/session handoff.
 
 ## Current Bridge Shape
 
 - `ApolloMacBridge`
-  Owns `MacDisplayKit` session startup and forwards encoded frame payloads into `ApolloCore`.
+  Owns `MacDisplayKit` session startup and forwards encoded sample buffers into `ApolloCore`.
 - `ApolloCore`
-  Exposes a C ABI encoded-capture consumer that stores payload bytes, frame metadata, and lifecycle events.
+  Exposes a C ABI encoded-capture ingress that retains `CMSampleBuffer` frames, queues bounded frame/event backlogs, and lets the next native consumer drain them without flattening them to copied payload bytes first.
 - `ApolloTuistTests`
-  Verifies both the C ABI consumer and the Swift-to-core forwarding path with synthetic payloads.
+  Verifies both the C ABI ingress and the Swift-to-core forwarding path with synthetic sample buffers, ordered queue draining, and drop-on-overflow behavior.

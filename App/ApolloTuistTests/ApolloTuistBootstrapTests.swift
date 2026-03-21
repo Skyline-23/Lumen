@@ -1,5 +1,6 @@
 @testable import ApolloMacBridge
 import ApolloCore
+import CoreMedia
 import XCTest
 
 final class ApolloTuistBootstrapTests: XCTestCase {
@@ -24,31 +25,35 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         XCTAssertFalse(configuration.showCursor)
     }
 
-    func testApolloCoreEncodedCaptureConsumerStoresPayloadMetadata() {
-        guard let consumer = ApolloCoreEncodedCaptureConsumerCreate() else {
-            return XCTFail("ApolloCoreEncodedCaptureConsumerCreate returned nil")
+    func testApolloCoreEncodedCaptureIngressStoresSampleBufferMetadata() throws {
+        guard let ingress = ApolloCoreEncodedCaptureIngressCreate() else {
+            return XCTFail("ApolloCoreEncodedCaptureIngressCreate returned nil")
         }
         defer {
-            ApolloCoreEncodedCaptureConsumerDestroy(consumer)
+            ApolloCoreEncodedCaptureIngressDestroy(ingress)
         }
 
-        let payload = Data([0x01, 0x02, 0x03, 0x04])
-        payload.withUnsafeBytes { rawBuffer in
-            ApolloCoreEncodedCaptureConsumerConsumeFrame(
-                consumer,
-                ApolloCoreCaptureCodecHEVC,
-                41,
-                42,
-                true,
-                1.25,
-                true,
-                false,
-                rawBuffer.baseAddress?.assumingMemoryBound(to: UInt8.self),
-                rawBuffer.count
-            )
-        }
-        ApolloCoreEncodedCaptureConsumerConsumeEvent(
-            consumer,
+        let sampleBuffer = try Self.makeEncodedSampleBuffer(
+            payload: Data([0x01, 0x02, 0x03, 0x04]),
+            codecType: kCMVideoCodecType_HEVC,
+            colorPrimaries: kCMFormatDescriptionColorPrimaries_ITU_R_2020 as String,
+            transferFunction: kCMFormatDescriptionTransferFunction_SMPTE_ST_2084_PQ as String,
+            notSync: true
+        )
+
+        ApolloCoreEncodedCaptureIngressConsumeSampleBuffer(
+            ingress,
+            ApolloCoreCaptureCodecHEVC,
+            41,
+            42,
+            true,
+            1.25,
+            false,
+            true,
+            sampleBuffer
+        )
+        ApolloCoreEncodedCaptureIngressConsumeEvent(
+            ingress,
             ApolloCoreCaptureEventKindRestarted,
             "restart",
             false,
@@ -59,38 +64,145 @@ final class ApolloTuistBootstrapTests: XCTestCase {
             0
         )
 
-        let snapshot = ApolloCoreEncodedCaptureConsumerCopySnapshot(consumer)
+        let snapshot = ApolloCoreEncodedCaptureIngressCopySnapshot(ingress)
         XCTAssertEqual(snapshot.frame_count, 1)
         XCTAssertEqual(snapshot.event_count, 1)
         XCTAssertTrue(snapshot.has_last_frame)
+        XCTAssertTrue(snapshot.has_last_sample_buffer)
         XCTAssertEqual(snapshot.last_frame_codec, ApolloCoreCaptureCodecHEVC)
-        XCTAssertEqual(snapshot.last_frame_payload_size, payload.count)
+        XCTAssertEqual(snapshot.last_frame_payload_size, 4)
         XCTAssertEqual(snapshot.last_frame_source_sequence_number, 41)
         XCTAssertEqual(snapshot.last_frame_source_display_time, 42)
-        XCTAssertTrue(snapshot.last_frame_is_key_frame)
-        XCTAssertFalse(snapshot.last_frame_is_hdr_signaled)
+        XCTAssertFalse(snapshot.last_frame_is_key_frame)
+        XCTAssertTrue(snapshot.last_frame_is_hdr_signaled)
         XCTAssertTrue(snapshot.has_last_event)
         XCTAssertEqual(snapshot.last_event_kind, ApolloCoreCaptureEventKindRestarted)
         XCTAssertTrue(snapshot.last_event_has_automatic_restart_count)
         XCTAssertEqual(snapshot.last_event_automatic_restart_count, 2)
-
-        var copiedPayload = Data(count: payload.count)
-        let copiedCount = copiedPayload.withUnsafeMutableBytes { rawBuffer in
-            ApolloCoreEncodedCaptureConsumerCopyLastFramePayload(
-                consumer,
-                rawBuffer.baseAddress?.assumingMemoryBound(to: UInt8.self),
-                rawBuffer.count
-            )
-        }
-        XCTAssertEqual(copiedCount, payload.count)
-        XCTAssertEqual(copiedPayload, payload)
     }
 
-    func testBridgeForwardsSyntheticPayloadIntoApolloCoreConsumer() async {
+    func testApolloCoreEncodedCaptureIngressQueuesFramesAndEventsInOrder() throws {
+        guard let ingress = ApolloCoreEncodedCaptureIngressCreate() else {
+            return XCTFail("ApolloCoreEncodedCaptureIngressCreate returned nil")
+        }
+        defer {
+            ApolloCoreEncodedCaptureIngressDestroy(ingress)
+        }
+
+        ApolloCoreEncodedCaptureIngressSetFrameCapacity(ingress, 4)
+        ApolloCoreEncodedCaptureIngressSetEventCapacity(ingress, 4)
+
+        let firstFrame = try Self.makeEncodedSampleBuffer(
+            payload: Data([0x10, 0x11]),
+            codecType: kCMVideoCodecType_HEVC
+        )
+        let secondFrame = try Self.makeEncodedSampleBuffer(
+            payload: Data([0x20, 0x21, 0x22]),
+            codecType: kCMVideoCodecType_HEVC
+        )
+
+        ApolloCoreEncodedCaptureIngressConsumeSampleBuffer(
+            ingress,
+            ApolloCoreCaptureCodecHEVC,
+            1,
+            101,
+            false,
+            0,
+            true,
+            false,
+            firstFrame
+        )
+        ApolloCoreEncodedCaptureIngressConsumeSampleBuffer(
+            ingress,
+            ApolloCoreCaptureCodecHEVC,
+            2,
+            202,
+            false,
+            0,
+            false,
+            true,
+            secondFrame
+        )
+        ApolloCoreEncodedCaptureIngressConsumeEvent(
+            ingress,
+            ApolloCoreCaptureEventKindStarted,
+            "started",
+            false,
+            0,
+            false,
+            0,
+            false,
+            0
+        )
+        ApolloCoreEncodedCaptureIngressConsumeEvent(
+            ingress,
+            ApolloCoreCaptureEventKindDroppedFrame,
+            "dropped",
+            false,
+            0,
+            false,
+            0,
+            true,
+            202
+        )
+
+        let snapshot = ApolloCoreEncodedCaptureIngressCopySnapshot(ingress)
+        XCTAssertEqual(snapshot.queued_frame_count, 2)
+        XCTAssertEqual(snapshot.queued_event_count, 2)
+        XCTAssertEqual(snapshot.dropped_frame_count, 0)
+        XCTAssertEqual(snapshot.dropped_event_count, 0)
+
+        var drainedSampleBuffer: Unmanaged<CMSampleBuffer>?
+        let firstRecord = withUnsafeMutablePointer(to: &drainedSampleBuffer) { pointer in
+            ApolloCoreEncodedCaptureIngressPopNextFrame(ingress, pointer)
+        }
+        XCTAssertTrue(firstRecord.has_value)
+        XCTAssertEqual(firstRecord.source_sequence_number, 1)
+        XCTAssertEqual(
+            try Self.payloadBytes(from: try XCTUnwrap(drainedSampleBuffer).takeRetainedValue()),
+            Data([0x10, 0x11])
+        )
+
+        drainedSampleBuffer = nil
+        let secondRecord = withUnsafeMutablePointer(to: &drainedSampleBuffer) { pointer in
+            ApolloCoreEncodedCaptureIngressPopNextFrame(ingress, pointer)
+        }
+        XCTAssertTrue(secondRecord.has_value)
+        XCTAssertEqual(secondRecord.source_sequence_number, 2)
+        XCTAssertEqual(
+            try Self.payloadBytes(from: try XCTUnwrap(drainedSampleBuffer).takeRetainedValue()),
+            Data([0x20, 0x21, 0x22])
+        )
+
+        var messageBuffer = Array<CChar>(repeating: 0, count: 128)
+        let firstEvent = messageBuffer.withUnsafeMutableBufferPointer { buffer in
+            ApolloCoreEncodedCaptureIngressPopNextEvent(ingress, buffer.baseAddress, buffer.count)
+        }
+        XCTAssertTrue(firstEvent.has_value)
+        XCTAssertEqual(firstEvent.kind, ApolloCoreCaptureEventKindStarted)
+        XCTAssertEqual(String(cString: messageBuffer), "started")
+
+        messageBuffer = Array<CChar>(repeating: 0, count: 128)
+        let secondEvent = messageBuffer.withUnsafeMutableBufferPointer { buffer in
+            ApolloCoreEncodedCaptureIngressPopNextEvent(ingress, buffer.baseAddress, buffer.count)
+        }
+        XCTAssertTrue(secondEvent.has_value)
+        XCTAssertEqual(secondEvent.kind, ApolloCoreCaptureEventKindDroppedFrame)
+        XCTAssertEqual(String(cString: messageBuffer), "dropped")
+    }
+
+    func testBridgeForwardsSyntheticSampleBufferIntoApolloCoreIngress() async throws {
         let runtime = ApolloBridgeRuntime()
         await runtime.debugResetCoreForwarding()
-        await runtime.debugForwardSyntheticFrame(
+        let sampleBuffer = try Self.makeEncodedSampleBuffer(
             payload: Data([0xAA, 0xBB, 0xCC]),
+            codecType: kCMVideoCodecType_AppleProRes422Proxy,
+            colorPrimaries: kCMFormatDescriptionColorPrimaries_ITU_R_2020 as String,
+            transferFunction: kCMFormatDescriptionTransferFunction_SMPTE_ST_2084_PQ as String,
+            notSync: true
+        )
+        await runtime.debugForwardSyntheticFrame(
+            sampleBuffer: sampleBuffer,
             codec: .proResProxy,
             sourceSequenceNumber: 7,
             sourceDisplayTime: 9,
@@ -111,10 +223,165 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(snapshot.lastFramePayloadSize, 3)
         XCTAssertEqual(snapshot.lastFrameSourceSequenceNumber, 7)
         XCTAssertEqual(snapshot.lastFrameSourceDisplayTime, 9)
+        XCTAssertTrue(snapshot.hasLastSampleBuffer)
         XCTAssertFalse(snapshot.lastFrameIsKeyFrame)
         XCTAssertTrue(snapshot.lastFrameIsHDRSignaled)
         XCTAssertEqual(snapshot.lastEventKind, .droppedFrame)
-        let forwardedPayload = await runtime.debugLastForwardedPayload()
-        XCTAssertEqual(forwardedPayload, Data([0xAA, 0xBB, 0xCC]))
+    }
+
+    func testBridgeForwardingDropsOldestFramesWhenCapacityIsExceeded() async throws {
+        let runtime = ApolloBridgeRuntime()
+        await runtime.debugResetCoreForwarding()
+        await runtime.debugSetCoreForwardingCapacities(frameCapacity: 1, eventCapacity: 1)
+
+        let firstSampleBuffer = try Self.makeEncodedSampleBuffer(
+            payload: Data([0x01]),
+            codecType: kCMVideoCodecType_HEVC
+        )
+        let secondSampleBuffer = try Self.makeEncodedSampleBuffer(
+            payload: Data([0x02]),
+            codecType: kCMVideoCodecType_HEVC
+        )
+
+        await runtime.debugForwardSyntheticFrame(
+            sampleBuffer: firstSampleBuffer,
+            codec: .hevc,
+            sourceSequenceNumber: 1,
+            sourceDisplayTime: 10,
+            isKeyFrame: true,
+            isHDRSignaled: false
+        )
+        await runtime.debugForwardSyntheticFrame(
+            sampleBuffer: secondSampleBuffer,
+            codec: .hevc,
+            sourceSequenceNumber: 2,
+            sourceDisplayTime: 20,
+            isKeyFrame: false,
+            isHDRSignaled: true
+        )
+
+        let snapshot = await runtime.coreForwardingSnapshot()
+        XCTAssertEqual(snapshot.frameCount, 2)
+        XCTAssertEqual(snapshot.queuedFrameCount, 1)
+        XCTAssertEqual(snapshot.droppedFrameCount, 1)
+
+        let drainedFrame = await runtime.debugDrainNextForwardedFrame()
+        XCTAssertEqual(drainedFrame?.sourceSequenceNumber, 2)
+        XCTAssertEqual(try Self.payloadBytes(from: try XCTUnwrap(drainedFrame?.sampleBuffer)), Data([0x02]))
+    }
+}
+
+private extension ApolloTuistBootstrapTests {
+    static func makeEncodedSampleBuffer(
+        payload: Data,
+        codecType: CMVideoCodecType,
+        colorPrimaries: String? = nil,
+        transferFunction: String? = nil,
+        notSync: Bool = false
+    ) throws -> CMSampleBuffer {
+        var blockBuffer: CMBlockBuffer?
+        let bytes = [UInt8](payload)
+        let status = CMBlockBufferCreateWithMemoryBlock(
+            allocator: kCFAllocatorDefault,
+            memoryBlock: nil,
+            blockLength: bytes.count,
+            blockAllocator: nil,
+            customBlockSource: nil,
+            offsetToData: 0,
+            dataLength: bytes.count,
+            flags: 0,
+            blockBufferOut: &blockBuffer
+        )
+        XCTAssertEqual(status, noErr)
+
+        let appendStatus = bytes.withUnsafeBytes { rawBuffer in
+            CMBlockBufferReplaceDataBytes(
+                with: rawBuffer.baseAddress!,
+                blockBuffer: blockBuffer!,
+                offsetIntoDestination: 0,
+                dataLength: bytes.count
+            )
+        }
+        XCTAssertEqual(appendStatus, noErr)
+
+        var extensions: [CFString: Any] = [:]
+        if let colorPrimaries {
+            extensions[kCMFormatDescriptionExtension_ColorPrimaries] = colorPrimaries as CFString
+        }
+        if let transferFunction {
+            extensions[kCMFormatDescriptionExtension_TransferFunction] = transferFunction as CFString
+        }
+        if transferFunction == (kCMFormatDescriptionTransferFunction_SMPTE_ST_2084_PQ as String) {
+            extensions[kCMFormatDescriptionExtension_ContentLightLevelInfo] = Data([0, 1, 0, 1]) as CFData
+        }
+
+        var formatDescription: CMFormatDescription?
+        XCTAssertEqual(
+            CMVideoFormatDescriptionCreate(
+                allocator: kCFAllocatorDefault,
+                codecType: codecType,
+                width: 3840,
+                height: 2160,
+                extensions: extensions as CFDictionary,
+                formatDescriptionOut: &formatDescription
+            ),
+            noErr
+        )
+
+        var sampleBuffer: CMSampleBuffer?
+        let timing = CMSampleTimingInfo(
+            duration: CMTime(value: 1, timescale: 120),
+            presentationTimeStamp: CMTime(value: 1, timescale: 120),
+            decodeTimeStamp: .invalid
+        )
+        let sampleSize = [bytes.count]
+        XCTAssertEqual(
+            CMSampleBufferCreateReady(
+                allocator: kCFAllocatorDefault,
+                dataBuffer: blockBuffer,
+                formatDescription: try XCTUnwrap(formatDescription),
+                sampleCount: 1,
+                sampleTimingEntryCount: 1,
+                sampleTimingArray: [timing],
+                sampleSizeEntryCount: 1,
+                sampleSizeArray: sampleSize,
+                sampleBufferOut: &sampleBuffer
+            ),
+            noErr
+        )
+
+        if notSync,
+           let attachments = CMSampleBufferGetSampleAttachmentsArray(
+            try XCTUnwrap(sampleBuffer),
+            createIfNecessary: true
+           ) {
+            let dictionary = unsafeBitCast(CFArrayGetValueAtIndex(attachments, 0), to: CFMutableDictionary.self)
+            CFDictionarySetValue(
+                dictionary,
+                Unmanaged.passUnretained(kCMSampleAttachmentKey_NotSync).toOpaque(),
+                Unmanaged.passUnretained(kCFBooleanTrue).toOpaque()
+            )
+        }
+
+        return try XCTUnwrap(sampleBuffer)
+    }
+
+    static func payloadBytes(from sampleBuffer: CMSampleBuffer) throws -> Data {
+        guard let blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else {
+            throw NSError(domain: "ApolloTuistBootstrapTests", code: 1)
+        }
+
+        let length = CMBlockBufferGetDataLength(blockBuffer)
+        var bytes = Data(count: length)
+        let status = bytes.withUnsafeMutableBytes { rawBuffer in
+            CMBlockBufferCopyDataBytes(
+                blockBuffer,
+                atOffset: 0,
+                dataLength: length,
+                destination: rawBuffer.baseAddress!
+            )
+        }
+        XCTAssertEqual(status, kCMBlockBufferNoErr)
+        return bytes
     }
 }

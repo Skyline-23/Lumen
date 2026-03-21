@@ -1,16 +1,68 @@
 #include "ApolloCore.h"
 #include "ApolloCore.hpp"
 
-#include <array>
 #include <algorithm>
+#include <array>
 #include <cstring>
+#include <deque>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <utility>
-#include <vector>
 
 namespace {
+  constexpr std::size_t default_frame_capacity = 8;
+  constexpr std::size_t default_event_capacity = 32;
+
+  struct retained_sample_buffer_t {
+    CMSampleBufferRef value = nullptr;
+
+    retained_sample_buffer_t() = default;
+
+    explicit retained_sample_buffer_t(CMSampleBufferRef sample_buffer) :
+        value(sample_buffer ? reinterpret_cast<CMSampleBufferRef>(const_cast<void *>(CFRetain(sample_buffer))) : nullptr) {
+    }
+
+    retained_sample_buffer_t(const retained_sample_buffer_t &other) :
+        value(other.value ? reinterpret_cast<CMSampleBufferRef>(const_cast<void *>(CFRetain(other.value))) : nullptr) {
+    }
+
+    retained_sample_buffer_t &operator=(const retained_sample_buffer_t &other) {
+      if (this == &other) {
+        return *this;
+      }
+
+      reset();
+      value = other.value ? reinterpret_cast<CMSampleBufferRef>(const_cast<void *>(CFRetain(other.value))) : nullptr;
+      return *this;
+    }
+
+    retained_sample_buffer_t(retained_sample_buffer_t &&other) noexcept :
+        value(std::exchange(other.value, nullptr)) {
+    }
+
+    retained_sample_buffer_t &operator=(retained_sample_buffer_t &&other) noexcept {
+      if (this == &other) {
+        return *this;
+      }
+
+      reset();
+      value = std::exchange(other.value, nullptr);
+      return *this;
+    }
+
+    ~retained_sample_buffer_t() {
+      reset();
+    }
+
+    void reset() {
+      if (value) {
+        CFRelease(value);
+        value = nullptr;
+      }
+    }
+  };
+
   struct encoded_event_state_t {
     ApolloCoreCaptureEventKind kind = ApolloCoreCaptureEventKindUnknown;
     std::string message;
@@ -20,26 +72,72 @@ namespace {
     std::uint64_t automatic_restart_count = 0;
     bool has_source_display_time = false;
     std::uint64_t source_display_time = 0;
+
+    ApolloCoreEncodedCaptureEventRecord record() const {
+      ApolloCoreEncodedCaptureEventRecord record {};
+      record.has_value = true;
+      record.kind = kind;
+      record.has_stop_status = has_stop_status;
+      record.stop_status = stop_status;
+      record.has_automatic_restart_count = has_automatic_restart_count;
+      record.automatic_restart_count = automatic_restart_count;
+      record.has_source_display_time = has_source_display_time;
+      record.source_display_time = source_display_time;
+      return record;
+    }
   };
 
   struct encoded_frame_state_t {
     ApolloCoreCaptureCodec codec = ApolloCoreCaptureCodecUnknown;
-    std::vector<std::uint8_t> payload;
+    retained_sample_buffer_t sample_buffer;
     std::uint64_t source_sequence_number = 0;
     std::uint64_t source_display_time = 0;
     bool has_output_callback_latency_milliseconds = false;
     double output_callback_latency_milliseconds = 0.0;
     bool is_key_frame = false;
     bool is_hdr_signaled = false;
+
+    std::size_t payload_size() const {
+      if (!sample_buffer.value) {
+        return 0;
+      }
+
+      CMBlockBufferRef block_buffer = CMSampleBufferGetDataBuffer(sample_buffer.value);
+      if (!block_buffer) {
+        return 0;
+      }
+
+      return static_cast<std::size_t>(CMBlockBufferGetDataLength(block_buffer));
+    }
+
+    ApolloCoreEncodedCaptureFrameRecord record() const {
+      ApolloCoreEncodedCaptureFrameRecord record {};
+      record.has_value = true;
+      record.codec = codec;
+      record.payload_size = payload_size();
+      record.source_sequence_number = source_sequence_number;
+      record.source_display_time = source_display_time;
+      record.has_output_callback_latency_milliseconds = has_output_callback_latency_milliseconds;
+      record.output_callback_latency_milliseconds = output_callback_latency_milliseconds;
+      record.is_key_frame = is_key_frame;
+      record.is_hdr_signaled = is_hdr_signaled;
+      return record;
+    }
   };
 }
 
-struct ApolloCoreEncodedCaptureConsumer {
+struct ApolloCoreEncodedCaptureIngress {
   mutable std::mutex mutex;
   std::uint64_t frame_count = 0;
   std::uint64_t event_count = 0;
+  std::uint64_t dropped_frame_count = 0;
+  std::uint64_t dropped_event_count = 0;
+  std::size_t frame_capacity = default_frame_capacity;
+  std::size_t event_capacity = default_event_capacity;
   std::optional<encoded_frame_state_t> last_frame;
   std::optional<encoded_event_state_t> last_event;
+  std::deque<encoded_frame_state_t> pending_frames;
+  std::deque<encoded_event_state_t> pending_events;
 };
 
 namespace apollo::core {
@@ -51,34 +149,42 @@ namespace apollo::core {
     return "C and C++ compatibility surface for the Swift/Tuist Apollo shell.";
   }
 
-  encoded_capture_consumer::encoded_capture_consumer() :
-      handle_(ApolloCoreEncodedCaptureConsumerCreate()) {
+  encoded_capture_ingress::encoded_capture_ingress() :
+      handle_(ApolloCoreEncodedCaptureIngressCreate()) {
   }
 
-  encoded_capture_consumer::~encoded_capture_consumer() {
-    ApolloCoreEncodedCaptureConsumerDestroy(handle_);
+  encoded_capture_ingress::~encoded_capture_ingress() {
+    ApolloCoreEncodedCaptureIngressDestroy(handle_);
     handle_ = nullptr;
   }
 
-  encoded_capture_consumer::encoded_capture_consumer(encoded_capture_consumer &&other) noexcept :
+  encoded_capture_ingress::encoded_capture_ingress(encoded_capture_ingress &&other) noexcept :
       handle_(std::exchange(other.handle_, nullptr)) {
   }
 
-  encoded_capture_consumer &encoded_capture_consumer::operator=(encoded_capture_consumer &&other) noexcept {
+  encoded_capture_ingress &encoded_capture_ingress::operator=(encoded_capture_ingress &&other) noexcept {
     if (this == &other) {
       return *this;
     }
 
-    ApolloCoreEncodedCaptureConsumerDestroy(handle_);
+    ApolloCoreEncodedCaptureIngressDestroy(handle_);
     handle_ = std::exchange(other.handle_, nullptr);
     return *this;
   }
 
-  void encoded_capture_consumer::reset() {
-    ApolloCoreEncodedCaptureConsumerReset(handle_);
+  void encoded_capture_ingress::reset() {
+    ApolloCoreEncodedCaptureIngressReset(handle_);
   }
 
-  void encoded_capture_consumer::consume_frame(
+  void encoded_capture_ingress::set_frame_capacity(std::size_t capacity) {
+    ApolloCoreEncodedCaptureIngressSetFrameCapacity(handle_, capacity);
+  }
+
+  void encoded_capture_ingress::set_event_capacity(std::size_t capacity) {
+    ApolloCoreEncodedCaptureIngressSetEventCapacity(handle_, capacity);
+  }
+
+  void encoded_capture_ingress::consume_sample_buffer(
     ApolloCoreCaptureCodec codec,
     std::uint64_t source_sequence_number,
     std::uint64_t source_display_time,
@@ -86,10 +192,9 @@ namespace apollo::core {
     double output_callback_latency_milliseconds,
     bool is_key_frame,
     bool is_hdr_signaled,
-    const std::uint8_t *payload_bytes,
-    std::size_t payload_size
+    CMSampleBufferRef sample_buffer
   ) {
-    ApolloCoreEncodedCaptureConsumerConsumeFrame(
+    ApolloCoreEncodedCaptureIngressConsumeSampleBuffer(
       handle_,
       codec,
       source_sequence_number,
@@ -98,12 +203,11 @@ namespace apollo::core {
       output_callback_latency_milliseconds,
       is_key_frame,
       is_hdr_signaled,
-      payload_bytes,
-      payload_size
+      sample_buffer
     );
   }
 
-  void encoded_capture_consumer::consume_event(
+  void encoded_capture_ingress::consume_event(
     ApolloCoreCaptureEventKind kind,
     const char *message,
     bool has_stop_status,
@@ -113,7 +217,7 @@ namespace apollo::core {
     bool has_source_display_time,
     std::uint64_t source_display_time
   ) {
-    ApolloCoreEncodedCaptureConsumerConsumeEvent(
+    ApolloCoreEncodedCaptureIngressConsumeEvent(
       handle_,
       kind,
       message,
@@ -126,29 +230,30 @@ namespace apollo::core {
     );
   }
 
-  ApolloCoreEncodedCaptureConsumerSnapshot encoded_capture_consumer::snapshot() const {
-    return ApolloCoreEncodedCaptureConsumerCopySnapshot(handle_);
+  ApolloCoreEncodedCaptureIngressSnapshot encoded_capture_ingress::snapshot() const {
+    return ApolloCoreEncodedCaptureIngressCopySnapshot(handle_);
   }
 
-  std::vector<std::uint8_t> encoded_capture_consumer::copy_last_frame_payload() const {
-    const auto state = snapshot();
-    if (!state.has_last_frame || state.last_frame_payload_size == 0) {
-      return {};
-    }
-
-    std::vector<std::uint8_t> payload(state.last_frame_payload_size);
-    const auto copied = ApolloCoreEncodedCaptureConsumerCopyLastFramePayload(
-      handle_,
-      payload.data(),
-      payload.size()
-    );
-    payload.resize(copied);
-    return payload;
+  CMSampleBufferRef encoded_capture_ingress::create_retained_last_sample_buffer() const {
+    return ApolloCoreEncodedCaptureIngressCreateRetainedLastSampleBuffer(handle_);
   }
 
-  std::string encoded_capture_consumer::copy_last_event_message() const {
+  ApolloCoreEncodedCaptureFrameRecord encoded_capture_ingress::pop_next_frame(
+    CMSampleBufferRef *sample_buffer_out
+  ) {
+    return ApolloCoreEncodedCaptureIngressPopNextFrame(handle_, sample_buffer_out);
+  }
+
+  ApolloCoreEncodedCaptureEventRecord encoded_capture_ingress::pop_next_event(
+    char *message_destination,
+    std::size_t message_capacity
+  ) {
+    return ApolloCoreEncodedCaptureIngressPopNextEvent(handle_, message_destination, message_capacity);
+  }
+
+  std::string encoded_capture_ingress::copy_last_event_message() const {
     std::array<char, 512> buffer {};
-    const auto copied = ApolloCoreEncodedCaptureConsumerCopyLastEventMessage(
+    const auto copied = ApolloCoreEncodedCaptureIngressCopyLastEventMessage(
       handle_,
       buffer.data(),
       buffer.size()
@@ -156,7 +261,7 @@ namespace apollo::core {
     return std::string(buffer.data(), copied);
   }
 
-  ApolloCoreEncodedCaptureConsumer *encoded_capture_consumer::handle() const {
+  ApolloCoreEncodedCaptureIngress *encoded_capture_ingress::handle() const {
     return handle_;
   }
 }
@@ -171,28 +276,64 @@ const char *ApolloCoreBootstrapRuntimeDescription(void) {
   return description.c_str();
 }
 
-ApolloCoreEncodedCaptureConsumer *ApolloCoreEncodedCaptureConsumerCreate(void) {
-  return new ApolloCoreEncodedCaptureConsumer();
+ApolloCoreEncodedCaptureIngress *ApolloCoreEncodedCaptureIngressCreate(void) {
+  return new ApolloCoreEncodedCaptureIngress();
 }
 
-void ApolloCoreEncodedCaptureConsumerDestroy(ApolloCoreEncodedCaptureConsumer *consumer) {
-  delete consumer;
+void ApolloCoreEncodedCaptureIngressDestroy(ApolloCoreEncodedCaptureIngress *ingress) {
+  delete ingress;
 }
 
-void ApolloCoreEncodedCaptureConsumerReset(ApolloCoreEncodedCaptureConsumer *consumer) {
-  if (!consumer) {
+void ApolloCoreEncodedCaptureIngressReset(ApolloCoreEncodedCaptureIngress *ingress) {
+  if (!ingress) {
     return;
   }
 
-  std::scoped_lock lock(consumer->mutex);
-  consumer->frame_count = 0;
-  consumer->event_count = 0;
-  consumer->last_frame.reset();
-  consumer->last_event.reset();
+  std::scoped_lock lock(ingress->mutex);
+  ingress->frame_count = 0;
+  ingress->event_count = 0;
+  ingress->dropped_frame_count = 0;
+  ingress->dropped_event_count = 0;
+  ingress->last_frame.reset();
+  ingress->last_event.reset();
+  ingress->pending_frames.clear();
+  ingress->pending_events.clear();
 }
 
-void ApolloCoreEncodedCaptureConsumerConsumeFrame(
-  ApolloCoreEncodedCaptureConsumer *consumer,
+void ApolloCoreEncodedCaptureIngressSetFrameCapacity(
+  ApolloCoreEncodedCaptureIngress *ingress,
+  std::size_t capacity
+) {
+  if (!ingress) {
+    return;
+  }
+
+  std::scoped_lock lock(ingress->mutex);
+  ingress->frame_capacity = std::max<std::size_t>(1, capacity);
+  while (ingress->pending_frames.size() > ingress->frame_capacity) {
+    ingress->pending_frames.pop_front();
+    ingress->dropped_frame_count += 1;
+  }
+}
+
+void ApolloCoreEncodedCaptureIngressSetEventCapacity(
+  ApolloCoreEncodedCaptureIngress *ingress,
+  std::size_t capacity
+) {
+  if (!ingress) {
+    return;
+  }
+
+  std::scoped_lock lock(ingress->mutex);
+  ingress->event_capacity = std::max<std::size_t>(1, capacity);
+  while (ingress->pending_events.size() > ingress->event_capacity) {
+    ingress->pending_events.pop_front();
+    ingress->dropped_event_count += 1;
+  }
+}
+
+void ApolloCoreEncodedCaptureIngressConsumeSampleBuffer(
+  ApolloCoreEncodedCaptureIngress *ingress,
   ApolloCoreCaptureCodec codec,
   std::uint64_t source_sequence_number,
   std::uint64_t source_display_time,
@@ -200,15 +341,15 @@ void ApolloCoreEncodedCaptureConsumerConsumeFrame(
   double output_callback_latency_milliseconds,
   bool is_key_frame,
   bool is_hdr_signaled,
-  const std::uint8_t *payload_bytes,
-  std::size_t payload_size
+  CMSampleBufferRef sample_buffer
 ) {
-  if (!consumer) {
+  if (!ingress) {
     return;
   }
 
   encoded_frame_state_t frame {};
   frame.codec = codec;
+  frame.sample_buffer = retained_sample_buffer_t(sample_buffer);
   frame.source_sequence_number = source_sequence_number;
   frame.source_display_time = source_display_time;
   frame.has_output_callback_latency_milliseconds = has_output_callback_latency_milliseconds;
@@ -216,17 +357,18 @@ void ApolloCoreEncodedCaptureConsumerConsumeFrame(
   frame.is_key_frame = is_key_frame;
   frame.is_hdr_signaled = is_hdr_signaled;
 
-  if (payload_bytes && payload_size > 0) {
-    frame.payload.assign(payload_bytes, payload_bytes + payload_size);
+  std::scoped_lock lock(ingress->mutex);
+  ingress->frame_count += 1;
+  ingress->last_frame = frame;
+  ingress->pending_frames.push_back(std::move(frame));
+  while (ingress->pending_frames.size() > ingress->frame_capacity) {
+    ingress->pending_frames.pop_front();
+    ingress->dropped_frame_count += 1;
   }
-
-  std::scoped_lock lock(consumer->mutex);
-  consumer->frame_count += 1;
-  consumer->last_frame = std::move(frame);
 }
 
-void ApolloCoreEncodedCaptureConsumerConsumeEvent(
-  ApolloCoreEncodedCaptureConsumer *consumer,
+void ApolloCoreEncodedCaptureIngressConsumeEvent(
+  ApolloCoreEncodedCaptureIngress *ingress,
   ApolloCoreCaptureEventKind kind,
   const char *message,
   bool has_stop_status,
@@ -236,7 +378,7 @@ void ApolloCoreEncodedCaptureConsumerConsumeEvent(
   bool has_source_display_time,
   std::uint64_t source_display_time
 ) {
-  if (!consumer) {
+  if (!ingress) {
     return;
   }
 
@@ -252,39 +394,49 @@ void ApolloCoreEncodedCaptureConsumerConsumeEvent(
   event.has_source_display_time = has_source_display_time;
   event.source_display_time = source_display_time;
 
-  std::scoped_lock lock(consumer->mutex);
-  consumer->event_count += 1;
-  consumer->last_event = std::move(event);
+  std::scoped_lock lock(ingress->mutex);
+  ingress->event_count += 1;
+  ingress->last_event = event;
+  ingress->pending_events.push_back(std::move(event));
+  while (ingress->pending_events.size() > ingress->event_capacity) {
+    ingress->pending_events.pop_front();
+    ingress->dropped_event_count += 1;
+  }
 }
 
-ApolloCoreEncodedCaptureConsumerSnapshot ApolloCoreEncodedCaptureConsumerCopySnapshot(
-  const ApolloCoreEncodedCaptureConsumer *consumer
+ApolloCoreEncodedCaptureIngressSnapshot ApolloCoreEncodedCaptureIngressCopySnapshot(
+  const ApolloCoreEncodedCaptureIngress *ingress
 ) {
-  ApolloCoreEncodedCaptureConsumerSnapshot snapshot {};
+  ApolloCoreEncodedCaptureIngressSnapshot snapshot {};
   snapshot.last_frame_codec = ApolloCoreCaptureCodecUnknown;
   snapshot.last_event_kind = ApolloCoreCaptureEventKindUnknown;
 
-  if (!consumer) {
+  if (!ingress) {
     return snapshot;
   }
 
-  std::scoped_lock lock(consumer->mutex);
-  snapshot.frame_count = consumer->frame_count;
-  snapshot.event_count = consumer->event_count;
+  std::scoped_lock lock(ingress->mutex);
+  snapshot.frame_count = ingress->frame_count;
+  snapshot.event_count = ingress->event_count;
+  snapshot.queued_frame_count = ingress->pending_frames.size();
+  snapshot.queued_event_count = ingress->pending_events.size();
+  snapshot.dropped_frame_count = ingress->dropped_frame_count;
+  snapshot.dropped_event_count = ingress->dropped_event_count;
 
-  if (consumer->last_frame.has_value()) {
-    const auto &frame = *consumer->last_frame;
+  if (ingress->last_frame.has_value()) {
+    const auto &frame = *ingress->last_frame;
     snapshot.has_last_frame = true;
+    snapshot.has_last_sample_buffer = frame.sample_buffer.value != nullptr;
     snapshot.last_frame_codec = frame.codec;
-    snapshot.last_frame_payload_size = frame.payload.size();
+    snapshot.last_frame_payload_size = frame.payload_size();
     snapshot.last_frame_source_sequence_number = frame.source_sequence_number;
     snapshot.last_frame_source_display_time = frame.source_display_time;
     snapshot.last_frame_is_key_frame = frame.is_key_frame;
     snapshot.last_frame_is_hdr_signaled = frame.is_hdr_signaled;
   }
 
-  if (consumer->last_event.has_value()) {
-    const auto &event = *consumer->last_event;
+  if (ingress->last_event.has_value()) {
+    const auto &event = *ingress->last_event;
     snapshot.has_last_event = true;
     snapshot.last_event_kind = event.kind;
     snapshot.last_event_has_stop_status = event.has_stop_status;
@@ -298,43 +450,91 @@ ApolloCoreEncodedCaptureConsumerSnapshot ApolloCoreEncodedCaptureConsumerCopySna
   return snapshot;
 }
 
-size_t ApolloCoreEncodedCaptureConsumerCopyLastFramePayload(
-  const ApolloCoreEncodedCaptureConsumer *consumer,
-  std::uint8_t *destination,
-  size_t capacity
+CMSampleBufferRef ApolloCoreEncodedCaptureIngressCreateRetainedLastSampleBuffer(
+  const ApolloCoreEncodedCaptureIngress *ingress
 ) {
-  if (!consumer) {
-    return 0;
+  if (!ingress) {
+    return nullptr;
   }
 
-  std::scoped_lock lock(consumer->mutex);
-  if (!consumer->last_frame.has_value()) {
-    return 0;
+  std::scoped_lock lock(ingress->mutex);
+  if (!ingress->last_frame.has_value() || !ingress->last_frame->sample_buffer.value) {
+    return nullptr;
   }
 
-  const auto &payload = consumer->last_frame->payload;
-  const auto copy_size = std::min(capacity, payload.size());
-  if (copy_size > 0 && destination) {
-    std::memcpy(destination, payload.data(), copy_size);
-  }
-  return copy_size;
+  return reinterpret_cast<CMSampleBufferRef>(const_cast<void *>(CFRetain(ingress->last_frame->sample_buffer.value)));
 }
 
-size_t ApolloCoreEncodedCaptureConsumerCopyLastEventMessage(
-  const ApolloCoreEncodedCaptureConsumer *consumer,
+ApolloCoreEncodedCaptureFrameRecord ApolloCoreEncodedCaptureIngressPopNextFrame(
+  ApolloCoreEncodedCaptureIngress *ingress,
+  CMSampleBufferRef *retained_sample_buffer_out
+) {
+  ApolloCoreEncodedCaptureFrameRecord record {};
+
+  if (retained_sample_buffer_out) {
+    *retained_sample_buffer_out = nullptr;
+  }
+
+  if (!ingress) {
+    return record;
+  }
+
+  std::scoped_lock lock(ingress->mutex);
+  if (ingress->pending_frames.empty()) {
+    return record;
+  }
+
+  auto frame = std::move(ingress->pending_frames.front());
+  ingress->pending_frames.pop_front();
+  record = frame.record();
+  if (retained_sample_buffer_out && frame.sample_buffer.value) {
+    *retained_sample_buffer_out = reinterpret_cast<CMSampleBufferRef>(const_cast<void *>(CFRetain(frame.sample_buffer.value)));
+  }
+  return record;
+}
+
+ApolloCoreEncodedCaptureEventRecord ApolloCoreEncodedCaptureIngressPopNextEvent(
+  ApolloCoreEncodedCaptureIngress *ingress,
+  char *message_destination,
+  size_t message_capacity
+) {
+  ApolloCoreEncodedCaptureEventRecord record {};
+
+  if (!ingress) {
+    return record;
+  }
+
+  std::scoped_lock lock(ingress->mutex);
+  if (ingress->pending_events.empty()) {
+    return record;
+  }
+
+  auto event = std::move(ingress->pending_events.front());
+  ingress->pending_events.pop_front();
+  record = event.record();
+
+  const auto copy_size = std::min(message_capacity, event.message.size());
+  if (copy_size > 0 && message_destination) {
+    std::memcpy(message_destination, event.message.data(), copy_size);
+  }
+  return record;
+}
+
+size_t ApolloCoreEncodedCaptureIngressCopyLastEventMessage(
+  const ApolloCoreEncodedCaptureIngress *ingress,
   char *destination,
   size_t capacity
 ) {
-  if (!consumer) {
+  if (!ingress) {
     return 0;
   }
 
-  std::scoped_lock lock(consumer->mutex);
-  if (!consumer->last_event.has_value()) {
+  std::scoped_lock lock(ingress->mutex);
+  if (!ingress->last_event.has_value()) {
     return 0;
   }
 
-  const auto &message = consumer->last_event->message;
+  const auto &message = ingress->last_event->message;
   const auto copy_size = std::min(capacity, message.size());
   if (copy_size > 0 && destination) {
     std::memcpy(destination, message.data(), copy_size);

@@ -31,6 +31,10 @@ let project = Project(
                 public: "App/ApolloCore/include/ApolloCore.h",
                 private: "App/ApolloCore/include/ApolloCore.hpp"
             ),
+            dependencies: [
+                .sdk(name: "CoreFoundation", type: .framework),
+                .sdk(name: "CoreMedia", type: .framework)
+            ],
             settings: .settings(
                 base: [
                     "DEFINES_MODULE": "YES",
