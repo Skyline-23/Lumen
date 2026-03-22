@@ -107,8 +107,5 @@ struct ApolloRootView: View {
         }
         .frame(width: 360)
         .padding(24)
-        .task {
-            captureController.activateIfNeeded()
-        }
     }
 }

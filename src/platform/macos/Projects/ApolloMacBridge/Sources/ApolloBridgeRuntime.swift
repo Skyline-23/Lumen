@@ -134,15 +134,24 @@ public struct ApolloBridgeStatus: Equatable, Sendable {
     public let coreVersion: String
     public let runtimeDescription: String
     public let integrationStatus: String
+    public let captureSessionRunning: Bool
+    public let audioCaptureSessionRunning: Bool
+    public let automaticCaptureOrchestrationRunning: Bool
 
     public init(
         coreVersion: String,
         runtimeDescription: String,
-        integrationStatus: String
+        integrationStatus: String,
+        captureSessionRunning: Bool,
+        audioCaptureSessionRunning: Bool,
+        automaticCaptureOrchestrationRunning: Bool
     ) {
         self.coreVersion = coreVersion
         self.runtimeDescription = runtimeDescription
         self.integrationStatus = integrationStatus
+        self.captureSessionRunning = captureSessionRunning
+        self.audioCaptureSessionRunning = audioCaptureSessionRunning
+        self.automaticCaptureOrchestrationRunning = automaticCaptureOrchestrationRunning
     }
 }
 
@@ -356,6 +365,13 @@ private struct ApolloBridgeAutomationRequest: Equatable, Sendable {
 
 public actor ApolloBridgeRuntime {
     public static let shared = ApolloBridgeRuntime()
+    public nonisolated static let statusDidChangeNotification = Notification.Name("ApolloBridgeRuntimeStatusDidChange")
+    private nonisolated static let statusNotificationCoalescingNanoseconds: UInt64 = 100_000_000
+    private nonisolated static func postStatusDidChangeNotificationAsync() {
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: statusDidChangeNotification, object: nil)
+        }
+    }
 
     private let coreForwarder = ApolloCoreCaptureForwarder()
     private let audioForwarder = ApolloCoreAudioCaptureForwarder()
@@ -367,6 +383,8 @@ public actor ApolloBridgeRuntime {
     private var activeAudioCaptureConfiguration: ApolloMacDisplayKitAudioCaptureConfiguration?
     private var captureAutomationTask: Task<Void, Never>?
     private var mirroredCaptureRequestTask: Task<Void, Never>?
+    private var lastStatusNotificationUptimeNanoseconds: UInt64 = 0
+    private var hasPendingStatusNotification = false
 
     public init() {}
 
@@ -408,6 +426,7 @@ public actor ApolloBridgeRuntime {
         coreForwarder.setProducerActive(true)
         encodedCaptureSession = session
         activeCaptureConfiguration = configuration
+        publishStatusDidChange(immediate: true)
     }
 
     public func stopMacDisplayKitCapture() async {
@@ -424,6 +443,7 @@ public actor ApolloBridgeRuntime {
         coreForwarder.setProducerActive(false)
         encodedCaptureSession = nil
         activeCaptureConfiguration = nil
+        publishStatusDidChange(immediate: true)
     }
 
     public func makeDefaultMicrophoneAudioConfiguration() -> ApolloMacDisplayKitAudioCaptureConfiguration {
@@ -462,6 +482,7 @@ public actor ApolloBridgeRuntime {
         audioForwarder.setProducerActive(true)
         audioCaptureSession = session
         activeAudioCaptureConfiguration = configuration
+        publishStatusDidChange(immediate: true)
     }
 
     public func stopMacDisplayKitAudioCapture() async {
@@ -477,6 +498,7 @@ public actor ApolloBridgeRuntime {
         audioForwarder.setProducerActive(false)
         audioCaptureSession = nil
         activeAudioCaptureConfiguration = nil
+        publishStatusDidChange(immediate: true)
     }
 
     public func startApolloCoreCaptureAutomation() {
@@ -500,6 +522,7 @@ public actor ApolloBridgeRuntime {
                 )
             }
         }
+        publishStatusDidChange(immediate: true)
     }
 
     public func stopApolloCoreCaptureAutomation() async {
@@ -509,6 +532,7 @@ public actor ApolloBridgeRuntime {
         mirroredCaptureRequestTask = nil
         await stopMacDisplayKitAudioCapture()
         await stopMacDisplayKitCapture()
+        publishStatusDidChange(immediate: true)
     }
 
     public func isApolloCoreCaptureAutomationRunning() -> Bool {
@@ -574,7 +598,10 @@ public actor ApolloBridgeRuntime {
         ApolloBridgeStatus(
             coreVersion: String(cString: ApolloCoreBootstrapVersionString()),
             runtimeDescription: String(cString: ApolloCoreBootstrapRuntimeDescription()),
-            integrationStatus: "Swift shell, C/C++ core, and bridge targets are ready. ApolloMacBridge now links MacDisplayCaptureKit, forwards encoded video and raw PCM audio into ApolloCore shared ingress surfaces, and can automatically follow ApolloCore streaming capture requests."
+            integrationStatus: "Swift shell, C/C++ core, and bridge targets are ready. ApolloMacBridge now links MacDisplayCaptureKit, forwards encoded video and raw PCM audio into ApolloCore shared ingress surfaces, and can automatically follow ApolloCore streaming capture requests.",
+            captureSessionRunning: encodedCaptureSession != nil,
+            audioCaptureSessionRunning: audioCaptureSession != nil,
+            automaticCaptureOrchestrationRunning: captureAutomationTask != nil
         )
     }
 
@@ -621,6 +648,7 @@ public actor ApolloBridgeRuntime {
 
     private func recordEncodedFrame(_ frame: MDKEncodedFrame) {
         latestFrame = ApolloBridgeEncodedFrameSnapshot(frame: frame)
+        publishStatusDidChange()
     }
 
     private func recordEncodedCaptureEvent(_ event: MDKEncodedCaptureSessionEvent) {
@@ -628,14 +656,48 @@ public actor ApolloBridgeRuntime {
         if recentEvents.count > 16 {
             recentEvents.removeFirst(recentEvents.count - 16)
         }
+        publishStatusDidChange()
     }
 
     private func recordAudioFrame(_ frame: MDKAudioFrame) {
         audioForwarder.consume(frame: frame)
+        publishStatusDidChange()
     }
 
     private func recordAudioCaptureEvent(_ event: MDKAudioCaptureSessionEvent) {
         audioForwarder.consume(event: event)
+        publishStatusDidChange()
+    }
+
+    private func publishStatusDidChange(immediate: Bool = false) {
+        let now = DispatchTime.now().uptimeNanoseconds
+        if immediate || now - lastStatusNotificationUptimeNanoseconds >= Self.statusNotificationCoalescingNanoseconds {
+            hasPendingStatusNotification = false
+            lastStatusNotificationUptimeNanoseconds = now
+            Self.postStatusDidChangeNotificationAsync()
+            return
+        }
+
+        guard !hasPendingStatusNotification else {
+            return
+        }
+
+        hasPendingStatusNotification = true
+        let delay = Self.statusNotificationCoalescingNanoseconds - (now - lastStatusNotificationUptimeNanoseconds)
+        Task { [delay] in
+            try? await Task.sleep(nanoseconds: delay)
+            self.flushPendingStatusDidChange()
+        }
+    }
+
+    private func flushPendingStatusDidChange() {
+        guard hasPendingStatusNotification else {
+            return
+        }
+
+        hasPendingStatusNotification = false
+        lastStatusNotificationUptimeNanoseconds = DispatchTime.now().uptimeNanoseconds
+        Self.postStatusDidChangeNotificationAsync()
     }
 
     func debugResetCoreForwarding() {

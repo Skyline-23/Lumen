@@ -92,15 +92,27 @@ final class ApolloCaptureController: ObservableObject {
     @Published var showCursor = false
 
     private let adapter: ApolloMacCaptureAdapter
-    private var refreshTask: Task<Void, Never>?
-    private var isActivated = false
+    private var statusObserver: NSObjectProtocol?
 
     init(adapter: ApolloMacCaptureAdapter = ApolloMacCaptureAdapter()) {
         self.adapter = adapter
+        statusObserver = NotificationCenter.default.addObserver(
+            forName: .ApolloMacCaptureAdapterStatusDidChange,
+            object: adapter,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.refreshStatus()
+            }
+        }
+        adapter.startAutomaticApolloCoreCaptureOrchestration()
         self.status = adapter.copyStatusSnapshot()
     }
 
     deinit {
+        if let statusObserver {
+            NotificationCenter.default.removeObserver(statusObserver)
+        }
         adapter.stopAutomaticApolloCoreCaptureOrchestration()
     }
 
@@ -108,19 +120,7 @@ final class ApolloCaptureController: ObservableObject {
         status?.captureSessionRunning == true ? "dot.radiowaves.left.and.right" : "bolt.horizontal.circle"
     }
 
-    func activateIfNeeded() {
-        guard !isActivated else {
-            return
-        }
-
-        isActivated = true
-        adapter.startAutomaticApolloCoreCaptureOrchestration()
-        refreshStatus()
-        startRefreshLoop()
-    }
-
     func startOrRestartCapture() async {
-        refreshTask?.cancel()
         isStarting = true
         lastErrorMessage = nil
 
@@ -136,10 +136,9 @@ final class ApolloCaptureController: ObservableObject {
                 frameCapacity: 128,
                 eventCapacity: 32
             )
-            status = adapter.copyStatusSnapshot()
-            startRefreshLoop()
+            refreshStatus()
         } catch {
-            status = adapter.copyStatusSnapshot()
+            refreshStatus()
             lastErrorMessage = error.localizedDescription
         }
 
@@ -147,27 +146,11 @@ final class ApolloCaptureController: ObservableObject {
     }
 
     func stopCapture() {
-        refreshTask?.cancel()
-        refreshTask = nil
         adapter.stopManagedCaptureSession()
-        status = adapter.copyStatusSnapshot()
+        refreshStatus()
     }
 
     func refreshStatus() {
         status = adapter.copyStatusSnapshot()
-    }
-
-    private func startRefreshLoop() {
-        refreshTask?.cancel()
-        refreshTask = Task { [weak self] in
-            while !Task.isCancelled {
-                guard let self else {
-                    return
-                }
-
-                self.refreshStatus()
-                try? await Task.sleep(for: .milliseconds(250))
-            }
-        }
     }
 }

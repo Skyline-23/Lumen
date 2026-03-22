@@ -89,6 +89,9 @@ typedef struct ApolloMacBridgeStatusSnapshot {
   char core_version[128];
   char runtime_description[256];
   char integration_status[512];
+  bool capture_session_running;
+  bool audio_capture_session_running;
+  bool automatic_capture_orchestration_running;
 } ApolloMacBridgeStatusSnapshot;
 
 typedef void (*ApolloMacBridgeEncodedFrameHandler)(

@@ -1,15 +1,58 @@
 #import <ApolloMacCaptureAdapter/ApolloMacCaptureAdapter.h>
 
 #import <atomic>
+#import <chrono>
 #import <cstring>
+
+@class ApolloMacCaptureAdapter;
+
+@interface ApolloMacCaptureAdapter ()
+- (void)postStatusDidChangeNotification;
+@end
 
 namespace {
   struct ApolloMacCaptureAdapterCallbackState {
+    __unsafe_unretained ApolloMacCaptureAdapter *adapter;
     std::atomic<uint64_t> frame_callback_count {0};
     std::atomic<uint64_t> event_callback_count {0};
     std::atomic<uint64_t> audio_frame_callback_count {0};
     std::atomic<uint64_t> audio_event_callback_count {0};
+    std::atomic<uint64_t> last_status_notification_nanoseconds {0};
   };
+
+  constexpr uint64_t status_notification_interval_nanoseconds = 100000000ULL;
+
+  void maybe_post_status_notification(ApolloMacCaptureAdapterCallbackState *state) {
+    if (!state || !state->adapter) {
+      return;
+    }
+
+    const auto now = static_cast<uint64_t>(
+      std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()
+      ).count()
+    );
+    auto expected = state->last_status_notification_nanoseconds.load(std::memory_order_relaxed);
+    if (expected != 0 && now - expected < status_notification_interval_nanoseconds) {
+      return;
+    }
+
+    if (!state->last_status_notification_nanoseconds.compare_exchange_strong(
+          expected,
+          now,
+          std::memory_order_relaxed,
+          std::memory_order_relaxed
+        )) {
+      return;
+    }
+
+    ApolloMacCaptureAdapter *adapter = state->adapter;
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (adapter) {
+        [adapter postStatusDidChangeNotification];
+      }
+    });
+  }
 
   void handle_encoded_frame(
     void *context,
@@ -18,6 +61,7 @@ namespace {
   ) {
     auto *state = static_cast<ApolloMacCaptureAdapterCallbackState *>(context);
     state->frame_callback_count.fetch_add(1, std::memory_order_relaxed);
+    maybe_post_status_notification(state);
   }
 
   void handle_capture_event(
@@ -27,6 +71,7 @@ namespace {
   ) {
     auto *state = static_cast<ApolloMacCaptureAdapterCallbackState *>(context);
     state->event_callback_count.fetch_add(1, std::memory_order_relaxed);
+    maybe_post_status_notification(state);
   }
 
   void handle_audio_frame(
@@ -37,6 +82,7 @@ namespace {
   ) {
     auto *state = static_cast<ApolloMacCaptureAdapterCallbackState *>(context);
     state->audio_frame_callback_count.fetch_add(1, std::memory_order_relaxed);
+    maybe_post_status_notification(state);
   }
 
   void handle_audio_capture_event(
@@ -46,6 +92,7 @@ namespace {
   ) {
     auto *state = static_cast<ApolloMacCaptureAdapterCallbackState *>(context);
     state->audio_event_callback_count.fetch_add(1, std::memory_order_relaxed);
+    maybe_post_status_notification(state);
   }
 
   NSString *string_from_c_buffer(const char *buffer) {
@@ -64,6 +111,11 @@ namespace {
                            }];
   }
 }
+
+NSNotificationName const ApolloMacCaptureAdapterStatusDidChangeNotification =
+  @"ApolloMacCaptureAdapterStatusDidChangeNotification";
+static NSNotificationName const ApolloBridgeRuntimeStatusDidChangeNotification =
+  @"ApolloBridgeRuntimeStatusDidChange";
 
 @implementation ApolloMacCaptureAdapterStatus
 
@@ -106,10 +158,8 @@ namespace {
 @implementation ApolloMacCaptureAdapter {
   ApolloMacBridgeController *_controller;
   ApolloMacCaptureAdapterCallbackState _callback_state;
-  BOOL _capture_session_running;
-  BOOL _audio_capture_session_running;
-  BOOL _automatic_capture_orchestration_running;
   BOOL _forwarding_pump_running;
+  id _bridge_status_observer;
 }
 
 - (instancetype)init {
@@ -119,10 +169,23 @@ namespace {
   }
 
   _controller = ApolloMacBridgeControllerCreate();
+  _callback_state.adapter = self;
+  __weak typeof(self) weak_self = self;
+  _bridge_status_observer = [[NSNotificationCenter defaultCenter]
+    addObserverForName:ApolloBridgeRuntimeStatusDidChangeNotification
+                object:nil
+                 queue:[NSOperationQueue mainQueue]
+            usingBlock:^(__unused NSNotification *notification) {
+              [weak_self postStatusDidChangeNotification];
+            }];
   return self;
 }
 
 - (void)dealloc {
+  if (_bridge_status_observer) {
+    [[NSNotificationCenter defaultCenter] removeObserver:_bridge_status_observer];
+    _bridge_status_observer = nil;
+  }
   if (_controller) {
     ApolloMacBridgeControllerStopApolloCoreCaptureAutomation(_controller);
     ApolloMacBridgeControllerStopCoreForwardingPump(_controller);
@@ -215,17 +278,16 @@ namespace {
     if (error) {
       *error = adapter_error(string_from_c_buffer(error_buffer));
     }
-    _capture_session_running = NO;
     return NO;
   }
 
-  _capture_session_running = YES;
+  [self postStatusDidChangeNotification];
   return YES;
 }
 
 - (void)stopMacDisplayKitCapture {
   ApolloMacBridgeControllerStopMacDisplayKitCapture(_controller);
-  _capture_session_running = NO;
+  [self postStatusDidChangeNotification];
 }
 
 - (BOOL)startMacDisplayKitAudioCaptureWithConfiguration:(ApolloMacBridgeAudioCaptureConfiguration)configuration
@@ -241,28 +303,26 @@ namespace {
     if (error) {
       *error = adapter_error(string_from_c_buffer(error_buffer));
     }
-    _audio_capture_session_running = NO;
     return NO;
   }
 
-  _audio_capture_session_running = YES;
+  [self postStatusDidChangeNotification];
   return YES;
 }
 
 - (void)stopMacDisplayKitAudioCapture {
   ApolloMacBridgeControllerStopMacDisplayKitAudioCapture(_controller);
-  _audio_capture_session_running = NO;
+  [self postStatusDidChangeNotification];
 }
 
 - (void)startAutomaticApolloCoreCaptureOrchestration {
   ApolloMacBridgeControllerStartApolloCoreCaptureAutomation(_controller);
-  _automatic_capture_orchestration_running =
-    ApolloMacBridgeControllerIsApolloCoreCaptureAutomationRunning(_controller);
+  [self postStatusDidChangeNotification];
 }
 
 - (void)stopAutomaticApolloCoreCaptureOrchestration {
   ApolloMacBridgeControllerStopApolloCoreCaptureAutomation(_controller);
-  _automatic_capture_orchestration_running = NO;
+  [self postStatusDidChangeNotification];
 }
 
 - (BOOL)startForwardingPumpWithError:(NSError * _Nullable __autoreleasing *)error {
@@ -289,17 +349,17 @@ namespace {
   }
 
   _forwarding_pump_running = YES;
+  [self postStatusDidChangeNotification];
   return YES;
 }
 
 - (void)stopForwardingPump {
   ApolloMacBridgeControllerStopCoreForwardingPump(_controller);
   _forwarding_pump_running = NO;
+  [self postStatusDidChangeNotification];
 }
 
 - (ApolloMacCaptureAdapterStatus *)copyStatusSnapshot {
-  _automatic_capture_orchestration_running =
-    ApolloMacBridgeControllerIsApolloCoreCaptureAutomationRunning(_controller);
   ApolloMacBridgeStatusSnapshot bridge_status = ApolloMacBridgeControllerCopyStatusSnapshot(_controller);
   ApolloCoreEncodedCaptureIngressSnapshot core_snapshot =
     ApolloMacBridgeControllerCopyCoreForwardingSnapshot(_controller);
@@ -309,9 +369,9 @@ namespace {
                initWithCoreVersion:string_from_c_buffer(bridge_status.core_version)
                  runtimeDescription:string_from_c_buffer(bridge_status.runtime_description)
                   integrationStatus:string_from_c_buffer(bridge_status.integration_status)
-              captureSessionRunning:_capture_session_running
-          audioCaptureSessionRunning:_audio_capture_session_running
-    automaticCaptureOrchestrationRunning:_automatic_capture_orchestration_running
+              captureSessionRunning:bridge_status.capture_session_running
+          audioCaptureSessionRunning:bridge_status.audio_capture_session_running
+    automaticCaptureOrchestrationRunning:bridge_status.automatic_capture_orchestration_running
                forwardingPumpRunning:_forwarding_pump_running
           forwardedFrameCallbackCount:static_cast<NSUInteger>(
             _callback_state.frame_callback_count.load(std::memory_order_relaxed)
@@ -326,7 +386,13 @@ namespace {
       _callback_state.audio_event_callback_count.load(std::memory_order_relaxed)
     )
                coreForwardingSnapshot:core_snapshot
-            audioForwardingSnapshot:audio_snapshot];
+                        audioForwardingSnapshot:audio_snapshot];
+}
+
+- (void)postStatusDidChangeNotification {
+  [[NSNotificationCenter defaultCenter]
+    postNotificationName:ApolloMacCaptureAdapterStatusDidChangeNotification
+                  object:self];
 }
 
 @end

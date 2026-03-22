@@ -129,11 +129,17 @@ public final class ApolloBridgeStatusBox: NSObject {
     public let coreVersion: String
     public let runtimeDescription: String
     public let integrationStatus: String
+    public let captureSessionRunning: Bool
+    public let audioCaptureSessionRunning: Bool
+    public let automaticCaptureOrchestrationRunning: Bool
 
     init(snapshot: ApolloBridgeStatus) {
         self.coreVersion = snapshot.coreVersion
         self.runtimeDescription = snapshot.runtimeDescription
         self.integrationStatus = snapshot.integrationStatus
+        self.captureSessionRunning = snapshot.captureSessionRunning
+        self.audioCaptureSessionRunning = snapshot.audioCaptureSessionRunning
+        self.automaticCaptureOrchestrationRunning = snapshot.automaticCaptureOrchestrationRunning
     }
 }
 
@@ -305,6 +311,10 @@ public final class ApolloBridgeDrainedEventBox: NSObject {
 public final class ApolloBridgeObjCFacade: NSObject {
     private let runtime: ApolloBridgeRuntime
 
+    @objc public static func runtimeStatusDidChangeNotificationName() -> String {
+        ApolloBridgeRuntime.statusDidChangeNotification.rawValue
+    }
+
     public override init() {
         self.runtime = ApolloBridgeRuntime()
         super.init()
@@ -389,7 +399,10 @@ public final class ApolloBridgeObjCFacade: NSObject {
             snapshot: ApolloBridgeStatus(
                 coreVersion: String(cString: ApolloCoreBootstrapVersionString()),
                 runtimeDescription: String(cString: ApolloCoreBootstrapRuntimeDescription()),
-                integrationStatus: "ApolloBridgeObjCFacade failed to read the actor-backed status snapshot."
+                integrationStatus: "ApolloBridgeObjCFacade failed to read the actor-backed status snapshot.",
+                captureSessionRunning: false,
+                audioCaptureSessionRunning: false,
+                automaticCaptureOrchestrationRunning: false
             )
         )
     }

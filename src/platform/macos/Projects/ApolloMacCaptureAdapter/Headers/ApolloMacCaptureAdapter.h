@@ -6,6 +6,8 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+FOUNDATION_EXPORT NSNotificationName const ApolloMacCaptureAdapterStatusDidChangeNotification;
+
 @interface ApolloMacCaptureAdapterStatus : NSObject
 
 @property(nonatomic, readonly, copy) NSString *coreVersion;

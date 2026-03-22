@@ -395,6 +395,9 @@ ApolloMacBridgeStatusSnapshot ApolloMacBridgeControllerCopyStatusSnapshot(
   copy_string_to_buffer(box.integrationStatus,
                         snapshot.integration_status,
                         sizeof(snapshot.integration_status));
+  snapshot.capture_session_running = box.captureSessionRunning;
+  snapshot.audio_capture_session_running = box.audioCaptureSessionRunning;
+  snapshot.automatic_capture_orchestration_running = box.automaticCaptureOrchestrationRunning;
   return snapshot;
 }
 
