@@ -50,6 +50,81 @@ public final class ApolloBridgeConfigurationBox: NSObject {
 }
 
 @objcMembers
+public final class ApolloBridgeAudioConfigurationBox: NSObject {
+    public let sourceKindRawValue: Int
+    public let displayID: UInt32
+    public let excludesCurrentProcessAudio: Bool
+    public let inputID: String?
+    public let sampleRate: Int
+    public let channelCount: Int
+    public let frameSize: Int
+
+    public init(
+        sourceKindRawValue: Int,
+        displayID: UInt32,
+        excludesCurrentProcessAudio: Bool,
+        inputID: String?,
+        sampleRate: Int,
+        channelCount: Int,
+        frameSize: Int
+    ) {
+        self.sourceKindRawValue = sourceKindRawValue
+        self.displayID = displayID
+        self.excludesCurrentProcessAudio = excludesCurrentProcessAudio
+        self.inputID = inputID
+        self.sampleRate = sampleRate
+        self.channelCount = channelCount
+        self.frameSize = frameSize
+    }
+
+    convenience init(configuration: ApolloMacDisplayKitAudioCaptureConfiguration) {
+        switch configuration.source {
+        case .microphone(let inputID):
+            self.init(
+                sourceKindRawValue: ApolloBridgeObjCFacade.rawValue(for: ApolloAudioCaptureSourceKind.microphone),
+                displayID: 0,
+                excludesCurrentProcessAudio: false,
+                inputID: inputID,
+                sampleRate: configuration.sampleRate,
+                channelCount: configuration.channelCount,
+                frameSize: configuration.frameSize
+            )
+        case .systemOutput(let displayID, let excludesCurrentProcessAudio):
+            self.init(
+                sourceKindRawValue: ApolloBridgeObjCFacade.rawValue(for: ApolloAudioCaptureSourceKind.systemOutput),
+                displayID: displayID,
+                excludesCurrentProcessAudio: excludesCurrentProcessAudio,
+                inputID: nil,
+                sampleRate: configuration.sampleRate,
+                channelCount: configuration.channelCount,
+                frameSize: configuration.frameSize
+            )
+        }
+    }
+
+    var swiftValue: ApolloMacDisplayKitAudioCaptureConfiguration {
+        let sourceKind = ApolloBridgeObjCFacade.audioSourceKind(fromRawValue: sourceKindRawValue)
+        switch sourceKind {
+        case .microphone:
+            return .microphone(
+                inputID: inputID?.isEmpty == false ? inputID : nil,
+                sampleRate: sampleRate,
+                channelCount: channelCount,
+                frameSize: frameSize
+            )
+        case .systemOutput:
+            return .systemOutput(
+                displayID: displayID,
+                sampleRate: sampleRate,
+                channelCount: channelCount,
+                frameSize: frameSize,
+                excludesCurrentProcessAudio: excludesCurrentProcessAudio
+            )
+        }
+    }
+}
+
+@objcMembers
 public final class ApolloBridgeStatusBox: NSObject {
     public let coreVersion: String
     public let runtimeDescription: String
@@ -59,6 +134,41 @@ public final class ApolloBridgeStatusBox: NSObject {
         self.coreVersion = snapshot.coreVersion
         self.runtimeDescription = snapshot.runtimeDescription
         self.integrationStatus = snapshot.integrationStatus
+    }
+}
+
+@objcMembers
+public final class ApolloBridgeCoreAudioForwardingSnapshotBox: NSObject {
+    public let frameCount: UInt64
+    public let eventCount: UInt64
+    public let queuedFrameCount: UInt64
+    public let queuedEventCount: UInt64
+    public let droppedFrameCount: UInt64
+    public let droppedEventCount: UInt64
+    public let hasLastFrame: Bool
+    public let lastFrameSequenceNumber: UInt64
+    public let lastFrameHostTimeNanoseconds: UInt64
+    public let lastFrameSampleRate: Int
+    public let lastFrameChannelCount: Int
+    public let lastFrameFrameCount: Int
+    public let lastFramePCMByteCount: Int
+    public let lastEventKindRawValue: Int
+
+    init(snapshot: ApolloBridgeAudioForwardingSnapshot) {
+        self.frameCount = snapshot.frameCount
+        self.eventCount = snapshot.eventCount
+        self.queuedFrameCount = snapshot.queuedFrameCount
+        self.queuedEventCount = snapshot.queuedEventCount
+        self.droppedFrameCount = snapshot.droppedFrameCount
+        self.droppedEventCount = snapshot.droppedEventCount
+        self.hasLastFrame = snapshot.lastFrameSequenceNumber != nil
+        self.lastFrameSequenceNumber = snapshot.lastFrameSequenceNumber ?? 0
+        self.lastFrameHostTimeNanoseconds = snapshot.lastFrameHostTimeNanoseconds ?? 0
+        self.lastFrameSampleRate = snapshot.lastFrameSampleRate ?? 0
+        self.lastFrameChannelCount = snapshot.lastFrameChannelCount ?? 0
+        self.lastFrameFrameCount = snapshot.lastFrameFrameCount ?? 0
+        self.lastFramePCMByteCount = snapshot.lastFramePCMByteCount
+        self.lastEventKindRawValue = snapshot.lastEventKind.map(ApolloBridgeObjCFacade.rawValue(for:)) ?? -1
     }
 }
 
@@ -102,6 +212,25 @@ public final class ApolloBridgeCoreForwardingSnapshotBox: NSObject {
 }
 
 @objcMembers
+public final class ApolloBridgeDrainedAudioFrameBox: NSObject {
+    public let sequenceNumber: UInt64
+    public let hostTimeNanoseconds: UInt64
+    public let sampleRate: Int
+    public let channelCount: Int
+    public let frameCount: Int
+    public let pcmFloat32LE: NSData
+
+    init(frame: ApolloBridgeDrainedAudioFrame) {
+        self.sequenceNumber = frame.sequenceNumber
+        self.hostTimeNanoseconds = frame.hostTimeNanoseconds
+        self.sampleRate = frame.sampleRate
+        self.channelCount = frame.channelCount
+        self.frameCount = frame.frameCount
+        self.pcmFloat32LE = frame.pcmFloat32LE as NSData
+    }
+}
+
+@objcMembers
 public final class ApolloBridgeDrainedFrameBox: NSObject {
     public let codecRawValue: Int
     public let payloadSize: Int
@@ -123,6 +252,29 @@ public final class ApolloBridgeDrainedFrameBox: NSObject {
         self.isKeyFrame = frame.isKeyFrame
         self.isHDRSignaled = frame.isHDRSignaled
         self.sampleBuffer = frame.sampleBuffer
+    }
+}
+
+@objcMembers
+public final class ApolloBridgeDrainedAudioEventBox: NSObject {
+    public let kindRawValue: Int
+    public let message: String?
+    public let hasStopStatus: Bool
+    public let stopStatus: Int32
+    public let hasAutomaticRestartCount: Bool
+    public let automaticRestartCount: UInt64
+    public let hasSourceSequenceNumber: Bool
+    public let sourceSequenceNumber: UInt64
+
+    init(event: ApolloBridgeDrainedAudioEvent) {
+        self.kindRawValue = ApolloBridgeObjCFacade.rawValue(for: event.kind)
+        self.message = event.message
+        self.hasStopStatus = event.stopStatus != nil
+        self.stopStatus = event.stopStatus ?? 0
+        self.hasAutomaticRestartCount = event.automaticRestartCount != nil
+        self.automaticRestartCount = event.automaticRestartCount ?? 0
+        self.hasSourceSequenceNumber = event.sourceSequenceNumber != nil
+        self.sourceSequenceNumber = event.sourceSequenceNumber ?? 0
     }
 }
 
@@ -162,6 +314,14 @@ public final class ApolloBridgeObjCFacade: NSObject {
         ApolloBridgeConfigurationBox(configuration: .panelNative(displayID: displayID))
     }
 
+    public func makeDefaultMicrophoneAudioConfiguration() -> ApolloBridgeAudioConfigurationBox {
+        ApolloBridgeAudioConfigurationBox(configuration: .microphone())
+    }
+
+    public func makeSystemOutputAudioConfiguration(displayID: UInt32) -> ApolloBridgeAudioConfigurationBox {
+        ApolloBridgeAudioConfigurationBox(configuration: .systemOutput(displayID: displayID))
+    }
+
     public func startMacDisplayKitCaptureSync(
         _ configuration: ApolloBridgeConfigurationBox,
         error errorPointer: NSErrorPointer
@@ -180,6 +340,27 @@ public final class ApolloBridgeObjCFacade: NSObject {
     public func stopMacDisplayKitCaptureSync() {
         try? blockingRun { [self] in
             await self.runtime.stopMacDisplayKitCapture()
+        }
+    }
+
+    public func startMacDisplayKitAudioCaptureSync(
+        _ configuration: ApolloBridgeAudioConfigurationBox,
+        error errorPointer: NSErrorPointer
+    ) -> Bool {
+        do {
+            try blockingRun { [self] in
+                try await self.runtime.startMacDisplayKitAudioCapture(configuration: configuration.swiftValue)
+            }
+            return true
+        } catch {
+            errorPointer?.pointee = error as NSError
+            return false
+        }
+    }
+
+    public func stopMacDisplayKitAudioCaptureSync() {
+        try? blockingRun { [self] in
+            await self.runtime.stopMacDisplayKitAudioCapture()
         }
     }
 
@@ -216,6 +397,39 @@ public final class ApolloBridgeObjCFacade: NSObject {
         )
     }
 
+    public func configureAudioForwardingSync(frameCapacity: Int, eventCapacity: Int) {
+        try? blockingRun { [self] in
+            await self.runtime.configureAudioForwarding(
+                frameCapacity: frameCapacity,
+                eventCapacity: eventCapacity
+            )
+        }
+    }
+
+    public func copyAudioForwardingSnapshotSync() -> ApolloBridgeCoreAudioForwardingSnapshotBox {
+        (try? blockingRun { [self] in
+            ApolloBridgeCoreAudioForwardingSnapshotBox(
+                snapshot: await self.runtime.audioForwardingSnapshot()
+            )
+        }) ?? ApolloBridgeCoreAudioForwardingSnapshotBox(
+            snapshot: ApolloBridgeAudioForwardingSnapshot(
+                frameCount: 0,
+                eventCount: 0,
+                queuedFrameCount: 0,
+                queuedEventCount: 0,
+                droppedFrameCount: 0,
+                droppedEventCount: 0,
+                lastFrameSequenceNumber: nil,
+                lastFrameHostTimeNanoseconds: nil,
+                lastFrameSampleRate: nil,
+                lastFrameChannelCount: nil,
+                lastFrameFrameCount: nil,
+                lastFramePCMByteCount: 0,
+                lastEventKind: nil
+            )
+        )
+    }
+
     public func popNextCoreForwardedFrameSync() -> ApolloBridgeDrainedFrameBox? {
         try? blockingRun { [self] in
             await self.runtime.drainNextCoreForwardedFrame().map {
@@ -228,6 +442,22 @@ public final class ApolloBridgeObjCFacade: NSObject {
         try? blockingRun { [self] in
             await self.runtime.drainNextCoreForwardedEvent().map {
                 ApolloBridgeDrainedEventBox(event: $0)
+            }
+        }
+    }
+
+    public func popNextCoreForwardedAudioFrameSync() -> ApolloBridgeDrainedAudioFrameBox? {
+        try? blockingRun { [self] in
+            await self.runtime.drainNextCoreForwardedAudioFrame().map {
+                ApolloBridgeDrainedAudioFrameBox(frame: $0)
+            }
+        }
+    }
+
+    public func popNextCoreForwardedAudioEventSync() -> ApolloBridgeDrainedAudioEventBox? {
+        try? blockingRun { [self] in
+            await self.runtime.drainNextCoreForwardedAudioEvent().map {
+                ApolloBridgeDrainedAudioEventBox(event: $0)
             }
         }
     }
@@ -309,6 +539,15 @@ extension ApolloBridgeObjCFacade {
         }
     }
 
+    static func audioSourceKind(fromRawValue rawValue: Int) -> ApolloAudioCaptureSourceKind {
+        switch rawValue {
+        case 1:
+            return .systemOutput
+        default:
+            return .microphone
+        }
+    }
+
     static func rawValue(for codec: ApolloCaptureCodec) -> Int {
         switch codec {
         case .h264:
@@ -339,6 +578,15 @@ extension ApolloBridgeObjCFacade {
             return 2
         case .q4:
             return 3
+        }
+    }
+
+    static func rawValue(for audioSourceKind: ApolloAudioCaptureSourceKind) -> Int {
+        switch audioSourceKind {
+        case .microphone:
+            return 0
+        case .systemOutput:
+            return 1
         }
     }
 

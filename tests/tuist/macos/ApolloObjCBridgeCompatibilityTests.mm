@@ -38,6 +38,27 @@
   XCTAssertEqual(forwarding.queued_frame_count, 0ULL);
   XCTAssertEqual(forwarding.queued_event_count, 0ULL);
 
+  ApolloMacBridgeAudioCaptureConfiguration microphoneConfiguration =
+    ApolloMacBridgeControllerMakeDefaultMicrophoneAudioConfiguration();
+  XCTAssertEqual(microphoneConfiguration.source_kind, ApolloMacBridgeAudioSourceKindMicrophone);
+  XCTAssertEqual(microphoneConfiguration.sample_rate, 48000);
+  XCTAssertEqual(microphoneConfiguration.channel_count, 2);
+  XCTAssertEqual(microphoneConfiguration.frame_size, 480);
+
+  ApolloMacBridgeAudioCaptureConfiguration systemOutputConfiguration =
+    ApolloMacBridgeControllerMakeSystemOutputAudioConfiguration(7);
+  XCTAssertEqual(systemOutputConfiguration.source_kind, ApolloMacBridgeAudioSourceKindSystemOutput);
+  XCTAssertEqual(systemOutputConfiguration.display_id, 7u);
+  XCTAssertEqual(systemOutputConfiguration.sample_rate, 48000);
+
+  ApolloMacBridgeControllerConfigureAudioForwarding(controller, 2, 3);
+  ApolloMacBridgeAudioForwardingSnapshot audioForwarding =
+    ApolloMacBridgeControllerCopyAudioForwardingSnapshot(controller);
+  XCTAssertEqual(audioForwarding.frame_count, 0ULL);
+  XCTAssertEqual(audioForwarding.event_count, 0ULL);
+  XCTAssertEqual(audioForwarding.queued_frame_count, 0ULL);
+  XCTAssertEqual(audioForwarding.queued_event_count, 0ULL);
+
   ApolloMacBridgeControllerDestroy(controller);
 }
 
@@ -55,6 +76,18 @@
   ApolloCoreEncodedCaptureEventRecord event =
     ApolloMacBridgeControllerPopNextForwardedEvent(controller, message, sizeof(message));
   XCTAssertFalse(event.has_value);
+  XCTAssertEqual(strcmp(message, ""), 0);
+
+  uint8_t pcm[256] = {};
+  size_t copiedPCMBytes = 0;
+  ApolloMacBridgeAudioCaptureFrameRecord audioFrame =
+    ApolloMacBridgeControllerPopNextForwardedAudioFrame(controller, pcm, sizeof(pcm), &copiedPCMBytes);
+  XCTAssertFalse(audioFrame.has_value);
+  XCTAssertEqual(copiedPCMBytes, 0UL);
+
+  ApolloMacBridgeAudioCaptureEventRecord audioEvent =
+    ApolloMacBridgeControllerPopNextForwardedAudioEvent(controller, message, sizeof(message));
+  XCTAssertFalse(audioEvent.has_value);
   XCTAssertEqual(strcmp(message, ""), 0);
 
   ApolloMacBridgeControllerDestroy(controller);
@@ -80,6 +113,19 @@
   callbacks.capture_event_handler = [](void *context,
                                        ApolloCoreEncodedCaptureEventRecord,
                                        const char *) {
+    auto *counts = static_cast<CallbackCounts *>(context);
+    counts->event_count.fetch_add(1, std::memory_order_relaxed);
+  };
+  callbacks.audio_frame_handler = [](void *context,
+                                     ApolloMacBridgeAudioCaptureFrameRecord,
+                                     const void *,
+                                     size_t) {
+    auto *counts = static_cast<CallbackCounts *>(context);
+    counts->frame_count.fetch_add(1, std::memory_order_relaxed);
+  };
+  callbacks.audio_capture_event_handler = [](void *context,
+                                             ApolloMacBridgeAudioCaptureEventRecord,
+                                             const char *) {
     auto *counts = static_cast<CallbackCounts *>(context);
     counts->event_count.fetch_add(1, std::memory_order_relaxed);
   };

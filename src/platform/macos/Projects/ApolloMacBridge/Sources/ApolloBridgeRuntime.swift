@@ -145,6 +145,240 @@ public struct ApolloBridgeStatus: Equatable, Sendable {
     }
 }
 
+public enum ApolloAudioCaptureSourceKind: String, Codable, Equatable, Sendable {
+    case microphone
+    case systemOutput = "system-output"
+}
+
+public enum ApolloAudioCaptureSource: Codable, Equatable, Sendable {
+    case microphone(inputID: String?)
+    case systemOutput(displayID: UInt32, excludesCurrentProcessAudio: Bool)
+
+    public var kind: ApolloAudioCaptureSourceKind {
+        switch self {
+        case .microphone:
+            return .microphone
+        case .systemOutput:
+            return .systemOutput
+        }
+    }
+}
+
+public struct ApolloMacDisplayKitAudioCaptureConfiguration: Codable, Equatable, Sendable {
+    public let source: ApolloAudioCaptureSource
+    public let sampleRate: Int
+    public let channelCount: Int
+    public let frameSize: Int
+
+    public init(
+        source: ApolloAudioCaptureSource,
+        sampleRate: Int = 48_000,
+        channelCount: Int = 2,
+        frameSize: Int = 480
+    ) {
+        self.source = source
+        self.sampleRate = max(sampleRate, 1)
+        self.channelCount = max(channelCount, 1)
+        self.frameSize = max(frameSize, 1)
+    }
+
+    public static func microphone(
+        inputID: String? = nil,
+        sampleRate: Int = 48_000,
+        channelCount: Int = 2,
+        frameSize: Int = 480
+    ) -> Self {
+        Self(
+            source: .microphone(inputID: inputID),
+            sampleRate: sampleRate,
+            channelCount: channelCount,
+            frameSize: frameSize
+        )
+    }
+
+    public static func systemOutput(
+        displayID: UInt32,
+        sampleRate: Int = 48_000,
+        channelCount: Int = 2,
+        frameSize: Int = 480,
+        excludesCurrentProcessAudio: Bool = false
+    ) -> Self {
+        Self(
+            source: .systemOutput(
+                displayID: displayID,
+                excludesCurrentProcessAudio: excludesCurrentProcessAudio
+            ),
+            sampleRate: sampleRate,
+            channelCount: channelCount,
+            frameSize: frameSize
+        )
+    }
+
+    var mdkValue: MDKAudioCaptureConfiguration {
+        switch source {
+        case .microphone(let inputID):
+            return .microphone(
+                inputID: inputID,
+                sampleRate: sampleRate,
+                channelCount: channelCount,
+                frameSize: frameSize,
+                deliveryMode: .callbackOnly
+            )
+        case .systemOutput(let displayID, let excludesCurrentProcessAudio):
+            return .systemOutput(
+                displayID: displayID,
+                sampleRate: sampleRate,
+                channelCount: channelCount,
+                frameSize: frameSize,
+                excludesCurrentProcessAudio: excludesCurrentProcessAudio,
+                deliveryMode: .callbackOnly
+            )
+        }
+    }
+}
+
+public struct ApolloBridgeAudioForwardingSnapshot: Equatable, Sendable {
+    public let frameCount: UInt64
+    public let eventCount: UInt64
+    public let queuedFrameCount: UInt64
+    public let queuedEventCount: UInt64
+    public let droppedFrameCount: UInt64
+    public let droppedEventCount: UInt64
+    public let lastFrameSequenceNumber: UInt64?
+    public let lastFrameHostTimeNanoseconds: UInt64?
+    public let lastFrameSampleRate: Int?
+    public let lastFrameChannelCount: Int?
+    public let lastFrameFrameCount: Int?
+    public let lastFramePCMByteCount: Int
+    public let lastEventKind: ApolloBridgeCaptureEventKind?
+}
+
+public struct ApolloBridgeDrainedAudioFrame: Equatable, Sendable {
+    public let sequenceNumber: UInt64
+    public let hostTimeNanoseconds: UInt64
+    public let sampleRate: Int
+    public let channelCount: Int
+    public let frameCount: Int
+    public let pcmFloat32LE: Data
+}
+
+public struct ApolloBridgeDrainedAudioEvent: Equatable, Sendable {
+    public let kind: ApolloBridgeCaptureEventKind
+    public let message: String?
+    public let stopStatus: Int32?
+    public let automaticRestartCount: UInt64?
+    public let sourceSequenceNumber: UInt64?
+}
+
+private struct ApolloAudioForwardingState: Sendable {
+    private(set) var frameCount: UInt64 = 0
+    private(set) var eventCount: UInt64 = 0
+    private(set) var droppedFrameCount: UInt64 = 0
+    private(set) var droppedEventCount: UInt64 = 0
+    private var frameCapacity: Int = 8
+    private var eventCapacity: Int = 32
+    private var lastFrame: ApolloBridgeDrainedAudioFrame?
+    private var lastEvent: ApolloBridgeDrainedAudioEvent?
+    private var pendingFrames: [ApolloBridgeDrainedAudioFrame] = []
+    private var pendingEvents: [ApolloBridgeDrainedAudioEvent] = []
+
+    mutating func reset() {
+        frameCount = 0
+        eventCount = 0
+        droppedFrameCount = 0
+        droppedEventCount = 0
+        lastFrame = nil
+        lastEvent = nil
+        pendingFrames.removeAll(keepingCapacity: false)
+        pendingEvents.removeAll(keepingCapacity: false)
+    }
+
+    mutating func setFrameCapacity(_ capacity: Int) {
+        frameCapacity = max(capacity, 1)
+        while pendingFrames.count > frameCapacity {
+            pendingFrames.removeFirst()
+            droppedFrameCount += 1
+        }
+    }
+
+    mutating func setEventCapacity(_ capacity: Int) {
+        eventCapacity = max(capacity, 1)
+        while pendingEvents.count > eventCapacity {
+            pendingEvents.removeFirst()
+            droppedEventCount += 1
+        }
+    }
+
+    mutating func consume(frame: MDKAudioFrame) {
+        let drainedFrame = ApolloBridgeDrainedAudioFrame(
+            sequenceNumber: frame.sequenceNumber,
+            hostTimeNanoseconds: frame.hostTimeNanoseconds,
+            sampleRate: frame.sampleRate,
+            channelCount: frame.channelCount,
+            frameCount: frame.frameCount,
+            pcmFloat32LE: frame.pcmFloat32LE
+        )
+
+        frameCount += 1
+        lastFrame = drainedFrame
+        pendingFrames.append(drainedFrame)
+        while pendingFrames.count > frameCapacity {
+            pendingFrames.removeFirst()
+            droppedFrameCount += 1
+        }
+    }
+
+    mutating func consume(event: MDKAudioCaptureSessionEvent) {
+        let drainedEvent = ApolloBridgeDrainedAudioEvent(
+            kind: ApolloBridgeCaptureEventKind(event.kind),
+            message: event.message,
+            stopStatus: event.stopStatus,
+            automaticRestartCount: event.automaticRestartCount,
+            sourceSequenceNumber: event.sourceSequenceNumber
+        )
+
+        eventCount += 1
+        lastEvent = drainedEvent
+        pendingEvents.append(drainedEvent)
+        while pendingEvents.count > eventCapacity {
+            pendingEvents.removeFirst()
+            droppedEventCount += 1
+        }
+    }
+
+    mutating func popNextFrame() -> ApolloBridgeDrainedAudioFrame? {
+        guard !pendingFrames.isEmpty else {
+            return nil
+        }
+        return pendingFrames.removeFirst()
+    }
+
+    mutating func popNextEvent() -> ApolloBridgeDrainedAudioEvent? {
+        guard !pendingEvents.isEmpty else {
+            return nil
+        }
+        return pendingEvents.removeFirst()
+    }
+
+    func snapshot() -> ApolloBridgeAudioForwardingSnapshot {
+        ApolloBridgeAudioForwardingSnapshot(
+            frameCount: frameCount,
+            eventCount: eventCount,
+            queuedFrameCount: UInt64(pendingFrames.count),
+            queuedEventCount: UInt64(pendingEvents.count),
+            droppedFrameCount: droppedFrameCount,
+            droppedEventCount: droppedEventCount,
+            lastFrameSequenceNumber: lastFrame?.sequenceNumber,
+            lastFrameHostTimeNanoseconds: lastFrame?.hostTimeNanoseconds,
+            lastFrameSampleRate: lastFrame?.sampleRate,
+            lastFrameChannelCount: lastFrame?.channelCount,
+            lastFrameFrameCount: lastFrame?.frameCount,
+            lastFramePCMByteCount: lastFrame?.pcmFloat32LE.count ?? 0,
+            lastEventKind: lastEvent?.kind
+        )
+    }
+}
+
 public actor ApolloBridgeRuntime {
     public static let shared = ApolloBridgeRuntime()
 
@@ -153,6 +387,9 @@ public actor ApolloBridgeRuntime {
     private var activeCaptureConfiguration: ApolloMacDisplayKitCaptureConfiguration?
     private var latestFrame: ApolloBridgeEncodedFrameSnapshot?
     private var recentEvents: [MDKEncodedCaptureSessionEvent] = []
+    private var audioCaptureSession: MDKAudioCaptureSession?
+    private var activeAudioCaptureConfiguration: ApolloMacDisplayKitAudioCaptureConfiguration?
+    private var audioForwarding = ApolloAudioForwardingState()
 
     public init() {}
 
@@ -208,6 +445,55 @@ public actor ApolloBridgeRuntime {
         activeCaptureConfiguration = nil
     }
 
+    public func makeDefaultMicrophoneAudioConfiguration() -> ApolloMacDisplayKitAudioCaptureConfiguration {
+        .microphone()
+    }
+
+    public func makeSystemOutputAudioConfiguration(
+        displayID: UInt32
+    ) -> ApolloMacDisplayKitAudioCaptureConfiguration {
+        .systemOutput(displayID: displayID)
+    }
+
+    public func startMacDisplayKitAudioCapture(
+        configuration: ApolloMacDisplayKitAudioCaptureConfiguration
+    ) async throws {
+        await stopMacDisplayKitAudioCapture()
+
+        audioForwarding.reset()
+        let runtime = self
+        let session = MDKAudioCaptureSession(configuration: configuration.mdkValue)
+        let callbacks = MDKAudioCaptureCallbacks(
+            frameHandler: { frame in
+                Task {
+                    await runtime.recordAudioFrame(frame)
+                }
+            },
+            eventHandler: { event in
+                Task {
+                    await runtime.recordAudioCaptureEvent(event)
+                }
+            }
+        )
+
+        try await session.start(callbacks: callbacks)
+        audioCaptureSession = session
+        activeAudioCaptureConfiguration = configuration
+    }
+
+    public func stopMacDisplayKitAudioCapture() async {
+        guard let session = audioCaptureSession else {
+            audioCaptureSession = nil
+            activeAudioCaptureConfiguration = nil
+            audioForwarding.reset()
+            return
+        }
+
+        await session.stop()
+        audioCaptureSession = nil
+        activeAudioCaptureConfiguration = nil
+    }
+
     public func captureSnapshot() async -> ApolloBridgeCaptureSnapshot? {
         guard let session = encodedCaptureSession,
               let configuration = activeCaptureConfiguration else {
@@ -235,6 +521,14 @@ public actor ApolloBridgeRuntime {
         coreForwarder.setEventCapacity(eventCapacity)
     }
 
+    public func configureAudioForwarding(
+        frameCapacity: Int,
+        eventCapacity: Int
+    ) {
+        audioForwarding.setFrameCapacity(frameCapacity)
+        audioForwarding.setEventCapacity(eventCapacity)
+    }
+
     public func drainNextCoreForwardedFrame() -> ApolloBridgeCoreDrainedFrame? {
         coreForwarder.popNextFrame()
     }
@@ -243,11 +537,23 @@ public actor ApolloBridgeRuntime {
         coreForwarder.popNextEvent()
     }
 
+    public func audioForwardingSnapshot() -> ApolloBridgeAudioForwardingSnapshot {
+        audioForwarding.snapshot()
+    }
+
+    public func drainNextCoreForwardedAudioFrame() -> ApolloBridgeDrainedAudioFrame? {
+        audioForwarding.popNextFrame()
+    }
+
+    public func drainNextCoreForwardedAudioEvent() -> ApolloBridgeDrainedAudioEvent? {
+        audioForwarding.popNextEvent()
+    }
+
     public func statusSnapshot() -> ApolloBridgeStatus {
         ApolloBridgeStatus(
             coreVersion: String(cString: ApolloCoreBootstrapVersionString()),
             runtimeDescription: String(cString: ApolloCoreBootstrapRuntimeDescription()),
-            integrationStatus: "Swift shell, C/C++ core, and bridge targets are ready. ApolloMacBridge now links MacDisplayCaptureKit, owns callback-only encoded capture sessions, and forwards encoded sample buffers into ApolloCore's C ABI ingress surface."
+            integrationStatus: "Swift shell, C/C++ core, and bridge targets are ready. ApolloMacBridge now links MacDisplayCaptureKit, owns callback-only encoded video and audio capture sessions, forwards encoded video sample buffers into ApolloCore's ingress surface, and exposes raw PCM audio through the bridge C ABI."
         )
     }
 
@@ -260,6 +566,14 @@ public actor ApolloBridgeRuntime {
         if recentEvents.count > 16 {
             recentEvents.removeFirst(recentEvents.count - 16)
         }
+    }
+
+    private func recordAudioFrame(_ frame: MDKAudioFrame) {
+        audioForwarding.consume(frame: frame)
+    }
+
+    private func recordAudioCaptureEvent(_ event: MDKAudioCaptureSessionEvent) {
+        audioForwarding.consume(event: event)
     }
 
     func debugResetCoreForwarding() {
@@ -326,6 +640,23 @@ private extension ApolloCaptureCodec {
             self = .hevc
         case .proResProxy:
             self = .proResProxy
+        }
+    }
+}
+
+private extension ApolloBridgeCaptureEventKind {
+    init(_ kind: MDKAudioCaptureSessionEventKind) {
+        switch kind {
+        case .started:
+            self = .started
+        case .stopped:
+            self = .stopped
+        case .restarted:
+            self = .restarted
+        case .failed:
+            self = .failed
+        case .droppedFrame:
+            self = .droppedFrame
         }
     }
 }

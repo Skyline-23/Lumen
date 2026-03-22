@@ -13,7 +13,7 @@ let baseSettings: SettingsDictionary = [
 let project = Project(
     name: "Apollo",
     packages: [
-        .package(url: "https://github.com/Skyline-23/MacDisplayKit", from: "0.1.0")
+        .package(url: "https://github.com/Skyline-23/MacDisplayKit", from: "0.2.0")
     ],
     settings: .settings(base: baseSettings),
     targets: [

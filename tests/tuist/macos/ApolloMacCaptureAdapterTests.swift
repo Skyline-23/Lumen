@@ -7,6 +7,7 @@ final class ApolloMacCaptureAdapterTests: XCTestCase {
 
         let status = adapter.copyStatusSnapshot()
         XCTAssertFalse(status.captureSessionRunning)
+        XCTAssertFalse(status.audioCaptureSessionRunning)
         XCTAssertFalse(status.forwardingPumpRunning)
         XCTAssertGreaterThan(status.coreVersion.count, 0)
         XCTAssertGreaterThan(status.runtimeDescription.count, 0)
@@ -16,6 +17,16 @@ final class ApolloMacCaptureAdapterTests: XCTestCase {
         XCTAssertEqual(configuration.display_id, 9)
         XCTAssertEqual(configuration.codec, ApolloCoreCaptureCodecHEVC)
         XCTAssertEqual(configuration.queue_profile.rawValue, 1)
+
+        let microphoneConfiguration = adapter.makeDefaultMicrophoneAudioConfiguration()
+        XCTAssertEqual(microphoneConfiguration.source_kind, ApolloMacBridgeAudioSourceKindMicrophone)
+        XCTAssertEqual(microphoneConfiguration.sample_rate, 48_000)
+        XCTAssertEqual(microphoneConfiguration.channel_count, 2)
+        XCTAssertEqual(microphoneConfiguration.frame_size, 480)
+
+        let systemOutputConfiguration = adapter.makeSystemOutputAudioConfiguration(forDisplayID: 9)
+        XCTAssertEqual(systemOutputConfiguration.source_kind, ApolloMacBridgeAudioSourceKindSystemOutput)
+        XCTAssertEqual(systemOutputConfiguration.display_id, 9)
     }
 
     func testAdapterStartsAndStopsForwardingPump() {
@@ -28,6 +39,8 @@ final class ApolloMacCaptureAdapterTests: XCTestCase {
         XCTAssertTrue(runningStatus.forwardingPumpRunning)
         XCTAssertEqual(runningStatus.forwardedFrameCallbackCount, 0)
         XCTAssertEqual(runningStatus.forwardedEventCallbackCount, 0)
+        XCTAssertEqual(runningStatus.forwardedAudioFrameCallbackCount, 0)
+        XCTAssertEqual(runningStatus.forwardedAudioEventCallbackCount, 0)
 
         adapter.stopForwardingPump()
 
