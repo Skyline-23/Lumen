@@ -100,6 +100,10 @@ final class ApolloCaptureController: ObservableObject {
         self.status = adapter.copyStatusSnapshot()
     }
 
+    deinit {
+        adapter.stopAutomaticApolloCoreCaptureOrchestration()
+    }
+
     var menuBarImageName: String {
         status?.captureSessionRunning == true ? "dot.radiowaves.left.and.right" : "bolt.horizontal.circle"
     }
@@ -110,6 +114,7 @@ final class ApolloCaptureController: ObservableObject {
         }
 
         isActivated = true
+        adapter.startAutomaticApolloCoreCaptureOrchestration()
         refreshStatus()
         startRefreshLoop()
     }

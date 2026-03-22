@@ -364,6 +364,24 @@ public final class ApolloBridgeObjCFacade: NSObject {
         }
     }
 
+    public func startApolloCoreCaptureAutomationSync() {
+        try? blockingRun { [self] in
+            await self.runtime.startApolloCoreCaptureAutomation()
+        }
+    }
+
+    public func stopApolloCoreCaptureAutomationSync() {
+        try? blockingRun { [self] in
+            await self.runtime.stopApolloCoreCaptureAutomation()
+        }
+    }
+
+    public func isApolloCoreCaptureAutomationRunningSync() -> Bool {
+        (try? blockingRun { [self] in
+            await self.runtime.isApolloCoreCaptureAutomationRunning()
+        }) ?? false
+    }
+
     public func copyStatusSnapshotSync() -> ApolloBridgeStatusBox {
         (try? blockingRun { [self] in
             ApolloBridgeStatusBox(snapshot: await self.runtime.statusSnapshot())

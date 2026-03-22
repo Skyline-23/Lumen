@@ -13,6 +13,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, readonly, copy) NSString *integrationStatus;
 @property(nonatomic, readonly) BOOL captureSessionRunning;
 @property(nonatomic, readonly) BOOL audioCaptureSessionRunning;
+@property(nonatomic, readonly) BOOL automaticCaptureOrchestrationRunning;
 @property(nonatomic, readonly) BOOL forwardingPumpRunning;
 @property(nonatomic, readonly) NSUInteger forwardedFrameCallbackCount;
 @property(nonatomic, readonly) NSUInteger forwardedEventCallbackCount;
@@ -26,6 +27,7 @@ NS_ASSUME_NONNULL_BEGIN
                               integrationStatus:(NSString *)integrationStatus
                             captureSessionRunning:(BOOL)captureSessionRunning
                        audioCaptureSessionRunning:(BOOL)audioCaptureSessionRunning
+              automaticCaptureOrchestrationRunning:(BOOL)automaticCaptureOrchestrationRunning
                            forwardingPumpRunning:(BOOL)forwardingPumpRunning
                       forwardedFrameCallbackCount:(NSUInteger)forwardedFrameCallbackCount
                       forwardedEventCallbackCount:(NSUInteger)forwardedEventCallbackCount
@@ -63,6 +65,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)startMacDisplayKitAudioCaptureWithConfiguration:(ApolloMacBridgeAudioCaptureConfiguration)configuration
                                                   error:(NSError * _Nullable * _Nullable)error;
 - (void)stopMacDisplayKitAudioCapture;
+- (void)startAutomaticApolloCoreCaptureOrchestration;
+- (void)stopAutomaticApolloCoreCaptureOrchestration;
 - (BOOL)startForwardingPumpWithError:(NSError * _Nullable * _Nullable)error;
 - (void)stopForwardingPump;
 - (ApolloMacCaptureAdapterStatus *)copyStatusSnapshot;

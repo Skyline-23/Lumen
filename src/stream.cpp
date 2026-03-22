@@ -4,6 +4,7 @@
  */
 
 // standard includes
+#include <cstdlib>
 #include <fstream>
 #include <future>
 #include <queue>
@@ -16,6 +17,9 @@ extern "C" {
   // clang-format off
 #include <moonlight-common-c/src/Limelight-internal.h>
 #include "rswrapper.h"
+#ifdef __APPLE__
+#include "ApolloCore.h"
+#endif
   // clang-format on
 }
 
@@ -1966,6 +1970,71 @@ namespace stream {
     audio::capture(session->mail, session->config.audio, session);
   }
 
+#ifdef __APPLE__
+  namespace {
+    uint32_t apollo_core_requested_display_id() {
+      if (proc::proc.display_name.empty()) {
+        return 0;
+      }
+
+      char *end_ptr = nullptr;
+      const auto display_id = std::strtoul(proc::proc.display_name.c_str(), &end_ptr, 10);
+      if (end_ptr && *end_ptr == '\0') {
+        return static_cast<uint32_t>(display_id);
+      }
+      return 0;
+    }
+
+    ApolloCoreCaptureCodec apollo_core_requested_codec(int video_format) {
+      switch (video_format) {
+        case 0:
+          return ApolloCoreCaptureCodecH264;
+        case 1:
+          return ApolloCoreCaptureCodecHEVC;
+        default:
+          return ApolloCoreCaptureCodecUnknown;
+      }
+    }
+
+    ApolloCoreAudioCaptureSourceKind apollo_core_audio_source_kind(const audio::config_t &config) {
+      return config.flags[audio::config_t::HOST_AUDIO] ?
+               ApolloCoreAudioCaptureSourceKindSystemOutput :
+               ApolloCoreAudioCaptureSourceKindMicrophone;
+    }
+
+    void publish_apollo_core_capture_request(const session_t &session) {
+      if (session.config.monitor.input_only) {
+        ApolloCoreCaptureRequestClear();
+        return;
+      }
+
+      ApolloCoreCaptureRequestClear();
+      ApolloCoreCaptureRequestPublishVideo(
+        apollo_core_requested_display_id(),
+        apollo_core_requested_codec(session.config.monitor.videoFormat),
+        ApolloCoreCapturePreprocessStrategyNone,
+        ApolloCoreCaptureQueueProfileQ2,
+        false,
+        session.config.monitor.framerate,
+        session.config.monitor.width,
+        session.config.monitor.height,
+        session.config.monitor.dynamicRange
+      );
+
+      if (config::audio.stream && !session.config.audio.input_only) {
+        ApolloCoreCaptureRequestPublishAudio(
+          apollo_core_audio_source_kind(session.config.audio),
+          apollo_core_requested_display_id(),
+          false,
+          48000,
+          session.config.audio.channels,
+          session.config.audio.packetDuration * 48
+        );
+      }
+    }
+  }  // namespace
+#endif
+
   namespace session {
     std::atomic_uint running_sessions;
 
@@ -2093,6 +2162,9 @@ namespace stream {
 
       // If this is the last session, invoke the platform callbacks
       if (--running_sessions == 0) {
+#ifdef __APPLE__
+        ApolloCoreCaptureRequestClear();
+#endif
         bool revert_display_config {config::video.dd.config_revert_on_disconnect};
         proc::proc.on_stream_disconnected();
 
@@ -2149,6 +2221,10 @@ namespace stream {
         platf::streaming_will_start();
         proc::proc.resume();
       }
+
+#ifdef __APPLE__
+      publish_apollo_core_capture_request(session);
+#endif
 
       if (!session.do_cmds.empty()) {
         auto exec_thread = std::thread([cmd_list = session.do_cmds]{

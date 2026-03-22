@@ -17,6 +17,24 @@ typedef enum ApolloCoreCaptureCodec {
   ApolloCoreCaptureCodecProResProxy = 2
 } ApolloCoreCaptureCodec;
 
+typedef enum ApolloCoreCapturePreprocessStrategy {
+  ApolloCoreCapturePreprocessStrategyNone = 0,
+  ApolloCoreCapturePreprocessStrategyDownscale2x = 1
+} ApolloCoreCapturePreprocessStrategy;
+
+typedef enum ApolloCoreCaptureQueueProfile {
+  ApolloCoreCaptureQueueProfileQ1 = 0,
+  ApolloCoreCaptureQueueProfileQ2 = 1,
+  ApolloCoreCaptureQueueProfileQ3 = 2,
+  ApolloCoreCaptureQueueProfileQ4 = 3
+} ApolloCoreCaptureQueueProfile;
+
+typedef enum ApolloCoreAudioCaptureSourceKind {
+  ApolloCoreAudioCaptureSourceKindUnknown = -1,
+  ApolloCoreAudioCaptureSourceKindMicrophone = 0,
+  ApolloCoreAudioCaptureSourceKindSystemOutput = 1
+} ApolloCoreAudioCaptureSourceKind;
+
 typedef enum ApolloCoreCaptureEventKind {
   ApolloCoreCaptureEventKindUnknown = -1,
   ApolloCoreCaptureEventKindStarted = 0,
@@ -191,6 +209,26 @@ typedef struct ApolloCoreAudioCaptureEventRecord {
   uint64_t source_sequence_number;
 } ApolloCoreAudioCaptureEventRecord;
 
+typedef struct ApolloCoreCaptureRequestSnapshot {
+  uint64_t generation;
+  bool video_requested;
+  bool audio_requested;
+  uint32_t display_id;
+  ApolloCoreCaptureCodec codec;
+  ApolloCoreCapturePreprocessStrategy preprocess_strategy;
+  ApolloCoreCaptureQueueProfile queue_profile;
+  bool show_cursor;
+  int32_t target_frame_rate;
+  int32_t requested_width;
+  int32_t requested_height;
+  int32_t dynamic_range;
+  ApolloCoreAudioCaptureSourceKind audio_source_kind;
+  bool audio_excludes_current_process;
+  int32_t audio_sample_rate;
+  int32_t audio_channel_count;
+  int32_t audio_frame_size;
+} ApolloCoreCaptureRequestSnapshot;
+
 ApolloCoreAudioCaptureIngress *ApolloCoreAudioCaptureIngressCreate(void);
 void ApolloCoreAudioCaptureIngressDestroy(ApolloCoreAudioCaptureIngress *ingress);
 void ApolloCoreAudioCaptureIngressReset(ApolloCoreAudioCaptureIngress *ingress);
@@ -254,6 +292,32 @@ bool ApolloCoreAudioCaptureIngressWaitForData(
   ApolloCoreAudioCaptureIngress *ingress,
   uint32_t timeout_milliseconds
 );
+
+ApolloCoreCaptureRequestSnapshot ApolloCoreCaptureRequestCopySnapshot(void);
+bool ApolloCoreCaptureRequestWaitForGenerationChange(
+  uint64_t observed_generation,
+  uint32_t timeout_milliseconds
+);
+void ApolloCoreCaptureRequestPublishVideo(
+  uint32_t display_id,
+  ApolloCoreCaptureCodec codec,
+  ApolloCoreCapturePreprocessStrategy preprocess_strategy,
+  ApolloCoreCaptureQueueProfile queue_profile,
+  bool show_cursor,
+  int32_t target_frame_rate,
+  int32_t requested_width,
+  int32_t requested_height,
+  int32_t dynamic_range
+);
+void ApolloCoreCaptureRequestPublishAudio(
+  ApolloCoreAudioCaptureSourceKind source_kind,
+  uint32_t display_id,
+  bool excludes_current_process_audio,
+  int32_t sample_rate,
+  int32_t channel_count,
+  int32_t frame_size
+);
+void ApolloCoreCaptureRequestClear(void);
 
 #ifdef __cplusplus
 }

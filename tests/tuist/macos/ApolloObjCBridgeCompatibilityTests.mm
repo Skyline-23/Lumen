@@ -59,6 +59,11 @@
   XCTAssertEqual(audioForwarding.queued_frame_count, 0ULL);
   XCTAssertEqual(audioForwarding.queued_event_count, 0ULL);
 
+  ApolloMacBridgeControllerStartApolloCoreCaptureAutomation(controller);
+  XCTAssertTrue(ApolloMacBridgeControllerIsApolloCoreCaptureAutomationRunning(controller));
+  ApolloMacBridgeControllerStopApolloCoreCaptureAutomation(controller);
+  XCTAssertFalse(ApolloMacBridgeControllerIsApolloCoreCaptureAutomationRunning(controller));
+
   ApolloMacBridgeControllerDestroy(controller);
 }
 

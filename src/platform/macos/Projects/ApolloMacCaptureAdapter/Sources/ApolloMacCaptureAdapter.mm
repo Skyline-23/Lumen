@@ -72,6 +72,7 @@ namespace {
                               integrationStatus:(NSString *)integrationStatus
                            captureSessionRunning:(BOOL)captureSessionRunning
                       audioCaptureSessionRunning:(BOOL)audioCaptureSessionRunning
+             automaticCaptureOrchestrationRunning:(BOOL)automaticCaptureOrchestrationRunning
                            forwardingPumpRunning:(BOOL)forwardingPumpRunning
                       forwardedFrameCallbackCount:(NSUInteger)forwardedFrameCallbackCount
                       forwardedEventCallbackCount:(NSUInteger)forwardedEventCallbackCount
@@ -89,6 +90,7 @@ namespace {
   _integrationStatus = [integrationStatus copy];
   _captureSessionRunning = captureSessionRunning;
   _audioCaptureSessionRunning = audioCaptureSessionRunning;
+  _automaticCaptureOrchestrationRunning = automaticCaptureOrchestrationRunning;
   _forwardingPumpRunning = forwardingPumpRunning;
   _forwardedFrameCallbackCount = forwardedFrameCallbackCount;
   _forwardedEventCallbackCount = forwardedEventCallbackCount;
@@ -106,6 +108,7 @@ namespace {
   ApolloMacCaptureAdapterCallbackState _callback_state;
   BOOL _capture_session_running;
   BOOL _audio_capture_session_running;
+  BOOL _automatic_capture_orchestration_running;
   BOOL _forwarding_pump_running;
 }
 
@@ -121,6 +124,7 @@ namespace {
 
 - (void)dealloc {
   if (_controller) {
+    ApolloMacBridgeControllerStopApolloCoreCaptureAutomation(_controller);
     ApolloMacBridgeControllerStopCoreForwardingPump(_controller);
     ApolloMacBridgeControllerStopMacDisplayKitAudioCapture(_controller);
     ApolloMacBridgeControllerStopMacDisplayKitCapture(_controller);
@@ -250,6 +254,17 @@ namespace {
   _audio_capture_session_running = NO;
 }
 
+- (void)startAutomaticApolloCoreCaptureOrchestration {
+  ApolloMacBridgeControllerStartApolloCoreCaptureAutomation(_controller);
+  _automatic_capture_orchestration_running =
+    ApolloMacBridgeControllerIsApolloCoreCaptureAutomationRunning(_controller);
+}
+
+- (void)stopAutomaticApolloCoreCaptureOrchestration {
+  ApolloMacBridgeControllerStopApolloCoreCaptureAutomation(_controller);
+  _automatic_capture_orchestration_running = NO;
+}
+
 - (BOOL)startForwardingPumpWithError:(NSError * _Nullable __autoreleasing *)error {
   ApolloMacBridgeForwardingCallbacks callbacks {};
   callbacks.context = &_callback_state;
@@ -283,6 +298,8 @@ namespace {
 }
 
 - (ApolloMacCaptureAdapterStatus *)copyStatusSnapshot {
+  _automatic_capture_orchestration_running =
+    ApolloMacBridgeControllerIsApolloCoreCaptureAutomationRunning(_controller);
   ApolloMacBridgeStatusSnapshot bridge_status = ApolloMacBridgeControllerCopyStatusSnapshot(_controller);
   ApolloCoreEncodedCaptureIngressSnapshot core_snapshot =
     ApolloMacBridgeControllerCopyCoreForwardingSnapshot(_controller);
@@ -294,6 +311,7 @@ namespace {
                   integrationStatus:string_from_c_buffer(bridge_status.integration_status)
               captureSessionRunning:_capture_session_running
           audioCaptureSessionRunning:_audio_capture_session_running
+    automaticCaptureOrchestrationRunning:_automatic_capture_orchestration_running
                forwardingPumpRunning:_forwarding_pump_running
           forwardedFrameCallbackCount:static_cast<NSUInteger>(
             _callback_state.frame_callback_count.load(std::memory_order_relaxed)

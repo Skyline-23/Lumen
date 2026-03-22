@@ -314,6 +314,54 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         )
     }
 
+    func testApolloCoreCaptureRequestPublishesAndWaitsForGenerationChanges() {
+        ApolloCoreCaptureRequestClear()
+
+        let initialSnapshot = ApolloCoreCaptureRequestCopySnapshot()
+        XCTAssertEqual(initialSnapshot.generation, 1)
+        XCTAssertFalse(initialSnapshot.video_requested)
+        XCTAssertFalse(initialSnapshot.audio_requested)
+        XCTAssertEqual(initialSnapshot.codec, ApolloCoreCaptureCodecUnknown)
+
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.05) {
+            ApolloCoreCaptureRequestPublishVideo(
+                17,
+                ApolloCoreCaptureCodecHEVC,
+                ApolloCoreCapturePreprocessStrategyNone,
+                ApolloCoreCaptureQueueProfileQ2,
+                false,
+                120,
+                3840,
+                2160,
+                1
+            )
+            ApolloCoreCaptureRequestPublishAudio(
+                ApolloCoreAudioCaptureSourceKindSystemOutput,
+                17,
+                false,
+                48_000,
+                2,
+                480
+            )
+        }
+
+        XCTAssertTrue(ApolloCoreCaptureRequestWaitForGenerationChange(initialSnapshot.generation, 500))
+
+        let updatedSnapshot = ApolloCoreCaptureRequestCopySnapshot()
+        XCTAssertTrue(updatedSnapshot.video_requested)
+        XCTAssertTrue(updatedSnapshot.audio_requested)
+        XCTAssertEqual(updatedSnapshot.display_id, 17)
+        XCTAssertEqual(updatedSnapshot.codec, ApolloCoreCaptureCodecHEVC)
+        XCTAssertEqual(updatedSnapshot.queue_profile, ApolloCoreCaptureQueueProfileQ2)
+        XCTAssertEqual(updatedSnapshot.target_frame_rate, 120)
+        XCTAssertEqual(updatedSnapshot.requested_width, 3840)
+        XCTAssertEqual(updatedSnapshot.requested_height, 2160)
+        XCTAssertEqual(updatedSnapshot.audio_source_kind, ApolloCoreAudioCaptureSourceKindSystemOutput)
+        XCTAssertEqual(updatedSnapshot.audio_frame_size, 480)
+
+        ApolloCoreCaptureRequestClear()
+    }
+
     func testApolloCoreAudioCaptureIngressStoresPCMAndEvents() {
         guard let ingress = ApolloCoreSharedAudioCaptureIngress() else {
             return XCTFail("ApolloCoreSharedAudioCaptureIngress returned nil")

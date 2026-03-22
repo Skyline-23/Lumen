@@ -349,6 +349,36 @@ void ApolloMacBridgeControllerStopMacDisplayKitAudioCapture(
   [controller->facade stopMacDisplayKitAudioCaptureSync];
 }
 
+void ApolloMacBridgeControllerStartApolloCoreCaptureAutomation(
+  ApolloMacBridgeController *controller
+) {
+  if (!controller) {
+    return;
+  }
+
+  [controller->facade startApolloCoreCaptureAutomationSync];
+}
+
+void ApolloMacBridgeControllerStopApolloCoreCaptureAutomation(
+  ApolloMacBridgeController *controller
+) {
+  if (!controller) {
+    return;
+  }
+
+  [controller->facade stopApolloCoreCaptureAutomationSync];
+}
+
+bool ApolloMacBridgeControllerIsApolloCoreCaptureAutomationRunning(
+  ApolloMacBridgeController *controller
+) {
+  if (!controller) {
+    return false;
+  }
+
+  return [controller->facade isApolloCoreCaptureAutomationRunningSync] == YES;
+}
+
 ApolloMacBridgeStatusSnapshot ApolloMacBridgeControllerCopyStatusSnapshot(
   ApolloMacBridgeController *controller
 ) {

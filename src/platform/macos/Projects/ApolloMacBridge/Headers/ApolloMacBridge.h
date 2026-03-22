@@ -164,6 +164,18 @@ void ApolloMacBridgeControllerStopMacDisplayKitAudioCapture(
   ApolloMacBridgeController *controller
 );
 
+void ApolloMacBridgeControllerStartApolloCoreCaptureAutomation(
+  ApolloMacBridgeController *controller
+);
+
+void ApolloMacBridgeControllerStopApolloCoreCaptureAutomation(
+  ApolloMacBridgeController *controller
+);
+
+bool ApolloMacBridgeControllerIsApolloCoreCaptureAutomationRunning(
+  ApolloMacBridgeController *controller
+);
+
 ApolloMacBridgeStatusSnapshot ApolloMacBridgeControllerCopyStatusSnapshot(
   ApolloMacBridgeController *controller
 );

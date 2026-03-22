@@ -210,6 +210,19 @@ struct ApolloCoreAudioCaptureIngress {
   std::deque<audio_event_state_t> pending_events;
 };
 
+struct ApolloCoreCaptureRequestState {
+  mutable std::mutex mutex;
+  std::condition_variable change_cv;
+  ApolloCoreCaptureRequestSnapshot snapshot {};
+
+  ApolloCoreCaptureRequestState() {
+    snapshot.codec = ApolloCoreCaptureCodecUnknown;
+    snapshot.audio_source_kind = ApolloCoreAudioCaptureSourceKindUnknown;
+    snapshot.preprocess_strategy = ApolloCoreCapturePreprocessStrategyNone;
+    snapshot.queue_profile = ApolloCoreCaptureQueueProfileQ2;
+  }
+};
+
 namespace apollo::core {
   std::string version_string() {
     return "ApolloCore bootstrap";
@@ -345,6 +358,11 @@ namespace {
   ApolloCoreAudioCaptureIngress *shared_audio_capture_ingress() {
     static ApolloCoreAudioCaptureIngress ingress;
     return &ingress;
+  }
+
+  ApolloCoreCaptureRequestState *shared_capture_request_state() {
+    static ApolloCoreCaptureRequestState state;
+    return &state;
   }
 }
 
@@ -988,4 +1006,93 @@ bool ApolloCoreAudioCaptureIngressWaitForData(
     return has_pending() || !ingress->producer_active;
   });
   return has_pending();
+}
+
+ApolloCoreCaptureRequestSnapshot ApolloCoreCaptureRequestCopySnapshot(void) {
+  auto *state = shared_capture_request_state();
+  std::scoped_lock lock(state->mutex);
+  return state->snapshot;
+}
+
+bool ApolloCoreCaptureRequestWaitForGenerationChange(
+  uint64_t observed_generation,
+  uint32_t timeout_milliseconds
+) {
+  auto *state = shared_capture_request_state();
+  std::unique_lock lock(state->mutex);
+  if (state->snapshot.generation != observed_generation) {
+    return true;
+  }
+
+  state->change_cv.wait_for(lock, std::chrono::milliseconds(timeout_milliseconds), [&]() {
+    return state->snapshot.generation != observed_generation;
+  });
+  return state->snapshot.generation != observed_generation;
+}
+
+void ApolloCoreCaptureRequestPublishVideo(
+  uint32_t display_id,
+  ApolloCoreCaptureCodec codec,
+  ApolloCoreCapturePreprocessStrategy preprocess_strategy,
+  ApolloCoreCaptureQueueProfile queue_profile,
+  bool show_cursor,
+  int32_t target_frame_rate,
+  int32_t requested_width,
+  int32_t requested_height,
+  int32_t dynamic_range
+) {
+  auto *state = shared_capture_request_state();
+  {
+    std::scoped_lock lock(state->mutex);
+    state->snapshot.generation += 1;
+    state->snapshot.video_requested = codec != ApolloCoreCaptureCodecUnknown;
+    state->snapshot.display_id = display_id;
+    state->snapshot.codec = codec;
+    state->snapshot.preprocess_strategy = preprocess_strategy;
+    state->snapshot.queue_profile = queue_profile;
+    state->snapshot.show_cursor = show_cursor;
+    state->snapshot.target_frame_rate = std::max<int32_t>(target_frame_rate, 1);
+    state->snapshot.requested_width = std::max<int32_t>(requested_width, 0);
+    state->snapshot.requested_height = std::max<int32_t>(requested_height, 0);
+    state->snapshot.dynamic_range = std::max<int32_t>(dynamic_range, 0);
+  }
+  state->change_cv.notify_all();
+}
+
+void ApolloCoreCaptureRequestPublishAudio(
+  ApolloCoreAudioCaptureSourceKind source_kind,
+  uint32_t display_id,
+  bool excludes_current_process_audio,
+  int32_t sample_rate,
+  int32_t channel_count,
+  int32_t frame_size
+) {
+  auto *state = shared_capture_request_state();
+  {
+    std::scoped_lock lock(state->mutex);
+    state->snapshot.generation += 1;
+    state->snapshot.audio_requested = source_kind != ApolloCoreAudioCaptureSourceKindUnknown;
+    state->snapshot.audio_source_kind = source_kind;
+    state->snapshot.display_id = display_id;
+    state->snapshot.audio_excludes_current_process = excludes_current_process_audio;
+    state->snapshot.audio_sample_rate = std::max<int32_t>(sample_rate, 1);
+    state->snapshot.audio_channel_count = std::max<int32_t>(channel_count, 1);
+    state->snapshot.audio_frame_size = std::max<int32_t>(frame_size, 1);
+  }
+  state->change_cv.notify_all();
+}
+
+void ApolloCoreCaptureRequestClear(void) {
+  auto *state = shared_capture_request_state();
+  {
+    std::scoped_lock lock(state->mutex);
+    const auto generation = state->snapshot.generation + 1;
+    state->snapshot = {};
+    state->snapshot.generation = generation;
+    state->snapshot.codec = ApolloCoreCaptureCodecUnknown;
+    state->snapshot.audio_source_kind = ApolloCoreAudioCaptureSourceKindUnknown;
+    state->snapshot.preprocess_strategy = ApolloCoreCapturePreprocessStrategyNone;
+    state->snapshot.queue_profile = ApolloCoreCaptureQueueProfileQ2;
+  }
+  state->change_cv.notify_all();
 }

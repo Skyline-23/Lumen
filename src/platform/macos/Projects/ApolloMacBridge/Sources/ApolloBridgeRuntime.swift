@@ -1,4 +1,5 @@
 import ApolloCore
+import CoreGraphics
 import CoreMedia
 import Foundation
 import MacDisplayCaptureKit
@@ -270,6 +271,89 @@ public struct ApolloBridgeDrainedAudioEvent: Equatable, Sendable {
     public let sourceSequenceNumber: UInt64?
 }
 
+private struct ApolloBridgeAutomationRequest: Equatable, Sendable {
+    let generation: UInt64
+    let videoConfiguration: ApolloMacDisplayKitCaptureConfiguration?
+    let audioConfiguration: ApolloMacDisplayKitAudioCaptureConfiguration?
+
+    init(snapshot: ApolloCoreCaptureRequestSnapshot) {
+        generation = snapshot.generation
+
+        let resolvedDisplayID = snapshot.display_id == 0 ? CGMainDisplayID() : snapshot.display_id
+        if snapshot.video_requested,
+           let codec = ApolloBridgeAutomationRequest.codec(from: snapshot.codec) {
+            videoConfiguration = ApolloMacDisplayKitCaptureConfiguration(
+                displayID: resolvedDisplayID,
+                codec: codec,
+                preprocessStrategy: ApolloBridgeAutomationRequest.preprocessStrategy(from: snapshot.preprocess_strategy),
+                queueProfile: ApolloBridgeAutomationRequest.queueProfile(from: snapshot.queue_profile),
+                showCursor: snapshot.show_cursor,
+                targetFrameRate: Int(snapshot.target_frame_rate)
+            )
+        } else {
+            videoConfiguration = nil
+        }
+
+        if snapshot.audio_requested {
+            switch snapshot.audio_source_kind {
+            case ApolloCoreAudioCaptureSourceKindSystemOutput:
+                audioConfiguration = .systemOutput(
+                    displayID: resolvedDisplayID,
+                    sampleRate: Int(snapshot.audio_sample_rate),
+                    channelCount: Int(snapshot.audio_channel_count),
+                    frameSize: Int(snapshot.audio_frame_size),
+                    excludesCurrentProcessAudio: snapshot.audio_excludes_current_process
+                )
+            case ApolloCoreAudioCaptureSourceKindMicrophone:
+                audioConfiguration = .microphone(
+                    sampleRate: Int(snapshot.audio_sample_rate),
+                    channelCount: Int(snapshot.audio_channel_count),
+                    frameSize: Int(snapshot.audio_frame_size)
+                )
+            default:
+                audioConfiguration = nil
+            }
+        } else {
+            audioConfiguration = nil
+        }
+    }
+
+    private static func codec(from value: ApolloCoreCaptureCodec) -> ApolloCaptureCodec? {
+        switch value {
+        case ApolloCoreCaptureCodecH264:
+            return .h264
+        case ApolloCoreCaptureCodecHEVC:
+            return .hevc
+        case ApolloCoreCaptureCodecProResProxy:
+            return .proResProxy
+        default:
+            return nil
+        }
+    }
+
+    private static func preprocessStrategy(from value: ApolloCoreCapturePreprocessStrategy) -> ApolloCapturePreprocessStrategy {
+        switch value {
+        case ApolloCoreCapturePreprocessStrategyDownscale2x:
+            return .downscale2x
+        default:
+            return .none
+        }
+    }
+
+    private static func queueProfile(from value: ApolloCoreCaptureQueueProfile) -> ApolloCaptureQueueProfile {
+        switch value {
+        case ApolloCoreCaptureQueueProfileQ1:
+            return .q1
+        case ApolloCoreCaptureQueueProfileQ3:
+            return .q3
+        case ApolloCoreCaptureQueueProfileQ4:
+            return .q4
+        default:
+            return .q2
+        }
+    }
+}
+
 public actor ApolloBridgeRuntime {
     public static let shared = ApolloBridgeRuntime()
 
@@ -281,6 +365,7 @@ public actor ApolloBridgeRuntime {
     private var recentEvents: [MDKEncodedCaptureSessionEvent] = []
     private var audioCaptureSession: MDKAudioCaptureSession?
     private var activeAudioCaptureConfiguration: ApolloMacDisplayKitAudioCaptureConfiguration?
+    private var captureAutomationTask: Task<Void, Never>?
 
     public init() {}
 
@@ -393,6 +478,39 @@ public actor ApolloBridgeRuntime {
         activeAudioCaptureConfiguration = nil
     }
 
+    public func startApolloCoreCaptureAutomation() {
+        guard captureAutomationTask == nil else {
+            return
+        }
+
+        captureAutomationTask = Task.detached(priority: .background) { [weak self] in
+            var observedGeneration = UInt64.max
+            while !Task.isCancelled {
+                let changed = ApolloCoreCaptureRequestWaitForGenerationChange(observedGeneration, 250)
+                if !changed && observedGeneration != UInt64.max {
+                    continue
+                }
+
+                let snapshot = ApolloCoreCaptureRequestCopySnapshot()
+                observedGeneration = snapshot.generation
+                await self?.applyApolloCoreCaptureRequest(
+                    ApolloBridgeAutomationRequest(snapshot: snapshot)
+                )
+            }
+        }
+    }
+
+    public func stopApolloCoreCaptureAutomation() async {
+        captureAutomationTask?.cancel()
+        captureAutomationTask = nil
+        await stopMacDisplayKitAudioCapture()
+        await stopMacDisplayKitCapture()
+    }
+
+    public func isApolloCoreCaptureAutomationRunning() -> Bool {
+        captureAutomationTask != nil
+    }
+
     public func captureSnapshot() async -> ApolloBridgeCaptureSnapshot? {
         guard let session = encodedCaptureSession,
               let configuration = activeCaptureConfiguration else {
@@ -452,8 +570,26 @@ public actor ApolloBridgeRuntime {
         ApolloBridgeStatus(
             coreVersion: String(cString: ApolloCoreBootstrapVersionString()),
             runtimeDescription: String(cString: ApolloCoreBootstrapRuntimeDescription()),
-            integrationStatus: "Swift shell, C/C++ core, and bridge targets are ready. ApolloMacBridge now links MacDisplayCaptureKit, forwards encoded video and raw PCM audio into ApolloCore shared ingress surfaces, and exposes managed callback delivery through the bridge C ABI."
+            integrationStatus: "Swift shell, C/C++ core, and bridge targets are ready. ApolloMacBridge now links MacDisplayCaptureKit, forwards encoded video and raw PCM audio into ApolloCore shared ingress surfaces, and can automatically follow ApolloCore streaming capture requests."
         )
+    }
+
+    private func applyApolloCoreCaptureRequest(_ request: ApolloBridgeAutomationRequest) async {
+        if request.videoConfiguration != activeCaptureConfiguration || (request.videoConfiguration == nil) != (encodedCaptureSession == nil) {
+            if let configuration = request.videoConfiguration {
+                try? await startMacDisplayKitCapture(configuration: configuration)
+            } else {
+                await stopMacDisplayKitCapture()
+            }
+        }
+
+        if request.audioConfiguration != activeAudioCaptureConfiguration || (request.audioConfiguration == nil) != (audioCaptureSession == nil) {
+            if let configuration = request.audioConfiguration {
+                try? await startMacDisplayKitAudioCapture(configuration: configuration)
+            } else {
+                await stopMacDisplayKitAudioCapture()
+            }
+        }
     }
 
     private func recordEncodedFrame(_ frame: MDKEncodedFrame) {

@@ -8,6 +8,7 @@ final class ApolloMacCaptureAdapterTests: XCTestCase {
         let status = adapter.copyStatusSnapshot()
         XCTAssertFalse(status.captureSessionRunning)
         XCTAssertFalse(status.audioCaptureSessionRunning)
+        XCTAssertFalse(status.automaticCaptureOrchestrationRunning)
         XCTAssertFalse(status.forwardingPumpRunning)
         XCTAssertGreaterThan(status.coreVersion.count, 0)
         XCTAssertGreaterThan(status.runtimeDescription.count, 0)
@@ -46,5 +47,15 @@ final class ApolloMacCaptureAdapterTests: XCTestCase {
 
         let stoppedStatus = adapter.copyStatusSnapshot()
         XCTAssertFalse(stoppedStatus.forwardingPumpRunning)
+    }
+
+    func testAdapterStartsAndStopsAutomaticCaptureOrchestration() {
+        let adapter = ApolloMacCaptureAdapter()
+
+        adapter.startAutomaticApolloCoreCaptureOrchestration()
+        XCTAssertTrue(adapter.copyStatusSnapshot().automaticCaptureOrchestrationRunning)
+
+        adapter.stopAutomaticApolloCoreCaptureOrchestration()
+        XCTAssertFalse(adapter.copyStatusSnapshot().automaticCaptureOrchestrationRunning)
     }
 }
