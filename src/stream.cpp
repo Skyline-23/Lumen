@@ -32,6 +32,9 @@ extern "C" {
 #include "logging.h"
 #include "network.h"
 #include "platform/common.h"
+#ifdef __APPLE__
+#include "platform/macos/misc.h"
+#endif
 #include "process.h"
 #include "stream.h"
 #include "sync.h"
@@ -2002,9 +2005,33 @@ namespace stream {
                ApolloCoreAudioCaptureSourceKindMicrophone;
     }
 
+    void mirror_apollo_core_capture_request(const ApolloCoreCaptureRequestSnapshot &snapshot) {
+      platf::capture_request_mirror_state_t mirror_state {
+        .generation = snapshot.generation,
+        .video_requested = snapshot.video_requested,
+        .audio_requested = snapshot.audio_requested,
+        .display_id = snapshot.display_id,
+        .codec = static_cast<int>(snapshot.codec),
+        .preprocess_strategy = static_cast<int>(snapshot.preprocess_strategy),
+        .queue_profile = static_cast<int>(snapshot.queue_profile),
+        .show_cursor = snapshot.show_cursor,
+        .target_frame_rate = snapshot.target_frame_rate,
+        .requested_width = snapshot.requested_width,
+        .requested_height = snapshot.requested_height,
+        .dynamic_range = snapshot.dynamic_range,
+        .audio_source_kind = static_cast<int>(snapshot.audio_source_kind),
+        .audio_excludes_current_process = snapshot.audio_excludes_current_process,
+        .audio_sample_rate = snapshot.audio_sample_rate,
+        .audio_channel_count = snapshot.audio_channel_count,
+        .audio_frame_size = snapshot.audio_frame_size,
+      };
+      platf::mirror_capture_request_state(mirror_state);
+    }
+
     void publish_apollo_core_capture_request(const session_t &session) {
       if (session.config.monitor.input_only) {
         ApolloCoreCaptureRequestClear();
+        platf::clear_capture_request_state_mirror();
         return;
       }
 
@@ -2031,6 +2058,8 @@ namespace stream {
           session.config.audio.packetDuration * 48
         );
       }
+
+      mirror_apollo_core_capture_request(ApolloCoreCaptureRequestCopySnapshot());
     }
   }  // namespace
 #endif
@@ -2164,6 +2193,7 @@ namespace stream {
       if (--running_sessions == 0) {
 #ifdef __APPLE__
         ApolloCoreCaptureRequestClear();
+        platf::clear_capture_request_state_mirror();
 #endif
         bool revert_display_config {config::video.dd.config_revert_on_disconnect};
         proc::proc.on_stream_disconnected();

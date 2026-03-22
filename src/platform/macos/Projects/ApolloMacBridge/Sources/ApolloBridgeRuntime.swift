@@ -366,6 +366,7 @@ public actor ApolloBridgeRuntime {
     private var audioCaptureSession: MDKAudioCaptureSession?
     private var activeAudioCaptureConfiguration: ApolloMacDisplayKitAudioCaptureConfiguration?
     private var captureAutomationTask: Task<Void, Never>?
+    private var mirroredCaptureRequestTask: Task<Void, Never>?
 
     public init() {}
 
@@ -483,6 +484,7 @@ public actor ApolloBridgeRuntime {
             return
         }
 
+        startMirroredApolloCoreCaptureRequestSync()
         captureAutomationTask = Task.detached(priority: .background) { [weak self] in
             var observedGeneration = UInt64.max
             while !Task.isCancelled {
@@ -503,6 +505,8 @@ public actor ApolloBridgeRuntime {
     public func stopApolloCoreCaptureAutomation() async {
         captureAutomationTask?.cancel()
         captureAutomationTask = nil
+        mirroredCaptureRequestTask?.cancel()
+        mirroredCaptureRequestTask = nil
         await stopMacDisplayKitAudioCapture()
         await stopMacDisplayKitCapture()
     }
@@ -588,6 +592,29 @@ public actor ApolloBridgeRuntime {
                 try? await startMacDisplayKitAudioCapture(configuration: configuration)
             } else {
                 await stopMacDisplayKitAudioCapture()
+            }
+        }
+    }
+
+    private func startMirroredApolloCoreCaptureRequestSync() {
+        guard mirroredCaptureRequestTask == nil else {
+            return
+        }
+
+        mirroredCaptureRequestTask = Task.detached(priority: .background) {
+            let coordinator = ApolloCaptureRequestMirrorCoordinator()
+            await coordinator.syncCurrentState()
+
+            let notificationCenter = DistributedNotificationCenter.default()
+            let notifications = notificationCenter.notifications(
+                named: ApolloBridgeMirroredCaptureRequestSnapshot.changedNotification
+            )
+
+            for await _ in notifications {
+                if Task.isCancelled {
+                    break
+                }
+                await coordinator.syncCurrentState()
             }
         }
     }

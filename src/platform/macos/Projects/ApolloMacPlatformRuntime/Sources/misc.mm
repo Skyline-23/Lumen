@@ -71,6 +71,8 @@ namespace platf {
     constexpr int32_t kVirtualIsolationParkOriginX = -32768;
     constexpr int32_t kVirtualIsolationParkOriginY = 0;
     constexpr int32_t kVirtualIsolationParkSpacingY = 4096;
+    constexpr std::string_view kCaptureRequestMirrorFileName = "capture_request_state.plist"sv;
+    NSString *const kCaptureRequestMirrorNotificationName = @"com.lizardbyte.apollo.capture-request-changed";
 
     struct private_display_control_api_t {
       void *handle = nullptr;
@@ -120,6 +122,50 @@ namespace platf {
       api.ws_display_is_canonical_mirror_master = load_private_symbol(api.handle, "WSDisplayIsCanonicalMirrorMaster");
       api.cgx_vfb_select_online_state = load_private_symbol(api.handle, "CGXVFBSelectOnlineState");
       return api;
+    }
+
+    NSURL *capture_request_mirror_url() {
+      auto directory = appdata();
+      std::error_code ec;
+      fs::create_directories(directory, ec);
+      if (ec) {
+        BOOST_LOG(warning) << "Unable to create Apollo appdata directory for capture request mirroring: "sv << ec.message();
+      }
+
+      const auto mirror_path = directory / kCaptureRequestMirrorFileName;
+      return [NSURL fileURLWithPath:[NSString stringWithUTF8String:mirror_path.string().c_str()]];
+    }
+
+    void post_capture_request_mirror_notification() {
+      CFNotificationCenterPostNotification(
+        CFNotificationCenterGetDistributedCenter(),
+        (__bridge CFStringRef) kCaptureRequestMirrorNotificationName,
+        nullptr,
+        nullptr,
+        true
+      );
+    }
+
+    NSDictionary *capture_request_dictionary(const capture_request_mirror_state_t &state) {
+      return @{
+        @"generation": @(state.generation),
+        @"videoRequested": @(state.video_requested),
+        @"audioRequested": @(state.audio_requested),
+        @"displayID": @(state.display_id),
+        @"codec": @(state.codec),
+        @"preprocessStrategy": @(state.preprocess_strategy),
+        @"queueProfile": @(state.queue_profile),
+        @"showCursor": @(state.show_cursor),
+        @"targetFrameRate": @(state.target_frame_rate),
+        @"requestedWidth": @(state.requested_width),
+        @"requestedHeight": @(state.requested_height),
+        @"dynamicRange": @(state.dynamic_range),
+        @"audioSourceKind": @(state.audio_source_kind),
+        @"audioExcludesCurrentProcess": @(state.audio_excludes_current_process),
+        @"audioSampleRate": @(state.audio_sample_rate),
+        @"audioChannelCount": @(state.audio_channel_count),
+        @"audioFrameSize": @(state.audio_frame_size),
+      };
     }
 
     using cgx_current_display_set_t = int (*)();
@@ -1025,6 +1071,44 @@ namespace platf {
 
     BOOST_LOG(info) << "Requested macOS physical displays to wake"sv;
     return true;
+  }
+
+  void mirror_capture_request_state(const capture_request_mirror_state_t &state) {
+    @autoreleasepool {
+      NSError *error = nil;
+      auto *data = [NSPropertyListSerialization dataWithPropertyList:capture_request_dictionary(state)
+                                                              format:NSPropertyListBinaryFormat_v1_0
+                                                             options:0
+                                                               error:&error];
+      if (data == nil) {
+        BOOST_LOG(warning) << "Unable to serialize mirrored Apollo capture request: "sv
+                           << (error ? [[error localizedDescription] UTF8String] : "unknown error");
+        return;
+      }
+
+      if (![data writeToURL:capture_request_mirror_url() options:NSDataWritingAtomic error:&error]) {
+        BOOST_LOG(warning) << "Unable to mirror Apollo capture request: "sv
+                           << (error ? [[error localizedDescription] UTF8String] : "unknown error");
+        return;
+      }
+
+      post_capture_request_mirror_notification();
+    }
+  }
+
+  void clear_capture_request_state_mirror() {
+    @autoreleasepool {
+      NSError *error = nil;
+      auto *url = capture_request_mirror_url();
+      if ([[NSFileManager defaultManager] fileExistsAtPath:[url path]] &&
+          ![[NSFileManager defaultManager] removeItemAtURL:url error:&error]) {
+        BOOST_LOG(warning) << "Unable to clear mirrored Apollo capture request: "sv
+                           << (error ? [[error localizedDescription] UTF8String] : "unknown error");
+        return;
+      }
+
+      post_capture_request_mirror_notification();
+    }
   }
 }  // namespace platf
 
