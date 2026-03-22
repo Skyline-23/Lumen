@@ -8,8 +8,8 @@
 // standard includes
 #include <filesystem>
 #include <array>
-#include <format>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <string>
@@ -157,7 +157,7 @@ namespace nvhttp {
                 host.resize(port_delimiter);
               }
             } else if (colon_count > 1) {
-              return std::format("[{}]", host);
+              return "[" + host + "]";
             }
 
             if (!host.empty()) {
@@ -1045,7 +1045,7 @@ namespace nvhttp {
       tree.put("root.<xmlattr>.status_code", 400);
       tree.put(
         "root.<xmlattr>.status_message",
-        std::format("Pin must be 4 digits, {} provided", pin.size())
+        "Pin must be 4 digits, " + std::to_string(pin.size()) + " provided"
       );
       return false;
     }
@@ -1536,12 +1536,13 @@ namespace nvhttp {
 
     tree.put("root.<xmlattr>.status_code", 200);
     auto session_url_host = rtsp_url_host_for_request(request);
-    auto session_url = std::format(
-      "{}{}:{}",
-      launch_session->rtsp_url_scheme,
-      session_url_host,
-      static_cast<int>(net::map_port(rtsp_stream::RTSP_SETUP_PORT))
-    );
+    std::ostringstream session_url_stream;
+    session_url_stream
+      << launch_session->rtsp_url_scheme
+      << session_url_host
+      << ':'
+      << static_cast<int>(net::map_port(rtsp_stream::RTSP_SETUP_PORT));
+    auto session_url = session_url_stream.str();
     BOOST_LOG(info) << "Launch session URL resolved to ["sv << session_url << "] from local endpoint ["sv
                     << net::addr_to_normalized_string(request->local_endpoint().address()) << ']';
     tree.put("root.sessionUrl0", session_url);
@@ -1644,12 +1645,13 @@ namespace nvhttp {
 
     tree.put("root.<xmlattr>.status_code", 200);
     auto session_url_host = rtsp_url_host_for_request(request);
-    auto session_url = std::format(
-      "{}{}:{}",
-      launch_session->rtsp_url_scheme,
-      session_url_host,
-      static_cast<int>(net::map_port(rtsp_stream::RTSP_SETUP_PORT))
-    );
+    std::ostringstream session_url_stream;
+    session_url_stream
+      << launch_session->rtsp_url_scheme
+      << session_url_host
+      << ':'
+      << static_cast<int>(net::map_port(rtsp_stream::RTSP_SETUP_PORT));
+    auto session_url = session_url_stream.str();
     BOOST_LOG(info) << "Resume session URL resolved to ["sv << session_url << "] from local endpoint ["sv
                     << net::addr_to_normalized_string(request->local_endpoint().address()) << ']';
     tree.put("root.sessionUrl0", session_url);

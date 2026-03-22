@@ -2,6 +2,8 @@
  * @file src/cbs.cpp
  * @brief Definitions for FFmpeg Coded Bitstream API.
  */
+#include <math.h>
+
 extern "C" {
 // lib includes
 #include <libavcodec/avcodec.h>

@@ -4,8 +4,8 @@
  */
 // standard includes
 #include <csignal>
-#include <format>
 #include <iostream>
+#include <sstream>
 #include <thread>
 
 // local includes
@@ -27,11 +27,12 @@ extern "C" {
 using namespace std::literals;
 
 void launch_ui(const std::optional<std::string> &path) {
-  std::string url = std::format("https://localhost:{}", static_cast<int>(net::map_port(confighttp::PORT_HTTPS)));
+  std::ostringstream url;
+  url << "https://localhost:" << static_cast<int>(net::map_port(confighttp::PORT_HTTPS));
   if (path) {
-    url += *path;
+    url << *path;
   }
-  platf::open_url(url);
+  platf::open_url(url.str());
 }
 
 namespace args {
