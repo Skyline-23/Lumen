@@ -53,13 +53,11 @@ public final class ApolloBridgeConfigurationBox: NSObject {
 public final class ApolloBridgeStatusBox: NSObject {
     public let coreVersion: String
     public let runtimeDescription: String
-    public let preferredCaptureBackendRawValue: Int
     public let integrationStatus: String
 
     init(snapshot: ApolloBridgeStatus) {
         self.coreVersion = snapshot.coreVersion
         self.runtimeDescription = snapshot.runtimeDescription
-        self.preferredCaptureBackendRawValue = ApolloBridgeObjCFacade.rawValue(for: snapshot.preferredCaptureBackend)
         self.integrationStatus = snapshot.integrationStatus
     }
 }
@@ -160,13 +158,6 @@ public final class ApolloBridgeObjCFacade: NSObject {
         super.init()
     }
 
-    public func setPreferredCaptureBackendRawValue(_ rawValue: Int) {
-        let backend = Self.backend(fromRawValue: rawValue)
-        Task {
-            await runtime.setPreferredCaptureBackend(backend)
-        }
-    }
-
     public func makePanelNativeConfiguration(displayID: UInt32) -> ApolloBridgeConfigurationBox {
         ApolloBridgeConfigurationBox(configuration: .panelNative(displayID: displayID))
     }
@@ -199,7 +190,6 @@ public final class ApolloBridgeObjCFacade: NSObject {
             snapshot: ApolloBridgeStatus(
                 coreVersion: String(cString: ApolloCoreBootstrapVersionString()),
                 runtimeDescription: String(cString: ApolloCoreBootstrapRuntimeDescription()),
-                preferredCaptureBackend: .macDisplayKit,
                 integrationStatus: "ApolloBridgeObjCFacade failed to read the actor-backed status snapshot."
             )
         )
@@ -282,17 +272,6 @@ public final class ApolloBridgeObjCFacade: NSObject {
 }
 
 extension ApolloBridgeObjCFacade {
-    static func backend(fromRawValue rawValue: Int) -> ApolloCaptureBackend {
-        switch rawValue {
-        case 0:
-            return .legacyApollo
-        case 1:
-            return .macDisplayKit
-        default:
-            return .macDisplayKit
-        }
-    }
-
     static func codec(fromRawValue rawValue: Int) -> ApolloCaptureCodec {
         switch rawValue {
         case Int(ApolloCoreCaptureCodecH264.rawValue):
@@ -327,15 +306,6 @@ extension ApolloBridgeObjCFacade {
             return .q4
         default:
             return .q2
-        }
-    }
-
-    static func rawValue(for backend: ApolloCaptureBackend) -> Int {
-        switch backend {
-        case .legacyApollo:
-            return 0
-        case .macDisplayKit:
-            return 1
         }
     }
 

@@ -5,17 +5,6 @@ struct ApolloRootView: View {
     @State private var status: ApolloMacCaptureAdapterStatus?
     private let captureAdapter = ApolloMacCaptureAdapter()
 
-    private func backendLabel(_ backend: ApolloMacBridgeCaptureBackend) -> String {
-        switch backend.rawValue {
-        case 0:
-            return "Legacy Apollo"
-        case 1:
-            return "MacDisplayKit"
-        default:
-            return "Unknown (\(backend.rawValue))"
-        }
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Apollo Tuist Bootstrap")
@@ -28,8 +17,8 @@ struct ApolloRootView: View {
                 LabeledContent("Bridge") {
                     Text(status.runtimeDescription)
                 }
-                LabeledContent("Preferred Backend") {
-                    Text(backendLabel(status.preferredCaptureBackend))
+                LabeledContent("Capture Path") {
+                    Text("MacDisplayKit")
                 }
                 LabeledContent("Forwarding Pump") {
                     Text(status.forwardingPumpRunning ? "Running" : "Stopped")

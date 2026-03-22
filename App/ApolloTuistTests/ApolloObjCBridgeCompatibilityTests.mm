@@ -17,7 +17,6 @@
   XCTAssertNotEqual(controller, nullptr);
 
   ApolloMacBridgeStatusSnapshot status = ApolloMacBridgeControllerCopyStatusSnapshot(controller);
-  XCTAssertEqual(status.preferred_capture_backend, ApolloMacBridgeCaptureBackendMacDisplayKit);
   XCTAssertGreaterThan(strlen(status.core_version), 0UL);
   XCTAssertGreaterThan(strlen(status.runtime_description), 0UL);
   XCTAssertGreaterThan(strlen(status.integration_status), 0UL);
@@ -65,7 +64,6 @@
   apollo::macbridge::Controller controller;
 
   ApolloMacBridgeStatusSnapshot status = controller.copy_status_snapshot();
-  XCTAssertEqual(status.preferred_capture_backend, ApolloMacBridgeCaptureBackendMacDisplayKit);
   XCTAssertGreaterThan(strlen(status.core_version), 0UL);
 
   ApolloMacBridgeCaptureConfiguration configuration =

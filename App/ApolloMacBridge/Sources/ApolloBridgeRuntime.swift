@@ -3,11 +3,6 @@ import CoreMedia
 import Foundation
 import MacDisplayCaptureKit
 
-public enum ApolloCaptureBackend: String, CaseIterable, Codable, Sendable {
-    case legacyApollo = "legacy-apollo"
-    case macDisplayKit = "mac-display-kit"
-}
-
 public enum ApolloCaptureCodec: String, CaseIterable, Codable, Sendable {
     case h264
     case hevc
@@ -137,18 +132,15 @@ public struct ApolloBridgeCaptureSnapshot: Equatable, Sendable {
 public struct ApolloBridgeStatus: Equatable, Sendable {
     public let coreVersion: String
     public let runtimeDescription: String
-    public let preferredCaptureBackend: ApolloCaptureBackend
     public let integrationStatus: String
 
     public init(
         coreVersion: String,
         runtimeDescription: String,
-        preferredCaptureBackend: ApolloCaptureBackend,
         integrationStatus: String
     ) {
         self.coreVersion = coreVersion
         self.runtimeDescription = runtimeDescription
-        self.preferredCaptureBackend = preferredCaptureBackend
         self.integrationStatus = integrationStatus
     }
 }
@@ -156,7 +148,6 @@ public struct ApolloBridgeStatus: Equatable, Sendable {
 public actor ApolloBridgeRuntime {
     public static let shared = ApolloBridgeRuntime()
 
-    private var preferredCaptureBackend: ApolloCaptureBackend = .macDisplayKit
     private let coreForwarder = ApolloCoreCaptureForwarder()
     private var encodedCaptureSession: MDKEncodedCaptureSession?
     private var activeCaptureConfiguration: ApolloMacDisplayKitCaptureConfiguration?
@@ -164,10 +155,6 @@ public actor ApolloBridgeRuntime {
     private var recentEvents: [MDKEncodedCaptureSessionEvent] = []
 
     public init() {}
-
-    public func setPreferredCaptureBackend(_ backend: ApolloCaptureBackend) {
-        preferredCaptureBackend = backend
-    }
 
     public func preferredMacDisplayKitCaptureConfiguration(
         displayID: UInt32
@@ -260,7 +247,6 @@ public actor ApolloBridgeRuntime {
         ApolloBridgeStatus(
             coreVersion: String(cString: ApolloCoreBootstrapVersionString()),
             runtimeDescription: String(cString: ApolloCoreBootstrapRuntimeDescription()),
-            preferredCaptureBackend: preferredCaptureBackend,
             integrationStatus: "Swift shell, C/C++ core, and bridge targets are ready. ApolloMacBridge now links MacDisplayCaptureKit, owns callback-only encoded capture sessions, and forwards encoded sample buffers into ApolloCore's C ABI ingress surface."
         )
     }

@@ -6,7 +6,6 @@ final class ApolloMacCaptureAdapterTests: XCTestCase {
         let adapter = ApolloMacCaptureAdapter()
 
         let status = adapter.copyStatusSnapshot()
-        XCTAssertEqual(status.preferredCaptureBackend.rawValue, 1)
         XCTAssertFalse(status.forwardingPumpRunning)
         XCTAssertGreaterThan(status.coreVersion.count, 0)
         XCTAssertGreaterThan(status.runtimeDescription.count, 0)

@@ -8,7 +8,6 @@ NS_ASSUME_NONNULL_BEGIN
 
 @interface ApolloMacCaptureAdapterStatus : NSObject
 
-@property(nonatomic, readonly) ApolloMacBridgeCaptureBackend preferredCaptureBackend;
 @property(nonatomic, readonly, copy) NSString *coreVersion;
 @property(nonatomic, readonly, copy) NSString *runtimeDescription;
 @property(nonatomic, readonly, copy) NSString *integrationStatus;
@@ -17,8 +16,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, readonly) NSUInteger forwardedEventCallbackCount;
 @property(nonatomic, readonly) ApolloCoreEncodedCaptureIngressSnapshot coreForwardingSnapshot;
 
-- (instancetype)initWithPreferredCaptureBackend:(ApolloMacBridgeCaptureBackend)preferredCaptureBackend
-                                    coreVersion:(NSString *)coreVersion
+- (instancetype)initWithCoreVersion:(NSString *)coreVersion
                              runtimeDescription:(NSString *)runtimeDescription
                               integrationStatus:(NSString *)integrationStatus
                            forwardingPumpRunning:(BOOL)forwardingPumpRunning
@@ -32,7 +30,6 @@ NS_ASSUME_NONNULL_BEGIN
 
 @interface ApolloMacCaptureAdapter : NSObject
 
-- (void)setPreferredCaptureBackend:(ApolloMacBridgeCaptureBackend)backend;
 - (ApolloMacBridgeCaptureConfiguration)makePanelNativeConfigurationForDisplayID:(uint32_t)displayID;
 - (void)configureCoreForwardingWithFrameCapacity:(NSUInteger)frameCapacity
                                    eventCapacity:(NSUInteger)eventCapacity;

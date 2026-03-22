@@ -10,11 +10,6 @@
 extern "C" {
 #endif
 
-typedef enum ApolloMacBridgeCaptureBackend {
-  ApolloMacBridgeCaptureBackendLegacyApollo = 0,
-  ApolloMacBridgeCaptureBackendMacDisplayKit = 1
-} ApolloMacBridgeCaptureBackend;
-
 typedef enum ApolloMacBridgePreprocessStrategy {
   ApolloMacBridgePreprocessStrategyNone = 0,
   ApolloMacBridgePreprocessStrategyDownscale2x = 1
@@ -37,7 +32,6 @@ typedef struct ApolloMacBridgeCaptureConfiguration {
 } ApolloMacBridgeCaptureConfiguration;
 
 typedef struct ApolloMacBridgeStatusSnapshot {
-  ApolloMacBridgeCaptureBackend preferred_capture_backend;
   char core_version[128];
   char runtime_description[256];
   char integration_status[512];
@@ -66,11 +60,6 @@ typedef struct ApolloMacBridgeController ApolloMacBridgeController;
 
 ApolloMacBridgeController *ApolloMacBridgeControllerCreate(void);
 void ApolloMacBridgeControllerDestroy(ApolloMacBridgeController *controller);
-
-void ApolloMacBridgeControllerSetPreferredCaptureBackend(
-  ApolloMacBridgeController *controller,
-  ApolloMacBridgeCaptureBackend backend
-);
 
 ApolloMacBridgeCaptureConfiguration ApolloMacBridgeControllerMakePanelNativeConfiguration(
   uint32_t display_id
@@ -217,10 +206,6 @@ class Controller {
 
   [[nodiscard]] auto raw_controller() const -> ApolloMacBridgeController * {
     return controller_;
-  }
-
-  void set_preferred_capture_backend(ApolloMacBridgeCaptureBackend backend) const {
-    ApolloMacBridgeControllerSetPreferredCaptureBackend(controller_, backend);
   }
 
   [[nodiscard]] static auto make_panel_native_configuration(uint32_t display_id)

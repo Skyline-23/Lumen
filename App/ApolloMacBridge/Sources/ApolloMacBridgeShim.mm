@@ -189,17 +189,6 @@ void ApolloMacBridgeControllerDestroy(ApolloMacBridgeController *controller) {
   delete controller;
 }
 
-void ApolloMacBridgeControllerSetPreferredCaptureBackend(
-  ApolloMacBridgeController *controller,
-  ApolloMacBridgeCaptureBackend backend
-) {
-  if (!controller) {
-    return;
-  }
-
-  [controller->facade setPreferredCaptureBackendRawValue:static_cast<NSInteger>(backend)];
-}
-
 ApolloMacBridgeCaptureConfiguration ApolloMacBridgeControllerMakePanelNativeConfiguration(
   uint32_t display_id
 ) {
@@ -246,8 +235,6 @@ ApolloMacBridgeStatusSnapshot ApolloMacBridgeControllerCopyStatusSnapshot(
   }
 
   ApolloBridgeStatusBox *box = [controller->facade copyStatusSnapshotSync];
-  snapshot.preferred_capture_backend =
-    static_cast<ApolloMacBridgeCaptureBackend>(box.preferredCaptureBackendRawValue);
   copy_string_to_buffer(box.coreVersion, snapshot.core_version, sizeof(snapshot.core_version));
   copy_string_to_buffer(box.runtimeDescription,
                         snapshot.runtime_description,

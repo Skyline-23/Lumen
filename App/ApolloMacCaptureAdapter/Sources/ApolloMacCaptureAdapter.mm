@@ -46,8 +46,7 @@ namespace {
 
 @implementation ApolloMacCaptureAdapterStatus
 
-- (instancetype)initWithPreferredCaptureBackend:(ApolloMacBridgeCaptureBackend)preferredCaptureBackend
-                                    coreVersion:(NSString *)coreVersion
+- (instancetype)initWithCoreVersion:(NSString *)coreVersion
                              runtimeDescription:(NSString *)runtimeDescription
                               integrationStatus:(NSString *)integrationStatus
                            forwardingPumpRunning:(BOOL)forwardingPumpRunning
@@ -59,7 +58,6 @@ namespace {
     return nil;
   }
 
-  _preferredCaptureBackend = preferredCaptureBackend;
   _coreVersion = [coreVersion copy];
   _runtimeDescription = [runtimeDescription copy];
   _integrationStatus = [integrationStatus copy];
@@ -76,10 +74,6 @@ namespace {
   apollo::macbridge::Controller _controller;
   ApolloMacCaptureAdapterCallbackState _callback_state;
   BOOL _forwarding_pump_running;
-}
-
-- (void)setPreferredCaptureBackend:(ApolloMacBridgeCaptureBackend)backend {
-  _controller.set_preferred_capture_backend(backend);
 }
 
 - (ApolloMacBridgeCaptureConfiguration)makePanelNativeConfigurationForDisplayID:(uint32_t)displayID {
@@ -135,8 +129,7 @@ namespace {
   ApolloMacBridgeStatusSnapshot bridge_status = _controller.copy_status_snapshot();
   ApolloCoreEncodedCaptureIngressSnapshot core_snapshot = _controller.copy_core_forwarding_snapshot();
   return [[ApolloMacCaptureAdapterStatus alloc]
-    initWithPreferredCaptureBackend:bridge_status.preferred_capture_backend
-                        coreVersion:string_from_c_buffer(bridge_status.core_version)
+               initWithCoreVersion:string_from_c_buffer(bridge_status.core_version)
                  runtimeDescription:string_from_c_buffer(bridge_status.runtime_description)
                   integrationStatus:string_from_c_buffer(bridge_status.integration_status)
                forwardingPumpRunning:_forwarding_pump_running
