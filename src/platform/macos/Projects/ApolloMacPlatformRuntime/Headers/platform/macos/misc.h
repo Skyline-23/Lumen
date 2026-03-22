@@ -1,5 +1,5 @@
 /**
- * @file src/platform/macos/misc.h
+ * @file src/platform/macos/Projects/ApolloMacPlatformRuntime/Headers/platform/macos/misc.h
  * @brief Miscellaneous declarations for macOS platform.
  */
 #pragma once

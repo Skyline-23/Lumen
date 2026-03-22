@@ -1,5 +1,5 @@
 /**
- * @file src/platform/macos/publish.cpp
+ * @file src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/publish.cpp
  * @brief Definitions for publishing services on macOS.
  */
 // standard includes

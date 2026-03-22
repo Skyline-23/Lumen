@@ -1,5 +1,5 @@
 #include "ApolloCore.h"
-#include "ApolloCore.hpp"
+#include "ApolloCoreInternal.hpp"
 
 #include <algorithm>
 #include <array>

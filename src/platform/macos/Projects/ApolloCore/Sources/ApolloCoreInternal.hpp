@@ -1,5 +1,5 @@
-#ifndef APOLLO_CORE_HPP
-#define APOLLO_CORE_HPP
+#ifndef APOLLO_CORE_INTERNAL_HPP
+#define APOLLO_CORE_INTERNAL_HPP
 
 #include "ApolloCore.h"
 

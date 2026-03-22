@@ -1,5 +1,5 @@
 /**
- * @file src/platform/macos/av_video.h
+ * @file src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/av_video.h
  * @brief Declarations for video capture on macOS.
  */
 #pragma once

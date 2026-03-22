@@ -1,10 +1,10 @@
 /**
- * @file src/platform/macos/vt_metal_context.mm
+ * @file src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/vt_metal_context.mm
  * @brief Definitions for the Metal-backed VideoToolbox frame preparation path on macOS.
  */
 #import <Metal/Metal.h>
 
-#include "src/platform/macos/vt_metal_context.h"
+#include "vt_metal_context.h"
 
 namespace platf {
   struct vt_metal_context_t::impl_t {

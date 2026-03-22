@@ -1,13 +1,13 @@
 /**
- * @file src/platform/macos/nv12_zero_device.cpp
+ * @file src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/nv12_zero_device.cpp
  * @brief Definitions for NV12 zero copy device on macOS.
  */
 // standard includes
 #include <utility>
 
 // local includes
-#include "src/platform/macos/av_img_t.h"
-#include "src/platform/macos/nv12_zero_device.h"
+#include "nv12_zero_device.h"
+#include "platform/macos/av_img_t.h"
 #include "src/video.h"
 
 extern "C" {

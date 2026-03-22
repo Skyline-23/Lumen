@@ -1,5 +1,5 @@
 /**
- * @file src/platform/macos/av_audio.m
+ * @file src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/av_audio.m
  * @brief Definitions for audio capture on macOS.
  */
 // local includes

@@ -60,30 +60,6 @@
   ApolloMacBridgeControllerDestroy(controller);
 }
 
-- (void)testApolloMacBridgeCppWrapperSmoke {
-  apollo::macbridge::Controller controller;
-
-  ApolloMacBridgeStatusSnapshot status = controller.copy_status_snapshot();
-  XCTAssertGreaterThan(strlen(status.core_version), 0UL);
-
-  ApolloMacBridgeCaptureConfiguration configuration =
-    apollo::macbridge::Controller::make_panel_native_configuration(11);
-  XCTAssertEqual(configuration.display_id, 11u);
-  XCTAssertEqual(configuration.codec, ApolloCoreCaptureCodecHEVC);
-  XCTAssertEqual(configuration.queue_profile, ApolloMacBridgeQueueProfileQ2);
-
-  controller.configure_core_forwarding(1, 1);
-  ApolloCoreEncodedCaptureIngressSnapshot forwarding = controller.copy_core_forwarding_snapshot();
-  XCTAssertEqual(forwarding.queued_frame_count, 0ULL);
-  XCTAssertEqual(forwarding.queued_event_count, 0ULL);
-
-  auto frame = controller.pop_next_forwarded_frame();
-  XCTAssertFalse(frame.has_value());
-
-  auto event = controller.pop_next_forwarded_event();
-  XCTAssertFalse(event.has_value());
-}
-
 - (void)testApolloMacBridgeForwardingPumpSmoke {
   ApolloMacBridgeController *controller = ApolloMacBridgeControllerCreate();
   XCTAssertNotEqual(controller, nullptr);

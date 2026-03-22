@@ -1,5 +1,5 @@
 /**
- * @file src/platform/macos/display.mm
+ * @file src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/display.mm
  * @brief Definitions for display capture on macOS.
  */
 // standard includes
@@ -10,11 +10,11 @@
 #include "src/config.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
-#include "src/platform/macos/av_img_t.h"
-#include "src/platform/macos/av_video.h"
-#include "src/platform/macos/misc.h"
-#include "src/platform/macos/nv12_zero_device.h"
-#include "src/platform/macos/virtual_display.h"
+#include "av_video.h"
+#include "nv12_zero_device.h"
+#include "platform/macos/av_img_t.h"
+#include "platform/macos/misc.h"
+#include "platform/macos/virtual_display.h"
 #include "src/process.h"
 #include "src/rtsp.h"
 

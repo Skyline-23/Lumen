@@ -1,5 +1,5 @@
 /**
- * @file src/platform/macos/microphone.mm
+ * @file src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/microphone.mm
  * @brief Definitions for microphone capture on macOS.
  */
 // local includes
@@ -9,7 +9,7 @@
 #include "src/config.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
-#include "src/platform/macos/av_audio.h"
+#include "av_audio.h"
 
 namespace platf {
   using namespace std::literals;

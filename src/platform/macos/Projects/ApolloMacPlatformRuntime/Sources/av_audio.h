@@ -1,5 +1,5 @@
 /**
- * @file src/platform/macos/av_audio.h
+ * @file src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/av_audio.h
  * @brief Declarations for audio capture on macOS.
  */
 #pragma once

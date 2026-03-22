@@ -5,11 +5,13 @@ This bootstrap introduces a parallel Apple-platform structure without disturbing
 ## Location
 
 - Tuist entrypoint:
-  [`src/platform/macos/bootstrap/Project.swift`](../src/platform/macos/bootstrap/Project.swift)
+  `src/platform/macos/Project.swift`
 - Generate from the repository root with:
-  `tuist generate --path src/platform/macos/bootstrap --no-open`
+  `tuist generate --path src/platform/macos --no-open`
 - Build from the repository root with:
-  `xcodebuild build -workspace src/platform/macos/bootstrap/Apollo.xcworkspace -scheme ApolloApp -destination 'platform=macOS'`
+  `xcodebuild build -workspace src/platform/macos/Apollo.xcworkspace -scheme ApolloApp -destination 'platform=macOS'`
+- Project sources live under:
+  `src/platform/macos/Projects`
 
 ## Targets
 

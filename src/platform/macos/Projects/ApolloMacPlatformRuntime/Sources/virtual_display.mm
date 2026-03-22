@@ -7,7 +7,7 @@
 
 #include "src/logging.h"
 #include "src/video.h"
-#include "src/platform/macos/virtual_display.h"
+#include "platform/macos/virtual_display.h"
 
 #include <algorithm>
 #include <mutex>

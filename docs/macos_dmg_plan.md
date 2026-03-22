@@ -53,12 +53,12 @@ These parts already provide value and should remain the base of the fork:
 
 These macOS-specific parts should be considered rewrite targets:
 
-- `src/platform/macos/av_video.m`
-- `src/platform/macos/av_audio.m`
-- `src/platform/macos/microphone.mm`
-- portions of `src/platform/macos/display.mm`
+- `src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/av_video.m`
+- `src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/av_audio.m`
+- `src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/microphone.mm`
+- portions of `src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/display.mm`
 - macOS FFmpeg `videotoolbox` encode bridge inside `src/video.cpp`
-- permission handling in `src/platform/macos/misc.mm`
+- permission handling in `src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/misc.mm`
 - macOS packaging in `cmake/packaging/macos.cmake`
 
 ### Target Capture Pipeline
@@ -150,20 +150,20 @@ The old Objective-C screen capture path and the FFmpeg `hevc_videotoolbox` wrapp
 
 Likely new files:
 
-- `src/platform/macos/capture_sck.h`
-- `src/platform/macos/capture_sck.mm`
+- `src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/capture_sck.h`
+- `src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/capture_sck.mm`
 
 Likely modified files:
 
-- `src/platform/macos/display.mm`
-- `src/platform/macos/misc.mm`
+- `src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/display.mm`
+- `src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/misc.mm`
 - `cmake/compile_definitions/macos.cmake`
 
 ### Design Notes
 
 - keep `display_t` as the platform-facing contract
 - move Objective-C / Objective-C++ stream lifecycle into a dedicated `capture_sck` object
-- keep `display.mm` thin and focused on frame handoff
+- keep the macOS runtime `display.mm` thin and focused on frame handoff
 - prefer latest-frame behavior over deep buffering
 - start with single-display capture only
 - do not rely on FFmpeg `*_videotoolbox` encoders for the macOS host path
@@ -197,16 +197,16 @@ The current macOS host can negotiate RTSP/audio/control successfully, but the fi
 
 Likely new files:
 
-- `src/platform/macos/vt_encode.h`
-- `src/platform/macos/vt_encode.mm`
-- `src/platform/macos/metal_convert.h`
-- `src/platform/macos/metal_convert.mm`
+- `src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/vt_encode.h`
+- `src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/vt_encode.mm`
+- `src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/metal_convert.h`
+- `src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/metal_convert.mm`
 
 Likely modified files:
 
 - `src/video.cpp`
 - `src/video.h`
-- `src/platform/macos/display.mm`
+- `src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/display.mm`
 
 ### Acceptance Criteria
 
@@ -236,13 +236,13 @@ The DMG release must work as a desktop product, not as a "developer setup plus v
 
 Likely new files:
 
-- `src/platform/macos/audio_sck.h`
-- `src/platform/macos/audio_sck.mm`
+- `src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/audio_sck.h`
+- `src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/audio_sck.mm`
 
 Likely modified files:
 
-- `src/platform/macos/microphone.mm`
-- `src/platform/macos/av_audio.m`
+- `src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/microphone.mm`
+- `src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/av_audio.m`
 - `src/audio.cpp`
 - `src/config.h`
 - `src/config.cpp`
@@ -296,8 +296,8 @@ Additional messaging should be tailored for a streaming host, not generic record
 
 Likely modified files:
 
-- `src/platform/macos/misc.mm`
-- `src/platform/macos/misc.h`
+- `src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/misc.mm`
+- `src/platform/macos/Projects/ApolloMacPlatformRuntime/Headers/platform/macos/misc.h`
 - `src/main.cpp`
 - `src_assets/macos/assets/Info.plist`
 - web UI config/status files under `src_assets/common/assets/web`
@@ -332,7 +332,7 @@ The project already has a functional `videotoolbox` encoder path and should buil
 Likely modified files:
 
 - `src/video.cpp`
-- `src/platform/macos/display.mm`
+- `src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/display.mm`
 - new `ScreenCaptureKit` bridge files
 
 ### Acceptance Criteria

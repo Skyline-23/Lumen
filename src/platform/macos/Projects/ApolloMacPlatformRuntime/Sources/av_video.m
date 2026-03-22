@@ -1,5 +1,5 @@
 /**
- * @file src/platform/macos/av_video.m
+ * @file src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/av_video.m
  * @brief Definitions for video capture on macOS.
  */
 // local includes

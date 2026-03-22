@@ -1,5 +1,5 @@
 /**
- * @file src/platform/macos/misc.mm
+ * @file src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/misc.mm
  * @brief Miscellaneous definitions for macOS platform.
  */
 
@@ -32,7 +32,7 @@ extern char **environ;
 #include <boost/process/v1.hpp>
 
 // local includes
-#include "misc.h"
+#include "platform/macos/misc.h"
 #include "src/config.h"
 #include "src/entry_handler.h"
 #include "src/logging.h"

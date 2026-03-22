@@ -1,5 +1,5 @@
 /**
- * @file src/platform/macos/vt_metal_context.h
+ * @file src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/vt_metal_context.h
  * @brief Declarations for the Metal-backed VideoToolbox frame preparation path on macOS.
  */
 #pragma once

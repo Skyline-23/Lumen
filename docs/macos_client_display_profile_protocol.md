@@ -69,9 +69,9 @@ Apollo host currently consumes the fields here:
   RTSP ANNOUNCE parser
 - [`src/process.cpp`](../src/process.cpp)
   session state propagation
-- [`src/platform/macos/virtual_display.mm`](../src/platform/macos/virtual_display.mm)
+- `src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/virtual_display.mm`
   virtual display primaries selection
-- [`src/platform/macos/display.mm`](../src/platform/macos/display.mm)
+- `src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/display.mm`
   generic virtual HDR metadata selection
 
 ## Current Client Gap

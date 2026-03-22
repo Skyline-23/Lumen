@@ -73,14 +73,33 @@ namespace {
 @end
 
 @implementation ApolloMacCaptureAdapter {
-  apollo::macbridge::Controller _controller;
+  ApolloMacBridgeController *_controller;
   ApolloMacCaptureAdapterCallbackState _callback_state;
   BOOL _capture_session_running;
   BOOL _forwarding_pump_running;
 }
 
+- (instancetype)init {
+  self = [super init];
+  if (!self) {
+    return nil;
+  }
+
+  _controller = ApolloMacBridgeControllerCreate();
+  return self;
+}
+
+- (void)dealloc {
+  if (_controller) {
+    ApolloMacBridgeControllerStopCoreForwardingPump(_controller);
+    ApolloMacBridgeControllerStopMacDisplayKitCapture(_controller);
+    ApolloMacBridgeControllerDestroy(_controller);
+    _controller = nullptr;
+  }
+}
+
 - (ApolloMacBridgeCaptureConfiguration)makePanelNativeConfigurationForDisplayID:(uint32_t)displayID {
-  return apollo::macbridge::Controller::make_panel_native_configuration(displayID);
+  return ApolloMacBridgeControllerMakePanelNativeConfiguration(displayID);
 }
 
 - (BOOL)startManagedCaptureSessionWithConfiguration:(ApolloMacBridgeCaptureConfiguration)configuration
@@ -109,15 +128,21 @@ namespace {
 
 - (void)configureCoreForwardingWithFrameCapacity:(NSUInteger)frameCapacity
                                    eventCapacity:(NSUInteger)eventCapacity {
-  _controller.configure_core_forwarding(frameCapacity, eventCapacity);
+  ApolloMacBridgeControllerConfigureCoreForwarding(_controller, frameCapacity, eventCapacity);
 }
 
 - (BOOL)startMacDisplayKitCaptureWithConfiguration:(ApolloMacBridgeCaptureConfiguration)configuration
                                              error:(NSError * _Nullable __autoreleasing *)error {
-  auto result = _controller.start_mac_display_kit_capture(configuration);
-  if (!result.started) {
+  char error_buffer[512] = {};
+  BOOL started = ApolloMacBridgeControllerStartMacDisplayKitCapture(
+    _controller,
+    configuration,
+    error_buffer,
+    sizeof(error_buffer)
+  );
+  if (!started) {
     if (error) {
-      *error = adapter_error(string_from_c_buffer(result.error_message.c_str()));
+      *error = adapter_error(string_from_c_buffer(error_buffer));
     }
     _capture_session_running = NO;
     return NO;
@@ -128,7 +153,7 @@ namespace {
 }
 
 - (void)stopMacDisplayKitCapture {
-  _controller.stop_mac_display_kit_capture();
+  ApolloMacBridgeControllerStopMacDisplayKitCapture(_controller);
   _capture_session_running = NO;
 }
 
@@ -138,10 +163,17 @@ namespace {
   callbacks.encoded_frame_handler = handle_encoded_frame;
   callbacks.capture_event_handler = handle_capture_event;
 
-  auto result = _controller.start_core_forwarding_pump(callbacks);
-  if (!result.started) {
+  char error_buffer[512] = {};
+  BOOL started = ApolloMacBridgeControllerStartCoreForwardingPump(
+    _controller,
+    callbacks,
+    1,
+    error_buffer,
+    sizeof(error_buffer)
+  );
+  if (!started) {
     if (error) {
-      *error = adapter_error(string_from_c_buffer(result.error_message.c_str()));
+      *error = adapter_error(string_from_c_buffer(error_buffer));
     }
     return NO;
   }
@@ -151,13 +183,14 @@ namespace {
 }
 
 - (void)stopForwardingPump {
-  _controller.stop_core_forwarding_pump();
+  ApolloMacBridgeControllerStopCoreForwardingPump(_controller);
   _forwarding_pump_running = NO;
 }
 
 - (ApolloMacCaptureAdapterStatus *)copyStatusSnapshot {
-  ApolloMacBridgeStatusSnapshot bridge_status = _controller.copy_status_snapshot();
-  ApolloCoreEncodedCaptureIngressSnapshot core_snapshot = _controller.copy_core_forwarding_snapshot();
+  ApolloMacBridgeStatusSnapshot bridge_status = ApolloMacBridgeControllerCopyStatusSnapshot(_controller);
+  ApolloCoreEncodedCaptureIngressSnapshot core_snapshot =
+    ApolloMacBridgeControllerCopyCoreForwardingSnapshot(_controller);
   return [[ApolloMacCaptureAdapterStatus alloc]
                initWithCoreVersion:string_from_c_buffer(bridge_status.core_version)
                  runtimeDescription:string_from_c_buffer(bridge_status.runtime_description)

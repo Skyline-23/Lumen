@@ -1,5 +1,5 @@
 /**
- * @file src/platform/macos/nv12_zero_device.h
+ * @file src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/nv12_zero_device.h
  * @brief Declarations for NV12 zero copy device on macOS.
  */
 #pragma once

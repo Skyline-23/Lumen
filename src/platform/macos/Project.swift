@@ -13,7 +13,7 @@ let baseSettings: SettingsDictionary = [
 let project = Project(
     name: "Apollo",
     packages: [
-        .package(path: "../../../../../MacDisplayKit")
+        .package(path: "../../../../MacDisplayKit")
     ],
     settings: .settings(base: baseSettings),
     targets: [
@@ -25,11 +25,10 @@ let project = Project(
             deploymentTargets: .macOS("13.0"),
             infoPlist: .default,
             sources: [
-                "ApolloCore/src/**/*.{c,cc,cpp,m,mm}"
+                "Projects/ApolloCore/Sources/**/*.{c,cc,cpp,m,mm}"
             ],
             headers: .headers(
-                public: "ApolloCore/include/ApolloCore.h",
-                private: "ApolloCore/include/ApolloCore.hpp"
+                public: "Projects/ApolloCore/Headers/ApolloCore.h"
             ),
             dependencies: [
                 .sdk(name: "CoreFoundation", type: .framework),
@@ -40,7 +39,7 @@ let project = Project(
                     "DEFINES_MODULE": "YES",
                     "PRODUCT_NAME": "ApolloCore",
                     "HEADER_SEARCH_PATHS": [
-                        "$(SRCROOT)/ApolloCore/include"
+                        "$(SRCROOT)/Projects/ApolloCore/Headers"
                     ]
                 ]
             )
@@ -53,10 +52,10 @@ let project = Project(
             deploymentTargets: .macOS("13.0"),
             infoPlist: .default,
             sources: [
-                "ApolloMacBridge/Sources/**/*.{swift,m,mm}"
+                "Projects/ApolloMacBridge/Sources/**/*.{swift,m,mm}"
             ],
             headers: .headers(
-                public: "ApolloMacBridge/include/ApolloMacBridge.h"
+                public: "Projects/ApolloMacBridge/Headers/ApolloMacBridge.h"
             ),
             dependencies: [
                 .target(name: "ApolloCore"),
@@ -69,7 +68,7 @@ let project = Project(
                     "BUILD_LIBRARY_FOR_DISTRIBUTION": "YES",
                     "SWIFT_ENABLE_LIBRARY_EVOLUTION": "YES",
                     "HEADER_SEARCH_PATHS": [
-                        "$(SRCROOT)/ApolloMacBridge/include"
+                        "$(SRCROOT)/Projects/ApolloMacBridge/Headers"
                     ]
                 ]
             )
@@ -82,10 +81,10 @@ let project = Project(
             deploymentTargets: .macOS("13.0"),
             infoPlist: .default,
             sources: [
-                "ApolloMacCaptureAdapter/Sources/**/*.{m,mm}"
+                "Projects/ApolloMacCaptureAdapter/Sources/**/*.{m,mm}"
             ],
             headers: .headers(
-                public: "ApolloMacCaptureAdapter/include/ApolloMacCaptureAdapter.h"
+                public: "Projects/ApolloMacCaptureAdapter/Headers/ApolloMacCaptureAdapter.h"
             ),
             dependencies: [
                 .target(name: "ApolloMacBridge")
@@ -95,7 +94,7 @@ let project = Project(
                     "DEFINES_MODULE": "YES",
                     "PRODUCT_NAME": "ApolloMacCaptureAdapter",
                     "HEADER_SEARCH_PATHS": [
-                        "$(SRCROOT)/ApolloMacCaptureAdapter/include"
+                        "$(SRCROOT)/Projects/ApolloMacCaptureAdapter/Headers"
                     ]
                 ]
             )
@@ -115,7 +114,7 @@ let project = Project(
                 ]
             ),
             sources: [
-                "ApolloApp/Sources/**/*.swift"
+                "Projects/ApolloApp/Sources/**/*.swift"
             ],
             dependencies: [
                 .target(name: "ApolloMacCaptureAdapter")
@@ -134,7 +133,7 @@ let project = Project(
             deploymentTargets: .macOS("13.0"),
             infoPlist: .default,
             sources: [
-                "../../../../tests/tuist/macos/**/*.{swift,m,mm}"
+                "../../../tests/tuist/macos/**/*.{swift,m,mm}"
             ],
             dependencies: [
                 .target(name: "ApolloMacBridge"),
