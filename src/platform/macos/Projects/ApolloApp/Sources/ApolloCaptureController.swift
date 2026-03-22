@@ -1,4 +1,5 @@
 import ApolloMacCaptureAdapter
+import AppKit
 import CoreGraphics
 import Foundation
 
@@ -152,5 +153,13 @@ final class ApolloCaptureController: ObservableObject {
 
     func refreshStatus() {
         status = adapter.copyStatusSnapshot()
+    }
+
+    func openWebDashboard() {
+        guard let url = URL(string: "https://localhost:47990") else {
+            return
+        }
+
+        NSWorkspace.shared.open(url)
     }
 }

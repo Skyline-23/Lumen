@@ -6,6 +6,7 @@
 #include <array>
 #include <atomic>
 #include <bitset>
+#include <cmath>
 #include <condition_variable>
 #include <list>
 #include <mutex>
@@ -40,6 +41,7 @@ extern "C" {
   #include <VideoToolbox/VideoToolbox.h>
   #include "ApolloCore.h"
   #include "platform/macos/av_img_t.h"
+  #include "platform/macos/misc.h"
 #endif
 
 #ifdef _WIN32
@@ -106,6 +108,8 @@ namespace video {
 
 #ifdef __APPLE__
   namespace {
+    constexpr uint32_t apollo_core_ingress_wait_timeout_ms = 5000;
+
     CMVideoCodecType apollo_core_codec_type(ApolloCoreCaptureCodec codec) {
       switch (codec) {
         case ApolloCoreCaptureCodecH264:
@@ -3096,26 +3100,32 @@ namespace video {
     };
   }
 
-#ifdef __APPLE__
   namespace {
     void raise_external_capture_metadata(
       safe::mail_t mail,
-      const config_t &config,
-      const std::shared_ptr<platf::display_t> &display
+      const config_t &config
     ) {
+      platf::external_capture_display_metadata_t external_metadata {};
+      platf::query_external_capture_display_metadata(
+        proc::proc.display_name,
+        config.width,
+        config.height,
+        external_metadata
+      );
+
       auto touch_port_event = mail->event<input::touch_port_t>(mail::touch_port);
+      touch_port_event->raise(input::touch_port_t {
+        external_metadata.viewport,
+        external_metadata.env_width,
+        external_metadata.env_height,
+        external_metadata.client_offset_x,
+        external_metadata.client_offset_y,
+        external_metadata.scalar_inv,
+      });
+
       auto hdr_event = mail->event<hdr_info_t>(mail::hdr);
-
-      touch_port_event->raise(make_port(display.get(), config));
-
-      hdr_info_t hdr_info = std::make_unique<hdr_info_raw_t>(false);
-      if (display->is_hdr()) {
-        if (display->get_hdr_metadata(hdr_info->metadata)) {
-          hdr_info->enabled = true;
-        } else {
-          BOOST_LOG(error) << "Couldn't get display hdr metadata for external macOS encoded ingress";
-        }
-      }
+      hdr_info_t hdr_info = std::make_unique<hdr_info_raw_t>(external_metadata.hdr_active);
+      hdr_info->metadata = external_metadata.hdr_metadata;
       hdr_event->raise(std::move(hdr_info));
     }
 
@@ -3127,17 +3137,18 @@ namespace video {
       auto shutdown_event = mail->event<bool>(mail::shutdown);
       auto packets = mail::man->queue<packet_t>(mail::video_packets);
       auto ingress = ApolloCoreSharedEncodedCaptureIngress();
-      auto display = platf::display(chosen_encoder->platform_formats->dev_type, proc::proc.display_name, config);
-      if (!display) {
-        BOOST_LOG(error) << "Failed to open display for external macOS encoded ingress";
-        return;
-      }
-
-      raise_external_capture_metadata(mail, config, display);
+      raise_external_capture_metadata(mail, config);
 
       bool logged_codec_mismatch = false;
       bool logged_producer_stop = false;
       std::array<char, 512> event_message {};
+
+      if (!ApolloCoreEncodedCaptureIngressIsProducerActive(ingress) &&
+          !ApolloCoreEncodedCaptureIngressWaitForProducerActive(ingress, apollo_core_ingress_wait_timeout_ms)) {
+        BOOST_LOG(error) << "External macOS encoded ingress producer did not become active within "
+                         << apollo_core_ingress_wait_timeout_ms << "ms";
+        return;
+      }
 
       while (!shutdown_event->peek()) {
         bool consumed_any = false;
@@ -3240,8 +3251,13 @@ namespace video {
 
         if (!ApolloCoreEncodedCaptureIngressWaitForData(ingress, 50)) {
           if (!ApolloCoreEncodedCaptureIngressIsProducerActive(ingress)) {
+            if (ApolloCoreEncodedCaptureIngressWaitForProducerActive(ingress, apollo_core_ingress_wait_timeout_ms)) {
+              logged_producer_stop = false;
+              continue;
+            }
             if (!logged_producer_stop) {
-              BOOST_LOG(info) << "External macOS encoded ingress producer became inactive"sv;
+              BOOST_LOG(error) << "External macOS encoded ingress producer became inactive and did not recover within "
+                               << apollo_core_ingress_wait_timeout_ms << "ms";
               logged_producer_stop = true;
             }
             break;
@@ -3250,7 +3266,6 @@ namespace video {
       }
     }
   }  // namespace
-#endif
 
   std::unique_ptr<platf::encode_device_t> make_encode_device(platf::display_t &disp, const encoder_t &encoder, const config_t &config) {
     std::unique_ptr<platf::encode_device_t> result;
@@ -3662,10 +3677,12 @@ namespace video {
 #ifdef __APPLE__
     if (!config.input_only) {
       auto *external_ingress = ApolloCoreSharedEncodedCaptureIngress();
-      if (ApolloCoreEncodedCaptureIngressIsProducerActive(external_ingress)) {
-        capture_external_encoded_ingress(std::move(mail), config, channel_data);
+      if (!external_ingress) {
+        BOOST_LOG(error) << "ApolloCore encoded ingress is unavailable on macOS";
         return;
       }
+      capture_external_encoded_ingress(std::move(mail), config, channel_data);
+      return;
     }
 #endif
     if (chosen_encoder->flags & PARALLEL_ENCODING) {
@@ -3997,6 +4014,36 @@ namespace video {
     if (chosen_encoder && !(chosen_encoder->flags & ALWAYS_REPROBE) && !platf::needs_encoder_reenumeration()) {
       return 0;
     }
+
+#ifdef __APPLE__
+    auto *bridge_encoder = &videotoolbox;
+    chosen_encoder = bridge_encoder;
+    active_hevc_mode = config::video.hevc_mode == 0 ? 3 : config::video.hevc_mode;
+    active_av1_mode = 1;
+    last_encoder_probe_supported_ref_frames_invalidation = false;
+    last_encoder_probe_supported_yuv444_for_codec = {false, false, false};
+
+    bridge_encoder->h264.capabilities.reset();
+    bridge_encoder->hevc.capabilities.reset();
+    bridge_encoder->av1.capabilities.reset();
+
+    bridge_encoder->h264[encoder_t::PASSED] = true;
+    bridge_encoder->h264[encoder_t::VUI_PARAMETERS] = true;
+    bridge_encoder->h264[encoder_t::REF_FRAMES_RESTRICT] = false;
+    bridge_encoder->h264[encoder_t::DYNAMIC_RANGE] = false;
+    bridge_encoder->h264[encoder_t::YUV444] = false;
+
+    bridge_encoder->hevc[encoder_t::PASSED] = true;
+    bridge_encoder->hevc[encoder_t::VUI_PARAMETERS] = true;
+    bridge_encoder->hevc[encoder_t::REF_FRAMES_RESTRICT] = false;
+    bridge_encoder->hevc[encoder_t::DYNAMIC_RANGE] = true;
+    bridge_encoder->hevc[encoder_t::YUV444] = false;
+
+    BOOST_LOG(info) << "Using Apollo macOS bridge encoder path backed by MacDisplayKit"sv;
+    BOOST_LOG(info) << "Found H.264 encoder: "sv << bridge_encoder->h264.name << " ["sv << bridge_encoder->name << ']';
+    BOOST_LOG(info) << "Found HEVC encoder: "sv << bridge_encoder->hevc.name << " ["sv << bridge_encoder->name << ']';
+    return 0;
+#endif
 
     // Restart encoder selection
     auto previous_encoder = chosen_encoder;

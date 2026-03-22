@@ -40,20 +40,18 @@ set(APPLE_PLIST_FILE "${SUNSHINE_SOURCE_ASSETS_DIR}/macos/assets/Info.plist")
 
 set(PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/macos/Projects/ApolloCore/Sources/ApolloCore.cpp"
-        "${CMAKE_SOURCE_DIR}/src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/av_audio.m"
-        "${CMAKE_SOURCE_DIR}/src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/av_video.m"
-        "${CMAKE_SOURCE_DIR}/src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/display.mm"
-        "${CMAKE_SOURCE_DIR}/src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/input.cpp"
-        "${CMAKE_SOURCE_DIR}/src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/microphone.mm"
-        "${CMAKE_SOURCE_DIR}/src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/misc.mm"
-        "${CMAKE_SOURCE_DIR}/src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/nv12_zero_device.cpp"
-        "${CMAKE_SOURCE_DIR}/src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/publish.cpp"
-        "${CMAKE_SOURCE_DIR}/src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/virtual_display.mm"
-        "${CMAKE_SOURCE_DIR}/src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/vt_metal_context.mm"
+        "${CMAKE_SOURCE_DIR}/src/platform/macos/Projects/ApolloMacSupport/Sources/audio_stub.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/macos/Projects/ApolloMacSupport/Sources/display_stub.mm"
+        "${CMAKE_SOURCE_DIR}/src/platform/macos/Projects/ApolloMacSupport/Sources/input.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/macos/Projects/ApolloMacSupport/Sources/misc.mm"
+        "${CMAKE_SOURCE_DIR}/src/platform/macos/Projects/ApolloMacSupport/Sources/nv12_zero_device.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/macos/Projects/ApolloMacSupport/Sources/publish.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/macos/Projects/ApolloMacSupport/Sources/virtual_display.mm"
+        "${CMAKE_SOURCE_DIR}/src/platform/macos/Projects/ApolloMacSupport/Sources/vt_metal_context.mm"
         "${CMAKE_SOURCE_DIR}/third-party/TPCircularBuffer/TPCircularBuffer.c"
         ${APPLE_PLIST_FILE})
 
-include_directories("${CMAKE_SOURCE_DIR}/src/platform/macos/Projects/ApolloMacPlatformRuntime/Headers")
+include_directories("${CMAKE_SOURCE_DIR}/src/platform/macos/Projects/ApolloMacSupport/Headers")
 include_directories("${CMAKE_SOURCE_DIR}/src/platform/macos/Projects/ApolloCore/Headers")
 
 if(SUNSHINE_ENABLE_TRAY)

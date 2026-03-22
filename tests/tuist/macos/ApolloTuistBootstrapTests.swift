@@ -314,6 +314,25 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         )
     }
 
+    func testApolloCoreSharedEncodedCaptureIngressWaitsForProducerActivation() {
+        guard let ingress = ApolloCoreSharedEncodedCaptureIngress() else {
+            return XCTFail("ApolloCoreSharedEncodedCaptureIngress returned nil")
+        }
+
+        ApolloCoreEncodedCaptureIngressReset(ingress)
+        ApolloCoreEncodedCaptureIngressSetProducerActive(ingress, false)
+        defer {
+            ApolloCoreEncodedCaptureIngressSetProducerActive(ingress, false)
+            ApolloCoreEncodedCaptureIngressReset(ingress)
+        }
+
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.05) {
+            ApolloCoreEncodedCaptureIngressSetProducerActive(ingress, true)
+        }
+
+        XCTAssertTrue(ApolloCoreEncodedCaptureIngressWaitForProducerActive(ingress, 500))
+    }
+
     func testApolloCoreCaptureRequestPublishesAndWaitsForGenerationChanges() {
         ApolloCoreCaptureRequestClear()
 
@@ -481,6 +500,25 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         XCTAssertTrue(eventRecord.has_value)
         XCTAssertEqual(eventRecord.kind, ApolloCoreCaptureEventKindRestarted)
         XCTAssertEqual(String(cString: messageBuffer), "audio-restarted")
+    }
+
+    func testApolloCoreSharedAudioCaptureIngressWaitsForProducerActivation() {
+        guard let ingress = ApolloCoreSharedAudioCaptureIngress() else {
+            return XCTFail("ApolloCoreSharedAudioCaptureIngress returned nil")
+        }
+
+        ApolloCoreAudioCaptureIngressReset(ingress)
+        ApolloCoreAudioCaptureIngressSetProducerActive(ingress, false)
+        defer {
+            ApolloCoreAudioCaptureIngressSetProducerActive(ingress, false)
+            ApolloCoreAudioCaptureIngressReset(ingress)
+        }
+
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.05) {
+            ApolloCoreAudioCaptureIngressSetProducerActive(ingress, true)
+        }
+
+        XCTAssertTrue(ApolloCoreAudioCaptureIngressWaitForProducerActive(ingress, 500))
     }
 }
 

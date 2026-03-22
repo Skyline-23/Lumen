@@ -107,7 +107,7 @@ let project = Project(
             deploymentTargets: .macOS("13.0"),
             infoPlist: .extendingDefault(
                 with: [
-                    "CFBundleDisplayName": "Apollo",
+                    "CFBundleDisplayName": "Apollo Companion",
                     "LSMinimumSystemVersion": "13.0",
                     "INFOPLIST_KEY_NSHighResolutionCapable": "YES",
                     "LSUIElement": "YES"

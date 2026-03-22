@@ -698,6 +698,25 @@ bool ApolloCoreEncodedCaptureIngressWaitForData(
   return has_pending();
 }
 
+bool ApolloCoreEncodedCaptureIngressWaitForProducerActive(
+  ApolloCoreEncodedCaptureIngress *ingress,
+  uint32_t timeout_milliseconds
+) {
+  if (!ingress) {
+    return false;
+  }
+
+  std::unique_lock lock(ingress->mutex);
+  if (ingress->producer_active) {
+    return true;
+  }
+
+  ingress->data_cv.wait_for(lock, std::chrono::milliseconds(timeout_milliseconds), [&]() {
+    return ingress->producer_active;
+  });
+  return ingress->producer_active;
+}
+
 ApolloCoreAudioCaptureIngress *ApolloCoreAudioCaptureIngressCreate(void) {
   return new ApolloCoreAudioCaptureIngress();
 }
@@ -1006,6 +1025,25 @@ bool ApolloCoreAudioCaptureIngressWaitForData(
     return has_pending() || !ingress->producer_active;
   });
   return has_pending();
+}
+
+bool ApolloCoreAudioCaptureIngressWaitForProducerActive(
+  ApolloCoreAudioCaptureIngress *ingress,
+  uint32_t timeout_milliseconds
+) {
+  if (!ingress) {
+    return false;
+  }
+
+  std::unique_lock lock(ingress->mutex);
+  if (ingress->producer_active) {
+    return true;
+  }
+
+  ingress->data_cv.wait_for(lock, std::chrono::milliseconds(timeout_milliseconds), [&]() {
+    return ingress->producer_active;
+  });
+  return ingress->producer_active;
 }
 
 ApolloCoreCaptureRequestSnapshot ApolloCoreCaptureRequestCopySnapshot(void) {

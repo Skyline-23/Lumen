@@ -9,6 +9,10 @@
 #endif
 
 // standard includes
+#include <algorithm>
+#include <cmath>
+#include <cstdlib>
+#include <cstring>
 #include <fcntl.h>
 #include <ifaddrs.h>
 
@@ -1109,6 +1113,123 @@ namespace platf {
 
       post_capture_request_mirror_notification();
     }
+  }
+
+  namespace {
+    constexpr double external_capture_hdr_edr_threshold = 1.001;
+
+    NSScreen *screen_for_external_capture_display_id(CGDirectDisplayID display_id) {
+      for (NSScreen *screen in [NSScreen screens]) {
+        NSNumber *screen_number = screen.deviceDescription[@"NSScreenNumber"];
+        if (screen_number != nil && screen_number.unsignedIntValue == display_id) {
+          return screen;
+        }
+      }
+
+      return nil;
+    }
+
+    bool screen_is_external_capture_hdr_capable(NSScreen *screen) {
+      if (screen == nil) {
+        return false;
+      }
+
+      if (@available(macOS 10.15, *)) {
+        return screen.maximumPotentialExtendedDynamicRangeColorComponentValue > external_capture_hdr_edr_threshold
+          || screen.maximumExtendedDynamicRangeColorComponentValue > external_capture_hdr_edr_threshold;
+      }
+
+      return false;
+    }
+
+    bool screen_is_external_capture_hdr_active(NSScreen *screen) {
+      if (screen == nil) {
+        return false;
+      }
+
+      if (@available(macOS 10.11, *)) {
+        return screen.maximumExtendedDynamicRangeColorComponentValue > external_capture_hdr_edr_threshold;
+      }
+
+      return false;
+    }
+
+    bool fallback_external_capture_hdr_metadata(NSScreen *screen, SS_HDR_METADATA &metadata) {
+      std::memset(&metadata, 0, sizeof(metadata));
+      if (!screen_is_external_capture_hdr_capable(screen)) {
+        return false;
+      }
+
+      metadata.displayPrimaries[0] = {34000, 16000};
+      metadata.displayPrimaries[1] = {13250, 34500};
+      metadata.displayPrimaries[2] = {7500, 3000};
+      metadata.whitePoint = {15635, 16450};
+
+      double peak_edr = 1.0;
+      if (@available(macOS 10.15, *)) {
+        peak_edr = std::max(
+          screen.maximumPotentialExtendedDynamicRangeColorComponentValue,
+          screen.maximumExtendedDynamicRangeColorComponentValue
+        );
+      }
+
+      const auto estimated_peak_nits = static_cast<uint16_t>(std::clamp(std::lround(peak_edr * 1000.0), 400l, 2000l));
+      metadata.maxDisplayLuminance = estimated_peak_nits;
+      metadata.maxFullFrameLuminance = estimated_peak_nits;
+      metadata.minDisplayLuminance = 1;
+      metadata.maxContentLightLevel = estimated_peak_nits;
+      metadata.maxFrameAverageLightLevel = estimated_peak_nits;
+      return true;
+    }
+
+    CGDirectDisplayID parse_external_capture_display_id(const std::string &display_name) {
+      if (!display_name.empty()) {
+        char *end_ptr = nullptr;
+        const auto parsed_display_id = std::strtoul(display_name.c_str(), &end_ptr, 10);
+        if (end_ptr != nullptr && *end_ptr == '\0') {
+          return static_cast<CGDirectDisplayID>(parsed_display_id);
+        }
+      }
+
+      return CGMainDisplayID();
+    }
+  }  // namespace
+
+  bool query_external_capture_display_metadata(
+    const std::string &display_name,
+    int target_width,
+    int target_height,
+    external_capture_display_metadata_t &metadata
+  ) {
+    const auto display_id = parse_external_capture_display_id(display_name);
+    const auto bounds = CGDisplayBounds(display_id);
+    const auto capture_width = std::max(1.0, static_cast<double>(CGDisplayPixelsWide(display_id)));
+    const auto capture_height = std::max(1.0, static_cast<double>(CGDisplayPixelsHigh(display_id)));
+    const auto output_width = std::max(1.0, static_cast<double>(target_width));
+    const auto output_height = std::max(1.0, static_cast<double>(target_height));
+    const auto scalar = std::fmin(output_width / capture_width, output_height / capture_height);
+
+    metadata.viewport = {
+      static_cast<int>(std::lround(bounds.origin.x)),
+      static_cast<int>(std::lround(bounds.origin.y)),
+      target_width,
+      target_height,
+    };
+    metadata.env_width = static_cast<int>(std::lround(capture_width));
+    metadata.env_height = static_cast<int>(std::lround(capture_height));
+    metadata.client_offset_x = static_cast<float>((output_width - (scalar * capture_width)) * 0.5);
+    metadata.client_offset_y = static_cast<float>((output_height - (scalar * capture_height)) * 0.5);
+    metadata.scalar_inv = static_cast<float>(1.0 / scalar);
+
+    const auto *screen = screen_for_external_capture_display_id(display_id);
+    metadata.hdr_active = false;
+    std::memset(&metadata.hdr_metadata, 0, sizeof(metadata.hdr_metadata));
+    if (screen_is_external_capture_hdr_active(const_cast<NSScreen *>(screen)) &&
+        fallback_external_capture_hdr_metadata(const_cast<NSScreen *>(screen), metadata.hdr_metadata)) {
+      metadata.hdr_active = true;
+    }
+
+    return true;
   }
 }  // namespace platf
 

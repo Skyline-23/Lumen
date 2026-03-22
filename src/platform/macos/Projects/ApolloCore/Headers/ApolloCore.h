@@ -163,6 +163,10 @@ bool ApolloCoreEncodedCaptureIngressWaitForData(
   ApolloCoreEncodedCaptureIngress *ingress,
   uint32_t timeout_milliseconds
 );
+bool ApolloCoreEncodedCaptureIngressWaitForProducerActive(
+  ApolloCoreEncodedCaptureIngress *ingress,
+  uint32_t timeout_milliseconds
+);
 
 typedef struct ApolloCoreAudioCaptureIngressSnapshot {
   uint64_t frame_count;
@@ -289,6 +293,10 @@ bool ApolloCoreAudioCaptureIngressIsProducerActive(
   const ApolloCoreAudioCaptureIngress *ingress
 );
 bool ApolloCoreAudioCaptureIngressWaitForData(
+  ApolloCoreAudioCaptureIngress *ingress,
+  uint32_t timeout_milliseconds
+);
+bool ApolloCoreAudioCaptureIngressWaitForProducerActive(
   ApolloCoreAudioCaptureIngress *ingress,
   uint32_t timeout_milliseconds
 );

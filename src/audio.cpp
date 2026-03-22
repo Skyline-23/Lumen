@@ -36,16 +36,23 @@ namespace audio {
 
 #ifdef __APPLE__
   namespace {
-    bool capture_from_apollo_core_ingress(safe::mail_t mail, config_t config, void *channel_data) {
+    constexpr uint32_t apollo_core_audio_ingress_wait_timeout_ms = 5000;
+
+    void capture_from_apollo_core_ingress(safe::mail_t mail, config_t config, void *channel_data) {
       auto *ingress = ApolloCoreSharedAudioCaptureIngress();
       if (!ingress) {
-        return false;
+        BOOST_LOG(error) << "ApolloCore audio ingress is unavailable on macOS";
+        return;
       }
 
       const bool producer_active = ApolloCoreAudioCaptureIngressIsProducerActive(ingress);
       const bool has_initial_data = ApolloCoreAudioCaptureIngressWaitForData(ingress, 0);
       if (!producer_active && !has_initial_data) {
-        return false;
+        if (!ApolloCoreAudioCaptureIngressWaitForProducerActive(ingress, apollo_core_audio_ingress_wait_timeout_ms)) {
+          BOOST_LOG(error) << "ApolloCore audio ingress producer did not become active within "
+                           << apollo_core_audio_ingress_wait_timeout_ms << "ms";
+          return;
+        }
       }
 
       auto shutdown_event = mail->event<bool>(mail::shutdown);
@@ -123,11 +130,15 @@ namespace audio {
 
         if (!ApolloCoreAudioCaptureIngressIsProducerActive(ingress) &&
             !ApolloCoreAudioCaptureIngressWaitForData(ingress, 0)) {
-          return true;
+          if (!ApolloCoreAudioCaptureIngressWaitForProducerActive(ingress, apollo_core_audio_ingress_wait_timeout_ms)) {
+            BOOST_LOG(error) << "ApolloCore audio ingress producer became inactive and did not recover within "
+                             << apollo_core_audio_ingress_wait_timeout_ms << "ms";
+            return;
+          }
         }
       }
 
-      return true;
+      BOOST_LOG(info) << "ApolloCore audio ingress capture loop exited on macOS";
     }
   }  // namespace
 #endif
@@ -237,9 +248,8 @@ namespace audio {
     }
 
 #ifdef __APPLE__
-    if (capture_from_apollo_core_ingress(mail, config, channel_data)) {
-      return;
-    }
+    capture_from_apollo_core_ingress(mail, config, channel_data);
+    return;
 #endif
 
     auto stream = stream_configs[map_stream(config.channels, config.flags[config_t::HIGH_QUALITY])];

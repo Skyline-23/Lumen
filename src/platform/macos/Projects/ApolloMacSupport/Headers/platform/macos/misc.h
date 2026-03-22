@@ -5,10 +5,14 @@
 #pragma once
 
 // standard includes
+#include <string>
 #include <vector>
 
 // platform includes
 #include <CoreGraphics/CoreGraphics.h>
+
+// local includes
+#include "src/platform/common.h"
 
 namespace platf {
   struct capture_request_mirror_state_t {
@@ -31,6 +35,17 @@ namespace platf {
     int audio_frame_size;
   };
 
+  struct external_capture_display_metadata_t {
+    touch_port_t viewport;
+    int env_width;
+    int env_height;
+    float client_offset_x;
+    float client_offset_y;
+    float scalar_inv;
+    bool hdr_active;
+    SS_HDR_METADATA hdr_metadata;
+  };
+
   void prepare_app_bundle_environment();
   bool is_screen_capture_allowed();
   void arm_display_wake_watchdog();
@@ -42,6 +57,12 @@ namespace platf {
   bool wake_physical_displays();
   void mirror_capture_request_state(const capture_request_mirror_state_t &state);
   void clear_capture_request_state_mirror();
+  bool query_external_capture_display_metadata(
+    const std::string &display_name,
+    int target_width,
+    int target_height,
+    external_capture_display_metadata_t &metadata
+  );
 }
 
 namespace dyn {

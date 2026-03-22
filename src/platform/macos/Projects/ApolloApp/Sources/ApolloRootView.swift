@@ -6,8 +6,12 @@ struct ApolloRootView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Apollo")
+            Text("Apollo Companion")
                 .font(.title2.weight(.semibold))
+
+            Text("The web dashboard remains the primary UI. This menu bar app only exposes macOS companion controls.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
 
             if let status = captureController.status {
                 LabeledContent("Main Display") {
@@ -88,6 +92,10 @@ struct ApolloRootView: View {
             }
 
             HStack(spacing: 12) {
+                Button("Open Web UI") {
+                    captureController.openWebDashboard()
+                }
+
                 Button(captureController.status?.captureSessionRunning == true ? "Restart Capture" : "Start Capture") {
                     Task {
                         await captureController.startOrRestartCapture()
