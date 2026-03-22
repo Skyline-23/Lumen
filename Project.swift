@@ -75,6 +75,32 @@ let project = Project(
             )
         ),
         .target(
+            name: "ApolloMacCaptureAdapter",
+            destinations: .macOS,
+            product: .framework,
+            bundleId: "com.lizardbyte.apollo.maccaptureadapter",
+            deploymentTargets: .macOS("13.0"),
+            infoPlist: .default,
+            sources: [
+                "App/ApolloMacCaptureAdapter/Sources/**/*.{m,mm}"
+            ],
+            headers: .headers(
+                public: "App/ApolloMacCaptureAdapter/include/ApolloMacCaptureAdapter.h"
+            ),
+            dependencies: [
+                .target(name: "ApolloMacBridge")
+            ],
+            settings: .settings(
+                base: [
+                    "DEFINES_MODULE": "YES",
+                    "PRODUCT_NAME": "ApolloMacCaptureAdapter",
+                    "HEADER_SEARCH_PATHS": [
+                        "$(SRCROOT)/App/ApolloMacCaptureAdapter/include"
+                    ]
+                ]
+            )
+        ),
+        .target(
             name: "ApolloApp",
             destinations: .macOS,
             product: .app,
@@ -91,7 +117,7 @@ let project = Project(
                 "App/ApolloApp/Sources/**/*.swift"
             ],
             dependencies: [
-                .target(name: "ApolloMacBridge")
+                .target(name: "ApolloMacCaptureAdapter")
             ],
             settings: .settings(
                 base: [
@@ -110,7 +136,8 @@ let project = Project(
                 "App/ApolloTuistTests/**/*.{swift,m,mm}"
             ],
             dependencies: [
-                .target(name: "ApolloMacBridge")
+                .target(name: "ApolloMacBridge"),
+                .target(name: "ApolloMacCaptureAdapter")
             ]
         )
     ],

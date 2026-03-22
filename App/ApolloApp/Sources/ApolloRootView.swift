@@ -1,8 +1,20 @@
-import ApolloMacBridge
+import ApolloMacCaptureAdapter
 import SwiftUI
 
 struct ApolloRootView: View {
-    @State private var status: ApolloBridgeStatus?
+    @State private var status: ApolloMacCaptureAdapterStatus?
+    private let captureAdapter = ApolloMacCaptureAdapter()
+
+    private func backendLabel(_ backend: ApolloMacBridgeCaptureBackend) -> String {
+        switch backend.rawValue {
+        case 0:
+            return "Legacy Apollo"
+        case 1:
+            return "MacDisplayKit"
+        default:
+            return "Unknown (\(backend.rawValue))"
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -17,7 +29,16 @@ struct ApolloRootView: View {
                     Text(status.runtimeDescription)
                 }
                 LabeledContent("Preferred Backend") {
-                    Text(status.preferredCaptureBackend.rawValue)
+                    Text(backendLabel(status.preferredCaptureBackend))
+                }
+                LabeledContent("Forwarding Pump") {
+                    Text(status.forwardingPumpRunning ? "Running" : "Stopped")
+                }
+                LabeledContent("Frame Callbacks") {
+                    Text("\(status.forwardedFrameCallbackCount)")
+                }
+                LabeledContent("Event Callbacks") {
+                    Text("\(status.forwardedEventCallbackCount)")
                 }
                 Text(status.integrationStatus)
                     .font(.footnote)
@@ -29,7 +50,7 @@ struct ApolloRootView: View {
         .frame(minWidth: 420, minHeight: 220)
         .padding(24)
         .task {
-            status = await ApolloBridgeRuntime.shared.statusSnapshot()
+            status = captureAdapter.copyStatusSnapshot()
         }
     }
 }
