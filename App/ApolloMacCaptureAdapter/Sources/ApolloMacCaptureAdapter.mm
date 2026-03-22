@@ -49,6 +49,7 @@ namespace {
 - (instancetype)initWithCoreVersion:(NSString *)coreVersion
                              runtimeDescription:(NSString *)runtimeDescription
                               integrationStatus:(NSString *)integrationStatus
+                           captureSessionRunning:(BOOL)captureSessionRunning
                            forwardingPumpRunning:(BOOL)forwardingPumpRunning
                       forwardedFrameCallbackCount:(NSUInteger)forwardedFrameCallbackCount
                       forwardedEventCallbackCount:(NSUInteger)forwardedEventCallbackCount
@@ -61,6 +62,7 @@ namespace {
   _coreVersion = [coreVersion copy];
   _runtimeDescription = [runtimeDescription copy];
   _integrationStatus = [integrationStatus copy];
+  _captureSessionRunning = captureSessionRunning;
   _forwardingPumpRunning = forwardingPumpRunning;
   _forwardedFrameCallbackCount = forwardedFrameCallbackCount;
   _forwardedEventCallbackCount = forwardedEventCallbackCount;
@@ -73,11 +75,36 @@ namespace {
 @implementation ApolloMacCaptureAdapter {
   apollo::macbridge::Controller _controller;
   ApolloMacCaptureAdapterCallbackState _callback_state;
+  BOOL _capture_session_running;
   BOOL _forwarding_pump_running;
 }
 
 - (ApolloMacBridgeCaptureConfiguration)makePanelNativeConfigurationForDisplayID:(uint32_t)displayID {
   return apollo::macbridge::Controller::make_panel_native_configuration(displayID);
+}
+
+- (BOOL)startManagedCaptureSessionWithConfiguration:(ApolloMacBridgeCaptureConfiguration)configuration
+                                      frameCapacity:(NSUInteger)frameCapacity
+                                      eventCapacity:(NSUInteger)eventCapacity
+                                              error:(NSError * _Nullable __autoreleasing *)error {
+  [self stopManagedCaptureSession];
+  [self configureCoreForwardingWithFrameCapacity:frameCapacity eventCapacity:eventCapacity];
+
+  if (![self startMacDisplayKitCaptureWithConfiguration:configuration error:error]) {
+    return NO;
+  }
+
+  if (![self startForwardingPumpWithError:error]) {
+    [self stopMacDisplayKitCapture];
+    return NO;
+  }
+
+  return YES;
+}
+
+- (void)stopManagedCaptureSession {
+  [self stopForwardingPump];
+  [self stopMacDisplayKitCapture];
 }
 
 - (void)configureCoreForwardingWithFrameCapacity:(NSUInteger)frameCapacity
@@ -92,14 +119,17 @@ namespace {
     if (error) {
       *error = adapter_error(string_from_c_buffer(result.error_message.c_str()));
     }
+    _capture_session_running = NO;
     return NO;
   }
 
+  _capture_session_running = YES;
   return YES;
 }
 
 - (void)stopMacDisplayKitCapture {
   _controller.stop_mac_display_kit_capture();
+  _capture_session_running = NO;
 }
 
 - (BOOL)startForwardingPumpWithError:(NSError * _Nullable __autoreleasing *)error {
@@ -132,6 +162,7 @@ namespace {
                initWithCoreVersion:string_from_c_buffer(bridge_status.core_version)
                  runtimeDescription:string_from_c_buffer(bridge_status.runtime_description)
                   integrationStatus:string_from_c_buffer(bridge_status.integration_status)
+              captureSessionRunning:_capture_session_running
                forwardingPumpRunning:_forwarding_pump_running
           forwardedFrameCallbackCount:static_cast<NSUInteger>(
             _callback_state.frame_callback_count.load(std::memory_order_relaxed)
