@@ -126,6 +126,57 @@ namespace nvhttp {
         static_cast<int>(video::client_display_transfer_e::sdr);
     }
 
+    std::string rtsp_url_host_for_request(const std::shared_ptr<typename SimpleWeb::ServerBase<SunshineHTTPS>::Request> &request) {
+      auto host_header = request->header.find("host");
+      if (host_header != request->header.end()) {
+        auto host = host_header->second;
+
+        if (!host.empty()) {
+          auto first = host.find_first_not_of(" \t");
+          if (first != std::string::npos) {
+            host.erase(0, first);
+          }
+
+          auto last = host.find_last_not_of(" \t");
+          if (last != std::string::npos) {
+            host.erase(last + 1);
+          }
+
+          if (!host.empty()) {
+            if (host.front() == '[') {
+              auto end = host.find(']');
+              if (end != std::string::npos) {
+                return host.substr(0, end + 1);
+              }
+            }
+
+            auto colon_count = std::count(host.begin(), host.end(), ':');
+            if (colon_count == 1) {
+              auto port_delimiter = host.rfind(':');
+              if (port_delimiter != std::string::npos) {
+                host.resize(port_delimiter);
+              }
+            } else if (colon_count > 1) {
+              return std::format("[{}]", host);
+            }
+
+            if (!host.empty()) {
+              return host;
+            }
+          }
+        }
+      }
+
+      auto local_address = net::normalize_address(request->local_endpoint().address());
+      if (local_address.is_v6() && local_address.to_v6().is_link_local()) {
+        BOOST_LOG(warning) << "RTSP session URL falling back to link-local local endpoint ["sv
+                           << net::addr_to_normalized_string(local_address)
+                           << "] because the request Host header was unavailable"sv;
+      }
+
+      return net::addr_to_url_escaped_string(local_address);
+    }
+
     bool macos_virtual_display_main10_capable() {
 #ifdef __APPLE__
       return VDISPLAY::openVDisplayDevice() == VDISPLAY::DRIVER_STATUS::OK && video::active_hevc_mode >= 2;
@@ -1484,15 +1535,16 @@ namespace nvhttp {
     }
 
     tree.put("root.<xmlattr>.status_code", 200);
-    tree.put(
-      "root.sessionUrl0",
-      std::format(
-        "{}{}:{}",
-        launch_session->rtsp_url_scheme,
-        net::addr_to_url_escaped_string(request->local_endpoint().address()),
-        static_cast<int>(net::map_port(rtsp_stream::RTSP_SETUP_PORT))
-      )
+    auto session_url_host = rtsp_url_host_for_request(request);
+    auto session_url = std::format(
+      "{}{}:{}",
+      launch_session->rtsp_url_scheme,
+      session_url_host,
+      static_cast<int>(net::map_port(rtsp_stream::RTSP_SETUP_PORT))
     );
+    BOOST_LOG(info) << "Launch session URL resolved to ["sv << session_url << "] from local endpoint ["sv
+                    << net::addr_to_normalized_string(request->local_endpoint().address()) << ']';
+    tree.put("root.sessionUrl0", session_url);
     tree.put("root.gamesession", 1);
 
     rtsp_stream::launch_session_raise(launch_session);
@@ -1591,15 +1643,16 @@ namespace nvhttp {
     }
 
     tree.put("root.<xmlattr>.status_code", 200);
-    tree.put(
-      "root.sessionUrl0",
-      std::format(
-        "{}{}:{}",
-        launch_session->rtsp_url_scheme,
-        net::addr_to_url_escaped_string(request->local_endpoint().address()),
-        static_cast<int>(net::map_port(rtsp_stream::RTSP_SETUP_PORT))
-      )
+    auto session_url_host = rtsp_url_host_for_request(request);
+    auto session_url = std::format(
+      "{}{}:{}",
+      launch_session->rtsp_url_scheme,
+      session_url_host,
+      static_cast<int>(net::map_port(rtsp_stream::RTSP_SETUP_PORT))
     );
+    BOOST_LOG(info) << "Resume session URL resolved to ["sv << session_url << "] from local endpoint ["sv
+                    << net::addr_to_normalized_string(request->local_endpoint().address()) << ']';
+    tree.put("root.sessionUrl0", session_url);
     tree.put("root.resume", 1);
 
     rtsp_stream::launch_session_raise(launch_session);
