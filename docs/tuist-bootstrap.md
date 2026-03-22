@@ -6,6 +6,7 @@ This bootstrap introduces a parallel Apple-platform structure without disturbing
 
 - Tuist entrypoint:
   `src/platform/macos/Project.swift`
+- `MacDisplayKit` is consumed as a remote Swift package dependency pinned from GitHub.
 - Generate from the repository root with:
   `tuist generate --path src/platform/macos --no-open`
 - Build from the repository root with:
