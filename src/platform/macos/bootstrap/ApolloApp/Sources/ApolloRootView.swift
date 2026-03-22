@@ -1,15 +1,18 @@
-import ApolloMacCaptureAdapter
+import CoreGraphics
 import SwiftUI
 
 struct ApolloRootView: View {
-    @StateObject private var captureController = ApolloCaptureController()
+    @ObservedObject var captureController: ApolloCaptureController
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Apollo Tuist Bootstrap")
+            Text("Apollo")
                 .font(.title2.weight(.semibold))
 
             if let status = captureController.status {
+                LabeledContent("Main Display") {
+                    Text("\(CGMainDisplayID())")
+                }
                 LabeledContent("Core") {
                     Text(status.coreVersion)
                 }
@@ -18,6 +21,15 @@ struct ApolloRootView: View {
                 }
                 LabeledContent("Capture Path") {
                     Text("MacDisplayKit")
+                }
+                LabeledContent("Codec") {
+                    Text(captureController.selectedCodec.label)
+                }
+                LabeledContent("Queue") {
+                    Text(captureController.selectedQueueProfile.label)
+                }
+                LabeledContent("Preprocess") {
+                    Text(captureController.selectedPreprocess.label)
                 }
                 LabeledContent("Capture Session") {
                     Text(status.captureSessionRunning ? "Running" : "Stopped")
@@ -47,6 +59,28 @@ struct ApolloRootView: View {
                 ProgressView()
             }
 
+            Divider()
+
+            Picker("Codec", selection: $captureController.selectedCodec) {
+                ForEach(ApolloCaptureCodecChoice.allCases) { codec in
+                    Text(codec.label).tag(codec)
+                }
+            }
+
+            Picker("Queue", selection: $captureController.selectedQueueProfile) {
+                ForEach(ApolloCaptureQueueProfileChoice.allCases) { profile in
+                    Text(profile.label).tag(profile)
+                }
+            }
+
+            Picker("Preprocess", selection: $captureController.selectedPreprocess) {
+                ForEach(ApolloCapturePreprocessChoice.allCases) { preprocess in
+                    Text(preprocess.label).tag(preprocess)
+                }
+            }
+
+            Toggle("Show Cursor", isOn: $captureController.showCursor)
+
             if let lastErrorMessage = captureController.lastErrorMessage {
                 Text(lastErrorMessage)
                     .font(.footnote)
@@ -71,13 +105,10 @@ struct ApolloRootView: View {
                 }
             }
         }
-        .frame(minWidth: 420, minHeight: 220)
+        .frame(width: 360)
         .padding(24)
         .task {
-            await captureController.startIfNeeded()
-        }
-        .onDisappear {
-            captureController.stopCapture()
+            captureController.activateIfNeeded()
         }
     }
 }
