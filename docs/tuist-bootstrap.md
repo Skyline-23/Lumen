@@ -2,6 +2,15 @@
 
 This bootstrap introduces a parallel Apple-platform structure without disturbing the existing CMake tree.
 
+## Location
+
+- Tuist entrypoint:
+  [src/platform/macos/bootstrap/Project.swift](/Users/skyline23/Downloads/Apollo/src/platform/macos/bootstrap/Project.swift)
+- Generate from the repository root with:
+  `tuist generate --path src/platform/macos/bootstrap --no-open`
+- Build from the repository root with:
+  `xcodebuild build -workspace src/platform/macos/bootstrap/Apollo.xcworkspace -scheme ApolloApp -destination 'platform=macOS'`
+
 ## Targets
 
 - `ApolloApp`
