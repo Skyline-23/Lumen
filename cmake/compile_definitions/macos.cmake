@@ -39,6 +39,7 @@ endif()
 set(APPLE_PLIST_FILE "${SUNSHINE_SOURCE_ASSETS_DIR}/macos/assets/Info.plist")
 
 set(PLATFORM_TARGET_FILES
+        "${CMAKE_SOURCE_DIR}/src/platform/macos/Projects/ApolloCore/Sources/ApolloCore.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/av_audio.m"
         "${CMAKE_SOURCE_DIR}/src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/av_video.m"
         "${CMAKE_SOURCE_DIR}/src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/display.mm"
@@ -53,6 +54,7 @@ set(PLATFORM_TARGET_FILES
         ${APPLE_PLIST_FILE})
 
 include_directories("${CMAKE_SOURCE_DIR}/src/platform/macos/Projects/ApolloMacPlatformRuntime/Headers")
+include_directories("${CMAKE_SOURCE_DIR}/src/platform/macos/Projects/ApolloCore/Headers")
 
 if(SUNSHINE_ENABLE_TRAY)
     list(APPEND SUNSHINE_EXTERNAL_LIBRARIES

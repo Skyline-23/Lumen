@@ -13,6 +13,9 @@
 #include "config.h"
 #include "globals.h"
 #include "logging.h"
+#ifdef __APPLE__
+  #include "ApolloCore.h"
+#endif
 #include "platform/common.h"
 #include "thread_safe.h"
 #include "utility.h"
@@ -25,10 +28,109 @@ namespace audio {
   static int start_audio_control(audio_ctx_t &ctx);
   static void stop_audio_control(audio_ctx_t &);
   static void apply_surround_params(opus_stream_config_t &stream, const stream_params_t &params);
+  void encodeThread(sample_queue_t samples, config_t config, void *channel_data);
 
   int map_stream(int channels, bool quality);
 
   constexpr auto SAMPLE_RATE = 48000;
+
+#ifdef __APPLE__
+  namespace {
+    bool capture_from_apollo_core_ingress(safe::mail_t mail, config_t config, void *channel_data) {
+      auto *ingress = ApolloCoreSharedAudioCaptureIngress();
+      if (!ingress) {
+        return false;
+      }
+
+      const bool producer_active = ApolloCoreAudioCaptureIngressIsProducerActive(ingress);
+      const bool has_initial_data = ApolloCoreAudioCaptureIngressWaitForData(ingress, 0);
+      if (!producer_active && !has_initial_data) {
+        return false;
+      }
+
+      auto shutdown_event = mail->event<bool>(mail::shutdown);
+      auto stream = stream_configs[map_stream(config.channels, config.flags[config_t::HIGH_QUALITY])];
+      if (config.flags[config_t::CUSTOM_SURROUND_PARAMS]) {
+        apply_surround_params(stream, config.customStreamParams);
+      }
+
+      const auto expected_frame_count = config.packetDuration * stream.sampleRate / 1000;
+      const auto expected_sample_count = expected_frame_count * stream.channelCount;
+      const auto expected_pcm_byte_count = static_cast<std::size_t>(expected_sample_count) * sizeof(float);
+
+      auto samples = std::make_shared<sample_queue_t::element_type>(30);
+      std::thread thread {encodeThread, samples, config, channel_data};
+      auto fg = util::fail_guard([&]() {
+        samples->stop();
+        thread.join();
+      });
+
+      bool logged_format_mismatch = false;
+      std::vector<std::uint8_t> pcm_storage(expected_pcm_byte_count);
+
+      while (!shutdown_event->peek()) {
+        (void) ApolloCoreAudioCaptureIngressWaitForData(ingress, 20);
+
+        while (true) {
+          std::size_t copied_pcm_bytes = 0;
+          auto record = ApolloCoreAudioCaptureIngressPopNextFrame(
+            ingress,
+            pcm_storage.data(),
+            pcm_storage.size(),
+            &copied_pcm_bytes
+          );
+          if (!record.has_value) {
+            break;
+          }
+
+          const bool format_matches =
+            record.sample_rate == stream.sampleRate &&
+            record.channel_count == stream.channelCount &&
+            record.frame_count == expected_frame_count &&
+            copied_pcm_bytes == expected_pcm_byte_count;
+          if (!format_matches) {
+            if (!logged_format_mismatch) {
+              BOOST_LOG(warning) << "ApolloCore audio ingress format mismatch: sampleRate="sv << record.sample_rate
+                                 << " channels="sv << record.channel_count
+                                 << " frameCount="sv << record.frame_count
+                                 << " copiedPCMBytes="sv << copied_pcm_bytes
+                                 << " expectedPCMBytes="sv << expected_pcm_byte_count;
+              logged_format_mismatch = true;
+            }
+            continue;
+          }
+
+          std::vector<float> sample_buffer(expected_sample_count);
+          std::memcpy(sample_buffer.data(), pcm_storage.data(), copied_pcm_bytes);
+          samples->raise(std::move(sample_buffer));
+        }
+
+        while (true) {
+          char message[256] = {};
+          auto event = ApolloCoreAudioCaptureIngressPopNextEvent(ingress, message, sizeof(message));
+          if (!event.has_value) {
+            break;
+          }
+
+          if (event.kind == ApolloCoreCaptureEventKindFailed) {
+            BOOST_LOG(error) << "ApolloCore audio ingress failed"sv
+                             << (message[0] ? ": "sv : ""sv)
+                             << (message[0] ? message : "");
+          } else if (event.kind == ApolloCoreCaptureEventKindRestarted) {
+            BOOST_LOG(info) << "ApolloCore audio ingress restarted"sv;
+          }
+        }
+
+        if (!ApolloCoreAudioCaptureIngressIsProducerActive(ingress) &&
+            !ApolloCoreAudioCaptureIngressWaitForData(ingress, 0)) {
+          return true;
+        }
+      }
+
+      return true;
+    }
+  }  // namespace
+#endif
 
   // NOTE: If you adjust the bitrates listed here, make sure to update the
   // corresponding bitrate adjustment logic in rtsp_stream::cmd_announce()
@@ -133,6 +235,13 @@ namespace audio {
       shutdown_event->view();
       return;
     }
+
+#ifdef __APPLE__
+    if (capture_from_apollo_core_ingress(mail, config, channel_data)) {
+      return;
+    }
+#endif
+
     auto stream = stream_configs[map_stream(config.channels, config.flags[config_t::HIGH_QUALITY])];
     if (config.flags[config_t::CUSTOM_SURROUND_PARAMS]) {
       apply_surround_params(stream, config.customStreamParams);

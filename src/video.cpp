@@ -38,6 +38,7 @@ extern "C" {
   #include <CoreFoundation/CoreFoundation.h>
   #include <CoreMedia/CoreMedia.h>
   #include <VideoToolbox/VideoToolbox.h>
+  #include "ApolloCore.h"
   #include "platform/macos/av_img_t.h"
 #endif
 
@@ -102,6 +103,137 @@ namespace video {
   void free_buffer(AVBufferRef *ref) {
     av_buffer_unref(&ref);
   }
+
+#ifdef __APPLE__
+  namespace {
+    CMVideoCodecType apollo_core_codec_type(ApolloCoreCaptureCodec codec) {
+      switch (codec) {
+        case ApolloCoreCaptureCodecH264:
+          return kCMVideoCodecType_H264;
+        case ApolloCoreCaptureCodecHEVC:
+          return kCMVideoCodecType_HEVC;
+        case ApolloCoreCaptureCodecProResProxy:
+          return kCMVideoCodecType_AppleProRes422Proxy;
+        default:
+          return 0;
+      }
+    }
+
+    bool apollo_core_codec_matches_config(ApolloCoreCaptureCodec codec, const config_t &config) {
+      switch (config.videoFormat) {
+        case 0:
+          return codec == ApolloCoreCaptureCodecH264;
+        case 1:
+          return codec == ApolloCoreCaptureCodecHEVC;
+        default:
+          return false;
+      }
+    }
+
+    bool external_sample_buffer_is_idr(CMSampleBufferRef sampleBuffer) {
+      CFArrayRef attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, false);
+      if (!attachments || CFArrayGetCount(attachments) == 0) {
+        return true;
+      }
+
+      CFDictionaryRef attachment = (CFDictionaryRef) CFArrayGetValueAtIndex(attachments, 0);
+      CFBooleanRef not_sync = (CFBooleanRef) CFDictionaryGetValue(attachment, kCMSampleAttachmentKey_NotSync);
+      return not_sync == nullptr || not_sync == kCFBooleanFalse;
+    }
+
+    const uint8_t *copy_or_map_external_sample_bytes(CMBlockBufferRef data_buffer, std::vector<uint8_t> &scratch, size_t &total_length) {
+      total_length = (size_t) CMBlockBufferGetDataLength(data_buffer);
+      size_t contiguous_length = 0;
+      char *contiguous_ptr = nullptr;
+      if (CMBlockBufferGetDataPointer(data_buffer, 0, &contiguous_length, nullptr, &contiguous_ptr) == kCMBlockBufferNoErr &&
+          contiguous_ptr != nullptr &&
+          contiguous_length >= total_length) {
+        return reinterpret_cast<const uint8_t *>(contiguous_ptr);
+      }
+
+      scratch.resize(total_length);
+      if (CMBlockBufferCopyDataBytes(data_buffer, 0, total_length, scratch.data()) != noErr) {
+        return nullptr;
+      }
+      return scratch.data();
+    }
+
+    void append_parameter_sets_for_codec(CMSampleBufferRef sampleBuffer, CMVideoCodecType codec_type, std::vector<uint8_t> &output) {
+      auto format_description = CMSampleBufferGetFormatDescription(sampleBuffer);
+      if (!format_description) {
+        return;
+      }
+
+      if (codec_type == kCMVideoCodecType_H264) {
+        size_t set_count = 0;
+        int header_length = 0;
+        if (CMVideoFormatDescriptionGetH264ParameterSetAtIndex(format_description, 0, nullptr, nullptr, &set_count, &header_length) != noErr) {
+          return;
+        }
+
+        for (size_t index = 0; index < set_count; ++index) {
+          const uint8_t *set_ptr = nullptr;
+          size_t set_size = 0;
+          if (CMVideoFormatDescriptionGetH264ParameterSetAtIndex(format_description, index, &set_ptr, &set_size, nullptr, nullptr) == noErr && set_ptr && set_size > 0) {
+            output.insert(output.end(), {0, 0, 0, 1});
+            output.insert(output.end(), set_ptr, set_ptr + set_size);
+          }
+        }
+      } else if (codec_type == kCMVideoCodecType_HEVC) {
+        size_t set_count = 0;
+        int header_length = 0;
+        if (CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(format_description, 0, nullptr, nullptr, &set_count, &header_length) != noErr) {
+          return;
+        }
+
+        for (size_t index = 0; index < set_count; ++index) {
+          const uint8_t *set_ptr = nullptr;
+          size_t set_size = 0;
+          if (CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(format_description, index, &set_ptr, &set_size, nullptr, nullptr) == noErr && set_ptr && set_size > 0) {
+            output.insert(output.end(), {0, 0, 0, 1});
+            output.insert(output.end(), set_ptr, set_ptr + set_size);
+          }
+        }
+      }
+    }
+
+    void append_external_sample_buffer_payload(CMSampleBufferRef sampleBuffer, CMVideoCodecType codec_type, std::vector<uint8_t> &output) {
+      auto data_buffer = CMSampleBufferGetDataBuffer(sampleBuffer);
+      if (!data_buffer) {
+        return;
+      }
+
+      size_t total_length = 0;
+      std::vector<uint8_t> scratch;
+      const uint8_t *buffer = copy_or_map_external_sample_bytes(data_buffer, scratch, total_length);
+      if (!buffer) {
+        return;
+      }
+
+      if (codec_type != kCMVideoCodecType_H264 && codec_type != kCMVideoCodecType_HEVC) {
+        output.insert(output.end(), buffer, buffer + total_length);
+        return;
+      }
+
+      output.reserve(output.size() + total_length + (total_length / 32) + 16);
+      size_t offset = 0;
+      while (offset + 4 <= total_length) {
+        uint32_t nal_length =
+          (uint32_t(buffer[offset]) << 24) |
+          (uint32_t(buffer[offset + 1]) << 16) |
+          (uint32_t(buffer[offset + 2]) << 8) |
+          uint32_t(buffer[offset + 3]);
+        offset += 4;
+        if (offset + nal_length > total_length) {
+          break;
+        }
+        output.insert(output.end(), {0, 0, 0, 1});
+        output.insert(output.end(), buffer + offset, buffer + offset + nal_length);
+        offset += nal_length;
+      }
+    }
+  }  // namespace
+#endif
 
   namespace nv {
 
@@ -2964,6 +3096,162 @@ namespace video {
     };
   }
 
+#ifdef __APPLE__
+  namespace {
+    void raise_external_capture_metadata(
+      safe::mail_t mail,
+      const config_t &config,
+      const std::shared_ptr<platf::display_t> &display
+    ) {
+      auto touch_port_event = mail->event<input::touch_port_t>(mail::touch_port);
+      auto hdr_event = mail->event<hdr_info_t>(mail::hdr);
+
+      touch_port_event->raise(make_port(display.get(), config));
+
+      hdr_info_t hdr_info = std::make_unique<hdr_info_raw_t>(false);
+      if (display->is_hdr()) {
+        if (display->get_hdr_metadata(hdr_info->metadata)) {
+          hdr_info->enabled = true;
+        } else {
+          BOOST_LOG(error) << "Couldn't get display hdr metadata for external macOS encoded ingress";
+        }
+      }
+      hdr_event->raise(std::move(hdr_info));
+    }
+
+    void capture_external_encoded_ingress(
+      safe::mail_t mail,
+      const config_t &config,
+      void *channel_data
+    ) {
+      auto shutdown_event = mail->event<bool>(mail::shutdown);
+      auto packets = mail::man->queue<packet_t>(mail::video_packets);
+      auto ingress = ApolloCoreSharedEncodedCaptureIngress();
+      auto display = platf::display(chosen_encoder->platform_formats->dev_type, proc::proc.display_name, config);
+      if (!display) {
+        BOOST_LOG(error) << "Failed to open display for external macOS encoded ingress";
+        return;
+      }
+
+      raise_external_capture_metadata(mail, config, display);
+
+      bool logged_codec_mismatch = false;
+      bool logged_producer_stop = false;
+      std::array<char, 512> event_message {};
+
+      while (!shutdown_event->peek()) {
+        bool consumed_any = false;
+
+        while (true) {
+          auto event = ApolloCoreEncodedCaptureIngressPopNextEvent(
+            ingress,
+            event_message.data(),
+            event_message.size()
+          );
+          if (!event.has_value) {
+            break;
+          }
+
+          consumed_any = true;
+          std::string_view message {
+            event_message.data(),
+            strnlen(event_message.data(), event_message.size())
+          };
+
+          switch (event.kind) {
+            case ApolloCoreCaptureEventKindStarted:
+            case ApolloCoreCaptureEventKindRestarted:
+              BOOST_LOG(info) << "External macOS encoded ingress event kind="sv << static_cast<int>(event.kind)
+                              << " message="sv << message;
+              break;
+            case ApolloCoreCaptureEventKindDroppedFrame:
+              BOOST_LOG(warning) << "External macOS encoded ingress dropped a frame"sv;
+              break;
+            case ApolloCoreCaptureEventKindFailed:
+              BOOST_LOG(error) << "External macOS encoded ingress reported a failure: "sv << message;
+              break;
+            case ApolloCoreCaptureEventKindStopped:
+              BOOST_LOG(info) << "External macOS encoded ingress stopped"sv;
+              break;
+            default:
+              break;
+          }
+
+          event_message.fill(0);
+        }
+
+        while (true) {
+          CMSampleBufferRef retained_sample_buffer = nullptr;
+          auto frame = ApolloCoreEncodedCaptureIngressPopNextFrame(ingress, &retained_sample_buffer);
+          if (!frame.has_value || !retained_sample_buffer) {
+            if (retained_sample_buffer) {
+              CFRelease(retained_sample_buffer);
+            }
+            break;
+          }
+
+          consumed_any = true;
+
+          if (!apollo_core_codec_matches_config(frame.codec, config)) {
+            if (!logged_codec_mismatch) {
+              BOOST_LOG(error) << "External macOS encoded ingress codec mismatch frameCodec="sv
+                               << static_cast<int>(frame.codec)
+                               << " requestedVideoFormat="sv
+                               << config.videoFormat;
+              logged_codec_mismatch = true;
+            }
+            CFRelease(retained_sample_buffer);
+            continue;
+          }
+
+          const auto codec_type = apollo_core_codec_type(frame.codec);
+          if (codec_type != kCMVideoCodecType_H264 && codec_type != kCMVideoCodecType_HEVC) {
+            BOOST_LOG(error) << "External macOS encoded ingress only supports H.264 or HEVC packetization"sv;
+            CFRelease(retained_sample_buffer);
+            continue;
+          }
+
+          std::vector<uint8_t> packet_data;
+          const bool packet_is_idr = external_sample_buffer_is_idr(retained_sample_buffer);
+          if (packet_is_idr) {
+            append_parameter_sets_for_codec(retained_sample_buffer, codec_type, packet_data);
+          }
+          append_external_sample_buffer_payload(retained_sample_buffer, codec_type, packet_data);
+          if (packet_data.empty()) {
+            BOOST_LOG(error) << "External macOS encoded ingress produced an empty packet payload"sv;
+            CFRelease(retained_sample_buffer);
+            continue;
+          }
+
+          auto packet = std::make_unique<packet_raw_generic>(
+            std::move(packet_data),
+            static_cast<int64_t>(frame.source_sequence_number),
+            packet_is_idr
+          );
+          packet->channel_data = channel_data;
+          packet->frame_timestamp = std::chrono::steady_clock::now();
+          packets->raise(std::move(packet));
+          CFRelease(retained_sample_buffer);
+        }
+
+        if (consumed_any) {
+          continue;
+        }
+
+        if (!ApolloCoreEncodedCaptureIngressWaitForData(ingress, 50)) {
+          if (!ApolloCoreEncodedCaptureIngressIsProducerActive(ingress)) {
+            if (!logged_producer_stop) {
+              BOOST_LOG(info) << "External macOS encoded ingress producer became inactive"sv;
+              logged_producer_stop = true;
+            }
+            break;
+          }
+        }
+      }
+    }
+  }  // namespace
+#endif
+
   std::unique_ptr<platf::encode_device_t> make_encode_device(platf::display_t &disp, const encoder_t &encoder, const config_t &config) {
     std::unique_ptr<platf::encode_device_t> result;
 
@@ -3371,6 +3659,15 @@ namespace video {
     auto idr_events = mail->event<bool>(mail::idr);
 
     idr_events->raise(true);
+#ifdef __APPLE__
+    if (!config.input_only) {
+      auto *external_ingress = ApolloCoreSharedEncodedCaptureIngress();
+      if (ApolloCoreEncodedCaptureIngressIsProducerActive(external_ingress)) {
+        capture_external_encoded_ingress(std::move(mail), config, channel_data);
+        return;
+      }
+    }
+#endif
     if (chosen_encoder->flags & PARALLEL_ENCODING) {
       capture_async(std::move(mail), config, channel_data);
     } else {

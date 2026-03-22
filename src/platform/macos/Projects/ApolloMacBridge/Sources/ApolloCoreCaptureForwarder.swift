@@ -60,15 +60,13 @@ final class ApolloCoreCaptureForwarder: @unchecked Sendable {
     private let handle: OpaquePointer
 
     init() {
-        guard let handle = ApolloCoreEncodedCaptureIngressCreate() else {
-            fatalError("ApolloCoreEncodedCaptureIngressCreate returned nil")
+        guard let handle = ApolloCoreSharedEncodedCaptureIngress() else {
+            fatalError("ApolloCoreSharedEncodedCaptureIngress returned nil")
         }
         self.handle = handle
     }
 
-    deinit {
-        ApolloCoreEncodedCaptureIngressDestroy(handle)
-    }
+    deinit {}
 
     func reset() {
         ApolloCoreEncodedCaptureIngressReset(handle)
@@ -80,6 +78,10 @@ final class ApolloCoreCaptureForwarder: @unchecked Sendable {
 
     func setEventCapacity(_ capacity: Int) {
         ApolloCoreEncodedCaptureIngressSetEventCapacity(handle, max(1, capacity))
+    }
+
+    func setProducerActive(_ active: Bool) {
+        ApolloCoreEncodedCaptureIngressSetProducerActive(handle, active)
     }
 
     func snapshot() -> ApolloBridgeCoreForwardingSnapshot {
@@ -198,7 +200,7 @@ final class ApolloCoreCaptureForwarder: @unchecked Sendable {
     }
 }
 
-private extension ApolloCaptureCodec {
+extension ApolloCaptureCodec {
     init(mdkCodec: MDKVideoEncoderCodec) {
         switch mdkCodec {
         case .h264:
@@ -235,7 +237,7 @@ private extension ApolloCaptureCodec {
     }
 }
 
-private extension MDKVideoEncoderCodec {
+extension MDKVideoEncoderCodec {
     var apolloCoreCodec: ApolloCoreCaptureCodec {
         switch self {
         case .h264:
@@ -248,7 +250,7 @@ private extension MDKVideoEncoderCodec {
     }
 }
 
-private extension ApolloBridgeCaptureEventKind {
+extension ApolloBridgeCaptureEventKind {
     init?(apolloCoreKind: ApolloCoreCaptureEventKind) {
         switch apolloCoreKind {
         case ApolloCoreCaptureEventKindStarted:

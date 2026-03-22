@@ -3,6 +3,8 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
+#include <condition_variable>
 #include <cstring>
 #include <deque>
 #include <mutex>
@@ -124,10 +126,62 @@ namespace {
       return record;
     }
   };
+
+  struct audio_event_state_t {
+    ApolloCoreCaptureEventKind kind = ApolloCoreCaptureEventKindUnknown;
+    std::string message;
+    bool has_stop_status = false;
+    std::int32_t stop_status = 0;
+    bool has_automatic_restart_count = false;
+    std::uint64_t automatic_restart_count = 0;
+    bool has_source_sequence_number = false;
+    std::uint64_t source_sequence_number = 0;
+
+    ApolloCoreAudioCaptureEventRecord record() const {
+      ApolloCoreAudioCaptureEventRecord record {};
+      record.has_value = true;
+      record.kind = kind;
+      record.has_stop_status = has_stop_status;
+      record.stop_status = stop_status;
+      record.has_automatic_restart_count = has_automatic_restart_count;
+      record.automatic_restart_count = automatic_restart_count;
+      record.has_source_sequence_number = has_source_sequence_number;
+      record.source_sequence_number = source_sequence_number;
+      return record;
+    }
+  };
+
+  struct audio_frame_state_t {
+    std::vector<std::uint8_t> pcm_float32le;
+    std::uint64_t sequence_number = 0;
+    std::uint64_t host_time_nanoseconds = 0;
+    std::int32_t sample_rate = 0;
+    std::int32_t channel_count = 0;
+    std::int32_t frame_count = 0;
+
+    ApolloCoreAudioCaptureFrameRecord record() const {
+      ApolloCoreAudioCaptureFrameRecord record {};
+      record.has_value = true;
+      record.sequence_number = sequence_number;
+      record.host_time_nanoseconds = host_time_nanoseconds;
+      record.sample_rate = sample_rate;
+      record.channel_count = channel_count;
+      record.frame_count = frame_count;
+      record.pcm_byte_count = pcm_float32le.size();
+      return record;
+    }
+  };
+
+  template<typename FrameQueue, typename EventQueue>
+  bool ingress_has_pending(const FrameQueue &frames, const EventQueue &events) {
+    return !frames.empty() || !events.empty();
+  }
 }
 
 struct ApolloCoreEncodedCaptureIngress {
   mutable std::mutex mutex;
+  std::condition_variable data_cv;
+  bool producer_active = false;
   std::uint64_t frame_count = 0;
   std::uint64_t event_count = 0;
   std::uint64_t dropped_frame_count = 0;
@@ -138,6 +192,22 @@ struct ApolloCoreEncodedCaptureIngress {
   std::optional<encoded_event_state_t> last_event;
   std::deque<encoded_frame_state_t> pending_frames;
   std::deque<encoded_event_state_t> pending_events;
+};
+
+struct ApolloCoreAudioCaptureIngress {
+  mutable std::mutex mutex;
+  std::condition_variable data_cv;
+  bool producer_active = false;
+  std::uint64_t frame_count = 0;
+  std::uint64_t event_count = 0;
+  std::uint64_t dropped_frame_count = 0;
+  std::uint64_t dropped_event_count = 0;
+  std::size_t frame_capacity = default_frame_capacity;
+  std::size_t event_capacity = default_event_capacity;
+  std::optional<audio_frame_state_t> last_frame;
+  std::optional<audio_event_state_t> last_event;
+  std::deque<audio_frame_state_t> pending_frames;
+  std::deque<audio_event_state_t> pending_events;
 };
 
 namespace apollo::core {
@@ -266,6 +336,18 @@ namespace apollo::core {
   }
 }
 
+namespace {
+  ApolloCoreEncodedCaptureIngress *shared_encoded_capture_ingress() {
+    static ApolloCoreEncodedCaptureIngress ingress;
+    return &ingress;
+  }
+
+  ApolloCoreAudioCaptureIngress *shared_audio_capture_ingress() {
+    static ApolloCoreAudioCaptureIngress ingress;
+    return &ingress;
+  }
+}
+
 const char *ApolloCoreBootstrapVersionString(void) {
   static const std::string version = apollo::core::version_string();
   return version.c_str();
@@ -298,6 +380,7 @@ void ApolloCoreEncodedCaptureIngressReset(ApolloCoreEncodedCaptureIngress *ingre
   ingress->last_event.reset();
   ingress->pending_frames.clear();
   ingress->pending_events.clear();
+  ingress->data_cv.notify_all();
 }
 
 void ApolloCoreEncodedCaptureIngressSetFrameCapacity(
@@ -365,6 +448,7 @@ void ApolloCoreEncodedCaptureIngressConsumeSampleBuffer(
     ingress->pending_frames.pop_front();
     ingress->dropped_frame_count += 1;
   }
+  ingress->data_cv.notify_all();
 }
 
 void ApolloCoreEncodedCaptureIngressConsumeEvent(
@@ -402,6 +486,7 @@ void ApolloCoreEncodedCaptureIngressConsumeEvent(
     ingress->pending_events.pop_front();
     ingress->dropped_event_count += 1;
   }
+  ingress->data_cv.notify_all();
 }
 
 ApolloCoreEncodedCaptureIngressSnapshot ApolloCoreEncodedCaptureIngressCopySnapshot(
@@ -540,4 +625,367 @@ size_t ApolloCoreEncodedCaptureIngressCopyLastEventMessage(
     std::memcpy(destination, message.data(), copy_size);
   }
   return copy_size;
+}
+
+ApolloCoreEncodedCaptureIngress *ApolloCoreSharedEncodedCaptureIngress(void) {
+  return shared_encoded_capture_ingress();
+}
+
+void ApolloCoreEncodedCaptureIngressSetProducerActive(
+  ApolloCoreEncodedCaptureIngress *ingress,
+  bool active
+) {
+  if (!ingress) {
+    return;
+  }
+
+  {
+    std::scoped_lock lock(ingress->mutex);
+    ingress->producer_active = active;
+  }
+  ingress->data_cv.notify_all();
+}
+
+bool ApolloCoreEncodedCaptureIngressIsProducerActive(
+  const ApolloCoreEncodedCaptureIngress *ingress
+) {
+  if (!ingress) {
+    return false;
+  }
+
+  std::scoped_lock lock(ingress->mutex);
+  return ingress->producer_active;
+}
+
+bool ApolloCoreEncodedCaptureIngressWaitForData(
+  ApolloCoreEncodedCaptureIngress *ingress,
+  uint32_t timeout_milliseconds
+) {
+  if (!ingress) {
+    return false;
+  }
+
+  std::unique_lock lock(ingress->mutex);
+  const auto has_pending = [&]() {
+    return ingress_has_pending(ingress->pending_frames, ingress->pending_events);
+  };
+
+  if (has_pending()) {
+    return true;
+  }
+
+  ingress->data_cv.wait_for(lock, std::chrono::milliseconds(timeout_milliseconds), [&]() {
+    return has_pending() || !ingress->producer_active;
+  });
+  return has_pending();
+}
+
+ApolloCoreAudioCaptureIngress *ApolloCoreAudioCaptureIngressCreate(void) {
+  return new ApolloCoreAudioCaptureIngress();
+}
+
+void ApolloCoreAudioCaptureIngressDestroy(ApolloCoreAudioCaptureIngress *ingress) {
+  delete ingress;
+}
+
+void ApolloCoreAudioCaptureIngressReset(ApolloCoreAudioCaptureIngress *ingress) {
+  if (!ingress) {
+    return;
+  }
+
+  std::scoped_lock lock(ingress->mutex);
+  ingress->frame_count = 0;
+  ingress->event_count = 0;
+  ingress->dropped_frame_count = 0;
+  ingress->dropped_event_count = 0;
+  ingress->last_frame.reset();
+  ingress->last_event.reset();
+  ingress->pending_frames.clear();
+  ingress->pending_events.clear();
+  ingress->data_cv.notify_all();
+}
+
+void ApolloCoreAudioCaptureIngressSetFrameCapacity(
+  ApolloCoreAudioCaptureIngress *ingress,
+  std::size_t capacity
+) {
+  if (!ingress) {
+    return;
+  }
+
+  std::scoped_lock lock(ingress->mutex);
+  ingress->frame_capacity = std::max<std::size_t>(1, capacity);
+  while (ingress->pending_frames.size() > ingress->frame_capacity) {
+    ingress->pending_frames.pop_front();
+    ingress->dropped_frame_count += 1;
+  }
+}
+
+void ApolloCoreAudioCaptureIngressSetEventCapacity(
+  ApolloCoreAudioCaptureIngress *ingress,
+  std::size_t capacity
+) {
+  if (!ingress) {
+    return;
+  }
+
+  std::scoped_lock lock(ingress->mutex);
+  ingress->event_capacity = std::max<std::size_t>(1, capacity);
+  while (ingress->pending_events.size() > ingress->event_capacity) {
+    ingress->pending_events.pop_front();
+    ingress->dropped_event_count += 1;
+  }
+}
+
+void ApolloCoreAudioCaptureIngressConsumePCMFloat32(
+  ApolloCoreAudioCaptureIngress *ingress,
+  std::uint64_t sequence_number,
+  std::uint64_t host_time_nanoseconds,
+  std::int32_t sample_rate,
+  std::int32_t channel_count,
+  std::int32_t frame_count,
+  const void *pcm_float32le,
+  std::size_t pcm_byte_count
+) {
+  if (!ingress || !pcm_float32le || pcm_byte_count == 0) {
+    return;
+  }
+
+  audio_frame_state_t frame {};
+  frame.sequence_number = sequence_number;
+  frame.host_time_nanoseconds = host_time_nanoseconds;
+  frame.sample_rate = sample_rate;
+  frame.channel_count = channel_count;
+  frame.frame_count = frame_count;
+  frame.pcm_float32le.resize(pcm_byte_count);
+  std::memcpy(frame.pcm_float32le.data(), pcm_float32le, pcm_byte_count);
+
+  std::scoped_lock lock(ingress->mutex);
+  ingress->frame_count += 1;
+  ingress->last_frame = frame;
+  ingress->pending_frames.push_back(std::move(frame));
+  while (ingress->pending_frames.size() > ingress->frame_capacity) {
+    ingress->pending_frames.pop_front();
+    ingress->dropped_frame_count += 1;
+  }
+  ingress->data_cv.notify_all();
+}
+
+void ApolloCoreAudioCaptureIngressConsumeEvent(
+  ApolloCoreAudioCaptureIngress *ingress,
+  ApolloCoreCaptureEventKind kind,
+  const char *message,
+  bool has_stop_status,
+  std::int32_t stop_status,
+  bool has_automatic_restart_count,
+  std::uint64_t automatic_restart_count,
+  bool has_source_sequence_number,
+  std::uint64_t source_sequence_number
+) {
+  if (!ingress) {
+    return;
+  }
+
+  audio_event_state_t event {};
+  event.kind = kind;
+  if (message) {
+    event.message = message;
+  }
+  event.has_stop_status = has_stop_status;
+  event.stop_status = stop_status;
+  event.has_automatic_restart_count = has_automatic_restart_count;
+  event.automatic_restart_count = automatic_restart_count;
+  event.has_source_sequence_number = has_source_sequence_number;
+  event.source_sequence_number = source_sequence_number;
+
+  std::scoped_lock lock(ingress->mutex);
+  ingress->event_count += 1;
+  ingress->last_event = event;
+  ingress->pending_events.push_back(std::move(event));
+  while (ingress->pending_events.size() > ingress->event_capacity) {
+    ingress->pending_events.pop_front();
+    ingress->dropped_event_count += 1;
+  }
+  ingress->data_cv.notify_all();
+}
+
+ApolloCoreAudioCaptureIngressSnapshot ApolloCoreAudioCaptureIngressCopySnapshot(
+  const ApolloCoreAudioCaptureIngress *ingress
+) {
+  ApolloCoreAudioCaptureIngressSnapshot snapshot {};
+  snapshot.last_event_kind = ApolloCoreCaptureEventKindUnknown;
+
+  if (!ingress) {
+    return snapshot;
+  }
+
+  std::scoped_lock lock(ingress->mutex);
+  snapshot.frame_count = ingress->frame_count;
+  snapshot.event_count = ingress->event_count;
+  snapshot.queued_frame_count = ingress->pending_frames.size();
+  snapshot.queued_event_count = ingress->pending_events.size();
+  snapshot.dropped_frame_count = ingress->dropped_frame_count;
+  snapshot.dropped_event_count = ingress->dropped_event_count;
+
+  if (ingress->last_frame.has_value()) {
+    const auto &frame = *ingress->last_frame;
+    snapshot.has_last_frame = true;
+    snapshot.last_frame_sequence_number = frame.sequence_number;
+    snapshot.last_frame_host_time_nanoseconds = frame.host_time_nanoseconds;
+    snapshot.last_frame_sample_rate = frame.sample_rate;
+    snapshot.last_frame_channel_count = frame.channel_count;
+    snapshot.last_frame_frame_count = frame.frame_count;
+    snapshot.last_frame_pcm_byte_count = frame.pcm_float32le.size();
+  }
+
+  if (ingress->last_event.has_value()) {
+    const auto &event = *ingress->last_event;
+    snapshot.has_last_event = true;
+    snapshot.last_event_kind = event.kind;
+    snapshot.last_event_has_stop_status = event.has_stop_status;
+    snapshot.last_event_stop_status = event.stop_status;
+    snapshot.last_event_has_automatic_restart_count = event.has_automatic_restart_count;
+    snapshot.last_event_automatic_restart_count = event.automatic_restart_count;
+    snapshot.last_event_has_source_sequence_number = event.has_source_sequence_number;
+    snapshot.last_event_source_sequence_number = event.source_sequence_number;
+  }
+
+  return snapshot;
+}
+
+ApolloCoreAudioCaptureFrameRecord ApolloCoreAudioCaptureIngressPopNextFrame(
+  ApolloCoreAudioCaptureIngress *ingress,
+  void *pcm_destination,
+  std::size_t pcm_capacity,
+  std::size_t *copied_size_out
+) {
+  ApolloCoreAudioCaptureFrameRecord record {};
+  if (copied_size_out) {
+    *copied_size_out = 0;
+  }
+
+  if (!ingress) {
+    return record;
+  }
+
+  std::scoped_lock lock(ingress->mutex);
+  if (ingress->pending_frames.empty()) {
+    return record;
+  }
+
+  auto frame = std::move(ingress->pending_frames.front());
+  ingress->pending_frames.pop_front();
+  record = frame.record();
+
+  if (pcm_destination && pcm_capacity > 0) {
+    const auto copy_size = std::min(pcm_capacity, frame.pcm_float32le.size());
+    std::memcpy(pcm_destination, frame.pcm_float32le.data(), copy_size);
+    if (copied_size_out) {
+      *copied_size_out = copy_size;
+    }
+  }
+
+  return record;
+}
+
+ApolloCoreAudioCaptureEventRecord ApolloCoreAudioCaptureIngressPopNextEvent(
+  ApolloCoreAudioCaptureIngress *ingress,
+  char *message_destination,
+  size_t message_capacity
+) {
+  ApolloCoreAudioCaptureEventRecord record {};
+
+  if (!ingress) {
+    return record;
+  }
+
+  std::scoped_lock lock(ingress->mutex);
+  if (ingress->pending_events.empty()) {
+    return record;
+  }
+
+  auto event = std::move(ingress->pending_events.front());
+  ingress->pending_events.pop_front();
+  record = event.record();
+
+  const auto copy_size = std::min(message_capacity, event.message.size());
+  if (copy_size > 0 && message_destination) {
+    std::memcpy(message_destination, event.message.data(), copy_size);
+  }
+  return record;
+}
+
+size_t ApolloCoreAudioCaptureIngressCopyLastEventMessage(
+  const ApolloCoreAudioCaptureIngress *ingress,
+  char *destination,
+  size_t capacity
+) {
+  if (!ingress) {
+    return 0;
+  }
+
+  std::scoped_lock lock(ingress->mutex);
+  if (!ingress->last_event.has_value()) {
+    return 0;
+  }
+
+  const auto &message = ingress->last_event->message;
+  const auto copy_size = std::min(capacity, message.size());
+  if (copy_size > 0 && destination) {
+    std::memcpy(destination, message.data(), copy_size);
+  }
+  return copy_size;
+}
+
+ApolloCoreAudioCaptureIngress *ApolloCoreSharedAudioCaptureIngress(void) {
+  return shared_audio_capture_ingress();
+}
+
+void ApolloCoreAudioCaptureIngressSetProducerActive(
+  ApolloCoreAudioCaptureIngress *ingress,
+  bool active
+) {
+  if (!ingress) {
+    return;
+  }
+
+  {
+    std::scoped_lock lock(ingress->mutex);
+    ingress->producer_active = active;
+  }
+  ingress->data_cv.notify_all();
+}
+
+bool ApolloCoreAudioCaptureIngressIsProducerActive(
+  const ApolloCoreAudioCaptureIngress *ingress
+) {
+  if (!ingress) {
+    return false;
+  }
+
+  std::scoped_lock lock(ingress->mutex);
+  return ingress->producer_active;
+}
+
+bool ApolloCoreAudioCaptureIngressWaitForData(
+  ApolloCoreAudioCaptureIngress *ingress,
+  uint32_t timeout_milliseconds
+) {
+  if (!ingress) {
+    return false;
+  }
+
+  std::unique_lock lock(ingress->mutex);
+  const auto has_pending = [&]() {
+    return ingress_has_pending(ingress->pending_frames, ingress->pending_events);
+  };
+
+  if (has_pending()) {
+    return true;
+  }
+
+  ingress->data_cv.wait_for(lock, std::chrono::milliseconds(timeout_milliseconds), [&]() {
+    return has_pending() || !ingress->producer_active;
+  });
+  return has_pending();
 }

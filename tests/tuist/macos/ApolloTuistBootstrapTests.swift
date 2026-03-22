@@ -268,6 +268,126 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(drainedFrame?.sourceSequenceNumber, 2)
         XCTAssertEqual(try Self.payloadBytes(from: try XCTUnwrap(drainedFrame?.sampleBuffer)), Data([0x02]))
     }
+
+    func testApolloCoreSharedEncodedCaptureIngressWaitsForSharedProducerData() throws {
+        guard let ingress = ApolloCoreSharedEncodedCaptureIngress() else {
+            return XCTFail("ApolloCoreSharedEncodedCaptureIngress returned nil")
+        }
+
+        ApolloCoreEncodedCaptureIngressReset(ingress)
+        ApolloCoreEncodedCaptureIngressSetProducerActive(ingress, true)
+        defer {
+            ApolloCoreEncodedCaptureIngressSetProducerActive(ingress, false)
+            ApolloCoreEncodedCaptureIngressReset(ingress)
+        }
+
+        let sampleBuffer = try Self.makeEncodedSampleBuffer(
+            payload: Data([0x31, 0x32, 0x33]),
+            codecType: kCMVideoCodecType_HEVC
+        )
+
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.05) {
+            ApolloCoreEncodedCaptureIngressConsumeSampleBuffer(
+                ingress,
+                ApolloCoreCaptureCodecHEVC,
+                99,
+                199,
+                false,
+                0,
+                true,
+                false,
+                sampleBuffer
+            )
+        }
+
+        XCTAssertTrue(ApolloCoreEncodedCaptureIngressWaitForData(ingress, 500))
+
+        var drainedSampleBuffer: Unmanaged<CMSampleBuffer>?
+        let record = withUnsafeMutablePointer(to: &drainedSampleBuffer) { pointer in
+            ApolloCoreEncodedCaptureIngressPopNextFrame(ingress, pointer)
+        }
+        XCTAssertTrue(record.has_value)
+        XCTAssertEqual(record.source_sequence_number, 99)
+        XCTAssertEqual(
+            try Self.payloadBytes(from: try XCTUnwrap(drainedSampleBuffer).takeRetainedValue()),
+            Data([0x31, 0x32, 0x33])
+        )
+    }
+
+    func testApolloCoreAudioCaptureIngressStoresPCMAndEvents() {
+        guard let ingress = ApolloCoreSharedAudioCaptureIngress() else {
+            return XCTFail("ApolloCoreSharedAudioCaptureIngress returned nil")
+        }
+
+        ApolloCoreAudioCaptureIngressReset(ingress)
+        ApolloCoreAudioCaptureIngressSetProducerActive(ingress, true)
+        ApolloCoreAudioCaptureIngressSetFrameCapacity(ingress, 2)
+        ApolloCoreAudioCaptureIngressSetEventCapacity(ingress, 2)
+        defer {
+            ApolloCoreAudioCaptureIngressSetProducerActive(ingress, false)
+            ApolloCoreAudioCaptureIngressReset(ingress)
+        }
+
+        let pcmValues: [Float] = [0.25, -0.5, 0.75, -1.0]
+        pcmValues.withUnsafeBytes { rawBuffer in
+            ApolloCoreAudioCaptureIngressConsumePCMFloat32(
+                ingress,
+                17,
+                123_456,
+                48_000,
+                2,
+                2,
+                rawBuffer.baseAddress,
+                rawBuffer.count
+            )
+        }
+        ApolloCoreAudioCaptureIngressConsumeEvent(
+            ingress,
+            ApolloCoreCaptureEventKindRestarted,
+            "audio-restarted",
+            false,
+            0,
+            true,
+            3,
+            true,
+            17
+        )
+
+        let snapshot = ApolloCoreAudioCaptureIngressCopySnapshot(ingress)
+        XCTAssertEqual(snapshot.frame_count, 1)
+        XCTAssertEqual(snapshot.event_count, 1)
+        XCTAssertEqual(snapshot.last_frame_sequence_number, 17)
+        XCTAssertEqual(snapshot.last_frame_host_time_nanoseconds, 123_456)
+        XCTAssertEqual(snapshot.last_frame_pcm_byte_count, pcmValues.count * MemoryLayout<Float>.size)
+        XCTAssertEqual(snapshot.last_event_kind, ApolloCoreCaptureEventKindRestarted)
+        XCTAssertEqual(snapshot.last_event_automatic_restart_count, 3)
+
+        var copiedSize = 0
+        var drainedPCM = Data(count: pcmValues.count * MemoryLayout<Float>.size)
+        let frameRecord = drainedPCM.withUnsafeMutableBytes { rawBuffer in
+            ApolloCoreAudioCaptureIngressPopNextFrame(
+                ingress,
+                rawBuffer.baseAddress,
+                rawBuffer.count,
+                &copiedSize
+            )
+        }
+        XCTAssertTrue(frameRecord.has_value)
+        XCTAssertEqual(frameRecord.sequence_number, 17)
+        XCTAssertEqual(copiedSize, drainedPCM.count)
+        let drainedValues = drainedPCM.withUnsafeBytes { rawBuffer in
+            Array(rawBuffer.bindMemory(to: Float.self))
+        }
+        XCTAssertEqual(drainedValues, pcmValues)
+
+        var messageBuffer = Array<CChar>(repeating: 0, count: 128)
+        let eventRecord = messageBuffer.withUnsafeMutableBufferPointer { buffer in
+            ApolloCoreAudioCaptureIngressPopNextEvent(ingress, buffer.baseAddress, buffer.count)
+        }
+        XCTAssertTrue(eventRecord.has_value)
+        XCTAssertEqual(eventRecord.kind, ApolloCoreCaptureEventKindRestarted)
+        XCTAssertEqual(String(cString: messageBuffer), "audio-restarted")
+    }
 }
 
 private extension ApolloTuistBootstrapTests {

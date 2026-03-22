@@ -27,6 +27,7 @@ typedef enum ApolloCoreCaptureEventKind {
 } ApolloCoreCaptureEventKind;
 
 typedef struct ApolloCoreEncodedCaptureIngress ApolloCoreEncodedCaptureIngress;
+typedef struct ApolloCoreAudioCaptureIngress ApolloCoreAudioCaptureIngress;
 
 typedef struct ApolloCoreEncodedCaptureIngressSnapshot {
   uint64_t frame_count;
@@ -131,6 +132,127 @@ size_t ApolloCoreEncodedCaptureIngressCopyLastEventMessage(
   const ApolloCoreEncodedCaptureIngress *ingress,
   char *destination,
   size_t capacity
+);
+ApolloCoreEncodedCaptureIngress *ApolloCoreSharedEncodedCaptureIngress(void);
+void ApolloCoreEncodedCaptureIngressSetProducerActive(
+  ApolloCoreEncodedCaptureIngress *ingress,
+  bool active
+);
+bool ApolloCoreEncodedCaptureIngressIsProducerActive(
+  const ApolloCoreEncodedCaptureIngress *ingress
+);
+bool ApolloCoreEncodedCaptureIngressWaitForData(
+  ApolloCoreEncodedCaptureIngress *ingress,
+  uint32_t timeout_milliseconds
+);
+
+typedef struct ApolloCoreAudioCaptureIngressSnapshot {
+  uint64_t frame_count;
+  uint64_t event_count;
+  uint64_t queued_frame_count;
+  uint64_t queued_event_count;
+  uint64_t dropped_frame_count;
+  uint64_t dropped_event_count;
+  bool has_last_frame;
+  uint64_t last_frame_sequence_number;
+  uint64_t last_frame_host_time_nanoseconds;
+  int32_t last_frame_sample_rate;
+  int32_t last_frame_channel_count;
+  int32_t last_frame_frame_count;
+  size_t last_frame_pcm_byte_count;
+  bool has_last_event;
+  ApolloCoreCaptureEventKind last_event_kind;
+  bool last_event_has_stop_status;
+  int32_t last_event_stop_status;
+  bool last_event_has_automatic_restart_count;
+  uint64_t last_event_automatic_restart_count;
+  bool last_event_has_source_sequence_number;
+  uint64_t last_event_source_sequence_number;
+} ApolloCoreAudioCaptureIngressSnapshot;
+
+typedef struct ApolloCoreAudioCaptureFrameRecord {
+  bool has_value;
+  uint64_t sequence_number;
+  uint64_t host_time_nanoseconds;
+  int32_t sample_rate;
+  int32_t channel_count;
+  int32_t frame_count;
+  size_t pcm_byte_count;
+} ApolloCoreAudioCaptureFrameRecord;
+
+typedef struct ApolloCoreAudioCaptureEventRecord {
+  bool has_value;
+  ApolloCoreCaptureEventKind kind;
+  bool has_stop_status;
+  int32_t stop_status;
+  bool has_automatic_restart_count;
+  uint64_t automatic_restart_count;
+  bool has_source_sequence_number;
+  uint64_t source_sequence_number;
+} ApolloCoreAudioCaptureEventRecord;
+
+ApolloCoreAudioCaptureIngress *ApolloCoreAudioCaptureIngressCreate(void);
+void ApolloCoreAudioCaptureIngressDestroy(ApolloCoreAudioCaptureIngress *ingress);
+void ApolloCoreAudioCaptureIngressReset(ApolloCoreAudioCaptureIngress *ingress);
+void ApolloCoreAudioCaptureIngressSetFrameCapacity(
+  ApolloCoreAudioCaptureIngress *ingress,
+  size_t capacity
+);
+void ApolloCoreAudioCaptureIngressSetEventCapacity(
+  ApolloCoreAudioCaptureIngress *ingress,
+  size_t capacity
+);
+void ApolloCoreAudioCaptureIngressConsumePCMFloat32(
+  ApolloCoreAudioCaptureIngress *ingress,
+  uint64_t sequence_number,
+  uint64_t host_time_nanoseconds,
+  int32_t sample_rate,
+  int32_t channel_count,
+  int32_t frame_count,
+  const void *pcm_float32le,
+  size_t pcm_byte_count
+);
+void ApolloCoreAudioCaptureIngressConsumeEvent(
+  ApolloCoreAudioCaptureIngress *ingress,
+  ApolloCoreCaptureEventKind kind,
+  const char *message,
+  bool has_stop_status,
+  int32_t stop_status,
+  bool has_automatic_restart_count,
+  uint64_t automatic_restart_count,
+  bool has_source_sequence_number,
+  uint64_t source_sequence_number
+);
+ApolloCoreAudioCaptureIngressSnapshot ApolloCoreAudioCaptureIngressCopySnapshot(
+  const ApolloCoreAudioCaptureIngress *ingress
+);
+ApolloCoreAudioCaptureFrameRecord ApolloCoreAudioCaptureIngressPopNextFrame(
+  ApolloCoreAudioCaptureIngress *ingress,
+  void *pcm_destination,
+  size_t pcm_capacity,
+  size_t *copied_size_out
+);
+ApolloCoreAudioCaptureEventRecord ApolloCoreAudioCaptureIngressPopNextEvent(
+  ApolloCoreAudioCaptureIngress *ingress,
+  char *message_destination,
+  size_t message_capacity
+);
+size_t ApolloCoreAudioCaptureIngressCopyLastEventMessage(
+  const ApolloCoreAudioCaptureIngress *ingress,
+  char *destination,
+  size_t capacity
+);
+ApolloCoreAudioCaptureIngress *ApolloCoreSharedAudioCaptureIngress(void);
+void ApolloCoreAudioCaptureIngressSetProducerActive(
+  ApolloCoreAudioCaptureIngress *ingress,
+  bool active
+);
+bool ApolloCoreAudioCaptureIngressIsProducerActive(
+  const ApolloCoreAudioCaptureIngress *ingress
+);
+bool ApolloCoreAudioCaptureIngressWaitForData(
+  ApolloCoreAudioCaptureIngress *ingress,
+  uint32_t timeout_milliseconds
 );
 
 #ifdef __cplusplus
