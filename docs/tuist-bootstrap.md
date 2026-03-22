@@ -5,7 +5,7 @@ This bootstrap introduces a parallel Apple-platform structure without disturbing
 ## Location
 
 - Tuist entrypoint:
-  [src/platform/macos/bootstrap/Project.swift](/Users/skyline23/Downloads/Apollo/src/platform/macos/bootstrap/Project.swift)
+  [`src/platform/macos/bootstrap/Project.swift`](../src/platform/macos/bootstrap/Project.swift)
 - Generate from the repository root with:
   `tuist generate --path src/platform/macos/bootstrap --no-open`
 - Build from the repository root with:

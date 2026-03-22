@@ -63,15 +63,15 @@ If the transfer value is omitted:
 
 Apollo host currently consumes the fields here:
 
-- [nvhttp.cpp](/Users/skyline23/Downloads/Apollo/src/nvhttp.cpp)
+- [`src/nvhttp.cpp`](../src/nvhttp.cpp)
   launch HTTP parser
-- [rtsp.cpp](/Users/skyline23/Downloads/Apollo/src/rtsp.cpp)
+- [`src/rtsp.cpp`](../src/rtsp.cpp)
   RTSP ANNOUNCE parser
-- [process.cpp](/Users/skyline23/Downloads/Apollo/src/process.cpp)
+- [`src/process.cpp`](../src/process.cpp)
   session state propagation
-- [virtual_display.mm](/Users/skyline23/Downloads/Apollo/src/platform/macos/virtual_display.mm)
+- [`src/platform/macos/virtual_display.mm`](../src/platform/macos/virtual_display.mm)
   virtual display primaries selection
-- [display.mm](/Users/skyline23/Downloads/Apollo/src/platform/macos/display.mm)
+- [`src/platform/macos/display.mm`](../src/platform/macos/display.mm)
   generic virtual HDR metadata selection
 
 ## Current Client Gap
@@ -86,8 +86,8 @@ But it does not yet send the client's panel gamut or transfer profile.
 
 Relevant client files to extend:
 
-- `/Users/skyline23/Downloads/shadow-client/Projects/App/Features/Home/Sources/ShadowClientGameStreamControlClient.swift`
-- `/Users/skyline23/Downloads/shadow-client/Projects/App/Features/Home/Sources/ShadowClientRTSPAnnouncePayloadBuilder.swift`
+- `ShadowClientGameStreamControlClient.swift`
+- `ShadowClientRTSPAnnouncePayloadBuilder.swift`
 
 ## Recommended Client Behavior
 
