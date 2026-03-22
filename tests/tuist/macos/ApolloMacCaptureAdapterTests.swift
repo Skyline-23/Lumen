@@ -1,4 +1,6 @@
 import ApolloMacCaptureAdapter
+import ApolloMacBridge
+import ApolloCore
 import XCTest
 
 final class ApolloMacCaptureAdapterTests: XCTestCase {

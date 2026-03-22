@@ -5,8 +5,10 @@
 // standard includes
 #include <codecvt>
 #include <csignal>
+#include <functional>
 #include <fstream>
 #include <iostream>
+#include <mutex>
 
 // local includes
 #include "confighttp.h"
@@ -42,6 +44,12 @@ extern "C" {
 using namespace std::literals;
 
 std::map<int, std::function<void()>> signal_handlers;
+
+namespace {
+  std::mutex hosted_runtime_shutdown_mutex;
+  std::function<void()> hosted_runtime_shutdown_request;
+  std::atomic<bool> hosted_runtime_running {false};
+}
 
 void on_signal_forwarder(int sig) {
   signal_handlers.at(sig)();
@@ -115,12 +123,12 @@ constexpr bool tray_is_enabled = true;
 constexpr bool tray_is_enabled = false;
 #endif
 
-void mainThreadLoop(const std::shared_ptr<safe::event_t<bool>> &shutdown_event) {
+void mainThreadLoop(const std::shared_ptr<safe::event_t<bool>> &shutdown_event, bool tray_enabled) {
   bool run_loop = false;
 
   // Conditions that would require the main thread event loop
 #ifndef _WIN32
-  run_loop = tray_is_enabled;  // On Windows, tray runs in separate thread, so no main loop needed for tray
+  run_loop = tray_enabled;  // On Windows, tray runs in separate thread, so no main loop needed for tray
 #endif
 
   if (!run_loop) {
@@ -133,13 +141,13 @@ void mainThreadLoop(const std::shared_ptr<safe::event_t<bool>> &shutdown_event) 
   while (true) {
     if (shutdown_event->peek()) {
       BOOST_LOG(info) << "Shutdown event detected, breaking main loop"sv;
-      if (tray_is_enabled && config::sunshine.system_tray) {
+      if (tray_enabled) {
         system_tray::end_tray();
       }
       break;
     }
 
-    if (tray_is_enabled) {
+    if (tray_enabled) {
       system_tray::process_tray_events();
     }
 
@@ -148,7 +156,7 @@ void mainThreadLoop(const std::shared_ptr<safe::event_t<bool>> &shutdown_event) 
   }
 }
 
-int main(int argc, char *argv[]) {
+int apollo_run(int argc, char *argv[], const ApolloRuntimeOptions &options) {
   lifetime::argv = argv;
 
   task_pool_util::TaskPool::task_id_t force_shutdown = nullptr;
@@ -314,64 +322,79 @@ int main(int argc, char *argv[]) {
 
   // Create signal handler after logging has been initialized
   auto shutdown_event = mail::man->event<bool>(mail::shutdown);
-  on_signal(SIGINT, [&force_shutdown, &display_device_deinit_guard, shutdown_event]() {
-    BOOST_LOG(info) << "Interrupt handler called"sv;
+  {
+    std::lock_guard<std::mutex> lock(hosted_runtime_shutdown_mutex);
+    hosted_runtime_shutdown_request = [shutdown_event]() {
+      proc::proc.terminate();
+      shutdown_event->raise(true);
+    };
+    hosted_runtime_running.store(true, std::memory_order_release);
+  }
+  auto hosted_runtime_reset_guard = util::fail_guard([]() {
+    std::lock_guard<std::mutex> lock(hosted_runtime_shutdown_mutex);
+    hosted_runtime_shutdown_request = nullptr;
+    hosted_runtime_running.store(false, std::memory_order_release);
+  });
+  if (options.install_signal_handlers) {
+    on_signal(SIGINT, [&force_shutdown, &display_device_deinit_guard, shutdown_event]() {
+      BOOST_LOG(info) << "Interrupt handler called"sv;
 
 #ifdef __APPLE__
-    platf::wake_physical_displays();
+      platf::wake_physical_displays();
 #endif
 
-    auto task = []() {
-      BOOST_LOG(fatal) << "10 seconds passed, yet Sunshine's still running: Forcing shutdown"sv;
-      logging::log_flush();
-      lifetime::debug_trap();
-    };
+      auto task = []() {
+        BOOST_LOG(fatal) << "10 seconds passed, yet Sunshine's still running: Forcing shutdown"sv;
+        logging::log_flush();
+        lifetime::debug_trap();
+      };
 
-    proc::proc.terminate();
+      proc::proc.terminate();
 
-    force_shutdown = task_pool.pushDelayed(task, 10s).task_id;
+      force_shutdown = task_pool.pushDelayed(task, 10s).task_id;
 
-    shutdown_event->raise(true);
-    display_device_deinit_guard = nullptr;
-  });
+      shutdown_event->raise(true);
+      display_device_deinit_guard = nullptr;
+    });
 
-  on_signal(SIGTERM, [&force_shutdown, &display_device_deinit_guard, shutdown_event]() {
-    BOOST_LOG(info) << "Terminate handler called"sv;
+    on_signal(SIGTERM, [&force_shutdown, &display_device_deinit_guard, shutdown_event]() {
+      BOOST_LOG(info) << "Terminate handler called"sv;
 
 #ifdef __APPLE__
-    platf::wake_physical_displays();
+      platf::wake_physical_displays();
 #endif
 
-    auto task = []() {
-      BOOST_LOG(fatal) << "10 seconds passed, yet Sunshine's still running: Forcing shutdown"sv;
-      logging::log_flush();
-      lifetime::debug_trap();
-    };
-    force_shutdown = task_pool.pushDelayed(task, 10s).task_id;
+      auto task = []() {
+        BOOST_LOG(fatal) << "10 seconds passed, yet Sunshine's still running: Forcing shutdown"sv;
+        logging::log_flush();
+        lifetime::debug_trap();
+      };
+      force_shutdown = task_pool.pushDelayed(task, 10s).task_id;
 
-    shutdown_event->raise(true);
-    display_device_deinit_guard = nullptr;
-  });
+      shutdown_event->raise(true);
+      display_device_deinit_guard = nullptr;
+    });
 
 #ifdef __APPLE__
-  on_signal(SIGABRT, []() {
-    wake_displays_for_fatal_signal(SIGABRT);
-  });
-  on_signal(SIGSEGV, []() {
-    wake_displays_for_fatal_signal(SIGSEGV);
-  });
-  on_signal(SIGBUS, []() {
-    wake_displays_for_fatal_signal(SIGBUS);
-  });
-  on_signal(SIGILL, []() {
-    wake_displays_for_fatal_signal(SIGILL);
-  });
+    on_signal(SIGABRT, []() {
+      wake_displays_for_fatal_signal(SIGABRT);
+    });
+    on_signal(SIGSEGV, []() {
+      wake_displays_for_fatal_signal(SIGSEGV);
+    });
+    on_signal(SIGBUS, []() {
+      wake_displays_for_fatal_signal(SIGBUS);
+    });
+    on_signal(SIGILL, []() {
+      wake_displays_for_fatal_signal(SIGILL);
+    });
 #endif
 
 #ifdef _WIN32
-  // Terminate gracefully on Windows when console window is closed
-  SetConsoleCtrlHandler(ConsoleCtrlHandler, TRUE);
+    // Terminate gracefully on Windows when console window is closed
+    SetConsoleCtrlHandler(ConsoleCtrlHandler, TRUE);
 #endif
+  }
 
   proc::refresh(config::stream.file_apps);
 
@@ -399,7 +422,8 @@ int main(int argc, char *argv[]) {
 #endif
   }
 
-  if (tray_is_enabled && config::sunshine.system_tray) {
+  const bool tray_enabled = options.enable_legacy_system_tray && tray_is_enabled && config::sunshine.system_tray;
+  if (tray_enabled) {
     BOOST_LOG(info) << "Starting system tray"sv;
 #ifdef _WIN32
     system_tray::init_tray_threaded();
@@ -492,7 +516,7 @@ int main(int argc, char *argv[]) {
   }
 #endif
 
-  mainThreadLoop(shutdown_event);
+  mainThreadLoop(shutdown_event, tray_enabled);
 
   // Wait for shutdown, this is not necessary when we're using the main event loop
   shutdown_event->view();
@@ -512,10 +536,39 @@ int main(int argc, char *argv[]) {
   }
 
   // Stop the threaded tray if it was started
-  if (tray_is_enabled && config::sunshine.system_tray) {
+  if (tray_enabled) {
     system_tray::end_tray_threaded();
   }
 #endif
 
   return lifetime::desired_exit_code;
 }
+
+void apollo_request_shutdown(void) {
+  std::function<void()> request_shutdown;
+  {
+    std::lock_guard<std::mutex> lock(hosted_runtime_shutdown_mutex);
+    request_shutdown = hosted_runtime_shutdown_request;
+  }
+
+  if (request_shutdown) {
+    request_shutdown();
+  }
+}
+
+bool apollo_is_running(void) {
+  return hosted_runtime_running.load(std::memory_order_acquire);
+}
+
+void apollo_force_stop_stream(void) {
+  proc::proc.terminate();
+}
+
+#ifndef APOLLO_EMBEDDED_HOST
+int main(int argc, char *argv[]) {
+  return apollo_run(argc, argv, ApolloRuntimeOptions {
+    .enable_legacy_system_tray = true,
+    .install_signal_handlers = true,
+  });
+}
+#endif

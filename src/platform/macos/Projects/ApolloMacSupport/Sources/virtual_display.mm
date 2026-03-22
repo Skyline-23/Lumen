@@ -62,23 +62,18 @@ namespace VDISPLAY {
           ((void (*)(id, SEL)) objc_msgSend)(display, sel_registerName("destroy"));
         }
         if (display != nil) {
-          [display release];
           display = nil;
         }
         if (settings != nil) {
-          [settings release];
           settings = nil;
         }
         if (mode != nil) {
-          [mode release];
           mode = nil;
         }
         if (descriptor != nil) {
-          [descriptor release];
           descriptor = nil;
         }
         if (queue != nil) {
-          dispatch_release(queue);
           queue = nil;
         }
       }
@@ -711,7 +706,6 @@ namespace VDISPLAY {
         &ns_error
       );
       if (new_settings == nil) {
-        [new_mode release];
         BOOST_LOG(warning) << "SkyLight virtual display settings update failed: "sv
                            << (ns_error.localizedDescription.UTF8String ? ns_error.localizedDescription.UTF8String : "unknown");
         return false;
@@ -719,20 +713,14 @@ namespace VDISPLAY {
 
       const auto ok = ((apply_skylight_settings_t) objc_msgSend)(handle.display, sel_registerName("applySettings:error:"), new_settings, &ns_error);
       if (!ok) {
-        [new_settings release];
-        [new_mode release];
         BOOST_LOG(warning) << "SkyLight virtual display mode update failed for displayID="sv << handle.display_id
                            << " error="sv
                            << (ns_error.localizedDescription.UTF8String ? ns_error.localizedDescription.UTF8String : "unknown");
         return false;
       }
 
-      [handle.mode release];
-      [handle.settings release];
-      handle.mode = [new_mode retain];
-      handle.settings = [new_settings retain];
-      [new_settings release];
-      [new_mode release];
+      handle.mode = new_mode;
+      handle.settings = new_settings;
 
       BOOST_LOG(info) << "Updated SkyLight virtual display mode for displayID="sv << handle.display_id
                       << " logical="sv << logical_width << "x"sv << logical_height
@@ -772,14 +760,11 @@ namespace VDISPLAY {
       [handle.settings setValue:@(1) forKey:@"hiDPI"];
       const auto ok = ((apply_settings_t) objc_msgSend)(handle.display, sel_registerName("applySettings:"), handle.settings);
       if (!ok) {
-        [new_mode release];
         BOOST_LOG(warning) << "macOS virtual display mode update failed for displayID="sv << handle.display_id;
         return false;
       }
 
-      [handle.mode release];
-      handle.mode = [new_mode retain];
-      [new_mode release];
+      handle.mode = new_mode;
 
       BOOST_LOG(info) << "Updated macOS virtual display mode for displayID="sv << handle.display_id
                       << " logical="sv << logical_width << "x"sv << logical_height

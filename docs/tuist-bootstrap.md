@@ -21,7 +21,7 @@ This bootstrap introduces a parallel Apple-platform structure without disturbing
 - `ApolloMacBridge`
   Swift bridge target that owns Apple-platform orchestration and will later host the `MacDisplayKit` integration.
 - `ApolloMacCaptureAdapter`
-  Apollo-owned ObjC++ adapter that consumes `ApolloMacBridge` and exposes a native callback seam without putting Apollo policy into the reusable bridge.
+  Apollo-owned Swift adapter that consumes `ApolloMacBridge`, owns hosted-runtime lifecycle, and keeps companion policy out of the reusable bridge.
 - `ApolloCore`
   C/C++ compatibility surface for the existing Apollo runtime.
 - `ApolloTuistTests`
@@ -30,26 +30,44 @@ This bootstrap introduces a parallel Apple-platform structure without disturbing
 ## Responsibility Split
 
 - `ApolloApp`
-  UI shell, lifecycle, and future Swift-only orchestration.
+  Swift menu bar companion. It owns the macOS-native menu, notifications, and hosted-runtime lifecycle, while the web UI remains the primary Apollo surface.
 - `ApolloMacBridge`
-  Apple-specific bridge surface, callback/session adapters, and the eventual `MacDisplayKit` hook-up.
+  Apple-specific bridge surface that starts `MacDisplayKit`, forwards encoded video and PCM audio into `ApolloCore`, and mirrors runtime capture requests.
 - `ApolloMacCaptureAdapter`
-  Apollo-owned native adapter layer that translates the reusable bridge into Apollo-specific consumption seams.
+  Apollo-owned adapter that keeps the hosted runtime and the Swift companion in the same process and same lifetime.
 - `ApolloCore`
-  Existing C/C++ Apollo logic exposed through a stable C ABI.
+  Existing C/C++ Apollo logic exposed through a stable C ABI for ingress, requests, and hosted-runtime control.
 
-## Next Slice
+## Current macOS Runtime Boundary
 
-1. Replace the bootstrap `ApolloCore` sample-buffer ingress with Apollo's real encoded-frame consumer.
-2. Move the current macOS encoded-frame consumer out of the legacy Objective-C runtime and behind the Apollo-owned adapter target.
-3. Keep `MacDisplayKit` callback-only startup in `ApolloMacBridge`, but let `ApolloCore` own the final packet/session handoff.
+- The web server/runtime remains the primary Apollo application surface.
+- The Swift menu bar companion is secondary and exists to:
+  - host the runtime in-process on macOS
+  - surface menu actions and notifications
+  - keep `MacDisplayKit` video/audio producers alive only while the runtime is alive
+- The companion and hosted runtime share the same process and same lifetime.
+  - If the app terminates, the runtime is stopped.
+  - If the hosted runtime exits unexpectedly, the app terminates.
+
+## Current Media Boundary
+
+- `MacDisplayKit` is the macOS capture and encode source.
+  - video capture
+  - system audio capture
+  - microphone capture
+  - hardware encode session startup
+- `ApolloMacBridge` forwards those encoded sample buffers and PCM audio frames into `ApolloCore` ingress surfaces.
+- On macOS, Apollo's runtime path consumes those ingress surfaces instead of the removed legacy macOS capture runtime.
+- `FFmpeg` is still present in Apollo, but not as the macOS capture backend.
+  - It remains downstream for transport-adjacent work such as coded-bitstream helpers and packetization glue.
+  - The macOS source of truth for capture is `MacDisplayKit`, not FFmpeg.
 
 ## Current Bridge Shape
 
 - `ApolloMacBridge`
   Owns `MacDisplayKit` session startup, forwards encoded sample buffers into `ApolloCore`, and exposes the queued ingress through bridge-owned drain methods, a mixed-language C/C++ wrapper surface, and a callback pump for native consumers.
 - `ApolloMacCaptureAdapter`
-  Consumes `ApolloMacBridge` from Apollo-owned ObjC++ code and presents a Swift-friendly, app-side seam for lifecycle and callback-pump control.
+  Consumes `ApolloMacBridge` from Apollo-owned Swift code and presents the app-facing seam for hosted-runtime lifecycle, notifications, and stream control.
 - `ApolloCore`
   Exposes a C ABI encoded-capture ingress that retains `CMSampleBuffer` frames, queues bounded frame/event backlogs, and lets the next native consumer drain them without flattening them to copied payload bytes first.
 - `ApolloTuistTests`

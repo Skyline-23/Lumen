@@ -57,6 +57,12 @@ namespace platf {
   bool wake_physical_displays();
   void mirror_capture_request_state(const capture_request_mirror_state_t &state);
   void clear_capture_request_state_mirror();
+  void post_runtime_event_notification(
+    const std::string &identifier,
+    const std::string &title,
+    const std::string &body,
+    const std::string &launch_path
+  );
   bool query_external_capture_display_metadata(
     const std::string &display_name,
     int target_width,

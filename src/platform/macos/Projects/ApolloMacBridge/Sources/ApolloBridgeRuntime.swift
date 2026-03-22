@@ -598,7 +598,7 @@ public actor ApolloBridgeRuntime {
         ApolloBridgeStatus(
             coreVersion: String(cString: ApolloCoreBootstrapVersionString()),
             runtimeDescription: String(cString: ApolloCoreBootstrapRuntimeDescription()),
-            integrationStatus: "Swift shell, C/C++ core, and bridge targets are ready. ApolloMacBridge now links MacDisplayCaptureKit, forwards encoded video and raw PCM audio into ApolloCore shared ingress surfaces, and can automatically follow ApolloCore streaming capture requests.",
+            integrationStatus: "MacDisplayKit owns macOS capture and encode. ApolloMacBridge forwards encoded video and PCM audio into ApolloCore ingress surfaces while Apollo keeps the web, session, and transport stack.",
             captureSessionRunning: encodedCaptureSession != nil,
             audioCaptureSessionRunning: audioCaptureSession != nil,
             automaticCaptureOrchestrationRunning: captureAutomationTask != nil

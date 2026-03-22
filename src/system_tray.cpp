@@ -39,7 +39,6 @@
   #include <chrono>
   #include <csignal>
   #include <filesystem>
-  #include <format>
   #include <string>
   #include <thread>
 
@@ -54,6 +53,9 @@
   #include "display_device.h"
   #include "logging.h"
   #include "platform/common.h"
+  #ifdef __APPLE__
+    #include "platform/macos/misc.h"
+  #endif
   #include "process.h"
   #include "network.h"
   #include "src/entry_handler.h"
@@ -116,6 +118,23 @@ namespace system_tray {
   static std::thread tray_thread;
   static std::atomic tray_thread_running = false;
   static std::atomic tray_thread_should_exit = false;
+
+#ifdef __APPLE__
+  namespace {
+    void mirror_notification_when_no_tray(
+      std::string identifier,
+      std::string title,
+      std::string body,
+      std::string launch_path = {}
+    ) {
+      if (tray_initialized) {
+        return;
+      }
+
+      platf::post_runtime_event_notification(identifier, title, body, launch_path);
+    }
+  }  // namespace
+#endif
 
   void tray_open_ui_cb([[maybe_unused]] struct tray_menu *item) {
     BOOST_LOG(info) << "Opening UI from system tray"sv;
@@ -305,6 +324,13 @@ namespace system_tray {
   }
 
   void update_tray_playing(std::string app_name) {
+#ifdef __APPLE__
+    mirror_notification_when_no_tray(
+      "apollo.app-launched",
+      "App launched",
+      app_name + " launched."
+    );
+#endif
     if (!tray_initialized) {
       return;
     }
@@ -334,6 +360,13 @@ namespace system_tray {
   }
 
   void update_tray_pausing(std::string app_name) {
+#ifdef __APPLE__
+    mirror_notification_when_no_tray(
+      "apollo.stream-paused",
+      "Stream Paused",
+      "Streaming paused for " + app_name
+    );
+#endif
     if (!tray_initialized) {
       return;
     }
@@ -358,6 +391,13 @@ namespace system_tray {
   }
 
   void update_tray_stopped(std::string app_name) {
+#ifdef __APPLE__
+    mirror_notification_when_no_tray(
+      "apollo.application-stopped",
+      "Application Stopped",
+      "Streaming stopped for " + app_name
+    );
+#endif
     if (!tray_initialized) {
       return;
     }
@@ -384,6 +424,14 @@ namespace system_tray {
 
   void
   update_tray_launch_error(std::string app_name, int exit_code) {
+#ifdef __APPLE__
+    mirror_notification_when_no_tray(
+      "apollo.launch-error",
+      "Launch Error",
+      "Application " + app_name + " exited too fast with code " + std::to_string(exit_code) + ".",
+      "/"
+    );
+#endif
     if (!tray_initialized) {
       return;
     }
@@ -412,6 +460,14 @@ namespace system_tray {
   }
 
   void update_tray_require_pin() {
+#ifdef __APPLE__
+    mirror_notification_when_no_tray(
+      "apollo.require-pin",
+      "Incoming Pairing Request",
+      "Click to complete the pairing process.",
+      "/pin#PIN"
+    );
+#endif
     if (!tray_initialized) {
       return;
     }
@@ -435,6 +491,13 @@ namespace system_tray {
 
   void
   update_tray_paired(std::string device_name) {
+#ifdef __APPLE__
+    mirror_notification_when_no_tray(
+      "apollo.device-paired",
+      "Device Paired Successfully",
+      "Device " + device_name + " paired successfully."
+    );
+#endif
     if (!tray_initialized) {
       return;
     }
@@ -458,6 +521,13 @@ namespace system_tray {
 
   void
   update_tray_client_connected(std::string client_name) {
+#ifdef __APPLE__
+    mirror_notification_when_no_tray(
+      "apollo.client-connected",
+      "Client Connected",
+      client_name + " has connected to the session."
+    );
+#endif
     if (!tray_initialized) {
       return;
     }

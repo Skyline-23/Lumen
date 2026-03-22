@@ -31,9 +31,7 @@ namespace platf {
         CFRelease(texture_cache);
         texture_cache = nullptr;
       }
-      [command_queue release];
       command_queue = nil;
-      [device release];
       device = nil;
     }
 

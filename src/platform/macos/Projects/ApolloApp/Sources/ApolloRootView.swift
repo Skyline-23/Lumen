@@ -1,119 +1,104 @@
-import CoreGraphics
 import SwiftUI
 
 struct ApolloRootView: View {
     @ObservedObject var captureController: ApolloCaptureController
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Apollo Companion")
-                .font(.title2.weight(.semibold))
+        VStack(alignment: .leading, spacing: 14) {
+            header
+            controls
+            statusSection
+            messagesSection
+        }
+        .frame(width: 320)
+        .padding(16)
+    }
 
-            Text("The web dashboard remains the primary UI. This menu bar app only exposes macOS companion controls.")
+    @ViewBuilder
+    private func statusRow(title: String, value: String) -> some View {
+        LabeledContent(title) {
+            Text(value)
+        }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Apollo")
+                .font(.title3.weight(.semibold))
+            Text("Web stays primary. This menu bar app only mirrors runtime status and macOS capture state.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
+        }
+    }
 
-            if let status = captureController.status {
-                LabeledContent("Main Display") {
-                    Text("\(CGMainDisplayID())")
-                }
-                LabeledContent("Core") {
-                    Text(status.coreVersion)
-                }
-                LabeledContent("Bridge") {
-                    Text(status.runtimeDescription)
-                }
-                LabeledContent("Capture Path") {
-                    Text("MacDisplayKit")
-                }
-                LabeledContent("Codec") {
-                    Text(captureController.selectedCodec.label)
-                }
-                LabeledContent("Queue") {
-                    Text(captureController.selectedQueueProfile.label)
-                }
-                LabeledContent("Preprocess") {
-                    Text(captureController.selectedPreprocess.label)
-                }
-                LabeledContent("Capture Session") {
-                    Text(status.captureSessionRunning ? "Running" : "Stopped")
-                }
-                LabeledContent("Forwarding Pump") {
-                    Text(status.forwardingPumpRunning ? "Running" : "Stopped")
-                }
-                LabeledContent("Frame Callbacks") {
-                    Text("\(status.forwardedFrameCallbackCount)")
-                }
-                LabeledContent("Event Callbacks") {
-                    Text("\(status.forwardedEventCallbackCount)")
-                }
-                LabeledContent("Queued Frames") {
-                    Text("\(status.coreForwardingSnapshot.queued_frame_count)")
-                }
-                LabeledContent("Dropped Frames") {
-                    Text("\(status.coreForwardingSnapshot.dropped_frame_count)")
-                }
-                LabeledContent("Queued Events") {
-                    Text("\(status.coreForwardingSnapshot.queued_event_count)")
-                }
-                Text(status.integrationStatus)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            } else {
-                ProgressView()
+    private var controls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button(captureController.openWebTitle) {
+                captureController.openWebDashboard()
             }
 
+            Button(captureController.streamControlTitle) {
+                captureController.forceStopCurrentStream()
+            }
+
+            Button("Restart Apollo") {
+                captureController.restartApolloCompanion()
+            }
+            .disabled(!captureController.canRestartApollo)
+
+            Button("Quit Apollo") {
+                captureController.quitApplication()
+            }
+        }
+        .buttonStyle(.borderless)
+    }
+
+    @ViewBuilder
+    private var statusSection: some View {
+        if let status = captureController.status {
             Divider()
-
-            Picker("Codec", selection: $captureController.selectedCodec) {
-                ForEach(ApolloCaptureCodecChoice.allCases) { codec in
-                    Text(codec.label).tag(codec)
-                }
+            VStack(alignment: .leading, spacing: 8) {
+                statusRow(title: "Runtime", value: status.hostedApolloRuntimeRunning ? "Active" : "Stopped")
+                statusRow(title: "Video", value: status.captureSessionRunning ? "Streaming" : "Idle")
+                statusRow(title: "Audio", value: status.audioCaptureSessionRunning ? "Streaming" : "Idle")
+                statusRow(title: "Forwarding", value: status.forwardingPumpRunning ? "Active" : "Idle")
+                statusRow(title: "Frame Callbacks", value: "\(status.forwardedFrameCallbackCount)")
+                statusRow(title: "Audio Callbacks", value: "\(status.forwardedAudioFrameCallbackCount)")
+                statusRow(title: "Queued Frames", value: "\(status.coreForwardingSnapshot.queued_frame_count)")
+                statusRow(title: "Dropped Frames", value: "\(status.coreForwardingSnapshot.dropped_frame_count)")
             }
+            .font(.footnote)
 
-            Picker("Queue", selection: $captureController.selectedQueueProfile) {
-                ForEach(ApolloCaptureQueueProfileChoice.allCases) { profile in
-                    Text(profile.label).tag(profile)
-                }
+            if !status.integrationStatus.isEmpty {
+                Text(status.integrationStatus)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+        } else {
+            ProgressView()
+        }
+    }
 
-            Picker("Preprocess", selection: $captureController.selectedPreprocess) {
-                ForEach(ApolloCapturePreprocessChoice.allCases) { preprocess in
-                    Text(preprocess.label).tag(preprocess)
-                }
-            }
-
-            Toggle("Show Cursor", isOn: $captureController.showCursor)
-
-            if let lastErrorMessage = captureController.lastErrorMessage {
-                Text(lastErrorMessage)
-                    .font(.footnote)
-                    .foregroundStyle(.red)
-            }
-
-            HStack(spacing: 12) {
-                Button("Open Web UI") {
-                    captureController.openWebDashboard()
+    @ViewBuilder
+    private var messagesSection: some View {
+        if captureController.lastErrorMessage != nil || captureController.lastRuntimeEventMessage != nil {
+            Divider()
+            VStack(alignment: .leading, spacing: 6) {
+                if let lastErrorMessage = captureController.lastErrorMessage {
+                    Text(lastErrorMessage)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
-                Button(captureController.status?.captureSessionRunning == true ? "Restart Capture" : "Start Capture") {
-                    Task {
-                        await captureController.startOrRestartCapture()
-                    }
-                }
-                .disabled(captureController.isStarting)
-
-                Button("Stop Capture") {
-                    captureController.stopCapture()
-                }
-                .disabled(captureController.status?.captureSessionRunning != true && captureController.status?.forwardingPumpRunning != true)
-
-                Button("Refresh Status") {
-                    captureController.refreshStatus()
+                if let lastRuntimeEventMessage = captureController.lastRuntimeEventMessage {
+                    Text(lastRuntimeEventMessage)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
-        .frame(width: 360)
-        .padding(24)
     }
 }

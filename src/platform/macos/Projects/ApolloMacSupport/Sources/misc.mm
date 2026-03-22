@@ -77,6 +77,11 @@ namespace platf {
     constexpr int32_t kVirtualIsolationParkSpacingY = 4096;
     constexpr std::string_view kCaptureRequestMirrorFileName = "capture_request_state.plist"sv;
     NSString *const kCaptureRequestMirrorNotificationName = @"com.lizardbyte.apollo.capture-request-changed";
+    NSString *const kApolloRuntimeEventNotificationName = @"ApolloRuntimeEventNotification";
+    NSString *const kApolloRuntimeEventIdentifierKey = @"identifier";
+    NSString *const kApolloRuntimeEventTitleKey = @"title";
+    NSString *const kApolloRuntimeEventBodyKey = @"body";
+    NSString *const kApolloRuntimeEventLaunchPathKey = @"launchPath";
 
     struct private_display_control_api_t {
       void *handle = nullptr;
@@ -1113,6 +1118,30 @@ namespace platf {
 
       post_capture_request_mirror_notification();
     }
+  }
+
+  void post_runtime_event_notification(
+    const std::string &identifier,
+    const std::string &title,
+    const std::string &body,
+    const std::string &launch_path
+  ) {
+    NSString *identifier_string = [NSString stringWithUTF8String:identifier.c_str()] ?: @"";
+    NSString *title_string = [NSString stringWithUTF8String:title.c_str()] ?: @"";
+    NSString *body_string = [NSString stringWithUTF8String:body.c_str()] ?: @"";
+    NSString *launch_path_string = [NSString stringWithUTF8String:launch_path.c_str()] ?: @"";
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+      [[NSNotificationCenter defaultCenter]
+        postNotificationName:kApolloRuntimeEventNotificationName
+                      object:nil
+                    userInfo:@ {
+                      kApolloRuntimeEventIdentifierKey: identifier_string,
+                      kApolloRuntimeEventTitleKey: title_string,
+                      kApolloRuntimeEventBodyKey: body_string,
+                      kApolloRuntimeEventLaunchPathKey: launch_path_string
+                    }];
+    });
   }
 
   namespace {
