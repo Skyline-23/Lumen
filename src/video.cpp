@@ -521,6 +521,19 @@ namespace video {
 
       return native_macos_vt_codec_session_creatable(codec_type, width, height);
     }
+
+    std::size_t native_macos_vt_max_inflight_frames_for_framerate(int framerate) {
+      if (framerate >= 120) {
+        return 3;
+      }
+      if (framerate >= 90) {
+        return 4;
+      }
+      if (framerate >= 60) {
+        return 5;
+      }
+      return 6;
+    }
   }  // namespace
 
   bool native_macos_vt_hevc_main10_supported() {
@@ -572,8 +585,8 @@ namespace video {
         VTCompressionSessionInvalidate(compression_session);
         CFRelease(compression_session);
       }
-      if (current_pixel_buffer) {
-        CVPixelBufferRelease(current_pixel_buffer);
+      if (current_pixel_buffer_ref) {
+        current_pixel_buffer_ref.reset();
       }
     }
 
@@ -654,10 +667,7 @@ namespace video {
         return -1;
       }
 
-      if (current_pixel_buffer) {
-        CVPixelBufferRelease(current_pixel_buffer);
-      }
-      current_pixel_buffer = (CVPixelBufferRef) CFRetain(av_img->pixel_buffer_ref->buf);
+      current_pixel_buffer_ref = av_img->pixel_buffer_ref;
       return 0;
     }
 
@@ -674,7 +684,7 @@ namespace video {
     }
 
     int encode_frame(int64_t frame_nr, safe::mail_raw_t::queue_t<packet_t> &packets, void *channel_data, std::optional<std::chrono::steady_clock::time_point> frame_timestamp) {
-      if (!compression_session || !current_pixel_buffer) {
+      if (!compression_session || !current_pixel_buffer_ref || !current_pixel_buffer_ref->buf) {
         return -1;
       }
       if (fatal_error.load(std::memory_order_acquire)) {
@@ -697,7 +707,7 @@ namespace video {
         channel_data,
         frame_timestamp,
         frame_nr,
-        (CVPixelBufferRef) CFRetain(current_pixel_buffer),
+        current_pixel_buffer_ref,
       };
 
       cf_dict_t frame_properties;
@@ -712,10 +722,10 @@ namespace video {
         std::lock_guard<std::mutex> lock(inflight_mutex);
         ++inflight_frames;
       }
-      const auto submitted_pixel_format = CVPixelBufferGetPixelFormatType(frame_context->pixel_buffer);
+      const auto submitted_pixel_format = CVPixelBufferGetPixelFormatType(frame_context->pixel_buffer_ref->buf);
       auto status = VTCompressionSessionEncodeFrame(
         compression_session,
-        frame_context->pixel_buffer,
+        frame_context->pixel_buffer_ref->buf,
         pts,
         kCMTimeInvalid,
         frame_properties.get(),
@@ -750,7 +760,7 @@ namespace video {
       void *channel_data;
       std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
       int64_t frame_index;
-      CVPixelBufferRef pixel_buffer;
+      std::shared_ptr<platf::av_pixel_ref_t> pixel_buffer_ref;
     };
 
     struct cfnumber_deleter {
@@ -935,9 +945,6 @@ namespace video {
       if (!frame_context) {
         return;
       }
-      if (frame_context->pixel_buffer) {
-        CVPixelBufferRelease(frame_context->pixel_buffer);
-      }
       delete frame_context;
     }
 
@@ -1114,7 +1121,7 @@ namespace video {
 
     std::unique_ptr<platf::avcodec_encode_device_t> device;
     VTCompressionSessionRef compression_session {nullptr};
-    CVPixelBufferRef current_pixel_buffer {nullptr};
+    std::shared_ptr<platf::av_pixel_ref_t> current_pixel_buffer_ref;
     CMVideoCodecType codec_type {};
     int width {};
     int height {};
@@ -1127,7 +1134,7 @@ namespace video {
     std::mutex inflight_mutex;
     std::condition_variable inflight_cv;
     std::size_t inflight_frames {0};
-    static constexpr std::size_t max_inflight_frames = 12;
+    const std::size_t max_inflight_frames {native_macos_vt_max_inflight_frames_for_framerate(framerate)};
     std::atomic<bool> fatal_error {false};
     std::atomic<uint64_t> submitted_frames {0};
     std::atomic<uint64_t> emitted_packets {0};
