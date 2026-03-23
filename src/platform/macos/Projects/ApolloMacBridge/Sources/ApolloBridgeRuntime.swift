@@ -1,8 +1,10 @@
 import ApolloCore
 import CoreGraphics
 import CoreMedia
+import Darwin
 import Foundation
 import MacDisplayCaptureKit
+import OSLog
 
 public enum ApolloCaptureCodec: String, CaseIterable, Codable, Sendable {
     case h264
@@ -480,14 +482,27 @@ public actor ApolloBridgeRuntime {
     public static let shared = ApolloBridgeRuntime()
     public nonisolated static let statusDidChangeNotification = Notification.Name("ApolloBridgeRuntimeStatusDidChange")
     private nonisolated static let statusNotificationCoalescingNanoseconds: UInt64 = 100_000_000
+    private nonisolated static let encodedFrameDiagnosticsIntervalNanoseconds: UInt64 = 3_000_000_000
     private nonisolated static func postStatusDidChangeNotificationAsync() {
         DispatchQueue.main.async {
             NotificationCenter.default.post(name: statusDidChangeNotification, object: nil)
         }
     }
 
+    private nonisolated static func displayTimeDeltaMilliseconds(_ delta: UInt64) -> Double {
+        var timebase = mach_timebase_info_data_t()
+        mach_timebase_info(&timebase)
+        guard timebase.denom != 0 else {
+            return 0
+        }
+
+        let nanoseconds = (Double(delta) * Double(timebase.numer)) / Double(timebase.denom)
+        return nanoseconds / 1_000_000
+    }
+
     private let coreForwarder = ApolloCoreCaptureForwarder()
     private let audioForwarder = ApolloCoreAudioCaptureForwarder()
+    private let logger = Logger(subsystem: "com.lizardbyte.apollo", category: "MacBridgeRuntime")
     private var encodedCaptureSession: MDKEncodedCaptureSession?
     private var activeCaptureConfiguration: ApolloMacDisplayKitCaptureConfiguration?
     private var latestFrame: ApolloBridgeEncodedFrameSnapshot?
@@ -498,6 +513,9 @@ public actor ApolloBridgeRuntime {
     private var mirroredCaptureRequestTask: Task<Void, Never>?
     private var lastStatusNotificationUptimeNanoseconds: UInt64 = 0
     private var hasPendingStatusNotification = false
+    private var lastEncodedFrameDiagnosticsUptimeNanoseconds: UInt64 = 0
+    private var lastEncodedFrameSourceSequenceNumber: UInt64?
+    private var lastEncodedFrameSourceDisplayTime: UInt64?
 
     public init() {}
 
@@ -516,6 +534,9 @@ public actor ApolloBridgeRuntime {
         coreForwarder.setProducerActive(false)
         latestFrame = nil
         recentEvents = []
+        lastEncodedFrameDiagnosticsUptimeNanoseconds = 0
+        lastEncodedFrameSourceSequenceNumber = nil
+        lastEncodedFrameSourceDisplayTime = nil
 
         let session = MDKEncodedCaptureSession(configuration: configuration.mdkValue)
         let runtime = self
@@ -549,6 +570,9 @@ public actor ApolloBridgeRuntime {
             coreForwarder.setProducerActive(false)
             latestFrame = nil
             recentEvents = []
+            lastEncodedFrameDiagnosticsUptimeNanoseconds = 0
+            lastEncodedFrameSourceSequenceNumber = nil
+            lastEncodedFrameSourceDisplayTime = nil
             return
         }
 
@@ -556,6 +580,9 @@ public actor ApolloBridgeRuntime {
         coreForwarder.setProducerActive(false)
         encodedCaptureSession = nil
         activeCaptureConfiguration = nil
+        lastEncodedFrameDiagnosticsUptimeNanoseconds = 0
+        lastEncodedFrameSourceSequenceNumber = nil
+        lastEncodedFrameSourceDisplayTime = nil
         publishStatusDidChange(immediate: true)
     }
 
@@ -761,6 +788,7 @@ public actor ApolloBridgeRuntime {
 
     private func recordEncodedFrame(_ frame: MDKEncodedFrame) {
         latestFrame = ApolloBridgeEncodedFrameSnapshot(frame: frame)
+        logEncodedFrameDiagnosticsIfNeeded(frame)
         publishStatusDidChange()
     }
 
@@ -770,6 +798,53 @@ public actor ApolloBridgeRuntime {
             recentEvents.removeFirst(recentEvents.count - 16)
         }
         publishStatusDidChange()
+    }
+
+    private func logEncodedFrameDiagnosticsIfNeeded(_ frame: MDKEncodedFrame) {
+        let now = DispatchTime.now().uptimeNanoseconds
+        let previousSequenceNumber = lastEncodedFrameSourceSequenceNumber
+        let previousDisplayTime = lastEncodedFrameSourceDisplayTime
+
+        let sequenceDelta = previousSequenceNumber.map { frame.sourceSequenceNumber >= $0 ? frame.sourceSequenceNumber - $0 : 0 }
+        let displayTimeDelta = previousDisplayTime.map { frame.sourceDisplayTime >= $0 ? frame.sourceDisplayTime - $0 : 0 }
+        let displayTimeDeltaMilliseconds = displayTimeDelta.map(Self.displayTimeDeltaMilliseconds)
+
+        let shouldLogAnomaly =
+            (sequenceDelta != nil && sequenceDelta != 1) ||
+            (displayTimeDelta != nil && displayTimeDelta == 0)
+        let shouldLogInterval =
+            lastEncodedFrameDiagnosticsUptimeNanoseconds == 0 ||
+            now - lastEncodedFrameDiagnosticsUptimeNanoseconds >= Self.encodedFrameDiagnosticsIntervalNanoseconds
+
+        if shouldLogAnomaly || shouldLogInterval {
+            let targetWidth = activeCaptureConfiguration?.requestedWidth ?? 0
+            let targetHeight = activeCaptureConfiguration?.requestedHeight ?? 0
+            let targetFrameRate = activeCaptureConfiguration?.targetFrameRate ?? 0
+            let queueProfile = activeCaptureConfiguration?.queueProfile.rawValue ?? "unknown"
+            let displayID = activeCaptureConfiguration?.displayID ?? 0
+            let codec = ApolloCaptureCodec(frame.codec).rawValue
+            let ingressSnapshot = coreForwarder.snapshot()
+            let callbackLatencyText: String
+            if let latency = frame.outputCallbackLatencyMilliseconds {
+                callbackLatencyText = String(format: "%.3f", latency)
+            } else {
+                callbackLatencyText = "n/a"
+            }
+            let displayDeltaText: String
+            if let displayTimeDeltaMilliseconds {
+                displayDeltaText = String(format: "%.3f", displayTimeDeltaMilliseconds)
+            } else {
+                displayDeltaText = "n/a"
+            }
+
+            logger.notice(
+                "Mac bridge frame callback display-id=\(displayID, privacy: .public) codec=\(codec, privacy: .public) seq=\(frame.sourceSequenceNumber, privacy: .public) seq-delta=\(sequenceDelta ?? 0, privacy: .public) display-time=\(frame.sourceDisplayTime, privacy: .public) display-delta-ms=\(displayDeltaText, privacy: .public) callback-latency-ms=\(callbackLatencyText, privacy: .public) key=\(frame.isKeyFrame, privacy: .public) hdr=\(frame.isHDRSignaled, privacy: .public) target-fps=\(targetFrameRate, privacy: .public) target-size=\(targetWidth, privacy: .public)x\(targetHeight, privacy: .public) queue=\(queueProfile, privacy: .public) core-frame-count=\(ingressSnapshot.frameCount, privacy: .public) core-queued=\(ingressSnapshot.queuedFrameCount, privacy: .public) core-dropped=\(ingressSnapshot.droppedFrameCount, privacy: .public) core-last-seq=\(ingressSnapshot.lastFrameSourceSequenceNumber ?? 0, privacy: .public)"
+            )
+            lastEncodedFrameDiagnosticsUptimeNanoseconds = now
+        }
+
+        lastEncodedFrameSourceSequenceNumber = frame.sourceSequenceNumber
+        lastEncodedFrameSourceDisplayTime = frame.sourceDisplayTime
     }
 
     private func recordAudioFrame(_ frame: MDKAudioFrame) {

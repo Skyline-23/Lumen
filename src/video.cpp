@@ -130,6 +130,10 @@ namespace video {
         return epoch_timestamp + delta_nanoseconds;
       }
 
+      static double display_time_delta_milliseconds(std::uint64_t delta_display_time) {
+        return static_cast<double>(display_time_delta_to_nanoseconds(delta_display_time).count()) / 1'000'000.0;
+      }
+
     private:
       static std::chrono::nanoseconds display_time_delta_to_nanoseconds(std::uint64_t delta_display_time) {
         static mach_timebase_info_data_t timebase_info {};
@@ -3218,6 +3222,13 @@ namespace video {
       apollo_core_display_time_clock_t display_time_clock;
       auto last_ingress_stats_log = std::chrono::steady_clock::now();
       std::uint64_t last_logged_frame_count = 0;
+      std::uint64_t last_forwarded_source_sequence_number = 0;
+      std::uint64_t last_forwarded_source_display_time = 0;
+      std::optional<std::chrono::steady_clock::time_point> last_forwarded_packet_timestamp;
+      std::optional<double> last_forwarded_callback_latency_milliseconds;
+      std::optional<double> last_forwarded_source_display_delta_milliseconds;
+      std::optional<double> last_forwarded_packet_timestamp_delta_milliseconds;
+      std::uint64_t last_forwarded_sequence_delta = 0;
       std::array<char, 512> event_message {};
 
       if (!ApolloCoreEncodedCaptureIngressIsProducerActive(ingress) &&
@@ -3344,6 +3355,41 @@ namespace video {
           if (!packet->frame_timestamp) {
             packet->frame_timestamp = std::chrono::steady_clock::now();
           }
+
+          last_forwarded_sequence_delta =
+            last_forwarded_source_sequence_number > 0 && frame.source_sequence_number >= last_forwarded_source_sequence_number ?
+              frame.source_sequence_number - last_forwarded_source_sequence_number :
+              0;
+          last_forwarded_source_display_delta_milliseconds =
+            last_forwarded_source_display_time > 0 && frame.source_display_time >= last_forwarded_source_display_time ?
+              std::optional<double> {apollo_core_display_time_clock_t::display_time_delta_milliseconds(frame.source_display_time - last_forwarded_source_display_time)} :
+              std::nullopt;
+          last_forwarded_packet_timestamp_delta_milliseconds =
+            last_forwarded_packet_timestamp && packet->frame_timestamp ?
+              std::optional<double> {static_cast<double>(std::chrono::duration_cast<std::chrono::microseconds>(*packet->frame_timestamp - *last_forwarded_packet_timestamp).count()) / 1000.0} :
+              std::nullopt;
+          last_forwarded_callback_latency_milliseconds =
+            frame.has_output_callback_latency_milliseconds ?
+              std::optional<double> {frame.output_callback_latency_milliseconds} :
+              std::nullopt;
+          last_forwarded_source_sequence_number = frame.source_sequence_number;
+          last_forwarded_source_display_time = frame.source_display_time;
+          last_forwarded_packet_timestamp = packet->frame_timestamp;
+
+          if (last_forwarded_sequence_delta > 1 ||
+              (last_forwarded_source_display_delta_milliseconds && *last_forwarded_source_display_delta_milliseconds <= 0.0)) {
+            BOOST_LOG(warning) << "External macOS encoded ingress cadence anomaly seq="sv
+                               << frame.source_sequence_number
+                               << " seq-delta="sv << last_forwarded_sequence_delta
+                               << " display-time="sv << frame.source_display_time
+                               << " display-delta-ms="sv
+                               << (last_forwarded_source_display_delta_milliseconds ? *last_forwarded_source_display_delta_milliseconds : -1.0)
+                               << " packet-ts-delta-ms="sv
+                               << (last_forwarded_packet_timestamp_delta_milliseconds ? *last_forwarded_packet_timestamp_delta_milliseconds : -1.0)
+                               << " callback-latency-ms="sv
+                               << (last_forwarded_callback_latency_milliseconds ? *last_forwarded_callback_latency_milliseconds : -1.0);
+          }
+
           packets->raise(std::move(packet));
           CFRelease(retained_sample_buffer);
         }
@@ -3357,7 +3403,14 @@ namespace video {
                           << " queued="sv << snapshot.queued_frame_count
                           << " dropped="sv << snapshot.dropped_frame_count
                           << " last-seq="sv << snapshot.last_frame_source_sequence_number
-                          << " producer-active="sv << producer_active;
+                          << " producer-active="sv << producer_active
+                          << " last-seq-delta="sv << last_forwarded_sequence_delta
+                          << " last-display-delta-ms="sv
+                          << (last_forwarded_source_display_delta_milliseconds ? *last_forwarded_source_display_delta_milliseconds : -1.0)
+                          << " last-packet-ts-delta-ms="sv
+                          << (last_forwarded_packet_timestamp_delta_milliseconds ? *last_forwarded_packet_timestamp_delta_milliseconds : -1.0)
+                          << " last-callback-latency-ms="sv
+                          << (last_forwarded_callback_latency_milliseconds ? *last_forwarded_callback_latency_milliseconds : -1.0);
 
           if (producer_active && snapshot.frame_count == last_logged_frame_count) {
             if (!logged_frame_stall) {
