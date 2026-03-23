@@ -340,19 +340,22 @@ namespace VDISPLAY {
       hdr_enabled ||
       client_transfer == video::client_display_transfer_e::pq ||
       client_transfer == video::client_display_transfer_e::hlg;
+    const bool use_rec2020_profile =
+      client_display_gamut == static_cast<int>(video::client_display_gamut_e::rec2020) ||
+      client_wants_hdr;
     const bool use_display_p3 =
-      client_display_gamut == static_cast<int>(video::client_display_gamut_e::display_p3) ? true :
-      client_display_gamut == static_cast<int>(video::client_display_gamut_e::srgb) ? false :
-      client_wants_hdr ? true :
-      screen_prefers_display_p3(reference_screen);
+      !use_rec2020_profile &&
+      (client_display_gamut == static_cast<int>(video::client_display_gamut_e::display_p3) ? true :
+       client_display_gamut == static_cast<int>(video::client_display_gamut_e::srgb) ? false :
+       screen_prefers_display_p3(reference_screen));
     color_profile_t profile =
-      client_display_gamut == static_cast<int>(video::client_display_gamut_e::rec2020) ? kRec2020ColorProfile :
+      use_rec2020_profile ? kRec2020ColorProfile :
       use_display_p3 ? kDisplayP3ColorProfile :
       kSrgbColorProfile;
     profile.hdr_capable = client_wants_hdr || screen_is_hdr_capable(reference_screen);
 
     const auto profile_gamut =
-      client_display_gamut == static_cast<int>(video::client_display_gamut_e::rec2020) ? "rec2020"sv :
+      use_rec2020_profile ? "rec2020"sv :
       profile.display_p3 ? "display-p3"sv :
       "srgb"sv;
     const auto transfer_name =
