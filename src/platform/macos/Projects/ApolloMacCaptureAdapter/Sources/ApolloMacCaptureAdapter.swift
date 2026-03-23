@@ -61,6 +61,22 @@ public final class ApolloMacCaptureAdapterStatus: NSObject {
     }
 }
 
+public struct ApolloMacCaptureAdapterMenuStatus: Equatable, Sendable {
+    public let hostedApolloRuntimeRunning: Bool
+    public let captureSessionRunning: Bool
+    public let audioCaptureSessionRunning: Bool
+
+    public init(
+        hostedApolloRuntimeRunning: Bool,
+        captureSessionRunning: Bool,
+        audioCaptureSessionRunning: Bool
+    ) {
+        self.hostedApolloRuntimeRunning = hostedApolloRuntimeRunning
+        self.captureSessionRunning = captureSessionRunning
+        self.audioCaptureSessionRunning = audioCaptureSessionRunning
+    }
+}
+
 @objcMembers
 public final class ApolloMacCaptureAdapter: NSObject {
     private let bridgeController: OpaquePointer
@@ -170,6 +186,22 @@ public final class ApolloMacCaptureAdapter: NSObject {
 
     public func forceStopCurrentStream() {
         ApolloHostedRuntimeControllerForceStopStream(hostedRuntimeController)
+    }
+
+    public var isAccessibilityPermissionGranted: Bool {
+        ApolloHostedRuntimeIsAccessibilityPermissionGranted()
+    }
+
+    public func requestAccessibilityPermission() {
+        ApolloHostedRuntimeRequestAccessibilityPermission()
+    }
+
+    public var isScreenCapturePermissionGranted: Bool {
+        ApolloHostedRuntimeIsScreenCapturePermissionGranted()
+    }
+
+    public func requestScreenCapturePermission() {
+        ApolloHostedRuntimeRequestScreenCapturePermission()
     }
 
     public func startManagedCaptureSession(
@@ -305,6 +337,16 @@ public final class ApolloMacCaptureAdapter: NSObject {
             forwardedAudioEventCallbackCount: numericCast(audioForwardingSnapshot.event_count),
             coreForwardingSnapshot: coreForwardingSnapshot,
             audioForwardingSnapshot: audioForwardingSnapshot
+        )
+    }
+
+    public func copyMenuStatusSnapshot() -> ApolloMacCaptureAdapterMenuStatus {
+        let bridgeStatus = ApolloMacBridgeControllerCopyStatusSnapshot(bridgeController)
+
+        return ApolloMacCaptureAdapterMenuStatus(
+            hostedApolloRuntimeRunning: ApolloHostedRuntimeControllerIsRunning(hostedRuntimeController),
+            captureSessionRunning: bridgeStatus.capture_session_running,
+            audioCaptureSessionRunning: bridgeStatus.audio_capture_session_running
         )
     }
 

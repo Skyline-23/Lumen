@@ -5,19 +5,39 @@ import UserNotifications
 
 extension Notification.Name {
     static let apolloRuntimeEvent = Notification.Name("ApolloRuntimeEventNotification")
+    static let apolloRuntimeWebUIReady = Notification.Name("ApolloRuntimeWebUIReadyNotification")
 }
 
 @MainActor
 final class ApolloCaptureController: ObservableObject {
-    @Published private(set) var status: ApolloMacCaptureAdapterStatus?
+    private enum WebDashboardConfiguration {
+        static let defaultBasePort = 47_989
+        static let httpsPortOffset = 1
+        static let configurationDirectoryName = "Apollo"
+        static let configurationFileName = "apollo.conf"
+    }
+
+    @Published private(set) var menuStatus = ApolloMacCaptureAdapterMenuStatus(
+        hostedApolloRuntimeRunning: false,
+        captureSessionRunning: false,
+        audioCaptureSessionRunning: false
+    )
     @Published private(set) var lastErrorMessage: String?
     @Published private(set) var lastRuntimeEventMessage: String?
+    @Published private(set) var isAccessibilityPermissionGranted = true
+    @Published private(set) var isScreenCapturePermissionGranted = true
 
     private let adapter: ApolloMacCaptureAdapter
+    private let statusRefreshQueue = DispatchQueue(label: "ApolloCaptureController.StatusRefresh", qos: .userInitiated)
     private var statusObserver: NSObjectProtocol?
     private var companionStopObserver: NSObjectProtocol?
     private var runtimeEventObserver: NSObjectProtocol?
+    private var runtimeWebUIReadyObserver: NSObjectProtocol?
+    private var runtimeWebDashboardBaseURLString: String?
+    private var shouldOpenDashboardWhenReady = false
     private var isShuttingDown = false
+    private var isStatusRefreshInFlight = false
+    private var hasPendingStatusRefresh = false
 
     init(adapter: ApolloMacCaptureAdapter = ApolloMacCaptureAdapter()) {
         self.adapter = adapter
@@ -53,13 +73,23 @@ final class ApolloCaptureController: ObservableObject {
                 self?.handleRuntimeEvent(notification)
             }
         }
+        runtimeWebUIReadyObserver = NotificationCenter.default.addObserver(
+            forName: .apolloRuntimeWebUIReady,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            Task { @MainActor [weak self] in
+                self?.handleRuntimeWebUIReady(notification)
+            }
+        }
         do {
+            shouldOpenDashboardWhenReady = true
             try adapter.startApolloCompanion()
-            openWebDashboard()
         } catch {
             self.lastErrorMessage = error.localizedDescription
         }
-        self.status = adapter.copyStatusSnapshot()
+        refreshPermissionStatus()
+        refreshStatus()
     }
 
     deinit {
@@ -72,42 +102,70 @@ final class ApolloCaptureController: ObservableObject {
         if let runtimeEventObserver {
             NotificationCenter.default.removeObserver(runtimeEventObserver)
         }
+        if let runtimeWebUIReadyObserver {
+            NotificationCenter.default.removeObserver(runtimeWebUIReadyObserver)
+        }
         isShuttingDown = true
         adapter.stopApolloCompanion()
     }
 
     var menuBarImageName: String {
-        guard let status else {
-            return "bolt.horizontal.circle"
-        }
-
-        if status.captureSessionRunning || status.audioCaptureSessionRunning {
-            return "dot.radiowaves.left.and.right"
-        }
-        if status.hostedApolloRuntimeRunning {
-            return "bolt.horizontal.circle.fill"
-        }
-        return "exclamationmark.circle"
+        menuStatus.captureSessionRunning ? "dot.radiowaves.left.and.right" : "bolt.horizontal.circle"
     }
 
     func refreshStatus() {
-        status = adapter.copyStatusSnapshot()
+        refreshPermissionStatus()
+
+        guard !isStatusRefreshInFlight else {
+            hasPendingStatusRefresh = true
+            return
+        }
+
+        isStatusRefreshInFlight = true
+        let adapter = self.adapter
+        statusRefreshQueue.async { [weak self] in
+            let menuStatus = adapter.copyMenuStatusSnapshot()
+
+            Task { @MainActor [weak self] in
+                guard let self else {
+                    return
+                }
+
+                self.menuStatus = menuStatus
+                self.isStatusRefreshInFlight = false
+
+                guard self.hasPendingStatusRefresh else {
+                    return
+                }
+
+                self.hasPendingStatusRefresh = false
+                self.refreshStatus()
+            }
+        }
     }
 
     var openWebTitle: String {
-        "Open Apollo (localhost:47990)"
+        "Open Apollo"
     }
 
     var streamControlTitle: String {
-        status?.captureSessionRunning == true || status?.audioCaptureSessionRunning == true ? "Force Stop Stream" : "Reload Apps"
+        menuStatus.captureSessionRunning || menuStatus.audioCaptureSessionRunning ? "Force Stop Stream" : "Reload Apps"
     }
 
     var canRestartApollo: Bool {
         true
     }
 
+    var shouldShowScreenCapturePermissionButton: Bool {
+        !isScreenCapturePermissionGranted
+    }
+
+    var shouldShowAccessibilityPermissionButton: Bool {
+        !isAccessibilityPermissionGranted
+    }
+
     func openWebDashboard(path: String = "/") {
-        guard var components = URLComponents(string: "https://localhost:47990") else {
+        guard var components = URLComponents(string: webDashboardBaseURLString) else {
             return
         }
 
@@ -128,9 +186,10 @@ final class ApolloCaptureController: ObservableObject {
 
     func restartApolloCompanion() {
         lastErrorMessage = nil
+        runtimeWebDashboardBaseURLString = nil
+        shouldOpenDashboardWhenReady = true
         do {
             try adapter.restartApolloCompanion()
-            openWebDashboard()
             refreshStatus()
         } catch {
             lastErrorMessage = error.localizedDescription
@@ -145,6 +204,21 @@ final class ApolloCaptureController: ObservableObject {
     func quitApplication() {
         isShuttingDown = true
         NSApp.terminate(nil)
+    }
+
+    func refreshPermissionStatus() {
+        isAccessibilityPermissionGranted = adapter.isAccessibilityPermissionGranted
+        isScreenCapturePermissionGranted = adapter.isScreenCapturePermissionGranted
+    }
+
+    func requestAccessibilityPermission() {
+        adapter.requestAccessibilityPermission()
+        refreshPermissionStatus()
+    }
+
+    func requestScreenCapturePermission() {
+        adapter.requestScreenCapturePermission()
+        refreshPermissionStatus()
     }
 
     func prepareForTermination() {
@@ -183,5 +257,81 @@ final class ApolloCaptureController: ObservableObject {
         content.userInfo = ["apolloLaunchPath": launchPath]
         let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request)
+    }
+
+    private func handleRuntimeWebUIReady(_ notification: Notification) {
+        if let baseURLString = notification.userInfo?["url"] as? String, !baseURLString.isEmpty {
+            runtimeWebDashboardBaseURLString = baseURLString
+        } else {
+            runtimeWebDashboardBaseURLString = nil
+        }
+
+        objectWillChange.send()
+
+        guard shouldOpenDashboardWhenReady else {
+            return
+        }
+
+        shouldOpenDashboardWhenReady = false
+        openWebDashboard()
+    }
+
+    private var webDashboardPort: Int {
+        resolvedApolloBasePort() + WebDashboardConfiguration.httpsPortOffset
+    }
+
+    private var webDashboardBaseURLString: String {
+        runtimeWebDashboardBaseURLString ?? "https://localhost:\(webDashboardPort)"
+    }
+
+    private func resolvedApolloBasePort() -> Int {
+        guard let configurationURL = apolloConfigurationURL,
+              let configurationContents = try? String(contentsOf: configurationURL, encoding: .utf8),
+              let configuredPort = configuredApolloBasePort(from: configurationContents) else {
+            return WebDashboardConfiguration.defaultBasePort
+        }
+
+        return configuredPort
+    }
+
+    private var apolloConfigurationURL: URL? {
+        guard let applicationSupportDirectory = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first else {
+            return nil
+        }
+
+        return applicationSupportDirectory
+            .appendingPathComponent(WebDashboardConfiguration.configurationDirectoryName, isDirectory: true)
+            .appendingPathComponent(WebDashboardConfiguration.configurationFileName, isDirectory: false)
+    }
+
+    private func configuredApolloBasePort(from configurationContents: String) -> Int? {
+        for rawLine in configurationContents.split(whereSeparator: \.isNewline) {
+            let lineWithoutComment = rawLine.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)
+                .first?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !lineWithoutComment.isEmpty else {
+                continue
+            }
+
+            let keyValue = lineWithoutComment.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            guard keyValue.count == 2 else {
+                continue
+            }
+
+            let key = keyValue[0].trimmingCharacters(in: .whitespacesAndNewlines)
+            guard key == "port" else {
+                continue
+            }
+
+            let value = keyValue[1].trimmingCharacters(in: .whitespacesAndNewlines)
+            if let port = Int(value) {
+                return port
+            }
+        }
+
+        return nil
     }
 }

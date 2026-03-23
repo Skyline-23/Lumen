@@ -44,7 +44,7 @@ struct ApolloApp: App {
     @StateObject private var captureController = ApolloCaptureController()
 
     init() {
-        NSApp.setActivationPolicy(.accessory)
+        NSApplication.shared.setActivationPolicy(.accessory)
     }
 
     var body: some Scene {

@@ -29,6 +29,10 @@ bool ApolloHostedRuntimeControllerIsRunning(const ApolloHostedRuntimeController 
 int32_t ApolloHostedRuntimeControllerCopyLastExitCode(const ApolloHostedRuntimeController *controller);
 
 void ApolloHostedRuntimeControllerForceStopStream(ApolloHostedRuntimeController *controller);
+bool ApolloHostedRuntimeIsAccessibilityPermissionGranted(void);
+void ApolloHostedRuntimeRequestAccessibilityPermission(void);
+bool ApolloHostedRuntimeIsScreenCapturePermissionGranted(void);
+void ApolloHostedRuntimeRequestScreenCapturePermission(void);
 
 #ifdef __cplusplus
 }

@@ -3,6 +3,7 @@
  * @brief Definitions for macOS input handling.
  */
 // standard includes
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <iostream>
@@ -19,7 +20,9 @@
 #include "src/input.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
+#include "src/process.h"
 #include "src/utility.h"
+#include "platform/macos/misc.h"
 
 /**
  * @brief Delay for a double click, in milliseconds.
@@ -48,18 +51,46 @@ namespace platf {
 
   namespace {
     [[nodiscard]] auto current_output_name() {
+      if (!proc::proc.display_name.empty()) {
+        return proc::proc.display_name;
+      }
+
       return display_device::map_output_name(config::video.output_name);
     }
 
+    [[nodiscard]] bool ensure_accessibility_permission() {
+      if (is_accessibility_allowed()) {
+        return true;
+      }
+
+      static std::atomic_bool logged_missing_accessibility {false};
+      if (!logged_missing_accessibility.exchange(true)) {
+        BOOST_LOG(warning) << "Ignoring macOS input because Accessibility permission is not granted yet."sv;
+        request_accessibility_permission();
+      }
+
+      return false;
+    }
+
     [[nodiscard]] bool refresh_display_context(macos_input_t *macos_input) {
+      static std::atomic_bool logged_empty_output_name {false};
+      static std::atomic_bool logged_unparseable_output_name {false};
+      static std::atomic_bool logged_missing_display {false};
+
       const auto output_name = current_output_name();
       if (output_name.empty()) {
+        if (!logged_empty_output_name.exchange(true)) {
+          BOOST_LOG(warning) << "Unable to resolve macOS input target display because no active output is selected."sv;
+        }
         return false;
       }
 
       char *parse_end = nullptr;
       const auto requested_display = static_cast<CGDirectDisplayID>(std::strtoul(output_name.c_str(), &parse_end, 10));
       if (parse_end == output_name.c_str() || *parse_end != '\0') {
+        if (!logged_unparseable_output_name.exchange(true)) {
+          BOOST_LOG(warning) << "Unable to resolve macOS input target display from output name ["sv << output_name << "]"sv;
+        }
         return false;
       }
 
@@ -72,6 +103,9 @@ namespace platf {
 
       const auto it = std::find(displays, displays + display_count, requested_display);
       if (it == displays + display_count) {
+        if (!logged_missing_display.exchange(true)) {
+          BOOST_LOG(warning) << "Unable to resolve macOS input target displayID="sv << requested_display << " from the active display list."sv;
+        }
         return false;
       }
 
@@ -85,9 +119,10 @@ namespace platf {
       }
 
       macos_input->display = requested_display;
+      const auto bounds = CGDisplayBounds(requested_display);
       macos_input->displayScaling =
-        static_cast<CGFloat>(CGDisplayPixelsWide(requested_display)) /
-        static_cast<CGFloat>(CGDisplayModeGetPixelWidth(mode));
+        static_cast<CGFloat>(std::max(CGRectGetWidth(bounds), 1.0)) /
+        static_cast<CGFloat>(std::max<double>(CGDisplayModeGetPixelWidth(mode), 1.0));
       CFRelease(mode);
 
       BOOST_LOG(debug) << "Updated macOS input target display to "sv << macos_input->display;
@@ -297,6 +332,10 @@ const KeyCodeMap kKeyCodesMap[] = {
   }
 
   void keyboard_update(input_t &input, uint16_t modcode, bool release, uint8_t flags) {
+    if (!ensure_accessibility_permission()) {
+      return;
+    }
+
     auto key = keysym(modcode);
 
     BOOST_LOG(debug) << "got keycode: 0x"sv << std::hex << modcode << ", translated to: 0x" << std::hex << key << ", release:" << release;
@@ -365,7 +404,7 @@ const KeyCodeMap kKeyCodesMap[] = {
   util::point_t get_mouse_loc(input_t &input) {
     // Creating a new event every time to avoid any reuse risk
     const auto macos_input = static_cast<macos_input_t *>(input.get());
-    refresh_display_context(macos_input);
+    (void) refresh_display_context(macos_input);
     const auto snapshot_event = CGEventCreate(macos_input->source);
     const auto current = CGEventGetLocation(snapshot_event);
     CFRelease(snapshot_event);
@@ -383,10 +422,16 @@ const KeyCodeMap kKeyCodesMap[] = {
     const util::point_t previous_location,
     const int click_count
   ) {
+    if (!ensure_accessibility_permission()) {
+      return;
+    }
+
     BOOST_LOG(debug) << "mouse_event: "sv << button << ", type: "sv << type << ", location:"sv << raw_location.x << ":"sv << raw_location.y << " click_count: "sv << click_count;
 
     const auto macos_input = static_cast<macos_input_t *>(input.get());
-    refresh_display_context(macos_input);
+    if (!refresh_display_context(macos_input)) {
+      return;
+    }
     const auto display = macos_input->display;
     const auto event = macos_input->mouse_event;
 
@@ -449,11 +494,12 @@ const KeyCodeMap kKeyCodesMap[] = {
     const float y
   ) {
     const auto macos_input = static_cast<macos_input_t *>(input.get());
-    refresh_display_context(macos_input);
-    const auto scaling = macos_input->displayScaling;
+    if (!refresh_display_context(macos_input)) {
+      return;
+    }
     const auto display = macos_input->display;
 
-    auto location = util::point_t {x * scaling, y * scaling};
+    auto location = util::point_t {x, y};
     CGRect display_bounds = CGDisplayBounds(display);
     // in order to get the correct mouse location for capturing display , we need to add the display bounds to the location
     location.x += display_bounds.origin.x;
@@ -502,6 +548,10 @@ const KeyCodeMap kKeyCodesMap[] = {
   }
 
   void scroll(input_t &input, const int high_res_distance) {
+    if (!ensure_accessibility_permission()) {
+      return;
+    }
+
     CGEventRef upEvent = CGEventCreateScrollWheelEvent(
       nullptr,
       kCGScrollEventUnitLine,
@@ -582,11 +632,14 @@ const KeyCodeMap kKeyCodesMap[] = {
     // Default to main display
     macos_input->display = CGMainDisplayID();
 
-    refresh_display_context(macos_input);
+    (void) refresh_display_context(macos_input);
 
-    // Input coordinates are based on the virtual resolution not the physical, so we need the scaling factor
+    // Quartz event locations use display points, not backing pixels.
     const CGDisplayModeRef mode = CGDisplayCopyDisplayMode(macos_input->display);
-    macos_input->displayScaling = ((CGFloat) CGDisplayPixelsWide(macos_input->display)) / ((CGFloat) CGDisplayModeGetPixelWidth(mode));
+    const auto bounds = CGDisplayBounds(macos_input->display);
+    macos_input->displayScaling =
+      static_cast<CGFloat>(std::max(CGRectGetWidth(bounds), 1.0)) /
+      static_cast<CGFloat>(std::max<double>(CGDisplayModeGetPixelWidth(mode), 1.0));
     CFRelease(mode);
 
     macos_input->source = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);

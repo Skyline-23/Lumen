@@ -54,6 +54,7 @@ namespace platf {
   // If they're not in the SDK then we can use our own function definitions.
   // Need to use weak import so that this will link in macOS 10.14 and earlier
   extern "C" bool CGPreflightScreenCaptureAccess(void) __attribute__((weak_import));
+  extern "C" bool CGRequestScreenCaptureAccess(void) __attribute__((weak_import));
 #endif
 
   namespace {
@@ -78,10 +79,12 @@ namespace platf {
     constexpr std::string_view kCaptureRequestMirrorFileName = "capture_request_state.plist"sv;
     NSString *const kCaptureRequestMirrorNotificationName = @"com.lizardbyte.apollo.capture-request-changed";
     NSString *const kApolloRuntimeEventNotificationName = @"ApolloRuntimeEventNotification";
+    NSString *const kApolloRuntimeWebUIReadyNotificationName = @"ApolloRuntimeWebUIReadyNotification";
     NSString *const kApolloRuntimeEventIdentifierKey = @"identifier";
     NSString *const kApolloRuntimeEventTitleKey = @"title";
     NSString *const kApolloRuntimeEventBodyKey = @"body";
     NSString *const kApolloRuntimeEventLaunchPathKey = @"launchPath";
+    NSString *const kApolloRuntimeWebUIReadyURLKey = @"url";
 
     struct private_display_control_api_t {
       void *handle = nullptr;
@@ -251,6 +254,38 @@ namespace platf {
       });
     }
 
+    void open_screen_capture_settings() {
+      NSURL *settings_url = [NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"];
+      if (settings_url == nil) {
+        return;
+      }
+
+      dispatch_async(dispatch_get_main_queue(), ^{
+        [[NSWorkspace sharedWorkspace] openURL:settings_url];
+      });
+    }
+
+    void prompt_for_accessibility_permission_once() {
+      if (accessibility_prompt_requested.exchange(true)) {
+        return;
+      }
+
+      CFTypeRef keys[] = {kAXTrustedCheckOptionPrompt};
+      CFTypeRef values[] = {kCFBooleanTrue};
+      CFDictionaryRef options = CFDictionaryCreate(
+        kCFAllocatorDefault,
+        keys,
+        values,
+        1,
+        &kCFCopyStringDictionaryKeyCallBacks,
+        &kCFTypeDictionaryValueCallBacks
+      );
+      if (options != nullptr) {
+        AXIsProcessTrustedWithOptions(options);
+        CFRelease(options);
+      }
+    }
+
     bool refresh_screen_capture_permission_state() {
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunguarded-availability-new"
@@ -269,10 +304,44 @@ namespace platf {
 
   }  // namespace
 
+  bool is_accessibility_allowed() {
+    return AXIsProcessTrusted();
+  }
+
+  void request_accessibility_permission() {
+    if (is_accessibility_allowed()) {
+      return;
+    }
+
+    prompt_for_accessibility_permission_once();
+    open_accessibility_settings();
+  }
+
   // Return whether screen capture is allowed for this process.
   bool is_screen_capture_allowed() {
     refresh_screen_capture_permission_state();
     return screen_capture_allowed;
+  }
+
+  void request_screen_capture_permission() {
+    if (refresh_screen_capture_permission_state()) {
+      return;
+    }
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunguarded-availability-new"
+#pragma clang diagnostic ignored "-Wtautological-pointer-compare"
+    if ([[NSProcessInfo processInfo] isOperatingSystemAtLeastVersion:((NSOperatingSystemVersion) {10, 15, 0})] &&
+        CGRequestScreenCaptureAccess != nullptr) {
+      const bool granted = CGRequestScreenCaptureAccess();
+      screen_capture_allowed = granted;
+      if (granted) {
+        return;
+      }
+    }
+#pragma clang diagnostic pop
+
+    open_screen_capture_settings();
   }
 
   void prepare_app_bundle_environment() {
@@ -952,23 +1021,7 @@ namespace platf {
 
     const auto trusted = AXIsProcessTrusted();
     if (!trusted) {
-      if (!accessibility_prompt_requested.exchange(true)) {
-        CFTypeRef keys[] = {kAXTrustedCheckOptionPrompt};
-        CFTypeRef values[] = {kCFBooleanTrue};
-        CFDictionaryRef options = CFDictionaryCreate(
-          kCFAllocatorDefault,
-          keys,
-          values,
-          1,
-          &kCFCopyStringDictionaryKeyCallBacks,
-          &kCFTypeDictionaryValueCallBacks
-        );
-        if (options != nullptr) {
-          AXIsProcessTrustedWithOptions(options);
-          CFRelease(options);
-        }
-        open_accessibility_settings();
-      }
+      request_accessibility_permission();
       BOOST_LOG(warning) << "Skipping macOS window migration to virtual display because Accessibility permission is not granted"sv;
       return;
     }
@@ -1144,6 +1197,17 @@ namespace platf {
     });
   }
 
+  void post_runtime_web_ui_ready_notification(const std::string &url) {
+    NSString *url_string = [NSString stringWithUTF8String:url.c_str()] ?: @"";
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+      [[NSNotificationCenter defaultCenter]
+        postNotificationName:kApolloRuntimeWebUIReadyNotificationName
+                      object:nil
+                    userInfo:@ {kApolloRuntimeWebUIReadyURLKey: url_string}];
+    });
+  }
+
   namespace {
     constexpr double external_capture_hdr_edr_threshold = 1.001;
 
@@ -1232,8 +1296,10 @@ namespace platf {
   ) {
     const auto display_id = parse_external_capture_display_id(display_name);
     const auto bounds = CGDisplayBounds(display_id);
-    const auto capture_width = std::max(1.0, static_cast<double>(CGDisplayPixelsWide(display_id)));
-    const auto capture_height = std::max(1.0, static_cast<double>(CGDisplayPixelsHigh(display_id)));
+    const auto capture_width = std::max(1.0, static_cast<double>(CGRectGetWidth(bounds)));
+    const auto capture_height = std::max(1.0, static_cast<double>(CGRectGetHeight(bounds)));
+    const auto pixel_width = std::max(1.0, static_cast<double>(CGDisplayPixelsWide(display_id)));
+    const auto pixel_height = std::max(1.0, static_cast<double>(CGDisplayPixelsHigh(display_id)));
     const auto output_width = std::max(1.0, static_cast<double>(target_width));
     const auto output_height = std::max(1.0, static_cast<double>(target_height));
     const auto scalar = std::fmin(output_width / capture_width, output_height / capture_height);
@@ -1249,6 +1315,14 @@ namespace platf {
     metadata.client_offset_x = static_cast<float>((output_width - (scalar * capture_width)) * 0.5);
     metadata.client_offset_y = static_cast<float>((output_height - (scalar * capture_height)) * 0.5);
     metadata.scalar_inv = static_cast<float>(1.0 / scalar);
+
+    BOOST_LOG(info) << "macOS external capture display metadata: displayID="sv
+                    << display_id
+                    << " stream="sv << target_width << "x"sv << target_height
+                    << " logical="sv << capture_width << "x"sv << capture_height
+                    << " pixels="sv << pixel_width << "x"sv << pixel_height
+                    << " offset="sv << metadata.client_offset_x << "x"sv << metadata.client_offset_y
+                    << " scalar-inv="sv << metadata.scalar_inv;
 
     const auto *screen = screen_for_external_capture_display_id(display_id);
     metadata.hdr_active = false;

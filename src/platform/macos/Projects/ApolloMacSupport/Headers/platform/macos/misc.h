@@ -47,7 +47,10 @@ namespace platf {
   };
 
   void prepare_app_bundle_environment();
+  bool is_accessibility_allowed();
+  void request_accessibility_permission();
   bool is_screen_capture_allowed();
+  void request_screen_capture_permission();
   void arm_display_wake_watchdog();
   bool isolate_virtual_display(CGDirectDisplayID virtual_display_id);
   void restore_virtual_display_isolation();
@@ -63,6 +66,7 @@ namespace platf {
     const std::string &body,
     const std::string &launch_path
   );
+  void post_runtime_web_ui_ready_notification(const std::string &url);
   bool query_external_capture_display_metadata(
     const std::string &display_name,
     int target_width,

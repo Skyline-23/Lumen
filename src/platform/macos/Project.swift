@@ -5,7 +5,7 @@ let baseSettings: SettingsDictionary = [
     "CLANG_ENABLE_MODULES": "YES",
     "CODE_SIGN_STYLE": "Automatic",
     "CODE_SIGN_IDENTITY": "Apple Development",
-    "DEVELOPMENT_TEAM": "6C922D256U",
+    "DEVELOPMENT_TEAM": "Q23JLSJCCV",
     "MACOSX_DEPLOYMENT_TARGET": "13.0",
     "SWIFT_VERSION": "5.0"
 ]
@@ -65,7 +65,7 @@ let hostedRuntimePreprocessorDefinitions = [
     "PROJECT_VERSION_MAJOR=\\\"0\\\"",
     "PROJECT_VERSION_MINOR=\\\"0\\\"",
     "PROJECT_VERSION_PATCH=\\\"0\\\"",
-    "SUNSHINE_ASSETS_DIR=\\\"/usr/local/assets\\\"",
+    "SUNSHINE_ASSETS_DIR=\\\"../Resources/assets\\\"",
     "SUNSHINE_PLATFORM=\\\"macos\\\"",
     "SUNSHINE_PUBLISHER_ISSUE_URL=\\\"https://github.com/ClassicOldSong/Apollo/issues\\\"",
     "SUNSHINE_PUBLISHER_NAME=\\\"SudoMaker\\\"",
@@ -145,6 +145,72 @@ let hostedRuntimeSettings: SettingsDictionary = [
     "GCC_PREPROCESSOR_DEFINITIONS": .array(hostedRuntimePreprocessorDefinitions),
     "OTHER_LDFLAGS": .array(hostedRuntimeOtherLdFlags)
 ]
+
+let appAssetsScript = TargetScript.post(
+    script: #"""
+    set -euo pipefail
+
+    resolve_npm() {
+        local npm_path
+
+        npm_path="$(command -v npm 2>/dev/null || true)"
+        if [[ -n "${npm_path}" ]]; then
+            printf '%s\n' "${npm_path}"
+            return 0
+        fi
+
+        if [[ -n "${HOME:-}" ]]; then
+            npm_path="$(/bin/ls -1dt "${HOME}"/.nvm/versions/node/*/bin/npm 2>/dev/null | /usr/bin/head -n 1 || true)"
+            if [[ -n "${npm_path}" ]]; then
+                printf '%s\n' "${npm_path}"
+                return 0
+            fi
+        fi
+
+        for npm_path in /opt/homebrew/bin/npm /usr/local/bin/npm /opt/homebrew/opt/node/bin/npm; do
+            if [[ -x "${npm_path}" ]]; then
+                printf '%s\n' "${npm_path}"
+                return 0
+            fi
+        done
+
+        return 1
+    }
+
+    REPO_ROOT="${SRCROOT}/../../.."
+    RESOURCES_ROOT="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}"
+    ASSETS_ROOT="${RESOURCES_ROOT}/assets"
+    NPM_BIN="$(resolve_npm || true)"
+
+    if [[ -z "${NPM_BIN}" ]]; then
+        echo "error: npm was not found for the Apollo asset build phase." >&2
+        echo "Searched PATH, ~/.nvm, /opt/homebrew/bin, /usr/local/bin, and /opt/homebrew/opt/node/bin." >&2
+        exit 1
+    fi
+
+    rm -rf "${ASSETS_ROOT}"
+    mkdir -p "${ASSETS_ROOT}"
+
+    rsync -a --exclude 'web' "${REPO_ROOT}/src_assets/common/assets/" "${ASSETS_ROOT}/"
+    rsync -a --exclude 'Info.plist' "${REPO_ROOT}/src_assets/macos/assets/" "${ASSETS_ROOT}/"
+
+    cd "${REPO_ROOT}"
+    export SUNSHINE_SOURCE_ASSETS_DIR="${REPO_ROOT}/src_assets"
+    export SUNSHINE_ASSETS_DIR="${RESOURCES_ROOT}"
+    export PATH="$(/usr/bin/dirname "${NPM_BIN}"):${PATH:-}"
+    "${NPM_BIN}" exec -- vite build
+    """#,
+    name: "Stage Apollo Assets",
+    inputPaths: [
+        .glob("\(repoRoot)/src_assets/common/assets/**/*"),
+        .glob("\(repoRoot)/src_assets/macos/assets/**/*"),
+        .glob("\(repoRoot)/package.json"),
+        .glob("\(repoRoot)/package-lock.json"),
+        .glob("\(repoRoot)/vite.config.js")
+    ],
+    basedOnDependencyAnalysis: false,
+    shellPath: "/bin/zsh"
+)
 
 let project = Project(
     name: "Apollo",
@@ -268,19 +334,29 @@ let project = Project(
                     "CFBundleDisplayName": "Apollo Companion",
                     "LSMinimumSystemVersion": "13.0",
                     "INFOPLIST_KEY_NSHighResolutionCapable": "YES",
-                    "LSUIElement": "YES"
+                    "LSUIElement": "YES",
+                    "NSAudioCaptureUsageDescription": "Apollo needs access to system audio to stream the selected Mac display with audio.",
+                    "NSMicrophoneUsageDescription": "Apollo needs microphone access when you choose microphone audio for a stream.",
+                    "NSMainStoryboardFile": "",
+                    "NSMainNibFile": "",
+                    "NSScreenCaptureUsageDescription": "Apollo needs screen recording access to capture the selected Mac display for streaming."
                 ]
             ),
             sources: [
                 "Projects/ApolloApp/Sources/**/*.swift"
             ],
+            scripts: [appAssetsScript],
             dependencies: [
                 .target(name: "ApolloMacCaptureAdapter"),
                 .sdk(name: "UserNotifications", type: .framework)
             ],
             settings: .settings(
                 base: [
-                    "PRODUCT_NAME": "Apollo"
+                    "PRODUCT_NAME": "Apollo",
+                    "AD_HOC_CODE_SIGNING_ALLOWED": "NO",
+                    "CODE_SIGN_STYLE": "Automatic",
+                    "CODE_SIGN_IDENTITY": "Apple Development",
+                    "DEVELOPMENT_TEAM": "Q23JLSJCCV"
                 ]
             )
         ),

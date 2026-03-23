@@ -39,6 +39,10 @@
 #include "utility.h"
 #include "uuid.h"
 
+#ifdef __APPLE__
+  #include "platform/macos/misc.h"
+#endif
+
 #ifdef _WIN32
   #include "platform/windows/utils.h"
 #endif
@@ -1566,6 +1570,9 @@ namespace confighttp {
       try {
         server->start([port_https](unsigned short port) {
           BOOST_LOG(info) << "Configuration UI available at [https://localhost:"sv << port << "]";
+#ifdef __APPLE__
+          platf::post_runtime_web_ui_ready_notification("https://localhost:" + std::to_string(port));
+#endif
         });
       } catch (boost::system::system_error &err) {
         // It's possible the exception gets thrown after calling server->stop() from a different thread

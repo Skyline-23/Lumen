@@ -1,6 +1,7 @@
 #import "ApolloHostedRuntime.h"
 
 #import <Foundation/Foundation.h>
+#include "platform/macos/misc.h"
 #include <atomic>
 #include <condition_variable>
 #include <cstring>
@@ -198,4 +199,20 @@ void ApolloHostedRuntimeControllerForceStopStream(ApolloHostedRuntimeController 
   }
 
   apollo_force_stop_stream();
+}
+
+bool ApolloHostedRuntimeIsAccessibilityPermissionGranted(void) {
+  return platf::is_accessibility_allowed();
+}
+
+void ApolloHostedRuntimeRequestAccessibilityPermission(void) {
+  platf::request_accessibility_permission();
+}
+
+bool ApolloHostedRuntimeIsScreenCapturePermissionGranted(void) {
+  return platf::is_screen_capture_allowed();
+}
+
+void ApolloHostedRuntimeRequestScreenCapturePermission(void) {
+  platf::request_screen_capture_permission();
 }
