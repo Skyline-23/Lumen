@@ -1083,6 +1083,7 @@ void ApolloCoreCaptureRequestPublishVideo(
   {
     std::scoped_lock lock(state->mutex);
     state->snapshot.generation += 1;
+    state->snapshot.video_generation += 1;
     state->snapshot.video_requested = codec != ApolloCoreCaptureCodecUnknown;
     state->snapshot.display_id = display_id;
     state->snapshot.codec = codec;
@@ -1109,6 +1110,7 @@ void ApolloCoreCaptureRequestPublishAudio(
   {
     std::scoped_lock lock(state->mutex);
     state->snapshot.generation += 1;
+    state->snapshot.audio_generation += 1;
     state->snapshot.audio_requested = source_kind != ApolloCoreAudioCaptureSourceKindUnknown;
     state->snapshot.audio_source_kind = source_kind;
     state->snapshot.display_id = display_id;
@@ -1125,8 +1127,12 @@ void ApolloCoreCaptureRequestClear(void) {
   {
     std::scoped_lock lock(state->mutex);
     const auto generation = state->snapshot.generation + 1;
+    const auto video_generation = state->snapshot.video_generation + 1;
+    const auto audio_generation = state->snapshot.audio_generation + 1;
     state->snapshot = {};
     state->snapshot.generation = generation;
+    state->snapshot.video_generation = video_generation;
+    state->snapshot.audio_generation = audio_generation;
     state->snapshot.codec = ApolloCoreCaptureCodecUnknown;
     state->snapshot.audio_source_kind = ApolloCoreAudioCaptureSourceKindUnknown;
     state->snapshot.preprocess_strategy = ApolloCoreCapturePreprocessStrategyNone;

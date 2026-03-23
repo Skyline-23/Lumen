@@ -161,6 +161,8 @@ namespace platf {
     NSDictionary *capture_request_dictionary(const capture_request_mirror_state_t &state) {
       return @{
         @"generation": @(state.generation),
+        @"videoGeneration": @(state.video_generation),
+        @"audioGeneration": @(state.audio_generation),
         @"videoRequested": @(state.video_requested),
         @"audioRequested": @(state.audio_requested),
         @"displayID": @(state.display_id),

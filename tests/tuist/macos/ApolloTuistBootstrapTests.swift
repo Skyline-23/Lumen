@@ -385,6 +385,8 @@ final class ApolloTuistBootstrapTests: XCTestCase {
 
         let initialSnapshot = ApolloCoreCaptureRequestCopySnapshot()
         XCTAssertEqual(initialSnapshot.generation, snapshotBeforeClear.generation + 1)
+        XCTAssertEqual(initialSnapshot.video_generation, snapshotBeforeClear.video_generation + 1)
+        XCTAssertEqual(initialSnapshot.audio_generation, snapshotBeforeClear.audio_generation + 1)
         XCTAssertFalse(initialSnapshot.video_requested)
         XCTAssertFalse(initialSnapshot.audio_requested)
         XCTAssertEqual(initialSnapshot.codec, ApolloCoreCaptureCodecUnknown)
@@ -416,6 +418,8 @@ final class ApolloTuistBootstrapTests: XCTestCase {
 
         let updatedSnapshot = ApolloCoreCaptureRequestCopySnapshot()
         XCTAssertGreaterThan(updatedSnapshot.generation, initialSnapshot.generation)
+        XCTAssertGreaterThan(updatedSnapshot.video_generation, initialSnapshot.video_generation)
+        XCTAssertGreaterThan(updatedSnapshot.audio_generation, initialSnapshot.audio_generation)
         XCTAssertTrue(updatedSnapshot.video_requested)
         XCTAssertTrue(updatedSnapshot.audio_requested)
         XCTAssertEqual(updatedSnapshot.display_id, 17)
@@ -433,6 +437,8 @@ final class ApolloTuistBootstrapTests: XCTestCase {
     func testMirroredCaptureRequestSnapshotLoadsFromPropertyList() throws {
         let propertyList: [String: Any] = [
             "generation": 9,
+            "videoGeneration": 10,
+            "audioGeneration": 11,
             "videoRequested": true,
             "audioRequested": true,
             "displayID": 19,
@@ -463,6 +469,8 @@ final class ApolloTuistBootstrapTests: XCTestCase {
 
         let snapshot = try XCTUnwrap(ApolloBridgeMirroredCaptureRequestSnapshot.load(from: url))
         XCTAssertEqual(snapshot.generation, 9)
+        XCTAssertEqual(snapshot.videoGeneration, 10)
+        XCTAssertEqual(snapshot.audioGeneration, 11)
         XCTAssertTrue(snapshot.videoRequested)
         XCTAssertTrue(snapshot.audioRequested)
         XCTAssertEqual(snapshot.displayID, 19)

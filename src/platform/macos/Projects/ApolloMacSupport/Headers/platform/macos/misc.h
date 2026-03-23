@@ -17,6 +17,8 @@
 namespace platf {
   struct capture_request_mirror_state_t {
     std::uint64_t generation;
+    std::uint64_t video_generation;
+    std::uint64_t audio_generation;
     bool video_requested;
     bool audio_requested;
     std::uint32_t display_id;

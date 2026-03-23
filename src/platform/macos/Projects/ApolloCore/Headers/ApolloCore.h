@@ -215,6 +215,8 @@ typedef struct ApolloCoreAudioCaptureEventRecord {
 
 typedef struct ApolloCoreCaptureRequestSnapshot {
   uint64_t generation;
+  uint64_t video_generation;
+  uint64_t audio_generation;
   bool video_requested;
   bool audio_requested;
   uint32_t display_id;

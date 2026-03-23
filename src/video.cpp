@@ -3277,6 +3277,8 @@ namespace video {
       bool logged_producer_stop = false;
       bool logged_frame_stall = false;
       bool logged_first_packet = false;
+      bool waiting_for_initial_idr = true;
+      bool logged_waiting_for_initial_idr = false;
       int64_t next_packet_frame_index = 1;
       apollo_core_display_time_clock_t display_time_clock;
       auto last_ingress_stats_log = std::chrono::steady_clock::now();
@@ -3319,6 +3321,9 @@ namespace video {
           switch (event.kind) {
             case ApolloCoreCaptureEventKindStarted:
             case ApolloCoreCaptureEventKindRestarted:
+              waiting_for_initial_idr = true;
+              logged_waiting_for_initial_idr = false;
+              logged_first_packet = false;
               BOOST_LOG(info) << "External macOS encoded ingress event kind="sv << static_cast<int>(event.kind)
                               << " message="sv << message;
               break;
@@ -3383,6 +3388,16 @@ namespace video {
           std::vector<uint8_t> packet_data;
           const bool sample_buffer_reports_idr = external_sample_buffer_is_idr(retained_sample_buffer);
           const bool packet_is_idr = frame.is_key_frame || sample_buffer_reports_idr;
+          if (waiting_for_initial_idr && !packet_is_idr) {
+            if (!logged_waiting_for_initial_idr) {
+              BOOST_LOG(warning) << "External macOS encoded ingress is waiting for an initial IDR packet before forwarding to the client"sv;
+              logged_waiting_for_initial_idr = true;
+            }
+            CFRelease(retained_sample_buffer);
+            continue;
+          }
+
+          waiting_for_initial_idr = false;
           if (packet_is_idr) {
             append_parameter_sets_for_codec(retained_sample_buffer, codec_type, packet_data);
           }

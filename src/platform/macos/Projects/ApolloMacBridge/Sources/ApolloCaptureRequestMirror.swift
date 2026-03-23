@@ -7,6 +7,8 @@ struct ApolloBridgeMirroredCaptureRequestSnapshot: Equatable, Sendable {
     )
 
     let generation: UInt64
+    let videoGeneration: UInt64
+    let audioGeneration: UInt64
     let videoRequested: Bool
     let audioRequested: Bool
     let displayID: UInt32
@@ -58,6 +60,8 @@ struct ApolloBridgeMirroredCaptureRequestSnapshot: Equatable, Sendable {
         }
 
         self.generation = generation
+        self.videoGeneration = Self.number(dictionary["videoGeneration"])?.uint64Value ?? generation
+        self.audioGeneration = Self.number(dictionary["audioGeneration"])?.uint64Value ?? generation
         self.videoRequested = videoRequested
         self.audioRequested = audioRequested
         self.displayID = displayID

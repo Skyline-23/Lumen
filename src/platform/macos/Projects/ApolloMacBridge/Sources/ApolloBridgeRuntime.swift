@@ -394,11 +394,15 @@ public struct ApolloBridgeDrainedAudioEvent: Equatable, Sendable {
 
 private struct ApolloBridgeAutomationRequest: Equatable, Sendable {
     let generation: UInt64
+    let videoGeneration: UInt64
+    let audioGeneration: UInt64
     let videoConfiguration: ApolloMacDisplayKitCaptureConfiguration?
     let audioConfiguration: ApolloMacDisplayKitAudioCaptureConfiguration?
 
     init(snapshot: ApolloCoreCaptureRequestSnapshot) {
         generation = snapshot.generation
+        videoGeneration = snapshot.video_generation
+        audioGeneration = snapshot.audio_generation
 
         let resolvedDisplayID = snapshot.display_id == 0 ? CGMainDisplayID() : snapshot.display_id
         if snapshot.video_requested,
@@ -525,6 +529,8 @@ public actor ApolloBridgeRuntime {
     private var lastEncodedFrameDiagnosticsUptimeNanoseconds: UInt64 = 0
     private var lastEncodedFrameSourceSequenceNumber: UInt64?
     private var lastEncodedFrameSourceDisplayTime: UInt64?
+    private var lastAppliedVideoRequestGeneration: UInt64?
+    private var lastAppliedAudioRequestGeneration: UInt64?
 
     public init() {}
 
@@ -582,6 +588,7 @@ public actor ApolloBridgeRuntime {
             lastEncodedFrameDiagnosticsUptimeNanoseconds = 0
             lastEncodedFrameSourceSequenceNumber = nil
             lastEncodedFrameSourceDisplayTime = nil
+            lastAppliedVideoRequestGeneration = nil
             return
         }
 
@@ -592,6 +599,7 @@ public actor ApolloBridgeRuntime {
         lastEncodedFrameDiagnosticsUptimeNanoseconds = 0
         lastEncodedFrameSourceSequenceNumber = nil
         lastEncodedFrameSourceDisplayTime = nil
+        lastAppliedVideoRequestGeneration = nil
         publishStatusDidChange(immediate: true)
     }
 
@@ -640,6 +648,7 @@ public actor ApolloBridgeRuntime {
             activeAudioCaptureConfiguration = nil
             audioForwarder.reset()
             audioForwarder.setProducerActive(false)
+            lastAppliedAudioRequestGeneration = nil
             return
         }
 
@@ -647,6 +656,7 @@ public actor ApolloBridgeRuntime {
         audioForwarder.setProducerActive(false)
         audioCaptureSession = nil
         activeAudioCaptureConfiguration = nil
+        lastAppliedAudioRequestGeneration = nil
         publishStatusDidChange(immediate: true)
     }
 
@@ -755,7 +765,12 @@ public actor ApolloBridgeRuntime {
     }
 
     private func applyApolloCoreCaptureRequest(_ request: ApolloBridgeAutomationRequest) async {
-        if request.videoConfiguration != activeCaptureConfiguration || (request.videoConfiguration == nil) != (encodedCaptureSession == nil) {
+        let videoConfigurationChanged =
+            request.videoConfiguration != activeCaptureConfiguration ||
+            (request.videoConfiguration == nil) != (encodedCaptureSession == nil)
+        let videoGenerationChanged = request.videoGeneration != lastAppliedVideoRequestGeneration
+
+        if videoConfigurationChanged || (request.videoConfiguration != nil && videoGenerationChanged) {
             if let configuration = request.videoConfiguration {
                 let frameCapacity = Self.recommendedCoreForwardingFrameCapacity(for: configuration)
                 configureCoreForwarding(
@@ -769,14 +784,21 @@ public actor ApolloBridgeRuntime {
             } else {
                 await stopMacDisplayKitCapture()
             }
+            lastAppliedVideoRequestGeneration = request.videoGeneration
         }
 
-        if request.audioConfiguration != activeAudioCaptureConfiguration || (request.audioConfiguration == nil) != (audioCaptureSession == nil) {
+        let audioConfigurationChanged =
+            request.audioConfiguration != activeAudioCaptureConfiguration ||
+            (request.audioConfiguration == nil) != (audioCaptureSession == nil)
+        let audioGenerationChanged = request.audioGeneration != lastAppliedAudioRequestGeneration
+
+        if audioConfigurationChanged || (request.audioConfiguration != nil && audioGenerationChanged) {
             if let configuration = request.audioConfiguration {
                 try? await startMacDisplayKitAudioCapture(configuration: configuration)
             } else {
                 await stopMacDisplayKitAudioCapture()
             }
+            lastAppliedAudioRequestGeneration = request.audioGeneration
         }
     }
 

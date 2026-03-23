@@ -2083,6 +2083,8 @@ namespace stream {
     void mirror_apollo_core_capture_request(const ApolloCoreCaptureRequestSnapshot &snapshot) {
       platf::capture_request_mirror_state_t mirror_state {
         .generation = snapshot.generation,
+        .video_generation = snapshot.video_generation,
+        .audio_generation = snapshot.audio_generation,
         .video_requested = snapshot.video_requested,
         .audio_requested = snapshot.audio_requested,
         .display_id = snapshot.display_id,
