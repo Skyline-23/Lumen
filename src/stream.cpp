@@ -2028,6 +2028,19 @@ namespace stream {
       }
     }
 
+    std::string_view apollo_core_codec_name(ApolloCoreCaptureCodec codec) {
+      switch (codec) {
+        case ApolloCoreCaptureCodecH264:
+          return "h264"sv;
+        case ApolloCoreCaptureCodecHEVC:
+          return "hevc"sv;
+        case ApolloCoreCaptureCodecProResProxy:
+          return "prores-proxy"sv;
+        default:
+          return "unknown"sv;
+      }
+    }
+
     ApolloCoreCaptureQueueProfile apollo_core_requested_queue_profile() {
       auto queue_profile = config::video.macos_bridge_queue_profile;
       std::transform(queue_profile.begin(), queue_profile.end(), queue_profile.begin(), [](unsigned char ch) {
@@ -2043,7 +2056,22 @@ namespace stream {
       if (queue_profile == "q4") {
         return ApolloCoreCaptureQueueProfileQ4;
       }
-      return ApolloCoreCaptureQueueProfileQ3;
+      return ApolloCoreCaptureQueueProfileQ2;
+    }
+
+    std::string_view apollo_core_queue_profile_name(ApolloCoreCaptureQueueProfile queue_profile) {
+      switch (queue_profile) {
+        case ApolloCoreCaptureQueueProfileQ1:
+          return "q1"sv;
+        case ApolloCoreCaptureQueueProfileQ2:
+          return "q2"sv;
+        case ApolloCoreCaptureQueueProfileQ3:
+          return "q3"sv;
+        case ApolloCoreCaptureQueueProfileQ4:
+          return "q4"sv;
+        default:
+          return "unknown"sv;
+      }
     }
 
     ApolloCoreAudioCaptureSourceKind apollo_core_audio_source_kind(const audio::config_t &config) {
@@ -2082,12 +2110,24 @@ namespace stream {
         return;
       }
 
+      const auto requested_display_id = apollo_core_requested_display_id();
+      const auto requested_codec = apollo_core_requested_codec(session.config.monitor.videoFormat);
+      const auto requested_queue_profile = apollo_core_requested_queue_profile();
+
+      BOOST_LOG(info) << "Publishing macOS bridge capture request displayID="sv
+                      << requested_display_id
+                      << " codec="sv << apollo_core_codec_name(requested_codec)
+                      << " queue="sv << apollo_core_queue_profile_name(requested_queue_profile)
+                      << " fps="sv << session.config.monitor.framerate
+                      << " size="sv << session.config.monitor.width << "x"sv << session.config.monitor.height
+                      << " hdr="sv << session.config.monitor.dynamicRange;
+
       ApolloCoreCaptureRequestClear();
       ApolloCoreCaptureRequestPublishVideo(
-        apollo_core_requested_display_id(),
-        apollo_core_requested_codec(session.config.monitor.videoFormat),
+        requested_display_id,
+        requested_codec,
         ApolloCoreCapturePreprocessStrategyNone,
-        apollo_core_requested_queue_profile(),
+        requested_queue_profile,
         true,
         session.config.monitor.framerate,
         session.config.monitor.width,

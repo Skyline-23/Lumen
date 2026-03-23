@@ -8,6 +8,7 @@
 #include <bitset>
 #include <cmath>
 #include <condition_variable>
+#include <cstring>
 #include <list>
 #include <mutex>
 #include <thread>
@@ -183,6 +184,64 @@ namespace video {
         default:
           return "unknown"sv;
       }
+    }
+
+    std::string apollo_core_cfstring_to_utf8(CFStringRef value) {
+      if (!value) {
+        return {};
+      }
+
+      if (const auto *direct = CFStringGetCStringPtr(value, kCFStringEncodingUTF8)) {
+        return direct;
+      }
+
+      const auto length = CFStringGetLength(value);
+      const auto max_size = static_cast<std::size_t>(CFStringGetMaximumSizeForEncoding(length, kCFStringEncodingUTF8) + 1);
+      std::string result(max_size, '\0');
+      if (!CFStringGetCString(value, result.data(), static_cast<CFIndex>(result.size()), kCFStringEncodingUTF8)) {
+        return {};
+      }
+
+      result.resize(std::strlen(result.c_str()));
+      return result;
+    }
+
+    std::string apollo_core_sample_buffer_extension_string(CMSampleBufferRef sample_buffer, CFStringRef key) {
+      const auto format_description = CMSampleBufferGetFormatDescription(sample_buffer);
+      if (!format_description) {
+        return {};
+      }
+
+      const auto extensions = CMFormatDescriptionGetExtensions(format_description);
+      if (!extensions) {
+        return {};
+      }
+
+      return apollo_core_cfstring_to_utf8(static_cast<CFStringRef>(CFDictionaryGetValue(extensions, key)));
+    }
+
+    bool apollo_core_sample_buffer_extension_present(CMSampleBufferRef sample_buffer, CFStringRef key) {
+      const auto format_description = CMSampleBufferGetFormatDescription(sample_buffer);
+      if (!format_description) {
+        return false;
+      }
+
+      const auto extensions = CMFormatDescriptionGetExtensions(format_description);
+      return extensions && CFDictionaryContainsKey(extensions, key);
+    }
+
+    std::string apollo_core_sample_buffer_dimensions(CMSampleBufferRef sample_buffer) {
+      const auto format_description = CMSampleBufferGetFormatDescription(sample_buffer);
+      if (!format_description) {
+        return "unknown";
+      }
+
+      const auto dimensions = CMVideoFormatDescriptionGetDimensions(format_description);
+      if (dimensions.width <= 0 || dimensions.height <= 0) {
+        return "unknown";
+      }
+
+      return std::to_string(dimensions.width) + "x" + std::to_string(dimensions.height);
     }
 
     CMVideoCodecType apollo_core_codec_type(ApolloCoreCaptureCodec codec) {
@@ -3322,7 +3381,8 @@ namespace video {
           }
 
           std::vector<uint8_t> packet_data;
-          const bool packet_is_idr = frame.is_key_frame || external_sample_buffer_is_idr(retained_sample_buffer);
+          const bool sample_buffer_reports_idr = external_sample_buffer_is_idr(retained_sample_buffer);
+          const bool packet_is_idr = frame.is_key_frame || sample_buffer_reports_idr;
           if (packet_is_idr) {
             append_parameter_sets_for_codec(retained_sample_buffer, codec_type, packet_data);
           }
@@ -3339,10 +3399,30 @@ namespace video {
             packet_is_idr
           );
           if (!logged_first_packet) {
+            const auto color_primaries = apollo_core_sample_buffer_extension_string(
+              retained_sample_buffer,
+              kCMFormatDescriptionExtension_ColorPrimaries
+            );
+            const auto transfer_function = apollo_core_sample_buffer_extension_string(
+              retained_sample_buffer,
+              kCMFormatDescriptionExtension_TransferFunction
+            );
+            const auto ycbcr_matrix = apollo_core_sample_buffer_extension_string(
+              retained_sample_buffer,
+              kCMFormatDescriptionExtension_YCbCrMatrix
+            );
             BOOST_LOG(info) << "External macOS encoded ingress first accepted packet codec="sv
                             << apollo_core_codec_name(frame.codec)
                             << " idr="sv << packet_is_idr
+                            << " bridge-key="sv << frame.is_key_frame
+                            << " samplebuffer-idr="sv << sample_buffer_reports_idr
                             << " hdr="sv << frame.is_hdr_signaled
+                            << " encoded="sv << apollo_core_sample_buffer_dimensions(retained_sample_buffer)
+                            << " primaries="sv << (color_primaries.empty() ? "n/a"sv : std::string_view {color_primaries})
+                            << " transfer="sv << (transfer_function.empty() ? "n/a"sv : std::string_view {transfer_function})
+                            << " matrix="sv << (ycbcr_matrix.empty() ? "n/a"sv : std::string_view {ycbcr_matrix})
+                            << " mastering="sv << apollo_core_sample_buffer_extension_present(retained_sample_buffer, kCMFormatDescriptionExtension_MasteringDisplayColorVolume)
+                            << " cll="sv << apollo_core_sample_buffer_extension_present(retained_sample_buffer, kCMFormatDescriptionExtension_ContentLightLevelInfo)
                             << " seq="sv << frame.source_sequence_number
                             << " display-time="sv << frame.source_display_time;
             if (!packet_is_idr) {

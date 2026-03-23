@@ -45,7 +45,7 @@ const config = ref(props.config)
           <option value="q4">Q4</option>
         </select>
         <div class="form-text">
-          Controls the SkyLight capture queue depth/profile used by the macOS bridge. Q3 is the current default for high-refresh Retina capture.
+          Controls the SkyLight capture queue depth/profile used by the macOS bridge. Q2 is the current default for high-refresh Retina capture.
         </div>
       </div>
     </template>

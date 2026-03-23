@@ -43,7 +43,7 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         )
         XCTAssertEqual(
             ApolloBridgeConfigurationPreferences.preferredQueueProfile(contents: "macos_bridge_queue_profile=garbage"),
-            .q3
+            .q2
         )
     }
 

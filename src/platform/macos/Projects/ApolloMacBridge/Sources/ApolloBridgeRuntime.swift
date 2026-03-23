@@ -98,7 +98,7 @@ enum ApolloBridgeConfigurationPreferences {
         case "q4":
             return .q4
         default:
-            return .q3
+            return .q2
         }
     }
 
@@ -146,7 +146,7 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         displayID: UInt32,
         codec: ApolloCaptureCodec = .hevc,
         preprocessStrategy: ApolloCapturePreprocessStrategy = .none,
-        queueProfile: ApolloCaptureQueueProfile = .q3,
+        queueProfile: ApolloCaptureQueueProfile = .q2,
         showCursor: Bool = false,
         targetFrameRate: Int = 120,
         requestedWidth: Int? = nil,
@@ -483,6 +483,7 @@ public actor ApolloBridgeRuntime {
     public nonisolated static let statusDidChangeNotification = Notification.Name("ApolloBridgeRuntimeStatusDidChange")
     private nonisolated static let statusNotificationCoalescingNanoseconds: UInt64 = 100_000_000
     private nonisolated static let encodedFrameDiagnosticsIntervalNanoseconds: UInt64 = 3_000_000_000
+    private nonisolated static let automaticCoreForwardingEventCapacity = 64
     private nonisolated static func postStatusDidChangeNotificationAsync() {
         DispatchQueue.main.async {
             NotificationCenter.default.post(name: statusDidChangeNotification, object: nil)
@@ -498,6 +499,14 @@ public actor ApolloBridgeRuntime {
 
         let nanoseconds = (Double(delta) * Double(timebase.numer)) / Double(timebase.denom)
         return nanoseconds / 1_000_000
+    }
+
+    private nonisolated static func recommendedCoreForwardingFrameCapacity(
+        for configuration: ApolloMacDisplayKitCaptureConfiguration
+    ) -> Int {
+        let baseCapacity = max(configuration.targetFrameRate / 2, 24)
+        let burstReserve = configuration.queueProfile.mdkValue.queueDepth * 8
+        return min(max(baseCapacity + burstReserve, 32), 128)
     }
 
     private let coreForwarder = ApolloCoreCaptureForwarder()
@@ -748,6 +757,14 @@ public actor ApolloBridgeRuntime {
     private func applyApolloCoreCaptureRequest(_ request: ApolloBridgeAutomationRequest) async {
         if request.videoConfiguration != activeCaptureConfiguration || (request.videoConfiguration == nil) != (encodedCaptureSession == nil) {
             if let configuration = request.videoConfiguration {
+                let frameCapacity = Self.recommendedCoreForwardingFrameCapacity(for: configuration)
+                configureCoreForwarding(
+                    frameCapacity: frameCapacity,
+                    eventCapacity: Self.automaticCoreForwardingEventCapacity
+                )
+                logger.notice(
+                    "Applying ApolloCore macOS bridge capture request display-id=\(configuration.displayID, privacy: .public) codec=\(configuration.codec.rawValue, privacy: .public) queue=\(configuration.queueProfile.rawValue, privacy: .public) fps=\(configuration.targetFrameRate, privacy: .public) forwarding-frame-capacity=\(frameCapacity, privacy: .public)"
+                )
                 try? await startMacDisplayKitCapture(configuration: configuration)
             } else {
                 await stopMacDisplayKitCapture()
@@ -786,21 +803,29 @@ public actor ApolloBridgeRuntime {
         }
     }
 
-    private func recordEncodedFrame(_ frame: MDKEncodedFrame) {
+    private func recordEncodedFrame(_ frame: MDKEncodedFrame) async {
         latestFrame = ApolloBridgeEncodedFrameSnapshot(frame: frame)
-        logEncodedFrameDiagnosticsIfNeeded(frame)
+        let captureStatistics = await encodedCaptureSession?.statisticsSnapshot()
+        logEncodedFrameDiagnosticsIfNeeded(frame, captureStatistics: captureStatistics)
         publishStatusDidChange()
     }
 
-    private func recordEncodedCaptureEvent(_ event: MDKEncodedCaptureSessionEvent) {
+    private func recordEncodedCaptureEvent(_ event: MDKEncodedCaptureSessionEvent) async {
         recentEvents.append(event)
         if recentEvents.count > 16 {
             recentEvents.removeFirst(recentEvents.count - 16)
         }
+        let captureStatistics = await encodedCaptureSession?.statisticsSnapshot()
+        logger.notice(
+            "Mac bridge capture event kind=\(event.kind.rawValue, privacy: .public) message=\(event.message ?? "n/a", privacy: .public) stop-status=\(event.stopStatus ?? 0, privacy: .public) automatic-restarts=\(event.automaticRestartCount ?? 0, privacy: .public) source-display-time=\(event.sourceDisplayTime ?? 0, privacy: .public) capture-emitted=\(captureStatistics?.emittedFrameCount ?? 0, privacy: .public) capture-dropped=\(captureStatistics?.droppedFrameCount ?? 0, privacy: .public) capture-processing-failures=\(captureStatistics?.processingFailureCount ?? 0, privacy: .public) capture-running=\(captureStatistics?.isRunning ?? false, privacy: .public) capture-last-error=\(captureStatistics?.lastErrorDescription ?? "n/a", privacy: .public)"
+        )
         publishStatusDidChange()
     }
 
-    private func logEncodedFrameDiagnosticsIfNeeded(_ frame: MDKEncodedFrame) {
+    private func logEncodedFrameDiagnosticsIfNeeded(
+        _ frame: MDKEncodedFrame,
+        captureStatistics: MDKEncodedCaptureSessionStatistics?
+    ) {
         let now = DispatchTime.now().uptimeNanoseconds
         let previousSequenceNumber = lastEncodedFrameSourceSequenceNumber
         let previousDisplayTime = lastEncodedFrameSourceDisplayTime
@@ -824,6 +849,7 @@ public actor ApolloBridgeRuntime {
             let displayID = activeCaptureConfiguration?.displayID ?? 0
             let codec = ApolloCaptureCodec(frame.codec).rawValue
             let ingressSnapshot = coreForwarder.snapshot()
+            let hdrValidation = frame.hdrValidationReport
             let callbackLatencyText: String
             if let latency = frame.outputCallbackLatencyMilliseconds {
                 callbackLatencyText = String(format: "%.3f", latency)
@@ -836,9 +862,13 @@ public actor ApolloBridgeRuntime {
             } else {
                 displayDeltaText = "n/a"
             }
+            let colorPrimaries = hdrValidation.colorPrimaries ?? "n/a"
+            let transferFunction = hdrValidation.transferFunction ?? "n/a"
+            let yCbCrMatrix = hdrValidation.yCbCrMatrix ?? "n/a"
+            let captureLastError = captureStatistics?.lastErrorDescription ?? "n/a"
 
             logger.notice(
-                "Mac bridge frame callback display-id=\(displayID, privacy: .public) codec=\(codec, privacy: .public) seq=\(frame.sourceSequenceNumber, privacy: .public) seq-delta=\(sequenceDelta ?? 0, privacy: .public) display-time=\(frame.sourceDisplayTime, privacy: .public) display-delta-ms=\(displayDeltaText, privacy: .public) callback-latency-ms=\(callbackLatencyText, privacy: .public) key=\(frame.isKeyFrame, privacy: .public) hdr=\(frame.isHDRSignaled, privacy: .public) target-fps=\(targetFrameRate, privacy: .public) target-size=\(targetWidth, privacy: .public)x\(targetHeight, privacy: .public) queue=\(queueProfile, privacy: .public) core-frame-count=\(ingressSnapshot.frameCount, privacy: .public) core-queued=\(ingressSnapshot.queuedFrameCount, privacy: .public) core-dropped=\(ingressSnapshot.droppedFrameCount, privacy: .public) core-last-seq=\(ingressSnapshot.lastFrameSourceSequenceNumber ?? 0, privacy: .public)"
+                "Mac bridge frame callback display-id=\(displayID, privacy: .public) codec=\(codec, privacy: .public) seq=\(frame.sourceSequenceNumber, privacy: .public) seq-delta=\(sequenceDelta ?? 0, privacy: .public) display-time=\(frame.sourceDisplayTime, privacy: .public) display-delta-ms=\(displayDeltaText, privacy: .public) callback-latency-ms=\(callbackLatencyText, privacy: .public) key=\(frame.isKeyFrame, privacy: .public) hdr=\(frame.isHDRSignaled, privacy: .public) hdr-primaries=\(colorPrimaries, privacy: .public) hdr-transfer=\(transferFunction, privacy: .public) hdr-matrix=\(yCbCrMatrix, privacy: .public) hdr-mastering=\(hdrValidation.hasMasteringDisplayColorVolume, privacy: .public) hdr-cll=\(hdrValidation.hasContentLightLevelInfo, privacy: .public) target-fps=\(targetFrameRate, privacy: .public) target-size=\(targetWidth, privacy: .public)x\(targetHeight, privacy: .public) queue=\(queueProfile, privacy: .public) capture-emitted=\(captureStatistics?.emittedFrameCount ?? 0, privacy: .public) capture-dropped=\(captureStatistics?.droppedFrameCount ?? 0, privacy: .public) capture-processing-failures=\(captureStatistics?.processingFailureCount ?? 0, privacy: .public) capture-restarts=\(captureStatistics?.automaticRestartCount ?? 0, privacy: .public) capture-running=\(captureStatistics?.isRunning ?? false, privacy: .public) capture-last-error=\(captureLastError, privacy: .public) core-frame-count=\(ingressSnapshot.frameCount, privacy: .public) core-queued=\(ingressSnapshot.queuedFrameCount, privacy: .public) core-dropped=\(ingressSnapshot.droppedFrameCount, privacy: .public) core-last-seq=\(ingressSnapshot.lastFrameSourceSequenceNumber ?? 0, privacy: .public)"
             )
             lastEncodedFrameDiagnosticsUptimeNanoseconds = now
         }
