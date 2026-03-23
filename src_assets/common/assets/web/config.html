@@ -299,6 +299,8 @@
             id: "vt",
             name: "VideoToolbox Encoder",
             options: {
+              "macos_bridge_codec": "hevc",
+              "macos_bridge_queue_profile": "q3",
               "vt_coder": "auto",
               "vt_software": "auto",
               "vt_realtime": "enabled",
@@ -313,7 +315,7 @@
           },
           {
             id: "sw",
-            name: "Software Encoder",
+            name: "CPU Software Encoder",
             options: {
               "sw_preset": "superfast",
               "sw_tune": "zerolatency",
@@ -348,8 +350,12 @@
             });
           }
           if (this.platform === "macos") {
+            const videoToolboxTab = this.tabs.find((el) => el.id === "vt");
+            if (videoToolboxTab) {
+              videoToolboxTab.name = "Codec Selection";
+            }
             this.tabs = this.tabs.filter((el) => {
-              return el.id !== "amd" && el.id !== "nv" && el.id !== "qsv" && el.id !== "vaapi";
+              return el.id !== "amd" && el.id !== "nv" && el.id !== "qsv" && el.id !== "vaapi" && el.id !== "sw";
             });
           }
 

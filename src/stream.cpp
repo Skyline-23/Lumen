@@ -439,6 +439,23 @@ namespace stream {
     std::atomic<session::state_e> state;
   };
 
+  static std::optional<boost::asio::ip::address> resolve_local_source_address(session_t &session, const std::string_view &control_local_address) {
+    if (auto address = net::parse_address(control_local_address)) {
+      return address;
+    }
+
+    if (!session.localAddress.is_unspecified()) {
+      return session.localAddress;
+    }
+
+    auto peer_address = session.video.peer.address();
+    if (peer_address.is_unspecified()) {
+      return std::nullopt;
+    }
+
+    return net::local_address_for_target(peer_address);
+  }
+
   /**
    * First part of cipher must be struct of type control_encrypted_t
    *
@@ -538,18 +555,30 @@ namespace stream {
         }
       }
 
-      // Once the control stream connection is established, RTSP session state can be torn down
-      rtsp_stream::launch_session_clear(session_p->launch_session_id);
-
-      session_p->control.peer = peer;
-
       // Use the local address from the control connection as the source address
       // for other communications to the client. This is necessary to ensure
       // proper routing on multi-homed hosts.
       auto local_address = platf::from_sockaddr((sockaddr *) &peer->localAddress.address);
-      session_p->localAddress = boost::asio::ip::make_address(local_address);
+      auto resolved_local_address = resolve_local_source_address(*session_p, local_address);
+      if (!resolved_local_address) {
+        BOOST_LOG(warning) << "Rejecting control connection from ["sv << peer_addr << ':' << peer_port
+                           << "]: unable to determine a local source address"sv;
+        continue;
+      }
 
-      BOOST_LOG(debug) << "Control local address ["sv << local_address << ']';
+      // Once the control stream connection is established, RTSP session state can be torn down
+      rtsp_stream::launch_session_clear(session_p->launch_session_id);
+
+      session_p->control.peer = peer;
+      session_p->localAddress = *resolved_local_address;
+
+      if (net::parse_address(local_address)) {
+        BOOST_LOG(debug) << "Control local address ["sv << local_address << ']';
+      } else {
+        auto logged_local_address = local_address.empty() ? std::string {"<unavailable>"} : local_address;
+        BOOST_LOG(warning) << "Control local address ["sv << logged_local_address
+                           << "] is invalid; using ["sv << net::addr_to_normalized_string(session_p->localAddress) << "] instead"sv;
+      }
       BOOST_LOG(debug) << "Control peer address ["sv << peer_addr << ':' << peer_port << ']';
 
       // Insert this into the map for O(1) lookups in the future
@@ -1999,6 +2028,24 @@ namespace stream {
       }
     }
 
+    ApolloCoreCaptureQueueProfile apollo_core_requested_queue_profile() {
+      auto queue_profile = config::video.macos_bridge_queue_profile;
+      std::transform(queue_profile.begin(), queue_profile.end(), queue_profile.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+      });
+
+      if (queue_profile == "q1") {
+        return ApolloCoreCaptureQueueProfileQ1;
+      }
+      if (queue_profile == "q2") {
+        return ApolloCoreCaptureQueueProfileQ2;
+      }
+      if (queue_profile == "q4") {
+        return ApolloCoreCaptureQueueProfileQ4;
+      }
+      return ApolloCoreCaptureQueueProfileQ3;
+    }
+
     ApolloCoreAudioCaptureSourceKind apollo_core_audio_source_kind(const audio::config_t &config) {
       return config.flags[audio::config_t::HOST_AUDIO] ?
                ApolloCoreAudioCaptureSourceKindSystemOutput :
@@ -2040,8 +2087,8 @@ namespace stream {
         apollo_core_requested_display_id(),
         apollo_core_requested_codec(session.config.monitor.videoFormat),
         ApolloCoreCapturePreprocessStrategyNone,
-        ApolloCoreCaptureQueueProfileQ2,
-        false,
+        apollo_core_requested_queue_profile(),
+        true,
         session.config.monitor.framerate,
         session.config.monitor.width,
         session.config.monitor.height,
@@ -2223,8 +2270,21 @@ namespace stream {
         return -1;
       }
 
-      session.control.expected_peer_address = addr_string;
-      BOOST_LOG(debug) << "Expecting incoming session connections from "sv << addr_string;
+      auto addr = net::parse_address(addr_string);
+      if (!addr) {
+        BOOST_LOG(error) << "Couldn't start session: invalid peer address ["sv << addr_string << ']';
+        return -1;
+      }
+
+      session.control.expected_peer_address = net::addr_to_normalized_string(*addr);
+      BOOST_LOG(debug) << "Expecting incoming session connections from "sv << session.control.expected_peer_address;
+
+      if (auto local_address = net::local_address_for_target(*addr)) {
+        session.localAddress = *local_address;
+      } else {
+        BOOST_LOG(warning) << "Couldn't determine routed local source address for peer ["sv
+                           << session.control.expected_peer_address << "] during session start"sv;
+      }
 
       // Insert this session into the session list
       {
@@ -2232,11 +2292,10 @@ namespace stream {
         session.broadcast_ref->control_server._sessions->push_back(&session);
       }
 
-      auto addr = boost::asio::ip::make_address(addr_string);
-      session.video.peer.address(addr);
+      session.video.peer.address(*addr);
       session.video.peer.port(0);
 
-      session.audio.peer.address(addr);
+      session.audio.peer.address(*addr);
       session.audio.peer.port(0);
 
       session.pingTimeout = std::chrono::steady_clock::now() + config::stream.ping_timeout;

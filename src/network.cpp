@@ -48,29 +48,32 @@ namespace net {
   }
 
   net_e from_address(const std::string_view &view) {
-    auto addr = normalize_address(ip::make_address(view));
+    auto addr = parse_address(view);
+    if (!addr) {
+      return WAN;
+    }
 
-    if (addr.is_v6()) {
+    if (addr->is_v6()) {
       for (auto &range : pc_ips_v6) {
-        if (range.hosts().find(addr.to_v6()) != range.hosts().end()) {
+        if (range.hosts().find(addr->to_v6()) != range.hosts().end()) {
           return PC;
         }
       }
 
       for (auto &range : lan_ips_v6) {
-        if (range.hosts().find(addr.to_v6()) != range.hosts().end()) {
+        if (range.hosts().find(addr->to_v6()) != range.hosts().end()) {
           return LAN;
         }
       }
     } else {
       for (auto &range : pc_ips_v4) {
-        if (range.hosts().find(addr.to_v4()) != range.hosts().end()) {
+        if (range.hosts().find(addr->to_v4()) != range.hosts().end()) {
           return PC;
         }
       }
 
       for (auto &range : lan_ips_v4) {
-        if (range.hosts().find(addr.to_v4()) != range.hosts().end()) {
+        if (range.hosts().find(addr->to_v4()) != range.hosts().end()) {
           return LAN;
         }
       }
@@ -115,6 +118,47 @@ namespace net {
 
     // avoid warning
     return "::"sv;
+  }
+
+  std::optional<ip::address> parse_address(const std::string_view &view) {
+    if (view.empty()) {
+      return std::nullopt;
+    }
+
+    boost::system::error_code ec;
+    auto address = ip::make_address(view, ec);
+    if (ec) {
+      return std::nullopt;
+    }
+
+    return normalize_address(address);
+  }
+
+  std::optional<ip::address> local_address_for_target(const ip::address &target) {
+    if (target.is_unspecified()) {
+      return std::nullopt;
+    }
+
+    boost::system::error_code ec;
+    boost::asio::io_context io_context;
+    ip::udp::socket socket {io_context};
+
+    socket.open(target.is_v6() ? ip::udp::v6() : ip::udp::v4(), ec);
+    if (ec) {
+      return std::nullopt;
+    }
+
+    socket.connect(ip::udp::endpoint {target, 9}, ec);
+    if (ec) {
+      return std::nullopt;
+    }
+
+    auto endpoint = socket.local_endpoint(ec);
+    if (ec || endpoint.address().is_unspecified()) {
+      return std::nullopt;
+    }
+
+    return normalize_address(endpoint.address());
   }
 
   boost::asio::ip::address normalize_address(boost::asio::ip::address address) {

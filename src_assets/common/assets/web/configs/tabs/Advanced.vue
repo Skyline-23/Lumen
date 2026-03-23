@@ -67,7 +67,7 @@ const config = ref(props.config)
     ></Checkbox>
 
     <!-- HEVC Support -->
-    <div class="mb-3">
+    <div class="mb-3" v-if="platform !== 'macos'">
       <label for="hevc_mode" class="form-label">{{ $t('config.hevc_mode') }}</label>
       <select id="hevc_mode" class="form-select" v-model="config.hevc_mode">
         <option value="0">{{ $t('config.hevc_mode_0') }}</option>
@@ -79,7 +79,7 @@ const config = ref(props.config)
     </div>
 
     <!-- AV1 Support -->
-    <div class="mb-3">
+    <div class="mb-3" v-if="platform !== 'macos'">
       <label for="av1_mode" class="form-label">{{ $t('config.av1_mode') }}</label>
       <select id="av1_mode" class="form-select" v-model="config.av1_mode">
         <option value="0">{{ $t('config.av1_mode_0') }}</option>
@@ -112,7 +112,7 @@ const config = ref(props.config)
     </div>
 
     <!-- Encoder -->
-    <div class="mb-3">
+    <div class="mb-3" v-if="platform !== 'macos'">
       <label for="encoder" class="form-label">{{ $t('config.encoder') }}</label>
       <select id="encoder" class="form-select" v-model="config.encoder">
         <option value="">{{ $t('_common.autodetect') }}</option>
@@ -125,9 +125,6 @@ const config = ref(props.config)
           <template #linux>
             <option value="nvenc">NVIDIA NVENC</option>
             <option value="vaapi">VA-API</option>
-          </template>
-          <template #macos>
-            <option value="videotoolbox">VideoToolbox</option>
           </template>
         </PlatformLayout>
         <option value="software">{{ $t('config.encoder_software') }}</option>

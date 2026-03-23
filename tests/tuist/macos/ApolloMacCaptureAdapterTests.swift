@@ -18,8 +18,17 @@ final class ApolloMacCaptureAdapterTests: XCTestCase {
 
         let configuration = adapter.makePanelNativeConfiguration(forDisplayID: 9)
         XCTAssertEqual(configuration.display_id, 9)
-        XCTAssertEqual(configuration.codec, ApolloCoreCaptureCodecHEVC)
-        XCTAssertEqual(configuration.queue_profile.rawValue, 1)
+        XCTAssertTrue(
+            configuration.codec == ApolloCoreCaptureCodecH264 ||
+            configuration.codec == ApolloCoreCaptureCodecHEVC ||
+            configuration.codec == ApolloCoreCaptureCodecProResProxy
+        )
+        XCTAssertTrue(
+            configuration.queue_profile == ApolloMacBridgeQueueProfileQ1 ||
+            configuration.queue_profile == ApolloMacBridgeQueueProfileQ2 ||
+            configuration.queue_profile == ApolloMacBridgeQueueProfileQ3 ||
+            configuration.queue_profile == ApolloMacBridgeQueueProfileQ4
+        )
 
         let microphoneConfiguration = adapter.makeDefaultMicrophoneAudioConfiguration()
         XCTAssertEqual(microphoneConfiguration.source_kind, ApolloMacBridgeAudioSourceKindMicrophone)

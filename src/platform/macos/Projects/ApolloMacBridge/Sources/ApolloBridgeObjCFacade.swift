@@ -9,6 +9,9 @@ public final class ApolloBridgeConfigurationBox: NSObject {
     public let queueProfileRawValue: Int
     public let showCursor: Bool
     public let targetFrameRate: Int
+    public let requestedWidth: Int
+    public let requestedHeight: Int
+    public let enableHDR: Bool
 
     public init(
         displayID: UInt32,
@@ -16,7 +19,10 @@ public final class ApolloBridgeConfigurationBox: NSObject {
         preprocessStrategyRawValue: Int,
         queueProfileRawValue: Int,
         showCursor: Bool,
-        targetFrameRate: Int
+        targetFrameRate: Int,
+        requestedWidth: Int,
+        requestedHeight: Int,
+        enableHDR: Bool
     ) {
         self.displayID = displayID
         self.codecRawValue = codecRawValue
@@ -24,6 +30,9 @@ public final class ApolloBridgeConfigurationBox: NSObject {
         self.queueProfileRawValue = queueProfileRawValue
         self.showCursor = showCursor
         self.targetFrameRate = targetFrameRate
+        self.requestedWidth = requestedWidth
+        self.requestedHeight = requestedHeight
+        self.enableHDR = enableHDR
     }
 
     convenience init(configuration: ApolloMacDisplayKitCaptureConfiguration) {
@@ -33,7 +42,10 @@ public final class ApolloBridgeConfigurationBox: NSObject {
             preprocessStrategyRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.preprocessStrategy),
             queueProfileRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.queueProfile),
             showCursor: configuration.showCursor,
-            targetFrameRate: configuration.targetFrameRate
+            targetFrameRate: configuration.targetFrameRate,
+            requestedWidth: configuration.requestedWidth ?? 0,
+            requestedHeight: configuration.requestedHeight ?? 0,
+            enableHDR: configuration.enableHDR
         )
     }
 
@@ -44,7 +56,10 @@ public final class ApolloBridgeConfigurationBox: NSObject {
             preprocessStrategy: ApolloBridgeObjCFacade.preprocessStrategy(fromRawValue: preprocessStrategyRawValue),
             queueProfile: ApolloBridgeObjCFacade.queueProfile(fromRawValue: queueProfileRawValue),
             showCursor: showCursor,
-            targetFrameRate: targetFrameRate
+            targetFrameRate: targetFrameRate,
+            requestedWidth: requestedWidth,
+            requestedHeight: requestedHeight,
+            enableHDR: enableHDR
         )
     }
 }

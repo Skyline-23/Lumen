@@ -5,6 +5,8 @@
 #pragma once
 
 // standard includes
+#include <optional>
+#include <string_view>
 #include <tuple>
 #include <utility>
 
@@ -48,6 +50,8 @@ namespace net {
   std::string_view to_enum_string(net_e net);
 
   net_e from_address(const std::string_view &view);
+  std::optional<boost::asio::ip::address> parse_address(const std::string_view &view);
+  std::optional<boost::asio::ip::address> local_address_for_target(const boost::asio::ip::address &target);
 
   host_t host_create(af_e af, ENetAddress &addr, std::uint16_t port);
 

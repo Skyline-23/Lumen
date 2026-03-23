@@ -39,6 +39,7 @@ extern "C" {
   #include <CoreFoundation/CoreFoundation.h>
   #include <CoreMedia/CoreMedia.h>
   #include <VideoToolbox/VideoToolbox.h>
+  #include <mach/mach_time.h>
   #include "ApolloCore.h"
   #include "platform/macos/av_img_t.h"
   #include "platform/macos/misc.h"
@@ -109,6 +110,76 @@ namespace video {
 #ifdef __APPLE__
   namespace {
     constexpr uint32_t apollo_core_ingress_wait_timeout_ms = 5000;
+    constexpr auto apollo_core_ingress_progress_log_interval = 3s;
+
+    class apollo_core_display_time_clock_t {
+    public:
+      std::optional<std::chrono::steady_clock::time_point> frame_timestamp(std::uint64_t source_display_time) {
+        if (source_display_time == 0) {
+          return std::nullopt;
+        }
+
+        if (!epoch_initialized || source_display_time < epoch_source_display_time) {
+          epoch_source_display_time = source_display_time;
+          epoch_timestamp = std::chrono::steady_clock::now();
+          epoch_initialized = true;
+          return epoch_timestamp;
+        }
+
+        const auto delta_nanoseconds = display_time_delta_to_nanoseconds(source_display_time - epoch_source_display_time);
+        return epoch_timestamp + delta_nanoseconds;
+      }
+
+    private:
+      static std::chrono::nanoseconds display_time_delta_to_nanoseconds(std::uint64_t delta_display_time) {
+        static mach_timebase_info_data_t timebase_info {};
+        static const auto timebase_ready = []() {
+          mach_timebase_info(&timebase_info);
+          return true;
+        }();
+        (void) timebase_ready;
+
+        const auto numerator = static_cast<unsigned long long>(timebase_info.numer);
+        const auto denominator = static_cast<unsigned long long>(std::max(timebase_info.denom, 1u));
+        const auto quotient = delta_display_time / denominator;
+        const auto remainder = delta_display_time % denominator;
+        const auto nanoseconds_from_quotient = quotient * numerator;
+        const auto nanoseconds_from_remainder = (remainder * numerator) / denominator;
+        const auto total_nanoseconds = nanoseconds_from_quotient + nanoseconds_from_remainder;
+
+        return std::chrono::nanoseconds(total_nanoseconds);
+      }
+
+      bool epoch_initialized = false;
+      std::uint64_t epoch_source_display_time = 0;
+      std::chrono::steady_clock::time_point epoch_timestamp {};
+    };
+
+    std::string_view apollo_core_codec_name(ApolloCoreCaptureCodec codec) {
+      switch (codec) {
+        case ApolloCoreCaptureCodecH264:
+          return "h264"sv;
+        case ApolloCoreCaptureCodecHEVC:
+          return "hevc"sv;
+        case ApolloCoreCaptureCodecProResProxy:
+          return "prores-proxy"sv;
+        default:
+          return "unknown"sv;
+      }
+    }
+
+    std::string_view requested_video_format_name(int video_format) {
+      switch (video_format) {
+        case 0:
+          return "h264"sv;
+        case 1:
+          return "hevc"sv;
+        case 2:
+          return "av1"sv;
+        default:
+          return "unknown"sv;
+      }
+    }
 
     CMVideoCodecType apollo_core_codec_type(ApolloCoreCaptureCodec codec) {
       switch (codec) {
@@ -3141,6 +3212,12 @@ namespace video {
 
       bool logged_codec_mismatch = false;
       bool logged_producer_stop = false;
+      bool logged_frame_stall = false;
+      bool logged_first_packet = false;
+      int64_t next_packet_frame_index = 1;
+      apollo_core_display_time_clock_t display_time_clock;
+      auto last_ingress_stats_log = std::chrono::steady_clock::now();
+      std::uint64_t last_logged_frame_count = 0;
       std::array<char, 512> event_message {};
 
       if (!ApolloCoreEncodedCaptureIngressIsProducerActive(ingress) &&
@@ -3203,12 +3280,23 @@ namespace video {
 
           consumed_any = true;
 
+          if (!CMSampleBufferDataIsReady(retained_sample_buffer)) {
+            const auto make_ready_status = CMSampleBufferMakeDataReady(retained_sample_buffer);
+            if (make_ready_status != noErr || !CMSampleBufferDataIsReady(retained_sample_buffer)) {
+              BOOST_LOG(error) << "External macOS encoded ingress produced a non-ready sample buffer"
+                               << " makeReadyStatus="sv << make_ready_status
+                               << " codec="sv << apollo_core_codec_name(frame.codec);
+              CFRelease(retained_sample_buffer);
+              continue;
+            }
+          }
+
           if (!apollo_core_codec_matches_config(frame.codec, config)) {
             if (!logged_codec_mismatch) {
               BOOST_LOG(error) << "External macOS encoded ingress codec mismatch frameCodec="sv
-                               << static_cast<int>(frame.codec)
+                               << apollo_core_codec_name(frame.codec)
                                << " requestedVideoFormat="sv
-                               << config.videoFormat;
+                               << requested_video_format_name(config.videoFormat);
               logged_codec_mismatch = true;
             }
             CFRelease(retained_sample_buffer);
@@ -3223,7 +3311,7 @@ namespace video {
           }
 
           std::vector<uint8_t> packet_data;
-          const bool packet_is_idr = external_sample_buffer_is_idr(retained_sample_buffer);
+          const bool packet_is_idr = frame.is_key_frame || external_sample_buffer_is_idr(retained_sample_buffer);
           if (packet_is_idr) {
             append_parameter_sets_for_codec(retained_sample_buffer, codec_type, packet_data);
           }
@@ -3236,13 +3324,54 @@ namespace video {
 
           auto packet = std::make_unique<packet_raw_generic>(
             std::move(packet_data),
-            static_cast<int64_t>(frame.source_sequence_number),
+            next_packet_frame_index++,
             packet_is_idr
           );
+          if (!logged_first_packet) {
+            BOOST_LOG(info) << "External macOS encoded ingress first accepted packet codec="sv
+                            << apollo_core_codec_name(frame.codec)
+                            << " idr="sv << packet_is_idr
+                            << " hdr="sv << frame.is_hdr_signaled
+                            << " seq="sv << frame.source_sequence_number
+                            << " display-time="sv << frame.source_display_time;
+            if (!packet_is_idr) {
+              BOOST_LOG(warning) << "External macOS encoded ingress started without an IDR packet; client decoder may wait for recovery"sv;
+            }
+            logged_first_packet = true;
+          }
           packet->channel_data = channel_data;
-          packet->frame_timestamp = std::chrono::steady_clock::now();
+          packet->frame_timestamp = display_time_clock.frame_timestamp(frame.source_display_time);
+          if (!packet->frame_timestamp) {
+            packet->frame_timestamp = std::chrono::steady_clock::now();
+          }
           packets->raise(std::move(packet));
           CFRelease(retained_sample_buffer);
+        }
+
+        const auto now = std::chrono::steady_clock::now();
+        if (now - last_ingress_stats_log >= apollo_core_ingress_progress_log_interval) {
+          const auto snapshot = ApolloCoreEncodedCaptureIngressCopySnapshot(ingress);
+          const auto producer_active = ApolloCoreEncodedCaptureIngressIsProducerActive(ingress);
+          BOOST_LOG(info) << "External macOS encoded ingress stats: frames="sv
+                          << snapshot.frame_count
+                          << " queued="sv << snapshot.queued_frame_count
+                          << " dropped="sv << snapshot.dropped_frame_count
+                          << " last-seq="sv << snapshot.last_frame_source_sequence_number
+                          << " producer-active="sv << producer_active;
+
+          if (producer_active && snapshot.frame_count == last_logged_frame_count) {
+            if (!logged_frame_stall) {
+              BOOST_LOG(warning) << "External macOS encoded ingress has not advanced frame delivery in the last "
+                                 << std::chrono::duration_cast<std::chrono::seconds>(apollo_core_ingress_progress_log_interval).count()
+                                 << "s"sv;
+              logged_frame_stall = true;
+            }
+          } else {
+            logged_frame_stall = false;
+          }
+
+          last_logged_frame_count = snapshot.frame_count;
+          last_ingress_stats_log = now;
         }
 
         if (consumed_any) {
@@ -3264,6 +3393,13 @@ namespace video {
           }
         }
       }
+
+      const auto final_snapshot = ApolloCoreEncodedCaptureIngressCopySnapshot(ingress);
+      BOOST_LOG(info) << "External macOS encoded ingress final stats: frames="sv
+                      << final_snapshot.frame_count
+                      << " queued="sv << final_snapshot.queued_frame_count
+                      << " dropped="sv << final_snapshot.dropped_frame_count
+                      << " last-seq="sv << final_snapshot.last_frame_source_sequence_number;
     }
   }  // namespace
 

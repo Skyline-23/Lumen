@@ -850,7 +850,7 @@ namespace rtsp_stream {
       ss << "sprop-parameter-sets=AAAAAU"sv << std::endl;
     }
 
-    if (video::active_av1_mode != 1 || video::native_macos_vt_av1_supported()) {
+    if (video::active_av1_mode != 1) {
       ss << "a=rtpmap:98 AV1/90000"sv << std::endl;
     }
 

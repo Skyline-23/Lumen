@@ -79,6 +79,9 @@ namespace config {
       int vt_coder;
     } vt;
 
+    std::string macos_bridge_codec;
+    std::string macos_bridge_queue_profile;
+
     struct {
       bool strict_rc_buffer;
     } vaapi;

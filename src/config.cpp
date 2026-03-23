@@ -488,6 +488,9 @@ namespace config {
       -1,
     },  // vt
 
+    "hevc"s,  // macos_bridge_codec
+    "q3"s,  // macos_bridge_queue_profile
+
     {
       false,  // strict_rc_buffer
     },  // vaapi
@@ -1174,6 +1177,8 @@ namespace config {
     int_f(vars, "vt_software", video.vt.vt_allow_sw, vt::allow_software_from_view);
     int_f(vars, "vt_software", video.vt.vt_require_sw, vt::force_software_from_view);
     int_f(vars, "vt_realtime", video.vt.vt_realtime, vt::rt_from_view);
+    string_f(vars, "macos_bridge_codec", video.macos_bridge_codec);
+    string_f(vars, "macos_bridge_queue_profile", video.macos_bridge_queue_profile);
 
     bool_f(vars, "vaapi_strict_rc_buffer", video.vaapi.strict_rc_buffer);
 

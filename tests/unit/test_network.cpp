@@ -13,6 +13,18 @@ TEST_P(MdnsInstanceNameTest, Run) {
   ASSERT_EQ(net::mdns_instance_name(input), expected);
 }
 
+TEST(ParseAddressTest, RejectsInvalidInputWithoutThrowing) {
+  EXPECT_FALSE(net::parse_address("").has_value());
+  EXPECT_FALSE(net::parse_address("not-an-address").has_value());
+}
+
+TEST(ParseAddressTest, NormalizesIPv4MappedIPv6Addresses) {
+  auto parsed = net::parse_address("::ffff:192.168.10.24");
+  ASSERT_TRUE(parsed.has_value());
+  EXPECT_TRUE(parsed->is_v4());
+  EXPECT_EQ(parsed->to_string(), "192.168.10.24");
+}
+
 INSTANTIATE_TEST_SUITE_P(
   MdnsInstanceNameTests,
   MdnsInstanceNameTest,

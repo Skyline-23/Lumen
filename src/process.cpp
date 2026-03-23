@@ -222,12 +222,12 @@ namespace proc {
         render_width *= ((float) scale_factor / 100);
         render_height *= ((float) scale_factor / 100);
       }
-#endif
 
       // Chop the last bit to ensure the scaled resolution is even numbered
       // Most odd resolutions won't work well
       render_width &= ~1;
       render_height &= ~1;
+#endif
     }
 
     launch_session->width = render_width;

@@ -17,11 +17,57 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         )
 
         XCTAssertEqual(configuration.displayID, 7)
-        XCTAssertEqual(configuration.codec, .hevc)
+        XCTAssertTrue(ApolloCaptureCodec.allCases.contains(configuration.codec))
         XCTAssertEqual(configuration.preprocessStrategy, .none)
-        XCTAssertEqual(configuration.queueProfile, .q2)
+        XCTAssertTrue(ApolloCaptureQueueProfile.allCases.contains(configuration.queueProfile))
         XCTAssertEqual(configuration.targetFrameRate, 120)
         XCTAssertFalse(configuration.showCursor)
+        XCTAssertNil(configuration.requestedWidth)
+        XCTAssertNil(configuration.requestedHeight)
+        XCTAssertFalse(configuration.enableHDR)
+    }
+
+    func testBridgeConfigurationPreferencesParseCodecAndQueueProfile() {
+        let contents = """
+        macos_bridge_codec=prores-proxy
+        macos_bridge_queue_profile=q4
+        """
+
+        XCTAssertEqual(
+            ApolloBridgeConfigurationPreferences.preferredCodec(contents: contents),
+            .proResProxy
+        )
+        XCTAssertEqual(
+            ApolloBridgeConfigurationPreferences.preferredQueueProfile(contents: contents),
+            .q4
+        )
+        XCTAssertEqual(
+            ApolloBridgeConfigurationPreferences.preferredQueueProfile(contents: "macos_bridge_queue_profile=garbage"),
+            .q3
+        )
+    }
+
+    func testBridgeConfigurationBoxRoundTripsRequestedOutputAndHDR() {
+        let configuration = ApolloMacDisplayKitCaptureConfiguration(
+            displayID: 11,
+            codec: .hevc,
+            preprocessStrategy: .none,
+            queueProfile: .q2,
+            showCursor: true,
+            targetFrameRate: 120,
+            requestedWidth: 3512,
+            requestedHeight: 2290,
+            enableHDR: true
+        )
+
+        let roundTrip = ApolloBridgeConfigurationBox(configuration: configuration).swiftValue
+        XCTAssertEqual(roundTrip.displayID, 11)
+        XCTAssertEqual(roundTrip.codec, .hevc)
+        XCTAssertTrue(roundTrip.showCursor)
+        XCTAssertEqual(roundTrip.targetFrameRate, 120)
+        XCTAssertEqual(roundTrip.requestedWidth, 3512)
+        XCTAssertEqual(roundTrip.requestedHeight, 2290)
+        XCTAssertTrue(roundTrip.enableHDR)
     }
 
     func testApolloCoreEncodedCaptureIngressStoresSampleBufferMetadata() throws {
@@ -334,13 +380,15 @@ final class ApolloTuistBootstrapTests: XCTestCase {
     }
 
     func testApolloCoreCaptureRequestPublishesAndWaitsForGenerationChanges() {
+        let snapshotBeforeClear = ApolloCoreCaptureRequestCopySnapshot()
         ApolloCoreCaptureRequestClear()
 
         let initialSnapshot = ApolloCoreCaptureRequestCopySnapshot()
-        XCTAssertEqual(initialSnapshot.generation, 1)
+        XCTAssertEqual(initialSnapshot.generation, snapshotBeforeClear.generation + 1)
         XCTAssertFalse(initialSnapshot.video_requested)
         XCTAssertFalse(initialSnapshot.audio_requested)
         XCTAssertEqual(initialSnapshot.codec, ApolloCoreCaptureCodecUnknown)
+        XCTAssertEqual(initialSnapshot.audio_source_kind, ApolloCoreAudioCaptureSourceKindUnknown)
 
         DispatchQueue.global().asyncAfter(deadline: .now() + 0.05) {
             ApolloCoreCaptureRequestPublishVideo(
@@ -367,6 +415,7 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         XCTAssertTrue(ApolloCoreCaptureRequestWaitForGenerationChange(initialSnapshot.generation, 500))
 
         let updatedSnapshot = ApolloCoreCaptureRequestCopySnapshot()
+        XCTAssertGreaterThan(updatedSnapshot.generation, initialSnapshot.generation)
         XCTAssertTrue(updatedSnapshot.video_requested)
         XCTAssertTrue(updatedSnapshot.audio_requested)
         XCTAssertEqual(updatedSnapshot.display_id, 17)

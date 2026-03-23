@@ -36,7 +36,7 @@ protected:
       {"AMD AMF Encoder", "amd"},
       {"VideoToolbox Encoder", "vt"},
       {"VA-API Encoder", "vaapi"},
-      {"Software Encoder", "sw"}
+      {"CPU Software Encoder", "sw"}
     };
   }
 

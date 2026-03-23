@@ -122,6 +122,9 @@ namespace {
     result.queue_profile = static_cast<ApolloMacBridgeQueueProfile>(configuration.queueProfileRawValue);
     result.show_cursor = configuration.showCursor;
     result.target_frame_rate = static_cast<int32_t>(configuration.targetFrameRate);
+    result.requested_width = static_cast<int32_t>(configuration.requestedWidth);
+    result.requested_height = static_cast<int32_t>(configuration.requestedHeight);
+    result.enable_hdr = configuration.enableHDR;
     return result;
   }
 
@@ -134,7 +137,10 @@ namespace {
  preprocessStrategyRawValue:static_cast<NSInteger>(configuration.preprocess_strategy)
      queueProfileRawValue:static_cast<NSInteger>(configuration.queue_profile)
               showCursor:configuration.show_cursor
-          targetFrameRate:static_cast<NSInteger>(configuration.target_frame_rate)];
+          targetFrameRate:static_cast<NSInteger>(configuration.target_frame_rate)
+           requestedWidth:static_cast<NSInteger>(configuration.requested_width)
+          requestedHeight:static_cast<NSInteger>(configuration.requested_height)
+                enableHDR:configuration.enable_hdr];
   }
 
   ApolloMacBridgeAudioCaptureConfiguration to_audio_bridge_configuration(

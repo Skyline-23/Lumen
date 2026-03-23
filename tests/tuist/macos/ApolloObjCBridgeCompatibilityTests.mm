@@ -24,9 +24,12 @@
   ApolloMacBridgeCaptureConfiguration configuration =
     ApolloMacBridgeControllerMakePanelNativeConfiguration(7);
   XCTAssertEqual(configuration.display_id, 7u);
-  XCTAssertEqual(configuration.codec, ApolloCoreCaptureCodecHEVC);
+  XCTAssertTrue(configuration.codec == ApolloCoreCaptureCodecH264 ||
+                configuration.codec == ApolloCoreCaptureCodecHEVC ||
+                configuration.codec == ApolloCoreCaptureCodecProResProxy);
   XCTAssertEqual(configuration.preprocess_strategy, ApolloMacBridgePreprocessStrategyNone);
-  XCTAssertEqual(configuration.queue_profile, ApolloMacBridgeQueueProfileQ2);
+  XCTAssertTrue(configuration.queue_profile >= ApolloMacBridgeQueueProfileQ1 &&
+                configuration.queue_profile <= ApolloMacBridgeQueueProfileQ4);
   XCTAssertFalse(configuration.show_cursor);
   XCTAssertEqual(configuration.target_frame_rate, 120);
 

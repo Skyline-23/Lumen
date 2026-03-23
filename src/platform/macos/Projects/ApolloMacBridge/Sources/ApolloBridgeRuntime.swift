@@ -55,6 +55,80 @@ public enum ApolloCaptureQueueProfile: String, CaseIterable, Codable, Sendable {
     }
 }
 
+enum ApolloBridgeConfigurationPreferences {
+    static let configurationFileURL: URL = {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appending(path: "Library", directoryHint: .isDirectory)
+            .appending(path: "Application Support", directoryHint: .isDirectory)
+            .appending(path: "Apollo", directoryHint: .isDirectory)
+            .appending(path: "apollo.conf", directoryHint: .notDirectory)
+    }()
+
+    static func preferredCodec() -> ApolloCaptureCodec {
+        preferredCodec(contents: try? String(contentsOf: configurationFileURL, encoding: .utf8))
+    }
+
+    static func preferredCodec(contents: String?) -> ApolloCaptureCodec {
+        guard let value = configuredValue(forKey: "macos_bridge_codec", contents: contents) else {
+            return .hevc
+        }
+
+        switch value {
+        case ApolloCaptureCodec.h264.rawValue:
+            return .h264
+        case ApolloCaptureCodec.proResProxy.rawValue, "proresproxy", "prores_proxy":
+            return .proResProxy
+        default:
+            return .hevc
+        }
+    }
+
+    static func preferredQueueProfile() -> ApolloCaptureQueueProfile {
+        preferredQueueProfile(contents: try? String(contentsOf: configurationFileURL, encoding: .utf8))
+    }
+
+    static func preferredQueueProfile(contents: String?) -> ApolloCaptureQueueProfile {
+        switch configuredValue(forKey: "macos_bridge_queue_profile", contents: contents) {
+        case "q1":
+            return .q1
+        case "q2":
+            return .q2
+        case "q4":
+            return .q4
+        default:
+            return .q3
+        }
+    }
+
+    private static func configuredValue(forKey key: String, contents: String?) -> String? {
+        guard let contents else {
+            return nil
+        }
+
+        for rawLine in contents.split(whereSeparator: \.isNewline) {
+            let line = String(rawLine).trimmingCharacters(in: .whitespacesAndNewlines)
+            if line.isEmpty || line.hasPrefix("#") {
+                continue
+            }
+
+            guard let separatorIndex = line.firstIndex(of: "=") else {
+                continue
+            }
+
+            let candidateKey = String(line[..<separatorIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard candidateKey == key else {
+                continue
+            }
+
+            return String(line[line.index(after: separatorIndex)...])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+        }
+
+        return nil
+    }
+}
+
 public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     public let displayID: UInt32
     public let codec: ApolloCaptureCodec
@@ -62,14 +136,20 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     public let queueProfile: ApolloCaptureQueueProfile
     public let showCursor: Bool
     public let targetFrameRate: Int
+    public let requestedWidth: Int?
+    public let requestedHeight: Int?
+    public let enableHDR: Bool
 
     public init(
         displayID: UInt32,
         codec: ApolloCaptureCodec = .hevc,
         preprocessStrategy: ApolloCapturePreprocessStrategy = .none,
-        queueProfile: ApolloCaptureQueueProfile = .q2,
+        queueProfile: ApolloCaptureQueueProfile = .q3,
         showCursor: Bool = false,
-        targetFrameRate: Int = 120
+        targetFrameRate: Int = 120,
+        requestedWidth: Int? = nil,
+        requestedHeight: Int? = nil,
+        enableHDR: Bool = false
     ) {
         self.displayID = displayID
         self.codec = codec
@@ -77,22 +157,52 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         self.queueProfile = queueProfile
         self.showCursor = showCursor
         self.targetFrameRate = max(targetFrameRate, 1)
+        self.requestedWidth = Self.sanitizedDimension(requestedWidth)
+        self.requestedHeight = Self.sanitizedDimension(requestedHeight)
+        self.enableHDR = enableHDR
     }
 
     public static func panelNative(displayID: UInt32) -> Self {
-        Self(displayID: displayID)
+        Self(
+            displayID: displayID,
+            codec: ApolloBridgeConfigurationPreferences.preferredCodec(),
+            queueProfile: ApolloBridgeConfigurationPreferences.preferredQueueProfile()
+        )
     }
 
     var mdkValue: MDKEncodedCaptureConfiguration {
-        .panelNative(
-            displayID: displayID,
+        let streamConfiguration = MDKSkyLightDisplayStreamConfiguration(
+            queueDepth: queueProfile.mdkValue.queueDepth,
             queueProfile: queueProfile.mdkValue,
             showCursor: showCursor,
+            outputWidth: requestedWidth,
+            outputHeight: requestedHeight,
+            pixelFormat: codec.mdkValue.preferredCapturePixelFormat
+        )
+
+        return MDKEncodedCaptureConfiguration(
+            displayID: displayID,
+            streamConfiguration: streamConfiguration,
             codec: codec.mdkValue,
             preprocessStrategy: preprocessStrategy.mdkValue,
             targetFrameRate: targetFrameRate,
-            deliveryMode: .callbackOnly
+            deliveryMode: .callbackOnly,
+            hdrConfiguration: hdrConfiguration
         )
+    }
+
+    private var hdrConfiguration: MDKVideoHDRConfiguration? {
+        guard enableHDR, codec != .h264 else {
+            return nil
+        }
+        return .hdr10()
+    }
+
+    private static func sanitizedDimension(_ value: Int?) -> Int? {
+        guard let value, value > 0 else {
+            return nil
+        }
+        return value
     }
 }
 
@@ -297,7 +407,10 @@ private struct ApolloBridgeAutomationRequest: Equatable, Sendable {
                 preprocessStrategy: ApolloBridgeAutomationRequest.preprocessStrategy(from: snapshot.preprocess_strategy),
                 queueProfile: ApolloBridgeAutomationRequest.queueProfile(from: snapshot.queue_profile),
                 showCursor: snapshot.show_cursor,
-                targetFrameRate: Int(snapshot.target_frame_rate)
+                targetFrameRate: Int(snapshot.target_frame_rate),
+                requestedWidth: Int(snapshot.requested_width),
+                requestedHeight: Int(snapshot.requested_height),
+                enableHDR: snapshot.dynamic_range > 0
             )
         } else {
             videoConfiguration = nil
