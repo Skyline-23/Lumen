@@ -70,6 +70,28 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         XCTAssertTrue(roundTrip.enableHDR)
     }
 
+    func testRecommendedCoreForwardingFrameCapacityStaysLowLatency() {
+        let q2 = ApolloMacDisplayKitCaptureConfiguration(
+            displayID: 7,
+            queueProfile: .q2,
+            targetFrameRate: 120
+        )
+        let q4 = ApolloMacDisplayKitCaptureConfiguration(
+            displayID: 7,
+            queueProfile: .q4,
+            targetFrameRate: 120
+        )
+        let q2ThirtyFps = ApolloMacDisplayKitCaptureConfiguration(
+            displayID: 7,
+            queueProfile: .q2,
+            targetFrameRate: 30
+        )
+
+        XCTAssertEqual(ApolloBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q2), 4)
+        XCTAssertEqual(ApolloBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q4), 6)
+        XCTAssertEqual(ApolloBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q2ThirtyFps), 4)
+    }
+
     func testApolloCoreEncodedCaptureIngressStoresSampleBufferMetadata() throws {
         guard let ingress = ApolloCoreEncodedCaptureIngressCreate() else {
             return XCTFail("ApolloCoreEncodedCaptureIngressCreate returned nil")

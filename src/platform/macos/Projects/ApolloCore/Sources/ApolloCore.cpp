@@ -13,7 +13,7 @@
 #include <utility>
 
 namespace {
-  constexpr std::size_t default_frame_capacity = 8;
+  constexpr std::size_t default_frame_capacity = 4;
   constexpr std::size_t default_event_capacity = 32;
 
   struct retained_sample_buffer_t {

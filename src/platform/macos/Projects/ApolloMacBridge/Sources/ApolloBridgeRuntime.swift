@@ -770,12 +770,14 @@ public actor ApolloBridgeRuntime {
         return nanoseconds / 1_000_000
     }
 
-    private nonisolated static func recommendedCoreForwardingFrameCapacity(
+    static func recommendedCoreForwardingFrameCapacity(
         for configuration: ApolloMacDisplayKitCaptureConfiguration
     ) -> Int {
-        let baseCapacity = max(configuration.targetFrameRate / 2, 24)
-        let burstReserve = configuration.queueProfile.mdkValue.queueDepth * 8
-        return min(max(baseCapacity + burstReserve, 32), 128)
+        // MDK already applies source-side backpressure. The ApolloCore forwarder only needs
+        // enough slack for cross-thread handoff; scaling this queue with frame rate just lets
+        // stale encoded frames accumulate and shows up as host-side latency.
+        let queueDepthReserve = max(configuration.queueProfile.mdkValue.queueDepth, 1)
+        return min(max(queueDepthReserve + 2, 3), 8)
     }
 
     private let coreForwarder = ApolloCoreCaptureForwarder()
@@ -810,7 +812,10 @@ public actor ApolloBridgeRuntime {
     ) async throws {
         await stopMacDisplayKitCapture(resetRequestGeneration: false)
 
+        let frameCapacity = Self.recommendedCoreForwardingFrameCapacity(for: configuration)
         coreForwarder.reset()
+        coreForwarder.setFrameCapacity(frameCapacity)
+        coreForwarder.setEventCapacity(Self.automaticCoreForwardingEventCapacity)
         coreForwarder.setProducerActive(false)
         latestFrame = nil
         recentEvents = []
@@ -818,7 +823,9 @@ public actor ApolloBridgeRuntime {
         lastEncodedFrameSourceSequenceNumber = nil
         lastEncodedFrameSourceDisplayTime = nil
 
-        logger.notice("Starting MacDisplayKit capture \(configuration.hdrConfigurationDebugSummary, privacy: .public)")
+        logger.notice(
+            "Starting MacDisplayKit capture \(configuration.hdrConfigurationDebugSummary, privacy: .public) queue=\(configuration.queueProfile.rawValue, privacy: .public) forwarding-frame-capacity=\(frameCapacity, privacy: .public)"
+        )
 
         let session = MDKEncodedCaptureSession(configuration: configuration.mdkValue)
         let runtime = self
@@ -1068,10 +1075,6 @@ public actor ApolloBridgeRuntime {
             lastAppliedVideoRequestGeneration = request.videoGeneration
             if let configuration = request.videoConfiguration {
                 let frameCapacity = Self.recommendedCoreForwardingFrameCapacity(for: configuration)
-                configureCoreForwarding(
-                    frameCapacity: frameCapacity,
-                    eventCapacity: Self.automaticCoreForwardingEventCapacity
-                )
                 logger.notice(
                     "Applying ApolloCore macOS bridge capture request display-id=\(configuration.displayID, privacy: .public) codec=\(configuration.codec.rawValue, privacy: .public) queue=\(configuration.queueProfile.rawValue, privacy: .public) fps=\(configuration.targetFrameRate, privacy: .public) forwarding-frame-capacity=\(frameCapacity, privacy: .public)"
                 )
