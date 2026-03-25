@@ -1372,6 +1372,7 @@ public actor ApolloBridgeRuntime {
             "videoToolboxRecommendedParallelizationLimit=",
             "videoToolboxPixelBufferPoolIsShared=",
             "videoToolboxStagingMode=",
+            "videoToolboxStagedSourceReleaseMode=",
             "videoToolboxEncoderInputStrategy=",
             "videoToolboxColorConversionMode=",
             "videoToolboxDirectSubmissionFrameCount=",
