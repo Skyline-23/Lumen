@@ -364,7 +364,7 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         displayID: UInt32,
         codec: ApolloCaptureCodec = .hevc,
         preprocessStrategy: ApolloCapturePreprocessStrategy = .none,
-        queueProfile: ApolloCaptureQueueProfile = .q2,
+        queueProfile: ApolloCaptureQueueProfile = .auto,
         encoderInputStrategy: ApolloCaptureEncoderInputStrategy = .auto,
         showCursor: Bool = false,
         targetFrameRate: Int = 120,
@@ -857,6 +857,8 @@ private struct ApolloBridgeAutomationRequest: Equatable, Sendable {
 
     private static func queueProfile(from value: ApolloCoreCaptureQueueProfile) -> ApolloCaptureQueueProfile {
         switch value {
+        case ApolloCoreCaptureQueueProfileAuto:
+            return .auto
         case ApolloCoreCaptureQueueProfileQ1:
             return .q1
         case ApolloCoreCaptureQueueProfileQ3:

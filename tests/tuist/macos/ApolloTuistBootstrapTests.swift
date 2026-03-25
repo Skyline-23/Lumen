@@ -448,6 +448,7 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         XCTAssertFalse(initialSnapshot.audio_requested)
         XCTAssertEqual(initialSnapshot.codec, ApolloCoreCaptureCodecUnknown)
         XCTAssertEqual(initialSnapshot.audio_source_kind, ApolloCoreAudioCaptureSourceKindUnknown)
+        XCTAssertEqual(initialSnapshot.queue_profile, ApolloCoreCaptureQueueProfileAuto)
 
         DispatchQueue.global().asyncAfter(deadline: .now() + 0.05) {
             var hdrStaticMetadata = ApolloCoreHDRStaticMetadata()
@@ -468,7 +469,7 @@ final class ApolloTuistBootstrapTests: XCTestCase {
                 17,
                 ApolloCoreCaptureCodecHEVC,
                 ApolloCoreCapturePreprocessStrategyNone,
-                ApolloCoreCaptureQueueProfileQ2,
+                ApolloCoreCaptureQueueProfileAuto,
                 false,
                 120,
                 3840,
@@ -501,7 +502,7 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         XCTAssertTrue(updatedSnapshot.audio_requested)
         XCTAssertEqual(updatedSnapshot.display_id, 17)
         XCTAssertEqual(updatedSnapshot.codec, ApolloCoreCaptureCodecHEVC)
-        XCTAssertEqual(updatedSnapshot.queue_profile, ApolloCoreCaptureQueueProfileQ2)
+        XCTAssertEqual(updatedSnapshot.queue_profile, ApolloCoreCaptureQueueProfileAuto)
         XCTAssertEqual(updatedSnapshot.target_frame_rate, 120)
         XCTAssertEqual(updatedSnapshot.requested_width, 3840)
         XCTAssertEqual(updatedSnapshot.requested_height, 2160)
@@ -591,6 +592,50 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(snapshot.audioSampleRate, 48_000)
         XCTAssertEqual(snapshot.audioChannelCount, 2)
         XCTAssertEqual(snapshot.audioFrameSize, 480)
+    }
+
+    func testMirroredCaptureRequestSnapshotLoadsAutoQueueProfileFromPropertyList() throws {
+        let propertyList: [String: Any] = [
+            "generation": 12,
+            "videoGeneration": 12,
+            "audioGeneration": 12,
+            "videoRequested": true,
+            "audioRequested": false,
+            "displayID": 27,
+            "codec": 1,
+            "preprocessStrategy": 0,
+            "queueProfile": 4,
+            "showCursor": false,
+            "targetFrameRate": 120,
+            "requestedWidth": 3512,
+            "requestedHeight": 2290,
+            "dynamicRange": 1,
+            "clientDisplayGamut": 3,
+            "clientDisplayTransfer": 2,
+            "effectiveDisplayGamut": 3,
+            "effectiveDisplayTransfer": 2,
+            "audioSourceKind": 0,
+            "audioExcludesCurrentProcess": false,
+            "audioSampleRate": 48_000,
+            "audioChannelCount": 2,
+            "audioFrameSize": 480,
+        ]
+
+        let data = try PropertyListSerialization.data(
+            fromPropertyList: propertyList,
+            format: .binary,
+            options: 0
+        )
+        let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try data.write(to: url)
+        defer {
+            try? FileManager.default.removeItem(at: url)
+        }
+
+        let snapshot = try XCTUnwrap(ApolloBridgeMirroredCaptureRequestSnapshot.load(from: url))
+        XCTAssertEqual(snapshot.queueProfile, ApolloCoreCaptureQueueProfileAuto)
+        XCTAssertEqual(snapshot.clientDisplayGamut, 3)
+        XCTAssertEqual(snapshot.effectiveDisplayGamut, 3)
     }
 
     func testApolloCoreAudioCaptureIngressStoresPCMAndEvents() {

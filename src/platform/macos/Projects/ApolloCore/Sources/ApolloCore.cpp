@@ -219,7 +219,7 @@ struct ApolloCoreCaptureRequestState {
     snapshot.codec = ApolloCoreCaptureCodecUnknown;
     snapshot.audio_source_kind = ApolloCoreAudioCaptureSourceKindUnknown;
     snapshot.preprocess_strategy = ApolloCoreCapturePreprocessStrategyNone;
-    snapshot.queue_profile = ApolloCoreCaptureQueueProfileQ2;
+    snapshot.queue_profile = ApolloCoreCaptureQueueProfileAuto;
   }
 };
 
@@ -1148,7 +1148,7 @@ void ApolloCoreCaptureRequestClear(void) {
     state->snapshot.codec = ApolloCoreCaptureCodecUnknown;
     state->snapshot.audio_source_kind = ApolloCoreAudioCaptureSourceKindUnknown;
     state->snapshot.preprocess_strategy = ApolloCoreCapturePreprocessStrategyNone;
-    state->snapshot.queue_profile = ApolloCoreCaptureQueueProfileQ2;
+    state->snapshot.queue_profile = ApolloCoreCaptureQueueProfileAuto;
   }
   state->change_cv.notify_all();
 }
