@@ -5,9 +5,12 @@
 // standard includes
 #include <atomic>
 #include <chrono>
+#include <cstdio>
+#include <cstdarg>
 #include <cstdlib>
 #include <iostream>
 #include <thread>
+#include <vector>
 
 // platform includes
 #include <ApplicationServices/ApplicationServices.h>
@@ -50,12 +53,37 @@ namespace platf {
   };
 
   namespace {
+    constexpr int kKeyboardDiagnosticSampleLimit = 96;
+    constexpr int kUnicodeDiagnosticSampleLimit = 8;
+
+    std::atomic_int keyboard_diagnostic_budget {kKeyboardDiagnosticSampleLimit};
+    std::atomic_int unicode_diagnostic_budget {kUnicodeDiagnosticSampleLimit};
+
+    void append_keyboard_debug_file(const char *format, ...) {
+      auto *file = std::fopen("/tmp/apollo-keyboard-debug.log", "a");
+      if (file == nullptr) {
+        return;
+      }
+
+      va_list args;
+      va_start(args, format);
+      std::vfprintf(file, format, args);
+      va_end(args);
+      std::fputc('\n', file);
+      std::fclose(file);
+    }
+
     [[nodiscard]] auto current_output_name() {
       if (!proc::proc.display_name.empty()) {
         return proc::proc.display_name;
       }
 
-      return display_device::map_output_name(config::video.output_name);
+      const auto mapped_output_name = display_device::map_output_name(config::video.output_name);
+      if (!mapped_output_name.empty()) {
+        return mapped_output_name;
+      }
+
+      return std::to_string(CGMainDisplayID());
     }
 
     [[nodiscard]] bool ensure_accessibility_permission() {
@@ -73,18 +101,10 @@ namespace platf {
     }
 
     [[nodiscard]] bool refresh_display_context(macos_input_t *macos_input) {
-      static std::atomic_bool logged_empty_output_name {false};
       static std::atomic_bool logged_unparseable_output_name {false};
       static std::atomic_bool logged_missing_display {false};
 
       const auto output_name = current_output_name();
-      if (output_name.empty()) {
-        if (!logged_empty_output_name.exchange(true)) {
-          BOOST_LOG(warning) << "Unable to resolve macOS input target display because no active output is selected."sv;
-        }
-        return false;
-      }
-
       char *parse_end = nullptr;
       const auto requested_display = static_cast<CGDirectDisplayID>(std::strtoul(output_name.c_str(), &parse_end, 10));
       if (parse_end == output_name.c_str() || *parse_end != '\0') {
@@ -128,6 +148,22 @@ namespace platf {
       BOOST_LOG(debug) << "Updated macOS input target display to "sv << macos_input->display;
       return true;
     }
+
+    void log_keyboard_diagnostic(const char *stage, uint16_t raw_key, int translated_key, bool release, uint8_t flags, const char *path) {
+      auto remaining = keyboard_diagnostic_budget.fetch_sub(1);
+      if (remaining <= 0) {
+        return;
+      }
+
+      BOOST_LOG(info)
+        << "macOS keyboard "sv << stage
+        << " raw=0x"sv << std::hex << raw_key
+        << " translated=0x"sv << std::hex << translated_key
+        << " release="sv << std::dec << release
+        << " flags=0x"sv << std::hex << static_cast<int>(flags)
+        << " path="sv << path;
+    }
+
   }  // namespace
 
   // A struct to hold a Windows keycode to Mac virtual keycode mapping.
@@ -336,22 +372,24 @@ const KeyCodeMap kKeyCodesMap[] = {
       return;
     }
 
-    auto key = keysym(modcode);
-
-    BOOST_LOG(debug) << "got keycode: 0x"sv << std::hex << modcode << ", translated to: 0x" << std::hex << key << ", release:" << release;
+    const auto key = keysym(modcode);
+    log_keyboard_diagnostic("packet", modcode, key, release, flags, "preflight");
 
     if (key < 0) {
       return;
     }
 
     auto macos_input = ((macos_input_t *) input.get());
-    auto event = macos_input->kb_event;
-
+    auto event = CGEventCreateKeyboardEvent(macos_input->source, static_cast<CGKeyCode>(key), !release);
+    if (event == nullptr) {
+      BOOST_LOG(warning) << "Unable to create macOS keyboard event for keycode 0x"sv << std::hex << key;
+      return;
+    }
     if (key == kVK_Shift || key == kVK_RightShift ||
         key == kVK_Command || key == kVK_RightCommand ||
         key == kVK_Option || key == kVK_RightOption ||
         key == kVK_Control || key == kVK_RightControl) {
-      CGEventFlags mask;
+      CGEventFlags mask = 0;
 
       switch (key) {
         case kVK_Shift:
@@ -374,17 +412,93 @@ const KeyCodeMap kKeyCodesMap[] = {
 
       macos_input->kb_flags = release ? macos_input->kb_flags & ~mask : macos_input->kb_flags | mask;
       CGEventSetType(event, kCGEventFlagsChanged);
-      CGEventSetFlags(event, macos_input->kb_flags);
     } else {
-      CGEventSetIntegerValueField(event, kCGKeyboardEventKeycode, key);
       CGEventSetType(event, release ? kCGEventKeyUp : kCGEventKeyDown);
     }
 
+    CGEventSetFlags(event, macos_input->kb_flags);
     CGEventPost(kCGHIDEventTap, event);
+    log_keyboard_diagnostic("packet", modcode, key, release, flags, "hid");
+    auto remaining = keyboard_diagnostic_budget.fetch_sub(1);
+    if (remaining > 0) {
+      BOOST_LOG(info)
+        << "macOS keyboard event raw=0x"sv << std::hex << modcode
+        << " translated=0x"sv << std::hex << key
+        << " release="sv << std::dec << release
+        << " flags=0x"sv << std::hex << static_cast<int>(flags)
+        << " kb-flags=0x"sv << std::hex << static_cast<uint64_t>(macos_input->kb_flags)
+        << " event-flags=0x"sv << std::hex << static_cast<uint64_t>(CGEventGetFlags(event))
+        << " event-type="sv << std::dec << static_cast<int>(CGEventGetType(event));
+    }
+    append_keyboard_debug_file(
+      "platform raw=0x%02x translated=0x%02x release=%d flags=0x%02x kb_flags=0x%llx event_flags=0x%llx event_type=%d",
+      static_cast<unsigned int>(modcode),
+      static_cast<unsigned int>(key & 0x00FF),
+      release ? 1 : 0,
+      static_cast<unsigned int>(flags),
+      static_cast<unsigned long long>(macos_input->kb_flags),
+      static_cast<unsigned long long>(CGEventGetFlags(event)),
+      static_cast<int>(CGEventGetType(event))
+    );
+    CFRelease(event);
   }
 
   void unicode(input_t &input, char *utf8, int size) {
-    BOOST_LOG(info) << "unicode: Unicode input not yet implemented for MacOS."sv;
+    if (!ensure_accessibility_permission()) {
+      return;
+    }
+
+    if (utf8 == nullptr || size <= 0) {
+      return;
+    }
+
+    const auto string = CFStringCreateWithBytes(
+      kCFAllocatorDefault,
+      reinterpret_cast<const UInt8 *>(utf8),
+      size,
+      kCFStringEncodingUTF8,
+      false
+    );
+    if (string == nullptr) {
+      BOOST_LOG(warning) << "Unable to decode macOS unicode input payload as UTF-8."sv;
+      return;
+    }
+
+    const auto length = CFStringGetLength(string);
+    if (length <= 0) {
+      CFRelease(string);
+      return;
+    }
+
+    std::vector<UniChar> characters(static_cast<size_t>(length));
+    CFStringGetCharacters(string, CFRangeMake(0, length), characters.data());
+    CFRelease(string);
+
+    auto macos_input = static_cast<macos_input_t *>(input.get());
+    auto down_event = CGEventCreateKeyboardEvent(macos_input->source, 0, true);
+    auto up_event = CGEventCreateKeyboardEvent(macos_input->source, 0, false);
+    if (down_event == nullptr || up_event == nullptr) {
+      if (down_event != nullptr) {
+        CFRelease(down_event);
+      }
+      if (up_event != nullptr) {
+        CFRelease(up_event);
+      }
+      BOOST_LOG(warning) << "Unable to create macOS unicode keyboard events."sv;
+      return;
+    }
+
+    CGEventKeyboardSetUnicodeString(down_event, length, characters.data());
+    CGEventKeyboardSetUnicodeString(up_event, length, characters.data());
+    CGEventPost(kCGHIDEventTap, down_event);
+    CGEventPost(kCGHIDEventTap, up_event);
+    CFRelease(down_event);
+    CFRelease(up_event);
+
+    auto remaining = unicode_diagnostic_budget.fetch_sub(1);
+    if (remaining > 0) {
+      BOOST_LOG(info) << "Injected macOS unicode input bytes="sv << size << " utf16-length="sv << length;
+    }
   }
 
   int alloc_gamepad(input_t &input, const gamepad_id_t &id, const gamepad_arrival_t &metadata, feedback_queue_t feedback_queue) {
@@ -643,7 +757,6 @@ const KeyCodeMap kKeyCodesMap[] = {
     CFRelease(mode);
 
     macos_input->source = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
-
     macos_input->kb_event = CGEventCreate(macos_input->source);
     macos_input->kb_flags = 0;
 

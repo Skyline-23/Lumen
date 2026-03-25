@@ -9,9 +9,12 @@ extern "C" {
 }
 
 // standard includes
+#include <atomic>
 #include <bitset>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <cstdarg>
 #include <list>
 #include <thread>
 #include <unordered_map>
@@ -36,6 +39,23 @@ extern "C" {
 using namespace std::literals;
 
 namespace input {
+  namespace {
+    std::atomic_int keyboard_packet_diagnostic_budget {96};
+
+    void append_keyboard_debug_file(const char *format, ...) {
+      auto *file = std::fopen("/tmp/apollo-keyboard-debug.log", "a");
+      if (file == nullptr) {
+        return;
+      }
+
+      va_list args;
+      va_start(args, format);
+      std::vfprintf(file, format, args);
+      va_end(args);
+      std::fputc('\n', file);
+      std::fclose(file);
+    }
+  }
 
   constexpr auto MAX_GAMEPADS = std::min((std::size_t) platf::MAX_GAMEPADS, sizeof(std::int16_t) * 8);
 #define DISABLE_LEFT_BUTTON_DELAY ((thread_pool_util::ThreadPool::task_id_t) 0x01)
@@ -726,6 +746,29 @@ namespace input {
 
     auto release = util::endian::little(packet->header.magic) == KEY_UP_EVENT_MAGIC;
     auto keyCode = packet->keyCode & 0x00FF;
+    const auto mappedKeyCode = map_keycode(keyCode);
+
+    auto remaining = keyboard_packet_diagnostic_budget.fetch_sub(1);
+    if (remaining > 0) {
+      BOOST_LOG(info)
+        << "Apollo keyboard packet key=0x"sv << std::hex << keyCode
+        << " raw=0x"sv << std::hex << packet->keyCode
+        << " mapped=0x"sv << std::hex << mappedKeyCode
+        << " release="sv << std::dec << release
+        << " flags=0x"sv << std::hex << static_cast<int>(packet->flags)
+        << " modifiers=0x"sv << std::hex << static_cast<int>(packet->modifiers)
+        << " shortcut-flags-before=0x"sv << std::hex << input->shortcutFlags;
+    }
+    append_keyboard_debug_file(
+      "packet key=0x%02x raw=0x%04x mapped=0x%02x release=%d flags=0x%02x modifiers=0x%02x shortcut_before=0x%02x",
+      static_cast<unsigned int>(keyCode),
+      static_cast<unsigned int>(packet->keyCode),
+      static_cast<unsigned int>(mappedKeyCode & 0x00FF),
+      release ? 1 : 0,
+      static_cast<unsigned int>(packet->flags),
+      static_cast<unsigned int>(packet->modifiers),
+      static_cast<unsigned int>(input->shortcutFlags)
+    );
 
     // Set synthetic modifier flags if the keyboard packet is requesting modifier
     // keys that are not current pressed.
@@ -741,6 +784,23 @@ namespace input {
         synthetic_modifiers |= MODIFIER_ALT;
       }
     }
+
+    if (remaining > 0) {
+      BOOST_LOG(info)
+        << "Apollo keyboard resolve key=0x"sv << std::hex << keyCode
+        << " mapped=0x"sv << std::hex << mappedKeyCode
+        << " release="sv << std::dec << release
+        << " shortcut-flags=0x"sv << std::hex << input->shortcutFlags
+        << " synthetic-modifiers=0x"sv << std::hex << static_cast<int>(synthetic_modifiers);
+    }
+    append_keyboard_debug_file(
+      "resolve key=0x%02x mapped=0x%02x release=%d shortcut=0x%02x synthetic=0x%02x",
+      static_cast<unsigned int>(keyCode),
+      static_cast<unsigned int>(mappedKeyCode & 0x00FF),
+      release ? 1 : 0,
+      static_cast<unsigned int>(input->shortcutFlags),
+      static_cast<unsigned int>(synthetic_modifiers)
+    );
 
     auto &pressed = key_press[make_kpid(keyCode, packet->flags)];
     if (!pressed) {
@@ -771,7 +831,22 @@ namespace input {
 
     send_key_and_modifiers(keyCode, release, packet->flags, synthetic_modifiers);
 
-    update_shortcutFlags(&input->shortcutFlags, map_keycode(keyCode), release);
+    update_shortcutFlags(&input->shortcutFlags, mappedKeyCode, release);
+
+    if (remaining > 0) {
+      BOOST_LOG(info)
+        << "Apollo keyboard state key=0x"sv << std::hex << keyCode
+        << " mapped=0x"sv << std::hex << mappedKeyCode
+        << " release="sv << std::dec << release
+        << " shortcut-flags-after=0x"sv << std::hex << input->shortcutFlags;
+    }
+    append_keyboard_debug_file(
+      "state key=0x%02x mapped=0x%02x release=%d shortcut_after=0x%02x",
+      static_cast<unsigned int>(keyCode),
+      static_cast<unsigned int>(mappedKeyCode & 0x00FF),
+      release ? 1 : 0,
+      static_cast<unsigned int>(input->shortcutFlags)
+    );
   }
 
   /**
