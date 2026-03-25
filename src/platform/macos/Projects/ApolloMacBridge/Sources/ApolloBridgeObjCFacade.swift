@@ -14,6 +14,8 @@ public final class ApolloBridgeConfigurationBox: NSObject {
     public let enableHDR: Bool
     public let clientDisplayGamutRawValue: Int
     public let clientDisplayTransferRawValue: Int
+    public let effectiveDisplayGamutRawValue: Int
+    public let effectiveDisplayTransferRawValue: Int
 
     public init(
         displayID: UInt32,
@@ -26,7 +28,9 @@ public final class ApolloBridgeConfigurationBox: NSObject {
         requestedHeight: Int,
         enableHDR: Bool,
         clientDisplayGamutRawValue: Int,
-        clientDisplayTransferRawValue: Int
+        clientDisplayTransferRawValue: Int,
+        effectiveDisplayGamutRawValue: Int,
+        effectiveDisplayTransferRawValue: Int
     ) {
         self.displayID = displayID
         self.codecRawValue = codecRawValue
@@ -39,6 +43,8 @@ public final class ApolloBridgeConfigurationBox: NSObject {
         self.enableHDR = enableHDR
         self.clientDisplayGamutRawValue = clientDisplayGamutRawValue
         self.clientDisplayTransferRawValue = clientDisplayTransferRawValue
+        self.effectiveDisplayGamutRawValue = effectiveDisplayGamutRawValue
+        self.effectiveDisplayTransferRawValue = effectiveDisplayTransferRawValue
     }
 
     convenience init(configuration: ApolloMacDisplayKitCaptureConfiguration) {
@@ -53,7 +59,9 @@ public final class ApolloBridgeConfigurationBox: NSObject {
             requestedHeight: configuration.requestedHeight ?? 0,
             enableHDR: configuration.enableHDR,
             clientDisplayGamutRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.clientDisplayGamut),
-            clientDisplayTransferRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.clientDisplayTransfer)
+            clientDisplayTransferRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.clientDisplayTransfer),
+            effectiveDisplayGamutRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.effectiveDisplayGamut),
+            effectiveDisplayTransferRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.effectiveDisplayTransfer)
         )
     }
 
@@ -69,7 +77,9 @@ public final class ApolloBridgeConfigurationBox: NSObject {
             requestedHeight: requestedHeight,
             enableHDR: enableHDR,
             clientDisplayGamut: ApolloBridgeObjCFacade.clientDisplayGamut(fromRawValue: clientDisplayGamutRawValue),
-            clientDisplayTransfer: ApolloBridgeObjCFacade.clientDisplayTransfer(fromRawValue: clientDisplayTransferRawValue)
+            clientDisplayTransfer: ApolloBridgeObjCFacade.clientDisplayTransfer(fromRawValue: clientDisplayTransferRawValue),
+            effectiveDisplayGamut: ApolloBridgeObjCFacade.clientDisplayGamut(fromRawValue: effectiveDisplayGamutRawValue),
+            effectiveDisplayTransfer: ApolloBridgeObjCFacade.clientDisplayTransfer(fromRawValue: effectiveDisplayTransferRawValue)
         )
     }
 }

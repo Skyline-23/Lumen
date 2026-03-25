@@ -2145,6 +2145,12 @@ namespace stream {
       const auto requested_display_id = apollo_core_requested_display_id();
       const auto requested_codec = apollo_core_requested_codec(session.config.monitor.videoFormat);
       const auto requested_queue_profile = apollo_core_requested_queue_profile();
+      const auto effective_display_state = platf::resolve_capture_request_effective_display_state(
+        requested_display_id,
+        session.config.monitor.dynamicRange,
+        session.config.monitor.clientDisplayGamut,
+        session.config.monitor.clientDisplayTransfer
+      );
 
       BOOST_LOG(info) << "Publishing macOS bridge capture request displayID="sv
                       << requested_display_id
@@ -2156,7 +2162,11 @@ namespace stream {
                       << " client-gamut="sv
                       << apollo_core_client_display_gamut_name(session.config.monitor.clientDisplayGamut)
                       << " client-transfer="sv
-                      << apollo_core_client_display_transfer_name(session.config.monitor.clientDisplayTransfer);
+                      << apollo_core_client_display_transfer_name(session.config.monitor.clientDisplayTransfer)
+                      << " effective-gamut="sv
+                      << apollo_core_client_display_gamut_name(effective_display_state.gamut)
+                      << " effective-transfer="sv
+                      << apollo_core_client_display_transfer_name(effective_display_state.transfer);
 
       ApolloCoreCaptureRequestClear();
       ApolloCoreCaptureRequestPublishVideo(
@@ -2170,7 +2180,9 @@ namespace stream {
         session.config.monitor.height,
         session.config.monitor.dynamicRange,
         session.config.monitor.clientDisplayGamut,
-        session.config.monitor.clientDisplayTransfer
+        session.config.monitor.clientDisplayTransfer,
+        effective_display_state.gamut,
+        effective_display_state.transfer
       );
 
       if (config::audio.stream && !session.config.audio.input_only) {

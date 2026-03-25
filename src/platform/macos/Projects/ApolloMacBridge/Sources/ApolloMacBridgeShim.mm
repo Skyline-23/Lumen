@@ -127,6 +127,8 @@ namespace {
     result.enable_hdr = configuration.enableHDR;
     result.client_display_gamut = static_cast<int32_t>(configuration.clientDisplayGamutRawValue);
     result.client_display_transfer = static_cast<int32_t>(configuration.clientDisplayTransferRawValue);
+    result.effective_display_gamut = static_cast<int32_t>(configuration.effectiveDisplayGamutRawValue);
+    result.effective_display_transfer = static_cast<int32_t>(configuration.effectiveDisplayTransferRawValue);
     return result;
   }
 
@@ -144,7 +146,9 @@ namespace {
           requestedHeight:static_cast<NSInteger>(configuration.requested_height)
                 enableHDR:configuration.enable_hdr
  clientDisplayGamutRawValue:static_cast<NSInteger>(configuration.client_display_gamut)
-clientDisplayTransferRawValue:static_cast<NSInteger>(configuration.client_display_transfer)];
+clientDisplayTransferRawValue:static_cast<NSInteger>(configuration.client_display_transfer)
+effectiveDisplayGamutRawValue:static_cast<NSInteger>(configuration.effective_display_gamut)
+effectiveDisplayTransferRawValue:static_cast<NSInteger>(configuration.effective_display_transfer)];
   }
 
   ApolloMacBridgeAudioCaptureConfiguration to_audio_bridge_configuration(

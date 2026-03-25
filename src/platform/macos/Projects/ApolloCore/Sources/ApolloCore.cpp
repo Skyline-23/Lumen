@@ -1079,7 +1079,9 @@ void ApolloCoreCaptureRequestPublishVideo(
   int32_t requested_height,
   int32_t dynamic_range,
   int32_t client_display_gamut,
-  int32_t client_display_transfer
+  int32_t client_display_transfer,
+  int32_t effective_display_gamut,
+  int32_t effective_display_transfer
 ) {
   auto *state = shared_capture_request_state();
   {
@@ -1098,6 +1100,8 @@ void ApolloCoreCaptureRequestPublishVideo(
     state->snapshot.dynamic_range = std::max<int32_t>(dynamic_range, 0);
     state->snapshot.client_display_gamut = std::max<int32_t>(client_display_gamut, 0);
     state->snapshot.client_display_transfer = std::max<int32_t>(client_display_transfer, 0);
+    state->snapshot.effective_display_gamut = std::max<int32_t>(effective_display_gamut, 0);
+    state->snapshot.effective_display_transfer = std::max<int32_t>(effective_display_transfer, 0);
   }
   state->change_cv.notify_all();
 }

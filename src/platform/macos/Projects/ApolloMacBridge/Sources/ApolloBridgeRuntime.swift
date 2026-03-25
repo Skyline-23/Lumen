@@ -221,6 +221,8 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     public let enableHDR: Bool
     public let clientDisplayGamut: ApolloClientDisplayGamut
     public let clientDisplayTransfer: ApolloClientDisplayTransfer
+    public let effectiveDisplayGamut: ApolloClientDisplayGamut
+    public let effectiveDisplayTransfer: ApolloClientDisplayTransfer
 
     public init(
         displayID: UInt32,
@@ -234,7 +236,9 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         requestedHeight: Int? = nil,
         enableHDR: Bool = false,
         clientDisplayGamut: ApolloClientDisplayGamut = .unknown,
-        clientDisplayTransfer: ApolloClientDisplayTransfer = .unknown
+        clientDisplayTransfer: ApolloClientDisplayTransfer = .unknown,
+        effectiveDisplayGamut: ApolloClientDisplayGamut = .unknown,
+        effectiveDisplayTransfer: ApolloClientDisplayTransfer = .unknown
     ) {
         self.displayID = displayID
         self.codec = codec
@@ -248,6 +252,8 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         self.enableHDR = enableHDR
         self.clientDisplayGamut = clientDisplayGamut
         self.clientDisplayTransfer = clientDisplayTransfer
+        self.effectiveDisplayGamut = effectiveDisplayGamut
+        self.effectiveDisplayTransfer = effectiveDisplayTransfer
     }
 
     public static func panelNative(displayID: UInt32) -> Self {
@@ -261,6 +267,12 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
                 environmentValue: environment["APOLLO_CLIENT_DISPLAY_GAMUT"]
             ),
             clientDisplayTransfer: ApolloClientDisplayTransfer(
+                environmentValue: environment["APOLLO_CLIENT_DISPLAY_TRANSFER"]
+            ),
+            effectiveDisplayGamut: ApolloClientDisplayGamut(
+                environmentValue: environment["APOLLO_CLIENT_DISPLAY_GAMUT"]
+            ),
+            effectiveDisplayTransfer: ApolloClientDisplayTransfer(
                 environmentValue: environment["APOLLO_CLIENT_DISPLAY_TRANSFER"]
             )
         )
@@ -290,12 +302,12 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
 
     private var encodedColorConfiguration: MDKVideoHDRConfiguration? {
         if enableHDR, codec != .h264 {
-            let colorPrimaries = preferredHDRColorPrimaries
-            let yCbCrMatrix = preferredHDRYCbCrMatrix
-            let metadata = preferredHDRStaticMetadata
+            let colorPrimaries = resolvedHDRColorPrimaries
+            let yCbCrMatrix = resolvedHDRYCbCrMatrix
+            let metadata = resolvedHDRStaticMetadata
             return MDKVideoHDRConfiguration(
                 colorPrimaries: colorPrimaries,
-                transferFunction: preferredHDRTransferFunction,
+                transferFunction: resolvedHDRTransferFunction,
                 yCbCrMatrix: yCbCrMatrix,
                 metadataInsertionMode: .automatic,
                 masteringDisplayColorVolume: metadata.masteringDisplayColorVolume,
@@ -303,7 +315,7 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
             )
         }
 
-        switch clientDisplayGamut {
+        switch resolvedDisplayGamut {
         case .displayP3:
             return MDKVideoHDRConfiguration(
                 colorPrimaries: .p3D65,
@@ -328,8 +340,16 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         }
     }
 
-    private var preferredHDRTransferFunction: MDKVideoTransferFunction {
-        switch clientDisplayTransfer {
+    private var resolvedDisplayGamut: ApolloClientDisplayGamut {
+        effectiveDisplayGamut == .unknown ? clientDisplayGamut : effectiveDisplayGamut
+    }
+
+    private var resolvedDisplayTransfer: ApolloClientDisplayTransfer {
+        effectiveDisplayTransfer == .unknown ? clientDisplayTransfer : effectiveDisplayTransfer
+    }
+
+    private var resolvedHDRTransferFunction: MDKVideoTransferFunction {
+        switch resolvedDisplayTransfer {
         case .hlg:
             return .ituR2100HLG
         case .sdr:
@@ -339,8 +359,8 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         }
     }
 
-    private var preferredHDRColorPrimaries: MDKVideoColorPrimaries {
-        switch clientDisplayGamut {
+    private var resolvedHDRColorPrimaries: MDKVideoColorPrimaries {
+        switch resolvedDisplayGamut {
         case .displayP3:
             return .p3D65
         case .rec2020:
@@ -350,8 +370,8 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         }
     }
 
-    private var preferredHDRYCbCrMatrix: MDKVideoYCbCrMatrix {
-        switch preferredHDRColorPrimaries {
+    private var resolvedHDRYCbCrMatrix: MDKVideoYCbCrMatrix {
+        switch resolvedHDRColorPrimaries {
         case .ituR2020:
             return .ituR2020
         case .p3D65, .ituR709:
@@ -359,15 +379,15 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         }
     }
 
-    private var preferredHDRStaticMetadata: (
+    private var resolvedHDRStaticMetadata: (
         masteringDisplayColorVolume: MDKVideoMasteringDisplayColorVolume?,
         contentLightLevelInfo: MDKVideoContentLightLevelInfo?
     ) {
-        switch preferredHDRTransferFunction {
+        switch resolvedHDRTransferFunction {
         case .ituR2100HLG:
             return (nil, nil)
         case .smpteSt2084PQ:
-            switch preferredHDRColorPrimaries {
+            switch resolvedHDRColorPrimaries {
             case .p3D65:
                 return (Self.hdrP3MasteringDisplayColorVolume, Self.hdrP3ContentLightLevelInfo)
             case .ituR2020:
@@ -415,9 +435,12 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
 
     private static let hdrP3ContentLightLevelInfo = MDKVideoContentLightLevelInfo(
         maximumContentLightLevel: 1000,
-        maximumFrameAverageLightLevel: 400
+                maximumFrameAverageLightLevel: 400
     )
 
+    var hdrConfigurationDebugSummary: String {
+        "hdr=\(enableHDR) client-gamut=\(clientDisplayGamut.rawValue) client-transfer=\(clientDisplayTransfer.rawValue) effective-gamut=\(resolvedDisplayGamut.rawValue) effective-transfer=\(resolvedDisplayTransfer.rawValue)"
+    }
 }
 
 public struct ApolloBridgeEncodedFrameSnapshot: Equatable, Sendable {
@@ -630,7 +653,9 @@ private struct ApolloBridgeAutomationRequest: Equatable, Sendable {
                 requestedHeight: Int(snapshot.requested_height),
                 enableHDR: snapshot.dynamic_range > 0,
                 clientDisplayGamut: ApolloBridgeAutomationRequest.clientDisplayGamut(from: snapshot.client_display_gamut),
-                clientDisplayTransfer: ApolloBridgeAutomationRequest.clientDisplayTransfer(from: snapshot.client_display_transfer)
+                clientDisplayTransfer: ApolloBridgeAutomationRequest.clientDisplayTransfer(from: snapshot.client_display_transfer),
+                effectiveDisplayGamut: ApolloBridgeAutomationRequest.clientDisplayGamut(from: snapshot.effective_display_gamut),
+                effectiveDisplayTransfer: ApolloBridgeAutomationRequest.clientDisplayTransfer(from: snapshot.effective_display_transfer)
             )
         } else {
             videoConfiguration = nil
@@ -792,6 +817,8 @@ public actor ApolloBridgeRuntime {
         lastEncodedFrameDiagnosticsUptimeNanoseconds = 0
         lastEncodedFrameSourceSequenceNumber = nil
         lastEncodedFrameSourceDisplayTime = nil
+
+        logger.notice("Starting MacDisplayKit capture \(configuration.hdrConfigurationDebugSummary, privacy: .public)")
 
         let session = MDKEncodedCaptureSession(configuration: configuration.mdkValue)
         let runtime = self

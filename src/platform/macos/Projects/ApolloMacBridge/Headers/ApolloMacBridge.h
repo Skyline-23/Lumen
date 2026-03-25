@@ -34,6 +34,8 @@ typedef struct ApolloMacBridgeCaptureConfiguration {
   bool enable_hdr;
   int32_t client_display_gamut;
   int32_t client_display_transfer;
+  int32_t effective_display_gamut;
+  int32_t effective_display_transfer;
 } ApolloMacBridgeCaptureConfiguration;
 
 typedef enum ApolloMacBridgeAudioSourceKind {

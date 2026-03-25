@@ -22,6 +22,8 @@ struct ApolloBridgeMirroredCaptureRequestSnapshot: Equatable, Sendable {
     let dynamicRange: Int32
     let clientDisplayGamut: Int32
     let clientDisplayTransfer: Int32
+    let effectiveDisplayGamut: Int32
+    let effectiveDisplayTransfer: Int32
     let audioSourceKind: ApolloCoreAudioCaptureSourceKind
     let audioExcludesCurrentProcess: Bool
     let audioSampleRate: Int32
@@ -77,6 +79,8 @@ struct ApolloBridgeMirroredCaptureRequestSnapshot: Equatable, Sendable {
         self.dynamicRange = dynamicRange
         self.clientDisplayGamut = Self.number(dictionary["clientDisplayGamut"])?.int32Value ?? 0
         self.clientDisplayTransfer = Self.number(dictionary["clientDisplayTransfer"])?.int32Value ?? 0
+        self.effectiveDisplayGamut = Self.number(dictionary["effectiveDisplayGamut"])?.int32Value ?? 0
+        self.effectiveDisplayTransfer = Self.number(dictionary["effectiveDisplayTransfer"])?.int32Value ?? 0
         self.audioSourceKind = audioSourceKind
         self.audioExcludesCurrentProcess = audioExcludesCurrentProcess
         self.audioSampleRate = audioSampleRate
@@ -153,7 +157,9 @@ actor ApolloCaptureRequestMirrorCoordinator {
                     mirroredSnapshot.requestedHeight,
                     mirroredSnapshot.dynamicRange,
                     mirroredSnapshot.clientDisplayGamut,
-                    mirroredSnapshot.clientDisplayTransfer
+                    mirroredSnapshot.clientDisplayTransfer,
+                    mirroredSnapshot.effectiveDisplayGamut,
+                    mirroredSnapshot.effectiveDisplayTransfer
                 )
             }
 
