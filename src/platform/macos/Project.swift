@@ -10,6 +10,9 @@ let baseSettings: SettingsDictionary = [
     "SWIFT_VERSION": "5.0"
 ]
 
+let macDisplayKitURL = "https://github.com/Skyline-23/MacDisplayKit.git"
+let macDisplayKitRevision = "d05e6484950aa17eb30c21b7dab5e5a549ef4e5b"
+
 let repoRoot = "$(SRCROOT)/../../.."
 let buildDepsRoot = "\(repoRoot)/third-party/build-deps/dist/Darwin-arm64"
 
@@ -215,7 +218,7 @@ let appAssetsScript = TargetScript.post(
 let project = Project(
     name: "Apollo",
     packages: [
-        .package(url: "https://github.com/Skyline-23/MacDisplayKit", from: "0.2.0")
+        .package(url: macDisplayKitURL, .revision(macDisplayKitRevision))
     ],
     settings: .settings(base: baseSettings),
     targets: [
@@ -332,6 +335,7 @@ let project = Project(
             infoPlist: .extendingDefault(
                 with: [
                     "CFBundleDisplayName": "Apollo Companion",
+                    "CFBundleIconFile": "apollo.icns",
                     "LSMinimumSystemVersion": "13.0",
                     "INFOPLIST_KEY_NSHighResolutionCapable": "YES",
                     "LSUIElement": "YES",
@@ -344,6 +348,13 @@ let project = Project(
             ),
             sources: [
                 "Projects/ApolloApp/Sources/**/*.swift"
+            ],
+            resources: [
+                "../../../apollo.icns",
+                "../../../src_assets/common/assets/web/public/images/logo-apollo-16.png",
+                "../../../src_assets/common/assets/web/public/images/apollo-playing-16.png",
+                "../../../src_assets/common/assets/web/public/images/apollo-pausing-16.png",
+                "../../../src_assets/common/assets/web/public/images/apollo-locked-16.png"
             ],
             scripts: [appAssetsScript],
             dependencies: [

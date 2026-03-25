@@ -110,7 +110,29 @@ final class ApolloCaptureController: ObservableObject {
     }
 
     var menuBarImageName: String {
-        menuStatus.captureSessionRunning ? "dot.radiowaves.left.and.right" : "bolt.horizontal.circle"
+        if menuStatus.captureSessionRunning {
+            return "apollo-playing-16"
+        }
+
+        if menuStatus.hostedApolloRuntimeRunning {
+            return "apollo-pausing-16"
+        }
+
+        return "apollo-locked-16"
+    }
+
+    var menuBarImage: NSImage {
+        if let image = loadMenuBarImage(named: menuBarImageName) {
+            return image
+        }
+
+        if let fallbackImage = makeFallbackMenuBarImage() {
+            return fallbackImage
+        }
+
+        let image = NSImage(size: NSSize(width: 18, height: 18))
+        image.isTemplate = true
+        return image
     }
 
     func refreshStatus() {
@@ -142,6 +164,42 @@ final class ApolloCaptureController: ObservableObject {
                 self.refreshStatus()
             }
         }
+    }
+
+    private func loadMenuBarImage(named name: String) -> NSImage? {
+        for resourceName in [name, "logo-apollo-16"] {
+            guard let url = Bundle.main.url(forResource: resourceName, withExtension: "png"),
+                  let image = NSImage(contentsOf: url) else {
+                continue
+            }
+
+            image.size = NSSize(width: 18, height: 18)
+            image.isTemplate = true
+            return image
+        }
+
+        return nil
+    }
+
+    private func makeFallbackMenuBarImage() -> NSImage? {
+        let symbolName: String
+        if menuStatus.captureSessionRunning {
+            symbolName = "dot.radiowaves.left.and.right"
+        } else if menuStatus.hostedApolloRuntimeRunning {
+            symbolName = "pause.circle"
+        } else {
+            symbolName = "lock.circle"
+        }
+
+        let configuration = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
+        guard let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Apollo")?
+            .withSymbolConfiguration(configuration) else {
+            return nil
+        }
+
+        image.size = NSSize(width: 18, height: 18)
+        image.isTemplate = true
+        return image
     }
 
     var openWebTitle: String {

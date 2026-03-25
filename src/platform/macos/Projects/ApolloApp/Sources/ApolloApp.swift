@@ -48,11 +48,16 @@ struct ApolloApp: App {
     }
 
     var body: some Scene {
-        MenuBarExtra("Apollo", systemImage: captureController.menuBarImageName) {
+        MenuBarExtra {
             ApolloRootView(captureController: captureController)
                 .task {
                     appDelegate.captureController = captureController
                 }
+        } label: {
+            Image(nsImage: captureController.menuBarImage)
+                .renderingMode(.template)
+                .frame(width: 18, height: 18)
+                .help("Apollo")
         }
         .menuBarExtraStyle(.menu)
     }

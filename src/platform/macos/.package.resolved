@@ -1,0 +1,14 @@
+{
+  "originHash" : "1495c3a977ddab009c26c14832a9c46e7c7925a5856123040a1f8c5009132da4",
+  "pins" : [
+    {
+      "identity" : "macdisplaykit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/Skyline-23/MacDisplayKit.git",
+      "state" : {
+        "revision" : "d05e6484950aa17eb30c21b7dab5e5a549ef4e5b"
+      }
+    }
+  ],
+  "version" : 3
+}
