@@ -117,6 +117,116 @@ public enum ApolloClientDisplayTransfer: String, CaseIterable, Codable, Sendable
     }
 }
 
+public struct ApolloHDRStaticMetadata: Equatable, Sendable {
+    public let redPrimaryX: Int
+    public let redPrimaryY: Int
+    public let greenPrimaryX: Int
+    public let greenPrimaryY: Int
+    public let bluePrimaryX: Int
+    public let bluePrimaryY: Int
+    public let whitePointX: Int
+    public let whitePointY: Int
+    public let maxDisplayLuminance: Int
+    public let minDisplayLuminance: Int
+    public let maxContentLightLevel: Int
+    public let maxFrameAverageLightLevel: Int
+    public let maxFullFrameLuminance: Int
+
+    public init(
+        redPrimaryX: Int,
+        redPrimaryY: Int,
+        greenPrimaryX: Int,
+        greenPrimaryY: Int,
+        bluePrimaryX: Int,
+        bluePrimaryY: Int,
+        whitePointX: Int,
+        whitePointY: Int,
+        maxDisplayLuminance: Int,
+        minDisplayLuminance: Int,
+        maxContentLightLevel: Int,
+        maxFrameAverageLightLevel: Int,
+        maxFullFrameLuminance: Int
+    ) {
+        self.redPrimaryX = redPrimaryX
+        self.redPrimaryY = redPrimaryY
+        self.greenPrimaryX = greenPrimaryX
+        self.greenPrimaryY = greenPrimaryY
+        self.bluePrimaryX = bluePrimaryX
+        self.bluePrimaryY = bluePrimaryY
+        self.whitePointX = whitePointX
+        self.whitePointY = whitePointY
+        self.maxDisplayLuminance = maxDisplayLuminance
+        self.minDisplayLuminance = minDisplayLuminance
+        self.maxContentLightLevel = maxContentLightLevel
+        self.maxFrameAverageLightLevel = maxFrameAverageLightLevel
+        self.maxFullFrameLuminance = maxFullFrameLuminance
+    }
+
+    init(coreValue: ApolloCoreHDRStaticMetadata) {
+        self.init(
+            redPrimaryX: Int(coreValue.red_primary_x),
+            redPrimaryY: Int(coreValue.red_primary_y),
+            greenPrimaryX: Int(coreValue.green_primary_x),
+            greenPrimaryY: Int(coreValue.green_primary_y),
+            bluePrimaryX: Int(coreValue.blue_primary_x),
+            bluePrimaryY: Int(coreValue.blue_primary_y),
+            whitePointX: Int(coreValue.white_point_x),
+            whitePointY: Int(coreValue.white_point_y),
+            maxDisplayLuminance: Int(coreValue.max_display_luminance),
+            minDisplayLuminance: Int(coreValue.min_display_luminance),
+            maxContentLightLevel: Int(coreValue.max_content_light_level),
+            maxFrameAverageLightLevel: Int(coreValue.max_frame_average_light_level),
+            maxFullFrameLuminance: Int(coreValue.max_full_frame_luminance)
+        )
+    }
+
+    var coreValue: ApolloCoreHDRStaticMetadata {
+        var metadata = ApolloCoreHDRStaticMetadata()
+        metadata.red_primary_x = Int32(redPrimaryX)
+        metadata.red_primary_y = Int32(redPrimaryY)
+        metadata.green_primary_x = Int32(greenPrimaryX)
+        metadata.green_primary_y = Int32(greenPrimaryY)
+        metadata.blue_primary_x = Int32(bluePrimaryX)
+        metadata.blue_primary_y = Int32(bluePrimaryY)
+        metadata.white_point_x = Int32(whitePointX)
+        metadata.white_point_y = Int32(whitePointY)
+        metadata.max_display_luminance = Int32(maxDisplayLuminance)
+        metadata.min_display_luminance = Int32(minDisplayLuminance)
+        metadata.max_content_light_level = Int32(maxContentLightLevel)
+        metadata.max_frame_average_light_level = Int32(maxFrameAverageLightLevel)
+        metadata.max_full_frame_luminance = Int32(maxFullFrameLuminance)
+        return metadata
+    }
+
+    var masteringDisplayColorVolume: MDKVideoMasteringDisplayColorVolume {
+        MDKVideoMasteringDisplayColorVolume(
+            redPrimary: Self.chromaticityPoint(x: redPrimaryX, y: redPrimaryY),
+            greenPrimary: Self.chromaticityPoint(x: greenPrimaryX, y: greenPrimaryY),
+            bluePrimary: Self.chromaticityPoint(x: bluePrimaryX, y: bluePrimaryY),
+            whitePoint: Self.chromaticityPoint(x: whitePointX, y: whitePointY),
+            maxLuminance: Double(maxDisplayLuminance),
+            minLuminance: Double(minDisplayLuminance) / 10_000.0
+        )
+    }
+
+    var contentLightLevelInfo: MDKVideoContentLightLevelInfo? {
+        guard maxContentLightLevel > 0 || maxFrameAverageLightLevel > 0 else {
+            return nil
+        }
+        return MDKVideoContentLightLevelInfo(
+            maximumContentLightLevel: UInt16(clamping: maxContentLightLevel),
+            maximumFrameAverageLightLevel: UInt16(clamping: maxFrameAverageLightLevel)
+        )
+    }
+
+    private static func chromaticityPoint(x: Int, y: Int) -> MDKVideoChromaticityPoint {
+        MDKVideoChromaticityPoint(
+            x: Double(x) / 50_000.0,
+            y: Double(y) / 50_000.0
+        )
+    }
+}
+
 enum ApolloBridgeConfigurationPreferences {
     static let configurationFileURL: URL = {
         FileManager.default.homeDirectoryForCurrentUser
@@ -223,6 +333,7 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     public let clientDisplayTransfer: ApolloClientDisplayTransfer
     public let effectiveDisplayGamut: ApolloClientDisplayGamut
     public let effectiveDisplayTransfer: ApolloClientDisplayTransfer
+    public let hdrStaticMetadata: ApolloHDRStaticMetadata?
 
     public init(
         displayID: UInt32,
@@ -238,7 +349,8 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         clientDisplayGamut: ApolloClientDisplayGamut = .unknown,
         clientDisplayTransfer: ApolloClientDisplayTransfer = .unknown,
         effectiveDisplayGamut: ApolloClientDisplayGamut = .unknown,
-        effectiveDisplayTransfer: ApolloClientDisplayTransfer = .unknown
+        effectiveDisplayTransfer: ApolloClientDisplayTransfer = .unknown,
+        hdrStaticMetadata: ApolloHDRStaticMetadata? = nil
     ) {
         self.displayID = displayID
         self.codec = codec
@@ -254,6 +366,7 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         self.clientDisplayTransfer = clientDisplayTransfer
         self.effectiveDisplayGamut = effectiveDisplayGamut
         self.effectiveDisplayTransfer = effectiveDisplayTransfer
+        self.hdrStaticMetadata = hdrStaticMetadata
     }
 
     public static func panelNative(displayID: UInt32) -> Self {
@@ -383,6 +496,13 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         masteringDisplayColorVolume: MDKVideoMasteringDisplayColorVolume?,
         contentLightLevelInfo: MDKVideoContentLightLevelInfo?
     ) {
+        if let hdrStaticMetadata {
+            return (
+                hdrStaticMetadata.masteringDisplayColorVolume,
+                hdrStaticMetadata.contentLightLevelInfo
+            )
+        }
+
         switch resolvedHDRTransferFunction {
         case .ituR2100HLG:
             return (nil, nil)
@@ -439,7 +559,7 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     )
 
     var hdrConfigurationDebugSummary: String {
-        "hdr=\(enableHDR) client-gamut=\(clientDisplayGamut.rawValue) client-transfer=\(clientDisplayTransfer.rawValue) effective-gamut=\(resolvedDisplayGamut.rawValue) effective-transfer=\(resolvedDisplayTransfer.rawValue)"
+        "hdr=\(enableHDR) client-gamut=\(clientDisplayGamut.rawValue) client-transfer=\(clientDisplayTransfer.rawValue) effective-gamut=\(resolvedDisplayGamut.rawValue) effective-transfer=\(resolvedDisplayTransfer.rawValue) negotiated-static-metadata=\(hdrStaticMetadata != nil)"
     }
 }
 
@@ -655,7 +775,10 @@ private struct ApolloBridgeAutomationRequest: Equatable, Sendable {
                 clientDisplayGamut: ApolloBridgeAutomationRequest.clientDisplayGamut(from: snapshot.client_display_gamut),
                 clientDisplayTransfer: ApolloBridgeAutomationRequest.clientDisplayTransfer(from: snapshot.client_display_transfer),
                 effectiveDisplayGamut: ApolloBridgeAutomationRequest.clientDisplayGamut(from: snapshot.effective_display_gamut),
-                effectiveDisplayTransfer: ApolloBridgeAutomationRequest.clientDisplayTransfer(from: snapshot.effective_display_transfer)
+                effectiveDisplayTransfer: ApolloBridgeAutomationRequest.clientDisplayTransfer(from: snapshot.effective_display_transfer),
+                hdrStaticMetadata: snapshot.has_effective_hdr_metadata ?
+                    ApolloHDRStaticMetadata(coreValue: snapshot.effective_hdr_metadata) :
+                    nil
             )
         } else {
             videoConfiguration = nil

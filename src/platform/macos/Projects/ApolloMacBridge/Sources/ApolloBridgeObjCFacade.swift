@@ -1,3 +1,4 @@
+import ApolloCore
 import CoreMedia
 import Foundation
 
@@ -16,6 +17,20 @@ public final class ApolloBridgeConfigurationBox: NSObject {
     public let clientDisplayTransferRawValue: Int
     public let effectiveDisplayGamutRawValue: Int
     public let effectiveDisplayTransferRawValue: Int
+    public let hasHDRStaticMetadata: Bool
+    public let hdrRedPrimaryX: Int
+    public let hdrRedPrimaryY: Int
+    public let hdrGreenPrimaryX: Int
+    public let hdrGreenPrimaryY: Int
+    public let hdrBluePrimaryX: Int
+    public let hdrBluePrimaryY: Int
+    public let hdrWhitePointX: Int
+    public let hdrWhitePointY: Int
+    public let hdrMaxDisplayLuminance: Int
+    public let hdrMinDisplayLuminance: Int
+    public let hdrMaxContentLightLevel: Int
+    public let hdrMaxFrameAverageLightLevel: Int
+    public let hdrMaxFullFrameLuminance: Int
 
     public init(
         displayID: UInt32,
@@ -30,7 +45,21 @@ public final class ApolloBridgeConfigurationBox: NSObject {
         clientDisplayGamutRawValue: Int,
         clientDisplayTransferRawValue: Int,
         effectiveDisplayGamutRawValue: Int,
-        effectiveDisplayTransferRawValue: Int
+        effectiveDisplayTransferRawValue: Int,
+        hasHDRStaticMetadata: Bool,
+        hdrRedPrimaryX: Int,
+        hdrRedPrimaryY: Int,
+        hdrGreenPrimaryX: Int,
+        hdrGreenPrimaryY: Int,
+        hdrBluePrimaryX: Int,
+        hdrBluePrimaryY: Int,
+        hdrWhitePointX: Int,
+        hdrWhitePointY: Int,
+        hdrMaxDisplayLuminance: Int,
+        hdrMinDisplayLuminance: Int,
+        hdrMaxContentLightLevel: Int,
+        hdrMaxFrameAverageLightLevel: Int,
+        hdrMaxFullFrameLuminance: Int
     ) {
         self.displayID = displayID
         self.codecRawValue = codecRawValue
@@ -45,9 +74,24 @@ public final class ApolloBridgeConfigurationBox: NSObject {
         self.clientDisplayTransferRawValue = clientDisplayTransferRawValue
         self.effectiveDisplayGamutRawValue = effectiveDisplayGamutRawValue
         self.effectiveDisplayTransferRawValue = effectiveDisplayTransferRawValue
+        self.hasHDRStaticMetadata = hasHDRStaticMetadata
+        self.hdrRedPrimaryX = hdrRedPrimaryX
+        self.hdrRedPrimaryY = hdrRedPrimaryY
+        self.hdrGreenPrimaryX = hdrGreenPrimaryX
+        self.hdrGreenPrimaryY = hdrGreenPrimaryY
+        self.hdrBluePrimaryX = hdrBluePrimaryX
+        self.hdrBluePrimaryY = hdrBluePrimaryY
+        self.hdrWhitePointX = hdrWhitePointX
+        self.hdrWhitePointY = hdrWhitePointY
+        self.hdrMaxDisplayLuminance = hdrMaxDisplayLuminance
+        self.hdrMinDisplayLuminance = hdrMinDisplayLuminance
+        self.hdrMaxContentLightLevel = hdrMaxContentLightLevel
+        self.hdrMaxFrameAverageLightLevel = hdrMaxFrameAverageLightLevel
+        self.hdrMaxFullFrameLuminance = hdrMaxFullFrameLuminance
     }
 
     convenience init(configuration: ApolloMacDisplayKitCaptureConfiguration) {
+        let hdrStaticMetadata = configuration.hdrStaticMetadata
         self.init(
             displayID: configuration.displayID,
             codecRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.codec),
@@ -61,12 +105,41 @@ public final class ApolloBridgeConfigurationBox: NSObject {
             clientDisplayGamutRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.clientDisplayGamut),
             clientDisplayTransferRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.clientDisplayTransfer),
             effectiveDisplayGamutRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.effectiveDisplayGamut),
-            effectiveDisplayTransferRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.effectiveDisplayTransfer)
+            effectiveDisplayTransferRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.effectiveDisplayTransfer),
+            hasHDRStaticMetadata: hdrStaticMetadata != nil,
+            hdrRedPrimaryX: hdrStaticMetadata?.redPrimaryX ?? 0,
+            hdrRedPrimaryY: hdrStaticMetadata?.redPrimaryY ?? 0,
+            hdrGreenPrimaryX: hdrStaticMetadata?.greenPrimaryX ?? 0,
+            hdrGreenPrimaryY: hdrStaticMetadata?.greenPrimaryY ?? 0,
+            hdrBluePrimaryX: hdrStaticMetadata?.bluePrimaryX ?? 0,
+            hdrBluePrimaryY: hdrStaticMetadata?.bluePrimaryY ?? 0,
+            hdrWhitePointX: hdrStaticMetadata?.whitePointX ?? 0,
+            hdrWhitePointY: hdrStaticMetadata?.whitePointY ?? 0,
+            hdrMaxDisplayLuminance: hdrStaticMetadata?.maxDisplayLuminance ?? 0,
+            hdrMinDisplayLuminance: hdrStaticMetadata?.minDisplayLuminance ?? 0,
+            hdrMaxContentLightLevel: hdrStaticMetadata?.maxContentLightLevel ?? 0,
+            hdrMaxFrameAverageLightLevel: hdrStaticMetadata?.maxFrameAverageLightLevel ?? 0,
+            hdrMaxFullFrameLuminance: hdrStaticMetadata?.maxFullFrameLuminance ?? 0
         )
     }
 
     var swiftValue: ApolloMacDisplayKitCaptureConfiguration {
-        ApolloMacDisplayKitCaptureConfiguration(
+        let hdrStaticMetadata = hasHDRStaticMetadata ? ApolloHDRStaticMetadata(
+            redPrimaryX: hdrRedPrimaryX,
+            redPrimaryY: hdrRedPrimaryY,
+            greenPrimaryX: hdrGreenPrimaryX,
+            greenPrimaryY: hdrGreenPrimaryY,
+            bluePrimaryX: hdrBluePrimaryX,
+            bluePrimaryY: hdrBluePrimaryY,
+            whitePointX: hdrWhitePointX,
+            whitePointY: hdrWhitePointY,
+            maxDisplayLuminance: hdrMaxDisplayLuminance,
+            minDisplayLuminance: hdrMinDisplayLuminance,
+            maxContentLightLevel: hdrMaxContentLightLevel,
+            maxFrameAverageLightLevel: hdrMaxFrameAverageLightLevel,
+            maxFullFrameLuminance: hdrMaxFullFrameLuminance
+        ) : nil
+        return ApolloMacDisplayKitCaptureConfiguration(
             displayID: displayID,
             codec: ApolloBridgeObjCFacade.codec(fromRawValue: codecRawValue),
             preprocessStrategy: ApolloBridgeObjCFacade.preprocessStrategy(fromRawValue: preprocessStrategyRawValue),
@@ -79,7 +152,8 @@ public final class ApolloBridgeConfigurationBox: NSObject {
             clientDisplayGamut: ApolloBridgeObjCFacade.clientDisplayGamut(fromRawValue: clientDisplayGamutRawValue),
             clientDisplayTransfer: ApolloBridgeObjCFacade.clientDisplayTransfer(fromRawValue: clientDisplayTransferRawValue),
             effectiveDisplayGamut: ApolloBridgeObjCFacade.clientDisplayGamut(fromRawValue: effectiveDisplayGamutRawValue),
-            effectiveDisplayTransfer: ApolloBridgeObjCFacade.clientDisplayTransfer(fromRawValue: effectiveDisplayTransferRawValue)
+            effectiveDisplayTransfer: ApolloBridgeObjCFacade.clientDisplayTransfer(fromRawValue: effectiveDisplayTransferRawValue),
+            hdrStaticMetadata: hdrStaticMetadata
         )
     }
 }

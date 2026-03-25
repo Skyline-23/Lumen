@@ -180,6 +180,20 @@ namespace platf {
         @"clientDisplayTransfer": @(state.client_display_transfer),
         @"effectiveDisplayGamut": @(state.effective_display_gamut),
         @"effectiveDisplayTransfer": @(state.effective_display_transfer),
+        @"hasEffectiveHDRMetadata": @(state.has_effective_hdr_metadata),
+        @"effectiveHDRRedPrimaryX": @(state.effective_hdr_red_primary_x),
+        @"effectiveHDRRedPrimaryY": @(state.effective_hdr_red_primary_y),
+        @"effectiveHDRGreenPrimaryX": @(state.effective_hdr_green_primary_x),
+        @"effectiveHDRGreenPrimaryY": @(state.effective_hdr_green_primary_y),
+        @"effectiveHDRBluePrimaryX": @(state.effective_hdr_blue_primary_x),
+        @"effectiveHDRBluePrimaryY": @(state.effective_hdr_blue_primary_y),
+        @"effectiveHDRWhitePointX": @(state.effective_hdr_white_point_x),
+        @"effectiveHDRWhitePointY": @(state.effective_hdr_white_point_y),
+        @"effectiveHDRMaxDisplayLuminance": @(state.effective_hdr_max_display_luminance),
+        @"effectiveHDRMinDisplayLuminance": @(state.effective_hdr_min_display_luminance),
+        @"effectiveHDRMaxContentLightLevel": @(state.effective_hdr_max_content_light_level),
+        @"effectiveHDRMaxFrameAverageLightLevel": @(state.effective_hdr_max_frame_average_light_level),
+        @"effectiveHDRMaxFullFrameLuminance": @(state.effective_hdr_max_full_frame_luminance),
         @"audioSourceKind": @(state.audio_source_kind),
         @"audioExcludesCurrentProcess": @(state.audio_excludes_current_process),
         @"audioSampleRate": @(state.audio_sample_rate),
@@ -194,6 +208,8 @@ namespace platf {
       int client_display_transfer = 0;
       int effective_display_gamut = 0;
       int effective_display_transfer = 0;
+      bool has_effective_hdr_metadata = false;
+      SS_HDR_METADATA effective_hdr_metadata {};
     };
 
     NSScreen *reference_screen_for_virtual_display_negotiation() {
@@ -251,17 +267,50 @@ namespace platf {
         NSNumber *client_display_transfer = dictionary[@"clientDisplayTransfer"];
         NSNumber *effective_display_gamut = dictionary[@"effectiveDisplayGamut"];
         NSNumber *effective_display_transfer = dictionary[@"effectiveDisplayTransfer"];
+        NSNumber *has_effective_hdr_metadata = dictionary[@"hasEffectiveHDRMetadata"];
         if (dynamic_range == nil || client_display_gamut == nil || client_display_transfer == nil) {
           return std::nullopt;
         }
 
-        return capture_request_hdr_preferences_t {
+        capture_request_hdr_preferences_t preferences {
           [dynamic_range intValue],
           [client_display_gamut intValue],
           [client_display_transfer intValue],
           effective_display_gamut != nil ? [effective_display_gamut intValue] : 0,
           effective_display_transfer != nil ? [effective_display_transfer intValue] : 0,
         };
+
+        if (has_effective_hdr_metadata.boolValue) {
+          preferences.has_effective_hdr_metadata = true;
+          preferences.effective_hdr_metadata.displayPrimaries[0] = {
+            static_cast<uint16_t>([dictionary[@"effectiveHDRRedPrimaryX"] intValue]),
+            static_cast<uint16_t>([dictionary[@"effectiveHDRRedPrimaryY"] intValue]),
+          };
+          preferences.effective_hdr_metadata.displayPrimaries[1] = {
+            static_cast<uint16_t>([dictionary[@"effectiveHDRGreenPrimaryX"] intValue]),
+            static_cast<uint16_t>([dictionary[@"effectiveHDRGreenPrimaryY"] intValue]),
+          };
+          preferences.effective_hdr_metadata.displayPrimaries[2] = {
+            static_cast<uint16_t>([dictionary[@"effectiveHDRBluePrimaryX"] intValue]),
+            static_cast<uint16_t>([dictionary[@"effectiveHDRBluePrimaryY"] intValue]),
+          };
+          preferences.effective_hdr_metadata.whitePoint = {
+            static_cast<uint16_t>([dictionary[@"effectiveHDRWhitePointX"] intValue]),
+            static_cast<uint16_t>([dictionary[@"effectiveHDRWhitePointY"] intValue]),
+          };
+          preferences.effective_hdr_metadata.maxDisplayLuminance =
+            static_cast<uint32_t>([dictionary[@"effectiveHDRMaxDisplayLuminance"] intValue]);
+          preferences.effective_hdr_metadata.minDisplayLuminance =
+            static_cast<uint32_t>([dictionary[@"effectiveHDRMinDisplayLuminance"] intValue]);
+          preferences.effective_hdr_metadata.maxContentLightLevel =
+            static_cast<uint16_t>([dictionary[@"effectiveHDRMaxContentLightLevel"] intValue]);
+          preferences.effective_hdr_metadata.maxFrameAverageLightLevel =
+            static_cast<uint16_t>([dictionary[@"effectiveHDRMaxFrameAverageLightLevel"] intValue]);
+          preferences.effective_hdr_metadata.maxFullFrameLuminance =
+            static_cast<uint16_t>([dictionary[@"effectiveHDRMaxFullFrameLuminance"] intValue]);
+        }
+
+        return preferences;
       }
     }
 
@@ -319,29 +368,15 @@ namespace platf {
       return state;
     }
 
-    bool bridge_aligned_external_capture_hdr_metadata(
-      const capture_request_hdr_preferences_t &preferences,
-      NSScreen *screen,
+    bool resolve_effective_display_hdr_metadata_impl(
+      int effective_display_gamut,
+      int effective_display_transfer,
       SS_HDR_METADATA &metadata
     ) {
       using gamut_e = video::client_display_gamut_e;
       using transfer_e = video::client_display_transfer_e;
 
-      auto effective_state =
-        preferences.effective_display_gamut != 0 && preferences.effective_display_transfer != 0 ?
-          effective_display_state_t {
-            .gamut = preferences.effective_display_gamut,
-            .transfer = preferences.effective_display_transfer,
-          } :
-          resolve_capture_request_effective_display_state_impl(
-            screen,
-            preferences.dynamic_range,
-            preferences.client_display_gamut,
-            preferences.client_display_transfer
-          );
-
-      if (preferences.dynamic_range <= 0 ||
-          static_cast<transfer_e>(effective_state.transfer) != transfer_e::pq) {
+      if (static_cast<transfer_e>(effective_display_transfer) != transfer_e::pq) {
         return false;
       }
 
@@ -349,8 +384,7 @@ namespace platf {
       metadata.whitePoint = {15635, 16450};
       metadata.minDisplayLuminance = 10;  // 0.001 nits in 1/10000th units
 
-      const bool use_display_p3 = static_cast<gamut_e>(effective_state.gamut) == gamut_e::display_p3;
-
+      const bool use_display_p3 = static_cast<gamut_e>(effective_display_gamut) == gamut_e::display_p3;
       if (use_display_p3) {
         metadata.displayPrimaries[0] = {34000, 16000};
         metadata.displayPrimaries[1] = {13250, 34500};
@@ -369,9 +403,45 @@ namespace platf {
         metadata.maxFullFrameLuminance = 600;
       }
 
+      return true;
+    }
+
+    bool bridge_aligned_external_capture_hdr_metadata(
+      const capture_request_hdr_preferences_t &preferences,
+      NSScreen *screen,
+      SS_HDR_METADATA &metadata
+    ) {
+      if (preferences.has_effective_hdr_metadata) {
+        metadata = preferences.effective_hdr_metadata;
+        BOOST_LOG(info) << "macOS external capture HDR metadata resolved from mirrored negotiated payload";
+        return true;
+      }
+
+      auto effective_state =
+        preferences.effective_display_gamut != 0 && preferences.effective_display_transfer != 0 ?
+          effective_display_state_t {
+            .gamut = preferences.effective_display_gamut,
+            .transfer = preferences.effective_display_transfer,
+          } :
+          resolve_capture_request_effective_display_state_impl(
+            screen,
+            preferences.dynamic_range,
+            preferences.client_display_gamut,
+            preferences.client_display_transfer
+          );
+
+      if (preferences.dynamic_range <= 0) {
+        return false;
+      }
+
+      if (!resolve_effective_display_hdr_metadata_impl(effective_state.gamut, effective_state.transfer, metadata)) {
+        return false;
+      }
+
       BOOST_LOG(info) << "macOS external capture HDR metadata negotiation resolved from mirrored capture request"
                       << " requested-gamut="sv << preferences.client_display_gamut
-                      << " effective-gamut="sv << (use_display_p3 ? "display-p3"sv : "srgb"sv)
+                      << " effective-gamut="sv
+                      << (effective_state.gamut == static_cast<int>(video::client_display_gamut_e::display_p3) ? "display-p3"sv : "srgb"sv)
                       << " requested-transfer="sv << preferences.client_display_transfer
                       << " effective-transfer="sv << effective_state.transfer;
       return true;
@@ -1496,6 +1566,18 @@ namespace platf {
       dynamic_range,
       client_display_gamut,
       client_display_transfer
+    );
+  }
+
+  bool resolve_effective_display_hdr_metadata(
+    int effective_display_gamut,
+    int effective_display_transfer,
+    SS_HDR_METADATA &metadata
+  ) {
+    return resolve_effective_display_hdr_metadata_impl(
+      effective_display_gamut,
+      effective_display_transfer,
+      metadata
     );
   }
 

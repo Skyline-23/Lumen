@@ -48,6 +48,21 @@ final class ApolloTuistBootstrapTests: XCTestCase {
     }
 
     func testBridgeConfigurationBoxRoundTripsRequestedOutputAndHDR() {
+        let hdrStaticMetadata = ApolloHDRStaticMetadata(
+            redPrimaryX: 34_000,
+            redPrimaryY: 16_000,
+            greenPrimaryX: 13_250,
+            greenPrimaryY: 34_500,
+            bluePrimaryX: 7_500,
+            bluePrimaryY: 3_000,
+            whitePointX: 15_635,
+            whitePointY: 16_450,
+            maxDisplayLuminance: 1_000,
+            minDisplayLuminance: 10,
+            maxContentLightLevel: 1_000,
+            maxFrameAverageLightLevel: 400,
+            maxFullFrameLuminance: 1_000
+        )
         let configuration = ApolloMacDisplayKitCaptureConfiguration(
             displayID: 11,
             codec: .hevc,
@@ -57,7 +72,8 @@ final class ApolloTuistBootstrapTests: XCTestCase {
             targetFrameRate: 120,
             requestedWidth: 3512,
             requestedHeight: 2290,
-            enableHDR: true
+            enableHDR: true,
+            hdrStaticMetadata: hdrStaticMetadata
         )
 
         let roundTrip = ApolloBridgeConfigurationBox(configuration: configuration).swiftValue
@@ -68,6 +84,7 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(roundTrip.requestedWidth, 3512)
         XCTAssertEqual(roundTrip.requestedHeight, 2290)
         XCTAssertTrue(roundTrip.enableHDR)
+        XCTAssertEqual(roundTrip.hdrStaticMetadata, hdrStaticMetadata)
     }
 
     func testRecommendedCoreForwardingFrameCapacityStaysLowLatency() {
@@ -415,6 +432,20 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(initialSnapshot.audio_source_kind, ApolloCoreAudioCaptureSourceKindUnknown)
 
         DispatchQueue.global().asyncAfter(deadline: .now() + 0.05) {
+            var hdrStaticMetadata = ApolloCoreHDRStaticMetadata()
+            hdrStaticMetadata.red_primary_x = 34_000
+            hdrStaticMetadata.red_primary_y = 16_000
+            hdrStaticMetadata.green_primary_x = 13_250
+            hdrStaticMetadata.green_primary_y = 34_500
+            hdrStaticMetadata.blue_primary_x = 7_500
+            hdrStaticMetadata.blue_primary_y = 3_000
+            hdrStaticMetadata.white_point_x = 15_635
+            hdrStaticMetadata.white_point_y = 16_450
+            hdrStaticMetadata.max_display_luminance = 1_000
+            hdrStaticMetadata.min_display_luminance = 10
+            hdrStaticMetadata.max_content_light_level = 1_000
+            hdrStaticMetadata.max_frame_average_light_level = 400
+            hdrStaticMetadata.max_full_frame_luminance = 1_000
             ApolloCoreCaptureRequestPublishVideo(
                 17,
                 ApolloCoreCaptureCodecHEVC,
@@ -428,7 +459,9 @@ final class ApolloTuistBootstrapTests: XCTestCase {
                 2,
                 2,
                 2,
-                2
+                2,
+                true,
+                hdrStaticMetadata
             )
             ApolloCoreCaptureRequestPublishAudio(
                 ApolloCoreAudioCaptureSourceKindSystemOutput,
@@ -459,6 +492,9 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(updatedSnapshot.client_display_transfer, 2)
         XCTAssertEqual(updatedSnapshot.effective_display_gamut, 2)
         XCTAssertEqual(updatedSnapshot.effective_display_transfer, 2)
+        XCTAssertTrue(updatedSnapshot.has_effective_hdr_metadata)
+        XCTAssertEqual(updatedSnapshot.effective_hdr_metadata.max_display_luminance, 1_000)
+        XCTAssertEqual(updatedSnapshot.effective_hdr_metadata.max_frame_average_light_level, 400)
         XCTAssertEqual(updatedSnapshot.audio_source_kind, ApolloCoreAudioCaptureSourceKindSystemOutput)
         XCTAssertEqual(updatedSnapshot.audio_frame_size, 480)
 
@@ -485,6 +521,20 @@ final class ApolloTuistBootstrapTests: XCTestCase {
             "clientDisplayTransfer": 2,
             "effectiveDisplayGamut": 2,
             "effectiveDisplayTransfer": 2,
+            "hasEffectiveHDRMetadata": true,
+            "effectiveHDRRedPrimaryX": 34_000,
+            "effectiveHDRRedPrimaryY": 16_000,
+            "effectiveHDRGreenPrimaryX": 13_250,
+            "effectiveHDRGreenPrimaryY": 34_500,
+            "effectiveHDRBluePrimaryX": 7_500,
+            "effectiveHDRBluePrimaryY": 3_000,
+            "effectiveHDRWhitePointX": 15_635,
+            "effectiveHDRWhitePointY": 16_450,
+            "effectiveHDRMaxDisplayLuminance": 1_000,
+            "effectiveHDRMinDisplayLuminance": 10,
+            "effectiveHDRMaxContentLightLevel": 1_000,
+            "effectiveHDRMaxFrameAverageLightLevel": 400,
+            "effectiveHDRMaxFullFrameLuminance": 1_000,
             "audioSourceKind": 1,
             "audioExcludesCurrentProcess": true,
             "audioSampleRate": 48_000,
@@ -516,6 +566,8 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(snapshot.clientDisplayTransfer, 2)
         XCTAssertEqual(snapshot.effectiveDisplayGamut, 2)
         XCTAssertEqual(snapshot.effectiveDisplayTransfer, 2)
+        XCTAssertEqual(snapshot.effectiveHDRStaticMetadata?.maxDisplayLuminance, 1_000)
+        XCTAssertEqual(snapshot.effectiveHDRStaticMetadata?.maxFrameAverageLightLevel, 400)
         XCTAssertEqual(snapshot.audioSourceKind, ApolloCoreAudioCaptureSourceKindSystemOutput)
         XCTAssertTrue(snapshot.audioExcludesCurrentProcess)
         XCTAssertEqual(snapshot.audioSampleRate, 48_000)

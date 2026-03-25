@@ -34,6 +34,20 @@ namespace platf {
     int client_display_transfer;
     int effective_display_gamut;
     int effective_display_transfer;
+    bool has_effective_hdr_metadata;
+    int effective_hdr_red_primary_x;
+    int effective_hdr_red_primary_y;
+    int effective_hdr_green_primary_x;
+    int effective_hdr_green_primary_y;
+    int effective_hdr_blue_primary_x;
+    int effective_hdr_blue_primary_y;
+    int effective_hdr_white_point_x;
+    int effective_hdr_white_point_y;
+    int effective_hdr_max_display_luminance;
+    int effective_hdr_min_display_luminance;
+    int effective_hdr_max_content_light_level;
+    int effective_hdr_max_frame_average_light_level;
+    int effective_hdr_max_full_frame_luminance;
     int audio_source_kind;
     bool audio_excludes_current_process;
     int audio_sample_rate;
@@ -83,6 +97,11 @@ namespace platf {
     int dynamic_range,
     int client_display_gamut,
     int client_display_transfer
+  );
+  bool resolve_effective_display_hdr_metadata(
+    int effective_display_gamut,
+    int effective_display_transfer,
+    SS_HDR_METADATA &metadata
   );
   bool query_external_capture_display_metadata(
     const std::string &display_name,

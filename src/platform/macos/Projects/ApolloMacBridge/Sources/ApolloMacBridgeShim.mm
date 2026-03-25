@@ -129,6 +129,20 @@ namespace {
     result.client_display_transfer = static_cast<int32_t>(configuration.clientDisplayTransferRawValue);
     result.effective_display_gamut = static_cast<int32_t>(configuration.effectiveDisplayGamutRawValue);
     result.effective_display_transfer = static_cast<int32_t>(configuration.effectiveDisplayTransferRawValue);
+    result.has_hdr_static_metadata = configuration.hasHDRStaticMetadata;
+    result.hdr_static_metadata.red_primary_x = static_cast<int32_t>(configuration.hdrRedPrimaryX);
+    result.hdr_static_metadata.red_primary_y = static_cast<int32_t>(configuration.hdrRedPrimaryY);
+    result.hdr_static_metadata.green_primary_x = static_cast<int32_t>(configuration.hdrGreenPrimaryX);
+    result.hdr_static_metadata.green_primary_y = static_cast<int32_t>(configuration.hdrGreenPrimaryY);
+    result.hdr_static_metadata.blue_primary_x = static_cast<int32_t>(configuration.hdrBluePrimaryX);
+    result.hdr_static_metadata.blue_primary_y = static_cast<int32_t>(configuration.hdrBluePrimaryY);
+    result.hdr_static_metadata.white_point_x = static_cast<int32_t>(configuration.hdrWhitePointX);
+    result.hdr_static_metadata.white_point_y = static_cast<int32_t>(configuration.hdrWhitePointY);
+    result.hdr_static_metadata.max_display_luminance = static_cast<int32_t>(configuration.hdrMaxDisplayLuminance);
+    result.hdr_static_metadata.min_display_luminance = static_cast<int32_t>(configuration.hdrMinDisplayLuminance);
+    result.hdr_static_metadata.max_content_light_level = static_cast<int32_t>(configuration.hdrMaxContentLightLevel);
+    result.hdr_static_metadata.max_frame_average_light_level = static_cast<int32_t>(configuration.hdrMaxFrameAverageLightLevel);
+    result.hdr_static_metadata.max_full_frame_luminance = static_cast<int32_t>(configuration.hdrMaxFullFrameLuminance);
     return result;
   }
 
@@ -148,7 +162,21 @@ namespace {
  clientDisplayGamutRawValue:static_cast<NSInteger>(configuration.client_display_gamut)
 clientDisplayTransferRawValue:static_cast<NSInteger>(configuration.client_display_transfer)
 effectiveDisplayGamutRawValue:static_cast<NSInteger>(configuration.effective_display_gamut)
-effectiveDisplayTransferRawValue:static_cast<NSInteger>(configuration.effective_display_transfer)];
+effectiveDisplayTransferRawValue:static_cast<NSInteger>(configuration.effective_display_transfer)
+         hasHDRStaticMetadata:configuration.has_hdr_static_metadata
+               hdrRedPrimaryX:static_cast<NSInteger>(configuration.hdr_static_metadata.red_primary_x)
+               hdrRedPrimaryY:static_cast<NSInteger>(configuration.hdr_static_metadata.red_primary_y)
+             hdrGreenPrimaryX:static_cast<NSInteger>(configuration.hdr_static_metadata.green_primary_x)
+             hdrGreenPrimaryY:static_cast<NSInteger>(configuration.hdr_static_metadata.green_primary_y)
+              hdrBluePrimaryX:static_cast<NSInteger>(configuration.hdr_static_metadata.blue_primary_x)
+              hdrBluePrimaryY:static_cast<NSInteger>(configuration.hdr_static_metadata.blue_primary_y)
+              hdrWhitePointX:static_cast<NSInteger>(configuration.hdr_static_metadata.white_point_x)
+              hdrWhitePointY:static_cast<NSInteger>(configuration.hdr_static_metadata.white_point_y)
+     hdrMaxDisplayLuminance:static_cast<NSInteger>(configuration.hdr_static_metadata.max_display_luminance)
+     hdrMinDisplayLuminance:static_cast<NSInteger>(configuration.hdr_static_metadata.min_display_luminance)
+    hdrMaxContentLightLevel:static_cast<NSInteger>(configuration.hdr_static_metadata.max_content_light_level)
+hdrMaxFrameAverageLightLevel:static_cast<NSInteger>(configuration.hdr_static_metadata.max_frame_average_light_level)
+   hdrMaxFullFrameLuminance:static_cast<NSInteger>(configuration.hdr_static_metadata.max_full_frame_luminance)];
   }
 
   ApolloMacBridgeAudioCaptureConfiguration to_audio_bridge_configuration(
