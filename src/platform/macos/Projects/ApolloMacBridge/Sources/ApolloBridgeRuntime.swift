@@ -1365,21 +1365,30 @@ public actor ApolloBridgeRuntime {
 
         let interestingPrefixes = [
             "skyLightAutotuningSource=",
+            "skyLightCandidateResult=",
             "skyLightTuningCandidate=",
             "skyLightTuningQueueDepth=",
             "skyLightTuningMinimumFrameTime=",
             "skyLightTuningEffectiveOutputFrameRate=",
             "skyLightTuningCadence=",
+            "skyLightPendingPolicy=",
+            "skyLightRecommendedPendingFrameCount=",
             "videoToolboxUsingHardwareEncoder=",
             "videoToolboxRecommendedParallelizationLimit=",
             "videoToolboxPixelBufferPoolIsShared=",
             "videoToolboxStagingMode=",
             "videoToolboxStagedSourceReleaseMode=",
             "videoToolboxEncoderInputStrategy=",
+            "videoToolboxEncoderInputPixelFormat=",
             "videoToolboxColorConversionMode=",
+            "videoToolboxTargetFrameRateHint=",
+            "videoToolboxConfiguredAverageBitRate=",
+            "videoToolboxConfiguredDataRateLimits=",
+            "videoToolboxConfiguredProfileLevel=",
             "videoToolboxDirectSubmissionFrameCount=",
             "videoToolboxStagedSubmissionFrameCount=",
-            "videoToolboxMaxInflightStagingSlots="
+            "videoToolboxMaxInflightStagingSlots=",
+            "videoToolboxProperty."
         ]
         let notes = statistics.notes.filter { note in
             interestingPrefixes.contains { note.hasPrefix($0) }
