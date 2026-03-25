@@ -522,6 +522,60 @@ namespace video {
       return presence;
     }
 
+    external_hevc_hdr_static_metadata_presence_t external_hevc_annexb_static_metadata_presence(
+      const std::vector<uint8_t> &payload
+    ) {
+      external_hevc_hdr_static_metadata_presence_t presence {
+        .has_mastering_display_color_volume = false,
+        .has_content_light_level_info = false,
+      };
+
+      const auto find_start_code = [&](size_t search_offset) -> std::optional<std::pair<size_t, size_t>> {
+        for (size_t index = search_offset; index + 3 < payload.size(); ++index) {
+          if (payload[index] == 0x00 && payload[index + 1] == 0x00) {
+            if (payload[index + 2] == 0x01) {
+              return std::pair<size_t, size_t> {index, 3};
+            }
+            if (index + 4 < payload.size() && payload[index + 2] == 0x00 && payload[index + 3] == 0x01) {
+              return std::pair<size_t, size_t> {index, 4};
+            }
+          }
+        }
+        return std::nullopt;
+      };
+
+      size_t offset = 0;
+      while (true) {
+        const auto start_code = find_start_code(offset);
+        if (!start_code.has_value()) {
+          break;
+        }
+
+        const auto nal_offset = start_code->first + start_code->second;
+        const auto next_start_code = find_start_code(nal_offset);
+        const auto nal_end = next_start_code.has_value() ? next_start_code->first : payload.size();
+        if (nal_offset >= nal_end || nal_offset >= payload.size()) {
+          break;
+        }
+
+        const auto nal_unit_type = static_cast<int>((payload[nal_offset] >> 1) & 0x3F);
+        if (nal_unit_type == 39 || nal_unit_type == 40) {
+          const auto sei_presence = parse_external_hevc_sei_presence(payload.data() + nal_offset, nal_end - nal_offset);
+          presence.has_mastering_display_color_volume =
+            presence.has_mastering_display_color_volume || sei_presence.has_mastering_display_color_volume;
+          presence.has_content_light_level_info =
+            presence.has_content_light_level_info || sei_presence.has_content_light_level_info;
+          if (presence.is_complete()) {
+            break;
+          }
+        }
+
+        offset = nal_end;
+      }
+
+      return presence;
+    }
+
     bool external_hdr_static_metadata_is_valid(const SS_HDR_METADATA &metadata) {
       return metadata.displayPrimaries[0].x != 0 &&
              metadata.displayPrimaries[1].x != 0 &&
@@ -3745,6 +3799,10 @@ namespace video {
           );
           if (!logged_first_packet) {
             const auto payload_static_metadata_presence = external_hevc_payload_static_metadata_presence(retained_sample_buffer);
+            const auto packet_static_metadata_presence =
+              codec_type == kCMVideoCodecType_HEVC ?
+                external_hevc_annexb_static_metadata_presence(packet->frame_data) :
+                external_hevc_hdr_static_metadata_presence_t {false, false};
             const auto color_primaries = apollo_core_sample_buffer_extension_string(
               retained_sample_buffer,
               kCMFormatDescriptionExtension_ColorPrimaries
@@ -3769,8 +3827,10 @@ namespace video {
                             << " matrix="sv << (ycbcr_matrix.empty() ? "n/a"sv : std::string_view {ycbcr_matrix})
                             << " mastering="sv << apollo_core_sample_buffer_extension_present(retained_sample_buffer, kCMFormatDescriptionExtension_MasteringDisplayColorVolume)
                             << " cll="sv << apollo_core_sample_buffer_extension_present(retained_sample_buffer, kCMFormatDescriptionExtension_ContentLightLevelInfo)
-                            << " payload-mastering="sv << payload_static_metadata_presence.has_mastering_display_color_volume
-                            << " payload-cll="sv << payload_static_metadata_presence.has_content_light_level_info
+                            << " sample-payload-mastering="sv << payload_static_metadata_presence.has_mastering_display_color_volume
+                            << " sample-payload-cll="sv << payload_static_metadata_presence.has_content_light_level_info
+                            << " packet-mastering="sv << packet_static_metadata_presence.has_mastering_display_color_volume
+                            << " packet-cll="sv << packet_static_metadata_presence.has_content_light_level_info
                             << " seq="sv << frame.source_sequence_number
                             << " display-time="sv << frame.source_display_time;
             if (!packet_is_idr) {
