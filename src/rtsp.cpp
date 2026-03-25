@@ -110,6 +110,39 @@ namespace rtsp_stream {
       stream << std::setprecision(6) << std::defaultfloat << value;
       return stream.str();
     }
+
+    std::string rtsp_preview(std::string_view payload, std::size_t max_length = 512) {
+      const auto preview = payload.substr(0, std::min(payload.size(), max_length));
+      std::string buffer;
+      buffer.reserve(preview.size() + 32);
+
+      for (const auto ch : preview) {
+        switch (ch) {
+          case '\r':
+            buffer += "\\r";
+            break;
+          case '\n':
+            buffer += "\\n";
+            break;
+          case '\t':
+            buffer += "\\t";
+            break;
+          default:
+            if (std::isprint(static_cast<unsigned char>(ch))) {
+              buffer.push_back(ch);
+            } else {
+              buffer.push_back('?');
+            }
+            break;
+        }
+      }
+
+      if (payload.size() > preview.size()) {
+        buffer += "...";
+      }
+
+      return buffer;
+    }
   }  // namespace
 
   void free_msg(PRTSP_MESSAGE msg) {
@@ -297,7 +330,8 @@ namespace rtsp_stream {
 
       msg_t req {new msg_t::element_type {}};
       if (auto status = parseRtspMessage(req.get(), (char *) plaintext.data(), plaintext.size())) {
-        BOOST_LOG(error) << "Malformed RTSP message: ["sv << status << ']';
+        BOOST_LOG(error) << "Malformed encrypted RTSP message: ["sv << status << "] bytes="sv << plaintext.size()
+                         << " preview="sv << rtsp_preview(std::string_view {(char *) plaintext.data(), plaintext.size()});
 
         respond(socket->sock, *socket->session, nullptr, 400, "BAD REQUEST", 0, {});
         return;
@@ -363,7 +397,9 @@ namespace rtsp_stream {
       auto end = socket->begin + bytes;
       msg_t req {new msg_t::element_type {}};
       if (auto status = parseRtspMessage(req.get(), socket->msg_buf.data(), (std::size_t) (end - socket->msg_buf.data()))) {
-        BOOST_LOG(error) << "Malformed RTSP message: ["sv << status << ']';
+        const auto raw_message = std::string_view {socket->msg_buf.data(), static_cast<std::size_t>(end - socket->msg_buf.data())};
+        BOOST_LOG(error) << "Malformed plaintext RTSP message: ["sv << status << "] bytes="sv << raw_message.size()
+                         << " preview="sv << rtsp_preview(raw_message);
 
         respond(socket->sock, *socket->session, nullptr, 400, "BAD REQUEST", 0, {});
         return;
@@ -1302,7 +1338,12 @@ namespace rtsp_stream {
         BOOST_LOG(info) << "Warp factor [" << warp_factor << "] engaged";
       }
 
-    } catch (std::out_of_range &) {
+    } catch (std::out_of_range &exception) {
+      BOOST_LOG(error) << "RTSP ANNOUNCE missing required field: "sv << exception.what()
+                       << " args="sv << args.size()
+                       << " client="sv << client
+                       << " payload-bytes="sv << payload.size()
+                       << " payload-preview="sv << rtsp_preview(payload);
       respond(sock, session, &option, 400, "BAD REQUEST", req->sequenceNumber, {});
       return;
     }
