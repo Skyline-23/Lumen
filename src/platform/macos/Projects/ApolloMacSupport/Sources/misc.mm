@@ -241,6 +241,21 @@ namespace platf {
       return [localized_name containsString:@"display p3"] || [localized_name containsString:@"p3"];
     }
 
+    std::string_view display_gamut_label(const int gamut) {
+      using gamut_e = video::client_display_gamut_e;
+      switch (static_cast<gamut_e>(gamut)) {
+        case gamut_e::srgb:
+          return "srgb"sv;
+        case gamut_e::display_p3:
+          return "display-p3"sv;
+        case gamut_e::rec2020:
+          return "rec2020"sv;
+        case gamut_e::unknown:
+        default:
+          return "unknown"sv;
+      }
+    }
+
     std::optional<capture_request_hdr_preferences_t> read_capture_request_hdr_preferences() {
       @autoreleasepool {
         NSError *error = nil;
@@ -330,8 +345,10 @@ namespace platf {
 
       switch (static_cast<gamut_e>(client_display_gamut)) {
         case gamut_e::display_p3:
-        case gamut_e::rec2020:
           state.gamut = static_cast<int>(gamut_e::display_p3);
+          break;
+        case gamut_e::rec2020:
+          state.gamut = static_cast<int>(gamut_e::rec2020);
           break;
         case gamut_e::srgb:
           state.gamut = static_cast<int>(gamut_e::srgb);
@@ -439,9 +456,8 @@ namespace platf {
       }
 
       BOOST_LOG(info) << "macOS external capture HDR metadata negotiation resolved from mirrored capture request"
-                      << " requested-gamut="sv << preferences.client_display_gamut
-                      << " effective-gamut="sv
-                      << (effective_state.gamut == static_cast<int>(video::client_display_gamut_e::display_p3) ? "display-p3"sv : "srgb"sv)
+                      << " requested-gamut="sv << display_gamut_label(preferences.client_display_gamut)
+                      << " effective-gamut="sv << display_gamut_label(effective_state.gamut)
                       << " requested-transfer="sv << preferences.client_display_transfer
                       << " effective-transfer="sv << effective_state.transfer;
       return true;

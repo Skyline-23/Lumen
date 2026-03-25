@@ -40,6 +40,15 @@ namespace VDISPLAY {
       true,
     };
 
+    constexpr VDISPLAY::color_profile_t kRec2020ColorProfile {
+      {0.7080, 0.2920},
+      {0.1700, 0.7970},
+      {0.1310, 0.0460},
+      {0.3127, 0.3290},
+      false,
+      true,
+    };
+
     struct virtual_display_handle_t {
       id descriptor {nil};
       id mode {nil};
@@ -518,37 +527,38 @@ namespace VDISPLAY {
       reference_screen = [NSScreen screens].firstObject;
     }
 
-    bool use_display_p3 = false;
-    switch (static_cast<video::client_display_gamut_e>(client_display_gamut)) {
-      case video::client_display_gamut_e::display_p3:
-      case video::client_display_gamut_e::rec2020:
-        use_display_p3 = true;
-        break;
-      case video::client_display_gamut_e::srgb:
-        use_display_p3 = false;
-        break;
-      case video::client_display_gamut_e::unknown:
-      default:
-        use_display_p3 = screen_prefers_display_p3(reference_screen);
-        break;
-    }
+    const auto client_transfer = static_cast<video::client_display_transfer_e>(client_display_transfer);
+    const bool client_wants_hdr =
+      hdr_enabled ||
+      client_transfer == video::client_display_transfer_e::pq ||
+      client_transfer == video::client_display_transfer_e::hlg;
+    const bool use_display_p3 =
+      client_display_gamut == static_cast<int>(video::client_display_gamut_e::display_p3) ? true :
+      client_display_gamut == static_cast<int>(video::client_display_gamut_e::srgb) ? false :
+      client_wants_hdr ? true :
+      screen_prefers_display_p3(reference_screen);
 
     color_profile_t profile =
+      client_display_gamut == static_cast<int>(video::client_display_gamut_e::rec2020) ? kRec2020ColorProfile :
       use_display_p3 ? kDisplayP3ColorProfile :
       kSrgbColorProfile;
-    profile.hdr_capable = hdr_enabled || screen_is_hdr_capable(reference_screen);
+    profile.hdr_capable = client_wants_hdr || screen_is_hdr_capable(reference_screen);
 
     const auto profile_gamut =
+      client_display_gamut == static_cast<int>(video::client_display_gamut_e::rec2020) ? "rec2020"sv :
       profile.display_p3 ? "display-p3"sv :
       "srgb"sv;
+    const auto transfer_name =
+      client_transfer == video::client_display_transfer_e::pq ? "pq"sv :
+      client_transfer == video::client_display_transfer_e::hlg ? "hlg"sv :
+      client_transfer == video::client_display_transfer_e::sdr ? "sdr"sv :
+      "unknown"sv;
     BOOST_LOG(info) << "macOS virtual display color profile: gamut="sv
                     << profile_gamut
-                    << " requested-gamut="sv
-                    << client_display_gamut_label(client_display_gamut)
                     << " hdr_capable="sv << profile.hdr_capable
                     << " hdr_intent="sv << hdr_enabled
-                    << " requested-transfer="sv
-                    << client_display_transfer_label(client_display_transfer);
+                    << " client_gamut="sv << client_display_gamut_label(client_display_gamut)
+                    << " client_transfer="sv << transfer_name;
 
     return profile;
   }
