@@ -981,10 +981,12 @@ public actor ApolloBridgeRuntime {
     private let audioForwarder = ApolloCoreAudioCaptureForwarder()
     private let logger = Logger(subsystem: "com.lizardbyte.apollo", category: "MacBridgeRuntime")
     private var encodedCaptureSession: MDKEncodedCaptureSession?
+    private var encodedCaptureStartupTask: Task<Void, Error>?
     private var activeCaptureConfiguration: ApolloMacDisplayKitCaptureConfiguration?
     private var latestFrame: ApolloBridgeEncodedFrameSnapshot?
     private var recentEvents: [MDKEncodedCaptureSessionEvent] = []
     private var audioCaptureSession: MDKAudioCaptureSession?
+    private var audioCaptureStartupTask: Task<Void, Error>?
     private var activeAudioCaptureConfiguration: ApolloMacDisplayKitAudioCaptureConfiguration?
     private var captureAutomationTask: Task<Void, Never>?
     private var mirroredCaptureRequestTask: Task<Void, Never>?
@@ -1006,6 +1008,16 @@ public actor ApolloBridgeRuntime {
 
     public func startMacDisplayKitCapture(
         configuration: ApolloMacDisplayKitCaptureConfiguration
+    ) async throws {
+        try await startMacDisplayKitCapture(
+            configuration: configuration,
+            waitForStartupCompletion: true
+        )
+    }
+
+    private func startMacDisplayKitCapture(
+        configuration: ApolloMacDisplayKitCaptureConfiguration,
+        waitForStartupCompletion: Bool
     ) async throws {
         await stopMacDisplayKitCapture(resetRequestGeneration: false)
 
@@ -1047,21 +1059,26 @@ public actor ApolloBridgeRuntime {
         coreForwarder.setProducerActive(true)
         publishStatusDidChange(immediate: true)
 
-        do {
-            try await session.start(callbacks: callbacks)
-        } catch {
-            if encodedCaptureSession === session {
-                encodedCaptureSession = nil
-                activeCaptureConfiguration = nil
-                coreForwarder.setProducerActive(false)
-                latestFrame = nil
-                recentEvents = []
-                lastEncodedFrameDiagnosticsUptimeNanoseconds = 0
-                lastEncodedFrameSourceSequenceNumber = nil
-                lastEncodedFrameSourceDisplayTime = nil
-                publishStatusDidChange(immediate: true)
+        let startupTask = Task<Void, Error> {
+            do {
+                try await session.start(callbacks: callbacks)
+                await runtime.handleEncodedCaptureStartupFinished(for: session)
+            } catch {
+                await runtime.handleEncodedCaptureStartupFailure(for: session, error: error)
+                throw error
             }
-            throw error
+        }
+        encodedCaptureStartupTask = startupTask
+
+        if waitForStartupCompletion {
+            do {
+                try await startupTask.value
+            } catch {
+                if encodedCaptureStartupTask?.isCancelled == true {
+                    encodedCaptureStartupTask = nil
+                }
+                throw error
+            }
         }
     }
 
@@ -1070,6 +1087,8 @@ public actor ApolloBridgeRuntime {
     }
 
     private func stopMacDisplayKitCapture(resetRequestGeneration: Bool) async {
+        encodedCaptureStartupTask?.cancel()
+        encodedCaptureStartupTask = nil
         guard let session = encodedCaptureSession else {
             encodedCaptureSession = nil
             activeCaptureConfiguration = nil
@@ -1111,12 +1130,25 @@ public actor ApolloBridgeRuntime {
     public func startMacDisplayKitAudioCapture(
         configuration: ApolloMacDisplayKitAudioCaptureConfiguration
     ) async throws {
+        try await startMacDisplayKitAudioCapture(
+            configuration: configuration,
+            waitForStartupCompletion: true
+        )
+    }
+
+    private func startMacDisplayKitAudioCapture(
+        configuration: ApolloMacDisplayKitAudioCaptureConfiguration,
+        waitForStartupCompletion: Bool
+    ) async throws {
         await stopMacDisplayKitAudioCapture(resetRequestGeneration: false)
 
         audioForwarder.reset()
         audioForwarder.setProducerActive(false)
         let runtime = self
         let session = MDKAudioCaptureSession(configuration: configuration.mdkValue)
+        logger.notice(
+            "Starting MacDisplayKit audio capture source=\(configuration.source.kind.rawValue, privacy: .public) sample-rate=\(configuration.sampleRate, privacy: .public) channels=\(configuration.channelCount, privacy: .public) frame-size=\(configuration.frameSize, privacy: .public)"
+        )
         let callbacks = MDKAudioCaptureCallbacks(
             frameHandler: { frame in
                 Task {
@@ -1135,16 +1167,26 @@ public actor ApolloBridgeRuntime {
         audioForwarder.setProducerActive(true)
         publishStatusDidChange(immediate: true)
 
-        do {
-            try await session.start(callbacks: callbacks)
-        } catch {
-            if audioCaptureSession === session {
-                audioCaptureSession = nil
-                activeAudioCaptureConfiguration = nil
-                audioForwarder.setProducerActive(false)
-                publishStatusDidChange(immediate: true)
+        let startupTask = Task<Void, Error> {
+            do {
+                try await session.start(callbacks: callbacks)
+                await runtime.handleAudioCaptureStartupFinished(for: session)
+            } catch {
+                await runtime.handleAudioCaptureStartupFailure(for: session, error: error)
+                throw error
             }
-            throw error
+        }
+        audioCaptureStartupTask = startupTask
+
+        if waitForStartupCompletion {
+            do {
+                try await startupTask.value
+            } catch {
+                if audioCaptureStartupTask?.isCancelled == true {
+                    audioCaptureStartupTask = nil
+                }
+                throw error
+            }
         }
     }
 
@@ -1153,6 +1195,8 @@ public actor ApolloBridgeRuntime {
     }
 
     private func stopMacDisplayKitAudioCapture(resetRequestGeneration: Bool) async {
+        audioCaptureStartupTask?.cancel()
+        audioCaptureStartupTask = nil
         guard let session = audioCaptureSession else {
             audioCaptureSession = nil
             activeAudioCaptureConfiguration = nil
@@ -1171,6 +1215,49 @@ public actor ApolloBridgeRuntime {
         if resetRequestGeneration {
             lastAppliedAudioRequestGeneration = nil
         }
+        publishStatusDidChange(immediate: true)
+    }
+
+    private func handleEncodedCaptureStartupFinished(for session: MDKEncodedCaptureSession) {
+        guard encodedCaptureSession === session else {
+            return
+        }
+        encodedCaptureStartupTask = nil
+    }
+
+    private func handleEncodedCaptureStartupFailure(for session: MDKEncodedCaptureSession, error: Error) {
+        guard encodedCaptureSession === session else {
+            return
+        }
+        encodedCaptureStartupTask = nil
+        encodedCaptureSession = nil
+        activeCaptureConfiguration = nil
+        coreForwarder.setProducerActive(false)
+        latestFrame = nil
+        recentEvents = []
+        lastEncodedFrameDiagnosticsUptimeNanoseconds = 0
+        lastEncodedFrameSourceSequenceNumber = nil
+        lastEncodedFrameSourceDisplayTime = nil
+        logger.error("MacDisplayKit video startup failed: \(String(describing: error), privacy: .public)")
+        publishStatusDidChange(immediate: true)
+    }
+
+    private func handleAudioCaptureStartupFinished(for session: MDKAudioCaptureSession) {
+        guard audioCaptureSession === session else {
+            return
+        }
+        audioCaptureStartupTask = nil
+    }
+
+    private func handleAudioCaptureStartupFailure(for session: MDKAudioCaptureSession, error: Error) {
+        guard audioCaptureSession === session else {
+            return
+        }
+        audioCaptureStartupTask = nil
+        audioCaptureSession = nil
+        activeAudioCaptureConfiguration = nil
+        audioForwarder.setProducerActive(false)
+        logger.error("MacDisplayKit audio startup failed: \(String(describing: error), privacy: .public)")
         publishStatusDidChange(immediate: true)
     }
 
@@ -1291,7 +1378,10 @@ public actor ApolloBridgeRuntime {
                 logger.notice(
                     "Applying ApolloCore macOS bridge capture request display-id=\(configuration.displayID, privacy: .public) codec=\(configuration.codec.rawValue, privacy: .public) queue=\(configuration.queueProfile.rawValue, privacy: .public) fps=\(configuration.targetFrameRate, privacy: .public) forwarding-frame-capacity=\(frameCapacity, privacy: .public)"
                 )
-                try? await startMacDisplayKitCapture(configuration: configuration)
+                try? await startMacDisplayKitCapture(
+                    configuration: configuration,
+                    waitForStartupCompletion: false
+                )
             } else {
                 let activeConfigurationSummary: String
                 if let activeConfiguration = activeCaptureConfiguration {
@@ -1315,7 +1405,10 @@ public actor ApolloBridgeRuntime {
         ) {
             lastAppliedAudioRequestGeneration = request.audioGeneration
             if let configuration = request.audioConfiguration {
-                try? await startMacDisplayKitAudioCapture(configuration: configuration)
+                try? await startMacDisplayKitAudioCapture(
+                    configuration: configuration,
+                    waitForStartupCompletion: false
+                )
             } else {
                 let activeAudioConfigurationSummary: String
                 if let activeAudioCaptureConfiguration = self.activeAudioCaptureConfiguration {
@@ -1520,6 +1613,9 @@ public actor ApolloBridgeRuntime {
 
     private func recordAudioCaptureEvent(_ event: MDKAudioCaptureSessionEvent) {
         audioForwarder.consume(event: event)
+        logger.notice(
+            "Mac bridge audio capture event kind=\(event.kind.rawValue, privacy: .public) message=\(event.message ?? "n/a", privacy: .public) automatic-restarts=\(event.automaticRestartCount ?? 0, privacy: .public) source-sequence=\(event.sourceSequenceNumber ?? 0, privacy: .public)"
+        )
         publishStatusDidChange()
     }
 
