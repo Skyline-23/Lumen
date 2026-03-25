@@ -293,7 +293,7 @@ enum ApolloBridgeConfigurationPreferences {
         case "q4":
             return .q4
         default:
-            return .q2
+            return .auto
         }
     }
 

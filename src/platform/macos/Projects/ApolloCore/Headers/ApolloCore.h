@@ -26,7 +26,8 @@ typedef enum ApolloCoreCaptureQueueProfile {
   ApolloCoreCaptureQueueProfileQ1 = 0,
   ApolloCoreCaptureQueueProfileQ2 = 1,
   ApolloCoreCaptureQueueProfileQ3 = 2,
-  ApolloCoreCaptureQueueProfileQ4 = 3
+  ApolloCoreCaptureQueueProfileQ4 = 3,
+  ApolloCoreCaptureQueueProfileAuto = 4
 } ApolloCoreCaptureQueueProfile;
 
 typedef enum ApolloCoreAudioCaptureSourceKind {

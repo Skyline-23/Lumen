@@ -489,7 +489,7 @@ namespace config {
     },  // vt
 
     "hevc"s,  // macos_bridge_codec
-    "q2"s,  // macos_bridge_queue_profile
+    "auto"s,  // macos_bridge_queue_profile
 
     {
       false,  // strict_rc_buffer

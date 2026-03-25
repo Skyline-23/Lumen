@@ -2039,11 +2039,17 @@ namespace stream {
         return static_cast<char>(std::tolower(ch));
       });
 
+      if (queue_profile == "auto" || queue_profile == "autotune") {
+        return ApolloCoreCaptureQueueProfileAuto;
+      }
       if (queue_profile == "q1") {
         return ApolloCoreCaptureQueueProfileQ1;
       }
       if (queue_profile == "q2") {
         return ApolloCoreCaptureQueueProfileQ2;
+      }
+      if (queue_profile == "q3") {
+        return ApolloCoreCaptureQueueProfileQ3;
       }
       if (queue_profile == "q4") {
         return ApolloCoreCaptureQueueProfileQ4;
@@ -2061,6 +2067,8 @@ namespace stream {
           return "q3"sv;
         case ApolloCoreCaptureQueueProfileQ4:
           return "q4"sv;
+        case ApolloCoreCaptureQueueProfileAuto:
+          return "auto"sv;
         default:
           return "unknown"sv;
       }
