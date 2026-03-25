@@ -1267,6 +1267,7 @@ public actor ApolloBridgeRuntime {
         if Self.shouldApplyAutomationRequest(
             requestedConfiguration: request.videoConfiguration,
             activeConfiguration: activeCaptureConfiguration,
+            sessionIsActive: encodedCaptureSession != nil,
             lastAppliedGeneration: lastAppliedVideoRequestGeneration
         ) {
             lastAppliedVideoRequestGeneration = request.videoGeneration
@@ -1284,6 +1285,7 @@ public actor ApolloBridgeRuntime {
         if Self.shouldApplyAutomationRequest(
             requestedConfiguration: request.audioConfiguration,
             activeConfiguration: activeAudioCaptureConfiguration,
+            sessionIsActive: audioCaptureSession != nil,
             lastAppliedGeneration: lastAppliedAudioRequestGeneration
         ) {
             lastAppliedAudioRequestGeneration = request.audioGeneration
@@ -1298,6 +1300,7 @@ public actor ApolloBridgeRuntime {
     static func shouldApplyAutomationRequest<Configuration: Equatable>(
         requestedConfiguration: Configuration?,
         activeConfiguration: Configuration?,
+        sessionIsActive: Bool,
         lastAppliedGeneration: UInt64?
     ) -> Bool {
         if requestedConfiguration != activeConfiguration {
@@ -1306,6 +1309,10 @@ public actor ApolloBridgeRuntime {
 
         guard requestedConfiguration != nil else {
             return false
+        }
+
+        if !sessionIsActive {
+            return true
         }
 
         return lastAppliedGeneration == nil

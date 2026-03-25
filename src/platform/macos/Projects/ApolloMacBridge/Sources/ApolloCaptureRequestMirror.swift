@@ -207,6 +207,32 @@ struct ApolloBridgeMirroredCaptureRequestSemanticState: Equatable, Sendable {
         audioChannelCount = snapshot.audioChannelCount
         audioFrameSize = snapshot.audioFrameSize
     }
+
+    init(snapshot: ApolloCoreCaptureRequestSnapshot) {
+        videoRequested = snapshot.video_requested
+        audioRequested = snapshot.audio_requested
+        displayID = snapshot.display_id
+        codec = snapshot.codec
+        preprocessStrategy = snapshot.preprocess_strategy
+        queueProfile = snapshot.queue_profile
+        showCursor = snapshot.show_cursor
+        targetFrameRate = snapshot.target_frame_rate
+        requestedWidth = snapshot.requested_width
+        requestedHeight = snapshot.requested_height
+        dynamicRange = snapshot.dynamic_range
+        clientDisplayGamut = snapshot.client_display_gamut
+        clientDisplayTransfer = snapshot.client_display_transfer
+        effectiveDisplayGamut = snapshot.effective_display_gamut
+        effectiveDisplayTransfer = snapshot.effective_display_transfer
+        effectiveHDRStaticMetadata = snapshot.has_effective_hdr_metadata ?
+            ApolloHDRStaticMetadata(coreValue: snapshot.effective_hdr_metadata) :
+            nil
+        audioSourceKind = snapshot.audio_source_kind
+        audioExcludesCurrentProcess = snapshot.audio_excludes_current_process
+        audioSampleRate = snapshot.audio_sample_rate
+        audioChannelCount = snapshot.audio_channel_count
+        audioFrameSize = snapshot.audio_frame_size
+    }
 }
 
 actor ApolloCaptureRequestMirrorCoordinator {
@@ -221,7 +247,11 @@ actor ApolloCaptureRequestMirrorCoordinator {
 
             let semanticState = mirroredSnapshot.semanticState
             mirroredGeneration = mirroredSnapshot.generation
-            guard semanticState != mirroredSemanticState else {
+            let currentApolloCoreSemanticState = ApolloBridgeMirroredCaptureRequestSemanticState(
+                snapshot: ApolloCoreCaptureRequestCopySnapshot()
+            )
+            guard semanticState != mirroredSemanticState ||
+                    semanticState != currentApolloCoreSemanticState else {
                 return
             }
 

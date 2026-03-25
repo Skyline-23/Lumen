@@ -736,6 +736,7 @@ final class ApolloTuistBootstrapTests: XCTestCase {
             ApolloBridgeRuntime.shouldApplyAutomationRequest(
                 requestedConfiguration: configuration,
                 activeConfiguration: nil,
+                sessionIsActive: false,
                 lastAppliedGeneration: nil
             )
         )
@@ -743,6 +744,7 @@ final class ApolloTuistBootstrapTests: XCTestCase {
             ApolloBridgeRuntime.shouldApplyAutomationRequest(
                 requestedConfiguration: configuration,
                 activeConfiguration: configuration,
+                sessionIsActive: true,
                 lastAppliedGeneration: 41
             )
         )
@@ -750,13 +752,23 @@ final class ApolloTuistBootstrapTests: XCTestCase {
             ApolloBridgeRuntime.shouldApplyAutomationRequest(
                 requestedConfiguration: configuration,
                 activeConfiguration: configuration,
+                sessionIsActive: true,
                 lastAppliedGeneration: nil
+            )
+        )
+        XCTAssertTrue(
+            ApolloBridgeRuntime.shouldApplyAutomationRequest(
+                requestedConfiguration: configuration,
+                activeConfiguration: configuration,
+                sessionIsActive: false,
+                lastAppliedGeneration: 41
             )
         )
         XCTAssertTrue(
             ApolloBridgeRuntime.shouldApplyAutomationRequest(
                 requestedConfiguration: nil as ApolloMacDisplayKitCaptureConfiguration?,
                 activeConfiguration: configuration,
+                sessionIsActive: true,
                 lastAppliedGeneration: 41
             )
         )
@@ -764,6 +776,7 @@ final class ApolloTuistBootstrapTests: XCTestCase {
             ApolloBridgeRuntime.shouldApplyAutomationRequest(
                 requestedConfiguration: nil as ApolloMacDisplayKitCaptureConfiguration?,
                 activeConfiguration: nil,
+                sessionIsActive: false,
                 lastAppliedGeneration: nil
             )
         )
