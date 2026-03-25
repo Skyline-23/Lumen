@@ -1043,16 +1043,26 @@ public actor ApolloBridgeRuntime {
         )
 
         activeCaptureConfiguration = configuration
+        encodedCaptureSession = session
+        coreForwarder.setProducerActive(true)
+        publishStatusDidChange(immediate: true)
 
         do {
             try await session.start(callbacks: callbacks)
         } catch {
-            activeCaptureConfiguration = nil
+            if encodedCaptureSession === session {
+                encodedCaptureSession = nil
+                activeCaptureConfiguration = nil
+                coreForwarder.setProducerActive(false)
+                latestFrame = nil
+                recentEvents = []
+                lastEncodedFrameDiagnosticsUptimeNanoseconds = 0
+                lastEncodedFrameSourceSequenceNumber = nil
+                lastEncodedFrameSourceDisplayTime = nil
+                publishStatusDidChange(immediate: true)
+            }
             throw error
         }
-        coreForwarder.setProducerActive(true)
-        encodedCaptureSession = session
-        publishStatusDidChange(immediate: true)
     }
 
     public func stopMacDisplayKitCapture() async {
@@ -1121,16 +1131,21 @@ public actor ApolloBridgeRuntime {
         )
 
         activeAudioCaptureConfiguration = configuration
+        audioCaptureSession = session
+        audioForwarder.setProducerActive(true)
+        publishStatusDidChange(immediate: true)
 
         do {
             try await session.start(callbacks: callbacks)
         } catch {
-            activeAudioCaptureConfiguration = nil
+            if audioCaptureSession === session {
+                audioCaptureSession = nil
+                activeAudioCaptureConfiguration = nil
+                audioForwarder.setProducerActive(false)
+                publishStatusDidChange(immediate: true)
+            }
             throw error
         }
-        audioForwarder.setProducerActive(true)
-        audioCaptureSession = session
-        publishStatusDidChange(immediate: true)
     }
 
     public func stopMacDisplayKitAudioCapture() async {
