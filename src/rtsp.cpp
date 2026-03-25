@@ -45,6 +45,8 @@ using namespace std::literals;
 
 namespace rtsp_stream {
   namespace {
+    constexpr std::size_t max_rtsp_message_size = 8192;
+
     const char *client_display_gamut_to_string(const int gamut) {
       switch (static_cast<video::client_display_gamut_e>(gamut)) {
         case video::client_display_gamut_e::srgb:
@@ -460,7 +462,7 @@ namespace rtsp_stream {
 
     tcp::socket sock;
 
-    std::array<char, 2048> msg_buf;
+    std::array<char, max_rtsp_message_size> msg_buf;
 
     char *crlf;
     char *begin = msg_buf.data();
