@@ -1081,7 +1081,9 @@ void ApolloCoreCaptureRequestPublishVideo(
   int32_t client_display_gamut,
   int32_t client_display_transfer,
   int32_t effective_display_gamut,
-  int32_t effective_display_transfer
+  int32_t effective_display_transfer,
+  bool has_effective_hdr_metadata,
+  ApolloCoreHDRStaticMetadata effective_hdr_metadata
 ) {
   auto *state = shared_capture_request_state();
   {
@@ -1102,6 +1104,8 @@ void ApolloCoreCaptureRequestPublishVideo(
     state->snapshot.client_display_transfer = std::max<int32_t>(client_display_transfer, 0);
     state->snapshot.effective_display_gamut = std::max<int32_t>(effective_display_gamut, 0);
     state->snapshot.effective_display_transfer = std::max<int32_t>(effective_display_transfer, 0);
+    state->snapshot.has_effective_hdr_metadata = has_effective_hdr_metadata;
+    state->snapshot.effective_hdr_metadata = effective_hdr_metadata;
   }
   state->change_cv.notify_all();
 }

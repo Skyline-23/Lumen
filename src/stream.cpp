@@ -2094,6 +2094,24 @@ namespace stream {
       }
     }
 
+    ApolloCoreHDRStaticMetadata apollo_core_hdr_static_metadata(const SS_HDR_METADATA &metadata) {
+      return ApolloCoreHDRStaticMetadata {
+        .red_primary_x = static_cast<int32_t>(metadata.displayPrimaries[0].x),
+        .red_primary_y = static_cast<int32_t>(metadata.displayPrimaries[0].y),
+        .green_primary_x = static_cast<int32_t>(metadata.displayPrimaries[1].x),
+        .green_primary_y = static_cast<int32_t>(metadata.displayPrimaries[1].y),
+        .blue_primary_x = static_cast<int32_t>(metadata.displayPrimaries[2].x),
+        .blue_primary_y = static_cast<int32_t>(metadata.displayPrimaries[2].y),
+        .white_point_x = static_cast<int32_t>(metadata.whitePoint.x),
+        .white_point_y = static_cast<int32_t>(metadata.whitePoint.y),
+        .max_display_luminance = static_cast<int32_t>(metadata.maxDisplayLuminance),
+        .min_display_luminance = static_cast<int32_t>(metadata.minDisplayLuminance),
+        .max_content_light_level = static_cast<int32_t>(metadata.maxContentLightLevel),
+        .max_frame_average_light_level = static_cast<int32_t>(metadata.maxFrameAverageLightLevel),
+        .max_full_frame_luminance = static_cast<int32_t>(metadata.maxFullFrameLuminance),
+      };
+    }
+
     ApolloCoreAudioCaptureSourceKind apollo_core_audio_source_kind(const audio::config_t &config) {
       return config.flags[audio::config_t::HOST_AUDIO] ?
                ApolloCoreAudioCaptureSourceKindSystemOutput :
@@ -2101,12 +2119,6 @@ namespace stream {
     }
 
     void mirror_apollo_core_capture_request(const ApolloCoreCaptureRequestSnapshot &snapshot) {
-      const auto effective_display_state = platf::resolve_capture_request_effective_display_state(
-        snapshot.display_id,
-        snapshot.dynamic_range,
-        snapshot.client_display_gamut,
-        snapshot.client_display_transfer
-      );
       platf::capture_request_mirror_state_t mirror_state {
         .generation = snapshot.generation,
         .video_generation = snapshot.video_generation,
@@ -2124,8 +2136,22 @@ namespace stream {
         .dynamic_range = snapshot.dynamic_range,
         .client_display_gamut = snapshot.client_display_gamut,
         .client_display_transfer = snapshot.client_display_transfer,
-        .effective_display_gamut = effective_display_state.gamut,
-        .effective_display_transfer = effective_display_state.transfer,
+        .effective_display_gamut = snapshot.effective_display_gamut,
+        .effective_display_transfer = snapshot.effective_display_transfer,
+        .has_effective_hdr_metadata = snapshot.has_effective_hdr_metadata,
+        .effective_hdr_red_primary_x = snapshot.effective_hdr_metadata.red_primary_x,
+        .effective_hdr_red_primary_y = snapshot.effective_hdr_metadata.red_primary_y,
+        .effective_hdr_green_primary_x = snapshot.effective_hdr_metadata.green_primary_x,
+        .effective_hdr_green_primary_y = snapshot.effective_hdr_metadata.green_primary_y,
+        .effective_hdr_blue_primary_x = snapshot.effective_hdr_metadata.blue_primary_x,
+        .effective_hdr_blue_primary_y = snapshot.effective_hdr_metadata.blue_primary_y,
+        .effective_hdr_white_point_x = snapshot.effective_hdr_metadata.white_point_x,
+        .effective_hdr_white_point_y = snapshot.effective_hdr_metadata.white_point_y,
+        .effective_hdr_max_display_luminance = snapshot.effective_hdr_metadata.max_display_luminance,
+        .effective_hdr_min_display_luminance = snapshot.effective_hdr_metadata.min_display_luminance,
+        .effective_hdr_max_content_light_level = snapshot.effective_hdr_metadata.max_content_light_level,
+        .effective_hdr_max_frame_average_light_level = snapshot.effective_hdr_metadata.max_frame_average_light_level,
+        .effective_hdr_max_full_frame_luminance = snapshot.effective_hdr_metadata.max_full_frame_luminance,
         .audio_source_kind = static_cast<int>(snapshot.audio_source_kind),
         .audio_excludes_current_process = snapshot.audio_excludes_current_process,
         .audio_sample_rate = snapshot.audio_sample_rate,
@@ -2151,6 +2177,19 @@ namespace stream {
         session.config.monitor.clientDisplayGamut,
         session.config.monitor.clientDisplayTransfer
       );
+      ApolloCoreHDRStaticMetadata effective_hdr_metadata {};
+      bool has_effective_hdr_metadata = false;
+      if (session.config.monitor.dynamicRange > 0) {
+        SS_HDR_METADATA hdr_metadata {};
+        has_effective_hdr_metadata = platf::resolve_effective_display_hdr_metadata(
+          effective_display_state.gamut,
+          effective_display_state.transfer,
+          hdr_metadata
+        );
+        if (has_effective_hdr_metadata) {
+          effective_hdr_metadata = apollo_core_hdr_static_metadata(hdr_metadata);
+        }
+      }
 
       BOOST_LOG(info) << "Publishing macOS bridge capture request displayID="sv
                       << requested_display_id
@@ -2166,7 +2205,8 @@ namespace stream {
                       << " effective-gamut="sv
                       << apollo_core_client_display_gamut_name(effective_display_state.gamut)
                       << " effective-transfer="sv
-                      << apollo_core_client_display_transfer_name(effective_display_state.transfer);
+                      << apollo_core_client_display_transfer_name(effective_display_state.transfer)
+                      << " effective-hdr-metadata="sv << has_effective_hdr_metadata;
 
       ApolloCoreCaptureRequestClear();
       ApolloCoreCaptureRequestPublishVideo(
@@ -2182,7 +2222,9 @@ namespace stream {
         session.config.monitor.clientDisplayGamut,
         session.config.monitor.clientDisplayTransfer,
         effective_display_state.gamut,
-        effective_display_state.transfer
+        effective_display_state.transfer,
+        has_effective_hdr_metadata,
+        effective_hdr_metadata
       );
 
       if (config::audio.stream && !session.config.audio.input_only) {

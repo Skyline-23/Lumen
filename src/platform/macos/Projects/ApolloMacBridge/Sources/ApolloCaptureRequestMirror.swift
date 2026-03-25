@@ -24,6 +24,7 @@ struct ApolloBridgeMirroredCaptureRequestSnapshot: Equatable, Sendable {
     let clientDisplayTransfer: Int32
     let effectiveDisplayGamut: Int32
     let effectiveDisplayTransfer: Int32
+    let effectiveHDRStaticMetadata: ApolloHDRStaticMetadata?
     let audioSourceKind: ApolloCoreAudioCaptureSourceKind
     let audioExcludesCurrentProcess: Bool
     let audioSampleRate: Int32
@@ -81,6 +82,7 @@ struct ApolloBridgeMirroredCaptureRequestSnapshot: Equatable, Sendable {
         self.clientDisplayTransfer = Self.number(dictionary["clientDisplayTransfer"])?.int32Value ?? 0
         self.effectiveDisplayGamut = Self.number(dictionary["effectiveDisplayGamut"])?.int32Value ?? 0
         self.effectiveDisplayTransfer = Self.number(dictionary["effectiveDisplayTransfer"])?.int32Value ?? 0
+        self.effectiveHDRStaticMetadata = Self.hdrStaticMetadata(from: dictionary)
         self.audioSourceKind = audioSourceKind
         self.audioExcludesCurrentProcess = audioExcludesCurrentProcess
         self.audioSampleRate = audioSampleRate
@@ -131,6 +133,28 @@ struct ApolloBridgeMirroredCaptureRequestSnapshot: Equatable, Sendable {
         }
         return ApolloCoreAudioCaptureSourceKind(rawValue: rawValue)
     }
+
+    private static func hdrStaticMetadata(from dictionary: [String: Any]) -> ApolloHDRStaticMetadata? {
+        guard (dictionary["hasEffectiveHDRMetadata"] as? Bool) == true else {
+            return nil
+        }
+
+        return ApolloHDRStaticMetadata(
+            redPrimaryX: Int(Self.number(dictionary["effectiveHDRRedPrimaryX"])?.int32Value ?? 0),
+            redPrimaryY: Int(Self.number(dictionary["effectiveHDRRedPrimaryY"])?.int32Value ?? 0),
+            greenPrimaryX: Int(Self.number(dictionary["effectiveHDRGreenPrimaryX"])?.int32Value ?? 0),
+            greenPrimaryY: Int(Self.number(dictionary["effectiveHDRGreenPrimaryY"])?.int32Value ?? 0),
+            bluePrimaryX: Int(Self.number(dictionary["effectiveHDRBluePrimaryX"])?.int32Value ?? 0),
+            bluePrimaryY: Int(Self.number(dictionary["effectiveHDRBluePrimaryY"])?.int32Value ?? 0),
+            whitePointX: Int(Self.number(dictionary["effectiveHDRWhitePointX"])?.int32Value ?? 0),
+            whitePointY: Int(Self.number(dictionary["effectiveHDRWhitePointY"])?.int32Value ?? 0),
+            maxDisplayLuminance: Int(Self.number(dictionary["effectiveHDRMaxDisplayLuminance"])?.int32Value ?? 0),
+            minDisplayLuminance: Int(Self.number(dictionary["effectiveHDRMinDisplayLuminance"])?.int32Value ?? 0),
+            maxContentLightLevel: Int(Self.number(dictionary["effectiveHDRMaxContentLightLevel"])?.int32Value ?? 0),
+            maxFrameAverageLightLevel: Int(Self.number(dictionary["effectiveHDRMaxFrameAverageLightLevel"])?.int32Value ?? 0),
+            maxFullFrameLuminance: Int(Self.number(dictionary["effectiveHDRMaxFullFrameLuminance"])?.int32Value ?? 0)
+        )
+    }
 }
 
 actor ApolloCaptureRequestMirrorCoordinator {
@@ -146,6 +170,7 @@ actor ApolloCaptureRequestMirrorCoordinator {
             ApolloCoreCaptureRequestClear()
 
             if mirroredSnapshot.videoRequested {
+                let effectiveHDRStaticMetadata = mirroredSnapshot.effectiveHDRStaticMetadata?.coreValue ?? ApolloCoreHDRStaticMetadata()
                 ApolloCoreCaptureRequestPublishVideo(
                     mirroredSnapshot.displayID,
                     mirroredSnapshot.codec,
@@ -159,7 +184,9 @@ actor ApolloCaptureRequestMirrorCoordinator {
                     mirroredSnapshot.clientDisplayGamut,
                     mirroredSnapshot.clientDisplayTransfer,
                     mirroredSnapshot.effectiveDisplayGamut,
-                    mirroredSnapshot.effectiveDisplayTransfer
+                    mirroredSnapshot.effectiveDisplayTransfer,
+                    mirroredSnapshot.effectiveHDRStaticMetadata != nil,
+                    effectiveHDRStaticMetadata
                 )
             }
 

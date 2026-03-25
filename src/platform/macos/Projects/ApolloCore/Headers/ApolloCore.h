@@ -44,6 +44,22 @@ typedef enum ApolloCoreCaptureEventKind {
   ApolloCoreCaptureEventKindDroppedFrame = 4
 } ApolloCoreCaptureEventKind;
 
+typedef struct ApolloCoreHDRStaticMetadata {
+  int32_t red_primary_x;
+  int32_t red_primary_y;
+  int32_t green_primary_x;
+  int32_t green_primary_y;
+  int32_t blue_primary_x;
+  int32_t blue_primary_y;
+  int32_t white_point_x;
+  int32_t white_point_y;
+  int32_t max_display_luminance;
+  int32_t min_display_luminance;
+  int32_t max_content_light_level;
+  int32_t max_frame_average_light_level;
+  int32_t max_full_frame_luminance;
+} ApolloCoreHDRStaticMetadata;
+
 typedef struct ApolloCoreEncodedCaptureIngress ApolloCoreEncodedCaptureIngress;
 typedef struct ApolloCoreAudioCaptureIngress ApolloCoreAudioCaptureIngress;
 
@@ -232,6 +248,8 @@ typedef struct ApolloCoreCaptureRequestSnapshot {
   int32_t client_display_transfer;
   int32_t effective_display_gamut;
   int32_t effective_display_transfer;
+  bool has_effective_hdr_metadata;
+  ApolloCoreHDRStaticMetadata effective_hdr_metadata;
   ApolloCoreAudioCaptureSourceKind audio_source_kind;
   bool audio_excludes_current_process;
   int32_t audio_sample_rate;
@@ -325,7 +343,9 @@ void ApolloCoreCaptureRequestPublishVideo(
   int32_t client_display_gamut,
   int32_t client_display_transfer,
   int32_t effective_display_gamut,
-  int32_t effective_display_transfer
+  int32_t effective_display_transfer,
+  bool has_effective_hdr_metadata,
+  ApolloCoreHDRStaticMetadata effective_hdr_metadata
 );
 void ApolloCoreCaptureRequestPublishAudio(
   ApolloCoreAudioCaptureSourceKind source_kind,
