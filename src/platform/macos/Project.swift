@@ -33,6 +33,7 @@ let hostedRuntimeHeaderSearchPaths = [
 ]
 
 let hostedRuntimeLibrarySearchPaths = [
+    "/opt/homebrew/opt/boost/lib",
     "\(buildDepsRoot)/lib",
     "/opt/homebrew/lib",
     "/opt/homebrew/opt/openssl/lib",
@@ -146,6 +147,11 @@ let hostedRuntimeSettings: SettingsDictionary = [
     "HEADER_SEARCH_PATHS": .array(hostedRuntimeHeaderSearchPaths),
     "LIBRARY_SEARCH_PATHS": .array(hostedRuntimeLibrarySearchPaths),
     "GCC_PREPROCESSOR_DEFINITIONS": .array(hostedRuntimePreprocessorDefinitions),
+    "OTHER_CPLUSPLUSFLAGS": .array([
+        "$(inherited)",
+        "-include",
+        "type_traits"
+    ]),
     "OTHER_LDFLAGS": .array(hostedRuntimeOtherLdFlags)
 ]
 
