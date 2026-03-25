@@ -42,6 +42,14 @@ final class ApolloTuistBootstrapTests: XCTestCase {
             .q4
         )
         XCTAssertEqual(
+            ApolloBridgeConfigurationPreferences.preferredQueueProfile(contents: "macos_bridge_queue_profile=q3"),
+            .q3
+        )
+        XCTAssertEqual(
+            ApolloBridgeConfigurationPreferences.preferredQueueProfile(contents: "macos_bridge_queue_profile=auto"),
+            .auto
+        )
+        XCTAssertEqual(
             ApolloBridgeConfigurationPreferences.preferredQueueProfile(contents: "macos_bridge_queue_profile=garbage"),
             .q2
         )
@@ -67,7 +75,7 @@ final class ApolloTuistBootstrapTests: XCTestCase {
             displayID: 11,
             codec: .hevc,
             preprocessStrategy: .none,
-            queueProfile: .q2,
+            queueProfile: .auto,
             showCursor: true,
             targetFrameRate: 120,
             requestedWidth: 3512,
@@ -93,6 +101,11 @@ final class ApolloTuistBootstrapTests: XCTestCase {
             queueProfile: .q2,
             targetFrameRate: 120
         )
+        let auto = ApolloMacDisplayKitCaptureConfiguration(
+            displayID: 7,
+            queueProfile: .auto,
+            targetFrameRate: 120
+        )
         let q4 = ApolloMacDisplayKitCaptureConfiguration(
             displayID: 7,
             queueProfile: .q4,
@@ -105,6 +118,7 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         )
 
         XCTAssertEqual(ApolloBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q2), 4)
+        XCTAssertEqual(ApolloBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: auto), 5)
         XCTAssertEqual(ApolloBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q4), 6)
         XCTAssertEqual(ApolloBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q2ThirtyFps), 4)
     }

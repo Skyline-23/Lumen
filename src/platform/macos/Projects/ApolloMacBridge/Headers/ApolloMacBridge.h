@@ -19,7 +19,8 @@ typedef enum ApolloMacBridgeQueueProfile {
   ApolloMacBridgeQueueProfileQ1 = 0,
   ApolloMacBridgeQueueProfileQ2 = 1,
   ApolloMacBridgeQueueProfileQ3 = 2,
-  ApolloMacBridgeQueueProfileQ4 = 3
+  ApolloMacBridgeQueueProfileQ4 = 3,
+  ApolloMacBridgeQueueProfileAuto = 4
 } ApolloMacBridgeQueueProfile;
 
 typedef struct ApolloMacBridgeCaptureConfiguration {

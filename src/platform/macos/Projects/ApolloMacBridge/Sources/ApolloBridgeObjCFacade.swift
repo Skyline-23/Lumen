@@ -666,6 +666,8 @@ extension ApolloBridgeObjCFacade {
 
     static func queueProfile(fromRawValue rawValue: Int) -> ApolloCaptureQueueProfile {
         switch rawValue {
+        case 4:
+            return .auto
         case 0:
             return .q1
         case 1:
@@ -736,6 +738,8 @@ extension ApolloBridgeObjCFacade {
 
     static func rawValue(for queueProfile: ApolloCaptureQueueProfile) -> Int {
         switch queueProfile {
+        case .auto:
+            return 4
         case .q1:
             return 0
         case .q2:

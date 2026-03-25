@@ -38,13 +38,16 @@ public enum ApolloCapturePreprocessStrategy: String, CaseIterable, Codable, Send
 }
 
 public enum ApolloCaptureQueueProfile: String, CaseIterable, Codable, Sendable {
+    case auto
     case q1
     case q2
     case q3
     case q4
 
-    var mdkValue: MDKSkyLightDisplayStreamQueueProfile {
+    var mdkQueueProfile: MDKSkyLightDisplayStreamQueueProfile? {
         switch self {
+        case .auto:
+            return nil
         case .q1:
             return .q1
         case .q2:
@@ -53,6 +56,24 @@ public enum ApolloCaptureQueueProfile: String, CaseIterable, Codable, Sendable {
             return .q3
         case .q4:
             return .q4
+        }
+    }
+
+    var queueDepthHint: Int {
+        switch self {
+        case .auto:
+            // MDK autotuning starts from its own candidate matrix; use the baseline-q3
+            // depth here so ApolloCore forwarding keeps enough slack without reviving
+            // large stale-frame queues by default.
+            return 3
+        case .q1:
+            return 1
+        case .q2:
+            return 2
+        case .q3:
+            return 3
+        case .q4:
+            return 4
         }
     }
 }
@@ -261,14 +282,18 @@ enum ApolloBridgeConfigurationPreferences {
 
     static func preferredQueueProfile(contents: String?) -> ApolloCaptureQueueProfile {
         switch configuredValue(forKey: "macos_bridge_queue_profile", contents: contents) {
+        case "auto":
+            return .auto
         case "q1":
             return .q1
         case "q2":
             return .q2
+        case "q3":
+            return .q3
         case "q4":
             return .q4
         default:
-            return .q1
+            return .q2
         }
     }
 
@@ -393,8 +418,8 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
 
     var mdkValue: MDKEncodedCaptureConfiguration {
         let streamConfiguration = MDKSkyLightDisplayStreamConfiguration(
-            queueDepth: queueProfile.mdkValue.queueDepth,
-            queueProfile: queueProfile.mdkValue,
+            queueDepth: queueProfile.queueDepthHint,
+            queueProfile: queueProfile.mdkQueueProfile,
             showCursor: showCursor,
             outputWidth: requestedWidth,
             outputHeight: requestedHeight,
@@ -899,7 +924,7 @@ public actor ApolloBridgeRuntime {
         // MDK already applies source-side backpressure. The ApolloCore forwarder only needs
         // enough slack for cross-thread handoff; scaling this queue with frame rate just lets
         // stale encoded frames accumulate and shows up as host-side latency.
-        let queueDepthReserve = max(configuration.queueProfile.mdkValue.queueDepth, 1)
+        let queueDepthReserve = max(configuration.queueProfile.queueDepthHint, 1)
         return min(max(queueDepthReserve + 2, 3), 8)
     }
 
