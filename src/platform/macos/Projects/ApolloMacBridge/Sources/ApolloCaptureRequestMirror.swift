@@ -1,5 +1,6 @@
 import ApolloCore
 import Foundation
+import OSLog
 
 struct ApolloBridgeMirroredCaptureRequestSnapshot: Equatable, Sendable {
     static let changedNotification = Notification.Name(
@@ -236,6 +237,7 @@ struct ApolloBridgeMirroredCaptureRequestSemanticState: Equatable, Sendable {
 }
 
 actor ApolloCaptureRequestMirrorCoordinator {
+    private let logger = Logger(subsystem: "com.lizardbyte.apollo", category: "CaptureRequestMirror")
     private var mirroredGeneration: UInt64?
     private var mirroredSemanticState: ApolloBridgeMirroredCaptureRequestSemanticState?
 
@@ -252,10 +254,16 @@ actor ApolloCaptureRequestMirrorCoordinator {
             )
             guard semanticState != mirroredSemanticState ||
                     semanticState != currentApolloCoreSemanticState else {
+                logger.debug(
+                    "Skipping mirrored capture request sync generation=\(mirroredSnapshot.generation, privacy: .public) because semantic state already matches ApolloCore"
+                )
                 return
             }
 
             mirroredSemanticState = semanticState
+            logger.notice(
+                "Applying mirrored capture request generation=\(mirroredSnapshot.generation, privacy: .public) video-generation=\(mirroredSnapshot.videoGeneration, privacy: .public) audio-generation=\(mirroredSnapshot.audioGeneration, privacy: .public) video-requested=\(mirroredSnapshot.videoRequested, privacy: .public) audio-requested=\(mirroredSnapshot.audioRequested, privacy: .public) display-id=\(mirroredSnapshot.displayID, privacy: .public) queue=\(mirroredSnapshot.queueProfile.rawValue, privacy: .public)"
+            )
             ApolloCoreCaptureRequestClear()
 
             if mirroredSnapshot.videoRequested {
@@ -277,6 +285,9 @@ actor ApolloCaptureRequestMirrorCoordinator {
                     mirroredSnapshot.effectiveHDRStaticMetadata != nil,
                     effectiveHDRStaticMetadata
                 )
+                logger.notice(
+                    "Republished mirrored video capture request generation=\(mirroredSnapshot.generation, privacy: .public) display-id=\(mirroredSnapshot.displayID, privacy: .public) codec=\(mirroredSnapshot.codec.rawValue, privacy: .public) queue=\(mirroredSnapshot.queueProfile.rawValue, privacy: .public) fps=\(mirroredSnapshot.targetFrameRate, privacy: .public)"
+                )
             }
 
             if mirroredSnapshot.audioRequested {
@@ -288,8 +299,14 @@ actor ApolloCaptureRequestMirrorCoordinator {
                     mirroredSnapshot.audioChannelCount,
                     mirroredSnapshot.audioFrameSize
                 )
+                logger.notice(
+                    "Republished mirrored audio capture request generation=\(mirroredSnapshot.generation, privacy: .public) source=\(mirroredSnapshot.audioSourceKind.rawValue, privacy: .public) sample-rate=\(mirroredSnapshot.audioSampleRate, privacy: .public) channels=\(mirroredSnapshot.audioChannelCount, privacy: .public)"
+                )
             }
         } else if mirroredGeneration != nil {
+            logger.notice(
+                "Clearing ApolloCore capture request because mirrored capture request state disappeared previous-generation=\(self.mirroredGeneration ?? 0, privacy: .public)"
+            )
             mirroredGeneration = nil
             mirroredSemanticState = nil
             ApolloCoreCaptureRequestClear()

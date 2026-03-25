@@ -1278,6 +1278,16 @@ public actor ApolloBridgeRuntime {
                 )
                 try? await startMacDisplayKitCapture(configuration: configuration)
             } else {
+                let activeConfigurationSummary: String
+                if let activeConfiguration = activeCaptureConfiguration {
+                    activeConfigurationSummary =
+                        "display-id=\(activeConfiguration.displayID) codec=\(activeConfiguration.codec.rawValue) queue=\(activeConfiguration.queueProfile.rawValue) fps=\(activeConfiguration.targetFrameRate)"
+                } else {
+                    activeConfigurationSummary = "none"
+                }
+                logger.notice(
+                    "Stopping MacDisplayKit capture because ApolloCore video request resolved to nil video-generation=\(request.videoGeneration, privacy: .public) last-applied-video-generation=\(self.lastAppliedVideoRequestGeneration ?? 0, privacy: .public) session-active=\(self.encodedCaptureSession != nil, privacy: .public) active-configuration=\(activeConfigurationSummary, privacy: .public)"
+                )
                 await stopMacDisplayKitCapture()
             }
         }
@@ -1292,6 +1302,24 @@ public actor ApolloBridgeRuntime {
             if let configuration = request.audioConfiguration {
                 try? await startMacDisplayKitAudioCapture(configuration: configuration)
             } else {
+                let activeAudioConfigurationSummary: String
+                if let activeAudioCaptureConfiguration = self.activeAudioCaptureConfiguration {
+                    let sourceDescription: String
+                    switch activeAudioCaptureConfiguration.source {
+                    case .microphone:
+                        sourceDescription = "microphone"
+                    case .systemOutput(let displayID, let excludesCurrentProcessAudio):
+                        sourceDescription =
+                            "system-output display-id=\(displayID) excludes-current-process=\(excludesCurrentProcessAudio)"
+                    }
+                    activeAudioConfigurationSummary =
+                        "source=\(sourceDescription) sample-rate=\(activeAudioCaptureConfiguration.sampleRate) channels=\(activeAudioCaptureConfiguration.channelCount)"
+                } else {
+                    activeAudioConfigurationSummary = "none"
+                }
+                logger.notice(
+                    "Stopping MacDisplayKit audio capture because ApolloCore audio request resolved to nil audio-generation=\(request.audioGeneration, privacy: .public) last-applied-audio-generation=\(self.lastAppliedAudioRequestGeneration ?? 0, privacy: .public) session-active=\(self.audioCaptureSession != nil, privacy: .public) active-configuration=\(activeAudioConfigurationSummary, privacy: .public)"
+                )
                 await stopMacDisplayKitAudioCapture()
             }
         }
