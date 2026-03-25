@@ -96,7 +96,7 @@ namespace nvhttp {
       }
     }
 
-    int parse_client_display_gamut(const std::string_view value) {
+    int parse_client_display_gamut(const std::string_view value, bool hdr_enabled) {
       if (value == "display-p3"sv || value == "display_p3"sv || value == "p3"sv) {
         return static_cast<int>(video::client_display_gamut_e::display_p3);
       }
@@ -105,6 +105,10 @@ namespace nvhttp {
       }
       if (value == "srgb"sv || value == "rec709"sv || value == "709"sv) {
         return static_cast<int>(video::client_display_gamut_e::srgb);
+      }
+
+      if (value.empty() && hdr_enabled) {
+        return static_cast<int>(video::client_display_gamut_e::display_p3);
       }
 
       return static_cast<int>(video::client_display_gamut_e::unknown);
@@ -259,7 +263,7 @@ namespace nvhttp {
 
     void after_bind() override {
       if (verify) {
-        context.set_verify_mode(boost::asio::ssl::verify_peer | boost::asio::ssl::verify_fail_if_no_peer_cert | boost::asio::ssl::verify_client_once);
+        context.set_verify_mode(boost::asio::ssl::verify_peer | boost::asio::ssl::verify_client_once);
         context.set_verify_callback([](int verified, boost::asio::ssl::verify_context &ctx) {
           // To respond with an error message, a connection must be established
           return 1;
@@ -650,7 +654,7 @@ namespace nvhttp {
     launch_session->client_display_hidpi = has_display_hidpi ?
       util::from_view(get_arg(args, "clientDisplayHiDPI", "0")) :
       launch_session->scale_factor > 100;
-    launch_session->client_display_gamut = parse_client_display_gamut(get_arg(args, "clientDisplayGamut", ""));
+    launch_session->client_display_gamut = parse_client_display_gamut(get_arg(args, "clientDisplayGamut", ""), launch_session->enable_hdr);
     launch_session->client_display_transfer = parse_client_display_transfer(get_arg(args, "clientDisplayTransfer", ""), launch_session->enable_hdr);
     BOOST_LOG(info) << "Client display profile from launch: gamut="sv
                     << client_display_gamut_to_string(launch_session->client_display_gamut)
@@ -871,6 +875,29 @@ namespace nvhttp {
     return (crypto::named_cert_t*)request->userp.get();
   }
 
+  inline void write_cert_verification_failed(resp_https_t response, req_https_t request) {
+    pt::ptree tree;
+    std::ostringstream data;
+
+    tree.put("root.<xmlattr>.status_code"s, 401);
+    tree.put("root.<xmlattr>.query"s, request->path);
+    tree.put("root.<xmlattr>.status_message"s, "The client is not authorized. Certificate verification failed."s);
+
+    pt::write_xml(data, tree);
+    response->write(data.str());
+    response->close_connection_after_response = true;
+  }
+
+  inline crypto::named_cert_t *require_verified_cert(resp_https_t response, req_https_t request) {
+    auto *named_cert_p = get_verified_cert(request);
+    if (named_cert_p) {
+      return named_cert_p;
+    }
+
+    write_cert_verification_failed(response, request);
+    return nullptr;
+  }
+
   template <class T>
   void print_req(std::shared_ptr<typename SimpleWeb::ServerBase<T>::Request> request) {
     BOOST_LOG(debug) << "TUNNEL :: "sv << tunnel<T>::to_string;
@@ -1089,14 +1116,6 @@ namespace nvhttp {
     print_req<T>(request);
 
     int pair_status = 0;
-    if constexpr (std::is_same_v<SunshineHTTPS, T>) {
-      auto args = request->parse_query_string();
-      auto clientID = args.find("uniqueid"s);
-
-      if (clientID != std::end(args)) {
-        pair_status = 1;
-      }
-    }
 
     auto local_endpoint = request->local_endpoint();
 
@@ -1115,29 +1134,35 @@ namespace nvhttp {
     // Only include the MAC address for requests sent from paired clients over HTTPS.
     // For HTTP requests, use a placeholder MAC address that Moonlight knows to ignore.
     if constexpr (std::is_same_v<SunshineHTTPS, T>) {
-      tree.put("root.mac", platf::get_mac_address(net::addr_to_normalized_string(local_endpoint.address())));
-
       auto named_cert_p = get_verified_cert(request);
-      if (!!(named_cert_p->perm & PERM::server_cmd)) {
-        pt::ptree& root_node = tree.get_child("root");
+      pair_status = named_cert_p ? 1 : 0;
+      if (named_cert_p) {
+        tree.put("root.mac", platf::get_mac_address(net::addr_to_normalized_string(local_endpoint.address())));
 
-        if (config::sunshine.server_cmds.size() > 0) {
-          // Broadcast server_cmds
-          for (const auto& cmd : config::sunshine.server_cmds) {
-            pt::ptree cmd_node;
-            cmd_node.put_value(cmd.cmd_name);
-            root_node.push_back(std::make_pair("ServerCommand", cmd_node));
+        if (!!(named_cert_p->perm & PERM::server_cmd)) {
+          pt::ptree& root_node = tree.get_child("root");
+
+          if (config::sunshine.server_cmds.size() > 0) {
+            // Broadcast server_cmds
+            for (const auto& cmd : config::sunshine.server_cmds) {
+              pt::ptree cmd_node;
+              cmd_node.put_value(cmd.cmd_name);
+              root_node.push_back(std::make_pair("ServerCommand", cmd_node));
+            }
           }
+        } else {
+          BOOST_LOG(debug) << "Permission Get ServerCommand denied for [" << named_cert_p->name << "] (" << (uint32_t)named_cert_p->perm << ")";
         }
-      } else {
-        BOOST_LOG(debug) << "Permission Get ServerCommand denied for [" << named_cert_p->name << "] (" << (uint32_t)named_cert_p->perm << ")";
-      }
 
-      tree.put("root.Permission", std::to_string((uint32_t)named_cert_p->perm));
+        tree.put("root.Permission", std::to_string((uint32_t)named_cert_p->perm));
+      } else {
+        tree.put("root.mac", "00:00:00:00:00:00");
+        tree.put("root.Permission", "0");
+      }
 
     #ifdef _WIN32
       tree.put("root.VirtualDisplayCapable", true);
-      if (!!(named_cert_p->perm & PERM::_all_actions)) {
+      if (named_cert_p && !!(named_cert_p->perm & PERM::_all_actions)) {
         tree.put("root.VirtualDisplayDriverReady", proc::vDisplayDriverStatus == VDISPLAY::DRIVER_STATUS::OK);
       } else {
         tree.put("root.VirtualDisplayDriverReady", true);
@@ -1287,7 +1312,12 @@ namespace nvhttp {
 
     apps.put("<xmlattr>.status_code", 200);
 
-    auto named_cert_p = get_verified_cert(request);
+    auto named_cert_p = require_verified_cert(response, request);
+    if (!named_cert_p) {
+      g.disable();
+      return;
+    }
+
     if (!!(named_cert_p->perm & PERM::_all_actions)) {
       auto current_appid = proc::proc.running();
       auto should_hide_inactive_apps = config::input.enable_input_only_mode && current_appid > 0 && current_appid != proc::input_only_app_id;
@@ -1373,7 +1403,12 @@ namespace nvhttp {
     auto current_app_uuid = proc::proc.get_running_app_uuid();
     bool is_input_only = config::input.enable_input_only_mode && (appid == proc::input_only_app_id || (appuuid_str == REMOTE_INPUT_UUID));
 
-    auto named_cert_p = get_verified_cert(request);
+    auto named_cert_p = require_verified_cert(response, request);
+    if (!named_cert_p) {
+      g.disable();
+      return;
+    }
+
     auto perm = PERM::launch;
 
     BOOST_LOG(verbose) << "Launching app [" << appid_str << "] with UUID [" << appuuid_str << "]";
@@ -1563,7 +1598,12 @@ namespace nvhttp {
       response->close_connection_after_response = true;
     });
 
-    auto named_cert_p = get_verified_cert(request);
+    auto named_cert_p = require_verified_cert(response, request);
+    if (!named_cert_p) {
+      g.disable();
+      return;
+    }
+
     if (!(named_cert_p->perm & PERM::_allow_view)) {
       BOOST_LOG(debug) << "Permission ViewApp denied for [" << named_cert_p->name << "] (" << (uint32_t)named_cert_p->perm << ")";
 
@@ -1676,7 +1716,12 @@ namespace nvhttp {
       response->close_connection_after_response = true;
     });
 
-    auto named_cert_p = get_verified_cert(request);
+    auto named_cert_p = require_verified_cert(response, request);
+    if (!named_cert_p) {
+      g.disable();
+      return;
+    }
+
     if (!(named_cert_p->perm & PERM::launch)) {
       BOOST_LOG(debug) << "Permission CancelApp denied for [" << named_cert_p->name << "] (" << (uint32_t)named_cert_p->perm << ")";
 
@@ -1708,7 +1753,11 @@ namespace nvhttp {
       response->close_connection_after_response = true;
     });
 
-    auto named_cert_p = get_verified_cert(request);
+    auto named_cert_p = require_verified_cert(response, request);
+    if (!named_cert_p) {
+      fg.disable();
+      return;
+    }
 
     if (!(named_cert_p->perm & PERM::_all_actions)) {
       BOOST_LOG(debug) << "Permission Get AppAsset denied for [" << named_cert_p->name << "] (" << (uint32_t)named_cert_p->perm << ")";
@@ -1734,7 +1783,10 @@ namespace nvhttp {
   void getClipboard(resp_https_t response, req_https_t request) {
     print_req<SunshineHTTPS>(request);
 
-    auto named_cert_p = get_verified_cert(request);
+    auto named_cert_p = require_verified_cert(response, request);
+    if (!named_cert_p) {
+      return;
+    }
 
     if (
       !(named_cert_p->perm & PERM::_allow_view)
@@ -1782,7 +1834,10 @@ namespace nvhttp {
   setClipboard(resp_https_t response, req_https_t request) {
     print_req<SunshineHTTPS>(request);
 
-    auto named_cert_p = get_verified_cert(request);
+    auto named_cert_p = require_verified_cert(response, request);
+    if (!named_cert_p) {
+      return;
+    }
 
     if (
       !(named_cert_p->perm & PERM::_allow_view)
@@ -1875,8 +1930,9 @@ namespace nvhttp {
 #endif
       };
       if (!x509) {
-        BOOST_LOG(info) << "unknown -- denied"sv;
-        return false;
+        req->userp.reset();
+        BOOST_LOG(debug) << "No client certificate presented during HTTPS handshake"sv;
+        return true;
       }
 
       bool verified = false;
@@ -1897,8 +1953,9 @@ namespace nvhttp {
 
       auto err_str = cert_chain.verify(x509.get(), named_cert_p);
       if (err_str) {
+        req->userp.reset();
         BOOST_LOG(warning) << "SSL Verification error :: "sv << err_str;
-        return verified;
+        return true;
       }
 
       verified = true;

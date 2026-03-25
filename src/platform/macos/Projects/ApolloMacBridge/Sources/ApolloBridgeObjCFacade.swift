@@ -12,6 +12,8 @@ public final class ApolloBridgeConfigurationBox: NSObject {
     public let requestedWidth: Int
     public let requestedHeight: Int
     public let enableHDR: Bool
+    public let clientDisplayGamutRawValue: Int
+    public let clientDisplayTransferRawValue: Int
 
     public init(
         displayID: UInt32,
@@ -22,7 +24,9 @@ public final class ApolloBridgeConfigurationBox: NSObject {
         targetFrameRate: Int,
         requestedWidth: Int,
         requestedHeight: Int,
-        enableHDR: Bool
+        enableHDR: Bool,
+        clientDisplayGamutRawValue: Int,
+        clientDisplayTransferRawValue: Int
     ) {
         self.displayID = displayID
         self.codecRawValue = codecRawValue
@@ -33,6 +37,8 @@ public final class ApolloBridgeConfigurationBox: NSObject {
         self.requestedWidth = requestedWidth
         self.requestedHeight = requestedHeight
         self.enableHDR = enableHDR
+        self.clientDisplayGamutRawValue = clientDisplayGamutRawValue
+        self.clientDisplayTransferRawValue = clientDisplayTransferRawValue
     }
 
     convenience init(configuration: ApolloMacDisplayKitCaptureConfiguration) {
@@ -45,7 +51,9 @@ public final class ApolloBridgeConfigurationBox: NSObject {
             targetFrameRate: configuration.targetFrameRate,
             requestedWidth: configuration.requestedWidth ?? 0,
             requestedHeight: configuration.requestedHeight ?? 0,
-            enableHDR: configuration.enableHDR
+            enableHDR: configuration.enableHDR,
+            clientDisplayGamutRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.clientDisplayGamut),
+            clientDisplayTransferRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.clientDisplayTransfer)
         )
     }
 
@@ -59,7 +67,9 @@ public final class ApolloBridgeConfigurationBox: NSObject {
             targetFrameRate: targetFrameRate,
             requestedWidth: requestedWidth,
             requestedHeight: requestedHeight,
-            enableHDR: enableHDR
+            enableHDR: enableHDR,
+            clientDisplayGamut: ApolloBridgeObjCFacade.clientDisplayGamut(fromRawValue: clientDisplayGamutRawValue),
+            clientDisplayTransfer: ApolloBridgeObjCFacade.clientDisplayTransfer(fromRawValue: clientDisplayTransferRawValue)
         )
     }
 }
@@ -585,6 +595,32 @@ extension ApolloBridgeObjCFacade {
         }
     }
 
+    static func clientDisplayGamut(fromRawValue rawValue: Int) -> ApolloClientDisplayGamut {
+        switch rawValue {
+        case 1:
+            return .srgb
+        case 2:
+            return .displayP3
+        case 3:
+            return .rec2020
+        default:
+            return .unknown
+        }
+    }
+
+    static func clientDisplayTransfer(fromRawValue rawValue: Int) -> ApolloClientDisplayTransfer {
+        switch rawValue {
+        case 1:
+            return .sdr
+        case 2:
+            return .pq
+        case 3:
+            return .hlg
+        default:
+            return .unknown
+        }
+    }
+
     static func audioSourceKind(fromRawValue rawValue: Int) -> ApolloAudioCaptureSourceKind {
         switch rawValue {
         case 1:
@@ -623,6 +659,32 @@ extension ApolloBridgeObjCFacade {
         case .q3:
             return 2
         case .q4:
+            return 3
+        }
+    }
+
+    static func rawValue(for clientDisplayGamut: ApolloClientDisplayGamut) -> Int {
+        switch clientDisplayGamut {
+        case .unknown:
+            return 0
+        case .srgb:
+            return 1
+        case .displayP3:
+            return 2
+        case .rec2020:
+            return 3
+        }
+    }
+
+    static func rawValue(for clientDisplayTransfer: ApolloClientDisplayTransfer) -> Int {
+        switch clientDisplayTransfer {
+        case .unknown:
+            return 0
+        case .sdr:
+            return 1
+        case .pq:
+            return 2
+        case .hlg:
             return 3
         }
     }

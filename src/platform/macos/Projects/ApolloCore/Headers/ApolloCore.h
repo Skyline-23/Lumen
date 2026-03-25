@@ -228,6 +228,8 @@ typedef struct ApolloCoreCaptureRequestSnapshot {
   int32_t requested_width;
   int32_t requested_height;
   int32_t dynamic_range;
+  int32_t client_display_gamut;
+  int32_t client_display_transfer;
   ApolloCoreAudioCaptureSourceKind audio_source_kind;
   bool audio_excludes_current_process;
   int32_t audio_sample_rate;
@@ -317,7 +319,9 @@ void ApolloCoreCaptureRequestPublishVideo(
   int32_t target_frame_rate,
   int32_t requested_width,
   int32_t requested_height,
-  int32_t dynamic_range
+  int32_t dynamic_range,
+  int32_t client_display_gamut,
+  int32_t client_display_transfer
 );
 void ApolloCoreCaptureRequestPublishAudio(
   ApolloCoreAudioCaptureSourceKind source_kind,

@@ -402,7 +402,9 @@ final class ApolloTuistBootstrapTests: XCTestCase {
                 120,
                 3840,
                 2160,
-                1
+                1,
+                2,
+                2
             )
             ApolloCoreCaptureRequestPublishAudio(
                 ApolloCoreAudioCaptureSourceKindSystemOutput,
@@ -428,6 +430,9 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(updatedSnapshot.target_frame_rate, 120)
         XCTAssertEqual(updatedSnapshot.requested_width, 3840)
         XCTAssertEqual(updatedSnapshot.requested_height, 2160)
+        XCTAssertEqual(updatedSnapshot.dynamic_range, 1)
+        XCTAssertEqual(updatedSnapshot.client_display_gamut, 2)
+        XCTAssertEqual(updatedSnapshot.client_display_transfer, 2)
         XCTAssertEqual(updatedSnapshot.audio_source_kind, ApolloCoreAudioCaptureSourceKindSystemOutput)
         XCTAssertEqual(updatedSnapshot.audio_frame_size, 480)
 
@@ -450,6 +455,8 @@ final class ApolloTuistBootstrapTests: XCTestCase {
             "requestedWidth": 3840,
             "requestedHeight": 2160,
             "dynamicRange": 1,
+            "clientDisplayGamut": 2,
+            "clientDisplayTransfer": 2,
             "audioSourceKind": 1,
             "audioExcludesCurrentProcess": true,
             "audioSampleRate": 48_000,
@@ -477,6 +484,8 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(snapshot.codec, ApolloCoreCaptureCodecHEVC)
         XCTAssertEqual(snapshot.preprocessStrategy, ApolloCoreCapturePreprocessStrategyDownscale2x)
         XCTAssertEqual(snapshot.queueProfile, ApolloCoreCaptureQueueProfileQ3)
+        XCTAssertEqual(snapshot.clientDisplayGamut, 2)
+        XCTAssertEqual(snapshot.clientDisplayTransfer, 2)
         XCTAssertEqual(snapshot.audioSourceKind, ApolloCoreAudioCaptureSourceKindSystemOutput)
         XCTAssertTrue(snapshot.audioExcludesCurrentProcess)
         XCTAssertEqual(snapshot.audioSampleRate, 48_000)

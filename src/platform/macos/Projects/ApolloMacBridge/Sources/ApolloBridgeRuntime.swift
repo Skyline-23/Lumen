@@ -57,6 +57,66 @@ public enum ApolloCaptureQueueProfile: String, CaseIterable, Codable, Sendable {
     }
 }
 
+public enum ApolloCaptureEncoderInputStrategy: String, CaseIterable, Codable, Sendable {
+    case auto
+    case bgra
+    case yuv420v8 = "420v8"
+    case yuv420v10 = "420v10"
+
+    var mdkValue: MDKEncodedCaptureEncoderInputStrategy {
+        switch self {
+        case .auto:
+            return .auto
+        case .bgra:
+            return .bgra
+        case .yuv420v8:
+            return .yuv420v8
+        case .yuv420v10:
+            return .yuv420v10
+        }
+    }
+}
+
+public enum ApolloClientDisplayGamut: String, CaseIterable, Codable, Sendable {
+    case unknown
+    case srgb
+    case displayP3 = "display-p3"
+    case rec2020
+
+    init(environmentValue: String?) {
+        switch environmentValue?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "display-p3", "display_p3", "p3":
+            self = .displayP3
+        case "rec2020", "bt2020", "2020":
+            self = .rec2020
+        case "srgb", "rec709", "709":
+            self = .srgb
+        default:
+            self = .unknown
+        }
+    }
+}
+
+public enum ApolloClientDisplayTransfer: String, CaseIterable, Codable, Sendable {
+    case unknown
+    case sdr
+    case pq
+    case hlg
+
+    init(environmentValue: String?) {
+        switch environmentValue?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "pq", "hdr-pq", "st2084", "smpte2084":
+            self = .pq
+        case "hlg", "hdr-hlg":
+            self = .hlg
+        case "sdr", "gamma":
+            self = .sdr
+        default:
+            self = .unknown
+        }
+    }
+}
+
 enum ApolloBridgeConfigurationPreferences {
     static let configurationFileURL: URL = {
         FileManager.default.homeDirectoryForCurrentUser
@@ -98,7 +158,24 @@ enum ApolloBridgeConfigurationPreferences {
         case "q4":
             return .q4
         default:
-            return .q2
+            return .q1
+        }
+    }
+
+    static func preferredEncoderInputStrategy() -> ApolloCaptureEncoderInputStrategy {
+        preferredEncoderInputStrategy(contents: try? String(contentsOf: configurationFileURL, encoding: .utf8))
+    }
+
+    static func preferredEncoderInputStrategy(contents: String?) -> ApolloCaptureEncoderInputStrategy {
+        switch configuredValue(forKey: "macos_bridge_encoder_input", contents: contents) {
+        case ApolloCaptureEncoderInputStrategy.bgra.rawValue:
+            return .bgra
+        case ApolloCaptureEncoderInputStrategy.yuv420v8.rawValue, "420", "nv12":
+            return .yuv420v8
+        case ApolloCaptureEncoderInputStrategy.yuv420v10.rawValue, "x420", "p010":
+            return .yuv420v10
+        default:
+            return .auto
         }
     }
 
@@ -136,39 +213,56 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     public let codec: ApolloCaptureCodec
     public let preprocessStrategy: ApolloCapturePreprocessStrategy
     public let queueProfile: ApolloCaptureQueueProfile
+    public let encoderInputStrategy: ApolloCaptureEncoderInputStrategy
     public let showCursor: Bool
     public let targetFrameRate: Int
     public let requestedWidth: Int?
     public let requestedHeight: Int?
     public let enableHDR: Bool
+    public let clientDisplayGamut: ApolloClientDisplayGamut
+    public let clientDisplayTransfer: ApolloClientDisplayTransfer
 
     public init(
         displayID: UInt32,
         codec: ApolloCaptureCodec = .hevc,
         preprocessStrategy: ApolloCapturePreprocessStrategy = .none,
         queueProfile: ApolloCaptureQueueProfile = .q2,
+        encoderInputStrategy: ApolloCaptureEncoderInputStrategy = .auto,
         showCursor: Bool = false,
         targetFrameRate: Int = 120,
         requestedWidth: Int? = nil,
         requestedHeight: Int? = nil,
-        enableHDR: Bool = false
+        enableHDR: Bool = false,
+        clientDisplayGamut: ApolloClientDisplayGamut = .unknown,
+        clientDisplayTransfer: ApolloClientDisplayTransfer = .unknown
     ) {
         self.displayID = displayID
         self.codec = codec
         self.preprocessStrategy = preprocessStrategy
         self.queueProfile = queueProfile
+        self.encoderInputStrategy = encoderInputStrategy
         self.showCursor = showCursor
         self.targetFrameRate = max(targetFrameRate, 1)
         self.requestedWidth = Self.sanitizedDimension(requestedWidth)
         self.requestedHeight = Self.sanitizedDimension(requestedHeight)
         self.enableHDR = enableHDR
+        self.clientDisplayGamut = clientDisplayGamut
+        self.clientDisplayTransfer = clientDisplayTransfer
     }
 
     public static func panelNative(displayID: UInt32) -> Self {
-        Self(
+        let environment = ProcessInfo.processInfo.environment
+        return Self(
             displayID: displayID,
             codec: ApolloBridgeConfigurationPreferences.preferredCodec(),
-            queueProfile: ApolloBridgeConfigurationPreferences.preferredQueueProfile()
+            queueProfile: ApolloBridgeConfigurationPreferences.preferredQueueProfile(),
+            encoderInputStrategy: ApolloBridgeConfigurationPreferences.preferredEncoderInputStrategy(),
+            clientDisplayGamut: ApolloClientDisplayGamut(
+                environmentValue: environment["APOLLO_CLIENT_DISPLAY_GAMUT"]
+            ),
+            clientDisplayTransfer: ApolloClientDisplayTransfer(
+                environmentValue: environment["APOLLO_CLIENT_DISPLAY_TRANSFER"]
+            )
         )
     }
 
@@ -189,15 +283,104 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
             preprocessStrategy: preprocessStrategy.mdkValue,
             targetFrameRate: targetFrameRate,
             deliveryMode: .callbackOnly,
-            hdrConfiguration: hdrConfiguration
+            encoderInputStrategy: encoderInputStrategy.mdkValue,
+            hdrConfiguration: encodedColorConfiguration
         )
     }
 
-    private var hdrConfiguration: MDKVideoHDRConfiguration? {
-        guard enableHDR, codec != .h264 else {
-            return nil
+    private var encodedColorConfiguration: MDKVideoHDRConfiguration? {
+        if enableHDR, codec != .h264 {
+            let colorPrimaries = preferredHDRColorPrimaries
+            let yCbCrMatrix = preferredHDRYCbCrMatrix
+            let metadata = preferredHDRStaticMetadata
+            return MDKVideoHDRConfiguration(
+                colorPrimaries: colorPrimaries,
+                transferFunction: preferredHDRTransferFunction,
+                yCbCrMatrix: yCbCrMatrix,
+                metadataInsertionMode: .automatic,
+                masteringDisplayColorVolume: metadata.masteringDisplayColorVolume,
+                contentLightLevelInfo: metadata.contentLightLevelInfo
+            )
         }
-        return .hdr10()
+
+        switch clientDisplayGamut {
+        case .displayP3:
+            return MDKVideoHDRConfiguration(
+                colorPrimaries: .p3D65,
+                transferFunction: .ituR709,
+                yCbCrMatrix: .ituR709,
+                metadataInsertionMode: .automatic
+            )
+        case .rec2020:
+            return MDKVideoHDRConfiguration(
+                colorPrimaries: .ituR2020,
+                transferFunction: .ituR709,
+                yCbCrMatrix: .ituR2020,
+                metadataInsertionMode: .automatic
+            )
+        case .srgb, .unknown:
+            return MDKVideoHDRConfiguration(
+                colorPrimaries: .ituR709,
+                transferFunction: .ituR709,
+                yCbCrMatrix: .ituR709,
+                metadataInsertionMode: .automatic
+            )
+        }
+    }
+
+    private var preferredHDRTransferFunction: MDKVideoTransferFunction {
+        switch clientDisplayTransfer {
+        case .hlg:
+            return .ituR2100HLG
+        case .sdr:
+            return .ituR709
+        case .pq, .unknown:
+            return .smpteSt2084PQ
+        }
+    }
+
+    private var preferredHDRColorPrimaries: MDKVideoColorPrimaries {
+        switch clientDisplayGamut {
+        case .displayP3:
+            return .p3D65
+        case .rec2020:
+            return .ituR2020
+        case .srgb, .unknown:
+            return .ituR709
+        }
+    }
+
+    private var preferredHDRYCbCrMatrix: MDKVideoYCbCrMatrix {
+        switch preferredHDRColorPrimaries {
+        case .ituR2020:
+            return .ituR2020
+        case .p3D65, .ituR709:
+            return .ituR709
+        }
+    }
+
+    private var preferredHDRStaticMetadata: (
+        masteringDisplayColorVolume: MDKVideoMasteringDisplayColorVolume?,
+        contentLightLevelInfo: MDKVideoContentLightLevelInfo?
+    ) {
+        switch preferredHDRTransferFunction {
+        case .ituR2100HLG:
+            return (nil, nil)
+        case .smpteSt2084PQ:
+            switch preferredHDRColorPrimaries {
+            case .p3D65:
+                return (Self.hdrP3MasteringDisplayColorVolume, Self.hdrP3ContentLightLevelInfo)
+            case .ituR2020:
+                return (
+                    MDKVideoMasteringDisplayColorVolume.hdr10Default(),
+                    MDKVideoContentLightLevelInfo.hdr10Default()
+                )
+            case .ituR709:
+                return (Self.hdr709MasteringDisplayColorVolume, Self.hdr709ContentLightLevelInfo)
+            }
+        case .ituR709:
+            return (nil, nil)
+        }
     }
 
     private static func sanitizedDimension(_ value: Int?) -> Int? {
@@ -206,6 +389,35 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         }
         return value
     }
+
+    private static let hdr709MasteringDisplayColorVolume = MDKVideoMasteringDisplayColorVolume(
+        redPrimary: MDKVideoChromaticityPoint(x: 0.6400, y: 0.3300),
+        greenPrimary: MDKVideoChromaticityPoint(x: 0.3000, y: 0.6000),
+        bluePrimary: MDKVideoChromaticityPoint(x: 0.1500, y: 0.0600),
+        whitePoint: MDKVideoChromaticityPoint(x: 0.3127, y: 0.3290),
+        maxLuminance: 600.0,
+        minLuminance: 0.001
+    )
+
+    private static let hdr709ContentLightLevelInfo = MDKVideoContentLightLevelInfo(
+        maximumContentLightLevel: 600,
+        maximumFrameAverageLightLevel: 250
+    )
+
+    private static let hdrP3MasteringDisplayColorVolume = MDKVideoMasteringDisplayColorVolume(
+        redPrimary: MDKVideoChromaticityPoint(x: 0.6800, y: 0.3200),
+        greenPrimary: MDKVideoChromaticityPoint(x: 0.2650, y: 0.6900),
+        bluePrimary: MDKVideoChromaticityPoint(x: 0.1500, y: 0.0600),
+        whitePoint: MDKVideoChromaticityPoint(x: 0.3127, y: 0.3290),
+        maxLuminance: 1000.0,
+        minLuminance: 0.001
+    )
+
+    private static let hdrP3ContentLightLevelInfo = MDKVideoContentLightLevelInfo(
+        maximumContentLightLevel: 1000,
+        maximumFrameAverageLightLevel: 400
+    )
+
 }
 
 public struct ApolloBridgeEncodedFrameSnapshot: Equatable, Sendable {
@@ -416,7 +628,9 @@ private struct ApolloBridgeAutomationRequest: Equatable, Sendable {
                 targetFrameRate: Int(snapshot.target_frame_rate),
                 requestedWidth: Int(snapshot.requested_width),
                 requestedHeight: Int(snapshot.requested_height),
-                enableHDR: snapshot.dynamic_range > 0
+                enableHDR: snapshot.dynamic_range > 0,
+                clientDisplayGamut: ApolloBridgeAutomationRequest.clientDisplayGamut(from: snapshot.client_display_gamut),
+                clientDisplayTransfer: ApolloBridgeAutomationRequest.clientDisplayTransfer(from: snapshot.client_display_transfer)
             )
         } else {
             videoConfiguration = nil
@@ -478,6 +692,32 @@ private struct ApolloBridgeAutomationRequest: Equatable, Sendable {
             return .q4
         default:
             return .q2
+        }
+    }
+
+    private static func clientDisplayGamut(from value: Int32) -> ApolloClientDisplayGamut {
+        switch value {
+        case 1:
+            return .srgb
+        case 2:
+            return .displayP3
+        case 3:
+            return .rec2020
+        default:
+            return .unknown
+        }
+    }
+
+    private static func clientDisplayTransfer(from value: Int32) -> ApolloClientDisplayTransfer {
+        switch value {
+        case 1:
+            return .sdr
+        case 2:
+            return .pq
+        case 3:
+            return .hlg
+        default:
+            return .unknown
         }
     }
 }
@@ -543,7 +783,7 @@ public actor ApolloBridgeRuntime {
     public func startMacDisplayKitCapture(
         configuration: ApolloMacDisplayKitCaptureConfiguration
     ) async throws {
-        await stopMacDisplayKitCapture()
+        await stopMacDisplayKitCapture(resetRequestGeneration: false)
 
         coreForwarder.reset()
         coreForwarder.setProducerActive(false)
@@ -571,14 +811,24 @@ public actor ApolloBridgeRuntime {
             }
         )
 
-        try await session.start(callbacks: callbacks)
+        activeCaptureConfiguration = configuration
+
+        do {
+            try await session.start(callbacks: callbacks)
+        } catch {
+            activeCaptureConfiguration = nil
+            throw error
+        }
         coreForwarder.setProducerActive(true)
         encodedCaptureSession = session
-        activeCaptureConfiguration = configuration
         publishStatusDidChange(immediate: true)
     }
 
     public func stopMacDisplayKitCapture() async {
+        await stopMacDisplayKitCapture(resetRequestGeneration: true)
+    }
+
+    private func stopMacDisplayKitCapture(resetRequestGeneration: Bool) async {
         guard let session = encodedCaptureSession else {
             encodedCaptureSession = nil
             activeCaptureConfiguration = nil
@@ -588,7 +838,9 @@ public actor ApolloBridgeRuntime {
             lastEncodedFrameDiagnosticsUptimeNanoseconds = 0
             lastEncodedFrameSourceSequenceNumber = nil
             lastEncodedFrameSourceDisplayTime = nil
-            lastAppliedVideoRequestGeneration = nil
+            if resetRequestGeneration {
+                lastAppliedVideoRequestGeneration = nil
+            }
             return
         }
 
@@ -599,7 +851,9 @@ public actor ApolloBridgeRuntime {
         lastEncodedFrameDiagnosticsUptimeNanoseconds = 0
         lastEncodedFrameSourceSequenceNumber = nil
         lastEncodedFrameSourceDisplayTime = nil
-        lastAppliedVideoRequestGeneration = nil
+        if resetRequestGeneration {
+            lastAppliedVideoRequestGeneration = nil
+        }
         publishStatusDidChange(immediate: true)
     }
 
@@ -616,7 +870,7 @@ public actor ApolloBridgeRuntime {
     public func startMacDisplayKitAudioCapture(
         configuration: ApolloMacDisplayKitAudioCaptureConfiguration
     ) async throws {
-        await stopMacDisplayKitAudioCapture()
+        await stopMacDisplayKitAudioCapture(resetRequestGeneration: false)
 
         audioForwarder.reset()
         audioForwarder.setProducerActive(false)
@@ -635,20 +889,32 @@ public actor ApolloBridgeRuntime {
             }
         )
 
-        try await session.start(callbacks: callbacks)
+        activeAudioCaptureConfiguration = configuration
+
+        do {
+            try await session.start(callbacks: callbacks)
+        } catch {
+            activeAudioCaptureConfiguration = nil
+            throw error
+        }
         audioForwarder.setProducerActive(true)
         audioCaptureSession = session
-        activeAudioCaptureConfiguration = configuration
         publishStatusDidChange(immediate: true)
     }
 
     public func stopMacDisplayKitAudioCapture() async {
+        await stopMacDisplayKitAudioCapture(resetRequestGeneration: true)
+    }
+
+    private func stopMacDisplayKitAudioCapture(resetRequestGeneration: Bool) async {
         guard let session = audioCaptureSession else {
             audioCaptureSession = nil
             activeAudioCaptureConfiguration = nil
             audioForwarder.reset()
             audioForwarder.setProducerActive(false)
-            lastAppliedAudioRequestGeneration = nil
+            if resetRequestGeneration {
+                lastAppliedAudioRequestGeneration = nil
+            }
             return
         }
 
@@ -656,7 +922,9 @@ public actor ApolloBridgeRuntime {
         audioForwarder.setProducerActive(false)
         audioCaptureSession = nil
         activeAudioCaptureConfiguration = nil
-        lastAppliedAudioRequestGeneration = nil
+        if resetRequestGeneration {
+            lastAppliedAudioRequestGeneration = nil
+        }
         publishStatusDidChange(immediate: true)
     }
 
@@ -766,11 +1034,11 @@ public actor ApolloBridgeRuntime {
 
     private func applyApolloCoreCaptureRequest(_ request: ApolloBridgeAutomationRequest) async {
         let videoConfigurationChanged =
-            request.videoConfiguration != activeCaptureConfiguration ||
-            (request.videoConfiguration == nil) != (encodedCaptureSession == nil)
+            request.videoConfiguration != activeCaptureConfiguration
         let videoGenerationChanged = request.videoGeneration != lastAppliedVideoRequestGeneration
 
         if videoConfigurationChanged || (request.videoConfiguration != nil && videoGenerationChanged) {
+            lastAppliedVideoRequestGeneration = request.videoGeneration
             if let configuration = request.videoConfiguration {
                 let frameCapacity = Self.recommendedCoreForwardingFrameCapacity(for: configuration)
                 configureCoreForwarding(
@@ -784,21 +1052,19 @@ public actor ApolloBridgeRuntime {
             } else {
                 await stopMacDisplayKitCapture()
             }
-            lastAppliedVideoRequestGeneration = request.videoGeneration
         }
 
         let audioConfigurationChanged =
-            request.audioConfiguration != activeAudioCaptureConfiguration ||
-            (request.audioConfiguration == nil) != (audioCaptureSession == nil)
+            request.audioConfiguration != activeAudioCaptureConfiguration
         let audioGenerationChanged = request.audioGeneration != lastAppliedAudioRequestGeneration
 
         if audioConfigurationChanged || (request.audioConfiguration != nil && audioGenerationChanged) {
+            lastAppliedAudioRequestGeneration = request.audioGeneration
             if let configuration = request.audioConfiguration {
                 try? await startMacDisplayKitAudioCapture(configuration: configuration)
             } else {
                 await stopMacDisplayKitAudioCapture()
             }
-            lastAppliedAudioRequestGeneration = request.audioGeneration
         }
     }
 
@@ -838,8 +1104,11 @@ public actor ApolloBridgeRuntime {
             recentEvents.removeFirst(recentEvents.count - 16)
         }
         let captureStatistics = await encodedCaptureSession?.statisticsSnapshot()
+        let captureMinCallbackLatency = formattedLatency(captureStatistics?.minOutputCallbackLatencyMilliseconds)
+        let captureMaxCallbackLatency = formattedLatency(captureStatistics?.maxOutputCallbackLatencyMilliseconds)
+        let captureDiagnostics = Self.captureDiagnosticsSnippet(from: captureStatistics)
         logger.notice(
-            "Mac bridge capture event kind=\(event.kind.rawValue, privacy: .public) message=\(event.message ?? "n/a", privacy: .public) stop-status=\(event.stopStatus ?? 0, privacy: .public) automatic-restarts=\(event.automaticRestartCount ?? 0, privacy: .public) source-display-time=\(event.sourceDisplayTime ?? 0, privacy: .public) capture-emitted=\(captureStatistics?.emittedFrameCount ?? 0, privacy: .public) capture-dropped=\(captureStatistics?.droppedFrameCount ?? 0, privacy: .public) capture-processing-failures=\(captureStatistics?.processingFailureCount ?? 0, privacy: .public) capture-running=\(captureStatistics?.isRunning ?? false, privacy: .public) capture-last-error=\(captureStatistics?.lastErrorDescription ?? "n/a", privacy: .public)"
+            "Mac bridge capture event kind=\(event.kind.rawValue, privacy: .public) message=\(event.message ?? "n/a", privacy: .public) stop-status=\(event.stopStatus ?? 0, privacy: .public) automatic-restarts=\(event.automaticRestartCount ?? 0, privacy: .public) source-display-time=\(event.sourceDisplayTime ?? 0, privacy: .public) capture-emitted=\(captureStatistics?.emittedFrameCount ?? 0, privacy: .public) capture-dropped=\(captureStatistics?.droppedFrameCount ?? 0, privacy: .public) capture-processing-failures=\(captureStatistics?.processingFailureCount ?? 0, privacy: .public) capture-running=\(captureStatistics?.isRunning ?? false, privacy: .public) capture-last-error=\(captureStatistics?.lastErrorDescription ?? "n/a", privacy: .public) capture-min-callback-latency-ms=\(captureMinCallbackLatency, privacy: .public) capture-max-callback-latency-ms=\(captureMaxCallbackLatency, privacy: .public) capture-vt=\(captureDiagnostics, privacy: .public)"
         )
         publishStatusDidChange()
     }
@@ -888,15 +1157,57 @@ public actor ApolloBridgeRuntime {
             let transferFunction = hdrValidation.transferFunction ?? "n/a"
             let yCbCrMatrix = hdrValidation.yCbCrMatrix ?? "n/a"
             let captureLastError = captureStatistics?.lastErrorDescription ?? "n/a"
+            let captureMinCallbackLatency = formattedLatency(captureStatistics?.minOutputCallbackLatencyMilliseconds)
+            let captureMaxCallbackLatency = formattedLatency(captureStatistics?.maxOutputCallbackLatencyMilliseconds)
+            let captureDiagnostics = Self.captureDiagnosticsSnippet(from: captureStatistics)
 
             logger.notice(
-                "Mac bridge frame callback display-id=\(displayID, privacy: .public) codec=\(codec, privacy: .public) seq=\(frame.sourceSequenceNumber, privacy: .public) seq-delta=\(sequenceDelta ?? 0, privacy: .public) display-time=\(frame.sourceDisplayTime, privacy: .public) display-delta-ms=\(displayDeltaText, privacy: .public) callback-latency-ms=\(callbackLatencyText, privacy: .public) key=\(frame.isKeyFrame, privacy: .public) hdr=\(frame.isHDRSignaled, privacy: .public) hdr-primaries=\(colorPrimaries, privacy: .public) hdr-transfer=\(transferFunction, privacy: .public) hdr-matrix=\(yCbCrMatrix, privacy: .public) hdr-mastering=\(hdrValidation.hasMasteringDisplayColorVolume, privacy: .public) hdr-cll=\(hdrValidation.hasContentLightLevelInfo, privacy: .public) target-fps=\(targetFrameRate, privacy: .public) target-size=\(targetWidth, privacy: .public)x\(targetHeight, privacy: .public) queue=\(queueProfile, privacy: .public) capture-emitted=\(captureStatistics?.emittedFrameCount ?? 0, privacy: .public) capture-dropped=\(captureStatistics?.droppedFrameCount ?? 0, privacy: .public) capture-processing-failures=\(captureStatistics?.processingFailureCount ?? 0, privacy: .public) capture-restarts=\(captureStatistics?.automaticRestartCount ?? 0, privacy: .public) capture-running=\(captureStatistics?.isRunning ?? false, privacy: .public) capture-last-error=\(captureLastError, privacy: .public) core-frame-count=\(ingressSnapshot.frameCount, privacy: .public) core-queued=\(ingressSnapshot.queuedFrameCount, privacy: .public) core-dropped=\(ingressSnapshot.droppedFrameCount, privacy: .public) core-last-seq=\(ingressSnapshot.lastFrameSourceSequenceNumber ?? 0, privacy: .public)"
+                "Mac bridge frame callback display-id=\(displayID, privacy: .public) codec=\(codec, privacy: .public) seq=\(frame.sourceSequenceNumber, privacy: .public) seq-delta=\(sequenceDelta ?? 0, privacy: .public) display-time=\(frame.sourceDisplayTime, privacy: .public) display-delta-ms=\(displayDeltaText, privacy: .public) callback-latency-ms=\(callbackLatencyText, privacy: .public) key=\(frame.isKeyFrame, privacy: .public) hdr=\(frame.isHDRSignaled, privacy: .public) hdr-primaries=\(colorPrimaries, privacy: .public) hdr-transfer=\(transferFunction, privacy: .public) hdr-matrix=\(yCbCrMatrix, privacy: .public) hdr-mastering=\(hdrValidation.hasMasteringDisplayColorVolume, privacy: .public) hdr-cll=\(hdrValidation.hasContentLightLevelInfo, privacy: .public) target-fps=\(targetFrameRate, privacy: .public) target-size=\(targetWidth, privacy: .public)x\(targetHeight, privacy: .public) queue=\(queueProfile, privacy: .public) capture-emitted=\(captureStatistics?.emittedFrameCount ?? 0, privacy: .public) capture-dropped=\(captureStatistics?.droppedFrameCount ?? 0, privacy: .public) capture-processing-failures=\(captureStatistics?.processingFailureCount ?? 0, privacy: .public) capture-restarts=\(captureStatistics?.automaticRestartCount ?? 0, privacy: .public) capture-running=\(captureStatistics?.isRunning ?? false, privacy: .public) capture-last-error=\(captureLastError, privacy: .public) capture-min-callback-latency-ms=\(captureMinCallbackLatency, privacy: .public) capture-max-callback-latency-ms=\(captureMaxCallbackLatency, privacy: .public) capture-vt=\(captureDiagnostics, privacy: .public) core-frame-count=\(ingressSnapshot.frameCount, privacy: .public) core-queued=\(ingressSnapshot.queuedFrameCount, privacy: .public) core-dropped=\(ingressSnapshot.droppedFrameCount, privacy: .public) core-last-seq=\(ingressSnapshot.lastFrameSourceSequenceNumber ?? 0, privacy: .public)"
             )
             lastEncodedFrameDiagnosticsUptimeNanoseconds = now
         }
 
         lastEncodedFrameSourceSequenceNumber = frame.sourceSequenceNumber
         lastEncodedFrameSourceDisplayTime = frame.sourceDisplayTime
+    }
+
+    private func formattedLatency(_ value: Double?) -> String {
+        guard let value else {
+            return "n/a"
+        }
+        return String(format: "%.3f", value)
+    }
+
+    private nonisolated static func captureDiagnosticsSnippet(from statistics: MDKEncodedCaptureSessionStatistics?) -> String {
+        guard let statistics else {
+            return "n/a"
+        }
+
+        let interestingPrefixes = [
+            "skyLightAutotuningSource=",
+            "skyLightTuningCandidate=",
+            "skyLightTuningQueueDepth=",
+            "skyLightTuningMinimumFrameTime=",
+            "skyLightTuningEffectiveOutputFrameRate=",
+            "skyLightTuningCadence=",
+            "videoToolboxUsingHardwareEncoder=",
+            "videoToolboxRecommendedParallelizationLimit=",
+            "videoToolboxPixelBufferPoolIsShared=",
+            "videoToolboxStagingMode=",
+            "videoToolboxEncoderInputStrategy=",
+            "videoToolboxColorConversionMode=",
+            "videoToolboxDirectSubmissionFrameCount=",
+            "videoToolboxStagedSubmissionFrameCount=",
+            "videoToolboxMaxInflightStagingSlots="
+        ]
+        let notes = statistics.notes.filter { note in
+            interestingPrefixes.contains { note.hasPrefix($0) }
+        }
+
+        guard !notes.isEmpty else {
+            return "n/a"
+        }
+        return notes.joined(separator: ";")
     }
 
     private func recordAudioFrame(_ frame: MDKAudioFrame) {

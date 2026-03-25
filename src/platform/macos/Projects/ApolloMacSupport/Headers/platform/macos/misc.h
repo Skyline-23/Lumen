@@ -30,6 +30,8 @@ namespace platf {
     int requested_width;
     int requested_height;
     int dynamic_range;
+    int client_display_gamut;
+    int client_display_transfer;
     int audio_source_kind;
     bool audio_excludes_current_process;
     int audio_sample_rate;

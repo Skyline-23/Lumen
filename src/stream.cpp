@@ -1031,11 +1031,7 @@ namespace stream {
       auto &cipher = session->control.cipher;
       auto &iv = session->control.legacy_input_enc_iv;
       if (cipher.decrypt(tagged_cipher, plaintext, &iv)) {
-        // something went wrong :(
-
-        BOOST_LOG(error) << "Failed to verify tag"sv;
-
-        session::stop(*session);
+        BOOST_LOG(warning) << "Dropping legacy input packet after authentication tag verification failure"sv;
         return;
       }
 
@@ -1137,11 +1133,7 @@ namespace stream {
 
       std::vector<uint8_t> plaintext;
       if (cipher.decrypt(tagged_cipher, plaintext, &iv)) {
-        // something went wrong :(
-
-        BOOST_LOG(error) << "Failed to verify tag"sv;
-
-        session::stop(*session);
+        BOOST_LOG(warning) << "Dropping encrypted control packet after authentication tag verification failure"sv;
         return;
       }
 
@@ -2074,6 +2066,34 @@ namespace stream {
       }
     }
 
+    std::string_view apollo_core_client_display_gamut_name(int gamut) {
+      switch (static_cast<video::client_display_gamut_e>(gamut)) {
+        case video::client_display_gamut_e::srgb:
+          return "srgb"sv;
+        case video::client_display_gamut_e::display_p3:
+          return "display-p3"sv;
+        case video::client_display_gamut_e::rec2020:
+          return "rec2020"sv;
+        case video::client_display_gamut_e::unknown:
+        default:
+          return "unknown"sv;
+      }
+    }
+
+    std::string_view apollo_core_client_display_transfer_name(int transfer) {
+      switch (static_cast<video::client_display_transfer_e>(transfer)) {
+        case video::client_display_transfer_e::sdr:
+          return "sdr"sv;
+        case video::client_display_transfer_e::pq:
+          return "pq"sv;
+        case video::client_display_transfer_e::hlg:
+          return "hlg"sv;
+        case video::client_display_transfer_e::unknown:
+        default:
+          return "unknown"sv;
+      }
+    }
+
     ApolloCoreAudioCaptureSourceKind apollo_core_audio_source_kind(const audio::config_t &config) {
       return config.flags[audio::config_t::HOST_AUDIO] ?
                ApolloCoreAudioCaptureSourceKindSystemOutput :
@@ -2096,6 +2116,8 @@ namespace stream {
         .requested_width = snapshot.requested_width,
         .requested_height = snapshot.requested_height,
         .dynamic_range = snapshot.dynamic_range,
+        .client_display_gamut = snapshot.client_display_gamut,
+        .client_display_transfer = snapshot.client_display_transfer,
         .audio_source_kind = static_cast<int>(snapshot.audio_source_kind),
         .audio_excludes_current_process = snapshot.audio_excludes_current_process,
         .audio_sample_rate = snapshot.audio_sample_rate,
@@ -2122,7 +2144,11 @@ namespace stream {
                       << " queue="sv << apollo_core_queue_profile_name(requested_queue_profile)
                       << " fps="sv << session.config.monitor.framerate
                       << " size="sv << session.config.monitor.width << "x"sv << session.config.monitor.height
-                      << " hdr="sv << session.config.monitor.dynamicRange;
+                      << " hdr="sv << session.config.monitor.dynamicRange
+                      << " client-gamut="sv
+                      << apollo_core_client_display_gamut_name(session.config.monitor.clientDisplayGamut)
+                      << " client-transfer="sv
+                      << apollo_core_client_display_transfer_name(session.config.monitor.clientDisplayTransfer);
 
       ApolloCoreCaptureRequestClear();
       ApolloCoreCaptureRequestPublishVideo(
@@ -2134,7 +2160,9 @@ namespace stream {
         session.config.monitor.framerate,
         session.config.monitor.width,
         session.config.monitor.height,
-        session.config.monitor.dynamicRange
+        session.config.monitor.dynamicRange,
+        session.config.monitor.clientDisplayGamut,
+        session.config.monitor.clientDisplayTransfer
       );
 
       if (config::audio.stream && !session.config.audio.input_only) {

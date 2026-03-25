@@ -370,6 +370,124 @@ namespace video {
         offset += nal_length;
       }
     }
+
+    bool external_hdr_static_metadata_is_valid(const SS_HDR_METADATA &metadata) {
+      return metadata.displayPrimaries[0].x != 0 &&
+             metadata.displayPrimaries[1].x != 0 &&
+             metadata.displayPrimaries[2].x != 0 &&
+             metadata.whitePoint.x != 0 &&
+             metadata.maxDisplayLuminance != 0;
+    }
+
+    void append_sei_payload_header(std::vector<uint8_t> &rbsp, uint32_t payload_type, uint32_t payload_size) {
+      while (payload_type >= 0xFF) {
+        rbsp.push_back(0xFF);
+        payload_type -= 0xFF;
+      }
+      rbsp.push_back(static_cast<uint8_t>(payload_type));
+
+      while (payload_size >= 0xFF) {
+        rbsp.push_back(0xFF);
+        payload_size -= 0xFF;
+      }
+      rbsp.push_back(static_cast<uint8_t>(payload_size));
+    }
+
+    void append_rbsp_with_emulation_prevention(const std::vector<uint8_t> &rbsp, std::vector<uint8_t> &output) {
+      int zero_count = 0;
+      for (const auto byte : rbsp) {
+        if (zero_count >= 2 && byte <= 0x03) {
+          output.push_back(0x03);
+          zero_count = 0;
+        }
+
+        output.push_back(byte);
+        zero_count = byte == 0x00 ? zero_count + 1 : 0;
+      }
+    }
+
+    std::vector<uint8_t> make_external_hevc_hdr_static_metadata_sei(const SS_HDR_METADATA &metadata) {
+      if (!external_hdr_static_metadata_is_valid(metadata)) {
+        return {};
+      }
+
+      constexpr uint8_t mastering_display_payload_type = 137;
+      constexpr uint8_t content_light_payload_type = 144;
+      constexpr uint8_t hevc_prefix_sei_header_bytes[] = {0x4E, 0x01};
+
+      const auto write_be16 = [](uint8_t *dst, uint16_t value) {
+        dst[0] = static_cast<uint8_t>((value >> 8) & 0xFF);
+        dst[1] = static_cast<uint8_t>(value & 0xFF);
+      };
+      const auto write_be32 = [](uint8_t *dst, uint32_t value) {
+        dst[0] = static_cast<uint8_t>((value >> 24) & 0xFF);
+        dst[1] = static_cast<uint8_t>((value >> 16) & 0xFF);
+        dst[2] = static_cast<uint8_t>((value >> 8) & 0xFF);
+        dst[3] = static_cast<uint8_t>(value & 0xFF);
+      };
+
+      std::vector<uint8_t> rbsp;
+      rbsp.reserve(48);
+
+      std::array<uint8_t, 24> mastering_display_payload {};
+      write_be16(mastering_display_payload.data() + 0, static_cast<uint16_t>(metadata.displayPrimaries[0].x));
+      write_be16(mastering_display_payload.data() + 2, static_cast<uint16_t>(metadata.displayPrimaries[0].y));
+      write_be16(mastering_display_payload.data() + 4, static_cast<uint16_t>(metadata.displayPrimaries[1].x));
+      write_be16(mastering_display_payload.data() + 6, static_cast<uint16_t>(metadata.displayPrimaries[1].y));
+      write_be16(mastering_display_payload.data() + 8, static_cast<uint16_t>(metadata.displayPrimaries[2].x));
+      write_be16(mastering_display_payload.data() + 10, static_cast<uint16_t>(metadata.displayPrimaries[2].y));
+      write_be16(mastering_display_payload.data() + 12, static_cast<uint16_t>(metadata.whitePoint.x));
+      write_be16(mastering_display_payload.data() + 14, static_cast<uint16_t>(metadata.whitePoint.y));
+      write_be32(mastering_display_payload.data() + 16, metadata.maxDisplayLuminance);
+      write_be32(mastering_display_payload.data() + 20, metadata.minDisplayLuminance);
+      append_sei_payload_header(rbsp, mastering_display_payload_type, mastering_display_payload.size());
+      rbsp.insert(rbsp.end(), mastering_display_payload.begin(), mastering_display_payload.end());
+
+      if (metadata.maxContentLightLevel != 0 || metadata.maxFrameAverageLightLevel != 0) {
+        std::array<uint8_t, 4> content_light_payload {};
+        write_be16(content_light_payload.data() + 0, static_cast<uint16_t>(metadata.maxContentLightLevel));
+        write_be16(content_light_payload.data() + 2, static_cast<uint16_t>(metadata.maxFrameAverageLightLevel));
+        append_sei_payload_header(rbsp, content_light_payload_type, content_light_payload.size());
+        rbsp.insert(rbsp.end(), content_light_payload.begin(), content_light_payload.end());
+      }
+
+      rbsp.push_back(0x80);  // rbsp_trailing_bits()
+
+      std::vector<uint8_t> nal_unit;
+      nal_unit.reserve(4 + sizeof(hevc_prefix_sei_header_bytes) + rbsp.size() + 8);
+      nal_unit.insert(nal_unit.end(), {0, 0, 0, 1});
+      nal_unit.insert(nal_unit.end(), std::begin(hevc_prefix_sei_header_bytes), std::end(hevc_prefix_sei_header_bytes));
+      append_rbsp_with_emulation_prevention(rbsp, nal_unit);
+      return nal_unit;
+    }
+
+    bool append_external_hdr_static_metadata_if_needed(
+      CMSampleBufferRef sample_buffer,
+      CMVideoCodecType codec_type,
+      const SS_HDR_METADATA &metadata,
+      bool hdr_signaled,
+      std::vector<uint8_t> &output
+    ) {
+      if (!hdr_signaled || codec_type != kCMVideoCodecType_HEVC) {
+        return false;
+      }
+
+      const bool has_mastering_display =
+        apollo_core_sample_buffer_extension_present(sample_buffer, kCMFormatDescriptionExtension_MasteringDisplayColorVolume);
+      const bool has_content_light =
+        apollo_core_sample_buffer_extension_present(sample_buffer, kCMFormatDescriptionExtension_ContentLightLevelInfo);
+      if (has_mastering_display && has_content_light) {
+        return false;
+      }
+
+      auto sei = make_external_hevc_hdr_static_metadata_sei(metadata);
+      if (sei.empty()) {
+        return false;
+      }
+
+      output.insert(output.end(), sei.begin(), sei.end());
+      return true;
+    }
   }  // namespace
 #endif
 
@@ -3269,8 +3387,17 @@ namespace video {
       void *channel_data
     ) {
       auto shutdown_event = mail->event<bool>(mail::shutdown);
+      auto idr_events = mail->event<bool>(mail::idr);
+      auto invalidate_ref_frames_events = mail->event<std::pair<int64_t, int64_t>>(mail::invalidate_ref_frames);
       auto packets = mail::man->queue<packet_t>(mail::video_packets);
       auto ingress = ApolloCoreSharedEncodedCaptureIngress();
+      platf::external_capture_display_metadata_t external_metadata {};
+      platf::query_external_capture_display_metadata(
+        proc::proc.display_name,
+        config.width,
+        config.height,
+        external_metadata
+      );
       raise_external_capture_metadata(mail, config);
 
       bool logged_codec_mismatch = false;
@@ -3301,6 +3428,31 @@ namespace video {
 
       while (!shutdown_event->peek()) {
         bool consumed_any = false;
+
+        bool resync_to_next_idr = false;
+        while (idr_events->peek()) {
+          idr_events->pop();
+          resync_to_next_idr = true;
+        }
+        while (invalidate_ref_frames_events->peek()) {
+          invalidate_ref_frames_events->pop(0ms);
+          resync_to_next_idr = true;
+        }
+
+        if (resync_to_next_idr) {
+          waiting_for_initial_idr = true;
+          logged_waiting_for_initial_idr = false;
+          logged_first_packet = false;
+          last_forwarded_source_sequence_number = 0;
+          last_forwarded_source_display_time = 0;
+          last_forwarded_packet_timestamp.reset();
+          last_forwarded_callback_latency_milliseconds.reset();
+          last_forwarded_source_display_delta_milliseconds.reset();
+          last_forwarded_packet_timestamp_delta_milliseconds.reset();
+          last_forwarded_sequence_delta = 0;
+          BOOST_LOG(info) << "External macOS encoded ingress requested decoder resync; holding frames until the next IDR packet"sv;
+          consumed_any = true;
+        }
 
         while (true) {
           auto event = ApolloCoreEncodedCaptureIngressPopNextEvent(
@@ -3400,6 +3552,15 @@ namespace video {
           waiting_for_initial_idr = false;
           if (packet_is_idr) {
             append_parameter_sets_for_codec(retained_sample_buffer, codec_type, packet_data);
+            if (append_external_hdr_static_metadata_if_needed(
+                  retained_sample_buffer,
+                  codec_type,
+                  external_metadata.hdr_metadata,
+                  frame.is_hdr_signaled,
+                  packet_data
+                )) {
+              BOOST_LOG(info) << "External macOS encoded ingress injected static HDR metadata SEI into HEVC IDR packet"sv;
+            }
           }
           append_external_sample_buffer_payload(retained_sample_buffer, codec_type, packet_data);
           if (packet_data.empty()) {

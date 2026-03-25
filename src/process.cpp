@@ -376,7 +376,26 @@ namespace proc {
 
 #elif defined(__APPLE__)
 
-    if (launch_session->virtual_display || _app.virtual_display) {
+    const bool requires_virtual_display =
+      launch_session->virtual_display ||
+      _app.virtual_display ||
+      launch_session->enable_hdr ||
+      launch_session->client_display_hidpi ||
+      launch_session->client_display_mode_is_logical ||
+      launch_session->scale_factor != 100;
+
+    if (requires_virtual_display) {
+      if (!launch_session->virtual_display && !_app.virtual_display) {
+        BOOST_LOG(info) << "Auto-enabling macOS virtual display for launch geometry: hdr="sv
+                        << launch_session->enable_hdr
+                        << " hidpi="sv
+                        << launch_session->client_display_hidpi
+                        << " scale-percent="sv
+                        << launch_session->scale_factor
+                        << " mode-is-logical="sv
+                        << launch_session->client_display_mode_is_logical;
+      }
+
       std::string device_name = _app.use_app_identity ? _app.name : launch_session->device_name;
       std::string device_key = _app.use_app_identity ? _app.uuid : launch_session->unique_id;
 
@@ -413,6 +432,15 @@ namespace proc {
     }
 
     display_device::configure_display(config::video, *launch_session);
+
+    if (this->display_name.empty()) {
+      this->display_name = display_device::map_output_name(config::video.output_name);
+      if (this->display_name.empty()) {
+        this->display_name = std::to_string(CGMainDisplayID());
+      }
+
+      BOOST_LOG(info) << "Resolved macOS session display target to "sv << this->display_name;
+    }
 
     if (this->virtual_display) {
       display_device::reset_persistence();

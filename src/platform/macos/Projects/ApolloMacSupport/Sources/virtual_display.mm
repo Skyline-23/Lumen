@@ -10,7 +10,12 @@
 #include "platform/macos/virtual_display.h"
 
 #include <algorithm>
+#include <array>
+#include <atomic>
+#include <cstdint>
 #include <mutex>
+#include <sstream>
+#include <string_view>
 #include <unordered_map>
 
 using namespace std::literals;
@@ -35,15 +40,6 @@ namespace VDISPLAY {
       true,
     };
 
-    constexpr VDISPLAY::color_profile_t kRec2020ColorProfile {
-      {0.7080, 0.2920},
-      {0.1700, 0.7970},
-      {0.1310, 0.0460},
-      {0.3127, 0.3290},
-      false,
-      true,
-    };
-
     struct virtual_display_handle_t {
       id descriptor {nil};
       id mode {nil};
@@ -51,6 +47,7 @@ namespace VDISPLAY {
       id display {nil};
       dispatch_queue_t queue {nil};
       bool uses_skylight_backend {false};
+      bool hdr_enabled {false};
       std::string display_id;
       std::uint32_t pixel_width {0};
       std::uint32_t pixel_height {0};
@@ -79,9 +76,32 @@ namespace VDISPLAY {
       }
     };
 
+    struct skylight_size_t {
+      float width;
+      float height;
+    };
+
+    struct skylight_pixels_t {
+      unsigned int width;
+      unsigned int height;
+    };
+
+    struct skylight_point_t {
+      float x;
+      float y;
+    };
+
+    struct skylight_chromaticities_t {
+      skylight_point_t red;
+      skylight_point_t green;
+      skylight_point_t blue;
+      skylight_point_t white;
+    };
+
     std::mutex display_mutex;
     std::unordered_map<std::string, std::unique_ptr<virtual_display_handle_t>> active_displays;
     DRIVER_STATUS driver_status = DRIVER_STATUS::UNKNOWN;
+    std::atomic<std::uint64_t> skylight_display_nonce {0};
 
     double normalize_refresh_rate(std::uint32_t fps_millihz) {
       if (fps_millihz == 0) {
@@ -142,8 +162,16 @@ namespace VDISPLAY {
         return;
       }
 
+      const auto display_info_selector = sel_registerName("displayInfo");
       const auto set_display_info = sel_registerName("setDisplayInfoValue:forKey:");
-      if (![descriptor respondsToSelector:set_display_info]) {
+      if (![descriptor respondsToSelector:set_display_info] || ![descriptor respondsToSelector:display_info_selector]) {
+        BOOST_LOG(info) << "Skipping macOS virtual display HDR displayInfo injection because descriptor does not expose displayInfo mutation hooks"sv;
+        return;
+      }
+
+      NSDictionary *existing_display_info = ((id (*)(id, SEL)) objc_msgSend)(descriptor, display_info_selector);
+      if (![existing_display_info isKindOfClass:[NSDictionary class]] || existing_display_info.count == 0) {
+        BOOST_LOG(info) << "Skipping macOS virtual display HDR displayInfo injection because descriptor has no baseline displayInfo keys"sv;
         return;
       }
 
@@ -156,43 +184,75 @@ namespace VDISPLAY {
       const auto sdr_luminance = host_profile.display_p3 ? 300.0 : 200.0;
       const auto minimum_luminance = 0.001;
 
-      if (max_hdr_luminance_key != nil) {
+      if (max_hdr_luminance_key != nil && [existing_display_info objectForKey:max_hdr_luminance_key] != nil) {
         [descriptor performSelector:set_display_info withObject:@(peak_luminance) withObject:max_hdr_luminance_key];
       }
-      if (max_sdr_luminance_key != nil) {
+      if (max_sdr_luminance_key != nil && [existing_display_info objectForKey:max_sdr_luminance_key] != nil) {
         [descriptor performSelector:set_display_info withObject:@(sdr_luminance) withObject:max_sdr_luminance_key];
       }
-      if (min_luminance_key != nil) {
+      if (min_luminance_key != nil && [existing_display_info objectForKey:min_luminance_key] != nil) {
         [descriptor performSelector:set_display_info withObject:@(minimum_luminance) withObject:min_luminance_key];
       }
-      if (expected_luminance_key != nil) {
-        [descriptor performSelector:set_display_info withObject:@(peak_luminance) withObject:expected_luminance_key];
+      if (expected_luminance_key != nil && [existing_display_info objectForKey:expected_luminance_key] != nil) {
+        // "Expected luminance" is the SDR reference white level, not the HDR peak.
+        [descriptor performSelector:set_display_info withObject:@(sdr_luminance) withObject:expected_luminance_key];
       }
 
-      BOOST_LOG(info) << "macOS virtual display HDR displayInfo configured peak="sv
+      BOOST_LOG(info) << "macOS virtual display HDR displayInfo reconciled against baseline keys count="sv
+                      << existing_display_info.count
+                      << " peak="sv
                       << peak_luminance
                       << " sdr="sv
+                      << sdr_luminance
+                      << " expected="sv
                       << sdr_luminance
                       << " min="sv
                       << minimum_luminance;
     }
 
-    int virtual_display_transfer_function(bool hdr_enabled, int client_display_transfer) {
-      switch (static_cast<video::client_display_transfer_e>(client_display_transfer)) {
+    const char *client_display_gamut_label(const int gamut) {
+      switch (static_cast<video::client_display_gamut_e>(gamut)) {
+        case video::client_display_gamut_e::srgb:
+          return "srgb";
+        case video::client_display_gamut_e::display_p3:
+          return "display-p3";
+        case video::client_display_gamut_e::rec2020:
+          return "rec2020";
+        case video::client_display_gamut_e::unknown:
+        default:
+          return "unknown";
+      }
+    }
+
+    const char *client_display_transfer_label(const int transfer) {
+      switch (static_cast<video::client_display_transfer_e>(transfer)) {
+        case video::client_display_transfer_e::sdr:
+          return "sdr";
         case video::client_display_transfer_e::pq:
-          return CVTransferFunctionGetIntegerCodePointForString(kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ);
+          return "pq";
+        case video::client_display_transfer_e::hlg:
+          return "hlg";
+        case video::client_display_transfer_e::unknown:
+        default:
+          return "unknown";
+      }
+    }
+
+    int virtual_display_transfer_function(bool hdr_enabled, int client_display_transfer) {
+      if (!hdr_enabled) {
+        return CVTransferFunctionGetIntegerCodePointForString(kCVImageBufferTransferFunction_ITU_R_709_2);
+      }
+
+      switch (static_cast<video::client_display_transfer_e>(client_display_transfer)) {
         case video::client_display_transfer_e::hlg:
           return CVTransferFunctionGetIntegerCodePointForString(kCVImageBufferTransferFunction_ITU_R_2100_HLG);
         case video::client_display_transfer_e::sdr:
           return CVTransferFunctionGetIntegerCodePointForString(kCVImageBufferTransferFunction_ITU_R_709_2);
+        case video::client_display_transfer_e::pq:
         case video::client_display_transfer_e::unknown:
         default:
-          break;
+          return CVTransferFunctionGetIntegerCodePointForString(kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ);
       }
-
-      return hdr_enabled ?
-               CVTransferFunctionGetIntegerCodePointForString(kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ) :
-               CVTransferFunctionGetIntegerCodePointForString(kCVImageBufferTransferFunction_ITU_R_709_2);
     }
 
     bool force_virtual_display_mode(CGDirectDisplayID display_id, std::uint32_t logical_width, std::uint32_t logical_height, double refresh_rate) {
@@ -255,6 +315,129 @@ namespace VDISPLAY {
       const auto logical_aspect = static_cast<double>(logical_width) / static_cast<double>(logical_height);
       const auto aspect_delta = std::fabs(logical_aspect - backing_aspect) / backing_aspect;
       return aspect_delta <= 0.02;
+    }
+
+    std::uint32_t even_points_for_scale(std::uint32_t backing_dimension, double scale) {
+      if (backing_dimension == 0 || scale <= 0.0) {
+        return 0;
+      }
+
+      auto points = static_cast<std::uint32_t>(std::lround(static_cast<double>(backing_dimension) / scale));
+      points = std::max<std::uint32_t>(2u, points);
+      return points & ~1u;
+    }
+
+    std::uint64_t stable_identity_hash(std::string_view input) {
+      constexpr std::uint64_t kFnvOffsetBasis = 14695981039346656037ull;
+      constexpr std::uint64_t kFnvPrime = 1099511628211ull;
+
+      std::uint64_t hash = kFnvOffsetBasis;
+      for (const auto byte : input) {
+        hash ^= static_cast<std::uint64_t>(static_cast<unsigned char>(byte));
+        hash *= kFnvPrime;
+      }
+
+      return hash;
+    }
+
+    template<typename InitModeT>
+    id create_skylight_mode(
+      Class mode_class,
+      InitModeT init_mode,
+      std::uint32_t pixel_width,
+      std::uint32_t pixel_height,
+      std::uint32_t logical_width,
+      std::uint32_t logical_height,
+      double refresh_rate,
+      NSUInteger eotf,
+      NSError **error
+    ) {
+      const skylight_pixels_t size_in_pixels {pixel_width, pixel_height};
+      const skylight_pixels_t size_in_points {std::max(logical_width, 1u), std::max(logical_height, 1u)};
+
+      id mode = init_mode(
+        [mode_class alloc],
+        sel_registerName("initWithSizeInPixels:sizeInPoints:refreshRate:error:"),
+        size_in_pixels,
+        size_in_points,
+        static_cast<float>(refresh_rate),
+        error
+      );
+      if (mode != nil) {
+        ((void (*)(id, SEL, NSUInteger)) objc_msgSend)(mode, sel_registerName("setEotf:"), eotf);
+      }
+      return mode;
+    }
+
+    template<typename InitModeT>
+    NSArray *create_skylight_optional_modes(
+      Class mode_class,
+      InitModeT init_mode,
+      std::uint32_t pixel_width,
+      std::uint32_t pixel_height,
+      std::uint32_t preferred_width,
+      std::uint32_t preferred_height,
+      double refresh_rate,
+      NSUInteger eotf
+    ) {
+      NSMutableArray *modes = [NSMutableArray array];
+      std::vector<std::pair<std::uint32_t, std::uint32_t>> emitted_modes;
+
+      const auto try_append_mode = [&](std::uint32_t logical_width, std::uint32_t logical_height) {
+        if (logical_width == 0 || logical_height == 0) {
+          return;
+        }
+
+        if (logical_width > pixel_width || logical_height > pixel_height) {
+          return;
+        }
+
+        const auto backing_aspect = static_cast<double>(pixel_width) / static_cast<double>(pixel_height);
+        const auto logical_aspect = static_cast<double>(logical_width) / static_cast<double>(logical_height);
+        const auto aspect_delta = std::fabs(logical_aspect - backing_aspect) / backing_aspect;
+        if (aspect_delta > 0.02) {
+          return;
+        }
+
+        const auto mode_key = std::pair {logical_width, logical_height};
+        if (std::find(emitted_modes.begin(), emitted_modes.end(), mode_key) != emitted_modes.end()) {
+          return;
+        }
+
+        NSError *ns_error = nil;
+        id mode = create_skylight_mode(
+          mode_class,
+          init_mode,
+          pixel_width,
+          pixel_height,
+          logical_width,
+          logical_height,
+          refresh_rate,
+          eotf,
+          &ns_error
+        );
+        if (mode == nil) {
+          BOOST_LOG(warning) << "Skipping optional SkyLight mode "sv
+                             << logical_width << "x"sv << logical_height
+                             << " because creation failed: "sv
+                             << (ns_error.localizedDescription.UTF8String ? ns_error.localizedDescription.UTF8String : "unknown");
+          return;
+        }
+
+        [modes addObject:mode];
+        emitted_modes.push_back(mode_key);
+      };
+
+      const std::array<double, 7> scale_steps {1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0};
+      for (const auto scale : scale_steps) {
+        try_append_mode(
+          even_points_for_scale(pixel_width, scale),
+          even_points_for_scale(pixel_height, scale)
+        );
+      }
+
+      try_append_mode(preferred_width, preferred_height);
+      return modes;
     }
 
     NSString *display_name_for_client(const char *client_name) {
@@ -335,40 +518,37 @@ namespace VDISPLAY {
       reference_screen = [NSScreen screens].firstObject;
     }
 
-    const auto client_transfer = static_cast<video::client_display_transfer_e>(client_display_transfer);
-    const bool client_wants_hdr =
-      hdr_enabled ||
-      client_transfer == video::client_display_transfer_e::pq ||
-      client_transfer == video::client_display_transfer_e::hlg;
-    const bool use_rec2020_profile =
-      client_display_gamut == static_cast<int>(video::client_display_gamut_e::rec2020) ||
-      client_wants_hdr;
-    const bool use_display_p3 =
-      !use_rec2020_profile &&
-      (client_display_gamut == static_cast<int>(video::client_display_gamut_e::display_p3) ? true :
-       client_display_gamut == static_cast<int>(video::client_display_gamut_e::srgb) ? false :
-       screen_prefers_display_p3(reference_screen));
+    bool use_display_p3 = false;
+    switch (static_cast<video::client_display_gamut_e>(client_display_gamut)) {
+      case video::client_display_gamut_e::display_p3:
+      case video::client_display_gamut_e::rec2020:
+        use_display_p3 = true;
+        break;
+      case video::client_display_gamut_e::srgb:
+        use_display_p3 = false;
+        break;
+      case video::client_display_gamut_e::unknown:
+      default:
+        use_display_p3 = screen_prefers_display_p3(reference_screen);
+        break;
+    }
+
     color_profile_t profile =
-      use_rec2020_profile ? kRec2020ColorProfile :
       use_display_p3 ? kDisplayP3ColorProfile :
       kSrgbColorProfile;
-    profile.hdr_capable = client_wants_hdr || screen_is_hdr_capable(reference_screen);
+    profile.hdr_capable = hdr_enabled || screen_is_hdr_capable(reference_screen);
 
     const auto profile_gamut =
-      use_rec2020_profile ? "rec2020"sv :
       profile.display_p3 ? "display-p3"sv :
       "srgb"sv;
-    const auto transfer_name =
-      client_transfer == video::client_display_transfer_e::pq ? "pq"sv :
-      client_transfer == video::client_display_transfer_e::hlg ? "hlg"sv :
-      client_transfer == video::client_display_transfer_e::sdr ? "sdr"sv :
-      "unknown"sv;
     BOOST_LOG(info) << "macOS virtual display color profile: gamut="sv
                     << profile_gamut
+                    << " requested-gamut="sv
+                    << client_display_gamut_label(client_display_gamut)
                     << " hdr_capable="sv << profile.hdr_capable
                     << " hdr_intent="sv << hdr_enabled
-                    << " client_gamut="sv << client_display_gamut
-                    << " client_transfer="sv << transfer_name;
+                    << " requested-transfer="sv
+                    << client_display_transfer_label(client_display_transfer);
 
     return profile;
   }
@@ -418,24 +598,6 @@ namespace VDISPLAY {
     using init_mode_t = id (*)(id, SEL, NSUInteger, NSUInteger, double);
     using init_mode_with_transfer_t = id (*)(id, SEL, NSUInteger, NSUInteger, double, unsigned int);
     using apply_settings_t = BOOL (*)(id, SEL, id);
-    using skylight_size_t = struct {
-      float width;
-      float height;
-    };
-    using skylight_pixels_t = struct {
-      unsigned int width;
-      unsigned int height;
-    };
-    using skylight_point_t = struct {
-      float x;
-      float y;
-    };
-    using skylight_chromaticities_t = struct {
-      skylight_point_t red;
-      skylight_point_t green;
-      skylight_point_t blue;
-      skylight_point_t white;
-    };
     using init_skylight_config_t = id (*)(id, SEL, id, unsigned long long, unsigned long long, unsigned long long, skylight_size_t, skylight_pixels_t, skylight_chromaticities_t, NSError **);
     using init_skylight_mode_t = id (*)(id, SEL, skylight_pixels_t, skylight_pixels_t, float, NSError **);
     using init_skylight_settings_t = id (*)(id, SEL, id, id, id, unsigned long long, NSError **);
@@ -450,16 +612,33 @@ namespace VDISPLAY {
     const auto transfer_function = virtual_display_transfer_function(hdr_enabled, client_display_transfer);
     if (use_skylight_backend) {
       NSError *ns_error = nil;
-      const auto serial_number = static_cast<unsigned long long>(1u);
-      const auto product_id = static_cast<unsigned long long>(width ^ height ^ 0xA901u);
+      const auto session_nonce = skylight_display_nonce.fetch_add(1, std::memory_order_relaxed) + 1u;
+      std::ostringstream identity_seed_stream;
+      identity_seed_stream
+        << display_key
+        << '|'
+        << (client_name ? client_name : "")
+        << '|'
+        << logical_width
+        << '|'
+        << logical_height
+        << '|'
+        << width
+        << '|'
+        << height
+        << '|'
+        << scale_factor
+        << '|'
+        << (hi_dpi ? 1 : 0);
+      const auto identity_hash = stable_identity_hash(identity_seed_stream.str());
+      const auto serial_number = static_cast<unsigned long long>((identity_hash + session_nonce) & 0xFFFFFFFFull);
+      const auto product_id = static_cast<unsigned long long>((width ^ (height << 1) ^ 0xA901u) + (session_nonce & 0xFFFFu));
       const auto vendor_id = static_cast<unsigned long long>(6973u);
       const skylight_size_t millimeters {
         static_cast<float>(physical_size.width),
         static_cast<float>(physical_size.height),
       };
       const skylight_pixels_t maximum_pixels {width, height};
-      const skylight_pixels_t size_in_pixels {width, height};
-      const skylight_pixels_t size_in_points {std::max(logical_width, 1u), std::max(logical_height, 1u)};
       const skylight_chromaticities_t chromaticities {
         {static_cast<float>(host_profile.red.x), static_cast<float>(host_profile.red.y)},
         {static_cast<float>(host_profile.green.x), static_cast<float>(host_profile.green.y)},
@@ -484,13 +663,24 @@ namespace VDISPLAY {
                          << (ns_error.localizedDescription.UTF8String ? ns_error.localizedDescription.UTF8String : "unknown");
         return {};
       }
+      configure_hdr_display_info(handle->descriptor, hdr_enabled, host_profile);
 
-      handle->mode = ((init_skylight_mode_t) objc_msgSend)(
-        [skylight_mode_class alloc],
-        sel_registerName("initWithSizeInPixels:sizeInPoints:refreshRate:error:"),
-        size_in_pixels,
-        size_in_points,
-        static_cast<float>(normalize_refresh_rate(fps_millihz)),
+      const auto skylight_eotf =
+        hdr_enabled || static_cast<video::client_display_transfer_e>(client_display_transfer) != video::client_display_transfer_e::sdr ?
+          1u :
+          0u;
+      auto init_mode = reinterpret_cast<init_skylight_mode_t>(objc_msgSend);
+      const auto refresh_rate = normalize_refresh_rate(fps_millihz);
+
+      handle->mode = create_skylight_mode(
+        skylight_mode_class,
+        init_mode,
+        width,
+        height,
+        std::max(logical_width, 1u),
+        std::max(logical_height, 1u),
+        refresh_rate,
+        skylight_eotf,
         &ns_error
       );
       if (handle->mode == nil) {
@@ -499,18 +689,40 @@ namespace VDISPLAY {
         return {};
       }
 
-      const auto skylight_eotf =
-        hdr_enabled || static_cast<video::client_display_transfer_e>(client_display_transfer) != video::client_display_transfer_e::sdr ?
-          1u :
-          0u;
-      ((void (*)(id, SEL, NSUInteger)) objc_msgSend)(handle->mode, sel_registerName("setEotf:"), skylight_eotf);
+      id native_mode = create_skylight_mode(
+        skylight_mode_class,
+        init_mode,
+        width,
+        height,
+        width,
+        height,
+        refresh_rate,
+        skylight_eotf,
+        &ns_error
+      );
+      if (native_mode == nil) {
+        BOOST_LOG(error) << "SkyLight virtual display native mode creation failed: "sv
+                         << (ns_error.localizedDescription.UTF8String ? ns_error.localizedDescription.UTF8String : "unknown");
+        return {};
+      }
+
+      NSArray *optional_modes = create_skylight_optional_modes(
+        skylight_mode_class,
+        init_mode,
+        width,
+        height,
+        std::max(logical_width, 1u),
+        std::max(logical_height, 1u),
+        refresh_rate,
+        skylight_eotf
+      );
 
       handle->settings = ((init_skylight_settings_t) objc_msgSend)(
         [skylight_settings_class alloc],
         sel_registerName("initWithNativeMode:preferredMode:optionalModes:rotations:error:"),
+        native_mode,
         handle->mode,
-        handle->mode,
-        @[],
+        optional_modes,
         0ULL,
         &ns_error
       );
@@ -542,7 +754,8 @@ namespace VDISPLAY {
       BOOST_LOG(info) << "SkyLight virtual display mode: pixels="sv << width << "x"sv << height
                       << " logical="sv << logical_width << "x"sv << logical_height
                       << " physical-mm="sv << physical_size.width << "x"sv << physical_size.height
-                      << " eotf="sv << skylight_eotf;
+                      << " eotf="sv << skylight_eotf
+                      << " optional-modes="sv << optional_modes.count;
     } else {
       handle->queue = dispatch_queue_create("dev.lizardbyte.sunshine.virtual-display", DISPATCH_QUEUE_SERIAL);
       handle->descriptor = [[descriptor_class alloc] init];
@@ -619,12 +832,17 @@ namespace VDISPLAY {
     }
 
     handle->display_id = std::to_string(display_id_number.unsignedIntValue);
+    handle->hdr_enabled = hdr_enabled;
     handle->pixel_width = width;
     handle->pixel_height = height;
     handle->logical_width = logical_width;
     handle->logical_height = logical_height;
     BOOST_LOG(info) << "macOS virtual display created displayID="sv << handle->display_id;
-    force_virtual_display_mode(display_id_number.unsignedIntValue, logical_width, logical_height, normalize_refresh_rate(fps_millihz));
+    if (handle->uses_skylight_backend) {
+      BOOST_LOG(info) << "Skipping forced macOS display mode selection for SkyLight virtual display "sv << handle->display_id;
+    } else {
+      force_virtual_display_mode(display_id_number.unsignedIntValue, logical_width, logical_height, normalize_refresh_rate(fps_millihz));
+    }
 
     std::lock_guard lock(display_mutex);
     active_displays[display_key] = std::move(handle);
@@ -645,10 +863,6 @@ namespace VDISPLAY {
     using init_mode_t = id (*)(id, SEL, NSUInteger, NSUInteger, double);
     using init_mode_with_transfer_t = id (*)(id, SEL, NSUInteger, NSUInteger, double, unsigned int);
     using apply_settings_t = BOOL (*)(id, SEL, id);
-    using skylight_pixels_t = struct {
-      unsigned int width;
-      unsigned int height;
-    };
     using init_skylight_mode_t = id (*)(id, SEL, skylight_pixels_t, skylight_pixels_t, float, NSError **);
     using init_skylight_settings_t = id (*)(id, SEL, id, id, id, unsigned long long, NSError **);
     using apply_skylight_settings_t = BOOL (*)(id, SEL, id, NSError **);
@@ -676,19 +890,22 @@ namespace VDISPLAY {
 
     if (handle.uses_skylight_backend) {
       NSError *ns_error = nil;
-      const skylight_pixels_t size_in_pixels {handle.pixel_width, handle.pixel_height};
-      const skylight_pixels_t size_in_points {std::max(logical_width, 1u), std::max(logical_height, 1u)};
       const auto skylight_eotf =
-        static_cast<video::client_display_transfer_e>(client_display_transfer) != video::client_display_transfer_e::sdr ?
+        handle.hdr_enabled || static_cast<video::client_display_transfer_e>(client_display_transfer) != video::client_display_transfer_e::sdr ?
           1u :
           0u;
+      auto init_mode = reinterpret_cast<init_skylight_mode_t>(objc_msgSend);
+      const auto refresh_rate = normalize_refresh_rate(fps_millihz);
 
-      id new_mode = ((init_skylight_mode_t) objc_msgSend)(
-        [skylight_mode_class alloc],
-        sel_registerName("initWithSizeInPixels:sizeInPoints:refreshRate:error:"),
-        size_in_pixels,
-        size_in_points,
-        static_cast<float>(normalize_refresh_rate(fps_millihz)),
+      id new_mode = create_skylight_mode(
+        skylight_mode_class,
+        init_mode,
+        handle.pixel_width,
+        handle.pixel_height,
+        std::max(logical_width, 1u),
+        std::max(logical_height, 1u),
+        refresh_rate,
+        skylight_eotf,
         &ns_error
       );
       if (new_mode == nil) {
@@ -697,14 +914,40 @@ namespace VDISPLAY {
         return false;
       }
 
-      ((void (*)(id, SEL, NSUInteger)) objc_msgSend)(new_mode, sel_registerName("setEotf:"), skylight_eotf);
+      id native_mode = create_skylight_mode(
+        skylight_mode_class,
+        init_mode,
+        handle.pixel_width,
+        handle.pixel_height,
+        handle.pixel_width,
+        handle.pixel_height,
+        refresh_rate,
+        skylight_eotf,
+        &ns_error
+      );
+      if (native_mode == nil) {
+        BOOST_LOG(warning) << "SkyLight virtual display native mode update failed: "sv
+                           << (ns_error.localizedDescription.UTF8String ? ns_error.localizedDescription.UTF8String : "unknown");
+        return false;
+      }
+
+      NSArray *optional_modes = create_skylight_optional_modes(
+        skylight_mode_class,
+        init_mode,
+        handle.pixel_width,
+        handle.pixel_height,
+        std::max(logical_width, 1u),
+        std::max(logical_height, 1u),
+        refresh_rate,
+        skylight_eotf
+      );
 
       id new_settings = ((init_skylight_settings_t) objc_msgSend)(
         [skylight_settings_class alloc],
         sel_registerName("initWithNativeMode:preferredMode:optionalModes:rotations:error:"),
+        native_mode,
         new_mode,
-        new_mode,
-        @[],
+        optional_modes,
         0ULL,
         &ns_error
       );
@@ -727,12 +970,10 @@ namespace VDISPLAY {
 
       BOOST_LOG(info) << "Updated SkyLight virtual display mode for displayID="sv << handle.display_id
                       << " logical="sv << logical_width << "x"sv << logical_height
-                      << " eotf="sv << skylight_eotf;
+                      << " eotf="sv << skylight_eotf
+                      << " optional-modes="sv << optional_modes.count;
     } else {
-      const auto transfer_function = virtual_display_transfer_function(
-        static_cast<video::client_display_transfer_e>(client_display_transfer) != video::client_display_transfer_e::sdr,
-        client_display_transfer
-      );
+      const auto transfer_function = virtual_display_transfer_function(handle.hdr_enabled, client_display_transfer);
 
       id new_mode = nil;
       if ([mode_class instancesRespondToSelector:sel_registerName("initWithWidth:height:refreshRate:transferFunction:")]) {
@@ -776,7 +1017,11 @@ namespace VDISPLAY {
 
     handle.logical_width = logical_width;
     handle.logical_height = logical_height;
-    force_virtual_display_mode(static_cast<CGDirectDisplayID>(std::strtoul(handle.display_id.c_str(), nullptr, 10)), logical_width, logical_height, normalize_refresh_rate(fps_millihz));
+    if (handle.uses_skylight_backend) {
+      BOOST_LOG(info) << "Skipping forced macOS display mode update for SkyLight virtual display "sv << handle.display_id;
+    } else {
+      force_virtual_display_mode(static_cast<CGDirectDisplayID>(std::strtoul(handle.display_id.c_str(), nullptr, 10)), logical_width, logical_height, normalize_refresh_rate(fps_millihz));
+    }
     return true;
   }
 

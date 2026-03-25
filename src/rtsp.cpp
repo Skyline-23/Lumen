@@ -1003,12 +1003,21 @@ namespace rtsp_stream {
       }
     }
 
-    // Initialize any omitted parameters to defaults
+    const auto fallback_bitstream_format = (session.enable_hdr && video::active_hevc_mode != 1) ? "1"sv : "0"sv;
+    const auto fallback_dynamic_range_mode = session.enable_hdr ? "1"sv : "0"sv;
+    const auto fallback_client_display_gamut = std::string_view {client_display_gamut_to_string(session.client_display_gamut)};
+    const auto fallback_client_display_transfer = std::string_view {client_display_transfer_to_string(session.client_display_transfer)};
+    const bool missing_bitstream_format = args.find("x-nv-vqos[0].bitStreamFormat"sv) == args.end();
+    const bool missing_dynamic_range_mode = args.find("x-nv-video[0].dynamicRangeMode"sv) == args.end();
+    const bool missing_client_display_gamut = args.find("x-apollo-video[0].clientDisplayGamut"sv) == args.end();
+    const bool missing_client_display_transfer = args.find("x-apollo-video[0].clientDisplayTransfer"sv) == args.end();
+
+    // Initialize any omitted parameters to launch-consistent defaults.
     args.try_emplace("x-nv-video[0].encoderCscMode"sv, "0"sv);
-    args.try_emplace("x-nv-vqos[0].bitStreamFormat"sv, "0"sv);
-    args.try_emplace("x-nv-video[0].dynamicRangeMode"sv, "0"sv);
-    args.try_emplace("x-apollo-video[0].clientDisplayGamut"sv, "unknown"sv);
-    args.try_emplace("x-apollo-video[0].clientDisplayTransfer"sv, "unknown"sv);
+    args.try_emplace("x-nv-vqos[0].bitStreamFormat"sv, fallback_bitstream_format);
+    args.try_emplace("x-nv-video[0].dynamicRangeMode"sv, fallback_dynamic_range_mode);
+    args.try_emplace("x-apollo-video[0].clientDisplayGamut"sv, fallback_client_display_gamut);
+    args.try_emplace("x-apollo-video[0].clientDisplayTransfer"sv, fallback_client_display_transfer);
     args.try_emplace("x-nv-aqos.packetDuration"sv, "5"sv);
     args.try_emplace("x-nv-general.useReliableUdp"sv, "1"sv);
     args.try_emplace("x-nv-vqos[0].fec.minRequiredFecPackets"sv, "0"sv);
@@ -1020,6 +1029,19 @@ namespace rtsp_stream {
     args.try_emplace("x-ss-general.encryptionEnabled"sv, "0"sv);
     args.try_emplace("x-ss-video[0].chromaSamplingType"sv, "0"sv);
     args.try_emplace("x-ss-video[0].intraRefresh"sv, "0"sv);
+
+    if (missing_bitstream_format || missing_dynamic_range_mode ||
+        missing_client_display_gamut || missing_client_display_transfer) {
+      BOOST_LOG(warning) << "RTSP ANNOUNCE omitted launch-critical fields; applying launch fallback values"
+                         << " bitStreamFormatMissing="sv << missing_bitstream_format
+                         << " dynamicRangeMissing="sv << missing_dynamic_range_mode
+                         << " clientDisplayGamutMissing="sv << missing_client_display_gamut
+                         << " clientDisplayTransferMissing="sv << missing_client_display_transfer
+                         << " fallback-bitstream="sv << fallback_bitstream_format
+                         << " fallback-dynamic-range="sv << fallback_dynamic_range_mode
+                         << " launch-gamut="sv << fallback_client_display_gamut
+                         << " launch-transfer="sv << fallback_client_display_transfer;
+    }
 
     stream::config_t config;
 
@@ -1102,6 +1124,10 @@ namespace rtsp_stream {
                       << client_display_gamut_to_string(config.monitor.clientDisplayGamut)
                       << " transfer="sv
                       << client_display_transfer_to_string(config.monitor.clientDisplayTransfer)
+                      << " codec="sv
+                      << (config.monitor.videoFormat == 0 ? "h264"sv :
+                          config.monitor.videoFormat == 1 ? "hevc"sv :
+                          config.monitor.videoFormat == 2 ? "av1"sv : "unknown"sv)
                       << " hdr="sv
                       << config.monitor.dynamicRange
                       << " scale-percent="sv

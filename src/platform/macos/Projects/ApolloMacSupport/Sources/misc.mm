@@ -15,6 +15,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <ifaddrs.h>
+#include <optional>
 
 // platform includes
 #include <AppKit/AppKit.h>
@@ -41,6 +42,7 @@ extern char **environ;
 #include "src/entry_handler.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
+#include "src/video.h"
 
 using namespace std::literals;
 namespace fs = std::filesystem;
@@ -174,12 +176,99 @@ namespace platf {
         @"requestedWidth": @(state.requested_width),
         @"requestedHeight": @(state.requested_height),
         @"dynamicRange": @(state.dynamic_range),
+        @"clientDisplayGamut": @(state.client_display_gamut),
+        @"clientDisplayTransfer": @(state.client_display_transfer),
         @"audioSourceKind": @(state.audio_source_kind),
         @"audioExcludesCurrentProcess": @(state.audio_excludes_current_process),
         @"audioSampleRate": @(state.audio_sample_rate),
         @"audioChannelCount": @(state.audio_channel_count),
         @"audioFrameSize": @(state.audio_frame_size),
       };
+    }
+
+    struct capture_request_hdr_preferences_t {
+      int dynamic_range = 0;
+      int client_display_gamut = 0;
+      int client_display_transfer = 0;
+    };
+
+    std::optional<capture_request_hdr_preferences_t> read_capture_request_hdr_preferences() {
+      @autoreleasepool {
+        NSError *error = nil;
+        auto *data = [NSData dataWithContentsOfURL:capture_request_mirror_url()
+                                          options:0
+                                            error:&error];
+        if (data == nil) {
+          return std::nullopt;
+        }
+
+        NSPropertyListFormat format = NSPropertyListBinaryFormat_v1_0;
+        id plist = [NSPropertyListSerialization propertyListWithData:data
+                                                             options:NSPropertyListImmutable
+                                                              format:&format
+                                                               error:&error];
+        auto *dictionary = [plist isKindOfClass:[NSDictionary class]] ? (NSDictionary *) plist : nil;
+        if (dictionary == nil) {
+          BOOST_LOG(warning) << "Unable to parse mirrored Apollo capture request HDR preferences";
+          return std::nullopt;
+        }
+
+        NSNumber *dynamic_range = dictionary[@"dynamicRange"];
+        NSNumber *client_display_gamut = dictionary[@"clientDisplayGamut"];
+        NSNumber *client_display_transfer = dictionary[@"clientDisplayTransfer"];
+        if (dynamic_range == nil || client_display_gamut == nil || client_display_transfer == nil) {
+          return std::nullopt;
+        }
+
+        return capture_request_hdr_preferences_t {
+          [dynamic_range intValue],
+          [client_display_gamut intValue],
+          [client_display_transfer intValue],
+        };
+      }
+    }
+
+    bool bridge_aligned_external_capture_hdr_metadata(
+      const capture_request_hdr_preferences_t &preferences,
+      SS_HDR_METADATA &metadata
+    ) {
+      using gamut_e = video::client_display_gamut_e;
+      using transfer_e = video::client_display_transfer_e;
+
+      if (preferences.dynamic_range <= 0 ||
+          static_cast<transfer_e>(preferences.client_display_transfer) != transfer_e::pq) {
+        return false;
+      }
+
+      std::memset(&metadata, 0, sizeof(metadata));
+      metadata.whitePoint = {15635, 16450};
+      metadata.minDisplayLuminance = 10;  // 0.001 nits in 1/10000th units
+
+      switch (static_cast<gamut_e>(preferences.client_display_gamut)) {
+        case gamut_e::display_p3:
+          metadata.displayPrimaries[0] = {34000, 16000};
+          metadata.displayPrimaries[1] = {13250, 34500};
+          metadata.displayPrimaries[2] = {7500, 3000};
+          metadata.maxDisplayLuminance = 1000;
+          metadata.maxContentLightLevel = 1000;
+          metadata.maxFrameAverageLightLevel = 400;
+          metadata.maxFullFrameLuminance = 1000;
+          return true;
+        case gamut_e::srgb:
+        case gamut_e::unknown:
+          metadata.displayPrimaries[0] = {32000, 16500};
+          metadata.displayPrimaries[1] = {15000, 30000};
+          metadata.displayPrimaries[2] = {7500, 3000};
+          metadata.maxDisplayLuminance = 600;
+          metadata.maxContentLightLevel = 600;
+          metadata.maxFrameAverageLightLevel = 250;
+          metadata.maxFullFrameLuminance = 600;
+          return true;
+        case gamut_e::rec2020:
+          return false;
+      }
+
+      return false;
     }
 
     using cgx_current_display_set_t = int (*)();
@@ -1329,9 +1418,16 @@ namespace platf {
     const auto *screen = screen_for_external_capture_display_id(display_id);
     metadata.hdr_active = false;
     std::memset(&metadata.hdr_metadata, 0, sizeof(metadata.hdr_metadata));
-    if (screen_is_external_capture_hdr_active(const_cast<NSScreen *>(screen)) &&
-        fallback_external_capture_hdr_metadata(const_cast<NSScreen *>(screen), metadata.hdr_metadata)) {
-      metadata.hdr_active = true;
+    if (screen_is_external_capture_hdr_active(const_cast<NSScreen *>(screen))) {
+      if (auto preferences = read_capture_request_hdr_preferences();
+          preferences && bridge_aligned_external_capture_hdr_metadata(*preferences, metadata.hdr_metadata)) {
+        metadata.hdr_active = true;
+        BOOST_LOG(info) << "macOS external capture HDR metadata aligned to mirrored capture request"
+                        << " gamut="sv << preferences->client_display_gamut
+                        << " transfer="sv << preferences->client_display_transfer;
+      } else if (fallback_external_capture_hdr_metadata(const_cast<NSScreen *>(screen), metadata.hdr_metadata)) {
+        metadata.hdr_active = true;
+      }
     }
 
     return true;
