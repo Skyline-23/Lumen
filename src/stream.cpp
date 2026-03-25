@@ -2147,6 +2147,10 @@ namespace stream {
         .effective_display_gamut = snapshot.effective_display_gamut,
         .effective_display_transfer = snapshot.effective_display_transfer,
         .has_effective_hdr_metadata = snapshot.has_effective_hdr_metadata,
+        .client_display_current_edr_headroom = snapshot.client_display_current_edr_headroom,
+        .client_display_potential_edr_headroom = snapshot.client_display_potential_edr_headroom,
+        .client_display_current_peak_luminance_nits = snapshot.client_display_current_peak_luminance_nits,
+        .client_display_potential_peak_luminance_nits = snapshot.client_display_potential_peak_luminance_nits,
         .effective_hdr_red_primary_x = snapshot.effective_hdr_metadata.red_primary_x,
         .effective_hdr_red_primary_y = snapshot.effective_hdr_metadata.red_primary_y,
         .effective_hdr_green_primary_x = snapshot.effective_hdr_metadata.green_primary_x,
@@ -2192,6 +2196,10 @@ namespace stream {
         has_effective_hdr_metadata = platf::resolve_effective_display_hdr_metadata(
           effective_display_state.gamut,
           effective_display_state.transfer,
+          session.config.monitor.clientDisplayCurrentEDRHeadroom,
+          session.config.monitor.clientDisplayPotentialEDRHeadroom,
+          session.config.monitor.clientDisplayCurrentPeakLuminanceNits,
+          session.config.monitor.clientDisplayPotentialPeakLuminanceNits,
           hdr_metadata
         );
         if (has_effective_hdr_metadata) {
@@ -2210,6 +2218,14 @@ namespace stream {
                       << apollo_core_client_display_gamut_name(session.config.monitor.clientDisplayGamut)
                       << " client-transfer="sv
                       << apollo_core_client_display_transfer_name(session.config.monitor.clientDisplayTransfer)
+                      << " current-edr-headroom="sv
+                      << session.config.monitor.clientDisplayCurrentEDRHeadroom
+                      << " potential-edr-headroom="sv
+                      << session.config.monitor.clientDisplayPotentialEDRHeadroom
+                      << " current-peak-nits="sv
+                      << session.config.monitor.clientDisplayCurrentPeakLuminanceNits
+                      << " potential-peak-nits="sv
+                      << session.config.monitor.clientDisplayPotentialPeakLuminanceNits
                       << " effective-gamut="sv
                       << apollo_core_client_display_gamut_name(effective_display_state.gamut)
                       << " effective-transfer="sv
@@ -2232,7 +2248,11 @@ namespace stream {
         effective_display_state.gamut,
         effective_display_state.transfer,
         has_effective_hdr_metadata,
-        effective_hdr_metadata
+        effective_hdr_metadata,
+        session.config.monitor.clientDisplayCurrentEDRHeadroom,
+        session.config.monitor.clientDisplayPotentialEDRHeadroom,
+        session.config.monitor.clientDisplayCurrentPeakLuminanceNits,
+        session.config.monitor.clientDisplayPotentialPeakLuminanceNits
       );
 
       if (config::audio.stream && !session.config.audio.input_only) {

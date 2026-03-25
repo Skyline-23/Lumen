@@ -409,7 +409,11 @@ namespace proc {
         launch_session->client_display_hidpi,
         launch_session->enable_hdr,
         launch_session->client_display_gamut,
-        launch_session->client_display_transfer
+        launch_session->client_display_transfer,
+        launch_session->client_display_current_edr_headroom,
+        launch_session->client_display_potential_edr_headroom,
+        launch_session->client_display_current_peak_luminance_nits,
+        launch_session->client_display_potential_peak_luminance_nits
       );
 
       launch_session->virtual_display = !virtual_display_name.empty();
@@ -420,6 +424,10 @@ namespace proc {
         this->display_name = virtual_display_name;
         this->client_display_gamut = launch_session->client_display_gamut;
         this->client_display_transfer = launch_session->client_display_transfer;
+        this->client_display_current_edr_headroom = launch_session->client_display_current_edr_headroom;
+        this->client_display_potential_edr_headroom = launch_session->client_display_potential_edr_headroom;
+        this->client_display_current_peak_luminance_nits = launch_session->client_display_current_peak_luminance_nits;
+        this->client_display_potential_peak_luminance_nits = launch_session->client_display_potential_peak_luminance_nits;
         config::video.output_name = this->display_name;
         const auto virtual_display_id = static_cast<CGDirectDisplayID>(std::strtoul(virtual_display_name.c_str(), nullptr, 10));
         if (!platf::isolate_virtual_display(virtual_display_id)) {
@@ -1001,6 +1009,10 @@ namespace proc {
     client_display_hidpi = false;
     client_display_gamut = static_cast<int>(video::client_display_gamut_e::unknown);
     client_display_transfer = static_cast<int>(video::client_display_transfer_e::unknown);
+    client_display_current_edr_headroom = 0.0f;
+    client_display_potential_edr_headroom = 0.0f;
+    client_display_current_peak_luminance_nits = 0;
+    client_display_potential_peak_luminance_nits = 0;
     client_scale_factor = 100;
     client_logical_width = 0;
     client_logical_height = 0;

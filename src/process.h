@@ -117,6 +117,10 @@ namespace proc {
     bool client_display_hidpi = false;
     int client_display_gamut = 0;
     int client_display_transfer = 0;
+    float client_display_current_edr_headroom = 0.0f;
+    float client_display_potential_edr_headroom = 0.0f;
+    int client_display_current_peak_luminance_nits = 0;
+    int client_display_potential_peak_luminance_nits = 0;
     int client_scale_factor = 100;
     int client_logical_width = 0;
     int client_logical_height = 0;

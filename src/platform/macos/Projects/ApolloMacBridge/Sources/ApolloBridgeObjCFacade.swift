@@ -31,6 +31,10 @@ public final class ApolloBridgeConfigurationBox: NSObject {
     public let hdrMaxContentLightLevel: Int
     public let hdrMaxFrameAverageLightLevel: Int
     public let hdrMaxFullFrameLuminance: Int
+    public let clientDisplayCurrentEDRHeadroom: Float
+    public let clientDisplayPotentialEDRHeadroom: Float
+    public let clientDisplayCurrentPeakLuminanceNits: Int
+    public let clientDisplayPotentialPeakLuminanceNits: Int
 
     public init(
         displayID: UInt32,
@@ -59,7 +63,11 @@ public final class ApolloBridgeConfigurationBox: NSObject {
         hdrMinDisplayLuminance: Int,
         hdrMaxContentLightLevel: Int,
         hdrMaxFrameAverageLightLevel: Int,
-        hdrMaxFullFrameLuminance: Int
+        hdrMaxFullFrameLuminance: Int,
+        clientDisplayCurrentEDRHeadroom: Float,
+        clientDisplayPotentialEDRHeadroom: Float,
+        clientDisplayCurrentPeakLuminanceNits: Int,
+        clientDisplayPotentialPeakLuminanceNits: Int
     ) {
         self.displayID = displayID
         self.codecRawValue = codecRawValue
@@ -88,6 +96,10 @@ public final class ApolloBridgeConfigurationBox: NSObject {
         self.hdrMaxContentLightLevel = hdrMaxContentLightLevel
         self.hdrMaxFrameAverageLightLevel = hdrMaxFrameAverageLightLevel
         self.hdrMaxFullFrameLuminance = hdrMaxFullFrameLuminance
+        self.clientDisplayCurrentEDRHeadroom = clientDisplayCurrentEDRHeadroom
+        self.clientDisplayPotentialEDRHeadroom = clientDisplayPotentialEDRHeadroom
+        self.clientDisplayCurrentPeakLuminanceNits = clientDisplayCurrentPeakLuminanceNits
+        self.clientDisplayPotentialPeakLuminanceNits = clientDisplayPotentialPeakLuminanceNits
     }
 
     convenience init(configuration: ApolloMacDisplayKitCaptureConfiguration) {
@@ -119,7 +131,11 @@ public final class ApolloBridgeConfigurationBox: NSObject {
             hdrMinDisplayLuminance: hdrStaticMetadata?.minDisplayLuminance ?? 0,
             hdrMaxContentLightLevel: hdrStaticMetadata?.maxContentLightLevel ?? 0,
             hdrMaxFrameAverageLightLevel: hdrStaticMetadata?.maxFrameAverageLightLevel ?? 0,
-            hdrMaxFullFrameLuminance: hdrStaticMetadata?.maxFullFrameLuminance ?? 0
+            hdrMaxFullFrameLuminance: hdrStaticMetadata?.maxFullFrameLuminance ?? 0,
+            clientDisplayCurrentEDRHeadroom: configuration.clientDisplayCurrentEDRHeadroom,
+            clientDisplayPotentialEDRHeadroom: configuration.clientDisplayPotentialEDRHeadroom,
+            clientDisplayCurrentPeakLuminanceNits: configuration.clientDisplayCurrentPeakLuminanceNits,
+            clientDisplayPotentialPeakLuminanceNits: configuration.clientDisplayPotentialPeakLuminanceNits
         )
     }
 
@@ -153,7 +169,11 @@ public final class ApolloBridgeConfigurationBox: NSObject {
             clientDisplayTransfer: ApolloBridgeObjCFacade.clientDisplayTransfer(fromRawValue: clientDisplayTransferRawValue),
             effectiveDisplayGamut: ApolloBridgeObjCFacade.clientDisplayGamut(fromRawValue: effectiveDisplayGamutRawValue),
             effectiveDisplayTransfer: ApolloBridgeObjCFacade.clientDisplayTransfer(fromRawValue: effectiveDisplayTransferRawValue),
-            hdrStaticMetadata: hdrStaticMetadata
+            hdrStaticMetadata: hdrStaticMetadata,
+            clientDisplayCurrentEDRHeadroom: clientDisplayCurrentEDRHeadroom,
+            clientDisplayPotentialEDRHeadroom: clientDisplayPotentialEDRHeadroom,
+            clientDisplayCurrentPeakLuminanceNits: clientDisplayCurrentPeakLuminanceNits,
+            clientDisplayPotentialPeakLuminanceNits: clientDisplayPotentialPeakLuminanceNits
         )
     }
 }

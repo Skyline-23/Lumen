@@ -10,8 +10,11 @@ extern "C" {
 }
 
 // standard includes
+#include <algorithm>
 #include <array>
 #include <cctype>
+#include <cstdlib>
+#include <iomanip>
 #include <sstream>
 #include <set>
 #include <unordered_map>
@@ -68,6 +71,42 @@ namespace rtsp_stream {
         default:
           return "unknown";
       }
+    }
+
+    float parse_client_display_headroom(const std::string_view value, const float fallback_value) {
+      if (value.empty()) {
+        return fallback_value;
+      }
+
+      std::string buffer {value};
+      char *end_ptr = nullptr;
+      const auto parsed = std::strtof(buffer.c_str(), &end_ptr);
+      if (end_ptr == buffer.c_str() || (end_ptr != nullptr && *end_ptr != '\0')) {
+        return fallback_value;
+      }
+
+      return std::max(parsed, 0.0f);
+    }
+
+    int parse_client_display_peak_luminance_nits(const std::string_view value, const int fallback_value) {
+      if (value.empty()) {
+        return fallback_value;
+      }
+
+      std::string buffer {value};
+      char *end_ptr = nullptr;
+      const auto parsed = std::strtol(buffer.c_str(), &end_ptr, 10);
+      if (end_ptr == buffer.c_str() || (end_ptr != nullptr && *end_ptr != '\0')) {
+        return fallback_value;
+      }
+
+      return static_cast<int>(std::max<long>(parsed, 0l));
+    }
+
+    std::string client_display_float_to_string(const float value) {
+      std::ostringstream stream;
+      stream << std::setprecision(6) << std::defaultfloat << value;
+      return stream.str();
     }
   }  // namespace
 
@@ -1007,10 +1046,22 @@ namespace rtsp_stream {
     const auto fallback_dynamic_range_mode = session.enable_hdr ? "1"sv : "0"sv;
     const auto fallback_client_display_gamut = std::string_view {client_display_gamut_to_string(session.client_display_gamut)};
     const auto fallback_client_display_transfer = std::string_view {client_display_transfer_to_string(session.client_display_transfer)};
+    const auto fallback_client_display_current_edr_headroom = client_display_float_to_string(session.client_display_current_edr_headroom);
+    const auto fallback_client_display_potential_edr_headroom = client_display_float_to_string(session.client_display_potential_edr_headroom);
+    const auto fallback_client_display_current_peak_luminance_nits = std::to_string(session.client_display_current_peak_luminance_nits);
+    const auto fallback_client_display_potential_peak_luminance_nits = std::to_string(session.client_display_potential_peak_luminance_nits);
     const bool missing_bitstream_format = args.find("x-nv-vqos[0].bitStreamFormat"sv) == args.end();
     const bool missing_dynamic_range_mode = args.find("x-nv-video[0].dynamicRangeMode"sv) == args.end();
     const bool missing_client_display_gamut = args.find("x-apollo-video[0].clientDisplayGamut"sv) == args.end();
     const bool missing_client_display_transfer = args.find("x-apollo-video[0].clientDisplayTransfer"sv) == args.end();
+    const bool missing_client_display_current_edr_headroom =
+      args.find("x-apollo-video[0].clientDisplayCurrentEDRHeadroom"sv) == args.end();
+    const bool missing_client_display_potential_edr_headroom =
+      args.find("x-apollo-video[0].clientDisplayPotentialEDRHeadroom"sv) == args.end();
+    const bool missing_client_display_current_peak_luminance_nits =
+      args.find("x-apollo-video[0].clientDisplayCurrentPeakLuminanceNits"sv) == args.end();
+    const bool missing_client_display_potential_peak_luminance_nits =
+      args.find("x-apollo-video[0].clientDisplayPotentialPeakLuminanceNits"sv) == args.end();
 
     // Initialize any omitted parameters to launch-consistent defaults.
     args.try_emplace("x-nv-video[0].encoderCscMode"sv, "0"sv);
@@ -1018,6 +1069,10 @@ namespace rtsp_stream {
     args.try_emplace("x-nv-video[0].dynamicRangeMode"sv, fallback_dynamic_range_mode);
     args.try_emplace("x-apollo-video[0].clientDisplayGamut"sv, fallback_client_display_gamut);
     args.try_emplace("x-apollo-video[0].clientDisplayTransfer"sv, fallback_client_display_transfer);
+    args.try_emplace("x-apollo-video[0].clientDisplayCurrentEDRHeadroom"sv, fallback_client_display_current_edr_headroom);
+    args.try_emplace("x-apollo-video[0].clientDisplayPotentialEDRHeadroom"sv, fallback_client_display_potential_edr_headroom);
+    args.try_emplace("x-apollo-video[0].clientDisplayCurrentPeakLuminanceNits"sv, fallback_client_display_current_peak_luminance_nits);
+    args.try_emplace("x-apollo-video[0].clientDisplayPotentialPeakLuminanceNits"sv, fallback_client_display_potential_peak_luminance_nits);
     args.try_emplace("x-nv-aqos.packetDuration"sv, "5"sv);
     args.try_emplace("x-nv-general.useReliableUdp"sv, "1"sv);
     args.try_emplace("x-nv-vqos[0].fec.minRequiredFecPackets"sv, "0"sv);
@@ -1031,16 +1086,26 @@ namespace rtsp_stream {
     args.try_emplace("x-ss-video[0].intraRefresh"sv, "0"sv);
 
     if (missing_bitstream_format || missing_dynamic_range_mode ||
-        missing_client_display_gamut || missing_client_display_transfer) {
+        missing_client_display_gamut || missing_client_display_transfer ||
+        missing_client_display_current_edr_headroom || missing_client_display_potential_edr_headroom ||
+        missing_client_display_current_peak_luminance_nits || missing_client_display_potential_peak_luminance_nits) {
       BOOST_LOG(warning) << "RTSP ANNOUNCE omitted launch-critical fields; applying launch fallback values"
                          << " bitStreamFormatMissing="sv << missing_bitstream_format
                          << " dynamicRangeMissing="sv << missing_dynamic_range_mode
                          << " clientDisplayGamutMissing="sv << missing_client_display_gamut
                          << " clientDisplayTransferMissing="sv << missing_client_display_transfer
+                         << " clientDisplayCurrentEDRHeadroomMissing="sv << missing_client_display_current_edr_headroom
+                         << " clientDisplayPotentialEDRHeadroomMissing="sv << missing_client_display_potential_edr_headroom
+                         << " clientDisplayCurrentPeakLuminanceNitsMissing="sv << missing_client_display_current_peak_luminance_nits
+                         << " clientDisplayPotentialPeakLuminanceNitsMissing="sv << missing_client_display_potential_peak_luminance_nits
                          << " fallback-bitstream="sv << fallback_bitstream_format
                          << " fallback-dynamic-range="sv << fallback_dynamic_range_mode
                          << " launch-gamut="sv << fallback_client_display_gamut
-                         << " launch-transfer="sv << fallback_client_display_transfer;
+                         << " launch-transfer="sv << fallback_client_display_transfer
+                         << " launch-current-edr-headroom="sv << fallback_client_display_current_edr_headroom
+                         << " launch-potential-edr-headroom="sv << fallback_client_display_potential_edr_headroom
+                         << " launch-current-peak-nits="sv << fallback_client_display_current_peak_luminance_nits
+                         << " launch-potential-peak-nits="sv << fallback_client_display_potential_peak_luminance_nits;
     }
 
     stream::config_t config;
@@ -1109,6 +1174,22 @@ namespace rtsp_stream {
       if (const auto it = args.find("x-apollo-video[0].clientDisplayHiDPI"sv); it != args.end()) {
         config.monitor.clientDisplayHiDPI = util::from_view(it->second);
       }
+      config.monitor.clientDisplayCurrentEDRHeadroom = parse_client_display_headroom(
+        args.at("x-apollo-video[0].clientDisplayCurrentEDRHeadroom"sv),
+        session.client_display_current_edr_headroom
+      );
+      config.monitor.clientDisplayPotentialEDRHeadroom = parse_client_display_headroom(
+        args.at("x-apollo-video[0].clientDisplayPotentialEDRHeadroom"sv),
+        session.client_display_potential_edr_headroom
+      );
+      config.monitor.clientDisplayCurrentPeakLuminanceNits = parse_client_display_peak_luminance_nits(
+        args.at("x-apollo-video[0].clientDisplayCurrentPeakLuminanceNits"sv),
+        session.client_display_current_peak_luminance_nits
+      );
+      config.monitor.clientDisplayPotentialPeakLuminanceNits = parse_client_display_peak_luminance_nits(
+        args.at("x-apollo-video[0].clientDisplayPotentialPeakLuminanceNits"sv),
+        session.client_display_potential_peak_luminance_nits
+      );
       if (config.monitor.clientDisplayScalePercent != static_cast<int>(session.scale_factor) ||
           config.monitor.clientDisplayHiDPI != (session.client_display_hidpi ? 1 : 0)) {
         BOOST_LOG(warning) << "Client display scale contract mismatch between launch and RTSP: launch-scale="sv
@@ -1119,6 +1200,27 @@ namespace rtsp_stream {
                            << config.monitor.clientDisplayScalePercent
                            << " rtsp-hidpi="sv
                            << config.monitor.clientDisplayHiDPI;
+      }
+      if (config.monitor.clientDisplayCurrentEDRHeadroom != session.client_display_current_edr_headroom ||
+          config.monitor.clientDisplayPotentialEDRHeadroom != session.client_display_potential_edr_headroom ||
+          config.monitor.clientDisplayCurrentPeakLuminanceNits != session.client_display_current_peak_luminance_nits ||
+          config.monitor.clientDisplayPotentialPeakLuminanceNits != session.client_display_potential_peak_luminance_nits) {
+        BOOST_LOG(warning) << "Client display HDR capability contract mismatch between launch and RTSP: launch-current-edr-headroom="sv
+                           << session.client_display_current_edr_headroom
+                           << " launch-potential-edr-headroom="sv
+                           << session.client_display_potential_edr_headroom
+                           << " launch-current-peak-nits="sv
+                           << session.client_display_current_peak_luminance_nits
+                           << " launch-potential-peak-nits="sv
+                           << session.client_display_potential_peak_luminance_nits
+                           << " rtsp-current-edr-headroom="sv
+                           << config.monitor.clientDisplayCurrentEDRHeadroom
+                           << " rtsp-potential-edr-headroom="sv
+                           << config.monitor.clientDisplayPotentialEDRHeadroom
+                           << " rtsp-current-peak-nits="sv
+                           << config.monitor.clientDisplayCurrentPeakLuminanceNits
+                           << " rtsp-potential-peak-nits="sv
+                           << config.monitor.clientDisplayPotentialPeakLuminanceNits;
       }
       BOOST_LOG(info) << "Client display profile from RTSP: gamut="sv
                       << client_display_gamut_to_string(config.monitor.clientDisplayGamut)
@@ -1134,6 +1236,14 @@ namespace rtsp_stream {
                       << config.monitor.clientDisplayScalePercent
                       << " hidpi="sv
                       << config.monitor.clientDisplayHiDPI
+                      << " current-edr-headroom="sv
+                      << config.monitor.clientDisplayCurrentEDRHeadroom
+                      << " potential-edr-headroom="sv
+                      << config.monitor.clientDisplayPotentialEDRHeadroom
+                      << " current-peak-nits="sv
+                      << config.monitor.clientDisplayCurrentPeakLuminanceNits
+                      << " potential-peak-nits="sv
+                      << config.monitor.clientDisplayPotentialPeakLuminanceNits
                       << " viewport="sv
                       << config.monitor.width << "x"sv
                       << config.monitor.height
@@ -1142,6 +1252,10 @@ namespace rtsp_stream {
 
       proc::proc.client_display_gamut = config.monitor.clientDisplayGamut;
       proc::proc.client_display_transfer = config.monitor.clientDisplayTransfer;
+      proc::proc.client_display_current_edr_headroom = config.monitor.clientDisplayCurrentEDRHeadroom;
+      proc::proc.client_display_potential_edr_headroom = config.monitor.clientDisplayPotentialEDRHeadroom;
+      proc::proc.client_display_current_peak_luminance_nits = config.monitor.clientDisplayCurrentPeakLuminanceNits;
+      proc::proc.client_display_potential_peak_luminance_nits = config.monitor.clientDisplayPotentialPeakLuminanceNits;
       proc::proc.client_scale_factor = config.monitor.clientDisplayScalePercent;
       proc::proc.client_display_hidpi = config.monitor.clientDisplayHiDPI != 0;
 

@@ -359,6 +359,10 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     public let effectiveDisplayGamut: ApolloClientDisplayGamut
     public let effectiveDisplayTransfer: ApolloClientDisplayTransfer
     public let hdrStaticMetadata: ApolloHDRStaticMetadata?
+    public let clientDisplayCurrentEDRHeadroom: Float
+    public let clientDisplayPotentialEDRHeadroom: Float
+    public let clientDisplayCurrentPeakLuminanceNits: Int
+    public let clientDisplayPotentialPeakLuminanceNits: Int
 
     public init(
         displayID: UInt32,
@@ -375,7 +379,11 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         clientDisplayTransfer: ApolloClientDisplayTransfer = .unknown,
         effectiveDisplayGamut: ApolloClientDisplayGamut = .unknown,
         effectiveDisplayTransfer: ApolloClientDisplayTransfer = .unknown,
-        hdrStaticMetadata: ApolloHDRStaticMetadata? = nil
+        hdrStaticMetadata: ApolloHDRStaticMetadata? = nil,
+        clientDisplayCurrentEDRHeadroom: Float = 0,
+        clientDisplayPotentialEDRHeadroom: Float = 0,
+        clientDisplayCurrentPeakLuminanceNits: Int = 0,
+        clientDisplayPotentialPeakLuminanceNits: Int = 0
     ) {
         self.displayID = displayID
         self.codec = codec
@@ -392,6 +400,10 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         self.effectiveDisplayGamut = effectiveDisplayGamut
         self.effectiveDisplayTransfer = effectiveDisplayTransfer
         self.hdrStaticMetadata = hdrStaticMetadata
+        self.clientDisplayCurrentEDRHeadroom = max(clientDisplayCurrentEDRHeadroom, 0)
+        self.clientDisplayPotentialEDRHeadroom = max(clientDisplayPotentialEDRHeadroom, 0)
+        self.clientDisplayCurrentPeakLuminanceNits = max(clientDisplayCurrentPeakLuminanceNits, 0)
+        self.clientDisplayPotentialPeakLuminanceNits = max(clientDisplayPotentialPeakLuminanceNits, 0)
     }
 
     struct EncodedHDRConfigurationSnapshot: Equatable, Sendable {
@@ -631,7 +643,7 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     )
 
     var hdrConfigurationDebugSummary: String {
-        "hdr=\(enableHDR) client-gamut=\(clientDisplayGamut.rawValue) client-transfer=\(clientDisplayTransfer.rawValue) effective-gamut=\(resolvedDisplayGamut.rawValue) effective-transfer=\(resolvedDisplayTransfer.rawValue) negotiated-static-metadata=\(hdrStaticMetadata != nil)"
+        "hdr=\(enableHDR) client-gamut=\(clientDisplayGamut.rawValue) client-transfer=\(clientDisplayTransfer.rawValue) effective-gamut=\(resolvedDisplayGamut.rawValue) effective-transfer=\(resolvedDisplayTransfer.rawValue) negotiated-static-metadata=\(hdrStaticMetadata != nil) current-edr-headroom=\(clientDisplayCurrentEDRHeadroom) potential-edr-headroom=\(clientDisplayPotentialEDRHeadroom) current-peak-nits=\(clientDisplayCurrentPeakLuminanceNits) potential-peak-nits=\(clientDisplayPotentialPeakLuminanceNits)"
     }
 }
 
@@ -850,7 +862,11 @@ private struct ApolloBridgeAutomationRequest: Equatable, Sendable {
                 effectiveDisplayTransfer: ApolloBridgeAutomationRequest.clientDisplayTransfer(from: snapshot.effective_display_transfer),
                 hdrStaticMetadata: snapshot.has_effective_hdr_metadata ?
                     ApolloHDRStaticMetadata(coreValue: snapshot.effective_hdr_metadata) :
-                    nil
+                    nil,
+                clientDisplayCurrentEDRHeadroom: snapshot.client_display_current_edr_headroom,
+                clientDisplayPotentialEDRHeadroom: snapshot.client_display_potential_edr_headroom,
+                clientDisplayCurrentPeakLuminanceNits: Int(snapshot.client_display_current_peak_luminance_nits),
+                clientDisplayPotentialPeakLuminanceNits: Int(snapshot.client_display_potential_peak_luminance_nits)
             )
         } else {
             videoConfiguration = nil

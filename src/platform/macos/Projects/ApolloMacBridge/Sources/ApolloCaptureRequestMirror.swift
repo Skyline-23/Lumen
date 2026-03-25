@@ -26,6 +26,10 @@ struct ApolloBridgeMirroredCaptureRequestSnapshot: Equatable, Sendable {
     let effectiveDisplayGamut: Int32
     let effectiveDisplayTransfer: Int32
     let effectiveHDRStaticMetadata: ApolloHDRStaticMetadata?
+    let clientDisplayCurrentEDRHeadroom: Float
+    let clientDisplayPotentialEDRHeadroom: Float
+    let clientDisplayCurrentPeakLuminanceNits: Int32
+    let clientDisplayPotentialPeakLuminanceNits: Int32
     let audioSourceKind: ApolloCoreAudioCaptureSourceKind
     let audioExcludesCurrentProcess: Bool
     let audioSampleRate: Int32
@@ -84,6 +88,10 @@ struct ApolloBridgeMirroredCaptureRequestSnapshot: Equatable, Sendable {
         self.effectiveDisplayGamut = Self.number(dictionary["effectiveDisplayGamut"])?.int32Value ?? 0
         self.effectiveDisplayTransfer = Self.number(dictionary["effectiveDisplayTransfer"])?.int32Value ?? 0
         self.effectiveHDRStaticMetadata = Self.hdrStaticMetadata(from: dictionary)
+        self.clientDisplayCurrentEDRHeadroom = Self.number(dictionary["clientDisplayCurrentEDRHeadroom"])?.floatValue ?? 0
+        self.clientDisplayPotentialEDRHeadroom = Self.number(dictionary["clientDisplayPotentialEDRHeadroom"])?.floatValue ?? 0
+        self.clientDisplayCurrentPeakLuminanceNits = Self.number(dictionary["clientDisplayCurrentPeakLuminanceNits"])?.int32Value ?? 0
+        self.clientDisplayPotentialPeakLuminanceNits = Self.number(dictionary["clientDisplayPotentialPeakLuminanceNits"])?.int32Value ?? 0
         self.audioSourceKind = audioSourceKind
         self.audioExcludesCurrentProcess = audioExcludesCurrentProcess
         self.audioSampleRate = audioSampleRate
@@ -179,6 +187,10 @@ struct ApolloBridgeMirroredCaptureRequestSemanticState: Equatable, Sendable {
     let effectiveDisplayGamut: Int32
     let effectiveDisplayTransfer: Int32
     let effectiveHDRStaticMetadata: ApolloHDRStaticMetadata?
+    let clientDisplayCurrentEDRHeadroom: Float
+    let clientDisplayPotentialEDRHeadroom: Float
+    let clientDisplayCurrentPeakLuminanceNits: Int32
+    let clientDisplayPotentialPeakLuminanceNits: Int32
     let audioSourceKind: ApolloCoreAudioCaptureSourceKind
     let audioExcludesCurrentProcess: Bool
     let audioSampleRate: Int32
@@ -202,6 +214,10 @@ struct ApolloBridgeMirroredCaptureRequestSemanticState: Equatable, Sendable {
         effectiveDisplayGamut = snapshot.effectiveDisplayGamut
         effectiveDisplayTransfer = snapshot.effectiveDisplayTransfer
         effectiveHDRStaticMetadata = snapshot.effectiveHDRStaticMetadata
+        clientDisplayCurrentEDRHeadroom = snapshot.clientDisplayCurrentEDRHeadroom
+        clientDisplayPotentialEDRHeadroom = snapshot.clientDisplayPotentialEDRHeadroom
+        clientDisplayCurrentPeakLuminanceNits = snapshot.clientDisplayCurrentPeakLuminanceNits
+        clientDisplayPotentialPeakLuminanceNits = snapshot.clientDisplayPotentialPeakLuminanceNits
         audioSourceKind = snapshot.audioSourceKind
         audioExcludesCurrentProcess = snapshot.audioExcludesCurrentProcess
         audioSampleRate = snapshot.audioSampleRate
@@ -228,6 +244,10 @@ struct ApolloBridgeMirroredCaptureRequestSemanticState: Equatable, Sendable {
         effectiveHDRStaticMetadata = snapshot.has_effective_hdr_metadata ?
             ApolloHDRStaticMetadata(coreValue: snapshot.effective_hdr_metadata) :
             nil
+        clientDisplayCurrentEDRHeadroom = snapshot.client_display_current_edr_headroom
+        clientDisplayPotentialEDRHeadroom = snapshot.client_display_potential_edr_headroom
+        clientDisplayCurrentPeakLuminanceNits = snapshot.client_display_current_peak_luminance_nits
+        clientDisplayPotentialPeakLuminanceNits = snapshot.client_display_potential_peak_luminance_nits
         audioSourceKind = snapshot.audio_source_kind
         audioExcludesCurrentProcess = snapshot.audio_excludes_current_process
         audioSampleRate = snapshot.audio_sample_rate
@@ -283,7 +303,11 @@ actor ApolloCaptureRequestMirrorCoordinator {
                     mirroredSnapshot.effectiveDisplayGamut,
                     mirroredSnapshot.effectiveDisplayTransfer,
                     mirroredSnapshot.effectiveHDRStaticMetadata != nil,
-                    effectiveHDRStaticMetadata
+                    effectiveHDRStaticMetadata,
+                    mirroredSnapshot.clientDisplayCurrentEDRHeadroom,
+                    mirroredSnapshot.clientDisplayPotentialEDRHeadroom,
+                    mirroredSnapshot.clientDisplayCurrentPeakLuminanceNits,
+                    mirroredSnapshot.clientDisplayPotentialPeakLuminanceNits
                 )
                 logger.notice(
                     "Republished mirrored video capture request generation=\(mirroredSnapshot.generation, privacy: .public) display-id=\(mirroredSnapshot.displayID, privacy: .public) codec=\(mirroredSnapshot.codec.rawValue, privacy: .public) queue=\(mirroredSnapshot.queueProfile.rawValue, privacy: .public) fps=\(mirroredSnapshot.targetFrameRate, privacy: .public)"

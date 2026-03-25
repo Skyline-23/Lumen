@@ -39,6 +39,10 @@ typedef struct ApolloMacBridgeCaptureConfiguration {
   int32_t effective_display_transfer;
   bool has_hdr_static_metadata;
   ApolloCoreHDRStaticMetadata hdr_static_metadata;
+  float client_display_current_edr_headroom;
+  float client_display_potential_edr_headroom;
+  int32_t client_display_current_peak_luminance_nits;
+  int32_t client_display_potential_peak_luminance_nits;
 } ApolloMacBridgeCaptureConfiguration;
 
 typedef enum ApolloMacBridgeAudioSourceKind {

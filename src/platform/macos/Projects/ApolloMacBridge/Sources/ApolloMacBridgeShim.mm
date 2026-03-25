@@ -143,6 +143,10 @@ namespace {
     result.hdr_static_metadata.max_content_light_level = static_cast<int32_t>(configuration.hdrMaxContentLightLevel);
     result.hdr_static_metadata.max_frame_average_light_level = static_cast<int32_t>(configuration.hdrMaxFrameAverageLightLevel);
     result.hdr_static_metadata.max_full_frame_luminance = static_cast<int32_t>(configuration.hdrMaxFullFrameLuminance);
+    result.client_display_current_edr_headroom = configuration.clientDisplayCurrentEDRHeadroom;
+    result.client_display_potential_edr_headroom = configuration.clientDisplayPotentialEDRHeadroom;
+    result.client_display_current_peak_luminance_nits = static_cast<int32_t>(configuration.clientDisplayCurrentPeakLuminanceNits);
+    result.client_display_potential_peak_luminance_nits = static_cast<int32_t>(configuration.clientDisplayPotentialPeakLuminanceNits);
     return result;
   }
 
@@ -176,7 +180,11 @@ effectiveDisplayTransferRawValue:static_cast<NSInteger>(configuration.effective_
      hdrMinDisplayLuminance:static_cast<NSInteger>(configuration.hdr_static_metadata.min_display_luminance)
     hdrMaxContentLightLevel:static_cast<NSInteger>(configuration.hdr_static_metadata.max_content_light_level)
 hdrMaxFrameAverageLightLevel:static_cast<NSInteger>(configuration.hdr_static_metadata.max_frame_average_light_level)
-   hdrMaxFullFrameLuminance:static_cast<NSInteger>(configuration.hdr_static_metadata.max_full_frame_luminance)];
+   hdrMaxFullFrameLuminance:static_cast<NSInteger>(configuration.hdr_static_metadata.max_full_frame_luminance)
+clientDisplayCurrentEDRHeadroom:configuration.client_display_current_edr_headroom
+clientDisplayPotentialEDRHeadroom:configuration.client_display_potential_edr_headroom
+clientDisplayCurrentPeakLuminanceNits:static_cast<NSInteger>(configuration.client_display_current_peak_luminance_nits)
+clientDisplayPotentialPeakLuminanceNits:static_cast<NSInteger>(configuration.client_display_potential_peak_luminance_nits)];
   }
 
   ApolloMacBridgeAudioCaptureConfiguration to_audio_bridge_configuration(

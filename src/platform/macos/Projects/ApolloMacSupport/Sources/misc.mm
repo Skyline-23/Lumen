@@ -181,6 +181,10 @@ namespace platf {
         @"effectiveDisplayGamut": @(state.effective_display_gamut),
         @"effectiveDisplayTransfer": @(state.effective_display_transfer),
         @"hasEffectiveHDRMetadata": @(state.has_effective_hdr_metadata),
+        @"clientDisplayCurrentEDRHeadroom": @(state.client_display_current_edr_headroom),
+        @"clientDisplayPotentialEDRHeadroom": @(state.client_display_potential_edr_headroom),
+        @"clientDisplayCurrentPeakLuminanceNits": @(state.client_display_current_peak_luminance_nits),
+        @"clientDisplayPotentialPeakLuminanceNits": @(state.client_display_potential_peak_luminance_nits),
         @"effectiveHDRRedPrimaryX": @(state.effective_hdr_red_primary_x),
         @"effectiveHDRRedPrimaryY": @(state.effective_hdr_red_primary_y),
         @"effectiveHDRGreenPrimaryX": @(state.effective_hdr_green_primary_x),
@@ -209,6 +213,10 @@ namespace platf {
       int effective_display_gamut = 0;
       int effective_display_transfer = 0;
       bool has_effective_hdr_metadata = false;
+      float client_display_current_edr_headroom = 0.0f;
+      float client_display_potential_edr_headroom = 0.0f;
+      int client_display_current_peak_luminance_nits = 0;
+      int client_display_potential_peak_luminance_nits = 0;
       SS_HDR_METADATA effective_hdr_metadata {};
     };
 
@@ -283,17 +291,28 @@ namespace platf {
         NSNumber *effective_display_gamut = dictionary[@"effectiveDisplayGamut"];
         NSNumber *effective_display_transfer = dictionary[@"effectiveDisplayTransfer"];
         NSNumber *has_effective_hdr_metadata = dictionary[@"hasEffectiveHDRMetadata"];
+        NSNumber *client_display_current_edr_headroom = dictionary[@"clientDisplayCurrentEDRHeadroom"];
+        NSNumber *client_display_potential_edr_headroom = dictionary[@"clientDisplayPotentialEDRHeadroom"];
+        NSNumber *client_display_current_peak_luminance_nits = dictionary[@"clientDisplayCurrentPeakLuminanceNits"];
+        NSNumber *client_display_potential_peak_luminance_nits = dictionary[@"clientDisplayPotentialPeakLuminanceNits"];
         if (dynamic_range == nil || client_display_gamut == nil || client_display_transfer == nil) {
           return std::nullopt;
         }
 
-        capture_request_hdr_preferences_t preferences {
-          [dynamic_range intValue],
-          [client_display_gamut intValue],
-          [client_display_transfer intValue],
-          effective_display_gamut != nil ? [effective_display_gamut intValue] : 0,
-          effective_display_transfer != nil ? [effective_display_transfer intValue] : 0,
-        };
+        capture_request_hdr_preferences_t preferences;
+        preferences.dynamic_range = [dynamic_range intValue];
+        preferences.client_display_gamut = [client_display_gamut intValue];
+        preferences.client_display_transfer = [client_display_transfer intValue];
+        preferences.effective_display_gamut = effective_display_gamut != nil ? [effective_display_gamut intValue] : 0;
+        preferences.effective_display_transfer = effective_display_transfer != nil ? [effective_display_transfer intValue] : 0;
+        preferences.client_display_current_edr_headroom =
+          client_display_current_edr_headroom != nil ? [client_display_current_edr_headroom floatValue] : 0.0f;
+        preferences.client_display_potential_edr_headroom =
+          client_display_potential_edr_headroom != nil ? [client_display_potential_edr_headroom floatValue] : 0.0f;
+        preferences.client_display_current_peak_luminance_nits =
+          client_display_current_peak_luminance_nits != nil ? [client_display_current_peak_luminance_nits intValue] : 0;
+        preferences.client_display_potential_peak_luminance_nits =
+          client_display_potential_peak_luminance_nits != nil ? [client_display_potential_peak_luminance_nits intValue] : 0;
 
         if (has_effective_hdr_metadata.boolValue) {
           preferences.has_effective_hdr_metadata = true;
@@ -385,9 +404,42 @@ namespace platf {
       return state;
     }
 
+    std::pair<uint32_t, std::string_view> resolve_effective_display_peak_luminance_nits(
+      int effective_display_gamut,
+      int client_display_current_peak_luminance_nits,
+      int client_display_potential_peak_luminance_nits
+    ) {
+      using gamut_e = video::client_display_gamut_e;
+
+      if (client_display_current_peak_luminance_nits > 0) {
+        return {
+          static_cast<uint32_t>(client_display_current_peak_luminance_nits),
+          "client-current-peak"
+        };
+      }
+
+      if (client_display_potential_peak_luminance_nits > 0) {
+        return {
+          static_cast<uint32_t>(client_display_potential_peak_luminance_nits),
+          "client-potential-peak"
+        };
+      }
+
+      const auto fallback_peak =
+        static_cast<gamut_e>(effective_display_gamut) == gamut_e::display_p3 ?
+          1000u :
+          600u;
+      return {fallback_peak, "legacy-fallback"};
+    }
+
     bool resolve_effective_display_hdr_metadata_impl(
       int effective_display_gamut,
       int effective_display_transfer,
+      float client_display_current_edr_headroom,
+      float client_display_potential_edr_headroom,
+      int client_display_current_peak_luminance_nits,
+      int client_display_potential_peak_luminance_nits,
+      std::string_view *peak_source,
       SS_HDR_METADATA &metadata
     ) {
       using gamut_e = video::client_display_gamut_e;
@@ -402,23 +454,42 @@ namespace platf {
       metadata.minDisplayLuminance = 10;  // 0.001 nits in 1/10000th units
 
       const bool use_display_p3 = static_cast<gamut_e>(effective_display_gamut) == gamut_e::display_p3;
+      const auto [chosen_peak_luminance_nits, resolved_peak_source] = resolve_effective_display_peak_luminance_nits(
+        effective_display_gamut,
+        client_display_current_peak_luminance_nits,
+        client_display_potential_peak_luminance_nits
+      );
+      const auto chosen_frame_average_light_level = static_cast<uint16_t>(std::min<uint32_t>(
+        chosen_peak_luminance_nits,
+        static_cast<uint32_t>(std::lround(static_cast<double>(chosen_peak_luminance_nits) * 0.4))
+      ));
       if (use_display_p3) {
         metadata.displayPrimaries[0] = {34000, 16000};
         metadata.displayPrimaries[1] = {13250, 34500};
         metadata.displayPrimaries[2] = {7500, 3000};
-        metadata.maxDisplayLuminance = 1000;
-        metadata.maxContentLightLevel = 1000;
-        metadata.maxFrameAverageLightLevel = 400;
-        metadata.maxFullFrameLuminance = 1000;
       } else {
         metadata.displayPrimaries[0] = {32000, 16500};
         metadata.displayPrimaries[1] = {15000, 30000};
         metadata.displayPrimaries[2] = {7500, 3000};
-        metadata.maxDisplayLuminance = 600;
-        metadata.maxContentLightLevel = 600;
-        metadata.maxFrameAverageLightLevel = 250;
-        metadata.maxFullFrameLuminance = 600;
       }
+      metadata.maxDisplayLuminance = chosen_peak_luminance_nits;
+      metadata.maxContentLightLevel = static_cast<uint16_t>(chosen_peak_luminance_nits);
+      metadata.maxFrameAverageLightLevel = chosen_frame_average_light_level;
+      metadata.maxFullFrameLuminance = static_cast<uint16_t>(chosen_peak_luminance_nits);
+
+      if (peak_source != nullptr) {
+        *peak_source = resolved_peak_source;
+      }
+
+      BOOST_LOG(info) << "Resolved effective HDR metadata from negotiated display characteristics"
+                      << " gamut="sv << display_gamut_label(effective_display_gamut)
+                      << " transfer="sv << effective_display_transfer
+                      << " current-edr-headroom="sv << client_display_current_edr_headroom
+                      << " potential-edr-headroom="sv << client_display_potential_edr_headroom
+                      << " current-peak-nits="sv << client_display_current_peak_luminance_nits
+                      << " potential-peak-nits="sv << client_display_potential_peak_luminance_nits
+                      << " chosen-peak-source="sv << resolved_peak_source
+                      << " chosen-peak-nits="sv << chosen_peak_luminance_nits;
 
       return true;
     }
@@ -451,7 +522,17 @@ namespace platf {
         return false;
       }
 
-      if (!resolve_effective_display_hdr_metadata_impl(effective_state.gamut, effective_state.transfer, metadata)) {
+      std::string_view peak_source {"none"};
+      if (!resolve_effective_display_hdr_metadata_impl(
+            effective_state.gamut,
+            effective_state.transfer,
+            preferences.client_display_current_edr_headroom,
+            preferences.client_display_potential_edr_headroom,
+            preferences.client_display_current_peak_luminance_nits,
+            preferences.client_display_potential_peak_luminance_nits,
+            &peak_source,
+            metadata
+          )) {
         return false;
       }
 
@@ -459,7 +540,13 @@ namespace platf {
                       << " requested-gamut="sv << display_gamut_label(preferences.client_display_gamut)
                       << " effective-gamut="sv << display_gamut_label(effective_state.gamut)
                       << " requested-transfer="sv << preferences.client_display_transfer
-                      << " effective-transfer="sv << effective_state.transfer;
+                      << " effective-transfer="sv << effective_state.transfer
+                      << " current-edr-headroom="sv << preferences.client_display_current_edr_headroom
+                      << " potential-edr-headroom="sv << preferences.client_display_potential_edr_headroom
+                      << " current-peak-nits="sv << preferences.client_display_current_peak_luminance_nits
+                      << " potential-peak-nits="sv << preferences.client_display_potential_peak_luminance_nits
+                      << " peak-source="sv << peak_source
+                      << " max-display-nits="sv << metadata.maxDisplayLuminance;
       return true;
     }
 
@@ -1588,11 +1675,20 @@ namespace platf {
   bool resolve_effective_display_hdr_metadata(
     int effective_display_gamut,
     int effective_display_transfer,
+    float client_display_current_edr_headroom,
+    float client_display_potential_edr_headroom,
+    int client_display_current_peak_luminance_nits,
+    int client_display_potential_peak_luminance_nits,
     SS_HDR_METADATA &metadata
   ) {
     return resolve_effective_display_hdr_metadata_impl(
       effective_display_gamut,
       effective_display_transfer,
+      client_display_current_edr_headroom,
+      client_display_potential_edr_headroom,
+      client_display_current_peak_luminance_nits,
+      client_display_potential_peak_luminance_nits,
+      nullptr,
       metadata
     );
   }
@@ -1642,7 +1738,12 @@ namespace platf {
         metadata.hdr_active = true;
         BOOST_LOG(info) << "macOS external capture HDR metadata aligned to mirrored capture request"
                         << " gamut="sv << preferences->client_display_gamut
-                        << " transfer="sv << preferences->client_display_transfer;
+                        << " transfer="sv << preferences->client_display_transfer
+                        << " current-edr-headroom="sv << preferences->client_display_current_edr_headroom
+                        << " potential-edr-headroom="sv << preferences->client_display_potential_edr_headroom
+                        << " current-peak-nits="sv << preferences->client_display_current_peak_luminance_nits
+                        << " potential-peak-nits="sv << preferences->client_display_potential_peak_luminance_nits
+                        << " max-display-nits="sv << metadata.hdr_metadata.maxDisplayLuminance;
       } else if (fallback_external_capture_hdr_metadata(const_cast<NSScreen *>(screen), metadata.hdr_metadata)) {
         metadata.hdr_active = true;
       }

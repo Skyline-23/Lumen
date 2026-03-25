@@ -65,6 +65,10 @@ namespace video {
     int clientDisplayTransfer;  // 0 - unknown, 1 - SDR, 2 - PQ, 3 - HLG
     int clientDisplayScalePercent;  // Requested display scale in percent
     int clientDisplayHiDPI;  // 0 - disabled, 1 - enabled
+    float clientDisplayCurrentEDRHeadroom;  // Current EDR headroom reported by the client display
+    float clientDisplayPotentialEDRHeadroom;  // Potential EDR headroom reported by the client display
+    int clientDisplayCurrentPeakLuminanceNits;  // Current peak luminance reported by the client display
+    int clientDisplayPotentialPeakLuminanceNits;  // Potential peak luminance reported by the client display
   };
 
   platf::mem_type_e map_base_dev_type(AVHWDeviceType type);

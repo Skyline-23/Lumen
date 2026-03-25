@@ -521,7 +521,15 @@ namespace VDISPLAY {
     driver_status = DRIVER_STATUS::UNKNOWN;
   }
 
-  color_profile_t probeHostDisplayColorProfile(bool hdr_enabled, int client_display_gamut, int client_display_transfer) {
+  color_profile_t probeHostDisplayColorProfile(
+    bool hdr_enabled,
+    int client_display_gamut,
+    int client_display_transfer,
+    float client_display_current_edr_headroom,
+    float client_display_potential_edr_headroom,
+    int client_display_current_peak_luminance_nits,
+    int client_display_potential_peak_luminance_nits
+  ) {
     NSScreen *reference_screen = [NSScreen mainScreen];
     if (reference_screen == nil && [NSScreen screens].count > 0) {
       reference_screen = [NSScreen screens].firstObject;
@@ -558,7 +566,11 @@ namespace VDISPLAY {
                     << " hdr_capable="sv << profile.hdr_capable
                     << " hdr_intent="sv << hdr_enabled
                     << " client_gamut="sv << client_display_gamut_label(client_display_gamut)
-                    << " client_transfer="sv << transfer_name;
+                    << " client_transfer="sv << transfer_name
+                    << " current-edr-headroom="sv << client_display_current_edr_headroom
+                    << " potential-edr-headroom="sv << client_display_potential_edr_headroom
+                    << " current-peak-nits="sv << client_display_current_peak_luminance_nits
+                    << " potential-peak-nits="sv << client_display_potential_peak_luminance_nits;
 
     return profile;
   }
@@ -573,7 +585,11 @@ namespace VDISPLAY {
     bool hi_dpi,
     bool hdr_enabled,
     int client_display_gamut,
-    int client_display_transfer
+    int client_display_transfer,
+    float client_display_current_edr_headroom,
+    float client_display_potential_edr_headroom,
+    int client_display_current_peak_luminance_nits,
+    int client_display_potential_peak_luminance_nits
   ) {
     const std::string display_key = client_uid ? client_uid : "";
     if (display_key.empty()) {
@@ -617,7 +633,15 @@ namespace VDISPLAY {
     auto handle = std::make_unique<virtual_display_handle_t>();
     const auto width = backing_dimension_for_scale_factor(logical_width, scale_factor, hi_dpi);
     const auto height = backing_dimension_for_scale_factor(logical_height, scale_factor, hi_dpi);
-    const auto host_profile = probeHostDisplayColorProfile(hdr_enabled, client_display_gamut, client_display_transfer);
+    const auto host_profile = probeHostDisplayColorProfile(
+      hdr_enabled,
+      client_display_gamut,
+      client_display_transfer,
+      client_display_current_edr_headroom,
+      client_display_potential_edr_headroom,
+      client_display_current_peak_luminance_nits,
+      client_display_potential_peak_luminance_nits
+    );
     const auto physical_size = virtual_display_size_for_pixels(width, height);
     const auto transfer_function = virtual_display_transfer_function(hdr_enabled, client_display_transfer);
     if (use_skylight_backend) {

@@ -85,7 +85,11 @@ final class ApolloTuistBootstrapTests: XCTestCase {
             requestedWidth: 3512,
             requestedHeight: 2290,
             enableHDR: true,
-            hdrStaticMetadata: hdrStaticMetadata
+            hdrStaticMetadata: hdrStaticMetadata,
+            clientDisplayCurrentEDRHeadroom: 2.8,
+            clientDisplayPotentialEDRHeadroom: 8.4,
+            clientDisplayCurrentPeakLuminanceNits: 800,
+            clientDisplayPotentialPeakLuminanceNits: 1600
         )
 
         let roundTrip = ApolloBridgeConfigurationBox(configuration: configuration).swiftValue
@@ -97,6 +101,10 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(roundTrip.requestedHeight, 2290)
         XCTAssertTrue(roundTrip.enableHDR)
         XCTAssertEqual(roundTrip.hdrStaticMetadata, hdrStaticMetadata)
+        XCTAssertEqual(roundTrip.clientDisplayCurrentEDRHeadroom, 2.8)
+        XCTAssertEqual(roundTrip.clientDisplayPotentialEDRHeadroom, 8.4)
+        XCTAssertEqual(roundTrip.clientDisplayCurrentPeakLuminanceNits, 800)
+        XCTAssertEqual(roundTrip.clientDisplayPotentialPeakLuminanceNits, 1600)
     }
 
     func testBridgeHDRConfigurationSeparatesDisplayGamutFromSignalPrimaries() {
@@ -502,7 +510,11 @@ final class ApolloTuistBootstrapTests: XCTestCase {
                 2,
                 2,
                 true,
-                hdrStaticMetadata
+                hdrStaticMetadata,
+                2.8,
+                8.4,
+                800,
+                1600
             )
             ApolloCoreCaptureRequestPublishAudio(
                 ApolloCoreAudioCaptureSourceKindSystemOutput,
@@ -536,6 +548,10 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         XCTAssertTrue(updatedSnapshot.has_effective_hdr_metadata)
         XCTAssertEqual(updatedSnapshot.effective_hdr_metadata.max_display_luminance, 1_000)
         XCTAssertEqual(updatedSnapshot.effective_hdr_metadata.max_frame_average_light_level, 400)
+        XCTAssertEqual(updatedSnapshot.client_display_current_edr_headroom, 2.8)
+        XCTAssertEqual(updatedSnapshot.client_display_potential_edr_headroom, 8.4)
+        XCTAssertEqual(updatedSnapshot.client_display_current_peak_luminance_nits, 800)
+        XCTAssertEqual(updatedSnapshot.client_display_potential_peak_luminance_nits, 1600)
         XCTAssertEqual(updatedSnapshot.audio_source_kind, ApolloCoreAudioCaptureSourceKindSystemOutput)
         XCTAssertEqual(updatedSnapshot.audio_frame_size, 480)
 
@@ -563,6 +579,10 @@ final class ApolloTuistBootstrapTests: XCTestCase {
             "effectiveDisplayGamut": 2,
             "effectiveDisplayTransfer": 2,
             "hasEffectiveHDRMetadata": true,
+            "clientDisplayCurrentEDRHeadroom": 2.8,
+            "clientDisplayPotentialEDRHeadroom": 8.4,
+            "clientDisplayCurrentPeakLuminanceNits": 800,
+            "clientDisplayPotentialPeakLuminanceNits": 1600,
             "effectiveHDRRedPrimaryX": 34_000,
             "effectiveHDRRedPrimaryY": 16_000,
             "effectiveHDRGreenPrimaryX": 13_250,
@@ -607,6 +627,10 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(snapshot.clientDisplayTransfer, 2)
         XCTAssertEqual(snapshot.effectiveDisplayGamut, 2)
         XCTAssertEqual(snapshot.effectiveDisplayTransfer, 2)
+        XCTAssertEqual(snapshot.clientDisplayCurrentEDRHeadroom, 2.8)
+        XCTAssertEqual(snapshot.clientDisplayPotentialEDRHeadroom, 8.4)
+        XCTAssertEqual(snapshot.clientDisplayCurrentPeakLuminanceNits, 800)
+        XCTAssertEqual(snapshot.clientDisplayPotentialPeakLuminanceNits, 1600)
         XCTAssertEqual(snapshot.effectiveHDRStaticMetadata?.maxDisplayLuminance, 1_000)
         XCTAssertEqual(snapshot.effectiveHDRStaticMetadata?.maxFrameAverageLightLevel, 400)
         XCTAssertEqual(snapshot.audioSourceKind, ApolloCoreAudioCaptureSourceKindSystemOutput)
@@ -636,6 +660,10 @@ final class ApolloTuistBootstrapTests: XCTestCase {
             "clientDisplayTransfer": 2,
             "effectiveDisplayGamut": 3,
             "effectiveDisplayTransfer": 2,
+            "clientDisplayCurrentEDRHeadroom": 2.2,
+            "clientDisplayPotentialEDRHeadroom": 7.8,
+            "clientDisplayCurrentPeakLuminanceNits": 700,
+            "clientDisplayPotentialPeakLuminanceNits": 1500,
             "audioSourceKind": 0,
             "audioExcludesCurrentProcess": false,
             "audioSampleRate": 48_000,
@@ -658,6 +686,8 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(snapshot.queueProfile, ApolloCoreCaptureQueueProfileAuto)
         XCTAssertEqual(snapshot.clientDisplayGamut, 3)
         XCTAssertEqual(snapshot.effectiveDisplayGamut, 3)
+        XCTAssertEqual(snapshot.clientDisplayCurrentEDRHeadroom, 2.2)
+        XCTAssertEqual(snapshot.clientDisplayPotentialPeakLuminanceNits, 1500)
     }
 
     func testMirroredCaptureRequestSemanticStateIgnoresGenerationOnlyChanges() {
@@ -681,6 +711,10 @@ final class ApolloTuistBootstrapTests: XCTestCase {
                 "clientDisplayTransfer": 2,
                 "effectiveDisplayGamut": 3,
                 "effectiveDisplayTransfer": 2,
+                "clientDisplayCurrentEDRHeadroom": 2.2,
+                "clientDisplayPotentialEDRHeadroom": 7.8,
+                "clientDisplayCurrentPeakLuminanceNits": 700,
+                "clientDisplayPotentialPeakLuminanceNits": 1500,
                 "audioSourceKind": 1,
                 "audioExcludesCurrentProcess": false,
                 "audioSampleRate": 48_000,
@@ -708,6 +742,10 @@ final class ApolloTuistBootstrapTests: XCTestCase {
                 "clientDisplayTransfer": 2,
                 "effectiveDisplayGamut": 3,
                 "effectiveDisplayTransfer": 2,
+                "clientDisplayCurrentEDRHeadroom": 2.2,
+                "clientDisplayPotentialEDRHeadroom": 7.8,
+                "clientDisplayCurrentPeakLuminanceNits": 700,
+                "clientDisplayPotentialPeakLuminanceNits": 1500,
                 "audioSourceKind": 1,
                 "audioExcludesCurrentProcess": false,
                 "audioSampleRate": 48_000,

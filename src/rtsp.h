@@ -55,6 +55,10 @@ namespace rtsp_stream {
     uint32_t scale_factor;
     int client_display_gamut;
     int client_display_transfer;
+    float client_display_current_edr_headroom;
+    float client_display_potential_edr_headroom;
+    int client_display_current_peak_luminance_nits;
+    int client_display_potential_peak_luminance_nits;
 
     std::optional<crypto::cipher::gcm_t> rtsp_cipher;
     std::string rtsp_url_scheme;

@@ -35,6 +35,10 @@ namespace platf {
     int effective_display_gamut;
     int effective_display_transfer;
     bool has_effective_hdr_metadata;
+    float client_display_current_edr_headroom;
+    float client_display_potential_edr_headroom;
+    int client_display_current_peak_luminance_nits;
+    int client_display_potential_peak_luminance_nits;
     int effective_hdr_red_primary_x;
     int effective_hdr_red_primary_y;
     int effective_hdr_green_primary_x;
@@ -101,6 +105,10 @@ namespace platf {
   bool resolve_effective_display_hdr_metadata(
     int effective_display_gamut,
     int effective_display_transfer,
+    float client_display_current_edr_headroom,
+    float client_display_potential_edr_headroom,
+    int client_display_current_peak_luminance_nits,
+    int client_display_potential_peak_luminance_nits,
     SS_HDR_METADATA &metadata
   );
   bool query_external_capture_display_metadata(

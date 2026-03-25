@@ -256,6 +256,10 @@ typedef struct ApolloCoreCaptureRequestSnapshot {
   int32_t audio_sample_rate;
   int32_t audio_channel_count;
   int32_t audio_frame_size;
+  float client_display_current_edr_headroom;
+  float client_display_potential_edr_headroom;
+  int32_t client_display_current_peak_luminance_nits;
+  int32_t client_display_potential_peak_luminance_nits;
 } ApolloCoreCaptureRequestSnapshot;
 
 ApolloCoreAudioCaptureIngress *ApolloCoreAudioCaptureIngressCreate(void);
@@ -346,7 +350,11 @@ void ApolloCoreCaptureRequestPublishVideo(
   int32_t effective_display_gamut,
   int32_t effective_display_transfer,
   bool has_effective_hdr_metadata,
-  ApolloCoreHDRStaticMetadata effective_hdr_metadata
+  ApolloCoreHDRStaticMetadata effective_hdr_metadata,
+  float client_display_current_edr_headroom,
+  float client_display_potential_edr_headroom,
+  int32_t client_display_current_peak_luminance_nits,
+  int32_t client_display_potential_peak_luminance_nits
 );
 void ApolloCoreCaptureRequestPublishAudio(
   ApolloCoreAudioCaptureSourceKind source_kind,

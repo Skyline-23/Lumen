@@ -6,8 +6,10 @@
 #define BOOST_BIND_GLOBAL_PLACEHOLDERS
 
 // standard includes
+#include <algorithm>
 #include <filesystem>
 #include <array>
+#include <cstdlib>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -128,6 +130,36 @@ namespace nvhttp {
       return hdr_enabled ?
         static_cast<int>(video::client_display_transfer_e::pq) :
         static_cast<int>(video::client_display_transfer_e::sdr);
+    }
+
+    float parse_client_display_headroom(const std::string_view value) {
+      if (value.empty()) {
+        return 0.0f;
+      }
+
+      std::string buffer {value};
+      char *end_ptr = nullptr;
+      const auto parsed = std::strtof(buffer.c_str(), &end_ptr);
+      if (end_ptr == buffer.c_str() || (end_ptr != nullptr && *end_ptr != '\0')) {
+        return 0.0f;
+      }
+
+      return std::max(parsed, 0.0f);
+    }
+
+    int parse_client_display_peak_luminance_nits(const std::string_view value) {
+      if (value.empty()) {
+        return 0;
+      }
+
+      std::string buffer {value};
+      char *end_ptr = nullptr;
+      const auto parsed = std::strtol(buffer.c_str(), &end_ptr, 10);
+      if (end_ptr == buffer.c_str() || (end_ptr != nullptr && *end_ptr != '\0')) {
+        return 0;
+      }
+
+      return static_cast<int>(std::max<long>(parsed, 0l));
     }
 
     std::string rtsp_url_host_for_request(const std::shared_ptr<typename SimpleWeb::ServerBase<SunshineHTTPS>::Request> &request) {
@@ -656,6 +688,18 @@ namespace nvhttp {
       launch_session->scale_factor > 100;
     launch_session->client_display_gamut = parse_client_display_gamut(get_arg(args, "clientDisplayGamut", ""), launch_session->enable_hdr);
     launch_session->client_display_transfer = parse_client_display_transfer(get_arg(args, "clientDisplayTransfer", ""), launch_session->enable_hdr);
+    launch_session->client_display_current_edr_headroom = parse_client_display_headroom(
+      get_arg(args, "clientDisplayCurrentEDRHeadroom", "")
+    );
+    launch_session->client_display_potential_edr_headroom = parse_client_display_headroom(
+      get_arg(args, "clientDisplayPotentialEDRHeadroom", "")
+    );
+    launch_session->client_display_current_peak_luminance_nits = parse_client_display_peak_luminance_nits(
+      get_arg(args, "clientDisplayCurrentPeakLuminanceNits", "")
+    );
+    launch_session->client_display_potential_peak_luminance_nits = parse_client_display_peak_luminance_nits(
+      get_arg(args, "clientDisplayPotentialPeakLuminanceNits", "")
+    );
     BOOST_LOG(info) << "Client display profile from launch: gamut="sv
                     << client_display_gamut_to_string(launch_session->client_display_gamut)
                     << " transfer="sv
@@ -669,7 +713,15 @@ namespace nvhttp {
                     << " explicit-scale="sv
                     << launch_session->client_display_scale_explicit
                     << " mode-is-logical="sv
-                    << launch_session->client_display_mode_is_logical;
+                    << launch_session->client_display_mode_is_logical
+                    << " current-edr-headroom="sv
+                    << launch_session->client_display_current_edr_headroom
+                    << " potential-edr-headroom="sv
+                    << launch_session->client_display_potential_edr_headroom
+                    << " current-peak-nits="sv
+                    << launch_session->client_display_current_peak_luminance_nits
+                    << " potential-peak-nits="sv
+                    << launch_session->client_display_potential_peak_luminance_nits;
 
     launch_session->client_do_cmds = named_cert_p->do_cmds;
     launch_session->client_undo_cmds = named_cert_p->undo_cmds;
