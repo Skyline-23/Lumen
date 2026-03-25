@@ -99,6 +99,28 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(roundTrip.hdrStaticMetadata, hdrStaticMetadata)
     }
 
+    func testBridgeHDRConfigurationSeparatesDisplayGamutFromSignalPrimaries() {
+        let configuration = ApolloMacDisplayKitCaptureConfiguration(
+            displayID: 11,
+            codec: .hevc,
+            preprocessStrategy: .none,
+            queueProfile: .auto,
+            showCursor: false,
+            targetFrameRate: 120,
+            enableHDR: true,
+            clientDisplayGamut: .displayP3,
+            clientDisplayTransfer: .pq,
+            effectiveDisplayGamut: .displayP3,
+            effectiveDisplayTransfer: .pq
+        )
+
+        let snapshot = configuration.encodedHDRConfigurationSnapshot
+        XCTAssertEqual(snapshot?.signalColorPrimaries, "ituR2020")
+        XCTAssertEqual(snapshot?.transferFunction, "smpteSt2084PQ")
+        XCTAssertEqual(snapshot?.signalYCbCrMatrix, "ituR2020")
+        XCTAssertEqual(snapshot?.staticMetadataSource, "display-p3-default")
+    }
+
     func testRecommendedCoreForwardingFrameCapacityStaysLowLatency() {
         let q2 = ApolloMacDisplayKitCaptureConfiguration(
             displayID: 7,

@@ -394,6 +394,13 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         self.hdrStaticMetadata = hdrStaticMetadata
     }
 
+    struct EncodedHDRConfigurationSnapshot: Equatable, Sendable {
+        let signalColorPrimaries: String
+        let transferFunction: String
+        let signalYCbCrMatrix: String
+        let staticMetadataSource: String
+    }
+
     public static func panelNative(displayID: UInt32) -> Self {
         let environment = ProcessInfo.processInfo.environment
         return Self(
@@ -440,8 +447,8 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
 
     private var encodedColorConfiguration: MDKVideoHDRConfiguration? {
         if enableHDR, codec != .h264 {
-            let colorPrimaries = resolvedHDRColorPrimaries
-            let yCbCrMatrix = resolvedHDRYCbCrMatrix
+            let colorPrimaries = resolvedHDRSignalColorPrimaries
+            let yCbCrMatrix = resolvedHDRSignalYCbCrMatrix
             let metadata = resolvedHDRStaticMetadata
             return MDKVideoHDRConfiguration(
                 colorPrimaries: colorPrimaries,
@@ -497,22 +504,40 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         }
     }
 
-    private var resolvedHDRColorPrimaries: MDKVideoColorPrimaries {
-        switch resolvedDisplayGamut {
-        case .displayP3:
-            return .p3D65
-        case .rec2020:
+    var encodedHDRConfigurationSnapshot: EncodedHDRConfigurationSnapshot? {
+        guard enableHDR, codec != .h264 else {
+            return nil
+        }
+
+        return EncodedHDRConfigurationSnapshot(
+            signalColorPrimaries: resolvedHDRSignalColorPrimaries.rawValue,
+            transferFunction: resolvedHDRTransferFunction.rawValue,
+            signalYCbCrMatrix: resolvedHDRSignalYCbCrMatrix.rawValue,
+            staticMetadataSource: resolvedHDRStaticMetadataSource
+        )
+    }
+
+    private var resolvedHDRSignalColorPrimaries: MDKVideoColorPrimaries {
+        switch resolvedHDRTransferFunction {
+        case .smpteSt2084PQ, .ituR2100HLG:
             return .ituR2020
-        case .srgb, .unknown:
-            return .ituR709
+        case .ituR709:
+            switch resolvedDisplayGamut {
+            case .displayP3:
+                return .p3D65
+            case .rec2020:
+                return .ituR2020
+            case .srgb, .unknown:
+                return .ituR709
+            }
         }
     }
 
-    private var resolvedHDRYCbCrMatrix: MDKVideoYCbCrMatrix {
-        switch resolvedHDRColorPrimaries {
-        case .ituR2020:
+    private var resolvedHDRSignalYCbCrMatrix: MDKVideoYCbCrMatrix {
+        switch resolvedHDRTransferFunction {
+        case .smpteSt2084PQ, .ituR2100HLG:
             return .ituR2020
-        case .p3D65, .ituR709:
+        case .ituR709:
             return .ituR709
         }
     }
@@ -532,19 +557,41 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         case .ituR2100HLG:
             return (nil, nil)
         case .smpteSt2084PQ:
-            switch resolvedHDRColorPrimaries {
-            case .p3D65:
+            switch resolvedDisplayGamut {
+            case .displayP3:
                 return (Self.hdrP3MasteringDisplayColorVolume, Self.hdrP3ContentLightLevelInfo)
-            case .ituR2020:
+            case .rec2020:
                 return (
                     MDKVideoMasteringDisplayColorVolume.hdr10Default(),
                     MDKVideoContentLightLevelInfo.hdr10Default()
                 )
-            case .ituR709:
+            case .srgb, .unknown:
                 return (Self.hdr709MasteringDisplayColorVolume, Self.hdr709ContentLightLevelInfo)
             }
         case .ituR709:
             return (nil, nil)
+        }
+    }
+
+    private var resolvedHDRStaticMetadataSource: String {
+        if hdrStaticMetadata != nil {
+            return "explicit"
+        }
+
+        switch resolvedHDRTransferFunction {
+        case .ituR2100HLG:
+            return "none"
+        case .smpteSt2084PQ:
+            switch resolvedDisplayGamut {
+            case .displayP3:
+                return "display-p3-default"
+            case .rec2020:
+                return "rec2020-default"
+            case .srgb, .unknown:
+                return "rec709-default"
+            }
+        case .ituR709:
+            return "none"
         }
     }
 
