@@ -192,6 +192,35 @@ namespace platf {
       int client_display_transfer = 0;
     };
 
+    NSScreen *reference_screen_for_virtual_display_negotiation() {
+      NSScreen *reference_screen = [NSScreen mainScreen];
+      if (reference_screen == nil && [NSScreen screens].count > 0) {
+        reference_screen = [NSScreen screens].firstObject;
+      }
+      return reference_screen;
+    }
+
+    bool screen_prefers_display_p3(NSScreen *screen) {
+      if (screen == nil) {
+        return false;
+      }
+
+      NSColorSpace *color_space = screen.colorSpace;
+      if (color_space == nil) {
+        return false;
+      }
+
+      if ([color_space respondsToSelector:sel_registerName("displayGamut")]) {
+        NSNumber *display_gamut = [color_space valueForKey:@"displayGamut"];
+        if (display_gamut != nil && display_gamut.integerValue == 1) {
+          return true;
+        }
+      }
+
+      NSString *localized_name = color_space.localizedName.lowercaseString;
+      return [localized_name containsString:@"display p3"] || [localized_name containsString:@"p3"];
+    }
+
     std::optional<capture_request_hdr_preferences_t> read_capture_request_hdr_preferences() {
       @autoreleasepool {
         NSError *error = nil;
@@ -230,6 +259,7 @@ namespace platf {
 
     bool bridge_aligned_external_capture_hdr_metadata(
       const capture_request_hdr_preferences_t &preferences,
+      NSScreen *screen,
       SS_HDR_METADATA &metadata
     ) {
       using gamut_e = video::client_display_gamut_e;
@@ -244,31 +274,46 @@ namespace platf {
       metadata.whitePoint = {15635, 16450};
       metadata.minDisplayLuminance = 10;  // 0.001 nits in 1/10000th units
 
+      bool use_display_p3 = false;
       switch (static_cast<gamut_e>(preferences.client_display_gamut)) {
         case gamut_e::display_p3:
-          metadata.displayPrimaries[0] = {34000, 16000};
-          metadata.displayPrimaries[1] = {13250, 34500};
-          metadata.displayPrimaries[2] = {7500, 3000};
-          metadata.maxDisplayLuminance = 1000;
-          metadata.maxContentLightLevel = 1000;
-          metadata.maxFrameAverageLightLevel = 400;
-          metadata.maxFullFrameLuminance = 1000;
-          return true;
-        case gamut_e::srgb:
-        case gamut_e::unknown:
-          metadata.displayPrimaries[0] = {32000, 16500};
-          metadata.displayPrimaries[1] = {15000, 30000};
-          metadata.displayPrimaries[2] = {7500, 3000};
-          metadata.maxDisplayLuminance = 600;
-          metadata.maxContentLightLevel = 600;
-          metadata.maxFrameAverageLightLevel = 250;
-          metadata.maxFullFrameLuminance = 600;
-          return true;
         case gamut_e::rec2020:
-          return false;
+          use_display_p3 = true;
+          break;
+        case gamut_e::srgb:
+          use_display_p3 = false;
+          break;
+        case gamut_e::unknown:
+        default:
+          use_display_p3 = screen_prefers_display_p3(
+            screen != nil ? screen : reference_screen_for_virtual_display_negotiation()
+          );
+          break;
       }
 
-      return false;
+      if (use_display_p3) {
+        metadata.displayPrimaries[0] = {34000, 16000};
+        metadata.displayPrimaries[1] = {13250, 34500};
+        metadata.displayPrimaries[2] = {7500, 3000};
+        metadata.maxDisplayLuminance = 1000;
+        metadata.maxContentLightLevel = 1000;
+        metadata.maxFrameAverageLightLevel = 400;
+        metadata.maxFullFrameLuminance = 1000;
+      } else {
+        metadata.displayPrimaries[0] = {32000, 16500};
+        metadata.displayPrimaries[1] = {15000, 30000};
+        metadata.displayPrimaries[2] = {7500, 3000};
+        metadata.maxDisplayLuminance = 600;
+        metadata.maxContentLightLevel = 600;
+        metadata.maxFrameAverageLightLevel = 250;
+        metadata.maxFullFrameLuminance = 600;
+      }
+
+      BOOST_LOG(info) << "macOS external capture HDR metadata negotiation resolved from mirrored capture request"
+                      << " requested-gamut="sv << preferences.client_display_gamut
+                      << " effective-gamut="sv << (use_display_p3 ? "display-p3"sv : "srgb"sv)
+                      << " requested-transfer="sv << preferences.client_display_transfer;
+      return true;
     }
 
     using cgx_current_display_set_t = int (*)();
@@ -1420,7 +1465,7 @@ namespace platf {
     std::memset(&metadata.hdr_metadata, 0, sizeof(metadata.hdr_metadata));
     if (screen_is_external_capture_hdr_active(const_cast<NSScreen *>(screen))) {
       if (auto preferences = read_capture_request_hdr_preferences();
-          preferences && bridge_aligned_external_capture_hdr_metadata(*preferences, metadata.hdr_metadata)) {
+          preferences && bridge_aligned_external_capture_hdr_metadata(*preferences, const_cast<NSScreen *>(screen), metadata.hdr_metadata)) {
         metadata.hdr_active = true;
         BOOST_LOG(info) << "macOS external capture HDR metadata aligned to mirrored capture request"
                         << " gamut="sv << preferences->client_display_gamut

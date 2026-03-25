@@ -371,6 +371,157 @@ namespace video {
       }
     }
 
+    struct external_hevc_hdr_static_metadata_presence_t {
+      bool has_mastering_display_color_volume;
+      bool has_content_light_level_info;
+
+      [[nodiscard]] bool is_complete() const {
+        return has_mastering_display_color_volume && has_content_light_level_info;
+      }
+    };
+
+    int external_hevc_nal_unit_header_length(CMSampleBufferRef sample_buffer) {
+      const auto format_description = CMSampleBufferGetFormatDescription(sample_buffer);
+      if (!format_description) {
+        return 4;
+      }
+
+      size_t parameter_set_count = 0;
+      int nal_unit_header_length = 0;
+      const auto status = CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(
+        format_description,
+        0,
+        nullptr,
+        nullptr,
+        &parameter_set_count,
+        &nal_unit_header_length
+      );
+      if (status != noErr || parameter_set_count == 0 || nal_unit_header_length <= 0) {
+        return 4;
+      }
+
+      return nal_unit_header_length;
+    }
+
+    external_hevc_hdr_static_metadata_presence_t parse_external_hevc_sei_presence(
+      const uint8_t *nal_unit,
+      size_t nal_unit_length
+    ) {
+      if (!nal_unit || nal_unit_length <= 2) {
+        return {false, false};
+      }
+
+      std::vector<uint8_t> rbsp;
+      rbsp.reserve(nal_unit_length - 2);
+      int consecutive_zero_count = 0;
+      for (size_t index = 2; index < nal_unit_length; ++index) {
+        const auto byte = nal_unit[index];
+        if (consecutive_zero_count >= 2 && byte == 0x03) {
+          consecutive_zero_count = 0;
+          continue;
+        }
+
+        rbsp.push_back(byte);
+        consecutive_zero_count = byte == 0x00 ? consecutive_zero_count + 1 : 0;
+      }
+
+      external_hevc_hdr_static_metadata_presence_t presence {
+        .has_mastering_display_color_volume = false,
+        .has_content_light_level_info = false,
+      };
+
+      size_t offset = 0;
+      while (offset < rbsp.size()) {
+        if (offset == rbsp.size() - 1 && rbsp[offset] == 0x80) {
+          break;
+        }
+
+        uint32_t payload_type = 0;
+        while (offset < rbsp.size()) {
+          const auto value = rbsp[offset++];
+          payload_type += value;
+          if (value != 0xFF) {
+            break;
+          }
+        }
+
+        uint32_t payload_size = 0;
+        while (offset < rbsp.size()) {
+          const auto value = rbsp[offset++];
+          payload_size += value;
+          if (value != 0xFF) {
+            break;
+          }
+        }
+
+        if (offset + payload_size > rbsp.size()) {
+          break;
+        }
+
+        if (payload_type == 137) {
+          presence.has_mastering_display_color_volume = true;
+        } else if (payload_type == 144) {
+          presence.has_content_light_level_info = true;
+        }
+
+        if (presence.is_complete()) {
+          break;
+        }
+
+        offset += payload_size;
+      }
+
+      return presence;
+    }
+
+    external_hevc_hdr_static_metadata_presence_t external_hevc_payload_static_metadata_presence(CMSampleBufferRef sample_buffer) {
+      auto data_buffer = CMSampleBufferGetDataBuffer(sample_buffer);
+      if (!data_buffer) {
+        return {false, false};
+      }
+
+      size_t total_length = 0;
+      std::vector<uint8_t> scratch;
+      const uint8_t *buffer = copy_or_map_external_sample_bytes(data_buffer, scratch, total_length);
+      if (!buffer) {
+        return {false, false};
+      }
+
+      const auto nal_unit_header_length = std::clamp(external_hevc_nal_unit_header_length(sample_buffer), 1, 4);
+      external_hevc_hdr_static_metadata_presence_t presence {
+        .has_mastering_display_color_volume = false,
+        .has_content_light_level_info = false,
+      };
+
+      size_t offset = 0;
+      while (offset + static_cast<size_t>(nal_unit_header_length) <= total_length) {
+        size_t nal_unit_length = 0;
+        for (int byte_index = 0; byte_index < nal_unit_header_length; ++byte_index) {
+          nal_unit_length = (nal_unit_length << 8) | buffer[offset + static_cast<size_t>(byte_index)];
+        }
+        offset += static_cast<size_t>(nal_unit_header_length);
+        if (nal_unit_length == 0 || offset + nal_unit_length > total_length) {
+          break;
+        }
+
+        const auto nal_unit_type = static_cast<int>((buffer[offset] >> 1) & 0x3F);
+        if (nal_unit_type == 39 || nal_unit_type == 40) {
+          const auto sei_presence = parse_external_hevc_sei_presence(buffer + offset, nal_unit_length);
+          presence.has_mastering_display_color_volume =
+            presence.has_mastering_display_color_volume || sei_presence.has_mastering_display_color_volume;
+          presence.has_content_light_level_info =
+            presence.has_content_light_level_info || sei_presence.has_content_light_level_info;
+          if (presence.is_complete()) {
+            break;
+          }
+        }
+
+        offset += nal_unit_length;
+      }
+
+      return presence;
+    }
+
     bool external_hdr_static_metadata_is_valid(const SS_HDR_METADATA &metadata) {
       return metadata.displayPrimaries[0].x != 0 &&
              metadata.displayPrimaries[1].x != 0 &&
@@ -406,8 +557,13 @@ namespace video {
       }
     }
 
-    std::vector<uint8_t> make_external_hevc_hdr_static_metadata_sei(const SS_HDR_METADATA &metadata) {
-      if (!external_hdr_static_metadata_is_valid(metadata)) {
+    std::vector<uint8_t> make_external_hevc_hdr_static_metadata_sei(
+      const SS_HDR_METADATA &metadata,
+      bool include_mastering_display_color_volume,
+      bool include_content_light_level_info
+    ) {
+      if (!external_hdr_static_metadata_is_valid(metadata) ||
+          (!include_mastering_display_color_volume && !include_content_light_level_info)) {
         return {};
       }
 
@@ -429,21 +585,24 @@ namespace video {
       std::vector<uint8_t> rbsp;
       rbsp.reserve(48);
 
-      std::array<uint8_t, 24> mastering_display_payload {};
-      write_be16(mastering_display_payload.data() + 0, static_cast<uint16_t>(metadata.displayPrimaries[0].x));
-      write_be16(mastering_display_payload.data() + 2, static_cast<uint16_t>(metadata.displayPrimaries[0].y));
-      write_be16(mastering_display_payload.data() + 4, static_cast<uint16_t>(metadata.displayPrimaries[1].x));
-      write_be16(mastering_display_payload.data() + 6, static_cast<uint16_t>(metadata.displayPrimaries[1].y));
-      write_be16(mastering_display_payload.data() + 8, static_cast<uint16_t>(metadata.displayPrimaries[2].x));
-      write_be16(mastering_display_payload.data() + 10, static_cast<uint16_t>(metadata.displayPrimaries[2].y));
-      write_be16(mastering_display_payload.data() + 12, static_cast<uint16_t>(metadata.whitePoint.x));
-      write_be16(mastering_display_payload.data() + 14, static_cast<uint16_t>(metadata.whitePoint.y));
-      write_be32(mastering_display_payload.data() + 16, metadata.maxDisplayLuminance);
-      write_be32(mastering_display_payload.data() + 20, metadata.minDisplayLuminance);
-      append_sei_payload_header(rbsp, mastering_display_payload_type, mastering_display_payload.size());
-      rbsp.insert(rbsp.end(), mastering_display_payload.begin(), mastering_display_payload.end());
+      if (include_mastering_display_color_volume) {
+        std::array<uint8_t, 24> mastering_display_payload {};
+        write_be16(mastering_display_payload.data() + 0, static_cast<uint16_t>(metadata.displayPrimaries[0].x));
+        write_be16(mastering_display_payload.data() + 2, static_cast<uint16_t>(metadata.displayPrimaries[0].y));
+        write_be16(mastering_display_payload.data() + 4, static_cast<uint16_t>(metadata.displayPrimaries[1].x));
+        write_be16(mastering_display_payload.data() + 6, static_cast<uint16_t>(metadata.displayPrimaries[1].y));
+        write_be16(mastering_display_payload.data() + 8, static_cast<uint16_t>(metadata.displayPrimaries[2].x));
+        write_be16(mastering_display_payload.data() + 10, static_cast<uint16_t>(metadata.displayPrimaries[2].y));
+        write_be16(mastering_display_payload.data() + 12, static_cast<uint16_t>(metadata.whitePoint.x));
+        write_be16(mastering_display_payload.data() + 14, static_cast<uint16_t>(metadata.whitePoint.y));
+        write_be32(mastering_display_payload.data() + 16, metadata.maxDisplayLuminance);
+        write_be32(mastering_display_payload.data() + 20, metadata.minDisplayLuminance);
+        append_sei_payload_header(rbsp, mastering_display_payload_type, mastering_display_payload.size());
+        rbsp.insert(rbsp.end(), mastering_display_payload.begin(), mastering_display_payload.end());
+      }
 
-      if (metadata.maxContentLightLevel != 0 || metadata.maxFrameAverageLightLevel != 0) {
+      if (include_content_light_level_info &&
+          (metadata.maxContentLightLevel != 0 || metadata.maxFrameAverageLightLevel != 0)) {
         std::array<uint8_t, 4> content_light_payload {};
         write_be16(content_light_payload.data() + 0, static_cast<uint16_t>(metadata.maxContentLightLevel));
         write_be16(content_light_payload.data() + 2, static_cast<uint16_t>(metadata.maxFrameAverageLightLevel));
@@ -472,20 +631,30 @@ namespace video {
         return false;
       }
 
-      const bool has_mastering_display =
+      const bool extension_has_mastering_display =
         apollo_core_sample_buffer_extension_present(sample_buffer, kCMFormatDescriptionExtension_MasteringDisplayColorVolume);
-      const bool has_content_light =
+      const bool extension_has_content_light =
         apollo_core_sample_buffer_extension_present(sample_buffer, kCMFormatDescriptionExtension_ContentLightLevelInfo);
-      if (has_mastering_display && has_content_light) {
+      const auto payload_presence = external_hevc_payload_static_metadata_presence(sample_buffer);
+      if (payload_presence.is_complete()) {
         return false;
       }
 
-      auto sei = make_external_hevc_hdr_static_metadata_sei(metadata);
+      auto sei = make_external_hevc_hdr_static_metadata_sei(
+        metadata,
+        !payload_presence.has_mastering_display_color_volume,
+        !payload_presence.has_content_light_level_info
+      );
       if (sei.empty()) {
         return false;
       }
 
       output.insert(output.end(), sei.begin(), sei.end());
+      BOOST_LOG(info) << "External macOS encoded ingress repaired HEVC HDR static metadata"
+                      << " extension-mastering="sv << extension_has_mastering_display
+                      << " extension-cll="sv << extension_has_content_light
+                      << " payload-mastering="sv << payload_presence.has_mastering_display_color_volume
+                      << " payload-cll="sv << payload_presence.has_content_light_level_info;
       return true;
     }
   }  // namespace
@@ -3575,6 +3744,7 @@ namespace video {
             packet_is_idr
           );
           if (!logged_first_packet) {
+            const auto payload_static_metadata_presence = external_hevc_payload_static_metadata_presence(retained_sample_buffer);
             const auto color_primaries = apollo_core_sample_buffer_extension_string(
               retained_sample_buffer,
               kCMFormatDescriptionExtension_ColorPrimaries
@@ -3599,6 +3769,8 @@ namespace video {
                             << " matrix="sv << (ycbcr_matrix.empty() ? "n/a"sv : std::string_view {ycbcr_matrix})
                             << " mastering="sv << apollo_core_sample_buffer_extension_present(retained_sample_buffer, kCMFormatDescriptionExtension_MasteringDisplayColorVolume)
                             << " cll="sv << apollo_core_sample_buffer_extension_present(retained_sample_buffer, kCMFormatDescriptionExtension_ContentLightLevelInfo)
+                            << " payload-mastering="sv << payload_static_metadata_presence.has_mastering_display_color_volume
+                            << " payload-cll="sv << payload_static_metadata_presence.has_content_light_level_info
                             << " seq="sv << frame.source_sequence_number
                             << " display-time="sv << frame.source_display_time;
             if (!packet_is_idr) {
