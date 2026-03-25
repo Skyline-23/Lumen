@@ -32,11 +32,18 @@ namespace platf {
     int dynamic_range;
     int client_display_gamut;
     int client_display_transfer;
+    int effective_display_gamut;
+    int effective_display_transfer;
     int audio_source_kind;
     bool audio_excludes_current_process;
     int audio_sample_rate;
     int audio_channel_count;
     int audio_frame_size;
+  };
+
+  struct effective_display_state_t {
+    int gamut;
+    int transfer;
   };
 
   struct external_capture_display_metadata_t {
@@ -71,6 +78,12 @@ namespace platf {
     const std::string &launch_path
   );
   void post_runtime_web_ui_ready_notification(const std::string &url);
+  effective_display_state_t resolve_capture_request_effective_display_state(
+    std::uint32_t display_id,
+    int dynamic_range,
+    int client_display_gamut,
+    int client_display_transfer
+  );
   bool query_external_capture_display_metadata(
     const std::string &display_name,
     int target_width,

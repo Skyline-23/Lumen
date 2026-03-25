@@ -178,6 +178,8 @@ namespace platf {
         @"dynamicRange": @(state.dynamic_range),
         @"clientDisplayGamut": @(state.client_display_gamut),
         @"clientDisplayTransfer": @(state.client_display_transfer),
+        @"effectiveDisplayGamut": @(state.effective_display_gamut),
+        @"effectiveDisplayTransfer": @(state.effective_display_transfer),
         @"audioSourceKind": @(state.audio_source_kind),
         @"audioExcludesCurrentProcess": @(state.audio_excludes_current_process),
         @"audioSampleRate": @(state.audio_sample_rate),
@@ -190,6 +192,8 @@ namespace platf {
       int dynamic_range = 0;
       int client_display_gamut = 0;
       int client_display_transfer = 0;
+      int effective_display_gamut = 0;
+      int effective_display_transfer = 0;
     };
 
     NSScreen *reference_screen_for_virtual_display_negotiation() {
@@ -245,6 +249,8 @@ namespace platf {
         NSNumber *dynamic_range = dictionary[@"dynamicRange"];
         NSNumber *client_display_gamut = dictionary[@"clientDisplayGamut"];
         NSNumber *client_display_transfer = dictionary[@"clientDisplayTransfer"];
+        NSNumber *effective_display_gamut = dictionary[@"effectiveDisplayGamut"];
+        NSNumber *effective_display_transfer = dictionary[@"effectiveDisplayTransfer"];
         if (dynamic_range == nil || client_display_gamut == nil || client_display_transfer == nil) {
           return std::nullopt;
         }
@@ -253,8 +259,64 @@ namespace platf {
           [dynamic_range intValue],
           [client_display_gamut intValue],
           [client_display_transfer intValue],
+          effective_display_gamut != nil ? [effective_display_gamut intValue] : 0,
+          effective_display_transfer != nil ? [effective_display_transfer intValue] : 0,
         };
       }
+    }
+
+    effective_display_state_t resolve_capture_request_effective_display_state_impl(
+      NSScreen *screen,
+      int dynamic_range,
+      int client_display_gamut,
+      int client_display_transfer
+    ) {
+      using gamut_e = video::client_display_gamut_e;
+      using transfer_e = video::client_display_transfer_e;
+
+      effective_display_state_t state {
+        .gamut = static_cast<int>(gamut_e::unknown),
+        .transfer = static_cast<int>(transfer_e::unknown),
+      };
+
+      switch (static_cast<gamut_e>(client_display_gamut)) {
+        case gamut_e::display_p3:
+        case gamut_e::rec2020:
+          state.gamut = static_cast<int>(gamut_e::display_p3);
+          break;
+        case gamut_e::srgb:
+          state.gamut = static_cast<int>(gamut_e::srgb);
+          break;
+        case gamut_e::unknown:
+        default:
+          state.gamut = static_cast<int>(
+            screen_prefers_display_p3(screen != nil ? screen : reference_screen_for_virtual_display_negotiation()) ?
+              gamut_e::display_p3 :
+              gamut_e::srgb
+          );
+          break;
+      }
+
+      if (dynamic_range <= 0) {
+        state.transfer = static_cast<int>(transfer_e::sdr);
+        return state;
+      }
+
+      switch (static_cast<transfer_e>(client_display_transfer)) {
+        case transfer_e::hlg:
+          state.transfer = static_cast<int>(transfer_e::hlg);
+          break;
+        case transfer_e::sdr:
+          state.transfer = static_cast<int>(transfer_e::sdr);
+          break;
+        case transfer_e::pq:
+        case transfer_e::unknown:
+        default:
+          state.transfer = static_cast<int>(transfer_e::pq);
+          break;
+      }
+
+      return state;
     }
 
     bool bridge_aligned_external_capture_hdr_metadata(
@@ -265,8 +327,21 @@ namespace platf {
       using gamut_e = video::client_display_gamut_e;
       using transfer_e = video::client_display_transfer_e;
 
+      auto effective_state =
+        preferences.effective_display_gamut != 0 && preferences.effective_display_transfer != 0 ?
+          effective_display_state_t {
+            .gamut = preferences.effective_display_gamut,
+            .transfer = preferences.effective_display_transfer,
+          } :
+          resolve_capture_request_effective_display_state_impl(
+            screen,
+            preferences.dynamic_range,
+            preferences.client_display_gamut,
+            preferences.client_display_transfer
+          );
+
       if (preferences.dynamic_range <= 0 ||
-          static_cast<transfer_e>(preferences.client_display_transfer) != transfer_e::pq) {
+          static_cast<transfer_e>(effective_state.transfer) != transfer_e::pq) {
         return false;
       }
 
@@ -274,22 +349,7 @@ namespace platf {
       metadata.whitePoint = {15635, 16450};
       metadata.minDisplayLuminance = 10;  // 0.001 nits in 1/10000th units
 
-      bool use_display_p3 = false;
-      switch (static_cast<gamut_e>(preferences.client_display_gamut)) {
-        case gamut_e::display_p3:
-        case gamut_e::rec2020:
-          use_display_p3 = true;
-          break;
-        case gamut_e::srgb:
-          use_display_p3 = false;
-          break;
-        case gamut_e::unknown:
-        default:
-          use_display_p3 = screen_prefers_display_p3(
-            screen != nil ? screen : reference_screen_for_virtual_display_negotiation()
-          );
-          break;
-      }
+      const bool use_display_p3 = static_cast<gamut_e>(effective_state.gamut) == gamut_e::display_p3;
 
       if (use_display_p3) {
         metadata.displayPrimaries[0] = {34000, 16000};
@@ -312,7 +372,8 @@ namespace platf {
       BOOST_LOG(info) << "macOS external capture HDR metadata negotiation resolved from mirrored capture request"
                       << " requested-gamut="sv << preferences.client_display_gamut
                       << " effective-gamut="sv << (use_display_p3 ? "display-p3"sv : "srgb"sv)
-                      << " requested-transfer="sv << preferences.client_display_transfer;
+                      << " requested-transfer="sv << preferences.client_display_transfer
+                      << " effective-transfer="sv << effective_state.transfer;
       return true;
     }
 
@@ -1423,6 +1484,20 @@ namespace platf {
       return CGMainDisplayID();
     }
   }  // namespace
+
+  effective_display_state_t resolve_capture_request_effective_display_state(
+    std::uint32_t display_id,
+    int dynamic_range,
+    int client_display_gamut,
+    int client_display_transfer
+  ) {
+    return resolve_capture_request_effective_display_state_impl(
+      screen_for_external_capture_display_id(static_cast<CGDirectDisplayID>(display_id)),
+      dynamic_range,
+      client_display_gamut,
+      client_display_transfer
+    );
+  }
 
   bool query_external_capture_display_metadata(
     const std::string &display_name,

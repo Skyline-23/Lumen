@@ -2101,6 +2101,12 @@ namespace stream {
     }
 
     void mirror_apollo_core_capture_request(const ApolloCoreCaptureRequestSnapshot &snapshot) {
+      const auto effective_display_state = platf::resolve_capture_request_effective_display_state(
+        snapshot.display_id,
+        snapshot.dynamic_range,
+        snapshot.client_display_gamut,
+        snapshot.client_display_transfer
+      );
       platf::capture_request_mirror_state_t mirror_state {
         .generation = snapshot.generation,
         .video_generation = snapshot.video_generation,
@@ -2118,6 +2124,8 @@ namespace stream {
         .dynamic_range = snapshot.dynamic_range,
         .client_display_gamut = snapshot.client_display_gamut,
         .client_display_transfer = snapshot.client_display_transfer,
+        .effective_display_gamut = effective_display_state.gamut,
+        .effective_display_transfer = effective_display_state.transfer,
         .audio_source_kind = static_cast<int>(snapshot.audio_source_kind),
         .audio_excludes_current_process = snapshot.audio_excludes_current_process,
         .audio_sample_rate = snapshot.audio_sample_rate,
