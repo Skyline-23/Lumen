@@ -155,10 +155,63 @@ struct ApolloBridgeMirroredCaptureRequestSnapshot: Equatable, Sendable {
             maxFullFrameLuminance: Int(Self.number(dictionary["effectiveHDRMaxFullFrameLuminance"])?.int32Value ?? 0)
         )
     }
+
+    var semanticState: ApolloBridgeMirroredCaptureRequestSemanticState {
+        ApolloBridgeMirroredCaptureRequestSemanticState(snapshot: self)
+    }
+}
+
+struct ApolloBridgeMirroredCaptureRequestSemanticState: Equatable, Sendable {
+    let videoRequested: Bool
+    let audioRequested: Bool
+    let displayID: UInt32
+    let codec: ApolloCoreCaptureCodec
+    let preprocessStrategy: ApolloCoreCapturePreprocessStrategy
+    let queueProfile: ApolloCoreCaptureQueueProfile
+    let showCursor: Bool
+    let targetFrameRate: Int32
+    let requestedWidth: Int32
+    let requestedHeight: Int32
+    let dynamicRange: Int32
+    let clientDisplayGamut: Int32
+    let clientDisplayTransfer: Int32
+    let effectiveDisplayGamut: Int32
+    let effectiveDisplayTransfer: Int32
+    let effectiveHDRStaticMetadata: ApolloHDRStaticMetadata?
+    let audioSourceKind: ApolloCoreAudioCaptureSourceKind
+    let audioExcludesCurrentProcess: Bool
+    let audioSampleRate: Int32
+    let audioChannelCount: Int32
+    let audioFrameSize: Int32
+
+    init(snapshot: ApolloBridgeMirroredCaptureRequestSnapshot) {
+        videoRequested = snapshot.videoRequested
+        audioRequested = snapshot.audioRequested
+        displayID = snapshot.displayID
+        codec = snapshot.codec
+        preprocessStrategy = snapshot.preprocessStrategy
+        queueProfile = snapshot.queueProfile
+        showCursor = snapshot.showCursor
+        targetFrameRate = snapshot.targetFrameRate
+        requestedWidth = snapshot.requestedWidth
+        requestedHeight = snapshot.requestedHeight
+        dynamicRange = snapshot.dynamicRange
+        clientDisplayGamut = snapshot.clientDisplayGamut
+        clientDisplayTransfer = snapshot.clientDisplayTransfer
+        effectiveDisplayGamut = snapshot.effectiveDisplayGamut
+        effectiveDisplayTransfer = snapshot.effectiveDisplayTransfer
+        effectiveHDRStaticMetadata = snapshot.effectiveHDRStaticMetadata
+        audioSourceKind = snapshot.audioSourceKind
+        audioExcludesCurrentProcess = snapshot.audioExcludesCurrentProcess
+        audioSampleRate = snapshot.audioSampleRate
+        audioChannelCount = snapshot.audioChannelCount
+        audioFrameSize = snapshot.audioFrameSize
+    }
 }
 
 actor ApolloCaptureRequestMirrorCoordinator {
     private var mirroredGeneration: UInt64?
+    private var mirroredSemanticState: ApolloBridgeMirroredCaptureRequestSemanticState?
 
     func syncCurrentState() {
         if let mirroredSnapshot = ApolloBridgeMirroredCaptureRequestSnapshot.load() {
@@ -166,7 +219,13 @@ actor ApolloCaptureRequestMirrorCoordinator {
                 return
             }
 
+            let semanticState = mirroredSnapshot.semanticState
             mirroredGeneration = mirroredSnapshot.generation
+            guard semanticState != mirroredSemanticState else {
+                return
+            }
+
+            mirroredSemanticState = semanticState
             ApolloCoreCaptureRequestClear()
 
             if mirroredSnapshot.videoRequested {
@@ -202,6 +261,7 @@ actor ApolloCaptureRequestMirrorCoordinator {
             }
         } else if mirroredGeneration != nil {
             mirroredGeneration = nil
+            mirroredSemanticState = nil
             ApolloCoreCaptureRequestClear()
         }
     }

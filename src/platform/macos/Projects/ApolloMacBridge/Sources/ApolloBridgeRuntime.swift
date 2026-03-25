@@ -1264,11 +1264,11 @@ public actor ApolloBridgeRuntime {
     }
 
     private func applyApolloCoreCaptureRequest(_ request: ApolloBridgeAutomationRequest) async {
-        let videoConfigurationChanged =
-            request.videoConfiguration != activeCaptureConfiguration
-        let videoGenerationChanged = request.videoGeneration != lastAppliedVideoRequestGeneration
-
-        if videoConfigurationChanged || (request.videoConfiguration != nil && videoGenerationChanged) {
+        if Self.shouldApplyAutomationRequest(
+            requestedConfiguration: request.videoConfiguration,
+            activeConfiguration: activeCaptureConfiguration,
+            lastAppliedGeneration: lastAppliedVideoRequestGeneration
+        ) {
             lastAppliedVideoRequestGeneration = request.videoGeneration
             if let configuration = request.videoConfiguration {
                 let frameCapacity = Self.recommendedCoreForwardingFrameCapacity(for: configuration)
@@ -1281,11 +1281,11 @@ public actor ApolloBridgeRuntime {
             }
         }
 
-        let audioConfigurationChanged =
-            request.audioConfiguration != activeAudioCaptureConfiguration
-        let audioGenerationChanged = request.audioGeneration != lastAppliedAudioRequestGeneration
-
-        if audioConfigurationChanged || (request.audioConfiguration != nil && audioGenerationChanged) {
+        if Self.shouldApplyAutomationRequest(
+            requestedConfiguration: request.audioConfiguration,
+            activeConfiguration: activeAudioCaptureConfiguration,
+            lastAppliedGeneration: lastAppliedAudioRequestGeneration
+        ) {
             lastAppliedAudioRequestGeneration = request.audioGeneration
             if let configuration = request.audioConfiguration {
                 try? await startMacDisplayKitAudioCapture(configuration: configuration)
@@ -1293,6 +1293,22 @@ public actor ApolloBridgeRuntime {
                 await stopMacDisplayKitAudioCapture()
             }
         }
+    }
+
+    static func shouldApplyAutomationRequest<Configuration: Equatable>(
+        requestedConfiguration: Configuration?,
+        activeConfiguration: Configuration?,
+        lastAppliedGeneration: UInt64?
+    ) -> Bool {
+        if requestedConfiguration != activeConfiguration {
+            return true
+        }
+
+        guard requestedConfiguration != nil else {
+            return false
+        }
+
+        return lastAppliedGeneration == nil
     }
 
     private func startMirroredApolloCoreCaptureRequestSync() {

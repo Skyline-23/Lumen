@@ -660,6 +660,115 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(snapshot.effectiveDisplayGamut, 3)
     }
 
+    func testMirroredCaptureRequestSemanticStateIgnoresGenerationOnlyChanges() {
+        let baseline = ApolloBridgeMirroredCaptureRequestSnapshot(
+            [
+                "generation": 12,
+                "videoGeneration": 12,
+                "audioGeneration": 12,
+                "videoRequested": true,
+                "audioRequested": true,
+                "displayID": 27,
+                "codec": 1,
+                "preprocessStrategy": 0,
+                "queueProfile": 4,
+                "showCursor": false,
+                "targetFrameRate": 120,
+                "requestedWidth": 3512,
+                "requestedHeight": 2290,
+                "dynamicRange": 1,
+                "clientDisplayGamut": 3,
+                "clientDisplayTransfer": 2,
+                "effectiveDisplayGamut": 3,
+                "effectiveDisplayTransfer": 2,
+                "audioSourceKind": 1,
+                "audioExcludesCurrentProcess": false,
+                "audioSampleRate": 48_000,
+                "audioChannelCount": 2,
+                "audioFrameSize": 480,
+            ]
+        )
+        let generationOnlyUpdate = ApolloBridgeMirroredCaptureRequestSnapshot(
+            [
+                "generation": 21,
+                "videoGeneration": 22,
+                "audioGeneration": 23,
+                "videoRequested": true,
+                "audioRequested": true,
+                "displayID": 27,
+                "codec": 1,
+                "preprocessStrategy": 0,
+                "queueProfile": 4,
+                "showCursor": false,
+                "targetFrameRate": 120,
+                "requestedWidth": 3512,
+                "requestedHeight": 2290,
+                "dynamicRange": 1,
+                "clientDisplayGamut": 3,
+                "clientDisplayTransfer": 2,
+                "effectiveDisplayGamut": 3,
+                "effectiveDisplayTransfer": 2,
+                "audioSourceKind": 1,
+                "audioExcludesCurrentProcess": false,
+                "audioSampleRate": 48_000,
+                "audioChannelCount": 2,
+                "audioFrameSize": 480,
+            ]
+        )
+
+        XCTAssertEqual(baseline?.semanticState, generationOnlyUpdate?.semanticState)
+    }
+
+    func testShouldApplyAutomationRequestSkipsGenerationOnlyChangesForStableConfiguration() {
+        let configuration = ApolloMacDisplayKitCaptureConfiguration(
+            displayID: 17,
+            codec: .hevc,
+            preprocessStrategy: .none,
+            queueProfile: .auto,
+            showCursor: false,
+            targetFrameRate: 120,
+            requestedWidth: 3840,
+            requestedHeight: 2160,
+            enableHDR: true
+        )
+
+        XCTAssertTrue(
+            ApolloBridgeRuntime.shouldApplyAutomationRequest(
+                requestedConfiguration: configuration,
+                activeConfiguration: nil,
+                lastAppliedGeneration: nil
+            )
+        )
+        XCTAssertFalse(
+            ApolloBridgeRuntime.shouldApplyAutomationRequest(
+                requestedConfiguration: configuration,
+                activeConfiguration: configuration,
+                lastAppliedGeneration: 41
+            )
+        )
+        XCTAssertTrue(
+            ApolloBridgeRuntime.shouldApplyAutomationRequest(
+                requestedConfiguration: configuration,
+                activeConfiguration: configuration,
+                lastAppliedGeneration: nil
+            )
+        )
+        XCTAssertTrue(
+            ApolloBridgeRuntime.shouldApplyAutomationRequest(
+                requestedConfiguration: nil as ApolloMacDisplayKitCaptureConfiguration?,
+                activeConfiguration: configuration,
+                lastAppliedGeneration: 41
+            )
+        )
+        XCTAssertFalse(
+            ApolloBridgeRuntime.shouldApplyAutomationRequest(
+                requestedConfiguration: nil as ApolloMacDisplayKitCaptureConfiguration?,
+                activeConfiguration: nil,
+                lastAppliedGeneration: nil
+            )
+        )
+    }
+
     func testApolloCoreAudioCaptureIngressStoresPCMAndEvents() {
         guard let ingress = ApolloCoreSharedAudioCaptureIngress() else {
             return XCTFail("ApolloCoreSharedAudioCaptureIngress returned nil")
