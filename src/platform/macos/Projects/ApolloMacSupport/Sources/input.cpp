@@ -3,6 +3,7 @@
  * @brief Definitions for macOS input handling.
  */
 // standard includes
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -55,9 +56,11 @@ namespace platf {
   namespace {
     constexpr int kKeyboardDiagnosticSampleLimit = 96;
     constexpr int kUnicodeDiagnosticSampleLimit = 8;
+    constexpr int kAbsoluteMouseDiagnosticSampleLimit = 32;
 
     std::atomic_int keyboard_diagnostic_budget {kKeyboardDiagnosticSampleLimit};
     std::atomic_int unicode_diagnostic_budget {kUnicodeDiagnosticSampleLimit};
+    std::atomic_int absolute_mouse_diagnostic_budget {kAbsoluteMouseDiagnosticSampleLimit};
 
     void append_keyboard_debug_file(const char *format, ...) {
       auto *file = std::fopen("/tmp/apollo-keyboard-debug.log", "a");
@@ -613,11 +616,29 @@ const KeyCodeMap kKeyCodesMap[] = {
     }
     const auto display = macos_input->display;
 
-    auto location = util::point_t {x, y};
-    CGRect display_bounds = CGDisplayBounds(display);
-    // in order to get the correct mouse location for capturing display , we need to add the display bounds to the location
-    location.x += display_bounds.origin.x;
-    location.y += display_bounds.origin.y;
+    const CGRect display_bounds = CGDisplayBounds(display);
+    const auto touch_port_width = std::max(touch_port.width, 1);
+    const auto touch_port_height = std::max(touch_port.height, 1);
+    const auto display_width = std::max(CGRectGetWidth(display_bounds), 1.0);
+    const auto display_height = std::max(CGRectGetHeight(display_bounds), 1.0);
+    const auto scale_x = display_width / static_cast<double>(touch_port_width);
+    const auto scale_y = display_height / static_cast<double>(touch_port_height);
+
+    auto location = util::point_t {
+      display_bounds.origin.x + (std::clamp(static_cast<double>(x), 0.0, static_cast<double>(touch_port_width)) * scale_x),
+      display_bounds.origin.y + (std::clamp(static_cast<double>(y), 0.0, static_cast<double>(touch_port_height)) * scale_y)
+    };
+
+    if (absolute_mouse_diagnostic_budget.fetch_sub(1) > 0) {
+      BOOST_LOG(info) << "macOS absolute mouse mapping displayID="sv
+                      << display
+                      << " input="sv << x << "x"sv << y
+                      << " touch-port="sv << touch_port_width << "x"sv << touch_port_height
+                      << " display-bounds="sv << display_width << "x"sv << display_height
+                      << " scale="sv << scale_x << "x"sv << scale_y
+                      << " mapped="sv << location.x << "x"sv << location.y
+                      << " display-origin="sv << display_bounds.origin.x << "x"sv << display_bounds.origin.y;
+    }
 
     post_mouse(input, kCGMouseButtonLeft, event_type_mouse(input), location, get_mouse_loc(input), 0);
   }

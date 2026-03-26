@@ -166,7 +166,69 @@ namespace VDISPLAY {
       return (__bridge NSString *) *constant_ptr;
     }
 
-    void configure_hdr_display_info(id descriptor, bool hdr_enabled, const color_profile_t &host_profile) {
+    struct hdr_display_info_luminance_t {
+      double peak_luminance;
+      double sdr_luminance;
+      double minimum_luminance;
+      std::string_view peak_source;
+      std::string_view sdr_source;
+    };
+
+    hdr_display_info_luminance_t resolve_hdr_display_info_luminance(
+      const color_profile_t &host_profile,
+      float client_display_current_edr_headroom,
+      float client_display_potential_edr_headroom,
+      int client_display_current_peak_luminance_nits,
+      int client_display_potential_peak_luminance_nits
+    ) {
+      constexpr double kLegacyP3PeakLuminance = 1000.0;
+      constexpr double kLegacySrgbPeakLuminance = 600.0;
+      constexpr double kLegacyP3SdrLuminance = 300.0;
+      constexpr double kLegacySrgbSdrLuminance = 200.0;
+      constexpr double kMinimumLuminance = 0.001;
+
+      const auto fallback_peak_luminance = host_profile.display_p3 ? kLegacyP3PeakLuminance : kLegacySrgbPeakLuminance;
+      const auto fallback_sdr_luminance = host_profile.display_p3 ? kLegacyP3SdrLuminance : kLegacySrgbSdrLuminance;
+
+      auto peak_luminance = fallback_peak_luminance;
+      auto peak_source = "legacy-fallback"sv;
+      if (client_display_current_peak_luminance_nits > 0) {
+        peak_luminance = static_cast<double>(client_display_current_peak_luminance_nits);
+        peak_source = "client-current-peak"sv;
+      } else if (client_display_potential_peak_luminance_nits > 0) {
+        peak_luminance = static_cast<double>(client_display_potential_peak_luminance_nits);
+        peak_source = "client-potential-peak"sv;
+      }
+
+      auto sdr_luminance = fallback_sdr_luminance;
+      auto sdr_source = "legacy-fallback"sv;
+      if (client_display_current_peak_luminance_nits > 0 && client_display_current_edr_headroom > 1.0f) {
+        sdr_luminance = static_cast<double>(client_display_current_peak_luminance_nits) / static_cast<double>(client_display_current_edr_headroom);
+        sdr_source = "client-current-headroom"sv;
+      } else if (client_display_potential_peak_luminance_nits > 0 && client_display_potential_edr_headroom > 1.0f) {
+        sdr_luminance = static_cast<double>(client_display_potential_peak_luminance_nits) / static_cast<double>(client_display_potential_edr_headroom);
+        sdr_source = "client-potential-headroom"sv;
+      }
+
+      sdr_luminance = std::clamp(sdr_luminance, 80.0, peak_luminance);
+      return {
+        .peak_luminance = peak_luminance,
+        .sdr_luminance = sdr_luminance,
+        .minimum_luminance = kMinimumLuminance,
+        .peak_source = peak_source,
+        .sdr_source = sdr_source,
+      };
+    }
+
+    void configure_hdr_display_info(
+      id descriptor,
+      bool hdr_enabled,
+      const color_profile_t &host_profile,
+      float client_display_current_edr_headroom,
+      float client_display_potential_edr_headroom,
+      int client_display_current_peak_luminance_nits,
+      int client_display_potential_peak_luminance_nits
+    ) {
       if (!hdr_enabled || descriptor == nil) {
         return;
       }
@@ -189,34 +251,50 @@ namespace VDISPLAY {
       const auto min_luminance_key = core_display_string_constant("kCDDisplayPresetMinLuminanceKey");
       const auto expected_luminance_key = core_display_string_constant("kCDDisplayUserAdjustmentExpectedLuminanceKey");
 
-      const auto peak_luminance = host_profile.hdr_capable ? 1000.0 : 600.0;
-      const auto sdr_luminance = host_profile.display_p3 ? 300.0 : 200.0;
-      const auto minimum_luminance = 0.001;
+      const auto luminance = resolve_hdr_display_info_luminance(
+        host_profile,
+        client_display_current_edr_headroom,
+        client_display_potential_edr_headroom,
+        client_display_current_peak_luminance_nits,
+        client_display_potential_peak_luminance_nits
+      );
 
       if (max_hdr_luminance_key != nil && [existing_display_info objectForKey:max_hdr_luminance_key] != nil) {
-        [descriptor performSelector:set_display_info withObject:@(peak_luminance) withObject:max_hdr_luminance_key];
+        [descriptor performSelector:set_display_info withObject:@(luminance.peak_luminance) withObject:max_hdr_luminance_key];
       }
       if (max_sdr_luminance_key != nil && [existing_display_info objectForKey:max_sdr_luminance_key] != nil) {
-        [descriptor performSelector:set_display_info withObject:@(sdr_luminance) withObject:max_sdr_luminance_key];
+        [descriptor performSelector:set_display_info withObject:@(luminance.sdr_luminance) withObject:max_sdr_luminance_key];
       }
       if (min_luminance_key != nil && [existing_display_info objectForKey:min_luminance_key] != nil) {
-        [descriptor performSelector:set_display_info withObject:@(minimum_luminance) withObject:min_luminance_key];
+        [descriptor performSelector:set_display_info withObject:@(luminance.minimum_luminance) withObject:min_luminance_key];
       }
       if (expected_luminance_key != nil && [existing_display_info objectForKey:expected_luminance_key] != nil) {
         // "Expected luminance" is the SDR reference white level, not the HDR peak.
-        [descriptor performSelector:set_display_info withObject:@(sdr_luminance) withObject:expected_luminance_key];
+        [descriptor performSelector:set_display_info withObject:@(luminance.sdr_luminance) withObject:expected_luminance_key];
       }
 
       BOOST_LOG(info) << "macOS virtual display HDR displayInfo reconciled against baseline keys count="sv
                       << existing_display_info.count
                       << " peak="sv
-                      << peak_luminance
+                      << luminance.peak_luminance
+                      << " peak-source="sv
+                      << luminance.peak_source
                       << " sdr="sv
-                      << sdr_luminance
+                      << luminance.sdr_luminance
+                      << " sdr-source="sv
+                      << luminance.sdr_source
                       << " expected="sv
-                      << sdr_luminance
+                      << luminance.sdr_luminance
                       << " min="sv
-                      << minimum_luminance;
+                      << luminance.minimum_luminance
+                      << " current-edr-headroom="sv
+                      << client_display_current_edr_headroom
+                      << " potential-edr-headroom="sv
+                      << client_display_potential_edr_headroom
+                      << " current-peak-nits="sv
+                      << client_display_current_peak_luminance_nits
+                      << " potential-peak-nits="sv
+                      << client_display_potential_peak_luminance_nits;
     }
 
     const char *client_display_gamut_label(const int gamut) {
@@ -697,7 +775,15 @@ namespace VDISPLAY {
                          << (ns_error.localizedDescription.UTF8String ? ns_error.localizedDescription.UTF8String : "unknown");
         return {};
       }
-      configure_hdr_display_info(handle->descriptor, hdr_enabled, host_profile);
+      configure_hdr_display_info(
+        handle->descriptor,
+        hdr_enabled,
+        host_profile,
+        client_display_current_edr_headroom,
+        client_display_potential_edr_headroom,
+        client_display_current_peak_luminance_nits,
+        client_display_potential_peak_luminance_nits
+      );
 
       const auto skylight_eotf =
         hdr_enabled || static_cast<video::client_display_transfer_e>(client_display_transfer) != video::client_display_transfer_e::sdr ?
@@ -811,7 +897,15 @@ namespace VDISPLAY {
       [handle->descriptor setValue:[NSValue valueWithPoint:NSMakePoint(host_profile.blue.x, host_profile.blue.y)] forKey:@"bluePrimary"];
       [handle->descriptor setValue:[NSValue valueWithPoint:NSMakePoint(host_profile.white.x, host_profile.white.y)] forKey:@"whitePoint"];
       [handle->descriptor setValue:handle->queue forKey:@"queue"];
-      configure_hdr_display_info(handle->descriptor, hdr_enabled, host_profile);
+      configure_hdr_display_info(
+        handle->descriptor,
+        hdr_enabled,
+        host_profile,
+        client_display_current_edr_headroom,
+        client_display_potential_edr_headroom,
+        client_display_current_peak_luminance_nits,
+        client_display_potential_peak_luminance_nits
+      );
 
       if ([mode_class instancesRespondToSelector:sel_registerName("initWithWidth:height:refreshRate:transferFunction:")]) {
         handle->mode = ((init_mode_with_transfer_t) objc_msgSend)(
