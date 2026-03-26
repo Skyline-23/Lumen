@@ -463,6 +463,7 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
             let yCbCrMatrix = resolvedHDRSignalYCbCrMatrix
             let metadata = resolvedHDRStaticMetadata
             return MDKVideoHDRConfiguration(
+                sourceColorPrimaries: resolvedSourceColorPrimaries,
                 colorPrimaries: colorPrimaries,
                 transferFunction: resolvedHDRTransferFunction,
                 yCbCrMatrix: yCbCrMatrix,
@@ -475,6 +476,7 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         switch resolvedDisplayGamut {
         case .displayP3:
             return MDKVideoHDRConfiguration(
+                sourceColorPrimaries: resolvedSourceColorPrimaries,
                 colorPrimaries: .p3D65,
                 transferFunction: .ituR709,
                 yCbCrMatrix: .ituR709,
@@ -482,6 +484,7 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
             )
         case .rec2020:
             return MDKVideoHDRConfiguration(
+                sourceColorPrimaries: resolvedSourceColorPrimaries,
                 colorPrimaries: .ituR2020,
                 transferFunction: .ituR709,
                 yCbCrMatrix: .ituR2020,
@@ -489,11 +492,23 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
             )
         case .srgb, .unknown:
             return MDKVideoHDRConfiguration(
+                sourceColorPrimaries: resolvedSourceColorPrimaries,
                 colorPrimaries: .ituR709,
                 transferFunction: .ituR709,
                 yCbCrMatrix: .ituR709,
                 metadataInsertionMode: .automatic
             )
+        }
+    }
+
+    private var resolvedSourceColorPrimaries: MDKVideoColorPrimaries {
+        switch resolvedDisplayGamut {
+        case .displayP3:
+            return .p3D65
+        case .rec2020:
+            return .ituR2020
+        case .srgb, .unknown:
+            return .ituR709
         }
     }
 
@@ -1604,6 +1619,18 @@ public actor ApolloBridgeRuntime {
             "sourceAverageDisplayDeltaMilliseconds=",
             "sourceApproxFrameRate=",
             "sourceCadenceClassification=",
+            "privateCaptureSourcePixelFormat=",
+            "privateCaptureRequestedPixelFormat=",
+            "privateCaptureExtendedRange=",
+            "privateCaptureCursorComposition=",
+            "sourceCaptureSampleCount=",
+            "sourceMinCaptureMilliseconds=",
+            "sourceMaxCaptureMilliseconds=",
+            "sourceAverageCaptureMilliseconds=",
+            "sourceCursorCompositeSampleCount=",
+            "sourceMinCursorCompositeMilliseconds=",
+            "sourceMaxCursorCompositeMilliseconds=",
+            "sourceAverageCursorCompositeMilliseconds=",
             "videoToolboxUsingHardwareEncoder=",
             "videoToolboxRecommendedParallelizationLimit=",
             "videoToolboxPixelBufferPoolIsShared=",
@@ -1611,6 +1638,9 @@ public actor ApolloBridgeRuntime {
             "videoToolboxStagedSourceReleaseMode=",
             "videoToolboxEncoderInputStrategy=",
             "videoToolboxEncoderInputPixelFormat=",
+            "videoToolboxSourcePixelFormat=",
+            "videoToolboxSourceColorPrimaries=",
+            "videoToolboxSignalColorPrimaries=",
             "videoToolboxColorConversionMode=",
             "videoToolboxTargetFrameRateHint=",
             "videoToolboxConfiguredAverageBitRate=",
