@@ -11,7 +11,7 @@ let baseSettings: SettingsDictionary = [
 ]
 
 let macDisplayKitURL = "https://github.com/Skyline-23/MacDisplayKit.git"
-let macDisplayKitRevision = "c96451ed50fffaea9d44d8876fdeb08d82be150c"
+let macDisplayKitRevision = "cd6e642b231d7331ed8cc79029ce7c103fd907df"
 
 let repoRoot = "$(SRCROOT)/../../.."
 let buildDepsRoot = "\(repoRoot)/third-party/build-deps/dist/Darwin-arm64"
@@ -22,6 +22,7 @@ let hostedRuntimeHeaderSearchPaths = [
     "\(repoRoot)/src",
     "\(repoRoot)/third-party",
     "$(SRCROOT)/Projects/ApolloCore/Headers",
+    "$(SRCROOT)/Projects/ApolloMacBridge/Headers",
     "$(SRCROOT)/Projects/ApolloMacSupport/Headers",
     "\(repoRoot)/third-party/libdisplaydevice/src/common/include",
     "\(repoRoot)/third-party/moonlight-common-c/enet/include",
@@ -297,6 +298,7 @@ let project = Project(
             ),
             dependencies: [
                 .target(name: "ApolloCore"),
+                .target(name: "ApolloMacBridge"),
                 .sdk(name: "AppKit", type: .framework),
                 .sdk(name: "ApplicationServices", type: .framework),
                 .sdk(name: "AVFoundation", type: .framework),

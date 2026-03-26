@@ -171,6 +171,8 @@ void ApolloMacBridgeControllerStopMacDisplayKitCapture(
   ApolloMacBridgeController *controller
 );
 
+void ApolloMacBridgeRequestImmediateCaptureKeyFrame(void);
+
 bool ApolloMacBridgeControllerStartMacDisplayKitAudioCapture(
   ApolloMacBridgeController *controller,
   ApolloMacBridgeAudioCaptureConfiguration configuration,

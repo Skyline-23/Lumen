@@ -450,8 +450,17 @@ public final class ApolloBridgeObjCFacade: NSObject {
     }
 
     public override init() {
-        self.runtime = ApolloBridgeRuntime()
+        self.runtime = ApolloBridgeRuntime.shared
         super.init()
+    }
+
+    @objc public static func requestImmediateCaptureKeyFrameSharedSync() {
+        let semaphore = DispatchSemaphore(value: 0)
+        Task {
+            await ApolloBridgeRuntime.shared.requestImmediateCaptureKeyFrame()
+            semaphore.signal()
+        }
+        semaphore.wait()
     }
 
     public func makePanelNativeConfiguration(displayID: UInt32) -> ApolloBridgeConfigurationBox {
@@ -484,6 +493,12 @@ public final class ApolloBridgeObjCFacade: NSObject {
     public func stopMacDisplayKitCaptureSync() {
         try? blockingRun { [self] in
             await self.runtime.stopMacDisplayKitCapture()
+        }
+    }
+
+    public func requestImmediateCaptureKeyFrameSync() {
+        try? blockingRun { [self] in
+            await self.runtime.requestImmediateCaptureKeyFrame()
         }
     }
 

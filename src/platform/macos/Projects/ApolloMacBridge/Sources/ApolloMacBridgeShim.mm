@@ -371,6 +371,10 @@ void ApolloMacBridgeControllerStopMacDisplayKitCapture(
   [controller->facade stopMacDisplayKitCaptureSync];
 }
 
+void ApolloMacBridgeRequestImmediateCaptureKeyFrame(void) {
+  [ApolloBridgeObjCFacade requestImmediateCaptureKeyFrameSharedSync];
+}
+
 bool ApolloMacBridgeControllerStartMacDisplayKitAudioCapture(
   ApolloMacBridgeController *controller,
   ApolloMacBridgeAudioCaptureConfiguration configuration,

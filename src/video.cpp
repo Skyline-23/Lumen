@@ -42,6 +42,7 @@ extern "C" {
   #include <VideoToolbox/VideoToolbox.h>
   #include <mach/mach_time.h>
   #include "ApolloCore.h"
+  #include "ApolloMacBridge.h"
   #include "platform/macos/av_img_t.h"
   #include "platform/macos/misc.h"
 #endif
@@ -184,6 +185,10 @@ namespace video {
         default:
           return "unknown"sv;
       }
+    }
+
+    void request_external_encoded_capture_key_frame() {
+      ApolloMacBridgeRequestImmediateCaptureKeyFrame();
     }
 
     std::string apollo_core_cfstring_to_utf8(CFStringRef value) {
@@ -3673,6 +3678,7 @@ namespace video {
           last_forwarded_source_display_delta_milliseconds.reset();
           last_forwarded_packet_timestamp_delta_milliseconds.reset();
           last_forwarded_sequence_delta = 0;
+          request_external_encoded_capture_key_frame();
           BOOST_LOG(info) << "External macOS encoded ingress requested decoder resync; holding frames until the next IDR packet"sv;
           consumed_any = true;
         }
@@ -3699,6 +3705,7 @@ namespace video {
               waiting_for_initial_idr = true;
               logged_waiting_for_initial_idr = false;
               logged_first_packet = false;
+              request_external_encoded_capture_key_frame();
               BOOST_LOG(info) << "External macOS encoded ingress event kind="sv << static_cast<int>(event.kind)
                               << " message="sv << message;
               break;

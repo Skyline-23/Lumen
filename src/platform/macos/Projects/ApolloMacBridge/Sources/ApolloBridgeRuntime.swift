@@ -1122,6 +1122,16 @@ public actor ApolloBridgeRuntime {
         await stopMacDisplayKitCapture(resetRequestGeneration: true)
     }
 
+    public func requestImmediateCaptureKeyFrame() async {
+        guard let encodedCaptureSession else {
+            logger.debug("Ignoring immediate keyframe request because no MacDisplayKit capture session is active")
+            return
+        }
+
+        logger.notice("Requesting an immediate MacDisplayKit keyframe for external encoded capture resync")
+        await encodedCaptureSession.requestImmediateKeyFrame()
+    }
+
     private func stopMacDisplayKitCapture(resetRequestGeneration: Bool) async {
         encodedCaptureStartupTask?.cancel()
         encodedCaptureStartupTask = nil

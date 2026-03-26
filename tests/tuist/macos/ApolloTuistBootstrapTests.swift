@@ -27,6 +27,12 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         XCTAssertFalse(configuration.enableHDR)
     }
 
+    func testBridgeIgnoresImmediateKeyFrameRequestsWithoutActiveSession() async {
+        await ApolloBridgeRuntime.shared.requestImmediateCaptureKeyFrame()
+        let status = await ApolloBridgeRuntime.shared.statusSnapshot()
+        XCTAssertFalse(status.captureSessionRunning)
+    }
+
     func testBridgeConfigurationPreferencesParseCodecAndQueueProfile() {
         let contents = """
         macos_bridge_codec=prores-proxy
