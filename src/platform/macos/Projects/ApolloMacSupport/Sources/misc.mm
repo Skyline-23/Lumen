@@ -411,17 +411,17 @@ namespace platf {
     ) {
       using gamut_e = video::client_display_gamut_e;
 
-      if (client_display_current_peak_luminance_nits > 0) {
-        return {
-          static_cast<uint32_t>(client_display_current_peak_luminance_nits),
-          "client-current-peak"
-        };
-      }
-
       if (client_display_potential_peak_luminance_nits > 0) {
         return {
           static_cast<uint32_t>(client_display_potential_peak_luminance_nits),
           "client-potential-peak"
+        };
+      }
+
+      if (client_display_current_peak_luminance_nits > 0) {
+        return {
+          static_cast<uint32_t>(client_display_current_peak_luminance_nits),
+          "client-current-peak"
         };
       }
 
