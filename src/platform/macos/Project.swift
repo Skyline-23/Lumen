@@ -11,7 +11,7 @@ let baseSettings: SettingsDictionary = [
 ]
 
 let macDisplayKitURL = "https://github.com/Skyline-23/MacDisplayKit.git"
-let macDisplayKitRevision = "4417c9c36c99f084a64839faddcfa2abab720f98"
+let macDisplayKitRevision = "e29c8d937b895b8dc063894d0f9cb97f2b3a802c"
 
 let repoRoot = "$(SRCROOT)/../../.."
 let buildDepsRoot = "\(repoRoot)/third-party/build-deps/dist/Darwin-arm64"
