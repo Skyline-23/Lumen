@@ -242,6 +242,7 @@ typedef struct ApolloCoreCaptureRequestSnapshot {
   ApolloCoreCaptureQueueProfile queue_profile;
   bool show_cursor;
   int32_t target_frame_rate;
+  int32_t target_video_bitrate_kbps;
   int32_t requested_width;
   int32_t requested_height;
   int32_t dynamic_range;
@@ -342,6 +343,7 @@ void ApolloCoreCaptureRequestPublishVideo(
   ApolloCoreCaptureQueueProfile queue_profile,
   bool show_cursor,
   int32_t target_frame_rate,
+  int32_t target_video_bitrate_kbps,
   int32_t requested_width,
   int32_t requested_height,
   int32_t dynamic_range,

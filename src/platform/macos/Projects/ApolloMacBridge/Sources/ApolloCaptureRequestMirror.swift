@@ -18,6 +18,7 @@ struct ApolloBridgeMirroredCaptureRequestSnapshot: Equatable, Sendable {
     let queueProfile: ApolloCoreCaptureQueueProfile
     let showCursor: Bool
     let targetFrameRate: Int32
+    let targetVideoBitrateKbps: Int32
     let requestedWidth: Int32
     let requestedHeight: Int32
     let dynamicRange: Int32
@@ -80,6 +81,7 @@ struct ApolloBridgeMirroredCaptureRequestSnapshot: Equatable, Sendable {
         self.queueProfile = queueProfile
         self.showCursor = showCursor
         self.targetFrameRate = targetFrameRate
+        self.targetVideoBitrateKbps = Self.number(dictionary["targetVideoBitrateKbps"])?.int32Value ?? 0
         self.requestedWidth = requestedWidth
         self.requestedHeight = requestedHeight
         self.dynamicRange = dynamicRange
@@ -179,6 +181,7 @@ struct ApolloBridgeMirroredCaptureRequestSemanticState: Equatable, Sendable {
     let queueProfile: ApolloCoreCaptureQueueProfile
     let showCursor: Bool
     let targetFrameRate: Int32
+    let targetVideoBitrateKbps: Int32
     let requestedWidth: Int32
     let requestedHeight: Int32
     let dynamicRange: Int32
@@ -206,6 +209,7 @@ struct ApolloBridgeMirroredCaptureRequestSemanticState: Equatable, Sendable {
         queueProfile = snapshot.queueProfile
         showCursor = snapshot.showCursor
         targetFrameRate = snapshot.targetFrameRate
+        targetVideoBitrateKbps = snapshot.targetVideoBitrateKbps
         requestedWidth = snapshot.requestedWidth
         requestedHeight = snapshot.requestedHeight
         dynamicRange = snapshot.dynamicRange
@@ -234,6 +238,7 @@ struct ApolloBridgeMirroredCaptureRequestSemanticState: Equatable, Sendable {
         queueProfile = snapshot.queue_profile
         showCursor = snapshot.show_cursor
         targetFrameRate = snapshot.target_frame_rate
+        targetVideoBitrateKbps = snapshot.target_video_bitrate_kbps
         requestedWidth = snapshot.requested_width
         requestedHeight = snapshot.requested_height
         dynamicRange = snapshot.dynamic_range
@@ -295,6 +300,7 @@ actor ApolloCaptureRequestMirrorCoordinator {
                     mirroredSnapshot.queueProfile,
                     mirroredSnapshot.showCursor,
                     mirroredSnapshot.targetFrameRate,
+                    mirroredSnapshot.targetVideoBitrateKbps,
                     mirroredSnapshot.requestedWidth,
                     mirroredSnapshot.requestedHeight,
                     mirroredSnapshot.dynamicRange,

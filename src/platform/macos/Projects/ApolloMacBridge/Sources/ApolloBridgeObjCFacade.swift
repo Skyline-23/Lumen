@@ -10,6 +10,7 @@ public final class ApolloBridgeConfigurationBox: NSObject {
     public let queueProfileRawValue: Int
     public let showCursor: Bool
     public let targetFrameRate: Int
+    public let targetVideoBitRateKbps: Int
     public let requestedWidth: Int
     public let requestedHeight: Int
     public let enableHDR: Bool
@@ -43,6 +44,7 @@ public final class ApolloBridgeConfigurationBox: NSObject {
         queueProfileRawValue: Int,
         showCursor: Bool,
         targetFrameRate: Int,
+        targetVideoBitRateKbps: Int,
         requestedWidth: Int,
         requestedHeight: Int,
         enableHDR: Bool,
@@ -75,6 +77,7 @@ public final class ApolloBridgeConfigurationBox: NSObject {
         self.queueProfileRawValue = queueProfileRawValue
         self.showCursor = showCursor
         self.targetFrameRate = targetFrameRate
+        self.targetVideoBitRateKbps = targetVideoBitRateKbps
         self.requestedWidth = requestedWidth
         self.requestedHeight = requestedHeight
         self.enableHDR = enableHDR
@@ -111,6 +114,7 @@ public final class ApolloBridgeConfigurationBox: NSObject {
             queueProfileRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.queueProfile),
             showCursor: configuration.showCursor,
             targetFrameRate: configuration.targetFrameRate,
+            targetVideoBitRateKbps: configuration.targetVideoBitRateKbps,
             requestedWidth: configuration.requestedWidth ?? 0,
             requestedHeight: configuration.requestedHeight ?? 0,
             enableHDR: configuration.enableHDR,
@@ -162,6 +166,7 @@ public final class ApolloBridgeConfigurationBox: NSObject {
             queueProfile: ApolloBridgeObjCFacade.queueProfile(fromRawValue: queueProfileRawValue),
             showCursor: showCursor,
             targetFrameRate: targetFrameRate,
+            targetVideoBitRateKbps: targetVideoBitRateKbps,
             requestedWidth: requestedWidth,
             requestedHeight: requestedHeight,
             enableHDR: enableHDR,

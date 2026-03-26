@@ -82,6 +82,7 @@ final class ApolloTuistBootstrapTests: XCTestCase {
             queueProfile: .auto,
             showCursor: true,
             targetFrameRate: 120,
+            targetVideoBitRateKbps: 41_000,
             requestedWidth: 3512,
             requestedHeight: 2290,
             enableHDR: true,
@@ -97,6 +98,7 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(roundTrip.codec, .hevc)
         XCTAssertTrue(roundTrip.showCursor)
         XCTAssertEqual(roundTrip.targetFrameRate, 120)
+        XCTAssertEqual(roundTrip.targetVideoBitRateKbps, 41_000)
         XCTAssertEqual(roundTrip.requestedWidth, 3512)
         XCTAssertEqual(roundTrip.requestedHeight, 2290)
         XCTAssertTrue(roundTrip.enableHDR)
@@ -502,6 +504,7 @@ final class ApolloTuistBootstrapTests: XCTestCase {
                 ApolloCoreCaptureQueueProfileAuto,
                 false,
                 120,
+                41_000,
                 3840,
                 2160,
                 1,
@@ -538,6 +541,7 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(updatedSnapshot.codec, ApolloCoreCaptureCodecHEVC)
         XCTAssertEqual(updatedSnapshot.queue_profile, ApolloCoreCaptureQueueProfileAuto)
         XCTAssertEqual(updatedSnapshot.target_frame_rate, 120)
+        XCTAssertEqual(updatedSnapshot.target_video_bitrate_kbps, 41_000)
         XCTAssertEqual(updatedSnapshot.requested_width, 3840)
         XCTAssertEqual(updatedSnapshot.requested_height, 2160)
         XCTAssertEqual(updatedSnapshot.dynamic_range, 1)
@@ -571,6 +575,7 @@ final class ApolloTuistBootstrapTests: XCTestCase {
             "queueProfile": 2,
             "showCursor": false,
             "targetFrameRate": 120,
+            "targetVideoBitrateKbps": 41_000,
             "requestedWidth": 3840,
             "requestedHeight": 2160,
             "dynamicRange": 1,
@@ -623,6 +628,7 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(snapshot.codec, ApolloCoreCaptureCodecHEVC)
         XCTAssertEqual(snapshot.preprocessStrategy, ApolloCoreCapturePreprocessStrategyDownscale2x)
         XCTAssertEqual(snapshot.queueProfile, ApolloCoreCaptureQueueProfileQ3)
+        XCTAssertEqual(snapshot.targetVideoBitrateKbps, 41_000)
         XCTAssertEqual(snapshot.clientDisplayGamut, 2)
         XCTAssertEqual(snapshot.clientDisplayTransfer, 2)
         XCTAssertEqual(snapshot.effectiveDisplayGamut, 2)
@@ -653,6 +659,7 @@ final class ApolloTuistBootstrapTests: XCTestCase {
             "queueProfile": 4,
             "showCursor": false,
             "targetFrameRate": 120,
+            "targetVideoBitrateKbps": 41_000,
             "requestedWidth": 3512,
             "requestedHeight": 2290,
             "dynamicRange": 1,
@@ -684,10 +691,49 @@ final class ApolloTuistBootstrapTests: XCTestCase {
 
         let snapshot = try XCTUnwrap(ApolloBridgeMirroredCaptureRequestSnapshot.load(from: url))
         XCTAssertEqual(snapshot.queueProfile, ApolloCoreCaptureQueueProfileAuto)
+        XCTAssertEqual(snapshot.targetVideoBitrateKbps, 41_000)
         XCTAssertEqual(snapshot.clientDisplayGamut, 3)
         XCTAssertEqual(snapshot.effectiveDisplayGamut, 3)
         XCTAssertEqual(snapshot.clientDisplayCurrentEDRHeadroom, 2.2)
         XCTAssertEqual(snapshot.clientDisplayPotentialPeakLuminanceNits, 1500)
+    }
+
+    func testMirroredCaptureRequestSnapshotDefaultsMissingTargetBitrateForOlderStateFiles() throws {
+        let propertyList: [String: Any] = [
+            "generation": 13,
+            "videoGeneration": 13,
+            "audioGeneration": 13,
+            "videoRequested": true,
+            "audioRequested": false,
+            "displayID": 27,
+            "codec": 1,
+            "preprocessStrategy": 0,
+            "queueProfile": 4,
+            "showCursor": false,
+            "targetFrameRate": 120,
+            "requestedWidth": 3512,
+            "requestedHeight": 2290,
+            "dynamicRange": 1,
+            "audioSourceKind": 0,
+            "audioExcludesCurrentProcess": false,
+            "audioSampleRate": 48_000,
+            "audioChannelCount": 2,
+            "audioFrameSize": 480,
+        ]
+
+        let data = try PropertyListSerialization.data(
+            fromPropertyList: propertyList,
+            format: .binary,
+            options: 0
+        )
+        let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try data.write(to: url)
+        defer {
+            try? FileManager.default.removeItem(at: url)
+        }
+
+        let snapshot = try XCTUnwrap(ApolloBridgeMirroredCaptureRequestSnapshot.load(from: url))
+        XCTAssertEqual(snapshot.targetVideoBitrateKbps, 0)
     }
 
     func testMirroredCaptureRequestSemanticStateIgnoresGenerationOnlyChanges() {
@@ -704,6 +750,7 @@ final class ApolloTuistBootstrapTests: XCTestCase {
                 "queueProfile": 4,
                 "showCursor": false,
                 "targetFrameRate": 120,
+                "targetVideoBitrateKbps": 41_000,
                 "requestedWidth": 3512,
                 "requestedHeight": 2290,
                 "dynamicRange": 1,
@@ -735,6 +782,7 @@ final class ApolloTuistBootstrapTests: XCTestCase {
                 "queueProfile": 4,
                 "showCursor": false,
                 "targetFrameRate": 120,
+                "targetVideoBitrateKbps": 41_000,
                 "requestedWidth": 3512,
                 "requestedHeight": 2290,
                 "dynamicRange": 1,
@@ -765,6 +813,7 @@ final class ApolloTuistBootstrapTests: XCTestCase {
             queueProfile: .auto,
             showCursor: false,
             targetFrameRate: 120,
+            targetVideoBitRateKbps: 41_000,
             requestedWidth: 3840,
             requestedHeight: 2160,
             enableHDR: true

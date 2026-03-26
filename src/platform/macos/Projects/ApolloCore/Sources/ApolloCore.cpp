@@ -1075,6 +1075,7 @@ void ApolloCoreCaptureRequestPublishVideo(
   ApolloCoreCaptureQueueProfile queue_profile,
   bool show_cursor,
   int32_t target_frame_rate,
+  int32_t target_video_bitrate_kbps,
   int32_t requested_width,
   int32_t requested_height,
   int32_t dynamic_range,
@@ -1101,6 +1102,7 @@ void ApolloCoreCaptureRequestPublishVideo(
     state->snapshot.queue_profile = queue_profile;
     state->snapshot.show_cursor = show_cursor;
     state->snapshot.target_frame_rate = std::max<int32_t>(target_frame_rate, 1);
+    state->snapshot.target_video_bitrate_kbps = std::max<int32_t>(target_video_bitrate_kbps, 0);
     state->snapshot.requested_width = std::max<int32_t>(requested_width, 0);
     state->snapshot.requested_height = std::max<int32_t>(requested_height, 0);
     state->snapshot.dynamic_range = std::max<int32_t>(dynamic_range, 0);

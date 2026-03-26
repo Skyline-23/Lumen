@@ -27,6 +27,7 @@ namespace platf {
     int queue_profile;
     bool show_cursor;
     int target_frame_rate;
+    int target_video_bitrate_kbps;
     int requested_width;
     int requested_height;
     int dynamic_range;

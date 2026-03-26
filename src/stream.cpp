@@ -2240,6 +2240,7 @@ namespace stream {
         requested_queue_profile,
         true,
         session.config.monitor.framerate,
+        session.config.monitor.bitrate,
         session.config.monitor.width,
         session.config.monitor.height,
         session.config.monitor.dynamicRange,

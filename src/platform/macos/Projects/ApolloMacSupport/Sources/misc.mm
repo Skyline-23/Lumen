@@ -173,6 +173,7 @@ namespace platf {
         @"queueProfile": @(state.queue_profile),
         @"showCursor": @(state.show_cursor),
         @"targetFrameRate": @(state.target_frame_rate),
+        @"targetVideoBitrateKbps": @(state.target_video_bitrate_kbps),
         @"requestedWidth": @(state.requested_width),
         @"requestedHeight": @(state.requested_height),
         @"dynamicRange": @(state.dynamic_range),
@@ -217,6 +218,7 @@ namespace platf {
       float client_display_potential_edr_headroom = 0.0f;
       int client_display_current_peak_luminance_nits = 0;
       int client_display_potential_peak_luminance_nits = 0;
+      int target_video_bitrate_kbps = 0;
       SS_HDR_METADATA effective_hdr_metadata {};
     };
 
@@ -295,6 +297,7 @@ namespace platf {
         NSNumber *client_display_potential_edr_headroom = dictionary[@"clientDisplayPotentialEDRHeadroom"];
         NSNumber *client_display_current_peak_luminance_nits = dictionary[@"clientDisplayCurrentPeakLuminanceNits"];
         NSNumber *client_display_potential_peak_luminance_nits = dictionary[@"clientDisplayPotentialPeakLuminanceNits"];
+        NSNumber *target_video_bitrate_kbps = dictionary[@"targetVideoBitrateKbps"];
         if (dynamic_range == nil || client_display_gamut == nil || client_display_transfer == nil) {
           return std::nullopt;
         }
@@ -313,6 +316,8 @@ namespace platf {
           client_display_current_peak_luminance_nits != nil ? [client_display_current_peak_luminance_nits intValue] : 0;
         preferences.client_display_potential_peak_luminance_nits =
           client_display_potential_peak_luminance_nits != nil ? [client_display_potential_peak_luminance_nits intValue] : 0;
+        preferences.target_video_bitrate_kbps =
+          target_video_bitrate_kbps != nil ? [target_video_bitrate_kbps intValue] : 0;
 
         if (has_effective_hdr_metadata.boolValue) {
           preferences.has_effective_hdr_metadata = true;

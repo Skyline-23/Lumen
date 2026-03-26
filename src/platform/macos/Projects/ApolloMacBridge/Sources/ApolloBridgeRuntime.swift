@@ -351,6 +351,7 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     public let encoderInputStrategy: ApolloCaptureEncoderInputStrategy
     public let showCursor: Bool
     public let targetFrameRate: Int
+    public let targetVideoBitRateKbps: Int
     public let requestedWidth: Int?
     public let requestedHeight: Int?
     public let enableHDR: Bool
@@ -372,6 +373,7 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         encoderInputStrategy: ApolloCaptureEncoderInputStrategy = .auto,
         showCursor: Bool = false,
         targetFrameRate: Int = 120,
+        targetVideoBitRateKbps: Int = 0,
         requestedWidth: Int? = nil,
         requestedHeight: Int? = nil,
         enableHDR: Bool = false,
@@ -392,6 +394,7 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         self.encoderInputStrategy = encoderInputStrategy
         self.showCursor = showCursor
         self.targetFrameRate = max(targetFrameRate, 1)
+        self.targetVideoBitRateKbps = max(targetVideoBitRateKbps, 0)
         self.requestedWidth = Self.sanitizedDimension(requestedWidth)
         self.requestedHeight = Self.sanitizedDimension(requestedHeight)
         self.enableHDR = enableHDR
@@ -451,6 +454,7 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
             codec: codec.mdkValue,
             preprocessStrategy: preprocessStrategy.mdkValue,
             targetFrameRate: targetFrameRate,
+            targetAverageBitRateBitsPerSecond: targetVideoBitRateKbps > 0 ? targetVideoBitRateKbps * 1_000 : nil,
             deliveryMode: .callbackOnly,
             encoderInputStrategy: encoderInputStrategy.mdkValue,
             hdrConfiguration: encodedColorConfiguration
@@ -868,6 +872,7 @@ private struct ApolloBridgeAutomationRequest: Equatable, Sendable {
                 queueProfile: ApolloBridgeAutomationRequest.queueProfile(from: snapshot.queue_profile),
                 showCursor: snapshot.show_cursor,
                 targetFrameRate: Int(snapshot.target_frame_rate),
+                targetVideoBitRateKbps: Int(snapshot.target_video_bitrate_kbps),
                 requestedWidth: Int(snapshot.requested_width),
                 requestedHeight: Int(snapshot.requested_height),
                 enableHDR: snapshot.dynamic_range > 0,
@@ -1407,7 +1412,7 @@ public actor ApolloBridgeRuntime {
             if let configuration = request.videoConfiguration {
                 let frameCapacity = Self.recommendedCoreForwardingFrameCapacity(for: configuration)
                 logger.notice(
-                    "Applying ApolloCore macOS bridge capture request display-id=\(configuration.displayID, privacy: .public) codec=\(configuration.codec.rawValue, privacy: .public) queue=\(configuration.queueProfile.rawValue, privacy: .public) fps=\(configuration.targetFrameRate, privacy: .public) forwarding-frame-capacity=\(frameCapacity, privacy: .public)"
+                    "Applying ApolloCore macOS bridge capture request display-id=\(configuration.displayID, privacy: .public) codec=\(configuration.codec.rawValue, privacy: .public) queue=\(configuration.queueProfile.rawValue, privacy: .public) fps=\(configuration.targetFrameRate, privacy: .public) bitrate-kbps=\(configuration.targetVideoBitRateKbps, privacy: .public) forwarding-frame-capacity=\(frameCapacity, privacy: .public)"
                 )
                 try? await startMacDisplayKitCapture(
                     configuration: configuration,
@@ -1644,7 +1649,9 @@ public actor ApolloBridgeRuntime {
             "videoToolboxColorConversionMode=",
             "videoToolboxTargetFrameRateHint=",
             "videoToolboxConfiguredAverageBitRate=",
+            "videoToolboxConfiguredAverageBitRateSource=",
             "videoToolboxConfiguredDataRateLimits=",
+            "videoToolboxConfiguredDataRateLimitsSource=",
             "videoToolboxConfiguredProfileLevel=",
             "videoToolboxDirectSubmissionFrameCount=",
             "videoToolboxStagedSubmissionFrameCount=",

@@ -30,6 +30,7 @@ typedef struct ApolloMacBridgeCaptureConfiguration {
   ApolloMacBridgeQueueProfile queue_profile;
   bool show_cursor;
   int32_t target_frame_rate;
+  int32_t target_video_bitrate_kbps;
   int32_t requested_width;
   int32_t requested_height;
   bool enable_hdr;
