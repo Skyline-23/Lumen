@@ -46,18 +46,18 @@ namespace http {
 
   int init() {
     bool clean_slate = config::runtime.flags[config::flag::FRESH_STATE];
-    origin_web_ui_allowed = net::from_enum_string(config::nvhttp.origin_web_ui_allowed);
+    origin_web_ui_allowed = net::from_enum_string(config::session_http.origin_web_ui_allowed);
 
     if (clean_slate) {
       uuid = uuid_util::uuid_t::generate();
       unique_id = uuid.string();
       auto dir = std::filesystem::temp_directory_path() / "Sunshine"sv;
-      config::nvhttp.cert = (dir / ("cert-"s + unique_id)).string();
-      config::nvhttp.pkey = (dir / ("pkey-"s + unique_id)).string();
+      config::session_http.cert = (dir / ("cert-"s + unique_id)).string();
+      config::session_http.pkey = (dir / ("pkey-"s + unique_id)).string();
     }
 
-    if ((!fs::exists(config::nvhttp.pkey) || !fs::exists(config::nvhttp.cert)) &&
-        create_creds(config::nvhttp.pkey, config::nvhttp.cert)) {
+    if ((!fs::exists(config::session_http.pkey) || !fs::exists(config::session_http.cert)) &&
+        create_creds(config::session_http.pkey, config::session_http.cert)) {
       return -1;
     }
     if (!user_creds_exist(config::runtime.credentials_file)) {
@@ -154,26 +154,26 @@ namespace http {
     }
 
     if (file_handler::write_file(pkey.c_str(), creds.pkey)) {
-      BOOST_LOG(error) << "Couldn't open ["sv << config::nvhttp.pkey << ']';
+      BOOST_LOG(error) << "Couldn't open ["sv << config::session_http.pkey << ']';
       return -1;
     }
 
     if (file_handler::write_file(cert.c_str(), creds.x509)) {
-      BOOST_LOG(error) << "Couldn't open ["sv << config::nvhttp.cert << ']';
+      BOOST_LOG(error) << "Couldn't open ["sv << config::session_http.cert << ']';
       return -1;
     }
 
     fs::permissions(pkey_path, fs::perms::owner_read | fs::perms::owner_write, fs::perm_options::replace, err_code);
 
     if (err_code) {
-      BOOST_LOG(error) << "Couldn't change permissions of ["sv << config::nvhttp.pkey << "] :"sv << err_code.message();
+      BOOST_LOG(error) << "Couldn't change permissions of ["sv << config::session_http.pkey << "] :"sv << err_code.message();
       return -1;
     }
 
     fs::permissions(cert_path, fs::perms::owner_read | fs::perms::group_read | fs::perms::others_read | fs::perms::owner_write, fs::perm_options::replace, err_code);
 
     if (err_code) {
-      BOOST_LOG(error) << "Couldn't change permissions of ["sv << config::nvhttp.cert << "] :"sv << err_code.message();
+      BOOST_LOG(error) << "Couldn't change permissions of ["sv << config::session_http.cert << "] :"sv << err_code.message();
       return -1;
     }
 

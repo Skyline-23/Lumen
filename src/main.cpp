@@ -504,7 +504,7 @@ int apollo_run(int argc, char *argv[], const ApolloRuntimeOptions &options) {
     return lifetime::desired_exit_code;
   }
 
-  std::thread httpThread {nvhttp::start};
+  std::thread httpThread {session_http::start};
   std::thread configThread {confighttp::start};
   std::thread rtspThread {rtsp_stream::start};
 

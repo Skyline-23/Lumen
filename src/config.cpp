@@ -541,13 +541,13 @@ namespace config {
     ENCRYPTION_MODE_OPPORTUNISTIC,  // wan_encryption_mode
   };
 
-  nvhttp_t nvhttp {
+  session_http_t session_http {
     "lan",  // origin web manager
 
     PRIVATE_KEY_FILE,
     CERTIFICATE_FILE,
 
-    platf::get_host_name(),  // sunshine_name,
+    platf::get_host_name(),  // host_name,
     "apollo_state.json"s,  // file_state
     {},  // external_ip
   };
@@ -1215,17 +1215,17 @@ namespace config {
     bool_f(vars, "isolated_virtual_display_option", video.isolated_virtual_display_option);
     bool_f(vars, "ignore_encoder_probe_failure", video.ignore_encoder_probe_failure);
 
-    path_f(vars, "pkey", nvhttp.pkey);
-    path_f(vars, "cert", nvhttp.cert);
-    string_f(vars, "sunshine_name", nvhttp.sunshine_name);
+    path_f(vars, "pkey", session_http.pkey);
+    path_f(vars, "cert", session_http.cert);
+    string_f(vars, "host_name", session_http.host_name);
     path_f(vars, "log_path", config::runtime.log_file);
-    path_f(vars, "file_state", nvhttp.file_state);
+    path_f(vars, "file_state", session_http.file_state);
 
     // Must be run after "file_state"
-    config::runtime.credentials_file = config::nvhttp.file_state;
+    config::runtime.credentials_file = config::session_http.file_state;
     path_f(vars, "credentials_file", config::runtime.credentials_file);
 
-    string_f(vars, "external_ip", nvhttp.external_ip);
+    string_f(vars, "external_ip", session_http.external_ip);
     list_prep_cmd_f(vars, "global_prep_cmd", config::runtime.prep_cmds);
     list_prep_cmd_f(vars, "global_state_cmd", config::runtime.state_cmds);
     list_server_cmd_f(vars, "server_cmd", config::runtime.server_cmds);
@@ -1237,7 +1237,7 @@ namespace config {
     bool_f(vars, "keep_sink_default", audio.keep_default);
     bool_f(vars, "auto_capture_sink", audio.auto_capture);
 
-    string_restricted_f(vars, "origin_web_ui_allowed", nvhttp.origin_web_ui_allowed, {"pc"sv, "lan"sv, "wan"sv});
+    string_restricted_f(vars, "origin_web_ui_allowed", session_http.origin_web_ui_allowed, {"pc"sv, "lan"sv, "wan"sv});
 
     int to = -1;
     int_between_f(vars, "ping_timeout", to, {-1, std::numeric_limits<int>::max()});
@@ -1308,7 +1308,7 @@ namespace config {
     bool_f(vars, "forward_rumble", input.forward_rumble);
 
     int port = runtime.port;
-    int_between_f(vars, "port"s, port, {1024 + nvhttp::PORT_HTTPS, 65535 - rtsp_stream::RTSP_SETUP_PORT});
+    int_between_f(vars, "port"s, port, {1024 + session_http::PORT_HTTPS, 65535 - rtsp_stream::RTSP_SETUP_PORT});
     runtime.port = (std::uint16_t) port;
 
     string_restricted_f(vars, "address_family", runtime.address_family, {"ipv4"sv, "both"sv});

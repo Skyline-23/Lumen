@@ -7,7 +7,7 @@
 
 #include <src/nvhttp.h>
 
-using namespace nvhttp;
+using namespace session_http;
 
 struct pairing_input {
   std::shared_ptr<pair_session_t> session;

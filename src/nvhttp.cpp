@@ -49,7 +49,7 @@
 
 using namespace std::literals;
 
-namespace nvhttp {
+namespace session_http {
 
   namespace fs = std::filesystem;
   namespace pt = boost::property_tree;
@@ -280,7 +280,7 @@ namespace nvhttp {
     }
 
     void migrate_legacy_state_if_needed() {
-      if (fs::exists(config::nvhttp.file_state)) {
+      if (fs::exists(config::session_http.file_state)) {
         return;
       }
 
@@ -290,11 +290,11 @@ namespace nvhttp {
       }
 
       try {
-        fs::create_directories(fs::path(config::nvhttp.file_state).parent_path());
-        fs::copy_file(*legacy_state, config::nvhttp.file_state, fs::copy_options::overwrite_existing);
-        BOOST_LOG(info) << "Migrated legacy state file from ["sv << legacy_state->string() << "] to ["sv << config::nvhttp.file_state << ']';
+        fs::create_directories(fs::path(config::session_http.file_state).parent_path());
+        fs::copy_file(*legacy_state, config::session_http.file_state, fs::copy_options::overwrite_existing);
+        BOOST_LOG(info) << "Migrated legacy state file from ["sv << legacy_state->string() << "] to ["sv << config::session_http.file_state << ']';
       } catch (std::exception &e) {
-        BOOST_LOG(error) << "Couldn't migrate legacy state file from ["sv << legacy_state->string() << "] to ["sv << config::nvhttp.file_state << "]: "sv << e.what();
+        BOOST_LOG(error) << "Couldn't migrate legacy state file from ["sv << legacy_state->string() << "] to ["sv << config::session_http.file_state << "]: "sv << e.what();
       }
     }
   }  // namespace
@@ -444,12 +444,12 @@ namespace nvhttp {
   void save_state() {
     nlohmann::json root = nlohmann::json::object();
     // If the state file exists, try to read it.
-    if (fs::exists(config::nvhttp.file_state)) {
+    if (fs::exists(config::session_http.file_state)) {
       try {
-        std::ifstream in(config::nvhttp.file_state);
+        std::ifstream in(config::session_http.file_state);
         in >> root;
       } catch (std::exception &e) {
-        BOOST_LOG(error) << "Couldn't read "sv << config::nvhttp.file_state << ": "sv << e.what();
+        BOOST_LOG(error) << "Couldn't read "sv << config::session_http.file_state << ": "sv << e.what();
         return;
       }
     }
@@ -516,10 +516,10 @@ namespace nvhttp {
     root["root"]["named_devices"] = named_cert_nodes;
 
     try {
-      std::ofstream out(config::nvhttp.file_state);
+      std::ofstream out(config::session_http.file_state);
       out << root.dump(4);  // Pretty-print with an indent of 4 spaces.
     } catch (std::exception &e) {
-      BOOST_LOG(error) << "Couldn't write "sv << config::nvhttp.file_state << ": "sv << e.what();
+      BOOST_LOG(error) << "Couldn't write "sv << config::session_http.file_state << ": "sv << e.what();
       return;
     }
   }
@@ -527,18 +527,18 @@ namespace nvhttp {
   void load_state() {
     migrate_legacy_state_if_needed();
 
-    if (!fs::exists(config::nvhttp.file_state)) {
-      BOOST_LOG(info) << "File "sv << config::nvhttp.file_state << " doesn't exist"sv;
+    if (!fs::exists(config::session_http.file_state)) {
+      BOOST_LOG(info) << "File "sv << config::session_http.file_state << " doesn't exist"sv;
       http::unique_id = uuid_util::uuid_t::generate().string();
       return;
     }
 
     nlohmann::json tree;
     try {
-      std::ifstream in(config::nvhttp.file_state);
+      std::ifstream in(config::session_http.file_state);
       in >> tree;
     } catch (std::exception &e) {
-      BOOST_LOG(error) << "Couldn't read "sv << config::nvhttp.file_state << ": "sv << e.what();
+      BOOST_LOG(error) << "Couldn't read "sv << config::session_http.file_state << ": "sv << e.what();
       return;
     }
 
@@ -1217,7 +1217,7 @@ namespace nvhttp {
     pt::ptree tree;
 
     tree.put("root.<xmlattr>.status_code", 200);
-    tree.put("root.hostname", config::nvhttp.sunshine_name);
+    tree.put("root.hostname", config::session_http.host_name);
 
     tree.put("root.appversion", VERSION);
     tree.put("root.GfeVersion", GFE_VERSION);
@@ -2004,15 +2004,15 @@ namespace nvhttp {
       load_state();
     }
 
-    auto pkey = file_handler::read_file(config::nvhttp.pkey.c_str());
-    auto cert = file_handler::read_file(config::nvhttp.cert.c_str());
+    auto pkey = file_handler::read_file(config::session_http.pkey.c_str());
+    auto cert = file_handler::read_file(config::session_http.cert.c_str());
     setup(pkey, cert);
 
     // resume doesn't always get the parameter "localAudioPlayMode"
     // launch will store it in host_audio
     bool host_audio {};
 
-    https_server_t https_server {config::nvhttp.cert, config::nvhttp.pkey};
+    https_server_t https_server {config::session_http.cert, config::session_http.pkey};
     http_server_t http_server;
 
     // Verify certificates after establishing connection
@@ -2244,4 +2244,4 @@ namespace nvhttp {
 
     return removed;
   }
-}  // namespace nvhttp
+}  // namespace session_http

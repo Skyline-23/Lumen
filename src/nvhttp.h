@@ -1,6 +1,6 @@
 /**
  * @file src/nvhttp.h
- * @brief Declarations for the nvhttp (GameStream) server.
+ * @brief Declarations for the session HTTP compatibility adapter.
  */
 // macros
 #pragma once
@@ -23,9 +23,9 @@
 using namespace std::chrono_literals;
 
 /**
- * @brief Contains all the functions and variables related to the nvhttp (GameStream) server.
+ * @brief Contains the functions and state used by the session HTTP compatibility adapter.
  */
-namespace nvhttp {
+namespace session_http {
 
   using args_t = SimpleWeb::CaseInsensitiveMultimap;
   using cmd_list_t = std::list<crypto::command_entry_t>;
@@ -55,9 +55,9 @@ namespace nvhttp {
   constexpr auto OTP_EXPIRE_DURATION = 180s;
 
   /**
-   * @brief Start the nvhttp server.
+   * @brief Start the session HTTP server.
    * @examples
-   * nvhttp::start();
+   * session_http::start();
    * @examples_end
    */
   void start();
@@ -73,7 +73,7 @@ namespace nvhttp {
   make_launch_session(bool host_audio, bool input_only, const args_t &args, const crypto::named_cert_t* named_cert_p);
 
   /**
-   * @brief Setup the nvhttp server.
+   * @brief Setup the session HTTP server.
    * @param pkey
    * @param cert
    */
@@ -190,7 +190,7 @@ namespace nvhttp {
    * @param name The user supplied name.
    * @return `true` if the pin is correct, `false` otherwise.
    * @examples
-   * bool pin_status = nvhttp::pin("1234", "laptop");
+   * bool pin_status = session_http::pin("1234", "laptop");
    * @examples_end
    */
   bool pin(std::string pin, std::string name);
@@ -201,7 +201,7 @@ namespace nvhttp {
    * @brief Remove single client.
    * @param uuid The UUID of the client to remove.
    * @examples
-   * nvhttp::unpair_client("4D7BB2DD-5704-A405-B41C-891A022932E1");
+   * session_http::unpair_client("4D7BB2DD-5704-A405-B41C-891A022932E1");
    * @examples_end
    */
   bool unpair_client(std::string_view uuid);
@@ -210,7 +210,7 @@ namespace nvhttp {
    * @brief Get all paired clients.
    * @return The list of all paired clients.
    * @examples
-   * nlohmann::json clients = nvhttp::get_all_clients();
+   * nlohmann::json clients = session_http::get_all_clients();
    * @examples_end
    */
   nlohmann::json get_all_clients();
@@ -218,7 +218,7 @@ namespace nvhttp {
   /**
    * @brief Remove all paired clients.
    * @examples
-   * nvhttp::erase_all_clients();
+   * session_http::erase_all_clients();
    * @examples_end
    */
   void erase_all_clients();
@@ -282,4 +282,4 @@ namespace nvhttp {
     const bool allow_client_commands,
     const bool always_use_virtual_display
   );
-}  // namespace nvhttp
+}  // namespace session_http
