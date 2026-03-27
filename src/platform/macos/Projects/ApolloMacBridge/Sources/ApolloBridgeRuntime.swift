@@ -508,7 +508,7 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     public static func panelNative(displayID: UInt32) -> Self {
         let environment = ProcessInfo.processInfo.environment
         let transport = ApolloClientSinkTransfer(
-            environmentValue: environment["APOLLO_CLIENT_SINK_TRANSFER"]
+            environmentValue: environment["SHADOW_CLIENT_SINK_TRANSFER"]
         )
         return Self(
             displayID: displayID,
@@ -518,10 +518,10 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
             sinkRequest: ApolloBridgeSinkRequest(
                 capability: ApolloBridgeSinkCapability(
                     gamut: ApolloClientSinkGamut(
-                        environmentValue: environment["APOLLO_CLIENT_SINK_GAMUT"]
+                        environmentValue: environment["SHADOW_CLIENT_SINK_GAMUT"]
                     ),
                     transfer: ApolloClientSinkTransfer(
-                        environmentValue: environment["APOLLO_CLIENT_SINK_TRANSFER"]
+                        environmentValue: environment["SHADOW_CLIENT_SINK_TRANSFER"]
                     ),
                     supportsFrameGatedHDR: true,
                     supportsHDRTileOverlay: false,
@@ -533,10 +533,10 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
             ),
             effectiveDisplayState: ApolloBridgeEffectiveDisplayState(
                 gamut: ApolloClientSinkGamut(
-                    environmentValue: environment["APOLLO_CLIENT_SINK_GAMUT"]
+                    environmentValue: environment["SHADOW_CLIENT_SINK_GAMUT"]
                 ),
                 transfer: ApolloClientSinkTransfer(
-                    environmentValue: environment["APOLLO_CLIENT_SINK_TRANSFER"]
+                    environmentValue: environment["SHADOW_CLIENT_SINK_TRANSFER"]
                 )
             )
         )
