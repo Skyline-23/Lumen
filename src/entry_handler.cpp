@@ -71,8 +71,8 @@ namespace lifetime {
   char **argv;
   std::atomic_int desired_exit_code;
 
-  void exit_sunshine(int exit_code, bool async) {
-    // Store the exit code of the first exit_sunshine() call
+  void exit_runtime(int exit_code, bool async) {
+    // Store the exit code of the first exit_runtime() call
     int zero = 0;
     desired_exit_code.compare_exchange_strong(zero, exit_code);
 
@@ -108,7 +108,7 @@ void log_publisher_data() {
 }
 
 #ifdef _WIN32
-bool is_gamestream_enabled() {
+bool is_nvidia_gamestream_enabled() {
   DWORD enabled;
   DWORD size = sizeof(enabled);
   return RegGetValueW(

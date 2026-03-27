@@ -396,7 +396,7 @@ std::string get_local_ip_for_gateway() {
   void restart() {
     // Gracefully clean up and restart ourselves instead of exiting
     atexit(restart_on_exit);
-    lifetime::exit_sunshine(0, true);
+    lifetime::exit_runtime(0, true);
   }
 
   int set_env(const std::string &name, const std::string &value) {

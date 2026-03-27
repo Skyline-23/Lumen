@@ -943,7 +943,7 @@ namespace platf {
       BOOST_LOG(error) << "Failed to spawn replacement Apollo process during restart."sv;
       return;
     }
-    lifetime::exit_sunshine(0, true);
+    lifetime::exit_runtime(0, true);
   }
 
   int set_env(const std::string &name, const std::string &value) {

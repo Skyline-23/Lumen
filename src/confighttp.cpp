@@ -1363,11 +1363,11 @@ namespace confighttp {
 
 #ifdef _WIN32
     if (GetConsoleWindow() == NULL) {
-      lifetime::exit_sunshine(ERROR_SHUTDOWN_IN_PROGRESS, true);
+      lifetime::exit_runtime(ERROR_SHUTDOWN_IN_PROGRESS, true);
     } else
 #endif
     {
-      lifetime::exit_sunshine(0, true);
+      lifetime::exit_runtime(0, true);
     }
     // If exit fails, write a response after 5 seconds.
     std::thread write_resp([response]{
