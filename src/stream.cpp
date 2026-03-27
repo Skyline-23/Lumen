@@ -52,7 +52,6 @@ extern "C" {
 #define IDX_PERIODIC_PING 8
 #define IDX_REQUEST_IDR_FRAME 9
 #define IDX_ENCRYPTED 10
-#define IDX_HDR_MODE 11
 #define IDX_RUMBLE_TRIGGER_DATA 12
 #define IDX_SET_MOTION_EVENT 13
 #define IDX_SET_RGB_LED 14
@@ -60,6 +59,7 @@ extern "C" {
 #define IDX_SET_CLIPBOARD 16
 #define IDX_FILE_TRANSFER_NONCE_REQUEST 17
 #define IDX_SET_ADAPTIVE_TRIGGERS 18
+#define IDX_HDR_FRAME_STATE 19
 
 static const short packetTypes[] = {
   0x0305,  // Start A
@@ -73,7 +73,7 @@ static const short packetTypes[] = {
   0x0200,  // Periodic Ping
   0x0302,  // IDR frame
   0x0001,  // fully encrypted
-  0x010e,  // HDR mode
+  0x010e,  // retired HDR mode (reserved)
   0x5500,  // Rumble triggers (Sunshine protocol extension)
   0x5501,  // Set motion event (Sunshine protocol extension)
   0x5502,  // Set RGB LED (Sunshine protocol extension)
@@ -81,6 +81,7 @@ static const short packetTypes[] = {
   0x3001,  // Set Clipboard (Apollo protocol extension)
   0x3002,  // File transfer nonce request (Apollo protocol extension)
   0x5503,  // Set Adaptive triggers (Sunshine protocol extension)
+  0x3003,  // HDR frame state v2 (Apollo protocol extension)
 };
 
 namespace asio = boost::asio;
@@ -218,12 +219,26 @@ namespace stream {
     std::uint8_t right[DS_EFFECT_PAYLOAD_SIZE];
   };
 
-  struct control_hdr_mode_t {
+  struct control_hdr_frame_state_v2_t {
     control_header_v2 header;
 
-    std::uint8_t enabled;
+    std::uint8_t version;
+    std::uint8_t frameDynamicRange;
+    std::uint8_t flags;
+    std::uint8_t reserved;
+    boost::endian::little_uint32_at effectiveFromFrameNumber;
+    boost::endian::little_uint16_at overlayRegionCount;
+    std::uint16_t reserved2;
+    SS_HDR_METADATA staticMetadata;
+  };
 
-    // Sunshine protocol extension
+  struct control_hdr_overlay_region_v2_t {
+    boost::endian::little_uint16_at x;
+    boost::endian::little_uint16_at y;
+    boost::endian::little_uint16_at width;
+    boost::endian::little_uint16_at height;
+    std::uint8_t flags;
+    std::uint8_t reserved[3];
     SS_HDR_METADATA metadata;
   };
 
@@ -422,7 +437,7 @@ namespace stream {
       std::uint32_t seq;
 
       platf::feedback_queue_t feedback_queue;
-      safe::mail_raw_t::event_t<video::hdr_info_t> hdr_queue;
+      std::optional<video::hdr_frame_state_t> last_sent_hdr_frame_state;
     } control;
 
     std::uint32_t launch_session_id;
@@ -511,6 +526,46 @@ namespace stream {
     packet->seq = util::endian::little(seq);
 
     return std::string_view {(char *) tagged_cipher.data(), packet_length + sizeof(control_encrypted_t) - sizeof(control_encrypted_t::seq)};
+  }
+
+  static inline std::string_view encode_control_dynamic(
+    session_t *session,
+    const std::string_view &plaintext,
+    std::vector<std::uint8_t> &tagged_cipher
+  ) {
+    if (session->config.controlProtocolType != 13) {
+      return plaintext;
+    }
+
+    auto seq = session->control.seq++;
+
+    auto &iv = session->control.outgoing_iv;
+    if (session->config.encryptionFlagsEnabled & SS_ENC_CONTROL_V2) {
+      iv.resize(12);
+      std::copy_n((uint8_t *) &seq, sizeof(seq), std::begin(iv));
+      iv[10] = 'H';
+      iv[11] = 'C';
+    } else {
+      iv.resize(16);
+      iv[0] = (std::uint8_t) seq;
+    }
+
+    auto *packet = reinterpret_cast<control_encrypted_p>(tagged_cipher.data());
+    auto bytes = session->control.cipher.encrypt(plaintext, packet->payload(), &iv);
+    if (bytes <= 0) {
+      BOOST_LOG(error) << "Couldn't encrypt control data"sv;
+      return {};
+    }
+
+    std::uint16_t packet_length = bytes + crypto::cipher::tag_size + sizeof(control_encrypted_t::seq);
+    packet->encryptedHeaderType = util::endian::little(0x0001);
+    packet->length = util::endian::little(packet_length);
+    packet->seq = util::endian::little(seq);
+
+    return std::string_view {
+      reinterpret_cast<char *>(tagged_cipher.data()),
+      packet_length + sizeof(control_encrypted_t) - sizeof(control_encrypted_t::seq)
+    };
   }
 
   int start_broadcast(broadcast_ctx_t &ctx);
@@ -943,32 +998,114 @@ namespace stream {
     return 0;
   }
 
-  int send_hdr_mode(session_t *session, video::hdr_info_t hdr_info) {
+  constexpr std::uint8_t apollo_hdr_frame_state_version = 1;
+  constexpr std::uint8_t apollo_hdr_frame_state_flag_has_static_metadata = 1 << 0;
+  constexpr std::uint8_t apollo_hdr_frame_state_flag_has_overlay_regions = 1 << 1;
+  constexpr std::uint8_t apollo_hdr_overlay_region_flag_has_metadata = 1 << 0;
+
+  std::string_view hdr_frame_content_name(video::hdr_frame_content_e content) {
+    switch (content) {
+      case video::hdr_frame_content_e::sdr:
+        return "sdr"sv;
+      case video::hdr_frame_content_e::full_frame_hdr:
+        return "full-frame-hdr"sv;
+      case video::hdr_frame_content_e::partial_hdr_overlay:
+        return "partial-hdr-overlay"sv;
+      default:
+        return "unknown"sv;
+    }
+  }
+
+  std::string build_hdr_frame_state_payload(
+    std::uint32_t effective_from_frame_number,
+    const video::hdr_frame_state_t &state
+  ) {
+    constexpr std::size_t max_control_payload_bytes = std::numeric_limits<std::uint16_t>::max();
+    constexpr std::size_t max_total_packet_bytes = sizeof(control_header_v2) + max_control_payload_bytes;
+    constexpr std::size_t max_overlay_regions_per_packet =
+      (max_total_packet_bytes - sizeof(control_hdr_frame_state_v2_t)) / sizeof(control_hdr_overlay_region_v2_t);
+    const auto region_count = std::min<std::size_t>(
+      state.overlay_regions.size(),
+      max_overlay_regions_per_packet
+    );
+    const auto total_size = sizeof(control_hdr_frame_state_v2_t) + region_count * sizeof(control_hdr_overlay_region_v2_t);
+    std::string payload(total_size, '\0');
+
+    auto *header = reinterpret_cast<control_hdr_frame_state_v2_t *>(payload.data());
+    header->header.type = packetTypes[IDX_HDR_FRAME_STATE];
+    header->header.payloadLength = static_cast<std::uint16_t>(total_size - sizeof(control_header_v2));
+    header->version = apollo_hdr_frame_state_version;
+    header->frameDynamicRange = static_cast<std::uint8_t>(state.content);
+    header->flags =
+      (state.has_static_metadata ? apollo_hdr_frame_state_flag_has_static_metadata : 0) |
+      (region_count > 0 ? apollo_hdr_frame_state_flag_has_overlay_regions : 0);
+    header->reserved = 0;
+    header->effectiveFromFrameNumber = effective_from_frame_number;
+    header->overlayRegionCount = static_cast<std::uint16_t>(region_count);
+    header->reserved2 = 0;
+    if (state.has_static_metadata) {
+      header->staticMetadata = state.static_metadata;
+    } else {
+      std::memset(&header->staticMetadata, 0, sizeof(header->staticMetadata));
+    }
+
+    auto *serialized_region = reinterpret_cast<control_hdr_overlay_region_v2_t *>(header + 1);
+    for (std::size_t index = 0; index < region_count; ++index) {
+      const auto &region = state.overlay_regions[index];
+      serialized_region[index].x = static_cast<std::uint16_t>(std::clamp(region.x, 0, 0xffff));
+      serialized_region[index].y = static_cast<std::uint16_t>(std::clamp(region.y, 0, 0xffff));
+      serialized_region[index].width = static_cast<std::uint16_t>(std::clamp(region.width, 0, 0xffff));
+      serialized_region[index].height = static_cast<std::uint16_t>(std::clamp(region.height, 0, 0xffff));
+      serialized_region[index].flags = region.has_metadata ? apollo_hdr_overlay_region_flag_has_metadata : 0;
+      std::memset(serialized_region[index].reserved, 0, sizeof(serialized_region[index].reserved));
+      if (region.has_metadata) {
+        serialized_region[index].metadata = region.metadata;
+      } else {
+        std::memset(&serialized_region[index].metadata, 0, sizeof(serialized_region[index].metadata));
+      }
+    }
+
+    return payload;
+  }
+
+  int send_hdr_frame_state(
+    session_t *session,
+    std::uint32_t effective_from_frame_number,
+    const video::hdr_frame_state_t &state
+  ) {
     if (!session->control.peer) {
-      BOOST_LOG(warning) << "Couldn't send HDR mode, still waiting for PING from Moonlight"sv;
-      // Still waiting for PING from Moonlight
+      BOOST_LOG(warning) << "Couldn't send HDR frame state, still waiting for PING from Moonlight"sv;
       return -1;
     }
 
-    control_hdr_mode_t plaintext {};
-    plaintext.header.type = packetTypes[IDX_HDR_MODE];
-    plaintext.header.payloadLength = sizeof(control_hdr_mode_t) - sizeof(control_header_v2);
+    auto plaintext = build_hdr_frame_state_payload(effective_from_frame_number, state);
 
-    plaintext.enabled = hdr_info->enabled;
-    plaintext.metadata = hdr_info->metadata;
+    std::vector<std::uint8_t> encrypted_payload(
+      sizeof(control_encrypted_t) +
+      crypto::cipher::round_to_pkcs7_padded(plaintext.size()) +
+      crypto::cipher::tag_size
+    );
 
-    std::array<std::uint8_t, sizeof(control_encrypted_t) + crypto::cipher::round_to_pkcs7_padded(sizeof(plaintext)) + crypto::cipher::tag_size>
-      encrypted_payload;
-
-    auto payload = encode_control(session, util::view(plaintext), encrypted_payload);
+    auto payload = encode_control_dynamic(
+      session,
+      plaintext,
+      encrypted_payload
+    );
     if (session->broadcast_ref->control_server.send(payload, session->control.peer)) {
       TUPLE_2D(port, addr, platf::from_sockaddr_ex((sockaddr *) &session->control.peer->address.address));
-      BOOST_LOG(warning) << "Couldn't send HDR mode to ["sv << addr << ':' << port << ']';
+      BOOST_LOG(warning) << "Couldn't send HDR frame state to ["sv << addr << ':' << port << ']';
 
       return -1;
     }
 
-    BOOST_LOG(debug) << "Sent HDR mode: " << hdr_info->enabled;
+    BOOST_LOG(debug) << "Sent HDR frame state effective-from-frame="sv
+                     << effective_from_frame_number
+                     << " dynamic-range="sv
+                     << hdr_frame_content_name(state.content)
+                     << " regions="sv
+                     << state.overlay_regions.size()
+                     << " static-metadata="sv
+                     << state.has_static_metadata;
     return 0;
   }
 
@@ -1214,12 +1351,6 @@ namespace stream {
               send_feedback_msg(session, *feedback_msg);
             }
 
-            auto &hdr_queue = session->control.hdr_queue;
-            while (session->control.peer && hdr_queue->peek()) {
-              auto hdr_info = hdr_queue->pop();
-
-              send_hdr_mode(session, std::move(hdr_info));
-            }
           }
 
           ++pos;
@@ -1421,6 +1552,23 @@ namespace stream {
 
           payload_with_replacements = replace(payload, frame_old, frame_new);
           payload = {(char *) payload_with_replacements.data(), payload_with_replacements.size()};
+        }
+      }
+
+      if (session->control.peer && session->config.monitor.clientSupportsPerFrameHDRMetadata != 0) {
+        auto frame_hdr_state = packet->hdr_frame_state.value_or(video::make_sdr_hdr_frame_state());
+        if (frame_hdr_state.content == video::hdr_frame_content_e::partial_hdr_overlay &&
+            session->config.monitor.clientSupportsHDRTileOverlay == 0) {
+          frame_hdr_state = video::make_sdr_hdr_frame_state();
+        }
+
+        const bool should_send_frame_hdr_state =
+          !session->control.last_sent_hdr_frame_state.has_value() ||
+          !video::hdr_frame_state_equal(*session->control.last_sent_hdr_frame_state, frame_hdr_state) ||
+          packet->is_idr();
+        if (should_send_frame_hdr_state &&
+            send_hdr_frame_state(session, static_cast<std::uint32_t>(packet->frame_index()), frame_hdr_state) == 0) {
+          session->control.last_sent_hdr_frame_state = frame_hdr_state;
         }
       }
 
@@ -2550,7 +2698,6 @@ namespace stream {
 
       session->control.connect_data = launch_session.control_connect_data;
       session->control.feedback_queue = mail->queue<platf::gamepad_feedback_msg_t>(mail::gamepad_feedback);
-      session->control.hdr_queue = mail->event<video::hdr_info_t>(mail::hdr);
       session->control.legacy_input_enc_iv = launch_session.iv;
       session->control.cipher = crypto::cipher::gcm_t {
         launch_session.gcm_key,

@@ -4,6 +4,11 @@
  */
 #pragma once
 
+// standard includes
+#include <cstring>
+#include <optional>
+#include <vector>
+
 // local includes
 #include "input.h"
 #include "platform/common.h"
@@ -39,6 +44,109 @@ namespace video {
     frame_gated_hdr = 3,
     sdr_base_hdr_overlay = 4,
   };
+
+  enum class hdr_frame_content_e : int {
+    sdr = 0,
+    full_frame_hdr = 1,
+    partial_hdr_overlay = 2,
+  };
+
+  struct hdr_overlay_region_t {
+    int x = 0;
+    int y = 0;
+    int width = 0;
+    int height = 0;
+    bool has_metadata = false;
+    SS_HDR_METADATA metadata {};
+  };
+
+  struct hdr_frame_state_t {
+    hdr_frame_content_e content = hdr_frame_content_e::sdr;
+    bool has_static_metadata = false;
+    SS_HDR_METADATA static_metadata {};
+    std::vector<hdr_overlay_region_t> overlay_regions;
+  };
+
+  inline bool hdr_metadata_equal(const SS_HDR_METADATA &lhs, const SS_HDR_METADATA &rhs) {
+    return std::memcmp(&lhs, &rhs, sizeof(SS_HDR_METADATA)) == 0;
+  }
+
+  inline bool hdr_overlay_region_equal(const hdr_overlay_region_t &lhs, const hdr_overlay_region_t &rhs) {
+    return lhs.x == rhs.x &&
+           lhs.y == rhs.y &&
+           lhs.width == rhs.width &&
+           lhs.height == rhs.height &&
+           lhs.has_metadata == rhs.has_metadata &&
+           (!lhs.has_metadata || hdr_metadata_equal(lhs.metadata, rhs.metadata));
+  }
+
+  inline bool hdr_frame_state_equal(const hdr_frame_state_t &lhs, const hdr_frame_state_t &rhs) {
+    if (lhs.content != rhs.content ||
+        lhs.has_static_metadata != rhs.has_static_metadata ||
+        lhs.overlay_regions.size() != rhs.overlay_regions.size()) {
+      return false;
+    }
+
+    if (lhs.has_static_metadata && !hdr_metadata_equal(lhs.static_metadata, rhs.static_metadata)) {
+      return false;
+    }
+
+    for (std::size_t index = 0; index < lhs.overlay_regions.size(); ++index) {
+      if (!hdr_overlay_region_equal(lhs.overlay_regions[index], rhs.overlay_regions[index])) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  inline hdr_frame_state_t make_sdr_hdr_frame_state() {
+    return {};
+  }
+
+  inline hdr_frame_state_t make_full_frame_hdr_state(const SS_HDR_METADATA *metadata) {
+    hdr_frame_state_t state;
+    state.content = hdr_frame_content_e::full_frame_hdr;
+    if (metadata != nullptr) {
+      state.has_static_metadata = true;
+      state.static_metadata = *metadata;
+    }
+    return state;
+  }
+
+  inline hdr_frame_state_t make_overlay_hdr_frame_state(
+    std::vector<hdr_overlay_region_t> overlay_regions,
+    const SS_HDR_METADATA *metadata = nullptr
+  ) {
+    hdr_frame_state_t state;
+    state.content = hdr_frame_content_e::partial_hdr_overlay;
+    state.overlay_regions = std::move(overlay_regions);
+    if (metadata != nullptr) {
+      state.has_static_metadata = true;
+      state.static_metadata = *metadata;
+    }
+    return state;
+  }
+
+  inline hdr_frame_state_t make_default_hdr_frame_state(
+    dynamic_range_transport_e transport,
+    bool frame_is_hdr_signaled,
+    const SS_HDR_METADATA *metadata = nullptr
+  ) {
+    switch (transport) {
+      case dynamic_range_transport_e::sdr:
+        return make_sdr_hdr_frame_state();
+      case dynamic_range_transport_e::full_frame_hdr:
+        return frame_is_hdr_signaled ? make_full_frame_hdr_state(metadata) : make_sdr_hdr_frame_state();
+      case dynamic_range_transport_e::frame_gated_hdr:
+        return frame_is_hdr_signaled ? make_full_frame_hdr_state(metadata) : make_sdr_hdr_frame_state();
+      case dynamic_range_transport_e::sdr_base_hdr_overlay:
+        return make_sdr_hdr_frame_state();
+      case dynamic_range_transport_e::unknown:
+      default:
+        return frame_is_hdr_signaled ? make_full_frame_hdr_state(metadata) : make_sdr_hdr_frame_state();
+    }
+  }
 
   /* Encoding configuration requested by remote client */
   struct config_t {
@@ -103,6 +211,18 @@ namespace video {
 
   inline bool config_uses_hdr_stream(const config_t &config) {
     return dynamic_range_transport_uses_hdr_stream(effective_dynamic_range_transport(config));
+  }
+
+  inline hdr_frame_state_t make_default_hdr_frame_state(
+    const config_t &config,
+    bool frame_is_hdr_signaled,
+    const SS_HDR_METADATA *metadata = nullptr
+  ) {
+    return make_default_hdr_frame_state(
+      effective_dynamic_range_transport(config),
+      frame_is_hdr_signaled,
+      metadata
+    );
   }
 
   platf::mem_type_e map_base_dev_type(AVHWDeviceType type);
@@ -317,6 +437,7 @@ namespace video {
     void *channel_data = nullptr;
     bool after_ref_frame_invalidation = false;
     std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
+    std::optional<hdr_frame_state_t> hdr_frame_state;
   };
 
   struct packet_raw_avcodec: packet_raw_t {
@@ -376,20 +497,6 @@ namespace video {
   };
 
   using packet_t = std::unique_ptr<packet_raw_t>;
-
-  struct hdr_info_raw_t {
-    explicit hdr_info_raw_t(bool enabled):
-        enabled {enabled},
-        metadata {} {};
-    explicit hdr_info_raw_t(bool enabled, const SS_HDR_METADATA &metadata):
-        enabled {enabled},
-        metadata {metadata} {};
-
-    bool enabled;
-    SS_HDR_METADATA metadata;
-  };
-
-  using hdr_info_t = std::unique_ptr<hdr_info_raw_t>;
 
   extern int active_hevc_mode;
   extern int active_av1_mode;

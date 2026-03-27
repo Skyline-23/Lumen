@@ -187,6 +187,30 @@ namespace video {
       }
     }
 
+    video::hdr_frame_state_t negotiated_hdr_frame_state(
+      const config_t &config,
+      bool frame_is_hdr_signaled,
+      const SS_HDR_METADATA *metadata = nullptr
+    ) {
+      return video::make_default_hdr_frame_state(
+        video::effective_dynamic_range_transport(config),
+        frame_is_hdr_signaled,
+        metadata
+      );
+    }
+
+    video::hdr_frame_state_t negotiated_hdr_frame_state(
+      video::dynamic_range_transport_e transport,
+      bool frame_is_hdr_signaled,
+      const SS_HDR_METADATA *metadata = nullptr
+    ) {
+      return video::make_default_hdr_frame_state(
+        transport,
+        frame_is_hdr_signaled,
+        metadata
+      );
+    }
+
     void request_external_encoded_capture_key_frame() {
       ApolloMacBridgeRequestImmediateCaptureKeyFrame();
     }
@@ -1197,6 +1221,7 @@ namespace video {
       int bitrate,
       int framerate,
       bool ten_bit,
+      video::dynamic_range_transport_e dynamic_range_transport,
       video::sunshine_colorspace_t colorspace,
       hdr_metadata_state_t hdr_metadata_state
     ):
@@ -1207,6 +1232,7 @@ namespace video {
         bitrate(bitrate),
         framerate(framerate),
         ten_bit(ten_bit),
+        dynamic_range_transport(dynamic_range_transport),
         colorspace(colorspace),
         hdr_metadata_state(std::move(hdr_metadata_state)) {
     }
@@ -1345,6 +1371,11 @@ namespace video {
         channel_data,
         frame_timestamp,
         frame_nr,
+        negotiated_hdr_frame_state(
+          dynamic_range_transport,
+          video::colorspace_is_hdr(colorspace),
+          hdr_metadata_state.valid ? &hdr_metadata_state.metadata : nullptr
+        ),
         current_pixel_buffer_ref,
       };
 
@@ -1398,6 +1429,7 @@ namespace video {
       void *channel_data;
       std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
       int64_t frame_index;
+      video::hdr_frame_state_t hdr_frame_state;
       std::shared_ptr<platf::av_pixel_ref_t> pixel_buffer_ref;
     };
 
@@ -1648,6 +1680,7 @@ namespace video {
       auto packet = std::make_unique<packet_raw_generic>(std::move(packet_data), frame_context->frame_index, packet_is_idr);
       packet->channel_data = frame_context->channel_data;
       packet->frame_timestamp = frame_context->frame_timestamp;
+      packet->hdr_frame_state = frame_context->hdr_frame_state;
       frame_context->packets->raise(std::move(packet));
 
       auto emitted = emitted_packets.fetch_add(1, std::memory_order_relaxed) + 1;
@@ -1766,6 +1799,7 @@ namespace video {
     int bitrate {};
     int framerate {};
     bool ten_bit {false};
+    video::dynamic_range_transport_e dynamic_range_transport {video::dynamic_range_transport_e::unknown};
     video::sunshine_colorspace_t colorspace;
     hdr_metadata_state_t hdr_metadata_state;
     bool force_idr {false};
@@ -1806,6 +1840,7 @@ namespace video {
       config.bitrate * 1000,
       std::max(config.encodingFramerate, config.framerate),
       video::config_uses_hdr_stream(config),
+      video::effective_dynamic_range_transport(config),
       native_colorspace,
       hdr_metadata_state
     );
@@ -1833,7 +1868,6 @@ namespace video {
     safe::mail_raw_t::event_t<bool> shutdown_event;
     safe::mail_raw_t::queue_t<packet_t> packets;
     safe::mail_raw_t::event_t<bool> idr_events;
-    safe::mail_raw_t::event_t<hdr_info_t> hdr_events;
     safe::mail_raw_t::event_t<input::touch_port_t> touch_port_events;
 
     config_t config;
@@ -2804,7 +2838,7 @@ namespace video {
     }
   }
 
-  int encode_avcodec(int64_t frame_nr, avcodec_encode_session_t &session, safe::mail_raw_t::queue_t<packet_t> &packets, void *channel_data, std::optional<std::chrono::steady_clock::time_point> frame_timestamp) {
+  int encode_avcodec(int64_t frame_nr, avcodec_encode_session_t &session, const config_t &config, safe::mail_raw_t::queue_t<packet_t> &packets, void *channel_data, std::optional<std::chrono::steady_clock::time_point> frame_timestamp) {
     auto &frame = session.device->frame;
     frame->pts = frame_nr;
 
@@ -2892,13 +2926,17 @@ namespace video {
 
       packet->replacements = &session.replacements;
       packet->channel_data = channel_data;
+      packet->hdr_frame_state = negotiated_hdr_frame_state(
+        config,
+        video::config_uses_hdr_stream(config)
+      );
       packets->raise(std::move(packet));
     }
 
     return 0;
   }
 
-  int encode_nvenc(int64_t frame_nr, nvenc_encode_session_t &session, safe::mail_raw_t::queue_t<packet_t> &packets, void *channel_data, std::optional<std::chrono::steady_clock::time_point> frame_timestamp) {
+  int encode_nvenc(int64_t frame_nr, nvenc_encode_session_t &session, const config_t &config, safe::mail_raw_t::queue_t<packet_t> &packets, void *channel_data, std::optional<std::chrono::steady_clock::time_point> frame_timestamp) {
     auto encoded_frame = session.encode_frame(frame_nr);
     if (encoded_frame.data.empty()) {
       BOOST_LOG(error) << "NvENC returned empty packet";
@@ -2913,16 +2951,20 @@ namespace video {
     packet->channel_data = channel_data;
     packet->after_ref_frame_invalidation = encoded_frame.after_ref_frame_invalidation;
     packet->frame_timestamp = frame_timestamp;
+    packet->hdr_frame_state = negotiated_hdr_frame_state(
+      config,
+      video::config_uses_hdr_stream(config)
+    );
     packets->raise(std::move(packet));
 
     return 0;
   }
 
-  int encode(int64_t frame_nr, encode_session_t &session, safe::mail_raw_t::queue_t<packet_t> &packets, void *channel_data, std::optional<std::chrono::steady_clock::time_point> frame_timestamp) {
+  int encode(int64_t frame_nr, encode_session_t &session, const config_t &config, safe::mail_raw_t::queue_t<packet_t> &packets, void *channel_data, std::optional<std::chrono::steady_clock::time_point> frame_timestamp) {
     if (auto avcodec_session = dynamic_cast<avcodec_encode_session_t *>(&session)) {
-      return encode_avcodec(frame_nr, *avcodec_session, packets, channel_data, frame_timestamp);
+      return encode_avcodec(frame_nr, *avcodec_session, config, packets, channel_data, frame_timestamp);
     } else if (auto nvenc_session = dynamic_cast<nvenc_encode_session_t *>(&session)) {
-      return encode_nvenc(frame_nr, *nvenc_session, packets, channel_data, frame_timestamp);
+      return encode_nvenc(frame_nr, *nvenc_session, config, packets, channel_data, frame_timestamp);
 #ifdef __APPLE__
     } else if (auto vt_session = dynamic_cast<vt_compression_encode_session_t *>(&session)) {
       return vt_session->encode_frame(frame_nr, packets, channel_data, frame_timestamp);
@@ -3443,7 +3485,7 @@ namespace video {
       BOOST_LOG(info) << "Input only session, video will not be captured."sv;
 
       // Encode the dummy img only once
-      if (encode(frame_nr++, *session, packets, channel_data, std::chrono::steady_clock::now())) {
+      if (encode(frame_nr++, *session, config, packets, channel_data, std::chrono::steady_clock::now())) {
         BOOST_LOG(error) << "Could not encode dummy video packet"sv;
         return;
       }
@@ -3564,7 +3606,7 @@ namespace video {
         continue;
       }
 
-      if (encode(frame_nr++, *session, packets, channel_data, frame_timestamp)) {
+      if (encode(frame_nr++, *session, config, packets, channel_data, frame_timestamp)) {
         BOOST_LOG(error) << "Could not encode video packet"sv;
         break;
       }
@@ -3626,10 +3668,6 @@ namespace video {
         external_metadata.scalar_inv,
       });
 
-      auto hdr_event = mail->event<hdr_info_t>(mail::hdr);
-      hdr_info_t hdr_info = std::make_unique<hdr_info_raw_t>(external_metadata.hdr_active);
-      hdr_info->metadata = external_metadata.hdr_metadata;
-      hdr_event->raise(std::move(hdr_info));
     }
 
     void capture_external_encoded_ingress(
@@ -3886,6 +3924,11 @@ namespace video {
           }
           packet->channel_data = channel_data;
           packet->frame_timestamp = display_time_clock.frame_timestamp(frame.source_display_time);
+          packet->hdr_frame_state = negotiated_hdr_frame_state(
+            config,
+            frame.is_hdr_signaled,
+            external_metadata.hdr_active ? &external_metadata.hdr_metadata : nullptr
+          );
           if (!packet->frame_timestamp) {
             packet->frame_timestamp = std::chrono::steady_clock::now();
           }
@@ -4084,17 +4127,6 @@ namespace video {
     // absolute mouse coordinates require that the dimensions of the screen are known
     ctx.touch_port_events->raise(make_port(disp, ctx.config));
 
-    // Update client with our current HDR display state
-    hdr_info_t hdr_info = std::make_unique<hdr_info_raw_t>(false);
-    if (colorspace_is_hdr(encode_device->colorspace)) {
-      if (disp->get_hdr_metadata(hdr_info->metadata)) {
-        hdr_info->enabled = true;
-      } else {
-        BOOST_LOG(error) << "Couldn't get display hdr metadata when colorspace selection indicates it should have one";
-      }
-    }
-    ctx.hdr_events->raise(std::move(hdr_info));
-
     auto session = make_encode_session(disp, encoder, ctx.config, img.width, img.height, std::move(encode_device));
     if (!session) {
       BOOST_LOG(error) << "Failed to create synced encode session"sv;
@@ -4236,7 +4268,7 @@ namespace video {
             frame_timestamp = img->frame_timestamp;
           }
 
-          if (encode(ctx->frame_nr++, *pos->session, ctx->packets, ctx->channel_data, frame_timestamp)) {
+          if (encode(ctx->frame_nr++, *pos->session, ctx->config, ctx->packets, ctx->channel_data, frame_timestamp)) {
             BOOST_LOG(error) << "Could not encode video packet"sv;
             ctx->shutdown_event->raise(true);
 
@@ -4332,7 +4364,6 @@ namespace video {
     int frame_nr = 1;
 
     auto touch_port_event = mail->event<input::touch_port_t>(mail::touch_port);
-    auto hdr_event = mail->event<hdr_info_t>(mail::hdr);
 
     // Encoding takes place on this thread
     platf::adjust_thread_priority(platf::thread_priority_e::high);
@@ -4363,17 +4394,6 @@ namespace video {
 
       // absolute mouse coordinates require that the dimensions of the screen are known
       touch_port_event->raise(make_port(display.get(), config));
-
-      // Update client with our current HDR display state
-      hdr_info_t hdr_info = std::make_unique<hdr_info_raw_t>(false);
-      if (colorspace_is_hdr(encode_device->colorspace)) {
-        if (display->get_hdr_metadata(hdr_info->metadata)) {
-          hdr_info->enabled = true;
-        } else {
-          BOOST_LOG(error) << "Couldn't get display hdr metadata when colorspace selection indicates it should have one";
-        }
-      }
-      hdr_event->raise(std::move(hdr_info));
 
       encode_run(
         frame_nr,
@@ -4418,7 +4438,6 @@ namespace video {
         mail->event<bool>(mail::shutdown),
         mail::man->queue<packet_t>(mail::video_packets),
         std::move(idr_events),
-        mail->event<hdr_info_t>(mail::hdr),
         mail->event<input::touch_port_t>(mail::touch_port),
         config,
         1,
@@ -4463,7 +4482,7 @@ namespace video {
 
     auto packets = mail::man->queue<packet_t>(mail::video_packets);
     if (auto *vt_session = dynamic_cast<vt_compression_encode_session_t *>(session.get())) {
-      if (encode(1, *vt_session, packets, nullptr, {})) {
+      if (encode(1, *vt_session, config, packets, nullptr, {})) {
         return -1;
       }
 
@@ -4476,7 +4495,7 @@ namespace video {
       }
     } else {
       while (!packets->peek()) {
-        if (encode(1, *session, packets, nullptr, {})) {
+        if (encode(1, *session, config, packets, nullptr, {})) {
           return -1;
         }
       }
