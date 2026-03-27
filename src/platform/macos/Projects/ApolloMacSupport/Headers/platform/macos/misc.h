@@ -16,6 +16,11 @@
 #include "src/platform/common.h"
 
 namespace platf {
+  struct effective_display_state_t {
+    int gamut;
+    int transfer;
+  };
+
   struct capture_request_mirror_state_t {
     std::uint64_t generation;
     std::uint64_t video_generation;
@@ -31,42 +36,15 @@ namespace platf {
     int target_video_bitrate_kbps;
     int requested_width;
     int requested_height;
-    int client_sink_gamut;
-    int client_sink_transfer;
-    int effective_sink_gamut;
-    int effective_sink_transfer;
+    video::sink_request_t sink_request;
+    effective_display_state_t effective_display_state;
     bool has_effective_hdr_metadata;
-    float client_sink_current_edr_headroom;
-    float client_sink_potential_edr_headroom;
-    int client_sink_current_peak_luminance_nits;
-    int client_sink_potential_peak_luminance_nits;
-    int requested_dynamic_range_transport;
-    bool client_sink_supports_frame_gated_hdr;
-    bool client_sink_supports_hdr_tile_overlay;
-    bool client_sink_supports_per_frame_hdr_metadata;
-    int effective_hdr_red_primary_x;
-    int effective_hdr_red_primary_y;
-    int effective_hdr_green_primary_x;
-    int effective_hdr_green_primary_y;
-    int effective_hdr_blue_primary_x;
-    int effective_hdr_blue_primary_y;
-    int effective_hdr_white_point_x;
-    int effective_hdr_white_point_y;
-    int effective_hdr_max_display_luminance;
-    int effective_hdr_min_display_luminance;
-    int effective_hdr_max_content_light_level;
-    int effective_hdr_max_frame_average_light_level;
-    int effective_hdr_max_full_frame_luminance;
+    SS_HDR_METADATA effective_hdr_metadata;
     int audio_source_kind;
     bool audio_excludes_current_process;
     int audio_sample_rate;
     int audio_channel_count;
     int audio_frame_size;
-  };
-
-  struct effective_display_state_t {
-    int gamut;
-    int transfer;
   };
 
   struct external_capture_display_metadata_t {

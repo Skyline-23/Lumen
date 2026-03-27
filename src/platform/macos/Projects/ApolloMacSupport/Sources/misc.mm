@@ -161,6 +161,42 @@ namespace platf {
     }
 
     NSDictionary *capture_request_dictionary(const capture_request_mirror_state_t &state) {
+      NSDictionary *sink_mode = @{
+        @"hidpi": @(state.sink_request.mode.hidpi),
+        @"scaleExplicit": @(state.sink_request.mode.scale_explicit),
+        @"modeIsLogical": @(state.sink_request.mode.mode_is_logical),
+        @"scalePercent": @(state.sink_request.mode.scale_percent),
+      };
+      NSDictionary *sink_capability = @{
+        @"gamut": @(state.sink_request.capability.gamut),
+        @"transfer": @(state.sink_request.capability.transfer),
+        @"currentEDRHeadroom": @(state.sink_request.capability.current_edr_headroom),
+        @"potentialEDRHeadroom": @(state.sink_request.capability.potential_edr_headroom),
+        @"currentPeakLuminanceNits": @(state.sink_request.capability.current_peak_luminance_nits),
+        @"potentialPeakLuminanceNits": @(state.sink_request.capability.potential_peak_luminance_nits),
+        @"supportsFrameGatedHDR": @(state.sink_request.capability.supports_frame_gated_hdr),
+        @"supportsHDRTileOverlay": @(state.sink_request.capability.supports_hdr_tile_overlay),
+        @"supportsPerFrameHDRMetadata": @(state.sink_request.capability.supports_per_frame_hdr_metadata),
+      };
+      NSDictionary *effective_display_state = @{
+        @"gamut": @(state.effective_display_state.gamut),
+        @"transfer": @(state.effective_display_state.transfer),
+      };
+      NSDictionary *effective_hdr_metadata = @{
+        @"redPrimaryX": @(state.effective_hdr_metadata.displayPrimaries[0].x),
+        @"redPrimaryY": @(state.effective_hdr_metadata.displayPrimaries[0].y),
+        @"greenPrimaryX": @(state.effective_hdr_metadata.displayPrimaries[1].x),
+        @"greenPrimaryY": @(state.effective_hdr_metadata.displayPrimaries[1].y),
+        @"bluePrimaryX": @(state.effective_hdr_metadata.displayPrimaries[2].x),
+        @"bluePrimaryY": @(state.effective_hdr_metadata.displayPrimaries[2].y),
+        @"whitePointX": @(state.effective_hdr_metadata.whitePoint.x),
+        @"whitePointY": @(state.effective_hdr_metadata.whitePoint.y),
+        @"maxDisplayLuminance": @(state.effective_hdr_metadata.maxDisplayLuminance),
+        @"minDisplayLuminance": @(state.effective_hdr_metadata.minDisplayLuminance),
+        @"maxContentLightLevel": @(state.effective_hdr_metadata.maxContentLightLevel),
+        @"maxFrameAverageLightLevel": @(state.effective_hdr_metadata.maxFrameAverageLightLevel),
+        @"maxFullFrameLuminance": @(state.effective_hdr_metadata.maxFullFrameLuminance),
+      };
       return @{
         @"generation": @(state.generation),
         @"videoGeneration": @(state.video_generation),
@@ -176,32 +212,12 @@ namespace platf {
         @"targetVideoBitrateKbps": @(state.target_video_bitrate_kbps),
         @"requestedWidth": @(state.requested_width),
         @"requestedHeight": @(state.requested_height),
-        @"clientSinkGamut": @(state.client_sink_gamut),
-        @"clientSinkTransfer": @(state.client_sink_transfer),
-        @"effectiveSinkGamut": @(state.effective_sink_gamut),
-        @"effectiveSinkTransfer": @(state.effective_sink_transfer),
+        @"sinkMode": sink_mode,
+        @"sinkCapability": sink_capability,
+        @"sinkRequestDynamicRangeTransport": @(static_cast<int>(state.sink_request.dynamic_range_transport)),
+        @"effectiveDisplayState": effective_display_state,
         @"hasEffectiveHDRMetadata": @(state.has_effective_hdr_metadata),
-        @"clientSinkCurrentEDRHeadroom": @(state.client_sink_current_edr_headroom),
-        @"clientSinkPotentialEDRHeadroom": @(state.client_sink_potential_edr_headroom),
-        @"clientSinkCurrentPeakLuminanceNits": @(state.client_sink_current_peak_luminance_nits),
-        @"clientSinkPotentialPeakLuminanceNits": @(state.client_sink_potential_peak_luminance_nits),
-        @"requestedDynamicRangeTransport": @(state.requested_dynamic_range_transport),
-        @"clientSinkSupportsFrameGatedHDR": @(state.client_sink_supports_frame_gated_hdr),
-        @"clientSinkSupportsHDRTileOverlay": @(state.client_sink_supports_hdr_tile_overlay),
-        @"clientSinkSupportsPerFrameHDRMetadata": @(state.client_sink_supports_per_frame_hdr_metadata),
-        @"effectiveHDRRedPrimaryX": @(state.effective_hdr_red_primary_x),
-        @"effectiveHDRRedPrimaryY": @(state.effective_hdr_red_primary_y),
-        @"effectiveHDRGreenPrimaryX": @(state.effective_hdr_green_primary_x),
-        @"effectiveHDRGreenPrimaryY": @(state.effective_hdr_green_primary_y),
-        @"effectiveHDRBluePrimaryX": @(state.effective_hdr_blue_primary_x),
-        @"effectiveHDRBluePrimaryY": @(state.effective_hdr_blue_primary_y),
-        @"effectiveHDRWhitePointX": @(state.effective_hdr_white_point_x),
-        @"effectiveHDRWhitePointY": @(state.effective_hdr_white_point_y),
-        @"effectiveHDRMaxDisplayLuminance": @(state.effective_hdr_max_display_luminance),
-        @"effectiveHDRMinDisplayLuminance": @(state.effective_hdr_min_display_luminance),
-        @"effectiveHDRMaxContentLightLevel": @(state.effective_hdr_max_content_light_level),
-        @"effectiveHDRMaxFrameAverageLightLevel": @(state.effective_hdr_max_frame_average_light_level),
-        @"effectiveHDRMaxFullFrameLuminance": @(state.effective_hdr_max_full_frame_luminance),
+        @"effectiveHDRStaticMetadata": effective_hdr_metadata,
         @"audioSourceKind": @(state.audio_source_kind),
         @"audioExcludesCurrentProcess": @(state.audio_excludes_current_process),
         @"audioSampleRate": @(state.audio_sample_rate),
@@ -211,19 +227,9 @@ namespace platf {
     }
 
     struct capture_request_hdr_preferences_t {
-      int client_sink_gamut = 0;
-      int client_sink_transfer = 0;
-      int effective_sink_gamut = 0;
-      int effective_sink_transfer = 0;
+      video::sink_request_t sink_request {};
+      effective_display_state_t effective_display_state {};
       bool has_effective_hdr_metadata = false;
-      float client_sink_current_edr_headroom = 0.0f;
-      float client_sink_potential_edr_headroom = 0.0f;
-      int client_sink_current_peak_luminance_nits = 0;
-      int client_sink_potential_peak_luminance_nits = 0;
-      int requested_dynamic_range_transport = 0;
-      bool client_sink_supports_frame_gated_hdr = false;
-      bool client_sink_supports_hdr_tile_overlay = false;
-      bool client_sink_supports_per_frame_hdr_metadata = false;
       int target_video_bitrate_kbps = 0;
       SS_HDR_METADATA effective_hdr_metadata {};
     };
@@ -293,76 +299,77 @@ namespace platf {
           return std::nullopt;
         }
 
-        NSNumber *client_sink_gamut = dictionary[@"clientSinkGamut"];
-        NSNumber *client_sink_transfer = dictionary[@"clientSinkTransfer"];
-        NSNumber *effective_sink_gamut = dictionary[@"effectiveSinkGamut"];
-        NSNumber *effective_sink_transfer = dictionary[@"effectiveSinkTransfer"];
+        NSDictionary *sink_mode = [dictionary[@"sinkMode"] isKindOfClass:[NSDictionary class]] ? dictionary[@"sinkMode"] : nil;
+        NSDictionary *sink_capability = [dictionary[@"sinkCapability"] isKindOfClass:[NSDictionary class]] ? dictionary[@"sinkCapability"] : nil;
+        NSDictionary *effective_display_state = [dictionary[@"effectiveDisplayState"] isKindOfClass:[NSDictionary class]] ? dictionary[@"effectiveDisplayState"] : nil;
+        NSDictionary *effective_hdr_metadata = [dictionary[@"effectiveHDRStaticMetadata"] isKindOfClass:[NSDictionary class]] ? dictionary[@"effectiveHDRStaticMetadata"] : nil;
         NSNumber *has_effective_hdr_metadata = dictionary[@"hasEffectiveHDRMetadata"];
-        NSNumber *client_sink_current_edr_headroom = dictionary[@"clientSinkCurrentEDRHeadroom"];
-        NSNumber *client_sink_potential_edr_headroom = dictionary[@"clientSinkPotentialEDRHeadroom"];
-        NSNumber *client_sink_current_peak_luminance_nits = dictionary[@"clientSinkCurrentPeakLuminanceNits"];
-        NSNumber *client_sink_potential_peak_luminance_nits = dictionary[@"clientSinkPotentialPeakLuminanceNits"];
-        NSNumber *requested_dynamic_range_transport = dictionary[@"requestedDynamicRangeTransport"];
-        NSNumber *client_sink_supports_frame_gated_hdr = dictionary[@"clientSinkSupportsFrameGatedHDR"];
-        NSNumber *client_sink_supports_hdr_tile_overlay = dictionary[@"clientSinkSupportsHDRTileOverlay"];
-        NSNumber *client_sink_supports_per_frame_hdr_metadata = dictionary[@"clientSinkSupportsPerFrameHDRMetadata"];
+        NSNumber *requested_dynamic_range_transport = dictionary[@"sinkRequestDynamicRangeTransport"];
         NSNumber *target_video_bitrate_kbps = dictionary[@"targetVideoBitrateKbps"];
-        if (client_sink_gamut == nil || client_sink_transfer == nil) {
+        NSNumber *sink_capability_gamut = sink_capability[@"gamut"];
+        NSNumber *sink_capability_transfer = sink_capability[@"transfer"];
+        if (sink_capability_gamut == nil || sink_capability_transfer == nil) {
           return std::nullopt;
         }
 
         capture_request_hdr_preferences_t preferences;
-        preferences.client_sink_gamut = [client_sink_gamut intValue];
-        preferences.client_sink_transfer = [client_sink_transfer intValue];
-        preferences.effective_sink_gamut = effective_sink_gamut != nil ? [effective_sink_gamut intValue] : 0;
-        preferences.effective_sink_transfer = effective_sink_transfer != nil ? [effective_sink_transfer intValue] : 0;
-        preferences.client_sink_current_edr_headroom =
-          client_sink_current_edr_headroom != nil ? [client_sink_current_edr_headroom floatValue] : 0.0f;
-        preferences.client_sink_potential_edr_headroom =
-          client_sink_potential_edr_headroom != nil ? [client_sink_potential_edr_headroom floatValue] : 0.0f;
-        preferences.client_sink_current_peak_luminance_nits =
-          client_sink_current_peak_luminance_nits != nil ? [client_sink_current_peak_luminance_nits intValue] : 0;
-        preferences.client_sink_potential_peak_luminance_nits =
-          client_sink_potential_peak_luminance_nits != nil ? [client_sink_potential_peak_luminance_nits intValue] : 0;
-        preferences.requested_dynamic_range_transport =
-          requested_dynamic_range_transport != nil ? [requested_dynamic_range_transport intValue] : 0;
-        preferences.client_sink_supports_frame_gated_hdr =
-          client_sink_supports_frame_gated_hdr != nil ? [client_sink_supports_frame_gated_hdr boolValue] : false;
-        preferences.client_sink_supports_hdr_tile_overlay =
-          client_sink_supports_hdr_tile_overlay != nil ? [client_sink_supports_hdr_tile_overlay boolValue] : false;
-        preferences.client_sink_supports_per_frame_hdr_metadata =
-          client_sink_supports_per_frame_hdr_metadata != nil ? [client_sink_supports_per_frame_hdr_metadata boolValue] : false;
+        if (sink_mode != nil) {
+          preferences.sink_request.mode.hidpi = [sink_mode[@"hidpi"] boolValue];
+          preferences.sink_request.mode.scale_explicit = [sink_mode[@"scaleExplicit"] boolValue];
+          preferences.sink_request.mode.mode_is_logical = [sink_mode[@"modeIsLogical"] boolValue];
+          preferences.sink_request.mode.scale_percent = sink_mode[@"scalePercent"] != nil ? [sink_mode[@"scalePercent"] intValue] : 100;
+        }
+        preferences.sink_request.capability.gamut = [sink_capability_gamut intValue];
+        preferences.sink_request.capability.transfer = [sink_capability_transfer intValue];
+        preferences.effective_display_state.gamut = effective_display_state[@"gamut"] != nil ? [effective_display_state[@"gamut"] intValue] : 0;
+        preferences.effective_display_state.transfer = effective_display_state[@"transfer"] != nil ? [effective_display_state[@"transfer"] intValue] : 0;
+        preferences.sink_request.capability.current_edr_headroom =
+          sink_capability[@"currentEDRHeadroom"] != nil ? [sink_capability[@"currentEDRHeadroom"] floatValue] : 0.0f;
+        preferences.sink_request.capability.potential_edr_headroom =
+          sink_capability[@"potentialEDRHeadroom"] != nil ? [sink_capability[@"potentialEDRHeadroom"] floatValue] : 0.0f;
+        preferences.sink_request.capability.current_peak_luminance_nits =
+          sink_capability[@"currentPeakLuminanceNits"] != nil ? [sink_capability[@"currentPeakLuminanceNits"] intValue] : 0;
+        preferences.sink_request.capability.potential_peak_luminance_nits =
+          sink_capability[@"potentialPeakLuminanceNits"] != nil ? [sink_capability[@"potentialPeakLuminanceNits"] intValue] : 0;
+        preferences.sink_request.dynamic_range_transport =
+          requested_dynamic_range_transport != nil ? static_cast<video::dynamic_range_transport_e>([requested_dynamic_range_transport intValue]) : video::dynamic_range_transport_e::unknown;
+        preferences.sink_request.capability.supports_frame_gated_hdr =
+          sink_capability[@"supportsFrameGatedHDR"] != nil ? [sink_capability[@"supportsFrameGatedHDR"] boolValue] : false;
+        preferences.sink_request.capability.supports_hdr_tile_overlay =
+          sink_capability[@"supportsHDRTileOverlay"] != nil ? [sink_capability[@"supportsHDRTileOverlay"] boolValue] : false;
+        preferences.sink_request.capability.supports_per_frame_hdr_metadata =
+          sink_capability[@"supportsPerFrameHDRMetadata"] != nil ? [sink_capability[@"supportsPerFrameHDRMetadata"] boolValue] : false;
         preferences.target_video_bitrate_kbps =
           target_video_bitrate_kbps != nil ? [target_video_bitrate_kbps intValue] : 0;
 
-        if (has_effective_hdr_metadata.boolValue) {
+        if (has_effective_hdr_metadata.boolValue && effective_hdr_metadata != nil) {
           preferences.has_effective_hdr_metadata = true;
           preferences.effective_hdr_metadata.displayPrimaries[0] = {
-            static_cast<uint16_t>([dictionary[@"effectiveHDRRedPrimaryX"] intValue]),
-            static_cast<uint16_t>([dictionary[@"effectiveHDRRedPrimaryY"] intValue]),
+            static_cast<uint16_t>([effective_hdr_metadata[@"redPrimaryX"] intValue]),
+            static_cast<uint16_t>([effective_hdr_metadata[@"redPrimaryY"] intValue]),
           };
           preferences.effective_hdr_metadata.displayPrimaries[1] = {
-            static_cast<uint16_t>([dictionary[@"effectiveHDRGreenPrimaryX"] intValue]),
-            static_cast<uint16_t>([dictionary[@"effectiveHDRGreenPrimaryY"] intValue]),
+            static_cast<uint16_t>([effective_hdr_metadata[@"greenPrimaryX"] intValue]),
+            static_cast<uint16_t>([effective_hdr_metadata[@"greenPrimaryY"] intValue]),
           };
           preferences.effective_hdr_metadata.displayPrimaries[2] = {
-            static_cast<uint16_t>([dictionary[@"effectiveHDRBluePrimaryX"] intValue]),
-            static_cast<uint16_t>([dictionary[@"effectiveHDRBluePrimaryY"] intValue]),
+            static_cast<uint16_t>([effective_hdr_metadata[@"bluePrimaryX"] intValue]),
+            static_cast<uint16_t>([effective_hdr_metadata[@"bluePrimaryY"] intValue]),
           };
           preferences.effective_hdr_metadata.whitePoint = {
-            static_cast<uint16_t>([dictionary[@"effectiveHDRWhitePointX"] intValue]),
-            static_cast<uint16_t>([dictionary[@"effectiveHDRWhitePointY"] intValue]),
+            static_cast<uint16_t>([effective_hdr_metadata[@"whitePointX"] intValue]),
+            static_cast<uint16_t>([effective_hdr_metadata[@"whitePointY"] intValue]),
           };
           preferences.effective_hdr_metadata.maxDisplayLuminance =
-            static_cast<uint32_t>([dictionary[@"effectiveHDRMaxDisplayLuminance"] intValue]);
+            static_cast<uint32_t>([effective_hdr_metadata[@"maxDisplayLuminance"] intValue]);
           preferences.effective_hdr_metadata.minDisplayLuminance =
-            static_cast<uint32_t>([dictionary[@"effectiveHDRMinDisplayLuminance"] intValue]);
+            static_cast<uint32_t>([effective_hdr_metadata[@"minDisplayLuminance"] intValue]);
           preferences.effective_hdr_metadata.maxContentLightLevel =
-            static_cast<uint16_t>([dictionary[@"effectiveHDRMaxContentLightLevel"] intValue]);
+            static_cast<uint16_t>([effective_hdr_metadata[@"maxContentLightLevel"] intValue]);
           preferences.effective_hdr_metadata.maxFrameAverageLightLevel =
-            static_cast<uint16_t>([dictionary[@"effectiveHDRMaxFrameAverageLightLevel"] intValue]);
+            static_cast<uint16_t>([effective_hdr_metadata[@"maxFrameAverageLightLevel"] intValue]);
           preferences.effective_hdr_metadata.maxFullFrameLuminance =
-            static_cast<uint16_t>([dictionary[@"effectiveHDRMaxFullFrameLuminance"] intValue]);
+            static_cast<uint16_t>([effective_hdr_metadata[@"maxFullFrameLuminance"] intValue]);
         }
 
         return preferences;
@@ -529,20 +536,20 @@ namespace platf {
       }
 
       auto effective_state =
-        preferences.effective_sink_gamut != 0 && preferences.effective_sink_transfer != 0 ?
+        preferences.effective_display_state.gamut != 0 && preferences.effective_display_state.transfer != 0 ?
           effective_display_state_t {
-            .gamut = preferences.effective_sink_gamut,
-            .transfer = preferences.effective_sink_transfer,
+            .gamut = preferences.effective_display_state.gamut,
+            .transfer = preferences.effective_display_state.transfer,
           } :
           resolve_capture_request_effective_display_state_impl(
             screen,
-            static_cast<video::dynamic_range_transport_e>(preferences.requested_dynamic_range_transport),
-            preferences.client_sink_gamut,
-            preferences.client_sink_transfer
+            preferences.sink_request.dynamic_range_transport,
+            preferences.sink_request.capability.gamut,
+            preferences.sink_request.capability.transfer
           );
 
       if (!video::dynamic_range_transport_uses_hdr_stream(
-            video::effective_dynamic_range_transport(preferences.requested_dynamic_range_transport)
+            video::effective_dynamic_range_transport(preferences.sink_request.dynamic_range_transport)
           )) {
         return false;
       }
@@ -551,10 +558,10 @@ namespace platf {
       if (!resolve_effective_display_hdr_metadata_impl(
             effective_state.gamut,
             effective_state.transfer,
-            preferences.client_sink_current_edr_headroom,
-            preferences.client_sink_potential_edr_headroom,
-            preferences.client_sink_current_peak_luminance_nits,
-            preferences.client_sink_potential_peak_luminance_nits,
+            preferences.sink_request.capability.current_edr_headroom,
+            preferences.sink_request.capability.potential_edr_headroom,
+            preferences.sink_request.capability.current_peak_luminance_nits,
+            preferences.sink_request.capability.potential_peak_luminance_nits,
             &peak_source,
             metadata
           )) {
@@ -562,14 +569,14 @@ namespace platf {
       }
 
       BOOST_LOG(info) << "macOS external capture HDR metadata negotiation resolved from mirrored capture request"
-                      << " requested-gamut="sv << display_gamut_label(preferences.client_sink_gamut)
+                      << " requested-gamut="sv << display_gamut_label(preferences.sink_request.capability.gamut)
                       << " effective-gamut="sv << display_gamut_label(effective_state.gamut)
-                      << " requested-transfer="sv << preferences.client_sink_transfer
+                      << " requested-transfer="sv << preferences.sink_request.capability.transfer
                       << " effective-transfer="sv << effective_state.transfer
-                      << " current-edr-headroom="sv << preferences.client_sink_current_edr_headroom
-                      << " potential-edr-headroom="sv << preferences.client_sink_potential_edr_headroom
-                      << " current-peak-nits="sv << preferences.client_sink_current_peak_luminance_nits
-                      << " potential-peak-nits="sv << preferences.client_sink_potential_peak_luminance_nits
+                      << " current-edr-headroom="sv << preferences.sink_request.capability.current_edr_headroom
+                      << " potential-edr-headroom="sv << preferences.sink_request.capability.potential_edr_headroom
+                      << " current-peak-nits="sv << preferences.sink_request.capability.current_peak_luminance_nits
+                      << " potential-peak-nits="sv << preferences.sink_request.capability.potential_peak_luminance_nits
                       << " peak-source="sv << peak_source
                       << " max-display-nits="sv << metadata.maxDisplayLuminance;
       return true;
@@ -1840,12 +1847,12 @@ namespace platf {
           preferences && bridge_aligned_external_capture_hdr_metadata(*preferences, const_cast<NSScreen *>(screen), metadata.hdr_metadata)) {
         metadata.hdr_active = true;
         BOOST_LOG(info) << "macOS external capture HDR metadata aligned to mirrored capture request"
-                        << " gamut="sv << preferences->client_sink_gamut
-                        << " transfer="sv << preferences->client_sink_transfer
-                        << " current-edr-headroom="sv << preferences->client_sink_current_edr_headroom
-                        << " potential-edr-headroom="sv << preferences->client_sink_potential_edr_headroom
-                        << " current-peak-nits="sv << preferences->client_sink_current_peak_luminance_nits
-                        << " potential-peak-nits="sv << preferences->client_sink_potential_peak_luminance_nits
+                        << " gamut="sv << preferences->sink_request.capability.gamut
+                        << " transfer="sv << preferences->sink_request.capability.transfer
+                        << " current-edr-headroom="sv << preferences->sink_request.capability.current_edr_headroom
+                        << " potential-edr-headroom="sv << preferences->sink_request.capability.potential_edr_headroom
+                        << " current-peak-nits="sv << preferences->sink_request.capability.current_peak_luminance_nits
+                        << " potential-peak-nits="sv << preferences->sink_request.capability.potential_peak_luminance_nits
                         << " max-display-nits="sv << metadata.hdr_metadata.maxDisplayLuminance;
       } else if (fallback_external_capture_hdr_metadata(const_cast<NSScreen *>(screen), metadata.hdr_metadata)) {
         metadata.hdr_active = true;

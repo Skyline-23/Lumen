@@ -2303,40 +2303,67 @@ namespace stream {
         .queue_profile = static_cast<int>(snapshot.queue_profile),
         .show_cursor = snapshot.show_cursor,
         .target_frame_rate = snapshot.target_frame_rate,
+        .target_video_bitrate_kbps = snapshot.target_video_bitrate_kbps,
         .requested_width = snapshot.requested_width,
         .requested_height = snapshot.requested_height,
-        .client_sink_gamut = snapshot.sink_request.capability.gamut,
-        .client_sink_transfer = snapshot.sink_request.capability.transfer,
-        .effective_sink_gamut = snapshot.effective_display_state.gamut,
-        .effective_sink_transfer = snapshot.effective_display_state.transfer,
+        .sink_request = {
+          .mode = {
+            .hidpi = snapshot.sink_request.mode.hidpi,
+            .scale_explicit = snapshot.sink_request.mode.scale_explicit,
+            .mode_is_logical = snapshot.sink_request.mode.mode_is_logical,
+            .scale_percent = snapshot.sink_request.mode.scale_percent,
+          },
+          .capability = {
+            .gamut = snapshot.sink_request.capability.gamut,
+            .transfer = snapshot.sink_request.capability.transfer,
+            .current_edr_headroom = snapshot.sink_request.capability.current_edr_headroom,
+            .potential_edr_headroom = snapshot.sink_request.capability.potential_edr_headroom,
+            .current_peak_luminance_nits = snapshot.sink_request.capability.current_peak_luminance_nits,
+            .potential_peak_luminance_nits = snapshot.sink_request.capability.potential_peak_luminance_nits,
+            .supports_frame_gated_hdr = snapshot.sink_request.capability.supports_frame_gated_hdr,
+            .supports_hdr_tile_overlay = snapshot.sink_request.capability.supports_hdr_tile_overlay,
+            .supports_per_frame_hdr_metadata = snapshot.sink_request.capability.supports_per_frame_hdr_metadata,
+          },
+          .dynamic_range_transport = static_cast<video::dynamic_range_transport_e>(snapshot.sink_request.dynamic_range_transport),
+        },
+        .effective_display_state = {
+          .gamut = snapshot.effective_display_state.gamut,
+          .transfer = snapshot.effective_display_state.transfer,
+        },
         .has_effective_hdr_metadata = snapshot.effective_display_state.has_hdr_static_metadata,
-        .client_sink_current_edr_headroom = snapshot.sink_request.capability.current_edr_headroom,
-        .client_sink_potential_edr_headroom = snapshot.sink_request.capability.potential_edr_headroom,
-        .client_sink_current_peak_luminance_nits = snapshot.sink_request.capability.current_peak_luminance_nits,
-        .client_sink_potential_peak_luminance_nits = snapshot.sink_request.capability.potential_peak_luminance_nits,
-        .requested_dynamic_range_transport = static_cast<int>(snapshot.sink_request.dynamic_range_transport),
-        .client_sink_supports_frame_gated_hdr = snapshot.sink_request.capability.supports_frame_gated_hdr,
-        .client_sink_supports_hdr_tile_overlay = snapshot.sink_request.capability.supports_hdr_tile_overlay,
-        .client_sink_supports_per_frame_hdr_metadata = snapshot.sink_request.capability.supports_per_frame_hdr_metadata,
-        .effective_hdr_red_primary_x = snapshot.effective_display_state.hdr_static_metadata.red_primary_x,
-        .effective_hdr_red_primary_y = snapshot.effective_display_state.hdr_static_metadata.red_primary_y,
-        .effective_hdr_green_primary_x = snapshot.effective_display_state.hdr_static_metadata.green_primary_x,
-        .effective_hdr_green_primary_y = snapshot.effective_display_state.hdr_static_metadata.green_primary_y,
-        .effective_hdr_blue_primary_x = snapshot.effective_display_state.hdr_static_metadata.blue_primary_x,
-        .effective_hdr_blue_primary_y = snapshot.effective_display_state.hdr_static_metadata.blue_primary_y,
-        .effective_hdr_white_point_x = snapshot.effective_display_state.hdr_static_metadata.white_point_x,
-        .effective_hdr_white_point_y = snapshot.effective_display_state.hdr_static_metadata.white_point_y,
-        .effective_hdr_max_display_luminance = snapshot.effective_display_state.hdr_static_metadata.max_display_luminance,
-        .effective_hdr_min_display_luminance = snapshot.effective_display_state.hdr_static_metadata.min_display_luminance,
-        .effective_hdr_max_content_light_level = snapshot.effective_display_state.hdr_static_metadata.max_content_light_level,
-        .effective_hdr_max_frame_average_light_level = snapshot.effective_display_state.hdr_static_metadata.max_frame_average_light_level,
-        .effective_hdr_max_full_frame_luminance = snapshot.effective_display_state.hdr_static_metadata.max_full_frame_luminance,
+        .effective_hdr_metadata = {},
         .audio_source_kind = static_cast<int>(snapshot.audio_source_kind),
         .audio_excludes_current_process = snapshot.audio_excludes_current_process,
         .audio_sample_rate = snapshot.audio_sample_rate,
         .audio_channel_count = snapshot.audio_channel_count,
         .audio_frame_size = snapshot.audio_frame_size,
       };
+      mirror_state.effective_hdr_metadata.displayPrimaries[0] = {
+        static_cast<uint16_t>(snapshot.effective_display_state.hdr_static_metadata.red_primary_x),
+        static_cast<uint16_t>(snapshot.effective_display_state.hdr_static_metadata.red_primary_y),
+      };
+      mirror_state.effective_hdr_metadata.displayPrimaries[1] = {
+        static_cast<uint16_t>(snapshot.effective_display_state.hdr_static_metadata.green_primary_x),
+        static_cast<uint16_t>(snapshot.effective_display_state.hdr_static_metadata.green_primary_y),
+      };
+      mirror_state.effective_hdr_metadata.displayPrimaries[2] = {
+        static_cast<uint16_t>(snapshot.effective_display_state.hdr_static_metadata.blue_primary_x),
+        static_cast<uint16_t>(snapshot.effective_display_state.hdr_static_metadata.blue_primary_y),
+      };
+      mirror_state.effective_hdr_metadata.whitePoint = {
+        static_cast<uint16_t>(snapshot.effective_display_state.hdr_static_metadata.white_point_x),
+        static_cast<uint16_t>(snapshot.effective_display_state.hdr_static_metadata.white_point_y),
+      };
+      mirror_state.effective_hdr_metadata.maxDisplayLuminance =
+        static_cast<uint32_t>(snapshot.effective_display_state.hdr_static_metadata.max_display_luminance);
+      mirror_state.effective_hdr_metadata.minDisplayLuminance =
+        static_cast<uint32_t>(snapshot.effective_display_state.hdr_static_metadata.min_display_luminance);
+      mirror_state.effective_hdr_metadata.maxContentLightLevel =
+        static_cast<uint16_t>(snapshot.effective_display_state.hdr_static_metadata.max_content_light_level);
+      mirror_state.effective_hdr_metadata.maxFrameAverageLightLevel =
+        static_cast<uint16_t>(snapshot.effective_display_state.hdr_static_metadata.max_frame_average_light_level);
+      mirror_state.effective_hdr_metadata.maxFullFrameLuminance =
+        static_cast<uint16_t>(snapshot.effective_display_state.hdr_static_metadata.max_full_frame_luminance);
       platf::mirror_capture_request_state(mirror_state);
     }
 
