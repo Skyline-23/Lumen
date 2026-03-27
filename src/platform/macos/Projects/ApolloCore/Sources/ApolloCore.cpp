@@ -1088,7 +1088,11 @@ void ApolloCoreCaptureRequestPublishVideo(
   float client_display_current_edr_headroom,
   float client_display_potential_edr_headroom,
   int32_t client_display_current_peak_luminance_nits,
-  int32_t client_display_potential_peak_luminance_nits
+  int32_t client_display_potential_peak_luminance_nits,
+  ApolloCoreDynamicRangeTransport requested_dynamic_range_transport,
+  bool client_supports_frame_gated_hdr,
+  bool client_supports_hdr_tile_overlay,
+  bool client_supports_per_frame_hdr_metadata
 ) {
   auto *state = shared_capture_request_state();
   {
@@ -1116,6 +1120,10 @@ void ApolloCoreCaptureRequestPublishVideo(
     state->snapshot.client_display_potential_edr_headroom = std::max(client_display_potential_edr_headroom, 0.0f);
     state->snapshot.client_display_current_peak_luminance_nits = std::max<int32_t>(client_display_current_peak_luminance_nits, 0);
     state->snapshot.client_display_potential_peak_luminance_nits = std::max<int32_t>(client_display_potential_peak_luminance_nits, 0);
+    state->snapshot.requested_dynamic_range_transport = requested_dynamic_range_transport;
+    state->snapshot.client_supports_frame_gated_hdr = client_supports_frame_gated_hdr;
+    state->snapshot.client_supports_hdr_tile_overlay = client_supports_hdr_tile_overlay;
+    state->snapshot.client_supports_per_frame_hdr_metadata = client_supports_per_frame_hdr_metadata;
   }
   state->change_cv.notify_all();
 }

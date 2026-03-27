@@ -1597,7 +1597,7 @@ namespace platf::dxgi {
       device_ctx->VSSetConstantBuffers(2, 1, &rotation);
     }
 
-    if (config.dynamicRange && is_hdr()) {
+    if (video::config_uses_hdr_stream(config) && is_hdr()) {
       // This shader will normalize scRGB white levels to a user-defined white level
       status = device->CreatePixelShader(cursor_ps_normalize_white_hlsl->GetBufferPointer(), cursor_ps_normalize_white_hlsl->GetBufferSize(), nullptr, &cursor_ps);
       if (status) {
@@ -1874,7 +1874,7 @@ namespace platf::dxgi {
                                  << AMF_GET_BUILD_VERSION(version);
               BOOST_LOG(warning) << "If your AMD GPU supports AV1 encoding, update your graphics drivers!"sv;
               return false;
-            } else if (config.dynamicRange && version < AMF_MAKE_FULL_VERSION(1, 4, 23, 0)) {
+            } else if (video::config_uses_hdr_stream(config) && version < AMF_MAKE_FULL_VERSION(1, 4, 23, 0)) {
               // Older versions of the AMD AMF runtime can crash when fed P010 surfaces.
               // Fail if AMF version is below 1.4.23 where HEVC Main10 encoding was introduced.
               // AMF 1.4.23 corresponds to driver version 21.12.1 (21.40.11.03) or newer.

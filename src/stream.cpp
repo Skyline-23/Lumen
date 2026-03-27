@@ -2102,6 +2102,22 @@ namespace stream {
       }
     }
 
+    std::string_view apollo_core_dynamic_range_transport_name(int transport) {
+      switch (static_cast<video::dynamic_range_transport_e>(transport)) {
+        case video::dynamic_range_transport_e::sdr:
+          return "sdr"sv;
+        case video::dynamic_range_transport_e::full_frame_hdr:
+          return "full-frame-hdr"sv;
+        case video::dynamic_range_transport_e::frame_gated_hdr:
+          return "frame-gated-hdr"sv;
+        case video::dynamic_range_transport_e::sdr_base_hdr_overlay:
+          return "sdr-base-hdr-overlay"sv;
+        case video::dynamic_range_transport_e::unknown:
+        default:
+          return "unknown"sv;
+      }
+    }
+
     ApolloCoreHDRStaticMetadata apollo_core_hdr_static_metadata(const SS_HDR_METADATA &metadata) {
       return ApolloCoreHDRStaticMetadata {
         .red_primary_x = static_cast<int32_t>(metadata.displayPrimaries[0].x),
@@ -2151,6 +2167,10 @@ namespace stream {
         .client_display_potential_edr_headroom = snapshot.client_display_potential_edr_headroom,
         .client_display_current_peak_luminance_nits = snapshot.client_display_current_peak_luminance_nits,
         .client_display_potential_peak_luminance_nits = snapshot.client_display_potential_peak_luminance_nits,
+        .requested_dynamic_range_transport = static_cast<int>(snapshot.requested_dynamic_range_transport),
+        .client_supports_frame_gated_hdr = snapshot.client_supports_frame_gated_hdr,
+        .client_supports_hdr_tile_overlay = snapshot.client_supports_hdr_tile_overlay,
+        .client_supports_per_frame_hdr_metadata = snapshot.client_supports_per_frame_hdr_metadata,
         .effective_hdr_red_primary_x = snapshot.effective_hdr_metadata.red_primary_x,
         .effective_hdr_red_primary_y = snapshot.effective_hdr_metadata.red_primary_y,
         .effective_hdr_green_primary_x = snapshot.effective_hdr_metadata.green_primary_x,
@@ -2191,7 +2211,8 @@ namespace stream {
       );
       ApolloCoreHDRStaticMetadata effective_hdr_metadata {};
       bool has_effective_hdr_metadata = false;
-      if (session.config.monitor.dynamicRange > 0) {
+      const bool hdr_stream = video::config_uses_hdr_stream(session.config.monitor);
+      if (hdr_stream) {
         SS_HDR_METADATA hdr_metadata {};
         has_effective_hdr_metadata = platf::resolve_effective_display_hdr_metadata(
           effective_display_state.gamut,
@@ -2214,10 +2235,13 @@ namespace stream {
                       << " fps="sv << session.config.monitor.framerate
                       << " size="sv << session.config.monitor.width << "x"sv << session.config.monitor.height
                       << " hdr="sv << session.config.monitor.dynamicRange
-                      << " client-gamut="sv
+                      << " hdr-stream="sv << hdr_stream
+                      << " sink-gamut="sv
                       << apollo_core_client_display_gamut_name(session.config.monitor.clientDisplayGamut)
-                      << " client-transfer="sv
+                      << " sink-transfer="sv
                       << apollo_core_client_display_transfer_name(session.config.monitor.clientDisplayTransfer)
+                      << " requested-transport="sv
+                      << apollo_core_dynamic_range_transport_name(session.config.monitor.requestedDynamicRangeTransport)
                       << " current-edr-headroom="sv
                       << session.config.monitor.clientDisplayCurrentEDRHeadroom
                       << " potential-edr-headroom="sv
@@ -2230,6 +2254,12 @@ namespace stream {
                       << apollo_core_client_display_gamut_name(effective_display_state.gamut)
                       << " effective-transfer="sv
                       << apollo_core_client_display_transfer_name(effective_display_state.transfer)
+                      << " supports-frame-gated-hdr="sv
+                      << (session.config.monitor.clientSupportsFrameGatedHDR != 0)
+                      << " supports-hdr-tile-overlay="sv
+                      << (session.config.monitor.clientSupportsHDRTileOverlay != 0)
+                      << " supports-per-frame-hdr-metadata="sv
+                      << (session.config.monitor.clientSupportsPerFrameHDRMetadata != 0)
                       << " effective-hdr-metadata="sv << has_effective_hdr_metadata;
 
       ApolloCoreCaptureRequestClear();
@@ -2253,7 +2283,11 @@ namespace stream {
         session.config.monitor.clientDisplayCurrentEDRHeadroom,
         session.config.monitor.clientDisplayPotentialEDRHeadroom,
         session.config.monitor.clientDisplayCurrentPeakLuminanceNits,
-        session.config.monitor.clientDisplayPotentialPeakLuminanceNits
+        session.config.monitor.clientDisplayPotentialPeakLuminanceNits,
+        static_cast<ApolloCoreDynamicRangeTransport>(session.config.monitor.requestedDynamicRangeTransport),
+        session.config.monitor.clientSupportsFrameGatedHDR != 0,
+        session.config.monitor.clientSupportsHDRTileOverlay != 0,
+        session.config.monitor.clientSupportsPerFrameHDRMetadata != 0
       );
 
       if (config::audio.stream && !session.config.audio.input_only) {

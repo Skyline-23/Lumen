@@ -36,6 +36,10 @@ public final class ApolloBridgeConfigurationBox: NSObject {
     public let clientDisplayPotentialEDRHeadroom: Float
     public let clientDisplayCurrentPeakLuminanceNits: Int
     public let clientDisplayPotentialPeakLuminanceNits: Int
+    public let requestedDynamicRangeTransportRawValue: Int
+    public let clientSupportsFrameGatedHDR: Bool
+    public let clientSupportsHDRTileOverlay: Bool
+    public let clientSupportsPerFrameHDRMetadata: Bool
 
     public init(
         displayID: UInt32,
@@ -69,7 +73,11 @@ public final class ApolloBridgeConfigurationBox: NSObject {
         clientDisplayCurrentEDRHeadroom: Float,
         clientDisplayPotentialEDRHeadroom: Float,
         clientDisplayCurrentPeakLuminanceNits: Int,
-        clientDisplayPotentialPeakLuminanceNits: Int
+        clientDisplayPotentialPeakLuminanceNits: Int,
+        requestedDynamicRangeTransportRawValue: Int,
+        clientSupportsFrameGatedHDR: Bool,
+        clientSupportsHDRTileOverlay: Bool,
+        clientSupportsPerFrameHDRMetadata: Bool
     ) {
         self.displayID = displayID
         self.codecRawValue = codecRawValue
@@ -103,6 +111,10 @@ public final class ApolloBridgeConfigurationBox: NSObject {
         self.clientDisplayPotentialEDRHeadroom = clientDisplayPotentialEDRHeadroom
         self.clientDisplayCurrentPeakLuminanceNits = clientDisplayCurrentPeakLuminanceNits
         self.clientDisplayPotentialPeakLuminanceNits = clientDisplayPotentialPeakLuminanceNits
+        self.requestedDynamicRangeTransportRawValue = requestedDynamicRangeTransportRawValue
+        self.clientSupportsFrameGatedHDR = clientSupportsFrameGatedHDR
+        self.clientSupportsHDRTileOverlay = clientSupportsHDRTileOverlay
+        self.clientSupportsPerFrameHDRMetadata = clientSupportsPerFrameHDRMetadata
     }
 
     convenience init(configuration: ApolloMacDisplayKitCaptureConfiguration) {
@@ -139,7 +151,11 @@ public final class ApolloBridgeConfigurationBox: NSObject {
             clientDisplayCurrentEDRHeadroom: configuration.clientDisplayCurrentEDRHeadroom,
             clientDisplayPotentialEDRHeadroom: configuration.clientDisplayPotentialEDRHeadroom,
             clientDisplayCurrentPeakLuminanceNits: configuration.clientDisplayCurrentPeakLuminanceNits,
-            clientDisplayPotentialPeakLuminanceNits: configuration.clientDisplayPotentialPeakLuminanceNits
+            clientDisplayPotentialPeakLuminanceNits: configuration.clientDisplayPotentialPeakLuminanceNits,
+            requestedDynamicRangeTransportRawValue: Int(configuration.requestedDynamicRangeTransport.rawValue),
+            clientSupportsFrameGatedHDR: configuration.clientSupportsFrameGatedHDR,
+            clientSupportsHDRTileOverlay: configuration.clientSupportsHDRTileOverlay,
+            clientSupportsPerFrameHDRMetadata: configuration.clientSupportsPerFrameHDRMetadata
         )
     }
 
@@ -178,7 +194,13 @@ public final class ApolloBridgeConfigurationBox: NSObject {
             clientDisplayCurrentEDRHeadroom: clientDisplayCurrentEDRHeadroom,
             clientDisplayPotentialEDRHeadroom: clientDisplayPotentialEDRHeadroom,
             clientDisplayCurrentPeakLuminanceNits: clientDisplayCurrentPeakLuminanceNits,
-            clientDisplayPotentialPeakLuminanceNits: clientDisplayPotentialPeakLuminanceNits
+            clientDisplayPotentialPeakLuminanceNits: clientDisplayPotentialPeakLuminanceNits,
+            requestedDynamicRangeTransport: ApolloCoreDynamicRangeTransport(
+                rawValue: UInt32(requestedDynamicRangeTransportRawValue)
+            ) ?? ApolloCoreDynamicRangeTransportUnknown,
+            clientSupportsFrameGatedHDR: clientSupportsFrameGatedHDR,
+            clientSupportsHDRTileOverlay: clientSupportsHDRTileOverlay,
+            clientSupportsPerFrameHDRMetadata: clientSupportsPerFrameHDRMetadata
         )
     }
 }

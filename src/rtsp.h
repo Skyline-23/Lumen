@@ -59,6 +59,10 @@ namespace rtsp_stream {
     float client_display_potential_edr_headroom;
     int client_display_current_peak_luminance_nits;
     int client_display_potential_peak_luminance_nits;
+    int requested_dynamic_range_transport;
+    bool client_supports_frame_gated_hdr;
+    bool client_supports_hdr_tile_overlay;
+    bool client_supports_per_frame_hdr_metadata;
 
     std::optional<crypto::cipher::gcm_t> rtsp_cipher;
     std::string rtsp_url_scheme;

@@ -177,15 +177,19 @@ namespace platf {
         @"requestedWidth": @(state.requested_width),
         @"requestedHeight": @(state.requested_height),
         @"dynamicRange": @(state.dynamic_range),
-        @"clientDisplayGamut": @(state.client_display_gamut),
-        @"clientDisplayTransfer": @(state.client_display_transfer),
+        @"clientSinkGamut": @(state.client_display_gamut),
+        @"clientSinkTransfer": @(state.client_display_transfer),
         @"effectiveDisplayGamut": @(state.effective_display_gamut),
         @"effectiveDisplayTransfer": @(state.effective_display_transfer),
         @"hasEffectiveHDRMetadata": @(state.has_effective_hdr_metadata),
-        @"clientDisplayCurrentEDRHeadroom": @(state.client_display_current_edr_headroom),
-        @"clientDisplayPotentialEDRHeadroom": @(state.client_display_potential_edr_headroom),
-        @"clientDisplayCurrentPeakLuminanceNits": @(state.client_display_current_peak_luminance_nits),
-        @"clientDisplayPotentialPeakLuminanceNits": @(state.client_display_potential_peak_luminance_nits),
+        @"clientSinkCurrentEDRHeadroom": @(state.client_display_current_edr_headroom),
+        @"clientSinkPotentialEDRHeadroom": @(state.client_display_potential_edr_headroom),
+        @"clientSinkCurrentPeakLuminanceNits": @(state.client_display_current_peak_luminance_nits),
+        @"clientSinkPotentialPeakLuminanceNits": @(state.client_display_potential_peak_luminance_nits),
+        @"requestedDynamicRangeTransport": @(state.requested_dynamic_range_transport),
+        @"clientSupportsFrameGatedHDR": @(state.client_supports_frame_gated_hdr),
+        @"clientSupportsHDRTileOverlay": @(state.client_supports_hdr_tile_overlay),
+        @"clientSupportsPerFrameHDRMetadata": @(state.client_supports_per_frame_hdr_metadata),
         @"effectiveHDRRedPrimaryX": @(state.effective_hdr_red_primary_x),
         @"effectiveHDRRedPrimaryY": @(state.effective_hdr_red_primary_y),
         @"effectiveHDRGreenPrimaryX": @(state.effective_hdr_green_primary_x),
@@ -218,6 +222,10 @@ namespace platf {
       float client_display_potential_edr_headroom = 0.0f;
       int client_display_current_peak_luminance_nits = 0;
       int client_display_potential_peak_luminance_nits = 0;
+      int requested_dynamic_range_transport = 0;
+      bool client_supports_frame_gated_hdr = false;
+      bool client_supports_hdr_tile_overlay = false;
+      bool client_supports_per_frame_hdr_metadata = false;
       int target_video_bitrate_kbps = 0;
       SS_HDR_METADATA effective_hdr_metadata {};
     };
@@ -288,15 +296,19 @@ namespace platf {
         }
 
         NSNumber *dynamic_range = dictionary[@"dynamicRange"];
-        NSNumber *client_display_gamut = dictionary[@"clientDisplayGamut"];
-        NSNumber *client_display_transfer = dictionary[@"clientDisplayTransfer"];
+        NSNumber *client_display_gamut = dictionary[@"clientSinkGamut"];
+        NSNumber *client_display_transfer = dictionary[@"clientSinkTransfer"];
         NSNumber *effective_display_gamut = dictionary[@"effectiveDisplayGamut"];
         NSNumber *effective_display_transfer = dictionary[@"effectiveDisplayTransfer"];
         NSNumber *has_effective_hdr_metadata = dictionary[@"hasEffectiveHDRMetadata"];
-        NSNumber *client_display_current_edr_headroom = dictionary[@"clientDisplayCurrentEDRHeadroom"];
-        NSNumber *client_display_potential_edr_headroom = dictionary[@"clientDisplayPotentialEDRHeadroom"];
-        NSNumber *client_display_current_peak_luminance_nits = dictionary[@"clientDisplayCurrentPeakLuminanceNits"];
-        NSNumber *client_display_potential_peak_luminance_nits = dictionary[@"clientDisplayPotentialPeakLuminanceNits"];
+        NSNumber *client_display_current_edr_headroom = dictionary[@"clientSinkCurrentEDRHeadroom"];
+        NSNumber *client_display_potential_edr_headroom = dictionary[@"clientSinkPotentialEDRHeadroom"];
+        NSNumber *client_display_current_peak_luminance_nits = dictionary[@"clientSinkCurrentPeakLuminanceNits"];
+        NSNumber *client_display_potential_peak_luminance_nits = dictionary[@"clientSinkPotentialPeakLuminanceNits"];
+        NSNumber *requested_dynamic_range_transport = dictionary[@"requestedDynamicRangeTransport"];
+        NSNumber *client_supports_frame_gated_hdr = dictionary[@"clientSupportsFrameGatedHDR"];
+        NSNumber *client_supports_hdr_tile_overlay = dictionary[@"clientSupportsHDRTileOverlay"];
+        NSNumber *client_supports_per_frame_hdr_metadata = dictionary[@"clientSupportsPerFrameHDRMetadata"];
         NSNumber *target_video_bitrate_kbps = dictionary[@"targetVideoBitrateKbps"];
         if (dynamic_range == nil || client_display_gamut == nil || client_display_transfer == nil) {
           return std::nullopt;
@@ -316,6 +328,14 @@ namespace platf {
           client_display_current_peak_luminance_nits != nil ? [client_display_current_peak_luminance_nits intValue] : 0;
         preferences.client_display_potential_peak_luminance_nits =
           client_display_potential_peak_luminance_nits != nil ? [client_display_potential_peak_luminance_nits intValue] : 0;
+        preferences.requested_dynamic_range_transport =
+          requested_dynamic_range_transport != nil ? [requested_dynamic_range_transport intValue] : 0;
+        preferences.client_supports_frame_gated_hdr =
+          client_supports_frame_gated_hdr != nil ? [client_supports_frame_gated_hdr boolValue] : false;
+        preferences.client_supports_hdr_tile_overlay =
+          client_supports_hdr_tile_overlay != nil ? [client_supports_hdr_tile_overlay boolValue] : false;
+        preferences.client_supports_per_frame_hdr_metadata =
+          client_supports_per_frame_hdr_metadata != nil ? [client_supports_per_frame_hdr_metadata boolValue] : false;
         preferences.target_video_bitrate_kbps =
           target_video_bitrate_kbps != nil ? [target_video_bitrate_kbps intValue] : 0;
 

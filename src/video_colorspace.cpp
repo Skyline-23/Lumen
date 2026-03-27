@@ -24,9 +24,15 @@ namespace video {
 
     /* See video::config_t declaration for details */
 
-    BOOST_LOG(info) << "Client dynamicRange: " << config.dynamicRange << ", Display is HDR: " << hdr_display;
+    const auto transport = effective_dynamic_range_transport(config);
+    const bool hdr_stream = config_uses_hdr_stream(config);
 
-    if (config.dynamicRange > 0 && hdr_display) {
+    BOOST_LOG(info) << "Client dynamicRange: " << config.dynamicRange
+                    << ", requested transport: " << static_cast<int>(transport)
+                    << ", HDR stream: " << hdr_stream
+                    << ", Display is HDR: " << hdr_display;
+
+    if (hdr_stream && hdr_display) {
       // Rec. 2020 with ST 2084 perceptual quantizer
       colorspace.colorspace = colorspace_e::bt2020;
     } else {

@@ -98,6 +98,22 @@ namespace nvhttp {
       }
     }
 
+    const char *dynamic_range_transport_to_string(const int transport) {
+      switch (static_cast<video::dynamic_range_transport_e>(transport)) {
+        case video::dynamic_range_transport_e::sdr:
+          return "sdr";
+        case video::dynamic_range_transport_e::full_frame_hdr:
+          return "full-frame-hdr";
+        case video::dynamic_range_transport_e::frame_gated_hdr:
+          return "frame-gated-hdr";
+        case video::dynamic_range_transport_e::sdr_base_hdr_overlay:
+          return "sdr-base-hdr-overlay";
+        case video::dynamic_range_transport_e::unknown:
+        default:
+          return "unknown";
+      }
+    }
+
     int parse_client_display_gamut(const std::string_view value, bool hdr_enabled) {
       if (value == "display-p3"sv || value == "display_p3"sv || value == "p3"sv) {
         return static_cast<int>(video::client_display_gamut_e::display_p3);
@@ -130,6 +146,25 @@ namespace nvhttp {
       return hdr_enabled ?
         static_cast<int>(video::client_display_transfer_e::pq) :
         static_cast<int>(video::client_display_transfer_e::sdr);
+    }
+
+    int parse_requested_dynamic_range_transport(const std::string_view value, bool hdr_enabled) {
+      if (value == "sdr"sv) {
+        return static_cast<int>(video::dynamic_range_transport_e::sdr);
+      }
+      if (value == "full-frame-hdr"sv || value == "full_frame_hdr"sv) {
+        return static_cast<int>(video::dynamic_range_transport_e::full_frame_hdr);
+      }
+      if (value == "frame-gated-hdr"sv || value == "frame_gated_hdr"sv) {
+        return static_cast<int>(video::dynamic_range_transport_e::frame_gated_hdr);
+      }
+      if (value == "sdr-base-hdr-overlay"sv || value == "sdr_base_hdr_overlay"sv) {
+        return static_cast<int>(video::dynamic_range_transport_e::sdr_base_hdr_overlay);
+      }
+
+      return hdr_enabled ?
+        static_cast<int>(video::dynamic_range_transport_e::frame_gated_hdr) :
+        static_cast<int>(video::dynamic_range_transport_e::sdr);
     }
 
     float parse_client_display_headroom(const std::string_view value) {
@@ -676,34 +711,45 @@ namespace nvhttp {
     launch_session->gcmap = util::from_view(get_arg(args, "gcmap", "0"));
     launch_session->enable_hdr = util::from_view(get_arg(args, "hdrMode", "0"));
     launch_session->virtual_display = util::from_view(get_arg(args, "virtualDisplay", "0")) || named_cert_p->always_use_virtual_display;
-    const bool has_display_scale_percent = has_arg(args, "clientDisplayScalePercent");
-    const bool has_display_hidpi = has_arg(args, "clientDisplayHiDPI");
+    const bool has_display_scale_percent = has_arg(args, "clientSinkScalePercent");
+    const bool has_display_hidpi = has_arg(args, "clientSinkHiDPI");
     launch_session->client_display_scale_explicit = has_display_scale_percent || has_display_hidpi;
     launch_session->client_display_mode_is_logical = util::from_view(get_arg(args, "clientDisplayModeIsLogical", "0"));
     launch_session->scale_factor = has_display_scale_percent ?
-      util::from_view(get_arg(args, "clientDisplayScalePercent", "100")) :
+      util::from_view(get_arg(args, "clientSinkScalePercent", "100")) :
       util::from_view(get_arg(args, "scaleFactor", "100"));
     launch_session->client_display_hidpi = has_display_hidpi ?
-      util::from_view(get_arg(args, "clientDisplayHiDPI", "0")) :
+      util::from_view(get_arg(args, "clientSinkHiDPI", "0")) :
       launch_session->scale_factor > 100;
-    launch_session->client_display_gamut = parse_client_display_gamut(get_arg(args, "clientDisplayGamut", ""), launch_session->enable_hdr);
-    launch_session->client_display_transfer = parse_client_display_transfer(get_arg(args, "clientDisplayTransfer", ""), launch_session->enable_hdr);
+    launch_session->client_display_gamut = parse_client_display_gamut(get_arg(args, "clientSinkGamut", ""), launch_session->enable_hdr);
+    launch_session->client_display_transfer = parse_client_display_transfer(get_arg(args, "clientSinkTransfer", ""), launch_session->enable_hdr);
     launch_session->client_display_current_edr_headroom = parse_client_display_headroom(
-      get_arg(args, "clientDisplayCurrentEDRHeadroom", "")
+      get_arg(args, "clientSinkCurrentEDRHeadroom", "")
     );
     launch_session->client_display_potential_edr_headroom = parse_client_display_headroom(
-      get_arg(args, "clientDisplayPotentialEDRHeadroom", "")
+      get_arg(args, "clientSinkPotentialEDRHeadroom", "")
     );
     launch_session->client_display_current_peak_luminance_nits = parse_client_display_peak_luminance_nits(
-      get_arg(args, "clientDisplayCurrentPeakLuminanceNits", "")
+      get_arg(args, "clientSinkCurrentPeakLuminanceNits", "")
     );
     launch_session->client_display_potential_peak_luminance_nits = parse_client_display_peak_luminance_nits(
-      get_arg(args, "clientDisplayPotentialPeakLuminanceNits", "")
+      get_arg(args, "clientSinkPotentialPeakLuminanceNits", "")
     );
-    BOOST_LOG(info) << "Client display profile from launch: gamut="sv
+    launch_session->requested_dynamic_range_transport = parse_requested_dynamic_range_transport(
+      get_arg(args, "requestedDynamicRangeTransport", ""),
+      launch_session->enable_hdr
+    );
+    launch_session->client_supports_frame_gated_hdr = util::from_view(get_arg(args, "clientSupportsFrameGatedHDR", launch_session->enable_hdr ? "1" : "0"));
+    launch_session->client_supports_hdr_tile_overlay = util::from_view(get_arg(args, "clientSupportsHDRTileOverlay", "0"));
+    launch_session->client_supports_per_frame_hdr_metadata = util::from_view(
+      get_arg(args, "clientSupportsPerFrameHDRMetadata", launch_session->enable_hdr ? "1" : "0")
+    );
+    BOOST_LOG(info) << "Client sink profile from launch: gamut="sv
                     << client_display_gamut_to_string(launch_session->client_display_gamut)
                     << " transfer="sv
                     << client_display_transfer_to_string(launch_session->client_display_transfer)
+                    << " requested-transport="sv
+                    << dynamic_range_transport_to_string(launch_session->requested_dynamic_range_transport)
                     << " hdr="sv
                     << launch_session->enable_hdr
                     << " scale-percent="sv
@@ -721,7 +767,13 @@ namespace nvhttp {
                     << " current-peak-nits="sv
                     << launch_session->client_display_current_peak_luminance_nits
                     << " potential-peak-nits="sv
-                    << launch_session->client_display_potential_peak_luminance_nits;
+                    << launch_session->client_display_potential_peak_luminance_nits
+                    << " supports-frame-gated-hdr="sv
+                    << launch_session->client_supports_frame_gated_hdr
+                    << " supports-hdr-tile-overlay="sv
+                    << launch_session->client_supports_hdr_tile_overlay
+                    << " supports-per-frame-hdr-metadata="sv
+                    << launch_session->client_supports_per_frame_hdr_metadata;
 
     launch_session->client_do_cmds = named_cert_p->do_cmds;
     launch_session->client_undo_cmds = named_cert_p->undo_cmds;

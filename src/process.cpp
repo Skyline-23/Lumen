@@ -428,6 +428,10 @@ namespace proc {
         this->client_display_potential_edr_headroom = launch_session->client_display_potential_edr_headroom;
         this->client_display_current_peak_luminance_nits = launch_session->client_display_current_peak_luminance_nits;
         this->client_display_potential_peak_luminance_nits = launch_session->client_display_potential_peak_luminance_nits;
+        this->requested_dynamic_range_transport = launch_session->requested_dynamic_range_transport;
+        this->client_supports_frame_gated_hdr = launch_session->client_supports_frame_gated_hdr;
+        this->client_supports_hdr_tile_overlay = launch_session->client_supports_hdr_tile_overlay;
+        this->client_supports_per_frame_hdr_metadata = launch_session->client_supports_per_frame_hdr_metadata;
         config::video.output_name = this->display_name;
         const auto virtual_display_id = static_cast<CGDirectDisplayID>(std::strtoul(virtual_display_name.c_str(), nullptr, 10));
         if (!platf::isolate_virtual_display(virtual_display_id)) {
@@ -1013,6 +1017,10 @@ namespace proc {
     client_display_potential_edr_headroom = 0.0f;
     client_display_current_peak_luminance_nits = 0;
     client_display_potential_peak_luminance_nits = 0;
+    requested_dynamic_range_transport = static_cast<int>(video::dynamic_range_transport_e::unknown);
+    client_supports_frame_gated_hdr = false;
+    client_supports_hdr_tile_overlay = false;
+    client_supports_per_frame_hdr_metadata = false;
     client_scale_factor = 100;
     client_logical_width = 0;
     client_logical_height = 0;

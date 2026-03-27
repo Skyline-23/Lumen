@@ -30,6 +30,14 @@ typedef enum ApolloCoreCaptureQueueProfile {
   ApolloCoreCaptureQueueProfileAuto = 4
 } ApolloCoreCaptureQueueProfile;
 
+typedef enum ApolloCoreDynamicRangeTransport {
+  ApolloCoreDynamicRangeTransportUnknown = 0,
+  ApolloCoreDynamicRangeTransportSDR = 1,
+  ApolloCoreDynamicRangeTransportFullFrameHDR = 2,
+  ApolloCoreDynamicRangeTransportFrameGatedHDR = 3,
+  ApolloCoreDynamicRangeTransportSDRBaseHDROverlay = 4
+} ApolloCoreDynamicRangeTransport;
+
 typedef enum ApolloCoreAudioCaptureSourceKind {
   ApolloCoreAudioCaptureSourceKindUnknown = -1,
   ApolloCoreAudioCaptureSourceKindMicrophone = 0,
@@ -261,6 +269,10 @@ typedef struct ApolloCoreCaptureRequestSnapshot {
   float client_display_potential_edr_headroom;
   int32_t client_display_current_peak_luminance_nits;
   int32_t client_display_potential_peak_luminance_nits;
+  ApolloCoreDynamicRangeTransport requested_dynamic_range_transport;
+  bool client_supports_frame_gated_hdr;
+  bool client_supports_hdr_tile_overlay;
+  bool client_supports_per_frame_hdr_metadata;
 } ApolloCoreCaptureRequestSnapshot;
 
 ApolloCoreAudioCaptureIngress *ApolloCoreAudioCaptureIngressCreate(void);
@@ -356,7 +368,11 @@ void ApolloCoreCaptureRequestPublishVideo(
   float client_display_current_edr_headroom,
   float client_display_potential_edr_headroom,
   int32_t client_display_current_peak_luminance_nits,
-  int32_t client_display_potential_peak_luminance_nits
+  int32_t client_display_potential_peak_luminance_nits,
+  ApolloCoreDynamicRangeTransport requested_dynamic_range_transport,
+  bool client_supports_frame_gated_hdr,
+  bool client_supports_hdr_tile_overlay,
+  bool client_supports_per_frame_hdr_metadata
 );
 void ApolloCoreCaptureRequestPublishAudio(
   ApolloCoreAudioCaptureSourceKind source_kind,

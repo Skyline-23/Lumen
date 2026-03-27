@@ -1082,35 +1082,53 @@ namespace rtsp_stream {
 
     const auto fallback_bitstream_format = (session.enable_hdr && video::active_hevc_mode != 1) ? "1"sv : "0"sv;
     const auto fallback_dynamic_range_mode = session.enable_hdr ? "1"sv : "0"sv;
-    const auto fallback_client_display_gamut = std::string_view {client_display_gamut_to_string(session.client_display_gamut)};
-    const auto fallback_client_display_transfer = std::string_view {client_display_transfer_to_string(session.client_display_transfer)};
-    const auto fallback_client_display_current_edr_headroom = client_display_float_to_string(session.client_display_current_edr_headroom);
-    const auto fallback_client_display_potential_edr_headroom = client_display_float_to_string(session.client_display_potential_edr_headroom);
-    const auto fallback_client_display_current_peak_luminance_nits = std::to_string(session.client_display_current_peak_luminance_nits);
-    const auto fallback_client_display_potential_peak_luminance_nits = std::to_string(session.client_display_potential_peak_luminance_nits);
+    const auto fallback_client_sink_gamut = std::string_view {client_display_gamut_to_string(session.client_display_gamut)};
+    const auto fallback_client_sink_transfer = std::string_view {client_display_transfer_to_string(session.client_display_transfer)};
+    const auto fallback_client_sink_current_edr_headroom = client_display_float_to_string(session.client_display_current_edr_headroom);
+    const auto fallback_client_sink_potential_edr_headroom = client_display_float_to_string(session.client_display_potential_edr_headroom);
+    const auto fallback_client_sink_current_peak_luminance_nits = std::to_string(session.client_display_current_peak_luminance_nits);
+    const auto fallback_client_sink_potential_peak_luminance_nits = std::to_string(session.client_display_potential_peak_luminance_nits);
+    const auto fallback_requested_dynamic_range_transport = std::string_view {
+      dynamic_range_transport_to_string(session.requested_dynamic_range_transport)
+    };
+    const auto fallback_client_supports_frame_gated_hdr = session.client_supports_frame_gated_hdr ? "1"sv : "0"sv;
+    const auto fallback_client_supports_hdr_tile_overlay = session.client_supports_hdr_tile_overlay ? "1"sv : "0"sv;
+    const auto fallback_client_supports_per_frame_hdr_metadata = session.client_supports_per_frame_hdr_metadata ? "1"sv : "0"sv;
     const bool missing_bitstream_format = args.find("x-nv-vqos[0].bitStreamFormat"sv) == args.end();
     const bool missing_dynamic_range_mode = args.find("x-nv-video[0].dynamicRangeMode"sv) == args.end();
-    const bool missing_client_display_gamut = args.find("x-apollo-video[0].clientDisplayGamut"sv) == args.end();
-    const bool missing_client_display_transfer = args.find("x-apollo-video[0].clientDisplayTransfer"sv) == args.end();
-    const bool missing_client_display_current_edr_headroom =
-      args.find("x-apollo-video[0].clientDisplayCurrentEDRHeadroom"sv) == args.end();
-    const bool missing_client_display_potential_edr_headroom =
-      args.find("x-apollo-video[0].clientDisplayPotentialEDRHeadroom"sv) == args.end();
-    const bool missing_client_display_current_peak_luminance_nits =
-      args.find("x-apollo-video[0].clientDisplayCurrentPeakLuminanceNits"sv) == args.end();
-    const bool missing_client_display_potential_peak_luminance_nits =
-      args.find("x-apollo-video[0].clientDisplayPotentialPeakLuminanceNits"sv) == args.end();
+    const bool missing_client_sink_gamut = args.find("x-apollo-video[0].clientSinkGamut"sv) == args.end();
+    const bool missing_client_sink_transfer = args.find("x-apollo-video[0].clientSinkTransfer"sv) == args.end();
+    const bool missing_client_sink_current_edr_headroom =
+      args.find("x-apollo-video[0].clientSinkCurrentEDRHeadroom"sv) == args.end();
+    const bool missing_client_sink_potential_edr_headroom =
+      args.find("x-apollo-video[0].clientSinkPotentialEDRHeadroom"sv) == args.end();
+    const bool missing_client_sink_current_peak_luminance_nits =
+      args.find("x-apollo-video[0].clientSinkCurrentPeakLuminanceNits"sv) == args.end();
+    const bool missing_client_sink_potential_peak_luminance_nits =
+      args.find("x-apollo-video[0].clientSinkPotentialPeakLuminanceNits"sv) == args.end();
+    const bool missing_requested_dynamic_range_transport =
+      args.find("x-apollo-video[0].requestedDynamicRangeTransport"sv) == args.end();
+    const bool missing_client_supports_frame_gated_hdr =
+      args.find("x-apollo-video[0].clientSupportsFrameGatedHDR"sv) == args.end();
+    const bool missing_client_supports_hdr_tile_overlay =
+      args.find("x-apollo-video[0].clientSupportsHDRTileOverlay"sv) == args.end();
+    const bool missing_client_supports_per_frame_hdr_metadata =
+      args.find("x-apollo-video[0].clientSupportsPerFrameHDRMetadata"sv) == args.end();
 
     // Initialize any omitted parameters to launch-consistent defaults.
     args.try_emplace("x-nv-video[0].encoderCscMode"sv, "0"sv);
     args.try_emplace("x-nv-vqos[0].bitStreamFormat"sv, fallback_bitstream_format);
     args.try_emplace("x-nv-video[0].dynamicRangeMode"sv, fallback_dynamic_range_mode);
-    args.try_emplace("x-apollo-video[0].clientDisplayGamut"sv, fallback_client_display_gamut);
-    args.try_emplace("x-apollo-video[0].clientDisplayTransfer"sv, fallback_client_display_transfer);
-    args.try_emplace("x-apollo-video[0].clientDisplayCurrentEDRHeadroom"sv, fallback_client_display_current_edr_headroom);
-    args.try_emplace("x-apollo-video[0].clientDisplayPotentialEDRHeadroom"sv, fallback_client_display_potential_edr_headroom);
-    args.try_emplace("x-apollo-video[0].clientDisplayCurrentPeakLuminanceNits"sv, fallback_client_display_current_peak_luminance_nits);
-    args.try_emplace("x-apollo-video[0].clientDisplayPotentialPeakLuminanceNits"sv, fallback_client_display_potential_peak_luminance_nits);
+    args.try_emplace("x-apollo-video[0].clientSinkGamut"sv, fallback_client_sink_gamut);
+    args.try_emplace("x-apollo-video[0].clientSinkTransfer"sv, fallback_client_sink_transfer);
+    args.try_emplace("x-apollo-video[0].clientSinkCurrentEDRHeadroom"sv, fallback_client_sink_current_edr_headroom);
+    args.try_emplace("x-apollo-video[0].clientSinkPotentialEDRHeadroom"sv, fallback_client_sink_potential_edr_headroom);
+    args.try_emplace("x-apollo-video[0].clientSinkCurrentPeakLuminanceNits"sv, fallback_client_sink_current_peak_luminance_nits);
+    args.try_emplace("x-apollo-video[0].clientSinkPotentialPeakLuminanceNits"sv, fallback_client_sink_potential_peak_luminance_nits);
+    args.try_emplace("x-apollo-video[0].requestedDynamicRangeTransport"sv, fallback_requested_dynamic_range_transport);
+    args.try_emplace("x-apollo-video[0].clientSupportsFrameGatedHDR"sv, fallback_client_supports_frame_gated_hdr);
+    args.try_emplace("x-apollo-video[0].clientSupportsHDRTileOverlay"sv, fallback_client_supports_hdr_tile_overlay);
+    args.try_emplace("x-apollo-video[0].clientSupportsPerFrameHDRMetadata"sv, fallback_client_supports_per_frame_hdr_metadata);
     args.try_emplace("x-nv-aqos.packetDuration"sv, "5"sv);
     args.try_emplace("x-nv-general.useReliableUdp"sv, "1"sv);
     args.try_emplace("x-nv-vqos[0].fec.minRequiredFecPackets"sv, "0"sv);
@@ -1124,26 +1142,34 @@ namespace rtsp_stream {
     args.try_emplace("x-ss-video[0].intraRefresh"sv, "0"sv);
 
     if (missing_bitstream_format || missing_dynamic_range_mode ||
-        missing_client_display_gamut || missing_client_display_transfer ||
-        missing_client_display_current_edr_headroom || missing_client_display_potential_edr_headroom ||
-        missing_client_display_current_peak_luminance_nits || missing_client_display_potential_peak_luminance_nits) {
+        missing_client_sink_gamut || missing_client_sink_transfer ||
+        missing_client_sink_current_edr_headroom || missing_client_sink_potential_edr_headroom ||
+        missing_client_sink_current_peak_luminance_nits || missing_client_sink_potential_peak_luminance_nits ||
+        missing_requested_dynamic_range_transport ||
+        missing_client_supports_frame_gated_hdr || missing_client_supports_hdr_tile_overlay ||
+        missing_client_supports_per_frame_hdr_metadata) {
       BOOST_LOG(warning) << "RTSP ANNOUNCE omitted launch-critical fields; applying launch fallback values"
                          << " bitStreamFormatMissing="sv << missing_bitstream_format
                          << " dynamicRangeMissing="sv << missing_dynamic_range_mode
-                         << " clientDisplayGamutMissing="sv << missing_client_display_gamut
-                         << " clientDisplayTransferMissing="sv << missing_client_display_transfer
-                         << " clientDisplayCurrentEDRHeadroomMissing="sv << missing_client_display_current_edr_headroom
-                         << " clientDisplayPotentialEDRHeadroomMissing="sv << missing_client_display_potential_edr_headroom
-                         << " clientDisplayCurrentPeakLuminanceNitsMissing="sv << missing_client_display_current_peak_luminance_nits
-                         << " clientDisplayPotentialPeakLuminanceNitsMissing="sv << missing_client_display_potential_peak_luminance_nits
+                         << " clientSinkGamutMissing="sv << missing_client_sink_gamut
+                         << " clientSinkTransferMissing="sv << missing_client_sink_transfer
+                         << " clientSinkCurrentEDRHeadroomMissing="sv << missing_client_sink_current_edr_headroom
+                         << " clientSinkPotentialEDRHeadroomMissing="sv << missing_client_sink_potential_edr_headroom
+                         << " clientSinkCurrentPeakLuminanceNitsMissing="sv << missing_client_sink_current_peak_luminance_nits
+                         << " clientSinkPotentialPeakLuminanceNitsMissing="sv << missing_client_sink_potential_peak_luminance_nits
+                         << " requestedDynamicRangeTransportMissing="sv << missing_requested_dynamic_range_transport
+                         << " clientSupportsFrameGatedHDRMissing="sv << missing_client_supports_frame_gated_hdr
+                         << " clientSupportsHDRTileOverlayMissing="sv << missing_client_supports_hdr_tile_overlay
+                         << " clientSupportsPerFrameHDRMetadataMissing="sv << missing_client_supports_per_frame_hdr_metadata
                          << " fallback-bitstream="sv << fallback_bitstream_format
                          << " fallback-dynamic-range="sv << fallback_dynamic_range_mode
-                         << " launch-gamut="sv << fallback_client_display_gamut
-                         << " launch-transfer="sv << fallback_client_display_transfer
-                         << " launch-current-edr-headroom="sv << fallback_client_display_current_edr_headroom
-                         << " launch-potential-edr-headroom="sv << fallback_client_display_potential_edr_headroom
-                         << " launch-current-peak-nits="sv << fallback_client_display_current_peak_luminance_nits
-                         << " launch-potential-peak-nits="sv << fallback_client_display_potential_peak_luminance_nits;
+                         << " launch-sink-gamut="sv << fallback_client_sink_gamut
+                         << " launch-sink-transfer="sv << fallback_client_sink_transfer
+                         << " launch-current-edr-headroom="sv << fallback_client_sink_current_edr_headroom
+                         << " launch-potential-edr-headroom="sv << fallback_client_sink_potential_edr_headroom
+                         << " launch-current-peak-nits="sv << fallback_client_sink_current_peak_luminance_nits
+                         << " launch-potential-peak-nits="sv << fallback_client_sink_potential_peak_luminance_nits
+                         << " launch-requested-transport="sv << fallback_requested_dynamic_range_transport;
     }
 
     stream::config_t config;
@@ -1182,50 +1208,60 @@ namespace rtsp_stream {
       config.monitor.dynamicRange = util::from_view(args.at("x-nv-video[0].dynamicRangeMode"sv));
       config.monitor.chromaSamplingType = util::from_view(args.at("x-ss-video[0].chromaSamplingType"sv));
       config.monitor.enableIntraRefresh = util::from_view(args.at("x-ss-video[0].intraRefresh"sv));
-      const auto client_display_gamut = args.at("x-apollo-video[0].clientDisplayGamut"sv);
-      if (client_display_gamut == "display-p3"sv || client_display_gamut == "display_p3"sv || client_display_gamut == "p3"sv) {
+      const auto client_sink_gamut = args.at("x-apollo-video[0].clientSinkGamut"sv);
+      if (client_sink_gamut == "display-p3"sv || client_sink_gamut == "display_p3"sv || client_sink_gamut == "p3"sv) {
         config.monitor.clientDisplayGamut = static_cast<int>(video::client_display_gamut_e::display_p3);
-      } else if (client_display_gamut == "rec2020"sv || client_display_gamut == "bt2020"sv || client_display_gamut == "2020"sv) {
+      } else if (client_sink_gamut == "rec2020"sv || client_sink_gamut == "bt2020"sv || client_sink_gamut == "2020"sv) {
         config.monitor.clientDisplayGamut = static_cast<int>(video::client_display_gamut_e::rec2020);
-      } else if (client_display_gamut == "srgb"sv || client_display_gamut == "rec709"sv || client_display_gamut == "709"sv) {
+      } else if (client_sink_gamut == "srgb"sv || client_sink_gamut == "rec709"sv || client_sink_gamut == "709"sv) {
         config.monitor.clientDisplayGamut = static_cast<int>(video::client_display_gamut_e::srgb);
       } else {
         config.monitor.clientDisplayGamut = static_cast<int>(video::client_display_gamut_e::unknown);
       }
-      const auto client_display_transfer = args.at("x-apollo-video[0].clientDisplayTransfer"sv);
-      if (client_display_transfer == "pq"sv || client_display_transfer == "hdr-pq"sv || client_display_transfer == "st2084"sv || client_display_transfer == "smpte2084"sv) {
+      const auto client_sink_transfer = args.at("x-apollo-video[0].clientSinkTransfer"sv);
+      if (client_sink_transfer == "pq"sv || client_sink_transfer == "hdr-pq"sv || client_sink_transfer == "st2084"sv || client_sink_transfer == "smpte2084"sv) {
         config.monitor.clientDisplayTransfer = static_cast<int>(video::client_display_transfer_e::pq);
-      } else if (client_display_transfer == "hlg"sv || client_display_transfer == "hdr-hlg"sv) {
+      } else if (client_sink_transfer == "hlg"sv || client_sink_transfer == "hdr-hlg"sv) {
         config.monitor.clientDisplayTransfer = static_cast<int>(video::client_display_transfer_e::hlg);
-      } else if (client_display_transfer == "sdr"sv || client_display_transfer == "gamma"sv) {
+      } else if (client_sink_transfer == "sdr"sv || client_sink_transfer == "gamma"sv) {
         config.monitor.clientDisplayTransfer = static_cast<int>(video::client_display_transfer_e::sdr);
       } else {
         config.monitor.clientDisplayTransfer = config.monitor.dynamicRange > 0 ?
           static_cast<int>(video::client_display_transfer_e::pq) :
           static_cast<int>(video::client_display_transfer_e::sdr);
       }
+      config.monitor.requestedDynamicRangeTransport = parse_requested_dynamic_range_transport(
+        args.at("x-apollo-video[0].requestedDynamicRangeTransport"sv),
+        config.monitor.dynamicRange > 0
+      );
+      config.monitor.clientSupportsFrameGatedHDR =
+        util::from_view(args.at("x-apollo-video[0].clientSupportsFrameGatedHDR"sv));
+      config.monitor.clientSupportsHDRTileOverlay =
+        util::from_view(args.at("x-apollo-video[0].clientSupportsHDRTileOverlay"sv));
+      config.monitor.clientSupportsPerFrameHDRMetadata =
+        util::from_view(args.at("x-apollo-video[0].clientSupportsPerFrameHDRMetadata"sv));
       config.monitor.clientDisplayScalePercent = session.scale_factor;
       config.monitor.clientDisplayHiDPI = session.client_display_hidpi ? 1 : 0;
-      if (const auto it = args.find("x-apollo-video[0].clientDisplayScalePercent"sv); it != args.end()) {
+      if (const auto it = args.find("x-apollo-video[0].clientSinkScalePercent"sv); it != args.end()) {
         config.monitor.clientDisplayScalePercent = util::from_view(it->second);
       }
-      if (const auto it = args.find("x-apollo-video[0].clientDisplayHiDPI"sv); it != args.end()) {
+      if (const auto it = args.find("x-apollo-video[0].clientSinkHiDPI"sv); it != args.end()) {
         config.monitor.clientDisplayHiDPI = util::from_view(it->second);
       }
       config.monitor.clientDisplayCurrentEDRHeadroom = parse_client_display_headroom(
-        args.at("x-apollo-video[0].clientDisplayCurrentEDRHeadroom"sv),
+        args.at("x-apollo-video[0].clientSinkCurrentEDRHeadroom"sv),
         session.client_display_current_edr_headroom
       );
       config.monitor.clientDisplayPotentialEDRHeadroom = parse_client_display_headroom(
-        args.at("x-apollo-video[0].clientDisplayPotentialEDRHeadroom"sv),
+        args.at("x-apollo-video[0].clientSinkPotentialEDRHeadroom"sv),
         session.client_display_potential_edr_headroom
       );
       config.monitor.clientDisplayCurrentPeakLuminanceNits = parse_client_display_peak_luminance_nits(
-        args.at("x-apollo-video[0].clientDisplayCurrentPeakLuminanceNits"sv),
+        args.at("x-apollo-video[0].clientSinkCurrentPeakLuminanceNits"sv),
         session.client_display_current_peak_luminance_nits
       );
       config.monitor.clientDisplayPotentialPeakLuminanceNits = parse_client_display_peak_luminance_nits(
-        args.at("x-apollo-video[0].clientDisplayPotentialPeakLuminanceNits"sv),
+        args.at("x-apollo-video[0].clientSinkPotentialPeakLuminanceNits"sv),
         session.client_display_potential_peak_luminance_nits
       );
       if (config.monitor.clientDisplayScalePercent != static_cast<int>(session.scale_factor) ||
@@ -1243,7 +1279,7 @@ namespace rtsp_stream {
           config.monitor.clientDisplayPotentialEDRHeadroom != session.client_display_potential_edr_headroom ||
           config.monitor.clientDisplayCurrentPeakLuminanceNits != session.client_display_current_peak_luminance_nits ||
           config.monitor.clientDisplayPotentialPeakLuminanceNits != session.client_display_potential_peak_luminance_nits) {
-        BOOST_LOG(warning) << "Client display HDR capability contract mismatch between launch and RTSP: launch-current-edr-headroom="sv
+        BOOST_LOG(warning) << "Client sink HDR capability contract mismatch between launch and RTSP: launch-current-edr-headroom="sv
                            << session.client_display_current_edr_headroom
                            << " launch-potential-edr-headroom="sv
                            << session.client_display_potential_edr_headroom
@@ -1260,10 +1296,12 @@ namespace rtsp_stream {
                            << " rtsp-potential-peak-nits="sv
                            << config.monitor.clientDisplayPotentialPeakLuminanceNits;
       }
-      BOOST_LOG(info) << "Client display profile from RTSP: gamut="sv
+      BOOST_LOG(info) << "Client sink profile from RTSP: gamut="sv
                       << client_display_gamut_to_string(config.monitor.clientDisplayGamut)
                       << " transfer="sv
                       << client_display_transfer_to_string(config.monitor.clientDisplayTransfer)
+                      << " requested-transport="sv
+                      << dynamic_range_transport_to_string(config.monitor.requestedDynamicRangeTransport)
                       << " codec="sv
                       << (config.monitor.videoFormat == 0 ? "h264"sv :
                           config.monitor.videoFormat == 1 ? "hevc"sv :
@@ -1282,6 +1320,12 @@ namespace rtsp_stream {
                       << config.monitor.clientDisplayCurrentPeakLuminanceNits
                       << " potential-peak-nits="sv
                       << config.monitor.clientDisplayPotentialPeakLuminanceNits
+                      << " supports-frame-gated-hdr="sv
+                      << config.monitor.clientSupportsFrameGatedHDR
+                      << " supports-hdr-tile-overlay="sv
+                      << config.monitor.clientSupportsHDRTileOverlay
+                      << " supports-per-frame-hdr-metadata="sv
+                      << config.monitor.clientSupportsPerFrameHDRMetadata
                       << " viewport="sv
                       << config.monitor.width << "x"sv
                       << config.monitor.height
@@ -1294,6 +1338,10 @@ namespace rtsp_stream {
       proc::proc.client_display_potential_edr_headroom = config.monitor.clientDisplayPotentialEDRHeadroom;
       proc::proc.client_display_current_peak_luminance_nits = config.monitor.clientDisplayCurrentPeakLuminanceNits;
       proc::proc.client_display_potential_peak_luminance_nits = config.monitor.clientDisplayPotentialPeakLuminanceNits;
+      proc::proc.requested_dynamic_range_transport = config.monitor.requestedDynamicRangeTransport;
+      proc::proc.client_supports_frame_gated_hdr = config.monitor.clientSupportsFrameGatedHDR != 0;
+      proc::proc.client_supports_hdr_tile_overlay = config.monitor.clientSupportsHDRTileOverlay != 0;
+      proc::proc.client_supports_per_frame_hdr_metadata = config.monitor.clientSupportsPerFrameHDRMetadata != 0;
       proc::proc.client_scale_factor = config.monitor.clientDisplayScalePercent;
       proc::proc.client_display_hidpi = config.monitor.clientDisplayHiDPI != 0;
 

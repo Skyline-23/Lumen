@@ -32,6 +32,14 @@ namespace video {
     hlg = 3,
   };
 
+  enum class dynamic_range_transport_e : int {
+    unknown = 0,
+    sdr = 1,
+    full_frame_hdr = 2,
+    frame_gated_hdr = 3,
+    sdr_base_hdr_overlay = 4,
+  };
+
   /* Encoding configuration requested by remote client */
   struct config_t {
     // DO NOT CHANGE ORDER OR ADD FIELDS IN THE MIDDLE!!!!!
@@ -69,7 +77,33 @@ namespace video {
     float clientDisplayPotentialEDRHeadroom;  // Potential EDR headroom reported by the client display
     int clientDisplayCurrentPeakLuminanceNits;  // Current peak luminance reported by the client display
     int clientDisplayPotentialPeakLuminanceNits;  // Potential peak luminance reported by the client display
+    int requestedDynamicRangeTransport;  // 0 - unknown, 1 - SDR, 2 - full-frame HDR, 3 - frame-gated HDR, 4 - SDR base + HDR overlay
+    int clientSupportsFrameGatedHDR;  // 0 - disabled, 1 - enabled
+    int clientSupportsHDRTileOverlay;  // 0 - disabled, 1 - enabled
+    int clientSupportsPerFrameHDRMetadata;  // 0 - disabled, 1 - enabled
   };
+
+  inline dynamic_range_transport_e effective_dynamic_range_transport(const config_t &config) {
+    switch (static_cast<dynamic_range_transport_e>(config.requestedDynamicRangeTransport)) {
+      case dynamic_range_transport_e::sdr:
+      case dynamic_range_transport_e::full_frame_hdr:
+      case dynamic_range_transport_e::frame_gated_hdr:
+      case dynamic_range_transport_e::sdr_base_hdr_overlay:
+        return static_cast<dynamic_range_transport_e>(config.requestedDynamicRangeTransport);
+      case dynamic_range_transport_e::unknown:
+      default:
+        return config.dynamicRange > 0 ? dynamic_range_transport_e::frame_gated_hdr : dynamic_range_transport_e::sdr;
+    }
+  }
+
+  inline bool dynamic_range_transport_uses_hdr_stream(const dynamic_range_transport_e transport) {
+    return transport == dynamic_range_transport_e::full_frame_hdr ||
+           transport == dynamic_range_transport_e::frame_gated_hdr;
+  }
+
+  inline bool config_uses_hdr_stream(const config_t &config) {
+    return dynamic_range_transport_uses_hdr_stream(effective_dynamic_range_transport(config));
+  }
 
   platf::mem_type_e map_base_dev_type(AVHWDeviceType type);
   platf::pix_fmt_e map_pix_fmt(AVPixelFormat fmt);

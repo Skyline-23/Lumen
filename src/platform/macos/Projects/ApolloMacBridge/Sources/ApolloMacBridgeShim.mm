@@ -148,6 +148,11 @@ namespace {
     result.client_display_potential_edr_headroom = configuration.clientDisplayPotentialEDRHeadroom;
     result.client_display_current_peak_luminance_nits = static_cast<int32_t>(configuration.clientDisplayCurrentPeakLuminanceNits);
     result.client_display_potential_peak_luminance_nits = static_cast<int32_t>(configuration.clientDisplayPotentialPeakLuminanceNits);
+    result.requested_dynamic_range_transport =
+      static_cast<ApolloCoreDynamicRangeTransport>(configuration.requestedDynamicRangeTransportRawValue);
+    result.client_supports_frame_gated_hdr = configuration.clientSupportsFrameGatedHDR;
+    result.client_supports_hdr_tile_overlay = configuration.clientSupportsHDRTileOverlay;
+    result.client_supports_per_frame_hdr_metadata = configuration.clientSupportsPerFrameHDRMetadata;
     return result;
   }
 
@@ -186,7 +191,11 @@ hdrMaxFrameAverageLightLevel:static_cast<NSInteger>(configuration.hdr_static_met
 clientDisplayCurrentEDRHeadroom:configuration.client_display_current_edr_headroom
 clientDisplayPotentialEDRHeadroom:configuration.client_display_potential_edr_headroom
 clientDisplayCurrentPeakLuminanceNits:static_cast<NSInteger>(configuration.client_display_current_peak_luminance_nits)
-clientDisplayPotentialPeakLuminanceNits:static_cast<NSInteger>(configuration.client_display_potential_peak_luminance_nits)];
+clientDisplayPotentialPeakLuminanceNits:static_cast<NSInteger>(configuration.client_display_potential_peak_luminance_nits)
+requestedDynamicRangeTransportRawValue:static_cast<NSInteger>(configuration.requested_dynamic_range_transport)
+clientSupportsFrameGatedHDR:configuration.client_supports_frame_gated_hdr
+clientSupportsHDRTileOverlay:configuration.client_supports_hdr_tile_overlay
+clientSupportsPerFrameHDRMetadata:configuration.client_supports_per_frame_hdr_metadata];
   }
 
   ApolloMacBridgeAudioCaptureConfiguration to_audio_bridge_configuration(

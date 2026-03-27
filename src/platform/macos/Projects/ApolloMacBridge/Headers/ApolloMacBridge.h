@@ -44,6 +44,10 @@ typedef struct ApolloMacBridgeCaptureConfiguration {
   float client_display_potential_edr_headroom;
   int32_t client_display_current_peak_luminance_nits;
   int32_t client_display_potential_peak_luminance_nits;
+  ApolloCoreDynamicRangeTransport requested_dynamic_range_transport;
+  bool client_supports_frame_gated_hdr;
+  bool client_supports_hdr_tile_overlay;
+  bool client_supports_per_frame_hdr_metadata;
 } ApolloMacBridgeCaptureConfiguration;
 
 typedef enum ApolloMacBridgeAudioSourceKind {

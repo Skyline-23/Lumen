@@ -1805,7 +1805,7 @@ namespace video {
       height,
       config.bitrate * 1000,
       std::max(config.encodingFramerate, config.framerate),
-      config.dynamicRange > 0,
+      video::config_uses_hdr_stream(config),
       native_colorspace,
       hdr_metadata_state
     );
@@ -2955,7 +2955,8 @@ namespace video {
       return nullptr;
     }
 
-    if (config.dynamicRange && !video_format[encoder_t::DYNAMIC_RANGE]) {
+    const bool hdr_stream = video::config_uses_hdr_stream(config);
+    if (hdr_stream && !video_format[encoder_t::DYNAMIC_RANGE]) {
       BOOST_LOG(error) << video_format.name << ": dynamic range not supported"sv;
       return nullptr;
     }
@@ -2997,7 +2998,7 @@ namespace video {
       switch (config.videoFormat) {
         case 0:
           // 10-bit h264 encoding is not supported by our streaming protocol
-          assert(!config.dynamicRange);
+          assert(colorspace.bit_depth == 8);
           ctx->profile = (config.chromaSamplingType == 1) ? AV_PROFILE_H264_HIGH_444_PREDICTIVE : AV_PROFILE_H264_HIGH;
           break;
 
@@ -3006,7 +3007,7 @@ namespace video {
             // HEVC uses the same RExt profile for both 8 and 10 bit YUV 4:4:4 encoding
             ctx->profile = AV_PROFILE_HEVC_REXT;
           } else {
-            ctx->profile = config.dynamicRange ? AV_PROFILE_HEVC_MAIN_10 : AV_PROFILE_HEVC_MAIN;
+            ctx->profile = colorspace.bit_depth > 8 ? AV_PROFILE_HEVC_MAIN_10 : AV_PROFILE_HEVC_MAIN;
           }
           break;
 
@@ -3165,11 +3166,11 @@ namespace video {
       for (auto &option : video_format.common_options) {
         handle_option(option);
       }
-      for (auto &option : (config.dynamicRange ? video_format.hdr_options : video_format.sdr_options)) {
+      for (auto &option : (hdr_stream ? video_format.hdr_options : video_format.sdr_options)) {
         handle_option(option);
       }
       if (config.chromaSamplingType == 1) {
-        for (auto &option : (config.dynamicRange ? video_format.hdr444_options : video_format.sdr444_options)) {
+        for (auto &option : (hdr_stream ? video_format.hdr444_options : video_format.sdr444_options)) {
           handle_option(option);
         }
       }

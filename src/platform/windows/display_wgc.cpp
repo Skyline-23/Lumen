@@ -114,7 +114,7 @@ namespace platf::dxgi {
       return -1;
     }
 
-    if (config.dynamicRange) {
+    if (video::config_uses_hdr_stream(config)) {
       display->capture_format = DXGI_FORMAT_R16G16B16A16_FLOAT;
     } else {
       display->capture_format = DXGI_FORMAT_B8G8R8A8_UNORM;
