@@ -954,7 +954,7 @@ namespace rtsp_stream {
     std::stringstream ss;
 
     // Tell the client about our supported features
-    ss << "a=x-ss-general.featureFlags:" << (uint32_t) platf::get_capabilities() << std::endl;
+    ss << "a=x-shadow-general.featureFlags:" << (uint32_t) platf::get_capabilities() << std::endl;
 
     // Always request new control stream encryption if the client supports it
     uint32_t encryption_flags_supported = SS_ENC_CONTROL_V2 | SS_ENC_AUDIO;
@@ -974,11 +974,11 @@ namespace rtsp_stream {
     }
 
     // Report supported and required encryption flags
-    ss << "a=x-ss-general.encryptionSupported:" << encryption_flags_supported << std::endl;
-    ss << "a=x-ss-general.encryptionRequested:" << encryption_flags_requested << std::endl;
+    ss << "a=x-shadow-general.encryptionSupported:" << encryption_flags_supported << std::endl;
+    ss << "a=x-shadow-general.encryptionRequested:" << encryption_flags_requested << std::endl;
 
     if (video::last_encoder_probe_supported_ref_frames_invalidation) {
-      ss << "a=x-nv-video[0].refPicInvalidation:1"sv << std::endl;
+      ss << "a=x-shadow-video[0].refPicInvalidation:1"sv << std::endl;
     }
 
     if (video::active_hevc_mode != 1) {
@@ -1139,20 +1139,20 @@ namespace rtsp_stream {
     }
 
     static constexpr std::array required_apollo_announce_fields {
-      "x-nv-vqos[0].bitStreamFormat"sv,
-      "x-apollo-video[0].clientSinkScalePercent"sv,
-      "x-apollo-video[0].clientSinkHiDPI"sv,
-      "x-apollo-video[0].clientSinkModeIsLogical"sv,
-      "x-apollo-video[0].clientSinkGamut"sv,
-      "x-apollo-video[0].clientSinkTransfer"sv,
-      "x-apollo-video[0].clientSinkCurrentEDRHeadroom"sv,
-      "x-apollo-video[0].clientSinkPotentialEDRHeadroom"sv,
-      "x-apollo-video[0].clientSinkCurrentPeakLuminanceNits"sv,
-      "x-apollo-video[0].clientSinkPotentialPeakLuminanceNits"sv,
-      "x-apollo-video[0].requestedDynamicRangeTransport"sv,
-      "x-apollo-video[0].clientSinkSupportsFrameGatedHDR"sv,
-      "x-apollo-video[0].clientSinkSupportsHDRTileOverlay"sv,
-      "x-apollo-video[0].clientSinkSupportsPerFrameHDRMetadata"sv,
+      "x-shadow-video[0].bitStreamFormat"sv,
+      "x-shadow-sink.scalePercent"sv,
+      "x-shadow-sink.hidpi"sv,
+      "x-shadow-sink.modeIsLogical"sv,
+      "x-shadow-sink.gamut"sv,
+      "x-shadow-sink.transfer"sv,
+      "x-shadow-sink.currentEDRHeadroom"sv,
+      "x-shadow-sink.potentialEDRHeadroom"sv,
+      "x-shadow-sink.currentPeakLuminanceNits"sv,
+      "x-shadow-sink.potentialPeakLuminanceNits"sv,
+      "x-shadow-sink.requestedDynamicRangeTransport"sv,
+      "x-shadow-sink.supportsFrameGatedHDR"sv,
+      "x-shadow-sink.supportsHDRTileOverlay"sv,
+      "x-shadow-sink.supportsPerFrameHDRMetadata"sv,
     };
 
     std::vector<std::string_view> missing_apollo_announce_fields;
@@ -1163,18 +1163,18 @@ namespace rtsp_stream {
     }
 
     // Initialize transport-independent defaults only.
-    args.try_emplace("x-nv-video[0].encoderCscMode"sv, "0"sv);
-    args.try_emplace("x-nv-aqos.packetDuration"sv, "5"sv);
-    args.try_emplace("x-nv-general.useReliableUdp"sv, "1"sv);
-    args.try_emplace("x-nv-vqos[0].fec.minRequiredFecPackets"sv, "0"sv);
-    args.try_emplace("x-nv-general.featureFlags"sv, "135"sv);
-    args.try_emplace("x-ml-general.featureFlags"sv, "0"sv);
-    args.try_emplace("x-nv-vqos[0].qosTrafficType"sv, "5"sv);
-    args.try_emplace("x-nv-aqos.qosTrafficType"sv, "4"sv);
-    args.try_emplace("x-ml-video.configuredBitrateKbps"sv, "0"sv);
-    args.try_emplace("x-ss-general.encryptionEnabled"sv, "0"sv);
-    args.try_emplace("x-ss-video[0].chromaSamplingType"sv, "0"sv);
-    args.try_emplace("x-ss-video[0].intraRefresh"sv, "0"sv);
+    args.try_emplace("x-shadow-video[0].encoderCscMode"sv, "0"sv);
+    args.try_emplace("x-shadow-audio.packetDuration"sv, "5"sv);
+    args.try_emplace("x-shadow-general.useReliableUdp"sv, "1"sv);
+    args.try_emplace("x-shadow-video[0].fec.minRequiredPackets"sv, "0"sv);
+    args.try_emplace("x-shadow-general.featureFlags"sv, "135"sv);
+    args.try_emplace("x-shadow-general.transportFeatureFlags"sv, "0"sv);
+    args.try_emplace("x-shadow-video[0].qosTrafficType"sv, "5"sv);
+    args.try_emplace("x-shadow-audio.qosTrafficType"sv, "4"sv);
+    args.try_emplace("x-shadow-video[0].configuredBitrateKbps"sv, "0"sv);
+    args.try_emplace("x-shadow-general.encryptionEnabled"sv, "0"sv);
+    args.try_emplace("x-shadow-video[0].chromaSamplingType"sv, "0"sv);
+    args.try_emplace("x-shadow-video[0].intraRefresh"sv, "0"sv);
 
     if (!missing_apollo_announce_fields.empty()) {
       std::ostringstream missing;
@@ -1198,60 +1198,60 @@ namespace rtsp_stream {
     std::int64_t configuredBitrateKbps;
     config.audio.flags[audio::config_t::HOST_AUDIO] = session.host_audio;
     try {
-      config.audio.channels = util::from_view(args.at("x-nv-audio.surround.numChannels"sv));
-      config.audio.mask = util::from_view(args.at("x-nv-audio.surround.channelMask"sv));
-      config.audio.packetDuration = util::from_view(args.at("x-nv-aqos.packetDuration"sv));
+      config.audio.channels = util::from_view(args.at("x-shadow-audio.surround.numChannels"sv));
+      config.audio.mask = util::from_view(args.at("x-shadow-audio.surround.channelMask"sv));
+      config.audio.packetDuration = util::from_view(args.at("x-shadow-audio.packetDuration"sv));
 
       config.audio.flags[audio::config_t::HIGH_QUALITY] =
-        util::from_view(args.at("x-nv-audio.surround.AudioQuality"sv));
+        util::from_view(args.at("x-shadow-audio.surround.quality"sv));
 
-      config.controlProtocolType = util::from_view(args.at("x-nv-general.useReliableUdp"sv));
-      config.packetsize = util::from_view(args.at("x-nv-video[0].packetSize"sv));
-      config.minRequiredFecPackets = util::from_view(args.at("x-nv-vqos[0].fec.minRequiredFecPackets"sv));
-      config.mlFeatureFlags = util::from_view(args.at("x-ml-general.featureFlags"sv));
-      config.audioQosType = util::from_view(args.at("x-nv-aqos.qosTrafficType"sv));
-      config.videoQosType = util::from_view(args.at("x-nv-vqos[0].qosTrafficType"sv));
-      config.encryptionFlagsEnabled = util::from_view(args.at("x-ss-general.encryptionEnabled"sv));
+      config.controlProtocolType = util::from_view(args.at("x-shadow-general.useReliableUdp"sv));
+      config.packetsize = util::from_view(args.at("x-shadow-video[0].packetSize"sv));
+      config.minRequiredFecPackets = util::from_view(args.at("x-shadow-video[0].fec.minRequiredPackets"sv));
+      config.mlFeatureFlags = util::from_view(args.at("x-shadow-general.transportFeatureFlags"sv));
+      config.audioQosType = util::from_view(args.at("x-shadow-audio.qosTrafficType"sv));
+      config.videoQosType = util::from_view(args.at("x-shadow-video[0].qosTrafficType"sv));
+      config.encryptionFlagsEnabled = util::from_view(args.at("x-shadow-general.encryptionEnabled"sv));
 
-      config.monitor.height = util::from_view(args.at("x-nv-video[0].clientViewportHt"sv));
-      config.monitor.width = util::from_view(args.at("x-nv-video[0].clientViewportWd"sv));
-      config.monitor.framerate = util::from_view(args.at("x-nv-video[0].maxFPS"sv));
-      config.monitor.bitrate = util::from_view(args.at("x-nv-vqos[0].bw.maximumBitrateKbps"sv));
-      config.monitor.slicesPerFrame = util::from_view(args.at("x-nv-video[0].videoEncoderSlicesPerFrame"sv));
-      config.monitor.numRefFrames = util::from_view(args.at("x-nv-video[0].maxNumReferenceFrames"sv));
-      config.monitor.encoderCscMode = util::from_view(args.at("x-nv-video[0].encoderCscMode"sv));
-      config.monitor.videoFormat = util::from_view(args.at("x-nv-vqos[0].bitStreamFormat"sv));
-      config.monitor.chromaSamplingType = util::from_view(args.at("x-ss-video[0].chromaSamplingType"sv));
-      config.monitor.enableIntraRefresh = util::from_view(args.at("x-ss-video[0].intraRefresh"sv));
-      config.monitor.sinkRequest.capability.gamut = parse_client_sink_gamut(args.at("x-apollo-video[0].clientSinkGamut"sv));
-      config.monitor.sinkRequest.capability.transfer = parse_client_sink_transfer(args.at("x-apollo-video[0].clientSinkTransfer"sv));
+      config.monitor.height = util::from_view(args.at("x-shadow-video[0].clientViewportHeight"sv));
+      config.monitor.width = util::from_view(args.at("x-shadow-video[0].clientViewportWidth"sv));
+      config.monitor.framerate = util::from_view(args.at("x-shadow-video[0].maxFPS"sv));
+      config.monitor.bitrate = util::from_view(args.at("x-shadow-video[0].maximumBitrateKbps"sv));
+      config.monitor.slicesPerFrame = util::from_view(args.at("x-shadow-video[0].encoderSlicesPerFrame"sv));
+      config.monitor.numRefFrames = util::from_view(args.at("x-shadow-video[0].maxReferenceFrames"sv));
+      config.monitor.encoderCscMode = util::from_view(args.at("x-shadow-video[0].encoderCscMode"sv));
+      config.monitor.videoFormat = util::from_view(args.at("x-shadow-video[0].bitStreamFormat"sv));
+      config.monitor.chromaSamplingType = util::from_view(args.at("x-shadow-video[0].chromaSamplingType"sv));
+      config.monitor.enableIntraRefresh = util::from_view(args.at("x-shadow-video[0].intraRefresh"sv));
+      config.monitor.sinkRequest.capability.gamut = parse_client_sink_gamut(args.at("x-shadow-sink.gamut"sv));
+      config.monitor.sinkRequest.capability.transfer = parse_client_sink_transfer(args.at("x-shadow-sink.transfer"sv));
       config.monitor.sinkRequest.dynamic_range_transport = parse_requested_dynamic_range_transport(
-        args.at("x-apollo-video[0].requestedDynamicRangeTransport"sv)
+        args.at("x-shadow-sink.requestedDynamicRangeTransport"sv)
       );
       config.monitor.sinkRequest.capability.supports_frame_gated_hdr =
-        util::from_view(args.at("x-apollo-video[0].clientSinkSupportsFrameGatedHDR"sv));
+        util::from_view(args.at("x-shadow-sink.supportsFrameGatedHDR"sv));
       config.monitor.sinkRequest.capability.supports_hdr_tile_overlay =
-        util::from_view(args.at("x-apollo-video[0].clientSinkSupportsHDRTileOverlay"sv));
+        util::from_view(args.at("x-shadow-sink.supportsHDRTileOverlay"sv));
       config.monitor.sinkRequest.capability.supports_per_frame_hdr_metadata =
-        util::from_view(args.at("x-apollo-video[0].clientSinkSupportsPerFrameHDRMetadata"sv));
+        util::from_view(args.at("x-shadow-sink.supportsPerFrameHDRMetadata"sv));
       config.monitor.sinkRequest.mode.scale_explicit = true;
       config.monitor.sinkRequest.mode.scale_percent =
-        util::from_view(args.at("x-apollo-video[0].clientSinkScalePercent"sv));
+        util::from_view(args.at("x-shadow-sink.scalePercent"sv));
       config.monitor.sinkRequest.mode.hidpi =
-        util::from_view(args.at("x-apollo-video[0].clientSinkHiDPI"sv));
+        util::from_view(args.at("x-shadow-sink.hidpi"sv));
       config.monitor.sinkRequest.mode.mode_is_logical =
-        util::from_view(args.at("x-apollo-video[0].clientSinkModeIsLogical"sv));
+        util::from_view(args.at("x-shadow-sink.modeIsLogical"sv));
       config.monitor.sinkRequest.capability.current_edr_headroom = parse_client_sink_headroom(
-        args.at("x-apollo-video[0].clientSinkCurrentEDRHeadroom"sv)
+        args.at("x-shadow-sink.currentEDRHeadroom"sv)
       );
       config.monitor.sinkRequest.capability.potential_edr_headroom = parse_client_sink_headroom(
-        args.at("x-apollo-video[0].clientSinkPotentialEDRHeadroom"sv)
+        args.at("x-shadow-sink.potentialEDRHeadroom"sv)
       );
       config.monitor.sinkRequest.capability.current_peak_luminance_nits = parse_client_sink_peak_luminance_nits(
-        args.at("x-apollo-video[0].clientSinkCurrentPeakLuminanceNits"sv)
+        args.at("x-shadow-sink.currentPeakLuminanceNits"sv)
       );
       config.monitor.sinkRequest.capability.potential_peak_luminance_nits = parse_client_sink_peak_luminance_nits(
-        args.at("x-apollo-video[0].clientSinkPotentialPeakLuminanceNits"sv)
+        args.at("x-shadow-sink.potentialPeakLuminanceNits"sv)
       );
       if (config.monitor.sinkRequest.mode.scale_percent != session.sink_request.mode.scale_percent ||
           config.monitor.sinkRequest.mode.hidpi != session.sink_request.mode.hidpi) {
@@ -1343,7 +1343,7 @@ namespace rtsp_stream {
 
       config.monitor.input_only = session.input_only;
 
-      configuredBitrateKbps = util::from_view(args.at("x-ml-video.configuredBitrateKbps"sv));
+      configuredBitrateKbps = util::from_view(args.at("x-shadow-video[0].configuredBitrateKbps"sv));
 
       if (!configuredBitrateKbps) {
         configuredBitrateKbps = config.monitor.bitrate;
