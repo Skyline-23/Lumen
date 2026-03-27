@@ -91,12 +91,18 @@ final class ApolloTuistBootstrapTests: XCTestCase {
             targetVideoBitRateKbps: 41_000,
             requestedWidth: 3512,
             requestedHeight: 2290,
-            hdrStaticMetadata: hdrStaticMetadata,
-            clientSinkCurrentEDRHeadroom: 2.8,
-            clientSinkPotentialEDRHeadroom: 8.4,
-            clientSinkCurrentPeakLuminanceNits: 800,
-            clientSinkPotentialPeakLuminanceNits: 1600,
-            requestedDynamicRangeTransport: ApolloCoreDynamicRangeTransportFrameGatedHDR
+            sinkRequest: ApolloBridgeSinkRequest(
+                capability: ApolloBridgeSinkCapability(
+                    currentEDRHeadroom: 2.8,
+                    potentialEDRHeadroom: 8.4,
+                    currentPeakLuminanceNits: 800,
+                    potentialPeakLuminanceNits: 1600
+                ),
+                dynamicRangeTransport: ApolloCoreDynamicRangeTransportFrameGatedHDR
+            ),
+            effectiveDisplayState: ApolloBridgeEffectiveDisplayState(
+                hdrStaticMetadata: hdrStaticMetadata
+            )
         )
 
         let roundTrip = ApolloBridgeConfigurationBox(configuration: configuration).swiftValue
@@ -108,11 +114,11 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(roundTrip.requestedWidth, 3512)
         XCTAssertEqual(roundTrip.requestedHeight, 2290)
         XCTAssertTrue(roundTrip.usesHDRTransport)
-        XCTAssertEqual(roundTrip.hdrStaticMetadata, hdrStaticMetadata)
-        XCTAssertEqual(roundTrip.clientSinkCurrentEDRHeadroom, 2.8)
-        XCTAssertEqual(roundTrip.clientSinkPotentialEDRHeadroom, 8.4)
-        XCTAssertEqual(roundTrip.clientSinkCurrentPeakLuminanceNits, 800)
-        XCTAssertEqual(roundTrip.clientSinkPotentialPeakLuminanceNits, 1600)
+        XCTAssertEqual(roundTrip.effectiveDisplayState.hdrStaticMetadata, hdrStaticMetadata)
+        XCTAssertEqual(roundTrip.sinkRequest.capability.currentEDRHeadroom, 2.8)
+        XCTAssertEqual(roundTrip.sinkRequest.capability.potentialEDRHeadroom, 8.4)
+        XCTAssertEqual(roundTrip.sinkRequest.capability.currentPeakLuminanceNits, 800)
+        XCTAssertEqual(roundTrip.sinkRequest.capability.potentialPeakLuminanceNits, 1600)
     }
 
     func testBridgeHDRConfigurationSeparatesDisplayGamutFromSignalPrimaries() {
@@ -123,11 +129,17 @@ final class ApolloTuistBootstrapTests: XCTestCase {
             queueProfile: .auto,
             showCursor: false,
             targetFrameRate: 120,
-            clientSinkGamut: .displayP3,
-            clientSinkTransfer: .pq,
-            effectiveSinkGamut: .displayP3,
-            effectiveSinkTransfer: .pq,
-            requestedDynamicRangeTransport: ApolloCoreDynamicRangeTransportFrameGatedHDR
+            sinkRequest: ApolloBridgeSinkRequest(
+                capability: ApolloBridgeSinkCapability(
+                    gamut: .displayP3,
+                    transfer: .pq
+                ),
+                dynamicRangeTransport: ApolloCoreDynamicRangeTransportFrameGatedHDR
+            ),
+            effectiveDisplayState: ApolloBridgeEffectiveDisplayState(
+                gamut: .displayP3,
+                transfer: .pq
+            )
         )
 
         let snapshot = configuration.encodedHDRConfigurationSnapshot
@@ -927,7 +939,9 @@ final class ApolloTuistBootstrapTests: XCTestCase {
             targetVideoBitRateKbps: 41_000,
             requestedWidth: 3840,
             requestedHeight: 2160,
-            requestedDynamicRangeTransport: ApolloCoreDynamicRangeTransportFrameGatedHDR
+            sinkRequest: ApolloBridgeSinkRequest(
+                dynamicRangeTransport: ApolloCoreDynamicRangeTransportFrameGatedHDR
+            )
         )
 
         XCTAssertTrue(
