@@ -176,7 +176,6 @@ namespace platf {
         @"targetVideoBitrateKbps": @(state.target_video_bitrate_kbps),
         @"requestedWidth": @(state.requested_width),
         @"requestedHeight": @(state.requested_height),
-        @"dynamicRange": @(state.dynamic_range),
         @"clientSinkGamut": @(state.client_display_gamut),
         @"clientSinkTransfer": @(state.client_display_transfer),
         @"effectiveDisplayGamut": @(state.effective_display_gamut),
@@ -212,7 +211,6 @@ namespace platf {
     }
 
     struct capture_request_hdr_preferences_t {
-      int dynamic_range = 0;
       int client_display_gamut = 0;
       int client_display_transfer = 0;
       int effective_display_gamut = 0;
@@ -295,7 +293,6 @@ namespace platf {
           return std::nullopt;
         }
 
-        NSNumber *dynamic_range = dictionary[@"dynamicRange"];
         NSNumber *client_display_gamut = dictionary[@"clientSinkGamut"];
         NSNumber *client_display_transfer = dictionary[@"clientSinkTransfer"];
         NSNumber *effective_display_gamut = dictionary[@"effectiveDisplayGamut"];
@@ -315,7 +312,6 @@ namespace platf {
         }
 
         capture_request_hdr_preferences_t preferences;
-        preferences.dynamic_range = dynamic_range != nil ? [dynamic_range intValue] : 0;
         preferences.client_display_gamut = [client_display_gamut intValue];
         preferences.client_display_transfer = [client_display_transfer intValue];
         preferences.effective_display_gamut = effective_display_gamut != nil ? [effective_display_gamut intValue] : 0;

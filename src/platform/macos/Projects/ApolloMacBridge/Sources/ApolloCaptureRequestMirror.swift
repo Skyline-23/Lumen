@@ -21,7 +21,6 @@ struct ApolloBridgeMirroredCaptureRequestSnapshot: Equatable, Sendable {
     let targetVideoBitrateKbps: Int32
     let requestedWidth: Int32
     let requestedHeight: Int32
-    let dynamicRange: Int32
     let clientDisplayGamut: Int32
     let clientDisplayTransfer: Int32
     let effectiveDisplayGamut: Int32
@@ -65,7 +64,6 @@ struct ApolloBridgeMirroredCaptureRequestSnapshot: Equatable, Sendable {
               let targetFrameRate = Self.number(dictionary["targetFrameRate"])?.int32Value,
               let requestedWidth = Self.number(dictionary["requestedWidth"])?.int32Value,
               let requestedHeight = Self.number(dictionary["requestedHeight"])?.int32Value,
-              let dynamicRange = Self.number(dictionary["dynamicRange"])?.int32Value,
               let audioSourceKind = Self.audioSourceKind(dictionary["audioSourceKind"]),
               let audioExcludesCurrentProcess = dictionary["audioExcludesCurrentProcess"] as? Bool,
               let audioSampleRate = Self.number(dictionary["audioSampleRate"])?.int32Value,
@@ -88,7 +86,6 @@ struct ApolloBridgeMirroredCaptureRequestSnapshot: Equatable, Sendable {
         self.targetVideoBitrateKbps = Self.number(dictionary["targetVideoBitrateKbps"])?.int32Value ?? 0
         self.requestedWidth = requestedWidth
         self.requestedHeight = requestedHeight
-        self.dynamicRange = dynamicRange
         self.clientDisplayGamut = Self.number(dictionary["clientSinkGamut"])?.int32Value ?? 0
         self.clientDisplayTransfer = Self.number(dictionary["clientSinkTransfer"])?.int32Value ?? 0
         self.effectiveDisplayGamut = Self.number(dictionary["effectiveDisplayGamut"])?.int32Value ?? 0
@@ -192,7 +189,6 @@ struct ApolloBridgeMirroredCaptureRequestSemanticState: Equatable, Sendable {
     let targetVideoBitrateKbps: Int32
     let requestedWidth: Int32
     let requestedHeight: Int32
-    let dynamicRange: Int32
     let clientDisplayGamut: Int32
     let clientDisplayTransfer: Int32
     let effectiveDisplayGamut: Int32
@@ -224,7 +220,6 @@ struct ApolloBridgeMirroredCaptureRequestSemanticState: Equatable, Sendable {
         targetVideoBitrateKbps = snapshot.targetVideoBitrateKbps
         requestedWidth = snapshot.requestedWidth
         requestedHeight = snapshot.requestedHeight
-        dynamicRange = snapshot.dynamicRange
         clientDisplayGamut = snapshot.clientDisplayGamut
         clientDisplayTransfer = snapshot.clientDisplayTransfer
         effectiveDisplayGamut = snapshot.effectiveDisplayGamut
@@ -257,7 +252,6 @@ struct ApolloBridgeMirroredCaptureRequestSemanticState: Equatable, Sendable {
         targetVideoBitrateKbps = snapshot.target_video_bitrate_kbps
         requestedWidth = snapshot.requested_width
         requestedHeight = snapshot.requested_height
-        dynamicRange = snapshot.dynamic_range
         clientDisplayGamut = snapshot.client_display_gamut
         clientDisplayTransfer = snapshot.client_display_transfer
         effectiveDisplayGamut = snapshot.effective_display_gamut
@@ -323,7 +317,6 @@ actor ApolloCaptureRequestMirrorCoordinator {
                     mirroredSnapshot.targetVideoBitrateKbps,
                     mirroredSnapshot.requestedWidth,
                     mirroredSnapshot.requestedHeight,
-                    mirroredSnapshot.dynamicRange,
                     mirroredSnapshot.clientDisplayGamut,
                     mirroredSnapshot.clientDisplayTransfer,
                     mirroredSnapshot.effectiveDisplayGamut,

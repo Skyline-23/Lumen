@@ -125,7 +125,6 @@ namespace {
     result.target_video_bitrate_kbps = static_cast<int32_t>(configuration.targetVideoBitRateKbps);
     result.requested_width = static_cast<int32_t>(configuration.requestedWidth);
     result.requested_height = static_cast<int32_t>(configuration.requestedHeight);
-    result.enable_hdr = configuration.enableHDR;
     result.client_display_gamut = static_cast<int32_t>(configuration.clientDisplayGamutRawValue);
     result.client_display_transfer = static_cast<int32_t>(configuration.clientDisplayTransferRawValue);
     result.effective_display_gamut = static_cast<int32_t>(configuration.effectiveDisplayGamutRawValue);
@@ -169,7 +168,6 @@ namespace {
      targetVideoBitRateKbps:static_cast<NSInteger>(configuration.target_video_bitrate_kbps)
            requestedWidth:static_cast<NSInteger>(configuration.requested_width)
           requestedHeight:static_cast<NSInteger>(configuration.requested_height)
-                enableHDR:configuration.enable_hdr
  clientDisplayGamutRawValue:static_cast<NSInteger>(configuration.client_display_gamut)
 clientDisplayTransferRawValue:static_cast<NSInteger>(configuration.client_display_transfer)
 effectiveDisplayGamutRawValue:static_cast<NSInteger>(configuration.effective_display_gamut)

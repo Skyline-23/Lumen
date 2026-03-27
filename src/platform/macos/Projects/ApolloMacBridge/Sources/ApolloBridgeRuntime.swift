@@ -378,7 +378,6 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     public let targetVideoBitRateKbps: Int
     public let requestedWidth: Int?
     public let requestedHeight: Int?
-    public let enableHDR: Bool
     public let clientDisplayGamut: ApolloClientDisplayGamut
     public let clientDisplayTransfer: ApolloClientDisplayTransfer
     public let effectiveDisplayGamut: ApolloClientDisplayGamut
@@ -404,7 +403,6 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         targetVideoBitRateKbps: Int = 0,
         requestedWidth: Int? = nil,
         requestedHeight: Int? = nil,
-        enableHDR: Bool = false,
         clientDisplayGamut: ApolloClientDisplayGamut = .unknown,
         clientDisplayTransfer: ApolloClientDisplayTransfer = .unknown,
         effectiveDisplayGamut: ApolloClientDisplayGamut = .unknown,
@@ -429,7 +427,6 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         self.targetVideoBitRateKbps = max(targetVideoBitRateKbps, 0)
         self.requestedWidth = Self.sanitizedDimension(requestedWidth)
         self.requestedHeight = Self.sanitizedDimension(requestedHeight)
-        self.enableHDR = apolloDynamicRangeTransportUsesHDR(requestedDynamicRangeTransport)
         self.clientDisplayGamut = clientDisplayGamut
         self.clientDisplayTransfer = clientDisplayTransfer
         self.effectiveDisplayGamut = effectiveDisplayGamut
@@ -443,6 +440,10 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         self.clientSupportsFrameGatedHDR = clientSupportsFrameGatedHDR
         self.clientSupportsHDRTileOverlay = clientSupportsHDRTileOverlay
         self.clientSupportsPerFrameHDRMetadata = clientSupportsPerFrameHDRMetadata
+    }
+
+    public var usesHDRTransport: Bool {
+        apolloDynamicRangeTransportUsesHDR(requestedDynamicRangeTransport)
     }
 
     struct EncodedHDRConfigurationSnapshot: Equatable, Sendable {
@@ -507,7 +508,7 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     }
 
     private var encodedColorConfiguration: MDKVideoHDRConfiguration? {
-        if enableHDR, codec != .h264 {
+        if usesHDRTransport, codec != .h264 {
             let colorPrimaries = resolvedHDRSignalColorPrimaries
             let yCbCrMatrix = resolvedHDRSignalYCbCrMatrix
             let metadata = resolvedHDRStaticMetadata
@@ -581,7 +582,7 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     }
 
     var encodedHDRConfigurationSnapshot: EncodedHDRConfigurationSnapshot? {
-        guard enableHDR, codec != .h264 else {
+        guard usesHDRTransport, codec != .h264 else {
             return nil
         }
 
@@ -707,7 +708,7 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     )
 
     var hdrConfigurationDebugSummary: String {
-        "hdr=\(enableHDR) sink-gamut=\(clientDisplayGamut.rawValue) sink-transfer=\(clientDisplayTransfer.rawValue) requested-transport=\(apolloDynamicRangeTransportName(requestedDynamicRangeTransport)) effective-gamut=\(resolvedDisplayGamut.rawValue) effective-transfer=\(resolvedDisplayTransfer.rawValue) negotiated-static-metadata=\(hdrStaticMetadata != nil) current-edr-headroom=\(clientDisplayCurrentEDRHeadroom) potential-edr-headroom=\(clientDisplayPotentialEDRHeadroom) current-peak-nits=\(clientDisplayCurrentPeakLuminanceNits) potential-peak-nits=\(clientDisplayPotentialPeakLuminanceNits) supports-frame-gated-hdr=\(clientSupportsFrameGatedHDR) supports-hdr-tile-overlay=\(clientSupportsHDRTileOverlay) supports-per-frame-hdr-metadata=\(clientSupportsPerFrameHDRMetadata)"
+        "uses-hdr-transport=\(usesHDRTransport) sink-gamut=\(clientDisplayGamut.rawValue) sink-transfer=\(clientDisplayTransfer.rawValue) requested-transport=\(apolloDynamicRangeTransportName(requestedDynamicRangeTransport)) effective-gamut=\(resolvedDisplayGamut.rawValue) effective-transfer=\(resolvedDisplayTransfer.rawValue) negotiated-static-metadata=\(hdrStaticMetadata != nil) current-edr-headroom=\(clientDisplayCurrentEDRHeadroom) potential-edr-headroom=\(clientDisplayPotentialEDRHeadroom) current-peak-nits=\(clientDisplayCurrentPeakLuminanceNits) potential-peak-nits=\(clientDisplayPotentialPeakLuminanceNits) supports-frame-gated-hdr=\(clientSupportsFrameGatedHDR) supports-hdr-tile-overlay=\(clientSupportsHDRTileOverlay) supports-per-frame-hdr-metadata=\(clientSupportsPerFrameHDRMetadata)"
     }
 }
 
@@ -920,7 +921,6 @@ private struct ApolloBridgeAutomationRequest: Equatable, Sendable {
                 targetVideoBitRateKbps: Int(snapshot.target_video_bitrate_kbps),
                 requestedWidth: Int(snapshot.requested_width),
                 requestedHeight: Int(snapshot.requested_height),
-                enableHDR: apolloDynamicRangeTransportUsesHDR(snapshot.requested_dynamic_range_transport),
                 clientDisplayGamut: ApolloBridgeAutomationRequest.clientDisplayGamut(from: snapshot.client_display_gamut),
                 clientDisplayTransfer: ApolloBridgeAutomationRequest.clientDisplayTransfer(from: snapshot.client_display_transfer),
                 effectiveDisplayGamut: ApolloBridgeAutomationRequest.clientDisplayGamut(from: snapshot.effective_display_gamut),

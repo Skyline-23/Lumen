@@ -24,7 +24,7 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         XCTAssertFalse(configuration.showCursor)
         XCTAssertNil(configuration.requestedWidth)
         XCTAssertNil(configuration.requestedHeight)
-        XCTAssertFalse(configuration.enableHDR)
+        XCTAssertFalse(configuration.usesHDRTransport)
     }
 
     func testBridgeIgnoresImmediateKeyFrameRequestsWithoutActiveSession() async {
@@ -91,7 +91,6 @@ final class ApolloTuistBootstrapTests: XCTestCase {
             targetVideoBitRateKbps: 41_000,
             requestedWidth: 3512,
             requestedHeight: 2290,
-            enableHDR: true,
             hdrStaticMetadata: hdrStaticMetadata,
             clientDisplayCurrentEDRHeadroom: 2.8,
             clientDisplayPotentialEDRHeadroom: 8.4,
@@ -108,7 +107,7 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(roundTrip.targetVideoBitRateKbps, 41_000)
         XCTAssertEqual(roundTrip.requestedWidth, 3512)
         XCTAssertEqual(roundTrip.requestedHeight, 2290)
-        XCTAssertTrue(roundTrip.enableHDR)
+        XCTAssertTrue(roundTrip.usesHDRTransport)
         XCTAssertEqual(roundTrip.hdrStaticMetadata, hdrStaticMetadata)
         XCTAssertEqual(roundTrip.clientDisplayCurrentEDRHeadroom, 2.8)
         XCTAssertEqual(roundTrip.clientDisplayPotentialEDRHeadroom, 8.4)
@@ -124,7 +123,6 @@ final class ApolloTuistBootstrapTests: XCTestCase {
             queueProfile: .auto,
             showCursor: false,
             targetFrameRate: 120,
-            enableHDR: true,
             clientDisplayGamut: .displayP3,
             clientDisplayTransfer: .pq,
             effectiveDisplayGamut: .displayP3,
@@ -515,7 +513,6 @@ final class ApolloTuistBootstrapTests: XCTestCase {
                 41_000,
                 3840,
                 2160,
-                1,
                 2,
                 2,
                 2,
@@ -556,7 +553,6 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(updatedSnapshot.target_video_bitrate_kbps, 41_000)
         XCTAssertEqual(updatedSnapshot.requested_width, 3840)
         XCTAssertEqual(updatedSnapshot.requested_height, 2160)
-        XCTAssertEqual(updatedSnapshot.dynamic_range, 1)
         XCTAssertEqual(updatedSnapshot.client_display_gamut, 2)
         XCTAssertEqual(updatedSnapshot.client_display_transfer, 2)
         XCTAssertEqual(updatedSnapshot.effective_display_gamut, 2)
@@ -594,7 +590,6 @@ final class ApolloTuistBootstrapTests: XCTestCase {
             "targetVideoBitrateKbps": 41_000,
             "requestedWidth": 3840,
             "requestedHeight": 2160,
-            "dynamicRange": 1,
             "clientSinkGamut": 2,
             "clientSinkTransfer": 2,
             "effectiveDisplayGamut": 2,
@@ -686,7 +681,6 @@ final class ApolloTuistBootstrapTests: XCTestCase {
             "targetVideoBitrateKbps": 41_000,
             "requestedWidth": 3512,
             "requestedHeight": 2290,
-            "dynamicRange": 1,
             "clientSinkGamut": 3,
             "clientSinkTransfer": 2,
             "effectiveDisplayGamut": 3,
@@ -745,7 +739,6 @@ final class ApolloTuistBootstrapTests: XCTestCase {
             "targetFrameRate": 120,
             "requestedWidth": 3512,
             "requestedHeight": 2290,
-            "dynamicRange": 1,
             "audioSourceKind": 0,
             "audioExcludesCurrentProcess": false,
             "audioSampleRate": 48_000,
@@ -785,7 +778,6 @@ final class ApolloTuistBootstrapTests: XCTestCase {
                 "targetVideoBitrateKbps": 41_000,
                 "requestedWidth": 3512,
                 "requestedHeight": 2290,
-                "dynamicRange": 1,
                 "clientSinkGamut": 3,
                 "clientSinkTransfer": 2,
                 "effectiveDisplayGamut": 3,
@@ -821,7 +813,6 @@ final class ApolloTuistBootstrapTests: XCTestCase {
                 "targetVideoBitrateKbps": 41_000,
                 "requestedWidth": 3512,
                 "requestedHeight": 2290,
-                "dynamicRange": 1,
                 "clientSinkGamut": 3,
                 "clientSinkTransfer": 2,
                 "effectiveDisplayGamut": 3,
@@ -856,7 +847,7 @@ final class ApolloTuistBootstrapTests: XCTestCase {
             targetVideoBitRateKbps: 41_000,
             requestedWidth: 3840,
             requestedHeight: 2160,
-            enableHDR: true
+            requestedDynamicRangeTransport: ApolloCoreDynamicRangeTransportFrameGatedHDR
         )
 
         XCTAssertTrue(

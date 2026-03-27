@@ -30,7 +30,6 @@ namespace platf {
     int target_video_bitrate_kbps;
     int requested_width;
     int requested_height;
-    int dynamic_range;
     int client_display_gamut;
     int client_display_transfer;
     int effective_display_gamut;

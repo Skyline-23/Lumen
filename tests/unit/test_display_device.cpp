@@ -8,6 +8,7 @@
 #include <src/config.h>
 #include <src/display_device.h>
 #include <src/rtsp.h>
+#include <src/video.h>
 
 namespace {
   using config_option_e = config::video_t::dd_t::config_option_e;
@@ -37,7 +38,7 @@ namespace {
 
   using client_fps_t = int;
   using sops_enabled_t = bool;
-  using client_wants_hdr_t = bool;
+  using requested_dynamic_range_transport_t = int;
 
   constexpr unsigned int max_uint {std::numeric_limits<unsigned int>::max()};
   const std::string max_uint_string {std::to_string(std::numeric_limits<unsigned int>::max())};
@@ -95,28 +96,28 @@ TEST_P(ParseConfigOption, IntegrationTest) {
   }
 }
 
-using ParseHdrOption = DisplayDeviceConfigTest<std::pair<std::pair<hdr_option_e, client_wants_hdr_t>, std::optional<hdr_state_e>>>;
+using ParseHdrOption = DisplayDeviceConfigTest<std::pair<std::pair<hdr_option_e, requested_dynamic_range_transport_t>, std::optional<hdr_state_e>>>;
 INSTANTIATE_TEST_SUITE_P(
   DisplayDeviceConfigTest,
   ParseHdrOption,
   testing::Values(
-    std::make_pair(std::make_pair(hdr_option_e::disabled, client_wants_hdr_t {true}), std::nullopt),
-    std::make_pair(std::make_pair(hdr_option_e::disabled, client_wants_hdr_t {false}), std::nullopt),
-    std::make_pair(std::make_pair(hdr_option_e::automatic, client_wants_hdr_t {true}), hdr_state_e::Enabled),
-    std::make_pair(std::make_pair(hdr_option_e::automatic, client_wants_hdr_t {false}), hdr_state_e::Disabled)
+    std::make_pair(std::make_pair(hdr_option_e::disabled, static_cast<int>(video::dynamic_range_transport_e::frame_gated_hdr)), std::nullopt),
+    std::make_pair(std::make_pair(hdr_option_e::disabled, static_cast<int>(video::dynamic_range_transport_e::sdr)), std::nullopt),
+    std::make_pair(std::make_pair(hdr_option_e::automatic, static_cast<int>(video::dynamic_range_transport_e::frame_gated_hdr)), hdr_state_e::Enabled),
+    std::make_pair(std::make_pair(hdr_option_e::automatic, static_cast<int>(video::dynamic_range_transport_e::sdr)), hdr_state_e::Disabled)
   )
 );
 
 TEST_P(ParseHdrOption, IntegrationTest) {
   const auto &[input_value, expected_value] = GetParam();
-  const auto &[input_hdr_option, input_enable_hdr] = input_value;
+  const auto &[input_hdr_option, input_requested_dynamic_range_transport] = input_value;
 
   config::video_t video_config {};
   video_config.dd.configuration_option = config_option_e::verify_only;
   video_config.dd.hdr_option = input_hdr_option;
 
   rtsp_stream::launch_session_t session {};
-  session.enable_hdr = input_enable_hdr;
+  session.requested_dynamic_range_transport = input_requested_dynamic_range_transport;
 
   const auto result {display_device::parse_configuration(video_config, session)};
   EXPECT_EQ(std::get<display_device::SingleDisplayConfiguration>(result).m_hdr_state, expected_value);

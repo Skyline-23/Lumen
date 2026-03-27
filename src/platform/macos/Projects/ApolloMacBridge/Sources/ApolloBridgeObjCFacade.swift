@@ -13,7 +13,6 @@ public final class ApolloBridgeConfigurationBox: NSObject {
     public let targetVideoBitRateKbps: Int
     public let requestedWidth: Int
     public let requestedHeight: Int
-    public let enableHDR: Bool
     public let clientDisplayGamutRawValue: Int
     public let clientDisplayTransferRawValue: Int
     public let effectiveDisplayGamutRawValue: Int
@@ -51,7 +50,6 @@ public final class ApolloBridgeConfigurationBox: NSObject {
         targetVideoBitRateKbps: Int,
         requestedWidth: Int,
         requestedHeight: Int,
-        enableHDR: Bool,
         clientDisplayGamutRawValue: Int,
         clientDisplayTransferRawValue: Int,
         effectiveDisplayGamutRawValue: Int,
@@ -88,7 +86,6 @@ public final class ApolloBridgeConfigurationBox: NSObject {
         self.targetVideoBitRateKbps = targetVideoBitRateKbps
         self.requestedWidth = requestedWidth
         self.requestedHeight = requestedHeight
-        self.enableHDR = enableHDR
         self.clientDisplayGamutRawValue = clientDisplayGamutRawValue
         self.clientDisplayTransferRawValue = clientDisplayTransferRawValue
         self.effectiveDisplayGamutRawValue = effectiveDisplayGamutRawValue
@@ -129,7 +126,6 @@ public final class ApolloBridgeConfigurationBox: NSObject {
             targetVideoBitRateKbps: configuration.targetVideoBitRateKbps,
             requestedWidth: configuration.requestedWidth ?? 0,
             requestedHeight: configuration.requestedHeight ?? 0,
-            enableHDR: configuration.enableHDR,
             clientDisplayGamutRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.clientDisplayGamut),
             clientDisplayTransferRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.clientDisplayTransfer),
             effectiveDisplayGamutRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.effectiveDisplayGamut),
@@ -185,7 +181,6 @@ public final class ApolloBridgeConfigurationBox: NSObject {
             targetVideoBitRateKbps: targetVideoBitRateKbps,
             requestedWidth: requestedWidth,
             requestedHeight: requestedHeight,
-            enableHDR: enableHDR,
             clientDisplayGamut: ApolloBridgeObjCFacade.clientDisplayGamut(fromRawValue: clientDisplayGamutRawValue),
             clientDisplayTransfer: ApolloBridgeObjCFacade.clientDisplayTransfer(fromRawValue: clientDisplayTransferRawValue),
             effectiveDisplayGamut: ApolloBridgeObjCFacade.clientDisplayGamut(fromRawValue: effectiveDisplayGamutRawValue),

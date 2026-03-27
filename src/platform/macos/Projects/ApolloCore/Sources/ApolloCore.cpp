@@ -1078,7 +1078,6 @@ void ApolloCoreCaptureRequestPublishVideo(
   int32_t target_video_bitrate_kbps,
   int32_t requested_width,
   int32_t requested_height,
-  int32_t dynamic_range,
   int32_t client_display_gamut,
   int32_t client_display_transfer,
   int32_t effective_display_gamut,
@@ -1094,10 +1093,6 @@ void ApolloCoreCaptureRequestPublishVideo(
   bool client_supports_hdr_tile_overlay,
   bool client_supports_per_frame_hdr_metadata
 ) {
-  const bool hdr_stream_requested =
-    requested_dynamic_range_transport == ApolloCoreDynamicRangeTransportFullFrameHDR ||
-    requested_dynamic_range_transport == ApolloCoreDynamicRangeTransportFrameGatedHDR;
-  (void) dynamic_range;
   auto *state = shared_capture_request_state();
   {
     std::scoped_lock lock(state->mutex);
@@ -1113,7 +1108,6 @@ void ApolloCoreCaptureRequestPublishVideo(
     state->snapshot.target_video_bitrate_kbps = std::max<int32_t>(target_video_bitrate_kbps, 0);
     state->snapshot.requested_width = std::max<int32_t>(requested_width, 0);
     state->snapshot.requested_height = std::max<int32_t>(requested_height, 0);
-    state->snapshot.dynamic_range = hdr_stream_requested ? 1 : 0;
     state->snapshot.client_display_gamut = std::max<int32_t>(client_display_gamut, 0);
     state->snapshot.client_display_transfer = std::max<int32_t>(client_display_transfer, 0);
     state->snapshot.effective_display_gamut = std::max<int32_t>(effective_display_gamut, 0);
