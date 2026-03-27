@@ -179,7 +179,7 @@ namespace config {
     int wan_encryption_mode;
   };
 
-  struct session_http_t {
+  struct shadow_http_t {
     // Could be any of the following values:
     // pc|lan|wan
     std::string origin_web_ui_allowed;
@@ -296,7 +296,7 @@ namespace config {
   extern video_t video;
   extern audio_t audio;
   extern stream_t stream;
-  extern session_http_t session_http;
+  extern shadow_http_t shadow_http;
   extern input_t input;
   extern runtime_t runtime;
 

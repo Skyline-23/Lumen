@@ -11,7 +11,7 @@
 // local includes
 #include "src/logging.h"
 #include "src/network.h"
-#include "src/session_http.h"
+#include "src/shadow_http.h"
 #include "src/platform/common.h"
 
 using namespace std::literals;
@@ -110,7 +110,7 @@ namespace platf::publish {
       SERVICE_TYPE,
       nullptr,  // domain
       nullptr,  // host
-      htons(net::map_port(session_http::PORT_HTTP)),
+      htons(net::map_port(shadow_http::PORT_HTTP)),
       0,  // txtLen
       nullptr,  // txtRecord
       registrationCallback,

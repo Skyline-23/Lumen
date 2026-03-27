@@ -18,7 +18,7 @@
 #include "httpcommon.h"
 #include "logging.h"
 #include "main.h"
-#include "session_http.h"
+#include "shadow_http.h"
 #include "process.h"
 #include "system_tray.h"
 #include "upnp.h"
@@ -504,7 +504,7 @@ int apollo_run(int argc, char *argv[], const ApolloRuntimeOptions &options) {
     return lifetime::desired_exit_code;
   }
 
-  std::thread httpThread {session_http::start};
+  std::thread httpThread {shadow_http::start};
   std::thread configThread {confighttp::start};
   std::thread rtspThread {rtsp_stream::start};
 

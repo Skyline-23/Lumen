@@ -16,7 +16,7 @@
 #include "src/config.h"
 #include "src/logging.h"
 #include "src/network.h"
-#include "src/session_http.h"
+#include "src/shadow_http.h"
 #include "src/platform/common.h"
 #include "src/thread_safe.h"
 
@@ -114,7 +114,7 @@ namespace platf::publish {
 
     DNS_SERVICE_INSTANCE instance {};
     instance.pszInstanceName = name.data();
-    instance.wPort = net::map_port(session_http::PORT_HTTP);
+    instance.wPort = net::map_port(shadow_http::PORT_HTTP);
     instance.pszHostName = host.data();
 
     // Setting these values ensures Windows mDNS answers comply with RFC 1035.

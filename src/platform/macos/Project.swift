@@ -123,7 +123,7 @@ let hostedRuntimeSources: SourceFilesList = [
     "../../../src/logging.cpp",
     "../../../src/main.cpp",
     "../../../src/crypto.cpp",
-    "../../../src/session_http.cpp",
+    "../../../src/shadow_http.cpp",
     "../../../src/httpcommon.cpp",
     "../../../src/confighttp.cpp",
     "../../../src/rtsp.cpp",

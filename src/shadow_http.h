@@ -1,5 +1,5 @@
 /**
- * @file src/session_http.h
+ * @file src/shadow_http.h
  * @brief Declarations for the session HTTP compatibility adapter.
  */
 // macros
@@ -25,7 +25,7 @@ using namespace std::chrono_literals;
 /**
  * @brief Contains the functions and state used by the session HTTP compatibility adapter.
  */
-namespace session_http {
+namespace shadow_http {
 
   using args_t = SimpleWeb::CaseInsensitiveMultimap;
   using cmd_list_t = std::list<crypto::command_entry_t>;
@@ -57,7 +57,7 @@ namespace session_http {
   /**
    * @brief Start the session HTTP server.
    * @examples
-   * session_http::start();
+   * shadow_http::start();
    * @examples_end
    */
   void start();
@@ -190,7 +190,7 @@ namespace session_http {
    * @param name The user supplied name.
    * @return `true` if the pin is correct, `false` otherwise.
    * @examples
-   * bool pin_status = session_http::pin("1234", "laptop");
+   * bool pin_status = shadow_http::pin("1234", "laptop");
    * @examples_end
    */
   bool pin(std::string pin, std::string name);
@@ -201,7 +201,7 @@ namespace session_http {
    * @brief Remove single client.
    * @param uuid The UUID of the client to remove.
    * @examples
-   * session_http::unpair_client("4D7BB2DD-5704-A405-B41C-891A022932E1");
+   * shadow_http::unpair_client("4D7BB2DD-5704-A405-B41C-891A022932E1");
    * @examples_end
    */
   bool unpair_client(std::string_view uuid);
@@ -210,7 +210,7 @@ namespace session_http {
    * @brief Get all paired clients.
    * @return The list of all paired clients.
    * @examples
-   * nlohmann::json clients = session_http::get_all_clients();
+   * nlohmann::json clients = shadow_http::get_all_clients();
    * @examples_end
    */
   nlohmann::json get_all_clients();
@@ -218,7 +218,7 @@ namespace session_http {
   /**
    * @brief Remove all paired clients.
    * @examples
-   * session_http::erase_all_clients();
+   * shadow_http::erase_all_clients();
    * @examples_end
    */
   void erase_all_clients();
@@ -282,4 +282,4 @@ namespace session_http {
     const bool allow_client_commands,
     const bool always_use_virtual_display
   );
-}  // namespace session_http
+}  // namespace shadow_http

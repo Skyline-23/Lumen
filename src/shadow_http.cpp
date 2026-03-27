@@ -1,5 +1,5 @@
 /**
- * @file src/session_http.cpp
+ * @file src/shadow_http.cpp
  * @brief Definitions for the session HTTP compatibility adapter.
  */
 // macros
@@ -32,7 +32,7 @@
 #include "httpcommon.h"
 #include "logging.h"
 #include "network.h"
-#include "session_http.h"
+#include "shadow_http.h"
 #include "platform/common.h"
 #include "process.h"
 #include "rtsp.h"
@@ -49,7 +49,7 @@
 
 using namespace std::literals;
 
-namespace session_http {
+namespace shadow_http {
 
   namespace fs = std::filesystem;
   namespace pt = boost::property_tree;
@@ -408,12 +408,12 @@ namespace session_http {
   void save_state() {
     nlohmann::json root = nlohmann::json::object();
     // If the state file exists, try to read it.
-    if (fs::exists(config::session_http.file_state)) {
+    if (fs::exists(config::shadow_http.file_state)) {
       try {
-        std::ifstream in(config::session_http.file_state);
+        std::ifstream in(config::shadow_http.file_state);
         in >> root;
       } catch (std::exception &e) {
-        BOOST_LOG(error) << "Couldn't read "sv << config::session_http.file_state << ": "sv << e.what();
+        BOOST_LOG(error) << "Couldn't read "sv << config::shadow_http.file_state << ": "sv << e.what();
         return;
       }
     }
@@ -480,27 +480,27 @@ namespace session_http {
     root["root"]["named_devices"] = named_cert_nodes;
 
     try {
-      std::ofstream out(config::session_http.file_state);
+      std::ofstream out(config::shadow_http.file_state);
       out << root.dump(4);  // Pretty-print with an indent of 4 spaces.
     } catch (std::exception &e) {
-      BOOST_LOG(error) << "Couldn't write "sv << config::session_http.file_state << ": "sv << e.what();
+      BOOST_LOG(error) << "Couldn't write "sv << config::shadow_http.file_state << ": "sv << e.what();
       return;
     }
   }
 
   void load_state() {
-    if (!fs::exists(config::session_http.file_state)) {
-      BOOST_LOG(info) << "File "sv << config::session_http.file_state << " doesn't exist"sv;
+    if (!fs::exists(config::shadow_http.file_state)) {
+      BOOST_LOG(info) << "File "sv << config::shadow_http.file_state << " doesn't exist"sv;
       http::unique_id = uuid_util::uuid_t::generate().string();
       return;
     }
 
     nlohmann::json tree;
     try {
-      std::ifstream in(config::session_http.file_state);
+      std::ifstream in(config::shadow_http.file_state);
       in >> tree;
     } catch (std::exception &e) {
-      BOOST_LOG(error) << "Couldn't read "sv << config::session_http.file_state << ": "sv << e.what();
+      BOOST_LOG(error) << "Couldn't read "sv << config::shadow_http.file_state << ": "sv << e.what();
       return;
     }
 
@@ -1208,7 +1208,7 @@ namespace session_http {
     pt::ptree tree;
 
     tree.put("root.<xmlattr>.status_code", 200);
-    tree.put("root.hostname", config::session_http.host_name);
+    tree.put("root.hostname", config::shadow_http.host_name);
 
     tree.put("root.appversion", VERSION);
     tree.put("root.GfeVersion", GFE_VERSION);
@@ -2009,15 +2009,15 @@ namespace session_http {
       load_state();
     }
 
-    auto pkey = file_handler::read_file(config::session_http.pkey.c_str());
-    auto cert = file_handler::read_file(config::session_http.cert.c_str());
+    auto pkey = file_handler::read_file(config::shadow_http.pkey.c_str());
+    auto cert = file_handler::read_file(config::shadow_http.cert.c_str());
     setup(pkey, cert);
 
     // resume doesn't always get the parameter "localAudioPlayMode"
     // launch will store it in host_audio
     bool host_audio {};
 
-    https_server_t https_server {config::session_http.cert, config::session_http.pkey};
+    https_server_t https_server {config::shadow_http.cert, config::shadow_http.pkey};
     http_server_t http_server;
 
     // Verify certificates after establishing connection
@@ -2249,4 +2249,4 @@ namespace session_http {
 
     return removed;
   }
-}  // namespace session_http
+}  // namespace shadow_http

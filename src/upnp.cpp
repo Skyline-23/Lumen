@@ -16,7 +16,7 @@
 #include "globals.h"
 #include "logging.h"
 #include "network.h"
-#include "session_http.h"
+#include "shadow_http.h"
 #include "rtsp.h"
 #include "stream.h"
 #include "upnp.h"
@@ -70,8 +70,8 @@ namespace upnp {
       auto video = std::to_string(net::map_port(stream::VIDEO_STREAM_PORT));
       auto audio = std::to_string(net::map_port(stream::AUDIO_STREAM_PORT));
       auto control = std::to_string(net::map_port(stream::CONTROL_PORT));
-      auto gs_http = std::to_string(net::map_port(session_http::PORT_HTTP));
-      auto gs_https = std::to_string(net::map_port(session_http::PORT_HTTPS));
+      auto gs_http = std::to_string(net::map_port(shadow_http::PORT_HTTP));
+      auto gs_https = std::to_string(net::map_port(shadow_http::PORT_HTTPS));
       auto wm_http = std::to_string(net::map_port(confighttp::PORT_HTTPS));
 
       mappings.assign({
@@ -84,7 +84,7 @@ namespace upnp {
       });
 
       // Only map port for the Web Manager if it is configured to accept connection from WAN
-      if (net::from_enum_string(config::session_http.origin_web_ui_allowed) > net::LAN) {
+      if (net::from_enum_string(config::shadow_http.origin_web_ui_allowed) > net::LAN) {
         mappings.emplace_back(mapping_t {{wm_http, wm_http, "TCP"s}, "Apollo - Web UI"s});
       }
 

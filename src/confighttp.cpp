@@ -33,7 +33,7 @@
 #include "httpcommon.h"
 #include "logging.h"
 #include "network.h"
-#include "session_http.h"
+#include "shadow_http.h"
 #include "platform/common.h"
 #include "process.h"
 #include "utility.h"
@@ -585,7 +585,7 @@ namespace confighttp {
 
       file_tree["current_app"] = proc::proc.get_running_app_uuid();
       file_tree["host_uuid"] = http::unique_id;
-      file_tree["host_name"] = config::session_http.host_name;
+      file_tree["host_name"] = config::shadow_http.host_name;
 
       send_response(response, file_tree);
     } catch (std::exception &e) {
@@ -870,7 +870,7 @@ namespace confighttp {
 
     print_req(request);
 
-    nlohmann::json named_certs = session_http::get_all_clients();
+    nlohmann::json named_certs = shadow_http::get_all_clients();
     nlohmann::json output_tree;
     output_tree["named_certs"] = named_certs;
 #ifdef _WIN32
@@ -915,10 +915,10 @@ namespace confighttp {
       bool enable_legacy_ordering = input_tree.value("enable_legacy_ordering", true);
       bool allow_client_commands = input_tree.value("allow_client_commands", true);
       bool always_use_virtual_display = input_tree.value("always_use_virtual_display", false);
-      auto do_cmds = session_http::extract_command_entries(input_tree, "do");
-      auto undo_cmds = session_http::extract_command_entries(input_tree, "undo");
+      auto do_cmds = shadow_http::extract_command_entries(input_tree, "do");
+      auto undo_cmds = shadow_http::extract_command_entries(input_tree, "undo");
       auto perm = static_cast<crypto::PERM>(input_tree.value("perm", static_cast<uint32_t>(crypto::PERM::_no)) & static_cast<uint32_t>(crypto::PERM::_all));
-      output_tree["status"] = session_http::update_device_info(
+      output_tree["status"] = shadow_http::update_device_info(
         uuid,
         name,
         display_mode,
@@ -963,7 +963,7 @@ namespace confighttp {
       nlohmann::json input_tree = nlohmann::json::parse(ss.str());
       nlohmann::json output_tree;
       std::string uuid = input_tree.value("uuid", "");
-      output_tree["status"] = session_http::unpair_client(uuid);
+      output_tree["status"] = shadow_http::unpair_client(uuid);
       send_response(response, output_tree);
     } catch (std::exception &e) {
       BOOST_LOG(warning) << "Unpair: "sv << e.what();
@@ -985,7 +985,7 @@ namespace confighttp {
 
     print_req(request);
 
-    session_http::erase_all_clients();
+    shadow_http::erase_all_clients();
     proc::proc.terminate();
     nlohmann::json output_tree;
     output_tree["status"] = true;
@@ -1252,9 +1252,9 @@ namespace confighttp {
         throw std::runtime_error("Passphrase too short!");
 
       std::string deviceName = input_tree.value("deviceName", "");
-      output_tree["otp"] = session_http::request_otp(passphrase, deviceName);
+      output_tree["otp"] = shadow_http::request_otp(passphrase, deviceName);
       output_tree["ip"] = platf::get_local_ip_for_gateway();
-      output_tree["name"] = config::session_http.host_name;
+      output_tree["name"] = config::shadow_http.host_name;
       output_tree["status"] = true;
       output_tree["message"] = "OTP created, effective within 3 minutes.";
       send_response(response, output_tree);
@@ -1293,7 +1293,7 @@ namespace confighttp {
       nlohmann::json output_tree;
       std::string pin = input_tree.value("pin", "");
       std::string name = input_tree.value("name", "");
-      output_tree["status"] = session_http::pin(pin, name);
+      output_tree["status"] = shadow_http::pin(pin, name);
       send_response(response, output_tree);
     } catch (std::exception &e) {
       BOOST_LOG(warning) << "SavePin: "sv << e.what();
@@ -1411,7 +1411,7 @@ namespace confighttp {
             .perm = crypto::PERM::_all,
           };
           BOOST_LOG(info) << "Launching app ["sv << app.name << "] from web UI"sv;
-          auto launch_session = session_http::make_launch_session(true, false, request->parse_query_string(), &named_cert);
+          auto launch_session = shadow_http::make_launch_session(true, false, request->parse_query_string(), &named_cert);
           auto err = proc::proc.execute(app, launch_session);
           if (err) {
             bad_request(response, request, err == 503 ?
@@ -1451,7 +1451,7 @@ namespace confighttp {
       nlohmann::json output_tree;
       nlohmann::json input_tree = nlohmann::json::parse(ss.str());
       std::string uuid = input_tree.value("uuid", "");
-      output_tree["status"] = session_http::find_and_stop_session(uuid, true);
+      output_tree["status"] = shadow_http::find_and_stop_session(uuid, true);
       send_response(response, output_tree);
     } catch (std::exception &e) {
       BOOST_LOG(warning) << "Disconnect: "sv << e.what();
@@ -1514,7 +1514,7 @@ namespace confighttp {
     auto shutdown_event = mail::man->event<bool>(mail::shutdown);
     auto port_https = net::map_port(PORT_HTTPS);
     auto address_family = net::af_from_enum_string(config::runtime.address_family);
-    https_server_t server { config::session_http.cert, config::session_http.pkey };
+    https_server_t server { config::shadow_http.cert, config::shadow_http.pkey };
     server.default_resource["DELETE"] = [](resp_https_t response, req_https_t request) {
       bad_request(response, request);
     };

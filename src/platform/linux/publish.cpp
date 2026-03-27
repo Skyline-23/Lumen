@@ -10,7 +10,7 @@
 #include "misc.h"
 #include "src/logging.h"
 #include "src/network.h"
-#include "src/session_http.h"
+#include "src/shadow_http.h"
 #include "src/platform/common.h"
 #include "src/utility.h"
 
@@ -348,7 +348,7 @@ namespace platf::publish {
         SERVICE_TYPE,
         nullptr,
         nullptr,
-        net::map_port(session_http::PORT_HTTP),
+        net::map_port(shadow_http::PORT_HTTP),
         nullptr
       );
 
