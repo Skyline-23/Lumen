@@ -1555,10 +1555,10 @@ namespace stream {
         }
       }
 
-      if (session->control.peer && session->config.monitor.clientSupportsPerFrameHDRMetadata != 0) {
+      if (session->control.peer && session->config.monitor.clientSinkSupportsPerFrameHDRMetadata != 0) {
         auto frame_hdr_state = packet->hdr_frame_state.value_or(video::make_sdr_hdr_frame_state());
         if (frame_hdr_state.content == video::hdr_frame_content_e::partial_hdr_overlay &&
-            session->config.monitor.clientSupportsHDRTileOverlay == 0) {
+            session->config.monitor.clientSinkSupportsHDRTileOverlay == 0) {
           frame_hdr_state = video::make_sdr_hdr_frame_state();
         }
 
@@ -2222,29 +2222,29 @@ namespace stream {
       }
     }
 
-    std::string_view apollo_core_client_display_gamut_name(int gamut) {
-      switch (static_cast<video::client_display_gamut_e>(gamut)) {
-        case video::client_display_gamut_e::srgb:
+    std::string_view apollo_core_client_sink_gamut_name(int gamut) {
+      switch (static_cast<video::client_sink_gamut_e>(gamut)) {
+        case video::client_sink_gamut_e::srgb:
           return "srgb"sv;
-        case video::client_display_gamut_e::display_p3:
+        case video::client_sink_gamut_e::display_p3:
           return "display-p3"sv;
-        case video::client_display_gamut_e::rec2020:
+        case video::client_sink_gamut_e::rec2020:
           return "rec2020"sv;
-        case video::client_display_gamut_e::unknown:
+        case video::client_sink_gamut_e::unknown:
         default:
           return "unknown"sv;
       }
     }
 
-    std::string_view apollo_core_client_display_transfer_name(int transfer) {
-      switch (static_cast<video::client_display_transfer_e>(transfer)) {
-        case video::client_display_transfer_e::sdr:
+    std::string_view apollo_core_client_sink_transfer_name(int transfer) {
+      switch (static_cast<video::client_sink_transfer_e>(transfer)) {
+        case video::client_sink_transfer_e::sdr:
           return "sdr"sv;
-        case video::client_display_transfer_e::pq:
+        case video::client_sink_transfer_e::pq:
           return "pq"sv;
-        case video::client_display_transfer_e::hlg:
+        case video::client_sink_transfer_e::hlg:
           return "hlg"sv;
-        case video::client_display_transfer_e::unknown:
+        case video::client_sink_transfer_e::unknown:
         default:
           return "unknown"sv;
       }
@@ -2305,19 +2305,19 @@ namespace stream {
         .target_frame_rate = snapshot.target_frame_rate,
         .requested_width = snapshot.requested_width,
         .requested_height = snapshot.requested_height,
-        .client_display_gamut = snapshot.client_display_gamut,
-        .client_display_transfer = snapshot.client_display_transfer,
-        .effective_display_gamut = snapshot.effective_display_gamut,
-        .effective_display_transfer = snapshot.effective_display_transfer,
+        .client_sink_gamut = snapshot.client_sink_gamut,
+        .client_sink_transfer = snapshot.client_sink_transfer,
+        .effective_sink_gamut = snapshot.effective_sink_gamut,
+        .effective_sink_transfer = snapshot.effective_sink_transfer,
         .has_effective_hdr_metadata = snapshot.has_effective_hdr_metadata,
-        .client_display_current_edr_headroom = snapshot.client_display_current_edr_headroom,
-        .client_display_potential_edr_headroom = snapshot.client_display_potential_edr_headroom,
-        .client_display_current_peak_luminance_nits = snapshot.client_display_current_peak_luminance_nits,
-        .client_display_potential_peak_luminance_nits = snapshot.client_display_potential_peak_luminance_nits,
+        .client_sink_current_edr_headroom = snapshot.client_sink_current_edr_headroom,
+        .client_sink_potential_edr_headroom = snapshot.client_sink_potential_edr_headroom,
+        .client_sink_current_peak_luminance_nits = snapshot.client_sink_current_peak_luminance_nits,
+        .client_sink_potential_peak_luminance_nits = snapshot.client_sink_potential_peak_luminance_nits,
         .requested_dynamic_range_transport = static_cast<int>(snapshot.requested_dynamic_range_transport),
-        .client_supports_frame_gated_hdr = snapshot.client_supports_frame_gated_hdr,
-        .client_supports_hdr_tile_overlay = snapshot.client_supports_hdr_tile_overlay,
-        .client_supports_per_frame_hdr_metadata = snapshot.client_supports_per_frame_hdr_metadata,
+        .client_sink_supports_frame_gated_hdr = snapshot.client_sink_supports_frame_gated_hdr,
+        .client_sink_supports_hdr_tile_overlay = snapshot.client_sink_supports_hdr_tile_overlay,
+        .client_sink_supports_per_frame_hdr_metadata = snapshot.client_sink_supports_per_frame_hdr_metadata,
         .effective_hdr_red_primary_x = snapshot.effective_hdr_metadata.red_primary_x,
         .effective_hdr_red_primary_y = snapshot.effective_hdr_metadata.red_primary_y,
         .effective_hdr_green_primary_x = snapshot.effective_hdr_metadata.green_primary_x,
@@ -2353,8 +2353,8 @@ namespace stream {
       const auto effective_display_state = platf::resolve_capture_request_effective_display_state(
         requested_display_id,
         session.config.monitor.requestedDynamicRangeTransport,
-        session.config.monitor.clientDisplayGamut,
-        session.config.monitor.clientDisplayTransfer
+        session.config.monitor.clientSinkGamut,
+        session.config.monitor.clientSinkTransfer
       );
       ApolloCoreHDRStaticMetadata effective_hdr_metadata {};
       bool has_effective_hdr_metadata = false;
@@ -2364,10 +2364,10 @@ namespace stream {
         has_effective_hdr_metadata = platf::resolve_effective_display_hdr_metadata(
           effective_display_state.gamut,
           effective_display_state.transfer,
-          session.config.monitor.clientDisplayCurrentEDRHeadroom,
-          session.config.monitor.clientDisplayPotentialEDRHeadroom,
-          session.config.monitor.clientDisplayCurrentPeakLuminanceNits,
-          session.config.monitor.clientDisplayPotentialPeakLuminanceNits,
+          session.config.monitor.clientSinkCurrentEDRHeadroom,
+          session.config.monitor.clientSinkPotentialEDRHeadroom,
+          session.config.monitor.clientSinkCurrentPeakLuminanceNits,
+          session.config.monitor.clientSinkPotentialPeakLuminanceNits,
           hdr_metadata
         );
         if (has_effective_hdr_metadata) {
@@ -2385,27 +2385,27 @@ namespace stream {
                       << apollo_core_dynamic_range_transport_name(session.config.monitor.requestedDynamicRangeTransport)
                       << " hdr-stream="sv << hdr_stream
                       << " sink-gamut="sv
-                      << apollo_core_client_display_gamut_name(session.config.monitor.clientDisplayGamut)
+                      << apollo_core_client_sink_gamut_name(session.config.monitor.clientSinkGamut)
                       << " sink-transfer="sv
-                      << apollo_core_client_display_transfer_name(session.config.monitor.clientDisplayTransfer)
+                      << apollo_core_client_sink_transfer_name(session.config.monitor.clientSinkTransfer)
                       << " current-edr-headroom="sv
-                      << session.config.monitor.clientDisplayCurrentEDRHeadroom
+                      << session.config.monitor.clientSinkCurrentEDRHeadroom
                       << " potential-edr-headroom="sv
-                      << session.config.monitor.clientDisplayPotentialEDRHeadroom
+                      << session.config.monitor.clientSinkPotentialEDRHeadroom
                       << " current-peak-nits="sv
-                      << session.config.monitor.clientDisplayCurrentPeakLuminanceNits
+                      << session.config.monitor.clientSinkCurrentPeakLuminanceNits
                       << " potential-peak-nits="sv
-                      << session.config.monitor.clientDisplayPotentialPeakLuminanceNits
+                      << session.config.monitor.clientSinkPotentialPeakLuminanceNits
                       << " effective-gamut="sv
-                      << apollo_core_client_display_gamut_name(effective_display_state.gamut)
+                      << apollo_core_client_sink_gamut_name(effective_display_state.gamut)
                       << " effective-transfer="sv
-                      << apollo_core_client_display_transfer_name(effective_display_state.transfer)
+                      << apollo_core_client_sink_transfer_name(effective_display_state.transfer)
                       << " supports-frame-gated-hdr="sv
-                      << (session.config.monitor.clientSupportsFrameGatedHDR != 0)
+                      << (session.config.monitor.clientSinkSupportsFrameGatedHDR != 0)
                       << " supports-hdr-tile-overlay="sv
-                      << (session.config.monitor.clientSupportsHDRTileOverlay != 0)
+                      << (session.config.monitor.clientSinkSupportsHDRTileOverlay != 0)
                       << " supports-per-frame-hdr-metadata="sv
-                      << (session.config.monitor.clientSupportsPerFrameHDRMetadata != 0)
+                      << (session.config.monitor.clientSinkSupportsPerFrameHDRMetadata != 0)
                       << " effective-hdr-metadata="sv << has_effective_hdr_metadata;
 
       ApolloCoreCaptureRequestClear();
@@ -2419,20 +2419,20 @@ namespace stream {
         session.config.monitor.bitrate,
         session.config.monitor.width,
         session.config.monitor.height,
-        session.config.monitor.clientDisplayGamut,
-        session.config.monitor.clientDisplayTransfer,
+        session.config.monitor.clientSinkGamut,
+        session.config.monitor.clientSinkTransfer,
         effective_display_state.gamut,
         effective_display_state.transfer,
         has_effective_hdr_metadata,
         effective_hdr_metadata,
-        session.config.monitor.clientDisplayCurrentEDRHeadroom,
-        session.config.monitor.clientDisplayPotentialEDRHeadroom,
-        session.config.monitor.clientDisplayCurrentPeakLuminanceNits,
-        session.config.monitor.clientDisplayPotentialPeakLuminanceNits,
+        session.config.monitor.clientSinkCurrentEDRHeadroom,
+        session.config.monitor.clientSinkPotentialEDRHeadroom,
+        session.config.monitor.clientSinkCurrentPeakLuminanceNits,
+        session.config.monitor.clientSinkPotentialPeakLuminanceNits,
         static_cast<ApolloCoreDynamicRangeTransport>(session.config.monitor.requestedDynamicRangeTransport),
-        session.config.monitor.clientSupportsFrameGatedHDR != 0,
-        session.config.monitor.clientSupportsHDRTileOverlay != 0,
-        session.config.monitor.clientSupportsPerFrameHDRMetadata != 0
+        session.config.monitor.clientSinkSupportsFrameGatedHDR != 0,
+        session.config.monitor.clientSinkSupportsHDRTileOverlay != 0,
+        session.config.monitor.clientSinkSupportsPerFrameHDRMetadata != 0
       );
 
       if (config::audio.stream && !session.config.audio.input_only) {

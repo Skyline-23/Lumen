@@ -28,12 +28,12 @@ namespace VDISPLAY {
   void closeVDisplayDevice();
   color_profile_t probeHostDisplayColorProfile(
     bool hdr_enabled,
-    int client_display_gamut = 0,
-    int client_display_transfer = 0,
-    float client_display_current_edr_headroom = 0.0f,
-    float client_display_potential_edr_headroom = 0.0f,
-    int client_display_current_peak_luminance_nits = 0,
-    int client_display_potential_peak_luminance_nits = 0
+    int client_sink_gamut = 0,
+    int client_sink_transfer = 0,
+    float client_sink_current_edr_headroom = 0.0f,
+    float client_sink_potential_edr_headroom = 0.0f,
+    int client_sink_current_peak_luminance_nits = 0,
+    int client_sink_potential_peak_luminance_nits = 0
   );
 
   std::string createVirtualDisplay(
@@ -45,12 +45,12 @@ namespace VDISPLAY {
     int scale_factor,
     bool hi_dpi,
     bool hdr_enabled,
-    int client_display_gamut,
-    int client_display_transfer,
-    float client_display_current_edr_headroom,
-    float client_display_potential_edr_headroom,
-    int client_display_current_peak_luminance_nits,
-    int client_display_potential_peak_luminance_nits
+    int client_sink_gamut,
+    int client_sink_transfer,
+    float client_sink_current_edr_headroom,
+    float client_sink_potential_edr_headroom,
+    int client_sink_current_peak_luminance_nits,
+    int client_sink_potential_peak_luminance_nits
   );
 
   bool updateVirtualDisplayMode(
@@ -58,7 +58,7 @@ namespace VDISPLAY {
     std::uint32_t logical_width,
     std::uint32_t logical_height,
     std::uint32_t fps_millihz,
-    int client_display_transfer
+    int client_sink_transfer
   );
 
   bool removeVirtualDisplay(const std::string &client_uid);

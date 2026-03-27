@@ -21,19 +21,19 @@ struct ApolloBridgeMirroredCaptureRequestSnapshot: Equatable, Sendable {
     let targetVideoBitrateKbps: Int32
     let requestedWidth: Int32
     let requestedHeight: Int32
-    let clientDisplayGamut: Int32
-    let clientDisplayTransfer: Int32
-    let effectiveDisplayGamut: Int32
-    let effectiveDisplayTransfer: Int32
+    let clientSinkGamut: Int32
+    let clientSinkTransfer: Int32
+    let effectiveSinkGamut: Int32
+    let effectiveSinkTransfer: Int32
     let effectiveHDRStaticMetadata: ApolloHDRStaticMetadata?
-    let clientDisplayCurrentEDRHeadroom: Float
-    let clientDisplayPotentialEDRHeadroom: Float
-    let clientDisplayCurrentPeakLuminanceNits: Int32
-    let clientDisplayPotentialPeakLuminanceNits: Int32
+    let clientSinkCurrentEDRHeadroom: Float
+    let clientSinkPotentialEDRHeadroom: Float
+    let clientSinkCurrentPeakLuminanceNits: Int32
+    let clientSinkPotentialPeakLuminanceNits: Int32
     let requestedDynamicRangeTransport: Int32
-    let clientSupportsFrameGatedHDR: Bool
-    let clientSupportsHDRTileOverlay: Bool
-    let clientSupportsPerFrameHDRMetadata: Bool
+    let clientSinkSupportsFrameGatedHDR: Bool
+    let clientSinkSupportsHDRTileOverlay: Bool
+    let clientSinkSupportsPerFrameHDRMetadata: Bool
     let audioSourceKind: ApolloCoreAudioCaptureSourceKind
     let audioExcludesCurrentProcess: Bool
     let audioSampleRate: Int32
@@ -86,19 +86,19 @@ struct ApolloBridgeMirroredCaptureRequestSnapshot: Equatable, Sendable {
         self.targetVideoBitrateKbps = Self.number(dictionary["targetVideoBitrateKbps"])?.int32Value ?? 0
         self.requestedWidth = requestedWidth
         self.requestedHeight = requestedHeight
-        self.clientDisplayGamut = Self.number(dictionary["clientSinkGamut"])?.int32Value ?? 0
-        self.clientDisplayTransfer = Self.number(dictionary["clientSinkTransfer"])?.int32Value ?? 0
-        self.effectiveDisplayGamut = Self.number(dictionary["effectiveDisplayGamut"])?.int32Value ?? 0
-        self.effectiveDisplayTransfer = Self.number(dictionary["effectiveDisplayTransfer"])?.int32Value ?? 0
+        self.clientSinkGamut = Self.number(dictionary["clientSinkGamut"])?.int32Value ?? 0
+        self.clientSinkTransfer = Self.number(dictionary["clientSinkTransfer"])?.int32Value ?? 0
+        self.effectiveSinkGamut = Self.number(dictionary["effectiveSinkGamut"])?.int32Value ?? 0
+        self.effectiveSinkTransfer = Self.number(dictionary["effectiveSinkTransfer"])?.int32Value ?? 0
         self.effectiveHDRStaticMetadata = Self.hdrStaticMetadata(from: dictionary)
-        self.clientDisplayCurrentEDRHeadroom = Self.number(dictionary["clientSinkCurrentEDRHeadroom"])?.floatValue ?? 0
-        self.clientDisplayPotentialEDRHeadroom = Self.number(dictionary["clientSinkPotentialEDRHeadroom"])?.floatValue ?? 0
-        self.clientDisplayCurrentPeakLuminanceNits = Self.number(dictionary["clientSinkCurrentPeakLuminanceNits"])?.int32Value ?? 0
-        self.clientDisplayPotentialPeakLuminanceNits = Self.number(dictionary["clientSinkPotentialPeakLuminanceNits"])?.int32Value ?? 0
+        self.clientSinkCurrentEDRHeadroom = Self.number(dictionary["clientSinkCurrentEDRHeadroom"])?.floatValue ?? 0
+        self.clientSinkPotentialEDRHeadroom = Self.number(dictionary["clientSinkPotentialEDRHeadroom"])?.floatValue ?? 0
+        self.clientSinkCurrentPeakLuminanceNits = Self.number(dictionary["clientSinkCurrentPeakLuminanceNits"])?.int32Value ?? 0
+        self.clientSinkPotentialPeakLuminanceNits = Self.number(dictionary["clientSinkPotentialPeakLuminanceNits"])?.int32Value ?? 0
         self.requestedDynamicRangeTransport = Self.number(dictionary["requestedDynamicRangeTransport"])?.int32Value ?? 0
-        self.clientSupportsFrameGatedHDR = (dictionary["clientSupportsFrameGatedHDR"] as? Bool) ?? false
-        self.clientSupportsHDRTileOverlay = (dictionary["clientSupportsHDRTileOverlay"] as? Bool) ?? false
-        self.clientSupportsPerFrameHDRMetadata = (dictionary["clientSupportsPerFrameHDRMetadata"] as? Bool) ?? false
+        self.clientSinkSupportsFrameGatedHDR = (dictionary["clientSinkSupportsFrameGatedHDR"] as? Bool) ?? false
+        self.clientSinkSupportsHDRTileOverlay = (dictionary["clientSinkSupportsHDRTileOverlay"] as? Bool) ?? false
+        self.clientSinkSupportsPerFrameHDRMetadata = (dictionary["clientSinkSupportsPerFrameHDRMetadata"] as? Bool) ?? false
         self.audioSourceKind = audioSourceKind
         self.audioExcludesCurrentProcess = audioExcludesCurrentProcess
         self.audioSampleRate = audioSampleRate
@@ -189,19 +189,19 @@ struct ApolloBridgeMirroredCaptureRequestSemanticState: Equatable, Sendable {
     let targetVideoBitrateKbps: Int32
     let requestedWidth: Int32
     let requestedHeight: Int32
-    let clientDisplayGamut: Int32
-    let clientDisplayTransfer: Int32
-    let effectiveDisplayGamut: Int32
-    let effectiveDisplayTransfer: Int32
+    let clientSinkGamut: Int32
+    let clientSinkTransfer: Int32
+    let effectiveSinkGamut: Int32
+    let effectiveSinkTransfer: Int32
     let effectiveHDRStaticMetadata: ApolloHDRStaticMetadata?
-    let clientDisplayCurrentEDRHeadroom: Float
-    let clientDisplayPotentialEDRHeadroom: Float
-    let clientDisplayCurrentPeakLuminanceNits: Int32
-    let clientDisplayPotentialPeakLuminanceNits: Int32
+    let clientSinkCurrentEDRHeadroom: Float
+    let clientSinkPotentialEDRHeadroom: Float
+    let clientSinkCurrentPeakLuminanceNits: Int32
+    let clientSinkPotentialPeakLuminanceNits: Int32
     let requestedDynamicRangeTransport: Int32
-    let clientSupportsFrameGatedHDR: Bool
-    let clientSupportsHDRTileOverlay: Bool
-    let clientSupportsPerFrameHDRMetadata: Bool
+    let clientSinkSupportsFrameGatedHDR: Bool
+    let clientSinkSupportsHDRTileOverlay: Bool
+    let clientSinkSupportsPerFrameHDRMetadata: Bool
     let audioSourceKind: ApolloCoreAudioCaptureSourceKind
     let audioExcludesCurrentProcess: Bool
     let audioSampleRate: Int32
@@ -220,19 +220,19 @@ struct ApolloBridgeMirroredCaptureRequestSemanticState: Equatable, Sendable {
         targetVideoBitrateKbps = snapshot.targetVideoBitrateKbps
         requestedWidth = snapshot.requestedWidth
         requestedHeight = snapshot.requestedHeight
-        clientDisplayGamut = snapshot.clientDisplayGamut
-        clientDisplayTransfer = snapshot.clientDisplayTransfer
-        effectiveDisplayGamut = snapshot.effectiveDisplayGamut
-        effectiveDisplayTransfer = snapshot.effectiveDisplayTransfer
+        clientSinkGamut = snapshot.clientSinkGamut
+        clientSinkTransfer = snapshot.clientSinkTransfer
+        effectiveSinkGamut = snapshot.effectiveSinkGamut
+        effectiveSinkTransfer = snapshot.effectiveSinkTransfer
         effectiveHDRStaticMetadata = snapshot.effectiveHDRStaticMetadata
-        clientDisplayCurrentEDRHeadroom = snapshot.clientDisplayCurrentEDRHeadroom
-        clientDisplayPotentialEDRHeadroom = snapshot.clientDisplayPotentialEDRHeadroom
-        clientDisplayCurrentPeakLuminanceNits = snapshot.clientDisplayCurrentPeakLuminanceNits
-        clientDisplayPotentialPeakLuminanceNits = snapshot.clientDisplayPotentialPeakLuminanceNits
+        clientSinkCurrentEDRHeadroom = snapshot.clientSinkCurrentEDRHeadroom
+        clientSinkPotentialEDRHeadroom = snapshot.clientSinkPotentialEDRHeadroom
+        clientSinkCurrentPeakLuminanceNits = snapshot.clientSinkCurrentPeakLuminanceNits
+        clientSinkPotentialPeakLuminanceNits = snapshot.clientSinkPotentialPeakLuminanceNits
         requestedDynamicRangeTransport = snapshot.requestedDynamicRangeTransport
-        clientSupportsFrameGatedHDR = snapshot.clientSupportsFrameGatedHDR
-        clientSupportsHDRTileOverlay = snapshot.clientSupportsHDRTileOverlay
-        clientSupportsPerFrameHDRMetadata = snapshot.clientSupportsPerFrameHDRMetadata
+        clientSinkSupportsFrameGatedHDR = snapshot.clientSinkSupportsFrameGatedHDR
+        clientSinkSupportsHDRTileOverlay = snapshot.clientSinkSupportsHDRTileOverlay
+        clientSinkSupportsPerFrameHDRMetadata = snapshot.clientSinkSupportsPerFrameHDRMetadata
         audioSourceKind = snapshot.audioSourceKind
         audioExcludesCurrentProcess = snapshot.audioExcludesCurrentProcess
         audioSampleRate = snapshot.audioSampleRate
@@ -252,21 +252,21 @@ struct ApolloBridgeMirroredCaptureRequestSemanticState: Equatable, Sendable {
         targetVideoBitrateKbps = snapshot.target_video_bitrate_kbps
         requestedWidth = snapshot.requested_width
         requestedHeight = snapshot.requested_height
-        clientDisplayGamut = snapshot.client_display_gamut
-        clientDisplayTransfer = snapshot.client_display_transfer
-        effectiveDisplayGamut = snapshot.effective_display_gamut
-        effectiveDisplayTransfer = snapshot.effective_display_transfer
+        clientSinkGamut = snapshot.client_sink_gamut
+        clientSinkTransfer = snapshot.client_sink_transfer
+        effectiveSinkGamut = snapshot.effective_sink_gamut
+        effectiveSinkTransfer = snapshot.effective_sink_transfer
         effectiveHDRStaticMetadata = snapshot.has_effective_hdr_metadata ?
             ApolloHDRStaticMetadata(coreValue: snapshot.effective_hdr_metadata) :
             nil
-        clientDisplayCurrentEDRHeadroom = snapshot.client_display_current_edr_headroom
-        clientDisplayPotentialEDRHeadroom = snapshot.client_display_potential_edr_headroom
-        clientDisplayCurrentPeakLuminanceNits = snapshot.client_display_current_peak_luminance_nits
-        clientDisplayPotentialPeakLuminanceNits = snapshot.client_display_potential_peak_luminance_nits
+        clientSinkCurrentEDRHeadroom = snapshot.client_sink_current_edr_headroom
+        clientSinkPotentialEDRHeadroom = snapshot.client_sink_potential_edr_headroom
+        clientSinkCurrentPeakLuminanceNits = snapshot.client_sink_current_peak_luminance_nits
+        clientSinkPotentialPeakLuminanceNits = snapshot.client_sink_potential_peak_luminance_nits
         requestedDynamicRangeTransport = Int32(snapshot.requested_dynamic_range_transport.rawValue)
-        clientSupportsFrameGatedHDR = snapshot.client_supports_frame_gated_hdr
-        clientSupportsHDRTileOverlay = snapshot.client_supports_hdr_tile_overlay
-        clientSupportsPerFrameHDRMetadata = snapshot.client_supports_per_frame_hdr_metadata
+        clientSinkSupportsFrameGatedHDR = snapshot.client_sink_supports_frame_gated_hdr
+        clientSinkSupportsHDRTileOverlay = snapshot.client_sink_supports_hdr_tile_overlay
+        clientSinkSupportsPerFrameHDRMetadata = snapshot.client_sink_supports_per_frame_hdr_metadata
         audioSourceKind = snapshot.audio_source_kind
         audioExcludesCurrentProcess = snapshot.audio_excludes_current_process
         audioSampleRate = snapshot.audio_sample_rate
@@ -317,20 +317,20 @@ actor ApolloCaptureRequestMirrorCoordinator {
                     mirroredSnapshot.targetVideoBitrateKbps,
                     mirroredSnapshot.requestedWidth,
                     mirroredSnapshot.requestedHeight,
-                    mirroredSnapshot.clientDisplayGamut,
-                    mirroredSnapshot.clientDisplayTransfer,
-                    mirroredSnapshot.effectiveDisplayGamut,
-                    mirroredSnapshot.effectiveDisplayTransfer,
+                    mirroredSnapshot.clientSinkGamut,
+                    mirroredSnapshot.clientSinkTransfer,
+                    mirroredSnapshot.effectiveSinkGamut,
+                    mirroredSnapshot.effectiveSinkTransfer,
                     mirroredSnapshot.effectiveHDRStaticMetadata != nil,
                     effectiveHDRStaticMetadata,
-                    mirroredSnapshot.clientDisplayCurrentEDRHeadroom,
-                    mirroredSnapshot.clientDisplayPotentialEDRHeadroom,
-                    mirroredSnapshot.clientDisplayCurrentPeakLuminanceNits,
-                    mirroredSnapshot.clientDisplayPotentialPeakLuminanceNits,
+                    mirroredSnapshot.clientSinkCurrentEDRHeadroom,
+                    mirroredSnapshot.clientSinkPotentialEDRHeadroom,
+                    mirroredSnapshot.clientSinkCurrentPeakLuminanceNits,
+                    mirroredSnapshot.clientSinkPotentialPeakLuminanceNits,
                     ApolloCoreDynamicRangeTransport(rawValue: UInt32(mirroredSnapshot.requestedDynamicRangeTransport)) ?? ApolloCoreDynamicRangeTransportUnknown,
-                    mirroredSnapshot.clientSupportsFrameGatedHDR,
-                    mirroredSnapshot.clientSupportsHDRTileOverlay,
-                    mirroredSnapshot.clientSupportsPerFrameHDRMetadata
+                    mirroredSnapshot.clientSinkSupportsFrameGatedHDR,
+                    mirroredSnapshot.clientSinkSupportsHDRTileOverlay,
+                    mirroredSnapshot.clientSinkSupportsPerFrameHDRMetadata
                 )
                 logger.notice(
                     "Republished mirrored video capture request generation=\(mirroredSnapshot.generation, privacy: .public) display-id=\(mirroredSnapshot.displayID, privacy: .public) codec=\(mirroredSnapshot.codec.rawValue, privacy: .public) queue=\(mirroredSnapshot.queueProfile.rawValue, privacy: .public) fps=\(mirroredSnapshot.targetFrameRate, privacy: .public)"

@@ -1078,20 +1078,20 @@ void ApolloCoreCaptureRequestPublishVideo(
   int32_t target_video_bitrate_kbps,
   int32_t requested_width,
   int32_t requested_height,
-  int32_t client_display_gamut,
-  int32_t client_display_transfer,
-  int32_t effective_display_gamut,
-  int32_t effective_display_transfer,
+  int32_t client_sink_gamut,
+  int32_t client_sink_transfer,
+  int32_t effective_sink_gamut,
+  int32_t effective_sink_transfer,
   bool has_effective_hdr_metadata,
   ApolloCoreHDRStaticMetadata effective_hdr_metadata,
-  float client_display_current_edr_headroom,
-  float client_display_potential_edr_headroom,
-  int32_t client_display_current_peak_luminance_nits,
-  int32_t client_display_potential_peak_luminance_nits,
+  float client_sink_current_edr_headroom,
+  float client_sink_potential_edr_headroom,
+  int32_t client_sink_current_peak_luminance_nits,
+  int32_t client_sink_potential_peak_luminance_nits,
   ApolloCoreDynamicRangeTransport requested_dynamic_range_transport,
-  bool client_supports_frame_gated_hdr,
-  bool client_supports_hdr_tile_overlay,
-  bool client_supports_per_frame_hdr_metadata
+  bool client_sink_supports_frame_gated_hdr,
+  bool client_sink_supports_hdr_tile_overlay,
+  bool client_sink_supports_per_frame_hdr_metadata
 ) {
   auto *state = shared_capture_request_state();
   {
@@ -1108,20 +1108,20 @@ void ApolloCoreCaptureRequestPublishVideo(
     state->snapshot.target_video_bitrate_kbps = std::max<int32_t>(target_video_bitrate_kbps, 0);
     state->snapshot.requested_width = std::max<int32_t>(requested_width, 0);
     state->snapshot.requested_height = std::max<int32_t>(requested_height, 0);
-    state->snapshot.client_display_gamut = std::max<int32_t>(client_display_gamut, 0);
-    state->snapshot.client_display_transfer = std::max<int32_t>(client_display_transfer, 0);
-    state->snapshot.effective_display_gamut = std::max<int32_t>(effective_display_gamut, 0);
-    state->snapshot.effective_display_transfer = std::max<int32_t>(effective_display_transfer, 0);
+    state->snapshot.client_sink_gamut = std::max<int32_t>(client_sink_gamut, 0);
+    state->snapshot.client_sink_transfer = std::max<int32_t>(client_sink_transfer, 0);
+    state->snapshot.effective_sink_gamut = std::max<int32_t>(effective_sink_gamut, 0);
+    state->snapshot.effective_sink_transfer = std::max<int32_t>(effective_sink_transfer, 0);
     state->snapshot.has_effective_hdr_metadata = has_effective_hdr_metadata;
     state->snapshot.effective_hdr_metadata = effective_hdr_metadata;
-    state->snapshot.client_display_current_edr_headroom = std::max(client_display_current_edr_headroom, 0.0f);
-    state->snapshot.client_display_potential_edr_headroom = std::max(client_display_potential_edr_headroom, 0.0f);
-    state->snapshot.client_display_current_peak_luminance_nits = std::max<int32_t>(client_display_current_peak_luminance_nits, 0);
-    state->snapshot.client_display_potential_peak_luminance_nits = std::max<int32_t>(client_display_potential_peak_luminance_nits, 0);
+    state->snapshot.client_sink_current_edr_headroom = std::max(client_sink_current_edr_headroom, 0.0f);
+    state->snapshot.client_sink_potential_edr_headroom = std::max(client_sink_potential_edr_headroom, 0.0f);
+    state->snapshot.client_sink_current_peak_luminance_nits = std::max<int32_t>(client_sink_current_peak_luminance_nits, 0);
+    state->snapshot.client_sink_potential_peak_luminance_nits = std::max<int32_t>(client_sink_potential_peak_luminance_nits, 0);
     state->snapshot.requested_dynamic_range_transport = requested_dynamic_range_transport;
-    state->snapshot.client_supports_frame_gated_hdr = client_supports_frame_gated_hdr;
-    state->snapshot.client_supports_hdr_tile_overlay = client_supports_hdr_tile_overlay;
-    state->snapshot.client_supports_per_frame_hdr_metadata = client_supports_per_frame_hdr_metadata;
+    state->snapshot.client_sink_supports_frame_gated_hdr = client_sink_supports_frame_gated_hdr;
+    state->snapshot.client_sink_supports_hdr_tile_overlay = client_sink_supports_hdr_tile_overlay;
+    state->snapshot.client_sink_supports_per_frame_hdr_metadata = client_sink_supports_per_frame_hdr_metadata;
   }
   state->change_cv.notify_all();
 }

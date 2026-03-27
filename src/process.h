@@ -122,10 +122,10 @@ namespace proc {
     int client_sink_current_peak_luminance_nits = 0;
     int client_sink_potential_peak_luminance_nits = 0;
     int requested_dynamic_range_transport = 0;
-    bool client_supports_frame_gated_hdr = false;
-    bool client_supports_hdr_tile_overlay = false;
-    bool client_supports_per_frame_hdr_metadata = false;
-    int client_scale_factor = 100;
+    bool client_sink_supports_frame_gated_hdr = false;
+    bool client_sink_supports_hdr_tile_overlay = false;
+    bool client_sink_supports_per_frame_hdr_metadata = false;
+    int client_sink_scale_factor = 100;
     int client_logical_width = 0;
     int client_logical_height = 0;
     int client_render_width = 0;

@@ -71,28 +71,28 @@ namespace session_http {
 
   namespace {
     const char *client_sink_gamut_to_string(const int gamut) {
-      switch (static_cast<video::client_display_gamut_e>(gamut)) {
-        case video::client_display_gamut_e::srgb:
+      switch (static_cast<video::client_sink_gamut_e>(gamut)) {
+        case video::client_sink_gamut_e::srgb:
           return "srgb";
-        case video::client_display_gamut_e::display_p3:
+        case video::client_sink_gamut_e::display_p3:
           return "display-p3";
-        case video::client_display_gamut_e::rec2020:
+        case video::client_sink_gamut_e::rec2020:
           return "rec2020";
-        case video::client_display_gamut_e::unknown:
+        case video::client_sink_gamut_e::unknown:
         default:
           return "unknown";
       }
     }
 
     const char *client_sink_transfer_to_string(const int transfer) {
-      switch (static_cast<video::client_display_transfer_e>(transfer)) {
-        case video::client_display_transfer_e::sdr:
+      switch (static_cast<video::client_sink_transfer_e>(transfer)) {
+        case video::client_sink_transfer_e::sdr:
           return "sdr";
-        case video::client_display_transfer_e::pq:
+        case video::client_sink_transfer_e::pq:
           return "pq";
-        case video::client_display_transfer_e::hlg:
+        case video::client_sink_transfer_e::hlg:
           return "hlg";
-        case video::client_display_transfer_e::unknown:
+        case video::client_sink_transfer_e::unknown:
         default:
           return "unknown";
       }
@@ -116,28 +116,28 @@ namespace session_http {
 
     int parse_client_sink_gamut(const std::string_view value) {
       if (value == "display-p3"sv || value == "display_p3"sv || value == "p3"sv) {
-        return static_cast<int>(video::client_display_gamut_e::display_p3);
+        return static_cast<int>(video::client_sink_gamut_e::display_p3);
       }
       if (value == "rec2020"sv || value == "bt2020"sv || value == "2020"sv) {
-        return static_cast<int>(video::client_display_gamut_e::rec2020);
+        return static_cast<int>(video::client_sink_gamut_e::rec2020);
       }
       if (value == "srgb"sv || value == "rec709"sv || value == "709"sv) {
-        return static_cast<int>(video::client_display_gamut_e::srgb);
+        return static_cast<int>(video::client_sink_gamut_e::srgb);
       }
-      return static_cast<int>(video::client_display_gamut_e::unknown);
+      return static_cast<int>(video::client_sink_gamut_e::unknown);
     }
 
     int parse_client_sink_transfer(const std::string_view value) {
       if (value == "pq"sv || value == "hdr-pq"sv || value == "st2084"sv || value == "smpte2084"sv) {
-        return static_cast<int>(video::client_display_transfer_e::pq);
+        return static_cast<int>(video::client_sink_transfer_e::pq);
       }
       if (value == "hlg"sv || value == "hdr-hlg"sv) {
-        return static_cast<int>(video::client_display_transfer_e::hlg);
+        return static_cast<int>(video::client_sink_transfer_e::hlg);
       }
       if (value == "sdr"sv || value == "gamma"sv) {
-        return static_cast<int>(video::client_display_transfer_e::sdr);
+        return static_cast<int>(video::client_sink_transfer_e::sdr);
       }
-      return static_cast<int>(video::client_display_transfer_e::unknown);
+      return static_cast<int>(video::client_sink_transfer_e::unknown);
     }
 
     int parse_requested_dynamic_range_transport(const std::string_view value) {
@@ -156,7 +156,7 @@ namespace session_http {
       return static_cast<int>(video::dynamic_range_transport_e::sdr);
     }
 
-    float parse_client_display_headroom(const std::string_view value) {
+    float parse_client_sink_headroom(const std::string_view value) {
       if (value.empty()) {
         return 0.0f;
       }
@@ -171,7 +171,7 @@ namespace session_http {
       return std::max(parsed, 0.0f);
     }
 
-    int parse_client_display_peak_luminance_nits(const std::string_view value) {
+    int parse_client_sink_peak_luminance_nits(const std::string_view value) {
       if (value.empty()) {
         return 0;
       }
@@ -702,7 +702,7 @@ namespace session_http {
     const bool has_display_scale_percent = has_arg(args, "clientSinkScalePercent");
     const bool has_display_hidpi = has_arg(args, "clientSinkHiDPI");
     launch_session->client_sink_scale_explicit = has_display_scale_percent || has_display_hidpi;
-    launch_session->client_sink_mode_is_logical = util::from_view(get_arg(args, "clientDisplayModeIsLogical", "0"));
+    launch_session->client_sink_mode_is_logical = util::from_view(get_arg(args, "clientSinkModeIsLogical", "0"));
     launch_session->scale_factor = has_display_scale_percent ?
       util::from_view(get_arg(args, "clientSinkScalePercent", "100")) :
       util::from_view(get_arg(args, "scaleFactor", "100"));
@@ -711,16 +711,16 @@ namespace session_http {
       launch_session->scale_factor > 100;
     launch_session->client_sink_gamut = parse_client_sink_gamut(get_arg(args, "clientSinkGamut", ""));
     launch_session->client_sink_transfer = parse_client_sink_transfer(get_arg(args, "clientSinkTransfer", ""));
-    launch_session->client_sink_current_edr_headroom = parse_client_display_headroom(
+    launch_session->client_sink_current_edr_headroom = parse_client_sink_headroom(
       get_arg(args, "clientSinkCurrentEDRHeadroom", "")
     );
-    launch_session->client_sink_potential_edr_headroom = parse_client_display_headroom(
+    launch_session->client_sink_potential_edr_headroom = parse_client_sink_headroom(
       get_arg(args, "clientSinkPotentialEDRHeadroom", "")
     );
-    launch_session->client_sink_current_peak_luminance_nits = parse_client_display_peak_luminance_nits(
+    launch_session->client_sink_current_peak_luminance_nits = parse_client_sink_peak_luminance_nits(
       get_arg(args, "clientSinkCurrentPeakLuminanceNits", "")
     );
-    launch_session->client_sink_potential_peak_luminance_nits = parse_client_display_peak_luminance_nits(
+    launch_session->client_sink_potential_peak_luminance_nits = parse_client_sink_peak_luminance_nits(
       get_arg(args, "clientSinkPotentialPeakLuminanceNits", "")
     );
     launch_session->requested_dynamic_range_transport = parse_requested_dynamic_range_transport(
@@ -730,10 +730,10 @@ namespace session_http {
       video::effective_dynamic_range_transport(launch_session->requested_dynamic_range_transport);
     const bool requested_hdr_stream =
       video::dynamic_range_transport_uses_hdr_stream(requested_dynamic_range_transport);
-    launch_session->client_supports_frame_gated_hdr = util::from_view(get_arg(args, "clientSupportsFrameGatedHDR", "0"));
-    launch_session->client_supports_hdr_tile_overlay = util::from_view(get_arg(args, "clientSupportsHDRTileOverlay", "0"));
-    launch_session->client_supports_per_frame_hdr_metadata = util::from_view(
-      get_arg(args, "clientSupportsPerFrameHDRMetadata", "0")
+    launch_session->client_sink_supports_frame_gated_hdr = util::from_view(get_arg(args, "clientSinkSupportsFrameGatedHDR", "0"));
+    launch_session->client_sink_supports_hdr_tile_overlay = util::from_view(get_arg(args, "clientSinkSupportsHDRTileOverlay", "0"));
+    launch_session->client_sink_supports_per_frame_hdr_metadata = util::from_view(
+      get_arg(args, "clientSinkSupportsPerFrameHDRMetadata", "0")
     );
     BOOST_LOG(info) << "Client sink profile from launch: gamut="sv
                     << client_sink_gamut_to_string(launch_session->client_sink_gamut)
@@ -760,11 +760,11 @@ namespace session_http {
                     << " potential-peak-nits="sv
                     << launch_session->client_sink_potential_peak_luminance_nits
                     << " supports-frame-gated-hdr="sv
-                    << launch_session->client_supports_frame_gated_hdr
+                    << launch_session->client_sink_supports_frame_gated_hdr
                     << " supports-hdr-tile-overlay="sv
-                    << launch_session->client_supports_hdr_tile_overlay
+                    << launch_session->client_sink_supports_hdr_tile_overlay
                     << " supports-per-frame-hdr-metadata="sv
-                    << launch_session->client_supports_per_frame_hdr_metadata;
+                    << launch_session->client_sink_supports_per_frame_hdr_metadata;
 
     launch_session->client_do_cmds = named_cert_p->do_cmds;
     launch_session->client_undo_cmds = named_cert_p->undo_cmds;

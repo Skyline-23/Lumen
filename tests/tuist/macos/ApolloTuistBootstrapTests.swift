@@ -92,10 +92,10 @@ final class ApolloTuistBootstrapTests: XCTestCase {
             requestedWidth: 3512,
             requestedHeight: 2290,
             hdrStaticMetadata: hdrStaticMetadata,
-            clientDisplayCurrentEDRHeadroom: 2.8,
-            clientDisplayPotentialEDRHeadroom: 8.4,
-            clientDisplayCurrentPeakLuminanceNits: 800,
-            clientDisplayPotentialPeakLuminanceNits: 1600,
+            clientSinkCurrentEDRHeadroom: 2.8,
+            clientSinkPotentialEDRHeadroom: 8.4,
+            clientSinkCurrentPeakLuminanceNits: 800,
+            clientSinkPotentialPeakLuminanceNits: 1600,
             requestedDynamicRangeTransport: ApolloCoreDynamicRangeTransportFrameGatedHDR
         )
 
@@ -109,10 +109,10 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(roundTrip.requestedHeight, 2290)
         XCTAssertTrue(roundTrip.usesHDRTransport)
         XCTAssertEqual(roundTrip.hdrStaticMetadata, hdrStaticMetadata)
-        XCTAssertEqual(roundTrip.clientDisplayCurrentEDRHeadroom, 2.8)
-        XCTAssertEqual(roundTrip.clientDisplayPotentialEDRHeadroom, 8.4)
-        XCTAssertEqual(roundTrip.clientDisplayCurrentPeakLuminanceNits, 800)
-        XCTAssertEqual(roundTrip.clientDisplayPotentialPeakLuminanceNits, 1600)
+        XCTAssertEqual(roundTrip.clientSinkCurrentEDRHeadroom, 2.8)
+        XCTAssertEqual(roundTrip.clientSinkPotentialEDRHeadroom, 8.4)
+        XCTAssertEqual(roundTrip.clientSinkCurrentPeakLuminanceNits, 800)
+        XCTAssertEqual(roundTrip.clientSinkPotentialPeakLuminanceNits, 1600)
     }
 
     func testBridgeHDRConfigurationSeparatesDisplayGamutFromSignalPrimaries() {
@@ -123,10 +123,10 @@ final class ApolloTuistBootstrapTests: XCTestCase {
             queueProfile: .auto,
             showCursor: false,
             targetFrameRate: 120,
-            clientDisplayGamut: .displayP3,
-            clientDisplayTransfer: .pq,
-            effectiveDisplayGamut: .displayP3,
-            effectiveDisplayTransfer: .pq,
+            clientSinkGamut: .displayP3,
+            clientSinkTransfer: .pq,
+            effectiveSinkGamut: .displayP3,
+            effectiveSinkTransfer: .pq,
             requestedDynamicRangeTransport: ApolloCoreDynamicRangeTransportFrameGatedHDR
         )
 
@@ -553,21 +553,21 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(updatedSnapshot.target_video_bitrate_kbps, 41_000)
         XCTAssertEqual(updatedSnapshot.requested_width, 3840)
         XCTAssertEqual(updatedSnapshot.requested_height, 2160)
-        XCTAssertEqual(updatedSnapshot.client_display_gamut, 2)
-        XCTAssertEqual(updatedSnapshot.client_display_transfer, 2)
-        XCTAssertEqual(updatedSnapshot.effective_display_gamut, 2)
-        XCTAssertEqual(updatedSnapshot.effective_display_transfer, 2)
+        XCTAssertEqual(updatedSnapshot.client_sink_gamut, 2)
+        XCTAssertEqual(updatedSnapshot.client_sink_transfer, 2)
+        XCTAssertEqual(updatedSnapshot.effective_sink_gamut, 2)
+        XCTAssertEqual(updatedSnapshot.effective_sink_transfer, 2)
         XCTAssertTrue(updatedSnapshot.has_effective_hdr_metadata)
         XCTAssertEqual(updatedSnapshot.effective_hdr_metadata.max_display_luminance, 1_000)
         XCTAssertEqual(updatedSnapshot.effective_hdr_metadata.max_frame_average_light_level, 400)
-        XCTAssertEqual(updatedSnapshot.client_display_current_edr_headroom, 2.8)
-        XCTAssertEqual(updatedSnapshot.client_display_potential_edr_headroom, 8.4)
-        XCTAssertEqual(updatedSnapshot.client_display_current_peak_luminance_nits, 800)
-        XCTAssertEqual(updatedSnapshot.client_display_potential_peak_luminance_nits, 1600)
+        XCTAssertEqual(updatedSnapshot.client_sink_current_edr_headroom, 2.8)
+        XCTAssertEqual(updatedSnapshot.client_sink_potential_edr_headroom, 8.4)
+        XCTAssertEqual(updatedSnapshot.client_sink_current_peak_luminance_nits, 800)
+        XCTAssertEqual(updatedSnapshot.client_sink_potential_peak_luminance_nits, 1600)
         XCTAssertEqual(updatedSnapshot.requested_dynamic_range_transport, ApolloCoreDynamicRangeTransportFrameGatedHDR)
-        XCTAssertTrue(updatedSnapshot.client_supports_frame_gated_hdr)
-        XCTAssertFalse(updatedSnapshot.client_supports_hdr_tile_overlay)
-        XCTAssertTrue(updatedSnapshot.client_supports_per_frame_hdr_metadata)
+        XCTAssertTrue(updatedSnapshot.client_sink_supports_frame_gated_hdr)
+        XCTAssertFalse(updatedSnapshot.client_sink_supports_hdr_tile_overlay)
+        XCTAssertTrue(updatedSnapshot.client_sink_supports_per_frame_hdr_metadata)
         XCTAssertEqual(updatedSnapshot.audio_source_kind, ApolloCoreAudioCaptureSourceKindSystemOutput)
         XCTAssertEqual(updatedSnapshot.audio_frame_size, 480)
 
@@ -592,17 +592,17 @@ final class ApolloTuistBootstrapTests: XCTestCase {
             "requestedHeight": 2160,
             "clientSinkGamut": 2,
             "clientSinkTransfer": 2,
-            "effectiveDisplayGamut": 2,
-            "effectiveDisplayTransfer": 2,
+            "effectiveSinkGamut": 2,
+            "effectiveSinkTransfer": 2,
             "hasEffectiveHDRMetadata": true,
             "clientSinkCurrentEDRHeadroom": 2.8,
             "clientSinkPotentialEDRHeadroom": 8.4,
             "clientSinkCurrentPeakLuminanceNits": 800,
             "clientSinkPotentialPeakLuminanceNits": 1600,
             "requestedDynamicRangeTransport": 3,
-            "clientSupportsFrameGatedHDR": true,
-            "clientSupportsHDRTileOverlay": false,
-            "clientSupportsPerFrameHDRMetadata": true,
+            "clientSinkSupportsFrameGatedHDR": true,
+            "clientSinkSupportsHDRTileOverlay": false,
+            "clientSinkSupportsPerFrameHDRMetadata": true,
             "effectiveHDRRedPrimaryX": 34_000,
             "effectiveHDRRedPrimaryY": 16_000,
             "effectiveHDRGreenPrimaryX": 13_250,
@@ -644,18 +644,18 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(snapshot.preprocessStrategy, ApolloCoreCapturePreprocessStrategyDownscale2x)
         XCTAssertEqual(snapshot.queueProfile, ApolloCoreCaptureQueueProfileQ3)
         XCTAssertEqual(snapshot.targetVideoBitrateKbps, 41_000)
-        XCTAssertEqual(snapshot.clientDisplayGamut, 2)
-        XCTAssertEqual(snapshot.clientDisplayTransfer, 2)
-        XCTAssertEqual(snapshot.effectiveDisplayGamut, 2)
-        XCTAssertEqual(snapshot.effectiveDisplayTransfer, 2)
-        XCTAssertEqual(snapshot.clientDisplayCurrentEDRHeadroom, 2.8)
-        XCTAssertEqual(snapshot.clientDisplayPotentialEDRHeadroom, 8.4)
-        XCTAssertEqual(snapshot.clientDisplayCurrentPeakLuminanceNits, 800)
-        XCTAssertEqual(snapshot.clientDisplayPotentialPeakLuminanceNits, 1600)
+        XCTAssertEqual(snapshot.clientSinkGamut, 2)
+        XCTAssertEqual(snapshot.clientSinkTransfer, 2)
+        XCTAssertEqual(snapshot.effectiveSinkGamut, 2)
+        XCTAssertEqual(snapshot.effectiveSinkTransfer, 2)
+        XCTAssertEqual(snapshot.clientSinkCurrentEDRHeadroom, 2.8)
+        XCTAssertEqual(snapshot.clientSinkPotentialEDRHeadroom, 8.4)
+        XCTAssertEqual(snapshot.clientSinkCurrentPeakLuminanceNits, 800)
+        XCTAssertEqual(snapshot.clientSinkPotentialPeakLuminanceNits, 1600)
         XCTAssertEqual(snapshot.requestedDynamicRangeTransport, 3)
-        XCTAssertTrue(snapshot.clientSupportsFrameGatedHDR)
-        XCTAssertFalse(snapshot.clientSupportsHDRTileOverlay)
-        XCTAssertTrue(snapshot.clientSupportsPerFrameHDRMetadata)
+        XCTAssertTrue(snapshot.clientSinkSupportsFrameGatedHDR)
+        XCTAssertFalse(snapshot.clientSinkSupportsHDRTileOverlay)
+        XCTAssertTrue(snapshot.clientSinkSupportsPerFrameHDRMetadata)
         XCTAssertEqual(snapshot.effectiveHDRStaticMetadata?.maxDisplayLuminance, 1_000)
         XCTAssertEqual(snapshot.effectiveHDRStaticMetadata?.maxFrameAverageLightLevel, 400)
         XCTAssertEqual(snapshot.audioSourceKind, ApolloCoreAudioCaptureSourceKindSystemOutput)
@@ -683,16 +683,16 @@ final class ApolloTuistBootstrapTests: XCTestCase {
             "requestedHeight": 2290,
             "clientSinkGamut": 3,
             "clientSinkTransfer": 2,
-            "effectiveDisplayGamut": 3,
-            "effectiveDisplayTransfer": 2,
+            "effectiveSinkGamut": 3,
+            "effectiveSinkTransfer": 2,
             "clientSinkCurrentEDRHeadroom": 2.2,
             "clientSinkPotentialEDRHeadroom": 7.8,
             "clientSinkCurrentPeakLuminanceNits": 700,
             "clientSinkPotentialPeakLuminanceNits": 1500,
             "requestedDynamicRangeTransport": 3,
-            "clientSupportsFrameGatedHDR": true,
-            "clientSupportsHDRTileOverlay": false,
-            "clientSupportsPerFrameHDRMetadata": true,
+            "clientSinkSupportsFrameGatedHDR": true,
+            "clientSinkSupportsHDRTileOverlay": false,
+            "clientSinkSupportsPerFrameHDRMetadata": true,
             "audioSourceKind": 0,
             "audioExcludesCurrentProcess": false,
             "audioSampleRate": 48_000,
@@ -714,14 +714,14 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         let snapshot = try XCTUnwrap(ApolloBridgeMirroredCaptureRequestSnapshot.load(from: url))
         XCTAssertEqual(snapshot.queueProfile, ApolloCoreCaptureQueueProfileAuto)
         XCTAssertEqual(snapshot.targetVideoBitrateKbps, 41_000)
-        XCTAssertEqual(snapshot.clientDisplayGamut, 3)
-        XCTAssertEqual(snapshot.effectiveDisplayGamut, 3)
-        XCTAssertEqual(snapshot.clientDisplayCurrentEDRHeadroom, 2.2)
-        XCTAssertEqual(snapshot.clientDisplayPotentialPeakLuminanceNits, 1500)
+        XCTAssertEqual(snapshot.clientSinkGamut, 3)
+        XCTAssertEqual(snapshot.effectiveSinkGamut, 3)
+        XCTAssertEqual(snapshot.clientSinkCurrentEDRHeadroom, 2.2)
+        XCTAssertEqual(snapshot.clientSinkPotentialPeakLuminanceNits, 1500)
         XCTAssertEqual(snapshot.requestedDynamicRangeTransport, 3)
-        XCTAssertTrue(snapshot.clientSupportsFrameGatedHDR)
-        XCTAssertFalse(snapshot.clientSupportsHDRTileOverlay)
-        XCTAssertTrue(snapshot.clientSupportsPerFrameHDRMetadata)
+        XCTAssertTrue(snapshot.clientSinkSupportsFrameGatedHDR)
+        XCTAssertFalse(snapshot.clientSinkSupportsHDRTileOverlay)
+        XCTAssertTrue(snapshot.clientSinkSupportsPerFrameHDRMetadata)
     }
 
     func testMirroredCaptureRequestSnapshotDefaultsMissingTargetBitrateForOlderStateFiles() throws {
@@ -780,16 +780,16 @@ final class ApolloTuistBootstrapTests: XCTestCase {
                 "requestedHeight": 2290,
                 "clientSinkGamut": 3,
                 "clientSinkTransfer": 2,
-                "effectiveDisplayGamut": 3,
-                "effectiveDisplayTransfer": 2,
+                "effectiveSinkGamut": 3,
+                "effectiveSinkTransfer": 2,
                 "clientSinkCurrentEDRHeadroom": 2.2,
                 "clientSinkPotentialEDRHeadroom": 7.8,
                 "clientSinkCurrentPeakLuminanceNits": 700,
                 "clientSinkPotentialPeakLuminanceNits": 1500,
                 "requestedDynamicRangeTransport": 3,
-                "clientSupportsFrameGatedHDR": true,
-                "clientSupportsHDRTileOverlay": false,
-                "clientSupportsPerFrameHDRMetadata": true,
+                "clientSinkSupportsFrameGatedHDR": true,
+                "clientSinkSupportsHDRTileOverlay": false,
+                "clientSinkSupportsPerFrameHDRMetadata": true,
                 "audioSourceKind": 1,
                 "audioExcludesCurrentProcess": false,
                 "audioSampleRate": 48_000,
@@ -815,16 +815,16 @@ final class ApolloTuistBootstrapTests: XCTestCase {
                 "requestedHeight": 2290,
                 "clientSinkGamut": 3,
                 "clientSinkTransfer": 2,
-                "effectiveDisplayGamut": 3,
-                "effectiveDisplayTransfer": 2,
+                "effectiveSinkGamut": 3,
+                "effectiveSinkTransfer": 2,
                 "clientSinkCurrentEDRHeadroom": 2.2,
                 "clientSinkPotentialEDRHeadroom": 7.8,
                 "clientSinkCurrentPeakLuminanceNits": 700,
                 "clientSinkPotentialPeakLuminanceNits": 1500,
                 "requestedDynamicRangeTransport": 3,
-                "clientSupportsFrameGatedHDR": true,
-                "clientSupportsHDRTileOverlay": false,
-                "clientSupportsPerFrameHDRMetadata": true,
+                "clientSinkSupportsFrameGatedHDR": true,
+                "clientSinkSupportsHDRTileOverlay": false,
+                "clientSinkSupportsPerFrameHDRMetadata": true,
                 "audioSourceKind": 1,
                 "audioExcludesCurrentProcess": false,
                 "audioSampleRate": 48_000,

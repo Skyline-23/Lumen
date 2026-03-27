@@ -30,19 +30,19 @@ namespace platf {
     int target_video_bitrate_kbps;
     int requested_width;
     int requested_height;
-    int client_display_gamut;
-    int client_display_transfer;
-    int effective_display_gamut;
-    int effective_display_transfer;
+    int client_sink_gamut;
+    int client_sink_transfer;
+    int effective_sink_gamut;
+    int effective_sink_transfer;
     bool has_effective_hdr_metadata;
-    float client_display_current_edr_headroom;
-    float client_display_potential_edr_headroom;
-    int client_display_current_peak_luminance_nits;
-    int client_display_potential_peak_luminance_nits;
+    float client_sink_current_edr_headroom;
+    float client_sink_potential_edr_headroom;
+    int client_sink_current_peak_luminance_nits;
+    int client_sink_potential_peak_luminance_nits;
     int requested_dynamic_range_transport;
-    bool client_supports_frame_gated_hdr;
-    bool client_supports_hdr_tile_overlay;
-    bool client_supports_per_frame_hdr_metadata;
+    bool client_sink_supports_frame_gated_hdr;
+    bool client_sink_supports_hdr_tile_overlay;
+    bool client_sink_supports_per_frame_hdr_metadata;
     int effective_hdr_red_primary_x;
     int effective_hdr_red_primary_y;
     int effective_hdr_green_primary_x;
@@ -104,16 +104,16 @@ namespace platf {
   effective_display_state_t resolve_capture_request_effective_display_state(
     std::uint32_t display_id,
     int requested_dynamic_range_transport,
-    int client_display_gamut,
-    int client_display_transfer
+    int client_sink_gamut,
+    int client_sink_transfer
   );
   bool resolve_effective_display_hdr_metadata(
-    int effective_display_gamut,
-    int effective_display_transfer,
-    float client_display_current_edr_headroom,
-    float client_display_potential_edr_headroom,
-    int client_display_current_peak_luminance_nits,
-    int client_display_potential_peak_luminance_nits,
+    int effective_sink_gamut,
+    int effective_sink_transfer,
+    float client_sink_current_edr_headroom,
+    float client_sink_potential_edr_headroom,
+    int client_sink_current_peak_luminance_nits,
+    int client_sink_potential_peak_luminance_nits,
     SS_HDR_METADATA &metadata
   );
   bool query_external_capture_display_metadata(

@@ -176,10 +176,10 @@ namespace VDISPLAY {
 
     hdr_display_info_luminance_t resolve_hdr_display_info_luminance(
       const color_profile_t &host_profile,
-      float client_display_current_edr_headroom,
-      float client_display_potential_edr_headroom,
-      int client_display_current_peak_luminance_nits,
-      int client_display_potential_peak_luminance_nits
+      float client_sink_current_edr_headroom,
+      float client_sink_potential_edr_headroom,
+      int client_sink_current_peak_luminance_nits,
+      int client_sink_potential_peak_luminance_nits
     ) {
       constexpr double kLegacyP3PeakLuminance = 1000.0;
       constexpr double kLegacySrgbPeakLuminance = 600.0;
@@ -192,21 +192,21 @@ namespace VDISPLAY {
 
       auto peak_luminance = fallback_peak_luminance;
       auto peak_source = "legacy-fallback"sv;
-      if (client_display_current_peak_luminance_nits > 0) {
-        peak_luminance = static_cast<double>(client_display_current_peak_luminance_nits);
+      if (client_sink_current_peak_luminance_nits > 0) {
+        peak_luminance = static_cast<double>(client_sink_current_peak_luminance_nits);
         peak_source = "client-current-peak"sv;
-      } else if (client_display_potential_peak_luminance_nits > 0) {
-        peak_luminance = static_cast<double>(client_display_potential_peak_luminance_nits);
+      } else if (client_sink_potential_peak_luminance_nits > 0) {
+        peak_luminance = static_cast<double>(client_sink_potential_peak_luminance_nits);
         peak_source = "client-potential-peak"sv;
       }
 
       auto sdr_luminance = fallback_sdr_luminance;
       auto sdr_source = "legacy-fallback"sv;
-      if (client_display_current_peak_luminance_nits > 0 && client_display_current_edr_headroom > 1.0f) {
-        sdr_luminance = static_cast<double>(client_display_current_peak_luminance_nits) / static_cast<double>(client_display_current_edr_headroom);
+      if (client_sink_current_peak_luminance_nits > 0 && client_sink_current_edr_headroom > 1.0f) {
+        sdr_luminance = static_cast<double>(client_sink_current_peak_luminance_nits) / static_cast<double>(client_sink_current_edr_headroom);
         sdr_source = "client-current-headroom"sv;
-      } else if (client_display_potential_peak_luminance_nits > 0 && client_display_potential_edr_headroom > 1.0f) {
-        sdr_luminance = static_cast<double>(client_display_potential_peak_luminance_nits) / static_cast<double>(client_display_potential_edr_headroom);
+      } else if (client_sink_potential_peak_luminance_nits > 0 && client_sink_potential_edr_headroom > 1.0f) {
+        sdr_luminance = static_cast<double>(client_sink_potential_peak_luminance_nits) / static_cast<double>(client_sink_potential_edr_headroom);
         sdr_source = "client-potential-headroom"sv;
       }
 
@@ -224,10 +224,10 @@ namespace VDISPLAY {
       id descriptor,
       bool hdr_enabled,
       const color_profile_t &host_profile,
-      float client_display_current_edr_headroom,
-      float client_display_potential_edr_headroom,
-      int client_display_current_peak_luminance_nits,
-      int client_display_potential_peak_luminance_nits
+      float client_sink_current_edr_headroom,
+      float client_sink_potential_edr_headroom,
+      int client_sink_current_peak_luminance_nits,
+      int client_sink_potential_peak_luminance_nits
     ) {
       if (!hdr_enabled || descriptor == nil) {
         return;
@@ -253,10 +253,10 @@ namespace VDISPLAY {
 
       const auto luminance = resolve_hdr_display_info_luminance(
         host_profile,
-        client_display_current_edr_headroom,
-        client_display_potential_edr_headroom,
-        client_display_current_peak_luminance_nits,
-        client_display_potential_peak_luminance_nits
+        client_sink_current_edr_headroom,
+        client_sink_potential_edr_headroom,
+        client_sink_current_peak_luminance_nits,
+        client_sink_potential_peak_luminance_nits
       );
 
       if (max_hdr_luminance_key != nil && [existing_display_info objectForKey:max_hdr_luminance_key] != nil) {
@@ -288,55 +288,55 @@ namespace VDISPLAY {
                       << " min="sv
                       << luminance.minimum_luminance
                       << " current-edr-headroom="sv
-                      << client_display_current_edr_headroom
+                      << client_sink_current_edr_headroom
                       << " potential-edr-headroom="sv
-                      << client_display_potential_edr_headroom
+                      << client_sink_potential_edr_headroom
                       << " current-peak-nits="sv
-                      << client_display_current_peak_luminance_nits
+                      << client_sink_current_peak_luminance_nits
                       << " potential-peak-nits="sv
-                      << client_display_potential_peak_luminance_nits;
+                      << client_sink_potential_peak_luminance_nits;
     }
 
-    const char *client_display_gamut_label(const int gamut) {
-      switch (static_cast<video::client_display_gamut_e>(gamut)) {
-        case video::client_display_gamut_e::srgb:
+    const char *client_sink_gamut_label(const int gamut) {
+      switch (static_cast<video::client_sink_gamut_e>(gamut)) {
+        case video::client_sink_gamut_e::srgb:
           return "srgb";
-        case video::client_display_gamut_e::display_p3:
+        case video::client_sink_gamut_e::display_p3:
           return "display-p3";
-        case video::client_display_gamut_e::rec2020:
+        case video::client_sink_gamut_e::rec2020:
           return "rec2020";
-        case video::client_display_gamut_e::unknown:
+        case video::client_sink_gamut_e::unknown:
         default:
           return "unknown";
       }
     }
 
-    const char *client_display_transfer_label(const int transfer) {
-      switch (static_cast<video::client_display_transfer_e>(transfer)) {
-        case video::client_display_transfer_e::sdr:
+    const char *client_sink_transfer_label(const int transfer) {
+      switch (static_cast<video::client_sink_transfer_e>(transfer)) {
+        case video::client_sink_transfer_e::sdr:
           return "sdr";
-        case video::client_display_transfer_e::pq:
+        case video::client_sink_transfer_e::pq:
           return "pq";
-        case video::client_display_transfer_e::hlg:
+        case video::client_sink_transfer_e::hlg:
           return "hlg";
-        case video::client_display_transfer_e::unknown:
+        case video::client_sink_transfer_e::unknown:
         default:
           return "unknown";
       }
     }
 
-    int virtual_display_transfer_function(bool hdr_enabled, int client_display_transfer) {
+    int virtual_display_transfer_function(bool hdr_enabled, int client_sink_transfer) {
       if (!hdr_enabled) {
         return CVTransferFunctionGetIntegerCodePointForString(kCVImageBufferTransferFunction_ITU_R_709_2);
       }
 
-      switch (static_cast<video::client_display_transfer_e>(client_display_transfer)) {
-        case video::client_display_transfer_e::hlg:
+      switch (static_cast<video::client_sink_transfer_e>(client_sink_transfer)) {
+        case video::client_sink_transfer_e::hlg:
           return CVTransferFunctionGetIntegerCodePointForString(kCVImageBufferTransferFunction_ITU_R_2100_HLG);
-        case video::client_display_transfer_e::sdr:
+        case video::client_sink_transfer_e::sdr:
           return CVTransferFunctionGetIntegerCodePointForString(kCVImageBufferTransferFunction_ITU_R_709_2);
-        case video::client_display_transfer_e::pq:
-        case video::client_display_transfer_e::unknown:
+        case video::client_sink_transfer_e::pq:
+        case video::client_sink_transfer_e::unknown:
         default:
           return CVTransferFunctionGetIntegerCodePointForString(kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ);
       }
@@ -601,54 +601,54 @@ namespace VDISPLAY {
 
   color_profile_t probeHostDisplayColorProfile(
     bool hdr_enabled,
-    int client_display_gamut,
-    int client_display_transfer,
-    float client_display_current_edr_headroom,
-    float client_display_potential_edr_headroom,
-    int client_display_current_peak_luminance_nits,
-    int client_display_potential_peak_luminance_nits
+    int client_sink_gamut,
+    int client_sink_transfer,
+    float client_sink_current_edr_headroom,
+    float client_sink_potential_edr_headroom,
+    int client_sink_current_peak_luminance_nits,
+    int client_sink_potential_peak_luminance_nits
   ) {
     NSScreen *reference_screen = [NSScreen mainScreen];
     if (reference_screen == nil && [NSScreen screens].count > 0) {
       reference_screen = [NSScreen screens].firstObject;
     }
 
-    const auto client_transfer = static_cast<video::client_display_transfer_e>(client_display_transfer);
+    const auto client_transfer = static_cast<video::client_sink_transfer_e>(client_sink_transfer);
     const bool client_wants_hdr =
       hdr_enabled ||
-      client_transfer == video::client_display_transfer_e::pq ||
-      client_transfer == video::client_display_transfer_e::hlg;
+      client_transfer == video::client_sink_transfer_e::pq ||
+      client_transfer == video::client_sink_transfer_e::hlg;
     const bool use_display_p3 =
-      client_display_gamut == static_cast<int>(video::client_display_gamut_e::display_p3) ? true :
-      client_display_gamut == static_cast<int>(video::client_display_gamut_e::srgb) ? false :
+      client_sink_gamut == static_cast<int>(video::client_sink_gamut_e::display_p3) ? true :
+      client_sink_gamut == static_cast<int>(video::client_sink_gamut_e::srgb) ? false :
       client_wants_hdr ? true :
       screen_prefers_display_p3(reference_screen);
 
     color_profile_t profile =
-      client_display_gamut == static_cast<int>(video::client_display_gamut_e::rec2020) ? kRec2020ColorProfile :
+      client_sink_gamut == static_cast<int>(video::client_sink_gamut_e::rec2020) ? kRec2020ColorProfile :
       use_display_p3 ? kDisplayP3ColorProfile :
       kSrgbColorProfile;
     profile.hdr_capable = client_wants_hdr || screen_is_hdr_capable(reference_screen);
 
     const auto profile_gamut =
-      client_display_gamut == static_cast<int>(video::client_display_gamut_e::rec2020) ? "rec2020"sv :
+      client_sink_gamut == static_cast<int>(video::client_sink_gamut_e::rec2020) ? "rec2020"sv :
       profile.display_p3 ? "display-p3"sv :
       "srgb"sv;
     const auto transfer_name =
-      client_transfer == video::client_display_transfer_e::pq ? "pq"sv :
-      client_transfer == video::client_display_transfer_e::hlg ? "hlg"sv :
-      client_transfer == video::client_display_transfer_e::sdr ? "sdr"sv :
+      client_transfer == video::client_sink_transfer_e::pq ? "pq"sv :
+      client_transfer == video::client_sink_transfer_e::hlg ? "hlg"sv :
+      client_transfer == video::client_sink_transfer_e::sdr ? "sdr"sv :
       "unknown"sv;
     BOOST_LOG(info) << "macOS virtual display color profile: gamut="sv
                     << profile_gamut
                     << " hdr_capable="sv << profile.hdr_capable
                     << " hdr_intent="sv << hdr_enabled
-                    << " client_gamut="sv << client_display_gamut_label(client_display_gamut)
+                    << " client_gamut="sv << client_sink_gamut_label(client_sink_gamut)
                     << " client_transfer="sv << transfer_name
-                    << " current-edr-headroom="sv << client_display_current_edr_headroom
-                    << " potential-edr-headroom="sv << client_display_potential_edr_headroom
-                    << " current-peak-nits="sv << client_display_current_peak_luminance_nits
-                    << " potential-peak-nits="sv << client_display_potential_peak_luminance_nits;
+                    << " current-edr-headroom="sv << client_sink_current_edr_headroom
+                    << " potential-edr-headroom="sv << client_sink_potential_edr_headroom
+                    << " current-peak-nits="sv << client_sink_current_peak_luminance_nits
+                    << " potential-peak-nits="sv << client_sink_potential_peak_luminance_nits;
 
     return profile;
   }
@@ -662,12 +662,12 @@ namespace VDISPLAY {
     int scale_factor,
     bool hi_dpi,
     bool hdr_enabled,
-    int client_display_gamut,
-    int client_display_transfer,
-    float client_display_current_edr_headroom,
-    float client_display_potential_edr_headroom,
-    int client_display_current_peak_luminance_nits,
-    int client_display_potential_peak_luminance_nits
+    int client_sink_gamut,
+    int client_sink_transfer,
+    float client_sink_current_edr_headroom,
+    float client_sink_potential_edr_headroom,
+    int client_sink_current_peak_luminance_nits,
+    int client_sink_potential_peak_luminance_nits
   ) {
     const std::string display_key = client_uid ? client_uid : "";
     if (display_key.empty()) {
@@ -713,15 +713,15 @@ namespace VDISPLAY {
     const auto height = backing_dimension_for_scale_factor(logical_height, scale_factor, hi_dpi);
     const auto host_profile = probeHostDisplayColorProfile(
       hdr_enabled,
-      client_display_gamut,
-      client_display_transfer,
-      client_display_current_edr_headroom,
-      client_display_potential_edr_headroom,
-      client_display_current_peak_luminance_nits,
-      client_display_potential_peak_luminance_nits
+      client_sink_gamut,
+      client_sink_transfer,
+      client_sink_current_edr_headroom,
+      client_sink_potential_edr_headroom,
+      client_sink_current_peak_luminance_nits,
+      client_sink_potential_peak_luminance_nits
     );
     const auto physical_size = virtual_display_size_for_pixels(width, height);
-    const auto transfer_function = virtual_display_transfer_function(hdr_enabled, client_display_transfer);
+    const auto transfer_function = virtual_display_transfer_function(hdr_enabled, client_sink_transfer);
     if (use_skylight_backend) {
       NSError *ns_error = nil;
       const auto session_nonce = skylight_display_nonce.fetch_add(1, std::memory_order_relaxed) + 1u;
@@ -779,14 +779,14 @@ namespace VDISPLAY {
         handle->descriptor,
         hdr_enabled,
         host_profile,
-        client_display_current_edr_headroom,
-        client_display_potential_edr_headroom,
-        client_display_current_peak_luminance_nits,
-        client_display_potential_peak_luminance_nits
+        client_sink_current_edr_headroom,
+        client_sink_potential_edr_headroom,
+        client_sink_current_peak_luminance_nits,
+        client_sink_potential_peak_luminance_nits
       );
 
       const auto skylight_eotf =
-        hdr_enabled || static_cast<video::client_display_transfer_e>(client_display_transfer) != video::client_display_transfer_e::sdr ?
+        hdr_enabled || static_cast<video::client_sink_transfer_e>(client_sink_transfer) != video::client_sink_transfer_e::sdr ?
           1u :
           0u;
       auto init_mode = reinterpret_cast<init_skylight_mode_t>(objc_msgSend);
@@ -901,10 +901,10 @@ namespace VDISPLAY {
         handle->descriptor,
         hdr_enabled,
         host_profile,
-        client_display_current_edr_headroom,
-        client_display_potential_edr_headroom,
-        client_display_current_peak_luminance_nits,
-        client_display_potential_peak_luminance_nits
+        client_sink_current_edr_headroom,
+        client_sink_potential_edr_headroom,
+        client_sink_current_peak_luminance_nits,
+        client_sink_potential_peak_luminance_nits
       );
 
       if ([mode_class instancesRespondToSelector:sel_registerName("initWithWidth:height:refreshRate:transferFunction:")]) {
@@ -982,7 +982,7 @@ namespace VDISPLAY {
     std::uint32_t logical_width,
     std::uint32_t logical_height,
     std::uint32_t fps_millihz,
-    int client_display_transfer
+    int client_sink_transfer
   ) {
     if (client_uid.empty()) {
       return false;
@@ -1019,7 +1019,7 @@ namespace VDISPLAY {
     if (handle.uses_skylight_backend) {
       NSError *ns_error = nil;
       const auto skylight_eotf =
-        handle.hdr_enabled || static_cast<video::client_display_transfer_e>(client_display_transfer) != video::client_display_transfer_e::sdr ?
+        handle.hdr_enabled || static_cast<video::client_sink_transfer_e>(client_sink_transfer) != video::client_sink_transfer_e::sdr ?
           1u :
           0u;
       auto init_mode = reinterpret_cast<init_skylight_mode_t>(objc_msgSend);
@@ -1101,7 +1101,7 @@ namespace VDISPLAY {
                       << " eotf="sv << skylight_eotf
                       << " optional-modes="sv << optional_modes.count;
     } else {
-      const auto transfer_function = virtual_display_transfer_function(handle.hdr_enabled, client_display_transfer);
+      const auto transfer_function = virtual_display_transfer_function(handle.hdr_enabled, client_sink_transfer);
 
       id new_mode = nil;
       if ([mode_class instancesRespondToSelector:sel_registerName("initWithWidth:height:refreshRate:transferFunction:")]) {

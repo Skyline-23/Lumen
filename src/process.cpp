@@ -236,7 +236,7 @@ namespace proc {
       video::effective_dynamic_range_transport(launch_session->requested_dynamic_range_transport);
     const bool requested_hdr_stream =
       video::dynamic_range_transport_uses_hdr_stream(requested_dynamic_range_transport);
-    this->client_scale_factor = scale_factor;
+    this->client_sink_scale_factor = scale_factor;
     this->client_sink_hidpi = launch_session->client_sink_hidpi;
     this->client_logical_width = static_cast<int>(render_width);
     this->client_logical_height = static_cast<int>(render_height);
@@ -435,9 +435,9 @@ namespace proc {
         this->client_sink_current_peak_luminance_nits = launch_session->client_sink_current_peak_luminance_nits;
         this->client_sink_potential_peak_luminance_nits = launch_session->client_sink_potential_peak_luminance_nits;
         this->requested_dynamic_range_transport = static_cast<int>(requested_dynamic_range_transport);
-        this->client_supports_frame_gated_hdr = launch_session->client_supports_frame_gated_hdr;
-        this->client_supports_hdr_tile_overlay = launch_session->client_supports_hdr_tile_overlay;
-        this->client_supports_per_frame_hdr_metadata = launch_session->client_supports_per_frame_hdr_metadata;
+        this->client_sink_supports_frame_gated_hdr = launch_session->client_sink_supports_frame_gated_hdr;
+        this->client_sink_supports_hdr_tile_overlay = launch_session->client_sink_supports_hdr_tile_overlay;
+        this->client_sink_supports_per_frame_hdr_metadata = launch_session->client_sink_supports_per_frame_hdr_metadata;
         config::video.output_name = this->display_name;
         const auto virtual_display_id = static_cast<CGDirectDisplayID>(std::strtoul(virtual_display_name.c_str(), nullptr, 10));
         if (!platf::isolate_virtual_display(virtual_display_id)) {
@@ -511,34 +511,34 @@ namespace proc {
     _env["APOLLO_CLIENT_SCALE_FACTOR"] = std::to_string(scale_factor);
     _env["APOLLO_CLIENT_FPS"] = fps_str;
     _env["APOLLO_CLIENT_HDR"] = requested_hdr_stream ? "true" : "false";
-    switch (static_cast<video::client_display_gamut_e>(launch_session->client_sink_gamut)) {
-      case video::client_display_gamut_e::display_p3:
-        _env["APOLLO_CLIENT_DISPLAY_GAMUT"] = "display-p3";
+    switch (static_cast<video::client_sink_gamut_e>(launch_session->client_sink_gamut)) {
+      case video::client_sink_gamut_e::display_p3:
+        _env["APOLLO_CLIENT_SINK_GAMUT"] = "display-p3";
         break;
-      case video::client_display_gamut_e::rec2020:
-        _env["APOLLO_CLIENT_DISPLAY_GAMUT"] = "rec2020";
+      case video::client_sink_gamut_e::rec2020:
+        _env["APOLLO_CLIENT_SINK_GAMUT"] = "rec2020";
         break;
-      case video::client_display_gamut_e::srgb:
-        _env["APOLLO_CLIENT_DISPLAY_GAMUT"] = "srgb";
+      case video::client_sink_gamut_e::srgb:
+        _env["APOLLO_CLIENT_SINK_GAMUT"] = "srgb";
         break;
-      case video::client_display_gamut_e::unknown:
+      case video::client_sink_gamut_e::unknown:
       default:
-        _env["APOLLO_CLIENT_DISPLAY_GAMUT"] = "unknown";
+        _env["APOLLO_CLIENT_SINK_GAMUT"] = "unknown";
         break;
     }
-    switch (static_cast<video::client_display_transfer_e>(launch_session->client_sink_transfer)) {
-      case video::client_display_transfer_e::pq:
-        _env["APOLLO_CLIENT_DISPLAY_TRANSFER"] = "pq";
+    switch (static_cast<video::client_sink_transfer_e>(launch_session->client_sink_transfer)) {
+      case video::client_sink_transfer_e::pq:
+        _env["APOLLO_CLIENT_SINK_TRANSFER"] = "pq";
         break;
-      case video::client_display_transfer_e::hlg:
-        _env["APOLLO_CLIENT_DISPLAY_TRANSFER"] = "hlg";
+      case video::client_sink_transfer_e::hlg:
+        _env["APOLLO_CLIENT_SINK_TRANSFER"] = "hlg";
         break;
-      case video::client_display_transfer_e::sdr:
-        _env["APOLLO_CLIENT_DISPLAY_TRANSFER"] = "sdr";
+      case video::client_sink_transfer_e::sdr:
+        _env["APOLLO_CLIENT_SINK_TRANSFER"] = "sdr";
         break;
-      case video::client_display_transfer_e::unknown:
+      case video::client_sink_transfer_e::unknown:
       default:
-        _env["APOLLO_CLIENT_DISPLAY_TRANSFER"] = "unknown";
+        _env["APOLLO_CLIENT_SINK_TRANSFER"] = "unknown";
         break;
     }
     _env["APOLLO_CLIENT_GCMAP"] = std::to_string(launch_session->gcmap);
@@ -1016,17 +1016,17 @@ namespace proc {
     physical_displays_asleep = false;
     allow_client_commands = false;
     client_sink_hidpi = false;
-    client_sink_gamut = static_cast<int>(video::client_display_gamut_e::unknown);
-    client_sink_transfer = static_cast<int>(video::client_display_transfer_e::unknown);
+    client_sink_gamut = static_cast<int>(video::client_sink_gamut_e::unknown);
+    client_sink_transfer = static_cast<int>(video::client_sink_transfer_e::unknown);
     client_sink_current_edr_headroom = 0.0f;
     client_sink_potential_edr_headroom = 0.0f;
     client_sink_current_peak_luminance_nits = 0;
     client_sink_potential_peak_luminance_nits = 0;
     requested_dynamic_range_transport = static_cast<int>(video::dynamic_range_transport_e::unknown);
-    client_supports_frame_gated_hdr = false;
-    client_supports_hdr_tile_overlay = false;
-    client_supports_per_frame_hdr_metadata = false;
-    client_scale_factor = 100;
+    client_sink_supports_frame_gated_hdr = false;
+    client_sink_supports_hdr_tile_overlay = false;
+    client_sink_supports_per_frame_hdr_metadata = false;
+    client_sink_scale_factor = 100;
     client_logical_width = 0;
     client_logical_height = 0;
     client_render_width = 0;

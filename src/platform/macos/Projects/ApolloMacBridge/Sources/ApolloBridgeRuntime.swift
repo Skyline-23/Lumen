@@ -98,7 +98,7 @@ public enum ApolloCaptureEncoderInputStrategy: String, CaseIterable, Codable, Se
     }
 }
 
-public enum ApolloClientDisplayGamut: String, CaseIterable, Codable, Sendable {
+public enum ApolloClientSinkGamut: String, CaseIterable, Codable, Sendable {
     case unknown
     case srgb
     case displayP3 = "display-p3"
@@ -118,7 +118,7 @@ public enum ApolloClientDisplayGamut: String, CaseIterable, Codable, Sendable {
     }
 }
 
-public enum ApolloClientDisplayTransfer: String, CaseIterable, Codable, Sendable {
+public enum ApolloClientSinkTransfer: String, CaseIterable, Codable, Sendable {
     case unknown
     case sdr
     case pq
@@ -378,19 +378,19 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     public let targetVideoBitRateKbps: Int
     public let requestedWidth: Int?
     public let requestedHeight: Int?
-    public let clientDisplayGamut: ApolloClientDisplayGamut
-    public let clientDisplayTransfer: ApolloClientDisplayTransfer
-    public let effectiveDisplayGamut: ApolloClientDisplayGamut
-    public let effectiveDisplayTransfer: ApolloClientDisplayTransfer
+    public let clientSinkGamut: ApolloClientSinkGamut
+    public let clientSinkTransfer: ApolloClientSinkTransfer
+    public let effectiveSinkGamut: ApolloClientSinkGamut
+    public let effectiveSinkTransfer: ApolloClientSinkTransfer
     public let hdrStaticMetadata: ApolloHDRStaticMetadata?
-    public let clientDisplayCurrentEDRHeadroom: Float
-    public let clientDisplayPotentialEDRHeadroom: Float
-    public let clientDisplayCurrentPeakLuminanceNits: Int
-    public let clientDisplayPotentialPeakLuminanceNits: Int
+    public let clientSinkCurrentEDRHeadroom: Float
+    public let clientSinkPotentialEDRHeadroom: Float
+    public let clientSinkCurrentPeakLuminanceNits: Int
+    public let clientSinkPotentialPeakLuminanceNits: Int
     public let requestedDynamicRangeTransport: ApolloCoreDynamicRangeTransport
-    public let clientSupportsFrameGatedHDR: Bool
-    public let clientSupportsHDRTileOverlay: Bool
-    public let clientSupportsPerFrameHDRMetadata: Bool
+    public let clientSinkSupportsFrameGatedHDR: Bool
+    public let clientSinkSupportsHDRTileOverlay: Bool
+    public let clientSinkSupportsPerFrameHDRMetadata: Bool
 
     public init(
         displayID: UInt32,
@@ -403,19 +403,19 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         targetVideoBitRateKbps: Int = 0,
         requestedWidth: Int? = nil,
         requestedHeight: Int? = nil,
-        clientDisplayGamut: ApolloClientDisplayGamut = .unknown,
-        clientDisplayTransfer: ApolloClientDisplayTransfer = .unknown,
-        effectiveDisplayGamut: ApolloClientDisplayGamut = .unknown,
-        effectiveDisplayTransfer: ApolloClientDisplayTransfer = .unknown,
+        clientSinkGamut: ApolloClientSinkGamut = .unknown,
+        clientSinkTransfer: ApolloClientSinkTransfer = .unknown,
+        effectiveSinkGamut: ApolloClientSinkGamut = .unknown,
+        effectiveSinkTransfer: ApolloClientSinkTransfer = .unknown,
         hdrStaticMetadata: ApolloHDRStaticMetadata? = nil,
-        clientDisplayCurrentEDRHeadroom: Float = 0,
-        clientDisplayPotentialEDRHeadroom: Float = 0,
-        clientDisplayCurrentPeakLuminanceNits: Int = 0,
-        clientDisplayPotentialPeakLuminanceNits: Int = 0,
+        clientSinkCurrentEDRHeadroom: Float = 0,
+        clientSinkPotentialEDRHeadroom: Float = 0,
+        clientSinkCurrentPeakLuminanceNits: Int = 0,
+        clientSinkPotentialPeakLuminanceNits: Int = 0,
         requestedDynamicRangeTransport: ApolloCoreDynamicRangeTransport = ApolloCoreDynamicRangeTransportUnknown,
-        clientSupportsFrameGatedHDR: Bool = false,
-        clientSupportsHDRTileOverlay: Bool = false,
-        clientSupportsPerFrameHDRMetadata: Bool = false
+        clientSinkSupportsFrameGatedHDR: Bool = false,
+        clientSinkSupportsHDRTileOverlay: Bool = false,
+        clientSinkSupportsPerFrameHDRMetadata: Bool = false
     ) {
         self.displayID = displayID
         self.codec = codec
@@ -427,19 +427,19 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         self.targetVideoBitRateKbps = max(targetVideoBitRateKbps, 0)
         self.requestedWidth = Self.sanitizedDimension(requestedWidth)
         self.requestedHeight = Self.sanitizedDimension(requestedHeight)
-        self.clientDisplayGamut = clientDisplayGamut
-        self.clientDisplayTransfer = clientDisplayTransfer
-        self.effectiveDisplayGamut = effectiveDisplayGamut
-        self.effectiveDisplayTransfer = effectiveDisplayTransfer
+        self.clientSinkGamut = clientSinkGamut
+        self.clientSinkTransfer = clientSinkTransfer
+        self.effectiveSinkGamut = effectiveSinkGamut
+        self.effectiveSinkTransfer = effectiveSinkTransfer
         self.hdrStaticMetadata = hdrStaticMetadata
-        self.clientDisplayCurrentEDRHeadroom = max(clientDisplayCurrentEDRHeadroom, 0)
-        self.clientDisplayPotentialEDRHeadroom = max(clientDisplayPotentialEDRHeadroom, 0)
-        self.clientDisplayCurrentPeakLuminanceNits = max(clientDisplayCurrentPeakLuminanceNits, 0)
-        self.clientDisplayPotentialPeakLuminanceNits = max(clientDisplayPotentialPeakLuminanceNits, 0)
+        self.clientSinkCurrentEDRHeadroom = max(clientSinkCurrentEDRHeadroom, 0)
+        self.clientSinkPotentialEDRHeadroom = max(clientSinkPotentialEDRHeadroom, 0)
+        self.clientSinkCurrentPeakLuminanceNits = max(clientSinkCurrentPeakLuminanceNits, 0)
+        self.clientSinkPotentialPeakLuminanceNits = max(clientSinkPotentialPeakLuminanceNits, 0)
         self.requestedDynamicRangeTransport = requestedDynamicRangeTransport
-        self.clientSupportsFrameGatedHDR = clientSupportsFrameGatedHDR
-        self.clientSupportsHDRTileOverlay = clientSupportsHDRTileOverlay
-        self.clientSupportsPerFrameHDRMetadata = clientSupportsPerFrameHDRMetadata
+        self.clientSinkSupportsFrameGatedHDR = clientSinkSupportsFrameGatedHDR
+        self.clientSinkSupportsHDRTileOverlay = clientSinkSupportsHDRTileOverlay
+        self.clientSinkSupportsPerFrameHDRMetadata = clientSinkSupportsPerFrameHDRMetadata
     }
 
     public var usesHDRTransport: Bool {
@@ -455,32 +455,32 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
 
     public static func panelNative(displayID: UInt32) -> Self {
         let environment = ProcessInfo.processInfo.environment
-        let transport = ApolloClientDisplayTransfer(
-            environmentValue: environment["APOLLO_CLIENT_DISPLAY_TRANSFER"]
+        let transport = ApolloClientSinkTransfer(
+            environmentValue: environment["APOLLO_CLIENT_SINK_TRANSFER"]
         )
         return Self(
             displayID: displayID,
             codec: ApolloBridgeConfigurationPreferences.preferredCodec(),
             queueProfile: ApolloBridgeConfigurationPreferences.preferredQueueProfile(),
             encoderInputStrategy: ApolloBridgeConfigurationPreferences.preferredEncoderInputStrategy(),
-            clientDisplayGamut: ApolloClientDisplayGamut(
-                environmentValue: environment["APOLLO_CLIENT_DISPLAY_GAMUT"]
+            clientSinkGamut: ApolloClientSinkGamut(
+                environmentValue: environment["APOLLO_CLIENT_SINK_GAMUT"]
             ),
-            clientDisplayTransfer: ApolloClientDisplayTransfer(
-                environmentValue: environment["APOLLO_CLIENT_DISPLAY_TRANSFER"]
+            clientSinkTransfer: ApolloClientSinkTransfer(
+                environmentValue: environment["APOLLO_CLIENT_SINK_TRANSFER"]
             ),
-            effectiveDisplayGamut: ApolloClientDisplayGamut(
-                environmentValue: environment["APOLLO_CLIENT_DISPLAY_GAMUT"]
+            effectiveSinkGamut: ApolloClientSinkGamut(
+                environmentValue: environment["APOLLO_CLIENT_SINK_GAMUT"]
             ),
-            effectiveDisplayTransfer: ApolloClientDisplayTransfer(
-                environmentValue: environment["APOLLO_CLIENT_DISPLAY_TRANSFER"]
+            effectiveSinkTransfer: ApolloClientSinkTransfer(
+                environmentValue: environment["APOLLO_CLIENT_SINK_TRANSFER"]
             ),
             requestedDynamicRangeTransport: transport == .pq || transport == .hlg ?
                 ApolloCoreDynamicRangeTransportFrameGatedHDR :
                 ApolloCoreDynamicRangeTransportSDR,
-            clientSupportsFrameGatedHDR: true,
-            clientSupportsHDRTileOverlay: false,
-            clientSupportsPerFrameHDRMetadata: true
+            clientSinkSupportsFrameGatedHDR: true,
+            clientSinkSupportsHDRTileOverlay: false,
+            clientSinkSupportsPerFrameHDRMetadata: true
         )
     }
 
@@ -562,12 +562,12 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         }
     }
 
-    private var resolvedDisplayGamut: ApolloClientDisplayGamut {
-        effectiveDisplayGamut == .unknown ? clientDisplayGamut : effectiveDisplayGamut
+    private var resolvedDisplayGamut: ApolloClientSinkGamut {
+        effectiveSinkGamut == .unknown ? clientSinkGamut : effectiveSinkGamut
     }
 
-    private var resolvedDisplayTransfer: ApolloClientDisplayTransfer {
-        effectiveDisplayTransfer == .unknown ? clientDisplayTransfer : effectiveDisplayTransfer
+    private var resolvedDisplayTransfer: ApolloClientSinkTransfer {
+        effectiveSinkTransfer == .unknown ? clientSinkTransfer : effectiveSinkTransfer
     }
 
     private var resolvedHDRTransferFunction: MDKVideoTransferFunction {
@@ -708,7 +708,7 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     )
 
     var hdrConfigurationDebugSummary: String {
-        "uses-hdr-transport=\(usesHDRTransport) sink-gamut=\(clientDisplayGamut.rawValue) sink-transfer=\(clientDisplayTransfer.rawValue) requested-transport=\(apolloDynamicRangeTransportName(requestedDynamicRangeTransport)) effective-gamut=\(resolvedDisplayGamut.rawValue) effective-transfer=\(resolvedDisplayTransfer.rawValue) negotiated-static-metadata=\(hdrStaticMetadata != nil) current-edr-headroom=\(clientDisplayCurrentEDRHeadroom) potential-edr-headroom=\(clientDisplayPotentialEDRHeadroom) current-peak-nits=\(clientDisplayCurrentPeakLuminanceNits) potential-peak-nits=\(clientDisplayPotentialPeakLuminanceNits) supports-frame-gated-hdr=\(clientSupportsFrameGatedHDR) supports-hdr-tile-overlay=\(clientSupportsHDRTileOverlay) supports-per-frame-hdr-metadata=\(clientSupportsPerFrameHDRMetadata)"
+        "uses-hdr-transport=\(usesHDRTransport) sink-gamut=\(clientSinkGamut.rawValue) sink-transfer=\(clientSinkTransfer.rawValue) requested-transport=\(apolloDynamicRangeTransportName(requestedDynamicRangeTransport)) effective-gamut=\(resolvedDisplayGamut.rawValue) effective-transfer=\(resolvedDisplayTransfer.rawValue) negotiated-static-metadata=\(hdrStaticMetadata != nil) current-edr-headroom=\(clientSinkCurrentEDRHeadroom) potential-edr-headroom=\(clientSinkPotentialEDRHeadroom) current-peak-nits=\(clientSinkCurrentPeakLuminanceNits) potential-peak-nits=\(clientSinkPotentialPeakLuminanceNits) supports-frame-gated-hdr=\(clientSinkSupportsFrameGatedHDR) supports-hdr-tile-overlay=\(clientSinkSupportsHDRTileOverlay) supports-per-frame-hdr-metadata=\(clientSinkSupportsPerFrameHDRMetadata)"
     }
 }
 
@@ -921,21 +921,21 @@ private struct ApolloBridgeAutomationRequest: Equatable, Sendable {
                 targetVideoBitRateKbps: Int(snapshot.target_video_bitrate_kbps),
                 requestedWidth: Int(snapshot.requested_width),
                 requestedHeight: Int(snapshot.requested_height),
-                clientDisplayGamut: ApolloBridgeAutomationRequest.clientDisplayGamut(from: snapshot.client_display_gamut),
-                clientDisplayTransfer: ApolloBridgeAutomationRequest.clientDisplayTransfer(from: snapshot.client_display_transfer),
-                effectiveDisplayGamut: ApolloBridgeAutomationRequest.clientDisplayGamut(from: snapshot.effective_display_gamut),
-                effectiveDisplayTransfer: ApolloBridgeAutomationRequest.clientDisplayTransfer(from: snapshot.effective_display_transfer),
+                clientSinkGamut: ApolloBridgeAutomationRequest.clientSinkGamut(from: snapshot.client_sink_gamut),
+                clientSinkTransfer: ApolloBridgeAutomationRequest.clientSinkTransfer(from: snapshot.client_sink_transfer),
+                effectiveSinkGamut: ApolloBridgeAutomationRequest.clientSinkGamut(from: snapshot.effective_sink_gamut),
+                effectiveSinkTransfer: ApolloBridgeAutomationRequest.clientSinkTransfer(from: snapshot.effective_sink_transfer),
                 hdrStaticMetadata: snapshot.has_effective_hdr_metadata ?
                     ApolloHDRStaticMetadata(coreValue: snapshot.effective_hdr_metadata) :
                     nil,
-                clientDisplayCurrentEDRHeadroom: snapshot.client_display_current_edr_headroom,
-                clientDisplayPotentialEDRHeadroom: snapshot.client_display_potential_edr_headroom,
-                clientDisplayCurrentPeakLuminanceNits: Int(snapshot.client_display_current_peak_luminance_nits),
-                clientDisplayPotentialPeakLuminanceNits: Int(snapshot.client_display_potential_peak_luminance_nits),
+                clientSinkCurrentEDRHeadroom: snapshot.client_sink_current_edr_headroom,
+                clientSinkPotentialEDRHeadroom: snapshot.client_sink_potential_edr_headroom,
+                clientSinkCurrentPeakLuminanceNits: Int(snapshot.client_sink_current_peak_luminance_nits),
+                clientSinkPotentialPeakLuminanceNits: Int(snapshot.client_sink_potential_peak_luminance_nits),
                 requestedDynamicRangeTransport: snapshot.requested_dynamic_range_transport,
-                clientSupportsFrameGatedHDR: snapshot.client_supports_frame_gated_hdr,
-                clientSupportsHDRTileOverlay: snapshot.client_supports_hdr_tile_overlay,
-                clientSupportsPerFrameHDRMetadata: snapshot.client_supports_per_frame_hdr_metadata
+                clientSinkSupportsFrameGatedHDR: snapshot.client_sink_supports_frame_gated_hdr,
+                clientSinkSupportsHDRTileOverlay: snapshot.client_sink_supports_hdr_tile_overlay,
+                clientSinkSupportsPerFrameHDRMetadata: snapshot.client_sink_supports_per_frame_hdr_metadata
             )
         } else {
             videoConfiguration = nil
@@ -1002,7 +1002,7 @@ private struct ApolloBridgeAutomationRequest: Equatable, Sendable {
         }
     }
 
-    private static func clientDisplayGamut(from value: Int32) -> ApolloClientDisplayGamut {
+    private static func clientSinkGamut(from value: Int32) -> ApolloClientSinkGamut {
         switch value {
         case 1:
             return .srgb
@@ -1015,7 +1015,7 @@ private struct ApolloBridgeAutomationRequest: Equatable, Sendable {
         }
     }
 
-    private static func clientDisplayTransfer(from value: Int32) -> ApolloClientDisplayTransfer {
+    private static func clientSinkTransfer(from value: Int32) -> ApolloClientSinkTransfer {
         switch value {
         case 1:
             return .sdr
