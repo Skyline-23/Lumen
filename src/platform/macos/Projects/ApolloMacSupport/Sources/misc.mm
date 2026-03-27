@@ -602,6 +602,15 @@ namespace platf {
       return true;
     }
 
+    int current_private_display_set() {
+      const auto api = load_private_display_control_api();
+      if (!api.handle || api.cgx_current_display_set == nullptr) {
+        return 0;
+      }
+
+      return reinterpret_cast<cgx_current_display_set_t>(api.cgx_current_display_set)();
+    }
+
     uint32_t refresh_active_display_ids(std::vector<CGDirectDisplayID> &display_ids) {
       uint32_t active_count = 0;
       if (CGGetActiveDisplayList(0, nullptr, &active_count) != kCGErrorSuccess || active_count == 0) {
@@ -1412,6 +1421,7 @@ namespace platf {
     CFIndex moved_windows = 0;
     pid_t activated_pid = 0;
     pid_t fallback_pid = 0;
+    AXUIElementRef activated_window = nullptr;
     for (CFIndex index = 0; index < entry_count; ++index) {
       const auto entry = static_cast<CFDictionaryRef>(CFArrayGetValueAtIndex(window_info, index));
       if (entry == nullptr) {
@@ -1465,6 +1475,7 @@ namespace platf {
               if (auto *application = [NSRunningApplication runningApplicationWithProcessIdentifier:pid]; application != nil) {
                 if (application.activationPolicy == NSApplicationActivationPolicyRegular) {
                   activated_pid = pid;
+                  activated_window = static_cast<AXUIElementRef>(CFRetain(window));
                 }
               }
             }
@@ -1491,6 +1502,20 @@ namespace platf {
     if (activated_pid > 0) {
       if (auto *application = [NSRunningApplication runningApplicationWithProcessIdentifier:activated_pid]; application != nil) {
         const auto activated = [application activateWithOptions:(NSApplicationActivateAllWindows | NSApplicationActivateIgnoringOtherApps)];
+        if (activated_window != nullptr) {
+          const auto activated_app_ax = AXUIElementCreateApplication(activated_pid);
+          if (activated_app_ax != nullptr) {
+            AXUIElementSetAttributeValue(activated_app_ax, kAXFrontmostAttribute, kCFBooleanTrue);
+            AXUIElementSetAttributeValue(activated_app_ax, kAXFocusedWindowAttribute, activated_window);
+            CFRelease(activated_app_ax);
+          }
+          AXUIElementSetAttributeValue(activated_window, kAXMainAttribute, kCFBooleanTrue);
+          AXUIElementSetAttributeValue(activated_window, kAXFocusedAttribute, kCFBooleanTrue);
+          AXUIElementPerformAction(activated_window, kAXRaiseAction);
+          CFRelease(activated_window);
+          activated_window = nullptr;
+        }
+        ensure_private_virtual_display_set_active("workspace-focus");
         BOOST_LOG(info) << "Activated macOS virtual display application pid="sv << activated_pid
                         << " name="sv
                         << (application.localizedName ? [application.localizedName UTF8String] : "unknown")
@@ -1498,7 +1523,28 @@ namespace platf {
                         << " result="sv << activated;
       }
     }
+    if (activated_window != nullptr) {
+      CFRelease(activated_window);
+    }
     BOOST_LOG(info) << "Focused macOS virtual display workspace around display "sv << virtual_display_id << " moved_windows="sv << moved_windows;
+  }
+
+  bool ensure_private_virtual_display_set_active(const char *reason) {
+    if (!private_display_set_active) {
+      return false;
+    }
+
+    const auto current_set = current_private_display_set();
+    if (current_set == 1) {
+      return true;
+    }
+
+    const auto restored = apply_private_virtual_display_set(1);
+    BOOST_LOG(info) << "Ensured macOS private display set active reason="sv
+                    << (reason ? reason : "unknown")
+                    << " previous="sv << current_set
+                    << " restored="sv << restored;
+    return restored;
   }
 
   bool sleep_physical_displays() {

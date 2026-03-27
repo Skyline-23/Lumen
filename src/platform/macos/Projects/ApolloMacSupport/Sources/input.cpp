@@ -409,6 +409,7 @@ const KeyCodeMap kKeyCodesMap[] = {
     if (!ensure_accessibility_permission()) {
       return;
     }
+    ensure_private_virtual_display_set_active("keyboard");
 
     const auto key = keysym(modcode);
     log_keyboard_diagnostic("packet", modcode, key, release, flags, "preflight");
@@ -485,6 +486,7 @@ const KeyCodeMap kKeyCodesMap[] = {
     if (!ensure_accessibility_permission()) {
       return;
     }
+    ensure_private_virtual_display_set_active("unicode");
 
     if (utf8 == nullptr || size <= 0) {
       return;
@@ -577,6 +579,7 @@ const KeyCodeMap kKeyCodesMap[] = {
     if (!ensure_accessibility_permission()) {
       return;
     }
+    ensure_private_virtual_display_set_active("mouse");
 
     BOOST_LOG(debug) << "mouse_event: "sv << button << ", type: "sv << type << ", location:"sv << raw_location.x << ":"sv << raw_location.y << " click_count: "sv << click_count;
 
@@ -732,6 +735,7 @@ const KeyCodeMap kKeyCodesMap[] = {
     if (!ensure_accessibility_permission()) {
       return;
     }
+    ensure_private_virtual_display_set_active("scroll");
 
     CGEventRef upEvent = CGEventCreateScrollWheelEvent(
       nullptr,
