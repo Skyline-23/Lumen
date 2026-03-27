@@ -106,7 +106,7 @@ namespace logging {
         message(message),
         units(units),
         interval(interval_in_seconds),
-        enabled(config::sunshine.min_log_level <= severity.default_severity()) {
+        enabled(config::runtime.min_log_level <= severity.default_severity()) {
     }
 
     void collect_and_log(const T &value) {

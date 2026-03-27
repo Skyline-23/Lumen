@@ -45,7 +45,7 @@ namespace http {
   net::net_e origin_web_ui_allowed;
 
   int init() {
-    bool clean_slate = config::sunshine.flags[config::flag::FRESH_STATE];
+    bool clean_slate = config::runtime.flags[config::flag::FRESH_STATE];
     origin_web_ui_allowed = net::from_enum_string(config::nvhttp.origin_web_ui_allowed);
 
     if (clean_slate) {
@@ -60,9 +60,9 @@ namespace http {
         create_creds(config::nvhttp.pkey, config::nvhttp.cert)) {
       return -1;
     }
-    if (!user_creds_exist(config::sunshine.credentials_file)) {
+    if (!user_creds_exist(config::runtime.credentials_file)) {
       BOOST_LOG(info) << "Open the Web UI to set your new username and password and getting started";
-    } else if (reload_user_creds(config::sunshine.credentials_file)) {
+    } else if (reload_user_creds(config::runtime.credentials_file)) {
       return -1;
     }
     return 0;
@@ -119,9 +119,9 @@ namespace http {
     pt::ptree inputTree;
     try {
       pt::read_json(file, inputTree);
-      config::sunshine.username = inputTree.get<std::string>("username");
-      config::sunshine.password = inputTree.get<std::string>("password");
-      config::sunshine.salt = inputTree.get<std::string>("salt");
+      config::runtime.username = inputTree.get<std::string>("username");
+      config::runtime.password = inputTree.get<std::string>("password");
+      config::runtime.salt = inputTree.get<std::string>("salt");
     } catch (std::exception &e) {
       BOOST_LOG(error) << "loading user credentials: "sv << e.what();
       return -1;

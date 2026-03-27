@@ -492,7 +492,7 @@ namespace proc {
     _env["SUNSHINE_APP_NAME"] = _app.name;
     _env["SUNSHINE_CLIENT_WIDTH"] = std::to_string(render_width);
     _env["SUNSHINE_CLIENT_HEIGHT"] = std::to_string(render_height);
-    _env["SUNSHINE_CLIENT_FPS"] = config::sunshine.envvar_compatibility_mode ? std::to_string(std::round((float)launch_session->fps / 1000.0f)) : fps_str;
+    _env["SUNSHINE_CLIENT_FPS"] = config::runtime.envvar_compatibility_mode ? std::to_string(std::round((float)launch_session->fps / 1000.0f)) : fps_str;
     _env["SUNSHINE_CLIENT_HDR"] = requested_hdr_stream ? "true" : "false";
     _env["SUNSHINE_CLIENT_GCMAP"] = std::to_string(launch_session->gcmap);
     _env["SUNSHINE_CLIENT_HOST_AUDIO"] = launch_session->host_audio ? "true" : "false";
@@ -1501,8 +1501,8 @@ namespace proc {
           std::vector<proc::cmd_t> prep_cmds;
           bool exclude_global_prep = app_node.value("exclude-global-prep-cmd", false);
           if (!exclude_global_prep) {
-            prep_cmds.reserve(config::sunshine.prep_cmds.size());
-            for (auto &prep_cmd : config::sunshine.prep_cmds) {
+            prep_cmds.reserve(config::runtime.prep_cmds.size());
+            for (auto &prep_cmd : config::runtime.prep_cmds) {
               auto do_cmd = parse_env_val(this_env, prep_cmd.do_cmd);
               auto undo_cmd = parse_env_val(this_env, prep_cmd.undo_cmd);
               prep_cmds.emplace_back(
@@ -1529,8 +1529,8 @@ namespace proc {
           std::vector<proc::cmd_t> state_cmds;
           bool exclude_global_state_cmds = app_node.value("exclude-global-state-cmd", false);
           if (!exclude_global_state_cmds) {
-            state_cmds.reserve(config::sunshine.state_cmds.size());
-            for (auto &state_cmd : config::sunshine.state_cmds) {
+            state_cmds.reserve(config::runtime.state_cmds.size());
+            for (auto &state_cmd : config::runtime.state_cmds) {
               auto do_cmd = parse_env_val(this_env, state_cmd.do_cmd);
               auto undo_cmd = parse_env_val(this_env, state_cmd.undo_cmd);
               state_cmds.emplace_back(

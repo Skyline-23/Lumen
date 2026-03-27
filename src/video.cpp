@@ -2179,7 +2179,7 @@ namespace video {
         {"async_depth"s, 1},
         {"skip_frame"s, 0},
         {"log_to_dbg"s, []() {
-           return config::sunshine.min_log_level < 2 ? 1 : 0;
+           return config::runtime.min_log_level < 2 ? 1 : 0;
          }},
         {"preencode"s, &config::video.amd.amd_preanalysis},
         {"quality"s, &config::video.amd.amd_quality_av1},
@@ -2203,7 +2203,7 @@ namespace video {
         {"async_depth"s, 1},
         {"skip_frame"s, 0},
         {"log_to_dbg"s, []() {
-           return config::sunshine.min_log_level < 2 ? 1 : 0;
+           return config::runtime.min_log_level < 2 ? 1 : 0;
          }},
         {"gops_per_idr"s, 1},
         {"header_insertion_mode"s, "idr"s},
@@ -2242,7 +2242,7 @@ namespace video {
         {"async_depth"s, 1},
         {"frame_skipping"s, 0},
         {"log_to_dbg"s, []() {
-           return config::sunshine.min_log_level < 2 ? 1 : 0;
+           return config::runtime.min_log_level < 2 ? 1 : 0;
          }},
         {"preencode"s, &config::video.amd.amd_preanalysis},
         {"quality"s, &config::video.amd.amd_quality_h264},
@@ -4730,8 +4730,8 @@ namespace video {
       test_hdr_and_yuv444(encoder.av1, 2);
     }
 
-    encoder.h264[encoder_t::VUI_PARAMETERS] = encoder.h264[encoder_t::VUI_PARAMETERS] && !config::sunshine.flags[config::flag::FORCE_VIDEO_HEADER_REPLACE];
-    encoder.hevc[encoder_t::VUI_PARAMETERS] = encoder.hevc[encoder_t::VUI_PARAMETERS] && !config::sunshine.flags[config::flag::FORCE_VIDEO_HEADER_REPLACE];
+    encoder.h264[encoder_t::VUI_PARAMETERS] = encoder.h264[encoder_t::VUI_PARAMETERS] && !config::runtime.flags[config::flag::FORCE_VIDEO_HEADER_REPLACE];
+    encoder.hevc[encoder_t::VUI_PARAMETERS] = encoder.hevc[encoder_t::VUI_PARAMETERS] && !config::runtime.flags[config::flag::FORCE_VIDEO_HEADER_REPLACE];
 
     if (!encoder.h264[encoder_t::VUI_PARAMETERS]) {
       BOOST_LOG(warning) << encoder.name << ": h264 missing sps->vui parameters"sv;

@@ -613,7 +613,7 @@ namespace nvhttp {
     system_tray::update_tray_paired(named_cert_p->name);
 #endif
 
-    if (!config::sunshine.flags[config::flag::FRESH_STATE]) {
+    if (!config::runtime.flags[config::flag::FRESH_STATE]) {
       save_state();
       load_state();
     }
@@ -1041,7 +1041,7 @@ namespace nvhttp {
       response->close_connection_after_response = true;
     });
 
-    if (!config::sunshine.enable_pairing) {
+    if (!config::runtime.enable_pairing) {
       tree.put("root.<xmlattr>.status_code", 403);
       tree.put("root.<xmlattr>.status_message", "Pairing is disabled for this instance");
 
@@ -1109,7 +1109,7 @@ namespace nvhttp {
           return;
         }
 
-        if (config::sunshine.flags[config::flag::PIN_STDIN]) {
+        if (config::runtime.flags[config::flag::PIN_STDIN]) {
           std::string pin;
 
           std::cout << "Please insert pin: "sv;
@@ -1237,9 +1237,9 @@ namespace nvhttp {
         if (!!(named_cert_p->perm & PERM::server_cmd)) {
           pt::ptree& root_node = tree.get_child("root");
 
-          if (config::sunshine.server_cmds.size() > 0) {
+          if (config::runtime.server_cmds.size() > 0) {
             // Broadcast server_cmds
-            for (const auto& cmd : config::sunshine.server_cmds) {
+            for (const auto& cmd : config::runtime.server_cmds) {
               pt::ptree cmd_node;
               cmd_node.put_value(cmd.cmd_name);
               root_node.push_back(std::make_pair("ServerCommand", cmd_node));
@@ -1419,7 +1419,7 @@ namespace nvhttp {
 
       auto app_list = proc::proc.get_apps();
 
-      bool enable_legacy_ordering = config::sunshine.legacy_ordering && named_cert_p->enable_legacy_ordering;
+      bool enable_legacy_ordering = config::runtime.legacy_ordering && named_cert_p->enable_legacy_ordering;
       size_t bits;
       if (enable_legacy_ordering) {
         bits = zwpad::pad_width_for_count(app_list.size());
@@ -1996,9 +1996,9 @@ namespace nvhttp {
 
     auto port_http = net::map_port(PORT_HTTP);
     auto port_https = net::map_port(PORT_HTTPS);
-    auto address_family = net::af_from_enum_string(config::sunshine.address_family);
+    auto address_family = net::af_from_enum_string(config::runtime.address_family);
 
-    bool clean_slate = config::sunshine.flags[config::flag::FRESH_STATE];
+    bool clean_slate = config::runtime.flags[config::flag::FRESH_STATE];
 
     if (!clean_slate) {
       load_state();

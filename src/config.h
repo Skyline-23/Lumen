@@ -1,6 +1,6 @@
 /**
  * @file src/config.h
- * @brief Declarations for the configuration of Sunshine.
+ * @brief Declarations for Apollo runtime configuration.
  */
 #pragma once
 
@@ -259,7 +259,7 @@ namespace config {
     bool elevated;
   };
 
-  struct sunshine_t {
+  struct runtime_t {
     bool hide_tray_controls;
     bool enable_pairing;
     bool enable_discovery;
@@ -298,7 +298,7 @@ namespace config {
   extern stream_t stream;
   extern nvhttp_t nvhttp;
   extern input_t input;
-  extern sunshine_t sunshine;
+  extern runtime_t runtime;
 
   int parse(int argc, char *argv[]);
   std::unordered_map<std::string, std::string> parse_config(const std::string_view &file_content);

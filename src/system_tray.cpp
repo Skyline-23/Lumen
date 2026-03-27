@@ -594,7 +594,7 @@ namespace system_tray {
   #endif
     tray.menu[0].text = title_str.c_str();
 
-    if (config::sunshine.hide_tray_controls) {
+    if (config::runtime.hide_tray_controls) {
       tray.menu[1].text = nullptr;
     }
 

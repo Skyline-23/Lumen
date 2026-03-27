@@ -183,7 +183,7 @@ namespace confighttp {
     if (!checkIPOrigin(response, request))
       return false;
     // If credentials not set, redirect to welcome.
-    if (config::sunshine.username.empty()) {
+    if (config::runtime.username.empty()) {
       send_redirect(response, request, "/welcome");
       return false;
     }
@@ -209,7 +209,7 @@ namespace confighttp {
       return false;
     auto authCookie = getCookieValue(cookies->second, "auth");
     if (authCookie.empty() ||
-        util::hex(crypto::hash(authCookie + config::sunshine.salt)).to_string() != sessionCookie)
+        util::hex(crypto::hash(authCookie + config::runtime.salt)).to_string() != sessionCookie)
       return false;
     fg.disable();
     return true;
@@ -423,7 +423,7 @@ namespace confighttp {
       return;
     }
 
-    if (config::sunshine.username.empty()) {
+    if (config::runtime.username.empty()) {
       send_redirect(response, request, "/welcome");
       return;
     }
@@ -444,7 +444,7 @@ namespace confighttp {
   void getWelcomePage(resp_https_t response, req_https_t request) {
     print_req(request);
 
-    if (!config::sunshine.username.empty()) {
+    if (!config::runtime.username.empty()) {
       send_redirect(response, request, "/");
       return;
     }
@@ -1011,7 +1011,7 @@ namespace confighttp {
 #ifdef _WIN32
     output_tree["vdisplayStatus"] = (int)proc::vDisplayDriverStatus;
 #endif
-    auto vars = config::parse_config(file_handler::read_file(config::sunshine.config_file.c_str()));
+    auto vars = config::parse_config(file_handler::read_file(config::runtime.config_file.c_str()));
     for (auto &[name, value] : vars) {
       output_tree[name] = value;
     }
@@ -1030,7 +1030,7 @@ namespace confighttp {
 
     nlohmann::json output_tree;
     output_tree["status"] = true;
-    output_tree["locale"] = config::sunshine.locale;
+    output_tree["locale"] = config::runtime.locale;
     send_response(response, output_tree);
   }
 
@@ -1072,7 +1072,7 @@ namespace confighttp {
         // we should migrate the config file to straight json and get rid of all this nonsense
         config_stream << k << " = " << (v.is_string() ? v.get<std::string>() : v.dump()) << std::endl;
       }
-      file_handler::write_file(config::sunshine.config_file.c_str(), config_stream.str());
+      file_handler::write_file(config::runtime.config_file.c_str(), config_stream.str());
       output_tree["status"] = true;
       send_response(response, output_tree);
     } catch (std::exception &e) {
@@ -1144,7 +1144,7 @@ namespace confighttp {
     }
 
     print_req(request);
-    std::string content = file_handler::read_file(config::sunshine.log_file.c_str());
+    std::string content = file_handler::read_file(config::runtime.log_file.c_str());
     SimpleWeb::CaseInsensitiveMultimap headers;
     std::string contentType = "text/plain";
   #ifdef _WIN32
@@ -1176,7 +1176,7 @@ namespace confighttp {
    * @api_examples{/api/password| POST| {"currentUsername":"admin","currentPassword":"admin","newUsername":"admin","newPassword":"admin","confirmNewPassword":"admin"}}
    */
   void savePassword(resp_https_t response, req_https_t request) {
-    if ((!config::sunshine.username.empty() && !authenticate(response, request)) || !validateContentType(response, request, "application/json"))
+    if ((!config::runtime.username.empty() && !authenticate(response, request)) || !validateContentType(response, request, "application/json"))
       return;
     print_req(request);
     std::vector<std::string> errors;
@@ -1195,14 +1195,14 @@ namespace confighttp {
       if (newUsername.empty()) {
         errors.push_back("Invalid Username");
       } else {
-        auto hash = util::hex(crypto::hash(password + config::sunshine.salt)).to_string();
-        if (config::sunshine.username.empty() ||
-            (boost::iequals(username, config::sunshine.username) && hash == config::sunshine.password)) {
+        auto hash = util::hex(crypto::hash(password + config::runtime.salt)).to_string();
+        if (config::runtime.username.empty() ||
+            (boost::iequals(username, config::runtime.username) && hash == config::runtime.password)) {
           if (newPassword.empty() || newPassword != confirmPassword)
             errors.push_back("Password Mismatch");
           else {
-            http::save_user_creds(config::sunshine.credentials_file, newUsername, newPassword);
-            http::reload_user_creds(config::sunshine.credentials_file);
+            http::save_user_creds(config::runtime.credentials_file, newUsername, newPassword);
+            http::reload_user_creds(config::runtime.credentials_file);
             sessionCookie.clear(); // force re-login
             output_tree["status"] = true;
           }
@@ -1487,11 +1487,11 @@ namespace confighttp {
       nlohmann::json input_tree = nlohmann::json::parse(ss.str());
       std::string username = input_tree.value("username", "");
       std::string password = input_tree.value("password", "");
-      std::string hash = util::hex(crypto::hash(password + config::sunshine.salt)).to_string();
-      if (!boost::iequals(username, config::sunshine.username) || hash != config::sunshine.password)
+      std::string hash = util::hex(crypto::hash(password + config::runtime.salt)).to_string();
+      if (!boost::iequals(username, config::runtime.username) || hash != config::runtime.password)
         return;
       std::string sessionCookieRaw = crypto::rand_alphabet(64);
-      sessionCookie = util::hex(crypto::hash(sessionCookieRaw + config::sunshine.salt)).to_string();
+      sessionCookie = util::hex(crypto::hash(sessionCookieRaw + config::runtime.salt)).to_string();
       cookie_creation_time = std::chrono::steady_clock::now();
       const SimpleWeb::CaseInsensitiveMultimap headers {
         { "Set-Cookie", "auth=" + sessionCookieRaw + "; Secure; SameSite=Strict; Max-Age=2592000; Path=/" }
@@ -1513,7 +1513,7 @@ namespace confighttp {
   void start() {
     auto shutdown_event = mail::man->event<bool>(mail::shutdown);
     auto port_https = net::map_port(PORT_HTTPS);
-    auto address_family = net::af_from_enum_string(config::sunshine.address_family);
+    auto address_family = net::af_from_enum_string(config::runtime.address_family);
     https_server_t server { config::nvhttp.cert, config::nvhttp.pkey };
     server.default_resource["DELETE"] = [](resp_https_t response, req_https_t request) {
       bad_request(response, request);

@@ -304,7 +304,7 @@ namespace upnp {
       bool mapped = false;
       IGDdatas data;
       urls_t mapped_urls;
-      auto address_family = net::af_from_enum_string(config::sunshine.address_family);
+      auto address_family = net::af_from_enum_string(config::runtime.address_family);
 
       // Refresh UPnP rules every few minutes. They can be lost if the router reboots,
       // WAN IP address changes, or various other conditions.
@@ -367,7 +367,7 @@ namespace upnp {
   };
 
   std::unique_ptr<platf::deinit_t> start() {
-    if (!config::sunshine.flags[config::flag::UPNP]) {
+    if (!config::runtime.flags[config::flag::UPNP]) {
       return nullptr;
     }
 
