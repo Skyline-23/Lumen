@@ -480,82 +480,67 @@ namespace proc {
     char fps_buf[8];
     snprintf(fps_buf, sizeof(fps_buf), "%.3f", (float)launch_session->fps / 1000.0f);
     fps_str = fps_buf;
-    // Add Stream-specific environment variables
-    // Sunshine Compatibility
-    _env["SUNSHINE_APP_ID"] = _app.id;
-    _env["SUNSHINE_APP_NAME"] = _app.name;
-    _env["SUNSHINE_CLIENT_WIDTH"] = std::to_string(render_width);
-    _env["SUNSHINE_CLIENT_HEIGHT"] = std::to_string(render_height);
-    _env["SUNSHINE_CLIENT_FPS"] = config::runtime.envvar_compatibility_mode ? std::to_string(std::round((float)launch_session->fps / 1000.0f)) : fps_str;
-    _env["SUNSHINE_CLIENT_HDR"] = requested_hdr_stream ? "true" : "false";
-    _env["SUNSHINE_CLIENT_GCMAP"] = std::to_string(launch_session->gcmap);
-    _env["SUNSHINE_CLIENT_HOST_AUDIO"] = launch_session->host_audio ? "true" : "false";
-    _env["SUNSHINE_CLIENT_ENABLE_SOPS"] = launch_session->enable_sops ? "true" : "false";
-
-    _env["APOLLO_APP_ID"] = _app.id;
-    _env["APOLLO_APP_NAME"] = _app.name;
-    _env["APOLLO_APP_UUID"] = _app.uuid;
-    _env["APOLLO_APP_STATUS"] = "STARTING";
-    _env["APOLLO_CLIENT_UUID"] = launch_session->unique_id;
-    _env["APOLLO_CLIENT_NAME"] = launch_session->device_name;
-    _env["APOLLO_CLIENT_WIDTH"] = std::to_string(render_width);
-    _env["APOLLO_CLIENT_HEIGHT"] = std::to_string(render_height);
-    _env["APOLLO_CLIENT_RENDER_WIDTH"] = std::to_string(launch_session->width);
-    _env["APOLLO_CLIENT_RENDER_HEIGHT"] = std::to_string(launch_session->height);
-    _env["APOLLO_CLIENT_SCALE_FACTOR"] = std::to_string(scale_factor);
-    _env["APOLLO_CLIENT_FPS"] = fps_str;
-    _env["APOLLO_CLIENT_HDR"] = requested_hdr_stream ? "true" : "false";
+    // Add stream-specific environment variables for Shadow app hooks.
+    _env["SHADOW_APP_ID"] = _app.id;
+    _env["SHADOW_APP_NAME"] = _app.name;
+    _env["SHADOW_APP_UUID"] = _app.uuid;
+    _env["SHADOW_APP_STATUS"] = "STARTING";
+    _env["SHADOW_CLIENT_UUID"] = launch_session->unique_id;
+    _env["SHADOW_CLIENT_NAME"] = launch_session->device_name;
+    _env["SHADOW_CLIENT_WIDTH"] = std::to_string(render_width);
+    _env["SHADOW_CLIENT_HEIGHT"] = std::to_string(render_height);
+    _env["SHADOW_CLIENT_RENDER_WIDTH"] = std::to_string(launch_session->width);
+    _env["SHADOW_CLIENT_RENDER_HEIGHT"] = std::to_string(launch_session->height);
+    _env["SHADOW_CLIENT_SCALE_FACTOR"] = std::to_string(scale_factor);
+    _env["SHADOW_CLIENT_FPS"] = fps_str;
+    _env["SHADOW_CLIENT_HDR"] = requested_hdr_stream ? "true" : "false";
     switch (static_cast<video::client_sink_gamut_e>(launch_session->sink_request.capability.gamut)) {
       case video::client_sink_gamut_e::display_p3:
-        _env["APOLLO_CLIENT_SINK_GAMUT"] = "display-p3";
+        _env["SHADOW_CLIENT_SINK_GAMUT"] = "display-p3";
         break;
       case video::client_sink_gamut_e::rec2020:
-        _env["APOLLO_CLIENT_SINK_GAMUT"] = "rec2020";
+        _env["SHADOW_CLIENT_SINK_GAMUT"] = "rec2020";
         break;
       case video::client_sink_gamut_e::srgb:
-        _env["APOLLO_CLIENT_SINK_GAMUT"] = "srgb";
+        _env["SHADOW_CLIENT_SINK_GAMUT"] = "srgb";
         break;
       case video::client_sink_gamut_e::unknown:
       default:
-        _env["APOLLO_CLIENT_SINK_GAMUT"] = "unknown";
+        _env["SHADOW_CLIENT_SINK_GAMUT"] = "unknown";
         break;
     }
     switch (static_cast<video::client_sink_transfer_e>(launch_session->sink_request.capability.transfer)) {
       case video::client_sink_transfer_e::pq:
-        _env["APOLLO_CLIENT_SINK_TRANSFER"] = "pq";
+        _env["SHADOW_CLIENT_SINK_TRANSFER"] = "pq";
         break;
       case video::client_sink_transfer_e::hlg:
-        _env["APOLLO_CLIENT_SINK_TRANSFER"] = "hlg";
+        _env["SHADOW_CLIENT_SINK_TRANSFER"] = "hlg";
         break;
       case video::client_sink_transfer_e::sdr:
-        _env["APOLLO_CLIENT_SINK_TRANSFER"] = "sdr";
+        _env["SHADOW_CLIENT_SINK_TRANSFER"] = "sdr";
         break;
       case video::client_sink_transfer_e::unknown:
       default:
-        _env["APOLLO_CLIENT_SINK_TRANSFER"] = "unknown";
+        _env["SHADOW_CLIENT_SINK_TRANSFER"] = "unknown";
         break;
     }
-    _env["APOLLO_CLIENT_GCMAP"] = std::to_string(launch_session->gcmap);
-    _env["APOLLO_CLIENT_HOST_AUDIO"] = launch_session->host_audio ? "true" : "false";
-    _env["APOLLO_CLIENT_ENABLE_SOPS"] = launch_session->enable_sops ? "true" : "false";
+    _env["SHADOW_CLIENT_GCMAP"] = std::to_string(launch_session->gcmap);
+    _env["SHADOW_CLIENT_HOST_AUDIO"] = launch_session->host_audio ? "true" : "false";
+    _env["SHADOW_CLIENT_ENABLE_SOPS"] = launch_session->enable_sops ? "true" : "false";
 
     int channelCount = launch_session->surround_info & 65535;
     switch (channelCount) {
       case 2:
-        _env["SUNSHINE_CLIENT_AUDIO_CONFIGURATION"] = "2.0";
-        _env["APOLLO_CLIENT_AUDIO_CONFIGURATION"] = "2.0";
+        _env["SHADOW_CLIENT_AUDIO_CONFIGURATION"] = "2.0";
         break;
       case 6:
-        _env["SUNSHINE_CLIENT_AUDIO_CONFIGURATION"] = "5.1";
-        _env["APOLLO_CLIENT_AUDIO_CONFIGURATION"] = "5.1";
+        _env["SHADOW_CLIENT_AUDIO_CONFIGURATION"] = "5.1";
         break;
       case 8:
-        _env["SUNSHINE_CLIENT_AUDIO_CONFIGURATION"] = "7.1";
-        _env["APOLLO_CLIENT_AUDIO_CONFIGURATION"] = "7.1";
+        _env["SHADOW_CLIENT_AUDIO_CONFIGURATION"] = "7.1";
         break;
     }
-    _env["SUNSHINE_CLIENT_AUDIO_SURROUND_PARAMS"] = launch_session->surround_params;
-    _env["APOLLO_CLIENT_AUDIO_SURROUND_PARAMS"] = launch_session->surround_params;
+    _env["SHADOW_CLIENT_AUDIO_SURROUND_PARAMS"] = launch_session->surround_params;
 
     if (!_app.output.empty() && _app.output != "null"sv) {
 #ifdef _WIN32
@@ -608,7 +593,7 @@ namespace proc {
       }
     }
 
-    _env["APOLLO_APP_STATUS"] = "RUNNING";
+    _env["SHADOW_APP_STATUS"] = "RUNNING";
 
     for (auto &cmd : _app.detached) {
       boost::filesystem::path working_dir = _app.working_dir.empty() ?
@@ -791,7 +776,7 @@ namespace proc {
     if (!_app.state_cmds.empty()) {
       auto exec_thread = std::thread([cmd_list = _app.state_cmds, app_working_dir = _app.working_dir, _env = _env]() mutable {
 
-        _env["APOLLO_APP_STATUS"] = "RESUMING";
+        _env["SHADOW_APP_STATUS"] = "RESUMING";
 
         std::error_code ec;
         auto _state_resume_it = std::begin(cmd_list);
@@ -845,7 +830,7 @@ namespace proc {
 
     if (!_app.state_cmds.empty()) {
       auto exec_thread = std::thread([cmd_list = _app.state_cmds, app_working_dir = _app.working_dir, _env = _env]() mutable {
-        _env["APOLLO_APP_STATUS"] = "PAUSING";
+        _env["SHADOW_APP_STATUS"] = "PAUSING";
 
         std::error_code ec;
         auto _state_pause_it = std::begin(cmd_list);
@@ -898,7 +883,7 @@ namespace proc {
     _process = boost::process::v1::child();
     _process_group = boost::process::v1::group();
 
-    _env["APOLLO_APP_STATUS"] = "TERMINATING";
+    _env["SHADOW_APP_STATUS"] = "TERMINATING";
 
     for (; _app_prep_it != _app_prep_begin; --_app_prep_it) {
       auto &cmd = *(_app_prep_it - 1);

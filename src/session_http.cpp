@@ -261,42 +261,6 @@ namespace session_http {
       return advertise_hevc_main10_support() || advertise_av1_main10_support();
     }
 
-    std::optional<fs::path> find_legacy_state_file() {
-#ifdef __APPLE__
-      if (const char *home = getenv("HOME")) {
-        std::array<fs::path, 2> legacy_candidates {
-          fs::path {home} / ".config/sunshine/sunshine_state.json",
-          fs::path {home} / "Library/Application Support/Sunshine/sunshine_state.json",
-        };
-
-        for (const auto &candidate : legacy_candidates) {
-          if (fs::exists(candidate)) {
-            return candidate;
-          }
-        }
-      }
-#endif
-      return std::nullopt;
-    }
-
-    void migrate_legacy_state_if_needed() {
-      if (fs::exists(config::session_http.file_state)) {
-        return;
-      }
-
-      auto legacy_state = find_legacy_state_file();
-      if (!legacy_state) {
-        return;
-      }
-
-      try {
-        fs::create_directories(fs::path(config::session_http.file_state).parent_path());
-        fs::copy_file(*legacy_state, config::session_http.file_state, fs::copy_options::overwrite_existing);
-        BOOST_LOG(info) << "Migrated legacy state file from ["sv << legacy_state->string() << "] to ["sv << config::session_http.file_state << ']';
-      } catch (std::exception &e) {
-        BOOST_LOG(error) << "Couldn't migrate legacy state file from ["sv << legacy_state->string() << "] to ["sv << config::session_http.file_state << "]: "sv << e.what();
-      }
-    }
   }  // namespace
 
   class SessionHTTPSServer: public SimpleWeb::ServerBase<SessionHTTPS> {
@@ -525,8 +489,6 @@ namespace session_http {
   }
 
   void load_state() {
-    migrate_legacy_state_if_needed();
-
     if (!fs::exists(config::session_http.file_state)) {
       BOOST_LOG(info) << "File "sv << config::session_http.file_state << " doesn't exist"sv;
       http::unique_id = uuid_util::uuid_t::generate().string();
@@ -1351,11 +1313,11 @@ namespace session_http {
       }
       tree.put("root.currentgame", current_appid);
       tree.put("root.currentgameuuid", proc::proc.get_running_app_uuid());
-      tree.put("root.state", current_appid > 0 ? "SUNSHINE_SERVER_BUSY" : "SUNSHINE_SERVER_FREE");
+      tree.put("root.state", current_appid > 0 ? "SHADOW_SERVER_BUSY" : "SHADOW_SERVER_FREE");
     } else {
       tree.put("root.currentgame", 0);
       tree.put("root.currentgameuuid", "");
-      tree.put("root.state", "SUNSHINE_SERVER_FREE");
+      tree.put("root.state", "SHADOW_SERVER_FREE");
     }
 
     std::ostringstream data;
