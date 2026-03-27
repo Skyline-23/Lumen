@@ -2,7 +2,7 @@
  * @file src/confighttp.cpp
  * @brief Definitions for the Web UI Config HTTPS server.
  *
- * @todo Authentication, better handling of routes common to nvhttp, cleanup
+ * @todo Authentication, better handling of routes shared with the session HTTP adapter, cleanup
  */
 #define BOOST_BIND_GLOBAL_PLACEHOLDERS
 
@@ -33,7 +33,7 @@
 #include "httpcommon.h"
 #include "logging.h"
 #include "network.h"
-#include "nvhttp.h"
+#include "session_http.h"
 #include "platform/common.h"
 #include "process.h"
 #include "utility.h"

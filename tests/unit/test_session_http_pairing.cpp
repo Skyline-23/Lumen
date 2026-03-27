@@ -1,11 +1,11 @@
 /**
- * @file tests/unit/test_http_pairing.cpp
- * @brief Test src/nvhttp.cpp HTTP pairing process
+ * @file tests/unit/test_session_http_pairing.cpp
+ * @brief Test src/session_http.cpp HTTP pairing process
  */
 
 #include "../tests_common.h"
 
-#include <src/nvhttp.h>
+#include <src/session_http.h>
 
 using namespace session_http;
 

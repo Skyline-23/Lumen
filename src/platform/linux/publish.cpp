@@ -10,7 +10,7 @@
 #include "misc.h"
 #include "src/logging.h"
 #include "src/network.h"
-#include "src/nvhttp.h"
+#include "src/session_http.h"
 #include "src/platform/common.h"
 #include "src/utility.h"
 

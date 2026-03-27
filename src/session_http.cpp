@@ -1,6 +1,6 @@
 /**
- * @file src/nvhttp.cpp
- * @brief Definitions for the nvhttp (GameStream) server.
+ * @file src/session_http.cpp
+ * @brief Definitions for the session HTTP compatibility adapter.
  */
 // macros
 #define BOOST_BIND_GLOBAL_PLACEHOLDERS
@@ -32,7 +32,7 @@
 #include "httpcommon.h"
 #include "logging.h"
 #include "network.h"
-#include "nvhttp.h"
+#include "session_http.h"
 #include "platform/common.h"
 #include "process.h"
 #include "rtsp.h"

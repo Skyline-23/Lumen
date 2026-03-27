@@ -23,7 +23,7 @@
 #include "entry_handler.h"
 #include "file_handler.h"
 #include "logging.h"
-#include "nvhttp.h"
+#include "session_http.h"
 #include "platform/common.h"
 #include "rtsp.h"
 #include "video.h"

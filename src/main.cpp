@@ -18,7 +18,7 @@
 #include "httpcommon.h"
 #include "logging.h"
 #include "main.h"
-#include "nvhttp.h"
+#include "session_http.h"
 #include "process.h"
 #include "system_tray.h"
 #include "upnp.h"

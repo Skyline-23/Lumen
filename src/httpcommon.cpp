@@ -26,7 +26,7 @@
 #include "httpcommon.h"
 #include "logging.h"
 #include "network.h"
-#include "nvhttp.h"
+#include "session_http.h"
 #include "platform/common.h"
 #include "process.h"
 #include "rtsp.h"

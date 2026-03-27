@@ -11,7 +11,7 @@
 // local includes
 #include "src/logging.h"
 #include "src/network.h"
-#include "src/nvhttp.h"
+#include "src/session_http.h"
 #include "src/platform/common.h"
 
 using namespace std::literals;

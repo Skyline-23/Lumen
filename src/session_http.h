@@ -1,5 +1,5 @@
 /**
- * @file src/nvhttp.h
+ * @file src/session_http.h
  * @brief Declarations for the session HTTP compatibility adapter.
  */
 // macros

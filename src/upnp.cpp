@@ -16,7 +16,7 @@
 #include "globals.h"
 #include "logging.h"
 #include "network.h"
-#include "nvhttp.h"
+#include "session_http.h"
 #include "rtsp.h"
 #include "stream.h"
 #include "upnp.h"
