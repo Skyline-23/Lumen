@@ -273,6 +273,28 @@ namespace video {
       }
     }
 
+    bool apollo_core_codec_matches_video_format(ApolloCoreCaptureCodec codec, int video_format) {
+      switch (video_format) {
+        case 0:
+          return codec == ApolloCoreCaptureCodecH264;
+        case 1:
+          return codec == ApolloCoreCaptureCodecHEVC;
+        default:
+          return false;
+      }
+    }
+
+    std::optional<int> apollo_core_video_format_for_codec(ApolloCoreCaptureCodec codec) {
+      switch (codec) {
+        case ApolloCoreCaptureCodecH264:
+          return 0;
+        case ApolloCoreCaptureCodecHEVC:
+          return 1;
+        default:
+          return std::nullopt;
+      }
+    }
+
     bool external_sample_buffer_is_idr(CMSampleBufferRef sampleBuffer) {
       CFArrayRef attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, false);
       if (!attachments || CFArrayGetCount(attachments) == 0) {
@@ -3634,6 +3656,7 @@ namespace video {
       bool logged_first_packet = false;
       bool waiting_for_initial_idr = true;
       bool logged_waiting_for_initial_idr = false;
+      std::optional<int> adopted_video_format;
       int64_t next_packet_frame_index = 1;
       apollo_core_display_time_clock_t display_time_clock;
       auto last_ingress_stats_log = std::chrono::steady_clock::now();
@@ -3671,6 +3694,8 @@ namespace video {
           waiting_for_initial_idr = true;
           logged_waiting_for_initial_idr = false;
           logged_first_packet = false;
+          logged_codec_mismatch = false;
+          adopted_video_format.reset();
           last_forwarded_source_sequence_number = 0;
           last_forwarded_source_display_time = 0;
           last_forwarded_packet_timestamp.reset();
@@ -3705,6 +3730,8 @@ namespace video {
               waiting_for_initial_idr = true;
               logged_waiting_for_initial_idr = false;
               logged_first_packet = false;
+              logged_codec_mismatch = false;
+              adopted_video_format.reset();
               request_external_encoded_capture_key_frame();
               BOOST_LOG(info) << "External macOS encoded ingress event kind="sv << static_cast<int>(event.kind)
                               << " message="sv << message;
@@ -3748,16 +3775,27 @@ namespace video {
             }
           }
 
-          if (!apollo_core_codec_matches_config(frame.codec, config)) {
-            if (!logged_codec_mismatch) {
+          const auto expected_video_format = adopted_video_format.value_or(config.videoFormat);
+          if (!apollo_core_codec_matches_video_format(frame.codec, expected_video_format)) {
+            const auto frame_video_format = apollo_core_video_format_for_codec(frame.codec);
+            if (!logged_first_packet && frame_video_format.has_value()) {
+              adopted_video_format = frame_video_format;
+              BOOST_LOG(warning) << "External macOS encoded ingress adopted frame codec="sv
+                                 << apollo_core_codec_name(frame.codec)
+                                 << " because the streaming thread still expected "sv
+                                 << requested_video_format_name(expected_video_format);
+            } else if (!logged_codec_mismatch) {
               BOOST_LOG(error) << "External macOS encoded ingress codec mismatch frameCodec="sv
                                << apollo_core_codec_name(frame.codec)
                                << " requestedVideoFormat="sv
-                               << requested_video_format_name(config.videoFormat);
+                               << requested_video_format_name(expected_video_format);
               logged_codec_mismatch = true;
+              CFRelease(retained_sample_buffer);
+              continue;
+            } else {
+              CFRelease(retained_sample_buffer);
+              continue;
             }
-            CFRelease(retained_sample_buffer);
-            continue;
           }
 
           const auto codec_type = apollo_core_codec_type(frame.codec);
