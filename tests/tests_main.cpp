@@ -8,7 +8,7 @@
 
 int main(int argc, char **argv) {
   testing::InitGoogleTest(&argc, argv);
-  testing::AddGlobalTestEnvironment(new SunshineEnvironment);
-  testing::UnitTest::GetInstance()->listeners().Append(new SunshineEventListener);
+  testing::AddGlobalTestEnvironment(new ApolloTestEnvironment);
+  testing::UnitTest::GetInstance()->listeners().Append(new ApolloTestEventListener);
   return RUN_ALL_TESTS();
 }

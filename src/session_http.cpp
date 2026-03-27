@@ -186,7 +186,7 @@ namespace session_http {
       return static_cast<int>(std::max<long>(parsed, 0l));
     }
 
-    std::string rtsp_url_host_for_request(const std::shared_ptr<typename SimpleWeb::ServerBase<SunshineHTTPS>::Request> &request) {
+    std::string rtsp_url_host_for_request(const std::shared_ptr<typename SimpleWeb::ServerBase<SessionHTTPS>::Request> &request) {
       auto host_header = request->header.find("host");
       if (host_header != request->header.end()) {
         auto host = host_header->second;
@@ -299,10 +299,10 @@ namespace session_http {
     }
   }  // namespace
 
-  class SunshineHTTPSServer: public SimpleWeb::ServerBase<SunshineHTTPS> {
+  class SessionHTTPSServer: public SimpleWeb::ServerBase<SessionHTTPS> {
   public:
-    SunshineHTTPSServer(const std::string &certification_file, const std::string &private_key_file):
-        ServerBase<SunshineHTTPS>::ServerBase(443),
+    SessionHTTPSServer(const std::string &certification_file, const std::string &private_key_file):
+        ServerBase<SessionHTTPS>::ServerBase(443),
         context(boost::asio::ssl::context::tls_server) {
       // Disabling TLS 1.0 and 1.1 (see RFC 8996)
       context.set_options(boost::asio::ssl::context::no_tlsv1);
@@ -372,7 +372,7 @@ namespace session_http {
     }
   };
 
-  using https_server_t = SunshineHTTPSServer;
+  using https_server_t = SessionHTTPSServer;
   using http_server_t = SimpleWeb::Server<SimpleWeb::HTTP>;
 
   struct conf_intern_t {
@@ -385,8 +385,8 @@ namespace session_http {
   client_t client_root;
   std::atomic<uint32_t> session_id_counter;
 
-  using resp_https_t = std::shared_ptr<typename SimpleWeb::ServerBase<SunshineHTTPS>::Response>;
-  using req_https_t = std::shared_ptr<typename SimpleWeb::ServerBase<SunshineHTTPS>::Request>;
+  using resp_https_t = std::shared_ptr<typename SimpleWeb::ServerBase<SessionHTTPS>::Response>;
+  using req_https_t = std::shared_ptr<typename SimpleWeb::ServerBase<SessionHTTPS>::Request>;
   using resp_http_t = std::shared_ptr<typename SimpleWeb::ServerBase<SimpleWeb::HTTP>::Response>;
   using req_http_t = std::shared_ptr<typename SimpleWeb::ServerBase<SimpleWeb::HTTP>::Request>;
 
@@ -957,7 +957,7 @@ namespace session_http {
   struct tunnel;
 
   template<>
-  struct tunnel<SunshineHTTPS> {
+  struct tunnel<SessionHTTPS> {
     static auto constexpr to_string = "HTTPS"sv;
   };
 
@@ -1228,7 +1228,7 @@ namespace session_http {
 
     // Only include the MAC address for requests sent from paired clients over HTTPS.
     // For HTTP requests, use a placeholder MAC address that Moonlight knows to ignore.
-    if constexpr (std::is_same_v<SunshineHTTPS, T>) {
+    if constexpr (std::is_same_v<SessionHTTPS, T>) {
       auto named_cert_p = get_verified_cert(request);
       pair_status = named_cert_p ? 1 : 0;
       if (named_cert_p) {
@@ -1314,7 +1314,7 @@ namespace session_http {
 
     tree.put("root.PairStatus", pair_status);
 
-    if constexpr (std::is_same_v<SunshineHTTPS, T>) {
+    if constexpr (std::is_same_v<SessionHTTPS, T>) {
       int current_appid = proc::proc.running();
       // When input only mode is enabled, the only resume method should be launching the same app again.
       if (config::input.enable_input_only_mode && current_appid != proc::input_only_app_id) {
@@ -1391,7 +1391,7 @@ namespace session_http {
   }
 
   void applist(resp_https_t response, req_https_t request) {
-    print_req<SunshineHTTPS>(request);
+    print_req<SessionHTTPS>(request);
 
     pt::ptree tree;
 
@@ -1478,7 +1478,7 @@ namespace session_http {
   }
 
   void launch(bool &host_audio, resp_https_t response, req_https_t request) {
-    print_req<SunshineHTTPS>(request);
+    print_req<SessionHTTPS>(request);
 
     pt::ptree tree;
     auto g = util::fail_guard([&]() {
@@ -1682,7 +1682,7 @@ namespace session_http {
   }
 
   void resume(bool &host_audio, resp_https_t response, req_https_t request) {
-    print_req<SunshineHTTPS>(request);
+    print_req<SessionHTTPS>(request);
 
     pt::ptree tree;
     auto g = util::fail_guard([&]() {
@@ -1800,7 +1800,7 @@ namespace session_http {
   }
 
   void cancel(resp_https_t response, req_https_t request) {
-    print_req<SunshineHTTPS>(request);
+    print_req<SessionHTTPS>(request);
 
     pt::ptree tree;
     auto g = util::fail_guard([&]() {
@@ -1841,7 +1841,7 @@ namespace session_http {
   }
 
   void appasset(resp_https_t response, req_https_t request) {
-    print_req<SunshineHTTPS>(request);
+    print_req<SessionHTTPS>(request);
 
     auto fg = util::fail_guard([&]() {
       response->write(SimpleWeb::StatusCode::server_error_internal_server_error);
@@ -1876,7 +1876,7 @@ namespace session_http {
   }
 
   void getClipboard(resp_https_t response, req_https_t request) {
-    print_req<SunshineHTTPS>(request);
+    print_req<SessionHTTPS>(request);
 
     auto named_cert_p = require_verified_cert(response, request);
     if (!named_cert_p) {
@@ -1927,7 +1927,7 @@ namespace session_http {
 
   void
   setClipboard(resp_https_t response, req_https_t request) {
-    print_req<SunshineHTTPS>(request);
+    print_req<SessionHTTPS>(request);
 
     auto named_cert_p = require_verified_cert(response, request);
     if (!named_cert_p) {
@@ -2074,9 +2074,9 @@ namespace session_http {
       tree.put("root.<xmlattr>.status_message"s, "The client is not authorized. Certificate verification failed."s);
     };
 
-    https_server.default_resource["GET"] = not_found<SunshineHTTPS>;
-    https_server.resource["^/serverinfo$"]["GET"] = serverinfo<SunshineHTTPS>;
-    https_server.resource["^/pair$"]["GET"] = pair<SunshineHTTPS>;
+    https_server.default_resource["GET"] = not_found<SessionHTTPS>;
+    https_server.resource["^/serverinfo$"]["GET"] = serverinfo<SessionHTTPS>;
+    https_server.resource["^/pair$"]["GET"] = pair<SessionHTTPS>;
     https_server.resource["^/applist$"]["GET"] = applist;
     https_server.resource["^/appasset$"]["GET"] = appasset;
     https_server.resource["^/launch$"]["GET"] = [&host_audio](auto resp, auto req) {

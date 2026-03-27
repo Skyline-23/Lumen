@@ -509,9 +509,9 @@ int apollo_run(int argc, char *argv[], const ApolloRuntimeOptions &options) {
   std::thread rtspThread {rtsp_stream::start};
 
 #ifdef _WIN32
-  // If we're using the default port and GameStream is enabled, warn the user
+  // If we're using the default port and NVIDIA's legacy streaming stack is enabled, warn the user
   if (config::runtime.port == 47989 && is_nvidia_gamestream_enabled()) {
-    BOOST_LOG(fatal) << "GameStream is still enabled in GeForce Experience! This *will* cause streaming problems with Apollo!"sv;
+    BOOST_LOG(fatal) << "NVIDIA's legacy GameStream stack is still enabled in GeForce Experience. This will conflict with Apollo."sv;
     BOOST_LOG(fatal) << "Disable GameStream on the SHIELD tab in GeForce Experience or change the Port setting on the Advanced tab in the Apollo Web UI."sv;
   }
 #endif

@@ -48,7 +48,7 @@ namespace display_device {
      * to be deactivated before the stream starts. In this case the audio context
      * will be captured for this display and can be restored once it is turned back.
      */
-    class sunshine_audio_context_t: public AudioContextInterface {
+    class runtime_audio_context_t: public AudioContextInterface {
     public:
       [[nodiscard]] bool capture() override {
         return context_scheduler.execute([](auto &audio_context) {
@@ -311,7 +311,7 @@ namespace display_device {
         case resolution_option_e::automatic:
           {
             if (!session.enable_sops) {
-              BOOST_LOG(warning) << R"(Sunshine is configured to change resolution automatically, but the "Optimize game settings" is not set in the client! Resolution will not be changed.)";
+              BOOST_LOG(warning) << R"(Apollo is configured to change resolution automatically, but the "Optimize game settings" is not set in the client! Resolution will not be changed.)";
             } else if (session.width >= 0 && session.height >= 0) {
               config.m_resolution = Resolution {
                 static_cast<unsigned int>(session.width),
@@ -326,7 +326,7 @@ namespace display_device {
         case resolution_option_e::manual:
           {
             if (!session.enable_sops) {
-              BOOST_LOG(warning) << R"(Sunshine is configured to change resolution manually, but the "Optimize game settings" is not set in the client! Resolution will not be changed.)";
+              BOOST_LOG(warning) << R"(Apollo is configured to change resolution manually, but the "Optimize game settings" is not set in the client! Resolution will not be changed.)";
             } else {
               if (!parse_resolution_string(video_config.dd.manual_resolution, config.m_resolution)) {
                 BOOST_LOG(error) << "Failed to parse manual resolution string!";
@@ -621,7 +621,7 @@ namespace display_device {
 #ifdef _WIN32
       return std::make_unique<SettingsManager>(
         std::make_shared<WinDisplayDevice>(std::make_shared<WinApiLayer>()),
-        std::make_shared<sunshine_audio_context_t>(),
+        std::make_shared<runtime_audio_context_t>(),
         std::make_unique<PersistentState>(
           std::make_shared<FileSettingsPersistence>(persistence_filepath)
         ),

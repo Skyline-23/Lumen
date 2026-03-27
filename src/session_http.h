@@ -32,8 +32,8 @@ namespace session_http {
 
   /**
    * @brief The protocol version.
-   * @details The version of the GameStream protocol we are mocking.
-   * @note The negative 4th number indicates to Moonlight that this is Sunshine.
+   * @details The version of the legacy session protocol compatibility surface we are emulating.
+   * @note The negative 4th number preserves Apollo host identification for existing Moonlight clients.
    */
   constexpr auto VERSION = "7.1.431.-1";
 
@@ -79,13 +79,13 @@ namespace session_http {
    */
   void setup(const std::string &pkey, const std::string &cert);
 
-  class SunshineHTTPS: public SimpleWeb::HTTPS {
+  class SessionHTTPS: public SimpleWeb::HTTPS {
   public:
-    SunshineHTTPS(boost::asio::io_context &io_context, boost::asio::ssl::context &ctx):
+    SessionHTTPS(boost::asio::io_context &io_context, boost::asio::ssl::context &ctx):
         SimpleWeb::HTTPS(io_context, ctx) {
     }
 
-    virtual ~SunshineHTTPS() {
+    virtual ~SessionHTTPS() {
       // Gracefully shutdown the TLS connection
       SimpleWeb::error_code ec;
       shutdown(ec);
@@ -93,11 +93,11 @@ namespace session_http {
   };
 
   enum class PAIR_PHASE {
-    NONE,  ///< Sunshine is not in a pairing phase
-    GETSERVERCERT,  ///< Sunshine is in the get server certificate phase
-    CLIENTCHALLENGE,  ///< Sunshine is in the client challenge phase
-    SERVERCHALLENGERESP,  ///< Sunshine is in the server challenge response phase
-    CLIENTPAIRINGSECRET  ///< Sunshine is in the client pairing secret phase
+    NONE,  ///< The adapter is not in a pairing phase
+    GETSERVERCERT,  ///< The adapter is in the get server certificate phase
+    CLIENTCHALLENGE,  ///< The adapter is in the client challenge phase
+    SERVERCHALLENGERESP,  ///< The adapter is in the server challenge response phase
+    CLIENTPAIRINGSECRET  ///< The adapter is in the client pairing secret phase
   };
 
   struct pair_session_t {
@@ -116,7 +116,7 @@ namespace session_http {
     struct {
       util::Either<
         std::shared_ptr<typename SimpleWeb::ServerBase<SimpleWeb::HTTP>::Response>,
-        std::shared_ptr<typename SimpleWeb::ServerBase<SunshineHTTPS>::Response>>
+        std::shared_ptr<typename SimpleWeb::ServerBase<SessionHTTPS>::Response>>
         response;
       std::string salt = {};
     } async_insert_pin;
