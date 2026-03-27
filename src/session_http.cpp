@@ -620,6 +620,41 @@ namespace session_http {
   }
 
   std::shared_ptr<rtsp_stream::launch_session_t> make_launch_session(bool host_audio, bool input_only, const args_t &args, const crypto::named_cert_t* named_cert_p) {
+    static constexpr std::array required_apollo_launch_args {
+      "clientSinkScalePercent"sv,
+      "clientSinkHiDPI"sv,
+      "clientSinkModeIsLogical"sv,
+      "clientSinkGamut"sv,
+      "clientSinkTransfer"sv,
+      "clientSinkCurrentEDRHeadroom"sv,
+      "clientSinkPotentialEDRHeadroom"sv,
+      "clientSinkCurrentPeakLuminanceNits"sv,
+      "clientSinkPotentialPeakLuminanceNits"sv,
+      "requestedDynamicRangeTransport"sv,
+      "clientSinkSupportsFrameGatedHDR"sv,
+      "clientSinkSupportsHDRTileOverlay"sv,
+      "clientSinkSupportsPerFrameHDRMetadata"sv,
+    };
+
+    std::vector<std::string_view> missing_apollo_launch_args;
+    for (const auto required_arg : required_apollo_launch_args) {
+      if (args.find(std::string(required_arg)) == std::end(args)) {
+        missing_apollo_launch_args.emplace_back(required_arg);
+      }
+    }
+
+    if (!missing_apollo_launch_args.empty()) {
+      std::ostringstream missing;
+      for (std::size_t index = 0; index < missing_apollo_launch_args.size(); ++index) {
+        if (index != 0) {
+          missing << ',';
+        }
+        missing << missing_apollo_launch_args[index];
+      }
+      BOOST_LOG(error) << "Launch request missing required Apollo sink fields: "sv << missing.str();
+      return nullptr;
+    }
+
     auto launch_session = std::make_shared<rtsp_stream::launch_session_t>();
 
     launch_session->id = ++session_id_counter;
@@ -699,41 +734,35 @@ namespace session_http {
     launch_session->surround_params = (get_arg(args, "surroundParams", ""));
     launch_session->gcmap = util::from_view(get_arg(args, "gcmap", "0"));
     launch_session->virtual_display = util::from_view(get_arg(args, "virtualDisplay", "0")) || named_cert_p->always_use_virtual_display;
-    const bool has_display_scale_percent = has_arg(args, "clientSinkScalePercent");
-    const bool has_display_hidpi = has_arg(args, "clientSinkHiDPI");
-    launch_session->sink_request.mode.scale_explicit = has_display_scale_percent || has_display_hidpi;
-    launch_session->sink_request.mode.mode_is_logical = util::from_view(get_arg(args, "clientSinkModeIsLogical", "0"));
-    launch_session->sink_request.mode.scale_percent = has_display_scale_percent ?
-      util::from_view(get_arg(args, "clientSinkScalePercent", "100")) :
-      util::from_view(get_arg(args, "scaleFactor", "100"));
-    launch_session->sink_request.mode.hidpi = has_display_hidpi ?
-      util::from_view(get_arg(args, "clientSinkHiDPI", "0")) :
-      launch_session->sink_request.mode.scale_percent > 100;
-    launch_session->sink_request.capability.gamut = parse_client_sink_gamut(get_arg(args, "clientSinkGamut", ""));
-    launch_session->sink_request.capability.transfer = parse_client_sink_transfer(get_arg(args, "clientSinkTransfer", ""));
+    launch_session->sink_request.mode.scale_explicit = true;
+    launch_session->sink_request.mode.mode_is_logical = util::from_view(get_arg(args, "clientSinkModeIsLogical"));
+    launch_session->sink_request.mode.scale_percent = util::from_view(get_arg(args, "clientSinkScalePercent"));
+    launch_session->sink_request.mode.hidpi = util::from_view(get_arg(args, "clientSinkHiDPI"));
+    launch_session->sink_request.capability.gamut = parse_client_sink_gamut(get_arg(args, "clientSinkGamut"));
+    launch_session->sink_request.capability.transfer = parse_client_sink_transfer(get_arg(args, "clientSinkTransfer"));
     launch_session->sink_request.capability.current_edr_headroom = parse_client_sink_headroom(
-      get_arg(args, "clientSinkCurrentEDRHeadroom", "")
+      get_arg(args, "clientSinkCurrentEDRHeadroom")
     );
     launch_session->sink_request.capability.potential_edr_headroom = parse_client_sink_headroom(
-      get_arg(args, "clientSinkPotentialEDRHeadroom", "")
+      get_arg(args, "clientSinkPotentialEDRHeadroom")
     );
     launch_session->sink_request.capability.current_peak_luminance_nits = parse_client_sink_peak_luminance_nits(
-      get_arg(args, "clientSinkCurrentPeakLuminanceNits", "")
+      get_arg(args, "clientSinkCurrentPeakLuminanceNits")
     );
     launch_session->sink_request.capability.potential_peak_luminance_nits = parse_client_sink_peak_luminance_nits(
-      get_arg(args, "clientSinkPotentialPeakLuminanceNits", "")
+      get_arg(args, "clientSinkPotentialPeakLuminanceNits")
     );
     launch_session->sink_request.dynamic_range_transport = parse_requested_dynamic_range_transport(
-      get_arg(args, "requestedDynamicRangeTransport", "")
+      get_arg(args, "requestedDynamicRangeTransport")
     );
     const auto requested_dynamic_range_transport =
       video::effective_dynamic_range_transport(launch_session->sink_request.dynamic_range_transport);
     const bool requested_hdr_stream =
       video::dynamic_range_transport_uses_hdr_stream(requested_dynamic_range_transport);
-    launch_session->sink_request.capability.supports_frame_gated_hdr = util::from_view(get_arg(args, "clientSinkSupportsFrameGatedHDR", "0"));
-    launch_session->sink_request.capability.supports_hdr_tile_overlay = util::from_view(get_arg(args, "clientSinkSupportsHDRTileOverlay", "0"));
+    launch_session->sink_request.capability.supports_frame_gated_hdr = util::from_view(get_arg(args, "clientSinkSupportsFrameGatedHDR"));
+    launch_session->sink_request.capability.supports_hdr_tile_overlay = util::from_view(get_arg(args, "clientSinkSupportsHDRTileOverlay"));
     launch_session->sink_request.capability.supports_per_frame_hdr_metadata = util::from_view(
-      get_arg(args, "clientSinkSupportsPerFrameHDRMetadata", "0")
+      get_arg(args, "clientSinkSupportsPerFrameHDRMetadata")
     );
     BOOST_LOG(info) << "Client sink profile from launch: gamut="sv
                     << client_sink_gamut_to_string(launch_session->sink_request.capability.gamut)
@@ -1573,6 +1602,13 @@ namespace session_http {
 
     host_audio = util::from_view(get_arg(args, "localAudioPlayMode"));
     auto launch_session = make_launch_session(host_audio, is_input_only, args, named_cert_p);
+    if (!launch_session) {
+      tree.put("root.<xmlattr>.status_code", 400);
+      tree.put("root.<xmlattr>.status_message", "Missing required Apollo v2 launch parameters");
+      tree.put("root.gamesession", 0);
+
+      return;
+    }
 
     auto encryption_mode = net::encryption_mode_for_address(request->remote_endpoint().address());
     if (!launch_session->rtsp_cipher && encryption_mode == config::ENCRYPTION_MODE_MANDATORY) {
@@ -1738,6 +1774,13 @@ namespace session_http {
       host_audio = util::from_view(get_arg(args, "localAudioPlayMode"));
     }
     auto launch_session = make_launch_session(host_audio, false, args, named_cert_p);
+    if (!launch_session) {
+      tree.put("root.resume", 0);
+      tree.put("root.<xmlattr>.status_code", 400);
+      tree.put("root.<xmlattr>.status_message", "Missing required Apollo v2 resume parameters");
+
+      return;
+    }
 
     if (!proc::proc.allow_client_commands || !named_cert_p->allow_client_commands) {
       launch_session->client_do_cmds.clear();
