@@ -1410,6 +1410,7 @@ namespace platf {
     const auto target_origin = CGPointMake(bounds.origin.x + 80.0, bounds.origin.y + 80.0);
     const auto entry_count = CFArrayGetCount(window_info);
     CFIndex moved_windows = 0;
+    pid_t activated_pid = 0;
     for (CFIndex index = 0; index < entry_count; ++index) {
       const auto entry = static_cast<CFDictionaryRef>(CFArrayGetValueAtIndex(window_info, index));
       if (entry == nullptr) {
@@ -1456,6 +1457,9 @@ namespace platf {
         if (position != nullptr) {
           if (AXUIElementSetAttributeValue(window, kAXPositionAttribute, position) == kAXErrorSuccess) {
             ++moved_windows;
+            if (activated_pid == 0) {
+              activated_pid = pid;
+            }
           }
           CFRelease(position);
         }
@@ -1466,6 +1470,12 @@ namespace platf {
     }
 
     CFRelease(window_info);
+    if (activated_pid > 0) {
+      if (auto *application = [NSRunningApplication runningApplicationWithProcessIdentifier:activated_pid]; application != nil) {
+        const auto activated = [application activateWithOptions:(NSApplicationActivateAllWindows | NSApplicationActivateIgnoringOtherApps)];
+        BOOST_LOG(info) << "Activated macOS virtual display application pid="sv << activated_pid << " result="sv << activated;
+      }
+    }
     BOOST_LOG(info) << "Focused macOS virtual display workspace around display "sv << virtual_display_id << " moved_windows="sv << moved_windows;
   }
 

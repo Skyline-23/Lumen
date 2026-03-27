@@ -57,10 +57,12 @@ namespace platf {
     constexpr int kKeyboardDiagnosticSampleLimit = 96;
     constexpr int kUnicodeDiagnosticSampleLimit = 8;
     constexpr int kAbsoluteMouseDiagnosticSampleLimit = 32;
+    constexpr int kRelativeMouseDiagnosticSampleLimit = 32;
 
     std::atomic_int keyboard_diagnostic_budget {kKeyboardDiagnosticSampleLimit};
     std::atomic_int unicode_diagnostic_budget {kUnicodeDiagnosticSampleLimit};
     std::atomic_int absolute_mouse_diagnostic_budget {kAbsoluteMouseDiagnosticSampleLimit};
+    std::atomic_int relative_mouse_diagnostic_budget {kRelativeMouseDiagnosticSampleLimit};
 
     void append_keyboard_debug_file(const char *format, ...) {
       auto *file = std::fopen("/tmp/apollo-keyboard-debug.log", "a");
@@ -165,6 +167,39 @@ namespace platf {
         << " release="sv << std::dec << release
         << " flags=0x"sv << std::hex << static_cast<int>(flags)
         << " path="sv << path;
+    }
+
+    [[nodiscard]] util::point_t clamp_point_to_display(const CGRect display_bounds, const util::point_t &point) {
+      return util::point_t {
+        std::clamp(point.x, display_bounds.origin.x, display_bounds.origin.x + display_bounds.size.width - 1),
+        std::clamp(point.y, display_bounds.origin.y, display_bounds.origin.y + display_bounds.size.height - 1)
+      };
+    }
+
+    [[nodiscard]] util::point_t mouse_anchor_for_target_display(input_t &input) {
+      const auto macos_input = static_cast<macos_input_t *>(input.get());
+      if (!refresh_display_context(macos_input)) {
+        return get_mouse_loc(input);
+      }
+
+      const auto display_bounds = CGDisplayBounds(macos_input->display);
+      const auto current = get_mouse_loc(input);
+      const auto current_point = CGPointMake(current.x, current.y);
+      if (CGRectContainsPoint(display_bounds, current_point)) {
+        return current;
+      }
+
+      const auto clamped = clamp_point_to_display(display_bounds, current);
+      if (relative_mouse_diagnostic_budget.fetch_sub(1) > 0) {
+        BOOST_LOG(info) << "macOS relative mouse anchor adjusted displayID="sv
+                        << macos_input->display
+                        << " current="sv << current.x << "x"sv << current.y
+                        << " clamped="sv << clamped.x << "x"sv << clamped.y
+                        << " display-bounds="sv << CGRectGetWidth(display_bounds) << "x"sv << CGRectGetHeight(display_bounds)
+                        << " display-origin="sv << display_bounds.origin.x << "x"sv << display_bounds.origin.y;
+      }
+
+      return clamped;
     }
 
   }  // namespace
@@ -598,7 +633,7 @@ const KeyCodeMap kKeyCodesMap[] = {
     const int deltaX,
     const int deltaY
   ) {
-    const auto current = get_mouse_loc(input);
+    const auto current = mouse_anchor_for_target_display(input);
 
     const auto location = util::point_t {current.x + deltaX, current.y + deltaY};
     post_mouse(input, kCGMouseButtonLeft, event_type_mouse(input), location, current, 0);
@@ -671,7 +706,7 @@ const KeyCodeMap kKeyCodesMap[] = {
 
     // if the last mouse down was less than MULTICLICK_DELAY_MS, we send a double click event
     const auto now = std::chrono::steady_clock::now();
-    const auto mouse_position = get_mouse_loc(input);
+    const auto mouse_position = mouse_anchor_for_target_display(input);
 
     if (now < macos_input->last_mouse_event[mac_button][release] + MULTICLICK_DELAY_MS) {
       post_mouse(input, mac_button, event, mouse_position, mouse_position, 2);
