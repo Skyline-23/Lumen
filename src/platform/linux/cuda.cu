@@ -329,7 +329,7 @@ namespace cuda {
     return CU_CHECK_IGNORE(cudaGetLastError(), "RGBA_to_NV12 failed");
   }
 
-  void sws_t::apply_colorspace(const video::sunshine_colorspace_t &colorspace) {
+  void sws_t::apply_colorspace(const video::stream_colorspace_t &colorspace) {
     auto color_p = video::color_vectors_from_colorspace(colorspace);
     CU_CHECK_IGNORE(cudaMemcpy(color_matrix.get(), color_p, sizeof(video::color_t), cudaMemcpyHostToDevice), "Couldn't copy color matrix to cuda");
   }

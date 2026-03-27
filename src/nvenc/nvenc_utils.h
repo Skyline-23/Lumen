@@ -23,8 +23,8 @@ namespace nvenc {
   DXGI_FORMAT dxgi_format_from_nvenc_format(NV_ENC_BUFFER_FORMAT format);
 #endif
 
-  NV_ENC_BUFFER_FORMAT nvenc_format_from_sunshine_format(platf::pix_fmt_e format);
+  NV_ENC_BUFFER_FORMAT nvenc_format_from_pixel_format(platf::pix_fmt_e format);
 
-  nvenc_colorspace_t nvenc_colorspace_from_sunshine_colorspace(const video::sunshine_colorspace_t &sunshine_colorspace);
+  nvenc_colorspace_t nvenc_colorspace_from_stream_colorspace(const video::stream_colorspace_t &stream_colorspace);
 
 }  // namespace nvenc

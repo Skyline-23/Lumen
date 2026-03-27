@@ -871,7 +871,7 @@ namespace video {
     }
 
     void apply_colorspace() override {
-      auto avcodec_colorspace = avcodec_colorspace_from_sunshine_colorspace(colorspace);
+      auto avcodec_colorspace = avcodec_colorspace_from_stream_colorspace(colorspace);
       sws_setColorspaceDetails(sws.get(), sws_getCoefficients(SWS_CS_DEFAULT), 0, sws_getCoefficients(avcodec_colorspace.software_format), avcodec_colorspace.range - 1, 0, 1 << 16, 1 << 16);
     }
 
@@ -1222,7 +1222,7 @@ namespace video {
       int framerate,
       bool ten_bit,
       video::dynamic_range_transport_e dynamic_range_transport,
-      video::sunshine_colorspace_t colorspace,
+      video::stream_colorspace_t colorspace,
       hdr_metadata_state_t hdr_metadata_state
     ):
         device(std::move(encode_device)),
@@ -1523,7 +1523,7 @@ namespace video {
       return cf_dict_t(CFDictionaryCreate(nullptr, keys, values, 5, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks));
     }
 
-    static CFStringRef color_primaries_for_colorspace(const video::sunshine_colorspace_t &colorspace) {
+    static CFStringRef color_primaries_for_colorspace(const video::stream_colorspace_t &colorspace) {
       switch (colorspace.colorspace) {
         case video::colorspace_e::rec601:
           return kCVImageBufferColorPrimaries_SMPTE_C;
@@ -1535,7 +1535,7 @@ namespace video {
       }
     }
 
-    static CFStringRef transfer_function_for_colorspace(const video::sunshine_colorspace_t &colorspace) {
+    static CFStringRef transfer_function_for_colorspace(const video::stream_colorspace_t &colorspace) {
       switch (colorspace.colorspace) {
         case video::colorspace_e::rec601:
         case video::colorspace_e::rec709:
@@ -1547,7 +1547,7 @@ namespace video {
       }
     }
 
-    static CFStringRef ycbcr_matrix_for_colorspace(const video::sunshine_colorspace_t &colorspace) {
+    static CFStringRef ycbcr_matrix_for_colorspace(const video::stream_colorspace_t &colorspace) {
       switch (colorspace.colorspace) {
         case video::colorspace_e::rec601:
           return kCVImageBufferYCbCrMatrix_ITU_R_601_4;
@@ -1800,7 +1800,7 @@ namespace video {
     int framerate {};
     bool ten_bit {false};
     video::dynamic_range_transport_e dynamic_range_transport {video::dynamic_range_transport_e::unknown};
-    video::sunshine_colorspace_t colorspace;
+    video::stream_colorspace_t colorspace;
     hdr_metadata_state_t hdr_metadata_state;
     bool force_idr {false};
     std::mutex inflight_mutex;
@@ -3088,7 +3088,7 @@ namespace video {
 
       ctx->flags2 |= AV_CODEC_FLAG2_FAST;
 
-      auto avcodec_colorspace = avcodec_colorspace_from_sunshine_colorspace(colorspace);
+      auto avcodec_colorspace = avcodec_colorspace_from_stream_colorspace(colorspace);
 
       ctx->color_range = avcodec_colorspace.range;
       ctx->color_primaries = avcodec_colorspace.primaries;

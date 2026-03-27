@@ -456,7 +456,7 @@ namespace platf::dxgi {
       return 0;
     }
 
-    void apply_colorspace(const ::video::sunshine_colorspace_t &colorspace) {
+    void apply_colorspace(const ::video::stream_colorspace_t &colorspace) {
       auto color_vectors = ::video::color_vectors_from_colorspace(colorspace);
 
       if (format == DXGI_FORMAT_AYUV ||
@@ -1059,7 +1059,7 @@ namespace platf::dxgi {
   class d3d_nvenc_encode_device_t: public nvenc_encode_device_t {
   public:
     bool init_device(std::shared_ptr<platf::display_t> display, adapter_t::pointer adapter_p, pix_fmt_e pix_fmt) {
-      buffer_format = nvenc::nvenc_format_from_sunshine_format(pix_fmt);
+      buffer_format = nvenc::nvenc_format_from_pixel_format(pix_fmt);
       if (buffer_format == NV_ENC_BUFFER_FORMAT_UNDEFINED) {
         BOOST_LOG(error) << "Unexpected pixel format for NvENC ["sv << from_pix_fmt(pix_fmt) << ']';
         return false;
@@ -1079,12 +1079,12 @@ namespace platf::dxgi {
       return true;
     }
 
-    bool init_encoder(const ::video::config_t &client_config, const ::video::sunshine_colorspace_t &colorspace) override {
+    bool init_encoder(const ::video::config_t &client_config, const ::video::stream_colorspace_t &colorspace) override {
       if (!nvenc_d3d) {
         return false;
       }
 
-      auto nvenc_colorspace = nvenc::nvenc_colorspace_from_sunshine_colorspace(colorspace);
+      auto nvenc_colorspace = nvenc::nvenc_colorspace_from_stream_colorspace(colorspace);
       if (!nvenc_d3d->create_encoder(config::video.nv, client_config, nvenc_colorspace, buffer_format)) {
         return false;
       }

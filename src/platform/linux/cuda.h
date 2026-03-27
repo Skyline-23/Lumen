@@ -111,7 +111,7 @@ namespace cuda {
     int convert(std::uint8_t *Y, std::uint8_t *UV, std::uint32_t pitchY, std::uint32_t pitchUV, cudaTextureObject_t texture, stream_t::pointer stream);
     int convert(std::uint8_t *Y, std::uint8_t *UV, std::uint32_t pitchY, std::uint32_t pitchUV, cudaTextureObject_t texture, stream_t::pointer stream, const viewport_t &viewport);
 
-    void apply_colorspace(const video::sunshine_colorspace_t &colorspace);
+    void apply_colorspace(const video::stream_colorspace_t &colorspace);
 
     int load_ram(platf::img_t &img, cudaArray_t array);
 

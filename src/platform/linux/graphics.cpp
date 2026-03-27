@@ -697,7 +697,7 @@ namespace egl {
     return nv12;
   }
 
-  void sws_t::apply_colorspace(const video::sunshine_colorspace_t &colorspace) {
+  void sws_t::apply_colorspace(const video::stream_colorspace_t &colorspace) {
     auto color_p = video::color_vectors_from_colorspace(colorspace);
 
     std::string_view members[] {
