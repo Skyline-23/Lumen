@@ -104,7 +104,7 @@ namespace platf {
   void post_runtime_web_ui_ready_notification(const std::string &url);
   effective_display_state_t resolve_capture_request_effective_display_state(
     std::uint32_t display_id,
-    int dynamic_range,
+    int requested_dynamic_range_transport,
     int client_display_gamut,
     int client_display_transfer
   );

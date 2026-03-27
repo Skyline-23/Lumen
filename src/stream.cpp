@@ -2353,7 +2353,7 @@ namespace stream {
       const auto requested_queue_profile = apollo_core_requested_queue_profile();
       const auto effective_display_state = platf::resolve_capture_request_effective_display_state(
         requested_display_id,
-        session.config.monitor.dynamicRange,
+        session.config.monitor.requestedDynamicRangeTransport,
         session.config.monitor.clientDisplayGamut,
         session.config.monitor.clientDisplayTransfer
       );
@@ -2382,14 +2382,13 @@ namespace stream {
                       << " queue="sv << apollo_core_queue_profile_name(requested_queue_profile)
                       << " fps="sv << session.config.monitor.framerate
                       << " size="sv << session.config.monitor.width << "x"sv << session.config.monitor.height
-                      << " hdr="sv << session.config.monitor.dynamicRange
+                      << " transport="sv
+                      << apollo_core_dynamic_range_transport_name(session.config.monitor.requestedDynamicRangeTransport)
                       << " hdr-stream="sv << hdr_stream
                       << " sink-gamut="sv
                       << apollo_core_client_display_gamut_name(session.config.monitor.clientDisplayGamut)
                       << " sink-transfer="sv
                       << apollo_core_client_display_transfer_name(session.config.monitor.clientDisplayTransfer)
-                      << " requested-transport="sv
-                      << apollo_core_dynamic_range_transport_name(session.config.monitor.requestedDynamicRangeTransport)
                       << " current-edr-headroom="sv
                       << session.config.monitor.clientDisplayCurrentEDRHeadroom
                       << " potential-edr-headroom="sv
@@ -2421,7 +2420,7 @@ namespace stream {
         session.config.monitor.bitrate,
         session.config.monitor.width,
         session.config.monitor.height,
-        session.config.monitor.dynamicRange,
+        hdr_stream ? 1 : 0,
         session.config.monitor.clientDisplayGamut,
         session.config.monitor.clientDisplayTransfer,
         effective_display_state.gamut,

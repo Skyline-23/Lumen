@@ -96,7 +96,8 @@ final class ApolloTuistBootstrapTests: XCTestCase {
             clientDisplayCurrentEDRHeadroom: 2.8,
             clientDisplayPotentialEDRHeadroom: 8.4,
             clientDisplayCurrentPeakLuminanceNits: 800,
-            clientDisplayPotentialPeakLuminanceNits: 1600
+            clientDisplayPotentialPeakLuminanceNits: 1600,
+            requestedDynamicRangeTransport: ApolloCoreDynamicRangeTransportFrameGatedHDR
         )
 
         let roundTrip = ApolloBridgeConfigurationBox(configuration: configuration).swiftValue
@@ -127,7 +128,8 @@ final class ApolloTuistBootstrapTests: XCTestCase {
             clientDisplayGamut: .displayP3,
             clientDisplayTransfer: .pq,
             effectiveDisplayGamut: .displayP3,
-            effectiveDisplayTransfer: .pq
+            effectiveDisplayTransfer: .pq,
+            requestedDynamicRangeTransport: ApolloCoreDynamicRangeTransportFrameGatedHDR
         )
 
         let snapshot = configuration.encodedHDRConfigurationSnapshot

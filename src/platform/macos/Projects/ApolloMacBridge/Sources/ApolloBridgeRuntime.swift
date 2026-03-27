@@ -153,6 +153,15 @@ private func apolloDynamicRangeTransportName(_ transport: ApolloCoreDynamicRange
     }
 }
 
+private func apolloDynamicRangeTransportUsesHDR(_ transport: ApolloCoreDynamicRangeTransport) -> Bool {
+    switch transport {
+    case ApolloCoreDynamicRangeTransportFullFrameHDR, ApolloCoreDynamicRangeTransportFrameGatedHDR:
+        return true
+    default:
+        return false
+    }
+}
+
 public struct ApolloHDRStaticMetadata: Equatable, Sendable {
     public let redPrimaryX: Int
     public let redPrimaryY: Int
@@ -420,7 +429,7 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         self.targetVideoBitRateKbps = max(targetVideoBitRateKbps, 0)
         self.requestedWidth = Self.sanitizedDimension(requestedWidth)
         self.requestedHeight = Self.sanitizedDimension(requestedHeight)
-        self.enableHDR = enableHDR
+        self.enableHDR = apolloDynamicRangeTransportUsesHDR(requestedDynamicRangeTransport)
         self.clientDisplayGamut = clientDisplayGamut
         self.clientDisplayTransfer = clientDisplayTransfer
         self.effectiveDisplayGamut = effectiveDisplayGamut
@@ -911,7 +920,7 @@ private struct ApolloBridgeAutomationRequest: Equatable, Sendable {
                 targetVideoBitRateKbps: Int(snapshot.target_video_bitrate_kbps),
                 requestedWidth: Int(snapshot.requested_width),
                 requestedHeight: Int(snapshot.requested_height),
-                enableHDR: snapshot.dynamic_range > 0,
+                enableHDR: apolloDynamicRangeTransportUsesHDR(snapshot.requested_dynamic_range_transport),
                 clientDisplayGamut: ApolloBridgeAutomationRequest.clientDisplayGamut(from: snapshot.client_display_gamut),
                 clientDisplayTransfer: ApolloBridgeAutomationRequest.clientDisplayTransfer(from: snapshot.client_display_transfer),
                 effectiveDisplayGamut: ApolloBridgeAutomationRequest.clientDisplayGamut(from: snapshot.effective_display_gamut),

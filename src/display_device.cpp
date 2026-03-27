@@ -19,6 +19,7 @@
 #include "audio.h"
 #include "platform/common.h"
 #include "rtsp.h"
+#include "video.h"
 
 // platform-specific includes
 #ifdef _WIN32
@@ -413,7 +414,11 @@ namespace display_device {
 
       switch (video_config.dd.hdr_option) {
         case hdr_option_e::automatic:
-          return session.enable_hdr ? HdrState::Enabled : HdrState::Disabled;
+          return video::dynamic_range_transport_uses_hdr_stream(
+                   video::effective_dynamic_range_transport(session.requested_dynamic_range_transport)
+                 ) ?
+                   HdrState::Enabled :
+                   HdrState::Disabled;
         case hdr_option_e::disabled:
           break;
       }

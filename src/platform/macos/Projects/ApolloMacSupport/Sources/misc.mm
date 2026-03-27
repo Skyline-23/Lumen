@@ -310,12 +310,12 @@ namespace platf {
         NSNumber *client_supports_hdr_tile_overlay = dictionary[@"clientSupportsHDRTileOverlay"];
         NSNumber *client_supports_per_frame_hdr_metadata = dictionary[@"clientSupportsPerFrameHDRMetadata"];
         NSNumber *target_video_bitrate_kbps = dictionary[@"targetVideoBitrateKbps"];
-        if (dynamic_range == nil || client_display_gamut == nil || client_display_transfer == nil) {
+        if (client_display_gamut == nil || client_display_transfer == nil) {
           return std::nullopt;
         }
 
         capture_request_hdr_preferences_t preferences;
-        preferences.dynamic_range = [dynamic_range intValue];
+        preferences.dynamic_range = dynamic_range != nil ? [dynamic_range intValue] : 0;
         preferences.client_display_gamut = [client_display_gamut intValue];
         preferences.client_display_transfer = [client_display_transfer intValue];
         preferences.effective_display_gamut = effective_display_gamut != nil ? [effective_display_gamut intValue] : 0;
@@ -375,7 +375,7 @@ namespace platf {
 
     effective_display_state_t resolve_capture_request_effective_display_state_impl(
       NSScreen *screen,
-      int dynamic_range,
+      int requested_dynamic_range_transport,
       int client_display_gamut,
       int client_display_transfer
     ) {
@@ -407,7 +407,9 @@ namespace platf {
           break;
       }
 
-      if (dynamic_range <= 0) {
+      if (!video::dynamic_range_transport_uses_hdr_stream(
+            video::effective_dynamic_range_transport(requested_dynamic_range_transport)
+          )) {
         state.transfer = static_cast<int>(transfer_e::sdr);
         return state;
       }
@@ -538,12 +540,14 @@ namespace platf {
           } :
           resolve_capture_request_effective_display_state_impl(
             screen,
-            preferences.dynamic_range,
+            preferences.requested_dynamic_range_transport,
             preferences.client_display_gamut,
             preferences.client_display_transfer
           );
 
-      if (preferences.dynamic_range <= 0) {
+      if (!video::dynamic_range_transport_uses_hdr_stream(
+            video::effective_dynamic_range_transport(preferences.requested_dynamic_range_transport)
+          )) {
         return false;
       }
 
@@ -1763,13 +1767,13 @@ namespace platf {
 
   effective_display_state_t resolve_capture_request_effective_display_state(
     std::uint32_t display_id,
-    int dynamic_range,
+    int requested_dynamic_range_transport,
     int client_display_gamut,
     int client_display_transfer
   ) {
     return resolve_capture_request_effective_display_state_impl(
       screen_for_external_capture_display_id(static_cast<CGDirectDisplayID>(display_id)),
-      dynamic_range,
+      requested_dynamic_range_transport,
       client_display_gamut,
       client_display_transfer
     );

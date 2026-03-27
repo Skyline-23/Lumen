@@ -191,17 +191,21 @@ namespace video {
     int clientSupportsPerFrameHDRMetadata;  // 0 - disabled, 1 - enabled
   };
 
-  inline dynamic_range_transport_e effective_dynamic_range_transport(const config_t &config) {
-    switch (static_cast<dynamic_range_transport_e>(config.requestedDynamicRangeTransport)) {
+  inline dynamic_range_transport_e effective_dynamic_range_transport(const int requested_transport) {
+    switch (static_cast<dynamic_range_transport_e>(requested_transport)) {
       case dynamic_range_transport_e::sdr:
       case dynamic_range_transport_e::full_frame_hdr:
       case dynamic_range_transport_e::frame_gated_hdr:
       case dynamic_range_transport_e::sdr_base_hdr_overlay:
-        return static_cast<dynamic_range_transport_e>(config.requestedDynamicRangeTransport);
+        return static_cast<dynamic_range_transport_e>(requested_transport);
       case dynamic_range_transport_e::unknown:
       default:
-        return config.dynamicRange > 0 ? dynamic_range_transport_e::frame_gated_hdr : dynamic_range_transport_e::sdr;
+        return dynamic_range_transport_e::sdr;
     }
+  }
+
+  inline dynamic_range_transport_e effective_dynamic_range_transport(const config_t &config) {
+    return effective_dynamic_range_transport(config.requestedDynamicRangeTransport);
   }
 
   inline bool dynamic_range_transport_uses_hdr_stream(const dynamic_range_transport_e transport) {

@@ -232,6 +232,10 @@ namespace proc {
 
     launch_session->width = render_width;
     launch_session->height = render_height;
+    const auto requested_dynamic_range_transport =
+      video::effective_dynamic_range_transport(launch_session->requested_dynamic_range_transport);
+    const bool requested_hdr_stream =
+      video::dynamic_range_transport_uses_hdr_stream(requested_dynamic_range_transport);
     this->client_scale_factor = scale_factor;
     this->client_display_hidpi = launch_session->client_display_hidpi;
     this->client_logical_width = static_cast<int>(render_width);
@@ -379,7 +383,7 @@ namespace proc {
     const bool requires_virtual_display =
       launch_session->virtual_display ||
       _app.virtual_display ||
-      launch_session->enable_hdr ||
+      requested_hdr_stream ||
       launch_session->client_display_hidpi ||
       launch_session->client_display_mode_is_logical ||
       launch_session->scale_factor != 100;
@@ -387,7 +391,9 @@ namespace proc {
     if (requires_virtual_display) {
       if (!launch_session->virtual_display && !_app.virtual_display) {
         BOOST_LOG(info) << "Auto-enabling macOS virtual display for launch geometry: hdr="sv
-                        << launch_session->enable_hdr
+                        << requested_hdr_stream
+                        << " requested-transport="sv
+                        << static_cast<int>(requested_dynamic_range_transport)
                         << " hidpi="sv
                         << launch_session->client_display_hidpi
                         << " scale-percent="sv
@@ -407,7 +413,7 @@ namespace proc {
         launch_session->fps ? static_cast<std::uint32_t>(launch_session->fps) : 60000u,
         scale_factor,
         launch_session->client_display_hidpi,
-        launch_session->enable_hdr,
+        requested_hdr_stream,
         launch_session->client_display_gamut,
         launch_session->client_display_transfer,
         launch_session->client_display_current_edr_headroom,
@@ -428,7 +434,7 @@ namespace proc {
         this->client_display_potential_edr_headroom = launch_session->client_display_potential_edr_headroom;
         this->client_display_current_peak_luminance_nits = launch_session->client_display_current_peak_luminance_nits;
         this->client_display_potential_peak_luminance_nits = launch_session->client_display_potential_peak_luminance_nits;
-        this->requested_dynamic_range_transport = launch_session->requested_dynamic_range_transport;
+        this->requested_dynamic_range_transport = static_cast<int>(requested_dynamic_range_transport);
         this->client_supports_frame_gated_hdr = launch_session->client_supports_frame_gated_hdr;
         this->client_supports_hdr_tile_overlay = launch_session->client_supports_hdr_tile_overlay;
         this->client_supports_per_frame_hdr_metadata = launch_session->client_supports_per_frame_hdr_metadata;
@@ -480,7 +486,6 @@ namespace proc {
     char fps_buf[8];
     snprintf(fps_buf, sizeof(fps_buf), "%.3f", (float)launch_session->fps / 1000.0f);
     fps_str = fps_buf;
-
     // Add Stream-specific environment variables
     // Sunshine Compatibility
     _env["SUNSHINE_APP_ID"] = _app.id;
@@ -488,7 +493,7 @@ namespace proc {
     _env["SUNSHINE_CLIENT_WIDTH"] = std::to_string(render_width);
     _env["SUNSHINE_CLIENT_HEIGHT"] = std::to_string(render_height);
     _env["SUNSHINE_CLIENT_FPS"] = config::sunshine.envvar_compatibility_mode ? std::to_string(std::round((float)launch_session->fps / 1000.0f)) : fps_str;
-    _env["SUNSHINE_CLIENT_HDR"] = launch_session->enable_hdr ? "true" : "false";
+    _env["SUNSHINE_CLIENT_HDR"] = requested_hdr_stream ? "true" : "false";
     _env["SUNSHINE_CLIENT_GCMAP"] = std::to_string(launch_session->gcmap);
     _env["SUNSHINE_CLIENT_HOST_AUDIO"] = launch_session->host_audio ? "true" : "false";
     _env["SUNSHINE_CLIENT_ENABLE_SOPS"] = launch_session->enable_sops ? "true" : "false";
@@ -505,7 +510,7 @@ namespace proc {
     _env["APOLLO_CLIENT_RENDER_HEIGHT"] = std::to_string(launch_session->height);
     _env["APOLLO_CLIENT_SCALE_FACTOR"] = std::to_string(scale_factor);
     _env["APOLLO_CLIENT_FPS"] = fps_str;
-    _env["APOLLO_CLIENT_HDR"] = launch_session->enable_hdr ? "true" : "false";
+    _env["APOLLO_CLIENT_HDR"] = requested_hdr_stream ? "true" : "false";
     switch (static_cast<video::client_display_gamut_e>(launch_session->client_display_gamut)) {
       case video::client_display_gamut_e::display_p3:
         _env["APOLLO_CLIENT_DISPLAY_GAMUT"] = "display-p3";
@@ -642,7 +647,7 @@ namespace proc {
     _app_launch_time = std::chrono::steady_clock::now();
 
   #ifdef _WIN32
-    auto resetHDRThread = std::thread([this, enable_hdr = launch_session->enable_hdr]{
+    auto resetHDRThread = std::thread([this, requested_hdr_stream]{
       // Windows doesn't seem to be able to set HDR correctly when a display is just connected / changed resolution,
       // so we have tooggle HDR for the virtual display manually after a delay.
       auto retryInterval = 200ms;
@@ -678,7 +683,7 @@ namespace proc {
         // As we always have to apply the workaround by turining off HDR first
         VDISPLAY::setDisplayHDRByName(currentDisplayW.c_str(), false);
 
-        if (enable_hdr) {
+        if (requested_hdr_stream) {
           if (VDISPLAY::setDisplayHDRByName(currentDisplayW.c_str(), true)) {
             BOOST_LOG(info) << "HDR enabled for display " << currentDisplay;
           } else {

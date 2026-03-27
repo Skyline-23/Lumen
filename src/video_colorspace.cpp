@@ -25,10 +25,9 @@ namespace video {
     /* See video::config_t declaration for details */
 
     const auto transport = effective_dynamic_range_transport(config);
-    const bool hdr_stream = config_uses_hdr_stream(config);
+    const bool hdr_stream = dynamic_range_transport_uses_hdr_stream(transport);
 
-    BOOST_LOG(info) << "Client dynamicRange: " << config.dynamicRange
-                    << ", requested transport: " << static_cast<int>(transport)
+    BOOST_LOG(info) << "Client requested transport: " << static_cast<int>(transport)
                     << ", HDR stream: " << hdr_stream
                     << ", Display is HDR: " << hdr_display;
 
@@ -61,20 +60,7 @@ namespace video {
 
     colorspace.full_range = (config.encoderCscMode & 0x1);
 
-    switch (config.dynamicRange) {
-      case 0:
-        colorspace.bit_depth = 8;
-        break;
-
-      case 1:
-        colorspace.bit_depth = 10;
-        break;
-
-      default:
-        BOOST_LOG(error) << "Unknown dynamicRange value, falling back to 10-bit color depth";
-        colorspace.bit_depth = 10;
-        break;
-    }
+    colorspace.bit_depth = hdr_stream || colorspace.colorspace == colorspace_e::bt2020sdr ? 10 : 8;
 
     if (colorspace.colorspace == colorspace_e::bt2020sdr && colorspace.bit_depth != 10) {
       BOOST_LOG(error) << "BT.2020 SDR colorspace expects 10-bit color depth, falling back to Rec. 709";
