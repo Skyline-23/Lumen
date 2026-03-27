@@ -921,21 +921,21 @@ private struct ApolloBridgeAutomationRequest: Equatable, Sendable {
                 targetVideoBitRateKbps: Int(snapshot.target_video_bitrate_kbps),
                 requestedWidth: Int(snapshot.requested_width),
                 requestedHeight: Int(snapshot.requested_height),
-                clientSinkGamut: ApolloBridgeAutomationRequest.clientSinkGamut(from: snapshot.client_sink_gamut),
-                clientSinkTransfer: ApolloBridgeAutomationRequest.clientSinkTransfer(from: snapshot.client_sink_transfer),
-                effectiveSinkGamut: ApolloBridgeAutomationRequest.clientSinkGamut(from: snapshot.effective_sink_gamut),
-                effectiveSinkTransfer: ApolloBridgeAutomationRequest.clientSinkTransfer(from: snapshot.effective_sink_transfer),
-                hdrStaticMetadata: snapshot.has_effective_hdr_metadata ?
-                    ApolloHDRStaticMetadata(coreValue: snapshot.effective_hdr_metadata) :
+                clientSinkGamut: ApolloBridgeAutomationRequest.clientSinkGamut(from: snapshot.sink_request.capability.gamut),
+                clientSinkTransfer: ApolloBridgeAutomationRequest.clientSinkTransfer(from: snapshot.sink_request.capability.transfer),
+                effectiveSinkGamut: ApolloBridgeAutomationRequest.clientSinkGamut(from: snapshot.effective_display_state.gamut),
+                effectiveSinkTransfer: ApolloBridgeAutomationRequest.clientSinkTransfer(from: snapshot.effective_display_state.transfer),
+                hdrStaticMetadata: snapshot.effective_display_state.has_hdr_static_metadata ?
+                    ApolloHDRStaticMetadata(coreValue: snapshot.effective_display_state.hdr_static_metadata) :
                     nil,
-                clientSinkCurrentEDRHeadroom: snapshot.client_sink_current_edr_headroom,
-                clientSinkPotentialEDRHeadroom: snapshot.client_sink_potential_edr_headroom,
-                clientSinkCurrentPeakLuminanceNits: Int(snapshot.client_sink_current_peak_luminance_nits),
-                clientSinkPotentialPeakLuminanceNits: Int(snapshot.client_sink_potential_peak_luminance_nits),
-                requestedDynamicRangeTransport: snapshot.requested_dynamic_range_transport,
-                clientSinkSupportsFrameGatedHDR: snapshot.client_sink_supports_frame_gated_hdr,
-                clientSinkSupportsHDRTileOverlay: snapshot.client_sink_supports_hdr_tile_overlay,
-                clientSinkSupportsPerFrameHDRMetadata: snapshot.client_sink_supports_per_frame_hdr_metadata
+                clientSinkCurrentEDRHeadroom: snapshot.sink_request.capability.current_edr_headroom,
+                clientSinkPotentialEDRHeadroom: snapshot.sink_request.capability.potential_edr_headroom,
+                clientSinkCurrentPeakLuminanceNits: Int(snapshot.sink_request.capability.current_peak_luminance_nits),
+                clientSinkPotentialPeakLuminanceNits: Int(snapshot.sink_request.capability.potential_peak_luminance_nits),
+                requestedDynamicRangeTransport: snapshot.sink_request.dynamic_range_transport,
+                clientSinkSupportsFrameGatedHDR: snapshot.sink_request.capability.supports_frame_gated_hdr,
+                clientSinkSupportsHDRTileOverlay: snapshot.sink_request.capability.supports_hdr_tile_overlay,
+                clientSinkSupportsPerFrameHDRMetadata: snapshot.sink_request.capability.supports_per_frame_hdr_metadata
             )
         } else {
             videoConfiguration = nil

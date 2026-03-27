@@ -252,21 +252,21 @@ struct ApolloBridgeMirroredCaptureRequestSemanticState: Equatable, Sendable {
         targetVideoBitrateKbps = snapshot.target_video_bitrate_kbps
         requestedWidth = snapshot.requested_width
         requestedHeight = snapshot.requested_height
-        clientSinkGamut = snapshot.client_sink_gamut
-        clientSinkTransfer = snapshot.client_sink_transfer
-        effectiveSinkGamut = snapshot.effective_sink_gamut
-        effectiveSinkTransfer = snapshot.effective_sink_transfer
-        effectiveHDRStaticMetadata = snapshot.has_effective_hdr_metadata ?
-            ApolloHDRStaticMetadata(coreValue: snapshot.effective_hdr_metadata) :
+        clientSinkGamut = snapshot.sink_request.capability.gamut
+        clientSinkTransfer = snapshot.sink_request.capability.transfer
+        effectiveSinkGamut = snapshot.effective_display_state.gamut
+        effectiveSinkTransfer = snapshot.effective_display_state.transfer
+        effectiveHDRStaticMetadata = snapshot.effective_display_state.has_hdr_static_metadata ?
+            ApolloHDRStaticMetadata(coreValue: snapshot.effective_display_state.hdr_static_metadata) :
             nil
-        clientSinkCurrentEDRHeadroom = snapshot.client_sink_current_edr_headroom
-        clientSinkPotentialEDRHeadroom = snapshot.client_sink_potential_edr_headroom
-        clientSinkCurrentPeakLuminanceNits = snapshot.client_sink_current_peak_luminance_nits
-        clientSinkPotentialPeakLuminanceNits = snapshot.client_sink_potential_peak_luminance_nits
-        requestedDynamicRangeTransport = Int32(snapshot.requested_dynamic_range_transport.rawValue)
-        clientSinkSupportsFrameGatedHDR = snapshot.client_sink_supports_frame_gated_hdr
-        clientSinkSupportsHDRTileOverlay = snapshot.client_sink_supports_hdr_tile_overlay
-        clientSinkSupportsPerFrameHDRMetadata = snapshot.client_sink_supports_per_frame_hdr_metadata
+        clientSinkCurrentEDRHeadroom = snapshot.sink_request.capability.current_edr_headroom
+        clientSinkPotentialEDRHeadroom = snapshot.sink_request.capability.potential_edr_headroom
+        clientSinkCurrentPeakLuminanceNits = snapshot.sink_request.capability.current_peak_luminance_nits
+        clientSinkPotentialPeakLuminanceNits = snapshot.sink_request.capability.potential_peak_luminance_nits
+        requestedDynamicRangeTransport = Int32(snapshot.sink_request.dynamic_range_transport.rawValue)
+        clientSinkSupportsFrameGatedHDR = snapshot.sink_request.capability.supports_frame_gated_hdr
+        clientSinkSupportsHDRTileOverlay = snapshot.sink_request.capability.supports_hdr_tile_overlay
+        clientSinkSupportsPerFrameHDRMetadata = snapshot.sink_request.capability.supports_per_frame_hdr_metadata
         audioSourceKind = snapshot.audio_source_kind
         audioExcludesCurrentProcess = snapshot.audio_excludes_current_process
         audioSampleRate = snapshot.audio_sample_rate
@@ -307,6 +307,32 @@ actor ApolloCaptureRequestMirrorCoordinator {
 
             if mirroredSnapshot.videoRequested {
                 let effectiveHDRStaticMetadata = mirroredSnapshot.effectiveHDRStaticMetadata?.coreValue ?? ApolloCoreHDRStaticMetadata()
+                var sinkMode = ApolloCoreSinkMode()
+                sinkMode.hidpi = false
+                sinkMode.scale_explicit = false
+                sinkMode.mode_is_logical = false
+                sinkMode.scale_percent = 100
+                var sinkCapability = ApolloCoreSinkCapability()
+                sinkCapability.gamut = mirroredSnapshot.clientSinkGamut
+                sinkCapability.transfer = mirroredSnapshot.clientSinkTransfer
+                sinkCapability.current_edr_headroom = mirroredSnapshot.clientSinkCurrentEDRHeadroom
+                sinkCapability.potential_edr_headroom = mirroredSnapshot.clientSinkPotentialEDRHeadroom
+                sinkCapability.current_peak_luminance_nits = mirroredSnapshot.clientSinkCurrentPeakLuminanceNits
+                sinkCapability.potential_peak_luminance_nits = mirroredSnapshot.clientSinkPotentialPeakLuminanceNits
+                sinkCapability.supports_frame_gated_hdr = mirroredSnapshot.clientSinkSupportsFrameGatedHDR
+                sinkCapability.supports_hdr_tile_overlay = mirroredSnapshot.clientSinkSupportsHDRTileOverlay
+                sinkCapability.supports_per_frame_hdr_metadata = mirroredSnapshot.clientSinkSupportsPerFrameHDRMetadata
+                var sinkRequest = ApolloCoreSinkRequest()
+                sinkRequest.mode = sinkMode
+                sinkRequest.capability = sinkCapability
+                sinkRequest.dynamic_range_transport =
+                    ApolloCoreDynamicRangeTransport(rawValue: UInt32(mirroredSnapshot.requestedDynamicRangeTransport)) ??
+                    ApolloCoreDynamicRangeTransportUnknown
+                var effectiveDisplayState = ApolloCoreEffectiveDisplayState()
+                effectiveDisplayState.gamut = mirroredSnapshot.effectiveSinkGamut
+                effectiveDisplayState.transfer = mirroredSnapshot.effectiveSinkTransfer
+                effectiveDisplayState.has_hdr_static_metadata = mirroredSnapshot.effectiveHDRStaticMetadata != nil
+                effectiveDisplayState.hdr_static_metadata = effectiveHDRStaticMetadata
                 ApolloCoreCaptureRequestPublishVideo(
                     mirroredSnapshot.displayID,
                     mirroredSnapshot.codec,
@@ -317,20 +343,8 @@ actor ApolloCaptureRequestMirrorCoordinator {
                     mirroredSnapshot.targetVideoBitrateKbps,
                     mirroredSnapshot.requestedWidth,
                     mirroredSnapshot.requestedHeight,
-                    mirroredSnapshot.clientSinkGamut,
-                    mirroredSnapshot.clientSinkTransfer,
-                    mirroredSnapshot.effectiveSinkGamut,
-                    mirroredSnapshot.effectiveSinkTransfer,
-                    mirroredSnapshot.effectiveHDRStaticMetadata != nil,
-                    effectiveHDRStaticMetadata,
-                    mirroredSnapshot.clientSinkCurrentEDRHeadroom,
-                    mirroredSnapshot.clientSinkPotentialEDRHeadroom,
-                    mirroredSnapshot.clientSinkCurrentPeakLuminanceNits,
-                    mirroredSnapshot.clientSinkPotentialPeakLuminanceNits,
-                    ApolloCoreDynamicRangeTransport(rawValue: UInt32(mirroredSnapshot.requestedDynamicRangeTransport)) ?? ApolloCoreDynamicRangeTransportUnknown,
-                    mirroredSnapshot.clientSinkSupportsFrameGatedHDR,
-                    mirroredSnapshot.clientSinkSupportsHDRTileOverlay,
-                    mirroredSnapshot.clientSinkSupportsPerFrameHDRMetadata
+                    sinkRequest,
+                    effectiveDisplayState
                 )
                 logger.notice(
                     "Republished mirrored video capture request generation=\(mirroredSnapshot.generation, privacy: .public) display-id=\(mirroredSnapshot.displayID, privacy: .public) codec=\(mirroredSnapshot.codec.rawValue, privacy: .public) queue=\(mirroredSnapshot.queueProfile.rawValue, privacy: .public) fps=\(mirroredSnapshot.targetFrameRate, privacy: .public)"

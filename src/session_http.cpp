@@ -140,20 +140,20 @@ namespace session_http {
       return static_cast<int>(video::client_sink_transfer_e::unknown);
     }
 
-    int parse_requested_dynamic_range_transport(const std::string_view value) {
+    video::dynamic_range_transport_e parse_requested_dynamic_range_transport(const std::string_view value) {
       if (value == "sdr"sv) {
-        return static_cast<int>(video::dynamic_range_transport_e::sdr);
+        return video::dynamic_range_transport_e::sdr;
       }
       if (value == "full-frame-hdr"sv || value == "full_frame_hdr"sv) {
-        return static_cast<int>(video::dynamic_range_transport_e::full_frame_hdr);
+        return video::dynamic_range_transport_e::full_frame_hdr;
       }
       if (value == "frame-gated-hdr"sv || value == "frame_gated_hdr"sv) {
-        return static_cast<int>(video::dynamic_range_transport_e::frame_gated_hdr);
+        return video::dynamic_range_transport_e::frame_gated_hdr;
       }
       if (value == "sdr-base-hdr-overlay"sv || value == "sdr_base_hdr_overlay"sv) {
-        return static_cast<int>(video::dynamic_range_transport_e::sdr_base_hdr_overlay);
+        return video::dynamic_range_transport_e::sdr_base_hdr_overlay;
       }
-      return static_cast<int>(video::dynamic_range_transport_e::sdr);
+      return video::dynamic_range_transport_e::sdr;
     }
 
     float parse_client_sink_headroom(const std::string_view value) {
@@ -701,70 +701,70 @@ namespace session_http {
     launch_session->virtual_display = util::from_view(get_arg(args, "virtualDisplay", "0")) || named_cert_p->always_use_virtual_display;
     const bool has_display_scale_percent = has_arg(args, "clientSinkScalePercent");
     const bool has_display_hidpi = has_arg(args, "clientSinkHiDPI");
-    launch_session->client_sink_scale_explicit = has_display_scale_percent || has_display_hidpi;
-    launch_session->client_sink_mode_is_logical = util::from_view(get_arg(args, "clientSinkModeIsLogical", "0"));
-    launch_session->scale_factor = has_display_scale_percent ?
+    launch_session->sink_request.mode.scale_explicit = has_display_scale_percent || has_display_hidpi;
+    launch_session->sink_request.mode.mode_is_logical = util::from_view(get_arg(args, "clientSinkModeIsLogical", "0"));
+    launch_session->sink_request.mode.scale_percent = has_display_scale_percent ?
       util::from_view(get_arg(args, "clientSinkScalePercent", "100")) :
       util::from_view(get_arg(args, "scaleFactor", "100"));
-    launch_session->client_sink_hidpi = has_display_hidpi ?
+    launch_session->sink_request.mode.hidpi = has_display_hidpi ?
       util::from_view(get_arg(args, "clientSinkHiDPI", "0")) :
-      launch_session->scale_factor > 100;
-    launch_session->client_sink_gamut = parse_client_sink_gamut(get_arg(args, "clientSinkGamut", ""));
-    launch_session->client_sink_transfer = parse_client_sink_transfer(get_arg(args, "clientSinkTransfer", ""));
-    launch_session->client_sink_current_edr_headroom = parse_client_sink_headroom(
+      launch_session->sink_request.mode.scale_percent > 100;
+    launch_session->sink_request.capability.gamut = parse_client_sink_gamut(get_arg(args, "clientSinkGamut", ""));
+    launch_session->sink_request.capability.transfer = parse_client_sink_transfer(get_arg(args, "clientSinkTransfer", ""));
+    launch_session->sink_request.capability.current_edr_headroom = parse_client_sink_headroom(
       get_arg(args, "clientSinkCurrentEDRHeadroom", "")
     );
-    launch_session->client_sink_potential_edr_headroom = parse_client_sink_headroom(
+    launch_session->sink_request.capability.potential_edr_headroom = parse_client_sink_headroom(
       get_arg(args, "clientSinkPotentialEDRHeadroom", "")
     );
-    launch_session->client_sink_current_peak_luminance_nits = parse_client_sink_peak_luminance_nits(
+    launch_session->sink_request.capability.current_peak_luminance_nits = parse_client_sink_peak_luminance_nits(
       get_arg(args, "clientSinkCurrentPeakLuminanceNits", "")
     );
-    launch_session->client_sink_potential_peak_luminance_nits = parse_client_sink_peak_luminance_nits(
+    launch_session->sink_request.capability.potential_peak_luminance_nits = parse_client_sink_peak_luminance_nits(
       get_arg(args, "clientSinkPotentialPeakLuminanceNits", "")
     );
-    launch_session->requested_dynamic_range_transport = parse_requested_dynamic_range_transport(
+    launch_session->sink_request.dynamic_range_transport = parse_requested_dynamic_range_transport(
       get_arg(args, "requestedDynamicRangeTransport", "")
     );
     const auto requested_dynamic_range_transport =
-      video::effective_dynamic_range_transport(launch_session->requested_dynamic_range_transport);
+      video::effective_dynamic_range_transport(launch_session->sink_request.dynamic_range_transport);
     const bool requested_hdr_stream =
       video::dynamic_range_transport_uses_hdr_stream(requested_dynamic_range_transport);
-    launch_session->client_sink_supports_frame_gated_hdr = util::from_view(get_arg(args, "clientSinkSupportsFrameGatedHDR", "0"));
-    launch_session->client_sink_supports_hdr_tile_overlay = util::from_view(get_arg(args, "clientSinkSupportsHDRTileOverlay", "0"));
-    launch_session->client_sink_supports_per_frame_hdr_metadata = util::from_view(
+    launch_session->sink_request.capability.supports_frame_gated_hdr = util::from_view(get_arg(args, "clientSinkSupportsFrameGatedHDR", "0"));
+    launch_session->sink_request.capability.supports_hdr_tile_overlay = util::from_view(get_arg(args, "clientSinkSupportsHDRTileOverlay", "0"));
+    launch_session->sink_request.capability.supports_per_frame_hdr_metadata = util::from_view(
       get_arg(args, "clientSinkSupportsPerFrameHDRMetadata", "0")
     );
     BOOST_LOG(info) << "Client sink profile from launch: gamut="sv
-                    << client_sink_gamut_to_string(launch_session->client_sink_gamut)
+                    << client_sink_gamut_to_string(launch_session->sink_request.capability.gamut)
                     << " transfer="sv
-                    << client_sink_transfer_to_string(launch_session->client_sink_transfer)
+                    << client_sink_transfer_to_string(launch_session->sink_request.capability.transfer)
                     << " requested-transport="sv
                     << dynamic_range_transport_to_string(static_cast<int>(requested_dynamic_range_transport))
                     << " requested-hdr-stream="sv
                     << requested_hdr_stream
                     << " scale-percent="sv
-                    << launch_session->scale_factor
+                    << launch_session->sink_request.mode.scale_percent
                     << " hidpi="sv
-                    << launch_session->client_sink_hidpi
+                    << launch_session->sink_request.mode.hidpi
                     << " explicit-scale="sv
-                    << launch_session->client_sink_scale_explicit
+                    << launch_session->sink_request.mode.scale_explicit
                     << " mode-is-logical="sv
-                    << launch_session->client_sink_mode_is_logical
+                    << launch_session->sink_request.mode.mode_is_logical
                     << " current-edr-headroom="sv
-                    << launch_session->client_sink_current_edr_headroom
+                    << launch_session->sink_request.capability.current_edr_headroom
                     << " potential-edr-headroom="sv
-                    << launch_session->client_sink_potential_edr_headroom
+                    << launch_session->sink_request.capability.potential_edr_headroom
                     << " current-peak-nits="sv
-                    << launch_session->client_sink_current_peak_luminance_nits
+                    << launch_session->sink_request.capability.current_peak_luminance_nits
                     << " potential-peak-nits="sv
-                    << launch_session->client_sink_potential_peak_luminance_nits
+                    << launch_session->sink_request.capability.potential_peak_luminance_nits
                     << " supports-frame-gated-hdr="sv
-                    << launch_session->client_sink_supports_frame_gated_hdr
+                    << launch_session->sink_request.capability.supports_frame_gated_hdr
                     << " supports-hdr-tile-overlay="sv
-                    << launch_session->client_sink_supports_hdr_tile_overlay
+                    << launch_session->sink_request.capability.supports_hdr_tile_overlay
                     << " supports-per-frame-hdr-metadata="sv
-                    << launch_session->client_sink_supports_per_frame_hdr_metadata;
+                    << launch_session->sink_request.capability.supports_per_frame_hdr_metadata;
 
     launch_session->client_do_cmds = named_cert_p->do_cmds;
     launch_session->client_undo_cmds = named_cert_p->undo_cmds;

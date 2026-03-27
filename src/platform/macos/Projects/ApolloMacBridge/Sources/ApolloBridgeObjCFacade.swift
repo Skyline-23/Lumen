@@ -13,10 +13,14 @@ public final class ApolloBridgeConfigurationBox: NSObject {
     public let targetVideoBitRateKbps: Int
     public let requestedWidth: Int
     public let requestedHeight: Int
-    public let clientSinkGamutRawValue: Int
-    public let clientSinkTransferRawValue: Int
-    public let effectiveSinkGamutRawValue: Int
-    public let effectiveSinkTransferRawValue: Int
+    public let sinkModeHIDPI: Bool
+    public let sinkModeScaleExplicit: Bool
+    public let sinkModeIsLogical: Bool
+    public let sinkModeScalePercent: Int
+    public let sinkCapabilityGamutRawValue: Int
+    public let sinkCapabilityTransferRawValue: Int
+    public let effectiveDisplayGamutRawValue: Int
+    public let effectiveDisplayTransferRawValue: Int
     public let hasHDRStaticMetadata: Bool
     public let hdrRedPrimaryX: Int
     public let hdrRedPrimaryY: Int
@@ -31,14 +35,14 @@ public final class ApolloBridgeConfigurationBox: NSObject {
     public let hdrMaxContentLightLevel: Int
     public let hdrMaxFrameAverageLightLevel: Int
     public let hdrMaxFullFrameLuminance: Int
-    public let clientSinkCurrentEDRHeadroom: Float
-    public let clientSinkPotentialEDRHeadroom: Float
-    public let clientSinkCurrentPeakLuminanceNits: Int
-    public let clientSinkPotentialPeakLuminanceNits: Int
-    public let requestedDynamicRangeTransportRawValue: Int
-    public let clientSinkSupportsFrameGatedHDR: Bool
-    public let clientSinkSupportsHDRTileOverlay: Bool
-    public let clientSinkSupportsPerFrameHDRMetadata: Bool
+    public let sinkCapabilityCurrentEDRHeadroom: Float
+    public let sinkCapabilityPotentialEDRHeadroom: Float
+    public let sinkCapabilityCurrentPeakLuminanceNits: Int
+    public let sinkCapabilityPotentialPeakLuminanceNits: Int
+    public let sinkRequestDynamicRangeTransportRawValue: Int
+    public let sinkCapabilitySupportsFrameGatedHDR: Bool
+    public let sinkCapabilitySupportsHDRTileOverlay: Bool
+    public let sinkCapabilitySupportsPerFrameHDRMetadata: Bool
 
     public init(
         displayID: UInt32,
@@ -50,10 +54,14 @@ public final class ApolloBridgeConfigurationBox: NSObject {
         targetVideoBitRateKbps: Int,
         requestedWidth: Int,
         requestedHeight: Int,
-        clientSinkGamutRawValue: Int,
-        clientSinkTransferRawValue: Int,
-        effectiveSinkGamutRawValue: Int,
-        effectiveSinkTransferRawValue: Int,
+        sinkModeHIDPI: Bool,
+        sinkModeScaleExplicit: Bool,
+        sinkModeIsLogical: Bool,
+        sinkModeScalePercent: Int,
+        sinkCapabilityGamutRawValue: Int,
+        sinkCapabilityTransferRawValue: Int,
+        effectiveDisplayGamutRawValue: Int,
+        effectiveDisplayTransferRawValue: Int,
         hasHDRStaticMetadata: Bool,
         hdrRedPrimaryX: Int,
         hdrRedPrimaryY: Int,
@@ -68,14 +76,14 @@ public final class ApolloBridgeConfigurationBox: NSObject {
         hdrMaxContentLightLevel: Int,
         hdrMaxFrameAverageLightLevel: Int,
         hdrMaxFullFrameLuminance: Int,
-        clientSinkCurrentEDRHeadroom: Float,
-        clientSinkPotentialEDRHeadroom: Float,
-        clientSinkCurrentPeakLuminanceNits: Int,
-        clientSinkPotentialPeakLuminanceNits: Int,
-        requestedDynamicRangeTransportRawValue: Int,
-        clientSinkSupportsFrameGatedHDR: Bool,
-        clientSinkSupportsHDRTileOverlay: Bool,
-        clientSinkSupportsPerFrameHDRMetadata: Bool
+        sinkCapabilityCurrentEDRHeadroom: Float,
+        sinkCapabilityPotentialEDRHeadroom: Float,
+        sinkCapabilityCurrentPeakLuminanceNits: Int,
+        sinkCapabilityPotentialPeakLuminanceNits: Int,
+        sinkRequestDynamicRangeTransportRawValue: Int,
+        sinkCapabilitySupportsFrameGatedHDR: Bool,
+        sinkCapabilitySupportsHDRTileOverlay: Bool,
+        sinkCapabilitySupportsPerFrameHDRMetadata: Bool
     ) {
         self.displayID = displayID
         self.codecRawValue = codecRawValue
@@ -86,10 +94,14 @@ public final class ApolloBridgeConfigurationBox: NSObject {
         self.targetVideoBitRateKbps = targetVideoBitRateKbps
         self.requestedWidth = requestedWidth
         self.requestedHeight = requestedHeight
-        self.clientSinkGamutRawValue = clientSinkGamutRawValue
-        self.clientSinkTransferRawValue = clientSinkTransferRawValue
-        self.effectiveSinkGamutRawValue = effectiveSinkGamutRawValue
-        self.effectiveSinkTransferRawValue = effectiveSinkTransferRawValue
+        self.sinkModeHIDPI = sinkModeHIDPI
+        self.sinkModeScaleExplicit = sinkModeScaleExplicit
+        self.sinkModeIsLogical = sinkModeIsLogical
+        self.sinkModeScalePercent = sinkModeScalePercent
+        self.sinkCapabilityGamutRawValue = sinkCapabilityGamutRawValue
+        self.sinkCapabilityTransferRawValue = sinkCapabilityTransferRawValue
+        self.effectiveDisplayGamutRawValue = effectiveDisplayGamutRawValue
+        self.effectiveDisplayTransferRawValue = effectiveDisplayTransferRawValue
         self.hasHDRStaticMetadata = hasHDRStaticMetadata
         self.hdrRedPrimaryX = hdrRedPrimaryX
         self.hdrRedPrimaryY = hdrRedPrimaryY
@@ -104,14 +116,14 @@ public final class ApolloBridgeConfigurationBox: NSObject {
         self.hdrMaxContentLightLevel = hdrMaxContentLightLevel
         self.hdrMaxFrameAverageLightLevel = hdrMaxFrameAverageLightLevel
         self.hdrMaxFullFrameLuminance = hdrMaxFullFrameLuminance
-        self.clientSinkCurrentEDRHeadroom = clientSinkCurrentEDRHeadroom
-        self.clientSinkPotentialEDRHeadroom = clientSinkPotentialEDRHeadroom
-        self.clientSinkCurrentPeakLuminanceNits = clientSinkCurrentPeakLuminanceNits
-        self.clientSinkPotentialPeakLuminanceNits = clientSinkPotentialPeakLuminanceNits
-        self.requestedDynamicRangeTransportRawValue = requestedDynamicRangeTransportRawValue
-        self.clientSinkSupportsFrameGatedHDR = clientSinkSupportsFrameGatedHDR
-        self.clientSinkSupportsHDRTileOverlay = clientSinkSupportsHDRTileOverlay
-        self.clientSinkSupportsPerFrameHDRMetadata = clientSinkSupportsPerFrameHDRMetadata
+        self.sinkCapabilityCurrentEDRHeadroom = sinkCapabilityCurrentEDRHeadroom
+        self.sinkCapabilityPotentialEDRHeadroom = sinkCapabilityPotentialEDRHeadroom
+        self.sinkCapabilityCurrentPeakLuminanceNits = sinkCapabilityCurrentPeakLuminanceNits
+        self.sinkCapabilityPotentialPeakLuminanceNits = sinkCapabilityPotentialPeakLuminanceNits
+        self.sinkRequestDynamicRangeTransportRawValue = sinkRequestDynamicRangeTransportRawValue
+        self.sinkCapabilitySupportsFrameGatedHDR = sinkCapabilitySupportsFrameGatedHDR
+        self.sinkCapabilitySupportsHDRTileOverlay = sinkCapabilitySupportsHDRTileOverlay
+        self.sinkCapabilitySupportsPerFrameHDRMetadata = sinkCapabilitySupportsPerFrameHDRMetadata
     }
 
     convenience init(configuration: ApolloMacDisplayKitCaptureConfiguration) {
@@ -126,10 +138,14 @@ public final class ApolloBridgeConfigurationBox: NSObject {
             targetVideoBitRateKbps: configuration.targetVideoBitRateKbps,
             requestedWidth: configuration.requestedWidth ?? 0,
             requestedHeight: configuration.requestedHeight ?? 0,
-            clientSinkGamutRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.clientSinkGamut),
-            clientSinkTransferRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.clientSinkTransfer),
-            effectiveSinkGamutRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.effectiveSinkGamut),
-            effectiveSinkTransferRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.effectiveSinkTransfer),
+            sinkModeHIDPI: false,
+            sinkModeScaleExplicit: false,
+            sinkModeIsLogical: false,
+            sinkModeScalePercent: 100,
+            sinkCapabilityGamutRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.clientSinkGamut),
+            sinkCapabilityTransferRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.clientSinkTransfer),
+            effectiveDisplayGamutRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.effectiveSinkGamut),
+            effectiveDisplayTransferRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.effectiveSinkTransfer),
             hasHDRStaticMetadata: hdrStaticMetadata != nil,
             hdrRedPrimaryX: hdrStaticMetadata?.redPrimaryX ?? 0,
             hdrRedPrimaryY: hdrStaticMetadata?.redPrimaryY ?? 0,
@@ -144,14 +160,14 @@ public final class ApolloBridgeConfigurationBox: NSObject {
             hdrMaxContentLightLevel: hdrStaticMetadata?.maxContentLightLevel ?? 0,
             hdrMaxFrameAverageLightLevel: hdrStaticMetadata?.maxFrameAverageLightLevel ?? 0,
             hdrMaxFullFrameLuminance: hdrStaticMetadata?.maxFullFrameLuminance ?? 0,
-            clientSinkCurrentEDRHeadroom: configuration.clientSinkCurrentEDRHeadroom,
-            clientSinkPotentialEDRHeadroom: configuration.clientSinkPotentialEDRHeadroom,
-            clientSinkCurrentPeakLuminanceNits: configuration.clientSinkCurrentPeakLuminanceNits,
-            clientSinkPotentialPeakLuminanceNits: configuration.clientSinkPotentialPeakLuminanceNits,
-            requestedDynamicRangeTransportRawValue: Int(configuration.requestedDynamicRangeTransport.rawValue),
-            clientSinkSupportsFrameGatedHDR: configuration.clientSinkSupportsFrameGatedHDR,
-            clientSinkSupportsHDRTileOverlay: configuration.clientSinkSupportsHDRTileOverlay,
-            clientSinkSupportsPerFrameHDRMetadata: configuration.clientSinkSupportsPerFrameHDRMetadata
+            sinkCapabilityCurrentEDRHeadroom: configuration.clientSinkCurrentEDRHeadroom,
+            sinkCapabilityPotentialEDRHeadroom: configuration.clientSinkPotentialEDRHeadroom,
+            sinkCapabilityCurrentPeakLuminanceNits: configuration.clientSinkCurrentPeakLuminanceNits,
+            sinkCapabilityPotentialPeakLuminanceNits: configuration.clientSinkPotentialPeakLuminanceNits,
+            sinkRequestDynamicRangeTransportRawValue: Int(configuration.requestedDynamicRangeTransport.rawValue),
+            sinkCapabilitySupportsFrameGatedHDR: configuration.clientSinkSupportsFrameGatedHDR,
+            sinkCapabilitySupportsHDRTileOverlay: configuration.clientSinkSupportsHDRTileOverlay,
+            sinkCapabilitySupportsPerFrameHDRMetadata: configuration.clientSinkSupportsPerFrameHDRMetadata
         )
     }
 
@@ -181,21 +197,21 @@ public final class ApolloBridgeConfigurationBox: NSObject {
             targetVideoBitRateKbps: targetVideoBitRateKbps,
             requestedWidth: requestedWidth,
             requestedHeight: requestedHeight,
-            clientSinkGamut: ApolloBridgeObjCFacade.clientSinkGamut(fromRawValue: clientSinkGamutRawValue),
-            clientSinkTransfer: ApolloBridgeObjCFacade.clientSinkTransfer(fromRawValue: clientSinkTransferRawValue),
-            effectiveSinkGamut: ApolloBridgeObjCFacade.clientSinkGamut(fromRawValue: effectiveSinkGamutRawValue),
-            effectiveSinkTransfer: ApolloBridgeObjCFacade.clientSinkTransfer(fromRawValue: effectiveSinkTransferRawValue),
+            clientSinkGamut: ApolloBridgeObjCFacade.clientSinkGamut(fromRawValue: sinkCapabilityGamutRawValue),
+            clientSinkTransfer: ApolloBridgeObjCFacade.clientSinkTransfer(fromRawValue: sinkCapabilityTransferRawValue),
+            effectiveSinkGamut: ApolloBridgeObjCFacade.clientSinkGamut(fromRawValue: effectiveDisplayGamutRawValue),
+            effectiveSinkTransfer: ApolloBridgeObjCFacade.clientSinkTransfer(fromRawValue: effectiveDisplayTransferRawValue),
             hdrStaticMetadata: hdrStaticMetadata,
-            clientSinkCurrentEDRHeadroom: clientSinkCurrentEDRHeadroom,
-            clientSinkPotentialEDRHeadroom: clientSinkPotentialEDRHeadroom,
-            clientSinkCurrentPeakLuminanceNits: clientSinkCurrentPeakLuminanceNits,
-            clientSinkPotentialPeakLuminanceNits: clientSinkPotentialPeakLuminanceNits,
+            clientSinkCurrentEDRHeadroom: sinkCapabilityCurrentEDRHeadroom,
+            clientSinkPotentialEDRHeadroom: sinkCapabilityPotentialEDRHeadroom,
+            clientSinkCurrentPeakLuminanceNits: sinkCapabilityCurrentPeakLuminanceNits,
+            clientSinkPotentialPeakLuminanceNits: sinkCapabilityPotentialPeakLuminanceNits,
             requestedDynamicRangeTransport: ApolloCoreDynamicRangeTransport(
-                rawValue: UInt32(requestedDynamicRangeTransportRawValue)
+                rawValue: UInt32(sinkRequestDynamicRangeTransportRawValue)
             ) ?? ApolloCoreDynamicRangeTransportUnknown,
-            clientSinkSupportsFrameGatedHDR: clientSinkSupportsFrameGatedHDR,
-            clientSinkSupportsHDRTileOverlay: clientSinkSupportsHDRTileOverlay,
-            clientSinkSupportsPerFrameHDRMetadata: clientSinkSupportsPerFrameHDRMetadata
+            clientSinkSupportsFrameGatedHDR: sinkCapabilitySupportsFrameGatedHDR,
+            clientSinkSupportsHDRTileOverlay: sinkCapabilitySupportsHDRTileOverlay,
+            clientSinkSupportsPerFrameHDRMetadata: sinkCapabilitySupportsPerFrameHDRMetadata
         )
     }
 }

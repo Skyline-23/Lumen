@@ -1078,20 +1078,8 @@ void ApolloCoreCaptureRequestPublishVideo(
   int32_t target_video_bitrate_kbps,
   int32_t requested_width,
   int32_t requested_height,
-  int32_t client_sink_gamut,
-  int32_t client_sink_transfer,
-  int32_t effective_sink_gamut,
-  int32_t effective_sink_transfer,
-  bool has_effective_hdr_metadata,
-  ApolloCoreHDRStaticMetadata effective_hdr_metadata,
-  float client_sink_current_edr_headroom,
-  float client_sink_potential_edr_headroom,
-  int32_t client_sink_current_peak_luminance_nits,
-  int32_t client_sink_potential_peak_luminance_nits,
-  ApolloCoreDynamicRangeTransport requested_dynamic_range_transport,
-  bool client_sink_supports_frame_gated_hdr,
-  bool client_sink_supports_hdr_tile_overlay,
-  bool client_sink_supports_per_frame_hdr_metadata
+  ApolloCoreSinkRequest sink_request,
+  ApolloCoreEffectiveDisplayState effective_display_state
 ) {
   auto *state = shared_capture_request_state();
   {
@@ -1108,20 +1096,24 @@ void ApolloCoreCaptureRequestPublishVideo(
     state->snapshot.target_video_bitrate_kbps = std::max<int32_t>(target_video_bitrate_kbps, 0);
     state->snapshot.requested_width = std::max<int32_t>(requested_width, 0);
     state->snapshot.requested_height = std::max<int32_t>(requested_height, 0);
-    state->snapshot.client_sink_gamut = std::max<int32_t>(client_sink_gamut, 0);
-    state->snapshot.client_sink_transfer = std::max<int32_t>(client_sink_transfer, 0);
-    state->snapshot.effective_sink_gamut = std::max<int32_t>(effective_sink_gamut, 0);
-    state->snapshot.effective_sink_transfer = std::max<int32_t>(effective_sink_transfer, 0);
-    state->snapshot.has_effective_hdr_metadata = has_effective_hdr_metadata;
-    state->snapshot.effective_hdr_metadata = effective_hdr_metadata;
-    state->snapshot.client_sink_current_edr_headroom = std::max(client_sink_current_edr_headroom, 0.0f);
-    state->snapshot.client_sink_potential_edr_headroom = std::max(client_sink_potential_edr_headroom, 0.0f);
-    state->snapshot.client_sink_current_peak_luminance_nits = std::max<int32_t>(client_sink_current_peak_luminance_nits, 0);
-    state->snapshot.client_sink_potential_peak_luminance_nits = std::max<int32_t>(client_sink_potential_peak_luminance_nits, 0);
-    state->snapshot.requested_dynamic_range_transport = requested_dynamic_range_transport;
-    state->snapshot.client_sink_supports_frame_gated_hdr = client_sink_supports_frame_gated_hdr;
-    state->snapshot.client_sink_supports_hdr_tile_overlay = client_sink_supports_hdr_tile_overlay;
-    state->snapshot.client_sink_supports_per_frame_hdr_metadata = client_sink_supports_per_frame_hdr_metadata;
+    state->snapshot.sink_request.mode.hidpi = sink_request.mode.hidpi;
+    state->snapshot.sink_request.mode.scale_explicit = sink_request.mode.scale_explicit;
+    state->snapshot.sink_request.mode.mode_is_logical = sink_request.mode.mode_is_logical;
+    state->snapshot.sink_request.mode.scale_percent = std::max<int32_t>(sink_request.mode.scale_percent, 0);
+    state->snapshot.sink_request.capability.gamut = std::max<int32_t>(sink_request.capability.gamut, 0);
+    state->snapshot.sink_request.capability.transfer = std::max<int32_t>(sink_request.capability.transfer, 0);
+    state->snapshot.sink_request.capability.current_edr_headroom = std::max(sink_request.capability.current_edr_headroom, 0.0f);
+    state->snapshot.sink_request.capability.potential_edr_headroom = std::max(sink_request.capability.potential_edr_headroom, 0.0f);
+    state->snapshot.sink_request.capability.current_peak_luminance_nits = std::max<int32_t>(sink_request.capability.current_peak_luminance_nits, 0);
+    state->snapshot.sink_request.capability.potential_peak_luminance_nits = std::max<int32_t>(sink_request.capability.potential_peak_luminance_nits, 0);
+    state->snapshot.sink_request.capability.supports_frame_gated_hdr = sink_request.capability.supports_frame_gated_hdr;
+    state->snapshot.sink_request.capability.supports_hdr_tile_overlay = sink_request.capability.supports_hdr_tile_overlay;
+    state->snapshot.sink_request.capability.supports_per_frame_hdr_metadata = sink_request.capability.supports_per_frame_hdr_metadata;
+    state->snapshot.sink_request.dynamic_range_transport = sink_request.dynamic_range_transport;
+    state->snapshot.effective_display_state.gamut = std::max<int32_t>(effective_display_state.gamut, 0);
+    state->snapshot.effective_display_state.transfer = std::max<int32_t>(effective_display_state.transfer, 0);
+    state->snapshot.effective_display_state.has_hdr_static_metadata = effective_display_state.has_hdr_static_metadata;
+    state->snapshot.effective_display_state.hdr_static_metadata = effective_display_state.hdr_static_metadata;
   }
   state->change_cv.notify_all();
 }

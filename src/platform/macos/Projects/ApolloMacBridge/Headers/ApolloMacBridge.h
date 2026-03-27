@@ -33,20 +33,8 @@ typedef struct ApolloMacBridgeCaptureConfiguration {
   int32_t target_video_bitrate_kbps;
   int32_t requested_width;
   int32_t requested_height;
-  int32_t client_sink_gamut;
-  int32_t client_sink_transfer;
-  int32_t effective_sink_gamut;
-  int32_t effective_sink_transfer;
-  bool has_hdr_static_metadata;
-  ApolloCoreHDRStaticMetadata hdr_static_metadata;
-  float client_sink_current_edr_headroom;
-  float client_sink_potential_edr_headroom;
-  int32_t client_sink_current_peak_luminance_nits;
-  int32_t client_sink_potential_peak_luminance_nits;
-  ApolloCoreDynamicRangeTransport requested_dynamic_range_transport;
-  bool client_sink_supports_frame_gated_hdr;
-  bool client_sink_supports_hdr_tile_overlay;
-  bool client_sink_supports_per_frame_hdr_metadata;
+  ApolloCoreSinkRequest sink_request;
+  ApolloCoreEffectiveDisplayState effective_display_state;
 } ApolloMacBridgeCaptureConfiguration;
 
 typedef enum ApolloMacBridgeAudioSourceKind {

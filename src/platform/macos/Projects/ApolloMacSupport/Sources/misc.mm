@@ -371,7 +371,7 @@ namespace platf {
 
     effective_display_state_t resolve_capture_request_effective_display_state_impl(
       NSScreen *screen,
-      int requested_dynamic_range_transport,
+      video::dynamic_range_transport_e requested_dynamic_range_transport,
       int client_sink_gamut,
       int client_sink_transfer
     ) {
@@ -536,7 +536,7 @@ namespace platf {
           } :
           resolve_capture_request_effective_display_state_impl(
             screen,
-            preferences.requested_dynamic_range_transport,
+            static_cast<video::dynamic_range_transport_e>(preferences.requested_dynamic_range_transport),
             preferences.client_sink_gamut,
             preferences.client_sink_transfer
           );
@@ -1763,7 +1763,7 @@ namespace platf {
 
   effective_display_state_t resolve_capture_request_effective_display_state(
     std::uint32_t display_id,
-    int requested_dynamic_range_transport,
+    video::dynamic_range_transport_e requested_dynamic_range_transport,
     int client_sink_gamut,
     int client_sink_transfer
   ) {

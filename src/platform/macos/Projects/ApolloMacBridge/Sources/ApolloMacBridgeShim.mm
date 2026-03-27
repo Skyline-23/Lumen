@@ -125,33 +125,37 @@ namespace {
     result.target_video_bitrate_kbps = static_cast<int32_t>(configuration.targetVideoBitRateKbps);
     result.requested_width = static_cast<int32_t>(configuration.requestedWidth);
     result.requested_height = static_cast<int32_t>(configuration.requestedHeight);
-    result.client_sink_gamut = static_cast<int32_t>(configuration.clientSinkGamutRawValue);
-    result.client_sink_transfer = static_cast<int32_t>(configuration.clientSinkTransferRawValue);
-    result.effective_sink_gamut = static_cast<int32_t>(configuration.effectiveSinkGamutRawValue);
-    result.effective_sink_transfer = static_cast<int32_t>(configuration.effectiveSinkTransferRawValue);
-    result.has_hdr_static_metadata = configuration.hasHDRStaticMetadata;
-    result.hdr_static_metadata.red_primary_x = static_cast<int32_t>(configuration.hdrRedPrimaryX);
-    result.hdr_static_metadata.red_primary_y = static_cast<int32_t>(configuration.hdrRedPrimaryY);
-    result.hdr_static_metadata.green_primary_x = static_cast<int32_t>(configuration.hdrGreenPrimaryX);
-    result.hdr_static_metadata.green_primary_y = static_cast<int32_t>(configuration.hdrGreenPrimaryY);
-    result.hdr_static_metadata.blue_primary_x = static_cast<int32_t>(configuration.hdrBluePrimaryX);
-    result.hdr_static_metadata.blue_primary_y = static_cast<int32_t>(configuration.hdrBluePrimaryY);
-    result.hdr_static_metadata.white_point_x = static_cast<int32_t>(configuration.hdrWhitePointX);
-    result.hdr_static_metadata.white_point_y = static_cast<int32_t>(configuration.hdrWhitePointY);
-    result.hdr_static_metadata.max_display_luminance = static_cast<int32_t>(configuration.hdrMaxDisplayLuminance);
-    result.hdr_static_metadata.min_display_luminance = static_cast<int32_t>(configuration.hdrMinDisplayLuminance);
-    result.hdr_static_metadata.max_content_light_level = static_cast<int32_t>(configuration.hdrMaxContentLightLevel);
-    result.hdr_static_metadata.max_frame_average_light_level = static_cast<int32_t>(configuration.hdrMaxFrameAverageLightLevel);
-    result.hdr_static_metadata.max_full_frame_luminance = static_cast<int32_t>(configuration.hdrMaxFullFrameLuminance);
-    result.client_sink_current_edr_headroom = configuration.clientSinkCurrentEDRHeadroom;
-    result.client_sink_potential_edr_headroom = configuration.clientSinkPotentialEDRHeadroom;
-    result.client_sink_current_peak_luminance_nits = static_cast<int32_t>(configuration.clientSinkCurrentPeakLuminanceNits);
-    result.client_sink_potential_peak_luminance_nits = static_cast<int32_t>(configuration.clientSinkPotentialPeakLuminanceNits);
-    result.requested_dynamic_range_transport =
-      static_cast<ApolloCoreDynamicRangeTransport>(configuration.requestedDynamicRangeTransportRawValue);
-    result.client_sink_supports_frame_gated_hdr = configuration.clientSinkSupportsFrameGatedHDR;
-    result.client_sink_supports_hdr_tile_overlay = configuration.clientSinkSupportsHDRTileOverlay;
-    result.client_sink_supports_per_frame_hdr_metadata = configuration.clientSinkSupportsPerFrameHDRMetadata;
+    result.sink_request.mode.hidpi = configuration.sinkModeHIDPI;
+    result.sink_request.mode.scale_explicit = configuration.sinkModeScaleExplicit;
+    result.sink_request.mode.mode_is_logical = configuration.sinkModeIsLogical;
+    result.sink_request.mode.scale_percent = static_cast<int32_t>(configuration.sinkModeScalePercent);
+    result.sink_request.capability.gamut = static_cast<int32_t>(configuration.sinkCapabilityGamutRawValue);
+    result.sink_request.capability.transfer = static_cast<int32_t>(configuration.sinkCapabilityTransferRawValue);
+    result.sink_request.capability.current_edr_headroom = configuration.sinkCapabilityCurrentEDRHeadroom;
+    result.sink_request.capability.potential_edr_headroom = configuration.sinkCapabilityPotentialEDRHeadroom;
+    result.sink_request.capability.current_peak_luminance_nits = static_cast<int32_t>(configuration.sinkCapabilityCurrentPeakLuminanceNits);
+    result.sink_request.capability.potential_peak_luminance_nits = static_cast<int32_t>(configuration.sinkCapabilityPotentialPeakLuminanceNits);
+    result.sink_request.capability.supports_frame_gated_hdr = configuration.sinkCapabilitySupportsFrameGatedHDR;
+    result.sink_request.capability.supports_hdr_tile_overlay = configuration.sinkCapabilitySupportsHDRTileOverlay;
+    result.sink_request.capability.supports_per_frame_hdr_metadata = configuration.sinkCapabilitySupportsPerFrameHDRMetadata;
+    result.sink_request.dynamic_range_transport =
+      static_cast<ApolloCoreDynamicRangeTransport>(configuration.sinkRequestDynamicRangeTransportRawValue);
+    result.effective_display_state.gamut = static_cast<int32_t>(configuration.effectiveDisplayGamutRawValue);
+    result.effective_display_state.transfer = static_cast<int32_t>(configuration.effectiveDisplayTransferRawValue);
+    result.effective_display_state.has_hdr_static_metadata = configuration.hasHDRStaticMetadata;
+    result.effective_display_state.hdr_static_metadata.red_primary_x = static_cast<int32_t>(configuration.hdrRedPrimaryX);
+    result.effective_display_state.hdr_static_metadata.red_primary_y = static_cast<int32_t>(configuration.hdrRedPrimaryY);
+    result.effective_display_state.hdr_static_metadata.green_primary_x = static_cast<int32_t>(configuration.hdrGreenPrimaryX);
+    result.effective_display_state.hdr_static_metadata.green_primary_y = static_cast<int32_t>(configuration.hdrGreenPrimaryY);
+    result.effective_display_state.hdr_static_metadata.blue_primary_x = static_cast<int32_t>(configuration.hdrBluePrimaryX);
+    result.effective_display_state.hdr_static_metadata.blue_primary_y = static_cast<int32_t>(configuration.hdrBluePrimaryY);
+    result.effective_display_state.hdr_static_metadata.white_point_x = static_cast<int32_t>(configuration.hdrWhitePointX);
+    result.effective_display_state.hdr_static_metadata.white_point_y = static_cast<int32_t>(configuration.hdrWhitePointY);
+    result.effective_display_state.hdr_static_metadata.max_display_luminance = static_cast<int32_t>(configuration.hdrMaxDisplayLuminance);
+    result.effective_display_state.hdr_static_metadata.min_display_luminance = static_cast<int32_t>(configuration.hdrMinDisplayLuminance);
+    result.effective_display_state.hdr_static_metadata.max_content_light_level = static_cast<int32_t>(configuration.hdrMaxContentLightLevel);
+    result.effective_display_state.hdr_static_metadata.max_frame_average_light_level = static_cast<int32_t>(configuration.hdrMaxFrameAverageLightLevel);
+    result.effective_display_state.hdr_static_metadata.max_full_frame_luminance = static_cast<int32_t>(configuration.hdrMaxFullFrameLuminance);
     return result;
   }
 
@@ -168,32 +172,36 @@ namespace {
      targetVideoBitRateKbps:static_cast<NSInteger>(configuration.target_video_bitrate_kbps)
            requestedWidth:static_cast<NSInteger>(configuration.requested_width)
           requestedHeight:static_cast<NSInteger>(configuration.requested_height)
- clientSinkGamutRawValue:static_cast<NSInteger>(configuration.client_sink_gamut)
-clientSinkTransferRawValue:static_cast<NSInteger>(configuration.client_sink_transfer)
-effectiveSinkGamutRawValue:static_cast<NSInteger>(configuration.effective_sink_gamut)
-effectiveSinkTransferRawValue:static_cast<NSInteger>(configuration.effective_sink_transfer)
-         hasHDRStaticMetadata:configuration.has_hdr_static_metadata
-               hdrRedPrimaryX:static_cast<NSInteger>(configuration.hdr_static_metadata.red_primary_x)
-               hdrRedPrimaryY:static_cast<NSInteger>(configuration.hdr_static_metadata.red_primary_y)
-             hdrGreenPrimaryX:static_cast<NSInteger>(configuration.hdr_static_metadata.green_primary_x)
-             hdrGreenPrimaryY:static_cast<NSInteger>(configuration.hdr_static_metadata.green_primary_y)
-              hdrBluePrimaryX:static_cast<NSInteger>(configuration.hdr_static_metadata.blue_primary_x)
-              hdrBluePrimaryY:static_cast<NSInteger>(configuration.hdr_static_metadata.blue_primary_y)
-              hdrWhitePointX:static_cast<NSInteger>(configuration.hdr_static_metadata.white_point_x)
-              hdrWhitePointY:static_cast<NSInteger>(configuration.hdr_static_metadata.white_point_y)
-     hdrMaxDisplayLuminance:static_cast<NSInteger>(configuration.hdr_static_metadata.max_display_luminance)
-     hdrMinDisplayLuminance:static_cast<NSInteger>(configuration.hdr_static_metadata.min_display_luminance)
-    hdrMaxContentLightLevel:static_cast<NSInteger>(configuration.hdr_static_metadata.max_content_light_level)
-hdrMaxFrameAverageLightLevel:static_cast<NSInteger>(configuration.hdr_static_metadata.max_frame_average_light_level)
-   hdrMaxFullFrameLuminance:static_cast<NSInteger>(configuration.hdr_static_metadata.max_full_frame_luminance)
-clientSinkCurrentEDRHeadroom:configuration.client_sink_current_edr_headroom
-clientSinkPotentialEDRHeadroom:configuration.client_sink_potential_edr_headroom
-clientSinkCurrentPeakLuminanceNits:static_cast<NSInteger>(configuration.client_sink_current_peak_luminance_nits)
-clientSinkPotentialPeakLuminanceNits:static_cast<NSInteger>(configuration.client_sink_potential_peak_luminance_nits)
-requestedDynamicRangeTransportRawValue:static_cast<NSInteger>(configuration.requested_dynamic_range_transport)
-clientSinkSupportsFrameGatedHDR:configuration.client_sink_supports_frame_gated_hdr
-clientSinkSupportsHDRTileOverlay:configuration.client_sink_supports_hdr_tile_overlay
-clientSinkSupportsPerFrameHDRMetadata:configuration.client_sink_supports_per_frame_hdr_metadata];
+      sinkModeHIDPI:configuration.sink_request.mode.hidpi
+sinkModeScaleExplicit:configuration.sink_request.mode.scale_explicit
+    sinkModeIsLogical:configuration.sink_request.mode.mode_is_logical
+   sinkModeScalePercent:static_cast<NSInteger>(configuration.sink_request.mode.scale_percent)
+sinkCapabilityGamutRawValue:static_cast<NSInteger>(configuration.sink_request.capability.gamut)
+sinkCapabilityTransferRawValue:static_cast<NSInteger>(configuration.sink_request.capability.transfer)
+effectiveDisplayGamutRawValue:static_cast<NSInteger>(configuration.effective_display_state.gamut)
+effectiveDisplayTransferRawValue:static_cast<NSInteger>(configuration.effective_display_state.transfer)
+         hasHDRStaticMetadata:configuration.effective_display_state.has_hdr_static_metadata
+               hdrRedPrimaryX:static_cast<NSInteger>(configuration.effective_display_state.hdr_static_metadata.red_primary_x)
+               hdrRedPrimaryY:static_cast<NSInteger>(configuration.effective_display_state.hdr_static_metadata.red_primary_y)
+             hdrGreenPrimaryX:static_cast<NSInteger>(configuration.effective_display_state.hdr_static_metadata.green_primary_x)
+             hdrGreenPrimaryY:static_cast<NSInteger>(configuration.effective_display_state.hdr_static_metadata.green_primary_y)
+              hdrBluePrimaryX:static_cast<NSInteger>(configuration.effective_display_state.hdr_static_metadata.blue_primary_x)
+              hdrBluePrimaryY:static_cast<NSInteger>(configuration.effective_display_state.hdr_static_metadata.blue_primary_y)
+              hdrWhitePointX:static_cast<NSInteger>(configuration.effective_display_state.hdr_static_metadata.white_point_x)
+              hdrWhitePointY:static_cast<NSInteger>(configuration.effective_display_state.hdr_static_metadata.white_point_y)
+     hdrMaxDisplayLuminance:static_cast<NSInteger>(configuration.effective_display_state.hdr_static_metadata.max_display_luminance)
+     hdrMinDisplayLuminance:static_cast<NSInteger>(configuration.effective_display_state.hdr_static_metadata.min_display_luminance)
+    hdrMaxContentLightLevel:static_cast<NSInteger>(configuration.effective_display_state.hdr_static_metadata.max_content_light_level)
+hdrMaxFrameAverageLightLevel:static_cast<NSInteger>(configuration.effective_display_state.hdr_static_metadata.max_frame_average_light_level)
+   hdrMaxFullFrameLuminance:static_cast<NSInteger>(configuration.effective_display_state.hdr_static_metadata.max_full_frame_luminance)
+sinkCapabilityCurrentEDRHeadroom:configuration.sink_request.capability.current_edr_headroom
+sinkCapabilityPotentialEDRHeadroom:configuration.sink_request.capability.potential_edr_headroom
+sinkCapabilityCurrentPeakLuminanceNits:static_cast<NSInteger>(configuration.sink_request.capability.current_peak_luminance_nits)
+sinkCapabilityPotentialPeakLuminanceNits:static_cast<NSInteger>(configuration.sink_request.capability.potential_peak_luminance_nits)
+sinkRequestDynamicRangeTransportRawValue:static_cast<NSInteger>(configuration.sink_request.dynamic_range_transport)
+sinkCapabilitySupportsFrameGatedHDR:configuration.sink_request.capability.supports_frame_gated_hdr
+sinkCapabilitySupportsHDRTileOverlay:configuration.sink_request.capability.supports_hdr_tile_overlay
+sinkCapabilitySupportsPerFrameHDRMetadata:configuration.sink_request.capability.supports_per_frame_hdr_metadata];
   }
 
   ApolloMacBridgeAudioCaptureConfiguration to_audio_bridge_configuration(

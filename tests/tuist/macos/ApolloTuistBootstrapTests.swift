@@ -503,6 +503,30 @@ final class ApolloTuistBootstrapTests: XCTestCase {
             hdrStaticMetadata.max_content_light_level = 1_000
             hdrStaticMetadata.max_frame_average_light_level = 400
             hdrStaticMetadata.max_full_frame_luminance = 1_000
+            var sinkMode = ApolloCoreSinkMode()
+            sinkMode.hidpi = true
+            sinkMode.scale_explicit = true
+            sinkMode.mode_is_logical = true
+            sinkMode.scale_percent = 200
+            var sinkCapability = ApolloCoreSinkCapability()
+            sinkCapability.gamut = 2
+            sinkCapability.transfer = 2
+            sinkCapability.current_edr_headroom = 2.8
+            sinkCapability.potential_edr_headroom = 8.4
+            sinkCapability.current_peak_luminance_nits = 800
+            sinkCapability.potential_peak_luminance_nits = 1600
+            sinkCapability.supports_frame_gated_hdr = true
+            sinkCapability.supports_hdr_tile_overlay = false
+            sinkCapability.supports_per_frame_hdr_metadata = true
+            var sinkRequest = ApolloCoreSinkRequest()
+            sinkRequest.mode = sinkMode
+            sinkRequest.capability = sinkCapability
+            sinkRequest.dynamic_range_transport = ApolloCoreDynamicRangeTransportFrameGatedHDR
+            var effectiveDisplayState = ApolloCoreEffectiveDisplayState()
+            effectiveDisplayState.gamut = 2
+            effectiveDisplayState.transfer = 2
+            effectiveDisplayState.has_hdr_static_metadata = true
+            effectiveDisplayState.hdr_static_metadata = hdrStaticMetadata
             ApolloCoreCaptureRequestPublishVideo(
                 17,
                 ApolloCoreCaptureCodecHEVC,
@@ -513,20 +537,8 @@ final class ApolloTuistBootstrapTests: XCTestCase {
                 41_000,
                 3840,
                 2160,
-                2,
-                2,
-                2,
-                2,
-                true,
-                hdrStaticMetadata,
-                2.8,
-                8.4,
-                800,
-                1600,
-                ApolloCoreDynamicRangeTransportFrameGatedHDR,
-                true,
-                false,
-                true
+                sinkRequest,
+                effectiveDisplayState
             )
             ApolloCoreCaptureRequestPublishAudio(
                 ApolloCoreAudioCaptureSourceKindSystemOutput,
@@ -553,21 +565,25 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(updatedSnapshot.target_video_bitrate_kbps, 41_000)
         XCTAssertEqual(updatedSnapshot.requested_width, 3840)
         XCTAssertEqual(updatedSnapshot.requested_height, 2160)
-        XCTAssertEqual(updatedSnapshot.client_sink_gamut, 2)
-        XCTAssertEqual(updatedSnapshot.client_sink_transfer, 2)
-        XCTAssertEqual(updatedSnapshot.effective_sink_gamut, 2)
-        XCTAssertEqual(updatedSnapshot.effective_sink_transfer, 2)
-        XCTAssertTrue(updatedSnapshot.has_effective_hdr_metadata)
-        XCTAssertEqual(updatedSnapshot.effective_hdr_metadata.max_display_luminance, 1_000)
-        XCTAssertEqual(updatedSnapshot.effective_hdr_metadata.max_frame_average_light_level, 400)
-        XCTAssertEqual(updatedSnapshot.client_sink_current_edr_headroom, 2.8)
-        XCTAssertEqual(updatedSnapshot.client_sink_potential_edr_headroom, 8.4)
-        XCTAssertEqual(updatedSnapshot.client_sink_current_peak_luminance_nits, 800)
-        XCTAssertEqual(updatedSnapshot.client_sink_potential_peak_luminance_nits, 1600)
-        XCTAssertEqual(updatedSnapshot.requested_dynamic_range_transport, ApolloCoreDynamicRangeTransportFrameGatedHDR)
-        XCTAssertTrue(updatedSnapshot.client_sink_supports_frame_gated_hdr)
-        XCTAssertFalse(updatedSnapshot.client_sink_supports_hdr_tile_overlay)
-        XCTAssertTrue(updatedSnapshot.client_sink_supports_per_frame_hdr_metadata)
+        XCTAssertTrue(updatedSnapshot.sink_request.mode.hidpi)
+        XCTAssertTrue(updatedSnapshot.sink_request.mode.scale_explicit)
+        XCTAssertTrue(updatedSnapshot.sink_request.mode.mode_is_logical)
+        XCTAssertEqual(updatedSnapshot.sink_request.mode.scale_percent, 200)
+        XCTAssertEqual(updatedSnapshot.sink_request.capability.gamut, 2)
+        XCTAssertEqual(updatedSnapshot.sink_request.capability.transfer, 2)
+        XCTAssertEqual(updatedSnapshot.effective_display_state.gamut, 2)
+        XCTAssertEqual(updatedSnapshot.effective_display_state.transfer, 2)
+        XCTAssertTrue(updatedSnapshot.effective_display_state.has_hdr_static_metadata)
+        XCTAssertEqual(updatedSnapshot.effective_display_state.hdr_static_metadata.max_display_luminance, 1_000)
+        XCTAssertEqual(updatedSnapshot.effective_display_state.hdr_static_metadata.max_frame_average_light_level, 400)
+        XCTAssertEqual(updatedSnapshot.sink_request.capability.current_edr_headroom, 2.8)
+        XCTAssertEqual(updatedSnapshot.sink_request.capability.potential_edr_headroom, 8.4)
+        XCTAssertEqual(updatedSnapshot.sink_request.capability.current_peak_luminance_nits, 800)
+        XCTAssertEqual(updatedSnapshot.sink_request.capability.potential_peak_luminance_nits, 1600)
+        XCTAssertEqual(updatedSnapshot.sink_request.dynamic_range_transport, ApolloCoreDynamicRangeTransportFrameGatedHDR)
+        XCTAssertTrue(updatedSnapshot.sink_request.capability.supports_frame_gated_hdr)
+        XCTAssertFalse(updatedSnapshot.sink_request.capability.supports_hdr_tile_overlay)
+        XCTAssertTrue(updatedSnapshot.sink_request.capability.supports_per_frame_hdr_metadata)
         XCTAssertEqual(updatedSnapshot.audio_source_kind, ApolloCoreAudioCaptureSourceKindSystemOutput)
         XCTAssertEqual(updatedSnapshot.audio_frame_size, 480)
 

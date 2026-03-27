@@ -38,6 +38,31 @@ typedef enum ApolloCoreDynamicRangeTransport {
   ApolloCoreDynamicRangeTransportSDRBaseHDROverlay = 4
 } ApolloCoreDynamicRangeTransport;
 
+typedef struct ApolloCoreSinkMode {
+  bool hidpi;
+  bool scale_explicit;
+  bool mode_is_logical;
+  int32_t scale_percent;
+} ApolloCoreSinkMode;
+
+typedef struct ApolloCoreSinkCapability {
+  int32_t gamut;
+  int32_t transfer;
+  float current_edr_headroom;
+  float potential_edr_headroom;
+  int32_t current_peak_luminance_nits;
+  int32_t potential_peak_luminance_nits;
+  bool supports_frame_gated_hdr;
+  bool supports_hdr_tile_overlay;
+  bool supports_per_frame_hdr_metadata;
+} ApolloCoreSinkCapability;
+
+typedef struct ApolloCoreSinkRequest {
+  ApolloCoreSinkMode mode;
+  ApolloCoreSinkCapability capability;
+  ApolloCoreDynamicRangeTransport dynamic_range_transport;
+} ApolloCoreSinkRequest;
+
 typedef enum ApolloCoreAudioCaptureSourceKind {
   ApolloCoreAudioCaptureSourceKindUnknown = -1,
   ApolloCoreAudioCaptureSourceKindMicrophone = 0,
@@ -68,6 +93,13 @@ typedef struct ApolloCoreHDRStaticMetadata {
   int32_t max_frame_average_light_level;
   int32_t max_full_frame_luminance;
 } ApolloCoreHDRStaticMetadata;
+
+typedef struct ApolloCoreEffectiveDisplayState {
+  int32_t gamut;
+  int32_t transfer;
+  bool has_hdr_static_metadata;
+  ApolloCoreHDRStaticMetadata hdr_static_metadata;
+} ApolloCoreEffectiveDisplayState;
 
 typedef struct ApolloCoreEncodedCaptureIngress ApolloCoreEncodedCaptureIngress;
 typedef struct ApolloCoreAudioCaptureIngress ApolloCoreAudioCaptureIngress;
@@ -253,25 +285,13 @@ typedef struct ApolloCoreCaptureRequestSnapshot {
   int32_t target_video_bitrate_kbps;
   int32_t requested_width;
   int32_t requested_height;
-  int32_t client_sink_gamut;
-  int32_t client_sink_transfer;
-  int32_t effective_sink_gamut;
-  int32_t effective_sink_transfer;
-  bool has_effective_hdr_metadata;
-  ApolloCoreHDRStaticMetadata effective_hdr_metadata;
+  ApolloCoreSinkRequest sink_request;
+  ApolloCoreEffectiveDisplayState effective_display_state;
   ApolloCoreAudioCaptureSourceKind audio_source_kind;
   bool audio_excludes_current_process;
   int32_t audio_sample_rate;
   int32_t audio_channel_count;
   int32_t audio_frame_size;
-  float client_sink_current_edr_headroom;
-  float client_sink_potential_edr_headroom;
-  int32_t client_sink_current_peak_luminance_nits;
-  int32_t client_sink_potential_peak_luminance_nits;
-  ApolloCoreDynamicRangeTransport requested_dynamic_range_transport;
-  bool client_sink_supports_frame_gated_hdr;
-  bool client_sink_supports_hdr_tile_overlay;
-  bool client_sink_supports_per_frame_hdr_metadata;
 } ApolloCoreCaptureRequestSnapshot;
 
 ApolloCoreAudioCaptureIngress *ApolloCoreAudioCaptureIngressCreate(void);
@@ -357,20 +377,8 @@ void ApolloCoreCaptureRequestPublishVideo(
   int32_t target_video_bitrate_kbps,
   int32_t requested_width,
   int32_t requested_height,
-  int32_t client_sink_gamut,
-  int32_t client_sink_transfer,
-  int32_t effective_sink_gamut,
-  int32_t effective_sink_transfer,
-  bool has_effective_hdr_metadata,
-  ApolloCoreHDRStaticMetadata effective_hdr_metadata,
-  float client_sink_current_edr_headroom,
-  float client_sink_potential_edr_headroom,
-  int32_t client_sink_current_peak_luminance_nits,
-  int32_t client_sink_potential_peak_luminance_nits,
-  ApolloCoreDynamicRangeTransport requested_dynamic_range_transport,
-  bool client_sink_supports_frame_gated_hdr,
-  bool client_sink_supports_hdr_tile_overlay,
-  bool client_sink_supports_per_frame_hdr_metadata
+  ApolloCoreSinkRequest sink_request,
+  ApolloCoreEffectiveDisplayState effective_display_state
 );
 void ApolloCoreCaptureRequestPublishAudio(
   ApolloCoreAudioCaptureSourceKind source_kind,

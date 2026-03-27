@@ -12,6 +12,7 @@
 #include <CoreGraphics/CoreGraphics.h>
 
 // local includes
+#include "src/session_transport.h"
 #include "src/platform/common.h"
 
 namespace platf {
@@ -103,7 +104,7 @@ namespace platf {
   void post_runtime_web_ui_ready_notification(const std::string &url);
   effective_display_state_t resolve_capture_request_effective_display_state(
     std::uint32_t display_id,
-    int requested_dynamic_range_transport,
+    video::dynamic_range_transport_e requested_dynamic_range_transport,
     int client_sink_gamut,
     int client_sink_transfer
   );

@@ -12,6 +12,7 @@
 // local includes
 #include "input.h"
 #include "platform/common.h"
+#include "session_transport.h"
 #include "thread_safe.h"
 #include "video_colorspace.h"
 
@@ -23,28 +24,6 @@ extern "C" {
 struct AVPacket;
 
 namespace video {
-  enum class client_sink_gamut_e : int {
-    unknown = 0,
-    srgb = 1,
-    display_p3 = 2,
-    rec2020 = 3,
-  };
-
-  enum class client_sink_transfer_e : int {
-    unknown = 0,
-    sdr = 1,
-    pq = 2,
-    hlg = 3,
-  };
-
-  enum class dynamic_range_transport_e : int {
-    unknown = 0,
-    sdr = 1,
-    full_frame_hdr = 2,
-    frame_gated_hdr = 3,
-    sdr_base_hdr_overlay = 4,
-  };
-
   enum class hdr_frame_content_e : int {
     sdr = 0,
     full_frame_hdr = 1,
@@ -173,40 +152,11 @@ namespace video {
 
     int encodingFramerate; // Requested display framerate
     bool input_only;
-    int clientSinkGamut;  // 0 - unknown, 1 - sRGB, 2 - Display P3, 3 - Rec.2020
-    int clientSinkTransfer;  // 0 - unknown, 1 - SDR, 2 - PQ, 3 - HLG
-    int clientSinkScalePercent;  // Requested display scale in percent
-    int clientSinkHiDPI;  // 0 - disabled, 1 - enabled
-    float clientSinkCurrentEDRHeadroom;  // Current EDR headroom reported by the client display
-    float clientSinkPotentialEDRHeadroom;  // Potential EDR headroom reported by the client display
-    int clientSinkCurrentPeakLuminanceNits;  // Current peak luminance reported by the client display
-    int clientSinkPotentialPeakLuminanceNits;  // Potential peak luminance reported by the client display
-    int requestedDynamicRangeTransport;  // 0 - unknown, 1 - SDR, 2 - full-frame HDR, 3 - frame-gated HDR, 4 - SDR base + HDR overlay
-    int clientSinkSupportsFrameGatedHDR;  // 0 - disabled, 1 - enabled
-    int clientSinkSupportsHDRTileOverlay;  // 0 - disabled, 1 - enabled
-    int clientSinkSupportsPerFrameHDRMetadata;  // 0 - disabled, 1 - enabled
+    sink_request_t sinkRequest;
   };
 
-  inline dynamic_range_transport_e effective_dynamic_range_transport(const int requested_transport) {
-    switch (static_cast<dynamic_range_transport_e>(requested_transport)) {
-      case dynamic_range_transport_e::sdr:
-      case dynamic_range_transport_e::full_frame_hdr:
-      case dynamic_range_transport_e::frame_gated_hdr:
-      case dynamic_range_transport_e::sdr_base_hdr_overlay:
-        return static_cast<dynamic_range_transport_e>(requested_transport);
-      case dynamic_range_transport_e::unknown:
-      default:
-        return dynamic_range_transport_e::sdr;
-    }
-  }
-
   inline dynamic_range_transport_e effective_dynamic_range_transport(const config_t &config) {
-    return effective_dynamic_range_transport(config.requestedDynamicRangeTransport);
-  }
-
-  inline bool dynamic_range_transport_uses_hdr_stream(const dynamic_range_transport_e transport) {
-    return transport == dynamic_range_transport_e::full_frame_hdr ||
-           transport == dynamic_range_transport_e::frame_gated_hdr;
+    return effective_dynamic_range_transport(config.sinkRequest.dynamic_range_transport);
   }
 
   inline bool config_uses_hdr_stream(const config_t &config) {

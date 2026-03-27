@@ -201,13 +201,13 @@ namespace proc {
     uint32_t backing_width = requested_width;
     uint32_t backing_height = requested_height;
 
-    int scale_factor = launch_session->scale_factor;
+    int scale_factor = launch_session->sink_request.mode.scale_percent;
     if (_app.scale_factor != 100) {
       scale_factor = _app.scale_factor;
     }
 
-    if (launch_session->client_sink_mode_is_logical) {
-      if (launch_session->client_sink_hidpi && scale_factor > 100) {
+    if (launch_session->sink_request.mode.mode_is_logical) {
+      if (launch_session->sink_request.mode.hidpi && scale_factor > 100) {
         backing_width = static_cast<std::uint32_t>(std::max(2.0, std::floor((static_cast<double>(requested_width) * static_cast<double>(scale_factor)) / 100.0)));
         backing_height = static_cast<std::uint32_t>(std::max(2.0, std::floor((static_cast<double>(requested_height) * static_cast<double>(scale_factor)) / 100.0)));
         backing_width &= ~1;
@@ -218,7 +218,7 @@ namespace proc {
       render_width = static_cast<std::uint32_t>(std::max(2.0, std::floor((static_cast<double>(requested_width) * 100.0) / static_cast<double>(scale_factor))));
       render_height = static_cast<std::uint32_t>(std::max(2.0, std::floor((static_cast<double>(requested_height) * 100.0) / static_cast<double>(scale_factor))));
 #else
-      if (!launch_session->client_sink_scale_explicit) {
+      if (!launch_session->sink_request.mode.scale_explicit) {
         render_width *= ((float) scale_factor / 100);
         render_height *= ((float) scale_factor / 100);
       }
@@ -233,11 +233,12 @@ namespace proc {
     launch_session->width = render_width;
     launch_session->height = render_height;
     const auto requested_dynamic_range_transport =
-      video::effective_dynamic_range_transport(launch_session->requested_dynamic_range_transport);
+      video::effective_dynamic_range_transport(launch_session->sink_request.dynamic_range_transport);
     const bool requested_hdr_stream =
       video::dynamic_range_transport_uses_hdr_stream(requested_dynamic_range_transport);
-    this->client_sink_scale_factor = scale_factor;
-    this->client_sink_hidpi = launch_session->client_sink_hidpi;
+    this->sink_request = launch_session->sink_request;
+    this->sink_request.mode.scale_percent = scale_factor;
+    this->sink_request.dynamic_range_transport = requested_dynamic_range_transport;
     this->client_logical_width = static_cast<int>(render_width);
     this->client_logical_height = static_cast<int>(render_height);
     this->client_render_width = static_cast<int>(backing_width);
@@ -245,7 +246,7 @@ namespace proc {
     BOOST_LOG(info) << "Client launch geometry resolved: mode="sv
                     << requested_width << "x"sv << requested_height
                     << " scale-percent="sv << scale_factor
-                    << " hidpi="sv << launch_session->client_sink_hidpi
+                    << " hidpi="sv << launch_session->sink_request.mode.hidpi
                     << " backing="sv
                     << backing_width << "x"sv << backing_height
                     << " logical="sv << render_width << "x"sv << render_height;
@@ -384,9 +385,9 @@ namespace proc {
       launch_session->virtual_display ||
       _app.virtual_display ||
       requested_hdr_stream ||
-      launch_session->client_sink_hidpi ||
-      launch_session->client_sink_mode_is_logical ||
-      launch_session->scale_factor != 100;
+      launch_session->sink_request.mode.hidpi ||
+      launch_session->sink_request.mode.mode_is_logical ||
+      launch_session->sink_request.mode.scale_percent != 100;
 
     if (requires_virtual_display) {
       if (!launch_session->virtual_display && !_app.virtual_display) {
@@ -395,11 +396,11 @@ namespace proc {
                         << " requested-transport="sv
                         << static_cast<int>(requested_dynamic_range_transport)
                         << " hidpi="sv
-                        << launch_session->client_sink_hidpi
+                        << launch_session->sink_request.mode.hidpi
                         << " scale-percent="sv
-                        << launch_session->scale_factor
+                        << launch_session->sink_request.mode.scale_percent
                         << " mode-is-logical="sv
-                        << launch_session->client_sink_mode_is_logical;
+                        << launch_session->sink_request.mode.mode_is_logical;
       }
 
       std::string device_name = _app.use_app_identity ? _app.name : launch_session->device_name;
@@ -412,14 +413,14 @@ namespace proc {
         render_height,
         launch_session->fps ? static_cast<std::uint32_t>(launch_session->fps) : 60000u,
         scale_factor,
-        launch_session->client_sink_hidpi,
+        launch_session->sink_request.mode.hidpi,
         requested_hdr_stream,
-        launch_session->client_sink_gamut,
-        launch_session->client_sink_transfer,
-        launch_session->client_sink_current_edr_headroom,
-        launch_session->client_sink_potential_edr_headroom,
-        launch_session->client_sink_current_peak_luminance_nits,
-        launch_session->client_sink_potential_peak_luminance_nits
+        launch_session->sink_request.capability.gamut,
+        launch_session->sink_request.capability.transfer,
+        launch_session->sink_request.capability.current_edr_headroom,
+        launch_session->sink_request.capability.potential_edr_headroom,
+        launch_session->sink_request.capability.current_peak_luminance_nits,
+        launch_session->sink_request.capability.potential_peak_luminance_nits
       );
 
       launch_session->virtual_display = !virtual_display_name.empty();
@@ -428,16 +429,9 @@ namespace proc {
         this->virtual_display = true;
         this->virtual_display_key = device_key;
         this->display_name = virtual_display_name;
-        this->client_sink_gamut = launch_session->client_sink_gamut;
-        this->client_sink_transfer = launch_session->client_sink_transfer;
-        this->client_sink_current_edr_headroom = launch_session->client_sink_current_edr_headroom;
-        this->client_sink_potential_edr_headroom = launch_session->client_sink_potential_edr_headroom;
-        this->client_sink_current_peak_luminance_nits = launch_session->client_sink_current_peak_luminance_nits;
-        this->client_sink_potential_peak_luminance_nits = launch_session->client_sink_potential_peak_luminance_nits;
-        this->requested_dynamic_range_transport = static_cast<int>(requested_dynamic_range_transport);
-        this->client_sink_supports_frame_gated_hdr = launch_session->client_sink_supports_frame_gated_hdr;
-        this->client_sink_supports_hdr_tile_overlay = launch_session->client_sink_supports_hdr_tile_overlay;
-        this->client_sink_supports_per_frame_hdr_metadata = launch_session->client_sink_supports_per_frame_hdr_metadata;
+        this->sink_request = launch_session->sink_request;
+        this->sink_request.mode.scale_percent = scale_factor;
+        this->sink_request.dynamic_range_transport = requested_dynamic_range_transport;
         config::video.output_name = this->display_name;
         const auto virtual_display_id = static_cast<CGDirectDisplayID>(std::strtoul(virtual_display_name.c_str(), nullptr, 10));
         if (!platf::isolate_virtual_display(virtual_display_id)) {
@@ -511,7 +505,7 @@ namespace proc {
     _env["APOLLO_CLIENT_SCALE_FACTOR"] = std::to_string(scale_factor);
     _env["APOLLO_CLIENT_FPS"] = fps_str;
     _env["APOLLO_CLIENT_HDR"] = requested_hdr_stream ? "true" : "false";
-    switch (static_cast<video::client_sink_gamut_e>(launch_session->client_sink_gamut)) {
+    switch (static_cast<video::client_sink_gamut_e>(launch_session->sink_request.capability.gamut)) {
       case video::client_sink_gamut_e::display_p3:
         _env["APOLLO_CLIENT_SINK_GAMUT"] = "display-p3";
         break;
@@ -526,7 +520,7 @@ namespace proc {
         _env["APOLLO_CLIENT_SINK_GAMUT"] = "unknown";
         break;
     }
-    switch (static_cast<video::client_sink_transfer_e>(launch_session->client_sink_transfer)) {
+    switch (static_cast<video::client_sink_transfer_e>(launch_session->sink_request.capability.transfer)) {
       case video::client_sink_transfer_e::pq:
         _env["APOLLO_CLIENT_SINK_TRANSFER"] = "pq";
         break;
@@ -1015,18 +1009,7 @@ namespace proc {
     virtual_display = false;
     physical_displays_asleep = false;
     allow_client_commands = false;
-    client_sink_hidpi = false;
-    client_sink_gamut = static_cast<int>(video::client_sink_gamut_e::unknown);
-    client_sink_transfer = static_cast<int>(video::client_sink_transfer_e::unknown);
-    client_sink_current_edr_headroom = 0.0f;
-    client_sink_potential_edr_headroom = 0.0f;
-    client_sink_current_peak_luminance_nits = 0;
-    client_sink_potential_peak_luminance_nits = 0;
-    requested_dynamic_range_transport = static_cast<int>(video::dynamic_range_transport_e::unknown);
-    client_sink_supports_frame_gated_hdr = false;
-    client_sink_supports_hdr_tile_overlay = false;
-    client_sink_supports_per_frame_hdr_metadata = false;
-    client_sink_scale_factor = 100;
+    sink_request = {};
     client_logical_width = 0;
     client_logical_height = 0;
     client_render_width = 0;
