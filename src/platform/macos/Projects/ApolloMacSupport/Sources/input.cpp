@@ -607,7 +607,15 @@ const KeyCodeMap kKeyCodesMap[] = {
     CGEventSetDoubleValueField(event, kCGMouseEventDeltaX, deltaX);
     CGEventSetDoubleValueField(event, kCGMouseEventDeltaY, deltaY);
 
+    const auto display_local_location = CGPoint {
+      location.x - display_bounds.origin.x,
+      location.y - display_bounds.origin.y
+    };
+
     CGEventPost(kCGHIDEventTap, event);
+    // Keep the actual cursor position in sync on the target display. Virtual displays
+    // can ignore the HID event's movement while still showing the cursor overlay.
+    CGDisplayMoveCursorToPoint(display, display_local_location);
     // For why this is here, see:
     // https://stackoverflow.com/questions/15194409/simulated-mouseevent-not-working-properly-osx
     CGWarpMouseCursorPosition(location);
