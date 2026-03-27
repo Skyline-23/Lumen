@@ -585,8 +585,6 @@ const KeyCodeMap kKeyCodesMap[] = {
       return;
     }
     const auto display = macos_input->display;
-    const auto event = macos_input->mouse_event;
-
     // get display bounds for current display
     const CGRect display_bounds = CGDisplayBounds(display);
 
@@ -596,8 +594,12 @@ const KeyCodeMap kKeyCodesMap[] = {
       std::clamp(raw_location.y, display_bounds.origin.y, display_bounds.origin.y + display_bounds.size.height - 1)
     };
 
-    CGEventSetType(event, type);
-    CGEventSetLocation(event, location);
+    const auto event = CGEventCreateMouseEvent(macos_input->source, type, location, button);
+    if (event == nullptr) {
+      BOOST_LOG(warning) << "Unable to create macOS mouse event for displayID="sv << display;
+      return;
+    }
+
     CGEventSetIntegerValueField(event, kCGMouseEventButtonNumber, button);
     CGEventSetIntegerValueField(event, kCGMouseEventClickState, click_count);
 
@@ -619,6 +621,7 @@ const KeyCodeMap kKeyCodesMap[] = {
     // For why this is here, see:
     // https://stackoverflow.com/questions/15194409/simulated-mouseevent-not-working-properly-osx
     CGWarpMouseCursorPosition(location);
+    CFRelease(event);
   }
 
   inline CGEventType event_type_mouse(input_t &input) {
