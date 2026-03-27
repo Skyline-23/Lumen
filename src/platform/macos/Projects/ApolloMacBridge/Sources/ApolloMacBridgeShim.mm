@@ -125,21 +125,21 @@ namespace {
     result.target_video_bitrate_kbps = static_cast<int32_t>(configuration.targetVideoBitRateKbps);
     result.requested_width = static_cast<int32_t>(configuration.requestedWidth);
     result.requested_height = static_cast<int32_t>(configuration.requestedHeight);
-    result.sink_request.mode.hidpi = configuration.sinkMode.hidpi;
-    result.sink_request.mode.scale_explicit = configuration.sinkMode.scaleExplicit;
-    result.sink_request.mode.mode_is_logical = configuration.sinkMode.modeIsLogical;
-    result.sink_request.mode.scale_percent = static_cast<int32_t>(configuration.sinkMode.scalePercent);
-    result.sink_request.capability.gamut = static_cast<int32_t>(configuration.sinkCapability.gamutRawValue);
-    result.sink_request.capability.transfer = static_cast<int32_t>(configuration.sinkCapability.transferRawValue);
-    result.sink_request.capability.current_edr_headroom = configuration.sinkCapability.currentEDRHeadroom;
-    result.sink_request.capability.potential_edr_headroom = configuration.sinkCapability.potentialEDRHeadroom;
-    result.sink_request.capability.current_peak_luminance_nits = static_cast<int32_t>(configuration.sinkCapability.currentPeakLuminanceNits);
-    result.sink_request.capability.potential_peak_luminance_nits = static_cast<int32_t>(configuration.sinkCapability.potentialPeakLuminanceNits);
-    result.sink_request.capability.supports_frame_gated_hdr = configuration.sinkCapability.supportsFrameGatedHDR;
-    result.sink_request.capability.supports_hdr_tile_overlay = configuration.sinkCapability.supportsHDRTileOverlay;
-    result.sink_request.capability.supports_per_frame_hdr_metadata = configuration.sinkCapability.supportsPerFrameHDRMetadata;
+    result.sink_request.mode.hidpi = configuration.sinkRequest.mode.hidpi;
+    result.sink_request.mode.scale_explicit = configuration.sinkRequest.mode.scaleExplicit;
+    result.sink_request.mode.mode_is_logical = configuration.sinkRequest.mode.modeIsLogical;
+    result.sink_request.mode.scale_percent = static_cast<int32_t>(configuration.sinkRequest.mode.scalePercent);
+    result.sink_request.capability.gamut = static_cast<int32_t>(configuration.sinkRequest.capability.gamutRawValue);
+    result.sink_request.capability.transfer = static_cast<int32_t>(configuration.sinkRequest.capability.transferRawValue);
+    result.sink_request.capability.current_edr_headroom = configuration.sinkRequest.capability.currentEDRHeadroom;
+    result.sink_request.capability.potential_edr_headroom = configuration.sinkRequest.capability.potentialEDRHeadroom;
+    result.sink_request.capability.current_peak_luminance_nits = static_cast<int32_t>(configuration.sinkRequest.capability.currentPeakLuminanceNits);
+    result.sink_request.capability.potential_peak_luminance_nits = static_cast<int32_t>(configuration.sinkRequest.capability.potentialPeakLuminanceNits);
+    result.sink_request.capability.supports_frame_gated_hdr = configuration.sinkRequest.capability.supportsFrameGatedHDR;
+    result.sink_request.capability.supports_hdr_tile_overlay = configuration.sinkRequest.capability.supportsHDRTileOverlay;
+    result.sink_request.capability.supports_per_frame_hdr_metadata = configuration.sinkRequest.capability.supportsPerFrameHDRMetadata;
     result.sink_request.dynamic_range_transport =
-      static_cast<ApolloCoreDynamicRangeTransport>(configuration.sinkRequestDynamicRangeTransportRawValue);
+      static_cast<ApolloCoreDynamicRangeTransport>(configuration.sinkRequest.dynamicRangeTransportRawValue);
     result.effective_display_state.gamut = static_cast<int32_t>(configuration.effectiveDisplayState.gamutRawValue);
     result.effective_display_state.transfer = static_cast<int32_t>(configuration.effectiveDisplayState.transferRawValue);
     result.effective_display_state.has_hdr_static_metadata = configuration.effectiveDisplayState.hdrStaticMetadata != nil;
@@ -179,6 +179,10 @@ namespace {
       supportsFrameGatedHDR:configuration.sink_request.capability.supports_frame_gated_hdr
       supportsHDRTileOverlay:configuration.sink_request.capability.supports_hdr_tile_overlay
       supportsPerFrameHDRMetadata:configuration.sink_request.capability.supports_per_frame_hdr_metadata];
+    ApolloBridgeSinkRequestBox *sinkRequest = [[ApolloBridgeSinkRequestBox alloc]
+      initWithMode:sinkMode
+      capability:sinkCapability
+      dynamicRangeTransportRawValue:static_cast<NSInteger>(configuration.sink_request.dynamic_range_transport)];
     ApolloBridgeHDRStaticMetadataBox *hdrStaticMetadata = nil;
     if (configuration.effective_display_state.has_hdr_static_metadata) {
       hdrStaticMetadata = [[ApolloBridgeHDRStaticMetadataBox alloc]
@@ -210,9 +214,7 @@ namespace {
      targetVideoBitRateKbps:static_cast<NSInteger>(configuration.target_video_bitrate_kbps)
            requestedWidth:static_cast<NSInteger>(configuration.requested_width)
           requestedHeight:static_cast<NSInteger>(configuration.requested_height)
-sinkRequestDynamicRangeTransportRawValue:static_cast<NSInteger>(configuration.sink_request.dynamic_range_transport)
-                 sinkMode:sinkMode
-           sinkCapability:sinkCapability
+              sinkRequest:sinkRequest
       effectiveDisplayState:effectiveDisplayState];
   }
 

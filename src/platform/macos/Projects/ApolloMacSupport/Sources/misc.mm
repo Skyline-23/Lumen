@@ -178,9 +178,10 @@ namespace platf {
         @"supportsHDRTileOverlay": @(state.sink_request.capability.supports_hdr_tile_overlay),
         @"supportsPerFrameHDRMetadata": @(state.sink_request.capability.supports_per_frame_hdr_metadata),
       };
-      NSDictionary *effective_display_state = @{
-        @"gamut": @(state.effective_display_state.gamut),
-        @"transfer": @(state.effective_display_state.transfer),
+      NSDictionary *sink_request = @{
+        @"mode": sink_mode,
+        @"capability": sink_capability,
+        @"dynamicRangeTransport": @(static_cast<int>(state.sink_request.dynamic_range_transport)),
       };
       NSDictionary *effective_hdr_metadata = @{
         @"redPrimaryX": @(state.effective_hdr_metadata.displayPrimaries[0].x),
@@ -197,6 +198,13 @@ namespace platf {
         @"maxFrameAverageLightLevel": @(state.effective_hdr_metadata.maxFrameAverageLightLevel),
         @"maxFullFrameLuminance": @(state.effective_hdr_metadata.maxFullFrameLuminance),
       };
+      NSMutableDictionary *effective_display_state = [@{
+        @"gamut": @(state.effective_display_state.gamut),
+        @"transfer": @(state.effective_display_state.transfer),
+      } mutableCopy];
+      if (state.has_effective_hdr_metadata) {
+        effective_display_state[@"hdrStaticMetadata"] = effective_hdr_metadata;
+      }
       return @{
         @"generation": @(state.generation),
         @"videoGeneration": @(state.video_generation),
@@ -212,12 +220,8 @@ namespace platf {
         @"targetVideoBitrateKbps": @(state.target_video_bitrate_kbps),
         @"requestedWidth": @(state.requested_width),
         @"requestedHeight": @(state.requested_height),
-        @"sinkMode": sink_mode,
-        @"sinkCapability": sink_capability,
-        @"sinkRequestDynamicRangeTransport": @(static_cast<int>(state.sink_request.dynamic_range_transport)),
+        @"sinkRequest": sink_request,
         @"effectiveDisplayState": effective_display_state,
-        @"hasEffectiveHDRMetadata": @(state.has_effective_hdr_metadata),
-        @"effectiveHDRStaticMetadata": effective_hdr_metadata,
         @"audioSourceKind": @(state.audio_source_kind),
         @"audioExcludesCurrentProcess": @(state.audio_excludes_current_process),
         @"audioSampleRate": @(state.audio_sample_rate),
@@ -299,12 +303,12 @@ namespace platf {
           return std::nullopt;
         }
 
-        NSDictionary *sink_mode = [dictionary[@"sinkMode"] isKindOfClass:[NSDictionary class]] ? dictionary[@"sinkMode"] : nil;
-        NSDictionary *sink_capability = [dictionary[@"sinkCapability"] isKindOfClass:[NSDictionary class]] ? dictionary[@"sinkCapability"] : nil;
+        NSDictionary *sink_request = [dictionary[@"sinkRequest"] isKindOfClass:[NSDictionary class]] ? dictionary[@"sinkRequest"] : nil;
+        NSDictionary *sink_mode = [sink_request[@"mode"] isKindOfClass:[NSDictionary class]] ? sink_request[@"mode"] : nil;
+        NSDictionary *sink_capability = [sink_request[@"capability"] isKindOfClass:[NSDictionary class]] ? sink_request[@"capability"] : nil;
         NSDictionary *effective_display_state = [dictionary[@"effectiveDisplayState"] isKindOfClass:[NSDictionary class]] ? dictionary[@"effectiveDisplayState"] : nil;
-        NSDictionary *effective_hdr_metadata = [dictionary[@"effectiveHDRStaticMetadata"] isKindOfClass:[NSDictionary class]] ? dictionary[@"effectiveHDRStaticMetadata"] : nil;
-        NSNumber *has_effective_hdr_metadata = dictionary[@"hasEffectiveHDRMetadata"];
-        NSNumber *requested_dynamic_range_transport = dictionary[@"sinkRequestDynamicRangeTransport"];
+        NSDictionary *effective_hdr_metadata = [effective_display_state[@"hdrStaticMetadata"] isKindOfClass:[NSDictionary class]] ? effective_display_state[@"hdrStaticMetadata"] : nil;
+        NSNumber *requested_dynamic_range_transport = sink_request[@"dynamicRangeTransport"];
         NSNumber *target_video_bitrate_kbps = dictionary[@"targetVideoBitrateKbps"];
         NSNumber *sink_capability_gamut = sink_capability[@"gamut"];
         NSNumber *sink_capability_transfer = sink_capability[@"transfer"];
@@ -342,7 +346,7 @@ namespace platf {
         preferences.target_video_bitrate_kbps =
           target_video_bitrate_kbps != nil ? [target_video_bitrate_kbps intValue] : 0;
 
-        if (has_effective_hdr_metadata.boolValue && effective_hdr_metadata != nil) {
+        if (effective_hdr_metadata != nil) {
           preferences.has_effective_hdr_metadata = true;
           preferences.effective_hdr_metadata.displayPrimaries[0] = {
             static_cast<uint16_t>([effective_hdr_metadata[@"redPrimaryX"] intValue]),

@@ -105,6 +105,23 @@ public final class ApolloBridgeHDRStaticMetadataBox: NSObject {
 }
 
 @objcMembers
+public final class ApolloBridgeSinkRequestBox: NSObject {
+    public let mode: ApolloBridgeSinkModeBox
+    public let capability: ApolloBridgeSinkCapabilityBox
+    public let dynamicRangeTransportRawValue: Int
+
+    public init(
+        mode: ApolloBridgeSinkModeBox,
+        capability: ApolloBridgeSinkCapabilityBox,
+        dynamicRangeTransportRawValue: Int
+    ) {
+        self.mode = mode
+        self.capability = capability
+        self.dynamicRangeTransportRawValue = dynamicRangeTransportRawValue
+    }
+}
+
+@objcMembers
 public final class ApolloBridgeEffectiveDisplayStateBox: NSObject {
     public let gamutRawValue: Int
     public let transferRawValue: Int
@@ -132,9 +149,7 @@ public final class ApolloBridgeConfigurationBox: NSObject {
     public let targetVideoBitRateKbps: Int
     public let requestedWidth: Int
     public let requestedHeight: Int
-    public let sinkMode: ApolloBridgeSinkModeBox
-    public let sinkCapability: ApolloBridgeSinkCapabilityBox
-    public let sinkRequestDynamicRangeTransportRawValue: Int
+    public let sinkRequest: ApolloBridgeSinkRequestBox
     public let effectiveDisplayState: ApolloBridgeEffectiveDisplayStateBox
 
     public init(
@@ -147,9 +162,7 @@ public final class ApolloBridgeConfigurationBox: NSObject {
         targetVideoBitRateKbps: Int,
         requestedWidth: Int,
         requestedHeight: Int,
-        sinkRequestDynamicRangeTransportRawValue: Int,
-        sinkMode: ApolloBridgeSinkModeBox,
-        sinkCapability: ApolloBridgeSinkCapabilityBox,
+        sinkRequest: ApolloBridgeSinkRequestBox,
         effectiveDisplayState: ApolloBridgeEffectiveDisplayStateBox
     ) {
         self.displayID = displayID
@@ -161,9 +174,7 @@ public final class ApolloBridgeConfigurationBox: NSObject {
         self.targetVideoBitRateKbps = targetVideoBitRateKbps
         self.requestedWidth = requestedWidth
         self.requestedHeight = requestedHeight
-        self.sinkRequestDynamicRangeTransportRawValue = sinkRequestDynamicRangeTransportRawValue
-        self.sinkMode = sinkMode
-        self.sinkCapability = sinkCapability
+        self.sinkRequest = sinkRequest
         self.effectiveDisplayState = effectiveDisplayState
     }
 
@@ -185,24 +196,14 @@ public final class ApolloBridgeConfigurationBox: NSObject {
                 maxFullFrameLuminance: $0.maxFullFrameLuminance
             )
         }
-        self.init(
-            displayID: configuration.displayID,
-            codecRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.codec),
-            preprocessStrategyRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.preprocessStrategy),
-            queueProfileRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.queueProfile),
-            showCursor: configuration.showCursor,
-            targetFrameRate: configuration.targetFrameRate,
-            targetVideoBitRateKbps: configuration.targetVideoBitRateKbps,
-            requestedWidth: configuration.requestedWidth ?? 0,
-            requestedHeight: configuration.requestedHeight ?? 0,
-            sinkRequestDynamicRangeTransportRawValue: Int(configuration.sinkRequest.dynamicRangeTransport.rawValue),
-            sinkMode: ApolloBridgeSinkModeBox(
+        let sinkRequest = ApolloBridgeSinkRequestBox(
+            mode: ApolloBridgeSinkModeBox(
                 hidpi: configuration.sinkRequest.mode.hidpi,
                 scaleExplicit: configuration.sinkRequest.mode.scaleExplicit,
                 modeIsLogical: configuration.sinkRequest.mode.modeIsLogical,
                 scalePercent: configuration.sinkRequest.mode.scalePercent
             ),
-            sinkCapability: ApolloBridgeSinkCapabilityBox(
+            capability: ApolloBridgeSinkCapabilityBox(
                 gamutRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.sinkRequest.capability.gamut),
                 transferRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.sinkRequest.capability.transfer),
                 currentEDRHeadroom: configuration.sinkRequest.capability.currentEDRHeadroom,
@@ -213,6 +214,19 @@ public final class ApolloBridgeConfigurationBox: NSObject {
                 supportsHDRTileOverlay: configuration.sinkRequest.capability.supportsHDRTileOverlay,
                 supportsPerFrameHDRMetadata: configuration.sinkRequest.capability.supportsPerFrameHDRMetadata
             ),
+            dynamicRangeTransportRawValue: Int(configuration.sinkRequest.dynamicRangeTransport.rawValue)
+        )
+        self.init(
+            displayID: configuration.displayID,
+            codecRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.codec),
+            preprocessStrategyRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.preprocessStrategy),
+            queueProfileRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.queueProfile),
+            showCursor: configuration.showCursor,
+            targetFrameRate: configuration.targetFrameRate,
+            targetVideoBitRateKbps: configuration.targetVideoBitRateKbps,
+            requestedWidth: configuration.requestedWidth ?? 0,
+            requestedHeight: configuration.requestedHeight ?? 0,
+            sinkRequest: sinkRequest,
             effectiveDisplayState: ApolloBridgeEffectiveDisplayStateBox(
                 gamutRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.effectiveDisplayState.gamut),
                 transferRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.effectiveDisplayState.transfer),
@@ -251,24 +265,24 @@ public final class ApolloBridgeConfigurationBox: NSObject {
             requestedHeight: requestedHeight,
             sinkRequest: ApolloBridgeSinkRequest(
                 mode: ApolloBridgeSinkMode(
-                    hidpi: sinkMode.hidpi,
-                    scaleExplicit: sinkMode.scaleExplicit,
-                    modeIsLogical: sinkMode.modeIsLogical,
-                    scalePercent: sinkMode.scalePercent
+                    hidpi: sinkRequest.mode.hidpi,
+                    scaleExplicit: sinkRequest.mode.scaleExplicit,
+                    modeIsLogical: sinkRequest.mode.modeIsLogical,
+                    scalePercent: sinkRequest.mode.scalePercent
                 ),
                 capability: ApolloBridgeSinkCapability(
-                    gamut: ApolloBridgeObjCFacade.clientSinkGamut(fromRawValue: sinkCapability.gamutRawValue),
-                    transfer: ApolloBridgeObjCFacade.clientSinkTransfer(fromRawValue: sinkCapability.transferRawValue),
-                    currentEDRHeadroom: sinkCapability.currentEDRHeadroom,
-                    potentialEDRHeadroom: sinkCapability.potentialEDRHeadroom,
-                    currentPeakLuminanceNits: sinkCapability.currentPeakLuminanceNits,
-                    potentialPeakLuminanceNits: sinkCapability.potentialPeakLuminanceNits,
-                    supportsFrameGatedHDR: sinkCapability.supportsFrameGatedHDR,
-                    supportsHDRTileOverlay: sinkCapability.supportsHDRTileOverlay,
-                    supportsPerFrameHDRMetadata: sinkCapability.supportsPerFrameHDRMetadata
+                    gamut: ApolloBridgeObjCFacade.clientSinkGamut(fromRawValue: sinkRequest.capability.gamutRawValue),
+                    transfer: ApolloBridgeObjCFacade.clientSinkTransfer(fromRawValue: sinkRequest.capability.transferRawValue),
+                    currentEDRHeadroom: sinkRequest.capability.currentEDRHeadroom,
+                    potentialEDRHeadroom: sinkRequest.capability.potentialEDRHeadroom,
+                    currentPeakLuminanceNits: sinkRequest.capability.currentPeakLuminanceNits,
+                    potentialPeakLuminanceNits: sinkRequest.capability.potentialPeakLuminanceNits,
+                    supportsFrameGatedHDR: sinkRequest.capability.supportsFrameGatedHDR,
+                    supportsHDRTileOverlay: sinkRequest.capability.supportsHDRTileOverlay,
+                    supportsPerFrameHDRMetadata: sinkRequest.capability.supportsPerFrameHDRMetadata
                 ),
                 dynamicRangeTransport: ApolloCoreDynamicRangeTransport(
-                    rawValue: UInt32(sinkRequestDynamicRangeTransportRawValue)
+                    rawValue: UInt32(sinkRequest.dynamicRangeTransportRawValue)
                 )
             ),
             effectiveDisplayState: ApolloBridgeEffectiveDisplayState(
