@@ -114,7 +114,7 @@ namespace platf::publish {
 
     DNS_SERVICE_INSTANCE instance {};
     instance.pszInstanceName = name.data();
-    instance.wPort = net::map_port(shadow_http::PORT_HTTP);
+    instance.wPort = net::map_port(shadow_http::PORT_HTTPS);
     instance.pszHostName = host.data();
 
     // Setting these values ensures Windows mDNS answers comply with RFC 1035.

@@ -1,6 +1,6 @@
 /**
  * @file src/shadow_http.cpp
- * @brief Definitions for the session HTTP compatibility adapter.
+ * @brief Definitions for the Shadow control server.
  */
 // macros
 #define BOOST_BIND_GLOBAL_PLACEHOLDERS
@@ -11,10 +11,9 @@
 #include <array>
 #include <cstdlib>
 #include <optional>
+#include <string>
 #include <sstream>
-#include <string>
 #include <utility>
-#include <string>
 
 // lib includes
 #include <boost/asio/ssl/context.hpp>
@@ -41,7 +40,6 @@
 #include "utility.h"
 #include "uuid.h"
 #include "video.h"
-#include "zwpad.h"
 
 #ifdef _WIN32
   #include "platform/windows/virtual_display.h"
@@ -237,30 +235,6 @@ namespace shadow_http {
       return net::addr_to_url_escaped_string(local_address);
     }
 
-    bool macos_virtual_display_main10_capable() {
-#ifdef __APPLE__
-      return VDISPLAY::openVDisplayDevice() == VDISPLAY::DRIVER_STATUS::OK && video::active_hevc_mode >= 2;
-#else
-      return false;
-#endif
-    }
-
-    bool advertise_hevc_main10_support() {
-      return video::active_hevc_mode >= 3 || macos_virtual_display_main10_capable();
-    }
-
-    bool advertise_av1_support() {
-      return video::active_av1_mode >= 2 || video::native_macos_vt_av1_supported();
-    }
-
-    bool advertise_av1_main10_support() {
-      return video::active_av1_mode >= 3 || video::native_macos_vt_av1_supported();
-    }
-
-    bool advertise_hdr_app_support() {
-      return advertise_hevc_main10_support() || advertise_av1_main10_support();
-    }
-
   }  // namespace
 
   class SessionHTTPSServer: public SimpleWeb::ServerBase<SessionHTTPS> {
@@ -337,7 +311,6 @@ namespace shadow_http {
   };
 
   using https_server_t = SessionHTTPSServer;
-  using http_server_t = SimpleWeb::Server<SimpleWeb::HTTP>;
 
   struct conf_intern_t {
     std::string servercert;
@@ -351,8 +324,6 @@ namespace shadow_http {
 
   using resp_https_t = std::shared_ptr<typename SimpleWeb::ServerBase<SessionHTTPS>::Response>;
   using req_https_t = std::shared_ptr<typename SimpleWeb::ServerBase<SessionHTTPS>::Request>;
-  using resp_http_t = std::shared_ptr<typename SimpleWeb::ServerBase<SimpleWeb::HTTP>::Response>;
-  using req_http_t = std::shared_ptr<typename SimpleWeb::ServerBase<SimpleWeb::HTTP>::Request>;
 
   enum class op_e {
     ADD,  ///< Add certificate
@@ -1197,136 +1168,6 @@ namespace shadow_http {
     return true;
   }
 
-  template<class T>
-  void serverinfo(std::shared_ptr<typename SimpleWeb::ServerBase<T>::Response> response, std::shared_ptr<typename SimpleWeb::ServerBase<T>::Request> request) {
-    print_req<T>(request);
-
-    int pair_status = 0;
-
-    auto local_endpoint = request->local_endpoint();
-
-    pt::ptree tree;
-
-    tree.put("root.<xmlattr>.status_code", 200);
-    tree.put("root.hostname", config::shadow_http.host_name);
-
-    tree.put("root.appversion", VERSION);
-    tree.put("root.GfeVersion", GFE_VERSION);
-    tree.put("root.uniqueid", http::unique_id);
-    tree.put("root.HttpsPort", net::map_port(PORT_HTTPS));
-    tree.put("root.ExternalPort", net::map_port(PORT_HTTP));
-    tree.put("root.MaxLumaPixelsHEVC", video::active_hevc_mode > 1 ? "1869449984" : "0");
-
-    // Only include the MAC address for requests sent from paired clients over HTTPS.
-    // For HTTP requests, use a placeholder MAC address that Moonlight knows to ignore.
-    if constexpr (std::is_same_v<SessionHTTPS, T>) {
-      auto named_cert_p = get_verified_cert(request);
-      pair_status = named_cert_p ? 1 : 0;
-      if (named_cert_p) {
-        tree.put("root.mac", platf::get_mac_address(net::addr_to_normalized_string(local_endpoint.address())));
-
-        if (!!(named_cert_p->perm & PERM::server_cmd)) {
-          pt::ptree& root_node = tree.get_child("root");
-
-          if (config::runtime.server_cmds.size() > 0) {
-            // Broadcast server_cmds
-            for (const auto& cmd : config::runtime.server_cmds) {
-              pt::ptree cmd_node;
-              cmd_node.put_value(cmd.cmd_name);
-              root_node.push_back(std::make_pair("ServerCommand", cmd_node));
-            }
-          }
-        } else {
-          BOOST_LOG(debug) << "Permission Get ServerCommand denied for [" << named_cert_p->name << "] (" << (uint32_t)named_cert_p->perm << ")";
-        }
-
-        tree.put("root.Permission", std::to_string((uint32_t)named_cert_p->perm));
-      } else {
-        tree.put("root.mac", "00:00:00:00:00:00");
-        tree.put("root.Permission", "0");
-      }
-
-    #ifdef _WIN32
-      tree.put("root.VirtualDisplayCapable", true);
-      if (named_cert_p && !!(named_cert_p->perm & PERM::_all_actions)) {
-        tree.put("root.VirtualDisplayDriverReady", proc::vDisplayDriverStatus == VDISPLAY::DRIVER_STATUS::OK);
-      } else {
-        tree.put("root.VirtualDisplayDriverReady", true);
-      }
-    #endif
-    } else {
-      tree.put("root.mac", "00:00:00:00:00:00");
-      tree.put("root.Permission", "0");
-    }
-
-    // Moonlight-compatible clients treat LocalIP as an IPv4-only hint even when the serverinfo
-    // request itself arrived over IPv6. Returning the active IPv6 socket address here would
-    // overwrite the previously learned LAN IPv4 route and can destabilize host routing.
-    //
-    // We do not currently resolve the matching LAN IPv4 address for the IPv6-local interface, so
-    // for IPv6 requests we intentionally preserve the legacy GFE/GS-IPv6-Forwarder behavior and
-    // publish 127.0.0.1 instead. This value is a non-route sentinel and clients are expected to
-    // ignore it when constructing reconnect or discovery candidates.
-    if (local_endpoint.address().is_v6() && !local_endpoint.address().to_v6().is_v4_mapped()) {
-      tree.put("root.LocalIP", "127.0.0.1");
-    } else {
-      tree.put("root.LocalIP", net::addr_to_normalized_string(local_endpoint.address()));
-    }
-
-    uint32_t codec_mode_flags = SCM_H264;
-    if (video::last_encoder_probe_supported_yuv444_for_codec[0]) {
-      codec_mode_flags |= SCM_H264_HIGH8_444;
-    }
-    if (video::active_hevc_mode >= 2) {
-      codec_mode_flags |= SCM_HEVC;
-      if (video::last_encoder_probe_supported_yuv444_for_codec[1]) {
-        codec_mode_flags |= SCM_HEVC_REXT8_444;
-      }
-    }
-    if (advertise_hevc_main10_support()) {
-      codec_mode_flags |= SCM_HEVC_MAIN10;
-      if (video::last_encoder_probe_supported_yuv444_for_codec[1]) {
-        codec_mode_flags |= SCM_HEVC_REXT10_444;
-      }
-    }
-    if (advertise_av1_support()) {
-      codec_mode_flags |= SCM_AV1_MAIN8;
-      if (video::last_encoder_probe_supported_yuv444_for_codec[2]) {
-        codec_mode_flags |= SCM_AV1_HIGH8_444;
-      }
-    }
-    if (advertise_av1_main10_support()) {
-      codec_mode_flags |= SCM_AV1_MAIN10;
-      if (video::last_encoder_probe_supported_yuv444_for_codec[2]) {
-        codec_mode_flags |= SCM_AV1_HIGH10_444;
-      }
-    }
-    tree.put("root.ServerCodecModeSupport", codec_mode_flags);
-
-    tree.put("root.PairStatus", pair_status);
-
-    if constexpr (std::is_same_v<SessionHTTPS, T>) {
-      int current_appid = proc::proc.running();
-      // When input only mode is enabled, the only resume method should be launching the same app again.
-      if (config::input.enable_input_only_mode && current_appid != proc::input_only_app_id) {
-        current_appid = 0;
-      }
-      tree.put("root.currentgame", current_appid);
-      tree.put("root.currentgameuuid", proc::proc.get_running_app_uuid());
-      tree.put("root.state", current_appid > 0 ? "SHADOW_SERVER_BUSY" : "SHADOW_SERVER_FREE");
-    } else {
-      tree.put("root.currentgame", 0);
-      tree.put("root.currentgameuuid", "");
-      tree.put("root.state", "SHADOW_SERVER_FREE");
-    }
-
-    std::ostringstream data;
-
-    pt::write_xml(data, tree);
-    response->write(data.str());
-    response->close_connection_after_response = true;
-  }
-
   nlohmann::json get_all_clients() {
     nlohmann::json named_cert_nodes = nlohmann::json::array();
     client_t &client = client_root;
@@ -1379,93 +1220,6 @@ namespace shadow_http {
     }
 
     return named_cert_nodes;
-  }
-
-  void applist(resp_https_t response, req_https_t request) {
-    print_req<SessionHTTPS>(request);
-
-    pt::ptree tree;
-
-    auto g = util::fail_guard([&]() {
-      std::ostringstream data;
-
-      pt::write_xml(data, tree);
-      response->write(data.str());
-      response->close_connection_after_response = true;
-    });
-
-    auto &apps = tree.add_child("root", pt::ptree {});
-
-    apps.put("<xmlattr>.status_code", 200);
-
-    auto named_cert_p = require_verified_cert(response, request);
-    if (!named_cert_p) {
-      g.disable();
-      return;
-    }
-
-    if (!!(named_cert_p->perm & PERM::_all_actions)) {
-      auto current_appid = proc::proc.running();
-      auto should_hide_inactive_apps = config::input.enable_input_only_mode && current_appid > 0 && current_appid != proc::input_only_app_id;
-
-      auto app_list = proc::proc.get_apps();
-
-      bool enable_legacy_ordering = config::runtime.legacy_ordering && named_cert_p->enable_legacy_ordering;
-      size_t bits;
-      if (enable_legacy_ordering) {
-        bits = zwpad::pad_width_for_count(app_list.size());
-      }
-
-      for (size_t i = 0; i < app_list.size(); i++) {
-        auto& app = app_list[i];
-        auto appid = util::from_view(app.id);
-        if (should_hide_inactive_apps) {
-          if (
-            appid != current_appid
-            && appid != proc::input_only_app_id
-            && appid != proc::terminate_app_id
-          ) {
-            continue;
-          }
-        } else {
-          if (appid == proc::terminate_app_id) {
-            continue;
-          }
-        }
-
-        std::string app_name;
-        if (enable_legacy_ordering) {
-          app_name = zwpad::pad_for_ordering(app.name, bits, i);
-        } else {
-          app_name = app.name;
-        }
-
-        pt::ptree app_node;
-
-        app_node.put("IsHdrSupported"s, advertise_hdr_app_support() ? 1 : 0);
-        app_node.put("AppTitle"s, app_name);
-        app_node.put("UUID", app.uuid);
-        app_node.put("IDX", app.idx);
-        app_node.put("ID", app.id);
-
-        apps.push_back(std::make_pair("App", std::move(app_node)));
-      }
-    } else {
-      BOOST_LOG(debug) << "Permission ListApp denied for [" << named_cert_p->name << "] (" << (uint32_t)named_cert_p->perm << ")";
-
-      pt::ptree app_node;
-
-      app_node.put("IsHdrSupported"s, 0);
-      app_node.put("AppTitle"s, "Permission Denied");
-      app_node.put("UUID", "");
-      app_node.put("IDX", "0");
-      app_node.put("ID", "114514");
-
-      apps.push_back(std::make_pair("App", std::move(app_node)));
-
-      return;
-    }
-
   }
 
   void launch(bool &host_audio, resp_https_t response, req_https_t request) {
@@ -1999,7 +1753,6 @@ namespace shadow_http {
   void start() {
     auto shutdown_event = mail::man->event<bool>(mail::shutdown);
 
-    auto port_http = net::map_port(PORT_HTTP);
     auto port_https = net::map_port(PORT_HTTPS);
     auto address_family = net::af_from_enum_string(config::runtime.address_family);
 
@@ -2018,7 +1771,6 @@ namespace shadow_http {
     bool host_audio {};
 
     https_server_t https_server {config::shadow_http.cert, config::shadow_http.pkey};
-    http_server_t http_server;
 
     // Verify certificates after establishing connection
     https_server.verify = [](req_https_t req, SSL *ssl) {
@@ -2080,9 +1832,7 @@ namespace shadow_http {
     };
 
     https_server.default_resource["GET"] = not_found<SessionHTTPS>;
-    https_server.resource["^/serverinfo$"]["GET"] = serverinfo<SessionHTTPS>;
     https_server.resource["^/pair$"]["GET"] = pair<SessionHTTPS>;
-    https_server.resource["^/applist$"]["GET"] = applist;
     https_server.resource["^/appasset$"]["GET"] = appasset;
     https_server.resource["^/launch$"]["GET"] = [&host_audio](auto resp, auto req) {
       launch(host_audio, resp, req);
@@ -2098,14 +1848,6 @@ namespace shadow_http {
     https_server.config.address = net::af_to_any_address_string(address_family);
     https_server.config.port = port_https;
 
-    http_server.default_resource["GET"] = not_found<SimpleWeb::HTTP>;
-    http_server.resource["^/serverinfo$"]["GET"] = serverinfo<SimpleWeb::HTTP>;
-    http_server.resource["^/pair$"]["GET"] = pair<SimpleWeb::HTTP>;
-
-    http_server.config.reuse_address = true;
-    http_server.config.address = net::af_to_any_address_string(address_family);
-    http_server.config.port = port_http;
-
     auto accept_and_run = [&](auto *http_server) {
       try {
         http_server->start();
@@ -2115,13 +1857,12 @@ namespace shadow_http {
           return;
         }
 
-        BOOST_LOG(fatal) << "Couldn't start http server on ports ["sv << port_https << ", "sv << port_https << "]: "sv << err.what();
+        BOOST_LOG(fatal) << "Couldn't start Shadow control server on port ["sv << port_https << "]: "sv << err.what();
         shutdown_event->raise(true);
         return;
       }
     };
-    std::thread ssl {accept_and_run, &https_server};
-    std::thread tcp {accept_and_run, &http_server};
+    std::thread https_thread {accept_and_run, &https_server};
 
     // Wait for any event
     shutdown_event->view();
@@ -2129,10 +1870,8 @@ namespace shadow_http {
     map_id_sess.clear();
 
     https_server.stop();
-    http_server.stop();
 
-    ssl.join();
-    tcp.join();
+    https_thread.join();
   }
 
   std::string request_otp(const std::string& passphrase, const std::string& deviceName) {

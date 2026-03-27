@@ -110,7 +110,7 @@ namespace platf::publish {
       SERVICE_TYPE,
       nullptr,  // domain
       nullptr,  // host
-      htons(net::map_port(shadow_http::PORT_HTTP)),
+      htons(net::map_port(shadow_http::PORT_HTTPS)),
       0,  // txtLen
       nullptr,  // txtRecord
       registrationCallback,

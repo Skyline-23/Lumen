@@ -70,7 +70,6 @@ namespace upnp {
       auto video = std::to_string(net::map_port(stream::VIDEO_STREAM_PORT));
       auto audio = std::to_string(net::map_port(stream::AUDIO_STREAM_PORT));
       auto control = std::to_string(net::map_port(stream::CONTROL_PORT));
-      auto gs_http = std::to_string(net::map_port(shadow_http::PORT_HTTP));
       auto gs_https = std::to_string(net::map_port(shadow_http::PORT_HTTPS));
       auto wm_http = std::to_string(net::map_port(confighttp::PORT_HTTPS));
 
@@ -79,8 +78,7 @@ namespace upnp {
         {{video, video, "UDP"s}, "Apollo - Video"s},
         {{audio, audio, "UDP"s}, "Apollo - Audio"s},
         {{control, control, "UDP"s}, "Apollo - Control"s},
-        {{gs_http, gs_http, "TCP"s}, "Apollo - Client HTTP"s},
-        {{gs_https, gs_https, "TCP"s}, "Apollo - Client HTTPS"s},
+        {{gs_https, gs_https, "TCP"s}, "Apollo - Shadow Control HTTPS"s},
       });
 
       // Only map port for the Web Manager if it is configured to accept connection from WAN

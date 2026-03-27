@@ -1,6 +1,6 @@
 /**
  * @file src/shadow_http.h
- * @brief Declarations for the session HTTP compatibility adapter.
+ * @brief Declarations for the Shadow control server.
  */
 // macros
 #pragma once
@@ -23,29 +23,12 @@
 using namespace std::chrono_literals;
 
 /**
- * @brief Contains the functions and state used by the session HTTP compatibility adapter.
+ * @brief Contains the functions and state used by the Shadow control server.
  */
 namespace shadow_http {
 
   using args_t = SimpleWeb::CaseInsensitiveMultimap;
   using cmd_list_t = std::list<crypto::command_entry_t>;
-
-  /**
-   * @brief The protocol version.
-   * @details The version of the legacy session protocol compatibility surface we are emulating.
-   * @note The negative 4th number preserves Apollo host identification for existing Moonlight clients.
-   */
-  constexpr auto VERSION = "7.1.431.-1";
-
-  /**
-   * @brief The GFE version we are replicating.
-   */
-  constexpr auto GFE_VERSION = "3.23.0.74";
-
-  /**
-   * @brief The HTTP port, as a difference from the config port.
-   */
-  constexpr auto PORT_HTTP = 0;
 
   /**
    * @brief The HTTPS port, as a difference from the config port.
@@ -55,7 +38,7 @@ namespace shadow_http {
   constexpr auto OTP_EXPIRE_DURATION = 180s;
 
   /**
-   * @brief Start the session HTTP server.
+   * @brief Start the Shadow control server.
    * @examples
    * shadow_http::start();
    * @examples_end
