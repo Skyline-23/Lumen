@@ -138,7 +138,7 @@ public enum LumenClientSinkTransfer: String, CaseIterable, Codable, Sendable {
     }
 }
 
-private func apolloDynamicRangeTransportName(_ transport: LumenCoreDynamicRangeTransport) -> String {
+private func lumenDynamicRangeTransportName(_ transport: LumenCoreDynamicRangeTransport) -> String {
     switch transport {
     case LumenCoreDynamicRangeTransportSDR:
         return "sdr"
@@ -153,7 +153,7 @@ private func apolloDynamicRangeTransportName(_ transport: LumenCoreDynamicRangeT
     }
 }
 
-private func apolloDynamicRangeTransportUsesHDR(_ transport: LumenCoreDynamicRangeTransport) -> Bool {
+private func lumenDynamicRangeTransportUsesHDR(_ transport: LumenCoreDynamicRangeTransport) -> Bool {
     switch transport {
     case LumenCoreDynamicRangeTransportFullFrameHDR, LumenCoreDynamicRangeTransportFrameGatedHDR:
         return true
@@ -491,7 +491,7 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     }
 
     public var usesHDRTransport: Bool {
-        apolloDynamicRangeTransportUsesHDR(negotiatedDynamicRangeTransport)
+        lumenDynamicRangeTransportUsesHDR(negotiatedDynamicRangeTransport)
     }
 
     public var negotiatedDynamicRangeTransport: LumenCoreDynamicRangeTransport {
@@ -817,7 +817,7 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     )
 
     var hdrConfigurationDebugSummary: String {
-        "uses-hdr-transport=\(usesHDRTransport) requested-transport=\(apolloDynamicRangeTransportName(sinkRequest.dynamicRangeTransport)) negotiated-transport=\(apolloDynamicRangeTransportName(negotiatedDynamicRangeTransport)) requested-queue=\(queueProfile.rawValue) negotiated-queue=\(negotiatedQueueProfile.rawValue) effective-gamut=\(resolvedDisplayGamut.rawValue) effective-transfer=\(resolvedDisplayTransfer.rawValue) negotiated-static-metadata=\(effectiveDisplayState.hdrStaticMetadata != nil) current-edr-headroom=\(sinkRequest.capability.currentEDRHeadroom) potential-edr-headroom=\(sinkRequest.capability.potentialEDRHeadroom) current-peak-nits=\(sinkRequest.capability.currentPeakLuminanceNits) potential-peak-nits=\(sinkRequest.capability.potentialPeakLuminanceNits) supports-frame-gated-hdr=\(sinkRequest.capability.supportsFrameGatedHDR) supports-hdr-tile-overlay=\(sinkRequest.capability.supportsHDRTileOverlay) supports-per-frame-hdr-metadata=\(sinkRequest.capability.supportsPerFrameHDRMetadata)"
+        "uses-hdr-transport=\(usesHDRTransport) requested-transport=\(lumenDynamicRangeTransportName(sinkRequest.dynamicRangeTransport)) negotiated-transport=\(lumenDynamicRangeTransportName(negotiatedDynamicRangeTransport)) requested-queue=\(queueProfile.rawValue) negotiated-queue=\(negotiatedQueueProfile.rawValue) effective-gamut=\(resolvedDisplayGamut.rawValue) effective-transfer=\(resolvedDisplayTransfer.rawValue) negotiated-static-metadata=\(effectiveDisplayState.hdrStaticMetadata != nil) current-edr-headroom=\(sinkRequest.capability.currentEDRHeadroom) potential-edr-headroom=\(sinkRequest.capability.potentialEDRHeadroom) current-peak-nits=\(sinkRequest.capability.currentPeakLuminanceNits) potential-peak-nits=\(sinkRequest.capability.potentialPeakLuminanceNits) supports-frame-gated-hdr=\(sinkRequest.capability.supportsFrameGatedHDR) supports-hdr-tile-overlay=\(sinkRequest.capability.supportsHDRTileOverlay) supports-per-frame-hdr-metadata=\(sinkRequest.capability.supportsPerFrameHDRMetadata)"
     }
 }
 
@@ -1204,7 +1204,7 @@ public actor LumenBridgeRuntime {
 
     private let coreForwarder = LumenCoreCaptureForwarder()
     private let audioForwarder = LumenCoreAudioCaptureForwarder()
-    private let logger = Logger(subsystem: "com.lizardbyte.apollo", category: "MacBridgeRuntime")
+    private let logger = Logger(subsystem: "dev.skyline23.lumen", category: "MacBridgeRuntime")
     private var encodedCaptureSession: MDKEncodedCaptureSession?
     private var encodedCaptureStartupTask: Task<Void, Error>?
     private var activeCaptureConfiguration: LumenMacDisplayKitCaptureConfiguration?
@@ -1611,7 +1611,7 @@ public actor LumenBridgeRuntime {
             if let configuration = request.videoConfiguration {
                 let frameCapacity = Self.recommendedCoreForwardingFrameCapacity(for: configuration)
                 logger.notice(
-                    "Applying LumenCore macOS bridge capture request display-id=\(configuration.displayID, privacy: .public) codec=\(configuration.codec.rawValue, privacy: .public) requested-queue=\(configuration.queueProfile.rawValue, privacy: .public) negotiated-queue=\(configuration.negotiatedQueueProfile.rawValue, privacy: .public) requested-transport=\(apolloDynamicRangeTransportName(configuration.sinkRequest.dynamicRangeTransport), privacy: .public) negotiated-transport=\(apolloDynamicRangeTransportName(configuration.negotiatedDynamicRangeTransport), privacy: .public) fps=\(configuration.targetFrameRate, privacy: .public) bitrate-kbps=\(configuration.targetVideoBitRateKbps, privacy: .public) forwarding-frame-capacity=\(frameCapacity, privacy: .public)"
+                    "Applying LumenCore macOS bridge capture request display-id=\(configuration.displayID, privacy: .public) codec=\(configuration.codec.rawValue, privacy: .public) requested-queue=\(configuration.queueProfile.rawValue, privacy: .public) negotiated-queue=\(configuration.negotiatedQueueProfile.rawValue, privacy: .public) requested-transport=\(lumenDynamicRangeTransportName(configuration.sinkRequest.dynamicRangeTransport), privacy: .public) negotiated-transport=\(lumenDynamicRangeTransportName(configuration.negotiatedDynamicRangeTransport), privacy: .public) fps=\(configuration.targetFrameRate, privacy: .public) bitrate-kbps=\(configuration.targetVideoBitRateKbps, privacy: .public) forwarding-frame-capacity=\(frameCapacity, privacy: .public)"
                 )
                 try? await startMacDisplayKitCapture(
                     configuration: configuration,

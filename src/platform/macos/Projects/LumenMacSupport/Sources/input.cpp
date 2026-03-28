@@ -65,7 +65,7 @@ namespace platf {
     std::atomic_int relative_mouse_diagnostic_budget {kRelativeMouseDiagnosticSampleLimit};
 
     void append_keyboard_debug_file(const char *format, ...) {
-      auto *file = std::fopen("/tmp/apollo-keyboard-debug.log", "a");
+      auto *file = std::fopen("/tmp/lumen-keyboard-debug.log", "a");
       if (file == nullptr) {
         return;
       }

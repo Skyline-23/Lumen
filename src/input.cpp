@@ -43,7 +43,7 @@ namespace input {
     std::atomic_int keyboard_packet_diagnostic_budget {96};
 
     void append_keyboard_debug_file(const char *format, ...) {
-      auto *file = std::fopen("/tmp/apollo-keyboard-debug.log", "a");
+      auto *file = std::fopen("/tmp/lumen-keyboard-debug.log", "a");
       if (file == nullptr) {
         return;
       }

@@ -343,7 +343,7 @@ final class LumenCaptureController: ObservableObject {
     }
 
     private func resolvedLumenBasePort() -> Int {
-        guard let configurationURL = apolloConfigurationURL,
+        guard let configurationURL = lumenConfigurationURL,
               let configurationContents = try? String(contentsOf: configurationURL, encoding: .utf8),
               let configuredPort = configuredLumenBasePort(from: configurationContents) else {
             return WebDashboardConfiguration.defaultBasePort
@@ -352,7 +352,7 @@ final class LumenCaptureController: ObservableObject {
         return configuredPort
     }
 
-    private var apolloConfigurationURL: URL? {
+    private var lumenConfigurationURL: URL? {
         guard let applicationSupportDirectory = FileManager.default.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask

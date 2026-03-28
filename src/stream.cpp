@@ -990,10 +990,10 @@ namespace stream {
     return 0;
   }
 
-  constexpr std::uint8_t apollo_hdr_frame_state_version = 1;
-  constexpr std::uint8_t apollo_hdr_frame_state_flag_has_static_metadata = 1 << 0;
-  constexpr std::uint8_t apollo_hdr_frame_state_flag_has_overlay_regions = 1 << 1;
-  constexpr std::uint8_t apollo_hdr_overlay_region_flag_has_metadata = 1 << 0;
+  constexpr std::uint8_t lumen_hdr_frame_state_version = 1;
+  constexpr std::uint8_t lumen_hdr_frame_state_flag_has_static_metadata = 1 << 0;
+  constexpr std::uint8_t lumen_hdr_frame_state_flag_has_overlay_regions = 1 << 1;
+  constexpr std::uint8_t lumen_hdr_overlay_region_flag_has_metadata = 1 << 0;
 
   std::string_view hdr_frame_content_name(video::hdr_frame_content_e content) {
     switch (content) {
@@ -1026,11 +1026,11 @@ namespace stream {
     auto *header = reinterpret_cast<control_hdr_frame_state_v2_t *>(payload.data());
     header->header.type = packetTypes[IDX_HDR_FRAME_STATE];
     header->header.payloadLength = static_cast<std::uint16_t>(total_size - sizeof(control_header_v2));
-    header->version = apollo_hdr_frame_state_version;
+    header->version = lumen_hdr_frame_state_version;
     header->frameDynamicRange = static_cast<std::uint8_t>(state.content);
     header->flags =
-      (state.has_static_metadata ? apollo_hdr_frame_state_flag_has_static_metadata : 0) |
-      (region_count > 0 ? apollo_hdr_frame_state_flag_has_overlay_regions : 0);
+      (state.has_static_metadata ? lumen_hdr_frame_state_flag_has_static_metadata : 0) |
+      (region_count > 0 ? lumen_hdr_frame_state_flag_has_overlay_regions : 0);
     header->reserved = 0;
     header->effectiveFromFrameNumber = effective_from_frame_number;
     header->overlayRegionCount = static_cast<std::uint16_t>(region_count);
@@ -1048,7 +1048,7 @@ namespace stream {
       serialized_region[index].y = static_cast<std::uint16_t>(std::clamp(region.y, 0, 0xffff));
       serialized_region[index].width = static_cast<std::uint16_t>(std::clamp(region.width, 0, 0xffff));
       serialized_region[index].height = static_cast<std::uint16_t>(std::clamp(region.height, 0, 0xffff));
-      serialized_region[index].flags = region.has_metadata ? apollo_hdr_overlay_region_flag_has_metadata : 0;
+      serialized_region[index].flags = region.has_metadata ? lumen_hdr_overlay_region_flag_has_metadata : 0;
       std::memset(serialized_region[index].reserved, 0, sizeof(serialized_region[index].reserved));
       if (region.has_metadata) {
         serialized_region[index].metadata = region.metadata;

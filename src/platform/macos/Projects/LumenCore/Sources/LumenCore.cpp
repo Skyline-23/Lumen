@@ -246,7 +246,7 @@ struct LumenCoreCaptureRequestState {
   }
 };
 
-namespace apollo::core {
+namespace lumen::core {
   std::string version_string() {
     return "LumenCore bootstrap";
   }
@@ -390,12 +390,12 @@ namespace {
 }
 
 const char *LumenCoreBootstrapVersionString(void) {
-  static const std::string version = apollo::core::version_string();
+  static const std::string version = lumen::core::version_string();
   return version.c_str();
 }
 
 const char *LumenCoreBootstrapRuntimeDescription(void) {
-  static const std::string description = apollo::core::runtime_description();
+  static const std::string description = lumen::core::runtime_description();
   return description.c_str();
 }
 

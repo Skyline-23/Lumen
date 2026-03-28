@@ -326,7 +326,7 @@ namespace system_tray {
   void update_tray_playing(std::string app_name) {
 #ifdef __APPLE__
     mirror_notification_when_no_tray(
-      "apollo.app-launched",
+      "lumen.app-launched",
       "App launched",
       app_name + " launched."
     );
@@ -362,7 +362,7 @@ namespace system_tray {
   void update_tray_pausing(std::string app_name) {
 #ifdef __APPLE__
     mirror_notification_when_no_tray(
-      "apollo.stream-paused",
+      "lumen.stream-paused",
       "Stream Paused",
       "Streaming paused for " + app_name
     );
@@ -393,7 +393,7 @@ namespace system_tray {
   void update_tray_stopped(std::string app_name) {
 #ifdef __APPLE__
     mirror_notification_when_no_tray(
-      "apollo.application-stopped",
+      "lumen.application-stopped",
       "Application Stopped",
       "Streaming stopped for " + app_name
     );
@@ -426,7 +426,7 @@ namespace system_tray {
   update_tray_launch_error(std::string app_name, int exit_code) {
 #ifdef __APPLE__
     mirror_notification_when_no_tray(
-      "apollo.launch-error",
+      "lumen.launch-error",
       "Launch Error",
       "Application " + app_name + " exited too fast with code " + std::to_string(exit_code) + ".",
       "/"
@@ -462,7 +462,7 @@ namespace system_tray {
   void update_tray_require_pairing_approval(std::string device_name, std::string user_code) {
 #ifdef __APPLE__
     mirror_notification_when_no_tray(
-      "apollo.require-pairing-approval",
+      "lumen.require-pairing-approval",
       "Incoming Pairing Request",
       "Approve " + device_name + " with code " + user_code + ".",
       "/pairing"
@@ -499,7 +499,7 @@ namespace system_tray {
   update_tray_paired(std::string device_name) {
 #ifdef __APPLE__
     mirror_notification_when_no_tray(
-      "apollo.device-paired",
+      "lumen.device-paired",
       "Device Paired Successfully",
       "Device " + device_name + " paired successfully."
     );
@@ -529,7 +529,7 @@ namespace system_tray {
   update_tray_client_connected(std::string client_name) {
 #ifdef __APPLE__
     mirror_notification_when_no_tray(
-      "apollo.client-connected",
+      "lumen.client-connected",
       "Client Connected",
       client_name + " has connected to the session."
     );

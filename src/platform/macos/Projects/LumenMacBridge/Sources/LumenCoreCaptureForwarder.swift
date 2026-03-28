@@ -27,13 +27,13 @@ public struct LumenBridgeCoreForwardingSnapshot: Equatable, Sendable {
         self.droppedFrameCount = snapshot.dropped_frame_count
         self.droppedEventCount = snapshot.dropped_event_count
         self.hasLastSampleBuffer = snapshot.has_last_sample_buffer
-        self.lastFrameCodec = snapshot.has_last_frame ? LumenCaptureCodec(apolloCoreCodec: snapshot.last_frame_codec) : nil
+        self.lastFrameCodec = snapshot.has_last_frame ? LumenCaptureCodec(lumenCoreCodec: snapshot.last_frame_codec) : nil
         self.lastFramePayloadSize = Int(snapshot.last_frame_payload_size)
         self.lastFrameSourceSequenceNumber = snapshot.has_last_frame ? snapshot.last_frame_source_sequence_number : nil
         self.lastFrameSourceDisplayTime = snapshot.has_last_frame ? snapshot.last_frame_source_display_time : nil
         self.lastFrameIsKeyFrame = snapshot.last_frame_is_key_frame
         self.lastFrameIsHDRSignaled = snapshot.last_frame_is_hdr_signaled
-        self.lastEventKind = snapshot.has_last_event ? LumenBridgeCaptureEventKind(apolloCoreKind: snapshot.last_event_kind) : nil
+        self.lastEventKind = snapshot.has_last_event ? LumenBridgeCaptureEventKind(lumenCoreKind: snapshot.last_event_kind) : nil
     }
 }
 
@@ -113,7 +113,7 @@ final class LumenCoreCaptureForwarder: @unchecked Sendable {
     ) {
         LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
             handle,
-            codec.apolloCoreCodec,
+            codec.lumenCoreCodec,
             sourceSequenceNumber,
             sourceDisplayTime,
             outputCallbackLatencyMilliseconds != nil,
@@ -129,7 +129,7 @@ final class LumenCoreCaptureForwarder: @unchecked Sendable {
             message.withCString { messagePointer in
                 LumenCoreEncodedCaptureIngressConsumeEvent(
                     handle,
-                    event.kind.apolloCoreKind,
+                    event.kind.lumenCoreKind,
                     messagePointer,
                     event.stopStatus != nil,
                     event.stopStatus ?? 0,
@@ -142,7 +142,7 @@ final class LumenCoreCaptureForwarder: @unchecked Sendable {
         } else {
             LumenCoreEncodedCaptureIngressConsumeEvent(
                 handle,
-                event.kind.apolloCoreKind,
+                event.kind.lumenCoreKind,
                 nil,
                 event.stopStatus != nil,
                 event.stopStatus ?? 0,
@@ -164,7 +164,7 @@ final class LumenCoreCaptureForwarder: @unchecked Sendable {
         }
 
         return LumenBridgeCoreDrainedFrame(
-            codec: LumenCaptureCodec(apolloCoreCodec: record.codec),
+            codec: LumenCaptureCodec(lumenCoreCodec: record.codec),
             payloadSize: Int(record.payload_size),
             sourceSequenceNumber: record.source_sequence_number,
             sourceDisplayTime: record.source_display_time,
@@ -185,7 +185,7 @@ final class LumenCoreCaptureForwarder: @unchecked Sendable {
             )
         }
         guard record.has_value,
-              let kind = LumenBridgeCaptureEventKind(apolloCoreKind: record.kind) else {
+              let kind = LumenBridgeCaptureEventKind(lumenCoreKind: record.kind) else {
             return nil
         }
 
@@ -212,8 +212,8 @@ extension LumenCaptureCodec {
         }
     }
 
-    init(apolloCoreCodec: LumenCoreCaptureCodec) {
-        switch apolloCoreCodec {
+    init(lumenCoreCodec: LumenCoreCaptureCodec) {
+        switch lumenCoreCodec {
         case LumenCoreCaptureCodecH264:
             self = .h264
         case LumenCoreCaptureCodecHEVC:
@@ -225,7 +225,7 @@ extension LumenCaptureCodec {
         }
     }
 
-    var apolloCoreCodec: LumenCoreCaptureCodec {
+    var lumenCoreCodec: LumenCoreCaptureCodec {
         switch self {
         case .h264:
             return LumenCoreCaptureCodecH264
@@ -238,7 +238,7 @@ extension LumenCaptureCodec {
 }
 
 extension MDKVideoEncoderCodec {
-    var apolloCoreCodec: LumenCoreCaptureCodec {
+    var lumenCoreCodec: LumenCoreCaptureCodec {
         switch self {
         case .h264:
             return LumenCoreCaptureCodecH264
@@ -251,8 +251,8 @@ extension MDKVideoEncoderCodec {
 }
 
 extension LumenBridgeCaptureEventKind {
-    init?(apolloCoreKind: LumenCoreCaptureEventKind) {
-        switch apolloCoreKind {
+    init?(lumenCoreKind: LumenCoreCaptureEventKind) {
+        switch lumenCoreKind {
         case LumenCoreCaptureEventKindStarted:
             self = .started
         case LumenCoreCaptureEventKindStopped:
@@ -270,7 +270,7 @@ extension LumenBridgeCaptureEventKind {
 }
 
 private extension MDKEncodedCaptureSessionEventKind {
-    var apolloCoreKind: LumenCoreCaptureEventKind {
+    var lumenCoreKind: LumenCoreCaptureEventKind {
         switch self {
         case .started:
             return LumenCoreCaptureEventKindStarted

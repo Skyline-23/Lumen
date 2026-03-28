@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-namespace apollo::core {
+namespace lumen::core {
   std::string version_string();
   std::string runtime_description();
 

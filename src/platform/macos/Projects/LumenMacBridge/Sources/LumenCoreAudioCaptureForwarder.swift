@@ -45,7 +45,7 @@ final class LumenCoreAudioCaptureForwarder: @unchecked Sendable {
             lastFrameChannelCount: snapshot.has_last_frame ? Int(snapshot.last_frame_channel_count) : nil,
             lastFrameFrameCount: snapshot.has_last_frame ? Int(snapshot.last_frame_frame_count) : nil,
             lastFramePCMByteCount: Int(snapshot.last_frame_pcm_byte_count),
-            lastEventKind: snapshot.has_last_event ? LumenBridgeCaptureEventKind(apolloCoreKind: snapshot.last_event_kind) : nil
+            lastEventKind: snapshot.has_last_event ? LumenBridgeCaptureEventKind(lumenCoreKind: snapshot.last_event_kind) : nil
         )
     }
 
@@ -69,7 +69,7 @@ final class LumenCoreAudioCaptureForwarder: @unchecked Sendable {
             message.withCString { messagePointer in
                 LumenCoreAudioCaptureIngressConsumeEvent(
                     handle,
-                    event.kind.apolloCoreKind,
+                    event.kind.lumenCoreKind,
                     messagePointer,
                     event.stopStatus != nil,
                     event.stopStatus ?? 0,
@@ -82,7 +82,7 @@ final class LumenCoreAudioCaptureForwarder: @unchecked Sendable {
         } else {
             LumenCoreAudioCaptureIngressConsumeEvent(
                 handle,
-                event.kind.apolloCoreKind,
+                event.kind.lumenCoreKind,
                 nil,
                 event.stopStatus != nil,
                 event.stopStatus ?? 0,
@@ -132,7 +132,7 @@ final class LumenCoreAudioCaptureForwarder: @unchecked Sendable {
             )
         }
         guard record.has_value,
-              let kind = LumenBridgeCaptureEventKind(apolloCoreKind: record.kind) else {
+              let kind = LumenBridgeCaptureEventKind(lumenCoreKind: record.kind) else {
             return nil
         }
 
@@ -148,7 +148,7 @@ final class LumenCoreAudioCaptureForwarder: @unchecked Sendable {
 }
 
 private extension MDKAudioCaptureSessionEventKind {
-    var apolloCoreKind: LumenCoreCaptureEventKind {
+    var lumenCoreKind: LumenCoreCaptureEventKind {
         switch self {
         case .started:
             return LumenCoreCaptureEventKindStarted

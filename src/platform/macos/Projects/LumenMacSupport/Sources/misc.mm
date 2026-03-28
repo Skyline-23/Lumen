@@ -79,7 +79,7 @@ namespace platf {
     constexpr int32_t kVirtualIsolationParkOriginY = 0;
     constexpr int32_t kVirtualIsolationParkSpacingY = 4096;
     constexpr std::string_view kCaptureRequestMirrorFileName = "capture_request_state.plist"sv;
-    NSString *const kCaptureRequestMirrorNotificationName = @"com.lizardbyte.apollo.capture-request-changed";
+    NSString *const kCaptureRequestMirrorNotificationName = @"dev.skyline23.lumen.capture-request-changed";
     NSString *const kLumenRuntimeEventNotificationName = @"LumenRuntimeEventNotification";
     NSString *const kLumenRuntimeWebUIReadyNotificationName = @"LumenRuntimeWebUIReadyNotification";
     NSString *const kLumenRuntimeEventIdentifierKey = @"identifier";

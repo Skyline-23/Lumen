@@ -35,7 +35,7 @@ struct LumenBridgeMirroredEffectiveDisplayState: Equatable, Sendable {
 
 struct LumenBridgeMirroredCaptureRequestSnapshot: Equatable, Sendable {
     static let changedNotification = Notification.Name(
-        "com.lizardbyte.apollo.capture-request-changed"
+        "dev.skyline23.lumen.capture-request-changed"
     )
 
     let generation: UInt64
@@ -338,7 +338,7 @@ struct LumenBridgeMirroredCaptureRequestSemanticState: Equatable, Sendable {
 }
 
 actor LumenCaptureRequestMirrorCoordinator {
-    private let logger = Logger(subsystem: "com.lizardbyte.apollo", category: "CaptureRequestMirror")
+    private let logger = Logger(subsystem: "dev.skyline23.lumen", category: "CaptureRequestMirror")
     private var mirroredGeneration: UInt64?
     private var mirroredSemanticState: LumenBridgeMirroredCaptureRequestSemanticState?
 
