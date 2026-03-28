@@ -16,9 +16,11 @@ let macDisplayKitRevision = "3525b1f79ba6f25842f3b337704c011476ef1d94"
 
 let repoRoot = "$(SRCROOT)/../../.."
 let buildDepsRoot = "\(repoRoot)/third-party/build-deps/dist/Darwin-arm64"
+let runtimeDepsRoot = "\(repoRoot)/third-party/runtime-deps/dist/Darwin-arm64"
 
 let hostedRuntimeHeaderSearchPaths = [
     "\(buildDepsRoot)/include",
+    "\(runtimeDepsRoot)/include",
     "\(repoRoot)/src",
     "$(SRCROOT)/Projects/ApolloCore/Headers",
     "$(SRCROOT)/Projects/ApolloMacBridge/Headers",
@@ -40,10 +42,10 @@ let hostedRuntimeLibrarySearchPaths = [
 ]
 
 let hostedRuntimeVendoredArchives = [
-    "\(buildDepsRoot)/lib/libminiupnpc.a",
-    "\(buildDepsRoot)/lib/libopus.a",
-    "\(buildDepsRoot)/lib/libssl.a",
-    "\(buildDepsRoot)/lib/libcrypto.a"
+    "\(runtimeDepsRoot)/lib/libminiupnpc.a",
+    "\(runtimeDepsRoot)/lib/libopus.a",
+    "\(runtimeDepsRoot)/lib/libssl.a",
+    "\(runtimeDepsRoot)/lib/libcrypto.a"
 ]
 
 let hostedRuntimePreprocessorDefinitions = [
