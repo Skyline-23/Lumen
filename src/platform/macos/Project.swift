@@ -346,7 +346,7 @@ let project = Project(
                 ]
             ),
             sources: [
-                "Projects/ApolloApp/Sources/**/*.swift"
+                "Projects/LumenApp/Sources/**/*.swift"
             ],
             resources: [
                 "../../../apollo.icns",

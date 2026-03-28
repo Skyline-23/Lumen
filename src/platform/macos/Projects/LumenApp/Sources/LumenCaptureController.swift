@@ -9,7 +9,7 @@ extension Notification.Name {
 }
 
 @MainActor
-final class ApolloCaptureController: ObservableObject {
+final class LumenCaptureController: ObservableObject {
     private enum WebDashboardConfiguration {
         static let defaultBasePort = 47_989
         static let httpsPortOffset = 1
@@ -210,7 +210,7 @@ final class ApolloCaptureController: ObservableObject {
         menuStatus.captureSessionRunning || menuStatus.audioCaptureSessionRunning ? "Force Stop Stream" : "Reload Apps"
     }
 
-    var canRestartApollo: Bool {
+    var canRestartRuntime: Bool {
         true
     }
 
@@ -242,7 +242,7 @@ final class ApolloCaptureController: ObservableObject {
         NSWorkspace.shared.open(url)
     }
 
-    func restartApolloCompanion() {
+    func restartRuntimeCompanion() {
         lastErrorMessage = nil
         runtimeWebDashboardBaseURLString = nil
         shouldOpenDashboardWhenReady = true

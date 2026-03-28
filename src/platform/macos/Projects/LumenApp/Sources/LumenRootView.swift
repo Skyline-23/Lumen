@@ -1,7 +1,7 @@
 import SwiftUI
 
-struct ApolloRootView: View {
-    @ObservedObject var captureController: ApolloCaptureController
+struct LumenRootView: View {
+    @ObservedObject var captureController: LumenCaptureController
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -43,9 +43,9 @@ struct ApolloRootView: View {
             }
 
             Button("Restart Lumen") {
-                captureController.restartApolloCompanion()
+                captureController.restartRuntimeCompanion()
             }
-            .disabled(!captureController.canRestartApollo)
+            .disabled(!captureController.canRestartRuntime)
 
             Button("Quit Lumen") {
                 captureController.quitApplication()

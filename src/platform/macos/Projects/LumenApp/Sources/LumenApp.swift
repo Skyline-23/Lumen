@@ -2,8 +2,8 @@ import AppKit
 import SwiftUI
 import UserNotifications
 
-final class ApolloAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
-    var captureController: ApolloCaptureController?
+final class LumenAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
+    var captureController: LumenCaptureController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         _ = notification
@@ -39,9 +39,9 @@ final class ApolloAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificati
 }
 
 @main
-struct ApolloApp: App {
-    @NSApplicationDelegateAdaptor(ApolloAppDelegate.self) private var appDelegate
-    @StateObject private var captureController = ApolloCaptureController()
+struct LumenApp: App {
+    @NSApplicationDelegateAdaptor(LumenAppDelegate.self) private var appDelegate
+    @StateObject private var captureController = LumenCaptureController()
 
     init() {
         NSApplication.shared.setActivationPolicy(.accessory)
@@ -49,7 +49,7 @@ struct ApolloApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            ApolloRootView(captureController: captureController)
+            LumenRootView(captureController: captureController)
                 .task {
                     appDelegate.captureController = captureController
                 }
