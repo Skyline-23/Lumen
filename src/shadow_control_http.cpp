@@ -9,9 +9,12 @@
 // standard includes
 #include <filesystem>
 #include <fstream>
+#include <mutex>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <thread>
+#include <unordered_map>
 #include <numeric>
 #include <algorithm>
 
@@ -66,6 +69,107 @@ namespace shadow_control_http {
   // SESSION COOKIE
   std::string sessionCookie;
   static std::chrono::time_point<std::chrono::steady_clock> cookie_creation_time;
+
+  constexpr auto SHADOW_PAIRING_EXPIRE_DURATION = 10min;
+  constexpr auto SHADOW_PAIRING_POLL_INTERVAL = 2s;
+
+  enum class shadow_pairing_status_e {
+    pending,
+    approved,
+    rejected,
+  };
+
+  struct shadow_pairing_request_t {
+    std::string pairing_id;
+    std::string user_code;
+    std::string device_name;
+    std::string platform;
+    std::string client_id;
+    std::string public_key;
+    std::chrono::time_point<std::chrono::steady_clock> created_at;
+    std::chrono::time_point<std::chrono::steady_clock> expires_at;
+    shadow_pairing_status_e status = shadow_pairing_status_e::pending;
+  };
+
+  std::mutex shadow_pairing_requests_mutex;
+  std::unordered_map<std::string, shadow_pairing_request_t> shadow_pairing_requests;
+
+  std::string shadow_pairing_status_string(const shadow_pairing_request_t &request) {
+    if (std::chrono::steady_clock::now() > request.expires_at) {
+      return "expired";
+    }
+
+    switch (request.status) {
+      case shadow_pairing_status_e::pending:
+        return "pending";
+      case shadow_pairing_status_e::approved:
+        return "approved";
+      case shadow_pairing_status_e::rejected:
+        return "rejected";
+    }
+
+    return "expired";
+  }
+
+  void erase_expired_shadow_pairing_requests_locked() {
+    const auto now = std::chrono::steady_clock::now();
+    for (auto it = shadow_pairing_requests.begin(); it != shadow_pairing_requests.end();) {
+      if (now > it->second.expires_at) {
+        it = shadow_pairing_requests.erase(it);
+      } else {
+        ++it;
+      }
+    }
+  }
+
+  nlohmann::json serialize_shadow_pairing_request(const shadow_pairing_request_t &request) {
+    const auto now = std::chrono::steady_clock::now();
+    const auto expires_in = std::max<int64_t>(
+      0,
+      std::chrono::duration_cast<std::chrono::seconds>(request.expires_at - now).count()
+    );
+
+    nlohmann::json tree;
+    tree["pairingId"] = request.pairing_id;
+    tree["userCode"] = request.user_code;
+    tree["deviceName"] = request.device_name;
+    tree["platform"] = request.platform;
+    tree["clientId"] = request.client_id;
+    tree["publicKeyPresent"] = !request.public_key.empty();
+    tree["status"] = shadow_pairing_status_string(request);
+    tree["expiresInSeconds"] = expires_in;
+    tree["pollIntervalSeconds"] = SHADOW_PAIRING_POLL_INTERVAL.count();
+    return tree;
+  }
+
+  std::string generate_shadow_pairing_user_code() {
+    static constexpr auto alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"sv;
+    return crypto::rand_alphabet(6, alphabet);
+  }
+
+  std::optional<std::string> resolve_shadow_pairing_request_id(
+    const nlohmann::json &input_tree,
+    const std::unordered_map<std::string, shadow_pairing_request_t> &requests
+  ) {
+    if (input_tree.contains("pairingId") && input_tree["pairingId"].is_string()) {
+      auto pairing_id = input_tree["pairingId"].get<std::string>();
+      if (requests.find(pairing_id) != requests.end()) {
+        return pairing_id;
+      }
+    }
+
+    if (input_tree.contains("userCode") && input_tree["userCode"].is_string()) {
+      auto user_code = input_tree["userCode"].get<std::string>();
+      auto it = std::find_if(requests.begin(), requests.end(), [&user_code](const auto &entry) {
+        return entry.second.user_code == user_code;
+      });
+      if (it != requests.end()) {
+        return it->first;
+      }
+    }
+
+    return std::nullopt;
+  }
 
   /**
    * @brief Log the request details.
@@ -1226,6 +1330,174 @@ namespace shadow_control_http {
   }
 
   /**
+   * @brief Start a Shadow-native pairing request for a device.
+   * @param response The HTTP response object.
+   * @param request The HTTP request object.
+   */
+  void startShadowPairing(resp_https_t response, req_https_t request) {
+    if (!checkIPOrigin(response, request) || !validateContentType(response, request, "application/json")) {
+      return;
+    }
+
+    print_req(request);
+
+    try {
+      std::stringstream ss;
+      ss << request->content.rdbuf();
+      nlohmann::json input_tree = nlohmann::json::parse(ss.str());
+
+      shadow_pairing_request_t pairing_request;
+      pairing_request.pairing_id = uuid_util::uuid_t::generate().string();
+      pairing_request.user_code = generate_shadow_pairing_user_code();
+      pairing_request.device_name = input_tree.value("deviceName", "Unnamed Device");
+      pairing_request.platform = input_tree.value("platform", "unknown");
+      pairing_request.client_id = input_tree.value("clientId", "");
+      pairing_request.public_key = input_tree.value("publicKey", "");
+      pairing_request.created_at = std::chrono::steady_clock::now();
+      pairing_request.expires_at = pairing_request.created_at + SHADOW_PAIRING_EXPIRE_DURATION;
+
+      {
+        std::lock_guard lock {shadow_pairing_requests_mutex};
+        erase_expired_shadow_pairing_requests_locked();
+        shadow_pairing_requests[pairing_request.pairing_id] = pairing_request;
+      }
+
+      BOOST_LOG(info) << "Shadow pairing request created for ["sv << pairing_request.device_name
+                      << "] platform ["sv << pairing_request.platform << "] code ["sv
+                      << pairing_request.user_code << ']';
+
+      nlohmann::json output_tree;
+      output_tree["status"] = true;
+      output_tree["pairing"] = serialize_shadow_pairing_request(pairing_request);
+      send_response(response, output_tree);
+    } catch (std::exception &e) {
+      BOOST_LOG(warning) << "StartShadowPairing: "sv << e.what();
+      bad_request(response, request, e.what());
+    }
+  }
+
+  /**
+   * @brief Get the current status of a Shadow-native pairing request.
+   * @param response The HTTP response object.
+   * @param request The HTTP request object.
+   */
+  void getShadowPairingStatus(resp_https_t response, req_https_t request) {
+    if (!checkIPOrigin(response, request)) {
+      return;
+    }
+
+    print_req(request);
+
+    auto args = request->parse_query_string();
+    auto pairing_id_it = args.find("pairingId"s);
+    if (pairing_id_it == args.end()) {
+      bad_request(response, request, "Missing pairingId query parameter");
+      return;
+    }
+
+    std::optional<shadow_pairing_request_t> pairing_request;
+    {
+      std::lock_guard lock {shadow_pairing_requests_mutex};
+      erase_expired_shadow_pairing_requests_locked();
+      auto it = shadow_pairing_requests.find(pairing_id_it->second);
+      if (it != shadow_pairing_requests.end()) {
+        pairing_request = it->second;
+      }
+    }
+
+    if (!pairing_request) {
+      not_found(response, request);
+      return;
+    }
+
+    nlohmann::json output_tree;
+    output_tree["status"] = true;
+    output_tree["pairing"] = serialize_shadow_pairing_request(*pairing_request);
+    send_response(response, output_tree);
+  }
+
+  /**
+   * @brief List pending and decided Shadow pairing requests for the Web UI.
+   * @param response The HTTP response object.
+   * @param request The HTTP request object.
+   */
+  void listShadowPairingRequests(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) {
+      return;
+    }
+
+    print_req(request);
+
+    nlohmann::json requests_json = nlohmann::json::array();
+    {
+      std::lock_guard lock {shadow_pairing_requests_mutex};
+      erase_expired_shadow_pairing_requests_locked();
+      for (const auto &[_, pairing_request] : shadow_pairing_requests) {
+        requests_json.push_back(serialize_shadow_pairing_request(pairing_request));
+      }
+    }
+
+    nlohmann::json output_tree;
+    output_tree["status"] = true;
+    output_tree["requests"] = requests_json;
+    send_response(response, output_tree);
+  }
+
+  /**
+   * @brief Approve or reject a Shadow pairing request.
+   * @param response The HTTP response object.
+   * @param request The HTTP request object.
+   * @param approved Whether the pairing request should be approved.
+   */
+  void setShadowPairingDecision(resp_https_t response, req_https_t request, bool approved) {
+    if (!validateContentType(response, request, "application/json") || !authenticate(response, request)) {
+      return;
+    }
+
+    print_req(request);
+
+    try {
+      std::stringstream ss;
+      ss << request->content.rdbuf();
+      nlohmann::json input_tree = nlohmann::json::parse(ss.str());
+
+      std::optional<shadow_pairing_request_t> pairing_request;
+      {
+        std::lock_guard lock {shadow_pairing_requests_mutex};
+        erase_expired_shadow_pairing_requests_locked();
+        auto pairing_id = resolve_shadow_pairing_request_id(input_tree, shadow_pairing_requests);
+        if (!pairing_id) {
+          not_found(response, request);
+          return;
+        }
+
+        auto &request_entry = shadow_pairing_requests[*pairing_id];
+        request_entry.status = approved ? shadow_pairing_status_e::approved : shadow_pairing_status_e::rejected;
+        pairing_request = request_entry;
+      }
+
+      BOOST_LOG(info) << "Shadow pairing request ["sv << pairing_request->pairing_id << "] "
+                      << (approved ? "approved"sv : "rejected"sv);
+
+      nlohmann::json output_tree;
+      output_tree["status"] = true;
+      output_tree["pairing"] = serialize_shadow_pairing_request(*pairing_request);
+      send_response(response, output_tree);
+    } catch (std::exception &e) {
+      BOOST_LOG(warning) << "SetShadowPairingDecision: "sv << e.what();
+      bad_request(response, request, e.what());
+    }
+  }
+
+  void approveShadowPairing(resp_https_t response, req_https_t request) {
+    setShadowPairingDecision(response, request, true);
+  }
+
+  void rejectShadowPairing(resp_https_t response, req_https_t request) {
+    setShadowPairingDecision(response, request, false);
+  }
+
+  /**
    * @brief Get a one-time password (OTP).
    * @param response The HTTP response object.
    * @param request The HTTP request object.
@@ -1537,6 +1809,11 @@ namespace shadow_control_http {
     server.resource["^/login/?$"]["GET"] = getLoginPage;
     server.resource["^/troubleshooting/?$"]["GET"] = getTroubleshootingPage;
     server.resource["^/api/login"]["POST"] = login;
+    server.resource["^/api/pairing/start$"]["POST"] = startShadowPairing;
+    server.resource["^/api/pairing/status$"]["GET"] = getShadowPairingStatus;
+    server.resource["^/api/pairing/requests$"]["GET"] = listShadowPairingRequests;
+    server.resource["^/api/pairing/approve$"]["POST"] = approveShadowPairing;
+    server.resource["^/api/pairing/reject$"]["POST"] = rejectShadowPairing;
     server.resource["^/api/pin$"]["POST"] = savePin;
     server.resource["^/api/otp$"]["POST"] = getOTP;
     server.resource["^/api/apps$"]["GET"] = getApps;
