@@ -430,8 +430,8 @@ namespace stream {
       crypto::aes_t incoming_iv;
       crypto::aes_t outgoing_iv;
 
-      std::uint32_t connect_data;  // Used for new clients with ML_FF_SESSION_ID_V1
-      std::string expected_peer_address;  // Only used for legacy clients without ML_FF_SESSION_ID_V1
+      std::uint32_t connect_data;  // Required for Shadow session identifier matching
+      std::string expected_peer_address;
 
       net::peer_t peer;
       std::uint32_t seq;
@@ -594,20 +594,10 @@ namespace stream {
         continue;
       }
 
-      // Identify the connection by the unique connect data if the client supports it.
-      // Only fall back to IP address matching for clients without session ID support.
-      if (session_p->config.mlFeatureFlags & ML_FF_SESSION_ID_V1) {
-        if (session_p->control.connect_data != connect_data) {
-          continue;
-        } else {
-          BOOST_LOG(debug) << "Initialized new control stream session by connect data match [v2]"sv;
-        }
+      if (session_p->control.connect_data != connect_data) {
+        continue;
       } else {
-        if (session_p->control.expected_peer_address != peer_addr) {
-          continue;
-        } else {
-          BOOST_LOG(debug) << "Initialized new control stream session by IP address match [v1]"sv;
-        }
+        BOOST_LOG(debug) << "Initialized new control stream session by Shadow session identifier"sv;
       }
 
       // Use the local address from the control connection as the source address
@@ -895,8 +885,8 @@ namespace stream {
    */
   int send_feedback_msg(session_t *session, platf::gamepad_feedback_msg_t &msg) {
     if (!session->control.peer) {
-      BOOST_LOG(warning) << "Couldn't send gamepad feedback data, still waiting for PING from Moonlight"sv;
-      // Still waiting for PING from Moonlight
+      BOOST_LOG(warning) << "Couldn't send gamepad feedback data, still waiting for a client ping"sv;
+      // Still waiting for the initial client ping
       return -1;
     }
 
@@ -1074,7 +1064,7 @@ namespace stream {
     const video::hdr_frame_state_t &state
   ) {
     if (!session->control.peer) {
-      BOOST_LOG(warning) << "Couldn't send HDR frame state, still waiting for PING from Moonlight"sv;
+      BOOST_LOG(warning) << "Couldn't send HDR frame state, still waiting for a client ping"sv;
       return -1;
     }
 
@@ -1467,20 +1457,9 @@ namespace stream {
           return;
         }
 
-        if (bytes == 4) {
-          // For legacy PING packets, find the matching session by address.
-          auto it = peer_to_session.find(peer.address());
-          if (it != std::end(peer_to_session)) {
-            if (auto owner_it = peer_to_session_owner.find(peer.address()); owner_it != std::end(peer_to_session_owner) && owner_it->second) {
-              owner_it->second->pingTimeout = std::chrono::steady_clock::now() + config::stream.ping_timeout;
-            }
-            BOOST_LOG(debug) << "RAISE: "sv << peer.address().to_string() << ':' << peer.port() << " :: " << type_str;
-            it->second->raise(peer, std::string {buf[buf_elem].data(), bytes});
-          }
-        } else if (bytes >= sizeof(SS_PING)) {
+        if (bytes >= sizeof(SS_PING)) {
           auto ping = (PSS_PING) buf[buf_elem].data();
 
-          // For new PING packets that include a client identifier, search by payload.
           auto it = peer_to_session.find(std::string {ping->payload, sizeof(ping->payload)});
           if (it != std::end(peer_to_session)) {
             if (auto owner_it = peer_to_session_owner.find(std::string {ping->payload, sizeof(ping->payload)}); owner_it != std::end(peer_to_session_owner) && owner_it->second) {
@@ -2047,19 +2026,12 @@ namespace stream {
     auto messages = std::make_shared<message_queue_t::element_type>(30);
     av_session_id_t session_id = std::string {expected_payload};
 
-    // Only allow matches on the peer address for legacy clients
-    if (!(session->config.mlFeatureFlags & ML_FF_SESSION_ID_V1)) {
-      ref->message_queue_queue->raise(message_queue_registration_t {type, peer.address(), messages, session});
-    }
     ref->message_queue_queue->raise(message_queue_registration_t {type, session_id, messages, session});
 
     auto fg = util::fail_guard([&]() {
       messages->stop();
 
       // remove message queue from session
-      if (!(session->config.mlFeatureFlags & ML_FF_SESSION_ID_V1)) {
-        ref->message_queue_queue->raise(message_queue_registration_t {type, peer.address(), nullptr, nullptr});
-      }
       ref->message_queue_queue->raise(message_queue_registration_t {type, session_id, nullptr, nullptr});
     });
 
@@ -2076,11 +2048,7 @@ namespace stream {
 
       TUPLE_2D_REF(recv_peer, msg, *msg_opt);
       if (msg.find(expected_payload) != std::string::npos) {
-        // Match the new PING payload format
-        BOOST_LOG(debug) << "Received ping [v2] from "sv << recv_peer.address() << ':' << recv_peer.port() << " ["sv << util::hex_vec(msg) << ']';
-      } else if (!(session->config.mlFeatureFlags & ML_FF_SESSION_ID_V1) && msg == "PING"sv) {
-        // Match the legacy fixed PING payload only if the new type is not supported
-        BOOST_LOG(debug) << "Received ping [v1] from "sv << recv_peer.address() << ':' << recv_peer.port() << " ["sv << util::hex_vec(msg) << ']';
+        BOOST_LOG(debug) << "Received ping from "sv << recv_peer.address() << ':' << recv_peer.port() << " ["sv << util::hex_vec(msg) << ']';
       } else {
         BOOST_LOG(debug) << "Received non-ping from "sv << recv_peer.address() << ':' << recv_peer.port() << " ["sv << util::hex_vec(msg) << ']';
         current_time = std::chrono::steady_clock::now();
@@ -2655,6 +2623,11 @@ namespace stream {
       auto addr = net::parse_address(addr_string);
       if (!addr) {
         BOOST_LOG(error) << "Couldn't start session: invalid peer address ["sv << addr_string << ']';
+        return -1;
+      }
+
+      if (!(session.config.mlFeatureFlags & ML_FF_SESSION_ID_V1)) {
+        BOOST_LOG(error) << "Couldn't start session: Shadow transport requires session ID ping support"sv;
         return -1;
       }
 
