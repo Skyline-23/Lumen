@@ -93,14 +93,20 @@ final class ApolloTuistBootstrapTests: XCTestCase {
             requestedHeight: 2290,
             sinkRequest: ApolloBridgeSinkRequest(
                 capability: ApolloBridgeSinkCapability(
+                    gamut: .displayP3,
+                    transfer: .pq,
                     currentEDRHeadroom: 2.8,
                     potentialEDRHeadroom: 8.4,
                     currentPeakLuminanceNits: 800,
-                    potentialPeakLuminanceNits: 1600
+                    potentialPeakLuminanceNits: 1600,
+                    supportsFrameGatedHDR: true,
+                    supportsPerFrameHDRMetadata: true
                 ),
                 dynamicRangeTransport: ApolloCoreDynamicRangeTransportFrameGatedHDR
             ),
             effectiveDisplayState: ApolloBridgeEffectiveDisplayState(
+                gamut: .displayP3,
+                transfer: .pq,
                 hdrStaticMetadata: hdrStaticMetadata
             )
         )
@@ -132,7 +138,9 @@ final class ApolloTuistBootstrapTests: XCTestCase {
             sinkRequest: ApolloBridgeSinkRequest(
                 capability: ApolloBridgeSinkCapability(
                     gamut: .displayP3,
-                    transfer: .pq
+                    transfer: .pq,
+                    supportsFrameGatedHDR: true,
+                    supportsPerFrameHDRMetadata: true
                 ),
                 dynamicRangeTransport: ApolloCoreDynamicRangeTransportFrameGatedHDR
             ),
@@ -171,10 +179,10 @@ final class ApolloTuistBootstrapTests: XCTestCase {
             targetFrameRate: 30
         )
 
-        XCTAssertEqual(ApolloBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q2), 4)
-        XCTAssertEqual(ApolloBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: auto), 5)
-        XCTAssertEqual(ApolloBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q4), 6)
-        XCTAssertEqual(ApolloBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q2ThirtyFps), 4)
+        XCTAssertEqual(ApolloBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q2), 2)
+        XCTAssertEqual(ApolloBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: auto), 2)
+        XCTAssertEqual(ApolloBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q4), 4)
+        XCTAssertEqual(ApolloBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q2ThirtyFps), 3)
     }
 
     func testApolloCoreEncodedCaptureIngressStoresSampleBufferMetadata() throws {

@@ -495,7 +495,61 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     }
 
     public var usesHDRTransport: Bool {
-        apolloDynamicRangeTransportUsesHDR(sinkRequest.dynamicRangeTransport)
+        apolloDynamicRangeTransportUsesHDR(negotiatedDynamicRangeTransport)
+    }
+
+    public var negotiatedDynamicRangeTransport: ApolloCoreDynamicRangeTransport {
+        switch sinkRequest.dynamicRangeTransport {
+        case ApolloCoreDynamicRangeTransportFullFrameHDR:
+            return codec == .h264 ? ApolloCoreDynamicRangeTransportSDR : ApolloCoreDynamicRangeTransportFullFrameHDR
+        case ApolloCoreDynamicRangeTransportFrameGatedHDR:
+            guard codec != .h264,
+                  sinkRequest.capability.supportsFrameGatedHDR else {
+                return ApolloCoreDynamicRangeTransportSDR
+            }
+            return ApolloCoreDynamicRangeTransportFrameGatedHDR
+        case ApolloCoreDynamicRangeTransportSDRBaseHDROverlay:
+            guard codec != .h264 else {
+                return ApolloCoreDynamicRangeTransportSDR
+            }
+            if sinkRequest.capability.supportsHDRTileOverlay,
+               sinkRequest.capability.supportsPerFrameHDRMetadata {
+                return ApolloCoreDynamicRangeTransportSDRBaseHDROverlay
+            }
+            if sinkRequest.capability.supportsFrameGatedHDR {
+                return ApolloCoreDynamicRangeTransportFrameGatedHDR
+            }
+            return ApolloCoreDynamicRangeTransportSDR
+        case ApolloCoreDynamicRangeTransportSDR, ApolloCoreDynamicRangeTransportUnknown:
+            return ApolloCoreDynamicRangeTransportSDR
+        default:
+            return ApolloCoreDynamicRangeTransportSDR
+        }
+    }
+
+    public var negotiatedQueueProfile: ApolloCaptureQueueProfile {
+        guard queueProfile == .auto else {
+            return queueProfile
+        }
+
+        if targetFrameRate >= 120 {
+            return .q1
+        }
+
+        if negotiatedDynamicRangeTransport == ApolloCoreDynamicRangeTransportSDRBaseHDROverlay {
+            return .q1
+        }
+
+        if usesHDRTransport || targetFrameRate >= 90 {
+            return .q2
+        }
+
+        return .q3
+    }
+
+    public var prefersRealtimeHDRMetadata: Bool {
+        negotiatedDynamicRangeTransport != ApolloCoreDynamicRangeTransportSDR &&
+            sinkRequest.capability.supportsPerFrameHDRMetadata
     }
 
     struct EncodedHDRConfigurationSnapshot: Equatable, Sendable {
@@ -544,8 +598,8 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
 
     var mdkValue: MDKEncodedCaptureConfiguration {
         let streamConfiguration = MDKSkyLightDisplayStreamConfiguration(
-            queueDepth: queueProfile.queueDepthHint,
-            queueProfile: queueProfile.mdkQueueProfile,
+            queueDepth: negotiatedQueueProfile.queueDepthHint,
+            queueProfile: negotiatedQueueProfile.mdkQueueProfile,
             showCursor: showCursor,
             outputWidth: requestedWidth,
             outputHeight: requestedHeight,
@@ -766,7 +820,7 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     )
 
     var hdrConfigurationDebugSummary: String {
-        "uses-hdr-transport=\(usesHDRTransport) sink-gamut=\(sinkRequest.capability.gamut.rawValue) sink-transfer=\(sinkRequest.capability.transfer.rawValue) requested-transport=\(apolloDynamicRangeTransportName(sinkRequest.dynamicRangeTransport)) effective-gamut=\(resolvedDisplayGamut.rawValue) effective-transfer=\(resolvedDisplayTransfer.rawValue) negotiated-static-metadata=\(effectiveDisplayState.hdrStaticMetadata != nil) current-edr-headroom=\(sinkRequest.capability.currentEDRHeadroom) potential-edr-headroom=\(sinkRequest.capability.potentialEDRHeadroom) current-peak-nits=\(sinkRequest.capability.currentPeakLuminanceNits) potential-peak-nits=\(sinkRequest.capability.potentialPeakLuminanceNits) supports-frame-gated-hdr=\(sinkRequest.capability.supportsFrameGatedHDR) supports-hdr-tile-overlay=\(sinkRequest.capability.supportsHDRTileOverlay) supports-per-frame-hdr-metadata=\(sinkRequest.capability.supportsPerFrameHDRMetadata)"
+        "uses-hdr-transport=\(usesHDRTransport) requested-transport=\(apolloDynamicRangeTransportName(sinkRequest.dynamicRangeTransport)) negotiated-transport=\(apolloDynamicRangeTransportName(negotiatedDynamicRangeTransport)) requested-queue=\(queueProfile.rawValue) negotiated-queue=\(negotiatedQueueProfile.rawValue) effective-gamut=\(resolvedDisplayGamut.rawValue) effective-transfer=\(resolvedDisplayTransfer.rawValue) negotiated-static-metadata=\(effectiveDisplayState.hdrStaticMetadata != nil) current-edr-headroom=\(sinkRequest.capability.currentEDRHeadroom) potential-edr-headroom=\(sinkRequest.capability.potentialEDRHeadroom) current-peak-nits=\(sinkRequest.capability.currentPeakLuminanceNits) potential-peak-nits=\(sinkRequest.capability.potentialPeakLuminanceNits) supports-frame-gated-hdr=\(sinkRequest.capability.supportsFrameGatedHDR) supports-hdr-tile-overlay=\(sinkRequest.capability.supportsHDRTileOverlay) supports-per-frame-hdr-metadata=\(sinkRequest.capability.supportsPerFrameHDRMetadata)"
     }
 }
 
@@ -1125,11 +1179,15 @@ public actor ApolloBridgeRuntime {
     static func recommendedCoreForwardingFrameCapacity(
         for configuration: ApolloMacDisplayKitCaptureConfiguration
     ) -> Int {
-        // MDK already applies source-side backpressure. The ApolloCore forwarder only needs
-        // enough slack for cross-thread handoff; scaling this queue with frame rate just lets
-        // stale encoded frames accumulate and shows up as host-side latency.
-        let queueDepthReserve = max(configuration.queueProfile.queueDepthHint, 1)
-        return min(max(queueDepthReserve + 2, 3), 8)
+        // MDK already applies source-side backpressure. Keep the ApolloCore handoff queue
+        // deliberately tight so stale encoded frames are dropped quickly instead of turning
+        // into host-side latency. Auto mode resolves the queue profile from the negotiated
+        // transport before sizing the forwarding buffer.
+        let queueDepthReserve = max(configuration.negotiatedQueueProfile.queueDepthHint, 1)
+        let hdrMetadataSlack = configuration.prefersRealtimeHDRMetadata ? 1 : 0
+        let minimumCapacity = configuration.targetFrameRate >= 120 ? 2 : 3
+        let maximumCapacity = configuration.targetFrameRate >= 120 ? 4 : 6
+        return min(max(queueDepthReserve + hdrMetadataSlack, minimumCapacity), maximumCapacity)
     }
 
     private let coreForwarder = ApolloCoreCaptureForwarder()
@@ -1188,7 +1246,7 @@ public actor ApolloBridgeRuntime {
         lastEncodedFrameSourceDisplayTime = nil
 
         logger.notice(
-            "Starting MacDisplayKit capture \(configuration.hdrConfigurationDebugSummary, privacy: .public) queue=\(configuration.queueProfile.rawValue, privacy: .public) forwarding-frame-capacity=\(frameCapacity, privacy: .public)"
+            "Starting MacDisplayKit capture \(configuration.hdrConfigurationDebugSummary, privacy: .public) forwarding-frame-capacity=\(frameCapacity, privacy: .public)"
         )
 
         let session = MDKEncodedCaptureSession(configuration: configuration.mdkValue)
@@ -1541,7 +1599,7 @@ public actor ApolloBridgeRuntime {
             if let configuration = request.videoConfiguration {
                 let frameCapacity = Self.recommendedCoreForwardingFrameCapacity(for: configuration)
                 logger.notice(
-                    "Applying ApolloCore macOS bridge capture request display-id=\(configuration.displayID, privacy: .public) codec=\(configuration.codec.rawValue, privacy: .public) queue=\(configuration.queueProfile.rawValue, privacy: .public) fps=\(configuration.targetFrameRate, privacy: .public) bitrate-kbps=\(configuration.targetVideoBitRateKbps, privacy: .public) forwarding-frame-capacity=\(frameCapacity, privacy: .public)"
+                    "Applying ApolloCore macOS bridge capture request display-id=\(configuration.displayID, privacy: .public) codec=\(configuration.codec.rawValue, privacy: .public) requested-queue=\(configuration.queueProfile.rawValue, privacy: .public) negotiated-queue=\(configuration.negotiatedQueueProfile.rawValue, privacy: .public) requested-transport=\(apolloDynamicRangeTransportName(configuration.sinkRequest.dynamicRangeTransport), privacy: .public) negotiated-transport=\(apolloDynamicRangeTransportName(configuration.negotiatedDynamicRangeTransport), privacy: .public) fps=\(configuration.targetFrameRate, privacy: .public) bitrate-kbps=\(configuration.targetVideoBitRateKbps, privacy: .public) forwarding-frame-capacity=\(frameCapacity, privacy: .public)"
                 )
                 try? await startMacDisplayKitCapture(
                     configuration: configuration,
