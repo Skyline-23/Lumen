@@ -95,6 +95,10 @@ using namespace std::literals;
 namespace stream {
   struct session_t;
 
+  constexpr std::size_t max_video_send_batch_bytes = 64 * 1024;
+  constexpr std::size_t max_video_send_batch_packets = 64;
+  constexpr std::uint8_t shadow_multi_fec_flags = 0x10;
+
   enum class socket_e : int {
     video,  ///< Video
     audio  ///< Audio
@@ -246,7 +250,7 @@ namespace stream {
     std::uint16_t encryptedHeaderType;  // Always LE 0x0001
     std::uint16_t length;  // sizeof(seq) + 16 byte tag + secondary header and data
 
-    // seq is accepted as an arbitrary value in Moonlight
+    // seq is carried through as the per-packet AES-GCM IV counter input.
     std::uint32_t seq;  // Monotonically increasing sequence number (used as IV for AES-GCM)
 
     uint8_t *payload() {
@@ -1643,11 +1647,11 @@ namespace stream {
         // On Windows, batches above 64K seem to bypass SO_SNDBUF regardless of its size,
         // appear in "Other I/O" and begin waiting for interrupts.
         // This gives inconsistent performance so we'd rather avoid it.
-        size_t send_batch_size = 64 * 1024 / blocksize;
-        // Also don't exceed 64 packets, which can happen when Moonlight requests
-        // unusually small packet size.
+        size_t send_batch_size = std::max<std::size_t>(1, max_video_send_batch_bytes / blocksize);
+        // Also don't exceed the platform packet-count cap, which can happen when the
+        // client negotiates an unusually small packet size.
         // Generic Segmentation Offload on Linux can't do more than 64.
-        send_batch_size = std::min<size_t>(64, send_batch_size);
+        send_batch_size = std::min(max_video_send_batch_packets, send_batch_size);
 
         // Don't ignore the last ratecontrol group of the previous frame
         auto ratecontrol_frame_start = std::max(ratecontrol_next_frame_start, std::chrono::steady_clock::now());
@@ -1665,8 +1669,7 @@ namespace stream {
             inspect->packet.frameIndex = packet->frame_index();
             inspect->packet.streamPacketIndex = ((uint32_t) lowseq + x) << 8;
 
-            // Match multiFecFlags with Moonlight
-            inspect->packet.multiFecFlags = 0x10;
+            inspect->packet.multiFecFlags = shadow_multi_fec_flags;
             inspect->packet.multiFecBlocks = (blockIndex << 4) | ((fec_blocks_needed - 1) << 6);
 
             inspect->packet.flags = FLAG_CONTAINS_PIC_DATA;

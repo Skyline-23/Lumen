@@ -2303,7 +2303,7 @@ namespace video {
     },
     {
       // x265's Info SEI is so long that it causes the IDR picture data to be
-      // kicked to the 2nd packet in the frame, breaking Moonlight's parsing logic.
+      // kicked to the 2nd packet in the frame, breaking the client packet parser.
       // It also looks like gop_size isn't passed on to x265, so we have to set
       // 'keyint=-1' in the parameters ourselves.
       {
@@ -3510,11 +3510,11 @@ namespace video {
     while (true) {
       // Break out of the encoding loop if any of the following are true:
       // a) The stream is ending
-      // b) Sunshine is quitting
+      // b) The host runtime is quitting
       // c) The capture side is waiting to reinit and we've encoded at least one frame
       //
       // If we have to reinit before we have received any captured frames, we will encode
-      // the blank dummy frame just to let Moonlight know that we're alive.
+      // the blank dummy frame just to let the client know that the stream is alive.
       if (shutdown_event->peek() || !images->running() || (reinit_event.peek() && frame_nr > 1)) {
         break;
       }
