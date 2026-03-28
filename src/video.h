@@ -128,9 +128,18 @@ namespace video {
     constexpr int preferred_tile_height = 540;
     constexpr int max_tiles_per_axis = 4;
     constexpr int max_total_tiles = 6;
+    constexpr std::int64_t medium_overlay_area = 1920ll * 1080ll;
+    constexpr std::int64_t small_overlay_area = 1280ll * 720ll;
 
     auto columns = std::clamp((width + preferred_tile_width - 1) / preferred_tile_width, 1, max_tiles_per_axis);
     auto rows = std::clamp((height + preferred_tile_height - 1) / preferred_tile_height, 1, max_tiles_per_axis);
+    auto max_tiles_for_area = max_total_tiles;
+    const auto overlay_area = static_cast<std::int64_t>(width) * static_cast<std::int64_t>(height);
+    if (overlay_area <= small_overlay_area) {
+      max_tiles_for_area = 2;
+    } else if (overlay_area <= medium_overlay_area) {
+      max_tiles_for_area = 4;
+    }
     const auto aspect_ratio = static_cast<double>(width) / static_cast<double>(height);
     if (aspect_ratio >= 2.0) {
       rows = 1;
@@ -141,7 +150,7 @@ namespace video {
     } else if (aspect_ratio <= 0.625) {
       columns = std::min(columns, 2);
     }
-    while (columns * rows > max_total_tiles) {
+    while (columns * rows > max_tiles_for_area) {
       if (columns >= rows && columns > 1) {
         --columns;
       } else if (rows > 1) {
