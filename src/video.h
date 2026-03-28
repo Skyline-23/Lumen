@@ -108,6 +108,59 @@ namespace video {
     return state;
   }
 
+  inline std::vector<hdr_overlay_region_t> make_coarse_overlay_regions(
+    int frame_width,
+    int frame_height,
+    const SS_HDR_METADATA *metadata = nullptr
+  ) {
+    const auto width = std::max(frame_width, 0);
+    const auto height = std::max(frame_height, 0);
+    std::vector<hdr_overlay_region_t> overlay_regions;
+    if (width <= 0 || height <= 0) {
+      return overlay_regions;
+    }
+
+    constexpr int preferred_tile_width = 960;
+    constexpr int preferred_tile_height = 540;
+    constexpr int max_tiles_per_axis = 4;
+
+    const auto columns = std::clamp((width + preferred_tile_width - 1) / preferred_tile_width, 1, max_tiles_per_axis);
+    const auto rows = std::clamp((height + preferred_tile_height - 1) / preferred_tile_height, 1, max_tiles_per_axis);
+    const auto tile_width = std::max((width + columns - 1) / columns, 1);
+    const auto tile_height = std::max((height + rows - 1) / rows, 1);
+
+    overlay_regions.reserve(static_cast<std::size_t>(columns * rows));
+    for (int row = 0; row < rows; ++row) {
+      for (int column = 0; column < columns; ++column) {
+        hdr_overlay_region_t region;
+        region.x = column * tile_width;
+        region.y = row * tile_height;
+        region.width = std::min(tile_width, width - region.x);
+        region.height = std::min(tile_height, height - region.y);
+        region.has_metadata = metadata != nullptr;
+        if (metadata != nullptr) {
+          region.metadata = *metadata;
+        }
+        if (region.width > 0 && region.height > 0) {
+          overlay_regions.emplace_back(region);
+        }
+      }
+    }
+
+    return overlay_regions;
+  }
+
+  inline hdr_frame_state_t make_tiled_overlay_hdr_frame_state(
+    int frame_width,
+    int frame_height,
+    const SS_HDR_METADATA *metadata = nullptr
+  ) {
+    return make_overlay_hdr_frame_state(
+      make_coarse_overlay_regions(frame_width, frame_height, metadata),
+      metadata
+    );
+  }
+
   inline hdr_frame_state_t make_full_frame_overlay_hdr_frame_state(
     int frame_width,
     int frame_height,
@@ -166,7 +219,7 @@ namespace video {
       case dynamic_range_transport_e::frame_gated_hdr:
         return frame_is_hdr_signaled ? make_full_frame_hdr_state(metadata) : make_sdr_hdr_frame_state();
       case dynamic_range_transport_e::sdr_base_hdr_overlay:
-        return frame_is_hdr_signaled ? make_full_frame_overlay_hdr_frame_state(frame_width, frame_height, metadata) : make_sdr_hdr_frame_state();
+        return frame_is_hdr_signaled ? make_tiled_overlay_hdr_frame_state(frame_width, frame_height, metadata) : make_sdr_hdr_frame_state();
       case dynamic_range_transport_e::unknown:
       default:
         return frame_is_hdr_signaled ? make_full_frame_hdr_state(metadata) : make_sdr_hdr_frame_state();
