@@ -47,7 +47,7 @@ int lumen_run(int argc, char *argv[], const LumenRuntimeOptions &options);
 void lumen_request_shutdown(void);
 
 /**
- * @brief Returns whether a hosted Apollo runtime is currently active.
+ * @brief Returns whether a hosted Lumen runtime is currently active.
  */
 bool lumen_is_running(void);
 

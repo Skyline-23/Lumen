@@ -1,6 +1,6 @@
 /**
  * @file src/main.cpp
- * @brief Definitions for the main entry point for Apollo.
+ * @brief Definitions for the main entry point for Lumen.
  */
 // standard includes
 #include <codecvt>
@@ -234,9 +234,9 @@ int lumen_run(int argc, char *argv[], const LumenRuntimeOptions &options) {
 #ifdef _WIN32
   // Modify relevant NVIDIA control panel settings if the system has corresponding gpu
   if (nvprefs_instance.load()) {
-    // Restore global settings to the undo file left by improper termination of Apollo.exe
+    // Restore global settings to the undo file left by improper termination of Lumen.exe
     nvprefs_instance.restore_from_and_delete_undo_file_if_exists();
-    // Modify application settings for Apollo.exe
+    // Modify application settings for Lumen.exe
     nvprefs_instance.modify_application_profile();
     // Modify global settings, undo file is produced in the process to restore after improper termination
     nvprefs_instance.modify_global_profile();
@@ -244,7 +244,7 @@ int lumen_run(int argc, char *argv[], const LumenRuntimeOptions &options) {
     nvprefs_instance.unload();
   }
 
-  // Wait as long as possible to terminate Apollo.exe during logoff/shutdown
+  // Wait as long as possible to terminate Lumen.exe during logoff/shutdown
   SetProcessShutdownParameters(0x100, SHUTDOWN_NORETRY);
 
   // We must create a hidden window to receive shutdown notifications since we load gdi32.dll
@@ -257,7 +257,7 @@ int lumen_run(int argc, char *argv[], const LumenRuntimeOptions &options) {
     session_monitor_join_thread_promise.set_value_at_thread_exit();
 
     WNDCLASSA wnd_class {};
-    wnd_class.lpszClassName = "ApolloSessionMonitorClass";
+    wnd_class.lpszClassName = "LumenSessionMonitorClass";
     wnd_class.lpfnWndProc = SessionMonitorWindowProc;
     if (!RegisterClassA(&wnd_class)) {
       session_monitor_hwnd_promise.set_value(nullptr);
@@ -268,7 +268,7 @@ int lumen_run(int argc, char *argv[], const LumenRuntimeOptions &options) {
     auto wnd = CreateWindowExA(
       0,
       wnd_class.lpszClassName,
-      "Apollo Session Monitor Window",
+      "Lumen Session Monitor Window",
       0,
       CW_USEDEFAULT,
       CW_USEDEFAULT,
@@ -344,7 +344,7 @@ int lumen_run(int argc, char *argv[], const LumenRuntimeOptions &options) {
 #endif
 
       auto task = []() {
-        BOOST_LOG(fatal) << "10 seconds passed, yet Apollo is still running: forcing shutdown"sv;
+        BOOST_LOG(fatal) << "10 seconds passed, yet Lumen is still running: forcing shutdown"sv;
         logging::log_flush();
         lifetime::debug_trap();
       };
@@ -365,7 +365,7 @@ int lumen_run(int argc, char *argv[], const LumenRuntimeOptions &options) {
 #endif
 
       auto task = []() {
-        BOOST_LOG(fatal) << "10 seconds passed, yet Apollo is still running: forcing shutdown"sv;
+        BOOST_LOG(fatal) << "10 seconds passed, yet Lumen is still running: forcing shutdown"sv;
         logging::log_flush();
         lifetime::debug_trap();
       };
@@ -480,7 +480,7 @@ int lumen_run(int argc, char *argv[], const LumenRuntimeOptions &options) {
     BOOST_LOG(fatal) << "HTTP interface failed to initialize"sv;
 
 #ifdef _WIN32
-    BOOST_LOG(fatal) << "To relaunch Apollo successfully, use the shortcut in the Start Menu. Do not run Apollo.exe manually."sv;
+    BOOST_LOG(fatal) << "To relaunch Lumen successfully, use the shortcut in the Start Menu. Do not run Lumen.exe manually."sv;
     std::this_thread::sleep_for(10s);
 #endif
 
