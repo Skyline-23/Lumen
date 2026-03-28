@@ -389,12 +389,12 @@ namespace {
   }
 }
 
-const char *ApolloCoreBootstrapVersionString(void) {
+const char *LumenCoreBootstrapVersionString(void) {
   static const std::string version = apollo::core::version_string();
   return version.c_str();
 }
 
-const char *ApolloCoreBootstrapRuntimeDescription(void) {
+const char *LumenCoreBootstrapRuntimeDescription(void) {
   static const std::string description = apollo::core::runtime_description();
   return description.c_str();
 }

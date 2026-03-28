@@ -26,7 +26,7 @@ public final class LumenMacCaptureAdapterStatus: NSObject {
     public let forwardedAudioFrameCallbackCount: UInt
     public let forwardedAudioEventCallbackCount: UInt
     public let coreForwardingSnapshot: ApolloCoreEncodedCaptureIngressSnapshot
-    public let audioForwardingSnapshot: ApolloMacBridgeAudioForwardingSnapshot
+    public let audioForwardingSnapshot: LumenMacBridgeAudioForwardingSnapshot
 
     public init(
         coreVersion: String,
@@ -42,7 +42,7 @@ public final class LumenMacCaptureAdapterStatus: NSObject {
         forwardedAudioFrameCallbackCount: UInt,
         forwardedAudioEventCallbackCount: UInt,
         coreForwardingSnapshot: ApolloCoreEncodedCaptureIngressSnapshot,
-        audioForwardingSnapshot: ApolloMacBridgeAudioForwardingSnapshot
+        audioForwardingSnapshot: LumenMacBridgeAudioForwardingSnapshot
     ) {
         self.coreVersion = coreVersion
         self.runtimeDescription = runtimeDescription
@@ -89,8 +89,8 @@ public final class LumenMacCaptureAdapter: NSObject {
     private var hostedRuntimeStopObserver: NSObjectProtocol?
 
     public override init() {
-        guard let bridgeController = ApolloMacBridgeControllerCreate() else {
-            fatalError("ApolloMacBridgeControllerCreate returned nil")
+        guard let bridgeController = LumenMacBridgeControllerCreate() else {
+            fatalError("LumenMacBridgeControllerCreate returned nil")
         }
         guard let hostedRuntimeController = LumenHostedRuntimeControllerCreate() else {
             fatalError("LumenHostedRuntimeControllerCreate returned nil")
@@ -136,20 +136,20 @@ public final class LumenMacCaptureAdapter: NSObject {
         }
 
         stopRuntimeCompanion()
-        ApolloMacBridgeControllerDestroy(bridgeController)
+        LumenMacBridgeControllerDestroy(bridgeController)
         LumenHostedRuntimeControllerDestroy(hostedRuntimeController)
     }
 
-    public func makePanelNativeConfiguration(forDisplayID displayID: UInt32) -> ApolloMacBridgeCaptureConfiguration {
-        ApolloMacBridgeControllerMakePanelNativeConfiguration(displayID)
+    public func makePanelNativeConfiguration(forDisplayID displayID: UInt32) -> LumenMacBridgeCaptureConfiguration {
+        LumenMacBridgeControllerMakePanelNativeConfiguration(displayID)
     }
 
-    public func makeDefaultMicrophoneAudioConfiguration() -> ApolloMacBridgeAudioCaptureConfiguration {
-        ApolloMacBridgeControllerMakeDefaultMicrophoneAudioConfiguration()
+    public func makeDefaultMicrophoneAudioConfiguration() -> LumenMacBridgeAudioCaptureConfiguration {
+        LumenMacBridgeControllerMakeDefaultMicrophoneAudioConfiguration()
     }
 
-    public func makeSystemOutputAudioConfiguration(forDisplayID displayID: UInt32) -> ApolloMacBridgeAudioCaptureConfiguration {
-        ApolloMacBridgeControllerMakeSystemOutputAudioConfiguration(displayID)
+    public func makeSystemOutputAudioConfiguration(forDisplayID displayID: UInt32) -> LumenMacBridgeAudioCaptureConfiguration {
+        LumenMacBridgeControllerMakeSystemOutputAudioConfiguration(displayID)
     }
 
     public func startRuntimeCompanion() throws {
@@ -205,7 +205,7 @@ public final class LumenMacCaptureAdapter: NSObject {
     }
 
     public func startManagedCaptureSession(
-        with configuration: ApolloMacBridgeCaptureConfiguration,
+        with configuration: LumenMacBridgeCaptureConfiguration,
         frameCapacity: UInt,
         eventCapacity: UInt
     ) throws {
@@ -221,7 +221,7 @@ public final class LumenMacCaptureAdapter: NSObject {
     }
 
     public func startManagedAudioCaptureSession(
-        with configuration: ApolloMacBridgeAudioCaptureConfiguration,
+        with configuration: LumenMacBridgeAudioCaptureConfiguration,
         frameCapacity: UInt,
         eventCapacity: UInt
     ) throws {
@@ -238,7 +238,7 @@ public final class LumenMacCaptureAdapter: NSObject {
     }
 
     public func configureCoreForwarding(withFrameCapacity frameCapacity: UInt, eventCapacity: UInt) {
-        ApolloMacBridgeControllerConfigureCoreForwarding(
+        LumenMacBridgeControllerConfigureCoreForwarding(
             bridgeController,
             numericCast(frameCapacity),
             numericCast(eventCapacity)
@@ -246,16 +246,16 @@ public final class LumenMacCaptureAdapter: NSObject {
     }
 
     public func configureAudioForwarding(withFrameCapacity frameCapacity: UInt, eventCapacity: UInt) {
-        ApolloMacBridgeControllerConfigureAudioForwarding(
+        LumenMacBridgeControllerConfigureAudioForwarding(
             bridgeController,
             numericCast(frameCapacity),
             numericCast(eventCapacity)
         )
     }
 
-    public func startMacDisplayKitCapture(with configuration: ApolloMacBridgeCaptureConfiguration) throws {
+    public func startMacDisplayKitCapture(with configuration: LumenMacBridgeCaptureConfiguration) throws {
         let started = withErrorBuffer { errorBuffer, errorCapacity in
-            ApolloMacBridgeControllerStartMacDisplayKitCapture(
+            LumenMacBridgeControllerStartMacDisplayKitCapture(
                 bridgeController,
                 configuration,
                 errorBuffer,
@@ -271,13 +271,13 @@ public final class LumenMacCaptureAdapter: NSObject {
     }
 
     public func stopMacDisplayKitCapture() {
-        ApolloMacBridgeControllerStopMacDisplayKitCapture(bridgeController)
+        LumenMacBridgeControllerStopMacDisplayKitCapture(bridgeController)
         postStatusDidChangeNotification()
     }
 
-    public func startMacDisplayKitAudioCapture(with configuration: ApolloMacBridgeAudioCaptureConfiguration) throws {
+    public func startMacDisplayKitAudioCapture(with configuration: LumenMacBridgeAudioCaptureConfiguration) throws {
         let started = withErrorBuffer { errorBuffer, errorCapacity in
-            ApolloMacBridgeControllerStartMacDisplayKitAudioCapture(
+            LumenMacBridgeControllerStartMacDisplayKitAudioCapture(
                 bridgeController,
                 configuration,
                 errorBuffer,
@@ -293,17 +293,17 @@ public final class LumenMacCaptureAdapter: NSObject {
     }
 
     public func stopMacDisplayKitAudioCapture() {
-        ApolloMacBridgeControllerStopMacDisplayKitAudioCapture(bridgeController)
+        LumenMacBridgeControllerStopMacDisplayKitAudioCapture(bridgeController)
         postStatusDidChangeNotification()
     }
 
     public func startAutomaticCoreCaptureOrchestration() {
-        ApolloMacBridgeControllerStartApolloCoreCaptureAutomation(bridgeController)
+        LumenMacBridgeControllerStartLumenCoreCaptureAutomation(bridgeController)
         postStatusDidChangeNotification()
     }
 
     public func stopAutomaticCoreCaptureOrchestration() {
-        ApolloMacBridgeControllerStopApolloCoreCaptureAutomation(bridgeController)
+        LumenMacBridgeControllerStopLumenCoreCaptureAutomation(bridgeController)
         postStatusDidChangeNotification()
     }
 
@@ -318,9 +318,9 @@ public final class LumenMacCaptureAdapter: NSObject {
     }
 
     public func copyStatusSnapshot() -> LumenMacCaptureAdapterStatus {
-        let bridgeStatus = ApolloMacBridgeControllerCopyStatusSnapshot(bridgeController)
-        let coreForwardingSnapshot = ApolloMacBridgeControllerCopyCoreForwardingSnapshot(bridgeController)
-        let audioForwardingSnapshot = ApolloMacBridgeControllerCopyAudioForwardingSnapshot(bridgeController)
+        let bridgeStatus = LumenMacBridgeControllerCopyStatusSnapshot(bridgeController)
+        let coreForwardingSnapshot = LumenMacBridgeControllerCopyCoreForwardingSnapshot(bridgeController)
+        let audioForwardingSnapshot = LumenMacBridgeControllerCopyAudioForwardingSnapshot(bridgeController)
 
         return LumenMacCaptureAdapterStatus(
             coreVersion: stringFromCStringTuple(bridgeStatus.core_version),
@@ -341,7 +341,7 @@ public final class LumenMacCaptureAdapter: NSObject {
     }
 
     public func copyMenuStatusSnapshot() -> LumenMacCaptureAdapterMenuStatus {
-        let bridgeStatus = ApolloMacBridgeControllerCopyStatusSnapshot(bridgeController)
+        let bridgeStatus = LumenMacBridgeControllerCopyStatusSnapshot(bridgeController)
 
         return LumenMacCaptureAdapterMenuStatus(
             hostedRuntimeRunning: LumenHostedRuntimeControllerIsRunning(hostedRuntimeController),

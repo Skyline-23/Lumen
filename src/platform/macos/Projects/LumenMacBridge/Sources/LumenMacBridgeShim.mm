@@ -9,24 +9,24 @@
 #import <memory>
 #import <thread>
 
-class ApolloMacBridgeForwardingPump {
+class LumenMacBridgeForwardingPump {
  public:
-  ApolloMacBridgeForwardingPump(
+  LumenMacBridgeForwardingPump(
     LumenBridgeObjCFacade *facade,
-    ApolloMacBridgeForwardingCallbacks callbacks,
+    LumenMacBridgeForwardingCallbacks callbacks,
     uint32_t idle_sleep_milliseconds
   );
 
-  ~ApolloMacBridgeForwardingPump();
+  ~LumenMacBridgeForwardingPump();
 
-  ApolloMacBridgeForwardingPump(const ApolloMacBridgeForwardingPump &) = delete;
-  auto operator=(const ApolloMacBridgeForwardingPump &) -> ApolloMacBridgeForwardingPump & = delete;
+  LumenMacBridgeForwardingPump(const LumenMacBridgeForwardingPump &) = delete;
+  auto operator=(const LumenMacBridgeForwardingPump &) -> LumenMacBridgeForwardingPump & = delete;
 
   void stop();
 
  private:
   LumenBridgeObjCFacade *facade_ = nil;
-  ApolloMacBridgeForwardingCallbacks callbacks_ {};
+  LumenMacBridgeForwardingCallbacks callbacks_ {};
   uint32_t idle_sleep_milliseconds_ = 1;
   std::atomic<bool> running_ {false};
   std::thread worker_;
@@ -34,9 +34,9 @@ class ApolloMacBridgeForwardingPump {
   void run();
 };
 
-struct ApolloMacBridgeController {
+struct LumenMacBridgeController {
   LumenBridgeObjCFacade *facade = nil;
-  std::unique_ptr<ApolloMacBridgeForwardingPump> forwarding_pump;
+  std::unique_ptr<LumenMacBridgeForwardingPump> forwarding_pump;
 };
 
 namespace {
@@ -67,8 +67,8 @@ namespace {
     return record;
   }
 
-  ApolloMacBridgeAudioCaptureFrameRecord to_audio_frame_record(LumenBridgeDrainedAudioFrameBox *box) {
-    ApolloMacBridgeAudioCaptureFrameRecord record {};
+  LumenMacBridgeAudioCaptureFrameRecord to_audio_frame_record(LumenBridgeDrainedAudioFrameBox *box) {
+    LumenMacBridgeAudioCaptureFrameRecord record {};
     record.has_value = true;
     record.sequence_number = box.sequenceNumber;
     record.host_time_nanoseconds = box.hostTimeNanoseconds;
@@ -79,8 +79,8 @@ namespace {
     return record;
   }
 
-  ApolloMacBridgeAudioCaptureEventRecord to_audio_event_record(LumenBridgeDrainedAudioEventBox *box) {
-    ApolloMacBridgeAudioCaptureEventRecord record {};
+  LumenMacBridgeAudioCaptureEventRecord to_audio_event_record(LumenBridgeDrainedAudioEventBox *box) {
+    LumenMacBridgeAudioCaptureEventRecord record {};
     record.has_value = true;
     record.kind = static_cast<ApolloCoreCaptureEventKind>(box.kindRawValue);
     record.has_stop_status = box.hasStopStatus;
@@ -111,15 +111,15 @@ namespace {
     destination[capacity - 1] = '\0';
   }
 
-  ApolloMacBridgeCaptureConfiguration to_bridge_configuration(
+  LumenMacBridgeCaptureConfiguration to_bridge_configuration(
     LumenBridgeConfigurationBox *configuration
   ) {
-    ApolloMacBridgeCaptureConfiguration result {};
+    LumenMacBridgeCaptureConfiguration result {};
     result.display_id = configuration.displayID;
     result.codec = static_cast<ApolloCoreCaptureCodec>(configuration.codecRawValue);
     result.preprocess_strategy =
-      static_cast<ApolloMacBridgePreprocessStrategy>(configuration.preprocessStrategyRawValue);
-    result.queue_profile = static_cast<ApolloMacBridgeQueueProfile>(configuration.queueProfileRawValue);
+      static_cast<LumenMacBridgePreprocessStrategy>(configuration.preprocessStrategyRawValue);
+    result.queue_profile = static_cast<LumenMacBridgeQueueProfile>(configuration.queueProfileRawValue);
     result.show_cursor = configuration.showCursor;
     result.target_frame_rate = static_cast<int32_t>(configuration.targetFrameRate);
     result.target_video_bitrate_kbps = static_cast<int32_t>(configuration.targetVideoBitRateKbps);
@@ -162,7 +162,7 @@ namespace {
   }
 
   LumenBridgeConfigurationBox *to_configuration_box(
-    ApolloMacBridgeCaptureConfiguration configuration
+    LumenMacBridgeCaptureConfiguration configuration
   ) {
     LumenBridgeSinkModeBox *sinkMode = [[LumenBridgeSinkModeBox alloc]
       initWithHidpi:configuration.sink_request.mode.hidpi
@@ -218,11 +218,11 @@ namespace {
       effectiveDisplayState:effectiveDisplayState];
   }
 
-  ApolloMacBridgeAudioCaptureConfiguration to_audio_bridge_configuration(
+  LumenMacBridgeAudioCaptureConfiguration to_audio_bridge_configuration(
     LumenBridgeAudioConfigurationBox *configuration
   ) {
-    ApolloMacBridgeAudioCaptureConfiguration result {};
-    result.source_kind = static_cast<ApolloMacBridgeAudioSourceKind>(configuration.sourceKindRawValue);
+    LumenMacBridgeAudioCaptureConfiguration result {};
+    result.source_kind = static_cast<LumenMacBridgeAudioSourceKind>(configuration.sourceKindRawValue);
     result.display_id = configuration.displayID;
     result.excludes_current_process_audio = configuration.excludesCurrentProcessAudio;
     result.sample_rate = static_cast<int32_t>(configuration.sampleRate);
@@ -233,7 +233,7 @@ namespace {
   }
 
   LumenBridgeAudioConfigurationBox *to_audio_configuration_box(
-    ApolloMacBridgeAudioCaptureConfiguration configuration
+    LumenMacBridgeAudioCaptureConfiguration configuration
   ) {
     NSString *inputID = configuration.input_id[0] != '\0' ?
       [NSString stringWithUTF8String:configuration.input_id] :
@@ -250,9 +250,9 @@ namespace {
 
 }
 
-ApolloMacBridgeForwardingPump::ApolloMacBridgeForwardingPump(
+LumenMacBridgeForwardingPump::LumenMacBridgeForwardingPump(
   LumenBridgeObjCFacade *facade,
-  ApolloMacBridgeForwardingCallbacks callbacks,
+  LumenMacBridgeForwardingCallbacks callbacks,
   uint32_t idle_sleep_milliseconds
 ):
     facade_(facade),
@@ -262,11 +262,11 @@ ApolloMacBridgeForwardingPump::ApolloMacBridgeForwardingPump(
     worker_([this]() { run(); }) {
 }
 
-ApolloMacBridgeForwardingPump::~ApolloMacBridgeForwardingPump() {
+LumenMacBridgeForwardingPump::~LumenMacBridgeForwardingPump() {
   stop();
 }
 
-void ApolloMacBridgeForwardingPump::stop() {
+void LumenMacBridgeForwardingPump::stop() {
   if (!running_.exchange(false)) {
     return;
   }
@@ -275,7 +275,7 @@ void ApolloMacBridgeForwardingPump::stop() {
   }
 }
 
-void ApolloMacBridgeForwardingPump::run() {
+void LumenMacBridgeForwardingPump::run() {
   while (running_.load(std::memory_order_acquire)) {
     bool delivered = false;
 
@@ -305,7 +305,7 @@ void ApolloMacBridgeForwardingPump::run() {
       if (callbacks_.audio_frame_handler) {
         LumenBridgeDrainedAudioFrameBox *audio_frame_box = [facade_ popNextCoreForwardedAudioFrameSync];
         if (audio_frame_box) {
-          ApolloMacBridgeAudioCaptureFrameRecord record = to_audio_frame_record(audio_frame_box);
+          LumenMacBridgeAudioCaptureFrameRecord record = to_audio_frame_record(audio_frame_box);
           callbacks_.audio_frame_handler(
             callbacks_.context,
             record,
@@ -319,7 +319,7 @@ void ApolloMacBridgeForwardingPump::run() {
       if (callbacks_.audio_capture_event_handler) {
         LumenBridgeDrainedAudioEventBox *audio_event_box = [facade_ popNextCoreForwardedAudioEventSync];
         if (audio_event_box) {
-          ApolloMacBridgeAudioCaptureEventRecord record = to_audio_event_record(audio_event_box);
+          LumenMacBridgeAudioCaptureEventRecord record = to_audio_event_record(audio_event_box);
           const char *message = audio_event_box.message.UTF8String ?: "";
           callbacks_.audio_capture_event_handler(callbacks_.context, record, message);
           delivered = true;
@@ -333,13 +333,13 @@ void ApolloMacBridgeForwardingPump::run() {
   }
 }
 
-ApolloMacBridgeController *ApolloMacBridgeControllerCreate(void) {
-  auto *controller = new ApolloMacBridgeController();
+LumenMacBridgeController *LumenMacBridgeControllerCreate(void) {
+  auto *controller = new LumenMacBridgeController();
   controller->facade = [[LumenBridgeObjCFacade alloc] init];
   return controller;
 }
 
-void ApolloMacBridgeControllerDestroy(ApolloMacBridgeController *controller) {
+void LumenMacBridgeControllerDestroy(LumenMacBridgeController *controller) {
   if (!controller) {
     return;
   }
@@ -349,35 +349,35 @@ void ApolloMacBridgeControllerDestroy(ApolloMacBridgeController *controller) {
   delete controller;
 }
 
-ApolloMacBridgeCaptureConfiguration ApolloMacBridgeControllerMakePanelNativeConfiguration(
+LumenMacBridgeCaptureConfiguration LumenMacBridgeControllerMakePanelNativeConfiguration(
   uint32_t display_id
 ) {
   LumenBridgeObjCFacade *facade = [[LumenBridgeObjCFacade alloc] init];
   return to_bridge_configuration([facade makePanelNativeConfigurationWithDisplayID:display_id]);
 }
 
-ApolloMacBridgeAudioCaptureConfiguration ApolloMacBridgeControllerMakeDefaultMicrophoneAudioConfiguration(
+LumenMacBridgeAudioCaptureConfiguration LumenMacBridgeControllerMakeDefaultMicrophoneAudioConfiguration(
   void
 ) {
   LumenBridgeObjCFacade *facade = [[LumenBridgeObjCFacade alloc] init];
   return to_audio_bridge_configuration([facade makeDefaultMicrophoneAudioConfiguration]);
 }
 
-ApolloMacBridgeAudioCaptureConfiguration ApolloMacBridgeControllerMakeSystemOutputAudioConfiguration(
+LumenMacBridgeAudioCaptureConfiguration LumenMacBridgeControllerMakeSystemOutputAudioConfiguration(
   uint32_t display_id
 ) {
   LumenBridgeObjCFacade *facade = [[LumenBridgeObjCFacade alloc] init];
   return to_audio_bridge_configuration([facade makeSystemOutputAudioConfigurationWithDisplayID:display_id]);
 }
 
-bool ApolloMacBridgeControllerStartMacDisplayKitCapture(
-  ApolloMacBridgeController *controller,
-  ApolloMacBridgeCaptureConfiguration configuration,
+bool LumenMacBridgeControllerStartMacDisplayKitCapture(
+  LumenMacBridgeController *controller,
+  LumenMacBridgeCaptureConfiguration configuration,
   char *error_destination,
   size_t error_capacity
 ) {
   if (!controller) {
-    copy_string_to_buffer(@"ApolloMacBridgeControllerStartMacDisplayKitCapture called with a null controller.",
+    copy_string_to_buffer(@"LumenMacBridgeControllerStartMacDisplayKitCapture called with a null controller.",
                           error_destination,
                           error_capacity);
     return false;
@@ -390,8 +390,8 @@ bool ApolloMacBridgeControllerStartMacDisplayKitCapture(
   return started == YES;
 }
 
-void ApolloMacBridgeControllerStopMacDisplayKitCapture(
-  ApolloMacBridgeController *controller
+void LumenMacBridgeControllerStopMacDisplayKitCapture(
+  LumenMacBridgeController *controller
 ) {
   if (!controller) {
     return;
@@ -400,18 +400,18 @@ void ApolloMacBridgeControllerStopMacDisplayKitCapture(
   [controller->facade stopMacDisplayKitCaptureSync];
 }
 
-void ApolloMacBridgeRequestImmediateCaptureKeyFrame(void) {
+void LumenMacBridgeRequestImmediateCaptureKeyFrame(void) {
   [LumenBridgeObjCFacade requestImmediateCaptureKeyFrameSharedSync];
 }
 
-bool ApolloMacBridgeControllerStartMacDisplayKitAudioCapture(
-  ApolloMacBridgeController *controller,
-  ApolloMacBridgeAudioCaptureConfiguration configuration,
+bool LumenMacBridgeControllerStartMacDisplayKitAudioCapture(
+  LumenMacBridgeController *controller,
+  LumenMacBridgeAudioCaptureConfiguration configuration,
   char *error_destination,
   size_t error_capacity
 ) {
   if (!controller) {
-    copy_string_to_buffer(@"ApolloMacBridgeControllerStartMacDisplayKitAudioCapture called with a null controller.",
+    copy_string_to_buffer(@"LumenMacBridgeControllerStartMacDisplayKitAudioCapture called with a null controller.",
                           error_destination,
                           error_capacity);
     return false;
@@ -424,8 +424,8 @@ bool ApolloMacBridgeControllerStartMacDisplayKitAudioCapture(
   return started == YES;
 }
 
-void ApolloMacBridgeControllerStopMacDisplayKitAudioCapture(
-  ApolloMacBridgeController *controller
+void LumenMacBridgeControllerStopMacDisplayKitAudioCapture(
+  LumenMacBridgeController *controller
 ) {
   if (!controller) {
     return;
@@ -434,8 +434,8 @@ void ApolloMacBridgeControllerStopMacDisplayKitAudioCapture(
   [controller->facade stopMacDisplayKitAudioCaptureSync];
 }
 
-void ApolloMacBridgeControllerStartApolloCoreCaptureAutomation(
-  ApolloMacBridgeController *controller
+void LumenMacBridgeControllerStartLumenCoreCaptureAutomation(
+  LumenMacBridgeController *controller
 ) {
   if (!controller) {
     return;
@@ -444,8 +444,8 @@ void ApolloMacBridgeControllerStartApolloCoreCaptureAutomation(
   [controller->facade startApolloCoreCaptureAutomationSync];
 }
 
-void ApolloMacBridgeControllerStopApolloCoreCaptureAutomation(
-  ApolloMacBridgeController *controller
+void LumenMacBridgeControllerStopLumenCoreCaptureAutomation(
+  LumenMacBridgeController *controller
 ) {
   if (!controller) {
     return;
@@ -454,8 +454,8 @@ void ApolloMacBridgeControllerStopApolloCoreCaptureAutomation(
   [controller->facade stopApolloCoreCaptureAutomationSync];
 }
 
-bool ApolloMacBridgeControllerIsApolloCoreCaptureAutomationRunning(
-  ApolloMacBridgeController *controller
+bool LumenMacBridgeControllerIsLumenCoreCaptureAutomationRunning(
+  LumenMacBridgeController *controller
 ) {
   if (!controller) {
     return false;
@@ -464,10 +464,10 @@ bool ApolloMacBridgeControllerIsApolloCoreCaptureAutomationRunning(
   return [controller->facade isApolloCoreCaptureAutomationRunningSync] == YES;
 }
 
-ApolloMacBridgeStatusSnapshot ApolloMacBridgeControllerCopyStatusSnapshot(
-  ApolloMacBridgeController *controller
+LumenMacBridgeStatusSnapshot LumenMacBridgeControllerCopyStatusSnapshot(
+  LumenMacBridgeController *controller
 ) {
-  ApolloMacBridgeStatusSnapshot snapshot {};
+  LumenMacBridgeStatusSnapshot snapshot {};
   if (!controller) {
     return snapshot;
   }
@@ -486,8 +486,8 @@ ApolloMacBridgeStatusSnapshot ApolloMacBridgeControllerCopyStatusSnapshot(
   return snapshot;
 }
 
-void ApolloMacBridgeControllerConfigureCoreForwarding(
-  ApolloMacBridgeController *controller,
+void LumenMacBridgeControllerConfigureCoreForwarding(
+  LumenMacBridgeController *controller,
   size_t frame_capacity,
   size_t event_capacity
 ) {
@@ -499,8 +499,8 @@ void ApolloMacBridgeControllerConfigureCoreForwarding(
                                                      eventCapacity:static_cast<NSInteger>(event_capacity)];
 }
 
-ApolloCoreEncodedCaptureIngressSnapshot ApolloMacBridgeControllerCopyCoreForwardingSnapshot(
-  ApolloMacBridgeController *controller
+ApolloCoreEncodedCaptureIngressSnapshot LumenMacBridgeControllerCopyCoreForwardingSnapshot(
+  LumenMacBridgeController *controller
 ) {
   ApolloCoreEncodedCaptureIngressSnapshot snapshot {};
   if (!controller) {
@@ -527,8 +527,8 @@ ApolloCoreEncodedCaptureIngressSnapshot ApolloMacBridgeControllerCopyCoreForward
   return snapshot;
 }
 
-void ApolloMacBridgeControllerConfigureAudioForwarding(
-  ApolloMacBridgeController *controller,
+void LumenMacBridgeControllerConfigureAudioForwarding(
+  LumenMacBridgeController *controller,
   size_t frame_capacity,
   size_t event_capacity
 ) {
@@ -540,10 +540,10 @@ void ApolloMacBridgeControllerConfigureAudioForwarding(
                                                       eventCapacity:static_cast<NSInteger>(event_capacity)];
 }
 
-ApolloMacBridgeAudioForwardingSnapshot ApolloMacBridgeControllerCopyAudioForwardingSnapshot(
-  ApolloMacBridgeController *controller
+LumenMacBridgeAudioForwardingSnapshot LumenMacBridgeControllerCopyAudioForwardingSnapshot(
+  LumenMacBridgeController *controller
 ) {
-  ApolloMacBridgeAudioForwardingSnapshot snapshot {};
+  LumenMacBridgeAudioForwardingSnapshot snapshot {};
   if (!controller) {
     return snapshot;
   }
@@ -567,8 +567,8 @@ ApolloMacBridgeAudioForwardingSnapshot ApolloMacBridgeControllerCopyAudioForward
   return snapshot;
 }
 
-ApolloCoreEncodedCaptureFrameRecord ApolloMacBridgeControllerPopNextForwardedFrame(
-  ApolloMacBridgeController *controller,
+ApolloCoreEncodedCaptureFrameRecord LumenMacBridgeControllerPopNextForwardedFrame(
+  LumenMacBridgeController *controller,
   CMSampleBufferRef *retained_sample_buffer_out
 ) {
   ApolloCoreEncodedCaptureFrameRecord record {};
@@ -602,8 +602,8 @@ ApolloCoreEncodedCaptureFrameRecord ApolloMacBridgeControllerPopNextForwardedFra
   return record;
 }
 
-ApolloCoreEncodedCaptureEventRecord ApolloMacBridgeControllerPopNextForwardedEvent(
-  ApolloMacBridgeController *controller,
+ApolloCoreEncodedCaptureEventRecord LumenMacBridgeControllerPopNextForwardedEvent(
+  LumenMacBridgeController *controller,
   char *message_destination,
   size_t message_capacity
 ) {
@@ -630,13 +630,13 @@ ApolloCoreEncodedCaptureEventRecord ApolloMacBridgeControllerPopNextForwardedEve
   return record;
 }
 
-ApolloMacBridgeAudioCaptureFrameRecord ApolloMacBridgeControllerPopNextForwardedAudioFrame(
-  ApolloMacBridgeController *controller,
+LumenMacBridgeAudioCaptureFrameRecord LumenMacBridgeControllerPopNextForwardedAudioFrame(
+  LumenMacBridgeController *controller,
   void *pcm_destination,
   size_t pcm_capacity,
   size_t *copied_size_out
 ) {
-  ApolloMacBridgeAudioCaptureFrameRecord record {};
+  LumenMacBridgeAudioCaptureFrameRecord record {};
   if (copied_size_out) {
     *copied_size_out = 0;
   }
@@ -660,12 +660,12 @@ ApolloMacBridgeAudioCaptureFrameRecord ApolloMacBridgeControllerPopNextForwarded
   return record;
 }
 
-ApolloMacBridgeAudioCaptureEventRecord ApolloMacBridgeControllerPopNextForwardedAudioEvent(
-  ApolloMacBridgeController *controller,
+LumenMacBridgeAudioCaptureEventRecord LumenMacBridgeControllerPopNextForwardedAudioEvent(
+  LumenMacBridgeController *controller,
   char *message_destination,
   size_t message_capacity
 ) {
-  ApolloMacBridgeAudioCaptureEventRecord record {};
+  LumenMacBridgeAudioCaptureEventRecord record {};
   if (!controller) {
     return record;
   }
@@ -681,9 +681,9 @@ ApolloMacBridgeAudioCaptureEventRecord ApolloMacBridgeControllerPopNextForwarded
   return record;
 }
 
-bool ApolloMacBridgeControllerStartCoreForwardingPump(
-  ApolloMacBridgeController *controller,
-  ApolloMacBridgeForwardingCallbacks callbacks,
+bool LumenMacBridgeControllerStartCoreForwardingPump(
+  LumenMacBridgeController *controller,
+  LumenMacBridgeForwardingCallbacks callbacks,
   uint32_t idle_sleep_milliseconds,
   char *error_destination,
   size_t error_capacity
@@ -691,7 +691,7 @@ bool ApolloMacBridgeControllerStartCoreForwardingPump(
   copy_string_to_buffer(nil, error_destination, error_capacity);
 
   if (!controller) {
-    copy_string_to_buffer(@"ApolloMacBridgeControllerStartCoreForwardingPump called with a null controller.",
+    copy_string_to_buffer(@"LumenMacBridgeControllerStartCoreForwardingPump called with a null controller.",
                           error_destination,
                           error_capacity);
     return false;
@@ -699,7 +699,7 @@ bool ApolloMacBridgeControllerStartCoreForwardingPump(
 
   if (!callbacks.encoded_frame_handler && !callbacks.capture_event_handler) {
     if (!callbacks.audio_frame_handler && !callbacks.audio_capture_event_handler) {
-      copy_string_to_buffer(@"ApolloMacBridgeControllerStartCoreForwardingPump requires at least one callback.",
+      copy_string_to_buffer(@"LumenMacBridgeControllerStartCoreForwardingPump requires at least one callback.",
                           error_destination,
                           error_capacity);
       return false;
@@ -707,7 +707,7 @@ bool ApolloMacBridgeControllerStartCoreForwardingPump(
   }
 
   controller->forwarding_pump.reset();
-  controller->forwarding_pump = std::make_unique<ApolloMacBridgeForwardingPump>(
+  controller->forwarding_pump = std::make_unique<LumenMacBridgeForwardingPump>(
     controller->facade,
     callbacks,
     idle_sleep_milliseconds
@@ -715,8 +715,8 @@ bool ApolloMacBridgeControllerStartCoreForwardingPump(
   return true;
 }
 
-void ApolloMacBridgeControllerStopCoreForwardingPump(
-  ApolloMacBridgeController *controller
+void LumenMacBridgeControllerStopCoreForwardingPump(
+  LumenMacBridgeController *controller
 ) {
   if (!controller) {
     return;

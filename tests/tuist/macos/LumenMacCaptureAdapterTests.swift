@@ -24,21 +24,21 @@ final class LumenMacCaptureAdapterTests: XCTestCase {
             configuration.codec == ApolloCoreCaptureCodecProResProxy
         )
         XCTAssertTrue(
-            configuration.queue_profile == ApolloMacBridgeQueueProfileQ1 ||
-            configuration.queue_profile == ApolloMacBridgeQueueProfileQ2 ||
-            configuration.queue_profile == ApolloMacBridgeQueueProfileQ3 ||
-            configuration.queue_profile == ApolloMacBridgeQueueProfileQ4 ||
-            configuration.queue_profile == ApolloMacBridgeQueueProfileAuto
+            configuration.queue_profile == LumenMacBridgeQueueProfileQ1 ||
+            configuration.queue_profile == LumenMacBridgeQueueProfileQ2 ||
+            configuration.queue_profile == LumenMacBridgeQueueProfileQ3 ||
+            configuration.queue_profile == LumenMacBridgeQueueProfileQ4 ||
+            configuration.queue_profile == LumenMacBridgeQueueProfileAuto
         )
 
         let microphoneConfiguration = adapter.makeDefaultMicrophoneAudioConfiguration()
-        XCTAssertEqual(microphoneConfiguration.source_kind, ApolloMacBridgeAudioSourceKindMicrophone)
+        XCTAssertEqual(microphoneConfiguration.source_kind, LumenMacBridgeAudioSourceKindMicrophone)
         XCTAssertEqual(microphoneConfiguration.sample_rate, 48_000)
         XCTAssertEqual(microphoneConfiguration.channel_count, 2)
         XCTAssertEqual(microphoneConfiguration.frame_size, 480)
 
         let systemOutputConfiguration = adapter.makeSystemOutputAudioConfiguration(forDisplayID: 9)
-        XCTAssertEqual(systemOutputConfiguration.source_kind, ApolloMacBridgeAudioSourceKindSystemOutput)
+        XCTAssertEqual(systemOutputConfiguration.source_kind, LumenMacBridgeAudioSourceKindSystemOutput)
         XCTAssertEqual(systemOutputConfiguration.display_id, 9)
     }
 

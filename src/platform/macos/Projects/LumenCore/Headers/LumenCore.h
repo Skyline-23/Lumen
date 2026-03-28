@@ -152,8 +152,8 @@ typedef struct ApolloCoreEncodedCaptureEventRecord {
   uint64_t source_display_time;
 } ApolloCoreEncodedCaptureEventRecord;
 
-const char *ApolloCoreBootstrapVersionString(void);
-const char *ApolloCoreBootstrapRuntimeDescription(void);
+const char *LumenCoreBootstrapVersionString(void);
+const char *LumenCoreBootstrapRuntimeDescription(void);
 
 ApolloCoreEncodedCaptureIngress *ApolloCoreEncodedCaptureIngressCreate(void);
 void ApolloCoreEncodedCaptureIngressDestroy(ApolloCoreEncodedCaptureIngress *ingress);

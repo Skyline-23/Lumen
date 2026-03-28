@@ -357,10 +357,10 @@ namespace video {
     }
 
     void request_external_encoded_capture_key_frame() {
-      ApolloMacBridgeRequestImmediateCaptureKeyFrame();
+      LumenMacBridgeRequestImmediateCaptureKeyFrame();
     }
 
-    std::string apollo_core_cfstring_to_utf8(CFStringRef value) {
+    std::string lumen_core_cfstring_to_utf8(CFStringRef value) {
       if (!value) {
         return {};
       }
@@ -380,7 +380,7 @@ namespace video {
       return result;
     }
 
-    std::string apollo_core_sample_buffer_extension_string(CMSampleBufferRef sample_buffer, CFStringRef key) {
+    std::string lumen_core_sample_buffer_extension_string(CMSampleBufferRef sample_buffer, CFStringRef key) {
       const auto format_description = CMSampleBufferGetFormatDescription(sample_buffer);
       if (!format_description) {
         return {};
@@ -391,10 +391,10 @@ namespace video {
         return {};
       }
 
-      return apollo_core_cfstring_to_utf8(static_cast<CFStringRef>(CFDictionaryGetValue(extensions, key)));
+      return lumen_core_cfstring_to_utf8(static_cast<CFStringRef>(CFDictionaryGetValue(extensions, key)));
     }
 
-    bool apollo_core_sample_buffer_extension_present(CMSampleBufferRef sample_buffer, CFStringRef key) {
+    bool lumen_core_sample_buffer_extension_present(CMSampleBufferRef sample_buffer, CFStringRef key) {
       const auto format_description = CMSampleBufferGetFormatDescription(sample_buffer);
       if (!format_description) {
         return false;
@@ -404,7 +404,7 @@ namespace video {
       return extensions && CFDictionaryContainsKey(extensions, key);
     }
 
-    std::string apollo_core_sample_buffer_dimensions(CMSampleBufferRef sample_buffer) {
+    std::string lumen_core_sample_buffer_dimensions(CMSampleBufferRef sample_buffer) {
       const auto format_description = CMSampleBufferGetFormatDescription(sample_buffer);
       if (!format_description) {
         return "unknown";
@@ -418,7 +418,7 @@ namespace video {
       return std::to_string(dimensions.width) + "x" + std::to_string(dimensions.height);
     }
 
-    CMVideoCodecType apollo_core_codec_type(ApolloCoreCaptureCodec codec) {
+    CMVideoCodecType lumen_core_codec_type(ApolloCoreCaptureCodec codec) {
       switch (codec) {
         case ApolloCoreCaptureCodecH264:
           return kCMVideoCodecType_H264;
@@ -871,9 +871,9 @@ namespace video {
       }
 
       const bool extension_has_mastering_display =
-        apollo_core_sample_buffer_extension_present(sample_buffer, kCMFormatDescriptionExtension_MasteringDisplayColorVolume);
+        lumen_core_sample_buffer_extension_present(sample_buffer, kCMFormatDescriptionExtension_MasteringDisplayColorVolume);
       const bool extension_has_content_light =
-        apollo_core_sample_buffer_extension_present(sample_buffer, kCMFormatDescriptionExtension_ContentLightLevelInfo);
+        lumen_core_sample_buffer_extension_present(sample_buffer, kCMFormatDescriptionExtension_ContentLightLevelInfo);
       const auto payload_presence = external_hevc_payload_static_metadata_presence(sample_buffer);
       if (payload_presence.is_complete()) {
         return false;
@@ -3968,7 +3968,7 @@ namespace video {
             }
           }
 
-          const auto codec_type = apollo_core_codec_type(frame.codec);
+          const auto codec_type = lumen_core_codec_type(frame.codec);
           if (codec_type != kCMVideoCodecType_H264 && codec_type != kCMVideoCodecType_HEVC) {
             BOOST_LOG(error) << "External macOS encoded ingress only supports H.264 or HEVC packetization"sv;
             CFRelease(retained_sample_buffer);
@@ -4018,15 +4018,15 @@ namespace video {
               codec_type == kCMVideoCodecType_HEVC ?
                 external_hevc_annexb_static_metadata_presence(packet->frame_data) :
                 external_hevc_hdr_static_metadata_presence_t {false, false};
-            const auto color_primaries = apollo_core_sample_buffer_extension_string(
+            const auto color_primaries = lumen_core_sample_buffer_extension_string(
               retained_sample_buffer,
               kCMFormatDescriptionExtension_ColorPrimaries
             );
-            const auto transfer_function = apollo_core_sample_buffer_extension_string(
+            const auto transfer_function = lumen_core_sample_buffer_extension_string(
               retained_sample_buffer,
               kCMFormatDescriptionExtension_TransferFunction
             );
-            const auto ycbcr_matrix = apollo_core_sample_buffer_extension_string(
+            const auto ycbcr_matrix = lumen_core_sample_buffer_extension_string(
               retained_sample_buffer,
               kCMFormatDescriptionExtension_YCbCrMatrix
             );
@@ -4036,12 +4036,12 @@ namespace video {
                             << " bridge-key="sv << frame.is_key_frame
                             << " samplebuffer-idr="sv << sample_buffer_reports_idr
                             << " hdr="sv << frame.is_hdr_signaled
-                            << " encoded="sv << apollo_core_sample_buffer_dimensions(retained_sample_buffer)
+                            << " encoded="sv << lumen_core_sample_buffer_dimensions(retained_sample_buffer)
                             << " primaries="sv << (color_primaries.empty() ? "n/a"sv : std::string_view {color_primaries})
                             << " transfer="sv << (transfer_function.empty() ? "n/a"sv : std::string_view {transfer_function})
                             << " matrix="sv << (ycbcr_matrix.empty() ? "n/a"sv : std::string_view {ycbcr_matrix})
-                            << " mastering="sv << apollo_core_sample_buffer_extension_present(retained_sample_buffer, kCMFormatDescriptionExtension_MasteringDisplayColorVolume)
-                            << " cll="sv << apollo_core_sample_buffer_extension_present(retained_sample_buffer, kCMFormatDescriptionExtension_ContentLightLevelInfo)
+                            << " mastering="sv << lumen_core_sample_buffer_extension_present(retained_sample_buffer, kCMFormatDescriptionExtension_MasteringDisplayColorVolume)
+                            << " cll="sv << lumen_core_sample_buffer_extension_present(retained_sample_buffer, kCMFormatDescriptionExtension_ContentLightLevelInfo)
                             << " sample-payload-mastering="sv << payload_static_metadata_presence.has_mastering_display_color_volume
                             << " sample-payload-cll="sv << payload_static_metadata_presence.has_content_light_level_info
                             << " packet-mastering="sv << packet_static_metadata_presence.has_mastering_display_color_volume

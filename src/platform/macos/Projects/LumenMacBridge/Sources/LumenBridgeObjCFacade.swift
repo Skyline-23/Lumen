@@ -657,8 +657,8 @@ public final class LumenBridgeObjCFacade: NSObject {
             LumenBridgeStatusBox(snapshot: await self.runtime.statusSnapshot())
         }) ?? LumenBridgeStatusBox(
             snapshot: LumenBridgeStatus(
-                coreVersion: String(cString: ApolloCoreBootstrapVersionString()),
-                runtimeDescription: String(cString: ApolloCoreBootstrapRuntimeDescription()),
+                coreVersion: String(cString: LumenCoreBootstrapVersionString()),
+                runtimeDescription: String(cString: LumenCoreBootstrapRuntimeDescription()),
                 integrationStatus: "LumenBridgeObjCFacade failed to read the actor-backed status snapshot.",
                 captureSessionRunning: false,
                 audioCaptureSessionRunning: false,

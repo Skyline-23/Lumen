@@ -1591,8 +1591,8 @@ public actor LumenBridgeRuntime {
 
     public func statusSnapshot() -> LumenBridgeStatus {
         LumenBridgeStatus(
-            coreVersion: String(cString: ApolloCoreBootstrapVersionString()),
-            runtimeDescription: String(cString: ApolloCoreBootstrapRuntimeDescription()),
+            coreVersion: String(cString: LumenCoreBootstrapVersionString()),
+            runtimeDescription: String(cString: LumenCoreBootstrapRuntimeDescription()),
             integrationStatus: "MacDisplayKit owns macOS capture and encode. LumenMacBridge forwards encoded video and PCM audio into LumenCore ingress surfaces while Lumen keeps the web, session, and transport stack.",
             captureSessionRunning: encodedCaptureSession != nil,
             audioCaptureSessionRunning: audioCaptureSession != nil,

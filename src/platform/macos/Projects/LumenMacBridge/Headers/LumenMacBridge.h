@@ -1,5 +1,5 @@
-#ifndef APOLLO_MAC_BRIDGE_H
-#define APOLLO_MAC_BRIDGE_H
+#ifndef LUMEN_MAC_BRIDGE_H
+#define LUMEN_MAC_BRIDGE_H
 
 #include <LumenCore/LumenCore.h>
 #include <stdbool.h>
@@ -10,24 +10,24 @@
 extern "C" {
 #endif
 
-typedef enum ApolloMacBridgePreprocessStrategy {
-  ApolloMacBridgePreprocessStrategyNone = 0,
-  ApolloMacBridgePreprocessStrategyDownscale2x = 1
-} ApolloMacBridgePreprocessStrategy;
+typedef enum LumenMacBridgePreprocessStrategy {
+  LumenMacBridgePreprocessStrategyNone = 0,
+  LumenMacBridgePreprocessStrategyDownscale2x = 1
+} LumenMacBridgePreprocessStrategy;
 
-typedef enum ApolloMacBridgeQueueProfile {
-  ApolloMacBridgeQueueProfileQ1 = 0,
-  ApolloMacBridgeQueueProfileQ2 = 1,
-  ApolloMacBridgeQueueProfileQ3 = 2,
-  ApolloMacBridgeQueueProfileQ4 = 3,
-  ApolloMacBridgeQueueProfileAuto = 4
-} ApolloMacBridgeQueueProfile;
+typedef enum LumenMacBridgeQueueProfile {
+  LumenMacBridgeQueueProfileQ1 = 0,
+  LumenMacBridgeQueueProfileQ2 = 1,
+  LumenMacBridgeQueueProfileQ3 = 2,
+  LumenMacBridgeQueueProfileQ4 = 3,
+  LumenMacBridgeQueueProfileAuto = 4
+} LumenMacBridgeQueueProfile;
 
-typedef struct ApolloMacBridgeCaptureConfiguration {
+typedef struct LumenMacBridgeCaptureConfiguration {
   uint32_t display_id;
   ApolloCoreCaptureCodec codec;
-  ApolloMacBridgePreprocessStrategy preprocess_strategy;
-  ApolloMacBridgeQueueProfile queue_profile;
+  LumenMacBridgePreprocessStrategy preprocess_strategy;
+  LumenMacBridgeQueueProfile queue_profile;
   bool show_cursor;
   int32_t target_frame_rate;
   int32_t target_video_bitrate_kbps;
@@ -35,24 +35,24 @@ typedef struct ApolloMacBridgeCaptureConfiguration {
   int32_t requested_height;
   ApolloCoreSinkRequest sink_request;
   ApolloCoreEffectiveDisplayState effective_display_state;
-} ApolloMacBridgeCaptureConfiguration;
+} LumenMacBridgeCaptureConfiguration;
 
-typedef enum ApolloMacBridgeAudioSourceKind {
-  ApolloMacBridgeAudioSourceKindMicrophone = 0,
-  ApolloMacBridgeAudioSourceKindSystemOutput = 1
-} ApolloMacBridgeAudioSourceKind;
+typedef enum LumenMacBridgeAudioSourceKind {
+  LumenMacBridgeAudioSourceKindMicrophone = 0,
+  LumenMacBridgeAudioSourceKindSystemOutput = 1
+} LumenMacBridgeAudioSourceKind;
 
-typedef struct ApolloMacBridgeAudioCaptureConfiguration {
-  ApolloMacBridgeAudioSourceKind source_kind;
+typedef struct LumenMacBridgeAudioCaptureConfiguration {
+  LumenMacBridgeAudioSourceKind source_kind;
   uint32_t display_id;
   bool excludes_current_process_audio;
   int32_t sample_rate;
   int32_t channel_count;
   int32_t frame_size;
   char input_id[256];
-} ApolloMacBridgeAudioCaptureConfiguration;
+} LumenMacBridgeAudioCaptureConfiguration;
 
-typedef struct ApolloMacBridgeAudioForwardingSnapshot {
+typedef struct LumenMacBridgeAudioForwardingSnapshot {
   uint64_t frame_count;
   uint64_t event_count;
   uint64_t queued_frame_count;
@@ -68,9 +68,9 @@ typedef struct ApolloMacBridgeAudioForwardingSnapshot {
   size_t last_frame_pcm_byte_count;
   bool has_last_event;
   ApolloCoreCaptureEventKind last_event_kind;
-} ApolloMacBridgeAudioForwardingSnapshot;
+} LumenMacBridgeAudioForwardingSnapshot;
 
-typedef struct ApolloMacBridgeAudioCaptureFrameRecord {
+typedef struct LumenMacBridgeAudioCaptureFrameRecord {
   bool has_value;
   uint64_t sequence_number;
   uint64_t host_time_nanoseconds;
@@ -78,9 +78,9 @@ typedef struct ApolloMacBridgeAudioCaptureFrameRecord {
   int32_t channel_count;
   int32_t frame_count;
   size_t pcm_byte_count;
-} ApolloMacBridgeAudioCaptureFrameRecord;
+} LumenMacBridgeAudioCaptureFrameRecord;
 
-typedef struct ApolloMacBridgeAudioCaptureEventRecord {
+typedef struct LumenMacBridgeAudioCaptureEventRecord {
   bool has_value;
   ApolloCoreCaptureEventKind kind;
   bool has_stop_status;
@@ -89,162 +89,162 @@ typedef struct ApolloMacBridgeAudioCaptureEventRecord {
   uint64_t automatic_restart_count;
   bool has_source_sequence_number;
   uint64_t source_sequence_number;
-} ApolloMacBridgeAudioCaptureEventRecord;
+} LumenMacBridgeAudioCaptureEventRecord;
 
-typedef struct ApolloMacBridgeStatusSnapshot {
+typedef struct LumenMacBridgeStatusSnapshot {
   char core_version[128];
   char runtime_description[256];
   char integration_status[512];
   bool capture_session_running;
   bool audio_capture_session_running;
   bool automatic_capture_orchestration_running;
-} ApolloMacBridgeStatusSnapshot;
+} LumenMacBridgeStatusSnapshot;
 
-typedef void (*ApolloMacBridgeEncodedFrameHandler)(
+typedef void (*LumenMacBridgeEncodedFrameHandler)(
   void *context,
   ApolloCoreEncodedCaptureFrameRecord record,
   CMSampleBufferRef retained_sample_buffer
 );
 
-typedef void (*ApolloMacBridgeCaptureEventHandler)(
+typedef void (*LumenMacBridgeCaptureEventHandler)(
   void *context,
   ApolloCoreEncodedCaptureEventRecord record,
   const char *message
 );
 
-typedef void (*ApolloMacBridgeAudioFrameHandler)(
+typedef void (*LumenMacBridgeAudioFrameHandler)(
   void *context,
-  ApolloMacBridgeAudioCaptureFrameRecord record,
+  LumenMacBridgeAudioCaptureFrameRecord record,
   const void *pcm_float32le,
   size_t pcm_byte_count
 );
 
-typedef void (*ApolloMacBridgeAudioCaptureEventHandler)(
+typedef void (*LumenMacBridgeAudioCaptureEventHandler)(
   void *context,
-  ApolloMacBridgeAudioCaptureEventRecord record,
+  LumenMacBridgeAudioCaptureEventRecord record,
   const char *message
 );
 
-typedef struct ApolloMacBridgeForwardingCallbacks {
+typedef struct LumenMacBridgeForwardingCallbacks {
   void *context;
   /* The bridge releases retained_sample_buffer after the callback returns. */
-  ApolloMacBridgeEncodedFrameHandler encoded_frame_handler;
-  ApolloMacBridgeCaptureEventHandler capture_event_handler;
-  ApolloMacBridgeAudioFrameHandler audio_frame_handler;
-  ApolloMacBridgeAudioCaptureEventHandler audio_capture_event_handler;
-} ApolloMacBridgeForwardingCallbacks;
+  LumenMacBridgeEncodedFrameHandler encoded_frame_handler;
+  LumenMacBridgeCaptureEventHandler capture_event_handler;
+  LumenMacBridgeAudioFrameHandler audio_frame_handler;
+  LumenMacBridgeAudioCaptureEventHandler audio_capture_event_handler;
+} LumenMacBridgeForwardingCallbacks;
 
-typedef struct ApolloMacBridgeController ApolloMacBridgeController;
+typedef struct LumenMacBridgeController LumenMacBridgeController;
 
-ApolloMacBridgeController *ApolloMacBridgeControllerCreate(void);
-void ApolloMacBridgeControllerDestroy(ApolloMacBridgeController *controller);
+LumenMacBridgeController *LumenMacBridgeControllerCreate(void);
+void LumenMacBridgeControllerDestroy(LumenMacBridgeController *controller);
 
-ApolloMacBridgeCaptureConfiguration ApolloMacBridgeControllerMakePanelNativeConfiguration(
+LumenMacBridgeCaptureConfiguration LumenMacBridgeControllerMakePanelNativeConfiguration(
   uint32_t display_id
 );
 
-ApolloMacBridgeAudioCaptureConfiguration ApolloMacBridgeControllerMakeDefaultMicrophoneAudioConfiguration(
+LumenMacBridgeAudioCaptureConfiguration LumenMacBridgeControllerMakeDefaultMicrophoneAudioConfiguration(
   void
 );
 
-ApolloMacBridgeAudioCaptureConfiguration ApolloMacBridgeControllerMakeSystemOutputAudioConfiguration(
+LumenMacBridgeAudioCaptureConfiguration LumenMacBridgeControllerMakeSystemOutputAudioConfiguration(
   uint32_t display_id
 );
 
-bool ApolloMacBridgeControllerStartMacDisplayKitCapture(
-  ApolloMacBridgeController *controller,
-  ApolloMacBridgeCaptureConfiguration configuration,
+bool LumenMacBridgeControllerStartMacDisplayKitCapture(
+  LumenMacBridgeController *controller,
+  LumenMacBridgeCaptureConfiguration configuration,
   char *error_destination,
   size_t error_capacity
 );
 
-void ApolloMacBridgeControllerStopMacDisplayKitCapture(
-  ApolloMacBridgeController *controller
+void LumenMacBridgeControllerStopMacDisplayKitCapture(
+  LumenMacBridgeController *controller
 );
 
-void ApolloMacBridgeRequestImmediateCaptureKeyFrame(void);
+void LumenMacBridgeRequestImmediateCaptureKeyFrame(void);
 
-bool ApolloMacBridgeControllerStartMacDisplayKitAudioCapture(
-  ApolloMacBridgeController *controller,
-  ApolloMacBridgeAudioCaptureConfiguration configuration,
+bool LumenMacBridgeControllerStartMacDisplayKitAudioCapture(
+  LumenMacBridgeController *controller,
+  LumenMacBridgeAudioCaptureConfiguration configuration,
   char *error_destination,
   size_t error_capacity
 );
 
-void ApolloMacBridgeControllerStopMacDisplayKitAudioCapture(
-  ApolloMacBridgeController *controller
+void LumenMacBridgeControllerStopMacDisplayKitAudioCapture(
+  LumenMacBridgeController *controller
 );
 
-void ApolloMacBridgeControllerStartApolloCoreCaptureAutomation(
-  ApolloMacBridgeController *controller
+void LumenMacBridgeControllerStartLumenCoreCaptureAutomation(
+  LumenMacBridgeController *controller
 );
 
-void ApolloMacBridgeControllerStopApolloCoreCaptureAutomation(
-  ApolloMacBridgeController *controller
+void LumenMacBridgeControllerStopLumenCoreCaptureAutomation(
+  LumenMacBridgeController *controller
 );
 
-bool ApolloMacBridgeControllerIsApolloCoreCaptureAutomationRunning(
-  ApolloMacBridgeController *controller
+bool LumenMacBridgeControllerIsLumenCoreCaptureAutomationRunning(
+  LumenMacBridgeController *controller
 );
 
-ApolloMacBridgeStatusSnapshot ApolloMacBridgeControllerCopyStatusSnapshot(
-  ApolloMacBridgeController *controller
+LumenMacBridgeStatusSnapshot LumenMacBridgeControllerCopyStatusSnapshot(
+  LumenMacBridgeController *controller
 );
 
-void ApolloMacBridgeControllerConfigureCoreForwarding(
-  ApolloMacBridgeController *controller,
+void LumenMacBridgeControllerConfigureCoreForwarding(
+  LumenMacBridgeController *controller,
   size_t frame_capacity,
   size_t event_capacity
 );
 
-ApolloCoreEncodedCaptureIngressSnapshot ApolloMacBridgeControllerCopyCoreForwardingSnapshot(
-  ApolloMacBridgeController *controller
+ApolloCoreEncodedCaptureIngressSnapshot LumenMacBridgeControllerCopyCoreForwardingSnapshot(
+  LumenMacBridgeController *controller
 );
 
-void ApolloMacBridgeControllerConfigureAudioForwarding(
-  ApolloMacBridgeController *controller,
+void LumenMacBridgeControllerConfigureAudioForwarding(
+  LumenMacBridgeController *controller,
   size_t frame_capacity,
   size_t event_capacity
 );
 
-ApolloMacBridgeAudioForwardingSnapshot ApolloMacBridgeControllerCopyAudioForwardingSnapshot(
-  ApolloMacBridgeController *controller
+LumenMacBridgeAudioForwardingSnapshot LumenMacBridgeControllerCopyAudioForwardingSnapshot(
+  LumenMacBridgeController *controller
 );
 
-ApolloCoreEncodedCaptureFrameRecord ApolloMacBridgeControllerPopNextForwardedFrame(
-  ApolloMacBridgeController *controller,
+ApolloCoreEncodedCaptureFrameRecord LumenMacBridgeControllerPopNextForwardedFrame(
+  LumenMacBridgeController *controller,
   CMSampleBufferRef *retained_sample_buffer_out
 );
 
-ApolloCoreEncodedCaptureEventRecord ApolloMacBridgeControllerPopNextForwardedEvent(
-  ApolloMacBridgeController *controller,
+ApolloCoreEncodedCaptureEventRecord LumenMacBridgeControllerPopNextForwardedEvent(
+  LumenMacBridgeController *controller,
   char *message_destination,
   size_t message_capacity
 );
 
-ApolloMacBridgeAudioCaptureFrameRecord ApolloMacBridgeControllerPopNextForwardedAudioFrame(
-  ApolloMacBridgeController *controller,
+LumenMacBridgeAudioCaptureFrameRecord LumenMacBridgeControllerPopNextForwardedAudioFrame(
+  LumenMacBridgeController *controller,
   void *pcm_destination,
   size_t pcm_capacity,
   size_t *copied_size_out
 );
 
-ApolloMacBridgeAudioCaptureEventRecord ApolloMacBridgeControllerPopNextForwardedAudioEvent(
-  ApolloMacBridgeController *controller,
+LumenMacBridgeAudioCaptureEventRecord LumenMacBridgeControllerPopNextForwardedAudioEvent(
+  LumenMacBridgeController *controller,
   char *message_destination,
   size_t message_capacity
 );
 
-bool ApolloMacBridgeControllerStartCoreForwardingPump(
-  ApolloMacBridgeController *controller,
-  ApolloMacBridgeForwardingCallbacks callbacks,
+bool LumenMacBridgeControllerStartCoreForwardingPump(
+  LumenMacBridgeController *controller,
+  LumenMacBridgeForwardingCallbacks callbacks,
   uint32_t idle_sleep_milliseconds,
   char *error_destination,
   size_t error_capacity
 );
 
-void ApolloMacBridgeControllerStopCoreForwardingPump(
-  ApolloMacBridgeController *controller
+void LumenMacBridgeControllerStopCoreForwardingPump(
+  LumenMacBridgeController *controller
 );
 
 #ifdef __cplusplus
