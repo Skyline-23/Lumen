@@ -664,7 +664,7 @@ namespace shadow_http {
       RAND_bytes((unsigned char *) &launch_session->control_connect_data, sizeof(launch_session->control_connect_data));
 
       launch_session->iv.resize(16);
-      uint32_t prepend_iv = util::endian::big<uint32_t>(util::from_view(get_arg(args, "rikeyid")));
+      uint32_t prepend_iv = util::endian::big<uint32_t>(static_cast<uint32_t>(util::from_view(get_arg(args, "rikeyid"))));
       auto prepend_iv_p = (uint8_t *) &prepend_iv;
       std::copy(prepend_iv_p, prepend_iv_p + sizeof(prepend_iv), std::begin(launch_session->iv));
     }
@@ -711,13 +711,13 @@ namespace shadow_http {
     launch_session->unique_id = named_cert_p->uuid;
     launch_session->perm = named_cert_p->perm;
     launch_session->enable_sops = util::from_view(get_arg(args, "sops", "0"));
-    launch_session->surround_info = util::from_view(get_arg(args, "surroundAudioInfo", "196610"));
+    launch_session->surround_info = static_cast<int>(util::from_view(get_arg(args, "surroundAudioInfo", "196610")));
     launch_session->surround_params = (get_arg(args, "surroundParams", ""));
-    launch_session->gcmap = util::from_view(get_arg(args, "gcmap", "0"));
+    launch_session->gcmap = static_cast<int>(util::from_view(get_arg(args, "gcmap", "0")));
     launch_session->virtual_display = util::from_view(get_arg(args, "virtualDisplay", "0")) || named_cert_p->always_use_virtual_display;
     launch_session->sink_request.mode.scale_explicit = true;
     launch_session->sink_request.mode.mode_is_logical = util::from_view(get_arg(args, "clientSinkModeIsLogical"));
-    launch_session->sink_request.mode.scale_percent = util::from_view(get_arg(args, "clientSinkScalePercent"));
+    launch_session->sink_request.mode.scale_percent = static_cast<int>(util::from_view(get_arg(args, "clientSinkScalePercent")));
     launch_session->sink_request.mode.hidpi = util::from_view(get_arg(args, "clientSinkHiDPI"));
     launch_session->sink_request.capability.gamut = parse_client_sink_gamut(get_arg(args, "clientSinkGamut"));
     launch_session->sink_request.capability.transfer = parse_client_sink_transfer(get_arg(args, "clientSinkTransfer"));
@@ -1316,7 +1316,7 @@ namespace shadow_http {
     }
 
     auto args = request->parse_query_string();
-    auto app_image = proc::proc.get_app_image(util::from_view(get_arg(args, "appid")));
+    auto app_image = proc::proc.get_app_image(static_cast<int>(util::from_view(get_arg(args, "appid"))));
 
     fg.disable();
 

@@ -201,18 +201,6 @@ namespace video {
 
     video::hdr_frame_state_t negotiated_hdr_frame_state(
       video::dynamic_range_transport_e transport,
-      bool frame_is_hdr_signaled,
-      const SS_HDR_METADATA *metadata = nullptr
-    ) {
-      return video::make_default_hdr_frame_state(
-        transport,
-        frame_is_hdr_signaled,
-        metadata
-      );
-    }
-
-    video::hdr_frame_state_t negotiated_hdr_frame_state(
-      video::dynamic_range_transport_e transport,
       int frame_width,
       int frame_height,
       bool frame_is_hdr_signaled,
@@ -440,17 +428,6 @@ namespace video {
           return kCMVideoCodecType_AppleProRes422Proxy;
         default:
           return 0;
-      }
-    }
-
-    bool apollo_core_codec_matches_config(ApolloCoreCaptureCodec codec, const config_t &config) {
-      switch (config.videoFormat) {
-        case 0:
-          return codec == ApolloCoreCaptureCodecH264;
-        case 1:
-          return codec == ApolloCoreCaptureCodecHEVC;
-        default:
-          return false;
       }
     }
 
@@ -3820,14 +3797,6 @@ namespace video {
   }
 
   namespace {
-    void raise_external_capture_metadata(
-      safe::mail_t mail,
-      const config_t &config
-    ) {
-      platf::external_capture_display_metadata_t external_metadata {};
-      refresh_external_capture_metadata(mail, config, external_metadata);
-    }
-
     void capture_external_encoded_ingress(
       safe::mail_t mail,
       const config_t &config,

@@ -259,18 +259,20 @@ namespace VDISPLAY {
         client_sink_potential_peak_luminance_nits
       );
 
+      const auto apply_display_info = reinterpret_cast<void (*)(id, SEL, id, id)>(objc_msgSend);
+
       if (max_hdr_luminance_key != nil && [existing_display_info objectForKey:max_hdr_luminance_key] != nil) {
-        [descriptor performSelector:set_display_info withObject:@(luminance.peak_luminance) withObject:max_hdr_luminance_key];
+        apply_display_info(descriptor, set_display_info, @(luminance.peak_luminance), max_hdr_luminance_key);
       }
       if (max_sdr_luminance_key != nil && [existing_display_info objectForKey:max_sdr_luminance_key] != nil) {
-        [descriptor performSelector:set_display_info withObject:@(luminance.sdr_luminance) withObject:max_sdr_luminance_key];
+        apply_display_info(descriptor, set_display_info, @(luminance.sdr_luminance), max_sdr_luminance_key);
       }
       if (min_luminance_key != nil && [existing_display_info objectForKey:min_luminance_key] != nil) {
-        [descriptor performSelector:set_display_info withObject:@(luminance.minimum_luminance) withObject:min_luminance_key];
+        apply_display_info(descriptor, set_display_info, @(luminance.minimum_luminance), min_luminance_key);
       }
       if (expected_luminance_key != nil && [existing_display_info objectForKey:expected_luminance_key] != nil) {
         // "Expected luminance" is the SDR reference white level, not the HDR peak.
-        [descriptor performSelector:set_display_info withObject:@(luminance.sdr_luminance) withObject:expected_luminance_key];
+        apply_display_info(descriptor, set_display_info, @(luminance.sdr_luminance), expected_luminance_key);
       }
 
       BOOST_LOG(info) << "macOS virtual display HDR displayInfo reconciled against baseline keys count="sv
@@ -306,20 +308,6 @@ namespace VDISPLAY {
         case video::client_sink_gamut_e::rec2020:
           return "rec2020";
         case video::client_sink_gamut_e::unknown:
-        default:
-          return "unknown";
-      }
-    }
-
-    const char *client_sink_transfer_label(const int transfer) {
-      switch (static_cast<video::client_sink_transfer_e>(transfer)) {
-        case video::client_sink_transfer_e::sdr:
-          return "sdr";
-        case video::client_sink_transfer_e::pq:
-          return "pq";
-        case video::client_sink_transfer_e::hlg:
-          return "hlg";
-        case video::client_sink_transfer_e::unknown:
         default:
           return "unknown";
       }
