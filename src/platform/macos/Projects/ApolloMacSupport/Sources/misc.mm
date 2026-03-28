@@ -82,11 +82,11 @@ namespace platf {
     NSString *const kCaptureRequestMirrorNotificationName = @"com.lizardbyte.apollo.capture-request-changed";
     NSString *const kLumenRuntimeEventNotificationName = @"LumenRuntimeEventNotification";
     NSString *const kLumenRuntimeWebUIReadyNotificationName = @"LumenRuntimeWebUIReadyNotification";
-    NSString *const kApolloRuntimeEventIdentifierKey = @"identifier";
-    NSString *const kApolloRuntimeEventTitleKey = @"title";
-    NSString *const kApolloRuntimeEventBodyKey = @"body";
-    NSString *const kApolloRuntimeEventLaunchPathKey = @"launchPath";
-    NSString *const kApolloRuntimeWebUIReadyURLKey = @"url";
+    NSString *const kLumenRuntimeEventIdentifierKey = @"identifier";
+    NSString *const kLumenRuntimeEventTitleKey = @"title";
+    NSString *const kLumenRuntimeEventBodyKey = @"body";
+    NSString *const kLumenRuntimeEventLaunchPathKey = @"launchPath";
+    NSString *const kLumenRuntimeWebUIReadyURLKey = @"url";
 
     struct private_display_control_api_t {
       void *handle = nullptr;
@@ -1673,10 +1673,10 @@ namespace platf {
         postNotificationName:kLumenRuntimeEventNotificationName
                       object:nil
                     userInfo:@ {
-                      kApolloRuntimeEventIdentifierKey: identifier_string,
-                      kApolloRuntimeEventTitleKey: title_string,
-                      kApolloRuntimeEventBodyKey: body_string,
-                      kApolloRuntimeEventLaunchPathKey: launch_path_string
+                      kLumenRuntimeEventIdentifierKey: identifier_string,
+                      kLumenRuntimeEventTitleKey: title_string,
+                      kLumenRuntimeEventBodyKey: body_string,
+                      kLumenRuntimeEventLaunchPathKey: launch_path_string
                     }];
     });
   }
@@ -1688,7 +1688,7 @@ namespace platf {
       [[NSNotificationCenter defaultCenter]
         postNotificationName:kLumenRuntimeWebUIReadyNotificationName
                       object:nil
-                    userInfo:@ {kApolloRuntimeWebUIReadyURLKey: url_string}];
+                    userInfo:@ {kLumenRuntimeWebUIReadyURLKey: url_string}];
     });
   }
 
