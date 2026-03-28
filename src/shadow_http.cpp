@@ -60,13 +60,7 @@ namespace shadow_http {
     std::vector<p_named_cert_t> named_devices;
   };
 
-  struct pair_session_t;
-
   crypto::cert_chain_t cert_chain;
-  static std::string one_time_pin;
-  static std::string otp_passphrase;
-  static std::string otp_device_name;
-  static std::chrono::time_point<std::chrono::steady_clock> otp_creation_time;
 
   namespace {
     const char *client_sink_gamut_to_string(const int gamut) {
@@ -318,8 +312,6 @@ namespace shadow_http {
     std::string pkey;
   } conf_intern;
 
-  // uniqueID, session
-  std::unordered_map<std::string, pair_session_t> map_id_sess;
   client_t client_root;
   std::atomic<uint32_t> session_id_counter;
 
@@ -754,185 +746,6 @@ namespace shadow_http {
     return launch_session;
   }
 
-  void remove_session(const pair_session_t &sess) {
-    map_id_sess.erase(sess.client.uniqueID);
-  }
-
-  void fail_pair(pair_session_t &sess, pt::ptree &tree, const std::string status_msg) {
-    tree.put("root.paired", 0);
-    tree.put("root.<xmlattr>.status_code", 400);
-    tree.put("root.<xmlattr>.status_message", status_msg);
-    remove_session(sess);  // Security measure, delete the session when something went wrong and force a re-pair
-    BOOST_LOG(warning) << "Pair attempt failed due to " << status_msg;
-  }
-
-  void getservercert(pair_session_t &sess, pt::ptree &tree, const std::string &pin) {
-    if (sess.last_phase != PAIR_PHASE::NONE) {
-      fail_pair(sess, tree, "Out of order call to getservercert");
-      return;
-    }
-    sess.last_phase = PAIR_PHASE::GETSERVERCERT;
-
-    if (sess.async_insert_pin.salt.size() < 32) {
-      fail_pair(sess, tree, "Salt too short");
-      return;
-    }
-
-    std::string_view salt_view {sess.async_insert_pin.salt.data(), 32};
-
-    auto salt = util::from_hex<std::array<uint8_t, 16>>(salt_view, true);
-
-    auto key = crypto::gen_aes_key(salt, pin);
-    sess.cipher_key = std::make_unique<crypto::aes_t>(key);
-
-    tree.put("root.paired", 1);
-    tree.put("root.plaincert", util::hex_vec(conf_intern.servercert, true));
-    tree.put("root.<xmlattr>.status_code", 200);
-  }
-
-  void clientchallenge(pair_session_t &sess, pt::ptree &tree, const std::string &challenge) {
-    if (sess.last_phase != PAIR_PHASE::GETSERVERCERT) {
-      fail_pair(sess, tree, "Out of order call to clientchallenge");
-      return;
-    }
-    sess.last_phase = PAIR_PHASE::CLIENTCHALLENGE;
-
-    if (!sess.cipher_key) {
-      fail_pair(sess, tree, "Cipher key not set");
-      return;
-    }
-    crypto::cipher::ecb_t cipher(*sess.cipher_key, false);
-
-    std::vector<uint8_t> decrypted;
-    cipher.decrypt(challenge, decrypted);
-
-    auto x509 = crypto::x509(conf_intern.servercert);
-    auto sign = crypto::signature(x509);
-    auto serversecret = crypto::rand(16);
-
-    decrypted.insert(std::end(decrypted), std::begin(sign), std::end(sign));
-    decrypted.insert(std::end(decrypted), std::begin(serversecret), std::end(serversecret));
-
-    auto hash = crypto::hash({(char *) decrypted.data(), decrypted.size()});
-    auto serverchallenge = crypto::rand(16);
-
-    std::string plaintext;
-    plaintext.reserve(hash.size() + serverchallenge.size());
-
-    plaintext.insert(std::end(plaintext), std::begin(hash), std::end(hash));
-    plaintext.insert(std::end(plaintext), std::begin(serverchallenge), std::end(serverchallenge));
-
-    std::vector<uint8_t> encrypted;
-    cipher.encrypt(plaintext, encrypted);
-
-    sess.serversecret = std::move(serversecret);
-    sess.serverchallenge = std::move(serverchallenge);
-
-    tree.put("root.paired", 1);
-    tree.put("root.challengeresponse", util::hex_vec(encrypted, true));
-    tree.put("root.<xmlattr>.status_code", 200);
-  }
-
-  void serverchallengeresp(pair_session_t &sess, pt::ptree &tree, const std::string &encrypted_response) {
-    if (sess.last_phase != PAIR_PHASE::CLIENTCHALLENGE) {
-      fail_pair(sess, tree, "Out of order call to serverchallengeresp");
-      return;
-    }
-    sess.last_phase = PAIR_PHASE::SERVERCHALLENGERESP;
-
-    if (!sess.cipher_key || sess.serversecret.empty()) {
-      fail_pair(sess, tree, "Cipher key or serversecret not set");
-      return;
-    }
-
-    std::vector<uint8_t> decrypted;
-    crypto::cipher::ecb_t cipher(*sess.cipher_key, false);
-
-    cipher.decrypt(encrypted_response, decrypted);
-
-    sess.clienthash = std::move(decrypted);
-
-    auto serversecret = sess.serversecret;
-    auto sign = crypto::sign256(crypto::pkey(conf_intern.pkey), serversecret);
-
-    serversecret.insert(std::end(serversecret), std::begin(sign), std::end(sign));
-
-    tree.put("root.pairingsecret", util::hex_vec(serversecret, true));
-    tree.put("root.paired", 1);
-    tree.put("root.<xmlattr>.status_code", 200);
-  }
-
-  void clientpairingsecret(pair_session_t &sess, pt::ptree &tree, const std::string &client_pairing_secret) {
-    if (sess.last_phase != PAIR_PHASE::SERVERCHALLENGERESP) {
-      fail_pair(sess, tree, "Out of order call to clientpairingsecret");
-      return;
-    }
-    sess.last_phase = PAIR_PHASE::CLIENTPAIRINGSECRET;
-
-    auto &client = sess.client;
-
-    if (client_pairing_secret.size() <= 16) {
-      fail_pair(sess, tree, "Client pairing secret too short");
-      return;
-    }
-
-    std::string_view secret {client_pairing_secret.data(), 16};
-    std::string_view sign {client_pairing_secret.data() + secret.size(), client_pairing_secret.size() - secret.size()};
-
-    auto x509 = crypto::x509(client.cert);
-    if (!x509) {
-      fail_pair(sess, tree, "Invalid client certificate");
-      return;
-    }
-    auto x509_sign = crypto::signature(x509);
-
-    std::string data;
-    data.reserve(sess.serverchallenge.size() + x509_sign.size() + secret.size());
-
-    data.insert(std::end(data), std::begin(sess.serverchallenge), std::end(sess.serverchallenge));
-    data.insert(std::end(data), std::begin(x509_sign), std::end(x509_sign));
-    data.insert(std::end(data), std::begin(secret), std::end(secret));
-
-    auto hash = crypto::hash(data);
-
-    // if hash not correct, probably MITM
-    bool same_hash = hash.size() == sess.clienthash.size() && std::equal(hash.begin(), hash.end(), sess.clienthash.begin());
-    auto verify = crypto::verify256(crypto::x509(client.cert), secret, sign);
-    if (same_hash && verify) {
-      tree.put("root.paired", 1);
-
-      auto named_cert_p = std::make_shared<crypto::named_cert_t>();
-      named_cert_p->name = client.name;
-      for (char& c : named_cert_p->name) {
-        if (c == '(') c = '[';
-        else if (c == ')') c = ']';
-      }
-      named_cert_p->cert = std::move(client.cert);
-      named_cert_p->uuid = uuid_util::uuid_t::generate().string();
-      // If the device is the first one paired with the server, assign full permission.
-      if (client_root.named_devices.empty()) {
-        named_cert_p->perm = PERM::_all;
-      } else {
-        named_cert_p->perm = PERM::_default;
-      }
-
-      named_cert_p->enable_legacy_ordering = true;
-      named_cert_p->allow_client_commands = true;
-      named_cert_p->always_use_virtual_display = false;
-
-      auto it = map_id_sess.find(client.uniqueID);
-      map_id_sess.erase(it);
-
-      add_authorized_client(named_cert_p);
-    } else {
-      tree.put("root.paired", 0);
-      BOOST_LOG(warning) << "Pair attempt failed due to same_hash: " << same_hash << ", verify: " << verify;
-    }
-
-    remove_session(sess);
-    tree.put("root.<xmlattr>.status_code", 200);
-  }
-
   template<class T>
   struct tunnel;
 
@@ -1069,57 +882,6 @@ namespace shadow_http {
     tree.put("root.paired", 0);
     tree.put("root.<xmlattr>.status_code", 426);
     tree.put("root.<xmlattr>.status_message", "Legacy /pair is no longer supported. Use Shadow pairing approval.");
-  }
-
-  bool pin(std::string pin, std::string name) {
-    pt::ptree tree;
-    if (map_id_sess.empty()) {
-      return false;
-    }
-
-    // ensure pin is 4 digits
-    if (pin.size() != 4) {
-      tree.put("root.paired", 0);
-      tree.put("root.<xmlattr>.status_code", 400);
-      tree.put(
-        "root.<xmlattr>.status_message",
-        "Pin must be 4 digits, " + std::to_string(pin.size()) + " provided"
-      );
-      return false;
-    }
-
-    // ensure all pin characters are numeric
-    if (!std::all_of(pin.begin(), pin.end(), ::isdigit)) {
-      tree.put("root.paired", 0);
-      tree.put("root.<xmlattr>.status_code", 400);
-      tree.put("root.<xmlattr>.status_message", "Pin must be numeric");
-      return false;
-    }
-
-    auto &sess = std::begin(map_id_sess)->second;
-    getservercert(sess, tree, pin);
-
-    if (!name.empty()) {
-      sess.client.name = name;
-    }
-
-    // response to the request for pin
-    std::ostringstream data;
-    pt::write_xml(data, tree);
-
-    auto &async_response = sess.async_insert_pin.response;
-    if (async_response.has_left() && async_response.left()) {
-      async_response.left()->write(data.str());
-    } else if (async_response.has_right() && async_response.right()) {
-      async_response.right()->write(data.str());
-    } else {
-      return false;
-    }
-
-    // reset async_response
-    async_response = std::decay_t<decltype(async_response.left())>();
-    // response to the current request
-    return true;
   }
 
   nlohmann::json get_all_clients() {
@@ -1821,24 +1583,9 @@ namespace shadow_http {
     // Wait for any event
     shutdown_event->view();
 
-    map_id_sess.clear();
-
     https_server.stop();
 
     https_thread.join();
-  }
-
-  std::string request_otp(const std::string& passphrase, const std::string& deviceName) {
-    if (passphrase.size() < 4) {
-      return "";
-    }
-
-    one_time_pin = crypto::rand_alphabet(4, "0123456789"sv);
-    otp_passphrase = passphrase;
-    otp_device_name = deviceName;
-    otp_creation_time = std::chrono::steady_clock::now();
-
-    return one_time_pin;
   }
 
   void

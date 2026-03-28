@@ -463,26 +463,6 @@ namespace shadow_control_http {
   }
 
   /**
-   * @brief Get the PIN page.
-   * @param response The HTTP response object.
-   * @param request The HTTP request object.
-   */
-  void getPinPage(resp_https_t response, req_https_t request) {
-    if (!authenticate(response, request, true)) {
-      return;
-    }
-
-    print_req(request);
-
-    std::string content = file_handler::read_file(WEB_DIR "pin.html");
-    SimpleWeb::CaseInsensitiveMultimap headers;
-    headers.emplace("Content-Type", "text/html; charset=utf-8");
-    headers.emplace("X-Frame-Options", "DENY");
-    headers.emplace("Content-Security-Policy", "frame-ancestors 'none';");
-    response->write(content, headers);
-  }
-
-  /**
    * @brief Get the apps page.
    * @param response The HTTP response object.
    * @param request The HTTP request object.
@@ -1543,82 +1523,6 @@ namespace shadow_control_http {
   }
 
   /**
-   * @brief Get a one-time password (OTP).
-   * @param response The HTTP response object.
-   * @param request The HTTP request object.
-   *
-   * @api_examples{/api/otp| GET| null}
-   */
-  void getOTP(resp_https_t response, req_https_t request) {
-    if (!validateContentType(response, request, "application/json") || !authenticate(response, request)) {
-      return;
-    }
-
-    print_req(request);
-
-    nlohmann::json output_tree;
-    try {
-      std::stringstream ss;
-      ss << request->content.rdbuf();
-      nlohmann::json input_tree = nlohmann::json::parse(ss.str());
-
-      std::string passphrase = input_tree.value("passphrase", "");
-      if (passphrase.empty())
-        throw std::runtime_error("Passphrase not provided!");
-      if (passphrase.size() < 4)
-        throw std::runtime_error("Passphrase too short!");
-
-      std::string deviceName = input_tree.value("deviceName", "");
-      output_tree["otp"] = shadow_http::request_otp(passphrase, deviceName);
-      output_tree["ip"] = platf::get_local_ip_for_gateway();
-      output_tree["name"] = config::shadow_http.host_name;
-      output_tree["status"] = true;
-      output_tree["message"] = "OTP created, effective within 3 minutes.";
-      send_response(response, output_tree);
-    } catch (std::exception &e) {
-      BOOST_LOG(warning) << "OTP creation failed: "sv << e.what();
-      bad_request(response, request, e.what());
-    }
-  }
-
-  /**
-   * @brief Send a PIN code to the host.
-   * @param response The HTTP response object.
-   * @param request The HTTP request object.
-   *
-   * The body for the POST request should be JSON serialized in the following format:
-   * @code{.json}
-   * {
-   *   "pin": "<pin>",
-   *   "name": "Friendly Client Name"
-   * }
-   * @endcode
-   *
-   * @api_examples{/api/pin| POST| {"pin":"1234","name":"My PC"}}
-   */
-  void savePin(resp_https_t response, req_https_t request) {
-    if (!validateContentType(response, request, "application/json") || !authenticate(response, request)) {
-      return;
-    }
-
-    print_req(request);
-
-    try {
-      std::stringstream ss;
-      ss << request->content.rdbuf();
-      nlohmann::json input_tree = nlohmann::json::parse(ss.str());
-      nlohmann::json output_tree;
-      std::string pin = input_tree.value("pin", "");
-      std::string name = input_tree.value("name", "");
-      output_tree["status"] = shadow_http::pin(pin, name);
-      send_response(response, output_tree);
-    } catch (std::exception &e) {
-      BOOST_LOG(warning) << "SavePin: "sv << e.what();
-      bad_request(response, request, e.what());
-    }
-  }
-
-  /**
    * @brief Reset the display device persistence.
    * @param response The HTTP response object.
    * @param request The HTTP request object.
@@ -1846,7 +1750,6 @@ namespace shadow_control_http {
     };
     server.default_resource["GET"] = not_found;
     server.resource["^/$"]["GET"] = getIndexPage;
-    server.resource["^/pin/?$"]["GET"] = getPinPage;
     server.resource["^/apps/?$"]["GET"] = getAppsPage;
     server.resource["^/config/?$"]["GET"] = getConfigPage;
     server.resource["^/password/?$"]["GET"] = getPasswordPage;
@@ -1859,8 +1762,6 @@ namespace shadow_control_http {
     server.resource["^/api/pairing/requests$"]["GET"] = listShadowPairingRequests;
     server.resource["^/api/pairing/approve$"]["POST"] = approveShadowPairing;
     server.resource["^/api/pairing/reject$"]["POST"] = rejectShadowPairing;
-    server.resource["^/api/pin$"]["POST"] = savePin;
-    server.resource["^/api/otp$"]["POST"] = getOTP;
     server.resource["^/api/apps$"]["GET"] = getApps;
     server.resource["^/api/apps$"]["POST"] = saveApp;
     server.resource["^/api/apps/reorder$"]["POST"] = reorderApps;

@@ -459,36 +459,6 @@ namespace system_tray {
     tray_update(&tray);
   }
 
-  void update_tray_require_pin() {
-#ifdef __APPLE__
-    mirror_notification_when_no_tray(
-      "apollo.require-pin",
-      "Incoming Pairing Request",
-      "Click to complete the pairing process.",
-      "/pin#PIN"
-    );
-#endif
-    if (!tray_initialized) {
-      return;
-    }
-
-    tray.notification_title = nullptr;
-    tray.notification_text = nullptr;
-    tray.notification_cb = nullptr;
-    tray.notification_icon = nullptr;
-    tray.icon = resolved_tray_icon_path(TRAY_ICON);
-    tray_update(&tray);
-    tray.icon = resolved_tray_icon_path(TRAY_ICON);
-    tray.notification_title = "Incoming Pairing Request";
-    tray.notification_text = "Click here to complete the pairing process";
-    tray.notification_icon = resolved_tray_icon_path(TRAY_ICON_LOCKED);
-    tray.tooltip = PROJECT_NAME;
-    tray.notification_cb = []() {
-      launch_ui("/pin#PIN");
-    };
-    tray_update(&tray);
-  }
-
   void
   update_tray_paired(std::string device_name) {
 #ifdef __APPLE__
