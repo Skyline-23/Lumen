@@ -302,7 +302,7 @@ namespace video {
           content_y,
           content_width,
           content_height,
-          metadata
+          nullptr
         ),
         metadata
       );
@@ -1290,15 +1290,15 @@ namespace video {
 
     std::size_t native_macos_vt_max_inflight_frames_for_framerate(int framerate) {
       if (framerate >= 120) {
-        return 2;
+        return 1;
       }
       if (framerate >= 90) {
-        return 3;
+        return 2;
       }
       if (framerate >= 60) {
-        return 4;
+        return 3;
       }
-      return 5;
+      return 4;
     }
   }  // namespace
 

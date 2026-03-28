@@ -168,7 +168,7 @@ namespace video {
     const SS_HDR_METADATA *metadata = nullptr
   ) {
     return make_overlay_hdr_frame_state(
-      make_coarse_overlay_regions(frame_width, frame_height, metadata),
+      make_coarse_overlay_regions(frame_width, frame_height, nullptr),
       metadata
     );
   }
