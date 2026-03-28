@@ -1005,7 +1005,7 @@ public struct LumenBridgeDrainedAudioEvent: Equatable, Sendable {
     public let sourceSequenceNumber: UInt64?
 }
 
-private struct ApolloBridgeAutomationRequest: Equatable, Sendable {
+private struct LumenBridgeAutomationRequest: Equatable, Sendable {
     let generation: UInt64
     let videoGeneration: UInt64
     let audioGeneration: UInt64
@@ -1019,12 +1019,12 @@ private struct ApolloBridgeAutomationRequest: Equatable, Sendable {
 
         let resolvedDisplayID = snapshot.display_id == 0 ? CGMainDisplayID() : snapshot.display_id
         if snapshot.video_requested,
-           let codec = ApolloBridgeAutomationRequest.codec(from: snapshot.codec) {
+           let codec = LumenBridgeAutomationRequest.codec(from: snapshot.codec) {
             videoConfiguration = LumenMacDisplayKitCaptureConfiguration(
                 displayID: resolvedDisplayID,
                 codec: codec,
-                preprocessStrategy: ApolloBridgeAutomationRequest.preprocessStrategy(from: snapshot.preprocess_strategy),
-                queueProfile: ApolloBridgeAutomationRequest.queueProfile(from: snapshot.queue_profile),
+                preprocessStrategy: LumenBridgeAutomationRequest.preprocessStrategy(from: snapshot.preprocess_strategy),
+                queueProfile: LumenBridgeAutomationRequest.queueProfile(from: snapshot.queue_profile),
                 showCursor: snapshot.show_cursor,
                 targetFrameRate: Int(snapshot.target_frame_rate),
                 targetVideoBitRateKbps: Int(snapshot.target_video_bitrate_kbps),
@@ -1038,8 +1038,8 @@ private struct ApolloBridgeAutomationRequest: Equatable, Sendable {
                         scalePercent: Int(snapshot.sink_request.mode.scale_percent)
                     ),
                     capability: LumenBridgeSinkCapability(
-                        gamut: ApolloBridgeAutomationRequest.clientSinkGamut(from: snapshot.sink_request.capability.gamut),
-                        transfer: ApolloBridgeAutomationRequest.clientSinkTransfer(from: snapshot.sink_request.capability.transfer),
+                        gamut: LumenBridgeAutomationRequest.clientSinkGamut(from: snapshot.sink_request.capability.gamut),
+                        transfer: LumenBridgeAutomationRequest.clientSinkTransfer(from: snapshot.sink_request.capability.transfer),
                         currentEDRHeadroom: snapshot.sink_request.capability.current_edr_headroom,
                         potentialEDRHeadroom: snapshot.sink_request.capability.potential_edr_headroom,
                         currentPeakLuminanceNits: Int(snapshot.sink_request.capability.current_peak_luminance_nits),
@@ -1051,8 +1051,8 @@ private struct ApolloBridgeAutomationRequest: Equatable, Sendable {
                     dynamicRangeTransport: snapshot.sink_request.dynamic_range_transport
                 ),
                 effectiveDisplayState: LumenBridgeEffectiveDisplayState(
-                    gamut: ApolloBridgeAutomationRequest.clientSinkGamut(from: snapshot.effective_display_state.gamut),
-                    transfer: ApolloBridgeAutomationRequest.clientSinkTransfer(from: snapshot.effective_display_state.transfer),
+                    gamut: LumenBridgeAutomationRequest.clientSinkGamut(from: snapshot.effective_display_state.gamut),
+                    transfer: LumenBridgeAutomationRequest.clientSinkTransfer(from: snapshot.effective_display_state.transfer),
                     hdrStaticMetadata: snapshot.effective_display_state.has_hdr_static_metadata ?
                         LumenHDRStaticMetadata(coreValue: snapshot.effective_display_state.hdr_static_metadata) :
                         nil
@@ -1512,8 +1512,8 @@ public actor LumenBridgeRuntime {
 
                 let snapshot = ApolloCoreCaptureRequestCopySnapshot()
                 observedGeneration = snapshot.generation
-                await self?.applyApolloCoreCaptureRequest(
-                    ApolloBridgeAutomationRequest(snapshot: snapshot)
+                await self?.applyLumenCoreCaptureRequest(
+                    LumenBridgeAutomationRequest(snapshot: snapshot)
                 )
             }
         }
@@ -1600,7 +1600,7 @@ public actor LumenBridgeRuntime {
         )
     }
 
-    private func applyApolloCoreCaptureRequest(_ request: ApolloBridgeAutomationRequest) async {
+    private func applyLumenCoreCaptureRequest(_ request: LumenBridgeAutomationRequest) async {
         if Self.shouldApplyAutomationRequest(
             requestedConfiguration: request.videoConfiguration,
             activeConfiguration: activeCaptureConfiguration,
