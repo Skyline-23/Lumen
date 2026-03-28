@@ -1,4 +1,4 @@
-@preconcurrency import ApolloMacCaptureAdapter
+@preconcurrency import LumenMacCaptureAdapter
 import AppKit
 import Foundation
 import UserNotifications
@@ -17,8 +17,8 @@ final class LumenCaptureController: ObservableObject {
         static let configurationFileName = "lumen.conf"
     }
 
-    @Published private(set) var menuStatus = ApolloMacCaptureAdapterMenuStatus(
-        hostedApolloRuntimeRunning: false,
+    @Published private(set) var menuStatus = LumenMacCaptureAdapterMenuStatus(
+        hostedRuntimeRunning: false,
         captureSessionRunning: false,
         audioCaptureSessionRunning: false
     )
@@ -27,7 +27,7 @@ final class LumenCaptureController: ObservableObject {
     @Published private(set) var isAccessibilityPermissionGranted = true
     @Published private(set) var isScreenCapturePermissionGranted = true
 
-    private let adapter: ApolloMacCaptureAdapter
+    private let adapter: LumenMacCaptureAdapter
     private let statusRefreshQueue = DispatchQueue(label: "LumenCaptureController.StatusRefresh", qos: .userInitiated)
     private var statusObserver: NSObjectProtocol?
     private var companionStopObserver: NSObjectProtocol?
@@ -39,10 +39,10 @@ final class LumenCaptureController: ObservableObject {
     private var isStatusRefreshInFlight = false
     private var hasPendingStatusRefresh = false
 
-    init(adapter: ApolloMacCaptureAdapter = ApolloMacCaptureAdapter()) {
+    init(adapter: LumenMacCaptureAdapter = LumenMacCaptureAdapter()) {
         self.adapter = adapter
         statusObserver = NotificationCenter.default.addObserver(
-            forName: .ApolloMacCaptureAdapterStatusDidChange,
+            forName: .lumenMacCaptureAdapterStatusDidChange,
             object: adapter,
             queue: .main
         ) { [weak self] _ in
@@ -51,7 +51,7 @@ final class LumenCaptureController: ObservableObject {
             }
         }
         companionStopObserver = NotificationCenter.default.addObserver(
-            forName: .ApolloMacCaptureAdapterCompanionDidStop,
+            forName: .lumenMacCaptureAdapterCompanionDidStop,
             object: adapter,
             queue: .main
         ) { [weak self] _ in
@@ -84,7 +84,7 @@ final class LumenCaptureController: ObservableObject {
         }
         do {
             shouldOpenDashboardWhenReady = true
-            try adapter.startApolloCompanion()
+            try adapter.startRuntimeCompanion()
         } catch {
             self.lastErrorMessage = error.localizedDescription
         }
@@ -106,7 +106,7 @@ final class LumenCaptureController: ObservableObject {
             NotificationCenter.default.removeObserver(runtimeWebUIReadyObserver)
         }
         isShuttingDown = true
-        adapter.stopApolloCompanion()
+        adapter.stopRuntimeCompanion()
     }
 
     var menuBarImageName: String {
@@ -114,7 +114,7 @@ final class LumenCaptureController: ObservableObject {
             return "lumen-playing-16"
         }
 
-        if menuStatus.hostedApolloRuntimeRunning {
+        if menuStatus.hostedRuntimeRunning {
             return "lumen-pausing-16"
         }
 
@@ -185,7 +185,7 @@ final class LumenCaptureController: ObservableObject {
         let symbolName: String
         if menuStatus.captureSessionRunning {
             symbolName = "dot.radiowaves.left.and.right"
-        } else if menuStatus.hostedApolloRuntimeRunning {
+        } else if menuStatus.hostedRuntimeRunning {
             symbolName = "pause.circle"
         } else {
             symbolName = "lock.circle"
@@ -247,7 +247,7 @@ final class LumenCaptureController: ObservableObject {
         runtimeWebDashboardBaseURLString = nil
         shouldOpenDashboardWhenReady = true
         do {
-            try adapter.restartApolloCompanion()
+            try adapter.restartRuntimeCompanion()
             refreshStatus()
         } catch {
             lastErrorMessage = error.localizedDescription
@@ -281,7 +281,7 @@ final class LumenCaptureController: ObservableObject {
 
     func prepareForTermination() {
         isShuttingDown = true
-        adapter.stopApolloCompanion()
+        adapter.stopRuntimeCompanion()
     }
 
     private func handleRuntimeEvent(_ notification: Notification) {

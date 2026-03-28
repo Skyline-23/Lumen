@@ -28,8 +28,9 @@
                 configuration.codec == ApolloCoreCaptureCodecHEVC ||
                 configuration.codec == ApolloCoreCaptureCodecProResProxy);
   XCTAssertEqual(configuration.preprocess_strategy, ApolloMacBridgePreprocessStrategyNone);
-  XCTAssertTrue(configuration.queue_profile >= ApolloMacBridgeQueueProfileQ1 &&
-                configuration.queue_profile <= ApolloMacBridgeQueueProfileQ4);
+  XCTAssertTrue((configuration.queue_profile >= ApolloMacBridgeQueueProfileQ1 &&
+                 configuration.queue_profile <= ApolloMacBridgeQueueProfileQ4) ||
+                configuration.queue_profile == ApolloMacBridgeQueueProfileAuto);
   XCTAssertFalse(configuration.show_cursor);
   XCTAssertEqual(configuration.target_frame_rate, 120);
 

@@ -305,14 +305,14 @@ let project = Project(
             settings: .settings(base: hostedRuntimeSettings)
         ),
         .target(
-            name: "ApolloMacCaptureAdapter",
+            name: "LumenMacCaptureAdapter",
             destinations: .macOS,
             product: .framework,
             bundleId: "dev.skyline23.lumen.maccaptureadapter",
             deploymentTargets: .macOS("14.0"),
             infoPlist: .default,
             sources: [
-                "Projects/ApolloMacCaptureAdapter/Sources/**/*.swift"
+                "Projects/LumenMacCaptureAdapter/Sources/**/*.swift"
             ],
             dependencies: [
                 .target(name: "ApolloMacBridge"),
@@ -321,7 +321,7 @@ let project = Project(
             settings: .settings(
                 base: [
                     "DEFINES_MODULE": "YES",
-                    "PRODUCT_NAME": "ApolloMacCaptureAdapter"
+                    "PRODUCT_NAME": "LumenMacCaptureAdapter"
                 ]
             )
         ),
@@ -357,7 +357,7 @@ let project = Project(
             ],
             scripts: [appAssetsScript],
             dependencies: [
-                .target(name: "ApolloMacCaptureAdapter"),
+                .target(name: "LumenMacCaptureAdapter"),
                 .sdk(name: "UserNotifications", type: .framework)
             ],
             settings: .settings(
@@ -382,7 +382,7 @@ let project = Project(
             ],
             dependencies: [
                 .target(name: "ApolloMacBridge"),
-                .target(name: "ApolloMacCaptureAdapter")
+                .target(name: "LumenMacCaptureAdapter")
             ]
         )
     ],

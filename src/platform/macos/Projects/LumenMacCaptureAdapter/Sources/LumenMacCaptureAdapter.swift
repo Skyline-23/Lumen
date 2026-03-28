@@ -3,20 +3,20 @@ import ApolloMacBridge
 import Foundation
 
 public extension Notification.Name {
-    static let ApolloMacCaptureAdapterStatusDidChange = Notification.Name(
-        "ApolloMacCaptureAdapterStatusDidChangeNotification"
+    static let lumenMacCaptureAdapterStatusDidChange = Notification.Name(
+        "LumenMacCaptureAdapterStatusDidChangeNotification"
     )
-    static let ApolloMacCaptureAdapterCompanionDidStop = Notification.Name(
-        "ApolloMacCaptureAdapterCompanionDidStopNotification"
+    static let lumenMacCaptureAdapterCompanionDidStop = Notification.Name(
+        "LumenMacCaptureAdapterCompanionDidStopNotification"
     )
 }
 
 @objcMembers
-public final class ApolloMacCaptureAdapterStatus: NSObject {
+public final class LumenMacCaptureAdapterStatus: NSObject {
     public let coreVersion: String
     public let runtimeDescription: String
     public let integrationStatus: String
-    public let hostedApolloRuntimeRunning: Bool
+    public let hostedRuntimeRunning: Bool
     public let captureSessionRunning: Bool
     public let audioCaptureSessionRunning: Bool
     public let automaticCaptureOrchestrationRunning: Bool
@@ -32,7 +32,7 @@ public final class ApolloMacCaptureAdapterStatus: NSObject {
         coreVersion: String,
         runtimeDescription: String,
         integrationStatus: String,
-        hostedApolloRuntimeRunning: Bool,
+        hostedRuntimeRunning: Bool,
         captureSessionRunning: Bool,
         audioCaptureSessionRunning: Bool,
         automaticCaptureOrchestrationRunning: Bool,
@@ -47,7 +47,7 @@ public final class ApolloMacCaptureAdapterStatus: NSObject {
         self.coreVersion = coreVersion
         self.runtimeDescription = runtimeDescription
         self.integrationStatus = integrationStatus
-        self.hostedApolloRuntimeRunning = hostedApolloRuntimeRunning
+        self.hostedRuntimeRunning = hostedRuntimeRunning
         self.captureSessionRunning = captureSessionRunning
         self.audioCaptureSessionRunning = audioCaptureSessionRunning
         self.automaticCaptureOrchestrationRunning = automaticCaptureOrchestrationRunning
@@ -61,24 +61,24 @@ public final class ApolloMacCaptureAdapterStatus: NSObject {
     }
 }
 
-public struct ApolloMacCaptureAdapterMenuStatus: Equatable, Sendable {
-    public let hostedApolloRuntimeRunning: Bool
+public struct LumenMacCaptureAdapterMenuStatus: Equatable, Sendable {
+    public let hostedRuntimeRunning: Bool
     public let captureSessionRunning: Bool
     public let audioCaptureSessionRunning: Bool
 
     public init(
-        hostedApolloRuntimeRunning: Bool,
+        hostedRuntimeRunning: Bool,
         captureSessionRunning: Bool,
         audioCaptureSessionRunning: Bool
     ) {
-        self.hostedApolloRuntimeRunning = hostedApolloRuntimeRunning
+        self.hostedRuntimeRunning = hostedRuntimeRunning
         self.captureSessionRunning = captureSessionRunning
         self.audioCaptureSessionRunning = audioCaptureSessionRunning
     }
 }
 
 @objcMembers
-public final class ApolloMacCaptureAdapter: NSObject {
+public final class LumenMacCaptureAdapter: NSObject {
     private let bridgeController: OpaquePointer
     private let hostedRuntimeController: OpaquePointer
     private let hostedRuntimeDidStopNotification = Notification.Name("ApolloHostedRuntimeDidStopNotification")
@@ -120,7 +120,7 @@ public final class ApolloMacCaptureAdapter: NSObject {
             self.postStatusDidChangeNotification()
             if !self.stoppingCompanion {
                 NotificationCenter.default.post(
-                    name: .ApolloMacCaptureAdapterCompanionDidStop,
+                    name: .lumenMacCaptureAdapterCompanionDidStop,
                     object: self
                 )
             }
@@ -135,7 +135,7 @@ public final class ApolloMacCaptureAdapter: NSObject {
             NotificationCenter.default.removeObserver(hostedRuntimeStopObserver)
         }
 
-        stopApolloCompanion()
+        stopRuntimeCompanion()
         ApolloMacBridgeControllerDestroy(bridgeController)
         ApolloHostedRuntimeControllerDestroy(hostedRuntimeController)
     }
@@ -152,7 +152,7 @@ public final class ApolloMacCaptureAdapter: NSObject {
         ApolloMacBridgeControllerMakeSystemOutputAudioConfiguration(displayID)
     }
 
-    public func startApolloCompanion() throws {
+    public func startRuntimeCompanion() throws {
         stoppingCompanion = false
         let started = withErrorBuffer { errorBuffer, errorCapacity in
             ApolloHostedRuntimeControllerStart(
@@ -167,18 +167,18 @@ public final class ApolloMacCaptureAdapter: NSObject {
             throw adapterError(started.errorMessage)
         }
 
-        startAutomaticApolloCoreCaptureOrchestration()
+        startAutomaticCoreCaptureOrchestration()
         postStatusDidChangeNotification()
     }
 
-    public func restartApolloCompanion() throws {
-        stopApolloCompanion()
-        try startApolloCompanion()
+    public func restartRuntimeCompanion() throws {
+        stopRuntimeCompanion()
+        try startRuntimeCompanion()
     }
 
-    public func stopApolloCompanion() {
+    public func stopRuntimeCompanion() {
         stoppingCompanion = true
-        stopAutomaticApolloCoreCaptureOrchestration()
+        stopAutomaticCoreCaptureOrchestration()
         stopForwardingPump()
         ApolloHostedRuntimeControllerStop(hostedRuntimeController)
         postStatusDidChangeNotification()
@@ -297,12 +297,12 @@ public final class ApolloMacCaptureAdapter: NSObject {
         postStatusDidChangeNotification()
     }
 
-    public func startAutomaticApolloCoreCaptureOrchestration() {
+    public func startAutomaticCoreCaptureOrchestration() {
         ApolloMacBridgeControllerStartApolloCoreCaptureAutomation(bridgeController)
         postStatusDidChangeNotification()
     }
 
-    public func stopAutomaticApolloCoreCaptureOrchestration() {
+    public func stopAutomaticCoreCaptureOrchestration() {
         ApolloMacBridgeControllerStopApolloCoreCaptureAutomation(bridgeController)
         postStatusDidChangeNotification()
     }
@@ -317,16 +317,16 @@ public final class ApolloMacCaptureAdapter: NSObject {
         postStatusDidChangeNotification()
     }
 
-    public func copyStatusSnapshot() -> ApolloMacCaptureAdapterStatus {
+    public func copyStatusSnapshot() -> LumenMacCaptureAdapterStatus {
         let bridgeStatus = ApolloMacBridgeControllerCopyStatusSnapshot(bridgeController)
         let coreForwardingSnapshot = ApolloMacBridgeControllerCopyCoreForwardingSnapshot(bridgeController)
         let audioForwardingSnapshot = ApolloMacBridgeControllerCopyAudioForwardingSnapshot(bridgeController)
 
-        return ApolloMacCaptureAdapterStatus(
+        return LumenMacCaptureAdapterStatus(
             coreVersion: stringFromCStringTuple(bridgeStatus.core_version),
             runtimeDescription: stringFromCStringTuple(bridgeStatus.runtime_description),
             integrationStatus: stringFromCStringTuple(bridgeStatus.integration_status),
-            hostedApolloRuntimeRunning: ApolloHostedRuntimeControllerIsRunning(hostedRuntimeController),
+            hostedRuntimeRunning: ApolloHostedRuntimeControllerIsRunning(hostedRuntimeController),
             captureSessionRunning: bridgeStatus.capture_session_running,
             audioCaptureSessionRunning: bridgeStatus.audio_capture_session_running,
             automaticCaptureOrchestrationRunning: bridgeStatus.automatic_capture_orchestration_running,
@@ -340,30 +340,30 @@ public final class ApolloMacCaptureAdapter: NSObject {
         )
     }
 
-    public func copyMenuStatusSnapshot() -> ApolloMacCaptureAdapterMenuStatus {
+    public func copyMenuStatusSnapshot() -> LumenMacCaptureAdapterMenuStatus {
         let bridgeStatus = ApolloMacBridgeControllerCopyStatusSnapshot(bridgeController)
 
-        return ApolloMacCaptureAdapterMenuStatus(
-            hostedApolloRuntimeRunning: ApolloHostedRuntimeControllerIsRunning(hostedRuntimeController),
+        return LumenMacCaptureAdapterMenuStatus(
+            hostedRuntimeRunning: ApolloHostedRuntimeControllerIsRunning(hostedRuntimeController),
             captureSessionRunning: bridgeStatus.capture_session_running,
             audioCaptureSessionRunning: bridgeStatus.audio_capture_session_running
         )
     }
 
     private func postStatusDidChangeNotification() {
-        NotificationCenter.default.post(name: .ApolloMacCaptureAdapterStatusDidChange, object: self)
+        NotificationCenter.default.post(name: .lumenMacCaptureAdapterStatusDidChange, object: self)
     }
 }
 
-private extension ApolloMacCaptureAdapter {
+private extension LumenMacCaptureAdapter {
     func adapterError(_ description: String?) -> NSError {
         NSError(
-            domain: "ApolloMacCaptureAdapter",
+            domain: "LumenMacCaptureAdapter",
             code: 1,
             userInfo: [
                 NSLocalizedDescriptionKey: description?.isEmpty == false
                     ? description!
-                    : "ApolloMacCaptureAdapter failed."
+                    : "LumenMacCaptureAdapter failed."
             ]
         )
     }
