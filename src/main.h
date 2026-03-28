@@ -1,6 +1,6 @@
 /**
  * @file src/main.h
- * @brief Declarations for the main entry point for Sunshine.
+ * @brief Declarations for the main entry point for Lumen.
  */
 #pragma once
 
@@ -15,9 +15,9 @@
 int main(int argc, char *argv[]);
 
 /**
- * @brief Options for running Apollo inside another host process.
+ * @brief Options for running Lumen inside another host process.
  */
-struct ApolloRuntimeOptions {
+struct LumenRuntimeOptions {
   /**
    * @brief Whether the legacy native tray should be enabled.
    * Hosted macOS app flows should generally disable this and keep their own menu bar UI.
@@ -32,27 +32,27 @@ struct ApolloRuntimeOptions {
 };
 
 /**
- * @brief Start the Apollo runtime with explicit hosting options.
+ * @brief Start the Lumen runtime with explicit hosting options.
  * @param argc The number of arguments.
  * @param argv The arguments.
  * @param options Runtime hosting options.
  * @return Desired exit code after shutdown.
  */
-int apollo_run(int argc, char *argv[], const ApolloRuntimeOptions &options);
+int lumen_run(int argc, char *argv[], const LumenRuntimeOptions &options);
 
 /**
- * @brief Request a graceful shutdown for a hosted Apollo runtime.
+ * @brief Request a graceful shutdown for a hosted Lumen runtime.
  * Does nothing if no hosted runtime is currently active.
  */
-void apollo_request_shutdown(void);
+void lumen_request_shutdown(void);
 
 /**
  * @brief Returns whether a hosted Apollo runtime is currently active.
  */
-bool apollo_is_running(void);
+bool lumen_is_running(void);
 
 /**
  * @brief Force-stop the currently running streamed application/session, if any.
  * Safe to call when no session is active.
  */
-void apollo_force_stop_stream(void);
+void lumen_force_stop_stream(void);

@@ -156,7 +156,7 @@ void mainThreadLoop(const std::shared_ptr<safe::event_t<bool>> &shutdown_event, 
   }
 }
 
-int apollo_run(int argc, char *argv[], const ApolloRuntimeOptions &options) {
+int lumen_run(int argc, char *argv[], const LumenRuntimeOptions &options) {
   lifetime::argv = argv;
 
   task_pool_util::TaskPool::task_id_t force_shutdown = nullptr;
@@ -536,7 +536,7 @@ int apollo_run(int argc, char *argv[], const ApolloRuntimeOptions &options) {
   return lifetime::desired_exit_code;
 }
 
-void apollo_request_shutdown(void) {
+void lumen_request_shutdown(void) {
   std::function<void()> request_shutdown;
   {
     std::lock_guard<std::mutex> lock(hosted_runtime_shutdown_mutex);
@@ -548,17 +548,17 @@ void apollo_request_shutdown(void) {
   }
 }
 
-bool apollo_is_running(void) {
+bool lumen_is_running(void) {
   return hosted_runtime_running.load(std::memory_order_acquire);
 }
 
-void apollo_force_stop_stream(void) {
+void lumen_force_stop_stream(void) {
   proc::proc.terminate();
 }
 
 #ifndef APOLLO_EMBEDDED_HOST
 int main(int argc, char *argv[]) {
-  return apollo_run(argc, argv, ApolloRuntimeOptions {
+  return lumen_run(argc, argv, LumenRuntimeOptions {
     .enable_legacy_system_tray = true,
     .install_signal_handlers = true,
   });

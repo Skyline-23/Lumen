@@ -11,15 +11,15 @@
 #include <utility>
 #include <vector>
 
-struct ApolloRuntimeOptions {
+struct LumenRuntimeOptions {
   bool enable_legacy_system_tray;
   bool install_signal_handlers;
 };
 
-int apollo_run(int argc, char *argv[], const ApolloRuntimeOptions &options);
-void apollo_request_shutdown(void);
-bool apollo_is_running(void);
-void apollo_force_stop_stream(void);
+int lumen_run(int argc, char *argv[], const LumenRuntimeOptions &options);
+void lumen_request_shutdown(void);
+bool lumen_is_running(void);
+void lumen_force_stop_stream(void);
 
 namespace {
   NSString *const hosted_runtime_did_stop_notification_name = @LumenHostedRuntimeDidStopNotification;
@@ -75,10 +75,10 @@ class LumenHostedRuntimeState {
 
     running_.store(true, std::memory_order_release);
     thread_ = std::thread([this]() {
-      const int exit_code = apollo_run(
+      const int exit_code = lumen_run(
         static_cast<int>(argv_storage_.size()),
         argv_.data(),
-        ApolloRuntimeOptions {
+        LumenRuntimeOptions {
           .enable_legacy_system_tray = false,
           .install_signal_handlers = false,
         }
@@ -106,7 +106,7 @@ class LumenHostedRuntimeState {
     }
 
     lock.unlock();
-    apollo_request_shutdown();
+    lumen_request_shutdown();
     lock.lock();
     condition_.wait_for(lock, std::chrono::seconds(10), [this]() {
       return !running_.load(std::memory_order_acquire);
@@ -119,7 +119,7 @@ class LumenHostedRuntimeState {
   }
 
   bool is_running() const {
-    return running_.load(std::memory_order_acquire) || apollo_is_running();
+    return running_.load(std::memory_order_acquire) || lumen_is_running();
   }
 
   int32_t last_exit_code() const {
@@ -198,7 +198,7 @@ void LumenHostedRuntimeControllerForceStopStream(LumenHostedRuntimeController *c
     return;
   }
 
-  apollo_force_stop_stream();
+  lumen_force_stop_stream();
 }
 
 bool LumenHostedRuntimeIsAccessibilityPermissionGranted(void) {
