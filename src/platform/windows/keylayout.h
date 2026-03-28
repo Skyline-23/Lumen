@@ -10,7 +10,7 @@
 
 namespace platf {
   // Virtual Key to Scan Code mapping for the US English layout (00000409).
-  // GameStream uses this as the canonical key layout for scancode conversion.
+  // Shadow uses this as the canonical key layout for scancode conversion.
   constexpr std::array<std::uint8_t, std::numeric_limits<std::uint8_t>::max() + 1> VK_TO_SCANCODE_MAP {
     0, /* 0x00 */
     0, /* 0x01 */

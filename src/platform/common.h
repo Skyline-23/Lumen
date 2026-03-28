@@ -832,7 +832,7 @@ namespace platf {
   platform_caps::caps_t get_capabilities();
 
 #define SERVICE_NAME "Apollo"
-#define SERVICE_TYPE "_nvstream._tcp"
+#define SERVICE_TYPE "_shadow._tcp"
 
   namespace publish {
     [[nodiscard]] std::unique_ptr<deinit_t> start();
