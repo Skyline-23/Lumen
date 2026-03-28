@@ -164,7 +164,6 @@ namespace shadow_http {
    * @param[in]  do_cmds    The do commands
    * @param[in]  undo_cmds  The undo commands
    * @param[in]  newPerm    New permission
-   * @param[in]  enable_legacy_ordering  Enable legacy ordering
    * @param[in]  allow_client_commands  Allow client commands
    * @param[in]  always_use_virtual_display  Always use virtual display
    * 
@@ -177,7 +176,6 @@ namespace shadow_http {
     const cmd_list_t& do_cmds,
     const cmd_list_t& undo_cmds,
     const crypto::PERM newPerm,
-    const bool enable_legacy_ordering,
     const bool allow_client_commands,
     const bool always_use_virtual_display
   );

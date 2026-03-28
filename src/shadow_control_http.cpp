@@ -1085,7 +1085,6 @@ namespace shadow_control_http {
       std::string uuid = input_tree.value("uuid", "");
       std::string name = input_tree.value("name", "");
       std::string display_mode = input_tree.value("display_mode", "");
-      bool enable_legacy_ordering = input_tree.value("enable_legacy_ordering", true);
       bool allow_client_commands = input_tree.value("allow_client_commands", true);
       bool always_use_virtual_display = input_tree.value("always_use_virtual_display", false);
       auto do_cmds = shadow_http::extract_command_entries(input_tree, "do");
@@ -1098,7 +1097,6 @@ namespace shadow_control_http {
         do_cmds,
         undo_cmds,
         perm,
-        enable_legacy_ordering,
         allow_client_commands,
         always_use_virtual_display
       );

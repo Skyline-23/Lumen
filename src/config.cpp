@@ -599,7 +599,6 @@ namespace config {
     "ipv4",  // Address family
     platf::appdata().string() + "/apollo.log",  // log file
     false,  // notify_pre_releases
-    false,  // legacy_ordering
     true,  // system_tray
     {},  // prep commands
     {},  // state commands
@@ -1304,7 +1303,6 @@ namespace config {
     bool_f(vars, "enable_discovery", runtime.enable_discovery);
     bool_f(vars, "envvar_compatibility_mode", runtime.envvar_compatibility_mode);
     bool_f(vars, "notify_pre_releases", runtime.notify_pre_releases);
-    bool_f(vars, "legacy_ordering", runtime.legacy_ordering);
     bool_f(vars, "forward_rumble", input.forward_rumble);
 
     int port = runtime.port;
