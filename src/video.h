@@ -131,6 +131,16 @@ namespace video {
 
     auto columns = std::clamp((width + preferred_tile_width - 1) / preferred_tile_width, 1, max_tiles_per_axis);
     auto rows = std::clamp((height + preferred_tile_height - 1) / preferred_tile_height, 1, max_tiles_per_axis);
+    const auto aspect_ratio = static_cast<double>(width) / static_cast<double>(height);
+    if (aspect_ratio >= 2.0) {
+      rows = 1;
+    } else if (aspect_ratio >= 1.6) {
+      rows = std::min(rows, 2);
+    } else if (aspect_ratio <= 0.5) {
+      columns = 1;
+    } else if (aspect_ratio <= 0.625) {
+      columns = std::min(columns, 2);
+    }
     while (columns * rows > max_total_tiles) {
       if (columns >= rows && columns > 1) {
         --columns;
