@@ -27,14 +27,6 @@ const config = ref(props.config)
       <div class="form-text">{{ $t('config.min_threads_desc') }}</div>
     </div>
 
-    <!-- Limit Framerate -->
-    <Checkbox class="mb-3"
-              id="limit_framerate"
-              locale-prefix="config"
-              v-model="config.limit_framerate"
-              default="true"
-    ></Checkbox>
-
     <!-- HEVC Support -->
     <div class="mb-3" v-if="platform !== 'macos'">
       <label for="hevc_mode" class="form-label">{{ $t('config.hevc_mode') }}</label>

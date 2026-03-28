@@ -2217,40 +2217,6 @@ editing the `conf` file in a text editor. Use the examples as reference.
     </tr>
 </table>
 
-### nvenc_vbv_increase
-
-<table>
-    <tr>
-        <td>Description</td>
-        <td colspan="2">
-            Single-frame VBV/HRD percentage increase.
-            By default Sunshine uses single-frame VBV/HRD, which means any encoded video frame size is not expected to
-            exceed requested bitrate divided by requested frame rate. Relaxing this restriction can be beneficial and
-            act as low-latency variable bitrate, but may also lead to packet loss if the network doesn't have buffer
-            headroom to handle bitrate spikes. Maximum accepted value is 400, which corresponds to 5x increased
-            encoded video frame upper size limit.
-            @note{This option only applies when using NVENC [encoder](#encoder).}
-            @warning{Can lead to network packet loss.}
-        </td>
-    </tr>
-    <tr>
-        <td>Default</td>
-        <td colspan="2">@code{}
-            0
-            @endcode</td>
-    </tr>
-    <tr>
-        <td>Range</td>
-        <td colspan="2">0-400</td>
-    </tr>
-    <tr>
-        <td>Example</td>
-        <td colspan="2">@code{}
-            nvenc_vbv_increase = 0
-            @endcode</td>
-    </tr>
-</table>
-
 ### nvenc_realtime_hags
 
 <table>

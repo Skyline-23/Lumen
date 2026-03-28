@@ -1366,15 +1366,7 @@ namespace rtsp_stream {
 
       proc::proc.sink_request = config.monitor.sinkRequest;
 
-      if (config::video.limit_framerate) {
-        config.monitor.encodingFramerate = session.fps;
-      } else {
-        if (config.monitor.framerate > 1000) {
-          config.monitor.encodingFramerate = config.monitor.framerate;
-        } else {
-          config.monitor.encodingFramerate = config.monitor.framerate * 1000;
-        }
-      }
+      config.monitor.encodingFramerate = session.fps;
 
       // When fractional refresh rate requested from client side, it should be well above 1000fps
       // 4000fps is when Warp2 Mode is enabled on the client, requested framerate can be actual * 4
@@ -1396,7 +1388,7 @@ namespace rtsp_stream {
 
       // Hack: Restore bitrate for warp mode
       size_t warp_factor = std::round((float)config.monitor.framerate * 1000 / session.fps);
-      if (config::video.limit_framerate && warp_factor >= 2) {
+      if (warp_factor >= 2) {
         configuredBitrateKbps *= warp_factor;
         BOOST_LOG(info) << "Warp factor [" << warp_factor << "] engaged";
       }

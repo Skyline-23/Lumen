@@ -247,9 +247,6 @@ namespace nvenc {
 
     if (get_encoder_cap(NV_ENC_CAPS_SUPPORT_CUSTOM_VBV_BUF_SIZE)) {
       enc_config.rcParams.vbvBufferSize = client_config.bitrate * 1000 / client_config.framerate;
-      if (config.vbv_percentage_increase > 0) {
-        enc_config.rcParams.vbvBufferSize += enc_config.rcParams.vbvBufferSize * config.vbv_percentage_increase / 100;
-      }
     }
 
     auto set_h264_hevc_common_format_config = [&](auto &format_config) {
@@ -426,9 +423,6 @@ namespace nvenc {
       }
       if (enc_config.rcParams.multiPass != NV_ENC_MULTI_PASS_DISABLED) {
         extra += " two-pass";
-      }
-      if (config.vbv_percentage_increase > 0 && get_encoder_cap(NV_ENC_CAPS_SUPPORT_CUSTOM_VBV_BUF_SIZE)) {
-        extra += " vbv+" + std::to_string(config.vbv_percentage_increase);
       }
       if (encoder_params.rfi) {
         extra += " rfi";

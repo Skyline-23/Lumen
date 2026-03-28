@@ -438,7 +438,6 @@ namespace config {
 
   video_t video {
     false, // headless_mode
-    true, // limit_framerate
     false, // double_refreshrate
 
     28,  // qp
@@ -1102,7 +1101,6 @@ namespace config {
     }
 
     bool_f(vars, "headless_mode", video.headless_mode);
-    bool_f(vars, "limit_framerate", video.limit_framerate);
     bool_f(vars, "double_refreshrate", video.double_refreshrate);
     int_f(vars, "qp", video.qp);
     int_between_f(vars, "hevc_mode", video.hevc_mode, {0, 3});
@@ -1115,7 +1113,6 @@ namespace config {
     string_f(vars, "sw_tune", video.sw.sw_tune);
 
     int_between_f(vars, "nvenc_preset", video.nv.quality_preset, {1, 7});
-    int_between_f(vars, "nvenc_vbv_increase", video.nv.vbv_percentage_increase, {0, 400});
     bool_f(vars, "nvenc_spatial_aq", video.nv.adaptive_quantization);
     generic_f(vars, "nvenc_twopass", video.nv.two_pass, nv::twopass_from_view);
     bool_f(vars, "nvenc_h264_cavlc", video.nv.h264_cavlc);
@@ -1131,7 +1128,6 @@ namespace config {
                                                                                                  NV_ENC_MULTI_PASS_DISABLED;
     video.nv_legacy.h264_coder = video.nv.h264_cavlc ? NV_ENC_H264_ENTROPY_CODING_MODE_CAVLC : NV_ENC_H264_ENTROPY_CODING_MODE_CABAC;
     video.nv_legacy.aq = video.nv.adaptive_quantization;
-    video.nv_legacy.vbv_percentage_increase = video.nv.vbv_percentage_increase;
 #endif
 
     int_f(vars, "qsv_preset", video.qsv.qsv_preset, qsv::preset_from_view);

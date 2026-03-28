@@ -3384,9 +3384,6 @@ namespace video {
           ctx->rc_buffer_size = bitrate / config.framerate;
 
 #ifndef __APPLE__
-          if (encoder.name == "nvenc" && config::video.nv_legacy.vbv_percentage_increase > 0) {
-            ctx->rc_buffer_size += ctx->rc_buffer_size * config::video.nv_legacy.vbv_percentage_increase / 100;
-          }
 #endif
         }
       }
