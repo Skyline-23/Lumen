@@ -296,6 +296,17 @@ namespace video {
         std::max(config.height - content_height, 0)
       );
 
+      if (content_x == 0 &&
+          content_y == 0 &&
+          content_width == config.width &&
+          content_height == config.height) {
+        return video::make_full_frame_overlay_hdr_frame_state(
+          config.width,
+          config.height,
+          metadata
+        );
+      }
+
       return video::make_overlay_hdr_frame_state(
         video::make_coarse_overlay_regions(
           content_x,
