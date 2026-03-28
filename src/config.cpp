@@ -515,7 +515,6 @@ namespace config {
 
     "1920x1080x60",  // fallback_mode
     false, // isolated Display
-    false, // ignore_encoder_probe_failure
   };
 
   audio_t audio {
@@ -582,7 +581,6 @@ namespace config {
     false, // hide_tray_controls
     true, // enable_pairing
     true, // enable_discovery
-    false, // envvar_compatibility_mode
     "en",  // locale
     2,  // min_log_level
     0,  // flags
@@ -1206,8 +1204,6 @@ namespace config {
 
     string_f(vars, "fallback_mode", video.fallback_mode);
     bool_f(vars, "isolated_virtual_display_option", video.isolated_virtual_display_option);
-    bool_f(vars, "ignore_encoder_probe_failure", video.ignore_encoder_probe_failure);
-
     path_f(vars, "pkey", shadow_http.pkey);
     path_f(vars, "cert", shadow_http.cert);
     string_f(vars, "host_name", shadow_http.host_name);
@@ -1295,7 +1291,6 @@ namespace config {
     bool_f(vars, "hide_tray_controls", runtime.hide_tray_controls);
     bool_f(vars, "enable_pairing", runtime.enable_pairing);
     bool_f(vars, "enable_discovery", runtime.enable_discovery);
-    bool_f(vars, "envvar_compatibility_mode", runtime.envvar_compatibility_mode);
     bool_f(vars, "notify_pre_releases", runtime.notify_pre_releases);
     bool_f(vars, "forward_rumble", input.forward_rumble);
 

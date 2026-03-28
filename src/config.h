@@ -148,7 +148,6 @@ namespace config {
 
     std::string fallback_mode;
     bool isolated_virtual_display_option;
-    bool ignore_encoder_probe_failure;
   };
 
   struct audio_t {
@@ -260,7 +259,6 @@ namespace config {
     bool hide_tray_controls;
     bool enable_pairing;
     bool enable_discovery;
-    bool envvar_compatibility_mode;
     std::string locale;
     int min_log_level;
     std::bitset<flag::FLAG_SIZE> flags;

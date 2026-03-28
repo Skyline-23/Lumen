@@ -35,30 +35,6 @@ const config = ref(props.config)
               default="true"
     ></Checkbox>
 
-    <!-- ENVVAR compatibility mode -->
-    <Checkbox class="mb-3"
-              id="envvar_compatibility_mode"
-              locale-prefix="config"
-              v-model="config.envvar_compatibility_mode"
-              default="false"
-    ></Checkbox>
-
-    <!-- Legacy ordering -->
-    <Checkbox class="mb-3"
-              id="legacy_ordering"
-              locale-prefix="config"
-              v-model="config.legacy_ordering"
-              default="false"
-    ></Checkbox>
-
-    <!-- Ignore Encoder Probe Failure -->
-    <Checkbox class="mb-3"
-              id="ignore_encoder_probe_failure"
-              locale-prefix="config"
-              v-model="config.ignore_encoder_probe_failure"
-              default="false"
-    ></Checkbox>
-
     <!-- HEVC Support -->
     <div class="mb-3" v-if="platform !== 'macos'">
       <label for="hevc_mode" class="form-label">{{ $t('config.hevc_mode') }}</label>

@@ -253,8 +253,6 @@
     "lan_encryption_mode_1": "Habilitar para clientes compatibles",
     "lan_encryption_mode_2": "Requerir para todos los clientes",
     "lan_encryption_mode_desc": "Esto determina cuándo se utilizará el cifrado al transmitir a través de su red local. El cifrado puede reducir el rendimiento de la transmisión, especialmente en hosts y clientes menos poderosos.",
-    "legacy_ordering": "Reordenar lista de apps legado",
-    "legacy_ordering_desc": "Habilita un apaño en cliente legados para permitir reordenar. Puede causar errores con clientes y scripts que no soporten UTF8 correctamente. Los clientes Artemis lo soportan por defecto.",
     "limit_framerate": "Limitar velocidad de fotogramas capturados",
     "limit_framerate_desc": "Limita los fotogramas capturados a la velocidad del cliente. Puede no ejecutarse a velocidad completa si se habilita VSync y la valocidad de la pantalla no coincide con la pedida por el cliente. Puede causar peor rendimiento en algunos clientes si se deshabilita.",
     "locale": "Localización",
