@@ -194,7 +194,7 @@ final class ApolloTuistBootstrapTests: XCTestCase {
                 dynamicRangeTransport: ApolloCoreDynamicRangeTransportSDRBaseHDROverlay
             )
         )
-        let nativeOverlay = ApolloMacDisplayKitCaptureConfiguration(
+        let overlayRequestedSink = ApolloMacDisplayKitCaptureConfiguration(
             displayID: 11,
             codec: .hevc,
             queueProfile: .auto,
@@ -216,10 +216,10 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         XCTAssertTrue(fallbackOverlay.prefersRealtimeHDRMetadata)
         XCTAssertEqual(fallbackOverlay.negotiatedQueueProfile, .q2)
 
-        XCTAssertEqual(nativeOverlay.negotiatedDynamicRangeTransport, ApolloCoreDynamicRangeTransportSDRBaseHDROverlay)
-        XCTAssertFalse(nativeOverlay.usesHDRTransport)
-        XCTAssertTrue(nativeOverlay.prefersRealtimeHDRMetadata)
-        XCTAssertEqual(nativeOverlay.negotiatedQueueProfile, .q1)
+        XCTAssertEqual(overlayRequestedSink.negotiatedDynamicRangeTransport, ApolloCoreDynamicRangeTransportFrameGatedHDR)
+        XCTAssertTrue(overlayRequestedSink.usesHDRTransport)
+        XCTAssertTrue(overlayRequestedSink.prefersRealtimeHDRMetadata)
+        XCTAssertEqual(overlayRequestedSink.negotiatedQueueProfile, .q2)
     }
 
     func testRecommendedCoreForwardingFrameCapacityStaysLowLatency() {

@@ -453,6 +453,8 @@ public struct ApolloBridgeEffectiveDisplayState: Equatable, Sendable {
 }
 
 public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
+    private static let supportsPartialHDROverlayProducer = false
+
     public let displayID: UInt32
     public let codec: ApolloCaptureCodec
     public let preprocessStrategy: ApolloCapturePreprocessStrategy
@@ -512,7 +514,8 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
             guard codec != .h264 else {
                 return ApolloCoreDynamicRangeTransportSDR
             }
-            if sinkRequest.capability.supportsHDRTileOverlay,
+            if Self.supportsPartialHDROverlayProducer,
+               sinkRequest.capability.supportsHDRTileOverlay,
                sinkRequest.capability.supportsPerFrameHDRMetadata {
                 return ApolloCoreDynamicRangeTransportSDRBaseHDROverlay
             }

@@ -52,6 +52,10 @@ namespace video {
     dynamic_range_transport_e dynamic_range_transport = dynamic_range_transport_e::unknown;
   };
 
+  inline bool partial_hdr_overlay_producer_available() {
+    return false;
+  }
+
   inline dynamic_range_transport_e effective_dynamic_range_transport(const dynamic_range_transport_e requested_transport) {
     switch (requested_transport) {
       case dynamic_range_transport_e::sdr:
@@ -78,7 +82,8 @@ namespace video {
                  dynamic_range_transport_e::frame_gated_hdr :
                  dynamic_range_transport_e::sdr;
       case dynamic_range_transport_e::sdr_base_hdr_overlay:
-        if (request.capability.supports_hdr_tile_overlay &&
+        if (partial_hdr_overlay_producer_available() &&
+            request.capability.supports_hdr_tile_overlay &&
             request.capability.supports_per_frame_hdr_metadata) {
           return dynamic_range_transport_e::sdr_base_hdr_overlay;
         }
