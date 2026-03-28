@@ -1,4 +1,4 @@
-import ApolloMacCaptureAdapter
+@preconcurrency import ApolloMacCaptureAdapter
 import AppKit
 import Foundation
 import UserNotifications

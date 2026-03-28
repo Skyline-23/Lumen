@@ -4964,7 +4964,7 @@ namespace video {
     BOOST_LOG(info) << "Found H.264 encoder: "sv << bridge_encoder->h264.name << " ["sv << bridge_encoder->name << ']';
     BOOST_LOG(info) << "Found HEVC encoder: "sv << bridge_encoder->hevc.name << " ["sv << bridge_encoder->name << ']';
     return 0;
-#endif
+#else
 
     // Restart encoder selection
     auto previous_encoder = chosen_encoder;
@@ -5141,6 +5141,7 @@ namespace video {
     }
 
     return 0;
+#endif
   }
 
   // Linux only declaration
