@@ -174,21 +174,21 @@ namespace platf::publish {
     mdns_registration_t():
         existing_instance(nullptr) {
       if (service(true, existing_instance)) {
-        BOOST_LOG(error) << "Unable to register Apollo mDNS service"sv;
+        BOOST_LOG(error) << "Unable to register Lumen mDNS service"sv;
         return;
       }
 
-      BOOST_LOG(info) << "Registered Apollo mDNS service"sv;
+      BOOST_LOG(info) << "Registered Lumen mDNS service"sv;
     }
 
     ~mdns_registration_t() override {
       if (existing_instance) {
         if (service(false, existing_instance)) {
-          BOOST_LOG(error) << "Unable to unregister Apollo mDNS service"sv;
+          BOOST_LOG(error) << "Unable to unregister Lumen mDNS service"sv;
           return;
         }
 
-        BOOST_LOG(info) << "Unregistered Apollo mDNS service"sv;
+        BOOST_LOG(info) << "Unregistered Lumen mDNS service"sv;
       }
     }
 
@@ -218,7 +218,7 @@ namespace platf::publish {
     HMODULE handle = LoadLibrary("dnsapi.dll");
 
     if (!handle || load_funcs(handle)) {
-      BOOST_LOG(error) << "Couldn't load dnsapi.dll, you'll need to add the Apollo host manually from Shadow"sv;
+      BOOST_LOG(error) << "Couldn't load dnsapi.dll, you'll need to add the Lumen host manually from Shadow"sv;
       return nullptr;
     }
 

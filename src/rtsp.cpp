@@ -1221,7 +1221,7 @@ namespace rtsp_stream {
         }
         missing << missing_apollo_announce_fields[index];
       }
-      BOOST_LOG(error) << "RTSP ANNOUNCE missing required Apollo fields: "sv << missing.str()
+      BOOST_LOG(error) << "RTSP ANNOUNCE missing required Lumen fields: "sv << missing.str()
                        << " args="sv << args.size()
                        << " client="sv << client
                        << " payload-bytes="sv << payload.size()

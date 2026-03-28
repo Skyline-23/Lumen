@@ -632,7 +632,7 @@ namespace shadow_http {
         }
         missing << missing_apollo_launch_args[index];
       }
-      BOOST_LOG(error) << "Launch request missing required Apollo sink fields: "sv << missing.str();
+      BOOST_LOG(error) << "Launch request missing required Lumen sink fields: "sv << missing.str();
       return nullptr;
     }
 
@@ -707,7 +707,7 @@ namespace shadow_http {
       launch_session->fps = 60000; // 60fps * 1000 denominator
     }
 
-    launch_session->device_name = named_cert_p->name.empty() ? "ApolloDisplay"s : named_cert_p->name;
+    launch_session->device_name = named_cert_p->name.empty() ? "LumenDisplay"s : named_cert_p->name;
     launch_session->unique_id = named_cert_p->uuid;
     launch_session->perm = named_cert_p->perm;
     launch_session->enable_sops = util::from_view(get_arg(args, "sops", "0"));
@@ -1013,7 +1013,7 @@ namespace shadow_http {
     auto launch_session = make_launch_session(host_audio, is_input_only, args, named_cert_p);
     if (!launch_session) {
       tree.put("root.<xmlattr>.status_code", 400);
-      tree.put("root.<xmlattr>.status_message", "Missing required Apollo v2 launch parameters");
+      tree.put("root.<xmlattr>.status_message", "Missing required Lumen v2 launch parameters");
       tree.put("root.gamesession", 0);
 
       return;
@@ -1186,7 +1186,7 @@ namespace shadow_http {
     if (!launch_session) {
       tree.put("root.resume", 0);
       tree.put("root.<xmlattr>.status_code", 400);
-      tree.put("root.<xmlattr>.status_message", "Missing required Apollo v2 resume parameters");
+      tree.put("root.<xmlattr>.status_message", "Missing required Lumen v2 resume parameters");
 
       return;
     }

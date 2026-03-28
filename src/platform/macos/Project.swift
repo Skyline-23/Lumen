@@ -350,10 +350,10 @@ let project = Project(
             ],
             resources: [
                 "../../../apollo.icns",
-                "../../../src_assets/common/assets/web/public/images/logo-apollo-16.png",
-                "../../../src_assets/common/assets/web/public/images/apollo-playing-16.png",
-                "../../../src_assets/common/assets/web/public/images/apollo-pausing-16.png",
-                "../../../src_assets/common/assets/web/public/images/apollo-locked-16.png"
+                "../../../src_assets/common/assets/web/public/images/logo-lumen-16.png",
+                "../../../src_assets/common/assets/web/public/images/lumen-playing-16.png",
+                "../../../src_assets/common/assets/web/public/images/lumen-pausing-16.png",
+                "../../../src_assets/common/assets/web/public/images/lumen-locked-16.png"
             ],
             scripts: [appAssetsScript],
             dependencies: [

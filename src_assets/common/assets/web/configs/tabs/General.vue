@@ -87,10 +87,10 @@ onMounted(() => {
       <div class="form-text">{{ $t('config.locale_desc') }}</div>
     </div>
 
-    <!-- Apollo Name -->
+    <!-- Lumen Name -->
     <div class="mb-3">
       <label for="sunshine_name" class="form-label">{{ $t('config.sunshine_name') }}</label>
-      <input type="text" class="form-control" id="sunshine_name" placeholder="Apollo"
+      <input type="text" class="form-control" id="sunshine_name" placeholder="Lumen"
              v-model="config.sunshine_name" />
       <div class="form-text">{{ $t('config.sunshine_name_desc') }}</div>
     </div>
@@ -162,7 +162,7 @@ onMounted(() => {
       <label class="form-label">{{ $t('config.server_cmd') }}</label>
       <div class="form-text">{{ $t('config.server_cmd_desc') }}</div>
       <div class="form-text">
-        <a href="https://github.com/ClassicOldSong/Apollo/wiki/Server-Commands" target="_blank">{{ $t('_common.learn_more') }}</a>
+        <a href="https://github.com/Skyline-23/Lumen/wiki/Server-Commands" target="_blank">{{ $t('_common.learn_more') }}</a>
       </div>
       <table class="table" v-if="serverCmd.length > 0">
         <thead>

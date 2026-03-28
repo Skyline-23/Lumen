@@ -111,14 +111,14 @@ final class ApolloCaptureController: ObservableObject {
 
     var menuBarImageName: String {
         if menuStatus.captureSessionRunning {
-            return "apollo-playing-16"
+            return "lumen-playing-16"
         }
 
         if menuStatus.hostedApolloRuntimeRunning {
-            return "apollo-pausing-16"
+            return "lumen-pausing-16"
         }
 
-        return "apollo-locked-16"
+        return "lumen-locked-16"
     }
 
     var menuBarImage: NSImage {
@@ -167,7 +167,7 @@ final class ApolloCaptureController: ObservableObject {
     }
 
     private func loadMenuBarImage(named name: String) -> NSImage? {
-        for resourceName in [name, "logo-apollo-16"] {
+        for resourceName in [name, "logo-lumen-16"] {
             guard let url = Bundle.main.url(forResource: resourceName, withExtension: "png"),
                   let image = NSImage(contentsOf: url) else {
                 continue
