@@ -2,14 +2,14 @@ import LumenCore
 import Foundation
 import OSLog
 
-struct ApolloBridgeMirroredSinkMode: Equatable, Sendable {
+struct LumenBridgeMirroredSinkMode: Equatable, Sendable {
     let hidpi: Bool
     let scaleExplicit: Bool
     let modeIsLogical: Bool
     let scalePercent: Int32
 }
 
-struct ApolloBridgeMirroredSinkCapability: Equatable, Sendable {
+struct LumenBridgeMirroredSinkCapability: Equatable, Sendable {
     let gamut: Int32
     let transfer: Int32
     let currentEDRHeadroom: Float
@@ -21,19 +21,19 @@ struct ApolloBridgeMirroredSinkCapability: Equatable, Sendable {
     let supportsPerFrameHDRMetadata: Bool
 }
 
-struct ApolloBridgeMirroredSinkRequest: Equatable, Sendable {
-    let mode: ApolloBridgeMirroredSinkMode
-    let capability: ApolloBridgeMirroredSinkCapability
+struct LumenBridgeMirroredSinkRequest: Equatable, Sendable {
+    let mode: LumenBridgeMirroredSinkMode
+    let capability: LumenBridgeMirroredSinkCapability
     let dynamicRangeTransport: ApolloCoreDynamicRangeTransport
 }
 
-struct ApolloBridgeMirroredEffectiveDisplayState: Equatable, Sendable {
+struct LumenBridgeMirroredEffectiveDisplayState: Equatable, Sendable {
     let gamut: Int32
     let transfer: Int32
-    let hdrStaticMetadata: ApolloHDRStaticMetadata?
+    let hdrStaticMetadata: LumenHDRStaticMetadata?
 }
 
-struct ApolloBridgeMirroredCaptureRequestSnapshot: Equatable, Sendable {
+struct LumenBridgeMirroredCaptureRequestSnapshot: Equatable, Sendable {
     static let changedNotification = Notification.Name(
         "com.lizardbyte.apollo.capture-request-changed"
     )
@@ -52,8 +52,8 @@ struct ApolloBridgeMirroredCaptureRequestSnapshot: Equatable, Sendable {
     let targetVideoBitrateKbps: Int32
     let requestedWidth: Int32
     let requestedHeight: Int32
-    let sinkRequest: ApolloBridgeMirroredSinkRequest
-    let effectiveDisplayState: ApolloBridgeMirroredEffectiveDisplayState
+    let sinkRequest: LumenBridgeMirroredSinkRequest
+    let effectiveDisplayState: LumenBridgeMirroredEffectiveDisplayState
     let audioSourceKind: ApolloCoreAudioCaptureSourceKind
     let audioExcludesCurrentProcess: Bool
     let audioSampleRate: Int32
@@ -161,11 +161,11 @@ struct ApolloBridgeMirroredCaptureRequestSnapshot: Equatable, Sendable {
         return ApolloCoreAudioCaptureSourceKind(rawValue: rawValue)
     }
 
-    private static func sinkMode(_ value: Any?) -> ApolloBridgeMirroredSinkMode? {
+    private static func sinkMode(_ value: Any?) -> LumenBridgeMirroredSinkMode? {
         guard let dictionary = value as? [String: Any] else {
             return nil
         }
-        return ApolloBridgeMirroredSinkMode(
+        return LumenBridgeMirroredSinkMode(
             hidpi: (dictionary["hidpi"] as? Bool) ?? false,
             scaleExplicit: (dictionary["scaleExplicit"] as? Bool) ?? false,
             modeIsLogical: (dictionary["modeIsLogical"] as? Bool) ?? false,
@@ -173,7 +173,7 @@ struct ApolloBridgeMirroredCaptureRequestSnapshot: Equatable, Sendable {
         )
     }
 
-    private static func sinkCapability(_ value: Any?) -> ApolloBridgeMirroredSinkCapability? {
+    private static func sinkCapability(_ value: Any?) -> LumenBridgeMirroredSinkCapability? {
         guard let dictionary = value as? [String: Any] else {
             return nil
         }
@@ -181,7 +181,7 @@ struct ApolloBridgeMirroredCaptureRequestSnapshot: Equatable, Sendable {
               let transfer = Self.number(dictionary["transfer"])?.int32Value else {
             return nil
         }
-        return ApolloBridgeMirroredSinkCapability(
+        return LumenBridgeMirroredSinkCapability(
             gamut: gamut,
             transfer: transfer,
             currentEDRHeadroom: Self.number(dictionary["currentEDRHeadroom"])?.floatValue ?? 0,
@@ -194,7 +194,7 @@ struct ApolloBridgeMirroredCaptureRequestSnapshot: Equatable, Sendable {
         )
     }
 
-    private static func sinkRequest(_ value: Any?) -> ApolloBridgeMirroredSinkRequest? {
+    private static func sinkRequest(_ value: Any?) -> LumenBridgeMirroredSinkRequest? {
         guard let dictionary = value as? [String: Any],
               let mode = sinkMode(dictionary["mode"]),
               let capability = sinkCapability(dictionary["capability"]) else {
@@ -203,31 +203,31 @@ struct ApolloBridgeMirroredCaptureRequestSnapshot: Equatable, Sendable {
         let dynamicRangeTransport = ApolloCoreDynamicRangeTransport(
             rawValue: UInt32(Self.number(dictionary["dynamicRangeTransport"])?.int32Value ?? 0)
         )
-        return ApolloBridgeMirroredSinkRequest(
+        return LumenBridgeMirroredSinkRequest(
             mode: mode,
             capability: capability,
             dynamicRangeTransport: dynamicRangeTransport
         )
     }
 
-    private static func effectiveDisplayState(_ value: Any?) -> ApolloBridgeMirroredEffectiveDisplayState? {
+    private static func effectiveDisplayState(_ value: Any?) -> LumenBridgeMirroredEffectiveDisplayState? {
         guard let dictionary = value as? [String: Any],
               let gamut = Self.number(dictionary["gamut"])?.int32Value,
               let transfer = Self.number(dictionary["transfer"])?.int32Value else {
             return nil
         }
-        return ApolloBridgeMirroredEffectiveDisplayState(
+        return LumenBridgeMirroredEffectiveDisplayState(
             gamut: gamut,
             transfer: transfer,
             hdrStaticMetadata: Self.hdrStaticMetadata(dictionary["hdrStaticMetadata"])
         )
     }
 
-    private static func hdrStaticMetadata(_ value: Any?) -> ApolloHDRStaticMetadata? {
+    private static func hdrStaticMetadata(_ value: Any?) -> LumenHDRStaticMetadata? {
         guard let dictionary = value as? [String: Any] else {
             return nil
         }
-        return ApolloHDRStaticMetadata(
+        return LumenHDRStaticMetadata(
             redPrimaryX: Int(Self.number(dictionary["redPrimaryX"])?.int32Value ?? 0),
             redPrimaryY: Int(Self.number(dictionary["redPrimaryY"])?.int32Value ?? 0),
             greenPrimaryX: Int(Self.number(dictionary["greenPrimaryX"])?.int32Value ?? 0),
@@ -244,12 +244,12 @@ struct ApolloBridgeMirroredCaptureRequestSnapshot: Equatable, Sendable {
         )
     }
 
-    var semanticState: ApolloBridgeMirroredCaptureRequestSemanticState {
-        ApolloBridgeMirroredCaptureRequestSemanticState(snapshot: self)
+    var semanticState: LumenBridgeMirroredCaptureRequestSemanticState {
+        LumenBridgeMirroredCaptureRequestSemanticState(snapshot: self)
     }
 }
 
-struct ApolloBridgeMirroredCaptureRequestSemanticState: Equatable, Sendable {
+struct LumenBridgeMirroredCaptureRequestSemanticState: Equatable, Sendable {
     let videoRequested: Bool
     let audioRequested: Bool
     let displayID: UInt32
@@ -261,15 +261,15 @@ struct ApolloBridgeMirroredCaptureRequestSemanticState: Equatable, Sendable {
     let targetVideoBitrateKbps: Int32
     let requestedWidth: Int32
     let requestedHeight: Int32
-    let sinkRequest: ApolloBridgeMirroredSinkRequest
-    let effectiveDisplayState: ApolloBridgeMirroredEffectiveDisplayState
+    let sinkRequest: LumenBridgeMirroredSinkRequest
+    let effectiveDisplayState: LumenBridgeMirroredEffectiveDisplayState
     let audioSourceKind: ApolloCoreAudioCaptureSourceKind
     let audioExcludesCurrentProcess: Bool
     let audioSampleRate: Int32
     let audioChannelCount: Int32
     let audioFrameSize: Int32
 
-    init(snapshot: ApolloBridgeMirroredCaptureRequestSnapshot) {
+    init(snapshot: LumenBridgeMirroredCaptureRequestSnapshot) {
         videoRequested = snapshot.videoRequested
         audioRequested = snapshot.audioRequested
         displayID = snapshot.displayID
@@ -302,14 +302,14 @@ struct ApolloBridgeMirroredCaptureRequestSemanticState: Equatable, Sendable {
         targetVideoBitrateKbps = snapshot.target_video_bitrate_kbps
         requestedWidth = snapshot.requested_width
         requestedHeight = snapshot.requested_height
-        sinkRequest = ApolloBridgeMirroredSinkRequest(
-            mode: ApolloBridgeMirroredSinkMode(
+        sinkRequest = LumenBridgeMirroredSinkRequest(
+            mode: LumenBridgeMirroredSinkMode(
                 hidpi: snapshot.sink_request.mode.hidpi,
                 scaleExplicit: snapshot.sink_request.mode.scale_explicit,
                 modeIsLogical: snapshot.sink_request.mode.mode_is_logical,
                 scalePercent: snapshot.sink_request.mode.scale_percent
             ),
-            capability: ApolloBridgeMirroredSinkCapability(
+            capability: LumenBridgeMirroredSinkCapability(
                 gamut: snapshot.sink_request.capability.gamut,
                 transfer: snapshot.sink_request.capability.transfer,
                 currentEDRHeadroom: snapshot.sink_request.capability.current_edr_headroom,
@@ -322,11 +322,11 @@ struct ApolloBridgeMirroredCaptureRequestSemanticState: Equatable, Sendable {
             ),
             dynamicRangeTransport: snapshot.sink_request.dynamic_range_transport
         )
-        effectiveDisplayState = ApolloBridgeMirroredEffectiveDisplayState(
+        effectiveDisplayState = LumenBridgeMirroredEffectiveDisplayState(
             gamut: snapshot.effective_display_state.gamut,
             transfer: snapshot.effective_display_state.transfer,
             hdrStaticMetadata: snapshot.effective_display_state.has_hdr_static_metadata ?
-                ApolloHDRStaticMetadata(coreValue: snapshot.effective_display_state.hdr_static_metadata) :
+                LumenHDRStaticMetadata(coreValue: snapshot.effective_display_state.hdr_static_metadata) :
                 nil
         )
         audioSourceKind = snapshot.audio_source_kind
@@ -337,20 +337,20 @@ struct ApolloBridgeMirroredCaptureRequestSemanticState: Equatable, Sendable {
     }
 }
 
-actor ApolloCaptureRequestMirrorCoordinator {
+actor LumenCaptureRequestMirrorCoordinator {
     private let logger = Logger(subsystem: "com.lizardbyte.apollo", category: "CaptureRequestMirror")
     private var mirroredGeneration: UInt64?
-    private var mirroredSemanticState: ApolloBridgeMirroredCaptureRequestSemanticState?
+    private var mirroredSemanticState: LumenBridgeMirroredCaptureRequestSemanticState?
 
     func syncCurrentState() {
-        if let mirroredSnapshot = ApolloBridgeMirroredCaptureRequestSnapshot.load() {
+        if let mirroredSnapshot = LumenBridgeMirroredCaptureRequestSnapshot.load() {
             guard mirroredGeneration != mirroredSnapshot.generation else {
                 return
             }
 
             let semanticState = mirroredSnapshot.semanticState
             mirroredGeneration = mirroredSnapshot.generation
-            let currentApolloCoreSemanticState = ApolloBridgeMirroredCaptureRequestSemanticState(
+            let currentApolloCoreSemanticState = LumenBridgeMirroredCaptureRequestSemanticState(
                 snapshot: ApolloCoreCaptureRequestCopySnapshot()
             )
             guard semanticState != mirroredSemanticState ||

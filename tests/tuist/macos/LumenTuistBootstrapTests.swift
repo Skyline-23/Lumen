@@ -5,21 +5,21 @@ import XCTest
 
 final class LumenTuistBootstrapTests: XCTestCase {
     func testBridgeExposesBootstrapStatus() async {
-        let status = await ApolloBridgeRuntime.shared.statusSnapshot()
+        let status = await LumenBridgeRuntime.shared.statusSnapshot()
 
         XCTAssertEqual(status.coreVersion, "LumenCore bootstrap")
         XCTAssertFalse(status.integrationStatus.isEmpty)
     }
 
     func testBridgeBuildsPanelNativeMacDisplayKitConfiguration() async {
-        let configuration = await ApolloBridgeRuntime.shared.preferredMacDisplayKitCaptureConfiguration(
+        let configuration = await LumenBridgeRuntime.shared.preferredMacDisplayKitCaptureConfiguration(
             displayID: 7
         )
 
         XCTAssertEqual(configuration.displayID, 7)
-        XCTAssertTrue(ApolloCaptureCodec.allCases.contains(configuration.codec))
+        XCTAssertTrue(LumenCaptureCodec.allCases.contains(configuration.codec))
         XCTAssertEqual(configuration.preprocessStrategy, .none)
-        XCTAssertTrue(ApolloCaptureQueueProfile.allCases.contains(configuration.queueProfile))
+        XCTAssertTrue(LumenCaptureQueueProfile.allCases.contains(configuration.queueProfile))
         XCTAssertEqual(configuration.targetFrameRate, 120)
         XCTAssertFalse(configuration.showCursor)
         XCTAssertNil(configuration.requestedWidth)
@@ -28,8 +28,8 @@ final class LumenTuistBootstrapTests: XCTestCase {
     }
 
     func testBridgeIgnoresImmediateKeyFrameRequestsWithoutActiveSession() async {
-        await ApolloBridgeRuntime.shared.requestImmediateCaptureKeyFrame()
-        let status = await ApolloBridgeRuntime.shared.statusSnapshot()
+        await LumenBridgeRuntime.shared.requestImmediateCaptureKeyFrame()
+        let status = await LumenBridgeRuntime.shared.statusSnapshot()
         XCTAssertFalse(status.captureSessionRunning)
     }
 
@@ -40,33 +40,33 @@ final class LumenTuistBootstrapTests: XCTestCase {
         """
 
         XCTAssertEqual(
-            ApolloBridgeConfigurationPreferences.preferredCodec(contents: contents),
+            LumenBridgeConfigurationPreferences.preferredCodec(contents: contents),
             .proResProxy
         )
         XCTAssertEqual(
-            ApolloBridgeConfigurationPreferences.preferredQueueProfile(contents: contents),
+            LumenBridgeConfigurationPreferences.preferredQueueProfile(contents: contents),
             .q4
         )
         XCTAssertEqual(
-            ApolloBridgeConfigurationPreferences.preferredQueueProfile(contents: "streaming_profile=low-latency"),
+            LumenBridgeConfigurationPreferences.preferredQueueProfile(contents: "streaming_profile=low-latency"),
             .q1
         )
         XCTAssertEqual(
-            ApolloBridgeConfigurationPreferences.preferredQueueProfile(contents: "streaming_profile=balanced"),
+            LumenBridgeConfigurationPreferences.preferredQueueProfile(contents: "streaming_profile=balanced"),
             .auto
         )
         XCTAssertEqual(
-            ApolloBridgeConfigurationPreferences.preferredQueueProfile(contents: "streaming_profile=garbage"),
+            LumenBridgeConfigurationPreferences.preferredQueueProfile(contents: "streaming_profile=garbage"),
             .auto
         )
         XCTAssertEqual(
-            ApolloBridgeConfigurationPreferences.preferredQueueProfile(contents: nil),
+            LumenBridgeConfigurationPreferences.preferredQueueProfile(contents: nil),
             .auto
         )
     }
 
     func testBridgeConfigurationBoxRoundTripsRequestedOutputAndHDR() {
-        let hdrStaticMetadata = ApolloHDRStaticMetadata(
+        let hdrStaticMetadata = LumenHDRStaticMetadata(
             redPrimaryX: 34_000,
             redPrimaryY: 16_000,
             greenPrimaryX: 13_250,
@@ -81,7 +81,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
             maxFrameAverageLightLevel: 400,
             maxFullFrameLuminance: 1_000
         )
-        let configuration = ApolloMacDisplayKitCaptureConfiguration(
+        let configuration = LumenMacDisplayKitCaptureConfiguration(
             displayID: 11,
             codec: .hevc,
             preprocessStrategy: .none,
@@ -91,8 +91,8 @@ final class LumenTuistBootstrapTests: XCTestCase {
             targetVideoBitRateKbps: 41_000,
             requestedWidth: 3512,
             requestedHeight: 2290,
-            sinkRequest: ApolloBridgeSinkRequest(
-                capability: ApolloBridgeSinkCapability(
+            sinkRequest: LumenBridgeSinkRequest(
+                capability: LumenBridgeSinkCapability(
                     gamut: .displayP3,
                     transfer: .pq,
                     currentEDRHeadroom: 2.8,
@@ -104,14 +104,14 @@ final class LumenTuistBootstrapTests: XCTestCase {
                 ),
                 dynamicRangeTransport: ApolloCoreDynamicRangeTransportFrameGatedHDR
             ),
-            effectiveDisplayState: ApolloBridgeEffectiveDisplayState(
+            effectiveDisplayState: LumenBridgeEffectiveDisplayState(
                 gamut: .displayP3,
                 transfer: .pq,
                 hdrStaticMetadata: hdrStaticMetadata
             )
         )
 
-        let roundTrip = ApolloBridgeConfigurationBox(configuration: configuration).swiftValue
+        let roundTrip = LumenBridgeConfigurationBox(configuration: configuration).swiftValue
         XCTAssertEqual(roundTrip.displayID, 11)
         XCTAssertEqual(roundTrip.codec, .hevc)
         XCTAssertTrue(roundTrip.showCursor)
@@ -128,15 +128,15 @@ final class LumenTuistBootstrapTests: XCTestCase {
     }
 
     func testBridgeHDRConfigurationSeparatesDisplayGamutFromSignalPrimaries() {
-        let configuration = ApolloMacDisplayKitCaptureConfiguration(
+        let configuration = LumenMacDisplayKitCaptureConfiguration(
             displayID: 11,
             codec: .hevc,
             preprocessStrategy: .none,
             queueProfile: .auto,
             showCursor: false,
             targetFrameRate: 120,
-            sinkRequest: ApolloBridgeSinkRequest(
-                capability: ApolloBridgeSinkCapability(
+            sinkRequest: LumenBridgeSinkRequest(
+                capability: LumenBridgeSinkCapability(
                     gamut: .displayP3,
                     transfer: .pq,
                     supportsFrameGatedHDR: true,
@@ -144,7 +144,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
                 ),
                 dynamicRangeTransport: ApolloCoreDynamicRangeTransportFrameGatedHDR
             ),
-            effectiveDisplayState: ApolloBridgeEffectiveDisplayState(
+            effectiveDisplayState: LumenBridgeEffectiveDisplayState(
                 gamut: .displayP3,
                 transfer: .pq
             )
@@ -158,13 +158,13 @@ final class LumenTuistBootstrapTests: XCTestCase {
     }
 
     func testBridgeNegotiatesFrameGatedHDRAgainstSinkCapabilities() {
-        let unsupportedSink = ApolloMacDisplayKitCaptureConfiguration(
+        let unsupportedSink = LumenMacDisplayKitCaptureConfiguration(
             displayID: 11,
             codec: .hevc,
             queueProfile: .auto,
             targetFrameRate: 60,
-            sinkRequest: ApolloBridgeSinkRequest(
-                capability: ApolloBridgeSinkCapability(
+            sinkRequest: LumenBridgeSinkRequest(
+                capability: LumenBridgeSinkCapability(
                     gamut: .displayP3,
                     transfer: .pq,
                     supportsPerFrameHDRMetadata: true
@@ -179,13 +179,13 @@ final class LumenTuistBootstrapTests: XCTestCase {
     }
 
     func testBridgeNegotiatesOverlayFallbackAndAutoQueueProfile() {
-        let fallbackOverlay = ApolloMacDisplayKitCaptureConfiguration(
+        let fallbackOverlay = LumenMacDisplayKitCaptureConfiguration(
             displayID: 11,
             codec: .hevc,
             queueProfile: .auto,
             targetFrameRate: 60,
-            sinkRequest: ApolloBridgeSinkRequest(
-                capability: ApolloBridgeSinkCapability(
+            sinkRequest: LumenBridgeSinkRequest(
+                capability: LumenBridgeSinkCapability(
                     gamut: .displayP3,
                     transfer: .pq,
                     supportsFrameGatedHDR: true,
@@ -194,13 +194,13 @@ final class LumenTuistBootstrapTests: XCTestCase {
                 dynamicRangeTransport: ApolloCoreDynamicRangeTransportSDRBaseHDROverlay
             )
         )
-        let overlayRequestedSink = ApolloMacDisplayKitCaptureConfiguration(
+        let overlayRequestedSink = LumenMacDisplayKitCaptureConfiguration(
             displayID: 11,
             codec: .hevc,
             queueProfile: .auto,
             targetFrameRate: 60,
-            sinkRequest: ApolloBridgeSinkRequest(
-                capability: ApolloBridgeSinkCapability(
+            sinkRequest: LumenBridgeSinkRequest(
+                capability: LumenBridgeSinkCapability(
                     gamut: .displayP3,
                     transfer: .pq,
                     supportsFrameGatedHDR: true,
@@ -223,43 +223,43 @@ final class LumenTuistBootstrapTests: XCTestCase {
     }
 
     func testRecommendedCoreForwardingFrameCapacityStaysLowLatency() {
-        let q2 = ApolloMacDisplayKitCaptureConfiguration(
+        let q2 = LumenMacDisplayKitCaptureConfiguration(
             displayID: 7,
             queueProfile: .q2,
             targetFrameRate: 120
         )
-        let auto = ApolloMacDisplayKitCaptureConfiguration(
+        let auto = LumenMacDisplayKitCaptureConfiguration(
             displayID: 7,
             queueProfile: .auto,
             targetFrameRate: 120
         )
-        let q4 = ApolloMacDisplayKitCaptureConfiguration(
+        let q4 = LumenMacDisplayKitCaptureConfiguration(
             displayID: 7,
             queueProfile: .q4,
             targetFrameRate: 120
         )
-        let q2NinetyFps = ApolloMacDisplayKitCaptureConfiguration(
+        let q2NinetyFps = LumenMacDisplayKitCaptureConfiguration(
             displayID: 7,
             queueProfile: .q2,
             targetFrameRate: 90
         )
-        let q2SixtyFps = ApolloMacDisplayKitCaptureConfiguration(
+        let q2SixtyFps = LumenMacDisplayKitCaptureConfiguration(
             displayID: 7,
             queueProfile: .q2,
             targetFrameRate: 60
         )
-        let q2ThirtyFps = ApolloMacDisplayKitCaptureConfiguration(
+        let q2ThirtyFps = LumenMacDisplayKitCaptureConfiguration(
             displayID: 7,
             queueProfile: .q2,
             targetFrameRate: 30
         )
 
-        XCTAssertEqual(ApolloBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q2), 1)
-        XCTAssertEqual(ApolloBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: auto), 1)
-        XCTAssertEqual(ApolloBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q4), 1)
-        XCTAssertEqual(ApolloBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q2NinetyFps), 1)
-        XCTAssertEqual(ApolloBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q2SixtyFps), 1)
-        XCTAssertEqual(ApolloBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q2ThirtyFps), 2)
+        XCTAssertEqual(LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q2), 1)
+        XCTAssertEqual(LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: auto), 1)
+        XCTAssertEqual(LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q4), 1)
+        XCTAssertEqual(LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q2NinetyFps), 1)
+        XCTAssertEqual(LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q2SixtyFps), 1)
+        XCTAssertEqual(LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q2ThirtyFps), 2)
     }
 
     func testApolloCoreEncodedCaptureIngressStoresSampleBufferMetadata() throws {
@@ -429,7 +429,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
     }
 
     func testBridgeForwardsSyntheticSampleBufferIntoApolloCoreIngress() async throws {
-        let runtime = ApolloBridgeRuntime()
+        let runtime = LumenBridgeRuntime()
         await runtime.debugResetCoreForwarding()
         let sampleBuffer = try Self.makeEncodedSampleBuffer(
             payload: Data([0xAA, 0xBB, 0xCC]),
@@ -467,7 +467,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
     }
 
     func testBridgeForwardingDropsOldestFramesWhenCapacityIsExceeded() async throws {
-        let runtime = ApolloBridgeRuntime()
+        let runtime = LumenBridgeRuntime()
         await runtime.debugResetCoreForwarding()
         await runtime.configureCoreForwarding(frameCapacity: 1, eventCapacity: 1)
 
@@ -1040,7 +1040,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
             try? FileManager.default.removeItem(at: url)
         }
 
-        let snapshot = try XCTUnwrap(ApolloBridgeMirroredCaptureRequestSnapshot.load(from: url))
+        let snapshot = try XCTUnwrap(LumenBridgeMirroredCaptureRequestSnapshot.load(from: url))
         XCTAssertEqual(snapshot.generation, 9)
         XCTAssertEqual(snapshot.videoGeneration, 10)
         XCTAssertEqual(snapshot.audioGeneration, 11)
@@ -1130,7 +1130,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
             try? FileManager.default.removeItem(at: url)
         }
 
-        let snapshot = try XCTUnwrap(ApolloBridgeMirroredCaptureRequestSnapshot.load(from: url))
+        let snapshot = try XCTUnwrap(LumenBridgeMirroredCaptureRequestSnapshot.load(from: url))
         XCTAssertEqual(snapshot.queueProfile, ApolloCoreCaptureQueueProfileAuto)
         XCTAssertEqual(snapshot.targetVideoBitrateKbps, 41_000)
         XCTAssertEqual(snapshot.sinkRequest.capability.gamut, 3)
@@ -1200,12 +1200,12 @@ final class LumenTuistBootstrapTests: XCTestCase {
             try? FileManager.default.removeItem(at: url)
         }
 
-        let snapshot = try XCTUnwrap(ApolloBridgeMirroredCaptureRequestSnapshot.load(from: url))
+        let snapshot = try XCTUnwrap(LumenBridgeMirroredCaptureRequestSnapshot.load(from: url))
         XCTAssertEqual(snapshot.targetVideoBitrateKbps, 0)
     }
 
     func testMirroredCaptureRequestSemanticStateIgnoresGenerationOnlyChanges() {
-        let baseline = ApolloBridgeMirroredCaptureRequestSnapshot(
+        let baseline = LumenBridgeMirroredCaptureRequestSnapshot(
             [
                 "generation": 12,
                 "videoGeneration": 12,
@@ -1252,7 +1252,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
                 "audioFrameSize": 480,
             ]
         )
-        let generationOnlyUpdate = ApolloBridgeMirroredCaptureRequestSnapshot(
+        let generationOnlyUpdate = LumenBridgeMirroredCaptureRequestSnapshot(
             [
                 "generation": 21,
                 "videoGeneration": 22,
@@ -1304,7 +1304,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
     }
 
     func testShouldApplyAutomationRequestSkipsGenerationOnlyChangesForStableConfiguration() {
-        let configuration = ApolloMacDisplayKitCaptureConfiguration(
+        let configuration = LumenMacDisplayKitCaptureConfiguration(
             displayID: 17,
             codec: .hevc,
             preprocessStrategy: .none,
@@ -1314,13 +1314,13 @@ final class LumenTuistBootstrapTests: XCTestCase {
             targetVideoBitRateKbps: 41_000,
             requestedWidth: 3840,
             requestedHeight: 2160,
-            sinkRequest: ApolloBridgeSinkRequest(
+            sinkRequest: LumenBridgeSinkRequest(
                 dynamicRangeTransport: ApolloCoreDynamicRangeTransportFrameGatedHDR
             )
         )
 
         XCTAssertTrue(
-            ApolloBridgeRuntime.shouldApplyAutomationRequest(
+            LumenBridgeRuntime.shouldApplyAutomationRequest(
                 requestedConfiguration: configuration,
                 activeConfiguration: nil,
                 sessionIsActive: false,
@@ -1328,7 +1328,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
             )
         )
         XCTAssertFalse(
-            ApolloBridgeRuntime.shouldApplyAutomationRequest(
+            LumenBridgeRuntime.shouldApplyAutomationRequest(
                 requestedConfiguration: configuration,
                 activeConfiguration: configuration,
                 sessionIsActive: true,
@@ -1336,7 +1336,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
             )
         )
         XCTAssertTrue(
-            ApolloBridgeRuntime.shouldApplyAutomationRequest(
+            LumenBridgeRuntime.shouldApplyAutomationRequest(
                 requestedConfiguration: configuration,
                 activeConfiguration: configuration,
                 sessionIsActive: true,
@@ -1344,7 +1344,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
             )
         )
         XCTAssertTrue(
-            ApolloBridgeRuntime.shouldApplyAutomationRequest(
+            LumenBridgeRuntime.shouldApplyAutomationRequest(
                 requestedConfiguration: configuration,
                 activeConfiguration: configuration,
                 sessionIsActive: false,
@@ -1352,16 +1352,16 @@ final class LumenTuistBootstrapTests: XCTestCase {
             )
         )
         XCTAssertTrue(
-            ApolloBridgeRuntime.shouldApplyAutomationRequest(
-                requestedConfiguration: nil as ApolloMacDisplayKitCaptureConfiguration?,
+            LumenBridgeRuntime.shouldApplyAutomationRequest(
+                requestedConfiguration: nil as LumenMacDisplayKitCaptureConfiguration?,
                 activeConfiguration: configuration,
                 sessionIsActive: true,
                 lastAppliedGeneration: 41
             )
         )
         XCTAssertFalse(
-            ApolloBridgeRuntime.shouldApplyAutomationRequest(
-                requestedConfiguration: nil as ApolloMacDisplayKitCaptureConfiguration?,
+            LumenBridgeRuntime.shouldApplyAutomationRequest(
+                requestedConfiguration: nil as LumenMacDisplayKitCaptureConfiguration?,
                 activeConfiguration: nil,
                 sessionIsActive: false,
                 lastAppliedGeneration: nil

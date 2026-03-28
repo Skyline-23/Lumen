@@ -101,7 +101,7 @@ public final class LumenMacCaptureAdapter: NSObject {
         super.init()
 
         bridgeStatusObserver = NotificationCenter.default.addObserver(
-            forName: ApolloBridgeRuntime.statusDidChangeNotification,
+            forName: LumenBridgeRuntime.statusDidChangeNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in

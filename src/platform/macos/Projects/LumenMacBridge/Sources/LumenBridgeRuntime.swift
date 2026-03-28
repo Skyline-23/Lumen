@@ -6,7 +6,7 @@ import Foundation
 import MacDisplayCaptureKit
 import OSLog
 
-public enum ApolloCaptureCodec: String, CaseIterable, Codable, Sendable {
+public enum LumenCaptureCodec: String, CaseIterable, Codable, Sendable {
     case h264
     case hevc
     case proResProxy = "prores-proxy"
@@ -23,7 +23,7 @@ public enum ApolloCaptureCodec: String, CaseIterable, Codable, Sendable {
     }
 }
 
-public enum ApolloCapturePreprocessStrategy: String, CaseIterable, Codable, Sendable {
+public enum LumenCapturePreprocessStrategy: String, CaseIterable, Codable, Sendable {
     case none
     case downscale2x = "downscale-2x"
 
@@ -37,7 +37,7 @@ public enum ApolloCapturePreprocessStrategy: String, CaseIterable, Codable, Send
     }
 }
 
-public enum ApolloCaptureQueueProfile: String, CaseIterable, Codable, Sendable {
+public enum LumenCaptureQueueProfile: String, CaseIterable, Codable, Sendable {
     case auto
     case q1
     case q2
@@ -78,7 +78,7 @@ public enum ApolloCaptureQueueProfile: String, CaseIterable, Codable, Sendable {
     }
 }
 
-public enum ApolloCaptureEncoderInputStrategy: String, CaseIterable, Codable, Sendable {
+public enum LumenCaptureEncoderInputStrategy: String, CaseIterable, Codable, Sendable {
     case auto
     case bgra
     case yuv420v8 = "420v8"
@@ -98,7 +98,7 @@ public enum ApolloCaptureEncoderInputStrategy: String, CaseIterable, Codable, Se
     }
 }
 
-public enum ApolloClientSinkGamut: String, CaseIterable, Codable, Sendable {
+public enum LumenClientSinkGamut: String, CaseIterable, Codable, Sendable {
     case unknown
     case srgb
     case displayP3 = "display-p3"
@@ -118,7 +118,7 @@ public enum ApolloClientSinkGamut: String, CaseIterable, Codable, Sendable {
     }
 }
 
-public enum ApolloClientSinkTransfer: String, CaseIterable, Codable, Sendable {
+public enum LumenClientSinkTransfer: String, CaseIterable, Codable, Sendable {
     case unknown
     case sdr
     case pq
@@ -162,7 +162,7 @@ private func apolloDynamicRangeTransportUsesHDR(_ transport: ApolloCoreDynamicRa
     }
 }
 
-public struct ApolloHDRStaticMetadata: Equatable, Sendable {
+public struct LumenHDRStaticMetadata: Equatable, Sendable {
     public let redPrimaryX: Int
     public let redPrimaryY: Int
     public let greenPrimaryX: Int
@@ -272,7 +272,7 @@ public struct ApolloHDRStaticMetadata: Equatable, Sendable {
     }
 }
 
-enum ApolloBridgeConfigurationPreferences {
+enum LumenBridgeConfigurationPreferences {
     static let configurationFileURL: URL = {
         FileManager.default.homeDirectoryForCurrentUser
             .appending(path: "Library", directoryHint: .isDirectory)
@@ -281,30 +281,30 @@ enum ApolloBridgeConfigurationPreferences {
             .appending(path: "lumen.conf", directoryHint: .notDirectory)
     }()
 
-    static func preferredCodec() -> ApolloCaptureCodec {
+    static func preferredCodec() -> LumenCaptureCodec {
         preferredCodec(contents: try? String(contentsOf: configurationFileURL, encoding: .utf8))
     }
 
-    static func preferredCodec(contents: String?) -> ApolloCaptureCodec {
+    static func preferredCodec(contents: String?) -> LumenCaptureCodec {
         guard let value = configuredValue(forKey: "macos_bridge_codec", contents: contents) else {
             return .hevc
         }
 
         switch value {
-        case ApolloCaptureCodec.h264.rawValue:
+        case LumenCaptureCodec.h264.rawValue:
             return .h264
-        case ApolloCaptureCodec.proResProxy.rawValue, "proresproxy", "prores_proxy":
+        case LumenCaptureCodec.proResProxy.rawValue, "proresproxy", "prores_proxy":
             return .proResProxy
         default:
             return .hevc
         }
     }
 
-    static func preferredQueueProfile() -> ApolloCaptureQueueProfile {
+    static func preferredQueueProfile() -> LumenCaptureQueueProfile {
         preferredQueueProfile(contents: try? String(contentsOf: configurationFileURL, encoding: .utf8))
     }
 
-    static func preferredQueueProfile(contents: String?) -> ApolloCaptureQueueProfile {
+    static func preferredQueueProfile(contents: String?) -> LumenCaptureQueueProfile {
         switch configuredValue(forKey: "streaming_profile", contents: contents) {
         case "low-latency":
             return .q1
@@ -315,17 +315,17 @@ enum ApolloBridgeConfigurationPreferences {
         }
     }
 
-    static func preferredEncoderInputStrategy() -> ApolloCaptureEncoderInputStrategy {
+    static func preferredEncoderInputStrategy() -> LumenCaptureEncoderInputStrategy {
         preferredEncoderInputStrategy(contents: try? String(contentsOf: configurationFileURL, encoding: .utf8))
     }
 
-    static func preferredEncoderInputStrategy(contents: String?) -> ApolloCaptureEncoderInputStrategy {
+    static func preferredEncoderInputStrategy(contents: String?) -> LumenCaptureEncoderInputStrategy {
         switch configuredValue(forKey: "macos_bridge_encoder_input", contents: contents) {
-        case ApolloCaptureEncoderInputStrategy.bgra.rawValue:
+        case LumenCaptureEncoderInputStrategy.bgra.rawValue:
             return .bgra
-        case ApolloCaptureEncoderInputStrategy.yuv420v8.rawValue, "420", "nv12":
+        case LumenCaptureEncoderInputStrategy.yuv420v8.rawValue, "420", "nv12":
             return .yuv420v8
-        case ApolloCaptureEncoderInputStrategy.yuv420v10.rawValue, "x420", "p010":
+        case LumenCaptureEncoderInputStrategy.yuv420v10.rawValue, "x420", "p010":
             return .yuv420v10
         default:
             return .auto
@@ -361,7 +361,7 @@ enum ApolloBridgeConfigurationPreferences {
     }
 }
 
-public struct ApolloBridgeSinkMode: Equatable, Sendable {
+public struct LumenBridgeSinkMode: Equatable, Sendable {
     public let hidpi: Bool
     public let scaleExplicit: Bool
     public let modeIsLogical: Bool
@@ -380,9 +380,9 @@ public struct ApolloBridgeSinkMode: Equatable, Sendable {
     }
 }
 
-public struct ApolloBridgeSinkCapability: Equatable, Sendable {
-    public let gamut: ApolloClientSinkGamut
-    public let transfer: ApolloClientSinkTransfer
+public struct LumenBridgeSinkCapability: Equatable, Sendable {
+    public let gamut: LumenClientSinkGamut
+    public let transfer: LumenClientSinkTransfer
     public let currentEDRHeadroom: Float
     public let potentialEDRHeadroom: Float
     public let currentPeakLuminanceNits: Int
@@ -392,8 +392,8 @@ public struct ApolloBridgeSinkCapability: Equatable, Sendable {
     public let supportsPerFrameHDRMetadata: Bool
 
     public init(
-        gamut: ApolloClientSinkGamut = .unknown,
-        transfer: ApolloClientSinkTransfer = .unknown,
+        gamut: LumenClientSinkGamut = .unknown,
+        transfer: LumenClientSinkTransfer = .unknown,
         currentEDRHeadroom: Float = 0,
         potentialEDRHeadroom: Float = 0,
         currentPeakLuminanceNits: Int = 0,
@@ -414,14 +414,14 @@ public struct ApolloBridgeSinkCapability: Equatable, Sendable {
     }
 }
 
-public struct ApolloBridgeSinkRequest: Equatable, Sendable {
-    public let mode: ApolloBridgeSinkMode
-    public let capability: ApolloBridgeSinkCapability
+public struct LumenBridgeSinkRequest: Equatable, Sendable {
+    public let mode: LumenBridgeSinkMode
+    public let capability: LumenBridgeSinkCapability
     public let dynamicRangeTransport: ApolloCoreDynamicRangeTransport
 
     public init(
-        mode: ApolloBridgeSinkMode = ApolloBridgeSinkMode(),
-        capability: ApolloBridgeSinkCapability = ApolloBridgeSinkCapability(),
+        mode: LumenBridgeSinkMode = LumenBridgeSinkMode(),
+        capability: LumenBridgeSinkCapability = LumenBridgeSinkCapability(),
         dynamicRangeTransport: ApolloCoreDynamicRangeTransport = ApolloCoreDynamicRangeTransportUnknown
     ) {
         self.mode = mode
@@ -430,15 +430,15 @@ public struct ApolloBridgeSinkRequest: Equatable, Sendable {
     }
 }
 
-public struct ApolloBridgeEffectiveDisplayState: Equatable, Sendable {
-    public let gamut: ApolloClientSinkGamut
-    public let transfer: ApolloClientSinkTransfer
-    public let hdrStaticMetadata: ApolloHDRStaticMetadata?
+public struct LumenBridgeEffectiveDisplayState: Equatable, Sendable {
+    public let gamut: LumenClientSinkGamut
+    public let transfer: LumenClientSinkTransfer
+    public let hdrStaticMetadata: LumenHDRStaticMetadata?
 
     public init(
-        gamut: ApolloClientSinkGamut = .unknown,
-        transfer: ApolloClientSinkTransfer = .unknown,
-        hdrStaticMetadata: ApolloHDRStaticMetadata? = nil
+        gamut: LumenClientSinkGamut = .unknown,
+        transfer: LumenClientSinkTransfer = .unknown,
+        hdrStaticMetadata: LumenHDRStaticMetadata? = nil
     ) {
         self.gamut = gamut
         self.transfer = transfer
@@ -446,35 +446,35 @@ public struct ApolloBridgeEffectiveDisplayState: Equatable, Sendable {
     }
 }
 
-public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
+public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     private static let supportsPartialHDROverlayProducer = true
 
     public let displayID: UInt32
-    public let codec: ApolloCaptureCodec
-    public let preprocessStrategy: ApolloCapturePreprocessStrategy
-    public let queueProfile: ApolloCaptureQueueProfile
-    public let encoderInputStrategy: ApolloCaptureEncoderInputStrategy
+    public let codec: LumenCaptureCodec
+    public let preprocessStrategy: LumenCapturePreprocessStrategy
+    public let queueProfile: LumenCaptureQueueProfile
+    public let encoderInputStrategy: LumenCaptureEncoderInputStrategy
     public let showCursor: Bool
     public let targetFrameRate: Int
     public let targetVideoBitRateKbps: Int
     public let requestedWidth: Int?
     public let requestedHeight: Int?
-    public let sinkRequest: ApolloBridgeSinkRequest
-    public let effectiveDisplayState: ApolloBridgeEffectiveDisplayState
+    public let sinkRequest: LumenBridgeSinkRequest
+    public let effectiveDisplayState: LumenBridgeEffectiveDisplayState
 
     public init(
         displayID: UInt32,
-        codec: ApolloCaptureCodec = .hevc,
-        preprocessStrategy: ApolloCapturePreprocessStrategy = .none,
-        queueProfile: ApolloCaptureQueueProfile = .auto,
-        encoderInputStrategy: ApolloCaptureEncoderInputStrategy = .auto,
+        codec: LumenCaptureCodec = .hevc,
+        preprocessStrategy: LumenCapturePreprocessStrategy = .none,
+        queueProfile: LumenCaptureQueueProfile = .auto,
+        encoderInputStrategy: LumenCaptureEncoderInputStrategy = .auto,
         showCursor: Bool = false,
         targetFrameRate: Int = 120,
         targetVideoBitRateKbps: Int = 0,
         requestedWidth: Int? = nil,
         requestedHeight: Int? = nil,
-        sinkRequest: ApolloBridgeSinkRequest = ApolloBridgeSinkRequest(),
-        effectiveDisplayState: ApolloBridgeEffectiveDisplayState = ApolloBridgeEffectiveDisplayState()
+        sinkRequest: LumenBridgeSinkRequest = LumenBridgeSinkRequest(),
+        effectiveDisplayState: LumenBridgeEffectiveDisplayState = LumenBridgeEffectiveDisplayState()
     ) {
         self.displayID = displayID
         self.codec = codec
@@ -524,7 +524,7 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         }
     }
 
-    public var negotiatedQueueProfile: ApolloCaptureQueueProfile {
+    public var negotiatedQueueProfile: LumenCaptureQueueProfile {
         guard queueProfile == .auto else {
             return queueProfile
         }
@@ -558,20 +558,20 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
 
     public static func panelNative(displayID: UInt32) -> Self {
         let environment = ProcessInfo.processInfo.environment
-        let transport = ApolloClientSinkTransfer(
+        let transport = LumenClientSinkTransfer(
             environmentValue: environment["SHADOW_CLIENT_SINK_TRANSFER"]
         )
         return Self(
             displayID: displayID,
-            codec: ApolloBridgeConfigurationPreferences.preferredCodec(),
-            queueProfile: ApolloBridgeConfigurationPreferences.preferredQueueProfile(),
-            encoderInputStrategy: ApolloBridgeConfigurationPreferences.preferredEncoderInputStrategy(),
-            sinkRequest: ApolloBridgeSinkRequest(
-                capability: ApolloBridgeSinkCapability(
-                    gamut: ApolloClientSinkGamut(
+            codec: LumenBridgeConfigurationPreferences.preferredCodec(),
+            queueProfile: LumenBridgeConfigurationPreferences.preferredQueueProfile(),
+            encoderInputStrategy: LumenBridgeConfigurationPreferences.preferredEncoderInputStrategy(),
+            sinkRequest: LumenBridgeSinkRequest(
+                capability: LumenBridgeSinkCapability(
+                    gamut: LumenClientSinkGamut(
                         environmentValue: environment["SHADOW_CLIENT_SINK_GAMUT"]
                     ),
-                    transfer: ApolloClientSinkTransfer(
+                    transfer: LumenClientSinkTransfer(
                         environmentValue: environment["SHADOW_CLIENT_SINK_TRANSFER"]
                     ),
                     supportsFrameGatedHDR: true,
@@ -582,11 +582,11 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
                     ApolloCoreDynamicRangeTransportFrameGatedHDR :
                     ApolloCoreDynamicRangeTransportSDR
             ),
-            effectiveDisplayState: ApolloBridgeEffectiveDisplayState(
-                gamut: ApolloClientSinkGamut(
+            effectiveDisplayState: LumenBridgeEffectiveDisplayState(
+                gamut: LumenClientSinkGamut(
                     environmentValue: environment["SHADOW_CLIENT_SINK_GAMUT"]
                 ),
-                transfer: ApolloClientSinkTransfer(
+                transfer: LumenClientSinkTransfer(
                     environmentValue: environment["SHADOW_CLIENT_SINK_TRANSFER"]
                 )
             )
@@ -671,11 +671,11 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         }
     }
 
-    private var resolvedDisplayGamut: ApolloClientSinkGamut {
+    private var resolvedDisplayGamut: LumenClientSinkGamut {
         effectiveDisplayState.gamut == .unknown ? sinkRequest.capability.gamut : effectiveDisplayState.gamut
     }
 
-    private var resolvedDisplayTransfer: ApolloClientSinkTransfer {
+    private var resolvedDisplayTransfer: LumenClientSinkTransfer {
         effectiveDisplayState.transfer == .unknown ? sinkRequest.capability.transfer : effectiveDisplayState.transfer
     }
 
@@ -821,8 +821,8 @@ public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     }
 }
 
-public struct ApolloBridgeEncodedFrameSnapshot: Equatable, Sendable {
-    public let codec: ApolloCaptureCodec
+public struct LumenBridgeEncodedFrameSnapshot: Equatable, Sendable {
+    public let codec: LumenCaptureCodec
     public let sourceDisplayTime: UInt64
     public let sourceSequenceNumber: UInt64
     public let outputCallbackLatencyMilliseconds: Double?
@@ -830,7 +830,7 @@ public struct ApolloBridgeEncodedFrameSnapshot: Equatable, Sendable {
     public let isHDRSignaled: Bool
 
     init(frame: MDKEncodedFrame) {
-        self.codec = ApolloCaptureCodec(frame.codec)
+        self.codec = LumenCaptureCodec(frame.codec)
         self.sourceDisplayTime = frame.sourceDisplayTime
         self.sourceSequenceNumber = frame.sourceSequenceNumber
         self.outputCallbackLatencyMilliseconds = frame.outputCallbackLatencyMilliseconds
@@ -839,7 +839,7 @@ public struct ApolloBridgeEncodedFrameSnapshot: Equatable, Sendable {
     }
 }
 
-public enum ApolloBridgeCaptureEventKind: String, Codable, Equatable, Sendable {
+public enum LumenBridgeCaptureEventKind: String, Codable, Equatable, Sendable {
     case started
     case stopped
     case restarted
@@ -847,15 +847,15 @@ public enum ApolloBridgeCaptureEventKind: String, Codable, Equatable, Sendable {
     case droppedFrame
 }
 
-public struct ApolloBridgeCaptureSnapshot: Equatable, Sendable {
-    public let configuration: ApolloMacDisplayKitCaptureConfiguration
+public struct LumenBridgeCaptureSnapshot: Equatable, Sendable {
+    public let configuration: LumenMacDisplayKitCaptureConfiguration
     public let statistics: MDKEncodedCaptureSessionStatistics
-    public let latestFrame: ApolloBridgeEncodedFrameSnapshot?
+    public let latestFrame: LumenBridgeEncodedFrameSnapshot?
     public let recentEvents: [MDKEncodedCaptureSessionEvent]
-    public let coreForwarding: ApolloBridgeCoreForwardingSnapshot
+    public let coreForwarding: LumenBridgeCoreForwardingSnapshot
 }
 
-public struct ApolloBridgeStatus: Equatable, Sendable {
+public struct LumenBridgeStatus: Equatable, Sendable {
     public let coreVersion: String
     public let runtimeDescription: String
     public let integrationStatus: String
@@ -880,16 +880,16 @@ public struct ApolloBridgeStatus: Equatable, Sendable {
     }
 }
 
-public enum ApolloAudioCaptureSourceKind: String, Codable, Equatable, Sendable {
+public enum LumenAudioCaptureSourceKind: String, Codable, Equatable, Sendable {
     case microphone
     case systemOutput = "system-output"
 }
 
-public enum ApolloAudioCaptureSource: Codable, Equatable, Sendable {
+public enum LumenAudioCaptureSource: Codable, Equatable, Sendable {
     case microphone(inputID: String?)
     case systemOutput(displayID: UInt32, excludesCurrentProcessAudio: Bool)
 
-    public var kind: ApolloAudioCaptureSourceKind {
+    public var kind: LumenAudioCaptureSourceKind {
         switch self {
         case .microphone:
             return .microphone
@@ -899,14 +899,14 @@ public enum ApolloAudioCaptureSource: Codable, Equatable, Sendable {
     }
 }
 
-public struct ApolloMacDisplayKitAudioCaptureConfiguration: Codable, Equatable, Sendable {
-    public let source: ApolloAudioCaptureSource
+public struct LumenMacDisplayKitAudioCaptureConfiguration: Codable, Equatable, Sendable {
+    public let source: LumenAudioCaptureSource
     public let sampleRate: Int
     public let channelCount: Int
     public let frameSize: Int
 
     public init(
-        source: ApolloAudioCaptureSource,
+        source: LumenAudioCaptureSource,
         sampleRate: Int = 48_000,
         channelCount: Int = 2,
         frameSize: Int = 480
@@ -972,7 +972,7 @@ public struct ApolloMacDisplayKitAudioCaptureConfiguration: Codable, Equatable, 
     }
 }
 
-public struct ApolloBridgeAudioForwardingSnapshot: Equatable, Sendable {
+public struct LumenBridgeAudioForwardingSnapshot: Equatable, Sendable {
     public let frameCount: UInt64
     public let eventCount: UInt64
     public let queuedFrameCount: UInt64
@@ -985,10 +985,10 @@ public struct ApolloBridgeAudioForwardingSnapshot: Equatable, Sendable {
     public let lastFrameChannelCount: Int?
     public let lastFrameFrameCount: Int?
     public let lastFramePCMByteCount: Int
-    public let lastEventKind: ApolloBridgeCaptureEventKind?
+    public let lastEventKind: LumenBridgeCaptureEventKind?
 }
 
-public struct ApolloBridgeDrainedAudioFrame: Equatable, Sendable {
+public struct LumenBridgeDrainedAudioFrame: Equatable, Sendable {
     public let sequenceNumber: UInt64
     public let hostTimeNanoseconds: UInt64
     public let sampleRate: Int
@@ -997,8 +997,8 @@ public struct ApolloBridgeDrainedAudioFrame: Equatable, Sendable {
     public let pcmFloat32LE: Data
 }
 
-public struct ApolloBridgeDrainedAudioEvent: Equatable, Sendable {
-    public let kind: ApolloBridgeCaptureEventKind
+public struct LumenBridgeDrainedAudioEvent: Equatable, Sendable {
+    public let kind: LumenBridgeCaptureEventKind
     public let message: String?
     public let stopStatus: Int32?
     public let automaticRestartCount: UInt64?
@@ -1009,8 +1009,8 @@ private struct ApolloBridgeAutomationRequest: Equatable, Sendable {
     let generation: UInt64
     let videoGeneration: UInt64
     let audioGeneration: UInt64
-    let videoConfiguration: ApolloMacDisplayKitCaptureConfiguration?
-    let audioConfiguration: ApolloMacDisplayKitAudioCaptureConfiguration?
+    let videoConfiguration: LumenMacDisplayKitCaptureConfiguration?
+    let audioConfiguration: LumenMacDisplayKitAudioCaptureConfiguration?
 
     init(snapshot: ApolloCoreCaptureRequestSnapshot) {
         generation = snapshot.generation
@@ -1020,7 +1020,7 @@ private struct ApolloBridgeAutomationRequest: Equatable, Sendable {
         let resolvedDisplayID = snapshot.display_id == 0 ? CGMainDisplayID() : snapshot.display_id
         if snapshot.video_requested,
            let codec = ApolloBridgeAutomationRequest.codec(from: snapshot.codec) {
-            videoConfiguration = ApolloMacDisplayKitCaptureConfiguration(
+            videoConfiguration = LumenMacDisplayKitCaptureConfiguration(
                 displayID: resolvedDisplayID,
                 codec: codec,
                 preprocessStrategy: ApolloBridgeAutomationRequest.preprocessStrategy(from: snapshot.preprocess_strategy),
@@ -1030,14 +1030,14 @@ private struct ApolloBridgeAutomationRequest: Equatable, Sendable {
                 targetVideoBitRateKbps: Int(snapshot.target_video_bitrate_kbps),
                 requestedWidth: Int(snapshot.requested_width),
                 requestedHeight: Int(snapshot.requested_height),
-                sinkRequest: ApolloBridgeSinkRequest(
-                    mode: ApolloBridgeSinkMode(
+                sinkRequest: LumenBridgeSinkRequest(
+                    mode: LumenBridgeSinkMode(
                         hidpi: snapshot.sink_request.mode.hidpi,
                         scaleExplicit: snapshot.sink_request.mode.scale_explicit,
                         modeIsLogical: snapshot.sink_request.mode.mode_is_logical,
                         scalePercent: Int(snapshot.sink_request.mode.scale_percent)
                     ),
-                    capability: ApolloBridgeSinkCapability(
+                    capability: LumenBridgeSinkCapability(
                         gamut: ApolloBridgeAutomationRequest.clientSinkGamut(from: snapshot.sink_request.capability.gamut),
                         transfer: ApolloBridgeAutomationRequest.clientSinkTransfer(from: snapshot.sink_request.capability.transfer),
                         currentEDRHeadroom: snapshot.sink_request.capability.current_edr_headroom,
@@ -1050,11 +1050,11 @@ private struct ApolloBridgeAutomationRequest: Equatable, Sendable {
                     ),
                     dynamicRangeTransport: snapshot.sink_request.dynamic_range_transport
                 ),
-                effectiveDisplayState: ApolloBridgeEffectiveDisplayState(
+                effectiveDisplayState: LumenBridgeEffectiveDisplayState(
                     gamut: ApolloBridgeAutomationRequest.clientSinkGamut(from: snapshot.effective_display_state.gamut),
                     transfer: ApolloBridgeAutomationRequest.clientSinkTransfer(from: snapshot.effective_display_state.transfer),
                     hdrStaticMetadata: snapshot.effective_display_state.has_hdr_static_metadata ?
-                        ApolloHDRStaticMetadata(coreValue: snapshot.effective_display_state.hdr_static_metadata) :
+                        LumenHDRStaticMetadata(coreValue: snapshot.effective_display_state.hdr_static_metadata) :
                         nil
                 )
             )
@@ -1086,7 +1086,7 @@ private struct ApolloBridgeAutomationRequest: Equatable, Sendable {
         }
     }
 
-    private static func codec(from value: ApolloCoreCaptureCodec) -> ApolloCaptureCodec? {
+    private static func codec(from value: ApolloCoreCaptureCodec) -> LumenCaptureCodec? {
         switch value {
         case ApolloCoreCaptureCodecH264:
             return .h264
@@ -1099,7 +1099,7 @@ private struct ApolloBridgeAutomationRequest: Equatable, Sendable {
         }
     }
 
-    private static func preprocessStrategy(from value: ApolloCoreCapturePreprocessStrategy) -> ApolloCapturePreprocessStrategy {
+    private static func preprocessStrategy(from value: ApolloCoreCapturePreprocessStrategy) -> LumenCapturePreprocessStrategy {
         switch value {
         case ApolloCoreCapturePreprocessStrategyDownscale2x:
             return .downscale2x
@@ -1108,7 +1108,7 @@ private struct ApolloBridgeAutomationRequest: Equatable, Sendable {
         }
     }
 
-    private static func queueProfile(from value: ApolloCoreCaptureQueueProfile) -> ApolloCaptureQueueProfile {
+    private static func queueProfile(from value: ApolloCoreCaptureQueueProfile) -> LumenCaptureQueueProfile {
         switch value {
         case ApolloCoreCaptureQueueProfileAuto:
             return .auto
@@ -1123,7 +1123,7 @@ private struct ApolloBridgeAutomationRequest: Equatable, Sendable {
         }
     }
 
-    private static func clientSinkGamut(from value: Int32) -> ApolloClientSinkGamut {
+    private static func clientSinkGamut(from value: Int32) -> LumenClientSinkGamut {
         switch value {
         case 1:
             return .srgb
@@ -1136,7 +1136,7 @@ private struct ApolloBridgeAutomationRequest: Equatable, Sendable {
         }
     }
 
-    private static func clientSinkTransfer(from value: Int32) -> ApolloClientSinkTransfer {
+    private static func clientSinkTransfer(from value: Int32) -> LumenClientSinkTransfer {
         switch value {
         case 1:
             return .sdr
@@ -1150,9 +1150,9 @@ private struct ApolloBridgeAutomationRequest: Equatable, Sendable {
     }
 }
 
-public actor ApolloBridgeRuntime {
-    public static let shared = ApolloBridgeRuntime()
-    public nonisolated static let statusDidChangeNotification = Notification.Name("ApolloBridgeRuntimeStatusDidChange")
+public actor LumenBridgeRuntime {
+    public static let shared = LumenBridgeRuntime()
+    public nonisolated static let statusDidChangeNotification = Notification.Name("LumenBridgeRuntimeStatusDidChange")
     private nonisolated static let statusNotificationCoalescingNanoseconds: UInt64 = 100_000_000
     private nonisolated static let encodedFrameDiagnosticsIntervalNanoseconds: UInt64 = 3_000_000_000
     private nonisolated static let automaticCoreForwardingEventCapacity = 64
@@ -1174,7 +1174,7 @@ public actor ApolloBridgeRuntime {
     }
 
     static func recommendedCoreForwardingFrameCapacity(
-        for configuration: ApolloMacDisplayKitCaptureConfiguration
+        for configuration: LumenMacDisplayKitCaptureConfiguration
     ) -> Int {
         // MDK already applies source-side backpressure. Keep the LumenCore handoff queue
         // deliberately tight so stale encoded frames are dropped quickly instead of turning
@@ -1202,17 +1202,17 @@ public actor ApolloBridgeRuntime {
         return min(max(queueDepthReserve + hdrMetadataSlack, 2), 5)
     }
 
-    private let coreForwarder = ApolloCoreCaptureForwarder()
-    private let audioForwarder = ApolloCoreAudioCaptureForwarder()
+    private let coreForwarder = LumenCoreCaptureForwarder()
+    private let audioForwarder = LumenCoreAudioCaptureForwarder()
     private let logger = Logger(subsystem: "com.lizardbyte.apollo", category: "MacBridgeRuntime")
     private var encodedCaptureSession: MDKEncodedCaptureSession?
     private var encodedCaptureStartupTask: Task<Void, Error>?
-    private var activeCaptureConfiguration: ApolloMacDisplayKitCaptureConfiguration?
-    private var latestFrame: ApolloBridgeEncodedFrameSnapshot?
+    private var activeCaptureConfiguration: LumenMacDisplayKitCaptureConfiguration?
+    private var latestFrame: LumenBridgeEncodedFrameSnapshot?
     private var recentEvents: [MDKEncodedCaptureSessionEvent] = []
     private var audioCaptureSession: MDKAudioCaptureSession?
     private var audioCaptureStartupTask: Task<Void, Error>?
-    private var activeAudioCaptureConfiguration: ApolloMacDisplayKitAudioCaptureConfiguration?
+    private var activeAudioCaptureConfiguration: LumenMacDisplayKitAudioCaptureConfiguration?
     private var captureAutomationTask: Task<Void, Never>?
     private var mirroredCaptureRequestTask: Task<Void, Never>?
     private var lastStatusNotificationUptimeNanoseconds: UInt64 = 0
@@ -1227,12 +1227,12 @@ public actor ApolloBridgeRuntime {
 
     public func preferredMacDisplayKitCaptureConfiguration(
         displayID: UInt32
-    ) -> ApolloMacDisplayKitCaptureConfiguration {
+    ) -> LumenMacDisplayKitCaptureConfiguration {
         .panelNative(displayID: displayID)
     }
 
     public func startMacDisplayKitCapture(
-        configuration: ApolloMacDisplayKitCaptureConfiguration
+        configuration: LumenMacDisplayKitCaptureConfiguration
     ) async throws {
         try await startMacDisplayKitCapture(
             configuration: configuration,
@@ -1241,7 +1241,7 @@ public actor ApolloBridgeRuntime {
     }
 
     private func startMacDisplayKitCapture(
-        configuration: ApolloMacDisplayKitCaptureConfiguration,
+        configuration: LumenMacDisplayKitCaptureConfiguration,
         waitForStartupCompletion: Bool
     ) async throws {
         await stopMacDisplayKitCapture(resetRequestGeneration: false)
@@ -1352,18 +1352,18 @@ public actor ApolloBridgeRuntime {
         publishStatusDidChange(immediate: true)
     }
 
-    public func makeDefaultMicrophoneAudioConfiguration() -> ApolloMacDisplayKitAudioCaptureConfiguration {
+    public func makeDefaultMicrophoneAudioConfiguration() -> LumenMacDisplayKitAudioCaptureConfiguration {
         .microphone()
     }
 
     public func makeSystemOutputAudioConfiguration(
         displayID: UInt32
-    ) -> ApolloMacDisplayKitAudioCaptureConfiguration {
+    ) -> LumenMacDisplayKitAudioCaptureConfiguration {
         .systemOutput(displayID: displayID)
     }
 
     public func startMacDisplayKitAudioCapture(
-        configuration: ApolloMacDisplayKitAudioCaptureConfiguration
+        configuration: LumenMacDisplayKitAudioCaptureConfiguration
     ) async throws {
         try await startMacDisplayKitAudioCapture(
             configuration: configuration,
@@ -1372,7 +1372,7 @@ public actor ApolloBridgeRuntime {
     }
 
     private func startMacDisplayKitAudioCapture(
-        configuration: ApolloMacDisplayKitAudioCaptureConfiguration,
+        configuration: LumenMacDisplayKitAudioCaptureConfiguration,
         waitForStartupCompletion: Bool
     ) async throws {
         await stopMacDisplayKitAudioCapture(resetRequestGeneration: false)
@@ -1534,13 +1534,13 @@ public actor ApolloBridgeRuntime {
         captureAutomationTask != nil
     }
 
-    public func captureSnapshot() async -> ApolloBridgeCaptureSnapshot? {
+    public func captureSnapshot() async -> LumenBridgeCaptureSnapshot? {
         guard let session = encodedCaptureSession,
               let configuration = activeCaptureConfiguration else {
             return nil
         }
 
-        return ApolloBridgeCaptureSnapshot(
+        return LumenBridgeCaptureSnapshot(
             configuration: configuration,
             statistics: await session.statisticsSnapshot(),
             latestFrame: latestFrame,
@@ -1549,7 +1549,7 @@ public actor ApolloBridgeRuntime {
         )
     }
 
-    public func coreForwardingSnapshot() -> ApolloBridgeCoreForwardingSnapshot {
+    public func coreForwardingSnapshot() -> LumenBridgeCoreForwardingSnapshot {
         coreForwarder.snapshot()
     }
 
@@ -1569,28 +1569,28 @@ public actor ApolloBridgeRuntime {
         audioForwarder.setEventCapacity(eventCapacity)
     }
 
-    public func drainNextCoreForwardedFrame() -> ApolloBridgeCoreDrainedFrame? {
+    public func drainNextCoreForwardedFrame() -> LumenBridgeCoreDrainedFrame? {
         coreForwarder.popNextFrame()
     }
 
-    public func drainNextCoreForwardedEvent() -> ApolloBridgeCoreDrainedEvent? {
+    public func drainNextCoreForwardedEvent() -> LumenBridgeCoreDrainedEvent? {
         coreForwarder.popNextEvent()
     }
 
-    public func audioForwardingSnapshot() -> ApolloBridgeAudioForwardingSnapshot {
+    public func audioForwardingSnapshot() -> LumenBridgeAudioForwardingSnapshot {
         audioForwarder.snapshot()
     }
 
-    public func drainNextCoreForwardedAudioFrame() -> ApolloBridgeDrainedAudioFrame? {
+    public func drainNextCoreForwardedAudioFrame() -> LumenBridgeDrainedAudioFrame? {
         audioForwarder.popNextFrame()
     }
 
-    public func drainNextCoreForwardedAudioEvent() -> ApolloBridgeDrainedAudioEvent? {
+    public func drainNextCoreForwardedAudioEvent() -> LumenBridgeDrainedAudioEvent? {
         audioForwarder.popNextEvent()
     }
 
-    public func statusSnapshot() -> ApolloBridgeStatus {
-        ApolloBridgeStatus(
+    public func statusSnapshot() -> LumenBridgeStatus {
+        LumenBridgeStatus(
             coreVersion: String(cString: ApolloCoreBootstrapVersionString()),
             runtimeDescription: String(cString: ApolloCoreBootstrapRuntimeDescription()),
             integrationStatus: "MacDisplayKit owns macOS capture and encode. LumenMacBridge forwards encoded video and PCM audio into LumenCore ingress surfaces while Lumen keeps the web, session, and transport stack.",
@@ -1695,12 +1695,12 @@ public actor ApolloBridgeRuntime {
         }
 
         mirroredCaptureRequestTask = Task.detached(priority: .background) {
-            let coordinator = ApolloCaptureRequestMirrorCoordinator()
+            let coordinator = LumenCaptureRequestMirrorCoordinator()
             await coordinator.syncCurrentState()
 
             let notificationCenter = DistributedNotificationCenter.default()
             let notifications = notificationCenter.notifications(
-                named: ApolloBridgeMirroredCaptureRequestSnapshot.changedNotification
+                named: LumenBridgeMirroredCaptureRequestSnapshot.changedNotification
             )
 
             for await _ in notifications {
@@ -1713,7 +1713,7 @@ public actor ApolloBridgeRuntime {
     }
 
     private func recordEncodedFrame(_ frame: MDKEncodedFrame) async {
-        latestFrame = ApolloBridgeEncodedFrameSnapshot(frame: frame)
+        latestFrame = LumenBridgeEncodedFrameSnapshot(frame: frame)
         let captureStatistics = await encodedCaptureSession?.statisticsSnapshot()
         logEncodedFrameDiagnosticsIfNeeded(frame, captureStatistics: captureStatistics)
         publishStatusDidChange()
@@ -1759,7 +1759,7 @@ public actor ApolloBridgeRuntime {
             let targetFrameRate = activeCaptureConfiguration?.targetFrameRate ?? 0
             let queueProfile = activeCaptureConfiguration?.queueProfile.rawValue ?? "unknown"
             let displayID = activeCaptureConfiguration?.displayID ?? 0
-            let codec = ApolloCaptureCodec(frame.codec).rawValue
+            let codec = LumenCaptureCodec(frame.codec).rawValue
             let ingressSnapshot = coreForwarder.snapshot()
             let hdrValidation = frame.hdrValidationReport
             let callbackLatencyText: String
@@ -1921,7 +1921,7 @@ public actor ApolloBridgeRuntime {
 
     func debugForwardSyntheticFrame(
         sampleBuffer: CMSampleBuffer,
-        codec: ApolloCaptureCodec = .hevc,
+        codec: LumenCaptureCodec = .hevc,
         sourceSequenceNumber: UInt64 = 1,
         sourceDisplayTime: UInt64 = 1,
         outputCallbackLatencyMilliseconds: Double? = nil,
@@ -1956,17 +1956,17 @@ public actor ApolloBridgeRuntime {
         coreForwarder.consume(event: event)
     }
 
-    func debugDrainNextForwardedFrame() -> ApolloBridgeCoreDrainedFrame? {
+    func debugDrainNextForwardedFrame() -> LumenBridgeCoreDrainedFrame? {
         drainNextCoreForwardedFrame()
     }
 
-    func debugDrainNextForwardedEvent() -> ApolloBridgeCoreDrainedEvent? {
+    func debugDrainNextForwardedEvent() -> LumenBridgeCoreDrainedEvent? {
         drainNextCoreForwardedEvent()
     }
 
 }
 
-private extension ApolloCaptureCodec {
+private extension LumenCaptureCodec {
     init(_ codec: MDKVideoEncoderCodec) {
         switch codec {
         case .h264:
@@ -1979,7 +1979,7 @@ private extension ApolloCaptureCodec {
     }
 }
 
-private extension ApolloBridgeCaptureEventKind {
+private extension LumenBridgeCaptureEventKind {
     init(_ kind: MDKAudioCaptureSessionEventKind) {
         switch kind {
         case .started:

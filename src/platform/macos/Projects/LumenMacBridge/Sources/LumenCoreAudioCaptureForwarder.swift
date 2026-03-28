@@ -2,7 +2,7 @@ import LumenCore
 import Foundation
 import MacDisplayCaptureKit
 
-final class ApolloCoreAudioCaptureForwarder: @unchecked Sendable {
+final class LumenCoreAudioCaptureForwarder: @unchecked Sendable {
     private let handle: OpaquePointer
 
     init() {
@@ -30,9 +30,9 @@ final class ApolloCoreAudioCaptureForwarder: @unchecked Sendable {
         ApolloCoreAudioCaptureIngressSetProducerActive(handle, active)
     }
 
-    func snapshot() -> ApolloBridgeAudioForwardingSnapshot {
+    func snapshot() -> LumenBridgeAudioForwardingSnapshot {
         let snapshot = ApolloCoreAudioCaptureIngressCopySnapshot(handle)
-        return ApolloBridgeAudioForwardingSnapshot(
+        return LumenBridgeAudioForwardingSnapshot(
             frameCount: snapshot.frame_count,
             eventCount: snapshot.event_count,
             queuedFrameCount: snapshot.queued_frame_count,
@@ -45,7 +45,7 @@ final class ApolloCoreAudioCaptureForwarder: @unchecked Sendable {
             lastFrameChannelCount: snapshot.has_last_frame ? Int(snapshot.last_frame_channel_count) : nil,
             lastFrameFrameCount: snapshot.has_last_frame ? Int(snapshot.last_frame_frame_count) : nil,
             lastFramePCMByteCount: Int(snapshot.last_frame_pcm_byte_count),
-            lastEventKind: snapshot.has_last_event ? ApolloBridgeCaptureEventKind(apolloCoreKind: snapshot.last_event_kind) : nil
+            lastEventKind: snapshot.has_last_event ? LumenBridgeCaptureEventKind(apolloCoreKind: snapshot.last_event_kind) : nil
         )
     }
 
@@ -94,7 +94,7 @@ final class ApolloCoreAudioCaptureForwarder: @unchecked Sendable {
         }
     }
 
-    func popNextFrame() -> ApolloBridgeDrainedAudioFrame? {
+    func popNextFrame() -> LumenBridgeDrainedAudioFrame? {
         let bufferCapacity = 1024 * 1024
         var data = Data(count: bufferCapacity)
         var copiedSize: Int = 0
@@ -112,7 +112,7 @@ final class ApolloCoreAudioCaptureForwarder: @unchecked Sendable {
         }
 
         data.count = copiedSize
-        return ApolloBridgeDrainedAudioFrame(
+        return LumenBridgeDrainedAudioFrame(
             sequenceNumber: record.sequence_number,
             hostTimeNanoseconds: record.host_time_nanoseconds,
             sampleRate: Int(record.sample_rate),
@@ -122,7 +122,7 @@ final class ApolloCoreAudioCaptureForwarder: @unchecked Sendable {
         )
     }
 
-    func popNextEvent() -> ApolloBridgeDrainedAudioEvent? {
+    func popNextEvent() -> LumenBridgeDrainedAudioEvent? {
         var messageBuffer = Array<CChar>(repeating: 0, count: 512)
         let record = messageBuffer.withUnsafeMutableBufferPointer { buffer in
             ApolloCoreAudioCaptureIngressPopNextEvent(
@@ -132,12 +132,12 @@ final class ApolloCoreAudioCaptureForwarder: @unchecked Sendable {
             )
         }
         guard record.has_value,
-              let kind = ApolloBridgeCaptureEventKind(apolloCoreKind: record.kind) else {
+              let kind = LumenBridgeCaptureEventKind(apolloCoreKind: record.kind) else {
             return nil
         }
 
         let message = messageBuffer.first == 0 ? nil : String(cString: messageBuffer)
-        return ApolloBridgeDrainedAudioEvent(
+        return LumenBridgeDrainedAudioEvent(
             kind: kind,
             message: message,
             stopStatus: record.has_stop_status ? record.stop_status : nil,

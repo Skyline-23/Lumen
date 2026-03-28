@@ -12,7 +12,7 @@
 class ApolloMacBridgeForwardingPump {
  public:
   ApolloMacBridgeForwardingPump(
-    ApolloBridgeObjCFacade *facade,
+    LumenBridgeObjCFacade *facade,
     ApolloMacBridgeForwardingCallbacks callbacks,
     uint32_t idle_sleep_milliseconds
   );
@@ -25,7 +25,7 @@ class ApolloMacBridgeForwardingPump {
   void stop();
 
  private:
-  ApolloBridgeObjCFacade *facade_ = nil;
+  LumenBridgeObjCFacade *facade_ = nil;
   ApolloMacBridgeForwardingCallbacks callbacks_ {};
   uint32_t idle_sleep_milliseconds_ = 1;
   std::atomic<bool> running_ {false};
@@ -35,12 +35,12 @@ class ApolloMacBridgeForwardingPump {
 };
 
 struct ApolloMacBridgeController {
-  ApolloBridgeObjCFacade *facade = nil;
+  LumenBridgeObjCFacade *facade = nil;
   std::unique_ptr<ApolloMacBridgeForwardingPump> forwarding_pump;
 };
 
 namespace {
-  ApolloCoreEncodedCaptureFrameRecord to_frame_record(ApolloBridgeDrainedFrameBox *box) {
+  ApolloCoreEncodedCaptureFrameRecord to_frame_record(LumenBridgeDrainedFrameBox *box) {
     ApolloCoreEncodedCaptureFrameRecord record {};
     record.has_value = true;
     record.codec = static_cast<ApolloCoreCaptureCodec>(box.codecRawValue);
@@ -54,7 +54,7 @@ namespace {
     return record;
   }
 
-  ApolloCoreEncodedCaptureEventRecord to_event_record(ApolloBridgeDrainedEventBox *box) {
+  ApolloCoreEncodedCaptureEventRecord to_event_record(LumenBridgeDrainedEventBox *box) {
     ApolloCoreEncodedCaptureEventRecord record {};
     record.has_value = true;
     record.kind = static_cast<ApolloCoreCaptureEventKind>(box.kindRawValue);
@@ -67,7 +67,7 @@ namespace {
     return record;
   }
 
-  ApolloMacBridgeAudioCaptureFrameRecord to_audio_frame_record(ApolloBridgeDrainedAudioFrameBox *box) {
+  ApolloMacBridgeAudioCaptureFrameRecord to_audio_frame_record(LumenBridgeDrainedAudioFrameBox *box) {
     ApolloMacBridgeAudioCaptureFrameRecord record {};
     record.has_value = true;
     record.sequence_number = box.sequenceNumber;
@@ -79,7 +79,7 @@ namespace {
     return record;
   }
 
-  ApolloMacBridgeAudioCaptureEventRecord to_audio_event_record(ApolloBridgeDrainedAudioEventBox *box) {
+  ApolloMacBridgeAudioCaptureEventRecord to_audio_event_record(LumenBridgeDrainedAudioEventBox *box) {
     ApolloMacBridgeAudioCaptureEventRecord record {};
     record.has_value = true;
     record.kind = static_cast<ApolloCoreCaptureEventKind>(box.kindRawValue);
@@ -112,7 +112,7 @@ namespace {
   }
 
   ApolloMacBridgeCaptureConfiguration to_bridge_configuration(
-    ApolloBridgeConfigurationBox *configuration
+    LumenBridgeConfigurationBox *configuration
   ) {
     ApolloMacBridgeCaptureConfiguration result {};
     result.display_id = configuration.displayID;
@@ -161,15 +161,15 @@ namespace {
     return result;
   }
 
-  ApolloBridgeConfigurationBox *to_configuration_box(
+  LumenBridgeConfigurationBox *to_configuration_box(
     ApolloMacBridgeCaptureConfiguration configuration
   ) {
-    ApolloBridgeSinkModeBox *sinkMode = [[ApolloBridgeSinkModeBox alloc]
+    LumenBridgeSinkModeBox *sinkMode = [[LumenBridgeSinkModeBox alloc]
       initWithHidpi:configuration.sink_request.mode.hidpi
       scaleExplicit:configuration.sink_request.mode.scale_explicit
       modeIsLogical:configuration.sink_request.mode.mode_is_logical
       scalePercent:static_cast<NSInteger>(configuration.sink_request.mode.scale_percent)];
-    ApolloBridgeSinkCapabilityBox *sinkCapability = [[ApolloBridgeSinkCapabilityBox alloc]
+    LumenBridgeSinkCapabilityBox *sinkCapability = [[LumenBridgeSinkCapabilityBox alloc]
       initWithGamutRawValue:static_cast<NSInteger>(configuration.sink_request.capability.gamut)
       transferRawValue:static_cast<NSInteger>(configuration.sink_request.capability.transfer)
       currentEDRHeadroom:configuration.sink_request.capability.current_edr_headroom
@@ -179,13 +179,13 @@ namespace {
       supportsFrameGatedHDR:configuration.sink_request.capability.supports_frame_gated_hdr
       supportsHDRTileOverlay:configuration.sink_request.capability.supports_hdr_tile_overlay
       supportsPerFrameHDRMetadata:configuration.sink_request.capability.supports_per_frame_hdr_metadata];
-    ApolloBridgeSinkRequestBox *sinkRequest = [[ApolloBridgeSinkRequestBox alloc]
+    LumenBridgeSinkRequestBox *sinkRequest = [[LumenBridgeSinkRequestBox alloc]
       initWithMode:sinkMode
       capability:sinkCapability
       dynamicRangeTransportRawValue:static_cast<NSInteger>(configuration.sink_request.dynamic_range_transport)];
-    ApolloBridgeHDRStaticMetadataBox *hdrStaticMetadata = nil;
+    LumenBridgeHDRStaticMetadataBox *hdrStaticMetadata = nil;
     if (configuration.effective_display_state.has_hdr_static_metadata) {
-      hdrStaticMetadata = [[ApolloBridgeHDRStaticMetadataBox alloc]
+      hdrStaticMetadata = [[LumenBridgeHDRStaticMetadataBox alloc]
         initWithRedPrimaryX:static_cast<NSInteger>(configuration.effective_display_state.hdr_static_metadata.red_primary_x)
         redPrimaryY:static_cast<NSInteger>(configuration.effective_display_state.hdr_static_metadata.red_primary_y)
         greenPrimaryX:static_cast<NSInteger>(configuration.effective_display_state.hdr_static_metadata.green_primary_x)
@@ -200,11 +200,11 @@ namespace {
         maxFrameAverageLightLevel:static_cast<NSInteger>(configuration.effective_display_state.hdr_static_metadata.max_frame_average_light_level)
         maxFullFrameLuminance:static_cast<NSInteger>(configuration.effective_display_state.hdr_static_metadata.max_full_frame_luminance)];
     }
-    ApolloBridgeEffectiveDisplayStateBox *effectiveDisplayState = [[ApolloBridgeEffectiveDisplayStateBox alloc]
+    LumenBridgeEffectiveDisplayStateBox *effectiveDisplayState = [[LumenBridgeEffectiveDisplayStateBox alloc]
       initWithGamutRawValue:static_cast<NSInteger>(configuration.effective_display_state.gamut)
       transferRawValue:static_cast<NSInteger>(configuration.effective_display_state.transfer)
       hdrStaticMetadata:hdrStaticMetadata];
-    return [[ApolloBridgeConfigurationBox alloc]
+    return [[LumenBridgeConfigurationBox alloc]
       initWithDisplayID:configuration.display_id
            codecRawValue:static_cast<NSInteger>(configuration.codec)
  preprocessStrategyRawValue:static_cast<NSInteger>(configuration.preprocess_strategy)
@@ -219,7 +219,7 @@ namespace {
   }
 
   ApolloMacBridgeAudioCaptureConfiguration to_audio_bridge_configuration(
-    ApolloBridgeAudioConfigurationBox *configuration
+    LumenBridgeAudioConfigurationBox *configuration
   ) {
     ApolloMacBridgeAudioCaptureConfiguration result {};
     result.source_kind = static_cast<ApolloMacBridgeAudioSourceKind>(configuration.sourceKindRawValue);
@@ -232,13 +232,13 @@ namespace {
     return result;
   }
 
-  ApolloBridgeAudioConfigurationBox *to_audio_configuration_box(
+  LumenBridgeAudioConfigurationBox *to_audio_configuration_box(
     ApolloMacBridgeAudioCaptureConfiguration configuration
   ) {
     NSString *inputID = configuration.input_id[0] != '\0' ?
       [NSString stringWithUTF8String:configuration.input_id] :
       nil;
-    return [[ApolloBridgeAudioConfigurationBox alloc]
+    return [[LumenBridgeAudioConfigurationBox alloc]
       initWithSourceKindRawValue:static_cast<NSInteger>(configuration.source_kind)
                        displayID:configuration.display_id
       excludesCurrentProcessAudio:configuration.excludes_current_process_audio
@@ -251,7 +251,7 @@ namespace {
 }
 
 ApolloMacBridgeForwardingPump::ApolloMacBridgeForwardingPump(
-  ApolloBridgeObjCFacade *facade,
+  LumenBridgeObjCFacade *facade,
   ApolloMacBridgeForwardingCallbacks callbacks,
   uint32_t idle_sleep_milliseconds
 ):
@@ -281,7 +281,7 @@ void ApolloMacBridgeForwardingPump::run() {
 
     @autoreleasepool {
       if (callbacks_.encoded_frame_handler) {
-        ApolloBridgeDrainedFrameBox *frame_box = [facade_ popNextCoreForwardedFrameSync];
+        LumenBridgeDrainedFrameBox *frame_box = [facade_ popNextCoreForwardedFrameSync];
         if (frame_box) {
           ApolloCoreEncodedCaptureFrameRecord record = to_frame_record(frame_box);
           CMSampleBufferRef retained_sample_buffer =
@@ -293,7 +293,7 @@ void ApolloMacBridgeForwardingPump::run() {
       }
 
       if (callbacks_.capture_event_handler) {
-        ApolloBridgeDrainedEventBox *event_box = [facade_ popNextCoreForwardedEventSync];
+        LumenBridgeDrainedEventBox *event_box = [facade_ popNextCoreForwardedEventSync];
         if (event_box) {
           ApolloCoreEncodedCaptureEventRecord record = to_event_record(event_box);
           const char *message = event_box.message.UTF8String ?: "";
@@ -303,7 +303,7 @@ void ApolloMacBridgeForwardingPump::run() {
       }
 
       if (callbacks_.audio_frame_handler) {
-        ApolloBridgeDrainedAudioFrameBox *audio_frame_box = [facade_ popNextCoreForwardedAudioFrameSync];
+        LumenBridgeDrainedAudioFrameBox *audio_frame_box = [facade_ popNextCoreForwardedAudioFrameSync];
         if (audio_frame_box) {
           ApolloMacBridgeAudioCaptureFrameRecord record = to_audio_frame_record(audio_frame_box);
           callbacks_.audio_frame_handler(
@@ -317,7 +317,7 @@ void ApolloMacBridgeForwardingPump::run() {
       }
 
       if (callbacks_.audio_capture_event_handler) {
-        ApolloBridgeDrainedAudioEventBox *audio_event_box = [facade_ popNextCoreForwardedAudioEventSync];
+        LumenBridgeDrainedAudioEventBox *audio_event_box = [facade_ popNextCoreForwardedAudioEventSync];
         if (audio_event_box) {
           ApolloMacBridgeAudioCaptureEventRecord record = to_audio_event_record(audio_event_box);
           const char *message = audio_event_box.message.UTF8String ?: "";
@@ -335,7 +335,7 @@ void ApolloMacBridgeForwardingPump::run() {
 
 ApolloMacBridgeController *ApolloMacBridgeControllerCreate(void) {
   auto *controller = new ApolloMacBridgeController();
-  controller->facade = [[ApolloBridgeObjCFacade alloc] init];
+  controller->facade = [[LumenBridgeObjCFacade alloc] init];
   return controller;
 }
 
@@ -352,21 +352,21 @@ void ApolloMacBridgeControllerDestroy(ApolloMacBridgeController *controller) {
 ApolloMacBridgeCaptureConfiguration ApolloMacBridgeControllerMakePanelNativeConfiguration(
   uint32_t display_id
 ) {
-  ApolloBridgeObjCFacade *facade = [[ApolloBridgeObjCFacade alloc] init];
+  LumenBridgeObjCFacade *facade = [[LumenBridgeObjCFacade alloc] init];
   return to_bridge_configuration([facade makePanelNativeConfigurationWithDisplayID:display_id]);
 }
 
 ApolloMacBridgeAudioCaptureConfiguration ApolloMacBridgeControllerMakeDefaultMicrophoneAudioConfiguration(
   void
 ) {
-  ApolloBridgeObjCFacade *facade = [[ApolloBridgeObjCFacade alloc] init];
+  LumenBridgeObjCFacade *facade = [[LumenBridgeObjCFacade alloc] init];
   return to_audio_bridge_configuration([facade makeDefaultMicrophoneAudioConfiguration]);
 }
 
 ApolloMacBridgeAudioCaptureConfiguration ApolloMacBridgeControllerMakeSystemOutputAudioConfiguration(
   uint32_t display_id
 ) {
-  ApolloBridgeObjCFacade *facade = [[ApolloBridgeObjCFacade alloc] init];
+  LumenBridgeObjCFacade *facade = [[LumenBridgeObjCFacade alloc] init];
   return to_audio_bridge_configuration([facade makeSystemOutputAudioConfigurationWithDisplayID:display_id]);
 }
 
@@ -401,7 +401,7 @@ void ApolloMacBridgeControllerStopMacDisplayKitCapture(
 }
 
 void ApolloMacBridgeRequestImmediateCaptureKeyFrame(void) {
-  [ApolloBridgeObjCFacade requestImmediateCaptureKeyFrameSharedSync];
+  [LumenBridgeObjCFacade requestImmediateCaptureKeyFrameSharedSync];
 }
 
 bool ApolloMacBridgeControllerStartMacDisplayKitAudioCapture(
@@ -472,7 +472,7 @@ ApolloMacBridgeStatusSnapshot ApolloMacBridgeControllerCopyStatusSnapshot(
     return snapshot;
   }
 
-  ApolloBridgeStatusBox *box = [controller->facade copyStatusSnapshotSync];
+  LumenBridgeStatusBox *box = [controller->facade copyStatusSnapshotSync];
   copy_string_to_buffer(box.coreVersion, snapshot.core_version, sizeof(snapshot.core_version));
   copy_string_to_buffer(box.runtimeDescription,
                         snapshot.runtime_description,
@@ -507,7 +507,7 @@ ApolloCoreEncodedCaptureIngressSnapshot ApolloMacBridgeControllerCopyCoreForward
     return snapshot;
   }
 
-  ApolloBridgeCoreForwardingSnapshotBox *box = [controller->facade copyCoreForwardingSnapshotSync];
+  LumenBridgeCoreForwardingSnapshotBox *box = [controller->facade copyCoreForwardingSnapshotSync];
   snapshot.frame_count = box.frameCount;
   snapshot.event_count = box.eventCount;
   snapshot.queued_frame_count = box.queuedFrameCount;
@@ -548,7 +548,7 @@ ApolloMacBridgeAudioForwardingSnapshot ApolloMacBridgeControllerCopyAudioForward
     return snapshot;
   }
 
-  ApolloBridgeCoreAudioForwardingSnapshotBox *box = [controller->facade copyAudioForwardingSnapshotSync];
+  LumenBridgeAudioForwardingSnapshotBox *box = [controller->facade copyAudioForwardingSnapshotSync];
   snapshot.frame_count = box.frameCount;
   snapshot.event_count = box.eventCount;
   snapshot.queued_frame_count = box.queuedFrameCount;
@@ -579,7 +579,7 @@ ApolloCoreEncodedCaptureFrameRecord ApolloMacBridgeControllerPopNextForwardedFra
     return record;
   }
 
-  ApolloBridgeDrainedFrameBox *box = [controller->facade popNextCoreForwardedFrameSync];
+  LumenBridgeDrainedFrameBox *box = [controller->facade popNextCoreForwardedFrameSync];
   if (!box) {
     return record;
   }
@@ -612,7 +612,7 @@ ApolloCoreEncodedCaptureEventRecord ApolloMacBridgeControllerPopNextForwardedEve
     return record;
   }
 
-  ApolloBridgeDrainedEventBox *box = [controller->facade popNextCoreForwardedEventSync];
+  LumenBridgeDrainedEventBox *box = [controller->facade popNextCoreForwardedEventSync];
   if (!box) {
     copy_string_to_buffer(nil, message_destination, message_capacity);
     return record;
@@ -644,7 +644,7 @@ ApolloMacBridgeAudioCaptureFrameRecord ApolloMacBridgeControllerPopNextForwarded
     return record;
   }
 
-  ApolloBridgeDrainedAudioFrameBox *box = [controller->facade popNextCoreForwardedAudioFrameSync];
+  LumenBridgeDrainedAudioFrameBox *box = [controller->facade popNextCoreForwardedAudioFrameSync];
   if (!box) {
     return record;
   }
@@ -670,7 +670,7 @@ ApolloMacBridgeAudioCaptureEventRecord ApolloMacBridgeControllerPopNextForwarded
     return record;
   }
 
-  ApolloBridgeDrainedAudioEventBox *box = [controller->facade popNextCoreForwardedAudioEventSync];
+  LumenBridgeDrainedAudioEventBox *box = [controller->facade popNextCoreForwardedAudioEventSync];
   if (!box) {
     copy_string_to_buffer(nil, message_destination, message_capacity);
     return record;

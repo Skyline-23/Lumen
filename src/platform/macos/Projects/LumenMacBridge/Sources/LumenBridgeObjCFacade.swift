@@ -3,7 +3,7 @@ import CoreMedia
 import Foundation
 
 @objcMembers
-public final class ApolloBridgeSinkModeBox: NSObject {
+public final class LumenBridgeSinkModeBox: NSObject {
     public let hidpi: Bool
     public let scaleExplicit: Bool
     public let modeIsLogical: Bool
@@ -23,7 +23,7 @@ public final class ApolloBridgeSinkModeBox: NSObject {
 }
 
 @objcMembers
-public final class ApolloBridgeSinkCapabilityBox: NSObject {
+public final class LumenBridgeSinkCapabilityBox: NSObject {
     public let gamutRawValue: Int
     public let transferRawValue: Int
     public let currentEDRHeadroom: Float
@@ -58,7 +58,7 @@ public final class ApolloBridgeSinkCapabilityBox: NSObject {
 }
 
 @objcMembers
-public final class ApolloBridgeHDRStaticMetadataBox: NSObject {
+public final class LumenBridgeHDRStaticMetadataBox: NSObject {
     public let redPrimaryX: Int
     public let redPrimaryY: Int
     public let greenPrimaryX: Int
@@ -105,14 +105,14 @@ public final class ApolloBridgeHDRStaticMetadataBox: NSObject {
 }
 
 @objcMembers
-public final class ApolloBridgeSinkRequestBox: NSObject {
-    public let mode: ApolloBridgeSinkModeBox
-    public let capability: ApolloBridgeSinkCapabilityBox
+public final class LumenBridgeSinkRequestBox: NSObject {
+    public let mode: LumenBridgeSinkModeBox
+    public let capability: LumenBridgeSinkCapabilityBox
     public let dynamicRangeTransportRawValue: Int
 
     public init(
-        mode: ApolloBridgeSinkModeBox,
-        capability: ApolloBridgeSinkCapabilityBox,
+        mode: LumenBridgeSinkModeBox,
+        capability: LumenBridgeSinkCapabilityBox,
         dynamicRangeTransportRawValue: Int
     ) {
         self.mode = mode
@@ -122,15 +122,15 @@ public final class ApolloBridgeSinkRequestBox: NSObject {
 }
 
 @objcMembers
-public final class ApolloBridgeEffectiveDisplayStateBox: NSObject {
+public final class LumenBridgeEffectiveDisplayStateBox: NSObject {
     public let gamutRawValue: Int
     public let transferRawValue: Int
-    public let hdrStaticMetadata: ApolloBridgeHDRStaticMetadataBox?
+    public let hdrStaticMetadata: LumenBridgeHDRStaticMetadataBox?
 
     public init(
         gamutRawValue: Int,
         transferRawValue: Int,
-        hdrStaticMetadata: ApolloBridgeHDRStaticMetadataBox?
+        hdrStaticMetadata: LumenBridgeHDRStaticMetadataBox?
     ) {
         self.gamutRawValue = gamutRawValue
         self.transferRawValue = transferRawValue
@@ -139,7 +139,7 @@ public final class ApolloBridgeEffectiveDisplayStateBox: NSObject {
 }
 
 @objcMembers
-public final class ApolloBridgeConfigurationBox: NSObject {
+public final class LumenBridgeConfigurationBox: NSObject {
     public let displayID: UInt32
     public let codecRawValue: Int
     public let preprocessStrategyRawValue: Int
@@ -149,8 +149,8 @@ public final class ApolloBridgeConfigurationBox: NSObject {
     public let targetVideoBitRateKbps: Int
     public let requestedWidth: Int
     public let requestedHeight: Int
-    public let sinkRequest: ApolloBridgeSinkRequestBox
-    public let effectiveDisplayState: ApolloBridgeEffectiveDisplayStateBox
+    public let sinkRequest: LumenBridgeSinkRequestBox
+    public let effectiveDisplayState: LumenBridgeEffectiveDisplayStateBox
 
     public init(
         displayID: UInt32,
@@ -162,8 +162,8 @@ public final class ApolloBridgeConfigurationBox: NSObject {
         targetVideoBitRateKbps: Int,
         requestedWidth: Int,
         requestedHeight: Int,
-        sinkRequest: ApolloBridgeSinkRequestBox,
-        effectiveDisplayState: ApolloBridgeEffectiveDisplayStateBox
+        sinkRequest: LumenBridgeSinkRequestBox,
+        effectiveDisplayState: LumenBridgeEffectiveDisplayStateBox
     ) {
         self.displayID = displayID
         self.codecRawValue = codecRawValue
@@ -178,9 +178,9 @@ public final class ApolloBridgeConfigurationBox: NSObject {
         self.effectiveDisplayState = effectiveDisplayState
     }
 
-    convenience init(configuration: ApolloMacDisplayKitCaptureConfiguration) {
+    convenience init(configuration: LumenMacDisplayKitCaptureConfiguration) {
         let hdrStaticMetadata = configuration.effectiveDisplayState.hdrStaticMetadata.map {
-            ApolloBridgeHDRStaticMetadataBox(
+            LumenBridgeHDRStaticMetadataBox(
                 redPrimaryX: $0.redPrimaryX,
                 redPrimaryY: $0.redPrimaryY,
                 greenPrimaryX: $0.greenPrimaryX,
@@ -196,16 +196,16 @@ public final class ApolloBridgeConfigurationBox: NSObject {
                 maxFullFrameLuminance: $0.maxFullFrameLuminance
             )
         }
-        let sinkRequest = ApolloBridgeSinkRequestBox(
-            mode: ApolloBridgeSinkModeBox(
+        let sinkRequest = LumenBridgeSinkRequestBox(
+            mode: LumenBridgeSinkModeBox(
                 hidpi: configuration.sinkRequest.mode.hidpi,
                 scaleExplicit: configuration.sinkRequest.mode.scaleExplicit,
                 modeIsLogical: configuration.sinkRequest.mode.modeIsLogical,
                 scalePercent: configuration.sinkRequest.mode.scalePercent
             ),
-            capability: ApolloBridgeSinkCapabilityBox(
-                gamutRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.sinkRequest.capability.gamut),
-                transferRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.sinkRequest.capability.transfer),
+            capability: LumenBridgeSinkCapabilityBox(
+                gamutRawValue: LumenBridgeObjCFacade.rawValue(for: configuration.sinkRequest.capability.gamut),
+                transferRawValue: LumenBridgeObjCFacade.rawValue(for: configuration.sinkRequest.capability.transfer),
                 currentEDRHeadroom: configuration.sinkRequest.capability.currentEDRHeadroom,
                 potentialEDRHeadroom: configuration.sinkRequest.capability.potentialEDRHeadroom,
                 currentPeakLuminanceNits: configuration.sinkRequest.capability.currentPeakLuminanceNits,
@@ -218,26 +218,26 @@ public final class ApolloBridgeConfigurationBox: NSObject {
         )
         self.init(
             displayID: configuration.displayID,
-            codecRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.codec),
-            preprocessStrategyRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.preprocessStrategy),
-            queueProfileRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.queueProfile),
+            codecRawValue: LumenBridgeObjCFacade.rawValue(for: configuration.codec),
+            preprocessStrategyRawValue: LumenBridgeObjCFacade.rawValue(for: configuration.preprocessStrategy),
+            queueProfileRawValue: LumenBridgeObjCFacade.rawValue(for: configuration.queueProfile),
             showCursor: configuration.showCursor,
             targetFrameRate: configuration.targetFrameRate,
             targetVideoBitRateKbps: configuration.targetVideoBitRateKbps,
             requestedWidth: configuration.requestedWidth ?? 0,
             requestedHeight: configuration.requestedHeight ?? 0,
             sinkRequest: sinkRequest,
-            effectiveDisplayState: ApolloBridgeEffectiveDisplayStateBox(
-                gamutRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.effectiveDisplayState.gamut),
-                transferRawValue: ApolloBridgeObjCFacade.rawValue(for: configuration.effectiveDisplayState.transfer),
+            effectiveDisplayState: LumenBridgeEffectiveDisplayStateBox(
+                gamutRawValue: LumenBridgeObjCFacade.rawValue(for: configuration.effectiveDisplayState.gamut),
+                transferRawValue: LumenBridgeObjCFacade.rawValue(for: configuration.effectiveDisplayState.transfer),
                 hdrStaticMetadata: hdrStaticMetadata
             )
         )
     }
 
-    var swiftValue: ApolloMacDisplayKitCaptureConfiguration {
+    var swiftValue: LumenMacDisplayKitCaptureConfiguration {
         let hdrStaticMetadata = effectiveDisplayState.hdrStaticMetadata.map {
-            ApolloHDRStaticMetadata(
+            LumenHDRStaticMetadata(
                 redPrimaryX: $0.redPrimaryX,
                 redPrimaryY: $0.redPrimaryY,
                 greenPrimaryX: $0.greenPrimaryX,
@@ -253,26 +253,26 @@ public final class ApolloBridgeConfigurationBox: NSObject {
                 maxFullFrameLuminance: $0.maxFullFrameLuminance
             )
         }
-        return ApolloMacDisplayKitCaptureConfiguration(
+        return LumenMacDisplayKitCaptureConfiguration(
             displayID: displayID,
-            codec: ApolloBridgeObjCFacade.codec(fromRawValue: codecRawValue),
-            preprocessStrategy: ApolloBridgeObjCFacade.preprocessStrategy(fromRawValue: preprocessStrategyRawValue),
-            queueProfile: ApolloBridgeObjCFacade.queueProfile(fromRawValue: queueProfileRawValue),
+            codec: LumenBridgeObjCFacade.codec(fromRawValue: codecRawValue),
+            preprocessStrategy: LumenBridgeObjCFacade.preprocessStrategy(fromRawValue: preprocessStrategyRawValue),
+            queueProfile: LumenBridgeObjCFacade.queueProfile(fromRawValue: queueProfileRawValue),
             showCursor: showCursor,
             targetFrameRate: targetFrameRate,
             targetVideoBitRateKbps: targetVideoBitRateKbps,
             requestedWidth: requestedWidth,
             requestedHeight: requestedHeight,
-            sinkRequest: ApolloBridgeSinkRequest(
-                mode: ApolloBridgeSinkMode(
+            sinkRequest: LumenBridgeSinkRequest(
+                mode: LumenBridgeSinkMode(
                     hidpi: sinkRequest.mode.hidpi,
                     scaleExplicit: sinkRequest.mode.scaleExplicit,
                     modeIsLogical: sinkRequest.mode.modeIsLogical,
                     scalePercent: sinkRequest.mode.scalePercent
                 ),
-                capability: ApolloBridgeSinkCapability(
-                    gamut: ApolloBridgeObjCFacade.clientSinkGamut(fromRawValue: sinkRequest.capability.gamutRawValue),
-                    transfer: ApolloBridgeObjCFacade.clientSinkTransfer(fromRawValue: sinkRequest.capability.transferRawValue),
+                capability: LumenBridgeSinkCapability(
+                    gamut: LumenBridgeObjCFacade.clientSinkGamut(fromRawValue: sinkRequest.capability.gamutRawValue),
+                    transfer: LumenBridgeObjCFacade.clientSinkTransfer(fromRawValue: sinkRequest.capability.transferRawValue),
                     currentEDRHeadroom: sinkRequest.capability.currentEDRHeadroom,
                     potentialEDRHeadroom: sinkRequest.capability.potentialEDRHeadroom,
                     currentPeakLuminanceNits: sinkRequest.capability.currentPeakLuminanceNits,
@@ -285,9 +285,9 @@ public final class ApolloBridgeConfigurationBox: NSObject {
                     rawValue: UInt32(sinkRequest.dynamicRangeTransportRawValue)
                 )
             ),
-            effectiveDisplayState: ApolloBridgeEffectiveDisplayState(
-                gamut: ApolloBridgeObjCFacade.clientSinkGamut(fromRawValue: effectiveDisplayState.gamutRawValue),
-                transfer: ApolloBridgeObjCFacade.clientSinkTransfer(fromRawValue: effectiveDisplayState.transferRawValue),
+            effectiveDisplayState: LumenBridgeEffectiveDisplayState(
+                gamut: LumenBridgeObjCFacade.clientSinkGamut(fromRawValue: effectiveDisplayState.gamutRawValue),
+                transfer: LumenBridgeObjCFacade.clientSinkTransfer(fromRawValue: effectiveDisplayState.transferRawValue),
                 hdrStaticMetadata: hdrStaticMetadata
             )
         )
@@ -295,7 +295,7 @@ public final class ApolloBridgeConfigurationBox: NSObject {
 }
 
 @objcMembers
-public final class ApolloBridgeAudioConfigurationBox: NSObject {
+public final class LumenBridgeAudioConfigurationBox: NSObject {
     public let sourceKindRawValue: Int
     public let displayID: UInt32
     public let excludesCurrentProcessAudio: Bool
@@ -322,11 +322,11 @@ public final class ApolloBridgeAudioConfigurationBox: NSObject {
         self.frameSize = frameSize
     }
 
-    convenience init(configuration: ApolloMacDisplayKitAudioCaptureConfiguration) {
+    convenience init(configuration: LumenMacDisplayKitAudioCaptureConfiguration) {
         switch configuration.source {
         case .microphone(let inputID):
             self.init(
-                sourceKindRawValue: ApolloBridgeObjCFacade.rawValue(for: ApolloAudioCaptureSourceKind.microphone),
+                sourceKindRawValue: LumenBridgeObjCFacade.rawValue(for: LumenAudioCaptureSourceKind.microphone),
                 displayID: 0,
                 excludesCurrentProcessAudio: false,
                 inputID: inputID,
@@ -336,7 +336,7 @@ public final class ApolloBridgeAudioConfigurationBox: NSObject {
             )
         case .systemOutput(let displayID, let excludesCurrentProcessAudio):
             self.init(
-                sourceKindRawValue: ApolloBridgeObjCFacade.rawValue(for: ApolloAudioCaptureSourceKind.systemOutput),
+                sourceKindRawValue: LumenBridgeObjCFacade.rawValue(for: LumenAudioCaptureSourceKind.systemOutput),
                 displayID: displayID,
                 excludesCurrentProcessAudio: excludesCurrentProcessAudio,
                 inputID: nil,
@@ -347,8 +347,8 @@ public final class ApolloBridgeAudioConfigurationBox: NSObject {
         }
     }
 
-    var swiftValue: ApolloMacDisplayKitAudioCaptureConfiguration {
-        let sourceKind = ApolloBridgeObjCFacade.audioSourceKind(fromRawValue: sourceKindRawValue)
+    var swiftValue: LumenMacDisplayKitAudioCaptureConfiguration {
+        let sourceKind = LumenBridgeObjCFacade.audioSourceKind(fromRawValue: sourceKindRawValue)
         switch sourceKind {
         case .microphone:
             return .microphone(
@@ -370,7 +370,7 @@ public final class ApolloBridgeAudioConfigurationBox: NSObject {
 }
 
 @objcMembers
-public final class ApolloBridgeStatusBox: NSObject {
+public final class LumenBridgeStatusBox: NSObject {
     public let coreVersion: String
     public let runtimeDescription: String
     public let integrationStatus: String
@@ -378,7 +378,7 @@ public final class ApolloBridgeStatusBox: NSObject {
     public let audioCaptureSessionRunning: Bool
     public let automaticCaptureOrchestrationRunning: Bool
 
-    init(snapshot: ApolloBridgeStatus) {
+    init(snapshot: LumenBridgeStatus) {
         self.coreVersion = snapshot.coreVersion
         self.runtimeDescription = snapshot.runtimeDescription
         self.integrationStatus = snapshot.integrationStatus
@@ -389,7 +389,7 @@ public final class ApolloBridgeStatusBox: NSObject {
 }
 
 @objcMembers
-public final class ApolloBridgeCoreAudioForwardingSnapshotBox: NSObject {
+public final class LumenBridgeAudioForwardingSnapshotBox: NSObject {
     public let frameCount: UInt64
     public let eventCount: UInt64
     public let queuedFrameCount: UInt64
@@ -405,7 +405,7 @@ public final class ApolloBridgeCoreAudioForwardingSnapshotBox: NSObject {
     public let lastFramePCMByteCount: Int
     public let lastEventKindRawValue: Int
 
-    init(snapshot: ApolloBridgeAudioForwardingSnapshot) {
+    init(snapshot: LumenBridgeAudioForwardingSnapshot) {
         self.frameCount = snapshot.frameCount
         self.eventCount = snapshot.eventCount
         self.queuedFrameCount = snapshot.queuedFrameCount
@@ -419,12 +419,12 @@ public final class ApolloBridgeCoreAudioForwardingSnapshotBox: NSObject {
         self.lastFrameChannelCount = snapshot.lastFrameChannelCount ?? 0
         self.lastFrameFrameCount = snapshot.lastFrameFrameCount ?? 0
         self.lastFramePCMByteCount = snapshot.lastFramePCMByteCount
-        self.lastEventKindRawValue = snapshot.lastEventKind.map(ApolloBridgeObjCFacade.rawValue(for:)) ?? -1
+        self.lastEventKindRawValue = snapshot.lastEventKind.map(LumenBridgeObjCFacade.rawValue(for:)) ?? -1
     }
 }
 
 @objcMembers
-public final class ApolloBridgeCoreForwardingSnapshotBox: NSObject {
+public final class LumenBridgeCoreForwardingSnapshotBox: NSObject {
     public let frameCount: UInt64
     public let eventCount: UInt64
     public let queuedFrameCount: UInt64
@@ -442,7 +442,7 @@ public final class ApolloBridgeCoreForwardingSnapshotBox: NSObject {
     public let lastFrameIsHDRSignaled: Bool
     public let lastEventKindRawValue: Int
 
-    init(snapshot: ApolloBridgeCoreForwardingSnapshot) {
+    init(snapshot: LumenBridgeCoreForwardingSnapshot) {
         self.frameCount = snapshot.frameCount
         self.eventCount = snapshot.eventCount
         self.queuedFrameCount = snapshot.queuedFrameCount
@@ -450,7 +450,7 @@ public final class ApolloBridgeCoreForwardingSnapshotBox: NSObject {
         self.droppedFrameCount = snapshot.droppedFrameCount
         self.droppedEventCount = snapshot.droppedEventCount
         self.hasLastSampleBuffer = snapshot.hasLastSampleBuffer
-        self.lastFrameCodecRawValue = snapshot.lastFrameCodec.map(ApolloBridgeObjCFacade.rawValue(for:)) ?? -1
+        self.lastFrameCodecRawValue = snapshot.lastFrameCodec.map(LumenBridgeObjCFacade.rawValue(for:)) ?? -1
         self.lastFramePayloadSize = snapshot.lastFramePayloadSize
         self.hasLastFrameSourceSequenceNumber = snapshot.lastFrameSourceSequenceNumber != nil
         self.lastFrameSourceSequenceNumber = snapshot.lastFrameSourceSequenceNumber ?? 0
@@ -458,12 +458,12 @@ public final class ApolloBridgeCoreForwardingSnapshotBox: NSObject {
         self.lastFrameSourceDisplayTime = snapshot.lastFrameSourceDisplayTime ?? 0
         self.lastFrameIsKeyFrame = snapshot.lastFrameIsKeyFrame
         self.lastFrameIsHDRSignaled = snapshot.lastFrameIsHDRSignaled
-        self.lastEventKindRawValue = snapshot.lastEventKind.map(ApolloBridgeObjCFacade.rawValue(for:)) ?? -1
+        self.lastEventKindRawValue = snapshot.lastEventKind.map(LumenBridgeObjCFacade.rawValue(for:)) ?? -1
     }
 }
 
 @objcMembers
-public final class ApolloBridgeDrainedAudioFrameBox: NSObject {
+public final class LumenBridgeDrainedAudioFrameBox: NSObject {
     public let sequenceNumber: UInt64
     public let hostTimeNanoseconds: UInt64
     public let sampleRate: Int
@@ -471,7 +471,7 @@ public final class ApolloBridgeDrainedAudioFrameBox: NSObject {
     public let frameCount: Int
     public let pcmFloat32LE: NSData
 
-    init(frame: ApolloBridgeDrainedAudioFrame) {
+    init(frame: LumenBridgeDrainedAudioFrame) {
         self.sequenceNumber = frame.sequenceNumber
         self.hostTimeNanoseconds = frame.hostTimeNanoseconds
         self.sampleRate = frame.sampleRate
@@ -482,7 +482,7 @@ public final class ApolloBridgeDrainedAudioFrameBox: NSObject {
 }
 
 @objcMembers
-public final class ApolloBridgeDrainedFrameBox: NSObject {
+public final class LumenBridgeDrainedFrameBox: NSObject {
     public let codecRawValue: Int
     public let payloadSize: Int
     public let sourceSequenceNumber: UInt64
@@ -493,8 +493,8 @@ public final class ApolloBridgeDrainedFrameBox: NSObject {
     public let isHDRSignaled: Bool
     public let sampleBuffer: CMSampleBuffer
 
-    init(frame: ApolloBridgeCoreDrainedFrame) {
-        self.codecRawValue = ApolloBridgeObjCFacade.rawValue(for: frame.codec)
+    init(frame: LumenBridgeCoreDrainedFrame) {
+        self.codecRawValue = LumenBridgeObjCFacade.rawValue(for: frame.codec)
         self.payloadSize = frame.payloadSize
         self.sourceSequenceNumber = frame.sourceSequenceNumber
         self.sourceDisplayTime = frame.sourceDisplayTime
@@ -507,7 +507,7 @@ public final class ApolloBridgeDrainedFrameBox: NSObject {
 }
 
 @objcMembers
-public final class ApolloBridgeDrainedAudioEventBox: NSObject {
+public final class LumenBridgeDrainedAudioEventBox: NSObject {
     public let kindRawValue: Int
     public let message: String?
     public let hasStopStatus: Bool
@@ -517,8 +517,8 @@ public final class ApolloBridgeDrainedAudioEventBox: NSObject {
     public let hasSourceSequenceNumber: Bool
     public let sourceSequenceNumber: UInt64
 
-    init(event: ApolloBridgeDrainedAudioEvent) {
-        self.kindRawValue = ApolloBridgeObjCFacade.rawValue(for: event.kind)
+    init(event: LumenBridgeDrainedAudioEvent) {
+        self.kindRawValue = LumenBridgeObjCFacade.rawValue(for: event.kind)
         self.message = event.message
         self.hasStopStatus = event.stopStatus != nil
         self.stopStatus = event.stopStatus ?? 0
@@ -530,7 +530,7 @@ public final class ApolloBridgeDrainedAudioEventBox: NSObject {
 }
 
 @objcMembers
-public final class ApolloBridgeDrainedEventBox: NSObject {
+public final class LumenBridgeDrainedEventBox: NSObject {
     public let kindRawValue: Int
     public let message: String?
     public let hasStopStatus: Bool
@@ -540,8 +540,8 @@ public final class ApolloBridgeDrainedEventBox: NSObject {
     public let hasSourceDisplayTime: Bool
     public let sourceDisplayTime: UInt64
 
-    init(event: ApolloBridgeCoreDrainedEvent) {
-        self.kindRawValue = ApolloBridgeObjCFacade.rawValue(for: event.kind)
+    init(event: LumenBridgeCoreDrainedEvent) {
+        self.kindRawValue = LumenBridgeObjCFacade.rawValue(for: event.kind)
         self.message = event.message
         self.hasStopStatus = event.stopStatus != nil
         self.stopStatus = event.stopStatus ?? 0
@@ -553,41 +553,41 @@ public final class ApolloBridgeDrainedEventBox: NSObject {
 }
 
 @objcMembers
-public final class ApolloBridgeObjCFacade: NSObject {
-    private let runtime: ApolloBridgeRuntime
+public final class LumenBridgeObjCFacade: NSObject {
+    private let runtime: LumenBridgeRuntime
 
     @objc public static func runtimeStatusDidChangeNotificationName() -> String {
-        ApolloBridgeRuntime.statusDidChangeNotification.rawValue
+        LumenBridgeRuntime.statusDidChangeNotification.rawValue
     }
 
     public override init() {
-        self.runtime = ApolloBridgeRuntime.shared
+        self.runtime = LumenBridgeRuntime.shared
         super.init()
     }
 
     @objc public static func requestImmediateCaptureKeyFrameSharedSync() {
         let semaphore = DispatchSemaphore(value: 0)
         Task {
-            await ApolloBridgeRuntime.shared.requestImmediateCaptureKeyFrame()
+            await LumenBridgeRuntime.shared.requestImmediateCaptureKeyFrame()
             semaphore.signal()
         }
         semaphore.wait()
     }
 
-    public func makePanelNativeConfiguration(displayID: UInt32) -> ApolloBridgeConfigurationBox {
-        ApolloBridgeConfigurationBox(configuration: .panelNative(displayID: displayID))
+    public func makePanelNativeConfiguration(displayID: UInt32) -> LumenBridgeConfigurationBox {
+        LumenBridgeConfigurationBox(configuration: .panelNative(displayID: displayID))
     }
 
-    public func makeDefaultMicrophoneAudioConfiguration() -> ApolloBridgeAudioConfigurationBox {
-        ApolloBridgeAudioConfigurationBox(configuration: .microphone())
+    public func makeDefaultMicrophoneAudioConfiguration() -> LumenBridgeAudioConfigurationBox {
+        LumenBridgeAudioConfigurationBox(configuration: .microphone())
     }
 
-    public func makeSystemOutputAudioConfiguration(displayID: UInt32) -> ApolloBridgeAudioConfigurationBox {
-        ApolloBridgeAudioConfigurationBox(configuration: .systemOutput(displayID: displayID))
+    public func makeSystemOutputAudioConfiguration(displayID: UInt32) -> LumenBridgeAudioConfigurationBox {
+        LumenBridgeAudioConfigurationBox(configuration: .systemOutput(displayID: displayID))
     }
 
     public func startMacDisplayKitCaptureSync(
-        _ configuration: ApolloBridgeConfigurationBox,
+        _ configuration: LumenBridgeConfigurationBox,
         error errorPointer: NSErrorPointer
     ) -> Bool {
         do {
@@ -614,7 +614,7 @@ public final class ApolloBridgeObjCFacade: NSObject {
     }
 
     public func startMacDisplayKitAudioCaptureSync(
-        _ configuration: ApolloBridgeAudioConfigurationBox,
+        _ configuration: LumenBridgeAudioConfigurationBox,
         error errorPointer: NSErrorPointer
     ) -> Bool {
         do {
@@ -652,14 +652,14 @@ public final class ApolloBridgeObjCFacade: NSObject {
         }) ?? false
     }
 
-    public func copyStatusSnapshotSync() -> ApolloBridgeStatusBox {
+    public func copyStatusSnapshotSync() -> LumenBridgeStatusBox {
         (try? blockingRun { [self] in
-            ApolloBridgeStatusBox(snapshot: await self.runtime.statusSnapshot())
-        }) ?? ApolloBridgeStatusBox(
-            snapshot: ApolloBridgeStatus(
+            LumenBridgeStatusBox(snapshot: await self.runtime.statusSnapshot())
+        }) ?? LumenBridgeStatusBox(
+            snapshot: LumenBridgeStatus(
                 coreVersion: String(cString: ApolloCoreBootstrapVersionString()),
                 runtimeDescription: String(cString: ApolloCoreBootstrapRuntimeDescription()),
-                integrationStatus: "ApolloBridgeObjCFacade failed to read the actor-backed status snapshot.",
+                integrationStatus: "LumenBridgeObjCFacade failed to read the actor-backed status snapshot.",
                 captureSessionRunning: false,
                 audioCaptureSessionRunning: false,
                 automaticCaptureOrchestrationRunning: false
@@ -676,13 +676,13 @@ public final class ApolloBridgeObjCFacade: NSObject {
         }
     }
 
-    public func copyCoreForwardingSnapshotSync() -> ApolloBridgeCoreForwardingSnapshotBox {
+    public func copyCoreForwardingSnapshotSync() -> LumenBridgeCoreForwardingSnapshotBox {
         (try? blockingRun { [self] in
-            ApolloBridgeCoreForwardingSnapshotBox(
+            LumenBridgeCoreForwardingSnapshotBox(
                 snapshot: await self.runtime.coreForwardingSnapshot()
             )
-        }) ?? ApolloBridgeCoreForwardingSnapshotBox(
-            snapshot: ApolloBridgeCoreForwardingSnapshot(
+        }) ?? LumenBridgeCoreForwardingSnapshotBox(
+            snapshot: LumenBridgeCoreForwardingSnapshot(
                 snapshot: ApolloCoreEncodedCaptureIngressSnapshot()
             )
         )
@@ -697,13 +697,13 @@ public final class ApolloBridgeObjCFacade: NSObject {
         }
     }
 
-    public func copyAudioForwardingSnapshotSync() -> ApolloBridgeCoreAudioForwardingSnapshotBox {
+    public func copyAudioForwardingSnapshotSync() -> LumenBridgeAudioForwardingSnapshotBox {
         (try? blockingRun { [self] in
-            ApolloBridgeCoreAudioForwardingSnapshotBox(
+            LumenBridgeAudioForwardingSnapshotBox(
                 snapshot: await self.runtime.audioForwardingSnapshot()
             )
-        }) ?? ApolloBridgeCoreAudioForwardingSnapshotBox(
-            snapshot: ApolloBridgeAudioForwardingSnapshot(
+        }) ?? LumenBridgeAudioForwardingSnapshotBox(
+            snapshot: LumenBridgeAudioForwardingSnapshot(
                 frameCount: 0,
                 eventCount: 0,
                 queuedFrameCount: 0,
@@ -721,34 +721,34 @@ public final class ApolloBridgeObjCFacade: NSObject {
         )
     }
 
-    public func popNextCoreForwardedFrameSync() -> ApolloBridgeDrainedFrameBox? {
+    public func popNextCoreForwardedFrameSync() -> LumenBridgeDrainedFrameBox? {
         try? blockingRun { [self] in
             await self.runtime.drainNextCoreForwardedFrame().map {
-                ApolloBridgeDrainedFrameBox(frame: $0)
+                LumenBridgeDrainedFrameBox(frame: $0)
             }
         }
     }
 
-    public func popNextCoreForwardedEventSync() -> ApolloBridgeDrainedEventBox? {
+    public func popNextCoreForwardedEventSync() -> LumenBridgeDrainedEventBox? {
         try? blockingRun { [self] in
             await self.runtime.drainNextCoreForwardedEvent().map {
-                ApolloBridgeDrainedEventBox(event: $0)
+                LumenBridgeDrainedEventBox(event: $0)
             }
         }
     }
 
-    public func popNextCoreForwardedAudioFrameSync() -> ApolloBridgeDrainedAudioFrameBox? {
+    public func popNextCoreForwardedAudioFrameSync() -> LumenBridgeDrainedAudioFrameBox? {
         try? blockingRun { [self] in
             await self.runtime.drainNextCoreForwardedAudioFrame().map {
-                ApolloBridgeDrainedAudioFrameBox(frame: $0)
+                LumenBridgeDrainedAudioFrameBox(frame: $0)
             }
         }
     }
 
-    public func popNextCoreForwardedAudioEventSync() -> ApolloBridgeDrainedAudioEventBox? {
+    public func popNextCoreForwardedAudioEventSync() -> LumenBridgeDrainedAudioEventBox? {
         try? blockingRun { [self] in
             await self.runtime.drainNextCoreForwardedAudioEvent().map {
-                ApolloBridgeDrainedAudioEventBox(event: $0)
+                LumenBridgeDrainedAudioEventBox(event: $0)
             }
         }
     }
@@ -786,14 +786,14 @@ public final class ApolloBridgeObjCFacade: NSObject {
             case .failure(let error):
                 throw error
             case .none:
-                fatalError("ApolloBridgeObjCFacade blockingRun resolved without a result")
+                fatalError("LumenBridgeObjCFacade blockingRun resolved without a result")
             }
         }
     }
 }
 
-extension ApolloBridgeObjCFacade {
-    static func codec(fromRawValue rawValue: Int) -> ApolloCaptureCodec {
+extension LumenBridgeObjCFacade {
+    static func codec(fromRawValue rawValue: Int) -> LumenCaptureCodec {
         switch rawValue {
         case Int(ApolloCoreCaptureCodecH264.rawValue):
             return .h264
@@ -806,7 +806,7 @@ extension ApolloBridgeObjCFacade {
         }
     }
 
-    static func preprocessStrategy(fromRawValue rawValue: Int) -> ApolloCapturePreprocessStrategy {
+    static func preprocessStrategy(fromRawValue rawValue: Int) -> LumenCapturePreprocessStrategy {
         switch rawValue {
         case 1:
             return .downscale2x
@@ -815,7 +815,7 @@ extension ApolloBridgeObjCFacade {
         }
     }
 
-    static func queueProfile(fromRawValue rawValue: Int) -> ApolloCaptureQueueProfile {
+    static func queueProfile(fromRawValue rawValue: Int) -> LumenCaptureQueueProfile {
         switch rawValue {
         case 4:
             return .auto
@@ -832,7 +832,7 @@ extension ApolloBridgeObjCFacade {
         }
     }
 
-    static func clientSinkGamut(fromRawValue rawValue: Int) -> ApolloClientSinkGamut {
+    static func clientSinkGamut(fromRawValue rawValue: Int) -> LumenClientSinkGamut {
         switch rawValue {
         case 1:
             return .srgb
@@ -845,7 +845,7 @@ extension ApolloBridgeObjCFacade {
         }
     }
 
-    static func clientSinkTransfer(fromRawValue rawValue: Int) -> ApolloClientSinkTransfer {
+    static func clientSinkTransfer(fromRawValue rawValue: Int) -> LumenClientSinkTransfer {
         switch rawValue {
         case 1:
             return .sdr
@@ -858,7 +858,7 @@ extension ApolloBridgeObjCFacade {
         }
     }
 
-    static func audioSourceKind(fromRawValue rawValue: Int) -> ApolloAudioCaptureSourceKind {
+    static func audioSourceKind(fromRawValue rawValue: Int) -> LumenAudioCaptureSourceKind {
         switch rawValue {
         case 1:
             return .systemOutput
@@ -867,7 +867,7 @@ extension ApolloBridgeObjCFacade {
         }
     }
 
-    static func rawValue(for codec: ApolloCaptureCodec) -> Int {
+    static func rawValue(for codec: LumenCaptureCodec) -> Int {
         switch codec {
         case .h264:
             return Int(ApolloCoreCaptureCodecH264.rawValue)
@@ -878,7 +878,7 @@ extension ApolloBridgeObjCFacade {
         }
     }
 
-    static func rawValue(for strategy: ApolloCapturePreprocessStrategy) -> Int {
+    static func rawValue(for strategy: LumenCapturePreprocessStrategy) -> Int {
         switch strategy {
         case .none:
             return 0
@@ -887,7 +887,7 @@ extension ApolloBridgeObjCFacade {
         }
     }
 
-    static func rawValue(for queueProfile: ApolloCaptureQueueProfile) -> Int {
+    static func rawValue(for queueProfile: LumenCaptureQueueProfile) -> Int {
         switch queueProfile {
         case .auto:
             return 4
@@ -902,7 +902,7 @@ extension ApolloBridgeObjCFacade {
         }
     }
 
-    static func rawValue(for clientSinkGamut: ApolloClientSinkGamut) -> Int {
+    static func rawValue(for clientSinkGamut: LumenClientSinkGamut) -> Int {
         switch clientSinkGamut {
         case .unknown:
             return 0
@@ -915,7 +915,7 @@ extension ApolloBridgeObjCFacade {
         }
     }
 
-    static func rawValue(for clientSinkTransfer: ApolloClientSinkTransfer) -> Int {
+    static func rawValue(for clientSinkTransfer: LumenClientSinkTransfer) -> Int {
         switch clientSinkTransfer {
         case .unknown:
             return 0
@@ -928,7 +928,7 @@ extension ApolloBridgeObjCFacade {
         }
     }
 
-    static func rawValue(for audioSourceKind: ApolloAudioCaptureSourceKind) -> Int {
+    static func rawValue(for audioSourceKind: LumenAudioCaptureSourceKind) -> Int {
         switch audioSourceKind {
         case .microphone:
             return 0
@@ -937,7 +937,7 @@ extension ApolloBridgeObjCFacade {
         }
     }
 
-    static func rawValue(for eventKind: ApolloBridgeCaptureEventKind) -> Int {
+    static func rawValue(for eventKind: LumenBridgeCaptureEventKind) -> Int {
         switch eventKind {
         case .started:
             return Int(ApolloCoreCaptureEventKindStarted.rawValue)

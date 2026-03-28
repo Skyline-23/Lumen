@@ -3,7 +3,7 @@ import CoreMedia
 import Foundation
 import MacDisplayCaptureKit
 
-public struct ApolloBridgeCoreForwardingSnapshot: Equatable, Sendable {
+public struct LumenBridgeCoreForwardingSnapshot: Equatable, Sendable {
     public let frameCount: UInt64
     public let eventCount: UInt64
     public let queuedFrameCount: UInt64
@@ -11,13 +11,13 @@ public struct ApolloBridgeCoreForwardingSnapshot: Equatable, Sendable {
     public let droppedFrameCount: UInt64
     public let droppedEventCount: UInt64
     public let hasLastSampleBuffer: Bool
-    public let lastFrameCodec: ApolloCaptureCodec?
+    public let lastFrameCodec: LumenCaptureCodec?
     public let lastFramePayloadSize: Int
     public let lastFrameSourceSequenceNumber: UInt64?
     public let lastFrameSourceDisplayTime: UInt64?
     public let lastFrameIsKeyFrame: Bool
     public let lastFrameIsHDRSignaled: Bool
-    public let lastEventKind: ApolloBridgeCaptureEventKind?
+    public let lastEventKind: LumenBridgeCaptureEventKind?
 
     init(snapshot: ApolloCoreEncodedCaptureIngressSnapshot) {
         self.frameCount = snapshot.frame_count
@@ -27,18 +27,18 @@ public struct ApolloBridgeCoreForwardingSnapshot: Equatable, Sendable {
         self.droppedFrameCount = snapshot.dropped_frame_count
         self.droppedEventCount = snapshot.dropped_event_count
         self.hasLastSampleBuffer = snapshot.has_last_sample_buffer
-        self.lastFrameCodec = snapshot.has_last_frame ? ApolloCaptureCodec(apolloCoreCodec: snapshot.last_frame_codec) : nil
+        self.lastFrameCodec = snapshot.has_last_frame ? LumenCaptureCodec(apolloCoreCodec: snapshot.last_frame_codec) : nil
         self.lastFramePayloadSize = Int(snapshot.last_frame_payload_size)
         self.lastFrameSourceSequenceNumber = snapshot.has_last_frame ? snapshot.last_frame_source_sequence_number : nil
         self.lastFrameSourceDisplayTime = snapshot.has_last_frame ? snapshot.last_frame_source_display_time : nil
         self.lastFrameIsKeyFrame = snapshot.last_frame_is_key_frame
         self.lastFrameIsHDRSignaled = snapshot.last_frame_is_hdr_signaled
-        self.lastEventKind = snapshot.has_last_event ? ApolloBridgeCaptureEventKind(apolloCoreKind: snapshot.last_event_kind) : nil
+        self.lastEventKind = snapshot.has_last_event ? LumenBridgeCaptureEventKind(apolloCoreKind: snapshot.last_event_kind) : nil
     }
 }
 
-public struct ApolloBridgeCoreDrainedFrame: @unchecked Sendable {
-    public let codec: ApolloCaptureCodec
+public struct LumenBridgeCoreDrainedFrame: @unchecked Sendable {
+    public let codec: LumenCaptureCodec
     public let payloadSize: Int
     public let sourceSequenceNumber: UInt64
     public let sourceDisplayTime: UInt64
@@ -48,15 +48,15 @@ public struct ApolloBridgeCoreDrainedFrame: @unchecked Sendable {
     public let sampleBuffer: CMSampleBuffer
 }
 
-public struct ApolloBridgeCoreDrainedEvent: Equatable, Sendable {
-    public let kind: ApolloBridgeCaptureEventKind
+public struct LumenBridgeCoreDrainedEvent: Equatable, Sendable {
+    public let kind: LumenBridgeCaptureEventKind
     public let message: String?
     public let stopStatus: Int32?
     public let automaticRestartCount: UInt64?
     public let sourceDisplayTime: UInt64?
 }
 
-final class ApolloCoreCaptureForwarder: @unchecked Sendable {
+final class LumenCoreCaptureForwarder: @unchecked Sendable {
     private let handle: OpaquePointer
 
     init() {
@@ -84,8 +84,8 @@ final class ApolloCoreCaptureForwarder: @unchecked Sendable {
         ApolloCoreEncodedCaptureIngressSetProducerActive(handle, active)
     }
 
-    func snapshot() -> ApolloBridgeCoreForwardingSnapshot {
-        ApolloBridgeCoreForwardingSnapshot(
+    func snapshot() -> LumenBridgeCoreForwardingSnapshot {
+        LumenBridgeCoreForwardingSnapshot(
             snapshot: ApolloCoreEncodedCaptureIngressCopySnapshot(handle)
         )
     }
@@ -93,7 +93,7 @@ final class ApolloCoreCaptureForwarder: @unchecked Sendable {
     func consume(frame: MDKEncodedFrame) {
         consume(
             sampleBuffer: frame.sampleBuffer,
-            codec: ApolloCaptureCodec(mdkCodec: frame.codec),
+            codec: LumenCaptureCodec(mdkCodec: frame.codec),
             sourceSequenceNumber: frame.sourceSequenceNumber,
             sourceDisplayTime: frame.sourceDisplayTime,
             outputCallbackLatencyMilliseconds: frame.outputCallbackLatencyMilliseconds,
@@ -104,7 +104,7 @@ final class ApolloCoreCaptureForwarder: @unchecked Sendable {
 
     func consume(
         sampleBuffer: CMSampleBuffer,
-        codec: ApolloCaptureCodec,
+        codec: LumenCaptureCodec,
         sourceSequenceNumber: UInt64,
         sourceDisplayTime: UInt64,
         outputCallbackLatencyMilliseconds: Double? = nil,
@@ -154,7 +154,7 @@ final class ApolloCoreCaptureForwarder: @unchecked Sendable {
         }
     }
 
-    func popNextFrame() -> ApolloBridgeCoreDrainedFrame? {
+    func popNextFrame() -> LumenBridgeCoreDrainedFrame? {
         var sampleBuffer: Unmanaged<CMSampleBuffer>?
         let record = withUnsafeMutablePointer(to: &sampleBuffer) { sampleBufferPointer in
             ApolloCoreEncodedCaptureIngressPopNextFrame(handle, sampleBufferPointer)
@@ -163,8 +163,8 @@ final class ApolloCoreCaptureForwarder: @unchecked Sendable {
             return nil
         }
 
-        return ApolloBridgeCoreDrainedFrame(
-            codec: ApolloCaptureCodec(apolloCoreCodec: record.codec),
+        return LumenBridgeCoreDrainedFrame(
+            codec: LumenCaptureCodec(apolloCoreCodec: record.codec),
             payloadSize: Int(record.payload_size),
             sourceSequenceNumber: record.source_sequence_number,
             sourceDisplayTime: record.source_display_time,
@@ -175,7 +175,7 @@ final class ApolloCoreCaptureForwarder: @unchecked Sendable {
         )
     }
 
-    func popNextEvent() -> ApolloBridgeCoreDrainedEvent? {
+    func popNextEvent() -> LumenBridgeCoreDrainedEvent? {
         var messageBuffer = Array<CChar>(repeating: 0, count: 512)
         let record = messageBuffer.withUnsafeMutableBufferPointer { buffer in
             ApolloCoreEncodedCaptureIngressPopNextEvent(
@@ -185,12 +185,12 @@ final class ApolloCoreCaptureForwarder: @unchecked Sendable {
             )
         }
         guard record.has_value,
-              let kind = ApolloBridgeCaptureEventKind(apolloCoreKind: record.kind) else {
+              let kind = LumenBridgeCaptureEventKind(apolloCoreKind: record.kind) else {
             return nil
         }
 
         let message = messageBuffer.first == 0 ? nil : String(cString: messageBuffer)
-        return ApolloBridgeCoreDrainedEvent(
+        return LumenBridgeCoreDrainedEvent(
             kind: kind,
             message: message,
             stopStatus: record.has_stop_status ? record.stop_status : nil,
@@ -200,7 +200,7 @@ final class ApolloCoreCaptureForwarder: @unchecked Sendable {
     }
 }
 
-extension ApolloCaptureCodec {
+extension LumenCaptureCodec {
     init(mdkCodec: MDKVideoEncoderCodec) {
         switch mdkCodec {
         case .h264:
@@ -250,7 +250,7 @@ extension MDKVideoEncoderCodec {
     }
 }
 
-extension ApolloBridgeCaptureEventKind {
+extension LumenBridgeCaptureEventKind {
     init?(apolloCoreKind: ApolloCoreCaptureEventKind) {
         switch apolloCoreKind {
         case ApolloCoreCaptureEventKindStarted:
