@@ -39,6 +39,7 @@
 #include "shadow_http.h"
 #include "platform/common.h"
 #include "process.h"
+#include "system_tray.h"
 #include "utility.h"
 #include "uuid.h"
 
@@ -215,6 +216,8 @@ namespace shadow_control_http {
     BOOST_LOG(info) << "Shadow pairing request created for ["sv << pairing_request.device_name
                     << "] platform ["sv << pairing_request.platform << "] code ["sv
                     << pairing_request.user_code << ']';
+
+    system_tray::update_tray_require_pairing_approval(pairing_request.device_name, pairing_request.user_code);
 
     return snapshot_shadow_pairing_request(pairing_request);
   }
@@ -455,6 +458,26 @@ namespace shadow_control_http {
     print_req(request);
 
     std::string content = file_handler::read_file(WEB_DIR "index.html");
+    SimpleWeb::CaseInsensitiveMultimap headers;
+    headers.emplace("Content-Type", "text/html; charset=utf-8");
+    headers.emplace("X-Frame-Options", "DENY");
+    headers.emplace("Content-Security-Policy", "frame-ancestors 'none';");
+    response->write(content, headers);
+  }
+
+  /**
+   * @brief Get the pairing approval page.
+   * @param response The HTTP response object.
+   * @param request The HTTP request object.
+   */
+  void getPairingPage(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request, true)) {
+      return;
+    }
+
+    print_req(request);
+
+    std::string content = file_handler::read_file(WEB_DIR "pairing.html");
     SimpleWeb::CaseInsensitiveMultimap headers;
     headers.emplace("Content-Type", "text/html; charset=utf-8");
     headers.emplace("X-Frame-Options", "DENY");
@@ -1750,6 +1773,7 @@ namespace shadow_control_http {
     };
     server.default_resource["GET"] = not_found;
     server.resource["^/$"]["GET"] = getIndexPage;
+    server.resource["^/pairing/?$"]["GET"] = getPairingPage;
     server.resource["^/apps/?$"]["GET"] = getAppsPage;
     server.resource["^/config/?$"]["GET"] = getConfigPage;
     server.resource["^/password/?$"]["GET"] = getPasswordPage;

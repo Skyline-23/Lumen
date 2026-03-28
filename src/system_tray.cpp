@@ -459,6 +459,42 @@ namespace system_tray {
     tray_update(&tray);
   }
 
+  void update_tray_require_pairing_approval(std::string device_name, std::string user_code) {
+#ifdef __APPLE__
+    mirror_notification_when_no_tray(
+      "apollo.require-pairing-approval",
+      "Incoming Pairing Request",
+      "Approve " + device_name + " with code " + user_code + ".",
+      "/pairing"
+    );
+#endif
+    if (!tray_initialized) {
+      return;
+    }
+
+    tray.notification_title = nullptr;
+    tray.notification_text = nullptr;
+    tray.notification_cb = nullptr;
+    tray.notification_icon = nullptr;
+    tray.icon = resolved_tray_icon_path(TRAY_ICON);
+    tray_update(&tray);
+
+    char msg[256];
+    snprintf(msg, std::size(msg), "Approve %s with code %s.", device_name.c_str(), user_code.c_str());
+#ifdef _WIN32
+    strncpy(msg, utf8ToAcp(msg).c_str(), std::size(msg) - 1);
+#endif
+    tray.icon = resolved_tray_icon_path(TRAY_ICON);
+    tray.notification_title = "Incoming Pairing Request";
+    tray.notification_text = msg;
+    tray.notification_icon = resolved_tray_icon_path(TRAY_ICON_LOCKED);
+    tray.tooltip = PROJECT_NAME;
+    tray.notification_cb = []() {
+      launch_ui("/pairing");
+    };
+    tray_update(&tray);
+  }
+
   void
   update_tray_paired(std::string device_name) {
 #ifdef __APPLE__

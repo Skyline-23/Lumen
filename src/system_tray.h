@@ -74,6 +74,8 @@ namespace system_tray {
   void
   update_tray_launch_error(std::string app_name, int exit_code);
 
+  void update_tray_require_pairing_approval(std::string device_name, std::string user_code);
+
   void update_tray_paired(std::string device_name);
 
   void update_tray_client_connected(std::string client_name);

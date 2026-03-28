@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="auto">
+
+<head>
+  <%- header %>
+  <style>
+    .pairing-grid {
+      display: grid;
+      gap: 1rem;
+    }
+
+    .pairing-code {
+      font-family: monospace;
+      font-size: 1.1rem;
+      letter-spacing: 0.12em;
+    }
+
+    .pairing-meta {
+      color: var(--bs-secondary-color);
+      font-size: 0.95rem;
+    }
+  </style>
+</head>
+
+<body id="app" v-cloak>
+  <Navbar></Navbar>
+  <div class="container my-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+      <div>
+        <h1 class="mb-2">Pairing Requests</h1>
+        <p class="mb-0">
+          Approve the first device locally on this host. New Shadow clients will wait here until you allow or reject them.
+        </p>
+      </div>
+      <button class="btn btn-outline-secondary" @click="refresh" :disabled="loading">
+        <i class="fas fa-rotate-right"></i> Refresh
+      </button>
+    </div>
+
+    <div v-if="banner.message" class="alert mb-4" :class="`alert-${banner.kind}`">{{ banner.message }}</div>
+
+    <div class="row g-4">
+      <div class="col-12 col-lg-7">
+        <div class="card h-100">
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+              <h2 class="h4 mb-0">Pending Approval</h2>
+              <span class="badge text-bg-warning">{{ pendingRequests.length }}</span>
+            </div>
+            <div v-if="loading" class="text-secondary">Loading pairing requests...</div>
+            <div v-else-if="!pendingRequests.length" class="text-secondary">
+              No devices are waiting for approval.
+            </div>
+            <div v-else class="pairing-grid">
+              <div v-for="request in pendingRequests" :key="request.pairingId" class="border rounded p-3">
+                <div class="d-flex flex-wrap justify-content-between gap-2 mb-2">
+                  <div>
+                    <div class="fw-semibold">{{ request.deviceName || 'Unnamed Device' }}</div>
+                    <div class="pairing-meta">{{ request.platform || 'unknown platform' }}</div>
+                  </div>
+                  <span class="badge text-bg-warning text-uppercase">{{ request.status }}</span>
+                </div>
+                <div class="pairing-code mb-2">{{ request.userCode }}</div>
+                <div class="pairing-meta mb-3">
+                  Expires in {{ request.expiresInSeconds }}s
+                  <span v-if="request.clientId">· Client {{ request.clientId }}</span>
+                </div>
+                <div class="d-flex gap-2">
+                  <button class="btn btn-success" @click="decide(request, true)" :disabled="busyPairingId === request.pairingId">
+                    <i class="fas fa-check"></i> Approve
+                  </button>
+                  <button class="btn btn-outline-danger" @click="decide(request, false)" :disabled="busyPairingId === request.pairingId">
+                    <i class="fas fa-xmark"></i> Reject
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-12 col-lg-5">
+        <div class="card mb-4">
+          <div class="card-body">
+            <h2 class="h4">Host Bootstrap</h2>
+            <p class="mb-0">
+              First-device trust starts on the host. A new client creates a pairing request, and this local page is the approval point even when no device has been paired yet.
+            </p>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+              <h2 class="h4 mb-0">Recent Decisions</h2>
+              <span class="badge text-bg-secondary">{{ decidedRequests.length }}</span>
+            </div>
+            <div v-if="!decidedRequests.length" class="text-secondary">
+              No approvals or rejections yet.
+            </div>
+            <div v-else class="pairing-grid">
+              <div v-for="request in decidedRequests" :key="request.pairingId" class="border rounded p-3">
+                <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
+                  <div class="fw-semibold">{{ request.deviceName || 'Unnamed Device' }}</div>
+                  <span class="badge" :class="request.status === 'approved' ? 'text-bg-success' : 'text-bg-danger'">
+                    {{ request.status }}
+                  </span>
+                </div>
+                <div class="pairing-meta">
+                  {{ request.platform || 'unknown platform' }}
+                  <span v-if="request.clientId">· Client {{ request.clientId }}</span>
+                </div>
+                <div class="pairing-code mt-2">{{ request.userCode }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+
+<script type="module">
+  import { createApp } from 'vue'
+  import { initApp } from './init'
+  import Navbar from './Navbar.vue'
+
+  const app = createApp({
+    components: { Navbar },
+    data() {
+      return {
+        requests: [],
+        loading: true,
+        busyPairingId: '',
+        refreshTimer: null,
+        banner: {
+          kind: 'info',
+          message: ''
+        }
+      }
+    },
+    computed: {
+      pendingRequests() {
+        return this.requests.filter((request) => request.status === 'pending')
+      },
+      decidedRequests() {
+        return this.requests.filter((request) => request.status !== 'pending')
+      }
+    },
+    async created() {
+      await this.refresh()
+      this.refreshTimer = window.setInterval(() => {
+        this.refresh(false)
+      }, 2000)
+    },
+    beforeUnmount() {
+      if (this.refreshTimer) {
+        window.clearInterval(this.refreshTimer)
+      }
+    },
+    methods: {
+      async refresh(showErrors = true) {
+        if (this.loading === false && this.busyPairingId) {
+          return
+        }
+
+        if (!this.requests.length) {
+          this.loading = true
+        }
+
+        try {
+          const response = await fetch('./api/pairing/requests')
+          const payload = await response.json()
+          this.requests = (payload.requests || []).sort((left, right) => {
+            if (left.status === right.status) {
+              return left.deviceName.localeCompare(right.deviceName)
+            }
+            if (left.status === 'pending') {
+              return -1
+            }
+            if (right.status === 'pending') {
+              return 1
+            }
+            return left.status.localeCompare(right.status)
+          })
+        } catch (error) {
+          if (showErrors) {
+            this.banner = {
+              kind: 'danger',
+              message: `Failed to load pairing requests: ${error}`
+            }
+          }
+        } finally {
+          this.loading = false
+        }
+      },
+      async decide(request, approved) {
+        this.busyPairingId = request.pairingId
+        this.banner.message = ''
+
+        try {
+          const response = await fetch(
+            approved ? './api/pairing/approve' : './api/pairing/reject',
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({ pairingId: request.pairingId })
+            }
+          )
+
+          const payload = await response.json()
+          if (!payload.status) {
+            throw new Error('Pairing decision was not accepted by the host.')
+          }
+
+          this.banner = {
+            kind: approved ? 'success' : 'warning',
+            message: `${request.deviceName || 'Device'} ${approved ? 'approved' : 'rejected'}.`
+          }
+          await this.refresh(false)
+        } catch (error) {
+          this.banner = {
+            kind: 'danger',
+            message: `Failed to update pairing request: ${error}`
+          }
+        } finally {
+          this.busyPairingId = ''
+        }
+      }
+    }
+  })
+
+  initApp(app)
+</script>
