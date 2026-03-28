@@ -334,7 +334,7 @@ let project = Project(
             infoPlist: .extendingDefault(
                 with: [
                     "CFBundleDisplayName": "Lumen",
-                    "CFBundleIconFile": "apollo.icns",
+                    "CFBundleIconFile": "lumen.icns",
                     "LSMinimumSystemVersion": "14.0",
                     "INFOPLIST_KEY_NSHighResolutionCapable": "YES",
                     "LSUIElement": "YES",
@@ -349,7 +349,7 @@ let project = Project(
                 "Projects/LumenApp/Sources/**/*.swift"
             ],
             resources: [
-                "../../../apollo.icns",
+                "../../../lumen.icns",
                 "../../../src_assets/common/assets/web/public/images/logo-lumen-16.png",
                 "../../../src_assets/common/assets/web/public/images/lumen-playing-16.png",
                 "../../../src_assets/common/assets/web/public/images/lumen-pausing-16.png",
