@@ -127,7 +127,7 @@ namespace display_device {
       if (result > std::numeric_limits<unsigned int>::max()) {
         throw std::out_of_range("stou");
       }
-      return result;
+      return static_cast<unsigned int>(result);
     }
 
     /**

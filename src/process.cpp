@@ -188,7 +188,7 @@ namespace proc {
     }
 
     _app = app;
-    _app_id = util::from_view(app.id);
+    _app_id = static_cast<int>(util::from_view(app.id));
     _app_name = app.name;
     _launch_session = launch_session;
     allow_client_commands = app.allow_client_commands;
@@ -1707,7 +1707,7 @@ namespace proc {
         ids.insert(ctx.id);
 
         input_only_app_id_str = ctx.id;
-        input_only_app_id = util::from_view(ctx.id);
+        input_only_app_id = static_cast<int>(util::from_view(ctx.id));
 
         apps.emplace_back(std::move(ctx));
       }
@@ -1743,7 +1743,7 @@ namespace proc {
         // ids.insert(ctx.id);
 
         terminate_app_id_str = ctx.id;
-        terminate_app_id = util::from_view(ctx.id);
+        terminate_app_id = static_cast<int>(util::from_view(ctx.id));
 
         apps.emplace_back(std::move(ctx));
       }

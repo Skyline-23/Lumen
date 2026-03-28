@@ -792,7 +792,7 @@ namespace config {
     if (val.size() >= 2 && val.substr(0, 2) == "0x"sv) {
       input = util::from_hex<int>(val.substr(2));
     } else {
-      input = util::from_view(val);
+      input = static_cast<int>(util::from_view(val));
     }
 
     vars.erase(it);
@@ -1022,7 +1022,7 @@ namespace config {
       if (val.size() >= 2 && val.substr(0, 2) == "0x"sv) {
         tmp = util::from_hex<int>(val.substr(2));
       } else {
-        tmp = util::from_view(val);
+        tmp = static_cast<int>(util::from_view(val));
       }
       input.emplace_back(tmp);
     }
