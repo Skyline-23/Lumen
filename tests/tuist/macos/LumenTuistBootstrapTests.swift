@@ -3,7 +3,7 @@ import ApolloCore
 import CoreMedia
 import XCTest
 
-final class ApolloTuistBootstrapTests: XCTestCase {
+final class LumenTuistBootstrapTests: XCTestCase {
     func testBridgeExposesBootstrapStatus() async {
         let status = await ApolloBridgeRuntime.shared.statusSnapshot()
 
@@ -1464,7 +1464,7 @@ final class ApolloTuistBootstrapTests: XCTestCase {
     }
 }
 
-private extension ApolloTuistBootstrapTests {
+private extension LumenTuistBootstrapTests {
     static func makeEncodedSampleBuffer(
         payload: Data,
         codecType: CMVideoCodecType,
@@ -1561,7 +1561,7 @@ private extension ApolloTuistBootstrapTests {
 
     static func payloadBytes(from sampleBuffer: CMSampleBuffer) throws -> Data {
         guard let blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else {
-            throw NSError(domain: "ApolloTuistBootstrapTests", code: 1)
+            throw NSError(domain: "LumenTuistBootstrapTests", code: 1)
         }
 
         let length = CMBlockBufferGetDataLength(blockBuffer)

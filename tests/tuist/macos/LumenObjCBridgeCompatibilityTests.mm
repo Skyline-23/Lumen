@@ -7,10 +7,10 @@
 #import <ApolloCore/ApolloCore.h>
 #import <ApolloMacBridge/ApolloMacBridge.h>
 
-@interface ApolloObjCBridgeCompatibilityTests : XCTestCase
+@interface LumenObjCBridgeCompatibilityTests : XCTestCase
 @end
 
-@implementation ApolloObjCBridgeCompatibilityTests
+@implementation LumenObjCBridgeCompatibilityTests
 
 - (void)testApolloMacBridgeCABIStatusAndConfigurationSmoke {
   ApolloMacBridgeController *controller = ApolloMacBridgeControllerCreate();
