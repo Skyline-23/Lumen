@@ -1191,13 +1191,13 @@ public actor ApolloBridgeRuntime {
         let targetFrameRate = configuration.targetFrameRate
 
         if targetFrameRate >= 120 {
-            let aggressivelyTrimmedCapacity = max(queueDepthReserve + hdrMetadataSlack - 2, 1)
-            return min(aggressivelyTrimmedCapacity, 2)
+            let aggressivelyTrimmedCapacity = max(queueDepthReserve + hdrMetadataSlack - 3, 1)
+            return min(aggressivelyTrimmedCapacity, 1 + hdrMetadataSlack)
         }
 
         if targetFrameRate >= 90 {
-            let aggressivelyTrimmedCapacity = max(queueDepthReserve + hdrMetadataSlack - 1, 1)
-            return min(aggressivelyTrimmedCapacity, 3)
+            let aggressivelyTrimmedCapacity = max(queueDepthReserve + hdrMetadataSlack - 2, 1)
+            return min(aggressivelyTrimmedCapacity, 2)
         }
 
         return min(max(queueDepthReserve + hdrMetadataSlack, 2), 5)
