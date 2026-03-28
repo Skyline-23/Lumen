@@ -127,9 +127,19 @@ namespace video {
     constexpr int preferred_tile_width = 960;
     constexpr int preferred_tile_height = 540;
     constexpr int max_tiles_per_axis = 4;
+    constexpr int max_total_tiles = 6;
 
-    const auto columns = std::clamp((width + preferred_tile_width - 1) / preferred_tile_width, 1, max_tiles_per_axis);
-    const auto rows = std::clamp((height + preferred_tile_height - 1) / preferred_tile_height, 1, max_tiles_per_axis);
+    auto columns = std::clamp((width + preferred_tile_width - 1) / preferred_tile_width, 1, max_tiles_per_axis);
+    auto rows = std::clamp((height + preferred_tile_height - 1) / preferred_tile_height, 1, max_tiles_per_axis);
+    while (columns * rows > max_total_tiles) {
+      if (columns >= rows && columns > 1) {
+        --columns;
+      } else if (rows > 1) {
+        --rows;
+      } else {
+        break;
+      }
+    }
     const auto tile_width = std::max((width + columns - 1) / columns, 1);
     const auto tile_height = std::max((height + rows - 1) / rows, 1);
 
