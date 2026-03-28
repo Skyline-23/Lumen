@@ -1,5 +1,5 @@
 /**
- * @file src/platform/macos/Projects/ApolloMacSupport/Sources/audio_stub.cpp
+ * @file src/platform/macos/Projects/LumenMacSupport/Sources/audio_stub.cpp
  * @brief No-op audio control shim for bridge-only macOS builds.
  */
 

@@ -24,7 +24,7 @@ let hostedRuntimeHeaderSearchPaths = [
     "\(repoRoot)/src",
     "$(SRCROOT)/Projects/ApolloCore/Headers",
     "$(SRCROOT)/Projects/ApolloMacBridge/Headers",
-    "$(SRCROOT)/Projects/ApolloMacSupport/Headers"
+    "$(SRCROOT)/Projects/LumenMacSupport/Headers"
 ]
 
 let hostedRuntimeSystemHeaderSearchPaths = [
@@ -128,7 +128,7 @@ let hostedRuntimeSources: SourceFilesList = [
     "../../../src/stat_trackers.cpp",
     "../../../src/rswrapper.c",
     "../../../src/nvenc/*.cpp",
-    "Projects/ApolloMacSupport/Sources/**/*.{c,cc,cpp,m,mm,h,hpp}",
+    "Projects/LumenMacSupport/Sources/**/*.{c,cc,cpp,m,mm,h,hpp}",
     "Projects/LumenHostedRuntime/Sources/**/*.{c,cc,cpp,m,mm,h,hpp}"
 ]
 

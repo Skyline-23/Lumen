@@ -1,5 +1,5 @@
 /**
- * @file src/platform/macos/Projects/ApolloMacSupport/Sources/display_stub.mm
+ * @file src/platform/macos/Projects/LumenMacSupport/Sources/display_stub.mm
  * @brief Bridge-only display shim for macOS.
  */
 
