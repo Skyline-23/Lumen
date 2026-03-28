@@ -23,7 +23,7 @@ let hostedRuntimeHeaderSearchPaths = [
     "\(runtimeDepsRoot)/include",
     "\(repoRoot)/src",
     "$(SRCROOT)/Projects/ApolloCore/Headers",
-    "$(SRCROOT)/Projects/ApolloMacBridge/Headers",
+    "$(SRCROOT)/Projects/LumenMacBridge/Headers",
     "$(SRCROOT)/Projects/LumenMacSupport/Headers"
 ]
 
@@ -248,17 +248,17 @@ let project = Project(
             )
         ),
         .target(
-            name: "ApolloMacBridge",
+            name: "LumenMacBridge",
             destinations: .macOS,
             product: .framework,
             bundleId: "dev.skyline23.lumen.macbridge",
             deploymentTargets: .macOS("14.0"),
             infoPlist: .default,
             sources: [
-                "Projects/ApolloMacBridge/Sources/**/*.{swift,m,mm}"
+                "Projects/LumenMacBridge/Sources/**/*.{swift,m,mm}"
             ],
             headers: .headers(
-                public: "Projects/ApolloMacBridge/Headers/ApolloMacBridge.h"
+                public: "Projects/LumenMacBridge/Headers/LumenMacBridge.h"
             ),
             dependencies: [
                 .target(name: "ApolloCore"),
@@ -267,11 +267,11 @@ let project = Project(
             settings: .settings(
                 base: [
                     "DEFINES_MODULE": "YES",
-                    "PRODUCT_NAME": "ApolloMacBridge",
+                    "PRODUCT_NAME": "LumenMacBridge",
                     "BUILD_LIBRARY_FOR_DISTRIBUTION": "YES",
                     "SWIFT_ENABLE_LIBRARY_EVOLUTION": "YES",
                     "HEADER_SEARCH_PATHS": [
-                        "$(SRCROOT)/Projects/ApolloMacBridge/Headers"
+                        "$(SRCROOT)/Projects/LumenMacBridge/Headers"
                     ]
                 ]
             )
@@ -289,7 +289,7 @@ let project = Project(
             ),
             dependencies: [
                 .target(name: "ApolloCore"),
-                .target(name: "ApolloMacBridge"),
+                .target(name: "LumenMacBridge"),
                 .sdk(name: "AppKit", type: .framework),
                 .sdk(name: "ApplicationServices", type: .framework),
                 .sdk(name: "AVFoundation", type: .framework),
@@ -315,7 +315,7 @@ let project = Project(
                 "Projects/LumenMacCaptureAdapter/Sources/**/*.swift"
             ],
             dependencies: [
-                .target(name: "ApolloMacBridge"),
+                .target(name: "LumenMacBridge"),
                 .target(name: "LumenHostedRuntime")
             ],
             settings: .settings(
@@ -381,7 +381,7 @@ let project = Project(
                 "../../../tests/tuist/macos/**/*.{swift,m,mm}"
             ],
             dependencies: [
-                .target(name: "ApolloMacBridge"),
+                .target(name: "LumenMacBridge"),
                 .target(name: "LumenMacCaptureAdapter")
             ]
         )
@@ -392,7 +392,7 @@ let project = Project(
             shared: true,
             buildAction: .buildAction(targets: [
                 "ApolloCore",
-                "ApolloMacBridge",
+                "LumenMacBridge",
                 "LumenTuistTests"
             ]),
             testAction: .targets([

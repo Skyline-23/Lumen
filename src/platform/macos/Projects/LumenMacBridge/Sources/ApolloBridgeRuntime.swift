@@ -1593,7 +1593,7 @@ public actor ApolloBridgeRuntime {
         ApolloBridgeStatus(
             coreVersion: String(cString: ApolloCoreBootstrapVersionString()),
             runtimeDescription: String(cString: ApolloCoreBootstrapRuntimeDescription()),
-            integrationStatus: "MacDisplayKit owns macOS capture and encode. ApolloMacBridge forwards encoded video and PCM audio into ApolloCore ingress surfaces while Apollo keeps the web, session, and transport stack.",
+            integrationStatus: "MacDisplayKit owns macOS capture and encode. LumenMacBridge forwards encoded video and PCM audio into ApolloCore ingress surfaces while Lumen keeps the web, session, and transport stack.",
             captureSessionRunning: encodedCaptureSession != nil,
             audioCaptureSessionRunning: audioCaptureSession != nil,
             automaticCaptureOrchestrationRunning: captureAutomationTask != nil

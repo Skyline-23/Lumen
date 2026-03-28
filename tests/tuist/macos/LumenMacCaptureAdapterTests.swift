@@ -1,5 +1,5 @@
 import LumenMacCaptureAdapter
-import ApolloMacBridge
+import LumenMacBridge
 import ApolloCore
 import XCTest
 

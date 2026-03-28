@@ -1,5 +1,5 @@
 import LumenHostedRuntime
-import ApolloMacBridge
+import LumenMacBridge
 import Foundation
 
 public extension Notification.Name {

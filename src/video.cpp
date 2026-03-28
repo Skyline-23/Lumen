@@ -42,7 +42,7 @@ extern "C" {
   #include <VideoToolbox/VideoToolbox.h>
   #include <mach/mach_time.h>
   #include "ApolloCore.h"
-  #include "ApolloMacBridge.h"
+  #include "LumenMacBridge.h"
   #include "platform/macos/av_img_t.h"
   #include "platform/macos/misc.h"
 #endif

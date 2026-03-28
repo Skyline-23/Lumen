@@ -1,4 +1,4 @@
-@testable import ApolloMacBridge
+@testable import LumenMacBridge
 import ApolloCore
 import CoreMedia
 import XCTest

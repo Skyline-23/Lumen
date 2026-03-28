@@ -5,7 +5,7 @@
 #import <thread>
 
 #import <ApolloCore/ApolloCore.h>
-#import <ApolloMacBridge/ApolloMacBridge.h>
+#import <LumenMacBridge/LumenMacBridge.h>
 
 @interface LumenObjCBridgeCompatibilityTests : XCTestCase
 @end

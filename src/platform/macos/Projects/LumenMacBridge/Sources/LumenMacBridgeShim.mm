@@ -1,6 +1,6 @@
-#import "ApolloMacBridge.h"
+#import "LumenMacBridge.h"
 
-#import <ApolloMacBridge/ApolloMacBridge-Swift.h>
+#import <LumenMacBridge/LumenMacBridge-Swift.h>
 #import <CoreFoundation/CoreFoundation.h>
 #import <algorithm>
 #import <atomic>
