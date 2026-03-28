@@ -3957,8 +3957,10 @@ namespace video {
           last_forwarded_source_display_time = frame.source_display_time;
           last_forwarded_packet_timestamp = packet->frame_timestamp;
 
-          if (last_forwarded_sequence_delta > 1 ||
-              (last_forwarded_source_display_delta_milliseconds && *last_forwarded_source_display_delta_milliseconds <= 0.0)) {
+          const auto has_cadence_anomaly =
+            last_forwarded_sequence_delta > 1 ||
+            (last_forwarded_source_display_delta_milliseconds && *last_forwarded_source_display_delta_milliseconds <= 0.0);
+          if (has_cadence_anomaly) {
             BOOST_LOG(warning) << "External macOS encoded ingress cadence anomaly seq="sv
                                << frame.source_sequence_number
                                << " seq-delta="sv << last_forwarded_sequence_delta
@@ -3969,6 +3971,11 @@ namespace video {
                                << (last_forwarded_packet_timestamp_delta_milliseconds ? *last_forwarded_packet_timestamp_delta_milliseconds : -1.0)
                                << " callback-latency-ms="sv
                                << (last_forwarded_callback_latency_milliseconds ? *last_forwarded_callback_latency_milliseconds : -1.0);
+            if (!packet_is_idr) {
+              arm_wait_for_next_idr("cadence-anomaly");
+              CFRelease(retained_sample_buffer);
+              continue;
+            }
           }
 
           packets->raise(std::move(packet));
