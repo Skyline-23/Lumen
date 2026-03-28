@@ -2,7 +2,7 @@
 
 ## Why this path was investigated
 
-Apollo on macOS is currently able to:
+Lumen on macOS is currently able to:
 
 - boot as an `.app`
 - initialize the tray and Web UI
@@ -56,7 +56,7 @@ The active problem is now narrowed to:
 
 ## Current technical suspicion
 
-The strongest current suspicion is that Apollo's direct VideoToolbox frame setup does not match the contract expected by FFmpeg's `hevc_videotoolbox` wrapper.
+The strongest current suspicion is that Lumen's direct VideoToolbox frame setup does not match the contract expected by FFmpeg's `hevc_videotoolbox` wrapper.
 
 Observed state before the crash has included:
 
@@ -73,7 +73,7 @@ This investigation narrowed the failure enough to justify moving away from FFmpe
 
 The current conclusion is:
 
-- Apollo reaches the first real HEVC frame
+- Lumen reaches the first real HEVC frame
 - the crash still occurs inside the first `avcodec_send_frame()`
 - the unstable point is specifically the FFmpeg `hevc_videotoolbox` submission path on macOS
 
@@ -98,7 +98,7 @@ Before switching, it was still useful to document whether the failure was:
 - a lifecycle / ownership issue
 - a limitation of the current wrapper path
 
-That information will be useful even if Apollo later moves to a direct `VTCompressionSession` implementation.
+That information will be useful even if Lumen later moves to a direct `VTCompressionSession` implementation.
 
 ## Investigation strategy
 
@@ -117,8 +117,8 @@ The investigation should continue in this order:
 
 At the time of this note:
 
-- Apollo no longer fails in startup probing
-- Apollo no longer fails before the first real frame
+- Lumen no longer fails in startup probing
+- Lumen no longer fails before the first real frame
 - the remaining crash happens on the first HEVC `avcodec_send_frame()`
 - the project is moving to native macOS `VTCompressionSession` encode instead of continuing to debug the FFmpeg wrapper path
 

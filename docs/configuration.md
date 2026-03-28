@@ -1422,7 +1422,7 @@ editing the `conf` file in a text editor. Use the examples as reference.
     <tr>
         <td>Description</td>
         <td colspan="2">
-            Select the built-in streaming policy Apollo should apply when balancing queue depth, stale-frame recovery, and encoder cadence.
+            Select the built-in streaming policy Lumen should apply when balancing queue depth, stale-frame recovery, and encoder cadence.
         </td>
     </tr>
     <tr>
@@ -1438,7 +1438,7 @@ editing the `conf` file in a text editor. Use the examples as reference.
     </tr>
     <tr>
         <td>balanced</td>
-        <td>Use Apollo's default policy for mixed latency and quality targets.</td>
+        <td>Use Lumen's default policy for mixed latency and quality targets.</td>
     </tr>
     <tr>
         <td>max-quality</td>

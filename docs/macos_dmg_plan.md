@@ -2,7 +2,7 @@
 
 ## Goal
 
-Ship Apollo as a macOS `.app` distributed inside a DMG, with native screen capture, native system audio capture, and hardware-accelerated low-latency video encoding.
+Ship Lumen as a macOS `.app` distributed inside a DMG, with native screen capture, native system audio capture, and hardware-accelerated low-latency video encoding.
 
 This plan assumes the fork will treat macOS as a first-class target instead of keeping the current "experimental" status.
 
@@ -13,7 +13,7 @@ This plan assumes the fork will treat macOS as a first-class target instead of k
 The first supported macOS release should allow a user to:
 
 1. Download a DMG.
-2. Drag Apollo into Applications.
+2. Drag Lumen into Applications.
 3. Launch the app without terminal setup.
 4. Grant the required permissions through guided UX.
 5. Start a stream with:
@@ -108,7 +108,7 @@ Distribution expectations:
 
 ### Objective
 
-Add a macOS-only virtual display mode so Apollo can stream from a dedicated desktop surface without depending on the state of the user's main physical monitor.
+Add a macOS-only virtual display mode so Lumen can stream from a dedicated desktop surface without depending on the state of the user's main physical monitor.
 
 ### Why
 
@@ -118,7 +118,7 @@ The current physical-monitor capture model is sufficient to bootstrap native `Sc
 - deterministic HDR behavior
 - avoiding host desktop UI interference
 - isolating streaming resolution / refresh rate from the user's active monitor state
-- future display management features comparable to Apollo's Windows virtual monitor workflow
+- future display management features comparable to Lumen's Windows virtual monitor workflow
 
 ### Scope
 
@@ -190,7 +190,7 @@ The current macOS host can negotiate RTSP/audio/control successfully, but the fi
 - create a macOS-only encoder implementation backed by `VTCompressionSession`
 - feed it frames sourced from `ScreenCaptureKit`, with optional `Metal` preprocessing
 - extract VPS/SPS/PPS / sample attachments required by the current packetization logic
-- preserve existing Apollo session/control/transport behavior
+- preserve existing Lumen session/control/transport behavior
 - keep H.264 and HEVC support; AV1 remains non-goal for v1
 
 ### Files
@@ -213,7 +213,7 @@ Likely modified files:
 - first HEVC frame no longer crashes
 - repeated stream start/stop works
 - H.264 and HEVC both encode through native `VTCompressionSession`
-- Apollo continues using the current transport/session stack
+- Lumen continues using the current transport/session stack
 
 ## 3. Native System Audio Capture
 
@@ -504,7 +504,7 @@ Milestone:
 
 The first DMG release is done when all of the following are true:
 
-1. A user can install Apollo from a DMG by dragging the app into Applications.
+1. A user can install Lumen from a DMG by dragging the app into Applications.
 2. The app launches without terminal setup.
 3. The app clearly guides the user through required macOS permissions.
 4. Screen capture works through `ScreenCaptureKit`.

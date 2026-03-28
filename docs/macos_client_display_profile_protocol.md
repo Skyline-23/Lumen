@@ -2,7 +2,7 @@
 
 ## Goal
 
-Allow the client to describe its display profile to the Apollo host so the macOS virtual display can be created to match the client rather than the host's physical monitor.
+Allow the client to describe its display profile to the Lumen host so the macOS virtual display can be created to match the client rather than the host's physical monitor.
 
 This is needed because the legacy GameStream fields only tell the host:
 
@@ -11,14 +11,14 @@ This is needed because the legacy GameStream fields only tell the host:
 
 They do not describe the client's actual panel gamut or HDR transfer mode.
 
-## Apollo Extension Keys
+## Lumen Extension Keys
 
-Apollo now accepts these optional fields in both launch HTTP and RTSP ANNOUNCE:
+Lumen now accepts these optional fields in both launch HTTP and RTSP ANNOUNCE:
 
 - `clientDisplayGamut`
 - `clientDisplayTransfer`
 
-And in RTSP ANNOUNCE as Apollo-specific attributes:
+And in RTSP ANNOUNCE as Lumen-specific attributes:
 
 - `x-apollo-video[0].clientDisplayGamut`
 - `x-apollo-video[0].clientDisplayTransfer`
@@ -61,7 +61,7 @@ If the transfer value is omitted:
 
 ## Current Host Wiring
 
-Apollo host currently consumes the fields here:
+Lumen host currently consumes the fields here:
 
 - [`src/nvhttp.cpp`](../src/nvhttp.cpp)
   launch HTTP parser

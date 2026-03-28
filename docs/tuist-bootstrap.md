@@ -1,4 +1,4 @@
-# Apollo Tuist Bootstrap
+# Lumen Tuist Bootstrap
 
 This bootstrap introduces a parallel Apple-platform structure without disturbing the existing CMake tree.
 
@@ -21,26 +21,26 @@ This bootstrap introduces a parallel Apple-platform structure without disturbing
 - `ApolloMacBridge`
   Swift bridge target that owns Apple-platform orchestration and will later host the `MacDisplayKit` integration.
 - `ApolloMacCaptureAdapter`
-  Apollo-owned Swift adapter that consumes `ApolloMacBridge`, owns hosted-runtime lifecycle, and keeps companion policy out of the reusable bridge.
+  Lumen-owned Swift adapter that consumes `ApolloMacBridge`, owns hosted-runtime lifecycle, and keeps companion policy out of the reusable bridge.
 - `ApolloCore`
-  C/C++ compatibility surface for the existing Apollo runtime.
+  C/C++ compatibility surface for the existing Lumen runtime.
 - `ApolloTuistTests`
   Basic validation for the Swift-to-core boundary.
 
 ## Responsibility Split
 
 - `ApolloApp`
-  Swift menu bar companion. It owns the macOS-native menu, notifications, and hosted-runtime lifecycle, while the web UI remains the primary Apollo surface.
+  Swift menu bar companion. It owns the macOS-native menu, notifications, and hosted-runtime lifecycle, while the web UI remains the primary Lumen surface.
 - `ApolloMacBridge`
   Apple-specific bridge surface that starts `MacDisplayKit`, forwards encoded video and PCM audio into `ApolloCore`, and mirrors runtime capture requests.
 - `ApolloMacCaptureAdapter`
-  Apollo-owned adapter that keeps the hosted runtime and the Swift companion in the same process and same lifetime.
+  Lumen-owned adapter that keeps the hosted runtime and the Swift companion in the same process and same lifetime.
 - `ApolloCore`
-  Existing C/C++ Apollo logic exposed through a stable C ABI for ingress, requests, and hosted-runtime control.
+  Existing C/C++ Lumen logic exposed through a stable C ABI for ingress, requests, and hosted-runtime control.
 
 ## Current macOS Runtime Boundary
 
-- The web server/runtime remains the primary Apollo application surface.
+- The web server/runtime remains the primary Lumen application surface.
 - The Swift menu bar companion is secondary and exists to:
   - host the runtime in-process on macOS
   - surface menu actions and notifications
@@ -57,8 +57,8 @@ This bootstrap introduces a parallel Apple-platform structure without disturbing
   - microphone capture
   - hardware encode session startup
 - `ApolloMacBridge` forwards those encoded sample buffers and PCM audio frames into `ApolloCore` ingress surfaces.
-- On macOS, Apollo's runtime path consumes those ingress surfaces instead of the removed legacy macOS capture runtime.
-- `FFmpeg` is still present in Apollo, but not as the macOS capture backend.
+- On macOS, Lumen's runtime path consumes those ingress surfaces instead of the removed legacy macOS capture runtime.
+- `FFmpeg` is still present in Lumen, but not as the macOS capture backend.
   - It remains downstream for transport-adjacent work such as coded-bitstream helpers and packetization glue.
   - The macOS source of truth for capture is `MacDisplayKit`, not FFmpeg.
 
@@ -67,7 +67,7 @@ This bootstrap introduces a parallel Apple-platform structure without disturbing
 - `ApolloMacBridge`
   Owns `MacDisplayKit` session startup, forwards encoded sample buffers into `ApolloCore`, and exposes the queued ingress through bridge-owned drain methods, a mixed-language C/C++ wrapper surface, and a callback pump for native consumers.
 - `ApolloMacCaptureAdapter`
-  Consumes `ApolloMacBridge` from Apollo-owned Swift code and presents the app-facing seam for hosted-runtime lifecycle, notifications, and stream control.
+  Consumes `ApolloMacBridge` from Lumen-owned Swift code and presents the app-facing seam for hosted-runtime lifecycle, notifications, and stream control.
 - `ApolloCore`
   Exposes a C ABI encoded-capture ingress that retains `CMSampleBuffer` frames, queues bounded frame/event backlogs, and lets the next native consumer drain them without flattening them to copied payload bytes first.
 - `ApolloTuistTests`
