@@ -900,7 +900,7 @@ namespace input {
       return;
     }
 
-    auto size = util::endian::big(packet->header.size) - sizeof(packet->header.magic);
+    const auto size = static_cast<int>(util::endian::big(packet->header.size) - sizeof(packet->header.magic));
     platf::unicode(platf_input, packet->text, size);
   }
 
