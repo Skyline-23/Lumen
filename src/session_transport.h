@@ -69,6 +69,30 @@ namespace video {
     return effective_dynamic_range_transport(static_cast<dynamic_range_transport_e>(requested_transport));
   }
 
+  inline dynamic_range_transport_e effective_dynamic_range_transport(const sink_request_t &request) {
+    switch (effective_dynamic_range_transport(request.dynamic_range_transport)) {
+      case dynamic_range_transport_e::full_frame_hdr:
+        return dynamic_range_transport_e::full_frame_hdr;
+      case dynamic_range_transport_e::frame_gated_hdr:
+        return request.capability.supports_frame_gated_hdr ?
+                 dynamic_range_transport_e::frame_gated_hdr :
+                 dynamic_range_transport_e::sdr;
+      case dynamic_range_transport_e::sdr_base_hdr_overlay:
+        if (request.capability.supports_hdr_tile_overlay &&
+            request.capability.supports_per_frame_hdr_metadata) {
+          return dynamic_range_transport_e::sdr_base_hdr_overlay;
+        }
+        if (request.capability.supports_frame_gated_hdr) {
+          return dynamic_range_transport_e::frame_gated_hdr;
+        }
+        return dynamic_range_transport_e::sdr;
+      case dynamic_range_transport_e::sdr:
+      case dynamic_range_transport_e::unknown:
+      default:
+        return dynamic_range_transport_e::sdr;
+    }
+  }
+
   inline bool dynamic_range_transport_uses_hdr_stream(const dynamic_range_transport_e transport) {
     return transport == dynamic_range_transport_e::full_frame_hdr ||
            transport == dynamic_range_transport_e::frame_gated_hdr;

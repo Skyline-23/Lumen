@@ -2306,9 +2306,13 @@ namespace stream {
       const auto requested_display_id = apollo_core_requested_display_id();
       const auto requested_codec = apollo_core_requested_codec(session.config.monitor.videoFormat);
       const auto requested_queue_profile = apollo_core_requested_queue_profile();
+      const auto requested_dynamic_range_transport =
+        video::effective_dynamic_range_transport(session.config.monitor.sinkRequest.dynamic_range_transport);
+      const auto negotiated_dynamic_range_transport =
+        video::effective_dynamic_range_transport(session.config.monitor);
       const auto effective_display_state = platf::resolve_capture_request_effective_display_state(
         requested_display_id,
-        session.config.monitor.sinkRequest.dynamic_range_transport,
+        negotiated_dynamic_range_transport,
         session.config.monitor.sinkRequest.capability.gamut,
         session.config.monitor.sinkRequest.capability.transfer
       );
@@ -2337,8 +2341,10 @@ namespace stream {
                       << " queue="sv << apollo_core_queue_profile_name(requested_queue_profile)
                       << " fps="sv << session.config.monitor.framerate
                       << " size="sv << session.config.monitor.width << "x"sv << session.config.monitor.height
-                      << " transport="sv
-                      << apollo_core_dynamic_range_transport_name(session.config.monitor.sinkRequest.dynamic_range_transport)
+                      << " requested-transport="sv
+                      << apollo_core_dynamic_range_transport_name(requested_dynamic_range_transport)
+                      << " negotiated-transport="sv
+                      << apollo_core_dynamic_range_transport_name(negotiated_dynamic_range_transport)
                       << " hdr-stream="sv << hdr_stream
                       << " sink-gamut="sv
                       << apollo_core_client_sink_gamut_name(session.config.monitor.sinkRequest.capability.gamut)
@@ -2382,7 +2388,7 @@ namespace stream {
           .supports_hdr_tile_overlay = session.config.monitor.sinkRequest.capability.supports_hdr_tile_overlay != 0,
           .supports_per_frame_hdr_metadata = session.config.monitor.sinkRequest.capability.supports_per_frame_hdr_metadata != 0
         },
-        .dynamic_range_transport = static_cast<ApolloCoreDynamicRangeTransport>(session.config.monitor.sinkRequest.dynamic_range_transport)
+        .dynamic_range_transport = static_cast<ApolloCoreDynamicRangeTransport>(requested_dynamic_range_transport)
       };
       const ApolloCoreEffectiveDisplayState effective_display_request {
         .gamut = effective_display_state.gamut,

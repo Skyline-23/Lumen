@@ -415,7 +415,7 @@ namespace display_device {
       switch (video_config.dd.hdr_option) {
         case hdr_option_e::automatic:
           return video::dynamic_range_transport_uses_hdr_stream(
-                   video::effective_dynamic_range_transport(session.sink_request.dynamic_range_transport)
+                   video::effective_dynamic_range_transport(session.sink_request)
                  ) ?
                    HdrState::Enabled :
                    HdrState::Disabled;

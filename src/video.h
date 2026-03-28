@@ -156,7 +156,15 @@ namespace video {
   };
 
   inline dynamic_range_transport_e effective_dynamic_range_transport(const config_t &config) {
-    return effective_dynamic_range_transport(config.sinkRequest.dynamic_range_transport);
+    const auto negotiated_transport = effective_dynamic_range_transport(config.sinkRequest);
+    switch (config.videoFormat) {
+      case 1:
+      case 2:
+        return negotiated_transport;
+      case 0:
+      default:
+        return dynamic_range_transport_e::sdr;
+    }
   }
 
   inline bool config_uses_hdr_stream(const config_t &config) {

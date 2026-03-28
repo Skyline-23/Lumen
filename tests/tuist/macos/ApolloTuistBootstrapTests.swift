@@ -157,6 +157,71 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(snapshot?.staticMetadataSource, "display-p3-default")
     }
 
+    func testBridgeNegotiatesFrameGatedHDRAgainstSinkCapabilities() {
+        let unsupportedSink = ApolloMacDisplayKitCaptureConfiguration(
+            displayID: 11,
+            codec: .hevc,
+            queueProfile: .auto,
+            targetFrameRate: 60,
+            sinkRequest: ApolloBridgeSinkRequest(
+                capability: ApolloBridgeSinkCapability(
+                    gamut: .displayP3,
+                    transfer: .pq,
+                    supportsPerFrameHDRMetadata: true
+                ),
+                dynamicRangeTransport: ApolloCoreDynamicRangeTransportFrameGatedHDR
+            )
+        )
+
+        XCTAssertEqual(unsupportedSink.negotiatedDynamicRangeTransport, ApolloCoreDynamicRangeTransportSDR)
+        XCTAssertFalse(unsupportedSink.usesHDRTransport)
+        XCTAssertEqual(unsupportedSink.negotiatedQueueProfile, .q3)
+    }
+
+    func testBridgeNegotiatesOverlayFallbackAndAutoQueueProfile() {
+        let fallbackOverlay = ApolloMacDisplayKitCaptureConfiguration(
+            displayID: 11,
+            codec: .hevc,
+            queueProfile: .auto,
+            targetFrameRate: 60,
+            sinkRequest: ApolloBridgeSinkRequest(
+                capability: ApolloBridgeSinkCapability(
+                    gamut: .displayP3,
+                    transfer: .pq,
+                    supportsFrameGatedHDR: true,
+                    supportsPerFrameHDRMetadata: true
+                ),
+                dynamicRangeTransport: ApolloCoreDynamicRangeTransportSDRBaseHDROverlay
+            )
+        )
+        let nativeOverlay = ApolloMacDisplayKitCaptureConfiguration(
+            displayID: 11,
+            codec: .hevc,
+            queueProfile: .auto,
+            targetFrameRate: 60,
+            sinkRequest: ApolloBridgeSinkRequest(
+                capability: ApolloBridgeSinkCapability(
+                    gamut: .displayP3,
+                    transfer: .pq,
+                    supportsFrameGatedHDR: true,
+                    supportsHDRTileOverlay: true,
+                    supportsPerFrameHDRMetadata: true
+                ),
+                dynamicRangeTransport: ApolloCoreDynamicRangeTransportSDRBaseHDROverlay
+            )
+        )
+
+        XCTAssertEqual(fallbackOverlay.negotiatedDynamicRangeTransport, ApolloCoreDynamicRangeTransportFrameGatedHDR)
+        XCTAssertTrue(fallbackOverlay.usesHDRTransport)
+        XCTAssertTrue(fallbackOverlay.prefersRealtimeHDRMetadata)
+        XCTAssertEqual(fallbackOverlay.negotiatedQueueProfile, .q2)
+
+        XCTAssertEqual(nativeOverlay.negotiatedDynamicRangeTransport, ApolloCoreDynamicRangeTransportSDRBaseHDROverlay)
+        XCTAssertFalse(nativeOverlay.usesHDRTransport)
+        XCTAssertTrue(nativeOverlay.prefersRealtimeHDRMetadata)
+        XCTAssertEqual(nativeOverlay.negotiatedQueueProfile, .q1)
+    }
+
     func testRecommendedCoreForwardingFrameCapacityStaysLowLatency() {
         let q2 = ApolloMacDisplayKitCaptureConfiguration(
             displayID: 7,

@@ -553,7 +553,7 @@ namespace platf {
           );
 
       if (!video::dynamic_range_transport_uses_hdr_stream(
-            video::effective_dynamic_range_transport(preferences.sink_request.dynamic_range_transport)
+            video::effective_dynamic_range_transport(preferences.sink_request)
           )) {
         return false;
       }

@@ -1285,16 +1285,20 @@ namespace rtsp_stream {
                            << " rtsp-potential-peak-nits="sv
                            << config.monitor.sinkRequest.capability.potential_peak_luminance_nits;
       }
+      const auto requested_dynamic_range_transport =
+        video::effective_dynamic_range_transport(config.monitor.sinkRequest.dynamic_range_transport);
+      const auto negotiated_dynamic_range_transport =
+        video::effective_dynamic_range_transport(config.monitor);
       BOOST_LOG(info) << "Client sink profile from RTSP: gamut="sv
                       << client_sink_gamut_to_string(config.monitor.sinkRequest.capability.gamut)
                       << " transfer="sv
                       << client_sink_transfer_to_string(config.monitor.sinkRequest.capability.transfer)
                       << " requested-transport="sv
-                      << dynamic_range_transport_to_string(static_cast<int>(config.monitor.sinkRequest.dynamic_range_transport))
-                      << " requested-hdr-stream="sv
-                      << video::dynamic_range_transport_uses_hdr_stream(
-                        video::effective_dynamic_range_transport(config.monitor.sinkRequest.dynamic_range_transport)
-                      )
+                      << dynamic_range_transport_to_string(static_cast<int>(requested_dynamic_range_transport))
+                      << " negotiated-transport="sv
+                      << dynamic_range_transport_to_string(static_cast<int>(negotiated_dynamic_range_transport))
+                      << " negotiated-hdr-stream="sv
+                      << video::dynamic_range_transport_uses_hdr_stream(negotiated_dynamic_range_transport)
                       << " codec="sv
                       << (config.monitor.videoFormat == 0 ? "h264"sv :
                           config.monitor.videoFormat == 1 ? "hevc"sv :

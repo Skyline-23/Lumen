@@ -736,23 +736,27 @@ namespace shadow_http {
     launch_session->sink_request.dynamic_range_transport = parse_requested_dynamic_range_transport(
       get_arg(args, "requestedDynamicRangeTransport")
     );
-    const auto requested_dynamic_range_transport =
-      video::effective_dynamic_range_transport(launch_session->sink_request.dynamic_range_transport);
-    const bool requested_hdr_stream =
-      video::dynamic_range_transport_uses_hdr_stream(requested_dynamic_range_transport);
     launch_session->sink_request.capability.supports_frame_gated_hdr = util::from_view(get_arg(args, "clientSinkSupportsFrameGatedHDR"));
     launch_session->sink_request.capability.supports_hdr_tile_overlay = util::from_view(get_arg(args, "clientSinkSupportsHDRTileOverlay"));
     launch_session->sink_request.capability.supports_per_frame_hdr_metadata = util::from_view(
       get_arg(args, "clientSinkSupportsPerFrameHDRMetadata")
     );
+    const auto requested_dynamic_range_transport =
+      video::effective_dynamic_range_transport(launch_session->sink_request.dynamic_range_transport);
+    const auto negotiated_dynamic_range_transport =
+      video::effective_dynamic_range_transport(launch_session->sink_request);
+    const bool negotiated_hdr_stream =
+      video::dynamic_range_transport_uses_hdr_stream(negotiated_dynamic_range_transport);
     BOOST_LOG(info) << "Client sink profile from launch: gamut="sv
                     << client_sink_gamut_to_string(launch_session->sink_request.capability.gamut)
                     << " transfer="sv
                     << client_sink_transfer_to_string(launch_session->sink_request.capability.transfer)
                     << " requested-transport="sv
                     << dynamic_range_transport_to_string(static_cast<int>(requested_dynamic_range_transport))
-                    << " requested-hdr-stream="sv
-                    << requested_hdr_stream
+                    << " negotiated-transport="sv
+                    << dynamic_range_transport_to_string(static_cast<int>(negotiated_dynamic_range_transport))
+                    << " negotiated-hdr-stream="sv
+                    << negotiated_hdr_stream
                     << " scale-percent="sv
                     << launch_session->sink_request.mode.scale_percent
                     << " hidpi="sv

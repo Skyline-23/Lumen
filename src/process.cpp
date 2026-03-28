@@ -232,13 +232,13 @@ namespace proc {
 
     launch_session->width = render_width;
     launch_session->height = render_height;
-    const auto requested_dynamic_range_transport =
-      video::effective_dynamic_range_transport(launch_session->sink_request.dynamic_range_transport);
-    const bool requested_hdr_stream =
-      video::dynamic_range_transport_uses_hdr_stream(requested_dynamic_range_transport);
+    const auto negotiated_dynamic_range_transport =
+      video::effective_dynamic_range_transport(launch_session->sink_request);
+    const bool negotiated_hdr_stream =
+      video::dynamic_range_transport_uses_hdr_stream(negotiated_dynamic_range_transport);
     this->sink_request = launch_session->sink_request;
     this->sink_request.mode.scale_percent = scale_factor;
-    this->sink_request.dynamic_range_transport = requested_dynamic_range_transport;
+    this->sink_request.dynamic_range_transport = negotiated_dynamic_range_transport;
     this->client_logical_width = static_cast<int>(render_width);
     this->client_logical_height = static_cast<int>(render_height);
     this->client_render_width = static_cast<int>(backing_width);
@@ -247,6 +247,7 @@ namespace proc {
                     << requested_width << "x"sv << requested_height
                     << " scale-percent="sv << scale_factor
                     << " hidpi="sv << launch_session->sink_request.mode.hidpi
+                    << " negotiated-hdr-stream="sv << negotiated_hdr_stream
                     << " backing="sv
                     << backing_width << "x"sv << backing_height
                     << " logical="sv << render_width << "x"sv << render_height;
@@ -384,7 +385,7 @@ namespace proc {
     const bool requires_virtual_display =
       launch_session->virtual_display ||
       _app.virtual_display ||
-      requested_hdr_stream ||
+      negotiated_hdr_stream ||
       launch_session->sink_request.mode.hidpi ||
       launch_session->sink_request.mode.mode_is_logical ||
       launch_session->sink_request.mode.scale_percent != 100;
@@ -392,9 +393,9 @@ namespace proc {
     if (requires_virtual_display) {
       if (!launch_session->virtual_display && !_app.virtual_display) {
         BOOST_LOG(info) << "Auto-enabling macOS virtual display for launch geometry: hdr="sv
-                        << requested_hdr_stream
+                        << negotiated_hdr_stream
                         << " requested-transport="sv
-                        << static_cast<int>(requested_dynamic_range_transport)
+                        << static_cast<int>(negotiated_dynamic_range_transport)
                         << " hidpi="sv
                         << launch_session->sink_request.mode.hidpi
                         << " scale-percent="sv
@@ -414,7 +415,7 @@ namespace proc {
         launch_session->fps ? static_cast<std::uint32_t>(launch_session->fps) : 60000u,
         scale_factor,
         launch_session->sink_request.mode.hidpi,
-        requested_hdr_stream,
+        negotiated_hdr_stream,
         launch_session->sink_request.capability.gamut,
         launch_session->sink_request.capability.transfer,
         launch_session->sink_request.capability.current_edr_headroom,
@@ -431,7 +432,7 @@ namespace proc {
         this->display_name = virtual_display_name;
         this->sink_request = launch_session->sink_request;
         this->sink_request.mode.scale_percent = scale_factor;
-        this->sink_request.dynamic_range_transport = requested_dynamic_range_transport;
+        this->sink_request.dynamic_range_transport = negotiated_dynamic_range_transport;
         config::video.output_name = this->display_name;
         const auto virtual_display_id = static_cast<CGDirectDisplayID>(std::strtoul(virtual_display_name.c_str(), nullptr, 10));
         if (!platf::isolate_virtual_display(virtual_display_id)) {
@@ -493,7 +494,7 @@ namespace proc {
     _env["SHADOW_CLIENT_RENDER_HEIGHT"] = std::to_string(launch_session->height);
     _env["SHADOW_CLIENT_SCALE_FACTOR"] = std::to_string(scale_factor);
     _env["SHADOW_CLIENT_FPS"] = fps_str;
-    _env["SHADOW_CLIENT_HDR"] = requested_hdr_stream ? "true" : "false";
+    _env["SHADOW_CLIENT_HDR"] = negotiated_hdr_stream ? "true" : "false";
     switch (static_cast<video::client_sink_gamut_e>(launch_session->sink_request.capability.gamut)) {
       case video::client_sink_gamut_e::display_p3:
         _env["SHADOW_CLIENT_SINK_GAMUT"] = "display-p3";
