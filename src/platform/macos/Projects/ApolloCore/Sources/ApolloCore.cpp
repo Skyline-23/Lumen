@@ -498,10 +498,14 @@ void ApolloCoreEncodedCaptureIngressConsumeSampleBuffer(
     drop_oldest_pending_frame();
   }
 
+  const auto newest_frame_is_key_frame = !ingress->pending_frames.empty() && ingress->pending_frames.back().is_key_frame;
+
   // Tiny forwarding queues are intentional low-latency profiles. If they overflow,
   // collapse the backlog to the freshest encoded frame instead of preserving extra
-  // dependent frames that will usually arrive too late to be useful.
-  if (overflowed && ingress->frame_capacity <= 3) {
+  // dependent frames that will usually arrive too late to be useful. Apply the same
+  // collapse when an overflow just delivered a new key frame, because older dependent
+  // frames are no longer useful once a fresher recovery point is already queued.
+  if (overflowed && (ingress->frame_capacity <= 3 || newest_frame_is_key_frame)) {
     while (ingress->pending_frames.size() > 1) {
       drop_oldest_pending_frame();
     }
