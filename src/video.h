@@ -150,6 +150,21 @@ namespace video {
         break;
       }
     }
+
+    if (columns == 1 || rows == 1) {
+      hdr_overlay_region_t region;
+      region.x = origin_x;
+      region.y = origin_y;
+      region.width = width;
+      region.height = height;
+      region.has_metadata = metadata != nullptr;
+      if (metadata != nullptr) {
+        region.metadata = *metadata;
+      }
+      overlay_regions.emplace_back(region);
+      return overlay_regions;
+    }
+
     const auto tile_width = std::max((width + columns - 1) / columns, 1);
     const auto tile_height = std::max((height + rows - 1) / rows, 1);
 
