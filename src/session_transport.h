@@ -53,7 +53,7 @@ namespace video {
   };
 
   inline bool partial_hdr_overlay_producer_available() {
-    return false;
+    return true;
   }
 
   inline dynamic_range_transport_e effective_dynamic_range_transport(const dynamic_range_transport_e requested_transport) {
@@ -101,5 +101,11 @@ namespace video {
   inline bool dynamic_range_transport_uses_hdr_stream(const dynamic_range_transport_e transport) {
     return transport == dynamic_range_transport_e::full_frame_hdr ||
            transport == dynamic_range_transport_e::frame_gated_hdr;
+  }
+
+  inline bool dynamic_range_transport_uses_hdr_frame_state(const dynamic_range_transport_e transport) {
+    return transport == dynamic_range_transport_e::full_frame_hdr ||
+           transport == dynamic_range_transport_e::frame_gated_hdr ||
+           transport == dynamic_range_transport_e::sdr_base_hdr_overlay;
   }
 }  // namespace video

@@ -453,7 +453,7 @@ public struct ApolloBridgeEffectiveDisplayState: Equatable, Sendable {
 }
 
 public struct ApolloMacDisplayKitCaptureConfiguration: Equatable, Sendable {
-    private static let supportsPartialHDROverlayProducer = false
+    private static let supportsPartialHDROverlayProducer = true
 
     public let displayID: UInt32
     public let codec: ApolloCaptureCodec

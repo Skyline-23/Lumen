@@ -211,12 +211,28 @@ namespace video {
       );
     }
 
+    video::hdr_frame_state_t negotiated_hdr_frame_state(
+      video::dynamic_range_transport_e transport,
+      int frame_width,
+      int frame_height,
+      bool frame_is_hdr_signaled,
+      const SS_HDR_METADATA *metadata = nullptr
+    ) {
+      return video::make_default_hdr_frame_state(
+        transport,
+        frame_width,
+        frame_height,
+        frame_is_hdr_signaled,
+        metadata
+      );
+    }
+
     std::optional<video::hdr_frame_state_t> negotiated_optional_hdr_frame_state(
       const config_t &config,
       bool frame_is_hdr_signaled,
       const SS_HDR_METADATA *metadata = nullptr
     ) {
-      if (!video::config_uses_hdr_stream(config)) {
+      if (!video::dynamic_range_transport_uses_hdr_frame_state(video::effective_dynamic_range_transport(config))) {
         return std::nullopt;
       }
 
@@ -229,15 +245,19 @@ namespace video {
 
     std::optional<video::hdr_frame_state_t> negotiated_optional_hdr_frame_state(
       video::dynamic_range_transport_e transport,
+      int frame_width,
+      int frame_height,
       bool frame_is_hdr_signaled,
       const SS_HDR_METADATA *metadata = nullptr
     ) {
-      if (!video::dynamic_range_transport_uses_hdr_stream(transport)) {
+      if (!video::dynamic_range_transport_uses_hdr_frame_state(transport)) {
         return std::nullopt;
       }
 
       return negotiated_hdr_frame_state(
         transport,
+        frame_width,
+        frame_height,
         frame_is_hdr_signaled,
         metadata
       );
@@ -1405,6 +1425,8 @@ namespace video {
         frame_nr,
         negotiated_optional_hdr_frame_state(
           dynamic_range_transport,
+          width,
+          height,
           video::colorspace_is_hdr(colorspace),
           hdr_metadata_state.valid ? &hdr_metadata_state.metadata : nullptr
         ),

@@ -216,10 +216,10 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         XCTAssertTrue(fallbackOverlay.prefersRealtimeHDRMetadata)
         XCTAssertEqual(fallbackOverlay.negotiatedQueueProfile, .q2)
 
-        XCTAssertEqual(overlayRequestedSink.negotiatedDynamicRangeTransport, ApolloCoreDynamicRangeTransportFrameGatedHDR)
-        XCTAssertTrue(overlayRequestedSink.usesHDRTransport)
+        XCTAssertEqual(overlayRequestedSink.negotiatedDynamicRangeTransport, ApolloCoreDynamicRangeTransportSDRBaseHDROverlay)
+        XCTAssertFalse(overlayRequestedSink.usesHDRTransport)
         XCTAssertTrue(overlayRequestedSink.prefersRealtimeHDRMetadata)
-        XCTAssertEqual(overlayRequestedSink.negotiatedQueueProfile, .q2)
+        XCTAssertEqual(overlayRequestedSink.negotiatedQueueProfile, .q1)
     }
 
     func testRecommendedCoreForwardingFrameCapacityStaysLowLatency() {

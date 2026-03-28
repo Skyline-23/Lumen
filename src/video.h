@@ -5,6 +5,7 @@
 #pragma once
 
 // standard includes
+#include <algorithm>
 #include <cstring>
 #include <optional>
 #include <vector>
@@ -107,6 +108,29 @@ namespace video {
     return state;
   }
 
+  inline hdr_frame_state_t make_full_frame_overlay_hdr_frame_state(
+    int frame_width,
+    int frame_height,
+    const SS_HDR_METADATA *metadata = nullptr
+  ) {
+    hdr_overlay_region_t region;
+    region.x = 0;
+    region.y = 0;
+    region.width = std::max(frame_width, 0);
+    region.height = std::max(frame_height, 0);
+    region.has_metadata = metadata != nullptr;
+    if (metadata != nullptr) {
+      region.metadata = *metadata;
+    }
+
+    std::vector<hdr_overlay_region_t> overlay_regions;
+    if (region.width > 0 && region.height > 0) {
+      overlay_regions.emplace_back(region);
+    }
+
+    return make_overlay_hdr_frame_state(std::move(overlay_regions), metadata);
+  }
+
   inline hdr_frame_state_t make_default_hdr_frame_state(
     dynamic_range_transport_e transport,
     bool frame_is_hdr_signaled,
@@ -121,6 +145,28 @@ namespace video {
         return frame_is_hdr_signaled ? make_full_frame_hdr_state(metadata) : make_sdr_hdr_frame_state();
       case dynamic_range_transport_e::sdr_base_hdr_overlay:
         return make_sdr_hdr_frame_state();
+      case dynamic_range_transport_e::unknown:
+      default:
+        return frame_is_hdr_signaled ? make_full_frame_hdr_state(metadata) : make_sdr_hdr_frame_state();
+    }
+  }
+
+  inline hdr_frame_state_t make_default_hdr_frame_state(
+    dynamic_range_transport_e transport,
+    int frame_width,
+    int frame_height,
+    bool frame_is_hdr_signaled,
+    const SS_HDR_METADATA *metadata = nullptr
+  ) {
+    switch (transport) {
+      case dynamic_range_transport_e::sdr:
+        return make_sdr_hdr_frame_state();
+      case dynamic_range_transport_e::full_frame_hdr:
+        return frame_is_hdr_signaled ? make_full_frame_hdr_state(metadata) : make_sdr_hdr_frame_state();
+      case dynamic_range_transport_e::frame_gated_hdr:
+        return frame_is_hdr_signaled ? make_full_frame_hdr_state(metadata) : make_sdr_hdr_frame_state();
+      case dynamic_range_transport_e::sdr_base_hdr_overlay:
+        return frame_is_hdr_signaled ? make_full_frame_overlay_hdr_frame_state(frame_width, frame_height, metadata) : make_sdr_hdr_frame_state();
       case dynamic_range_transport_e::unknown:
       default:
         return frame_is_hdr_signaled ? make_full_frame_hdr_state(metadata) : make_sdr_hdr_frame_state();
@@ -178,6 +224,8 @@ namespace video {
   ) {
     return make_default_hdr_frame_state(
       effective_dynamic_range_transport(config),
+      config.width,
+      config.height,
       frame_is_hdr_signaled,
       metadata
     );
