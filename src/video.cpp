@@ -211,6 +211,38 @@ namespace video {
       );
     }
 
+    std::optional<video::hdr_frame_state_t> negotiated_optional_hdr_frame_state(
+      const config_t &config,
+      bool frame_is_hdr_signaled,
+      const SS_HDR_METADATA *metadata = nullptr
+    ) {
+      if (!video::config_uses_hdr_stream(config)) {
+        return std::nullopt;
+      }
+
+      return negotiated_hdr_frame_state(
+        config,
+        frame_is_hdr_signaled,
+        metadata
+      );
+    }
+
+    std::optional<video::hdr_frame_state_t> negotiated_optional_hdr_frame_state(
+      video::dynamic_range_transport_e transport,
+      bool frame_is_hdr_signaled,
+      const SS_HDR_METADATA *metadata = nullptr
+    ) {
+      if (!video::dynamic_range_transport_uses_hdr_stream(transport)) {
+        return std::nullopt;
+      }
+
+      return negotiated_hdr_frame_state(
+        transport,
+        frame_is_hdr_signaled,
+        metadata
+      );
+    }
+
     void request_external_encoded_capture_key_frame() {
       ApolloMacBridgeRequestImmediateCaptureKeyFrame();
     }
@@ -1371,7 +1403,7 @@ namespace video {
         channel_data,
         frame_timestamp,
         frame_nr,
-        negotiated_hdr_frame_state(
+        negotiated_optional_hdr_frame_state(
           dynamic_range_transport,
           video::colorspace_is_hdr(colorspace),
           hdr_metadata_state.valid ? &hdr_metadata_state.metadata : nullptr
@@ -1429,7 +1461,7 @@ namespace video {
       void *channel_data;
       std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
       int64_t frame_index;
-      video::hdr_frame_state_t hdr_frame_state;
+      std::optional<video::hdr_frame_state_t> hdr_frame_state;
       std::shared_ptr<platf::av_pixel_ref_t> pixel_buffer_ref;
     };
 
@@ -2926,9 +2958,9 @@ namespace video {
 
       packet->replacements = &session.replacements;
       packet->channel_data = channel_data;
-      packet->hdr_frame_state = negotiated_hdr_frame_state(
+      packet->hdr_frame_state = negotiated_optional_hdr_frame_state(
         config,
-        video::config_uses_hdr_stream(config)
+        true
       );
       packets->raise(std::move(packet));
     }
@@ -2951,9 +2983,9 @@ namespace video {
     packet->channel_data = channel_data;
     packet->after_ref_frame_invalidation = encoded_frame.after_ref_frame_invalidation;
     packet->frame_timestamp = frame_timestamp;
-    packet->hdr_frame_state = negotiated_hdr_frame_state(
+    packet->hdr_frame_state = negotiated_optional_hdr_frame_state(
       config,
-      video::config_uses_hdr_stream(config)
+      true
     );
     packets->raise(std::move(packet));
 
@@ -3928,7 +3960,7 @@ namespace video {
           }
           packet->channel_data = channel_data;
           packet->frame_timestamp = display_time_clock.frame_timestamp(frame.source_display_time);
-          packet->hdr_frame_state = negotiated_hdr_frame_state(
+          packet->hdr_frame_state = negotiated_optional_hdr_frame_state(
             config,
             frame.is_hdr_signaled,
             external_metadata.hdr_active ? &external_metadata.hdr_metadata : nullptr

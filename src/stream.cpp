@@ -1502,7 +1502,9 @@ namespace stream {
         }
       }
 
-      if (session->control.peer && session->config.monitor.sinkRequest.capability.supports_per_frame_hdr_metadata != 0) {
+      if (session->control.peer &&
+          video::config_uses_hdr_stream(session->config.monitor) &&
+          session->config.monitor.sinkRequest.capability.supports_per_frame_hdr_metadata != 0) {
         auto frame_hdr_state = packet->hdr_frame_state.value_or(video::make_sdr_hdr_frame_state());
         if (frame_hdr_state.content == video::hdr_frame_content_e::partial_hdr_overlay &&
             session->config.monitor.sinkRequest.capability.supports_hdr_tile_overlay == 0) {
