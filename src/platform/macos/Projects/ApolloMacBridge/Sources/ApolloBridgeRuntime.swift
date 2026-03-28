@@ -1188,9 +1188,18 @@ public actor ApolloBridgeRuntime {
         // transport before sizing the forwarding buffer.
         let queueDepthReserve = max(configuration.negotiatedQueueProfile.queueDepthHint, 1)
         let hdrMetadataSlack = configuration.prefersRealtimeHDRMetadata ? 1 : 0
-        let minimumCapacity = configuration.targetFrameRate >= 120 ? 2 : 3
-        let maximumCapacity = configuration.targetFrameRate >= 120 ? 4 : 6
-        return min(max(queueDepthReserve + hdrMetadataSlack, minimumCapacity), maximumCapacity)
+        let targetFrameRate = configuration.targetFrameRate
+
+        if targetFrameRate >= 120 {
+            let aggressivelyTrimmedCapacity = max(queueDepthReserve + hdrMetadataSlack - 1, 1)
+            return min(aggressivelyTrimmedCapacity, 3)
+        }
+
+        if targetFrameRate >= 90 {
+            return min(max(queueDepthReserve + hdrMetadataSlack, 2), 4)
+        }
+
+        return min(max(queueDepthReserve + hdrMetadataSlack, 2), 5)
     }
 
     private let coreForwarder = ApolloCoreCaptureForwarder()

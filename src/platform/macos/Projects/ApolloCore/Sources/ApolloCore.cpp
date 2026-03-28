@@ -485,11 +485,26 @@ void ApolloCoreEncodedCaptureIngressConsumeSampleBuffer(
   ingress->frame_count += 1;
   ingress->last_frame = frame;
   ingress->pending_frames.push_back(std::move(frame));
-  while (ingress->pending_frames.size() > ingress->frame_capacity) {
+
+  const auto drop_oldest_pending_frame = [&]() {
     const auto dropped_frame_source_display_time = ingress->pending_frames.front().source_display_time;
     ingress->pending_frames.pop_front();
     ingress->dropped_frame_count += 1;
     push_encoded_capture_drop_event_locked(ingress, dropped_frame_source_display_time);
+  };
+
+  const auto overflowed = ingress->pending_frames.size() > ingress->frame_capacity;
+  while (ingress->pending_frames.size() > ingress->frame_capacity) {
+    drop_oldest_pending_frame();
+  }
+
+  // Tiny forwarding queues are intentional low-latency profiles. If they overflow,
+  // collapse the backlog to the freshest encoded frame instead of preserving an extra
+  // dependent frame that will usually arrive too late to be useful.
+  if (overflowed && ingress->frame_capacity <= 2) {
+    while (ingress->pending_frames.size() > 1) {
+      drop_oldest_pending_frame();
+    }
   }
   ingress->data_cv.notify_all();
 }
