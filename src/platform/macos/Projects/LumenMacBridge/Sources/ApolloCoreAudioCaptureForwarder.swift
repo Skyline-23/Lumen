@@ -1,4 +1,4 @@
-import ApolloCore
+import LumenCore
 import Foundation
 import MacDisplayCaptureKit
 

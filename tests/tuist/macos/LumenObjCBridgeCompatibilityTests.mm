@@ -4,7 +4,7 @@
 #import <chrono>
 #import <thread>
 
-#import <ApolloCore/ApolloCore.h>
+#import <LumenCore/LumenCore.h>
 #import <LumenMacBridge/LumenMacBridge.h>
 
 @interface LumenObjCBridgeCompatibilityTests : XCTestCase

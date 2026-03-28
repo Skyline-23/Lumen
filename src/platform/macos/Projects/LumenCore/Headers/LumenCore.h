@@ -1,5 +1,5 @@
-#ifndef APOLLO_CORE_H
-#define APOLLO_CORE_H
+#ifndef LUMEN_CORE_H
+#define LUMEN_CORE_H
 
 #include <CoreMedia/CoreMedia.h>
 #include <stdbool.h>

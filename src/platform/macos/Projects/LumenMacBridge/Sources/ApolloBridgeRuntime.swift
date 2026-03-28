@@ -1,4 +1,4 @@
-import ApolloCore
+import LumenCore
 import CoreGraphics
 import CoreMedia
 import Darwin
@@ -63,7 +63,7 @@ public enum ApolloCaptureQueueProfile: String, CaseIterable, Codable, Sendable {
         switch self {
         case .auto:
             // MDK autotuning starts from its own candidate matrix; use the baseline-q3
-            // depth here so ApolloCore forwarding keeps enough slack without reviving
+            // depth here so LumenCore forwarding keeps enough slack without reviving
             // large stale-frame queues by default.
             return 3
         case .q1:
@@ -1176,7 +1176,7 @@ public actor ApolloBridgeRuntime {
     static func recommendedCoreForwardingFrameCapacity(
         for configuration: ApolloMacDisplayKitCaptureConfiguration
     ) -> Int {
-        // MDK already applies source-side backpressure. Keep the ApolloCore handoff queue
+        // MDK already applies source-side backpressure. Keep the LumenCore handoff queue
         // deliberately tight so stale encoded frames are dropped quickly instead of turning
         // into host-side latency. Auto mode resolves the queue profile from the negotiated
         // transport before sizing the forwarding buffer.
@@ -1593,7 +1593,7 @@ public actor ApolloBridgeRuntime {
         ApolloBridgeStatus(
             coreVersion: String(cString: ApolloCoreBootstrapVersionString()),
             runtimeDescription: String(cString: ApolloCoreBootstrapRuntimeDescription()),
-            integrationStatus: "MacDisplayKit owns macOS capture and encode. LumenMacBridge forwards encoded video and PCM audio into ApolloCore ingress surfaces while Lumen keeps the web, session, and transport stack.",
+            integrationStatus: "MacDisplayKit owns macOS capture and encode. LumenMacBridge forwards encoded video and PCM audio into LumenCore ingress surfaces while Lumen keeps the web, session, and transport stack.",
             captureSessionRunning: encodedCaptureSession != nil,
             audioCaptureSessionRunning: audioCaptureSession != nil,
             automaticCaptureOrchestrationRunning: captureAutomationTask != nil
@@ -1611,7 +1611,7 @@ public actor ApolloBridgeRuntime {
             if let configuration = request.videoConfiguration {
                 let frameCapacity = Self.recommendedCoreForwardingFrameCapacity(for: configuration)
                 logger.notice(
-                    "Applying ApolloCore macOS bridge capture request display-id=\(configuration.displayID, privacy: .public) codec=\(configuration.codec.rawValue, privacy: .public) requested-queue=\(configuration.queueProfile.rawValue, privacy: .public) negotiated-queue=\(configuration.negotiatedQueueProfile.rawValue, privacy: .public) requested-transport=\(apolloDynamicRangeTransportName(configuration.sinkRequest.dynamicRangeTransport), privacy: .public) negotiated-transport=\(apolloDynamicRangeTransportName(configuration.negotiatedDynamicRangeTransport), privacy: .public) fps=\(configuration.targetFrameRate, privacy: .public) bitrate-kbps=\(configuration.targetVideoBitRateKbps, privacy: .public) forwarding-frame-capacity=\(frameCapacity, privacy: .public)"
+                    "Applying LumenCore macOS bridge capture request display-id=\(configuration.displayID, privacy: .public) codec=\(configuration.codec.rawValue, privacy: .public) requested-queue=\(configuration.queueProfile.rawValue, privacy: .public) negotiated-queue=\(configuration.negotiatedQueueProfile.rawValue, privacy: .public) requested-transport=\(apolloDynamicRangeTransportName(configuration.sinkRequest.dynamicRangeTransport), privacy: .public) negotiated-transport=\(apolloDynamicRangeTransportName(configuration.negotiatedDynamicRangeTransport), privacy: .public) fps=\(configuration.targetFrameRate, privacy: .public) bitrate-kbps=\(configuration.targetVideoBitRateKbps, privacy: .public) forwarding-frame-capacity=\(frameCapacity, privacy: .public)"
                 )
                 try? await startMacDisplayKitCapture(
                     configuration: configuration,
@@ -1626,7 +1626,7 @@ public actor ApolloBridgeRuntime {
                     activeConfigurationSummary = "none"
                 }
                 logger.notice(
-                    "Stopping MacDisplayKit capture because ApolloCore video request resolved to nil video-generation=\(request.videoGeneration, privacy: .public) last-applied-video-generation=\(self.lastAppliedVideoRequestGeneration ?? 0, privacy: .public) session-active=\(self.encodedCaptureSession != nil, privacy: .public) active-configuration=\(activeConfigurationSummary, privacy: .public)"
+                    "Stopping MacDisplayKit capture because LumenCore video request resolved to nil video-generation=\(request.videoGeneration, privacy: .public) last-applied-video-generation=\(self.lastAppliedVideoRequestGeneration ?? 0, privacy: .public) session-active=\(self.encodedCaptureSession != nil, privacy: .public) active-configuration=\(activeConfigurationSummary, privacy: .public)"
                 )
                 await stopMacDisplayKitCapture()
             }
@@ -1661,7 +1661,7 @@ public actor ApolloBridgeRuntime {
                     activeAudioConfigurationSummary = "none"
                 }
                 logger.notice(
-                    "Stopping MacDisplayKit audio capture because ApolloCore audio request resolved to nil audio-generation=\(request.audioGeneration, privacy: .public) last-applied-audio-generation=\(self.lastAppliedAudioRequestGeneration ?? 0, privacy: .public) session-active=\(self.audioCaptureSession != nil, privacy: .public) active-configuration=\(activeAudioConfigurationSummary, privacy: .public)"
+                    "Stopping MacDisplayKit audio capture because LumenCore audio request resolved to nil audio-generation=\(request.audioGeneration, privacy: .public) last-applied-audio-generation=\(self.lastAppliedAudioRequestGeneration ?? 0, privacy: .public) session-active=\(self.audioCaptureSession != nil, privacy: .public) active-configuration=\(activeAudioConfigurationSummary, privacy: .public)"
                 )
                 await stopMacDisplayKitAudioCapture()
             }

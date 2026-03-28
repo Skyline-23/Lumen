@@ -24,7 +24,7 @@ This bootstrap introduces a parallel Apple-platform structure without disturbing
   Lumen-owned framework that hosts the runtime in-process for the macOS companion.
 - `LumenMacCaptureAdapter`
   Lumen-owned Swift adapter that consumes `LumenMacBridge`, owns hosted-runtime lifecycle, and keeps companion policy out of the reusable bridge.
-- `ApolloCore`
+- `LumenCore`
   C/C++ compatibility surface for the existing Lumen runtime.
 - `LumenTuistTests`
   Basic validation for the Swift-to-core boundary.
@@ -34,10 +34,10 @@ This bootstrap introduces a parallel Apple-platform structure without disturbing
 - `LumenApp`
   Swift menu bar companion. It owns the macOS-native menu, notifications, and hosted-runtime lifecycle, while the web UI remains the primary Lumen surface.
 - `LumenMacBridge`
-  Apple-specific bridge surface that starts `MacDisplayKit`, forwards encoded video and PCM audio into `ApolloCore`, and mirrors runtime capture requests.
+  Apple-specific bridge surface that starts `MacDisplayKit`, forwards encoded video and PCM audio into `LumenCore`, and mirrors runtime capture requests.
 - `LumenMacCaptureAdapter`
   Lumen-owned adapter that keeps the hosted runtime and the Swift companion in the same process and same lifetime.
-- `ApolloCore`
+- `LumenCore`
   Existing C/C++ Lumen logic exposed through a stable C ABI for ingress, requests, and hosted-runtime control.
 
 ## Current macOS Runtime Boundary
@@ -58,7 +58,7 @@ This bootstrap introduces a parallel Apple-platform structure without disturbing
   - system audio capture
   - microphone capture
   - hardware encode session startup
-- `LumenMacBridge` forwards those encoded sample buffers and PCM audio frames into `ApolloCore` ingress surfaces.
+- `LumenMacBridge` forwards those encoded sample buffers and PCM audio frames into `LumenCore` ingress surfaces.
 - On macOS, Lumen's runtime path consumes those ingress surfaces instead of the removed legacy macOS capture runtime.
 - `FFmpeg` is still present in Lumen, but not as the macOS capture backend.
   - It remains downstream for transport-adjacent work such as coded-bitstream helpers and packetization glue.
@@ -67,10 +67,10 @@ This bootstrap introduces a parallel Apple-platform structure without disturbing
 ## Current Bridge Shape
 
 - `LumenMacBridge`
-  Owns `MacDisplayKit` session startup, forwards encoded sample buffers into `ApolloCore`, and exposes the queued ingress through bridge-owned drain methods, a mixed-language C/C++ wrapper surface, and a callback pump for native consumers.
+  Owns `MacDisplayKit` session startup, forwards encoded sample buffers into `LumenCore`, and exposes the queued ingress through bridge-owned drain methods, a mixed-language C/C++ wrapper surface, and a callback pump for native consumers.
 - `LumenMacCaptureAdapter`
   Consumes `LumenMacBridge` from Lumen-owned Swift code and presents the app-facing seam for hosted-runtime lifecycle, notifications, and stream control.
-- `ApolloCore`
+- `LumenCore`
   Exposes a C ABI encoded-capture ingress that retains `CMSampleBuffer` frames, queues bounded frame/event backlogs, and lets the next native consumer drain them without flattening them to copied payload bytes first.
 - `LumenTuistTests`
   Verifies both the C ABI ingress and the Swift-to-core forwarding path with synthetic sample buffers, ordered queue draining, and drop-on-overflow behavior.

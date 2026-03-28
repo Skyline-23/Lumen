@@ -1,6 +1,6 @@
 import LumenMacCaptureAdapter
 import LumenMacBridge
-import ApolloCore
+import LumenCore
 import XCTest
 
 final class LumenMacCaptureAdapterTests: XCTestCase {

@@ -22,7 +22,7 @@ let hostedRuntimeHeaderSearchPaths = [
     "\(buildDepsRoot)/include",
     "\(runtimeDepsRoot)/include",
     "\(repoRoot)/src",
-    "$(SRCROOT)/Projects/ApolloCore/Headers",
+    "$(SRCROOT)/Projects/LumenCore/Headers",
     "$(SRCROOT)/Projects/LumenMacBridge/Headers",
     "$(SRCROOT)/Projects/LumenMacSupport/Headers"
 ]
@@ -221,17 +221,17 @@ let project = Project(
     settings: .settings(base: baseSettings),
     targets: [
         .target(
-            name: "ApolloCore",
+            name: "LumenCore",
             destinations: .macOS,
             product: .framework,
             bundleId: "dev.skyline23.lumen.core",
             deploymentTargets: .macOS("14.0"),
             infoPlist: .default,
             sources: [
-                "Projects/ApolloCore/Sources/**/*.{c,cc,cpp,m,mm}"
+                "Projects/LumenCore/Sources/**/*.{c,cc,cpp,m,mm}"
             ],
             headers: .headers(
-                public: "Projects/ApolloCore/Headers/ApolloCore.h"
+                public: "Projects/LumenCore/Headers/LumenCore.h"
             ),
             dependencies: [
                 .sdk(name: "CoreFoundation", type: .framework),
@@ -240,9 +240,9 @@ let project = Project(
             settings: .settings(
                 base: [
                     "DEFINES_MODULE": "YES",
-                    "PRODUCT_NAME": "ApolloCore",
+                    "PRODUCT_NAME": "LumenCore",
                     "HEADER_SEARCH_PATHS": [
-                        "$(SRCROOT)/Projects/ApolloCore/Headers"
+                        "$(SRCROOT)/Projects/LumenCore/Headers"
                     ]
                 ]
             )
@@ -261,7 +261,7 @@ let project = Project(
                 public: "Projects/LumenMacBridge/Headers/LumenMacBridge.h"
             ),
             dependencies: [
-                .target(name: "ApolloCore"),
+                .target(name: "LumenCore"),
                 .package(product: "MacDisplayCaptureKit", type: .runtime)
             ],
             settings: .settings(
@@ -288,7 +288,7 @@ let project = Project(
                 public: "Projects/LumenHostedRuntime/Headers/LumenHostedRuntime.h"
             ),
             dependencies: [
-                .target(name: "ApolloCore"),
+                .target(name: "LumenCore"),
                 .target(name: "LumenMacBridge"),
                 .sdk(name: "AppKit", type: .framework),
                 .sdk(name: "ApplicationServices", type: .framework),
@@ -391,7 +391,7 @@ let project = Project(
             name: "LumenTuistTests",
             shared: true,
             buildAction: .buildAction(targets: [
-                "ApolloCore",
+                "LumenCore",
                 "LumenMacBridge",
                 "LumenTuistTests"
             ]),

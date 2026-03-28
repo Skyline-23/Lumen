@@ -41,7 +41,7 @@ extern "C" {
   #include <CoreMedia/CoreMedia.h>
   #include <VideoToolbox/VideoToolbox.h>
   #include <mach/mach_time.h>
-  #include "ApolloCore.h"
+  #include "LumenCore.h"
   #include "LumenMacBridge.h"
   #include "platform/macos/av_img_t.h"
   #include "platform/macos/misc.h"
@@ -4600,7 +4600,7 @@ namespace video {
     if (!config.input_only) {
       auto *external_ingress = ApolloCoreSharedEncodedCaptureIngress();
       if (!external_ingress) {
-        BOOST_LOG(error) << "ApolloCore encoded ingress is unavailable on macOS";
+        BOOST_LOG(error) << "LumenCore encoded ingress is unavailable on macOS";
         return;
       }
       capture_external_encoded_ingress(std::move(mail), config, channel_data);

@@ -1,4 +1,4 @@
-import ApolloCore
+import LumenCore
 import Foundation
 import OSLog
 
@@ -356,7 +356,7 @@ actor ApolloCaptureRequestMirrorCoordinator {
             guard semanticState != mirroredSemanticState ||
                     semanticState != currentApolloCoreSemanticState else {
                 logger.debug(
-                    "Skipping mirrored capture request sync generation=\(mirroredSnapshot.generation, privacy: .public) because semantic state already matches ApolloCore"
+                    "Skipping mirrored capture request sync generation=\(mirroredSnapshot.generation, privacy: .public) because semantic state already matches LumenCore"
                 )
                 return
             }
@@ -426,7 +426,7 @@ actor ApolloCaptureRequestMirrorCoordinator {
             }
         } else if mirroredGeneration != nil {
             logger.notice(
-                "Clearing ApolloCore capture request because mirrored capture request state disappeared previous-generation=\(self.mirroredGeneration ?? 0, privacy: .public)"
+                "Clearing LumenCore capture request because mirrored capture request state disappeared previous-generation=\(self.mirroredGeneration ?? 0, privacy: .public)"
             )
             mirroredGeneration = nil
             mirroredSemanticState = nil

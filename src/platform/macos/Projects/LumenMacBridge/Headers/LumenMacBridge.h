@@ -1,7 +1,7 @@
 #ifndef APOLLO_MAC_BRIDGE_H
 #define APOLLO_MAC_BRIDGE_H
 
-#include <ApolloCore/ApolloCore.h>
+#include <LumenCore/LumenCore.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>

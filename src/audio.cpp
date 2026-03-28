@@ -14,7 +14,7 @@
 #include "globals.h"
 #include "logging.h"
 #ifdef __APPLE__
-  #include "ApolloCore.h"
+  #include "LumenCore.h"
 #endif
 #include "platform/common.h"
 #include "thread_safe.h"

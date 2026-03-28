@@ -18,7 +18,7 @@ extern "C" {
 #include <moonlight-common-c/src/Limelight-internal.h>
 #include "rswrapper.h"
 #ifdef __APPLE__
-#include "ApolloCore.h"
+#include "LumenCore.h"
 #endif
   // clang-format on
 }

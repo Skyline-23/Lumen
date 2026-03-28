@@ -1,5 +1,5 @@
 @testable import LumenMacBridge
-import ApolloCore
+import LumenCore
 import CoreMedia
 import XCTest
 
@@ -7,7 +7,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
     func testBridgeExposesBootstrapStatus() async {
         let status = await ApolloBridgeRuntime.shared.statusSnapshot()
 
-        XCTAssertEqual(status.coreVersion, "ApolloCore bootstrap")
+        XCTAssertEqual(status.coreVersion, "LumenCore bootstrap")
         XCTAssertFalse(status.integrationStatus.isEmpty)
     }
 

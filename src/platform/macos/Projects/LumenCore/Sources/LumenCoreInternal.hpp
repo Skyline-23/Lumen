@@ -1,7 +1,7 @@
-#ifndef APOLLO_CORE_INTERNAL_HPP
-#define APOLLO_CORE_INTERNAL_HPP
+#ifndef LUMEN_CORE_INTERNAL_HPP
+#define LUMEN_CORE_INTERNAL_HPP
 
-#include "ApolloCore.h"
+#include "LumenCore.h"
 
 #include <cstddef>
 #include <cstdint>

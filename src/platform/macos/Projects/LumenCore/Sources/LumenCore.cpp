@@ -1,5 +1,5 @@
-#include "ApolloCore.h"
-#include "ApolloCoreInternal.hpp"
+#include "LumenCore.h"
+#include "LumenCoreInternal.hpp"
 
 #include <algorithm>
 #include <array>
@@ -248,7 +248,7 @@ struct ApolloCoreCaptureRequestState {
 
 namespace apollo::core {
   std::string version_string() {
-    return "ApolloCore bootstrap";
+    return "LumenCore bootstrap";
   }
 
   std::string runtime_description() {
