@@ -432,7 +432,16 @@ int lumen_run(int argc, char *argv[], const LumenRuntimeOptions &options) {
 #endif
   }
 
-  if (video::probe_encoders()) {
+  const bool defer_startup_encoder_probe =
+#ifdef __APPLE__
+    true;
+#else
+    false;
+#endif
+
+  if (defer_startup_encoder_probe) {
+    BOOST_LOG(info) << "Deferring initial encoder probe until the first stream launch on macOS"sv;
+  } else if (video::probe_encoders()) {
 #ifdef _WIN32
     bool allow_probing = video::allow_encoder_probing();
     // Create a temporary virtual display for encoder capability probing
