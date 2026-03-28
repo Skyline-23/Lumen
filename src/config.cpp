@@ -489,7 +489,7 @@ namespace config {
     },  // vt
 
     "hevc"s,  // macos_bridge_codec
-    "auto"s,  // macos_bridge_queue_profile
+    "balanced"s,  // streaming_profile
 
     {
       false,  // strict_rc_buffer
@@ -512,8 +512,6 @@ namespace config {
       {},  // mode_remapping
       {}  // wa
     },  // display_device
-
-    0,  // minimum_fps_target (0 = framerate)
 
     "1920x1080x60",  // fallback_mode
     false, // isolated Display
@@ -1176,7 +1174,7 @@ namespace config {
     int_f(vars, "vt_software", video.vt.vt_require_sw, vt::force_software_from_view);
     int_f(vars, "vt_realtime", video.vt.vt_realtime, vt::rt_from_view);
     string_f(vars, "macos_bridge_codec", video.macos_bridge_codec);
-    string_f(vars, "macos_bridge_queue_profile", video.macos_bridge_queue_profile);
+    string_f(vars, "streaming_profile", video.streaming_profile);
 
     bool_f(vars, "vaapi_strict_rc_buffer", video.vaapi.strict_rc_buffer);
 
@@ -1205,8 +1203,6 @@ namespace config {
       int_between_f(vars, "dd_wa_hdr_toggle_delay", value, {0, 3000});
       video.dd.wa.hdr_toggle_delay = std::chrono::milliseconds {value};
     }
-
-    double_between_f(vars, "minimum_fps_target", video.minimum_fps_target, {0.0, 1000.0});
 
     string_f(vars, "fallback_mode", video.fallback_mode);
     bool_f(vars, "isolated_virtual_display_option", video.isolated_virtual_display_option);

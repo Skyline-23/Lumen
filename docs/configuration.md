@@ -1416,29 +1416,33 @@ editing the `conf` file in a text editor. Use the examples as reference.
     </tr>
 </table>
 
-### minimum_fps_target
+### streaming_profile
 
 <table>
     <tr>
         <td>Description</td>
         <td colspan="2">
-            Sunshine tries to save bandwidth when content on screen is static or a low framerate. Because many clients expect a constant stream of video frames, a certain amount of duplicate frames are sent when this happens. This setting controls the lowest effective framerate a stream can reach.
+            Select the built-in streaming policy Apollo should apply when balancing queue depth, stale-frame recovery, and encoder cadence.
         </td>
     </tr>
     <tr>
         <td>Default</td>
         <td colspan="2">@code{}
-            0
+            balanced
             @endcode</td>
     </tr>
     <tr>
         <td rowspan="3">Choices</td>
-        <td>0</td>
-        <td>Use half the stream's FPS as the minimum target.</td>
+        <td>low-latency</td>
+        <td>Favor the smallest host-side queues and the fastest stale-frame recovery.</td>
     </tr>
     <tr>
-        <td>1-1000</td>
-        <td>Specify your own value. The real minimum may differ from this value.</td>
+        <td>balanced</td>
+        <td>Use Apollo's default policy for mixed latency and quality targets.</td>
+    </tr>
+    <tr>
+        <td>max-quality</td>
+        <td>Allow a little more cadence slack in exchange for steadier visual quality.</td>
     </tr>
 </table>
 

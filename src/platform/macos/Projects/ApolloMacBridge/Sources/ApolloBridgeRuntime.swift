@@ -305,16 +305,10 @@ enum ApolloBridgeConfigurationPreferences {
     }
 
     static func preferredQueueProfile(contents: String?) -> ApolloCaptureQueueProfile {
-        switch configuredValue(forKey: "macos_bridge_queue_profile", contents: contents) {
-        case "auto":
-            return .auto
-        case "q1":
+        switch configuredValue(forKey: "streaming_profile", contents: contents) {
+        case "low-latency":
             return .q1
-        case "q2":
-            return .q2
-        case "q3":
-            return .q3
-        case "q4":
+        case "max-quality":
             return .q4
         default:
             return .auto

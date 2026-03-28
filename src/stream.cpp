@@ -2160,28 +2160,23 @@ namespace stream {
       }
     }
 
-    ApolloCoreCaptureQueueProfile apollo_core_requested_queue_profile() {
-      auto queue_profile = config::video.macos_bridge_queue_profile;
-      std::transform(queue_profile.begin(), queue_profile.end(), queue_profile.begin(), [](unsigned char ch) {
+    std::string apollo_core_requested_streaming_profile() {
+      auto streaming_profile = config::video.streaming_profile;
+      std::transform(streaming_profile.begin(), streaming_profile.end(), streaming_profile.begin(), [](unsigned char ch) {
         return static_cast<char>(std::tolower(ch));
       });
+      return streaming_profile;
+    }
 
-      if (queue_profile == "auto" || queue_profile == "autotune") {
-        return ApolloCoreCaptureQueueProfileAuto;
-      }
-      if (queue_profile == "q1") {
+    ApolloCoreCaptureQueueProfile apollo_core_requested_queue_profile() {
+      const auto streaming_profile = apollo_core_requested_streaming_profile();
+      if (streaming_profile == "low-latency") {
         return ApolloCoreCaptureQueueProfileQ1;
       }
-      if (queue_profile == "q2") {
-        return ApolloCoreCaptureQueueProfileQ2;
-      }
-      if (queue_profile == "q3") {
-        return ApolloCoreCaptureQueueProfileQ3;
-      }
-      if (queue_profile == "q4") {
+      if (streaming_profile == "max-quality") {
         return ApolloCoreCaptureQueueProfileQ4;
       }
-      return ApolloCoreCaptureQueueProfileQ2;
+      return ApolloCoreCaptureQueueProfileAuto;
     }
 
     std::string_view apollo_core_queue_profile_name(ApolloCoreCaptureQueueProfile queue_profile) {
@@ -2388,6 +2383,7 @@ namespace stream {
       BOOST_LOG(info) << "Publishing macOS bridge capture request displayID="sv
                       << requested_display_id
                       << " codec="sv << apollo_core_codec_name(requested_codec)
+                      << " streaming-profile="sv << apollo_core_requested_streaming_profile()
                       << " queue="sv << apollo_core_queue_profile_name(requested_queue_profile)
                       << " fps="sv << session.config.monitor.framerate
                       << " size="sv << session.config.monitor.width << "x"sv << session.config.monitor.height

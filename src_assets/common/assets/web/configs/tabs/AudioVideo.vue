@@ -13,7 +13,6 @@ const props = defineProps([
   'platform',
   'config',
   'vdisplay',
-  'min_fps_factor',
 ])
 
 const sudovdaStatus = {
@@ -121,6 +120,16 @@ const validateFallbackMode = (event) => {
       :platform="platform"
       :config="config"
     />
+
+    <div class="mb-3">
+      <label for="streaming_profile" class="form-label">{{ $t('config.streaming_profile') }}</label>
+      <select id="streaming_profile" class="form-select" v-model="config.streaming_profile">
+        <option value="low-latency">{{ $t('config.streaming_profile_low_latency') }}</option>
+        <option value="balanced">{{ $t('config.streaming_profile_balanced') }}</option>
+        <option value="max-quality">{{ $t('config.streaming_profile_max_quality') }}</option>
+      </select>
+      <div class="form-text">{{ $t('config.streaming_profile_desc') }}</div>
+    </div>
 
     <!-- Fallback Display Mode -->
     <div class="mb-3">

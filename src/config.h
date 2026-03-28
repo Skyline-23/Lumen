@@ -80,7 +80,7 @@ namespace config {
     } vt;
 
     std::string macos_bridge_codec;
-    std::string macos_bridge_queue_profile;
+    std::string streaming_profile;
 
     struct {
       bool strict_rc_buffer;
@@ -145,8 +145,6 @@ namespace config {
       mode_remapping_t mode_remapping;
       workarounds_t wa;
     } dd;
-
-    double minimum_fps_target;  ///< Lowest framerate that will be used when streaming. Range 0-1000, 0 = half of client's requested framerate.
 
     std::string fallback_mode;
     bool isolated_virtual_display_option;

@@ -3614,12 +3614,27 @@ namespace video {
       }
     });
 
-    // set max frame time based on client-requested target framerate.
-    double minimum_fps_target = (config::video.minimum_fps_target > 0.0) ? config::video.minimum_fps_target * 1000 : std::max(config.encodingFramerate / 5, 10000);
+    auto streaming_profile = config::video.streaming_profile;
+    std::transform(streaming_profile.begin(), streaming_profile.end(), streaming_profile.begin(), [](unsigned char ch) {
+      return static_cast<char>(std::tolower(ch));
+    });
+
+    // Keep stale-frame recovery tied to the user-facing streaming profile instead
+    // of a separate manual FPS floor knob.
+    const double minimum_fps_target = [&]() -> double {
+      if (streaming_profile == "low-latency") {
+        return std::max(config.encodingFramerate / 3, 20000);
+      }
+      if (streaming_profile == "max-quality") {
+        return std::max(config.encodingFramerate / 8, 6000);
+      }
+      return std::max(config.encodingFramerate / 5, 10000);
+    }();
     auto max_frametime = std::chrono::nanoseconds(1000ms) * 1000 / minimum_fps_target;
     auto encode_frame_threshold = std::chrono::nanoseconds(1000ms) * 1000 / config.encodingFramerate;
     auto frame_variation_threshold = encode_frame_threshold / 4;
-    BOOST_LOG(info) << "Minimum FPS target set to ~"sv << (minimum_fps_target / 2000) << "fps ("sv << max_frametime * 2 << ")"sv;
+    BOOST_LOG(info) << "Streaming profile set to "sv << streaming_profile
+                    << " with minimum frame cadence of ~"sv << (minimum_fps_target / 2000) << "fps ("sv << max_frametime * 2 << ")"sv;
     BOOST_LOG(info) << "Encoding Frame threshold: "sv << encode_frame_threshold;
 
     auto shutdown_event = mail->event<bool>(mail::shutdown);

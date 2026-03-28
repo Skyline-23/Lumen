@@ -33,10 +33,10 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         XCTAssertFalse(status.captureSessionRunning)
     }
 
-    func testBridgeConfigurationPreferencesParseCodecAndQueueProfile() {
+    func testBridgeConfigurationPreferencesParseCodecAndStreamingProfile() {
         let contents = """
         macos_bridge_codec=prores-proxy
-        macos_bridge_queue_profile=q4
+        streaming_profile=max-quality
         """
 
         XCTAssertEqual(
@@ -48,15 +48,15 @@ final class ApolloTuistBootstrapTests: XCTestCase {
             .q4
         )
         XCTAssertEqual(
-            ApolloBridgeConfigurationPreferences.preferredQueueProfile(contents: "macos_bridge_queue_profile=q3"),
-            .q3
+            ApolloBridgeConfigurationPreferences.preferredQueueProfile(contents: "streaming_profile=low-latency"),
+            .q1
         )
         XCTAssertEqual(
-            ApolloBridgeConfigurationPreferences.preferredQueueProfile(contents: "macos_bridge_queue_profile=auto"),
+            ApolloBridgeConfigurationPreferences.preferredQueueProfile(contents: "streaming_profile=balanced"),
             .auto
         )
         XCTAssertEqual(
-            ApolloBridgeConfigurationPreferences.preferredQueueProfile(contents: "macos_bridge_queue_profile=garbage"),
+            ApolloBridgeConfigurationPreferences.preferredQueueProfile(contents: "streaming_profile=garbage"),
             .auto
         )
         XCTAssertEqual(
