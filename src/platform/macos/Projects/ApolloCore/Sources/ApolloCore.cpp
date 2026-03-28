@@ -499,9 +499,9 @@ void ApolloCoreEncodedCaptureIngressConsumeSampleBuffer(
   }
 
   // Tiny forwarding queues are intentional low-latency profiles. If they overflow,
-  // collapse the backlog to the freshest encoded frame instead of preserving an extra
-  // dependent frame that will usually arrive too late to be useful.
-  if (overflowed && ingress->frame_capacity <= 2) {
+  // collapse the backlog to the freshest encoded frame instead of preserving extra
+  // dependent frames that will usually arrive too late to be useful.
+  if (overflowed && ingress->frame_capacity <= 3) {
     while (ingress->pending_frames.size() > 1) {
       drop_oldest_pending_frame();
     }

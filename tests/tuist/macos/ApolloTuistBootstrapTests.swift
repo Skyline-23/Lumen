@@ -585,6 +585,97 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         )
     }
 
+    func testApolloCoreEncodedIngressCollapsesThreeFrameBacklogAfterOverflow() throws {
+        guard let ingress = ApolloCoreEncodedCaptureIngressCreate() else {
+            return XCTFail("ApolloCoreEncodedCaptureIngressCreate returned nil")
+        }
+        defer {
+            ApolloCoreEncodedCaptureIngressDestroy(ingress)
+        }
+
+        ApolloCoreEncodedCaptureIngressSetFrameCapacity(ingress, 3)
+
+        let firstSampleBuffer = try Self.makeEncodedSampleBuffer(
+            payload: Data([0x41]),
+            codecType: kCMVideoCodecType_HEVC
+        )
+        let secondSampleBuffer = try Self.makeEncodedSampleBuffer(
+            payload: Data([0x42]),
+            codecType: kCMVideoCodecType_HEVC
+        )
+        let thirdSampleBuffer = try Self.makeEncodedSampleBuffer(
+            payload: Data([0x43]),
+            codecType: kCMVideoCodecType_HEVC
+        )
+        let fourthSampleBuffer = try Self.makeEncodedSampleBuffer(
+            payload: Data([0x44]),
+            codecType: kCMVideoCodecType_HEVC
+        )
+
+        ApolloCoreEncodedCaptureIngressConsumeSampleBuffer(
+            ingress,
+            ApolloCoreCaptureCodecHEVC,
+            1,
+            10,
+            false,
+            0,
+            false,
+            false,
+            firstSampleBuffer
+        )
+        ApolloCoreEncodedCaptureIngressConsumeSampleBuffer(
+            ingress,
+            ApolloCoreCaptureCodecHEVC,
+            2,
+            20,
+            false,
+            0,
+            false,
+            false,
+            secondSampleBuffer
+        )
+        ApolloCoreEncodedCaptureIngressConsumeSampleBuffer(
+            ingress,
+            ApolloCoreCaptureCodecHEVC,
+            3,
+            30,
+            false,
+            0,
+            false,
+            false,
+            thirdSampleBuffer
+        )
+        ApolloCoreEncodedCaptureIngressConsumeSampleBuffer(
+            ingress,
+            ApolloCoreCaptureCodecHEVC,
+            4,
+            40,
+            false,
+            0,
+            true,
+            false,
+            fourthSampleBuffer
+        )
+
+        let snapshot = ApolloCoreEncodedCaptureIngressCopySnapshot(ingress)
+        XCTAssertEqual(snapshot.frame_count, 4)
+        XCTAssertEqual(snapshot.queued_frame_count, 1)
+        XCTAssertEqual(snapshot.dropped_frame_count, 3)
+        XCTAssertEqual(snapshot.event_count, 3)
+        XCTAssertEqual(snapshot.queued_event_count, 3)
+
+        var drainedSampleBuffer: Unmanaged<CMSampleBuffer>?
+        let record = withUnsafeMutablePointer(to: &drainedSampleBuffer) { pointer in
+            ApolloCoreEncodedCaptureIngressPopNextFrame(ingress, pointer)
+        }
+        XCTAssertTrue(record.has_value)
+        XCTAssertEqual(record.source_sequence_number, 4)
+        XCTAssertEqual(
+            try Self.payloadBytes(from: try XCTUnwrap(drainedSampleBuffer).takeRetainedValue()),
+            Data([0x44])
+        )
+    }
+
     func testApolloCoreSharedEncodedCaptureIngressWaitsForSharedProducerData() throws {
         guard let ingress = ApolloCoreSharedEncodedCaptureIngress() else {
             return XCTFail("ApolloCoreSharedEncodedCaptureIngress returned nil")
