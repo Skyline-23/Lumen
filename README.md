@@ -76,7 +76,7 @@ SDR actually provides much more stable color accuracy, and are widely supported 
 This workflow is still being rewritten for the Lumen control surface.
 
 ## FAQ
-The legacy Apollo wiki has not been migrated yet.
+The legacy Lumen wiki has not been migrated yet.
 
 ## Stuttering Clinic
 Latency tuning guidance is being consolidated into the Lumen docs and web UI profiles.

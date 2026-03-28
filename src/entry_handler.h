@@ -57,9 +57,9 @@ namespace args {
 #ifdef _WIN32
   /**
    * @brief Restore global NVIDIA control panel settings.
-   * If Apollo was improperly terminated, this function restores
+   * If Lumen was improperly terminated, this function restores
    * the global NVIDIA control panel settings to the undo file left
-   * by Apollo. This function is typically called by the uninstaller.
+   * by Lumen. This function is typically called by the uninstaller.
    * @examples
    * restore_nvprefs_undo();
    * @examples_end
@@ -69,21 +69,21 @@ namespace args {
 }  // namespace args
 
 /**
- * @brief Functions for handling the Apollo runtime lifetime.
+ * @brief Functions for handling the Lumen runtime lifetime.
  */
 namespace lifetime {
   extern char **argv;
   extern std::atomic_int desired_exit_code;
 
   /**
-   * @brief Terminates the Apollo runtime gracefully with the provided exit code.
+   * @brief Terminates the Lumen runtime gracefully with the provided exit code.
    * @param exit_code The exit code to return from main().
    * @param async Specifies whether our termination will be non-blocking.
    */
   void exit_runtime(int exit_code, bool async);
 
   /**
-   * @brief Breaks into the debugger or terminates Apollo if no debugger is attached.
+   * @brief Breaks into the debugger or terminates Lumen if no debugger is attached.
    */
   void debug_trap();
 
@@ -100,7 +100,7 @@ void log_publisher_data();
 
 #ifdef _WIN32
 /**
- * @brief Namespace for controlling the Apollo service model on Windows.
+ * @brief Namespace for controlling the Lumen service model on Windows.
  */
 namespace service_ctrl {
   /**
@@ -120,7 +120,7 @@ namespace service_ctrl {
   bool start_service();
 
   /**
-   * @brief Wait for the UI to be ready after Apollo startup.
+   * @brief Wait for the UI to be ready after Lumen startup.
    * @examples
    * wait_for_ui_ready();
    * @examples_end

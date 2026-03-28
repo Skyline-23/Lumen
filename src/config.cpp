@@ -1471,7 +1471,7 @@ namespace config {
     // so that service instance will do the work instead.
 
     if (!config_loaded && !shortcut_launch) {
-      BOOST_LOG(fatal) << "To relaunch Apollo successfully, use the shortcut in the Start Menu. Do not run Apollo.exe manually."sv;
+      BOOST_LOG(fatal) << "To relaunch Lumen successfully, use the shortcut in the Start Menu. Do not run Lumen.exe manually."sv;
       std::this_thread::sleep_for(10s);
 #else
     if (!config_loaded) {

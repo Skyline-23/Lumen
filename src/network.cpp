@@ -243,7 +243,7 @@ namespace net {
   /**
    * @brief Returns a string for use as the instance name for mDNS.
    * @param hostname The hostname to use for instance name generation.
-   * @return Hostname-based instance name or "Apollo" if hostname is invalid.
+   * @return Hostname-based instance name or "Lumen" if hostname is invalid.
    */
   std::string mdns_instance_name(const std::string_view &hostname) {
     // Start with the unmodified hostname
@@ -265,6 +265,6 @@ namespace net {
       }
     }
 
-    return !instancename.empty() ? instancename : "Apollo";
+    return !instancename.empty() ? instancename : "Lumen";
   }
 }  // namespace net

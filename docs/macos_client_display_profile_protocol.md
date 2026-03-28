@@ -69,9 +69,9 @@ Lumen host currently consumes the fields here:
   RTSP ANNOUNCE parser
 - [`src/process.cpp`](../src/process.cpp)
   session state propagation
-- `src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/virtual_display.mm`
+- `src/platform/macos/Projects/LumenMacSupport/Sources/virtual_display.mm`
   virtual display primaries selection
-- `src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/display.mm`
+- `src/platform/macos/Projects/LumenMacSupport/Sources/display.mm`
   generic virtual HDR metadata selection
 
 ## Current Client Gap

@@ -751,7 +751,7 @@ namespace input {
     auto remaining = keyboard_packet_diagnostic_budget.fetch_sub(1);
     if (remaining > 0) {
       BOOST_LOG(info)
-        << "Apollo keyboard packet key=0x"sv << std::hex << keyCode
+        << "Lumen keyboard packet key=0x"sv << std::hex << keyCode
         << " raw=0x"sv << std::hex << packet->keyCode
         << " mapped=0x"sv << std::hex << mappedKeyCode
         << " release="sv << std::dec << release
@@ -787,7 +787,7 @@ namespace input {
 
     if (remaining > 0) {
       BOOST_LOG(info)
-        << "Apollo keyboard resolve key=0x"sv << std::hex << keyCode
+        << "Lumen keyboard resolve key=0x"sv << std::hex << keyCode
         << " mapped=0x"sv << std::hex << mappedKeyCode
         << " release="sv << std::dec << release
         << " shortcut-flags=0x"sv << std::hex << input->shortcutFlags
@@ -835,7 +835,7 @@ namespace input {
 
     if (remaining > 0) {
       BOOST_LOG(info)
-        << "Apollo keyboard state key=0x"sv << std::hex << keyCode
+        << "Lumen keyboard state key=0x"sv << std::hex << keyCode
         << " mapped=0x"sv << std::hex << mappedKeyCode
         << " release="sv << std::dec << release
         << " shortcut-flags-after=0x"sv << std::hex << input->shortcutFlags;

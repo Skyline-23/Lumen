@@ -52,7 +52,7 @@ if(APPLE AND SUNSHINE_PACKAGE_MACOS)
             MACOSX_BUNDLE_INFO_PLIST "${APPLE_PLIST_FILE}"
             MACOSX_BUNDLE_ICON_FILE "apollo.icns"
             MACOSX_BUNDLE_BUNDLE_NAME "${CMAKE_PROJECT_NAME}"
-            MACOSX_BUNDLE_GUI_IDENTIFIER "com.skyline23.apollo")
+            MACOSX_BUNDLE_GUI_IDENTIFIER "dev.skyline23.lumen")
 
     add_custom_command(TARGET sunshine POST_BUILD
             COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_BUNDLE_CONTENT_DIR:sunshine>/Resources/assets"

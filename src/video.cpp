@@ -4960,7 +4960,7 @@ namespace video {
     bridge_encoder->hevc[encoder_t::DYNAMIC_RANGE] = true;
     bridge_encoder->hevc[encoder_t::YUV444] = false;
 
-    BOOST_LOG(info) << "Using Apollo macOS bridge encoder path backed by MacDisplayKit"sv;
+    BOOST_LOG(info) << "Using Lumen macOS bridge encoder path backed by MacDisplayKit"sv;
     BOOST_LOG(info) << "Found H.264 encoder: "sv << bridge_encoder->h264.name << " ["sv << bridge_encoder->name << ']';
     BOOST_LOG(info) << "Found HEVC encoder: "sv << bridge_encoder->hevc.name << " ["sv << bridge_encoder->name << ']';
     return 0;

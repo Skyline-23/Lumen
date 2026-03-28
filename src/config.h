@@ -1,6 +1,6 @@
 /**
  * @file src/config.h
- * @brief Declarations for Apollo runtime configuration.
+ * @brief Declarations for Lumen runtime configuration.
  */
 #pragma once
 

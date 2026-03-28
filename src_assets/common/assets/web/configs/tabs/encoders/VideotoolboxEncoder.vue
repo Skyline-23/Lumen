@@ -22,18 +22,18 @@ const config = ref(props.config)
           <option value="3">H.264 + HEVC Main10 (HDR)</option>
         </select>
         <div class="form-text">
-          Current GameStream sessions still negotiate H.264 or HEVC with the client. This controls what Apollo advertises to Moonlight-compatible clients.
+          Current GameStream sessions still negotiate H.264 or HEVC with the client. This controls what Lumen advertises to Moonlight-compatible clients.
         </div>
       </div>
       <div class="mb-3">
-        <label for="macos_bridge_codec" class="form-label">Apollo Bridge Default Codec</label>
+        <label for="macos_bridge_codec" class="form-label">Lumen Bridge Default Codec</label>
         <select id="macos_bridge_codec" class="form-select" v-model="config.macos_bridge_codec">
           <option value="h264">H.264</option>
           <option value="hevc">HEVC (H.265)</option>
           <option value="prores-proxy">ProRes Proxy (Experimental)</option>
         </select>
         <div class="form-text">
-          This only affects Apollo-native bridge/manual macOS capture defaults. It does not change the GameStream transport codec path.
+          This only affects Lumen-native bridge/manual macOS capture defaults. It does not change the GameStream transport codec path.
         </div>
       </div>
     </template>

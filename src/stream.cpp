@@ -77,11 +77,11 @@ static const short packetTypes[] = {
   0x5500,  // Rumble triggers (Sunshine protocol extension)
   0x5501,  // Set motion event (Sunshine protocol extension)
   0x5502,  // Set RGB LED (Sunshine protocol extension)
-  0x3000,  // Execute Server Command (Apollo protocol extension)
-  0x3001,  // Set Clipboard (Apollo protocol extension)
-  0x3002,  // File transfer nonce request (Apollo protocol extension)
+  0x3000,  // Execute Server Command (Lumen protocol extension)
+  0x3001,  // Set Clipboard (Lumen protocol extension)
+  0x3002,  // File transfer nonce request (Lumen protocol extension)
   0x5503,  // Set Adaptive triggers (Sunshine protocol extension)
-  0x3003,  // HDR frame state v2 (Apollo protocol extension)
+  0x3003,  // HDR frame state v2 (Lumen protocol extension)
 };
 
 namespace asio = boost::asio;

@@ -74,16 +74,16 @@ namespace upnp {
       auto web_ui_https = std::to_string(net::map_port(shadow_control_http::PORT_HTTPS));
 
       mappings.assign({
-        {{rtsp, rtsp, "TCP"s}, "Apollo - RTSP"s},
-        {{video, video, "UDP"s}, "Apollo - Video"s},
-        {{audio, audio, "UDP"s}, "Apollo - Audio"s},
-        {{control, control, "UDP"s}, "Apollo - Control"s},
-        {{shadow_control_https, shadow_control_https, "TCP"s}, "Apollo - Shadow Control HTTPS"s},
+        {{rtsp, rtsp, "TCP"s}, "Lumen - RTSP"s},
+        {{video, video, "UDP"s}, "Lumen - Video"s},
+        {{audio, audio, "UDP"s}, "Lumen - Audio"s},
+        {{control, control, "UDP"s}, "Lumen - Control"s},
+        {{shadow_control_https, shadow_control_https, "TCP"s}, "Lumen - Shadow Control HTTPS"s},
       });
 
       // Only map the Web UI port if it is configured to accept WAN connections.
       if (net::from_enum_string(config::shadow_http.origin_web_ui_allowed) > net::LAN) {
-        mappings.emplace_back(mapping_t {{web_ui_https, web_ui_https, "TCP"s}, "Apollo - Web UI"s});
+        mappings.emplace_back(mapping_t {{web_ui_https, web_ui_https, "TCP"s}, "Lumen - Web UI"s});
       }
 
       // Start the mapping thread
