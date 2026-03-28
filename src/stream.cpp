@@ -109,6 +109,7 @@ namespace stream {
   constexpr std::size_t high_refresh_send_pacing_divisor = 3;
   constexpr std::size_t ultra_high_refresh_send_pacing_divisor = 4;
   constexpr std::uint8_t shadow_multi_fec_flags = 0x10;
+  constexpr std::uint32_t frame_trace_sample_interval = 120;
 
   enum class socket_e : int {
     video,  ///< Video
@@ -1548,6 +1549,7 @@ namespace stream {
       } else {
         frame_header.frame_processing_latency = 0;
       }
+      const auto frame_processing_latency_ms = frame_header.frame_processing_latency / 10.;
 
       auto fecPercentage = config::stream.fec_percentage;
 
@@ -1814,6 +1816,22 @@ namespace stream {
                                            ratecontrol_frame_packets_sent / ratecontrol_packets_per_quantum;
 
           frame_network_latency_logger.second_point_now_and_log();
+
+          if (packet->is_idr() || packet->frame_index() % frame_trace_sample_interval == 0) {
+            const auto network_latency_ms =
+              packet->frame_timestamp ?
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                  std::chrono::steady_clock::now() - *packet->frame_timestamp
+                ).count() /
+                  1000.0 :
+                0.0;
+            BOOST_LOG(info) << "Frame trace host frame-index="sv << packet->frame_index()
+                            << " processing-ms="sv << frame_processing_latency_ms
+                            << " network-ms="sv << network_latency_ms
+                            << " shards="sv << shards.size()
+                            << (packet->is_idr() ? " Key"sv : ""sv)
+                            << (packet->after_ref_frame_invalidation ? " RFI"sv : ""sv);
+          }
 
           BOOST_LOG(verbose) << "Sent Frame seq ["sv << packet->frame_index() << "] pts ["sv << timestamp
                              << "] shards ["sv << shards.size() << "/"sv << shards.percentage << "%]"sv
