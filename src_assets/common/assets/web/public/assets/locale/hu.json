@@ -290,8 +290,6 @@
     "nvenc_twopass_disabled": "Kikapcsolva (leggyorsabb, nem ajánlott)",
     "nvenc_twopass_full_res": "Teljes felbontás (lassabb)",
     "nvenc_twopass_quarter_res": "Negyedes felbontás (gyorsabb, alapértelmezett)",
-    "nvenc_vbv_increase": "Egyetlen képkocka VBV/HRD százalékos növekedése",
-    "nvenc_vbv_increase_desc": "Alapértelmezés szerint a sunshine egykockás VBV/HRD-t használ, ami azt jelenti, hogy a kódolt videóképkocka mérete várhatóan nem haladja meg a kért bitrátát osztva a kért képkocka sebességgel. Ennek a korlátozásnak az enyhítése előnyös lehet, és alacsony késleltetésű változó bitrátaként működhet, de csomagvesztéshez is vezethet, ha a hálózatnak nincs pufferterülete a bitráta-csúcsok kezeléséhez. A maximálisan elfogadott érték 400, ami megfelel az 5x megnövelt kódolt videóképkocka felső mérethatárának.",
     "origin_web_ui_allowed": "Origin webes felhasználói felület Engedélyezve",
     "origin_web_ui_allowed_desc": "A webes felhasználói felülethez való hozzáférést nem tiltó távoli végpontcím eredete",
     "origin_web_ui_allowed_lan": "Csak a LAN-ban lévők férhetnek hozzá a webes felhasználói felülethez",

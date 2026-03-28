@@ -285,8 +285,6 @@
     "nvenc_twopass_disabled": "Désactivé (plus rapide, non recommandé)",
     "nvenc_twopass_full_res": "Résolution complète (plus lente)",
     "nvenc_twopass_quarter_res": "Quart de résolution (plus rapide, par défaut)",
-    "nvenc_vbv_increase": "Augmentation du pourcentage de VBV/HRD à une seule image",
-    "nvenc_vbv_increase_desc": "Par défaut, Lumen utilise un VBV/HRD à une seule image, ce qui signifie que la taille de chaque image vidéo encodée ne doit pas dépasser le débit binaire demandé divisé par le taux de trame demandé. Assouplir cette restriction peut être bénéfique et agir comme un débit variable à faible latence, mais cela peut également entraîner une perte de paquets si le réseau n'a pas de marge tampon suffisante pour gérer les pics de débit binaire. La valeur maximale acceptée est 400, ce qui correspond à une limite supérieure de taille d'image vidéo encodée augmentée de 5x.",
     "origin_web_ui_allowed": "Origines autorisées à accéder à l'interface web",
     "origin_web_ui_allowed_desc": "Origine de l'adresse du point de terminaison distant à laquelle l'accès à l'interface utilisateur Web n'est pas refusé",
     "origin_web_ui_allowed_lan": "Seuls ceux qui sont en LAN peuvent accéder à l'interface Web",

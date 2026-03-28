@@ -284,8 +284,6 @@
     "nvenc_twopass_disabled": "Wyłączony (najszybszy, niezalecany)",
     "nvenc_twopass_full_res": "Pełna rozdzielczość (wolniej)",
     "nvenc_twopass_quarter_res": "Rozdzielczość ćwiartki (szybsza, domyślna)",
-    "nvenc_vbv_increase": "Procentowy wzrost VBV/HRD w pojedynczej ramce",
-    "nvenc_vbv_increase_desc": "Domyślnie Lumen używa jednoklatkowego VBV/HRD, co oznacza, że żaden zakodowany rozmiar klatki wideo nie powinien przekraczać żądanej przepływności podzielonej przez żądaną liczbę klatek na sekundę. Złagodzenie tego ograniczenia może być korzystne i działać jako zmienna przepływność o niskim opóźnieniu, ale może również prowadzić do utraty pakietów, jeśli sieć nie ma bufora, aby obsłużyć skoki przepływności. Maksymalna akceptowana wartość to 400, co odpowiada 5-krotnemu zwiększeniu górnego limitu rozmiaru zakodowanej ramki wideo.",
     "origin_web_ui_allowed": "Interfejs Origin Web UI dozwolony",
     "origin_web_ui_allowed_desc": "Pochodzenie adresu zdalnego punktu końcowego, któremu nie odmówiono dostępu do interfejsu Web UI",
     "origin_web_ui_allowed_lan": "Tylko osoby w sieci LAN mogą uzyskać dostęp do interfejsu użytkownika",

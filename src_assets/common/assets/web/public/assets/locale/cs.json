@@ -290,8 +290,6 @@
     "nvenc_twopass_disabled": "Zakázáno (nejrychlejší, nedoporučeno)",
     "nvenc_twopass_full_res": "Úplné rozlišení (pomalejší)",
     "nvenc_twopass_quarter_res": "Čtvrtinové rozlišení (rychlejší, výchozí)",
-    "nvenc_vbv_increase": "Procentuální nárůst VBV/HRD v jednom snímku",
-    "nvenc_vbv_increase_desc": "Ve výchozím nastavení používá Sunshine jednosnímkové VBV/HRD, což znamená, že velikost kódovaného videosnímku nesmí překročit požadovaný datový tok dělený požadovanou snímkovou frekvencí. Uvolnění tohoto omezení může být přínosné a fungovat jako proměnný datový tok s nízkou latencí, ale může také vést ke ztrátě paketů, pokud síť nemá vyrovnávací paměť, která by zvládla skokové nárůsty datového toku. Maximální přijatelná hodnota je 400, což odpovídá 5x zvýšenému hornímu limitu velikosti kódovaného videosnímku.",
     "origin_web_ui_allowed": "Povolené webové rozhraní Origin",
     "origin_web_ui_allowed_desc": "Původ adresy vzdáleného koncového bodu, kterému není odepřen přístup k webovému uživatelskému rozhraní",
     "origin_web_ui_allowed_lan": "K webovému uživatelskému rozhraní mohou přistupovat pouze osoby v síti LAN",

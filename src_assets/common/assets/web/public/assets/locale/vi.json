@@ -290,8 +290,6 @@
     "nvenc_twopass_disabled": "Tắt (nhanh nhất, không được khuyến nghị)",
     "nvenc_twopass_full_res": "Độ phân giải cao (chậm hơn)",
     "nvenc_twopass_quarter_res": "Độ phân giải theo quý (nhanh hơn, mặc định)",
-    "nvenc_vbv_increase": "Tỷ lệ phần trăm tăng của VBV/HRD trong một khung hình",
-    "nvenc_vbv_increase_desc": "Theo mặc định, Sunshine sử dụng VBV/HRD một khung hình, có nghĩa là kích thước khung hình video đã mã hóa không được vượt quá tỷ lệ bit yêu cầu chia cho tần số khung hình yêu cầu. Nới lỏng hạn chế này có thể mang lại lợi ích và hoạt động như bitrate biến đổi độ trễ thấp, nhưng cũng có thể dẫn đến mất gói nếu mạng không có dung lượng đệm đủ để xử lý các đỉnh bitrate. Giá trị tối đa được chấp nhận là 400, tương ứng với giới hạn kích thước khung hình video đã mã hóa tăng gấp 5 lần.",
     "origin_web_ui_allowed": "Giao diện người dùng web gốc được phép",
     "origin_web_ui_allowed_desc": "Nguồn gốc của địa chỉ điểm cuối từ xa không bị từ chối truy cập vào giao diện người dùng web (Web UI).",
     "origin_web_ui_allowed_lan": "Chỉ những người trong mạng LAN mới có thể truy cập giao diện người dùng web.",

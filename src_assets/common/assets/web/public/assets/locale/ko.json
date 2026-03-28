@@ -289,8 +289,6 @@
     "nvenc_twopass_disabled": "사용 안 함(가장 빠름, 권장하지 않음)",
     "nvenc_twopass_full_res": "전체 해상도(느림)",
     "nvenc_twopass_quarter_res": "분기 해상도(더 빠른, 기본값)",
-    "nvenc_vbv_increase": "싱글 프레임 VBV/HRD 비율 증가",
-    "nvenc_vbv_increase_desc": "기본적으로 선샤인은 단일 프레임 VBV/HRD를 사용하므로 인코딩된 동영상 프레임 크기가 요청된 비트레이트를 요청된 프레임 전송률로 나눈 값을 초과하지 않아야 합니다. 이 제한을 완화하면 지연 시간이 짧은 가변 비트레이트의 이점이 있지만 네트워크에 비트레이트 급증을 처리할 수 있는 버퍼 헤드룸이 없는 경우 패킷 손실이 발생할 수도 있습니다. 허용되는 최대 값은 400이며, 이는 인코딩된 동영상 프레임 상한 크기를 5배 늘린 것에 해당합니다.",
     "origin_web_ui_allowed": "Origin 웹 UI 허용",
     "origin_web_ui_allowed_desc": "웹 UI에 대한 액세스가 거부되지 않은 원격 엔드포인트 주소의 원본입니다.",
     "origin_web_ui_allowed_lan": "LAN에 있는 사용자만 웹 UI에 액세스할 수 있습니다.",

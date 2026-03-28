@@ -285,8 +285,6 @@
     "nvenc_twopass_disabled": "Devre dışı (en hızlı, önerilmez)",
     "nvenc_twopass_full_res": "Tam çözünürlük (daha yavaş)",
     "nvenc_twopass_quarter_res": "Çeyrek çözünürlük (daha hızlı, varsayılan)",
-    "nvenc_vbv_increase": "Tek kare VBV/HRD yüzde artışı",
-    "nvenc_vbv_increase_desc": "Varsayılan olarak Lumen tek kare VBV/HRD kullanır, yani kodlanmış herhangi bir video karesi boyutunun istenen bit hızının istenen kare hızına bölünmesini aşması beklenmez. Bu kısıtlamanın gevşetilmesi faydalı olabilir ve düşük gecikmeli değişken bit hızı olarak işlev görebilir, ancak ağın bit hızı artışlarını idare edecek tampon boşluğu yoksa paket kaybına da yol açabilir. Kabul edilen maksimum değer 400'dür, bu da 5 kat artırılmış kodlanmış video karesi üst boyut sınırına karşılık gelir.",
     "origin_web_ui_allowed": "Origin Web Kullanıcı Arayüzüne İzin Verildi",
     "origin_web_ui_allowed_desc": "Web UI'ye erişimi reddedilmeyen uzak uç nokta adresinin kaynağı",
     "origin_web_ui_allowed_lan": "Yalnızca LAN'da bulunanlar Web UI'ye erişebilir",

@@ -290,8 +290,6 @@
     "nvenc_twopass_disabled": "停用（最快，不建議使用）",
     "nvenc_twopass_full_res": "全解析度（較慢）",
     "nvenc_twopass_quarter_res": "四分之一解析度（更快，預設值）",
-    "nvenc_vbv_increase": "單幅 VBV/HRD 百分比增加",
-    "nvenc_vbv_increase_desc": "預設 sunshine 使用單幀 VBV/HRD，這表示任何編碼視訊幀大小都不會超過要求的位元率除以要求的幀速率。放寬此限制可能有益並可作為低延遲的可變位元率，但如果網路沒有緩衝空間處理比特率峰值，也可能導致封包遺失。可接受的最大值是 400，相當於 5 倍增加的編碼視訊畫格上限。",
     "origin_web_ui_allowed": "允許存取 Web UI 的來源",
     "origin_web_ui_allowed_desc": "未被拒絕存取 Web UI 的遠端端點位址來源",
     "origin_web_ui_allowed_lan": "只有區域網路中的人可以存取 Web UI",

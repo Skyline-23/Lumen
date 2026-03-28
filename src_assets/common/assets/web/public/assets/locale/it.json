@@ -284,8 +284,6 @@
     "nvenc_twopass_disabled": "Disabilitato (più veloce, non consigliato)",
     "nvenc_twopass_full_res": "Risoluzione completa (lenta)",
     "nvenc_twopass_quarter_res": "Un quarto di risoluzione (più veloce, predefinito)",
-    "nvenc_vbv_increase": "Incremento percentuale VBV/HRD singolo frame",
-    "nvenc_vbv_increase_desc": "Per impostazione predefinita, Lumen utilizza VBV/HRD a singolo frame, in questo modo la dimensione di un frame video codificato non supererà il bitrate richiesto diviso per il frame rate richiesto. Allentare questa restrizione può portare benefici, agendo come un bitrate variabile a bassa latenza, ma può anche portare alla perdita di pacchetti se la rete non ha banda aggiuntiva sufficiente per gestire picchi di bitrate. Il valore massimo accettato è di 400, che corrisponde a 5x la dimensione limite dei frame video codificati.",
     "origin_web_ui_allowed": "Origine Web UI Consentita",
     "origin_web_ui_allowed_desc": "L'origine dell'indirizzo di endpoint remoto a cui viene consentito l'accesso all'interfaccia utente Web",
     "origin_web_ui_allowed_lan": "Solo quelli in LAN possono accedere all'interfaccia utente Web",
