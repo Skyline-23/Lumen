@@ -1,6 +1,6 @@
 /**
- * @file src/httpcommon.h
- * @brief Declarations for common HTTP.
+ * @file src/shadow_http_common.h
+ * @brief Declarations for shared Shadow HTTP helpers.
  */
 #pragma once
 
@@ -12,7 +12,7 @@
 #include "thread_safe.h"
 #include "uuid.h"
 
-namespace http {
+namespace shadow_http_common {
 
   int init();
   int create_creds(const std::string &pkey, const std::string &cert);
@@ -32,4 +32,4 @@ namespace http {
   extern uuid_util::uuid_t uuid;
   extern net::net_e origin_web_ui_allowed;
 
-}  // namespace http
+}  // namespace shadow_http_common

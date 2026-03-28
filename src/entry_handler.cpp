@@ -10,10 +10,10 @@
 
 // local includes
 #include "config.h"
-#include "confighttp.h"
+#include "shadow_control_http.h"
 #include "entry_handler.h"
 #include "globals.h"
-#include "httpcommon.h"
+#include "shadow_http_common.h"
 #include "logging.h"
 #include "network.h"
 #include "platform/common.h"
@@ -28,7 +28,7 @@ using namespace std::literals;
 
 void launch_ui(const std::optional<std::string> &path) {
   std::ostringstream url;
-  url << "https://localhost:" << static_cast<int>(net::map_port(confighttp::PORT_HTTPS));
+  url << "https://localhost:" << static_cast<int>(net::map_port(shadow_control_http::PORT_HTTPS));
   if (path) {
     url << *path;
   }
@@ -41,7 +41,7 @@ namespace args {
       help(name);
     }
 
-    http::save_user_creds(config::runtime.credentials_file, argv[0], argv[1]);
+    shadow_http_common::save_user_creds(config::runtime.credentials_file, argv[0], argv[1]);
 
     return 0;
   }
@@ -246,7 +246,7 @@ namespace service_ctrl {
         return false;
       }
 
-      uint16_t port_nbo = htons(net::map_port(confighttp::PORT_HTTPS));
+      uint16_t port_nbo = htons(net::map_port(shadow_control_http::PORT_HTTPS));
       for (DWORD i = 0; i < tcp_table->dwNumEntries; i++) {
         auto &entry = tcp_table->table[i];
 

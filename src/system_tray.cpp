@@ -49,7 +49,7 @@
 
   // local includes
   #include "config.h"
-  #include "confighttp.h"
+  #include "shadow_control_http.h"
   #include "display_device.h"
   #include "logging.h"
   #include "platform/common.h"
@@ -587,10 +587,10 @@ namespace system_tray {
     }
 
   #ifdef _WIN32
-    std::string tmp_str = "Open Apollo (" + config::shadow_http.host_name + ":" + std::to_string(net::map_port(confighttp::PORT_HTTPS)) + ")";
+    std::string tmp_str = "Open Apollo (" + config::shadow_http.host_name + ":" + std::to_string(net::map_port(shadow_control_http::PORT_HTTPS)) + ")";
     static const std::string title_str = utf8ToAcp(tmp_str);
   #else
-    static const std::string title_str = "Open Apollo (" + config::shadow_http.host_name + ":" + std::to_string(net::map_port(confighttp::PORT_HTTPS)) + ")";
+    static const std::string title_str = "Open Apollo (" + config::shadow_http.host_name + ":" + std::to_string(net::map_port(shadow_control_http::PORT_HTTPS)) + ")";
   #endif
     tray.menu[0].text = title_str.c_str();
 

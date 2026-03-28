@@ -28,7 +28,7 @@
 #include "display_device.h"
 #include "file_handler.h"
 #include "globals.h"
-#include "httpcommon.h"
+#include "shadow_http_common.h"
 #include "logging.h"
 #include "network.h"
 #include "shadow_http.h"
@@ -394,7 +394,7 @@ namespace shadow_http {
 
     // Create a new "root" object and set the unique id.
     root["root"] = nlohmann::json::object();
-    root["root"]["uniqueid"] = http::unique_id;
+    root["root"]["uniqueid"] = shadow_http_common::unique_id;
 
     client_t &client = client_root;
     nlohmann::json named_cert_nodes = nlohmann::json::array();
@@ -462,7 +462,7 @@ namespace shadow_http {
   void load_state() {
     if (!fs::exists(config::shadow_http.file_state)) {
       BOOST_LOG(info) << "File "sv << config::shadow_http.file_state << " doesn't exist"sv;
-      http::unique_id = uuid_util::uuid_t::generate().string();
+      shadow_http_common::unique_id = uuid_util::uuid_t::generate().string();
       return;
     }
 
@@ -477,14 +477,14 @@ namespace shadow_http {
 
     // Check that the file contains a "root.uniqueid" value.
     if (!tree.contains("root") || !tree["root"].contains("uniqueid")) {
-      http::uuid = uuid_util::uuid_t::generate();
-      http::unique_id = http::uuid.string();
+      shadow_http_common::uuid = uuid_util::uuid_t::generate();
+      shadow_http_common::unique_id = shadow_http_common::uuid.string();
       return;
     }
 
     std::string uid = tree["root"]["uniqueid"];
-    http::uuid = uuid_util::uuid_t::parse(uid);
-    http::unique_id = uid;
+    shadow_http_common::uuid = uuid_util::uuid_t::parse(uid);
+    shadow_http_common::unique_id = uid;
 
     nlohmann::json root = tree["root"];
     client_t client;  // Local client to load into
@@ -593,7 +593,7 @@ namespace shadow_http {
     launch_session->id = ++session_id_counter;
 
     // If launched from client
-    if (named_cert_p->uuid != http::unique_id) {
+    if (named_cert_p->uuid != shadow_http_common::unique_id) {
       auto rikey = util::from_hex_vec(get_arg(args, "rikey"), true);
       std::copy(rikey.cbegin(), rikey.cend(), std::back_inserter(launch_session->gcm_key));
 

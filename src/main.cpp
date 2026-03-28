@@ -11,11 +11,11 @@
 #include <mutex>
 
 // local includes
-#include "confighttp.h"
+#include "shadow_control_http.h"
 #include "display_device.h"
 #include "entry_handler.h"
 #include "globals.h"
-#include "httpcommon.h"
+#include "shadow_http_common.h"
 #include "logging.h"
 #include "main.h"
 #include "shadow_http.h"
@@ -476,7 +476,7 @@ int apollo_run(int argc, char *argv[], const ApolloRuntimeOptions &options) {
 #endif
   }
 
-  if (http::init()) {
+  if (shadow_http_common::init()) {
     BOOST_LOG(fatal) << "HTTP interface failed to initialize"sv;
 
 #ifdef _WIN32
@@ -505,7 +505,7 @@ int apollo_run(int argc, char *argv[], const ApolloRuntimeOptions &options) {
   }
 
   std::thread httpThread {shadow_http::start};
-  std::thread configThread {confighttp::start};
+  std::thread configThread {shadow_control_http::start};
   std::thread rtspThread {rtsp_stream::start};
 
   mainThreadLoop(shutdown_event, tray_enabled);

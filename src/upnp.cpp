@@ -12,7 +12,7 @@
 
 // local includes
 #include "config.h"
-#include "confighttp.h"
+#include "shadow_control_http.h"
 #include "globals.h"
 #include "logging.h"
 #include "network.h"
@@ -71,7 +71,7 @@ namespace upnp {
       auto audio = std::to_string(net::map_port(stream::AUDIO_STREAM_PORT));
       auto control = std::to_string(net::map_port(stream::CONTROL_PORT));
       auto gs_https = std::to_string(net::map_port(shadow_http::PORT_HTTPS));
-      auto wm_http = std::to_string(net::map_port(confighttp::PORT_HTTPS));
+      auto wm_http = std::to_string(net::map_port(shadow_control_http::PORT_HTTPS));
 
       mappings.assign({
         {{rtsp, rtsp, "TCP"s}, "Apollo - RTSP"s},

@@ -1,6 +1,6 @@
 /**
- * @file src/confighttp.h
- * @brief Declarations for the Web UI Config HTTP server.
+ * @file src/shadow_control_http.h
+ * @brief Declarations for the Shadow control Web UI HTTPS server.
  */
 #pragma once
 
@@ -16,11 +16,11 @@
 
 using namespace std::chrono_literals;
 
-namespace confighttp {
+namespace shadow_control_http {
   constexpr auto PORT_HTTPS = 1;
   constexpr auto SESSION_EXPIRE_DURATION = 24h * 15;
   void start();
-}  // namespace confighttp
+}  // namespace shadow_control_http
 
 // mime types map
 const std::map<std::string, std::string> mime_types = {

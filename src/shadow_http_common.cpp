@@ -1,6 +1,6 @@
 /**
- * @file src/httpcommon.cpp
- * @brief Definitions for common HTTP.
+ * @file src/shadow_http_common.cpp
+ * @brief Definitions for shared Shadow HTTP helpers.
  */
 #define BOOST_BIND_GLOBAL_PLACEHOLDERS
 
@@ -23,7 +23,7 @@
 #include "config.h"
 #include "crypto.h"
 #include "file_handler.h"
-#include "httpcommon.h"
+#include "shadow_http_common.h"
 #include "logging.h"
 #include "network.h"
 #include "shadow_http.h"
@@ -32,7 +32,7 @@
 #include "rtsp.h"
 #include "utility.h"
 
-namespace http {
+namespace shadow_http_common {
   using namespace std::literals;
   namespace fs = std::filesystem;
   namespace pt = boost::property_tree;
@@ -238,4 +238,4 @@ namespace http {
     curl_url_cleanup(curlu);
     return result;
   }
-}  // namespace http
+}  // namespace shadow_http_common

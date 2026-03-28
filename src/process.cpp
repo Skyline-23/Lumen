@@ -34,7 +34,7 @@
   #include "platform/macos/misc.h"
 #endif
 #include "process.h"
-#include "httpcommon.h"
+#include "shadow_http_common.h"
 #include "system_tray.h"
 #include "utility.h"
 #include "video.h"

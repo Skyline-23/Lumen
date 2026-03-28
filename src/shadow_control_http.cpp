@@ -1,8 +1,8 @@
 /**
- * @file src/confighttp.cpp
- * @brief Definitions for the Web UI Config HTTPS server.
+ * @file src/shadow_control_http.cpp
+ * @brief Definitions for the Shadow control Web UI HTTPS server.
  *
- * @todo Authentication, better handling of routes shared with the session HTTP adapter, cleanup
+ * @todo Authentication, better handling of routes shared with the Shadow control server, cleanup
  */
 #define BOOST_BIND_GLOBAL_PLACEHOLDERS
 
@@ -25,12 +25,12 @@
 
 // local includes
 #include "config.h"
-#include "confighttp.h"
+#include "shadow_control_http.h"
 #include "crypto.h"
 #include "display_device.h"
 #include "file_handler.h"
 #include "globals.h"
-#include "httpcommon.h"
+#include "shadow_http_common.h"
 #include "logging.h"
 #include "network.h"
 #include "shadow_http.h"
@@ -49,7 +49,7 @@
 
 using namespace std::literals;
 
-namespace confighttp {
+namespace shadow_control_http {
   namespace fs = std::filesystem;
 
   using https_server_t = SimpleWeb::Server<SimpleWeb::HTTPS>;
@@ -162,7 +162,7 @@ namespace confighttp {
   bool checkIPOrigin(resp_https_t response, req_https_t request) {
     auto address = net::addr_to_normalized_string(request->remote_endpoint().address());
     auto ip_type = net::from_address(address);
-    if (ip_type > http::origin_web_ui_allowed) {
+    if (ip_type > shadow_http_common::origin_web_ui_allowed) {
       BOOST_LOG(info) << "Web UI: ["sv << address << "] -- denied"sv;
       response->write(SimpleWeb::StatusCode::client_error_forbidden);
       return false;
@@ -584,7 +584,7 @@ namespace confighttp {
       nlohmann::json file_tree = nlohmann::json::parse(content);
 
       file_tree["current_app"] = proc::proc.get_running_app_uuid();
-      file_tree["host_uuid"] = http::unique_id;
+      file_tree["host_uuid"] = shadow_http_common::unique_id;
       file_tree["host_name"] = config::shadow_http.host_name;
 
       send_response(response, file_tree);
@@ -1107,13 +1107,13 @@ namespace confighttp {
       std::string url = input_tree.value("url", "");
       const std::string coverdir = platf::appdata().string() + "/covers/";
       file_handler::make_directory(coverdir);
-      std::string path = coverdir + http::url_escape(key) + ".png";
+      std::string path = coverdir + shadow_http_common::url_escape(key) + ".png";
       if (!url.empty()) {
-        if (http::url_get_host(url) != "images.igdb.com") {
+        if (shadow_http_common::url_get_host(url) != "images.igdb.com") {
           bad_request(response, request, "Only images.igdb.com is allowed");
           return;
         }
-        if (!http::download_file(url, path)) {
+        if (!shadow_http_common::download_file(url, path)) {
           bad_request(response, request, "Failed to download cover");
           return;
         }
@@ -1201,8 +1201,8 @@ namespace confighttp {
           if (newPassword.empty() || newPassword != confirmPassword)
             errors.push_back("Password Mismatch");
           else {
-            http::save_user_creds(config::runtime.credentials_file, newUsername, newPassword);
-            http::reload_user_creds(config::runtime.credentials_file);
+            shadow_http_common::save_user_creds(config::runtime.credentials_file, newUsername, newPassword);
+            shadow_http_common::reload_user_creds(config::runtime.credentials_file);
             sessionCookie.clear(); // force re-login
             output_tree["status"] = true;
           }
@@ -1407,7 +1407,7 @@ namespace confighttp {
         if (app.uuid == uuid) {
           crypto::named_cert_t named_cert {
             .name = "",
-            .uuid = http::unique_id,
+            .uuid = shadow_http_common::unique_id,
             .perm = crypto::PERM::_all,
           };
           BOOST_LOG(info) << "Launching app ["sv << app.name << "] from web UI"sv;
@@ -1592,4 +1592,4 @@ namespace confighttp {
 
     tcp.join();
   }
-}  // namespace confighttp
+}  // namespace shadow_control_http
