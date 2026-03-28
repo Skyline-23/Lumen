@@ -38,7 +38,6 @@ let hostedRuntimeSystemHeaderSearchPaths = [
 ]
 
 let hostedRuntimeLibrarySearchPaths = [
-    "/opt/homebrew/opt/boost/lib",
     "\(buildDepsRoot)/lib",
     "/opt/homebrew/lib",
     "/opt/homebrew/opt/openssl/lib",
@@ -46,27 +45,16 @@ let hostedRuntimeLibrarySearchPaths = [
 ]
 
 let hostedRuntimePreprocessorDefinitions = [
-    "BOOST_ATOMIC_DYN_LINK",
     "BOOST_ATOMIC_NO_LIB",
-    "BOOST_CHARCONV_DYN_LINK",
     "BOOST_CHARCONV_NO_LIB",
-    "BOOST_CHRONO_DYN_LINK",
     "BOOST_CHRONO_NO_LIB",
-    "BOOST_CONTAINER_DYN_LINK",
     "BOOST_CONTAINER_NO_LIB",
-    "BOOST_DATE_TIME_DYN_LINK",
     "BOOST_DATE_TIME_NO_LIB",
-    "BOOST_FILESYSTEM_DYN_LINK",
     "BOOST_FILESYSTEM_NO_LIB",
-    "BOOST_LOCALE_DYN_LINK",
     "BOOST_LOCALE_NO_LIB",
-    "BOOST_LOG_DYN_LINK",
     "BOOST_LOG_NO_LIB",
-    "BOOST_PROGRAM_OPTIONS_DYN_LINK",
     "BOOST_PROGRAM_OPTIONS_NO_LIB",
-    "BOOST_REGEX_DYN_LINK",
     "BOOST_REGEX_NO_LIB",
-    "BOOST_THREAD_DYN_LINK",
     "BOOST_THREAD_NO_LIB",
     "PROJECT_NAME=\\\"Apollo\\\"",
     "PROJECT_VERSION=\\\"0.0.0\\\"",
@@ -101,13 +89,11 @@ let hostedRuntimeOtherLdFlags = [
     "-lboost_program_options",
     "-lssl",
     "-lcrypto",
-    "-lboost_charconv",
     "-lboost_filesystem",
     "-lboost_thread",
     "-lboost_atomic",
     "-lboost_chrono",
     "-lboost_date_time",
-    "-lboost_regex",
     "-lboost_container"
 ]
 
