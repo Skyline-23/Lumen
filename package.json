@@ -9,15 +9,14 @@
   },
   "type": "module",
   "dependencies": {
-    "@lizardbyte/shared-web": "2025.922.181114",
-    "vue": "3.5.22",
-    "vue-i18n": "11.1.12"
+    "@lizardbyte/shared-web": "^2026.314.32913",
+    "vue": "^3.5.31",
+    "vue-i18n": "^11.3.0"
   },
   "devDependencies": {
-    "@codecov/vite-plugin": "1.9.1",
-    "@vitejs/plugin-vue": "6.0.1",
-    "serve": "14.2.5",
-    "vite": "6.3.6",
+    "@vitejs/plugin-vue": "^6.0.5",
+    "serve": "^14.2.6",
+    "vite": "^8.0.3",
     "vite-plugin-ejs": "1.7.0"
   }
 }
