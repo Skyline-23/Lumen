@@ -7,7 +7,7 @@ let baseSettings: SettingsDictionary = [
     "CODE_SIGN_STYLE": "Automatic",
     "CODE_SIGN_IDENTITY": "Apple Development",
     "DEVELOPMENT_TEAM": "Q23JLSJCCV",
-    "MACOSX_DEPLOYMENT_TARGET": "13.0",
+    "MACOSX_DEPLOYMENT_TARGET": "14.0",
     "SWIFT_VERSION": "5.0"
 ]
 
@@ -239,7 +239,7 @@ let project = Project(
             destinations: .macOS,
             product: .framework,
             bundleId: "com.lizardbyte.apollo.core",
-            deploymentTargets: .macOS("13.0"),
+            deploymentTargets: .macOS("14.0"),
             infoPlist: .default,
             sources: [
                 "Projects/ApolloCore/Sources/**/*.{c,cc,cpp,m,mm}"
@@ -266,7 +266,7 @@ let project = Project(
             destinations: .macOS,
             product: .framework,
             bundleId: "com.lizardbyte.apollo.macbridge",
-            deploymentTargets: .macOS("13.0"),
+            deploymentTargets: .macOS("14.0"),
             infoPlist: .default,
             sources: [
                 "Projects/ApolloMacBridge/Sources/**/*.{swift,m,mm}"
@@ -295,7 +295,7 @@ let project = Project(
             destinations: .macOS,
             product: .framework,
             bundleId: "com.lizardbyte.apollo.hostedruntime",
-            deploymentTargets: .macOS("13.0"),
+            deploymentTargets: .macOS("14.0"),
             infoPlist: .default,
             sources: hostedRuntimeSources,
             headers: .headers(
@@ -323,7 +323,7 @@ let project = Project(
             destinations: .macOS,
             product: .framework,
             bundleId: "com.lizardbyte.apollo.maccaptureadapter",
-            deploymentTargets: .macOS("13.0"),
+            deploymentTargets: .macOS("14.0"),
             infoPlist: .default,
             sources: [
                 "Projects/ApolloMacCaptureAdapter/Sources/**/*.swift"
@@ -344,12 +344,12 @@ let project = Project(
             destinations: .macOS,
             product: .app,
             bundleId: "com.lizardbyte.apollo.app",
-            deploymentTargets: .macOS("13.0"),
+            deploymentTargets: .macOS("14.0"),
             infoPlist: .extendingDefault(
                 with: [
                     "CFBundleDisplayName": "Apollo Companion",
                     "CFBundleIconFile": "apollo.icns",
-                    "LSMinimumSystemVersion": "13.0",
+                    "LSMinimumSystemVersion": "14.0",
                     "INFOPLIST_KEY_NSHighResolutionCapable": "YES",
                     "LSUIElement": "YES",
                     "NSAudioCaptureUsageDescription": "Apollo needs access to system audio to stream the selected Mac display with audio.",
@@ -389,7 +389,7 @@ let project = Project(
             destinations: .macOS,
             product: .unitTests,
             bundleId: "com.lizardbyte.apollo.tuist.tests",
-            deploymentTargets: .macOS("13.0"),
+            deploymentTargets: .macOS("14.0"),
             infoPlist: .default,
             sources: [
                 "../../../tests/tuist/macos/**/*.{swift,m,mm}"
