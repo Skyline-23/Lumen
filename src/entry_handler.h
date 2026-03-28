@@ -32,7 +32,7 @@ namespace args {
    * @param argc The number of arguments.
    * @param argv The arguments.
    * @examples
-   * creds("apollo", 2, {"new_username", "new_password"});
+   * creds("lumen", 2, {"new_username", "new_password"});
    * @examples_end
    */
   int creds(const char *name, int argc, char *argv[]);
@@ -41,7 +41,7 @@ namespace args {
    * @brief Print help to stdout, then exit.
    * @param name The name of the program.
    * @examples
-   * help("apollo");
+   * help("lumen");
    * @examples_end
    */
   int help(const char *name);

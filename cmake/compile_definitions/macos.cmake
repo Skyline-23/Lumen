@@ -35,7 +35,7 @@ endif()
 set(APPLE_PLIST_FILE "${SUNSHINE_SOURCE_ASSETS_DIR}/macos/assets/Info.plist")
 
 set(PLATFORM_TARGET_FILES
-        "${CMAKE_SOURCE_DIR}/src/platform/macos/Projects/LumenCore/Sources/ApolloCore.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/macos/Projects/LumenCore/Sources/LumenCore.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/macos/Projects/LumenMacSupport/Sources/audio_stub.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/macos/Projects/LumenMacSupport/Sources/display_stub.mm"
         "${CMAKE_SOURCE_DIR}/src/platform/macos/Projects/LumenMacSupport/Sources/input.cpp"

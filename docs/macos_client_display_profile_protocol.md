@@ -20,8 +20,8 @@ Lumen now accepts these optional fields in both launch HTTP and RTSP ANNOUNCE:
 
 And in RTSP ANNOUNCE as Lumen-specific attributes:
 
-- `x-apollo-video[0].clientDisplayGamut`
-- `x-apollo-video[0].clientDisplayTransfer`
+- `x-shadow-video[0].clientDisplayGamut`
+- `x-shadow-video[0].clientDisplayTransfer`
 
 ## Accepted Values
 
@@ -102,8 +102,8 @@ Add these query parameters:
 
 Add these attributes:
 
-- `x-apollo-video[0].clientDisplayGamut`
-- `x-apollo-video[0].clientDisplayTransfer`
+- `x-shadow-video[0].clientDisplayGamut`
+- `x-shadow-video[0].clientDisplayTransfer`
 
 ## Recommended Value Source
 

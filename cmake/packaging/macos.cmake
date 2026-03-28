@@ -5,7 +5,7 @@ set(APPLE_CODESIGN_IDENTITY "" CACHE STRING "Signing identity to use for macOS a
 # todo - bundle doesn't produce a valid .app use cpack -G DragNDrop
 set(CPACK_BUNDLE_NAME "${CMAKE_PROJECT_NAME}")
 set(CPACK_BUNDLE_PLIST "${APPLE_PLIST_FILE}")
-set(CPACK_BUNDLE_ICON "${PROJECT_SOURCE_DIR}/apollo.icns")
+set(CPACK_BUNDLE_ICON "${PROJECT_SOURCE_DIR}/lumen.icns")
 # set(CPACK_BUNDLE_STARTUP_COMMAND "${INSTALL_RUNTIME_DIR}/sunshine")
 
 if(SUNSHINE_PACKAGE_MACOS)  # todo

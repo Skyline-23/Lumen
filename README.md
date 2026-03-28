@@ -183,7 +183,7 @@ You can also install the Lumen streaming host with chocolatey.
 Install Chocolatey if you don't have it, then run the following command in an elevated PowerShell/CMD window:
 
 ```pwsh
-choco upgrade apollo -y 
+choco upgrade lumen -y 
 ```
 
 Same command can be used to upgrade, add to a scheduled task to automate updates.
