@@ -100,6 +100,9 @@ namespace stream {
   constexpr int high_refresh_low_latency_fps = 90;
   constexpr std::size_t high_refresh_send_batch_packets_cap = 16;
   constexpr std::size_t high_refresh_send_batch_divisor = 4;
+  constexpr auto default_send_pacing_quantum = 1ms;
+  constexpr auto high_refresh_send_pacing_quantum = 500us;
+  constexpr std::size_t high_refresh_send_pacing_divisor = 2;
   constexpr std::uint8_t shadow_multi_fec_flags = 0x10;
 
   enum class socket_e : int {
@@ -1626,6 +1629,16 @@ namespace stream {
           );
           send_batch_size = std::min(send_batch_size, high_refresh_send_batch_size);
         }
+        const auto pacing_quantum =
+          session->config.monitor.framerate >= high_refresh_low_latency_fps ?
+            high_refresh_send_pacing_quantum :
+            default_send_pacing_quantum;
+        const auto ratecontrol_packets_per_quantum = std::max<std::size_t>(
+          1,
+          session->config.monitor.framerate >= high_refresh_low_latency_fps ?
+            ratecontrol_packets_in_1ms / high_refresh_send_pacing_divisor :
+            ratecontrol_packets_in_1ms
+        );
 
         // Don't ignore the last ratecontrol group of the previous frame
         auto ratecontrol_frame_start = std::max(ratecontrol_next_frame_start, std::chrono::steady_clock::now());
@@ -1728,11 +1741,11 @@ namespace stream {
               // Do pacing within the frame.
               // Also trigger pacing before the first send_batch() of the frame
               // to account for the last send_batch() of the previous frame.
-              if (ratecontrol_group_packets_sent >= ratecontrol_packets_in_1ms ||
+              if (ratecontrol_group_packets_sent >= ratecontrol_packets_per_quantum ||
                   ratecontrol_frame_packets_sent == 0) {
                 auto due = ratecontrol_frame_start +
-                           std::chrono::duration_cast<std::chrono::nanoseconds>(1ms) *
-                             ratecontrol_frame_packets_sent / ratecontrol_packets_in_1ms;
+                           std::chrono::duration_cast<std::chrono::nanoseconds>(pacing_quantum) *
+                             ratecontrol_frame_packets_sent / ratecontrol_packets_per_quantum;
 
                 auto now = std::chrono::steady_clock::now();
                 if (now < due) {
@@ -1776,8 +1789,8 @@ namespace stream {
 
           // remember this in case the next frame comes immediately
           ratecontrol_next_frame_start = ratecontrol_frame_start +
-                                         std::chrono::duration_cast<std::chrono::nanoseconds>(1ms) *
-                                           ratecontrol_frame_packets_sent / ratecontrol_packets_in_1ms;
+                                         std::chrono::duration_cast<std::chrono::nanoseconds>(pacing_quantum) *
+                                           ratecontrol_frame_packets_sent / ratecontrol_packets_per_quantum;
 
           frame_network_latency_logger.second_point_now_and_log();
 
