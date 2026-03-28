@@ -562,6 +562,52 @@ namespace shadow_http {
     }
   }
 
+  std::optional<std::string> authorize_client_certificate(
+    const std::string &name,
+    const std::string &uuid,
+    const std::string &cert_pem
+  ) {
+    if (cert_pem.empty()) {
+      return "Pairing request does not include a client certificate.";
+    }
+
+    auto cert = crypto::x509(cert_pem);
+    if (!cert) {
+      return "Pairing request contains an invalid PEM client certificate.";
+    }
+
+    client_t &client = client_root;
+    auto existing = std::find_if(client.named_devices.begin(), client.named_devices.end(), [&](const auto &named_cert_p) {
+      return named_cert_p->cert == cert_pem;
+    });
+
+    if (existing != client.named_devices.end()) {
+      auto &named_cert_p = *existing;
+      named_cert_p->name = name.empty() ? named_cert_p->name : name;
+      named_cert_p->uuid = uuid.empty() ? named_cert_p->uuid : uuid;
+
+      if (!config::runtime.flags[config::flag::FRESH_STATE]) {
+        save_state();
+        load_state();
+      }
+
+      return std::nullopt;
+    }
+
+    auto named_cert_p = std::make_shared<crypto::named_cert_t>();
+    named_cert_p->name = name.empty() ? "Unnamed Device" : name;
+    named_cert_p->uuid = uuid.empty() ? uuid_util::uuid_t::generate().string() : uuid;
+    named_cert_p->cert = cert_pem;
+    named_cert_p->display_mode = "";
+    named_cert_p->perm = crypto::PERM::_default;
+    named_cert_p->enable_legacy_ordering = false;
+    named_cert_p->allow_client_commands = true;
+    named_cert_p->always_use_virtual_display = false;
+    add_authorized_client(named_cert_p);
+
+    return std::nullopt;
+  }
+
   std::shared_ptr<rtsp_stream::launch_session_t> make_launch_session(bool host_audio, bool input_only, const args_t &args, const crypto::named_cert_t* named_cert_p) {
     static constexpr std::array required_apollo_launch_args {
       "clientSinkScalePercent"sv,

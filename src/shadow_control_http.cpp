@@ -1401,7 +1401,7 @@ namespace shadow_control_http {
         input_tree.value("deviceName", "Unnamed Device"),
         input_tree.value("platform", "unknown"),
         input_tree.value("clientId", ""),
-        input_tree.value("publicKey", "")
+        input_tree.value("clientCertificate", input_tree.value("publicKey", ""))
       );
 
       nlohmann::json output_tree;
@@ -1509,19 +1509,46 @@ namespace shadow_control_http {
       ss << request->content.rdbuf();
       nlohmann::json input_tree = nlohmann::json::parse(ss.str());
 
+      std::optional<std::string> pairing_id;
       std::optional<shadow_pairing_request_t> pairing_request;
       {
         std::lock_guard lock {shadow_pairing_requests_mutex};
         erase_expired_shadow_pairing_requests_locked();
-        auto pairing_id = resolve_shadow_pairing_request_id(input_tree, shadow_pairing_requests);
+        pairing_id = resolve_shadow_pairing_request_id(input_tree, shadow_pairing_requests);
         if (!pairing_id) {
           not_found(response, request);
           return;
         }
 
-        auto &request_entry = shadow_pairing_requests[*pairing_id];
-        request_entry.status = approved ? shadow_pairing_status_e::approved : shadow_pairing_status_e::rejected;
-        pairing_request = request_entry;
+        pairing_request = shadow_pairing_requests[*pairing_id];
+      }
+
+      if (approved) {
+        auto authorize_error = shadow_http::authorize_client_certificate(
+          pairing_request->device_name,
+          pairing_request->client_id,
+          pairing_request->public_key
+        );
+        if (authorize_error) {
+          BOOST_LOG(warning) << "Shadow pairing request ["sv << pairing_request->pairing_id
+                             << "] could not be trusted: "sv << *authorize_error;
+          bad_request(response, request, *authorize_error);
+          return;
+        }
+      }
+
+      {
+        std::lock_guard lock {shadow_pairing_requests_mutex};
+        erase_expired_shadow_pairing_requests_locked();
+
+        auto it = shadow_pairing_requests.find(*pairing_id);
+        if (it == shadow_pairing_requests.end()) {
+          not_found(response, request);
+          return;
+        }
+
+        it->second.status = approved ? shadow_pairing_status_e::approved : shadow_pairing_status_e::rejected;
+        pairing_request = it->second;
       }
 
       BOOST_LOG(info) << "Shadow pairing request ["sv << pairing_request->pairing_id << "] "

@@ -9,6 +9,7 @@
 #include <string>
 #include <chrono>
 #include <list>
+#include <optional>
 
 // lib includes
 #include <boost/property_tree/ptree.hpp>
@@ -100,6 +101,19 @@ namespace shadow_http {
    * @examples_end
    */
   void erase_all_clients();
+
+  /**
+   * @brief Trust a client certificate for Shadow control and streaming sessions.
+   * @param name The display name to store for the device.
+   * @param uuid The stable client identifier, if provided by the client.
+   * @param cert_pem The PEM encoded client certificate to trust.
+   * @return An error message when the certificate cannot be trusted.
+   */
+  std::optional<std::string> authorize_client_certificate(
+    const std::string &name,
+    const std::string &uuid,
+    const std::string &cert_pem
+  );
 
   /**
    * @brief      Stops a session.
