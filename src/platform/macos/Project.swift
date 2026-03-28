@@ -68,7 +68,7 @@ let hostedRuntimePreprocessorDefinitions = [
     "PROJECT_VERSION_PATCH=\\\"0\\\"",
     "SUNSHINE_ASSETS_DIR=\\\"../Resources/assets\\\"",
     "SUNSHINE_PLATFORM=\\\"macos\\\"",
-    "SUNSHINE_PUBLISHER_ISSUE_URL=\\\"https://github.com/ClassicOldSong/Apollo/issues\\\"",
+    "SUNSHINE_PUBLISHER_ISSUE_URL=\\\"https://github.com/Skyline-23/Lumen/issues\\\"",
     "SUNSHINE_PUBLISHER_NAME=\\\"SudoMaker\\\"",
     "SUNSHINE_PUBLISHER_WEBSITE=\\\"https://www.sudomaker.com\\\"",
     "SUNSHINE_TRAY=1",
@@ -214,7 +214,7 @@ let appAssetsScript = TargetScript.post(
 )
 
 let project = Project(
-    name: "Apollo",
+    name: "Lumen",
     packages: [
         .package(url: macDisplayKitURL, .revision(macDisplayKitRevision))
     ],
@@ -224,7 +224,7 @@ let project = Project(
             name: "ApolloCore",
             destinations: .macOS,
             product: .framework,
-            bundleId: "com.lizardbyte.apollo.core",
+            bundleId: "dev.skyline23.lumen.core",
             deploymentTargets: .macOS("14.0"),
             infoPlist: .default,
             sources: [
@@ -251,7 +251,7 @@ let project = Project(
             name: "ApolloMacBridge",
             destinations: .macOS,
             product: .framework,
-            bundleId: "com.lizardbyte.apollo.macbridge",
+            bundleId: "dev.skyline23.lumen.macbridge",
             deploymentTargets: .macOS("14.0"),
             infoPlist: .default,
             sources: [
@@ -280,7 +280,7 @@ let project = Project(
             name: "ApolloHostedRuntime",
             destinations: .macOS,
             product: .framework,
-            bundleId: "com.lizardbyte.apollo.hostedruntime",
+            bundleId: "dev.skyline23.lumen.hostedruntime",
             deploymentTargets: .macOS("14.0"),
             infoPlist: .default,
             sources: hostedRuntimeSources,
@@ -308,7 +308,7 @@ let project = Project(
             name: "ApolloMacCaptureAdapter",
             destinations: .macOS,
             product: .framework,
-            bundleId: "com.lizardbyte.apollo.maccaptureadapter",
+            bundleId: "dev.skyline23.lumen.maccaptureadapter",
             deploymentTargets: .macOS("14.0"),
             infoPlist: .default,
             sources: [
@@ -326,10 +326,10 @@ let project = Project(
             )
         ),
         .target(
-            name: "ApolloApp",
+            name: "LumenApp",
             destinations: .macOS,
             product: .app,
-            bundleId: "com.lizardbyte.apollo.app",
+            bundleId: "dev.skyline23.lumen.app",
             deploymentTargets: .macOS("14.0"),
             infoPlist: .extendingDefault(
                 with: [
@@ -371,10 +371,10 @@ let project = Project(
             )
         ),
         .target(
-            name: "ApolloTuistTests",
+            name: "LumenTuistTests",
             destinations: .macOS,
             product: .unitTests,
-            bundleId: "com.lizardbyte.apollo.tuist.tests",
+            bundleId: "dev.skyline23.lumen.tuist.tests",
             deploymentTargets: .macOS("14.0"),
             infoPlist: .default,
             sources: [
@@ -388,15 +388,15 @@ let project = Project(
     ],
     schemes: [
         .scheme(
-            name: "ApolloTuistTests",
+            name: "LumenTuistTests",
             shared: true,
             buildAction: .buildAction(targets: [
                 "ApolloCore",
                 "ApolloMacBridge",
-                "ApolloTuistTests"
+                "LumenTuistTests"
             ]),
             testAction: .targets([
-                .testableTarget(target: "ApolloTuistTests")
+                .testableTarget(target: "LumenTuistTests")
             ])
         )
     ]
