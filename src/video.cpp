@@ -315,6 +315,36 @@ namespace video {
       return std::max(6.0, frame_interval_ms * 1.5);
     }
 
+    double packet_timestamp_resync_threshold_milliseconds(const config_t &config) {
+      const auto frame_interval_ms = config.framerate > 0 ?
+        (1000.0 / static_cast<double>(config.framerate)) :
+        (1000.0 / 60.0);
+      return std::max(8.0, frame_interval_ms * 2.0);
+    }
+
+    void refresh_external_capture_metadata(
+      safe::mail_t mail,
+      const config_t &config,
+      platf::external_capture_display_metadata_t &external_metadata
+    ) {
+      platf::query_external_capture_display_metadata(
+        proc::proc.display_name,
+        config.width,
+        config.height,
+        external_metadata
+      );
+
+      auto touch_port_event = mail->event<input::touch_port_t>(mail::touch_port);
+      touch_port_event->raise(input::touch_port_t {
+        external_metadata.viewport,
+        external_metadata.env_width,
+        external_metadata.env_height,
+        external_metadata.client_offset_x,
+        external_metadata.client_offset_y,
+        external_metadata.scalar_inv,
+      });
+    }
+
     void request_external_encoded_capture_key_frame() {
       ApolloMacBridgeRequestImmediateCaptureKeyFrame();
     }
@@ -3757,23 +3787,7 @@ namespace video {
       const config_t &config
     ) {
       platf::external_capture_display_metadata_t external_metadata {};
-      platf::query_external_capture_display_metadata(
-        proc::proc.display_name,
-        config.width,
-        config.height,
-        external_metadata
-      );
-
-      auto touch_port_event = mail->event<input::touch_port_t>(mail::touch_port);
-      touch_port_event->raise(input::touch_port_t {
-        external_metadata.viewport,
-        external_metadata.env_width,
-        external_metadata.env_height,
-        external_metadata.client_offset_x,
-        external_metadata.client_offset_y,
-        external_metadata.scalar_inv,
-      });
-
+      refresh_external_capture_metadata(mail, config, external_metadata);
     }
 
     void capture_external_encoded_ingress(
@@ -3787,13 +3801,7 @@ namespace video {
       auto packets = mail::man->queue<packet_t>(mail::video_packets);
       auto ingress = ApolloCoreSharedEncodedCaptureIngress();
       platf::external_capture_display_metadata_t external_metadata {};
-      platf::query_external_capture_display_metadata(
-        proc::proc.display_name,
-        config.width,
-        config.height,
-        external_metadata
-      );
-      raise_external_capture_metadata(mail, config);
+      refresh_external_capture_metadata(mail, config, external_metadata);
 
       bool logged_codec_mismatch = false;
       bool logged_producer_stop = false;
@@ -3818,6 +3826,7 @@ namespace video {
       const auto arm_wait_for_next_idr = [&](std::string_view reason) {
         const auto ingress_snapshot = ApolloCoreEncodedCaptureIngressCopySnapshot(ingress);
         ApolloCoreEncodedCaptureIngressReset(ingress);
+        refresh_external_capture_metadata(mail, config, external_metadata);
         display_time_clock = apollo_core_display_time_clock_t {};
         waiting_for_initial_idr = true;
         logged_waiting_for_initial_idr = false;
@@ -4079,6 +4088,9 @@ namespace video {
           const auto has_callback_latency_spike =
             last_forwarded_callback_latency_milliseconds &&
             *last_forwarded_callback_latency_milliseconds > callback_latency_resync_threshold_milliseconds(config);
+          const auto has_packet_timestamp_drift =
+            last_forwarded_packet_timestamp_delta_milliseconds &&
+            *last_forwarded_packet_timestamp_delta_milliseconds > packet_timestamp_resync_threshold_milliseconds(config);
           if (has_cadence_anomaly) {
             BOOST_LOG(warning) << "External macOS encoded ingress cadence anomaly seq="sv
                                << frame.source_sequence_number
@@ -4107,6 +4119,21 @@ namespace video {
                                << (last_forwarded_packet_timestamp_delta_milliseconds ? *last_forwarded_packet_timestamp_delta_milliseconds : -1.0);
             if (!packet_is_idr) {
               arm_wait_for_next_idr("callback-latency-spike");
+              CFRelease(retained_sample_buffer);
+              continue;
+            }
+          }
+          if (has_packet_timestamp_drift) {
+            BOOST_LOG(warning) << "External macOS encoded ingress packet timestamp drift seq="sv
+                               << frame.source_sequence_number
+                               << " packet-ts-delta-ms="sv
+                               << *last_forwarded_packet_timestamp_delta_milliseconds
+                               << " threshold-ms="sv
+                               << packet_timestamp_resync_threshold_milliseconds(config)
+                               << " callback-latency-ms="sv
+                               << (last_forwarded_callback_latency_milliseconds ? *last_forwarded_callback_latency_milliseconds : -1.0);
+            if (!packet_is_idr) {
+              arm_wait_for_next_idr("packet-timestamp-drift");
               CFRelease(retained_sample_buffer);
               continue;
             }
