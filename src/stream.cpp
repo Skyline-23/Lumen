@@ -98,11 +98,11 @@ namespace stream {
   constexpr std::size_t max_video_send_batch_bytes = 64 * 1024;
   constexpr std::size_t max_video_send_batch_packets = 64;
   constexpr int high_refresh_low_latency_fps = 90;
-  constexpr std::size_t high_refresh_send_batch_packets_cap = 16;
-  constexpr std::size_t high_refresh_send_batch_divisor = 4;
+  constexpr std::size_t high_refresh_send_batch_packets_cap = 12;
+  constexpr std::size_t high_refresh_send_batch_divisor = 6;
   constexpr auto default_send_pacing_quantum = 1ms;
-  constexpr auto high_refresh_send_pacing_quantum = 500us;
-  constexpr std::size_t high_refresh_send_pacing_divisor = 2;
+  constexpr auto high_refresh_send_pacing_quantum = 333us;
+  constexpr std::size_t high_refresh_send_pacing_divisor = 3;
   constexpr std::uint8_t shadow_multi_fec_flags = 0x10;
 
   enum class socket_e : int {
