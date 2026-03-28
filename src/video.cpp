@@ -3709,6 +3709,24 @@ namespace video {
       std::uint64_t last_forwarded_sequence_delta = 0;
       std::array<char, 512> event_message {};
 
+      const auto arm_wait_for_next_idr = [&](std::string_view reason) {
+        waiting_for_initial_idr = true;
+        logged_waiting_for_initial_idr = false;
+        logged_first_packet = false;
+        logged_codec_mismatch = false;
+        adopted_video_format.reset();
+        last_forwarded_source_sequence_number = 0;
+        last_forwarded_source_display_time = 0;
+        last_forwarded_packet_timestamp.reset();
+        last_forwarded_callback_latency_milliseconds.reset();
+        last_forwarded_source_display_delta_milliseconds.reset();
+        last_forwarded_packet_timestamp_delta_milliseconds.reset();
+        last_forwarded_sequence_delta = 0;
+        request_external_encoded_capture_key_frame();
+        BOOST_LOG(info) << "External macOS encoded ingress requested decoder resync; holding frames until the next IDR packet"
+                        << " reason="sv << reason;
+      };
+
       if (!ApolloCoreEncodedCaptureIngressIsProducerActive(ingress) &&
           !ApolloCoreEncodedCaptureIngressWaitForProducerActive(ingress, apollo_core_ingress_wait_timeout_ms)) {
         BOOST_LOG(error) << "External macOS encoded ingress producer did not become active within "
@@ -3730,20 +3748,7 @@ namespace video {
         }
 
         if (resync_to_next_idr) {
-          waiting_for_initial_idr = true;
-          logged_waiting_for_initial_idr = false;
-          logged_first_packet = false;
-          logged_codec_mismatch = false;
-          adopted_video_format.reset();
-          last_forwarded_source_sequence_number = 0;
-          last_forwarded_source_display_time = 0;
-          last_forwarded_packet_timestamp.reset();
-          last_forwarded_callback_latency_milliseconds.reset();
-          last_forwarded_source_display_delta_milliseconds.reset();
-          last_forwarded_packet_timestamp_delta_milliseconds.reset();
-          last_forwarded_sequence_delta = 0;
-          request_external_encoded_capture_key_frame();
-          BOOST_LOG(info) << "External macOS encoded ingress requested decoder resync; holding frames until the next IDR packet"sv;
+          arm_wait_for_next_idr("session-resync");
           consumed_any = true;
         }
 
@@ -3766,17 +3771,16 @@ namespace video {
           switch (event.kind) {
             case ApolloCoreCaptureEventKindStarted:
             case ApolloCoreCaptureEventKindRestarted:
-              waiting_for_initial_idr = true;
-              logged_waiting_for_initial_idr = false;
-              logged_first_packet = false;
-              logged_codec_mismatch = false;
-              adopted_video_format.reset();
-              request_external_encoded_capture_key_frame();
+              arm_wait_for_next_idr("capture-restarted");
               BOOST_LOG(info) << "External macOS encoded ingress event kind="sv << static_cast<int>(event.kind)
                               << " message="sv << message;
               break;
             case ApolloCoreCaptureEventKindDroppedFrame:
-              BOOST_LOG(warning) << "External macOS encoded ingress dropped a frame"sv;
+              BOOST_LOG(warning) << "External macOS encoded ingress dropped a frame"sv
+                                 << " message="sv << message;
+              if (message == "core-forwarder-overflow"sv) {
+                arm_wait_for_next_idr("core-forwarder-overflow");
+              }
               break;
             case ApolloCoreCaptureEventKindFailed:
               BOOST_LOG(error) << "External macOS encoded ingress reported a failure: "sv << message;

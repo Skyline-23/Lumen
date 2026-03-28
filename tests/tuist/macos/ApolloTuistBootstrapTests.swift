@@ -487,12 +487,20 @@ final class ApolloTuistBootstrapTests: XCTestCase {
 
         let snapshot = await runtime.coreForwardingSnapshot()
         XCTAssertEqual(snapshot.frameCount, 2)
+        XCTAssertEqual(snapshot.eventCount, 1)
         XCTAssertEqual(snapshot.queuedFrameCount, 1)
+        XCTAssertEqual(snapshot.queuedEventCount, 1)
         XCTAssertEqual(snapshot.droppedFrameCount, 1)
+        XCTAssertEqual(snapshot.lastEventKind, .droppedFrame)
 
         let drainedFrame = await runtime.drainNextCoreForwardedFrame()
         XCTAssertEqual(drainedFrame?.sourceSequenceNumber, 2)
         XCTAssertEqual(try Self.payloadBytes(from: try XCTUnwrap(drainedFrame?.sampleBuffer)), Data([0x02]))
+
+        let drainedEvent = await runtime.drainNextCoreForwardedEvent()
+        XCTAssertEqual(drainedEvent?.kind, .droppedFrame)
+        XCTAssertEqual(drainedEvent?.message, "core-forwarder-overflow")
+        XCTAssertEqual(drainedEvent?.sourceDisplayTime, 10)
     }
 
     func testApolloCoreSharedEncodedCaptureIngressWaitsForSharedProducerData() throws {

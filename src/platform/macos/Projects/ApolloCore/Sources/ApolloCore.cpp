@@ -10,11 +10,13 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace {
   constexpr std::size_t default_frame_capacity = 4;
   constexpr std::size_t default_event_capacity = 32;
+  constexpr std::string_view encoded_capture_queue_overflow_message = "core-forwarder-overflow";
 
   struct retained_sample_buffer_t {
     CMSampleBufferRef value = nullptr;
@@ -193,6 +195,27 @@ struct ApolloCoreEncodedCaptureIngress {
   std::deque<encoded_frame_state_t> pending_frames;
   std::deque<encoded_event_state_t> pending_events;
 };
+
+namespace {
+  void push_encoded_capture_drop_event_locked(
+    ApolloCoreEncodedCaptureIngress *ingress,
+    std::uint64_t source_display_time
+  ) {
+    encoded_event_state_t event {};
+    event.kind = ApolloCoreCaptureEventKindDroppedFrame;
+    event.message = encoded_capture_queue_overflow_message;
+    event.has_source_display_time = true;
+    event.source_display_time = source_display_time;
+
+    ingress->event_count += 1;
+    ingress->last_event = event;
+    ingress->pending_events.push_back(std::move(event));
+    while (ingress->pending_events.size() > ingress->event_capacity) {
+      ingress->pending_events.pop_front();
+      ingress->dropped_event_count += 1;
+    }
+  }
+}
 
 struct ApolloCoreAudioCaptureIngress {
   mutable std::mutex mutex;
@@ -463,8 +486,10 @@ void ApolloCoreEncodedCaptureIngressConsumeSampleBuffer(
   ingress->last_frame = frame;
   ingress->pending_frames.push_back(std::move(frame));
   while (ingress->pending_frames.size() > ingress->frame_capacity) {
+    const auto dropped_frame_source_display_time = ingress->pending_frames.front().source_display_time;
     ingress->pending_frames.pop_front();
     ingress->dropped_frame_count += 1;
+    push_encoded_capture_drop_event_locked(ingress, dropped_frame_source_display_time);
   }
   ingress->data_cv.notify_all();
 }
