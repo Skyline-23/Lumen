@@ -430,7 +430,6 @@ namespace stream {
 
     struct {
       crypto::cipher::gcm_t cipher;
-      crypto::aes_t legacy_input_enc_iv;  // Only used when the client doesn't support full control stream encryption
       crypto::aes_t incoming_iv;
       crypto::aes_t outgoing_iv;
 
@@ -495,25 +494,18 @@ namespace stream {
     auto seq = session->control.seq++;
 
     auto &iv = session->control.outgoing_iv;
-    if (session->config.encryptionFlagsEnabled & SS_ENC_CONTROL_V2) {
-      // We use the deterministic IV construction algorithm specified in NIST SP 800-38D
-      // Section 8.2.1. The sequence number is our "invocation" field and the 'CH' in the
-      // high bytes is the "fixed" field. Because each client provides their own unique
-      // key, our values in the fixed field need only uniquely identify each independent
-      // use of the client's key with AES-GCM in our code.
-      //
-      // The sequence number is 32 bits long which allows for 2^32 control stream messages
-      // to be sent to each client before the IV repeats.
-      iv.resize(12);
-      std::copy_n((uint8_t *) &seq, sizeof(seq), std::begin(iv));
-      iv[10] = 'H';  // Host originated
-      iv[11] = 'C';  // Control stream
-    } else {
-      // Nvidia's old style encryption uses a 16-byte IV
-      iv.resize(16);
-
-      iv[0] = (std::uint8_t) seq;
-    }
+    // We use the deterministic IV construction algorithm specified in NIST SP 800-38D
+    // Section 8.2.1. The sequence number is our "invocation" field and the 'CH' in the
+    // high bytes is the "fixed" field. Because each client provides their own unique
+    // key, our values in the fixed field need only uniquely identify each independent
+    // use of the client's key with AES-GCM in our code.
+    //
+    // The sequence number is 32 bits long which allows for 2^32 control stream messages
+    // to be sent to each client before the IV repeats.
+    iv.resize(12);
+    std::copy_n((uint8_t *) &seq, sizeof(seq), std::begin(iv));
+    iv[10] = 'H';  // Host originated
+    iv[11] = 'C';  // Control stream
 
     auto packet = (control_encrypted_p) tagged_cipher.data();
 
@@ -544,15 +536,10 @@ namespace stream {
     auto seq = session->control.seq++;
 
     auto &iv = session->control.outgoing_iv;
-    if (session->config.encryptionFlagsEnabled & SS_ENC_CONTROL_V2) {
-      iv.resize(12);
-      std::copy_n((uint8_t *) &seq, sizeof(seq), std::begin(iv));
-      iv[10] = 'H';
-      iv[11] = 'C';
-    } else {
-      iv.resize(16);
-      iv[0] = (std::uint8_t) seq;
-    }
+    iv.resize(12);
+    std::copy_n((uint8_t *) &seq, sizeof(seq), std::begin(iv));
+    iv[10] = 'H';
+    iv[11] = 'C';
 
     auto *packet = reinterpret_cast<control_encrypted_p>(tagged_cipher.data());
     auto bytes = session->control.cipher.encrypt(plaintext, packet->payload(), &iv);
@@ -1151,28 +1138,6 @@ namespace stream {
       session->video.invalidate_ref_frames_events->raise(std::make_pair(firstFrame, lastFrame));
     });
 
-    server->map(packetTypes[IDX_INPUT_DATA], [&](session_t *session, const std::string_view &payload) {
-      BOOST_LOG(debug) << "type [IDX_INPUT_DATA]"sv;
-
-      auto tagged_cipher_length = util::endian::big(*(int32_t *) payload.data());
-      std::string_view tagged_cipher {payload.data() + sizeof(tagged_cipher_length), (size_t) tagged_cipher_length};
-
-      std::vector<uint8_t> plaintext;
-
-      auto &cipher = session->control.cipher;
-      auto &iv = session->control.legacy_input_enc_iv;
-      if (cipher.decrypt(tagged_cipher, plaintext, &iv)) {
-        BOOST_LOG(warning) << "Dropping legacy input packet after authentication tag verification failure"sv;
-        return;
-      }
-
-      if (tagged_cipher_length >= 16 + iv.size()) {
-        std::copy(payload.end() - 16, payload.end(), std::begin(iv));
-      }
-
-      input::passthrough(session->input, std::move(plaintext), session->permission);
-    });
-
     server->map(packetTypes[IDX_EXEC_SERVER_CMD], [server](session_t *session, const std::string_view &payload) {
       BOOST_LOG(debug) << "type [IDX_EXEC_SERVER_CMD]"sv;
 
@@ -1242,25 +1207,18 @@ namespace stream {
 
       auto &cipher = session->control.cipher;
       auto &iv = session->control.incoming_iv;
-      if (session->config.encryptionFlagsEnabled & SS_ENC_CONTROL_V2) {
-        // We use the deterministic IV construction algorithm specified in NIST SP 800-38D
-        // Section 8.2.1. The sequence number is our "invocation" field and the 'CC' in the
-        // high bytes is the "fixed" field. Because each client provides their own unique
-        // key, our values in the fixed field need only uniquely identify each independent
-        // use of the client's key with AES-GCM in our code.
-        //
-        // The sequence number is 32 bits long which allows for 2^32 control stream messages
-        // to be received from each client before the IV repeats.
-        iv.resize(12);
-        std::copy_n((uint8_t *) &seq, sizeof(seq), std::begin(iv));
-        iv[10] = 'C';  // Client originated
-        iv[11] = 'C';  // Control stream
-      } else {
-        // Nvidia's old style encryption uses a 16-byte IV
-        iv.resize(16);
-
-        iv[0] = (std::uint8_t) seq;
-      }
+      // We use the deterministic IV construction algorithm specified in NIST SP 800-38D
+      // Section 8.2.1. The sequence number is our "invocation" field and the 'CC' in the
+      // high bytes is the "fixed" field. Because each client provides their own unique
+      // key, our values in the fixed field need only uniquely identify each independent
+      // use of the client's key with AES-GCM in our code.
+      //
+      // The sequence number is 32 bits long which allows for 2^32 control stream messages
+      // to be received from each client before the IV repeats.
+      iv.resize(12);
+      std::copy_n((uint8_t *) &seq, sizeof(seq), std::begin(iv));
+      iv[10] = 'C';  // Client originated
+      iv[11] = 'C';  // Control stream
 
       std::vector<uint8_t> plaintext;
       if (cipher.decrypt(tagged_cipher, plaintext, &iv)) {
@@ -1277,7 +1235,7 @@ namespace stream {
         return;
       }
 
-      // IDX_INPUT_DATA callback will attempt to decrypt unencrypted data, therefore we need pass it directly
+      // Encrypted control packets already yielded plaintext, so input data can bypass the control dispatcher.
       if (type == packetTypes[IDX_INPUT_DATA]) {
         plaintext.erase(std::begin(plaintext), std::begin(plaintext) + 4);
         input::passthrough(session->input, std::move(plaintext), session->permission);
@@ -2634,6 +2592,11 @@ namespace stream {
         return -1;
       }
 
+      if (!(session.config.encryptionFlagsEnabled & SS_ENC_CONTROL_V2)) {
+        BOOST_LOG(error) << "Couldn't start session: Shadow transport requires encrypted control stream v2 support"sv;
+        return -1;
+      }
+
       session.control.expected_peer_address = net::addr_to_normalized_string(*addr);
       BOOST_LOG(debug) << "Expecting incoming session connections from "sv << session.control.expected_peer_address;
 
@@ -2713,7 +2676,6 @@ namespace stream {
 
       session->control.connect_data = launch_session.control_connect_data;
       session->control.feedback_queue = mail->queue<platf::gamepad_feedback_msg_t>(mail::gamepad_feedback);
-      session->control.legacy_input_enc_iv = launch_session.iv;
       session->control.cipher = crypto::cipher::gcm_t {
         launch_session.gcm_key,
         false
