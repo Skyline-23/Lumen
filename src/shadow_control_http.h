@@ -27,8 +27,14 @@ namespace shadow_control_http {
     std::string device_name;
     std::string platform;
     std::string client_id;
+    std::string trusted_client_uuid;
     bool public_key_present = false;
+    bool client_trusted = false;
+    bool client_certificate_required = true;
     std::string status;
+    std::string server_unique_id;
+    std::string service_type;
+    std::uint16_t control_https_port = 0;
     std::int64_t expires_in_seconds = 0;
     std::int64_t poll_interval_seconds = 0;
   };

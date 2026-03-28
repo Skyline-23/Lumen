@@ -465,8 +465,13 @@ namespace shadow_http {
     tree.put("root.shadowPairingId", pairing_request.pairing_id);
     tree.put("root.shadowPairingCode", pairing_request.user_code);
     tree.put("root.shadowPairingStatus", pairing_request.status);
+    tree.put("root.shadowPairingClientTrusted", pairing_request.client_trusted);
+    tree.put("root.shadowPairingTrustedClientUuid", pairing_request.trusted_client_uuid);
     tree.put("root.shadowPairingExpiresInSeconds", pairing_request.expires_in_seconds);
     tree.put("root.shadowPairingPollIntervalSeconds", pairing_request.poll_interval_seconds);
+    tree.put("root.shadowControlPort", pairing_request.control_https_port);
+    tree.put("root.shadowServiceType", pairing_request.service_type);
+    tree.put("root.shadowServerUniqueId", pairing_request.server_unique_id);
   }
 
   void load_state() {
@@ -565,7 +570,8 @@ namespace shadow_http {
   std::optional<std::string> authorize_client_certificate(
     const std::string &name,
     const std::string &uuid,
-    const std::string &cert_pem
+    const std::string &cert_pem,
+    authorize_client_certificate_result_t *result
   ) {
     if (cert_pem.empty()) {
       return "Pairing request does not include a client certificate.";
@@ -586,6 +592,12 @@ namespace shadow_http {
       named_cert_p->name = name.empty() ? named_cert_p->name : name;
       named_cert_p->uuid = uuid.empty() ? named_cert_p->uuid : uuid;
 
+      if (result) {
+        result->uuid = named_cert_p->uuid;
+        result->name = named_cert_p->name;
+        result->already_trusted = true;
+      }
+
       if (!config::runtime.flags[config::flag::FRESH_STATE]) {
         save_state();
         load_state();
@@ -604,6 +616,12 @@ namespace shadow_http {
     named_cert_p->allow_client_commands = true;
     named_cert_p->always_use_virtual_display = false;
     add_authorized_client(named_cert_p);
+
+    if (result) {
+      result->uuid = named_cert_p->uuid;
+      result->name = named_cert_p->name;
+      result->already_trusted = false;
+    }
 
     return std::nullopt;
   }

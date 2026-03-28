@@ -31,6 +31,12 @@ namespace shadow_http {
   using args_t = SimpleWeb::CaseInsensitiveMultimap;
   using cmd_list_t = std::list<crypto::command_entry_t>;
 
+  struct authorize_client_certificate_result_t {
+    std::string uuid;
+    std::string name;
+    bool already_trusted = false;
+  };
+
   /**
    * @brief The HTTPS port, as a difference from the config port.
    */
@@ -112,7 +118,8 @@ namespace shadow_http {
   std::optional<std::string> authorize_client_certificate(
     const std::string &name,
     const std::string &uuid,
-    const std::string &cert_pem
+    const std::string &cert_pem,
+    authorize_client_certificate_result_t *result = nullptr
   );
 
   /**

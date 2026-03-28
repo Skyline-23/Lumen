@@ -87,6 +87,8 @@ namespace shadow_control_http {
     std::string platform;
     std::string client_id;
     std::string public_key;
+    std::string trusted_client_uuid;
+    bool client_trusted = false;
     std::chrono::time_point<std::chrono::steady_clock> created_at;
     std::chrono::time_point<std::chrono::steady_clock> expires_at;
     shadow_pairing_status_e status = shadow_pairing_status_e::pending;
@@ -123,6 +125,13 @@ namespace shadow_control_http {
     }
   }
 
+  void append_shadow_pairing_host_details(nlohmann::json &tree) {
+    tree["clientCertificateRequired"] = true;
+    tree["serverUniqueId"] = shadow_http_common::unique_id;
+    tree["serviceType"] = SERVICE_TYPE;
+    tree["controlHttpsPort"] = net::map_port(PORT_HTTPS);
+  }
+
   nlohmann::json serialize_shadow_pairing_request(const shadow_pairing_request_t &request) {
     const auto now = std::chrono::steady_clock::now();
     const auto expires_in = std::max<int64_t>(
@@ -136,10 +145,13 @@ namespace shadow_control_http {
     tree["deviceName"] = request.device_name;
     tree["platform"] = request.platform;
     tree["clientId"] = request.client_id;
+    tree["trustedClientUuid"] = request.trusted_client_uuid;
     tree["publicKeyPresent"] = !request.public_key.empty();
+    tree["clientTrusted"] = request.client_trusted;
     tree["status"] = shadow_pairing_status_string(request);
     tree["expiresInSeconds"] = expires_in;
     tree["pollIntervalSeconds"] = SHADOW_PAIRING_POLL_INTERVAL.count();
+    append_shadow_pairing_host_details(tree);
     return tree;
   }
 
@@ -152,8 +164,14 @@ namespace shadow_control_http {
     snapshot.device_name = request.device_name;
     snapshot.platform = request.platform;
     snapshot.client_id = request.client_id;
+    snapshot.trusted_client_uuid = request.trusted_client_uuid;
     snapshot.public_key_present = !request.public_key.empty();
+    snapshot.client_trusted = request.client_trusted;
+    snapshot.client_certificate_required = true;
     snapshot.status = shadow_pairing_status_string(request);
+    snapshot.server_unique_id = shadow_http_common::unique_id;
+    snapshot.service_type = SERVICE_TYPE;
+    snapshot.control_https_port = net::map_port(PORT_HTTPS);
     snapshot.expires_in_seconds = std::max<int64_t>(
       0,
       std::chrono::duration_cast<std::chrono::seconds>(request.expires_at - now).count()
@@ -1412,8 +1430,14 @@ namespace shadow_control_http {
         {"deviceName", pairing_request.device_name},
         {"platform", pairing_request.platform},
         {"clientId", pairing_request.client_id},
+        {"trustedClientUuid", pairing_request.trusted_client_uuid},
         {"publicKeyPresent", pairing_request.public_key_present},
+        {"clientTrusted", pairing_request.client_trusted},
+        {"clientCertificateRequired", pairing_request.client_certificate_required},
         {"status", pairing_request.status},
+        {"serverUniqueId", pairing_request.server_unique_id},
+        {"serviceType", pairing_request.service_type},
+        {"controlHttpsPort", pairing_request.control_https_port},
         {"expiresInSeconds", pairing_request.expires_in_seconds},
         {"pollIntervalSeconds", pairing_request.poll_interval_seconds}
       };
@@ -1524,10 +1548,12 @@ namespace shadow_control_http {
       }
 
       if (approved) {
+        shadow_http::authorize_client_certificate_result_t authorize_result;
         auto authorize_error = shadow_http::authorize_client_certificate(
           pairing_request->device_name,
           pairing_request->client_id,
-          pairing_request->public_key
+          pairing_request->public_key,
+          &authorize_result
         );
         if (authorize_error) {
           BOOST_LOG(warning) << "Shadow pairing request ["sv << pairing_request->pairing_id
@@ -1535,6 +1561,11 @@ namespace shadow_control_http {
           bad_request(response, request, *authorize_error);
           return;
         }
+
+        pairing_request->trusted_client_uuid = authorize_result.uuid;
+        pairing_request->client_id = authorize_result.uuid;
+        pairing_request->device_name = authorize_result.name;
+        pairing_request->client_trusted = true;
       }
 
       {
@@ -1547,6 +1578,10 @@ namespace shadow_control_http {
           return;
         }
 
+        it->second.device_name = pairing_request->device_name;
+        it->second.client_id = pairing_request->client_id;
+        it->second.trusted_client_uuid = pairing_request->trusted_client_uuid;
+        it->second.client_trusted = pairing_request->client_trusted;
         it->second.status = approved ? shadow_pairing_status_e::approved : shadow_pairing_status_e::rejected;
         pairing_request = it->second;
       }
