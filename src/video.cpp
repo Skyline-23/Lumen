@@ -3742,6 +3742,9 @@ namespace video {
       std::array<char, 512> event_message {};
 
       const auto arm_wait_for_next_idr = [&](std::string_view reason) {
+        const auto ingress_snapshot = ApolloCoreEncodedCaptureIngressCopySnapshot(ingress);
+        ApolloCoreEncodedCaptureIngressReset(ingress);
+        display_time_clock = apollo_core_display_time_clock_t {};
         waiting_for_initial_idr = true;
         logged_waiting_for_initial_idr = false;
         logged_first_packet = false;
@@ -3755,8 +3758,10 @@ namespace video {
         last_forwarded_packet_timestamp_delta_milliseconds.reset();
         last_forwarded_sequence_delta = 0;
         request_external_encoded_capture_key_frame();
-        BOOST_LOG(info) << "External macOS encoded ingress requested decoder resync; holding frames until the next IDR packet"
-                        << " reason="sv << reason;
+        BOOST_LOG(info) << "External macOS encoded ingress requested decoder resync; flushed queued frames before waiting for the next IDR packet"
+                        << " reason="sv << reason
+                        << " flushed-queued="sv << ingress_snapshot.queued_frame_count
+                        << " flushed-events="sv << ingress_snapshot.queued_event_count;
       };
 
       if (!ApolloCoreEncodedCaptureIngressIsProducerActive(ingress) &&
