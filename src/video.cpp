@@ -1218,15 +1218,15 @@ namespace video {
 
     std::size_t native_macos_vt_max_inflight_frames_for_framerate(int framerate) {
       if (framerate >= 120) {
-        return 3;
+        return 2;
       }
       if (framerate >= 90) {
-        return 4;
+        return 3;
       }
       if (framerate >= 60) {
-        return 5;
+        return 4;
       }
-      return 6;
+      return 5;
     }
   }  // namespace
 
