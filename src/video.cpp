@@ -263,6 +263,58 @@ namespace video {
       );
     }
 
+    video::hdr_frame_state_t negotiated_external_overlay_hdr_frame_state(
+      const config_t &config,
+      const platf::external_capture_display_metadata_t &external_metadata,
+      bool frame_is_hdr_signaled,
+      const SS_HDR_METADATA *metadata = nullptr
+    ) {
+      const auto transport = video::effective_dynamic_range_transport(config);
+      if (transport != video::dynamic_range_transport_e::sdr_base_hdr_overlay || !frame_is_hdr_signaled) {
+        return negotiated_hdr_frame_state(config, frame_is_hdr_signaled, metadata);
+      }
+
+      const auto scalar = external_metadata.scalar_inv > 0.0f ? (1.0f / external_metadata.scalar_inv) : 0.0f;
+      const auto content_width = std::clamp(
+        static_cast<int>(std::lround(static_cast<float>(external_metadata.env_width) * scalar)),
+        0,
+        config.width
+      );
+      const auto content_height = std::clamp(
+        static_cast<int>(std::lround(static_cast<float>(external_metadata.env_height) * scalar)),
+        0,
+        config.height
+      );
+      const auto content_x = std::clamp(
+        static_cast<int>(std::lround(external_metadata.client_offset_x)),
+        0,
+        std::max(config.width - content_width, 0)
+      );
+      const auto content_y = std::clamp(
+        static_cast<int>(std::lround(external_metadata.client_offset_y)),
+        0,
+        std::max(config.height - content_height, 0)
+      );
+
+      return video::make_overlay_hdr_frame_state(
+        video::make_coarse_overlay_regions(
+          content_x,
+          content_y,
+          content_width,
+          content_height,
+          metadata
+        ),
+        metadata
+      );
+    }
+
+    double callback_latency_resync_threshold_milliseconds(const config_t &config) {
+      const auto frame_interval_ms = config.framerate > 0 ?
+        (1000.0 / static_cast<double>(config.framerate)) :
+        (1000.0 / 60.0);
+      return std::max(6.0, frame_interval_ms * 1.5);
+    }
+
     void request_external_encoded_capture_key_frame() {
       ApolloMacBridgeRequestImmediateCaptureKeyFrame();
     }
@@ -3987,11 +4039,16 @@ namespace video {
           }
           packet->channel_data = channel_data;
           packet->frame_timestamp = display_time_clock.frame_timestamp(frame.source_display_time);
-          packet->hdr_frame_state = negotiated_optional_hdr_frame_state(
-            config,
-            frame.is_hdr_signaled,
-            external_metadata.hdr_active ? &external_metadata.hdr_metadata : nullptr
-          );
+          if (video::dynamic_range_transport_uses_hdr_frame_state(video::effective_dynamic_range_transport(config))) {
+            packet->hdr_frame_state = negotiated_external_overlay_hdr_frame_state(
+              config,
+              external_metadata,
+              frame.is_hdr_signaled,
+              external_metadata.hdr_active ? &external_metadata.hdr_metadata : nullptr
+            );
+          } else {
+            packet->hdr_frame_state = std::nullopt;
+          }
           if (!packet->frame_timestamp) {
             packet->frame_timestamp = std::chrono::steady_clock::now();
           }
@@ -4019,6 +4076,9 @@ namespace video {
           const auto has_cadence_anomaly =
             last_forwarded_sequence_delta > 1 ||
             (last_forwarded_source_display_delta_milliseconds && *last_forwarded_source_display_delta_milliseconds <= 0.0);
+          const auto has_callback_latency_spike =
+            last_forwarded_callback_latency_milliseconds &&
+            *last_forwarded_callback_latency_milliseconds > callback_latency_resync_threshold_milliseconds(config);
           if (has_cadence_anomaly) {
             BOOST_LOG(warning) << "External macOS encoded ingress cadence anomaly seq="sv
                                << frame.source_sequence_number
@@ -4032,6 +4092,21 @@ namespace video {
                                << (last_forwarded_callback_latency_milliseconds ? *last_forwarded_callback_latency_milliseconds : -1.0);
             if (!packet_is_idr) {
               arm_wait_for_next_idr("cadence-anomaly");
+              CFRelease(retained_sample_buffer);
+              continue;
+            }
+          }
+          if (has_callback_latency_spike) {
+            BOOST_LOG(warning) << "External macOS encoded ingress callback latency spike seq="sv
+                               << frame.source_sequence_number
+                               << " callback-latency-ms="sv
+                               << *last_forwarded_callback_latency_milliseconds
+                               << " threshold-ms="sv
+                               << callback_latency_resync_threshold_milliseconds(config)
+                               << " packet-ts-delta-ms="sv
+                               << (last_forwarded_packet_timestamp_delta_milliseconds ? *last_forwarded_packet_timestamp_delta_milliseconds : -1.0);
+            if (!packet_is_idr) {
+              arm_wait_for_next_idr("callback-latency-spike");
               CFRelease(retained_sample_buffer);
               continue;
             }

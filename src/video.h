@@ -109,10 +109,14 @@ namespace video {
   }
 
   inline std::vector<hdr_overlay_region_t> make_coarse_overlay_regions(
+    int frame_x,
+    int frame_y,
     int frame_width,
     int frame_height,
     const SS_HDR_METADATA *metadata = nullptr
   ) {
+    const auto origin_x = std::max(frame_x, 0);
+    const auto origin_y = std::max(frame_y, 0);
     const auto width = std::max(frame_width, 0);
     const auto height = std::max(frame_height, 0);
     std::vector<hdr_overlay_region_t> overlay_regions;
@@ -133,10 +137,10 @@ namespace video {
     for (int row = 0; row < rows; ++row) {
       for (int column = 0; column < columns; ++column) {
         hdr_overlay_region_t region;
-        region.x = column * tile_width;
-        region.y = row * tile_height;
-        region.width = std::min(tile_width, width - region.x);
-        region.height = std::min(tile_height, height - region.y);
+        region.x = origin_x + column * tile_width;
+        region.y = origin_y + row * tile_height;
+        region.width = std::min(tile_width, width - (column * tile_width));
+        region.height = std::min(tile_height, height - (row * tile_height));
         region.has_metadata = metadata != nullptr;
         if (metadata != nullptr) {
           region.metadata = *metadata;
@@ -148,6 +152,14 @@ namespace video {
     }
 
     return overlay_regions;
+  }
+
+  inline std::vector<hdr_overlay_region_t> make_coarse_overlay_regions(
+    int frame_width,
+    int frame_height,
+    const SS_HDR_METADATA *metadata = nullptr
+  ) {
+    return make_coarse_overlay_regions(0, 0, frame_width, frame_height, metadata);
   }
 
   inline hdr_frame_state_t make_tiled_overlay_hdr_frame_state(
