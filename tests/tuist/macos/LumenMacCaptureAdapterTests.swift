@@ -19,9 +19,9 @@ final class LumenMacCaptureAdapterTests: XCTestCase {
         let configuration = adapter.makePanelNativeConfiguration(forDisplayID: 9)
         XCTAssertEqual(configuration.display_id, 9)
         XCTAssertTrue(
-            configuration.codec == ApolloCoreCaptureCodecH264 ||
-            configuration.codec == ApolloCoreCaptureCodecHEVC ||
-            configuration.codec == ApolloCoreCaptureCodecProResProxy
+            configuration.codec == LumenCoreCaptureCodecH264 ||
+            configuration.codec == LumenCoreCaptureCodecHEVC ||
+            configuration.codec == LumenCoreCaptureCodecProResProxy
         )
         XCTAssertTrue(
             configuration.queue_profile == LumenMacBridgeQueueProfileQ1 ||

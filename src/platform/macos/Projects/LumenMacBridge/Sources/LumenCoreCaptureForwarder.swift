@@ -19,7 +19,7 @@ public struct LumenBridgeCoreForwardingSnapshot: Equatable, Sendable {
     public let lastFrameIsHDRSignaled: Bool
     public let lastEventKind: LumenBridgeCaptureEventKind?
 
-    init(snapshot: ApolloCoreEncodedCaptureIngressSnapshot) {
+    init(snapshot: LumenCoreEncodedCaptureIngressSnapshot) {
         self.frameCount = snapshot.frame_count
         self.eventCount = snapshot.event_count
         self.queuedFrameCount = snapshot.queued_frame_count
@@ -60,8 +60,8 @@ final class LumenCoreCaptureForwarder: @unchecked Sendable {
     private let handle: OpaquePointer
 
     init() {
-        guard let handle = ApolloCoreSharedEncodedCaptureIngress() else {
-            fatalError("ApolloCoreSharedEncodedCaptureIngress returned nil")
+        guard let handle = LumenCoreSharedEncodedCaptureIngress() else {
+            fatalError("LumenCoreSharedEncodedCaptureIngress returned nil")
         }
         self.handle = handle
     }
@@ -69,24 +69,24 @@ final class LumenCoreCaptureForwarder: @unchecked Sendable {
     deinit {}
 
     func reset() {
-        ApolloCoreEncodedCaptureIngressReset(handle)
+        LumenCoreEncodedCaptureIngressReset(handle)
     }
 
     func setFrameCapacity(_ capacity: Int) {
-        ApolloCoreEncodedCaptureIngressSetFrameCapacity(handle, max(1, capacity))
+        LumenCoreEncodedCaptureIngressSetFrameCapacity(handle, max(1, capacity))
     }
 
     func setEventCapacity(_ capacity: Int) {
-        ApolloCoreEncodedCaptureIngressSetEventCapacity(handle, max(1, capacity))
+        LumenCoreEncodedCaptureIngressSetEventCapacity(handle, max(1, capacity))
     }
 
     func setProducerActive(_ active: Bool) {
-        ApolloCoreEncodedCaptureIngressSetProducerActive(handle, active)
+        LumenCoreEncodedCaptureIngressSetProducerActive(handle, active)
     }
 
     func snapshot() -> LumenBridgeCoreForwardingSnapshot {
         LumenBridgeCoreForwardingSnapshot(
-            snapshot: ApolloCoreEncodedCaptureIngressCopySnapshot(handle)
+            snapshot: LumenCoreEncodedCaptureIngressCopySnapshot(handle)
         )
     }
 
@@ -111,7 +111,7 @@ final class LumenCoreCaptureForwarder: @unchecked Sendable {
         isKeyFrame: Bool,
         isHDRSignaled: Bool
     ) {
-        ApolloCoreEncodedCaptureIngressConsumeSampleBuffer(
+        LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
             handle,
             codec.apolloCoreCodec,
             sourceSequenceNumber,
@@ -127,7 +127,7 @@ final class LumenCoreCaptureForwarder: @unchecked Sendable {
     func consume(event: MDKEncodedCaptureSessionEvent) {
         if let message = event.message {
             message.withCString { messagePointer in
-                ApolloCoreEncodedCaptureIngressConsumeEvent(
+                LumenCoreEncodedCaptureIngressConsumeEvent(
                     handle,
                     event.kind.apolloCoreKind,
                     messagePointer,
@@ -140,7 +140,7 @@ final class LumenCoreCaptureForwarder: @unchecked Sendable {
                 )
             }
         } else {
-            ApolloCoreEncodedCaptureIngressConsumeEvent(
+            LumenCoreEncodedCaptureIngressConsumeEvent(
                 handle,
                 event.kind.apolloCoreKind,
                 nil,
@@ -157,7 +157,7 @@ final class LumenCoreCaptureForwarder: @unchecked Sendable {
     func popNextFrame() -> LumenBridgeCoreDrainedFrame? {
         var sampleBuffer: Unmanaged<CMSampleBuffer>?
         let record = withUnsafeMutablePointer(to: &sampleBuffer) { sampleBufferPointer in
-            ApolloCoreEncodedCaptureIngressPopNextFrame(handle, sampleBufferPointer)
+            LumenCoreEncodedCaptureIngressPopNextFrame(handle, sampleBufferPointer)
         }
         guard record.has_value, let sampleBuffer else {
             return nil
@@ -178,7 +178,7 @@ final class LumenCoreCaptureForwarder: @unchecked Sendable {
     func popNextEvent() -> LumenBridgeCoreDrainedEvent? {
         var messageBuffer = Array<CChar>(repeating: 0, count: 512)
         let record = messageBuffer.withUnsafeMutableBufferPointer { buffer in
-            ApolloCoreEncodedCaptureIngressPopNextEvent(
+            LumenCoreEncodedCaptureIngressPopNextEvent(
                 handle,
                 buffer.baseAddress,
                 buffer.count
@@ -212,56 +212,56 @@ extension LumenCaptureCodec {
         }
     }
 
-    init(apolloCoreCodec: ApolloCoreCaptureCodec) {
+    init(apolloCoreCodec: LumenCoreCaptureCodec) {
         switch apolloCoreCodec {
-        case ApolloCoreCaptureCodecH264:
+        case LumenCoreCaptureCodecH264:
             self = .h264
-        case ApolloCoreCaptureCodecHEVC:
+        case LumenCoreCaptureCodecHEVC:
             self = .hevc
-        case ApolloCoreCaptureCodecProResProxy:
+        case LumenCoreCaptureCodecProResProxy:
             self = .proResProxy
         default:
             self = .hevc
         }
     }
 
-    var apolloCoreCodec: ApolloCoreCaptureCodec {
+    var apolloCoreCodec: LumenCoreCaptureCodec {
         switch self {
         case .h264:
-            return ApolloCoreCaptureCodecH264
+            return LumenCoreCaptureCodecH264
         case .hevc:
-            return ApolloCoreCaptureCodecHEVC
+            return LumenCoreCaptureCodecHEVC
         case .proResProxy:
-            return ApolloCoreCaptureCodecProResProxy
+            return LumenCoreCaptureCodecProResProxy
         }
     }
 }
 
 extension MDKVideoEncoderCodec {
-    var apolloCoreCodec: ApolloCoreCaptureCodec {
+    var apolloCoreCodec: LumenCoreCaptureCodec {
         switch self {
         case .h264:
-            return ApolloCoreCaptureCodecH264
+            return LumenCoreCaptureCodecH264
         case .hevc:
-            return ApolloCoreCaptureCodecHEVC
+            return LumenCoreCaptureCodecHEVC
         case .proResProxy:
-            return ApolloCoreCaptureCodecProResProxy
+            return LumenCoreCaptureCodecProResProxy
         }
     }
 }
 
 extension LumenBridgeCaptureEventKind {
-    init?(apolloCoreKind: ApolloCoreCaptureEventKind) {
+    init?(apolloCoreKind: LumenCoreCaptureEventKind) {
         switch apolloCoreKind {
-        case ApolloCoreCaptureEventKindStarted:
+        case LumenCoreCaptureEventKindStarted:
             self = .started
-        case ApolloCoreCaptureEventKindStopped:
+        case LumenCoreCaptureEventKindStopped:
             self = .stopped
-        case ApolloCoreCaptureEventKindRestarted:
+        case LumenCoreCaptureEventKindRestarted:
             self = .restarted
-        case ApolloCoreCaptureEventKindFailed:
+        case LumenCoreCaptureEventKindFailed:
             self = .failed
-        case ApolloCoreCaptureEventKindDroppedFrame:
+        case LumenCoreCaptureEventKindDroppedFrame:
             self = .droppedFrame
         default:
             return nil
@@ -270,18 +270,18 @@ extension LumenBridgeCaptureEventKind {
 }
 
 private extension MDKEncodedCaptureSessionEventKind {
-    var apolloCoreKind: ApolloCoreCaptureEventKind {
+    var apolloCoreKind: LumenCoreCaptureEventKind {
         switch self {
         case .started:
-            return ApolloCoreCaptureEventKindStarted
+            return LumenCoreCaptureEventKindStarted
         case .stopped:
-            return ApolloCoreCaptureEventKindStopped
+            return LumenCoreCaptureEventKindStopped
         case .restarted:
-            return ApolloCoreCaptureEventKindRestarted
+            return LumenCoreCaptureEventKindRestarted
         case .failed:
-            return ApolloCoreCaptureEventKindFailed
+            return LumenCoreCaptureEventKindFailed
         case .droppedFrame:
-            return ApolloCoreCaptureEventKindDroppedFrame
+            return LumenCoreCaptureEventKindDroppedFrame
         }
     }
 }

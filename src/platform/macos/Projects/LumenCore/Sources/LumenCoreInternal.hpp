@@ -27,7 +27,7 @@ namespace apollo::core {
     void set_frame_capacity(std::size_t capacity);
     void set_event_capacity(std::size_t capacity);
     void consume_sample_buffer(
-      ApolloCoreCaptureCodec codec,
+      LumenCoreCaptureCodec codec,
       std::uint64_t source_sequence_number,
       std::uint64_t source_display_time,
       bool has_output_callback_latency_milliseconds,
@@ -37,7 +37,7 @@ namespace apollo::core {
       CMSampleBufferRef sample_buffer
     );
     void consume_event(
-      ApolloCoreCaptureEventKind kind,
+      LumenCoreCaptureEventKind kind,
       const char *message,
       bool has_stop_status,
       std::int32_t stop_status,
@@ -46,15 +46,15 @@ namespace apollo::core {
       bool has_source_display_time,
       std::uint64_t source_display_time
     );
-    ApolloCoreEncodedCaptureIngressSnapshot snapshot() const;
+    LumenCoreEncodedCaptureIngressSnapshot snapshot() const;
     CMSampleBufferRef create_retained_last_sample_buffer() const;
-    ApolloCoreEncodedCaptureFrameRecord pop_next_frame(CMSampleBufferRef *sample_buffer_out);
-    ApolloCoreEncodedCaptureEventRecord pop_next_event(char *message_destination, std::size_t message_capacity);
+    LumenCoreEncodedCaptureFrameRecord pop_next_frame(CMSampleBufferRef *sample_buffer_out);
+    LumenCoreEncodedCaptureEventRecord pop_next_event(char *message_destination, std::size_t message_capacity);
     std::string copy_last_event_message() const;
-    ApolloCoreEncodedCaptureIngress *handle() const;
+    LumenCoreEncodedCaptureIngress *handle() const;
 
   private:
-    ApolloCoreEncodedCaptureIngress *handle_ = nullptr;
+    LumenCoreEncodedCaptureIngress *handle_ = nullptr;
   };
 }
 

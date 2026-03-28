@@ -102,7 +102,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
                     supportsFrameGatedHDR: true,
                     supportsPerFrameHDRMetadata: true
                 ),
-                dynamicRangeTransport: ApolloCoreDynamicRangeTransportFrameGatedHDR
+                dynamicRangeTransport: LumenCoreDynamicRangeTransportFrameGatedHDR
             ),
             effectiveDisplayState: LumenBridgeEffectiveDisplayState(
                 gamut: .displayP3,
@@ -142,7 +142,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
                     supportsFrameGatedHDR: true,
                     supportsPerFrameHDRMetadata: true
                 ),
-                dynamicRangeTransport: ApolloCoreDynamicRangeTransportFrameGatedHDR
+                dynamicRangeTransport: LumenCoreDynamicRangeTransportFrameGatedHDR
             ),
             effectiveDisplayState: LumenBridgeEffectiveDisplayState(
                 gamut: .displayP3,
@@ -169,11 +169,11 @@ final class LumenTuistBootstrapTests: XCTestCase {
                     transfer: .pq,
                     supportsPerFrameHDRMetadata: true
                 ),
-                dynamicRangeTransport: ApolloCoreDynamicRangeTransportFrameGatedHDR
+                dynamicRangeTransport: LumenCoreDynamicRangeTransportFrameGatedHDR
             )
         )
 
-        XCTAssertEqual(unsupportedSink.negotiatedDynamicRangeTransport, ApolloCoreDynamicRangeTransportSDR)
+        XCTAssertEqual(unsupportedSink.negotiatedDynamicRangeTransport, LumenCoreDynamicRangeTransportSDR)
         XCTAssertFalse(unsupportedSink.usesHDRTransport)
         XCTAssertEqual(unsupportedSink.negotiatedQueueProfile, .q3)
     }
@@ -191,7 +191,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
                     supportsFrameGatedHDR: true,
                     supportsPerFrameHDRMetadata: true
                 ),
-                dynamicRangeTransport: ApolloCoreDynamicRangeTransportSDRBaseHDROverlay
+                dynamicRangeTransport: LumenCoreDynamicRangeTransportSDRBaseHDROverlay
             )
         )
         let overlayRequestedSink = LumenMacDisplayKitCaptureConfiguration(
@@ -207,16 +207,16 @@ final class LumenTuistBootstrapTests: XCTestCase {
                     supportsHDRTileOverlay: true,
                     supportsPerFrameHDRMetadata: true
                 ),
-                dynamicRangeTransport: ApolloCoreDynamicRangeTransportSDRBaseHDROverlay
+                dynamicRangeTransport: LumenCoreDynamicRangeTransportSDRBaseHDROverlay
             )
         )
 
-        XCTAssertEqual(fallbackOverlay.negotiatedDynamicRangeTransport, ApolloCoreDynamicRangeTransportFrameGatedHDR)
+        XCTAssertEqual(fallbackOverlay.negotiatedDynamicRangeTransport, LumenCoreDynamicRangeTransportFrameGatedHDR)
         XCTAssertTrue(fallbackOverlay.usesHDRTransport)
         XCTAssertTrue(fallbackOverlay.prefersRealtimeHDRMetadata)
         XCTAssertEqual(fallbackOverlay.negotiatedQueueProfile, .q2)
 
-        XCTAssertEqual(overlayRequestedSink.negotiatedDynamicRangeTransport, ApolloCoreDynamicRangeTransportSDRBaseHDROverlay)
+        XCTAssertEqual(overlayRequestedSink.negotiatedDynamicRangeTransport, LumenCoreDynamicRangeTransportSDRBaseHDROverlay)
         XCTAssertFalse(overlayRequestedSink.usesHDRTransport)
         XCTAssertTrue(overlayRequestedSink.prefersRealtimeHDRMetadata)
         XCTAssertEqual(overlayRequestedSink.negotiatedQueueProfile, .q1)
@@ -262,12 +262,12 @@ final class LumenTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q2ThirtyFps), 2)
     }
 
-    func testApolloCoreEncodedCaptureIngressStoresSampleBufferMetadata() throws {
-        guard let ingress = ApolloCoreEncodedCaptureIngressCreate() else {
-            return XCTFail("ApolloCoreEncodedCaptureIngressCreate returned nil")
+    func testLumenCoreEncodedCaptureIngressStoresSampleBufferMetadata() throws {
+        guard let ingress = LumenCoreEncodedCaptureIngressCreate() else {
+            return XCTFail("LumenCoreEncodedCaptureIngressCreate returned nil")
         }
         defer {
-            ApolloCoreEncodedCaptureIngressDestroy(ingress)
+            LumenCoreEncodedCaptureIngressDestroy(ingress)
         }
 
         let sampleBuffer = try Self.makeEncodedSampleBuffer(
@@ -278,9 +278,9 @@ final class LumenTuistBootstrapTests: XCTestCase {
             notSync: true
         )
 
-        ApolloCoreEncodedCaptureIngressConsumeSampleBuffer(
+        LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
             ingress,
-            ApolloCoreCaptureCodecHEVC,
+            LumenCoreCaptureCodecHEVC,
             41,
             42,
             true,
@@ -289,9 +289,9 @@ final class LumenTuistBootstrapTests: XCTestCase {
             true,
             sampleBuffer
         )
-        ApolloCoreEncodedCaptureIngressConsumeEvent(
+        LumenCoreEncodedCaptureIngressConsumeEvent(
             ingress,
-            ApolloCoreCaptureEventKindRestarted,
+            LumenCoreCaptureEventKindRestarted,
             "restart",
             false,
             0,
@@ -301,33 +301,33 @@ final class LumenTuistBootstrapTests: XCTestCase {
             0
         )
 
-        let snapshot = ApolloCoreEncodedCaptureIngressCopySnapshot(ingress)
+        let snapshot = LumenCoreEncodedCaptureIngressCopySnapshot(ingress)
         XCTAssertEqual(snapshot.frame_count, 1)
         XCTAssertEqual(snapshot.event_count, 1)
         XCTAssertTrue(snapshot.has_last_frame)
         XCTAssertTrue(snapshot.has_last_sample_buffer)
-        XCTAssertEqual(snapshot.last_frame_codec, ApolloCoreCaptureCodecHEVC)
+        XCTAssertEqual(snapshot.last_frame_codec, LumenCoreCaptureCodecHEVC)
         XCTAssertEqual(snapshot.last_frame_payload_size, 4)
         XCTAssertEqual(snapshot.last_frame_source_sequence_number, 41)
         XCTAssertEqual(snapshot.last_frame_source_display_time, 42)
         XCTAssertFalse(snapshot.last_frame_is_key_frame)
         XCTAssertTrue(snapshot.last_frame_is_hdr_signaled)
         XCTAssertTrue(snapshot.has_last_event)
-        XCTAssertEqual(snapshot.last_event_kind, ApolloCoreCaptureEventKindRestarted)
+        XCTAssertEqual(snapshot.last_event_kind, LumenCoreCaptureEventKindRestarted)
         XCTAssertTrue(snapshot.last_event_has_automatic_restart_count)
         XCTAssertEqual(snapshot.last_event_automatic_restart_count, 2)
     }
 
-    func testApolloCoreEncodedCaptureIngressQueuesFramesAndEventsInOrder() throws {
-        guard let ingress = ApolloCoreEncodedCaptureIngressCreate() else {
-            return XCTFail("ApolloCoreEncodedCaptureIngressCreate returned nil")
+    func testLumenCoreEncodedCaptureIngressQueuesFramesAndEventsInOrder() throws {
+        guard let ingress = LumenCoreEncodedCaptureIngressCreate() else {
+            return XCTFail("LumenCoreEncodedCaptureIngressCreate returned nil")
         }
         defer {
-            ApolloCoreEncodedCaptureIngressDestroy(ingress)
+            LumenCoreEncodedCaptureIngressDestroy(ingress)
         }
 
-        ApolloCoreEncodedCaptureIngressSetFrameCapacity(ingress, 4)
-        ApolloCoreEncodedCaptureIngressSetEventCapacity(ingress, 4)
+        LumenCoreEncodedCaptureIngressSetFrameCapacity(ingress, 4)
+        LumenCoreEncodedCaptureIngressSetEventCapacity(ingress, 4)
 
         let firstFrame = try Self.makeEncodedSampleBuffer(
             payload: Data([0x10, 0x11]),
@@ -338,9 +338,9 @@ final class LumenTuistBootstrapTests: XCTestCase {
             codecType: kCMVideoCodecType_HEVC
         )
 
-        ApolloCoreEncodedCaptureIngressConsumeSampleBuffer(
+        LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
             ingress,
-            ApolloCoreCaptureCodecHEVC,
+            LumenCoreCaptureCodecHEVC,
             1,
             101,
             false,
@@ -349,9 +349,9 @@ final class LumenTuistBootstrapTests: XCTestCase {
             false,
             firstFrame
         )
-        ApolloCoreEncodedCaptureIngressConsumeSampleBuffer(
+        LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
             ingress,
-            ApolloCoreCaptureCodecHEVC,
+            LumenCoreCaptureCodecHEVC,
             2,
             202,
             false,
@@ -360,9 +360,9 @@ final class LumenTuistBootstrapTests: XCTestCase {
             true,
             secondFrame
         )
-        ApolloCoreEncodedCaptureIngressConsumeEvent(
+        LumenCoreEncodedCaptureIngressConsumeEvent(
             ingress,
-            ApolloCoreCaptureEventKindStarted,
+            LumenCoreCaptureEventKindStarted,
             "started",
             false,
             0,
@@ -371,9 +371,9 @@ final class LumenTuistBootstrapTests: XCTestCase {
             false,
             0
         )
-        ApolloCoreEncodedCaptureIngressConsumeEvent(
+        LumenCoreEncodedCaptureIngressConsumeEvent(
             ingress,
-            ApolloCoreCaptureEventKindDroppedFrame,
+            LumenCoreCaptureEventKindDroppedFrame,
             "dropped",
             false,
             0,
@@ -383,7 +383,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
             202
         )
 
-        let snapshot = ApolloCoreEncodedCaptureIngressCopySnapshot(ingress)
+        let snapshot = LumenCoreEncodedCaptureIngressCopySnapshot(ingress)
         XCTAssertEqual(snapshot.queued_frame_count, 2)
         XCTAssertEqual(snapshot.queued_event_count, 2)
         XCTAssertEqual(snapshot.dropped_frame_count, 0)
@@ -391,7 +391,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
 
         var drainedSampleBuffer: Unmanaged<CMSampleBuffer>?
         let firstRecord = withUnsafeMutablePointer(to: &drainedSampleBuffer) { pointer in
-            ApolloCoreEncodedCaptureIngressPopNextFrame(ingress, pointer)
+            LumenCoreEncodedCaptureIngressPopNextFrame(ingress, pointer)
         }
         XCTAssertTrue(firstRecord.has_value)
         XCTAssertEqual(firstRecord.source_sequence_number, 1)
@@ -402,7 +402,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
 
         drainedSampleBuffer = nil
         let secondRecord = withUnsafeMutablePointer(to: &drainedSampleBuffer) { pointer in
-            ApolloCoreEncodedCaptureIngressPopNextFrame(ingress, pointer)
+            LumenCoreEncodedCaptureIngressPopNextFrame(ingress, pointer)
         }
         XCTAssertTrue(secondRecord.has_value)
         XCTAssertEqual(secondRecord.source_sequence_number, 2)
@@ -413,22 +413,22 @@ final class LumenTuistBootstrapTests: XCTestCase {
 
         var messageBuffer = Array<CChar>(repeating: 0, count: 128)
         let firstEvent = messageBuffer.withUnsafeMutableBufferPointer { buffer in
-            ApolloCoreEncodedCaptureIngressPopNextEvent(ingress, buffer.baseAddress, buffer.count)
+            LumenCoreEncodedCaptureIngressPopNextEvent(ingress, buffer.baseAddress, buffer.count)
         }
         XCTAssertTrue(firstEvent.has_value)
-        XCTAssertEqual(firstEvent.kind, ApolloCoreCaptureEventKindStarted)
+        XCTAssertEqual(firstEvent.kind, LumenCoreCaptureEventKindStarted)
         XCTAssertEqual(String(cString: messageBuffer), "started")
 
         messageBuffer = Array<CChar>(repeating: 0, count: 128)
         let secondEvent = messageBuffer.withUnsafeMutableBufferPointer { buffer in
-            ApolloCoreEncodedCaptureIngressPopNextEvent(ingress, buffer.baseAddress, buffer.count)
+            LumenCoreEncodedCaptureIngressPopNextEvent(ingress, buffer.baseAddress, buffer.count)
         }
         XCTAssertTrue(secondEvent.has_value)
-        XCTAssertEqual(secondEvent.kind, ApolloCoreCaptureEventKindDroppedFrame)
+        XCTAssertEqual(secondEvent.kind, LumenCoreCaptureEventKindDroppedFrame)
         XCTAssertEqual(String(cString: messageBuffer), "dropped")
     }
 
-    func testBridgeForwardsSyntheticSampleBufferIntoApolloCoreIngress() async throws {
+    func testBridgeForwardsSyntheticSampleBufferIntoLumenCoreIngress() async throws {
         let runtime = LumenBridgeRuntime()
         await runtime.debugResetCoreForwarding()
         let sampleBuffer = try Self.makeEncodedSampleBuffer(
@@ -515,15 +515,15 @@ final class LumenTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(drainedEvent?.sourceDisplayTime, 10)
     }
 
-    func testApolloCoreEncodedIngressCollapsesTinyBacklogAfterOverflow() throws {
-        guard let ingress = ApolloCoreEncodedCaptureIngressCreate() else {
-            return XCTFail("ApolloCoreEncodedCaptureIngressCreate returned nil")
+    func testLumenCoreEncodedIngressCollapsesTinyBacklogAfterOverflow() throws {
+        guard let ingress = LumenCoreEncodedCaptureIngressCreate() else {
+            return XCTFail("LumenCoreEncodedCaptureIngressCreate returned nil")
         }
         defer {
-            ApolloCoreEncodedCaptureIngressDestroy(ingress)
+            LumenCoreEncodedCaptureIngressDestroy(ingress)
         }
 
-        ApolloCoreEncodedCaptureIngressSetFrameCapacity(ingress, 2)
+        LumenCoreEncodedCaptureIngressSetFrameCapacity(ingress, 2)
 
         let firstSampleBuffer = try Self.makeEncodedSampleBuffer(
             payload: Data([0x11]),
@@ -538,9 +538,9 @@ final class LumenTuistBootstrapTests: XCTestCase {
             codecType: kCMVideoCodecType_HEVC
         )
 
-        ApolloCoreEncodedCaptureIngressConsumeSampleBuffer(
+        LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
             ingress,
-            ApolloCoreCaptureCodecHEVC,
+            LumenCoreCaptureCodecHEVC,
             1,
             10,
             false,
@@ -549,9 +549,9 @@ final class LumenTuistBootstrapTests: XCTestCase {
             false,
             firstSampleBuffer
         )
-        ApolloCoreEncodedCaptureIngressConsumeSampleBuffer(
+        LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
             ingress,
-            ApolloCoreCaptureCodecHEVC,
+            LumenCoreCaptureCodecHEVC,
             2,
             20,
             false,
@@ -560,9 +560,9 @@ final class LumenTuistBootstrapTests: XCTestCase {
             false,
             secondSampleBuffer
         )
-        ApolloCoreEncodedCaptureIngressConsumeSampleBuffer(
+        LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
             ingress,
-            ApolloCoreCaptureCodecHEVC,
+            LumenCoreCaptureCodecHEVC,
             3,
             30,
             false,
@@ -572,7 +572,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
             thirdSampleBuffer
         )
 
-        let snapshot = ApolloCoreEncodedCaptureIngressCopySnapshot(ingress)
+        let snapshot = LumenCoreEncodedCaptureIngressCopySnapshot(ingress)
         XCTAssertEqual(snapshot.frame_count, 3)
         XCTAssertEqual(snapshot.queued_frame_count, 1)
         XCTAssertEqual(snapshot.dropped_frame_count, 2)
@@ -581,7 +581,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
 
         var drainedSampleBuffer: Unmanaged<CMSampleBuffer>?
         let record = withUnsafeMutablePointer(to: &drainedSampleBuffer) { pointer in
-            ApolloCoreEncodedCaptureIngressPopNextFrame(ingress, pointer)
+            LumenCoreEncodedCaptureIngressPopNextFrame(ingress, pointer)
         }
         XCTAssertTrue(record.has_value)
         XCTAssertEqual(record.source_sequence_number, 3)
@@ -591,15 +591,15 @@ final class LumenTuistBootstrapTests: XCTestCase {
         )
     }
 
-    func testApolloCoreEncodedIngressCollapsesThreeFrameBacklogAfterOverflow() throws {
-        guard let ingress = ApolloCoreEncodedCaptureIngressCreate() else {
-            return XCTFail("ApolloCoreEncodedCaptureIngressCreate returned nil")
+    func testLumenCoreEncodedIngressCollapsesThreeFrameBacklogAfterOverflow() throws {
+        guard let ingress = LumenCoreEncodedCaptureIngressCreate() else {
+            return XCTFail("LumenCoreEncodedCaptureIngressCreate returned nil")
         }
         defer {
-            ApolloCoreEncodedCaptureIngressDestroy(ingress)
+            LumenCoreEncodedCaptureIngressDestroy(ingress)
         }
 
-        ApolloCoreEncodedCaptureIngressSetFrameCapacity(ingress, 3)
+        LumenCoreEncodedCaptureIngressSetFrameCapacity(ingress, 3)
 
         let firstSampleBuffer = try Self.makeEncodedSampleBuffer(
             payload: Data([0x41]),
@@ -618,9 +618,9 @@ final class LumenTuistBootstrapTests: XCTestCase {
             codecType: kCMVideoCodecType_HEVC
         )
 
-        ApolloCoreEncodedCaptureIngressConsumeSampleBuffer(
+        LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
             ingress,
-            ApolloCoreCaptureCodecHEVC,
+            LumenCoreCaptureCodecHEVC,
             1,
             10,
             false,
@@ -629,9 +629,9 @@ final class LumenTuistBootstrapTests: XCTestCase {
             false,
             firstSampleBuffer
         )
-        ApolloCoreEncodedCaptureIngressConsumeSampleBuffer(
+        LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
             ingress,
-            ApolloCoreCaptureCodecHEVC,
+            LumenCoreCaptureCodecHEVC,
             2,
             20,
             false,
@@ -640,9 +640,9 @@ final class LumenTuistBootstrapTests: XCTestCase {
             false,
             secondSampleBuffer
         )
-        ApolloCoreEncodedCaptureIngressConsumeSampleBuffer(
+        LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
             ingress,
-            ApolloCoreCaptureCodecHEVC,
+            LumenCoreCaptureCodecHEVC,
             3,
             30,
             false,
@@ -651,9 +651,9 @@ final class LumenTuistBootstrapTests: XCTestCase {
             false,
             thirdSampleBuffer
         )
-        ApolloCoreEncodedCaptureIngressConsumeSampleBuffer(
+        LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
             ingress,
-            ApolloCoreCaptureCodecHEVC,
+            LumenCoreCaptureCodecHEVC,
             4,
             40,
             false,
@@ -663,7 +663,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
             fourthSampleBuffer
         )
 
-        let snapshot = ApolloCoreEncodedCaptureIngressCopySnapshot(ingress)
+        let snapshot = LumenCoreEncodedCaptureIngressCopySnapshot(ingress)
         XCTAssertEqual(snapshot.frame_count, 4)
         XCTAssertEqual(snapshot.queued_frame_count, 1)
         XCTAssertEqual(snapshot.dropped_frame_count, 3)
@@ -672,7 +672,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
 
         var drainedSampleBuffer: Unmanaged<CMSampleBuffer>?
         let record = withUnsafeMutablePointer(to: &drainedSampleBuffer) { pointer in
-            ApolloCoreEncodedCaptureIngressPopNextFrame(ingress, pointer)
+            LumenCoreEncodedCaptureIngressPopNextFrame(ingress, pointer)
         }
         XCTAssertTrue(record.has_value)
         XCTAssertEqual(record.source_sequence_number, 4)
@@ -682,15 +682,15 @@ final class LumenTuistBootstrapTests: XCTestCase {
         )
     }
 
-    func testApolloCoreEncodedIngressCollapsesOverflowedBacklogWhenNewestFrameIsKeyFrame() throws {
-        guard let ingress = ApolloCoreEncodedCaptureIngressCreate() else {
-            return XCTFail("ApolloCoreEncodedCaptureIngressCreate returned nil")
+    func testLumenCoreEncodedIngressCollapsesOverflowedBacklogWhenNewestFrameIsKeyFrame() throws {
+        guard let ingress = LumenCoreEncodedCaptureIngressCreate() else {
+            return XCTFail("LumenCoreEncodedCaptureIngressCreate returned nil")
         }
         defer {
-            ApolloCoreEncodedCaptureIngressDestroy(ingress)
+            LumenCoreEncodedCaptureIngressDestroy(ingress)
         }
 
-        ApolloCoreEncodedCaptureIngressSetFrameCapacity(ingress, 4)
+        LumenCoreEncodedCaptureIngressSetFrameCapacity(ingress, 4)
 
         let firstSampleBuffer = try Self.makeEncodedSampleBuffer(
             payload: Data([0x51]),
@@ -713,9 +713,9 @@ final class LumenTuistBootstrapTests: XCTestCase {
             codecType: kCMVideoCodecType_HEVC
         )
 
-        ApolloCoreEncodedCaptureIngressConsumeSampleBuffer(
+        LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
             ingress,
-            ApolloCoreCaptureCodecHEVC,
+            LumenCoreCaptureCodecHEVC,
             1,
             10,
             false,
@@ -724,9 +724,9 @@ final class LumenTuistBootstrapTests: XCTestCase {
             false,
             firstSampleBuffer
         )
-        ApolloCoreEncodedCaptureIngressConsumeSampleBuffer(
+        LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
             ingress,
-            ApolloCoreCaptureCodecHEVC,
+            LumenCoreCaptureCodecHEVC,
             2,
             20,
             false,
@@ -735,9 +735,9 @@ final class LumenTuistBootstrapTests: XCTestCase {
             false,
             secondSampleBuffer
         )
-        ApolloCoreEncodedCaptureIngressConsumeSampleBuffer(
+        LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
             ingress,
-            ApolloCoreCaptureCodecHEVC,
+            LumenCoreCaptureCodecHEVC,
             3,
             30,
             false,
@@ -746,9 +746,9 @@ final class LumenTuistBootstrapTests: XCTestCase {
             false,
             thirdSampleBuffer
         )
-        ApolloCoreEncodedCaptureIngressConsumeSampleBuffer(
+        LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
             ingress,
-            ApolloCoreCaptureCodecHEVC,
+            LumenCoreCaptureCodecHEVC,
             4,
             40,
             false,
@@ -757,9 +757,9 @@ final class LumenTuistBootstrapTests: XCTestCase {
             false,
             fourthSampleBuffer
         )
-        ApolloCoreEncodedCaptureIngressConsumeSampleBuffer(
+        LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
             ingress,
-            ApolloCoreCaptureCodecHEVC,
+            LumenCoreCaptureCodecHEVC,
             5,
             50,
             false,
@@ -769,7 +769,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
             fifthSampleBuffer
         )
 
-        let snapshot = ApolloCoreEncodedCaptureIngressCopySnapshot(ingress)
+        let snapshot = LumenCoreEncodedCaptureIngressCopySnapshot(ingress)
         XCTAssertEqual(snapshot.frame_count, 5)
         XCTAssertEqual(snapshot.queued_frame_count, 1)
         XCTAssertEqual(snapshot.dropped_frame_count, 4)
@@ -778,7 +778,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
 
         var drainedSampleBuffer: Unmanaged<CMSampleBuffer>?
         let record = withUnsafeMutablePointer(to: &drainedSampleBuffer) { pointer in
-            ApolloCoreEncodedCaptureIngressPopNextFrame(ingress, pointer)
+            LumenCoreEncodedCaptureIngressPopNextFrame(ingress, pointer)
         }
         XCTAssertTrue(record.has_value)
         XCTAssertEqual(record.source_sequence_number, 5)
@@ -788,16 +788,16 @@ final class LumenTuistBootstrapTests: XCTestCase {
         )
     }
 
-    func testApolloCoreSharedEncodedCaptureIngressWaitsForSharedProducerData() throws {
-        guard let ingress = ApolloCoreSharedEncodedCaptureIngress() else {
-            return XCTFail("ApolloCoreSharedEncodedCaptureIngress returned nil")
+    func testLumenCoreSharedEncodedCaptureIngressWaitsForSharedProducerData() throws {
+        guard let ingress = LumenCoreSharedEncodedCaptureIngress() else {
+            return XCTFail("LumenCoreSharedEncodedCaptureIngress returned nil")
         }
 
-        ApolloCoreEncodedCaptureIngressReset(ingress)
-        ApolloCoreEncodedCaptureIngressSetProducerActive(ingress, true)
+        LumenCoreEncodedCaptureIngressReset(ingress)
+        LumenCoreEncodedCaptureIngressSetProducerActive(ingress, true)
         defer {
-            ApolloCoreEncodedCaptureIngressSetProducerActive(ingress, false)
-            ApolloCoreEncodedCaptureIngressReset(ingress)
+            LumenCoreEncodedCaptureIngressSetProducerActive(ingress, false)
+            LumenCoreEncodedCaptureIngressReset(ingress)
         }
 
         let sampleBuffer = try Self.makeEncodedSampleBuffer(
@@ -806,9 +806,9 @@ final class LumenTuistBootstrapTests: XCTestCase {
         )
 
         DispatchQueue.global().asyncAfter(deadline: .now() + 0.05) {
-            ApolloCoreEncodedCaptureIngressConsumeSampleBuffer(
+            LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
                 ingress,
-                ApolloCoreCaptureCodecHEVC,
+                LumenCoreCaptureCodecHEVC,
                 99,
                 199,
                 false,
@@ -819,11 +819,11 @@ final class LumenTuistBootstrapTests: XCTestCase {
             )
         }
 
-        XCTAssertTrue(ApolloCoreEncodedCaptureIngressWaitForData(ingress, 500))
+        XCTAssertTrue(LumenCoreEncodedCaptureIngressWaitForData(ingress, 500))
 
         var drainedSampleBuffer: Unmanaged<CMSampleBuffer>?
         let record = withUnsafeMutablePointer(to: &drainedSampleBuffer) { pointer in
-            ApolloCoreEncodedCaptureIngressPopNextFrame(ingress, pointer)
+            LumenCoreEncodedCaptureIngressPopNextFrame(ingress, pointer)
         }
         XCTAssertTrue(record.has_value)
         XCTAssertEqual(record.source_sequence_number, 99)
@@ -833,41 +833,41 @@ final class LumenTuistBootstrapTests: XCTestCase {
         )
     }
 
-    func testApolloCoreSharedEncodedCaptureIngressWaitsForProducerActivation() {
-        guard let ingress = ApolloCoreSharedEncodedCaptureIngress() else {
-            return XCTFail("ApolloCoreSharedEncodedCaptureIngress returned nil")
+    func testLumenCoreSharedEncodedCaptureIngressWaitsForProducerActivation() {
+        guard let ingress = LumenCoreSharedEncodedCaptureIngress() else {
+            return XCTFail("LumenCoreSharedEncodedCaptureIngress returned nil")
         }
 
-        ApolloCoreEncodedCaptureIngressReset(ingress)
-        ApolloCoreEncodedCaptureIngressSetProducerActive(ingress, false)
+        LumenCoreEncodedCaptureIngressReset(ingress)
+        LumenCoreEncodedCaptureIngressSetProducerActive(ingress, false)
         defer {
-            ApolloCoreEncodedCaptureIngressSetProducerActive(ingress, false)
-            ApolloCoreEncodedCaptureIngressReset(ingress)
+            LumenCoreEncodedCaptureIngressSetProducerActive(ingress, false)
+            LumenCoreEncodedCaptureIngressReset(ingress)
         }
 
         DispatchQueue.global().asyncAfter(deadline: .now() + 0.05) {
-            ApolloCoreEncodedCaptureIngressSetProducerActive(ingress, true)
+            LumenCoreEncodedCaptureIngressSetProducerActive(ingress, true)
         }
 
-        XCTAssertTrue(ApolloCoreEncodedCaptureIngressWaitForProducerActive(ingress, 500))
+        XCTAssertTrue(LumenCoreEncodedCaptureIngressWaitForProducerActive(ingress, 500))
     }
 
-    func testApolloCoreCaptureRequestPublishesAndWaitsForGenerationChanges() {
-        let snapshotBeforeClear = ApolloCoreCaptureRequestCopySnapshot()
-        ApolloCoreCaptureRequestClear()
+    func testLumenCoreCaptureRequestPublishesAndWaitsForGenerationChanges() {
+        let snapshotBeforeClear = LumenCoreCaptureRequestCopySnapshot()
+        LumenCoreCaptureRequestClear()
 
-        let initialSnapshot = ApolloCoreCaptureRequestCopySnapshot()
+        let initialSnapshot = LumenCoreCaptureRequestCopySnapshot()
         XCTAssertEqual(initialSnapshot.generation, snapshotBeforeClear.generation + 1)
         XCTAssertEqual(initialSnapshot.video_generation, snapshotBeforeClear.video_generation + 1)
         XCTAssertEqual(initialSnapshot.audio_generation, snapshotBeforeClear.audio_generation + 1)
         XCTAssertFalse(initialSnapshot.video_requested)
         XCTAssertFalse(initialSnapshot.audio_requested)
-        XCTAssertEqual(initialSnapshot.codec, ApolloCoreCaptureCodecUnknown)
-        XCTAssertEqual(initialSnapshot.audio_source_kind, ApolloCoreAudioCaptureSourceKindUnknown)
-        XCTAssertEqual(initialSnapshot.queue_profile, ApolloCoreCaptureQueueProfileAuto)
+        XCTAssertEqual(initialSnapshot.codec, LumenCoreCaptureCodecUnknown)
+        XCTAssertEqual(initialSnapshot.audio_source_kind, LumenCoreAudioCaptureSourceKindUnknown)
+        XCTAssertEqual(initialSnapshot.queue_profile, LumenCoreCaptureQueueProfileAuto)
 
         DispatchQueue.global().asyncAfter(deadline: .now() + 0.05) {
-            var hdrStaticMetadata = ApolloCoreHDRStaticMetadata()
+            var hdrStaticMetadata = LumenCoreHDRStaticMetadata()
             hdrStaticMetadata.red_primary_x = 34_000
             hdrStaticMetadata.red_primary_y = 16_000
             hdrStaticMetadata.green_primary_x = 13_250
@@ -881,12 +881,12 @@ final class LumenTuistBootstrapTests: XCTestCase {
             hdrStaticMetadata.max_content_light_level = 1_000
             hdrStaticMetadata.max_frame_average_light_level = 400
             hdrStaticMetadata.max_full_frame_luminance = 1_000
-            var sinkMode = ApolloCoreSinkMode()
+            var sinkMode = LumenCoreSinkMode()
             sinkMode.hidpi = true
             sinkMode.scale_explicit = true
             sinkMode.mode_is_logical = true
             sinkMode.scale_percent = 200
-            var sinkCapability = ApolloCoreSinkCapability()
+            var sinkCapability = LumenCoreSinkCapability()
             sinkCapability.gamut = 2
             sinkCapability.transfer = 2
             sinkCapability.current_edr_headroom = 2.8
@@ -896,20 +896,20 @@ final class LumenTuistBootstrapTests: XCTestCase {
             sinkCapability.supports_frame_gated_hdr = true
             sinkCapability.supports_hdr_tile_overlay = false
             sinkCapability.supports_per_frame_hdr_metadata = true
-            var sinkRequest = ApolloCoreSinkRequest()
+            var sinkRequest = LumenCoreSinkRequest()
             sinkRequest.mode = sinkMode
             sinkRequest.capability = sinkCapability
-            sinkRequest.dynamic_range_transport = ApolloCoreDynamicRangeTransportFrameGatedHDR
-            var effectiveDisplayState = ApolloCoreEffectiveDisplayState()
+            sinkRequest.dynamic_range_transport = LumenCoreDynamicRangeTransportFrameGatedHDR
+            var effectiveDisplayState = LumenCoreEffectiveDisplayState()
             effectiveDisplayState.gamut = 2
             effectiveDisplayState.transfer = 2
             effectiveDisplayState.has_hdr_static_metadata = true
             effectiveDisplayState.hdr_static_metadata = hdrStaticMetadata
-            ApolloCoreCaptureRequestPublishVideo(
+            LumenCoreCaptureRequestPublishVideo(
                 17,
-                ApolloCoreCaptureCodecHEVC,
-                ApolloCoreCapturePreprocessStrategyNone,
-                ApolloCoreCaptureQueueProfileAuto,
+                LumenCoreCaptureCodecHEVC,
+                LumenCoreCapturePreprocessStrategyNone,
+                LumenCoreCaptureQueueProfileAuto,
                 false,
                 120,
                 41_000,
@@ -918,8 +918,8 @@ final class LumenTuistBootstrapTests: XCTestCase {
                 sinkRequest,
                 effectiveDisplayState
             )
-            ApolloCoreCaptureRequestPublishAudio(
-                ApolloCoreAudioCaptureSourceKindSystemOutput,
+            LumenCoreCaptureRequestPublishAudio(
+                LumenCoreAudioCaptureSourceKindSystemOutput,
                 17,
                 false,
                 48_000,
@@ -928,17 +928,17 @@ final class LumenTuistBootstrapTests: XCTestCase {
             )
         }
 
-        XCTAssertTrue(ApolloCoreCaptureRequestWaitForGenerationChange(initialSnapshot.generation, 500))
+        XCTAssertTrue(LumenCoreCaptureRequestWaitForGenerationChange(initialSnapshot.generation, 500))
 
-        let updatedSnapshot = ApolloCoreCaptureRequestCopySnapshot()
+        let updatedSnapshot = LumenCoreCaptureRequestCopySnapshot()
         XCTAssertGreaterThan(updatedSnapshot.generation, initialSnapshot.generation)
         XCTAssertGreaterThan(updatedSnapshot.video_generation, initialSnapshot.video_generation)
         XCTAssertGreaterThan(updatedSnapshot.audio_generation, initialSnapshot.audio_generation)
         XCTAssertTrue(updatedSnapshot.video_requested)
         XCTAssertTrue(updatedSnapshot.audio_requested)
         XCTAssertEqual(updatedSnapshot.display_id, 17)
-        XCTAssertEqual(updatedSnapshot.codec, ApolloCoreCaptureCodecHEVC)
-        XCTAssertEqual(updatedSnapshot.queue_profile, ApolloCoreCaptureQueueProfileAuto)
+        XCTAssertEqual(updatedSnapshot.codec, LumenCoreCaptureCodecHEVC)
+        XCTAssertEqual(updatedSnapshot.queue_profile, LumenCoreCaptureQueueProfileAuto)
         XCTAssertEqual(updatedSnapshot.target_frame_rate, 120)
         XCTAssertEqual(updatedSnapshot.target_video_bitrate_kbps, 41_000)
         XCTAssertEqual(updatedSnapshot.requested_width, 3840)
@@ -958,14 +958,14 @@ final class LumenTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(updatedSnapshot.sink_request.capability.potential_edr_headroom, 8.4)
         XCTAssertEqual(updatedSnapshot.sink_request.capability.current_peak_luminance_nits, 800)
         XCTAssertEqual(updatedSnapshot.sink_request.capability.potential_peak_luminance_nits, 1600)
-        XCTAssertEqual(updatedSnapshot.sink_request.dynamic_range_transport, ApolloCoreDynamicRangeTransportFrameGatedHDR)
+        XCTAssertEqual(updatedSnapshot.sink_request.dynamic_range_transport, LumenCoreDynamicRangeTransportFrameGatedHDR)
         XCTAssertTrue(updatedSnapshot.sink_request.capability.supports_frame_gated_hdr)
         XCTAssertFalse(updatedSnapshot.sink_request.capability.supports_hdr_tile_overlay)
         XCTAssertTrue(updatedSnapshot.sink_request.capability.supports_per_frame_hdr_metadata)
-        XCTAssertEqual(updatedSnapshot.audio_source_kind, ApolloCoreAudioCaptureSourceKindSystemOutput)
+        XCTAssertEqual(updatedSnapshot.audio_source_kind, LumenCoreAudioCaptureSourceKindSystemOutput)
         XCTAssertEqual(updatedSnapshot.audio_frame_size, 480)
 
-        ApolloCoreCaptureRequestClear()
+        LumenCoreCaptureRequestClear()
     }
 
     func testMirroredCaptureRequestSnapshotLoadsFromPropertyList() throws {
@@ -1047,9 +1047,9 @@ final class LumenTuistBootstrapTests: XCTestCase {
         XCTAssertTrue(snapshot.videoRequested)
         XCTAssertTrue(snapshot.audioRequested)
         XCTAssertEqual(snapshot.displayID, 19)
-        XCTAssertEqual(snapshot.codec, ApolloCoreCaptureCodecHEVC)
-        XCTAssertEqual(snapshot.preprocessStrategy, ApolloCoreCapturePreprocessStrategyDownscale2x)
-        XCTAssertEqual(snapshot.queueProfile, ApolloCoreCaptureQueueProfileQ3)
+        XCTAssertEqual(snapshot.codec, LumenCoreCaptureCodecHEVC)
+        XCTAssertEqual(snapshot.preprocessStrategy, LumenCoreCapturePreprocessStrategyDownscale2x)
+        XCTAssertEqual(snapshot.queueProfile, LumenCoreCaptureQueueProfileQ3)
         XCTAssertEqual(snapshot.targetVideoBitrateKbps, 41_000)
         XCTAssertEqual(snapshot.sinkRequest.capability.gamut, 2)
         XCTAssertEqual(snapshot.sinkRequest.capability.transfer, 2)
@@ -1059,13 +1059,13 @@ final class LumenTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(snapshot.sinkRequest.capability.potentialEDRHeadroom, 8.4)
         XCTAssertEqual(snapshot.sinkRequest.capability.currentPeakLuminanceNits, 800)
         XCTAssertEqual(snapshot.sinkRequest.capability.potentialPeakLuminanceNits, 1600)
-        XCTAssertEqual(snapshot.sinkRequest.dynamicRangeTransport, ApolloCoreDynamicRangeTransportFrameGatedHDR)
+        XCTAssertEqual(snapshot.sinkRequest.dynamicRangeTransport, LumenCoreDynamicRangeTransportFrameGatedHDR)
         XCTAssertTrue(snapshot.sinkRequest.capability.supportsFrameGatedHDR)
         XCTAssertFalse(snapshot.sinkRequest.capability.supportsHDRTileOverlay)
         XCTAssertTrue(snapshot.sinkRequest.capability.supportsPerFrameHDRMetadata)
         XCTAssertEqual(snapshot.effectiveDisplayState.hdrStaticMetadata?.maxDisplayLuminance, 1_000)
         XCTAssertEqual(snapshot.effectiveDisplayState.hdrStaticMetadata?.maxFrameAverageLightLevel, 400)
-        XCTAssertEqual(snapshot.audioSourceKind, ApolloCoreAudioCaptureSourceKindSystemOutput)
+        XCTAssertEqual(snapshot.audioSourceKind, LumenCoreAudioCaptureSourceKindSystemOutput)
         XCTAssertTrue(snapshot.audioExcludesCurrentProcess)
         XCTAssertEqual(snapshot.audioSampleRate, 48_000)
         XCTAssertEqual(snapshot.audioChannelCount, 2)
@@ -1131,13 +1131,13 @@ final class LumenTuistBootstrapTests: XCTestCase {
         }
 
         let snapshot = try XCTUnwrap(LumenBridgeMirroredCaptureRequestSnapshot.load(from: url))
-        XCTAssertEqual(snapshot.queueProfile, ApolloCoreCaptureQueueProfileAuto)
+        XCTAssertEqual(snapshot.queueProfile, LumenCoreCaptureQueueProfileAuto)
         XCTAssertEqual(snapshot.targetVideoBitrateKbps, 41_000)
         XCTAssertEqual(snapshot.sinkRequest.capability.gamut, 3)
         XCTAssertEqual(snapshot.effectiveDisplayState.gamut, 3)
         XCTAssertEqual(snapshot.sinkRequest.capability.currentEDRHeadroom, 2.2)
         XCTAssertEqual(snapshot.sinkRequest.capability.potentialPeakLuminanceNits, 1500)
-        XCTAssertEqual(snapshot.sinkRequest.dynamicRangeTransport, ApolloCoreDynamicRangeTransportFrameGatedHDR)
+        XCTAssertEqual(snapshot.sinkRequest.dynamicRangeTransport, LumenCoreDynamicRangeTransportFrameGatedHDR)
         XCTAssertTrue(snapshot.sinkRequest.capability.supportsFrameGatedHDR)
         XCTAssertFalse(snapshot.sinkRequest.capability.supportsHDRTileOverlay)
         XCTAssertTrue(snapshot.sinkRequest.capability.supportsPerFrameHDRMetadata)
@@ -1315,7 +1315,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
             requestedWidth: 3840,
             requestedHeight: 2160,
             sinkRequest: LumenBridgeSinkRequest(
-                dynamicRangeTransport: ApolloCoreDynamicRangeTransportFrameGatedHDR
+                dynamicRangeTransport: LumenCoreDynamicRangeTransportFrameGatedHDR
             )
         )
 
@@ -1369,23 +1369,23 @@ final class LumenTuistBootstrapTests: XCTestCase {
         )
     }
 
-    func testApolloCoreAudioCaptureIngressStoresPCMAndEvents() {
-        guard let ingress = ApolloCoreSharedAudioCaptureIngress() else {
-            return XCTFail("ApolloCoreSharedAudioCaptureIngress returned nil")
+    func testLumenCoreAudioCaptureIngressStoresPCMAndEvents() {
+        guard let ingress = LumenCoreSharedAudioCaptureIngress() else {
+            return XCTFail("LumenCoreSharedAudioCaptureIngress returned nil")
         }
 
-        ApolloCoreAudioCaptureIngressReset(ingress)
-        ApolloCoreAudioCaptureIngressSetProducerActive(ingress, true)
-        ApolloCoreAudioCaptureIngressSetFrameCapacity(ingress, 2)
-        ApolloCoreAudioCaptureIngressSetEventCapacity(ingress, 2)
+        LumenCoreAudioCaptureIngressReset(ingress)
+        LumenCoreAudioCaptureIngressSetProducerActive(ingress, true)
+        LumenCoreAudioCaptureIngressSetFrameCapacity(ingress, 2)
+        LumenCoreAudioCaptureIngressSetEventCapacity(ingress, 2)
         defer {
-            ApolloCoreAudioCaptureIngressSetProducerActive(ingress, false)
-            ApolloCoreAudioCaptureIngressReset(ingress)
+            LumenCoreAudioCaptureIngressSetProducerActive(ingress, false)
+            LumenCoreAudioCaptureIngressReset(ingress)
         }
 
         let pcmValues: [Float] = [0.25, -0.5, 0.75, -1.0]
         pcmValues.withUnsafeBytes { rawBuffer in
-            ApolloCoreAudioCaptureIngressConsumePCMFloat32(
+            LumenCoreAudioCaptureIngressConsumePCMFloat32(
                 ingress,
                 17,
                 123_456,
@@ -1396,9 +1396,9 @@ final class LumenTuistBootstrapTests: XCTestCase {
                 rawBuffer.count
             )
         }
-        ApolloCoreAudioCaptureIngressConsumeEvent(
+        LumenCoreAudioCaptureIngressConsumeEvent(
             ingress,
-            ApolloCoreCaptureEventKindRestarted,
+            LumenCoreCaptureEventKindRestarted,
             "audio-restarted",
             false,
             0,
@@ -1408,19 +1408,19 @@ final class LumenTuistBootstrapTests: XCTestCase {
             17
         )
 
-        let snapshot = ApolloCoreAudioCaptureIngressCopySnapshot(ingress)
+        let snapshot = LumenCoreAudioCaptureIngressCopySnapshot(ingress)
         XCTAssertEqual(snapshot.frame_count, 1)
         XCTAssertEqual(snapshot.event_count, 1)
         XCTAssertEqual(snapshot.last_frame_sequence_number, 17)
         XCTAssertEqual(snapshot.last_frame_host_time_nanoseconds, 123_456)
         XCTAssertEqual(snapshot.last_frame_pcm_byte_count, pcmValues.count * MemoryLayout<Float>.size)
-        XCTAssertEqual(snapshot.last_event_kind, ApolloCoreCaptureEventKindRestarted)
+        XCTAssertEqual(snapshot.last_event_kind, LumenCoreCaptureEventKindRestarted)
         XCTAssertEqual(snapshot.last_event_automatic_restart_count, 3)
 
         var copiedSize = 0
         var drainedPCM = Data(count: pcmValues.count * MemoryLayout<Float>.size)
         let frameRecord = drainedPCM.withUnsafeMutableBytes { rawBuffer in
-            ApolloCoreAudioCaptureIngressPopNextFrame(
+            LumenCoreAudioCaptureIngressPopNextFrame(
                 ingress,
                 rawBuffer.baseAddress,
                 rawBuffer.count,
@@ -1437,30 +1437,30 @@ final class LumenTuistBootstrapTests: XCTestCase {
 
         var messageBuffer = Array<CChar>(repeating: 0, count: 128)
         let eventRecord = messageBuffer.withUnsafeMutableBufferPointer { buffer in
-            ApolloCoreAudioCaptureIngressPopNextEvent(ingress, buffer.baseAddress, buffer.count)
+            LumenCoreAudioCaptureIngressPopNextEvent(ingress, buffer.baseAddress, buffer.count)
         }
         XCTAssertTrue(eventRecord.has_value)
-        XCTAssertEqual(eventRecord.kind, ApolloCoreCaptureEventKindRestarted)
+        XCTAssertEqual(eventRecord.kind, LumenCoreCaptureEventKindRestarted)
         XCTAssertEqual(String(cString: messageBuffer), "audio-restarted")
     }
 
-    func testApolloCoreSharedAudioCaptureIngressWaitsForProducerActivation() {
-        guard let ingress = ApolloCoreSharedAudioCaptureIngress() else {
-            return XCTFail("ApolloCoreSharedAudioCaptureIngress returned nil")
+    func testLumenCoreSharedAudioCaptureIngressWaitsForProducerActivation() {
+        guard let ingress = LumenCoreSharedAudioCaptureIngress() else {
+            return XCTFail("LumenCoreSharedAudioCaptureIngress returned nil")
         }
 
-        ApolloCoreAudioCaptureIngressReset(ingress)
-        ApolloCoreAudioCaptureIngressSetProducerActive(ingress, false)
+        LumenCoreAudioCaptureIngressReset(ingress)
+        LumenCoreAudioCaptureIngressSetProducerActive(ingress, false)
         defer {
-            ApolloCoreAudioCaptureIngressSetProducerActive(ingress, false)
-            ApolloCoreAudioCaptureIngressReset(ingress)
+            LumenCoreAudioCaptureIngressSetProducerActive(ingress, false)
+            LumenCoreAudioCaptureIngressReset(ingress)
         }
 
         DispatchQueue.global().asyncAfter(deadline: .now() + 0.05) {
-            ApolloCoreAudioCaptureIngressSetProducerActive(ingress, true)
+            LumenCoreAudioCaptureIngressSetProducerActive(ingress, true)
         }
 
-        XCTAssertTrue(ApolloCoreAudioCaptureIngressWaitForProducerActive(ingress, 500))
+        XCTAssertTrue(LumenCoreAudioCaptureIngressWaitForProducerActive(ingress, 500))
     }
 }
 

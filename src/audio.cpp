@@ -36,21 +36,21 @@ namespace audio {
 
 #ifdef __APPLE__
   namespace {
-    constexpr uint32_t apollo_core_audio_ingress_wait_timeout_ms = 5000;
+    constexpr uint32_t lumen_core_audio_ingress_wait_timeout_ms = 5000;
 
-    void capture_from_apollo_core_ingress(safe::mail_t mail, config_t config, void *channel_data) {
-      auto *ingress = ApolloCoreSharedAudioCaptureIngress();
+    void capture_from_lumen_core_ingress(safe::mail_t mail, config_t config, void *channel_data) {
+      auto *ingress = LumenCoreSharedAudioCaptureIngress();
       if (!ingress) {
-        BOOST_LOG(error) << "ApolloCore audio ingress is unavailable on macOS";
+        BOOST_LOG(error) << "LumenCore audio ingress is unavailable on macOS";
         return;
       }
 
-      const bool producer_active = ApolloCoreAudioCaptureIngressIsProducerActive(ingress);
-      const bool has_initial_data = ApolloCoreAudioCaptureIngressWaitForData(ingress, 0);
+      const bool producer_active = LumenCoreAudioCaptureIngressIsProducerActive(ingress);
+      const bool has_initial_data = LumenCoreAudioCaptureIngressWaitForData(ingress, 0);
       if (!producer_active && !has_initial_data) {
-        if (!ApolloCoreAudioCaptureIngressWaitForProducerActive(ingress, apollo_core_audio_ingress_wait_timeout_ms)) {
-          BOOST_LOG(error) << "ApolloCore audio ingress producer did not become active within "
-                           << apollo_core_audio_ingress_wait_timeout_ms << "ms";
+        if (!LumenCoreAudioCaptureIngressWaitForProducerActive(ingress, lumen_core_audio_ingress_wait_timeout_ms)) {
+          BOOST_LOG(error) << "LumenCore audio ingress producer did not become active within "
+                           << lumen_core_audio_ingress_wait_timeout_ms << "ms";
           return;
         }
       }
@@ -76,11 +76,11 @@ namespace audio {
       std::vector<std::uint8_t> pcm_storage(expected_pcm_byte_count);
 
       while (!shutdown_event->peek()) {
-        (void) ApolloCoreAudioCaptureIngressWaitForData(ingress, 20);
+        (void) LumenCoreAudioCaptureIngressWaitForData(ingress, 20);
 
         while (true) {
           std::size_t copied_pcm_bytes = 0;
-          auto record = ApolloCoreAudioCaptureIngressPopNextFrame(
+          auto record = LumenCoreAudioCaptureIngressPopNextFrame(
             ingress,
             pcm_storage.data(),
             pcm_storage.size(),
@@ -97,7 +97,7 @@ namespace audio {
             copied_pcm_bytes == expected_pcm_byte_count;
           if (!format_matches) {
             if (!logged_format_mismatch) {
-              BOOST_LOG(warning) << "ApolloCore audio ingress format mismatch: sampleRate="sv << record.sample_rate
+              BOOST_LOG(warning) << "LumenCore audio ingress format mismatch: sampleRate="sv << record.sample_rate
                                  << " channels="sv << record.channel_count
                                  << " frameCount="sv << record.frame_count
                                  << " copiedPCMBytes="sv << copied_pcm_bytes
@@ -114,31 +114,31 @@ namespace audio {
 
         while (true) {
           char message[256] = {};
-          auto event = ApolloCoreAudioCaptureIngressPopNextEvent(ingress, message, sizeof(message));
+          auto event = LumenCoreAudioCaptureIngressPopNextEvent(ingress, message, sizeof(message));
           if (!event.has_value) {
             break;
           }
 
-          if (event.kind == ApolloCoreCaptureEventKindFailed) {
-            BOOST_LOG(error) << "ApolloCore audio ingress failed"sv
+          if (event.kind == LumenCoreCaptureEventKindFailed) {
+            BOOST_LOG(error) << "LumenCore audio ingress failed"sv
                              << (message[0] ? ": "sv : ""sv)
                              << (message[0] ? message : "");
-          } else if (event.kind == ApolloCoreCaptureEventKindRestarted) {
-            BOOST_LOG(info) << "ApolloCore audio ingress restarted"sv;
+          } else if (event.kind == LumenCoreCaptureEventKindRestarted) {
+            BOOST_LOG(info) << "LumenCore audio ingress restarted"sv;
           }
         }
 
-        if (!ApolloCoreAudioCaptureIngressIsProducerActive(ingress) &&
-            !ApolloCoreAudioCaptureIngressWaitForData(ingress, 0)) {
-          if (!ApolloCoreAudioCaptureIngressWaitForProducerActive(ingress, apollo_core_audio_ingress_wait_timeout_ms)) {
-            BOOST_LOG(error) << "ApolloCore audio ingress producer became inactive and did not recover within "
-                             << apollo_core_audio_ingress_wait_timeout_ms << "ms";
+        if (!LumenCoreAudioCaptureIngressIsProducerActive(ingress) &&
+            !LumenCoreAudioCaptureIngressWaitForData(ingress, 0)) {
+          if (!LumenCoreAudioCaptureIngressWaitForProducerActive(ingress, lumen_core_audio_ingress_wait_timeout_ms)) {
+            BOOST_LOG(error) << "LumenCore audio ingress producer became inactive and did not recover within "
+                             << lumen_core_audio_ingress_wait_timeout_ms << "ms";
             return;
           }
         }
       }
 
-      BOOST_LOG(info) << "ApolloCore audio ingress capture loop exited on macOS";
+      BOOST_LOG(info) << "LumenCore audio ingress capture loop exited on macOS";
     }
   }  // namespace
 #endif
@@ -254,7 +254,7 @@ namespace audio {
     }
 
 #ifdef __APPLE__
-    capture_from_apollo_core_ingress(mail, config, channel_data);
+    capture_from_lumen_core_ingress(mail, config, channel_data);
     return;
 #else
     auto stream = stream_configs[map_stream(config.channels, config.flags[config_t::HIGH_QUALITY])];

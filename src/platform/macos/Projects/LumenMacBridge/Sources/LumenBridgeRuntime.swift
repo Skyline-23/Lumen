@@ -138,24 +138,24 @@ public enum LumenClientSinkTransfer: String, CaseIterable, Codable, Sendable {
     }
 }
 
-private func apolloDynamicRangeTransportName(_ transport: ApolloCoreDynamicRangeTransport) -> String {
+private func apolloDynamicRangeTransportName(_ transport: LumenCoreDynamicRangeTransport) -> String {
     switch transport {
-    case ApolloCoreDynamicRangeTransportSDR:
+    case LumenCoreDynamicRangeTransportSDR:
         return "sdr"
-    case ApolloCoreDynamicRangeTransportFullFrameHDR:
+    case LumenCoreDynamicRangeTransportFullFrameHDR:
         return "full-frame-hdr"
-    case ApolloCoreDynamicRangeTransportFrameGatedHDR:
+    case LumenCoreDynamicRangeTransportFrameGatedHDR:
         return "frame-gated-hdr"
-    case ApolloCoreDynamicRangeTransportSDRBaseHDROverlay:
+    case LumenCoreDynamicRangeTransportSDRBaseHDROverlay:
         return "sdr-base-hdr-overlay"
     default:
         return "unknown"
     }
 }
 
-private func apolloDynamicRangeTransportUsesHDR(_ transport: ApolloCoreDynamicRangeTransport) -> Bool {
+private func apolloDynamicRangeTransportUsesHDR(_ transport: LumenCoreDynamicRangeTransport) -> Bool {
     switch transport {
-    case ApolloCoreDynamicRangeTransportFullFrameHDR, ApolloCoreDynamicRangeTransportFrameGatedHDR:
+    case LumenCoreDynamicRangeTransportFullFrameHDR, LumenCoreDynamicRangeTransportFrameGatedHDR:
         return true
     default:
         return false
@@ -207,7 +207,7 @@ public struct LumenHDRStaticMetadata: Equatable, Sendable {
         self.maxFullFrameLuminance = maxFullFrameLuminance
     }
 
-    init(coreValue: ApolloCoreHDRStaticMetadata) {
+    init(coreValue: LumenCoreHDRStaticMetadata) {
         self.init(
             redPrimaryX: Int(coreValue.red_primary_x),
             redPrimaryY: Int(coreValue.red_primary_y),
@@ -225,8 +225,8 @@ public struct LumenHDRStaticMetadata: Equatable, Sendable {
         )
     }
 
-    var coreValue: ApolloCoreHDRStaticMetadata {
-        var metadata = ApolloCoreHDRStaticMetadata()
+    var coreValue: LumenCoreHDRStaticMetadata {
+        var metadata = LumenCoreHDRStaticMetadata()
         metadata.red_primary_x = Int32(redPrimaryX)
         metadata.red_primary_y = Int32(redPrimaryY)
         metadata.green_primary_x = Int32(greenPrimaryX)
@@ -417,12 +417,12 @@ public struct LumenBridgeSinkCapability: Equatable, Sendable {
 public struct LumenBridgeSinkRequest: Equatable, Sendable {
     public let mode: LumenBridgeSinkMode
     public let capability: LumenBridgeSinkCapability
-    public let dynamicRangeTransport: ApolloCoreDynamicRangeTransport
+    public let dynamicRangeTransport: LumenCoreDynamicRangeTransport
 
     public init(
         mode: LumenBridgeSinkMode = LumenBridgeSinkMode(),
         capability: LumenBridgeSinkCapability = LumenBridgeSinkCapability(),
-        dynamicRangeTransport: ApolloCoreDynamicRangeTransport = ApolloCoreDynamicRangeTransportUnknown
+        dynamicRangeTransport: LumenCoreDynamicRangeTransport = LumenCoreDynamicRangeTransportUnknown
     ) {
         self.mode = mode
         self.capability = capability
@@ -494,33 +494,33 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         apolloDynamicRangeTransportUsesHDR(negotiatedDynamicRangeTransport)
     }
 
-    public var negotiatedDynamicRangeTransport: ApolloCoreDynamicRangeTransport {
+    public var negotiatedDynamicRangeTransport: LumenCoreDynamicRangeTransport {
         switch sinkRequest.dynamicRangeTransport {
-        case ApolloCoreDynamicRangeTransportFullFrameHDR:
-            return codec == .h264 ? ApolloCoreDynamicRangeTransportSDR : ApolloCoreDynamicRangeTransportFullFrameHDR
-        case ApolloCoreDynamicRangeTransportFrameGatedHDR:
+        case LumenCoreDynamicRangeTransportFullFrameHDR:
+            return codec == .h264 ? LumenCoreDynamicRangeTransportSDR : LumenCoreDynamicRangeTransportFullFrameHDR
+        case LumenCoreDynamicRangeTransportFrameGatedHDR:
             guard codec != .h264,
                   sinkRequest.capability.supportsFrameGatedHDR else {
-                return ApolloCoreDynamicRangeTransportSDR
+                return LumenCoreDynamicRangeTransportSDR
             }
-            return ApolloCoreDynamicRangeTransportFrameGatedHDR
-        case ApolloCoreDynamicRangeTransportSDRBaseHDROverlay:
+            return LumenCoreDynamicRangeTransportFrameGatedHDR
+        case LumenCoreDynamicRangeTransportSDRBaseHDROverlay:
             guard codec != .h264 else {
-                return ApolloCoreDynamicRangeTransportSDR
+                return LumenCoreDynamicRangeTransportSDR
             }
             if Self.supportsPartialHDROverlayProducer,
                sinkRequest.capability.supportsHDRTileOverlay,
                sinkRequest.capability.supportsPerFrameHDRMetadata {
-                return ApolloCoreDynamicRangeTransportSDRBaseHDROverlay
+                return LumenCoreDynamicRangeTransportSDRBaseHDROverlay
             }
             if sinkRequest.capability.supportsFrameGatedHDR {
-                return ApolloCoreDynamicRangeTransportFrameGatedHDR
+                return LumenCoreDynamicRangeTransportFrameGatedHDR
             }
-            return ApolloCoreDynamicRangeTransportSDR
-        case ApolloCoreDynamicRangeTransportSDR, ApolloCoreDynamicRangeTransportUnknown:
-            return ApolloCoreDynamicRangeTransportSDR
+            return LumenCoreDynamicRangeTransportSDR
+        case LumenCoreDynamicRangeTransportSDR, LumenCoreDynamicRangeTransportUnknown:
+            return LumenCoreDynamicRangeTransportSDR
         default:
-            return ApolloCoreDynamicRangeTransportSDR
+            return LumenCoreDynamicRangeTransportSDR
         }
     }
 
@@ -533,7 +533,7 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
             return .q1
         }
 
-        if negotiatedDynamicRangeTransport == ApolloCoreDynamicRangeTransportSDRBaseHDROverlay {
+        if negotiatedDynamicRangeTransport == LumenCoreDynamicRangeTransportSDRBaseHDROverlay {
             return .q1
         }
 
@@ -545,7 +545,7 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     }
 
     public var prefersRealtimeHDRMetadata: Bool {
-        negotiatedDynamicRangeTransport != ApolloCoreDynamicRangeTransportSDR &&
+        negotiatedDynamicRangeTransport != LumenCoreDynamicRangeTransportSDR &&
             sinkRequest.capability.supportsPerFrameHDRMetadata
     }
 
@@ -579,8 +579,8 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
                     supportsPerFrameHDRMetadata: true
                 ),
                 dynamicRangeTransport: transport == .pq || transport == .hlg ?
-                    ApolloCoreDynamicRangeTransportFrameGatedHDR :
-                    ApolloCoreDynamicRangeTransportSDR
+                    LumenCoreDynamicRangeTransportFrameGatedHDR :
+                    LumenCoreDynamicRangeTransportSDR
             ),
             effectiveDisplayState: LumenBridgeEffectiveDisplayState(
                 gamut: LumenClientSinkGamut(
@@ -1012,7 +1012,7 @@ private struct LumenBridgeAutomationRequest: Equatable, Sendable {
     let videoConfiguration: LumenMacDisplayKitCaptureConfiguration?
     let audioConfiguration: LumenMacDisplayKitAudioCaptureConfiguration?
 
-    init(snapshot: ApolloCoreCaptureRequestSnapshot) {
+    init(snapshot: LumenCoreCaptureRequestSnapshot) {
         generation = snapshot.generation
         videoGeneration = snapshot.video_generation
         audioGeneration = snapshot.audio_generation
@@ -1064,7 +1064,7 @@ private struct LumenBridgeAutomationRequest: Equatable, Sendable {
 
         if snapshot.audio_requested {
             switch snapshot.audio_source_kind {
-            case ApolloCoreAudioCaptureSourceKindSystemOutput:
+            case LumenCoreAudioCaptureSourceKindSystemOutput:
                 audioConfiguration = .systemOutput(
                     displayID: resolvedDisplayID,
                     sampleRate: Int(snapshot.audio_sample_rate),
@@ -1072,7 +1072,7 @@ private struct LumenBridgeAutomationRequest: Equatable, Sendable {
                     frameSize: Int(snapshot.audio_frame_size),
                     excludesCurrentProcessAudio: snapshot.audio_excludes_current_process
                 )
-            case ApolloCoreAudioCaptureSourceKindMicrophone:
+            case LumenCoreAudioCaptureSourceKindMicrophone:
                 audioConfiguration = .microphone(
                     sampleRate: Int(snapshot.audio_sample_rate),
                     channelCount: Int(snapshot.audio_channel_count),
@@ -1086,37 +1086,37 @@ private struct LumenBridgeAutomationRequest: Equatable, Sendable {
         }
     }
 
-    private static func codec(from value: ApolloCoreCaptureCodec) -> LumenCaptureCodec? {
+    private static func codec(from value: LumenCoreCaptureCodec) -> LumenCaptureCodec? {
         switch value {
-        case ApolloCoreCaptureCodecH264:
+        case LumenCoreCaptureCodecH264:
             return .h264
-        case ApolloCoreCaptureCodecHEVC:
+        case LumenCoreCaptureCodecHEVC:
             return .hevc
-        case ApolloCoreCaptureCodecProResProxy:
+        case LumenCoreCaptureCodecProResProxy:
             return .proResProxy
         default:
             return nil
         }
     }
 
-    private static func preprocessStrategy(from value: ApolloCoreCapturePreprocessStrategy) -> LumenCapturePreprocessStrategy {
+    private static func preprocessStrategy(from value: LumenCoreCapturePreprocessStrategy) -> LumenCapturePreprocessStrategy {
         switch value {
-        case ApolloCoreCapturePreprocessStrategyDownscale2x:
+        case LumenCoreCapturePreprocessStrategyDownscale2x:
             return .downscale2x
         default:
             return .none
         }
     }
 
-    private static func queueProfile(from value: ApolloCoreCaptureQueueProfile) -> LumenCaptureQueueProfile {
+    private static func queueProfile(from value: LumenCoreCaptureQueueProfile) -> LumenCaptureQueueProfile {
         switch value {
-        case ApolloCoreCaptureQueueProfileAuto:
+        case LumenCoreCaptureQueueProfileAuto:
             return .auto
-        case ApolloCoreCaptureQueueProfileQ1:
+        case LumenCoreCaptureQueueProfileQ1:
             return .q1
-        case ApolloCoreCaptureQueueProfileQ3:
+        case LumenCoreCaptureQueueProfileQ3:
             return .q3
-        case ApolloCoreCaptureQueueProfileQ4:
+        case LumenCoreCaptureQueueProfileQ4:
             return .q4
         default:
             return .q2
@@ -1496,21 +1496,21 @@ public actor LumenBridgeRuntime {
         publishStatusDidChange(immediate: true)
     }
 
-    public func startApolloCoreCaptureAutomation() {
+    public func startLumenCoreCaptureAutomation() {
         guard captureAutomationTask == nil else {
             return
         }
 
-        startMirroredApolloCoreCaptureRequestSync()
+        startMirroredLumenCoreCaptureRequestSync()
         captureAutomationTask = Task.detached(priority: .background) { [weak self] in
             var observedGeneration = UInt64.max
             while !Task.isCancelled {
-                let changed = ApolloCoreCaptureRequestWaitForGenerationChange(observedGeneration, 250)
+                let changed = LumenCoreCaptureRequestWaitForGenerationChange(observedGeneration, 250)
                 if !changed && observedGeneration != UInt64.max {
                     continue
                 }
 
-                let snapshot = ApolloCoreCaptureRequestCopySnapshot()
+                let snapshot = LumenCoreCaptureRequestCopySnapshot()
                 observedGeneration = snapshot.generation
                 await self?.applyLumenCoreCaptureRequest(
                     LumenBridgeAutomationRequest(snapshot: snapshot)
@@ -1520,7 +1520,7 @@ public actor LumenBridgeRuntime {
         publishStatusDidChange(immediate: true)
     }
 
-    public func stopApolloCoreCaptureAutomation() async {
+    public func stopLumenCoreCaptureAutomation() async {
         captureAutomationTask?.cancel()
         captureAutomationTask = nil
         mirroredCaptureRequestTask?.cancel()
@@ -1530,7 +1530,7 @@ public actor LumenBridgeRuntime {
         publishStatusDidChange(immediate: true)
     }
 
-    public func isApolloCoreCaptureAutomationRunning() -> Bool {
+    public func isLumenCoreCaptureAutomationRunning() -> Bool {
         captureAutomationTask != nil
     }
 
@@ -1689,7 +1689,7 @@ public actor LumenBridgeRuntime {
         return lastAppliedGeneration == nil
     }
 
-    private func startMirroredApolloCoreCaptureRequestSync() {
+    private func startMirroredLumenCoreCaptureRequestSync() {
         guard mirroredCaptureRequestTask == nil else {
             return
         }

@@ -6,8 +6,8 @@ final class LumenCoreAudioCaptureForwarder: @unchecked Sendable {
     private let handle: OpaquePointer
 
     init() {
-        guard let handle = ApolloCoreSharedAudioCaptureIngress() else {
-            fatalError("ApolloCoreSharedAudioCaptureIngress returned nil")
+        guard let handle = LumenCoreSharedAudioCaptureIngress() else {
+            fatalError("LumenCoreSharedAudioCaptureIngress returned nil")
         }
         self.handle = handle
     }
@@ -15,23 +15,23 @@ final class LumenCoreAudioCaptureForwarder: @unchecked Sendable {
     deinit {}
 
     func reset() {
-        ApolloCoreAudioCaptureIngressReset(handle)
+        LumenCoreAudioCaptureIngressReset(handle)
     }
 
     func setFrameCapacity(_ capacity: Int) {
-        ApolloCoreAudioCaptureIngressSetFrameCapacity(handle, max(1, capacity))
+        LumenCoreAudioCaptureIngressSetFrameCapacity(handle, max(1, capacity))
     }
 
     func setEventCapacity(_ capacity: Int) {
-        ApolloCoreAudioCaptureIngressSetEventCapacity(handle, max(1, capacity))
+        LumenCoreAudioCaptureIngressSetEventCapacity(handle, max(1, capacity))
     }
 
     func setProducerActive(_ active: Bool) {
-        ApolloCoreAudioCaptureIngressSetProducerActive(handle, active)
+        LumenCoreAudioCaptureIngressSetProducerActive(handle, active)
     }
 
     func snapshot() -> LumenBridgeAudioForwardingSnapshot {
-        let snapshot = ApolloCoreAudioCaptureIngressCopySnapshot(handle)
+        let snapshot = LumenCoreAudioCaptureIngressCopySnapshot(handle)
         return LumenBridgeAudioForwardingSnapshot(
             frameCount: snapshot.frame_count,
             eventCount: snapshot.event_count,
@@ -51,7 +51,7 @@ final class LumenCoreAudioCaptureForwarder: @unchecked Sendable {
 
     func consume(frame: MDKAudioFrame) {
         frame.pcmFloat32LE.withUnsafeBytes { pcmBuffer in
-            ApolloCoreAudioCaptureIngressConsumePCMFloat32(
+            LumenCoreAudioCaptureIngressConsumePCMFloat32(
                 handle,
                 frame.sequenceNumber,
                 frame.hostTimeNanoseconds,
@@ -67,7 +67,7 @@ final class LumenCoreAudioCaptureForwarder: @unchecked Sendable {
     func consume(event: MDKAudioCaptureSessionEvent) {
         if let message = event.message {
             message.withCString { messagePointer in
-                ApolloCoreAudioCaptureIngressConsumeEvent(
+                LumenCoreAudioCaptureIngressConsumeEvent(
                     handle,
                     event.kind.apolloCoreKind,
                     messagePointer,
@@ -80,7 +80,7 @@ final class LumenCoreAudioCaptureForwarder: @unchecked Sendable {
                 )
             }
         } else {
-            ApolloCoreAudioCaptureIngressConsumeEvent(
+            LumenCoreAudioCaptureIngressConsumeEvent(
                 handle,
                 event.kind.apolloCoreKind,
                 nil,
@@ -99,7 +99,7 @@ final class LumenCoreAudioCaptureForwarder: @unchecked Sendable {
         var data = Data(count: bufferCapacity)
         var copiedSize: Int = 0
         let record = data.withUnsafeMutableBytes { rawBuffer in
-            ApolloCoreAudioCaptureIngressPopNextFrame(
+            LumenCoreAudioCaptureIngressPopNextFrame(
                 handle,
                 rawBuffer.baseAddress,
                 rawBuffer.count,
@@ -125,7 +125,7 @@ final class LumenCoreAudioCaptureForwarder: @unchecked Sendable {
     func popNextEvent() -> LumenBridgeDrainedAudioEvent? {
         var messageBuffer = Array<CChar>(repeating: 0, count: 512)
         let record = messageBuffer.withUnsafeMutableBufferPointer { buffer in
-            ApolloCoreAudioCaptureIngressPopNextEvent(
+            LumenCoreAudioCaptureIngressPopNextEvent(
                 handle,
                 buffer.baseAddress,
                 buffer.count
@@ -148,18 +148,18 @@ final class LumenCoreAudioCaptureForwarder: @unchecked Sendable {
 }
 
 private extension MDKAudioCaptureSessionEventKind {
-    var apolloCoreKind: ApolloCoreCaptureEventKind {
+    var apolloCoreKind: LumenCoreCaptureEventKind {
         switch self {
         case .started:
-            return ApolloCoreCaptureEventKindStarted
+            return LumenCoreCaptureEventKindStarted
         case .stopped:
-            return ApolloCoreCaptureEventKindStopped
+            return LumenCoreCaptureEventKindStopped
         case .restarted:
-            return ApolloCoreCaptureEventKindRestarted
+            return LumenCoreCaptureEventKindRestarted
         case .failed:
-            return ApolloCoreCaptureEventKindFailed
+            return LumenCoreCaptureEventKindFailed
         case .droppedFrame:
-            return ApolloCoreCaptureEventKindDroppedFrame
+            return LumenCoreCaptureEventKindDroppedFrame
         }
     }
 }

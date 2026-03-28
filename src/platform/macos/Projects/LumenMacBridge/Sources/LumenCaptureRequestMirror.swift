@@ -24,7 +24,7 @@ struct LumenBridgeMirroredSinkCapability: Equatable, Sendable {
 struct LumenBridgeMirroredSinkRequest: Equatable, Sendable {
     let mode: LumenBridgeMirroredSinkMode
     let capability: LumenBridgeMirroredSinkCapability
-    let dynamicRangeTransport: ApolloCoreDynamicRangeTransport
+    let dynamicRangeTransport: LumenCoreDynamicRangeTransport
 }
 
 struct LumenBridgeMirroredEffectiveDisplayState: Equatable, Sendable {
@@ -44,9 +44,9 @@ struct LumenBridgeMirroredCaptureRequestSnapshot: Equatable, Sendable {
     let videoRequested: Bool
     let audioRequested: Bool
     let displayID: UInt32
-    let codec: ApolloCoreCaptureCodec
-    let preprocessStrategy: ApolloCoreCapturePreprocessStrategy
-    let queueProfile: ApolloCoreCaptureQueueProfile
+    let codec: LumenCoreCaptureCodec
+    let preprocessStrategy: LumenCoreCapturePreprocessStrategy
+    let queueProfile: LumenCoreCaptureQueueProfile
     let showCursor: Bool
     let targetFrameRate: Int32
     let targetVideoBitrateKbps: Int32
@@ -54,7 +54,7 @@ struct LumenBridgeMirroredCaptureRequestSnapshot: Equatable, Sendable {
     let requestedHeight: Int32
     let sinkRequest: LumenBridgeMirroredSinkRequest
     let effectiveDisplayState: LumenBridgeMirroredEffectiveDisplayState
-    let audioSourceKind: ApolloCoreAudioCaptureSourceKind
+    let audioSourceKind: LumenCoreAudioCaptureSourceKind
     let audioExcludesCurrentProcess: Bool
     let audioSampleRate: Int32
     let audioChannelCount: Int32
@@ -133,32 +133,32 @@ struct LumenBridgeMirroredCaptureRequestSnapshot: Equatable, Sendable {
         value as? NSNumber
     }
 
-    private static func captureCodec(_ value: Any?) -> ApolloCoreCaptureCodec? {
+    private static func captureCodec(_ value: Any?) -> LumenCoreCaptureCodec? {
         guard let rawValue = number(value)?.int32Value else {
             return nil
         }
-        return ApolloCoreCaptureCodec(rawValue: rawValue)
+        return LumenCoreCaptureCodec(rawValue: rawValue)
     }
 
-    private static func preprocessStrategy(_ value: Any?) -> ApolloCoreCapturePreprocessStrategy? {
+    private static func preprocessStrategy(_ value: Any?) -> LumenCoreCapturePreprocessStrategy? {
         guard let rawValue = number(value)?.uint32Value else {
             return nil
         }
-        return ApolloCoreCapturePreprocessStrategy(rawValue: rawValue)
+        return LumenCoreCapturePreprocessStrategy(rawValue: rawValue)
     }
 
-    private static func queueProfile(_ value: Any?) -> ApolloCoreCaptureQueueProfile? {
+    private static func queueProfile(_ value: Any?) -> LumenCoreCaptureQueueProfile? {
         guard let rawValue = number(value)?.uint32Value else {
             return nil
         }
-        return ApolloCoreCaptureQueueProfile(rawValue: rawValue)
+        return LumenCoreCaptureQueueProfile(rawValue: rawValue)
     }
 
-    private static func audioSourceKind(_ value: Any?) -> ApolloCoreAudioCaptureSourceKind? {
+    private static func audioSourceKind(_ value: Any?) -> LumenCoreAudioCaptureSourceKind? {
         guard let rawValue = number(value)?.int32Value else {
             return nil
         }
-        return ApolloCoreAudioCaptureSourceKind(rawValue: rawValue)
+        return LumenCoreAudioCaptureSourceKind(rawValue: rawValue)
     }
 
     private static func sinkMode(_ value: Any?) -> LumenBridgeMirroredSinkMode? {
@@ -200,7 +200,7 @@ struct LumenBridgeMirroredCaptureRequestSnapshot: Equatable, Sendable {
               let capability = sinkCapability(dictionary["capability"]) else {
             return nil
         }
-        let dynamicRangeTransport = ApolloCoreDynamicRangeTransport(
+        let dynamicRangeTransport = LumenCoreDynamicRangeTransport(
             rawValue: UInt32(Self.number(dictionary["dynamicRangeTransport"])?.int32Value ?? 0)
         )
         return LumenBridgeMirroredSinkRequest(
@@ -253,9 +253,9 @@ struct LumenBridgeMirroredCaptureRequestSemanticState: Equatable, Sendable {
     let videoRequested: Bool
     let audioRequested: Bool
     let displayID: UInt32
-    let codec: ApolloCoreCaptureCodec
-    let preprocessStrategy: ApolloCoreCapturePreprocessStrategy
-    let queueProfile: ApolloCoreCaptureQueueProfile
+    let codec: LumenCoreCaptureCodec
+    let preprocessStrategy: LumenCoreCapturePreprocessStrategy
+    let queueProfile: LumenCoreCaptureQueueProfile
     let showCursor: Bool
     let targetFrameRate: Int32
     let targetVideoBitrateKbps: Int32
@@ -263,7 +263,7 @@ struct LumenBridgeMirroredCaptureRequestSemanticState: Equatable, Sendable {
     let requestedHeight: Int32
     let sinkRequest: LumenBridgeMirroredSinkRequest
     let effectiveDisplayState: LumenBridgeMirroredEffectiveDisplayState
-    let audioSourceKind: ApolloCoreAudioCaptureSourceKind
+    let audioSourceKind: LumenCoreAudioCaptureSourceKind
     let audioExcludesCurrentProcess: Bool
     let audioSampleRate: Int32
     let audioChannelCount: Int32
@@ -290,7 +290,7 @@ struct LumenBridgeMirroredCaptureRequestSemanticState: Equatable, Sendable {
         audioFrameSize = snapshot.audioFrameSize
     }
 
-    init(snapshot: ApolloCoreCaptureRequestSnapshot) {
+    init(snapshot: LumenCoreCaptureRequestSnapshot) {
         videoRequested = snapshot.video_requested
         audioRequested = snapshot.audio_requested
         displayID = snapshot.display_id
@@ -350,11 +350,11 @@ actor LumenCaptureRequestMirrorCoordinator {
 
             let semanticState = mirroredSnapshot.semanticState
             mirroredGeneration = mirroredSnapshot.generation
-            let currentApolloCoreSemanticState = LumenBridgeMirroredCaptureRequestSemanticState(
-                snapshot: ApolloCoreCaptureRequestCopySnapshot()
+            let currentLumenCoreSemanticState = LumenBridgeMirroredCaptureRequestSemanticState(
+                snapshot: LumenCoreCaptureRequestCopySnapshot()
             )
             guard semanticState != mirroredSemanticState ||
-                    semanticState != currentApolloCoreSemanticState else {
+                    semanticState != currentLumenCoreSemanticState else {
                 logger.debug(
                     "Skipping mirrored capture request sync generation=\(mirroredSnapshot.generation, privacy: .public) because semantic state already matches LumenCore"
                 )
@@ -365,12 +365,12 @@ actor LumenCaptureRequestMirrorCoordinator {
             logger.notice(
                 "Applying mirrored capture request generation=\(mirroredSnapshot.generation, privacy: .public) video-generation=\(mirroredSnapshot.videoGeneration, privacy: .public) audio-generation=\(mirroredSnapshot.audioGeneration, privacy: .public) video-requested=\(mirroredSnapshot.videoRequested, privacy: .public) audio-requested=\(mirroredSnapshot.audioRequested, privacy: .public) display-id=\(mirroredSnapshot.displayID, privacy: .public) queue=\(mirroredSnapshot.queueProfile.rawValue, privacy: .public)"
             )
-            ApolloCoreCaptureRequestClear()
+            LumenCoreCaptureRequestClear()
 
             if mirroredSnapshot.videoRequested {
-                let effectiveHDRStaticMetadata = mirroredSnapshot.effectiveDisplayState.hdrStaticMetadata?.coreValue ?? ApolloCoreHDRStaticMetadata()
-                var sinkMode = ApolloCoreSinkMode()
-                var sinkCapability = ApolloCoreSinkCapability()
+                let effectiveHDRStaticMetadata = mirroredSnapshot.effectiveDisplayState.hdrStaticMetadata?.coreValue ?? LumenCoreHDRStaticMetadata()
+                var sinkMode = LumenCoreSinkMode()
+                var sinkCapability = LumenCoreSinkCapability()
                 sinkCapability.gamut = mirroredSnapshot.sinkRequest.capability.gamut
                 sinkCapability.transfer = mirroredSnapshot.sinkRequest.capability.transfer
                 sinkCapability.current_edr_headroom = mirroredSnapshot.sinkRequest.capability.currentEDRHeadroom
@@ -380,7 +380,7 @@ actor LumenCaptureRequestMirrorCoordinator {
                 sinkCapability.supports_frame_gated_hdr = mirroredSnapshot.sinkRequest.capability.supportsFrameGatedHDR
                 sinkCapability.supports_hdr_tile_overlay = mirroredSnapshot.sinkRequest.capability.supportsHDRTileOverlay
                 sinkCapability.supports_per_frame_hdr_metadata = mirroredSnapshot.sinkRequest.capability.supportsPerFrameHDRMetadata
-                var sinkRequest = ApolloCoreSinkRequest()
+                var sinkRequest = LumenCoreSinkRequest()
                 sinkMode.hidpi = mirroredSnapshot.sinkRequest.mode.hidpi
                 sinkMode.scale_explicit = mirroredSnapshot.sinkRequest.mode.scaleExplicit
                 sinkMode.mode_is_logical = mirroredSnapshot.sinkRequest.mode.modeIsLogical
@@ -388,12 +388,12 @@ actor LumenCaptureRequestMirrorCoordinator {
                 sinkRequest.mode = sinkMode
                 sinkRequest.capability = sinkCapability
                 sinkRequest.dynamic_range_transport = mirroredSnapshot.sinkRequest.dynamicRangeTransport
-                var effectiveDisplayState = ApolloCoreEffectiveDisplayState()
+                var effectiveDisplayState = LumenCoreEffectiveDisplayState()
                 effectiveDisplayState.gamut = mirroredSnapshot.effectiveDisplayState.gamut
                 effectiveDisplayState.transfer = mirroredSnapshot.effectiveDisplayState.transfer
                 effectiveDisplayState.has_hdr_static_metadata = mirroredSnapshot.effectiveDisplayState.hdrStaticMetadata != nil
                 effectiveDisplayState.hdr_static_metadata = effectiveHDRStaticMetadata
-                ApolloCoreCaptureRequestPublishVideo(
+                LumenCoreCaptureRequestPublishVideo(
                     mirroredSnapshot.displayID,
                     mirroredSnapshot.codec,
                     mirroredSnapshot.preprocessStrategy,
@@ -412,7 +412,7 @@ actor LumenCaptureRequestMirrorCoordinator {
             }
 
             if mirroredSnapshot.audioRequested {
-                ApolloCoreCaptureRequestPublishAudio(
+                LumenCoreCaptureRequestPublishAudio(
                     mirroredSnapshot.audioSourceKind,
                     mirroredSnapshot.displayID,
                     mirroredSnapshot.audioExcludesCurrentProcess,
@@ -430,7 +430,7 @@ actor LumenCaptureRequestMirrorCoordinator {
             )
             mirroredGeneration = nil
             mirroredSemanticState = nil
-            ApolloCoreCaptureRequestClear()
+            LumenCoreCaptureRequestClear()
         }
     }
 }

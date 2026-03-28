@@ -2123,7 +2123,7 @@ namespace stream {
 
 #ifdef __APPLE__
   namespace {
-    uint32_t apollo_core_requested_display_id() {
+    uint32_t lumen_core_requested_display_id() {
       if (proc::proc.display_name.empty()) {
         return 0;
       }
@@ -2136,31 +2136,31 @@ namespace stream {
       return 0;
     }
 
-    ApolloCoreCaptureCodec apollo_core_requested_codec(int video_format) {
+    LumenCoreCaptureCodec lumen_core_requested_codec(int video_format) {
       switch (video_format) {
         case 0:
-          return ApolloCoreCaptureCodecH264;
+          return LumenCoreCaptureCodecH264;
         case 1:
-          return ApolloCoreCaptureCodecHEVC;
+          return LumenCoreCaptureCodecHEVC;
         default:
-          return ApolloCoreCaptureCodecUnknown;
+          return LumenCoreCaptureCodecUnknown;
       }
     }
 
-    std::string_view apollo_core_codec_name(ApolloCoreCaptureCodec codec) {
+    std::string_view lumen_core_codec_name(LumenCoreCaptureCodec codec) {
       switch (codec) {
-        case ApolloCoreCaptureCodecH264:
+        case LumenCoreCaptureCodecH264:
           return "h264"sv;
-        case ApolloCoreCaptureCodecHEVC:
+        case LumenCoreCaptureCodecHEVC:
           return "hevc"sv;
-        case ApolloCoreCaptureCodecProResProxy:
+        case LumenCoreCaptureCodecProResProxy:
           return "prores-proxy"sv;
         default:
           return "unknown"sv;
       }
     }
 
-    std::string apollo_core_requested_streaming_profile() {
+    std::string lumen_core_requested_streaming_profile() {
       auto streaming_profile = config::video.streaming_profile;
       std::transform(streaming_profile.begin(), streaming_profile.end(), streaming_profile.begin(), [](unsigned char ch) {
         return static_cast<char>(std::tolower(ch));
@@ -2168,35 +2168,35 @@ namespace stream {
       return streaming_profile;
     }
 
-    ApolloCoreCaptureQueueProfile apollo_core_requested_queue_profile() {
-      const auto streaming_profile = apollo_core_requested_streaming_profile();
+    LumenCoreCaptureQueueProfile lumen_core_requested_queue_profile() {
+      const auto streaming_profile = lumen_core_requested_streaming_profile();
       if (streaming_profile == "low-latency") {
-        return ApolloCoreCaptureQueueProfileQ1;
+        return LumenCoreCaptureQueueProfileQ1;
       }
       if (streaming_profile == "max-quality") {
-        return ApolloCoreCaptureQueueProfileQ4;
+        return LumenCoreCaptureQueueProfileQ4;
       }
-      return ApolloCoreCaptureQueueProfileAuto;
+      return LumenCoreCaptureQueueProfileAuto;
     }
 
-    std::string_view apollo_core_queue_profile_name(ApolloCoreCaptureQueueProfile queue_profile) {
+    std::string_view lumen_core_queue_profile_name(LumenCoreCaptureQueueProfile queue_profile) {
       switch (queue_profile) {
-        case ApolloCoreCaptureQueueProfileQ1:
+        case LumenCoreCaptureQueueProfileQ1:
           return "q1"sv;
-        case ApolloCoreCaptureQueueProfileQ2:
+        case LumenCoreCaptureQueueProfileQ2:
           return "q2"sv;
-        case ApolloCoreCaptureQueueProfileQ3:
+        case LumenCoreCaptureQueueProfileQ3:
           return "q3"sv;
-        case ApolloCoreCaptureQueueProfileQ4:
+        case LumenCoreCaptureQueueProfileQ4:
           return "q4"sv;
-        case ApolloCoreCaptureQueueProfileAuto:
+        case LumenCoreCaptureQueueProfileAuto:
           return "auto"sv;
         default:
           return "unknown"sv;
       }
     }
 
-    std::string_view apollo_core_client_sink_gamut_name(int gamut) {
+    std::string_view lumen_core_client_sink_gamut_name(int gamut) {
       switch (static_cast<video::client_sink_gamut_e>(gamut)) {
         case video::client_sink_gamut_e::srgb:
           return "srgb"sv;
@@ -2210,7 +2210,7 @@ namespace stream {
       }
     }
 
-    std::string_view apollo_core_client_sink_transfer_name(int transfer) {
+    std::string_view lumen_core_client_sink_transfer_name(int transfer) {
       switch (static_cast<video::client_sink_transfer_e>(transfer)) {
         case video::client_sink_transfer_e::sdr:
           return "sdr"sv;
@@ -2224,7 +2224,7 @@ namespace stream {
       }
     }
 
-    std::string_view apollo_core_dynamic_range_transport_name(video::dynamic_range_transport_e transport) {
+    std::string_view lumen_core_dynamic_range_transport_name(video::dynamic_range_transport_e transport) {
       switch (transport) {
         case video::dynamic_range_transport_e::sdr:
           return "sdr"sv;
@@ -2240,8 +2240,8 @@ namespace stream {
       }
     }
 
-    ApolloCoreHDRStaticMetadata apollo_core_hdr_static_metadata(const SS_HDR_METADATA &metadata) {
-      return ApolloCoreHDRStaticMetadata {
+    LumenCoreHDRStaticMetadata lumen_core_hdr_static_metadata(const SS_HDR_METADATA &metadata) {
+      return LumenCoreHDRStaticMetadata {
         .red_primary_x = static_cast<int32_t>(metadata.displayPrimaries[0].x),
         .red_primary_y = static_cast<int32_t>(metadata.displayPrimaries[0].y),
         .green_primary_x = static_cast<int32_t>(metadata.displayPrimaries[1].x),
@@ -2258,13 +2258,13 @@ namespace stream {
       };
     }
 
-    ApolloCoreAudioCaptureSourceKind apollo_core_audio_source_kind(const audio::config_t &config) {
+    LumenCoreAudioCaptureSourceKind lumen_core_audio_source_kind(const audio::config_t &config) {
       return config.flags[audio::config_t::HOST_AUDIO] ?
-               ApolloCoreAudioCaptureSourceKindSystemOutput :
-               ApolloCoreAudioCaptureSourceKindMicrophone;
+               LumenCoreAudioCaptureSourceKindSystemOutput :
+               LumenCoreAudioCaptureSourceKindMicrophone;
     }
 
-    void mirror_apollo_core_capture_request(const ApolloCoreCaptureRequestSnapshot &snapshot) {
+    void mirror_lumen_core_capture_request(const LumenCoreCaptureRequestSnapshot &snapshot) {
       platf::capture_request_mirror_state_t mirror_state {
         .generation = snapshot.generation,
         .video_generation = snapshot.video_generation,
@@ -2341,16 +2341,16 @@ namespace stream {
       platf::mirror_capture_request_state(mirror_state);
     }
 
-    void publish_apollo_core_capture_request(const session_t &session) {
+    void publish_lumen_core_capture_request(const session_t &session) {
       if (session.config.monitor.input_only) {
-        ApolloCoreCaptureRequestClear();
+        LumenCoreCaptureRequestClear();
         platf::clear_capture_request_state_mirror();
         return;
       }
 
-      const auto requested_display_id = apollo_core_requested_display_id();
-      const auto requested_codec = apollo_core_requested_codec(session.config.monitor.videoFormat);
-      const auto requested_queue_profile = apollo_core_requested_queue_profile();
+      const auto requested_display_id = lumen_core_requested_display_id();
+      const auto requested_codec = lumen_core_requested_codec(session.config.monitor.videoFormat);
+      const auto requested_queue_profile = lumen_core_requested_queue_profile();
       const auto requested_dynamic_range_transport =
         video::effective_dynamic_range_transport(session.config.monitor.sinkRequest.dynamic_range_transport);
       const auto negotiated_dynamic_range_transport =
@@ -2361,7 +2361,7 @@ namespace stream {
         session.config.monitor.sinkRequest.capability.gamut,
         session.config.monitor.sinkRequest.capability.transfer
       );
-      ApolloCoreHDRStaticMetadata effective_hdr_metadata {};
+      LumenCoreHDRStaticMetadata effective_hdr_metadata {};
       bool has_effective_hdr_metadata = false;
       const bool hdr_stream = video::config_uses_hdr_stream(session.config.monitor);
       if (hdr_stream) {
@@ -2376,26 +2376,26 @@ namespace stream {
           hdr_metadata
         );
         if (has_effective_hdr_metadata) {
-          effective_hdr_metadata = apollo_core_hdr_static_metadata(hdr_metadata);
+          effective_hdr_metadata = lumen_core_hdr_static_metadata(hdr_metadata);
         }
       }
 
       BOOST_LOG(info) << "Publishing macOS bridge capture request displayID="sv
                       << requested_display_id
-                      << " codec="sv << apollo_core_codec_name(requested_codec)
-                      << " streaming-profile="sv << apollo_core_requested_streaming_profile()
-                      << " queue="sv << apollo_core_queue_profile_name(requested_queue_profile)
+                      << " codec="sv << lumen_core_codec_name(requested_codec)
+                      << " streaming-profile="sv << lumen_core_requested_streaming_profile()
+                      << " queue="sv << lumen_core_queue_profile_name(requested_queue_profile)
                       << " fps="sv << session.config.monitor.framerate
                       << " size="sv << session.config.monitor.width << "x"sv << session.config.monitor.height
                       << " requested-transport="sv
-                      << apollo_core_dynamic_range_transport_name(requested_dynamic_range_transport)
+                      << lumen_core_dynamic_range_transport_name(requested_dynamic_range_transport)
                       << " negotiated-transport="sv
-                      << apollo_core_dynamic_range_transport_name(negotiated_dynamic_range_transport)
+                      << lumen_core_dynamic_range_transport_name(negotiated_dynamic_range_transport)
                       << " hdr-stream="sv << hdr_stream
                       << " sink-gamut="sv
-                      << apollo_core_client_sink_gamut_name(session.config.monitor.sinkRequest.capability.gamut)
+                      << lumen_core_client_sink_gamut_name(session.config.monitor.sinkRequest.capability.gamut)
                       << " sink-transfer="sv
-                      << apollo_core_client_sink_transfer_name(session.config.monitor.sinkRequest.capability.transfer)
+                      << lumen_core_client_sink_transfer_name(session.config.monitor.sinkRequest.capability.transfer)
                       << " current-edr-headroom="sv
                       << session.config.monitor.sinkRequest.capability.current_edr_headroom
                       << " potential-edr-headroom="sv
@@ -2405,9 +2405,9 @@ namespace stream {
                       << " potential-peak-nits="sv
                       << session.config.monitor.sinkRequest.capability.potential_peak_luminance_nits
                       << " effective-gamut="sv
-                      << apollo_core_client_sink_gamut_name(effective_display_state.gamut)
+                      << lumen_core_client_sink_gamut_name(effective_display_state.gamut)
                       << " effective-transfer="sv
-                      << apollo_core_client_sink_transfer_name(effective_display_state.transfer)
+                      << lumen_core_client_sink_transfer_name(effective_display_state.transfer)
                       << " supports-frame-gated-hdr="sv
                       << (session.config.monitor.sinkRequest.capability.supports_frame_gated_hdr != 0)
                       << " supports-hdr-tile-overlay="sv
@@ -2416,7 +2416,7 @@ namespace stream {
                       << (session.config.monitor.sinkRequest.capability.supports_per_frame_hdr_metadata != 0)
                       << " effective-hdr-metadata="sv << has_effective_hdr_metadata;
 
-      const ApolloCoreSinkRequest sink_request {
+      const LumenCoreSinkRequest sink_request {
         .mode = {
           .hidpi = session.config.monitor.sinkRequest.mode.hidpi != 0,
           .scale_explicit = session.config.monitor.sinkRequest.mode.scale_explicit != 0,
@@ -2434,20 +2434,20 @@ namespace stream {
           .supports_hdr_tile_overlay = session.config.monitor.sinkRequest.capability.supports_hdr_tile_overlay != 0,
           .supports_per_frame_hdr_metadata = session.config.monitor.sinkRequest.capability.supports_per_frame_hdr_metadata != 0
         },
-        .dynamic_range_transport = static_cast<ApolloCoreDynamicRangeTransport>(requested_dynamic_range_transport)
+        .dynamic_range_transport = static_cast<LumenCoreDynamicRangeTransport>(requested_dynamic_range_transport)
       };
-      const ApolloCoreEffectiveDisplayState effective_display_request {
+      const LumenCoreEffectiveDisplayState effective_display_request {
         .gamut = effective_display_state.gamut,
         .transfer = effective_display_state.transfer,
         .has_hdr_static_metadata = has_effective_hdr_metadata,
         .hdr_static_metadata = effective_hdr_metadata
       };
 
-      ApolloCoreCaptureRequestClear();
-      ApolloCoreCaptureRequestPublishVideo(
+      LumenCoreCaptureRequestClear();
+      LumenCoreCaptureRequestPublishVideo(
         requested_display_id,
         requested_codec,
-        ApolloCoreCapturePreprocessStrategyNone,
+        LumenCoreCapturePreprocessStrategyNone,
         requested_queue_profile,
         true,
         session.config.monitor.framerate,
@@ -2459,9 +2459,9 @@ namespace stream {
       );
 
       if (config::audio.stream && !session.config.audio.input_only) {
-        ApolloCoreCaptureRequestPublishAudio(
-          apollo_core_audio_source_kind(session.config.audio),
-          apollo_core_requested_display_id(),
+        LumenCoreCaptureRequestPublishAudio(
+          lumen_core_audio_source_kind(session.config.audio),
+          lumen_core_requested_display_id(),
           false,
           48000,
           session.config.audio.channels,
@@ -2469,7 +2469,7 @@ namespace stream {
         );
       }
 
-      mirror_apollo_core_capture_request(ApolloCoreCaptureRequestCopySnapshot());
+      mirror_lumen_core_capture_request(LumenCoreCaptureRequestCopySnapshot());
     }
   }  // namespace
 #endif
@@ -2602,7 +2602,7 @@ namespace stream {
       // If this is the last session, invoke the platform callbacks
       if (--running_sessions == 0) {
 #ifdef __APPLE__
-        ApolloCoreCaptureRequestClear();
+        LumenCoreCaptureRequestClear();
         platf::clear_capture_request_state_mirror();
 #endif
         bool revert_display_config {config::video.dd.config_revert_on_disconnect};
@@ -2685,7 +2685,7 @@ namespace stream {
       }
 
 #ifdef __APPLE__
-      publish_apollo_core_capture_request(session);
+      publish_lumen_core_capture_request(session);
 #endif
 
       if (!session.do_cmds.empty()) {

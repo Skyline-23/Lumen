@@ -40,10 +40,10 @@ struct LumenMacBridgeController {
 };
 
 namespace {
-  ApolloCoreEncodedCaptureFrameRecord to_frame_record(LumenBridgeDrainedFrameBox *box) {
-    ApolloCoreEncodedCaptureFrameRecord record {};
+  LumenCoreEncodedCaptureFrameRecord to_frame_record(LumenBridgeDrainedFrameBox *box) {
+    LumenCoreEncodedCaptureFrameRecord record {};
     record.has_value = true;
-    record.codec = static_cast<ApolloCoreCaptureCodec>(box.codecRawValue);
+    record.codec = static_cast<LumenCoreCaptureCodec>(box.codecRawValue);
     record.payload_size = static_cast<size_t>(box.payloadSize);
     record.source_sequence_number = box.sourceSequenceNumber;
     record.source_display_time = box.sourceDisplayTime;
@@ -54,10 +54,10 @@ namespace {
     return record;
   }
 
-  ApolloCoreEncodedCaptureEventRecord to_event_record(LumenBridgeDrainedEventBox *box) {
-    ApolloCoreEncodedCaptureEventRecord record {};
+  LumenCoreEncodedCaptureEventRecord to_event_record(LumenBridgeDrainedEventBox *box) {
+    LumenCoreEncodedCaptureEventRecord record {};
     record.has_value = true;
-    record.kind = static_cast<ApolloCoreCaptureEventKind>(box.kindRawValue);
+    record.kind = static_cast<LumenCoreCaptureEventKind>(box.kindRawValue);
     record.has_stop_status = box.hasStopStatus;
     record.stop_status = box.stopStatus;
     record.has_automatic_restart_count = box.hasAutomaticRestartCount;
@@ -82,7 +82,7 @@ namespace {
   LumenMacBridgeAudioCaptureEventRecord to_audio_event_record(LumenBridgeDrainedAudioEventBox *box) {
     LumenMacBridgeAudioCaptureEventRecord record {};
     record.has_value = true;
-    record.kind = static_cast<ApolloCoreCaptureEventKind>(box.kindRawValue);
+    record.kind = static_cast<LumenCoreCaptureEventKind>(box.kindRawValue);
     record.has_stop_status = box.hasStopStatus;
     record.stop_status = box.stopStatus;
     record.has_automatic_restart_count = box.hasAutomaticRestartCount;
@@ -116,7 +116,7 @@ namespace {
   ) {
     LumenMacBridgeCaptureConfiguration result {};
     result.display_id = configuration.displayID;
-    result.codec = static_cast<ApolloCoreCaptureCodec>(configuration.codecRawValue);
+    result.codec = static_cast<LumenCoreCaptureCodec>(configuration.codecRawValue);
     result.preprocess_strategy =
       static_cast<LumenMacBridgePreprocessStrategy>(configuration.preprocessStrategyRawValue);
     result.queue_profile = static_cast<LumenMacBridgeQueueProfile>(configuration.queueProfileRawValue);
@@ -139,7 +139,7 @@ namespace {
     result.sink_request.capability.supports_hdr_tile_overlay = configuration.sinkRequest.capability.supportsHDRTileOverlay;
     result.sink_request.capability.supports_per_frame_hdr_metadata = configuration.sinkRequest.capability.supportsPerFrameHDRMetadata;
     result.sink_request.dynamic_range_transport =
-      static_cast<ApolloCoreDynamicRangeTransport>(configuration.sinkRequest.dynamicRangeTransportRawValue);
+      static_cast<LumenCoreDynamicRangeTransport>(configuration.sinkRequest.dynamicRangeTransportRawValue);
     result.effective_display_state.gamut = static_cast<int32_t>(configuration.effectiveDisplayState.gamutRawValue);
     result.effective_display_state.transfer = static_cast<int32_t>(configuration.effectiveDisplayState.transferRawValue);
     result.effective_display_state.has_hdr_static_metadata = configuration.effectiveDisplayState.hdrStaticMetadata != nil;
@@ -283,7 +283,7 @@ void LumenMacBridgeForwardingPump::run() {
       if (callbacks_.encoded_frame_handler) {
         LumenBridgeDrainedFrameBox *frame_box = [facade_ popNextCoreForwardedFrameSync];
         if (frame_box) {
-          ApolloCoreEncodedCaptureFrameRecord record = to_frame_record(frame_box);
+          LumenCoreEncodedCaptureFrameRecord record = to_frame_record(frame_box);
           CMSampleBufferRef retained_sample_buffer =
             reinterpret_cast<CMSampleBufferRef>(const_cast<void *>(CFRetain(frame_box.sampleBuffer)));
           callbacks_.encoded_frame_handler(callbacks_.context, record, retained_sample_buffer);
@@ -295,7 +295,7 @@ void LumenMacBridgeForwardingPump::run() {
       if (callbacks_.capture_event_handler) {
         LumenBridgeDrainedEventBox *event_box = [facade_ popNextCoreForwardedEventSync];
         if (event_box) {
-          ApolloCoreEncodedCaptureEventRecord record = to_event_record(event_box);
+          LumenCoreEncodedCaptureEventRecord record = to_event_record(event_box);
           const char *message = event_box.message.UTF8String ?: "";
           callbacks_.capture_event_handler(callbacks_.context, record, message);
           delivered = true;
@@ -441,7 +441,7 @@ void LumenMacBridgeControllerStartLumenCoreCaptureAutomation(
     return;
   }
 
-  [controller->facade startApolloCoreCaptureAutomationSync];
+  [controller->facade startLumenCoreCaptureAutomationSync];
 }
 
 void LumenMacBridgeControllerStopLumenCoreCaptureAutomation(
@@ -451,7 +451,7 @@ void LumenMacBridgeControllerStopLumenCoreCaptureAutomation(
     return;
   }
 
-  [controller->facade stopApolloCoreCaptureAutomationSync];
+  [controller->facade stopLumenCoreCaptureAutomationSync];
 }
 
 bool LumenMacBridgeControllerIsLumenCoreCaptureAutomationRunning(
@@ -461,7 +461,7 @@ bool LumenMacBridgeControllerIsLumenCoreCaptureAutomationRunning(
     return false;
   }
 
-  return [controller->facade isApolloCoreCaptureAutomationRunningSync] == YES;
+  return [controller->facade isLumenCoreCaptureAutomationRunningSync] == YES;
 }
 
 LumenMacBridgeStatusSnapshot LumenMacBridgeControllerCopyStatusSnapshot(
@@ -499,10 +499,10 @@ void LumenMacBridgeControllerConfigureCoreForwarding(
                                                      eventCapacity:static_cast<NSInteger>(event_capacity)];
 }
 
-ApolloCoreEncodedCaptureIngressSnapshot LumenMacBridgeControllerCopyCoreForwardingSnapshot(
+LumenCoreEncodedCaptureIngressSnapshot LumenMacBridgeControllerCopyCoreForwardingSnapshot(
   LumenMacBridgeController *controller
 ) {
-  ApolloCoreEncodedCaptureIngressSnapshot snapshot {};
+  LumenCoreEncodedCaptureIngressSnapshot snapshot {};
   if (!controller) {
     return snapshot;
   }
@@ -516,14 +516,14 @@ ApolloCoreEncodedCaptureIngressSnapshot LumenMacBridgeControllerCopyCoreForwardi
   snapshot.dropped_event_count = box.droppedEventCount;
   snapshot.has_last_sample_buffer = box.hasLastSampleBuffer;
   snapshot.has_last_frame = box.lastFrameCodecRawValue >= 0;
-  snapshot.last_frame_codec = static_cast<ApolloCoreCaptureCodec>(box.lastFrameCodecRawValue);
+  snapshot.last_frame_codec = static_cast<LumenCoreCaptureCodec>(box.lastFrameCodecRawValue);
   snapshot.last_frame_payload_size = static_cast<size_t>(box.lastFramePayloadSize);
   snapshot.last_frame_source_sequence_number = box.lastFrameSourceSequenceNumber;
   snapshot.last_frame_source_display_time = box.lastFrameSourceDisplayTime;
   snapshot.last_frame_is_key_frame = box.lastFrameIsKeyFrame;
   snapshot.last_frame_is_hdr_signaled = box.lastFrameIsHDRSignaled;
   snapshot.has_last_event = box.lastEventKindRawValue >= 0;
-  snapshot.last_event_kind = static_cast<ApolloCoreCaptureEventKind>(box.lastEventKindRawValue);
+  snapshot.last_event_kind = static_cast<LumenCoreCaptureEventKind>(box.lastEventKindRawValue);
   return snapshot;
 }
 
@@ -563,15 +563,15 @@ LumenMacBridgeAudioForwardingSnapshot LumenMacBridgeControllerCopyAudioForwardin
   snapshot.last_frame_frame_count = static_cast<int32_t>(box.lastFrameFrameCount);
   snapshot.last_frame_pcm_byte_count = static_cast<size_t>(box.lastFramePCMByteCount);
   snapshot.has_last_event = box.lastEventKindRawValue >= 0;
-  snapshot.last_event_kind = static_cast<ApolloCoreCaptureEventKind>(box.lastEventKindRawValue);
+  snapshot.last_event_kind = static_cast<LumenCoreCaptureEventKind>(box.lastEventKindRawValue);
   return snapshot;
 }
 
-ApolloCoreEncodedCaptureFrameRecord LumenMacBridgeControllerPopNextForwardedFrame(
+LumenCoreEncodedCaptureFrameRecord LumenMacBridgeControllerPopNextForwardedFrame(
   LumenMacBridgeController *controller,
   CMSampleBufferRef *retained_sample_buffer_out
 ) {
-  ApolloCoreEncodedCaptureFrameRecord record {};
+  LumenCoreEncodedCaptureFrameRecord record {};
   if (retained_sample_buffer_out) {
     *retained_sample_buffer_out = nullptr;
   }
@@ -585,7 +585,7 @@ ApolloCoreEncodedCaptureFrameRecord LumenMacBridgeControllerPopNextForwardedFram
   }
 
   record.has_value = true;
-  record.codec = static_cast<ApolloCoreCaptureCodec>(box.codecRawValue);
+  record.codec = static_cast<LumenCoreCaptureCodec>(box.codecRawValue);
   record.payload_size = static_cast<size_t>(box.payloadSize);
   record.source_sequence_number = box.sourceSequenceNumber;
   record.source_display_time = box.sourceDisplayTime;
@@ -602,12 +602,12 @@ ApolloCoreEncodedCaptureFrameRecord LumenMacBridgeControllerPopNextForwardedFram
   return record;
 }
 
-ApolloCoreEncodedCaptureEventRecord LumenMacBridgeControllerPopNextForwardedEvent(
+LumenCoreEncodedCaptureEventRecord LumenMacBridgeControllerPopNextForwardedEvent(
   LumenMacBridgeController *controller,
   char *message_destination,
   size_t message_capacity
 ) {
-  ApolloCoreEncodedCaptureEventRecord record {};
+  LumenCoreEncodedCaptureEventRecord record {};
   if (!controller) {
     return record;
   }
@@ -619,7 +619,7 @@ ApolloCoreEncodedCaptureEventRecord LumenMacBridgeControllerPopNextForwardedEven
   }
 
   record.has_value = true;
-  record.kind = static_cast<ApolloCoreCaptureEventKind>(box.kindRawValue);
+  record.kind = static_cast<LumenCoreCaptureEventKind>(box.kindRawValue);
   record.has_stop_status = box.hasStopStatus;
   record.stop_status = box.stopStatus;
   record.has_automatic_restart_count = box.hasAutomaticRestartCount;

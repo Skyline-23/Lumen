@@ -68,7 +68,7 @@ namespace {
   };
 
   struct encoded_event_state_t {
-    ApolloCoreCaptureEventKind kind = ApolloCoreCaptureEventKindUnknown;
+    LumenCoreCaptureEventKind kind = LumenCoreCaptureEventKindUnknown;
     std::string message;
     bool has_stop_status = false;
     std::int32_t stop_status = 0;
@@ -77,8 +77,8 @@ namespace {
     bool has_source_display_time = false;
     std::uint64_t source_display_time = 0;
 
-    ApolloCoreEncodedCaptureEventRecord record() const {
-      ApolloCoreEncodedCaptureEventRecord record {};
+    LumenCoreEncodedCaptureEventRecord record() const {
+      LumenCoreEncodedCaptureEventRecord record {};
       record.has_value = true;
       record.kind = kind;
       record.has_stop_status = has_stop_status;
@@ -92,7 +92,7 @@ namespace {
   };
 
   struct encoded_frame_state_t {
-    ApolloCoreCaptureCodec codec = ApolloCoreCaptureCodecUnknown;
+    LumenCoreCaptureCodec codec = LumenCoreCaptureCodecUnknown;
     retained_sample_buffer_t sample_buffer;
     std::uint64_t source_sequence_number = 0;
     std::uint64_t source_display_time = 0;
@@ -114,8 +114,8 @@ namespace {
       return static_cast<std::size_t>(CMBlockBufferGetDataLength(block_buffer));
     }
 
-    ApolloCoreEncodedCaptureFrameRecord record() const {
-      ApolloCoreEncodedCaptureFrameRecord record {};
+    LumenCoreEncodedCaptureFrameRecord record() const {
+      LumenCoreEncodedCaptureFrameRecord record {};
       record.has_value = true;
       record.codec = codec;
       record.payload_size = payload_size();
@@ -130,7 +130,7 @@ namespace {
   };
 
   struct audio_event_state_t {
-    ApolloCoreCaptureEventKind kind = ApolloCoreCaptureEventKindUnknown;
+    LumenCoreCaptureEventKind kind = LumenCoreCaptureEventKindUnknown;
     std::string message;
     bool has_stop_status = false;
     std::int32_t stop_status = 0;
@@ -139,8 +139,8 @@ namespace {
     bool has_source_sequence_number = false;
     std::uint64_t source_sequence_number = 0;
 
-    ApolloCoreAudioCaptureEventRecord record() const {
-      ApolloCoreAudioCaptureEventRecord record {};
+    LumenCoreAudioCaptureEventRecord record() const {
+      LumenCoreAudioCaptureEventRecord record {};
       record.has_value = true;
       record.kind = kind;
       record.has_stop_status = has_stop_status;
@@ -161,8 +161,8 @@ namespace {
     std::int32_t channel_count = 0;
     std::int32_t frame_count = 0;
 
-    ApolloCoreAudioCaptureFrameRecord record() const {
-      ApolloCoreAudioCaptureFrameRecord record {};
+    LumenCoreAudioCaptureFrameRecord record() const {
+      LumenCoreAudioCaptureFrameRecord record {};
       record.has_value = true;
       record.sequence_number = sequence_number;
       record.host_time_nanoseconds = host_time_nanoseconds;
@@ -180,7 +180,7 @@ namespace {
   }
 }
 
-struct ApolloCoreEncodedCaptureIngress {
+struct LumenCoreEncodedCaptureIngress {
   mutable std::mutex mutex;
   std::condition_variable data_cv;
   bool producer_active = false;
@@ -198,11 +198,11 @@ struct ApolloCoreEncodedCaptureIngress {
 
 namespace {
   void push_encoded_capture_drop_event_locked(
-    ApolloCoreEncodedCaptureIngress *ingress,
+    LumenCoreEncodedCaptureIngress *ingress,
     std::uint64_t source_display_time
   ) {
     encoded_event_state_t event {};
-    event.kind = ApolloCoreCaptureEventKindDroppedFrame;
+    event.kind = LumenCoreCaptureEventKindDroppedFrame;
     event.message = encoded_capture_queue_overflow_message;
     event.has_source_display_time = true;
     event.source_display_time = source_display_time;
@@ -217,7 +217,7 @@ namespace {
   }
 }
 
-struct ApolloCoreAudioCaptureIngress {
+struct LumenCoreAudioCaptureIngress {
   mutable std::mutex mutex;
   std::condition_variable data_cv;
   bool producer_active = false;
@@ -233,16 +233,16 @@ struct ApolloCoreAudioCaptureIngress {
   std::deque<audio_event_state_t> pending_events;
 };
 
-struct ApolloCoreCaptureRequestState {
+struct LumenCoreCaptureRequestState {
   mutable std::mutex mutex;
   std::condition_variable change_cv;
-  ApolloCoreCaptureRequestSnapshot snapshot {};
+  LumenCoreCaptureRequestSnapshot snapshot {};
 
-  ApolloCoreCaptureRequestState() {
-    snapshot.codec = ApolloCoreCaptureCodecUnknown;
-    snapshot.audio_source_kind = ApolloCoreAudioCaptureSourceKindUnknown;
-    snapshot.preprocess_strategy = ApolloCoreCapturePreprocessStrategyNone;
-    snapshot.queue_profile = ApolloCoreCaptureQueueProfileAuto;
+  LumenCoreCaptureRequestState() {
+    snapshot.codec = LumenCoreCaptureCodecUnknown;
+    snapshot.audio_source_kind = LumenCoreAudioCaptureSourceKindUnknown;
+    snapshot.preprocess_strategy = LumenCoreCapturePreprocessStrategyNone;
+    snapshot.queue_profile = LumenCoreCaptureQueueProfileAuto;
   }
 };
 
@@ -256,11 +256,11 @@ namespace apollo::core {
   }
 
   encoded_capture_ingress::encoded_capture_ingress() :
-      handle_(ApolloCoreEncodedCaptureIngressCreate()) {
+      handle_(LumenCoreEncodedCaptureIngressCreate()) {
   }
 
   encoded_capture_ingress::~encoded_capture_ingress() {
-    ApolloCoreEncodedCaptureIngressDestroy(handle_);
+    LumenCoreEncodedCaptureIngressDestroy(handle_);
     handle_ = nullptr;
   }
 
@@ -273,25 +273,25 @@ namespace apollo::core {
       return *this;
     }
 
-    ApolloCoreEncodedCaptureIngressDestroy(handle_);
+    LumenCoreEncodedCaptureIngressDestroy(handle_);
     handle_ = std::exchange(other.handle_, nullptr);
     return *this;
   }
 
   void encoded_capture_ingress::reset() {
-    ApolloCoreEncodedCaptureIngressReset(handle_);
+    LumenCoreEncodedCaptureIngressReset(handle_);
   }
 
   void encoded_capture_ingress::set_frame_capacity(std::size_t capacity) {
-    ApolloCoreEncodedCaptureIngressSetFrameCapacity(handle_, capacity);
+    LumenCoreEncodedCaptureIngressSetFrameCapacity(handle_, capacity);
   }
 
   void encoded_capture_ingress::set_event_capacity(std::size_t capacity) {
-    ApolloCoreEncodedCaptureIngressSetEventCapacity(handle_, capacity);
+    LumenCoreEncodedCaptureIngressSetEventCapacity(handle_, capacity);
   }
 
   void encoded_capture_ingress::consume_sample_buffer(
-    ApolloCoreCaptureCodec codec,
+    LumenCoreCaptureCodec codec,
     std::uint64_t source_sequence_number,
     std::uint64_t source_display_time,
     bool has_output_callback_latency_milliseconds,
@@ -300,7 +300,7 @@ namespace apollo::core {
     bool is_hdr_signaled,
     CMSampleBufferRef sample_buffer
   ) {
-    ApolloCoreEncodedCaptureIngressConsumeSampleBuffer(
+    LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
       handle_,
       codec,
       source_sequence_number,
@@ -314,7 +314,7 @@ namespace apollo::core {
   }
 
   void encoded_capture_ingress::consume_event(
-    ApolloCoreCaptureEventKind kind,
+    LumenCoreCaptureEventKind kind,
     const char *message,
     bool has_stop_status,
     std::int32_t stop_status,
@@ -323,7 +323,7 @@ namespace apollo::core {
     bool has_source_display_time,
     std::uint64_t source_display_time
   ) {
-    ApolloCoreEncodedCaptureIngressConsumeEvent(
+    LumenCoreEncodedCaptureIngressConsumeEvent(
       handle_,
       kind,
       message,
@@ -336,30 +336,30 @@ namespace apollo::core {
     );
   }
 
-  ApolloCoreEncodedCaptureIngressSnapshot encoded_capture_ingress::snapshot() const {
-    return ApolloCoreEncodedCaptureIngressCopySnapshot(handle_);
+  LumenCoreEncodedCaptureIngressSnapshot encoded_capture_ingress::snapshot() const {
+    return LumenCoreEncodedCaptureIngressCopySnapshot(handle_);
   }
 
   CMSampleBufferRef encoded_capture_ingress::create_retained_last_sample_buffer() const {
-    return ApolloCoreEncodedCaptureIngressCreateRetainedLastSampleBuffer(handle_);
+    return LumenCoreEncodedCaptureIngressCreateRetainedLastSampleBuffer(handle_);
   }
 
-  ApolloCoreEncodedCaptureFrameRecord encoded_capture_ingress::pop_next_frame(
+  LumenCoreEncodedCaptureFrameRecord encoded_capture_ingress::pop_next_frame(
     CMSampleBufferRef *sample_buffer_out
   ) {
-    return ApolloCoreEncodedCaptureIngressPopNextFrame(handle_, sample_buffer_out);
+    return LumenCoreEncodedCaptureIngressPopNextFrame(handle_, sample_buffer_out);
   }
 
-  ApolloCoreEncodedCaptureEventRecord encoded_capture_ingress::pop_next_event(
+  LumenCoreEncodedCaptureEventRecord encoded_capture_ingress::pop_next_event(
     char *message_destination,
     std::size_t message_capacity
   ) {
-    return ApolloCoreEncodedCaptureIngressPopNextEvent(handle_, message_destination, message_capacity);
+    return LumenCoreEncodedCaptureIngressPopNextEvent(handle_, message_destination, message_capacity);
   }
 
   std::string encoded_capture_ingress::copy_last_event_message() const {
     std::array<char, 512> buffer {};
-    const auto copied = ApolloCoreEncodedCaptureIngressCopyLastEventMessage(
+    const auto copied = LumenCoreEncodedCaptureIngressCopyLastEventMessage(
       handle_,
       buffer.data(),
       buffer.size()
@@ -367,24 +367,24 @@ namespace apollo::core {
     return std::string(buffer.data(), copied);
   }
 
-  ApolloCoreEncodedCaptureIngress *encoded_capture_ingress::handle() const {
+  LumenCoreEncodedCaptureIngress *encoded_capture_ingress::handle() const {
     return handle_;
   }
 }
 
 namespace {
-  ApolloCoreEncodedCaptureIngress *shared_encoded_capture_ingress() {
-    static ApolloCoreEncodedCaptureIngress ingress;
+  LumenCoreEncodedCaptureIngress *shared_encoded_capture_ingress() {
+    static LumenCoreEncodedCaptureIngress ingress;
     return &ingress;
   }
 
-  ApolloCoreAudioCaptureIngress *shared_audio_capture_ingress() {
-    static ApolloCoreAudioCaptureIngress ingress;
+  LumenCoreAudioCaptureIngress *shared_audio_capture_ingress() {
+    static LumenCoreAudioCaptureIngress ingress;
     return &ingress;
   }
 
-  ApolloCoreCaptureRequestState *shared_capture_request_state() {
-    static ApolloCoreCaptureRequestState state;
+  LumenCoreCaptureRequestState *shared_capture_request_state() {
+    static LumenCoreCaptureRequestState state;
     return &state;
   }
 }
@@ -399,15 +399,15 @@ const char *LumenCoreBootstrapRuntimeDescription(void) {
   return description.c_str();
 }
 
-ApolloCoreEncodedCaptureIngress *ApolloCoreEncodedCaptureIngressCreate(void) {
-  return new ApolloCoreEncodedCaptureIngress();
+LumenCoreEncodedCaptureIngress *LumenCoreEncodedCaptureIngressCreate(void) {
+  return new LumenCoreEncodedCaptureIngress();
 }
 
-void ApolloCoreEncodedCaptureIngressDestroy(ApolloCoreEncodedCaptureIngress *ingress) {
+void LumenCoreEncodedCaptureIngressDestroy(LumenCoreEncodedCaptureIngress *ingress) {
   delete ingress;
 }
 
-void ApolloCoreEncodedCaptureIngressReset(ApolloCoreEncodedCaptureIngress *ingress) {
+void LumenCoreEncodedCaptureIngressReset(LumenCoreEncodedCaptureIngress *ingress) {
   if (!ingress) {
     return;
   }
@@ -424,8 +424,8 @@ void ApolloCoreEncodedCaptureIngressReset(ApolloCoreEncodedCaptureIngress *ingre
   ingress->data_cv.notify_all();
 }
 
-void ApolloCoreEncodedCaptureIngressSetFrameCapacity(
-  ApolloCoreEncodedCaptureIngress *ingress,
+void LumenCoreEncodedCaptureIngressSetFrameCapacity(
+  LumenCoreEncodedCaptureIngress *ingress,
   std::size_t capacity
 ) {
   if (!ingress) {
@@ -440,8 +440,8 @@ void ApolloCoreEncodedCaptureIngressSetFrameCapacity(
   }
 }
 
-void ApolloCoreEncodedCaptureIngressSetEventCapacity(
-  ApolloCoreEncodedCaptureIngress *ingress,
+void LumenCoreEncodedCaptureIngressSetEventCapacity(
+  LumenCoreEncodedCaptureIngress *ingress,
   std::size_t capacity
 ) {
   if (!ingress) {
@@ -456,9 +456,9 @@ void ApolloCoreEncodedCaptureIngressSetEventCapacity(
   }
 }
 
-void ApolloCoreEncodedCaptureIngressConsumeSampleBuffer(
-  ApolloCoreEncodedCaptureIngress *ingress,
-  ApolloCoreCaptureCodec codec,
+void LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
+  LumenCoreEncodedCaptureIngress *ingress,
+  LumenCoreCaptureCodec codec,
   std::uint64_t source_sequence_number,
   std::uint64_t source_display_time,
   bool has_output_callback_latency_milliseconds,
@@ -513,9 +513,9 @@ void ApolloCoreEncodedCaptureIngressConsumeSampleBuffer(
   ingress->data_cv.notify_all();
 }
 
-void ApolloCoreEncodedCaptureIngressConsumeEvent(
-  ApolloCoreEncodedCaptureIngress *ingress,
-  ApolloCoreCaptureEventKind kind,
+void LumenCoreEncodedCaptureIngressConsumeEvent(
+  LumenCoreEncodedCaptureIngress *ingress,
+  LumenCoreCaptureEventKind kind,
   const char *message,
   bool has_stop_status,
   std::int32_t stop_status,
@@ -551,12 +551,12 @@ void ApolloCoreEncodedCaptureIngressConsumeEvent(
   ingress->data_cv.notify_all();
 }
 
-ApolloCoreEncodedCaptureIngressSnapshot ApolloCoreEncodedCaptureIngressCopySnapshot(
-  const ApolloCoreEncodedCaptureIngress *ingress
+LumenCoreEncodedCaptureIngressSnapshot LumenCoreEncodedCaptureIngressCopySnapshot(
+  const LumenCoreEncodedCaptureIngress *ingress
 ) {
-  ApolloCoreEncodedCaptureIngressSnapshot snapshot {};
-  snapshot.last_frame_codec = ApolloCoreCaptureCodecUnknown;
-  snapshot.last_event_kind = ApolloCoreCaptureEventKindUnknown;
+  LumenCoreEncodedCaptureIngressSnapshot snapshot {};
+  snapshot.last_frame_codec = LumenCoreCaptureCodecUnknown;
+  snapshot.last_event_kind = LumenCoreCaptureEventKindUnknown;
 
   if (!ingress) {
     return snapshot;
@@ -597,8 +597,8 @@ ApolloCoreEncodedCaptureIngressSnapshot ApolloCoreEncodedCaptureIngressCopySnaps
   return snapshot;
 }
 
-CMSampleBufferRef ApolloCoreEncodedCaptureIngressCreateRetainedLastSampleBuffer(
-  const ApolloCoreEncodedCaptureIngress *ingress
+CMSampleBufferRef LumenCoreEncodedCaptureIngressCreateRetainedLastSampleBuffer(
+  const LumenCoreEncodedCaptureIngress *ingress
 ) {
   if (!ingress) {
     return nullptr;
@@ -612,11 +612,11 @@ CMSampleBufferRef ApolloCoreEncodedCaptureIngressCreateRetainedLastSampleBuffer(
   return reinterpret_cast<CMSampleBufferRef>(const_cast<void *>(CFRetain(ingress->last_frame->sample_buffer.value)));
 }
 
-ApolloCoreEncodedCaptureFrameRecord ApolloCoreEncodedCaptureIngressPopNextFrame(
-  ApolloCoreEncodedCaptureIngress *ingress,
+LumenCoreEncodedCaptureFrameRecord LumenCoreEncodedCaptureIngressPopNextFrame(
+  LumenCoreEncodedCaptureIngress *ingress,
   CMSampleBufferRef *retained_sample_buffer_out
 ) {
-  ApolloCoreEncodedCaptureFrameRecord record {};
+  LumenCoreEncodedCaptureFrameRecord record {};
 
   if (retained_sample_buffer_out) {
     *retained_sample_buffer_out = nullptr;
@@ -640,12 +640,12 @@ ApolloCoreEncodedCaptureFrameRecord ApolloCoreEncodedCaptureIngressPopNextFrame(
   return record;
 }
 
-ApolloCoreEncodedCaptureEventRecord ApolloCoreEncodedCaptureIngressPopNextEvent(
-  ApolloCoreEncodedCaptureIngress *ingress,
+LumenCoreEncodedCaptureEventRecord LumenCoreEncodedCaptureIngressPopNextEvent(
+  LumenCoreEncodedCaptureIngress *ingress,
   char *message_destination,
   size_t message_capacity
 ) {
-  ApolloCoreEncodedCaptureEventRecord record {};
+  LumenCoreEncodedCaptureEventRecord record {};
 
   if (!ingress) {
     return record;
@@ -667,8 +667,8 @@ ApolloCoreEncodedCaptureEventRecord ApolloCoreEncodedCaptureIngressPopNextEvent(
   return record;
 }
 
-size_t ApolloCoreEncodedCaptureIngressCopyLastEventMessage(
-  const ApolloCoreEncodedCaptureIngress *ingress,
+size_t LumenCoreEncodedCaptureIngressCopyLastEventMessage(
+  const LumenCoreEncodedCaptureIngress *ingress,
   char *destination,
   size_t capacity
 ) {
@@ -689,12 +689,12 @@ size_t ApolloCoreEncodedCaptureIngressCopyLastEventMessage(
   return copy_size;
 }
 
-ApolloCoreEncodedCaptureIngress *ApolloCoreSharedEncodedCaptureIngress(void) {
+LumenCoreEncodedCaptureIngress *LumenCoreSharedEncodedCaptureIngress(void) {
   return shared_encoded_capture_ingress();
 }
 
-void ApolloCoreEncodedCaptureIngressSetProducerActive(
-  ApolloCoreEncodedCaptureIngress *ingress,
+void LumenCoreEncodedCaptureIngressSetProducerActive(
+  LumenCoreEncodedCaptureIngress *ingress,
   bool active
 ) {
   if (!ingress) {
@@ -708,8 +708,8 @@ void ApolloCoreEncodedCaptureIngressSetProducerActive(
   ingress->data_cv.notify_all();
 }
 
-bool ApolloCoreEncodedCaptureIngressIsProducerActive(
-  const ApolloCoreEncodedCaptureIngress *ingress
+bool LumenCoreEncodedCaptureIngressIsProducerActive(
+  const LumenCoreEncodedCaptureIngress *ingress
 ) {
   if (!ingress) {
     return false;
@@ -719,8 +719,8 @@ bool ApolloCoreEncodedCaptureIngressIsProducerActive(
   return ingress->producer_active;
 }
 
-bool ApolloCoreEncodedCaptureIngressWaitForData(
-  ApolloCoreEncodedCaptureIngress *ingress,
+bool LumenCoreEncodedCaptureIngressWaitForData(
+  LumenCoreEncodedCaptureIngress *ingress,
   uint32_t timeout_milliseconds
 ) {
   if (!ingress) {
@@ -742,8 +742,8 @@ bool ApolloCoreEncodedCaptureIngressWaitForData(
   return has_pending();
 }
 
-bool ApolloCoreEncodedCaptureIngressWaitForProducerActive(
-  ApolloCoreEncodedCaptureIngress *ingress,
+bool LumenCoreEncodedCaptureIngressWaitForProducerActive(
+  LumenCoreEncodedCaptureIngress *ingress,
   uint32_t timeout_milliseconds
 ) {
   if (!ingress) {
@@ -761,15 +761,15 @@ bool ApolloCoreEncodedCaptureIngressWaitForProducerActive(
   return ingress->producer_active;
 }
 
-ApolloCoreAudioCaptureIngress *ApolloCoreAudioCaptureIngressCreate(void) {
-  return new ApolloCoreAudioCaptureIngress();
+LumenCoreAudioCaptureIngress *LumenCoreAudioCaptureIngressCreate(void) {
+  return new LumenCoreAudioCaptureIngress();
 }
 
-void ApolloCoreAudioCaptureIngressDestroy(ApolloCoreAudioCaptureIngress *ingress) {
+void LumenCoreAudioCaptureIngressDestroy(LumenCoreAudioCaptureIngress *ingress) {
   delete ingress;
 }
 
-void ApolloCoreAudioCaptureIngressReset(ApolloCoreAudioCaptureIngress *ingress) {
+void LumenCoreAudioCaptureIngressReset(LumenCoreAudioCaptureIngress *ingress) {
   if (!ingress) {
     return;
   }
@@ -786,8 +786,8 @@ void ApolloCoreAudioCaptureIngressReset(ApolloCoreAudioCaptureIngress *ingress) 
   ingress->data_cv.notify_all();
 }
 
-void ApolloCoreAudioCaptureIngressSetFrameCapacity(
-  ApolloCoreAudioCaptureIngress *ingress,
+void LumenCoreAudioCaptureIngressSetFrameCapacity(
+  LumenCoreAudioCaptureIngress *ingress,
   std::size_t capacity
 ) {
   if (!ingress) {
@@ -802,8 +802,8 @@ void ApolloCoreAudioCaptureIngressSetFrameCapacity(
   }
 }
 
-void ApolloCoreAudioCaptureIngressSetEventCapacity(
-  ApolloCoreAudioCaptureIngress *ingress,
+void LumenCoreAudioCaptureIngressSetEventCapacity(
+  LumenCoreAudioCaptureIngress *ingress,
   std::size_t capacity
 ) {
   if (!ingress) {
@@ -818,8 +818,8 @@ void ApolloCoreAudioCaptureIngressSetEventCapacity(
   }
 }
 
-void ApolloCoreAudioCaptureIngressConsumePCMFloat32(
-  ApolloCoreAudioCaptureIngress *ingress,
+void LumenCoreAudioCaptureIngressConsumePCMFloat32(
+  LumenCoreAudioCaptureIngress *ingress,
   std::uint64_t sequence_number,
   std::uint64_t host_time_nanoseconds,
   std::int32_t sample_rate,
@@ -852,9 +852,9 @@ void ApolloCoreAudioCaptureIngressConsumePCMFloat32(
   ingress->data_cv.notify_all();
 }
 
-void ApolloCoreAudioCaptureIngressConsumeEvent(
-  ApolloCoreAudioCaptureIngress *ingress,
-  ApolloCoreCaptureEventKind kind,
+void LumenCoreAudioCaptureIngressConsumeEvent(
+  LumenCoreAudioCaptureIngress *ingress,
+  LumenCoreCaptureEventKind kind,
   const char *message,
   bool has_stop_status,
   std::int32_t stop_status,
@@ -890,11 +890,11 @@ void ApolloCoreAudioCaptureIngressConsumeEvent(
   ingress->data_cv.notify_all();
 }
 
-ApolloCoreAudioCaptureIngressSnapshot ApolloCoreAudioCaptureIngressCopySnapshot(
-  const ApolloCoreAudioCaptureIngress *ingress
+LumenCoreAudioCaptureIngressSnapshot LumenCoreAudioCaptureIngressCopySnapshot(
+  const LumenCoreAudioCaptureIngress *ingress
 ) {
-  ApolloCoreAudioCaptureIngressSnapshot snapshot {};
-  snapshot.last_event_kind = ApolloCoreCaptureEventKindUnknown;
+  LumenCoreAudioCaptureIngressSnapshot snapshot {};
+  snapshot.last_event_kind = LumenCoreCaptureEventKindUnknown;
 
   if (!ingress) {
     return snapshot;
@@ -934,13 +934,13 @@ ApolloCoreAudioCaptureIngressSnapshot ApolloCoreAudioCaptureIngressCopySnapshot(
   return snapshot;
 }
 
-ApolloCoreAudioCaptureFrameRecord ApolloCoreAudioCaptureIngressPopNextFrame(
-  ApolloCoreAudioCaptureIngress *ingress,
+LumenCoreAudioCaptureFrameRecord LumenCoreAudioCaptureIngressPopNextFrame(
+  LumenCoreAudioCaptureIngress *ingress,
   void *pcm_destination,
   std::size_t pcm_capacity,
   std::size_t *copied_size_out
 ) {
-  ApolloCoreAudioCaptureFrameRecord record {};
+  LumenCoreAudioCaptureFrameRecord record {};
   if (copied_size_out) {
     *copied_size_out = 0;
   }
@@ -969,12 +969,12 @@ ApolloCoreAudioCaptureFrameRecord ApolloCoreAudioCaptureIngressPopNextFrame(
   return record;
 }
 
-ApolloCoreAudioCaptureEventRecord ApolloCoreAudioCaptureIngressPopNextEvent(
-  ApolloCoreAudioCaptureIngress *ingress,
+LumenCoreAudioCaptureEventRecord LumenCoreAudioCaptureIngressPopNextEvent(
+  LumenCoreAudioCaptureIngress *ingress,
   char *message_destination,
   size_t message_capacity
 ) {
-  ApolloCoreAudioCaptureEventRecord record {};
+  LumenCoreAudioCaptureEventRecord record {};
 
   if (!ingress) {
     return record;
@@ -996,8 +996,8 @@ ApolloCoreAudioCaptureEventRecord ApolloCoreAudioCaptureIngressPopNextEvent(
   return record;
 }
 
-size_t ApolloCoreAudioCaptureIngressCopyLastEventMessage(
-  const ApolloCoreAudioCaptureIngress *ingress,
+size_t LumenCoreAudioCaptureIngressCopyLastEventMessage(
+  const LumenCoreAudioCaptureIngress *ingress,
   char *destination,
   size_t capacity
 ) {
@@ -1018,12 +1018,12 @@ size_t ApolloCoreAudioCaptureIngressCopyLastEventMessage(
   return copy_size;
 }
 
-ApolloCoreAudioCaptureIngress *ApolloCoreSharedAudioCaptureIngress(void) {
+LumenCoreAudioCaptureIngress *LumenCoreSharedAudioCaptureIngress(void) {
   return shared_audio_capture_ingress();
 }
 
-void ApolloCoreAudioCaptureIngressSetProducerActive(
-  ApolloCoreAudioCaptureIngress *ingress,
+void LumenCoreAudioCaptureIngressSetProducerActive(
+  LumenCoreAudioCaptureIngress *ingress,
   bool active
 ) {
   if (!ingress) {
@@ -1037,8 +1037,8 @@ void ApolloCoreAudioCaptureIngressSetProducerActive(
   ingress->data_cv.notify_all();
 }
 
-bool ApolloCoreAudioCaptureIngressIsProducerActive(
-  const ApolloCoreAudioCaptureIngress *ingress
+bool LumenCoreAudioCaptureIngressIsProducerActive(
+  const LumenCoreAudioCaptureIngress *ingress
 ) {
   if (!ingress) {
     return false;
@@ -1048,8 +1048,8 @@ bool ApolloCoreAudioCaptureIngressIsProducerActive(
   return ingress->producer_active;
 }
 
-bool ApolloCoreAudioCaptureIngressWaitForData(
-  ApolloCoreAudioCaptureIngress *ingress,
+bool LumenCoreAudioCaptureIngressWaitForData(
+  LumenCoreAudioCaptureIngress *ingress,
   uint32_t timeout_milliseconds
 ) {
   if (!ingress) {
@@ -1071,8 +1071,8 @@ bool ApolloCoreAudioCaptureIngressWaitForData(
   return has_pending();
 }
 
-bool ApolloCoreAudioCaptureIngressWaitForProducerActive(
-  ApolloCoreAudioCaptureIngress *ingress,
+bool LumenCoreAudioCaptureIngressWaitForProducerActive(
+  LumenCoreAudioCaptureIngress *ingress,
   uint32_t timeout_milliseconds
 ) {
   if (!ingress) {
@@ -1090,13 +1090,13 @@ bool ApolloCoreAudioCaptureIngressWaitForProducerActive(
   return ingress->producer_active;
 }
 
-ApolloCoreCaptureRequestSnapshot ApolloCoreCaptureRequestCopySnapshot(void) {
+LumenCoreCaptureRequestSnapshot LumenCoreCaptureRequestCopySnapshot(void) {
   auto *state = shared_capture_request_state();
   std::scoped_lock lock(state->mutex);
   return state->snapshot;
 }
 
-bool ApolloCoreCaptureRequestWaitForGenerationChange(
+bool LumenCoreCaptureRequestWaitForGenerationChange(
   uint64_t observed_generation,
   uint32_t timeout_milliseconds
 ) {
@@ -1112,25 +1112,25 @@ bool ApolloCoreCaptureRequestWaitForGenerationChange(
   return state->snapshot.generation != observed_generation;
 }
 
-void ApolloCoreCaptureRequestPublishVideo(
+void LumenCoreCaptureRequestPublishVideo(
   uint32_t display_id,
-  ApolloCoreCaptureCodec codec,
-  ApolloCoreCapturePreprocessStrategy preprocess_strategy,
-  ApolloCoreCaptureQueueProfile queue_profile,
+  LumenCoreCaptureCodec codec,
+  LumenCoreCapturePreprocessStrategy preprocess_strategy,
+  LumenCoreCaptureQueueProfile queue_profile,
   bool show_cursor,
   int32_t target_frame_rate,
   int32_t target_video_bitrate_kbps,
   int32_t requested_width,
   int32_t requested_height,
-  ApolloCoreSinkRequest sink_request,
-  ApolloCoreEffectiveDisplayState effective_display_state
+  LumenCoreSinkRequest sink_request,
+  LumenCoreEffectiveDisplayState effective_display_state
 ) {
   auto *state = shared_capture_request_state();
   {
     std::scoped_lock lock(state->mutex);
     state->snapshot.generation += 1;
     state->snapshot.video_generation += 1;
-    state->snapshot.video_requested = codec != ApolloCoreCaptureCodecUnknown;
+    state->snapshot.video_requested = codec != LumenCoreCaptureCodecUnknown;
     state->snapshot.display_id = display_id;
     state->snapshot.codec = codec;
     state->snapshot.preprocess_strategy = preprocess_strategy;
@@ -1162,8 +1162,8 @@ void ApolloCoreCaptureRequestPublishVideo(
   state->change_cv.notify_all();
 }
 
-void ApolloCoreCaptureRequestPublishAudio(
-  ApolloCoreAudioCaptureSourceKind source_kind,
+void LumenCoreCaptureRequestPublishAudio(
+  LumenCoreAudioCaptureSourceKind source_kind,
   uint32_t display_id,
   bool excludes_current_process_audio,
   int32_t sample_rate,
@@ -1175,7 +1175,7 @@ void ApolloCoreCaptureRequestPublishAudio(
     std::scoped_lock lock(state->mutex);
     state->snapshot.generation += 1;
     state->snapshot.audio_generation += 1;
-    state->snapshot.audio_requested = source_kind != ApolloCoreAudioCaptureSourceKindUnknown;
+    state->snapshot.audio_requested = source_kind != LumenCoreAudioCaptureSourceKindUnknown;
     state->snapshot.audio_source_kind = source_kind;
     state->snapshot.display_id = display_id;
     state->snapshot.audio_excludes_current_process = excludes_current_process_audio;
@@ -1186,7 +1186,7 @@ void ApolloCoreCaptureRequestPublishAudio(
   state->change_cv.notify_all();
 }
 
-void ApolloCoreCaptureRequestClear(void) {
+void LumenCoreCaptureRequestClear(void) {
   auto *state = shared_capture_request_state();
   {
     std::scoped_lock lock(state->mutex);
@@ -1197,10 +1197,10 @@ void ApolloCoreCaptureRequestClear(void) {
     state->snapshot.generation = generation;
     state->snapshot.video_generation = video_generation;
     state->snapshot.audio_generation = audio_generation;
-    state->snapshot.codec = ApolloCoreCaptureCodecUnknown;
-    state->snapshot.audio_source_kind = ApolloCoreAudioCaptureSourceKindUnknown;
-    state->snapshot.preprocess_strategy = ApolloCoreCapturePreprocessStrategyNone;
-    state->snapshot.queue_profile = ApolloCoreCaptureQueueProfileAuto;
+    state->snapshot.codec = LumenCoreCaptureCodecUnknown;
+    state->snapshot.audio_source_kind = LumenCoreAudioCaptureSourceKindUnknown;
+    state->snapshot.preprocess_strategy = LumenCoreCapturePreprocessStrategyNone;
+    state->snapshot.queue_profile = LumenCoreCaptureQueueProfileAuto;
   }
   state->change_cv.notify_all();
 }

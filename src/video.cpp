@@ -111,10 +111,10 @@ namespace video {
 
 #ifdef __APPLE__
   namespace {
-    constexpr uint32_t apollo_core_ingress_wait_timeout_ms = 5000;
-    constexpr auto apollo_core_ingress_progress_log_interval = 3s;
+    constexpr uint32_t lumen_core_ingress_wait_timeout_ms = 5000;
+    constexpr auto lumen_core_ingress_progress_log_interval = 3s;
 
-    class apollo_core_display_time_clock_t {
+    class lumen_core_display_time_clock_t {
     public:
       std::optional<std::chrono::steady_clock::time_point> frame_timestamp(std::uint64_t source_display_time) {
         if (source_display_time == 0) {
@@ -161,13 +161,13 @@ namespace video {
       std::chrono::steady_clock::time_point epoch_timestamp {};
     };
 
-    std::string_view apollo_core_codec_name(ApolloCoreCaptureCodec codec) {
+    std::string_view lumen_core_codec_name(LumenCoreCaptureCodec codec) {
       switch (codec) {
-        case ApolloCoreCaptureCodecH264:
+        case LumenCoreCaptureCodecH264:
           return "h264"sv;
-        case ApolloCoreCaptureCodecHEVC:
+        case LumenCoreCaptureCodecHEVC:
           return "hevc"sv;
-        case ApolloCoreCaptureCodecProResProxy:
+        case LumenCoreCaptureCodecProResProxy:
           return "prores-proxy"sv;
         default:
           return "unknown"sv;
@@ -418,35 +418,35 @@ namespace video {
       return std::to_string(dimensions.width) + "x" + std::to_string(dimensions.height);
     }
 
-    CMVideoCodecType lumen_core_codec_type(ApolloCoreCaptureCodec codec) {
+    CMVideoCodecType lumen_core_codec_type(LumenCoreCaptureCodec codec) {
       switch (codec) {
-        case ApolloCoreCaptureCodecH264:
+        case LumenCoreCaptureCodecH264:
           return kCMVideoCodecType_H264;
-        case ApolloCoreCaptureCodecHEVC:
+        case LumenCoreCaptureCodecHEVC:
           return kCMVideoCodecType_HEVC;
-        case ApolloCoreCaptureCodecProResProxy:
+        case LumenCoreCaptureCodecProResProxy:
           return kCMVideoCodecType_AppleProRes422Proxy;
         default:
           return 0;
       }
     }
 
-    bool apollo_core_codec_matches_video_format(ApolloCoreCaptureCodec codec, int video_format) {
+    bool lumen_core_codec_matches_video_format(LumenCoreCaptureCodec codec, int video_format) {
       switch (video_format) {
         case 0:
-          return codec == ApolloCoreCaptureCodecH264;
+          return codec == LumenCoreCaptureCodecH264;
         case 1:
-          return codec == ApolloCoreCaptureCodecHEVC;
+          return codec == LumenCoreCaptureCodecHEVC;
         default:
           return false;
       }
     }
 
-    std::optional<int> apollo_core_video_format_for_codec(ApolloCoreCaptureCodec codec) {
+    std::optional<int> lumen_core_video_format_for_codec(LumenCoreCaptureCodec codec) {
       switch (codec) {
-        case ApolloCoreCaptureCodecH264:
+        case LumenCoreCaptureCodecH264:
           return 0;
-        case ApolloCoreCaptureCodecHEVC:
+        case LumenCoreCaptureCodecHEVC:
           return 1;
         default:
           return std::nullopt;
@@ -3806,7 +3806,7 @@ namespace video {
       auto idr_events = mail->event<bool>(mail::idr);
       auto invalidate_ref_frames_events = mail->event<std::pair<int64_t, int64_t>>(mail::invalidate_ref_frames);
       auto packets = mail::man->queue<packet_t>(mail::video_packets);
-      auto ingress = ApolloCoreSharedEncodedCaptureIngress();
+      auto ingress = LumenCoreSharedEncodedCaptureIngress();
       platf::external_capture_display_metadata_t external_metadata {};
       refresh_external_capture_metadata(mail, config, external_metadata);
 
@@ -3818,7 +3818,7 @@ namespace video {
       bool logged_waiting_for_initial_idr = false;
       std::optional<int> adopted_video_format;
       int64_t next_packet_frame_index = 1;
-      apollo_core_display_time_clock_t display_time_clock;
+      lumen_core_display_time_clock_t display_time_clock;
       auto last_ingress_stats_log = std::chrono::steady_clock::now();
       std::uint64_t last_logged_frame_count = 0;
       std::uint64_t last_forwarded_source_sequence_number = 0;
@@ -3831,10 +3831,10 @@ namespace video {
       std::array<char, 512> event_message {};
 
       const auto arm_wait_for_next_idr = [&](std::string_view reason) {
-        const auto ingress_snapshot = ApolloCoreEncodedCaptureIngressCopySnapshot(ingress);
-        ApolloCoreEncodedCaptureIngressReset(ingress);
+        const auto ingress_snapshot = LumenCoreEncodedCaptureIngressCopySnapshot(ingress);
+        LumenCoreEncodedCaptureIngressReset(ingress);
         refresh_external_capture_metadata(mail, config, external_metadata);
-        display_time_clock = apollo_core_display_time_clock_t {};
+        display_time_clock = lumen_core_display_time_clock_t {};
         waiting_for_initial_idr = true;
         logged_waiting_for_initial_idr = false;
         logged_first_packet = false;
@@ -3854,10 +3854,10 @@ namespace video {
                         << " flushed-events="sv << ingress_snapshot.queued_event_count;
       };
 
-      if (!ApolloCoreEncodedCaptureIngressIsProducerActive(ingress) &&
-          !ApolloCoreEncodedCaptureIngressWaitForProducerActive(ingress, apollo_core_ingress_wait_timeout_ms)) {
+      if (!LumenCoreEncodedCaptureIngressIsProducerActive(ingress) &&
+          !LumenCoreEncodedCaptureIngressWaitForProducerActive(ingress, lumen_core_ingress_wait_timeout_ms)) {
         BOOST_LOG(error) << "External macOS encoded ingress producer did not become active within "
-                         << apollo_core_ingress_wait_timeout_ms << "ms";
+                         << lumen_core_ingress_wait_timeout_ms << "ms";
         return;
       }
 
@@ -3880,7 +3880,7 @@ namespace video {
         }
 
         while (true) {
-          auto event = ApolloCoreEncodedCaptureIngressPopNextEvent(
+          auto event = LumenCoreEncodedCaptureIngressPopNextEvent(
             ingress,
             event_message.data(),
             event_message.size()
@@ -3896,23 +3896,23 @@ namespace video {
           };
 
           switch (event.kind) {
-            case ApolloCoreCaptureEventKindStarted:
-            case ApolloCoreCaptureEventKindRestarted:
+            case LumenCoreCaptureEventKindStarted:
+            case LumenCoreCaptureEventKindRestarted:
               arm_wait_for_next_idr("capture-restarted");
               BOOST_LOG(info) << "External macOS encoded ingress event kind="sv << static_cast<int>(event.kind)
                               << " message="sv << message;
               break;
-            case ApolloCoreCaptureEventKindDroppedFrame:
+            case LumenCoreCaptureEventKindDroppedFrame:
               BOOST_LOG(warning) << "External macOS encoded ingress dropped a frame"sv
                                  << " message="sv << message;
               if (message == "core-forwarder-overflow"sv) {
                 arm_wait_for_next_idr("core-forwarder-overflow");
               }
               break;
-            case ApolloCoreCaptureEventKindFailed:
+            case LumenCoreCaptureEventKindFailed:
               BOOST_LOG(error) << "External macOS encoded ingress reported a failure: "sv << message;
               break;
-            case ApolloCoreCaptureEventKindStopped:
+            case LumenCoreCaptureEventKindStopped:
               BOOST_LOG(info) << "External macOS encoded ingress stopped"sv;
               break;
             default:
@@ -3924,7 +3924,7 @@ namespace video {
 
         while (true) {
           CMSampleBufferRef retained_sample_buffer = nullptr;
-          auto frame = ApolloCoreEncodedCaptureIngressPopNextFrame(ingress, &retained_sample_buffer);
+          auto frame = LumenCoreEncodedCaptureIngressPopNextFrame(ingress, &retained_sample_buffer);
           if (!frame.has_value || !retained_sample_buffer) {
             if (retained_sample_buffer) {
               CFRelease(retained_sample_buffer);
@@ -3939,24 +3939,24 @@ namespace video {
             if (make_ready_status != noErr || !CMSampleBufferDataIsReady(retained_sample_buffer)) {
               BOOST_LOG(error) << "External macOS encoded ingress produced a non-ready sample buffer"
                                << " makeReadyStatus="sv << make_ready_status
-                               << " codec="sv << apollo_core_codec_name(frame.codec);
+                               << " codec="sv << lumen_core_codec_name(frame.codec);
               CFRelease(retained_sample_buffer);
               continue;
             }
           }
 
           const auto expected_video_format = adopted_video_format.value_or(config.videoFormat);
-          if (!apollo_core_codec_matches_video_format(frame.codec, expected_video_format)) {
-            const auto frame_video_format = apollo_core_video_format_for_codec(frame.codec);
+          if (!lumen_core_codec_matches_video_format(frame.codec, expected_video_format)) {
+            const auto frame_video_format = lumen_core_video_format_for_codec(frame.codec);
             if (!logged_first_packet && frame_video_format.has_value()) {
               adopted_video_format = frame_video_format;
               BOOST_LOG(warning) << "External macOS encoded ingress adopted frame codec="sv
-                                 << apollo_core_codec_name(frame.codec)
+                                 << lumen_core_codec_name(frame.codec)
                                  << " because the streaming thread still expected "sv
                                  << requested_video_format_name(expected_video_format);
             } else if (!logged_codec_mismatch) {
               BOOST_LOG(error) << "External macOS encoded ingress codec mismatch frameCodec="sv
-                               << apollo_core_codec_name(frame.codec)
+                               << lumen_core_codec_name(frame.codec)
                                << " requestedVideoFormat="sv
                                << requested_video_format_name(expected_video_format);
               logged_codec_mismatch = true;
@@ -4031,7 +4031,7 @@ namespace video {
               kCMFormatDescriptionExtension_YCbCrMatrix
             );
             BOOST_LOG(info) << "External macOS encoded ingress first accepted packet codec="sv
-                            << apollo_core_codec_name(frame.codec)
+                            << lumen_core_codec_name(frame.codec)
                             << " idr="sv << packet_is_idr
                             << " bridge-key="sv << frame.is_key_frame
                             << " samplebuffer-idr="sv << sample_buffer_reports_idr
@@ -4075,7 +4075,7 @@ namespace video {
               0;
           last_forwarded_source_display_delta_milliseconds =
             last_forwarded_source_display_time > 0 && frame.source_display_time >= last_forwarded_source_display_time ?
-              std::optional<double> {apollo_core_display_time_clock_t::display_time_delta_milliseconds(frame.source_display_time - last_forwarded_source_display_time)} :
+              std::optional<double> {lumen_core_display_time_clock_t::display_time_delta_milliseconds(frame.source_display_time - last_forwarded_source_display_time)} :
               std::nullopt;
           last_forwarded_packet_timestamp_delta_milliseconds =
             last_forwarded_packet_timestamp && packet->frame_timestamp ?
@@ -4151,9 +4151,9 @@ namespace video {
         }
 
         const auto now = std::chrono::steady_clock::now();
-        if (now - last_ingress_stats_log >= apollo_core_ingress_progress_log_interval) {
-          const auto snapshot = ApolloCoreEncodedCaptureIngressCopySnapshot(ingress);
-          const auto producer_active = ApolloCoreEncodedCaptureIngressIsProducerActive(ingress);
+        if (now - last_ingress_stats_log >= lumen_core_ingress_progress_log_interval) {
+          const auto snapshot = LumenCoreEncodedCaptureIngressCopySnapshot(ingress);
+          const auto producer_active = LumenCoreEncodedCaptureIngressIsProducerActive(ingress);
           BOOST_LOG(info) << "External macOS encoded ingress stats: frames="sv
                           << snapshot.frame_count
                           << " queued="sv << snapshot.queued_frame_count
@@ -4171,7 +4171,7 @@ namespace video {
           if (producer_active && snapshot.frame_count == last_logged_frame_count) {
             if (!logged_frame_stall) {
               BOOST_LOG(warning) << "External macOS encoded ingress has not advanced frame delivery in the last "
-                                 << std::chrono::duration_cast<std::chrono::seconds>(apollo_core_ingress_progress_log_interval).count()
+                                 << std::chrono::duration_cast<std::chrono::seconds>(lumen_core_ingress_progress_log_interval).count()
                                  << "s"sv;
               logged_frame_stall = true;
             }
@@ -4187,15 +4187,15 @@ namespace video {
           continue;
         }
 
-        if (!ApolloCoreEncodedCaptureIngressWaitForData(ingress, 50)) {
-          if (!ApolloCoreEncodedCaptureIngressIsProducerActive(ingress)) {
-            if (ApolloCoreEncodedCaptureIngressWaitForProducerActive(ingress, apollo_core_ingress_wait_timeout_ms)) {
+        if (!LumenCoreEncodedCaptureIngressWaitForData(ingress, 50)) {
+          if (!LumenCoreEncodedCaptureIngressIsProducerActive(ingress)) {
+            if (LumenCoreEncodedCaptureIngressWaitForProducerActive(ingress, lumen_core_ingress_wait_timeout_ms)) {
               logged_producer_stop = false;
               continue;
             }
             if (!logged_producer_stop) {
               BOOST_LOG(error) << "External macOS encoded ingress producer became inactive and did not recover within "
-                               << apollo_core_ingress_wait_timeout_ms << "ms";
+                               << lumen_core_ingress_wait_timeout_ms << "ms";
               logged_producer_stop = true;
             }
             break;
@@ -4203,7 +4203,7 @@ namespace video {
         }
       }
 
-      const auto final_snapshot = ApolloCoreEncodedCaptureIngressCopySnapshot(ingress);
+      const auto final_snapshot = LumenCoreEncodedCaptureIngressCopySnapshot(ingress);
       BOOST_LOG(info) << "External macOS encoded ingress final stats: frames="sv
                       << final_snapshot.frame_count
                       << " queued="sv << final_snapshot.queued_frame_count
@@ -4598,7 +4598,7 @@ namespace video {
     idr_events->raise(true);
 #ifdef __APPLE__
     if (!config.input_only) {
-      auto *external_ingress = ApolloCoreSharedEncodedCaptureIngress();
+      auto *external_ingress = LumenCoreSharedEncodedCaptureIngress();
       if (!external_ingress) {
         BOOST_LOG(error) << "LumenCore encoded ingress is unavailable on macOS";
         return;

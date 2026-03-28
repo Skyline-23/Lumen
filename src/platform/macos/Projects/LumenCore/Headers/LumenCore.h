@@ -10,42 +10,42 @@
 extern "C" {
 #endif
 
-typedef enum ApolloCoreCaptureCodec {
-  ApolloCoreCaptureCodecUnknown = -1,
-  ApolloCoreCaptureCodecH264 = 0,
-  ApolloCoreCaptureCodecHEVC = 1,
-  ApolloCoreCaptureCodecProResProxy = 2
-} ApolloCoreCaptureCodec;
+typedef enum LumenCoreCaptureCodec {
+  LumenCoreCaptureCodecUnknown = -1,
+  LumenCoreCaptureCodecH264 = 0,
+  LumenCoreCaptureCodecHEVC = 1,
+  LumenCoreCaptureCodecProResProxy = 2
+} LumenCoreCaptureCodec;
 
-typedef enum ApolloCoreCapturePreprocessStrategy {
-  ApolloCoreCapturePreprocessStrategyNone = 0,
-  ApolloCoreCapturePreprocessStrategyDownscale2x = 1
-} ApolloCoreCapturePreprocessStrategy;
+typedef enum LumenCoreCapturePreprocessStrategy {
+  LumenCoreCapturePreprocessStrategyNone = 0,
+  LumenCoreCapturePreprocessStrategyDownscale2x = 1
+} LumenCoreCapturePreprocessStrategy;
 
-typedef enum ApolloCoreCaptureQueueProfile {
-  ApolloCoreCaptureQueueProfileQ1 = 0,
-  ApolloCoreCaptureQueueProfileQ2 = 1,
-  ApolloCoreCaptureQueueProfileQ3 = 2,
-  ApolloCoreCaptureQueueProfileQ4 = 3,
-  ApolloCoreCaptureQueueProfileAuto = 4
-} ApolloCoreCaptureQueueProfile;
+typedef enum LumenCoreCaptureQueueProfile {
+  LumenCoreCaptureQueueProfileQ1 = 0,
+  LumenCoreCaptureQueueProfileQ2 = 1,
+  LumenCoreCaptureQueueProfileQ3 = 2,
+  LumenCoreCaptureQueueProfileQ4 = 3,
+  LumenCoreCaptureQueueProfileAuto = 4
+} LumenCoreCaptureQueueProfile;
 
-typedef enum ApolloCoreDynamicRangeTransport {
-  ApolloCoreDynamicRangeTransportUnknown = 0,
-  ApolloCoreDynamicRangeTransportSDR = 1,
-  ApolloCoreDynamicRangeTransportFullFrameHDR = 2,
-  ApolloCoreDynamicRangeTransportFrameGatedHDR = 3,
-  ApolloCoreDynamicRangeTransportSDRBaseHDROverlay = 4
-} ApolloCoreDynamicRangeTransport;
+typedef enum LumenCoreDynamicRangeTransport {
+  LumenCoreDynamicRangeTransportUnknown = 0,
+  LumenCoreDynamicRangeTransportSDR = 1,
+  LumenCoreDynamicRangeTransportFullFrameHDR = 2,
+  LumenCoreDynamicRangeTransportFrameGatedHDR = 3,
+  LumenCoreDynamicRangeTransportSDRBaseHDROverlay = 4
+} LumenCoreDynamicRangeTransport;
 
-typedef struct ApolloCoreSinkMode {
+typedef struct LumenCoreSinkMode {
   bool hidpi;
   bool scale_explicit;
   bool mode_is_logical;
   int32_t scale_percent;
-} ApolloCoreSinkMode;
+} LumenCoreSinkMode;
 
-typedef struct ApolloCoreSinkCapability {
+typedef struct LumenCoreSinkCapability {
   int32_t gamut;
   int32_t transfer;
   float current_edr_headroom;
@@ -55,30 +55,30 @@ typedef struct ApolloCoreSinkCapability {
   bool supports_frame_gated_hdr;
   bool supports_hdr_tile_overlay;
   bool supports_per_frame_hdr_metadata;
-} ApolloCoreSinkCapability;
+} LumenCoreSinkCapability;
 
-typedef struct ApolloCoreSinkRequest {
-  ApolloCoreSinkMode mode;
-  ApolloCoreSinkCapability capability;
-  ApolloCoreDynamicRangeTransport dynamic_range_transport;
-} ApolloCoreSinkRequest;
+typedef struct LumenCoreSinkRequest {
+  LumenCoreSinkMode mode;
+  LumenCoreSinkCapability capability;
+  LumenCoreDynamicRangeTransport dynamic_range_transport;
+} LumenCoreSinkRequest;
 
-typedef enum ApolloCoreAudioCaptureSourceKind {
-  ApolloCoreAudioCaptureSourceKindUnknown = -1,
-  ApolloCoreAudioCaptureSourceKindMicrophone = 0,
-  ApolloCoreAudioCaptureSourceKindSystemOutput = 1
-} ApolloCoreAudioCaptureSourceKind;
+typedef enum LumenCoreAudioCaptureSourceKind {
+  LumenCoreAudioCaptureSourceKindUnknown = -1,
+  LumenCoreAudioCaptureSourceKindMicrophone = 0,
+  LumenCoreAudioCaptureSourceKindSystemOutput = 1
+} LumenCoreAudioCaptureSourceKind;
 
-typedef enum ApolloCoreCaptureEventKind {
-  ApolloCoreCaptureEventKindUnknown = -1,
-  ApolloCoreCaptureEventKindStarted = 0,
-  ApolloCoreCaptureEventKindStopped = 1,
-  ApolloCoreCaptureEventKindRestarted = 2,
-  ApolloCoreCaptureEventKindFailed = 3,
-  ApolloCoreCaptureEventKindDroppedFrame = 4
-} ApolloCoreCaptureEventKind;
+typedef enum LumenCoreCaptureEventKind {
+  LumenCoreCaptureEventKindUnknown = -1,
+  LumenCoreCaptureEventKindStarted = 0,
+  LumenCoreCaptureEventKindStopped = 1,
+  LumenCoreCaptureEventKindRestarted = 2,
+  LumenCoreCaptureEventKindFailed = 3,
+  LumenCoreCaptureEventKindDroppedFrame = 4
+} LumenCoreCaptureEventKind;
 
-typedef struct ApolloCoreHDRStaticMetadata {
+typedef struct LumenCoreHDRStaticMetadata {
   int32_t red_primary_x;
   int32_t red_primary_y;
   int32_t green_primary_x;
@@ -92,19 +92,19 @@ typedef struct ApolloCoreHDRStaticMetadata {
   int32_t max_content_light_level;
   int32_t max_frame_average_light_level;
   int32_t max_full_frame_luminance;
-} ApolloCoreHDRStaticMetadata;
+} LumenCoreHDRStaticMetadata;
 
-typedef struct ApolloCoreEffectiveDisplayState {
+typedef struct LumenCoreEffectiveDisplayState {
   int32_t gamut;
   int32_t transfer;
   bool has_hdr_static_metadata;
-  ApolloCoreHDRStaticMetadata hdr_static_metadata;
-} ApolloCoreEffectiveDisplayState;
+  LumenCoreHDRStaticMetadata hdr_static_metadata;
+} LumenCoreEffectiveDisplayState;
 
-typedef struct ApolloCoreEncodedCaptureIngress ApolloCoreEncodedCaptureIngress;
-typedef struct ApolloCoreAudioCaptureIngress ApolloCoreAudioCaptureIngress;
+typedef struct LumenCoreEncodedCaptureIngress LumenCoreEncodedCaptureIngress;
+typedef struct LumenCoreAudioCaptureIngress LumenCoreAudioCaptureIngress;
 
-typedef struct ApolloCoreEncodedCaptureIngressSnapshot {
+typedef struct LumenCoreEncodedCaptureIngressSnapshot {
   uint64_t frame_count;
   uint64_t event_count;
   uint64_t queued_frame_count;
@@ -113,25 +113,25 @@ typedef struct ApolloCoreEncodedCaptureIngressSnapshot {
   uint64_t dropped_event_count;
   bool has_last_frame;
   bool has_last_sample_buffer;
-  ApolloCoreCaptureCodec last_frame_codec;
+  LumenCoreCaptureCodec last_frame_codec;
   size_t last_frame_payload_size;
   uint64_t last_frame_source_sequence_number;
   uint64_t last_frame_source_display_time;
   bool last_frame_is_key_frame;
   bool last_frame_is_hdr_signaled;
   bool has_last_event;
-  ApolloCoreCaptureEventKind last_event_kind;
+  LumenCoreCaptureEventKind last_event_kind;
   bool last_event_has_stop_status;
   int32_t last_event_stop_status;
   bool last_event_has_automatic_restart_count;
   uint64_t last_event_automatic_restart_count;
   bool last_event_has_source_display_time;
   uint64_t last_event_source_display_time;
-} ApolloCoreEncodedCaptureIngressSnapshot;
+} LumenCoreEncodedCaptureIngressSnapshot;
 
-typedef struct ApolloCoreEncodedCaptureFrameRecord {
+typedef struct LumenCoreEncodedCaptureFrameRecord {
   bool has_value;
-  ApolloCoreCaptureCodec codec;
+  LumenCoreCaptureCodec codec;
   size_t payload_size;
   uint64_t source_sequence_number;
   uint64_t source_display_time;
@@ -139,36 +139,36 @@ typedef struct ApolloCoreEncodedCaptureFrameRecord {
   double output_callback_latency_milliseconds;
   bool is_key_frame;
   bool is_hdr_signaled;
-} ApolloCoreEncodedCaptureFrameRecord;
+} LumenCoreEncodedCaptureFrameRecord;
 
-typedef struct ApolloCoreEncodedCaptureEventRecord {
+typedef struct LumenCoreEncodedCaptureEventRecord {
   bool has_value;
-  ApolloCoreCaptureEventKind kind;
+  LumenCoreCaptureEventKind kind;
   bool has_stop_status;
   int32_t stop_status;
   bool has_automatic_restart_count;
   uint64_t automatic_restart_count;
   bool has_source_display_time;
   uint64_t source_display_time;
-} ApolloCoreEncodedCaptureEventRecord;
+} LumenCoreEncodedCaptureEventRecord;
 
 const char *LumenCoreBootstrapVersionString(void);
 const char *LumenCoreBootstrapRuntimeDescription(void);
 
-ApolloCoreEncodedCaptureIngress *ApolloCoreEncodedCaptureIngressCreate(void);
-void ApolloCoreEncodedCaptureIngressDestroy(ApolloCoreEncodedCaptureIngress *ingress);
-void ApolloCoreEncodedCaptureIngressReset(ApolloCoreEncodedCaptureIngress *ingress);
-void ApolloCoreEncodedCaptureIngressSetFrameCapacity(
-  ApolloCoreEncodedCaptureIngress *ingress,
+LumenCoreEncodedCaptureIngress *LumenCoreEncodedCaptureIngressCreate(void);
+void LumenCoreEncodedCaptureIngressDestroy(LumenCoreEncodedCaptureIngress *ingress);
+void LumenCoreEncodedCaptureIngressReset(LumenCoreEncodedCaptureIngress *ingress);
+void LumenCoreEncodedCaptureIngressSetFrameCapacity(
+  LumenCoreEncodedCaptureIngress *ingress,
   size_t capacity
 );
-void ApolloCoreEncodedCaptureIngressSetEventCapacity(
-  ApolloCoreEncodedCaptureIngress *ingress,
+void LumenCoreEncodedCaptureIngressSetEventCapacity(
+  LumenCoreEncodedCaptureIngress *ingress,
   size_t capacity
 );
-void ApolloCoreEncodedCaptureIngressConsumeSampleBuffer(
-  ApolloCoreEncodedCaptureIngress *ingress,
-  ApolloCoreCaptureCodec codec,
+void LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
+  LumenCoreEncodedCaptureIngress *ingress,
+  LumenCoreCaptureCodec codec,
   uint64_t source_sequence_number,
   uint64_t source_display_time,
   bool has_output_callback_latency_milliseconds,
@@ -177,9 +177,9 @@ void ApolloCoreEncodedCaptureIngressConsumeSampleBuffer(
   bool is_hdr_signaled,
   CMSampleBufferRef sample_buffer
 );
-void ApolloCoreEncodedCaptureIngressConsumeEvent(
-  ApolloCoreEncodedCaptureIngress *ingress,
-  ApolloCoreCaptureEventKind kind,
+void LumenCoreEncodedCaptureIngressConsumeEvent(
+  LumenCoreEncodedCaptureIngress *ingress,
+  LumenCoreCaptureEventKind kind,
   const char *message,
   bool has_stop_status,
   int32_t stop_status,
@@ -188,44 +188,44 @@ void ApolloCoreEncodedCaptureIngressConsumeEvent(
   bool has_source_display_time,
   uint64_t source_display_time
 );
-ApolloCoreEncodedCaptureIngressSnapshot ApolloCoreEncodedCaptureIngressCopySnapshot(
-  const ApolloCoreEncodedCaptureIngress *ingress
+LumenCoreEncodedCaptureIngressSnapshot LumenCoreEncodedCaptureIngressCopySnapshot(
+  const LumenCoreEncodedCaptureIngress *ingress
 );
-CMSampleBufferRef ApolloCoreEncodedCaptureIngressCreateRetainedLastSampleBuffer(
-  const ApolloCoreEncodedCaptureIngress *ingress
+CMSampleBufferRef LumenCoreEncodedCaptureIngressCreateRetainedLastSampleBuffer(
+  const LumenCoreEncodedCaptureIngress *ingress
 );
-ApolloCoreEncodedCaptureFrameRecord ApolloCoreEncodedCaptureIngressPopNextFrame(
-  ApolloCoreEncodedCaptureIngress *ingress,
+LumenCoreEncodedCaptureFrameRecord LumenCoreEncodedCaptureIngressPopNextFrame(
+  LumenCoreEncodedCaptureIngress *ingress,
   CMSampleBufferRef *retained_sample_buffer_out
 );
-ApolloCoreEncodedCaptureEventRecord ApolloCoreEncodedCaptureIngressPopNextEvent(
-  ApolloCoreEncodedCaptureIngress *ingress,
+LumenCoreEncodedCaptureEventRecord LumenCoreEncodedCaptureIngressPopNextEvent(
+  LumenCoreEncodedCaptureIngress *ingress,
   char *message_destination,
   size_t message_capacity
 );
-size_t ApolloCoreEncodedCaptureIngressCopyLastEventMessage(
-  const ApolloCoreEncodedCaptureIngress *ingress,
+size_t LumenCoreEncodedCaptureIngressCopyLastEventMessage(
+  const LumenCoreEncodedCaptureIngress *ingress,
   char *destination,
   size_t capacity
 );
-ApolloCoreEncodedCaptureIngress *ApolloCoreSharedEncodedCaptureIngress(void);
-void ApolloCoreEncodedCaptureIngressSetProducerActive(
-  ApolloCoreEncodedCaptureIngress *ingress,
+LumenCoreEncodedCaptureIngress *LumenCoreSharedEncodedCaptureIngress(void);
+void LumenCoreEncodedCaptureIngressSetProducerActive(
+  LumenCoreEncodedCaptureIngress *ingress,
   bool active
 );
-bool ApolloCoreEncodedCaptureIngressIsProducerActive(
-  const ApolloCoreEncodedCaptureIngress *ingress
+bool LumenCoreEncodedCaptureIngressIsProducerActive(
+  const LumenCoreEncodedCaptureIngress *ingress
 );
-bool ApolloCoreEncodedCaptureIngressWaitForData(
-  ApolloCoreEncodedCaptureIngress *ingress,
+bool LumenCoreEncodedCaptureIngressWaitForData(
+  LumenCoreEncodedCaptureIngress *ingress,
   uint32_t timeout_milliseconds
 );
-bool ApolloCoreEncodedCaptureIngressWaitForProducerActive(
-  ApolloCoreEncodedCaptureIngress *ingress,
+bool LumenCoreEncodedCaptureIngressWaitForProducerActive(
+  LumenCoreEncodedCaptureIngress *ingress,
   uint32_t timeout_milliseconds
 );
 
-typedef struct ApolloCoreAudioCaptureIngressSnapshot {
+typedef struct LumenCoreAudioCaptureIngressSnapshot {
   uint64_t frame_count;
   uint64_t event_count;
   uint64_t queued_frame_count;
@@ -240,16 +240,16 @@ typedef struct ApolloCoreAudioCaptureIngressSnapshot {
   int32_t last_frame_frame_count;
   size_t last_frame_pcm_byte_count;
   bool has_last_event;
-  ApolloCoreCaptureEventKind last_event_kind;
+  LumenCoreCaptureEventKind last_event_kind;
   bool last_event_has_stop_status;
   int32_t last_event_stop_status;
   bool last_event_has_automatic_restart_count;
   uint64_t last_event_automatic_restart_count;
   bool last_event_has_source_sequence_number;
   uint64_t last_event_source_sequence_number;
-} ApolloCoreAudioCaptureIngressSnapshot;
+} LumenCoreAudioCaptureIngressSnapshot;
 
-typedef struct ApolloCoreAudioCaptureFrameRecord {
+typedef struct LumenCoreAudioCaptureFrameRecord {
   bool has_value;
   uint64_t sequence_number;
   uint64_t host_time_nanoseconds;
@@ -257,56 +257,56 @@ typedef struct ApolloCoreAudioCaptureFrameRecord {
   int32_t channel_count;
   int32_t frame_count;
   size_t pcm_byte_count;
-} ApolloCoreAudioCaptureFrameRecord;
+} LumenCoreAudioCaptureFrameRecord;
 
-typedef struct ApolloCoreAudioCaptureEventRecord {
+typedef struct LumenCoreAudioCaptureEventRecord {
   bool has_value;
-  ApolloCoreCaptureEventKind kind;
+  LumenCoreCaptureEventKind kind;
   bool has_stop_status;
   int32_t stop_status;
   bool has_automatic_restart_count;
   uint64_t automatic_restart_count;
   bool has_source_sequence_number;
   uint64_t source_sequence_number;
-} ApolloCoreAudioCaptureEventRecord;
+} LumenCoreAudioCaptureEventRecord;
 
-typedef struct ApolloCoreCaptureRequestSnapshot {
+typedef struct LumenCoreCaptureRequestSnapshot {
   uint64_t generation;
   uint64_t video_generation;
   uint64_t audio_generation;
   bool video_requested;
   bool audio_requested;
   uint32_t display_id;
-  ApolloCoreCaptureCodec codec;
-  ApolloCoreCapturePreprocessStrategy preprocess_strategy;
-  ApolloCoreCaptureQueueProfile queue_profile;
+  LumenCoreCaptureCodec codec;
+  LumenCoreCapturePreprocessStrategy preprocess_strategy;
+  LumenCoreCaptureQueueProfile queue_profile;
   bool show_cursor;
   int32_t target_frame_rate;
   int32_t target_video_bitrate_kbps;
   int32_t requested_width;
   int32_t requested_height;
-  ApolloCoreSinkRequest sink_request;
-  ApolloCoreEffectiveDisplayState effective_display_state;
-  ApolloCoreAudioCaptureSourceKind audio_source_kind;
+  LumenCoreSinkRequest sink_request;
+  LumenCoreEffectiveDisplayState effective_display_state;
+  LumenCoreAudioCaptureSourceKind audio_source_kind;
   bool audio_excludes_current_process;
   int32_t audio_sample_rate;
   int32_t audio_channel_count;
   int32_t audio_frame_size;
-} ApolloCoreCaptureRequestSnapshot;
+} LumenCoreCaptureRequestSnapshot;
 
-ApolloCoreAudioCaptureIngress *ApolloCoreAudioCaptureIngressCreate(void);
-void ApolloCoreAudioCaptureIngressDestroy(ApolloCoreAudioCaptureIngress *ingress);
-void ApolloCoreAudioCaptureIngressReset(ApolloCoreAudioCaptureIngress *ingress);
-void ApolloCoreAudioCaptureIngressSetFrameCapacity(
-  ApolloCoreAudioCaptureIngress *ingress,
+LumenCoreAudioCaptureIngress *LumenCoreAudioCaptureIngressCreate(void);
+void LumenCoreAudioCaptureIngressDestroy(LumenCoreAudioCaptureIngress *ingress);
+void LumenCoreAudioCaptureIngressReset(LumenCoreAudioCaptureIngress *ingress);
+void LumenCoreAudioCaptureIngressSetFrameCapacity(
+  LumenCoreAudioCaptureIngress *ingress,
   size_t capacity
 );
-void ApolloCoreAudioCaptureIngressSetEventCapacity(
-  ApolloCoreAudioCaptureIngress *ingress,
+void LumenCoreAudioCaptureIngressSetEventCapacity(
+  LumenCoreAudioCaptureIngress *ingress,
   size_t capacity
 );
-void ApolloCoreAudioCaptureIngressConsumePCMFloat32(
-  ApolloCoreAudioCaptureIngress *ingress,
+void LumenCoreAudioCaptureIngressConsumePCMFloat32(
+  LumenCoreAudioCaptureIngress *ingress,
   uint64_t sequence_number,
   uint64_t host_time_nanoseconds,
   int32_t sample_rate,
@@ -315,9 +315,9 @@ void ApolloCoreAudioCaptureIngressConsumePCMFloat32(
   const void *pcm_float32le,
   size_t pcm_byte_count
 );
-void ApolloCoreAudioCaptureIngressConsumeEvent(
-  ApolloCoreAudioCaptureIngress *ingress,
-  ApolloCoreCaptureEventKind kind,
+void LumenCoreAudioCaptureIngressConsumeEvent(
+  LumenCoreAudioCaptureIngress *ingress,
+  LumenCoreCaptureEventKind kind,
   const char *message,
   bool has_stop_status,
   int32_t stop_status,
@@ -326,69 +326,69 @@ void ApolloCoreAudioCaptureIngressConsumeEvent(
   bool has_source_sequence_number,
   uint64_t source_sequence_number
 );
-ApolloCoreAudioCaptureIngressSnapshot ApolloCoreAudioCaptureIngressCopySnapshot(
-  const ApolloCoreAudioCaptureIngress *ingress
+LumenCoreAudioCaptureIngressSnapshot LumenCoreAudioCaptureIngressCopySnapshot(
+  const LumenCoreAudioCaptureIngress *ingress
 );
-ApolloCoreAudioCaptureFrameRecord ApolloCoreAudioCaptureIngressPopNextFrame(
-  ApolloCoreAudioCaptureIngress *ingress,
+LumenCoreAudioCaptureFrameRecord LumenCoreAudioCaptureIngressPopNextFrame(
+  LumenCoreAudioCaptureIngress *ingress,
   void *pcm_destination,
   size_t pcm_capacity,
   size_t *copied_size_out
 );
-ApolloCoreAudioCaptureEventRecord ApolloCoreAudioCaptureIngressPopNextEvent(
-  ApolloCoreAudioCaptureIngress *ingress,
+LumenCoreAudioCaptureEventRecord LumenCoreAudioCaptureIngressPopNextEvent(
+  LumenCoreAudioCaptureIngress *ingress,
   char *message_destination,
   size_t message_capacity
 );
-size_t ApolloCoreAudioCaptureIngressCopyLastEventMessage(
-  const ApolloCoreAudioCaptureIngress *ingress,
+size_t LumenCoreAudioCaptureIngressCopyLastEventMessage(
+  const LumenCoreAudioCaptureIngress *ingress,
   char *destination,
   size_t capacity
 );
-ApolloCoreAudioCaptureIngress *ApolloCoreSharedAudioCaptureIngress(void);
-void ApolloCoreAudioCaptureIngressSetProducerActive(
-  ApolloCoreAudioCaptureIngress *ingress,
+LumenCoreAudioCaptureIngress *LumenCoreSharedAudioCaptureIngress(void);
+void LumenCoreAudioCaptureIngressSetProducerActive(
+  LumenCoreAudioCaptureIngress *ingress,
   bool active
 );
-bool ApolloCoreAudioCaptureIngressIsProducerActive(
-  const ApolloCoreAudioCaptureIngress *ingress
+bool LumenCoreAudioCaptureIngressIsProducerActive(
+  const LumenCoreAudioCaptureIngress *ingress
 );
-bool ApolloCoreAudioCaptureIngressWaitForData(
-  ApolloCoreAudioCaptureIngress *ingress,
+bool LumenCoreAudioCaptureIngressWaitForData(
+  LumenCoreAudioCaptureIngress *ingress,
   uint32_t timeout_milliseconds
 );
-bool ApolloCoreAudioCaptureIngressWaitForProducerActive(
-  ApolloCoreAudioCaptureIngress *ingress,
+bool LumenCoreAudioCaptureIngressWaitForProducerActive(
+  LumenCoreAudioCaptureIngress *ingress,
   uint32_t timeout_milliseconds
 );
 
-ApolloCoreCaptureRequestSnapshot ApolloCoreCaptureRequestCopySnapshot(void);
-bool ApolloCoreCaptureRequestWaitForGenerationChange(
+LumenCoreCaptureRequestSnapshot LumenCoreCaptureRequestCopySnapshot(void);
+bool LumenCoreCaptureRequestWaitForGenerationChange(
   uint64_t observed_generation,
   uint32_t timeout_milliseconds
 );
-void ApolloCoreCaptureRequestPublishVideo(
+void LumenCoreCaptureRequestPublishVideo(
   uint32_t display_id,
-  ApolloCoreCaptureCodec codec,
-  ApolloCoreCapturePreprocessStrategy preprocess_strategy,
-  ApolloCoreCaptureQueueProfile queue_profile,
+  LumenCoreCaptureCodec codec,
+  LumenCoreCapturePreprocessStrategy preprocess_strategy,
+  LumenCoreCaptureQueueProfile queue_profile,
   bool show_cursor,
   int32_t target_frame_rate,
   int32_t target_video_bitrate_kbps,
   int32_t requested_width,
   int32_t requested_height,
-  ApolloCoreSinkRequest sink_request,
-  ApolloCoreEffectiveDisplayState effective_display_state
+  LumenCoreSinkRequest sink_request,
+  LumenCoreEffectiveDisplayState effective_display_state
 );
-void ApolloCoreCaptureRequestPublishAudio(
-  ApolloCoreAudioCaptureSourceKind source_kind,
+void LumenCoreCaptureRequestPublishAudio(
+  LumenCoreAudioCaptureSourceKind source_kind,
   uint32_t display_id,
   bool excludes_current_process_audio,
   int32_t sample_rate,
   int32_t channel_count,
   int32_t frame_size
 );
-void ApolloCoreCaptureRequestClear(void);
+void LumenCoreCaptureRequestClear(void);
 
 #ifdef __cplusplus
 }

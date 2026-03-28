@@ -25,7 +25,7 @@ typedef enum LumenMacBridgeQueueProfile {
 
 typedef struct LumenMacBridgeCaptureConfiguration {
   uint32_t display_id;
-  ApolloCoreCaptureCodec codec;
+  LumenCoreCaptureCodec codec;
   LumenMacBridgePreprocessStrategy preprocess_strategy;
   LumenMacBridgeQueueProfile queue_profile;
   bool show_cursor;
@@ -33,8 +33,8 @@ typedef struct LumenMacBridgeCaptureConfiguration {
   int32_t target_video_bitrate_kbps;
   int32_t requested_width;
   int32_t requested_height;
-  ApolloCoreSinkRequest sink_request;
-  ApolloCoreEffectiveDisplayState effective_display_state;
+  LumenCoreSinkRequest sink_request;
+  LumenCoreEffectiveDisplayState effective_display_state;
 } LumenMacBridgeCaptureConfiguration;
 
 typedef enum LumenMacBridgeAudioSourceKind {
@@ -67,7 +67,7 @@ typedef struct LumenMacBridgeAudioForwardingSnapshot {
   int32_t last_frame_frame_count;
   size_t last_frame_pcm_byte_count;
   bool has_last_event;
-  ApolloCoreCaptureEventKind last_event_kind;
+  LumenCoreCaptureEventKind last_event_kind;
 } LumenMacBridgeAudioForwardingSnapshot;
 
 typedef struct LumenMacBridgeAudioCaptureFrameRecord {
@@ -82,7 +82,7 @@ typedef struct LumenMacBridgeAudioCaptureFrameRecord {
 
 typedef struct LumenMacBridgeAudioCaptureEventRecord {
   bool has_value;
-  ApolloCoreCaptureEventKind kind;
+  LumenCoreCaptureEventKind kind;
   bool has_stop_status;
   int32_t stop_status;
   bool has_automatic_restart_count;
@@ -102,13 +102,13 @@ typedef struct LumenMacBridgeStatusSnapshot {
 
 typedef void (*LumenMacBridgeEncodedFrameHandler)(
   void *context,
-  ApolloCoreEncodedCaptureFrameRecord record,
+  LumenCoreEncodedCaptureFrameRecord record,
   CMSampleBufferRef retained_sample_buffer
 );
 
 typedef void (*LumenMacBridgeCaptureEventHandler)(
   void *context,
-  ApolloCoreEncodedCaptureEventRecord record,
+  LumenCoreEncodedCaptureEventRecord record,
   const char *message
 );
 
@@ -197,7 +197,7 @@ void LumenMacBridgeControllerConfigureCoreForwarding(
   size_t event_capacity
 );
 
-ApolloCoreEncodedCaptureIngressSnapshot LumenMacBridgeControllerCopyCoreForwardingSnapshot(
+LumenCoreEncodedCaptureIngressSnapshot LumenMacBridgeControllerCopyCoreForwardingSnapshot(
   LumenMacBridgeController *controller
 );
 
@@ -211,12 +211,12 @@ LumenMacBridgeAudioForwardingSnapshot LumenMacBridgeControllerCopyAudioForwardin
   LumenMacBridgeController *controller
 );
 
-ApolloCoreEncodedCaptureFrameRecord LumenMacBridgeControllerPopNextForwardedFrame(
+LumenCoreEncodedCaptureFrameRecord LumenMacBridgeControllerPopNextForwardedFrame(
   LumenMacBridgeController *controller,
   CMSampleBufferRef *retained_sample_buffer_out
 );
 
-ApolloCoreEncodedCaptureEventRecord LumenMacBridgeControllerPopNextForwardedEvent(
+LumenCoreEncodedCaptureEventRecord LumenMacBridgeControllerPopNextForwardedEvent(
   LumenMacBridgeController *controller,
   char *message_destination,
   size_t message_capacity

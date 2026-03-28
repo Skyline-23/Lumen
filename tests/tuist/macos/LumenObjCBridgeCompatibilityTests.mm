@@ -24,9 +24,9 @@
   LumenMacBridgeCaptureConfiguration configuration =
     LumenMacBridgeControllerMakePanelNativeConfiguration(7);
   XCTAssertEqual(configuration.display_id, 7u);
-  XCTAssertTrue(configuration.codec == ApolloCoreCaptureCodecH264 ||
-                configuration.codec == ApolloCoreCaptureCodecHEVC ||
-                configuration.codec == ApolloCoreCaptureCodecProResProxy);
+  XCTAssertTrue(configuration.codec == LumenCoreCaptureCodecH264 ||
+                configuration.codec == LumenCoreCaptureCodecHEVC ||
+                configuration.codec == LumenCoreCaptureCodecProResProxy);
   XCTAssertEqual(configuration.preprocess_strategy, LumenMacBridgePreprocessStrategyNone);
   XCTAssertTrue((configuration.queue_profile >= LumenMacBridgeQueueProfileQ1 &&
                  configuration.queue_profile <= LumenMacBridgeQueueProfileQ4) ||
@@ -35,7 +35,7 @@
   XCTAssertEqual(configuration.target_frame_rate, 120);
 
   LumenMacBridgeControllerConfigureCoreForwarding(controller, 2, 3);
-  ApolloCoreEncodedCaptureIngressSnapshot forwarding =
+  LumenCoreEncodedCaptureIngressSnapshot forwarding =
     LumenMacBridgeControllerCopyCoreForwardingSnapshot(controller);
   XCTAssertEqual(forwarding.frame_count, 0ULL);
   XCTAssertEqual(forwarding.event_count, 0ULL);
@@ -76,13 +76,13 @@
   XCTAssertNotEqual(controller, nullptr);
 
   CMSampleBufferRef drainedSampleBuffer = nullptr;
-  ApolloCoreEncodedCaptureFrameRecord frame =
+  LumenCoreEncodedCaptureFrameRecord frame =
     LumenMacBridgeControllerPopNextForwardedFrame(controller, &drainedSampleBuffer);
   XCTAssertFalse(frame.has_value);
   XCTAssertEqual(drainedSampleBuffer, nullptr);
 
   char message[64] = {};
-  ApolloCoreEncodedCaptureEventRecord event =
+  LumenCoreEncodedCaptureEventRecord event =
     LumenMacBridgeControllerPopNextForwardedEvent(controller, message, sizeof(message));
   XCTAssertFalse(event.has_value);
   XCTAssertEqual(strcmp(message, ""), 0);
@@ -114,13 +114,13 @@
   LumenMacBridgeForwardingCallbacks callbacks {};
   callbacks.context = &callbackCounts;
   callbacks.encoded_frame_handler = [](void *context,
-                                       ApolloCoreEncodedCaptureFrameRecord,
+                                       LumenCoreEncodedCaptureFrameRecord,
                                        CMSampleBufferRef) {
     auto *counts = static_cast<CallbackCounts *>(context);
     counts->frame_count.fetch_add(1, std::memory_order_relaxed);
   };
   callbacks.capture_event_handler = [](void *context,
-                                       ApolloCoreEncodedCaptureEventRecord,
+                                       LumenCoreEncodedCaptureEventRecord,
                                        const char *) {
     auto *counts = static_cast<CallbackCounts *>(context);
     counts->event_count.fetch_add(1, std::memory_order_relaxed);

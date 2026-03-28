@@ -281,7 +281,7 @@ public final class LumenBridgeConfigurationBox: NSObject {
                     supportsHDRTileOverlay: sinkRequest.capability.supportsHDRTileOverlay,
                     supportsPerFrameHDRMetadata: sinkRequest.capability.supportsPerFrameHDRMetadata
                 ),
-                dynamicRangeTransport: ApolloCoreDynamicRangeTransport(
+                dynamicRangeTransport: LumenCoreDynamicRangeTransport(
                     rawValue: UInt32(sinkRequest.dynamicRangeTransportRawValue)
                 )
             ),
@@ -634,21 +634,21 @@ public final class LumenBridgeObjCFacade: NSObject {
         }
     }
 
-    public func startApolloCoreCaptureAutomationSync() {
+    public func startLumenCoreCaptureAutomationSync() {
         try? blockingRun { [self] in
-            await self.runtime.startApolloCoreCaptureAutomation()
+            await self.runtime.startLumenCoreCaptureAutomation()
         }
     }
 
-    public func stopApolloCoreCaptureAutomationSync() {
+    public func stopLumenCoreCaptureAutomationSync() {
         try? blockingRun { [self] in
-            await self.runtime.stopApolloCoreCaptureAutomation()
+            await self.runtime.stopLumenCoreCaptureAutomation()
         }
     }
 
-    public func isApolloCoreCaptureAutomationRunningSync() -> Bool {
+    public func isLumenCoreCaptureAutomationRunningSync() -> Bool {
         (try? blockingRun { [self] in
-            await self.runtime.isApolloCoreCaptureAutomationRunning()
+            await self.runtime.isLumenCoreCaptureAutomationRunning()
         }) ?? false
     }
 
@@ -683,7 +683,7 @@ public final class LumenBridgeObjCFacade: NSObject {
             )
         }) ?? LumenBridgeCoreForwardingSnapshotBox(
             snapshot: LumenBridgeCoreForwardingSnapshot(
-                snapshot: ApolloCoreEncodedCaptureIngressSnapshot()
+                snapshot: LumenCoreEncodedCaptureIngressSnapshot()
             )
         )
     }
@@ -795,11 +795,11 @@ public final class LumenBridgeObjCFacade: NSObject {
 extension LumenBridgeObjCFacade {
     static func codec(fromRawValue rawValue: Int) -> LumenCaptureCodec {
         switch rawValue {
-        case Int(ApolloCoreCaptureCodecH264.rawValue):
+        case Int(LumenCoreCaptureCodecH264.rawValue):
             return .h264
-        case Int(ApolloCoreCaptureCodecProResProxy.rawValue):
+        case Int(LumenCoreCaptureCodecProResProxy.rawValue):
             return .proResProxy
-        case Int(ApolloCoreCaptureCodecHEVC.rawValue):
+        case Int(LumenCoreCaptureCodecHEVC.rawValue):
             return .hevc
         default:
             return .hevc
@@ -870,11 +870,11 @@ extension LumenBridgeObjCFacade {
     static func rawValue(for codec: LumenCaptureCodec) -> Int {
         switch codec {
         case .h264:
-            return Int(ApolloCoreCaptureCodecH264.rawValue)
+            return Int(LumenCoreCaptureCodecH264.rawValue)
         case .hevc:
-            return Int(ApolloCoreCaptureCodecHEVC.rawValue)
+            return Int(LumenCoreCaptureCodecHEVC.rawValue)
         case .proResProxy:
-            return Int(ApolloCoreCaptureCodecProResProxy.rawValue)
+            return Int(LumenCoreCaptureCodecProResProxy.rawValue)
         }
     }
 
@@ -940,15 +940,15 @@ extension LumenBridgeObjCFacade {
     static func rawValue(for eventKind: LumenBridgeCaptureEventKind) -> Int {
         switch eventKind {
         case .started:
-            return Int(ApolloCoreCaptureEventKindStarted.rawValue)
+            return Int(LumenCoreCaptureEventKindStarted.rawValue)
         case .stopped:
-            return Int(ApolloCoreCaptureEventKindStopped.rawValue)
+            return Int(LumenCoreCaptureEventKindStopped.rawValue)
         case .restarted:
-            return Int(ApolloCoreCaptureEventKindRestarted.rawValue)
+            return Int(LumenCoreCaptureEventKindRestarted.rawValue)
         case .failed:
-            return Int(ApolloCoreCaptureEventKindFailed.rawValue)
+            return Int(LumenCoreCaptureEventKindFailed.rawValue)
         case .droppedFrame:
-            return Int(ApolloCoreCaptureEventKindDroppedFrame.rawValue)
+            return Int(LumenCoreCaptureEventKindDroppedFrame.rawValue)
         }
     }
 }

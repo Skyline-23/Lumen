@@ -25,7 +25,7 @@ public final class LumenMacCaptureAdapterStatus: NSObject {
     public let forwardedEventCallbackCount: UInt
     public let forwardedAudioFrameCallbackCount: UInt
     public let forwardedAudioEventCallbackCount: UInt
-    public let coreForwardingSnapshot: ApolloCoreEncodedCaptureIngressSnapshot
+    public let coreForwardingSnapshot: LumenCoreEncodedCaptureIngressSnapshot
     public let audioForwardingSnapshot: LumenMacBridgeAudioForwardingSnapshot
 
     public init(
@@ -41,7 +41,7 @@ public final class LumenMacCaptureAdapterStatus: NSObject {
         forwardedEventCallbackCount: UInt,
         forwardedAudioFrameCallbackCount: UInt,
         forwardedAudioEventCallbackCount: UInt,
-        coreForwardingSnapshot: ApolloCoreEncodedCaptureIngressSnapshot,
+        coreForwardingSnapshot: LumenCoreEncodedCaptureIngressSnapshot,
         audioForwardingSnapshot: LumenMacBridgeAudioForwardingSnapshot
     ) {
         self.coreVersion = coreVersion
