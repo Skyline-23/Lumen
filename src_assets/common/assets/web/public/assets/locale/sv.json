@@ -303,8 +303,6 @@
     "log_level_desc": "Minsta loggnivå utskriven till loggfilen.",
     "log_path": "Sökväg till loggfil",
     "log_path_desc": "Filen där de aktuella loggarna av Apollo lagras.",
-    "max_bitrate": "Maximal bithastighet",
-    "max_bitrate_desc": "Den maximala bithastigheten (i Kbps) som Apollo kommer att koda strömmen med. Om inställd på 0 kommer den alltid att använda den bithastighet som begärs av Artemis/Moonlight.",
     "min_fps_factor": "Minsta FPS faktor",
     "min_fps_factor_desc": "Apollo kommer att använda denna faktor för att beräkna minimitiden mellan bildrutor. Att öka detta värde något kan hjälpa vid streaming av mestadels statiskt innehåll. Högre värden kommer att förbruka mer bandbredd.",
     "min_threads": "Minsta antal CPU-trådar",

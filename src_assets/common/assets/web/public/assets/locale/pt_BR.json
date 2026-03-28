@@ -303,8 +303,6 @@
     "log_level_desc": "O nível mínimo do log impresso na saída padrão",
     "log_path": "Caminho do arquivo de log",
     "log_path_desc": "O arquivo em que os logs atuais do Apollo são armazenados.",
-    "max_bitrate": "Taxa de bits máximo",
-    "max_bitrate_desc": "A taxa máxima de bits (em Kbps) que Apollo usará para condificar a transmissão. Se for 0, sempre usará a taxa de bits solicitada pelo cliente Artemis/Moonlight.",
     "min_fps_factor": "Fator mínimo de FPS",
     "min_fps_factor_desc": "O Apollo usará esse fator para calcular o tempo mínimo entre os quadros. Aumentar um pouco esse valor pode ajudar na transmissão de conteúdo predominantemente estático. Valores mais altos consumirão mais largura de banda.",
     "min_threads": "Quantidade mínima de threads da CPU",

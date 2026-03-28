@@ -328,8 +328,6 @@
     "min_log_level_desc": "打印到标准输出的最小日志级别",
     "log_path": "日志文件路径",
     "log_path_desc": "Apollo 当前日志存储的文件。",
-    "max_bitrate": "最大比特率",
-    "max_bitrate_desc": "限制 Apollo 所编码的最大比特率 (Kbps)。 设 0 则总是使用客户端请求的值。",
     "minimum_fps_target": "最低 FPS 目标",
     "minimum_fps_target_desc": "设置最低的有效编码帧率。设 0 为自动。",
     "min_threads": "最低 CPU 线程数",

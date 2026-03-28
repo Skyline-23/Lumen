@@ -47,6 +47,49 @@ namespace rtsp_stream {
   namespace {
     constexpr std::size_t max_rtsp_message_size = 65536;
 
+    struct bitrate_reserve_policy_t {
+      std::int64_t audio_share_divisor;
+      std::int64_t control_overhead_kbps;
+      std::int64_t control_share_divisor;
+    };
+
+    std::string normalized_streaming_profile() {
+      auto streaming_profile = config::video.streaming_profile;
+      std::transform(streaming_profile.begin(), streaming_profile.end(), streaming_profile.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+      });
+
+      if (streaming_profile == "low-latency"s || streaming_profile == "max-quality"s) {
+        return streaming_profile;
+      }
+
+      return "balanced"s;
+    }
+
+    bitrate_reserve_policy_t bitrate_reserve_policy_for_streaming_profile(const std::string_view streaming_profile) {
+      if (streaming_profile == "low-latency"sv) {
+        return {
+          .audio_share_divisor = 4,
+          .control_overhead_kbps = 1000,
+          .control_share_divisor = 8,
+        };
+      }
+
+      if (streaming_profile == "max-quality"sv) {
+        return {
+          .audio_share_divisor = 8,
+          .control_overhead_kbps = 250,
+          .control_share_divisor = 20,
+        };
+      }
+
+      return {
+        .audio_share_divisor = 5,
+        .control_overhead_kbps = 500,
+        .control_share_divisor = 10,
+      };
+    }
+
     const char *client_sink_gamut_to_string(const int gamut) {
       switch (static_cast<video::client_sink_gamut_e>(gamut)) {
         case video::client_sink_gamut_e::srgb:
@@ -161,12 +204,6 @@ namespace rtsp_stream {
       }
 
       return static_cast<int>(std::max<long>(parsed, 0l));
-    }
-
-    std::string client_sink_float_to_string(const float value) {
-      std::ostringstream stream;
-      stream << std::setprecision(6) << std::defaultfloat << value;
-      return stream.str();
     }
 
     std::string rtsp_preview(std::string_view payload, std::size_t max_length = 512) {
@@ -387,7 +424,7 @@ namespace rtsp_stream {
       }
 
       msg_t req {new msg_t::element_type {}};
-      if (auto status = parseRtspMessage(req.get(), (char *) plaintext.data(), plaintext.size())) {
+      if (auto status = parseRtspMessage(req.get(), (char *) plaintext.data(), static_cast<int>(plaintext.size()))) {
         BOOST_LOG(error) << "Malformed encrypted RTSP message: ["sv << status << "] bytes="sv << plaintext.size()
                          << " preview="sv << rtsp_preview(std::string_view {(char *) plaintext.data(), plaintext.size()});
 
@@ -454,7 +491,7 @@ namespace rtsp_stream {
 
       auto end = socket->begin + bytes;
       msg_t req {new msg_t::element_type {}};
-      if (auto status = parseRtspMessage(req.get(), socket->msg_buf.data(), (std::size_t) (end - socket->msg_buf.data()))) {
+      if (auto status = parseRtspMessage(req.get(), socket->msg_buf.data(), static_cast<int>(end - socket->msg_buf.data()))) {
         const auto raw_message = std::string_view {socket->msg_buf.data(), static_cast<std::size_t>(end - socket->msg_buf.data())};
         BOOST_LOG(error) << "Malformed plaintext RTSP message: ["sv << status << "] bytes="sv << raw_message.size()
                          << " preview="sv << rtsp_preview(raw_message);
@@ -481,7 +518,7 @@ namespace rtsp_stream {
             return (bool) std::isdigit(ch);
           });
 
-          content_length = util::from_chars(begin, std::end(content));
+          content_length = static_cast<int>(util::from_chars(begin, std::end(content)));
           break;
         }
       }
@@ -700,7 +737,7 @@ namespace rtsp_stream {
      */
     int session_count() {
       auto lg = _session_slots.lock();
-      return _session_slots->size();
+      return static_cast<int>(_session_slots->size());
     }
 
     safe::event_t<std::shared_ptr<launch_session_t>> launch_event;
@@ -1198,31 +1235,31 @@ namespace rtsp_stream {
     std::int64_t configuredBitrateKbps;
     config.audio.flags[audio::config_t::HOST_AUDIO] = session.host_audio;
     try {
-      config.audio.channels = util::from_view(args.at("x-shadow-audio.surround.numChannels"sv));
-      config.audio.mask = util::from_view(args.at("x-shadow-audio.surround.channelMask"sv));
-      config.audio.packetDuration = util::from_view(args.at("x-shadow-audio.packetDuration"sv));
+      config.audio.channels = static_cast<int>(util::from_view(args.at("x-shadow-audio.surround.numChannels"sv)));
+      config.audio.mask = static_cast<int>(util::from_view(args.at("x-shadow-audio.surround.channelMask"sv)));
+      config.audio.packetDuration = static_cast<int>(util::from_view(args.at("x-shadow-audio.packetDuration"sv)));
 
       config.audio.flags[audio::config_t::HIGH_QUALITY] =
         util::from_view(args.at("x-shadow-audio.surround.quality"sv));
 
-      config.controlProtocolType = util::from_view(args.at("x-shadow-general.useReliableUdp"sv));
-      config.packetsize = util::from_view(args.at("x-shadow-video[0].packetSize"sv));
-      config.minRequiredFecPackets = util::from_view(args.at("x-shadow-video[0].fec.minRequiredPackets"sv));
-      config.mlFeatureFlags = util::from_view(args.at("x-shadow-general.transportFeatureFlags"sv));
-      config.audioQosType = util::from_view(args.at("x-shadow-audio.qosTrafficType"sv));
-      config.videoQosType = util::from_view(args.at("x-shadow-video[0].qosTrafficType"sv));
-      config.encryptionFlagsEnabled = util::from_view(args.at("x-shadow-general.encryptionEnabled"sv));
+      config.controlProtocolType = static_cast<int>(util::from_view(args.at("x-shadow-general.useReliableUdp"sv)));
+      config.packetsize = static_cast<int>(util::from_view(args.at("x-shadow-video[0].packetSize"sv)));
+      config.minRequiredFecPackets = static_cast<int>(util::from_view(args.at("x-shadow-video[0].fec.minRequiredPackets"sv)));
+      config.mlFeatureFlags = static_cast<int>(util::from_view(args.at("x-shadow-general.transportFeatureFlags"sv)));
+      config.audioQosType = static_cast<int>(util::from_view(args.at("x-shadow-audio.qosTrafficType"sv)));
+      config.videoQosType = static_cast<int>(util::from_view(args.at("x-shadow-video[0].qosTrafficType"sv)));
+      config.encryptionFlagsEnabled = static_cast<uint32_t>(util::from_view(args.at("x-shadow-general.encryptionEnabled"sv)));
 
-      config.monitor.height = util::from_view(args.at("x-shadow-video[0].clientViewportHeight"sv));
-      config.monitor.width = util::from_view(args.at("x-shadow-video[0].clientViewportWidth"sv));
-      config.monitor.framerate = util::from_view(args.at("x-shadow-video[0].maxFPS"sv));
-      config.monitor.bitrate = util::from_view(args.at("x-shadow-video[0].maximumBitrateKbps"sv));
-      config.monitor.slicesPerFrame = util::from_view(args.at("x-shadow-video[0].encoderSlicesPerFrame"sv));
-      config.monitor.numRefFrames = util::from_view(args.at("x-shadow-video[0].maxReferenceFrames"sv));
-      config.monitor.encoderCscMode = util::from_view(args.at("x-shadow-video[0].encoderCscMode"sv));
-      config.monitor.videoFormat = util::from_view(args.at("x-shadow-video[0].bitStreamFormat"sv));
-      config.monitor.chromaSamplingType = util::from_view(args.at("x-shadow-video[0].chromaSamplingType"sv));
-      config.monitor.enableIntraRefresh = util::from_view(args.at("x-shadow-video[0].intraRefresh"sv));
+      config.monitor.height = static_cast<int>(util::from_view(args.at("x-shadow-video[0].clientViewportHeight"sv)));
+      config.monitor.width = static_cast<int>(util::from_view(args.at("x-shadow-video[0].clientViewportWidth"sv)));
+      config.monitor.framerate = static_cast<int>(util::from_view(args.at("x-shadow-video[0].maxFPS"sv)));
+      config.monitor.bitrate = static_cast<int>(util::from_view(args.at("x-shadow-video[0].maximumBitrateKbps"sv)));
+      config.monitor.slicesPerFrame = static_cast<int>(util::from_view(args.at("x-shadow-video[0].encoderSlicesPerFrame"sv)));
+      config.monitor.numRefFrames = static_cast<int>(util::from_view(args.at("x-shadow-video[0].maxReferenceFrames"sv)));
+      config.monitor.encoderCscMode = static_cast<int>(util::from_view(args.at("x-shadow-video[0].encoderCscMode"sv)));
+      config.monitor.videoFormat = static_cast<int>(util::from_view(args.at("x-shadow-video[0].bitStreamFormat"sv)));
+      config.monitor.chromaSamplingType = static_cast<int>(util::from_view(args.at("x-shadow-video[0].chromaSamplingType"sv)));
+      config.monitor.enableIntraRefresh = static_cast<int>(util::from_view(args.at("x-shadow-video[0].intraRefresh"sv)));
       config.monitor.sinkRequest.capability.gamut = parse_client_sink_gamut(args.at("x-shadow-sink.gamut"sv));
       config.monitor.sinkRequest.capability.transfer = parse_client_sink_transfer(args.at("x-shadow-sink.transfer"sv));
       config.monitor.sinkRequest.dynamic_range_transport = parse_requested_dynamic_range_transport(
@@ -1236,7 +1273,7 @@ namespace rtsp_stream {
         util::from_view(args.at("x-shadow-sink.supportsPerFrameHDRMetadata"sv));
       config.monitor.sinkRequest.mode.scale_explicit = true;
       config.monitor.sinkRequest.mode.scale_percent =
-        util::from_view(args.at("x-shadow-sink.scalePercent"sv));
+        static_cast<int>(util::from_view(args.at("x-shadow-sink.scalePercent"sv)));
       config.monitor.sinkRequest.mode.hidpi =
         util::from_view(args.at("x-shadow-sink.hidpi"sv));
       config.monitor.sinkRequest.mode.mode_is_logical =
@@ -1416,25 +1453,27 @@ namespace rtsp_stream {
     // too low, we'll allow it to exceed the limits rather than reducing the encoding bitrate
     // down to nearly nothing.
     if (configuredBitrateKbps) {
+      const auto streaming_profile = normalized_streaming_profile();
+      const auto reserve_policy = bitrate_reserve_policy_for_streaming_profile(streaming_profile);
       BOOST_LOG(debug) << "Client configured bitrate is "sv << configuredBitrateKbps << " Kbps"sv;
+      BOOST_LOG(debug) << "Applying "sv << streaming_profile << " streaming profile bitrate reserve policy"sv;
 
       // If the FEC percentage isn't too high, adjust the configured bitrate to ensure video
-      // traffic doesn't exceed the user's selected bitrate when the FEC shards are included.
+      // traffic doesn't exceed the negotiated transport budget when the FEC shards are included.
       if (config::stream.fec_percentage <= 80) {
         configuredBitrateKbps /= 100.f / (100 - config::stream.fec_percentage);
       }
 
-      // Adjust the bitrate to account for audio traffic bandwidth usage (capped at 20% reduction).
+      // Adjust the bitrate to account for audio traffic bandwidth usage.
       // The bitrate per channel is 256 Kbps for high quality mode and 96 Kbps for normal quality.
-      auto audioBitrateAdjustment = (config.audio.flags[audio::config_t::HIGH_QUALITY] ? 256 : 96) * config.audio.channels;
-      configuredBitrateKbps -= std::min((std::int64_t) audioBitrateAdjustment, configuredBitrateKbps / 5);
+      const auto audioBitrateAdjustment = static_cast<std::int64_t>((config.audio.flags[audio::config_t::HIGH_QUALITY] ? 256 : 96) * config.audio.channels);
+      configuredBitrateKbps -= std::min(audioBitrateAdjustment, configuredBitrateKbps / reserve_policy.audio_share_divisor);
 
-      // Reduce it by another 500Kbps to account for A/V packet overhead and control data
-      // traffic (capped at 10% reduction).
-      configuredBitrateKbps -= std::min((std::int64_t) 500, configuredBitrateKbps / 10);
+      // Reserve transport headroom for A/V packet overhead and control data.
+      configuredBitrateKbps -= std::min(reserve_policy.control_overhead_kbps, configuredBitrateKbps / reserve_policy.control_share_divisor);
 
       BOOST_LOG(debug) << "Final adjusted video encoding bitrate is "sv << configuredBitrateKbps << " Kbps"sv;
-      config.monitor.bitrate = configuredBitrateKbps;
+      config.monitor.bitrate = static_cast<int>(configuredBitrateKbps);
     }
 
     if (config.monitor.videoFormat == 1 && video::active_hevc_mode == 1) {

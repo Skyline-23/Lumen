@@ -249,8 +249,6 @@
     "locale_desc": "A Sunshine felhasználói felületén használt területi beállítás.",
     "log_path": "Naplófájl elérési útvonal",
     "log_path_desc": "Az a fájl, amelyben a Sunshine aktuális naplói tárolódnak.",
-    "max_bitrate": "Maximális bitráta",
-    "max_bitrate_desc": "A maximális bitráta (Kbps-ban), amellyel a Sunshine kódolni fogja a streamet. Ha 0-ra van állítva, mindig a Moonlight által kért bitrátát fogja használni.",
     "minimum_fps_target": "Minimális FPS cél",
     "minimum_fps_target_desc": "A legalacsonyabb effektív FPS, amelyet egy stream elérhet. A 0 értéket a folyam FPS-értékének nagyjából felének tekintjük. A 20-as beállítás ajánlott, ha 24 vagy 30fps sebességű tartalmat streamel.",
     "min_log_level": "Napló szint",
