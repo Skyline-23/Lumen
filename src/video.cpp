@@ -312,6 +312,12 @@ namespace video {
       const auto frame_interval_ms = config.framerate > 0 ?
         (1000.0 / static_cast<double>(config.framerate)) :
         (1000.0 / 60.0);
+      if (config.framerate >= 110) {
+        return std::max(4.0, frame_interval_ms * 1.1);
+      }
+      if (config.framerate >= 90) {
+        return std::max(5.0, frame_interval_ms * 1.25);
+      }
       return std::max(6.0, frame_interval_ms * 1.5);
     }
 
@@ -319,6 +325,12 @@ namespace video {
       const auto frame_interval_ms = config.framerate > 0 ?
         (1000.0 / static_cast<double>(config.framerate)) :
         (1000.0 / 60.0);
+      if (config.framerate >= 110) {
+        return std::max(5.0, frame_interval_ms * 1.35);
+      }
+      if (config.framerate >= 90) {
+        return std::max(6.0, frame_interval_ms * 1.6);
+      }
       return std::max(8.0, frame_interval_ms * 2.0);
     }
 
