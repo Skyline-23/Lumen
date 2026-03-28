@@ -1532,7 +1532,7 @@ namespace platf {
     }
     if (activated_pid > 0) {
       if (auto *application = [NSRunningApplication runningApplicationWithProcessIdentifier:activated_pid]; application != nil) {
-        const auto activated = [application activateWithOptions:(NSApplicationActivateAllWindows | NSApplicationActivateIgnoringOtherApps)];
+        const auto activated = [application activateWithOptions:NSApplicationActivateAllWindows];
         if (activated_window != nullptr) {
           const auto activated_app_ax = AXUIElementCreateApplication(activated_pid);
           if (activated_app_ax != nullptr) {
