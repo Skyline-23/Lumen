@@ -22,12 +22,12 @@
 # doxygen -x_noenv [configFile]
 
 # project metadata
-DOCSET_BUNDLE_ID = dev.lizardbyte.Sunshine
-DOCSET_PUBLISHER_ID = dev.lizardbyte.Sunshine.documentation
-PROJECT_BRIEF = "Self-hosted game stream host for Moonlight."
+DOCSET_BUNDLE_ID = dev.skyline23.Lumen
+DOCSET_PUBLISHER_ID = dev.skyline23.Lumen.documentation
+PROJECT_BRIEF = "Self-hosted game stream host for Shadow."
 PROJECT_ICON = ../sunshine.ico
 PROJECT_LOGO = ../sunshine.png
-PROJECT_NAME = Sunshine
+PROJECT_NAME = Lumen
 
 # project specific settings
 DOT_GRAPH_MAX_NODES = 60

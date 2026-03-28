@@ -70,20 +70,20 @@ namespace upnp {
       auto video = std::to_string(net::map_port(stream::VIDEO_STREAM_PORT));
       auto audio = std::to_string(net::map_port(stream::AUDIO_STREAM_PORT));
       auto control = std::to_string(net::map_port(stream::CONTROL_PORT));
-      auto gs_https = std::to_string(net::map_port(shadow_http::PORT_HTTPS));
-      auto wm_http = std::to_string(net::map_port(shadow_control_http::PORT_HTTPS));
+      auto shadow_control_https = std::to_string(net::map_port(shadow_http::PORT_HTTPS));
+      auto web_ui_https = std::to_string(net::map_port(shadow_control_http::PORT_HTTPS));
 
       mappings.assign({
         {{rtsp, rtsp, "TCP"s}, "Apollo - RTSP"s},
         {{video, video, "UDP"s}, "Apollo - Video"s},
         {{audio, audio, "UDP"s}, "Apollo - Audio"s},
         {{control, control, "UDP"s}, "Apollo - Control"s},
-        {{gs_https, gs_https, "TCP"s}, "Apollo - Shadow Control HTTPS"s},
+        {{shadow_control_https, shadow_control_https, "TCP"s}, "Apollo - Shadow Control HTTPS"s},
       });
 
-      // Only map port for the Web Manager if it is configured to accept connection from WAN
+      // Only map the Web UI port if it is configured to accept WAN connections.
       if (net::from_enum_string(config::shadow_http.origin_web_ui_allowed) > net::LAN) {
-        mappings.emplace_back(mapping_t {{wm_http, wm_http, "TCP"s}, "Apollo - Web UI"s});
+        mappings.emplace_back(mapping_t {{web_ui_https, web_ui_https, "TCP"s}, "Apollo - Web UI"s});
       }
 
       // Start the mapping thread

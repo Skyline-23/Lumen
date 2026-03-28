@@ -457,7 +457,7 @@ on how to set up a headless streaming server without autologin and dummy plugs (
 
 ### Configuration
 
-Sunshine is configured via the web ui, which is available on [https://localhost:47990](https://localhost:47990)
+Lumen is configured via the web UI, which is available on [https://localhost:47990](https://localhost:47990)
 by default. You may replace *localhost* with your internal ip address.
 
 > [!NOTE]
@@ -469,13 +469,13 @@ by default. You may replace *localhost* with your internal ip address.
 
 1. Add games and applications.
 2. Adjust any configuration settings as needed.
-3. In Moonlight, you may need to add the PC manually.
-4. When Moonlight requests for you insert the pin:
+3. In your Shadow client, add the host manually if discovery does not list it yet.
+4. When the client asks to pair:
 
-   - Login to the web ui
-   - Go to "PIN" in the Navbar
-   - Type in your PIN and press Enter, you should get a Success Message
-   - In Moonlight, select one of the Applications listed
+   - Login to the web UI
+   - Go to "Pairing" in the navigation bar
+   - Approve the pending device request
+   - Return to the client and launch one of the Applications listed
 
 ### Arguments
 To get a list of available arguments, run the following command.

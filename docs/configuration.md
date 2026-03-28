@@ -1509,7 +1509,7 @@ editing the `conf` file in a text editor. Use the examples as reference.
     <tr>
         <td>Description</td>
         <td colspan="2">
-            Set the family of ports used by Sunshine.
+            Set the family of ports used by Lumen.
             Changing this value will offset other ports as shown in config UI.
         </td>
     </tr>
@@ -1573,7 +1573,7 @@ editing the `conf` file in a text editor. Use the examples as reference.
     <tr>
         <td>Description</td>
         <td colspan="2">
-            If no external IP address is given, Sunshine will attempt to automatically detect external ip-address.
+            If no external IP address is given, Lumen will attempt to automatically detect external ip-address.
         </td>
     </tr>
     <tr>

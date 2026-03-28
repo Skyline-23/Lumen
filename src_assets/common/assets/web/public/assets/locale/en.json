@@ -412,7 +412,7 @@
     "qsv_preset_veryfast": "fastest (lowest quality)",
     "qsv_slow_hevc": "Allow Slow HEVC Encoding",
     "qsv_slow_hevc_desc": "This can enable HEVC encoding on older Intel GPUs, at the cost of higher GPU usage and worse performance.",
-    "restart_note": "Apollo is restarting to apply changes.",
+    "restart_note": "Lumen is restarting to apply changes.",
     "server_cmd": "Server Commands",
     "server_cmd_desc": "Configure a list of commands to be executed when called from client during streaming.",
     "stream_audio": "Stream Audio",
@@ -463,16 +463,16 @@
     "save_password": "Remember Password"
   },
   "index": {
-    "description": "Apollo is a self-hosted game stream host for Moonlight.",
+    "description": "Lumen is a self-hosted Shadow stream host.",
     "download": "Download",
-    "installed_version_not_stable": "You are running a pre-release version of Apollo. You may experience bugs or other issues. Please report any issues you encounter. Thank you for helping to make Apollo a better software!",
+    "installed_version_not_stable": "You are running a pre-release version of Lumen. You may experience bugs or other issues. Please report any issues you encounter. Thank you for helping to make Lumen better!",
     "loading_latest": "Loading latest release...",
     "new_pre_release": "A new Pre-Release Version is Available!",
     "new_stable": "A new Stable Version is Available!",
-    "startup_errors": "<b>Attention!</b> Apollo detected these errors during startup. We <b>STRONGLY RECOMMEND</b> fixing them before streaming.",
-    "version_dirty": "Thank you for helping to make Apollo a better software!",
-    "version_latest": "You are running the latest version of Apollo",
-    "welcome": "Hello, Apollo!"
+    "startup_errors": "<b>Attention!</b> Lumen detected these errors during startup. We <b>STRONGLY RECOMMEND</b> fixing them before streaming.",
+    "version_dirty": "Thank you for helping to make Lumen better!",
+    "version_latest": "You are running the latest version of Lumen",
+    "welcome": "Hello, Lumen!"
   },
   "navbar": {
     "applications": "Applications",
@@ -555,12 +555,12 @@
     "legal_desc": "By continuing to use this software you agree to the terms and conditions in the following documents.",
     "license": "License",
     "resources": "Resources",
-    "resources_desc": "Resources for Apollo!",
+    "resources_desc": "Resources for Lumen!",
     "third_party_notice": "Third Party Notice"
   },
   "troubleshooting": {
     "dd_reset": "Reset Persistent Display Device Settings",
-    "dd_reset_desc": "If Apollo is stuck trying to restore the changed display device settings, you can reset the settings and proceed to restore the display state manually.",
+    "dd_reset_desc": "If Lumen is stuck trying to restore the changed display device settings, you can reset the settings and proceed to restore the display state manually.",
     "dd_reset_error": "Error while resetting persistence!",
     "dd_reset_success": "Success resetting persistence!",
     "force_close": "Force Close",
@@ -568,11 +568,11 @@
     "force_close_error": "Error while closing Application",
     "force_close_success": "Application Closed Successfully!",
     "logs": "Logs",
-    "logs_desc": "See the logs uploaded by Apollo",
+    "logs_desc": "See the logs uploaded by Lumen",
     "logs_find": "Find...",
-    "restart_apollo": "Restart Apollo",
-    "restart_apollo_desc": "If Apollo isn't working properly, you can try restarting it. This will terminate any running sessions.",
-    "restart_apollo_success": "Apollo is restarting",
+    "restart_apollo": "Restart Lumen",
+    "restart_apollo_desc": "If Lumen isn't working properly, you can try restarting it. This will terminate any running sessions.",
+    "restart_apollo_success": "Lumen is restarting",
     "quit_apollo": "Quit Apollo",
     "quit_apollo_desc": "Exit Apollo. This will terminate any running sessions.",
     "quit_apollo_success": "Apollo has exited.",
@@ -583,8 +583,8 @@
   "welcome": {
     "confirm_password": "Confirm password",
     "create_creds": "Before Getting Started, we need you to make a new username and password for accessing the Web UI.",
-    "create_creds_alert": "The credentials below are needed to access Apollo's Web UI. Keep them safe, since you will never see them again!",
-    "greeting": "Welcome to Apollo!",
+    "create_creds_alert": "The credentials below are needed to access Lumen's Web UI. Keep them safe, since you will never see them again!",
+    "greeting": "Welcome to Lumen!",
     "login": "Login",
     "welcome_success": "This page will reload soon, your browser will ask you for the new credentials",
     "login_success": "This page will reload soon."

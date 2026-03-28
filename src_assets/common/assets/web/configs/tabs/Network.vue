@@ -7,10 +7,10 @@ const props = defineProps([
   'config'
 ])
 
-const defaultMoonlightPort = 47989
+const defaultControlPort = 47989
 
 const config = ref(props.config)
-const effectivePort = computed(() => +config.value?.port ?? defaultMoonlightPort)
+const effectivePort = computed(() => +config.value?.port ?? defaultControlPort)
 </script>
 
 <template>
@@ -36,7 +36,7 @@ const effectivePort = computed(() => +config.value?.port ?? defaultMoonlightPort
     <!-- Port family -->
     <div class="mb-3">
       <label for="port" class="form-label">{{ $t('config.port') }}</label>
-      <input type="number" min="1029" max="65514" class="form-control" id="port" :placeholder="defaultMoonlightPort"
+      <input type="number" min="1029" max="65514" class="form-control" id="port" :placeholder="defaultControlPort"
              v-model="config.port" />
       <div class="form-text">{{ $t('config.port_desc') }}</div>
       <!-- Add warning if any port is less than 1024 -->
@@ -58,20 +58,10 @@ const effectivePort = computed(() => +config.value?.port ?? defaultMoonlightPort
         </thead>
         <tbody>
         <tr>
-          <!-- HTTPS -->
+          <!-- Shadow control -->
           <td>{{ $t('config.port_tcp') }}</td>
           <td>{{+effectivePort - 5}}</td>
           <td></td>
-        </tr>
-        <tr>
-          <!-- HTTP -->
-          <td>{{ $t('config.port_tcp') }}</td>
-          <td>{{+effectivePort}}</td>
-          <td>
-            <div class="alert alert-primary" role="alert" v-if="+effectivePort !== defaultMoonlightPort">
-              <i class="fa-solid fa-xl fa-circle-info"></i> {{ $t('config.port_http_port_note') }}
-            </div>
-          </td>
         </tr>
         <tr>
           <!-- Web UI -->

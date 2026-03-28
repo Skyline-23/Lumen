@@ -60,7 +60,7 @@ let hostedRuntimePreprocessorDefinitions = [
     "BOOST_PROGRAM_OPTIONS_NO_LIB",
     "BOOST_REGEX_NO_LIB",
     "BOOST_THREAD_NO_LIB",
-    "PROJECT_NAME=\\\"Apollo\\\"",
+    "PROJECT_NAME=\\\"Lumen\\\"",
     "PROJECT_VERSION=\\\"0.0.0\\\"",
     "PROJECT_VERSION_COMMIT=\\\"\\\"",
     "PROJECT_VERSION_MAJOR=\\\"0\\\"",
@@ -184,7 +184,7 @@ let appAssetsScript = TargetScript.post(
     NPM_BIN="$(resolve_npm || true)"
 
     if [[ -z "${NPM_BIN}" ]]; then
-        echo "error: npm was not found for the Apollo asset build phase." >&2
+        echo "error: npm was not found for the Lumen asset build phase." >&2
         echo "Searched PATH, ~/.nvm, /opt/homebrew/bin, /usr/local/bin, and /opt/homebrew/opt/node/bin." >&2
         exit 1
     fi
@@ -201,7 +201,7 @@ let appAssetsScript = TargetScript.post(
     export PATH="$(/usr/bin/dirname "${NPM_BIN}"):${PATH:-}"
     "${NPM_BIN}" exec -- vite build
     """#,
-    name: "Stage Apollo Assets",
+    name: "Stage Lumen Assets",
     inputPaths: [
         .glob("\(repoRoot)/src_assets/common/assets/**/*"),
         .glob("\(repoRoot)/src_assets/macos/assets/**/*"),
@@ -333,16 +333,16 @@ let project = Project(
             deploymentTargets: .macOS("14.0"),
             infoPlist: .extendingDefault(
                 with: [
-                    "CFBundleDisplayName": "Apollo Companion",
+                    "CFBundleDisplayName": "Lumen",
                     "CFBundleIconFile": "apollo.icns",
                     "LSMinimumSystemVersion": "14.0",
                     "INFOPLIST_KEY_NSHighResolutionCapable": "YES",
                     "LSUIElement": "YES",
-                    "NSAudioCaptureUsageDescription": "Apollo needs access to system audio to stream the selected Mac display with audio.",
-                    "NSMicrophoneUsageDescription": "Apollo needs microphone access when you choose microphone audio for a stream.",
+                    "NSAudioCaptureUsageDescription": "Lumen needs access to system audio to stream the selected Mac display with audio.",
+                    "NSMicrophoneUsageDescription": "Lumen needs microphone access when you choose microphone audio for a stream.",
                     "NSMainStoryboardFile": "",
                     "NSMainNibFile": "",
-                    "NSScreenCaptureUsageDescription": "Apollo needs screen recording access to capture the selected Mac display for streaming."
+                    "NSScreenCaptureUsageDescription": "Lumen needs screen recording access to capture the selected Mac display for streaming."
                 ]
             ),
             sources: [
@@ -362,7 +362,7 @@ let project = Project(
             ],
             settings: .settings(
                 base: [
-                    "PRODUCT_NAME": "Apollo",
+                    "PRODUCT_NAME": "Lumen",
                     "AD_HOC_CODE_SIGNING_ALLOWED": "NO",
                     "CODE_SIGN_STYLE": "Automatic",
                     "CODE_SIGN_IDENTITY": "Apple Development",
