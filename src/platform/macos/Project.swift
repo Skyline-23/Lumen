@@ -72,7 +72,7 @@ let hostedRuntimePreprocessorDefinitions = [
     "SUNSHINE_PUBLISHER_NAME=\\\"SudoMaker\\\"",
     "SUNSHINE_PUBLISHER_WEBSITE=\\\"https://www.sudomaker.com\\\"",
     "SUNSHINE_TRAY=1",
-    "APOLLO_EMBEDDED_HOST=1"
+    "LUMEN_EMBEDDED_HOST=1"
 ]
 
 let hostedRuntimeOtherLdFlags = hostedRuntimeVendoredArchives + [

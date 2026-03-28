@@ -1175,7 +1175,7 @@ namespace rtsp_stream {
       }
     }
 
-    static constexpr std::array required_apollo_announce_fields {
+    static constexpr std::array required_lumen_announce_fields {
       "x-shadow-video[0].bitStreamFormat"sv,
       "x-shadow-sink.scalePercent"sv,
       "x-shadow-sink.hidpi"sv,
@@ -1192,10 +1192,10 @@ namespace rtsp_stream {
       "x-shadow-sink.supportsPerFrameHDRMetadata"sv,
     };
 
-    std::vector<std::string_view> missing_apollo_announce_fields;
-    for (const auto required_field : required_apollo_announce_fields) {
+    std::vector<std::string_view> missing_lumen_announce_fields;
+    for (const auto required_field : required_lumen_announce_fields) {
       if (args.find(required_field) == args.end()) {
-        missing_apollo_announce_fields.emplace_back(required_field);
+        missing_lumen_announce_fields.emplace_back(required_field);
       }
     }
 
@@ -1213,13 +1213,13 @@ namespace rtsp_stream {
     args.try_emplace("x-shadow-video[0].chromaSamplingType"sv, "0"sv);
     args.try_emplace("x-shadow-video[0].intraRefresh"sv, "0"sv);
 
-    if (!missing_apollo_announce_fields.empty()) {
+    if (!missing_lumen_announce_fields.empty()) {
       std::ostringstream missing;
-      for (std::size_t index = 0; index < missing_apollo_announce_fields.size(); ++index) {
+      for (std::size_t index = 0; index < missing_lumen_announce_fields.size(); ++index) {
         if (index != 0) {
           missing << ',';
         }
-        missing << missing_apollo_announce_fields[index];
+        missing << missing_lumen_announce_fields[index];
       }
       BOOST_LOG(error) << "RTSP ANNOUNCE missing required Lumen fields: "sv << missing.str()
                        << " args="sv << args.size()

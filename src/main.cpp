@@ -556,7 +556,7 @@ void lumen_force_stop_stream(void) {
   proc::proc.terminate();
 }
 
-#ifndef APOLLO_EMBEDDED_HOST
+#ifndef LUMEN_EMBEDDED_HOST
 int main(int argc, char *argv[]) {
   return lumen_run(argc, argv, LumenRuntimeOptions {
     .enable_legacy_system_tray = true,

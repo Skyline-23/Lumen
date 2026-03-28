@@ -1,12 +1,12 @@
 /**
  * @file tests/tests_events.h
- * @brief Declarations for ApolloTestEventListener.
+ * @brief Declarations for LumenTestEventListener.
  */
 #pragma once
 #include "tests_common.h"
 
-struct ApolloTestEventListener: testing::EmptyTestEventListener {
-  ApolloTestEventListener() {
+struct LumenTestEventListener: testing::EmptyTestEventListener {
+  LumenTestEventListener() {
     sink = boost::make_shared<sink_t>();
     sink_buffer = boost::make_shared<std::stringstream>();
     sink->locked_backend()->add_stream(sink_buffer);

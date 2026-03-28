@@ -174,7 +174,7 @@ and applications to Sunshine.
 
 | Prep Step | Command                                                                                                                               |
 |-----------|---------------------------------------------------------------------------------------------------------------------------------------|
-| Do        | @code{}sh -c "xrandr --output HDMI-1 --mode ${SUNSHINE_CLIENT_WIDTH}x${SUNSHINE_CLIENT_HEIGHT} --rate ${SUNSHINE_CLIENT_FPS}"@endcode |
+| Do        | @code{}sh -c "xrandr --output HDMI-1 --mode ${SHADOW_CLIENT_WIDTH}x${SHADOW_CLIENT_HEIGHT} --rate ${SHADOW_CLIENT_FPS}"@endcode |
 | Undo      | @code{}xrandr --output HDMI-1 --mode 3840x2160 --rate 120@endcode                                                                     |
 
 > [!TIP]
@@ -183,7 +183,7 @@ and applications to Sunshine.
 >
 > You can update the ``Do`` command to this:
 > ```bash
-> bash -c "${HOME}/scripts/set-custom-res.sh \"${SUNSHINE_CLIENT_WIDTH}\" \"${SUNSHINE_CLIENT_HEIGHT}\" \"${SUNSHINE_CLIENT_FPS}\""
+> bash -c "${HOME}/scripts/set-custom-res.sh \"${SHADOW_CLIENT_WIDTH}\" \"${SHADOW_CLIENT_HEIGHT}\" \"${SHADOW_CLIENT_FPS}\""
 > ```
 >
 > The `set-custom-res.sh` will have this content:
@@ -225,7 +225,7 @@ and applications to Sunshine.
 
 | Prep Step | Command                                                                                                                                  |
 |-----------|------------------------------------------------------------------------------------------------------------------------------------------|
-| Do        | @code{}sh -c "wlr-xrandr --output HDMI-1 --mode \"${SUNSHINE_CLIENT_WIDTH}x${SUNSHINE_CLIENT_HEIGHT}@${SUNSHINE_CLIENT_FPS}Hz\""@endcode |
+| Do        | @code{}sh -c "wlr-xrandr --output HDMI-1 --mode \"${SHADOW_CLIENT_WIDTH}x${SHADOW_CLIENT_HEIGHT}@${SHADOW_CLIENT_FPS}Hz\""@endcode |
 | Undo      | @code{}wlr-xrandr --output HDMI-1 --mode 3840x2160@120Hz@endcode                                                                         |
 
 > [!TIP]
@@ -235,14 +235,14 @@ and applications to Sunshine.
 
 | Prep Step | Command                                                                                                                               |
 |-----------|---------------------------------------------------------------------------------------------------------------------------------------|
-| Do        | @code{}sh -c "xrandr --output HDMI-1 --mode ${SUNSHINE_CLIENT_WIDTH}x${SUNSHINE_CLIENT_HEIGHT} --rate ${SUNSHINE_CLIENT_FPS}"@endcode |
+| Do        | @code{}sh -c "xrandr --output HDMI-1 --mode ${SHADOW_CLIENT_WIDTH}x${SHADOW_CLIENT_HEIGHT} --rate ${SHADOW_CLIENT_FPS}"@endcode |
 | Undo      | @code{}xrandr --output HDMI-1 --mode 3840x2160 --rate 120@endcode                                                                     |
 
 ###### Gnome (Wayland)
 
 | Prep Step | Command                                                                                                                                                                                               |
 |-----------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Do        | @code{}sh -c "displayconfig-mutter set --connector HDMI-1 --resolution ${SUNSHINE_CLIENT_WIDTH}x${SUNSHINE_CLIENT_HEIGHT} --refresh-rate ${SUNSHINE_CLIENT_FPS} --hdr ${SUNSHINE_CLIENT_HDR}"@endcode |
+| Do        | @code{}sh -c "displayconfig-mutter set --connector HDMI-1 --resolution ${SHADOW_CLIENT_WIDTH}x${SHADOW_CLIENT_HEIGHT} --refresh-rate ${SHADOW_CLIENT_FPS} --hdr ${SHADOW_CLIENT_HDR}"@endcode |
 | Undo      | @code{}displayconfig-mutter set --connector HDMI-1 --resolution 3840x2160 --refresh-rate 120 --hdr false@endcode                                                                                      |
 
 Installation instructions for displayconfig-mutter can be [found here](https://github.com/eaglesemanation/displayconfig-mutter). Alternatives include
@@ -260,7 +260,7 @@ unmaintained and do not support newer Mutter features such as HDR and VRR.
 
 | Prep Step | Command                                                                                                                              |
 |-----------|--------------------------------------------------------------------------------------------------------------------------------------|
-| Do        | @code{}sh -c "kscreen-doctor output.HDMI-A-1.mode.${SUNSHINE_CLIENT_WIDTH}x${SUNSHINE_CLIENT_HEIGHT}@${SUNSHINE_CLIENT_FPS}"@endcode |
+| Do        | @code{}sh -c "kscreen-doctor output.HDMI-A-1.mode.${SHADOW_CLIENT_WIDTH}x${SHADOW_CLIENT_HEIGHT}@${SHADOW_CLIENT_FPS}"@endcode |
 | Undo      | @code{}kscreen-doctor output.HDMI-A-1.mode.3840x2160@120@endcode                                                                     |
 
 > [!CAUTION]
@@ -284,7 +284,7 @@ unmaintained and do not support newer Mutter features such as HDR and VRR.
 
 | Prep Step | Command                                                                                                                                                                                                                        |
 |-----------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Do        | @code{}sh -c "nvidia-settings -a CurrentMetaMode=\"HDMI-1: nvidia-auto-select { ViewPortIn=${SUNSHINE_CLIENT_WIDTH}x${SUNSHINE_CLIENT_HEIGHT}, ViewPortOut=${SUNSHINE_CLIENT_WIDTH}x${SUNSHINE_CLIENT_HEIGHT}+0+0 }\""@endcode |
+| Do        | @code{}sh -c "nvidia-settings -a CurrentMetaMode=\"HDMI-1: nvidia-auto-select { ViewPortIn=${SHADOW_CLIENT_WIDTH}x${SHADOW_CLIENT_HEIGHT}, ViewPortOut=${SHADOW_CLIENT_WIDTH}x${SHADOW_CLIENT_HEIGHT}+0+0 }\""@endcode |
 | Undo      | @code{}nvidia-settings -a CurrentMetaMode=\"HDMI-1: nvidia-auto-select { ViewPortIn=3840x2160, ViewPortOut=3840x2160+0+0 }"@endcode                                                                                            |
 
 ##### macOS
@@ -298,7 +298,7 @@ unmaintained and do not support newer Mutter features such as HDR and VRR.
 
 | Prep Step | Command                                                                                                                                                                  |
 |-----------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Do        | @code{}sh -c "displayplacer \"id:<screenId> res:${SUNSHINE_CLIENT_WIDTH}x${SUNSHINE_CLIENT_HEIGHT} hz:${SUNSHINE_CLIENT_FPS} scaling:on origin:(0,0) degree:0\""@endcode |
+| Do        | @code{}sh -c "displayplacer \"id:<screenId> res:${SHADOW_CLIENT_WIDTH}x${SHADOW_CLIENT_HEIGHT} hz:${SHADOW_CLIENT_FPS} scaling:on origin:(0,0) degree:0\""@endcode |
 | Undo      | @code{}displayplacer "id:<screenId> res:3840x2160 hz:120 scaling:on origin:(0,0) degree:0"@endcode                                                                       |
 
 ##### Windows
@@ -313,7 +313,7 @@ third-party tool, you can use *QRes* as an example.
 
 | Prep Step | Command                                                                                                                   |
 |-----------|---------------------------------------------------------------------------------------------------------------------------|
-| Do        | @code{}cmd /C "FullPath\qres.exe /x:%SUNSHINE_CLIENT_WIDTH% /y:%SUNSHINE_CLIENT_HEIGHT% /r:%SUNSHINE_CLIENT_FPS%"@endcode |
+| Do        | @code{}cmd /C "FullPath\qres.exe /x:%SHADOW_CLIENT_WIDTH% /y:%SHADOW_CLIENT_HEIGHT% /r:%SHADOW_CLIENT_FPS%"@endcode |
 | Undo      | @code{}FullPath\qres.exe /x:3840 /y:2160 /r:120@endcode                                                                   |
 
 ### Additional Considerations

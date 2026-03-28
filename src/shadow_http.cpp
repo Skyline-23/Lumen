@@ -601,7 +601,7 @@ namespace shadow_http {
   }
 
   std::shared_ptr<rtsp_stream::launch_session_t> make_launch_session(bool host_audio, bool input_only, const args_t &args, const crypto::named_cert_t* named_cert_p) {
-    static constexpr std::array required_apollo_launch_args {
+    static constexpr std::array required_lumen_launch_args {
       "clientSinkScalePercent"sv,
       "clientSinkHiDPI"sv,
       "clientSinkModeIsLogical"sv,
@@ -617,20 +617,20 @@ namespace shadow_http {
       "clientSinkSupportsPerFrameHDRMetadata"sv,
     };
 
-    std::vector<std::string_view> missing_apollo_launch_args;
-    for (const auto required_arg : required_apollo_launch_args) {
+    std::vector<std::string_view> missing_lumen_launch_args;
+    for (const auto required_arg : required_lumen_launch_args) {
       if (args.find(std::string(required_arg)) == std::end(args)) {
-        missing_apollo_launch_args.emplace_back(required_arg);
+        missing_lumen_launch_args.emplace_back(required_arg);
       }
     }
 
-    if (!missing_apollo_launch_args.empty()) {
+    if (!missing_lumen_launch_args.empty()) {
       std::ostringstream missing;
-      for (std::size_t index = 0; index < missing_apollo_launch_args.size(); ++index) {
+      for (std::size_t index = 0; index < missing_lumen_launch_args.size(); ++index) {
         if (index != 0) {
           missing << ',';
         }
-        missing << missing_apollo_launch_args[index];
+        missing << missing_lumen_launch_args[index];
       }
       BOOST_LOG(error) << "Launch request missing required Lumen sink fields: "sv << missing.str();
       return nullptr;

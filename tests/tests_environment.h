@@ -1,14 +1,14 @@
 /**
  * @file tests/tests_environment.h
- * @brief Declarations for ApolloTestEnvironment.
+ * @brief Declarations for LumenTestEnvironment.
  */
 #pragma once
 #include "tests_common.h"
 
-struct ApolloTestEnvironment: testing::Environment {
+struct LumenTestEnvironment: testing::Environment {
   void SetUp() override {
     mail::man = std::make_shared<safe::mail_raw_t>();
-    deinit_log = logging::init(0, "test_apollo.log");
+    deinit_log = logging::init(0, "test_lumen.log");
   }
 
   void TearDown() override {
