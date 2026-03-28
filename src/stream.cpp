@@ -98,11 +98,16 @@ namespace stream {
   constexpr std::size_t max_video_send_batch_bytes = 64 * 1024;
   constexpr std::size_t max_video_send_batch_packets = 64;
   constexpr int high_refresh_low_latency_fps = 90;
+  constexpr int ultra_high_refresh_low_latency_fps = 110;
   constexpr std::size_t high_refresh_send_batch_packets_cap = 12;
   constexpr std::size_t high_refresh_send_batch_divisor = 6;
+  constexpr std::size_t ultra_high_refresh_send_batch_packets_cap = 8;
+  constexpr std::size_t ultra_high_refresh_send_batch_divisor = 8;
   constexpr auto default_send_pacing_quantum = 1ms;
   constexpr auto high_refresh_send_pacing_quantum = 333us;
+  constexpr auto ultra_high_refresh_send_pacing_quantum = 250us;
   constexpr std::size_t high_refresh_send_pacing_divisor = 3;
+  constexpr std::size_t ultra_high_refresh_send_pacing_divisor = 4;
   constexpr std::uint8_t shadow_multi_fec_flags = 0x10;
 
   enum class socket_e : int {
@@ -1618,26 +1623,40 @@ namespace stream {
         // client negotiates an unusually small packet size.
         // Generic Segmentation Offload on Linux can't do more than 64.
         send_batch_size = std::min(max_video_send_batch_packets, send_batch_size);
-        if (session->config.monitor.framerate >= high_refresh_low_latency_fps) {
+        const auto is_high_refresh = session->config.monitor.framerate >= high_refresh_low_latency_fps;
+        const auto is_ultra_high_refresh = session->config.monitor.framerate >= ultra_high_refresh_low_latency_fps;
+        if (is_high_refresh) {
           // High-refresh sessions are more sensitive to kernel-side packet clumping than
           // lower-refresh streams, so keep each send_batch() closer to a fraction of the
           // 1 ms pacing budget instead of always filling the largest batch we can.
+          const auto send_batch_packets_cap =
+            is_ultra_high_refresh ?
+              ultra_high_refresh_send_batch_packets_cap :
+              high_refresh_send_batch_packets_cap;
+          const auto send_batch_divisor =
+            is_ultra_high_refresh ?
+              ultra_high_refresh_send_batch_divisor :
+              high_refresh_send_batch_divisor;
           const auto high_refresh_send_batch_size = std::max<std::size_t>(
             1,
             std::min(
-              high_refresh_send_batch_packets_cap,
-              std::max<std::size_t>(1, ratecontrol_packets_in_1ms / high_refresh_send_batch_divisor)
+              send_batch_packets_cap,
+              std::max<std::size_t>(1, ratecontrol_packets_in_1ms / send_batch_divisor)
             )
           );
           send_batch_size = std::min(send_batch_size, high_refresh_send_batch_size);
         }
         const auto pacing_quantum =
-          session->config.monitor.framerate >= high_refresh_low_latency_fps ?
+          is_ultra_high_refresh ?
+            ultra_high_refresh_send_pacing_quantum :
+          is_high_refresh ?
             high_refresh_send_pacing_quantum :
             default_send_pacing_quantum;
         const auto ratecontrol_packets_per_quantum = std::max<std::size_t>(
           1,
-          session->config.monitor.framerate >= high_refresh_low_latency_fps ?
+          is_ultra_high_refresh ?
+            ratecontrol_packets_in_1ms / ultra_high_refresh_send_pacing_divisor :
+          is_high_refresh ?
             ratecontrol_packets_in_1ms / high_refresh_send_pacing_divisor :
             ratecontrol_packets_in_1ms
         );
