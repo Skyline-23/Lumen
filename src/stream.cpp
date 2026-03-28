@@ -97,6 +97,9 @@ namespace stream {
 
   constexpr std::size_t max_video_send_batch_bytes = 64 * 1024;
   constexpr std::size_t max_video_send_batch_packets = 64;
+  constexpr int high_refresh_low_latency_fps = 90;
+  constexpr std::size_t high_refresh_send_batch_packets_cap = 16;
+  constexpr std::size_t high_refresh_send_batch_divisor = 4;
   constexpr std::uint8_t shadow_multi_fec_flags = 0x10;
 
   enum class socket_e : int {
@@ -1610,6 +1613,19 @@ namespace stream {
         // client negotiates an unusually small packet size.
         // Generic Segmentation Offload on Linux can't do more than 64.
         send_batch_size = std::min(max_video_send_batch_packets, send_batch_size);
+        if (session->config.monitor.framerate >= high_refresh_low_latency_fps) {
+          // High-refresh sessions are more sensitive to kernel-side packet clumping than
+          // lower-refresh streams, so keep each send_batch() closer to a fraction of the
+          // 1 ms pacing budget instead of always filling the largest batch we can.
+          const auto high_refresh_send_batch_size = std::max<std::size_t>(
+            1,
+            std::min(
+              high_refresh_send_batch_packets_cap,
+              std::max<std::size_t>(1, ratecontrol_packets_in_1ms / high_refresh_send_batch_divisor)
+            )
+          );
+          send_batch_size = std::min(send_batch_size, high_refresh_send_batch_size);
+        }
 
         // Don't ignore the last ratecontrol group of the previous frame
         auto ratecontrol_frame_start = std::max(ratecontrol_next_frame_start, std::chrono::steady_clock::now());
