@@ -49,6 +49,54 @@ namespace {
   std::mutex hosted_runtime_shutdown_mutex;
   std::function<void()> hosted_runtime_shutdown_request;
   std::atomic<bool> hosted_runtime_running {false};
+  std::mutex streaming_services_mutex;
+  std::future<std::unique_ptr<platf::deinit_t>> streaming_mdns_future;
+  std::future<std::unique_ptr<platf::deinit_t>> streaming_upnp_future;
+  std::unique_ptr<platf::deinit_t> streaming_mdns;
+  std::unique_ptr<platf::deinit_t> streaming_upnp;
+  bool streaming_services_requested {false};
+  bool lazy_streaming_service_startup {false};
+
+  void request_streaming_services_start_locked() {
+    if (streaming_services_requested) {
+      return;
+    }
+
+    streaming_services_requested = true;
+
+    if (config::runtime.enable_discovery) {
+      streaming_mdns_future = std::async(std::launch::async, []() {
+        return platf::publish::start();
+      });
+    }
+
+    if (config::runtime.flags[config::flag::UPNP]) {
+      streaming_upnp_future = std::async(std::launch::async, []() {
+        return upnp::start();
+      });
+    }
+  }
+
+  void collect_streaming_services_locked() {
+    if (streaming_mdns_future.valid()) {
+      streaming_mdns = streaming_mdns_future.get();
+    }
+
+    if (streaming_upnp_future.valid()) {
+      streaming_upnp = streaming_upnp_future.get();
+    }
+  }
+
+  void reset_streaming_services_locked() {
+    if (streaming_services_requested) {
+      collect_streaming_services_locked();
+    }
+
+    streaming_upnp.reset();
+    streaming_mdns.reset();
+    streaming_services_requested = false;
+    lazy_streaming_service_startup = false;
+  }
 }
 
 void on_signal_forwarder(int sig) {
@@ -439,6 +487,16 @@ int lumen_run(int argc, char *argv[], const LumenRuntimeOptions &options) {
     false;
 #endif
 
+  {
+    std::lock_guard<std::mutex> lock(streaming_services_mutex);
+    lazy_streaming_service_startup =
+#ifdef __APPLE__
+      !options.enable_legacy_system_tray;
+#else
+      false;
+#endif
+  }
+
   if (defer_startup_encoder_probe) {
     BOOST_LOG(info) << "Deferring initial encoder probe until the first stream launch on macOS"sv;
   } else if (video::probe_encoders()) {
@@ -496,17 +554,11 @@ int lumen_run(int argc, char *argv[], const LumenRuntimeOptions &options) {
     return -1;
   }
 
-  std::unique_ptr<platf::deinit_t> mDNS;
-  auto sync_mDNS = std::async(std::launch::async, [&mDNS]() {
-    if (config::runtime.enable_discovery) {
-      mDNS = platf::publish::start();
-    }
-  });
-
-  std::unique_ptr<platf::deinit_t> upnp_unmap;
-  auto sync_upnp = std::async(std::launch::async, [&upnp_unmap]() {
-    upnp_unmap = upnp::start();
-  });
+  if (lazy_streaming_service_startup) {
+    BOOST_LOG(info) << "Deferring discovery and UPnP startup until the first stream session"sv;
+  } else {
+    lumen_ensure_streaming_services_started();
+  }
 
   // FIXME: Temporary workaround: Simple-Web_server needs to be updated or replaced
   if (shutdown_event->peek()) {
@@ -542,6 +594,11 @@ int lumen_run(int argc, char *argv[], const LumenRuntimeOptions &options) {
   }
 #endif
 
+  {
+    std::lock_guard<std::mutex> lock(streaming_services_mutex);
+    reset_streaming_services_locked();
+  }
+
   return lifetime::desired_exit_code;
 }
 
@@ -563,6 +620,11 @@ bool lumen_is_running(void) {
 
 void lumen_force_stop_stream(void) {
   proc::proc.terminate();
+}
+
+void lumen_ensure_streaming_services_started(void) {
+  std::lock_guard<std::mutex> lock(streaming_services_mutex);
+  request_streaming_services_start_locked();
 }
 
 #ifndef LUMEN_EMBEDDED_HOST

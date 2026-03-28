@@ -30,6 +30,7 @@ extern "C" {
 #include "globals.h"
 #include "input.h"
 #include "logging.h"
+#include "main.h"
 #include "network.h"
 #include "platform/common.h"
 #ifdef __APPLE__
@@ -2698,6 +2699,7 @@ namespace stream {
 
       // If this is the first session, invoke the platform callbacks
       if (++running_sessions == 1) {
+        lumen_ensure_streaming_services_started();
         platf::streaming_will_start();
         proc::proc.resume();
       }

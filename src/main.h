@@ -56,3 +56,9 @@ bool lumen_is_running(void);
  * Safe to call when no session is active.
  */
 void lumen_force_stop_stream(void);
+
+/**
+ * @brief Start deferred streaming-facing services when the first session begins.
+ * Safe to call repeatedly; subsequent calls are ignored after the first start request.
+ */
+void lumen_ensure_streaming_services_started(void);
