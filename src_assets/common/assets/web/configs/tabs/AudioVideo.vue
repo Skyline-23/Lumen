@@ -5,7 +5,6 @@ import PlatformLayout from '../../PlatformLayout.vue'
 import AdapterNameSelector from './audiovideo/AdapterNameSelector.vue'
 import DisplayOutputSelector from './audiovideo/DisplayOutputSelector.vue'
 import DisplayDeviceOptions from "./audiovideo/DisplayDeviceOptions.vue";
-import DisplayModesSettings from "./audiovideo/DisplayModesSettings.vue";
 import Checkbox from "../../Checkbox.vue";
 
 const $t = inject('i18n').t;
@@ -121,12 +120,6 @@ const validateFallbackMode = (event) => {
     <DisplayDeviceOptions
       :platform="platform"
       :config="config"
-    />
-
-    <!-- Display Modes -->
-    <DisplayModesSettings
-        :platform="platform"
-        :config="config"
     />
 
     <!-- Fallback Display Mode -->

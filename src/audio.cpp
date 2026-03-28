@@ -227,7 +227,13 @@ namespace audio {
     while (auto sample = samples->pop()) {
       buffer_t packet {1400};
 
-      int bytes = opus_multistream_encode_float(opus.get(), sample->data(), frame_size, std::begin(packet), packet.size());
+      int bytes = opus_multistream_encode_float(
+        opus.get(),
+        sample->data(),
+        frame_size,
+        std::begin(packet),
+        static_cast<opus_int32>(packet.size())
+      );
       if (bytes < 0) {
         BOOST_LOG(error) << "Couldn't encode audio: "sv << opus_strerror(bytes);
         packets->stop();
@@ -250,8 +256,7 @@ namespace audio {
 #ifdef __APPLE__
     capture_from_apollo_core_ingress(mail, config, channel_data);
     return;
-#endif
-
+#else
     auto stream = stream_configs[map_stream(config.channels, config.flags[config_t::HIGH_QUALITY])];
     if (config.flags[config_t::CUSTOM_SURROUND_PARAMS]) {
       apply_surround_params(stream, config.customStreamParams);
@@ -376,6 +381,7 @@ namespace audio {
 
       samples->raise(std::move(sample_buffer));
     }
+#endif
   }
 
   audio_ctx_ref_t get_audio_ctx_ref() {

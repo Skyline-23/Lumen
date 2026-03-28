@@ -46,18 +46,6 @@ const config = ref(props.config)
               default="false"
     ></Checkbox>
 
-    <!-- Single-frame VBV/HRD percentage increase -->
-    <div class="mb-3">
-      <label for="nvenc_vbv_increase" class="form-label">{{ $t('config.nvenc_vbv_increase') }}</label>
-      <input type="number" min="0" max="400" class="form-control" id="nvenc_vbv_increase" placeholder="0"
-             v-model="config.nvenc_vbv_increase" />
-      <div class="form-text">
-        {{ $t('config.nvenc_vbv_increase_desc') }}<br>
-        <br>
-        <a href="https://en.wikipedia.org/wiki/Video_buffering_verifier">VBV/HRD</a>
-      </div>
-    </div>
-
     <!-- Miscellaneous options -->
     <div class="mb-3 accordion">
       <div class="accordion-item">

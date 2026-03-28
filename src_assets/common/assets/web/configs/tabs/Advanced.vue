@@ -13,13 +13,6 @@ const config = ref(props.config)
 
 <template>
   <div class="config-page">
-    <!-- FEC Percentage -->
-    <div class="mb-3">
-      <label for="fec_percentage" class="form-label">{{ $t('config.fec_percentage') }}</label>
-      <input type="text" class="form-control" id="fec_percentage" placeholder="20" v-model="config.fec_percentage" />
-      <div class="form-text">{{ $t('config.fec_percentage_desc') }}</div>
-    </div>
-
     <!-- Quantization Parameter -->
     <div class="mb-3">
       <label for="qp" class="form-label">{{ $t('config.qp') }}</label>

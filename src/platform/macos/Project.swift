@@ -3,6 +3,7 @@ import ProjectDescription
 let baseSettings: SettingsDictionary = [
     "CLANG_CXX_LANGUAGE_STANDARD": "gnu++23",
     "CLANG_ENABLE_MODULES": "YES",
+    "CLANG_WARN_DOCUMENTATION_COMMENTS": "NO",
     "CODE_SIGN_STYLE": "Automatic",
     "CODE_SIGN_IDENTITY": "Apple Development",
     "DEVELOPMENT_TEAM": "Q23JLSJCCV",
@@ -18,12 +19,15 @@ let buildDepsRoot = "\(repoRoot)/third-party/build-deps/dist/Darwin-arm64"
 
 let hostedRuntimeHeaderSearchPaths = [
     "\(buildDepsRoot)/include",
-    "\(repoRoot)",
     "\(repoRoot)/src",
-    "\(repoRoot)/third-party",
     "$(SRCROOT)/Projects/ApolloCore/Headers",
     "$(SRCROOT)/Projects/ApolloMacBridge/Headers",
-    "$(SRCROOT)/Projects/ApolloMacSupport/Headers",
+    "$(SRCROOT)/Projects/ApolloMacSupport/Headers"
+]
+
+let hostedRuntimeSystemHeaderSearchPaths = [
+    "\(repoRoot)",
+    "\(repoRoot)/third-party",
     "\(repoRoot)/third-party/libdisplaydevice/src/common/include",
     "\(repoRoot)/third-party/moonlight-common-c/enet/include",
     "\(repoRoot)/third-party/nanors",
@@ -146,6 +150,7 @@ let hostedRuntimeSettings: SettingsDictionary = [
     "PRODUCT_NAME": "ApolloHostedRuntime",
     "DEFINES_MODULE": "YES",
     "HEADER_SEARCH_PATHS": .array(hostedRuntimeHeaderSearchPaths),
+    "SYSTEM_HEADER_SEARCH_PATHS": .array(hostedRuntimeSystemHeaderSearchPaths),
     "LIBRARY_SEARCH_PATHS": .array(hostedRuntimeLibrarySearchPaths),
     "GCC_PREPROCESSOR_DEFINITIONS": .array(hostedRuntimePreprocessorDefinitions),
     "OTHER_CPLUSPLUSFLAGS": .array([

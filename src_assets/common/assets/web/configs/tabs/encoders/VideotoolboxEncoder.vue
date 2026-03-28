@@ -36,19 +36,6 @@ const config = ref(props.config)
           This only affects Apollo-native bridge/manual macOS capture defaults. It does not change the GameStream transport codec path.
         </div>
       </div>
-      <div class="mb-3">
-        <label for="macos_bridge_queue_profile" class="form-label">Apollo Bridge Queue Profile</label>
-        <select id="macos_bridge_queue_profile" class="form-select" v-model="config.macos_bridge_queue_profile">
-          <option value="auto">Auto (recommended)</option>
-          <option value="q1">Q1</option>
-          <option value="q2">Q2</option>
-          <option value="q3">Q3</option>
-          <option value="q4">Q4</option>
-        </select>
-        <div class="form-text">
-          Controls the SkyLight capture queue profile used by the macOS bridge. Auto benchmarks the best capture path for the current display and target refresh rate.
-        </div>
-      </div>
     </template>
     <template v-else>
       <div class="mb-3">
