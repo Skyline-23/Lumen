@@ -243,6 +243,11 @@ final class ApolloTuistBootstrapTests: XCTestCase {
             queueProfile: .q2,
             targetFrameRate: 90
         )
+        let q2SixtyFps = ApolloMacDisplayKitCaptureConfiguration(
+            displayID: 7,
+            queueProfile: .q2,
+            targetFrameRate: 60
+        )
         let q2ThirtyFps = ApolloMacDisplayKitCaptureConfiguration(
             displayID: 7,
             queueProfile: .q2,
@@ -253,6 +258,7 @@ final class ApolloTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(ApolloBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: auto), 1)
         XCTAssertEqual(ApolloBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q4), 1)
         XCTAssertEqual(ApolloBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q2NinetyFps), 1)
+        XCTAssertEqual(ApolloBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q2SixtyFps), 1)
         XCTAssertEqual(ApolloBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q2ThirtyFps), 2)
     }
 
