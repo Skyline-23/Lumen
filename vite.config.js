@@ -69,8 +69,8 @@ export default defineConfig({
                 apps: resolve(assetsSrcPath, 'apps.html'),
                 config: resolve(assetsSrcPath, 'config.html'),
                 index: resolve(assetsSrcPath, 'index.html'),
+                pairing: resolve(assetsSrcPath, 'pairing.html'),
                 password: resolve(assetsSrcPath, 'password.html'),
-                pin: resolve(assetsSrcPath, 'pin.html'),
                 troubleshooting: resolve(assetsSrcPath, 'troubleshooting.html'),
                 welcome: resolve(assetsSrcPath, 'welcome.html'),
                 login: resolve(assetsSrcPath, 'login.html')

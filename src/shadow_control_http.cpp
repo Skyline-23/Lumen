@@ -1419,7 +1419,7 @@ namespace shadow_control_http {
         input_tree.value("deviceName", "Unnamed Device"),
         input_tree.value("platform", "unknown"),
         input_tree.value("clientId", ""),
-        input_tree.value("clientCertificate", input_tree.value("publicKey", ""))
+        input_tree.value("clientCertificate", "")
       );
 
       nlohmann::json output_tree;

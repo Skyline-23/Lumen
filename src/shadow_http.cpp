@@ -452,28 +452,6 @@ namespace shadow_http {
     }
   }
 
-  void write_shadow_pairing_required_response(
-    pt::ptree &tree,
-    const shadow_control_http::shadow_pairing_request_snapshot_t &pairing_request
-  ) {
-    tree.put("root.paired", 0);
-    tree.put("root.<xmlattr>.status_code", 426);
-    tree.put(
-      "root.<xmlattr>.status_message",
-      "Legacy /pair handshake removed. Approve this device in Shadow control."
-    );
-    tree.put("root.shadowPairingId", pairing_request.pairing_id);
-    tree.put("root.shadowPairingCode", pairing_request.user_code);
-    tree.put("root.shadowPairingStatus", pairing_request.status);
-    tree.put("root.shadowPairingClientTrusted", pairing_request.client_trusted);
-    tree.put("root.shadowPairingTrustedClientUuid", pairing_request.trusted_client_uuid);
-    tree.put("root.shadowPairingExpiresInSeconds", pairing_request.expires_in_seconds);
-    tree.put("root.shadowPairingPollIntervalSeconds", pairing_request.poll_interval_seconds);
-    tree.put("root.shadowControlPort", pairing_request.control_https_port);
-    tree.put("root.shadowServiceType", pairing_request.service_type);
-    tree.put("root.shadowServerUniqueId", pairing_request.server_unique_id);
-  }
-
   void load_state() {
     if (!fs::exists(config::shadow_http.file_state)) {
       BOOST_LOG(info) << "File "sv << config::shadow_http.file_state << " doesn't exist"sv;
@@ -882,70 +860,6 @@ namespace shadow_http {
     pt::write_xml(data, tree);
     response->write(SimpleWeb::StatusCode::client_error_not_found, data.str());
     response->close_connection_after_response = true;
-  }
-
-  template <class T>
-  void pair(std::shared_ptr<typename SimpleWeb::ServerBase<T>::Response> response, std::shared_ptr<typename SimpleWeb::ServerBase<T>::Request> request) {
-    print_req<T>(request);
-
-    pt::ptree tree;
-
-    auto fg = util::fail_guard([&]() {
-      std::ostringstream data;
-
-      pt::write_xml(data, tree);
-      response->write(data.str());
-      response->close_connection_after_response = true;
-    });
-
-    if (!config::runtime.enable_pairing) {
-      tree.put("root.<xmlattr>.status_code", 403);
-      tree.put("root.<xmlattr>.status_message", "Pairing is disabled for this instance");
-
-      return;
-    }
-
-    auto args = request->parse_query_string();
-    if (args.find("uniqueid"s) == std::end(args)) {
-      tree.put("root.<xmlattr>.status_code", 400);
-      tree.put("root.<xmlattr>.status_message", "Missing uniqueid parameter");
-
-      return;
-    }
-
-    auto uniqID {get_arg(args, "uniqueid")};
-
-    args_t::const_iterator it;
-    if (it = args.find("phrase"); it != std::end(args)) {
-      if (it->second == "getservercert"sv) {
-        auto deviceName { get_arg(args, "devicename") };
-        if (deviceName == "roth"sv) {
-          deviceName = "Legacy Client";
-        }
-
-        auto pairing_request = shadow_control_http::create_pairing_request(
-          deviceName,
-          "legacy-nvhttp",
-          uniqID,
-          get_arg(args, "clientcert")
-        );
-
-        BOOST_LOG(info) << "Redirecting legacy /pair request for ["sv << pairing_request.device_name
-                        << "] into Shadow pairing approval ["sv << pairing_request.pairing_id << ']';
-
-        write_shadow_pairing_required_response(tree, pairing_request);
-        return;
-      } else if (it->second == "pairchallenge"sv) {
-        tree.put("root.paired", 0);
-        tree.put("root.<xmlattr>.status_code", 426);
-        tree.put("root.<xmlattr>.status_message", "Legacy /pair challenge removed. Restart pairing in Shadow control.");
-        return;
-      }
-    }
-
-    tree.put("root.paired", 0);
-    tree.put("root.<xmlattr>.status_code", 426);
-    tree.put("root.<xmlattr>.status_message", "Legacy /pair is no longer supported. Use Shadow pairing approval.");
   }
 
   nlohmann::json get_all_clients() {
@@ -1612,7 +1526,6 @@ namespace shadow_http {
     };
 
     https_server.default_resource["GET"] = not_found<SessionHTTPS>;
-    https_server.resource["^/pair$"]["GET"] = pair<SessionHTTPS>;
     https_server.resource["^/appasset$"]["GET"] = appasset;
     https_server.resource["^/launch$"]["GET"] = [&host_audio](auto resp, auto req) {
       launch(host_audio, resp, req);
