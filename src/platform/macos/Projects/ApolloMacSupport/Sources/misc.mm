@@ -80,8 +80,8 @@ namespace platf {
     constexpr int32_t kVirtualIsolationParkSpacingY = 4096;
     constexpr std::string_view kCaptureRequestMirrorFileName = "capture_request_state.plist"sv;
     NSString *const kCaptureRequestMirrorNotificationName = @"com.lizardbyte.apollo.capture-request-changed";
-    NSString *const kApolloRuntimeEventNotificationName = @"ApolloRuntimeEventNotification";
-    NSString *const kApolloRuntimeWebUIReadyNotificationName = @"ApolloRuntimeWebUIReadyNotification";
+    NSString *const kLumenRuntimeEventNotificationName = @"LumenRuntimeEventNotification";
+    NSString *const kLumenRuntimeWebUIReadyNotificationName = @"LumenRuntimeWebUIReadyNotification";
     NSString *const kApolloRuntimeEventIdentifierKey = @"identifier";
     NSString *const kApolloRuntimeEventTitleKey = @"title";
     NSString *const kApolloRuntimeEventBodyKey = @"body";
@@ -773,7 +773,7 @@ namespace platf {
     if (!refresh_screen_capture_permission_state()) {
       if (!screen_capture_warning_logged.exchange(true)) {
         BOOST_LOG(warning) << "Screen capture permission is not granted yet."sv;
-        BOOST_LOG(warning) << "Please enable Apollo in System Settings -> Privacy & Security -> Screen Recording."sv;
+        BOOST_LOG(warning) << "Please enable Lumen in System Settings -> Privacy & Security -> Screen Recording."sv;
       }
     }
 
@@ -787,7 +787,7 @@ namespace platf {
       homedir = getpwuid(geteuid())->pw_dir;
     }
 
-    return fs::path {homedir} / "Library/Application Support/Apollo"sv;
+    return fs::path {homedir} / "Library/Application Support/Lumen"sv;
   }
 
   using ifaddr_t = util::safe_ptr<ifaddrs, freeifaddrs>;
@@ -1670,7 +1670,7 @@ namespace platf {
 
     dispatch_async(dispatch_get_main_queue(), ^{
       [[NSNotificationCenter defaultCenter]
-        postNotificationName:kApolloRuntimeEventNotificationName
+        postNotificationName:kLumenRuntimeEventNotificationName
                       object:nil
                     userInfo:@ {
                       kApolloRuntimeEventIdentifierKey: identifier_string,
@@ -1686,7 +1686,7 @@ namespace platf {
 
     dispatch_async(dispatch_get_main_queue(), ^{
       [[NSNotificationCenter defaultCenter]
-        postNotificationName:kApolloRuntimeWebUIReadyNotificationName
+        postNotificationName:kLumenRuntimeWebUIReadyNotificationName
                       object:nil
                     userInfo:@ {kApolloRuntimeWebUIReadyURLKey: url_string}];
     });

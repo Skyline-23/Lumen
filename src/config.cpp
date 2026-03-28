@@ -588,11 +588,11 @@ namespace config {
     {},  // Username
     {},  // Password
     {},  // Password Salt
-    platf::appdata().string() + "/apollo.conf",  // config file
+    platf::appdata().string() + "/lumen.conf",  // config file
     {},  // cmd args
     47989,  // Base port number
     "ipv4",  // Address family
-    platf::appdata().string() + "/apollo.log",  // log file
+    platf::appdata().string() + "/lumen.log",  // log file
     false,  // notify_pre_releases
     true,  // system_tray
     {},  // prep commands

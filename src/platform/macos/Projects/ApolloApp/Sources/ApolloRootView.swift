@@ -16,7 +16,7 @@ struct ApolloRootView: View {
     }
 
     private var header: some View {
-        Text("Apollo")
+        Text("Lumen")
             .font(.title3.weight(.semibold))
     }
 
@@ -42,12 +42,12 @@ struct ApolloRootView: View {
                 captureController.forceStopCurrentStream()
             }
 
-            Button("Restart Apollo") {
+            Button("Restart Lumen") {
                 captureController.restartApolloCompanion()
             }
             .disabled(!captureController.canRestartApollo)
 
-            Button("Quit Apollo") {
+            Button("Quit Lumen") {
                 captureController.quitApplication()
             }
         }

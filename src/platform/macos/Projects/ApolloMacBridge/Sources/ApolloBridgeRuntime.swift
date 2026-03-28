@@ -277,8 +277,8 @@ enum ApolloBridgeConfigurationPreferences {
         FileManager.default.homeDirectoryForCurrentUser
             .appending(path: "Library", directoryHint: .isDirectory)
             .appending(path: "Application Support", directoryHint: .isDirectory)
-            .appending(path: "Apollo", directoryHint: .isDirectory)
-            .appending(path: "apollo.conf", directoryHint: .notDirectory)
+            .appending(path: "Lumen", directoryHint: .isDirectory)
+            .appending(path: "lumen.conf", directoryHint: .notDirectory)
     }()
 
     static func preferredCodec() -> ApolloCaptureCodec {

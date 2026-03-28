@@ -31,7 +31,7 @@ final class ApolloAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificati
         didReceive response: UNNotificationResponse
     ) async {
         _ = center
-        let launchPath = response.notification.request.content.userInfo["apolloLaunchPath"] as? String ?? "/"
+        let launchPath = response.notification.request.content.userInfo["lumenLaunchPath"] as? String ?? "/"
         await MainActor.run {
             captureController?.openWebDashboard(path: launchPath)
         }
@@ -57,7 +57,7 @@ struct ApolloApp: App {
             Image(nsImage: captureController.menuBarImage)
                 .renderingMode(.template)
                 .frame(width: 18, height: 18)
-                .help("Apollo")
+                .help("Lumen")
         }
         .menuBarExtraStyle(.menu)
     }

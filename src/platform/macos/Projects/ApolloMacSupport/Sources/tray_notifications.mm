@@ -7,7 +7,7 @@
 #include <string>
 
 namespace {
-  constexpr const char *notification_url_key = "apolloLaunchPath";
+  constexpr const char *notification_url_key = "lumenLaunchPath";
   std::atomic<bool> authorization_requested {false};
 
   NSString *to_ns_string(std::string_view value) {

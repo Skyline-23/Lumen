@@ -4,8 +4,8 @@ import Foundation
 import UserNotifications
 
 extension Notification.Name {
-    static let apolloRuntimeEvent = Notification.Name("ApolloRuntimeEventNotification")
-    static let apolloRuntimeWebUIReady = Notification.Name("ApolloRuntimeWebUIReadyNotification")
+    static let lumenRuntimeEvent = Notification.Name("LumenRuntimeEventNotification")
+    static let lumenRuntimeWebUIReady = Notification.Name("LumenRuntimeWebUIReadyNotification")
 }
 
 @MainActor
@@ -13,8 +13,8 @@ final class ApolloCaptureController: ObservableObject {
     private enum WebDashboardConfiguration {
         static let defaultBasePort = 47_989
         static let httpsPortOffset = 1
-        static let configurationDirectoryName = "Apollo"
-        static let configurationFileName = "apollo.conf"
+        static let configurationDirectoryName = "Lumen"
+        static let configurationFileName = "lumen.conf"
     }
 
     @Published private(set) var menuStatus = ApolloMacCaptureAdapterMenuStatus(
@@ -28,7 +28,7 @@ final class ApolloCaptureController: ObservableObject {
     @Published private(set) var isScreenCapturePermissionGranted = true
 
     private let adapter: ApolloMacCaptureAdapter
-    private let statusRefreshQueue = DispatchQueue(label: "ApolloCaptureController.StatusRefresh", qos: .userInitiated)
+    private let statusRefreshQueue = DispatchQueue(label: "LumenCaptureController.StatusRefresh", qos: .userInitiated)
     private var statusObserver: NSObjectProtocol?
     private var companionStopObserver: NSObjectProtocol?
     private var runtimeEventObserver: NSObjectProtocol?
@@ -60,12 +60,12 @@ final class ApolloCaptureController: ObservableObject {
                     return
                 }
 
-                self.lastErrorMessage = "Apollo web runtime stopped."
+                self.lastErrorMessage = "Lumen web runtime stopped."
                 NSApp.terminate(nil)
             }
         }
         runtimeEventObserver = NotificationCenter.default.addObserver(
-            forName: .apolloRuntimeEvent,
+            forName: .lumenRuntimeEvent,
             object: nil,
             queue: .main
         ) { [weak self] notification in
@@ -74,7 +74,7 @@ final class ApolloCaptureController: ObservableObject {
             }
         }
         runtimeWebUIReadyObserver = NotificationCenter.default.addObserver(
-            forName: .apolloRuntimeWebUIReady,
+            forName: .lumenRuntimeWebUIReady,
             object: nil,
             queue: .main
         ) { [weak self] notification in
@@ -192,7 +192,7 @@ final class ApolloCaptureController: ObservableObject {
         }
 
         let configuration = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
-        guard let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Apollo")?
+        guard let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Lumen")?
             .withSymbolConfiguration(configuration) else {
             return nil
         }
@@ -203,7 +203,7 @@ final class ApolloCaptureController: ObservableObject {
     }
 
     var openWebTitle: String {
-        "Open Apollo"
+        "Open Lumen"
     }
 
     var streamControlTitle: String {
@@ -290,7 +290,7 @@ final class ApolloCaptureController: ObservableObject {
         }
 
         let identifier = userInfo["identifier"] as? String ?? UUID().uuidString
-        let title = userInfo["title"] as? String ?? "Apollo"
+        let title = userInfo["title"] as? String ?? "Lumen"
         let body = userInfo["body"] as? String ?? ""
         let launchPath = userInfo["launchPath"] as? String ?? "/"
 
@@ -312,7 +312,7 @@ final class ApolloCaptureController: ObservableObject {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
-        content.userInfo = ["apolloLaunchPath": launchPath]
+        content.userInfo = ["lumenLaunchPath": launchPath]
         let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request)
     }
@@ -335,17 +335,17 @@ final class ApolloCaptureController: ObservableObject {
     }
 
     private var webDashboardPort: Int {
-        resolvedApolloBasePort() + WebDashboardConfiguration.httpsPortOffset
+        resolvedLumenBasePort() + WebDashboardConfiguration.httpsPortOffset
     }
 
     private var webDashboardBaseURLString: String {
         runtimeWebDashboardBaseURLString ?? "https://localhost:\(webDashboardPort)"
     }
 
-    private func resolvedApolloBasePort() -> Int {
+    private func resolvedLumenBasePort() -> Int {
         guard let configurationURL = apolloConfigurationURL,
               let configurationContents = try? String(contentsOf: configurationURL, encoding: .utf8),
-              let configuredPort = configuredApolloBasePort(from: configurationContents) else {
+              let configuredPort = configuredLumenBasePort(from: configurationContents) else {
             return WebDashboardConfiguration.defaultBasePort
         }
 
@@ -365,7 +365,7 @@ final class ApolloCaptureController: ObservableObject {
             .appendingPathComponent(WebDashboardConfiguration.configurationFileName, isDirectory: false)
     }
 
-    private func configuredApolloBasePort(from configurationContents: String) -> Int? {
+    private func configuredLumenBasePort(from configurationContents: String) -> Int? {
         for rawLine in configurationContents.split(whereSeparator: \.isNewline) {
             let lineWithoutComment = rawLine.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)
                 .first?
