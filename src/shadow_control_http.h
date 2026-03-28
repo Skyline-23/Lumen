@@ -5,6 +5,7 @@
 #pragma once
 
 // standard includes
+#include <cstdint>
 #include <functional>
 #include <chrono>
 #include <string>
@@ -19,6 +20,26 @@ using namespace std::chrono_literals;
 namespace shadow_control_http {
   constexpr auto PORT_HTTPS = 1;
   constexpr auto SESSION_EXPIRE_DURATION = 24h * 15;
+
+  struct shadow_pairing_request_snapshot_t {
+    std::string pairing_id;
+    std::string user_code;
+    std::string device_name;
+    std::string platform;
+    std::string client_id;
+    bool public_key_present = false;
+    std::string status;
+    std::int64_t expires_in_seconds = 0;
+    std::int64_t poll_interval_seconds = 0;
+  };
+
+  shadow_pairing_request_snapshot_t create_pairing_request(
+    std::string device_name,
+    std::string platform,
+    std::string client_id,
+    std::string public_key
+  );
+
   void start();
 }  // namespace shadow_control_http
 

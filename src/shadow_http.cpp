@@ -28,6 +28,7 @@
 #include "display_device.h"
 #include "file_handler.h"
 #include "globals.h"
+#include "shadow_control_http.h"
 #include "shadow_http_common.h"
 #include "logging.h"
 #include "network.h"
@@ -457,6 +458,23 @@ namespace shadow_http {
       BOOST_LOG(error) << "Couldn't write "sv << config::shadow_http.file_state << ": "sv << e.what();
       return;
     }
+  }
+
+  void write_shadow_pairing_required_response(
+    pt::ptree &tree,
+    const shadow_control_http::shadow_pairing_request_snapshot_t &pairing_request
+  ) {
+    tree.put("root.paired", 0);
+    tree.put("root.<xmlattr>.status_code", 426);
+    tree.put(
+      "root.<xmlattr>.status_message",
+      "Legacy /pair handshake removed. Approve this device in Shadow control."
+    );
+    tree.put("root.shadowPairingId", pairing_request.pairing_id);
+    tree.put("root.shadowPairingCode", pairing_request.user_code);
+    tree.put("root.shadowPairingStatus", pairing_request.status);
+    tree.put("root.shadowPairingExpiresInSeconds", pairing_request.expires_in_seconds);
+    tree.put("root.shadowPairingPollIntervalSeconds", pairing_request.poll_interval_seconds);
   }
 
   void load_state() {
@@ -1023,98 +1041,34 @@ namespace shadow_http {
     args_t::const_iterator it;
     if (it = args.find("phrase"); it != std::end(args)) {
       if (it->second == "getservercert"sv) {
-        pair_session_t sess;
-
         auto deviceName { get_arg(args, "devicename") };
-
         if (deviceName == "roth"sv) {
-          deviceName = "Legacy Moonlight Client";
+          deviceName = "Legacy Client";
         }
 
-        sess.client.uniqueID = std::move(uniqID);
-        sess.client.name = std::move(deviceName);
-        sess.client.cert = util::from_hex_vec(get_arg(args, "clientcert"), true);
+        auto pairing_request = shadow_control_http::create_pairing_request(
+          deviceName,
+          "legacy-nvhttp",
+          uniqID,
+          get_arg(args, "clientcert")
+        );
 
-        BOOST_LOG(debug) << sess.client.cert;
-        auto ptr = map_id_sess.emplace(sess.client.uniqueID, std::move(sess)).first;
+        BOOST_LOG(info) << "Redirecting legacy /pair request for ["sv << pairing_request.device_name
+                        << "] into Shadow pairing approval ["sv << pairing_request.pairing_id << ']';
 
-        ptr->second.async_insert_pin.salt = std::move(get_arg(args, "salt"));
-
-        auto it = args.find("otpauth");
-        if (it != std::end(args)) {
-          if (one_time_pin.empty() || (std::chrono::steady_clock::now() - otp_creation_time > OTP_EXPIRE_DURATION)) {
-            one_time_pin.clear();
-            otp_passphrase.clear();
-            otp_device_name.clear();
-            tree.put("root.<xmlattr>.status_code", 503);
-            tree.put("root.<xmlattr>.status_message", "OTP auth not available.");
-          } else {
-            auto hash = util::hex(crypto::hash(one_time_pin + ptr->second.async_insert_pin.salt + otp_passphrase), true);
-
-            if (hash.to_string_view() == it->second) {
-
-              if (!otp_device_name.empty()) {
-                ptr->second.client.name = std::move(otp_device_name);
-              }
-
-              getservercert(ptr->second, tree, one_time_pin);
-
-              one_time_pin.clear();
-              otp_passphrase.clear();
-              otp_device_name.clear();
-              return;
-            }
-          }
-
-          // Always return positive, attackers will fail in the next steps.
-          getservercert(ptr->second, tree, crypto::rand(16));
-          return;
-        }
-
-        if (config::runtime.flags[config::flag::PIN_STDIN]) {
-          std::string pin;
-
-          std::cout << "Please insert pin: "sv;
-          std::getline(std::cin, pin);
-
-          getservercert(ptr->second, tree, pin);
-        } else {
-#if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
-          system_tray::update_tray_require_pin();
-#endif
-          ptr->second.async_insert_pin.response = std::move(response);
-
-          fg.disable();
-          return;
-        }
+        write_shadow_pairing_required_response(tree, pairing_request);
+        return;
       } else if (it->second == "pairchallenge"sv) {
-        tree.put("root.paired", 1);
-        tree.put("root.<xmlattr>.status_code", 200);
+        tree.put("root.paired", 0);
+        tree.put("root.<xmlattr>.status_code", 426);
+        tree.put("root.<xmlattr>.status_message", "Legacy /pair challenge removed. Restart pairing in Shadow control.");
         return;
       }
     }
 
-    auto sess_it = map_id_sess.find(uniqID);
-    if (sess_it == std::end(map_id_sess)) {
-      tree.put("root.<xmlattr>.status_code", 400);
-      tree.put("root.<xmlattr>.status_message", "Invalid uniqueid");
-
-      return;
-    }
-
-    if (it = args.find("clientchallenge"); it != std::end(args)) {
-      auto challenge = util::from_hex_vec(it->second, true);
-      clientchallenge(sess_it->second, tree, challenge);
-    } else if (it = args.find("serverchallengeresp"); it != std::end(args)) {
-      auto encrypted_response = util::from_hex_vec(it->second, true);
-      serverchallengeresp(sess_it->second, tree, encrypted_response);
-    } else if (it = args.find("clientpairingsecret"); it != std::end(args)) {
-      auto pairingsecret = util::from_hex_vec(it->second, true);
-      clientpairingsecret(sess_it->second, tree, pairingsecret);
-    } else {
-      tree.put("root.<xmlattr>.status_code", 404);
-      tree.put("root.<xmlattr>.status_message", "Invalid pairing request");
-    }
+    tree.put("root.paired", 0);
+    tree.put("root.<xmlattr>.status_code", 426);
+    tree.put("root.<xmlattr>.status_message", "Legacy /pair is no longer supported. Use Shadow pairing approval.");
   }
 
   bool pin(std::string pin, std::string name) {

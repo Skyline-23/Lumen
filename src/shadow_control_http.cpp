@@ -142,6 +142,25 @@ namespace shadow_control_http {
     return tree;
   }
 
+  shadow_pairing_request_snapshot_t snapshot_shadow_pairing_request(const shadow_pairing_request_t &request) {
+    const auto now = std::chrono::steady_clock::now();
+
+    shadow_pairing_request_snapshot_t snapshot;
+    snapshot.pairing_id = request.pairing_id;
+    snapshot.user_code = request.user_code;
+    snapshot.device_name = request.device_name;
+    snapshot.platform = request.platform;
+    snapshot.client_id = request.client_id;
+    snapshot.public_key_present = !request.public_key.empty();
+    snapshot.status = shadow_pairing_status_string(request);
+    snapshot.expires_in_seconds = std::max<int64_t>(
+      0,
+      std::chrono::duration_cast<std::chrono::seconds>(request.expires_at - now).count()
+    );
+    snapshot.poll_interval_seconds = SHADOW_PAIRING_POLL_INTERVAL.count();
+    return snapshot;
+  }
+
   std::string generate_shadow_pairing_user_code() {
     static constexpr auto alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"sv;
     return crypto::rand_alphabet(6, alphabet);
@@ -169,6 +188,35 @@ namespace shadow_control_http {
     }
 
     return std::nullopt;
+  }
+
+  shadow_pairing_request_snapshot_t create_pairing_request(
+    std::string device_name,
+    std::string platform,
+    std::string client_id,
+    std::string public_key
+  ) {
+    shadow_pairing_request_t pairing_request;
+    pairing_request.pairing_id = uuid_util::uuid_t::generate().string();
+    pairing_request.user_code = generate_shadow_pairing_user_code();
+    pairing_request.device_name = device_name.empty() ? "Unnamed Device"s : std::move(device_name);
+    pairing_request.platform = platform.empty() ? "unknown"s : std::move(platform);
+    pairing_request.client_id = std::move(client_id);
+    pairing_request.public_key = std::move(public_key);
+    pairing_request.created_at = std::chrono::steady_clock::now();
+    pairing_request.expires_at = pairing_request.created_at + SHADOW_PAIRING_EXPIRE_DURATION;
+
+    {
+      std::lock_guard lock {shadow_pairing_requests_mutex};
+      erase_expired_shadow_pairing_requests_locked();
+      shadow_pairing_requests[pairing_request.pairing_id] = pairing_request;
+    }
+
+    BOOST_LOG(info) << "Shadow pairing request created for ["sv << pairing_request.device_name
+                    << "] platform ["sv << pairing_request.platform << "] code ["sv
+                    << pairing_request.user_code << ']';
+
+    return snapshot_shadow_pairing_request(pairing_request);
   }
 
   /**
@@ -1346,29 +1394,26 @@ namespace shadow_control_http {
       ss << request->content.rdbuf();
       nlohmann::json input_tree = nlohmann::json::parse(ss.str());
 
-      shadow_pairing_request_t pairing_request;
-      pairing_request.pairing_id = uuid_util::uuid_t::generate().string();
-      pairing_request.user_code = generate_shadow_pairing_user_code();
-      pairing_request.device_name = input_tree.value("deviceName", "Unnamed Device");
-      pairing_request.platform = input_tree.value("platform", "unknown");
-      pairing_request.client_id = input_tree.value("clientId", "");
-      pairing_request.public_key = input_tree.value("publicKey", "");
-      pairing_request.created_at = std::chrono::steady_clock::now();
-      pairing_request.expires_at = pairing_request.created_at + SHADOW_PAIRING_EXPIRE_DURATION;
-
-      {
-        std::lock_guard lock {shadow_pairing_requests_mutex};
-        erase_expired_shadow_pairing_requests_locked();
-        shadow_pairing_requests[pairing_request.pairing_id] = pairing_request;
-      }
-
-      BOOST_LOG(info) << "Shadow pairing request created for ["sv << pairing_request.device_name
-                      << "] platform ["sv << pairing_request.platform << "] code ["sv
-                      << pairing_request.user_code << ']';
+      auto pairing_request = create_pairing_request(
+        input_tree.value("deviceName", "Unnamed Device"),
+        input_tree.value("platform", "unknown"),
+        input_tree.value("clientId", ""),
+        input_tree.value("publicKey", "")
+      );
 
       nlohmann::json output_tree;
       output_tree["status"] = true;
-      output_tree["pairing"] = serialize_shadow_pairing_request(pairing_request);
+      output_tree["pairing"] = {
+        {"pairingId", pairing_request.pairing_id},
+        {"userCode", pairing_request.user_code},
+        {"deviceName", pairing_request.device_name},
+        {"platform", pairing_request.platform},
+        {"clientId", pairing_request.client_id},
+        {"publicKeyPresent", pairing_request.public_key_present},
+        {"status", pairing_request.status},
+        {"expiresInSeconds", pairing_request.expires_in_seconds},
+        {"pollIntervalSeconds", pairing_request.poll_interval_seconds}
+      };
       send_response(response, output_tree);
     } catch (std::exception &e) {
       BOOST_LOG(warning) << "StartShadowPairing: "sv << e.what();
