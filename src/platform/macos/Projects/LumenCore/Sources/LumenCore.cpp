@@ -252,7 +252,7 @@ namespace apollo::core {
   }
 
   std::string runtime_description() {
-    return "C and C++ compatibility surface for the Swift/Tuist Apollo shell.";
+    return "C and C++ compatibility surface for the Swift/Tuist Lumen shell.";
   }
 
   encoded_capture_ingress::encoded_capture_ingress() :

@@ -1,5 +1,5 @@
 /**
- * @file src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/misc.mm
+ * @file src/platform/macos/Projects/LumenMacSupport/Sources/misc.mm
  * @brief Miscellaneous definitions for macOS platform.
  */
 
@@ -143,7 +143,7 @@ namespace platf {
       std::error_code ec;
       fs::create_directories(directory, ec);
       if (ec) {
-        BOOST_LOG(warning) << "Unable to create Apollo appdata directory for capture request mirroring: "sv << ec.message();
+        BOOST_LOG(warning) << "Unable to create Lumen appdata directory for capture request mirroring: "sv << ec.message();
       }
 
       const auto mirror_path = directory / kCaptureRequestMirrorFileName;
@@ -299,7 +299,7 @@ namespace platf {
                                                                error:&error];
         auto *dictionary = [plist isKindOfClass:[NSDictionary class]] ? (NSDictionary *) plist : nil;
         if (dictionary == nil) {
-          BOOST_LOG(warning) << "Unable to parse mirrored Apollo capture request HDR preferences";
+          BOOST_LOG(warning) << "Unable to parse mirrored Lumen capture request HDR preferences";
           return std::nullopt;
         }
 
@@ -945,13 +945,13 @@ namespace platf {
       return false;
     }
 
-    BOOST_LOG(info) << "Spawned replacement Apollo process pid="sv << child_pid;
+    BOOST_LOG(info) << "Spawned replacement Lumen process pid="sv << child_pid;
     return true;
   }
 
   void restart() {
     if (!spawn_restart_process()) {
-      BOOST_LOG(error) << "Failed to spawn replacement Apollo process during restart."sv;
+      BOOST_LOG(error) << "Failed to spawn replacement Lumen process during restart."sv;
       return;
     }
     lifetime::exit_runtime(0, true);
@@ -1627,13 +1627,13 @@ namespace platf {
                                                              options:0
                                                                error:&error];
       if (data == nil) {
-        BOOST_LOG(warning) << "Unable to serialize mirrored Apollo capture request: "sv
+        BOOST_LOG(warning) << "Unable to serialize mirrored Lumen capture request: "sv
                            << (error ? [[error localizedDescription] UTF8String] : "unknown error");
         return;
       }
 
       if (![data writeToURL:capture_request_mirror_url() options:NSDataWritingAtomic error:&error]) {
-        BOOST_LOG(warning) << "Unable to mirror Apollo capture request: "sv
+        BOOST_LOG(warning) << "Unable to mirror Lumen capture request: "sv
                            << (error ? [[error localizedDescription] UTF8String] : "unknown error");
         return;
       }
@@ -1648,7 +1648,7 @@ namespace platf {
       auto *url = capture_request_mirror_url();
       if ([[NSFileManager defaultManager] fileExistsAtPath:[url path]] &&
           ![[NSFileManager defaultManager] removeItemAtURL:url error:&error]) {
-        BOOST_LOG(warning) << "Unable to clear mirrored Apollo capture request: "sv
+        BOOST_LOG(warning) << "Unable to clear mirrored Lumen capture request: "sv
                            << (error ? [[error localizedDescription] UTF8String] : "unknown error");
         return;
       }

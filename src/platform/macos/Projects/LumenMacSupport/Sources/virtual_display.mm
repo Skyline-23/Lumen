@@ -517,10 +517,10 @@ namespace VDISPLAY {
 
     NSString *display_name_for_client(const char *client_name) {
       if (client_name && client_name[0] != '\0') {
-        return [NSString stringWithFormat:@"Apollo (%s)", client_name];
+        return [NSString stringWithFormat:@"Lumen (%s)", client_name];
       }
 
-      return @"Apollo Virtual Display";
+      return @"Lumen Virtual Display";
     }
 
     bool classes_available() {

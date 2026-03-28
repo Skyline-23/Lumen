@@ -1,5 +1,5 @@
 /**
- * @file src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/input.cpp
+ * @file src/platform/macos/Projects/LumenMacSupport/Sources/input.cpp
  * @brief Definitions for macOS input handling.
  */
 // standard includes

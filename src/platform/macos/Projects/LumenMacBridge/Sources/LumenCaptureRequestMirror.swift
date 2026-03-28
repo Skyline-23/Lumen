@@ -64,7 +64,7 @@ struct LumenBridgeMirroredCaptureRequestSnapshot: Equatable, Sendable {
         FileManager.default.homeDirectoryForCurrentUser
             .appending(path: "Library", directoryHint: .isDirectory)
             .appending(path: "Application Support", directoryHint: .isDirectory)
-            .appending(path: "Apollo", directoryHint: .isDirectory)
+            .appending(path: "Lumen", directoryHint: .isDirectory)
             .appending(path: "capture_request_state.plist", directoryHint: .notDirectory)
     }()
 

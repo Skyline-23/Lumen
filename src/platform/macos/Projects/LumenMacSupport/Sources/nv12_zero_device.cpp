@@ -1,5 +1,5 @@
 /**
- * @file src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/nv12_zero_device.cpp
+ * @file src/platform/macos/Projects/LumenMacSupport/Sources/nv12_zero_device.cpp
  * @brief Definitions for NV12 zero copy device on macOS.
  */
 // standard includes

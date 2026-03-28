@@ -1,5 +1,5 @@
 /**
- * @file src/platform/macos/Projects/ApolloMacPlatformRuntime/Sources/vt_metal_context.mm
+ * @file src/platform/macos/Projects/LumenMacSupport/Sources/vt_metal_context.mm
  * @brief Definitions for the Metal-backed VideoToolbox frame preparation path on macOS.
  */
 #import <Metal/Metal.h>
