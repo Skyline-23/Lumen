@@ -20,14 +20,47 @@ add_subdirectory("${CMAKE_SOURCE_DIR}/third-party/libdisplaydevice")
 
 # common dependencies
 include("${CMAKE_MODULE_PATH}/dependencies/nlohmann_json.cmake")
-find_package(OpenSSL REQUIRED)
 find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
 pkg_check_modules(CURL REQUIRED libcurl)
 
-# miniupnp
-pkg_check_modules(MINIUPNP miniupnpc REQUIRED)
-include_directories(SYSTEM ${MINIUPNP_INCLUDE_DIRS})
+if(APPLE)
+    set(APPLE_PREPARED_THIRD_PARTY_ROOT
+            "${CMAKE_SOURCE_DIR}/third-party/build-deps/dist/${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")
+    set(APPLE_PREPARED_THIRD_PARTY_INCLUDE_DIR
+            "${APPLE_PREPARED_THIRD_PARTY_ROOT}/include")
+
+    set(OPENSSL_INCLUDE_DIR "${APPLE_PREPARED_THIRD_PARTY_INCLUDE_DIR}")
+    set(OPENSSL_LIBRARIES
+            "${APPLE_PREPARED_THIRD_PARTY_ROOT}/lib/libssl.a"
+            "${APPLE_PREPARED_THIRD_PARTY_ROOT}/lib/libcrypto.a")
+    set(MINIUPNP_INCLUDE_DIRS "${APPLE_PREPARED_THIRD_PARTY_INCLUDE_DIR}")
+    set(MINIUPNP_LIBRARIES "${APPLE_PREPARED_THIRD_PARTY_ROOT}/lib/libminiupnpc.a")
+    set(OPUS_INCLUDE_DIRS "${APPLE_PREPARED_THIRD_PARTY_INCLUDE_DIR}")
+    set(OPUS_LIBRARIES "${APPLE_PREPARED_THIRD_PARTY_ROOT}/lib/libopus.a")
+
+    foreach(_apple_static_dependency
+            ${OPENSSL_LIBRARIES}
+            ${MINIUPNP_LIBRARIES}
+            ${OPUS_LIBRARIES})
+        if(NOT EXISTS "${_apple_static_dependency}")
+            message(FATAL_ERROR "Missing Darwin build-deps archive: ${_apple_static_dependency}")
+        endif()
+    endforeach()
+
+    include_directories(BEFORE SYSTEM
+            ${OPENSSL_INCLUDE_DIR}
+            ${MINIUPNP_INCLUDE_DIRS}
+            ${OPUS_INCLUDE_DIRS})
+else()
+    find_package(OpenSSL REQUIRED)
+
+    # miniupnp
+    pkg_check_modules(MINIUPNP miniupnpc REQUIRED)
+    include_directories(SYSTEM ${MINIUPNP_INCLUDE_DIRS})
+
+    set(OPUS_LIBRARIES opus)
+endif()
 
 # ffmpeg pre-compiled binaries
 if(NOT DEFINED FFMPEG_PREPARED_BINARIES)

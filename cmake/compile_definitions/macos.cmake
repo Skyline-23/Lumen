@@ -7,7 +7,7 @@ if(SUNSHINE_PACKAGE_MACOS)
 endif()
 
 set(MACOS_LINK_DIRECTORIES
-        /opt/homebrew/lib
+        "${CMAKE_SOURCE_DIR}/third-party/build-deps/dist/${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}/lib"
         /opt/local/lib
         /usr/local/lib)
 

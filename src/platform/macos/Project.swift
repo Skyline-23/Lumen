@@ -32,16 +32,18 @@ let hostedRuntimeSystemHeaderSearchPaths = [
     "\(repoRoot)/third-party/moonlight-common-c/enet/include",
     "\(repoRoot)/third-party/nanors",
     "\(repoRoot)/third-party/nanors/deps/obl",
-    "\(repoRoot)/third-party/nv-codec-headers/include",
-    "/opt/homebrew/include",
-    "/opt/homebrew/Cellar/miniupnpc/2.3.3/include"
+    "\(repoRoot)/third-party/nv-codec-headers/include"
 ]
 
 let hostedRuntimeLibrarySearchPaths = [
-    "\(buildDepsRoot)/lib",
-    "/opt/homebrew/lib",
-    "/opt/homebrew/opt/openssl/lib",
-    "/usr/local/lib"
+    "\(buildDepsRoot)/lib"
+]
+
+let hostedRuntimeVendoredArchives = [
+    "\(buildDepsRoot)/lib/libminiupnpc.a",
+    "\(buildDepsRoot)/lib/libopus.a",
+    "\(buildDepsRoot)/lib/libssl.a",
+    "\(buildDepsRoot)/lib/libcrypto.a"
 ]
 
 let hostedRuntimePreprocessorDefinitions = [
@@ -71,12 +73,10 @@ let hostedRuntimePreprocessorDefinitions = [
     "APOLLO_EMBEDDED_HOST=1"
 ]
 
-let hostedRuntimeOtherLdFlags = [
+let hostedRuntimeOtherLdFlags = hostedRuntimeVendoredArchives + [
     "-framework",
     "UserNotifications",
     "-lcurl",
-    "-lminiupnpc",
-    "-lopus",
     "-lavcodec",
     "-lswscale",
     "-lavutil",
@@ -87,8 +87,6 @@ let hostedRuntimeOtherLdFlags = [
     "-lboost_locale",
     "-lboost_log",
     "-lboost_program_options",
-    "-lssl",
-    "-lcrypto",
     "-lboost_filesystem",
     "-lboost_thread",
     "-lboost_atomic",
