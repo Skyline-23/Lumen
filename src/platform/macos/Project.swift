@@ -129,11 +129,11 @@ let hostedRuntimeSources: SourceFilesList = [
     "../../../src/rswrapper.c",
     "../../../src/nvenc/*.cpp",
     "Projects/ApolloMacSupport/Sources/**/*.{c,cc,cpp,m,mm,h,hpp}",
-    "Projects/ApolloHostedRuntime/Sources/**/*.{c,cc,cpp,m,mm,h,hpp}"
+    "Projects/LumenHostedRuntime/Sources/**/*.{c,cc,cpp,m,mm,h,hpp}"
 ]
 
 let hostedRuntimeSettings: SettingsDictionary = [
-    "PRODUCT_NAME": "ApolloHostedRuntime",
+    "PRODUCT_NAME": "LumenHostedRuntime",
     "DEFINES_MODULE": "YES",
     "HEADER_SEARCH_PATHS": .array(hostedRuntimeHeaderSearchPaths),
     "SYSTEM_HEADER_SEARCH_PATHS": .array(hostedRuntimeSystemHeaderSearchPaths),
@@ -277,7 +277,7 @@ let project = Project(
             )
         ),
         .target(
-            name: "ApolloHostedRuntime",
+            name: "LumenHostedRuntime",
             destinations: .macOS,
             product: .framework,
             bundleId: "dev.skyline23.lumen.hostedruntime",
@@ -285,7 +285,7 @@ let project = Project(
             infoPlist: .default,
             sources: hostedRuntimeSources,
             headers: .headers(
-                public: "Projects/ApolloHostedRuntime/Headers/ApolloHostedRuntime.h"
+                public: "Projects/LumenHostedRuntime/Headers/LumenHostedRuntime.h"
             ),
             dependencies: [
                 .target(name: "ApolloCore"),
@@ -316,7 +316,7 @@ let project = Project(
             ],
             dependencies: [
                 .target(name: "ApolloMacBridge"),
-                .target(name: "ApolloHostedRuntime")
+                .target(name: "LumenHostedRuntime")
             ],
             settings: .settings(
                 base: [

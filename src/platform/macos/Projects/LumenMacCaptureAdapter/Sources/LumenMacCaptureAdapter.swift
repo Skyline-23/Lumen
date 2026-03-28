@@ -1,4 +1,4 @@
-import ApolloHostedRuntime
+import LumenHostedRuntime
 import ApolloMacBridge
 import Foundation
 
@@ -81,7 +81,7 @@ public struct LumenMacCaptureAdapterMenuStatus: Equatable, Sendable {
 public final class LumenMacCaptureAdapter: NSObject {
     private let bridgeController: OpaquePointer
     private let hostedRuntimeController: OpaquePointer
-    private let hostedRuntimeDidStopNotification = Notification.Name("ApolloHostedRuntimeDidStopNotification")
+    private let hostedRuntimeDidStopNotification = Notification.Name("LumenHostedRuntimeDidStopNotification")
 
     private var forwardingPumpRunning = false
     private var stoppingCompanion = false
@@ -92,8 +92,8 @@ public final class LumenMacCaptureAdapter: NSObject {
         guard let bridgeController = ApolloMacBridgeControllerCreate() else {
             fatalError("ApolloMacBridgeControllerCreate returned nil")
         }
-        guard let hostedRuntimeController = ApolloHostedRuntimeControllerCreate() else {
-            fatalError("ApolloHostedRuntimeControllerCreate returned nil")
+        guard let hostedRuntimeController = LumenHostedRuntimeControllerCreate() else {
+            fatalError("LumenHostedRuntimeControllerCreate returned nil")
         }
 
         self.bridgeController = bridgeController
@@ -137,7 +137,7 @@ public final class LumenMacCaptureAdapter: NSObject {
 
         stopRuntimeCompanion()
         ApolloMacBridgeControllerDestroy(bridgeController)
-        ApolloHostedRuntimeControllerDestroy(hostedRuntimeController)
+        LumenHostedRuntimeControllerDestroy(hostedRuntimeController)
     }
 
     public func makePanelNativeConfiguration(forDisplayID displayID: UInt32) -> ApolloMacBridgeCaptureConfiguration {
@@ -155,7 +155,7 @@ public final class LumenMacCaptureAdapter: NSObject {
     public func startRuntimeCompanion() throws {
         stoppingCompanion = false
         let started = withErrorBuffer { errorBuffer, errorCapacity in
-            ApolloHostedRuntimeControllerStart(
+            LumenHostedRuntimeControllerStart(
                 hostedRuntimeController,
                 errorBuffer,
                 errorCapacity
@@ -180,28 +180,28 @@ public final class LumenMacCaptureAdapter: NSObject {
         stoppingCompanion = true
         stopAutomaticCoreCaptureOrchestration()
         stopForwardingPump()
-        ApolloHostedRuntimeControllerStop(hostedRuntimeController)
+        LumenHostedRuntimeControllerStop(hostedRuntimeController)
         postStatusDidChangeNotification()
     }
 
     public func forceStopCurrentStream() {
-        ApolloHostedRuntimeControllerForceStopStream(hostedRuntimeController)
+        LumenHostedRuntimeControllerForceStopStream(hostedRuntimeController)
     }
 
     public var isAccessibilityPermissionGranted: Bool {
-        ApolloHostedRuntimeIsAccessibilityPermissionGranted()
+        LumenHostedRuntimeIsAccessibilityPermissionGranted()
     }
 
     public func requestAccessibilityPermission() {
-        ApolloHostedRuntimeRequestAccessibilityPermission()
+        LumenHostedRuntimeRequestAccessibilityPermission()
     }
 
     public var isScreenCapturePermissionGranted: Bool {
-        ApolloHostedRuntimeIsScreenCapturePermissionGranted()
+        LumenHostedRuntimeIsScreenCapturePermissionGranted()
     }
 
     public func requestScreenCapturePermission() {
-        ApolloHostedRuntimeRequestScreenCapturePermission()
+        LumenHostedRuntimeRequestScreenCapturePermission()
     }
 
     public func startManagedCaptureSession(
@@ -326,7 +326,7 @@ public final class LumenMacCaptureAdapter: NSObject {
             coreVersion: stringFromCStringTuple(bridgeStatus.core_version),
             runtimeDescription: stringFromCStringTuple(bridgeStatus.runtime_description),
             integrationStatus: stringFromCStringTuple(bridgeStatus.integration_status),
-            hostedRuntimeRunning: ApolloHostedRuntimeControllerIsRunning(hostedRuntimeController),
+            hostedRuntimeRunning: LumenHostedRuntimeControllerIsRunning(hostedRuntimeController),
             captureSessionRunning: bridgeStatus.capture_session_running,
             audioCaptureSessionRunning: bridgeStatus.audio_capture_session_running,
             automaticCaptureOrchestrationRunning: bridgeStatus.automatic_capture_orchestration_running,
@@ -344,7 +344,7 @@ public final class LumenMacCaptureAdapter: NSObject {
         let bridgeStatus = ApolloMacBridgeControllerCopyStatusSnapshot(bridgeController)
 
         return LumenMacCaptureAdapterMenuStatus(
-            hostedRuntimeRunning: ApolloHostedRuntimeControllerIsRunning(hostedRuntimeController),
+            hostedRuntimeRunning: LumenHostedRuntimeControllerIsRunning(hostedRuntimeController),
             captureSessionRunning: bridgeStatus.capture_session_running,
             audioCaptureSessionRunning: bridgeStatus.audio_capture_session_running
         )

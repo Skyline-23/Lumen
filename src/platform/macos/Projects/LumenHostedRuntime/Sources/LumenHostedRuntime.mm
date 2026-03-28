@@ -1,4 +1,4 @@
-#import "ApolloHostedRuntime.h"
+#import "LumenHostedRuntime.h"
 
 #import <Foundation/Foundation.h>
 #include "platform/macos/misc.h"
@@ -22,7 +22,7 @@ bool apollo_is_running(void);
 void apollo_force_stop_stream(void);
 
 namespace {
-  NSString *const hosted_runtime_did_stop_notification_name = @ApolloHostedRuntimeDidStopNotification;
+  NSString *const hosted_runtime_did_stop_notification_name = @LumenHostedRuntimeDidStopNotification;
 
   void copy_string_to_buffer(const std::string &message, char *destination, std::size_t capacity) {
     if (!destination || capacity == 0) {
@@ -41,19 +41,19 @@ namespace {
   std::string hosted_runtime_executable_name() {
     NSString *bundle_executable_path = NSBundle.mainBundle.executablePath;
     if (bundle_executable_path.length > 0) {
-      return bundle_executable_path.UTF8String ?: "Apollo";
+      return bundle_executable_path.UTF8String ?: "Lumen";
     }
 
     NSString *process_name = NSProcessInfo.processInfo.processName;
     if (process_name.length > 0) {
-      return process_name.UTF8String ?: "Apollo";
+      return process_name.UTF8String ?: "Lumen";
     }
 
-    return "Apollo";
+    return "Lumen";
   }
 }
 
-class ApolloHostedRuntimeState {
+class LumenHostedRuntimeState {
  public:
   bool start(std::string &error_message) {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -127,7 +127,7 @@ class ApolloHostedRuntimeState {
     return last_exit_code_;
   }
 
-  ~ApolloHostedRuntimeState() {
+  ~LumenHostedRuntimeState() {
     stop();
   }
 
@@ -141,25 +141,25 @@ class ApolloHostedRuntimeState {
   int32_t last_exit_code_ = 0;
 };
 
-struct ApolloHostedRuntimeController {
-  ApolloHostedRuntimeState state;
+struct LumenHostedRuntimeController {
+  LumenHostedRuntimeState state;
 };
 
-ApolloHostedRuntimeController *ApolloHostedRuntimeControllerCreate(void) {
-  return new ApolloHostedRuntimeController();
+LumenHostedRuntimeController *LumenHostedRuntimeControllerCreate(void) {
+  return new LumenHostedRuntimeController();
 }
 
-void ApolloHostedRuntimeControllerDestroy(ApolloHostedRuntimeController *controller) {
+void LumenHostedRuntimeControllerDestroy(LumenHostedRuntimeController *controller) {
   delete controller;
 }
 
-bool ApolloHostedRuntimeControllerStart(
-  ApolloHostedRuntimeController *controller,
+bool LumenHostedRuntimeControllerStart(
+  LumenHostedRuntimeController *controller,
   char *error_destination,
   size_t error_capacity
 ) {
   if (!controller) {
-    copy_string_to_buffer("ApolloHostedRuntimeControllerStart called with a null controller.", error_destination, error_capacity);
+    copy_string_to_buffer("LumenHostedRuntimeControllerStart called with a null controller.", error_destination, error_capacity);
     return false;
   }
 
@@ -169,7 +169,7 @@ bool ApolloHostedRuntimeControllerStart(
   return started;
 }
 
-void ApolloHostedRuntimeControllerStop(ApolloHostedRuntimeController *controller) {
+void LumenHostedRuntimeControllerStop(LumenHostedRuntimeController *controller) {
   if (!controller) {
     return;
   }
@@ -177,7 +177,7 @@ void ApolloHostedRuntimeControllerStop(ApolloHostedRuntimeController *controller
   controller->state.stop();
 }
 
-bool ApolloHostedRuntimeControllerIsRunning(const ApolloHostedRuntimeController *controller) {
+bool LumenHostedRuntimeControllerIsRunning(const LumenHostedRuntimeController *controller) {
   if (!controller) {
     return false;
   }
@@ -185,7 +185,7 @@ bool ApolloHostedRuntimeControllerIsRunning(const ApolloHostedRuntimeController 
   return controller->state.is_running();
 }
 
-int32_t ApolloHostedRuntimeControllerCopyLastExitCode(const ApolloHostedRuntimeController *controller) {
+int32_t LumenHostedRuntimeControllerCopyLastExitCode(const LumenHostedRuntimeController *controller) {
   if (!controller) {
     return 0;
   }
@@ -193,7 +193,7 @@ int32_t ApolloHostedRuntimeControllerCopyLastExitCode(const ApolloHostedRuntimeC
   return controller->state.last_exit_code();
 }
 
-void ApolloHostedRuntimeControllerForceStopStream(ApolloHostedRuntimeController *controller) {
+void LumenHostedRuntimeControllerForceStopStream(LumenHostedRuntimeController *controller) {
   if (!controller || !controller->state.is_running()) {
     return;
   }
@@ -201,18 +201,18 @@ void ApolloHostedRuntimeControllerForceStopStream(ApolloHostedRuntimeController 
   apollo_force_stop_stream();
 }
 
-bool ApolloHostedRuntimeIsAccessibilityPermissionGranted(void) {
+bool LumenHostedRuntimeIsAccessibilityPermissionGranted(void) {
   return platf::is_accessibility_allowed();
 }
 
-void ApolloHostedRuntimeRequestAccessibilityPermission(void) {
+void LumenHostedRuntimeRequestAccessibilityPermission(void) {
   platf::request_accessibility_permission();
 }
 
-bool ApolloHostedRuntimeIsScreenCapturePermissionGranted(void) {
+bool LumenHostedRuntimeIsScreenCapturePermissionGranted(void) {
   return platf::is_screen_capture_allowed();
 }
 
-void ApolloHostedRuntimeRequestScreenCapturePermission(void) {
+void LumenHostedRuntimeRequestScreenCapturePermission(void) {
   platf::request_screen_capture_permission();
 }
