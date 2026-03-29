@@ -840,13 +840,7 @@ namespace shadow_control_http {
    *
    * @api_examples{/api/apps| GET| null}
    */
-  void getApps(resp_https_t response, req_https_t request) {
-    if (!authenticate(response, request)) {
-      return;
-    }
-
-    print_req(request);
-
+  nlohmann::json build_shadow_apps_payload() {
     try {
       std::string content = file_handler::read_file(config::stream.file_apps.c_str());
       nlohmann::json file_tree = nlohmann::json::parse(content);
@@ -883,10 +877,39 @@ namespace shadow_control_http {
       file_tree["current_app"] = proc::proc.get_running_app_uuid();
       file_tree["host_uuid"] = shadow_http_common::unique_id;
       file_tree["host_name"] = config::shadow_http.host_name;
-
-      send_response(response, file_tree);
+      return file_tree;
     } catch (std::exception &e) {
       BOOST_LOG(warning) << "GetApps: "sv << e.what();
+      throw;
+    }
+  }
+
+  void getShadowAppsDescriptor(resp_https_t response, req_https_t request) {
+    print_req(request);
+
+    try {
+      nlohmann::json output_tree;
+      output_tree["status"] = true;
+      output_tree["apps"] = build_shadow_apps_payload().value("apps", nlohmann::json::array());
+      output_tree["currentApp"] = proc::proc.get_running_app_uuid();
+      output_tree["hostUUID"] = shadow_http_common::unique_id;
+      output_tree["hostName"] = config::shadow_http.host_name;
+      send_response(response, output_tree);
+    } catch (std::exception &e) {
+      bad_request(response, request, e.what());
+    }
+  }
+
+  void getApps(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) {
+      return;
+    }
+
+    print_req(request);
+
+    try {
+      send_response(response, build_shadow_apps_payload());
+    } catch (std::exception &e) {
       bad_request(response, request, e.what());
     }
   }
@@ -1995,6 +2018,7 @@ namespace shadow_control_http {
     server.resource["^/api/pairing/start$"]["POST"] = startShadowPairing;
     server.resource["^/api/pairing/status$"]["GET"] = getShadowPairingStatus;
     server.resource["^/api/discovery/host$"]["GET"] = getShadowHostDescriptor;
+    server.resource["^/api/discovery/apps$"]["GET"] = getShadowAppsDescriptor;
     server.resource["^/api/pairing/requests$"]["GET"] = listShadowPairingRequests;
     server.resource["^/api/pairing/approve$"]["POST"] = approveShadowPairing;
     server.resource["^/api/pairing/reject$"]["POST"] = rejectShadowPairing;
