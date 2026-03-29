@@ -60,6 +60,7 @@ export default defineConfig({
         rollupOptions: {
             input: {
                 apps: resolve(assetsSrcPath, 'apps.html'),
+                clients: resolve(assetsSrcPath, 'clients.html'),
                 config: resolve(assetsSrcPath, 'config.html'),
                 index: resolve(assetsSrcPath, 'index.html'),
                 pairing: resolve(assetsSrcPath, 'pairing.html'),
