@@ -641,9 +641,9 @@ namespace shadow_http {
 
       launch_session->host_audio = host_audio;
 
-      // Encrypted RTSP is enabled with client reported corever >= 1
-      auto corever = util::from_view(get_arg(args, "corever", "0"));
-      if (corever >= 1) {
+      // Shadow/Lumen sessions always provide the remote input keying material required
+      // for encrypted RTSP setup, so do not gate encryption on legacy corever semantics.
+      if (!launch_session->gcm_key.empty()) {
         launch_session->rtsp_cipher = crypto::cipher::gcm_t {
           launch_session->gcm_key, false
         };
@@ -931,6 +931,22 @@ namespace shadow_http {
     auto current_app_uuid = proc::proc.get_running_app_uuid();
     bool is_input_only = config::input.enable_input_only_mode && (appid == proc::input_only_app_id || (appuuid_str == REMOTE_INPUT_UUID));
 
+    const auto write_launch_status = [&](int status_code, std::string_view status_message) {
+      BOOST_LOG(info) << "Launch response status="sv
+                      << status_code
+                      << " appid="sv
+                      << appid_str
+                      << " appuuid="sv
+                      << appuuid_str
+                      << " current-appid="sv
+                      << current_appid
+                      << " message="sv
+                      << status_message;
+      tree.put("root.<xmlattr>.status_code", status_code);
+      tree.put("root.<xmlattr>.status_message", std::string(status_message));
+      tree.put("root.gamesession", 0);
+    };
+
     auto named_cert_p = require_verified_cert(response, request);
     if (!named_cert_p) {
       g.disable();
@@ -986,9 +1002,7 @@ namespace shadow_http {
     host_audio = util::from_view(get_arg(args, "localAudioPlayMode"));
     auto launch_session = make_launch_session(host_audio, is_input_only, args, named_cert_p);
     if (!launch_session) {
-      tree.put("root.<xmlattr>.status_code", 400);
-      tree.put("root.<xmlattr>.status_message", "Missing required Lumen v2 launch parameters");
-      tree.put("root.gamesession", 0);
+      write_launch_status(400, "Missing required Lumen v2 launch parameters");
 
       return;
     }
@@ -996,10 +1010,7 @@ namespace shadow_http {
     auto encryption_mode = net::encryption_mode_for_address(request->remote_endpoint().address());
     if (!launch_session->rtsp_cipher && encryption_mode == config::ENCRYPTION_MODE_MANDATORY) {
       BOOST_LOG(error) << "Rejecting client that cannot comply with mandatory encryption requirement"sv;
-
-      tree.put("root.<xmlattr>.status_code", 403);
-      tree.put("root.<xmlattr>.status_message", "Encryption is mandatory for this host but unsupported by the client");
-      tree.put("root.gamesession", 0);
+      write_launch_status(403, "Encryption is mandatory for this host but unsupported by the client");
 
       return;
     }
@@ -1034,8 +1045,7 @@ namespace shadow_http {
           display_device::configure_display(config::video, *launch_session);
           if (video::probe_encoders()) {
             tree.put("root.resume", 0);
-            tree.put("root.<xmlattr>.status_code", 503);
-            tree.put("root.<xmlattr>.status_message", "Failed to initialize video capture/encoding. Is a display connected and turned on?");
+            write_launch_status(503, "Failed to initialize video capture/encoding. Is a display connected and turned on?");
 
             return;
           }
@@ -1056,23 +1066,21 @@ namespace shadow_http {
 
         auto err = proc::proc.execute(*app_iter, launch_session);
         if (err) {
-          tree.put("root.<xmlattr>.status_code", err);
-          tree.put(
-            "root.<xmlattr>.status_message",
+          write_launch_status(
+            err,
             err == 503
-            ? "Failed to initialize video capture/encoding. Is a display connected and turned on?"
-            : "Failed to start the specified application");
-          tree.put("root.gamesession", 0);
+              ? "Failed to initialize video capture/encoding. Is a display connected and turned on?"
+              : "Failed to start the specified application"
+          );
 
           return;
         }
       }
     } else {
-      tree.put("root.<xmlattr>.status_code", 403);
-      tree.put("root.<xmlattr>.status_message", "How did you get here?");
-      tree.put("root.gamesession", 0);
+      write_launch_status(403, "How did you get here?");
     }
 
+    BOOST_LOG(info) << "Launch response status=200 appid="sv << appid_str << " appuuid="sv << appuuid_str << " current-appid="sv << current_appid;
     tree.put("root.<xmlattr>.status_code", 200);
     auto session_url_host = rtsp_url_host_for_request(request);
     std::ostringstream session_url_stream;
