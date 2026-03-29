@@ -851,6 +851,35 @@ namespace shadow_control_http {
       std::string content = file_handler::read_file(config::stream.file_apps.c_str());
       nlohmann::json file_tree = nlohmann::json::parse(content);
 
+      if (auto apps_it = file_tree.find("apps"); apps_it != file_tree.end() && apps_it->is_array()) {
+        std::unordered_map<std::string, const proc::ctx_t *> apps_by_uuid;
+        for (const auto &app : proc::proc.get_apps()) {
+          apps_by_uuid.emplace(app.uuid, &app);
+        }
+
+        for (auto &app_tree : *apps_it) {
+          if (!app_tree.is_object()) {
+            continue;
+          }
+
+          const auto uuid = app_tree.value("uuid", std::string {});
+          if (uuid.empty()) {
+            continue;
+          }
+
+          const auto runtime_app = apps_by_uuid.find(uuid);
+          if (runtime_app == apps_by_uuid.end()) {
+            continue;
+          }
+
+          app_tree["id"] = static_cast<int>(util::from_view(runtime_app->second->id));
+          app_tree["title"] = runtime_app->second->name;
+          app_tree["hdrSupported"] = false;
+          app_tree["isAppCollectorGame"] = false;
+          app_tree["allowClientCommands"] = runtime_app->second->allow_client_commands;
+        }
+      }
+
       file_tree["current_app"] = proc::proc.get_running_app_uuid();
       file_tree["host_uuid"] = shadow_http_common::unique_id;
       file_tree["host_name"] = config::shadow_http.host_name;
