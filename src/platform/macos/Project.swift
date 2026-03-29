@@ -77,6 +77,8 @@ let hostedRuntimePreprocessorDefinitions = [
 
 let hostedRuntimeOtherLdFlags = hostedRuntimeVendoredArchives + [
     "-framework",
+    "SystemConfiguration",
+    "-framework",
     "UserNotifications",
     "-lcurl",
     "-lavcodec",

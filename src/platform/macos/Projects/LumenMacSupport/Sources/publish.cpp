@@ -3,10 +3,12 @@
  * @brief Definitions for publishing services on macOS.
  */
 // standard includes
+#include <cstring>
 #include <thread>
 
 // platform includes
 #include <dns_sd.h>
+#include <SystemConfiguration/SystemConfiguration.h>
 
 // local includes
 #include "src/logging.h"
@@ -18,6 +20,30 @@ using namespace std::literals;
 
 namespace platf::publish {
   namespace {
+    std::string local_mdns_host_label() {
+      if (auto local_host_name = SCDynamicStoreCopyLocalHostName(nullptr)) {
+        const auto length = CFStringGetLength(local_host_name);
+        const auto capacity = CFStringGetMaximumSizeForEncoding(length, kCFStringEncodingUTF8) + 1;
+        std::string label(static_cast<std::size_t>(capacity), '\0');
+        const auto converted = CFStringGetCString(
+          local_host_name,
+          label.data(),
+          capacity,
+          kCFStringEncodingUTF8
+        );
+        CFRelease(local_host_name);
+
+        if (converted) {
+          label.resize(std::strlen(label.c_str()));
+          if (!label.empty()) {
+            return label;
+          }
+        }
+      }
+
+      return net::mdns_instance_name(platf::get_host_name());
+    }
+
     /** @brief Custom deleter intended to be used for `std::unique_ptr<DNSServiceRef>`. */
     struct ServiceRefDeleter {
       typedef DNSServiceRef pointer;  ///< Type of object to be deleted.
@@ -102,8 +128,7 @@ namespace platf::publish {
    */
   [[nodiscard]] std::unique_ptr<::platf::deinit_t> start() {
     auto serviceRef = DNSServiceRef {};
-    const auto hostname = platf::get_host_name();
-    const auto instance_name = net::mdns_instance_name(hostname);
+    const auto instance_name = net::mdns_instance_name(local_mdns_host_label());
     const auto local_host = instance_name + ".local"s;
     const auto status = DNSServiceRegister(
       &serviceRef,
