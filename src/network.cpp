@@ -4,7 +4,20 @@
  */
 // standard includes
 #include <algorithm>
+#include <cstring>
 #include <sstream>
+#include <set>
+#include <vector>
+
+#ifdef _WIN32
+  #include <iphlpapi.h>
+  #include <winsock2.h>
+  #include <ws2tcpip.h>
+#else
+  #include <ifaddrs.h>
+  #include <net/if.h>
+  #include <sys/socket.h>
+#endif
 
 // local includes
 #include "config.h"
@@ -159,6 +172,101 @@ namespace net {
     }
 
     return normalize_address(endpoint.address());
+  }
+
+  std::vector<ip::address> local_interface_addresses() {
+    std::vector<ip::address> addresses;
+    std::set<std::string> seen;
+
+    auto append_address = [&](ip::address address) {
+      address = normalize_address(address);
+      if (address.is_unspecified()) {
+        return;
+      }
+
+      const auto key = addr_to_normalized_string(address);
+      if (seen.emplace(key).second) {
+        addresses.emplace_back(std::move(address));
+      }
+    };
+
+#ifdef _WIN32
+    ULONG size = 0;
+    std::vector<std::uint8_t> buffer;
+    auto flags = ULONG {GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER};
+
+    for (;;) {
+      auto *adapter_addresses = buffer.empty()
+        ? nullptr
+        : reinterpret_cast<PIP_ADAPTER_ADDRESSES>(buffer.data());
+      const auto status = GetAdaptersAddresses(AF_UNSPEC, flags, nullptr, adapter_addresses, &size);
+      if (status == ERROR_BUFFER_OVERFLOW) {
+        buffer.resize(size);
+        continue;
+      }
+      if (status != NO_ERROR) {
+        return addresses;
+      }
+
+      for (auto adapter = adapter_addresses; adapter != nullptr; adapter = adapter->Next) {
+        if (adapter->OperStatus != IfOperStatusUp) {
+          continue;
+        }
+
+        for (auto address = adapter->FirstUnicastAddress; address != nullptr; address = address->Next) {
+          if (address->Address.lpSockaddr == nullptr) {
+            continue;
+          }
+
+          if (address->Address.lpSockaddr->sa_family == AF_INET) {
+            const auto *ipv4 = reinterpret_cast<const sockaddr_in *>(address->Address.lpSockaddr);
+            ip::address_v4::bytes_type bytes {};
+            std::memcpy(bytes.data(), &ipv4->sin_addr, bytes.size());
+            append_address(ip::address_v4 {bytes});
+          } else if (address->Address.lpSockaddr->sa_family == AF_INET6) {
+            const auto *ipv6 = reinterpret_cast<const sockaddr_in6 *>(address->Address.lpSockaddr);
+            ip::address_v6::bytes_type bytes {};
+            std::memcpy(bytes.data(), &ipv6->sin6_addr, bytes.size());
+            append_address(ip::address_v6 {bytes});
+          }
+        }
+      }
+
+      return addresses;
+    }
+#else
+    ifaddrs *ifaddr_list = nullptr;
+    if (getifaddrs(&ifaddr_list) != 0) {
+      return addresses;
+    }
+
+    const auto cleanup = util::fail_guard([&]() {
+      freeifaddrs(ifaddr_list);
+    });
+
+    for (auto *entry = ifaddr_list; entry != nullptr; entry = entry->ifa_next) {
+      if (entry->ifa_addr == nullptr) {
+        continue;
+      }
+      if ((entry->ifa_flags & IFF_UP) == 0) {
+        continue;
+      }
+
+      if (entry->ifa_addr->sa_family == AF_INET) {
+        const auto *ipv4 = reinterpret_cast<const sockaddr_in *>(entry->ifa_addr);
+        ip::address_v4::bytes_type bytes {};
+        std::memcpy(bytes.data(), &ipv4->sin_addr, bytes.size());
+        append_address(ip::address_v4 {bytes});
+      } else if (entry->ifa_addr->sa_family == AF_INET6) {
+        const auto *ipv6 = reinterpret_cast<const sockaddr_in6 *>(entry->ifa_addr);
+        ip::address_v6::bytes_type bytes {};
+        std::memcpy(bytes.data(), &ipv6->sin6_addr, bytes.size());
+        append_address(ip::address_v6 {bytes});
+      }
+    }
+
+    return addresses;
+#endif
   }
 
   boost::asio::ip::address normalize_address(boost::asio::ip::address address) {

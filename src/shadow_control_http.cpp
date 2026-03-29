@@ -196,6 +196,21 @@ namespace shadow_control_http {
       );
     }
 
+    for (const auto &interface_address : net::local_interface_addresses()) {
+      if (interface_address.is_loopback()) {
+        continue;
+      }
+      if (interface_address.is_v6() && interface_address.to_v6().is_link_local()) {
+        continue;
+      }
+
+      append_shadow_pairing_control_url_candidate(
+        control_urls,
+        seen_urls,
+        net::addr_to_url_escaped_string(interface_address)
+      );
+    }
+
     append_shadow_pairing_control_url_candidate(control_urls, seen_urls, normalized_request_host(request));
 
     if (shadow_http_common::origin_web_ui_allowed > net::LAN) {

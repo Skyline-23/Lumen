@@ -6,6 +6,7 @@
 
 // standard includes
 #include <optional>
+#include <vector>
 #include <string_view>
 #include <tuple>
 #include <utility>
@@ -52,6 +53,7 @@ namespace net {
   net_e from_address(const std::string_view &view);
   std::optional<boost::asio::ip::address> parse_address(const std::string_view &view);
   std::optional<boost::asio::ip::address> local_address_for_target(const boost::asio::ip::address &target);
+  std::vector<boost::asio::ip::address> local_interface_addresses();
 
   host_t host_create(af_e af, ENetAddress &addr, std::uint16_t port);
 
