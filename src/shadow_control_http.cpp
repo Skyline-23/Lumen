@@ -132,6 +132,81 @@ namespace shadow_control_http {
     tree["controlHttpsPort"] = net::map_port(PORT_HTTPS);
   }
 
+  std::string normalized_request_host(req_https_t request) {
+    auto host_it = request->header.find("host");
+    if (host_it == request->header.end()) {
+      return {};
+    }
+
+    auto host = host_it->second;
+    boost::trim(host);
+    if (host.empty()) {
+      return {};
+    }
+
+    if (host.front() == '[') {
+      auto end = host.find(']');
+      if (end != std::string::npos) {
+        return host.substr(0, end + 1);
+      }
+    }
+
+    auto colon_count = std::count(host.begin(), host.end(), ':');
+    if (colon_count == 1) {
+      auto port_delimiter = host.rfind(':');
+      if (port_delimiter != std::string::npos) {
+        host.resize(port_delimiter);
+      }
+    } else if (colon_count > 1) {
+      return "[" + host + "]";
+    }
+
+    return host;
+  }
+
+  void append_shadow_pairing_control_url_candidate(
+    nlohmann::json::array_t &urls,
+    std::set<std::string> &seen,
+    const std::string &host
+  ) {
+    auto trimmed_host = host;
+    boost::trim(trimmed_host);
+    if (trimmed_host.empty()) {
+      return;
+    }
+
+    const auto url = "https://"s + trimmed_host + ":"s + std::to_string(net::map_port(PORT_HTTPS));
+    if (seen.emplace(url).second) {
+      urls.push_back(url);
+    }
+  }
+
+  void append_shadow_pairing_host_details(nlohmann::json &tree, req_https_t request) {
+    append_shadow_pairing_host_details(tree);
+
+    nlohmann::json::array_t control_urls;
+    std::set<std::string> seen_urls;
+
+    const auto local_address = net::normalize_address(request->local_endpoint().address());
+    if (!local_address.is_loopback() && !(local_address.is_v6() && local_address.to_v6().is_link_local())) {
+      append_shadow_pairing_control_url_candidate(
+        control_urls,
+        seen_urls,
+        net::addr_to_url_escaped_string(local_address)
+      );
+    }
+
+    append_shadow_pairing_control_url_candidate(control_urls, seen_urls, normalized_request_host(request));
+
+    if (shadow_http_common::origin_web_ui_allowed > net::LAN) {
+      append_shadow_pairing_control_url_candidate(control_urls, seen_urls, config::shadow_http.external_ip);
+      append_shadow_pairing_control_url_candidate(control_urls, seen_urls, config::shadow_http.host_name);
+    }
+
+    tree["controlHttpsUrls"] = control_urls;
+    tree["preferredControlHttpsUrl"] = control_urls.empty() ? ""s : control_urls.front().get<std::string>();
+  }
+
   nlohmann::json serialize_shadow_pairing_request(const shadow_pairing_request_t &request) {
     const auto now = std::chrono::steady_clock::now();
     const auto expires_in = std::max<int64_t>(
@@ -1439,6 +1514,7 @@ namespace shadow_control_http {
         {"expiresInSeconds", pairing_request.expires_in_seconds},
         {"pollIntervalSeconds", pairing_request.poll_interval_seconds}
       };
+      append_shadow_pairing_host_details(output_tree["pairing"], request);
       send_response(response, output_tree);
     } catch (std::exception &e) {
       BOOST_LOG(warning) << "StartShadowPairing: "sv << e.what();
@@ -1483,6 +1559,7 @@ namespace shadow_control_http {
     nlohmann::json output_tree;
     output_tree["status"] = true;
     output_tree["pairing"] = serialize_shadow_pairing_request(*pairing_request);
+    append_shadow_pairing_host_details(output_tree["pairing"], request);
     send_response(response, output_tree);
   }
 
