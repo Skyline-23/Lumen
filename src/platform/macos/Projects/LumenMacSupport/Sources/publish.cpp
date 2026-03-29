@@ -102,14 +102,17 @@ namespace platf::publish {
    */
   [[nodiscard]] std::unique_ptr<::platf::deinit_t> start() {
     auto serviceRef = DNSServiceRef {};
+    const auto hostname = platf::get_host_name();
+    const auto instance_name = net::mdns_instance_name(hostname);
+    const auto local_host = instance_name + ".local"s;
     const auto status = DNSServiceRegister(
       &serviceRef,
       0,  // flags
       0,  // interfaceIndex
-      nullptr,  // name
+      instance_name.c_str(),
       SERVICE_TYPE,
       nullptr,  // domain
-      nullptr,  // host
+      local_host.c_str(),
       htons(net::map_port(shadow_http::PORT_HTTPS)),
       0,  // txtLen
       nullptr,  // txtRecord
@@ -120,6 +123,7 @@ namespace platf::publish {
       BOOST_LOG(error) << "Failed immediately to register DNS service: Error "sv << status;
       return nullptr;
     }
+    BOOST_LOG(info) << "Registering DNS service instance="sv << instance_name << " host="sv << local_host;
     return std::make_unique<deinit_t>(serviceRef);
   }
 }  // namespace platf::publish
