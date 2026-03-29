@@ -1920,6 +1920,7 @@ namespace shadow_control_http {
     server.default_resource["GET"] = not_found;
     server.resource["^/$"]["GET"] = getIndexPage;
     server.resource["^/pairing/?$"]["GET"] = getPairingPage;
+    server.resource["^/clients/?$"]["GET"] = getClientsPage;
     server.resource["^/apps/?$"]["GET"] = getAppsPage;
     server.resource["^/config/?$"]["GET"] = getConfigPage;
     server.resource["^/password/?$"]["GET"] = getPasswordPage;

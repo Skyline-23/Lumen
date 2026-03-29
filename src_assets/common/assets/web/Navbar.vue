@@ -17,6 +17,9 @@
             <a class="nav-link" href="./pairing"><i class="fas fa-fw fa-unlock"></i> Pairing</a>
           </li>
           <li class="nav-item">
+            <a class="nav-link" href="./clients"><i class="fas fa-fw fa-mobile-screen-button"></i> {{ $t('client_card.clients') }}</a>
+          </li>
+          <li class="nav-item">
             <a class="nav-link" href="./apps"><i class="fas fa-fw fa-stream"></i> {{ $t('navbar.applications') }}</a>
           </li>
           <li class="nav-item">

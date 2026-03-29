@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="auto">
+
+<head>
+  <%- header %>
+  <style>
+    .client-grid {
+      display: grid;
+      gap: 1rem;
+    }
+
+    .client-meta {
+      color: var(--bs-secondary-color);
+      font-size: 0.95rem;
+    }
+
+    .client-permissions {
+      font-family: monospace;
+    }
+  </style>
+</head>
+
+<body id="app" v-cloak>
+  <Navbar></Navbar>
+  <div class="container my-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+      <div>
+        <h1 class="mb-2">{{ $t('pin.device_management') }}</h1>
+        <p class="mb-1">{{ $t('pin.device_management_desc') }}</p>
+        <p class="mb-0 text-secondary">{{ $t('pin.device_management_warning') }}</p>
+      </div>
+      <div class="d-flex gap-2">
+        <button class="btn btn-outline-secondary" @click="refresh" :disabled="loading || !!busyUuid">
+          <i class="fas fa-rotate-right"></i> Refresh
+        </button>
+        <button class="btn btn-outline-danger" @click="unpairAll" :disabled="loading || !!busyUuid || !clients.length">
+          <i class="fas fa-trash"></i> {{ $t('pin.unpair_all') }}
+        </button>
+      </div>
+    </div>
+
+    <div v-if="banner.message" class="alert mb-4" :class="`alert-${banner.kind}`">{{ banner.message }}</div>
+
+    <div class="card">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <h2 class="h4 mb-0">Trusted Devices</h2>
+          <span class="badge text-bg-secondary">{{ clients.length }}</span>
+        </div>
+
+        <div v-if="loading" class="text-secondary">Loading paired devices...</div>
+        <div v-else-if="!clients.length" class="text-secondary">
+          {{ $t('pin.unpair_single_no_devices') }}
+        </div>
+        <div v-else class="client-grid">
+          <div v-for="client in clients" :key="client.uuid" class="border rounded p-3">
+            <div class="d-flex flex-wrap justify-content-between gap-2 mb-2">
+              <div>
+                <div class="fw-semibold">{{ client.name || $t('pin.unpair_single_unknown') }}</div>
+                <div class="client-meta">{{ client.uuid }}</div>
+              </div>
+              <span class="badge" :class="client.connected ? 'text-bg-success' : 'text-bg-secondary'">
+                {{ client.connected ? 'connected' : 'offline' }}
+              </span>
+            </div>
+
+            <div class="client-meta mb-2" v-if="client.display_mode">
+              Display override: {{ client.display_mode }}
+            </div>
+            <div class="client-meta mb-2" v-else>
+              Display override: auto
+            </div>
+
+            <div class="d-flex flex-wrap gap-3 client-meta mb-3">
+              <span class="client-permissions">perm={{ client.perm }}</span>
+              <span>client commands: {{ client.allow_client_commands ? 'on' : 'off' }}</span>
+              <span>virtual display: {{ client.always_use_virtual_display ? 'forced' : 'auto' }}</span>
+            </div>
+
+            <div class="d-flex gap-2">
+              <button class="btn btn-outline-danger" @click="unpair(client)" :disabled="busyUuid === client.uuid">
+                <i class="fas fa-link-slash"></i> Unpair
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+
+<script type="module">
+  import { createApp } from 'vue'
+  import { initApp } from './init'
+  import Navbar from './Navbar.vue'
+
+  const app = createApp({
+    components: { Navbar },
+    data() {
+      return {
+        clients: [],
+        loading: true,
+        busyUuid: '',
+        banner: {
+          kind: 'info',
+          message: ''
+        }
+      }
+    },
+    async created() {
+      await this.refresh()
+    },
+    methods: {
+      async refresh(showErrors = true) {
+        this.loading = true
+        try {
+          const response = await fetch('./api/clients/list')
+          const payload = await response.json()
+          if (!payload.status) {
+            throw new Error('The host refused to return paired devices.')
+          }
+          this.clients = (payload.named_certs || []).slice().sort((left, right) => {
+            if (left.connected !== right.connected) {
+              return left.connected ? -1 : 1
+            }
+            return (left.name || '').localeCompare(right.name || '')
+          })
+        } catch (error) {
+          if (showErrors) {
+            this.banner = {
+              kind: 'danger',
+              message: `Failed to load paired devices: ${error}`
+            }
+          }
+        } finally {
+          this.loading = false
+        }
+      },
+      async unpair(client) {
+        this.busyUuid = client.uuid
+        this.banner.message = ''
+
+        try {
+          const response = await fetch('./api/clients/unpair', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ uuid: client.uuid })
+          })
+          const payload = await response.json()
+          if (!payload.status) {
+            throw new Error('The host refused to unpair the device.')
+          }
+          this.banner = {
+            kind: 'success',
+            message: `${client.name || 'Device'} unpaired. ${this.$t('pin.unpair_single_success')}`
+          }
+          await this.refresh(false)
+        } catch (error) {
+          this.banner = {
+            kind: 'danger',
+            message: `Failed to unpair device: ${error}`
+          }
+        } finally {
+          this.busyUuid = ''
+        }
+      },
+      async unpairAll() {
+        this.busyUuid = '__all__'
+        this.banner.message = ''
+
+        try {
+          const response = await fetch('./api/clients/unpair-all', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: '{}'
+          })
+          const payload = await response.json()
+          if (!payload.status) {
+            throw new Error(this.$t('pin.unpair_all_error'))
+          }
+          this.banner = {
+            kind: 'success',
+            message: this.$t('pin.unpair_all_success')
+          }
+          await this.refresh(false)
+        } catch (error) {
+          this.banner = {
+            kind: 'danger',
+            message: `Failed to unpair all devices: ${error}`
+          }
+        } finally {
+          this.busyUuid = ''
+        }
+      }
+    }
+  })
+
+  initApp(app)
+</script>
