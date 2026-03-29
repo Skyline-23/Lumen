@@ -1133,6 +1133,14 @@ namespace rtsp_stream {
     option.content = const_cast<char *>(seqn_str.c_str());
 
     std::string_view payload {req->payload, (size_t) req->payloadLength};
+    std::string_view target {req->message.request.target};
+
+    BOOST_LOG(info) << "RTSP ANNOUNCE request target="sv
+                    << target
+                    << " seq="sv
+                    << req->sequenceNumber
+                    << " payload-bytes="sv
+                    << payload.size();
 
     std::vector<std::string_view> lines;
 
@@ -1510,6 +1518,8 @@ namespace rtsp_stream {
       return;
     }
 
+    BOOST_LOG(info) << "RTSP ANNOUNCE accepted seq="sv
+                    << req->sequenceNumber;
     respond(sock, session, &option, 200, "OK", req->sequenceNumber, {});
   }
 
@@ -1521,6 +1531,11 @@ namespace rtsp_stream {
 
     auto seqn_str = std::to_string(req->sequenceNumber);
     option.content = const_cast<char *>(seqn_str.c_str());
+
+    BOOST_LOG(info) << "RTSP PLAY request target="sv
+                    << req->message.request.target
+                    << " seq="sv
+                    << req->sequenceNumber;
 
     respond(sock, session, &option, 200, "OK", req->sequenceNumber, {});
   }
