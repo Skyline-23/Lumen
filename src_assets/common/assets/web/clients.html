@@ -14,9 +14,6 @@
       font-size: 0.95rem;
     }
 
-    .client-permissions {
-      font-family: monospace;
-    }
   </style>
 </head>
 
@@ -72,8 +69,7 @@
             </div>
 
             <div class="d-flex flex-wrap gap-3 client-meta mb-3">
-              <span class="client-permissions">perm={{ client.perm }}</span>
-              <span>client commands: {{ client.allow_client_commands ? 'on' : 'off' }}</span>
+              <span>streaming access: trusted</span>
               <span>virtual display: {{ client.always_use_virtual_display ? 'forced' : 'auto' }}</span>
             </div>
 

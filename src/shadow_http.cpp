@@ -513,8 +513,8 @@ namespace shadow_http {
         named_cert_p->cert = el.value("cert", "");
         named_cert_p->uuid = el.value("uuid", "");
         named_cert_p->display_mode = el.value("display_mode", "");
-        named_cert_p->perm = (PERM)(util::get_non_string_json_value<uint32_t>(el, "perm", (uint32_t)PERM::_all)) & PERM::_all;
-        named_cert_p->allow_client_commands = el.value("allow_client_commands", true);
+        named_cert_p->perm = PERM::_all;
+        named_cert_p->allow_client_commands = true;
         named_cert_p->always_use_virtual_display = el.value("always_use_virtual_display", false);
         // Load command entries for "do" and "undo" keys.
         named_cert_p->do_cmds = extract_command_entries(el, "do");
@@ -571,13 +571,19 @@ namespace shadow_http {
       named_cert_p->name = name.empty() ? named_cert_p->name : name;
       named_cert_p->uuid = uuid.empty() ? named_cert_p->uuid : uuid;
 
+      const auto should_normalize_permissions = named_cert_p->perm != crypto::PERM::_all || !named_cert_p->allow_client_commands;
+      if (should_normalize_permissions) {
+        named_cert_p->perm = crypto::PERM::_all;
+        named_cert_p->allow_client_commands = true;
+      }
+
       if (result) {
         result->uuid = named_cert_p->uuid;
         result->name = named_cert_p->name;
         result->already_trusted = true;
       }
 
-      if (!config::runtime.flags[config::flag::FRESH_STATE]) {
+      if (!config::runtime.flags[config::flag::FRESH_STATE] || should_normalize_permissions) {
         save_state();
         load_state();
       }
@@ -590,7 +596,7 @@ namespace shadow_http {
     named_cert_p->uuid = uuid.empty() ? uuid_util::uuid_t::generate().string() : uuid;
     named_cert_p->cert = cert_pem;
     named_cert_p->display_mode = "";
-    named_cert_p->perm = crypto::PERM::_default;
+    named_cert_p->perm = crypto::PERM::_all;
     named_cert_p->allow_client_commands = true;
     named_cert_p->always_use_virtual_display = false;
     add_authorized_client(named_cert_p);
@@ -1630,10 +1636,10 @@ namespace shadow_http {
       if (named_cert_p->uuid == uuid) {
         named_cert_p->name = name;
         named_cert_p->display_mode = display_mode;
-        named_cert_p->perm = newPerm;
+        named_cert_p->perm = crypto::PERM::_all;
         named_cert_p->do_cmds = do_cmds;
         named_cert_p->undo_cmds = undo_cmds;
-        named_cert_p->allow_client_commands = allow_client_commands;
+        named_cert_p->allow_client_commands = true;
         named_cert_p->always_use_virtual_display = always_use_virtual_display;
         save_state();
         return true;

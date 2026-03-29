@@ -1232,19 +1232,17 @@ namespace shadow_control_http {
       std::string uuid = input_tree.value("uuid", "");
       std::string name = input_tree.value("name", "");
       std::string display_mode = input_tree.value("display_mode", "");
-      bool allow_client_commands = input_tree.value("allow_client_commands", true);
       bool always_use_virtual_display = input_tree.value("always_use_virtual_display", false);
       auto do_cmds = shadow_http::extract_command_entries(input_tree, "do");
       auto undo_cmds = shadow_http::extract_command_entries(input_tree, "undo");
-      auto perm = static_cast<crypto::PERM>(input_tree.value("perm", static_cast<uint32_t>(crypto::PERM::_no)) & static_cast<uint32_t>(crypto::PERM::_all));
       output_tree["status"] = shadow_http::update_device_info(
         uuid,
         name,
         display_mode,
         do_cmds,
         undo_cmds,
-        perm,
-        allow_client_commands,
+        crypto::PERM::_all,
+        true,
         always_use_virtual_display
       );
       send_response(response, output_tree);
