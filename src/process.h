@@ -96,7 +96,6 @@ namespace proc {
     bool virtual_display_primary;
     bool use_app_identity;
     bool per_client_app_identity;
-    bool allow_client_commands;
     bool terminate_on_pause;
     int  scale_factor;
     std::chrono::seconds exit_timeout;
@@ -113,7 +112,6 @@ namespace proc {
     bool initial_hdr = false;
     bool virtual_display = false;
     bool physical_displays_asleep = false;
-    bool allow_client_commands = false;
     video::sink_request_t sink_request;
     int client_logical_width = 0;
     int client_logical_height = 0;

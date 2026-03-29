@@ -459,7 +459,6 @@ namespace stream {
     std::uint32_t launch_session_id;
     std::string device_name;
     std::string device_uuid;
-    crypto::PERM permission;
 
     std::list<crypto::command_entry_t> do_cmds;
     std::list<crypto::command_entry_t> undo_cmds;
@@ -1154,11 +1153,6 @@ namespace stream {
     server->map(packetTypes[IDX_EXEC_SERVER_CMD], [server](session_t *session, const std::string_view &payload) {
       BOOST_LOG(debug) << "type [IDX_EXEC_SERVER_CMD]"sv;
 
-      if (!(session->permission & crypto::PERM::server_cmd)) {
-        BOOST_LOG(debug) << "Permission Exec Server Cmd deined for [" << session->device_name << "]";
-        return;
-      }
-
       uint8_t cmdIndex = *(uint8_t*)payload.data();
 
       if (cmdIndex < config::runtime.server_cmds.size()) {
@@ -1186,20 +1180,10 @@ namespace stream {
 
     server->map(packetTypes[IDX_SET_CLIPBOARD], [server](session_t *session, const std::string_view &payload) {
       BOOST_LOG(info) << "type [IDX_SET_CLIPBOARD]: "sv << payload << " size: " << payload.size();
-
-      if (!(session->permission & crypto::PERM::clipboard_set)) {
-        BOOST_LOG(debug) << "Permission Clipboard Set deined for [" << session->device_name << "]";
-        return;
-      }
     });
 
     server->map(packetTypes[IDX_FILE_TRANSFER_NONCE_REQUEST], [server](session_t *session, const std::string_view &payload) {
       BOOST_LOG(info) << "type [IDX_FILE_TRANSFER_NONCE_REQUEST]: "sv << payload << " size: " << payload.size();
-
-      if (!(session->permission & crypto::PERM::file_upload)) {
-        BOOST_LOG(debug) << "Permission File Upload deined for [" << session->device_name << "]";
-        return;
-      }
     });
 
     server->map(packetTypes[IDX_ENCRYPTED], [server](session_t *session, const std::string_view &payload) {
@@ -1251,7 +1235,7 @@ namespace stream {
       // Encrypted control packets already yielded plaintext, so input data can bypass the control dispatcher.
       if (type == packetTypes[IDX_INPUT_DATA]) {
         plaintext.erase(std::begin(plaintext), std::begin(plaintext) + 4);
-        input::passthrough(session->input, std::move(plaintext), session->permission);
+        input::passthrough(session->input, std::move(plaintext));
       } else {
         server->call(type, session, next_payload, true);
       }
@@ -2512,16 +2496,7 @@ namespace stream {
       return session.device_uuid == uuid;
     }
 
-    bool update_device_info(session_t& session, const std::string& name, const crypto::PERM& newPerm) {
-      session.permission = newPerm;
-      if (!(newPerm & crypto::PERM::_allow_view)) {
-        BOOST_LOG(debug) << "Session: View permission revoked for [" << session.device_name << "], disconnecting...";
-        graceful_stop(session);
-        return true;
-      }
-
-      BOOST_LOG(debug) << "Session: Permission updated for [" << session.device_name << "]";
-
+    bool update_device_info(session_t& session, const std::string& name) {
       if (session.device_name != name) {
         BOOST_LOG(debug) << "Session: Device name changed from [" << session.device_name << "] to [" << name << "]";
         session.device_name = name;
@@ -2739,7 +2714,6 @@ namespace stream {
       session->launch_session_id = launch_session.id;
       session->device_name = launch_session.device_name;
       session->device_uuid = launch_session.unique_id;
-      session->permission = launch_session.perm;
 
       session->do_cmds = std::move(launch_session.client_do_cmds);
       session->undo_cmds = std::move(launch_session.client_undo_cmds);

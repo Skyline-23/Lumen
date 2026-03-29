@@ -170,7 +170,6 @@ namespace proc {
     _app_name = "Remote Input";
     _app.uuid = REMOTE_INPUT_UUID;
     _app.terminate_on_pause = true;
-    allow_client_commands = false;
     placebo = true;
 
 #if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
@@ -191,7 +190,6 @@ namespace proc {
     _app_id = static_cast<int>(util::from_view(app.id));
     _app_name = app.name;
     _launch_session = launch_session;
-    allow_client_commands = app.allow_client_commands;
 
     uint32_t requested_width = launch_session->width ? launch_session->width : 1920;
     uint32_t requested_height = launch_session->height ? launch_session->height : 1080;
@@ -990,7 +988,6 @@ namespace proc {
     _launch_session.reset();
     virtual_display = false;
     physical_displays_asleep = false;
-    allow_client_commands = false;
     sink_request = {};
     client_logical_width = 0;
     client_logical_height = 0;
@@ -1326,7 +1323,6 @@ namespace proc {
 
       // List of keys to convert to booleans.
       std::vector<std::string> boolean_keys = {
-        "allow-client-commands",
         "exclude-global-prep-cmd",
         "elevated",
         "auto-detach",
@@ -1551,7 +1547,6 @@ namespace proc {
           ctx.scale_factor = app_node.value("scale-factor", 100);
           ctx.use_app_identity = app_node.value("use-app-identity", false);
           ctx.per_client_app_identity = app_node.value("per-client-app-identity", false);
-          ctx.allow_client_commands = app_node.value("allow-client-commands", true);
           ctx.terminate_on_pause = app_node.value("terminate-on-pause", false);
           ctx.gamepad = app_node.value("gamepad", "");
 
@@ -1618,7 +1613,6 @@ namespace proc {
       ctx.scale_factor = 100;
       ctx.use_app_identity = false;
       ctx.per_client_app_identity = false;
-      ctx.allow_client_commands = false;
       ctx.terminate_on_pause = false;
 
       ctx.elevated = false;
@@ -1652,7 +1646,6 @@ namespace proc {
       ctx.scale_factor = 100;
       ctx.use_app_identity = false;
       ctx.per_client_app_identity = false;
-      ctx.allow_client_commands = false;
       ctx.terminate_on_pause = false;
 
       ctx.elevated = false;
@@ -1687,7 +1680,6 @@ namespace proc {
         ctx.scale_factor = 100;
         ctx.use_app_identity = false;
         ctx.per_client_app_identity = false;
-        ctx.allow_client_commands = false;
         ctx.terminate_on_pause = true; // There's no need to keep an active input only session ongoing
 
         ctx.elevated = false;
@@ -1723,7 +1715,6 @@ namespace proc {
         ctx.scale_factor = 100;
         ctx.use_app_identity = false;
         ctx.per_client_app_identity = false;
-        ctx.allow_client_commands = false;
         ctx.terminate_on_pause = false;
 
         ctx.elevated = false;

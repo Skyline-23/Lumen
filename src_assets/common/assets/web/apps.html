@@ -268,14 +268,6 @@
             <b>{{ $t('_common.note') }}</b> {{ $t('apps.detached_cmds_note') }}
           </div>
         </div>
-        <!-- allow client commands -->
-        <Checkbox class="mb-3"
-                  id="clientCommands"
-                  label="apps.allow_client_commands"
-                  desc="apps.allow_client_commands_desc"
-                  v-model="editForm['allow-client-commands']"
-                  default="true"
-        ></Checkbox>
         <!-- prep and state-cmd -->
         <template v-for="type in ['prep', 'state']">
           <Checkbox class="mb-3"
@@ -541,7 +533,6 @@
     "scale-factor": 100,
     "use-app-identity": false,
     "per-client-app-identity": false,
-    "allow-client-commands": true,
     "virtual-display": false,
     "terminate-on-pause": false,
     "gamepad": ""

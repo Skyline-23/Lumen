@@ -54,8 +54,6 @@ namespace shadow_http {
   namespace pt = boost::property_tree;
 
   using p_named_cert_t = crypto::p_named_cert_t;
-  using PERM = crypto::PERM;
-
   struct client_t {
     std::vector<p_named_cert_t> named_devices;
   };
@@ -417,8 +415,6 @@ namespace shadow_http {
         named_cert_node["cert"] = named_cert_p->cert;
         named_cert_node["uuid"] = named_cert_p->uuid;
         named_cert_node["display_mode"] = named_cert_p->display_mode;
-        named_cert_node["perm"] = static_cast<uint32_t>(named_cert_p->perm);
-        named_cert_node["allow_client_commands"] = named_cert_p->allow_client_commands;
         named_cert_node["always_use_virtual_display"] = named_cert_p->always_use_virtual_display;
 
         // Add "do" commands if available.
@@ -496,8 +492,6 @@ namespace shadow_http {
             named_cert_p->cert = el.get<std::string>();
             named_cert_p->uuid = uuid_util::uuid_t::generate().string();
             named_cert_p->display_mode = "";
-            named_cert_p->perm = PERM::_all;
-            named_cert_p->allow_client_commands = true;
             named_cert_p->always_use_virtual_display = false;
             client.named_devices.emplace_back(named_cert_p);
           }
@@ -513,8 +507,6 @@ namespace shadow_http {
         named_cert_p->cert = el.value("cert", "");
         named_cert_p->uuid = el.value("uuid", "");
         named_cert_p->display_mode = el.value("display_mode", "");
-        named_cert_p->perm = PERM::_all;
-        named_cert_p->allow_client_commands = true;
         named_cert_p->always_use_virtual_display = el.value("always_use_virtual_display", false);
         // Load command entries for "do" and "undo" keys.
         named_cert_p->do_cmds = extract_command_entries(el, "do");
@@ -571,19 +563,13 @@ namespace shadow_http {
       named_cert_p->name = name.empty() ? named_cert_p->name : name;
       named_cert_p->uuid = uuid.empty() ? named_cert_p->uuid : uuid;
 
-      const auto should_normalize_permissions = named_cert_p->perm != crypto::PERM::_all || !named_cert_p->allow_client_commands;
-      if (should_normalize_permissions) {
-        named_cert_p->perm = crypto::PERM::_all;
-        named_cert_p->allow_client_commands = true;
-      }
-
       if (result) {
         result->uuid = named_cert_p->uuid;
         result->name = named_cert_p->name;
         result->already_trusted = true;
       }
 
-      if (!config::runtime.flags[config::flag::FRESH_STATE] || should_normalize_permissions) {
+      if (!config::runtime.flags[config::flag::FRESH_STATE]) {
         save_state();
         load_state();
       }
@@ -596,8 +582,6 @@ namespace shadow_http {
     named_cert_p->uuid = uuid.empty() ? uuid_util::uuid_t::generate().string() : uuid;
     named_cert_p->cert = cert_pem;
     named_cert_p->display_mode = "";
-    named_cert_p->perm = crypto::PERM::_all;
-    named_cert_p->allow_client_commands = true;
     named_cert_p->always_use_virtual_display = false;
     add_authorized_client(named_cert_p);
 
@@ -719,7 +703,6 @@ namespace shadow_http {
 
     launch_session->device_name = named_cert_p->name.empty() ? "LumenDisplay"s : named_cert_p->name;
     launch_session->unique_id = named_cert_p->uuid;
-    launch_session->perm = named_cert_p->perm;
     launch_session->enable_sops = util::from_view(get_arg(args, "sops", "0"));
     launch_session->surround_info = static_cast<int>(util::from_view(get_arg(args, "surroundAudioInfo", "196610")));
     launch_session->surround_params = (get_arg(args, "surroundParams", ""));
@@ -886,8 +869,6 @@ namespace shadow_http {
       named_cert_node["name"] = named_cert->name;
       named_cert_node["uuid"] = named_cert->uuid;
       named_cert_node["display_mode"] = named_cert->display_mode;
-      named_cert_node["perm"] = static_cast<uint32_t>(named_cert->perm);
-      named_cert_node["allow_client_commands"] = named_cert->allow_client_commands;
       named_cert_node["always_use_virtual_display"] = named_cert->always_use_virtual_display;
 
       // Add "do" commands if available
@@ -956,29 +937,8 @@ namespace shadow_http {
       return;
     }
 
-    auto perm = PERM::launch;
-
     BOOST_LOG(verbose) << "Launching app [" << appid_str << "] with UUID [" << appuuid_str << "]";
     // BOOST_LOG(verbose) << "QS: " << request->query_string;
-
-    // If we have already launched an app, we should allow clients with view permission to join the input only or current app's session.
-    if (
-      current_appid > 0
-      && (appuuid_str != TERMINATE_APP_UUID || appid != proc::terminate_app_id)
-      && (is_input_only || appid == current_appid || (!appuuid_str.empty() && appuuid_str == current_app_uuid))
-    ) {
-      perm = PERM::_allow_view;
-    }
-
-    if (!(named_cert_p->perm & perm)) {
-      BOOST_LOG(debug) << "Permission LaunchApp denied for [" << named_cert_p->name << "] (" << (uint32_t)named_cert_p->perm << ")";
-
-      tree.put("root.resume", 0);
-      tree.put("root.<xmlattr>.status_code", 403);
-      tree.put("root.<xmlattr>.status_message", "Permission denied");
-
-      return;
-    }
     if (
       args.find("rikey"s) == std::end(args) ||
       args.find("rikeyid"s) == std::end(args) ||
@@ -1066,11 +1026,6 @@ namespace shadow_http {
 
         BOOST_LOG(debug) << "Resuming app [" << proc::proc.get_last_run_app_name() << "] from launch app path...";
 
-        if (!proc::proc.allow_client_commands || !named_cert_p->allow_client_commands) {
-          launch_session->client_do_cmds.clear();
-          launch_session->client_undo_cmds.clear();
-        }
-
         if (current_appid == proc::input_only_app_id) {
           launch_session->input_only = true;
         }
@@ -1097,11 +1052,6 @@ namespace shadow_http {
           tree.put("root.<xmlattr>.status_message", "Cannot find requested application");
           tree.put("root.gamesession", 0);
           return;
-        }
-
-        if (!app_iter->allow_client_commands) {
-          launch_session->client_do_cmds.clear();
-          launch_session->client_undo_cmds.clear();
         }
 
         auto err = proc::proc.execute(*app_iter, launch_session);
@@ -1158,16 +1108,6 @@ namespace shadow_http {
       return;
     }
 
-    if (!(named_cert_p->perm & PERM::_allow_view)) {
-      BOOST_LOG(debug) << "Permission ViewApp denied for [" << named_cert_p->name << "] (" << (uint32_t)named_cert_p->perm << ")";
-
-      tree.put("root.resume", 0);
-      tree.put("root.<xmlattr>.status_code", 403);
-      tree.put("root.<xmlattr>.status_message", "Permission denied");
-
-      return;
-    }
-
     auto current_appid = proc::proc.running();
     if (current_appid == 0) {
       tree.put("root.resume", 0);
@@ -1203,11 +1143,6 @@ namespace shadow_http {
       tree.put("root.<xmlattr>.status_message", "Missing required Lumen v2 resume parameters");
 
       return;
-    }
-
-    if (!proc::proc.allow_client_commands || !named_cert_p->allow_client_commands) {
-      launch_session->client_do_cmds.clear();
-      launch_session->client_undo_cmds.clear();
     }
 
     if (config::input.enable_input_only_mode && current_appid == proc::input_only_app_id) {
@@ -1283,16 +1218,6 @@ namespace shadow_http {
       return;
     }
 
-    if (!(named_cert_p->perm & PERM::launch)) {
-      BOOST_LOG(debug) << "Permission CancelApp denied for [" << named_cert_p->name << "] (" << (uint32_t)named_cert_p->perm << ")";
-
-      tree.put("root.resume", 0);
-      tree.put("root.<xmlattr>.status_code", 403);
-      tree.put("root.<xmlattr>.status_message", "Permission denied");
-
-      return;
-    }
-
     tree.put("root.cancel", 1);
     tree.put("root.<xmlattr>.status_code", 200);
 
@@ -1320,15 +1245,6 @@ namespace shadow_http {
       return;
     }
 
-    if (!(named_cert_p->perm & PERM::_all_actions)) {
-      BOOST_LOG(debug) << "Permission Get AppAsset denied for [" << named_cert_p->name << "] (" << (uint32_t)named_cert_p->perm << ")";
-
-      fg.disable();
-      response->write(SimpleWeb::StatusCode::client_error_unauthorized);
-      response->close_connection_after_response = true;
-      return;
-    }
-
     auto args = request->parse_query_string();
     auto app_image = proc::proc.get_app_image(static_cast<int>(util::from_view(get_arg(args, "appid"))));
 
@@ -1346,17 +1262,6 @@ namespace shadow_http {
 
     auto named_cert_p = require_verified_cert(response, request);
     if (!named_cert_p) {
-      return;
-    }
-
-    if (
-      !(named_cert_p->perm & PERM::_allow_view)
-      || !(named_cert_p->perm & PERM::clipboard_read)
-    ) {
-      BOOST_LOG(debug) << "Permission Read Clipboard denied for [" << named_cert_p->name << "] (" << (uint32_t)named_cert_p->perm << ")";
-
-      response->write(SimpleWeb::StatusCode::client_error_unauthorized);
-      response->close_connection_after_response = true;
       return;
     }
 
@@ -1397,17 +1302,6 @@ namespace shadow_http {
 
     auto named_cert_p = require_verified_cert(response, request);
     if (!named_cert_p) {
-      return;
-    }
-
-    if (
-      !(named_cert_p->perm & PERM::_allow_view)
-      || !(named_cert_p->perm & PERM::clipboard_set)
-    ) {
-      BOOST_LOG(debug) << "Permission Write Clipboard denied for [" << named_cert_p->name << "] (" << (uint32_t)named_cert_p->perm << ")";
-
-      response->write(SimpleWeb::StatusCode::client_error_unauthorized);
-      response->close_connection_after_response = true;
       return;
     }
 
@@ -1604,14 +1498,14 @@ namespace shadow_http {
     return false;
   }
 
-  void update_session_info(stream::session_t& session, const std::string& name, const crypto::PERM newPerm) {
-    stream::session::update_device_info(session, name, newPerm);
+  void update_session_info(stream::session_t& session, const std::string& name) {
+    stream::session::update_device_info(session, name);
   }
 
-  bool find_and_udpate_session_info(const std::string& uuid, const std::string& name, const crypto::PERM newPerm) {
+  bool find_and_udpate_session_info(const std::string& uuid, const std::string& name) {
     auto session = rtsp_stream::find_session(uuid);
     if (session) {
-      update_session_info(*session, name, newPerm);
+      update_session_info(*session, name);
       return true;
     }
     return false;
@@ -1623,11 +1517,9 @@ namespace shadow_http {
     const std::string& display_mode,
     const cmd_list_t& do_cmds,
     const cmd_list_t& undo_cmds,
-    const crypto::PERM newPerm,
-    const bool allow_client_commands,
     const bool always_use_virtual_display
   ) {
-    find_and_udpate_session_info(uuid, name, newPerm);
+    find_and_udpate_session_info(uuid, name);
 
     client_t &client = client_root;
     auto it = client.named_devices.begin();
@@ -1636,10 +1528,8 @@ namespace shadow_http {
       if (named_cert_p->uuid == uuid) {
         named_cert_p->name = name;
         named_cert_p->display_mode = display_mode;
-        named_cert_p->perm = crypto::PERM::_all;
         named_cert_p->do_cmds = do_cmds;
         named_cert_p->undo_cmds = undo_cmds;
-        named_cert_p->allow_client_commands = true;
         named_cert_p->always_use_virtual_display = always_use_virtual_display;
         save_state();
         return true;

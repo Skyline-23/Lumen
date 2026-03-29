@@ -143,18 +143,16 @@ namespace shadow_http {
    *
    * @param      session  The session
    * @param[in]  name     New name
-   * @param[in]  newPerm  New permission
    */
-  void update_session_info(stream::session_t& session, const std::string& name, const crypto::PERM newPerm);
+  void update_session_info(stream::session_t& session, const std::string& name);
 
   /**
    * @brief      Finds and udpate session information.
    *
    * @param[in]  uuid     The uuid string
    * @param[in]  name     New name
-   * @param[in]  newPerm  New permission
    */
-  bool find_and_udpate_session_info(const std::string& uuid, const std::string& name, const crypto::PERM newPerm);
+  bool find_and_udpate_session_info(const std::string& uuid, const std::string& name);
 
   /**
    * @brief      Update device info
@@ -163,8 +161,6 @@ namespace shadow_http {
    * @param[in]  name       New name
    * @param[in]  do_cmds    The do commands
    * @param[in]  undo_cmds  The undo commands
-   * @param[in]  newPerm    New permission
-   * @param[in]  allow_client_commands  Allow client commands
    * @param[in]  always_use_virtual_display  Always use virtual display
    * 
    * @return     Whether the update is successful
@@ -175,8 +171,6 @@ namespace shadow_http {
     const std::string& display_mode,
     const cmd_list_t& do_cmds,
     const cmd_list_t& undo_cmds,
-    const crypto::PERM newPerm,
-    const bool allow_client_commands,
     const bool always_use_virtual_display
   );
 }  // namespace shadow_http

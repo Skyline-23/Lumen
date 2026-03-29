@@ -870,7 +870,6 @@ namespace shadow_control_http {
           app_tree["title"] = runtime_app->second->name;
           app_tree["hdrSupported"] = false;
           app_tree["isAppCollectorGame"] = false;
-          app_tree["allowClientCommands"] = runtime_app->second->allow_client_commands;
         }
       }
 
@@ -1212,8 +1211,7 @@ namespace shadow_control_http {
    *   "name": "<Friendly Name>",
    *   "display_mode": "1920x1080x59.94",
    *   "do": [ { "cmd": "<command>", "elevated": false }, ... ],
-   *   "undo": [ { "cmd": "<command>", "elevated": false }, ... ],
-   *   "perm": <uint32_t>
+   *   "undo": [ { "cmd": "<command>", "elevated": false }, ... ]
    * }
    * @endcode
    */
@@ -1241,8 +1239,6 @@ namespace shadow_control_http {
         display_mode,
         do_cmds,
         undo_cmds,
-        crypto::PERM::_all,
-        true,
         always_use_virtual_display
       );
       send_response(response, output_tree);
@@ -1883,7 +1879,6 @@ namespace shadow_control_http {
           crypto::named_cert_t named_cert {
             .name = "",
             .uuid = shadow_http_common::unique_id,
-            .perm = crypto::PERM::_all,
           };
           BOOST_LOG(info) << "Launching app ["sv << app.name << "] from web UI"sv;
           auto launch_session = shadow_http::make_launch_session(true, false, request->parse_query_string(), &named_cert);

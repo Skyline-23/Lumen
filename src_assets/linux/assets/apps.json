@@ -5,13 +5,11 @@
   "apps": [
     {
       "name": "Desktop",
-      "image-path": "desktop.png",
-      "allow-client-commands": false
+      "image-path": "desktop.png"
     },
     {
       "name": "Low Res Desktop",
       "image-path": "desktop.png",
-      "allow-client-commands": false,
       "prep-cmd": [
         {
           "do": "xrandr --output HDMI-1 --mode 1920x1080",
