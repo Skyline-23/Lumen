@@ -1531,13 +1531,13 @@ editing the `conf` file in a text editor. Use the examples as reference.
     </tr>
 </table>
 
-### origin_web_ui_allowed
+### origin_admin_allowed
 
 <table>
     <tr>
         <td>Description</td>
         <td colspan="2">
-            The origin of the remote endpoint address that is not denied for HTTPS Web UI.
+            The origin of the remote endpoint address that is not denied for the authenticated admin UI and admin APIs. Pairing control remains available on the control HTTPS port.
         </td>
     </tr>
     <tr>
@@ -1549,21 +1549,21 @@ editing the `conf` file in a text editor. Use the examples as reference.
     <tr>
         <td>Example</td>
         <td colspan="2">@code{}
-            origin_web_ui_allowed = lan
+            origin_admin_allowed = lan
             @endcode</td>
     </tr>
     <tr>
         <td rowspan="3">Choices</td>
         <td>pc</td>
-        <td>Only localhost may access the web ui</td>
+        <td>Only localhost may access remote admin</td>
     </tr>
     <tr>
         <td>lan</td>
-        <td>Only LAN devices may access the web ui</td>
+        <td>Only LAN devices may access remote admin</td>
     </tr>
     <tr>
         <td>wan</td>
-        <td>Anyone may access the web ui</td>
+        <td>Anyone may access remote admin</td>
     </tr>
 </table>
 

@@ -42,11 +42,11 @@ namespace shadow_http_common {
 
   std::string unique_id;
   uuid_util::uuid_t uuid;
-  net::net_e origin_web_ui_allowed;
+  net::net_e origin_admin_allowed;
 
   int init() {
     bool clean_slate = config::runtime.flags[config::flag::FRESH_STATE];
-    origin_web_ui_allowed = net::from_enum_string(config::shadow_http.origin_web_ui_allowed);
+    origin_admin_allowed = net::from_enum_string(config::shadow_http.origin_admin_allowed);
 
     if (clean_slate) {
       uuid = uuid_util::uuid_t::generate();

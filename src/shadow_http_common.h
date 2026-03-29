@@ -30,6 +30,6 @@ namespace shadow_http_common {
 
   extern std::string unique_id;
   extern uuid_util::uuid_t uuid;
-  extern net::net_e origin_web_ui_allowed;
+  extern net::net_e origin_admin_allowed;
 
 }  // namespace shadow_http_common

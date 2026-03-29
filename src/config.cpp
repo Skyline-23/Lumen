@@ -537,7 +537,7 @@ namespace config {
   };
 
   shadow_http_t shadow_http {
-    "lan",  // origin web manager
+    "lan",  // origin remote admin
 
     PRIVATE_KEY_FILE,
     CERTIFICATE_FILE,
@@ -1222,7 +1222,7 @@ namespace config {
     bool_f(vars, "keep_sink_default", audio.keep_default);
     bool_f(vars, "auto_capture_sink", audio.auto_capture);
 
-    string_restricted_f(vars, "origin_web_ui_allowed", shadow_http.origin_web_ui_allowed, {"pc"sv, "lan"sv, "wan"sv});
+    string_restricted_f(vars, "origin_admin_allowed", shadow_http.origin_admin_allowed, {"pc"sv, "lan"sv, "wan"sv});
 
     int to = -1;
     int_between_f(vars, "ping_timeout", to, {-1, std::numeric_limits<int>::max()});

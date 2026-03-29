@@ -36,6 +36,8 @@ final class LumenCaptureController: ObservableObject {
     private var runtimeWebDashboardBaseURLString: String?
     private var shouldOpenDashboardWhenReady = false
     private var isShuttingDown = false
+    private var isRestartingCompanion = false
+    private var shouldIgnoreNextCompanionStop = false
     private var isStatusRefreshInFlight = false
     private var hasPendingStatusRefresh = false
 
@@ -60,8 +62,13 @@ final class LumenCaptureController: ObservableObject {
                     return
                 }
 
+                if self.isRestartingCompanion || self.shouldIgnoreNextCompanionStop {
+                    self.shouldIgnoreNextCompanionStop = false
+                    return
+                }
+
                 self.lastErrorMessage = "Lumen web runtime stopped."
-                NSApp.terminate(nil)
+                self.refreshStatus()
             }
         }
         runtimeEventObserver = NotificationCenter.default.addObserver(
@@ -154,6 +161,9 @@ final class LumenCaptureController: ObservableObject {
                 }
 
                 self.menuStatus = menuStatus
+                if self.isRestartingCompanion && menuStatus.hostedRuntimeRunning {
+                    self.isRestartingCompanion = false
+                }
                 self.isStatusRefreshInFlight = false
 
                 guard self.hasPendingStatusRefresh else {
@@ -246,10 +256,14 @@ final class LumenCaptureController: ObservableObject {
         lastErrorMessage = nil
         runtimeWebDashboardBaseURLString = nil
         shouldOpenDashboardWhenReady = true
+        isRestartingCompanion = true
+        shouldIgnoreNextCompanionStop = true
         do {
             try adapter.restartRuntimeCompanion()
             refreshStatus()
         } catch {
+            isRestartingCompanion = false
+            shouldIgnoreNextCompanionStop = false
             lastErrorMessage = error.localizedDescription
         }
     }

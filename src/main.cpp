@@ -55,7 +55,6 @@ namespace {
   std::unique_ptr<platf::deinit_t> streaming_mdns;
   std::unique_ptr<platf::deinit_t> streaming_upnp;
   bool streaming_services_requested {false};
-  bool lazy_streaming_service_startup {false};
 
   void request_streaming_services_start_locked() {
     if (streaming_services_requested) {
@@ -95,7 +94,6 @@ namespace {
     streaming_upnp.reset();
     streaming_mdns.reset();
     streaming_services_requested = false;
-    lazy_streaming_service_startup = false;
   }
 }
 
@@ -487,16 +485,6 @@ int lumen_run(int argc, char *argv[], const LumenRuntimeOptions &options) {
     false;
 #endif
 
-  {
-    std::lock_guard<std::mutex> lock(streaming_services_mutex);
-    lazy_streaming_service_startup =
-#ifdef __APPLE__
-      !options.enable_legacy_system_tray;
-#else
-      false;
-#endif
-  }
-
   if (defer_startup_encoder_probe) {
     BOOST_LOG(info) << "Deferring initial encoder probe until the first stream launch on macOS"sv;
   } else if (video::probe_encoders()) {
@@ -554,11 +542,7 @@ int lumen_run(int argc, char *argv[], const LumenRuntimeOptions &options) {
     return -1;
   }
 
-  if (lazy_streaming_service_startup) {
-    BOOST_LOG(info) << "Deferring discovery and UPnP startup until the first stream session"sv;
-  } else {
-    lumen_ensure_streaming_services_started();
-  }
+  lumen_ensure_streaming_services_started();
 
   // FIXME: Temporary workaround: Simple-Web_server needs to be updated or replaced
   if (shutdown_event->peek()) {

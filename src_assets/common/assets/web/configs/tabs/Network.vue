@@ -90,20 +90,20 @@ const effectivePort = computed(() => +config.value?.port ?? defaultControlPort)
         </tbody>
       </table>
       <!-- add warning about exposing web ui to the internet -->
-      <div class="alert alert-warning" v-if="config.origin_web_ui_allowed === 'wan'">
+      <div class="alert alert-warning" v-if="config.origin_admin_allowed === 'wan'">
         <i class="fa-solid fa-xl fa-triangle-exclamation"></i> {{ $t('config.port_warning') }}
       </div>
     </div>
 
-    <!-- Origin Web UI Allowed -->
+    <!-- Origin Remote Admin Allowed -->
     <div class="mb-3">
-      <label for="origin_web_ui_allowed" class="form-label">{{ $t('config.origin_web_ui_allowed') }}</label>
-      <select id="origin_web_ui_allowed" class="form-select" v-model="config.origin_web_ui_allowed">
-        <option value="pc">{{ $t('config.origin_web_ui_allowed_pc') }}</option>
-        <option value="lan">{{ $t('config.origin_web_ui_allowed_lan') }}</option>
-        <option value="wan">{{ $t('config.origin_web_ui_allowed_wan') }}</option>
+      <label for="origin_admin_allowed" class="form-label">{{ $t('config.origin_admin_allowed') }}</label>
+      <select id="origin_admin_allowed" class="form-select" v-model="config.origin_admin_allowed">
+        <option value="pc">{{ $t('config.origin_admin_allowed_pc') }}</option>
+        <option value="lan">{{ $t('config.origin_admin_allowed_lan') }}</option>
+        <option value="wan">{{ $t('config.origin_admin_allowed_wan') }}</option>
       </select>
-      <div class="form-text">{{ $t('config.origin_web_ui_allowed_desc') }}</div>
+      <div class="form-text">{{ $t('config.origin_admin_allowed_desc') }}</div>
     </div>
 
     <!-- External IP -->

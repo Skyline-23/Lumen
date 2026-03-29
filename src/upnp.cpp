@@ -71,7 +71,7 @@ namespace upnp {
       auto audio = std::to_string(net::map_port(stream::AUDIO_STREAM_PORT));
       auto control = std::to_string(net::map_port(stream::CONTROL_PORT));
       auto shadow_control_https = std::to_string(net::map_port(shadow_http::PORT_HTTPS));
-      auto web_ui_https = std::to_string(net::map_port(shadow_control_http::PORT_HTTPS));
+      auto pairing_control_https = std::to_string(net::map_port(shadow_control_http::PORT_HTTPS));
 
       mappings.assign({
         {{rtsp, rtsp, "TCP"s}, "Lumen - RTSP"s},
@@ -79,12 +79,8 @@ namespace upnp {
         {{audio, audio, "UDP"s}, "Lumen - Audio"s},
         {{control, control, "UDP"s}, "Lumen - Control"s},
         {{shadow_control_https, shadow_control_https, "TCP"s}, "Lumen - Shadow Control HTTPS"s},
+        {{pairing_control_https, pairing_control_https, "TCP"s}, "Lumen - Pairing Control HTTPS"s},
       });
-
-      // Only map the Web UI port if it is configured to accept WAN connections.
-      if (net::from_enum_string(config::shadow_http.origin_web_ui_allowed) > net::LAN) {
-        mappings.emplace_back(mapping_t {{web_ui_https, web_ui_https, "TCP"s}, "Lumen - Web UI"s});
-      }
 
       // Start the mapping thread
       upnp_thread = std::thread {&deinit_t::upnp_thread_proc, this};

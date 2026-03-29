@@ -213,10 +213,8 @@ namespace shadow_control_http {
 
     append_shadow_pairing_control_url_candidate(control_urls, seen_urls, normalized_request_host(request));
 
-    if (shadow_http_common::origin_web_ui_allowed > net::LAN) {
-      append_shadow_pairing_control_url_candidate(control_urls, seen_urls, config::shadow_http.external_ip);
-      append_shadow_pairing_control_url_candidate(control_urls, seen_urls, config::shadow_http.host_name);
-    }
+    append_shadow_pairing_control_url_candidate(control_urls, seen_urls, config::shadow_http.external_ip);
+    append_shadow_pairing_control_url_candidate(control_urls, seen_urls, config::shadow_http.host_name);
 
     tree["controlHttpsUrls"] = control_urls;
     tree["preferredControlHttpsUrl"] = control_urls.empty() ? ""s : control_urls.front().get<std::string>();
@@ -422,11 +420,11 @@ namespace shadow_control_http {
    * @param request The HTTP request object.
    * @return True if allowed, false otherwise.
    */
-  bool checkIPOrigin(resp_https_t response, req_https_t request) {
+  bool checkAdminOrigin(resp_https_t response, req_https_t request) {
     auto address = net::addr_to_normalized_string(request->remote_endpoint().address());
     auto ip_type = net::from_address(address);
-    if (ip_type > shadow_http_common::origin_web_ui_allowed) {
-      BOOST_LOG(info) << "Web UI: ["sv << address << "] -- denied"sv;
+    if (ip_type > shadow_http_common::origin_admin_allowed) {
+      BOOST_LOG(info) << "Admin UI: ["sv << address << "] -- denied"sv;
       response->write(SimpleWeb::StatusCode::client_error_forbidden);
       return false;
     }
@@ -443,7 +441,7 @@ namespace shadow_control_http {
    * This function uses session cookies (if set) and ensures they have not expired.
    */
   bool authenticate(resp_https_t response, req_https_t request, bool needsRedirect = false) {
-    if (!checkIPOrigin(response, request))
+    if (!checkAdminOrigin(response, request))
       return false;
     // If credentials not set, redirect to welcome.
     if (config::runtime.username.empty()) {
@@ -682,7 +680,7 @@ namespace shadow_control_http {
    * @todo Combine this function with getWelcomePage if appropriate.
    */
   void getLoginPage(resp_https_t response, req_https_t request) {
-    if (!checkIPOrigin(response, request)) {
+    if (!checkAdminOrigin(response, request)) {
       return;
     }
 
@@ -1492,7 +1490,7 @@ namespace shadow_control_http {
    * @param request The HTTP request object.
    */
   void startShadowPairing(resp_https_t response, req_https_t request) {
-    if (!checkIPOrigin(response, request) || !validateContentType(response, request, "application/json")) {
+    if (!validateContentType(response, request, "application/json")) {
       return;
     }
 
@@ -1543,10 +1541,6 @@ namespace shadow_control_http {
    * @param request The HTTP request object.
    */
   void getShadowPairingStatus(resp_https_t response, req_https_t request) {
-    if (!checkIPOrigin(response, request)) {
-      return;
-    }
-
     print_req(request);
 
     auto args = request->parse_query_string();
@@ -1869,7 +1863,7 @@ namespace shadow_control_http {
    * @endcode
    */
   void login(resp_https_t response, req_https_t request) {
-    if (!checkIPOrigin(response, request) || !validateContentType(response, request, "application/json")) {
+    if (!checkAdminOrigin(response, request) || !validateContentType(response, request, "application/json")) {
       return;
     }
 

@@ -176,7 +176,7 @@ namespace config {
   struct shadow_http_t {
     // Could be any of the following values:
     // pc|lan|wan
-    std::string origin_web_ui_allowed;
+    std::string origin_admin_allowed;
 
     std::string pkey;
     std::string cert;
