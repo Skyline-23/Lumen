@@ -1580,6 +1580,34 @@ namespace shadow_control_http {
   }
 
   /**
+   * @brief Get an unauthenticated Shadow-native host descriptor for discovery and catalog refresh.
+   * @param response The HTTP response object.
+   * @param request The HTTP request object.
+   */
+  void getShadowHostDescriptor(resp_https_t response, req_https_t request) {
+    print_req(request);
+
+    const auto current_app_id = std::max(proc::proc.running(), 0);
+    const auto server_state = current_app_id > 0 ? "SUNSHINE_SERVER_BUSY"sv : "SUNSHINE_SERVER_FREE"sv;
+
+    nlohmann::json output_tree;
+    output_tree["status"] = true;
+    output_tree["host"] = {
+      {"displayName", config::shadow_http.host_name},
+      {"pairStatus", request->userp ? "paired" : "notPaired"},
+      {"currentGameID", current_app_id},
+      {"serverState", server_state},
+      {"streamHttpsPort", net::map_port(shadow_http::PORT_HTTPS)},
+      {"controlHttpsPort", net::map_port(PORT_HTTPS)},
+      {"serverUniqueId", shadow_http_common::unique_id},
+      {"serviceType", SERVICE_TYPE},
+      {"serverCodecModeSupport", 0}
+    };
+    append_shadow_pairing_host_details(output_tree["host"], request);
+    send_response(response, output_tree);
+  }
+
+  /**
    * @brief List pending and decided Shadow pairing requests for the Web UI.
    * @param response The HTTP response object.
    * @param request The HTTP request object.
@@ -1937,6 +1965,7 @@ namespace shadow_control_http {
     server.resource["^/api/login"]["POST"] = login;
     server.resource["^/api/pairing/start$"]["POST"] = startShadowPairing;
     server.resource["^/api/pairing/status$"]["GET"] = getShadowPairingStatus;
+    server.resource["^/api/discovery/host$"]["GET"] = getShadowHostDescriptor;
     server.resource["^/api/pairing/requests$"]["GET"] = listShadowPairingRequests;
     server.resource["^/api/pairing/approve$"]["POST"] = approveShadowPairing;
     server.resource["^/api/pairing/reject$"]["POST"] = rejectShadowPairing;
