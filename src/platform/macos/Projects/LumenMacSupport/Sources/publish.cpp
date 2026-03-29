@@ -130,6 +130,21 @@ namespace platf::publish {
     auto serviceRef = DNSServiceRef {};
     const auto instance_name = net::mdns_instance_name(local_mdns_host_label());
     const auto local_host = instance_name + ".local"s;
+    TXTRecordRef txt_record {};
+    TXTRecordCreate(&txt_record, 0, nullptr);
+
+    const auto txt_records = net::shadow_discovery_txt_records();
+    for (const auto &txt_entry : txt_records) {
+      const auto separator = txt_entry.find('=');
+      if (separator == std::string::npos || separator == 0) {
+        continue;
+      }
+
+      const auto key = txt_entry.substr(0, separator);
+      const auto value = txt_entry.substr(separator + 1);
+      TXTRecordSetValue(&txt_record, key.c_str(), static_cast<uint8_t>(value.size()), value.data());
+    }
+
     const auto status = DNSServiceRegister(
       &serviceRef,
       0,  // flags
@@ -139,11 +154,12 @@ namespace platf::publish {
       nullptr,  // domain
       local_host.c_str(),
       htons(net::map_port(shadow_http::PORT_HTTPS)),
-      0,  // txtLen
-      nullptr,  // txtRecord
+      TXTRecordGetLength(&txt_record),
+      TXTRecordGetBytesPtr(&txt_record),
       registrationCallback,
       nullptr  // context
     );
+    TXTRecordDeallocate(&txt_record);
     if (status != kDNSServiceErr_NoError) {
       BOOST_LOG(error) << "Failed immediately to register DNS service: Error "sv << status;
       return nullptr;

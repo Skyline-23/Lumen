@@ -8,6 +8,7 @@
 #include <sstream>
 #include <set>
 #include <vector>
+#include <string>
 
 #ifdef _WIN32
   #include <iphlpapi.h>
@@ -23,6 +24,9 @@
 #include "config.h"
 #include "logging.h"
 #include "network.h"
+#include "platform/common.h"
+#include "shadow_control_http.h"
+#include "shadow_http_common.h"
 #include "utility.h"
 
 using namespace std::literals;
@@ -30,6 +34,19 @@ using namespace std::literals;
 namespace ip = boost::asio::ip;
 
 namespace net {
+  namespace {
+    void append_discovery_host_candidate(std::vector<std::string> &hosts, std::set<std::string> &seen, std::string candidate) {
+      boost::trim(candidate);
+      if (candidate.empty()) {
+        return;
+      }
+
+      if (seen.emplace(candidate).second) {
+        hosts.emplace_back(std::move(candidate));
+      }
+    }
+  }  // namespace
+
   std::vector<ip::network_v4> pc_ips_v4 {
     ip::make_network_v4("127.0.0.0/8"sv),
   };
@@ -267,6 +284,37 @@ namespace net {
 
     return addresses;
 #endif
+  }
+
+  std::optional<std::string> preferred_discovery_authority_host() {
+    std::vector<std::string> hosts;
+    std::set<std::string> seen;
+
+    append_discovery_host_candidate(hosts, seen, config::shadow_http.external_ip);
+    append_discovery_host_candidate(hosts, seen, shadow_http_common::discovery_authority_host);
+
+    auto configured_host_name = config::shadow_http.host_name;
+    boost::trim(configured_host_name);
+    if (!configured_host_name.empty() && configured_host_name != platf::get_host_name()) {
+      append_discovery_host_candidate(hosts, seen, std::move(configured_host_name));
+    }
+
+    if (hosts.empty()) {
+      return std::nullopt;
+    }
+
+    return hosts.front();
+  }
+
+  std::vector<std::string> shadow_discovery_txt_records() {
+    std::vector<std::string> records;
+    records.emplace_back("control-port=" + std::to_string(net::map_port(shadow_control_http::PORT_HTTPS)));
+
+    if (auto authority_host = preferred_discovery_authority_host()) {
+      records.emplace_back("authority-host=" + *authority_host);
+    }
+
+    return records;
   }
 
   boost::asio::ip::address normalize_address(boost::asio::ip::address address) {

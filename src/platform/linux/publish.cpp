@@ -339,18 +339,54 @@ namespace platf::publish {
     if (avahi::entry_group_is_empty(group)) {
       BOOST_LOG(info) << "Adding avahi service "sv << name.get();
 
-      ret = avahi::entry_group_add_service(
-        group,
-        avahi::IF_UNSPEC,
-        avahi::PROTO_UNSPEC,
-        avahi::PublishFlags(0),
-        name.get(),
-        SERVICE_TYPE,
-        nullptr,
-        nullptr,
-        net::map_port(shadow_http::PORT_HTTPS),
-        nullptr
-      );
+      const auto txt_records = net::shadow_discovery_txt_records();
+      switch (txt_records.size()) {
+        case 0:
+          ret = avahi::entry_group_add_service(
+            group,
+            avahi::IF_UNSPEC,
+            avahi::PROTO_UNSPEC,
+            avahi::PublishFlags(0),
+            name.get(),
+            SERVICE_TYPE,
+            nullptr,
+            nullptr,
+            net::map_port(shadow_http::PORT_HTTPS),
+            nullptr
+          );
+          break;
+        case 1:
+          ret = avahi::entry_group_add_service(
+            group,
+            avahi::IF_UNSPEC,
+            avahi::PROTO_UNSPEC,
+            avahi::PublishFlags(0),
+            name.get(),
+            SERVICE_TYPE,
+            nullptr,
+            nullptr,
+            net::map_port(shadow_http::PORT_HTTPS),
+            txt_records[0].c_str(),
+            nullptr
+          );
+          break;
+        default:
+          ret = avahi::entry_group_add_service(
+            group,
+            avahi::IF_UNSPEC,
+            avahi::PROTO_UNSPEC,
+            avahi::PublishFlags(0),
+            name.get(),
+            SERVICE_TYPE,
+            nullptr,
+            nullptr,
+            net::map_port(shadow_http::PORT_HTTPS),
+            txt_records[0].c_str(),
+            txt_records[1].c_str(),
+            nullptr
+          );
+          break;
+      }
 
       if (ret < 0) {
         if (ret == avahi::ERR_COLLISION) {

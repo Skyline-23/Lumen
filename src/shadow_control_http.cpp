@@ -130,6 +130,9 @@ namespace shadow_control_http {
     tree["serverUniqueId"] = shadow_http_common::unique_id;
     tree["serviceType"] = SERVICE_TYPE;
     tree["controlHttpsPort"] = net::map_port(PORT_HTTPS);
+    if (auto authority_host = net::preferred_discovery_authority_host()) {
+      tree["authorityHost"] = *authority_host;
+    }
   }
 
   std::string normalized_request_host(req_https_t request) {
@@ -333,6 +336,10 @@ namespace shadow_control_http {
    * @param request The HTTP request object.
    */
   void print_req(const req_https_t &request) {
+    if (auto host_it = request->header.find("host"); host_it != request->header.end()) {
+      shadow_http_common::observe_discovery_authority_host(host_it->second);
+    }
+
     BOOST_LOG(debug) << "METHOD :: "sv << request->method;
     BOOST_LOG(debug) << "DESTINATION :: "sv << request->path;
     for (auto &[name, val] : request->header) {

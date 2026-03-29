@@ -27,9 +27,12 @@ namespace shadow_http_common {
   bool download_file(const std::string &url, const std::string &file, long ssl_version = CURL_SSLVERSION_TLSv1_2);
   std::string url_escape(const std::string &url);
   std::string url_get_host(const std::string &url);
+  void load_discovery_authority_state();
+  bool observe_discovery_authority_host(const std::string_view &host);
 
   extern std::string unique_id;
   extern uuid_util::uuid_t uuid;
   extern net::net_e origin_admin_allowed;
+  extern std::string discovery_authority_host;
 
 }  // namespace shadow_http_common

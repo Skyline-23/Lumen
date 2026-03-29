@@ -388,6 +388,9 @@ namespace shadow_http {
     // Create a new "root" object and set the unique id.
     root["root"] = nlohmann::json::object();
     root["root"]["uniqueid"] = shadow_http_common::unique_id;
+    if (!shadow_http_common::discovery_authority_host.empty()) {
+      root["root"]["authority_host"] = shadow_http_common::discovery_authority_host;
+    }
 
     client_t &client = client_root;
     nlohmann::json named_cert_nodes = nlohmann::json::array();
@@ -477,6 +480,7 @@ namespace shadow_http {
     std::string uid = tree["root"]["uniqueid"];
     shadow_http_common::uuid = uuid_util::uuid_t::parse(uid);
     shadow_http_common::unique_id = uid;
+    shadow_http_common::load_discovery_authority_state();
 
     nlohmann::json root = tree["root"];
     client_t client;  // Local client to load into
@@ -834,6 +838,10 @@ namespace shadow_http {
 
     BOOST_LOG(debug) << "METHOD :: "sv << request->method;
     BOOST_LOG(debug) << "DESTINATION :: "sv << request->path;
+
+    if (auto host_it = request->header.find("host"); host_it != request->header.end()) {
+      shadow_http_common::observe_discovery_authority_host(host_it->second);
+    }
 
     for (auto &[name, val] : request->header) {
       BOOST_LOG(debug) << name << " -- " << val;

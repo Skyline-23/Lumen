@@ -54,6 +54,8 @@ namespace net {
   std::optional<boost::asio::ip::address> parse_address(const std::string_view &view);
   std::optional<boost::asio::ip::address> local_address_for_target(const boost::asio::ip::address &target);
   std::vector<boost::asio::ip::address> local_interface_addresses();
+  std::optional<std::string> preferred_discovery_authority_host();
+  std::vector<std::string> shadow_discovery_txt_records();
 
   host_t host_create(af_e af, ENetAddress &addr, std::uint16_t port);
 

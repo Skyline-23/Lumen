@@ -5,11 +5,14 @@
 #define BOOST_BIND_GLOBAL_PLACEHOLDERS
 
 // standard includes
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <set>
 #include <utility>
 
 // lib includes
+#include <boost/algorithm/string.hpp>
 #include <boost/asio/ssl/context.hpp>
 #include <boost/asio/ssl/context_base.hpp>
 #include <boost/property_tree/json_parser.hpp>
@@ -43,10 +46,96 @@ namespace shadow_http_common {
   std::string unique_id;
   uuid_util::uuid_t uuid;
   net::net_e origin_admin_allowed;
+  std::string discovery_authority_host;
+
+  namespace {
+    std::string normalized_discovery_authority_host(std::string host) {
+      boost::trim(host);
+      if (host.empty()) {
+        return {};
+      }
+
+      if (host.front() == '[') {
+        const auto end = host.find(']');
+        if (end == std::string::npos) {
+          return {};
+        }
+        host = host.substr(1, end - 1);
+      } else {
+        const auto colon_count = std::count(host.begin(), host.end(), ':');
+        if (colon_count == 1) {
+          const auto port_delimiter = host.rfind(':');
+          if (port_delimiter != std::string::npos) {
+            host.resize(port_delimiter);
+          }
+        }
+      }
+
+      boost::trim(host);
+      while (!host.empty() && host.back() == '.') {
+        host.pop_back();
+      }
+      if (host.empty()) {
+        return {};
+      }
+
+      const auto local_host_name = platf::get_host_name();
+      const std::set<std::string> rejected_hosts {
+        local_host_name,
+        local_host_name + ".local",
+        net::mdns_instance_name(local_host_name),
+        net::mdns_instance_name(local_host_name) + ".local",
+        "localhost"
+      };
+
+      if (rejected_hosts.contains(host)) {
+        return {};
+      }
+
+      const auto net_type = net::from_address(host);
+      if (net_type == net::PC || net_type == net::LAN) {
+        return {};
+      }
+
+      return host;
+    }
+
+    void persist_discovery_authority_state() {
+      nlohmann::json root = nlohmann::json::object();
+      if (fs::exists(config::shadow_http.file_state)) {
+        try {
+          std::ifstream in(config::shadow_http.file_state);
+          in >> root;
+        } catch (const std::exception &e) {
+          BOOST_LOG(error) << "Couldn't read "sv << config::shadow_http.file_state << " while persisting authority host: "sv << e.what();
+          return;
+        }
+      }
+
+      auto &root_node = root["root"];
+      if (!root_node.is_object()) {
+        root_node = nlohmann::json::object();
+      }
+
+      if (discovery_authority_host.empty()) {
+        root_node.erase("authority_host");
+      } else {
+        root_node["authority_host"] = discovery_authority_host;
+      }
+
+      try {
+        std::ofstream out(config::shadow_http.file_state);
+        out << root.dump(4);
+      } catch (const std::exception &e) {
+        BOOST_LOG(error) << "Couldn't write "sv << config::shadow_http.file_state << " while persisting authority host: "sv << e.what();
+      }
+    }
+  }  // namespace
 
   int init() {
     bool clean_slate = config::runtime.flags[config::flag::FRESH_STATE];
     origin_admin_allowed = net::from_enum_string(config::shadow_http.origin_admin_allowed);
+    load_discovery_authority_state();
 
     if (clean_slate) {
       uuid = uuid_util::uuid_t::generate();
@@ -66,6 +155,41 @@ namespace shadow_http_common {
       return -1;
     }
     return 0;
+  }
+
+  void load_discovery_authority_state() {
+    discovery_authority_host.clear();
+
+    if (!fs::exists(config::shadow_http.file_state)) {
+      return;
+    }
+
+    try {
+      nlohmann::json root;
+      std::ifstream in(config::shadow_http.file_state);
+      in >> root;
+
+      if (root.contains("root") && root["root"].is_object()) {
+        const auto authority_host = normalized_discovery_authority_host(root["root"].value("authority_host", ""s));
+        if (!authority_host.empty()) {
+          discovery_authority_host = authority_host;
+        }
+      }
+    } catch (const std::exception &e) {
+      BOOST_LOG(error) << "Couldn't read "sv << config::shadow_http.file_state << " while loading authority host: "sv << e.what();
+    }
+  }
+
+  bool observe_discovery_authority_host(const std::string_view &host) {
+    auto normalized_host = normalized_discovery_authority_host(std::string {host});
+    if (normalized_host.empty() || normalized_host == discovery_authority_host) {
+      return false;
+    }
+
+    discovery_authority_host = std::move(normalized_host);
+    persist_discovery_authority_state();
+    BOOST_LOG(info) << "Observed discovery authority host "sv << discovery_authority_host;
+    return true;
   }
 
   int save_user_creds(const std::string &file, const std::string &username, const std::string &password, bool run_our_mouth) {

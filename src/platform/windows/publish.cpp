@@ -117,20 +117,38 @@ namespace platf::publish {
     instance.wPort = net::map_port(shadow_http::PORT_HTTPS);
     instance.pszHostName = host.data();
 
-    // Setting these values ensures Windows mDNS answers comply with RFC 1035.
-    // If these are unset, Windows will send a TXT record that has zero strings,
-    // which is illegal. Setting them to a single empty value causes Windows to
-    // send a single empty string for the TXT record, which is the correct thing
-    // to do when advertising a service without any TXT strings.
-    //
-    // Most clients aren't strictly checking TXT record compliance with RFC 1035,
-    // but Apple's mDNS resolver does and rejects the entire answer if an invalid
-    // TXT record is present.
-    PWCHAR keys[] = {nullptr};
-    PWCHAR values[] = {nullptr};
-    instance.dwPropertyCount = 1;
-    instance.keys = keys;
-    instance.values = values;
+    auto txt_records = net::shadow_discovery_txt_records();
+    std::vector<std::wstring> txt_keys_storage;
+    std::vector<std::wstring> txt_values_storage;
+    std::vector<PWSTR> txt_keys;
+    std::vector<PWSTR> txt_values;
+
+    for (const auto &txt_entry : txt_records) {
+      const auto separator = txt_entry.find('=');
+      if (separator == std::string::npos || separator == 0) {
+        continue;
+      }
+
+      txt_keys_storage.emplace_back(from_utf8(txt_entry.substr(0, separator)));
+      txt_values_storage.emplace_back(from_utf8(txt_entry.substr(separator + 1)));
+    }
+
+    if (txt_keys_storage.empty()) {
+      // Keep Windows mDNS TXT records RFC-compliant even when there is no metadata to publish.
+      txt_keys.push_back(nullptr);
+      txt_values.push_back(nullptr);
+    } else {
+      txt_keys.reserve(txt_keys_storage.size());
+      txt_values.reserve(txt_values_storage.size());
+      for (std::size_t index = 0; index < txt_keys_storage.size(); ++index) {
+        txt_keys.push_back(txt_keys_storage[index].data());
+        txt_values.push_back(txt_values_storage[index].data());
+      }
+    }
+
+    instance.dwPropertyCount = static_cast<DWORD>(txt_keys.size());
+    instance.keys = txt_keys.data();
+    instance.values = txt_values.data();
 
     DNS_SERVICE_REGISTER_REQUEST req {};
     req.Version = DNS_QUERY_REQUEST_VERSION1;
