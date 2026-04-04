@@ -2358,6 +2358,13 @@ namespace stream {
         video::effective_dynamic_range_transport(session.config.monitor.sinkRequest.dynamic_range_transport);
       const auto negotiated_dynamic_range_transport =
         video::effective_dynamic_range_transport(session.config.monitor);
+      const auto effective_capture_frame_rate =
+        video::effective_capture_frame_rate_for_workload(
+          session.config.monitor.framerate,
+          session.config.monitor.width,
+          session.config.monitor.height,
+          negotiated_dynamic_range_transport
+        );
       const auto effective_display_state = platf::resolve_capture_request_effective_display_state(
         requested_display_id,
         negotiated_dynamic_range_transport,
@@ -2367,7 +2374,9 @@ namespace stream {
       LumenCoreHDRStaticMetadata effective_hdr_metadata {};
       bool has_effective_hdr_metadata = false;
       const bool hdr_stream = video::config_uses_hdr_stream(session.config.monitor);
-      if (hdr_stream) {
+      const bool hdr_display_intent =
+        video::dynamic_range_transport_requires_hdr_display(negotiated_dynamic_range_transport);
+      if (hdr_display_intent) {
         SS_HDR_METADATA hdr_metadata {};
         has_effective_hdr_metadata = platf::resolve_effective_display_hdr_metadata(
           effective_display_state.gamut,
@@ -2388,7 +2397,7 @@ namespace stream {
                       << " codec="sv << lumen_core_codec_name(requested_codec)
                       << " streaming-profile="sv << lumen_core_requested_streaming_profile()
                       << " queue="sv << lumen_core_queue_profile_name(requested_queue_profile)
-                      << " fps="sv << session.config.monitor.framerate
+                      << " fps="sv << effective_capture_frame_rate
                       << " size="sv << session.config.monitor.width << "x"sv << session.config.monitor.height
                       << " requested-transport="sv
                       << lumen_core_dynamic_range_transport_name(requested_dynamic_range_transport)
@@ -2453,7 +2462,7 @@ namespace stream {
         LumenCoreCapturePreprocessStrategyNone,
         requested_queue_profile,
         true,
-        session.config.monitor.framerate,
+        effective_capture_frame_rate,
         session.config.monitor.bitrate,
         session.config.monitor.width,
         session.config.monitor.height,

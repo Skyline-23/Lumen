@@ -448,6 +448,8 @@ public struct LumenBridgeEffectiveDisplayState: Equatable, Sendable {
 
 public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     private static let supportsPartialHDROverlayProducer = true
+    private static let highResolutionPixelCountThreshold = 5_000_000
+    private static let veryHighResolutionPixelCountThreshold = 7_000_000
 
     public let displayID: UInt32
     public let codec: LumenCaptureCodec
@@ -529,19 +531,23 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
             return queueProfile
         }
 
-        if targetFrameRate >= 120 {
+        if effectiveTargetFrameRate >= 120 {
             return .q1
         }
 
         if negotiatedDynamicRangeTransport == LumenCoreDynamicRangeTransportSDRBaseHDROverlay {
-            return .q1
+            return usesHighResolutionWorkload ? .q2 : .q4
         }
 
-        if usesHDRTransport || targetFrameRate >= 90 {
+        if usesHighResolutionWorkload {
             return .q2
         }
 
-        return .q3
+        if usesHDRTransport || effectiveTargetFrameRate >= 90 {
+            return .q3
+        }
+
+        return .q2
     }
 
     public var prefersRealtimeHDRMetadata: Bool {
@@ -607,13 +613,65 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
             displayID: displayID,
             streamConfiguration: streamConfiguration,
             codec: codec.mdkValue,
-            preprocessStrategy: preprocessStrategy.mdkValue,
-            targetFrameRate: targetFrameRate,
+            preprocessStrategy: effectivePreprocessStrategy.mdkValue,
+            targetFrameRate: effectiveTargetFrameRate,
             targetAverageBitRateBitsPerSecond: targetVideoBitRateKbps > 0 ? targetVideoBitRateKbps * 1_000 : nil,
             deliveryMode: .callbackOnly,
-            encoderInputStrategy: encoderInputStrategy.mdkValue,
+            encoderInputStrategy: effectiveEncoderInputStrategy.mdkValue,
             hdrConfiguration: encodedColorConfiguration
         )
+    }
+
+    public var effectiveTargetFrameRate: Int {
+        targetFrameRate
+    }
+
+    public var effectivePreprocessStrategy: LumenCapturePreprocessStrategy {
+        if preprocessStrategy != .none {
+            return preprocessStrategy
+        }
+
+        return .none
+    }
+
+    public var effectiveEncoderInputStrategy: LumenCaptureEncoderInputStrategy {
+        if encoderInputStrategy != .auto {
+            return encoderInputStrategy
+        }
+
+        if usesHDRTransport || negotiatedDynamicRangeTransport == LumenCoreDynamicRangeTransportSDRBaseHDROverlay {
+            return .yuv420v10
+        }
+
+        if usesHighResolutionWorkload || targetFrameRate >= 120 {
+            return .yuv420v8
+        }
+
+        return .auto
+    }
+
+    private var effectivePixelCount: Int? {
+        guard let width = requestedWidth, let height = requestedHeight else {
+            return nil
+        }
+
+        return width * height
+    }
+
+    private var usesHighResolutionWorkload: Bool {
+        guard let effectivePixelCount else {
+            return false
+        }
+
+        return effectivePixelCount >= Self.highResolutionPixelCountThreshold
+    }
+
+    private var usesVeryHighResolutionWorkload: Bool {
+        guard let effectivePixelCount else {
+            return false
+        }
+
+        return effectivePixelCount >= Self.veryHighResolutionPixelCountThreshold
     }
 
     private var encodedColorConfiguration: MDKVideoHDRConfiguration? {
@@ -1155,6 +1213,7 @@ public actor LumenBridgeRuntime {
     public nonisolated static let statusDidChangeNotification = Notification.Name("LumenBridgeRuntimeStatusDidChange")
     private nonisolated static let statusNotificationCoalescingNanoseconds: UInt64 = 100_000_000
     private nonisolated static let encodedFrameDiagnosticsIntervalNanoseconds: UInt64 = 3_000_000_000
+    private nonisolated static let captureRestartCooldownNanoseconds: UInt64 = 2_000_000_000
     private nonisolated static let automaticCoreForwardingEventCapacity = 64
     private nonisolated static func postStatusDidChangeNotificationAsync() {
         DispatchQueue.main.async {
@@ -1176,30 +1235,25 @@ public actor LumenBridgeRuntime {
     static func recommendedCoreForwardingFrameCapacity(
         for configuration: LumenMacDisplayKitCaptureConfiguration
     ) -> Int {
-        // MDK already applies source-side backpressure. Keep the LumenCore handoff queue
-        // deliberately tight so stale encoded frames are dropped quickly instead of turning
-        // into host-side latency. Auto mode resolves the queue profile from the negotiated
-        // transport before sizing the forwarding buffer.
+        // Favor freshness over throughput. Deep forwarding queues translate directly into
+        // input lag when the producer starts missing cadence.
         let queueDepthReserve = max(configuration.negotiatedQueueProfile.queueDepthHint, 1)
         let hdrMetadataSlack = configuration.prefersRealtimeHDRMetadata ? 1 : 0
-        let targetFrameRate = configuration.targetFrameRate
+        let targetFrameRate = configuration.effectiveTargetFrameRate
 
         if targetFrameRate >= 120 {
-            let aggressivelyTrimmedCapacity = max(queueDepthReserve + hdrMetadataSlack - 3, 1)
-            return min(aggressivelyTrimmedCapacity, 1 + hdrMetadataSlack)
+            return min(max(queueDepthReserve + hdrMetadataSlack, 2), 3)
         }
 
         if targetFrameRate >= 90 {
-            let aggressivelyTrimmedCapacity = max(queueDepthReserve + hdrMetadataSlack - 2, 1)
-            return min(aggressivelyTrimmedCapacity, 2)
+            return min(max(queueDepthReserve + hdrMetadataSlack, 2), 4)
         }
 
         if targetFrameRate >= 60 {
-            let aggressivelyTrimmedCapacity = max(queueDepthReserve + hdrMetadataSlack - 1, 1)
-            return min(aggressivelyTrimmedCapacity, 2)
+            return min(max(queueDepthReserve + hdrMetadataSlack, 2), 4)
         }
 
-        return min(max(queueDepthReserve + hdrMetadataSlack, 2), 5)
+        return min(max(queueDepthReserve + hdrMetadataSlack, 2), 4)
     }
 
     private let coreForwarder = LumenCoreCaptureForwarder()
@@ -1222,6 +1276,7 @@ public actor LumenBridgeRuntime {
     private var lastEncodedFrameSourceDisplayTime: UInt64?
     private var lastAppliedVideoRequestGeneration: UInt64?
     private var lastAppliedAudioRequestGeneration: UInt64?
+    private var lastCaptureRestartRequestUptimeNanoseconds: UInt64 = 0
 
     public init() {}
 
@@ -1319,6 +1374,32 @@ public actor LumenBridgeRuntime {
 
         logger.notice("Requesting an immediate MacDisplayKit keyframe for external encoded capture resync")
         await encodedCaptureSession.requestImmediateKeyFrame()
+    }
+
+    public func restartMacDisplayKitCapture(reason: String) async {
+        guard let configuration = activeCaptureConfiguration else {
+            logger.debug("Ignoring MacDisplayKit capture restart because no capture session is active reason=\(reason, privacy: .public)")
+            return
+        }
+
+        let now = DispatchTime.now().uptimeNanoseconds
+        if lastCaptureRestartRequestUptimeNanoseconds != 0 &&
+            now - lastCaptureRestartRequestUptimeNanoseconds < Self.captureRestartCooldownNanoseconds {
+            logger.notice(
+                "Suppressing MacDisplayKit capture restart because the cooldown is active reason=\(reason, privacy: .public)"
+            )
+            return
+        }
+
+        lastCaptureRestartRequestUptimeNanoseconds = now
+        logger.notice(
+            "Restarting MacDisplayKit capture to recover stale external encoded frames reason=\(reason, privacy: .public)"
+        )
+        await stopMacDisplayKitCapture(resetRequestGeneration: false)
+        try? await startMacDisplayKitCapture(
+            configuration: configuration,
+            waitForStartupCompletion: false
+        )
     }
 
     private func stopMacDisplayKitCapture(resetRequestGeneration: Bool) async {
@@ -1611,7 +1692,7 @@ public actor LumenBridgeRuntime {
             if let configuration = request.videoConfiguration {
                 let frameCapacity = Self.recommendedCoreForwardingFrameCapacity(for: configuration)
                 logger.notice(
-                    "Applying LumenCore macOS bridge capture request display-id=\(configuration.displayID, privacy: .public) codec=\(configuration.codec.rawValue, privacy: .public) requested-queue=\(configuration.queueProfile.rawValue, privacy: .public) negotiated-queue=\(configuration.negotiatedQueueProfile.rawValue, privacy: .public) requested-transport=\(lumenDynamicRangeTransportName(configuration.sinkRequest.dynamicRangeTransport), privacy: .public) negotiated-transport=\(lumenDynamicRangeTransportName(configuration.negotiatedDynamicRangeTransport), privacy: .public) fps=\(configuration.targetFrameRate, privacy: .public) bitrate-kbps=\(configuration.targetVideoBitRateKbps, privacy: .public) forwarding-frame-capacity=\(frameCapacity, privacy: .public)"
+                    "Applying LumenCore macOS bridge capture request display-id=\(configuration.displayID, privacy: .public) codec=\(configuration.codec.rawValue, privacy: .public) requested-queue=\(configuration.queueProfile.rawValue, privacy: .public) negotiated-queue=\(configuration.negotiatedQueueProfile.rawValue, privacy: .public) requested-transport=\(lumenDynamicRangeTransportName(configuration.sinkRequest.dynamicRangeTransport), privacy: .public) negotiated-transport=\(lumenDynamicRangeTransportName(configuration.negotiatedDynamicRangeTransport), privacy: .public) requested-fps=\(configuration.targetFrameRate, privacy: .public) effective-fps=\(configuration.effectiveTargetFrameRate, privacy: .public) bitrate-kbps=\(configuration.targetVideoBitRateKbps, privacy: .public) forwarding-frame-capacity=\(frameCapacity, privacy: .public)"
                 )
                 try? await startMacDisplayKitCapture(
                     configuration: configuration,
@@ -1714,9 +1795,7 @@ public actor LumenBridgeRuntime {
 
     private func recordEncodedFrame(_ frame: MDKEncodedFrame) async {
         latestFrame = LumenBridgeEncodedFrameSnapshot(frame: frame)
-        let captureStatistics = await encodedCaptureSession?.statisticsSnapshot()
-        logEncodedFrameDiagnosticsIfNeeded(frame, captureStatistics: captureStatistics)
-        publishStatusDidChange()
+        logEncodedFrameDiagnosticsIfNeeded(frame, captureStatistics: nil)
     }
 
     private func recordEncodedCaptureEvent(_ event: MDKEncodedCaptureSessionEvent) async {
@@ -1747,8 +1826,7 @@ public actor LumenBridgeRuntime {
         let displayTimeDeltaMilliseconds = displayTimeDelta.map(Self.displayTimeDeltaMilliseconds)
 
         let shouldLogAnomaly =
-            (sequenceDelta != nil && sequenceDelta != 1) ||
-            (displayTimeDelta != nil && displayTimeDelta == 0)
+            displayTimeDelta != nil && displayTimeDelta == 0
         let shouldLogInterval =
             lastEncodedFrameDiagnosticsUptimeNanoseconds == 0 ||
             now - lastEncodedFrameDiagnosticsUptimeNanoseconds >= Self.encodedFrameDiagnosticsIntervalNanoseconds
@@ -1756,7 +1834,7 @@ public actor LumenBridgeRuntime {
         if shouldLogAnomaly || shouldLogInterval {
             let targetWidth = activeCaptureConfiguration?.requestedWidth ?? 0
             let targetHeight = activeCaptureConfiguration?.requestedHeight ?? 0
-            let targetFrameRate = activeCaptureConfiguration?.targetFrameRate ?? 0
+            let targetFrameRate = activeCaptureConfiguration?.effectiveTargetFrameRate ?? 0
             let queueProfile = activeCaptureConfiguration?.queueProfile.rawValue ?? "unknown"
             let displayID = activeCaptureConfiguration?.displayID ?? 0
             let codec = LumenCaptureCodec(frame.codec).rawValue

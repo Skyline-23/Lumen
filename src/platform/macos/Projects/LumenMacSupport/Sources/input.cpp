@@ -27,6 +27,7 @@
 #include "src/process.h"
 #include "src/utility.h"
 #include "platform/macos/misc.h"
+#include "platform/macos/virtual_display.h"
 
 /**
  * @brief Delay for a double click, in milliseconds.
@@ -668,8 +669,15 @@ const KeyCodeMap kKeyCodesMap[] = {
     const CGRect display_bounds = CGDisplayBounds(display);
     const auto touch_port_width = std::max(touch_port.width, 1);
     const auto touch_port_height = std::max(touch_port.height, 1);
-    const auto display_width = std::max(CGRectGetWidth(display_bounds), 1.0);
-    const auto display_height = std::max(CGRectGetHeight(display_bounds), 1.0);
+    auto display_width = std::max(CGRectGetWidth(display_bounds), 1.0);
+    auto display_height = std::max(CGRectGetHeight(display_bounds), 1.0);
+    VDISPLAY::display_metrics_t virtual_display_metrics {};
+    if (VDISPLAY::queryVirtualDisplayMetrics(std::to_string(display), virtual_display_metrics) &&
+        virtual_display_metrics.logical_width > 0 &&
+        virtual_display_metrics.logical_height > 0) {
+      display_width = static_cast<double>(virtual_display_metrics.logical_width);
+      display_height = static_cast<double>(virtual_display_metrics.logical_height);
+    }
     const auto scale_x = display_width / static_cast<double>(touch_port_width);
     const auto scale_y = display_height / static_cast<double>(touch_port_height);
 

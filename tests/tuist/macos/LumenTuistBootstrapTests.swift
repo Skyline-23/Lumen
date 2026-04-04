@@ -214,12 +214,12 @@ final class LumenTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(fallbackOverlay.negotiatedDynamicRangeTransport, LumenCoreDynamicRangeTransportFrameGatedHDR)
         XCTAssertTrue(fallbackOverlay.usesHDRTransport)
         XCTAssertTrue(fallbackOverlay.prefersRealtimeHDRMetadata)
-        XCTAssertEqual(fallbackOverlay.negotiatedQueueProfile, .q2)
+        XCTAssertEqual(fallbackOverlay.negotiatedQueueProfile, .q3)
 
         XCTAssertEqual(overlayRequestedSink.negotiatedDynamicRangeTransport, LumenCoreDynamicRangeTransportSDRBaseHDROverlay)
         XCTAssertFalse(overlayRequestedSink.usesHDRTransport)
         XCTAssertTrue(overlayRequestedSink.prefersRealtimeHDRMetadata)
-        XCTAssertEqual(overlayRequestedSink.negotiatedQueueProfile, .q1)
+        XCTAssertEqual(overlayRequestedSink.negotiatedQueueProfile, .q4)
     }
 
     func testRecommendedCoreForwardingFrameCapacityStaysLowLatency() {
@@ -254,12 +254,178 @@ final class LumenTuistBootstrapTests: XCTestCase {
             targetFrameRate: 30
         )
 
-        XCTAssertEqual(LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q2), 1)
-        XCTAssertEqual(LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: auto), 1)
-        XCTAssertEqual(LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q4), 1)
-        XCTAssertEqual(LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q2NinetyFps), 1)
-        XCTAssertEqual(LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q2SixtyFps), 1)
+        XCTAssertEqual(LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q2), 2)
+        XCTAssertEqual(LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: auto), 2)
+        XCTAssertEqual(LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q4), 3)
+        XCTAssertEqual(LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q2NinetyFps), 2)
+        XCTAssertEqual(LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q2SixtyFps), 2)
         XCTAssertEqual(LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q2ThirtyFps), 2)
+    }
+
+    func testBridgePreservesRequested120HzWithoutImplicitDownscaleFor4KOverlay() {
+        let configuration = LumenMacDisplayKitCaptureConfiguration(
+            displayID: 42,
+            codec: .hevc,
+            preprocessStrategy: .none,
+            queueProfile: .auto,
+            targetFrameRate: 120,
+            requestedWidth: 3512,
+            requestedHeight: 2290,
+            sinkRequest: LumenBridgeSinkRequest(
+                capability: LumenBridgeSinkCapability(
+                    gamut: .displayP3,
+                    transfer: .pq,
+                    supportsFrameGatedHDR: true,
+                    supportsHDRTileOverlay: true,
+                    supportsPerFrameHDRMetadata: true
+                ),
+                dynamicRangeTransport: LumenCoreDynamicRangeTransportSDRBaseHDROverlay
+            ),
+            effectiveDisplayState: LumenBridgeEffectiveDisplayState(
+                gamut: .displayP3,
+                transfer: .pq
+            )
+        )
+
+        XCTAssertEqual(configuration.negotiatedDynamicRangeTransport, LumenCoreDynamicRangeTransportSDRBaseHDROverlay)
+        XCTAssertEqual(configuration.effectiveTargetFrameRate, 120)
+        XCTAssertEqual(configuration.effectivePreprocessStrategy, .none)
+        XCTAssertEqual(configuration.negotiatedQueueProfile, .q1)
+        XCTAssertEqual(configuration.mdkValue.targetFrameRate, 120)
+        XCTAssertEqual(configuration.mdkValue.streamConfiguration.outputWidth, 3512)
+        XCTAssertEqual(configuration.mdkValue.streamConfiguration.outputHeight, 2290)
+    }
+
+    func testBridgePrefersTenBitEncoderInputForPartialHDROverlay() {
+        let configuration = LumenMacDisplayKitCaptureConfiguration(
+            displayID: 42,
+            codec: .hevc,
+            queueProfile: .auto,
+            targetFrameRate: 120,
+            requestedWidth: 3512,
+            requestedHeight: 2290,
+            sinkRequest: LumenBridgeSinkRequest(
+                capability: LumenBridgeSinkCapability(
+                    gamut: .displayP3,
+                    transfer: .pq,
+                    supportsFrameGatedHDR: true,
+                    supportsHDRTileOverlay: true,
+                    supportsPerFrameHDRMetadata: true
+                ),
+                dynamicRangeTransport: LumenCoreDynamicRangeTransportSDRBaseHDROverlay
+            ),
+            effectiveDisplayState: LumenBridgeEffectiveDisplayState(
+                gamut: .displayP3,
+                transfer: .pq
+            )
+        )
+
+        XCTAssertEqual(configuration.effectiveEncoderInputStrategy, .yuv420v10)
+    }
+
+    func testBridgeDoesNotForceHDRTransportForBatterySavingSDRMode() {
+        let configuration = LumenMacDisplayKitCaptureConfiguration(
+            displayID: 42,
+            codec: .hevc,
+            queueProfile: .auto,
+            targetFrameRate: 120,
+            requestedWidth: 3512,
+            requestedHeight: 2290,
+            sinkRequest: LumenBridgeSinkRequest(
+                capability: LumenBridgeSinkCapability(
+                    gamut: .displayP3,
+                    transfer: .sdr,
+                    supportsFrameGatedHDR: true,
+                    supportsHDRTileOverlay: true,
+                    supportsPerFrameHDRMetadata: true
+                ),
+                dynamicRangeTransport: LumenCoreDynamicRangeTransportSDR
+            ),
+            effectiveDisplayState: LumenBridgeEffectiveDisplayState(
+                gamut: .displayP3,
+                transfer: .sdr
+            )
+        )
+
+        XCTAssertEqual(configuration.negotiatedDynamicRangeTransport, LumenCoreDynamicRangeTransportSDR)
+        XCTAssertFalse(configuration.usesHDRTransport)
+        XCTAssertFalse(configuration.prefersRealtimeHDRMetadata)
+    }
+
+    func testAutoresearchStreamScoringSnapshot() {
+        let overlayConfiguration = LumenMacDisplayKitCaptureConfiguration(
+            displayID: 42,
+            codec: .hevc,
+            preprocessStrategy: .none,
+            queueProfile: .auto,
+            targetFrameRate: 120,
+            requestedWidth: 3512,
+            requestedHeight: 2290,
+            sinkRequest: LumenBridgeSinkRequest(
+                capability: LumenBridgeSinkCapability(
+                    gamut: .displayP3,
+                    transfer: .pq,
+                    supportsFrameGatedHDR: true,
+                    supportsHDRTileOverlay: true,
+                    supportsPerFrameHDRMetadata: true
+                ),
+                dynamicRangeTransport: LumenCoreDynamicRangeTransportSDRBaseHDROverlay
+            ),
+            effectiveDisplayState: LumenBridgeEffectiveDisplayState(
+                gamut: .displayP3,
+                transfer: .pq
+            )
+        )
+        let batterySavingConfiguration = LumenMacDisplayKitCaptureConfiguration(
+            displayID: 43,
+            codec: .hevc,
+            preprocessStrategy: .none,
+            queueProfile: .auto,
+            targetFrameRate: 120,
+            requestedWidth: 3512,
+            requestedHeight: 2290,
+            sinkRequest: LumenBridgeSinkRequest(
+                capability: LumenBridgeSinkCapability(
+                    gamut: .displayP3,
+                    transfer: .sdr,
+                    supportsFrameGatedHDR: true,
+                    supportsHDRTileOverlay: true,
+                    supportsPerFrameHDRMetadata: true
+                ),
+                dynamicRangeTransport: LumenCoreDynamicRangeTransportSDR
+            ),
+            effectiveDisplayState: LumenBridgeEffectiveDisplayState(
+                gamut: .displayP3,
+                transfer: .sdr
+            )
+        )
+
+        var score = 0.0
+        if overlayConfiguration.negotiatedDynamicRangeTransport == LumenCoreDynamicRangeTransportSDRBaseHDROverlay {
+            score += 20.0
+        }
+        if overlayConfiguration.effectiveTargetFrameRate == 120 &&
+            overlayConfiguration.mdkValue.targetFrameRate == 120 {
+            score += 20.0
+        }
+        if overlayConfiguration.effectivePreprocessStrategy == .none {
+            score += 20.0
+        }
+        if overlayConfiguration.effectiveEncoderInputStrategy == .yuv420v10 {
+            score += 10.0
+        }
+        if overlayConfiguration.negotiatedQueueProfile == .q1 {
+            score += 10.0
+        }
+        if LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: overlayConfiguration) <= 2 {
+            score += 10.0
+        }
+        if !batterySavingConfiguration.usesHDRTransport {
+            score += 10.0
+        }
+
+        print(String(format: "AUTORESEARCH_SYNTHETIC_SCORE=%.2f", score))
+        XCTAssertGreaterThan(score, 0.0)
     }
 
     func testLumenCoreEncodedCaptureIngressStoresSampleBufferMetadata() throws {

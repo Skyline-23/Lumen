@@ -194,6 +194,8 @@ namespace video {
     ) {
       return video::make_default_hdr_frame_state(
         video::effective_dynamic_range_transport(config),
+        config.width,
+        config.height,
         frame_is_hdr_signaled,
         metadata
       );
@@ -312,12 +314,12 @@ namespace video {
         (1000.0 / static_cast<double>(config.framerate)) :
         (1000.0 / 60.0);
       if (config.framerate >= 110) {
-        return std::max(4.0, frame_interval_ms * 1.1);
+        return std::max(80.0, frame_interval_ms * 8.0);
       }
       if (config.framerate >= 90) {
-        return std::max(5.0, frame_interval_ms * 1.25);
+        return std::max(80.0, frame_interval_ms * 7.0);
       }
-      return std::max(6.0, frame_interval_ms * 1.5);
+      return std::max(80.0, frame_interval_ms * 6.0);
     }
 
     double packet_timestamp_resync_threshold_milliseconds(const config_t &config) {
@@ -325,12 +327,12 @@ namespace video {
         (1000.0 / static_cast<double>(config.framerate)) :
         (1000.0 / 60.0);
       if (config.framerate >= 110) {
-        return std::max(5.0, frame_interval_ms * 1.35);
+        return std::max(80.0, frame_interval_ms * 8.0);
       }
       if (config.framerate >= 90) {
-        return std::max(6.0, frame_interval_ms * 1.6);
+        return std::max(80.0, frame_interval_ms * 7.0);
       }
-      return std::max(8.0, frame_interval_ms * 2.0);
+      return std::max(80.0, frame_interval_ms * 6.0);
     }
 
     void refresh_external_capture_metadata(
@@ -358,6 +360,11 @@ namespace video {
 
     void request_external_encoded_capture_key_frame() {
       LumenMacBridgeRequestImmediateCaptureKeyFrame();
+    }
+
+    void restart_external_encoded_capture_session(std::string_view reason) {
+      std::string owned_reason {reason};
+      LumenMacBridgeRestartMacDisplayKitCapture(owned_reason.c_str());
     }
 
     std::string lumen_core_cfstring_to_utf8(CFStringRef value) {
@@ -402,6 +409,39 @@ namespace video {
 
       const auto extensions = CMFormatDescriptionGetExtensions(format_description);
       return extensions && CFDictionaryContainsKey(extensions, key);
+    }
+
+    bool lumen_core_transfer_function_is_hdr(std::string_view transfer_function) {
+      return transfer_function == "SMPTE_ST_2084_PQ"sv ||
+             transfer_function == "ITU_R_2100_PQ"sv ||
+             transfer_function == "ITU_R_2100_HLG"sv ||
+             transfer_function == "ARIB_STD_B67_HLG"sv;
+    }
+
+    bool lumen_core_sample_buffer_indicates_hdr(CMSampleBufferRef sample_buffer) {
+      if (lumen_core_sample_buffer_extension_present(sample_buffer, kCMFormatDescriptionExtension_MasteringDisplayColorVolume) ||
+          lumen_core_sample_buffer_extension_present(sample_buffer, kCMFormatDescriptionExtension_ContentLightLevelInfo)) {
+        return true;
+      }
+
+      return lumen_core_transfer_function_is_hdr(
+        lumen_core_sample_buffer_extension_string(sample_buffer, kCMFormatDescriptionExtension_TransferFunction)
+      );
+    }
+
+    std::uint64_t fnv1a64_hash(const std::uint8_t *data, std::size_t size) {
+      constexpr std::uint64_t offset_basis = 1469598103934665603ull;
+      constexpr std::uint64_t prime = 1099511628211ull;
+      auto hash = offset_basis;
+      for (std::size_t index = 0; index < size; ++index) {
+        hash ^= static_cast<std::uint64_t>(data[index]);
+        hash *= prime;
+      }
+      return hash;
+    }
+
+    std::uint64_t packet_payload_hash(const std::vector<std::uint8_t> &payload) {
+      return fnv1a64_hash(payload.data(), payload.size());
     }
 
     std::string lumen_core_sample_buffer_dimensions(CMSampleBufferRef sample_buffer) {
@@ -3825,6 +3865,11 @@ namespace video {
       std::optional<double> last_forwarded_source_display_delta_milliseconds;
       std::optional<double> last_forwarded_packet_timestamp_delta_milliseconds;
       std::uint64_t last_forwarded_sequence_delta = 0;
+      std::uint64_t last_forwarded_payload_hash = 0;
+      std::size_t last_forwarded_payload_size = 0;
+      std::uint32_t duplicate_payload_run = 0;
+      std::uint32_t duplicate_payload_recovery_attempts = 0;
+      std::uint32_t saturated_drop_event_run = 0;
       std::array<char, 512> event_message {};
 
       const auto arm_wait_for_next_idr = [&](std::string_view reason) {
@@ -3844,11 +3889,22 @@ namespace video {
         last_forwarded_source_display_delta_milliseconds.reset();
         last_forwarded_packet_timestamp_delta_milliseconds.reset();
         last_forwarded_sequence_delta = 0;
+        last_forwarded_payload_hash = 0;
+        last_forwarded_payload_size = 0;
+        duplicate_payload_run = 0;
         request_external_encoded_capture_key_frame();
         BOOST_LOG(info) << "External macOS encoded ingress requested decoder resync; flushed queued frames before waiting for the next IDR packet"
                         << " reason="sv << reason
                         << " flushed-queued="sv << ingress_snapshot.queued_frame_count
                         << " flushed-events="sv << ingress_snapshot.queued_event_count;
+      };
+
+      const auto restart_capture_session = [&](std::string_view reason) {
+        duplicate_payload_run = 0;
+        duplicate_payload_recovery_attempts = 0;
+        saturated_drop_event_run = 0;
+        restart_external_encoded_capture_session(reason);
+        arm_wait_for_next_idr(reason);
       };
 
       if (!LumenCoreEncodedCaptureIngressIsProducerActive(ingress) &&
@@ -3895,6 +3951,8 @@ namespace video {
           switch (event.kind) {
             case LumenCoreCaptureEventKindStarted:
             case LumenCoreCaptureEventKindRestarted:
+              duplicate_payload_recovery_attempts = 0;
+              saturated_drop_event_run = 0;
               arm_wait_for_next_idr("capture-restarted");
               BOOST_LOG(info) << "External macOS encoded ingress event kind="sv << static_cast<int>(event.kind)
                               << " message="sv << message;
@@ -3902,8 +3960,18 @@ namespace video {
             case LumenCoreCaptureEventKindDroppedFrame:
               BOOST_LOG(warning) << "External macOS encoded ingress dropped a frame"sv
                                  << " message="sv << message;
+              if (message.find("capture processing queue is saturated"sv) != std::string_view::npos) {
+                ++saturated_drop_event_run;
+                arm_wait_for_next_idr("capture-queue-saturated");
+              } else {
+                saturated_drop_event_run = 0;
+              }
               if (message == "core-forwarder-overflow"sv) {
                 arm_wait_for_next_idr("core-forwarder-overflow");
+              } else if (saturated_drop_event_run >= 3) {
+                BOOST_LOG(warning) << "External macOS encoded ingress is restarting the capture session after repeated queue saturation events"sv
+                                   << " run="sv << saturated_drop_event_run;
+                restart_capture_session("capture-queue-saturated");
               }
               break;
             case LumenCoreCaptureEventKindFailed:
@@ -3991,7 +4059,7 @@ namespace video {
                   retained_sample_buffer,
                   codec_type,
                   external_metadata.hdr_metadata,
-                  frame.is_hdr_signaled,
+                  frame.is_hdr_signaled || lumen_core_sample_buffer_indicates_hdr(retained_sample_buffer),
                   packet_data
                 )) {
               BOOST_LOG(info) << "External macOS encoded ingress injected static HDR metadata SEI into HEVC IDR packet"sv;
@@ -4052,11 +4120,13 @@ namespace video {
           }
           packet->channel_data = channel_data;
           packet->frame_timestamp = display_time_clock.frame_timestamp(frame.source_display_time);
+          const auto frame_is_hdr_signaled =
+            frame.is_hdr_signaled || lumen_core_sample_buffer_indicates_hdr(retained_sample_buffer);
           if (video::dynamic_range_transport_uses_hdr_frame_state(video::effective_dynamic_range_transport(config))) {
             packet->hdr_frame_state = negotiated_external_overlay_hdr_frame_state(
               config,
               external_metadata,
-              frame.is_hdr_signaled,
+              frame_is_hdr_signaled,
               external_metadata.hdr_active ? &external_metadata.hdr_metadata : nullptr
             );
           } else {
@@ -4066,29 +4136,54 @@ namespace video {
             packet->frame_timestamp = std::chrono::steady_clock::now();
           }
 
+          const auto previous_forwarded_source_sequence_number = last_forwarded_source_sequence_number;
+          const auto previous_forwarded_source_display_time = last_forwarded_source_display_time;
+          const auto previous_forwarded_packet_timestamp = last_forwarded_packet_timestamp;
+
           last_forwarded_sequence_delta =
-            last_forwarded_source_sequence_number > 0 && frame.source_sequence_number >= last_forwarded_source_sequence_number ?
-              frame.source_sequence_number - last_forwarded_source_sequence_number :
+            previous_forwarded_source_sequence_number > 0 && frame.source_sequence_number >= previous_forwarded_source_sequence_number ?
+              frame.source_sequence_number - previous_forwarded_source_sequence_number :
               0;
           last_forwarded_source_display_delta_milliseconds =
-            last_forwarded_source_display_time > 0 && frame.source_display_time >= last_forwarded_source_display_time ?
-              std::optional<double> {lumen_core_display_time_clock_t::display_time_delta_milliseconds(frame.source_display_time - last_forwarded_source_display_time)} :
+            previous_forwarded_source_display_time > 0 && frame.source_display_time >= previous_forwarded_source_display_time ?
+              std::optional<double> {lumen_core_display_time_clock_t::display_time_delta_milliseconds(frame.source_display_time - previous_forwarded_source_display_time)} :
               std::nullopt;
           last_forwarded_packet_timestamp_delta_milliseconds =
-            last_forwarded_packet_timestamp && packet->frame_timestamp ?
-              std::optional<double> {static_cast<double>(std::chrono::duration_cast<std::chrono::microseconds>(*packet->frame_timestamp - *last_forwarded_packet_timestamp).count()) / 1000.0} :
+            previous_forwarded_packet_timestamp && packet->frame_timestamp ?
+              std::optional<double> {static_cast<double>(std::chrono::duration_cast<std::chrono::microseconds>(*packet->frame_timestamp - *previous_forwarded_packet_timestamp).count()) / 1000.0} :
               std::nullopt;
           last_forwarded_callback_latency_milliseconds =
             frame.has_output_callback_latency_milliseconds ?
               std::optional<double> {frame.output_callback_latency_milliseconds} :
               std::nullopt;
-          last_forwarded_source_sequence_number = frame.source_sequence_number;
-          last_forwarded_source_display_time = frame.source_display_time;
-          last_forwarded_packet_timestamp = packet->frame_timestamp;
+          const auto current_payload_hash = packet_payload_hash(packet->frame_data);
+          const auto duplicate_payload =
+            last_forwarded_payload_size == packet->frame_data.size() &&
+            last_forwarded_payload_hash == current_payload_hash;
+          const auto duplicate_source_identity =
+            previous_forwarded_source_sequence_number > 0 &&
+            previous_forwarded_source_display_time > 0 &&
+            frame.source_sequence_number == previous_forwarded_source_sequence_number &&
+            frame.source_display_time == previous_forwarded_source_display_time;
+
+          if (duplicate_source_identity && duplicate_payload) {
+            CFRelease(retained_sample_buffer);
+            continue;
+          }
+
+          if (duplicate_payload &&
+              last_forwarded_sequence_delta > 0 &&
+              last_forwarded_source_display_delta_milliseconds &&
+              *last_forwarded_source_display_delta_milliseconds > 0.0) {
+            ++duplicate_payload_run;
+          } else {
+            duplicate_payload_run = 0;
+            duplicate_payload_recovery_attempts = 0;
+          }
 
           const auto has_cadence_anomaly =
-            last_forwarded_sequence_delta > 1 ||
-            (last_forwarded_source_display_delta_milliseconds && *last_forwarded_source_display_delta_milliseconds <= 0.0);
+            last_forwarded_source_display_delta_milliseconds &&
+            *last_forwarded_source_display_delta_milliseconds <= 0.0;
           const auto has_callback_latency_spike =
             last_forwarded_callback_latency_milliseconds &&
             *last_forwarded_callback_latency_milliseconds > callback_latency_resync_threshold_milliseconds(config);
@@ -4121,11 +4216,6 @@ namespace video {
                                << callback_latency_resync_threshold_milliseconds(config)
                                << " packet-ts-delta-ms="sv
                                << (last_forwarded_packet_timestamp_delta_milliseconds ? *last_forwarded_packet_timestamp_delta_milliseconds : -1.0);
-            if (!packet_is_idr) {
-              arm_wait_for_next_idr("callback-latency-spike");
-              CFRelease(retained_sample_buffer);
-              continue;
-            }
           }
           if (has_packet_timestamp_drift) {
             BOOST_LOG(warning) << "External macOS encoded ingress packet timestamp drift seq="sv
@@ -4136,12 +4226,27 @@ namespace video {
                                << packet_timestamp_resync_threshold_milliseconds(config)
                                << " callback-latency-ms="sv
                                << (last_forwarded_callback_latency_milliseconds ? *last_forwarded_callback_latency_milliseconds : -1.0);
-            if (!packet_is_idr) {
-              arm_wait_for_next_idr("packet-timestamp-drift");
-              CFRelease(retained_sample_buffer);
-              continue;
-            }
           }
+          if (duplicate_payload_run >= 2 && !packet_is_idr) {
+            ++duplicate_payload_recovery_attempts;
+            if (duplicate_payload_recovery_attempts >= 2) {
+              BOOST_LOG(warning) << "External macOS encoded ingress is restarting the capture session after repeated duplicate payload recovery failures"sv
+                                 << " duplicate-run="sv << duplicate_payload_run
+                                 << " recovery-attempts="sv << duplicate_payload_recovery_attempts;
+              restart_capture_session("duplicate-payload-restart");
+            } else {
+              arm_wait_for_next_idr("duplicate-payload");
+            }
+            CFRelease(retained_sample_buffer);
+            continue;
+          }
+
+          last_forwarded_source_sequence_number = frame.source_sequence_number;
+          last_forwarded_source_display_time = frame.source_display_time;
+          last_forwarded_packet_timestamp = packet->frame_timestamp;
+          last_forwarded_payload_hash = current_payload_hash;
+          last_forwarded_payload_size = packet->frame_data.size();
+          saturated_drop_event_run = 0;
 
           packets->raise(std::move(packet));
           CFRelease(retained_sample_buffer);

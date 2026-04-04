@@ -868,7 +868,9 @@ namespace shadow_control_http {
 
           app_tree["id"] = static_cast<int>(util::from_view(runtime_app->second->id));
           app_tree["title"] = runtime_app->second->name;
-          app_tree["hdrSupported"] = false;
+          // Desktop/app-list capability is negotiated again at launch/RTSP time.
+          // Advertising false here prevents HDR-capable clients from ever requesting it.
+          app_tree["hdrSupported"] = true;
           app_tree["isAppCollectorGame"] = false;
         }
       }

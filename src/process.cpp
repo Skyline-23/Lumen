@@ -196,6 +196,8 @@ namespace proc {
 
     uint32_t render_width = requested_width;
     uint32_t render_height = requested_height;
+    uint32_t display_logical_width = requested_width;
+    uint32_t display_logical_height = requested_height;
     uint32_t backing_width = requested_width;
     uint32_t backing_height = requested_height;
 
@@ -205,12 +207,12 @@ namespace proc {
     }
 
     if (launch_session->sink_request.mode.mode_is_logical) {
-      if (launch_session->sink_request.mode.hidpi && scale_factor > 100) {
-        backing_width = static_cast<std::uint32_t>(std::max(2.0, std::floor((static_cast<double>(requested_width) * static_cast<double>(scale_factor)) / 100.0)));
-        backing_height = static_cast<std::uint32_t>(std::max(2.0, std::floor((static_cast<double>(requested_height) * static_cast<double>(scale_factor)) / 100.0)));
-        backing_width &= ~1;
-        backing_height &= ~1;
-      }
+      // Logical-mode clients already send the virtual desktop size they expect to interact
+      // with. Do not shrink that again for HiDPI sessions or the desktop appears zoomed in.
+      display_logical_width = std::max<std::uint32_t>(2u, requested_width) & ~1u;
+      display_logical_height = std::max<std::uint32_t>(2u, requested_height) & ~1u;
+      backing_width = std::max<std::uint32_t>(2u, requested_width) & ~1u;
+      backing_height = std::max<std::uint32_t>(2u, requested_height) & ~1u;
     } else if (scale_factor != 100) {
 #ifdef __APPLE__
       render_width = static_cast<std::uint32_t>(std::max(2.0, std::floor((static_cast<double>(requested_width) * 100.0) / static_cast<double>(scale_factor))));
@@ -226,6 +228,8 @@ namespace proc {
       render_width &= ~1;
       render_height &= ~1;
 #endif
+      display_logical_width = render_width;
+      display_logical_height = render_height;
     }
 
     launch_session->width = render_width;
@@ -234,11 +238,13 @@ namespace proc {
       video::effective_dynamic_range_transport(launch_session->sink_request);
     const bool negotiated_hdr_stream =
       video::dynamic_range_transport_uses_hdr_stream(negotiated_dynamic_range_transport);
+    const bool negotiated_hdr_display =
+      video::dynamic_range_transport_requires_hdr_display(negotiated_dynamic_range_transport);
     this->sink_request = launch_session->sink_request;
     this->sink_request.mode.scale_percent = scale_factor;
     this->sink_request.dynamic_range_transport = negotiated_dynamic_range_transport;
-    this->client_logical_width = static_cast<int>(render_width);
-    this->client_logical_height = static_cast<int>(render_height);
+    this->client_logical_width = static_cast<int>(display_logical_width);
+    this->client_logical_height = static_cast<int>(display_logical_height);
     this->client_render_width = static_cast<int>(backing_width);
     this->client_render_height = static_cast<int>(backing_height);
     BOOST_LOG(info) << "Client launch geometry resolved: mode="sv
@@ -246,9 +252,10 @@ namespace proc {
                     << " scale-percent="sv << scale_factor
                     << " hidpi="sv << launch_session->sink_request.mode.hidpi
                     << " negotiated-hdr-stream="sv << negotiated_hdr_stream
+                    << " stream="sv << render_width << "x"sv << render_height
                     << " backing="sv
                     << backing_width << "x"sv << backing_height
-                    << " logical="sv << render_width << "x"sv << render_height;
+                    << " logical="sv << display_logical_width << "x"sv << display_logical_height;
 
     this->initial_display = config::video.output_name;
     // Executed when returning from function
@@ -383,7 +390,7 @@ namespace proc {
     const bool requires_virtual_display =
       launch_session->virtual_display ||
       _app.virtual_display ||
-      negotiated_hdr_stream ||
+      negotiated_hdr_display ||
       launch_session->sink_request.mode.hidpi ||
       launch_session->sink_request.mode.mode_is_logical ||
       launch_session->sink_request.mode.scale_percent != 100;
@@ -391,7 +398,7 @@ namespace proc {
     if (requires_virtual_display) {
       if (!launch_session->virtual_display && !_app.virtual_display) {
         BOOST_LOG(info) << "Auto-enabling macOS virtual display for launch geometry: hdr="sv
-                        << negotiated_hdr_stream
+                        << negotiated_hdr_display
                         << " requested-transport="sv
                         << static_cast<int>(negotiated_dynamic_range_transport)
                         << " hidpi="sv
@@ -404,16 +411,25 @@ namespace proc {
 
       std::string device_name = _app.use_app_identity ? _app.name : launch_session->device_name;
       std::string device_key = _app.use_app_identity ? _app.uuid : launch_session->unique_id;
+      const auto effective_virtual_display_refresh_millihz =
+        video::effective_capture_frame_rate_millihz_for_workload(
+          launch_session->fps ? launch_session->fps : 60000,
+          render_width,
+          render_height,
+          negotiated_dynamic_range_transport
+        );
 
+      const auto virtual_display_scale_factor =
+        launch_session->sink_request.mode.mode_is_logical ? 100 : scale_factor;
       auto virtual_display_name = VDISPLAY::createVirtualDisplay(
         device_key.c_str(),
         device_name.c_str(),
-        render_width,
-        render_height,
-        launch_session->fps ? static_cast<std::uint32_t>(launch_session->fps) : 60000u,
-        scale_factor,
+        display_logical_width,
+        display_logical_height,
+        static_cast<std::uint32_t>(effective_virtual_display_refresh_millihz),
+        virtual_display_scale_factor,
         launch_session->sink_request.mode.hidpi,
-        negotiated_hdr_stream,
+        negotiated_hdr_display,
         launch_session->sink_request.capability.gamut,
         launch_session->sink_request.capability.transfer,
         launch_session->sink_request.capability.current_edr_headroom,

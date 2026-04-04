@@ -38,6 +38,7 @@ extern char **environ;
 
 // local includes
 #include "platform/macos/misc.h"
+#include "platform/macos/virtual_display.h"
 #include "src/config.h"
 #include "src/entry_handler.h"
 #include "src/logging.h"
@@ -414,7 +415,7 @@ namespace platf {
           break;
       }
 
-      if (!video::dynamic_range_transport_uses_hdr_stream(
+      if (!video::dynamic_range_transport_requires_hdr_display(
             video::effective_dynamic_range_transport(requested_dynamic_range_transport)
           )) {
         state.transfer = static_cast<int>(transfer_e::sdr);
@@ -1815,10 +1816,23 @@ namespace platf {
   ) {
     const auto display_id = parse_external_capture_display_id(display_name);
     const auto bounds = CGDisplayBounds(display_id);
-    const auto capture_width = std::max(1.0, static_cast<double>(CGRectGetWidth(bounds)));
-    const auto capture_height = std::max(1.0, static_cast<double>(CGRectGetHeight(bounds)));
-    const auto pixel_width = std::max(1.0, static_cast<double>(CGDisplayPixelsWide(display_id)));
-    const auto pixel_height = std::max(1.0, static_cast<double>(CGDisplayPixelsHigh(display_id)));
+    auto capture_width = std::max(1.0, static_cast<double>(CGRectGetWidth(bounds)));
+    auto capture_height = std::max(1.0, static_cast<double>(CGRectGetHeight(bounds)));
+    auto pixel_width = std::max(1.0, static_cast<double>(CGDisplayPixelsWide(display_id)));
+    auto pixel_height = std::max(1.0, static_cast<double>(CGDisplayPixelsHigh(display_id)));
+    VDISPLAY::display_metrics_t virtual_display_metrics {};
+    const auto has_virtual_display_metrics =
+      VDISPLAY::queryVirtualDisplayMetrics(std::to_string(display_id), virtual_display_metrics) &&
+      virtual_display_metrics.logical_width > 0 &&
+      virtual_display_metrics.logical_height > 0 &&
+      virtual_display_metrics.pixel_width > 0 &&
+      virtual_display_metrics.pixel_height > 0;
+    if (has_virtual_display_metrics) {
+      capture_width = static_cast<double>(virtual_display_metrics.logical_width);
+      capture_height = static_cast<double>(virtual_display_metrics.logical_height);
+      pixel_width = static_cast<double>(virtual_display_metrics.pixel_width);
+      pixel_height = static_cast<double>(virtual_display_metrics.pixel_height);
+    }
     const auto output_width = std::max(1.0, static_cast<double>(target_width));
     const auto output_height = std::max(1.0, static_cast<double>(target_height));
     const auto scalar = std::fmin(output_width / capture_width, output_height / capture_height);
@@ -1840,6 +1854,7 @@ namespace platf {
                     << " stream="sv << target_width << "x"sv << target_height
                     << " logical="sv << capture_width << "x"sv << capture_height
                     << " pixels="sv << pixel_width << "x"sv << pixel_height
+                    << " source="sv << (has_virtual_display_metrics ? "virtual-display-cache"sv : "quartz"sv)
                     << " offset="sv << metadata.client_offset_x << "x"sv << metadata.client_offset_y
                     << " scalar-inv="sv << metadata.scalar_inv;
 

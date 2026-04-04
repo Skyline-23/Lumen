@@ -163,6 +163,7 @@ void LumenMacBridgeControllerStopMacDisplayKitCapture(
 );
 
 void LumenMacBridgeRequestImmediateCaptureKeyFrame(void);
+void LumenMacBridgeRestartMacDisplayKitCapture(const char *reason);
 
 bool LumenMacBridgeControllerStartMacDisplayKitAudioCapture(
   LumenMacBridgeController *controller,

@@ -18,6 +18,13 @@ namespace VDISPLAY {
     bool hdr_capable;
   };
 
+  struct display_metrics_t {
+    std::uint32_t pixel_width;
+    std::uint32_t pixel_height;
+    std::uint32_t logical_width;
+    std::uint32_t logical_height;
+  };
+
   enum class DRIVER_STATUS {
     UNKNOWN = 1,
     OK = 0,
@@ -59,6 +66,11 @@ namespace VDISPLAY {
     std::uint32_t logical_height,
     std::uint32_t fps_millihz,
     int client_sink_transfer
+  );
+
+  bool queryVirtualDisplayMetrics(
+    const std::string &display_id,
+    display_metrics_t &metrics
   );
 
   bool removeVirtualDisplay(const std::string &client_uid);

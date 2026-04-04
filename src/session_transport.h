@@ -108,4 +108,38 @@ namespace video {
            transport == dynamic_range_transport_e::frame_gated_hdr ||
            transport == dynamic_range_transport_e::sdr_base_hdr_overlay;
   }
+
+  inline bool dynamic_range_transport_requires_hdr_display(const dynamic_range_transport_e transport) {
+    return dynamic_range_transport_uses_hdr_frame_state(transport);
+  }
+
+  inline int effective_capture_frame_rate_for_workload(
+    int requested_frame_rate,
+    int width,
+    int height,
+    const dynamic_range_transport_e transport
+  ) {
+    const auto normalized_requested_frame_rate = requested_frame_rate > 0 ? requested_frame_rate : 60;
+    return normalized_requested_frame_rate;
+  }
+
+  inline int effective_capture_frame_rate_millihz_for_workload(
+    int requested_frame_rate_millihz,
+    int width,
+    int height,
+    const dynamic_range_transport_e transport
+  ) {
+    const auto normalized_requested_frame_rate_millihz =
+      requested_frame_rate_millihz > 0 ? requested_frame_rate_millihz : 60000;
+    const auto requested_frame_rate =
+      (normalized_requested_frame_rate_millihz + 999) / 1000;
+
+    return effective_capture_frame_rate_for_workload(
+             requested_frame_rate,
+             width,
+             height,
+             transport
+           ) *
+           1000;
+  }
 }  // namespace video

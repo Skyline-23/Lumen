@@ -31,6 +31,10 @@ extern "C" {
 #include "thread_pool.h"
 #include "utility.h"
 
+#ifdef __APPLE__
+  #include "LumenMacBridge.h"
+#endif
+
 // Win32 WHEEL_DELTA constant
 #ifndef WHEEL_DELTA
   #define WHEEL_DELTA 120
@@ -41,6 +45,35 @@ using namespace std::literals;
 namespace input {
   namespace {
     std::atomic_int keyboard_packet_diagnostic_budget {96};
+
+#ifdef __APPLE__
+    std::atomic<std::uint64_t> external_capture_refresh_deadline_ns {0};
+
+    void request_external_capture_refresh() {
+      constexpr auto minimum_interval = 120ms;
+      const auto now = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+          std::chrono::steady_clock::now().time_since_epoch()
+        ).count()
+      );
+      const auto deadline = now + static_cast<std::uint64_t>(minimum_interval.count());
+      auto current_deadline = external_capture_refresh_deadline_ns.load(std::memory_order_relaxed);
+      while (current_deadline <= now) {
+        if (external_capture_refresh_deadline_ns.compare_exchange_weak(
+              current_deadline,
+              deadline,
+              std::memory_order_relaxed,
+              std::memory_order_relaxed
+            )) {
+          LumenMacBridgeRequestImmediateCaptureKeyFrame();
+          return;
+        }
+      }
+    }
+#else
+    void request_external_capture_refresh() {
+    }
+#endif
 
     void append_keyboard_debug_file(const char *format, ...) {
       auto *file = std::fopen("/tmp/lumen-keyboard-debug.log", "a");
@@ -468,6 +501,7 @@ namespace input {
 
     input->mouse_left_button_timeout = DISABLE_LEFT_BUTTON_DELAY;
     platf::move_mouse(platf_input, util::endian::big(packet->deltaX), util::endian::big(packet->deltaY));
+    request_external_capture_refresh();
   }
 
   /**
@@ -573,12 +607,15 @@ namespace input {
     };
 
     platf::abs_mouse(platf_input, abs_port, tpcoords->first, tpcoords->second);
+    request_external_capture_refresh();
   }
 
   void passthrough(std::shared_ptr<input_t> &input, PNV_MOUSE_BUTTON_PACKET packet) {
     if (!config::input.mouse) {
       return;
     }
+
+    request_external_capture_refresh();
 
     auto release = util::endian::little(packet->header.magic) == MOUSE_BUTTON_UP_EVENT_MAGIC_GEN5;
     auto button = util::endian::big(packet->button);
@@ -744,6 +781,8 @@ namespace input {
       return;
     }
 
+    request_external_capture_refresh();
+
     auto release = util::endian::little(packet->header.magic) == KEY_UP_EVENT_MAGIC;
     auto keyCode = packet->keyCode & 0x00FF;
     const auto mappedKeyCode = map_keycode(keyCode);
@@ -870,6 +909,7 @@ namespace input {
         input->accumulated_vscroll_delta -= full_ticks * WHEEL_DELTA;
       }
     }
+    request_external_capture_refresh();
   }
 
   /**
@@ -893,6 +933,7 @@ namespace input {
         input->accumulated_hscroll_delta -= full_ticks * WHEEL_DELTA;
       }
     }
+    request_external_capture_refresh();
   }
 
   void passthrough(PNV_UNICODE_PACKET packet) {
@@ -998,6 +1039,7 @@ namespace input {
     };
 
     platf::touch_update(input->client_context.get(), abs_port, touch);
+    request_external_capture_refresh();
   }
 
   /**
@@ -1056,6 +1098,7 @@ namespace input {
     };
 
     platf::pen_update(input->client_context.get(), abs_port, pen);
+    request_external_capture_refresh();
   }
 
   /**

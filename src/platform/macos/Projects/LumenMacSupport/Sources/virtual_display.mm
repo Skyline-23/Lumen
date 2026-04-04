@@ -1141,6 +1141,35 @@ namespace VDISPLAY {
     return true;
   }
 
+  bool queryVirtualDisplayMetrics(
+    const std::string &display_id,
+    display_metrics_t &metrics
+  ) {
+    if (display_id.empty()) {
+      return false;
+    }
+
+    std::lock_guard lock(display_mutex);
+    const auto match = std::find_if(
+      active_displays.begin(),
+      active_displays.end(),
+      [&](const auto &entry) {
+        return entry.second && entry.second->display_id == display_id;
+      }
+    );
+    if (match == active_displays.end() || !match->second) {
+      return false;
+    }
+
+    metrics = {
+      .pixel_width = match->second->pixel_width,
+      .pixel_height = match->second->pixel_height,
+      .logical_width = match->second->logical_width,
+      .logical_height = match->second->logical_height,
+    };
+    return true;
+  }
+
   bool removeVirtualDisplay(const std::string &client_uid) {
     std::lock_guard lock(display_mutex);
     auto it = active_displays.find(client_uid);

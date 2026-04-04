@@ -404,6 +404,17 @@ void LumenMacBridgeRequestImmediateCaptureKeyFrame(void) {
   [LumenBridgeObjCFacade requestImmediateCaptureKeyFrameSharedSync];
 }
 
+void LumenMacBridgeRestartMacDisplayKitCapture(const char *reason) {
+  NSString *restartReason =
+    reason != nullptr ?
+      [NSString stringWithUTF8String:reason] :
+      @"external-encoded-capture-restart";
+  if (!restartReason) {
+    restartReason = @"external-encoded-capture-restart";
+  }
+  [LumenBridgeObjCFacade restartMacDisplayKitCaptureSharedSync:restartReason];
+}
+
 bool LumenMacBridgeControllerStartMacDisplayKitAudioCapture(
   LumenMacBridgeController *controller,
   LumenMacBridgeAudioCaptureConfiguration configuration,

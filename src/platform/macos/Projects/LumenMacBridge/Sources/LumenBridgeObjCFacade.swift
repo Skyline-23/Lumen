@@ -574,6 +574,15 @@ public final class LumenBridgeObjCFacade: NSObject {
         semaphore.wait()
     }
 
+    @objc public static func restartMacDisplayKitCaptureSharedSync(_ reason: String) {
+        let semaphore = DispatchSemaphore(value: 0)
+        Task {
+            await LumenBridgeRuntime.shared.restartMacDisplayKitCapture(reason: reason)
+            semaphore.signal()
+        }
+        semaphore.wait()
+    }
+
     public func makePanelNativeConfiguration(displayID: UInt32) -> LumenBridgeConfigurationBox {
         LumenBridgeConfigurationBox(configuration: .panelNative(displayID: displayID))
     }
@@ -610,6 +619,12 @@ public final class LumenBridgeObjCFacade: NSObject {
     public func requestImmediateCaptureKeyFrameSync() {
         try? blockingRun { [self] in
             await self.runtime.requestImmediateCaptureKeyFrame()
+        }
+    }
+
+    public func restartMacDisplayKitCaptureSync(_ reason: String) {
+        try? blockingRun { [self] in
+            await self.runtime.restartMacDisplayKitCapture(reason: reason)
         }
     }
 
