@@ -339,7 +339,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
                     supportsHDRTileOverlay: true,
                     supportsPerFrameHDRMetadata: true
                 ),
-                dynamicRangeTransport: LumenCoreDynamicRangeTransportSDR
+                dynamicRangeTransport: LumenCoreDynamicRangeTransportSDRBaseHDROverlay
             ),
             effectiveDisplayState: LumenBridgeEffectiveDisplayState(
                 gamut: .displayP3,
@@ -347,9 +347,9 @@ final class LumenTuistBootstrapTests: XCTestCase {
             )
         )
 
-        XCTAssertEqual(configuration.negotiatedDynamicRangeTransport, LumenCoreDynamicRangeTransportSDR)
         XCTAssertFalse(configuration.usesHDRTransport)
-        XCTAssertFalse(configuration.prefersRealtimeHDRMetadata)
+        XCTAssertEqual(configuration.negotiatedDynamicRangeTransport, LumenCoreDynamicRangeTransportSDRBaseHDROverlay)
+        XCTAssertTrue(configuration.prefersRealtimeHDRMetadata)
     }
 
     func testAutoresearchStreamScoringSnapshot() {
@@ -392,7 +392,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
                     supportsHDRTileOverlay: true,
                     supportsPerFrameHDRMetadata: true
                 ),
-                dynamicRangeTransport: LumenCoreDynamicRangeTransportSDR
+                dynamicRangeTransport: LumenCoreDynamicRangeTransportSDRBaseHDROverlay
             ),
             effectiveDisplayState: LumenBridgeEffectiveDisplayState(
                 gamut: .displayP3,
@@ -420,7 +420,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
         if LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: overlayConfiguration) <= 2 {
             score += 10.0
         }
-        if !batterySavingConfiguration.usesHDRTransport {
+        if batterySavingConfiguration.negotiatedDynamicRangeTransport == LumenCoreDynamicRangeTransportSDR {
             score += 10.0
         }
 
