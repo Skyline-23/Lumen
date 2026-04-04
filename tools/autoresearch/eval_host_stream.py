@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 
 PUBLISH_RE = re.compile(
@@ -64,6 +65,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--target-height", type=int, default=2290)
     parser.add_argument("--target-fps", type=int, default=120)
     parser.add_argument("--codec", default="hevc", choices=["hevc", "h264", "prores-proxy"])
+    parser.add_argument("--runtime-probe-runs", type=int, default=3)
     parser.add_argument("--require-hdr", action="store_true")
     parser.add_argument("--require-partial-hdr", action="store_true")
     parser.add_argument("--require-low-latency", action="store_true")
@@ -179,6 +181,20 @@ def run_runtime_probe(args: argparse.Namespace) -> str:
     return executed.stdout
 
 
+def run_runtime_probe_series(args: argparse.Namespace) -> list[dict[str, Any]]:
+    run_count = max(args.runtime_probe_runs, 1)
+    runs: list[dict[str, Any]] = []
+    for run_index in range(run_count):
+        output = run_runtime_probe(args)
+        metrics = parse_runtime_probe_output(output)
+        if metrics is None:
+            raise RuntimeError(
+                f"runtime probe returned unparseable output on run {run_index + 1}\n{output}"
+            )
+        runs.append(metrics)
+    return runs
+
+
 def bool_from_group(value: str) -> bool:
     return value.lower() == "true"
 
@@ -255,6 +271,21 @@ def parse_runtime_probe_output(output: str) -> dict[str, float | bool | int] | N
         "last_seq": as_int("LAST_SEQ"),
         "last_hdr_signalled": as_bool("LAST_HDR_SIGNALLED"),
     }
+
+
+def median_runtime_probe_result(
+    runs: list[dict[str, Any]],
+    args: argparse.Namespace,
+) -> tuple[dict[str, Any], float, dict[str, float]]:
+    scored_runs: list[tuple[float, dict[str, float], dict[str, Any]]] = []
+    for metrics in runs:
+        score, components = score_runtime_probe(metrics, args)
+        scored_runs.append((score, components, metrics))
+
+    scored_runs.sort(key=lambda item: item[0])
+    median_index = len(scored_runs) // 2
+    median_score, median_components, median_metrics = scored_runs[median_index]
+    return median_metrics, median_score, median_components
 
 
 def score_runtime_probe(
@@ -572,16 +603,25 @@ def main() -> int:
 
     runtime_score = 0.0
     runtime_components: dict[str, float] = {}
-    runtime_output = ""
     try:
-        runtime_output = run_runtime_probe(args)
-        runtime_metrics = parse_runtime_probe_output(runtime_output)
-        if runtime_metrics is not None:
-            runtime_score, runtime_components = score_runtime_probe(runtime_metrics, args)
-            print(runtime_output, end="" if runtime_output.endswith("\n") else "\n")
-            print(f"RUNTIME_SCORE={runtime_score:.2f}")
-            for key, value in sorted(runtime_components.items()):
-                print(f"RUNTIME_COMPONENT_{key.upper()}={value:.2f}")
+        runtime_probe_runs = run_runtime_probe_series(args)
+        runtime_metrics, runtime_score, runtime_components = median_runtime_probe_result(
+            runtime_probe_runs,
+            args,
+        )
+        print(f"AUTORESEARCH_RUNTIME_PROBE_RUNS={len(runtime_probe_runs)}")
+        for key, value in runtime_metrics.items():
+            if key == "status":
+                print(f"AUTORESEARCH_RUNTIME_PROBE_STATUS={value}")
+                continue
+            output_key = key.upper()
+            if isinstance(value, bool):
+                print(f"AUTORESEARCH_RUNTIME_PROBE_{output_key}={1 if value else 0}")
+            else:
+                print(f"AUTORESEARCH_RUNTIME_PROBE_{output_key}={value}")
+        print(f"RUNTIME_SCORE={runtime_score:.2f}")
+        for key, value in sorted(runtime_components.items()):
+            print(f"RUNTIME_COMPONENT_{key.upper()}={value:.2f}")
     except RuntimeError as error:
         print(f"RUNTIME_PROBE_NOTE={error}")
 
