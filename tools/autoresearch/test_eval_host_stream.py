@@ -13,6 +13,10 @@ SPEC.loader.exec_module(MODULE)
 
 
 class EvalHostStreamTests(unittest.TestCase):
+    def test_requested_codecs_prefers_codec_suite(self) -> None:
+        args = types.SimpleNamespace(codec="hevc", codec_suite="hevc,prores-proxy")
+        self.assertEqual(MODULE.requested_codecs(args), ["hevc", "prores-proxy"])
+
     def test_parse_runtime_probe_output_parses_successful_probe(self) -> None:
         output = """
 AUTORESEARCH_RUNTIME_PROBE_STATUS=ok

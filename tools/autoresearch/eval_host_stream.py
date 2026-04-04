@@ -65,6 +65,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--target-height", type=int, default=2290)
     parser.add_argument("--target-fps", type=int, default=120)
     parser.add_argument("--codec", default="hevc", choices=["hevc", "h264", "prores-proxy"])
+    parser.add_argument("--codec-suite", default="")
     parser.add_argument("--runtime-probe-runs", type=int, default=3)
     parser.add_argument("--require-hdr", action="store_true")
     parser.add_argument("--require-partial-hdr", action="store_true")
@@ -72,6 +73,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--battery-policy", default="adaptive-hdr")
     parser.add_argument("--skip-tests", action="store_true")
     return parser.parse_args()
+
+
+def requested_codecs(args: argparse.Namespace) -> list[str]:
+    if args.codec_suite:
+        codecs = [item.strip() for item in args.codec_suite.split(",") if item.strip()]
+        if codecs:
+            return codecs
+    return [args.codec]
 
 
 def run_targeted_tests(workspace: str, scheme: str) -> tuple[float, str]:
@@ -193,6 +202,10 @@ def run_runtime_probe_series(args: argparse.Namespace) -> list[dict[str, Any]]:
             )
         runs.append(metrics)
     return runs
+
+
+def args_with_codec(args: argparse.Namespace, codec: str) -> argparse.Namespace:
+    return argparse.Namespace(**{**vars(args), "codec": codec})
 
 
 def bool_from_group(value: str) -> bool:
@@ -601,43 +614,55 @@ def main() -> int:
     else:
         test_output = ""
 
-    runtime_score = 0.0
-    runtime_components: dict[str, float] = {}
-    try:
-        runtime_probe_runs = run_runtime_probe_series(args)
-        runtime_metrics, runtime_score, runtime_components = median_runtime_probe_result(
-            runtime_probe_runs,
-            args,
-        )
-        print(f"AUTORESEARCH_RUNTIME_PROBE_RUNS={len(runtime_probe_runs)}")
-        for key, value in runtime_metrics.items():
-            if key == "status":
-                print(f"AUTORESEARCH_RUNTIME_PROBE_STATUS={value}")
-                continue
-            output_key = key.upper()
-            if isinstance(value, bool):
-                print(f"AUTORESEARCH_RUNTIME_PROBE_{output_key}={1 if value else 0}")
-            else:
-                print(f"AUTORESEARCH_RUNTIME_PROBE_{output_key}={value}")
-        print(f"RUNTIME_SCORE={runtime_score:.2f}")
-        for key, value in sorted(runtime_components.items()):
-            print(f"RUNTIME_COMPONENT_{key.upper()}={value:.2f}")
-    except RuntimeError as error:
-        print(f"RUNTIME_PROBE_NOTE={error}")
-
-    if not runtime_components and args.log:
-        runtime_metrics = parse_runtime_log(Path(args.log))
-        if runtime_metrics is not None:
-            runtime_score, runtime_components = score_runtime(runtime_metrics, args)
-            print(f"RUNTIME_SCORE={runtime_score:.2f}")
+    codec_scores: list[float] = []
+    codec_components_available = False
+    for codec in requested_codecs(args):
+        codec_args = args_with_codec(args, codec)
+        runtime_score = 0.0
+        runtime_components: dict[str, float] = {}
+        try:
+            runtime_probe_runs = run_runtime_probe_series(codec_args)
+            runtime_metrics, runtime_score, runtime_components = median_runtime_probe_result(
+                runtime_probe_runs,
+                codec_args,
+            )
+            print(f"AUTORESEARCH_RUNTIME_PROBE_CODEC_NAME={codec}")
+            print(f"AUTORESEARCH_RUNTIME_PROBE_RUNS={len(runtime_probe_runs)}")
+            for key, value in runtime_metrics.items():
+                output_key = f"{codec.upper().replace('-', '_')}_{key.upper()}"
+                if isinstance(value, bool):
+                    print(f"AUTORESEARCH_RUNTIME_PROBE_{output_key}={1 if value else 0}")
+                else:
+                    print(f"AUTORESEARCH_RUNTIME_PROBE_{output_key}={value}")
+            print(f"RUNTIME_SCORE_{codec.upper().replace('-', '_')}={runtime_score:.2f}")
             for key, value in sorted(runtime_components.items()):
-                print(f"RUNTIME_COMPONENT_{key.upper()}={value:.2f}")
-        else:
-            print("RUNTIME_SCORE=0.00")
-            print("RUNTIME_COMPONENT_NOTE=missing-or-no-session")
+                print(
+                    f"RUNTIME_COMPONENT_{codec.upper().replace('-', '_')}_{key.upper()}={value:.2f}"
+                )
+        except RuntimeError as error:
+            print(f"RUNTIME_PROBE_NOTE_{codec.upper().replace('-', '_')}={error}")
 
-    if runtime_components:
-        total = runtime_score + (synthetic_score * 0.25)
+        if not runtime_components and args.log:
+            runtime_metrics = parse_runtime_log(Path(args.log))
+            if runtime_metrics is not None:
+                runtime_score, runtime_components = score_runtime(runtime_metrics, codec_args)
+                print(f"RUNTIME_SCORE_{codec.upper().replace('-', '_')}={runtime_score:.2f}")
+                for key, value in sorted(runtime_components.items()):
+                    print(
+                        f"RUNTIME_COMPONENT_{codec.upper().replace('-', '_')}_{key.upper()}={value:.2f}"
+                    )
+            else:
+                print(f"RUNTIME_SCORE_{codec.upper().replace('-', '_')}=0.00")
+                print(
+                    f"RUNTIME_COMPONENT_{codec.upper().replace('-', '_')}_NOTE=missing-or-no-session"
+                )
+
+        if runtime_components:
+            codec_components_available = True
+        codec_scores.append(runtime_score)
+
+    if codec_components_available and codec_scores:
+        total = min(codec_scores) + (synthetic_score * 0.25)
     else:
         total = synthetic_score
     total = max(0.0, min(total, 110.0))
