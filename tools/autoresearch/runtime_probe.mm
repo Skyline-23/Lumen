@@ -18,6 +18,34 @@ namespace {
 constexpr int32_t kDisplayP3Gamut = 1;
 constexpr int32_t kPQTransfer = 2;
 
+LumenCoreCaptureCodec codecFromArgument(const char *value) {
+  if (value == nullptr) {
+    return LumenCoreCaptureCodecHEVC;
+  }
+
+  if (std::strcmp(value, "h264") == 0) {
+    return LumenCoreCaptureCodecH264;
+  }
+  if (std::strcmp(value, "prores-proxy") == 0) {
+    return LumenCoreCaptureCodecProResProxy;
+  }
+
+  return LumenCoreCaptureCodecHEVC;
+}
+
+const char *codecName(LumenCoreCaptureCodec codec) {
+  switch (codec) {
+    case LumenCoreCaptureCodecH264:
+      return "h264";
+    case LumenCoreCaptureCodecProResProxy:
+      return "prores-proxy";
+    case LumenCoreCaptureCodecHEVC:
+      return "hevc";
+    default:
+      return "unknown";
+  }
+}
+
 struct ProbeMetrics {
   uint64_t frames = 0;
   uint64_t hdrFrames = 0;
@@ -116,13 +144,14 @@ void printErrorAndExit(const char *message) {
 int main(int argc, const char *argv[]) {
   @autoreleasepool {
     if (argc < 4) {
-      printErrorAndExit("usage: runtime_probe <width> <height> <fps>");
+      printErrorAndExit("usage: runtime_probe <width> <height> <fps> [codec]");
       return 1;
     }
 
     int32_t width = std::atoi(argv[1]);
     int32_t height = std::atoi(argv[2]);
     int32_t fps = std::atoi(argv[3]);
+    LumenCoreCaptureCodec codec = codecFromArgument(argc >= 5 ? argv[4] : nullptr);
     uint32_t displayID = CGMainDisplayID();
 
     LumenMacBridgeController *controller = LumenMacBridgeControllerCreate();
@@ -136,6 +165,7 @@ int main(int argc, const char *argv[]) {
     LumenMacBridgeCaptureConfiguration configuration =
       LumenMacBridgeControllerMakePanelNativeConfiguration(displayID);
     configuration.display_id = displayID;
+    configuration.codec = codec;
     configuration.target_frame_rate = fps;
     configuration.requested_width = width;
     configuration.requested_height = height;
@@ -210,6 +240,7 @@ int main(int argc, const char *argv[]) {
     std::printf("AUTORESEARCH_RUNTIME_PROBE_WIDTH=%d\n", width);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_HEIGHT=%d\n", height);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_FPS=%d\n", fps);
+    std::printf("AUTORESEARCH_RUNTIME_PROBE_CODEC=%s\n", codecName(codec));
     std::printf("AUTORESEARCH_RUNTIME_PROBE_FRAMES=%llu\n", metrics.frames);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_HDR_FRAMES=%llu\n", metrics.hdrFrames);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_FIRST_FRAME_HDR=%d\n", metrics.firstFrameHDR ? 1 : 0);

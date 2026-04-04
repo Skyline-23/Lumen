@@ -19,6 +19,7 @@ AUTORESEARCH_RUNTIME_PROBE_STATUS=ok
 AUTORESEARCH_RUNTIME_PROBE_WIDTH=3512
 AUTORESEARCH_RUNTIME_PROBE_HEIGHT=2290
 AUTORESEARCH_RUNTIME_PROBE_FPS=120
+AUTORESEARCH_RUNTIME_PROBE_CODEC=hevc
 AUTORESEARCH_RUNTIME_PROBE_FRAMES=16
 AUTORESEARCH_RUNTIME_PROBE_HDR_FRAMES=16
 AUTORESEARCH_RUNTIME_PROBE_FIRST_FRAME_HDR=1
@@ -36,6 +37,7 @@ AUTORESEARCH_RUNTIME_PROBE_LAST_HDR_SIGNALLED=1
         metrics = MODULE.parse_runtime_probe_output(output)
         assert metrics is not None
         self.assertEqual(metrics["frames"], 16)
+        self.assertEqual(metrics["codec"], "hevc")
         self.assertEqual(metrics["hdr_frames"], 16)
         self.assertTrue(metrics["first_frame_hdr"])
         self.assertEqual(metrics["startup_ms"], 742.5)
@@ -47,6 +49,7 @@ AUTORESEARCH_RUNTIME_PROBE_LAST_HDR_SIGNALLED=1
             "width": 3512,
             "height": 2290,
             "fps": 120,
+            "codec": "hevc",
             "frames": 24,
             "hdr_frames": 24,
             "first_frame_hdr": True,
@@ -65,6 +68,7 @@ AUTORESEARCH_RUNTIME_PROBE_LAST_HDR_SIGNALLED=1
             target_fps=120,
             target_width=3512,
             target_height=2290,
+            codec="hevc",
             battery_policy="adaptive-hdr",
         )
         score, components = MODULE.score_runtime_probe(metrics, args)
@@ -76,6 +80,7 @@ AUTORESEARCH_RUNTIME_PROBE_LAST_HDR_SIGNALLED=1
         metrics = {
             "status": "error",
             "frames": 0,
+            "codec": "hevc",
             "hdr_frames": 0,
             "first_frame_hdr": False,
             "startup_ms": 0.0,
@@ -93,6 +98,7 @@ AUTORESEARCH_RUNTIME_PROBE_LAST_HDR_SIGNALLED=1
             target_fps=120,
             target_width=3512,
             target_height=2290,
+            codec="hevc",
             battery_policy="adaptive-hdr",
         )
         score, components = MODULE.score_runtime_probe(metrics, args)

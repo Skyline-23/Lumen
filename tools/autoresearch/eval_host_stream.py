@@ -63,6 +63,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--target-width", type=int, default=3512)
     parser.add_argument("--target-height", type=int, default=2290)
     parser.add_argument("--target-fps", type=int, default=120)
+    parser.add_argument("--codec", default="hevc", choices=["hevc", "h264", "prores-proxy"])
     parser.add_argument("--require-hdr", action="store_true")
     parser.add_argument("--require-partial-hdr", action="store_true")
     parser.add_argument("--require-low-latency", action="store_true")
@@ -165,6 +166,7 @@ def run_runtime_probe(args: argparse.Namespace) -> str:
             str(args.target_width),
             str(args.target_height),
             str(args.target_fps),
+            args.codec,
         ],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -238,6 +240,7 @@ def parse_runtime_probe_output(output: str) -> dict[str, float | bool | int] | N
         "width": as_int("WIDTH"),
         "height": as_int("HEIGHT"),
         "fps": as_int("FPS"),
+        "codec": values.get("CODEC", "unknown"),
         "frames": as_int("FRAMES"),
         "hdr_frames": as_int("HDR_FRAMES"),
         "first_frame_hdr": as_bool("FIRST_FRAME_HDR"),
@@ -264,6 +267,7 @@ def score_runtime_probe(
         return 0.0, components
 
     fps = int(metrics["fps"])
+    codec = str(metrics.get("codec", "unknown"))
     width = int(metrics["width"])
     height = int(metrics["height"])
     frames = int(metrics["frames"])
@@ -281,6 +285,7 @@ def score_runtime_probe(
     last_hdr_signalled = bool(metrics["last_hdr_signalled"])
 
     components["fps"] = 10.0 * min(fps / max(args.target_fps, 1), 1.0)
+    components["codec"] = 5.0 if codec == args.codec else 0.0
     components["resolution"] = 10.0 if (
         width == args.target_width and height == args.target_height
     ) else 0.0
