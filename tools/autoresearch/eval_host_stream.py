@@ -2,7 +2,6 @@
 import argparse
 import datetime as dt
 import math
-import os
 import re
 import statistics
 import subprocess
@@ -39,9 +38,6 @@ TIMESTAMP_RE = re.compile(
     r"^\[(?P<stamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})\]"
 )
 SYNTHETIC_SCORE_RE = re.compile(r"AUTORESEARCH_SYNTHETIC_SCORE=(?P<score>[0-9.]+)")
-RUNTIME_PROBE_VALUE_RE = re.compile(
-    r"AUTORESEARCH_RUNTIME_PROBE_(?P<key>[A-Z_]+)=(?P<value>.*)"
-)
 
 TARGETED_TESTS = [
     "LumenTuistTests/LumenTuistBootstrapTests/testBridgeNegotiatesOverlayFallbackAndAutoQueueProfile",
@@ -50,9 +46,7 @@ TARGETED_TESTS = [
     "LumenTuistTests/LumenTuistBootstrapTests/testBridgePrefersTenBitEncoderInputForPartialHDROverlay",
     "LumenTuistTests/LumenTuistBootstrapTests/testBridgeDoesNotForceHDRTransportForBatterySavingSDRMode",
     "LumenTuistTests/LumenTuistBootstrapTests/testAutoresearchStreamScoringSnapshot",
-    "LumenTuistTests/LumenTuistBootstrapTests/testAutoresearchLiveEncodedCaptureProbe",
 ]
-RUNTIME_PROBE_FLAG = Path("/tmp/lumen-autoresearch-runtime-probe.flag")
 
 
 def parse_args() -> argparse.Namespace:
@@ -85,82 +79,20 @@ def run_targeted_tests(workspace: str, scheme: str) -> tuple[float, str]:
     for test_name in TARGETED_TESTS:
         command.extend(["-only-testing:" + test_name])
 
-    env = dict(os.environ)
-    RUNTIME_PROBE_FLAG.write_text("1\n", encoding="utf-8")
-    try:
-        completed = subprocess.run(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            check=False,
-            env=env,
-        )
-        output = completed.stdout
-    finally:
-        RUNTIME_PROBE_FLAG.unlink(missing_ok=True)
+    completed = subprocess.run(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+    )
+    output = completed.stdout
     match = SYNTHETIC_SCORE_RE.search(output)
     score = float(match.group("score")) if match else 0.0
     if completed.returncode != 0:
         tail = "\n".join(output.splitlines()[-60:])
         raise RuntimeError(f"xcodebuild test failed\n{tail}")
     return score, output
-
-
-def parse_runtime_probe_output(output: str) -> dict[str, str] | None:
-    matches = RUNTIME_PROBE_VALUE_RE.findall(output)
-    if not matches:
-        return None
-    return {key: value.strip() for key, value in matches}
-
-
-def score_runtime_probe(
-    probe: dict[str, str],
-    args: argparse.Namespace,
-) -> tuple[float, dict[str, float]]:
-    fps = float(probe.get("FPS", "0") or 0)
-    frames = int(probe.get("FRAMES", "0") or 0)
-    hdr_frames = int(probe.get("HDR_FRAMES", "0") or 0)
-    first_frame_hdr = probe.get("FIRST_FRAME_HDR", "false").lower() == "true"
-    average_latency = float(probe.get("AVG_LATENCY_MS", "-1") or -1)
-    max_latency = float(probe.get("MAX_LATENCY_MS", "-1") or -1)
-    dropped = int(probe.get("DROPPED", "0") or 0)
-    failures = int(probe.get("FAILURES", "0") or 0)
-    restarts = int(probe.get("RESTARTS", "0") or 0)
-    error = probe.get("ERROR", "")
-
-    components: dict[str, float] = {}
-    components["fps"] = 40.0 * min(fps / max(args.target_fps, 1), 1.0)
-    components["progression"] = 20.0 if frames > 0 else 0.0
-    if frames > 60:
-        components["progression"] += 10.0
-    if args.require_partial_hdr:
-        components["partial_hdr"] = 15.0 if hdr_frames > 0 or first_frame_hdr else 0.0
-    elif args.require_hdr:
-        components["partial_hdr"] = 15.0 if hdr_frames > 0 or first_frame_hdr else 0.0
-    else:
-        components["partial_hdr"] = 0.0
-
-    if max_latency >= 0 or average_latency >= 0:
-        reference_latency = max(max_latency, average_latency, 0.0)
-        components["latency"] = max(0.0, 15.0 - max(0.0, reference_latency - 8.0) * 0.75)
-    else:
-        components["latency"] = 0.0
-
-    penalty = (
-        dropped * 1.5
-        + failures * 8.0
-        + restarts * 10.0
-    )
-    if error:
-        penalty += 20.0
-    if frames == 0:
-        penalty += 40.0
-    components["stability_penalty"] = -penalty
-
-    total = sum(components.values())
-    total = max(0.0, min(total, 100.0))
-    return total, components
 
 
 def bool_from_group(value: str) -> bool:
@@ -414,18 +346,10 @@ def main() -> int:
     args = parse_args()
 
     synthetic_score = 0.0
-    runtime_probe_score = 0.0
-    runtime_probe_components: dict[str, float] = {}
     if not args.skip_tests:
         synthetic_score, test_output = run_targeted_tests(args.workspace, args.scheme)
         print(f"SYNTHETIC_TEST_SCORE={synthetic_score:.2f}")
         print(f"SYNTHETIC_TESTS={len(TARGETED_TESTS)}")
-        runtime_probe = parse_runtime_probe_output(test_output)
-        if runtime_probe is not None:
-            runtime_probe_score, runtime_probe_components = score_runtime_probe(runtime_probe, args)
-            print(f"BENCHMARK_RUNTIME_SCORE={runtime_probe_score:.2f}")
-            for key, value in sorted(runtime_probe_components.items()):
-                print(f"BENCHMARK_RUNTIME_COMPONENT_{key.upper()}={value:.2f}")
     else:
         test_output = ""
 
@@ -442,9 +366,7 @@ def main() -> int:
             print("RUNTIME_SCORE=0.00")
             print("RUNTIME_COMPONENT_NOTE=missing-or-no-session")
 
-    if runtime_probe_components:
-        total = runtime_probe_score + (synthetic_score * 0.25)
-    elif args.log and runtime_components:
+    if args.log and runtime_components:
         total = runtime_score + (synthetic_score * 0.25)
     else:
         total = synthetic_score
