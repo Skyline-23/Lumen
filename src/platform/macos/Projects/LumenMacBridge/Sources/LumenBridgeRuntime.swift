@@ -620,6 +620,8 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
 
     var mdkValue: MDKEncodedCaptureConfiguration {
         let capturePixelFormat = effectiveCapturePixelFormat
+        let targetAverageBitRateBitsPerSecond =
+            effectiveTargetVideoBitRateKbps > 0 ? effectiveTargetVideoBitRateKbps * 1_000 : nil
         let streamConfiguration = MDKSkyLightDisplayStreamConfiguration(
             queueDepth: negotiatedQueueProfile.queueDepthHint,
             queueProfile: negotiatedQueueProfile.mdkQueueProfile,
@@ -635,7 +637,7 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
             codec: codec.mdkValue,
             preprocessStrategy: effectivePreprocessStrategy.mdkValue,
             targetFrameRate: effectiveTargetFrameRate,
-            targetAverageBitRateBitsPerSecond: targetVideoBitRateKbps > 0 ? targetVideoBitRateKbps * 1_000 : nil,
+            targetAverageBitRateBitsPerSecond: targetAverageBitRateBitsPerSecond,
             deliveryMode: .callbackOnly,
             capturePixelFormat: capturePixelFormat,
             encoderInputStrategy: effectiveEncoderInputStrategy.mdkValue,
@@ -677,6 +679,18 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         }
 
         return codec.mdkValue.preferredCapturePixelFormat
+    }
+
+    public var effectiveTargetVideoBitRateKbps: Int {
+        if targetVideoBitRateKbps > 0 {
+            return targetVideoBitRateKbps
+        }
+
+        if shouldPreferBGRAOverlayCaptureBackend {
+            return 41_000
+        }
+
+        return 0
     }
 
     private var effectivePixelCount: Int? {
