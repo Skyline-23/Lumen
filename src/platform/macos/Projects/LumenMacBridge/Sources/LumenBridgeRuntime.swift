@@ -496,6 +496,10 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         lumenDynamicRangeTransportUsesHDR(negotiatedDynamicRangeTransport)
     }
 
+    private var usesHDREncoderColorConfiguration: Bool {
+        usesHDRTransport || negotiatedDynamicRangeTransport == LumenCoreDynamicRangeTransportSDRBaseHDROverlay
+    }
+
     public var sinkPrefersHDRPresentation: Bool {
         switch resolvedDisplayTransfer {
         case .pq, .hlg:
@@ -547,6 +551,12 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     public var negotiatedQueueProfile: LumenCaptureQueueProfile {
         guard queueProfile == .auto else {
             return queueProfile
+        }
+
+        if negotiatedDynamicRangeTransport == LumenCoreDynamicRangeTransportSDRBaseHDROverlay &&
+            usesHighResolutionWorkload &&
+            effectiveTargetFrameRate >= 120 {
+            return .q4
         }
 
         if effectiveTargetFrameRate >= 120 {
@@ -634,7 +644,7 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
             preprocessStrategy: effectivePreprocessStrategy.mdkValue,
             targetFrameRate: effectiveTargetFrameRate,
             targetAverageBitRateBitsPerSecond: targetVideoBitRateKbps > 0 ? targetVideoBitRateKbps * 1_000 : nil,
-            deliveryMode: .callbackOnly,
+            deliveryMode: usesHighResolutionWorkload && effectiveTargetFrameRate >= 120 ? .multiplexed : .callbackOnly,
             encoderInputStrategy: effectiveEncoderInputStrategy.mdkValue,
             hdrConfiguration: encodedColorConfiguration
         )
@@ -693,7 +703,7 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     }
 
     private var encodedColorConfiguration: MDKVideoHDRConfiguration? {
-        if usesHDRTransport, codec != .h264 {
+        if usesHDREncoderColorConfiguration, codec != .h264 {
             let colorPrimaries = resolvedHDRSignalColorPrimaries
             let yCbCrMatrix = resolvedHDRSignalYCbCrMatrix
             let metadata = resolvedHDRStaticMetadata
@@ -767,7 +777,7 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     }
 
     var encodedHDRConfigurationSnapshot: EncodedHDRConfigurationSnapshot? {
-        guard usesHDRTransport, codec != .h264 else {
+        guard usesHDREncoderColorConfiguration, codec != .h264 else {
             return nil
         }
 
