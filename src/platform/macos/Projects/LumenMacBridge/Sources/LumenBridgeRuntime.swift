@@ -496,10 +496,6 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         lumenDynamicRangeTransportUsesHDR(negotiatedDynamicRangeTransport)
     }
 
-    private var usesHDREncoderColorConfiguration: Bool {
-        usesHDRTransport || negotiatedDynamicRangeTransport == LumenCoreDynamicRangeTransportSDRBaseHDROverlay
-    }
-
     public var sinkPrefersHDRPresentation: Bool {
         switch resolvedDisplayTransfer {
         case .pq, .hlg:
@@ -697,7 +693,7 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     }
 
     private var encodedColorConfiguration: MDKVideoHDRConfiguration? {
-        if usesHDREncoderColorConfiguration, codec != .h264 {
+        if usesHDRTransport, codec != .h264 {
             let colorPrimaries = resolvedHDRSignalColorPrimaries
             let yCbCrMatrix = resolvedHDRSignalYCbCrMatrix
             let metadata = resolvedHDRStaticMetadata
@@ -771,7 +767,7 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     }
 
     var encodedHDRConfigurationSnapshot: EncodedHDRConfigurationSnapshot? {
-        guard usesHDREncoderColorConfiguration, codec != .h264 else {
+        guard usesHDRTransport, codec != .h264 else {
             return nil
         }
 
