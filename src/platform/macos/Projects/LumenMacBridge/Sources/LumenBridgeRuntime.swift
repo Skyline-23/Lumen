@@ -1,6 +1,7 @@
 import LumenCore
 import CoreGraphics
 import CoreMedia
+import CoreVideo
 import Darwin
 import Foundation
 import MacDisplayCaptureKit
@@ -618,13 +619,14 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     }
 
     var mdkValue: MDKEncodedCaptureConfiguration {
+        let capturePixelFormat = effectiveCapturePixelFormat
         let streamConfiguration = MDKSkyLightDisplayStreamConfiguration(
             queueDepth: negotiatedQueueProfile.queueDepthHint,
             queueProfile: negotiatedQueueProfile.mdkQueueProfile,
             showCursor: showCursor,
             outputWidth: requestedWidth,
             outputHeight: requestedHeight,
-            pixelFormat: codec.mdkValue.preferredCapturePixelFormat
+            pixelFormat: capturePixelFormat
         )
 
         return MDKEncodedCaptureConfiguration(
@@ -635,6 +637,7 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
             targetFrameRate: effectiveTargetFrameRate,
             targetAverageBitRateBitsPerSecond: targetVideoBitRateKbps > 0 ? targetVideoBitRateKbps * 1_000 : nil,
             deliveryMode: .callbackOnly,
+            capturePixelFormat: capturePixelFormat,
             encoderInputStrategy: effectiveEncoderInputStrategy.mdkValue,
             hdrConfiguration: encodedColorConfiguration
         )
@@ -668,6 +671,14 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         return .auto
     }
 
+    public var effectiveCapturePixelFormat: UInt32 {
+        if shouldPreferBGRAOverlayCaptureBackend {
+            return kCVPixelFormatType_32BGRA
+        }
+
+        return codec.mdkValue.preferredCapturePixelFormat
+    }
+
     private var effectivePixelCount: Int? {
         guard let width = requestedWidth, let height = requestedHeight else {
             return nil
@@ -690,6 +701,13 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         }
 
         return effectivePixelCount >= Self.veryHighResolutionPixelCountThreshold
+    }
+
+    private var shouldPreferBGRAOverlayCaptureBackend: Bool {
+        negotiatedDynamicRangeTransport == LumenCoreDynamicRangeTransportSDRBaseHDROverlay &&
+            codec == .hevc &&
+            effectiveTargetFrameRate >= 120 &&
+            usesHighResolutionWorkload
     }
 
     private var encodedColorConfiguration: MDKVideoHDRConfiguration? {
