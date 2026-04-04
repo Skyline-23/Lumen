@@ -1,7 +1,11 @@
 @testable import LumenMacBridge
+import AppKit
+import CoreGraphics
 import LumenCore
 import CoreMedia
 import XCTest
+
+private let autoresearchRuntimeProbeFlagPath = "/tmp/lumen-autoresearch-runtime-probe.flag"
 
 final class LumenTuistBootstrapTests: XCTestCase {
     func testBridgeExposesBootstrapStatus() async {
@@ -426,6 +430,57 @@ final class LumenTuistBootstrapTests: XCTestCase {
 
         print(String(format: "AUTORESEARCH_SYNTHETIC_SCORE=%.2f", score))
         XCTAssertGreaterThan(score, 0.0)
+    }
+
+    func testAutoresearchLiveEncodedCaptureProbe() async throws {
+        guard FileManager.default.fileExists(atPath: autoresearchRuntimeProbeFlagPath) else {
+            throw XCTSkip("Live runtime probe is only enabled for autoresearch runs.")
+        }
+
+        guard let displayID = Self.autoresearchDisplayID() else {
+            print("AUTORESEARCH_RUNTIME_PROBE_ERROR=no-display")
+            print("AUTORESEARCH_RUNTIME_PROBE_FPS=0.00")
+            print("AUTORESEARCH_RUNTIME_PROBE_FRAMES=0")
+            print("AUTORESEARCH_RUNTIME_PROBE_HDR_FRAMES=0")
+            print("AUTORESEARCH_RUNTIME_PROBE_FIRST_FRAME_HDR=false")
+            print("AUTORESEARCH_RUNTIME_PROBE_AVG_LATENCY_MS=-1.00")
+            print("AUTORESEARCH_RUNTIME_PROBE_MAX_LATENCY_MS=-1.00")
+            print("AUTORESEARCH_RUNTIME_PROBE_DROPPED=0")
+            print("AUTORESEARCH_RUNTIME_PROBE_FAILURES=0")
+            print("AUTORESEARCH_RUNTIME_PROBE_RESTARTS=0")
+            return
+        }
+
+        let configuration = LumenMacDisplayKitCaptureConfiguration(
+            displayID: displayID,
+            codec: .hevc,
+            preprocessStrategy: .none,
+            queueProfile: .auto,
+            targetFrameRate: 120,
+            requestedWidth: 3512,
+            requestedHeight: 2290,
+            sinkRequest: LumenBridgeSinkRequest(
+                capability: LumenBridgeSinkCapability(
+                    gamut: .displayP3,
+                    transfer: .pq,
+                    supportsFrameGatedHDR: true,
+                    supportsHDRTileOverlay: true,
+                    supportsPerFrameHDRMetadata: true
+                ),
+                dynamicRangeTransport: LumenCoreDynamicRangeTransportSDRBaseHDROverlay
+            ),
+            effectiveDisplayState: LumenBridgeEffectiveDisplayState(
+                gamut: .displayP3,
+                transfer: .pq
+            )
+        )
+
+        let report = await Self.runAutoresearchRuntimeProbe(
+            configuration: configuration,
+            sampleDuration: 1.0
+        )
+
+        Self.printAutoresearchRuntimeProbe(report)
     }
 
     func testLumenCoreEncodedCaptureIngressStoresSampleBufferMetadata() throws {
@@ -1630,7 +1685,149 @@ final class LumenTuistBootstrapTests: XCTestCase {
     }
 }
 
+private struct AutoresearchRuntimeProbeReport: Sendable {
+    let observedOutputFrameRate: Double
+    let consumedFrameCount: UInt64
+    let hdrSignaledFrameCount: UInt64
+    let firstFrameHDRSignaled: Bool
+    let averageOutputCallbackLatencyMilliseconds: Double?
+    let maximumOutputCallbackLatencyMilliseconds: Double?
+    let droppedFrameCount: UInt64
+    let processingFailureCount: UInt64
+    let automaticRestartCount: UInt64
+    let streamErrorDescription: String?
+}
+
 private extension LumenTuistBootstrapTests {
+    static func autoresearchDisplayID() -> UInt32? {
+        let mainDisplayID = UInt32(CGMainDisplayID())
+        return mainDisplayID == 0 ? nil : mainDisplayID
+    }
+
+    static func runAutoresearchRuntimeProbe(
+        configuration: LumenMacDisplayKitCaptureConfiguration,
+        sampleDuration: TimeInterval
+    ) async -> AutoresearchRuntimeProbeReport {
+        let runtime = LumenBridgeRuntime.shared
+        await MainActor.run {
+            _ = NSApplication.shared
+            NSApp.setActivationPolicy(.prohibited)
+        }
+        await runtime.stopMacDisplayKitCapture()
+
+        do {
+            try await runtime.startMacDisplayKitCapture(configuration: configuration)
+        } catch {
+            return AutoresearchRuntimeProbeReport(
+                observedOutputFrameRate: 0,
+                consumedFrameCount: 0,
+                hdrSignaledFrameCount: 0,
+                firstFrameHDRSignaled: false,
+                averageOutputCallbackLatencyMilliseconds: nil,
+                maximumOutputCallbackLatencyMilliseconds: nil,
+                droppedFrameCount: 0,
+                processingFailureCount: 0,
+                automaticRestartCount: 0,
+                streamErrorDescription: (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+            )
+        }
+
+        var callbackLatencies: [Double] = []
+        var latestSequenceNumber: UInt64?
+        var firstFrameHDRSignaled = false
+        var hdrSignaledFrameCount: UInt64 = 0
+        var consumedFrameCount: UInt64 = 0
+        var droppedFrameCount: UInt64 = 0
+        var processingFailureCount: UInt64 = 0
+        var automaticRestartCount: UInt64 = 0
+        var streamErrorDescription: String?
+
+        let sampleNanoseconds = UInt64(max(sampleDuration, 0) * 1_000_000_000)
+        let deadline = ContinuousClock.now + .nanoseconds(Int64(sampleNanoseconds))
+        while ContinuousClock.now < deadline {
+            if let snapshot = await runtime.captureSnapshot() {
+                consumedFrameCount = snapshot.statistics.emittedFrameCount
+                droppedFrameCount = snapshot.statistics.droppedFrameCount
+                processingFailureCount = snapshot.statistics.processingFailureCount
+                automaticRestartCount = snapshot.statistics.automaticRestartCount
+                streamErrorDescription = snapshot.statistics.lastErrorDescription
+                if let latestFrame = snapshot.latestFrame,
+                   latestFrame.sourceSequenceNumber != latestSequenceNumber {
+                    latestSequenceNumber = latestFrame.sourceSequenceNumber
+                    if latestFrame.isHDRSignaled {
+                        hdrSignaledFrameCount += 1
+                        if consumedFrameCount == 1 {
+                            firstFrameHDRSignaled = true
+                        }
+                    }
+                    if let latency = latestFrame.outputCallbackLatencyMilliseconds {
+                        callbackLatencies.append(latency)
+                    }
+                }
+            }
+            try? await Task.sleep(nanoseconds: 16_000_000)
+        }
+
+        let finalSnapshot = await runtime.captureSnapshot()
+        await runtime.stopMacDisplayKitCapture()
+        if let finalSnapshot {
+            consumedFrameCount = max(consumedFrameCount, finalSnapshot.statistics.emittedFrameCount)
+            droppedFrameCount = max(droppedFrameCount, finalSnapshot.statistics.droppedFrameCount)
+            processingFailureCount = max(processingFailureCount, finalSnapshot.statistics.processingFailureCount)
+            automaticRestartCount = max(automaticRestartCount, finalSnapshot.statistics.automaticRestartCount)
+            streamErrorDescription = streamErrorDescription ?? finalSnapshot.statistics.lastErrorDescription
+            if let latestFrame = finalSnapshot.latestFrame {
+                firstFrameHDRSignaled = firstFrameHDRSignaled || (consumedFrameCount > 0 && latestFrame.isHDRSignaled)
+                if latestFrame.isHDRSignaled {
+                    hdrSignaledFrameCount = max(hdrSignaledFrameCount, 1)
+                }
+                if let latency = latestFrame.outputCallbackLatencyMilliseconds {
+                    callbackLatencies.append(latency)
+                }
+            }
+        }
+
+        return AutoresearchRuntimeProbeReport(
+            observedOutputFrameRate: sampleDuration > 0 ? Double(consumedFrameCount) / sampleDuration : 0,
+            consumedFrameCount: consumedFrameCount,
+            hdrSignaledFrameCount: hdrSignaledFrameCount,
+            firstFrameHDRSignaled: firstFrameHDRSignaled,
+            averageOutputCallbackLatencyMilliseconds: callbackLatencies.isEmpty
+                ? nil
+                : callbackLatencies.reduce(0, +) / Double(callbackLatencies.count),
+            maximumOutputCallbackLatencyMilliseconds: callbackLatencies.max(),
+            droppedFrameCount: droppedFrameCount,
+            processingFailureCount: processingFailureCount,
+            automaticRestartCount: automaticRestartCount,
+            streamErrorDescription: streamErrorDescription
+        )
+    }
+
+    static func printAutoresearchRuntimeProbe(_ report: AutoresearchRuntimeProbeReport) {
+        print(String(format: "AUTORESEARCH_RUNTIME_PROBE_FPS=%.2f", report.observedOutputFrameRate))
+        print("AUTORESEARCH_RUNTIME_PROBE_FRAMES=\(report.consumedFrameCount)")
+        print("AUTORESEARCH_RUNTIME_PROBE_HDR_FRAMES=\(report.hdrSignaledFrameCount)")
+        print("AUTORESEARCH_RUNTIME_PROBE_FIRST_FRAME_HDR=\(report.firstFrameHDRSignaled)")
+        if let averageLatency = report.averageOutputCallbackLatencyMilliseconds {
+            print(String(format: "AUTORESEARCH_RUNTIME_PROBE_AVG_LATENCY_MS=%.3f", averageLatency))
+        } else {
+            print("AUTORESEARCH_RUNTIME_PROBE_AVG_LATENCY_MS=-1.000")
+        }
+        if let maximumLatency = report.maximumOutputCallbackLatencyMilliseconds {
+            print(String(format: "AUTORESEARCH_RUNTIME_PROBE_MAX_LATENCY_MS=%.3f", maximumLatency))
+        } else {
+            print("AUTORESEARCH_RUNTIME_PROBE_MAX_LATENCY_MS=-1.000")
+        }
+        print("AUTORESEARCH_RUNTIME_PROBE_DROPPED=\(report.droppedFrameCount)")
+        print("AUTORESEARCH_RUNTIME_PROBE_FAILURES=\(report.processingFailureCount)")
+        print("AUTORESEARCH_RUNTIME_PROBE_RESTARTS=\(report.automaticRestartCount)")
+        if let error = report.streamErrorDescription {
+            print("AUTORESEARCH_RUNTIME_PROBE_ERROR=\(error)")
+        } else {
+            print("AUTORESEARCH_RUNTIME_PROBE_ERROR=")
+        }
+    }
+
     static func makeEncodedSampleBuffer(
         payload: Data,
         codecType: CMVideoCodecType,
