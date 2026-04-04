@@ -290,7 +290,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(configuration.negotiatedDynamicRangeTransport, LumenCoreDynamicRangeTransportSDRBaseHDROverlay)
         XCTAssertEqual(configuration.effectiveTargetFrameRate, 120)
         XCTAssertEqual(configuration.effectivePreprocessStrategy, .none)
-        XCTAssertEqual(configuration.negotiatedQueueProfile, .q2)
+        XCTAssertEqual(configuration.negotiatedQueueProfile, .q1)
         XCTAssertEqual(configuration.mdkValue.targetFrameRate, 120)
         XCTAssertEqual(configuration.mdkValue.streamConfiguration.outputWidth, 3512)
         XCTAssertEqual(configuration.mdkValue.streamConfiguration.outputHeight, 2290)
