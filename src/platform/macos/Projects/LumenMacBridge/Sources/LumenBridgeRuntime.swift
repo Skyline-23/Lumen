@@ -634,7 +634,7 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
             preprocessStrategy: effectivePreprocessStrategy.mdkValue,
             targetFrameRate: effectiveTargetFrameRate,
             targetAverageBitRateBitsPerSecond: targetVideoBitRateKbps > 0 ? targetVideoBitRateKbps * 1_000 : nil,
-            deliveryMode: usesHighResolutionWorkload && effectiveTargetFrameRate >= 120 ? .multiplexed : .callbackOnly,
+            deliveryMode: .callbackOnly,
             encoderInputStrategy: effectiveEncoderInputStrategy.mdkValue,
             hdrConfiguration: encodedColorConfiguration
         )
