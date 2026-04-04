@@ -2,10 +2,12 @@
 import argparse
 import datetime as dt
 import math
+import os
 import re
 import statistics
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -38,6 +40,10 @@ TIMESTAMP_RE = re.compile(
     r"^\[(?P<stamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})\]"
 )
 SYNTHETIC_SCORE_RE = re.compile(r"AUTORESEARCH_SYNTHETIC_SCORE=(?P<score>[0-9.]+)")
+PROBE_LINE_RE = re.compile(
+    r"^AUTORESEARCH_RUNTIME_PROBE_(?P<key>[A-Z0-9_]+)=(?P<value>.+)$",
+    re.MULTILINE,
+)
 
 TARGETED_TESTS = [
     "LumenTuistTests/LumenTuistBootstrapTests/testBridgeNegotiatesOverlayFallbackAndAutoQueueProfile",
@@ -95,6 +101,82 @@ def run_targeted_tests(workspace: str, scheme: str) -> tuple[float, str]:
     return score, output
 
 
+def resolve_debug_products_dir() -> Path:
+    derived_data_root = Path.home() / "Library/Developer/Xcode/DerivedData"
+    candidates = list(
+        derived_data_root.glob("Lumen-*/Build/Products/Debug/LumenMacBridge.framework")
+    )
+    if not candidates:
+        raise RuntimeError("unable to locate LumenMacBridge.framework in DerivedData")
+    framework_dir = max(candidates, key=lambda path: path.stat().st_mtime)
+    return framework_dir.parent
+
+
+def run_runtime_probe(args: argparse.Namespace) -> str:
+    debug_products_dir = resolve_debug_products_dir()
+    package_frameworks_dir = debug_products_dir / "PackageFrameworks"
+    probe_source = Path(__file__).with_name("runtime_probe.mm")
+    probe_binary = Path(tempfile.gettempdir()) / "lumen-autoresearch-runtime-probe"
+    compile_command = [
+        "clang++",
+        "-std=c++17",
+        "-fobjc-arc",
+        str(probe_source),
+        "-o",
+        str(probe_binary),
+        "-F",
+        str(debug_products_dir),
+        "-F",
+        str(package_frameworks_dir),
+        "-framework",
+        "LumenMacBridge",
+        "-framework",
+        "LumenCore",
+        "-framework",
+        "AppKit",
+        "-framework",
+        "CoreGraphics",
+        "-framework",
+        "CoreMedia",
+        "-framework",
+        "Foundation",
+    ]
+    compiled = subprocess.run(
+        compile_command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+    )
+    if compiled.returncode != 0:
+        raise RuntimeError(f"runtime probe compile failed\n{compiled.stdout}")
+
+    environment = dict(os.environ)
+    framework_path = f"{debug_products_dir}:{package_frameworks_dir}"
+    existing_framework_path = environment.get("DYLD_FRAMEWORK_PATH")
+    if existing_framework_path:
+        environment["DYLD_FRAMEWORK_PATH"] = f"{framework_path}:{existing_framework_path}"
+    else:
+        environment["DYLD_FRAMEWORK_PATH"] = framework_path
+
+    executed = subprocess.run(
+        [
+            str(probe_binary),
+            str(args.target_width),
+            str(args.target_height),
+            str(args.target_fps),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+        env=environment,
+    )
+    if executed.returncode != 0:
+        raise RuntimeError(f"runtime probe failed\n{executed.stdout}")
+    return executed.stdout
+
+
 def bool_from_group(value: str) -> bool:
     return value.lower() == "true"
 
@@ -112,6 +194,129 @@ def quantile95(values: list[float]) -> float:
     if len(values) == 1:
         return values[0]
     return statistics.quantiles(values, n=20)[-1]
+
+
+def parse_runtime_probe_output(output: str) -> dict[str, float | bool | int] | None:
+    matches = list(PROBE_LINE_RE.finditer(output))
+    if not matches:
+        return None
+
+    values: dict[str, str] = {}
+    for match in matches:
+        values[match.group("key")] = match.group("value").strip()
+
+    status = values.get("STATUS", "")
+    if status != "ok":
+        return {
+            "status": status or "error",
+            "frames": 0,
+            "hdr_frames": 0,
+            "first_frame_hdr": False,
+            "avg_callback_latency_ms": 0.0,
+            "max_callback_latency_ms": 0.0,
+            "restart_events": 0,
+            "failure_events": 1,
+            "drop_events": 0,
+            "queued_frames": 0,
+            "dropped_frames": 0,
+            "last_seq": 0,
+            "last_hdr_signalled": False,
+            "error": values.get("ERROR", "runtime probe failed"),
+        }
+
+    def as_int(key: str) -> int:
+        return int(values.get(key, "0"))
+
+    def as_float(key: str) -> float:
+        return float(values.get(key, "0"))
+
+    def as_bool(key: str) -> bool:
+        return values.get(key, "0") in {"1", "true", "True"}
+
+    return {
+        "status": status,
+        "width": as_int("WIDTH"),
+        "height": as_int("HEIGHT"),
+        "fps": as_int("FPS"),
+        "frames": as_int("FRAMES"),
+        "hdr_frames": as_int("HDR_FRAMES"),
+        "first_frame_hdr": as_bool("FIRST_FRAME_HDR"),
+        "avg_callback_latency_ms": as_float("AVG_CALLBACK_LATENCY_MS"),
+        "max_callback_latency_ms": as_float("MAX_CALLBACK_LATENCY_MS"),
+        "restart_events": as_int("RESTART_EVENTS"),
+        "failure_events": as_int("FAILURE_EVENTS"),
+        "drop_events": as_int("DROP_EVENTS"),
+        "queued_frames": as_int("QUEUED_FRAMES"),
+        "dropped_frames": as_int("DROPPED_FRAMES"),
+        "last_seq": as_int("LAST_SEQ"),
+        "last_hdr_signalled": as_bool("LAST_HDR_SIGNALLED"),
+    }
+
+
+def score_runtime_probe(
+    metrics: dict[str, float | bool | int],
+    args: argparse.Namespace,
+) -> tuple[float, dict[str, float]]:
+    components: dict[str, float] = {}
+    if metrics.get("status") != "ok":
+        components["probe_penalty"] = -100.0
+        return 0.0, components
+
+    fps = int(metrics["fps"])
+    width = int(metrics["width"])
+    height = int(metrics["height"])
+    frames = int(metrics["frames"])
+    hdr_frames = int(metrics["hdr_frames"])
+    first_frame_hdr = bool(metrics["first_frame_hdr"])
+    avg_latency = float(metrics["avg_callback_latency_ms"])
+    max_latency = float(metrics["max_callback_latency_ms"])
+    restart_events = int(metrics["restart_events"])
+    failure_events = int(metrics["failure_events"])
+    drop_events = int(metrics["drop_events"])
+    queued_frames = int(metrics["queued_frames"])
+    dropped_frames = int(metrics["dropped_frames"])
+    last_seq = int(metrics["last_seq"])
+    last_hdr_signalled = bool(metrics["last_hdr_signalled"])
+
+    components["fps"] = 10.0 * min(fps / max(args.target_fps, 1), 1.0)
+    components["resolution"] = 10.0 if (
+        width == args.target_width and height == args.target_height
+    ) else 0.0
+
+    hdr_frames_ok = hdr_frames > 0 and (first_frame_hdr or last_hdr_signalled)
+    components["partial_hdr"] = 15.0 if hdr_frames_ok else 0.0
+
+    if avg_latency > 0 or max_latency > 0:
+        components["latency"] = max(0.0, 20.0 - max(0.0, max_latency - 12.0) * 0.6)
+    else:
+        components["latency"] = 0.0
+
+    progression = 0.0
+    if frames > 0 and last_seq > 0:
+        progression = 25.0 * min(frames / max(args.target_fps, 1), 1.0)
+    elif frames > 0:
+        progression = 10.0
+    components["progression"] = progression
+
+    if args.battery_policy == "adaptive-hdr":
+        components["battery_policy"] = 5.0 if hdr_frames_ok else 0.0
+    else:
+        components["battery_policy"] = 0.0
+
+    penalty = (
+        restart_events * 8.0
+        + failure_events * 25.0
+        + drop_events * 2.0
+        + queued_frames * 1.5
+        + dropped_frames * 1.5
+    )
+    if frames == 0:
+        penalty += 40.0
+    components["stability_penalty"] = -penalty
+
+    total = sum(components.values())
+    total = max(0.0, min(total, 100.0))
+    return total, components
 
 
 def parse_runtime_log(path: Path) -> dict[str, float | bool | int] | None:
@@ -355,7 +560,20 @@ def main() -> int:
 
     runtime_score = 0.0
     runtime_components: dict[str, float] = {}
-    if args.log:
+    runtime_output = ""
+    try:
+        runtime_output = run_runtime_probe(args)
+        runtime_metrics = parse_runtime_probe_output(runtime_output)
+        if runtime_metrics is not None:
+            runtime_score, runtime_components = score_runtime_probe(runtime_metrics, args)
+            print(runtime_output, end="" if runtime_output.endswith("\n") else "\n")
+            print(f"RUNTIME_SCORE={runtime_score:.2f}")
+            for key, value in sorted(runtime_components.items()):
+                print(f"RUNTIME_COMPONENT_{key.upper()}={value:.2f}")
+    except RuntimeError as error:
+        print(f"RUNTIME_PROBE_NOTE={error}")
+
+    if not runtime_components and args.log:
         runtime_metrics = parse_runtime_log(Path(args.log))
         if runtime_metrics is not None:
             runtime_score, runtime_components = score_runtime(runtime_metrics, args)
@@ -366,7 +584,7 @@ def main() -> int:
             print("RUNTIME_SCORE=0.00")
             print("RUNTIME_COMPONENT_NOTE=missing-or-no-session")
 
-    if args.log and runtime_components:
+    if runtime_components:
         total = runtime_score + (synthetic_score * 0.25)
     else:
         total = synthetic_score

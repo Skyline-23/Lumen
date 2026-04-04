@@ -13,6 +13,88 @@ SPEC.loader.exec_module(MODULE)
 
 
 class EvalHostStreamTests(unittest.TestCase):
+    def test_parse_runtime_probe_output_parses_successful_probe(self) -> None:
+        output = """
+AUTORESEARCH_RUNTIME_PROBE_STATUS=ok
+AUTORESEARCH_RUNTIME_PROBE_WIDTH=3512
+AUTORESEARCH_RUNTIME_PROBE_HEIGHT=2290
+AUTORESEARCH_RUNTIME_PROBE_FPS=120
+AUTORESEARCH_RUNTIME_PROBE_FRAMES=16
+AUTORESEARCH_RUNTIME_PROBE_HDR_FRAMES=16
+AUTORESEARCH_RUNTIME_PROBE_FIRST_FRAME_HDR=1
+AUTORESEARCH_RUNTIME_PROBE_AVG_CALLBACK_LATENCY_MS=8.700
+AUTORESEARCH_RUNTIME_PROBE_MAX_CALLBACK_LATENCY_MS=10.300
+AUTORESEARCH_RUNTIME_PROBE_RESTART_EVENTS=0
+AUTORESEARCH_RUNTIME_PROBE_FAILURE_EVENTS=0
+AUTORESEARCH_RUNTIME_PROBE_DROP_EVENTS=0
+AUTORESEARCH_RUNTIME_PROBE_QUEUED_FRAMES=2
+AUTORESEARCH_RUNTIME_PROBE_DROPPED_FRAMES=14
+AUTORESEARCH_RUNTIME_PROBE_LAST_SEQ=20862881947186
+AUTORESEARCH_RUNTIME_PROBE_LAST_HDR_SIGNALLED=1
+"""
+        metrics = MODULE.parse_runtime_probe_output(output)
+        assert metrics is not None
+        self.assertEqual(metrics["frames"], 16)
+        self.assertEqual(metrics["hdr_frames"], 16)
+        self.assertTrue(metrics["first_frame_hdr"])
+        self.assertEqual(metrics["last_seq"], 20862881947186)
+
+    def test_score_runtime_probe_rewards_live_progression(self) -> None:
+        metrics = {
+            "status": "ok",
+            "width": 3512,
+            "height": 2290,
+            "fps": 120,
+            "frames": 24,
+            "hdr_frames": 24,
+            "first_frame_hdr": True,
+            "avg_callback_latency_ms": 8.5,
+            "max_callback_latency_ms": 10.0,
+            "restart_events": 0,
+            "failure_events": 0,
+            "drop_events": 0,
+            "queued_frames": 0,
+            "dropped_frames": 0,
+            "last_seq": 200,
+            "last_hdr_signalled": True,
+        }
+        args = types.SimpleNamespace(
+            target_fps=120,
+            target_width=3512,
+            target_height=2290,
+            battery_policy="adaptive-hdr",
+        )
+        score, components = MODULE.score_runtime_probe(metrics, args)
+        self.assertGreater(score, 50.0)
+        self.assertGreater(components["progression"], 0.0)
+        self.assertGreater(components["partial_hdr"], 0.0)
+
+    def test_score_runtime_probe_rejects_failed_probe(self) -> None:
+        metrics = {
+            "status": "error",
+            "frames": 0,
+            "hdr_frames": 0,
+            "first_frame_hdr": False,
+            "avg_callback_latency_ms": 0.0,
+            "max_callback_latency_ms": 0.0,
+            "restart_events": 0,
+            "failure_events": 1,
+            "drop_events": 0,
+            "queued_frames": 0,
+            "dropped_frames": 0,
+            "last_seq": 0,
+            "last_hdr_signalled": False,
+        }
+        args = types.SimpleNamespace(
+            target_fps=120,
+            target_width=3512,
+            target_height=2290,
+            battery_policy="adaptive-hdr",
+        )
+        score, components = MODULE.score_runtime_probe(metrics, args)
+        self.assertEqual(score, 0.0)
+        self.assertLess(components["probe_penalty"], 0.0)
+
     def test_parse_runtime_log_detects_overlay_hdr_fix(self) -> None:
         log_contents = """
 [2026-04-04 13:30:57.034]: Info: macOS virtual display color profile: gamut=display-p3 hdr_capable=true hdr_intent=true client_gamut=display-p3 client_transfer=pq current-edr-headroom=1.2 potential-edr-headroom=16 current-peak-nits=120 potential-peak-nits=1600
