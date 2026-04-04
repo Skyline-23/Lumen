@@ -4,6 +4,7 @@
 #import <Foundation/Foundation.h>
 #import <LumenCore/LumenCore.h>
 #import <LumenMacBridge/LumenMacBridge.h>
+#import <QuartzCore/QuartzCore.h>
 
 #include <algorithm>
 #include <chrono>
@@ -61,6 +62,73 @@ struct ProbeMetrics {
   bool lastHDRSignaled = false;
   std::vector<double> callbackLatencies;
 };
+
+NSWindow *makeStimulusWindow() {
+  NSScreen *screen = NSScreen.mainScreen;
+  if (screen == nil) {
+    return nil;
+  }
+
+  const CGFloat side = 12.0;
+  NSRect visibleFrame = screen.visibleFrame;
+  NSRect frame = NSMakeRect(
+    NSMaxX(visibleFrame) - side - 18.0,
+    NSMinY(visibleFrame) + 18.0,
+    side,
+    side
+  );
+
+  NSWindow *window = [[NSWindow alloc] initWithContentRect:frame
+                                                 styleMask:NSWindowStyleMaskBorderless
+                                                   backing:NSBackingStoreBuffered
+                                                     defer:NO];
+  if (window == nil) {
+    return nil;
+  }
+
+  window.releasedWhenClosed = NO;
+  window.opaque = YES;
+  window.backgroundColor = NSColor.blackColor;
+  window.level = NSStatusWindowLevel;
+  window.ignoresMouseEvents = YES;
+  window.hasShadow = NO;
+  window.collectionBehavior =
+    NSWindowCollectionBehaviorCanJoinAllSpaces |
+    NSWindowCollectionBehaviorFullScreenAuxiliary;
+  [window setHidesOnDeactivate:NO];
+
+  NSView *contentView = window.contentView;
+  contentView.wantsLayer = YES;
+  contentView.layer.backgroundColor = NSColor.blackColor.CGColor;
+  [window orderFront:nil];
+  return window;
+}
+
+void updateStimulusWindow(NSWindow *window, uint64_t tick) {
+  if (window == nil || (tick % 2) != 0) {
+    return;
+  }
+
+  NSView *contentView = window.contentView;
+  if (contentView.layer == nil) {
+    return;
+  }
+
+  NSColor *color = ((tick / 2) % 2) == 0
+    ? [NSColor colorWithSRGBRed:1.0 green:1.0 blue:1.0 alpha:1.0]
+    : [NSColor colorWithSRGBRed:0.05 green:0.05 blue:0.05 alpha:1.0];
+  contentView.layer.backgroundColor = color.CGColor;
+  [contentView displayIfNeeded];
+  [window displayIfNeeded];
+}
+
+void closeStimulusWindow(NSWindow *window) {
+  if (window == nil) {
+    return;
+  }
+  [window orderOut:nil];
+  [window close];
+}
 
 double averageLatency(const std::vector<double> &samples) {
   if (samples.empty()) {
@@ -191,7 +259,10 @@ int main(int argc, const char *argv[]) {
       return 1;
     }
 
+    [NSApplication sharedApplication];
     ProbeMetrics metrics;
+    NSWindow *stimulusWindow = makeStimulusWindow();
+    uint64_t stimulusTick = 0;
     const auto captureStartTime = std::chrono::steady_clock::now();
     const auto startupDeadline = captureStartTime + std::chrono::seconds(10);
     while (std::chrono::steady_clock::now() < startupDeadline && !metrics.firstFrameSeen) {
@@ -209,6 +280,7 @@ int main(int argc, const char *argv[]) {
     if (metrics.firstFrameSeen) {
       const auto sampleDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1000);
       while (std::chrono::steady_clock::now() < sampleDeadline) {
+        updateStimulusWindow(stimulusWindow, stimulusTick++);
         drainForwardedFrames(controller, metrics);
         drainForwardedEvents(controller, metrics);
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -235,6 +307,7 @@ int main(int argc, const char *argv[]) {
 
     LumenMacBridgeControllerStopMacDisplayKitCapture(controller);
     LumenMacBridgeControllerDestroy(controller);
+    closeStimulusWindow(stimulusWindow);
 
     std::printf("AUTORESEARCH_RUNTIME_PROBE_STATUS=ok\n");
     std::printf("AUTORESEARCH_RUNTIME_PROBE_WIDTH=%d\n", width);
