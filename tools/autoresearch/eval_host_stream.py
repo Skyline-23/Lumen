@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import datetime as dt
 import math
 import re
 import statistics
@@ -19,6 +20,23 @@ VIRTUAL_DISPLAY_RE = re.compile(
     r"macOS virtual display color profile: .* hdr_intent=(?P<hdr_intent>true|false)"
 )
 CALLBACK_RE = re.compile(r"Mac bridge frame callback .* callback-latency-ms=(?P<latency>[0-9.]+)")
+CALLBACK_SPIKE_RE = re.compile(
+    r"callback latency spike .* callback-latency-ms=(?P<latency>[0-9.]+)"
+)
+ACCEPTED_PACKET_RE = re.compile(
+    r"External macOS encoded ingress first accepted packet .* "
+    r"hdr=(?P<hdr>true|false) .* transfer=(?P<transfer>[A-Z0-9_\.]+) .* "
+    r"seq=(?P<seq>\d+) display-time=(?P<display_time>\d+)"
+)
+STATS_RE = re.compile(
+    r"External macOS encoded ingress(?: final)? stats: "
+    r"frames=(?P<frames>\d+) queued=(?P<queued>\d+) dropped=(?P<dropped>\d+) "
+    r"last-seq=(?P<last_seq>\d+).* producer-active=(?P<producer_active>true|false).* "
+    r"last-callback-latency-ms=(?P<last_callback_latency>-?[0-9.]+)"
+)
+TIMESTAMP_RE = re.compile(
+    r"^\[(?P<stamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})\]"
+)
 SYNTHETIC_SCORE_RE = re.compile(r"AUTORESEARCH_SYNTHETIC_SCORE=(?P<score>[0-9.]+)")
 
 TARGETED_TESTS = [
@@ -81,6 +99,21 @@ def bool_from_group(value: str) -> bool:
     return value.lower() == "true"
 
 
+def parse_timestamp(line: str) -> dt.datetime | None:
+    match = TIMESTAMP_RE.search(line)
+    if not match:
+        return None
+    return dt.datetime.strptime(match.group("stamp"), "%Y-%m-%d %H:%M:%S.%f")
+
+
+def quantile95(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    if len(values) == 1:
+        return values[0]
+    return statistics.quantiles(values, n=20)[-1]
+
+
 def parse_runtime_log(path: Path) -> dict[str, float | bool | int] | None:
     if not path.exists():
         return None
@@ -103,16 +136,38 @@ def parse_runtime_log(path: Path) -> dict[str, float | bool | int] | None:
             hdr_intent = bool_from_group(display_match.group("hdr_intent"))
             break
 
+    publish_time = parse_timestamp(lines[publish_index])
+    end_time = publish_time
     callback_latencies = []
+    callback_spike_latencies = []
     saturation_count = 0
     overflow_count = 0
     callback_spike_count = 0
     duplicate_payload_count = 0
     restart_count = 0
+    no_advance_count = 0
+    initial_idr_wait_count = 0
+    callback_count = 0
+    accepted_packet_count = 0
+    accepted_hdr_count = 0
+    accepted_non709_transfer_count = 0
+    accepted_sequences: list[int] = []
+    max_stats_frames = 0
+    max_stats_queued = 0
+    max_stats_dropped = 0
+    producer_active_count = 0
+    stats_last_callback_latencies = []
     for line in lines[publish_index:]:
+        parsed_time = parse_timestamp(line)
+        if parsed_time is not None:
+            end_time = parsed_time
         callback_match = CALLBACK_RE.search(line)
         if callback_match:
             callback_latencies.append(float(callback_match.group("latency")))
+            callback_count += 1
+        spike_match = CALLBACK_SPIKE_RE.search(line)
+        if spike_match:
+            callback_spike_latencies.append(float(spike_match.group("latency")))
         if "capture processing queue is saturated" in line:
             saturation_count += 1
         if "core-forwarder-overflow" in line:
@@ -123,6 +178,30 @@ def parse_runtime_log(path: Path) -> dict[str, float | bool | int] | None:
             duplicate_payload_count += 1
         if "restarting the capture session" in line:
             restart_count += 1
+        if "has not advanced frame delivery" in line:
+            no_advance_count += 1
+        if "waiting for an initial IDR packet" in line:
+            initial_idr_wait_count += 1
+
+        accepted_match = ACCEPTED_PACKET_RE.search(line)
+        if accepted_match:
+            accepted_packet_count += 1
+            if bool_from_group(accepted_match.group("hdr")):
+                accepted_hdr_count += 1
+            if accepted_match.group("transfer") != "ITU_R_709_2":
+                accepted_non709_transfer_count += 1
+            accepted_sequences.append(int(accepted_match.group("seq")))
+
+        stats_match = STATS_RE.search(line)
+        if stats_match:
+            max_stats_frames = max(max_stats_frames, int(stats_match.group("frames")))
+            max_stats_queued = max(max_stats_queued, int(stats_match.group("queued")))
+            max_stats_dropped = max(max_stats_dropped, int(stats_match.group("dropped")))
+            if bool_from_group(stats_match.group("producer_active")):
+                producer_active_count += 1
+            last_callback_latency = float(stats_match.group("last_callback_latency"))
+            if last_callback_latency >= 0:
+                stats_last_callback_latencies.append(last_callback_latency)
 
     return {
         "fps": int(publish_match.group("fps")),
@@ -134,11 +213,32 @@ def parse_runtime_log(path: Path) -> dict[str, float | bool | int] | None:
         "effective_hdr_metadata": bool_from_group(publish_match.group("effective_hdr_metadata")),
         "hdr_intent": hdr_intent,
         "callback_latencies": callback_latencies,
+        "callback_spike_latencies": callback_spike_latencies,
         "saturation_count": saturation_count,
         "overflow_count": overflow_count,
         "callback_spike_count": callback_spike_count,
         "duplicate_payload_count": duplicate_payload_count,
         "restart_count": restart_count,
+        "no_advance_count": no_advance_count,
+        "initial_idr_wait_count": initial_idr_wait_count,
+        "callback_count": callback_count,
+        "accepted_packet_count": accepted_packet_count,
+        "accepted_hdr_count": accepted_hdr_count,
+        "accepted_non709_transfer_count": accepted_non709_transfer_count,
+        "accepted_sequence_span": (
+            max(accepted_sequences) - min(accepted_sequences)
+            if len(accepted_sequences) >= 2
+            else 0
+        ),
+        "max_stats_frames": max_stats_frames,
+        "max_stats_queued": max_stats_queued,
+        "max_stats_dropped": max_stats_dropped,
+        "producer_active_count": producer_active_count,
+        "stats_last_callback_latencies": stats_last_callback_latencies,
+        "session_duration_seconds": max(
+            (end_time - publish_time).total_seconds(),
+            0.0,
+        ) if publish_time and end_time else 0.0,
     }
 
 
@@ -151,14 +251,28 @@ def score_runtime(metrics: dict[str, float | bool | int], args: argparse.Namespa
     effective_hdr_metadata = bool(metrics["effective_hdr_metadata"])
     hdr_intent = bool(metrics["hdr_intent"])
     callback_latencies = list(metrics["callback_latencies"])
+    callback_spike_latencies = list(metrics["callback_spike_latencies"])
     saturation_count = int(metrics["saturation_count"])
     overflow_count = int(metrics["overflow_count"])
     callback_spike_count = int(metrics["callback_spike_count"])
     duplicate_payload_count = int(metrics["duplicate_payload_count"])
     restart_count = int(metrics["restart_count"])
+    no_advance_count = int(metrics["no_advance_count"])
+    initial_idr_wait_count = int(metrics["initial_idr_wait_count"])
+    callback_count = int(metrics["callback_count"])
+    accepted_packet_count = int(metrics["accepted_packet_count"])
+    accepted_hdr_count = int(metrics["accepted_hdr_count"])
+    accepted_non709_transfer_count = int(metrics["accepted_non709_transfer_count"])
+    accepted_sequence_span = int(metrics["accepted_sequence_span"])
+    max_stats_frames = int(metrics["max_stats_frames"])
+    max_stats_queued = int(metrics["max_stats_queued"])
+    max_stats_dropped = int(metrics["max_stats_dropped"])
+    producer_active_count = int(metrics["producer_active_count"])
+    stats_last_callback_latencies = list(metrics["stats_last_callback_latencies"])
+    session_duration_seconds = float(metrics["session_duration_seconds"])
 
     components: dict[str, float] = {}
-    components["fps"] = 15.0 * min(fps / max(args.target_fps, 1), 1.0)
+    components["fps"] = 10.0 * min(fps / max(args.target_fps, 1), 1.0)
     dimensions_match = width == args.target_width and height == args.target_height
     components["resolution"] = 10.0 if dimensions_match else 0.0
 
@@ -171,22 +285,60 @@ def score_runtime(metrics: dict[str, float | bool | int], args: argparse.Namespa
     else:
         components["battery_policy"] = 0.0
 
-    if callback_latencies:
-        p95 = statistics.quantiles(callback_latencies, n=20)[-1] if len(callback_latencies) >= 2 else callback_latencies[0]
-        components["latency"] = max(0.0, 15.0 - max(0.0, p95 - 12.0) * 0.5)
+    runtime_latency_samples = callback_latencies + callback_spike_latencies + stats_last_callback_latencies
+    if runtime_latency_samples:
+        p95 = quantile95(runtime_latency_samples)
+        components["latency"] = max(0.0, 20.0 - max(0.0, p95 - 12.0) * 0.6)
     else:
         components["latency"] = 0.0
 
-    components["stability_penalty"] = -(
-        saturation_count * 0.5
-        + overflow_count * 2.0
-        + callback_spike_count * 1.5
+    progress_frames = max(callback_count, max_stats_frames)
+    if session_duration_seconds > 0:
+        expected_frames = max(session_duration_seconds * max(args.target_fps, 1), 1.0)
+        progress_ratio = min(progress_frames / expected_frames, 1.0)
+    else:
+        progress_ratio = 0.0
+
+    progression_bonus = 0.0
+    if callback_count > 0:
+        progression_bonus += 20.0 * min(progress_ratio * 4.0, 1.0)
+    elif progress_frames > 1:
+        progression_bonus += 8.0 * min(progress_ratio * 2.0, 1.0)
+
+    if accepted_packet_count > 0 and callback_count == 0:
+        progression_bonus = 0.0
+
+    if accepted_packet_count > 0 and accepted_sequence_span > 0:
+        progression_bonus += 5.0
+
+    components["progression"] = min(progression_bonus, 25.0)
+
+    thrash_penalty = (
+        saturation_count * 0.8
+        + overflow_count * 2.5
+        + callback_spike_count * 1.0
         + duplicate_payload_count * 2.0
-        + restart_count * 3.0
+        + restart_count * 5.0
+        + no_advance_count * 8.0
+        + initial_idr_wait_count * 4.0
     )
+    if accepted_packet_count > 1:
+        thrash_penalty += (accepted_packet_count - 1) * 1.25
+    if callback_count == 0 and accepted_packet_count > 0:
+        thrash_penalty += 20.0
+    if max_stats_frames <= 1 and session_duration_seconds >= 1.0:
+        thrash_penalty += 15.0
+    if max_stats_queued > 0:
+        thrash_penalty += max_stats_queued * 1.5
+    if max_stats_dropped > 0:
+        thrash_penalty += max_stats_dropped * 1.5
+    if producer_active_count > 0 and progress_frames == 0:
+        thrash_penalty += 10.0
+
+    components["stability_penalty"] = -thrash_penalty
 
     total = sum(components.values())
-    total = max(0.0, min(total, 40.0))
+    total = max(0.0, min(total, 100.0))
     return total, components
 
 
@@ -214,8 +366,11 @@ def main() -> int:
             print("RUNTIME_SCORE=0.00")
             print("RUNTIME_COMPONENT_NOTE=missing-or-no-session")
 
-    total = synthetic_score + runtime_score
-    total = max(0.0, min(total, 140.0))
+    if args.log and runtime_components:
+        total = runtime_score + (synthetic_score * 0.25)
+    else:
+        total = synthetic_score
+    total = max(0.0, min(total, 110.0))
     print(f"AUTORESEARCH_SCORE={total:.2f}")
     return 0
 

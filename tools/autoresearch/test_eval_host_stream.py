@@ -1,4 +1,5 @@
 import importlib.util
+import types
 import tempfile
 import unittest
 from pathlib import Path
@@ -30,6 +31,8 @@ class EvalHostStreamTests(unittest.TestCase):
         self.assertEqual(metrics["effective_transfer"], "pq")
         self.assertTrue(metrics["effective_hdr_metadata"])
         self.assertTrue(metrics["hdr_intent"])
+        self.assertEqual(metrics["callback_count"], 1)
+        self.assertEqual(metrics["accepted_packet_count"], 0)
 
     def test_parse_runtime_log_counts_saturation_and_overflow(self) -> None:
         log_contents = """
@@ -48,6 +51,64 @@ class EvalHostStreamTests(unittest.TestCase):
         self.assertEqual(metrics["saturation_count"], 1)
         self.assertEqual(metrics["overflow_count"], 1)
         self.assertEqual(metrics["callback_spike_count"], 1)
+
+    def test_score_runtime_rewards_progressing_session(self) -> None:
+        log_contents = """
+[2026-04-04 13:31:00.207]: Info: Publishing macOS bridge capture request displayID=182 codec=hevc streaming-profile=balanced queue=auto fps=120 size=3512x2290 requested-transport=sdr-base-hdr-overlay negotiated-transport=sdr-base-hdr-overlay hdr-stream=false sink-gamut=display-p3 sink-transfer=pq current-edr-headroom=1.2 potential-edr-headroom=16 current-peak-nits=120 potential-peak-nits=1600 effective-gamut=display-p3 effective-transfer=pq supports-frame-gated-hdr=true supports-hdr-tile-overlay=true supports-per-frame-hdr-metadata=true effective-hdr-metadata=true
+[2026-04-04 13:31:00.300]: Info: External macOS encoded ingress stats: frames=12 queued=0 dropped=0 last-seq=12 producer-active=true last-seq-delta=1 last-display-delta-ms=8.3 last-packet-ts-delta-ms=8.3 last-callback-latency-ms=8.2
+[2026-04-04 13:31:00.308]: Info: Mac bridge frame callback display-id=182 codec=hevc seq=10 seq-delta=1 display-time=1 display-delta-ms=8.0 callback-latency-ms=8.9 key=false hdr=true hdr-primaries=p3 hdr-transfer=pq hdr-matrix=709 hdr-mastering=true hdr-cll=true target-fps=120 target-size=3512x2290 queue=q1 capture-emitted=10 capture-dropped=0 capture-processing-failures=0 capture-restarts=0 capture-running=true capture-last-error=n/a capture-min-callback-latency-ms=8.1 capture-max-callback-latency-ms=9.0 capture-vt=n/a core-frame-count=10 core-queued=0 core-dropped=0 core-last-seq=10
+[2026-04-04 13:31:00.316]: Info: Mac bridge frame callback display-id=182 codec=hevc seq=11 seq-delta=1 display-time=2 display-delta-ms=8.1 callback-latency-ms=9.1 key=false hdr=true hdr-primaries=p3 hdr-transfer=pq hdr-matrix=709 hdr-mastering=true hdr-cll=true target-fps=120 target-size=3512x2290 queue=q1 capture-emitted=11 capture-dropped=0 capture-processing-failures=0 capture-restarts=0 capture-running=true capture-last-error=n/a capture-min-callback-latency-ms=8.1 capture-max-callback-latency-ms=9.1 capture-vt=n/a core-frame-count=11 core-queued=0 core-dropped=0 core-last-seq=11
+[2026-04-04 13:31:00.324]: Info: Mac bridge frame callback display-id=182 codec=hevc seq=12 seq-delta=1 display-time=3 display-delta-ms=8.3 callback-latency-ms=9.3 key=false hdr=true hdr-primaries=p3 hdr-transfer=pq hdr-matrix=709 hdr-mastering=true hdr-cll=true target-fps=120 target-size=3512x2290 queue=q1 capture-emitted=12 capture-dropped=0 capture-processing-failures=0 capture-restarts=0 capture-running=true capture-last-error=n/a capture-min-callback-latency-ms=8.1 capture-max-callback-latency-ms=9.3 capture-vt=n/a core-frame-count=12 core-queued=0 core-dropped=0 core-last-seq=12
+"""
+        with tempfile.NamedTemporaryFile("w+", delete=False) as handle:
+            handle.write(log_contents)
+            handle.flush()
+            path = Path(handle.name)
+
+        metrics = MODULE.parse_runtime_log(path)
+        assert metrics is not None
+        args = types.SimpleNamespace(
+            target_fps=120,
+            target_width=3512,
+            target_height=2290,
+            battery_policy="adaptive-hdr",
+        )
+        score, components = MODULE.score_runtime(metrics, args)
+        self.assertGreater(score, 50.0)
+        self.assertGreater(components["progression"], 0.0)
+        self.assertGreater(components["latency"], 0.0)
+
+    def test_score_runtime_rejects_thrashing_session_without_callbacks(self) -> None:
+        log_contents = """
+[2026-04-04 13:58:11.205]: Info: Publishing macOS bridge capture request displayID=183 codec=hevc streaming-profile=balanced queue=auto fps=120 size=3512x2290 requested-transport=sdr-base-hdr-overlay negotiated-transport=sdr-base-hdr-overlay hdr-stream=false sink-gamut=display-p3 sink-transfer=pq current-edr-headroom=3.2 potential-edr-headroom=16 current-peak-nits=320 potential-peak-nits=1600 effective-gamut=display-p3 effective-transfer=pq supports-frame-gated-hdr=true supports-hdr-tile-overlay=true supports-per-frame-hdr-metadata=true effective-hdr-metadata=true
+[2026-04-04 13:58:19.148]: Info: External macOS encoded ingress stats: frames=0 queued=0 dropped=0 last-seq=0 producer-active=true last-seq-delta=0 last-display-delta-ms=-1 last-packet-ts-delta-ms=-1 last-callback-latency-ms=-1
+[2026-04-04 13:58:19.148]: Warning: External macOS encoded ingress has not advanced frame delivery in the last 3s
+[2026-04-04 13:58:20.143]: Info: External macOS encoded ingress first accepted packet codec=hevc idr=true bridge-key=true samplebuffer-idr=true hdr=false encoded=3512x2290 primaries=P3_D65 transfer=ITU_R_709_2 matrix=ITU_R_709_2 mastering=false cll=false sample-payload-mastering=false sample-payload-cll=false packet-mastering=false packet-cll=false seq=20818008916218 display-time=20818009139607
+[2026-04-04 13:58:20.470]: Warning: External macOS encoded ingress callback latency spike seq=20818008916219 callback-latency-ms=91.3985 threshold-ms=80 packet-ts-delta-ms=1.46
+[2026-04-04 13:58:20.471]: Warning: External macOS encoded ingress dropped a frame message=Source frame dropped before processing because the capture processing queue is saturated.
+[2026-04-04 13:58:20.472]: Warning: External macOS encoded ingress dropped a frame message=core-forwarder-overflow
+[2026-04-04 13:58:20.473]: Warning: External macOS encoded ingress is restarting the capture session after repeated queue saturation events run=3
+[2026-04-04 13:58:20.474]: Warning: External macOS encoded ingress is waiting for an initial IDR packet before forwarding to the client
+[2026-04-04 13:58:20.700]: Info: External macOS encoded ingress final stats: frames=1 queued=0 dropped=0 last-seq=20818008916218 producer-active=true last-seq-delta=0 last-display-delta-ms=-1 last-packet-ts-delta-ms=-1 last-callback-latency-ms=91.4
+"""
+        with tempfile.NamedTemporaryFile("w+", delete=False) as handle:
+            handle.write(log_contents)
+            handle.flush()
+            path = Path(handle.name)
+
+        metrics = MODULE.parse_runtime_log(path)
+        assert metrics is not None
+        args = types.SimpleNamespace(
+            target_fps=120,
+            target_width=3512,
+            target_height=2290,
+            battery_policy="adaptive-hdr",
+        )
+        score, components = MODULE.score_runtime(metrics, args)
+        self.assertLess(score, 15.0)
+        self.assertEqual(metrics["callback_count"], 0)
+        self.assertGreater(metrics["accepted_packet_count"], 0)
+        self.assertLessEqual(components["progression"], 0.0)
 
 
 if __name__ == "__main__":
