@@ -23,6 +23,7 @@ struct ProbeMetrics {
   uint64_t hdrFrames = 0;
   bool firstFrameSeen = false;
   bool firstFrameHDR = false;
+  double startupMilliseconds = -1.0;
   uint64_t restartEvents = 0;
   uint64_t failureEvents = 0;
   uint64_t dropEvents = 0;
@@ -161,14 +162,36 @@ int main(int argc, const char *argv[]) {
     }
 
     ProbeMetrics metrics;
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
-    while (std::chrono::steady_clock::now() < deadline) {
+    const auto captureStartTime = std::chrono::steady_clock::now();
+    const auto startupDeadline = captureStartTime + std::chrono::seconds(10);
+    while (std::chrono::steady_clock::now() < startupDeadline && !metrics.firstFrameSeen) {
       drainForwardedFrames(controller, metrics);
       drainForwardedEvents(controller, metrics);
+      if (metrics.firstFrameSeen && metrics.startupMilliseconds < 0.0) {
+        metrics.startupMilliseconds = std::chrono::duration<double, std::milli>(
+          std::chrono::steady_clock::now() - captureStartTime
+        ).count();
+        break;
+      }
       std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
+
+    if (metrics.firstFrameSeen) {
+      const auto sampleDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1000);
+      while (std::chrono::steady_clock::now() < sampleDeadline) {
+        drainForwardedFrames(controller, metrics);
+        drainForwardedEvents(controller, metrics);
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      }
+    }
+
     drainForwardedFrames(controller, metrics);
     drainForwardedEvents(controller, metrics);
+    if (metrics.firstFrameSeen && metrics.startupMilliseconds < 0.0) {
+      metrics.startupMilliseconds = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - captureStartTime
+      ).count();
+    }
 
     LumenCoreEncodedCaptureIngressSnapshot snapshot =
       LumenMacBridgeControllerCopyCoreForwardingSnapshot(controller);
@@ -190,6 +213,7 @@ int main(int argc, const char *argv[]) {
     std::printf("AUTORESEARCH_RUNTIME_PROBE_FRAMES=%llu\n", metrics.frames);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_HDR_FRAMES=%llu\n", metrics.hdrFrames);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_FIRST_FRAME_HDR=%d\n", metrics.firstFrameHDR ? 1 : 0);
+    std::printf("AUTORESEARCH_RUNTIME_PROBE_STARTUP_MS=%.3f\n", metrics.startupMilliseconds);
     std::printf(
       "AUTORESEARCH_RUNTIME_PROBE_AVG_CALLBACK_LATENCY_MS=%.3f\n",
       averageLatency(metrics.callbackLatencies)

@@ -22,6 +22,7 @@ AUTORESEARCH_RUNTIME_PROBE_FPS=120
 AUTORESEARCH_RUNTIME_PROBE_FRAMES=16
 AUTORESEARCH_RUNTIME_PROBE_HDR_FRAMES=16
 AUTORESEARCH_RUNTIME_PROBE_FIRST_FRAME_HDR=1
+AUTORESEARCH_RUNTIME_PROBE_STARTUP_MS=742.500
 AUTORESEARCH_RUNTIME_PROBE_AVG_CALLBACK_LATENCY_MS=8.700
 AUTORESEARCH_RUNTIME_PROBE_MAX_CALLBACK_LATENCY_MS=10.300
 AUTORESEARCH_RUNTIME_PROBE_RESTART_EVENTS=0
@@ -37,6 +38,7 @@ AUTORESEARCH_RUNTIME_PROBE_LAST_HDR_SIGNALLED=1
         self.assertEqual(metrics["frames"], 16)
         self.assertEqual(metrics["hdr_frames"], 16)
         self.assertTrue(metrics["first_frame_hdr"])
+        self.assertEqual(metrics["startup_ms"], 742.5)
         self.assertEqual(metrics["last_seq"], 20862881947186)
 
     def test_score_runtime_probe_rewards_live_progression(self) -> None:
@@ -48,6 +50,7 @@ AUTORESEARCH_RUNTIME_PROBE_LAST_HDR_SIGNALLED=1
             "frames": 24,
             "hdr_frames": 24,
             "first_frame_hdr": True,
+            "startup_ms": 640.0,
             "avg_callback_latency_ms": 8.5,
             "max_callback_latency_ms": 10.0,
             "restart_events": 0,
@@ -75,6 +78,7 @@ AUTORESEARCH_RUNTIME_PROBE_LAST_HDR_SIGNALLED=1
             "frames": 0,
             "hdr_frames": 0,
             "first_frame_hdr": False,
+            "startup_ms": 0.0,
             "avg_callback_latency_ms": 0.0,
             "max_callback_latency_ms": 0.0,
             "restart_events": 0,

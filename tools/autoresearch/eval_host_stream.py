@@ -241,6 +241,7 @@ def parse_runtime_probe_output(output: str) -> dict[str, float | bool | int] | N
         "frames": as_int("FRAMES"),
         "hdr_frames": as_int("HDR_FRAMES"),
         "first_frame_hdr": as_bool("FIRST_FRAME_HDR"),
+        "startup_ms": as_float("STARTUP_MS"),
         "avg_callback_latency_ms": as_float("AVG_CALLBACK_LATENCY_MS"),
         "max_callback_latency_ms": as_float("MAX_CALLBACK_LATENCY_MS"),
         "restart_events": as_int("RESTART_EVENTS"),
@@ -268,6 +269,7 @@ def score_runtime_probe(
     frames = int(metrics["frames"])
     hdr_frames = int(metrics["hdr_frames"])
     first_frame_hdr = bool(metrics["first_frame_hdr"])
+    startup_ms = float(metrics.get("startup_ms", 0.0))
     avg_latency = float(metrics["avg_callback_latency_ms"])
     max_latency = float(metrics["max_callback_latency_ms"])
     restart_events = int(metrics["restart_events"])
@@ -286,8 +288,13 @@ def score_runtime_probe(
     hdr_frames_ok = hdr_frames > 0 and (first_frame_hdr or last_hdr_signalled)
     components["partial_hdr"] = 15.0 if hdr_frames_ok else 0.0
 
+    if startup_ms > 0:
+        components["startup"] = max(0.0, 15.0 - max(0.0, startup_ms - 800.0) / 300.0)
+    else:
+        components["startup"] = 0.0
+
     if avg_latency > 0 or max_latency > 0:
-        components["latency"] = max(0.0, 20.0 - max(0.0, max_latency - 12.0) * 0.6)
+        components["latency"] = max(0.0, 15.0 - max(0.0, max_latency - 12.0) * 0.6)
     else:
         components["latency"] = 0.0
 
