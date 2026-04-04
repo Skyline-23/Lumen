@@ -335,6 +335,16 @@ namespace video {
       return std::max(80.0, frame_interval_ms * 6.0);
     }
 
+    int saturation_restart_threshold(const config_t &config) {
+      if (config.framerate >= 110) {
+        return 24;
+      }
+      if (config.framerate >= 90) {
+        return 12;
+      }
+      return 3;
+    }
+
     void refresh_external_capture_metadata(
       safe::mail_t mail,
       const config_t &config,
@@ -3962,13 +3972,15 @@ namespace video {
                                  << " message="sv << message;
               if (message.find("capture processing queue is saturated"sv) != std::string_view::npos) {
                 ++saturated_drop_event_run;
-                arm_wait_for_next_idr("capture-queue-saturated");
+                if (config.framerate < 110) {
+                  arm_wait_for_next_idr("capture-queue-saturated");
+                }
               } else {
                 saturated_drop_event_run = 0;
               }
               if (message == "core-forwarder-overflow"sv) {
                 arm_wait_for_next_idr("core-forwarder-overflow");
-              } else if (saturated_drop_event_run >= 3) {
+              } else if (saturated_drop_event_run >= saturation_restart_threshold(config)) {
                 BOOST_LOG(warning) << "External macOS encoded ingress is restarting the capture session after repeated queue saturation events"sv
                                    << " run="sv << saturated_drop_event_run;
                 restart_capture_session("capture-queue-saturated");
