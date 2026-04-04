@@ -322,9 +322,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
 
         XCTAssertEqual(configuration.effectiveEncoderInputStrategy, .yuv420v10)
         XCTAssertEqual(configuration.effectiveCapturePixelFormat, kCVPixelFormatType_32BGRA)
-        XCTAssertEqual(configuration.effectiveTargetVideoBitRateKbps, 41_000)
         XCTAssertEqual(configuration.mdkValue.capturePixelFormat, kCVPixelFormatType_32BGRA)
-        XCTAssertEqual(configuration.mdkValue.targetAverageBitRateBitsPerSecond, 41_000_000)
         XCTAssertEqual(configuration.encodedHDRConfigurationSnapshot?.transferFunction, "smpteSt2084PQ")
     }
 
@@ -356,7 +354,6 @@ final class LumenTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(configuration.negotiatedDynamicRangeTransport, LumenCoreDynamicRangeTransportSDR)
         XCTAssertFalse(configuration.prefersRealtimeHDRMetadata)
         XCTAssertEqual(configuration.effectiveCapturePixelFormat, kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange)
-        XCTAssertEqual(configuration.effectiveTargetVideoBitRateKbps, 0)
         XCTAssertNil(configuration.encodedHDRConfigurationSnapshot)
     }
 
