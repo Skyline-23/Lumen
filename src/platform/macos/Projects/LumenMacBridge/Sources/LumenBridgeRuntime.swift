@@ -636,10 +636,11 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
             preprocessStrategy: effectivePreprocessStrategy.mdkValue,
             targetFrameRate: effectiveTargetFrameRate,
             targetAverageBitRateBitsPerSecond: targetVideoBitRateKbps > 0 ? targetVideoBitRateKbps * 1_000 : nil,
-            deliveryMode: .callbackOnly,
+            deliveryMode: effectiveDeliveryMode,
             capturePixelFormat: capturePixelFormat,
             encoderInputStrategy: effectiveEncoderInputStrategy.mdkValue,
-            hdrConfiguration: encodedColorConfiguration
+            hdrConfiguration: encodedColorConfiguration,
+            backpressurePolicy: effectiveBackpressurePolicy
         )
     }
 
@@ -679,6 +680,37 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         return codec.mdkValue.preferredCapturePixelFormat
     }
 
+    private var effectiveDeliveryMode: MDKEncodedCaptureDeliveryMode {
+        if shouldUseMultiplexedOverlayDelivery {
+            return .multiplexed
+        }
+
+        return .callbackOnly
+    }
+
+    public var effectiveDeliveryModeName: String {
+        effectiveDeliveryMode.rawValue
+    }
+
+    private var effectiveBackpressurePolicy: MDKEncodedCaptureBackpressurePolicy {
+        if shouldUseMultiplexedOverlayDelivery {
+            return .dropOldest(limit: 2)
+        }
+
+        return .dropOldest(limit: 4)
+    }
+
+    public var effectiveBackpressurePolicySummary: String {
+        switch effectiveBackpressurePolicy {
+        case .unbounded:
+            return "unbounded"
+        case .dropOldest(let limit):
+            return "drop-oldest:\(limit)"
+        case .dropNewest(let limit):
+            return "drop-newest:\(limit)"
+        }
+    }
+
     private var effectivePixelCount: Int? {
         guard let width = requestedWidth, let height = requestedHeight else {
             return nil
@@ -704,6 +736,13 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     }
 
     private var shouldPreferBGRAOverlayCaptureBackend: Bool {
+        negotiatedDynamicRangeTransport == LumenCoreDynamicRangeTransportSDRBaseHDROverlay &&
+            codec == .hevc &&
+            effectiveTargetFrameRate >= 120 &&
+            usesHighResolutionWorkload
+    }
+
+    private var shouldUseMultiplexedOverlayDelivery: Bool {
         negotiatedDynamicRangeTransport == LumenCoreDynamicRangeTransportSDRBaseHDROverlay &&
             codec == .hevc &&
             effectiveTargetFrameRate >= 120 &&

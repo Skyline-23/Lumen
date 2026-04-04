@@ -323,6 +323,8 @@ final class LumenTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(configuration.effectiveEncoderInputStrategy, .yuv420v10)
         XCTAssertEqual(configuration.effectiveCapturePixelFormat, kCVPixelFormatType_32BGRA)
         XCTAssertEqual(configuration.mdkValue.capturePixelFormat, kCVPixelFormatType_32BGRA)
+        XCTAssertEqual(configuration.effectiveDeliveryModeName, "multiplexed")
+        XCTAssertEqual(configuration.effectiveBackpressurePolicySummary, "drop-oldest:2")
         XCTAssertEqual(configuration.encodedHDRConfigurationSnapshot?.transferFunction, "smpteSt2084PQ")
     }
 
@@ -354,6 +356,8 @@ final class LumenTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(configuration.negotiatedDynamicRangeTransport, LumenCoreDynamicRangeTransportSDR)
         XCTAssertFalse(configuration.prefersRealtimeHDRMetadata)
         XCTAssertEqual(configuration.effectiveCapturePixelFormat, kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange)
+        XCTAssertEqual(configuration.effectiveDeliveryModeName, "callback-only")
+        XCTAssertEqual(configuration.effectiveBackpressurePolicySummary, "drop-oldest:4")
         XCTAssertNil(configuration.encodedHDRConfigurationSnapshot)
     }
 
