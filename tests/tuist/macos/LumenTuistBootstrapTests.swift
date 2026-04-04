@@ -348,8 +348,8 @@ final class LumenTuistBootstrapTests: XCTestCase {
         )
 
         XCTAssertFalse(configuration.usesHDRTransport)
-        XCTAssertEqual(configuration.negotiatedDynamicRangeTransport, LumenCoreDynamicRangeTransportSDRBaseHDROverlay)
-        XCTAssertTrue(configuration.prefersRealtimeHDRMetadata)
+        XCTAssertEqual(configuration.negotiatedDynamicRangeTransport, LumenCoreDynamicRangeTransportSDR)
+        XCTAssertFalse(configuration.prefersRealtimeHDRMetadata)
     }
 
     func testAutoresearchStreamScoringSnapshot() {

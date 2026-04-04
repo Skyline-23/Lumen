@@ -496,17 +496,35 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         lumenDynamicRangeTransportUsesHDR(negotiatedDynamicRangeTransport)
     }
 
+    public var sinkPrefersHDRPresentation: Bool {
+        switch resolvedDisplayTransfer {
+        case .pq, .hlg:
+            return true
+        case .sdr, .unknown:
+            return false
+        }
+    }
+
     public var negotiatedDynamicRangeTransport: LumenCoreDynamicRangeTransport {
         switch sinkRequest.dynamicRangeTransport {
         case LumenCoreDynamicRangeTransportFullFrameHDR:
+            guard sinkPrefersHDRPresentation else {
+                return LumenCoreDynamicRangeTransportSDR
+            }
             return codec == .h264 ? LumenCoreDynamicRangeTransportSDR : LumenCoreDynamicRangeTransportFullFrameHDR
         case LumenCoreDynamicRangeTransportFrameGatedHDR:
+            guard sinkPrefersHDRPresentation else {
+                return LumenCoreDynamicRangeTransportSDR
+            }
             guard codec != .h264,
                   sinkRequest.capability.supportsFrameGatedHDR else {
                 return LumenCoreDynamicRangeTransportSDR
             }
             return LumenCoreDynamicRangeTransportFrameGatedHDR
         case LumenCoreDynamicRangeTransportSDRBaseHDROverlay:
+            guard sinkPrefersHDRPresentation else {
+                return LumenCoreDynamicRangeTransportSDR
+            }
             guard codec != .h264 else {
                 return LumenCoreDynamicRangeTransportSDR
             }
