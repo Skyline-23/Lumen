@@ -321,6 +321,9 @@ final class LumenTuistBootstrapTests: XCTestCase {
         )
 
         XCTAssertEqual(configuration.effectiveEncoderInputStrategy, .yuv420v10)
+        XCTAssertEqual(configuration.effectiveCapturePixelFormat, kCVPixelFormatType_32BGRA)
+        XCTAssertEqual(configuration.mdkValue.capturePixelFormat, kCVPixelFormatType_32BGRA)
+        XCTAssertEqual(configuration.encodedHDRConfigurationSnapshot?.transferFunction, "smpteSt2084PQ")
     }
 
     func testBridgeDoesNotForceHDRTransportForBatterySavingSDRMode() {
@@ -350,6 +353,8 @@ final class LumenTuistBootstrapTests: XCTestCase {
         XCTAssertFalse(configuration.usesHDRTransport)
         XCTAssertEqual(configuration.negotiatedDynamicRangeTransport, LumenCoreDynamicRangeTransportSDR)
         XCTAssertFalse(configuration.prefersRealtimeHDRMetadata)
+        XCTAssertEqual(configuration.effectiveCapturePixelFormat, kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange)
+        XCTAssertNil(configuration.encodedHDRConfigurationSnapshot)
     }
 
     func testAutoresearchStreamScoringSnapshot() {
