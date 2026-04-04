@@ -256,7 +256,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
 
         XCTAssertEqual(LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q2), 2)
         XCTAssertEqual(LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: auto), 2)
-        XCTAssertEqual(LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q4), 2)
+        XCTAssertEqual(LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q4), 3)
         XCTAssertEqual(LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q2NinetyFps), 2)
         XCTAssertEqual(LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q2SixtyFps), 2)
         XCTAssertEqual(LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q2ThirtyFps), 2)

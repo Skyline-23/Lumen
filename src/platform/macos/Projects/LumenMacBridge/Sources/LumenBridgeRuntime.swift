@@ -1280,7 +1280,7 @@ public actor LumenBridgeRuntime {
         let targetFrameRate = configuration.effectiveTargetFrameRate
 
         if targetFrameRate >= 120 {
-            return 2
+            return min(max(queueDepthReserve + hdrMetadataSlack, 2), 3)
         }
 
         if targetFrameRate >= 90 {
