@@ -11,8 +11,7 @@ let baseSettings: SettingsDictionary = [
     "SWIFT_VERSION": "5.0"
 ]
 
-let macDisplayKitURL = "https://github.com/Skyline-23/MacDisplayKit.git"
-let macDisplayKitRevision = "3525b1f79ba6f25842f3b337704c011476ef1d94"
+let localMacDisplayKitPath: Path = "/Users/skyline23/Downloads/MacDisplayKit"
 
 let repoRoot = "$(SRCROOT)/../../.."
 let buildDepsRoot = "\(repoRoot)/third-party/build-deps/dist/Darwin-arm64"
@@ -218,7 +217,7 @@ let appAssetsScript = TargetScript.post(
 let project = Project(
     name: "Lumen",
     packages: [
-        .package(url: macDisplayKitURL, .revision(macDisplayKitRevision))
+        .package(path: localMacDisplayKitPath)
     ],
     settings: .settings(base: baseSettings),
     targets: [
