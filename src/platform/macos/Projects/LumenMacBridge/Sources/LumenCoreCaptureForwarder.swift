@@ -112,7 +112,7 @@ final class LumenCoreCaptureForwarder: @unchecked Sendable {
         outputCallbackLatencyMilliseconds: Double? = nil,
         isKeyFrame: Bool,
         isHDRSignaled: Bool,
-        isReplay: Bool
+        isReplay: Bool = false
     ) {
         LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
             handle,
