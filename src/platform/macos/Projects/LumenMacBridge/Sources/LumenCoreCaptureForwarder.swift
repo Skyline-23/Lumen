@@ -100,7 +100,7 @@ final class LumenCoreCaptureForwarder: @unchecked Sendable {
             outputCallbackLatencyMilliseconds: frame.outputCallbackLatencyMilliseconds,
             isKeyFrame: frame.isKeyFrame,
             isHDRSignaled: frame.isHDRSignaled,
-            isReplay: frame.isReplay
+            isReplay: false
         )
     }
 
