@@ -100,6 +100,7 @@ namespace {
     double output_callback_latency_milliseconds = 0.0;
     bool is_key_frame = false;
     bool is_hdr_signaled = false;
+    bool is_replay = false;
 
     std::size_t payload_size() const {
       if (!sample_buffer.value) {
@@ -125,6 +126,7 @@ namespace {
       record.output_callback_latency_milliseconds = output_callback_latency_milliseconds;
       record.is_key_frame = is_key_frame;
       record.is_hdr_signaled = is_hdr_signaled;
+      record.is_replay = is_replay;
       return record;
     }
   };
@@ -298,6 +300,7 @@ namespace lumen::core {
     double output_callback_latency_milliseconds,
     bool is_key_frame,
     bool is_hdr_signaled,
+    bool is_replay,
     CMSampleBufferRef sample_buffer
   ) {
     LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
@@ -309,6 +312,7 @@ namespace lumen::core {
       output_callback_latency_milliseconds,
       is_key_frame,
       is_hdr_signaled,
+      is_replay,
       sample_buffer
     );
   }
@@ -465,6 +469,7 @@ void LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
   double output_callback_latency_milliseconds,
   bool is_key_frame,
   bool is_hdr_signaled,
+  bool is_replay,
   CMSampleBufferRef sample_buffer
 ) {
   if (!ingress) {
@@ -480,6 +485,7 @@ void LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
   frame.output_callback_latency_milliseconds = output_callback_latency_milliseconds;
   frame.is_key_frame = is_key_frame;
   frame.is_hdr_signaled = is_hdr_signaled;
+  frame.is_replay = is_replay;
 
   std::scoped_lock lock(ingress->mutex);
   ingress->frame_count += 1;

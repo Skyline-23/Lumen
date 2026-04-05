@@ -139,6 +139,7 @@ typedef struct LumenCoreEncodedCaptureFrameRecord {
   double output_callback_latency_milliseconds;
   bool is_key_frame;
   bool is_hdr_signaled;
+  bool is_replay;
 } LumenCoreEncodedCaptureFrameRecord;
 
 typedef struct LumenCoreEncodedCaptureEventRecord {
@@ -175,6 +176,7 @@ void LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
   double output_callback_latency_milliseconds,
   bool is_key_frame,
   bool is_hdr_signaled,
+  bool is_replay,
   CMSampleBufferRef sample_buffer
 );
 void LumenCoreEncodedCaptureIngressConsumeEvent(

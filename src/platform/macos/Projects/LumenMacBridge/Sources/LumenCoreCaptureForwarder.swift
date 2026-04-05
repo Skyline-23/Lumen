@@ -45,6 +45,7 @@ public struct LumenBridgeCoreDrainedFrame: @unchecked Sendable {
     public let outputCallbackLatencyMilliseconds: Double?
     public let isKeyFrame: Bool
     public let isHDRSignaled: Bool
+    public let isReplay: Bool
     public let sampleBuffer: CMSampleBuffer
 }
 
@@ -98,7 +99,8 @@ final class LumenCoreCaptureForwarder: @unchecked Sendable {
             sourceDisplayTime: frame.sourceDisplayTime,
             outputCallbackLatencyMilliseconds: frame.outputCallbackLatencyMilliseconds,
             isKeyFrame: frame.isKeyFrame,
-            isHDRSignaled: frame.isHDRSignaled
+            isHDRSignaled: frame.isHDRSignaled,
+            isReplay: frame.isReplay
         )
     }
 
@@ -109,7 +111,8 @@ final class LumenCoreCaptureForwarder: @unchecked Sendable {
         sourceDisplayTime: UInt64,
         outputCallbackLatencyMilliseconds: Double? = nil,
         isKeyFrame: Bool,
-        isHDRSignaled: Bool
+        isHDRSignaled: Bool,
+        isReplay: Bool
     ) {
         LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
             handle,
@@ -120,6 +123,7 @@ final class LumenCoreCaptureForwarder: @unchecked Sendable {
             outputCallbackLatencyMilliseconds ?? 0,
             isKeyFrame,
             isHDRSignaled,
+            isReplay,
             sampleBuffer
         )
     }
@@ -171,6 +175,7 @@ final class LumenCoreCaptureForwarder: @unchecked Sendable {
             outputCallbackLatencyMilliseconds: record.has_output_callback_latency_milliseconds ? record.output_callback_latency_milliseconds : nil,
             isKeyFrame: record.is_key_frame,
             isHDRSignaled: record.is_hdr_signaled,
+            isReplay: record.is_replay,
             sampleBuffer: sampleBuffer.takeRetainedValue()
         )
     }

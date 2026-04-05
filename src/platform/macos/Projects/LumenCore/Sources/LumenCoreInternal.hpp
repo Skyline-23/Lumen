@@ -34,6 +34,7 @@ namespace lumen::core {
       double output_callback_latency_milliseconds,
       bool is_key_frame,
       bool is_hdr_signaled,
+      bool is_replay,
       CMSampleBufferRef sample_buffer
     );
     void consume_event(

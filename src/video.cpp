@@ -4165,6 +4165,7 @@ namespace video {
             previous_forwarded_source_display_time > 0 &&
             frame.source_sequence_number == previous_forwarded_source_sequence_number &&
             frame.source_display_time == previous_forwarded_source_display_time;
+          const auto replay_duplicate = duplicate_payload && frame.is_replay;
 
           if (duplicate_source_identity && duplicate_payload) {
             CFRelease(retained_sample_buffer);
@@ -4172,6 +4173,7 @@ namespace video {
           }
 
           if (duplicate_payload &&
+              !frame.is_replay &&
               last_forwarded_sequence_delta > 0 &&
               last_forwarded_source_display_delta_milliseconds &&
               *last_forwarded_source_display_delta_milliseconds > 0.0) {
@@ -4239,6 +4241,11 @@ namespace video {
             }
             CFRelease(retained_sample_buffer);
             continue;
+          }
+
+          if (replay_duplicate) {
+            duplicate_payload_run = 0;
+            duplicate_payload_recovery_attempts = 0;
           }
 
           last_forwarded_source_sequence_number = frame.source_sequence_number;
