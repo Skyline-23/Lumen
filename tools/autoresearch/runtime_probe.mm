@@ -80,41 +80,7 @@ double maxLatency(const std::vector<double> &samples) {
   return *std::max_element(samples.begin(), samples.end());
 }
 
-bool selectiveHDROverlayActive(uint32_t displayID) {
-  NSScreen *matchedScreen = nil;
-  for (NSScreen *screen in NSScreen.screens) {
-    NSNumber *screenNumber = screen.deviceDescription[@"NSScreenNumber"];
-    if (screenNumber != nil && static_cast<uint32_t>(screenNumber.unsignedIntValue) == displayID) {
-      matchedScreen = screen;
-      break;
-    }
-  }
-
-  if (matchedScreen == nil) {
-    return false;
-  }
-
-  if (@available(macOS 10.11, *)) {
-    constexpr CGFloat kExternalCaptureHDREDRThreshold = 1.05;
-    CGFloat effectiveEDR = matchedScreen.maximumExtendedDynamicRangeColorComponentValue;
-    if (@available(macOS 10.15, *)) {
-      effectiveEDR = std::max(
-        effectiveEDR,
-        matchedScreen.maximumPotentialExtendedDynamicRangeColorComponentValue
-      );
-    }
-    return effectiveEDR > kExternalCaptureHDREDRThreshold;
-  }
-
-  return false;
-}
-
-void drainForwardedFrames(
-  LumenMacBridgeController *controller,
-  ProbeMetrics &metrics,
-  bool selectiveOverlayTransport,
-  bool overlayHDRActive
-) {
+void drainForwardedFrames(LumenMacBridgeController *controller, ProbeMetrics &metrics) {
   while (true) {
     CMSampleBufferRef sampleBuffer = nullptr;
     LumenCoreEncodedCaptureFrameRecord record =
@@ -126,19 +92,16 @@ void drainForwardedFrames(
       break;
     }
 
-    const bool effectiveHDRSignaled =
-      selectiveOverlayTransport ? overlayHDRActive : record.is_hdr_signaled;
-
     metrics.frames += 1;
     if (!metrics.firstFrameSeen) {
       metrics.firstFrameSeen = true;
-      metrics.firstFrameHDR = effectiveHDRSignaled;
+      metrics.firstFrameHDR = record.is_hdr_signaled;
     }
-    if (effectiveHDRSignaled) {
+    if (record.is_hdr_signaled) {
       metrics.hdrFrames += 1;
     }
     metrics.lastSeq = record.source_sequence_number;
-    metrics.lastHDRSignaled = effectiveHDRSignaled;
+    metrics.lastHDRSignaled = record.is_hdr_signaled;
     if (record.has_output_callback_latency_milliseconds) {
       metrics.callbackLatencies.push_back(record.output_callback_latency_milliseconds);
     }
@@ -229,18 +192,10 @@ int main(int argc, const char *argv[]) {
     }
 
     ProbeMetrics metrics;
-    const bool selectiveOverlayTransport =
-      configuration.sink_request.dynamic_range_transport ==
-      LumenCoreDynamicRangeTransportSDRBaseHDROverlay;
     const auto captureStartTime = std::chrono::steady_clock::now();
     const auto startupDeadline = captureStartTime + std::chrono::seconds(10);
     while (std::chrono::steady_clock::now() < startupDeadline && !metrics.firstFrameSeen) {
-      drainForwardedFrames(
-        controller,
-        metrics,
-        selectiveOverlayTransport,
-        selectiveHDROverlayActive(displayID)
-      );
+      drainForwardedFrames(controller, metrics);
       drainForwardedEvents(controller, metrics);
       if (metrics.firstFrameSeen && metrics.startupMilliseconds < 0.0) {
         metrics.startupMilliseconds = std::chrono::duration<double, std::milli>(
@@ -254,23 +209,13 @@ int main(int argc, const char *argv[]) {
     if (metrics.firstFrameSeen) {
       const auto sampleDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1000);
       while (std::chrono::steady_clock::now() < sampleDeadline) {
-        drainForwardedFrames(
-          controller,
-          metrics,
-          selectiveOverlayTransport,
-          selectiveHDROverlayActive(displayID)
-        );
+        drainForwardedFrames(controller, metrics);
         drainForwardedEvents(controller, metrics);
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
       }
     }
 
-    drainForwardedFrames(
-      controller,
-      metrics,
-      selectiveOverlayTransport,
-      selectiveHDROverlayActive(displayID)
-    );
+    drainForwardedFrames(controller, metrics);
     drainForwardedEvents(controller, metrics);
     if (metrics.firstFrameSeen && metrics.startupMilliseconds < 0.0) {
       metrics.startupMilliseconds = std::chrono::duration<double, std::milli>(
@@ -285,10 +230,7 @@ int main(int argc, const char *argv[]) {
     metrics.droppedFrames = snapshot.dropped_frame_count;
     if (snapshot.has_last_frame) {
       metrics.lastSeq = snapshot.last_frame_source_sequence_number;
-      metrics.lastHDRSignaled =
-        selectiveOverlayTransport ?
-          selectiveHDROverlayActive(displayID) :
-          snapshot.last_frame_is_hdr_signaled;
+      metrics.lastHDRSignaled = snapshot.last_frame_is_hdr_signaled;
     }
 
     LumenMacBridgeControllerStopMacDisplayKitCapture(controller);

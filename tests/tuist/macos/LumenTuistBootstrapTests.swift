@@ -320,10 +320,10 @@ final class LumenTuistBootstrapTests: XCTestCase {
             )
         )
 
-        XCTAssertEqual(configuration.effectiveEncoderInputStrategy, .yuv420v8)
-        XCTAssertEqual(configuration.effectiveCapturePixelFormat, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
-        XCTAssertEqual(configuration.mdkValue.capturePixelFormat, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
-        XCTAssertEqual(configuration.encodedHDRConfigurationSnapshot?.transferFunction, "ituR709")
+        XCTAssertEqual(configuration.effectiveEncoderInputStrategy, .yuv420v10)
+        XCTAssertEqual(configuration.effectiveCapturePixelFormat, kCVPixelFormatType_32BGRA)
+        XCTAssertEqual(configuration.mdkValue.capturePixelFormat, kCVPixelFormatType_32BGRA)
+        XCTAssertEqual(configuration.encodedHDRConfigurationSnapshot?.transferFunction, "smpteSt2084PQ")
     }
 
     func testBridgeDoesNotForceHDRTransportForBatterySavingSDRMode() {
@@ -416,9 +416,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
         if overlayConfiguration.effectivePreprocessStrategy == .none {
             score += 20.0
         }
-        if overlayConfiguration.effectiveEncoderInputStrategy == .yuv420v8 &&
-            overlayConfiguration.effectiveCapturePixelFormat == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange &&
-            overlayConfiguration.encodedHDRConfigurationSnapshot?.transferFunction == "ituR709" {
+        if overlayConfiguration.effectiveEncoderInputStrategy == .yuv420v10 {
             score += 10.0
         }
         if overlayConfiguration.negotiatedQueueProfile == .q1 {

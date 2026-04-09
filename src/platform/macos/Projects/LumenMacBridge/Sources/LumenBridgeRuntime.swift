@@ -660,16 +660,7 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
             return encoderInputStrategy
         }
 
-        if usesSelectiveHDROverlayTransport {
-            switch codec {
-            case .hevc, .h264:
-                return .yuv420v8
-            case .proResProxy:
-                return .bgra
-            }
-        }
-
-        if usesHDRTransport {
+        if usesHDRTransport || negotiatedDynamicRangeTransport == LumenCoreDynamicRangeTransportSDRBaseHDROverlay {
             return .yuv420v10
         }
 
@@ -681,8 +672,8 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     }
 
     public var effectiveCapturePixelFormat: UInt32 {
-        if let overlayCapturePixelFormatOverride {
-            return overlayCapturePixelFormatOverride
+        if shouldPreferBGRAOverlayCaptureBackend {
+            return kCVPixelFormatType_32BGRA
         }
 
         return codec.mdkValue.preferredCapturePixelFormat
@@ -712,33 +703,23 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         return effectivePixelCount >= Self.veryHighResolutionPixelCountThreshold
     }
 
-    private var usesSelectiveHDROverlayTransport: Bool {
-        negotiatedDynamicRangeTransport == LumenCoreDynamicRangeTransportSDRBaseHDROverlay
-    }
-
-    private var overlayCapturePixelFormatOverride: UInt32? {
-        guard usesSelectiveHDROverlayTransport else {
-            return nil
-        }
-
-        switch codec {
-        case .hevc, .h264:
-            return kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
-        case .proResProxy:
-            return kCVPixelFormatType_32BGRA
-        }
+    private var shouldPreferBGRAOverlayCaptureBackend: Bool {
+        negotiatedDynamicRangeTransport == LumenCoreDynamicRangeTransportSDRBaseHDROverlay &&
+            codec == .hevc &&
+            effectiveTargetFrameRate >= 120 &&
+            usesHighResolutionWorkload
     }
 
     private var encodedColorConfiguration: MDKVideoHDRConfiguration? {
-        if (usesHDRTransport || usesSelectiveHDROverlayTransport),
+        if (usesHDRTransport || negotiatedDynamicRangeTransport == LumenCoreDynamicRangeTransportSDRBaseHDROverlay),
            codec != .h264 {
-            let colorPrimaries = encodedSignalColorPrimaries
-            let yCbCrMatrix = encodedSignalYCbCrMatrix
-            let metadata = encodedStaticMetadata
+            let colorPrimaries = resolvedHDRSignalColorPrimaries
+            let yCbCrMatrix = resolvedHDRSignalYCbCrMatrix
+            let metadata = resolvedHDRStaticMetadata
             return MDKVideoHDRConfiguration(
                 sourceColorPrimaries: resolvedSourceColorPrimaries,
                 colorPrimaries: colorPrimaries,
-                transferFunction: encodedTransferFunction,
+                transferFunction: resolvedHDRTransferFunction,
                 yCbCrMatrix: yCbCrMatrix,
                 metadataInsertionMode: .automatic,
                 masteringDisplayColorVolume: metadata.masteringDisplayColorVolume,
@@ -805,60 +786,17 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     }
 
     var encodedHDRConfigurationSnapshot: EncodedHDRConfigurationSnapshot? {
-        guard (usesHDRTransport || usesSelectiveHDROverlayTransport),
+        guard (usesHDRTransport || negotiatedDynamicRangeTransport == LumenCoreDynamicRangeTransportSDRBaseHDROverlay),
               codec != .h264 else {
             return nil
         }
 
         return EncodedHDRConfigurationSnapshot(
-            signalColorPrimaries: encodedSignalColorPrimaries.rawValue,
-            transferFunction: encodedTransferFunction.rawValue,
-            signalYCbCrMatrix: encodedSignalYCbCrMatrix.rawValue,
-            staticMetadataSource: encodedStaticMetadataSource
+            signalColorPrimaries: resolvedHDRSignalColorPrimaries.rawValue,
+            transferFunction: resolvedHDRTransferFunction.rawValue,
+            signalYCbCrMatrix: resolvedHDRSignalYCbCrMatrix.rawValue,
+            staticMetadataSource: resolvedHDRStaticMetadataSource
         )
-    }
-
-    private var encodedTransferFunction: MDKVideoTransferFunction {
-        usesSelectiveHDROverlayTransport ? .ituR709 : resolvedHDRTransferFunction
-    }
-
-    private var encodedSignalColorPrimaries: MDKVideoColorPrimaries {
-        switch encodedTransferFunction {
-        case .smpteSt2084PQ, .ituR2100HLG:
-            return .ituR2020
-        case .ituR709:
-            switch resolvedDisplayGamut {
-            case .displayP3:
-                return .p3D65
-            case .rec2020:
-                return .ituR2020
-            case .srgb, .unknown:
-                return .ituR709
-            }
-        }
-    }
-
-    private var encodedSignalYCbCrMatrix: MDKVideoYCbCrMatrix {
-        switch encodedTransferFunction {
-        case .smpteSt2084PQ, .ituR2100HLG:
-            return .ituR2020
-        case .ituR709:
-            return .ituR709
-        }
-    }
-
-    private var encodedStaticMetadata: (
-        masteringDisplayColorVolume: MDKVideoMasteringDisplayColorVolume?,
-        contentLightLevelInfo: MDKVideoContentLightLevelInfo?
-    ) {
-        if usesSelectiveHDROverlayTransport {
-            return (nil, nil)
-        }
-        return resolvedHDRStaticMetadata
-    }
-
-    private var encodedStaticMetadataSource: String {
-        usesSelectiveHDROverlayTransport ? "none" : resolvedHDRStaticMetadataSource
     }
 
     private var resolvedHDRSignalColorPrimaries: MDKVideoColorPrimaries {
