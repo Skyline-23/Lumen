@@ -550,6 +550,13 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
             return queueProfile
         }
 
+        if negotiatedDynamicRangeTransport == LumenCoreDynamicRangeTransportSDRBaseHDROverlay &&
+            usesHighResolutionWorkload &&
+            codec == .hevc &&
+            effectiveTargetFrameRate >= 120 {
+            return .q2
+        }
+
         if effectiveTargetFrameRate >= 120 {
             return .q1
         }
