@@ -704,10 +704,11 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     }
 
     private var shouldPreferBGRAOverlayCaptureBackend: Bool {
-        negotiatedDynamicRangeTransport == LumenCoreDynamicRangeTransportSDRBaseHDROverlay &&
-            codec == .hevc &&
-            effectiveTargetFrameRate >= 120 &&
-            usesHighResolutionWorkload
+        // Partial HDR overlay should not force a full-frame BGRA capture path.
+        // Keeping the raw 10-bit YUV source allows the SkyLight backend to stay
+        // on its lower-overhead zero-copy path instead of paying a global BGRA
+        // staging/conversion penalty before we even encode.
+        false
     }
 
     private var encodedColorConfiguration: MDKVideoHDRConfiguration? {
