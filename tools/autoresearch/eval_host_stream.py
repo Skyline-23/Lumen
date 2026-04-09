@@ -113,7 +113,47 @@ def run_targeted_tests(workspace: str, scheme: str) -> tuple[float, str]:
     return score, output
 
 
-def resolve_debug_products_dir() -> Path:
+def resolve_debug_products_dir(workspace: str, scheme: str) -> Path:
+    build_settings = subprocess.run(
+        [
+            "xcodebuild",
+            "-showBuildSettings",
+            "-workspace",
+            workspace,
+            "-scheme",
+            scheme,
+            "-destination",
+            "platform=macOS",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+    )
+    if build_settings.returncode != 0:
+        tail = "\n".join(build_settings.stdout.splitlines()[-80:])
+        raise RuntimeError(f"unable to resolve build products directory\n{tail}")
+
+    current_block: list[str] = []
+    for line in build_settings.stdout.splitlines():
+        if line.startswith("Build settings for action "):
+            current_block = [line]
+            continue
+        if current_block:
+            current_block.append(line)
+            target_name = None
+            target_build_dir = None
+            for entry in current_block:
+                stripped = entry.strip()
+                if stripped.startswith("TARGET_NAME = "):
+                    target_name = stripped.split("=", 1)[1].strip()
+                elif stripped.startswith("TARGET_BUILD_DIR = "):
+                    target_build_dir = stripped.split("=", 1)[1].strip()
+            if target_name == "LumenMacBridge" and target_build_dir:
+                candidate = Path(target_build_dir)
+                if (candidate / "LumenMacBridge.framework").exists():
+                    return candidate
+
     derived_data_root = Path.home() / "Library/Developer/Xcode/DerivedData"
     candidates = list(
         derived_data_root.glob("Lumen-*/Build/Products/Debug/LumenMacBridge.framework")
@@ -125,7 +165,7 @@ def resolve_debug_products_dir() -> Path:
 
 
 def run_runtime_probe(args: argparse.Namespace) -> str:
-    debug_products_dir = resolve_debug_products_dir()
+    debug_products_dir = resolve_debug_products_dir(args.workspace, args.scheme)
     package_frameworks_dir = debug_products_dir / "PackageFrameworks"
     probe_source = Path(__file__).with_name("runtime_probe.mm")
     probe_binary = Path(tempfile.gettempdir()) / "lumen-autoresearch-runtime-probe"
