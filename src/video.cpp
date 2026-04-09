@@ -260,8 +260,12 @@ namespace video {
       const SS_HDR_METADATA *metadata = nullptr
     ) {
       const auto transport = video::effective_dynamic_range_transport(config);
-      if (transport != video::dynamic_range_transport_e::sdr_base_hdr_overlay || !frame_is_hdr_signaled) {
+      if (transport != video::dynamic_range_transport_e::sdr_base_hdr_overlay) {
         return negotiated_hdr_frame_state(config, frame_is_hdr_signaled, metadata);
+      }
+
+      if (!external_metadata.hdr_active) {
+        return video::make_sdr_hdr_frame_state();
       }
 
       const auto scalar = external_metadata.scalar_inv > 0.0f ? (1.0f / external_metadata.scalar_inv) : 0.0f;
