@@ -296,7 +296,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(configuration.mdkValue.streamConfiguration.outputHeight, 2290)
     }
 
-    func testBridgePrefersTenBitZeroCopyInputForPartialHDROverlay() {
+    func testBridgePrefersTenBitEncoderInputForPartialHDROverlay() {
         let configuration = LumenMacDisplayKitCaptureConfiguration(
             displayID: 42,
             codec: .hevc,
@@ -321,8 +321,8 @@ final class LumenTuistBootstrapTests: XCTestCase {
         )
 
         XCTAssertEqual(configuration.effectiveEncoderInputStrategy, .yuv420v10)
-        XCTAssertEqual(configuration.effectiveCapturePixelFormat, kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange)
-        XCTAssertEqual(configuration.mdkValue.capturePixelFormat, kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange)
+        XCTAssertEqual(configuration.effectiveCapturePixelFormat, kCVPixelFormatType_32BGRA)
+        XCTAssertEqual(configuration.mdkValue.capturePixelFormat, kCVPixelFormatType_32BGRA)
         XCTAssertEqual(configuration.encodedHDRConfigurationSnapshot?.transferFunction, "smpteSt2084PQ")
     }
 
