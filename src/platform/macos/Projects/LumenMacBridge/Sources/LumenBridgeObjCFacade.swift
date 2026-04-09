@@ -703,6 +703,12 @@ public final class LumenBridgeObjCFacade: NSObject {
         )
     }
 
+    public func copyCaptureDiagnosticsSync() -> NSString {
+        (try? blockingRun { [self] in
+            await self.runtime.captureDiagnosticsString() as NSString
+        }) ?? "n/a"
+    }
+
     public func configureAudioForwardingSync(frameCapacity: Int, eventCapacity: Int) {
         try? blockingRun { [self] in
             await self.runtime.configureAudioForwarding(

@@ -202,6 +202,12 @@ LumenCoreEncodedCaptureIngressSnapshot LumenMacBridgeControllerCopyCoreForwardin
   LumenMacBridgeController *controller
 );
 
+bool LumenMacBridgeControllerCopyCaptureDiagnostics(
+  LumenMacBridgeController *controller,
+  char *diagnostics_destination,
+  size_t diagnostics_capacity
+);
+
 void LumenMacBridgeControllerConfigureAudioForwarding(
   LumenMacBridgeController *controller,
   size_t frame_capacity,

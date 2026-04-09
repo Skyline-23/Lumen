@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -78,6 +79,63 @@ double maxLatency(const std::vector<double> &samples) {
     return 0.0;
   }
   return *std::max_element(samples.begin(), samples.end());
+}
+
+const char *trimLeadingSpaces(const char *value) {
+  while (value != nullptr && (*value == ' ' || *value == '\t')) {
+    value += 1;
+  }
+  return value;
+}
+
+void emitSelectedDiagnostics(const char *diagnostics) {
+  if (diagnostics == nullptr || diagnostics[0] == '\0') {
+    return;
+  }
+
+  std::string remaining(diagnostics);
+  while (!remaining.empty()) {
+    std::size_t separator = remaining.find(';');
+    std::string token = separator == std::string::npos ? remaining : remaining.substr(0, separator);
+    if (separator == std::string::npos) {
+      remaining.clear();
+    } else {
+      remaining.erase(0, separator + 1);
+    }
+
+    if (token.empty()) {
+      continue;
+    }
+
+    const std::size_t equals = token.find('=');
+    if (equals == std::string::npos || equals == 0 || equals == (token.size() - 1)) {
+      continue;
+    }
+
+    const std::string key = token.substr(0, equals);
+    const char *value = trimLeadingSpaces(token.c_str() + equals + 1);
+    if (key == "sourceReducedDirtySampleCount") {
+      std::printf("AUTORESEARCH_RUNTIME_PROBE_SOURCE_REDUCED_DIRTY_SAMPLE_COUNT=%s\n", value);
+    } else if (key == "sourceAverageReducedDirtyCoverageRatio") {
+      std::printf("AUTORESEARCH_RUNTIME_PROBE_SOURCE_AVG_REDUCED_DIRTY_COVERAGE_RATIO=%s\n", value);
+    } else if (key == "sourceMaxReducedDirtyCoverageRatio") {
+      std::printf("AUTORESEARCH_RUNTIME_PROBE_SOURCE_MAX_REDUCED_DIRTY_COVERAGE_RATIO=%s\n", value);
+    } else if (key == "sourceAverageReducedDirtyRectCount") {
+      std::printf("AUTORESEARCH_RUNTIME_PROBE_SOURCE_AVG_REDUCED_DIRTY_RECT_COUNT=%s\n", value);
+    } else if (key == "sourceMaxReducedDirtyRectCount") {
+      std::printf("AUTORESEARCH_RUNTIME_PROBE_SOURCE_MAX_REDUCED_DIRTY_RECT_COUNT=%s\n", value);
+    } else if (key == "sourceUpdateDropSampleCount") {
+      std::printf("AUTORESEARCH_RUNTIME_PROBE_SOURCE_UPDATE_DROP_SAMPLE_COUNT=%s\n", value);
+    } else if (key == "sourceAverageUpdateDropCount") {
+      std::printf("AUTORESEARCH_RUNTIME_PROBE_SOURCE_AVG_UPDATE_DROP_COUNT=%s\n", value);
+    } else if (key == "sourceMaxUpdateDropCount") {
+      std::printf("AUTORESEARCH_RUNTIME_PROBE_SOURCE_MAX_UPDATE_DROP_COUNT=%s\n", value);
+    } else if (key == "sourceApproxFrameRate") {
+      std::printf("AUTORESEARCH_RUNTIME_PROBE_SOURCE_APPROX_FRAME_RATE=%s\n", value);
+    } else if (key == "sourceCadenceClassification") {
+      std::printf("AUTORESEARCH_RUNTIME_PROBE_SOURCE_CADENCE=%s\n", value);
+    }
+  }
 }
 
 void drainForwardedFrames(LumenMacBridgeController *controller, ProbeMetrics &metrics) {
@@ -233,6 +291,14 @@ int main(int argc, const char *argv[]) {
       metrics.lastHDRSignaled = snapshot.last_frame_is_hdr_signaled;
     }
 
+    char captureDiagnostics[8192];
+    std::memset(captureDiagnostics, 0, sizeof(captureDiagnostics));
+    LumenMacBridgeControllerCopyCaptureDiagnostics(
+      controller,
+      captureDiagnostics,
+      sizeof(captureDiagnostics)
+    );
+
     LumenMacBridgeControllerStopMacDisplayKitCapture(controller);
     LumenMacBridgeControllerDestroy(controller);
 
@@ -263,6 +329,7 @@ int main(int argc, const char *argv[]) {
       "AUTORESEARCH_RUNTIME_PROBE_LAST_HDR_SIGNALLED=%d\n",
       metrics.lastHDRSignaled ? 1 : 0
     );
+    emitSelectedDiagnostics(captureDiagnostics);
     std::fflush(stdout);
     return 0;
   }

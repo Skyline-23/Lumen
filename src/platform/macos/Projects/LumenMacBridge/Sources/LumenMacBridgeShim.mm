@@ -538,6 +538,21 @@ LumenCoreEncodedCaptureIngressSnapshot LumenMacBridgeControllerCopyCoreForwardin
   return snapshot;
 }
 
+bool LumenMacBridgeControllerCopyCaptureDiagnostics(
+  LumenMacBridgeController *controller,
+  char *diagnostics_destination,
+  size_t diagnostics_capacity
+) {
+  if (controller == nullptr || controller->facade == nil) {
+    copy_string_to_buffer(@"n/a", diagnostics_destination, diagnostics_capacity);
+    return false;
+  }
+
+  NSString *diagnostics = [controller->facade copyCaptureDiagnosticsSync];
+  copy_string_to_buffer(diagnostics, diagnostics_destination, diagnostics_capacity);
+  return diagnostics.length > 0 && ![diagnostics isEqualToString:@"n/a"];
+}
+
 void LumenMacBridgeControllerConfigureAudioForwarding(
   LumenMacBridgeController *controller,
   size_t frame_capacity,

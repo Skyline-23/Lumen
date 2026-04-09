@@ -1672,6 +1672,14 @@ public actor LumenBridgeRuntime {
         coreForwarder.snapshot()
     }
 
+    public func captureDiagnosticsString() async -> String {
+        guard let session = encodedCaptureSession else {
+            return "n/a"
+        }
+
+        return Self.captureDiagnosticsSnippet(from: await session.statisticsSnapshot())
+    }
+
     public func configureCoreForwarding(
         frameCapacity: Int,
         eventCapacity: Int
