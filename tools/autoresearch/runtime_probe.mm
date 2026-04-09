@@ -14,6 +14,12 @@
 #include <thread>
 #include <vector>
 
+extern "C" bool LumenMacBridgeControllerCopyCaptureDiagnostics(
+  LumenMacBridgeController *controller,
+  char *diagnostics_destination,
+  size_t diagnostics_capacity
+);
+
 namespace {
 
 constexpr int32_t kDisplayP3Gamut = 1;
