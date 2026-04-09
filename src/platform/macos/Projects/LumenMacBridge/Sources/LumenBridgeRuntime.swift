@@ -672,10 +672,6 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     }
 
     public var effectiveCapturePixelFormat: UInt32 {
-        if shouldPreferBGRAOverlayCaptureBackend {
-            return kCVPixelFormatType_32BGRA
-        }
-
         return codec.mdkValue.preferredCapturePixelFormat
     }
 
@@ -701,13 +697,6 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         }
 
         return effectivePixelCount >= Self.veryHighResolutionPixelCountThreshold
-    }
-
-    private var shouldPreferBGRAOverlayCaptureBackend: Bool {
-        negotiatedDynamicRangeTransport == LumenCoreDynamicRangeTransportSDRBaseHDROverlay &&
-            codec == .hevc &&
-            effectiveTargetFrameRate >= 120 &&
-            usesHighResolutionWorkload
     }
 
     private var encodedColorConfiguration: MDKVideoHDRConfiguration? {
