@@ -538,7 +538,7 @@ LumenCoreEncodedCaptureIngressSnapshot LumenMacBridgeControllerCopyCoreForwardin
   return snapshot;
 }
 
-bool LumenMacBridgeControllerCopyCaptureDiagnostics(
+extern "C" bool LumenMacBridgeControllerCopyCaptureDiagnostics(
   LumenMacBridgeController *controller,
   char *diagnostics_destination,
   size_t diagnostics_capacity
