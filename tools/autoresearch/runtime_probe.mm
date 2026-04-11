@@ -188,6 +188,8 @@ void drainForwardedEvents(LumenMacBridgeController *controller, ProbeMetrics &me
       case LumenCoreCaptureEventKindFailed:
         metrics.failureEvents += 1;
         break;
+      case LumenCoreCaptureEventKindCoalescedFrame:
+        break;
       case LumenCoreCaptureEventKindDroppedFrame:
         metrics.dropEvents += 1;
         break;
