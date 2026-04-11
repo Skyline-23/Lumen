@@ -3974,6 +3974,10 @@ namespace video {
                 restart_capture_session("capture-queue-saturated");
               }
               break;
+            case LumenCoreCaptureEventKindCoalescedFrame:
+              BOOST_LOG(info) << "External macOS encoded ingress coalesced a frame"sv
+                              << " message="sv << message;
+              break;
             case LumenCoreCaptureEventKindFailed:
               BOOST_LOG(error) << "External macOS encoded ingress reported a failure: "sv << message;
               break;
