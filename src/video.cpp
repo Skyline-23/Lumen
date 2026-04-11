@@ -3962,16 +3962,18 @@ namespace video {
                                  << " message="sv << message;
               if (message.find("capture processing queue is saturated"sv) != std::string_view::npos) {
                 ++saturated_drop_event_run;
-                arm_wait_for_next_idr("capture-queue-saturated");
               } else {
                 saturated_drop_event_run = 0;
               }
               if (message == "core-forwarder-overflow"sv) {
-                arm_wait_for_next_idr("core-forwarder-overflow");
+                BOOST_LOG(info) << "External macOS encoded ingress preserved decoder state across core forwarder overflow because the local ingress already collapsed backlog to the freshest frame"sv;
               } else if (saturated_drop_event_run >= 3) {
                 BOOST_LOG(warning) << "External macOS encoded ingress is restarting the capture session after repeated queue saturation events"sv
                                    << " run="sv << saturated_drop_event_run;
                 restart_capture_session("capture-queue-saturated");
+              } else if (saturated_drop_event_run > 0) {
+                BOOST_LOG(info) << "External macOS encoded ingress is preserving decoder state while monitoring repeated queue saturation events"sv
+                                << " run="sv << saturated_drop_event_run;
               }
               break;
             case LumenCoreCaptureEventKindFailed:
