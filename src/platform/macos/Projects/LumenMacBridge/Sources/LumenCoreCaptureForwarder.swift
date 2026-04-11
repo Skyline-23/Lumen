@@ -266,6 +266,8 @@ extension LumenBridgeCaptureEventKind {
             self = .restarted
         case LumenCoreCaptureEventKindFailed:
             self = .failed
+        case LumenCoreCaptureEventKindCoalescedFrame:
+            self = .coalescedFrame
         case LumenCoreCaptureEventKindDroppedFrame:
             self = .droppedFrame
         default:
@@ -285,6 +287,8 @@ private extension MDKEncodedCaptureSessionEventKind {
             return LumenCoreCaptureEventKindRestarted
         case .failed:
             return LumenCoreCaptureEventKindFailed
+        case .coalescedFrame:
+            return LumenCoreCaptureEventKindCoalescedFrame
         case .droppedFrame:
             return LumenCoreCaptureEventKindDroppedFrame
         }

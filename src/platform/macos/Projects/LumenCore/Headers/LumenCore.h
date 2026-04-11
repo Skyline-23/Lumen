@@ -75,7 +75,8 @@ typedef enum LumenCoreCaptureEventKind {
   LumenCoreCaptureEventKindStopped = 1,
   LumenCoreCaptureEventKindRestarted = 2,
   LumenCoreCaptureEventKindFailed = 3,
-  LumenCoreCaptureEventKindDroppedFrame = 4
+  LumenCoreCaptureEventKindDroppedFrame = 4,
+  LumenCoreCaptureEventKindCoalescedFrame = 5
 } LumenCoreCaptureEventKind;
 
 typedef struct LumenCoreHDRStaticMetadata {
