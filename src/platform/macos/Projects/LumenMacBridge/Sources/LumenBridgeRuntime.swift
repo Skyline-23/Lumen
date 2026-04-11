@@ -929,6 +929,7 @@ public enum LumenBridgeCaptureEventKind: String, Codable, Equatable, Sendable {
     case stopped
     case restarted
     case failed
+    case coalescedFrame
     case droppedFrame
 }
 
