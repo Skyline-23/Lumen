@@ -705,19 +705,12 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
             let colorPrimaries = resolvedHDRSignalColorPrimaries
             let yCbCrMatrix = resolvedHDRSignalYCbCrMatrix
             let metadata = resolvedHDRStaticMetadata
-            let metadataInsertionMode: MDKVideoHDRMetadataInsertionMode =
-                negotiatedDynamicRangeTransport == LumenCoreDynamicRangeTransportSDRBaseHDROverlay &&
-                resolvedHDRTransferFunction == .smpteSt2084PQ &&
-                colorPrimaries == .ituR2020 &&
-                yCbCrMatrix == .ituR2020
-                ? .requestSDRRangePreservation
-                : .automatic
             return MDKVideoHDRConfiguration(
                 sourceColorPrimaries: resolvedSourceColorPrimaries,
                 colorPrimaries: colorPrimaries,
                 transferFunction: resolvedHDRTransferFunction,
                 yCbCrMatrix: yCbCrMatrix,
-                metadataInsertionMode: metadataInsertionMode,
+                metadataInsertionMode: .automatic,
                 masteringDisplayColorVolume: metadata.masteringDisplayColorVolume,
                 contentLightLevelInfo: metadata.contentLightLevelInfo
             )
