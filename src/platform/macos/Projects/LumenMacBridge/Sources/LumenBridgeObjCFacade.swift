@@ -491,11 +491,6 @@ public final class LumenBridgeDrainedFrameBox: NSObject {
     public let outputCallbackLatencyMilliseconds: Double
     public let isKeyFrame: Bool
     public let isHDRSignaled: Bool
-    public let hasSourceDirtyRect: Bool
-    public let sourceDirtyRectX: Int
-    public let sourceDirtyRectY: Int
-    public let sourceDirtyRectWidth: Int
-    public let sourceDirtyRectHeight: Int
     public let sampleBuffer: CMSampleBuffer
 
     init(frame: LumenBridgeCoreDrainedFrame) {
@@ -507,11 +502,6 @@ public final class LumenBridgeDrainedFrameBox: NSObject {
         self.outputCallbackLatencyMilliseconds = frame.outputCallbackLatencyMilliseconds ?? 0
         self.isKeyFrame = frame.isKeyFrame
         self.isHDRSignaled = frame.isHDRSignaled
-        self.hasSourceDirtyRect = frame.sourceDirtyRect != nil
-        self.sourceDirtyRectX = Int(lround(Double(frame.sourceDirtyRect?.origin.x ?? 0)))
-        self.sourceDirtyRectY = Int(lround(Double(frame.sourceDirtyRect?.origin.y ?? 0)))
-        self.sourceDirtyRectWidth = Int(lround(Double(frame.sourceDirtyRect?.size.width ?? 0)))
-        self.sourceDirtyRectHeight = Int(lround(Double(frame.sourceDirtyRect?.size.height ?? 0)))
         self.sampleBuffer = frame.sampleBuffer
     }
 }

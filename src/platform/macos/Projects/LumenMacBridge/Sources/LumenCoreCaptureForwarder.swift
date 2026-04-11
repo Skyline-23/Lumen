@@ -1,5 +1,4 @@
 import LumenCore
-import CoreGraphics
 import CoreMedia
 import Foundation
 import MacDisplayCaptureKit
@@ -47,7 +46,6 @@ public struct LumenBridgeCoreDrainedFrame: @unchecked Sendable {
     public let isKeyFrame: Bool
     public let isHDRSignaled: Bool
     public let isReplay: Bool
-    public let sourceDirtyRect: CGRect?
     public let sampleBuffer: CMSampleBuffer
 }
 
@@ -102,8 +100,7 @@ final class LumenCoreCaptureForwarder: @unchecked Sendable {
             outputCallbackLatencyMilliseconds: frame.outputCallbackLatencyMilliseconds,
             isKeyFrame: frame.isKeyFrame,
             isHDRSignaled: frame.isHDRSignaled,
-            isReplay: false,
-            sourceDirtyRect: frame.sourceDirtyRect
+            isReplay: false
         )
     }
 
@@ -115,8 +112,7 @@ final class LumenCoreCaptureForwarder: @unchecked Sendable {
         outputCallbackLatencyMilliseconds: Double? = nil,
         isKeyFrame: Bool,
         isHDRSignaled: Bool,
-        isReplay: Bool = false,
-        sourceDirtyRect: CGRect? = nil
+        isReplay: Bool = false
     ) {
         LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
             handle,
@@ -128,11 +124,6 @@ final class LumenCoreCaptureForwarder: @unchecked Sendable {
             isKeyFrame,
             isHDRSignaled,
             isReplay,
-            sourceDirtyRect != nil,
-            Int32(lround(Double(sourceDirtyRect?.origin.x ?? 0))),
-            Int32(lround(Double(sourceDirtyRect?.origin.y ?? 0))),
-            Int32(lround(Double(sourceDirtyRect?.size.width ?? 0))),
-            Int32(lround(Double(sourceDirtyRect?.size.height ?? 0))),
             sampleBuffer
         )
     }
@@ -185,12 +176,6 @@ final class LumenCoreCaptureForwarder: @unchecked Sendable {
             isKeyFrame: record.is_key_frame,
             isHDRSignaled: record.is_hdr_signaled,
             isReplay: record.is_replay,
-            sourceDirtyRect: record.has_source_dirty_rect ? CGRect(
-                x: Int(record.source_dirty_rect_x),
-                y: Int(record.source_dirty_rect_y),
-                width: Int(record.source_dirty_rect_width),
-                height: Int(record.source_dirty_rect_height)
-            ) : nil,
             sampleBuffer: sampleBuffer.takeRetainedValue()
         )
     }
