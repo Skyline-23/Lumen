@@ -51,6 +51,11 @@ namespace {
     record.output_callback_latency_milliseconds = box.outputCallbackLatencyMilliseconds;
     record.is_key_frame = box.isKeyFrame;
     record.is_hdr_signaled = box.isHDRSignaled;
+    record.has_source_dirty_rect = box.hasSourceDirtyRect;
+    record.source_dirty_rect_x = static_cast<int32_t>(box.sourceDirtyRectX);
+    record.source_dirty_rect_y = static_cast<int32_t>(box.sourceDirtyRectY);
+    record.source_dirty_rect_width = static_cast<int32_t>(box.sourceDirtyRectWidth);
+    record.source_dirty_rect_height = static_cast<int32_t>(box.sourceDirtyRectHeight);
     return record;
   }
 
@@ -619,6 +624,11 @@ LumenCoreEncodedCaptureFrameRecord LumenMacBridgeControllerPopNextForwardedFrame
   record.output_callback_latency_milliseconds = box.outputCallbackLatencyMilliseconds;
   record.is_key_frame = box.isKeyFrame;
   record.is_hdr_signaled = box.isHDRSignaled;
+  record.has_source_dirty_rect = box.hasSourceDirtyRect;
+  record.source_dirty_rect_x = static_cast<int32_t>(box.sourceDirtyRectX);
+  record.source_dirty_rect_y = static_cast<int32_t>(box.sourceDirtyRectY);
+  record.source_dirty_rect_width = static_cast<int32_t>(box.sourceDirtyRectWidth);
+  record.source_dirty_rect_height = static_cast<int32_t>(box.sourceDirtyRectHeight);
 
   if (retained_sample_buffer_out) {
     *retained_sample_buffer_out =

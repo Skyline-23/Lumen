@@ -35,6 +35,11 @@ namespace lumen::core {
       bool is_key_frame,
       bool is_hdr_signaled,
       bool is_replay,
+      bool has_source_dirty_rect,
+      std::int32_t source_dirty_rect_x,
+      std::int32_t source_dirty_rect_y,
+      std::int32_t source_dirty_rect_width,
+      std::int32_t source_dirty_rect_height,
       CMSampleBufferRef sample_buffer
     );
     void consume_event(

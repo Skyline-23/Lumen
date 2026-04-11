@@ -459,6 +459,11 @@ final class LumenTuistBootstrapTests: XCTestCase {
             false,
             true,
             false,
+            false,
+            0,
+            0,
+            0,
+            0,
             sampleBuffer
         )
         LumenCoreEncodedCaptureIngressConsumeEvent(
@@ -520,6 +525,11 @@ final class LumenTuistBootstrapTests: XCTestCase {
             true,
             false,
             false,
+            false,
+            0,
+            0,
+            0,
+            0,
             firstFrame
         )
         LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
@@ -532,6 +542,11 @@ final class LumenTuistBootstrapTests: XCTestCase {
             false,
             true,
             false,
+            false,
+            0,
+            0,
+            0,
+            0,
             secondFrame
         )
         LumenCoreEncodedCaptureIngressConsumeEvent(
@@ -722,6 +737,11 @@ final class LumenTuistBootstrapTests: XCTestCase {
             false,
             false,
             false,
+            false,
+            0,
+            0,
+            0,
+            0,
             firstSampleBuffer
         )
         LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
@@ -734,6 +754,11 @@ final class LumenTuistBootstrapTests: XCTestCase {
             false,
             false,
             false,
+            false,
+            0,
+            0,
+            0,
+            0,
             secondSampleBuffer
         )
         LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
@@ -746,6 +771,11 @@ final class LumenTuistBootstrapTests: XCTestCase {
             true,
             false,
             false,
+            false,
+            0,
+            0,
+            0,
+            0,
             thirdSampleBuffer
         )
 
@@ -805,6 +835,11 @@ final class LumenTuistBootstrapTests: XCTestCase {
             false,
             false,
             false,
+            false,
+            0,
+            0,
+            0,
+            0,
             firstSampleBuffer
         )
         LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
@@ -817,6 +852,11 @@ final class LumenTuistBootstrapTests: XCTestCase {
             false,
             false,
             false,
+            false,
+            0,
+            0,
+            0,
+            0,
             secondSampleBuffer
         )
         LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
@@ -829,6 +869,11 @@ final class LumenTuistBootstrapTests: XCTestCase {
             false,
             false,
             false,
+            false,
+            0,
+            0,
+            0,
+            0,
             thirdSampleBuffer
         )
         LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
@@ -841,6 +886,11 @@ final class LumenTuistBootstrapTests: XCTestCase {
             true,
             false,
             false,
+            false,
+            0,
+            0,
+            0,
+            0,
             fourthSampleBuffer
         )
 
@@ -904,6 +954,11 @@ final class LumenTuistBootstrapTests: XCTestCase {
             false,
             false,
             false,
+            false,
+            0,
+            0,
+            0,
+            0,
             firstSampleBuffer
         )
         LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
@@ -916,6 +971,11 @@ final class LumenTuistBootstrapTests: XCTestCase {
             false,
             false,
             false,
+            false,
+            0,
+            0,
+            0,
+            0,
             secondSampleBuffer
         )
         LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
@@ -928,6 +988,11 @@ final class LumenTuistBootstrapTests: XCTestCase {
             false,
             false,
             false,
+            false,
+            0,
+            0,
+            0,
+            0,
             thirdSampleBuffer
         )
         LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
@@ -940,6 +1005,11 @@ final class LumenTuistBootstrapTests: XCTestCase {
             false,
             false,
             false,
+            false,
+            0,
+            0,
+            0,
+            0,
             fourthSampleBuffer
         )
         LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
@@ -952,6 +1022,11 @@ final class LumenTuistBootstrapTests: XCTestCase {
             true,
             false,
             false,
+            false,
+            0,
+            0,
+            0,
+            0,
             fifthSampleBuffer
         )
 
@@ -1001,8 +1076,13 @@ final class LumenTuistBootstrapTests: XCTestCase {
                 0,
                 true,
                 false,
-                false,
-                sampleBuffer
+            false,
+            false,
+            0,
+            0,
+            0,
+            0,
+            sampleBuffer
             )
         }
 

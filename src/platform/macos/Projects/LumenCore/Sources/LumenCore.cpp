@@ -101,6 +101,11 @@ namespace {
     bool is_key_frame = false;
     bool is_hdr_signaled = false;
     bool is_replay = false;
+    bool has_source_dirty_rect = false;
+    std::int32_t source_dirty_rect_x = 0;
+    std::int32_t source_dirty_rect_y = 0;
+    std::int32_t source_dirty_rect_width = 0;
+    std::int32_t source_dirty_rect_height = 0;
 
     std::size_t payload_size() const {
       if (!sample_buffer.value) {
@@ -127,6 +132,11 @@ namespace {
       record.is_key_frame = is_key_frame;
       record.is_hdr_signaled = is_hdr_signaled;
       record.is_replay = is_replay;
+      record.has_source_dirty_rect = has_source_dirty_rect;
+      record.source_dirty_rect_x = source_dirty_rect_x;
+      record.source_dirty_rect_y = source_dirty_rect_y;
+      record.source_dirty_rect_width = source_dirty_rect_width;
+      record.source_dirty_rect_height = source_dirty_rect_height;
       return record;
     }
   };
@@ -301,6 +311,11 @@ namespace lumen::core {
     bool is_key_frame,
     bool is_hdr_signaled,
     bool is_replay,
+    bool has_source_dirty_rect,
+    std::int32_t source_dirty_rect_x,
+    std::int32_t source_dirty_rect_y,
+    std::int32_t source_dirty_rect_width,
+    std::int32_t source_dirty_rect_height,
     CMSampleBufferRef sample_buffer
   ) {
     LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
@@ -313,6 +328,11 @@ namespace lumen::core {
       is_key_frame,
       is_hdr_signaled,
       is_replay,
+      has_source_dirty_rect,
+      source_dirty_rect_x,
+      source_dirty_rect_y,
+      source_dirty_rect_width,
+      source_dirty_rect_height,
       sample_buffer
     );
   }
@@ -470,6 +490,11 @@ void LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
   bool is_key_frame,
   bool is_hdr_signaled,
   bool is_replay,
+  bool has_source_dirty_rect,
+  std::int32_t source_dirty_rect_x,
+  std::int32_t source_dirty_rect_y,
+  std::int32_t source_dirty_rect_width,
+  std::int32_t source_dirty_rect_height,
   CMSampleBufferRef sample_buffer
 ) {
   if (!ingress) {
@@ -486,6 +511,11 @@ void LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
   frame.is_key_frame = is_key_frame;
   frame.is_hdr_signaled = is_hdr_signaled;
   frame.is_replay = is_replay;
+  frame.has_source_dirty_rect = has_source_dirty_rect;
+  frame.source_dirty_rect_x = source_dirty_rect_x;
+  frame.source_dirty_rect_y = source_dirty_rect_y;
+  frame.source_dirty_rect_width = source_dirty_rect_width;
+  frame.source_dirty_rect_height = source_dirty_rect_height;
 
   std::scoped_lock lock(ingress->mutex);
   ingress->frame_count += 1;

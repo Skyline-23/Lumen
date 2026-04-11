@@ -257,10 +257,18 @@ namespace video {
       const config_t &config,
       const platf::external_capture_display_metadata_t &external_metadata,
       bool frame_is_hdr_signaled,
+      bool has_source_dirty_rect,
+      std::int32_t source_dirty_rect_x,
+      std::int32_t source_dirty_rect_y,
+      std::int32_t source_dirty_rect_width,
+      std::int32_t source_dirty_rect_height,
       const SS_HDR_METADATA *metadata = nullptr
     ) {
       const auto transport = video::effective_dynamic_range_transport(config);
-      if (transport != video::dynamic_range_transport_e::sdr_base_hdr_overlay || !frame_is_hdr_signaled) {
+      if (transport != video::dynamic_range_transport_e::sdr_base_hdr_overlay) {
+        return negotiated_hdr_frame_state(config, frame_is_hdr_signaled, metadata);
+      }
+      if (!frame_is_hdr_signaled && !external_metadata.hdr_active) {
         return negotiated_hdr_frame_state(config, frame_is_hdr_signaled, metadata);
       }
 
@@ -285,6 +293,63 @@ namespace video {
         0,
         std::max(config.height - content_height, 0)
       );
+
+      if (has_source_dirty_rect &&
+          external_metadata.env_width > 0 &&
+          external_metadata.env_height > 0 &&
+          source_dirty_rect_width > 0 &&
+          source_dirty_rect_height > 0 &&
+          content_width > 0 &&
+          content_height > 0) {
+        const auto scale_x = static_cast<double>(content_width) / static_cast<double>(external_metadata.env_width);
+        const auto scale_y = static_cast<double>(content_height) / static_cast<double>(external_metadata.env_height);
+        const auto dirty_x = std::clamp(
+          content_x + static_cast<int>(std::lround(static_cast<double>(source_dirty_rect_x) * scale_x)),
+          content_x,
+          content_x + content_width
+        );
+        const auto dirty_y = std::clamp(
+          content_y + static_cast<int>(std::lround(static_cast<double>(source_dirty_rect_y) * scale_y)),
+          content_y,
+          content_y + content_height
+        );
+        const auto dirty_right = std::clamp(
+          dirty_x + static_cast<int>(std::lround(static_cast<double>(source_dirty_rect_width) * scale_x)),
+          dirty_x,
+          content_x + content_width
+        );
+        const auto dirty_bottom = std::clamp(
+          dirty_y + static_cast<int>(std::lround(static_cast<double>(source_dirty_rect_height) * scale_y)),
+          dirty_y,
+          content_y + content_height
+        );
+        const auto dirty_width = std::max(dirty_right - dirty_x, 0);
+        const auto dirty_height = std::max(dirty_bottom - dirty_y, 0);
+
+        if (dirty_width > 0 && dirty_height > 0) {
+          if (dirty_x == 0 &&
+              dirty_y == 0 &&
+              dirty_width == config.width &&
+              dirty_height == config.height) {
+            return video::make_full_frame_overlay_hdr_frame_state(
+              config.width,
+              config.height,
+              metadata
+            );
+          }
+
+          return video::make_overlay_hdr_frame_state(
+            video::make_coarse_overlay_regions(
+              dirty_x,
+              dirty_y,
+              dirty_width,
+              dirty_height,
+              nullptr
+            ),
+            metadata
+          );
+        }
+      }
 
       if (content_x == 0 &&
           content_y == 0 &&
@@ -4127,6 +4192,11 @@ namespace video {
               config,
               external_metadata,
               frame_is_hdr_signaled,
+              frame.has_source_dirty_rect,
+              frame.source_dirty_rect_x,
+              frame.source_dirty_rect_y,
+              frame.source_dirty_rect_width,
+              frame.source_dirty_rect_height,
               external_metadata.hdr_active ? &external_metadata.hdr_metadata : nullptr
             );
           } else {

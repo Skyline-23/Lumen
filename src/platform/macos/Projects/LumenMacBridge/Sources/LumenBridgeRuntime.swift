@@ -2047,7 +2047,8 @@ public actor LumenBridgeRuntime {
         sourceDisplayTime: UInt64 = 1,
         outputCallbackLatencyMilliseconds: Double? = nil,
         isKeyFrame: Bool = true,
-        isHDRSignaled: Bool = false
+        isHDRSignaled: Bool = false,
+        sourceDirtyRect: CGRect? = nil
     ) {
         coreForwarder.consume(
             sampleBuffer: sampleBuffer,
@@ -2056,7 +2057,8 @@ public actor LumenBridgeRuntime {
             sourceDisplayTime: sourceDisplayTime,
             outputCallbackLatencyMilliseconds: outputCallbackLatencyMilliseconds,
             isKeyFrame: isKeyFrame,
-            isHDRSignaled: isHDRSignaled
+            isHDRSignaled: isHDRSignaled,
+            sourceDirtyRect: sourceDirtyRect
         )
     }
 

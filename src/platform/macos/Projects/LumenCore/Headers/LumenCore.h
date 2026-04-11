@@ -140,6 +140,11 @@ typedef struct LumenCoreEncodedCaptureFrameRecord {
   bool is_key_frame;
   bool is_hdr_signaled;
   bool is_replay;
+  bool has_source_dirty_rect;
+  int32_t source_dirty_rect_x;
+  int32_t source_dirty_rect_y;
+  int32_t source_dirty_rect_width;
+  int32_t source_dirty_rect_height;
 } LumenCoreEncodedCaptureFrameRecord;
 
 typedef struct LumenCoreEncodedCaptureEventRecord {
@@ -177,6 +182,11 @@ void LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
   bool is_key_frame,
   bool is_hdr_signaled,
   bool is_replay,
+  bool has_source_dirty_rect,
+  int32_t source_dirty_rect_x,
+  int32_t source_dirty_rect_y,
+  int32_t source_dirty_rect_width,
+  int32_t source_dirty_rect_height,
   CMSampleBufferRef sample_buffer
 );
 void LumenCoreEncodedCaptureIngressConsumeEvent(
