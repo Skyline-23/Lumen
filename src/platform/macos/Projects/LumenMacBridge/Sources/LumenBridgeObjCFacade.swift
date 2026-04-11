@@ -968,8 +968,6 @@ extension LumenBridgeObjCFacade {
             return Int(LumenCoreCaptureEventKindRestarted.rawValue)
         case .failed:
             return Int(LumenCoreCaptureEventKindFailed.rawValue)
-        case .coalescedFrame:
-            return Int(LumenCoreCaptureEventKindCoalescedFrame.rawValue)
         case .droppedFrame:
             return Int(LumenCoreCaptureEventKindDroppedFrame.rawValue)
         }
