@@ -551,9 +551,6 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         }
 
         if effectiveTargetFrameRate >= 120 {
-            if codec == .hevc {
-                return .q3
-            }
             if codec == .proResProxy {
                 return .q3
             }
