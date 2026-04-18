@@ -290,7 +290,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(configuration.negotiatedDynamicRangeTransport, LumenCoreDynamicRangeTransportSDRBaseHDROverlay)
         XCTAssertEqual(configuration.effectiveTargetFrameRate, 120)
         XCTAssertEqual(configuration.effectivePreprocessStrategy, .none)
-        XCTAssertEqual(configuration.negotiatedQueueProfile, .q3)
+        XCTAssertEqual(configuration.negotiatedQueueProfile, .q1)
         XCTAssertEqual(configuration.mdkValue.targetFrameRate, 120)
         XCTAssertEqual(configuration.mdkValue.streamConfiguration.outputWidth, 3512)
         XCTAssertEqual(configuration.mdkValue.streamConfiguration.outputHeight, 2290)
@@ -419,10 +419,10 @@ final class LumenTuistBootstrapTests: XCTestCase {
         if overlayConfiguration.effectiveEncoderInputStrategy == .yuv420v10 {
             score += 10.0
         }
-        if overlayConfiguration.negotiatedQueueProfile == .q3 {
+        if overlayConfiguration.negotiatedQueueProfile == .q1 {
             score += 10.0
         }
-        if LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: overlayConfiguration) <= 3 {
+        if LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: overlayConfiguration) <= 2 {
             score += 10.0
         }
         if batterySavingConfiguration.negotiatedDynamicRangeTransport == LumenCoreDynamicRangeTransportSDR {
