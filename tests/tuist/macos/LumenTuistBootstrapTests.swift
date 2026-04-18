@@ -255,7 +255,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
         )
 
         XCTAssertEqual(LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q2), 2)
-        XCTAssertEqual(LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: auto), 2)
+        XCTAssertEqual(LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: auto), 3)
         XCTAssertEqual(LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q4), 3)
         XCTAssertEqual(LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q2NinetyFps), 2)
         XCTAssertEqual(LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q2SixtyFps), 2)
@@ -290,7 +290,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(configuration.negotiatedDynamicRangeTransport, LumenCoreDynamicRangeTransportSDRBaseHDROverlay)
         XCTAssertEqual(configuration.effectiveTargetFrameRate, 120)
         XCTAssertEqual(configuration.effectivePreprocessStrategy, .none)
-        XCTAssertEqual(configuration.negotiatedQueueProfile, .q1)
+        XCTAssertEqual(configuration.negotiatedQueueProfile, .q3)
         XCTAssertEqual(configuration.mdkValue.targetFrameRate, 120)
         XCTAssertEqual(configuration.mdkValue.streamConfiguration.outputWidth, 3512)
         XCTAssertEqual(configuration.mdkValue.streamConfiguration.outputHeight, 2290)
@@ -419,10 +419,10 @@ final class LumenTuistBootstrapTests: XCTestCase {
         if overlayConfiguration.effectiveEncoderInputStrategy == .yuv420v10 {
             score += 10.0
         }
-        if overlayConfiguration.negotiatedQueueProfile == .q1 {
+        if overlayConfiguration.negotiatedQueueProfile == .q3 {
             score += 10.0
         }
-        if LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: overlayConfiguration) <= 2 {
+        if LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: overlayConfiguration) <= 3 {
             score += 10.0
         }
         if batterySavingConfiguration.negotiatedDynamicRangeTransport == LumenCoreDynamicRangeTransportSDR {
