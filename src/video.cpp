@@ -4120,13 +4120,9 @@ namespace video {
           }
           packet->channel_data = channel_data;
           packet->frame_timestamp = display_time_clock.frame_timestamp(frame.source_display_time);
-          const auto effective_transport = video::effective_dynamic_range_transport(config);
           const auto frame_is_hdr_signaled =
-            frame.is_hdr_signaled ||
-            lumen_core_sample_buffer_indicates_hdr(retained_sample_buffer) ||
-            (effective_transport == video::dynamic_range_transport_e::sdr_base_hdr_overlay &&
-             external_metadata.hdr_active);
-          if (video::dynamic_range_transport_uses_hdr_frame_state(effective_transport)) {
+            frame.is_hdr_signaled || lumen_core_sample_buffer_indicates_hdr(retained_sample_buffer);
+          if (video::dynamic_range_transport_uses_hdr_frame_state(video::effective_dynamic_range_transport(config))) {
             packet->hdr_frame_state = negotiated_external_overlay_hdr_frame_state(
               config,
               external_metadata,
