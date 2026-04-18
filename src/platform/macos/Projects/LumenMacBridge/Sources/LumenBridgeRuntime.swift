@@ -574,6 +574,10 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
             sinkRequest.capability.supportsPerFrameHDRMetadata
     }
 
+    public var usesSDRBaseHDROverlayTransport: Bool {
+        negotiatedDynamicRangeTransport == LumenCoreDynamicRangeTransportSDRBaseHDROverlay
+    }
+
     struct EncodedHDRConfigurationSnapshot: Equatable, Sendable {
         let signalColorPrimaries: String
         let transferFunction: String
@@ -700,8 +704,7 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     }
 
     private var encodedColorConfiguration: MDKVideoHDRConfiguration? {
-        if (usesHDRTransport || negotiatedDynamicRangeTransport == LumenCoreDynamicRangeTransportSDRBaseHDROverlay),
-           codec != .h264 {
+        if usesHDRTransport, codec != .h264 {
             let colorPrimaries = resolvedHDRSignalColorPrimaries
             let yCbCrMatrix = resolvedHDRSignalYCbCrMatrix
             let metadata = resolvedHDRStaticMetadata
@@ -775,8 +778,20 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     }
 
     var encodedHDRConfigurationSnapshot: EncodedHDRConfigurationSnapshot? {
-        guard (usesHDRTransport || negotiatedDynamicRangeTransport == LumenCoreDynamicRangeTransportSDRBaseHDROverlay),
-              codec != .h264 else {
+        guard codec != .h264 else {
+            return nil
+        }
+
+        if usesSDRBaseHDROverlayTransport {
+            return EncodedHDRConfigurationSnapshot(
+                signalColorPrimaries: resolvedSourceColorPrimaries.rawValue,
+                transferFunction: MDKVideoTransferFunction.ituR709.rawValue,
+                signalYCbCrMatrix: resolvedSDRSignalYCbCrMatrix.rawValue,
+                staticMetadataSource: "none"
+            )
+        }
+
+        guard usesHDRTransport else {
             return nil
         }
 
@@ -809,6 +824,15 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         case .smpteSt2084PQ, .ituR2100HLG:
             return .ituR2020
         case .ituR709:
+            return .ituR709
+        }
+    }
+
+    private var resolvedSDRSignalYCbCrMatrix: MDKVideoYCbCrMatrix {
+        switch resolvedDisplayGamut {
+        case .rec2020:
+            return .ituR2020
+        case .displayP3, .srgb, .unknown:
             return .ituR709
         }
     }
