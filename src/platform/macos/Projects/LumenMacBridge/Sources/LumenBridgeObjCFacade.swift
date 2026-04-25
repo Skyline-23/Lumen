@@ -1,4 +1,5 @@
 import LumenCore
+import CoreGraphics
 import CoreMedia
 import Foundation
 
@@ -33,6 +34,7 @@ public final class LumenBridgeSinkCapabilityBox: NSObject {
     public let supportsFrameGatedHDR: Bool
     public let supportsHDRTileOverlay: Bool
     public let supportsPerFrameHDRMetadata: Bool
+    public let supportsEncodedTileStream: Bool
 
     public init(
         gamutRawValue: Int,
@@ -43,7 +45,8 @@ public final class LumenBridgeSinkCapabilityBox: NSObject {
         potentialPeakLuminanceNits: Int,
         supportsFrameGatedHDR: Bool,
         supportsHDRTileOverlay: Bool,
-        supportsPerFrameHDRMetadata: Bool
+        supportsPerFrameHDRMetadata: Bool,
+        supportsEncodedTileStream: Bool
     ) {
         self.gamutRawValue = gamutRawValue
         self.transferRawValue = transferRawValue
@@ -54,6 +57,7 @@ public final class LumenBridgeSinkCapabilityBox: NSObject {
         self.supportsFrameGatedHDR = supportsFrameGatedHDR
         self.supportsHDRTileOverlay = supportsHDRTileOverlay
         self.supportsPerFrameHDRMetadata = supportsPerFrameHDRMetadata
+        self.supportsEncodedTileStream = supportsEncodedTileStream
     }
 }
 
@@ -212,7 +216,8 @@ public final class LumenBridgeConfigurationBox: NSObject {
                 potentialPeakLuminanceNits: configuration.sinkRequest.capability.potentialPeakLuminanceNits,
                 supportsFrameGatedHDR: configuration.sinkRequest.capability.supportsFrameGatedHDR,
                 supportsHDRTileOverlay: configuration.sinkRequest.capability.supportsHDRTileOverlay,
-                supportsPerFrameHDRMetadata: configuration.sinkRequest.capability.supportsPerFrameHDRMetadata
+                supportsPerFrameHDRMetadata: configuration.sinkRequest.capability.supportsPerFrameHDRMetadata,
+                supportsEncodedTileStream: configuration.sinkRequest.capability.supportsEncodedTileStream
             ),
             dynamicRangeTransportRawValue: Int(configuration.sinkRequest.dynamicRangeTransport.rawValue)
         )
@@ -279,7 +284,8 @@ public final class LumenBridgeConfigurationBox: NSObject {
                     potentialPeakLuminanceNits: sinkRequest.capability.potentialPeakLuminanceNits,
                     supportsFrameGatedHDR: sinkRequest.capability.supportsFrameGatedHDR,
                     supportsHDRTileOverlay: sinkRequest.capability.supportsHDRTileOverlay,
-                    supportsPerFrameHDRMetadata: sinkRequest.capability.supportsPerFrameHDRMetadata
+                    supportsPerFrameHDRMetadata: sinkRequest.capability.supportsPerFrameHDRMetadata,
+                    supportsEncodedTileStream: sinkRequest.capability.supportsEncodedTileStream
                 ),
                 dynamicRangeTransport: LumenCoreDynamicRangeTransport(
                     rawValue: UInt32(sinkRequest.dynamicRangeTransportRawValue)
@@ -491,6 +497,17 @@ public final class LumenBridgeDrainedFrameBox: NSObject {
     public let outputCallbackLatencyMilliseconds: Double
     public let isKeyFrame: Bool
     public let isHDRSignaled: Bool
+    public let isReplay: Bool
+    public let frameGroupID: UInt64
+    public let tileIndex: UInt32
+    public let tileCount: UInt32
+    public let encodedLaneIndex: UInt32
+    public let encodedLaneCount: UInt32
+    public let hasTileRegion: Bool
+    public let tileOriginX: UInt32
+    public let tileOriginY: UInt32
+    public let tileWidth: UInt32
+    public let tileHeight: UInt32
     public let sampleBuffer: CMSampleBuffer
 
     init(frame: LumenBridgeCoreDrainedFrame) {
@@ -502,6 +519,24 @@ public final class LumenBridgeDrainedFrameBox: NSObject {
         self.outputCallbackLatencyMilliseconds = frame.outputCallbackLatencyMilliseconds ?? 0
         self.isKeyFrame = frame.isKeyFrame
         self.isHDRSignaled = frame.isHDRSignaled
+        self.isReplay = frame.isReplay
+        self.frameGroupID = frame.tileMetadata.frameGroupID
+        self.tileIndex = frame.tileMetadata.tileIndex
+        self.tileCount = frame.tileMetadata.tileCount
+        self.encodedLaneIndex = frame.tileMetadata.encodedLaneIndex
+        self.encodedLaneCount = frame.tileMetadata.encodedLaneCount
+        self.hasTileRegion = frame.tileMetadata.tileRegion != nil
+        if let tileRegion = frame.tileMetadata.tileRegion {
+            self.tileOriginX = UInt32(clamping: Int(max(0, tileRegion.origin.x.rounded(.down))))
+            self.tileOriginY = UInt32(clamping: Int(max(0, tileRegion.origin.y.rounded(.down))))
+            self.tileWidth = UInt32(clamping: Int(max(0, tileRegion.width.rounded(.down))))
+            self.tileHeight = UInt32(clamping: Int(max(0, tileRegion.height.rounded(.down))))
+        } else {
+            self.tileOriginX = 0
+            self.tileOriginY = 0
+            self.tileWidth = 0
+            self.tileHeight = 0
+        }
         self.sampleBuffer = frame.sampleBuffer
     }
 }

@@ -1,7 +1,79 @@
 import LumenCore
+import CoreGraphics
 import CoreMedia
 import Foundation
 import MacDisplayCaptureKit
+
+public struct LumenBridgeEncodedTileMetadata: Equatable, Sendable {
+    public static let singleFrame = LumenBridgeEncodedTileMetadata()
+
+    public let frameGroupID: UInt64
+    public let tileIndex: UInt32
+    public let tileCount: UInt32
+    public let encodedLaneIndex: UInt32
+    public let encodedLaneCount: UInt32
+    public let tileRegion: CGRect?
+
+    public init(
+        frameGroupID: UInt64 = 0,
+        tileIndex: UInt32 = 0,
+        tileCount: UInt32 = 1,
+        encodedLaneIndex: UInt32 = 0,
+        encodedLaneCount: UInt32 = 1,
+        tileRegion: CGRect? = nil
+    ) {
+        self.frameGroupID = frameGroupID
+        self.tileIndex = tileIndex
+        self.tileCount = max(1, tileCount)
+        self.encodedLaneIndex = encodedLaneIndex
+        self.encodedLaneCount = max(1, encodedLaneCount)
+        self.tileRegion = tileRegion
+    }
+
+    init(coreValue: LumenCoreEncodedCaptureTileMetadata) {
+        self.frameGroupID = coreValue.frame_group_id
+        self.tileIndex = coreValue.tile_index
+        self.tileCount = max(1, coreValue.tile_count)
+        self.encodedLaneIndex = coreValue.encoded_lane_index
+        self.encodedLaneCount = max(1, coreValue.encoded_lane_count)
+        if coreValue.has_tile_region {
+            self.tileRegion = CGRect(
+                x: CGFloat(coreValue.tile_origin_x),
+                y: CGFloat(coreValue.tile_origin_y),
+                width: CGFloat(coreValue.tile_width),
+                height: CGFloat(coreValue.tile_height)
+            )
+        } else {
+            self.tileRegion = nil
+        }
+    }
+
+    init(mdkValue: MDKEncodedFrameTileMetadata) {
+        self.frameGroupID = mdkValue.frameGroupID
+        self.tileIndex = mdkValue.tileIndex
+        self.tileCount = mdkValue.tileCount
+        self.encodedLaneIndex = mdkValue.encodedLaneIndex
+        self.encodedLaneCount = mdkValue.encodedLaneCount
+        self.tileRegion = mdkValue.tileRegion
+    }
+
+    var coreValue: LumenCoreEncodedCaptureTileMetadata {
+        var metadata = LumenCoreEncodedCaptureTileMetadata()
+        metadata.frame_group_id = frameGroupID
+        metadata.tile_index = tileIndex
+        metadata.tile_count = tileCount
+        metadata.encoded_lane_index = encodedLaneIndex
+        metadata.encoded_lane_count = encodedLaneCount
+        metadata.has_tile_region = tileRegion != nil
+        if let tileRegion {
+            metadata.tile_origin_x = UInt32(clamping: Int(max(0, tileRegion.origin.x.rounded(.down))))
+            metadata.tile_origin_y = UInt32(clamping: Int(max(0, tileRegion.origin.y.rounded(.down))))
+            metadata.tile_width = UInt32(clamping: Int(max(0, tileRegion.width.rounded(.down))))
+            metadata.tile_height = UInt32(clamping: Int(max(0, tileRegion.height.rounded(.down))))
+        }
+        return metadata
+    }
+}
 
 public struct LumenBridgeCoreForwardingSnapshot: Equatable, Sendable {
     public let frameCount: UInt64
@@ -17,6 +89,7 @@ public struct LumenBridgeCoreForwardingSnapshot: Equatable, Sendable {
     public let lastFrameSourceDisplayTime: UInt64?
     public let lastFrameIsKeyFrame: Bool
     public let lastFrameIsHDRSignaled: Bool
+    public let lastFrameTileMetadata: LumenBridgeEncodedTileMetadata
     public let lastEventKind: LumenBridgeCaptureEventKind?
 
     init(snapshot: LumenCoreEncodedCaptureIngressSnapshot) {
@@ -33,6 +106,7 @@ public struct LumenBridgeCoreForwardingSnapshot: Equatable, Sendable {
         self.lastFrameSourceDisplayTime = snapshot.has_last_frame ? snapshot.last_frame_source_display_time : nil
         self.lastFrameIsKeyFrame = snapshot.last_frame_is_key_frame
         self.lastFrameIsHDRSignaled = snapshot.last_frame_is_hdr_signaled
+        self.lastFrameTileMetadata = LumenBridgeEncodedTileMetadata(coreValue: snapshot.last_frame_tile_metadata)
         self.lastEventKind = snapshot.has_last_event ? LumenBridgeCaptureEventKind(lumenCoreKind: snapshot.last_event_kind) : nil
     }
 }
@@ -46,6 +120,7 @@ public struct LumenBridgeCoreDrainedFrame: @unchecked Sendable {
     public let isKeyFrame: Bool
     public let isHDRSignaled: Bool
     public let isReplay: Bool
+    public let tileMetadata: LumenBridgeEncodedTileMetadata
     public let sampleBuffer: CMSampleBuffer
 }
 
@@ -100,7 +175,8 @@ final class LumenCoreCaptureForwarder: @unchecked Sendable {
             outputCallbackLatencyMilliseconds: frame.outputCallbackLatencyMilliseconds,
             isKeyFrame: frame.isKeyFrame,
             isHDRSignaled: frame.isHDRSignaled,
-            isReplay: false
+            isReplay: false,
+            tileMetadata: LumenBridgeEncodedTileMetadata(mdkValue: frame.tileMetadata)
         )
     }
 
@@ -112,9 +188,10 @@ final class LumenCoreCaptureForwarder: @unchecked Sendable {
         outputCallbackLatencyMilliseconds: Double? = nil,
         isKeyFrame: Bool,
         isHDRSignaled: Bool,
-        isReplay: Bool = false
+        isReplay: Bool = false,
+        tileMetadata: LumenBridgeEncodedTileMetadata = .singleFrame
     ) {
-        LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
+        LumenCoreEncodedCaptureIngressConsumeSampleBufferWithTileMetadata(
             handle,
             codec.lumenCoreCodec,
             sourceSequenceNumber,
@@ -124,6 +201,7 @@ final class LumenCoreCaptureForwarder: @unchecked Sendable {
             isKeyFrame,
             isHDRSignaled,
             isReplay,
+            tileMetadata.coreValue,
             sampleBuffer
         )
     }
@@ -176,6 +254,7 @@ final class LumenCoreCaptureForwarder: @unchecked Sendable {
             isKeyFrame: record.is_key_frame,
             isHDRSignaled: record.is_hdr_signaled,
             isReplay: record.is_replay,
+            tileMetadata: LumenBridgeEncodedTileMetadata(coreValue: record.tile_metadata),
             sampleBuffer: sampleBuffer.takeRetainedValue()
         )
     }
@@ -194,7 +273,8 @@ final class LumenCoreCaptureForwarder: @unchecked Sendable {
             return nil
         }
 
-        let message = messageBuffer.first == 0 ? nil : String(cString: messageBuffer)
+        let messageBytes = messageBuffer.prefix { $0 != 0 }.map(UInt8.init(bitPattern:))
+        let message = messageBytes.isEmpty ? nil : String(decoding: messageBytes, as: UTF8.self)
         return LumenBridgeCoreDrainedEvent(
             kind: kind,
             message: message,

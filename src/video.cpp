@@ -174,6 +174,23 @@ namespace video {
       }
     }
 
+    video::encoded_tile_metadata_t lumen_core_tile_metadata(
+      const LumenCoreEncodedCaptureTileMetadata &metadata
+    ) {
+      video::encoded_tile_metadata_t result {};
+      result.frame_group_id = metadata.frame_group_id;
+      result.tile_index = metadata.tile_index;
+      result.tile_count = std::max<std::uint32_t>(1, metadata.tile_count);
+      result.encoded_lane_index = metadata.encoded_lane_index;
+      result.encoded_lane_count = std::max<std::uint32_t>(1, metadata.encoded_lane_count);
+      result.has_tile_region = metadata.has_tile_region;
+      result.tile_origin_x = metadata.has_tile_region ? metadata.tile_origin_x : 0;
+      result.tile_origin_y = metadata.has_tile_region ? metadata.tile_origin_y : 0;
+      result.tile_width = metadata.has_tile_region ? metadata.tile_width : 0;
+      result.tile_height = metadata.has_tile_region ? metadata.tile_height : 0;
+      return result;
+    }
+
     std::string_view requested_video_format_name(int video_format) {
       switch (video_format) {
         case 0:
@@ -3851,6 +3868,7 @@ namespace video {
       bool logged_producer_stop = false;
       bool logged_frame_stall = false;
       bool logged_first_packet = false;
+      bool logged_multi_tile_unsupported = false;
       bool waiting_for_initial_idr = true;
       bool logged_waiting_for_initial_idr = false;
       std::optional<int> adopted_video_format;
@@ -3881,6 +3899,7 @@ namespace video {
         logged_waiting_for_initial_idr = false;
         logged_first_packet = false;
         logged_codec_mismatch = false;
+        logged_multi_tile_unsupported = false;
         adopted_video_format.reset();
         last_forwarded_source_sequence_number = 0;
         last_forwarded_source_display_time = 0;
@@ -4040,6 +4059,24 @@ namespace video {
             continue;
           }
 
+          const auto encoded_tile_metadata = lumen_core_tile_metadata(frame.tile_metadata);
+          const auto tile_count = encoded_tile_metadata.tile_count;
+          const auto lane_count = encoded_tile_metadata.encoded_lane_count;
+          if ((tile_count > 1 || lane_count > 1) &&
+              config.sinkRequest.capability.supports_encoded_tile_stream == 0) {
+            if (!logged_multi_tile_unsupported) {
+              BOOST_LOG(error) << "External macOS encoded ingress received multi-tile encoded frame before client encoded tile stream support was negotiated"
+                               << " tile-index="sv << encoded_tile_metadata.tile_index
+                               << " tile-count="sv << tile_count
+                               << " lane-index="sv << encoded_tile_metadata.encoded_lane_index
+                               << " lane-count="sv << lane_count
+                               << " group-id="sv << encoded_tile_metadata.frame_group_id;
+              logged_multi_tile_unsupported = true;
+            }
+            CFRelease(retained_sample_buffer);
+            continue;
+          }
+
           std::vector<uint8_t> packet_data;
           const bool sample_buffer_reports_idr = external_sample_buffer_is_idr(retained_sample_buffer);
           const bool packet_is_idr = frame.is_key_frame || sample_buffer_reports_idr;
@@ -4111,6 +4148,10 @@ namespace video {
                             << " sample-payload-cll="sv << payload_static_metadata_presence.has_content_light_level_info
                             << " packet-mastering="sv << packet_static_metadata_presence.has_mastering_display_color_volume
                             << " packet-cll="sv << packet_static_metadata_presence.has_content_light_level_info
+                            << " tile-index="sv << encoded_tile_metadata.tile_index
+                            << " tile-count="sv << tile_count
+                            << " lane-index="sv << encoded_tile_metadata.encoded_lane_index
+                            << " lane-count="sv << lane_count
                             << " seq="sv << frame.source_sequence_number
                             << " display-time="sv << frame.source_display_time;
             if (!packet_is_idr) {
@@ -4120,6 +4161,7 @@ namespace video {
           }
           packet->channel_data = channel_data;
           packet->frame_timestamp = display_time_clock.frame_timestamp(frame.source_display_time);
+          packet->encoded_tile_metadata = encoded_tile_metadata;
           const auto frame_is_hdr_signaled =
             frame.is_hdr_signaled || lumen_core_sample_buffer_indicates_hdr(retained_sample_buffer);
           if (video::dynamic_range_transport_uses_hdr_frame_state(video::effective_dynamic_range_transport(config))) {

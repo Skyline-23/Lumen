@@ -734,6 +734,9 @@ namespace shadow_http {
     launch_session->sink_request.capability.supports_per_frame_hdr_metadata = util::from_view(
       get_arg(args, "clientSinkSupportsPerFrameHDRMetadata")
     );
+    launch_session->sink_request.capability.supports_encoded_tile_stream = util::from_view(
+      get_arg(args, "clientSinkSupportsEncodedTileStream", "0")
+    );
     const auto requested_dynamic_range_transport =
       video::effective_dynamic_range_transport(launch_session->sink_request.dynamic_range_transport);
     const auto negotiated_dynamic_range_transport =
@@ -771,7 +774,9 @@ namespace shadow_http {
                     << " supports-hdr-tile-overlay="sv
                     << launch_session->sink_request.capability.supports_hdr_tile_overlay
                     << " supports-per-frame-hdr-metadata="sv
-                    << launch_session->sink_request.capability.supports_per_frame_hdr_metadata;
+                    << launch_session->sink_request.capability.supports_per_frame_hdr_metadata
+                    << " supports-encoded-tile-stream="sv
+                    << launch_session->sink_request.capability.supports_encoded_tile_stream;
 
     launch_session->client_do_cmds = named_cert_p->do_cmds;
     launch_session->client_undo_cmds = named_cert_p->undo_cmds;

@@ -12,6 +12,8 @@
 #include <cstring>
 #include <string>
 #include <thread>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 extern "C" bool LumenMacBridgeControllerCopyCaptureDiagnostics(
@@ -55,6 +57,9 @@ const char *codecName(LumenCoreCaptureCodec codec) {
 
 struct ProbeMetrics {
   uint64_t frames = 0;
+  uint64_t frameRecords = 0;
+  uint64_t tiledFrameRecords = 0;
+  uint64_t completeFrameGroups = 0;
   uint64_t hdrFrames = 0;
   bool firstFrameSeen = false;
   bool firstFrameHDR = false;
@@ -66,7 +71,16 @@ struct ProbeMetrics {
   uint64_t droppedFrames = 0;
   uint64_t lastSeq = 0;
   bool lastHDRSignaled = false;
+  uint32_t maxTileCount = 1;
+  uint32_t maxEncodedLaneCount = 1;
   std::vector<double> callbackLatencies;
+};
+
+struct TileGroupProgress {
+  uint32_t expectedTileCount = 1;
+  bool isHDRSignaled = false;
+  bool isComplete = false;
+  std::unordered_set<uint32_t> observedTileIndexes;
 };
 
 double averageLatency(const std::vector<double> &samples) {
@@ -87,6 +101,24 @@ double maxLatency(const std::vector<double> &samples) {
   return *std::max_element(samples.begin(), samples.end());
 }
 
+uint64_t tileGroupKey(const LumenCoreEncodedCaptureFrameRecord &record) {
+  if (record.tile_metadata.frame_group_id != 0) {
+    return record.tile_metadata.frame_group_id;
+  }
+  return record.source_sequence_number;
+}
+
+void countLogicalFrame(ProbeMetrics &metrics, bool isHDRSignaled) {
+  metrics.frames += 1;
+  if (!metrics.firstFrameSeen) {
+    metrics.firstFrameSeen = true;
+    metrics.firstFrameHDR = isHDRSignaled;
+  }
+  if (isHDRSignaled) {
+    metrics.hdrFrames += 1;
+  }
+}
+
 const char *trimLeadingSpaces(const char *value) {
   while (value != nullptr && (*value == ' ' || *value == '\t')) {
     value += 1;
@@ -98,6 +130,67 @@ void emitSelectedDiagnostics(const char *diagnostics) {
   if (diagnostics == nullptr || diagnostics[0] == '\0') {
     return;
   }
+
+  struct DiagnosticEmission {
+    const char *sourceKey;
+    const char *probeKey;
+  };
+  static constexpr DiagnosticEmission emissions[] = {
+    {"sourceBackend", "SOURCE_BACKEND"},
+    {"rawPrivateDisplayStream", "RAW_PRIVATE_DISPLAY_STREAM"},
+    {"rawPrivateDisplayStreamRequestedPixelFormat", "RAW_PRIVATE_DISPLAY_STREAM_REQUESTED_PIXEL_FORMAT"},
+    {"rawPrivateDisplayStreamRequestedMatrix", "RAW_PRIVATE_DISPLAY_STREAM_REQUESTED_MATRIX"},
+    {"skyLightSyntheticIdleReplay", "SKYLIGHT_SYNTHETIC_IDLE_REPLAY"},
+    {"skyLightSyntheticIdleReplayIntervalMilliseconds", "SKYLIGHT_SYNTHETIC_IDLE_REPLAY_INTERVAL_MS"},
+    {"skyLightPendingPolicy", "SKYLIGHT_PENDING_POLICY"},
+    {"skyLightRecommendedPendingFrameCount", "SKYLIGHT_RECOMMENDED_PENDING_FRAME_COUNT"},
+    {"sourceFrameCount", "SOURCE_FRAME_COUNT"},
+    {"sourceDisplayDeltaCount", "SOURCE_DISPLAY_DELTA_COUNT"},
+    {"sourceLastDisplayDeltaMilliseconds", "SOURCE_LAST_DISPLAY_DELTA_MS"},
+    {"sourceMinDisplayDeltaMilliseconds", "SOURCE_MIN_DISPLAY_DELTA_MS"},
+    {"sourceMaxDisplayDeltaMilliseconds", "SOURCE_MAX_DISPLAY_DELTA_MS"},
+    {"sourceAverageDisplayDeltaMilliseconds", "SOURCE_AVG_DISPLAY_DELTA_MS"},
+    {"sourceApproxFrameRate", "SOURCE_APPROX_FRAME_RATE"},
+    {"sourceCadenceClassification", "SOURCE_CADENCE"},
+    {"sourceReducedDirtySampleCount", "SOURCE_REDUCED_DIRTY_SAMPLE_COUNT"},
+    {"sourceAverageReducedDirtyCoverageRatio", "SOURCE_AVG_REDUCED_DIRTY_COVERAGE_RATIO"},
+    {"sourceMaxReducedDirtyCoverageRatio", "SOURCE_MAX_REDUCED_DIRTY_COVERAGE_RATIO"},
+    {"sourceAverageReducedDirtyRectCount", "SOURCE_AVG_REDUCED_DIRTY_RECT_COUNT"},
+    {"sourceMaxReducedDirtyRectCount", "SOURCE_MAX_REDUCED_DIRTY_RECT_COUNT"},
+    {"sourceUpdateDropSampleCount", "SOURCE_UPDATE_DROP_SAMPLE_COUNT"},
+    {"sourceAverageUpdateDropCount", "SOURCE_AVG_UPDATE_DROP_COUNT"},
+    {"sourceMaxUpdateDropCount", "SOURCE_MAX_UPDATE_DROP_COUNT"},
+    {"sourceHotPathDiagnostics", "SOURCE_HOT_PATH_DIAGNOSTICS"},
+    {"privateCaptureSourcePixelFormat", "PRIVATE_CAPTURE_SOURCE_PIXEL_FORMAT"},
+    {"privateCaptureRequestedPixelFormat", "PRIVATE_CAPTURE_REQUESTED_PIXEL_FORMAT"},
+    {"privateCaptureExtendedRange", "PRIVATE_CAPTURE_EXTENDED_RANGE"},
+    {"privateCaptureCursorComposition", "PRIVATE_CAPTURE_CURSOR_COMPOSITION"},
+    {"privateCaptureSourceColorTransform", "PRIVATE_CAPTURE_SOURCE_COLOR_TRANSFORM"},
+    {"videoToolboxUsingHardwareEncoder", "VT_USING_HARDWARE_ENCODER"},
+    {"videoToolboxRecommendedParallelizationLimit", "VT_RECOMMENDED_PARALLELIZATION_LIMIT"},
+    {"videoToolboxPixelBufferPoolIsShared", "VT_PIXEL_BUFFER_POOL_IS_SHARED"},
+    {"videoToolboxStagingMode", "VT_STAGING_MODE"},
+    {"videoToolboxStagedSourceReleaseMode", "VT_STAGED_SOURCE_RELEASE_MODE"},
+    {"videoToolboxEncoderInputStrategy", "VT_ENCODER_INPUT_STRATEGY"},
+    {"videoToolboxEncoderInputPixelFormat", "VT_ENCODER_INPUT_PIXEL_FORMAT"},
+    {"videoToolboxSourcePixelFormat", "VT_SOURCE_PIXEL_FORMAT"},
+    {"videoToolboxSourceColorPrimaries", "VT_SOURCE_COLOR_PRIMARIES"},
+    {"videoToolboxSignalColorPrimaries", "VT_SIGNAL_COLOR_PRIMARIES"},
+    {"videoToolboxColorConversionMode", "VT_COLOR_CONVERSION_MODE"},
+    {"videoToolboxTargetFrameRateHint", "VT_TARGET_FRAME_RATE_HINT"},
+    {"videoToolboxConfiguredAverageBitRate", "VT_CONFIGURED_AVG_BIT_RATE"},
+    {"videoToolboxConfiguredAverageBitRateSource", "VT_CONFIGURED_AVG_BIT_RATE_SOURCE"},
+    {"videoToolboxConfiguredDataRateLimits", "VT_CONFIGURED_DATA_RATE_LIMITS"},
+    {"videoToolboxConfiguredDataRateLimitsSource", "VT_CONFIGURED_DATA_RATE_LIMITS_SOURCE"},
+    {"videoToolboxConfiguredProfileLevel", "VT_CONFIGURED_PROFILE_LEVEL"},
+    {"videoToolboxDirectSubmissionFrameCount", "VT_DIRECT_SUBMISSION_FRAME_COUNT"},
+    {"videoToolboxStagedSubmissionFrameCount", "VT_STAGED_SUBMISSION_FRAME_COUNT"},
+    {"videoToolboxSubmittedFrameCount", "VT_SUBMITTED_FRAME_COUNT"},
+    {"videoToolboxImmediateReplaySubmissionCount", "VT_IMMEDIATE_REPLAY_SUBMISSION_COUNT"},
+    {"videoToolboxSuppressedImmediateReplayCount", "VT_SUPPRESSED_IMMEDIATE_REPLAY_COUNT"},
+    {"videoToolboxMaxInflightStagingSlots", "VT_MAX_INFLIGHT_STAGING_SLOTS"},
+    {"videoToolboxPixelBufferCacheSize", "VT_PIXEL_BUFFER_CACHE_SIZE"},
+  };
 
   std::string remaining(diagnostics);
   while (!remaining.empty()) {
@@ -120,31 +213,20 @@ void emitSelectedDiagnostics(const char *diagnostics) {
 
     const std::string key = token.substr(0, equals);
     const char *value = trimLeadingSpaces(token.c_str() + equals + 1);
-    if (key == "sourceReducedDirtySampleCount") {
-      std::printf("AUTORESEARCH_RUNTIME_PROBE_SOURCE_REDUCED_DIRTY_SAMPLE_COUNT=%s\n", value);
-    } else if (key == "sourceAverageReducedDirtyCoverageRatio") {
-      std::printf("AUTORESEARCH_RUNTIME_PROBE_SOURCE_AVG_REDUCED_DIRTY_COVERAGE_RATIO=%s\n", value);
-    } else if (key == "sourceMaxReducedDirtyCoverageRatio") {
-      std::printf("AUTORESEARCH_RUNTIME_PROBE_SOURCE_MAX_REDUCED_DIRTY_COVERAGE_RATIO=%s\n", value);
-    } else if (key == "sourceAverageReducedDirtyRectCount") {
-      std::printf("AUTORESEARCH_RUNTIME_PROBE_SOURCE_AVG_REDUCED_DIRTY_RECT_COUNT=%s\n", value);
-    } else if (key == "sourceMaxReducedDirtyRectCount") {
-      std::printf("AUTORESEARCH_RUNTIME_PROBE_SOURCE_MAX_REDUCED_DIRTY_RECT_COUNT=%s\n", value);
-    } else if (key == "sourceUpdateDropSampleCount") {
-      std::printf("AUTORESEARCH_RUNTIME_PROBE_SOURCE_UPDATE_DROP_SAMPLE_COUNT=%s\n", value);
-    } else if (key == "sourceAverageUpdateDropCount") {
-      std::printf("AUTORESEARCH_RUNTIME_PROBE_SOURCE_AVG_UPDATE_DROP_COUNT=%s\n", value);
-    } else if (key == "sourceMaxUpdateDropCount") {
-      std::printf("AUTORESEARCH_RUNTIME_PROBE_SOURCE_MAX_UPDATE_DROP_COUNT=%s\n", value);
-    } else if (key == "sourceApproxFrameRate") {
-      std::printf("AUTORESEARCH_RUNTIME_PROBE_SOURCE_APPROX_FRAME_RATE=%s\n", value);
-    } else if (key == "sourceCadenceClassification") {
-      std::printf("AUTORESEARCH_RUNTIME_PROBE_SOURCE_CADENCE=%s\n", value);
+    for (const DiagnosticEmission &emission : emissions) {
+      if (key == emission.sourceKey) {
+        std::printf("AUTORESEARCH_RUNTIME_PROBE_%s=%s\n", emission.probeKey, value);
+        break;
+      }
     }
   }
 }
 
-void drainForwardedFrames(LumenMacBridgeController *controller, ProbeMetrics &metrics) {
+void drainForwardedFrames(
+  LumenMacBridgeController *controller,
+  ProbeMetrics &metrics,
+  std::unordered_map<uint64_t, TileGroupProgress> &tileGroups
+) {
   while (true) {
     CMSampleBufferRef sampleBuffer = nullptr;
     LumenCoreEncodedCaptureFrameRecord record =
@@ -156,18 +238,33 @@ void drainForwardedFrames(LumenMacBridgeController *controller, ProbeMetrics &me
       break;
     }
 
-    metrics.frames += 1;
-    if (!metrics.firstFrameSeen) {
-      metrics.firstFrameSeen = true;
-      metrics.firstFrameHDR = record.is_hdr_signaled;
-    }
-    if (record.is_hdr_signaled) {
-      metrics.hdrFrames += 1;
-    }
+    metrics.frameRecords += 1;
     metrics.lastSeq = record.source_sequence_number;
     metrics.lastHDRSignaled = record.is_hdr_signaled;
+    metrics.maxTileCount = std::max(metrics.maxTileCount, record.tile_metadata.tile_count);
+    metrics.maxEncodedLaneCount =
+      std::max(metrics.maxEncodedLaneCount, record.tile_metadata.encoded_lane_count);
     if (record.has_output_callback_latency_milliseconds) {
       metrics.callbackLatencies.push_back(record.output_callback_latency_milliseconds);
+    }
+
+    if (record.tile_metadata.tile_count <= 1 &&
+        record.tile_metadata.encoded_lane_count <= 1) {
+      countLogicalFrame(metrics, record.is_hdr_signaled);
+      continue;
+    }
+
+    metrics.tiledFrameRecords += 1;
+    const uint64_t groupKey = tileGroupKey(record);
+    TileGroupProgress &group = tileGroups[groupKey];
+    group.expectedTileCount = std::max(group.expectedTileCount, record.tile_metadata.tile_count);
+    group.isHDRSignaled = group.isHDRSignaled || record.is_hdr_signaled;
+    group.observedTileIndexes.insert(record.tile_metadata.tile_index);
+    if (!group.isComplete &&
+        group.observedTileIndexes.size() >= static_cast<size_t>(group.expectedTileCount)) {
+      group.isComplete = true;
+      metrics.completeFrameGroups += 1;
+      countLogicalFrame(metrics, group.isHDRSignaled);
     }
   }
 }
@@ -256,10 +353,11 @@ int main(int argc, const char *argv[]) {
     }
 
     ProbeMetrics metrics;
+    std::unordered_map<uint64_t, TileGroupProgress> tileGroups;
     const auto captureStartTime = std::chrono::steady_clock::now();
     const auto startupDeadline = captureStartTime + std::chrono::seconds(10);
     while (std::chrono::steady_clock::now() < startupDeadline && !metrics.firstFrameSeen) {
-      drainForwardedFrames(controller, metrics);
+      drainForwardedFrames(controller, metrics, tileGroups);
       drainForwardedEvents(controller, metrics);
       if (metrics.firstFrameSeen && metrics.startupMilliseconds < 0.0) {
         metrics.startupMilliseconds = std::chrono::duration<double, std::milli>(
@@ -273,13 +371,13 @@ int main(int argc, const char *argv[]) {
     if (metrics.firstFrameSeen) {
       const auto sampleDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1000);
       while (std::chrono::steady_clock::now() < sampleDeadline) {
-        drainForwardedFrames(controller, metrics);
+        drainForwardedFrames(controller, metrics, tileGroups);
         drainForwardedEvents(controller, metrics);
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
       }
     }
 
-    drainForwardedFrames(controller, metrics);
+    drainForwardedFrames(controller, metrics, tileGroups);
     drainForwardedEvents(controller, metrics);
     if (metrics.firstFrameSeen && metrics.startupMilliseconds < 0.0) {
       metrics.startupMilliseconds = std::chrono::duration<double, std::milli>(
@@ -308,12 +406,25 @@ int main(int argc, const char *argv[]) {
     LumenMacBridgeControllerStopMacDisplayKitCapture(controller);
     LumenMacBridgeControllerDestroy(controller);
 
+    uint64_t incompleteFrameGroups = 0;
+    for (const auto &entry : tileGroups) {
+      if (!entry.second.isComplete) {
+        incompleteFrameGroups += 1;
+      }
+    }
+
     std::printf("AUTORESEARCH_RUNTIME_PROBE_STATUS=ok\n");
     std::printf("AUTORESEARCH_RUNTIME_PROBE_WIDTH=%d\n", width);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_HEIGHT=%d\n", height);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_FPS=%d\n", fps);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_CODEC=%s\n", codecName(codec));
     std::printf("AUTORESEARCH_RUNTIME_PROBE_FRAMES=%llu\n", metrics.frames);
+    std::printf("AUTORESEARCH_RUNTIME_PROBE_FRAME_RECORDS=%llu\n", metrics.frameRecords);
+    std::printf("AUTORESEARCH_RUNTIME_PROBE_TILED_FRAME_RECORDS=%llu\n", metrics.tiledFrameRecords);
+    std::printf("AUTORESEARCH_RUNTIME_PROBE_COMPLETE_FRAME_GROUPS=%llu\n", metrics.completeFrameGroups);
+    std::printf("AUTORESEARCH_RUNTIME_PROBE_INCOMPLETE_FRAME_GROUPS=%llu\n", incompleteFrameGroups);
+    std::printf("AUTORESEARCH_RUNTIME_PROBE_MAX_TILE_COUNT=%u\n", metrics.maxTileCount);
+    std::printf("AUTORESEARCH_RUNTIME_PROBE_MAX_ENCODED_LANE_COUNT=%u\n", metrics.maxEncodedLaneCount);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_HDR_FRAMES=%llu\n", metrics.hdrFrames);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_FIRST_FRAME_HDR=%d\n", metrics.firstFrameHDR ? 1 : 0);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_STARTUP_MS=%.3f\n", metrics.startupMilliseconds);

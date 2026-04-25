@@ -267,7 +267,7 @@ def quantile95(values: list[float]) -> float:
     return statistics.quantiles(values, n=20)[-1]
 
 
-def parse_runtime_probe_output(output: str) -> dict[str, float | bool | int] | None:
+def parse_runtime_probe_output(output: str) -> dict[str, Any] | None:
     matches = list(PROBE_LINE_RE.finditer(output))
     if not matches:
         return None
@@ -304,7 +304,7 @@ def parse_runtime_probe_output(output: str) -> dict[str, float | bool | int] | N
     def as_bool(key: str) -> bool:
         return values.get(key, "0") in {"1", "true", "True"}
 
-    return {
+    metrics: dict[str, Any] = {
         "status": status,
         "width": as_int("WIDTH"),
         "height": as_int("HEIGHT"),
@@ -324,6 +324,85 @@ def parse_runtime_probe_output(output: str) -> dict[str, float | bool | int] | N
         "last_seq": as_int("LAST_SEQ"),
         "last_hdr_signalled": as_bool("LAST_HDR_SIGNALLED"),
     }
+
+    optional_int_metrics = {
+        "SOURCE_FRAME_COUNT": "source_frame_count",
+        "SOURCE_DISPLAY_DELTA_COUNT": "source_display_delta_count",
+        "SOURCE_REDUCED_DIRTY_SAMPLE_COUNT": "source_reduced_dirty_sample_count",
+        "SOURCE_UPDATE_DROP_SAMPLE_COUNT": "source_update_drop_sample_count",
+        "SOURCE_MAX_UPDATE_DROP_COUNT": "source_max_update_drop_count",
+        "FRAME_RECORDS": "frame_records",
+        "TILED_FRAME_RECORDS": "tiled_frame_records",
+        "COMPLETE_FRAME_GROUPS": "complete_frame_groups",
+        "INCOMPLETE_FRAME_GROUPS": "incomplete_frame_groups",
+        "MAX_TILE_COUNT": "max_tile_count",
+        "MAX_ENCODED_LANE_COUNT": "max_encoded_lane_count",
+        "VT_DIRECT_SUBMISSION_FRAME_COUNT": "vt_direct_submission_frame_count",
+        "VT_STAGED_SUBMISSION_FRAME_COUNT": "vt_staged_submission_frame_count",
+        "VT_SUBMITTED_FRAME_COUNT": "vt_submitted_frame_count",
+        "VT_IMMEDIATE_REPLAY_SUBMISSION_COUNT": "vt_immediate_replay_submission_count",
+        "VT_SUPPRESSED_IMMEDIATE_REPLAY_COUNT": "vt_suppressed_immediate_replay_count",
+        "VT_MAX_INFLIGHT_STAGING_SLOTS": "vt_max_inflight_staging_slots",
+        "VT_PIXEL_BUFFER_CACHE_SIZE": "vt_pixel_buffer_cache_size",
+        "SKYLIGHT_RECOMMENDED_PENDING_FRAME_COUNT": "skylight_recommended_pending_frame_count",
+    }
+    optional_float_metrics = {
+        "SOURCE_LAST_DISPLAY_DELTA_MS": "source_last_display_delta_ms",
+        "SOURCE_MIN_DISPLAY_DELTA_MS": "source_min_display_delta_ms",
+        "SOURCE_MAX_DISPLAY_DELTA_MS": "source_max_display_delta_ms",
+        "SOURCE_AVG_DISPLAY_DELTA_MS": "source_avg_display_delta_ms",
+        "SOURCE_AVG_REDUCED_DIRTY_COVERAGE_RATIO": "source_avg_reduced_dirty_coverage_ratio",
+        "SOURCE_MAX_REDUCED_DIRTY_COVERAGE_RATIO": "source_max_reduced_dirty_coverage_ratio",
+        "SOURCE_AVG_REDUCED_DIRTY_RECT_COUNT": "source_avg_reduced_dirty_rect_count",
+        "SOURCE_MAX_REDUCED_DIRTY_RECT_COUNT": "source_max_reduced_dirty_rect_count",
+        "SOURCE_AVG_UPDATE_DROP_COUNT": "source_avg_update_drop_count",
+        "SOURCE_APPROX_FRAME_RATE": "source_approx_frame_rate",
+        "SKYLIGHT_SYNTHETIC_IDLE_REPLAY_INTERVAL_MS": "skylight_synthetic_idle_replay_interval_ms",
+    }
+    optional_string_metrics = {
+        "SOURCE_BACKEND": "source_backend",
+        "SOURCE_CADENCE": "source_cadence",
+        "SOURCE_HOT_PATH_DIAGNOSTICS": "source_hot_path_diagnostics",
+        "RAW_PRIVATE_DISPLAY_STREAM": "raw_private_display_stream",
+        "RAW_PRIVATE_DISPLAY_STREAM_REQUESTED_PIXEL_FORMAT": "raw_private_display_stream_requested_pixel_format",
+        "RAW_PRIVATE_DISPLAY_STREAM_REQUESTED_MATRIX": "raw_private_display_stream_requested_matrix",
+        "SKYLIGHT_SYNTHETIC_IDLE_REPLAY": "skylight_synthetic_idle_replay",
+        "SKYLIGHT_PENDING_POLICY": "skylight_pending_policy",
+        "PRIVATE_CAPTURE_SOURCE_PIXEL_FORMAT": "private_capture_source_pixel_format",
+        "PRIVATE_CAPTURE_REQUESTED_PIXEL_FORMAT": "private_capture_requested_pixel_format",
+        "PRIVATE_CAPTURE_EXTENDED_RANGE": "private_capture_extended_range",
+        "PRIVATE_CAPTURE_CURSOR_COMPOSITION": "private_capture_cursor_composition",
+        "PRIVATE_CAPTURE_SOURCE_COLOR_TRANSFORM": "private_capture_source_color_transform",
+        "VT_USING_HARDWARE_ENCODER": "vt_using_hardware_encoder",
+        "VT_RECOMMENDED_PARALLELIZATION_LIMIT": "vt_recommended_parallelization_limit",
+        "VT_PIXEL_BUFFER_POOL_IS_SHARED": "vt_pixel_buffer_pool_is_shared",
+        "VT_STAGING_MODE": "vt_staging_mode",
+        "VT_STAGED_SOURCE_RELEASE_MODE": "vt_staged_source_release_mode",
+        "VT_ENCODER_INPUT_STRATEGY": "vt_encoder_input_strategy",
+        "VT_ENCODER_INPUT_PIXEL_FORMAT": "vt_encoder_input_pixel_format",
+        "VT_SOURCE_PIXEL_FORMAT": "vt_source_pixel_format",
+        "VT_SOURCE_COLOR_PRIMARIES": "vt_source_color_primaries",
+        "VT_SIGNAL_COLOR_PRIMARIES": "vt_signal_color_primaries",
+        "VT_COLOR_CONVERSION_MODE": "vt_color_conversion_mode",
+        "VT_TARGET_FRAME_RATE_HINT": "vt_target_frame_rate_hint",
+        "VT_CONFIGURED_AVG_BIT_RATE": "vt_configured_avg_bit_rate",
+        "VT_CONFIGURED_AVG_BIT_RATE_SOURCE": "vt_configured_avg_bit_rate_source",
+        "VT_CONFIGURED_DATA_RATE_LIMITS": "vt_configured_data_rate_limits",
+        "VT_CONFIGURED_DATA_RATE_LIMITS_SOURCE": "vt_configured_data_rate_limits_source",
+        "VT_CONFIGURED_PROFILE_LEVEL": "vt_configured_profile_level",
+    }
+
+    for probe_key, metric_key in optional_int_metrics.items():
+        if probe_key in values:
+            metrics[metric_key] = as_int(probe_key)
+    for probe_key, metric_key in optional_float_metrics.items():
+        if probe_key in values:
+            metrics[metric_key] = as_float(probe_key)
+    for probe_key, metric_key in optional_string_metrics.items():
+        if probe_key in values:
+            metrics[metric_key] = values[probe_key]
+
+    return metrics
 
 
 def median_runtime_probe_result(

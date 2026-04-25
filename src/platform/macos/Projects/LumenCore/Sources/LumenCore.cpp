@@ -18,6 +18,27 @@ namespace {
   constexpr std::size_t default_event_capacity = 32;
   constexpr std::string_view encoded_capture_queue_overflow_message = "core-forwarder-overflow";
 
+  LumenCoreEncodedCaptureTileMetadata single_frame_tile_metadata() {
+    LumenCoreEncodedCaptureTileMetadata metadata {};
+    metadata.tile_count = 1;
+    metadata.encoded_lane_count = 1;
+    return metadata;
+  }
+
+  LumenCoreEncodedCaptureTileMetadata normalized_tile_metadata(
+    LumenCoreEncodedCaptureTileMetadata metadata
+  ) {
+    metadata.tile_count = std::max<std::uint32_t>(1, metadata.tile_count);
+    metadata.encoded_lane_count = std::max<std::uint32_t>(1, metadata.encoded_lane_count);
+    if (!metadata.has_tile_region) {
+      metadata.tile_origin_x = 0;
+      metadata.tile_origin_y = 0;
+      metadata.tile_width = 0;
+      metadata.tile_height = 0;
+    }
+    return metadata;
+  }
+
   struct retained_sample_buffer_t {
     CMSampleBufferRef value = nullptr;
 
@@ -101,6 +122,7 @@ namespace {
     bool is_key_frame = false;
     bool is_hdr_signaled = false;
     bool is_replay = false;
+    LumenCoreEncodedCaptureTileMetadata tile_metadata = single_frame_tile_metadata();
 
     std::size_t payload_size() const {
       if (!sample_buffer.value) {
@@ -127,6 +149,7 @@ namespace {
       record.is_key_frame = is_key_frame;
       record.is_hdr_signaled = is_hdr_signaled;
       record.is_replay = is_replay;
+      record.tile_metadata = tile_metadata;
       return record;
     }
   };
@@ -472,6 +495,34 @@ void LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
   bool is_replay,
   CMSampleBufferRef sample_buffer
 ) {
+  LumenCoreEncodedCaptureIngressConsumeSampleBufferWithTileMetadata(
+    ingress,
+    codec,
+    source_sequence_number,
+    source_display_time,
+    has_output_callback_latency_milliseconds,
+    output_callback_latency_milliseconds,
+    is_key_frame,
+    is_hdr_signaled,
+    is_replay,
+    single_frame_tile_metadata(),
+    sample_buffer
+  );
+}
+
+void LumenCoreEncodedCaptureIngressConsumeSampleBufferWithTileMetadata(
+  LumenCoreEncodedCaptureIngress *ingress,
+  LumenCoreCaptureCodec codec,
+  std::uint64_t source_sequence_number,
+  std::uint64_t source_display_time,
+  bool has_output_callback_latency_milliseconds,
+  double output_callback_latency_milliseconds,
+  bool is_key_frame,
+  bool is_hdr_signaled,
+  bool is_replay,
+  LumenCoreEncodedCaptureTileMetadata tile_metadata,
+  CMSampleBufferRef sample_buffer
+) {
   if (!ingress) {
     return;
   }
@@ -486,6 +537,7 @@ void LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
   frame.is_key_frame = is_key_frame;
   frame.is_hdr_signaled = is_hdr_signaled;
   frame.is_replay = is_replay;
+  frame.tile_metadata = normalized_tile_metadata(tile_metadata);
 
   std::scoped_lock lock(ingress->mutex);
   ingress->frame_count += 1;
@@ -586,6 +638,7 @@ LumenCoreEncodedCaptureIngressSnapshot LumenCoreEncodedCaptureIngressCopySnapsho
     snapshot.last_frame_source_display_time = frame.source_display_time;
     snapshot.last_frame_is_key_frame = frame.is_key_frame;
     snapshot.last_frame_is_hdr_signaled = frame.is_hdr_signaled;
+    snapshot.last_frame_tile_metadata = frame.tile_metadata;
   }
 
   if (ingress->last_event.has_value()) {
@@ -1159,6 +1212,7 @@ void LumenCoreCaptureRequestPublishVideo(
     state->snapshot.sink_request.capability.supports_frame_gated_hdr = sink_request.capability.supports_frame_gated_hdr;
     state->snapshot.sink_request.capability.supports_hdr_tile_overlay = sink_request.capability.supports_hdr_tile_overlay;
     state->snapshot.sink_request.capability.supports_per_frame_hdr_metadata = sink_request.capability.supports_per_frame_hdr_metadata;
+    state->snapshot.sink_request.capability.supports_encoded_tile_stream = sink_request.capability.supports_encoded_tile_stream;
     state->snapshot.sink_request.dynamic_range_transport = sink_request.dynamic_range_transport;
     state->snapshot.effective_display_state.gamut = std::max<int32_t>(effective_display_state.gamut, 0);
     state->snapshot.effective_display_state.transfer = std::max<int32_t>(effective_display_state.transfer, 0);

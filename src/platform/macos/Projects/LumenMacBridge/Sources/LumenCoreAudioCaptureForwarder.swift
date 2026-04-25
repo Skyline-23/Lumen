@@ -136,7 +136,8 @@ final class LumenCoreAudioCaptureForwarder: @unchecked Sendable {
             return nil
         }
 
-        let message = messageBuffer.first == 0 ? nil : String(cString: messageBuffer)
+        let messageBytes = messageBuffer.prefix { $0 != 0 }.map(UInt8.init(bitPattern:))
+        let message = messageBytes.isEmpty ? nil : String(decoding: messageBytes, as: UTF8.self)
         return LumenBridgeDrainedAudioEvent(
             kind: kind,
             message: message,

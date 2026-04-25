@@ -19,6 +19,7 @@ struct LumenBridgeMirroredSinkCapability: Equatable, Sendable {
     let supportsFrameGatedHDR: Bool
     let supportsHDRTileOverlay: Bool
     let supportsPerFrameHDRMetadata: Bool
+    let supportsEncodedTileStream: Bool
 }
 
 struct LumenBridgeMirroredSinkRequest: Equatable, Sendable {
@@ -190,7 +191,8 @@ struct LumenBridgeMirroredCaptureRequestSnapshot: Equatable, Sendable {
             potentialPeakLuminanceNits: Self.number(dictionary["potentialPeakLuminanceNits"])?.int32Value ?? 0,
             supportsFrameGatedHDR: (dictionary["supportsFrameGatedHDR"] as? Bool) ?? false,
             supportsHDRTileOverlay: (dictionary["supportsHDRTileOverlay"] as? Bool) ?? false,
-            supportsPerFrameHDRMetadata: (dictionary["supportsPerFrameHDRMetadata"] as? Bool) ?? false
+            supportsPerFrameHDRMetadata: (dictionary["supportsPerFrameHDRMetadata"] as? Bool) ?? false,
+            supportsEncodedTileStream: (dictionary["supportsEncodedTileStream"] as? Bool) ?? false
         )
     }
 
@@ -318,7 +320,8 @@ struct LumenBridgeMirroredCaptureRequestSemanticState: Equatable, Sendable {
                 potentialPeakLuminanceNits: snapshot.sink_request.capability.potential_peak_luminance_nits,
                 supportsFrameGatedHDR: snapshot.sink_request.capability.supports_frame_gated_hdr,
                 supportsHDRTileOverlay: snapshot.sink_request.capability.supports_hdr_tile_overlay,
-                supportsPerFrameHDRMetadata: snapshot.sink_request.capability.supports_per_frame_hdr_metadata
+                supportsPerFrameHDRMetadata: snapshot.sink_request.capability.supports_per_frame_hdr_metadata,
+                supportsEncodedTileStream: snapshot.sink_request.capability.supports_encoded_tile_stream
             ),
             dynamicRangeTransport: snapshot.sink_request.dynamic_range_transport
         )
@@ -380,6 +383,7 @@ actor LumenCaptureRequestMirrorCoordinator {
                 sinkCapability.supports_frame_gated_hdr = mirroredSnapshot.sinkRequest.capability.supportsFrameGatedHDR
                 sinkCapability.supports_hdr_tile_overlay = mirroredSnapshot.sinkRequest.capability.supportsHDRTileOverlay
                 sinkCapability.supports_per_frame_hdr_metadata = mirroredSnapshot.sinkRequest.capability.supportsPerFrameHDRMetadata
+                sinkCapability.supports_encoded_tile_stream = mirroredSnapshot.sinkRequest.capability.supportsEncodedTileStream
                 var sinkRequest = LumenCoreSinkRequest()
                 sinkMode.hidpi = mirroredSnapshot.sinkRequest.mode.hidpi
                 sinkMode.scale_explicit = mirroredSnapshot.sinkRequest.mode.scaleExplicit

@@ -1220,6 +1220,7 @@ namespace rtsp_stream {
     args.try_emplace("x-shadow-general.encryptionEnabled"sv, "0"sv);
     args.try_emplace("x-shadow-video[0].chromaSamplingType"sv, "0"sv);
     args.try_emplace("x-shadow-video[0].intraRefresh"sv, "0"sv);
+    args.try_emplace("x-shadow-sink.supportsEncodedTileStream"sv, "0"sv);
 
     if (!missing_lumen_announce_fields.empty()) {
       std::ostringstream missing;
@@ -1279,6 +1280,8 @@ namespace rtsp_stream {
         util::from_view(args.at("x-shadow-sink.supportsHDRTileOverlay"sv));
       config.monitor.sinkRequest.capability.supports_per_frame_hdr_metadata =
         util::from_view(args.at("x-shadow-sink.supportsPerFrameHDRMetadata"sv));
+      config.monitor.sinkRequest.capability.supports_encoded_tile_stream =
+        util::from_view(args.at("x-shadow-sink.supportsEncodedTileStream"sv));
       config.monitor.sinkRequest.mode.scale_explicit = true;
       config.monitor.sinkRequest.mode.scale_percent =
         static_cast<int>(util::from_view(args.at("x-shadow-sink.scalePercent"sv)));
@@ -1366,6 +1369,8 @@ namespace rtsp_stream {
                       << config.monitor.sinkRequest.capability.supports_hdr_tile_overlay
                       << " supports-per-frame-hdr-metadata="sv
                       << config.monitor.sinkRequest.capability.supports_per_frame_hdr_metadata
+                      << " supports-encoded-tile-stream="sv
+                      << config.monitor.sinkRequest.capability.supports_encoded_tile_stream
                       << " viewport="sv
                       << config.monitor.width << "x"sv
                       << config.monitor.height

@@ -55,6 +55,7 @@ typedef struct LumenCoreSinkCapability {
   bool supports_frame_gated_hdr;
   bool supports_hdr_tile_overlay;
   bool supports_per_frame_hdr_metadata;
+  bool supports_encoded_tile_stream;
 } LumenCoreSinkCapability;
 
 typedef struct LumenCoreSinkRequest {
@@ -101,6 +102,19 @@ typedef struct LumenCoreEffectiveDisplayState {
   LumenCoreHDRStaticMetadata hdr_static_metadata;
 } LumenCoreEffectiveDisplayState;
 
+typedef struct LumenCoreEncodedCaptureTileMetadata {
+  uint64_t frame_group_id;
+  uint32_t tile_index;
+  uint32_t tile_count;
+  uint32_t encoded_lane_index;
+  uint32_t encoded_lane_count;
+  bool has_tile_region;
+  uint32_t tile_origin_x;
+  uint32_t tile_origin_y;
+  uint32_t tile_width;
+  uint32_t tile_height;
+} LumenCoreEncodedCaptureTileMetadata;
+
 typedef struct LumenCoreEncodedCaptureIngress LumenCoreEncodedCaptureIngress;
 typedef struct LumenCoreAudioCaptureIngress LumenCoreAudioCaptureIngress;
 
@@ -119,6 +133,7 @@ typedef struct LumenCoreEncodedCaptureIngressSnapshot {
   uint64_t last_frame_source_display_time;
   bool last_frame_is_key_frame;
   bool last_frame_is_hdr_signaled;
+  LumenCoreEncodedCaptureTileMetadata last_frame_tile_metadata;
   bool has_last_event;
   LumenCoreCaptureEventKind last_event_kind;
   bool last_event_has_stop_status;
@@ -140,6 +155,7 @@ typedef struct LumenCoreEncodedCaptureFrameRecord {
   bool is_key_frame;
   bool is_hdr_signaled;
   bool is_replay;
+  LumenCoreEncodedCaptureTileMetadata tile_metadata;
 } LumenCoreEncodedCaptureFrameRecord;
 
 typedef struct LumenCoreEncodedCaptureEventRecord {
@@ -177,6 +193,19 @@ void LumenCoreEncodedCaptureIngressConsumeSampleBuffer(
   bool is_key_frame,
   bool is_hdr_signaled,
   bool is_replay,
+  CMSampleBufferRef sample_buffer
+);
+void LumenCoreEncodedCaptureIngressConsumeSampleBufferWithTileMetadata(
+  LumenCoreEncodedCaptureIngress *ingress,
+  LumenCoreCaptureCodec codec,
+  uint64_t source_sequence_number,
+  uint64_t source_display_time,
+  bool has_output_callback_latency_milliseconds,
+  double output_callback_latency_milliseconds,
+  bool is_key_frame,
+  bool is_hdr_signaled,
+  bool is_replay,
+  LumenCoreEncodedCaptureTileMetadata tile_metadata,
   CMSampleBufferRef sample_buffer
 );
 void LumenCoreEncodedCaptureIngressConsumeEvent(

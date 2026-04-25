@@ -6,6 +6,7 @@
 
 // standard includes
 #include <algorithm>
+#include <cstdint>
 #include <cstring>
 #include <optional>
 #include <vector>
@@ -525,6 +526,23 @@ namespace video {
   extern encoder_t videotoolbox;
 #endif
 
+  struct encoded_tile_metadata_t {
+    std::uint64_t frame_group_id = 0;
+    std::uint32_t tile_index = 0;
+    std::uint32_t tile_count = 1;
+    std::uint32_t encoded_lane_index = 0;
+    std::uint32_t encoded_lane_count = 1;
+    bool has_tile_region = false;
+    std::uint32_t tile_origin_x = 0;
+    std::uint32_t tile_origin_y = 0;
+    std::uint32_t tile_width = 0;
+    std::uint32_t tile_height = 0;
+
+    bool is_single_frame() const {
+      return tile_count <= 1 && encoded_lane_count <= 1;
+    }
+  };
+
   struct packet_raw_t {
     virtual ~packet_raw_t() = default;
 
@@ -553,6 +571,7 @@ namespace video {
     bool after_ref_frame_invalidation = false;
     std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
     std::optional<hdr_frame_state_t> hdr_frame_state;
+    encoded_tile_metadata_t encoded_tile_metadata;
   };
 
   struct packet_raw_avcodec: packet_raw_t {

@@ -25,6 +25,12 @@ AUTORESEARCH_RUNTIME_PROBE_HEIGHT=2290
 AUTORESEARCH_RUNTIME_PROBE_FPS=120
 AUTORESEARCH_RUNTIME_PROBE_CODEC=hevc
 AUTORESEARCH_RUNTIME_PROBE_FRAMES=16
+AUTORESEARCH_RUNTIME_PROBE_FRAME_RECORDS=20
+AUTORESEARCH_RUNTIME_PROBE_TILED_FRAME_RECORDS=4
+AUTORESEARCH_RUNTIME_PROBE_COMPLETE_FRAME_GROUPS=2
+AUTORESEARCH_RUNTIME_PROBE_INCOMPLETE_FRAME_GROUPS=1
+AUTORESEARCH_RUNTIME_PROBE_MAX_TILE_COUNT=2
+AUTORESEARCH_RUNTIME_PROBE_MAX_ENCODED_LANE_COUNT=2
 AUTORESEARCH_RUNTIME_PROBE_HDR_FRAMES=16
 AUTORESEARCH_RUNTIME_PROBE_FIRST_FRAME_HDR=1
 AUTORESEARCH_RUNTIME_PROBE_STARTUP_MS=742.500
@@ -37,15 +43,108 @@ AUTORESEARCH_RUNTIME_PROBE_QUEUED_FRAMES=2
 AUTORESEARCH_RUNTIME_PROBE_DROPPED_FRAMES=14
 AUTORESEARCH_RUNTIME_PROBE_LAST_SEQ=20862881947186
 AUTORESEARCH_RUNTIME_PROBE_LAST_HDR_SIGNALLED=1
+AUTORESEARCH_RUNTIME_PROBE_SOURCE_BACKEND=skylight-display-stream
+AUTORESEARCH_RUNTIME_PROBE_RAW_PRIVATE_DISPLAY_STREAM=true
+AUTORESEARCH_RUNTIME_PROBE_RAW_PRIVATE_DISPLAY_STREAM_REQUESTED_PIXEL_FORMAT=0x78343230
+AUTORESEARCH_RUNTIME_PROBE_RAW_PRIVATE_DISPLAY_STREAM_REQUESTED_MATRIX=unset
+AUTORESEARCH_RUNTIME_PROBE_SKYLIGHT_SYNTHETIC_IDLE_REPLAY=true
+AUTORESEARCH_RUNTIME_PROBE_SKYLIGHT_SYNTHETIC_IDLE_REPLAY_INTERVAL_MS=8.333
+AUTORESEARCH_RUNTIME_PROBE_SKYLIGHT_PENDING_POLICY=callback-low-latency
+AUTORESEARCH_RUNTIME_PROBE_SKYLIGHT_RECOMMENDED_PENDING_FRAME_COUNT=1
+AUTORESEARCH_RUNTIME_PROBE_SOURCE_FRAME_COUNT=121
+AUTORESEARCH_RUNTIME_PROBE_SOURCE_DISPLAY_DELTA_COUNT=120
+AUTORESEARCH_RUNTIME_PROBE_SOURCE_LAST_DISPLAY_DELTA_MS=8.333
+AUTORESEARCH_RUNTIME_PROBE_SOURCE_MIN_DISPLAY_DELTA_MS=8.100
+AUTORESEARCH_RUNTIME_PROBE_SOURCE_MAX_DISPLAY_DELTA_MS=11.200
+AUTORESEARCH_RUNTIME_PROBE_SOURCE_AVG_DISPLAY_DELTA_MS=8.368
+AUTORESEARCH_RUNTIME_PROBE_SOURCE_REDUCED_DIRTY_SAMPLE_COUNT=120
+AUTORESEARCH_RUNTIME_PROBE_SOURCE_AVG_REDUCED_DIRTY_COVERAGE_RATIO=0.391
+AUTORESEARCH_RUNTIME_PROBE_SOURCE_MAX_REDUCED_DIRTY_COVERAGE_RATIO=0.744
+AUTORESEARCH_RUNTIME_PROBE_SOURCE_AVG_REDUCED_DIRTY_RECT_COUNT=1.400
+AUTORESEARCH_RUNTIME_PROBE_SOURCE_MAX_REDUCED_DIRTY_RECT_COUNT=4.000
+AUTORESEARCH_RUNTIME_PROBE_SOURCE_UPDATE_DROP_SAMPLE_COUNT=120
+AUTORESEARCH_RUNTIME_PROBE_SOURCE_AVG_UPDATE_DROP_COUNT=0.200
+AUTORESEARCH_RUNTIME_PROBE_SOURCE_MAX_UPDATE_DROP_COUNT=2
+AUTORESEARCH_RUNTIME_PROBE_SOURCE_APPROX_FRAME_RATE=119.500
+AUTORESEARCH_RUNTIME_PROBE_SOURCE_CADENCE=near-target
+AUTORESEARCH_RUNTIME_PROBE_SOURCE_HOT_PATH_DIAGNOSTICS=disabled
+AUTORESEARCH_RUNTIME_PROBE_PRIVATE_CAPTURE_SOURCE_PIXEL_FORMAT=0x42475241
+AUTORESEARCH_RUNTIME_PROBE_PRIVATE_CAPTURE_REQUESTED_PIXEL_FORMAT=0x78343230
+AUTORESEARCH_RUNTIME_PROBE_PRIVATE_CAPTURE_EXTENDED_RANGE=true
+AUTORESEARCH_RUNTIME_PROBE_PRIVATE_CAPTURE_CURSOR_COMPOSITION=metal-overlay-on-encode
+AUTORESEARCH_RUNTIME_PROBE_PRIVATE_CAPTURE_SOURCE_COLOR_TRANSFORM=negotiated-source-primaries-to-hdr-signal
+AUTORESEARCH_RUNTIME_PROBE_VT_USING_HARDWARE_ENCODER=true
+AUTORESEARCH_RUNTIME_PROBE_VT_RECOMMENDED_PARALLELIZATION_LIMIT=6
+AUTORESEARCH_RUNTIME_PROBE_VT_PIXEL_BUFFER_POOL_IS_SHARED=false
+AUTORESEARCH_RUNTIME_PROBE_VT_STAGING_MODE=direct-iosurface
+AUTORESEARCH_RUNTIME_PROBE_VT_STAGED_SOURCE_RELEASE_MODE=post-submit
+AUTORESEARCH_RUNTIME_PROBE_VT_DIRECT_SUBMISSION_FRAME_COUNT=16
+AUTORESEARCH_RUNTIME_PROBE_VT_STAGED_SUBMISSION_FRAME_COUNT=0
+AUTORESEARCH_RUNTIME_PROBE_VT_SUBMITTED_FRAME_COUNT=16
+AUTORESEARCH_RUNTIME_PROBE_VT_IMMEDIATE_REPLAY_SUBMISSION_COUNT=0
+AUTORESEARCH_RUNTIME_PROBE_VT_SUPPRESSED_IMMEDIATE_REPLAY_COUNT=0
+AUTORESEARCH_RUNTIME_PROBE_VT_MAX_INFLIGHT_STAGING_SLOTS=3
+AUTORESEARCH_RUNTIME_PROBE_VT_PIXEL_BUFFER_CACHE_SIZE=2
 """
         metrics = MODULE.parse_runtime_probe_output(output)
         assert metrics is not None
         self.assertEqual(metrics["frames"], 16)
+        self.assertEqual(metrics["frame_records"], 20)
+        self.assertEqual(metrics["tiled_frame_records"], 4)
+        self.assertEqual(metrics["complete_frame_groups"], 2)
+        self.assertEqual(metrics["incomplete_frame_groups"], 1)
+        self.assertEqual(metrics["max_tile_count"], 2)
+        self.assertEqual(metrics["max_encoded_lane_count"], 2)
         self.assertEqual(metrics["codec"], "hevc")
         self.assertEqual(metrics["hdr_frames"], 16)
         self.assertTrue(metrics["first_frame_hdr"])
         self.assertEqual(metrics["startup_ms"], 742.5)
         self.assertEqual(metrics["last_seq"], 20862881947186)
+        self.assertEqual(metrics["source_backend"], "skylight-display-stream")
+        self.assertEqual(metrics["raw_private_display_stream"], "true")
+        self.assertEqual(metrics["raw_private_display_stream_requested_pixel_format"], "0x78343230")
+        self.assertEqual(metrics["raw_private_display_stream_requested_matrix"], "unset")
+        self.assertEqual(metrics["skylight_synthetic_idle_replay"], "true")
+        self.assertEqual(metrics["skylight_synthetic_idle_replay_interval_ms"], 8.333)
+        self.assertEqual(metrics["skylight_pending_policy"], "callback-low-latency")
+        self.assertEqual(metrics["skylight_recommended_pending_frame_count"], 1)
+        self.assertEqual(metrics["source_frame_count"], 121)
+        self.assertEqual(metrics["source_display_delta_count"], 120)
+        self.assertEqual(metrics["source_last_display_delta_ms"], 8.333)
+        self.assertEqual(metrics["source_min_display_delta_ms"], 8.1)
+        self.assertEqual(metrics["source_max_display_delta_ms"], 11.2)
+        self.assertEqual(metrics["source_avg_display_delta_ms"], 8.368)
+        self.assertEqual(metrics["source_reduced_dirty_sample_count"], 120)
+        self.assertEqual(metrics["source_update_drop_sample_count"], 120)
+        self.assertEqual(metrics["source_max_update_drop_count"], 2)
+        self.assertEqual(metrics["source_avg_reduced_dirty_coverage_ratio"], 0.391)
+        self.assertEqual(metrics["source_max_reduced_dirty_coverage_ratio"], 0.744)
+        self.assertEqual(metrics["source_avg_reduced_dirty_rect_count"], 1.4)
+        self.assertEqual(metrics["source_max_reduced_dirty_rect_count"], 4.0)
+        self.assertEqual(metrics["source_avg_update_drop_count"], 0.2)
+        self.assertEqual(metrics["source_approx_frame_rate"], 119.5)
+        self.assertEqual(metrics["source_cadence"], "near-target")
+        self.assertEqual(metrics["source_hot_path_diagnostics"], "disabled")
+        self.assertEqual(metrics["private_capture_source_pixel_format"], "0x42475241")
+        self.assertEqual(metrics["private_capture_requested_pixel_format"], "0x78343230")
+        self.assertEqual(metrics["private_capture_extended_range"], "true")
+        self.assertEqual(metrics["private_capture_cursor_composition"], "metal-overlay-on-encode")
+        self.assertEqual(
+            metrics["private_capture_source_color_transform"],
+            "negotiated-source-primaries-to-hdr-signal",
+        )
+        self.assertEqual(metrics["vt_using_hardware_encoder"], "true")
+        self.assertEqual(metrics["vt_recommended_parallelization_limit"], "6")
+        self.assertEqual(metrics["vt_pixel_buffer_pool_is_shared"], "false")
+        self.assertEqual(metrics["vt_staging_mode"], "direct-iosurface")
+        self.assertEqual(metrics["vt_staged_source_release_mode"], "post-submit")
+        self.assertEqual(metrics["vt_direct_submission_frame_count"], 16)
+        self.assertEqual(metrics["vt_staged_submission_frame_count"], 0)
+        self.assertEqual(metrics["vt_submitted_frame_count"], 16)
+        self.assertEqual(metrics["vt_immediate_replay_submission_count"], 0)
+        self.assertEqual(metrics["vt_suppressed_immediate_replay_count"], 0)
+        self.assertEqual(metrics["vt_max_inflight_staging_slots"], 3)
+        self.assertEqual(metrics["vt_pixel_buffer_cache_size"], 2)
 
     def test_score_runtime_probe_rewards_live_progression(self) -> None:
         metrics = {

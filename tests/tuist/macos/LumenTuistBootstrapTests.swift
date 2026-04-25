@@ -1,4 +1,5 @@
 @testable import LumenMacBridge
+import CoreGraphics
 import LumenCore
 import CoreMedia
 import XCTest
@@ -175,7 +176,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
 
         XCTAssertEqual(unsupportedSink.negotiatedDynamicRangeTransport, LumenCoreDynamicRangeTransportSDR)
         XCTAssertFalse(unsupportedSink.usesHDRTransport)
-        XCTAssertEqual(unsupportedSink.negotiatedQueueProfile, .q3)
+        XCTAssertEqual(unsupportedSink.negotiatedQueueProfile, .q2)
     }
 
     func testBridgeNegotiatesOverlayFallbackAndAutoQueueProfile() {
@@ -321,8 +322,8 @@ final class LumenTuistBootstrapTests: XCTestCase {
         )
 
         XCTAssertEqual(configuration.effectiveEncoderInputStrategy, .yuv420v10)
-        XCTAssertEqual(configuration.effectiveCapturePixelFormat, kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange)
-        XCTAssertEqual(configuration.mdkValue.capturePixelFormat, kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange)
+        XCTAssertEqual(configuration.effectiveCapturePixelFormat, kCVPixelFormatType_32BGRA)
+        XCTAssertEqual(configuration.mdkValue.capturePixelFormat, kCVPixelFormatType_32BGRA)
         XCTAssertEqual(configuration.encodedHDRConfigurationSnapshot?.transferFunction, "smpteSt2084PQ")
     }
 
@@ -353,7 +354,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
         XCTAssertFalse(configuration.usesHDRTransport)
         XCTAssertEqual(configuration.negotiatedDynamicRangeTransport, LumenCoreDynamicRangeTransportSDR)
         XCTAssertFalse(configuration.prefersRealtimeHDRMetadata)
-        XCTAssertEqual(configuration.effectiveCapturePixelFormat, kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange)
+        XCTAssertEqual(configuration.effectiveCapturePixelFormat, kCVPixelFormatType_32BGRA)
         XCTAssertNil(configuration.encodedHDRConfigurationSnapshot)
     }
 
@@ -638,6 +639,43 @@ final class LumenTuistBootstrapTests: XCTestCase {
         XCTAssertFalse(snapshot.lastFrameIsKeyFrame)
         XCTAssertTrue(snapshot.lastFrameIsHDRSignaled)
         XCTAssertEqual(snapshot.lastEventKind, .droppedFrame)
+    }
+
+    func testBridgeForwardingPreservesEncodedTileMetadata() async throws {
+        let runtime = LumenBridgeRuntime()
+        await runtime.debugResetCoreForwarding()
+        let sampleBuffer = try Self.makeEncodedSampleBuffer(
+            payload: Data([0xCA, 0xFE]),
+            codecType: kCMVideoCodecType_HEVC
+        )
+        let tileMetadata = LumenBridgeEncodedTileMetadata(
+            frameGroupID: 99,
+            tileIndex: 1,
+            tileCount: 2,
+            encodedLaneIndex: 1,
+            encodedLaneCount: 2,
+            tileRegion: CGRect(x: 1920, y: 0, width: 1920, height: 2160)
+        )
+
+        await runtime.debugForwardSyntheticFrame(
+            sampleBuffer: sampleBuffer,
+            codec: .hevc,
+            sourceSequenceNumber: 77,
+            sourceDisplayTime: 88,
+            isKeyFrame: true,
+            isHDRSignaled: true,
+            tileMetadata: tileMetadata
+        )
+
+        let snapshot = await runtime.coreForwardingSnapshot()
+        XCTAssertEqual(snapshot.frameCount, 1)
+        XCTAssertEqual(snapshot.lastFrameTileMetadata, tileMetadata)
+
+        let optionalDrainedFrame = await runtime.drainNextCoreForwardedFrame()
+        let drainedFrame = try XCTUnwrap(optionalDrainedFrame)
+        XCTAssertEqual(drainedFrame.sourceSequenceNumber, 77)
+        XCTAssertEqual(drainedFrame.tileMetadata, tileMetadata)
+        XCTAssertEqual(try Self.payloadBytes(from: drainedFrame.sampleBuffer), Data([0xCA, 0xFE]))
     }
 
     func testBridgeForwardingDropsOldestFramesWhenCapacityIsExceeded() async throws {

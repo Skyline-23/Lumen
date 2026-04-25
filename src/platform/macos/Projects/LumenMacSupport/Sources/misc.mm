@@ -178,6 +178,7 @@ namespace platf {
         @"supportsFrameGatedHDR": @(state.sink_request.capability.supports_frame_gated_hdr),
         @"supportsHDRTileOverlay": @(state.sink_request.capability.supports_hdr_tile_overlay),
         @"supportsPerFrameHDRMetadata": @(state.sink_request.capability.supports_per_frame_hdr_metadata),
+        @"supportsEncodedTileStream": @(state.sink_request.capability.supports_encoded_tile_stream),
       };
       NSDictionary *sink_request = @{
         @"mode": sink_mode,
@@ -344,6 +345,8 @@ namespace platf {
           sink_capability[@"supportsHDRTileOverlay"] != nil ? [sink_capability[@"supportsHDRTileOverlay"] boolValue] : false;
         preferences.sink_request.capability.supports_per_frame_hdr_metadata =
           sink_capability[@"supportsPerFrameHDRMetadata"] != nil ? [sink_capability[@"supportsPerFrameHDRMetadata"] boolValue] : false;
+        preferences.sink_request.capability.supports_encoded_tile_stream =
+          sink_capability[@"supportsEncodedTileStream"] != nil ? [sink_capability[@"supportsEncodedTileStream"] boolValue] : false;
         preferences.target_video_bitrate_kbps =
           target_video_bitrate_kbps != nil ? [target_video_bitrate_kbps intValue] : 0;
 

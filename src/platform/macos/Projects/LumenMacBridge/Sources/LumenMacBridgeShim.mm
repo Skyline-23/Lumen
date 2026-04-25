@@ -51,6 +51,17 @@ namespace {
     record.output_callback_latency_milliseconds = box.outputCallbackLatencyMilliseconds;
     record.is_key_frame = box.isKeyFrame;
     record.is_hdr_signaled = box.isHDRSignaled;
+    record.is_replay = box.isReplay;
+    record.tile_metadata.frame_group_id = box.frameGroupID;
+    record.tile_metadata.tile_index = box.tileIndex;
+    record.tile_metadata.tile_count = std::max<uint32_t>(1, box.tileCount);
+    record.tile_metadata.encoded_lane_index = box.encodedLaneIndex;
+    record.tile_metadata.encoded_lane_count = std::max<uint32_t>(1, box.encodedLaneCount);
+    record.tile_metadata.has_tile_region = box.hasTileRegion;
+    record.tile_metadata.tile_origin_x = box.tileOriginX;
+    record.tile_metadata.tile_origin_y = box.tileOriginY;
+    record.tile_metadata.tile_width = box.tileWidth;
+    record.tile_metadata.tile_height = box.tileHeight;
     return record;
   }
 
@@ -138,6 +149,7 @@ namespace {
     result.sink_request.capability.supports_frame_gated_hdr = configuration.sinkRequest.capability.supportsFrameGatedHDR;
     result.sink_request.capability.supports_hdr_tile_overlay = configuration.sinkRequest.capability.supportsHDRTileOverlay;
     result.sink_request.capability.supports_per_frame_hdr_metadata = configuration.sinkRequest.capability.supportsPerFrameHDRMetadata;
+    result.sink_request.capability.supports_encoded_tile_stream = configuration.sinkRequest.capability.supportsEncodedTileStream;
     result.sink_request.dynamic_range_transport =
       static_cast<LumenCoreDynamicRangeTransport>(configuration.sinkRequest.dynamicRangeTransportRawValue);
     result.effective_display_state.gamut = static_cast<int32_t>(configuration.effectiveDisplayState.gamutRawValue);
@@ -178,7 +190,8 @@ namespace {
       potentialPeakLuminanceNits:static_cast<NSInteger>(configuration.sink_request.capability.potential_peak_luminance_nits)
       supportsFrameGatedHDR:configuration.sink_request.capability.supports_frame_gated_hdr
       supportsHDRTileOverlay:configuration.sink_request.capability.supports_hdr_tile_overlay
-      supportsPerFrameHDRMetadata:configuration.sink_request.capability.supports_per_frame_hdr_metadata];
+      supportsPerFrameHDRMetadata:configuration.sink_request.capability.supports_per_frame_hdr_metadata
+      supportsEncodedTileStream:configuration.sink_request.capability.supports_encoded_tile_stream];
     LumenBridgeSinkRequestBox *sinkRequest = [[LumenBridgeSinkRequestBox alloc]
       initWithMode:sinkMode
       capability:sinkCapability
@@ -619,6 +632,17 @@ LumenCoreEncodedCaptureFrameRecord LumenMacBridgeControllerPopNextForwardedFrame
   record.output_callback_latency_milliseconds = box.outputCallbackLatencyMilliseconds;
   record.is_key_frame = box.isKeyFrame;
   record.is_hdr_signaled = box.isHDRSignaled;
+  record.is_replay = box.isReplay;
+  record.tile_metadata.frame_group_id = box.frameGroupID;
+  record.tile_metadata.tile_index = box.tileIndex;
+  record.tile_metadata.tile_count = std::max<uint32_t>(1, box.tileCount);
+  record.tile_metadata.encoded_lane_index = box.encodedLaneIndex;
+  record.tile_metadata.encoded_lane_count = std::max<uint32_t>(1, box.encodedLaneCount);
+  record.tile_metadata.has_tile_region = box.hasTileRegion;
+  record.tile_metadata.tile_origin_x = box.tileOriginX;
+  record.tile_metadata.tile_origin_y = box.tileOriginY;
+  record.tile_metadata.tile_width = box.tileWidth;
+  record.tile_metadata.tile_height = box.tileHeight;
 
   if (retained_sample_buffer_out) {
     *retained_sample_buffer_out =

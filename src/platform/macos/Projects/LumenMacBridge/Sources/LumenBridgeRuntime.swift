@@ -391,6 +391,7 @@ public struct LumenBridgeSinkCapability: Equatable, Sendable {
     public let supportsFrameGatedHDR: Bool
     public let supportsHDRTileOverlay: Bool
     public let supportsPerFrameHDRMetadata: Bool
+    public let supportsEncodedTileStream: Bool
 
     public init(
         gamut: LumenClientSinkGamut = .unknown,
@@ -401,7 +402,8 @@ public struct LumenBridgeSinkCapability: Equatable, Sendable {
         potentialPeakLuminanceNits: Int = 0,
         supportsFrameGatedHDR: Bool = false,
         supportsHDRTileOverlay: Bool = false,
-        supportsPerFrameHDRMetadata: Bool = false
+        supportsPerFrameHDRMetadata: Bool = false,
+        supportsEncodedTileStream: Bool = false
     ) {
         self.gamut = gamut
         self.transfer = transfer
@@ -412,6 +414,7 @@ public struct LumenBridgeSinkCapability: Equatable, Sendable {
         self.supportsFrameGatedHDR = supportsFrameGatedHDR
         self.supportsHDRTileOverlay = supportsHDRTileOverlay
         self.supportsPerFrameHDRMetadata = supportsPerFrameHDRMetadata
+        self.supportsEncodedTileStream = supportsEncodedTileStream
     }
 }
 
@@ -604,7 +607,8 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
                     ),
                     supportsFrameGatedHDR: true,
                     supportsHDRTileOverlay: false,
-                    supportsPerFrameHDRMetadata: true
+                    supportsPerFrameHDRMetadata: true,
+                    supportsEncodedTileStream: false
                 ),
                 dynamicRangeTransport: transport == .pq || transport == .hlg ?
                     LumenCoreDynamicRangeTransportFrameGatedHDR :
@@ -675,6 +679,9 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     }
 
     public var effectiveCapturePixelFormat: UInt32 {
+        if codec == .hevc {
+            return kCVPixelFormatType_32BGRA
+        }
         return codec.mdkValue.preferredCapturePixelFormat
     }
 
@@ -905,7 +912,7 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     )
 
     var hdrConfigurationDebugSummary: String {
-        "uses-hdr-transport=\(usesHDRTransport) requested-transport=\(lumenDynamicRangeTransportName(sinkRequest.dynamicRangeTransport)) negotiated-transport=\(lumenDynamicRangeTransportName(negotiatedDynamicRangeTransport)) requested-queue=\(queueProfile.rawValue) negotiated-queue=\(negotiatedQueueProfile.rawValue) effective-gamut=\(resolvedDisplayGamut.rawValue) effective-transfer=\(resolvedDisplayTransfer.rawValue) negotiated-static-metadata=\(effectiveDisplayState.hdrStaticMetadata != nil) current-edr-headroom=\(sinkRequest.capability.currentEDRHeadroom) potential-edr-headroom=\(sinkRequest.capability.potentialEDRHeadroom) current-peak-nits=\(sinkRequest.capability.currentPeakLuminanceNits) potential-peak-nits=\(sinkRequest.capability.potentialPeakLuminanceNits) supports-frame-gated-hdr=\(sinkRequest.capability.supportsFrameGatedHDR) supports-hdr-tile-overlay=\(sinkRequest.capability.supportsHDRTileOverlay) supports-per-frame-hdr-metadata=\(sinkRequest.capability.supportsPerFrameHDRMetadata)"
+        "uses-hdr-transport=\(usesHDRTransport) requested-transport=\(lumenDynamicRangeTransportName(sinkRequest.dynamicRangeTransport)) negotiated-transport=\(lumenDynamicRangeTransportName(negotiatedDynamicRangeTransport)) requested-queue=\(queueProfile.rawValue) negotiated-queue=\(negotiatedQueueProfile.rawValue) effective-gamut=\(resolvedDisplayGamut.rawValue) effective-transfer=\(resolvedDisplayTransfer.rawValue) negotiated-static-metadata=\(effectiveDisplayState.hdrStaticMetadata != nil) current-edr-headroom=\(sinkRequest.capability.currentEDRHeadroom) potential-edr-headroom=\(sinkRequest.capability.potentialEDRHeadroom) current-peak-nits=\(sinkRequest.capability.currentPeakLuminanceNits) potential-peak-nits=\(sinkRequest.capability.potentialPeakLuminanceNits) supports-frame-gated-hdr=\(sinkRequest.capability.supportsFrameGatedHDR) supports-hdr-tile-overlay=\(sinkRequest.capability.supportsHDRTileOverlay) supports-per-frame-hdr-metadata=\(sinkRequest.capability.supportsPerFrameHDRMetadata) supports-encoded-tile-stream=\(sinkRequest.capability.supportsEncodedTileStream)"
     }
 }
 
@@ -1134,7 +1141,8 @@ private struct LumenBridgeAutomationRequest: Equatable, Sendable {
                         potentialPeakLuminanceNits: Int(snapshot.sink_request.capability.potential_peak_luminance_nits),
                         supportsFrameGatedHDR: snapshot.sink_request.capability.supports_frame_gated_hdr,
                         supportsHDRTileOverlay: snapshot.sink_request.capability.supports_hdr_tile_overlay,
-                        supportsPerFrameHDRMetadata: snapshot.sink_request.capability.supports_per_frame_hdr_metadata
+                        supportsPerFrameHDRMetadata: snapshot.sink_request.capability.supports_per_frame_hdr_metadata,
+                        supportsEncodedTileStream: snapshot.sink_request.capability.supports_encoded_tile_stream
                     ),
                     dynamicRangeTransport: snapshot.sink_request.dynamic_range_transport
                 ),
@@ -1921,6 +1929,7 @@ public actor LumenBridgeRuntime {
         }
 
         let interestingPrefixes = [
+            "sourceBackend=",
             "skyLightAutotuningSource=",
             "skyLightCandidateResult=",
             "skyLightTuningCandidate=",
@@ -1929,8 +1938,14 @@ public actor LumenBridgeRuntime {
             "skyLightTuningEffectiveOutputFrameRate=",
             "skyLightTuningCadence=",
             "skyLightDisplayRefreshRate=",
+            "rawPrivateDisplayStream=",
+            "rawPrivateDisplayStreamRequestedPixelFormat=",
+            "rawPrivateDisplayStreamRequestedMatrix=",
+            "skyLightSyntheticIdleReplay=",
+            "skyLightSyntheticIdleReplayIntervalMilliseconds=",
             "skyLightPendingPolicy=",
             "skyLightRecommendedPendingFrameCount=",
+            "sourceHotPathDiagnostics=",
             "sourceFrameCount=",
             "sourceDisplayDeltaCount=",
             "sourceLastDisplayDeltaMilliseconds=",
@@ -1951,6 +1966,7 @@ public actor LumenBridgeRuntime {
             "privateCaptureRequestedPixelFormat=",
             "privateCaptureExtendedRange=",
             "privateCaptureCursorComposition=",
+            "privateCaptureSourceColorTransform=",
             "sourceCaptureSampleCount=",
             "sourceMinCaptureMilliseconds=",
             "sourceMaxCaptureMilliseconds=",
@@ -1978,7 +1994,11 @@ public actor LumenBridgeRuntime {
             "videoToolboxConfiguredProfileLevel=",
             "videoToolboxDirectSubmissionFrameCount=",
             "videoToolboxStagedSubmissionFrameCount=",
+            "videoToolboxSubmittedFrameCount=",
+            "videoToolboxImmediateReplaySubmissionCount=",
+            "videoToolboxSuppressedImmediateReplayCount=",
             "videoToolboxMaxInflightStagingSlots=",
+            "videoToolboxPixelBufferCacheSize=",
             "videoToolboxProperty."
         ]
         let notes = statistics.notes.filter { note in
@@ -2050,7 +2070,8 @@ public actor LumenBridgeRuntime {
         sourceDisplayTime: UInt64 = 1,
         outputCallbackLatencyMilliseconds: Double? = nil,
         isKeyFrame: Bool = true,
-        isHDRSignaled: Bool = false
+        isHDRSignaled: Bool = false,
+        tileMetadata: LumenBridgeEncodedTileMetadata = .singleFrame
     ) {
         coreForwarder.consume(
             sampleBuffer: sampleBuffer,
@@ -2059,7 +2080,8 @@ public actor LumenBridgeRuntime {
             sourceDisplayTime: sourceDisplayTime,
             outputCallbackLatencyMilliseconds: outputCallbackLatencyMilliseconds,
             isKeyFrame: isKeyFrame,
-            isHDRSignaled: isHDRSignaled
+            isHDRSignaled: isHDRSignaled,
+            tileMetadata: tileMetadata
         )
     }
 

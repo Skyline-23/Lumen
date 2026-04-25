@@ -61,6 +61,7 @@ extern "C" {
 #define IDX_FILE_TRANSFER_NONCE_REQUEST 17
 #define IDX_SET_ADAPTIVE_TRIGGERS 18
 #define IDX_HDR_FRAME_STATE 19
+#define IDX_ENCODED_TILE_FRAME_STATE 20
 
 static const short packetTypes[] = {
   0x0305,  // Start A
@@ -83,6 +84,7 @@ static const short packetTypes[] = {
   0x3002,  // File transfer nonce request (Lumen protocol extension)
   0x5503,  // Set Adaptive triggers (Sunshine protocol extension)
   0x3003,  // HDR frame state v2 (Lumen protocol extension)
+  0x3004,  // Encoded tile frame state v1 (Lumen protocol extension)
 };
 
 namespace asio = boost::asio;
@@ -257,6 +259,24 @@ namespace stream {
     std::uint8_t flags;
     std::uint8_t reserved[3];
     SS_HDR_METADATA metadata;
+  };
+
+  struct control_encoded_tile_frame_state_v1_t {
+    control_header_v2 header;
+
+    std::uint8_t version;
+    std::uint8_t flags;
+    std::uint16_t reserved;
+    boost::endian::little_uint32_at effectiveFromFrameNumber;
+    boost::endian::little_uint64_at frameGroupId;
+    boost::endian::little_uint32_at tileIndex;
+    boost::endian::little_uint32_at tileCount;
+    boost::endian::little_uint32_at encodedLaneIndex;
+    boost::endian::little_uint32_at encodedLaneCount;
+    boost::endian::little_uint32_at tileOriginX;
+    boost::endian::little_uint32_at tileOriginY;
+    boost::endian::little_uint32_at tileWidth;
+    boost::endian::little_uint32_at tileHeight;
   };
 
   typedef struct control_encrypted_t {
@@ -994,6 +1014,8 @@ namespace stream {
   constexpr std::uint8_t lumen_hdr_frame_state_version = 1;
   constexpr std::uint8_t lumen_hdr_frame_state_flag_has_static_metadata = 1 << 0;
   constexpr std::uint8_t lumen_hdr_frame_state_flag_has_overlay_regions = 1 << 1;
+  constexpr std::uint8_t lumen_encoded_tile_frame_state_version = 1;
+  constexpr std::uint8_t lumen_encoded_tile_frame_state_flag_has_tile_region = 1 << 0;
   constexpr std::uint8_t lumen_hdr_overlay_region_flag_has_metadata = 1 << 0;
 
   std::string_view hdr_frame_content_name(video::hdr_frame_content_e content) {
@@ -1099,6 +1121,68 @@ namespace stream {
                      << state.overlay_regions.size()
                      << " static-metadata="sv
                      << state.has_static_metadata;
+    return 0;
+  }
+
+  std::array<std::uint8_t, sizeof(control_encoded_tile_frame_state_v1_t)> build_encoded_tile_frame_state_payload(
+    std::uint32_t effective_from_frame_number,
+    const video::encoded_tile_metadata_t &metadata
+  ) {
+    std::array<std::uint8_t, sizeof(control_encoded_tile_frame_state_v1_t)> payload {};
+    auto *header = reinterpret_cast<control_encoded_tile_frame_state_v1_t *>(payload.data());
+    header->header.type = packetTypes[IDX_ENCODED_TILE_FRAME_STATE];
+    header->header.payloadLength = static_cast<std::uint16_t>(sizeof(control_encoded_tile_frame_state_v1_t) - sizeof(control_header_v2));
+    header->version = lumen_encoded_tile_frame_state_version;
+    header->flags = metadata.has_tile_region ? lumen_encoded_tile_frame_state_flag_has_tile_region : 0;
+    header->reserved = 0;
+    header->effectiveFromFrameNumber = effective_from_frame_number;
+    header->frameGroupId = metadata.frame_group_id;
+    header->tileIndex = metadata.tile_index;
+    header->tileCount = std::max<std::uint32_t>(1, metadata.tile_count);
+    header->encodedLaneIndex = metadata.encoded_lane_index;
+    header->encodedLaneCount = std::max<std::uint32_t>(1, metadata.encoded_lane_count);
+    header->tileOriginX = metadata.has_tile_region ? metadata.tile_origin_x : 0;
+    header->tileOriginY = metadata.has_tile_region ? metadata.tile_origin_y : 0;
+    header->tileWidth = metadata.has_tile_region ? metadata.tile_width : 0;
+    header->tileHeight = metadata.has_tile_region ? metadata.tile_height : 0;
+    return payload;
+  }
+
+  int send_encoded_tile_frame_state(
+    session_t *session,
+    std::uint32_t effective_from_frame_number,
+    const video::encoded_tile_metadata_t &metadata
+  ) {
+    if (!session->control.peer) {
+      BOOST_LOG(warning) << "Couldn't send encoded tile frame state, still waiting for a client ping"sv;
+      return -1;
+    }
+
+    auto plaintext_bytes = build_encoded_tile_frame_state_payload(effective_from_frame_number, metadata);
+    std::string_view plaintext {
+      reinterpret_cast<const char *>(plaintext_bytes.data()),
+      plaintext_bytes.size()
+    };
+    std::vector<std::uint8_t> encrypted_payload(
+      sizeof(control_encrypted_t) +
+      crypto::cipher::round_to_pkcs7_padded(plaintext.size()) +
+      crypto::cipher::tag_size
+    );
+
+    auto payload = encode_control_dynamic(session, plaintext, encrypted_payload);
+    if (session->broadcast_ref->control_server.send(payload, session->control.peer)) {
+      TUPLE_2D(port, addr, platf::from_sockaddr_ex((sockaddr *) &session->control.peer->address.address));
+      BOOST_LOG(warning) << "Couldn't send encoded tile frame state to ["sv << addr << ':' << port << ']';
+      return -1;
+    }
+
+    BOOST_LOG(debug) << "Sent encoded tile frame state effective-from-frame="sv
+                     << effective_from_frame_number
+                     << " group-id="sv << metadata.frame_group_id
+                     << " tile-index="sv << metadata.tile_index
+                     << " tile-count="sv << metadata.tile_count
+                     << " lane-index="sv << metadata.encoded_lane_index
+                     << " lane-count="sv << metadata.encoded_lane_count;
     return 0;
   }
 
@@ -1493,6 +1577,34 @@ namespace stream {
         }
       }
 
+      if (!packet->encoded_tile_metadata.is_single_frame()) {
+        if (session->config.monitor.sinkRequest.capability.supports_encoded_tile_stream == 0) {
+          BOOST_LOG(error) << "Dropping encoded tile frame because client did not negotiate encoded tile stream support"
+                           << " frame-index="sv << packet->frame_index()
+                           << " tile-index="sv << packet->encoded_tile_metadata.tile_index
+                           << " tile-count="sv << packet->encoded_tile_metadata.tile_count
+                           << " lane-index="sv << packet->encoded_tile_metadata.encoded_lane_index
+                           << " lane-count="sv << packet->encoded_tile_metadata.encoded_lane_count
+                           << " group-id="sv << packet->encoded_tile_metadata.frame_group_id;
+          continue;
+        }
+
+        if (send_encoded_tile_frame_state(
+              session,
+              static_cast<std::uint32_t>(packet->frame_index()),
+              packet->encoded_tile_metadata
+            ) != 0) {
+          BOOST_LOG(error) << "Dropping encoded tile frame because tile frame state could not be sent"
+                           << " frame-index="sv << packet->frame_index()
+                           << " tile-index="sv << packet->encoded_tile_metadata.tile_index
+                           << " tile-count="sv << packet->encoded_tile_metadata.tile_count
+                           << " lane-index="sv << packet->encoded_tile_metadata.encoded_lane_index
+                           << " lane-count="sv << packet->encoded_tile_metadata.encoded_lane_count
+                           << " group-id="sv << packet->encoded_tile_metadata.frame_group_id;
+          continue;
+        }
+      }
+
       if (session->control.peer &&
           video::dynamic_range_transport_uses_hdr_frame_state(video::effective_dynamic_range_transport(session->config.monitor)) &&
           session->config.monitor.sinkRequest.capability.supports_per_frame_hdr_metadata != 0) {
@@ -1810,12 +1922,26 @@ namespace stream {
                 ).count() /
                   1000.0 :
                 0.0;
-            BOOST_LOG(info) << "Frame trace host frame-index="sv << packet->frame_index()
-                            << " processing-ms="sv << frame_processing_latency_ms
-                            << " network-ms="sv << network_latency_ms
-                            << " shards="sv << shards.size()
-                            << (packet->is_idr() ? " Key"sv : ""sv)
-                            << (packet->after_ref_frame_invalidation ? " RFI"sv : ""sv);
+            if (!packet->encoded_tile_metadata.is_single_frame()) {
+              BOOST_LOG(info) << "Frame trace host frame-index="sv << packet->frame_index()
+                              << " processing-ms="sv << frame_processing_latency_ms
+                              << " network-ms="sv << network_latency_ms
+                              << " shards="sv << shards.size()
+                              << " tile-index="sv << packet->encoded_tile_metadata.tile_index
+                              << " tile-count="sv << packet->encoded_tile_metadata.tile_count
+                              << " lane-index="sv << packet->encoded_tile_metadata.encoded_lane_index
+                              << " lane-count="sv << packet->encoded_tile_metadata.encoded_lane_count
+                              << " group-id="sv << packet->encoded_tile_metadata.frame_group_id
+                              << (packet->is_idr() ? " Key"sv : ""sv)
+                              << (packet->after_ref_frame_invalidation ? " RFI"sv : ""sv);
+            } else {
+              BOOST_LOG(info) << "Frame trace host frame-index="sv << packet->frame_index()
+                              << " processing-ms="sv << frame_processing_latency_ms
+                              << " network-ms="sv << network_latency_ms
+                              << " shards="sv << shards.size()
+                              << (packet->is_idr() ? " Key"sv : ""sv)
+                              << (packet->after_ref_frame_invalidation ? " RFI"sv : ""sv);
+            }
           }
 
           BOOST_LOG(verbose) << "Sent Frame seq ["sv << packet->frame_index() << "] pts ["sv << timestamp
@@ -2300,6 +2426,7 @@ namespace stream {
             .supports_frame_gated_hdr = snapshot.sink_request.capability.supports_frame_gated_hdr,
             .supports_hdr_tile_overlay = snapshot.sink_request.capability.supports_hdr_tile_overlay,
             .supports_per_frame_hdr_metadata = snapshot.sink_request.capability.supports_per_frame_hdr_metadata,
+            .supports_encoded_tile_stream = snapshot.sink_request.capability.supports_encoded_tile_stream,
           },
           .dynamic_range_transport = static_cast<video::dynamic_range_transport_e>(snapshot.sink_request.dynamic_range_transport),
         },
@@ -2426,6 +2553,8 @@ namespace stream {
                       << (session.config.monitor.sinkRequest.capability.supports_hdr_tile_overlay != 0)
                       << " supports-per-frame-hdr-metadata="sv
                       << (session.config.monitor.sinkRequest.capability.supports_per_frame_hdr_metadata != 0)
+                      << " supports-encoded-tile-stream="sv
+                      << (session.config.monitor.sinkRequest.capability.supports_encoded_tile_stream != 0)
                       << " effective-hdr-metadata="sv << has_effective_hdr_metadata;
 
       const LumenCoreSinkRequest sink_request {
@@ -2444,7 +2573,8 @@ namespace stream {
           .potential_peak_luminance_nits = session.config.monitor.sinkRequest.capability.potential_peak_luminance_nits,
           .supports_frame_gated_hdr = session.config.monitor.sinkRequest.capability.supports_frame_gated_hdr != 0,
           .supports_hdr_tile_overlay = session.config.monitor.sinkRequest.capability.supports_hdr_tile_overlay != 0,
-          .supports_per_frame_hdr_metadata = session.config.monitor.sinkRequest.capability.supports_per_frame_hdr_metadata != 0
+          .supports_per_frame_hdr_metadata = session.config.monitor.sinkRequest.capability.supports_per_frame_hdr_metadata != 0,
+          .supports_encoded_tile_stream = session.config.monitor.sinkRequest.capability.supports_encoded_tile_stream != 0
         },
         .dynamic_range_transport = static_cast<LumenCoreDynamicRangeTransport>(requested_dynamic_range_transport)
       };

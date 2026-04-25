@@ -44,6 +44,7 @@ namespace video {
     bool supports_frame_gated_hdr = false;
     bool supports_hdr_tile_overlay = false;
     bool supports_per_frame_hdr_metadata = false;
+    bool supports_encoded_tile_stream = false;
   };
 
   struct sink_request_t {
