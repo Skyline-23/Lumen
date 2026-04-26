@@ -344,6 +344,10 @@ def parse_runtime_probe_output(output: str) -> dict[str, Any] | None:
         "VT_SUPPRESSED_IMMEDIATE_REPLAY_COUNT": "vt_suppressed_immediate_replay_count",
         "VT_MAX_INFLIGHT_STAGING_SLOTS": "vt_max_inflight_staging_slots",
         "VT_PIXEL_BUFFER_CACHE_SIZE": "vt_pixel_buffer_cache_size",
+        "VT_ENCODE_QUEUE_WAIT_SAMPLE_COUNT": "vt_encode_queue_wait_sample_count",
+        "VT_ENCODE_INVOCATION_SAMPLE_COUNT": "vt_encode_invocation_sample_count",
+        "VT_METAL_STAGE_SAMPLE_COUNT": "vt_metal_stage_sample_count",
+        "VT_ENCODE_CALL_SAMPLE_COUNT": "vt_encode_call_sample_count",
         "SKYLIGHT_RECOMMENDED_PENDING_FRAME_COUNT": "skylight_recommended_pending_frame_count",
     }
     optional_float_metrics = {
@@ -358,6 +362,14 @@ def parse_runtime_probe_output(output: str) -> dict[str, Any] | None:
         "SOURCE_AVG_UPDATE_DROP_COUNT": "source_avg_update_drop_count",
         "SOURCE_APPROX_FRAME_RATE": "source_approx_frame_rate",
         "SKYLIGHT_SYNTHETIC_IDLE_REPLAY_INTERVAL_MS": "skylight_synthetic_idle_replay_interval_ms",
+        "VT_ENCODE_QUEUE_WAIT_AVG_MS": "vt_encode_queue_wait_avg_ms",
+        "VT_ENCODE_QUEUE_WAIT_MAX_MS": "vt_encode_queue_wait_max_ms",
+        "VT_ENCODE_INVOCATION_AVG_MS": "vt_encode_invocation_avg_ms",
+        "VT_ENCODE_INVOCATION_MAX_MS": "vt_encode_invocation_max_ms",
+        "VT_METAL_STAGE_AVG_MS": "vt_metal_stage_avg_ms",
+        "VT_METAL_STAGE_MAX_MS": "vt_metal_stage_max_ms",
+        "VT_ENCODE_CALL_AVG_MS": "vt_encode_call_avg_ms",
+        "VT_ENCODE_CALL_MAX_MS": "vt_encode_call_max_ms",
     }
     optional_string_metrics = {
         "SOURCE_BACKEND": "source_backend",

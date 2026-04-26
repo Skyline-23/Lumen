@@ -190,6 +190,18 @@ void emitSelectedDiagnostics(const char *diagnostics) {
     {"videoToolboxSuppressedImmediateReplayCount", "VT_SUPPRESSED_IMMEDIATE_REPLAY_COUNT"},
     {"videoToolboxMaxInflightStagingSlots", "VT_MAX_INFLIGHT_STAGING_SLOTS"},
     {"videoToolboxPixelBufferCacheSize", "VT_PIXEL_BUFFER_CACHE_SIZE"},
+    {"videoToolboxEncodeQueueWaitSampleCount", "VT_ENCODE_QUEUE_WAIT_SAMPLE_COUNT"},
+    {"videoToolboxEncodeQueueWaitAverageMilliseconds", "VT_ENCODE_QUEUE_WAIT_AVG_MS"},
+    {"videoToolboxEncodeQueueWaitMaxMilliseconds", "VT_ENCODE_QUEUE_WAIT_MAX_MS"},
+    {"videoToolboxEncodeInvocationSampleCount", "VT_ENCODE_INVOCATION_SAMPLE_COUNT"},
+    {"videoToolboxEncodeInvocationAverageMilliseconds", "VT_ENCODE_INVOCATION_AVG_MS"},
+    {"videoToolboxEncodeInvocationMaxMilliseconds", "VT_ENCODE_INVOCATION_MAX_MS"},
+    {"videoToolboxMetalStageSampleCount", "VT_METAL_STAGE_SAMPLE_COUNT"},
+    {"videoToolboxMetalStageAverageMilliseconds", "VT_METAL_STAGE_AVG_MS"},
+    {"videoToolboxMetalStageMaxMilliseconds", "VT_METAL_STAGE_MAX_MS"},
+    {"videoToolboxVTEncodeCallSampleCount", "VT_ENCODE_CALL_SAMPLE_COUNT"},
+    {"videoToolboxVTEncodeCallAverageMilliseconds", "VT_ENCODE_CALL_AVG_MS"},
+    {"videoToolboxVTEncodeCallMaxMilliseconds", "VT_ENCODE_CALL_MAX_MS"},
   };
 
   std::string remaining(diagnostics);

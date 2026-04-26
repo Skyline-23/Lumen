@@ -1999,6 +1999,10 @@ public actor LumenBridgeRuntime {
             "videoToolboxSuppressedImmediateReplayCount=",
             "videoToolboxMaxInflightStagingSlots=",
             "videoToolboxPixelBufferCacheSize=",
+            "videoToolboxEncodeQueueWait",
+            "videoToolboxEncodeInvocation",
+            "videoToolboxMetalStage",
+            "videoToolboxVTEncodeCall",
             "videoToolboxProperty."
         ]
         let notes = statistics.notes.filter { note in
