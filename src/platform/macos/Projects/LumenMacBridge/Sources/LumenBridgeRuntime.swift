@@ -667,12 +667,6 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
             return encoderInputStrategy
         }
 
-        if codec == .hevc &&
-            effectiveCapturePixelFormat == kCVPixelFormatType_32BGRA &&
-            !showCursor {
-            return .bgra
-        }
-
         if usesHDRTransport || negotiatedDynamicRangeTransport == LumenCoreDynamicRangeTransportSDRBaseHDROverlay {
             return .yuv420v10
         }
