@@ -2,9 +2,9 @@ Must read @/Users/skyline23/.codex/RTK.md
 
 ## Lumen HDR120 / HEVC Autoresearch Rules
 
-- Do not enable or restart the native autoresearch hook unless the user explicitly asks for it. Current default is manual loop only.
-- Manual loop means: make one focused experiment, commit it, run the metric manually, keep only if it beats the current manual best and has no HDR/drop/stability regression, otherwise revert the experiment commit.
-- Do not ask whether to continue when the user says short go-aheads like `ㅇㅇ`, `ㄱㄱ`, or `계속`; continue the manual loop.
+- Use the native `$auto-research-codex` loop when the user explicitly asks for automatic autoresearch or names the skill. Do not keep a stale manual-only policy active after that.
+- Manual loop fallback means: make one focused experiment, commit it, run the metric manually, keep only if it beats the current best and has no HDR/drop/stability regression, otherwise revert the experiment commit.
+- Do not ask whether to continue when the user says short go-aheads like `ㅇㅇ`, `ㄱㄱ`, or `계속`; continue the active loop mode, whether native autoresearch or explicit manual fallback.
 - Do not use `NSLock` for new coordination. Prefer actor-isolated state, or an existing serial queue only when the code is already queue-isolated and an actor would not fit the callback boundary.
 - Do not add `targetFrameRate >= 100` or equivalent 100fps policy gates. High refresh is core to this project; do not make HEVC/HDR/low-latency behavior conditional on hitting a 100fps threshold.
 - Do not lower bitrate, QP, quality, HDR, resolution, or frame rate to get a better score unless the user explicitly asks for that tradeoff. Quality matters.
@@ -21,4 +21,3 @@ Run from `/Users/skyline23/Downloads/Lumen`:
 ```bash
 rtk python3 tools/autoresearch/eval_host_stream.py --workspace src/platform/macos/Lumen.xcworkspace --scheme LumenTuistTests --log "/Users/skyline23/Library/Application Support/Lumen/lumen.log" --target-width 3512 --target-height 2290 --target-fps 120 --codec-suite hevc,prores-proxy --require-partial-hdr --require-low-latency --battery-policy adaptive-hdr
 ```
-
