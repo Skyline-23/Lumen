@@ -321,7 +321,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
             )
         )
 
-        XCTAssertEqual(configuration.effectiveEncoderInputStrategy, .auto)
+        XCTAssertEqual(configuration.effectiveEncoderInputStrategy, .yuv420v10)
         XCTAssertEqual(configuration.effectiveCapturePixelFormat, kCVPixelFormatType_32BGRA)
         XCTAssertEqual(configuration.mdkValue.capturePixelFormat, kCVPixelFormatType_32BGRA)
         XCTAssertEqual(configuration.encodedHDRConfigurationSnapshot?.transferFunction, "smpteSt2084PQ")
