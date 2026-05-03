@@ -701,7 +701,7 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         return effectivePixelCount >= Self.highResolutionPixelCountThreshold
     }
 
-    fileprivate var usesVeryHighResolutionWorkload: Bool {
+    private var usesVeryHighResolutionWorkload: Bool {
         guard let effectivePixelCount else {
             return false
         }
