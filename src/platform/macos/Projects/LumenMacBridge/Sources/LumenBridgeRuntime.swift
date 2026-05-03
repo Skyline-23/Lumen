@@ -668,7 +668,7 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         }
 
         if usesHDRTransport || negotiatedDynamicRangeTransport == LumenCoreDynamicRangeTransportSDRBaseHDROverlay {
-            return .bgra
+            return .yuv420v10
         }
 
         if usesHighResolutionWorkload || targetFrameRate >= 120 {
