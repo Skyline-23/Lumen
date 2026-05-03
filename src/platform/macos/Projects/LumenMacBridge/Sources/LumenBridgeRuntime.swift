@@ -1360,6 +1360,9 @@ public actor LumenBridgeRuntime {
         let callbacks = MDKEncodedCaptureCallbacks(
             frameHandler: { frame in
                 coreForwarder.consume(frame: frame)
+                Task {
+                    await runtime.recordEncodedFrame(frame)
+                }
             },
             eventHandler: { event in
                 coreForwarder.consume(event: event)
