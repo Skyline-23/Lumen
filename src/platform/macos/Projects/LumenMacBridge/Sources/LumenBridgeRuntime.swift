@@ -680,9 +680,6 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
 
     public var effectiveCapturePixelFormat: UInt32 {
         if codec == .hevc {
-            if usesHDRTransport || negotiatedDynamicRangeTransport == LumenCoreDynamicRangeTransportSDRBaseHDROverlay {
-                return kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
-            }
             return kCVPixelFormatType_32BGRA
         }
         return codec.mdkValue.preferredCapturePixelFormat
