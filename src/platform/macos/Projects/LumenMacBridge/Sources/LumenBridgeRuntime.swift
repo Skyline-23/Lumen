@@ -1294,7 +1294,7 @@ public actor LumenBridgeRuntime {
         return min(max(queueDepthReserve + hdrMetadataSlack, 2), 4)
     }
 
-    private nonisolated let coreForwarder = LumenCoreCaptureForwarder()
+    private let coreForwarder = LumenCoreCaptureForwarder()
     private let audioForwarder = LumenCoreAudioCaptureForwarder()
     private let logger = Logger(subsystem: "dev.skyline23.lumen", category: "MacBridgeRuntime")
     private var encodedCaptureSession: MDKEncodedCaptureSession?
@@ -1697,10 +1697,6 @@ public actor LumenBridgeRuntime {
     }
 
     public func drainNextCoreForwardedFrame() -> LumenBridgeCoreDrainedFrame? {
-        coreForwarder.popNextFrame()
-    }
-
-    public nonisolated func drainNextCoreForwardedFrameNonisolated() -> LumenBridgeCoreDrainedFrame? {
         coreForwarder.popNextFrame()
     }
 
