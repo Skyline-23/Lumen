@@ -134,7 +134,6 @@ public struct LumenBridgeCoreDrainedEvent: Equatable, Sendable {
 
 final class LumenCoreCaptureForwarder: @unchecked Sendable {
     private let handle: OpaquePointer
-    private var cachedFrameHDRSignalByCodec: [LumenCaptureCodec: Bool] = [:]
 
     init() {
         guard let handle = LumenCoreSharedEncodedCaptureIngress() else {
@@ -146,7 +145,6 @@ final class LumenCoreCaptureForwarder: @unchecked Sendable {
     deinit {}
 
     func reset() {
-        cachedFrameHDRSignalByCodec = [:]
         LumenCoreEncodedCaptureIngressReset(handle)
     }
 
@@ -169,23 +167,14 @@ final class LumenCoreCaptureForwarder: @unchecked Sendable {
     }
 
     func consume(frame: MDKEncodedFrame) {
-        let codec = LumenCaptureCodec(mdkCodec: frame.codec)
-        let isKeyFrame = frame.isKeyFrame
-        let isHDRSignaled: Bool
-        if isKeyFrame || cachedFrameHDRSignalByCodec[codec] == nil {
-            isHDRSignaled = frame.isHDRSignaled
-            cachedFrameHDRSignalByCodec[codec] = isHDRSignaled
-        } else {
-            isHDRSignaled = cachedFrameHDRSignalByCodec[codec] ?? frame.isHDRSignaled
-        }
         consume(
             sampleBuffer: frame.sampleBuffer,
-            codec: codec,
+            codec: LumenCaptureCodec(mdkCodec: frame.codec),
             sourceSequenceNumber: frame.sourceSequenceNumber,
             sourceDisplayTime: frame.sourceDisplayTime,
             outputCallbackLatencyMilliseconds: frame.outputCallbackLatencyMilliseconds,
-            isKeyFrame: isKeyFrame,
-            isHDRSignaled: isHDRSignaled,
+            isKeyFrame: frame.isKeyFrame,
+            isHDRSignaled: frame.isHDRSignaled,
             isReplay: false,
             tileMetadata: LumenBridgeEncodedTileMetadata(mdkValue: frame.tileMetadata)
         )
