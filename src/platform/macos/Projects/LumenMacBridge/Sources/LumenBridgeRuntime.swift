@@ -1277,10 +1277,12 @@ public actor LumenBridgeRuntime {
         // input lag when the producer starts missing cadence.
         let queueDepthReserve = max(configuration.negotiatedQueueProfile.queueDepthHint, 1)
         let hdrMetadataSlack = configuration.prefersRealtimeHDRMetadata ? 1 : 0
+        let highResolutionMetadataSlack =
+            configuration.usesVeryHighResolutionWorkload && configuration.prefersRealtimeHDRMetadata ? 1 : 0
         let targetFrameRate = configuration.effectiveTargetFrameRate
 
         if targetFrameRate >= 120 {
-            return min(max(queueDepthReserve + hdrMetadataSlack, 2), 3)
+            return min(max(queueDepthReserve + hdrMetadataSlack + highResolutionMetadataSlack, 2), 3)
         }
 
         if targetFrameRate >= 90 {
