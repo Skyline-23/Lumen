@@ -554,10 +554,7 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         }
 
         if effectiveTargetFrameRate >= 120 {
-            if codec == .proResProxy {
-                return .q3
-            }
-            return .q1
+            return .q3
         }
 
         if negotiatedDynamicRangeTransport == LumenCoreDynamicRangeTransportSDRBaseHDROverlay {
