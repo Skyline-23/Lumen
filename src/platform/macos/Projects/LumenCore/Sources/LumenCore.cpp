@@ -154,6 +154,17 @@ namespace {
     }
   };
 
+  struct encoded_frame_snapshot_state_t {
+    LumenCoreCaptureCodec codec = LumenCoreCaptureCodecUnknown;
+    std::size_t payload_size = 0;
+    std::uint64_t source_sequence_number = 0;
+    std::uint64_t source_display_time = 0;
+    bool has_sample_buffer = false;
+    bool is_key_frame = false;
+    bool is_hdr_signaled = false;
+    LumenCoreEncodedCaptureTileMetadata tile_metadata = single_frame_tile_metadata();
+  };
+
   struct audio_event_state_t {
     LumenCoreCaptureEventKind kind = LumenCoreCaptureEventKindUnknown;
     std::string message;
@@ -215,7 +226,7 @@ struct LumenCoreEncodedCaptureIngress {
   std::uint64_t dropped_event_count = 0;
   std::size_t frame_capacity = default_frame_capacity;
   std::size_t event_capacity = default_event_capacity;
-  std::optional<encoded_frame_state_t> last_frame;
+  std::optional<encoded_frame_snapshot_state_t> last_frame;
   std::optional<encoded_event_state_t> last_event;
   std::deque<encoded_frame_state_t> pending_frames;
   std::deque<encoded_event_state_t> pending_events;
@@ -539,9 +550,19 @@ void LumenCoreEncodedCaptureIngressConsumeSampleBufferWithTileMetadata(
   frame.is_replay = is_replay;
   frame.tile_metadata = normalized_tile_metadata(tile_metadata);
 
+  encoded_frame_snapshot_state_t last_frame {};
+  last_frame.codec = frame.codec;
+  last_frame.payload_size = frame.payload_size();
+  last_frame.source_sequence_number = frame.source_sequence_number;
+  last_frame.source_display_time = frame.source_display_time;
+  last_frame.has_sample_buffer = frame.sample_buffer.value != nullptr;
+  last_frame.is_key_frame = frame.is_key_frame;
+  last_frame.is_hdr_signaled = frame.is_hdr_signaled;
+  last_frame.tile_metadata = frame.tile_metadata;
+
   std::scoped_lock lock(ingress->mutex);
   ingress->frame_count += 1;
-  ingress->last_frame = frame;
+  ingress->last_frame = last_frame;
   ingress->pending_frames.push_back(std::move(frame));
 
   const auto drop_oldest_pending_frame = [&]() {
@@ -631,9 +652,9 @@ LumenCoreEncodedCaptureIngressSnapshot LumenCoreEncodedCaptureIngressCopySnapsho
   if (ingress->last_frame.has_value()) {
     const auto &frame = *ingress->last_frame;
     snapshot.has_last_frame = true;
-    snapshot.has_last_sample_buffer = frame.sample_buffer.value != nullptr;
+    snapshot.has_last_sample_buffer = frame.has_sample_buffer;
     snapshot.last_frame_codec = frame.codec;
-    snapshot.last_frame_payload_size = frame.payload_size();
+    snapshot.last_frame_payload_size = frame.payload_size;
     snapshot.last_frame_source_sequence_number = frame.source_sequence_number;
     snapshot.last_frame_source_display_time = frame.source_display_time;
     snapshot.last_frame_is_key_frame = frame.is_key_frame;
@@ -664,11 +685,11 @@ CMSampleBufferRef LumenCoreEncodedCaptureIngressCreateRetainedLastSampleBuffer(
   }
 
   std::scoped_lock lock(ingress->mutex);
-  if (!ingress->last_frame.has_value() || !ingress->last_frame->sample_buffer.value) {
+  if (ingress->pending_frames.empty() || !ingress->pending_frames.back().sample_buffer.value) {
     return nullptr;
   }
 
-  return reinterpret_cast<CMSampleBufferRef>(const_cast<void *>(CFRetain(ingress->last_frame->sample_buffer.value)));
+  return reinterpret_cast<CMSampleBufferRef>(const_cast<void *>(CFRetain(ingress->pending_frames.back().sample_buffer.value)));
 }
 
 LumenCoreEncodedCaptureFrameRecord LumenCoreEncodedCaptureIngressPopNextFrame(
