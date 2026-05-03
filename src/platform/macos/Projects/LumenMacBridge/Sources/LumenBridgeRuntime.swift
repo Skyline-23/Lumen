@@ -924,18 +924,13 @@ public struct LumenBridgeEncodedFrameSnapshot: Equatable, Sendable {
     public let isKeyFrame: Bool
     public let isHDRSignaled: Bool
 
-    init(
-        frame: MDKEncodedFrame,
-        codec: LumenCaptureCodec,
-        isKeyFrame: Bool,
-        isHDRSignaled: Bool
-    ) {
-        self.codec = codec
+    init(frame: MDKEncodedFrame) {
+        self.codec = LumenCaptureCodec(frame.codec)
         self.sourceDisplayTime = frame.sourceDisplayTime
         self.sourceSequenceNumber = frame.sourceSequenceNumber
         self.outputCallbackLatencyMilliseconds = frame.outputCallbackLatencyMilliseconds
-        self.isKeyFrame = isKeyFrame
-        self.isHDRSignaled = isHDRSignaled
+        self.isKeyFrame = frame.isKeyFrame
+        self.isHDRSignaled = frame.isHDRSignaled
     }
 }
 
@@ -1306,7 +1301,6 @@ public actor LumenBridgeRuntime {
     private var encodedCaptureStartupTask: Task<Void, Error>?
     private var activeCaptureConfiguration: LumenMacDisplayKitCaptureConfiguration?
     private var latestFrame: LumenBridgeEncodedFrameSnapshot?
-    private var cachedDiagnosticHDRSignalByCodec: [LumenCaptureCodec: Bool] = [:]
     private var recentEvents: [MDKEncodedCaptureSessionEvent] = []
     private var audioCaptureSession: MDKAudioCaptureSession?
     private var audioCaptureStartupTask: Task<Void, Error>?
@@ -1351,7 +1345,6 @@ public actor LumenBridgeRuntime {
         coreForwarder.setEventCapacity(Self.automaticCoreForwardingEventCapacity)
         coreForwarder.setProducerActive(false)
         latestFrame = nil
-        cachedDiagnosticHDRSignalByCodec = [:]
         recentEvents = []
         lastEncodedFrameDiagnosticsUptimeNanoseconds = 0
         lastEncodedFrameSourceSequenceNumber = nil
@@ -1847,21 +1840,7 @@ public actor LumenBridgeRuntime {
     }
 
     private func recordEncodedFrame(_ frame: MDKEncodedFrame) async {
-        let codec = LumenCaptureCodec(frame.codec)
-        let isKeyFrame = frame.isKeyFrame
-        let isHDRSignaled: Bool
-        if isKeyFrame || cachedDiagnosticHDRSignalByCodec[codec] == nil {
-            isHDRSignaled = frame.isHDRSignaled
-            cachedDiagnosticHDRSignalByCodec[codec] = isHDRSignaled
-        } else {
-            isHDRSignaled = cachedDiagnosticHDRSignalByCodec[codec] ?? frame.isHDRSignaled
-        }
-        latestFrame = LumenBridgeEncodedFrameSnapshot(
-            frame: frame,
-            codec: codec,
-            isKeyFrame: isKeyFrame,
-            isHDRSignaled: isHDRSignaled
-        )
+        latestFrame = LumenBridgeEncodedFrameSnapshot(frame: frame)
         logEncodedFrameDiagnosticsIfNeeded(frame, captureStatistics: nil)
     }
 
