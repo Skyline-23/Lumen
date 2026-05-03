@@ -256,7 +256,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
         )
 
         XCTAssertEqual(LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q2), 2)
-        XCTAssertEqual(LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: auto), 2)
+        XCTAssertEqual(LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: auto), 3)
         XCTAssertEqual(LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q4), 3)
         XCTAssertEqual(LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q2NinetyFps), 2)
         XCTAssertEqual(LumenBridgeRuntime.recommendedCoreForwardingFrameCapacity(for: q2SixtyFps), 2)
@@ -291,7 +291,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(configuration.negotiatedDynamicRangeTransport, LumenCoreDynamicRangeTransportSDRBaseHDROverlay)
         XCTAssertEqual(configuration.effectiveTargetFrameRate, 120)
         XCTAssertEqual(configuration.effectivePreprocessStrategy, .none)
-        XCTAssertEqual(configuration.negotiatedQueueProfile, .q1)
+        XCTAssertEqual(configuration.negotiatedQueueProfile, .q3)
         XCTAssertEqual(configuration.mdkValue.targetFrameRate, 120)
         XCTAssertEqual(configuration.mdkValue.streamConfiguration.outputWidth, 3512)
         XCTAssertEqual(configuration.mdkValue.streamConfiguration.outputHeight, 2290)
