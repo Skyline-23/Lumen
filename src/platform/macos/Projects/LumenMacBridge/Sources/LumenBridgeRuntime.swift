@@ -1294,12 +1294,26 @@ public actor LumenBridgeRuntime {
         return min(max(queueDepthReserve + hdrMetadataSlack, 2), 4)
     }
 
+    private func coreForwardingFrameCapacity(
+        for configuration: LumenMacDisplayKitCaptureConfiguration
+    ) -> Int {
+        explicitCoreForwardingFrameCapacity
+            ?? Self.recommendedCoreForwardingFrameCapacity(for: configuration)
+    }
+
+    private var coreForwardingEventCapacity: Int {
+        explicitCoreForwardingEventCapacity
+            ?? Self.automaticCoreForwardingEventCapacity
+    }
+
     private let coreForwarder = LumenCoreCaptureForwarder()
     private let audioForwarder = LumenCoreAudioCaptureForwarder()
     private let logger = Logger(subsystem: "dev.skyline23.lumen", category: "MacBridgeRuntime")
     private var encodedCaptureSession: MDKEncodedCaptureSession?
     private var encodedCaptureStartupTask: Task<Void, Error>?
     private var activeCaptureConfiguration: LumenMacDisplayKitCaptureConfiguration?
+    private var explicitCoreForwardingFrameCapacity: Int?
+    private var explicitCoreForwardingEventCapacity: Int?
     private var latestFrame: LumenBridgeEncodedFrameSnapshot?
     private var recentEvents: [MDKEncodedCaptureSessionEvent] = []
     private var audioCaptureSession: MDKAudioCaptureSession?
@@ -1339,10 +1353,11 @@ public actor LumenBridgeRuntime {
     ) async throws {
         await stopMacDisplayKitCapture(resetRequestGeneration: false)
 
-        let frameCapacity = Self.recommendedCoreForwardingFrameCapacity(for: configuration)
+        let frameCapacity = coreForwardingFrameCapacity(for: configuration)
+        let eventCapacity = coreForwardingEventCapacity
         coreForwarder.reset()
         coreForwarder.setFrameCapacity(frameCapacity)
-        coreForwarder.setEventCapacity(Self.automaticCoreForwardingEventCapacity)
+        coreForwarder.setEventCapacity(eventCapacity)
         coreForwarder.setProducerActive(false)
         latestFrame = nil
         recentEvents = []
@@ -1351,7 +1366,7 @@ public actor LumenBridgeRuntime {
         lastEncodedFrameSourceDisplayTime = nil
 
         logger.notice(
-            "Starting MacDisplayKit capture \(configuration.hdrConfigurationDebugSummary, privacy: .public) forwarding-frame-capacity=\(frameCapacity, privacy: .public)"
+            "Starting MacDisplayKit capture \(configuration.hdrConfigurationDebugSummary, privacy: .public) forwarding-frame-capacity=\(frameCapacity, privacy: .public) forwarding-event-capacity=\(eventCapacity, privacy: .public) explicit-forwarding-capacity=\(self.explicitCoreForwardingFrameCapacity != nil, privacy: .public)"
         )
 
         let session = MDKEncodedCaptureSession(configuration: configuration.mdkValue)
@@ -1684,6 +1699,8 @@ public actor LumenBridgeRuntime {
         frameCapacity: Int,
         eventCapacity: Int
     ) {
+        explicitCoreForwardingFrameCapacity = max(1, frameCapacity)
+        explicitCoreForwardingEventCapacity = max(1, eventCapacity)
         coreForwarder.setFrameCapacity(frameCapacity)
         coreForwarder.setEventCapacity(eventCapacity)
     }
@@ -1736,7 +1753,7 @@ public actor LumenBridgeRuntime {
         ) {
             lastAppliedVideoRequestGeneration = request.videoGeneration
             if let configuration = request.videoConfiguration {
-                let frameCapacity = Self.recommendedCoreForwardingFrameCapacity(for: configuration)
+                let frameCapacity = coreForwardingFrameCapacity(for: configuration)
                 logger.notice(
                     "Applying LumenCore macOS bridge capture request display-id=\(configuration.displayID, privacy: .public) codec=\(configuration.codec.rawValue, privacy: .public) requested-queue=\(configuration.queueProfile.rawValue, privacy: .public) negotiated-queue=\(configuration.negotiatedQueueProfile.rawValue, privacy: .public) requested-transport=\(lumenDynamicRangeTransportName(configuration.sinkRequest.dynamicRangeTransport), privacy: .public) negotiated-transport=\(lumenDynamicRangeTransportName(configuration.negotiatedDynamicRangeTransport), privacy: .public) requested-fps=\(configuration.targetFrameRate, privacy: .public) effective-fps=\(configuration.effectiveTargetFrameRate, privacy: .public) bitrate-kbps=\(configuration.targetVideoBitRateKbps, privacy: .public) forwarding-frame-capacity=\(frameCapacity, privacy: .public)"
                 )
