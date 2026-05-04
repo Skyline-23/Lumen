@@ -4,6 +4,7 @@ Must read @/Users/skyline23/.codex/RTK.md
 
 - Use the native `$auto-research-codex` loop when the user explicitly asks for automatic autoresearch or names the skill. Do not keep a stale manual-only policy active after that.
 - Manual loop fallback means: make one focused experiment, commit it, run the metric manually, keep only if it beats the current best and has no HDR/drop/stability regression, otherwise revert the experiment commit.
+- Every experiment, including discarded ties, regressions, crashes, and reverted commits, must append a concise record to `results.tsv` and `.codex-autoresearch/experiment_notes.md`: hypothesis, change, metric/result, and what the result means for future search.
 - Do not ask whether to continue when the user says short go-aheads like `ㅇㅇ`, `ㄱㄱ`, or `계속`; continue the active loop mode, whether native autoresearch or explicit manual fallback.
 - Do not use `NSLock` for new coordination. Prefer actor-isolated state, or an existing serial queue only when the code is already queue-isolated and an actor would not fit the callback boundary.
 - Do not add `targetFrameRate >= 100` or equivalent 100fps policy gates. High refresh is core to this project; do not make HEVC/HDR/low-latency behavior conditional on hitting a 100fps threshold.
