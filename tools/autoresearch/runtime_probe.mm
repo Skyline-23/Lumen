@@ -346,6 +346,7 @@ int main(int argc, const char *argv[]) {
     configuration.sink_request.capability.transfer = kPQTransfer;
     configuration.sink_request.capability.supports_frame_gated_hdr = true;
     configuration.sink_request.capability.supports_hdr_tile_overlay = true;
+    configuration.sink_request.capability.supports_encoded_tile_stream = true;
     configuration.sink_request.capability.supports_per_frame_hdr_metadata = true;
     configuration.sink_request.dynamic_range_transport =
       LumenCoreDynamicRangeTransportSDRBaseHDROverlay;
