@@ -312,6 +312,12 @@ void printErrorAndExit(const char *message) {
   std::fflush(stdout);
 }
 
+std::chrono::milliseconds drainPollIntervalForFPS(int32_t fps) {
+  const int32_t safeFPS = std::max<int32_t>(fps, 1);
+  const int32_t halfFrameMilliseconds = std::max<int32_t>(1, 1000 / (safeFPS * 2));
+  return std::chrono::milliseconds(std::min<int32_t>(halfFrameMilliseconds, 10));
+}
+
 }  // namespace
 
 int main(int argc, const char *argv[]) {
@@ -366,6 +372,7 @@ int main(int argc, const char *argv[]) {
 
     ProbeMetrics metrics;
     std::unordered_map<uint64_t, TileGroupProgress> tileGroups;
+    const auto drainPollInterval = drainPollIntervalForFPS(fps);
     const auto captureStartTime = std::chrono::steady_clock::now();
     const auto startupDeadline = captureStartTime + std::chrono::seconds(10);
     while (std::chrono::steady_clock::now() < startupDeadline && !metrics.firstFrameSeen) {
@@ -377,7 +384,7 @@ int main(int argc, const char *argv[]) {
         ).count();
         break;
       }
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      std::this_thread::sleep_for(drainPollInterval);
     }
 
     if (metrics.firstFrameSeen) {
@@ -385,7 +392,7 @@ int main(int argc, const char *argv[]) {
       while (std::chrono::steady_clock::now() < sampleDeadline) {
         drainForwardedFrames(controller, metrics, tileGroups);
         drainForwardedEvents(controller, metrics);
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        std::this_thread::sleep_for(drainPollInterval);
       }
     }
 
