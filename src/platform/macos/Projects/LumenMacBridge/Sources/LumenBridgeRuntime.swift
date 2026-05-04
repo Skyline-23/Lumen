@@ -1696,11 +1696,11 @@ public actor LumenBridgeRuntime {
         audioForwarder.setEventCapacity(eventCapacity)
     }
 
-    public nonisolated func drainNextCoreForwardedFrame() -> LumenBridgeCoreDrainedFrame? {
+    public func drainNextCoreForwardedFrame() -> LumenBridgeCoreDrainedFrame? {
         coreForwarder.popNextFrame()
     }
 
-    public nonisolated func drainNextCoreForwardedEvent() -> LumenBridgeCoreDrainedEvent? {
+    public func drainNextCoreForwardedEvent() -> LumenBridgeCoreDrainedEvent? {
         coreForwarder.popNextEvent()
     }
 

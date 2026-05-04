@@ -778,14 +778,18 @@ public final class LumenBridgeObjCFacade: NSObject {
     }
 
     public func popNextCoreForwardedFrameSync() -> LumenBridgeDrainedFrameBox? {
-        runtime.drainNextCoreForwardedFrame().map {
-            LumenBridgeDrainedFrameBox(frame: $0)
+        try? blockingRun { [self] in
+            await self.runtime.drainNextCoreForwardedFrame().map {
+                LumenBridgeDrainedFrameBox(frame: $0)
+            }
         }
     }
 
     public func popNextCoreForwardedEventSync() -> LumenBridgeDrainedEventBox? {
-        runtime.drainNextCoreForwardedEvent().map {
-            LumenBridgeDrainedEventBox(event: $0)
+        try? blockingRun { [self] in
+            await self.runtime.drainNextCoreForwardedEvent().map {
+                LumenBridgeDrainedEventBox(event: $0)
+            }
         }
     }
 
