@@ -679,9 +679,6 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     }
 
     public var effectiveCapturePixelFormat: UInt32 {
-        if codec == .hevc {
-            return kCVPixelFormatType_32BGRA
-        }
         return codec.mdkValue.preferredCapturePixelFormat
     }
 
