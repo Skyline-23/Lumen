@@ -646,8 +646,21 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
             deliveryMode: .callbackOnly,
             capturePixelFormat: capturePixelFormat,
             encoderInputStrategy: effectiveEncoderInputStrategy.mdkValue,
-            hdrConfiguration: encodedColorConfiguration
+            hdrConfiguration: encodedColorConfiguration,
+            tileLayout: effectiveTileLayout
         )
+    }
+
+    private var effectiveTileLayout: MDKEncodedCaptureTileLayout {
+        guard codec == .hevc,
+              sinkRequest.capability.supportsEncodedTileStream,
+              negotiatedDynamicRangeTransport == LumenCoreDynamicRangeTransportSDRBaseHDROverlay,
+              (requestedWidth ?? 0) > 0,
+              (requestedHeight ?? 0) > 0 else {
+            return .singleFrame
+        }
+
+        return MDKEncodedCaptureTileLayout(tileCount: 2, encodedLaneCount: 2)
     }
 
     public var effectiveTargetFrameRate: Int {
