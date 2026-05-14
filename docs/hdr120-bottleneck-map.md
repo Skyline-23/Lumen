@@ -17,6 +17,7 @@ Last updated: 2026-05-14.
 | HEVC source/tiling | 2063: 194 tile records, 194 HDR records, max tile count 2, encoded lane count 2 | Protocol-level tile records bypass the old single full-frame 101-102 output ceiling. |
 | HEVC logical groups | 2063: 97 complete frame groups, 0 incomplete groups | Column partitioning improves logical-frame throughput, but it remains below 120 groups/s. |
 | HEVC VT submission | 2063: 103 staged/submitted half-width tile frames | The HEVC tile path reaches enough tile records for the score cap, but each logical frame needs 2 tile submissions. |
+| HEVC per-lane VT output | 2068 diagnostic: lane 0 and lane 1 each submitted 103 staged frames and completed 97 output callbacks | The 97-group ceiling is symmetric across both lanes, not a single slow-lane imbalance. |
 | HEVC callback/stability | 2063: 70.483 ms avg callback latency, 0 drops | Stability is currently fixed for the tile-record path; do not reopen naive tile emission or forwarding capacity churn. |
 | ProRes source cadence | 2063: 135 source frames, 134 records, about 123.4 fps | ProRes frame count is no longer the limiting stage when catch-up replay is isolated from HEVC. |
 | ProRes VT encode | 2063: 135 submissions, 1.482 ms avg VT encode call, 0 drops | ProRes encoder remains fast enough after source cadence recovery. |
@@ -37,6 +38,7 @@ Last updated: 2026-05-14.
 - Do not rotate 2-column tile lane processing order. Experiment 2065 regressed complete groups to 94, introduced 3 incomplete groups, and increased Metal/VT jitter.
 - Do not round the 2-column split to a 64-pixel CTU boundary as a standalone fix. Experiment 2066 regressed complete groups to 94 and introduced 4 HEVC drop events.
 - Do not move the existing 2-column lane work onto per-lane serial queues as a standalone fix. Experiment 2067 removed almost all encode queue wait but still produced 194 tile records, 97 complete groups, 0 drops, and 103 VT submissions, so source-callback lane enqueue serialization is not the first remaining bottleneck.
+- Do not assume one tile lane is uniquely lagging. Experiment 2068 showed lane 0 and lane 1 both processed/submitted 103 tile frames and completed 97 callbacks. The detailed diagnostic path itself caused 1 HEVC drop event, so keep it as discard-only evidence rather than baseline instrumentation.
 - Do not optimize host probe drain cadence. Faster drain destabilized measurement and did not reveal hidden encoder headroom.
 - Be careful with detailed source diagnostics: forcing cadence/timing trackers on the hot path reduced source counts during measurement, so use them as diagnostic-only evidence, not a performance baseline.
 
