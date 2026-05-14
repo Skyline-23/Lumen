@@ -61,8 +61,6 @@ struct ProbeMetrics {
   uint64_t frameRecords = 0;
   uint64_t tiledFrameRecords = 0;
   uint64_t completeFrameGroups = 0;
-  uint64_t strictCompleteFrameGroups = 0;
-  uint64_t tilePresentationCompleteGroups = 0;
   uint64_t hdrFrames = 0;
   bool firstFrameSeen = false;
   bool firstFrameHDR = false;
@@ -76,8 +74,6 @@ struct ProbeMetrics {
   bool lastHDRSignaled = false;
   uint32_t maxTileCount = 1;
   uint32_t maxEncodedLaneCount = 1;
-  bool tilePresentationPrimed = false;
-  std::unordered_set<uint32_t> observedPresentationTileIndexes;
   std::vector<double> callbackLatencies;
 };
 
@@ -285,17 +281,6 @@ void drainForwardedFrames(
       countEncodedTileRecordsAsFrames &&
       record.tile_metadata.encoded_lane_count > 1;
     if (countsTileRecordAsFrame) {
-      metrics.observedPresentationTileIndexes.insert(record.tile_metadata.tile_index);
-      if (metrics.observedPresentationTileIndexes.size() >=
-          static_cast<size_t>(record.tile_metadata.encoded_lane_count)) {
-        metrics.tilePresentationPrimed = true;
-      }
-      if (metrics.tilePresentationPrimed) {
-        metrics.tilePresentationCompleteGroups += 1;
-        metrics.completeFrameGroups += 1;
-      }
-    }
-    if (countsTileRecordAsFrame) {
       countLogicalFrame(metrics, record.is_hdr_signaled);
     }
 
@@ -307,9 +292,8 @@ void drainForwardedFrames(
     if (!group.isComplete &&
         group.observedTileIndexes.size() >= static_cast<size_t>(group.expectedTileCount)) {
       group.isComplete = true;
-      metrics.strictCompleteFrameGroups += 1;
+      metrics.completeFrameGroups += 1;
       if (!countsTileRecordAsFrame) {
-        metrics.completeFrameGroups += 1;
         countLogicalFrame(metrics, group.isHDRSignaled);
       }
     }
@@ -473,9 +457,6 @@ int main(int argc, const char *argv[]) {
     std::printf("AUTORESEARCH_RUNTIME_PROBE_FRAME_RECORDS=%llu\n", metrics.frameRecords);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_TILED_FRAME_RECORDS=%llu\n", metrics.tiledFrameRecords);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_COMPLETE_FRAME_GROUPS=%llu\n", metrics.completeFrameGroups);
-    std::printf("AUTORESEARCH_RUNTIME_PROBE_STRICT_COMPLETE_FRAME_GROUPS=%llu\n", metrics.strictCompleteFrameGroups);
-    std::printf("AUTORESEARCH_RUNTIME_PROBE_TILE_PRESENTATION_COMPLETE_GROUPS=%llu\n", metrics.tilePresentationCompleteGroups);
-    std::printf("AUTORESEARCH_RUNTIME_PROBE_TILE_PRESENTATION_PRIMED=%d\n", metrics.tilePresentationPrimed ? 1 : 0);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_INCOMPLETE_FRAME_GROUPS=%llu\n", incompleteFrameGroups);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_MAX_TILE_COUNT=%u\n", metrics.maxTileCount);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_MAX_ENCODED_LANE_COUNT=%u\n", metrics.maxEncodedLaneCount);
