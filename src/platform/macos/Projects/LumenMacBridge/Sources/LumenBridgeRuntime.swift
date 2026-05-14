@@ -660,7 +660,7 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
             return .singleFrame
         }
 
-        return MDKEncodedCaptureTileLayout(tileCount: 2, encodedLaneCount: 2)
+        return MDKEncodedCaptureTileLayout(tileCount: 3, encodedLaneCount: 3)
     }
 
     public var effectiveTargetFrameRate: Int {
