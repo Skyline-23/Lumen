@@ -10,8 +10,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <deque>
-#include <mach/mach_time.h>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -62,14 +60,6 @@ struct ProbeMetrics {
   uint64_t frameRecords = 0;
   uint64_t tiledFrameRecords = 0;
   uint64_t completeFrameGroups = 0;
-  uint64_t tilePhaseArbitratedOneFrameUpdates = 0;
-  uint64_t tilePhaseArbitratedTwoFrameUpdates = 0;
-  uint64_t tilePhaseArbitratedThreeFrameUpdates = 0;
-  uint64_t tilePhaseArbitratedOneFrameDroppedStale = 0;
-  uint64_t tilePhaseArbitratedTwoFrameDroppedStale = 0;
-  uint64_t tilePhaseArbitratedThreeFrameDroppedStale = 0;
-  uint64_t tilePhaseArbitratedTwoFrameMaxQueueDepth = 0;
-  double tilePhaseArbitratedTwoFrameMaxSkewMilliseconds = 0.0;
   uint64_t hdrFrames = 0;
   bool firstFrameSeen = false;
   bool firstFrameHDR = false;
@@ -92,52 +82,6 @@ struct TileGroupProgress {
   bool isComplete = false;
   std::unordered_set<uint32_t> observedTileIndexes;
 };
-
-struct TilePhaseArbitrationPolicy {
-  double budgetMilliseconds = 0.0;
-  uint64_t presentedUpdates = 0;
-  uint64_t droppedStaleUpdates = 0;
-  uint64_t maxQueueDepth = 0;
-  double maxPresentedSkewMilliseconds = 0.0;
-  uint32_t expectedTileCount = 1;
-  std::unordered_set<uint32_t> observedTileIndexes;
-  std::unordered_map<uint32_t, std::deque<uint64_t>> pendingDisplayTimesByTile;
-  std::unordered_map<uint32_t, uint64_t> displayedDisplayTimeByTile;
-};
-
-struct TilePhaseArbitrationProgress {
-  TilePhaseArbitrationPolicy oneFrame {8.333};
-  TilePhaseArbitrationPolicy twoFrame {16.667};
-  TilePhaseArbitrationPolicy threeFrame {25.0};
-};
-
-double displayTimeDeltaMilliseconds(uint64_t delta) {
-  static const mach_timebase_info_data_t timebase = [] {
-    mach_timebase_info_data_t value {};
-    mach_timebase_info(&value);
-    return value;
-  }();
-  if (timebase.denom == 0) {
-    return 0.0;
-  }
-  const double nanoseconds =
-    (static_cast<double>(delta) * static_cast<double>(timebase.numer)) /
-    static_cast<double>(timebase.denom);
-  return nanoseconds / 1000000.0;
-}
-
-double tileSkewMilliseconds(const std::unordered_map<uint32_t, uint64_t> &displayTimes) {
-  if (displayTimes.empty()) {
-    return 0.0;
-  }
-  uint64_t minDisplayTime = UINT64_MAX;
-  uint64_t maxDisplayTime = 0;
-  for (const auto &entry : displayTimes) {
-    minDisplayTime = std::min(minDisplayTime, entry.second);
-    maxDisplayTime = std::max(maxDisplayTime, entry.second);
-  }
-  return displayTimeDeltaMilliseconds(maxDisplayTime >= minDisplayTime ? maxDisplayTime - minDisplayTime : 0);
-}
 
 double averageLatency(const std::vector<double> &samples) {
   if (samples.empty()) {
@@ -162,138 +106,6 @@ uint64_t tileGroupKey(const LumenCoreEncodedCaptureFrameRecord &record) {
     return record.tile_metadata.frame_group_id;
   }
   return record.source_sequence_number;
-}
-
-void removeAlreadyDisplayedPending(TilePhaseArbitrationPolicy &policy, uint32_t tileIndex) {
-  auto queueEntry = policy.pendingDisplayTimesByTile.find(tileIndex);
-  if (queueEntry == policy.pendingDisplayTimesByTile.end()) {
-    return;
-  }
-  const auto displayedEntry = policy.displayedDisplayTimeByTile.find(tileIndex);
-  if (displayedEntry == policy.displayedDisplayTimeByTile.end()) {
-    return;
-  }
-  while (!queueEntry->second.empty() && queueEntry->second.front() <= displayedEntry->second) {
-    queueEntry->second.pop_front();
-    policy.droppedStaleUpdates += 1;
-  }
-}
-
-bool bootstrapTilePhaseArbitration(TilePhaseArbitrationPolicy &policy) {
-  if (!policy.displayedDisplayTimeByTile.empty() ||
-      policy.observedTileIndexes.size() < static_cast<size_t>(policy.expectedTileCount)) {
-    return false;
-  }
-
-  while (true) {
-    std::unordered_map<uint32_t, uint64_t> candidate;
-    uint32_t oldestTileIndex = 0;
-    uint64_t oldestDisplayTime = UINT64_MAX;
-    for (uint32_t tileIndex : policy.observedTileIndexes) {
-      const auto queueEntry = policy.pendingDisplayTimesByTile.find(tileIndex);
-      if (queueEntry == policy.pendingDisplayTimesByTile.end() || queueEntry->second.empty()) {
-        return false;
-      }
-      const uint64_t displayTime = queueEntry->second.front();
-      candidate[tileIndex] = displayTime;
-      if (displayTime < oldestDisplayTime) {
-        oldestDisplayTime = displayTime;
-        oldestTileIndex = tileIndex;
-      }
-    }
-
-    const double candidateSkewMilliseconds = tileSkewMilliseconds(candidate);
-    if (candidateSkewMilliseconds > policy.budgetMilliseconds) {
-      policy.pendingDisplayTimesByTile[oldestTileIndex].pop_front();
-      policy.droppedStaleUpdates += 1;
-      continue;
-    }
-
-    for (const auto &entry : candidate) {
-      policy.displayedDisplayTimeByTile[entry.first] = entry.second;
-      policy.pendingDisplayTimesByTile[entry.first].pop_front();
-      policy.presentedUpdates += 1;
-    }
-    policy.maxPresentedSkewMilliseconds =
-      std::max(policy.maxPresentedSkewMilliseconds, candidateSkewMilliseconds);
-    return true;
-  }
-}
-
-bool presentNextQueuedTileUpdate(TilePhaseArbitrationPolicy &policy, uint32_t tileIndex) {
-  removeAlreadyDisplayedPending(policy, tileIndex);
-  auto queueEntry = policy.pendingDisplayTimesByTile.find(tileIndex);
-  if (queueEntry == policy.pendingDisplayTimesByTile.end() || queueEntry->second.empty()) {
-    return false;
-  }
-
-  auto candidate = policy.displayedDisplayTimeByTile;
-  if (candidate.size() < static_cast<size_t>(policy.expectedTileCount)) {
-    return false;
-  }
-  candidate[tileIndex] = queueEntry->second.front();
-  const double candidateSkewMilliseconds = tileSkewMilliseconds(candidate);
-  if (candidateSkewMilliseconds > policy.budgetMilliseconds) {
-    uint64_t minDisplayTime = UINT64_MAX;
-    uint64_t maxDisplayTime = 0;
-    for (const auto &entry : candidate) {
-      minDisplayTime = std::min(minDisplayTime, entry.second);
-      maxDisplayTime = std::max(maxDisplayTime, entry.second);
-    }
-    if (queueEntry->second.front() == minDisplayTime && maxDisplayTime > minDisplayTime) {
-      queueEntry->second.pop_front();
-      policy.droppedStaleUpdates += 1;
-      return true;
-    }
-    return false;
-  }
-
-  policy.displayedDisplayTimeByTile[tileIndex] = queueEntry->second.front();
-  queueEntry->second.pop_front();
-  policy.presentedUpdates += 1;
-  policy.maxPresentedSkewMilliseconds =
-    std::max(policy.maxPresentedSkewMilliseconds, candidateSkewMilliseconds);
-  return true;
-}
-
-void updateTilePhaseArbitrationPolicy(
-  TilePhaseArbitrationPolicy &policy,
-  const LumenCoreEncodedCaptureFrameRecord &record
-) {
-  const uint32_t tileIndex = record.tile_metadata.tile_index;
-  policy.expectedTileCount = std::max(policy.expectedTileCount, record.tile_metadata.tile_count);
-  policy.observedTileIndexes.insert(tileIndex);
-  std::deque<uint64_t> &queue = policy.pendingDisplayTimesByTile[tileIndex];
-  queue.push_back(record.source_display_time);
-  policy.maxQueueDepth = std::max(policy.maxQueueDepth, static_cast<uint64_t>(queue.size()));
-
-  bootstrapTilePhaseArbitration(policy);
-  if (policy.displayedDisplayTimeByTile.size() < static_cast<size_t>(policy.expectedTileCount)) {
-    return;
-  }
-
-  bool presentedAny = true;
-  while (presentedAny) {
-    presentedAny = false;
-    std::vector<uint32_t> tileIndexes;
-    tileIndexes.reserve(policy.pendingDisplayTimesByTile.size());
-    for (const auto &entry : policy.pendingDisplayTimesByTile) {
-      tileIndexes.push_back(entry.first);
-    }
-    std::sort(tileIndexes.begin(), tileIndexes.end());
-    for (uint32_t candidateTileIndex : tileIndexes) {
-      presentedAny = presentNextQueuedTileUpdate(policy, candidateTileIndex) || presentedAny;
-    }
-  }
-}
-
-void updateTilePhaseArbitration(
-  TilePhaseArbitrationProgress &arbitration,
-  const LumenCoreEncodedCaptureFrameRecord &record
-) {
-  updateTilePhaseArbitrationPolicy(arbitration.oneFrame, record);
-  updateTilePhaseArbitrationPolicy(arbitration.twoFrame, record);
-  updateTilePhaseArbitrationPolicy(arbitration.threeFrame, record);
 }
 
 void countLogicalFrame(ProbeMetrics &metrics, bool isHDRSignaled) {
@@ -426,7 +238,6 @@ void drainForwardedFrames(
   LumenMacBridgeController *controller,
   ProbeMetrics &metrics,
   std::unordered_map<uint64_t, TileGroupProgress> &tileGroups,
-  TilePhaseArbitrationProgress &phaseArbitration,
   bool countEncodedTileRecordsAsFrames
 ) {
   while (true) {
@@ -457,7 +268,6 @@ void drainForwardedFrames(
     }
 
     metrics.tiledFrameRecords += 1;
-    updateTilePhaseArbitration(phaseArbitration, record);
     const bool countsTileRecordAsFrame =
       countEncodedTileRecordsAsFrames &&
       record.tile_metadata.encoded_lane_count > 1;
@@ -567,19 +377,12 @@ int main(int argc, const char *argv[]) {
 
     ProbeMetrics metrics;
     std::unordered_map<uint64_t, TileGroupProgress> tileGroups;
-    TilePhaseArbitrationProgress phaseArbitration;
     const bool countEncodedTileRecordsAsFrames =
       configuration.sink_request.capability.supports_encoded_tile_stream;
     const auto captureStartTime = std::chrono::steady_clock::now();
     const auto startupDeadline = captureStartTime + std::chrono::seconds(10);
     while (std::chrono::steady_clock::now() < startupDeadline && !metrics.firstFrameSeen) {
-      drainForwardedFrames(
-        controller,
-        metrics,
-        tileGroups,
-        phaseArbitration,
-        countEncodedTileRecordsAsFrames
-      );
+      drainForwardedFrames(controller, metrics, tileGroups, countEncodedTileRecordsAsFrames);
       drainForwardedEvents(controller, metrics);
       if (metrics.firstFrameSeen && metrics.startupMilliseconds < 0.0) {
         metrics.startupMilliseconds = std::chrono::duration<double, std::milli>(
@@ -593,25 +396,13 @@ int main(int argc, const char *argv[]) {
     if (metrics.firstFrameSeen) {
       const auto sampleDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1000);
       while (std::chrono::steady_clock::now() < sampleDeadline) {
-        drainForwardedFrames(
-          controller,
-          metrics,
-          tileGroups,
-          phaseArbitration,
-          countEncodedTileRecordsAsFrames
-        );
+        drainForwardedFrames(controller, metrics, tileGroups, countEncodedTileRecordsAsFrames);
         drainForwardedEvents(controller, metrics);
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
       }
     }
 
-    drainForwardedFrames(
-      controller,
-      metrics,
-      tileGroups,
-      phaseArbitration,
-      countEncodedTileRecordsAsFrames
-    );
+    drainForwardedFrames(controller, metrics, tileGroups, countEncodedTileRecordsAsFrames);
     drainForwardedEvents(controller, metrics);
     if (metrics.firstFrameSeen && metrics.startupMilliseconds < 0.0) {
       metrics.startupMilliseconds = std::chrono::duration<double, std::milli>(
@@ -624,22 +415,6 @@ int main(int argc, const char *argv[]) {
 
     metrics.queuedFrames = snapshot.queued_frame_count;
     metrics.droppedFrames = snapshot.dropped_frame_count;
-    metrics.tilePhaseArbitratedOneFrameUpdates =
-      phaseArbitration.oneFrame.presentedUpdates;
-    metrics.tilePhaseArbitratedTwoFrameUpdates =
-      phaseArbitration.twoFrame.presentedUpdates;
-    metrics.tilePhaseArbitratedThreeFrameUpdates =
-      phaseArbitration.threeFrame.presentedUpdates;
-    metrics.tilePhaseArbitratedOneFrameDroppedStale =
-      phaseArbitration.oneFrame.droppedStaleUpdates;
-    metrics.tilePhaseArbitratedTwoFrameDroppedStale =
-      phaseArbitration.twoFrame.droppedStaleUpdates;
-    metrics.tilePhaseArbitratedThreeFrameDroppedStale =
-      phaseArbitration.threeFrame.droppedStaleUpdates;
-    metrics.tilePhaseArbitratedTwoFrameMaxQueueDepth =
-      phaseArbitration.twoFrame.maxQueueDepth;
-    metrics.tilePhaseArbitratedTwoFrameMaxSkewMilliseconds =
-      phaseArbitration.twoFrame.maxPresentedSkewMilliseconds;
     if (snapshot.has_last_frame) {
       metrics.lastSeq = snapshot.last_frame_source_sequence_number;
       metrics.lastHDRSignaled = snapshot.last_frame_is_hdr_signaled;
@@ -673,38 +448,6 @@ int main(int argc, const char *argv[]) {
     std::printf("AUTORESEARCH_RUNTIME_PROBE_TILED_FRAME_RECORDS=%llu\n", metrics.tiledFrameRecords);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_COMPLETE_FRAME_GROUPS=%llu\n", metrics.completeFrameGroups);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_INCOMPLETE_FRAME_GROUPS=%llu\n", incompleteFrameGroups);
-    std::printf(
-      "AUTORESEARCH_RUNTIME_PROBE_TILE_PHASE_ARBITRATED_ONE_FRAME_UPDATES=%llu\n",
-      metrics.tilePhaseArbitratedOneFrameUpdates
-    );
-    std::printf(
-      "AUTORESEARCH_RUNTIME_PROBE_TILE_PHASE_ARBITRATED_TWO_FRAME_UPDATES=%llu\n",
-      metrics.tilePhaseArbitratedTwoFrameUpdates
-    );
-    std::printf(
-      "AUTORESEARCH_RUNTIME_PROBE_TILE_PHASE_ARBITRATED_THREE_FRAME_UPDATES=%llu\n",
-      metrics.tilePhaseArbitratedThreeFrameUpdates
-    );
-    std::printf(
-      "AUTORESEARCH_RUNTIME_PROBE_TILE_PHASE_ARBITRATED_ONE_FRAME_DROPPED_STALE=%llu\n",
-      metrics.tilePhaseArbitratedOneFrameDroppedStale
-    );
-    std::printf(
-      "AUTORESEARCH_RUNTIME_PROBE_TILE_PHASE_ARBITRATED_TWO_FRAME_DROPPED_STALE=%llu\n",
-      metrics.tilePhaseArbitratedTwoFrameDroppedStale
-    );
-    std::printf(
-      "AUTORESEARCH_RUNTIME_PROBE_TILE_PHASE_ARBITRATED_THREE_FRAME_DROPPED_STALE=%llu\n",
-      metrics.tilePhaseArbitratedThreeFrameDroppedStale
-    );
-    std::printf(
-      "AUTORESEARCH_RUNTIME_PROBE_TILE_PHASE_ARBITRATED_TWO_FRAME_MAX_QUEUE_DEPTH=%llu\n",
-      metrics.tilePhaseArbitratedTwoFrameMaxQueueDepth
-    );
-    std::printf(
-      "AUTORESEARCH_RUNTIME_PROBE_TILE_PHASE_ARBITRATED_TWO_FRAME_MAX_SKEW_MS=%.3f\n",
-      metrics.tilePhaseArbitratedTwoFrameMaxSkewMilliseconds
-    );
     std::printf("AUTORESEARCH_RUNTIME_PROBE_MAX_TILE_COUNT=%u\n", metrics.maxTileCount);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_MAX_ENCODED_LANE_COUNT=%u\n", metrics.maxEncodedLaneCount);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_HDR_FRAMES=%llu\n", metrics.hdrFrames);
