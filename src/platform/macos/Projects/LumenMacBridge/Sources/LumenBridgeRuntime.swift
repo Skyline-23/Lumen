@@ -2025,13 +2025,18 @@ public actor LumenBridgeRuntime {
             "videoToolboxVTEncodeCall",
             "videoToolboxProperty."
         ]
-        let notes = statistics.notes.filter { note in
+        let sessionNotes = [
+            "captureSessionEmittedFrameCount=\(statistics.emittedFrameCount)",
+            "captureSessionDroppedFrameCount=\(statistics.droppedFrameCount)",
+            "captureSessionProcessingFailureCount=\(statistics.processingFailureCount)",
+            "captureSessionAutomaticRestartCount=\(statistics.automaticRestartCount)",
+            "captureSessionIsRunning=\(statistics.isRunning)",
+            "captureSessionLastError=\(statistics.lastErrorDescription?.replacingOccurrences(of: ";", with: ",") ?? "n/a")"
+        ]
+        let notes = sessionNotes + statistics.notes.filter { note in
             interestingPrefixes.contains { note.hasPrefix($0) }
         }
 
-        guard !notes.isEmpty else {
-            return "n/a"
-        }
         return notes.joined(separator: ";")
     }
 

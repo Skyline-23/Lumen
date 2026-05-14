@@ -349,6 +349,10 @@ def parse_runtime_probe_output(output: str) -> dict[str, Any] | None:
         "VT_METAL_STAGE_SAMPLE_COUNT": "vt_metal_stage_sample_count",
         "VT_ENCODE_CALL_SAMPLE_COUNT": "vt_encode_call_sample_count",
         "SKYLIGHT_RECOMMENDED_PENDING_FRAME_COUNT": "skylight_recommended_pending_frame_count",
+        "CAPTURE_SESSION_EMITTED_FRAME_COUNT": "capture_session_emitted_frame_count",
+        "CAPTURE_SESSION_DROPPED_FRAME_COUNT": "capture_session_dropped_frame_count",
+        "CAPTURE_SESSION_PROCESSING_FAILURE_COUNT": "capture_session_processing_failure_count",
+        "CAPTURE_SESSION_AUTOMATIC_RESTART_COUNT": "capture_session_automatic_restart_count",
     }
     optional_float_metrics = {
         "SOURCE_LAST_DISPLAY_DELTA_MS": "source_last_display_delta_ms",
@@ -402,6 +406,8 @@ def parse_runtime_probe_output(output: str) -> dict[str, Any] | None:
         "VT_CONFIGURED_DATA_RATE_LIMITS": "vt_configured_data_rate_limits",
         "VT_CONFIGURED_DATA_RATE_LIMITS_SOURCE": "vt_configured_data_rate_limits_source",
         "VT_CONFIGURED_PROFILE_LEVEL": "vt_configured_profile_level",
+        "CAPTURE_SESSION_IS_RUNNING": "capture_session_is_running",
+        "CAPTURE_SESSION_LAST_ERROR": "capture_session_last_error",
     }
 
     for probe_key, metric_key in optional_int_metrics.items():

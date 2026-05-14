@@ -136,6 +136,12 @@ void emitSelectedDiagnostics(const char *diagnostics) {
     const char *probeKey;
   };
   static constexpr DiagnosticEmission emissions[] = {
+    {"captureSessionEmittedFrameCount", "CAPTURE_SESSION_EMITTED_FRAME_COUNT"},
+    {"captureSessionDroppedFrameCount", "CAPTURE_SESSION_DROPPED_FRAME_COUNT"},
+    {"captureSessionProcessingFailureCount", "CAPTURE_SESSION_PROCESSING_FAILURE_COUNT"},
+    {"captureSessionAutomaticRestartCount", "CAPTURE_SESSION_AUTOMATIC_RESTART_COUNT"},
+    {"captureSessionIsRunning", "CAPTURE_SESSION_IS_RUNNING"},
+    {"captureSessionLastError", "CAPTURE_SESSION_LAST_ERROR"},
     {"sourceBackend", "SOURCE_BACKEND"},
     {"rawPrivateDisplayStream", "RAW_PRIVATE_DISPLAY_STREAM"},
     {"rawPrivateDisplayStreamRequestedPixelFormat", "RAW_PRIVATE_DISPLAY_STREAM_REQUESTED_PIXEL_FORMAT"},
