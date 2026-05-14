@@ -174,7 +174,7 @@ final class LumenCoreCaptureForwarder: @unchecked Sendable {
             sourceDisplayTime: frame.sourceDisplayTime,
             outputCallbackLatencyMilliseconds: frame.outputCallbackLatencyMilliseconds,
             isKeyFrame: frame.isKeyFrame,
-            isHDRSignaled: frame.isHDRSignaled,
+            isHDRSignaled: frame.formatDescriptionSignalsHDR,
             isReplay: false,
             tileMetadata: LumenBridgeEncodedTileMetadata(mdkValue: frame.tileMetadata)
         )
