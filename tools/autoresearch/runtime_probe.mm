@@ -67,6 +67,7 @@ struct ProbeMetrics {
   uint64_t restartEvents = 0;
   uint64_t failureEvents = 0;
   uint64_t dropEvents = 0;
+  uint64_t startupRetryCount = 0;
   uint64_t queuedFrames = 0;
   uint64_t droppedFrames = 0;
   uint64_t lastSeq = 0;
@@ -380,17 +381,37 @@ int main(int argc, const char *argv[]) {
     const bool countEncodedTileRecordsAsFrames =
       configuration.sink_request.capability.supports_encoded_tile_stream;
     const auto captureStartTime = std::chrono::steady_clock::now();
-    const auto startupDeadline = captureStartTime + std::chrono::seconds(10);
-    while (std::chrono::steady_clock::now() < startupDeadline && !metrics.firstFrameSeen) {
-      drainForwardedFrames(controller, metrics, tileGroups, countEncodedTileRecordsAsFrames);
-      drainForwardedEvents(controller, metrics);
-      if (metrics.firstFrameSeen && metrics.startupMilliseconds < 0.0) {
-        metrics.startupMilliseconds = std::chrono::duration<double, std::milli>(
-          std::chrono::steady_clock::now() - captureStartTime
-        ).count();
-        break;
+    auto waitForFirstFrame = [&]() {
+      const auto startupDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+      while (std::chrono::steady_clock::now() < startupDeadline && !metrics.firstFrameSeen) {
+        drainForwardedFrames(controller, metrics, tileGroups, countEncodedTileRecordsAsFrames);
+        drainForwardedEvents(controller, metrics);
+        if (metrics.firstFrameSeen && metrics.startupMilliseconds < 0.0) {
+          metrics.startupMilliseconds = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - captureStartTime
+          ).count();
+          break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
       }
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    };
+
+    waitForFirstFrame();
+    if (!metrics.firstFrameSeen) {
+      LumenMacBridgeControllerStopMacDisplayKitCapture(controller);
+      std::this_thread::sleep_for(std::chrono::milliseconds(200));
+      std::memset(errorBuffer, 0, sizeof(errorBuffer));
+      if (!LumenMacBridgeControllerStartMacDisplayKitCapture(
+            controller,
+            configuration,
+            errorBuffer,
+            sizeof(errorBuffer))) {
+        printErrorAndExit(errorBuffer[0] == '\0' ? "capture restart failed" : errorBuffer);
+        LumenMacBridgeControllerDestroy(controller);
+        return 1;
+      }
+      metrics.startupRetryCount += 1;
+      waitForFirstFrame();
     }
 
     if (metrics.firstFrameSeen) {
@@ -464,6 +485,7 @@ int main(int argc, const char *argv[]) {
     std::printf("AUTORESEARCH_RUNTIME_PROBE_RESTART_EVENTS=%llu\n", metrics.restartEvents);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_FAILURE_EVENTS=%llu\n", metrics.failureEvents);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_DROP_EVENTS=%llu\n", metrics.dropEvents);
+    std::printf("AUTORESEARCH_RUNTIME_PROBE_STARTUP_RETRY_COUNT=%llu\n", metrics.startupRetryCount);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_QUEUED_FRAMES=%llu\n", metrics.queuedFrames);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_DROPPED_FRAMES=%llu\n", metrics.droppedFrames);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_LAST_SEQ=%llu\n", metrics.lastSeq);
