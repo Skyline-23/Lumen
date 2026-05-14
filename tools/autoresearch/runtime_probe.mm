@@ -268,10 +268,11 @@ void drainForwardedFrames(
     }
 
     metrics.tiledFrameRecords += 1;
-    if (countEncodedTileRecordsAsFrames &&
-        record.tile_metadata.encoded_lane_count > 1) {
+    const bool countsTileRecordAsFrame =
+      countEncodedTileRecordsAsFrames &&
+      record.tile_metadata.encoded_lane_count > 1;
+    if (countsTileRecordAsFrame) {
       countLogicalFrame(metrics, record.is_hdr_signaled);
-      continue;
     }
 
     const uint64_t groupKey = tileGroupKey(record);
@@ -283,7 +284,9 @@ void drainForwardedFrames(
         group.observedTileIndexes.size() >= static_cast<size_t>(group.expectedTileCount)) {
       group.isComplete = true;
       metrics.completeFrameGroups += 1;
-      countLogicalFrame(metrics, group.isHDRSignaled);
+      if (!countsTileRecordAsFrame) {
+        countLogicalFrame(metrics, group.isHDRSignaled);
+      }
     }
   }
 }
