@@ -33,6 +33,7 @@ Last updated: 2026-05-14.
 - Do not repeat shared replay catch-up that changes HEVC single-replay timestamp semantics. Experiment 2060 recovered ProRes but introduced 21 HEVC drop events. Experiment 2061 shows the keepable shape is ProRes-only batch replay with the original HEVC single-replay path preserved.
 - Do not treat encoded tile-record count alone as proof of logical-frame completion. Experiment 2062 shows 178 stable tile records but only 89 complete logical tile groups.
 - Do not revert to full-width half-height tile bands unless a later experiment proves columns break client decoding. Experiment 2063 raised complete logical groups from 89 to 97 with zero drops.
+- Do not add a third HEVC tile lane as a direct throughput fix. Experiment 2064 raised tile records to 272 but regressed complete logical groups to 90 and introduced 1 incomplete group.
 - Do not optimize host probe drain cadence. Faster drain destabilized measurement and did not reveal hidden encoder headroom.
 - Be careful with detailed source diagnostics: forcing cadence/timing trackers on the hot path reduced source counts during measurement, so use them as diagnostic-only evidence, not a performance baseline.
 
@@ -65,6 +66,7 @@ The target is now to make the HEVC tile-stream contract rigorous enough for the 
 - Tile semantics branch: add a first-class tile-stream manifest/reassembly contract so the receiver can map each encoded tile record to frame group, tile index, region, and lane without requiring the encoder to hold back records for group completion.
 - Logical-group throughput branch: if the product requires complete frames before delivery, redesign HEVC lane scheduling so both tile lanes produce at least 120 complete groups/s; do not reintroduce complete-group gating on the current queue because prior gating collapsed throughput.
 - Client contract branch: define whether Android/general clients consume independent HEVC substreams directly, reassemble them, or require a logical-frame manifest beside each tile record.
+- Lane-count branch is mostly closed for direct scaling: 3 lanes increased record count but made logical groups worse. Prefer 2-lane scheduling/region work before any higher lane count.
 - ProRes catch-up branch is kept and should not be widened unless new evidence shows drop-free ProRes overproduction hurts battery or latency.
 - HEVC admission branch is lower priority now: keep the 2058 tile path unless a new change regresses HDR, drops, or Android-required HEVC Main10 support.
 
