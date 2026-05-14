@@ -734,11 +734,8 @@ namespace shadow_http {
     launch_session->sink_request.capability.supports_per_frame_hdr_metadata = util::from_view(
       get_arg(args, "clientSinkSupportsPerFrameHDRMetadata")
     );
-    const bool inferred_encoded_tile_stream_support =
-      launch_session->sink_request.capability.supports_hdr_tile_overlay &&
-      launch_session->sink_request.capability.supports_per_frame_hdr_metadata;
     launch_session->sink_request.capability.supports_encoded_tile_stream = util::from_view(
-      get_arg(args, "clientSinkSupportsEncodedTileStream", inferred_encoded_tile_stream_support ? "1" : "0")
+      get_arg(args, "clientSinkSupportsEncodedTileStream", "0")
     );
     const auto requested_dynamic_range_transport =
       video::effective_dynamic_range_transport(launch_session->sink_request.dynamic_range_transport);

@@ -1220,18 +1220,7 @@ namespace rtsp_stream {
     args.try_emplace("x-shadow-general.encryptionEnabled"sv, "0"sv);
     args.try_emplace("x-shadow-video[0].chromaSamplingType"sv, "0"sv);
     args.try_emplace("x-shadow-video[0].intraRefresh"sv, "0"sv);
-    const bool inferred_encoded_tile_stream_support = [&]() {
-      const auto hdr_tile_overlay = args.find("x-shadow-sink.supportsHDRTileOverlay"sv);
-      const auto per_frame_hdr_metadata = args.find("x-shadow-sink.supportsPerFrameHDRMetadata"sv);
-      return hdr_tile_overlay != args.end() &&
-             per_frame_hdr_metadata != args.end() &&
-             util::from_view(hdr_tile_overlay->second) &&
-             util::from_view(per_frame_hdr_metadata->second);
-    }();
-    args.try_emplace(
-      "x-shadow-sink.supportsEncodedTileStream"sv,
-      inferred_encoded_tile_stream_support ? "1"sv : "0"sv
-    );
+    args.try_emplace("x-shadow-sink.supportsEncodedTileStream"sv, "0"sv);
 
     if (!missing_lumen_announce_fields.empty()) {
       std::ostringstream missing;
