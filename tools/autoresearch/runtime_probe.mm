@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -336,6 +337,7 @@ int main(int argc, const char *argv[]) {
     int32_t fps = std::atoi(argv[3]);
     LumenCoreCaptureCodec codec = codecFromArgument(argc >= 5 ? argv[4] : nullptr);
     uint32_t displayID = CGMainDisplayID();
+    setenv("MDK_SKYLIGHT_DISPLAY_STREAM_MAIN_QUEUE", "1", 1);
 
     LumenMacBridgeController *controller = LumenMacBridgeControllerCreate();
     if (controller == nullptr) {
