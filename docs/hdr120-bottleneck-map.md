@@ -39,6 +39,7 @@ Last updated: 2026-05-14.
 - Do not round the 2-column split to a 64-pixel CTU boundary as a standalone fix. Experiment 2066 regressed complete groups to 94 and introduced 4 HEVC drop events.
 - Do not move the existing 2-column lane work onto per-lane serial queues as a standalone fix. Experiment 2067 removed almost all encode queue wait but still produced 194 tile records, 97 complete groups, 0 drops, and 103 VT submissions, so source-callback lane enqueue serialization is not the first remaining bottleneck.
 - Do not assume one tile lane is uniquely lagging. Experiment 2068 showed lane 0 and lane 1 both processed/submitted 103 tile frames and completed 97 callbacks. The detailed diagnostic path itself caused 1 HEVC drop event, so keep it as discard-only evidence rather than baseline instrumentation.
+- Do not replace HEVC forwarding HDR detection with a format-description-only fast path as a standalone fix. Experiment 2069 improved ProRes but regressed HEVC to 95 complete groups, 2 incomplete groups, and 5 drop events, so per-frame HEVC HDR payload validation is not the current HEVC tile ceiling.
 - Do not optimize host probe drain cadence. Faster drain destabilized measurement and did not reveal hidden encoder headroom.
 - Be careful with detailed source diagnostics: forcing cadence/timing trackers on the hot path reduced source counts during measurement, so use them as diagnostic-only evidence, not a performance baseline.
 
