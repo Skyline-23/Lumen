@@ -120,6 +120,17 @@ void countLogicalFrame(ProbeMetrics &metrics, bool isHDRSignaled) {
   }
 }
 
+bool probeHasTiledOutput(const ProbeMetrics &metrics) {
+  return metrics.maxTileCount > 1 || metrics.maxEncodedLaneCount > 1 || metrics.tiledFrameRecords > 0;
+}
+
+bool sampleWindowReady(const ProbeMetrics &metrics, bool countEncodedTileRecordsAsFrames) {
+  if (countEncodedTileRecordsAsFrames && probeHasTiledOutput(metrics)) {
+    return metrics.completeFrameGroups > 0;
+  }
+  return metrics.firstFrameSeen;
+}
+
 const char *trimLeadingSpaces(const char *value) {
   while (value != nullptr && (*value == ' ' || *value == '\t')) {
     value += 1;
@@ -391,10 +402,12 @@ int main(int argc, const char *argv[]) {
       configuration.sink_request.capability.supports_encoded_tile_stream;
     const auto captureStartTime = std::chrono::steady_clock::now();
     const auto startupDeadline = captureStartTime + std::chrono::seconds(10);
-    while (std::chrono::steady_clock::now() < startupDeadline && !metrics.firstFrameSeen) {
+    while (std::chrono::steady_clock::now() < startupDeadline &&
+           !sampleWindowReady(metrics, countEncodedTileRecordsAsFrames)) {
       drainForwardedFrames(controller, metrics, tileGroups, countEncodedTileRecordsAsFrames);
       drainForwardedEvents(controller, metrics);
-      if (metrics.firstFrameSeen && metrics.startupMilliseconds < 0.0) {
+      if (sampleWindowReady(metrics, countEncodedTileRecordsAsFrames) &&
+          metrics.startupMilliseconds < 0.0) {
         metrics.startupMilliseconds = std::chrono::duration<double, std::milli>(
           std::chrono::steady_clock::now() - captureStartTime
         ).count();
