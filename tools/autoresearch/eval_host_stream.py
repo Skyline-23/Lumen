@@ -349,13 +349,6 @@ def parse_runtime_probe_output(output: str) -> dict[str, Any] | None:
         "VT_METAL_STAGE_SAMPLE_COUNT": "vt_metal_stage_sample_count",
         "VT_ENCODE_CALL_SAMPLE_COUNT": "vt_encode_call_sample_count",
         "SKYLIGHT_RECOMMENDED_PENDING_FRAME_COUNT": "skylight_recommended_pending_frame_count",
-        "RAW_SKYLIGHT_CREATE_SYMBOL_PRESENT": "raw_skylight_create_symbol_present",
-        "RAW_SKYLIGHT_START_SYMBOL_PRESENT": "raw_skylight_start_symbol_present",
-        "RAW_SKYLIGHT_OUTPUT_WIDTH": "raw_skylight_output_width",
-        "RAW_SKYLIGHT_OUTPUT_HEIGHT": "raw_skylight_output_height",
-        "RAW_SKYLIGHT_PROPERTY_COUNT": "raw_skylight_property_count",
-        "RAW_SKYLIGHT_CREATE_RETURNED_STREAM": "raw_skylight_create_returned_stream",
-        "RAW_SKYLIGHT_START_STATUS": "raw_skylight_start_status",
     }
     optional_float_metrics = {
         "SOURCE_LAST_DISPLAY_DELTA_MS": "source_last_display_delta_ms",
@@ -385,8 +378,6 @@ def parse_runtime_probe_output(output: str) -> dict[str, Any] | None:
         "RAW_PRIVATE_DISPLAY_STREAM": "raw_private_display_stream",
         "RAW_PRIVATE_DISPLAY_STREAM_REQUESTED_PIXEL_FORMAT": "raw_private_display_stream_requested_pixel_format",
         "RAW_PRIVATE_DISPLAY_STREAM_REQUESTED_MATRIX": "raw_private_display_stream_requested_matrix",
-        "RAW_SKYLIGHT_REQUESTED_PIXEL_FORMAT": "raw_skylight_requested_pixel_format",
-        "RAW_SKYLIGHT_START_FUNCTION": "raw_skylight_start_function",
         "SKYLIGHT_SYNTHETIC_IDLE_REPLAY": "skylight_synthetic_idle_replay",
         "SKYLIGHT_PENDING_POLICY": "skylight_pending_policy",
         "PRIVATE_CAPTURE_SOURCE_PIXEL_FORMAT": "private_capture_source_pixel_format",
