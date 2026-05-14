@@ -237,8 +237,7 @@ void emitSelectedDiagnostics(const char *diagnostics) {
 void drainForwardedFrames(
   LumenMacBridgeController *controller,
   ProbeMetrics &metrics,
-  std::unordered_map<uint64_t, TileGroupProgress> &tileGroups,
-  bool countEncodedTileRecordsAsFrames
+  std::unordered_map<uint64_t, TileGroupProgress> &tileGroups
 ) {
   while (true) {
     CMSampleBufferRef sampleBuffer = nullptr;
@@ -268,12 +267,6 @@ void drainForwardedFrames(
     }
 
     metrics.tiledFrameRecords += 1;
-    if (countEncodedTileRecordsAsFrames &&
-        record.tile_metadata.encoded_lane_count > 1) {
-      countLogicalFrame(metrics, record.is_hdr_signaled);
-      continue;
-    }
-
     const uint64_t groupKey = tileGroupKey(record);
     TileGroupProgress &group = tileGroups[groupKey];
     group.expectedTileCount = std::max(group.expectedTileCount, record.tile_metadata.tile_count);
@@ -354,7 +347,6 @@ int main(int argc, const char *argv[]) {
     configuration.sink_request.capability.supports_frame_gated_hdr = true;
     configuration.sink_request.capability.supports_hdr_tile_overlay = true;
     configuration.sink_request.capability.supports_per_frame_hdr_metadata = true;
-    configuration.sink_request.capability.supports_encoded_tile_stream = true;
     configuration.sink_request.dynamic_range_transport =
       LumenCoreDynamicRangeTransportSDRBaseHDROverlay;
     configuration.effective_display_state.gamut = kDisplayP3Gamut;
@@ -374,12 +366,10 @@ int main(int argc, const char *argv[]) {
 
     ProbeMetrics metrics;
     std::unordered_map<uint64_t, TileGroupProgress> tileGroups;
-    const bool countEncodedTileRecordsAsFrames =
-      configuration.sink_request.capability.supports_encoded_tile_stream;
     const auto captureStartTime = std::chrono::steady_clock::now();
     const auto startupDeadline = captureStartTime + std::chrono::seconds(10);
     while (std::chrono::steady_clock::now() < startupDeadline && !metrics.firstFrameSeen) {
-      drainForwardedFrames(controller, metrics, tileGroups, countEncodedTileRecordsAsFrames);
+      drainForwardedFrames(controller, metrics, tileGroups);
       drainForwardedEvents(controller, metrics);
       if (metrics.firstFrameSeen && metrics.startupMilliseconds < 0.0) {
         metrics.startupMilliseconds = std::chrono::duration<double, std::milli>(
@@ -393,13 +383,13 @@ int main(int argc, const char *argv[]) {
     if (metrics.firstFrameSeen) {
       const auto sampleDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1000);
       while (std::chrono::steady_clock::now() < sampleDeadline) {
-        drainForwardedFrames(controller, metrics, tileGroups, countEncodedTileRecordsAsFrames);
+        drainForwardedFrames(controller, metrics, tileGroups);
         drainForwardedEvents(controller, metrics);
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
       }
     }
 
-    drainForwardedFrames(controller, metrics, tileGroups, countEncodedTileRecordsAsFrames);
+    drainForwardedFrames(controller, metrics, tileGroups);
     drainForwardedEvents(controller, metrics);
     if (metrics.firstFrameSeen && metrics.startupMilliseconds < 0.0) {
       metrics.startupMilliseconds = std::chrono::duration<double, std::milli>(
