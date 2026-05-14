@@ -67,9 +67,6 @@ struct ProbeMetrics {
   uint64_t restartEvents = 0;
   uint64_t failureEvents = 0;
   uint64_t dropEvents = 0;
-  uint64_t saturationDropEvents = 0;
-  uint64_t coreForwarderOverflowDropEvents = 0;
-  uint64_t otherDropEvents = 0;
   uint64_t queuedFrames = 0;
   uint64_t droppedFrames = 0;
   uint64_t lastSeq = 0;
@@ -312,13 +309,6 @@ void drainForwardedEvents(LumenMacBridgeController *controller, ProbeMetrics &me
         break;
       case LumenCoreCaptureEventKindDroppedFrame:
         metrics.dropEvents += 1;
-        if (std::strstr(message, "capture processing queue is saturated") != nullptr) {
-          metrics.saturationDropEvents += 1;
-        } else if (std::strcmp(message, "core-forwarder-overflow") == 0) {
-          metrics.coreForwarderOverflowDropEvents += 1;
-        } else {
-          metrics.otherDropEvents += 1;
-        }
         break;
       default:
         break;
@@ -474,12 +464,6 @@ int main(int argc, const char *argv[]) {
     std::printf("AUTORESEARCH_RUNTIME_PROBE_RESTART_EVENTS=%llu\n", metrics.restartEvents);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_FAILURE_EVENTS=%llu\n", metrics.failureEvents);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_DROP_EVENTS=%llu\n", metrics.dropEvents);
-    std::printf("AUTORESEARCH_RUNTIME_PROBE_SATURATION_DROP_EVENTS=%llu\n", metrics.saturationDropEvents);
-    std::printf(
-      "AUTORESEARCH_RUNTIME_PROBE_CORE_FORWARDER_OVERFLOW_DROP_EVENTS=%llu\n",
-      metrics.coreForwarderOverflowDropEvents
-    );
-    std::printf("AUTORESEARCH_RUNTIME_PROBE_OTHER_DROP_EVENTS=%llu\n", metrics.otherDropEvents);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_QUEUED_FRAMES=%llu\n", metrics.queuedFrames);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_DROPPED_FRAMES=%llu\n", metrics.droppedFrames);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_LAST_SEQ=%llu\n", metrics.lastSeq);
