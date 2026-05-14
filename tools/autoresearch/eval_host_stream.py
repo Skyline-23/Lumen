@@ -335,10 +335,6 @@ def parse_runtime_probe_output(output: str) -> dict[str, Any] | None:
         "TILED_FRAME_RECORDS": "tiled_frame_records",
         "COMPLETE_FRAME_GROUPS": "complete_frame_groups",
         "INCOMPLETE_FRAME_GROUPS": "incomplete_frame_groups",
-        "TILE_ARRIVAL_NEAREST_ONE_FRAME_PAIRS": "tile_arrival_nearest_one_frame_pairs",
-        "TILE_ARRIVAL_NEAREST_TWO_FRAME_PAIRS": "tile_arrival_nearest_two_frame_pairs",
-        "TILE_ARRIVAL_NEAREST_THREE_FRAME_PAIRS": "tile_arrival_nearest_three_frame_pairs",
-        "TILE_ARRIVAL_NEAREST_TWO_FRAME_UPDATES": "tile_arrival_nearest_two_frame_updates",
         "MAX_TILE_COUNT": "max_tile_count",
         "MAX_ENCODED_LANE_COUNT": "max_encoded_lane_count",
         "VT_DIRECT_SUBMISSION_FRAME_COUNT": "vt_direct_submission_frame_count",
@@ -374,7 +370,6 @@ def parse_runtime_probe_output(output: str) -> dict[str, Any] | None:
         "VT_METAL_STAGE_MAX_MS": "vt_metal_stage_max_ms",
         "VT_ENCODE_CALL_AVG_MS": "vt_encode_call_avg_ms",
         "VT_ENCODE_CALL_MAX_MS": "vt_encode_call_max_ms",
-        "TILE_ARRIVAL_NEAREST_TWO_FRAME_MAX_SKEW_MS": "tile_arrival_nearest_two_frame_max_skew_ms",
     }
     optional_string_metrics = {
         "SOURCE_BACKEND": "source_backend",

@@ -10,7 +10,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <mach/mach_time.h>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -61,10 +60,6 @@ struct ProbeMetrics {
   uint64_t frameRecords = 0;
   uint64_t tiledFrameRecords = 0;
   uint64_t completeFrameGroups = 0;
-  uint64_t tileArrivalNearestOneFramePairs = 0;
-  uint64_t tileArrivalNearestTwoFramePairs = 0;
-  uint64_t tileArrivalNearestThreeFramePairs = 0;
-  double tileArrivalNearestTwoFrameMaxSkewMilliseconds = 0.0;
   uint64_t hdrFrames = 0;
   bool firstFrameSeen = false;
   bool firstFrameHDR = false;
@@ -87,96 +82,6 @@ struct TileGroupProgress {
   bool isComplete = false;
   std::unordered_set<uint32_t> observedTileIndexes;
 };
-
-struct TileArrivalTraceRecord {
-  uint32_t tileIndex = 0;
-  uint32_t tileCount = 1;
-  uint64_t arrivalTime = 0;
-};
-
-double machTimeDeltaMilliseconds(uint64_t delta) {
-  static const mach_timebase_info_data_t timebase = [] {
-    mach_timebase_info_data_t value {};
-    mach_timebase_info(&value);
-    return value;
-  }();
-  if (timebase.denom == 0) {
-    return 0.0;
-  }
-  const double nanoseconds =
-    (static_cast<double>(delta) * static_cast<double>(timebase.numer)) /
-    static_cast<double>(timebase.denom);
-  return nanoseconds / 1000000.0;
-}
-
-uint64_t countNearestArrivalPairs(
-  std::vector<uint64_t> tile0ArrivalTimes,
-  std::vector<uint64_t> tile1ArrivalTimes,
-  double budgetMilliseconds,
-  double *maxSkewMilliseconds
-) {
-  std::sort(tile0ArrivalTimes.begin(), tile0ArrivalTimes.end());
-  std::sort(tile1ArrivalTimes.begin(), tile1ArrivalTimes.end());
-
-  uint64_t pairs = 0;
-  size_t tile0Index = 0;
-  size_t tile1Index = 0;
-  while (tile0Index < tile0ArrivalTimes.size() && tile1Index < tile1ArrivalTimes.size()) {
-    const uint64_t tile0Time = tile0ArrivalTimes[tile0Index];
-    const uint64_t tile1Time = tile1ArrivalTimes[tile1Index];
-    const uint64_t delta = tile0Time >= tile1Time ? tile0Time - tile1Time : tile1Time - tile0Time;
-    const double skewMilliseconds = machTimeDeltaMilliseconds(delta);
-    if (skewMilliseconds <= budgetMilliseconds) {
-      pairs += 1;
-      if (maxSkewMilliseconds != nullptr) {
-        *maxSkewMilliseconds = std::max(*maxSkewMilliseconds, skewMilliseconds);
-      }
-      tile0Index += 1;
-      tile1Index += 1;
-      continue;
-    }
-
-    if (tile0Time < tile1Time) {
-      tile0Index += 1;
-    } else {
-      tile1Index += 1;
-    }
-  }
-
-  return pairs;
-}
-
-void computeNearestArrivalMetrics(
-  ProbeMetrics &metrics,
-  const std::vector<TileArrivalTraceRecord> &trace
-) {
-  std::vector<uint64_t> tile0ArrivalTimes;
-  std::vector<uint64_t> tile1ArrivalTimes;
-  tile0ArrivalTimes.reserve(trace.size() / 2);
-  tile1ArrivalTimes.reserve(trace.size() / 2);
-  for (const TileArrivalTraceRecord &record : trace) {
-    if (record.tileCount != 2) {
-      continue;
-    }
-    if (record.tileIndex == 0) {
-      tile0ArrivalTimes.push_back(record.arrivalTime);
-    } else if (record.tileIndex == 1) {
-      tile1ArrivalTimes.push_back(record.arrivalTime);
-    }
-  }
-
-  metrics.tileArrivalNearestOneFramePairs =
-    countNearestArrivalPairs(tile0ArrivalTimes, tile1ArrivalTimes, 8.333, nullptr);
-  metrics.tileArrivalNearestTwoFramePairs =
-    countNearestArrivalPairs(
-      tile0ArrivalTimes,
-      tile1ArrivalTimes,
-      16.667,
-      &metrics.tileArrivalNearestTwoFrameMaxSkewMilliseconds
-    );
-  metrics.tileArrivalNearestThreeFramePairs =
-    countNearestArrivalPairs(tile0ArrivalTimes, tile1ArrivalTimes, 25.0, nullptr);
-}
 
 double averageLatency(const std::vector<double> &samples) {
   if (samples.empty()) {
@@ -333,14 +238,12 @@ void drainForwardedFrames(
   LumenMacBridgeController *controller,
   ProbeMetrics &metrics,
   std::unordered_map<uint64_t, TileGroupProgress> &tileGroups,
-  std::vector<TileArrivalTraceRecord> &tileArrivalTrace,
   bool countEncodedTileRecordsAsFrames
 ) {
   while (true) {
     CMSampleBufferRef sampleBuffer = nullptr;
     LumenCoreEncodedCaptureFrameRecord record =
       LumenMacBridgeControllerPopNextForwardedFrame(controller, &sampleBuffer);
-    const uint64_t arrivalTime = mach_absolute_time();
     if (sampleBuffer != nullptr) {
       CFRelease(sampleBuffer);
     }
@@ -365,11 +268,6 @@ void drainForwardedFrames(
     }
 
     metrics.tiledFrameRecords += 1;
-    tileArrivalTrace.push_back({
-      record.tile_metadata.tile_index,
-      record.tile_metadata.tile_count,
-      arrivalTime,
-    });
     const bool countsTileRecordAsFrame =
       countEncodedTileRecordsAsFrames &&
       record.tile_metadata.encoded_lane_count > 1;
@@ -479,20 +377,12 @@ int main(int argc, const char *argv[]) {
 
     ProbeMetrics metrics;
     std::unordered_map<uint64_t, TileGroupProgress> tileGroups;
-    std::vector<TileArrivalTraceRecord> tileArrivalTrace;
-    tileArrivalTrace.reserve(512);
     const bool countEncodedTileRecordsAsFrames =
       configuration.sink_request.capability.supports_encoded_tile_stream;
     const auto captureStartTime = std::chrono::steady_clock::now();
     const auto startupDeadline = captureStartTime + std::chrono::seconds(10);
     while (std::chrono::steady_clock::now() < startupDeadline && !metrics.firstFrameSeen) {
-      drainForwardedFrames(
-        controller,
-        metrics,
-        tileGroups,
-        tileArrivalTrace,
-        countEncodedTileRecordsAsFrames
-      );
+      drainForwardedFrames(controller, metrics, tileGroups, countEncodedTileRecordsAsFrames);
       drainForwardedEvents(controller, metrics);
       if (metrics.firstFrameSeen && metrics.startupMilliseconds < 0.0) {
         metrics.startupMilliseconds = std::chrono::duration<double, std::milli>(
@@ -506,25 +396,13 @@ int main(int argc, const char *argv[]) {
     if (metrics.firstFrameSeen) {
       const auto sampleDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1000);
       while (std::chrono::steady_clock::now() < sampleDeadline) {
-        drainForwardedFrames(
-          controller,
-          metrics,
-          tileGroups,
-          tileArrivalTrace,
-          countEncodedTileRecordsAsFrames
-        );
+        drainForwardedFrames(controller, metrics, tileGroups, countEncodedTileRecordsAsFrames);
         drainForwardedEvents(controller, metrics);
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
       }
     }
 
-    drainForwardedFrames(
-      controller,
-      metrics,
-      tileGroups,
-      tileArrivalTrace,
-      countEncodedTileRecordsAsFrames
-    );
+    drainForwardedFrames(controller, metrics, tileGroups, countEncodedTileRecordsAsFrames);
     drainForwardedEvents(controller, metrics);
     if (metrics.firstFrameSeen && metrics.startupMilliseconds < 0.0) {
       metrics.startupMilliseconds = std::chrono::duration<double, std::milli>(
@@ -553,8 +431,6 @@ int main(int argc, const char *argv[]) {
     LumenMacBridgeControllerStopMacDisplayKitCapture(controller);
     LumenMacBridgeControllerDestroy(controller);
 
-    computeNearestArrivalMetrics(metrics, tileArrivalTrace);
-
     uint64_t incompleteFrameGroups = 0;
     for (const auto &entry : tileGroups) {
       if (!entry.second.isComplete) {
@@ -572,26 +448,6 @@ int main(int argc, const char *argv[]) {
     std::printf("AUTORESEARCH_RUNTIME_PROBE_TILED_FRAME_RECORDS=%llu\n", metrics.tiledFrameRecords);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_COMPLETE_FRAME_GROUPS=%llu\n", metrics.completeFrameGroups);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_INCOMPLETE_FRAME_GROUPS=%llu\n", incompleteFrameGroups);
-    std::printf(
-      "AUTORESEARCH_RUNTIME_PROBE_TILE_ARRIVAL_NEAREST_ONE_FRAME_PAIRS=%llu\n",
-      metrics.tileArrivalNearestOneFramePairs
-    );
-    std::printf(
-      "AUTORESEARCH_RUNTIME_PROBE_TILE_ARRIVAL_NEAREST_TWO_FRAME_PAIRS=%llu\n",
-      metrics.tileArrivalNearestTwoFramePairs
-    );
-    std::printf(
-      "AUTORESEARCH_RUNTIME_PROBE_TILE_ARRIVAL_NEAREST_THREE_FRAME_PAIRS=%llu\n",
-      metrics.tileArrivalNearestThreeFramePairs
-    );
-    std::printf(
-      "AUTORESEARCH_RUNTIME_PROBE_TILE_ARRIVAL_NEAREST_TWO_FRAME_UPDATES=%llu\n",
-      metrics.tileArrivalNearestTwoFramePairs * 2
-    );
-    std::printf(
-      "AUTORESEARCH_RUNTIME_PROBE_TILE_ARRIVAL_NEAREST_TWO_FRAME_MAX_SKEW_MS=%.3f\n",
-      metrics.tileArrivalNearestTwoFrameMaxSkewMilliseconds
-    );
     std::printf("AUTORESEARCH_RUNTIME_PROBE_MAX_TILE_COUNT=%u\n", metrics.maxTileCount);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_MAX_ENCODED_LANE_COUNT=%u\n", metrics.maxEncodedLaneCount);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_HDR_FRAMES=%llu\n", metrics.hdrFrames);
