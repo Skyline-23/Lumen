@@ -333,8 +333,6 @@ def parse_runtime_probe_output(output: str) -> dict[str, Any] | None:
         "SOURCE_MAX_UPDATE_DROP_COUNT": "source_max_update_drop_count",
         "FRAME_RECORDS": "frame_records",
         "TILED_FRAME_RECORDS": "tiled_frame_records",
-        "TILE_CONTRACT_READY_UPDATES": "tile_contract_ready_updates",
-        "TILE_CONTRACT_INVALID_RECORDS": "tile_contract_invalid_records",
         "COMPLETE_FRAME_GROUPS": "complete_frame_groups",
         "INCOMPLETE_FRAME_GROUPS": "incomplete_frame_groups",
         "MAX_TILE_COUNT": "max_tile_count",
