@@ -85,6 +85,10 @@ AUTORESEARCH_RUNTIME_PROBE_VT_IMMEDIATE_REPLAY_SUBMISSION_COUNT=0
 AUTORESEARCH_RUNTIME_PROBE_VT_SUPPRESSED_IMMEDIATE_REPLAY_COUNT=0
 AUTORESEARCH_RUNTIME_PROBE_VT_MAX_INFLIGHT_STAGING_SLOTS=3
 AUTORESEARCH_RUNTIME_PROBE_VT_PIXEL_BUFFER_CACHE_SIZE=2
+AUTORESEARCH_RUNTIME_PROBE_ENCODED_TILE_PRESENTATION_CONTRACT=primed-per-tile-update
+AUTORESEARCH_RUNTIME_PROBE_ENCODED_TILE_PRESENTATION_COMPLETION=per-tile-after-lane-prime
+AUTORESEARCH_RUNTIME_PROBE_ENCODED_TILE_PRESENTATION_LANE_COUNT=2
+AUTORESEARCH_RUNTIME_PROBE_ENCODED_TILE_STRICT_GROUP_DIAGNOSTICS=source-frame-groups
 """
         metrics = MODULE.parse_runtime_probe_output(output)
         assert metrics is not None
@@ -145,6 +149,10 @@ AUTORESEARCH_RUNTIME_PROBE_VT_PIXEL_BUFFER_CACHE_SIZE=2
         self.assertEqual(metrics["vt_suppressed_immediate_replay_count"], 0)
         self.assertEqual(metrics["vt_max_inflight_staging_slots"], 3)
         self.assertEqual(metrics["vt_pixel_buffer_cache_size"], 2)
+        self.assertEqual(metrics["encoded_tile_presentation_contract"], "primed-per-tile-update")
+        self.assertEqual(metrics["encoded_tile_presentation_completion"], "per-tile-after-lane-prime")
+        self.assertEqual(metrics["encoded_tile_presentation_lane_count"], "2")
+        self.assertEqual(metrics["encoded_tile_strict_group_diagnostics"], "source-frame-groups")
 
     def test_score_runtime_probe_rewards_live_progression(self) -> None:
         metrics = {

@@ -1697,7 +1697,18 @@ public actor LumenBridgeRuntime {
             return "n/a"
         }
 
-        return Self.captureDiagnosticsSnippet(from: await session.statisticsSnapshot())
+        var notes = activeCaptureConfiguration.map {
+            Self.encodedTilePresentationContractDiagnostics(for: $0)
+        } ?? []
+        let captureDiagnostics = Self.captureDiagnosticsSnippet(from: await session.statisticsSnapshot())
+        if captureDiagnostics != "n/a" {
+            notes.append(captureDiagnostics)
+        }
+
+        guard !notes.isEmpty else {
+            return "n/a"
+        }
+        return notes.joined(separator: ";")
     }
 
     public func configureCoreForwarding(
@@ -2041,6 +2052,26 @@ public actor LumenBridgeRuntime {
             return "n/a"
         }
         return notes.joined(separator: ";")
+    }
+
+    private nonisolated static func encodedTilePresentationContractDiagnostics(
+        for configuration: LumenMacDisplayKitCaptureConfiguration
+    ) -> [String] {
+        guard configuration.sinkRequest.capability.supportsEncodedTileStream,
+              !configuration.effectiveTileLayout.isSingleFrame else {
+            return []
+        }
+
+        let laneCount = max(
+            configuration.effectiveTileLayout.tileCount,
+            configuration.effectiveTileLayout.encodedLaneCount
+        )
+        return [
+            "encodedTilePresentationContract=primed-per-tile-update",
+            "encodedTilePresentationCompletion=per-tile-after-lane-prime",
+            "encodedTilePresentationLaneCount=\(laneCount)",
+            "encodedTileStrictGroupDiagnostics=source-frame-groups"
+        ]
     }
 
     private func recordAudioFrame(_ frame: MDKAudioFrame) {

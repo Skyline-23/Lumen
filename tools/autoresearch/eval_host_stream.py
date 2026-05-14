@@ -410,6 +410,10 @@ def parse_runtime_probe_output(output: str) -> dict[str, Any] | None:
         "VT_CONFIGURED_DATA_RATE_LIMITS": "vt_configured_data_rate_limits",
         "VT_CONFIGURED_DATA_RATE_LIMITS_SOURCE": "vt_configured_data_rate_limits_source",
         "VT_CONFIGURED_PROFILE_LEVEL": "vt_configured_profile_level",
+        "ENCODED_TILE_PRESENTATION_CONTRACT": "encoded_tile_presentation_contract",
+        "ENCODED_TILE_PRESENTATION_COMPLETION": "encoded_tile_presentation_completion",
+        "ENCODED_TILE_PRESENTATION_LANE_COUNT": "encoded_tile_presentation_lane_count",
+        "ENCODED_TILE_STRICT_GROUP_DIAGNOSTICS": "encoded_tile_strict_group_diagnostics",
     }
 
     for probe_key, metric_key in optional_int_metrics.items():
