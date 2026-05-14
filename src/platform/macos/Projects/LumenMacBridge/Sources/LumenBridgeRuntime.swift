@@ -943,7 +943,7 @@ public struct LumenBridgeEncodedFrameSnapshot: Equatable, Sendable {
         self.sourceSequenceNumber = frame.sourceSequenceNumber
         self.outputCallbackLatencyMilliseconds = frame.outputCallbackLatencyMilliseconds
         self.isKeyFrame = frame.isKeyFrame
-        self.isHDRSignaled = frame.formatDescriptionSignalsHDR
+        self.isHDRSignaled = frame.isHDRSignaled
     }
 }
 
