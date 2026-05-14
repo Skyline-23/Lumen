@@ -27,12 +27,6 @@ AUTORESEARCH_RUNTIME_PROBE_CODEC=hevc
 AUTORESEARCH_RUNTIME_PROBE_FRAMES=16
 AUTORESEARCH_RUNTIME_PROBE_FRAME_RECORDS=20
 AUTORESEARCH_RUNTIME_PROBE_TILED_FRAME_RECORDS=4
-AUTORESEARCH_RUNTIME_PROBE_TILE_PHASE_REPLAY_TWO_FRAME_UPDATES=3
-AUTORESEARCH_RUNTIME_PROBE_TILE_PHASE_REPLAY_THREE_FRAME_UPDATES=4
-AUTORESEARCH_RUNTIME_PROBE_TILE_PHASE_REPLAY_TWO_FRAME_DROPPED_STALE=1
-AUTORESEARCH_RUNTIME_PROBE_TILE_PHASE_REPLAY_TWO_FRAME_MAX_QUEUE_DEPTH=2
-AUTORESEARCH_RUNTIME_PROBE_TILE_PHASE_REPLAY_TRACE_DROPPED=0
-AUTORESEARCH_RUNTIME_PROBE_TILE_PHASE_REPLAY_TWO_FRAME_MAX_SKEW_MS=12.500
 AUTORESEARCH_RUNTIME_PROBE_COMPLETE_FRAME_GROUPS=2
 AUTORESEARCH_RUNTIME_PROBE_INCOMPLETE_FRAME_GROUPS=1
 AUTORESEARCH_RUNTIME_PROBE_MAX_TILE_COUNT=2
@@ -97,12 +91,6 @@ AUTORESEARCH_RUNTIME_PROBE_VT_PIXEL_BUFFER_CACHE_SIZE=2
         self.assertEqual(metrics["frames"], 16)
         self.assertEqual(metrics["frame_records"], 20)
         self.assertEqual(metrics["tiled_frame_records"], 4)
-        self.assertEqual(metrics["tile_phase_replay_two_frame_updates"], 3)
-        self.assertEqual(metrics["tile_phase_replay_three_frame_updates"], 4)
-        self.assertEqual(metrics["tile_phase_replay_two_frame_dropped_stale"], 1)
-        self.assertEqual(metrics["tile_phase_replay_two_frame_max_queue_depth"], 2)
-        self.assertEqual(metrics["tile_phase_replay_trace_dropped"], 0)
-        self.assertEqual(metrics["tile_phase_replay_two_frame_max_skew_ms"], 12.5)
         self.assertEqual(metrics["complete_frame_groups"], 2)
         self.assertEqual(metrics["incomplete_frame_groups"], 1)
         self.assertEqual(metrics["max_tile_count"], 2)
