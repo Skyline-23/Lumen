@@ -349,6 +349,12 @@ def parse_runtime_probe_output(output: str) -> dict[str, Any] | None:
         "VT_METAL_STAGE_SAMPLE_COUNT": "vt_metal_stage_sample_count",
         "VT_ENCODE_CALL_SAMPLE_COUNT": "vt_encode_call_sample_count",
         "SKYLIGHT_RECOMMENDED_PENDING_FRAME_COUNT": "skylight_recommended_pending_frame_count",
+        "SKYLIGHT_SOURCE_CALLBACK_COUNT": "skylight_source_callback_count",
+        "SKYLIGHT_SOURCE_CALLBACK_WITH_SURFACE_COUNT": "skylight_source_callback_with_surface_count",
+        "SKYLIGHT_SOURCE_CALLBACK_FRAME_COMPLETE_COUNT": "skylight_source_callback_frame_complete_count",
+        "SKYLIGHT_SOURCE_CALLBACK_FRAME_IDLE_COUNT": "skylight_source_callback_frame_idle_count",
+        "SKYLIGHT_SOURCE_CALLBACK_DROP_STATUS_COUNT": "skylight_source_callback_drop_status_count",
+        "SKYLIGHT_SOURCE_TIMER_TICK_COUNT": "skylight_source_timer_tick_count",
     }
     optional_float_metrics = {
         "SOURCE_LAST_DISPLAY_DELTA_MS": "source_last_display_delta_ms",
