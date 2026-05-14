@@ -4,22 +4,22 @@ Last updated: 2026-05-14.
 
 ## Current Best
 
-- Best score: 106.25.
-- Stable HEVC shape: about 101-102 output frames in the 1 s probe.
-- Stable submit shape: about 107-108 staged `VTCompressionSessionEncodeFrame` submissions when the source side is healthy.
+- Best score: 110.00 from experiment 2058.
+- Stable HEVC shape: 184 encoded tile records / 184 HDR records in the 1 s probe, with 2 independent half-height encoded lanes and zero drops.
+- Stable HEVC submit shape: about 94 half-height tile `VTCompressionSessionEncodeFrame` submissions; this is enough for the current tile-record metric but is not the same as 120 complete logical frames.
+- Current ProRes gap: about 106-107 ProRes frames after the HEVC tile-stream path, with zero drops and fast VT encode calls but source cadence around 95-97 fps.
 - Contract: keep HEVC Main10, PQ HDR, target 3512x2290, 120 fps, low latency, and existing quality/bitrate policy. Do not trade quality or high refresh for score.
 
 ## Measured Pipeline
 
 | Boundary | Representative measurement | Interpretation |
 | --- | ---: | --- |
-| Source ingress | 120 source frames in the earlier full diagnostic probe | Source can reach the target window; raw source availability is not the primary limiter. |
-| Pending-frame admission | 102 acquire attempts, 102 acquired, 0 rejected in the lightweight submitQueue probe | Pending limit is not rejecting frames in the measured window. |
-| Metal stage | 102 samples, avg 1.995 ms, max 5.755 ms in the lightweight submitQueue probe | Metal conversion is not the dominant wall-clock limiter in the current kept path. |
-| Metal completion to VT submit queue | 102 samples, avg 16.616 ms, max 50.369 ms in the lightweight submitQueue probe | The largest newly isolated pre-VT-output bottleneck. Frames that finished Metal wait behind the serialized VT submit lane. |
-| VT encode call | 102 samples, avg 6.247 ms, max 37.381 ms in the lightweight submitQueue probe | `VTCompressionSessionEncodeFrame` itself can occupy the submit lane long enough to accumulate queue wait. |
-| VT submit to output callback | 100 output frames from 102 submissions, avg callback latency 55.112 ms, max 71.656 ms in the lightweight submitQueue probe | VT output latency still costs frames at the probe boundary. In healthy best-like runs this is usually about 101 from 107 submissions with about 67 ms callback latency. |
-| Lumen forwarding ingress | 0 queued, 0 dropped in current probes | The Lumen bridge/forwarding queue is not the limiting stage. |
+| HEVC source/tiling | 2058: 184 tile records, 184 HDR records, max tile count 2, encoded lane count 2 | Protocol-level tile records bypass the old single full-frame 101-102 output ceiling. |
+| HEVC VT submission | 2058/2059: 94 staged/submitted half-height tile frames | The HEVC tile path reaches enough records for the score cap, but logical-frame semantics still need care. |
+| HEVC callback/stability | 2058: 63.504 ms avg callback latency, 0 drops; 2059: 55.828 ms avg, 0 drops | Stability is currently fixed for the tile-record path; do not reopen naive tile emission or forwarding capacity churn. |
+| ProRes source cadence | 2058: 107 source-like frames, about 96.72 fps; 2059: 107 source frames, about 95.63 fps | ProRes is now source-cadence limited after HEVC tile mode, not VT encode-call limited. |
+| ProRes VT encode | 2059: 106 submissions, 1.191 ms avg VT encode call, 0 drops | ProRes encoder is fast and idle relative to the missing frames. |
+| Lumen forwarding ingress | 2058/2059: 0 queued, 0 dropped | The Lumen bridge is not dropping the current kept tile/prores paths. |
 
 ## Closed Or Low-Priority Axes
 
@@ -27,6 +27,8 @@ Last updated: 2026-05-14.
 - Do not repeat simple VT knobs: temporal compression disable, unretained command buffers, per-frame or batched `VTCompressionSessionCompleteFrames`, and diagnostic property deferral did not beat best.
 - Do not repeat simple `submissionQueue` removal by calling VT directly from the Metal completion callback. Prior inline submit shifted blocking into the Metal-stage bucket without increasing useful submissions or outputs.
 - Do not repeat naive temporal or spatial HEVC lane splitting under the current client/probe contract. It worsened callback latency or produced incomplete/dropped logical groups.
+- Do not repeat independent HEVC tile emission without protocol-aware queue semantics. Experiment 2057 hit 120 HEVC HDR tile records but collapsed with 62 drops; 2058 fixed that by scaling forwarding capacity to the negotiated tile-record multiplier.
+- Do not repeat ProRes replay-timer queue isolation as a standalone fix. Experiment 2059 kept the score capped at 110.00 but ProRes regressed to 106 frames and about 95.63 fps source cadence.
 - Do not optimize host probe drain cadence. Faster drain destabilized measurement and did not reveal hidden encoder headroom.
 - Be careful with detailed source diagnostics: forcing cadence/timing trackers on the hot path reduced source counts during measurement, so use them as diagnostic-only evidence, not a performance baseline.
 
@@ -46,22 +48,20 @@ Stability failures are usually not crashes in this campaign. If `DROP_EVENTS` is
 
 ## Highest Priority Bottleneck
 
-The best current explanation is serialized VT admission pressure:
+The best current explanation has split into two layers:
 
-1. Metal can stage frames fast enough.
-2. Pending admission is not rejecting frames.
-3. The VT submit lane waits because prior `VTCompressionSessionEncodeFrame` calls and output/session bookkeeping occupy the serialized path.
-4. Even after submission, VT callback latency leaves several submitted frames outside the 1 s probe window.
+1. For HEVC, single full-frame VT output was the old ceiling; the kept tile-record protocol now reaches 184 HDR records with zero drops.
+2. For ProRes, the post-2058 suite is source-cadence limited: ProRes gets only about 106-107 frames even though VT encode calls average about 1-1.2 ms and no drop events fire.
+3. The failed 2059 queue split says ProRes under-emission is not caused by the synthetic replay timer sharing the delivery queue.
 
-The target is not just "remove the queue"; that has already failed. The target is to reduce or hide the time that full-resolution HDR HEVC frames spend waiting for the single VT submit/admission lane while preserving ordered output and the existing codec contract.
+The target is now to recover ProRes source production after HEVC tile mode without reducing quality or destabilizing HEVC tile records. The next useful branch should inspect SkyLight tuning/update production or codec-suite isolation rather than timer leeway, timer queue placement, or ProRes VT encode knobs.
 
 ## Next Structural Directions
 
-- Split state mutation from VT admission: keep staging-slot ownership, force-keyframe state, counters, and output bookkeeping actor/queue-isolated, but minimize what must sit on the same serial lane as `VTCompressionSessionEncodeFrame`.
-- Prebuild an ordered submission packet before Metal completion: all per-frame state needed by VT should be resolved on the encode path before the Metal handler fires, so the post-Metal lane only performs the irreducible VT call and source-release transition.
-- Investigate whether VT accepts safe bounded concurrent admission for independent staged pixel buffers without violating ordering or increasing callback latency. This needs a small bounded design, not naive multi-lane or direct callback submission.
-- Investigate private/SkyLight capture sizing only as a source-health branch: the display mode is 5120x2880 @ 240 Hz while the requested stream is 3512x2290, but current healthy runs already show source can get ahead of VT, so this is secondary to VT admission.
-- If no single-session admission design beats the plateau, the next creative path is a protocol-level change that lets clients consume independently encoded substreams without requiring complete logical-frame grouping in the 1 s probe. Under the current logical-frame contract, naive tiling is closed.
+- ProRes source-production branch: compare SkyLight tuning candidate and source update production when ProRes runs after HEVC tile mode versus ProRes-only. The likely failing boundary is source update generation, not encoding.
+- Codec-suite isolation branch: avoid persistent HEVC tile-mode side effects carrying into the ProRes leg, but keep HEVC and ProRes structurally aligned unless evidence proves codec-required divergence.
+- Tile semantics branch: distinguish tile records from logical frames more rigorously in client/probe semantics while preserving zero drops; do not go back to complete-group gating unless client consumption requires complete groups.
+- HEVC admission branch is lower priority now: keep the 2058 tile path unless a new change regresses HDR, drops, or Android-required HEVC Main10 support.
 
 ## Measurement Command
 
