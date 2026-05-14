@@ -60,6 +60,10 @@ struct ProbeMetrics {
   uint64_t frameRecords = 0;
   uint64_t tiledFrameRecords = 0;
   uint64_t completeFrameGroups = 0;
+  uint64_t tileFreshCompositeUpdates = 0;
+  uint64_t tileFreshCompositeHDRFrames = 0;
+  uint64_t lastTileFreshCompositeSkew = 0;
+  uint64_t maxTileFreshCompositeSkew = 0;
   uint64_t hdrFrames = 0;
   bool firstFrameSeen = false;
   bool firstFrameHDR = false;
@@ -81,6 +85,13 @@ struct TileGroupProgress {
   bool isHDRSignaled = false;
   bool isComplete = false;
   std::unordered_set<uint32_t> observedTileIndexes;
+};
+
+struct TileFreshCompositeProgress {
+  uint32_t expectedTileCount = 1;
+  bool lastCompositeHDRSignaled = false;
+  std::unordered_set<uint32_t> observedTileIndexes;
+  std::unordered_map<uint32_t, uint64_t> latestSequenceByTile;
 };
 
 double averageLatency(const std::vector<double> &samples) {
@@ -238,6 +249,7 @@ void drainForwardedFrames(
   LumenMacBridgeController *controller,
   ProbeMetrics &metrics,
   std::unordered_map<uint64_t, TileGroupProgress> &tileGroups,
+  TileFreshCompositeProgress &tileFreshComposite,
   bool countEncodedTileRecordsAsFrames
 ) {
   while (true) {
@@ -268,6 +280,29 @@ void drainForwardedFrames(
     }
 
     metrics.tiledFrameRecords += 1;
+    tileFreshComposite.expectedTileCount =
+      std::max(tileFreshComposite.expectedTileCount, record.tile_metadata.tile_count);
+    tileFreshComposite.observedTileIndexes.insert(record.tile_metadata.tile_index);
+    tileFreshComposite.latestSequenceByTile[record.tile_metadata.tile_index] =
+      record.source_sequence_number;
+    tileFreshComposite.lastCompositeHDRSignaled =
+      tileFreshComposite.lastCompositeHDRSignaled || record.is_hdr_signaled;
+    if (tileFreshComposite.observedTileIndexes.size() >=
+        static_cast<size_t>(tileFreshComposite.expectedTileCount)) {
+      uint64_t minSequence = UINT64_MAX;
+      uint64_t maxSequence = 0;
+      for (const auto &entry : tileFreshComposite.latestSequenceByTile) {
+        minSequence = std::min(minSequence, entry.second);
+        maxSequence = std::max(maxSequence, entry.second);
+      }
+      const uint64_t skew = maxSequence >= minSequence ? maxSequence - minSequence : 0;
+      metrics.tileFreshCompositeUpdates += 1;
+      metrics.lastTileFreshCompositeSkew = skew;
+      metrics.maxTileFreshCompositeSkew = std::max(metrics.maxTileFreshCompositeSkew, skew);
+      if (tileFreshComposite.lastCompositeHDRSignaled) {
+        metrics.tileFreshCompositeHDRFrames += 1;
+      }
+    }
     const bool countsTileRecordAsFrame =
       countEncodedTileRecordsAsFrames &&
       record.tile_metadata.encoded_lane_count > 1;
@@ -377,12 +412,19 @@ int main(int argc, const char *argv[]) {
 
     ProbeMetrics metrics;
     std::unordered_map<uint64_t, TileGroupProgress> tileGroups;
+    TileFreshCompositeProgress tileFreshComposite;
     const bool countEncodedTileRecordsAsFrames =
       configuration.sink_request.capability.supports_encoded_tile_stream;
     const auto captureStartTime = std::chrono::steady_clock::now();
     const auto startupDeadline = captureStartTime + std::chrono::seconds(10);
     while (std::chrono::steady_clock::now() < startupDeadline && !metrics.firstFrameSeen) {
-      drainForwardedFrames(controller, metrics, tileGroups, countEncodedTileRecordsAsFrames);
+      drainForwardedFrames(
+        controller,
+        metrics,
+        tileGroups,
+        tileFreshComposite,
+        countEncodedTileRecordsAsFrames
+      );
       drainForwardedEvents(controller, metrics);
       if (metrics.firstFrameSeen && metrics.startupMilliseconds < 0.0) {
         metrics.startupMilliseconds = std::chrono::duration<double, std::milli>(
@@ -396,13 +438,25 @@ int main(int argc, const char *argv[]) {
     if (metrics.firstFrameSeen) {
       const auto sampleDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1000);
       while (std::chrono::steady_clock::now() < sampleDeadline) {
-        drainForwardedFrames(controller, metrics, tileGroups, countEncodedTileRecordsAsFrames);
+        drainForwardedFrames(
+          controller,
+          metrics,
+          tileGroups,
+          tileFreshComposite,
+          countEncodedTileRecordsAsFrames
+        );
         drainForwardedEvents(controller, metrics);
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
       }
     }
 
-    drainForwardedFrames(controller, metrics, tileGroups, countEncodedTileRecordsAsFrames);
+    drainForwardedFrames(
+      controller,
+      metrics,
+      tileGroups,
+      tileFreshComposite,
+      countEncodedTileRecordsAsFrames
+    );
     drainForwardedEvents(controller, metrics);
     if (metrics.firstFrameSeen && metrics.startupMilliseconds < 0.0) {
       metrics.startupMilliseconds = std::chrono::duration<double, std::milli>(
@@ -448,6 +502,22 @@ int main(int argc, const char *argv[]) {
     std::printf("AUTORESEARCH_RUNTIME_PROBE_TILED_FRAME_RECORDS=%llu\n", metrics.tiledFrameRecords);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_COMPLETE_FRAME_GROUPS=%llu\n", metrics.completeFrameGroups);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_INCOMPLETE_FRAME_GROUPS=%llu\n", incompleteFrameGroups);
+    std::printf(
+      "AUTORESEARCH_RUNTIME_PROBE_TILE_FRESH_COMPOSITE_UPDATES=%llu\n",
+      metrics.tileFreshCompositeUpdates
+    );
+    std::printf(
+      "AUTORESEARCH_RUNTIME_PROBE_TILE_FRESH_COMPOSITE_HDR_FRAMES=%llu\n",
+      metrics.tileFreshCompositeHDRFrames
+    );
+    std::printf(
+      "AUTORESEARCH_RUNTIME_PROBE_TILE_FRESH_COMPOSITE_LAST_SKEW=%llu\n",
+      metrics.lastTileFreshCompositeSkew
+    );
+    std::printf(
+      "AUTORESEARCH_RUNTIME_PROBE_TILE_FRESH_COMPOSITE_MAX_SKEW=%llu\n",
+      metrics.maxTileFreshCompositeSkew
+    );
     std::printf("AUTORESEARCH_RUNTIME_PROBE_MAX_TILE_COUNT=%u\n", metrics.maxTileCount);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_MAX_ENCODED_LANE_COUNT=%u\n", metrics.maxEncodedLaneCount);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_HDR_FRAMES=%llu\n", metrics.hdrFrames);
