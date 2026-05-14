@@ -41,6 +41,7 @@ Last updated: 2026-05-14.
 - Do not assume one tile lane is uniquely lagging. Experiment 2068 showed lane 0 and lane 1 both processed/submitted 103 tile frames and completed 97 callbacks. The detailed diagnostic path itself caused 1 HEVC drop event, so keep it as discard-only evidence rather than baseline instrumentation.
 - Do not replace HEVC forwarding HDR detection with a format-description-only fast path as a standalone fix. Experiment 2069 improved ProRes but regressed HEVC to 95 complete groups, 2 incomplete groups, and 5 drop events, so per-frame HEVC HDR payload validation is not the current HEVC tile ceiling.
 - Do not enable HEVC tile replay catch-up as a standalone source-cadence fix. Experiment 2070 regressed to 95 complete groups, 2 incomplete groups, and 21 drop events while VT submissions stayed at 101, so missing timer replay frames are not the first bottleneck.
+- Do not preserve fresh mailbox frames over replay frames as a standalone HEVC tile-stream stability fix. Experiment 2071 reduced drop severity but regressed to 94 complete groups, 3 incomplete groups, and 100 VT submissions, so replay overflow filtering does not create more logical frames.
 - Do not optimize host probe drain cadence. Faster drain destabilized measurement and did not reveal hidden encoder headroom.
 - Be careful with detailed source diagnostics: forcing cadence/timing trackers on the hot path reduced source counts during measurement, so use them as diagnostic-only evidence, not a performance baseline.
 
