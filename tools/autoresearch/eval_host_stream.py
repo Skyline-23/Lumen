@@ -334,6 +334,9 @@ def parse_runtime_probe_output(output: str) -> dict[str, Any] | None:
         "FRAME_RECORDS": "frame_records",
         "TILED_FRAME_RECORDS": "tiled_frame_records",
         "COMPLETE_FRAME_GROUPS": "complete_frame_groups",
+        "STRICT_COMPLETE_FRAME_GROUPS": "strict_complete_frame_groups",
+        "TILE_PRESENTATION_COMPLETE_GROUPS": "tile_presentation_complete_groups",
+        "TILE_PRESENTATION_PRIMED": "tile_presentation_primed",
         "INCOMPLETE_FRAME_GROUPS": "incomplete_frame_groups",
         "MAX_TILE_COUNT": "max_tile_count",
         "MAX_ENCODED_LANE_COUNT": "max_encoded_lane_count",
@@ -466,6 +469,10 @@ def score_runtime_probe(
     dropped_frames = int(metrics["dropped_frames"])
     last_seq = int(metrics["last_seq"])
     last_hdr_signalled = bool(metrics["last_hdr_signalled"])
+    complete_frame_groups = int(metrics.get("complete_frame_groups", 0))
+    tile_presentation_complete_groups = int(metrics.get("tile_presentation_complete_groups", 0))
+    tile_presentation_primed = bool(metrics.get("tile_presentation_primed", 0))
+    max_encoded_lane_count = int(metrics.get("max_encoded_lane_count", 1))
 
     components["fps"] = 10.0 * min(fps / max(args.target_fps, 1), 1.0)
     components["codec"] = 5.0 if codec == args.codec else 0.0
@@ -493,6 +500,14 @@ def score_runtime_probe(
         progression = 10.0
     components["progression"] = progression
 
+    tile_presentation_ok = (
+        tile_presentation_primed and
+        max_encoded_lane_count > 1 and
+        complete_frame_groups >= max(args.target_fps, 1) and
+        tile_presentation_complete_groups >= max(args.target_fps, 1)
+    )
+    components["tile_presentation_contract"] = 15.0 if tile_presentation_ok else 0.0
+
     if args.battery_policy == "adaptive-hdr":
         components["battery_policy"] = 5.0 if hdr_frames_ok else 0.0
     else:
@@ -510,7 +525,7 @@ def score_runtime_probe(
     components["stability_penalty"] = -penalty
 
     total = sum(components.values())
-    total = max(0.0, min(total, 100.0))
+    total = max(0.0, min(total, 115.0))
     return total, components
 
 
@@ -804,7 +819,7 @@ def main() -> int:
         total = min(codec_scores) + (synthetic_score * 0.25)
     else:
         total = synthetic_score
-    total = max(0.0, min(total, 110.0))
+    total = max(0.0, min(total, 125.0))
     print(f"AUTORESEARCH_SCORE={total:.2f}")
     return 0
 

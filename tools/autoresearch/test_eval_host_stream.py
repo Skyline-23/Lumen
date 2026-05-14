@@ -28,6 +28,9 @@ AUTORESEARCH_RUNTIME_PROBE_FRAMES=16
 AUTORESEARCH_RUNTIME_PROBE_FRAME_RECORDS=20
 AUTORESEARCH_RUNTIME_PROBE_TILED_FRAME_RECORDS=4
 AUTORESEARCH_RUNTIME_PROBE_COMPLETE_FRAME_GROUPS=2
+AUTORESEARCH_RUNTIME_PROBE_STRICT_COMPLETE_FRAME_GROUPS=1
+AUTORESEARCH_RUNTIME_PROBE_TILE_PRESENTATION_COMPLETE_GROUPS=2
+AUTORESEARCH_RUNTIME_PROBE_TILE_PRESENTATION_PRIMED=1
 AUTORESEARCH_RUNTIME_PROBE_INCOMPLETE_FRAME_GROUPS=1
 AUTORESEARCH_RUNTIME_PROBE_MAX_TILE_COUNT=2
 AUTORESEARCH_RUNTIME_PROBE_MAX_ENCODED_LANE_COUNT=2
@@ -92,6 +95,9 @@ AUTORESEARCH_RUNTIME_PROBE_VT_PIXEL_BUFFER_CACHE_SIZE=2
         self.assertEqual(metrics["frame_records"], 20)
         self.assertEqual(metrics["tiled_frame_records"], 4)
         self.assertEqual(metrics["complete_frame_groups"], 2)
+        self.assertEqual(metrics["strict_complete_frame_groups"], 1)
+        self.assertEqual(metrics["tile_presentation_complete_groups"], 2)
+        self.assertEqual(metrics["tile_presentation_primed"], 1)
         self.assertEqual(metrics["incomplete_frame_groups"], 1)
         self.assertEqual(metrics["max_tile_count"], 2)
         self.assertEqual(metrics["max_encoded_lane_count"], 2)
@@ -178,6 +184,47 @@ AUTORESEARCH_RUNTIME_PROBE_VT_PIXEL_BUFFER_CACHE_SIZE=2
         self.assertGreater(score, 50.0)
         self.assertGreater(components["progression"], 0.0)
         self.assertGreater(components["partial_hdr"], 0.0)
+        self.assertEqual(components["tile_presentation_contract"], 0.0)
+
+    def test_score_runtime_probe_rewards_primed_tile_presentation_contract(self) -> None:
+        metrics = {
+            "status": "ok",
+            "width": 3512,
+            "height": 2290,
+            "fps": 120,
+            "codec": "hevc",
+            "frames": 194,
+            "frame_records": 194,
+            "tiled_frame_records": 194,
+            "complete_frame_groups": 193,
+            "strict_complete_frame_groups": 97,
+            "tile_presentation_complete_groups": 193,
+            "tile_presentation_primed": 1,
+            "max_tile_count": 2,
+            "max_encoded_lane_count": 2,
+            "hdr_frames": 194,
+            "first_frame_hdr": True,
+            "startup_ms": 156.0,
+            "avg_callback_latency_ms": 70.0,
+            "max_callback_latency_ms": 85.0,
+            "restart_events": 0,
+            "failure_events": 0,
+            "drop_events": 0,
+            "queued_frames": 0,
+            "dropped_frames": 0,
+            "last_seq": 200,
+            "last_hdr_signalled": True,
+        }
+        args = types.SimpleNamespace(
+            target_fps=120,
+            target_width=3512,
+            target_height=2290,
+            codec="hevc",
+            battery_policy="adaptive-hdr",
+        )
+        score, components = MODULE.score_runtime_probe(metrics, args)
+        self.assertEqual(components["tile_presentation_contract"], 15.0)
+        self.assertGreater(score, 85.0)
 
     def test_score_runtime_probe_rejects_failed_probe(self) -> None:
         metrics = {
