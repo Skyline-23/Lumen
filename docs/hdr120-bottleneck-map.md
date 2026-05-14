@@ -20,6 +20,7 @@ Last updated: 2026-05-14.
 | HEVC per-lane VT output | 2068 diagnostic: lane 0 and lane 1 each submitted 103 staged frames and completed 97 output callbacks | The 97-group ceiling is symmetric across both lanes, not a single slow-lane imbalance. |
 | HEVC callback/stability | 2063: 70.483 ms avg callback latency, 0 drops | Stability is currently fixed for the tile-record path; do not reopen naive tile emission or forwarding capacity churn. |
 | HEVC Metal/VT tail latency | 2072 diagnostic: Metal stage avg/P95/P99 4.681/14.489/18.959 ms; VT encode call avg/P95/P99 10.179/21.065/21.363 ms; output callback avg/P95/P99 71.147/84.074/84.150 ms | Averages hide the first visible tail stall. VT encode-call P95 is already above the 8.33 ms frame budget, so source replay/mailbox work is below priority. |
+| HEVC independent tile freshness | 2073 diagnostic: 193 tile records, 96 strict complete groups, 192 freshness-composite updates, 192 HDR freshness-composite updates | The stream already has over-120 independent tile updates; the remaining question is whether the product accepts partial freshness with explicit skew bounds instead of strict same-group frame completion. |
 | ProRes source cadence | 2063: 135 source frames, 134 records, about 123.4 fps | ProRes frame count is no longer the limiting stage when catch-up replay is isolated from HEVC. |
 | ProRes VT encode | 2063: 135 submissions, 1.482 ms avg VT encode call, 0 drops | ProRes encoder remains fast enough after source cadence recovery. |
 | Lumen forwarding ingress | 2058/2061/2062/2063: 0 queued, 0 dropped | The Lumen bridge is not dropping the current kept tile/prores paths. |
@@ -44,6 +45,7 @@ Last updated: 2026-05-14.
 - Do not enable HEVC tile replay catch-up as a standalone source-cadence fix. Experiment 2070 regressed to 95 complete groups, 2 incomplete groups, and 21 drop events while VT submissions stayed at 101, so missing timer replay frames are not the first bottleneck.
 - Do not preserve fresh mailbox frames over replay frames as a standalone HEVC tile-stream stability fix. Experiment 2071 reduced drop severity but regressed to 94 complete groups, 3 incomplete groups, and 100 VT submissions, so replay overflow filtering does not create more logical frames.
 - Do not keep hot-path percentile arrays as baseline instrumentation. Experiment 2072 exposed useful tail evidence but scored 92.00 with 9 HEVC drop events, so use the data to guide topology changes and revert the instrumentation after the diagnostic run.
+- Do not assume 120 strict complete groups is the only viable client contract. Experiment 2073 showed 192 independent tile freshness updates while strict groups stayed at 96; the viable topology may be a skew-bounded tile freshness stream rather than synchronous frame-group assembly.
 - Do not optimize host probe drain cadence. Faster drain destabilized measurement and did not reveal hidden encoder headroom.
 - Be careful with detailed source diagnostics: forcing cadence/timing trackers on the hot path reduced source counts during measurement, so use them as diagnostic-only evidence, not a performance baseline.
 
@@ -69,12 +71,14 @@ The best current explanation has shifted again:
 2. For ProRes, experiment 2061-2063 recovers source cadence and reaches 134-141 HDR records with zero drops, so ProRes frame count is no longer the primary limiter.
 3. The remaining HEVC gap is now 97 complete logical tile groups versus the 120 target. Tile geometry matters: column partitioning improved the previous 89-group audit.
 4. The latest tail-latency evidence points at Metal conversion plus VT encode-call/output drain. HEVC VT encode-call P95 is about 21 ms in the diagnostic run, so the next useful structural experiment should reduce per-lane Metal/VT work or avoid requiring both lanes to complete each logical frame inside the same 8.33 ms cadence.
+5. The first topology-contract probe supports the latter path: independent tile freshness can exceed 120 updates in the current stream, while strict same-group completion cannot. The next product-level bottleneck is the receiver contract: tile manifest, latest-tile composition, skew bounds, and visual-coherence rules.
 
 The target is now to make the HEVC tile-stream contract rigorous enough for the product: either clients and probes must explicitly consume independent encoded tile records as tile substreams, or the encoder topology must deliver 120 complete logical tile groups without treating valid substreams as drops.
 
 ## Next Structural Directions
 
 - Tile semantics branch: add a first-class tile-stream manifest/reassembly contract so the receiver can map each encoded tile record to frame group, tile index, region, and lane without requiring the encoder to hold back records for group completion.
+- Tile freshness branch: define a skew-bounded partial-freshness contract where clients can update a tile as soon as its substream arrives after all tiles are primed, instead of waiting for all lanes from the same frame group.
 - Logical-group throughput branch: if the product requires complete frames before delivery, redesign HEVC lane scheduling so both tile lanes produce at least 120 complete groups/s; do not reintroduce complete-group gating on the current queue because prior gating collapsed throughput.
 - Client contract branch: define whether Android/general clients consume independent HEVC substreams directly, reassemble them, or require a logical-frame manifest beside each tile record.
 - Lane-count branch is mostly closed for direct scaling: 3 lanes increased record count but made logical groups worse. Prefer 2-lane scheduling/region work before any higher lane count.
