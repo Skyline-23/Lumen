@@ -36,6 +36,7 @@ Last updated: 2026-05-14.
 - Do not add a third HEVC tile lane as a direct throughput fix. Experiment 2064 raised tile records to 272 but regressed complete logical groups to 90 and introduced 1 incomplete group.
 - Do not rotate 2-column tile lane processing order. Experiment 2065 regressed complete groups to 94, introduced 3 incomplete groups, and increased Metal/VT jitter.
 - Do not round the 2-column split to a 64-pixel CTU boundary as a standalone fix. Experiment 2066 regressed complete groups to 94 and introduced 4 HEVC drop events.
+- Do not move the existing 2-column lane work onto per-lane serial queues as a standalone fix. Experiment 2067 removed almost all encode queue wait but still produced 194 tile records, 97 complete groups, 0 drops, and 103 VT submissions, so source-callback lane enqueue serialization is not the first remaining bottleneck.
 - Do not optimize host probe drain cadence. Faster drain destabilized measurement and did not reveal hidden encoder headroom.
 - Be careful with detailed source diagnostics: forcing cadence/timing trackers on the hot path reduced source counts during measurement, so use them as diagnostic-only evidence, not a performance baseline.
 
@@ -69,7 +70,7 @@ The target is now to make the HEVC tile-stream contract rigorous enough for the 
 - Logical-group throughput branch: if the product requires complete frames before delivery, redesign HEVC lane scheduling so both tile lanes produce at least 120 complete groups/s; do not reintroduce complete-group gating on the current queue because prior gating collapsed throughput.
 - Client contract branch: define whether Android/general clients consume independent HEVC substreams directly, reassemble them, or require a logical-frame manifest beside each tile record.
 - Lane-count branch is mostly closed for direct scaling: 3 lanes increased record count but made logical groups worse. Prefer 2-lane scheduling/region work before any higher lane count.
-- Lane-order branch is closed for simple rotation: reordering existing lane work caused incomplete groups. Prefer per-lane queue isolation or lower per-lane work instead.
+- Lane-order branch is closed for simple rotation: reordering existing lane work caused incomplete groups. Per-lane queue isolation also tied the current 97-group best without moving VT submission/output, so prefer reducing per-lane work or changing the encoded tile contract rather than rescheduling the same work.
 - Tile-width alignment branch is closed for simple asymmetric CTU rounding: equal half-width columns remain the best measured geometry.
 - ProRes catch-up branch is kept and should not be widened unless new evidence shows drop-free ProRes overproduction hurts battery or latency.
 - HEVC admission branch is lower priority now: keep the 2058 tile path unless a new change regresses HDR, drops, or Android-required HEVC Main10 support.
