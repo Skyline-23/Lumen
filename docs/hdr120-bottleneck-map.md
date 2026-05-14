@@ -35,6 +35,7 @@ Last updated: 2026-05-14.
 | HEVC fused 420 conversion | 2086 diagnostic: combined no-scale/no-cursor BGRA-to-420 Metal kernel produced 190 tile records, 94 complete groups, 2 incomplete groups, 7 drop events, and 100 VT submissions | Fusing luma/chroma conversion dispatches does not improve the HEVC ceiling and destabilizes tile cadence. The current bottleneck is not solved by simply reducing Metal pass count inside the same staged BGRA topology. |
 | HEVC VT internal BGRA input | 2087 diagnostic: staged BGRA input with Main10/HDR session properties produced 176 tile records, 88 complete groups, 11 drop events, 98 VT submissions, and 118.450 ms average callback latency | Moving BGRA-to-HEVC conversion into VT is worse than explicit staged 420v10. Keep explicit 420v10 staged input unless a different ownership/pacing model proves otherwise. |
 | HEVC tile PTS phase staggering | 2088 diagnostic: lane-index half-frame PTS staggering produced 192 tile records, 95 complete groups, 2 incomplete groups, 11 drop events, and 101 VT submissions | Separating tile-lane presentation timestamp phases does not improve VT/output cadence and worsens stability. The ceiling is not caused by both lanes sharing identical PTS cadence slots. |
+| HEVC callback augmentation deferral | 2089 diagnostic: deferring HDR metadata augmentation from the VT callback entry to `outputQueue` produced 193 tile records, 96 complete groups, 1 incomplete group, 5 drop events, and 102 VT submissions | Callback entry work placement is not the primary drain bottleneck. Moving HEVC HDR augmentation off the callback thread does not improve callback latency or strict groups. |
 | ProRes source cadence | 2063: 135 source frames, 134 records, about 123.4 fps | ProRes frame count is no longer the limiting stage when catch-up replay is isolated from HEVC. |
 | ProRes VT encode | 2063: 135 submissions, 1.482 ms avg VT encode call, 0 drops | ProRes encoder remains fast enough after source cadence recovery. |
 | Lumen forwarding ingress | 2058/2061/2062/2063: 0 queued, 0 dropped | The Lumen bridge is not dropping the current kept tile/prores paths. |
@@ -74,6 +75,7 @@ Last updated: 2026-05-14.
 - Do not use a fused unscaled BGRA-to-420 Metal kernel as a standalone fix. Experiment 2086 reduced the conversion to one compute path but regressed HEVC to 94 complete groups with 7 drop events and 100 VT submissions.
 - Do not use staged BGRA input with HEVC Main10/HDR properties as a standalone fix. Experiment 2087 moved conversion into VT and regressed to 88 complete groups, 11 drops, and 118.450 ms average callback latency.
 - Do not use lane-index PTS phase staggering as a standalone VT cadence fix. Experiment 2088 kept tile records at 192 but still produced only 95 complete groups with 11 drop events, so identical lane PTS cadence slots are not the bottleneck.
+- Do not defer only HEVC HDR static metadata augmentation out of the VT callback as a standalone callback-drain fix. Experiment 2089 still produced only 96 complete groups with 5 drop events and unchanged callback latency.
 - Do not optimize host probe drain cadence. Faster drain destabilized measurement and did not reveal hidden encoder headroom.
 - Be careful with detailed source diagnostics: forcing cadence/timing trackers on the hot path reduced source counts during measurement, so use them as diagnostic-only evidence, not a performance baseline.
 
@@ -112,6 +114,7 @@ The best current explanation has shifted again:
 15. Returning to Metal conversion with a fused no-scale 420 kernel also fails. The same staged BGRA topology still regresses to 94 complete groups and nonzero drops, so the next encoder-side experiment needs a different pacing/ownership topology rather than only fewer shader dispatches.
 16. Moving color conversion into VT by submitting staged BGRA to a Main10 HEVC session fails harder. The explicit staged 420v10 path remains the better baseline; future VT/output work should not assume VT internal conversion is cheaper.
 17. Staggering tile-lane PTS phases also fails. VT/output work should not assume a simple timestamp cadence offset can desynchronize hardware drain; the next encoder-side branch needs different session ownership, callback isolation, or a real client-side tile presentation contract.
+18. Deferring callback-local HDR augmentation also fails. The VT callback latency bucket reflects downstream encoder/output drain more than local metadata wrapping work, so callback work placement alone is not enough.
 
 The target is now to make the HEVC tile-stream contract rigorous enough for the product: either clients and probes must explicitly consume independent encoded tile records as tile substreams, or the encoder topology must deliver 120 complete logical tile groups without treating valid substreams as drops.
 
@@ -128,6 +131,7 @@ The target is now to make the HEVC tile-stream contract rigorous enough for the 
 - ProRes catch-up branch is kept and should not be widened unless new evidence shows drop-free ProRes overproduction hurts battery or latency.
 - HEVC admission branch is lower priority now: keep the 2058 tile path unless a new change regresses HDR, drops, or Android-required HEVC Main10 support.
 - VT cadence branch: simple timestamp phase staggering is closed. If this branch continues, change VT session topology or callback/output ownership rather than only shifting presentation timestamps.
+- Callback ownership branch: simple deferral of HEVC HDR augmentation is closed. Future callback work must isolate VT output ownership more structurally than moving sample-buffer wrapping into the same serial output queue.
 
 ## Measurement Command
 
