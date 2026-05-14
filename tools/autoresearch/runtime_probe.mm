@@ -219,6 +219,32 @@ bool tryPresentPendingTile(TileReceiverArbitrationPolicy &policy, uint32_t tileI
   return true;
 }
 
+bool tryBootstrapPendingTiles(TileReceiverArbitrationPolicy &policy) {
+  if (!policy.displayedDisplayTimeByTile.empty() ||
+      policy.pendingDisplayTimeByTile.size() < static_cast<size_t>(policy.expectedTileCount)) {
+    return false;
+  }
+
+  const double candidateSkewMilliseconds = tileSkewMilliseconds(policy.pendingDisplayTimeByTile);
+  if (candidateSkewMilliseconds > policy.budgetMilliseconds) {
+    return false;
+  }
+
+  for (const auto &entry : policy.pendingDisplayTimeByTile) {
+    const uint32_t tileIndex = entry.first;
+    policy.displayedDisplayTimeByTile[tileIndex] = entry.second;
+    const auto pendingHDREntry = policy.pendingHDRByTile.find(tileIndex);
+    policy.displayedHDRByTile[tileIndex] =
+      pendingHDREntry != policy.pendingHDRByTile.end() && pendingHDREntry->second;
+    policy.presentedUpdates += 1;
+  }
+  policy.pendingDisplayTimeByTile.clear();
+  policy.pendingHDRByTile.clear();
+  policy.maxPresentedSkewMilliseconds =
+    std::max(policy.maxPresentedSkewMilliseconds, candidateSkewMilliseconds);
+  return true;
+}
+
 void updateReceiverArbitrationPolicy(
   TileReceiverArbitrationPolicy &policy,
   const LumenCoreEncodedCaptureFrameRecord &record
@@ -234,6 +260,9 @@ void updateReceiverArbitrationPolicy(
     policy.heldUpdates += 1;
   }
   if (policy.observedTileIndexes.size() < static_cast<size_t>(policy.expectedTileCount)) {
+    return;
+  }
+  if (tryBootstrapPendingTiles(policy)) {
     return;
   }
 
