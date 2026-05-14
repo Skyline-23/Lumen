@@ -32,6 +32,7 @@ Last updated: 2026-05-14.
 | HEVC source-time nearest pairing | 2083 diagnostic: nearest matching tile 0 and tile 1 source-display-time sequences produced 95 pairs for one/two/three-frame budgets, equal to strict complete groups, while HEVC had 5 drop events | Source-display-time nearest matching only rediscovers strict groups. The useful phase signal is likely in receiver arrival/callback-drain timing or presentation scheduling, not just source timestamps. |
 | HEVC arrival-time nearest pairing | 2084 diagnostic: nearest matching tile 0 and tile 1 probe arrival times produced 36 one-frame pairs and 95 two/three-frame pairs, equal to strict complete groups at two frames, while HEVC had 8 drop events | Probe arrival-time nearest matching also rediscovers strict groups. The 2081 recovery is a display-state update-policy effect after priming, not a hidden extra pair-count in source or arrival timestamps. |
 | HEVC bounded partial presentation | 2085 diagnostic: depth-4 and depth-8 newest-pending partial presentation produced only 25 two-frame updates, while dropping 152-160 stale entries and causing 9 HEVC drop events | Simple bounded newest-pending stateful presentation is too aggressive and loses useful history. The remaining receiver path is not a small tweak to pending depth; it needs either exact 2081 semantics with lower overhead or a real client-side presentation contract. |
+| HEVC fused 420 conversion | 2086 diagnostic: combined no-scale/no-cursor BGRA-to-420 Metal kernel produced 190 tile records, 94 complete groups, 2 incomplete groups, 7 drop events, and 100 VT submissions | Fusing luma/chroma conversion dispatches does not improve the HEVC ceiling and destabilizes tile cadence. The current bottleneck is not solved by simply reducing Metal pass count inside the same staged BGRA topology. |
 | ProRes source cadence | 2063: 135 source frames, 134 records, about 123.4 fps | ProRes frame count is no longer the limiting stage when catch-up replay is isolated from HEVC. |
 | ProRes VT encode | 2063: 135 submissions, 1.482 ms avg VT encode call, 0 drops | ProRes encoder remains fast enough after source cadence recovery. |
 | Lumen forwarding ingress | 2058/2061/2062/2063: 0 queued, 0 dropped | The Lumen bridge is not dropping the current kept tile/prores paths. |
@@ -68,6 +69,7 @@ Last updated: 2026-05-14.
 - Do not use source-display-time nearest matching as the phase reconstruction model. Experiment 2083 produced exactly the strict-group pair count and still caused 5 HEVC drop events.
 - Do not use probe arrival-time nearest matching as the phase reconstruction model. Experiment 2084 produced exactly the strict-group pair count at two/three-frame budgets and caused 8 HEVC drop events.
 - Do not use bounded newest-pending partial presentation as the receiver model. Experiment 2085 produced only 25 updates and dropped most pending history while still causing 9 HEVC drop events.
+- Do not use a fused unscaled BGRA-to-420 Metal kernel as a standalone fix. Experiment 2086 reduced the conversion to one compute path but regressed HEVC to 94 complete groups with 7 drop events and 100 VT submissions.
 - Do not optimize host probe drain cadence. Faster drain destabilized measurement and did not reveal hidden encoder headroom.
 - Be careful with detailed source diagnostics: forcing cadence/timing trackers on the hot path reduced source counts during measurement, so use them as diagnostic-only evidence, not a performance baseline.
 
@@ -103,6 +105,7 @@ The best current explanation has shifted again:
 12. Source timestamp pairing also fails: nearest source-display-time matches equal strict groups. Receiver timebase reconstruction needs receiver-side arrival/callback phase, not only capture/display timestamps.
 13. Arrival timestamp pairing also fails: nearest probe-drain arrival matches equal strict groups. The 2081 two-frame recovery came from stateful partial presentation updates, not from discovering more whole-tile pairs.
 14. Bounded newest-pending presentation also fails. It drops the history that produced the 2081 signal, so queue-depth limiting by itself is not the stateful presentation contract.
+15. Returning to Metal conversion with a fused no-scale 420 kernel also fails. The same staged BGRA topology still regresses to 94 complete groups and nonzero drops, so the next encoder-side experiment needs a different pacing/ownership topology rather than only fewer shader dispatches.
 
 The target is now to make the HEVC tile-stream contract rigorous enough for the product: either clients and probes must explicitly consume independent encoded tile records as tile substreams, or the encoder topology must deliver 120 complete logical tile groups without treating valid substreams as drops.
 
