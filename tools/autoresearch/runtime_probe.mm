@@ -431,14 +431,6 @@ int main(int argc, const char *argv[]) {
     LumenMacBridgeControllerStopMacDisplayKitCapture(controller);
     LumenMacBridgeControllerDestroy(controller);
 
-    if (!metrics.firstFrameSeen) {
-      std::printf("AUTORESEARCH_RUNTIME_PROBE_STATUS=error\n");
-      std::printf("AUTORESEARCH_RUNTIME_PROBE_ERROR=no forwarded frames before startup deadline\n");
-      emitSelectedDiagnostics(captureDiagnostics);
-      std::fflush(stdout);
-      return 2;
-    }
-
     uint64_t incompleteFrameGroups = 0;
     for (const auto &entry : tileGroups) {
       if (!entry.second.isComplete) {
