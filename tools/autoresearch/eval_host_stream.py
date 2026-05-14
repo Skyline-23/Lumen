@@ -335,10 +335,6 @@ def parse_runtime_probe_output(output: str) -> dict[str, Any] | None:
         "TILED_FRAME_RECORDS": "tiled_frame_records",
         "COMPLETE_FRAME_GROUPS": "complete_frame_groups",
         "INCOMPLETE_FRAME_GROUPS": "incomplete_frame_groups",
-        "TILE_BOUNDED_PRESENTATION_DEPTH4_UPDATES": "tile_bounded_presentation_depth4_updates",
-        "TILE_BOUNDED_PRESENTATION_DEPTH8_UPDATES": "tile_bounded_presentation_depth8_updates",
-        "TILE_BOUNDED_PRESENTATION_DEPTH4_DROPPED_STALE": "tile_bounded_presentation_depth4_dropped_stale",
-        "TILE_BOUNDED_PRESENTATION_DEPTH8_DROPPED_STALE": "tile_bounded_presentation_depth8_dropped_stale",
         "MAX_TILE_COUNT": "max_tile_count",
         "MAX_ENCODED_LANE_COUNT": "max_encoded_lane_count",
         "VT_DIRECT_SUBMISSION_FRAME_COUNT": "vt_direct_submission_frame_count",
@@ -374,8 +370,6 @@ def parse_runtime_probe_output(output: str) -> dict[str, Any] | None:
         "VT_METAL_STAGE_MAX_MS": "vt_metal_stage_max_ms",
         "VT_ENCODE_CALL_AVG_MS": "vt_encode_call_avg_ms",
         "VT_ENCODE_CALL_MAX_MS": "vt_encode_call_max_ms",
-        "TILE_BOUNDED_PRESENTATION_DEPTH4_MAX_SKEW_MS": "tile_bounded_presentation_depth4_max_skew_ms",
-        "TILE_BOUNDED_PRESENTATION_DEPTH8_MAX_SKEW_MS": "tile_bounded_presentation_depth8_max_skew_ms",
     }
     optional_string_metrics = {
         "SOURCE_BACKEND": "source_backend",
