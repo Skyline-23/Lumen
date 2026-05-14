@@ -103,6 +103,7 @@ Last updated: 2026-05-14.
 - Do not set the shared HEVC tile session's `MaxFrameDelayCount` to 0 as admission control. Experiment 2102 failed both runtime probes before useful HEVC/ProRes counters were available.
 - Do not add drop-source classification directly to the official runtime probe as hot-path instrumentation. Experiment 2103 made the official probe produce zero HEVC and ProRes frames, so drop attribution must come from already-valid logs or a separate diagnostic path.
 - Do not treat zero-frame `STATUS=ok` runtime-probe runs as throughput evidence. Experiment 2104 showed the clean measurement path can fail before any source frame reaches VT; fix or isolate startup/source delivery before interpreting encoder numbers.
+- Do not rely on a probe-level stop/start retry to recover zero-frame startup. Experiment 2105 retried capture once, reported `STARTUP_RETRY_COUNT=1`, and still produced 0 HEVC/ProRes frames and 0 VT submissions.
 - Do not optimize host probe drain cadence. Faster drain destabilized measurement and did not reveal hidden encoder headroom.
 - Be careful with detailed source diagnostics: forcing cadence/timing trackers on the hot path reduced source counts during measurement, so use them as diagnostic-only evidence, not a performance baseline.
 
@@ -157,6 +158,7 @@ The best current explanation has shifted again:
 31. Shared-session zero frame-delay is closed. Forcing `MaxFrameDelayCount=0` on the shared HEVC tile processor fails both HEVC and ProRes runtime probes, so simple VT frame-delay knobs do not provide safe admission control around the lower-latency shared-session regime.
 32. Probe hot-path drop-source classification is closed as implemented. Adding dropped-frame message buckets to the official runtime probe produced zero HEVC/ProRes frames, so future attribution should parse existing logs or use a separate non-scoring diagnostic runner.
 33. The current clean measurement path can enter a no-frame startup failure before VT submission. Experiment 2104 converted that state into an explicit probe error and confirmed diagnostics stop at SkyLight/raw-private setup with 0 VT submissions. Future work should restore valid source delivery before further encoder or receiver tuning.
+34. The no-frame source startup failure survives a probe-level capture restart. Experiment 2105 showed one stop/start retry still yields 0 HEVC/ProRes frames, startup -1.0 ms, and 0 VT submissions, so the next startup/source-delivery work must instrument or isolate the source callback/forwarding boundary rather than retrying the probe start sequence.
 
 The target is now to make the HEVC tile-stream contract rigorous enough for the product: either clients and probes must explicitly consume independent encoded tile records as tile substreams, or the encoder topology must deliver 120 complete logical tile groups without treating valid substreams as drops.
 
@@ -179,7 +181,7 @@ The target is now to make the HEVC tile-stream contract rigorous enough for the 
 - VT session topology branch: one shared tile VT session is not keepable as-is, but it proves session topology affects callback latency. Tile-record cadence hints alone are also insufficient, hard staging-slot caps create admission failures, synchronous pending waits destabilize capture, same-PTS grouping kills output, generic non-blocking staged-submission drain breaks ProRes while regressing strict groups, source pending-window sizing fails in both directions, and `MaxFrameDelayCount=0` fails both runtime probes. If this branch continues, it must use a genuinely new per-codec lifecycle model, or it should move to a receiver/client presentation contract around the shared-session shape instead of another admission/pacing knob.
 - Metal ownership branch: shared tile-lane command queue is closed. Do not repeat queue-sharing without changing VT session ownership or presentation contract.
 - Probe instrumentation branch: do not add new counters directly to the official runtime probe unless the measurement target is otherwise unchanged and a baseline sanity run confirms frame delivery. Prefer log-parser-only diagnostics for attribution work.
-- Startup/source-delivery branch: the immediate blocker is now a zero-frame startup path on the clean tree. Before more VT/session/presentation tuning, isolate why SkyLight/raw-private capture starts but no forwarded frames reach VT in the official probe.
+- Startup/source-delivery branch: the immediate blocker is now a zero-frame startup path on the clean tree. Before more VT/session/presentation tuning, isolate why SkyLight/raw-private capture starts but no forwarded frames reach VT in the official probe. Experiment 2105 closes a generic stop/start retry, so the next useful probe should distinguish source backend start, source frame callback firing, Lumen forwarding, and VT submission using existing logs or a narrow non-hot diagnostic path.
 
 ## Measurement Command
 
