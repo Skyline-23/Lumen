@@ -553,10 +553,6 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
             return queueProfile
         }
 
-        if !effectiveTileLayout.isSingleFrame {
-            return .q2
-        }
-
         if effectiveTargetFrameRate >= 120 {
             if codec == .proResProxy {
                 return .q3
