@@ -34,6 +34,7 @@ Last updated: 2026-05-14.
 | HEVC bounded partial presentation | 2085 diagnostic: depth-4 and depth-8 newest-pending partial presentation produced only 25 two-frame updates, while dropping 152-160 stale entries and causing 9 HEVC drop events | Simple bounded newest-pending stateful presentation is too aggressive and loses useful history. The remaining receiver path is not a small tweak to pending depth; it needs either exact 2081 semantics with lower overhead or a real client-side presentation contract. |
 | HEVC fused 420 conversion | 2086 diagnostic: combined no-scale/no-cursor BGRA-to-420 Metal kernel produced 190 tile records, 94 complete groups, 2 incomplete groups, 7 drop events, and 100 VT submissions | Fusing luma/chroma conversion dispatches does not improve the HEVC ceiling and destabilizes tile cadence. The current bottleneck is not solved by simply reducing Metal pass count inside the same staged BGRA topology. |
 | HEVC VT internal BGRA input | 2087 diagnostic: staged BGRA input with Main10/HDR session properties produced 176 tile records, 88 complete groups, 11 drop events, 98 VT submissions, and 118.450 ms average callback latency | Moving BGRA-to-HEVC conversion into VT is worse than explicit staged 420v10. Keep explicit 420v10 staged input unless a different ownership/pacing model proves otherwise. |
+| HEVC tile PTS phase staggering | 2088 diagnostic: lane-index half-frame PTS staggering produced 192 tile records, 95 complete groups, 2 incomplete groups, 11 drop events, and 101 VT submissions | Separating tile-lane presentation timestamp phases does not improve VT/output cadence and worsens stability. The ceiling is not caused by both lanes sharing identical PTS cadence slots. |
 | ProRes source cadence | 2063: 135 source frames, 134 records, about 123.4 fps | ProRes frame count is no longer the limiting stage when catch-up replay is isolated from HEVC. |
 | ProRes VT encode | 2063: 135 submissions, 1.482 ms avg VT encode call, 0 drops | ProRes encoder remains fast enough after source cadence recovery. |
 | Lumen forwarding ingress | 2058/2061/2062/2063: 0 queued, 0 dropped | The Lumen bridge is not dropping the current kept tile/prores paths. |
@@ -72,6 +73,7 @@ Last updated: 2026-05-14.
 - Do not use bounded newest-pending partial presentation as the receiver model. Experiment 2085 produced only 25 updates and dropped most pending history while still causing 9 HEVC drop events.
 - Do not use a fused unscaled BGRA-to-420 Metal kernel as a standalone fix. Experiment 2086 reduced the conversion to one compute path but regressed HEVC to 94 complete groups with 7 drop events and 100 VT submissions.
 - Do not use staged BGRA input with HEVC Main10/HDR properties as a standalone fix. Experiment 2087 moved conversion into VT and regressed to 88 complete groups, 11 drops, and 118.450 ms average callback latency.
+- Do not use lane-index PTS phase staggering as a standalone VT cadence fix. Experiment 2088 kept tile records at 192 but still produced only 95 complete groups with 11 drop events, so identical lane PTS cadence slots are not the bottleneck.
 - Do not optimize host probe drain cadence. Faster drain destabilized measurement and did not reveal hidden encoder headroom.
 - Be careful with detailed source diagnostics: forcing cadence/timing trackers on the hot path reduced source counts during measurement, so use them as diagnostic-only evidence, not a performance baseline.
 
@@ -109,6 +111,7 @@ The best current explanation has shifted again:
 14. Bounded newest-pending presentation also fails. It drops the history that produced the 2081 signal, so queue-depth limiting by itself is not the stateful presentation contract.
 15. Returning to Metal conversion with a fused no-scale 420 kernel also fails. The same staged BGRA topology still regresses to 94 complete groups and nonzero drops, so the next encoder-side experiment needs a different pacing/ownership topology rather than only fewer shader dispatches.
 16. Moving color conversion into VT by submitting staged BGRA to a Main10 HEVC session fails harder. The explicit staged 420v10 path remains the better baseline; future VT/output work should not assume VT internal conversion is cheaper.
+17. Staggering tile-lane PTS phases also fails. VT/output work should not assume a simple timestamp cadence offset can desynchronize hardware drain; the next encoder-side branch needs different session ownership, callback isolation, or a real client-side tile presentation contract.
 
 The target is now to make the HEVC tile-stream contract rigorous enough for the product: either clients and probes must explicitly consume independent encoded tile records as tile substreams, or the encoder topology must deliver 120 complete logical tile groups without treating valid substreams as drops.
 
@@ -124,6 +127,7 @@ The target is now to make the HEVC tile-stream contract rigorous enough for the 
 - Tile-width alignment branch is closed for simple asymmetric CTU rounding: equal half-width columns remain the best measured geometry.
 - ProRes catch-up branch is kept and should not be widened unless new evidence shows drop-free ProRes overproduction hurts battery or latency.
 - HEVC admission branch is lower priority now: keep the 2058 tile path unless a new change regresses HDR, drops, or Android-required HEVC Main10 support.
+- VT cadence branch: simple timestamp phase staggering is closed. If this branch continues, change VT session topology or callback/output ownership rather than only shifting presentation timestamps.
 
 ## Measurement Command
 
