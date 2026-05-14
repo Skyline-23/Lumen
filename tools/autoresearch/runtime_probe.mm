@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -144,6 +145,14 @@ void emitSelectedDiagnostics(const char *diagnostics) {
     {"skyLightSyntheticIdleReplayIntervalMilliseconds", "SKYLIGHT_SYNTHETIC_IDLE_REPLAY_INTERVAL_MS"},
     {"skyLightPendingPolicy", "SKYLIGHT_PENDING_POLICY"},
     {"skyLightRecommendedPendingFrameCount", "SKYLIGHT_RECOMMENDED_PENDING_FRAME_COUNT"},
+    {"skyLightPreflightWarmupMode", "SKYLIGHT_PREFLIGHT_WARMUP_MODE"},
+    {"skyLightPreflightWarmupStatus", "SKYLIGHT_PREFLIGHT_WARMUP_STATUS"},
+    {"skyLightPreflightWarmupStopStatus", "SKYLIGHT_PREFLIGHT_WARMUP_STOP_STATUS"},
+    {"skyLightPreflightWarmupCallbackCount", "SKYLIGHT_PREFLIGHT_WARMUP_CALLBACK_COUNT"},
+    {"skyLightPreflightWarmupCompleteFrameCount", "SKYLIGHT_PREFLIGHT_WARMUP_COMPLETE_FRAME_COUNT"},
+    {"skyLightPreflightWarmupObservedFrameRate", "SKYLIGHT_PREFLIGHT_WARMUP_OBSERVED_FRAME_RATE"},
+    {"skyLightPreflightWarmupCadence", "SKYLIGHT_PREFLIGHT_WARMUP_CADENCE"},
+    {"skyLightPreflightWarmupError", "SKYLIGHT_PREFLIGHT_WARMUP_ERROR"},
     {"sourceFrameCount", "SOURCE_FRAME_COUNT"},
     {"sourceDisplayDeltaCount", "SOURCE_DISPLAY_DELTA_COUNT"},
     {"sourceLastDisplayDeltaMilliseconds", "SOURCE_LAST_DISPLAY_DELTA_MS"},
@@ -336,6 +345,7 @@ int main(int argc, const char *argv[]) {
     int32_t fps = std::atoi(argv[3]);
     LumenCoreCaptureCodec codec = codecFromArgument(argc >= 5 ? argv[4] : nullptr);
     uint32_t displayID = CGMainDisplayID();
+    setenv("MDK_SKYLIGHT_DISPLAY_STREAM_PREFLIGHT_FIRST_FRAME_WARMUP", "1", 1);
 
     LumenMacBridgeController *controller = LumenMacBridgeControllerCreate();
     if (controller == nullptr) {
