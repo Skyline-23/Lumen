@@ -31,9 +31,6 @@ AUTORESEARCH_RUNTIME_PROBE_COMPLETE_FRAME_GROUPS=2
 AUTORESEARCH_RUNTIME_PROBE_INCOMPLETE_FRAME_GROUPS=1
 AUTORESEARCH_RUNTIME_PROBE_MAX_TILE_COUNT=2
 AUTORESEARCH_RUNTIME_PROBE_MAX_ENCODED_LANE_COUNT=2
-AUTORESEARCH_RUNTIME_PROBE_STATEFUL_PRESENTATION_ONE_FRAME_UPDATES=3
-AUTORESEARCH_RUNTIME_PROBE_STATEFUL_PRESENTATION_TWO_FRAME_UPDATES=5
-AUTORESEARCH_RUNTIME_PROBE_STATEFUL_PRESENTATION_THREE_FRAME_UPDATES=6
 AUTORESEARCH_RUNTIME_PROBE_HDR_FRAMES=16
 AUTORESEARCH_RUNTIME_PROBE_FIRST_FRAME_HDR=1
 AUTORESEARCH_RUNTIME_PROBE_STARTUP_MS=742.500
@@ -98,9 +95,6 @@ AUTORESEARCH_RUNTIME_PROBE_VT_PIXEL_BUFFER_CACHE_SIZE=2
         self.assertEqual(metrics["incomplete_frame_groups"], 1)
         self.assertEqual(metrics["max_tile_count"], 2)
         self.assertEqual(metrics["max_encoded_lane_count"], 2)
-        self.assertEqual(metrics["stateful_presentation_one_frame_updates"], 3)
-        self.assertEqual(metrics["stateful_presentation_two_frame_updates"], 5)
-        self.assertEqual(metrics["stateful_presentation_three_frame_updates"], 6)
         self.assertEqual(metrics["codec"], "hevc")
         self.assertEqual(metrics["hdr_frames"], 16)
         self.assertTrue(metrics["first_frame_hdr"])

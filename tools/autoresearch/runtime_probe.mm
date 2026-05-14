@@ -11,15 +11,11 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <deque>
-#include <limits>
 #include <string>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
-
-#include <mach/mach_time.h>
 
 extern "C" bool LumenMacBridgeControllerCopyCaptureDiagnostics(
   LumenMacBridgeController *controller,
@@ -88,19 +84,6 @@ struct TileGroupProgress {
   std::unordered_set<uint32_t> observedTileIndexes;
 };
 
-struct TilePresentationRecord {
-  uint32_t tileIndex = 0;
-  uint32_t tileCount = 1;
-  uint64_t displayTime = 0;
-  bool isHDRSignaled = false;
-};
-
-struct StatefulPresentationStats {
-  uint64_t oneFrameUpdates = 0;
-  uint64_t twoFrameUpdates = 0;
-  uint64_t threeFrameUpdates = 0;
-};
-
 double averageLatency(const std::vector<double> &samples) {
   if (samples.empty()) {
     return 0.0;
@@ -124,132 +107,6 @@ uint64_t tileGroupKey(const LumenCoreEncodedCaptureFrameRecord &record) {
     return record.tile_metadata.frame_group_id;
   }
   return record.source_sequence_number;
-}
-
-uint64_t machTicksForNanoseconds(uint64_t nanoseconds) {
-  mach_timebase_info_data_t timebase {};
-  if (mach_timebase_info(&timebase) != KERN_SUCCESS || timebase.numer == 0) {
-    return nanoseconds;
-  }
-  const long double ticks =
-    (static_cast<long double>(nanoseconds) * static_cast<long double>(timebase.denom)) /
-    static_cast<long double>(timebase.numer);
-  return static_cast<uint64_t>(ticks + 0.5L);
-}
-
-uint64_t maxDisplaySkew(const std::vector<uint64_t> &displayTimes) {
-  uint64_t minimum = std::numeric_limits<uint64_t>::max();
-  uint64_t maximum = 0;
-  for (uint64_t displayTime : displayTimes) {
-    minimum = std::min(minimum, displayTime);
-    maximum = std::max(maximum, displayTime);
-  }
-  return maximum >= minimum ? maximum - minimum : 0;
-}
-
-uint64_t countStatefulPresentationUpdates(
-  const std::vector<TilePresentationRecord> &records,
-  uint32_t expectedTileCount,
-  uint64_t skewBudget
-) {
-  if (records.empty() || expectedTileCount <= 1) {
-    return 0;
-  }
-
-  std::vector<std::deque<TilePresentationRecord>> pending(expectedTileCount);
-  for (const TilePresentationRecord &record : records) {
-    if (record.tileIndex < expectedTileCount && record.displayTime > 0) {
-      pending[record.tileIndex].push_back(record);
-    }
-  }
-
-  std::vector<uint64_t> displayedTimes(expectedTileCount, 0);
-  bool initialized = false;
-  uint64_t updates = 0;
-  bool madeProgress = true;
-
-  while (madeProgress) {
-    madeProgress = false;
-
-    if (!initialized) {
-      bool hasAllTiles = true;
-      std::vector<uint64_t> frontTimes(expectedTileCount, 0);
-      for (uint32_t index = 0; index < expectedTileCount; index += 1) {
-        if (pending[index].empty()) {
-          hasAllTiles = false;
-          break;
-        }
-        frontTimes[index] = pending[index].front().displayTime;
-      }
-      if (!hasAllTiles) {
-        break;
-      }
-
-      if (maxDisplaySkew(frontTimes) <= skewBudget) {
-        for (uint32_t index = 0; index < expectedTileCount; index += 1) {
-          displayedTimes[index] = pending[index].front().displayTime;
-          pending[index].pop_front();
-        }
-        initialized = true;
-        updates += expectedTileCount;
-        madeProgress = true;
-        continue;
-      }
-
-      uint32_t oldestTile = 0;
-      uint64_t oldestTime = frontTimes[0];
-      for (uint32_t index = 1; index < expectedTileCount; index += 1) {
-        if (frontTimes[index] < oldestTime) {
-          oldestTile = index;
-          oldestTime = frontTimes[index];
-        }
-      }
-      pending[oldestTile].pop_front();
-      madeProgress = true;
-      continue;
-    }
-
-    for (uint32_t index = 0; index < expectedTileCount; index += 1) {
-      while (!pending[index].empty() &&
-             pending[index].front().displayTime <= displayedTimes[index]) {
-        pending[index].pop_front();
-        madeProgress = true;
-      }
-      if (pending[index].empty()) {
-        continue;
-      }
-
-      std::vector<uint64_t> candidateTimes = displayedTimes;
-      candidateTimes[index] = pending[index].front().displayTime;
-      if (maxDisplaySkew(candidateTimes) <= skewBudget) {
-        displayedTimes[index] = pending[index].front().displayTime;
-        pending[index].pop_front();
-        updates += 1;
-        madeProgress = true;
-      }
-    }
-  }
-
-  return updates;
-}
-
-StatefulPresentationStats statefulPresentationStats(
-  const std::vector<TilePresentationRecord> &records,
-  uint32_t expectedTileCount,
-  int32_t fps
-) {
-  if (fps <= 0) {
-    return {};
-  }
-
-  const uint64_t frameNanoseconds =
-    static_cast<uint64_t>((1'000'000'000.0 / static_cast<double>(fps)) + 0.5);
-  const uint64_t frameTicks = std::max<uint64_t>(1, machTicksForNanoseconds(frameNanoseconds));
-  StatefulPresentationStats stats;
-  stats.oneFrameUpdates = countStatefulPresentationUpdates(records, expectedTileCount, frameTicks);
-  stats.twoFrameUpdates = countStatefulPresentationUpdates(records, expectedTileCount, frameTicks * 2);
-  stats.threeFrameUpdates = countStatefulPresentationUpdates(records, expectedTileCount, frameTicks * 3);
-  return stats;
 }
 
 void countLogicalFrame(ProbeMetrics &metrics, bool isHDRSignaled) {
@@ -390,7 +247,6 @@ void drainForwardedFrames(
   LumenMacBridgeController *controller,
   ProbeMetrics &metrics,
   std::unordered_map<uint64_t, TileGroupProgress> &tileGroups,
-  std::vector<TilePresentationRecord> &tilePresentationRecords,
   bool countEncodedTileRecordsAsFrames
 ) {
   while (true) {
@@ -421,12 +277,6 @@ void drainForwardedFrames(
     }
 
     metrics.tiledFrameRecords += 1;
-    tilePresentationRecords.push_back(TilePresentationRecord {
-      record.tile_metadata.tile_index,
-      record.tile_metadata.tile_count,
-      record.source_display_time,
-      record.is_hdr_signaled,
-    });
     const bool countsTileRecordAsFrame =
       countEncodedTileRecordsAsFrames &&
       record.tile_metadata.encoded_lane_count > 1;
@@ -537,20 +387,12 @@ int main(int argc, const char *argv[]) {
 
     ProbeMetrics metrics;
     std::unordered_map<uint64_t, TileGroupProgress> tileGroups;
-    std::vector<TilePresentationRecord> tilePresentationRecords;
-    tilePresentationRecords.reserve(512);
     const bool countEncodedTileRecordsAsFrames =
       configuration.sink_request.capability.supports_encoded_tile_stream;
     const auto captureStartTime = std::chrono::steady_clock::now();
     const auto startupDeadline = captureStartTime + std::chrono::seconds(10);
     while (std::chrono::steady_clock::now() < startupDeadline && !metrics.firstFrameSeen) {
-      drainForwardedFrames(
-        controller,
-        metrics,
-        tileGroups,
-        tilePresentationRecords,
-        countEncodedTileRecordsAsFrames
-      );
+      drainForwardedFrames(controller, metrics, tileGroups, countEncodedTileRecordsAsFrames);
       drainForwardedEvents(controller, metrics);
       if (metrics.firstFrameSeen && metrics.startupMilliseconds < 0.0) {
         metrics.startupMilliseconds = std::chrono::duration<double, std::milli>(
@@ -564,25 +406,13 @@ int main(int argc, const char *argv[]) {
     if (metrics.firstFrameSeen) {
       const auto sampleDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1000);
       while (std::chrono::steady_clock::now() < sampleDeadline) {
-        drainForwardedFrames(
-          controller,
-          metrics,
-          tileGroups,
-          tilePresentationRecords,
-          countEncodedTileRecordsAsFrames
-        );
+        drainForwardedFrames(controller, metrics, tileGroups, countEncodedTileRecordsAsFrames);
         drainForwardedEvents(controller, metrics);
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
       }
     }
 
-    drainForwardedFrames(
-      controller,
-      metrics,
-      tileGroups,
-      tilePresentationRecords,
-      countEncodedTileRecordsAsFrames
-    );
+    drainForwardedFrames(controller, metrics, tileGroups, countEncodedTileRecordsAsFrames);
     drainForwardedEvents(controller, metrics);
     if (metrics.firstFrameSeen && metrics.startupMilliseconds < 0.0) {
       metrics.startupMilliseconds = std::chrono::duration<double, std::milli>(
@@ -617,8 +447,6 @@ int main(int argc, const char *argv[]) {
         incompleteFrameGroups += 1;
       }
     }
-    StatefulPresentationStats presentationStats =
-      statefulPresentationStats(tilePresentationRecords, metrics.maxTileCount, fps);
 
     std::printf("AUTORESEARCH_RUNTIME_PROBE_STATUS=ok\n");
     std::printf("AUTORESEARCH_RUNTIME_PROBE_WIDTH=%d\n", width);
@@ -632,18 +460,6 @@ int main(int argc, const char *argv[]) {
     std::printf("AUTORESEARCH_RUNTIME_PROBE_INCOMPLETE_FRAME_GROUPS=%llu\n", incompleteFrameGroups);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_MAX_TILE_COUNT=%u\n", metrics.maxTileCount);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_MAX_ENCODED_LANE_COUNT=%u\n", metrics.maxEncodedLaneCount);
-    std::printf(
-      "AUTORESEARCH_RUNTIME_PROBE_STATEFUL_PRESENTATION_ONE_FRAME_UPDATES=%llu\n",
-      presentationStats.oneFrameUpdates
-    );
-    std::printf(
-      "AUTORESEARCH_RUNTIME_PROBE_STATEFUL_PRESENTATION_TWO_FRAME_UPDATES=%llu\n",
-      presentationStats.twoFrameUpdates
-    );
-    std::printf(
-      "AUTORESEARCH_RUNTIME_PROBE_STATEFUL_PRESENTATION_THREE_FRAME_UPDATES=%llu\n",
-      presentationStats.threeFrameUpdates
-    );
     std::printf("AUTORESEARCH_RUNTIME_PROBE_HDR_FRAMES=%llu\n", metrics.hdrFrames);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_FIRST_FRAME_HDR=%d\n", metrics.firstFrameHDR ? 1 : 0);
     std::printf("AUTORESEARCH_RUNTIME_PROBE_STARTUP_MS=%.3f\n", metrics.startupMilliseconds);
