@@ -651,7 +651,7 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         )
     }
 
-    private var effectiveTileLayout: MDKEncodedCaptureTileLayout {
+    var effectiveTileLayout: MDKEncodedCaptureTileLayout {
         guard codec == .hevc,
               sinkRequest.capability.supportsEncodedTileStream,
               negotiatedDynamicRangeTransport == LumenCoreDynamicRangeTransportSDRBaseHDROverlay,
