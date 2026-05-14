@@ -646,8 +646,21 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
             deliveryMode: .callbackOnly,
             capturePixelFormat: capturePixelFormat,
             encoderInputStrategy: effectiveEncoderInputStrategy.mdkValue,
-            hdrConfiguration: encodedColorConfiguration
+            hdrConfiguration: encodedColorConfiguration,
+            tileLayout: effectiveTileLayout
         )
+    }
+
+    private var effectiveTileLayout: MDKEncodedCaptureTileLayout {
+        guard codec == .hevc,
+              sinkRequest.capability.supportsEncodedTileStream,
+              negotiatedDynamicRangeTransport == LumenCoreDynamicRangeTransportSDRBaseHDROverlay,
+              (requestedWidth ?? 0) > 0,
+              (requestedHeight ?? 0) > 0 else {
+            return .singleFrame
+        }
+
+        return MDKEncodedCaptureTileLayout(tileCount: 2, encodedLaneCount: 2)
     }
 
     public var effectiveTargetFrameRate: Int {
@@ -1278,6 +1291,13 @@ public actor LumenBridgeRuntime {
         let queueDepthReserve = max(configuration.negotiatedQueueProfile.queueDepthHint, 1)
         let hdrMetadataSlack = configuration.prefersRealtimeHDRMetadata ? 1 : 0
         let targetFrameRate = configuration.effectiveTargetFrameRate
+        let tileRecordMultiplier = Int(
+            max(configuration.effectiveTileLayout.tileCount, configuration.effectiveTileLayout.encodedLaneCount)
+        )
+
+        if !configuration.effectiveTileLayout.isSingleFrame {
+            return min(max((queueDepthReserve + hdrMetadataSlack) * tileRecordMultiplier, tileRecordMultiplier * 2), 8)
+        }
 
         if targetFrameRate >= 120 {
             return min(max(queueDepthReserve + hdrMetadataSlack, 2), 3)
