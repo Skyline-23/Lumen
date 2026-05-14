@@ -101,6 +101,7 @@ Last updated: 2026-05-14.
 - Do not reduce the HEVC tiled SkyLight pending-frame window as shared-session admission control. Experiment 2100 failed the HEVC runtime probe and did not preserve the ProRes suite.
 - Do not increase the HEVC tiled SkyLight pending-frame window as shared-session admission control. Experiment 2101 failed the HEVC runtime probe and did not preserve the ProRes suite.
 - Do not set the shared HEVC tile session's `MaxFrameDelayCount` to 0 as admission control. Experiment 2102 failed both runtime probes before useful HEVC/ProRes counters were available.
+- Do not add drop-source classification directly to the official runtime probe as hot-path instrumentation. Experiment 2103 made the official probe produce zero HEVC and ProRes frames, so drop attribution must come from already-valid logs or a separate diagnostic path.
 - Do not optimize host probe drain cadence. Faster drain destabilized measurement and did not reveal hidden encoder headroom.
 - Be careful with detailed source diagnostics: forcing cadence/timing trackers on the hot path reduced source counts during measurement, so use them as diagnostic-only evidence, not a performance baseline.
 
@@ -153,6 +154,7 @@ The best current explanation has shifted again:
 29. Source-level pending-window reduction is also closed for shared-session admission. Lowering the HEVC tiled SkyLight pending window to 12 destabilizes the runtime probe, so the source ingress window should not be used as the next pacing knob.
 30. Source-level pending-window expansion is closed too. Raising the HEVC tiled SkyLight pending window to 24 also destabilizes the runtime probe, so the shared-session branch should not continue with source-window sizing in either direction.
 31. Shared-session zero frame-delay is closed. Forcing `MaxFrameDelayCount=0` on the shared HEVC tile processor fails both HEVC and ProRes runtime probes, so simple VT frame-delay knobs do not provide safe admission control around the lower-latency shared-session regime.
+32. Probe hot-path drop-source classification is closed as implemented. Adding dropped-frame message buckets to the official runtime probe produced zero HEVC/ProRes frames, so future attribution should parse existing logs or use a separate non-scoring diagnostic runner.
 
 The target is now to make the HEVC tile-stream contract rigorous enough for the product: either clients and probes must explicitly consume independent encoded tile records as tile substreams, or the encoder topology must deliver 120 complete logical tile groups without treating valid substreams as drops.
 
@@ -174,6 +176,7 @@ The target is now to make the HEVC tile-stream contract rigorous enough for the 
 - VT lifecycle branch: skipping `VTCompressionSessionPrepareToEncodeFrames` is closed. Do not retry lazy session start without changing session ownership or output contract.
 - VT session topology branch: one shared tile VT session is not keepable as-is, but it proves session topology affects callback latency. Tile-record cadence hints alone are also insufficient, hard staging-slot caps create admission failures, synchronous pending waits destabilize capture, same-PTS grouping kills output, generic non-blocking staged-submission drain breaks ProRes while regressing strict groups, source pending-window sizing fails in both directions, and `MaxFrameDelayCount=0` fails both runtime probes. If this branch continues, it must use a genuinely new per-codec lifecycle model, or it should move to a receiver/client presentation contract around the shared-session shape instead of another admission/pacing knob.
 - Metal ownership branch: shared tile-lane command queue is closed. Do not repeat queue-sharing without changing VT session ownership or presentation contract.
+- Probe instrumentation branch: do not add new counters directly to the official runtime probe unless the measurement target is otherwise unchanged and a baseline sanity run confirms frame delivery. Prefer log-parser-only diagnostics for attribution work.
 
 ## Measurement Command
 
