@@ -335,6 +335,10 @@ def parse_runtime_probe_output(output: str) -> dict[str, Any] | None:
         "TILED_FRAME_RECORDS": "tiled_frame_records",
         "COMPLETE_FRAME_GROUPS": "complete_frame_groups",
         "INCOMPLETE_FRAME_GROUPS": "incomplete_frame_groups",
+        "TILE_FRESH_COMPOSITE_UPDATES": "tile_fresh_composite_updates",
+        "TILE_FRESH_COMPOSITE_HDR_FRAMES": "tile_fresh_composite_hdr_frames",
+        "TILE_FRESH_COMPOSITE_WITHIN_FRAME_BUDGET": "tile_fresh_composite_within_frame_budget",
+        "TILE_FRESH_COMPOSITE_WITHIN_TWO_FRAME_BUDGET": "tile_fresh_composite_within_two_frame_budget",
         "MAX_TILE_COUNT": "max_tile_count",
         "MAX_ENCODED_LANE_COUNT": "max_encoded_lane_count",
         "VT_DIRECT_SUBMISSION_FRAME_COUNT": "vt_direct_submission_frame_count",
@@ -370,6 +374,8 @@ def parse_runtime_probe_output(output: str) -> dict[str, Any] | None:
         "VT_METAL_STAGE_MAX_MS": "vt_metal_stage_max_ms",
         "VT_ENCODE_CALL_AVG_MS": "vt_encode_call_avg_ms",
         "VT_ENCODE_CALL_MAX_MS": "vt_encode_call_max_ms",
+        "TILE_FRESH_COMPOSITE_LAST_SKEW_MS": "tile_fresh_composite_last_skew_ms",
+        "TILE_FRESH_COMPOSITE_MAX_SKEW_MS": "tile_fresh_composite_max_skew_ms",
     }
     optional_string_metrics = {
         "SOURCE_BACKEND": "source_backend",
