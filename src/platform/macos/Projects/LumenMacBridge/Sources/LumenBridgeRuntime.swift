@@ -2023,6 +2023,7 @@ public actor LumenBridgeRuntime {
             "videoToolboxEncodeInvocation",
             "videoToolboxMetalStage",
             "videoToolboxVTEncodeCall",
+            "videoToolboxTileLane",
             "videoToolboxProperty."
         ]
         let notes = statistics.notes.filter { note in
