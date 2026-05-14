@@ -349,10 +349,6 @@ def parse_runtime_probe_output(output: str) -> dict[str, Any] | None:
         "VT_METAL_STAGE_SAMPLE_COUNT": "vt_metal_stage_sample_count",
         "VT_ENCODE_CALL_SAMPLE_COUNT": "vt_encode_call_sample_count",
         "SKYLIGHT_RECOMMENDED_PENDING_FRAME_COUNT": "skylight_recommended_pending_frame_count",
-        "SKYLIGHT_PREFLIGHT_BENCHMARK_STATUS": "skylight_preflight_benchmark_status",
-        "SKYLIGHT_PREFLIGHT_BENCHMARK_STOP_STATUS": "skylight_preflight_benchmark_stop_status",
-        "SKYLIGHT_PREFLIGHT_BENCHMARK_CALLBACK_COUNT": "skylight_preflight_benchmark_callback_count",
-        "SKYLIGHT_PREFLIGHT_BENCHMARK_COMPLETE_FRAME_COUNT": "skylight_preflight_benchmark_complete_frame_count",
     }
     optional_float_metrics = {
         "SOURCE_LAST_DISPLAY_DELTA_MS": "source_last_display_delta_ms",
@@ -366,7 +362,6 @@ def parse_runtime_probe_output(output: str) -> dict[str, Any] | None:
         "SOURCE_AVG_UPDATE_DROP_COUNT": "source_avg_update_drop_count",
         "SOURCE_APPROX_FRAME_RATE": "source_approx_frame_rate",
         "SKYLIGHT_SYNTHETIC_IDLE_REPLAY_INTERVAL_MS": "skylight_synthetic_idle_replay_interval_ms",
-        "SKYLIGHT_PREFLIGHT_BENCHMARK_OBSERVED_FRAME_RATE": "skylight_preflight_benchmark_observed_frame_rate",
         "VT_ENCODE_QUEUE_WAIT_AVG_MS": "vt_encode_queue_wait_avg_ms",
         "VT_ENCODE_QUEUE_WAIT_MAX_MS": "vt_encode_queue_wait_max_ms",
         "VT_ENCODE_INVOCATION_AVG_MS": "vt_encode_invocation_avg_ms",
@@ -385,8 +380,6 @@ def parse_runtime_probe_output(output: str) -> dict[str, Any] | None:
         "RAW_PRIVATE_DISPLAY_STREAM_REQUESTED_MATRIX": "raw_private_display_stream_requested_matrix",
         "SKYLIGHT_SYNTHETIC_IDLE_REPLAY": "skylight_synthetic_idle_replay",
         "SKYLIGHT_PENDING_POLICY": "skylight_pending_policy",
-        "SKYLIGHT_PREFLIGHT_BENCHMARK_CADENCE": "skylight_preflight_benchmark_cadence",
-        "SKYLIGHT_PREFLIGHT_BENCHMARK_ERROR": "skylight_preflight_benchmark_error",
         "PRIVATE_CAPTURE_SOURCE_PIXEL_FORMAT": "private_capture_source_pixel_format",
         "PRIVATE_CAPTURE_REQUESTED_PIXEL_FORMAT": "private_capture_requested_pixel_format",
         "PRIVATE_CAPTURE_EXTENDED_RANGE": "private_capture_extended_range",
