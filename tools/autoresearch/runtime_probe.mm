@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -144,6 +145,13 @@ void emitSelectedDiagnostics(const char *diagnostics) {
     {"skyLightSyntheticIdleReplayIntervalMilliseconds", "SKYLIGHT_SYNTHETIC_IDLE_REPLAY_INTERVAL_MS"},
     {"skyLightPendingPolicy", "SKYLIGHT_PENDING_POLICY"},
     {"skyLightRecommendedPendingFrameCount", "SKYLIGHT_RECOMMENDED_PENDING_FRAME_COUNT"},
+    {"skyLightPreflightBenchmarkStatus", "SKYLIGHT_PREFLIGHT_BENCHMARK_STATUS"},
+    {"skyLightPreflightBenchmarkStopStatus", "SKYLIGHT_PREFLIGHT_BENCHMARK_STOP_STATUS"},
+    {"skyLightPreflightBenchmarkCallbackCount", "SKYLIGHT_PREFLIGHT_BENCHMARK_CALLBACK_COUNT"},
+    {"skyLightPreflightBenchmarkCompleteFrameCount", "SKYLIGHT_PREFLIGHT_BENCHMARK_COMPLETE_FRAME_COUNT"},
+    {"skyLightPreflightBenchmarkObservedFrameRate", "SKYLIGHT_PREFLIGHT_BENCHMARK_OBSERVED_FRAME_RATE"},
+    {"skyLightPreflightBenchmarkCadence", "SKYLIGHT_PREFLIGHT_BENCHMARK_CADENCE"},
+    {"skyLightPreflightBenchmarkError", "SKYLIGHT_PREFLIGHT_BENCHMARK_ERROR"},
     {"sourceFrameCount", "SOURCE_FRAME_COUNT"},
     {"sourceDisplayDeltaCount", "SOURCE_DISPLAY_DELTA_COUNT"},
     {"sourceLastDisplayDeltaMilliseconds", "SOURCE_LAST_DISPLAY_DELTA_MS"},
@@ -336,6 +344,7 @@ int main(int argc, const char *argv[]) {
     int32_t fps = std::atoi(argv[3]);
     LumenCoreCaptureCodec codec = codecFromArgument(argc >= 5 ? argv[4] : nullptr);
     uint32_t displayID = CGMainDisplayID();
+    setenv("MDK_SKYLIGHT_DISPLAY_STREAM_PREFLIGHT_BENCHMARK", "1", 1);
 
     LumenMacBridgeController *controller = LumenMacBridgeControllerCreate();
     if (controller == nullptr) {
