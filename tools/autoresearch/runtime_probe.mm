@@ -211,10 +211,6 @@ void emitSelectedDiagnostics(const char *diagnostics) {
     {"videoToolboxVTEncodeCallSampleCount", "VT_ENCODE_CALL_SAMPLE_COUNT"},
     {"videoToolboxVTEncodeCallAverageMilliseconds", "VT_ENCODE_CALL_AVG_MS"},
     {"videoToolboxVTEncodeCallMaxMilliseconds", "VT_ENCODE_CALL_MAX_MS"},
-    {"encodedTilePresentationContract", "ENCODED_TILE_PRESENTATION_CONTRACT"},
-    {"encodedTilePresentationCompletion", "ENCODED_TILE_PRESENTATION_COMPLETION"},
-    {"encodedTilePresentationLaneCount", "ENCODED_TILE_PRESENTATION_LANE_COUNT"},
-    {"encodedTileStrictGroupDiagnostics", "ENCODED_TILE_STRICT_GROUP_DIAGNOSTICS"},
   };
 
   std::string remaining(diagnostics);
