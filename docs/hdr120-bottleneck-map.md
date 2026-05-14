@@ -38,6 +38,7 @@ Last updated: 2026-05-14.
 | HEVC callback augmentation deferral | 2089 diagnostic: deferring HDR metadata augmentation from the VT callback entry to `outputQueue` produced 193 tile records, 96 complete groups, 1 incomplete group, 5 drop events, and 102 VT submissions | Callback entry work placement is not the primary drain bottleneck. Moving HEVC HDR augmentation off the callback thread does not improve callback latency or strict groups. |
 | HEVC explicit encode duration | 2090 diagnostic: passing `1 / targetFrameRate` as each VT encode-frame duration produced 192 tile records, 94 complete groups, 4 incomplete groups, 9 drop events, and 100 VT submissions | Per-frame duration hints destabilize HEVC tile cadence. The session-level `ExpectedDuration` hint is better than concrete per-frame duration for this path. |
 | HEVC shared Metal command queue | 2091 diagnostic: sharing one Metal command queue across tile lanes produced 193 tile records, 96 complete groups, 1 incomplete group, 9 drop events, and 102 VT submissions | Independent Metal command queues are not the root cause of the VT drain ceiling. Shared queue ownership increases drop pressure without improving callback latency. |
+| HEVC shared VT output queue | 2092 diagnostic: sharing one serial output queue across tile-lane VT processors produced 193 tile records, 96 complete groups, 1 incomplete group, 6 drop events, and 102 VT submissions | Per-lane output-handler delivery concurrency is not the root cause of the VT drain ceiling. Shared output queue ownership does not improve callback latency or strict groups. |
 | ProRes source cadence | 2063: 135 source frames, 134 records, about 123.4 fps | ProRes frame count is no longer the limiting stage when catch-up replay is isolated from HEVC. |
 | ProRes VT encode | 2063: 135 submissions, 1.482 ms avg VT encode call, 0 drops | ProRes encoder remains fast enough after source cadence recovery. |
 | Lumen forwarding ingress | 2058/2061/2062/2063: 0 queued, 0 dropped | The Lumen bridge is not dropping the current kept tile/prores paths. |
@@ -80,6 +81,7 @@ Last updated: 2026-05-14.
 - Do not defer only HEVC HDR static metadata augmentation out of the VT callback as a standalone callback-drain fix. Experiment 2089 still produced only 96 complete groups with 5 drop events and unchanged callback latency.
 - Do not pass explicit per-frame VT encode duration as a standalone cadence fix. Experiment 2090 regressed to 94 complete groups with 9 drops and 4 incomplete groups; keep `.invalid` duration with session-level `ExpectedDuration`.
 - Do not share a single Metal command queue across HEVC tile lanes as a standalone completion-ownership fix. Experiment 2091 still produced only 96 complete groups with 9 drops and unchanged callback latency.
+- Do not share a single VT output queue across HEVC tile-lane processors as a standalone output-drain fix. Experiment 2092 still produced only 96 complete groups with 6 drops and unchanged callback latency.
 - Do not optimize host probe drain cadence. Faster drain destabilized measurement and did not reveal hidden encoder headroom.
 - Be careful with detailed source diagnostics: forcing cadence/timing trackers on the hot path reduced source counts during measurement, so use them as diagnostic-only evidence, not a performance baseline.
 
@@ -121,6 +123,7 @@ The best current explanation has shifted again:
 18. Deferring callback-local HDR augmentation also fails. The VT callback latency bucket reflects downstream encoder/output drain more than local metadata wrapping work, so callback work placement alone is not enough.
 19. Explicit per-frame duration also fails. The VT cadence problem is not fixed by making frame duration more concrete; this appears to add ordering or scheduler pressure rather than reducing drain jitter.
 20. Sharing the tile-lane Metal command queue also fails. GPU completion ownership at the command-queue level does not explain the strict-group plateau; the bottleneck is deeper than simple Metal queue burst regularity.
+21. Sharing the tile-lane VT output queue also fails. Output-handler serialization after VT callbacks does not change the ~70 ms callback latency regime or the 96 strict-group plateau, so the remaining encoder-side branch must alter VT session/drain ownership itself rather than only downstream queue ownership.
 
 The target is now to make the HEVC tile-stream contract rigorous enough for the product: either clients and probes must explicitly consume independent encoded tile records as tile substreams, or the encoder topology must deliver 120 complete logical tile groups without treating valid substreams as drops.
 
@@ -137,7 +140,7 @@ The target is now to make the HEVC tile-stream contract rigorous enough for the 
 - ProRes catch-up branch is kept and should not be widened unless new evidence shows drop-free ProRes overproduction hurts battery or latency.
 - HEVC admission branch is lower priority now: keep the 2058 tile path unless a new change regresses HDR, drops, or Android-required HEVC Main10 support.
 - VT cadence branch: simple timestamp phase staggering is closed. If this branch continues, change VT session topology or callback/output ownership rather than only shifting presentation timestamps.
-- Callback ownership branch: simple deferral of HEVC HDR augmentation is closed. Future callback work must isolate VT output ownership more structurally than moving sample-buffer wrapping into the same serial output queue.
+- Callback ownership branch: simple deferral of HEVC HDR augmentation and simple tile-lane output-queue sharing are closed. Future callback work must change VT session/drain ownership more structurally than moving sample-buffer wrapping or output delivery onto a different serial queue.
 - VT timing-hint branch: explicit per-frame duration is closed. Keep session-level duration hints and avoid more timestamp/duration-only tweaks unless coupled to a different session topology.
 - Metal ownership branch: shared tile-lane command queue is closed. Do not repeat queue-sharing without changing VT session ownership or presentation contract.
 
