@@ -337,7 +337,6 @@ def parse_runtime_probe_output(output: str) -> dict[str, Any] | None:
         "INCOMPLETE_FRAME_GROUPS": "incomplete_frame_groups",
         "MAX_TILE_COUNT": "max_tile_count",
         "MAX_ENCODED_LANE_COUNT": "max_encoded_lane_count",
-        "STARTUP_RETRY_COUNT": "startup_retry_count",
         "VT_DIRECT_SUBMISSION_FRAME_COUNT": "vt_direct_submission_frame_count",
         "VT_STAGED_SUBMISSION_FRAME_COUNT": "vt_staged_submission_frame_count",
         "VT_SUBMITTED_FRAME_COUNT": "vt_submitted_frame_count",
