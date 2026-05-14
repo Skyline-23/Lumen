@@ -4,23 +4,23 @@ Last updated: 2026-05-14.
 
 ## Current Best
 
-- Best score: 110.00 from experiment 2058; best objective-progress state is experiment 2062 because it keeps the 2061 behavior and adds the missing HEVC tile-group audit.
-- Stable HEVC tile-record shape: 178-184 encoded tile records / HDR records in the 1 s probe, with 2 independent half-height encoded lanes and zero drops.
-- Stable HEVC logical-group shape: experiment 2062 reports 89 complete frame groups and 0 incomplete groups from 178 tile records. This is stable, but it is not 120 complete logical frames.
-- Current ProRes shape: experiment 2062 reaches 141 ProRes frames / 141 HDR records, 142 VT submissions, zero drops, and about 131.15 fps source cadence by using ProRes-only bounded replay catch-up.
+- Best score: 110.00 from experiment 2058; best objective-progress state is experiment 2063 because it raises HEVC complete tile groups while preserving zero drops and ProRes over 120.
+- Stable HEVC tile-record shape: 194 encoded tile records / HDR records in the 1 s probe, with 2 independent half-width encoded lanes and zero drops.
+- Stable HEVC logical-group shape: experiment 2063 reports 97 complete frame groups and 0 incomplete groups from 194 tile records. This is stable and better than 2062, but it is still not 120 complete logical frames.
+- Current ProRes shape: experiment 2063 reaches 134 ProRes frames / 134 HDR records, 135 VT submissions, zero drops, and about 123.4 fps source cadence by using ProRes-only bounded replay catch-up.
 - Contract: keep HEVC Main10, PQ HDR, target 3512x2290, 120 fps, low latency, and existing quality/bitrate policy. Do not trade quality or high refresh for score.
 
 ## Measured Pipeline
 
 | Boundary | Representative measurement | Interpretation |
 | --- | ---: | --- |
-| HEVC source/tiling | 2062: 178 tile records, 178 HDR records, max tile count 2, encoded lane count 2 | Protocol-level tile records bypass the old single full-frame 101-102 output ceiling. |
-| HEVC logical groups | 2062: 89 complete frame groups, 0 incomplete groups | The tile stream is internally paired, but logical-frame throughput is still below 120 groups/s. |
-| HEVC VT submission | 2062: 90 staged/submitted half-height tile frames | The HEVC tile path reaches enough tile records for the score cap, but each logical frame needs 2 tile submissions. |
-| HEVC callback/stability | 2062: 42.035 ms avg callback latency, 0 drops | Stability is currently fixed for the tile-record path; do not reopen naive tile emission or forwarding capacity churn. |
-| ProRes source cadence | 2062: 149 source frames, 141 records, about 131.15 fps | ProRes frame count is no longer the limiting stage when catch-up replay is isolated from HEVC. |
-| ProRes VT encode | 2062: 142 submissions, 2.472 ms avg VT encode call, 0 drops | ProRes encoder remains fast enough after source cadence recovery. |
-| Lumen forwarding ingress | 2058/2061/2062: 0 queued, 0 dropped | The Lumen bridge is not dropping the current kept tile/prores paths. |
+| HEVC source/tiling | 2063: 194 tile records, 194 HDR records, max tile count 2, encoded lane count 2 | Protocol-level tile records bypass the old single full-frame 101-102 output ceiling. |
+| HEVC logical groups | 2063: 97 complete frame groups, 0 incomplete groups | Column partitioning improves logical-frame throughput, but it remains below 120 groups/s. |
+| HEVC VT submission | 2063: 103 staged/submitted half-width tile frames | The HEVC tile path reaches enough tile records for the score cap, but each logical frame needs 2 tile submissions. |
+| HEVC callback/stability | 2063: 70.483 ms avg callback latency, 0 drops | Stability is currently fixed for the tile-record path; do not reopen naive tile emission or forwarding capacity churn. |
+| ProRes source cadence | 2063: 135 source frames, 134 records, about 123.4 fps | ProRes frame count is no longer the limiting stage when catch-up replay is isolated from HEVC. |
+| ProRes VT encode | 2063: 135 submissions, 1.482 ms avg VT encode call, 0 drops | ProRes encoder remains fast enough after source cadence recovery. |
+| Lumen forwarding ingress | 2058/2061/2062/2063: 0 queued, 0 dropped | The Lumen bridge is not dropping the current kept tile/prores paths. |
 
 ## Closed Or Low-Priority Axes
 
@@ -32,6 +32,7 @@ Last updated: 2026-05-14.
 - Do not repeat ProRes replay-timer queue isolation as a standalone fix. Experiment 2059 kept the score capped at 110.00 but ProRes regressed to 106 frames and about 95.63 fps source cadence.
 - Do not repeat shared replay catch-up that changes HEVC single-replay timestamp semantics. Experiment 2060 recovered ProRes but introduced 21 HEVC drop events. Experiment 2061 shows the keepable shape is ProRes-only batch replay with the original HEVC single-replay path preserved.
 - Do not treat encoded tile-record count alone as proof of logical-frame completion. Experiment 2062 shows 178 stable tile records but only 89 complete logical tile groups.
+- Do not revert to full-width half-height tile bands unless a later experiment proves columns break client decoding. Experiment 2063 raised complete logical groups from 89 to 97 with zero drops.
 - Do not optimize host probe drain cadence. Faster drain destabilized measurement and did not reveal hidden encoder headroom.
 - Be careful with detailed source diagnostics: forcing cadence/timing trackers on the hot path reduced source counts during measurement, so use them as diagnostic-only evidence, not a performance baseline.
 
@@ -53,9 +54,9 @@ Stability failures are usually not crashes in this campaign. If `DROP_EVENTS` is
 
 The best current explanation has shifted again:
 
-1. For HEVC, single full-frame VT output was the old ceiling; the kept tile-record protocol now reaches 178-184 HDR tile records with zero drops.
-2. For ProRes, experiment 2061/2062 recovers source cadence and reaches 136-141 HDR records with zero drops, so ProRes frame count is no longer the primary limiter.
-3. The remaining HEVC gap is no longer unknown: experiment 2062 proves the current stream reaches 89 complete logical tile groups, not 120 complete logical frames.
+1. For HEVC, single full-frame VT output was the old ceiling; the kept tile-record protocol now reaches 194 HDR tile records with zero drops.
+2. For ProRes, experiment 2061-2063 recovers source cadence and reaches 134-141 HDR records with zero drops, so ProRes frame count is no longer the primary limiter.
+3. The remaining HEVC gap is now 97 complete logical tile groups versus the 120 target. Tile geometry matters: column partitioning improved the previous 89-group audit.
 
 The target is now to make the HEVC tile-stream contract rigorous enough for the product: either clients and probes must explicitly consume independent encoded tile records as tile substreams, or the encoder topology must deliver 120 complete logical tile groups without treating valid substreams as drops.
 
