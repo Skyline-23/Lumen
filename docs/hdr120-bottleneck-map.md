@@ -62,6 +62,7 @@ Last updated: 2026-05-14.
 | ProRes source cadence | 2063: 135 source frames, 134 records, about 123.4 fps | ProRes frame count is no longer the limiting stage when catch-up replay is isolated from HEVC. |
 | ProRes VT encode | 2063: 135 submissions, 1.482 ms avg VT encode call, 0 drops | ProRes encoder remains fast enough after source cadence recovery. |
 | Lumen forwarding ingress | 2058/2061/2062/2063: 0 queued, 0 dropped | The Lumen bridge is not dropping the current kept tile/prores paths. |
+| Lumen tile-stream bridge queue | 2142 diagnostic: selecting q2 for encoded tile stream topology before the 120fps q1 fallback produced 180 tile records, 90 complete groups, 0 drops, and 41.421 ms average callback latency | Extra bridge queue slack does not recover strict tile-group cadence. The q2-before-120fps bridge seam is closed as a standalone fix. |
 
 ## Closed Or Low-Priority Axes
 
