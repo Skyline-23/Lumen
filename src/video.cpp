@@ -4062,10 +4062,18 @@ namespace video {
           const auto encoded_tile_metadata = lumen_core_tile_metadata(frame.tile_metadata);
           const auto tile_count = encoded_tile_metadata.tile_count;
           const auto lane_count = encoded_tile_metadata.encoded_lane_count;
+          const auto lumen_protocol_adapter = video::make_lumen_protocol_adapter(
+            config.sinkRequest,
+            lumen::protocol::encoded_tile_layout {
+              .tile_count = tile_count,
+              .encoded_lane_count = lane_count,
+            }
+          );
           if ((tile_count > 1 || lane_count > 1) &&
-              config.sinkRequest.capability.supports_encoded_tile_stream == 0) {
+              lumen_protocol_adapter.presentation_contract != lumen::protocol::presentation_contract::primed_per_tile_update) {
             if (!logged_multi_tile_unsupported) {
-              BOOST_LOG(error) << "External macOS encoded ingress received multi-tile encoded frame before client encoded tile stream support was negotiated"
+              BOOST_LOG(error) << "External macOS encoded ingress received multi-tile encoded frame before the Lumen encoded tile presentation contract was negotiated"
+                               << " contract="sv << lumen_protocol_adapter.presentation_contract_name()
                                << " tile-index="sv << encoded_tile_metadata.tile_index
                                << " tile-count="sv << tile_count
                                << " lane-index="sv << encoded_tile_metadata.encoded_lane_index

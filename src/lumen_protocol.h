@@ -10,6 +10,72 @@
 #include <string_view>
 
 namespace lumen::protocol {
+  enum class dynamic_range_transport {
+    sdr,
+    full_frame_hdr,
+    frame_gated_hdr,
+    sdr_base_hdr_overlay,
+  };
+
+  struct sink_capability {
+    bool prefers_hdr = false;
+    bool supports_hdr_tile_overlay = false;
+    bool supports_per_frame_hdr_metadata = false;
+    bool supports_encoded_tile_stream = false;
+  };
+
+  struct encoded_tile_layout {
+    std::uint32_t tile_count = 1;
+    std::uint32_t encoded_lane_count = 1;
+
+    [[nodiscard]] constexpr bool is_single_frame() const {
+      return tile_count <= 1 && encoded_lane_count <= 1;
+    }
+  };
+
+  enum class presentation_completion_rule {
+    full_frame,
+    per_tile_after_lane_prime,
+  };
+
+  enum class presentation_contract {
+    single_frame,
+    primed_per_tile_update,
+  };
+
+  struct presentation_input {
+    dynamic_range_transport requested_transport = dynamic_range_transport::sdr;
+    sink_capability sink;
+    encoded_tile_layout source_layout;
+  };
+
+  [[nodiscard]] constexpr presentation_contract resolve_presentation_contract(
+    const presentation_input &input
+  ) {
+    if (input.requested_transport == dynamic_range_transport::sdr_base_hdr_overlay &&
+        input.sink.prefers_hdr &&
+        input.sink.supports_hdr_tile_overlay &&
+        input.sink.supports_per_frame_hdr_metadata &&
+        input.sink.supports_encoded_tile_stream &&
+        !input.source_layout.is_single_frame()) {
+      return presentation_contract::primed_per_tile_update;
+    }
+
+    return presentation_contract::single_frame;
+  }
+
+  [[nodiscard]] constexpr presentation_completion_rule completion_rule_for(
+    const presentation_contract contract
+  ) {
+    switch (contract) {
+      case presentation_contract::primed_per_tile_update:
+        return presentation_completion_rule::per_tile_after_lane_prime;
+      case presentation_contract::single_frame:
+      default:
+        return presentation_completion_rule::full_frame;
+    }
+  }
+
   namespace rtsp {
     using namespace std::literals;
 
@@ -150,8 +216,32 @@ namespace lumen::protocol {
     using namespace std::literals;
 
     inline constexpr std::string_view single_frame = "single-frame"sv;
+    inline constexpr std::string_view full_frame = "full-frame"sv;
     inline constexpr std::string_view primed_per_tile_update = "primed-per-tile-update"sv;
     inline constexpr std::string_view per_tile_after_lane_prime = "per-tile-after-lane-prime"sv;
   }
-}
 
+  [[nodiscard]] constexpr std::string_view presentation_contract_name(
+    const presentation_contract contract
+  ) {
+    switch (contract) {
+      case presentation_contract::primed_per_tile_update:
+        return presentation::primed_per_tile_update;
+      case presentation_contract::single_frame:
+      default:
+        return presentation::single_frame;
+    }
+  }
+
+  [[nodiscard]] constexpr std::string_view presentation_completion_rule_name(
+    const presentation_completion_rule rule
+  ) {
+    switch (rule) {
+      case presentation_completion_rule::per_tile_after_lane_prime:
+        return presentation::per_tile_after_lane_prime;
+      case presentation_completion_rule::full_frame:
+      default:
+        return presentation::full_frame;
+    }
+  }
+}

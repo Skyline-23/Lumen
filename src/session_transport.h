@@ -4,6 +4,8 @@
  */
 #pragma once
 
+#include "lumen_protocol.h"
+
 namespace video {
   enum class client_sink_gamut_e : int {
     unknown = 0,
@@ -129,6 +131,83 @@ namespace video {
 
   inline bool dynamic_range_transport_requires_hdr_display(const dynamic_range_transport_e transport) {
     return dynamic_range_transport_uses_hdr_frame_state(transport);
+  }
+
+  inline lumen::protocol::dynamic_range_transport to_lumen_protocol_transport(
+    const dynamic_range_transport_e transport
+  ) {
+    switch (effective_dynamic_range_transport(transport)) {
+      case dynamic_range_transport_e::full_frame_hdr:
+        return lumen::protocol::dynamic_range_transport::full_frame_hdr;
+      case dynamic_range_transport_e::frame_gated_hdr:
+        return lumen::protocol::dynamic_range_transport::frame_gated_hdr;
+      case dynamic_range_transport_e::sdr_base_hdr_overlay:
+        return lumen::protocol::dynamic_range_transport::sdr_base_hdr_overlay;
+      case dynamic_range_transport_e::sdr:
+      case dynamic_range_transport_e::unknown:
+      default:
+        return lumen::protocol::dynamic_range_transport::sdr;
+    }
+  }
+
+  inline lumen::protocol::sink_capability to_lumen_protocol_sink_capability(
+    const sink_capability_t &capability
+  ) {
+    return {
+      .prefers_hdr = client_sink_transfer_prefers_hdr(capability.transfer),
+      .supports_hdr_tile_overlay = capability.supports_hdr_tile_overlay,
+      .supports_per_frame_hdr_metadata = capability.supports_per_frame_hdr_metadata,
+      .supports_encoded_tile_stream = capability.supports_encoded_tile_stream,
+    };
+  }
+
+  struct lumen_protocol_adapter_t {
+    lumen::protocol::dynamic_range_transport requested_transport =
+      lumen::protocol::dynamic_range_transport::sdr;
+    lumen::protocol::dynamic_range_transport negotiated_transport =
+      lumen::protocol::dynamic_range_transport::sdr;
+    lumen::protocol::sink_capability sink_capability;
+    lumen::protocol::encoded_tile_layout source_layout;
+    lumen::protocol::presentation_contract presentation_contract =
+      lumen::protocol::presentation_contract::single_frame;
+
+    [[nodiscard]] constexpr std::string_view presentation_contract_name() const {
+      return lumen::protocol::presentation_contract_name(presentation_contract);
+    }
+
+    [[nodiscard]] constexpr std::string_view presentation_completion_name() const {
+      return lumen::protocol::presentation_completion_rule_name(
+        lumen::protocol::completion_rule_for(presentation_contract)
+      );
+    }
+  };
+
+  inline lumen_protocol_adapter_t make_lumen_protocol_adapter(
+    const sink_request_t &request,
+    const lumen::protocol::encoded_tile_layout source_layout
+  ) {
+    const auto requested_transport =
+      to_lumen_protocol_transport(request.dynamic_range_transport);
+    const auto negotiated_transport =
+      to_lumen_protocol_transport(effective_dynamic_range_transport(request));
+    const auto sink_capability =
+      to_lumen_protocol_sink_capability(request.capability);
+    const auto presentation_contract =
+      lumen::protocol::resolve_presentation_contract(
+        {
+          .requested_transport = negotiated_transport,
+          .sink = sink_capability,
+          .source_layout = source_layout,
+        }
+      );
+
+    return {
+      .requested_transport = requested_transport,
+      .negotiated_transport = negotiated_transport,
+      .sink_capability = sink_capability,
+      .source_layout = source_layout,
+      .presentation_contract = presentation_contract,
+    };
   }
 
   inline int effective_capture_frame_rate_for_workload(

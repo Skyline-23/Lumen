@@ -94,3 +94,28 @@ public enum LumenProtocolPresentationContract: Equatable, Sendable {
         }
     }
 }
+
+public protocol LumenProtocolAdapter: Sendable {
+    var requestedTransport: LumenProtocolDynamicRangeTransport { get }
+    var negotiatedTransport: LumenProtocolDynamicRangeTransport { get }
+    var sinkCapability: LumenProtocolSinkCapability { get }
+    var sourceLayout: LumenProtocolEncodedTileLayout { get }
+}
+
+public extension LumenProtocolAdapter {
+    var presentationContract: LumenProtocolPresentationContract {
+        LumenProtocolPresentationContract.resolve(
+            requestedTransport: negotiatedTransport,
+            sinkCapability: sinkCapability,
+            sourceLayout: sourceLayout
+        )
+    }
+
+    var presentationContractName: String {
+        presentationContract.wireName
+    }
+
+    var presentationCompletionName: String {
+        presentationContract.completionRule.wireName
+    }
+}

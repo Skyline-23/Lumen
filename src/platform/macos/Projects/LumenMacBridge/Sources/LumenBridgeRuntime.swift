@@ -450,6 +450,25 @@ public struct LumenBridgeEffectiveDisplayState: Equatable, Sendable {
     }
 }
 
+public struct LumenMacDisplayKitProtocolAdapter: LumenProtocolAdapter, Equatable, Sendable {
+    public let requestedTransport: LumenProtocolDynamicRangeTransport
+    public let negotiatedTransport: LumenProtocolDynamicRangeTransport
+    public let sinkCapability: LumenProtocolSinkCapability
+    public let sourceLayout: LumenProtocolEncodedTileLayout
+
+    public init(
+        requestedTransport: LumenProtocolDynamicRangeTransport,
+        negotiatedTransport: LumenProtocolDynamicRangeTransport,
+        sinkCapability: LumenProtocolSinkCapability,
+        sourceLayout: LumenProtocolEncodedTileLayout
+    ) {
+        self.requestedTransport = requestedTransport
+        self.negotiatedTransport = negotiatedTransport
+        self.sinkCapability = sinkCapability
+        self.sourceLayout = sourceLayout
+    }
+}
+
 public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     private static let supportsPartialHDROverlayProducer = true
     private static let highResolutionPixelCountThreshold = 5_000_000
@@ -580,23 +599,41 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
             sinkRequest.capability.supportsPerFrameHDRMetadata
     }
 
-    public var lumenProtocolPresentationContract: LumenProtocolPresentationContract {
-        LumenProtocolPresentationContract.resolve(
-            requestedTransport: lumenProtocolDynamicRangeTransport,
+    public var lumenProtocolAdapter: LumenMacDisplayKitProtocolAdapter {
+        LumenMacDisplayKitProtocolAdapter(
+            requestedTransport: lumenProtocolRequestedDynamicRangeTransport,
+            negotiatedTransport: lumenProtocolNegotiatedDynamicRangeTransport,
             sinkCapability: lumenProtocolSinkCapability,
             sourceLayout: candidateLumenProtocolEncodedTileLayout
         )
     }
 
+    public var lumenProtocolPresentationContract: LumenProtocolPresentationContract {
+        lumenProtocolAdapter.presentationContract
+    }
+
     public var encodedTilePresentationContractName: String {
-        lumenProtocolPresentationContract.wireName
+        lumenProtocolAdapter.presentationContractName
     }
 
     public var encodedTilePresentationCompletionName: String {
-        lumenProtocolPresentationContract.completionRule.wireName
+        lumenProtocolAdapter.presentationCompletionName
     }
 
-    private var lumenProtocolDynamicRangeTransport: LumenProtocolDynamicRangeTransport {
+    private var lumenProtocolRequestedDynamicRangeTransport: LumenProtocolDynamicRangeTransport {
+        switch sinkRequest.dynamicRangeTransport {
+        case LumenCoreDynamicRangeTransportFullFrameHDR:
+            return .fullFrameHDR
+        case LumenCoreDynamicRangeTransportFrameGatedHDR:
+            return .frameGatedHDR
+        case LumenCoreDynamicRangeTransportSDRBaseHDROverlay:
+            return .sdrBaseHDROverlay
+        default:
+            return .sdr
+        }
+    }
+
+    private var lumenProtocolNegotiatedDynamicRangeTransport: LumenProtocolDynamicRangeTransport {
         switch negotiatedDynamicRangeTransport {
         case LumenCoreDynamicRangeTransportFullFrameHDR:
             return .fullFrameHDR

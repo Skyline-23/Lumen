@@ -1550,8 +1550,16 @@ namespace stream {
       }
 
       if (!packet->encoded_tile_metadata.is_single_frame()) {
-        if (session->config.monitor.sinkRequest.capability.supports_encoded_tile_stream == 0) {
-          BOOST_LOG(error) << "Dropping encoded tile frame because client did not negotiate encoded tile stream support"
+        const auto lumen_protocol_adapter = video::make_lumen_protocol_adapter(
+          session->config.monitor.sinkRequest,
+          lumen::protocol::encoded_tile_layout {
+            .tile_count = packet->encoded_tile_metadata.tile_count,
+            .encoded_lane_count = packet->encoded_tile_metadata.encoded_lane_count,
+          }
+        );
+        if (lumen_protocol_adapter.presentation_contract != lumen::protocol::presentation_contract::primed_per_tile_update) {
+          BOOST_LOG(error) << "Dropping encoded tile frame because client did not negotiate the Lumen encoded tile presentation contract"
+                           << " contract="sv << lumen_protocol_adapter.presentation_contract_name()
                            << " frame-index="sv << packet->frame_index()
                            << " tile-index="sv << packet->encoded_tile_metadata.tile_index
                            << " tile-count="sv << packet->encoded_tile_metadata.tile_count

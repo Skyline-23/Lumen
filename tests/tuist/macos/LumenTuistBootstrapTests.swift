@@ -392,6 +392,47 @@ final class LumenTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(configuration.encodedTilePresentationCompletionName, "per-tile-after-lane-prime")
     }
 
+    func testMacProtocolAdapterMapsConfigurationToLumenProtocolSignals() {
+        let configuration = LumenMacDisplayKitCaptureConfiguration(
+            displayID: 42,
+            codec: .hevc,
+            targetFrameRate: 120,
+            requestedWidth: 3512,
+            requestedHeight: 2290,
+            sinkRequest: LumenBridgeSinkRequest(
+                capability: LumenBridgeSinkCapability(
+                    gamut: .displayP3,
+                    transfer: .pq,
+                    supportsFrameGatedHDR: true,
+                    supportsHDRTileOverlay: true,
+                    supportsPerFrameHDRMetadata: true,
+                    supportsEncodedTileStream: true
+                ),
+                dynamicRangeTransport: LumenCoreDynamicRangeTransportSDRBaseHDROverlay
+            ),
+            effectiveDisplayState: LumenBridgeEffectiveDisplayState(
+                gamut: .displayP3,
+                transfer: .pq
+            )
+        )
+
+        let adapter = configuration.lumenProtocolAdapter
+
+        XCTAssertEqual(adapter.requestedTransport, .sdrBaseHDROverlay)
+        XCTAssertEqual(adapter.negotiatedTransport, .sdrBaseHDROverlay)
+        XCTAssertEqual(
+            adapter.sinkCapability,
+            LumenProtocolSinkCapability(
+                prefersHDR: true,
+                supportsHDRTileOverlay: true,
+                supportsPerFrameHDRMetadata: true,
+                supportsEncodedTileStream: true
+            )
+        )
+        XCTAssertEqual(adapter.sourceLayout, LumenProtocolEncodedTileLayout(tileCount: 2, encodedLaneCount: 2))
+        XCTAssertEqual(adapter.presentationContract, .primedPerTileUpdate)
+    }
+
     func testBridgeKeepsEncodedTilePresentationContractBehindSinkCapability() {
         let configuration = LumenMacDisplayKitCaptureConfiguration(
             displayID: 42,
