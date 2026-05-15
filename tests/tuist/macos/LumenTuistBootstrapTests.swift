@@ -343,6 +343,26 @@ final class LumenTuistBootstrapTests: XCTestCase {
         )
     }
 
+    func testLumenProtocolNegotiatesPrimedPerTileUpdateFromSourceNeutralCapabilities() {
+        let contract = LumenProtocolPresentationContract.resolve(
+            requestedTransport: .sdrBaseHDROverlay,
+            sinkCapability: LumenProtocolSinkCapability(
+                prefersHDR: true,
+                supportsHDRTileOverlay: true,
+                supportsPerFrameHDRMetadata: true,
+                supportsEncodedTileStream: true
+            ),
+            sourceLayout: LumenProtocolEncodedTileLayout(
+                tileCount: 2,
+                encodedLaneCount: 2
+            )
+        )
+
+        XCTAssertEqual(contract, .primedPerTileUpdate)
+        XCTAssertEqual(contract.wireName, "primed-per-tile-update")
+        XCTAssertEqual(contract.completionRule, .perTileAfterLanePrime)
+    }
+
     func testBridgeKeepsEncodedTilePresentationContractBehindSinkCapability() {
         let configuration = LumenMacDisplayKitCaptureConfiguration(
             displayID: 42,
