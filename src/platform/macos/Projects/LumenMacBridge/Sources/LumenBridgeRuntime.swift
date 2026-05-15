@@ -580,6 +580,55 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
             sinkRequest.capability.supportsPerFrameHDRMetadata
     }
 
+    public var lumenProtocolPresentationContract: LumenProtocolPresentationContract {
+        LumenProtocolPresentationContract.resolve(
+            requestedTransport: lumenProtocolDynamicRangeTransport,
+            sinkCapability: lumenProtocolSinkCapability,
+            sourceLayout: candidateLumenProtocolEncodedTileLayout
+        )
+    }
+
+    public var encodedTilePresentationContractName: String {
+        lumenProtocolPresentationContract.wireName
+    }
+
+    public var encodedTilePresentationCompletionName: String {
+        lumenProtocolPresentationContract.completionRule.wireName
+    }
+
+    private var lumenProtocolDynamicRangeTransport: LumenProtocolDynamicRangeTransport {
+        switch negotiatedDynamicRangeTransport {
+        case LumenCoreDynamicRangeTransportFullFrameHDR:
+            return .fullFrameHDR
+        case LumenCoreDynamicRangeTransportFrameGatedHDR:
+            return .frameGatedHDR
+        case LumenCoreDynamicRangeTransportSDRBaseHDROverlay:
+            return .sdrBaseHDROverlay
+        default:
+            return .sdr
+        }
+    }
+
+    private var lumenProtocolSinkCapability: LumenProtocolSinkCapability {
+        LumenProtocolSinkCapability(
+            prefersHDR: sinkPrefersHDRPresentation,
+            supportsHDRTileOverlay: sinkRequest.capability.supportsHDRTileOverlay,
+            supportsPerFrameHDRMetadata: sinkRequest.capability.supportsPerFrameHDRMetadata,
+            supportsEncodedTileStream: sinkRequest.capability.supportsEncodedTileStream
+        )
+    }
+
+    private var candidateLumenProtocolEncodedTileLayout: LumenProtocolEncodedTileLayout {
+        guard codec == .hevc,
+              negotiatedDynamicRangeTransport == LumenCoreDynamicRangeTransportSDRBaseHDROverlay,
+              (requestedWidth ?? 0) > 0,
+              (requestedHeight ?? 0) > 0 else {
+            return LumenProtocolEncodedTileLayout(tileCount: 1, encodedLaneCount: 1)
+        }
+
+        return LumenProtocolEncodedTileLayout(tileCount: 2, encodedLaneCount: 2)
+    }
+
     struct EncodedHDRConfigurationSnapshot: Equatable, Sendable {
         let signalColorPrimaries: String
         let transferFunction: String
@@ -652,15 +701,14 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     }
 
     var effectiveTileLayout: MDKEncodedCaptureTileLayout {
-        guard codec == .hevc,
-              sinkRequest.capability.supportsEncodedTileStream,
-              negotiatedDynamicRangeTransport == LumenCoreDynamicRangeTransportSDRBaseHDROverlay,
-              (requestedWidth ?? 0) > 0,
-              (requestedHeight ?? 0) > 0 else {
+        guard lumenProtocolPresentationContract == .primedPerTileUpdate else {
             return .singleFrame
         }
 
-        return MDKEncodedCaptureTileLayout(tileCount: 2, encodedLaneCount: 2)
+        return MDKEncodedCaptureTileLayout(
+            tileCount: candidateLumenProtocolEncodedTileLayout.tileCount,
+            encodedLaneCount: candidateLumenProtocolEncodedTileLayout.encodedLaneCount
+        )
     }
 
     var usesEncodedTilePresentationContract: Bool {
@@ -930,7 +978,7 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     )
 
     var hdrConfigurationDebugSummary: String {
-        "uses-hdr-transport=\(usesHDRTransport) requested-transport=\(lumenDynamicRangeTransportName(sinkRequest.dynamicRangeTransport)) negotiated-transport=\(lumenDynamicRangeTransportName(negotiatedDynamicRangeTransport)) requested-queue=\(queueProfile.rawValue) negotiated-queue=\(negotiatedQueueProfile.rawValue) effective-gamut=\(resolvedDisplayGamut.rawValue) effective-transfer=\(resolvedDisplayTransfer.rawValue) negotiated-static-metadata=\(effectiveDisplayState.hdrStaticMetadata != nil) current-edr-headroom=\(sinkRequest.capability.currentEDRHeadroom) potential-edr-headroom=\(sinkRequest.capability.potentialEDRHeadroom) current-peak-nits=\(sinkRequest.capability.currentPeakLuminanceNits) potential-peak-nits=\(sinkRequest.capability.potentialPeakLuminanceNits) supports-frame-gated-hdr=\(sinkRequest.capability.supportsFrameGatedHDR) supports-hdr-tile-overlay=\(sinkRequest.capability.supportsHDRTileOverlay) supports-per-frame-hdr-metadata=\(sinkRequest.capability.supportsPerFrameHDRMetadata) supports-encoded-tile-stream=\(sinkRequest.capability.supportsEncodedTileStream) encoded-tile-presentation-contract=\(usesEncodedTilePresentationContract ? "primed-per-tile-update" : "single-frame")"
+        "uses-hdr-transport=\(usesHDRTransport) requested-transport=\(lumenDynamicRangeTransportName(sinkRequest.dynamicRangeTransport)) negotiated-transport=\(lumenDynamicRangeTransportName(negotiatedDynamicRangeTransport)) requested-queue=\(queueProfile.rawValue) negotiated-queue=\(negotiatedQueueProfile.rawValue) effective-gamut=\(resolvedDisplayGamut.rawValue) effective-transfer=\(resolvedDisplayTransfer.rawValue) negotiated-static-metadata=\(effectiveDisplayState.hdrStaticMetadata != nil) current-edr-headroom=\(sinkRequest.capability.currentEDRHeadroom) potential-edr-headroom=\(sinkRequest.capability.potentialEDRHeadroom) current-peak-nits=\(sinkRequest.capability.currentPeakLuminanceNits) potential-peak-nits=\(sinkRequest.capability.potentialPeakLuminanceNits) supports-frame-gated-hdr=\(sinkRequest.capability.supportsFrameGatedHDR) supports-hdr-tile-overlay=\(sinkRequest.capability.supportsHDRTileOverlay) supports-per-frame-hdr-metadata=\(sinkRequest.capability.supportsPerFrameHDRMetadata) supports-encoded-tile-stream=\(sinkRequest.capability.supportsEncodedTileStream) encoded-tile-presentation-contract=\(encodedTilePresentationContractName)"
     }
 }
 
@@ -1966,8 +2014,8 @@ public actor LumenBridgeRuntime {
 
         let layout = configuration.effectiveTileLayout
         return [
-            "encodedTilePresentationContract=primed-per-tile-update",
-            "encodedTilePresentationCompletion=per-tile-after-lane-prime",
+            "encodedTilePresentationContract=\(configuration.encodedTilePresentationContractName)",
+            "encodedTilePresentationCompletion=\(configuration.encodedTilePresentationCompletionName)",
             "encodedTilePresentationTileCount=\(layout.tileCount)",
             "encodedTilePresentationLaneCount=\(layout.encodedLaneCount)",
             "encodedTileStrictGroupDiagnostics=source-frame-groups"

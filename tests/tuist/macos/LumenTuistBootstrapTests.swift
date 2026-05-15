@@ -363,6 +363,35 @@ final class LumenTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(contract.completionRule, .perTileAfterLanePrime)
     }
 
+    func testMacBridgeDerivesPresentationContractFromLumenProtocol() {
+        let configuration = LumenMacDisplayKitCaptureConfiguration(
+            displayID: 42,
+            codec: .hevc,
+            targetFrameRate: 120,
+            requestedWidth: 3512,
+            requestedHeight: 2290,
+            sinkRequest: LumenBridgeSinkRequest(
+                capability: LumenBridgeSinkCapability(
+                    gamut: .displayP3,
+                    transfer: .pq,
+                    supportsFrameGatedHDR: true,
+                    supportsHDRTileOverlay: true,
+                    supportsPerFrameHDRMetadata: true,
+                    supportsEncodedTileStream: true
+                ),
+                dynamicRangeTransport: LumenCoreDynamicRangeTransportSDRBaseHDROverlay
+            ),
+            effectiveDisplayState: LumenBridgeEffectiveDisplayState(
+                gamut: .displayP3,
+                transfer: .pq
+            )
+        )
+
+        XCTAssertEqual(configuration.lumenProtocolPresentationContract, .primedPerTileUpdate)
+        XCTAssertEqual(configuration.encodedTilePresentationContractName, "primed-per-tile-update")
+        XCTAssertEqual(configuration.encodedTilePresentationCompletionName, "per-tile-after-lane-prime")
+    }
+
     func testBridgeKeepsEncodedTilePresentationContractBehindSinkCapability() {
         let configuration = LumenMacDisplayKitCaptureConfiguration(
             displayID: 42,

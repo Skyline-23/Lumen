@@ -43,6 +43,15 @@ public struct LumenProtocolEncodedTileLayout: Equatable, Sendable {
 public enum LumenProtocolPresentationCompletionRule: Equatable, Sendable {
     case fullFrame
     case perTileAfterLanePrime
+
+    public var wireName: String {
+        switch self {
+        case .fullFrame:
+            return "full-frame"
+        case .perTileAfterLanePrime:
+            return "per-tile-after-lane-prime"
+        }
+    }
 }
 
 public enum LumenProtocolPresentationContract: Equatable, Sendable {
@@ -85,4 +94,3 @@ public enum LumenProtocolPresentationContract: Equatable, Sendable {
         }
     }
 }
-
