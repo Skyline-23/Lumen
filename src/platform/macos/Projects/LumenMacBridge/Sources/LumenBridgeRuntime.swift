@@ -663,6 +663,11 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
         return MDKEncodedCaptureTileLayout(tileCount: 2, encodedLaneCount: 2)
     }
 
+    var usesEncodedTilePresentationContract: Bool {
+        let layout = effectiveTileLayout
+        return layout.tileCount > 1 || layout.encodedLaneCount > 1
+    }
+
     public var effectiveTargetFrameRate: Int {
         targetFrameRate
     }
@@ -925,7 +930,7 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     )
 
     var hdrConfigurationDebugSummary: String {
-        "uses-hdr-transport=\(usesHDRTransport) requested-transport=\(lumenDynamicRangeTransportName(sinkRequest.dynamicRangeTransport)) negotiated-transport=\(lumenDynamicRangeTransportName(negotiatedDynamicRangeTransport)) requested-queue=\(queueProfile.rawValue) negotiated-queue=\(negotiatedQueueProfile.rawValue) effective-gamut=\(resolvedDisplayGamut.rawValue) effective-transfer=\(resolvedDisplayTransfer.rawValue) negotiated-static-metadata=\(effectiveDisplayState.hdrStaticMetadata != nil) current-edr-headroom=\(sinkRequest.capability.currentEDRHeadroom) potential-edr-headroom=\(sinkRequest.capability.potentialEDRHeadroom) current-peak-nits=\(sinkRequest.capability.currentPeakLuminanceNits) potential-peak-nits=\(sinkRequest.capability.potentialPeakLuminanceNits) supports-frame-gated-hdr=\(sinkRequest.capability.supportsFrameGatedHDR) supports-hdr-tile-overlay=\(sinkRequest.capability.supportsHDRTileOverlay) supports-per-frame-hdr-metadata=\(sinkRequest.capability.supportsPerFrameHDRMetadata) supports-encoded-tile-stream=\(sinkRequest.capability.supportsEncodedTileStream)"
+        "uses-hdr-transport=\(usesHDRTransport) requested-transport=\(lumenDynamicRangeTransportName(sinkRequest.dynamicRangeTransport)) negotiated-transport=\(lumenDynamicRangeTransportName(negotiatedDynamicRangeTransport)) requested-queue=\(queueProfile.rawValue) negotiated-queue=\(negotiatedQueueProfile.rawValue) effective-gamut=\(resolvedDisplayGamut.rawValue) effective-transfer=\(resolvedDisplayTransfer.rawValue) negotiated-static-metadata=\(effectiveDisplayState.hdrStaticMetadata != nil) current-edr-headroom=\(sinkRequest.capability.currentEDRHeadroom) potential-edr-headroom=\(sinkRequest.capability.potentialEDRHeadroom) current-peak-nits=\(sinkRequest.capability.currentPeakLuminanceNits) potential-peak-nits=\(sinkRequest.capability.potentialPeakLuminanceNits) supports-frame-gated-hdr=\(sinkRequest.capability.supportsFrameGatedHDR) supports-hdr-tile-overlay=\(sinkRequest.capability.supportsHDRTileOverlay) supports-per-frame-hdr-metadata=\(sinkRequest.capability.supportsPerFrameHDRMetadata) supports-encoded-tile-stream=\(sinkRequest.capability.supportsEncodedTileStream) encoded-tile-presentation-contract=\(usesEncodedTilePresentationContract ? "primed-per-tile-update" : "single-frame")"
     }
 }
 
@@ -1697,7 +1702,10 @@ public actor LumenBridgeRuntime {
             return "n/a"
         }
 
-        return Self.captureDiagnosticsSnippet(from: await session.statisticsSnapshot())
+        return Self.captureDiagnosticsSnippet(
+            from: await session.statisticsSnapshot(),
+            configuration: activeCaptureConfiguration
+        )
     }
 
     public func configureCoreForwarding(
@@ -1872,7 +1880,10 @@ public actor LumenBridgeRuntime {
         let captureStatistics = await encodedCaptureSession?.statisticsSnapshot()
         let captureMinCallbackLatency = formattedLatency(captureStatistics?.minOutputCallbackLatencyMilliseconds)
         let captureMaxCallbackLatency = formattedLatency(captureStatistics?.maxOutputCallbackLatencyMilliseconds)
-        let captureDiagnostics = Self.captureDiagnosticsSnippet(from: captureStatistics)
+        let captureDiagnostics = Self.captureDiagnosticsSnippet(
+            from: captureStatistics,
+            configuration: activeCaptureConfiguration
+        )
         logger.notice(
             "Mac bridge capture event kind=\(event.kind.rawValue, privacy: .public) message=\(event.message ?? "n/a", privacy: .public) stop-status=\(event.stopStatus ?? 0, privacy: .public) automatic-restarts=\(event.automaticRestartCount ?? 0, privacy: .public) source-display-time=\(event.sourceDisplayTime ?? 0, privacy: .public) capture-emitted=\(captureStatistics?.emittedFrameCount ?? 0, privacy: .public) capture-dropped=\(captureStatistics?.droppedFrameCount ?? 0, privacy: .public) capture-processing-failures=\(captureStatistics?.processingFailureCount ?? 0, privacy: .public) capture-running=\(captureStatistics?.isRunning ?? false, privacy: .public) capture-last-error=\(captureStatistics?.lastErrorDescription ?? "n/a", privacy: .public) capture-min-callback-latency-ms=\(captureMinCallbackLatency, privacy: .public) capture-max-callback-latency-ms=\(captureMaxCallbackLatency, privacy: .public) capture-vt=\(captureDiagnostics, privacy: .public)"
         )
@@ -1924,7 +1935,10 @@ public actor LumenBridgeRuntime {
             let captureLastError = captureStatistics?.lastErrorDescription ?? "n/a"
             let captureMinCallbackLatency = formattedLatency(captureStatistics?.minOutputCallbackLatencyMilliseconds)
             let captureMaxCallbackLatency = formattedLatency(captureStatistics?.maxOutputCallbackLatencyMilliseconds)
-            let captureDiagnostics = Self.captureDiagnosticsSnippet(from: captureStatistics)
+            let captureDiagnostics = Self.captureDiagnosticsSnippet(
+                from: captureStatistics,
+                configuration: activeCaptureConfiguration
+            )
 
             logger.notice(
                 "Mac bridge frame callback display-id=\(displayID, privacy: .public) codec=\(codec, privacy: .public) seq=\(frame.sourceSequenceNumber, privacy: .public) seq-delta=\(sequenceDelta ?? 0, privacy: .public) display-time=\(frame.sourceDisplayTime, privacy: .public) display-delta-ms=\(displayDeltaText, privacy: .public) callback-latency-ms=\(callbackLatencyText, privacy: .public) key=\(frame.isKeyFrame, privacy: .public) hdr=\(frame.isHDRSignaled, privacy: .public) hdr-primaries=\(colorPrimaries, privacy: .public) hdr-transfer=\(transferFunction, privacy: .public) hdr-matrix=\(yCbCrMatrix, privacy: .public) hdr-mastering=\(hdrValidation.hasMasteringDisplayColorVolume, privacy: .public) hdr-cll=\(hdrValidation.hasContentLightLevelInfo, privacy: .public) target-fps=\(targetFrameRate, privacy: .public) target-size=\(targetWidth, privacy: .public)x\(targetHeight, privacy: .public) queue=\(queueProfile, privacy: .public) capture-emitted=\(captureStatistics?.emittedFrameCount ?? 0, privacy: .public) capture-dropped=\(captureStatistics?.droppedFrameCount ?? 0, privacy: .public) capture-processing-failures=\(captureStatistics?.processingFailureCount ?? 0, privacy: .public) capture-restarts=\(captureStatistics?.automaticRestartCount ?? 0, privacy: .public) capture-running=\(captureStatistics?.isRunning ?? false, privacy: .public) capture-last-error=\(captureLastError, privacy: .public) capture-min-callback-latency-ms=\(captureMinCallbackLatency, privacy: .public) capture-max-callback-latency-ms=\(captureMaxCallbackLatency, privacy: .public) capture-vt=\(captureDiagnostics, privacy: .public) core-frame-count=\(ingressSnapshot.frameCount, privacy: .public) core-queued=\(ingressSnapshot.queuedFrameCount, privacy: .public) core-dropped=\(ingressSnapshot.droppedFrameCount, privacy: .public) core-last-seq=\(ingressSnapshot.lastFrameSourceSequenceNumber ?? 0, privacy: .public)"
@@ -1943,9 +1957,30 @@ public actor LumenBridgeRuntime {
         return String(format: "%.3f", value)
     }
 
-    private nonisolated static func captureDiagnosticsSnippet(from statistics: MDKEncodedCaptureSessionStatistics?) -> String {
+    nonisolated static func encodedTilePresentationContractDiagnostics(
+        for configuration: LumenMacDisplayKitCaptureConfiguration
+    ) -> [String] {
+        guard configuration.usesEncodedTilePresentationContract else {
+            return []
+        }
+
+        let layout = configuration.effectiveTileLayout
+        return [
+            "encodedTilePresentationContract=primed-per-tile-update",
+            "encodedTilePresentationCompletion=per-tile-after-lane-prime",
+            "encodedTilePresentationTileCount=\(layout.tileCount)",
+            "encodedTilePresentationLaneCount=\(layout.encodedLaneCount)",
+            "encodedTileStrictGroupDiagnostics=source-frame-groups"
+        ]
+    }
+
+    private nonisolated static func captureDiagnosticsSnippet(
+        from statistics: MDKEncodedCaptureSessionStatistics?,
+        configuration: LumenMacDisplayKitCaptureConfiguration? = nil
+    ) -> String {
+        let contractNotes = configuration.map(encodedTilePresentationContractDiagnostics(for:)) ?? []
         guard let statistics else {
-            return "n/a"
+            return contractNotes.isEmpty ? "n/a" : contractNotes.joined(separator: ";")
         }
 
         let interestingPrefixes = [
@@ -2035,7 +2070,7 @@ public actor LumenBridgeRuntime {
         ]
         let notes = statistics.notes.filter { note in
             interestingPrefixes.contains { note.hasPrefix($0) }
-        }
+        } + contractNotes
 
         guard !notes.isEmpty else {
             return "n/a"

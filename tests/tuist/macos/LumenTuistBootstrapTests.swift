@@ -297,6 +297,92 @@ final class LumenTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(configuration.mdkValue.streamConfiguration.outputHeight, 2290)
     }
 
+    func testBridgeExposesEncodedTilePresentationContractForNegotiatedOverlayStreams() {
+        let configuration = LumenMacDisplayKitCaptureConfiguration(
+            displayID: 42,
+            codec: .hevc,
+            preprocessStrategy: .none,
+            queueProfile: .auto,
+            targetFrameRate: 120,
+            requestedWidth: 3512,
+            requestedHeight: 2290,
+            sinkRequest: LumenBridgeSinkRequest(
+                capability: LumenBridgeSinkCapability(
+                    gamut: .displayP3,
+                    transfer: .pq,
+                    supportsFrameGatedHDR: true,
+                    supportsHDRTileOverlay: true,
+                    supportsPerFrameHDRMetadata: true,
+                    supportsEncodedTileStream: true
+                ),
+                dynamicRangeTransport: LumenCoreDynamicRangeTransportSDRBaseHDROverlay
+            ),
+            effectiveDisplayState: LumenBridgeEffectiveDisplayState(
+                gamut: .displayP3,
+                transfer: .pq
+            )
+        )
+
+        XCTAssertTrue(configuration.usesEncodedTilePresentationContract)
+        XCTAssertEqual(configuration.effectiveTileLayout.tileCount, 2)
+        XCTAssertEqual(configuration.effectiveTileLayout.encodedLaneCount, 2)
+        XCTAssertTrue(
+            configuration.hdrConfigurationDebugSummary.contains(
+                "encoded-tile-presentation-contract=primed-per-tile-update"
+            )
+        )
+        XCTAssertEqual(
+            LumenBridgeRuntime.encodedTilePresentationContractDiagnostics(for: configuration),
+            [
+                "encodedTilePresentationContract=primed-per-tile-update",
+                "encodedTilePresentationCompletion=per-tile-after-lane-prime",
+                "encodedTilePresentationTileCount=2",
+                "encodedTilePresentationLaneCount=2",
+                "encodedTileStrictGroupDiagnostics=source-frame-groups"
+            ]
+        )
+    }
+
+    func testBridgeKeepsEncodedTilePresentationContractBehindSinkCapability() {
+        let configuration = LumenMacDisplayKitCaptureConfiguration(
+            displayID: 42,
+            codec: .hevc,
+            preprocessStrategy: .none,
+            queueProfile: .auto,
+            targetFrameRate: 120,
+            requestedWidth: 3512,
+            requestedHeight: 2290,
+            sinkRequest: LumenBridgeSinkRequest(
+                capability: LumenBridgeSinkCapability(
+                    gamut: .displayP3,
+                    transfer: .pq,
+                    supportsFrameGatedHDR: true,
+                    supportsHDRTileOverlay: true,
+                    supportsPerFrameHDRMetadata: true,
+                    supportsEncodedTileStream: false
+                ),
+                dynamicRangeTransport: LumenCoreDynamicRangeTransportSDRBaseHDROverlay
+            ),
+            effectiveDisplayState: LumenBridgeEffectiveDisplayState(
+                gamut: .displayP3,
+                transfer: .pq
+            )
+        )
+
+        XCTAssertFalse(configuration.usesEncodedTilePresentationContract)
+        XCTAssertEqual(configuration.effectiveTileLayout.tileCount, 1)
+        XCTAssertEqual(configuration.effectiveTileLayout.encodedLaneCount, 1)
+        XCTAssertTrue(
+            configuration.hdrConfigurationDebugSummary.contains(
+                "encoded-tile-presentation-contract=single-frame"
+            )
+        )
+        XCTAssertEqual(
+            LumenBridgeRuntime.encodedTilePresentationContractDiagnostics(for: configuration),
+            []
+        )
+    }
+
     func testBridgePrefersTenBitEncoderInputForPartialHDROverlay() {
         let configuration = LumenMacDisplayKitCaptureConfiguration(
             displayID: 42,
