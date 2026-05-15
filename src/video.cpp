@@ -4063,7 +4063,7 @@ namespace video {
           const auto tile_count = encoded_tile_metadata.tile_count;
           const auto lane_count = encoded_tile_metadata.encoded_lane_count;
           const auto lumen_protocol_adapter = video::make_lumen_protocol_adapter(
-            config.sinkRequest,
+            config,
             lumen::protocol::encoded_tile_layout {
               .tile_count = tile_count,
               .encoded_lane_count = lane_count,

@@ -1551,7 +1551,7 @@ namespace stream {
 
       if (!packet->encoded_tile_metadata.is_single_frame()) {
         const auto lumen_protocol_adapter = video::make_lumen_protocol_adapter(
-          session->config.monitor.sinkRequest,
+          session->config.monitor,
           lumen::protocol::encoded_tile_layout {
             .tile_count = packet->encoded_tile_metadata.tile_count,
             .encoded_lane_count = packet->encoded_tile_metadata.encoded_lane_count,

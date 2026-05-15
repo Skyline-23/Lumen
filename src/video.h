@@ -327,6 +327,34 @@ namespace video {
     return dynamic_range_transport_uses_hdr_stream(effective_dynamic_range_transport(config));
   }
 
+  inline lumen_protocol_adapter_t make_lumen_protocol_adapter(
+    const config_t &config,
+    const lumen::protocol::encoded_tile_layout source_layout
+  ) {
+    const auto requested_transport =
+      to_lumen_protocol_transport(effective_dynamic_range_transport(config.sinkRequest.dynamic_range_transport));
+    const auto negotiated_transport =
+      to_lumen_protocol_transport(effective_dynamic_range_transport(config));
+    const auto sink_capability =
+      to_lumen_protocol_sink_capability(config.sinkRequest.capability);
+    const auto presentation_contract =
+      lumen::protocol::resolve_presentation_contract(
+        {
+          .requested_transport = negotiated_transport,
+          .sink = sink_capability,
+          .source_layout = source_layout,
+        }
+      );
+
+    return {
+      .requested_transport = requested_transport,
+      .negotiated_transport = negotiated_transport,
+      .sink_capability = sink_capability,
+      .source_layout = source_layout,
+      .presentation_contract = presentation_contract,
+    };
+  }
+
   inline hdr_frame_state_t make_default_hdr_frame_state(
     const config_t &config,
     bool frame_is_hdr_signaled,
