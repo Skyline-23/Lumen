@@ -30,6 +30,7 @@ extern "C" {
 #include "globals.h"
 #include "input.h"
 #include "logging.h"
+#include "lumen_protocol.h"
 #include "main.h"
 #include "network.h"
 #include "platform/common.h"
@@ -43,49 +44,27 @@ extern "C" {
 #include "thread_safe.h"
 #include "utility.h"
 
-#define IDX_START_A 0
-#define IDX_START_B 1
-#define IDX_INVALIDATE_REF_FRAMES 2
-#define IDX_LOSS_STATS 3
-#define IDX_INPUT_DATA 5
-#define IDX_RUMBLE_DATA 6
-#define IDX_TERMINATION 7
-#define IDX_PERIODIC_PING 8
-#define IDX_REQUEST_IDR_FRAME 9
-#define IDX_ENCRYPTED 10
-#define IDX_RUMBLE_TRIGGER_DATA 12
-#define IDX_SET_MOTION_EVENT 13
-#define IDX_SET_RGB_LED 14
-#define IDX_EXEC_SERVER_CMD 15
-#define IDX_SET_CLIPBOARD 16
-#define IDX_FILE_TRANSFER_NONCE_REQUEST 17
-#define IDX_SET_ADAPTIVE_TRIGGERS 18
-#define IDX_HDR_FRAME_STATE 19
-#define IDX_ENCODED_TILE_FRAME_STATE 20
+static constexpr auto IDX_START_A = lumen::protocol::control::start_a;
+static constexpr auto IDX_START_B = lumen::protocol::control::start_b;
+static constexpr auto IDX_INVALIDATE_REF_FRAMES = lumen::protocol::control::invalidate_reference_frames;
+static constexpr auto IDX_LOSS_STATS = lumen::protocol::control::loss_stats;
+static constexpr auto IDX_INPUT_DATA = lumen::protocol::control::input_data;
+static constexpr auto IDX_RUMBLE_DATA = lumen::protocol::control::rumble_data;
+static constexpr auto IDX_TERMINATION = lumen::protocol::control::termination;
+static constexpr auto IDX_PERIODIC_PING = lumen::protocol::control::periodic_ping;
+static constexpr auto IDX_REQUEST_IDR_FRAME = lumen::protocol::control::request_idr_frame;
+static constexpr auto IDX_ENCRYPTED = lumen::protocol::control::encrypted;
+static constexpr auto IDX_RUMBLE_TRIGGER_DATA = lumen::protocol::control::rumble_trigger_data;
+static constexpr auto IDX_SET_MOTION_EVENT = lumen::protocol::control::set_motion_event;
+static constexpr auto IDX_SET_RGB_LED = lumen::protocol::control::set_rgb_led;
+static constexpr auto IDX_EXEC_SERVER_CMD = lumen::protocol::control::execute_server_command;
+static constexpr auto IDX_SET_CLIPBOARD = lumen::protocol::control::set_clipboard;
+static constexpr auto IDX_FILE_TRANSFER_NONCE_REQUEST = lumen::protocol::control::file_transfer_nonce_request;
+static constexpr auto IDX_SET_ADAPTIVE_TRIGGERS = lumen::protocol::control::set_adaptive_triggers;
+static constexpr auto IDX_HDR_FRAME_STATE = lumen::protocol::control::hdr_frame_state;
+static constexpr auto IDX_ENCODED_TILE_FRAME_STATE = lumen::protocol::control::encoded_tile_frame_state;
 
-static const short packetTypes[] = {
-  0x0305,  // Start A
-  0x0307,  // Start B
-  0x0301,  // Invalidate reference frames
-  0x0201,  // Loss Stats
-  0x0204,  // Frame Stats (unused)
-  0x0206,  // Input data
-  0x010b,  // Rumble data
-  0x0109,  // Termination
-  0x0200,  // Periodic Ping
-  0x0302,  // IDR frame
-  0x0001,  // fully encrypted
-  0x010e,  // retired HDR mode (reserved)
-  0x5500,  // Rumble triggers (Sunshine protocol extension)
-  0x5501,  // Set motion event (Sunshine protocol extension)
-  0x5502,  // Set RGB LED (Sunshine protocol extension)
-  0x3000,  // Execute Server Command (Lumen protocol extension)
-  0x3001,  // Set Clipboard (Lumen protocol extension)
-  0x3002,  // File transfer nonce request (Lumen protocol extension)
-  0x5503,  // Set Adaptive triggers (Sunshine protocol extension)
-  0x3003,  // HDR frame state v2 (Lumen protocol extension)
-  0x3004,  // Encoded tile frame state v1 (Lumen protocol extension)
-};
+static constexpr auto packetTypes = lumen::protocol::control::packet_types;
 
 namespace asio = boost::asio;
 namespace sys = boost::system;
@@ -1011,13 +990,6 @@ namespace stream {
     return 0;
   }
 
-  constexpr std::uint8_t lumen_hdr_frame_state_version = 1;
-  constexpr std::uint8_t lumen_hdr_frame_state_flag_has_static_metadata = 1 << 0;
-  constexpr std::uint8_t lumen_hdr_frame_state_flag_has_overlay_regions = 1 << 1;
-  constexpr std::uint8_t lumen_encoded_tile_frame_state_version = 1;
-  constexpr std::uint8_t lumen_encoded_tile_frame_state_flag_has_tile_region = 1 << 0;
-  constexpr std::uint8_t lumen_hdr_overlay_region_flag_has_metadata = 1 << 0;
-
   std::string_view hdr_frame_content_name(video::hdr_frame_content_e content) {
     switch (content) {
       case video::hdr_frame_content_e::sdr:
@@ -1049,11 +1021,11 @@ namespace stream {
     auto *header = reinterpret_cast<control_hdr_frame_state_v2_t *>(payload.data());
     header->header.type = packetTypes[IDX_HDR_FRAME_STATE];
     header->header.payloadLength = static_cast<std::uint16_t>(total_size - sizeof(control_header_v2));
-    header->version = lumen_hdr_frame_state_version;
+    header->version = lumen::protocol::control::hdr_frame_state_version;
     header->frameDynamicRange = static_cast<std::uint8_t>(state.content);
     header->flags =
-      (state.has_static_metadata ? lumen_hdr_frame_state_flag_has_static_metadata : 0) |
-      (region_count > 0 ? lumen_hdr_frame_state_flag_has_overlay_regions : 0);
+      (state.has_static_metadata ? lumen::protocol::control::hdr_frame_state_flag_has_static_metadata : 0) |
+      (region_count > 0 ? lumen::protocol::control::hdr_frame_state_flag_has_overlay_regions : 0);
     header->reserved = 0;
     header->effectiveFromFrameNumber = effective_from_frame_number;
     header->overlayRegionCount = static_cast<std::uint16_t>(region_count);
@@ -1071,7 +1043,7 @@ namespace stream {
       serialized_region[index].y = static_cast<std::uint16_t>(std::clamp(region.y, 0, 0xffff));
       serialized_region[index].width = static_cast<std::uint16_t>(std::clamp(region.width, 0, 0xffff));
       serialized_region[index].height = static_cast<std::uint16_t>(std::clamp(region.height, 0, 0xffff));
-      serialized_region[index].flags = region.has_metadata ? lumen_hdr_overlay_region_flag_has_metadata : 0;
+      serialized_region[index].flags = region.has_metadata ? lumen::protocol::control::hdr_overlay_region_flag_has_metadata : 0;
       std::memset(serialized_region[index].reserved, 0, sizeof(serialized_region[index].reserved));
       if (region.has_metadata) {
         serialized_region[index].metadata = region.metadata;
@@ -1132,8 +1104,8 @@ namespace stream {
     auto *header = reinterpret_cast<control_encoded_tile_frame_state_v1_t *>(payload.data());
     header->header.type = packetTypes[IDX_ENCODED_TILE_FRAME_STATE];
     header->header.payloadLength = static_cast<std::uint16_t>(sizeof(control_encoded_tile_frame_state_v1_t) - sizeof(control_header_v2));
-    header->version = lumen_encoded_tile_frame_state_version;
-    header->flags = metadata.has_tile_region ? lumen_encoded_tile_frame_state_flag_has_tile_region : 0;
+    header->version = lumen::protocol::control::encoded_tile_frame_state_version;
+    header->flags = metadata.has_tile_region ? lumen::protocol::control::encoded_tile_frame_state_flag_has_tile_region : 0;
     header->reserved = 0;
     header->effectiveFromFrameNumber = effective_from_frame_number;
     header->frameGroupId = metadata.frame_group_id;

@@ -112,6 +112,7 @@ let hostedRuntimeSources: SourceFilesList = [
     "../../../src/file_handler.cpp",
     "../../../src/globals.cpp",
     "../../../src/logging.cpp",
+    "../../../src/lumen_protocol.h",
     "../../../src/main.cpp",
     "../../../src/crypto.cpp",
     "../../../src/shadow_http.cpp",

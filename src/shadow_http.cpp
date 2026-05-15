@@ -31,6 +31,7 @@
 #include "shadow_control_http.h"
 #include "shadow_http_common.h"
 #include "logging.h"
+#include "lumen_protocol.h"
 #include "network.h"
 #include "shadow_http.h"
 #include "platform/common.h"
@@ -333,6 +334,10 @@ namespace shadow_http {
       return it->second;
     }
 
+    std::string get_lumen_arg(const args_t &args, std::string_view name, const char *default_value = nullptr) {
+      return get_arg(args, std::string(name).c_str(), default_value);
+    }
+
     bool has_arg(const args_t &args, const char *name) {
       return args.find(name) != std::end(args);
     }
@@ -595,24 +600,8 @@ namespace shadow_http {
   }
 
   std::shared_ptr<rtsp_stream::launch_session_t> make_launch_session(bool host_audio, bool input_only, const args_t &args, const crypto::named_cert_t* named_cert_p) {
-    static constexpr std::array required_lumen_launch_args {
-      "clientSinkScalePercent"sv,
-      "clientSinkHiDPI"sv,
-      "clientSinkModeIsLogical"sv,
-      "clientSinkGamut"sv,
-      "clientSinkTransfer"sv,
-      "clientSinkCurrentEDRHeadroom"sv,
-      "clientSinkPotentialEDRHeadroom"sv,
-      "clientSinkCurrentPeakLuminanceNits"sv,
-      "clientSinkPotentialPeakLuminanceNits"sv,
-      "requestedDynamicRangeTransport"sv,
-      "clientSinkSupportsFrameGatedHDR"sv,
-      "clientSinkSupportsHDRTileOverlay"sv,
-      "clientSinkSupportsPerFrameHDRMetadata"sv,
-    };
-
     std::vector<std::string_view> missing_lumen_launch_args;
-    for (const auto required_arg : required_lumen_launch_args) {
+    for (const auto required_arg : lumen::protocol::launch::required_launch_args) {
       if (args.find(std::string(required_arg)) == std::end(args)) {
         missing_lumen_launch_args.emplace_back(required_arg);
       }
@@ -709,33 +698,33 @@ namespace shadow_http {
     launch_session->gcmap = static_cast<int>(util::from_view(get_arg(args, "gcmap", "0")));
     launch_session->virtual_display = util::from_view(get_arg(args, "virtualDisplay", "0")) || named_cert_p->always_use_virtual_display;
     launch_session->sink_request.mode.scale_explicit = true;
-    launch_session->sink_request.mode.mode_is_logical = util::from_view(get_arg(args, "clientSinkModeIsLogical"));
-    launch_session->sink_request.mode.scale_percent = static_cast<int>(util::from_view(get_arg(args, "clientSinkScalePercent")));
-    launch_session->sink_request.mode.hidpi = util::from_view(get_arg(args, "clientSinkHiDPI"));
-    launch_session->sink_request.capability.gamut = parse_client_sink_gamut(get_arg(args, "clientSinkGamut"));
-    launch_session->sink_request.capability.transfer = parse_client_sink_transfer(get_arg(args, "clientSinkTransfer"));
+    launch_session->sink_request.mode.mode_is_logical = util::from_view(get_lumen_arg(args, lumen::protocol::launch::sink_mode_is_logical));
+    launch_session->sink_request.mode.scale_percent = static_cast<int>(util::from_view(get_lumen_arg(args, lumen::protocol::launch::sink_scale_percent)));
+    launch_session->sink_request.mode.hidpi = util::from_view(get_lumen_arg(args, lumen::protocol::launch::sink_hidpi));
+    launch_session->sink_request.capability.gamut = parse_client_sink_gamut(get_lumen_arg(args, lumen::protocol::launch::sink_gamut));
+    launch_session->sink_request.capability.transfer = parse_client_sink_transfer(get_lumen_arg(args, lumen::protocol::launch::sink_transfer));
     launch_session->sink_request.capability.current_edr_headroom = parse_client_sink_headroom(
-      get_arg(args, "clientSinkCurrentEDRHeadroom")
+      get_lumen_arg(args, lumen::protocol::launch::sink_current_edr_headroom)
     );
     launch_session->sink_request.capability.potential_edr_headroom = parse_client_sink_headroom(
-      get_arg(args, "clientSinkPotentialEDRHeadroom")
+      get_lumen_arg(args, lumen::protocol::launch::sink_potential_edr_headroom)
     );
     launch_session->sink_request.capability.current_peak_luminance_nits = parse_client_sink_peak_luminance_nits(
-      get_arg(args, "clientSinkCurrentPeakLuminanceNits")
+      get_lumen_arg(args, lumen::protocol::launch::sink_current_peak_luminance_nits)
     );
     launch_session->sink_request.capability.potential_peak_luminance_nits = parse_client_sink_peak_luminance_nits(
-      get_arg(args, "clientSinkPotentialPeakLuminanceNits")
+      get_lumen_arg(args, lumen::protocol::launch::sink_potential_peak_luminance_nits)
     );
     launch_session->sink_request.dynamic_range_transport = parse_requested_dynamic_range_transport(
-      get_arg(args, "requestedDynamicRangeTransport")
+      get_lumen_arg(args, lumen::protocol::launch::requested_dynamic_range_transport)
     );
-    launch_session->sink_request.capability.supports_frame_gated_hdr = util::from_view(get_arg(args, "clientSinkSupportsFrameGatedHDR"));
-    launch_session->sink_request.capability.supports_hdr_tile_overlay = util::from_view(get_arg(args, "clientSinkSupportsHDRTileOverlay"));
+    launch_session->sink_request.capability.supports_frame_gated_hdr = util::from_view(get_lumen_arg(args, lumen::protocol::launch::sink_supports_frame_gated_hdr));
+    launch_session->sink_request.capability.supports_hdr_tile_overlay = util::from_view(get_lumen_arg(args, lumen::protocol::launch::sink_supports_hdr_tile_overlay));
     launch_session->sink_request.capability.supports_per_frame_hdr_metadata = util::from_view(
-      get_arg(args, "clientSinkSupportsPerFrameHDRMetadata")
+      get_lumen_arg(args, lumen::protocol::launch::sink_supports_per_frame_hdr_metadata)
     );
     launch_session->sink_request.capability.supports_encoded_tile_stream = util::from_view(
-      get_arg(args, "clientSinkSupportsEncodedTileStream", "0")
+      get_lumen_arg(args, lumen::protocol::launch::sink_supports_encoded_tile_stream, "0")
     );
     const auto requested_dynamic_range_transport =
       video::effective_dynamic_range_transport(launch_session->sink_request.dynamic_range_transport);

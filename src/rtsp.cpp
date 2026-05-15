@@ -29,6 +29,7 @@ extern "C" {
 #include "globals.h"
 #include "input.h"
 #include "logging.h"
+#include "lumen_protocol.h"
 #include "network.h"
 #include "process.h"
 #include "rtsp.h"
@@ -1183,25 +1184,8 @@ namespace rtsp_stream {
       }
     }
 
-    static constexpr std::array required_lumen_announce_fields {
-      "x-shadow-video[0].bitStreamFormat"sv,
-      "x-shadow-sink.scalePercent"sv,
-      "x-shadow-sink.hidpi"sv,
-      "x-shadow-sink.modeIsLogical"sv,
-      "x-shadow-sink.gamut"sv,
-      "x-shadow-sink.transfer"sv,
-      "x-shadow-sink.currentEDRHeadroom"sv,
-      "x-shadow-sink.potentialEDRHeadroom"sv,
-      "x-shadow-sink.currentPeakLuminanceNits"sv,
-      "x-shadow-sink.potentialPeakLuminanceNits"sv,
-      "x-shadow-sink.requestedDynamicRangeTransport"sv,
-      "x-shadow-sink.supportsFrameGatedHDR"sv,
-      "x-shadow-sink.supportsHDRTileOverlay"sv,
-      "x-shadow-sink.supportsPerFrameHDRMetadata"sv,
-    };
-
     std::vector<std::string_view> missing_lumen_announce_fields;
-    for (const auto required_field : required_lumen_announce_fields) {
+    for (const auto required_field : lumen::protocol::rtsp::required_announce_fields) {
       if (args.find(required_field) == args.end()) {
         missing_lumen_announce_fields.emplace_back(required_field);
       }
@@ -1220,7 +1204,7 @@ namespace rtsp_stream {
     args.try_emplace("x-shadow-general.encryptionEnabled"sv, "0"sv);
     args.try_emplace("x-shadow-video[0].chromaSamplingType"sv, "0"sv);
     args.try_emplace("x-shadow-video[0].intraRefresh"sv, "0"sv);
-    args.try_emplace("x-shadow-sink.supportsEncodedTileStream"sv, "0"sv);
+    args.try_emplace(lumen::protocol::rtsp::sink_supports_encoded_tile_stream, "0"sv);
 
     if (!missing_lumen_announce_fields.empty()) {
       std::ostringstream missing;
@@ -1269,37 +1253,37 @@ namespace rtsp_stream {
       config.monitor.videoFormat = static_cast<int>(util::from_view(args.at("x-shadow-video[0].bitStreamFormat"sv)));
       config.monitor.chromaSamplingType = static_cast<int>(util::from_view(args.at("x-shadow-video[0].chromaSamplingType"sv)));
       config.monitor.enableIntraRefresh = static_cast<int>(util::from_view(args.at("x-shadow-video[0].intraRefresh"sv)));
-      config.monitor.sinkRequest.capability.gamut = parse_client_sink_gamut(args.at("x-shadow-sink.gamut"sv));
-      config.monitor.sinkRequest.capability.transfer = parse_client_sink_transfer(args.at("x-shadow-sink.transfer"sv));
+      config.monitor.sinkRequest.capability.gamut = parse_client_sink_gamut(args.at(lumen::protocol::rtsp::sink_gamut));
+      config.monitor.sinkRequest.capability.transfer = parse_client_sink_transfer(args.at(lumen::protocol::rtsp::sink_transfer));
       config.monitor.sinkRequest.dynamic_range_transport = parse_requested_dynamic_range_transport(
-        args.at("x-shadow-sink.requestedDynamicRangeTransport"sv)
+        args.at(lumen::protocol::rtsp::sink_requested_dynamic_range_transport)
       );
       config.monitor.sinkRequest.capability.supports_frame_gated_hdr =
-        util::from_view(args.at("x-shadow-sink.supportsFrameGatedHDR"sv));
+        util::from_view(args.at(lumen::protocol::rtsp::sink_supports_frame_gated_hdr));
       config.monitor.sinkRequest.capability.supports_hdr_tile_overlay =
-        util::from_view(args.at("x-shadow-sink.supportsHDRTileOverlay"sv));
+        util::from_view(args.at(lumen::protocol::rtsp::sink_supports_hdr_tile_overlay));
       config.monitor.sinkRequest.capability.supports_per_frame_hdr_metadata =
-        util::from_view(args.at("x-shadow-sink.supportsPerFrameHDRMetadata"sv));
+        util::from_view(args.at(lumen::protocol::rtsp::sink_supports_per_frame_hdr_metadata));
       config.monitor.sinkRequest.capability.supports_encoded_tile_stream =
-        util::from_view(args.at("x-shadow-sink.supportsEncodedTileStream"sv));
+        util::from_view(args.at(lumen::protocol::rtsp::sink_supports_encoded_tile_stream));
       config.monitor.sinkRequest.mode.scale_explicit = true;
       config.monitor.sinkRequest.mode.scale_percent =
-        static_cast<int>(util::from_view(args.at("x-shadow-sink.scalePercent"sv)));
+        static_cast<int>(util::from_view(args.at(lumen::protocol::rtsp::sink_scale_percent)));
       config.monitor.sinkRequest.mode.hidpi =
-        util::from_view(args.at("x-shadow-sink.hidpi"sv));
+        util::from_view(args.at(lumen::protocol::rtsp::sink_hidpi));
       config.monitor.sinkRequest.mode.mode_is_logical =
-        util::from_view(args.at("x-shadow-sink.modeIsLogical"sv));
+        util::from_view(args.at(lumen::protocol::rtsp::sink_mode_is_logical));
       config.monitor.sinkRequest.capability.current_edr_headroom = parse_client_sink_headroom(
-        args.at("x-shadow-sink.currentEDRHeadroom"sv)
+        args.at(lumen::protocol::rtsp::sink_current_edr_headroom)
       );
       config.monitor.sinkRequest.capability.potential_edr_headroom = parse_client_sink_headroom(
-        args.at("x-shadow-sink.potentialEDRHeadroom"sv)
+        args.at(lumen::protocol::rtsp::sink_potential_edr_headroom)
       );
       config.monitor.sinkRequest.capability.current_peak_luminance_nits = parse_client_sink_peak_luminance_nits(
-        args.at("x-shadow-sink.currentPeakLuminanceNits"sv)
+        args.at(lumen::protocol::rtsp::sink_current_peak_luminance_nits)
       );
       config.monitor.sinkRequest.capability.potential_peak_luminance_nits = parse_client_sink_peak_luminance_nits(
-        args.at("x-shadow-sink.potentialPeakLuminanceNits"sv)
+        args.at(lumen::protocol::rtsp::sink_potential_peak_luminance_nits)
       );
       if (config.monitor.sinkRequest.mode.scale_percent != session.sink_request.mode.scale_percent ||
           config.monitor.sinkRequest.mode.hidpi != session.sink_request.mode.hidpi) {
