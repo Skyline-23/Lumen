@@ -256,3 +256,47 @@ TEST(LumenProtocolAdapterTests, MatchesSharedConformanceFixturePresentationContr
     ) << example.at("name").get<std::string>();
   }
 }
+
+TEST(LumenProtocolAdapterTests, MatchesSharedConformanceFixtureControlWireLayout) {
+  const auto fixture = load_lumen_protocol_conformance_fixture();
+  ASSERT_TRUE(fixture.contains("controlWire"));
+
+  const auto control_wire = fixture.at("controlWire");
+  EXPECT_EQ(lumen::protocol::control::header_size, control_wire.at("headerSize").get<std::size_t>());
+
+  const auto hdr = control_wire.at("hdrFrameState");
+  const auto hdr_flags = hdr.at("flags");
+  const auto hdr_offsets = hdr.at("offsets");
+  EXPECT_EQ(lumen::protocol::control::hdr_frame_state_type, hdr.at("packetType").get<std::uint16_t>());
+  EXPECT_EQ(lumen::protocol::control::hdr_frame_state_version, hdr.at("version").get<std::uint8_t>());
+  EXPECT_EQ(lumen::protocol::control::hdr_frame_state_flag_has_static_metadata, hdr_flags.at("hasStaticMetadata").get<std::uint8_t>());
+  EXPECT_EQ(lumen::protocol::control::hdr_frame_state_flag_has_overlay_regions, hdr_flags.at("hasOverlayRegions").get<std::uint8_t>());
+  EXPECT_EQ(lumen::protocol::control::hdr_overlay_region_flag_has_metadata, hdr_flags.at("overlayRegionHasMetadata").get<std::uint8_t>());
+  EXPECT_EQ(lumen::protocol::control::hdr_frame_state_version_offset, hdr_offsets.at("version").get<std::size_t>());
+  EXPECT_EQ(lumen::protocol::control::hdr_frame_state_dynamic_range_offset, hdr_offsets.at("frameDynamicRange").get<std::size_t>());
+  EXPECT_EQ(lumen::protocol::control::hdr_frame_state_flags_offset, hdr_offsets.at("flags").get<std::size_t>());
+  EXPECT_EQ(lumen::protocol::control::hdr_frame_state_effective_frame_offset, hdr_offsets.at("effectiveFromFrameNumber").get<std::size_t>());
+  EXPECT_EQ(lumen::protocol::control::hdr_frame_state_overlay_region_count_offset, hdr_offsets.at("overlayRegionCount").get<std::size_t>());
+  EXPECT_EQ(lumen::protocol::control::hdr_frame_state_static_metadata_offset, hdr_offsets.at("staticMetadata").get<std::size_t>());
+
+  const auto encoded_tile = control_wire.at("encodedTileFrameState");
+  const auto encoded_tile_flags = encoded_tile.at("flags");
+  const auto encoded_tile_offsets = encoded_tile.at("offsets");
+  EXPECT_EQ(lumen::protocol::control::encoded_tile_frame_state_type, encoded_tile.at("packetType").get<std::uint16_t>());
+  EXPECT_EQ(lumen::protocol::control::encoded_tile_frame_state_version, encoded_tile.at("version").get<std::uint8_t>());
+  EXPECT_EQ(lumen::protocol::control::encoded_tile_frame_state_flag_has_tile_region, encoded_tile_flags.at("hasTileRegion").get<std::uint8_t>());
+  EXPECT_EQ(lumen::protocol::control::encoded_tile_frame_state_packet_length, encoded_tile.at("packetLength").get<std::size_t>());
+  EXPECT_EQ(lumen::protocol::control::encoded_tile_frame_state_payload_length, encoded_tile.at("payloadLength").get<std::size_t>());
+  EXPECT_EQ(lumen::protocol::control::encoded_tile_frame_state_version_offset, encoded_tile_offsets.at("version").get<std::size_t>());
+  EXPECT_EQ(lumen::protocol::control::encoded_tile_frame_state_flags_offset, encoded_tile_offsets.at("flags").get<std::size_t>());
+  EXPECT_EQ(lumen::protocol::control::encoded_tile_frame_state_effective_frame_offset, encoded_tile_offsets.at("effectiveFromFrameNumber").get<std::size_t>());
+  EXPECT_EQ(lumen::protocol::control::encoded_tile_frame_state_group_id_offset, encoded_tile_offsets.at("frameGroupId").get<std::size_t>());
+  EXPECT_EQ(lumen::protocol::control::encoded_tile_frame_state_tile_index_offset, encoded_tile_offsets.at("tileIndex").get<std::size_t>());
+  EXPECT_EQ(lumen::protocol::control::encoded_tile_frame_state_tile_count_offset, encoded_tile_offsets.at("tileCount").get<std::size_t>());
+  EXPECT_EQ(lumen::protocol::control::encoded_tile_frame_state_lane_index_offset, encoded_tile_offsets.at("encodedLaneIndex").get<std::size_t>());
+  EXPECT_EQ(lumen::protocol::control::encoded_tile_frame_state_lane_count_offset, encoded_tile_offsets.at("encodedLaneCount").get<std::size_t>());
+  EXPECT_EQ(lumen::protocol::control::encoded_tile_frame_state_tile_origin_x_offset, encoded_tile_offsets.at("tileOriginX").get<std::size_t>());
+  EXPECT_EQ(lumen::protocol::control::encoded_tile_frame_state_tile_origin_y_offset, encoded_tile_offsets.at("tileOriginY").get<std::size_t>());
+  EXPECT_EQ(lumen::protocol::control::encoded_tile_frame_state_tile_width_offset, encoded_tile_offsets.at("tileWidth").get<std::size_t>());
+  EXPECT_EQ(lumen::protocol::control::encoded_tile_frame_state_tile_height_offset, encoded_tile_offsets.at("tileHeight").get<std::size_t>());
+}

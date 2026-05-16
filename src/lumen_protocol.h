@@ -210,6 +210,31 @@ namespace lumen::protocol {
 
     inline constexpr std::uint8_t encoded_tile_frame_state_version = 1;
     inline constexpr std::uint8_t encoded_tile_frame_state_flag_has_tile_region = 1 << 0;
+
+    inline constexpr std::size_t header_size = 4;
+
+    inline constexpr std::size_t hdr_frame_state_version_offset = header_size;
+    inline constexpr std::size_t hdr_frame_state_dynamic_range_offset = header_size + 1;
+    inline constexpr std::size_t hdr_frame_state_flags_offset = header_size + 2;
+    inline constexpr std::size_t hdr_frame_state_effective_frame_offset = header_size + 4;
+    inline constexpr std::size_t hdr_frame_state_overlay_region_count_offset = header_size + 8;
+    inline constexpr std::size_t hdr_frame_state_static_metadata_offset = header_size + 12;
+
+    inline constexpr std::size_t encoded_tile_frame_state_packet_length = 52;
+    inline constexpr std::size_t encoded_tile_frame_state_payload_length =
+      encoded_tile_frame_state_packet_length - header_size;
+    inline constexpr std::size_t encoded_tile_frame_state_version_offset = header_size;
+    inline constexpr std::size_t encoded_tile_frame_state_flags_offset = header_size + 1;
+    inline constexpr std::size_t encoded_tile_frame_state_effective_frame_offset = header_size + 4;
+    inline constexpr std::size_t encoded_tile_frame_state_group_id_offset = header_size + 8;
+    inline constexpr std::size_t encoded_tile_frame_state_tile_index_offset = header_size + 16;
+    inline constexpr std::size_t encoded_tile_frame_state_tile_count_offset = header_size + 20;
+    inline constexpr std::size_t encoded_tile_frame_state_lane_index_offset = header_size + 24;
+    inline constexpr std::size_t encoded_tile_frame_state_lane_count_offset = header_size + 28;
+    inline constexpr std::size_t encoded_tile_frame_state_tile_origin_x_offset = header_size + 32;
+    inline constexpr std::size_t encoded_tile_frame_state_tile_origin_y_offset = header_size + 36;
+    inline constexpr std::size_t encoded_tile_frame_state_tile_width_offset = header_size + 40;
+    inline constexpr std::size_t encoded_tile_frame_state_tile_height_offset = header_size + 44;
   }
 
   namespace presentation {

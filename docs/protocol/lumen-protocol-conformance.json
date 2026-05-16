@@ -1,5 +1,48 @@
 {
   "schemaVersion": 1,
+  "controlWire": {
+    "headerSize": 4,
+    "hdrFrameState": {
+      "packetType": 12291,
+      "version": 1,
+      "flags": {
+        "hasStaticMetadata": 1,
+        "hasOverlayRegions": 2,
+        "overlayRegionHasMetadata": 1
+      },
+      "offsets": {
+        "version": 4,
+        "frameDynamicRange": 5,
+        "flags": 6,
+        "effectiveFromFrameNumber": 8,
+        "overlayRegionCount": 12,
+        "staticMetadata": 16
+      }
+    },
+    "encodedTileFrameState": {
+      "packetType": 12292,
+      "version": 1,
+      "flags": {
+        "hasTileRegion": 1
+      },
+      "packetLength": 52,
+      "payloadLength": 48,
+      "offsets": {
+        "version": 4,
+        "flags": 5,
+        "effectiveFromFrameNumber": 8,
+        "frameGroupId": 12,
+        "tileIndex": 20,
+        "tileCount": 24,
+        "encodedLaneIndex": 28,
+        "encodedLaneCount": 32,
+        "tileOriginX": 36,
+        "tileOriginY": 40,
+        "tileWidth": 44,
+        "tileHeight": 48
+      }
+    }
+  },
   "presentationContracts": [
     {
       "name": "overlay-tiles-supported",

@@ -240,6 +240,14 @@ namespace stream {
     SS_HDR_METADATA metadata;
   };
 
+  static_assert(sizeof(control_header_v2) == lumen::protocol::control::header_size);
+  static_assert(offsetof(control_hdr_frame_state_v2_t, version) == lumen::protocol::control::hdr_frame_state_version_offset);
+  static_assert(offsetof(control_hdr_frame_state_v2_t, frameDynamicRange) == lumen::protocol::control::hdr_frame_state_dynamic_range_offset);
+  static_assert(offsetof(control_hdr_frame_state_v2_t, flags) == lumen::protocol::control::hdr_frame_state_flags_offset);
+  static_assert(offsetof(control_hdr_frame_state_v2_t, effectiveFromFrameNumber) == lumen::protocol::control::hdr_frame_state_effective_frame_offset);
+  static_assert(offsetof(control_hdr_frame_state_v2_t, overlayRegionCount) == lumen::protocol::control::hdr_frame_state_overlay_region_count_offset);
+  static_assert(offsetof(control_hdr_frame_state_v2_t, staticMetadata) == lumen::protocol::control::hdr_frame_state_static_metadata_offset);
+
   struct control_encoded_tile_frame_state_v1_t {
     control_header_v2 header;
 
@@ -257,6 +265,24 @@ namespace stream {
     boost::endian::little_uint32_at tileWidth;
     boost::endian::little_uint32_at tileHeight;
   };
+
+  static_assert(sizeof(control_encoded_tile_frame_state_v1_t) == lumen::protocol::control::encoded_tile_frame_state_packet_length);
+  static_assert(
+    sizeof(control_encoded_tile_frame_state_v1_t) - sizeof(control_header_v2) ==
+    lumen::protocol::control::encoded_tile_frame_state_payload_length
+  );
+  static_assert(offsetof(control_encoded_tile_frame_state_v1_t, version) == lumen::protocol::control::encoded_tile_frame_state_version_offset);
+  static_assert(offsetof(control_encoded_tile_frame_state_v1_t, flags) == lumen::protocol::control::encoded_tile_frame_state_flags_offset);
+  static_assert(offsetof(control_encoded_tile_frame_state_v1_t, effectiveFromFrameNumber) == lumen::protocol::control::encoded_tile_frame_state_effective_frame_offset);
+  static_assert(offsetof(control_encoded_tile_frame_state_v1_t, frameGroupId) == lumen::protocol::control::encoded_tile_frame_state_group_id_offset);
+  static_assert(offsetof(control_encoded_tile_frame_state_v1_t, tileIndex) == lumen::protocol::control::encoded_tile_frame_state_tile_index_offset);
+  static_assert(offsetof(control_encoded_tile_frame_state_v1_t, tileCount) == lumen::protocol::control::encoded_tile_frame_state_tile_count_offset);
+  static_assert(offsetof(control_encoded_tile_frame_state_v1_t, encodedLaneIndex) == lumen::protocol::control::encoded_tile_frame_state_lane_index_offset);
+  static_assert(offsetof(control_encoded_tile_frame_state_v1_t, encodedLaneCount) == lumen::protocol::control::encoded_tile_frame_state_lane_count_offset);
+  static_assert(offsetof(control_encoded_tile_frame_state_v1_t, tileOriginX) == lumen::protocol::control::encoded_tile_frame_state_tile_origin_x_offset);
+  static_assert(offsetof(control_encoded_tile_frame_state_v1_t, tileOriginY) == lumen::protocol::control::encoded_tile_frame_state_tile_origin_y_offset);
+  static_assert(offsetof(control_encoded_tile_frame_state_v1_t, tileWidth) == lumen::protocol::control::encoded_tile_frame_state_tile_width_offset);
+  static_assert(offsetof(control_encoded_tile_frame_state_v1_t, tileHeight) == lumen::protocol::control::encoded_tile_frame_state_tile_height_offset);
 
   typedef struct control_encrypted_t {
     std::uint16_t encryptedHeaderType;  // Always LE 0x0001
