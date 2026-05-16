@@ -391,6 +391,49 @@ final class LumenTuistBootstrapTests: XCTestCase {
         }
     }
 
+    func testLumenProtocolMatchesSharedConformanceFixtureControlWireLayout() throws {
+        let fixture = try Self.loadLumenProtocolConformanceFixture()
+        let controlWire = try XCTUnwrap(fixture["controlWire"] as? [String: Any])
+
+        XCTAssertEqual(LumenProtocolControlWireLayout.headerSize, try Self.fixtureUInt16(controlWire, "headerSize"))
+
+        let hdr = try XCTUnwrap(controlWire["hdrFrameState"] as? [String: Any])
+        let hdrFlags = try XCTUnwrap(hdr["flags"] as? [String: Any])
+        let hdrOffsets = try XCTUnwrap(hdr["offsets"] as? [String: Any])
+        XCTAssertEqual(LumenProtocolControlWireLayout.HDRFrameState.packetType, try Self.fixtureUInt16(hdr, "packetType"))
+        XCTAssertEqual(LumenProtocolControlWireLayout.HDRFrameState.version, try Self.fixtureUInt8(hdr, "version"))
+        XCTAssertEqual(LumenProtocolControlWireLayout.HDRFrameState.Flags.hasStaticMetadata, try Self.fixtureUInt8(hdrFlags, "hasStaticMetadata"))
+        XCTAssertEqual(LumenProtocolControlWireLayout.HDRFrameState.Flags.hasOverlayRegions, try Self.fixtureUInt8(hdrFlags, "hasOverlayRegions"))
+        XCTAssertEqual(LumenProtocolControlWireLayout.HDRFrameState.OverlayRegionFlags.hasMetadata, try Self.fixtureUInt8(hdrFlags, "overlayRegionHasMetadata"))
+        XCTAssertEqual(LumenProtocolControlWireLayout.HDRFrameState.Offsets.version, try Self.fixtureUInt16(hdrOffsets, "version"))
+        XCTAssertEqual(LumenProtocolControlWireLayout.HDRFrameState.Offsets.frameDynamicRange, try Self.fixtureUInt16(hdrOffsets, "frameDynamicRange"))
+        XCTAssertEqual(LumenProtocolControlWireLayout.HDRFrameState.Offsets.flags, try Self.fixtureUInt16(hdrOffsets, "flags"))
+        XCTAssertEqual(LumenProtocolControlWireLayout.HDRFrameState.Offsets.effectiveFromFrameNumber, try Self.fixtureUInt16(hdrOffsets, "effectiveFromFrameNumber"))
+        XCTAssertEqual(LumenProtocolControlWireLayout.HDRFrameState.Offsets.overlayRegionCount, try Self.fixtureUInt16(hdrOffsets, "overlayRegionCount"))
+        XCTAssertEqual(LumenProtocolControlWireLayout.HDRFrameState.Offsets.staticMetadata, try Self.fixtureUInt16(hdrOffsets, "staticMetadata"))
+
+        let encodedTile = try XCTUnwrap(controlWire["encodedTileFrameState"] as? [String: Any])
+        let encodedTileFlags = try XCTUnwrap(encodedTile["flags"] as? [String: Any])
+        let encodedTileOffsets = try XCTUnwrap(encodedTile["offsets"] as? [String: Any])
+        XCTAssertEqual(LumenProtocolControlWireLayout.EncodedTileFrameState.packetType, try Self.fixtureUInt16(encodedTile, "packetType"))
+        XCTAssertEqual(LumenProtocolControlWireLayout.EncodedTileFrameState.version, try Self.fixtureUInt8(encodedTile, "version"))
+        XCTAssertEqual(LumenProtocolControlWireLayout.EncodedTileFrameState.Flags.hasTileRegion, try Self.fixtureUInt8(encodedTileFlags, "hasTileRegion"))
+        XCTAssertEqual(LumenProtocolControlWireLayout.EncodedTileFrameState.packetLength, try Self.fixtureUInt16(encodedTile, "packetLength"))
+        XCTAssertEqual(LumenProtocolControlWireLayout.EncodedTileFrameState.payloadLength, try Self.fixtureUInt16(encodedTile, "payloadLength"))
+        XCTAssertEqual(LumenProtocolControlWireLayout.EncodedTileFrameState.Offsets.version, try Self.fixtureUInt16(encodedTileOffsets, "version"))
+        XCTAssertEqual(LumenProtocolControlWireLayout.EncodedTileFrameState.Offsets.flags, try Self.fixtureUInt16(encodedTileOffsets, "flags"))
+        XCTAssertEqual(LumenProtocolControlWireLayout.EncodedTileFrameState.Offsets.effectiveFromFrameNumber, try Self.fixtureUInt16(encodedTileOffsets, "effectiveFromFrameNumber"))
+        XCTAssertEqual(LumenProtocolControlWireLayout.EncodedTileFrameState.Offsets.frameGroupId, try Self.fixtureUInt16(encodedTileOffsets, "frameGroupId"))
+        XCTAssertEqual(LumenProtocolControlWireLayout.EncodedTileFrameState.Offsets.tileIndex, try Self.fixtureUInt16(encodedTileOffsets, "tileIndex"))
+        XCTAssertEqual(LumenProtocolControlWireLayout.EncodedTileFrameState.Offsets.tileCount, try Self.fixtureUInt16(encodedTileOffsets, "tileCount"))
+        XCTAssertEqual(LumenProtocolControlWireLayout.EncodedTileFrameState.Offsets.encodedLaneIndex, try Self.fixtureUInt16(encodedTileOffsets, "encodedLaneIndex"))
+        XCTAssertEqual(LumenProtocolControlWireLayout.EncodedTileFrameState.Offsets.encodedLaneCount, try Self.fixtureUInt16(encodedTileOffsets, "encodedLaneCount"))
+        XCTAssertEqual(LumenProtocolControlWireLayout.EncodedTileFrameState.Offsets.tileOriginX, try Self.fixtureUInt16(encodedTileOffsets, "tileOriginX"))
+        XCTAssertEqual(LumenProtocolControlWireLayout.EncodedTileFrameState.Offsets.tileOriginY, try Self.fixtureUInt16(encodedTileOffsets, "tileOriginY"))
+        XCTAssertEqual(LumenProtocolControlWireLayout.EncodedTileFrameState.Offsets.tileWidth, try Self.fixtureUInt16(encodedTileOffsets, "tileWidth"))
+        XCTAssertEqual(LumenProtocolControlWireLayout.EncodedTileFrameState.Offsets.tileHeight, try Self.fixtureUInt16(encodedTileOffsets, "tileHeight"))
+    }
+
     func testMacBridgeDerivesPresentationContractFromLumenProtocol() {
         let configuration = LumenMacDisplayKitCaptureConfiguration(
             displayID: 42,
@@ -1926,6 +1969,14 @@ private extension LumenTuistBootstrapTests {
         default:
             throw NSError(domain: "LumenTuistBootstrapTests", code: 3)
         }
+    }
+
+    static func fixtureUInt8(_ values: [String: Any], _ key: String) throws -> UInt8 {
+        UInt8(try XCTUnwrap(values[key] as? Int))
+    }
+
+    static func fixtureUInt16(_ values: [String: Any], _ key: String) throws -> UInt16 {
+        UInt16(try XCTUnwrap(values[key] as? Int))
     }
 
     static func makeEncodedSampleBuffer(
