@@ -12,9 +12,8 @@ Major features:
 
 ## Usage
 
-Refer to LizardByte's documentation hosted on [Read the Docs](https://docs.lizardbyte.dev/projects/sunshine) for now.
-
-Currently Virtual Display support is Windows only, Linux support is planned and will be implemented in the future.
+The active Lumen host targets are Windows and macOS. Apple-platform bootstrap notes live in
+`docs/tuist-bootstrap.md`, and the shared stream protocol contract lives in `docs/protocol/lumen-streaming-protocol.md`.
 
 ## About Permission System
 
@@ -101,9 +100,6 @@ Latency tuning guidance is being consolidated into the Lumen docs and web UI pro
 | RAM           | 4GB or more |
 | OS            | Windows: 10+ (Windows Server requires [manual installation](https://github.com/nefarius/ViGEmBus/issues/153) for gamepad support) |
 |               | macOS: 12+ |
-|               | Linux/Debian: 11 (bullseye) |
-|               | Linux/Fedora: 39+ |
-|               | Linux/Ubuntu: 22.04+ (jammy) |
 | Network       | Host: 5GHz, 802.11ac |
 |               | Client: 5GHz, 802.11ac |
 

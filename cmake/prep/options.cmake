@@ -7,7 +7,6 @@ set(SUNSHINE_PUBLISHER_ISSUE_URL "https://github.com/Skyline-23/Lumen/issues"
         CACHE STRING "The URL of the publisher's support site or issue tracker.
         If you provide a modified version of Sunshine, we kindly request that you use your own url.")
 
-option(BUILD_DOCS "Build documentation" OFF)
 option(BUILD_TESTS "Build tests" OFF)
 option(NPM_OFFLINE "Use offline npm packages. You must ensure packages are in your npm cache." OFF)
 
@@ -17,8 +16,6 @@ option(BUILD_WERROR "Enable -Werror flag." OFF)
 option(SUNSHINE_CONFIGURE_ONLY "Configure special files only, then exit." OFF)
 
 option(SUNSHINE_ENABLE_TRAY "Enable system tray icon." ON)
-
-option(SUNSHINE_SYSTEM_WAYLAND_PROTOCOLS "Use system installation of wayland-protocols rather than the submodule." OFF)
 
 if(APPLE)
     option(BOOST_USE_STATIC "Use static boost libraries." OFF)
@@ -43,25 +40,4 @@ if(APPLE)
             "Configure macOS Portfile. Recommended to use with SUNSHINE_CONFIGURE_ONLY" OFF)
     option(SUNSHINE_PACKAGE_MACOS
             "Should only be used when creating a macOS package/dmg." OFF)
-elseif(UNIX)  # Linux
-    option(SUNSHINE_BUILD_APPIMAGE
-            "Enable an AppImage build." OFF)
-    option(SUNSHINE_BUILD_FLATPAK
-            "Enable a Flatpak build." OFF)
-    option(SUNSHINE_CONFIGURE_PKGBUILD
-            "Configure files required for AUR. Recommended to use with SUNSHINE_CONFIGURE_ONLY" OFF)
-    option(SUNSHINE_CONFIGURE_FLATPAK_MAN
-            "Configure manifest file required for Flatpak build. Recommended to use with SUNSHINE_CONFIGURE_ONLY" OFF)
-
-    # Linux capture methods
-    option(SUNSHINE_ENABLE_CUDA
-            "Enable cuda specific code." ON)
-    option(SUNSHINE_ENABLE_DRM
-            "Enable KMS grab if available." ON)
-    option(SUNSHINE_ENABLE_VAAPI
-            "Enable building vaapi specific code." ON)
-    option(SUNSHINE_ENABLE_WAYLAND
-            "Enable building wayland specific code." ON)
-    option(SUNSHINE_ENABLE_X11
-            "Enable X11 grab if available." ON)
 endif()

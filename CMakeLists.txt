@@ -8,6 +8,10 @@ project(Lumen VERSION 0.0.0
         DESCRIPTION "Self-hosted game stream host for Artemis"
         HOMEPAGE_URL "https://github.com/ClassicOldSong/Lumen")
 
+if(UNIX AND NOT APPLE)
+    message(FATAL_ERROR "Lumen currently supports Windows and macOS host builds only.")
+endif()
+
 set(PROJECT_LICENSE "GPL-3.0-only")
 
 set(PROJECT_FQDN "dev.skyline23.lumen")

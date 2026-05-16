@@ -38,14 +38,9 @@ endif()
 # platform specific compile definitions
 if(WIN32)
     include(${CMAKE_MODULE_PATH}/compile_definitions/windows.cmake)
-elseif(UNIX)
+elseif(APPLE)
     include(${CMAKE_MODULE_PATH}/compile_definitions/unix.cmake)
-
-    if(APPLE)
-        include(${CMAKE_MODULE_PATH}/compile_definitions/macos.cmake)
-    else()
-        include(${CMAKE_MODULE_PATH}/compile_definitions/linux.cmake)
-    endif()
+    include(${CMAKE_MODULE_PATH}/compile_definitions/macos.cmake)
 endif()
 
 include_directories(BEFORE SYSTEM "${CMAKE_SOURCE_DIR}/third-party/nv-codec-headers/include")
@@ -80,8 +75,8 @@ set(SUNSHINE_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/main.h"
         "${CMAKE_SOURCE_DIR}/src/crypto.cpp"
         "${CMAKE_SOURCE_DIR}/src/crypto.h"
-        "${CMAKE_SOURCE_DIR}/src/nvhttp.cpp"
-        "${CMAKE_SOURCE_DIR}/src/nvhttp.h"
+        "${CMAKE_SOURCE_DIR}/src/shadow_http.cpp"
+        "${CMAKE_SOURCE_DIR}/src/shadow_http.h"
         "${CMAKE_SOURCE_DIR}/src/shadow_http_common.cpp"
         "${CMAKE_SOURCE_DIR}/src/shadow_http_common.h"
         "${CMAKE_SOURCE_DIR}/src/shadow_control_http.cpp"

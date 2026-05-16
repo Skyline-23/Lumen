@@ -22,13 +22,10 @@ class @PROJECT_NAME@ < Formula
     end
   end
 
-  option "with-docs", "Enable docs"
   option "with-static-boost", "Enable static link of Boost libraries"
   option "without-static-boost", "Disable static link of Boost libraries" # default option
 
   depends_on "cmake" => :build
-  depends_on "doxygen" => :build
-  depends_on "graphviz" => :build
   depends_on "node" => :build
   depends_on "pkgconf" => :build
   depends_on "curl"
@@ -36,29 +33,6 @@ class @PROJECT_NAME@ < Formula
   depends_on "openssl"
   depends_on "opus"
   depends_on "icu4c" => :recommended
-
-  on_linux do
-    depends_on "avahi"
-    depends_on "gnu-which"
-    depends_on "libayatana-appindicator"
-    depends_on "libcap"
-    depends_on "libdrm"
-    depends_on "libnotify"
-    depends_on "libva"
-    depends_on "libx11"
-    depends_on "libxcb"
-    depends_on "libxcursor"
-    depends_on "libxfixes"
-    depends_on "libxi"
-    depends_on "libxinerama"
-    depends_on "libxrandr"
-    depends_on "libxtst"
-    depends_on "mesa"
-    depends_on "numactl"
-    depends_on "pulseaudio"
-    depends_on "systemd"
-    depends_on "wayland"
-  end
 
   fails_with :clang do
     build 1400
@@ -88,14 +62,6 @@ class @PROJECT_NAME@ < Formula
       -DSUNSHINE_PUBLISHER_ISSUE_URL='https://app.lizardbyte.dev/support'
     ]
 
-    if build.with? "docs"
-      ohai "Building docs: enabled"
-      args << "-DBUILD_DOCS=ON"
-    else
-      ohai "Building docs: disabled"
-      args << "-DBUILD_DOCS=OFF"
-    end
-
     if build.without? "static-boost"
       args << "-DBOOST_USE_STATIC=OFF"
       ohai "Disabled statically linking Boost libraries"
@@ -116,8 +82,6 @@ class @PROJECT_NAME@ < Formula
       ohai "Linking against ICU libraries at: #{icu4c_lib_path}"
     end
 
-    args << "-DCUDA_FAIL_ON_MISSING=OFF" if OS.linux?
-
     system "cmake", "-S", ".", "-B", "build", "-G", "Unix Makefiles",
             *std_cmake_args,
             *args
@@ -129,7 +93,6 @@ class @PROJECT_NAME@ < Formula
     # codesign the binary on intel macs
     system "codesign", "-s", "-", "--force", "--deep", bin/"sunshine" if OS.mac? && Hardware::CPU.intel?
 
-    bin.install "src_assets/linux/misc/postinst" if OS.linux?
   end
 
   service do
@@ -137,13 +100,6 @@ class @PROJECT_NAME@ < Formula
   end
 
   def post_install
-    if OS.linux?
-      opoo <<~EOS
-        ATTENTION: To complete installation, you must run the following command:
-        `sudo #{bin}/postinst`
-      EOS
-    end
-
     if OS.mac?
       opoo <<~EOS
         Sunshine can only access microphones on macOS due to system limitations.

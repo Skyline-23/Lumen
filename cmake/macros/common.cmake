@@ -4,14 +4,9 @@
 # platform specific macros
 if(WIN32)
     include(${CMAKE_MODULE_PATH}/macros/windows.cmake)
-elseif(UNIX)
+elseif(APPLE)
     include(${CMAKE_MODULE_PATH}/macros/unix.cmake)
-
-    if(APPLE)
-        include(${CMAKE_MODULE_PATH}/macros/macos.cmake)
-    else()
-        include(${CMAKE_MODULE_PATH}/macros/linux.cmake)
-    endif()
+    include(${CMAKE_MODULE_PATH}/macros/macos.cmake)
 endif()
 
 # override find_package function

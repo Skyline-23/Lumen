@@ -29,8 +29,6 @@ endif ()
 if (WIN32)
     list(APPEND
             SUNSHINE_DEFINITIONS SUNSHINE_SHADERS_DIR="${CMAKE_SOURCE_DIR}/src_assets/windows/assets/shaders/directx")
-elseif (NOT APPLE)
-    list(APPEND SUNSHINE_DEFINITIONS SUNSHINE_SHADERS_DIR="${CMAKE_SOURCE_DIR}/src_assets/linux/assets/shaders/opengl")
 endif ()
 
 set(TEST_DEFINITIONS)  # list will be appended as needed
@@ -39,14 +37,6 @@ set(TEST_DEFINITIONS)  # list will be appended as needed
 list(APPEND TEST_DEFINITIONS SUNSHINE_TESTS)
 list(APPEND TEST_DEFINITIONS SUNSHINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 list(APPEND TEST_DEFINITIONS SUNSHINE_TEST_BIN_DIR="${CMAKE_CURRENT_BINARY_DIR}")
-
-if(NOT WIN32)
-    find_package(Udev 255)  # we need 255+ for udevadm verify
-    message(STATUS "UDEV_FOUND: ${UDEV_FOUND}")
-    if(UDEV_FOUND)
-        list(APPEND TEST_DEFINITIONS UDEVADM_EXECUTABLE="${UDEVADM_EXECUTABLE}")
-    endif()
-endif()
 
 file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS
         ${CMAKE_SOURCE_DIR}/tests/*.h
@@ -71,7 +61,6 @@ set(INTEGRATION_TEST_FILES
     "docs/configuration.md"
     "src_assets/common/assets/web/public/assets/locale/en.json"
     "src_assets/common/assets/web/configs/tabs/General.vue"
-    "src_assets/linux/misc/60-sunshine.rules"
 )
 
 foreach(file ${INTEGRATION_TEST_FILES})

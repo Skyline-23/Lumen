@@ -42,14 +42,9 @@ install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/assets/web"
 # platform specific packaging
 if(WIN32)
     include(${CMAKE_MODULE_PATH}/packaging/windows.cmake)
-elseif(UNIX)
+elseif(APPLE)
     include(${CMAKE_MODULE_PATH}/packaging/unix.cmake)
-
-    if(APPLE)
-        include(${CMAKE_MODULE_PATH}/packaging/macos.cmake)
-    else()
-        include(${CMAKE_MODULE_PATH}/packaging/linux.cmake)
-    endif()
+    include(${CMAKE_MODULE_PATH}/packaging/macos.cmake)
 endif()
 
 include(CPack)

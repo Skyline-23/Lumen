@@ -11,14 +11,9 @@ target_include_directories(sunshine SYSTEM BEFORE PRIVATE ${FFMPEG_INCLUDE_DIRS}
 # platform specific target definitions
 if(WIN32)
     include(${CMAKE_MODULE_PATH}/targets/windows.cmake)
-elseif(UNIX)
+elseif(APPLE)
     include(${CMAKE_MODULE_PATH}/targets/unix.cmake)
-
-    if(APPLE)
-        include(${CMAKE_MODULE_PATH}/targets/macos.cmake)
-    else()
-        include(${CMAKE_MODULE_PATH}/targets/linux.cmake)
-    endif()
+    include(${CMAKE_MODULE_PATH}/targets/macos.cmake)
 endif()
 
 # todo - is this necessary? ... for anything except linux?
@@ -97,11 +92,6 @@ add_custom_target(web-ui ALL
         COMMAND_EXPAND_LISTS
         VERBATIM)
 
-# docs
-if(BUILD_DOCS)
-    add_subdirectory(third-party/doxyconfig docs)
-endif()
-
 # tests
 if(BUILD_TESTS)
     add_subdirectory(tests)
@@ -138,16 +128,16 @@ set_source_files_properties("${CMAKE_SOURCE_DIR}/third-party/ViGEmClient/src/ViG
         COMPILE_DEFINITIONS "UNICODE=1;ERROR_INVALID_DEVICE_OBJECT_PARAMETER=650"
         COMPILE_FLAGS ${VIGEM_COMPILE_FLAGS})
 
-# src/nvhttp
+# src/shadow_http
 string(TOUPPER "x${CMAKE_BUILD_TYPE}" BUILD_TYPE)
 if("${BUILD_TYPE}" STREQUAL "XDEBUG")
     if(WIN32)
         if (NOT BUILD_TESTS)
-            set_source_files_properties("${CMAKE_SOURCE_DIR}/src/nvhttp.cpp"
+            set_source_files_properties("${CMAKE_SOURCE_DIR}/src/shadow_http.cpp"
                     DIRECTORY "${CMAKE_SOURCE_DIR}"
                     PROPERTIES COMPILE_FLAGS -O2)
         else()
-            set_source_files_properties("${CMAKE_SOURCE_DIR}/src/nvhttp.cpp"
+            set_source_files_properties("${CMAKE_SOURCE_DIR}/src/shadow_http.cpp"
                     DIRECTORY "${CMAKE_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/tests"
                     PROPERTIES COMPILE_FLAGS -O2)
         endif()

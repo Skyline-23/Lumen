@@ -110,12 +110,7 @@ set(FFMPEG_INCLUDE_DIRS
 # platform specific dependencies
 if(WIN32)
     include("${CMAKE_MODULE_PATH}/dependencies/windows.cmake")
-elseif(UNIX)
+elseif(APPLE)
     include("${CMAKE_MODULE_PATH}/dependencies/unix.cmake")
-
-    if(APPLE)
-        include("${CMAKE_MODULE_PATH}/dependencies/macos.cmake")
-    else()
-        include("${CMAKE_MODULE_PATH}/dependencies/linux.cmake")
-    endif()
+    include("${CMAKE_MODULE_PATH}/dependencies/macos.cmake")
 endif()
