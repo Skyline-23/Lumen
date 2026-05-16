@@ -149,6 +149,23 @@ let hostedRuntimeSettings: SettingsDictionary = [
     "OTHER_LDFLAGS": .array(hostedRuntimeOtherLdFlags)
 ]
 
+let protocolGeneratorScript = TargetScript.pre(
+    script: #"""
+    set -euo pipefail
+
+    REPO_ROOT="${SRCROOT}/../../.."
+    cd "${REPO_ROOT}"
+    python3 tools/protocol/generate_lumen_protocol.py
+    """#,
+    name: "Generate Lumen Protocol Authority",
+    inputPaths: [
+        .glob("\(repoRoot)/docs/protocol/lumen-protocol-conformance.json"),
+        .glob("\(repoRoot)/tools/protocol/generate_lumen_protocol.py")
+    ],
+    basedOnDependencyAnalysis: false,
+    shellPath: "/bin/zsh"
+)
+
 let appAssetsScript = TargetScript.post(
     script: #"""
     set -euo pipefail
@@ -262,6 +279,7 @@ let project = Project(
             headers: .headers(
                 public: "Projects/LumenMacBridge/Headers/LumenMacBridge.h"
             ),
+            scripts: [protocolGeneratorScript],
             dependencies: [
                 .target(name: "LumenCore"),
                 .package(product: "MacDisplayCaptureKit", type: .runtime)
