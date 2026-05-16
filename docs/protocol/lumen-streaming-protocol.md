@@ -140,3 +140,13 @@ The host negotiates `primed-per-tile-update` only when all of these are true:
 - Source adapters provide facts; protocol negotiation owns fallback decisions.
 - Clients must reject invalid payload versions and invalid tile regions, then fall back to the last valid presentable state.
 
+## Quality Gate
+
+Run `python3 tools/quality/lumen_protocol_quality_gate.py` before changing Lumen protocol authority files.
+
+The gate enforces these protocol-maintenance rules:
+
+- control message ids `0x3003` and `0x3004` stay in Lumen protocol authority files instead of being duplicated in adapters
+- new Mac protocol coordination must not use `NSLock`
+- high-refresh behavior must not be gated on `targetFrameRate >= 100` or an equivalent 100 fps threshold
+- protocol authority functions must stay below the configured function-size budget and be split when they grow too large
