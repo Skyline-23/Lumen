@@ -363,6 +363,34 @@ final class LumenTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(contract.completionRule, .perTileAfterLanePrime)
     }
 
+    func testLumenProtocolMatchesSharedConformanceFixturePresentationContracts() throws {
+        let fixture = try Self.loadLumenProtocolConformanceFixture()
+        let examples = try XCTUnwrap(fixture["presentationContracts"] as? [[String: Any]])
+
+        for example in examples {
+            let sink = try XCTUnwrap(example["sink"] as? [String: Any])
+            let sourceLayout = try XCTUnwrap(example["sourceLayout"] as? [String: Any])
+            let expected = try XCTUnwrap(example["expected"] as? [String: String])
+
+            let contract = LumenProtocolPresentationContract.resolve(
+                requestedTransport: try Self.protocolTransport(from: XCTUnwrap(example["requestedTransport"] as? String)),
+                sinkCapability: LumenProtocolSinkCapability(
+                    prefersHDR: try XCTUnwrap(sink["prefersHDR"] as? Bool),
+                    supportsHDRTileOverlay: try XCTUnwrap(sink["supportsHDRTileOverlay"] as? Bool),
+                    supportsPerFrameHDRMetadata: try XCTUnwrap(sink["supportsPerFrameHDRMetadata"] as? Bool),
+                    supportsEncodedTileStream: try XCTUnwrap(sink["supportsEncodedTileStream"] as? Bool)
+                ),
+                sourceLayout: LumenProtocolEncodedTileLayout(
+                    tileCount: UInt32(try XCTUnwrap(sourceLayout["tileCount"] as? Int)),
+                    encodedLaneCount: UInt32(try XCTUnwrap(sourceLayout["encodedLaneCount"] as? Int))
+                )
+            )
+
+            XCTAssertEqual(contract.wireName, expected["contract"], example["name"] as? String ?? "")
+            XCTAssertEqual(contract.completionRule.wireName, expected["completionRule"], example["name"] as? String ?? "")
+        }
+    }
+
     func testMacBridgeDerivesPresentationContractFromLumenProtocol() {
         let configuration = LumenMacDisplayKitCaptureConfiguration(
             displayID: 42,
@@ -1866,6 +1894,40 @@ final class LumenTuistBootstrapTests: XCTestCase {
 }
 
 private extension LumenTuistBootstrapTests {
+    static func loadLumenProtocolConformanceFixture(
+        filePath: String = #filePath
+    ) throws -> [String: Any] {
+        var directory = URL(fileURLWithPath: filePath).deletingLastPathComponent()
+        while directory.path != "/" {
+            let candidate = directory
+                .appendingPathComponent("docs")
+                .appendingPathComponent("protocol")
+                .appendingPathComponent("lumen-protocol-conformance.json")
+            if FileManager.default.fileExists(atPath: candidate.path) {
+                let data = try Data(contentsOf: candidate)
+                return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            }
+            directory.deleteLastPathComponent()
+        }
+
+        throw NSError(domain: "LumenTuistBootstrapTests", code: 2)
+    }
+
+    static func protocolTransport(from name: String) throws -> LumenProtocolDynamicRangeTransport {
+        switch name {
+        case "sdr":
+            return .sdr
+        case "full-frame-hdr":
+            return .fullFrameHDR
+        case "frame-gated-hdr":
+            return .frameGatedHDR
+        case "sdr-base-hdr-overlay":
+            return .sdrBaseHDROverlay
+        default:
+            throw NSError(domain: "LumenTuistBootstrapTests", code: 3)
+        }
+    }
+
     static func makeEncodedSampleBuffer(
         payload: Data,
         codecType: CMVideoCodecType,

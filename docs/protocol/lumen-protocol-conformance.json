@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "presentationContracts": [
+    {
+      "name": "overlay-tiles-supported",
+      "requestedTransport": "sdr-base-hdr-overlay",
+      "sink": {
+        "prefersHDR": true,
+        "supportsHDRTileOverlay": true,
+        "supportsPerFrameHDRMetadata": true,
+        "supportsEncodedTileStream": true
+      },
+      "sourceLayout": {
+        "tileCount": 2,
+        "encodedLaneCount": 2
+      },
+      "expected": {
+        "contract": "primed-per-tile-update",
+        "completionRule": "per-tile-after-lane-prime"
+      }
+    },
+    {
+      "name": "overlay-tiles-require-encoded-tile-client-support",
+      "requestedTransport": "sdr-base-hdr-overlay",
+      "sink": {
+        "prefersHDR": true,
+        "supportsHDRTileOverlay": true,
+        "supportsPerFrameHDRMetadata": true,
+        "supportsEncodedTileStream": false
+      },
+      "sourceLayout": {
+        "tileCount": 2,
+        "encodedLaneCount": 2
+      },
+      "expected": {
+        "contract": "single-frame",
+        "completionRule": "full-frame"
+      }
+    },
+    {
+      "name": "overlay-tiles-require-multi-tile-source-layout",
+      "requestedTransport": "sdr-base-hdr-overlay",
+      "sink": {
+        "prefersHDR": true,
+        "supportsHDRTileOverlay": true,
+        "supportsPerFrameHDRMetadata": true,
+        "supportsEncodedTileStream": true
+      },
+      "sourceLayout": {
+        "tileCount": 1,
+        "encodedLaneCount": 1
+      },
+      "expected": {
+        "contract": "single-frame",
+        "completionRule": "full-frame"
+      }
+    },
+    {
+      "name": "sdr-remains-single-frame",
+      "requestedTransport": "sdr",
+      "sink": {
+        "prefersHDR": true,
+        "supportsHDRTileOverlay": true,
+        "supportsPerFrameHDRMetadata": true,
+        "supportsEncodedTileStream": true
+      },
+      "sourceLayout": {
+        "tileCount": 2,
+        "encodedLaneCount": 2
+      },
+      "expected": {
+        "contract": "single-frame",
+        "completionRule": "full-frame"
+      }
+    }
+  ]
+}

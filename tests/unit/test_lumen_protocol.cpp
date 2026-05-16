@@ -4,10 +4,63 @@
  */
 #include <gtest/gtest.h>
 
+#include <filesystem>
+#include <fstream>
+#include <nlohmann/json.hpp>
+
 #include <src/lumen_protocol_adapter.h>
 #include <src/lumen_protocol.h>
 #include <src/session_transport.h>
 #include <src/video.h>
+
+namespace {
+  std::filesystem::path find_repo_root_from(std::filesystem::path start) {
+    if (start.has_filename()) {
+      start = start.parent_path();
+    }
+
+    while (!start.empty()) {
+      if (std::filesystem::exists(start / "src" / "lumen_protocol.h") &&
+          std::filesystem::exists(start / "tests" / "unit" / "test_lumen_protocol.cpp")) {
+        return start;
+      }
+      const auto parent = start.parent_path();
+      if (parent == start) {
+        break;
+      }
+      start = parent;
+    }
+
+    return {};
+  }
+
+  nlohmann::json load_lumen_protocol_conformance_fixture() {
+    const auto repo_root = find_repo_root_from(std::filesystem::current_path());
+    const auto fixture_path = repo_root / "docs" / "protocol" / "lumen-protocol-conformance.json";
+    std::ifstream fixture_file {fixture_path};
+    EXPECT_TRUE(fixture_file.good()) << "Missing Lumen protocol fixture at " << fixture_path;
+    if (!fixture_file.good()) {
+      return {};
+    }
+    return nlohmann::json::parse(fixture_file);
+  }
+
+  lumen::protocol::dynamic_range_transport protocol_transport_from_name(const std::string_view name) {
+    if (name == "sdr") {
+      return lumen::protocol::dynamic_range_transport::sdr;
+    }
+    if (name == "full-frame-hdr") {
+      return lumen::protocol::dynamic_range_transport::full_frame_hdr;
+    }
+    if (name == "frame-gated-hdr") {
+      return lumen::protocol::dynamic_range_transport::frame_gated_hdr;
+    }
+    if (name == "sdr-base-hdr-overlay") {
+      return lumen::protocol::dynamic_range_transport::sdr_base_hdr_overlay;
+    }
+    return lumen::protocol::dynamic_range_transport::sdr;
+  }
+}
 
 TEST(LumenProtocolAdapterTests, VideoSinkRequestMapsToPrimedPerTilePresentation) {
   video::sink_request_t request {};
@@ -166,4 +219,40 @@ TEST(LumenProtocolAdapterTests, BuildsSinkRequestFromProtocolFieldsAtAdapterBoun
   EXPECT_TRUE(request.capability.supports_hdr_tile_overlay);
   EXPECT_TRUE(request.capability.supports_per_frame_hdr_metadata);
   EXPECT_TRUE(request.capability.supports_encoded_tile_stream);
+}
+
+TEST(LumenProtocolAdapterTests, MatchesSharedConformanceFixturePresentationContracts) {
+  const auto fixture = load_lumen_protocol_conformance_fixture();
+  ASSERT_TRUE(fixture.contains("presentationContracts"));
+
+  for (const auto &example : fixture.at("presentationContracts")) {
+    const auto sink = example.at("sink");
+    const auto source_layout = example.at("sourceLayout");
+    const auto expected = example.at("expected");
+
+    const auto contract = lumen::protocol::resolve_presentation_contract(
+      {
+        .requested_transport = protocol_transport_from_name(example.at("requestedTransport").get<std::string>()),
+        .sink = {
+          .prefers_hdr = sink.at("prefersHDR").get<bool>(),
+          .supports_hdr_tile_overlay = sink.at("supportsHDRTileOverlay").get<bool>(),
+          .supports_per_frame_hdr_metadata = sink.at("supportsPerFrameHDRMetadata").get<bool>(),
+          .supports_encoded_tile_stream = sink.at("supportsEncodedTileStream").get<bool>(),
+        },
+        .source_layout = {
+          .tile_count = source_layout.at("tileCount").get<std::uint32_t>(),
+          .encoded_lane_count = source_layout.at("encodedLaneCount").get<std::uint32_t>(),
+        },
+      }
+    );
+
+    EXPECT_EQ(
+      lumen::protocol::presentation_contract_name(contract),
+      expected.at("contract").get<std::string>()
+    ) << example.at("name").get<std::string>();
+    EXPECT_EQ(
+      lumen::protocol::presentation_completion_rule_name(lumen::protocol::completion_rule_for(contract)),
+      expected.at("completionRule").get<std::string>()
+    ) << example.at("name").get<std::string>();
+  }
 }
