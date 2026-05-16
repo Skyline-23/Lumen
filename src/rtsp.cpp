@@ -1137,37 +1137,24 @@ namespace rtsp_stream {
       config.monitor.videoFormat = static_cast<int>(util::from_view(args.at("x-shadow-video[0].bitStreamFormat"sv)));
       config.monitor.chromaSamplingType = static_cast<int>(util::from_view(args.at("x-shadow-video[0].chromaSamplingType"sv)));
       config.monitor.enableIntraRefresh = static_cast<int>(util::from_view(args.at("x-shadow-video[0].intraRefresh"sv)));
-      config.monitor.sinkRequest.capability.gamut = video::parse_lumen_protocol_client_sink_gamut(args.at(lumen::protocol::rtsp::sink_gamut));
-      config.monitor.sinkRequest.capability.transfer = video::parse_lumen_protocol_client_sink_transfer(args.at(lumen::protocol::rtsp::sink_transfer));
-      config.monitor.sinkRequest.dynamic_range_transport = video::parse_lumen_protocol_dynamic_range_transport(
-        args.at(lumen::protocol::rtsp::sink_requested_dynamic_range_transport)
-      );
-      config.monitor.sinkRequest.capability.supports_frame_gated_hdr =
-        util::from_view(args.at(lumen::protocol::rtsp::sink_supports_frame_gated_hdr));
-      config.monitor.sinkRequest.capability.supports_hdr_tile_overlay =
-        util::from_view(args.at(lumen::protocol::rtsp::sink_supports_hdr_tile_overlay));
-      config.monitor.sinkRequest.capability.supports_per_frame_hdr_metadata =
-        util::from_view(args.at(lumen::protocol::rtsp::sink_supports_per_frame_hdr_metadata));
-      config.monitor.sinkRequest.capability.supports_encoded_tile_stream =
-        util::from_view(args.at(lumen::protocol::rtsp::sink_supports_encoded_tile_stream));
-      config.monitor.sinkRequest.mode.scale_explicit = true;
-      config.monitor.sinkRequest.mode.scale_percent =
-        static_cast<int>(util::from_view(args.at(lumen::protocol::rtsp::sink_scale_percent)));
-      config.monitor.sinkRequest.mode.hidpi =
-        util::from_view(args.at(lumen::protocol::rtsp::sink_hidpi));
-      config.monitor.sinkRequest.mode.mode_is_logical =
-        util::from_view(args.at(lumen::protocol::rtsp::sink_mode_is_logical));
-      config.monitor.sinkRequest.capability.current_edr_headroom = video::parse_lumen_protocol_headroom(
-        args.at(lumen::protocol::rtsp::sink_current_edr_headroom)
-      );
-      config.monitor.sinkRequest.capability.potential_edr_headroom = video::parse_lumen_protocol_headroom(
-        args.at(lumen::protocol::rtsp::sink_potential_edr_headroom)
-      );
-      config.monitor.sinkRequest.capability.current_peak_luminance_nits = video::parse_lumen_protocol_peak_luminance_nits(
-        args.at(lumen::protocol::rtsp::sink_current_peak_luminance_nits)
-      );
-      config.monitor.sinkRequest.capability.potential_peak_luminance_nits = video::parse_lumen_protocol_peak_luminance_nits(
-        args.at(lumen::protocol::rtsp::sink_potential_peak_luminance_nits)
+      config.monitor.sinkRequest = video::make_lumen_sink_request(
+        {
+          .scale_explicit = true,
+          .mode_is_logical = util::from_view(args.at(lumen::protocol::rtsp::sink_mode_is_logical)) != 0,
+          .scale_percent = static_cast<int>(util::from_view(args.at(lumen::protocol::rtsp::sink_scale_percent))),
+          .hidpi = util::from_view(args.at(lumen::protocol::rtsp::sink_hidpi)) != 0,
+          .gamut = args.at(lumen::protocol::rtsp::sink_gamut),
+          .transfer = args.at(lumen::protocol::rtsp::sink_transfer),
+          .current_edr_headroom = args.at(lumen::protocol::rtsp::sink_current_edr_headroom),
+          .potential_edr_headroom = args.at(lumen::protocol::rtsp::sink_potential_edr_headroom),
+          .current_peak_luminance_nits = args.at(lumen::protocol::rtsp::sink_current_peak_luminance_nits),
+          .potential_peak_luminance_nits = args.at(lumen::protocol::rtsp::sink_potential_peak_luminance_nits),
+          .requested_dynamic_range_transport = args.at(lumen::protocol::rtsp::sink_requested_dynamic_range_transport),
+          .supports_frame_gated_hdr = util::from_view(args.at(lumen::protocol::rtsp::sink_supports_frame_gated_hdr)) != 0,
+          .supports_hdr_tile_overlay = util::from_view(args.at(lumen::protocol::rtsp::sink_supports_hdr_tile_overlay)) != 0,
+          .supports_per_frame_hdr_metadata = util::from_view(args.at(lumen::protocol::rtsp::sink_supports_per_frame_hdr_metadata)) != 0,
+          .supports_encoded_tile_stream = util::from_view(args.at(lumen::protocol::rtsp::sink_supports_encoded_tile_stream)) != 0,
+        }
       );
       if (config.monitor.sinkRequest.mode.scale_percent != session.sink_request.mode.scale_percent ||
           config.monitor.sinkRequest.mode.hidpi != session.sink_request.mode.hidpi) {

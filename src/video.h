@@ -13,8 +13,8 @@
 
 // local includes
 #include "input.h"
+#include "lumen_protocol_adapter.h"
 #include "platform/common.h"
-#include "session_transport.h"
 #include "thread_safe.h"
 #include "video_colorspace.h"
 

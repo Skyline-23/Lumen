@@ -581,34 +581,24 @@ namespace shadow_http {
     launch_session->surround_params = (get_arg(args, "surroundParams", ""));
     launch_session->gcmap = static_cast<int>(util::from_view(get_arg(args, "gcmap", "0")));
     launch_session->virtual_display = util::from_view(get_arg(args, "virtualDisplay", "0")) || named_cert_p->always_use_virtual_display;
-    launch_session->sink_request.mode.scale_explicit = true;
-    launch_session->sink_request.mode.mode_is_logical = util::from_view(get_lumen_arg(args, lumen::protocol::launch::sink_mode_is_logical));
-    launch_session->sink_request.mode.scale_percent = static_cast<int>(util::from_view(get_lumen_arg(args, lumen::protocol::launch::sink_scale_percent)));
-    launch_session->sink_request.mode.hidpi = util::from_view(get_lumen_arg(args, lumen::protocol::launch::sink_hidpi));
-    launch_session->sink_request.capability.gamut = video::parse_lumen_protocol_client_sink_gamut(get_lumen_arg(args, lumen::protocol::launch::sink_gamut));
-    launch_session->sink_request.capability.transfer = video::parse_lumen_protocol_client_sink_transfer(get_lumen_arg(args, lumen::protocol::launch::sink_transfer));
-    launch_session->sink_request.capability.current_edr_headroom = video::parse_lumen_protocol_headroom(
-      get_lumen_arg(args, lumen::protocol::launch::sink_current_edr_headroom)
-    );
-    launch_session->sink_request.capability.potential_edr_headroom = video::parse_lumen_protocol_headroom(
-      get_lumen_arg(args, lumen::protocol::launch::sink_potential_edr_headroom)
-    );
-    launch_session->sink_request.capability.current_peak_luminance_nits = video::parse_lumen_protocol_peak_luminance_nits(
-      get_lumen_arg(args, lumen::protocol::launch::sink_current_peak_luminance_nits)
-    );
-    launch_session->sink_request.capability.potential_peak_luminance_nits = video::parse_lumen_protocol_peak_luminance_nits(
-      get_lumen_arg(args, lumen::protocol::launch::sink_potential_peak_luminance_nits)
-    );
-    launch_session->sink_request.dynamic_range_transport = video::parse_lumen_protocol_dynamic_range_transport(
-      get_lumen_arg(args, lumen::protocol::launch::requested_dynamic_range_transport)
-    );
-    launch_session->sink_request.capability.supports_frame_gated_hdr = util::from_view(get_lumen_arg(args, lumen::protocol::launch::sink_supports_frame_gated_hdr));
-    launch_session->sink_request.capability.supports_hdr_tile_overlay = util::from_view(get_lumen_arg(args, lumen::protocol::launch::sink_supports_hdr_tile_overlay));
-    launch_session->sink_request.capability.supports_per_frame_hdr_metadata = util::from_view(
-      get_lumen_arg(args, lumen::protocol::launch::sink_supports_per_frame_hdr_metadata)
-    );
-    launch_session->sink_request.capability.supports_encoded_tile_stream = util::from_view(
-      get_lumen_arg(args, lumen::protocol::launch::sink_supports_encoded_tile_stream, "0")
+    launch_session->sink_request = video::make_lumen_sink_request(
+      {
+        .scale_explicit = true,
+        .mode_is_logical = util::from_view(get_lumen_arg(args, lumen::protocol::launch::sink_mode_is_logical)) != 0,
+        .scale_percent = static_cast<int>(util::from_view(get_lumen_arg(args, lumen::protocol::launch::sink_scale_percent))),
+        .hidpi = util::from_view(get_lumen_arg(args, lumen::protocol::launch::sink_hidpi)) != 0,
+        .gamut = get_lumen_arg(args, lumen::protocol::launch::sink_gamut),
+        .transfer = get_lumen_arg(args, lumen::protocol::launch::sink_transfer),
+        .current_edr_headroom = get_lumen_arg(args, lumen::protocol::launch::sink_current_edr_headroom),
+        .potential_edr_headroom = get_lumen_arg(args, lumen::protocol::launch::sink_potential_edr_headroom),
+        .current_peak_luminance_nits = get_lumen_arg(args, lumen::protocol::launch::sink_current_peak_luminance_nits),
+        .potential_peak_luminance_nits = get_lumen_arg(args, lumen::protocol::launch::sink_potential_peak_luminance_nits),
+        .requested_dynamic_range_transport = get_lumen_arg(args, lumen::protocol::launch::requested_dynamic_range_transport),
+        .supports_frame_gated_hdr = util::from_view(get_lumen_arg(args, lumen::protocol::launch::sink_supports_frame_gated_hdr)) != 0,
+        .supports_hdr_tile_overlay = util::from_view(get_lumen_arg(args, lumen::protocol::launch::sink_supports_hdr_tile_overlay)) != 0,
+        .supports_per_frame_hdr_metadata = util::from_view(get_lumen_arg(args, lumen::protocol::launch::sink_supports_per_frame_hdr_metadata)) != 0,
+        .supports_encoded_tile_stream = util::from_view(get_lumen_arg(args, lumen::protocol::launch::sink_supports_encoded_tile_stream, "0")) != 0,
+      }
     );
     const auto requested_dynamic_range_transport =
       video::effective_dynamic_range_transport(launch_session->sink_request.dynamic_range_transport);

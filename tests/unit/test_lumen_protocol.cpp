@@ -4,6 +4,7 @@
  */
 #include <gtest/gtest.h>
 
+#include <src/lumen_protocol_adapter.h>
 #include <src/lumen_protocol.h>
 #include <src/session_transport.h>
 #include <src/video.h>
@@ -127,4 +128,42 @@ TEST(LumenProtocolAdapterTests, SanitizesSinkLuminanceProtocolNumbersThroughShar
   EXPECT_EQ(video::parse_lumen_protocol_peak_luminance_nits("1600"), 1600);
   EXPECT_EQ(video::parse_lumen_protocol_peak_luminance_nits("-300"), 0);
   EXPECT_EQ(video::parse_lumen_protocol_peak_luminance_nits("1600x"), 0);
+}
+
+TEST(LumenProtocolAdapterTests, BuildsSinkRequestFromProtocolFieldsAtAdapterBoundary) {
+  const auto request = video::make_lumen_sink_request(
+    video::lumen_sink_request_fields_t {
+      .scale_explicit = true,
+      .mode_is_logical = true,
+      .scale_percent = 175,
+      .hidpi = true,
+      .gamut = "display_p3",
+      .transfer = "hdr-pq",
+      .current_edr_headroom = "2.75",
+      .potential_edr_headroom = "7.5",
+      .current_peak_luminance_nits = "800",
+      .potential_peak_luminance_nits = "1600",
+      .requested_dynamic_range_transport = "frame_gated_hdr",
+      .supports_frame_gated_hdr = true,
+      .supports_hdr_tile_overlay = true,
+      .supports_per_frame_hdr_metadata = true,
+      .supports_encoded_tile_stream = true,
+    }
+  );
+
+  EXPECT_TRUE(request.mode.scale_explicit);
+  EXPECT_TRUE(request.mode.mode_is_logical);
+  EXPECT_EQ(request.mode.scale_percent, 175);
+  EXPECT_TRUE(request.mode.hidpi);
+  EXPECT_EQ(request.capability.gamut, static_cast<int>(video::client_sink_gamut_e::display_p3));
+  EXPECT_EQ(request.capability.transfer, static_cast<int>(video::client_sink_transfer_e::pq));
+  EXPECT_FLOAT_EQ(request.capability.current_edr_headroom, 2.75f);
+  EXPECT_FLOAT_EQ(request.capability.potential_edr_headroom, 7.5f);
+  EXPECT_EQ(request.capability.current_peak_luminance_nits, 800);
+  EXPECT_EQ(request.capability.potential_peak_luminance_nits, 1600);
+  EXPECT_EQ(request.dynamic_range_transport, video::dynamic_range_transport_e::frame_gated_hdr);
+  EXPECT_TRUE(request.capability.supports_frame_gated_hdr);
+  EXPECT_TRUE(request.capability.supports_hdr_tile_overlay);
+  EXPECT_TRUE(request.capability.supports_per_frame_hdr_metadata);
+  EXPECT_TRUE(request.capability.supports_encoded_tile_stream);
 }
