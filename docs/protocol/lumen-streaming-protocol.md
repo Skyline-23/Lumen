@@ -142,10 +142,13 @@ The host negotiates `primed-per-tile-update` only when all of these are true:
 
 ## Quality Gate
 
-Run `python3 tools/quality/lumen_protocol_quality_gate.py` before changing Lumen protocol authority files.
+Run `python3 tools/protocol/generate_lumen_protocol.py` after changing `docs/protocol/lumen-protocol-conformance.json`.
+
+Run `python3 tools/quality/lumen_protocol_quality_gate.py` before changing Lumen protocol authority files or committing protocol changes.
 
 The gate enforces these protocol-maintenance rules:
 
+- generated protocol authority files must be current with `docs/protocol/lumen-protocol-conformance.json`
 - control message ids `0x3003` and `0x3004` stay in Lumen protocol authority files instead of being duplicated in adapters
 - new Mac protocol coordination must not use `NSLock`
 - high-refresh behavior must not be gated on `targetFrameRate >= 100` or an equivalent 100 fps threshold

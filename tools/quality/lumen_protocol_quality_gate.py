@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import re
 import sys
 from dataclasses import dataclass
@@ -18,7 +19,12 @@ PROTOCOL_FUNCTION_FILES = {
     Path("src/platform/macos/Projects/LumenMacBridge/Sources/LumenStreamingProtocol.swift"),
 }
 PROTOCOL_LITERAL_AUTHORITY_FILES = PROTOCOL_FUNCTION_FILES | {
+    Path("src/lumen_protocol_control_wire_generated.h"),
     Path("src/stream.cpp"),
+    Path(
+        "src/platform/macos/Projects/LumenMacBridge/Sources/Generated/"
+        "LumenProtocolControlWireLayout.generated.swift"
+    ),
 }
 PROTOCOL_WIRE_LITERALS = ("0x3003", "0x3004")
 FORBIDDEN_PATTERNS = (
@@ -147,9 +153,41 @@ def check_protocol_function_sizes(root: Path, path: Path, text: str) -> list[Vio
     return violations
 
 
+def check_generated_protocol_outputs(root: Path) -> list[Violation]:
+    generator_path = root / "tools" / "protocol" / "generate_lumen_protocol.py"
+    if not generator_path.exists():
+        return []
+
+    spec = importlib.util.spec_from_file_location("generate_lumen_protocol_for_quality_gate", generator_path)
+    if spec is None or spec.loader is None:
+        return [
+            Violation(
+                "stale-generated-protocol",
+                generator_path.relative_to(root),
+                1,
+                "Could not load Lumen protocol generator.",
+            )
+        ]
+
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    stale_outputs = module.find_stale_outputs(root)
+    return [
+        Violation(
+            "stale-generated-protocol",
+            path,
+            1,
+            "Generated protocol file is stale; run python3 tools/protocol/generate_lumen_protocol.py.",
+        )
+        for path in stale_outputs
+    ]
+
+
 def run_checks(root: Path) -> list[Violation]:
     root = root.resolve()
     violations: list[Violation] = []
+    violations.extend(check_generated_protocol_outputs(root))
     for path in iter_source_files(root):
         text = path.read_text(errors="replace")
         violations.extend(check_forbidden_patterns(root, path, text))

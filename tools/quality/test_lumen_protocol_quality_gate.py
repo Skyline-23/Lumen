@@ -24,6 +24,15 @@ class LumenProtocolQualityGateTests(unittest.TestCase):
 
             self.assertEqual(MODULE.run_checks(root), [])
 
+    def test_allows_protocol_literals_in_generated_authority_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            authority = root / "src" / "lumen_protocol_control_wire_generated.h"
+            authority.parent.mkdir(parents=True)
+            authority.write_text("inline constexpr std::uint16_t hdr_frame_state_type = 0x3003;\n")
+
+            self.assertEqual(MODULE.run_checks(root), [])
+
     def test_rejects_protocol_literals_outside_authority_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -36,6 +45,27 @@ class LumenProtocolQualityGateTests(unittest.TestCase):
         self.assertEqual(len(violations), 1)
         self.assertEqual(violations[0].rule, "protocol-literal-authority")
         self.assertIn("0x3004", violations[0].message)
+
+    def test_rejects_stale_generated_protocol_outputs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            generator = root / "tools" / "protocol" / "generate_lumen_protocol.py"
+            generator.parent.mkdir(parents=True)
+            generator.write_text(
+                textwrap.dedent(
+                    """
+                    from pathlib import Path
+
+                    def find_stale_outputs(root):
+                        return [Path("src/lumen_protocol_control_wire_generated.h")]
+                    """
+                )
+            )
+
+            violations = MODULE.run_checks(root)
+
+        self.assertEqual(len(violations), 1)
+        self.assertEqual(violations[0].rule, "stale-generated-protocol")
 
     def test_rejects_forbidden_coordination_and_refresh_gates(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

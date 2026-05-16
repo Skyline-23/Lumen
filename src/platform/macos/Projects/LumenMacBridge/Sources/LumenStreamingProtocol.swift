@@ -95,59 +95,6 @@ public enum LumenProtocolPresentationContract: Equatable, Sendable {
     }
 }
 
-public enum LumenProtocolControlWireLayout {
-    public static let headerSize: UInt16 = 4
-
-    public enum HDRFrameState {
-        public static let packetType: UInt16 = 0x3003
-        public static let version: UInt8 = 1
-
-        public enum Flags {
-            public static let hasStaticMetadata: UInt8 = 1 << 0
-            public static let hasOverlayRegions: UInt8 = 1 << 1
-        }
-
-        public enum OverlayRegionFlags {
-            public static let hasMetadata: UInt8 = 1 << 0
-        }
-
-        public enum Offsets {
-            public static let version: UInt16 = LumenProtocolControlWireLayout.headerSize
-            public static let frameDynamicRange: UInt16 = LumenProtocolControlWireLayout.headerSize + 1
-            public static let flags: UInt16 = LumenProtocolControlWireLayout.headerSize + 2
-            public static let effectiveFromFrameNumber: UInt16 = LumenProtocolControlWireLayout.headerSize + 4
-            public static let overlayRegionCount: UInt16 = LumenProtocolControlWireLayout.headerSize + 8
-            public static let staticMetadata: UInt16 = LumenProtocolControlWireLayout.headerSize + 12
-        }
-    }
-
-    public enum EncodedTileFrameState {
-        public static let packetType: UInt16 = 0x3004
-        public static let version: UInt8 = 1
-        public static let packetLength: UInt16 = 52
-        public static let payloadLength: UInt16 = packetLength - LumenProtocolControlWireLayout.headerSize
-
-        public enum Flags {
-            public static let hasTileRegion: UInt8 = 1 << 0
-        }
-
-        public enum Offsets {
-            public static let version: UInt16 = LumenProtocolControlWireLayout.headerSize
-            public static let flags: UInt16 = LumenProtocolControlWireLayout.headerSize + 1
-            public static let effectiveFromFrameNumber: UInt16 = LumenProtocolControlWireLayout.headerSize + 4
-            public static let frameGroupId: UInt16 = LumenProtocolControlWireLayout.headerSize + 8
-            public static let tileIndex: UInt16 = LumenProtocolControlWireLayout.headerSize + 16
-            public static let tileCount: UInt16 = LumenProtocolControlWireLayout.headerSize + 20
-            public static let encodedLaneIndex: UInt16 = LumenProtocolControlWireLayout.headerSize + 24
-            public static let encodedLaneCount: UInt16 = LumenProtocolControlWireLayout.headerSize + 28
-            public static let tileOriginX: UInt16 = LumenProtocolControlWireLayout.headerSize + 32
-            public static let tileOriginY: UInt16 = LumenProtocolControlWireLayout.headerSize + 36
-            public static let tileWidth: UInt16 = LumenProtocolControlWireLayout.headerSize + 40
-            public static let tileHeight: UInt16 = LumenProtocolControlWireLayout.headerSize + 44
-        }
-    }
-}
-
 public protocol LumenProtocolAdapter: Sendable {
     var requestedTransport: LumenProtocolDynamicRangeTransport { get }
     var negotiatedTransport: LumenProtocolDynamicRangeTransport { get }
