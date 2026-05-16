@@ -74,3 +74,57 @@ TEST(LumenProtocolAdapterTests, VideoConfigAdapterKeepsH264SourcesOnSingleFrameP
   EXPECT_EQ(adapter.negotiated_transport, lumen::protocol::dynamic_range_transport::sdr);
   EXPECT_EQ(adapter.presentation_contract, lumen::protocol::presentation_contract::single_frame);
 }
+
+TEST(LumenProtocolAdapterTests, ParsesSinkCapabilityProtocolValuesThroughSharedAdapter) {
+  EXPECT_EQ(
+    video::parse_lumen_protocol_client_sink_gamut("p3"),
+    static_cast<int>(video::client_sink_gamut_e::display_p3)
+  );
+  EXPECT_EQ(
+    video::parse_lumen_protocol_client_sink_gamut("bt2020"),
+    static_cast<int>(video::client_sink_gamut_e::rec2020)
+  );
+  EXPECT_EQ(
+    video::parse_lumen_protocol_client_sink_transfer("st2084"),
+    static_cast<int>(video::client_sink_transfer_e::pq)
+  );
+  EXPECT_EQ(
+    video::parse_lumen_protocol_dynamic_range_transport("sdr_base_hdr_overlay"),
+    video::dynamic_range_transport_e::sdr_base_hdr_overlay
+  );
+  EXPECT_EQ(
+    video::parse_lumen_protocol_dynamic_range_transport("bogus"),
+    video::dynamic_range_transport_e::sdr
+  );
+}
+
+TEST(LumenProtocolAdapterTests, FormatsSinkCapabilityProtocolValuesThroughSharedAdapter) {
+  EXPECT_EQ(
+    video::lumen_protocol_client_sink_gamut_name(
+      static_cast<int>(video::client_sink_gamut_e::display_p3)
+    ),
+    std::string_view("display-p3")
+  );
+  EXPECT_EQ(
+    video::lumen_protocol_client_sink_transfer_name(
+      static_cast<int>(video::client_sink_transfer_e::pq)
+    ),
+    std::string_view("pq")
+  );
+  EXPECT_EQ(
+    video::lumen_protocol_dynamic_range_transport_name(
+      video::dynamic_range_transport_e::sdr_base_hdr_overlay
+    ),
+    std::string_view("sdr-base-hdr-overlay")
+  );
+}
+
+TEST(LumenProtocolAdapterTests, SanitizesSinkLuminanceProtocolNumbersThroughSharedAdapter) {
+  EXPECT_FLOAT_EQ(video::parse_lumen_protocol_headroom("2.5"), 2.5f);
+  EXPECT_FLOAT_EQ(video::parse_lumen_protocol_headroom("-1.5"), 0.0f);
+  EXPECT_FLOAT_EQ(video::parse_lumen_protocol_headroom("2.5x"), 0.0f);
+
+  EXPECT_EQ(video::parse_lumen_protocol_peak_luminance_nits("1600"), 1600);
+  EXPECT_EQ(video::parse_lumen_protocol_peak_luminance_nits("-300"), 0);
+  EXPECT_EQ(video::parse_lumen_protocol_peak_luminance_nits("1600x"), 0);
+}

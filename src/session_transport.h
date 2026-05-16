@@ -6,6 +6,11 @@
 
 #include "lumen_protocol.h"
 
+#include <algorithm>
+#include <cstdlib>
+#include <string>
+#include <string_view>
+
 namespace video {
   enum class client_sink_gamut_e : int {
     unknown = 0,
@@ -57,6 +62,130 @@ namespace video {
 
   inline bool partial_hdr_overlay_producer_available() {
     return true;
+  }
+
+  [[nodiscard]] constexpr std::string_view lumen_protocol_client_sink_gamut_name(const int gamut) {
+    switch (static_cast<client_sink_gamut_e>(gamut)) {
+      case client_sink_gamut_e::srgb:
+        return "srgb";
+      case client_sink_gamut_e::display_p3:
+        return "display-p3";
+      case client_sink_gamut_e::rec2020:
+        return "rec2020";
+      case client_sink_gamut_e::unknown:
+      default:
+        return "unknown";
+    }
+  }
+
+  [[nodiscard]] constexpr std::string_view lumen_protocol_client_sink_transfer_name(const int transfer) {
+    switch (static_cast<client_sink_transfer_e>(transfer)) {
+      case client_sink_transfer_e::sdr:
+        return "sdr";
+      case client_sink_transfer_e::pq:
+        return "pq";
+      case client_sink_transfer_e::hlg:
+        return "hlg";
+      case client_sink_transfer_e::unknown:
+      default:
+        return "unknown";
+    }
+  }
+
+  [[nodiscard]] constexpr std::string_view lumen_protocol_dynamic_range_transport_name(
+    const dynamic_range_transport_e transport
+  ) {
+    switch (transport) {
+      case dynamic_range_transport_e::sdr:
+        return "sdr";
+      case dynamic_range_transport_e::full_frame_hdr:
+        return "full-frame-hdr";
+      case dynamic_range_transport_e::frame_gated_hdr:
+        return "frame-gated-hdr";
+      case dynamic_range_transport_e::sdr_base_hdr_overlay:
+        return "sdr-base-hdr-overlay";
+      case dynamic_range_transport_e::unknown:
+      default:
+        return "unknown";
+    }
+  }
+
+  [[nodiscard]] constexpr std::string_view lumen_protocol_dynamic_range_transport_name(const int transport) {
+    return lumen_protocol_dynamic_range_transport_name(
+      static_cast<dynamic_range_transport_e>(transport)
+    );
+  }
+
+  inline int parse_lumen_protocol_client_sink_gamut(const std::string_view value) {
+    if (value == "display-p3" || value == "display_p3" || value == "p3") {
+      return static_cast<int>(client_sink_gamut_e::display_p3);
+    }
+    if (value == "rec2020" || value == "bt2020" || value == "2020") {
+      return static_cast<int>(client_sink_gamut_e::rec2020);
+    }
+    if (value == "srgb" || value == "rec709" || value == "709") {
+      return static_cast<int>(client_sink_gamut_e::srgb);
+    }
+    return static_cast<int>(client_sink_gamut_e::unknown);
+  }
+
+  inline int parse_lumen_protocol_client_sink_transfer(const std::string_view value) {
+    if (value == "pq" || value == "hdr-pq" || value == "st2084" || value == "smpte2084") {
+      return static_cast<int>(client_sink_transfer_e::pq);
+    }
+    if (value == "hlg" || value == "hdr-hlg") {
+      return static_cast<int>(client_sink_transfer_e::hlg);
+    }
+    if (value == "sdr" || value == "gamma") {
+      return static_cast<int>(client_sink_transfer_e::sdr);
+    }
+    return static_cast<int>(client_sink_transfer_e::unknown);
+  }
+
+  inline dynamic_range_transport_e parse_lumen_protocol_dynamic_range_transport(const std::string_view value) {
+    if (value == "sdr") {
+      return dynamic_range_transport_e::sdr;
+    }
+    if (value == "full-frame-hdr" || value == "full_frame_hdr") {
+      return dynamic_range_transport_e::full_frame_hdr;
+    }
+    if (value == "frame-gated-hdr" || value == "frame_gated_hdr") {
+      return dynamic_range_transport_e::frame_gated_hdr;
+    }
+    if (value == "sdr-base-hdr-overlay" || value == "sdr_base_hdr_overlay") {
+      return dynamic_range_transport_e::sdr_base_hdr_overlay;
+    }
+    return dynamic_range_transport_e::sdr;
+  }
+
+  inline float parse_lumen_protocol_headroom(const std::string_view value) {
+    if (value.empty()) {
+      return 0.0f;
+    }
+
+    std::string buffer {value};
+    char *end_ptr = nullptr;
+    const auto parsed = std::strtof(buffer.c_str(), &end_ptr);
+    if (end_ptr == buffer.c_str() || (end_ptr != nullptr && *end_ptr != '\0')) {
+      return 0.0f;
+    }
+
+    return std::max(parsed, 0.0f);
+  }
+
+  inline int parse_lumen_protocol_peak_luminance_nits(const std::string_view value) {
+    if (value.empty()) {
+      return 0;
+    }
+
+    std::string buffer {value};
+    char *end_ptr = nullptr;
+    const auto parsed = std::strtol(buffer.c_str(), &end_ptr, 10);
+    if (end_ptr == buffer.c_str() || (end_ptr != nullptr && *end_ptr != '\0')) {
+      return 0;
+    }
+
+    return static_cast<int>(std::max<long>(parsed, 0l));
   }
 
   inline bool client_sink_transfer_prefers_hdr(const int transfer) {

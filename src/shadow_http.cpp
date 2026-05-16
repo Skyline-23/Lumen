@@ -62,122 +62,6 @@ namespace shadow_http {
   crypto::cert_chain_t cert_chain;
 
   namespace {
-    const char *client_sink_gamut_to_string(const int gamut) {
-      switch (static_cast<video::client_sink_gamut_e>(gamut)) {
-        case video::client_sink_gamut_e::srgb:
-          return "srgb";
-        case video::client_sink_gamut_e::display_p3:
-          return "display-p3";
-        case video::client_sink_gamut_e::rec2020:
-          return "rec2020";
-        case video::client_sink_gamut_e::unknown:
-        default:
-          return "unknown";
-      }
-    }
-
-    const char *client_sink_transfer_to_string(const int transfer) {
-      switch (static_cast<video::client_sink_transfer_e>(transfer)) {
-        case video::client_sink_transfer_e::sdr:
-          return "sdr";
-        case video::client_sink_transfer_e::pq:
-          return "pq";
-        case video::client_sink_transfer_e::hlg:
-          return "hlg";
-        case video::client_sink_transfer_e::unknown:
-        default:
-          return "unknown";
-      }
-    }
-
-    const char *dynamic_range_transport_to_string(const int transport) {
-      switch (static_cast<video::dynamic_range_transport_e>(transport)) {
-        case video::dynamic_range_transport_e::sdr:
-          return "sdr";
-        case video::dynamic_range_transport_e::full_frame_hdr:
-          return "full-frame-hdr";
-        case video::dynamic_range_transport_e::frame_gated_hdr:
-          return "frame-gated-hdr";
-        case video::dynamic_range_transport_e::sdr_base_hdr_overlay:
-          return "sdr-base-hdr-overlay";
-        case video::dynamic_range_transport_e::unknown:
-        default:
-          return "unknown";
-      }
-    }
-
-    int parse_client_sink_gamut(const std::string_view value) {
-      if (value == "display-p3"sv || value == "display_p3"sv || value == "p3"sv) {
-        return static_cast<int>(video::client_sink_gamut_e::display_p3);
-      }
-      if (value == "rec2020"sv || value == "bt2020"sv || value == "2020"sv) {
-        return static_cast<int>(video::client_sink_gamut_e::rec2020);
-      }
-      if (value == "srgb"sv || value == "rec709"sv || value == "709"sv) {
-        return static_cast<int>(video::client_sink_gamut_e::srgb);
-      }
-      return static_cast<int>(video::client_sink_gamut_e::unknown);
-    }
-
-    int parse_client_sink_transfer(const std::string_view value) {
-      if (value == "pq"sv || value == "hdr-pq"sv || value == "st2084"sv || value == "smpte2084"sv) {
-        return static_cast<int>(video::client_sink_transfer_e::pq);
-      }
-      if (value == "hlg"sv || value == "hdr-hlg"sv) {
-        return static_cast<int>(video::client_sink_transfer_e::hlg);
-      }
-      if (value == "sdr"sv || value == "gamma"sv) {
-        return static_cast<int>(video::client_sink_transfer_e::sdr);
-      }
-      return static_cast<int>(video::client_sink_transfer_e::unknown);
-    }
-
-    video::dynamic_range_transport_e parse_requested_dynamic_range_transport(const std::string_view value) {
-      if (value == "sdr"sv) {
-        return video::dynamic_range_transport_e::sdr;
-      }
-      if (value == "full-frame-hdr"sv || value == "full_frame_hdr"sv) {
-        return video::dynamic_range_transport_e::full_frame_hdr;
-      }
-      if (value == "frame-gated-hdr"sv || value == "frame_gated_hdr"sv) {
-        return video::dynamic_range_transport_e::frame_gated_hdr;
-      }
-      if (value == "sdr-base-hdr-overlay"sv || value == "sdr_base_hdr_overlay"sv) {
-        return video::dynamic_range_transport_e::sdr_base_hdr_overlay;
-      }
-      return video::dynamic_range_transport_e::sdr;
-    }
-
-    float parse_client_sink_headroom(const std::string_view value) {
-      if (value.empty()) {
-        return 0.0f;
-      }
-
-      std::string buffer {value};
-      char *end_ptr = nullptr;
-      const auto parsed = std::strtof(buffer.c_str(), &end_ptr);
-      if (end_ptr == buffer.c_str() || (end_ptr != nullptr && *end_ptr != '\0')) {
-        return 0.0f;
-      }
-
-      return std::max(parsed, 0.0f);
-    }
-
-    int parse_client_sink_peak_luminance_nits(const std::string_view value) {
-      if (value.empty()) {
-        return 0;
-      }
-
-      std::string buffer {value};
-      char *end_ptr = nullptr;
-      const auto parsed = std::strtol(buffer.c_str(), &end_ptr, 10);
-      if (end_ptr == buffer.c_str() || (end_ptr != nullptr && *end_ptr != '\0')) {
-        return 0;
-      }
-
-      return static_cast<int>(std::max<long>(parsed, 0l));
-    }
-
     std::string rtsp_url_host_for_request(const std::shared_ptr<typename SimpleWeb::ServerBase<SessionHTTPS>::Request> &request) {
       auto host_header = request->header.find("host");
       if (host_header != request->header.end()) {
@@ -701,21 +585,21 @@ namespace shadow_http {
     launch_session->sink_request.mode.mode_is_logical = util::from_view(get_lumen_arg(args, lumen::protocol::launch::sink_mode_is_logical));
     launch_session->sink_request.mode.scale_percent = static_cast<int>(util::from_view(get_lumen_arg(args, lumen::protocol::launch::sink_scale_percent)));
     launch_session->sink_request.mode.hidpi = util::from_view(get_lumen_arg(args, lumen::protocol::launch::sink_hidpi));
-    launch_session->sink_request.capability.gamut = parse_client_sink_gamut(get_lumen_arg(args, lumen::protocol::launch::sink_gamut));
-    launch_session->sink_request.capability.transfer = parse_client_sink_transfer(get_lumen_arg(args, lumen::protocol::launch::sink_transfer));
-    launch_session->sink_request.capability.current_edr_headroom = parse_client_sink_headroom(
+    launch_session->sink_request.capability.gamut = video::parse_lumen_protocol_client_sink_gamut(get_lumen_arg(args, lumen::protocol::launch::sink_gamut));
+    launch_session->sink_request.capability.transfer = video::parse_lumen_protocol_client_sink_transfer(get_lumen_arg(args, lumen::protocol::launch::sink_transfer));
+    launch_session->sink_request.capability.current_edr_headroom = video::parse_lumen_protocol_headroom(
       get_lumen_arg(args, lumen::protocol::launch::sink_current_edr_headroom)
     );
-    launch_session->sink_request.capability.potential_edr_headroom = parse_client_sink_headroom(
+    launch_session->sink_request.capability.potential_edr_headroom = video::parse_lumen_protocol_headroom(
       get_lumen_arg(args, lumen::protocol::launch::sink_potential_edr_headroom)
     );
-    launch_session->sink_request.capability.current_peak_luminance_nits = parse_client_sink_peak_luminance_nits(
+    launch_session->sink_request.capability.current_peak_luminance_nits = video::parse_lumen_protocol_peak_luminance_nits(
       get_lumen_arg(args, lumen::protocol::launch::sink_current_peak_luminance_nits)
     );
-    launch_session->sink_request.capability.potential_peak_luminance_nits = parse_client_sink_peak_luminance_nits(
+    launch_session->sink_request.capability.potential_peak_luminance_nits = video::parse_lumen_protocol_peak_luminance_nits(
       get_lumen_arg(args, lumen::protocol::launch::sink_potential_peak_luminance_nits)
     );
-    launch_session->sink_request.dynamic_range_transport = parse_requested_dynamic_range_transport(
+    launch_session->sink_request.dynamic_range_transport = video::parse_lumen_protocol_dynamic_range_transport(
       get_lumen_arg(args, lumen::protocol::launch::requested_dynamic_range_transport)
     );
     launch_session->sink_request.capability.supports_frame_gated_hdr = util::from_view(get_lumen_arg(args, lumen::protocol::launch::sink_supports_frame_gated_hdr));
@@ -733,13 +617,13 @@ namespace shadow_http {
     const bool negotiated_hdr_stream =
       video::dynamic_range_transport_uses_hdr_stream(negotiated_dynamic_range_transport);
     BOOST_LOG(info) << "Client sink profile from launch: gamut="sv
-                    << client_sink_gamut_to_string(launch_session->sink_request.capability.gamut)
+                    << video::lumen_protocol_client_sink_gamut_name(launch_session->sink_request.capability.gamut)
                     << " transfer="sv
-                    << client_sink_transfer_to_string(launch_session->sink_request.capability.transfer)
+                    << video::lumen_protocol_client_sink_transfer_name(launch_session->sink_request.capability.transfer)
                     << " requested-transport="sv
-                    << dynamic_range_transport_to_string(static_cast<int>(requested_dynamic_range_transport))
+                    << video::lumen_protocol_dynamic_range_transport_name(requested_dynamic_range_transport)
                     << " negotiated-transport="sv
-                    << dynamic_range_transport_to_string(static_cast<int>(negotiated_dynamic_range_transport))
+                    << video::lumen_protocol_dynamic_range_transport_name(negotiated_dynamic_range_transport)
                     << " negotiated-hdr-stream="sv
                     << negotiated_hdr_stream
                     << " scale-percent="sv
