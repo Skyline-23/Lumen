@@ -28,13 +28,6 @@ option(CUDA_INHERIT_COMPILE_OPTIONS
         "When building CUDA code, inherit compile options from the the main project. You may want to disable this if
         your IDE throws errors about unknown flags after running cmake." ON)
 
-if(UNIX)
-    option(SUNSHINE_BUILD_HOMEBREW
-            "Enable a Homebrew build." OFF)
-    option(SUNSHINE_CONFIGURE_HOMEBREW
-            "Configure Homebrew formula. Recommended to use with SUNSHINE_CONFIGURE_ONLY" OFF)
-endif()
-
 if(APPLE)
     option(SUNSHINE_CONFIGURE_PORTFILE
             "Configure macOS Portfile. Recommended to use with SUNSHINE_CONFIGURE_ONLY" OFF)
