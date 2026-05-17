@@ -20,7 +20,7 @@ class RunLumenQualityGateTests(unittest.TestCase):
 
         self.assertIn("python3 tools/protocol/generate_lumen_protocol.py --check", commands)
         self.assertIn("python3 tools/quality/lumen_protocol_quality_gate.py", commands)
-        self.assertIn("python3 tools/quality/test_windows_protocol_adapter.py", commands)
+        self.assertIn("python3 tools/quality/test_platform_protocol_adapters.py", commands)
         self.assertIn("tuist generate --no-open", commands)
 
     def test_fast_gate_skips_build_heavy_checks(self) -> None:

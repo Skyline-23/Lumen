@@ -31,6 +31,10 @@ The Mac adapter maps MacDisplayKit capture state into Lumen protocol state:
 - HDR static metadata and overlay regions to `LumenHDRFrameState`
 - VideoToolbox and Metal timing to diagnostics only
 
+The pure adapter boundary is `src/platform/macos/lumen_protocol_adapter.h`; it
+maps CoreDisplay/ScreenCaptureKit/VideoToolbox/HDR facts into the same
+source-neutral `presentation_signal` used by other platforms.
+
 ### Windows
 
 The Windows adapter maps Windows capture state into the same Lumen protocol state:
@@ -43,6 +47,8 @@ Windows adapters must not create client-visible message ids or capability keys o
 The pure adapter boundary is `src/platform/windows/lumen_protocol_adapter.h`; it
 maps DXGI/WGC/NVENC/HDR facts into a source-neutral `presentation_signal` before
 contract resolution.
+Both platform adapters share `src/lumen_protocol_platform_adapter.h` for fallback
+and presentation-contract negotiation.
 
 ## Sink Capability
 
@@ -165,7 +171,7 @@ The gate enforces these protocol-maintenance rules:
 
 - generated protocol authority files must be current with `docs/protocol/lumen-protocol-conformance.json`
 - control message ids `0x3003` and `0x3004` stay in Lumen protocol authority files instead of being duplicated in adapters
-- new `Sunshine` identity references must stay in explicit legacy migration, service removal, or upstream attribution boundaries
+- new `Sunshine` or `Apollo` identity references must stay in explicit legacy migration, service removal, or upstream attribution boundaries
 - new Mac protocol coordination must not use `NSLock`
 - high-refresh behavior must not be gated on `targetFrameRate >= 100` or an equivalent 100 fps threshold
 - protocol authority functions must stay below the configured function-size budget and be split when they grow too large

@@ -1,6 +1,6 @@
 /**
- * @file src/platform/windows/lumen_protocol_adapter.h
- * @brief Windows capture signal adapter for the source-neutral Lumen protocol.
+ * @file src/platform/macos/lumen_protocol_adapter.h
+ * @brief macOS capture signal adapter for the source-neutral Lumen protocol.
  */
 #pragma once
 
@@ -9,24 +9,25 @@
 #include <algorithm>
 #include <cstdint>
 
-namespace lumen::platform::windows {
+namespace lumen::platform::macos {
   enum class capture_backend {
-    dxgi,
-    wgc,
+    core_display,
+    screen_capture_kit,
   };
 
   enum class encoder_backend {
     unknown,
-    nvenc_h264,
-    nvenc_hevc_main10,
-    nvenc_av1_main10,
+    videotoolbox_h264,
+    videotoolbox_hevc_main10,
+    videotoolbox_av1_main10,
+    videotoolbox_prores_422_hq,
   };
 
   struct source_signal {
     bool hdr_enabled = false;
-    capture_backend capture_backend = capture_backend::dxgi;
+    capture_backend capture_backend = capture_backend::core_display;
     encoder_backend encoder = encoder_backend::unknown;
-    std::uint32_t dirty_region_count = 1;
+    std::uint32_t tile_count = 1;
     std::uint32_t encoded_lane_count = 1;
   };
 
@@ -38,11 +39,12 @@ namespace lumen::platform::windows {
 
   [[nodiscard]] constexpr bool encoder_supports_hdr_overlay(const encoder_backend encoder) {
     switch (encoder) {
-      case encoder_backend::nvenc_hevc_main10:
-      case encoder_backend::nvenc_av1_main10:
+      case encoder_backend::videotoolbox_hevc_main10:
+      case encoder_backend::videotoolbox_av1_main10:
+      case encoder_backend::videotoolbox_prores_422_hq:
         return true;
       case encoder_backend::unknown:
-      case encoder_backend::nvenc_h264:
+      case encoder_backend::videotoolbox_h264:
       default:
         return false;
     }
@@ -52,7 +54,7 @@ namespace lumen::platform::windows {
     const source_signal &source
   ) {
     return {
-      .tile_count = std::max<std::uint32_t>(source.dirty_region_count, 1),
+      .tile_count = std::max<std::uint32_t>(source.tile_count, 1),
       .encoded_lane_count = std::max<std::uint32_t>(source.encoded_lane_count, 1),
     };
   }
@@ -76,4 +78,4 @@ namespace lumen::platform::windows {
   ) {
     return platform::make_lumen_protocol_adapter(make_protocol_adapter_input(signal));
   }
-}  // namespace lumen::platform::windows
+}  // namespace lumen::platform::macos

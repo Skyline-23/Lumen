@@ -138,7 +138,19 @@ class LumenProtocolQualityGateTests(unittest.TestCase):
             violations = MODULE.run_checks(root)
 
         self.assertEqual(len(violations), 1)
-        self.assertEqual(violations[0].rule, "legacy-sunshine-boundary")
+        self.assertEqual(violations[0].rule, "legacy-identity-boundary")
+
+    def test_rejects_new_apollo_identity_outside_legacy_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "src" / "runtime_identity.cpp"
+            source.parent.mkdir(parents=True)
+            source.write_text('auto name = "Apollo";\n')
+
+            violations = MODULE.run_checks(root)
+
+        self.assertEqual(len(violations), 1)
+        self.assertEqual(violations[0].rule, "legacy-identity-boundary")
 
     def test_allows_sunshine_identity_in_legacy_migration_boundary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
