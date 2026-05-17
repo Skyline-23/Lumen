@@ -59,6 +59,34 @@ public struct LumenProtocolPresentationSignal: Equatable, Sendable {
     }
 }
 
+public struct LumenProtocolAdapterOutput: Equatable, Sendable {
+    public let requestedTransport: LumenProtocolDynamicRangeTransport
+    public let negotiatedTransport: LumenProtocolDynamicRangeTransport
+    public let sinkCapability: LumenProtocolSinkCapability
+    public let sourceLayout: LumenProtocolEncodedTileLayout
+    public let presentationContract: LumenProtocolPresentationContract
+
+    public init(
+        requestedTransport: LumenProtocolDynamicRangeTransport,
+        negotiatedTransport: LumenProtocolDynamicRangeTransport,
+        sinkCapability: LumenProtocolSinkCapability,
+        sourceLayout: LumenProtocolEncodedTileLayout
+    ) {
+        self.requestedTransport = requestedTransport
+        self.negotiatedTransport = negotiatedTransport
+        self.sinkCapability = sinkCapability
+        self.sourceLayout = sourceLayout
+        self.presentationContract = LumenProtocolPresentationContract.resolve(
+            signal: LumenProtocolPresentationSignal(
+                requestedTransport: requestedTransport,
+                negotiatedTransport: negotiatedTransport,
+                sinkCapability: sinkCapability,
+                sourceLayout: sourceLayout
+            )
+        )
+    }
+}
+
 public enum LumenProtocolPresentationCompletionRule: Equatable, Sendable {
     case fullFrame
     case perTileAfterLanePrime
@@ -132,9 +160,19 @@ public protocol LumenProtocolAdapter: Sendable {
     var negotiatedTransport: LumenProtocolDynamicRangeTransport { get }
     var sinkCapability: LumenProtocolSinkCapability { get }
     var sourceLayout: LumenProtocolEncodedTileLayout { get }
+    var output: LumenProtocolAdapterOutput { get }
 }
 
 public extension LumenProtocolAdapter {
+    var output: LumenProtocolAdapterOutput {
+        LumenProtocolAdapterOutput(
+            requestedTransport: requestedTransport,
+            negotiatedTransport: negotiatedTransport,
+            sinkCapability: sinkCapability,
+            sourceLayout: sourceLayout
+        )
+    }
+
     var presentationSignal: LumenProtocolPresentationSignal {
         LumenProtocolPresentationSignal(
             requestedTransport: requestedTransport,
@@ -145,7 +183,7 @@ public extension LumenProtocolAdapter {
     }
 
     var presentationContract: LumenProtocolPresentationContract {
-        LumenProtocolPresentationContract.resolve(signal: presentationSignal)
+        output.presentationContract
     }
 
     var presentationContractName: String {

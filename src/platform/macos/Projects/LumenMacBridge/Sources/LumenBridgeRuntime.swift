@@ -451,10 +451,23 @@ public struct LumenBridgeEffectiveDisplayState: Equatable, Sendable {
 }
 
 public struct LumenMacDisplayKitProtocolAdapter: LumenProtocolAdapter, Equatable, Sendable {
-    public let requestedTransport: LumenProtocolDynamicRangeTransport
-    public let negotiatedTransport: LumenProtocolDynamicRangeTransport
-    public let sinkCapability: LumenProtocolSinkCapability
-    public let sourceLayout: LumenProtocolEncodedTileLayout
+    public let output: LumenProtocolAdapterOutput
+
+    public var requestedTransport: LumenProtocolDynamicRangeTransport {
+        output.requestedTransport
+    }
+
+    public var negotiatedTransport: LumenProtocolDynamicRangeTransport {
+        output.negotiatedTransport
+    }
+
+    public var sinkCapability: LumenProtocolSinkCapability {
+        output.sinkCapability
+    }
+
+    public var sourceLayout: LumenProtocolEncodedTileLayout {
+        output.sourceLayout
+    }
 
     public init(
         requestedTransport: LumenProtocolDynamicRangeTransport,
@@ -462,10 +475,18 @@ public struct LumenMacDisplayKitProtocolAdapter: LumenProtocolAdapter, Equatable
         sinkCapability: LumenProtocolSinkCapability,
         sourceLayout: LumenProtocolEncodedTileLayout
     ) {
-        self.requestedTransport = requestedTransport
-        self.negotiatedTransport = negotiatedTransport
-        self.sinkCapability = sinkCapability
-        self.sourceLayout = sourceLayout
+        self.init(
+            output: LumenProtocolAdapterOutput(
+                requestedTransport: requestedTransport,
+                negotiatedTransport: negotiatedTransport,
+                sinkCapability: sinkCapability,
+                sourceLayout: sourceLayout
+            )
+        )
+    }
+
+    public init(output: LumenProtocolAdapterOutput) {
+        self.output = output
     }
 }
 
@@ -600,7 +621,11 @@ public struct LumenMacDisplayKitCaptureConfiguration: Equatable, Sendable {
     }
 
     public var lumenProtocolAdapter: LumenMacDisplayKitProtocolAdapter {
-        LumenMacDisplayKitProtocolAdapter(
+        LumenMacDisplayKitProtocolAdapter(output: lumenProtocolAdapterOutput)
+    }
+
+    public var lumenProtocolAdapterOutput: LumenProtocolAdapterOutput {
+        LumenProtocolAdapterOutput(
             requestedTransport: lumenProtocolRequestedDynamicRangeTransport,
             negotiatedTransport: lumenProtocolNegotiatedDynamicRangeTransport,
             sinkCapability: lumenProtocolSinkCapability,

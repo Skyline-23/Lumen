@@ -534,6 +534,24 @@ final class LumenTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(adapter.presentationContract, .primedPerTileUpdate)
     }
 
+    func testMacProtocolAdapterUsesSharedProtocolAdapterOutputShape() {
+        let output = LumenProtocolAdapterOutput(
+            requestedTransport: .sdrBaseHDROverlay,
+            negotiatedTransport: .sdrBaseHDROverlay,
+            sinkCapability: LumenProtocolSinkCapability(
+                prefersHDR: true,
+                supportsHDRTileOverlay: true,
+                supportsPerFrameHDRMetadata: true,
+                supportsEncodedTileStream: true
+            ),
+            sourceLayout: LumenProtocolEncodedTileLayout(tileCount: 2, encodedLaneCount: 2)
+        )
+        let adapter = LumenMacDisplayKitProtocolAdapter(output: output)
+
+        XCTAssertEqual(adapter.output, output)
+        XCTAssertEqual(adapter.presentationContract, .primedPerTileUpdate)
+    }
+
     func testBridgeKeepsEncodedTilePresentationContractBehindSinkCapability() {
         let configuration = LumenMacDisplayKitCaptureConfiguration(
             displayID: 42,
