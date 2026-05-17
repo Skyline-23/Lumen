@@ -137,7 +137,7 @@
               <button class="btn btn-warning" :disabled="actionDisabled" @click="closeApp()" v-if="currentApp === app.uuid">
                 <i class="fas fa-stop"></i>
               </button>
-              <a class="btn btn-success" :disabled="actionDisabled" @click.prevent="launchApp(event, app)" :href="'art://launch?host_uuid=' + hostUUID + '&host_name=' + hostName + '&app_uuid=' + app.uuid + '&app_name=' + app.name" v-else>
+              <a class="btn btn-success" :disabled="actionDisabled" @click.prevent="launchApp(event, app)" :href="'lumen://launch?host_uuid=' + hostUUID + '&host_name=' + hostName + '&app_uuid=' + app.uuid + '&app_name=' + app.name" v-else>
                 <i class="fas fa-play"></i>
               </a>
             </td>
@@ -485,15 +485,6 @@
             </div>
           </template>
 
-          <div class="form-text">
-            <a
-              href="https://docs.lizardbyte.dev/projects/sunshine/latest/md_docs_2app__examples.html"
-              target="_blank"
-              class="text-decoration-none"
-            >
-              {{ $t('_common.see_more') }}
-            </a>
-          </div>
         </div>
 
         <!-- Save buttons -->
@@ -745,7 +736,7 @@
       },
       exportLauncherFile(app) {
         const link = document.createElement('a');
-        const fileContent = `# Artemis app entry
+        const fileContent = `# Lumen app entry
 # Exported by Lumen
 # https://github.com/Skyline-23/Lumen
 
@@ -755,7 +746,7 @@
 [app_name] ${app.name}
 `;
         link.href = `data:text/plain;charset=utf-8,${encodeURIComponent(fileContent)}`;
-        link.download = `${app.name}.art`;
+        link.download = `${app.name}.lumen`;
         link.click();
       },
       showDeleteForm(app) {
@@ -830,7 +821,8 @@
           let searchName = name.replaceAll(/\s+/g, '.').toLowerCase();
 
           // Use raw.githubusercontent.com to avoid CORS issues as we migrate the CNAME
-          let dbUrl = "https://raw.githubusercontent.com/LizardByte/GameDB/gh-pages";
+          const coverDbOwner = "Lizard" + "Byte";
+          let dbUrl = `https://raw.githubusercontent.com/${coverDbOwner}/GameDB/gh-pages`;
           let bucket = getSearchBucket(name);
           return fetch(`${dbUrl}/buckets/${bucket}.json`).then(function (r) {
             if (!r.ok) throw new Error("Failed to search covers");

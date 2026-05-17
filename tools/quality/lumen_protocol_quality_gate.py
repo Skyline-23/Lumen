@@ -43,9 +43,6 @@ FORBIDDEN_PATTERNS = (
 LEGACY_IDENTITY_PATTERN = re.compile(r"\b(?:[Ss]unshine|[Aa]pollo)\w*\b")
 LEGACY_IDENTITY_ALLOWED_FILES = {
     Path("src/platform/windows/utils.cpp"),
-    Path("src_assets/windows/misc/migration/migrate-config.bat"),
-    Path("src_assets/windows/misc/service/install-service.bat"),
-    Path("src_assets/windows/misc/service/uninstall-service.bat"),
 }
 
 
@@ -119,7 +116,7 @@ def check_legacy_identity_boundary(root: Path, path: Path, text: str) -> list[Vi
                     "legacy-identity-boundary",
                     relative,
                     line_number,
-                    "Legacy Sunshine/Apollo identity is only allowed in migration, service removal, or upstream attribution boundaries.",
+                    "Legacy upstream identity is only allowed in explicit upstream attribution boundaries.",
                 )
             )
     return violations

@@ -24,7 +24,7 @@ BEGIN
             VALUE "InternalName",     TOSTRING(PROJECT_NAME)
             VALUE "ProductName",      TOSTRING(PROJECT_NAME)
             VALUE "ProductVersion",   TOSTRING(PROJECT_VERSION)
-            VALUE "LegalCopyright",   "https://raw.githubusercontent.com/ClassicOldSong/Lumen/master/LICENSE"
+            VALUE "LegalCopyright",   "https://raw.githubusercontent.com/Skyline-23/Lumen/main/LICENSE"
         END
     END
 

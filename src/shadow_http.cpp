@@ -1005,7 +1005,7 @@ namespace shadow_http {
       return;
     }
 
-    // Newer Moonlight clients send localAudioPlayMode on /resume too,
+    // Newer compatibility clients send localAudioPlayMode on /resume too,
     // so we should use it if it's present in the args and there are
     // no active sessions we could be interfering with.
     const bool no_active_sessions {rtsp_stream::session_count() == 0};

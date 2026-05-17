@@ -5,8 +5,8 @@ cmake_minimum_required(VERSION 3.20)
 # todo - set this conditionally
 
 project(Lumen VERSION 0.0.0
-        DESCRIPTION "Self-hosted game stream host for Artemis"
-        HOMEPAGE_URL "https://github.com/ClassicOldSong/Lumen")
+        DESCRIPTION "Self-hosted desktop streaming host"
+        HOMEPAGE_URL "https://github.com/Skyline-23/Lumen")
 
 if(UNIX AND NOT APPLE)
     message(FATAL_ERROR "Lumen currently supports Windows and macOS host builds only.")
@@ -16,12 +16,11 @@ set(PROJECT_LICENSE "GPL-3.0-only")
 
 set(PROJECT_FQDN "dev.skyline23.lumen")
 
-set(PROJECT_BRIEF_DESCRIPTION "GameStream host for Artemis")  # must be <= 35 characters
+set(PROJECT_BRIEF_DESCRIPTION "Desktop streaming host")  # must be <= 35 characters
 
-set(PROJECT_LONG_DESCRIPTION "Offering low latency, cloud gaming server capabilities with support for AMD, Intel, \
-and Nvidia GPUs for hardware encoding. Software encoding is also available. You can connect to Lumen from any \
-Artemis client on a variety of devices. A web UI is provided to allow configuration, and client pairing, from \
-your favorite web browser. Pair from the local server or any mobile device.")
+set(PROJECT_LONG_DESCRIPTION "Offering low latency desktop streaming with support for AMD, Intel, \
+and Nvidia GPUs for hardware encoding. Software encoding is also available. A web UI is provided to allow \
+configuration and client pairing from your favorite web browser. Pair from the local server or any mobile device.")
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     message(STATUS "Setting build type to 'Release' as none was specified.")

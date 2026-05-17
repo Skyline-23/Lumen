@@ -12,10 +12,6 @@ set "SERVICE_CONFIG_FILE=%SERVICE_CONFIG_DIR%\service_start_type.txt"
 rem Set service to demand start. It will be changed to auto later if the user selected that option.
 set SERVICE_START_TYPE=demand
 
-rem Remove the legacy SunshineSvc service
-net stop sunshinesvc
-sc delete sunshinesvc
-
 rem Check if LumenService already exists
 sc qc %SERVICE_NAME% > nul 2>&1
 if %ERRORLEVEL%==0 (
@@ -61,7 +57,7 @@ rem Run the sc command to create/reconfigure the service
 sc %SC_CMD% %SERVICE_NAME% binPath= "\"%SERVICE_BIN%\"" start= %SERVICE_START_TYPE% DisplayName= "Lumen Service"
 
 rem Set the description of the service
-sc description %SERVICE_NAME% "Lumen is a self-hosted game stream host for Moonlight."
+sc description %SERVICE_NAME% "Lumen is a self-hosted desktop streaming host."
 
 rem Start the new service
 net start %SERVICE_NAME%

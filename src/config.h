@@ -104,19 +104,19 @@ namespace config {
 
       enum class resolution_option_e {
         disabled,  ///< Do not change resolution.
-        automatic,  ///< Change resolution and use the one received from Moonlight.
+        automatic,  ///< Change resolution and use the one received from the client.
         manual  ///< Change resolution and use the manually provided one.
       };
 
       enum class refresh_rate_option_e {
         disabled,  ///< Do not change refresh rate.
-        automatic,  ///< Change refresh rate and use the one received from Moonlight.
+        automatic,  ///< Change refresh rate and use the one received from the client.
         manual  ///< Change refresh rate and use the manually provided one.
       };
 
       enum class hdr_option_e {
         disabled,  ///< Do not change HDR settings.
-        automatic  ///< Change HDR settings and use the state requested by Moonlight.
+        automatic  ///< Change HDR settings and use the state requested by the client.
       };
 
       struct mode_remapping_entry_t {

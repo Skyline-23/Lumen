@@ -1,14 +1,18 @@
 # Lumen
 
-Lumen is a self-hosted desktop stream host for [Artemis(Moonlight Noir)](https://github.com/ClassicOldSong/moonlight-android). Offering low latency, native client resolution, cloud gaming server capabilities with support for AMD, Intel, and Nvidia GPUs for hardware encoding. Software encoding is also available. A web UI is provided to allow configuration and client pairing from your favorite web browser. Pair from the local server or any mobile device.
+Lumen is a self-hosted desktop streaming host for Windows and macOS. It is built around low-latency capture, native client resolution, HDR-aware streaming, hardware encoding, and a web control surface for pairing, configuration, and application launch management.
 
-Major features:
+Lumen keeps compatibility with existing GameStream-style clients where practical, while the active product direction is the Lumen host plus the Shadow client protocol.
+
+## Features
 
 - [x] Built-in Virtual Display with HDR support that matches the resolution/framerate config of your client automatically
 - [x] Permission management for clients
 - [x] Clipboard sync
 - [x] Commands for client connection/disconnection
 - [x] Input only mode
+- [x] Source-neutral Lumen streaming protocol adapters for Windows and macOS
+- [x] macOS app target backed by the shared protocol bridge
 
 ## Usage
 
@@ -25,14 +29,14 @@ Manage device permissions directly from the Lumen web UI.
 ## About Virtual Display
 
 > [!WARNING]
-> ***It is highly recommend to remove any other virtual display solutions from your system and Lumen/Sunshine config, to reduce confusions and compatibility issues.***
+> ***It is highly recommended to remove other virtual display solutions from your system and Lumen config to reduce conflicts and compatibility issues.***
 
 > [!NOTE]
-> **TL;DR** Just treat your Artemis/Moonlight client like a dedicated PnP monitor with Lumen.
+> **TL;DR** Treat each streaming client like a dedicated PnP monitor managed by Lumen.
 
-Lumen uses SudoVDA for virtual display. It features auto resolution and framerate matching for your Artemis/Moonlight clients. The virtual display is created upon the stream starts and removed once the app quits. **If you do not see a new virtual display added or removed when the stream starts or stops, there may be a driver misconfiguration, or another persistent virtual display might still be active.**
+Lumen uses SudoVDA for virtual display. It features auto resolution and framerate matching for connected clients. The virtual display is created when a stream starts and removed when the app quits. **If you do not see a new virtual display added or removed when the stream starts or stops, there may be a driver misconfiguration, or another persistent virtual display might still be active.**
 
-The virtual display works just like any physically attached monitors with SudoVDA, there's completely no need for a super complicated solution to "fix" resolution configurations for your devices. Unlike all other solutions that reuses one identity or generate a random one each time for any virtual display sessions, **Lumen assigns a fixed identity for each Artemis/Moonlight client, so your display configuration will be automatically remembered and managed by Windows natively.**
+The virtual display works like a physically attached monitor with SudoVDA. Unlike solutions that reuse one identity or generate a random identity for every virtual display session, **Lumen assigns a fixed identity for each client, so your display configuration can be remembered and managed by Windows natively.**
 
 ## Configuration for dual GPU laptops
 
@@ -127,27 +131,17 @@ Latency tuning guidance is being consolidated into the Lumen docs and web UI pro
 | Network       | Host: CAT5e ethernet or better |
 |               | Client: CAT5e ethernet or better |
 
+## Clients
+
+Shadow Client is the first-party client direction for Lumen. Other GameStream-compatible clients may still work through compatibility paths, but new protocol work targets Shadow first.
+
 ## Integrations
 
-SudoVDA: Virtual Display Adapter Driver used in Lumen
-
-[Artemis](https://github.com/ClassicOldSong/moonlight-android): Integrated Virtual Display options control from client side
-
-**NOTE**: Artemis currently supports Android only. Other platforms will come later.
+SudoVDA: Virtual Display Adapter Driver used in Lumen.
 
 ## Support
 
-Currently support is only provided via GitHub Issues/Discussions.
-
-No real time chat support will ever be provided for Lumen and Artemis. Including but not limited to:
-
-- Discord
-- Telegram
-- Whatsapp
-- QQ
-- WeChat 
-
-> When there's a chat, there're dramas. -- Confucius
+Support is provided through GitHub Issues and Discussions.
 
 ## Downloads
 
@@ -186,19 +180,9 @@ Same command can be used to upgrade, add to a scheduled task to automate updates
 
 See more details on the chocolatey package [here](https://community.chocolatey.org/packages/lumen)
 
-## Disclaimer
+## Attribution
 
-I got kicked from Moonlight and Sunshine's Discord server and banned from Sunshine's GitHub repo literally for helping people out.
-
-This is what I got for finding a bug, opened an issue, getting no response, troubleshoot myself, fixed the issue myself, shared it by PR to the main repo hoping my efforts can help someone else during the maintenance gap.
-
-Yes, I'm going away. [Lumen](https://github.com/Skyline-23/Lumen) and [Artemis(Moonlight Noir)](https://github.com/ClassicOldSong/moonlight-android) will no longer be compatible with OG Sunshine and OG Moonlight eventually, but they'll work even better with much more carefully designed features.
-
-The Moonlight repo had stayed silent for 5 months, with nobody actually responding to issues, and people are getting totally no help besides the limited FAQ in their Discord server. I tried to answer issues and questions, solve problems within my ability but I got kicked out just for helping others.
-
-**PRs for feature improvements are welcomed here unlike the main repo, your ideas are more likely to be appreciated and your efforts are actually being respected. We welcome people who can and willing to share their efforts, helping yourselves and other people in need.**
-
-**Update**: They have contacted me and apologized for this incident, but the fact it **happened** still motivated me to start my own fork.
+Lumen builds on open streaming, capture, and client compatibility work from the wider GameStream ecosystem. Legacy compatibility names are retained only where they describe protocol behavior, third-party dependencies, or source attribution.
 
 ## License
 

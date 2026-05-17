@@ -198,10 +198,10 @@ namespace input {
     int id;
 
     // When emulating the HOME button, we may need to artificially release the back button.
-    // Afterwards, the gamepad state on Lumen won't match the state on Moonlight.
+    // Afterwards, the gamepad state on Lumen won't match the state on the client.
     // To prevent Lumen from sending erroneous input data to the active application,
     // Lumen forces the button to be in a specific state until the gamepad state matches that of
-    // Moonlight once more.
+    // the client once more.
     button_state_e back_button_state;
   };
 
@@ -332,7 +332,7 @@ namespace input {
   }
 
   void print(PNV_MULTI_CONTROLLER_PACKET packet) {
-    // Moonlight spams controller packet even when not necessary
+    // Some compatibility clients spam controller packets even when not necessary
     BOOST_LOG(verbose)
       << "--begin controller packet--"sv << std::endl
       << "controllerNumber ["sv << packet->controllerNumber << ']' << std::endl
@@ -585,7 +585,7 @@ namespace input {
     // Prevent divide by zero
     // Don't expect it to happen, but just in case
     if (!packet->width || !packet->height) {
-      BOOST_LOG(warning) << "Moonlight passed invalid dimensions"sv;
+      BOOST_LOG(warning) << "Client passed invalid dimensions"sv;
 
       return;
     }
@@ -628,7 +628,7 @@ namespace input {
       mouse_press[button] = !release;
     }
     /**
-     * When Moonlight sends mouse input through absolute coordinates,
+     * When clients send mouse input through absolute coordinates,
      * it's possible that BUTTON_RIGHT is pressed down immediately after releasing BUTTON_LEFT.
      * As a result, Lumen will left-click on hyperlinks in the browser before right-clicking
      *

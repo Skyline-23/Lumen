@@ -925,7 +925,7 @@ namespace rtsp_stream {
 
       /**
        * GFE advertises incorrect mapping for normal quality configurations,
-       * as a result, Moonlight rotates all channels from index '3' to the right
+       * as a result, compatibility clients rotate all channels from index '3' to the right
        * To work around this, rotate channels to the left from index '3'
        */
       if (x == audio::SURROUND51 || x == audio::SURROUND71) {
@@ -985,7 +985,7 @@ namespace rtsp_stream {
 
     session_option.next = &port_option;
 
-    // Moonlight merely requires 'server_port=<port>'
+    // Compatibility clients merely require 'server_port=<port>'
     std::ostringstream port_value_stream;
     port_value_stream << "server_port=" << static_cast<int>(port);
     auto port_value = port_value_stream.str();
@@ -1272,7 +1272,7 @@ namespace rtsp_stream {
     }
 
     // When using stereo audio, the audio quality is (strangely) indicated by whether the Host field
-    // in the RTSP message matches a local interface's IP address. Fortunately, Moonlight always sends
+    // in the RTSP message matches a local interface's IP address. Fortunately, clients always send
     // 0.0.0.0 when it wants low quality, so it is easy to check without enumerating interfaces.
     if (config.audio.channels == 2) {
       for (auto option = req->options; option != nullptr; option = option->next) {

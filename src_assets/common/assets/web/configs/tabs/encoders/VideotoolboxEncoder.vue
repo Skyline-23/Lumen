@@ -22,7 +22,7 @@ const config = ref(props.config)
           <option value="3">H.264 + HEVC Main10 (HDR)</option>
         </select>
         <div class="form-text">
-          Current GameStream sessions still negotiate H.264 or HEVC with the client. This controls what Lumen advertises to Moonlight-compatible clients.
+          Current GameStream sessions still negotiate H.264 or HEVC with the client. This controls what Lumen advertises to compatibility clients.
         </div>
       </div>
       <div class="mb-3">

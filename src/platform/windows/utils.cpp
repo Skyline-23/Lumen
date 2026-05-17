@@ -109,7 +109,7 @@ std::string currentCodePageToCharset() {
 }
 
 
-// Modified from https://github.com/FrogTheFrog/Sunshine/blob/b6f8573d35eff7c55da6965dfa317dc9722bd4ef/src/platform/windows/display_device/windows_utils.cpp
+// Adapted from upstream Windows display-device helper code.
 
 std::string
 get_error_string(LONG error_code) {

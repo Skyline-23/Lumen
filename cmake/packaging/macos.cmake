@@ -15,9 +15,6 @@ if(LUMEN_PACKAGE_MACOS)  # todo
     install(TARGETS lumen
             BUNDLE DESTINATION . COMPONENT Runtime
             RUNTIME DESTINATION ${INSTALL_RUNTIME_DIR} COMPONENT Runtime)
-else()
-    install(FILES "${LUMEN_SOURCE_ASSETS_DIR}/macos/misc/uninstall_pkg.sh"
-            DESTINATION "${LUMEN_PACKAGE_ASSETS_DIR}")
 endif()
 
 install(DIRECTORY "${LUMEN_SOURCE_ASSETS_DIR}/macos/assets/"

@@ -37,8 +37,8 @@ namespace crypto {
     int err_code = X509_STORE_CTX_get_error(ctx);
 
     switch (err_code) {
-      // Expired or not-yet-valid certificates are fine. Sometimes Moonlight is running on embedded devices
-      // that don't have accurate clocks (or haven't yet synchronized by the time Moonlight first runs).
+      // Expired or not-yet-valid certificates are fine. Sometimes clients run on embedded devices
+      // that don't have accurate clocks (or haven't yet synchronized by the time the client first runs).
       // This behavior also matches what GeForce Experience does.
       // TODO: Checking for X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY is a temporary workaround to get moonlight-embedded to work on the raspberry pi
       case X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY:
@@ -53,9 +53,9 @@ namespace crypto {
 
   /**
    * @brief Verify the certificate chain.
-   * When certificates from two or more instances of Moonlight have been added to x509_store_t,
+   * When certificates from two or more client instances have been added to x509_store_t,
    * only one of them will be verified by X509_verify_cert, resulting in only a single instance of
-   * Moonlight to be able to use Lumen
+   * clients to be able to use Lumen
    *
    * To circumvent this, x509_store_t instance will be created for each instance of the certificates.
    * @param cert The certificate to verify.
@@ -72,7 +72,7 @@ namespace crypto {
       X509_STORE_CTX_set_verify_cb(_cert_ctx.get(), openssl_verify_cb);
 
       // We don't care to validate the entire chain for the purposes of client auth.
-      // Some versions of clients forked from Moonlight Embedded produce client certs
+      // Some embedded client forks produce client certs
       // that OpenSSL doesn't detect as self-signed due to some X509v3 extensions.
       X509_STORE_CTX_set_flags(_cert_ctx.get(), X509_V_FLAG_PARTIAL_CHAIN);
 

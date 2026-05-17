@@ -89,10 +89,10 @@ onMounted(() => {
 
     <!-- Lumen Name -->
     <div class="mb-3">
-      <label for="sunshine_name" class="form-label">{{ $t('config.sunshine_name') }}</label>
-      <input type="text" class="form-control" id="sunshine_name" placeholder="Lumen"
-             v-model="config.sunshine_name" />
-      <div class="form-text">{{ $t('config.sunshine_name_desc') }}</div>
+      <label for="host_name" class="form-label">{{ $t('config.host_name') }}</label>
+      <input type="text" class="form-control" id="host_name" placeholder="Lumen"
+             v-model="config.host_name" />
+      <div class="form-text">{{ $t('config.host_name_desc') }}</div>
     </div>
 
     <!-- Log Level -->

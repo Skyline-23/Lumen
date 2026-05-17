@@ -173,7 +173,7 @@ The gate enforces these protocol-maintenance rules:
 
 - generated protocol authority files must be current with `docs/protocol/lumen-protocol-conformance.json`
 - control message ids `0x3003` and `0x3004` stay in Lumen protocol authority files instead of being duplicated in adapters
-- new `Sunshine` or `Apollo` identity references must stay in explicit legacy migration, service removal, or upstream attribution boundaries
+- new legacy upstream identity references must stay in explicit upstream attribution boundaries
 - new Mac protocol coordination must not use `NSLock`
 - high-refresh behavior must not be gated on `targetFrameRate >= 100` or an equivalent 100 fps threshold
 - protocol authority functions must stay below the configured function-size budget and be split when they grow too large

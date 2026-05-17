@@ -543,7 +543,7 @@ namespace config {
     CERTIFICATE_FILE,
 
     platf::get_host_name(),  // host_name,
-    "shadow_state.json"s,  // file_state
+    "lumen_state.json"s,  // file_state
     {},  // external_ip
   };
 
