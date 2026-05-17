@@ -40,6 +40,9 @@ The Windows adapter maps Windows capture state into the same Lumen protocol stat
 - Windows HDR display state to `LumenHDRFrameState`
 
 Windows adapters must not create client-visible message ids or capability keys outside the Lumen protocol namespace.
+The pure adapter boundary is `src/platform/windows/lumen_protocol_adapter.h`; it
+maps DXGI/WGC/NVENC/HDR facts into a source-neutral `presentation_signal` before
+contract resolution.
 
 ## Sink Capability
 
@@ -155,8 +158,8 @@ The host negotiates `primed-per-tile-update` only when all of these are true:
 
 Run `python3 tools/protocol/generate_lumen_protocol.py` after changing `docs/protocol/lumen-protocol-conformance.json`.
 
-Run `python3 tools/quality/run_lumen_quality_gate.py` before committing protocol or adapter changes.
-Use `--fast` for the non-build subset while iterating.
+Run `npm run quality` before committing protocol or adapter changes.
+Use `npm run quality-fast` for the non-build subset while iterating.
 
 The gate enforces these protocol-maintenance rules:
 

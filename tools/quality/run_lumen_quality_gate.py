@@ -21,6 +21,7 @@ def build_steps(fast: bool) -> list[QualityStep]:
         QualityStep("protocol generator tests", ("python3", "tools/protocol/test_generate_lumen_protocol.py")),
         QualityStep("protocol output freshness", ("python3", "tools/protocol/generate_lumen_protocol.py", "--check")),
         QualityStep("protocol quality gate tests", ("python3", "tools/quality/test_lumen_protocol_quality_gate.py")),
+        QualityStep("Windows protocol adapter tests", ("python3", "tools/quality/test_windows_protocol_adapter.py")),
         QualityStep("quality runner tests", ("python3", "tools/quality/test_run_lumen_quality_gate.py")),
         QualityStep("protocol quality gate", ("python3", "tools/quality/lumen_protocol_quality_gate.py")),
     ]
