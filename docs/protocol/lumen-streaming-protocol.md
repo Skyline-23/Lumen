@@ -49,6 +49,8 @@ maps DXGI/WGC/NVENC/HDR facts into a source-neutral `presentation_signal` before
 contract resolution.
 Both platform adapters share `src/lumen_protocol_platform_adapter.h` for fallback
 and presentation-contract negotiation.
+The existing `video::make_lumen_protocol_adapter` runtime paths build the same
+platform adapter input/output before exposing the legacy `video` adapter shape.
 
 ## Sink Capability
 

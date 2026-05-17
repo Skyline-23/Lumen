@@ -4,6 +4,7 @@
  */
 #pragma once
 
+#include "src/lumen_protocol_adapter.h"
 #include "src/lumen_protocol_platform_adapter.h"
 
 #include <algorithm>
@@ -60,20 +61,24 @@ namespace lumen::platform::windows {
   [[nodiscard]] constexpr platform::protocol_adapter_input make_protocol_adapter_input(
     const capture_signal &signal
   ) {
-    return {
-      .requested_transport = signal.requested_transport,
-      .sink = signal.sink,
-      .source = {
-        .hdr_enabled = signal.source.hdr_enabled,
-        .supports_hdr_overlay_encode = encoder_supports_hdr_overlay(signal.source.encoder),
-        .source_layout = source_encoded_tile_layout(signal.source),
-      },
-    };
+    return platform::make_protocol_adapter_input(
+      platform::protocol_negotiation_input {
+        .requested_transport = signal.requested_transport,
+        .sink = signal.sink,
+        .source = {
+          .hdr_enabled = signal.source.hdr_enabled,
+          .supports_hdr_overlay_encode = encoder_supports_hdr_overlay(signal.source.encoder),
+          .source_layout = source_encoded_tile_layout(signal.source),
+        },
+      }
+    );
   }
 
   [[nodiscard]] constexpr video::lumen_protocol_adapter_t make_lumen_protocol_adapter(
     const capture_signal &signal
   ) {
-    return platform::make_lumen_protocol_adapter(make_protocol_adapter_input(signal));
+    return video::make_lumen_protocol_adapter(
+      platform::resolve_protocol_adapter(make_protocol_adapter_input(signal))
+    );
   }
 }  // namespace lumen::platform::windows

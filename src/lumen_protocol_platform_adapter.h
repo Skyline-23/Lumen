@@ -5,7 +5,6 @@
 #pragma once
 
 #include "lumen_protocol.h"
-#include "lumen_protocol_adapter.h"
 
 namespace lumen::platform {
   struct protocol_source_signal {
@@ -14,14 +13,29 @@ namespace lumen::platform {
     protocol::encoded_tile_layout source_layout;
   };
 
-  struct protocol_adapter_input {
+  struct protocol_negotiation_input {
     protocol::dynamic_range_transport requested_transport = protocol::dynamic_range_transport::sdr;
     protocol::sink_capability sink;
     protocol_source_signal source;
   };
 
+  struct protocol_adapter_input {
+    protocol::dynamic_range_transport requested_transport = protocol::dynamic_range_transport::sdr;
+    protocol::dynamic_range_transport negotiated_transport = protocol::dynamic_range_transport::sdr;
+    protocol::sink_capability sink;
+    protocol::encoded_tile_layout source_layout;
+  };
+
+  struct protocol_adapter_output {
+    protocol::dynamic_range_transport requested_transport = protocol::dynamic_range_transport::sdr;
+    protocol::dynamic_range_transport negotiated_transport = protocol::dynamic_range_transport::sdr;
+    protocol::sink_capability sink;
+    protocol::encoded_tile_layout source_layout;
+    protocol::presentation_contract presentation_contract = protocol::presentation_contract::single_frame;
+  };
+
   [[nodiscard]] constexpr protocol::dynamic_range_transport negotiate_platform_transport(
-    const protocol_adapter_input &input
+    const protocol_negotiation_input &input
   ) {
     if (input.requested_transport == protocol::dynamic_range_transport::sdr ||
         !input.source.hdr_enabled ||
@@ -61,22 +75,32 @@ namespace lumen::platform {
     return protocol::dynamic_range_transport::sdr;
   }
 
-  [[nodiscard]] constexpr video::lumen_protocol_adapter_t make_lumen_protocol_adapter(
-    const protocol_adapter_input &input
+  [[nodiscard]] constexpr protocol_adapter_input make_protocol_adapter_input(
+    const protocol_negotiation_input &input
   ) {
-    const auto negotiated = negotiate_platform_transport(input);
-    const auto presentation_signal = protocol::presentation_signal {
+    return {
       .requested_transport = input.requested_transport,
-      .negotiated_transport = negotiated,
+      .negotiated_transport = negotiate_platform_transport(input),
       .sink = input.sink,
       .source_layout = input.source.source_layout,
+    };
+  }
+
+  [[nodiscard]] constexpr protocol_adapter_output resolve_protocol_adapter(
+    const protocol_adapter_input &input
+  ) {
+    const auto presentation_signal = protocol::presentation_signal {
+      .requested_transport = input.requested_transport,
+      .negotiated_transport = input.negotiated_transport,
+      .sink = input.sink,
+      .source_layout = input.source_layout,
     };
 
     return {
       .requested_transport = input.requested_transport,
-      .negotiated_transport = negotiated,
-      .sink_capability = input.sink,
-      .source_layout = input.source.source_layout,
+      .negotiated_transport = input.negotiated_transport,
+      .sink = input.sink,
+      .source_layout = input.source_layout,
       .presentation_contract = protocol::resolve_presentation_contract(presentation_signal),
     };
   }

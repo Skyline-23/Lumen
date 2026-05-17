@@ -5,6 +5,7 @@
 #pragma once
 
 #include "lumen_protocol.h"
+#include "lumen_protocol_platform_adapter.h"
 #include "session_transport.h"
 
 #include <algorithm>
@@ -238,6 +239,18 @@ namespace video {
   };
 
   inline lumen_protocol_adapter_t make_lumen_protocol_adapter(
+    const lumen::platform::protocol_adapter_output &output
+  ) {
+    return {
+      .requested_transport = output.requested_transport,
+      .negotiated_transport = output.negotiated_transport,
+      .sink_capability = output.sink,
+      .source_layout = output.source_layout,
+      .presentation_contract = output.presentation_contract,
+    };
+  }
+
+  inline lumen::platform::protocol_adapter_input make_lumen_protocol_adapter_input(
     const sink_request_t &request,
     const lumen::protocol::encoded_tile_layout source_layout
   ) {
@@ -245,24 +258,23 @@ namespace video {
       to_lumen_protocol_transport(request.dynamic_range_transport);
     const auto negotiated_transport =
       to_lumen_protocol_transport(effective_dynamic_range_transport(request));
-    const auto sink_capability =
-      to_lumen_protocol_sink_capability(request.capability);
-    const auto presentation_contract =
-      lumen::protocol::resolve_presentation_contract(
-        lumen::protocol::presentation_signal {
-          .requested_transport = requested_transport,
-          .negotiated_transport = negotiated_transport,
-          .sink = sink_capability,
-          .source_layout = source_layout,
-        }
-      );
 
     return {
       .requested_transport = requested_transport,
       .negotiated_transport = negotiated_transport,
-      .sink_capability = sink_capability,
+      .sink = to_lumen_protocol_sink_capability(request.capability),
       .source_layout = source_layout,
-      .presentation_contract = presentation_contract,
     };
+  }
+
+  inline lumen_protocol_adapter_t make_lumen_protocol_adapter(
+    const sink_request_t &request,
+    const lumen::protocol::encoded_tile_layout source_layout
+  ) {
+    return make_lumen_protocol_adapter(
+      lumen::platform::resolve_protocol_adapter(
+        make_lumen_protocol_adapter_input(request, source_layout)
+      )
+    );
   }
 }  // namespace video
