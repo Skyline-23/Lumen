@@ -1255,7 +1255,7 @@ namespace proc {
    * Additionally, empty keys (such as "prep-cmd" or "detached") and keys no longer needed ("launching", "index")
    * are removed from the input.
    *
-   * Legacy versions of Sunshine and Lumen stored boolean and integer values as strings.
+   * Legacy runtime versions stored boolean and integer values as strings.
    * The following keys are converted:
    *   - Boolean keys: "exclude-global-prep-cmd", "elevated", "auto-detach", "wait-all",
    *                     "use-app-identity", "per-client-app-identity", "virtual-display"

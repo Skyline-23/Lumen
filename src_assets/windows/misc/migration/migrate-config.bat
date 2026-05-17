@@ -1,6 +1,6 @@
 @echo off
 
-rem Get sunshine root directory
+rem Get legacy config root directory
 for %%I in ("%~dp0\..") do set "OLD_DIR=%%~fI"
 
 rem Create the config directory if it didn't already exist

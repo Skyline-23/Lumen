@@ -226,6 +226,15 @@ namespace video {
         lumen::protocol::completion_rule_for(presentation_contract)
       );
     }
+
+    [[nodiscard]] constexpr lumen::protocol::presentation_signal presentation_signal() const {
+      return {
+        .requested_transport = requested_transport,
+        .negotiated_transport = negotiated_transport,
+        .sink = sink_capability,
+        .source_layout = source_layout,
+      };
+    }
   };
 
   inline lumen_protocol_adapter_t make_lumen_protocol_adapter(
@@ -240,8 +249,9 @@ namespace video {
       to_lumen_protocol_sink_capability(request.capability);
     const auto presentation_contract =
       lumen::protocol::resolve_presentation_contract(
-        {
-          .requested_transport = negotiated_transport,
+        lumen::protocol::presentation_signal {
+          .requested_transport = requested_transport,
+          .negotiated_transport = negotiated_transport,
           .sink = sink_capability,
           .source_layout = source_layout,
         }

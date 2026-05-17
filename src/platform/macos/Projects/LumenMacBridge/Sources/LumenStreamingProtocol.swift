@@ -40,6 +40,25 @@ public struct LumenProtocolEncodedTileLayout: Equatable, Sendable {
     }
 }
 
+public struct LumenProtocolPresentationSignal: Equatable, Sendable {
+    public let requestedTransport: LumenProtocolDynamicRangeTransport
+    public let negotiatedTransport: LumenProtocolDynamicRangeTransport
+    public let sinkCapability: LumenProtocolSinkCapability
+    public let sourceLayout: LumenProtocolEncodedTileLayout
+
+    public init(
+        requestedTransport: LumenProtocolDynamicRangeTransport,
+        negotiatedTransport: LumenProtocolDynamicRangeTransport,
+        sinkCapability: LumenProtocolSinkCapability,
+        sourceLayout: LumenProtocolEncodedTileLayout
+    ) {
+        self.requestedTransport = requestedTransport
+        self.negotiatedTransport = negotiatedTransport
+        self.sinkCapability = sinkCapability
+        self.sourceLayout = sourceLayout
+    }
+}
+
 public enum LumenProtocolPresentationCompletionRule: Equatable, Sendable {
     case fullFrame
     case perTileAfterLanePrime
@@ -63,12 +82,25 @@ public enum LumenProtocolPresentationContract: Equatable, Sendable {
         sinkCapability: LumenProtocolSinkCapability,
         sourceLayout: LumenProtocolEncodedTileLayout
     ) -> LumenProtocolPresentationContract {
-        guard requestedTransport == .sdrBaseHDROverlay,
-              sinkCapability.prefersHDR,
-              sinkCapability.supportsHDRTileOverlay,
-              sinkCapability.supportsPerFrameHDRMetadata,
-              sinkCapability.supportsEncodedTileStream,
-              !sourceLayout.isSingleFrame
+        resolve(
+            signal: LumenProtocolPresentationSignal(
+                requestedTransport: requestedTransport,
+                negotiatedTransport: requestedTransport,
+                sinkCapability: sinkCapability,
+                sourceLayout: sourceLayout
+            )
+        )
+    }
+
+    public static func resolve(
+        signal: LumenProtocolPresentationSignal
+    ) -> LumenProtocolPresentationContract {
+        guard signal.negotiatedTransport == .sdrBaseHDROverlay,
+              signal.sinkCapability.prefersHDR,
+              signal.sinkCapability.supportsHDRTileOverlay,
+              signal.sinkCapability.supportsPerFrameHDRMetadata,
+              signal.sinkCapability.supportsEncodedTileStream,
+              !signal.sourceLayout.isSingleFrame
         else {
             return .singleFrame
         }
@@ -103,12 +135,17 @@ public protocol LumenProtocolAdapter: Sendable {
 }
 
 public extension LumenProtocolAdapter {
-    var presentationContract: LumenProtocolPresentationContract {
-        LumenProtocolPresentationContract.resolve(
-            requestedTransport: negotiatedTransport,
+    var presentationSignal: LumenProtocolPresentationSignal {
+        LumenProtocolPresentationSignal(
+            requestedTransport: requestedTransport,
+            negotiatedTransport: negotiatedTransport,
             sinkCapability: sinkCapability,
             sourceLayout: sourceLayout
         )
+    }
+
+    var presentationContract: LumenProtocolPresentationContract {
+        LumenProtocolPresentationContract.resolve(signal: presentationSignal)
     }
 
     var presentationContractName: String {

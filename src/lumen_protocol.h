@@ -51,19 +51,43 @@ namespace lumen::protocol {
     encoded_tile_layout source_layout;
   };
 
-  [[nodiscard]] constexpr presentation_contract resolve_presentation_contract(
+  struct presentation_signal {
+    dynamic_range_transport requested_transport = dynamic_range_transport::sdr;
+    dynamic_range_transport negotiated_transport = dynamic_range_transport::sdr;
+    sink_capability sink;
+    encoded_tile_layout source_layout;
+  };
+
+  [[nodiscard]] constexpr presentation_signal make_presentation_signal(
     const presentation_input &input
   ) {
-    if (input.requested_transport == dynamic_range_transport::sdr_base_hdr_overlay &&
-        input.sink.prefers_hdr &&
-        input.sink.supports_hdr_tile_overlay &&
-        input.sink.supports_per_frame_hdr_metadata &&
-        input.sink.supports_encoded_tile_stream &&
-        !input.source_layout.is_single_frame()) {
+    return {
+      .requested_transport = input.requested_transport,
+      .negotiated_transport = input.requested_transport,
+      .sink = input.sink,
+      .source_layout = input.source_layout,
+    };
+  }
+
+  [[nodiscard]] constexpr presentation_contract resolve_presentation_contract(
+    const presentation_signal &signal
+  ) {
+    if (signal.negotiated_transport == dynamic_range_transport::sdr_base_hdr_overlay &&
+        signal.sink.prefers_hdr &&
+        signal.sink.supports_hdr_tile_overlay &&
+        signal.sink.supports_per_frame_hdr_metadata &&
+        signal.sink.supports_encoded_tile_stream &&
+        !signal.source_layout.is_single_frame()) {
       return presentation_contract::primed_per_tile_update;
     }
 
     return presentation_contract::single_frame;
+  }
+
+  [[nodiscard]] constexpr presentation_contract resolve_presentation_contract(
+    const presentation_input &input
+  ) {
+    return resolve_presentation_contract(make_presentation_signal(input));
   }
 
   [[nodiscard]] constexpr presentation_completion_rule completion_rule_for(

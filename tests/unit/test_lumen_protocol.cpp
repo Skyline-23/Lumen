@@ -85,6 +85,28 @@ TEST(LumenProtocolAdapterTests, VideoSinkRequestMapsToPrimedPerTilePresentation)
   EXPECT_EQ(adapter.presentation_completion_name(), lumen::protocol::presentation::per_tile_after_lane_prime);
 }
 
+TEST(LumenProtocolAdapterTests, PresentationSignalResolvesThroughCommonProtocol) {
+  const auto signal = lumen::protocol::presentation_signal {
+    .requested_transport = lumen::protocol::dynamic_range_transport::sdr_base_hdr_overlay,
+    .negotiated_transport = lumen::protocol::dynamic_range_transport::sdr_base_hdr_overlay,
+    .sink = {
+      .prefers_hdr = true,
+      .supports_hdr_tile_overlay = true,
+      .supports_per_frame_hdr_metadata = true,
+      .supports_encoded_tile_stream = true,
+    },
+    .source_layout = {
+      .tile_count = 2,
+      .encoded_lane_count = 2,
+    },
+  };
+
+  EXPECT_EQ(
+    lumen::protocol::resolve_presentation_contract(signal),
+    lumen::protocol::presentation_contract::primed_per_tile_update
+  );
+}
+
 TEST(LumenProtocolAdapterTests, VideoSinkRequestFallsBackToSingleFrameWithoutEncodedTileSupport) {
   video::sink_request_t request {};
   request.capability.transfer = static_cast<int>(video::client_sink_transfer_e::pq);

@@ -11,8 +11,8 @@ from pathlib import Path
 
 MAX_FUNCTION_LINES = 80
 
-SCAN_SUFFIXES = {".cpp", ".h", ".hpp", ".mm", ".m", ".swift"}
-SCAN_ROOTS = ("src", "tests/tuist/macos", "tests/unit")
+SCAN_SUFFIXES = {".bat", ".cpp", ".h", ".hpp", ".m", ".mm", ".swift"}
+SCAN_ROOTS = ("src", "src_assets/windows", "tests/tuist/macos", "tests/unit")
 PROTOCOL_FUNCTION_FILES = {
     Path("src/lumen_protocol.h"),
     Path("src/lumen_protocol_adapter.h"),
@@ -39,6 +39,13 @@ FORBIDDEN_PATTERNS = (
         "Do not gate Lumen high-refresh behavior on a 100 fps threshold.",
     ),
 )
+LEGACY_SUNSHINE_PATTERN = re.compile(r"\b[Ss]unshine\w*\b")
+LEGACY_SUNSHINE_ALLOWED_FILES = {
+    Path("src/platform/windows/utils.cpp"),
+    Path("src_assets/windows/misc/migration/migrate-config.bat"),
+    Path("src_assets/windows/misc/service/install-service.bat"),
+    Path("src_assets/windows/misc/service/uninstall-service.bat"),
+}
 
 
 @dataclass(frozen=True)
@@ -95,6 +102,25 @@ def check_forbidden_patterns(root: Path, path: Path, text: str) -> list[Violatio
         for rule, pattern, message in FORBIDDEN_PATTERNS:
             if pattern.search(line):
                 violations.append(Violation(rule, relative, line_number, message))
+    return violations
+
+
+def check_legacy_sunshine_boundary(root: Path, path: Path, text: str) -> list[Violation]:
+    relative = relative_to_root(path, root)
+    if relative in LEGACY_SUNSHINE_ALLOWED_FILES:
+        return []
+
+    violations: list[Violation] = []
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        if LEGACY_SUNSHINE_PATTERN.search(line):
+            violations.append(
+                Violation(
+                    "legacy-sunshine-boundary",
+                    relative,
+                    line_number,
+                    "Sunshine identity is only allowed in legacy migration, service removal, or upstream attribution boundaries.",
+                )
+            )
     return violations
 
 
@@ -191,6 +217,7 @@ def run_checks(root: Path) -> list[Violation]:
     for path in iter_source_files(root):
         text = path.read_text(errors="replace")
         violations.extend(check_forbidden_patterns(root, path, text))
+        violations.extend(check_legacy_sunshine_boundary(root, path, text))
         violations.extend(check_protocol_literal_authority(root, path, text))
         violations.extend(check_protocol_function_sizes(root, path, text))
     return violations

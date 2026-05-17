@@ -128,6 +128,27 @@ class LumenProtocolQualityGateTests(unittest.TestCase):
         self.assertEqual(len(violations), 1)
         self.assertEqual(violations[0].rule, "protocol-function-size")
 
+    def test_rejects_new_sunshine_identity_outside_legacy_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "src" / "runtime_identity.cpp"
+            source.parent.mkdir(parents=True)
+            source.write_text('auto name = "Sunshine";\n')
+
+            violations = MODULE.run_checks(root)
+
+        self.assertEqual(len(violations), 1)
+        self.assertEqual(violations[0].rule, "legacy-sunshine-boundary")
+
+    def test_allows_sunshine_identity_in_legacy_migration_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            migration = root / "src_assets" / "windows" / "misc" / "migration" / "migrate-config.bat"
+            migration.parent.mkdir(parents=True)
+            migration.write_text('if exist "%OLD_DIR%\\sunshine.conf" echo migrating\n')
+
+            self.assertEqual(MODULE.run_checks(root), [])
+
 
 if __name__ == "__main__":
     unittest.main()

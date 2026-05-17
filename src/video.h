@@ -339,8 +339,9 @@ namespace video {
       to_lumen_protocol_sink_capability(config.sinkRequest.capability);
     const auto presentation_contract =
       lumen::protocol::resolve_presentation_contract(
-        {
-          .requested_transport = negotiated_transport,
+        lumen::protocol::presentation_signal {
+          .requested_transport = requested_transport,
+          .negotiated_transport = negotiated_transport,
           .sink = sink_capability,
           .source_layout = source_layout,
         }

@@ -12,6 +12,17 @@ Lumen Streaming Protocol is the platform-neutral contract between a Lumen host a
 
 ## Source Adapters
 
+Every platform adapter emits a normalized presentation signal:
+
+- requested dynamic-range transport from the client or launch path
+- negotiated dynamic-range transport after platform and codec constraints
+- sink capability
+- source encoded-tile layout
+
+Presentation contracts are resolved from this source-neutral signal. MacDisplayKit,
+DXGI, WGC, VideoToolbox, NVENC, and future capture backends must stay behind this
+adapter boundary.
+
 ### Mac
 
 The Mac adapter maps MacDisplayKit capture state into Lumen protocol state:
@@ -144,12 +155,14 @@ The host negotiates `primed-per-tile-update` only when all of these are true:
 
 Run `python3 tools/protocol/generate_lumen_protocol.py` after changing `docs/protocol/lumen-protocol-conformance.json`.
 
-Run `python3 tools/quality/lumen_protocol_quality_gate.py` before changing Lumen protocol authority files or committing protocol changes.
+Run `python3 tools/quality/run_lumen_quality_gate.py` before committing protocol or adapter changes.
+Use `--fast` for the non-build subset while iterating.
 
 The gate enforces these protocol-maintenance rules:
 
 - generated protocol authority files must be current with `docs/protocol/lumen-protocol-conformance.json`
 - control message ids `0x3003` and `0x3004` stay in Lumen protocol authority files instead of being duplicated in adapters
+- new `Sunshine` identity references must stay in explicit legacy migration, service removal, or upstream attribution boundaries
 - new Mac protocol coordination must not use `NSLock`
 - high-refresh behavior must not be gated on `targetFrameRate >= 100` or an equivalent 100 fps threshold
 - protocol authority functions must stay below the configured function-size budget and be split when they grow too large
