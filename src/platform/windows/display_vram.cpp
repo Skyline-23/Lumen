@@ -29,8 +29,8 @@ extern "C" {
 #include "src/nvenc/nvenc_utils.h"
 #include "src/video.h"
 
-#if !defined(SUNSHINE_SHADERS_DIR)  // for testing this needs to be defined in cmake as we don't do an install
-  #define SUNSHINE_SHADERS_DIR SUNSHINE_ASSETS_DIR "/shaders/directx"
+#if !defined(LUMEN_SHADERS_DIR)  // for testing this needs to be defined in cmake as we don't do an install
+  #define LUMEN_SHADERS_DIR LUMEN_ASSETS_DIR "/shaders/directx"
 #endif
 namespace platf {
   using namespace std::literals;
@@ -1939,10 +1939,10 @@ namespace platf::dxgi {
     BOOST_LOG(info) << "Compiling shaders..."sv;
 
 #define compile_vertex_shader_helper(x) \
-  if (!(x##_hlsl = compile_vertex_shader(SUNSHINE_SHADERS_DIR "/" #x ".hlsl"))) \
+  if (!(x##_hlsl = compile_vertex_shader(LUMEN_SHADERS_DIR "/" #x ".hlsl"))) \
     return -1;
 #define compile_pixel_shader_helper(x) \
-  if (!(x##_hlsl = compile_pixel_shader(SUNSHINE_SHADERS_DIR "/" #x ".hlsl"))) \
+  if (!(x##_hlsl = compile_pixel_shader(LUMEN_SHADERS_DIR "/" #x ".hlsl"))) \
     return -1;
 
     compile_pixel_shader_helper(convert_yuv420_packed_uv_type0_ps);

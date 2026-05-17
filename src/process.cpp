@@ -49,7 +49,7 @@
   #include <share.h>
 #endif
 
-#define DEFAULT_APP_IMAGE_PATH SUNSHINE_ASSETS_DIR "/box.png"
+#define DEFAULT_APP_IMAGE_PATH LUMEN_ASSETS_DIR "/box.png"
 
 namespace proc {
   using namespace std::literals;
@@ -172,7 +172,7 @@ namespace proc {
     _app.terminate_on_pause = true;
     placebo = true;
 
-#if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
+#if defined LUMEN_TRAY && LUMEN_TRAY >= 1
     system_tray::update_tray_playing(_app_name);
 #endif
   }
@@ -694,7 +694,7 @@ namespace proc {
 
     fg.disable();
 
-#if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
+#if defined LUMEN_TRAY && LUMEN_TRAY >= 1
     system_tray::update_tray_playing(_app.name);
 #endif
 
@@ -725,7 +725,7 @@ namespace proc {
       BOOST_LOG(info) << "Adjust this behavior in the Applications tab or apps.json if this is not what you want."sv;
       placebo = true;
 
-    #if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
+    #if defined LUMEN_TRAY && LUMEN_TRAY >= 1
       if (_process.native_exit_code() != 0) {
         system_tray::update_tray_launch_error(proc::proc.get_last_run_app_name(), _process.native_exit_code());
       }
@@ -878,7 +878,7 @@ namespace proc {
       exec_thread.detach();
     }
 
-#if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
+#if defined LUMEN_TRAY && LUMEN_TRAY >= 1
     system_tray::update_tray_pausing(proc::proc.get_last_run_app_name());
 #endif
   }
@@ -980,7 +980,7 @@ namespace proc {
       display_device::revert_configuration();
 #endif
 
-#if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
+#if defined LUMEN_TRAY && LUMEN_TRAY >= 1
       system_tray::update_tray_stopped(proc::proc.get_last_run_app_name());
 #endif
     }
@@ -1153,12 +1153,12 @@ namespace proc {
     }
 
     // check if image is in assets directory
-    auto full_image_path = std::filesystem::path(SUNSHINE_ASSETS_DIR) / app_image_path;
+    auto full_image_path = std::filesystem::path(LUMEN_ASSETS_DIR) / app_image_path;
     if (std::filesystem::exists(full_image_path)) {
       return full_image_path.string();
     } else if (app_image_path == "./assets/steam.png") {
       // handle old default steam image definition
-      return SUNSHINE_ASSETS_DIR "/steam.png";
+      return LUMEN_ASSETS_DIR "/steam.png";
     }
 
     // check if specified image exists

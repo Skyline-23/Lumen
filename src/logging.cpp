@@ -43,7 +43,7 @@ bl::sources::severity_logger<int> info(2);  // Should be informed about
 bl::sources::severity_logger<int> warning(3);  // Strange events
 bl::sources::severity_logger<int> error(4);  // Recoverable errors
 bl::sources::severity_logger<int> fatal(5);  // Unrecoverable errors
-#ifdef SUNSHINE_TESTS
+#ifdef LUMEN_TESTS
 bl::sources::severity_logger<int> tests(10);  // Automatic tests output
 #endif
 
@@ -86,7 +86,7 @@ namespace logging {
       case 5:
         log_type = "Fatal: "sv;
         break;
-#ifdef SUNSHINE_TESTS
+#ifdef LUMEN_TESTS
       case 10:
         log_type = "Tests: "sv;
         break;
@@ -175,7 +175,7 @@ namespace logging {
 
     sink = boost::make_shared<text_sink>();
 
-#ifndef SUNSHINE_TESTS
+#ifndef LUMEN_TESTS
     boost::shared_ptr<std::ostream> stream {&std::cout, boost::null_deleter()};
     sink->locked_backend()->add_stream(stream);
 #endif

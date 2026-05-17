@@ -26,45 +26,45 @@ install(TARGETS audio-info RUNTIME DESTINATION "tools" COMPONENT audio)
 install(TARGETS lumen-service RUNTIME DESTINATION "tools" COMPONENT application)
 
 # Drivers
-install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/drivers/sudovda"
+install(DIRECTORY "${LUMEN_SOURCE_ASSETS_DIR}/windows/drivers/sudovda"
         DESTINATION "drivers"
         COMPONENT sudovda)
 
 # Mandatory scripts
-install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/service/"
+install(DIRECTORY "${LUMEN_SOURCE_ASSETS_DIR}/windows/misc/service/"
         DESTINATION "scripts"
         COMPONENT assets)
-install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/migration/"
+install(DIRECTORY "${LUMEN_SOURCE_ASSETS_DIR}/windows/misc/migration/"
         DESTINATION "scripts"
         COMPONENT assets)
-install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/path/"
+install(DIRECTORY "${LUMEN_SOURCE_ASSETS_DIR}/windows/misc/path/"
         DESTINATION "scripts"
         COMPONENT assets)
 
 # Configurable options for the service
-install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/autostart/"
+install(DIRECTORY "${LUMEN_SOURCE_ASSETS_DIR}/windows/misc/autostart/"
         DESTINATION "scripts"
         COMPONENT autostart)
 
 # scripts
-install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/firewall/"
+install(DIRECTORY "${LUMEN_SOURCE_ASSETS_DIR}/windows/misc/firewall/"
         DESTINATION "scripts"
         COMPONENT firewall)
-install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/gamepad/"
+install(DIRECTORY "${LUMEN_SOURCE_ASSETS_DIR}/windows/misc/gamepad/"
         DESTINATION "scripts"
         COMPONENT gamepad)
 
 # Lumen assets
-install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/"
-        DESTINATION "${SUNSHINE_ASSETS_DIR}"
+install(DIRECTORY "${LUMEN_SOURCE_ASSETS_DIR}/windows/assets/"
+        DESTINATION "${LUMEN_ASSETS_DIR}"
         COMPONENT assets)
 
 # copy assets (excluding shaders) to build directory, for running without install
-file(COPY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/"
+file(COPY "${LUMEN_SOURCE_ASSETS_DIR}/windows/assets/"
         DESTINATION "${CMAKE_BINARY_DIR}/assets"
         PATTERN "shaders" EXCLUDE)
 # use junction for shaders directory
-cmake_path(CONVERT "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/shaders"
+cmake_path(CONVERT "${LUMEN_SOURCE_ASSETS_DIR}/windows/assets/shaders"
         TO_NATIVE_PATH_LIST shaders_in_build_src_native)
 cmake_path(CONVERT "${CMAKE_BINARY_DIR}/assets/shaders" TO_NATIVE_PATH_LIST shaders_in_build_dest_native)
 execute_process(COMMAND cmd.exe /c mklink /J "${shaders_in_build_dest_native}" "${shaders_in_build_src_native}")
@@ -77,7 +77,7 @@ set(CPACK_PACKAGE_INSTALL_DIRECTORY "${CPACK_PACKAGE_NAME}")
 # Setting components groups and dependencies
 set(CPACK_COMPONENT_GROUP_CORE_EXPANDED true)
 
-# sunshine binary
+# Lumen binary
 set(CPACK_COMPONENT_APPLICATION_DISPLAY_NAME "${CMAKE_PROJECT_NAME}")
 set(CPACK_COMPONENT_APPLICATION_DESCRIPTION "${CMAKE_PROJECT_NAME} main application and required components.")
 set(CPACK_COMPONENT_APPLICATION_GROUP "Core")

@@ -13,7 +13,7 @@
 // local includes
 #include "thread_safe.h"
 
-#define WEB_DIR SUNSHINE_ASSETS_DIR "/web/"
+#define WEB_DIR LUMEN_ASSETS_DIR "/web/"
 
 using namespace std::chrono_literals;
 

@@ -10,7 +10,7 @@ target_link_libraries(dxgi-info
         ${CMAKE_THREAD_LIBS_INIT}
         dxgi
         ${PLATFORM_LIBRARIES})
-target_compile_options(dxgi-info PRIVATE ${SUNSHINE_COMPILE_OPTIONS})
+target_compile_options(dxgi-info PRIVATE ${LUMEN_COMPILE_OPTIONS})
 
 add_executable(audio-info audio.cpp utils.cpp)
 set_target_properties(audio-info PROPERTIES CXX_STANDARD 23)
@@ -19,7 +19,7 @@ target_link_libraries(audio-info
         ${CMAKE_THREAD_LIBS_INIT}
         ksuser
         ${PLATFORM_LIBRARIES})
-target_compile_options(audio-info PRIVATE ${SUNSHINE_COMPILE_OPTIONS})
+target_compile_options(audio-info PRIVATE ${LUMEN_COMPILE_OPTIONS})
 
 add_executable(lumen-service lumen_service.cpp)
 set_target_properties(lumen-service PROPERTIES
@@ -29,4 +29,4 @@ target_link_libraries(lumen-service
         ${CMAKE_THREAD_LIBS_INIT}
         wtsapi32
         ${PLATFORM_LIBRARIES})
-target_compile_options(lumen-service PRIVATE ${SUNSHINE_COMPILE_OPTIONS})
+target_compile_options(lumen-service PRIVATE ${LUMEN_COMPILE_OPTIONS})

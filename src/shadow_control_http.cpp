@@ -1320,7 +1320,7 @@ namespace shadow_control_http {
 
     nlohmann::json output_tree;
     output_tree["status"] = true;
-    output_tree["platform"] = SUNSHINE_PLATFORM;
+    output_tree["platform"] = LUMEN_PLATFORM;
     output_tree["version"] = PROJECT_VERSION;
 #ifdef _WIN32
     output_tree["vdisplayStatus"] = (int)proc::vDisplayDriverStatus;
@@ -1636,7 +1636,7 @@ namespace shadow_control_http {
     print_req(request);
 
     const auto current_app_id = std::max(proc::proc.running(), 0);
-    const auto server_state = current_app_id > 0 ? "SUNSHINE_SERVER_BUSY"sv : "SUNSHINE_SERVER_FREE"sv;
+    const auto server_state = current_app_id > 0 ? "LUMEN_SERVER_BUSY"sv : "LUMEN_SERVER_FREE"sv;
 
     nlohmann::json output_tree;
     output_tree["status"] = true;

@@ -21,7 +21,7 @@ const config = ref(props.config)
     <!-- Credentials File -->
     <div class="mb-3">
       <label for="credentials_file" class="form-label">{{ $t('config.credentials_file') }}</label>
-      <input type="text" class="form-control" id="credentials_file" placeholder="sunshine_state.json" v-model="config.credentials_file" />
+      <input type="text" class="form-control" id="credentials_file" placeholder="lumen_state.json" v-model="config.credentials_file" />
       <div class="form-text">{{ $t('config.credentials_file_desc') }}</div>
     </div>
 
@@ -49,7 +49,7 @@ const config = ref(props.config)
     <!-- State File -->
     <div class="mb-3">
       <label for="file_state" class="form-label">{{ $t('config.file_state') }}</label>
-      <input type="text" class="form-control" id="file_state" placeholder="sunshine_state.json"
+      <input type="text" class="form-control" id="file_state" placeholder="lumen_state.json"
              v-model="config.file_state" />
       <div class="form-text">{{ $t('config.file_state_desc') }}</div>
     </div>

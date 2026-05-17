@@ -1087,7 +1087,7 @@ namespace config {
 #ifndef __ANDROID__
     // TODO: Android can possibly support this
     if (!fs::exists(stream.file_apps.c_str())) {
-      fs::copy_file(SUNSHINE_ASSETS_DIR "/apps.json", stream.file_apps);
+      fs::copy_file(LUMEN_ASSETS_DIR "/apps.json", stream.file_apps);
     }
 #endif
 

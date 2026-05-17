@@ -163,7 +163,7 @@ WINAPI BOOL ConsoleCtrlHandler(DWORD type) {
 }
 #endif
 
-#if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
+#if defined LUMEN_TRAY && LUMEN_TRAY >= 1
 constexpr bool tray_is_enabled = true;
 #else
 constexpr bool tray_is_enabled = false;

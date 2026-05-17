@@ -3,7 +3,7 @@
  * @brief Definitions for the system tray icon and notification system.
  */
 // macros
-#if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
+#if defined LUMEN_TRAY && LUMEN_TRAY >= 1
 
   #if defined(_WIN32)
     #define WIN32_LEAN_AND_MEAN
@@ -15,10 +15,10 @@
     #define TRAY_ICON_PAUSING WEB_DIR "images/lumen-pausing.ico"
     #define TRAY_ICON_LOCKED WEB_DIR "images/lumen-locked.ico"
   #elif defined(__linux__) || defined(linux) || defined(__linux)
-    #define TRAY_ICON SUNSHINE_TRAY_PREFIX "-tray"
-    #define TRAY_ICON_PLAYING SUNSHINE_TRAY_PREFIX "-playing"
-    #define TRAY_ICON_PAUSING SUNSHINE_TRAY_PREFIX "-pausing"
-    #define TRAY_ICON_LOCKED SUNSHINE_TRAY_PREFIX "-locked"
+    #define TRAY_ICON LUMEN_TRAY_PREFIX "-tray"
+    #define TRAY_ICON_PLAYING LUMEN_TRAY_PREFIX "-playing"
+    #define TRAY_ICON_PAUSING LUMEN_TRAY_PREFIX "-pausing"
+    #define TRAY_ICON_LOCKED LUMEN_TRAY_PREFIX "-locked"
   #elif defined(__APPLE__) || defined(__MACH__)
     #define TRAY_ICON WEB_DIR "images/logo-lumen-16.png"
     #define TRAY_ICON_PLAYING WEB_DIR "images/lumen-playing-16.png"

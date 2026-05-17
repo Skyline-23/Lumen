@@ -2,7 +2,7 @@
 # this file will also load platform specific dependencies
 
 # boost, this should be before Simple-Web-Server as it also depends on boost
-include(dependencies/Boost_Sunshine)
+include(dependencies/Boost_Lumen)
 
 # submodules
 # moonlight common library

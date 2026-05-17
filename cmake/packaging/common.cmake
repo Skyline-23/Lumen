@@ -16,28 +16,28 @@ set(CPACK_PACKAGE_ICON ${PROJECT_SOURCE_DIR}/lumen.png)
 set(CPACK_PACKAGE_FILE_NAME "${CMAKE_PROJECT_NAME}")
 set(CPACK_STRIP_FILES YES)
 
-if(APPLE AND SUNSHINE_PACKAGE_MACOS)
-    set(SUNSHINE_PACKAGE_ASSETS_DIR "${CMAKE_PROJECT_NAME}.app/Contents/Resources/assets")
+if(APPLE AND LUMEN_PACKAGE_MACOS)
+    set(LUMEN_PACKAGE_ASSETS_DIR "${CMAKE_PROJECT_NAME}.app/Contents/Resources/assets")
 else()
-    set(SUNSHINE_PACKAGE_ASSETS_DIR "${SUNSHINE_ASSETS_DIR}")
+    set(LUMEN_PACKAGE_ASSETS_DIR "${LUMEN_ASSETS_DIR}")
 endif()
 
 # install common assets
-install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/"
-        DESTINATION "${SUNSHINE_PACKAGE_ASSETS_DIR}"
+install(DIRECTORY "${LUMEN_SOURCE_ASSETS_DIR}/common/assets/"
+        DESTINATION "${LUMEN_PACKAGE_ASSETS_DIR}"
         PATTERN "web" EXCLUDE)
 # copy assets to build directory, for running without install
 file(GLOB_RECURSE ALL_ASSETS
-        RELATIVE "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/" "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/*")
+        RELATIVE "${LUMEN_SOURCE_ASSETS_DIR}/common/assets/" "${LUMEN_SOURCE_ASSETS_DIR}/common/assets/*")
 list(FILTER ALL_ASSETS EXCLUDE REGEX "^web/.*$")  # Filter out the web directory
 foreach(asset ${ALL_ASSETS})  # Copy assets to build directory, excluding the web directory
-    file(COPY "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/${asset}"
+    file(COPY "${LUMEN_SOURCE_ASSETS_DIR}/common/assets/${asset}"
             DESTINATION "${CMAKE_CURRENT_BINARY_DIR}/assets")
 endforeach()
 
 # install built vite assets
 install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/assets/web"
-        DESTINATION "${SUNSHINE_PACKAGE_ASSETS_DIR}")
+        DESTINATION "${LUMEN_PACKAGE_ASSETS_DIR}")
 
 # platform specific packaging
 if(WIN32)

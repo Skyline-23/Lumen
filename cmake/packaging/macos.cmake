@@ -8,7 +8,7 @@ set(CPACK_BUNDLE_PLIST "${APPLE_PLIST_FILE}")
 set(CPACK_BUNDLE_ICON "${PROJECT_SOURCE_DIR}/lumen.icns")
 # set(CPACK_BUNDLE_STARTUP_COMMAND "${INSTALL_RUNTIME_DIR}/sunshine")
 
-if(SUNSHINE_PACKAGE_MACOS)  # todo
+if(LUMEN_PACKAGE_MACOS)  # todo
     set(MAC_PREFIX "${CMAKE_PROJECT_NAME}.app/Contents")
     set(INSTALL_RUNTIME_DIR "${MAC_PREFIX}/MacOS")
 
@@ -16,18 +16,18 @@ if(SUNSHINE_PACKAGE_MACOS)  # todo
             BUNDLE DESTINATION . COMPONENT Runtime
             RUNTIME DESTINATION ${INSTALL_RUNTIME_DIR} COMPONENT Runtime)
 else()
-    install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/macos/misc/uninstall_pkg.sh"
-            DESTINATION "${SUNSHINE_PACKAGE_ASSETS_DIR}")
+    install(FILES "${LUMEN_SOURCE_ASSETS_DIR}/macos/misc/uninstall_pkg.sh"
+            DESTINATION "${LUMEN_PACKAGE_ASSETS_DIR}")
 endif()
 
-install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/macos/assets/"
-        DESTINATION "${SUNSHINE_PACKAGE_ASSETS_DIR}"
+install(DIRECTORY "${LUMEN_SOURCE_ASSETS_DIR}/macos/assets/"
+        DESTINATION "${LUMEN_PACKAGE_ASSETS_DIR}"
         PATTERN "Info.plist" EXCLUDE)
 # copy assets to build directory, for running without install
-file(COPY "${SUNSHINE_SOURCE_ASSETS_DIR}/macos/assets/"
+file(COPY "${LUMEN_SOURCE_ASSETS_DIR}/macos/assets/"
         DESTINATION "${CMAKE_BINARY_DIR}/assets")
 
-if(SUNSHINE_PACKAGE_MACOS)
+if(LUMEN_PACKAGE_MACOS)
     install(CODE "
         include(BundleUtilities)
         set(BU_CHMOD_BUNDLE_ITEMS ON)

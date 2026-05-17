@@ -30,8 +30,8 @@ else()
     message(STATUS "libevdev binary dir: ${BINARY_DIR}")
     set(EVDEV_LIBRARY "${BINARY_DIR}/libevdev/.libs/libevdev.a")
 
-    # compile libevdev before sunshine
-    set(SUNSHINE_TARGET_DEPENDENCIES ${SUNSHINE_TARGET_DEPENDENCIES} libevdev)
+    # compile libevdev before Lumen
+    set(LUMEN_TARGET_DEPENDENCIES ${LUMEN_TARGET_DEPENDENCIES} libevdev)
 
     set(EXTERNAL_PROJECT_LIBEVDEV_USED TRUE)
 endif()

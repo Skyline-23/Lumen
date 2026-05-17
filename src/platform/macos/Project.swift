@@ -65,12 +65,12 @@ let hostedRuntimePreprocessorDefinitions = [
     "PROJECT_VERSION_MAJOR=\\\"0\\\"",
     "PROJECT_VERSION_MINOR=\\\"0\\\"",
     "PROJECT_VERSION_PATCH=\\\"0\\\"",
-    "SUNSHINE_ASSETS_DIR=\\\"../Resources/assets\\\"",
-    "SUNSHINE_PLATFORM=\\\"macos\\\"",
-    "SUNSHINE_PUBLISHER_ISSUE_URL=\\\"https://github.com/Skyline-23/Lumen/issues\\\"",
-    "SUNSHINE_PUBLISHER_NAME=\\\"SudoMaker\\\"",
-    "SUNSHINE_PUBLISHER_WEBSITE=\\\"https://www.sudomaker.com\\\"",
-    "SUNSHINE_TRAY=1",
+    "LUMEN_ASSETS_DIR=\\\"../Resources/assets\\\"",
+    "LUMEN_PLATFORM=\\\"macos\\\"",
+    "LUMEN_PUBLISHER_ISSUE_URL=\\\"https://github.com/Skyline-23/Lumen/issues\\\"",
+    "LUMEN_PUBLISHER_NAME=\\\"SudoMaker\\\"",
+    "LUMEN_PUBLISHER_WEBSITE=\\\"https://www.sudomaker.com\\\"",
+    "LUMEN_TRAY=1",
     "LUMEN_EMBEDDED_HOST=1"
 ]
 

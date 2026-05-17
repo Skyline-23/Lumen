@@ -417,7 +417,7 @@ namespace shadow_http {
     client_t &client = client_root;
     client.named_devices.push_back(named_cert_p);
 
-#if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
+#if defined LUMEN_TRAY && LUMEN_TRAY >= 1
     system_tray::update_tray_paired(named_cert_p->name);
 #endif
 
@@ -1071,7 +1071,7 @@ namespace shadow_http {
 
     rtsp_stream::launch_session_raise(launch_session);
 
-#if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
+#if defined LUMEN_TRAY && LUMEN_TRAY >= 1
     system_tray::update_tray_client_connected(named_cert_p->name);
 #endif
   }

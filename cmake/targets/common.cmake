@@ -1,8 +1,8 @@
 # common target definitions
 # this file will also load platform specific macros
 
-add_executable(lumen ${SUNSHINE_TARGET_FILES})
-foreach(dep ${SUNSHINE_TARGET_DEPENDENCIES})
+add_executable(lumen ${LUMEN_TARGET_FILES})
+foreach(dep ${LUMEN_TARGET_DEPENDENCIES})
     add_dependencies(lumen ${dep})  # compile these before Lumen
 endforeach()
 
@@ -22,8 +22,8 @@ if(NOT DEFINED CMAKE_CUDA_STANDARD)
     set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 endif()
 
-target_link_libraries(lumen ${SUNSHINE_EXTERNAL_LIBRARIES} ${EXTRA_LIBS})
-target_compile_definitions(lumen PUBLIC ${SUNSHINE_DEFINITIONS})
+target_link_libraries(lumen ${LUMEN_EXTERNAL_LIBRARIES} ${EXTRA_LIBS})
+target_compile_definitions(lumen PUBLIC ${LUMEN_DEFINITIONS})
 set_target_properties(lumen PROPERTIES
         CXX_STANDARD 23
         OUTPUT_NAME "${CMAKE_PROJECT_NAME}")
@@ -34,7 +34,7 @@ if(NOT APPLE)
             SOVERSION ${PROJECT_VERSION_MAJOR})
 endif()
 
-if(APPLE AND SUNSHINE_PACKAGE_MACOS)
+if(APPLE AND LUMEN_PACKAGE_MACOS)
     set_source_files_properties("${PROJECT_SOURCE_DIR}/lumen.icns"
             PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
     target_sources(lumen PRIVATE "${PROJECT_SOURCE_DIR}/lumen.icns")
@@ -54,14 +54,14 @@ endif()
 
 # CLion complains about unknown flags after running cmake, and cannot add symbols to the index for cuda files
 if(CUDA_INHERIT_COMPILE_OPTIONS)
-    foreach(flag IN LISTS SUNSHINE_COMPILE_OPTIONS)
-        list(APPEND SUNSHINE_COMPILE_OPTIONS_CUDA "$<$<COMPILE_LANGUAGE:CUDA>:--compiler-options=${flag}>")
+    foreach(flag IN LISTS LUMEN_COMPILE_OPTIONS)
+        list(APPEND LUMEN_COMPILE_OPTIONS_CUDA "$<$<COMPILE_LANGUAGE:CUDA>:--compiler-options=${flag}>")
     endforeach()
 endif()
 
-target_compile_options(lumen PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>;$<$<COMPILE_LANGUAGE:CUDA>:${SUNSHINE_COMPILE_OPTIONS_CUDA};-std=c++17>)  # cmake-lint: disable=C0301
+target_compile_options(lumen PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${LUMEN_COMPILE_OPTIONS}>;$<$<COMPILE_LANGUAGE:CUDA>:${LUMEN_COMPILE_OPTIONS_CUDA};-std=c++17>)  # cmake-lint: disable=C0301
 
-set(NPM_SOURCE_ASSETS_DIR ${SUNSHINE_SOURCE_ASSETS_DIR})
+set(NPM_SOURCE_ASSETS_DIR ${LUMEN_SOURCE_ASSETS_DIR})
 set(NPM_ASSETS_DIR ${CMAKE_BINARY_DIR})
 
 #WebUI build
