@@ -215,8 +215,8 @@ let appAssetsScript = TargetScript.post(
     rsync -a --exclude 'Info.plist' "${REPO_ROOT}/src_assets/macos/assets/" "${ASSETS_ROOT}/"
 
     cd "${REPO_ROOT}"
-    export SUNSHINE_SOURCE_ASSETS_DIR="${REPO_ROOT}/src_assets"
-    export SUNSHINE_ASSETS_DIR="${RESOURCES_ROOT}"
+    export LUMEN_SOURCE_ASSETS_DIR="${REPO_ROOT}/src_assets"
+    export LUMEN_ASSETS_DIR="${RESOURCES_ROOT}"
     export PATH="$(/usr/bin/dirname "${NPM_BIN}"):${PATH:-}"
     "${NPM_BIN}" exec -- vite build
     """#,

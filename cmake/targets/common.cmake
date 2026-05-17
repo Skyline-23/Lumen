@@ -1,12 +1,12 @@
 # common target definitions
 # this file will also load platform specific macros
 
-add_executable(sunshine ${SUNSHINE_TARGET_FILES})
+add_executable(lumen ${SUNSHINE_TARGET_FILES})
 foreach(dep ${SUNSHINE_TARGET_DEPENDENCIES})
-    add_dependencies(sunshine ${dep})  # compile these before sunshine
+    add_dependencies(lumen ${dep})  # compile these before Lumen
 endforeach()
 
-target_include_directories(sunshine SYSTEM BEFORE PRIVATE ${FFMPEG_INCLUDE_DIRS})
+target_include_directories(lumen SYSTEM BEFORE PRIVATE ${FFMPEG_INCLUDE_DIRS})
 
 # platform specific target definitions
 if(WIN32)
@@ -22,36 +22,33 @@ if(NOT DEFINED CMAKE_CUDA_STANDARD)
     set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 endif()
 
-target_link_libraries(sunshine ${SUNSHINE_EXTERNAL_LIBRARIES} ${EXTRA_LIBS})
-target_compile_definitions(sunshine PUBLIC ${SUNSHINE_DEFINITIONS})
-set_target_properties(sunshine PROPERTIES CXX_STANDARD 23)
+target_link_libraries(lumen ${SUNSHINE_EXTERNAL_LIBRARIES} ${EXTRA_LIBS})
+target_compile_definitions(lumen PUBLIC ${SUNSHINE_DEFINITIONS})
+set_target_properties(lumen PROPERTIES
+        CXX_STANDARD 23
+        OUTPUT_NAME "${CMAKE_PROJECT_NAME}")
 
 if(NOT APPLE)
-    set_target_properties(sunshine PROPERTIES
+    set_target_properties(lumen PROPERTIES
             VERSION ${PROJECT_VERSION}
             SOVERSION ${PROJECT_VERSION_MAJOR})
-endif()
-
-if(APPLE)
-    set_target_properties(sunshine PROPERTIES
-            OUTPUT_NAME "${CMAKE_PROJECT_NAME}")
 endif()
 
 if(APPLE AND SUNSHINE_PACKAGE_MACOS)
     set_source_files_properties("${PROJECT_SOURCE_DIR}/lumen.icns"
             PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
-    target_sources(sunshine PRIVATE "${PROJECT_SOURCE_DIR}/lumen.icns")
+    target_sources(lumen PRIVATE "${PROJECT_SOURCE_DIR}/lumen.icns")
 
-    set_target_properties(sunshine PROPERTIES
+    set_target_properties(lumen PROPERTIES
             MACOSX_BUNDLE TRUE
             MACOSX_BUNDLE_INFO_PLIST "${APPLE_PLIST_FILE}"
             MACOSX_BUNDLE_ICON_FILE "lumen.icns"
             MACOSX_BUNDLE_BUNDLE_NAME "${CMAKE_PROJECT_NAME}"
             MACOSX_BUNDLE_GUI_IDENTIFIER "dev.skyline23.lumen")
 
-    add_custom_command(TARGET sunshine POST_BUILD
-            COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_BUNDLE_CONTENT_DIR:sunshine>/Resources/assets"
-            COMMAND "${CMAKE_COMMAND}" -E copy_directory "${CMAKE_BINARY_DIR}/assets" "$<TARGET_BUNDLE_CONTENT_DIR:sunshine>/Resources/assets"
+    add_custom_command(TARGET lumen POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_BUNDLE_CONTENT_DIR:lumen>/Resources/assets"
+            COMMAND "${CMAKE_COMMAND}" -E copy_directory "${CMAKE_BINARY_DIR}/assets" "$<TARGET_BUNDLE_CONTENT_DIR:lumen>/Resources/assets"
             VERBATIM)
 endif()
 
@@ -62,7 +59,7 @@ if(CUDA_INHERIT_COMPILE_OPTIONS)
     endforeach()
 endif()
 
-target_compile_options(sunshine PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>;$<$<COMPILE_LANGUAGE:CUDA>:${SUNSHINE_COMPILE_OPTIONS_CUDA};-std=c++17>)  # cmake-lint: disable=C0301
+target_compile_options(lumen PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>;$<$<COMPILE_LANGUAGE:CUDA>:${SUNSHINE_COMPILE_OPTIONS_CUDA};-std=c++17>)  # cmake-lint: disable=C0301
 
 set(NPM_SOURCE_ASSETS_DIR ${SUNSHINE_SOURCE_ASSETS_DIR})
 set(NPM_ASSETS_DIR ${CMAKE_BINARY_DIR})
@@ -80,7 +77,7 @@ add_custom_target(web-ui ALL
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
         COMMENT "Installing NPM Dependencies and Building the Web UI"
         COMMAND "$<$<BOOL:${WIN32}>:cmd;/C>" "${NPM}" install ${NPM_INSTALL_FLAGS}
-        COMMAND "${CMAKE_COMMAND}" -E env "SUNSHINE_SOURCE_ASSETS_DIR=${NPM_SOURCE_ASSETS_DIR}" "SUNSHINE_ASSETS_DIR=${NPM_ASSETS_DIR}" "$<$<BOOL:${WIN32}>:cmd;/C>" "${NPM}" run build  # cmake-lint: disable=C0301
+        COMMAND "${CMAKE_COMMAND}" -E env "LUMEN_SOURCE_ASSETS_DIR=${NPM_SOURCE_ASSETS_DIR}" "LUMEN_ASSETS_DIR=${NPM_ASSETS_DIR}" "$<$<BOOL:${WIN32}>:cmd;/C>" "${NPM}" run build  # cmake-lint: disable=C0301
         COMMAND_EXPAND_LISTS
         VERBATIM)
 

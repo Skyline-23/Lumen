@@ -12,7 +12,7 @@ if(SUNSHINE_PACKAGE_MACOS)  # todo
     set(MAC_PREFIX "${CMAKE_PROJECT_NAME}.app/Contents")
     set(INSTALL_RUNTIME_DIR "${MAC_PREFIX}/MacOS")
 
-    install(TARGETS sunshine
+    install(TARGETS lumen
             BUNDLE DESTINATION . COMPONENT Runtime
             RUNTIME DESTINATION ${INSTALL_RUNTIME_DIR} COMPONENT Runtime)
 else()

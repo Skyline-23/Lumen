@@ -1,11 +1,11 @@
 @echo off
 setlocal enabledelayedexpansion
 
-rem Get sunshine root directory
+rem Get Lumen root directory
 for %%I in ("%~dp0\..") do set "ROOT_DIR=%%~fI"
 
 set SERVICE_NAME=LumenService
-set "SERVICE_BIN=%ROOT_DIR%\tools\sunshinesvc.exe"
+set "SERVICE_BIN=%ROOT_DIR%\tools\LumenService.exe"
 set "SERVICE_CONFIG_DIR=%LOCALAPPDATA%\SudoMaker\Lumen"
 set "SERVICE_CONFIG_FILE=%SERVICE_CONFIG_DIR%\service_start_type.txt"
 

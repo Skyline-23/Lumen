@@ -28,7 +28,7 @@ const config = ref(props.config)
     <!-- Log Path -->
     <div class="mb-3">
       <label for="log_path" class="form-label">{{ $t('config.log_path') }}</label>
-      <input type="text" class="form-control" id="log_path" placeholder="sunshine.log" v-model="config.log_path" />
+      <input type="text" class="form-control" id="log_path" placeholder="lumen.log" v-model="config.log_path" />
       <div class="form-text">{{ $t('config.log_path_desc') }}</div>
     </div>
 

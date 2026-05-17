@@ -17,13 +17,13 @@ let assetsSrcPath = 'src_assets/common/assets/web';
 let assetsDstPath = 'build/assets/web';
 
 // Resolve symlinks up front so Rollup never receives absolute or relative chunk names.
-if (process.env.SUNSHINE_SOURCE_ASSETS_DIR) {
-    let path = resolve(fs.realpathSync(process.env.SUNSHINE_SOURCE_ASSETS_DIR), "common/assets/web");
+if (process.env.LUMEN_SOURCE_ASSETS_DIR) {
+    let path = resolve(fs.realpathSync(process.env.LUMEN_SOURCE_ASSETS_DIR), "common/assets/web");
     console.log("Using srcdir from Cmake: " + path);
     assetsSrcPath = path;
 }
-if (process.env.SUNSHINE_ASSETS_DIR) {
-    let path = resolve(fs.realpathSync(process.env.SUNSHINE_ASSETS_DIR), "assets/web");
+if (process.env.LUMEN_ASSETS_DIR) {
+    let path = resolve(fs.realpathSync(process.env.LUMEN_ASSETS_DIR), "assets/web");
     console.log("Using destdir from Cmake: " + path);
     assetsDstPath = path;
 }

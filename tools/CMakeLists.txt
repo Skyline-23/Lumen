@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(sunshine_tools)
+project(lumen_tools)
 
 include_directories(${CMAKE_SOURCE_DIR})
 
@@ -21,10 +21,12 @@ target_link_libraries(audio-info
         ${PLATFORM_LIBRARIES})
 target_compile_options(audio-info PRIVATE ${SUNSHINE_COMPILE_OPTIONS})
 
-add_executable(sunshinesvc sunshinesvc.cpp)
-set_target_properties(sunshinesvc PROPERTIES CXX_STANDARD 23)
-target_link_libraries(sunshinesvc
+add_executable(lumen-service lumen_service.cpp)
+set_target_properties(lumen-service PROPERTIES
+        CXX_STANDARD 23
+        OUTPUT_NAME "LumenService")
+target_link_libraries(lumen-service
         ${CMAKE_THREAD_LIBS_INIT}
         wtsapi32
         ${PLATFORM_LIBRARIES})
-target_compile_options(sunshinesvc PRIVATE ${SUNSHINE_COMPILE_OPTIONS})
+target_compile_options(lumen-service PRIVATE ${SUNSHINE_COMPILE_OPTIONS})
