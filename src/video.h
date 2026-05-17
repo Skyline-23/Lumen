@@ -287,7 +287,7 @@ namespace video {
   struct config_t {
     // DO NOT CHANGE ORDER OR ADD FIELDS IN THE MIDDLE!!!!!
     // ONLY APPEND NEW FIELD AFTERWARDS!!!!!!!!!
-    // BIG F WORD to Sunshine!!!!!!!!!
+    // Legacy compatibility workaround.
     int width;  // Video width in pixels
     int height;  // Video height in pixels
     int framerate;  // Requested framerate, used in individual frame bitrate budget calculation

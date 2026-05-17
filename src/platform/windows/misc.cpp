@@ -127,9 +127,9 @@ namespace platf {
   decltype(WlanSetInterface) *fn_WlanSetInterface = nullptr;
 
   std::filesystem::path appdata() {
-    WCHAR sunshine_path[MAX_PATH];
-    GetModuleFileNameW(nullptr, sunshine_path, _countof(sunshine_path));
-    return std::filesystem::path {sunshine_path}.remove_filename() / L"config"sv;
+    WCHAR lumen_path[MAX_PATH];
+    GetModuleFileNameW(nullptr, lumen_path, _countof(lumen_path));
+    return std::filesystem::path {lumen_path}.remove_filename() / L"config"sv;
   }
 
   std::string from_sockaddr(const sockaddr *const socket_address) {
@@ -345,7 +345,7 @@ namespace platf {
     if (elevated && (elevationType == TokenElevationTypeDefault && !IsUserAdmin(userToken))) {
       // We don't have to strip the token or do anything here, but let's give the user a warning so they're aware what is happening.
       BOOST_LOG(warning) << "This command requires elevation and the current user account logged in does not have administrator rights. "
-                         << "For security reasons Sunshine will retain the same access level as the current user and will not elevate it.";
+                         << "For security reasons Lumen will retain the same access level as the current user and will not elevate it.";
     }
 
     // User has a limited token, this means they have UAC enabled and is an Administrator
@@ -601,7 +601,7 @@ namespace platf {
       startup_info.StartupInfo.hStdError = log_file_handle;
 
       // Allow the log file handle to be inherited by the child process (without inheriting all of
-      // our inheritable handles, such as our own log file handle created by SunshineSvc).
+      // our inheritable handles, such as our own log file handle created by LumenService).
       //
       // Note: The value we point to here must be valid for the lifetime of the attribute list,
       // so we need to point into the STARTUPINFO instead of our log_file_variable on the stack.
@@ -979,28 +979,28 @@ namespace platf {
     creation_flags |= interactive ? CREATE_NEW_CONSOLE : CREATE_NO_WINDOW;
 
     // Find the PATH variable in our environment block using a case-insensitive search
-    auto sunshine_wenv = boost::this_process::wenvironment();
+    auto lumen_wenv = boost::this_process::wenvironment();
     std::wstring path_var_name {L"PATH"};
     std::wstring old_path_val;
-    auto itr = std::find_if(sunshine_wenv.cbegin(), sunshine_wenv.cend(), [&](const auto &e) {
+    auto itr = std::find_if(lumen_wenv.cbegin(), lumen_wenv.cend(), [&](const auto &e) {
       return boost::iequals(e.get_name(), path_var_name);
     });
-    if (itr != sunshine_wenv.cend()) {
+    if (itr != lumen_wenv.cend()) {
       // Use the existing variable if it exists, since Boost treats these as case-sensitive.
       path_var_name = itr->get_name();
-      old_path_val = sunshine_wenv[path_var_name].to_string();
+      old_path_val = lumen_wenv[path_var_name].to_string();
     }
 
     // Temporarily prepend the specified working directory to PATH to ensure CreateProcess()
     // will (preferentially) find binaries that reside in the working directory.
-    sunshine_wenv[path_var_name].assign(start_dir + L";" + old_path_val);
+    lumen_wenv[path_var_name].assign(start_dir + L";" + old_path_val);
 
     // Restore the old PATH value for our process when we're done here
     auto restore_path = util::fail_guard([&]() {
       if (old_path_val.empty()) {
-        sunshine_wenv[path_var_name].clear();
+        lumen_wenv[path_var_name].clear();
       } else {
-        sunshine_wenv[path_var_name].assign(old_path_val);
+        lumen_wenv[path_var_name].assign(old_path_val);
       }
     });
 
@@ -1009,7 +1009,7 @@ namespace platf {
       // Duplicate the current user's token
       HANDLE user_token = retrieve_users_token(elevated);
       if (!user_token) {
-        // Fail the launch rather than risking launching with Sunshine's permissions unmodified.
+        // Fail the launch rather than risking launching with Lumen's permissions unmodified.
         ec = std::make_error_code(std::errc::permission_denied);
         return bp::child();
       }
@@ -1033,7 +1033,7 @@ namespace platf {
       });
     }
     // Otherwise, launch the process using CreateProcessW()
-    // This will inherit the elevation of whatever the user launched Sunshine with.
+    // This will inherit the elevation of whatever the user launched Lumen with.
     else {
       // Open our current token to resolve environment variables
       HANDLE process_token;
@@ -1150,7 +1150,7 @@ namespace platf {
     // Promote ourselves to high priority class
     SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
 
-    // Modify NVIDIA control panel settings again, in case they have been changed externally since sunshine launch
+    // Modify NVIDIA control panel settings again, in case they have been changed externally since Lumen launch
     if (nvprefs_instance.load()) {
       if (!nvprefs_instance.owning_undo_file()) {
         nvprefs_instance.restore_from_and_delete_undo_file_if_exists();
@@ -1193,7 +1193,7 @@ namespace platf {
 
     // If there is no mouse connected, enable Mouse Keys to force the cursor to appear
     if (!GetSystemMetrics(SM_MOUSEPRESENT)) {
-      BOOST_LOG(info) << "A mouse was not detected. Sunshine will enable Mouse Keys while streaming to force the mouse cursor to appear.";
+      BOOST_LOG(info) << "A mouse was not detected. Lumen will enable Mouse Keys while streaming to force the mouse cursor to appear.";
 
       // Get the current state of Mouse Keys so we can restore it when streaming is over
       previous_mouse_keys_state.cbSize = sizeof(previous_mouse_keys_state);
@@ -1259,14 +1259,14 @@ namespace platf {
     WCHAR executable[MAX_PATH];
     if (GetModuleFileNameW(nullptr, executable, ARRAYSIZE(executable)) == 0) {
       auto winerr = GetLastError();
-      BOOST_LOG(fatal) << "Failed to get Sunshine path: "sv << winerr;
+      BOOST_LOG(fatal) << "Failed to get Lumen path: "sv << winerr;
       return;
     }
 
     PROCESS_INFORMATION process_info;
     if (!CreateProcessW(executable, GetCommandLineW(), nullptr, nullptr, false, CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT, nullptr, nullptr, (LPSTARTUPINFOW) &startup_info, &process_info)) {
       auto winerr = GetLastError();
-      BOOST_LOG(fatal) << "Unable to restart Sunshine: "sv << winerr;
+      BOOST_LOG(fatal) << "Unable to restart Lumen: "sv << winerr;
       return;
     }
 
@@ -1800,7 +1800,7 @@ namespace platf {
     WCHAR hostname[256];
     if (GetHostNameW(hostname, ARRAYSIZE(hostname)) == SOCKET_ERROR) {
       BOOST_LOG(error) << "GetHostNameW() failed: "sv << WSAGetLastError();
-      return "Sunshine"s;
+      return "Lumen"s;
     }
     return to_utf8(hostname);
   }

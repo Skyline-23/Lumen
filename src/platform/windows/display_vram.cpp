@@ -1292,7 +1292,7 @@ namespace platf::dxgi {
         } else {
           // ...and we don't need to blend the mouse cursor.
           // This happens when the mouse cursor disappears from screen,
-          // or there's mouse cursor on screen, but its drawing is disabled in sunshine.
+          // or there's mouse cursor on screen, but its drawing is disabled in Lumen.
           if (std::holds_alternative<texture2d_t>(last_frame_variant)) {
             // We have the intermediate surface that was used as the mouse cursor blending base.
             // Replace it with an image from pull_free_image_cb copying contents and freeing up the surface memory.

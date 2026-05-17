@@ -52,13 +52,13 @@ namespace proc {
 
   /**
    * pre_cmds -- guaranteed to be executed unless any of the commands fail.
-   * detached -- commands detached from Sunshine
+   * detached -- commands detached from Lumen
    * cmd -- Runs indefinitely until:
    *    No session is running and a different set of commands it to be executed
    *    Command exits
    * working_dir -- the process working directory. This is required for some games to run properly.
    * cmd_output --
-   *    empty    -- The output of the commands are appended to the output of sunshine
+   *    empty    -- The output of the commands are appended to the output of Lumen
    *    "null"   -- The output of the commands are discarded
    *    filename -- The output of the commands are appended to filename
    */

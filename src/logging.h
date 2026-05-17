@@ -51,7 +51,7 @@ namespace logging {
    * @param log_file The log file to write to.
    * @return An object that will deinitialize the logging system when it goes out of scope.
    * @examples
-   * log_init(2, "sunshine.log");
+   * log_init(2, "lumen.log");
    * @examples_end
    */
   [[nodiscard]] std::unique_ptr<deinit_t> init(int min_log_level, const std::string &log_file);
@@ -80,7 +80,7 @@ namespace logging {
    * @brief Print help to stdout.
    * @param name The name of the program.
    * @examples
-   * print_help("sunshine");
+   * print_help("lumen");
    * @examples_end
    */
   void print_help(const char *name);

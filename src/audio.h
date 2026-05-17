@@ -56,7 +56,7 @@ namespace audio {
 
     std::bitset<MAX_FLAGS> flags;
 
-    // Who TF knows what Sunshine did
+    // Who TF knows what the legacy path did
     // putting input_only at the end of flags will always be over written to true
     uint64_t __padding;
 

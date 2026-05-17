@@ -9,7 +9,7 @@
  * @param argc The number of arguments.
  * @param argv The arguments.
  * @examples
- * main(1, const char* args[] = {"sunshine", nullptr});
+ * main(1, const char* args[] = {"lumen", nullptr});
  * @examples_end
  */
 int main(int argc, char *argv[]);

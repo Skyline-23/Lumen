@@ -11,9 +11,9 @@ set(BOOST_COMPONENTS
         program_options
         system
 )
-# system is not used by Sunshine, but by Simple-Web-Server, added here for convenience
+# system is not used by Lumen, but by Simple-Web-Server, added here for convenience
 
-# algorithm, preprocessor, scope, and uuid are not used by Sunshine, but by libdisplaydevice, added here for convenience
+# algorithm, preprocessor, scope, and uuid are not used by Lumen, but by libdisplaydevice, added here for convenience
 if(WIN32)
     list(APPEND BOOST_COMPONENTS
             algorithm

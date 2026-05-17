@@ -865,7 +865,7 @@ namespace VDISPLAY {
                       << " eotf="sv << skylight_eotf
                       << " optional-modes="sv << optional_modes.count;
     } else {
-      handle->queue = dispatch_queue_create("dev.lizardbyte.sunshine.virtual-display", DISPATCH_QUEUE_SERIAL);
+      handle->queue = dispatch_queue_create("dev.skyline23.lumen.virtual-display", DISPATCH_QUEUE_SERIAL);
       handle->descriptor = [[descriptor_class alloc] init];
       handle->settings = [[settings_class alloc] init];
       if (handle->queue == nil || handle->descriptor == nil || handle->settings == nil) {

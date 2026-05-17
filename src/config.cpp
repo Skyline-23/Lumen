@@ -1,6 +1,6 @@
 /**
  * @file src/config.cpp
- * @brief Definitions for the configuration of Sunshine.
+ * @brief Definitions for the configuration of Lumen.
  */
 // standard includes
 #include <algorithm>
@@ -1004,7 +1004,7 @@ namespace config {
     }
 
     // The framerate list must be cleared before adding values from the file configuration.
-    // If the list is not cleared, then the specified parameters do not affect the behavior of the sunshine server.
+    // If the list is not cleared, then the specified parameters do not affect the behavior of the Lumen server.
     // That is, if you set only 30 fps in the configuration file, it will not work because by default, during initialization the list includes 10, 30, 60, 90 and 120 fps.
     input.clear();
     for (auto &el : list) {
@@ -1484,7 +1484,7 @@ namespace config {
       // This is a relaunch as admin to start the service
       service_ctrl::start_service();
 
-      // Always return 1 to ensure Sunshine doesn't start normally
+      // Always return 1 to ensure Lumen doesn't start normally
       return 1;
     }
     if (shortcut_launch) {
@@ -1517,7 +1517,7 @@ namespace config {
       // Launch the web UI
       launch_ui();
 
-      // Always return 1 to ensure Sunshine doesn't start normally
+      // Always return 1 to ensure Lumen doesn't start normally
       return 1;
     }
 #endif

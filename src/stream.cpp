@@ -107,7 +107,7 @@ namespace stream {
 
     std::uint8_t headerType;  // Always 0x01 for short headers
 
-    // Sunshine extension
+    // Lumen extension
     // Frame processing latency, in 1/10 ms units
     //     zero when the frame is repeated or there is no backend implementation
     boost::endian::little_uint16_at frame_processing_latency;
@@ -120,7 +120,7 @@ namespace stream {
     std::uint8_t frameType;
 
     // Length of the final packet payload for codecs that cannot handle
-    // zero padding, such as AV1 (Sunshine extension).
+    // zero padding, such as AV1 (Lumen extension).
     boost::endian::little_uint16_at lastPayloadLen;
 
     std::uint8_t unknown[2];
@@ -2697,7 +2697,7 @@ namespace stream {
     void join(session_t &session) {
       // Current Nvidia drivers have a bug where NVENC can deadlock the encoder thread with hardware-accelerated
       // GPU scheduling enabled. If this happens, we will terminate ourselves and the service can restart.
-      // The alternative is that Sunshine can never start another session until it's manually restarted.
+      // The alternative is that Lumen can never start another session until it's manually restarted.
       auto task = []() {
         BOOST_LOG(fatal) << "Hang detected! Session failed to terminate in 10 seconds."sv;
         logging::log_flush();

@@ -444,7 +444,7 @@ int lumen_run(int argc, char *argv[], const LumenRuntimeOptions &options) {
 
   proc::refresh(config::stream.file_apps);
 
-  // If any of the following fail, we log an error and continue event though sunshine will not function correctly.
+  // If any of the following fail, we log an error and continue even though Lumen will not function correctly.
   // This allows access to the UI to fix configuration problems or view the logs.
 
   auto platf_deinit_guard = platf::init();
