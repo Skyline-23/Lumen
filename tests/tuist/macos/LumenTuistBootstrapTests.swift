@@ -1416,65 +1416,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(initialSnapshot.queue_profile, LumenCoreCaptureQueueProfileAuto)
 
         DispatchQueue.global().asyncAfter(deadline: .now() + 0.05) {
-            var hdrStaticMetadata = LumenCoreHDRStaticMetadata()
-            hdrStaticMetadata.red_primary_x = 34_000
-            hdrStaticMetadata.red_primary_y = 16_000
-            hdrStaticMetadata.green_primary_x = 13_250
-            hdrStaticMetadata.green_primary_y = 34_500
-            hdrStaticMetadata.blue_primary_x = 7_500
-            hdrStaticMetadata.blue_primary_y = 3_000
-            hdrStaticMetadata.white_point_x = 15_635
-            hdrStaticMetadata.white_point_y = 16_450
-            hdrStaticMetadata.max_display_luminance = 1_000
-            hdrStaticMetadata.min_display_luminance = 10
-            hdrStaticMetadata.max_content_light_level = 1_000
-            hdrStaticMetadata.max_frame_average_light_level = 400
-            hdrStaticMetadata.max_full_frame_luminance = 1_000
-            var sinkMode = LumenCoreSinkMode()
-            sinkMode.hidpi = true
-            sinkMode.scale_explicit = true
-            sinkMode.mode_is_logical = true
-            sinkMode.scale_percent = 200
-            var sinkCapability = LumenCoreSinkCapability()
-            sinkCapability.gamut = 2
-            sinkCapability.transfer = 2
-            sinkCapability.current_edr_headroom = 2.8
-            sinkCapability.potential_edr_headroom = 8.4
-            sinkCapability.current_peak_luminance_nits = 800
-            sinkCapability.potential_peak_luminance_nits = 1600
-            sinkCapability.supports_frame_gated_hdr = true
-            sinkCapability.supports_hdr_tile_overlay = false
-            sinkCapability.supports_per_frame_hdr_metadata = true
-            var sinkRequest = LumenCoreSinkRequest()
-            sinkRequest.mode = sinkMode
-            sinkRequest.capability = sinkCapability
-            sinkRequest.dynamic_range_transport = LumenCoreDynamicRangeTransportFrameGatedHDR
-            var effectiveDisplayState = LumenCoreEffectiveDisplayState()
-            effectiveDisplayState.gamut = 2
-            effectiveDisplayState.transfer = 2
-            effectiveDisplayState.has_hdr_static_metadata = true
-            effectiveDisplayState.hdr_static_metadata = hdrStaticMetadata
-            LumenCoreCaptureRequestPublishVideo(
-                17,
-                LumenCoreCaptureCodecHEVC,
-                LumenCoreCapturePreprocessStrategyNone,
-                LumenCoreCaptureQueueProfileAuto,
-                false,
-                120,
-                41_000,
-                3840,
-                2160,
-                sinkRequest,
-                effectiveDisplayState
-            )
-            LumenCoreCaptureRequestPublishAudio(
-                LumenCoreAudioCaptureSourceKindSystemOutput,
-                17,
-                false,
-                48_000,
-                2,
-                480
-            )
+            Self.publishTestCaptureRequest(displayID: 17)
         }
 
         XCTAssertTrue(LumenCoreCaptureRequestWaitForGenerationChange(initialSnapshot.generation, 500))
@@ -1751,6 +1693,47 @@ final class LumenTuistBootstrapTests: XCTestCase {
 
         let snapshot = try XCTUnwrap(LumenBridgeMirroredCaptureRequestSnapshot.load(from: url))
         XCTAssertEqual(snapshot.targetVideoBitrateKbps, 0)
+    }
+
+    func testMirrorCoordinatorDoesNotClearLiveCaptureRequestWhenMirrorFileDisappears() async throws {
+        let mirrorURL = LumenBridgeMirroredCaptureRequestSnapshot.mirrorURL
+        let previousMirrorData = try? Data(contentsOf: mirrorURL)
+        try FileManager.default.createDirectory(
+            at: mirrorURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        defer {
+            if let previousMirrorData {
+                try? previousMirrorData.write(to: mirrorURL)
+            } else {
+                try? FileManager.default.removeItem(at: mirrorURL)
+            }
+            LumenCoreCaptureRequestClear()
+        }
+
+        LumenCoreCaptureRequestClear()
+        Self.publishTestCaptureRequest(displayID: 17)
+        let liveSnapshot = LumenCoreCaptureRequestCopySnapshot()
+        XCTAssertTrue(liveSnapshot.video_requested)
+        XCTAssertEqual(liveSnapshot.display_id, 17)
+
+        try Self.writeMirroredCaptureRequest(
+            to: mirrorURL,
+            generation: liveSnapshot.generation,
+            displayID: 17
+        )
+
+        let coordinator = LumenCaptureRequestMirrorCoordinator()
+        await coordinator.syncCurrentState()
+        try FileManager.default.removeItem(at: mirrorURL)
+        await coordinator.syncCurrentState()
+
+        let currentSnapshot = LumenCoreCaptureRequestCopySnapshot()
+        XCTAssertEqual(currentSnapshot.generation, liveSnapshot.generation)
+        XCTAssertTrue(currentSnapshot.video_requested)
+        XCTAssertEqual(currentSnapshot.display_id, 17)
+        XCTAssertEqual(currentSnapshot.codec, LumenCoreCaptureCodecHEVC)
+        XCTAssertEqual(currentSnapshot.target_frame_rate, 120)
     }
 
     func testMirroredCaptureRequestSemanticStateIgnoresGenerationOnlyChanges() {
@@ -2148,6 +2131,142 @@ private extension LumenTuistBootstrapTests {
         }
 
         return try XCTUnwrap(sampleBuffer)
+    }
+
+    static func publishTestCaptureRequest(displayID: UInt32) {
+        var hdrStaticMetadata = LumenCoreHDRStaticMetadata()
+        hdrStaticMetadata.red_primary_x = 34_000
+        hdrStaticMetadata.red_primary_y = 16_000
+        hdrStaticMetadata.green_primary_x = 13_250
+        hdrStaticMetadata.green_primary_y = 34_500
+        hdrStaticMetadata.blue_primary_x = 7_500
+        hdrStaticMetadata.blue_primary_y = 3_000
+        hdrStaticMetadata.white_point_x = 15_635
+        hdrStaticMetadata.white_point_y = 16_450
+        hdrStaticMetadata.max_display_luminance = 1_000
+        hdrStaticMetadata.min_display_luminance = 10
+        hdrStaticMetadata.max_content_light_level = 1_000
+        hdrStaticMetadata.max_frame_average_light_level = 400
+        hdrStaticMetadata.max_full_frame_luminance = 1_000
+        var sinkMode = LumenCoreSinkMode()
+        sinkMode.hidpi = true
+        sinkMode.scale_explicit = true
+        sinkMode.mode_is_logical = true
+        sinkMode.scale_percent = 200
+        var sinkCapability = LumenCoreSinkCapability()
+        sinkCapability.gamut = 2
+        sinkCapability.transfer = 2
+        sinkCapability.current_edr_headroom = 2.8
+        sinkCapability.potential_edr_headroom = 8.4
+        sinkCapability.current_peak_luminance_nits = 800
+        sinkCapability.potential_peak_luminance_nits = 1600
+        sinkCapability.supports_frame_gated_hdr = true
+        sinkCapability.supports_hdr_tile_overlay = false
+        sinkCapability.supports_per_frame_hdr_metadata = true
+        var sinkRequest = LumenCoreSinkRequest()
+        sinkRequest.mode = sinkMode
+        sinkRequest.capability = sinkCapability
+        sinkRequest.dynamic_range_transport = LumenCoreDynamicRangeTransportFrameGatedHDR
+        var effectiveDisplayState = LumenCoreEffectiveDisplayState()
+        effectiveDisplayState.gamut = 2
+        effectiveDisplayState.transfer = 2
+        effectiveDisplayState.has_hdr_static_metadata = true
+        effectiveDisplayState.hdr_static_metadata = hdrStaticMetadata
+        LumenCoreCaptureRequestPublishVideo(
+            displayID,
+            LumenCoreCaptureCodecHEVC,
+            LumenCoreCapturePreprocessStrategyNone,
+            LumenCoreCaptureQueueProfileAuto,
+            false,
+            120,
+            41_000,
+            3840,
+            2160,
+            sinkRequest,
+            effectiveDisplayState
+        )
+        LumenCoreCaptureRequestPublishAudio(
+            LumenCoreAudioCaptureSourceKindSystemOutput,
+            displayID,
+            false,
+            48_000,
+            2,
+            480
+        )
+    }
+
+    static func writeMirroredCaptureRequest(
+        to url: URL,
+        generation: UInt64,
+        displayID: UInt32
+    ) throws {
+        let propertyList: [String: Any] = [
+            "generation": generation,
+            "videoGeneration": generation,
+            "audioGeneration": generation,
+            "videoRequested": true,
+            "audioRequested": true,
+            "displayID": displayID,
+            "codec": 1,
+            "preprocessStrategy": 0,
+            "queueProfile": 4,
+            "showCursor": false,
+            "targetFrameRate": 120,
+            "targetVideoBitrateKbps": 41_000,
+            "requestedWidth": 3840,
+            "requestedHeight": 2160,
+            "sinkRequest": [
+                "mode": [
+                    "hidpi": true,
+                    "scaleExplicit": true,
+                    "modeIsLogical": true,
+                    "scalePercent": 200,
+                ],
+                "capability": [
+                    "gamut": 2,
+                    "transfer": 2,
+                    "currentEDRHeadroom": 2.8,
+                    "potentialEDRHeadroom": 8.4,
+                    "currentPeakLuminanceNits": 800,
+                    "potentialPeakLuminanceNits": 1600,
+                    "supportsFrameGatedHDR": true,
+                    "supportsHDRTileOverlay": false,
+                    "supportsPerFrameHDRMetadata": true,
+                    "supportsEncodedTileStream": false,
+                ],
+                "dynamicRangeTransport": 3,
+            ],
+            "effectiveDisplayState": [
+                "gamut": 2,
+                "transfer": 2,
+                "hdrStaticMetadata": [
+                    "redPrimaryX": 34_000,
+                    "redPrimaryY": 16_000,
+                    "greenPrimaryX": 13_250,
+                    "greenPrimaryY": 34_500,
+                    "bluePrimaryX": 7_500,
+                    "bluePrimaryY": 3_000,
+                    "whitePointX": 15_635,
+                    "whitePointY": 16_450,
+                    "maxDisplayLuminance": 1_000,
+                    "minDisplayLuminance": 10,
+                    "maxContentLightLevel": 1_000,
+                    "maxFrameAverageLightLevel": 400,
+                    "maxFullFrameLuminance": 1_000,
+                ],
+            ],
+            "audioSourceKind": 1,
+            "audioExcludesCurrentProcess": false,
+            "audioSampleRate": 48_000,
+            "audioChannelCount": 2,
+            "audioFrameSize": 480,
+        ]
+        let data = try PropertyListSerialization.data(
+            fromPropertyList: propertyList,
+            format: .binary,
+            options: 0
+        )
+        try data.write(to: url)
     }
 
     static func payloadBytes(from sampleBuffer: CMSampleBuffer) throws -> Data {

@@ -1772,7 +1772,7 @@ public actor LumenBridgeRuntime {
             return
         }
 
-        startMirroredLumenCoreCaptureRequestSync()
+        startMirroredLumenCoreCaptureRequestObservation()
         captureAutomationGeneration &+= 1
         let automationGeneration = captureAutomationGeneration
         captureAutomationTask = Task.detached(priority: .background) { [weak self] in
@@ -1990,7 +1990,7 @@ public actor LumenBridgeRuntime {
         return lastAppliedGeneration == nil
     }
 
-    private func startMirroredLumenCoreCaptureRequestSync() {
+    private func startMirroredLumenCoreCaptureRequestObservation() {
         guard mirroredCaptureRequestTask == nil else {
             return
         }

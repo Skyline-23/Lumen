@@ -342,99 +342,40 @@ struct LumenBridgeMirroredCaptureRequestSemanticState: Equatable, Sendable {
 
 actor LumenCaptureRequestMirrorCoordinator {
     private let logger = Logger(subsystem: "dev.skyline23.lumen", category: "CaptureRequestMirror")
+    private let mirrorURL: URL
     private var mirroredGeneration: UInt64?
     private var mirroredSemanticState: LumenBridgeMirroredCaptureRequestSemanticState?
 
+    init(mirrorURL: URL = LumenBridgeMirroredCaptureRequestSnapshot.mirrorURL) {
+        self.mirrorURL = mirrorURL
+    }
+
     func syncCurrentState() {
-        if let mirroredSnapshot = LumenBridgeMirroredCaptureRequestSnapshot.load() {
+        if let mirroredSnapshot = LumenBridgeMirroredCaptureRequestSnapshot.load(from: mirrorURL) {
             guard mirroredGeneration != mirroredSnapshot.generation else {
                 return
             }
 
             let semanticState = mirroredSnapshot.semanticState
             mirroredGeneration = mirroredSnapshot.generation
-            let currentLumenCoreSemanticState = LumenBridgeMirroredCaptureRequestSemanticState(
-                snapshot: LumenCoreCaptureRequestCopySnapshot()
-            )
-            guard semanticState != mirroredSemanticState ||
-                    semanticState != currentLumenCoreSemanticState else {
+
+            guard semanticState != mirroredSemanticState else {
                 logger.debug(
-                    "Skipping mirrored capture request sync generation=\(mirroredSnapshot.generation, privacy: .public) because semantic state already matches LumenCore"
+                    "Skipping mirrored capture request observation generation=\(mirroredSnapshot.generation, privacy: .public) because semantic state did not change"
                 )
                 return
             }
 
             mirroredSemanticState = semanticState
             logger.notice(
-                "Applying mirrored capture request generation=\(mirroredSnapshot.generation, privacy: .public) video-generation=\(mirroredSnapshot.videoGeneration, privacy: .public) audio-generation=\(mirroredSnapshot.audioGeneration, privacy: .public) video-requested=\(mirroredSnapshot.videoRequested, privacy: .public) audio-requested=\(mirroredSnapshot.audioRequested, privacy: .public) display-id=\(mirroredSnapshot.displayID, privacy: .public) queue=\(mirroredSnapshot.queueProfile.rawValue, privacy: .public)"
+                "Observed mirrored capture request generation=\(mirroredSnapshot.generation, privacy: .public) video-generation=\(mirroredSnapshot.videoGeneration, privacy: .public) audio-generation=\(mirroredSnapshot.audioGeneration, privacy: .public) video-requested=\(mirroredSnapshot.videoRequested, privacy: .public) audio-requested=\(mirroredSnapshot.audioRequested, privacy: .public) display-id=\(mirroredSnapshot.displayID, privacy: .public) queue=\(mirroredSnapshot.queueProfile.rawValue, privacy: .public)"
             )
-            LumenCoreCaptureRequestClear()
-
-            if mirroredSnapshot.videoRequested {
-                let effectiveHDRStaticMetadata = mirroredSnapshot.effectiveDisplayState.hdrStaticMetadata?.coreValue ?? LumenCoreHDRStaticMetadata()
-                var sinkMode = LumenCoreSinkMode()
-                var sinkCapability = LumenCoreSinkCapability()
-                sinkCapability.gamut = mirroredSnapshot.sinkRequest.capability.gamut
-                sinkCapability.transfer = mirroredSnapshot.sinkRequest.capability.transfer
-                sinkCapability.current_edr_headroom = mirroredSnapshot.sinkRequest.capability.currentEDRHeadroom
-                sinkCapability.potential_edr_headroom = mirroredSnapshot.sinkRequest.capability.potentialEDRHeadroom
-                sinkCapability.current_peak_luminance_nits = mirroredSnapshot.sinkRequest.capability.currentPeakLuminanceNits
-                sinkCapability.potential_peak_luminance_nits = mirroredSnapshot.sinkRequest.capability.potentialPeakLuminanceNits
-                sinkCapability.supports_frame_gated_hdr = mirroredSnapshot.sinkRequest.capability.supportsFrameGatedHDR
-                sinkCapability.supports_hdr_tile_overlay = mirroredSnapshot.sinkRequest.capability.supportsHDRTileOverlay
-                sinkCapability.supports_per_frame_hdr_metadata = mirroredSnapshot.sinkRequest.capability.supportsPerFrameHDRMetadata
-                sinkCapability.supports_encoded_tile_stream = mirroredSnapshot.sinkRequest.capability.supportsEncodedTileStream
-                var sinkRequest = LumenCoreSinkRequest()
-                sinkMode.hidpi = mirroredSnapshot.sinkRequest.mode.hidpi
-                sinkMode.scale_explicit = mirroredSnapshot.sinkRequest.mode.scaleExplicit
-                sinkMode.mode_is_logical = mirroredSnapshot.sinkRequest.mode.modeIsLogical
-                sinkMode.scale_percent = mirroredSnapshot.sinkRequest.mode.scalePercent
-                sinkRequest.mode = sinkMode
-                sinkRequest.capability = sinkCapability
-                sinkRequest.dynamic_range_transport = mirroredSnapshot.sinkRequest.dynamicRangeTransport
-                var effectiveDisplayState = LumenCoreEffectiveDisplayState()
-                effectiveDisplayState.gamut = mirroredSnapshot.effectiveDisplayState.gamut
-                effectiveDisplayState.transfer = mirroredSnapshot.effectiveDisplayState.transfer
-                effectiveDisplayState.has_hdr_static_metadata = mirroredSnapshot.effectiveDisplayState.hdrStaticMetadata != nil
-                effectiveDisplayState.hdr_static_metadata = effectiveHDRStaticMetadata
-                LumenCoreCaptureRequestPublishVideo(
-                    mirroredSnapshot.displayID,
-                    mirroredSnapshot.codec,
-                    mirroredSnapshot.preprocessStrategy,
-                    mirroredSnapshot.queueProfile,
-                    mirroredSnapshot.showCursor,
-                    mirroredSnapshot.targetFrameRate,
-                    mirroredSnapshot.targetVideoBitrateKbps,
-                    mirroredSnapshot.requestedWidth,
-                    mirroredSnapshot.requestedHeight,
-                    sinkRequest,
-                    effectiveDisplayState
-                )
-                logger.notice(
-                    "Republished mirrored video capture request generation=\(mirroredSnapshot.generation, privacy: .public) display-id=\(mirroredSnapshot.displayID, privacy: .public) codec=\(mirroredSnapshot.codec.rawValue, privacy: .public) queue=\(mirroredSnapshot.queueProfile.rawValue, privacy: .public) fps=\(mirroredSnapshot.targetFrameRate, privacy: .public)"
-                )
-            }
-
-            if mirroredSnapshot.audioRequested {
-                LumenCoreCaptureRequestPublishAudio(
-                    mirroredSnapshot.audioSourceKind,
-                    mirroredSnapshot.displayID,
-                    mirroredSnapshot.audioExcludesCurrentProcess,
-                    mirroredSnapshot.audioSampleRate,
-                    mirroredSnapshot.audioChannelCount,
-                    mirroredSnapshot.audioFrameSize
-                )
-                logger.notice(
-                    "Republished mirrored audio capture request generation=\(mirroredSnapshot.generation, privacy: .public) source=\(mirroredSnapshot.audioSourceKind.rawValue, privacy: .public) sample-rate=\(mirroredSnapshot.audioSampleRate, privacy: .public) channels=\(mirroredSnapshot.audioChannelCount, privacy: .public)"
-                )
-            }
         } else if mirroredGeneration != nil {
             logger.notice(
-                "Clearing LumenCore capture request because mirrored capture request state disappeared previous-generation=\(self.mirroredGeneration ?? 0, privacy: .public)"
+                "Observed mirrored capture request state disappearance previous-generation=\(self.mirroredGeneration ?? 0, privacy: .public)"
             )
             mirroredGeneration = nil
             mirroredSemanticState = nil
-            LumenCoreCaptureRequestClear()
         }
     }
 }
