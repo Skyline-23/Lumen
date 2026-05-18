@@ -3891,6 +3891,10 @@ namespace video {
       std::array<char, 512> event_message {};
 
       const auto arm_wait_for_next_idr = [&](std::string_view reason) {
+        if (shutdown_event->peek()) {
+          return;
+        }
+
         const auto ingress_snapshot = LumenCoreEncodedCaptureIngressCopySnapshot(ingress);
         LumenCoreEncodedCaptureIngressReset(ingress);
         refresh_external_capture_metadata(mail, config, external_metadata);

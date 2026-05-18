@@ -34,6 +34,35 @@ final class LumenTuistBootstrapTests: XCTestCase {
         XCTAssertFalse(status.captureSessionRunning)
     }
 
+    func testBridgeCaptureLifecycleKeepsProducerInactiveDuringStartup() async {
+        let lifecycle = LumenBridgeCaptureLifecycle()
+
+        await lifecycle.beginStartup()
+
+        let shouldExposeProducer = await lifecycle.shouldExposeProducer
+        let shouldRequestImmediateKeyFrame = await lifecycle.shouldRequestImmediateKeyFrame
+
+        XCTAssertFalse(shouldExposeProducer)
+        XCTAssertFalse(shouldRequestImmediateKeyFrame)
+    }
+
+    func testBridgeCaptureLifecycleAllowsKeyFramesOnlyWhileRunning() async {
+        let lifecycle = LumenBridgeCaptureLifecycle()
+
+        await lifecycle.beginStartup()
+        await lifecycle.finishStartup()
+        let runningShouldExposeProducer = await lifecycle.shouldExposeProducer
+        let runningShouldRequestImmediateKeyFrame = await lifecycle.shouldRequestImmediateKeyFrame
+        XCTAssertTrue(runningShouldExposeProducer)
+        XCTAssertTrue(runningShouldRequestImmediateKeyFrame)
+
+        await lifecycle.beginStop()
+        let stoppingShouldExposeProducer = await lifecycle.shouldExposeProducer
+        let stoppingShouldRequestImmediateKeyFrame = await lifecycle.shouldRequestImmediateKeyFrame
+        XCTAssertFalse(stoppingShouldExposeProducer)
+        XCTAssertFalse(stoppingShouldRequestImmediateKeyFrame)
+    }
+
     func testBridgeConfigurationPreferencesParseCodecAndStreamingProfile() {
         let contents = """
         macos_bridge_codec=prores-proxy

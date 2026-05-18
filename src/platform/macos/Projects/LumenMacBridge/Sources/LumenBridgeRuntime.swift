@@ -1432,6 +1432,7 @@ public actor LumenBridgeRuntime {
     private let coreForwarder = LumenCoreCaptureForwarder()
     private let audioForwarder = LumenCoreAudioCaptureForwarder()
     private let logger = Logger(subsystem: "dev.skyline23.lumen", category: "MacBridgeRuntime")
+    private let captureLifecycle = LumenBridgeCaptureLifecycle()
     private var encodedCaptureSession: MDKEncodedCaptureSession?
     private var encodedCaptureStartupTask: Task<Void, Error>?
     private var activeCaptureConfiguration: LumenMacDisplayKitCaptureConfiguration?
@@ -1441,6 +1442,7 @@ public actor LumenBridgeRuntime {
     private var audioCaptureStartupTask: Task<Void, Error>?
     private var activeAudioCaptureConfiguration: LumenMacDisplayKitAudioCaptureConfiguration?
     private var captureAutomationTask: Task<Void, Never>?
+    private var captureAutomationGeneration: UInt64 = 0
     private var mirroredCaptureRequestTask: Task<Void, Never>?
     private var lastStatusNotificationUptimeNanoseconds: UInt64 = 0
     private var hasPendingStatusNotification = false
@@ -1479,6 +1481,7 @@ public actor LumenBridgeRuntime {
         coreForwarder.setFrameCapacity(frameCapacity)
         coreForwarder.setEventCapacity(Self.automaticCoreForwardingEventCapacity)
         coreForwarder.setProducerActive(false)
+        await captureLifecycle.beginStartup()
         latestFrame = nil
         recentEvents = []
         lastEncodedFrameDiagnosticsUptimeNanoseconds = 0
@@ -1509,7 +1512,6 @@ public actor LumenBridgeRuntime {
 
         activeCaptureConfiguration = configuration
         encodedCaptureSession = session
-        coreForwarder.setProducerActive(true)
         publishStatusDidChange(immediate: true)
 
         let startupTask = Task<Void, Error> {
@@ -1540,6 +1542,11 @@ public actor LumenBridgeRuntime {
     }
 
     public func requestImmediateCaptureKeyFrame() async {
+        guard await captureLifecycle.shouldRequestImmediateKeyFrame else {
+            logger.debug("Ignoring immediate keyframe request because MacDisplayKit capture is not running")
+            return
+        }
+
         guard let encodedCaptureSession else {
             logger.debug("Ignoring immediate keyframe request because no MacDisplayKit capture session is active")
             return
@@ -1578,15 +1585,17 @@ public actor LumenBridgeRuntime {
     private func stopMacDisplayKitCapture(resetRequestGeneration: Bool) async {
         encodedCaptureStartupTask?.cancel()
         encodedCaptureStartupTask = nil
+        coreForwarder.setProducerActive(false)
+        await captureLifecycle.beginStop()
         guard let session = encodedCaptureSession else {
             encodedCaptureSession = nil
             activeCaptureConfiguration = nil
-            coreForwarder.setProducerActive(false)
             latestFrame = nil
             recentEvents = []
             lastEncodedFrameDiagnosticsUptimeNanoseconds = 0
             lastEncodedFrameSourceSequenceNumber = nil
             lastEncodedFrameSourceDisplayTime = nil
+            await captureLifecycle.finishStop()
             if resetRequestGeneration {
                 lastAppliedVideoRequestGeneration = nil
             }
@@ -1594,12 +1603,12 @@ public actor LumenBridgeRuntime {
         }
 
         await session.stop()
-        coreForwarder.setProducerActive(false)
         encodedCaptureSession = nil
         activeCaptureConfiguration = nil
         lastEncodedFrameDiagnosticsUptimeNanoseconds = 0
         lastEncodedFrameSourceSequenceNumber = nil
         lastEncodedFrameSourceDisplayTime = nil
+        await captureLifecycle.finishStop()
         if resetRequestGeneration {
             lastAppliedVideoRequestGeneration = nil
         }
@@ -1707,14 +1716,21 @@ public actor LumenBridgeRuntime {
         publishStatusDidChange(immediate: true)
     }
 
-    private func handleEncodedCaptureStartupFinished(for session: MDKEncodedCaptureSession) {
+    private func handleEncodedCaptureStartupFinished(for session: MDKEncodedCaptureSession) async {
         guard encodedCaptureSession === session else {
             return
         }
+        await captureLifecycle.finishStartup()
+        guard encodedCaptureSession === session else {
+            await captureLifecycle.finishStop()
+            return
+        }
         encodedCaptureStartupTask = nil
+        coreForwarder.setProducerActive(true)
+        publishStatusDidChange(immediate: true)
     }
 
-    private func handleEncodedCaptureStartupFailure(for session: MDKEncodedCaptureSession, error: Error) {
+    private func handleEncodedCaptureStartupFailure(for session: MDKEncodedCaptureSession, error: Error) async {
         guard encodedCaptureSession === session else {
             return
         }
@@ -1722,6 +1738,7 @@ public actor LumenBridgeRuntime {
         encodedCaptureSession = nil
         activeCaptureConfiguration = nil
         coreForwarder.setProducerActive(false)
+        await captureLifecycle.failStartup()
         latestFrame = nil
         recentEvents = []
         lastEncodedFrameDiagnosticsUptimeNanoseconds = 0
@@ -1756,6 +1773,8 @@ public actor LumenBridgeRuntime {
         }
 
         startMirroredLumenCoreCaptureRequestSync()
+        captureAutomationGeneration &+= 1
+        let automationGeneration = captureAutomationGeneration
         captureAutomationTask = Task.detached(priority: .background) { [weak self] in
             var observedGeneration = UInt64.max
             while !Task.isCancelled {
@@ -1763,11 +1782,18 @@ public actor LumenBridgeRuntime {
                 if !changed && observedGeneration != UInt64.max {
                     continue
                 }
+                if Task.isCancelled {
+                    break
+                }
 
                 let snapshot = LumenCoreCaptureRequestCopySnapshot()
                 observedGeneration = snapshot.generation
+                if Task.isCancelled {
+                    break
+                }
                 await self?.applyLumenCoreCaptureRequest(
-                    LumenBridgeAutomationRequest(snapshot: snapshot)
+                    LumenBridgeAutomationRequest(snapshot: snapshot),
+                    automationGeneration: automationGeneration
                 )
             }
         }
@@ -1775,6 +1801,7 @@ public actor LumenBridgeRuntime {
     }
 
     public func stopLumenCoreCaptureAutomation() async {
+        captureAutomationGeneration &+= 1
         captureAutomationTask?.cancel()
         captureAutomationTask = nil
         mirroredCaptureRequestTask?.cancel()
@@ -1865,7 +1892,16 @@ public actor LumenBridgeRuntime {
         )
     }
 
-    private func applyLumenCoreCaptureRequest(_ request: LumenBridgeAutomationRequest) async {
+    private func applyLumenCoreCaptureRequest(
+        _ request: LumenBridgeAutomationRequest,
+        automationGeneration: UInt64? = nil
+    ) async {
+        if let automationGeneration {
+            guard captureAutomationTask != nil, automationGeneration == captureAutomationGeneration else {
+                return
+            }
+        }
+
         if Self.shouldApplyAutomationRequest(
             requestedConfiguration: request.videoConfiguration,
             activeConfiguration: activeCaptureConfiguration,

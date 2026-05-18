@@ -2,6 +2,7 @@ import LumenCore
 import CoreGraphics
 import CoreMedia
 import Foundation
+import OSLog
 
 @objcMembers
 public final class LumenBridgeSinkModeBox: NSObject {
@@ -589,6 +590,8 @@ public final class LumenBridgeDrainedEventBox: NSObject {
 
 @objcMembers
 public final class LumenBridgeObjCFacade: NSObject {
+    private static let logger = Logger(subsystem: "dev.skyline23.lumen", category: "MacBridgeObjCFacade")
+    private static let keyFrameRequestTimeout: DispatchTimeInterval = .milliseconds(250)
     private let runtime: LumenBridgeRuntime
 
     @objc public static func runtimeStatusDidChangeNotificationName() -> String {
@@ -603,10 +606,14 @@ public final class LumenBridgeObjCFacade: NSObject {
     @objc public static func requestImmediateCaptureKeyFrameSharedSync() {
         let semaphore = DispatchSemaphore(value: 0)
         Task {
+            defer {
+                semaphore.signal()
+            }
             await LumenBridgeRuntime.shared.requestImmediateCaptureKeyFrame()
-            semaphore.signal()
         }
-        semaphore.wait()
+        if semaphore.wait(timeout: .now() + keyFrameRequestTimeout) == .timedOut {
+            logger.warning("Timed out waiting for immediate MacDisplayKit keyframe request; continuing without blocking video teardown")
+        }
     }
 
     @objc public static func restartMacDisplayKitCaptureSharedSync(_ reason: String) {
