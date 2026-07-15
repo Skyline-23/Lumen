@@ -29,6 +29,13 @@ private actor DisplayTopologyProbe: LumenMacDisplayTopologyControlling {
         }
     }
 
+    func visibleDisplayIDs() -> Set<CGDirectDisplayID> {
+        Set(topology.displays.compactMap { state in
+            guard state.active, state.online else { return nil }
+            return UInt32(state.id)
+        })
+    }
+
     func allowVerification() {
         verificationFails = false
     }
@@ -39,13 +46,64 @@ private actor DisplayTopologyProbe: LumenMacDisplayTopologyControlling {
 }
 
 final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
+    func testProductionTopologyVerificationRejectsCGDisplayMissingFromNSScreen() async throws {
+        // Given: CoreGraphics reports the exact persisted topology but AppKit cannot see it.
+        let topology = displayTopology()
+        let controller = LumenCoreGraphicsDisplayTopologyController(
+            capture: { topology },
+            restore: { _ in },
+            visibleDisplayIDs: { [] }
+        )
+
+        // When/Then: the production verifier rejects the incomplete restoration readback.
+        await XCTAssertThrowsErrorAsync {
+            try await controller.verify(topology)
+        }
+    }
+
+    func testMissingCapabilityReceiptRejectsIsolationBeforeDisplayMutation() async throws {
+        let fixture = IsolationDisplayFixture(physicalTopology: isolationPhysicalTopology())
+        let receiptURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            .appendingPathComponent("display-disconnect-capability-v1.json")
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: IsolationTopologyController(fixture: fixture),
+            physicalDisplayController: RecordingPhysicalDisplayController(fixture: fixture),
+            disconnectCapabilityVerifier: LumenDisplayDisconnectCapabilityFileVerifier(
+                receiptURL: receiptURL,
+                environment: .init(
+                    osBuild: "25G42",
+                    hardwareIdentity: "platform-uuid|Mac16,1|J514cAP"
+                ),
+                currentTimeUnixSeconds: 1_752_600_000
+            )
+        )
+        _ = try await workspace.snapshotWorkspace(targetProcessIdentifiers: [])
+        fixture.publishVirtualDisplay(99)
+
+        do {
+            try await workspace.isolateVirtualDisplay(99)
+            XCTFail("expected missing capability receipt to reject isolation")
+        } catch let failure as LumenPhysicalDisplayControlFailure {
+            XCTAssertEqual(failure.code, .physicalDisplayDisconnectUnverified)
+            XCTAssertEqual(
+                failure.code.rawValue,
+                "mac.display_disconnect.physical_display_disconnect_unverified"
+            )
+        }
+
+        XCTAssertTrue(fixture.controlCalls().isEmpty)
+        XCTAssertEqual(fixture.physicalTopology(), isolationPhysicalTopology())
+    }
+
     func testSnapshotSurvivesRestoreUntilIndependentVerificationSucceeds() async throws {
         // Given: a workspace owns a snapshot and its first physical readback will fail.
         let topology = displayTopology()
         let probe = DisplayTopologyProbe(topology: topology)
         let workspace = LumenMacDisplayWorkspace(
             topologyController: probe,
-            physicalDisplayController: RecordingPhysicalDisplayController()
+            physicalDisplayController: RecordingPhysicalDisplayController(),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier()
         )
         let captured = try await workspace.snapshotWorkspace(targetProcessIdentifiers: [])
         XCTAssertEqual(captured, topology)
@@ -75,7 +133,8 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         let fixture = IsolationDisplayFixture(physicalTopology: isolationPhysicalTopology())
         let workspace = LumenMacDisplayWorkspace(
             topologyController: IsolationTopologyController(fixture: fixture),
-            physicalDisplayController: RecordingPhysicalDisplayController(fixture: fixture)
+            physicalDisplayController: RecordingPhysicalDisplayController(fixture: fixture),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier()
         )
         _ = try await workspace.snapshotWorkspace(targetProcessIdentifiers: [])
         fixture.publishVirtualDisplay(99)
@@ -102,7 +161,8 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
             physicalDisplayController: RecordingPhysicalDisplayController(
                 fixture: fixture,
                 failingDisableDisplayID: 42
-            )
+            ),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier()
         )
         _ = try await workspace.snapshotWorkspace(targetProcessIdentifiers: [])
         fixture.publishVirtualDisplay(99)
@@ -127,7 +187,8 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         let fixture = IsolationDisplayFixture(physicalTopology: topology)
         let workspace = LumenMacDisplayWorkspace(
             topologyController: IsolationTopologyController(fixture: fixture),
-            physicalDisplayController: RecordingPhysicalDisplayController(fixture: fixture)
+            physicalDisplayController: RecordingPhysicalDisplayController(fixture: fixture),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier()
         )
         _ = try await workspace.snapshotWorkspace(targetProcessIdentifiers: [])
         fixture.publishVirtualDisplay(99)
@@ -155,7 +216,8 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
             physicalDisplayController: RecordingPhysicalDisplayController(
                 fixture: fixture,
                 probeFails: true
-            )
+            ),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier()
         )
         _ = try await workspace.snapshotWorkspace(targetProcessIdentifiers: [])
         fixture.publishVirtualDisplay(99)
@@ -176,7 +238,8 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
             physicalDisplayController: RecordingPhysicalDisplayController(
                 fixture: fixture,
                 doesNotApplyDisable: true
-            )
+            ),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier()
         )
         _ = try await workspace.snapshotWorkspace(targetProcessIdentifiers: [])
         fixture.publishVirtualDisplay(99)
@@ -185,6 +248,39 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
             try await workspace.isolateVirtualDisplay(99)
         }
 
+        XCTAssertEqual(
+            fixture.controlCalls(),
+            [
+                .init(displayID: 41, enabled: false),
+                .init(displayID: 42, enabled: false),
+                .init(displayID: 42, enabled: true),
+                .init(displayID: 41, enabled: true),
+            ]
+        )
+        XCTAssertEqual(fixture.physicalTopology(), topology)
+    }
+
+    func testIsolationRollsBackWhenNSScreenStillShowsDisabledPhysicalDisplays() async throws {
+        // Given: private disable updates CoreGraphics state but NSScreen remains stale.
+        let topology = isolationPhysicalTopology()
+        let fixture = IsolationDisplayFixture(
+            physicalTopology: topology,
+            keepsDisabledDisplaysVisible: true
+        )
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: IsolationTopologyController(fixture: fixture),
+            physicalDisplayController: RecordingPhysicalDisplayController(fixture: fixture),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier()
+        )
+        _ = try await workspace.snapshotWorkspace(targetProcessIdentifiers: [])
+        fixture.publishVirtualDisplay(99)
+
+        // When: isolation validates both CoreGraphics and NSScreen postconditions.
+        await XCTAssertThrowsErrorAsync {
+            try await workspace.isolateVirtualDisplay(99)
+        }
+
+        // Then: every physical display is enabled again and the exact topology is restored.
         XCTAssertEqual(
             fixture.controlCalls(),
             [
@@ -265,16 +361,23 @@ private final class IsolationDisplayFixture: Sendable {
     private struct State: Sendable {
         var topology: LumenMacPhysicalDisplayTopology
         var originalPhysicalTopology: LumenMacPhysicalDisplayTopology
+        var visibleDisplayIDs: Set<CGDirectDisplayID>
         var calls: [PhysicalControlCall] = []
     }
 
     private let storage: Mutex<State>
+    private let keepsDisabledDisplaysVisible: Bool
 
-    init(physicalTopology: LumenMacPhysicalDisplayTopology) {
+    init(
+        physicalTopology: LumenMacPhysicalDisplayTopology,
+        keepsDisabledDisplaysVisible: Bool = false
+    ) {
+        self.keepsDisabledDisplaysVisible = keepsDisabledDisplaysVisible
         storage = Mutex(
             State(
                 topology: physicalTopology,
-                originalPhysicalTopology: physicalTopology
+                originalPhysicalTopology: physicalTopology,
+                visibleDisplayIDs: Set(physicalTopology.displays.compactMap { UInt32($0.id) })
             )
         )
     }
@@ -302,6 +405,7 @@ private final class IsolationDisplayFixture: Sendable {
                 windowsAdapterLUID: nil,
                 windowsTargetPaths: []
             )
+            state.visibleDisplayIDs.insert(displayID)
         }
     }
 
@@ -325,6 +429,11 @@ private final class IsolationDisplayFixture: Sendable {
                 windowsAdapterLUID: nil,
                 windowsTargetPaths: []
             )
+            if enabled {
+                state.visibleDisplayIDs.insert(displayID)
+            } else if !keepsDisabledDisplaysVisible {
+                state.visibleDisplayIDs.remove(displayID)
+            }
         }
     }
 
@@ -343,6 +452,12 @@ private final class IsolationDisplayFixture: Sendable {
                 displays: topology.displays + virtualDisplays,
                 windowsAdapterLUID: nil,
                 windowsTargetPaths: []
+            )
+            state.visibleDisplayIDs.formUnion(
+                topology.displays.compactMap { state in
+                    guard state.active, state.online else { return nil }
+                    return UInt32(state.id)
+                }
             )
         }
     }
@@ -371,6 +486,10 @@ private final class IsolationDisplayFixture: Sendable {
     func controlCalls() -> [PhysicalControlCall] {
         storage.withLock { $0.calls }
     }
+
+    func visibleDisplayIDs() -> Set<CGDirectDisplayID> {
+        storage.withLock { $0.visibleDisplayIDs }
+    }
 }
 
 private actor IsolationTopologyController: LumenMacDisplayTopologyControlling {
@@ -393,6 +512,10 @@ private actor IsolationTopologyController: LumenMacDisplayTopologyControlling {
         guard actual == topology else {
             throw DisplayTopologyProbeFailure.mismatch
         }
+    }
+
+    func visibleDisplayIDs() -> Set<CGDirectDisplayID> {
+        fixture.visibleDisplayIDs()
     }
 }
 

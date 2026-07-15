@@ -69,6 +69,8 @@ private enum LumenDisplayDisconnectCanaryMain {
                 "Set LUMEN_RUN_DISPLAY_DISCONNECT_CANARY=1 to authorize display mutation"
             )
         }
+        let capabilityStore = LumenDisplayDisconnectCapabilityFileStore.production
+        try capabilityStore.revoke()
 
         let environment = ProcessInfo.processInfo.environment
         MainActor.assumeIsolated {
@@ -95,10 +97,13 @@ private enum LumenDisplayDisconnectCanaryMain {
         )
 
         let beforeSelection = try displayStates()
-        guard let selected = beforeSelection.first(where: { state in
+        let physicalCandidates = beforeSelection.filter { state in
             state.active && state.nsscreenVisible && !isLumenVirtual(state)
-        }) else {
-            throw CanaryFailure.blocked("No active non-Lumen display is available")
+        }
+        guard physicalCandidates.count == 1, let selected = physicalCandidates.first else {
+            throw CanaryFailure.blocked(
+                "Exactly one active non-Lumen display is required for exact-set verification"
+            )
         }
 
         let generationID = UUID().uuidString
@@ -318,9 +323,25 @@ private enum LumenDisplayDisconnectCanaryMain {
             detail: "Physical display restored and watchdog safety displays removed",
             to: runDirectory.appendingPathComponent("after.json")
         )
+        let issuedAtUnixSeconds = Int64(Date().timeIntervalSince1970)
+        let capabilityEnvironment = LumenDisplayDisconnectCapabilityEnvironment.current
+        guard capabilityEnvironment.isResolved else {
+            throw CanaryFailure.blocked(
+                "OS build or hardware identity could not be resolved for capability receipt"
+            )
+        }
+        let capabilityReceipt = LumenDisplayDisconnectCapabilityReceipt.verified(
+            environment: capabilityEnvironment,
+            probe: probe,
+            physicalDisplayIDs: [selected.displayID],
+            issuedAtUnixSeconds: issuedAtUnixSeconds,
+            expiresAtUnixSeconds: issuedAtUnixSeconds + (7 * 24 * 60 * 60)
+        )
+        try capabilityStore.persist(capabilityReceipt)
         print(
             "canary_status=passed selected_display_id=\(selected.displayID) "
-                + "symbol=\(probe.symbolName) artifacts=\(runDirectory.path)"
+                + "symbol=\(probe.symbolName) artifacts=\(runDirectory.path) "
+                + "capability_receipt=\(capabilityStore.receiptURL.path)"
         )
     }
 

@@ -2,7 +2,7 @@ import CoreGraphics
 import Darwin
 import Foundation
 
-public enum LumenDisplayEnabledSymbolSource: String, Equatable, Sendable {
+public enum LumenDisplayEnabledSymbolSource: String, Codable, Equatable, Sendable {
     case skyLightSLS
     case skyLightCGS
     case verifiedCoreDisplay
@@ -212,6 +212,8 @@ public struct LumenDisplayDisconnectWatchdogRestorer {
 }
 
 public enum LumenPhysicalDisplayControlCode: String, Equatable, Sendable {
+    case physicalDisplayDisconnectUnverified =
+        "mac.display_disconnect.physical_display_disconnect_unverified"
     case privateSymbolUnavailable = "mac.display_disconnect.private_symbol_unavailable"
     case transactionRejected = "mac.display_disconnect.transaction_rejected"
 }

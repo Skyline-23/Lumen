@@ -57,6 +57,7 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
 
     private let topologyController: any LumenMacDisplayTopologyControlling
     private let physicalDisplayController: any LumenPhysicalDisplayControlling
+    private let disconnectCapabilityVerifier: any LumenDisplayDisconnectCapabilityVerifying
     private var snapshot: Snapshot?
 
     public init() {
@@ -64,6 +65,7 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
         physicalDisplayController = LumenPhysicalDisplayControlAdapter(
             resolver: LumenDlsymDisplayEnabledSymbolResolver()
         )
+        disconnectCapabilityVerifier = LumenDisplayDisconnectCapabilityFileVerifier.production
     }
 
     init(
@@ -71,10 +73,12 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
         physicalDisplayController: any LumenPhysicalDisplayControlling =
             LumenPhysicalDisplayControlAdapter(
                 resolver: LumenDlsymDisplayEnabledSymbolResolver()
-            )
+            ),
+        disconnectCapabilityVerifier: any LumenDisplayDisconnectCapabilityVerifying
     ) {
         self.topologyController = topologyController
         self.physicalDisplayController = physicalDisplayController
+        self.disconnectCapabilityVerifier = disconnectCapabilityVerifier
     }
 
     public func snapshotWorkspace(
@@ -163,9 +167,10 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             throw LumenMacDisplayWorkspaceError.snapshotMissing
         }
         let current = try await topologyController.capture()
+        let visibleDisplayIDs = await topologyController.visibleDisplayIDs()
         guard current.displays.contains(where: {
             $0.id == String(displayID) && $0.active && $0.online
-        }) else {
+        }), visibleDisplayIDs.contains(displayID) else {
             throw LumenMacDisplayWorkspaceError.displayNotFound(displayID)
         }
 
@@ -177,7 +182,11 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
                 }
                 return physicalDisplayID
             }
-        _ = try physicalDisplayController.probe()
+        let probe = try physicalDisplayController.probe()
+        try disconnectCapabilityVerifier.authorize(
+            probe: probe,
+            physicalDisplayIDs: physicalDisplayIDs
+        )
 
         var disabled: [CGDirectDisplayID] = []
         do {
@@ -271,10 +280,13 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
         let statesByID = Dictionary(uniqueKeysWithValues: current.displays.compactMap { state in
             UInt32(state.id).map { ($0, state) }
         })
+        let visibleDisplayIDs = await topologyController.visibleDisplayIDs()
         guard let virtualState = statesByID[virtualDisplayID],
               virtualState.online,
               virtualState.active,
-              physicalDisplayIDs.allSatisfy({ statesByID[$0]?.active != true }) else {
+              visibleDisplayIDs.contains(virtualDisplayID),
+              physicalDisplayIDs.allSatisfy({ statesByID[$0]?.active != true }),
+              physicalDisplayIDs.isDisjoint(with: visibleDisplayIDs) else {
             throw LumenMacDisplayWorkspaceError.isolationPostconditionFailed
         }
     }

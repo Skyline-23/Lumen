@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Foundation
 
@@ -5,10 +6,41 @@ protocol LumenMacDisplayTopologyControlling: Sendable {
     func capture() async throws -> LumenMacPhysicalDisplayTopology
     func restore(_ topology: LumenMacPhysicalDisplayTopology) async throws
     func verify(_ topology: LumenMacPhysicalDisplayTopology) async throws
+    func visibleDisplayIDs() async -> Set<CGDirectDisplayID>
 }
 
 actor LumenCoreGraphicsDisplayTopologyController: LumenMacDisplayTopologyControlling {
-    func capture() throws -> LumenMacPhysicalDisplayTopology {
+    private let captureOverride: (@Sendable () async throws -> LumenMacPhysicalDisplayTopology)?
+    private let restoreOverride: (@Sendable (LumenMacPhysicalDisplayTopology) async throws -> Void)?
+    private let visibleDisplayIDsProvider: @Sendable () async -> Set<CGDirectDisplayID>
+
+    init() {
+        captureOverride = nil
+        restoreOverride = nil
+        visibleDisplayIDsProvider = {
+            await MainActor.run {
+                Set(NSScreen.screens.compactMap { screen in
+                    (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?
+                        .uint32Value
+                })
+            }
+        }
+    }
+
+    init(
+        capture: @escaping @Sendable () async throws -> LumenMacPhysicalDisplayTopology,
+        restore: @escaping @Sendable (LumenMacPhysicalDisplayTopology) async throws -> Void,
+        visibleDisplayIDs: @escaping @Sendable () async -> Set<CGDirectDisplayID>
+    ) {
+        captureOverride = capture
+        restoreOverride = restore
+        visibleDisplayIDsProvider = visibleDisplayIDs
+    }
+
+    func capture() async throws -> LumenMacPhysicalDisplayTopology {
+        if let captureOverride {
+            return try await captureOverride()
+        }
         let displays = try onlineDisplayIDs().map { displayID in
             let bounds = CGDisplayBounds(displayID)
             guard let mode = CGDisplayCopyDisplayMode(displayID) else {
@@ -32,7 +64,11 @@ actor LumenCoreGraphicsDisplayTopologyController: LumenMacDisplayTopologyControl
         )
     }
 
-    func restore(_ topology: LumenMacPhysicalDisplayTopology) throws {
+    func restore(_ topology: LumenMacPhysicalDisplayTopology) async throws {
+        if let restoreOverride {
+            try await restoreOverride(topology)
+            return
+        }
         let currentOnline = Set(try onlineDisplayIDs())
         let expected = try topology.displays.map { state -> (CGDirectDisplayID, LumenMacPhysicalDisplayState) in
             guard let displayID = UInt32(state.id), currentOnline.contains(displayID) else {
@@ -92,13 +128,22 @@ actor LumenCoreGraphicsDisplayTopologyController: LumenMacDisplayTopologyControl
         }
     }
 
-    func verify(_ topology: LumenMacPhysicalDisplayTopology) throws {
-        let actual = try capture()
+    func verify(_ topology: LumenMacPhysicalDisplayTopology) async throws {
+        let actual = try await capture()
         let actualByID = Dictionary(uniqueKeysWithValues: actual.displays.map { ($0.id, $0) })
         let expectedByID = Dictionary(uniqueKeysWithValues: topology.displays.map { ($0.id, $0) })
-        guard expectedByID.allSatisfy({ actualByID[$0.key] == $0.value }) else {
+        let visibleDisplayIDs = await visibleDisplayIDs()
+        guard expectedByID.allSatisfy({ actualByID[$0.key] == $0.value }),
+              expectedByID.allSatisfy({ id, state in
+                guard let displayID = UInt32(id) else { return false }
+                return visibleDisplayIDs.contains(displayID) == (state.active && state.online)
+              }) else {
             throw LumenMacDisplayWorkspaceError.physicalTopologyMismatch
         }
+    }
+
+    func visibleDisplayIDs() async -> Set<CGDirectDisplayID> {
+        await visibleDisplayIDsProvider()
     }
 
     private func onlineDisplayIDs() throws -> [CGDirectDisplayID] {

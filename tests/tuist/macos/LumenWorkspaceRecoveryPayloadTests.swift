@@ -118,6 +118,61 @@ final class LumenWorkspaceRecoveryPayloadTests: XCTestCase {
         XCTAssertNil(nextCommand)
     }
 
+    func testFreshExecutorRetainsJournalWhenNSScreenDisagreesWithCoreGraphics() async throws {
+        // Given: persisted display state matches CoreGraphics while NSScreen omits the display.
+        let journalURL = temporaryJournalURL()
+        let persisted = recoveryTopology()
+        let topology = LumenMacPhysicalDisplayTopology(
+            displays: persisted.displays,
+            windowsAdapterLUID: nil,
+            windowsTargetPaths: []
+        )
+        try await seedIsolatedProductionJournal(at: journalURL, topology: topology)
+        let recorder = RecoveryPayloadRecorder()
+        let topologyController = LumenCoreGraphicsDisplayTopologyController(
+            capture: { topology },
+            restore: { _ in },
+            visibleDisplayIDs: { [] }
+        )
+        let displayWorkspace = LumenMacDisplayWorkspace(
+            topologyController: topologyController,
+            physicalDisplayController: RecoveryNoopPhysicalDisplayController(),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier()
+        )
+        let operations = LumenMacWorkspaceNativeOperations(
+            createVirtualDisplay: { _, _ in 410 },
+            configureVirtualDisplay: { _, _ in },
+            startCapture: { _ in },
+            stopCapture: {},
+            destroyVirtualDisplay: { identity in
+                await recorder.append(.destroy(identity))
+            }
+        )
+        let executor = try LumenMacWorkspaceExecutor(
+            targetProcessIdentifiers: [],
+            displayMode: LumenMacDisplayModeRequest(
+                width: 3024,
+                height: 1964,
+                scalePercent: 100,
+                dimensionsAreLogical: false
+            ),
+            operations: operations,
+            displayWorkspace: displayWorkspace
+        )
+        let coordinator = try LumenWorkspaceCoordinator(recoveryJournalPath: journalURL.path)
+        let admitted = try await coordinator.beginSession(policy: .isolatedWorkspace)
+        XCTAssertFalse(admitted)
+
+        // When: the fresh executor restores and performs production combined verification.
+        let error = try await coordinator.executePendingCommandsRecovering(using: executor)
+
+        // Then: verification fails before destroy and the durable journal remains retryable.
+        XCTAssertNotNil(error)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: journalURL.path))
+        let events = await recorder.recordedEvents()
+        XCTAssertTrue(events.isEmpty)
+    }
+
     private func seedIsolatedProductionJournal(
         at journalURL: URL,
         topology: LumenMacPhysicalDisplayTopology
@@ -199,5 +254,26 @@ final class LumenWorkspaceRecoveryPayloadTests: XCTestCase {
         FileManager.default.temporaryDirectory
             .appending(path: UUID().uuidString, directoryHint: .isDirectory)
             .appending(path: "display-recovery.json", directoryHint: .notDirectory)
+    }
+}
+
+private struct RecoveryNoopPhysicalDisplayController: LumenPhysicalDisplayControlling {
+    func probe() -> LumenDisplayEnabledSymbolProbe {
+        LumenDisplayEnabledSymbolProbe(
+            source: .skyLightSLS,
+            symbolName: "SLSConfigureDisplayEnabled"
+        )
+    }
+
+    func setEnabled(
+        _ enabled: Bool,
+        for displayID: CGDirectDisplayID
+    ) -> LumenPhysicalDisplayControlReceipt {
+        LumenPhysicalDisplayControlReceipt(
+            displayID: displayID,
+            enabled: enabled,
+            source: .skyLightSLS,
+            symbolName: "SLSConfigureDisplayEnabled"
+        )
     }
 }
