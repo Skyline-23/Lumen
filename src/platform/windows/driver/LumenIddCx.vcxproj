@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="Current" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{E4506FD9-5EAC-4B95-B386-C87E0C32D829}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+    <RootNamespace>LumenIddCx</RootNamespace>
+    <WindowsTargetPlatformVersion>$(LatestTargetPlatformVersion)</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <DriverType>UMDF</DriverType>
+    <DriverTargetPlatform>Universal</DriverTargetPlatform>
+    <PlatformToolset>WindowsUserModeDriver10.0</PlatformToolset>
+    <TargetVersion>Windows10</TargetVersion>
+    <_NT_TARGET_VERSION>0x0A000005</_NT_TARGET_VERSION>
+    <UMDF_VERSION_MAJOR>2</UMDF_VERSION_MAJOR>
+    <UMDF_VERSION_MINOR>33</UMDF_VERSION_MINOR>
+    <UMDF_VERSION_MINOR_REQUIRED>25</UMDF_VERSION_MINOR_REQUIRED>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <DriverType>UMDF</DriverType>
+    <DriverTargetPlatform>Universal</DriverTargetPlatform>
+    <PlatformToolset>WindowsUserModeDriver10.0</PlatformToolset>
+    <TargetVersion>Windows10</TargetVersion>
+    <_NT_TARGET_VERSION>0x0A000005</_NT_TARGET_VERSION>
+    <UMDF_VERSION_MAJOR>2</UMDF_VERSION_MAJOR>
+    <UMDF_VERSION_MINOR>33</UMDF_VERSION_MINOR>
+    <UMDF_VERSION_MINOR_REQUIRED>25</UMDF_VERSION_MINOR_REQUIRED>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <PropertyGroup>
+    <TargetName>LumenIddCx</TargetName>
+    <OutDir>$(ProjectDir)build\bin\$(Platform)\$(Configuration)\</OutDir>
+    <IntDir>$(ProjectDir)build\obj\$(Platform)\$(Configuration)\</IntDir>
+    <LumenDriverCoreLibrary Condition="'$(LumenDriverCoreLibrary)'==''">$(ProjectDir)..\..\..\..\target\x86_64-pc-windows-msvc\release\lumen_windows_driver_core.lib</LumenDriverCoreLibrary>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(ProjectDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <ConformanceMode>true</ConformanceMode>
+      <ExceptionHandling>false</ExceptionHandling>
+      <RuntimeTypeInfo>false</RuntimeTypeInfo>
+      <WarningLevel>Level4</WarningLevel>
+      <TreatWarningAsError>true</TreatWarningAsError>
+    </ClCompile>
+    <Link>
+      <AdditionalDependencies>IddCxStub.lib;$(LumenDriverCoreLibrary);advapi32.lib;bcrypt.lib;ntdll.lib;userenv.lib;ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="shim\driver.cpp" />
+    <ClCompile Include="shim\iddcx_callbacks.cpp" />
+    <ClCompile Include="shim\io.cpp" />
+    <ClInclude Include="shim\driver.h" />
+    <ClInclude Include="include\lumen_driver_abi.h" />
+    <None Include="package\LumenIddCx.inf" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>

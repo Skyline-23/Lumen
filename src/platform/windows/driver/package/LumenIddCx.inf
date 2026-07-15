@@ -1,0 +1,64 @@
+[Version]
+Signature = "$WINDOWS NT$"
+Class = Display
+ClassGuid = {4d36e968-e325-11ce-bfc1-08002be10318}
+Provider = %ProviderName%
+CatalogFile = LumenIddCx.cat
+DriverVer = 07/15/2026,0.1.0.0
+PnpLockdown = 1
+
+[DestinationDirs]
+DriverCopy = 13
+
+[SourceDisksNames]
+1 = %DiskName%
+
+[SourceDisksFiles]
+LumenIddCx.dll = 1
+
+[Manufacturer]
+%ProviderName% = Models,NTamd64
+
+[Models.NTamd64]
+%DeviceDescription% = DriverInstall,Root\LumenIddCx
+
+[DriverInstall.NT]
+CopyFiles = DriverCopy
+AddReg = DriverSecurity,DriverIsolation
+
+[DriverCopy]
+LumenIddCx.dll
+
+[DriverSecurity]
+HKR,,Security,,"D:P(A;;GA;;;SY)"
+
+[DriverIsolation]
+HKR,"WUDF","DeviceGroupId",0x00000000,"LumenIddCx"
+
+[DriverInstall.NT.Services]
+AddService = WUDFRd,0x000001fa,WUDFRdService
+
+[WUDFRdService]
+DisplayName = %WUDFRdDisplayName%
+ServiceType = 1
+StartType = 3
+ErrorControl = 1
+ServiceBinary = %12%\WUDFRd.sys
+
+[DriverInstall.NT.Wdf]
+UmdfService = LumenIddCx,LumenIddCxService
+UmdfServiceOrder = LumenIddCx
+UmdfHostProcessSharing = ProcessSharingDisabled
+UmdfFileObjectPolicy = RejectNullAndUnknownFileObjects
+UmdfKernelModeClientPolicy = RejectKernelModeClients
+
+[LumenIddCxService]
+UmdfLibraryVersion = 2.33.0
+ServiceBinary = %13%\LumenIddCx.dll
+UmdfExtensions = IddCx0100
+
+[Strings]
+ProviderName = "Lumen"
+DeviceDescription = "Lumen Indirect Display Adapter"
+DiskName = "Lumen Indirect Display Driver"
+WUDFRdDisplayName = "Windows Driver Foundation - User-mode Driver Framework Reflector"

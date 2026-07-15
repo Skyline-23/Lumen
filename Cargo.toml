@@ -1,5 +1,9 @@
 [workspace]
-members = ["engine/lumen-engine", "engine/lumen-host"]
+members = [
+    "engine/lumen-engine",
+    "engine/lumen-host",
+    "src/platform/windows/driver/core",
+]
 resolver = "2"
 
 [workspace.package]
