@@ -263,6 +263,38 @@ let project = Project(
             )
         ),
         .target(
+            name: "LumenDisplayDisconnectCanary",
+            destinations: .macOS,
+            product: .app,
+            bundleId: "dev.skyline23.lumen.displaydisconnectcanary",
+            deploymentTargets: .macOS("15.0"),
+            infoPlist: .extendingDefault(with: [
+                "LSBackgroundOnly": true,
+                "NSPrincipalClass": "NSApplication"
+            ]),
+            sources: [
+                "Projects/LumenDisplayDisconnectCanary/Sources/**/*.swift"
+            ],
+            dependencies: [
+                .target(name: "LumenMacBridge"),
+                .sdk(name: "AppKit", type: .framework)
+            ],
+            settings: .settings(
+                base: [
+                    "AD_HOC_CODE_SIGNING_ALLOWED": "NO",
+                    "CODE_SIGN_STYLE": "Manual",
+                    "CODE_SIGN_IDENTITY": "Developer ID Application: Buseong Kim (Q23JLSJCCV)",
+                    "CODE_SIGN_INJECT_BASE_ENTITLEMENTS": "NO",
+                    "DEVELOPMENT_TEAM": "Q23JLSJCCV",
+                    "ENABLE_HARDENED_RUNTIME": "YES",
+                    "LD_RUNPATH_SEARCH_PATHS": "$(inherited) @executable_path/../Frameworks",
+                    "OTHER_CODE_SIGN_FLAGS": "--timestamp",
+                    "PRODUCT_NAME": "LumenDisplayDisconnectCanary",
+                    "SKIP_INSTALL": "YES"
+                ]
+            )
+        ),
+        .target(
             name: "LumenApp",
             destinations: .macOS,
             product: .app,
@@ -358,6 +390,13 @@ let project = Project(
             ]),
             testAction: .targets([
                 .testableTarget(target: "LumenTuistTests")
+            ])
+        ),
+        .scheme(
+            name: "LumenDisplayDisconnectCanary",
+            shared: true,
+            buildAction: .buildAction(targets: [
+                "LumenDisplayDisconnectCanary"
             ])
         )
     ]
