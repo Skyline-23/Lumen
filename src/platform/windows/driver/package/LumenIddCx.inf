@@ -24,7 +24,10 @@ LumenIddCx.dll = 1
 
 [DriverInstall.NT]
 CopyFiles = DriverCopy
-AddReg = DriverSecurity,DriverIsolation
+AddReg = DriverIsolation
+
+[DriverInstall.NT.HW]
+AddReg = DriverSecurity
 
 [DriverCopy]
 LumenIddCx.dll

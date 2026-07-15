@@ -14,25 +14,36 @@ $inf = Join-Path $PackageDirectory "LumenIddCx.inf"
 $certificate = Join-Path $PackageDirectory "LumenIddCxTest.cer"
 if (-not (Test-Path $inf)) { throw "Missing $inf." }
 
-if (Test-Path $certificate) {
-    Import-Certificate -FilePath $certificate -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
-    Import-Certificate -FilePath $certificate -CertStoreLocation Cert:\LocalMachine\TrustedPublisher | Out-Null
+$certificateThumbprint = $null
+$installSucceeded = $false
+try {
+    if (Test-Path $certificate) {
+        $certificateThumbprint = (Get-PfxCertificate -FilePath $certificate).Thumbprint
+        Import-Certificate -FilePath $certificate -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
+        Import-Certificate -FilePath $certificate -CertStoreLocation Cert:\LocalMachine\TrustedPublisher | Out-Null
+    }
+
+    & pnputil.exe /add-driver $inf /install
+    if ($LASTEXITCODE -ne 0) { throw "pnputil failed to stage the driver package." }
+
+    $devcon = Get-ChildItem (Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\Tools") -Filter devcon.exe -Recurse |
+        Where-Object { $_.FullName -match '\\x64\\' } |
+        Sort-Object FullName -Descending |
+        Select-Object -First 1 -ExpandProperty FullName
+    if (-not $devcon) { throw "WDK devcon.exe x64 was not found." }
+
+    $devices = @(Get-PnpDevice -PresentOnly | Where-Object InstanceId -Like "ROOT\LUMENIDDCX*")
+    if ($devices.Count -eq 0) {
+        & $devcon install $inf "Root\LumenIddCx"
+        if ($LASTEXITCODE -ne 0) { throw "devcon failed to create the root-enumerated adapter." }
+    }
+    $devices = @(Get-PnpDevice -PresentOnly | Where-Object InstanceId -Like "ROOT\LUMENIDDCX*")
+    if ($devices.Count -ne 1) { throw "Expected exactly one Lumen IDD device; found $($devices.Count)." }
+    $installSucceeded = $true
 }
-
-& pnputil.exe /add-driver $inf /install
-if ($LASTEXITCODE -ne 0) { throw "pnputil failed to stage the driver package." }
-
-$devcon = Get-ChildItem (Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\Tools") -Filter devcon.exe -Recurse |
-    Where-Object { $_.FullName -match '\\x64\\' } |
-    Sort-Object FullName -Descending |
-    Select-Object -First 1 -ExpandProperty FullName
-if (-not $devcon) { throw "WDK devcon.exe x64 was not found." }
-
-$devices = @(Get-PnpDevice -PresentOnly | Where-Object InstanceId -Like "ROOT\LUMENIDDCX*")
-if ($devices.Count -eq 0) {
-    & $devcon install $inf "Root\LumenIddCx"
-    if ($LASTEXITCODE -ne 0) { throw "devcon failed to create the root-enumerated adapter." }
+finally {
+    if (-not $installSucceeded) {
+        & (Join-Path $PSScriptRoot "uninstall_windows_driver.ps1") -CertificateThumbprint $certificateThumbprint
+    }
 }
-$devices = @(Get-PnpDevice -PresentOnly | Where-Object InstanceId -Like "ROOT\LUMENIDDCX*")
-if ($devices.Count -ne 1) { throw "Expected exactly one Lumen IDD device; found $($devices.Count)." }
-$devices | Select-Object Status, Class, FriendlyName, InstanceId
+$devices

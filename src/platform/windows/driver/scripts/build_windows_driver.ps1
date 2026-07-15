@@ -74,19 +74,28 @@ Copy-Item (Join-Path $driverRoot "package\LumenIddCx.inf") $OutputDirectory
 Copy-Item (Join-Path $boundaryBuild "$Configuration\lumen_driver_device_qa.exe") $OutputDirectory
 
 $certificate = $null
-if ($TestSign) {
-    $certificate = New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=Lumen IddCx Test" -CertStoreLocation "Cert:\CurrentUser\My" -HashAlgorithm SHA256
-    Export-Certificate -Cert $certificate -FilePath (Join-Path $OutputDirectory "LumenIddCxTest.cer") | Out-Null
-    & $signtool sign /fd SHA256 /s My /sha1 $certificate.Thumbprint (Join-Path $OutputDirectory "LumenIddCx.dll")
-    if ($LASTEXITCODE -ne 0) { throw "Test signing the driver DLL failed." }
-}
+try {
+    if ($TestSign) {
+        $certificate = New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=Lumen IddCx Test" -CertStoreLocation "Cert:\CurrentUser\My" -HashAlgorithm SHA256
+        Export-Certificate -Cert $certificate -FilePath (Join-Path $OutputDirectory "LumenIddCxTest.cer") | Out-Null
+        & $signtool sign /fd SHA256 /s My /sha1 $certificate.Thumbprint (Join-Path $OutputDirectory "LumenIddCx.dll")
+        if ($LASTEXITCODE -ne 0) { throw "Test signing the driver DLL failed." }
+    }
 
-& $inf2cat "/driver:$OutputDirectory" /os:10_X64,Server10_X64
-if ($LASTEXITCODE -ne 0) { throw "Inf2Cat validation failed." }
-if ($TestSign) {
-    & $signtool sign /fd SHA256 /s My /sha1 $certificate.Thumbprint (Join-Path $OutputDirectory "LumenIddCx.cat")
-    if ($LASTEXITCODE -ne 0) { throw "Test signing the driver catalog failed." }
-    Remove-Item "Cert:\CurrentUser\My\$($certificate.Thumbprint)" -Force
-}
+    & $inf2cat "/driver:$OutputDirectory" "/os:10_X64,Server10_X64"
+    if ($LASTEXITCODE -ne 0) { throw "Inf2Cat validation failed." }
+    if ($TestSign) {
+        & $signtool sign /fd SHA256 /s My /sha1 $certificate.Thumbprint (Join-Path $OutputDirectory "LumenIddCx.cat")
+        if ($LASTEXITCODE -ne 0) { throw "Test signing the driver catalog failed." }
+    }
 
-Get-ChildItem $OutputDirectory | Select-Object Name, Length
+    Get-ChildItem $OutputDirectory
+}
+finally {
+    if ($certificate) {
+        $certificatePath = "Cert:\CurrentUser\My\$($certificate.Thumbprint)"
+        if (Test-Path $certificatePath) {
+            Remove-Item $certificatePath -Force
+        }
+    }
+}

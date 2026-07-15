@@ -25,7 +25,11 @@ if(DEFINED LUMEN_DRIVER_CORE_LIBRARY)
 endif()
 
 if(WIN32)
-  add_executable(lumen_driver_device_qa tests/windows_device_qa.cpp)
+  add_executable(lumen_driver_device_qa
+    tests/windows_device_io.cpp
+    tests/windows_device_probes.cpp
+    tests/windows_device_stop_restart.cpp
+    tests/windows_device_qa.cpp)
   target_compile_features(lumen_driver_device_qa PRIVATE cxx_std_20)
   target_include_directories(lumen_driver_device_qa PRIVATE include)
   target_link_libraries(lumen_driver_device_qa PRIVATE setupapi)

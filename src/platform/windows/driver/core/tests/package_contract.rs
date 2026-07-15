@@ -79,21 +79,21 @@ fn iddcx_client_config_registers_complete_callback_boundary() {
 }
 
 #[test]
-fn rejected_file_cleanup_cannot_purge_the_active_owner() {
+fn rejected_file_cleanup_cannot_drain_the_active_owner() {
     // Given: a second file object whose ownership claim was rejected.
     let io = fs::read_to_string(driver_root().join("shim/io.cpp"))
         .expect("driver I/O source must exist");
 
     // When: WDF invokes cleanup for that rejected file object.
     let owner_guard = "if (context->core_state.owner_id != owner_id)";
-    let purge = "WdfIoQueuePurge(context->access_unit_queue";
+    let drain = "cancel_pending_access_unit_reads(context)";
     let owner_guard_index = io
         .find(owner_guard)
         .expect("cleanup must verify owner identity");
-    let purge_index = io
-        .find(purge)
-        .expect("active-owner cleanup must purge reads");
+    let drain_index = io
+        .find(drain)
+        .expect("active-owner cleanup must synchronously drain reads");
 
-    // Then: the shim rejects the cleanup before it can purge the active owner's reads.
-    assert!(owner_guard_index < purge_index);
+    // Then: the shim rejects the cleanup before it can drain the active owner's reads.
+    assert!(owner_guard_index < drain_index);
 }

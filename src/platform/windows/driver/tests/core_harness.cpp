@@ -89,9 +89,43 @@ int main() {
   if (!status_is(cancelled, LumenDriverStatusCancelled)) {
     return 16;
   }
+  state = cancelled.state;
+
+  for (uint64_t cycle = 0; cycle < 2; ++cycle) {
+    for (uint64_t slot = 0; slot < LUMEN_PENDING_READ_DEPTH; ++slot) {
+      auto queued = request(LumenDriverOperationDequeueAccessUnit, kOwner, state.generation);
+      queued.request_id = 100 + cycle * LUMEN_PENDING_READ_DEPTH + slot;
+      queued.arguments[0] = LUMEN_MAX_ACCESS_UNIT_BYTES;
+      const auto queued_result = lumen_driver_core_dispatch(state, queued);
+      if (!status_is(queued_result, LumenDriverStatusPending)) {
+        return 17;
+      }
+      state = queued_result.state;
+    }
+    const auto stopped = lumen_driver_core_dispatch(
+      state,
+      request(LumenDriverOperationStopEncoder, kOwner, state.generation)
+    );
+    if (!status_is(stopped, LumenDriverStatusOk)) {
+      return 18;
+    }
+    for (uint64_t pending_id : stopped.state.pending_access_unit_reads) {
+      if (pending_id != 0) {
+        return 19;
+      }
+    }
+    const auto restarted = lumen_driver_core_dispatch(
+      stopped.state,
+      request(LumenDriverOperationStartEncoder, kOwner, stopped.state.generation)
+    );
+    if (!status_is(restarted, LumenDriverStatusOk)) {
+      return 20;
+    }
+    state = restarted.state;
+  }
 
   const auto released = lumen_driver_core_dispatch(
-    cancelled.state,
+    state,
     request(LumenDriverOperationReleaseOwner, kOwner, state.generation)
   );
   const auto reclaimed = lumen_driver_core_dispatch(
@@ -103,11 +137,12 @@ int main() {
     request(LumenDriverOperationCreateMonitor, kOwner, state.generation)
   );
   if (!status_is(stale, LumenDriverStatusStaleGeneration)) {
-    return 17;
+    return 21;
   }
 
   std::cout << "{\"malformed_version\":\"rejected\","
                "\"second_owner\":\"busy\",\"oversize\":\"rejected\","
-               "\"cancel\":\"cancelled\",\"stale_generation\":\"rejected\"}\n";
+               "\"cancel\":\"cancelled\",\"stop_restart\":\"bounded\","
+               "\"stale_generation\":\"rejected\"}\n";
   return 0;
 }
