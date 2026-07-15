@@ -19,6 +19,7 @@ igd-next = "0.17.1"
 libc = "0.2"
 lumen-engine = { path = "../lumen-engine" }
 mdns-sd = { version = "0.20.1", default-features = false }
+netdev = "0.45"
 percent-encoding = "2.3.2"
 quinn = { version = "=0.11.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 reed-solomon-erasure = "6.0.0"

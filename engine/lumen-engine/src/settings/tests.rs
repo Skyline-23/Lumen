@@ -34,7 +34,7 @@ fn patch_is_host_revisioned_and_live_values_are_effective_after_ack() {
             request_id: "request-live-1".to_owned(),
             changes: SettingsChanges {
                 general: Some(GeneralChanges {
-                    host_name: Some("Studio Host".to_owned()),
+                    name: Some("Studio Host".to_owned()),
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -45,7 +45,7 @@ fn patch_is_host_revisioned_and_live_values_are_effective_after_ack() {
     assert_eq!(response.revision, 2);
     assert_eq!(response.apply_state, SettingsApplyState::Applied);
     assert_eq!(response.requires, SettingsApplyRequirement::None);
-    assert_eq!(response.effective.general.host_name, "Studio Host");
+    assert_eq!(response.effective.general.name, "Studio Host");
 }
 
 #[test]
@@ -104,7 +104,7 @@ fn conformance_fixture_matches_runtime_field_catalog_and_constraints() {
     );
     let fields = field_catalog();
     let fixture_fields = fixture["fields"].as_array().unwrap();
-    assert_eq!(fixture_fields.len(), 31);
+    assert_eq!(fixture_fields.len(), 30);
     assert_eq!(fixture_fields.len(), fields.len());
     for fixture_field in fixture_fields {
         let key = fixture_field["key"].as_str().unwrap();
@@ -185,6 +185,9 @@ fn conformance_fixture_matches_runtime_field_catalog_and_constraints() {
         );
     }
     assert!(!fields.contains_key("general.locale"));
+    assert!(!fields.contains_key("general.hostName"));
+    assert!(!fields.contains_key("workspace.policy"));
+    assert!(fields.contains_key("general.name"));
     assert!(!fields.contains_key("network.externalIp"));
     assert!(fields.contains_key("network.externalIpMode"));
     assert!(fields.contains_key("general.updateChannel"));
@@ -214,11 +217,6 @@ fn conformance_fixture_matches_runtime_field_catalog_and_constraints() {
         assert!(!capability.presets.is_empty(), "{key}");
         assert!(capability.step.is_some(), "{key}");
     }
-    let windows = SettingsCapabilities::for_platform(SettingsHostPlatform::Windows);
-    assert_eq!(
-        fixture["platformCapabilities"]["windows"]["workspace.policy"]["available"],
-        windows.fields["workspace.policy"].available
-    );
 }
 
 #[test]
@@ -230,7 +228,7 @@ fn local_reconciliation_preserves_unapplied_desired_values() {
             "pending-before-local-1",
             SettingsChanges {
                 general: Some(GeneralChanges {
-                    host_name: Some("Remote Host".to_owned()),
+                    name: Some("Remote Host".to_owned()),
                     ..Default::default()
                 }),
                 streaming: Some(StreamingChanges {
@@ -261,7 +259,7 @@ fn local_reconciliation_preserves_unapplied_desired_values() {
     local_runtime.input.mouse = false;
     let reconciled = authority.apply_local_update(local_runtime).unwrap();
 
-    assert_eq!(reconciled.settings.general.host_name, "Remote Host");
+    assert_eq!(reconciled.settings.general.name, "Remote Host");
     assert!(!reconciled.settings.input.mouse);
     assert!(!reconciled.effective.input.mouse);
     assert_eq!(
@@ -289,7 +287,7 @@ fn invalid_field_rejects_the_entire_patch_without_revision_or_partial_write() {
             "atomic-invalid-1",
             SettingsChanges {
                 general: Some(GeneralChanges {
-                    host_name: Some("Must Not Persist".to_owned()),
+                    name: Some("Must Not Persist".to_owned()),
                     ..Default::default()
                 }),
                 network: Some(NetworkChanges {
@@ -304,7 +302,7 @@ fn invalid_field_rejects_the_entire_patch_without_revision_or_partial_write() {
     assert_eq!(error.code, SettingsErrorCode::InvalidValue);
     assert_eq!(error.field.as_deref(), Some("network.port"));
     assert_eq!(authority.snapshot().revision, 1);
-    assert_eq!(authority.snapshot().settings.general.host_name, "Lumen");
+    assert_eq!(authority.snapshot().settings.general.name, "Lumen");
 }
 
 #[test]
@@ -336,7 +334,7 @@ fn stale_revision_is_typed_and_accepted_retry_is_durable_and_idempotent() {
             "stale-2",
             SettingsChanges {
                 general: Some(GeneralChanges {
-                    host_name: Some("Stale".to_owned()),
+                    name: Some("Stale".to_owned()),
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -506,6 +504,10 @@ fn unknown_secret_path_and_control_location_fields_are_rejected_before_decode() 
     for (request_id, changes) in [
         ("retired-locale", r#"{"general":{"locale":"ko"}}"#),
         (
+            "retired-host-name",
+            r#"{"general":{"hostName":"Legacy Host"}}"#,
+        ),
+        (
             "retired-external-ip",
             r#"{"network":{"externalIp":"203.0.113.10"}}"#,
         ),
@@ -534,28 +536,18 @@ fn unknown_secret_path_and_control_location_fields_are_rejected_before_decode() 
 }
 
 #[test]
-fn host_capabilities_hide_and_reject_unsupported_workspace_policy() {
+fn public_settings_reject_internal_workspace_policy() {
     let (_root, mut authority) = authority(SettingsHostPlatform::Windows);
-    let capability = &authority.snapshot().capabilities.fields["workspace.policy"];
-    assert!(!capability.available);
-    assert!(capability
-        .unavailable_reason
-        .as_deref()
-        .unwrap()
-        .contains("macOS"));
-    let error = authority
-        .apply_patch(patch_request(
-            1,
-            "windows-workspace-1",
-            SettingsChanges {
-                workspace: Some(WorkspaceChanges {
-                    policy: Some(WorkspacePolicy::FocusedWorkspace),
-                }),
-                ..Default::default()
-            },
-        ))
-        .unwrap_err();
-    assert_eq!(error.code, SettingsErrorCode::UnavailableField);
+    assert!(!authority
+        .snapshot()
+        .capabilities
+        .fields
+        .contains_key("workspace.policy"));
+    let error = authority.apply_patch_json(
+        r#"{"schemaVersion":1,"baseRevision":1,"requestId":"workspace-1","changes":{"workspace":{"policy":"focused-workspace"}}}"#,
+    )
+    .unwrap_err();
+    assert_eq!(error.code, SettingsErrorCode::UnknownField);
     assert_eq!(authority.snapshot().revision, 1);
 }
 
@@ -672,7 +664,7 @@ fn factory_reset_removes_durable_settings_and_request_history() {
             "reset-me-1",
             SettingsChanges {
                 general: Some(GeneralChanges {
-                    host_name: Some("Before Reset".to_owned()),
+                    name: Some("Before Reset".to_owned()),
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -691,7 +683,7 @@ fn factory_reset_removes_durable_settings_and_request_history() {
             "reset-me-1",
             SettingsChanges {
                 general: Some(GeneralChanges {
-                    host_name: Some("After Reset".to_owned()),
+                    name: Some("After Reset".to_owned()),
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -699,15 +691,15 @@ fn factory_reset_removes_durable_settings_and_request_history() {
         ))
         .unwrap();
     assert_eq!(retry_after_reset.revision, 2);
-    assert_eq!(retry_after_reset.effective.general.host_name, "After Reset");
+    assert_eq!(retry_after_reset.effective.general.name, "After Reset");
 }
 
 #[test]
-fn legacy_journal_is_reseeded_before_revisioned_patches_resume() {
+fn retired_journal_is_reseeded_before_revisioned_patches_resume() {
     let root = TempDir::new().unwrap();
     let path = root.path().join("settings.json");
     let legacy = PersistedSettingsState {
-        storage_version: 1,
+        storage_version: 2,
         revision: 37,
         ..Default::default()
     };
@@ -728,7 +720,7 @@ fn legacy_journal_is_reseeded_before_revisioned_patches_resume() {
             "first-after-reseed",
             SettingsChanges {
                 general: Some(GeneralChanges {
-                    host_name: Some("Reseeded Host".to_owned()),
+                    name: Some("Reseeded Host".to_owned()),
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -738,7 +730,7 @@ fn legacy_journal_is_reseeded_before_revisioned_patches_resume() {
     assert_eq!(response.revision, 2);
 
     let persisted: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
-    assert_eq!(persisted["storageVersion"], 2);
+    assert_eq!(persisted["storageVersion"], 3);
     assert_eq!(persisted["revision"], 2);
 }
 
@@ -839,8 +831,7 @@ fn protocol_snapshots_never_contain_internal_paths_secrets_or_control_selector()
 fn complete_portable_patch_round_trips_every_supported_non_file_setting() {
     let (_root, mut authority) = authority(SettingsHostPlatform::Macos);
     let mut expected = HostSettings::default();
-    expected.workspace.policy = WorkspacePolicy::FocusedWorkspace;
-    expected.general.host_name = "Studio Lumen".to_owned();
+    expected.general.name = "Studio Lumen".to_owned();
     expected.general.discovery = false;
     expected.general.update_channel = UpdateChannel::PreRelease;
     expected.general.notify_pre_releases = true;

@@ -12,7 +12,7 @@ patch_group!(WorkspaceChanges {
     policy: WorkspacePolicy
 });
 patch_group!(GeneralChanges {
-    host_name: String,
+    name: String,
     discovery: bool,
     update_channel: UpdateChannel,
     notify_pre_releases: bool,

@@ -233,7 +233,7 @@ mod tests {
         let snapshot = model.snapshot().unwrap();
         assert_eq!(snapshot.host_name, "Studio");
         assert_eq!(snapshot.navigation, WindowsNavigation::Applications);
-        assert_eq!(snapshot.settings.general.host_name, "Lumen");
+        assert_eq!(snapshot.settings.general.name, "Lumen");
         assert!(snapshot.applications.is_empty());
     }
 

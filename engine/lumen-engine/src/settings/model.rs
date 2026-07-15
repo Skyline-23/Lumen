@@ -84,7 +84,7 @@ pub struct WorkspaceSettings {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GeneralSettings {
-    pub host_name: String,
+    pub name: String,
     pub discovery: bool,
     pub update_channel: UpdateChannel,
     pub notify_pre_releases: bool,
@@ -166,7 +166,7 @@ impl Default for HostSettings {
                 policy: WorkspacePolicy::Coexist,
             },
             general: GeneralSettings {
-                host_name: "Lumen".to_owned(),
+                name: "Lumen".to_owned(),
                 discovery: true,
                 update_channel: UpdateChannel::Stable,
                 notify_pre_releases: false,

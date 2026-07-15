@@ -1,11 +1,11 @@
 use super::*;
 
 pub(super) fn validate_settings(settings: &HostSettings) -> Result<(), SettingsProtocolError> {
-    let host_name = settings.general.host_name.trim();
-    if host_name.is_empty() || host_name.chars().count() > 64 || contains_control(host_name) {
+    let name = settings.general.name.trim();
+    if name.is_empty() || name.chars().count() > 64 || contains_control(name) {
         return Err(SettingsProtocolError::field(
             SettingsErrorCode::InvalidValue,
-            "general.hostName",
+            "general.name",
             "host name must be 1 to 64 printable characters",
         ));
     }

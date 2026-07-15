@@ -58,7 +58,7 @@
 "Display adapter" = "ディスプレイアダプタ";
 "Display output" = "ディスプレイ出力";
 "Display workspace" = "ディスプレイのワークスペース";
-"Display, workspace, and capture device behavior" = "ディスプレイ、ワークスペース、キャプチャデバイスの動作";
+"Display and capture device behavior" = "ディスプレイとキャプチャデバイスの動作";
 "Drag the Lumen application into the open System Settings permission list." = "Lumenアプリを、開いているシステム設定の許可リストへドラッグしてください。";
 "Drag this app into the permission list" = "このアプリを許可リストへドラッグ";
 "Edit" = "編集";

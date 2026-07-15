@@ -55,7 +55,7 @@ public struct LumenServerCommand: Equatable, Sendable {
 public struct LumenNativeHostSettings: Equatable, Sendable {
     public var workspacePolicy: LumenMacWorkspacePolicy
     public var systemAuthenticationEnabled: Bool
-    public var hostName: String
+    public var name: String
     public var discoveryEnabled: Bool
     public var deviceEnrollmentEnabled: Bool
     public var notifyPreReleases: Bool
@@ -99,7 +99,7 @@ public struct LumenNativeHostSettings: Equatable, Sendable {
         return Self(
             workspacePolicy: .coexist,
             systemAuthenticationEnabled: false,
-            hostName: Host.current().localizedName ?? "Lumen",
+            name: Host.current().localizedName ?? "Lumen",
             discoveryEnabled: true,
             deviceEnrollmentEnabled: true,
             notifyPreReleases: false,
@@ -140,7 +140,7 @@ public struct LumenNativeHostSettings: Equatable, Sendable {
 
     public var runtimeArguments: [String] {
         let requiredArguments = [
-            "host_name=\(hostName)",
+            "host_name=\(name)",
             "enable_discovery=\(discoveryEnabled)",
             "device_enrollment_enabled=\(deviceEnrollmentEnabled)",
             "notify_pre_releases=\(notifyPreReleases)",
@@ -231,7 +231,7 @@ public actor LumenHostSettingsStore {
     private enum Key {
         static let workspacePolicy = "host.workspace-policy"
         static let systemAuthentication = "security.system-authentication"
-        static let hostName = "host.name"
+        static let name = "host.name"
         static let discovery = "host.discovery"
         static let deviceEnrollment = "security.device-enrollment-enabled"
         static let notifyPreReleases = "general.notify-pre-releases"
@@ -287,7 +287,7 @@ public actor LumenHostSettingsStore {
         let defaults = try makeDefaults()
         defaults.set(Self.workspaceName(settings.workspacePolicy), forKey: Key.workspacePolicy)
         defaults.set(settings.systemAuthenticationEnabled, forKey: Key.systemAuthentication)
-        defaults.set(settings.hostName, forKey: Key.hostName)
+        defaults.set(settings.name, forKey: Key.name)
         defaults.set(settings.discoveryEnabled, forKey: Key.discovery)
         defaults.set(settings.deviceEnrollmentEnabled, forKey: Key.deviceEnrollment)
         defaults.set(settings.notifyPreReleases, forKey: Key.notifyPreReleases)
@@ -329,12 +329,6 @@ public actor LumenHostSettingsStore {
         try snapshot().workspacePolicy
     }
 
-    public func setWorkspacePolicy(_ policy: LumenMacWorkspacePolicy) throws {
-        var settings = try snapshot()
-        settings.workspacePolicy = policy
-        try save(settings)
-    }
-
     public func isSystemAuthenticationEnabled() -> Bool {
         guard let defaults = try? makeDefaults() else {
             return false
@@ -374,7 +368,7 @@ public actor LumenHostSettingsStore {
         let settings = LumenNativeHostSettings(
             workspacePolicy: workspacePolicy(defaults.string(forKey: Key.workspacePolicy)) ?? fallback.workspacePolicy,
             systemAuthenticationEnabled: bool(defaults, Key.systemAuthentication, fallback.systemAuthenticationEnabled),
-            hostName: defaults.string(forKey: Key.hostName) ?? fallback.hostName,
+            name: defaults.string(forKey: Key.name) ?? fallback.name,
             discoveryEnabled: bool(defaults, Key.discovery, fallback.discoveryEnabled),
             deviceEnrollmentEnabled: bool(
                 defaults,
@@ -426,9 +420,9 @@ public actor LumenHostSettingsStore {
 
     private nonisolated static func validated(_ settings: LumenNativeHostSettings) throws -> LumenNativeHostSettings {
         var settings = settings
-        settings.hostName = settings.hostName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !settings.hostName.isEmpty,
-              settings.hostName.count <= 64,
+        settings.name = settings.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !settings.name.isEmpty,
+              settings.name.count <= 64,
               settings.adapterSelector == "automatic",
               settings.outputSelector == "automatic",
               settings.audioSink == "system-default",

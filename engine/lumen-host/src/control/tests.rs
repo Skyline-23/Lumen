@@ -21,6 +21,13 @@ fn router() -> (tempfile::TempDir, ControlRouter) {
 fn router_with_platform(
     platform: Arc<dyn PlatformSessionControl>,
 ) -> (tempfile::TempDir, ControlRouter) {
+    router_with_discovery(platform, HostDiscoveryState::test_default())
+}
+
+fn router_with_discovery(
+    platform: Arc<dyn PlatformSessionControl>,
+    discovery: HostDiscoveryState,
+) -> (tempfile::TempDir, ControlRouter) {
     let root = tempfile::tempdir().unwrap();
     let expires_at = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -56,7 +63,7 @@ fn router_with_platform(
     let authorities = HostAuthorities::open_native(paths).unwrap();
     (
         root,
-        ControlRouter::new_with_platform(authorities, HostDiscoveryState::test_default(), platform),
+        ControlRouter::new_with_platform(authorities, discovery, platform),
     )
 }
 
@@ -468,7 +475,7 @@ fn dispatches_snapshot_patch_and_resumable_events_through_one_authority() {
         "schemaVersion": 1,
         "baseRevision": revision,
         "requestId": "router-1",
-        "changes": {"general": {"hostName": "Rust Host"}}
+        "changes": {"general": {"name": "Rust Host"}}
     }))
     .unwrap();
     let patched = router.dispatch(&patch);
@@ -478,10 +485,7 @@ fn dispatches_snapshot_patch_and_resumable_events_through_one_authority() {
         "{}",
         String::from_utf8_lossy(&patched.body)
     );
-    assert_eq!(
-        body(&patched)["effective"]["general"]["hostName"],
-        "Rust Host"
-    );
+    assert_eq!(body(&patched)["effective"]["general"]["name"], "Rust Host");
 
     let mut events = authorized(ControlMethod::Get, "/api/v1/settings/events");
     events
@@ -549,7 +553,8 @@ fn serves_the_authenticated_application_catalog_from_the_rust_authority() {
     assert_eq!(payload["apps"][0]["isAppCollectorGame"], false);
     assert_eq!(payload["currentApp"], "");
     assert!(!payload["hostUUID"].as_str().unwrap().is_empty());
-    assert_eq!(payload["hostName"], "Lumen");
+    assert_eq!(payload["name"], "Lumen");
+    assert!(payload.get("hostName").is_none());
 }
 
 #[test]
@@ -559,7 +564,11 @@ fn serves_the_authenticated_lumen_host_descriptor_from_rust_state() {
     assert_eq!(response.status_code, 200);
     let payload = body(&response);
     assert_eq!(payload["status"], true);
-    assert_eq!(payload["host"]["displayName"], "Lumen");
+    assert_eq!(payload["host"]["name"], "Lumen");
+    assert!(payload["host"].get("displayName").is_none());
+    assert_eq!(payload["host"]["wakeOnLan"]["supported"], false);
+    assert!(payload["host"]["wakeOnLan"].get("macAddress").is_none());
+    assert!(payload["host"]["wakeOnLan"].get("udpPort").is_none());
     assert_eq!(payload["host"]["deviceAuthentication"], "ready");
     assert_eq!(payload["host"]["currentGameID"], 0);
     assert_eq!(payload["host"]["serverState"], "LUMEN_SERVER_FREE");
@@ -598,4 +607,23 @@ fn serves_the_authenticated_lumen_host_descriptor_from_rust_state() {
 
     let unauthorized = ControlRequest::new(ControlMethod::Get, "/api/discovery/host");
     assert_eq!(router.dispatch(&unauthorized).status_code, 401);
+}
+
+#[test]
+fn serves_a_normalized_automatic_wake_on_lan_target_when_the_active_nic_is_safe() {
+    let discovery = HostDiscoveryState::test_with_wake_on_lan([0x02, 0x1a, 0x2b, 0x3c, 0x4d, 0x5e]);
+    let (_root, mut router) =
+        router_with_discovery(Arc::new(IdlePlatformSessionControl), discovery);
+
+    let response = router.dispatch(&authorized(ControlMethod::Get, "/api/discovery/host"));
+
+    assert_eq!(response.status_code, 200);
+    assert_eq!(
+        body(&response)["host"]["wakeOnLan"],
+        json!({
+            "supported": true,
+            "macAddress": "02:1A:2B:3C:4D:5E",
+            "udpPort": 9
+        })
+    );
 }

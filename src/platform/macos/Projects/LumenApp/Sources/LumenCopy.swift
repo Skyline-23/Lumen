@@ -163,12 +163,12 @@ enum LumenCopy {
         static var hideDockIconWhenMainWindowCloses: String { localized("Hide Dock icon when the main window closes") }
         static var hideDockIconWhenMainWindowClosesDetail: String { localized("Lumen stays available from the menu bar. Showing the main window restores the Dock icon.") }
         static var host: String { localized("Host") }
-        static var hostName: String { localized("Computer name") }
+        static var name: String { localized("Computer name") }
         static var discovery: String { localized("Discoverable on the local network") }
         static var deviceEnrollment: String { localized("Allow new device enrollment") }
         static var notifyPreReleases: String { localized("Notify about pre-release updates") }
         static var streaming: String { localized("Streaming") }
-        static var streamingSubtitle: String { localized("Display, workspace, and capture device behavior") }
+        static var streamingSubtitle: String { localized("Display and capture device behavior") }
         static var display: String { localized("Display") }
         static var adapterName: String { localized("Display adapter") }
         static var outputName: String { localized("Display output") }
@@ -313,37 +313,6 @@ enum LumenCopy {
                 localized("UPnP could not remove the previous port mapping.")
             default:
                 fallback
-            }
-        }
-    }
-
-    enum Workspace {
-        static var label: String { localized("Display workspace") }
-        static var nextSessionNotice: String { localized("Changes apply to the next stream session.") }
-
-        static func title(for policy: LumenMacWorkspacePolicy) -> String {
-            switch policy {
-            case .coexist:
-                localized("Keep physical displays active")
-            case .promoteVirtualMain:
-                localized("Make stream display primary")
-            case .focusedWorkspace:
-                localized("Focus selected app windows")
-            case .isolatedWorkspace:
-                localized("Isolate stream display")
-            }
-        }
-
-        static func description(for policy: LumenMacWorkspacePolicy) -> String {
-            switch policy {
-            case .coexist:
-                localized("Adds the stream display without moving the computer desktop or existing windows.")
-            case .promoteVirtualMain:
-                localized("Makes the stream display primary while physical displays remain active.")
-            case .focusedWorkspace:
-                localized("Makes the stream display primary and moves only windows selected for the stream.")
-            case .isolatedWorkspace:
-                localized("Places physical displays outside the active workspace until the stream ends, then restores the previous layout.")
             }
         }
     }

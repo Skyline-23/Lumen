@@ -34,7 +34,7 @@ impl MdnsService {
 
         let ports = HostPorts::from_arguments(arguments)?;
         let snapshot = authorities.settings().snapshot();
-        let instance = instance_name(&snapshot.settings.general.host_name);
+        let instance = instance_name(&snapshot.settings.general.name);
         let hostname = format!("{}.local.", dns_label(&instance));
         let mut properties = HashMap::from([
             ("protocol-major".to_owned(), "2".to_owned()),

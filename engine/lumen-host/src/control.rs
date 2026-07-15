@@ -9,6 +9,7 @@ mod auth;
 mod discovery;
 mod native_session;
 mod settings;
+mod wake_on_lan;
 
 pub(crate) use native_session::NativeConnectionContext;
 
