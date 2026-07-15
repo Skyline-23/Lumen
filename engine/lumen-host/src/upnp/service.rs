@@ -10,12 +10,19 @@ use super::ipv6;
 use super::mapping::{mappings, PortMapping};
 use crate::{
     HostArguments, IdlePlatformSessionControl, PlatformRuntimeEvent, PlatformRuntimeEventCode,
-    PlatformRuntimeEventSeverity, PlatformSessionControl,
+    PlatformRuntimeEventDisposition, PlatformRuntimeEventSeverity, PlatformSessionControl,
 };
 
 const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(2);
 const REFRESH_INTERVAL: Duration = Duration::from_secs(120);
 const LEASE_SECONDS: u32 = 3_600;
+const WARNING_CODES: [PlatformRuntimeEventCode; 5] = [
+    PlatformRuntimeEventCode::UpnpGatewayDiscovery,
+    PlatformRuntimeEventCode::UpnpLocalAddressDiscovery,
+    PlatformRuntimeEventCode::UpnpPortMapping,
+    PlatformRuntimeEventCode::UpnpIpv6Pinhole,
+    PlatformRuntimeEventCode::UpnpPortRemoval,
+];
 
 pub(crate) struct UpnpService {
     worker: Option<Worker>,
@@ -51,6 +58,9 @@ impl UpnpService {
             return Err("UPnP service is already running".to_owned());
         }
         if arguments.get("upnp") != Some("true") {
+            for code in WARNING_CODES {
+                clear_warning(self.event_sink.as_ref(), code);
+            }
             return Ok(());
         }
         let plan = mappings(arguments)?;
@@ -72,14 +82,16 @@ impl UpnpService {
                 loop {
                     refresh_mappings(&plan, &mut active, event_sink.as_ref());
                     if let Some(runtime) = &ipv6_runtime {
-                        if let Err(error) =
-                            runtime.block_on(ipv6::refresh(&plan, &mut ipv6_pinholes))
-                        {
-                            report_warning(
+                        match runtime.block_on(ipv6::refresh(&plan, &mut ipv6_pinholes)) {
+                            Ok(()) => clear_warning(
+                                event_sink.as_ref(),
+                                PlatformRuntimeEventCode::UpnpIpv6Pinhole,
+                            ),
+                            Err(error) => report_warning(
                                 event_sink.as_ref(),
                                 PlatformRuntimeEventCode::UpnpIpv6Pinhole,
                                 format!("Lumen UPnP IPv6 pinhole refresh failed: {error}"),
-                            );
+                            ),
                         }
                     }
                     match receiver.recv_timeout(REFRESH_INTERVAL) {
@@ -137,6 +149,7 @@ fn refresh_mappings(
             return;
         }
     };
+    clear_warning(event_sink, PlatformRuntimeEventCode::UpnpGatewayDiscovery);
     let local_ip = match local_ip_for_gateway(&gateway) {
         Ok(address) => address,
         Err(error) => {
@@ -148,6 +161,10 @@ fn refresh_mappings(
             return;
         }
     };
+    clear_warning(
+        event_sink,
+        PlatformRuntimeEventCode::UpnpLocalAddressDiscovery,
+    );
 
     if active
         .as_ref()
@@ -162,6 +179,7 @@ fn refresh_mappings(
         .as_ref()
         .map(|current| current.mappings.clone())
         .unwrap_or_default();
+    let mut failures = Vec::new();
     for mapping in plan {
         let local_address = SocketAddr::new(local_ip, mapping.port);
         match add_mapping(&gateway, *mapping, local_address) {
@@ -170,15 +188,20 @@ fn refresh_mappings(
                     mapped.push(*mapping);
                 }
             }
-            Err(error) => report_warning(
-                event_sink,
-                PlatformRuntimeEventCode::UpnpPortMapping,
-                format!(
-                    "Lumen UPnP could not map {} {}: {error}",
-                    mapping.protocol, mapping.port
-                ),
-            ),
+            Err(error) => failures.push(format!(
+                "Lumen UPnP could not map {} {}: {error}",
+                mapping.protocol, mapping.port
+            )),
         }
+    }
+    if failures.is_empty() {
+        clear_warning(event_sink, PlatformRuntimeEventCode::UpnpPortMapping);
+    } else {
+        report_warning(
+            event_sink,
+            PlatformRuntimeEventCode::UpnpPortMapping,
+            failures.join("; "),
+        );
     }
     *active = Some(ActiveMappings {
         gateway,
@@ -232,17 +255,23 @@ fn local_ip_for_gateway(gateway: &Gateway) -> Result<IpAddr, String> {
 }
 
 fn remove_mappings(active: &ActiveMappings, event_sink: &dyn PlatformSessionControl) {
+    let mut failures = Vec::new();
     for mapping in &active.mappings {
         if let Err(error) = active.gateway.remove_port(mapping.protocol, mapping.port) {
-            report_warning(
-                event_sink,
-                PlatformRuntimeEventCode::UpnpPortRemoval,
-                format!(
-                    "Lumen UPnP could not remove {} {}: {error}",
-                    mapping.protocol, mapping.port
-                ),
-            );
+            failures.push(format!(
+                "Lumen UPnP could not remove {} {}: {error}",
+                mapping.protocol, mapping.port
+            ));
         }
+    }
+    if failures.is_empty() {
+        clear_warning(event_sink, PlatformRuntimeEventCode::UpnpPortRemoval);
+    } else {
+        report_warning(
+            event_sink,
+            PlatformRuntimeEventCode::UpnpPortRemoval,
+            failures.join("; "),
+        );
     }
 }
 
@@ -253,8 +282,18 @@ fn report_warning(
 ) {
     eprintln!("{message}");
     let _ = event_sink.publish_runtime_event(PlatformRuntimeEvent {
+        disposition: PlatformRuntimeEventDisposition::Raised,
         severity: PlatformRuntimeEventSeverity::Warning,
         code,
-        message,
+        message: Some(message),
+    });
+}
+
+fn clear_warning(event_sink: &dyn PlatformSessionControl, code: PlatformRuntimeEventCode) {
+    let _ = event_sink.publish_runtime_event(PlatformRuntimeEvent {
+        disposition: PlatformRuntimeEventDisposition::Cleared,
+        severity: PlatformRuntimeEventSeverity::Warning,
+        code,
+        message: None,
     });
 }

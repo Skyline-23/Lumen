@@ -1,5 +1,10 @@
 import SwiftUI
 
+enum LumenRuntimeEventDisposition: Int {
+    case raised
+    case cleared
+}
+
 struct LumenRuntimeWarning: Identifiable, Equatable {
     let code: Int
     let message: String

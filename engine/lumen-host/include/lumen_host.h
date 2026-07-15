@@ -67,6 +67,11 @@ typedef struct LumenHostPlatformControlEvent {
   int64_t last_frame;
 } LumenHostPlatformControlEvent;
 
+typedef enum LumenHostPlatformRuntimeEventDisposition {
+  LumenHostPlatformRuntimeEventDispositionRaised = 0,
+  LumenHostPlatformRuntimeEventDispositionCleared = 1,
+} LumenHostPlatformRuntimeEventDisposition;
+
 typedef enum LumenHostPlatformRuntimeEventSeverity {
   LumenHostPlatformRuntimeEventSeverityWarning = 0,
   LumenHostPlatformRuntimeEventSeverityError = 1,
@@ -81,6 +86,7 @@ typedef enum LumenHostPlatformRuntimeEventCode {
 } LumenHostPlatformRuntimeEventCode;
 
 typedef struct LumenHostPlatformRuntimeEvent {
+  LumenHostPlatformRuntimeEventDisposition disposition;
   LumenHostPlatformRuntimeEventSeverity severity;
   LumenHostPlatformRuntimeEventCode code;
   const char *message;

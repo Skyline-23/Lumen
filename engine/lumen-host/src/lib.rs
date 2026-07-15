@@ -44,10 +44,11 @@ pub use platform::{
     IdlePlatformSessionControl, LumenHostPlatformCallbacks, LumenHostPlatformControlEvent,
     LumenHostPlatformControlEventKind, LumenHostPlatformEncodedAudioPacket,
     LumenHostPlatformEncodedVideoFrame, LumenHostPlatformRuntimeEvent,
-    LumenHostPlatformRuntimeEventCode, LumenHostPlatformRuntimeEventSeverity,
-    LumenHostPlatformSessionPlan, LumenHostPlatformVideoCodec, PlatformApplicationPlan,
-    PlatformControlEvent, PlatformEncodedAudioPacket, PlatformEncodedVideoFrame,
-    PlatformRuntimeEvent, PlatformRuntimeEventCode, PlatformRuntimeEventSeverity,
+    LumenHostPlatformRuntimeEventCode, LumenHostPlatformRuntimeEventDisposition,
+    LumenHostPlatformRuntimeEventSeverity, LumenHostPlatformSessionPlan,
+    LumenHostPlatformVideoCodec, PlatformApplicationPlan, PlatformControlEvent,
+    PlatformEncodedAudioPacket, PlatformEncodedVideoFrame, PlatformRuntimeEvent,
+    PlatformRuntimeEventCode, PlatformRuntimeEventDisposition, PlatformRuntimeEventSeverity,
     PlatformSessionControl, PlatformSessionPlan, PlatformVideoCodec,
 };
 pub use platform_feedback::{

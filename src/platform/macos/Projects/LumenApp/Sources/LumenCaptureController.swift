@@ -731,27 +731,42 @@ final class LumenCaptureController: NSObject, ObservableObject {
         let identifier = userInfo["identifier"] as? String ?? UUID().uuidString
         let body = userInfo["body"] as? String ?? ""
         let launchPath = userInfo["launchPath"] as? String ?? "/"
+        let disposition = (userInfo["disposition"] as? NSNumber)
+            .flatMap { LumenRuntimeEventDisposition(rawValue: $0.intValue) }
         let severity = (userInfo["severity"] as? NSNumber)?.intValue
         let code = (userInfo["code"] as? NSNumber)?.intValue
 
-        if severity == 0, let code {
-            let warning = LumenRuntimeWarning(code: code, message: body)
-            let isDuplicate = runtimeWarnings.first(where: { $0.code == code }) == warning
-            runtimeWarnings.removeAll(where: { $0.code == code })
-            runtimeWarnings.insert(warning, at: 0)
-            if runtimeWarnings.count > 8 {
-                runtimeWarnings.removeLast(runtimeWarnings.count - 8)
-            }
-            lastRuntimeEventMessage = body
-            guard !isDuplicate else {
+        if severity == 0, let code, let disposition {
+            switch disposition {
+            case .raised:
+                let warning = LumenRuntimeWarning(code: code, message: body)
+                let isDuplicate = runtimeWarnings.first(where: { $0.code == code }) == warning
+                runtimeWarnings.removeAll(where: { $0.code == code })
+                runtimeWarnings.insert(warning, at: 0)
+                if runtimeWarnings.count > 8 {
+                    runtimeWarnings.removeLast(runtimeWarnings.count - 8)
+                }
+                lastRuntimeEventMessage = body
+                guard !isDuplicate else {
+                    return
+                }
+                presentRuntimeNotification(
+                    identifier: identifier,
+                    title: LumenCopy.Diagnostics.runtimeWarning,
+                    body: body,
+                    launchPath: launchPath
+                )
+            case .cleared:
+                let clearedMessage = runtimeWarnings.first(where: { $0.code == code })?.message
+                runtimeWarnings.removeAll(where: { $0.code == code })
+                if lastRuntimeEventMessage == clearedMessage {
+                    lastRuntimeEventMessage = runtimeWarnings.first?.message
+                }
+                let notificationCenter = UNUserNotificationCenter.current()
+                notificationCenter.removePendingNotificationRequests(withIdentifiers: [identifier])
+                notificationCenter.removeDeliveredNotifications(withIdentifiers: [identifier])
                 return
             }
-            presentRuntimeNotification(
-                identifier: identifier,
-                title: LumenCopy.Diagnostics.runtimeWarning,
-                body: body,
-                launchPath: launchPath
-            )
             return
         }
 
