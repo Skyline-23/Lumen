@@ -1,0 +1,429 @@
+syntax = "proto3";
+
+package lumen.streaming.v2;
+
+enum VideoCodec {
+  VIDEO_CODEC_UNSPECIFIED = 0;
+  VIDEO_CODEC_H264 = 1;
+  VIDEO_CODEC_HEVC = 2;
+  VIDEO_CODEC_AV1 = 3;
+}
+
+enum DynamicRange {
+  DYNAMIC_RANGE_UNSPECIFIED = 0;
+  DYNAMIC_RANGE_SDR = 1;
+  DYNAMIC_RANGE_HDR10 = 2;
+}
+
+enum AudioChannelMode {
+  AUDIO_CHANNEL_MODE_UNSPECIFIED = 0;
+  AUDIO_CHANNEL_MODE_STEREO = 1;
+  AUDIO_CHANNEL_MODE_SURROUND_5_1 = 2;
+  AUDIO_CHANNEL_MODE_SURROUND_7_1 = 3;
+}
+
+enum AudioQuality {
+  AUDIO_QUALITY_UNSPECIFIED = 0;
+  AUDIO_QUALITY_STANDARD = 1;
+  AUDIO_QUALITY_HIGH = 2;
+}
+
+enum NegotiationFailure {
+  NEGOTIATION_FAILURE_UNSPECIFIED = 0;
+  NEGOTIATION_FAILURE_UNSUPPORTED_PROTOCOL_VERSION = 1;
+  NEGOTIATION_FAILURE_UNSUPPORTED_REQUIRED_FEATURES = 2;
+  NEGOTIATION_FAILURE_INVALID_SESSION_EPOCH = 3;
+  NEGOTIATION_FAILURE_INVALID_DISPLAY_MODE = 4;
+  NEGOTIATION_FAILURE_INVALID_PRESENTATION_CONTRACT = 5;
+  NEGOTIATION_FAILURE_INVALID_VIDEO_CODEC = 6;
+  NEGOTIATION_FAILURE_UNSUPPORTED_VIDEO_SELECTION = 7;
+  NEGOTIATION_FAILURE_INVALID_DYNAMIC_RANGE = 8;
+  NEGOTIATION_FAILURE_INVALID_POLICY_MODE = 9;
+  NEGOTIATION_FAILURE_DATAGRAM_PAYLOAD_TOO_SMALL = 10;
+  NEGOTIATION_FAILURE_INVALID_RECEIVE_MEMORY = 11;
+  NEGOTIATION_FAILURE_UNSUPPORTED_AUDIO_LAYOUT = 12;
+  NEGOTIATION_FAILURE_INVALID_AUDIO_QUALITY = 13;
+  NEGOTIATION_FAILURE_INVALID_STREAMING_PROFILE_REVISION = 14;
+}
+
+enum PolicyMode {
+  POLICY_MODE_UNSPECIFIED = 0;
+  POLICY_MODE_ULTRA_LATENCY = 1;
+  POLICY_MODE_BALANCED = 2;
+  POLICY_MODE_QUALITY = 3;
+}
+
+enum DisplayGamut {
+  DISPLAY_GAMUT_UNSPECIFIED = 0;
+  DISPLAY_GAMUT_SRGB = 1;
+  DISPLAY_GAMUT_DISPLAY_P3 = 2;
+  DISPLAY_GAMUT_REC2020 = 3;
+}
+
+enum DisplayTransfer {
+  DISPLAY_TRANSFER_UNSPECIFIED = 0;
+  DISPLAY_TRANSFER_SDR = 1;
+  DISPLAY_TRANSFER_PQ = 2;
+  DISPLAY_TRANSFER_HLG = 3;
+}
+
+enum PointerMotionMode {
+  POINTER_MOTION_MODE_UNSPECIFIED = 0;
+  POINTER_MOTION_MODE_RELATIVE = 1;
+  POINTER_MOTION_MODE_ABSOLUTE = 2;
+}
+
+enum ContactPhase {
+  CONTACT_PHASE_UNSPECIFIED = 0;
+  CONTACT_PHASE_BEGAN = 1;
+  CONTACT_PHASE_ENDED = 2;
+  CONTACT_PHASE_CANCELLED = 3;
+}
+
+enum GamepadButton {
+  GAMEPAD_BUTTON_UNSPECIFIED = 0;
+  GAMEPAD_BUTTON_SOUTH = 1;
+  GAMEPAD_BUTTON_EAST = 2;
+  GAMEPAD_BUTTON_WEST = 3;
+  GAMEPAD_BUTTON_NORTH = 4;
+  GAMEPAD_BUTTON_LEFT_BUMPER = 5;
+  GAMEPAD_BUTTON_RIGHT_BUMPER = 6;
+  GAMEPAD_BUTTON_LEFT_STICK = 7;
+  GAMEPAD_BUTTON_RIGHT_STICK = 8;
+  GAMEPAD_BUTTON_BACK = 9;
+  GAMEPAD_BUTTON_START = 10;
+  GAMEPAD_BUTTON_GUIDE = 11;
+  GAMEPAD_BUTTON_DPAD_UP = 12;
+  GAMEPAD_BUTTON_DPAD_DOWN = 13;
+  GAMEPAD_BUTTON_DPAD_LEFT = 14;
+  GAMEPAD_BUTTON_DPAD_RIGHT = 15;
+}
+
+message VideoCapability {
+  VideoCodec codec = 1;
+  uint32 max_bit_depth = 2;
+  bool supports_hdr10 = 3;
+  uint32 max_width = 4;
+  uint32 max_height = 5;
+  uint32 max_refresh_millihz = 6;
+}
+
+message ClientSessionHello {
+  uint32 minimum_protocol_version = 1;
+  uint32 maximum_protocol_version = 2;
+  uint64 required_features = 3;
+  uint32 width = 4;
+  uint32 height = 5;
+  uint32 refresh_millihz = 6;
+  repeated VideoCapability video_capabilities = 7;
+  DynamicRange requested_dynamic_range = 8;
+  PolicyMode requested_policy = 9;
+  uint32 maximum_datagram_payload = 10;
+  uint64 receive_memory_bytes = 11;
+  repeated uint32 opus_channel_counts = 12;
+  VideoCodec requested_video_codec = 13;
+  string device_id = 14;
+  string access_token = 15;
+  uint32 application_id = 16;
+  bool resume = 17;
+  uint32 bitrate_kbps = 18;
+  bool play_audio_on_host = 19;
+  bool virtual_display = 20;
+  bool sink_hidpi = 21;
+  bool sink_scale_explicit = 22;
+  bool sink_mode_is_logical = 23;
+  uint32 sink_scale_percent = 24;
+  DisplayGamut sink_gamut = 25;
+  DisplayTransfer sink_transfer = 26;
+  float sink_current_edr_headroom = 27;
+  float sink_potential_edr_headroom = 28;
+  uint32 sink_current_peak_luminance_nits = 29;
+  uint32 sink_potential_peak_luminance_nits = 30;
+  bool sink_supports_frame_gated_hdr = 31;
+  bool sink_supports_hdr_tile_overlay = 32;
+  bool sink_supports_per_frame_hdr_metadata = 33;
+  AudioQuality requested_audio_quality = 34;
+  AudioChannelMode requested_audio_channel_mode = 35;
+  uint64 streaming_profile_revision = 36;
+}
+
+message HostSessionPlan {
+  uint32 protocol_version = 1;
+  uint32 session_epoch = 2;
+  uint64 selected_features = 3;
+  uint32 encoded_width = 4;
+  uint32 encoded_height = 5;
+  uint32 refresh_millihz = 6;
+  VideoCodec video_codec = 7;
+  uint32 bit_depth = 8;
+  DynamicRange dynamic_range = 9;
+  PolicyMode policy = 10;
+  uint32 maximum_datagram_payload = 11;
+  uint32 maximum_presentable_frames = 12;
+  uint32 path_id = 13;
+  uint32 policy_revision = 14;
+  uint32 opus_channel_count = 15;
+  uint32 opus_packet_duration_microseconds = 16;
+  uint32 bitrate_kbps = 17;
+  uint32 sink_scale_percent = 18;
+  DisplayGamut sink_gamut = 19;
+  DisplayTransfer sink_transfer = 20;
+  float sink_current_edr_headroom = 21;
+  float sink_potential_edr_headroom = 22;
+  uint32 sink_current_peak_luminance_nits = 23;
+  uint32 sink_potential_peak_luminance_nits = 24;
+  bool sink_supports_frame_gated_hdr = 25;
+  bool sink_supports_hdr_tile_overlay = 26;
+  bool sink_supports_per_frame_hdr_metadata = 27;
+  bool enhanced_audio_quality = 28;
+  uint32 dynamic_range_transport = 29;
+  bool sink_hidpi = 30;
+  bool sink_scale_explicit = 31;
+  bool sink_mode_is_logical = 32;
+  uint64 streaming_profile_revision = 33;
+  uint32 opus_stream_count = 34;
+  uint32 opus_coupled_stream_count = 35;
+  bytes opus_mapping = 36;
+  uint32 video_stream_id = 37;
+  uint32 audio_stream_id = 38;
+  uint32 input_motion_stream_id = 39;
+  uint32 video_configuration_id = 40;
+  uint32 maximum_data_shards = 41;
+  uint32 maximum_parity_shards = 42;
+  uint32 initial_parity_percentage = 43;
+}
+
+message CodecConfiguration {
+  uint32 session_epoch = 1;
+  uint32 stream_id = 2;
+  uint32 configuration_id = 3;
+  VideoCodec codec = 4;
+  bytes decoder_configuration_record = 5;
+}
+
+message CodecConfigurationAck {
+  uint32 session_epoch = 1;
+  uint32 stream_id = 2;
+  uint32 configuration_id = 3;
+}
+
+message KeyboardInput {
+  uint32 hid_usage = 1;
+  bool pressed = 2;
+  uint32 modifiers = 3;
+  bool repeat = 4;
+}
+
+message TextInput {
+  string text_utf8 = 1;
+  uint64 composition_id = 2;
+  bool commit = 3;
+  uint32 selection_start_utf8 = 4;
+  uint32 selection_length_utf8 = 5;
+}
+
+message PointerButtonInput {
+  uint32 pointer_id = 1;
+  uint32 button = 2;
+  bool pressed = 3;
+}
+
+message GamepadConnectionInput {
+  uint32 gamepad_id = 1;
+  bool connected = 2;
+  uint32 capabilities = 3;
+}
+
+message GamepadButtonInput {
+  uint32 gamepad_id = 1;
+  GamepadButton button = 2;
+  bool pressed = 3;
+  uint32 analog_value = 4;
+}
+
+message TouchContactInput {
+  uint32 contact_id = 1;
+  ContactPhase phase = 2;
+  float normalized_x = 3;
+  float normalized_y = 4;
+  float pressure = 5;
+}
+
+message PenContactInput {
+  uint32 pointer_id = 1;
+  ContactPhase phase = 2;
+  uint32 buttons = 3;
+  float normalized_x = 4;
+  float normalized_y = 5;
+  float pressure = 6;
+}
+
+message RumbleAck {
+  uint64 command_sequence = 1;
+  uint32 gamepad_id = 2;
+  bool accepted = 3;
+}
+
+message ClientInputEnvelope {
+  uint32 session_epoch = 1;
+  uint64 event_sequence = 2;
+  oneof payload {
+    KeyboardInput keyboard = 10;
+    TextInput text = 11;
+    PointerButtonInput pointer_button = 12;
+    GamepadConnectionInput gamepad_connection = 13;
+    GamepadButtonInput gamepad_button = 14;
+    TouchContactInput touch_contact = 15;
+    PenContactInput pen_contact = 16;
+    RumbleAck rumble_ack = 17;
+  }
+}
+
+message PointerMotionInput {
+  uint32 pointer_id = 1;
+  PointerMotionMode mode = 2;
+  sint32 delta_x = 3;
+  sint32 delta_y = 4;
+  float normalized_x = 5;
+  float normalized_y = 6;
+}
+
+message ScrollInput {
+  uint32 pointer_id = 1;
+  sint32 delta_x_1024_points = 2;
+  sint32 delta_y_1024_points = 3;
+}
+
+message TouchMotionInput {
+  uint32 contact_id = 1;
+  float normalized_x = 2;
+  float normalized_y = 3;
+  float pressure = 4;
+}
+
+message PenMotionInput {
+  uint32 pointer_id = 1;
+  float normalized_x = 2;
+  float normalized_y = 3;
+  float pressure = 4;
+  float tilt_x_degrees = 5;
+  float tilt_y_degrees = 6;
+  float rotation_degrees = 7;
+}
+
+message GamepadMotionInput {
+  uint32 gamepad_id = 1;
+  sint32 left_stick_x = 2;
+  sint32 left_stick_y = 3;
+  sint32 right_stick_x = 4;
+  sint32 right_stick_y = 5;
+  uint32 left_trigger = 6;
+  uint32 right_trigger = 7;
+  float gyro_x = 8;
+  float gyro_y = 9;
+  float gyro_z = 10;
+  float acceleration_x = 11;
+  float acceleration_y = 12;
+  float acceleration_z = 13;
+}
+
+message ClientMotionEnvelope {
+  uint32 motion_sequence = 1;
+  oneof payload {
+    PointerMotionInput pointer_motion = 10;
+    ScrollInput scroll = 11;
+    TouchMotionInput touch_motion = 12;
+    PenMotionInput pen_motion = 13;
+    GamepadMotionInput gamepad_motion = 14;
+  }
+}
+
+message InputAck {
+  uint64 highest_contiguous_event_sequence = 1;
+}
+
+message InputReset {
+  uint32 reason = 1;
+}
+
+message RumbleCommand {
+  uint32 gamepad_id = 1;
+  uint32 low_frequency_motor = 2;
+  uint32 high_frequency_motor = 3;
+  uint32 left_trigger_motor = 4;
+  uint32 right_trigger_motor = 5;
+  uint32 duration_milliseconds = 6;
+}
+
+message HostInputEnvelope {
+  uint32 session_epoch = 1;
+  uint64 command_sequence = 2;
+  oneof payload {
+    InputAck ack = 10;
+    InputReset reset = 11;
+    RumbleCommand rumble = 12;
+  }
+}
+
+message ProtocolError {
+  uint32 code = 1;
+  string message = 2;
+  NegotiationFailure negotiation_failure = 3;
+}
+
+message StartSessionAck {
+  uint32 session_epoch = 1;
+}
+
+message StopSession {
+  uint32 session_epoch = 1;
+}
+
+message MediaPathChallenge {
+  uint32 session_epoch = 1;
+  uint32 path_id = 2;
+  uint32 media_port = 3;
+  bytes token = 4;
+}
+
+message MediaPathResponse {
+  uint32 session_epoch = 1;
+  uint32 path_id = 2;
+  bytes token = 3;
+}
+
+message MediaPathValidated {
+  uint32 session_epoch = 1;
+  uint32 path_id = 2;
+}
+
+message SessionStopped {
+  uint32 session_epoch = 1;
+}
+
+message SessionStarted {
+  uint32 session_epoch = 1;
+}
+
+message ClientControlEnvelope {
+  uint64 request_id = 1;
+  oneof payload {
+    ClientSessionHello hello = 10;
+    StartSessionAck start_session = 11;
+    MediaPathResponse media_path = 12;
+    StopSession stop_session = 13;
+    CodecConfigurationAck codec_configuration_ack = 14;
+  }
+}
+
+message HostControlEnvelope {
+  uint64 request_id = 1;
+  oneof payload {
+    HostSessionPlan session_plan = 10;
+    MediaPathChallenge media_path = 11;
+    SessionStopped session_stopped = 12;
+    ProtocolError error = 13;
+    MediaPathValidated media_path_validated = 14;
+    SessionStarted session_started = 15;
+  }
+}

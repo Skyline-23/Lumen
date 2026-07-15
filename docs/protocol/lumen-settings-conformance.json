@@ -1,0 +1,98 @@
+{
+  "schemaVersion": 1,
+  "protocol": "lumen-settings",
+  "networkTransport": {
+    "scheme": "https",
+    "contentType": "application/json",
+    "maximumRequestBytes": 32768,
+    "authentication": "lumen-device-bearer-v1",
+    "routes": {
+      "snapshot": {"method": "GET", "path": "/api/v1/settings"},
+      "patch": {"method": "PATCH", "path": "/api/v1/settings"},
+      "events": {"method": "GET", "path": "/api/v1/settings/events", "resumeQuery": "afterRevision"}
+    }
+  },
+  "envelopes": {
+    "snapshot": ["schemaVersion", "revision", "settings", "effective", "applyState", "capabilities"],
+    "patchRequest": ["schemaVersion", "baseRevision", "requestId", "changes"],
+    "patchResponse": ["schemaVersion", "revision", "accepted", "effective", "applyState", "requires"],
+    "event": ["schemaVersion", "revision", "settings", "effective", "applyState"]
+  },
+  "applyStates": ["applied", "pending-next-session", "pending-worker-restart"],
+  "applyClasses": ["live", "next-session", "worker-restart"],
+  "requires": ["none", "next-session", "worker-restart"],
+  "errorCodes": [
+    "unsupported-schema", "invalid-request", "unknown-field", "forbidden-field",
+    "unavailable-field", "invalid-value", "stale-revision", "request-id-conflict",
+    "revision-not-retained", "storage-error", "corrupt-data"
+  ],
+  "requestId": {"minimumLength": 1, "maximumLength": 128, "encoding": "non-whitespace-ascii"},
+  "retention": {"events": 128, "idempotencyRecords": 256},
+  "commandContract": {
+    "execution": "argv-without-shell",
+    "privileges": ["user", "administrator"],
+    "maximumEntriesPerList": 64,
+    "maximumArgumentsPerInvocation": 64,
+    "maximumArgumentLength": 1024,
+    "programPattern": "^[A-Za-z0-9._-]+$"
+  },
+  "forbiddenRemoteKeys": [
+    "applicationsFilePath",
+    "accessToken",
+    "certificatePath",
+    "controlLocation",
+    "credentialsFilePath",
+    "logFilePath",
+    "ownerPassword",
+    "deviceEnrollmentEnabled",
+    "privateKeyPath",
+    "refreshToken",
+    "remoteSettingsAllowed",
+    "stateFilePath",
+    "systemAuthenticationEnabled"
+  ],
+  "platformCapabilities": {
+    "macos": {
+      "workspace.policy": {"available": true},
+      "commandPrivileges": ["user"]
+    },
+    "windows": {
+      "workspace.policy": {"available": false},
+      "commandPrivileges": ["user", "administrator"]
+    }
+  },
+  "fields": [
+    {"key":"workspace.policy","type":"enum","applyClass":"next-session","availability":"host-capability","values":["coexist","promote-virtual-main","focused-workspace","isolated-workspace"]},
+    {"key":"general.locale","type":"string","applyClass":"worker-restart","availability":"all","maxLength":32},
+    {"key":"general.hostName","type":"string","applyClass":"live","availability":"all","maxLength":64},
+    {"key":"general.discovery","type":"boolean","applyClass":"live","availability":"all"},
+    {"key":"general.updateChannel","type":"enum","applyClass":"live","availability":"all","values":["stable","pre-release"]},
+    {"key":"general.notifyPreReleases","type":"boolean","applyClass":"live","availability":"all"},
+    {"key":"streaming.adapterSelector","type":"string","applyClass":"worker-restart","availability":"host-capability","maxLength":256},
+    {"key":"streaming.outputSelector","type":"string","applyClass":"worker-restart","availability":"host-capability","maxLength":256},
+    {"key":"streaming.fallbackDisplayMode","type":"string","applyClass":"next-session","availability":"all","pattern":"^\\d+x\\d+x\\d+(\\.\\d+)?$"},
+    {"key":"audio.sink","type":"string","applyClass":"next-session","availability":"host-capability","maxLength":256},
+    {"key":"audio.streamAudio","type":"boolean","applyClass":"next-session","availability":"all"},
+    {"key":"input.keyboard","type":"boolean","applyClass":"live","availability":"all"},
+    {"key":"input.mouse","type":"boolean","applyClass":"live","availability":"all"},
+    {"key":"input.controller","type":"boolean","applyClass":"live","availability":"all"},
+    {"key":"input.backButtonTimeoutMs","type":"integer","applyClass":"live","availability":"all","minimum":-1,"maximum":60000},
+    {"key":"input.mapRightAltToWindowsKey","type":"boolean","applyClass":"live","availability":"all"},
+    {"key":"input.highResolutionScrolling","type":"boolean","applyClass":"live","availability":"all"},
+    {"key":"input.nativePenTouch","type":"boolean","applyClass":"live","availability":"host-capability"},
+    {"key":"input.rumbleForwarding","type":"boolean","applyClass":"live","availability":"host-capability"},
+    {"key":"network.addressFamily","type":"enum","applyClass":"worker-restart","availability":"all","values":["ipv4","both"]},
+    {"key":"network.port","type":"integer","applyClass":"worker-restart","availability":"all","minimum":1029,"maximum":65515},
+    {"key":"network.upnp","type":"boolean","applyClass":"worker-restart","availability":"host-capability"},
+    {"key":"network.remoteAccessScope","type":"enum","applyClass":"worker-restart","availability":"all","values":["pc","lan","wan"]},
+    {"key":"network.externalIp","type":"string","applyClass":"worker-restart","availability":"all","maxLength":255},
+    {"key":"network.lanEncryption","type":"enum","applyClass":"next-session","availability":"all","values":["disabled","opportunistic","required"]},
+    {"key":"network.wanEncryption","type":"enum","applyClass":"next-session","availability":"all","values":["disabled","opportunistic","required"]},
+    {"key":"network.pingTimeoutMs","type":"integer","applyClass":"next-session","availability":"all","minimum":1000,"maximum":120000},
+    {"key":"network.fecPercentage","type":"integer","applyClass":"next-session","availability":"all","minimum":1,"maximum":255},
+    {"key":"diagnostics.logLevel","type":"enum","applyClass":"live","availability":"all","values":["verbose","debug","info","warning","error","fatal","none"]},
+    {"key":"commands.prep","type":"command-list","applyClass":"worker-restart","availability":"host-capability","values":["user","administrator"]},
+    {"key":"commands.state","type":"command-list","applyClass":"worker-restart","availability":"host-capability","values":["user","administrator"]},
+    {"key":"commands.server","type":"command-list","applyClass":"worker-restart","availability":"host-capability","values":["user","administrator"]}
+  ]
+}

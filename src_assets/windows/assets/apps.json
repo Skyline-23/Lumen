@@ -1,0 +1,8 @@
+{
+  "env": {},
+  "apps": [
+    {
+      "name": "Desktop"
+    }
+  ]
+}

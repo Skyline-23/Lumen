@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key>
+  <string>dev.skyline23.lumen.app</string>
+  <key>CFBundleDisplayName</key>
+  <string>Lumen</string>
+  <key>CFBundleExecutable</key>
+  <string>Lumen</string>
+  <key>CFBundleIconFile</key>
+  <string>lumen.icns</string>
+  <key>CFBundleName</key>
+  <string>Lumen</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>LSUIElement</key>
+  <true/>
+  <key>NSAudioCaptureUsageDescription</key>
+  <string>This app requires access to system audio to stream your Mac's sound to connected clients.</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>This app requires access to your microphone to stream audio.</string>
+</dict>
+</plist>

@@ -1,0 +1,573 @@
+import { AboutSlint, LineEdit, ScrollView, Switch } from "std-widgets.slint";
+
+component ActionButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> primary: false;
+    in property <bool> danger: false;
+    in property <bool> enabled: true;
+    callback clicked();
+    height: 30px;
+    border-radius: 8px;
+    background: !root.enabled ? #f0f0ec : root.primary ? #1466d9 : root.danger ? #fff0ee : touch.has-hover ? #e9e9e5 : #efefeb;
+    border-width: root.danger ? 1px : 0px;
+    border-color: #e05b4f;
+    Text {
+        text: root.text;
+        color: !root.enabled ? #aaa9a4 : root.primary ? #ffffff : root.danger ? #c43d32 : #22221f;
+        font-size: 13px;
+        font-weight: root.primary ? 600 : 500;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    touch := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+}
+
+component FeatureRow inherits HorizontalLayout {
+    in property <image> icon;
+    in property <string> title;
+    spacing: 10px;
+    height: 22px;
+    Image { source: root.icon; width: 16px; height: 16px; image-fit: contain; colorize: #5d5b56; }
+    Text { text: root.title; color: #5d5b56; font-size: 13px; vertical-alignment: center; }
+}
+
+component NavigationRow inherits Rectangle {
+    in property <image> icon;
+    in property <string> title;
+    in property <bool> selected;
+    callback clicked();
+    height: 34px;
+    border-radius: 7px;
+    background: root.selected ? #dfdfda : touch.has-hover ? #e9e9e5 : transparent;
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 8px;
+        spacing: 9px;
+        Image { source: root.icon; width: 17px; height: 17px; image-fit: contain; }
+        Text {
+            text: root.title;
+            color: #282724;
+            font-size: 13px;
+            font-weight: root.selected ? 600 : 400;
+            vertical-alignment: center;
+        }
+    }
+    touch := TouchArea { clicked => { root.clicked(); } }
+}
+
+component PageHeader inherits VerticalLayout {
+    in property <string> title;
+    in property <string> subtitle;
+    spacing: 4px;
+    height: 52px;
+    vertical-stretch: 0;
+    Text { text: root.title; color: #1b1b19; font-size: 30px; font-weight: 600; }
+    Text { text: root.subtitle; color: #77746d; font-size: 13px; }
+}
+
+component StatusCard inherits Rectangle {
+    in property <image> icon;
+    in property <string> value;
+    in property <string> label;
+    in property <bool> ready;
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: #deddd8;
+    background: #ffffff;
+    height: 118px;
+    width: 222px;
+    horizontal-stretch: 1;
+    vertical-stretch: 0;
+    VerticalLayout {
+        padding: 16px;
+        spacing: 7px;
+        alignment: start;
+        Image { source: root.icon; width: 23px; height: 23px; image-fit: contain; }
+        Text { text: root.value; color: #1d1d1a; font-size: 20px; font-weight: 600; }
+        Text { text: root.label; color: #77746d; font-size: 12px; }
+    }
+}
+
+component SectionPanel inherits Rectangle {
+    in property <string> title;
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: #deddd8;
+    background: #ffffff;
+}
+
+component SettingRow inherits Rectangle {
+    in property <string> title;
+    in property <string> detail;
+    in property <bool> checked: false;
+    height: root.detail == "" ? 44px : 60px;
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        spacing: 12px;
+        VerticalLayout {
+            spacing: 2px;
+            alignment: center;
+            Text { text: root.title; color: #24231f; font-size: 13px; }
+            if root.detail != "": Text { text: root.detail; color: #7a7770; font-size: 11px; wrap: word-wrap; }
+        }
+        Switch { checked: root.checked; }
+    }
+}
+
+export component LumenWindowsApp inherits Window {
+    in-out property <int> auth-mode: 0;
+    in-out property <int> navigation: 0;
+    in property <string> owner-name: "";
+    in property <string> auth-error: "";
+    in property <string> host-name: "Lumen";
+    in property <int> application-count: 0;
+    in property <int> control-port: 47989;
+    in property <int> settings-revision: 0;
+    in property <[string]> application-names: [];
+    in property <bool> system-authentication-enabled: false;
+    in property <string> system-authentication-label: "Unlock with Windows Hello";
+
+    callback create-owner(string, string, string);
+    callback login(string);
+    callback lock();
+    callback navigate(int);
+    callback reload-applications();
+    callback force-stop-stream();
+    callback restart-host();
+    callback quit-host();
+
+    title: "Lumen";
+    icon: @image-url("../../../icon.svg");
+    min-width: 820px;
+    min-height: 500px;
+    preferred-width: 960px;
+    preferred-height: root.auth-mode == 2 ? 620px : 588px;
+    background: #fafaf7;
+    default-font-family: "Segoe UI Variable";
+
+    if root.auth-mode != 2: HorizontalLayout {
+        spacing: 0px;
+        hero := Rectangle {
+            width: 340px;
+            horizontal-stretch: 0;
+            clip: true;
+            background: #fffdf5;
+
+            Rectangle {
+                x: -450px;
+                y: -350px;
+                width: 1000px;
+                height: 1000px;
+                border-radius: 500px;
+                background: @radial-gradient(circle, #ffc4299c 0%, #ffc4294d 40%, #ffc42900 100%);
+            }
+            Rectangle {
+                x: -100px;
+                y: -30px;
+                width: 800px;
+                height: 800px;
+                border-radius: 400px;
+                background: @radial-gradient(circle, #ff645038 0%, #ff64501c 42%, #ff645000 100%);
+            }
+            Rectangle {
+                x: -100px;
+                y: 200px;
+                width: 800px;
+                height: 800px;
+                border-radius: 400px;
+                background: @radial-gradient(circle, #38dbc32e 0%, #38dbc317 42%, #38dbc300 100%);
+            }
+
+            Image {
+                source: @image-url("../../../icon.svg");
+                width: 390px;
+                height: 336px;
+                x: 80px;
+                y: 315px;
+                opacity: 0.10;
+                image-fit: contain;
+            }
+
+            VerticalLayout {
+                padding: 32px;
+                spacing: 0px;
+                HorizontalLayout {
+                    height: 28px;
+                    spacing: 10px;
+                    Image { source: @image-url("../../../icon.svg"); width: 27px; height: 24px; image-fit: contain; }
+                    Text { text: "L U M E N"; color: #171714; font-size: 17px; font-weight: 700; vertical-alignment: center; }
+                }
+                Rectangle { vertical-stretch: 1; background: transparent; }
+                Text {
+                    text: "Your computer,\nready anywhere.";
+                    color: #171714;
+                    font-size: 36px;
+                    font-weight: 600;
+                }
+                Rectangle { height: 14px; background: transparent; }
+                Text {
+                    text: "Set up one owner account. Lumen keeps\nstreaming, applications, and enrolled devices\nunder your control.";
+                    color: #5c5952;
+                    font-size: 14px;
+                }
+                Rectangle { height: 22px; background: transparent; }
+                VerticalLayout {
+                    spacing: 10px;
+                    FeatureRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/local-credentials.svg"); title: "Local credentials"; }
+                    FeatureRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/host-controls.svg"); title: "Native host controls"; }
+                    FeatureRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/remote-access.svg"); title: "Remote device access"; }
+                }
+                Rectangle { vertical-stretch: 1; background: transparent; }
+                Text { text: "Credentials never leave this computer in plaintext."; color: #817e76; font-size: 11px; }
+            }
+        }
+
+        Rectangle {
+            background: #fffefa;
+            VerticalLayout {
+                Rectangle { vertical-stretch: 1; background: transparent; }
+                HorizontalLayout {
+                    height: root.auth-mode == 0 ? 294px : root.system-authentication-enabled ? 240px : 198px;
+                    vertical-stretch: 0;
+                    padding-left: 100px;
+                    padding-right: 100px;
+                    VerticalLayout {
+                        width: 420px;
+                        vertical-stretch: 0;
+                        spacing: 12px;
+                    HorizontalLayout {
+                        height: 48px;
+                        spacing: 16px;
+                        Image {
+                            source: root.auth-mode == 0
+                                ? @image-url("../../../src_assets/common/assets/icons/ui/create-owner.svg")
+                                : @image-url("../../../src_assets/common/assets/icons/ui/unlock.svg");
+                            width: 24px;
+                            height: 24px;
+                            image-fit: contain;
+                            colorize: #ed6538;
+                        }
+                        VerticalLayout {
+                            spacing: 3px;
+                            Text {
+                                text: root.auth-mode == 0 ? "Create the owner account" : "Unlock Lumen";
+                                color: #24231f;
+                                font-size: 15px;
+                                font-weight: 600;
+                            }
+                            Text {
+                                text: root.auth-mode == 0
+                                    ? "This account controls this host, enrolled devices, and remote settings."
+                                    : "Sign in to manage this host. Streaming services continue independently.";
+                                color: #77746d;
+                                font-size: 11px;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+
+                        if root.auth-mode == 0: VerticalLayout {
+                            vertical-stretch: 0;
+                            spacing: 10px;
+                            owner-input := LineEdit { height: 30px; vertical-stretch: 0; placeholder-text: "Owner ID"; }
+                            new-password := LineEdit { height: 30px; vertical-stretch: 0; placeholder-text: "Password (12 characters minimum)"; input-type: password; }
+                            confirmation := LineEdit {
+                                height: 30px;
+                                vertical-stretch: 0;
+                                placeholder-text: "Confirm password";
+                                input-type: password;
+                                accepted => { root.create-owner(owner-input.text, new-password.text, confirmation.text); }
+                            }
+                            if root.auth-error != "": Rectangle {
+                                height: 36px;
+                                border-radius: 8px;
+                                background: #fff0ed;
+                                Text { x: 12px; text: root.auth-error; color: #d14c43; font-size: 11px; vertical-alignment: center; }
+                            }
+                            ActionButton {
+                                text: "Create account";
+                                primary: true;
+                                enabled: owner-input.text != "" && new-password.text != "" && confirmation.text != "";
+                                clicked => { root.create-owner(owner-input.text, new-password.text, confirmation.text); }
+                            }
+                            Text {
+                                text: "The password is stored only as an Argon2id hash on this computer.";
+                                color: #817e76;
+                                font-size: 11px;
+                                wrap: word-wrap;
+                            }
+                        }
+
+                        if root.auth-mode == 1: VerticalLayout {
+                            vertical-stretch: 0;
+                            HorizontalLayout {
+                                height: 26px;
+                                spacing: 9px;
+                                Image { source: @image-url("../../../src_assets/common/assets/icons/ui/complete.svg"); width: 16px; height: 16px; image-fit: contain; colorize: #5dcf92; }
+                                Text { text: "Owner account"; color: #4d4b45; font-size: 12px; vertical-alignment: center; }
+                                Rectangle { horizontal-stretch: 1; background: transparent; }
+                                Text { text: root.owner-name; color: #8b8880; font-size: 11px; vertical-alignment: center; }
+                            }
+                            password-input := LineEdit {
+                                height: 30px;
+                                vertical-stretch: 0;
+                                placeholder-text: "Password";
+                                input-type: password;
+                                accepted => { root.login(password-input.text); }
+                            }
+                            if root.auth-error != "": Rectangle {
+                                height: 36px;
+                                border-radius: 8px;
+                                background: #fff0ed;
+                                HorizontalLayout {
+                                    padding-left: 10px;
+                                    spacing: 8px;
+                                    Image { source: @image-url("../../../src_assets/common/assets/icons/ui/attention.svg"); width: 14px; height: 14px; image-fit: contain; }
+                                    Text { text: root.auth-error; color: #d14c43; font-size: 11px; vertical-alignment: center; }
+                                }
+                            }
+                            ActionButton {
+                                text: "Sign in";
+                                primary: true;
+                                enabled: password-input.text != "";
+                                clicked => { root.login(password-input.text); }
+                            }
+                            if root.system-authentication-enabled: ActionButton {
+                                text: root.system-authentication-label;
+                            }
+                            HorizontalLayout {
+                                Text { text: "Forgot password?"; color: #1769c8; font-size: 12px; }
+                                Rectangle { horizontal-stretch: 1; background: transparent; }
+                                Text { text: "Quit"; color: #1769c8; font-size: 12px; }
+                            }
+                        }
+                    }
+                }
+                Rectangle { vertical-stretch: 1; background: transparent; }
+            }
+        }
+    }
+
+    if root.auth-mode == 2: HorizontalLayout {
+        spacing: 0px;
+        Rectangle {
+            width: 210px;
+            horizontal-stretch: 0;
+            background: #f1f1ee;
+            border-width: 0px;
+            VerticalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                padding-top: 14px;
+                padding-bottom: 12px;
+                spacing: 4px;
+                NavigationRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/overview.svg"); title: "Overview"; selected: root.navigation == 0; clicked => { root.navigate(0); } }
+                NavigationRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/applications.svg"); title: "Applications"; selected: root.navigation == 1; clicked => { root.navigate(1); } }
+                Rectangle { height: 13px; background: transparent; }
+                Text { text: "SETTINGS"; color: #96938b; font-size: 10px; font-weight: 600; }
+                NavigationRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/unlock.svg"); title: "Security"; selected: root.navigation == 2; clicked => { root.navigate(2); } }
+                NavigationRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/settings.svg"); title: "General"; selected: root.navigation == 3; clicked => { root.navigate(3); } }
+                NavigationRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/current-stream.svg"); title: "Streaming"; selected: root.navigation == 4; clicked => { root.navigate(4); } }
+                NavigationRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/host-controls.svg"); title: "Audio"; selected: root.navigation == 5; clicked => { root.navigate(5); } }
+                NavigationRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/remote-access.svg"); title: "Input"; selected: root.navigation == 6; clicked => { root.navigate(6); } }
+                NavigationRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/workspace.svg"); title: "Network"; selected: root.navigation == 7; clicked => { root.navigate(7); } }
+                NavigationRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/restart.svg"); title: "Advanced"; selected: root.navigation == 8; clicked => { root.navigate(8); } }
+                Rectangle { height: 9px; background: transparent; }
+                NavigationRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/diagnostics.svg"); title: "Diagnostics"; selected: root.navigation == 9; clicked => { root.navigate(9); } }
+                NavigationRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/settings.svg"); title: "About"; selected: root.navigation == 10; clicked => { root.navigate(10); } }
+                Rectangle { vertical-stretch: 1; background: transparent; }
+                Text { text: "Signed in as"; color: #99968f; font-size: 10px; }
+                Text { text: root.owner-name; color: #4a4842; font-size: 12px; font-weight: 500; }
+            }
+        }
+
+        Rectangle {
+            background: #fafaf7;
+            if root.navigation == 0: ScrollView {
+                VerticalLayout {
+                    padding: 28px;
+                    spacing: 20px;
+                    PageHeader { title: "Overview"; subtitle: "Host readiness and active streaming state"; }
+                    HorizontalLayout {
+                        height: 118px;
+                        horizontal-stretch: 1;
+                        vertical-stretch: 0;
+                        spacing: 14px;
+                        StatusCard { icon: @image-url("../../../src_assets/common/assets/icons/ui/host-runtime.svg"); value: "Running"; label: "Host runtime"; ready: true; }
+                        StatusCard { icon: @image-url("../../../src_assets/common/assets/icons/ui/current-stream.svg"); value: "Idle"; label: "Current stream"; ready: false; }
+                        StatusCard { icon: @image-url("../../../src_assets/common/assets/icons/ui/applications.svg"); value: "\{root.application-count}"; label: "Applications"; ready: root.application-count > 0; }
+                    }
+                    SectionPanel {
+                        height: 128px;
+                        title: "System access";
+                        VerticalLayout {
+                            padding: 14px;
+                            spacing: 9px;
+                            Text { text: "System access"; color: #272620; font-size: 13px; font-weight: 600; }
+                            HorizontalLayout {
+                                height: 28px;
+                                Image { source: @image-url("../../../src_assets/common/assets/icons/ui/complete.svg"); width: 17px; height: 17px; image-fit: contain; colorize: #5dcf92; }
+                                Text { text: "Display capture"; color: #34332e; font-size: 12px; vertical-alignment: center; }
+                                Rectangle { horizontal-stretch: 1; background: transparent; }
+                                Text { text: "Managed by Windows"; color: #817e76; font-size: 11px; vertical-alignment: center; }
+                            }
+                            HorizontalLayout {
+                                height: 28px;
+                                Image { source: @image-url("../../../src_assets/common/assets/icons/ui/complete.svg"); width: 17px; height: 17px; image-fit: contain; colorize: #5dcf92; }
+                                Text { text: "Input control"; color: #34332e; font-size: 12px; vertical-alignment: center; }
+                                Rectangle { horizontal-stretch: 1; background: transparent; }
+                                Text { text: "Managed by Windows"; color: #817e76; font-size: 11px; vertical-alignment: center; }
+                            }
+                        }
+                    }
+                    SectionPanel {
+                        height: 110px;
+                        title: "Host controls";
+                        VerticalLayout {
+                            padding: 14px;
+                            spacing: 12px;
+                            Text { text: "Host controls"; color: #272620; font-size: 13px; font-weight: 600; }
+                            HorizontalLayout {
+                                spacing: 10px;
+                                ActionButton { text: "Reload applications"; primary: true; clicked => { root.reload-applications(); } }
+                                ActionButton { text: "Force Stop Stream"; danger: true; clicked => { root.force-stop-stream(); } }
+                                Rectangle { horizontal-stretch: 1; background: transparent; }
+                                ActionButton { text: "Restart host"; clicked => { root.restart-host(); } }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if root.navigation == 1: ScrollView {
+                VerticalLayout {
+                    padding: 28px;
+                    spacing: 20px;
+                    HorizontalLayout {
+                        height: 52px;
+                        vertical-stretch: 0;
+                        PageHeader { title: "Applications"; subtitle: "Choose what remote clients can launch"; }
+                        Rectangle { horizontal-stretch: 1; background: transparent; }
+                        ActionButton { width: 128px; text: "Add application"; primary: true; }
+                    }
+                    if root.application-count == 0: Rectangle {
+                        height: 210px;
+                        border-radius: 10px;
+                        border-width: 1px;
+                        border-color: #deddd8;
+                        background: #ffffff;
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: 8px;
+                            Image { source: @image-url("../../../src_assets/common/assets/icons/ui/applications.svg"); width: 30px; height: 30px; image-fit: contain; }
+                            Text { text: "No applications"; color: #282721; font-size: 16px; font-weight: 600; horizontal-alignment: center; }
+                            Text { text: "Add a desktop or application entry for remote clients."; color: #77746d; font-size: 12px; horizontal-alignment: center; }
+                        }
+                    }
+                    for app-name in root.application-names: Rectangle {
+                        height: 58px;
+                        border-radius: 9px;
+                        border-width: 1px;
+                        border-color: #deddd8;
+                        background: #ffffff;
+                        HorizontalLayout {
+                            padding-left: 14px;
+                            padding-right: 14px;
+                            spacing: 12px;
+                            Image { source: @image-url("../../../src_assets/common/assets/icons/ui/application.svg"); width: 22px; height: 22px; image-fit: contain; }
+                            Text { text: app-name; color: #26251f; font-size: 13px; font-weight: 500; vertical-alignment: center; }
+                        }
+                    }
+                }
+            }
+
+            if root.navigation >= 2 && root.navigation <= 8: ScrollView {
+                VerticalLayout {
+                    padding: 28px;
+                    spacing: 18px;
+                    PageHeader {
+                        title: root.navigation == 2 ? "Security" : root.navigation == 3 ? "General" : root.navigation == 4 ? "Streaming" : root.navigation == 5 ? "Audio" : root.navigation == 6 ? "Input" : root.navigation == 7 ? "Network" : "Advanced";
+                        subtitle: root.navigation == 2 ? "Owner access, host locking, and system authentication" : root.navigation == 3 ? "Computer identity, discovery, language, and logging" : root.navigation == 4 ? "Codec, latency, quality, and stream display behavior" : root.navigation == 5 ? "Computer audio capture and device selection" : root.navigation == 6 ? "Keyboard, pointer, touch, and controller forwarding" : root.navigation == 7 ? "Discovery, remote access, encryption, and recovery" : "Lifecycle commands and host process automation";
+                    }
+                    Rectangle {
+                        border-radius: 10px;
+                        border-width: 1px;
+                        border-color: #deddd8;
+                        background: #ffffff;
+                        min-height: 250px;
+                        VerticalLayout {
+                            if root.navigation == 2: SettingRow { title: "Unlock with Windows Hello"; detail: "System authentication is not enabled."; checked: false; }
+                            if root.navigation == 2: ActionButton { width: 110px; text: "Lock now"; clicked => { root.lock(); } }
+                            if root.navigation == 3: SettingRow { title: "Computer name"; detail: root.host-name; }
+                            if root.navigation == 3: SettingRow { title: "Discoverable on the local network"; detail: ""; checked: true; }
+                            if root.navigation == 5: SettingRow { title: "Stream computer audio"; detail: ""; checked: true; }
+                            if root.navigation == 6: SettingRow { title: "Keyboard input"; detail: ""; checked: true; }
+                            if root.navigation == 6: SettingRow { title: "Mouse input"; detail: ""; checked: true; }
+                            if root.navigation == 6: SettingRow { title: "Game controller input"; detail: ""; checked: true; }
+                            if root.navigation == 7: SettingRow { title: "Base port"; detail: "\{root.control-port}"; }
+                            if root.navigation == 7: SettingRow { title: "UPnP port mapping"; detail: ""; checked: false; }
+                            if root.navigation == 8: SettingRow { title: "Preparation commands"; detail: "Configure commands that run before a streamed application starts."; }
+                            if root.navigation == 8: SettingRow { title: "Server commands"; detail: "Commands available to connected clients."; }
+                            Rectangle { vertical-stretch: 1; background: transparent; }
+                        }
+                    }
+                    Text { text: "Changes are saved automatically.  Revision \{root.settings-revision}"; color: #85827b; font-size: 11px; }
+                }
+            }
+
+            if root.navigation == 9: ScrollView {
+                VerticalLayout {
+                    padding: 28px;
+                    spacing: 18px;
+                    PageHeader { title: "Diagnostics"; subtitle: "Runtime state and troubleshooting information"; }
+                    SectionPanel {
+                        height: 170px;
+                        title: "Runtime";
+                        VerticalLayout {
+                            padding: 15px;
+                            spacing: 12px;
+                            Text { text: "Runtime"; color: #282720; font-size: 13px; font-weight: 600; }
+                            SettingRow { title: "Host"; detail: root.host-name; }
+                            SettingRow { title: "Control port"; detail: "\{root.control-port}"; }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 10px;
+                        ActionButton { text: "Lock now"; clicked => { root.lock(); } }
+                        Rectangle { horizontal-stretch: 1; background: transparent; }
+                        ActionButton { text: "Quit Lumen"; danger: true; clicked => { root.quit-host(); } }
+                    }
+                }
+            }
+
+            if root.navigation == 10: ScrollView {
+                VerticalLayout {
+                    padding: 28px;
+                    spacing: 18px;
+                    PageHeader { title: "About Lumen"; subtitle: "Product and third-party attribution"; }
+                    SectionPanel {
+                        height: 188px;
+                        title: "Lumen";
+                        VerticalLayout {
+                            padding: 15px;
+                            spacing: 8px;
+                            Text { text: "Lumen"; color: #282720; font-size: 20px; font-weight: 600; }
+                            Text { text: "Self-hosted remote desktop streaming"; color: #77746d; font-size: 12px; }
+                            Text { text: "Third-party license texts are installed with the application."; color: #77746d; font-size: 11px; }
+                            Rectangle { vertical-stretch: 1; background: transparent; }
+                        }
+                    }
+                    SectionPanel {
+                        height: 124px;
+                        title: "Slint";
+                        AboutSlint { }
+                    }
+                }
+            }
+        }
+    }
+}

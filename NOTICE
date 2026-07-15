@@ -1,0 +1,13 @@
+Lumen
+Copyright (c) 2026 Buseong Kim
+Licensed under the MIT License.
+
+Lumen's Windows desktop application uses Slint 1.13.1 under the Slint
+Royalty-free Desktop, Mobile, and Web Applications License 2.0. The application
+provides the required AboutSlint attribution in its top-level About screen.
+
+Lumen links Opus for low-latency audio encoding under its BSD 3-Clause license
+and includes ViGEmClient under the MIT License. The shared UI icons are selected
+from Tabler Icons under the MIT License. Complete license texts are installed or
+bundled with the application. `Rust-Crates.html` lists the Rust dependency graph,
+crate versions, selected license expressions, and detected license texts.

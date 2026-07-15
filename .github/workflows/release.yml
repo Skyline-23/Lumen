@@ -1,0 +1,239 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    name: Signed macOS package
+    runs-on: macos-26
+    defaults:
+      run:
+        shell: zsh {0}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      - name: Validate Apple release secrets
+        env:
+          APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+          APPLE_NOTARY_KEY_BASE64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+        run: |
+          for variable in \
+            APPLE_CERTIFICATE_P12_BASE64 \
+            APPLE_CERTIFICATE_PASSWORD \
+            APPLE_NOTARY_ISSUER_ID \
+            APPLE_NOTARY_KEY_BASE64 \
+            APPLE_NOTARY_KEY_ID; do
+            if [[ -z "${(P)variable}" ]]; then
+              print -u2 "Missing required release secret: ${variable}"
+              exit 1
+            fi
+          done
+      - name: Install build tools
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add aarch64-apple-darwin
+          brew install opus
+          brew install --cask tuist
+      - name: Configure signing and notarization
+        env:
+          APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+          APPLE_NOTARY_KEY_BASE64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+        run: |
+          KEYCHAIN_PATH="${RUNNER_TEMP}/lumen-release.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          CERTIFICATE_PATH="${RUNNER_TEMP}/lumen-release.p12"
+          NOTARY_KEY_PATH="${RUNNER_TEMP}/AuthKey_${APPLE_NOTARY_KEY_ID}.p8"
+          print -rn -- "${APPLE_CERTIFICATE_P12_BASE64}" | /usr/bin/base64 -D > "${CERTIFICATE_PATH}"
+          print -rn -- "${APPLE_NOTARY_KEY_BASE64}" | /usr/bin/base64 -D > "${NOTARY_KEY_PATH}"
+          security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+          security set-keychain-settings -lut 21600 "${KEYCHAIN_PATH}"
+          security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+          security import "${CERTIFICATE_PATH}" \
+            -k "${KEYCHAIN_PATH}" \
+            -P "${APPLE_CERTIFICATE_PASSWORD}" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -s \
+            -k "${KEYCHAIN_PASSWORD}" \
+            "${KEYCHAIN_PATH}"
+          security list-keychains -d user -s "${KEYCHAIN_PATH}" login.keychain-db
+          security default-keychain -d user -s "${KEYCHAIN_PATH}"
+          SIGNING_IDENTITY="$(security find-identity -v -p codesigning "${KEYCHAIN_PATH}" | sed -n 's/.*"\(.*\)"/\1/p' | head -1)"
+          [[ -n "${SIGNING_IDENTITY}" ]] || { print -u2 "No code-signing identity was imported"; exit 1; }
+          xcrun notarytool store-credentials lumen-release \
+            --key "${NOTARY_KEY_PATH}" \
+            --key-id "${APPLE_NOTARY_KEY_ID}" \
+            --issuer "${APPLE_NOTARY_ISSUER_ID}"
+          print "LUMEN_SIGNING_IDENTITY=${SIGNING_IDENTITY}" >> "${GITHUB_ENV}"
+          print "LUMEN_NOTARY_PROFILE=lumen-release" >> "${GITHUB_ENV}"
+          print "LUMEN_RELEASE_KEYCHAIN=${KEYCHAIN_PATH}" >> "${GITHUB_ENV}"
+          print "LUMEN_RELEASE_CERTIFICATE=${CERTIFICATE_PATH}" >> "${GITHUB_ENV}"
+          print "LUMEN_RELEASE_NOTARY_KEY=${NOTARY_KEY_PATH}" >> "${GITHUB_ENV}"
+      - name: Build, sign, and notarize DMG
+        env:
+          LUMEN_BUILD_NUMBER: ${{ github.run_number }}
+          LUMEN_OUTPUT_DIR: ${{ github.workspace }}/build/release-artifacts
+          LUMEN_VERSION: ${{ github.ref_name }}
+        run: scripts/macos/package.sh --skip-tests
+      - name: Upload macOS release artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: lumen-macos-release
+          path: build/release-artifacts/Lumen-*-macOS.dmg
+          if-no-files-found: error
+      - name: Remove signing material
+        if: always()
+        run: |
+          [[ -z "${LUMEN_RELEASE_KEYCHAIN:-}" ]] || security delete-keychain "${LUMEN_RELEASE_KEYCHAIN}" || true
+          [[ -z "${LUMEN_RELEASE_CERTIFICATE:-}" ]] || rm -f "${LUMEN_RELEASE_CERTIFICATE}"
+          [[ -z "${LUMEN_RELEASE_NOTARY_KEY:-}" ]] || rm -f "${LUMEN_RELEASE_NOTARY_KEY}"
+
+  windows:
+    name: Signed Windows package
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      - name: Validate Windows release secrets
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          WINDOWS_CERTIFICATE_PFX_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_PFX_BASE64 }}
+        run: |
+          if (-not $env:WINDOWS_CERTIFICATE_PFX_BASE64) { throw "Missing WINDOWS_CERTIFICATE_PFX_BASE64" }
+          if (-not $env:WINDOWS_CERTIFICATE_PASSWORD) { throw "Missing WINDOWS_CERTIFICATE_PASSWORD" }
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          path-type: inherit
+          update: true
+          install: >-
+            git
+            make
+            mingw-w64-ucrt-x86_64-MinHook
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-cppwinrt
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-libvpl
+            mingw-w64-ucrt-x86_64-nasm
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-nsis
+            mingw-w64-ucrt-x86_64-opus
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-zlib
+      - name: Add the GNU Rust target
+        shell: pwsh
+        run: rustup target add x86_64-pc-windows-gnu
+      - name: Build NSIS installer
+        shell: msys2 {0}
+        env:
+          LUMEN_VERSION: ${{ github.ref_name }}
+        run: scripts/ci/build_windows_package.sh
+      - name: Sign Windows installer
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          WINDOWS_CERTIFICATE_PFX_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_PFX_BASE64 }}
+        run: |
+          $certificate = Join-Path $env:RUNNER_TEMP "lumen-release.pfx"
+          [IO.File]::WriteAllBytes($certificate, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_PFX_BASE64))
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if (-not $signtool) { throw "signtool.exe was not found" }
+          $installer = Get-ChildItem "cmake-build-release\cpack_artifacts\Lumen-*-Windows-x86_64.exe" |
+            Select-Object -First 1
+          & $signtool.FullName sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com `
+            /f $certificate /p $env:WINDOWS_CERTIFICATE_PASSWORD $installer.FullName
+          & $signtool.FullName verify /pa /v $installer.FullName
+          Remove-Item -Force $certificate
+      - name: Upload Windows release artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: lumen-windows-release
+          path: cmake-build-release/cpack_artifacts/Lumen-*-Windows-x86_64.exe
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs: [macos, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: lumen-*-release
+          path: artifacts
+          merge-multiple: true
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "${{ github.ref_name }}" artifacts/*
+          --repo "${{ github.repository }}"
+          --verify-tag
+          --generate-notes
+          --title "Lumen ${{ github.ref_name }}"
+
+  homebrew:
+    name: Update Homebrew tap
+    needs: publish
+    runs-on: macos-15
+    defaults:
+      run:
+        shell: zsh {0}
+    steps:
+      - name: Validate Homebrew tap secret
+        env:
+          HOMEBREW_TAP_SSH_KEY: ${{ secrets.HOMEBREW_TAP_SSH_KEY }}
+        run: |
+          [[ -n "${HOMEBREW_TAP_SSH_KEY}" ]] || { print -u2 "Missing HOMEBREW_TAP_SSH_KEY"; exit 1; }
+      - uses: actions/checkout@v7
+        with:
+          path: source
+      - uses: actions/checkout@v7
+        with:
+          repository: Skyline-23/homebrew-lumen
+          path: homebrew-tap
+          ssh-key: ${{ secrets.HOMEBREW_TAP_SSH_KEY }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: lumen-macos-release
+          path: artifacts
+      - name: Render and publish cask
+        run: |
+          source/scripts/release/render_homebrew_cask.sh \
+            "${{ github.ref_name }}" \
+            artifacts/Lumen-${GITHUB_REF_NAME#v}-macOS.dmg \
+            homebrew-tap/Casks/lumen.rb
+          cd homebrew-tap
+          brew style --cask Casks/lumen.rb
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/lumen.rb
+          if git diff --cached --quiet; then
+            print "Homebrew cask is already current."
+            exit 0
+          fi
+          git commit -m "chore: Update Lumen to ${GITHUB_REF_NAME#v}"
+          git push

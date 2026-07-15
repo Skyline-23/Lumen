@@ -1,0 +1,232 @@
+{
+  "schemaVersion": 1,
+  "protocolName": "lumen-auth",
+  "transport": "source-neutral",
+  "networkTransport": {
+    "scheme": "https",
+    "method": "POST",
+    "contentType": "application/json",
+    "maximumRequestBytes": 32768,
+    "routes": {
+      "enrollmentChallenge": "/api/v1/auth/enrollment-challenge",
+      "enroll": "/api/v1/auth/enroll",
+      "tokenExchangeChallenge": "/api/v1/auth/token-challenge",
+      "tokenExchange": "/api/v1/auth/token",
+      "revokeDevice": "/api/v1/auth/revoke"
+    }
+  },
+  "accessRequestAuthentication": {
+    "authorizationHeader": "Authorization: Bearer <accessToken>",
+    "authorizationHeaderName": {
+      "name": "Authorization",
+      "matching": "ascii-case-insensitive"
+    },
+    "authorizationScheme": {
+      "name": "Bearer",
+      "matching": "ascii-case-insensitive",
+      "tokenMatching": "opaque-exact"
+    },
+    "deviceIdHeader": {
+      "name": "Lumen-Device-ID",
+      "matching": "ascii-case-insensitive",
+      "valueMatching": "opaque-exact"
+    },
+    "queryParameters": "forbidden",
+    "cookies": "forbidden",
+    "basicAuthentication": "forbidden"
+  },
+  "protectedRoutes": {
+    "controlDiscoveryHost": {
+      "method": "GET",
+      "path": "/api/discovery/host"
+    },
+    "controlDiscoveryApps": {
+      "method": "GET",
+      "path": "/api/discovery/apps"
+    },
+    "streamLaunch": {
+      "method": "GET",
+      "path": "/launch"
+    },
+    "streamResume": {
+      "method": "GET",
+      "path": "/resume"
+    },
+    "streamCancel": {
+      "method": "GET",
+      "path": "/cancel"
+    },
+    "streamClipboardRead": {
+      "method": "GET",
+      "path": "/actions/clipboard"
+    },
+    "streamClipboardWrite": {
+      "method": "POST",
+      "path": "/actions/clipboard"
+    }
+  },
+  "credentialPolicy": {
+    "refreshTokenRotation": "required",
+    "refreshTokenPersistence": "sha256-hash-only",
+    "accessTokenLifetimeSeconds": 900,
+    "accessTokenPersistence": "sha256-hash-only",
+    "activeAccessTokensPerDevice": 1,
+    "revocation": "immediate",
+    "factoryReset": "invalidate-all"
+  },
+  "deviceEnrollmentPolicy": {
+    "scope": "local-host-only",
+    "configKey": "device_enrollment_enabled",
+    "disabledError": "device-enrollment-disabled",
+    "existingDeviceAuthentication": "unaffected"
+  },
+  "idempotency": {
+    "key": "operation-plus-requestId",
+    "retryMatch": "exact-request-body",
+    "requestIdCollision": "invalid-request",
+    "retention": "bounded-in-memory",
+    "maximumRetainedResponses": 256
+  },
+  "possessionProof": {
+    "algorithm": "p256-ecdsa-sha256",
+    "publicKeyEncoding": "ansi-x9.63-uncompressed",
+    "publicKeyLength": 65,
+    "publicKeyTransportEncoding": "base64url-no-pad",
+    "signatureEncoding": "asn1-der",
+    "signatureTransportEncoding": "base64url-no-pad",
+    "challengeLength": 32,
+    "challengeLifetimeSeconds": 300,
+    "challengeUse": "single-use",
+    "signingMessages": {
+      "enrollment": {
+        "encoding": "binary-concatenation",
+        "components": [
+          "ascii:LUMEN-AUTH-ENROLLMENT-V1",
+          "hex:00",
+          "base64url-decoded-challenge"
+        ]
+      },
+      "tokenExchange": {
+        "encoding": "binary-concatenation",
+        "components": [
+          "ascii:LUMEN-AUTH-TOKEN-EXCHANGE-V1",
+          "hex:00",
+          "utf8-device-id",
+          "hex:00",
+          "base64url-decoded-challenge"
+        ]
+      }
+    }
+  },
+  "operations": {
+    "enrollmentChallenge": {
+      "request": {
+        "publicKey": "base64url-x9.63-public-key"
+      },
+      "response": {
+        "challengeId": "opaque-id",
+        "challenge": "base64url-random-32-bytes",
+        "algorithm": "p256-ecdsa-sha256",
+        "purpose": "enrollment",
+        "expiresAtUnixSeconds": 1700000300
+      }
+    },
+    "tokenExchangeChallenge": {
+      "request": {
+        "deviceId": "opaque-device-id"
+      },
+      "response": {
+        "challengeId": "opaque-id",
+        "challenge": "base64url-random-32-bytes",
+        "algorithm": "p256-ecdsa-sha256",
+        "purpose": "token-exchange",
+        "deviceId": "opaque-device-id",
+        "expiresAtUnixSeconds": 1700000300
+      }
+    },
+    "enroll": {
+      "request": {
+        "ownerUsername": "owner",
+        "ownerPassword": "one-time-owner-secret",
+        "deviceName": "Living Room Tablet",
+        "platform": "ios",
+        "publicKey": "base64url-x9.63-public-key",
+        "challengeId": "opaque-id",
+        "challengeSignature": "base64url-asn1-der-signature"
+      },
+      "response": {
+        "deviceId": "opaque-device-id",
+        "refreshToken": "one-time-refresh-token",
+        "credentialType": "lumen-device-refresh"
+      }
+    },
+    "exchangeRefreshToken": {
+      "request": {
+        "deviceId": "opaque-device-id",
+        "refreshToken": "current-refresh-token",
+        "challengeId": "opaque-id",
+        "challengeSignature": "base64url-asn1-der-signature"
+      },
+      "response": {
+        "deviceId": "opaque-device-id",
+        "refreshToken": "rotated-refresh-token",
+        "accessToken": "short-lived-access-token",
+        "tokenType": "Bearer",
+        "expiresAtUnixSeconds": 1700000900
+      }
+    },
+    "verifyAccessToken": {
+      "request": {
+        "deviceId": "opaque-device-id",
+        "accessToken": "short-lived-access-token"
+      },
+      "response": {
+        "authorized": true
+      }
+    },
+    "revokeDevice": {
+      "request": {
+        "ownerUsername": "owner",
+        "ownerPassword": "owner-secret",
+        "deviceId": "opaque-device-id"
+      },
+      "response": {
+        "revoked": true
+      }
+    }
+  },
+  "envelopes": {
+    "request": {
+      "schemaVersion": 1,
+      "requestId": "stable-request-id",
+      "request": {}
+    },
+    "success": {
+      "schemaVersion": 1,
+      "requestId": "stable-request-id",
+      "result": {}
+    },
+    "error": {
+      "schemaVersion": 1,
+      "requestId": "stable-request-id",
+      "error": {
+        "code": "revoked",
+        "message": "The device credential has been revoked.",
+        "retryable": false
+      }
+    }
+  },
+  "errorCodes": [
+    "invalid-request",
+    "device-enrollment-disabled",
+    "invalid-owner-credentials",
+    "invalid-challenge",
+    "challenge-expired",
+    "invalid-signature",
+    "invalid-device-credential",
+    "access-token-expired",
+    "revoked",
+    "storage-unavailable",
+    "corrupt-authority"
+  ]
+}
