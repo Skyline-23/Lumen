@@ -18,6 +18,9 @@ struct LumenAppContainer {
         return Self(
             captureController: LumenCaptureController(
                 adapter: adapter,
+                applicationRelauncher: LumenWorkspaceApplicationRelauncher(
+                    applicationURL: Bundle.main.bundleURL
+                ),
                 readinessStore: readinessStore,
                 ownerAccountStore: ownerAccountStore,
                 hostSettingsStore: hostSettingsStore,

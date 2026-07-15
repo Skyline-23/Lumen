@@ -23,6 +23,11 @@ protocol LumenApplicationCatalogServicing: Sendable {
 }
 
 @MainActor
+protocol LumenApplicationRelaunching: AnyObject {
+    func relaunch() async throws
+}
+
+@MainActor
 protocol LumenHostRuntimeControlling: AnyObject {
     var isAccessibilityPermissionGranted: Bool { get }
     var isScreenCapturePermissionGranted: Bool { get }
