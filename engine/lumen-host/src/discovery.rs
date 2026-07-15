@@ -206,10 +206,24 @@ fn dns_label(instance: &str) -> String {
 mod tests {
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-    use netdev::interface::flags::{IFF_MULTICAST, IFF_POINTOPOINT, IFF_RUNNING, IFF_UP};
+    #[cfg(not(target_os = "windows"))]
+    use netdev::interface::flags::IFF_RUNNING;
+    use netdev::interface::flags::{IFF_MULTICAST, IFF_POINTOPOINT, IFF_UP};
     use netdev::ipnet::{Ipv4Net, Ipv6Net};
 
     use super::*;
+
+    fn active_multicast_flags() -> u32 {
+        let flags = (IFF_UP | IFF_MULTICAST) as u32;
+        #[cfg(target_os = "windows")]
+        {
+            flags
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            flags | IFF_RUNNING as u32
+        }
+    }
 
     #[test]
     fn filters_non_routable_addresses_from_an_interface() {
@@ -242,12 +256,12 @@ mod tests {
     fn prefers_a_multicast_lan_interface_over_the_default_tunnel() {
         let mut tunnel = netdev::Interface::dummy();
         tunnel.name = "utun7".to_owned();
-        tunnel.flags = (IFF_UP | IFF_RUNNING | IFF_MULTICAST | IFF_POINTOPOINT) as u32;
+        tunnel.flags = active_multicast_flags() | IFF_POINTOPOINT as u32;
         tunnel.ipv4 = vec![Ipv4Net::new(Ipv4Addr::new(100, 85, 138, 127), 32).unwrap()];
 
         let mut lan = netdev::Interface::dummy();
         lan.name = "en0".to_owned();
-        lan.flags = (IFF_UP | IFF_RUNNING | IFF_MULTICAST) as u32;
+        lan.flags = active_multicast_flags();
         lan.ipv4 = vec![Ipv4Net::new(Ipv4Addr::new(192, 168, 0, 51), 24).unwrap()];
 
         assert_eq!(

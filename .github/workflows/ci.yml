@@ -42,9 +42,18 @@ jobs:
           rustup target add aarch64-apple-darwin
           brew install opus
           brew install --cask tuist
+      - name: Build macOS Rust libraries
+        run: |
+          CONFIGURATION=Debug \
+          ARCHS=arm64 \
+          CURRENT_ARCH=undefined_arch \
+            scripts/rust/build_lumen_engine.sh
       - name: Test Lumen app
         working-directory: src/platform/macos
-        run: tuist test --no-selective-testing --no-binary-cache LumenTuistTests
+        run: |
+          opus_prefix="$(brew --prefix opus)"
+          export TUIST_LUMEN_OPUS_ARCHIVE="${opus_prefix}/lib/libopus.a"
+          tuist test --no-selective-testing --no-binary-cache LumenTuistTests
       - name: Build Lumen app
         working-directory: src/platform/macos
         run: |
