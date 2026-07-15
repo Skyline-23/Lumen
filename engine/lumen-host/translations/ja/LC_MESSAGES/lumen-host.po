@@ -1,0 +1,278 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: Lumen\n"
+"POT-Creation-Date: 2026-07-15 00:00+0000\n"
+"PO-Revision-Date: 2026-07-15 00:00+0000\n"
+"Language-Team: Japanese\n"
+"MIME-Version: 1.0\n"
+"Language: ja\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+msgid "About"
+msgstr "情報"
+
+msgid "About Lumen"
+msgstr "Lumenについて"
+
+msgid "Add a desktop or application entry for remote clients."
+msgstr "リモートクライアントが起動できるデスクトップまたはアプリを追加してください。"
+
+msgid "Add application"
+msgstr "アプリを追加"
+
+msgid "Advanced"
+msgstr "詳細"
+
+msgid "Applications"
+msgstr "アプリケーション"
+
+msgid "Audio"
+msgstr "オーディオ"
+
+msgid "Base port"
+msgstr "ベースポート"
+
+msgid "Choose what remote clients can launch"
+msgstr "リモートクライアントが起動できる項目を選択"
+
+msgid "Codec, latency, quality, and stream display behavior"
+msgstr "コーデック、遅延、品質、ストリームディスプレイの動作"
+
+msgid "Commands available to connected clients."
+msgstr "接続したクライアントから使用できるコマンドです。"
+
+msgid "Computer audio capture and device selection"
+msgstr "コンピュータ音声のキャプチャとデバイス選択"
+
+msgid "Computer identity, discovery, language, and logging"
+msgstr "コンピュータ情報、検出、言語、ログ"
+
+msgid "Computer name"
+msgstr "コンピュータ名"
+
+msgid "Configure commands that run before a streamed application starts."
+msgstr "ストリーミングアプリの起動前に実行するコマンドを設定します。"
+
+msgid "Confirm password"
+msgstr "パスワードを確認"
+
+msgid "Control port"
+msgstr "制御ポート"
+
+msgid "Create account"
+msgstr "アカウントを作成"
+
+msgid "Create the owner account"
+msgstr "所有者アカウントを作成"
+
+msgid "Credentials never leave this computer in plaintext."
+msgstr "認証情報が平文のままこのコンピュータから送信されることはありません。"
+
+msgid "Current stream"
+msgstr "現在のストリーム"
+
+msgid "Diagnostics"
+msgstr "診断"
+
+msgid "Discoverable on the local network"
+msgstr "ローカルネットワークで検出可能にする"
+
+msgid "Discovery, remote access, encryption, and recovery"
+msgstr "検出、リモートアクセス、暗号化、復旧"
+
+msgid "Display capture"
+msgstr "ディスプレイキャプチャ"
+
+msgid "Force Stop Stream"
+msgstr "ストリームを強制停止"
+
+msgid "Forgot password?"
+msgstr "パスワードをお忘れですか？"
+
+msgid "Game controller input"
+msgstr "ゲームコントローラ入力"
+
+msgid "General"
+msgstr "一般"
+
+msgid "Host"
+msgstr "ホスト"
+
+msgid "Host controls"
+msgstr "ホスト操作"
+
+msgid "Host readiness and active streaming state"
+msgstr "ホストの準備状況とストリーミング状態"
+
+msgid "Host runtime"
+msgstr "ホストランタイム"
+
+msgid "Idle"
+msgstr "待機中"
+
+msgid "Input"
+msgstr "入力"
+
+msgid "Input control"
+msgstr "入力制御"
+
+msgid "Keyboard input"
+msgstr "キーボード入力"
+
+msgid "Keyboard, pointer, touch, and controller forwarding"
+msgstr "キーボード、ポインタ、タッチ、コントローラの転送"
+
+msgid "Language"
+msgstr "言語"
+
+msgid "Lifecycle commands and host process automation"
+msgstr "ライフサイクルコマンドとホストプロセスの自動化"
+
+msgid "Local credentials"
+msgstr "ローカル認証情報"
+
+msgid "Lock now"
+msgstr "今すぐロック"
+
+msgid "Managed by Windows"
+msgstr "Windowsで管理"
+
+msgid "Mouse input"
+msgstr "マウス入力"
+
+msgid "Native host controls"
+msgstr "ネイティブホスト操作"
+
+msgid "Network"
+msgstr "ネットワーク"
+
+msgid "No applications"
+msgstr "アプリがありません"
+
+msgid "Overview"
+msgstr "概要"
+
+msgid "Owner ID"
+msgstr "所有者ID"
+
+msgid "Owner access, host locking, and system authentication"
+msgstr "オーナーアクセス、ホストのロック、システム認証"
+
+msgid "Owner account"
+msgstr "所有者アカウント"
+
+msgid "Password"
+msgstr "パスワード"
+
+msgid "Password (12 characters minimum)"
+msgstr "パスワード（12文字以上）"
+
+msgid "Preparation commands"
+msgstr "準備コマンド"
+
+msgid "Product and third-party attribution"
+msgstr "製品およびサードパーティの帰属情報"
+
+msgid "Quit"
+msgstr "終了"
+
+msgid "Quit Lumen"
+msgstr "Lumenを終了"
+
+msgid "Reload applications"
+msgstr "アプリを再読み込み"
+
+msgid "Remote device access"
+msgstr "リモートデバイスアクセス"
+
+msgid "Restart host"
+msgstr "ホストを再起動"
+
+msgid "Revision {}"
+msgstr "リビジョン {}"
+
+msgid "Running"
+msgstr "実行中"
+
+msgid "Runtime"
+msgstr "ランタイム"
+
+msgid "Runtime state and troubleshooting information"
+msgstr "ランタイム状態とトラブルシューティング情報"
+
+msgid "SETTINGS"
+msgstr "設定"
+
+msgid "Security"
+msgstr "セキュリティ"
+
+msgid "Self-hosted remote desktop streaming"
+msgstr "セルフホスト型リモートデスクトップストリーミング"
+
+msgid "Server commands"
+msgstr "サーバーコマンド"
+
+msgid "Set up one owner account. Lumen keeps\nstreaming, applications, and enrolled devices\nunder your control."
+msgstr "オーナーアカウントを1つ設定します。\nストリーミング、アプリ、登録済みデバイスを\nLumenで管理できます。"
+
+msgid "Sign in"
+msgstr "サインイン"
+
+msgid "Sign in to manage this host. Streaming services continue independently."
+msgstr "このホストを管理するにはサインインしてください。ストリーミングサービスは独立して動作し続けます。"
+
+msgid "Signed in as"
+msgstr "サインイン中"
+
+msgid "Slint"
+msgstr "Slint"
+
+msgid "Stream computer audio"
+msgstr "コンピュータの音声をストリーミング"
+
+msgid "Streaming"
+msgstr "ストリーミング"
+
+msgid "System access"
+msgstr "システムアクセス"
+
+msgid "System authentication is not enabled."
+msgstr "システム認証は有効になっていません。"
+
+msgid "The password is stored only as an Argon2id hash on this computer."
+msgstr "パスワードはこのコンピュータにArgon2idハッシュとしてのみ保存されます。"
+
+msgid "Third-party license texts are installed with the application."
+msgstr "サードパーティライセンス文書はアプリと共にインストールされます。"
+
+msgid "This account controls this host, enrolled devices, and remote settings."
+msgstr "このアカウントでホスト、登録済みデバイス、リモート設定を管理します。"
+
+msgid "UPnP port mapping"
+msgstr "UPnPポートマッピング"
+
+msgid "Unlock Lumen"
+msgstr "Lumenのロックを解除"
+
+msgid "Unlock with Windows Hello"
+msgstr "Windows Helloでロック解除"
+
+msgid "Your computer,\nready anywhere."
+msgstr "自分のMacへ、\nどこからでも。"
+
+msgid "Check the account fields and password confirmation."
+msgstr "アカウントの入力内容とパスワードの確認を見直してください。"
+
+msgid "An owner account already exists."
+msgstr "オーナーアカウントはすでに存在します。"
+
+msgid "Authentication failure."
+msgstr "認証に失敗しました。"
+
+msgid "The owner account could not be saved."
+msgstr "オーナーアカウントを保存できませんでした。"
+
+msgid "The owner account data is damaged."
+msgstr "オーナーアカウントのデータが破損しています。"

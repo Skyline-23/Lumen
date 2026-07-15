@@ -57,6 +57,7 @@ final class LumenCaptureController: NSObject, ObservableObject {
     @Published private(set) var isApplicationRestartInFlight = false
 
     private let adapter: any LumenHostRuntimeControlling
+    private let applicationLocaleStore: LumenApplicationLocaleStore
     private let applicationRelauncher: any LumenApplicationRelaunching
     private let readinessStore: LumenHostReadinessStore
     private let ownerAccountStore: (any LumenOwnerAccountServicing)?
@@ -72,10 +73,12 @@ final class LumenCaptureController: NSObject, ObservableObject {
     private var localAuthenticationContext: LAContext?
     private var localAuthenticationRequestID: UUID?
     private var pendingHostSettings: LumenNativeHostSettings?
+    private var pendingApplicationLocaleRelaunch = false
     private var readinessObservationTask: Task<Void, Never>?
 
     init(
         adapter: any LumenHostRuntimeControlling,
+        applicationLocaleStore: LumenApplicationLocaleStore,
         applicationRelauncher: any LumenApplicationRelaunching,
         readinessStore: LumenHostReadinessStore,
         ownerAccountStore: (any LumenOwnerAccountServicing)?,
@@ -84,6 +87,7 @@ final class LumenCaptureController: NSObject, ObservableObject {
         permissionDragPanelController: LumenPermissionDragPanelController
     ) {
         self.adapter = adapter
+        self.applicationLocaleStore = applicationLocaleStore
         self.applicationRelauncher = applicationRelauncher
         self.readinessStore = readinessStore
         self.ownerAccountStore = ownerAccountStore
@@ -465,11 +469,18 @@ final class LumenCaptureController: NSObject, ObservableObject {
                 if let pendingSettings = self.pendingHostSettings {
                     self.pendingHostSettings = nil
                     self.saveHostSettings(pendingSettings)
+                } else if self.pendingApplicationLocaleRelaunch {
+                    self.pendingApplicationLocaleRelaunch = false
+                    self.restartApplication()
                 }
             }
             do {
                 try await hostSettingsStore.save(settings)
-                self.applyHostSettingsSnapshot(try await hostSettingsStore.snapshot())
+                let snapshot = try await hostSettingsStore.snapshot()
+                self.applyHostSettingsSnapshot(snapshot)
+                let locale = LumenApplicationLocale.resolve(snapshot.locale)
+                self.pendingApplicationLocaleRelaunch =
+                    self.applicationLocaleStore.select(locale)
             } catch {
                 self.setError(error.localizedDescription)
             }
@@ -746,21 +757,22 @@ final class LumenCaptureController: NSObject, ObservableObject {
                 if runtimeWarnings.count > 8 {
                     runtimeWarnings.removeLast(runtimeWarnings.count - 8)
                 }
-                lastRuntimeEventMessage = body
+                let localizedBody = warning.localizedMessage
+                lastRuntimeEventMessage = localizedBody
                 guard !isDuplicate else {
                     return
                 }
                 presentRuntimeNotification(
                     identifier: identifier,
                     title: LumenCopy.Diagnostics.runtimeWarning,
-                    body: body,
+                    body: localizedBody,
                     launchPath: launchPath
                 )
             case .cleared:
-                let clearedMessage = runtimeWarnings.first(where: { $0.code == code })?.message
+                let clearedMessage = runtimeWarnings.first(where: { $0.code == code })?.localizedMessage
                 runtimeWarnings.removeAll(where: { $0.code == code })
                 if lastRuntimeEventMessage == clearedMessage {
-                    lastRuntimeEventMessage = runtimeWarnings.first?.message
+                    lastRuntimeEventMessage = runtimeWarnings.first?.localizedMessage
                 }
                 let notificationCenter = UNUserNotificationCenter.current()
                 notificationCenter.removePendingNotificationRequests(withIdentifiers: [identifier])
@@ -808,7 +820,12 @@ final class LumenCaptureController: NSObject, ObservableObject {
                 return
             }
             do {
-                self.applyHostSettingsSnapshot(try await hostSettingsStore.snapshot())
+                let snapshot = try await hostSettingsStore.snapshot()
+                self.applyHostSettingsSnapshot(snapshot)
+                let locale = LumenApplicationLocale.resolve(snapshot.locale)
+                if self.applicationLocaleStore.select(locale) {
+                    self.restartApplication()
+                }
             } catch {
                 self.setError(error.localizedDescription)
             }
@@ -816,6 +833,8 @@ final class LumenCaptureController: NSObject, ObservableObject {
     }
 
     private func applyHostSettingsSnapshot(_ settings: LumenNativeHostSettings) {
+        var settings = settings
+        settings.locale = LumenApplicationLocale.resolve(settings.locale).rawValue
         hostSettings = settings
         workspacePolicy = settings.workspacePolicy
         isSystemAuthenticationEnabled = settings.systemAuthenticationEnabled

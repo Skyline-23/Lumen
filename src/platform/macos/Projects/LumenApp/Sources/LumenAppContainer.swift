@@ -14,10 +14,15 @@ struct LumenAppContainer {
         let hostSettingsStore = try? LumenHostSettingsStore()
         let applicationCatalogStore = try? LumenApplicationCatalogStore()
         let readinessStore = LumenHostReadinessStore()
+        let applicationLocaleStore = LumenApplicationLocaleStore(
+            userDefaults: .standard,
+            activeLanguage: { Bundle.main.preferredLocalizations.first }
+        )
 
         return Self(
             captureController: LumenCaptureController(
                 adapter: adapter,
+                applicationLocaleStore: applicationLocaleStore,
                 applicationRelauncher: LumenWorkspaceApplicationRelauncher(
                     applicationURL: Bundle.main.bundleURL
                 ),

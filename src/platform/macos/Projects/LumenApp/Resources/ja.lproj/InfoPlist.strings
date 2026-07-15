@@ -1,0 +1,3 @@
+"NSAudioCaptureUsageDescription" = "選択したMacディスプレイを音声付きでストリーミングするために、Lumenはシステムオーディオへのアクセスを必要とします。";
+"NSMicrophoneUsageDescription" = "ストリームでマイク音声を選択した場合、Lumenはマイクへのアクセスを必要とします。";
+"NSScreenCaptureUsageDescription" = "選択したMacディスプレイをキャプチャしてストリーミングするために、Lumenは画面収録へのアクセスを必要とします。";

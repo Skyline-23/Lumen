@@ -1,23 +1,33 @@
+import Foundation
+import LumenAppArchitecture
 import LumenMacBridge
+
+private func localized(_ key: String) -> String {
+    Bundle.main.localizedString(forKey: key, value: key, table: nil)
+}
+
+private func localizedFormat(_ key: String, _ arguments: CVarArg...) -> String {
+    String(format: localized(key), locale: Locale.current, arguments: arguments)
+}
 
 enum LumenCopy {
     static let productName = "Lumen"
     static let productNameUppercase = "LUMEN"
 
     enum Navigation {
-        static let overview = "Overview"
-        static let applications = "Applications"
-        static let settings = "Settings"
-        static let diagnostics = "Diagnostics"
+        static var overview: String { localized("Overview") }
+        static var applications: String { localized("Applications") }
+        static var settings: String { localized("Settings") }
+        static var diagnostics: String { localized("Diagnostics") }
     }
 
     enum Status {
-        static let running = "Running"
-        static let stopped = "Stopped"
-        static let active = "Active"
-        static let idle = "Idle"
-        static let ready = "Ready"
-        static let configured = "Configured"
+        static var running: String { localized("Running") }
+        static var stopped: String { localized("Stopped") }
+        static var active: String { localized("Active") }
+        static var idle: String { localized("Idle") }
+        static var ready: String { localized("Ready") }
+        static var configured: String { localized("Configured") }
 
         static func runtime(isRunning: Bool) -> String {
             isRunning ? running : stopped
@@ -29,117 +39,117 @@ enum LumenCopy {
     }
 
     enum Action {
-        static let add = "Add"
-        static let edit = "Edit"
-        static let delete = "Delete"
-        static let cancel = "Cancel"
-        static let save = "Save"
-        static let request = "Request"
-        static let openSettings = "Open Settings"
-        static let settings = "Settings"
-        static let quit = "Quit"
-        static let signIn = "Sign in"
-        static let createAccount = "Create account"
-        static let forgotPassword = "Forgot password?"
-        static let lockSettings = "Lock now"
-        static let reloadApplications = "Reload applications"
-        static let restartHost = "Restart host"
-        static let showWindow = "Show Lumen Window"
-        static let restartLumen = "Restart Lumen"
-        static let factoryReset = "Factory Reset..."
-        static let factoryResetLumen = "Factory Reset Lumen..."
-        static let quitLumen = "Quit Lumen"
-        static let eraseAllSettings = "Erase All Settings"
-        static let close = "Close"
-        static let checkAgain = "Check Again"
-        static let unlockWithSystemAuthentication = "Unlock with Touch ID"
-        static let forceStopStream = "Force Stop Stream"
+        static var add: String { localized("Add") }
+        static var edit: String { localized("Edit") }
+        static var delete: String { localized("Delete") }
+        static var cancel: String { localized("Cancel") }
+        static var save: String { localized("Save") }
+        static var request: String { localized("Request") }
+        static var openSettings: String { localized("Open Settings") }
+        static var settings: String { localized("Settings") }
+        static var quit: String { localized("Quit") }
+        static var signIn: String { localized("Sign in") }
+        static var createAccount: String { localized("Create account") }
+        static var forgotPassword: String { localized("Forgot password?") }
+        static var lockSettings: String { localized("Lock now") }
+        static var reloadApplications: String { localized("Reload applications") }
+        static var restartHost: String { localized("Restart host") }
+        static var showWindow: String { localized("Show Lumen Window") }
+        static var restartLumen: String { localized("Restart Lumen") }
+        static var factoryReset: String { localized("Factory Reset...") }
+        static var factoryResetLumen: String { localized("Factory Reset Lumen...") }
+        static var quitLumen: String { localized("Quit Lumen") }
+        static var eraseAllSettings: String { localized("Erase All Settings") }
+        static var close: String { localized("Close") }
+        static var checkAgain: String { localized("Check Again") }
+        static var unlockWithSystemAuthentication: String { localized("Unlock with Touch ID") }
+        static var forceStopStream: String { localized("Force Stop Stream") }
     }
 
     enum Account {
-        static let ownerAccount = "Owner account"
-        static let account = "Account"
-        static let ownerName = "Owner ID"
-        static let password = "Password"
-        static let passwordMinimum = "Password (12 characters minimum)"
-        static let confirmPassword = "Confirm password"
-        static let signedInAs = "Signed in as"
-        static let systemAuthenticationReason = "Unlock Lumen settings with Touch ID"
-        static let enableSystemAuthenticationReason = "Confirm Touch ID before enabling it for Lumen"
-        static let systemAuthenticationUnavailable = "Touch ID is unavailable on this Mac."
-        static let systemAuthenticationFailed = "Touch ID authentication did not complete."
+        static var ownerAccount: String { localized("Owner account") }
+        static var account: String { localized("Account") }
+        static var ownerName: String { localized("Owner ID") }
+        static var password: String { localized("Password") }
+        static var passwordMinimum: String { localized("Password (12 characters minimum)") }
+        static var confirmPassword: String { localized("Confirm password") }
+        static var signedInAs: String { localized("Signed in as") }
+        static var systemAuthenticationReason: String { localized("Unlock Lumen settings with Touch ID") }
+        static var enableSystemAuthenticationReason: String { localized("Confirm Touch ID before enabling it for Lumen") }
+        static var systemAuthenticationUnavailable: String { localized("Touch ID is unavailable on this Mac.") }
+        static var systemAuthenticationFailed: String { localized("Touch ID authentication did not complete.") }
 
         static func signedInAs(_ username: String) -> String {
-            "\(signedInAs) \(username)"
+            localizedFormat("Signed in as %@", username)
         }
     }
 
     enum Permission {
-        static let systemAccess = "System access"
-        static let screenRecording = "Screen Recording"
-        static let accessibility = "Accessibility"
-        static let dragPanelTitle = "Add Lumen to System Settings"
-        static let accessibilityDragDetail = "In System Settings, open Accessibility and drag Lumen into the app list below."
-        static let screenRecordingDragDetail = "In System Settings, open Screen & System Audio Recording and drag Lumen into the app list below."
-        static let dragInstruction = "Drag this app into the permission list"
-        static let dragHint = "After adding Lumen, enable its switch and check again."
-        static let stillRequired = "The permission is still disabled. Enable Lumen in System Settings, then check again."
-        static let dragAccessibilityHelp = "Drag the Lumen application into the open System Settings permission list."
+        static var systemAccess: String { localized("System access") }
+        static var screenRecording: String { localized("Screen Recording") }
+        static var accessibility: String { localized("Accessibility") }
+        static var dragPanelTitle: String { localized("Add Lumen to System Settings") }
+        static var accessibilityDragDetail: String { localized("In System Settings, open Accessibility and drag Lumen into the app list below.") }
+        static var screenRecordingDragDetail: String { localized("In System Settings, open Screen & System Audio Recording and drag Lumen into the app list below.") }
+        static var dragInstruction: String { localized("Drag this app into the permission list") }
+        static var dragHint: String { localized("After adding Lumen, enable its switch and check again.") }
+        static var stillRequired: String { localized("The permission is still disabled. Enable Lumen in System Settings, then check again.") }
+        static var dragAccessibilityHelp: String { localized("Drag the Lumen application into the open System Settings permission list.") }
     }
 
     enum Onboarding {
-        static let headline = "Your computer,\nready anywhere."
-        static let introduction = "Set up one owner account. Lumen keeps streaming, applications, and enrolled devices under your control."
-        static let localCredentials = "Local credentials"
-        static let nativeHostControls = "Native host controls"
-        static let remoteDeviceAccess = "Remote device access"
-        static let credentialsNotice = "Credentials never leave this computer in plaintext."
-        static let opening = "Opening Lumen"
-        static let openingDetail = "Checking the local owner account and host state."
-        static let createOwnerTitle = "Create the owner account"
-        static let createOwnerDetail = "This account controls this host, enrolled devices, and remote settings."
-        static let passwordStorageNotice = "The password is stored only as an Argon2id hash on this computer."
-        static let unlockTitle = "Unlock Lumen"
-        static let unlockDetail = "Sign in to manage this host. Streaming services continue independently."
+        static var headline: String { localized("Your computer,\nready anywhere.") }
+        static var introduction: String { localized("Set up one owner account. Lumen keeps streaming, applications, and enrolled devices under your control.") }
+        static var localCredentials: String { localized("Local credentials") }
+        static var nativeHostControls: String { localized("Native host controls") }
+        static var remoteDeviceAccess: String { localized("Remote device access") }
+        static var credentialsNotice: String { localized("Credentials never leave this computer in plaintext.") }
+        static var opening: String { localized("Opening Lumen") }
+        static var openingDetail: String { localized("Checking the local owner account and host state.") }
+        static var createOwnerTitle: String { localized("Create the owner account") }
+        static var createOwnerDetail: String { localized("This account controls this host, enrolled devices, and remote settings.") }
+        static var passwordStorageNotice: String { localized("The password is stored only as an Argon2id hash on this computer.") }
+        static var unlockTitle: String { localized("Unlock Lumen") }
+        static var unlockDetail: String { localized("Sign in to manage this host. Streaming services continue independently.") }
     }
 
     enum Overview {
-        static let subtitle = "Host readiness and active streaming state"
-        static let hostRuntime = "Host runtime"
-        static let currentStream = "Current stream"
-        static let hostControls = "Host controls"
+        static var subtitle: String { localized("Host readiness and active streaming state") }
+        static var hostRuntime: String { localized("Host runtime") }
+        static var currentStream: String { localized("Current stream") }
+        static var hostControls: String { localized("Host controls") }
     }
 
     enum Applications {
-        static let subtitle = "Choose what remote clients can launch"
-        static let newApplication = "New application"
-        static let emptyTitle = "No applications"
-        static let emptyDetail = "Add a desktop or application entry for remote clients."
-        static let streamDesktop = "Stream the desktop"
-        static let virtualDisplay = "Virtual display"
-        static let addTitle = "Add application"
-        static let editTitle = "Edit application"
-        static let identity = "Identity"
-        static let name = "Name"
-        static let coverPath = "Cover path"
-        static let launch = "Launch"
-        static let command = "Command"
-        static let workingDirectory = "Working directory"
-        static let detachedCommands = "Detached commands (one per line)"
-        static let display = "Display"
-        static let createVirtualDisplay = "Create a virtual display"
-        static let processBehavior = "Process behavior"
-        static let detachAutomatically = "Detach automatically"
-        static let waitForAllProcesses = "Wait for all processes"
-        static let terminateWhenPaused = "Terminate when paused"
-        static let runElevated = "Run elevated"
+        static var subtitle: String { localized("Choose what remote clients can launch") }
+        static var newApplication: String { localized("New application") }
+        static var emptyTitle: String { localized("No applications") }
+        static var emptyDetail: String { localized("Add a desktop or application entry for remote clients.") }
+        static var streamDesktop: String { localized("Stream the desktop") }
+        static var virtualDisplay: String { localized("Virtual display") }
+        static var addTitle: String { localized("Add application") }
+        static var editTitle: String { localized("Edit application") }
+        static var identity: String { localized("Identity") }
+        static var name: String { localized("Name") }
+        static var coverPath: String { localized("Cover path") }
+        static var launch: String { localized("Launch") }
+        static var command: String { localized("Command") }
+        static var workingDirectory: String { localized("Working directory") }
+        static var detachedCommands: String { localized("Detached commands (one per line)") }
+        static var display: String { localized("Display") }
+        static var createVirtualDisplay: String { localized("Create a virtual display") }
+        static var processBehavior: String { localized("Process behavior") }
+        static var detachAutomatically: String { localized("Detach automatically") }
+        static var waitForAllProcesses: String { localized("Wait for all processes") }
+        static var terminateWhenPaused: String { localized("Terminate when paused") }
+        static var runElevated: String { localized("Run elevated") }
 
         static func exitTimeout(seconds: Int) -> String {
-            "Exit timeout: \(seconds) seconds"
+            localizedFormat("Exit timeout: %@ seconds", seconds.formatted())
         }
 
         static func desktopScale(percent: Int) -> String {
-            "Desktop scale: \(percent)%"
+            localizedFormat("Desktop scale: %@%%", percent.formatted())
         }
     }
 
@@ -149,69 +159,69 @@ enum LumenCopy {
             let title: String
         }
 
-        static let subtitle = "Native host behavior and account controls"
-        static let security = "Security"
-        static let securitySubtitle = "Protect local access and recovery controls"
-        static let general = "General"
-        static let generalSubtitle = "Computer identity, discovery, language, and logging"
-        static let application = "Application"
-        static let hideDockIconWhenMainWindowCloses = "Hide Dock icon when the main window closes"
-        static let hideDockIconWhenMainWindowClosesDetail = "Lumen stays available from the menu bar. Showing the main window restores the Dock icon."
-        static let host = "Host"
-        static let hostName = "Computer name"
-        static let locale = "Language"
-        static let discovery = "Discoverable on the local network"
-        static let deviceEnrollment = "Allow new device enrollment"
-        static let notifyPreReleases = "Notify about pre-release updates"
-        static let streaming = "Streaming"
-        static let streamingSubtitle = "Display, workspace, and capture device behavior"
-        static let display = "Display"
-        static let adapterName = "Display adapter"
-        static let outputName = "Display output"
-        static let fallbackDisplayMode = "Fallback display mode"
-        static let audio = "Audio"
-        static let audioSubtitle = "Computer audio capture and device selection"
-        static let audioSink = "Audio device"
-        static let audioSinkDetail = "Leave empty to use native system audio capture, or enter an input device name."
-        static let streamAudio = "Stream computer audio"
-        static let input = "Input"
-        static let inputSubtitle = "Keyboard, pointer, touch, and controller forwarding"
-        static let controller = "Controller"
-        static let keyboard = "Keyboard"
-        static let pointer = "Pointer and touch"
-        static let keyboardInput = "Keyboard input"
-        static let mouseInput = "Mouse input"
-        static let controllerInput = "Game controller input"
-        static let controllerBackButtonTimeout = "Back button timeout (ms)"
-        static let mapRightAltToWindowsKey = "Map Right Alt to Windows key"
-        static let highResolutionScrolling = "High-resolution scrolling"
-        static let nativePenAndTouch = "Native pen and touch"
-        static let rumbleForwarding = "Controller rumble"
-        static let network = "Network"
-        static let networkSubtitle = "Discovery, remote access, encryption, and recovery"
-        static let addressFamily = "Address family"
-        static let port = "Base port"
-        static let upnp = "UPnP port mapping"
-        static let externalIP = "External IP address"
-        static let encryption = "Encryption and recovery"
-        static let lanEncryption = "LAN encryption"
-        static let wanEncryption = "Remote encryption"
-        static let pingTimeout = "Connection timeout (ms)"
-        static let fecPercentage = "Forward error correction (%)"
-        static let advanced = "Advanced"
-        static let advancedSubtitle = "Lifecycle commands and host process automation"
-        static let preparationCommands = "Preparation commands"
-        static let stateCommands = "State commands"
-        static let serverCommands = "Server commands"
-        static let commandName = "Name"
-        static let command = "Command"
-        static let undoCommand = "Undo command"
-        static let logging = "Logging"
-        static let logLevel = "Log level"
-        static let systemAuthentication = "Unlock with Touch ID"
-        static let systemAuthenticationDetail = "Touch ID confirmation is required when this option is enabled."
-        static let automatic = "Automatic"
-        static let disabled = "Disabled"
+        static var subtitle: String { localized("Native host behavior and account controls") }
+        static var security: String { localized("Security") }
+        static var securitySubtitle: String { localized("Protect local access and recovery controls") }
+        static var general: String { localized("General") }
+        static var generalSubtitle: String { localized("Computer identity, discovery, language, and logging") }
+        static var application: String { localized("Application") }
+        static var hideDockIconWhenMainWindowCloses: String { localized("Hide Dock icon when the main window closes") }
+        static var hideDockIconWhenMainWindowClosesDetail: String { localized("Lumen stays available from the menu bar. Showing the main window restores the Dock icon.") }
+        static var host: String { localized("Host") }
+        static var hostName: String { localized("Computer name") }
+        static var locale: String { localized("Language") }
+        static var discovery: String { localized("Discoverable on the local network") }
+        static var deviceEnrollment: String { localized("Allow new device enrollment") }
+        static var notifyPreReleases: String { localized("Notify about pre-release updates") }
+        static var streaming: String { localized("Streaming") }
+        static var streamingSubtitle: String { localized("Display, workspace, and capture device behavior") }
+        static var display: String { localized("Display") }
+        static var adapterName: String { localized("Display adapter") }
+        static var outputName: String { localized("Display output") }
+        static var fallbackDisplayMode: String { localized("Fallback display mode") }
+        static var audio: String { localized("Audio") }
+        static var audioSubtitle: String { localized("Computer audio capture and device selection") }
+        static var audioSink: String { localized("Audio device") }
+        static var audioSinkDetail: String { localized("Leave empty to use native system audio capture, or enter an input device name.") }
+        static var streamAudio: String { localized("Stream computer audio") }
+        static var input: String { localized("Input") }
+        static var inputSubtitle: String { localized("Keyboard, pointer, touch, and controller forwarding") }
+        static var controller: String { localized("Controller") }
+        static var keyboard: String { localized("Keyboard") }
+        static var pointer: String { localized("Pointer and touch") }
+        static var keyboardInput: String { localized("Keyboard input") }
+        static var mouseInput: String { localized("Mouse input") }
+        static var controllerInput: String { localized("Game controller input") }
+        static var controllerBackButtonTimeout: String { localized("Back button timeout (ms)") }
+        static var mapRightAltToWindowsKey: String { localized("Map Right Alt to Windows key") }
+        static var highResolutionScrolling: String { localized("High-resolution scrolling") }
+        static var nativePenAndTouch: String { localized("Native pen and touch") }
+        static var rumbleForwarding: String { localized("Controller rumble") }
+        static var network: String { localized("Network") }
+        static var networkSubtitle: String { localized("Discovery, remote access, encryption, and recovery") }
+        static var addressFamily: String { localized("Address family") }
+        static var port: String { localized("Base port") }
+        static var upnp: String { localized("UPnP port mapping") }
+        static var externalIP: String { localized("External IP address") }
+        static var encryption: String { localized("Encryption and recovery") }
+        static var lanEncryption: String { localized("LAN encryption") }
+        static var wanEncryption: String { localized("Remote encryption") }
+        static var pingTimeout: String { localized("Connection timeout (ms)") }
+        static var fecPercentage: String { localized("Forward error correction (%)") }
+        static var advanced: String { localized("Advanced") }
+        static var advancedSubtitle: String { localized("Lifecycle commands and host process automation") }
+        static var preparationCommands: String { localized("Preparation commands") }
+        static var stateCommands: String { localized("State commands") }
+        static var serverCommands: String { localized("Server commands") }
+        static var commandName: String { localized("Name") }
+        static var command: String { localized("Command") }
+        static var undoCommand: String { localized("Undo command") }
+        static var logging: String { localized("Logging") }
+        static var logLevel: String { localized("Log level") }
+        static var systemAuthentication: String { localized("Unlock with Touch ID") }
+        static var systemAuthenticationDetail: String { localized("Touch ID confirmation is required when this option is enabled.") }
+        static var automatic: String { localized("Automatic") }
+        static var disabled: String { localized("Disabled") }
         static let displayModeOptions = [
             "1280x720x60",
             "1920x1080x60",
@@ -229,7 +239,12 @@ enum LumenCopy {
             guard components.count == 3 else {
                 return mode
             }
-            return "\(components[0]) × \(components[1]) at \(components[2]) Hz"
+            return localizedFormat(
+                "%@ × %@ at %@ Hz",
+                String(components[0]),
+                String(components[1]),
+                String(components[2])
+            )
         }
 
         static func controllerTimeoutTitle(_ milliseconds: Int) -> String {
@@ -237,125 +252,121 @@ enum LumenCopy {
         }
 
         static func millisecondsTitle(_ milliseconds: Int) -> String {
-            "\(milliseconds.formatted()) ms"
+            localizedFormat("%@ ms", milliseconds.formatted())
         }
 
         static func percentageTitle(_ percentage: Int) -> String {
-            "\(percentage)%"
+            localizedFormat("Percentage value", percentage.formatted())
         }
-        static let locales = [
-            LocaleOption(code: "bg", title: "Български"),
-            LocaleOption(code: "cs", title: "Čeština"),
-            LocaleOption(code: "de", title: "Deutsch"),
-            LocaleOption(code: "en", title: "English"),
-            LocaleOption(code: "en_GB", title: "English, UK"),
-            LocaleOption(code: "en_US", title: "English, US"),
-            LocaleOption(code: "es", title: "Español"),
-            LocaleOption(code: "fr", title: "Français"),
-            LocaleOption(code: "hu", title: "Magyar"),
-            LocaleOption(code: "it", title: "Italiano"),
-            LocaleOption(code: "ja", title: "日本語"),
-            LocaleOption(code: "ko", title: "한국어"),
-            LocaleOption(code: "pl", title: "Polski"),
-            LocaleOption(code: "pt", title: "Português"),
-            LocaleOption(code: "pt_BR", title: "Português, Brasil"),
-            LocaleOption(code: "ru", title: "Русский"),
-            LocaleOption(code: "sv", title: "Svenska"),
-            LocaleOption(code: "tr", title: "Türkçe"),
-            LocaleOption(code: "uk", title: "Українська"),
-            LocaleOption(code: "vi", title: "Tiếng Việt"),
-            LocaleOption(code: "zh", title: "简体中文"),
-            LocaleOption(code: "zh_TW", title: "繁體中文"),
-        ]
+        static let locales = LumenApplicationLocale.allCases.map { locale in
+            LocaleOption(code: locale.rawValue, title: locale.nativeTitle)
+        }
 
         static func addressFamilyTitle(_ family: LumenNetworkAddressFamily) -> String {
             switch family {
-            case .ipv4: "IPv4"
-            case .dualStack: "IPv4 and IPv6"
+            case .ipv4: localized("IPv4")
+            case .dualStack: localized("IPv4 and IPv6")
             }
         }
 
         static func encryptionTitle(_ mode: LumenEncryptionMode) -> String {
             switch mode {
-            case .disabled: "Disabled"
-            case .opportunistic: "When supported"
-            case .required: "Required"
+            case .disabled: localized("Disabled")
+            case .opportunistic: localized("When supported")
+            case .required: localized("Required")
             }
         }
 
         static func logLevelTitle(_ level: LumenLogLevel) -> String {
             switch level {
-            case .verbose: "Verbose"
-            case .debug: "Debug"
-            case .info: "Info"
-            case .warning: "Warning"
-            case .error: "Error"
-            case .fatal: "Fatal only"
-            case .none: "None"
+            case .verbose: localized("Verbose")
+            case .debug: localized("Debug")
+            case .info: localized("Info")
+            case .warning: localized("Warning")
+            case .error: localized("Error")
+            case .fatal: localized("Fatal only")
+            case .none: localized("None")
             }
         }
     }
 
     enum Diagnostics {
-        static let subtitle = "Live state from the native host runtime"
-        static let runtimeWarning = "Runtime warning"
-        static let runtimeWarnings = "Runtime warnings"
-        static let videoCapture = "Video capture"
-        static let audioCapture = "Audio capture"
-        static let applicationRecords = "Application records"
-        static let lastRuntimeEvent = "Last runtime event"
-        static let lastError = "Last error"
+        static var subtitle: String { localized("Live state from the native host runtime") }
+        static var runtimeWarning: String { localized("Runtime warning") }
+        static var runtimeWarnings: String { localized("Runtime warnings") }
+        static var videoCapture: String { localized("Video capture") }
+        static var audioCapture: String { localized("Audio capture") }
+        static var applicationRecords: String { localized("Application records") }
+        static var lastRuntimeEvent: String { localized("Last runtime event") }
+        static var lastError: String { localized("Last error") }
+
+        static func runtimeWarningMessage(code: Int, fallback: String) -> String {
+            switch code {
+            case 0:
+                localized("UPnP could not find a compatible gateway.")
+            case 1:
+                localized("UPnP could not determine this Mac's local network address.")
+            case 2:
+                localized("UPnP could not configure the requested port mapping.")
+            case 3:
+                localized("UPnP could not configure the requested IPv6 pinhole.")
+            case 4:
+                localized("UPnP could not remove the previous port mapping.")
+            default:
+                fallback
+            }
+        }
     }
 
     enum Workspace {
-        static let label = "Display workspace"
-        static let nextSessionNotice = "Changes apply to the next stream session."
+        static var label: String { localized("Display workspace") }
+        static var nextSessionNotice: String { localized("Changes apply to the next stream session.") }
 
         static func title(for policy: LumenMacWorkspacePolicy) -> String {
             switch policy {
             case .coexist:
-                "Keep physical displays active"
+                localized("Keep physical displays active")
             case .promoteVirtualMain:
-                "Make stream display primary"
+                localized("Make stream display primary")
             case .focusedWorkspace:
-                "Focus selected app windows"
+                localized("Focus selected app windows")
             case .isolatedWorkspace:
-                "Isolate stream display"
+                localized("Isolate stream display")
             }
         }
 
         static func description(for policy: LumenMacWorkspacePolicy) -> String {
             switch policy {
             case .coexist:
-                "Adds the stream display without moving the computer desktop or existing windows."
+                localized("Adds the stream display without moving the computer desktop or existing windows.")
             case .promoteVirtualMain:
-                "Makes the stream display primary while physical displays remain active."
+                localized("Makes the stream display primary while physical displays remain active.")
             case .focusedWorkspace:
-                "Makes the stream display primary and moves only windows selected for the stream."
+                localized("Makes the stream display primary and moves only windows selected for the stream.")
             case .isolatedWorkspace:
-                "Places physical displays outside the active workspace until the stream ends, then restores the previous layout."
+                localized("Places physical displays outside the active workspace until the stream ends, then restores the previous layout.")
             }
         }
     }
 
     enum Recovery {
-        static let damagedTitle = "Owner data is damaged"
-        static let damagedDetail = "Reset Lumen to remove the damaged account and all host settings. Diagnostic logs will be kept."
-        static let unavailableTitle = "Owner storage is unavailable"
-        static let unavailableDetail = "Lumen could not open its local account store. Check disk access or reset the host configuration."
-        static let factoryResetTitle = "Factory Reset Lumen"
-        static let factoryResetDetail = "This removes the owner account, enrolled devices, applications, streaming settings, host certificates, display state, and cached covers. Logs are kept for diagnostics."
-        static let factoryResetPrompt = "Type RESET to continue."
+        static var damagedTitle: String { localized("Owner data is damaged") }
+        static var damagedDetail: String { localized("Reset Lumen to remove the damaged account and all host settings. Diagnostic logs will be kept.") }
+        static var unavailableTitle: String { localized("Owner storage is unavailable") }
+        static var unavailableDetail: String { localized("Lumen could not open its local account store. Check disk access or reset the host configuration.") }
+        static var factoryResetTitle: String { localized("Factory Reset Lumen") }
+        static var factoryResetDetail: String { localized("This removes the owner account, enrolled devices, applications, streaming settings, host certificates, display state, and cached covers. Logs are kept for diagnostics.") }
+        static var factoryResetPrompt: String { localized("Type RESET to continue.") }
         static let factoryResetConfirmation = "RESET"
     }
 
     enum HostState {
-        static let ownerSetupRequired = "Owner account setup is required"
-        static let ready = "Ready for streaming and remote input"
-        static let permissionsRequired = "Screen Recording and Accessibility permissions are required"
-        static let screenRecordingRequired = "Screen Recording permission is required"
-        static let accessibilityRequired = "Accessibility permission is required for remote input"
-        static let runtimeStopped = "Lumen host runtime stopped."
-        static let passwordConfirmationMismatch = "The password confirmation does not match."
+        static var ownerSetupRequired: String { localized("Owner account setup is required") }
+        static var ready: String { localized("Ready for streaming and remote input") }
+        static var permissionsRequired: String { localized("Screen Recording and Accessibility permissions are required") }
+        static var screenRecordingRequired: String { localized("Screen Recording permission is required") }
+        static var accessibilityRequired: String { localized("Accessibility permission is required for remote input") }
+        static var runtimeStopped: String { localized("Lumen host runtime stopped.") }
+        static var passwordConfirmationMismatch: String { localized("The password confirmation does not match.") }
     }
 }
