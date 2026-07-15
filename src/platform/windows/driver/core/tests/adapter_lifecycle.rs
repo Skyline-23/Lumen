@@ -1,6 +1,7 @@
 use lumen_windows_driver_core::{
     lumen_driver_core_dispatch, lumen_driver_core_initial_state, CoreRequest, Operation, Status,
-    ADAPTER_DEVICE_D3D11, ADAPTER_DEVICE_D3D12, IDDCX_FEATURE_D3D12,
+    ADAPTER_DEVICE_D3D11, ADAPTER_DEVICE_D3D12, EVENT_ADAPTER_REMOVED, IDDCX_FEATURE_D3D12,
+    MAX_EVENT_BYTES,
 };
 
 const OWNER: u64 = 0xA11C_E001;
@@ -18,7 +19,7 @@ fn dispatch(
     lumen_driver_core_dispatch(state, request)
 }
 
-fn ready_adapter(
+fn prepared_adapter(
     iddcx_version: u64,
     os_features: u64,
     devices: u64,
@@ -36,13 +37,53 @@ fn ready_adapter(
         [SELECTED_LUID, devices, 0, 0, 0],
     );
     assert_eq!(prepared.response.status, Status::Ok.raw());
+    prepared.state
+}
+
+fn ready_adapter(
+    iddcx_version: u64,
+    os_features: u64,
+    devices: u64,
+) -> lumen_windows_driver_core::CoreState {
+    let prepared = prepared_adapter(iddcx_version, os_features, devices);
     let initialized = dispatch(
-        prepared.state,
+        prepared,
         Operation::CompleteAdapterInitialization,
         [1, 0, 0, 0, 0],
     );
     assert_eq!(initialized.response.status, Status::Ok.raw());
     initialized.state
+}
+
+#[test]
+fn backend_rows_require_completed_adapter_initialization() {
+    // Given: untouched, prepared-but-not-complete, and failed initialization states.
+    let untouched = lumen_driver_core_initial_state();
+    let prepared = prepared_adapter(IDDCX_1_10, 0, ADAPTER_DEVICE_D3D11);
+    let failed = dispatch(
+        prepared,
+        Operation::CompleteAdapterInitialization,
+        [0, 0, 0, 0, 0],
+    );
+
+    // When: each pre-success state is queried for a backend row.
+    let before_probe = dispatch(
+        untouched,
+        Operation::QueryBackendCapability,
+        [0, 0, 0, 0, 0],
+    );
+    let during_init = dispatch(prepared, Operation::QueryBackendCapability, [0, 0, 0, 0, 0]);
+    let after_failure = dispatch(
+        failed.state,
+        Operation::QueryBackendCapability,
+        [0, 0, 0, 0, 0],
+    );
+
+    // Then: no row or selected LUID is externally visible before successful completion.
+    for transition in [before_probe, during_init, after_failure] {
+        assert_eq!(transition.response.status, Status::NotReady.raw());
+        assert_eq!(transition.response.values, [0; 2]);
+    }
 }
 
 fn claimed(state: lumen_windows_driver_core::CoreState) -> lumen_windows_driver_core::CoreState {
@@ -179,89 +220,95 @@ fn rejects_feature_query_failure_and_malformed_luid() {
 }
 
 #[test]
-fn matching_assignment_is_accepted_and_mismatch_rolls_back() {
+fn matching_assignment_is_validated_then_abandoned_without_claiming_ownership() {
     // Given: one initialized adapter with an owned monitor.
     let state = with_monitor(ready_adapter(IDDCX_1_10, 0, ADAPTER_DEVICE_D3D11));
 
-    // When: the OS assigns the selected LUID, it is unassigned, then a different LUID arrives.
+    // When: matching and mismatched swap chains reach the pre-processor validation boundary.
     let matching = dispatch(
         state,
-        Operation::AssignSwapchain,
+        Operation::ValidateAndAbandonSwapchain,
         [7, SELECTED_LUID, 0, 0, 0],
     );
-    let unassigned = dispatch(
-        matching.state,
-        Operation::UnassignSwapchain,
-        [7, 0, 0, 0, 0],
-    );
     let mismatched = dispatch(
-        unassigned.state,
-        Operation::AssignSwapchain,
+        matching.state,
+        Operation::ValidateAndAbandonSwapchain,
         [7, SELECTED_LUID + 1, 0, 0, 0],
     );
 
-    // Then: equality is exact and mismatch retains neither assignment nor a substituted LUID.
-    assert_eq!(matching.response.status, Status::Ok.raw());
-    assert_eq!(matching.state.assigned_adapter_luid, SELECTED_LUID);
+    // Then: matching is typed as pending-processor abandonment and neither path claims ownership.
+    assert_eq!(matching.response.status, Status::ProcessorUnavailable.raw());
+    assert_eq!(matching.state.render_adapter_luid, SELECTED_LUID);
     assert_eq!(mismatched.response.status, Status::LuidMismatch.raw());
-    assert_eq!(mismatched.state.assigned_adapter_luid, 0);
     assert_eq!(mismatched.state.render_adapter_luid, SELECTED_LUID);
 }
 
 #[test]
-fn rejects_hot_reassignment_and_duplicate_monitor() {
-    // Given: a monitor with an already assigned matching swap chain.
+fn repeated_validation_remains_abandoned_and_duplicate_monitor_is_rejected() {
+    // Given: a monitor whose matching swap chain was explicitly abandoned pending a processor.
     let state = with_monitor(ready_adapter(IDDCX_1_10, 0, ADAPTER_DEVICE_D3D11));
-    let assigned = dispatch(
+    let abandoned = dispatch(
         state,
-        Operation::AssignSwapchain,
+        Operation::ValidateAndAbandonSwapchain,
         [7, SELECTED_LUID, 0, 0, 0],
     );
 
-    // When: another assignment and another monitor creation are attempted.
-    let reassigned = dispatch(
-        assigned.state,
-        Operation::AssignSwapchain,
+    // When: validation repeats and another monitor creation is attempted.
+    let repeated = dispatch(
+        abandoned.state,
+        Operation::ValidateAndAbandonSwapchain,
         [7, SELECTED_LUID, 0, 0, 0],
     );
     let duplicate = dispatch(
-        assigned.state,
+        abandoned.state,
         Operation::CreateMonitor,
         [8, (1280 << 32) | 720, 60_000, 0, 0],
     );
 
-    // Then: both exclusive ownership boundaries remain unchanged.
-    assert_eq!(reassigned.response.status, Status::Busy.raw());
+    // Then: no validation is misreported as accepted and monitor ownership remains exclusive.
+    assert_eq!(repeated.response.status, Status::ProcessorUnavailable.raw());
     assert_eq!(duplicate.response.status, Status::Busy.raw());
     assert_eq!(duplicate.state.monitor_id, 7);
 }
 
 #[test]
-fn adapter_removal_rolls_back_monitor_and_assignment() {
-    // Given: an initialized monitor with a matching assigned swap chain.
+fn adapter_removal_rolls_back_capabilities_and_delivers_typed_event() {
+    // Given: an initialized monitor and one bounded pending event read.
     let state = with_monitor(ready_adapter(IDDCX_1_10, 0, ADAPTER_DEVICE_D3D11));
-    let assigned = dispatch(
-        state,
-        Operation::AssignSwapchain,
-        [7, SELECTED_LUID, 0, 0, 0],
-    );
+    let mut event_request = CoreRequest::new(Operation::DequeueEvent, OWNER, state.generation);
+    event_request.request_id = 91;
+    event_request.arguments[0] = MAX_EVENT_BYTES;
+    let pending = lumen_driver_core_dispatch(state, event_request);
+    assert_eq!(pending.response.status, Status::Pending.raw());
 
     // When: PnP removes the selected render adapter.
     let removed = dispatch(
-        assigned.state,
+        pending.state,
         Operation::AdapterRemoved,
         [SELECTED_LUID, 0, 0, 0, 0],
     );
-    let stale_assignment = dispatch(
+    let delivered = lumen_driver_core_dispatch(removed.state, event_request);
+    let stale_validation = dispatch(
         removed.state,
-        Operation::AssignSwapchain,
+        Operation::ValidateAndAbandonSwapchain,
         [7, SELECTED_LUID, 0, 0, 0],
     );
+    let stale_query = dispatch(
+        removed.state,
+        Operation::QueryBackendCapability,
+        [0, 0, 0, 0, 0],
+    );
 
-    // Then: the lifecycle reports a typed removal and clears all dependent ownership.
+    // Then: capabilities clear and exactly one stable typed event completes the pending read.
     assert_eq!(removed.response.status, Status::DeviceRemoved.raw());
     assert_eq!(removed.state.monitor_id, 0);
-    assert_eq!(removed.state.assigned_adapter_luid, 0);
     assert_eq!(removed.state.render_adapter_luid, 0);
-    assert_eq!(stale_assignment.response.status, Status::NotReady.raw());
+    assert_eq!(delivered.response.status, Status::Ok.raw());
+    assert_eq!(
+        delivered.response.values,
+        [EVENT_ADAPTER_REMOVED, SELECTED_LUID]
+    );
+    assert!(!delivered.state.pending_event_reads.contains(&91));
+    assert_eq!(stale_validation.response.status, Status::NotReady.raw());
+    assert_eq!(stale_query.response.status, Status::NotReady.raw());
 }

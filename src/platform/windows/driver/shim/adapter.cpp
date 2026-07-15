@@ -51,11 +51,12 @@ namespace {
   }
 
   NTSTATUS select_render_adapter(
+    LumenDeviceContext *context,
     uint64_t os_features,
     uint64_t *selected_luid,
     uint64_t *device_probes
   ) {
-    ComPtr<IDXGIFactory6> factory;
+    ComPtr<IDXGIFactory7> factory;
     HRESULT result = CreateDXGIFactory2(0, IID_PPV_ARGS(factory.GetAddressOf()));
     if (FAILED(result)) {
       return STATUS_NOT_SUPPORTED;
@@ -82,6 +83,7 @@ namespace {
       uint64_t probes = 0;
       ComPtr<ID3D11Device> d3d11_device;
       ComPtr<ID3D11DeviceContext> d3d11_context;
+      ComPtr<ID3D12Device> d3d12_device;
       const D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0};
       D3D_FEATURE_LEVEL selected_level {};
       result = D3D11CreateDevice(
@@ -101,7 +103,6 @@ namespace {
       }
 
       if ((os_features & LUMEN_IDDCX_FEATURE_D3D12) != 0) {
-        ComPtr<ID3D12Device> d3d12_device;
         result = D3D12CreateDevice(
           adapter.Get(),
           D3D_FEATURE_LEVEL_11_0,
@@ -116,8 +117,174 @@ namespace {
       }
       *selected_luid = LumenPackLuid(description.AdapterLuid);
       *device_probes = probes;
+      context->adapter_factory = factory.Detach();
+      context->d3d11_probe_device = d3d11_device.Detach();
+      context->d3d12_probe_device = d3d12_device.Detach();
       return STATUS_SUCCESS;
     }
+  }
+
+  VOID CALLBACK adapter_change_wait_callback(
+    PTP_CALLBACK_INSTANCE,
+    PVOID context_value,
+    PTP_WAIT,
+    TP_WAIT_RESULT
+  );
+
+  NTSTATUS start_adapter_monitoring(WDFDEVICE device, LumenDeviceContext *context) {
+    WDF_WORKITEM_CONFIG work_item_config;
+    WDF_WORKITEM_CONFIG_INIT(&work_item_config, LumenEvtAdapterChangeWorkItem);
+    work_item_config.AutomaticSerialization = TRUE;
+    WDF_OBJECT_ATTRIBUTES attributes;
+    WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(
+      &attributes,
+      LumenAdapterChangeWorkItemContext
+    );
+    attributes.ParentObject = device;
+    NTSTATUS status = WdfWorkItemCreate(
+      &work_item_config,
+      &attributes,
+      &context->adapter_change_work_item
+    );
+    if (!NT_SUCCESS(status)) {
+      return status;
+    }
+    LumenGetAdapterChangeWorkItemContext(
+      context->adapter_change_work_item
+    )->device = device;
+
+    context->adapter_change_event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    if (context->adapter_change_event == nullptr) {
+      return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    context->adapter_change_wait = CreateThreadpoolWait(
+      adapter_change_wait_callback,
+      context,
+      nullptr
+    );
+    if (context->adapter_change_wait == nullptr) {
+      return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    const HRESULT result = context->adapter_factory->RegisterAdaptersChangedEvent(
+      context->adapter_change_event,
+      &context->adapter_change_cookie
+    );
+    if (FAILED(result)) {
+      return STATUS_NOT_SUPPORTED;
+    }
+    InterlockedExchange(&context->adapter_monitoring, 1);
+    SetThreadpoolWait(
+      context->adapter_change_wait,
+      context->adapter_change_event,
+      nullptr
+    );
+    return STATUS_SUCCESS;
+  }
+
+  VOID CALLBACK adapter_change_wait_callback(
+    PTP_CALLBACK_INSTANCE,
+    PVOID context_value,
+    PTP_WAIT,
+    TP_WAIT_RESULT
+  ) {
+    auto *context = static_cast<LumenDeviceContext *>(context_value);
+    if (InterlockedCompareExchange(&context->adapter_monitoring, 1, 1) != 0) {
+      WdfWorkItemEnqueue(context->adapter_change_work_item);
+    }
+  }
+}
+
+void LumenEvtAdapterChangeWorkItem(WDFWORKITEM work_item) {
+  auto *work_item_context = LumenGetAdapterChangeWorkItemContext(work_item);
+  auto *context = LumenGetDeviceContext(work_item_context->device);
+  if (InterlockedCompareExchange(&context->adapter_monitoring, 1, 1) == 0) {
+    return;
+  }
+
+  ComPtr<IDXGIAdapter4> selected_adapter;
+  const HRESULT adapter_status = context->adapter_factory->EnumAdapterByLuid(
+    LumenUnpackLuid(context->core_state.render_adapter_luid),
+    IID_PPV_ARGS(selected_adapter.GetAddressOf())
+  );
+  const HRESULT d3d11_status = context->d3d11_probe_device == nullptr
+    ? S_OK
+    : context->d3d11_probe_device->GetDeviceRemovedReason();
+  const HRESULT d3d12_status = context->d3d12_probe_device == nullptr
+    ? S_OK
+    : context->d3d12_probe_device->GetDeviceRemovedReason();
+  if (InterlockedCompareExchange(&context->adapter_monitoring, 1, 1) == 0) {
+    return;
+  }
+  if (SUCCEEDED(adapter_status) &&
+      SUCCEEDED(d3d11_status) &&
+      SUCCEEDED(d3d12_status)) {
+    SetThreadpoolWait(
+      context->adapter_change_wait,
+      context->adapter_change_event,
+      nullptr
+    );
+    return;
+  }
+
+  InterlockedExchange(&context->adapter_monitoring, 0);
+  if (context->adapter_change_cookie != 0) {
+    context->adapter_factory->UnregisterAdaptersChangedEvent(
+      context->adapter_change_cookie
+    );
+    context->adapter_change_cookie = 0;
+  }
+  if (context->monitor != nullptr) {
+    LumenRemoveMonitor(context);
+  }
+  const uint64_t removed_luid = context->core_state.render_adapter_luid;
+  const auto removed = dispatch_internal(
+    context,
+    LumenDriverOperationAdapterRemoved,
+    removed_luid,
+    0,
+    0
+  );
+  context->core_state = removed.state;
+  if (removed.response.status == LumenDriverStatusDeviceRemoved) {
+    LumenCompletePendingEvent(context);
+  }
+}
+
+void LumenStopAdapterMonitoring(LumenDeviceContext *context) {
+  InterlockedExchange(&context->adapter_monitoring, 0);
+  if (context->adapter_factory != nullptr &&
+      context->adapter_change_cookie != 0) {
+    context->adapter_factory->UnregisterAdaptersChangedEvent(
+      context->adapter_change_cookie
+    );
+    context->adapter_change_cookie = 0;
+  }
+  if (context->adapter_change_wait != nullptr) {
+    SetThreadpoolWait(context->adapter_change_wait, nullptr, nullptr);
+    WaitForThreadpoolWaitCallbacks(context->adapter_change_wait, TRUE);
+  }
+  if (context->adapter_change_work_item != nullptr) {
+    WdfWorkItemFlush(context->adapter_change_work_item);
+  }
+  if (context->adapter_change_wait != nullptr) {
+    CloseThreadpoolWait(context->adapter_change_wait);
+    context->adapter_change_wait = nullptr;
+  }
+  if (context->adapter_change_event != nullptr) {
+    CloseHandle(context->adapter_change_event);
+    context->adapter_change_event = nullptr;
+  }
+  if (context->d3d12_probe_device != nullptr) {
+    context->d3d12_probe_device->Release();
+    context->d3d12_probe_device = nullptr;
+  }
+  if (context->d3d11_probe_device != nullptr) {
+    context->d3d11_probe_device->Release();
+    context->d3d11_probe_device = nullptr;
+  }
+  if (context->adapter_factory != nullptr) {
+    context->adapter_factory->Release();
+    context->adapter_factory = nullptr;
   }
 }
 
@@ -146,6 +313,7 @@ NTSTATUS LumenInitializeAdapter(WDFDEVICE device, LumenDeviceContext *context) {
   uint64_t selected_luid = 0;
   uint64_t device_probes = 0;
   status = select_render_adapter(
+    context,
     context->core_state.os_feature_flags,
     &selected_luid,
     &device_probes
@@ -206,6 +374,19 @@ NTSTATUS LumenEvtIddCxAdapterInitFinished(
   render_adapter.PreferredRenderAdapter =
     LumenUnpackLuid(context->core_state.render_adapter_luid);
   IddCxAdapterSetRenderAdapter(adapter, &render_adapter);
+  const NTSTATUS monitoring_status =
+    start_adapter_monitoring(adapter_context->device, context);
+  if (!NT_SUCCESS(monitoring_status)) {
+    const auto failed = dispatch_internal(
+      context,
+      LumenDriverOperationCompleteAdapterInitialization,
+      0,
+      0,
+      0
+    );
+    context->core_state = failed.state;
+    return monitoring_status;
+  }
   const auto initialized = dispatch_internal(
     context,
     LumenDriverOperationCompleteAdapterInitialization,

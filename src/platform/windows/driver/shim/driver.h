@@ -4,6 +4,9 @@
 
 #include <iddcx.h>
 #include <wdf.h>
+#include <d3d11.h>
+#include <d3d12.h>
+#include <dxgi1_6.h>
 
 struct LumenDeviceContext {
   LumenDriverCoreState core_state;
@@ -11,6 +14,14 @@ struct LumenDeviceContext {
   WDFQUEUE event_queue;
   IDDCX_ADAPTER adapter;
   IDDCX_MONITOR monitor;
+  IDXGIFactory7 *adapter_factory;
+  ID3D11Device *d3d11_probe_device;
+  ID3D12Device *d3d12_probe_device;
+  HANDLE adapter_change_event;
+  PTP_WAIT adapter_change_wait;
+  DWORD adapter_change_cookie;
+  WDFWORKITEM adapter_change_work_item;
+  volatile LONG adapter_monitoring;
 };
 
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(LumenDeviceContext, LumenGetDeviceContext);
@@ -31,6 +42,15 @@ struct LumenMonitorContext {
 
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(LumenMonitorContext, LumenGetMonitorContext);
 
+struct LumenAdapterChangeWorkItemContext {
+  WDFDEVICE device;
+};
+
+WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(
+  LumenAdapterChangeWorkItemContext,
+  LumenGetAdapterChangeWorkItemContext
+);
+
 EVT_WDF_DRIVER_DEVICE_ADD LumenEvtDeviceAdd;
 EVT_WDF_OBJECT_CONTEXT_CLEANUP LumenEvtDeviceContextCleanup;
 EVT_WDF_DEVICE_FILE_CREATE LumenEvtDeviceFileCreate;
@@ -44,11 +64,14 @@ EVT_IDD_CX_MONITOR_GET_DEFAULT_DESCRIPTION_MODES LumenEvtIddCxMonitorGetDefaultD
 EVT_IDD_CX_MONITOR_QUERY_TARGET_MODES LumenEvtIddCxMonitorQueryTargetModes;
 EVT_IDD_CX_MONITOR_ASSIGN_SWAPCHAIN LumenEvtIddCxMonitorAssignSwapChain;
 EVT_IDD_CX_MONITOR_UNASSIGN_SWAPCHAIN LumenEvtIddCxMonitorUnassignSwapChain;
+EVT_WDF_WORKITEM LumenEvtAdapterChangeWorkItem;
 
 uint64_t LumenOwnerId(WDFFILEOBJECT file_object);
 LumenDriverCoreRequest LumenRequest(uint32_t operation, uint64_t owner_id, uint64_t generation);
 NTSTATUS LumenStatusToNtStatus(uint32_t status);
 NTSTATUS LumenInitializeAdapter(WDFDEVICE device, LumenDeviceContext *context);
+void LumenStopAdapterMonitoring(LumenDeviceContext *context);
+NTSTATUS LumenCompletePendingEvent(LumenDeviceContext *context);
 NTSTATUS LumenCreateMonitor(
   LumenDeviceContext *context,
   const LumenDriverCoreRequest &request

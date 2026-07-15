@@ -1,8 +1,8 @@
 use crate::{
     CoreRequest, CoreState, CoreTransition, Status, ADAPTER_DEVICE_D3D11, ADAPTER_DEVICE_D3D12,
     ADAPTER_FEATURES_PROBED, ADAPTER_INITIALIZED, ADAPTER_PREPARED, ADAPTER_REMOVED,
-    ADAPTER_SWAPCHAIN_ASSIGNED, BACKEND_CAPABILITY_D3D11, BACKEND_CAPABILITY_D3D12, BACKEND_D3D11,
-    BACKEND_D3D12, IDDCX_FEATURE_D3D12, IDDCX_VERSION_1_11, STATE_ENCODER_ACTIVE,
+    BACKEND_CAPABILITY_D3D11, BACKEND_CAPABILITY_D3D12, BACKEND_D3D11, BACKEND_D3D12,
+    EVENT_ADAPTER_REMOVED, IDDCX_FEATURE_D3D12, IDDCX_VERSION_1_11, STATE_ENCODER_ACTIVE,
     STATE_KEYFRAME_PENDING, STATE_MONITOR_ACTIVE, SURFACE_D3D11_TEXTURE2D, SURFACE_D3D12_RESOURCE,
 };
 
@@ -100,6 +100,9 @@ pub(super) fn complete_initialization(
 }
 
 pub(super) fn query_backend(state: CoreState, request: CoreRequest, index: u64) -> CoreTransition {
+    if state.adapter_flags & ADAPTER_INITIALIZED == 0 {
+        return finish(state, request.header.operation, Status::NotReady, [0; 2]);
+    }
     let row = capability_at(&state, index);
     match row {
         Some((backend, surface)) => {
@@ -127,8 +130,8 @@ pub(super) fn query_backend(state: CoreState, request: CoreRequest, index: u64) 
     }
 }
 
-pub(super) fn assign_swapchain(
-    mut state: CoreState,
+pub(super) fn validate_and_abandon_swapchain(
+    state: CoreState,
     request: CoreRequest,
     monitor_id: u64,
     assigned_luid: u64,
@@ -138,16 +141,10 @@ pub(super) fn assign_swapchain(
         || state.monitor_id != monitor_id
     {
         Status::NotReady
-    } else if state.adapter_flags & ADAPTER_SWAPCHAIN_ASSIGNED != 0 {
-        Status::Busy
     } else if assigned_luid == 0 || assigned_luid != state.render_adapter_luid {
-        state.assigned_adapter_luid = 0;
-        state.adapter_flags &= !ADAPTER_SWAPCHAIN_ASSIGNED;
         Status::LuidMismatch
     } else {
-        state.assigned_adapter_luid = assigned_luid;
-        state.adapter_flags |= ADAPTER_SWAPCHAIN_ASSIGNED;
-        Status::Ok
+        Status::ProcessorUnavailable
     };
     finish(
         state,
@@ -155,23 +152,6 @@ pub(super) fn assign_swapchain(
         status,
         [assigned_luid, monitor_id],
     )
-}
-
-pub(super) fn unassign_swapchain(
-    mut state: CoreState,
-    request: CoreRequest,
-    monitor_id: u64,
-) -> CoreTransition {
-    let status = if state.monitor_id != monitor_id
-        || state.adapter_flags & ADAPTER_SWAPCHAIN_ASSIGNED == 0
-    {
-        Status::NotReady
-    } else {
-        state.assigned_adapter_luid = 0;
-        state.adapter_flags &= !ADAPTER_SWAPCHAIN_ASSIGNED;
-        Status::Ok
-    };
-    finish(state, request.header.operation, status, [0; 2])
 }
 
 pub(super) fn adapter_removed(
@@ -184,6 +164,8 @@ pub(super) fn adapter_removed(
     } else {
         clear_adapter_dependents(&mut state);
         state.adapter_flags = ADAPTER_FEATURES_PROBED | ADAPTER_REMOVED;
+        state.pending_event_code = u32::try_from(EVENT_ADAPTER_REMOVED).unwrap_or(0);
+        state.pending_event_value = removed_luid;
         Status::DeviceRemoved
     };
     finish(state, request.header.operation, status, [removed_luid, 0])
@@ -215,7 +197,6 @@ fn capability_count(state: &CoreState) -> u32 {
 
 fn clear_adapter_dependents(state: &mut CoreState) {
     state.render_adapter_luid = 0;
-    state.assigned_adapter_luid = 0;
     state.monitor_id = 0;
     state.flags &= !(STATE_MONITOR_ACTIVE | STATE_ENCODER_ACTIVE | STATE_KEYFRAME_PENDING);
     state.adapter_flags = 0;

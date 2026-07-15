@@ -6,7 +6,7 @@
 
 #define LUMEN_DRIVER_ABI_MAGIC 0x4C554D4Eu
 #define LUMEN_DRIVER_ABI_MAJOR 1u
-#define LUMEN_DRIVER_ABI_MINOR 1u
+#define LUMEN_DRIVER_ABI_MINOR 2u
 #define LUMEN_METHOD_BUFFERED 0u
 #define LUMEN_METHOD_OUT_DIRECT 2u
 #define LUMEN_FILE_READ_ACCESS 1u
@@ -66,8 +66,7 @@ typedef enum LumenDriverOperation {
   LumenDriverOperationRecordOsFeatures = 14,
   LumenDriverOperationPrepareAdapter = 15,
   LumenDriverOperationCompleteAdapterInitialization = 16,
-  LumenDriverOperationAssignSwapchain = 17,
-  LumenDriverOperationUnassignSwapchain = 18,
+  LumenDriverOperationValidateAndAbandonSwapchain = 17,
   LumenDriverOperationAdapterRemoved = 19
 } LumenDriverOperation;
 
@@ -86,8 +85,13 @@ typedef enum LumenDriverStatus {
   LumenDriverStatusPending = 11,
   LumenDriverStatusFeatureUnavailable = 12,
   LumenDriverStatusLuidMismatch = 13,
-  LumenDriverStatusDeviceRemoved = 14
+  LumenDriverStatusDeviceRemoved = 14,
+  LumenDriverStatusProcessorUnavailable = 15
 } LumenDriverStatus;
+
+typedef enum LumenDriverEventCode {
+  LumenDriverEventAdapterRemoved = 1
+} LumenDriverEventCode;
 
 typedef struct LumenDriverAbiHeader {
   uint32_t magic;
@@ -126,11 +130,13 @@ typedef struct LumenDriverCoreState {
   uint16_t event_queue_depth;
   uint8_t reserved[4];
   uint64_t render_adapter_luid;
-  uint64_t assigned_adapter_luid;
   uint32_t iddcx_version;
   uint32_t os_feature_flags;
   uint32_t adapter_flags;
   uint32_t backend_capability_mask;
+  uint32_t pending_event_code;
+  uint32_t pending_event_reserved;
+  uint64_t pending_event_value;
 } LumenDriverCoreState;
 
 typedef struct LumenDriverCoreTransition {
@@ -152,8 +158,8 @@ extern "C" {
 static_assert(sizeof(LumenDriverAbiHeader) == 16, "LumenDriverAbiHeader layout changed");
 static_assert(sizeof(LumenDriverCoreRequest) == 80, "LumenDriverCoreRequest layout changed");
 static_assert(sizeof(LumenDriverCoreResponse) == 48, "LumenDriverCoreResponse layout changed");
-static_assert(sizeof(LumenDriverCoreState) == 144, "LumenDriverCoreState layout changed");
-static_assert(sizeof(LumenDriverCoreTransition) == 192, "LumenDriverCoreTransition layout changed");
+static_assert(sizeof(LumenDriverCoreState) == 152, "LumenDriverCoreState layout changed");
+static_assert(sizeof(LumenDriverCoreTransition) == 200, "LumenDriverCoreTransition layout changed");
 #endif
 
 #endif

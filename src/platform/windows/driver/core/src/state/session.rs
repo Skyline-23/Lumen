@@ -1,7 +1,6 @@
 use crate::{
-    CoreRequest, CoreState, CoreTransition, Status, ADAPTER_INITIALIZED,
-    ADAPTER_SWAPCHAIN_ASSIGNED, PENDING_READ_DEPTH, STATE_ENCODER_ACTIVE, STATE_KEYFRAME_PENDING,
-    STATE_MONITOR_ACTIVE,
+    CoreRequest, CoreState, CoreTransition, Status, ADAPTER_INITIALIZED, PENDING_READ_DEPTH,
+    STATE_ENCODER_ACTIVE, STATE_KEYFRAME_PENDING, STATE_MONITOR_ACTIVE,
 };
 
 use super::finish;
@@ -22,10 +21,9 @@ pub(super) fn released_state(state: CoreState) -> CoreState {
     CoreState {
         generation: state.generation.checked_add(1).unwrap_or(1),
         render_adapter_luid: state.render_adapter_luid,
-        assigned_adapter_luid: 0,
         iddcx_version: state.iddcx_version,
         os_feature_flags: state.os_feature_flags,
-        adapter_flags: state.adapter_flags & !ADAPTER_SWAPCHAIN_ASSIGNED,
+        adapter_flags: state.adapter_flags,
         backend_capability_mask: state.backend_capability_mask,
         ..CoreState::initial()
     }
@@ -64,9 +62,7 @@ pub(super) fn remove_monitor(
     request: CoreRequest,
     monitor_id: u64,
 ) -> CoreTransition {
-    let status = if state.adapter_flags & ADAPTER_SWAPCHAIN_ASSIGNED != 0
-        || state.flags & STATE_ENCODER_ACTIVE != 0
-    {
+    let status = if state.flags & STATE_ENCODER_ACTIVE != 0 {
         Status::InvalidState
     } else if state.flags & STATE_MONITOR_ACTIVE == 0 || state.monitor_id != monitor_id {
         Status::NotReady

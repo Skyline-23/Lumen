@@ -63,6 +63,14 @@ NTSTATUS LumenEvtDeviceAdd(WDFDRIVER, PWDFDEVICE_INIT device_init) {
   context->event_queue = nullptr;
   context->adapter = nullptr;
   context->monitor = nullptr;
+  context->adapter_factory = nullptr;
+  context->d3d11_probe_device = nullptr;
+  context->d3d12_probe_device = nullptr;
+  context->adapter_change_event = nullptr;
+  context->adapter_change_wait = nullptr;
+  context->adapter_change_cookie = 0;
+  context->adapter_change_work_item = nullptr;
+  context->adapter_monitoring = 0;
 
   status = LumenInitializeAdapter(device, context);
   if (!NT_SUCCESS(status)) {
@@ -89,6 +97,7 @@ NTSTATUS LumenEvtDeviceAdd(WDFDRIVER, PWDFDEVICE_INIT device_init) {
 
 void LumenEvtDeviceContextCleanup(WDFOBJECT object) {
   auto *context = LumenGetDeviceContext(static_cast<WDFDEVICE>(object));
+  LumenStopAdapterMonitoring(context);
   if (context->core_state.render_adapter_luid == 0) {
     return;
   }

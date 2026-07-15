@@ -30,44 +30,82 @@ fn feature_probe_and_luid_pin_precede_adapter_and_monitor_creation() {
     let pin = adapter
         .find("IddCxAdapterSetRenderAdapter")
         .expect("selected render adapter must be pinned");
+    let monitoring = adapter[pin..]
+        .find("start_adapter_monitoring")
+        .map(|offset| pin + offset)
+        .expect("selected render adapter must be monitored");
+    let complete = adapter[monitoring..]
+        .rfind("LumenDriverOperationCompleteAdapterInitialization")
+        .map(|offset| monitoring + offset)
+        .expect("backend rows must unlock after the pin and monitor are installed");
     let arrival = adapter
         .find("IddCxMonitorArrival")
         .expect("monitor must arrive through IddCx");
 
     // Then: features and LUID are fixed before monitor ownership can become visible.
     assert!(version < feature && feature < prepare && prepare < initialize);
-    assert!(initialize < pin && pin < arrival);
+    assert!(initialize < pin && pin < monitoring && monitoring < complete);
+    assert!(complete < arrival);
 }
 
 #[test]
-fn swapchain_callback_revalidates_os_assigned_luid_and_rolls_back() {
+fn swapchain_callback_validates_then_abandons_without_claiming_ownership() {
     // Given: the IddCx swap-chain callback boundary.
     let callbacks = fs::read_to_string(driver_root().join("shim/iddcx_callbacks.cpp"))
         .expect("callback boundary must exist");
 
     // When: the assignment transaction is inspected.
     let validation = callbacks
-        .find("const auto assigned = lumen_driver_core_dispatch")
+        .find("LumenDriverOperationValidateAndAbandonSwapchain")
         .expect("Rust must validate assignment");
-    let assigned_luid = callbacks[..validation]
-        .rfind("RenderAdapterLuid")
-        .expect("OS-assigned LUID must cross the boundary");
-    let rejected_state = callbacks[validation..]
-        .find("context->core_state = assigned.state")
+    let assigned_luid = callbacks[validation..]
+        .find("RenderAdapterLuid")
         .map(|offset| validation + offset)
-        .expect("rejected assignment must commit Rust rollback state");
-    let abandon = callbacks[rejected_state..]
+        .expect("OS-assigned LUID must cross the boundary");
+    let abandon = callbacks[assigned_luid..]
         .find("STATUS_GRAPHICS_INDIRECT_DISPLAY_ABANDON_SWAPCHAIN")
-        .map(|offset| rejected_state + offset)
+        .map(|offset| assigned_luid + offset)
         .expect("IddCx must receive the only safe callback failure");
-    let accepted_rollback = callbacks[abandon..]
-        .find("LumenDriverOperationUnassignSwapchain")
-        .map(|offset| abandon + offset)
-        .expect("accepted assignment must be released until a processor owns it");
 
-    // Then: no swap chain can be accepted or retried with an unvalidated LUID.
-    assert!(assigned_luid < validation && validation < rejected_state && rejected_state < abandon);
-    assert!(abandon < accepted_rollback);
+    // Then: validation precedes abandonment and no production assignment state is retained.
+    assert!(validation < assigned_luid && assigned_luid < abandon);
+    assert!(!callbacks.contains("assigned_adapter_luid"));
+    assert!(!callbacks.contains("LumenDriverOperationUnassignSwapchain"));
+}
+
+#[test]
+fn adapter_change_notification_dispatches_removal_and_completes_typed_event() {
+    // Given: the selected-adapter monitoring and event-delivery boundaries.
+    let adapter = fs::read_to_string(driver_root().join("shim/adapter.cpp"))
+        .expect("adapter boundary must exist");
+    let io = fs::read_to_string(driver_root().join("shim/io.cpp"))
+        .expect("event I/O boundary must exist");
+
+    // When: registration, device-loss checks, rollback, and bounded completion are located.
+    let register = adapter
+        .find("RegisterAdaptersChangedEvent")
+        .expect("DXGI adapter changes must be registered");
+    let work_item = adapter
+        .find("WdfWorkItemEnqueue")
+        .expect("notification must enter the serialized WDF boundary");
+    let removed_reason = adapter
+        .find("GetDeviceRemovedReason")
+        .expect("retained probe devices must report device loss");
+    let rollback = adapter
+        .find("LumenDriverOperationAdapterRemoved")
+        .expect("device loss must reach Rust rollback");
+    let completion = adapter
+        .find("LumenCompletePendingEvent")
+        .expect("typed removal must complete one bounded read");
+    let unregister = adapter
+        .find("UnregisterAdaptersChangedEvent")
+        .expect("adapter notification must have deterministic cleanup");
+
+    // Then: event detection is serialized, typed, bounded, and cleanup-backed.
+    assert!(register < work_item && work_item < removed_reason);
+    assert!(removed_reason < rollback && rollback < completion);
+    assert!(io.contains("LumenDriverEventAdapterRemoved"));
+    assert!(unregister > register);
 }
 
 #[test]

@@ -28,13 +28,28 @@ pub(super) fn dequeue_event(
     request: CoreRequest,
     capacity: u64,
 ) -> CoreTransition {
-    let status = if capacity > MAX_EVENT_BYTES {
-        Status::Oversize
-    } else if capacity == 0 || request.request_id == 0 {
-        Status::InvalidArgument
-    } else {
-        enqueue_pending(&mut state.pending_event_reads, request.request_id)
-    };
+    if capacity > MAX_EVENT_BYTES {
+        return super::finish(state, request.header.operation, Status::Oversize, [0; 2]);
+    }
+    if capacity == 0 || request.request_id == 0 {
+        return super::finish(
+            state,
+            request.header.operation,
+            Status::InvalidArgument,
+            [0; 2],
+        );
+    }
+    if state.pending_event_code != 0 {
+        remove_pending(&mut state.pending_event_reads, request.request_id);
+        let values = [
+            u64::from(state.pending_event_code),
+            state.pending_event_value,
+        ];
+        state.pending_event_code = 0;
+        state.pending_event_value = 0;
+        return super::finish(state, request.header.operation, Status::Ok, values);
+    }
+    let status = enqueue_pending(&mut state.pending_event_reads, request.request_id);
     super::finish(state, request.header.operation, status, [0; 2])
 }
 

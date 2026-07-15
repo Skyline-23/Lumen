@@ -36,41 +36,19 @@ NTSTATUS LumenEvtIddCxMonitorAssignSwapChain(
 ) {
   auto *monitor_context = LumenGetMonitorContext(monitor);
   auto *context = LumenGetDeviceContext(monitor_context->device);
-  auto assign = LumenRequest(
-    LumenDriverOperationAssignSwapchain,
+  auto validation = LumenRequest(
+    LumenDriverOperationValidateAndAbandonSwapchain,
     0,
     context->core_state.generation
   );
-  assign.arguments[0] = monitor_context->monitor_id;
-  assign.arguments[1] = LumenPackLuid(input->RenderAdapterLuid);
-  const auto assigned = lumen_driver_core_dispatch(context->core_state, assign);
-  if (assigned.response.status != LumenDriverStatusOk) {
-    context->core_state = assigned.state;
-    return STATUS_GRAPHICS_INDIRECT_DISPLAY_ABANDON_SWAPCHAIN;
-  }
-  auto rollback = LumenRequest(
-    LumenDriverOperationUnassignSwapchain,
-    0,
-    assigned.state.generation
-  );
-  rollback.arguments[0] = monitor_context->monitor_id;
-  context->core_state =
-    lumen_driver_core_dispatch(assigned.state, rollback).state;
+  validation.arguments[0] = monitor_context->monitor_id;
+  validation.arguments[1] = LumenPackLuid(input->RenderAdapterLuid);
+  const auto validated =
+    lumen_driver_core_dispatch(context->core_state, validation);
+  context->core_state = validated.state;
   return STATUS_GRAPHICS_INDIRECT_DISPLAY_ABANDON_SWAPCHAIN;
 }
 
-NTSTATUS LumenEvtIddCxMonitorUnassignSwapChain(IDDCX_MONITOR monitor) {
-  auto *monitor_context = LumenGetMonitorContext(monitor);
-  auto *context = LumenGetDeviceContext(monitor_context->device);
-  auto request = LumenRequest(
-    LumenDriverOperationUnassignSwapchain,
-    0,
-    context->core_state.generation
-  );
-  request.arguments[0] = monitor_context->monitor_id;
-  const auto transition = lumen_driver_core_dispatch(context->core_state, request);
-  if (transition.response.status == LumenDriverStatusOk) {
-    context->core_state = transition.state;
-  }
+NTSTATUS LumenEvtIddCxMonitorUnassignSwapChain(IDDCX_MONITOR) {
   return STATUS_SUCCESS;
 }

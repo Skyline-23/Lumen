@@ -35,10 +35,9 @@ pub(crate) fn dispatch(mut state: CoreState, request: CoreRequest) -> CoreTransi
         Operation::CompleteAdapterInitialization => {
             adapter::complete_initialization(state, request, argument0)
         }
-        Operation::AssignSwapchain => {
-            adapter::assign_swapchain(state, request, argument0, argument1)
+        Operation::ValidateAndAbandonSwapchain => {
+            adapter::validate_and_abandon_swapchain(state, request, argument0, argument1)
         }
-        Operation::UnassignSwapchain => adapter::unassign_swapchain(state, request, argument0),
         Operation::AdapterRemoved => adapter::adapter_removed(state, request, argument0),
         Operation::ClaimOwner => session::claim_owner(state, request),
         Operation::ReleaseOwner => {
@@ -83,8 +82,7 @@ pub(crate) fn dispatch(mut state: CoreState, request: CoreRequest) -> CoreTransi
                 | Operation::RecordOsFeatures
                 | Operation::PrepareAdapter
                 | Operation::CompleteAdapterInitialization
-                | Operation::AssignSwapchain
-                | Operation::UnassignSwapchain
+                | Operation::ValidateAndAbandonSwapchain
                 | Operation::AdapterRemoved => finish(
                     state,
                     request.header.operation,

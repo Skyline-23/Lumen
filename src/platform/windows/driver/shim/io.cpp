@@ -109,6 +109,63 @@ namespace {
   }
 }  // namespace
 
+NTSTATUS LumenCompletePendingEvent(LumenDeviceContext *context) {
+  if (context->event_queue == nullptr ||
+      context->core_state.pending_event_code == 0) {
+    return STATUS_NO_MORE_ENTRIES;
+  }
+  WDFREQUEST pending_request = nullptr;
+  NTSTATUS status =
+    WdfIoQueueRetrieveNextRequest(context->event_queue, &pending_request);
+  if (!NT_SUCCESS(status)) {
+    return status;
+  }
+  void *input_buffer = nullptr;
+  status = WdfRequestRetrieveInputBuffer(
+    pending_request,
+    sizeof(LumenDriverCoreRequest),
+    &input_buffer,
+    nullptr
+  );
+  void *output_buffer = nullptr;
+  if (NT_SUCCESS(status)) {
+    status = WdfRequestRetrieveOutputBuffer(
+      pending_request,
+      sizeof(LumenDriverCoreResponse),
+      &output_buffer,
+      nullptr
+    );
+  }
+  if (!NT_SUCCESS(status)) {
+    cancel_core_read(context, pending_request, 2);
+    WdfRequestComplete(pending_request, status);
+    return status;
+  }
+
+  auto request = *static_cast<LumenDriverCoreRequest *>(input_buffer);
+  request.owner_id = LumenOwnerId(WdfRequestGetFileObject(pending_request));
+  const auto transition =
+    lumen_driver_core_dispatch(context->core_state, request);
+  if (transition.response.status != LumenDriverStatusOk) {
+    context->core_state = transition.state;
+    status = LumenStatusToNtStatus(transition.response.status);
+    WdfRequestComplete(pending_request, status);
+    return status;
+  }
+  context->core_state = transition.state;
+  if (transition.response.values[0] != LumenDriverEventAdapterRemoved) {
+    WdfRequestComplete(pending_request, STATUS_DATA_ERROR);
+    return STATUS_DATA_ERROR;
+  }
+  *static_cast<LumenDriverCoreResponse *>(output_buffer) = transition.response;
+  WdfRequestCompleteWithInformation(
+    pending_request,
+    STATUS_SUCCESS,
+    sizeof(LumenDriverCoreResponse)
+  );
+  return STATUS_SUCCESS;
+}
+
 uint64_t LumenOwnerId(WDFFILEOBJECT file_object) {
   return static_cast<uint64_t>(reinterpret_cast<uintptr_t>(file_object));
 }
@@ -152,6 +209,7 @@ NTSTATUS LumenStatusToNtStatus(uint32_t status) {
     case LumenDriverStatusFeatureUnavailable:
       return STATUS_NOT_SUPPORTED;
     case LumenDriverStatusLuidMismatch:
+    case LumenDriverStatusProcessorUnavailable:
       return STATUS_GRAPHICS_INDIRECT_DISPLAY_ABANDON_SWAPCHAIN;
     case LumenDriverStatusDeviceRemoved:
       return STATUS_DEVICE_REMOVED;

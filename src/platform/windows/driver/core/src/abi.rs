@@ -2,7 +2,7 @@ use std::mem::size_of;
 
 pub const ABI_MAGIC: u32 = 0x4C55_4D4E;
 pub const ABI_MAJOR: u16 = 1;
-pub const ABI_MINOR: u16 = 1;
+pub const ABI_MINOR: u16 = 2;
 pub const ABI_HEADER_SIZE: u32 = 16;
 pub const ABI_REQUEST_SIZE: u32 = 80;
 pub const ABI_RESPONSE_SIZE: u32 = 48;
@@ -25,7 +25,6 @@ pub const SURFACE_D3D12_RESOURCE: u32 = 2;
 pub const ADAPTER_FEATURES_PROBED: u32 = 1 << 0;
 pub const ADAPTER_PREPARED: u32 = 1 << 1;
 pub const ADAPTER_INITIALIZED: u32 = 1 << 2;
-pub const ADAPTER_SWAPCHAIN_ASSIGNED: u32 = 1 << 3;
 pub const ADAPTER_REMOVED: u32 = 1 << 4;
 pub const BACKEND_CAPABILITY_D3D11: u32 = 1 << 0;
 pub const BACKEND_CAPABILITY_D3D12: u32 = 1 << 1;
@@ -33,6 +32,8 @@ pub const BACKEND_CAPABILITY_D3D12: u32 = 1 << 1;
 pub const STATE_MONITOR_ACTIVE: u32 = 1 << 0;
 pub const STATE_ENCODER_ACTIVE: u32 = 1 << 1;
 pub const STATE_KEYFRAME_PENDING: u32 = 1 << 2;
+
+pub const EVENT_ADAPTER_REMOVED: u64 = 1;
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -53,8 +54,7 @@ pub enum Operation {
     RecordOsFeatures = 14,
     PrepareAdapter = 15,
     CompleteAdapterInitialization = 16,
-    AssignSwapchain = 17,
-    UnassignSwapchain = 18,
+    ValidateAndAbandonSwapchain = 17,
     AdapterRemoved = 19,
 }
 
@@ -77,8 +77,7 @@ impl Operation {
             Self::RecordOsFeatures => 14,
             Self::PrepareAdapter => 15,
             Self::CompleteAdapterInitialization => 16,
-            Self::AssignSwapchain => 17,
-            Self::UnassignSwapchain => 18,
+            Self::ValidateAndAbandonSwapchain => 17,
             Self::AdapterRemoved => 19,
         }
     }
@@ -101,8 +100,7 @@ impl Operation {
             14 => Some(Self::RecordOsFeatures),
             15 => Some(Self::PrepareAdapter),
             16 => Some(Self::CompleteAdapterInitialization),
-            17 => Some(Self::AssignSwapchain),
-            18 => Some(Self::UnassignSwapchain),
+            17 => Some(Self::ValidateAndAbandonSwapchain),
             19 => Some(Self::AdapterRemoved),
             _ => None,
         }
@@ -127,6 +125,7 @@ pub enum Status {
     FeatureUnavailable = 12,
     LuidMismatch = 13,
     DeviceRemoved = 14,
+    ProcessorUnavailable = 15,
 }
 
 impl Status {
@@ -147,6 +146,7 @@ impl Status {
             Self::FeatureUnavailable => 12,
             Self::LuidMismatch => 13,
             Self::DeviceRemoved => 14,
+            Self::ProcessorUnavailable => 15,
         }
     }
 }
@@ -230,11 +230,13 @@ pub struct CoreState {
     pub event_queue_depth: u16,
     pub reserved: [u8; 4],
     pub render_adapter_luid: u64,
-    pub assigned_adapter_luid: u64,
     pub iddcx_version: u32,
     pub os_feature_flags: u32,
     pub adapter_flags: u32,
     pub backend_capability_mask: u32,
+    pub pending_event_code: u32,
+    pub pending_event_reserved: u32,
+    pub pending_event_value: u64,
 }
 
 impl CoreState {
@@ -252,11 +254,13 @@ impl CoreState {
             event_queue_depth: 0,
             reserved: [0; 4],
             render_adapter_luid: 0,
-            assigned_adapter_luid: 0,
             iddcx_version: 0,
             os_feature_flags: 0,
             adapter_flags: 0,
             backend_capability_mask: 0,
+            pending_event_code: 0,
+            pending_event_reserved: 0,
+            pending_event_value: 0,
         }
     }
 }
@@ -271,5 +275,5 @@ pub struct CoreTransition {
 const _: () = assert!(size_of::<AbiHeader>() == 16);
 const _: () = assert!(size_of::<CoreRequest>() == 80);
 const _: () = assert!(size_of::<CoreResponse>() == 48);
-const _: () = assert!(size_of::<CoreState>() == 144);
-const _: () = assert!(size_of::<CoreTransition>() == 192);
+const _: () = assert!(size_of::<CoreState>() == 152);
+const _: () = assert!(size_of::<CoreTransition>() == 200);

@@ -51,6 +51,13 @@ int main() {
   prepare.arguments[1] =
     LUMEN_ADAPTER_DEVICE_D3D11 | LUMEN_ADAPTER_DEVICE_D3D12;
   const auto prepared = lumen_driver_core_dispatch(feature_result.state, prepare);
+  auto preinit_query = request(
+    LumenDriverOperationQueryBackendCapability,
+    0,
+    prepared.state.generation
+  );
+  const auto preinit =
+    lumen_driver_core_dispatch(prepared.state, preinit_query);
   auto initialize = request(
     LumenDriverOperationCompleteAdapterInitialization,
     0,
@@ -60,6 +67,8 @@ int main() {
   const auto initialized = lumen_driver_core_dispatch(prepared.state, initialize);
   if (!status_is(feature_result, LumenDriverStatusOk) ||
       !status_is(prepared, LumenDriverStatusOk) ||
+      !status_is(preinit, LumenDriverStatusNotReady) ||
+      preinit.response.values[0] != 0 || preinit.response.values[1] != 0 ||
       !status_is(initialized, LumenDriverStatusOk)) {
     return 22;
   }
@@ -103,7 +112,7 @@ int main() {
   query_d3d11.arguments[0] = 1;
   const auto d3d11 = lumen_driver_core_dispatch(d3d12.state, query_d3d11);
   auto matching_request = request(
-    LumenDriverOperationAssignSwapchain,
+    LumenDriverOperationValidateAndAbandonSwapchain,
     0,
     d3d11.state.generation
   );
@@ -111,22 +120,15 @@ int main() {
   matching_request.arguments[1] = 0x0000000200001234ull;
   const auto matching =
     lumen_driver_core_dispatch(d3d11.state, matching_request);
-  auto unassign = request(
-    LumenDriverOperationUnassignSwapchain,
+  auto mismatch_request = request(
+    LumenDriverOperationValidateAndAbandonSwapchain,
     0,
     matching.state.generation
-  );
-  unassign.arguments[0] = 7;
-  const auto unassigned = lumen_driver_core_dispatch(matching.state, unassign);
-  auto mismatch_request = request(
-    LumenDriverOperationAssignSwapchain,
-    0,
-    unassigned.state.generation
   );
   mismatch_request.arguments[0] = 7;
   mismatch_request.arguments[1] = 0x0000000200001235ull;
   const auto mismatch =
-    lumen_driver_core_dispatch(unassigned.state, mismatch_request);
+    lumen_driver_core_dispatch(matching.state, mismatch_request);
   const auto started = lumen_driver_core_dispatch(
     mismatch.state,
     request(LumenDriverOperationStartEncoder, kOwner, state.generation)
@@ -134,10 +136,8 @@ int main() {
   if (!status_is(created, LumenDriverStatusOk) ||
       !status_is(d3d12, LumenDriverStatusOk) ||
       !status_is(d3d11, LumenDriverStatusOk) ||
-      !status_is(matching, LumenDriverStatusOk) ||
-      !status_is(unassigned, LumenDriverStatusOk) ||
+      !status_is(matching, LumenDriverStatusProcessorUnavailable) ||
       !status_is(mismatch, LumenDriverStatusLuidMismatch) ||
-      mismatch.state.assigned_adapter_luid != 0 ||
       !status_is(started, LumenDriverStatusOk)) {
     return 13;
   }
@@ -217,11 +217,40 @@ int main() {
     return 21;
   }
 
+  auto pending_event = request(
+    LumenDriverOperationDequeueEvent,
+    kOwner,
+    reclaimed.state.generation
+  );
+  pending_event.request_id = 500;
+  pending_event.arguments[0] = LUMEN_MAX_EVENT_BYTES;
+  const auto event_wait =
+    lumen_driver_core_dispatch(reclaimed.state, pending_event);
+  auto remove_adapter = request(
+    LumenDriverOperationAdapterRemoved,
+    0,
+    event_wait.state.generation
+  );
+  remove_adapter.arguments[0] = 0x0000000200001234ull;
+  const auto removed =
+    lumen_driver_core_dispatch(event_wait.state, remove_adapter);
+  const auto delivered =
+    lumen_driver_core_dispatch(removed.state, pending_event);
+  if (!status_is(event_wait, LumenDriverStatusPending) ||
+      !status_is(removed, LumenDriverStatusDeviceRemoved) ||
+      !status_is(delivered, LumenDriverStatusOk) ||
+      delivered.response.values[0] != LumenDriverEventAdapterRemoved ||
+      delivered.response.values[1] != 0x0000000200001234ull) {
+    return 23;
+  }
+
   std::cout << "{\"selected_luid\":\"0x0000000200001234\","
                "\"capabilities\":[{\"backend\":\"d3d12\",\"surface\":\"resource\"},"
                "{\"backend\":\"d3d11\",\"surface\":\"texture2d\"}],"
-               "\"matching_assignment\":\"accepted\","
+               "\"backend_before_init\":\"not_ready\","
+               "\"swapchain_assignment\":\"validated_then_abandoned_pending_processor\","
                "\"mismatched_assignment\":\"luid_mismatch_rollback\","
+               "\"adapter_removed_event\":\"delivered\","
                "\"malformed_version\":\"rejected\","
                "\"second_owner\":\"busy\",\"oversize\":\"rejected\","
                "\"cancel\":\"cancelled\",\"stop_restart\":\"bounded\","
