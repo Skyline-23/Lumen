@@ -4,6 +4,7 @@
 #include "windows_device_stop_restart.h"
 
 #include <cstdint>
+#include <iomanip>
 #include <ostream>
 #include <vector>
 
@@ -45,6 +46,47 @@ namespace lumen_driver_qa {
       }
       return pending_io.wait(5000) == ERROR_OPERATION_ABORTED ? 0 : 51;
     }
+
+    int query_backend_rows(
+      HANDLE handle,
+      uint64_t generation,
+      std::ostream *receipt
+    ) {
+      auto query = request(LumenDriverOperationQueryBackendCapability, generation);
+      LumenDriverCoreResponse response {};
+      query.arguments[0] = 0;
+      if (send_ioctl(
+            handle,
+            LUMEN_IOCTL_QUERY_BACKEND_CAPABILITY,
+            &query,
+            &response,
+            sizeof(response)
+          ) != ERROR_SUCCESS) {
+        return 52;
+      }
+      const uint64_t count = (response.values[1] >> 24u) & 0xffu;
+      for (uint64_t index = 0; index < count; ++index) {
+        query.arguments[0] = index;
+        if (send_ioctl(
+              handle,
+              LUMEN_IOCTL_QUERY_BACKEND_CAPABILITY,
+              &query,
+              &response,
+              sizeof(response)
+            ) != ERROR_SUCCESS) {
+          return 53;
+        }
+        if (receipt != nullptr) {
+          *receipt << "{\"probe\":\"backend_capability\",\"index\":" << index
+                   << ",\"luid\":\"0x" << std::hex << std::setw(16)
+                   << std::setfill('0') << response.values[0] << std::dec
+                   << "\",\"backend\":" << (response.values[1] & 0xffu)
+                   << ",\"surface\":" << ((response.values[1] >> 8u) & 0xffu)
+                   << "}\n";
+        }
+      }
+      return count == 0 ? 54 : 0;
+    }
   }  // namespace
 
   int run_denied(const std::wstring &path, std::ostream *receipt) {
@@ -85,6 +127,12 @@ namespace lumen_driver_qa {
       return result;
     }
     const uint64_t generation = response.generation;
+    result = query_backend_rows(handle, generation, receipt);
+    write_probe(receipt, "backend_capabilities", result);
+    if (result != 0) {
+      CloseHandle(handle);
+      return result;
+    }
 
     auto malformed = request(LumenDriverOperationQueryCapabilities, generation);
     ++malformed.header.major;

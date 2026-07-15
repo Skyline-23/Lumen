@@ -23,6 +23,8 @@ namespace {
         return LumenDriverOperationDequeueEvent;
       case LUMEN_IOCTL_QUERY_HEALTH:
         return LumenDriverOperationQueryHealth;
+      case LUMEN_IOCTL_QUERY_BACKEND_CAPABILITY:
+        return LumenDriverOperationQueryBackendCapability;
       default:
         return 0;
     }
@@ -147,6 +149,12 @@ NTSTATUS LumenStatusToNtStatus(uint32_t status) {
       return STATUS_DEVICE_NOT_READY;
     case LumenDriverStatusPending:
       return STATUS_PENDING;
+    case LumenDriverStatusFeatureUnavailable:
+      return STATUS_NOT_SUPPORTED;
+    case LumenDriverStatusLuidMismatch:
+      return STATUS_GRAPHICS_INDIRECT_DISPLAY_ABANDON_SWAPCHAIN;
+    case LumenDriverStatusDeviceRemoved:
+      return STATUS_DEVICE_REMOVED;
     default:
       return STATUS_INVALID_PARAMETER;
   }
@@ -177,6 +185,9 @@ void LumenEvtFileCleanup(WDFFILEOBJECT file_object) {
     cancel_pending_reads(context, context->event_queue, 2);
   if (!NT_SUCCESS(access_unit_status) || !NT_SUCCESS(event_status)) {
     return;
+  }
+  if (context->monitor != nullptr) {
+    LumenRemoveMonitor(context);
   }
   const auto release = LumenRequest(LumenDriverOperationReleaseOwner, owner_id, context->core_state.generation);
   context->core_state =
@@ -216,6 +227,22 @@ void LumenEvtIoDeviceControl(WDFQUEUE queue, WDFREQUEST request, size_t output_l
   auto *context = LumenGetDeviceContext(WdfIoQueueGetDevice(queue));
   const auto transition =
     lumen_driver_core_dispatch(context->core_state, core_request);
+  if (transition.response.status == LumenDriverStatusOk &&
+      operation == LumenDriverOperationCreateMonitor) {
+    status = LumenCreateMonitor(context, core_request);
+    if (!NT_SUCCESS(status)) {
+      WdfRequestComplete(request, status);
+      return;
+    }
+  }
+  if (transition.response.status == LumenDriverStatusOk &&
+      operation == LumenDriverOperationRemoveMonitor) {
+    status = LumenRemoveMonitor(context);
+    if (!NT_SUCCESS(status)) {
+      WdfRequestComplete(request, status);
+      return;
+    }
+  }
   if (operation == LumenDriverOperationStopEncoder &&
       transition.response.status == LumenDriverStatusOk) {
     status = cancel_pending_access_unit_reads(context);

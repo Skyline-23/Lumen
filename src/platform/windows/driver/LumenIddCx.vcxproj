@@ -61,11 +61,12 @@
       <TreatWarningAsError>true</TreatWarningAsError>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>IddCxStub.lib;$(LumenDriverCoreLibrary);advapi32.lib;bcrypt.lib;ntdll.lib;userenv.lib;ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>IddCxStub.lib;$(LumenDriverCoreLibrary);d3d11.lib;d3d12.lib;dxgi.lib;advapi32.lib;bcrypt.lib;ntdll.lib;userenv.lib;ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="shim\driver.cpp" />
+    <ClCompile Include="shim\adapter.cpp" />
     <ClCompile Include="shim\iddcx_callbacks.cpp" />
     <ClCompile Include="shim\io.cpp" />
     <ClInclude Include="shim\driver.h" />

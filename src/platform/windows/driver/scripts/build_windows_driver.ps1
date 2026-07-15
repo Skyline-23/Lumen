@@ -10,7 +10,7 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 if ($env:OS -ne "Windows_NT") {
-    throw "Lumen IddCx requires Windows, Visual Studio 2022 C++ tools, and WDK 10.0.26100 or newer."
+    throw "Lumen IddCx requires Windows, Visual Studio 2022 C++ tools, and a 26H1 WDK with IddCxCheckOsFeatureSupport."
 }
 
 $driverRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
@@ -34,6 +34,13 @@ if (-not $msbuild) {
 }
 
 $kitsBin = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\bin"
+$kitsInclude = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\Include"
+$iddcxHeader = Get-ChildItem $kitsInclude -Filter iddcx.h -Recurse |
+    Sort-Object FullName -Descending |
+    Select-Object -First 1 -ExpandProperty FullName
+if (-not $iddcxHeader -or -not (Select-String -Path $iddcxHeader -Pattern "IddCxCheckOsFeatureSupport" -Quiet)) {
+    throw "The installed WDK does not expose IddCx 1.11 IddCxCheckOsFeatureSupport; install the Windows 11 26H1 WDK."
+}
 $inf2cat = Get-ChildItem $kitsBin -Filter inf2cat.exe -Recurse |
     Where-Object { $_.FullName -match '\\x64\\' } |
     Sort-Object FullName -Descending |

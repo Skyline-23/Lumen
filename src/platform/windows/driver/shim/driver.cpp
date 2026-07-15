@@ -49,6 +49,7 @@ NTSTATUS LumenEvtDeviceAdd(WDFDRIVER, PWDFDEVICE_INIT device_init) {
   WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&attributes, LumenDeviceContext);
   attributes.ExecutionLevel = WdfExecutionLevelPassive;
   attributes.SynchronizationScope = WdfSynchronizationScopeDevice;
+  attributes.EvtCleanupCallback = LumenEvtDeviceContextCleanup;
 
   WDFDEVICE device = nullptr;
   status = WdfDeviceCreate(&device_init, &attributes, &device);
@@ -60,8 +61,10 @@ NTSTATUS LumenEvtDeviceAdd(WDFDRIVER, PWDFDEVICE_INIT device_init) {
   context->core_state = lumen_driver_core_initial_state();
   context->access_unit_queue = nullptr;
   context->event_queue = nullptr;
+  context->adapter = nullptr;
+  context->monitor = nullptr;
 
-  status = IddCxDeviceInitialize(device);
+  status = LumenInitializeAdapter(device, context);
   if (!NT_SUCCESS(status)) {
     return status;
   }
@@ -84,9 +87,17 @@ NTSTATUS LumenEvtDeviceAdd(WDFDRIVER, PWDFDEVICE_INIT device_init) {
   return create_manual_queue(device, &context->event_queue);
 }
 
-NTSTATUS LumenEvtIddCxAdapterInitFinished(
-  IDDCX_ADAPTER,
-  const IDARG_IN_ADAPTER_INIT_FINISHED *input
-) {
-  return input->AdapterInitStatus;
+void LumenEvtDeviceContextCleanup(WDFOBJECT object) {
+  auto *context = LumenGetDeviceContext(static_cast<WDFDEVICE>(object));
+  if (context->core_state.render_adapter_luid == 0) {
+    return;
+  }
+  auto request = LumenRequest(
+    LumenDriverOperationAdapterRemoved,
+    0,
+    context->core_state.generation
+  );
+  request.arguments[0] = context->core_state.render_adapter_luid;
+  context->core_state =
+    lumen_driver_core_dispatch(context->core_state, request).state;
 }

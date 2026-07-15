@@ -6,7 +6,7 @@
 
 #define LUMEN_DRIVER_ABI_MAGIC 0x4C554D4Eu
 #define LUMEN_DRIVER_ABI_MAJOR 1u
-#define LUMEN_DRIVER_ABI_MINOR 0u
+#define LUMEN_DRIVER_ABI_MINOR 1u
 #define LUMEN_METHOD_BUFFERED 0u
 #define LUMEN_METHOD_OUT_DIRECT 2u
 #define LUMEN_FILE_READ_ACCESS 1u
@@ -17,6 +17,10 @@
 #define LUMEN_ACCESS_UNIT_QUEUE_DEPTH 8u
 #define LUMEN_EVENT_QUEUE_DEPTH 32u
 #define LUMEN_PENDING_READ_DEPTH 4u
+#define LUMEN_IDDCX_VERSION_1_11 0x1B00u
+#define LUMEN_IDDCX_FEATURE_D3D12 (1u << 0u)
+#define LUMEN_ADAPTER_DEVICE_D3D11 (1u << 0u)
+#define LUMEN_ADAPTER_DEVICE_D3D12 (1u << 1u)
 #define LUMEN_DEVICE_INTERFACE_GUID_INIT \
   {0xf04b8b5a, 0xa603, 0x4d32, {0x96, 0xf8, 0x5f, 0x8c, 0x21, 0x08, 0xa1, 0xd0}}
 
@@ -42,6 +46,8 @@
   LUMEN_CTL_CODE(0x909u, LUMEN_METHOD_OUT_DIRECT, LUMEN_FILE_READ_ACCESS | LUMEN_FILE_WRITE_ACCESS)
 #define LUMEN_IOCTL_QUERY_HEALTH \
   LUMEN_CTL_CODE(0x90Au, LUMEN_METHOD_BUFFERED, LUMEN_FILE_READ_ACCESS)
+#define LUMEN_IOCTL_QUERY_BACKEND_CAPABILITY \
+  LUMEN_CTL_CODE(0x90Bu, LUMEN_METHOD_BUFFERED, LUMEN_FILE_READ_ACCESS)
 
 typedef enum LumenDriverOperation {
   LumenDriverOperationQueryCapabilities = 1,
@@ -55,7 +61,14 @@ typedef enum LumenDriverOperation {
   LumenDriverOperationDequeueAccessUnit = 9,
   LumenDriverOperationDequeueEvent = 10,
   LumenDriverOperationCancelPending = 11,
-  LumenDriverOperationQueryHealth = 12
+  LumenDriverOperationQueryHealth = 12,
+  LumenDriverOperationQueryBackendCapability = 13,
+  LumenDriverOperationRecordOsFeatures = 14,
+  LumenDriverOperationPrepareAdapter = 15,
+  LumenDriverOperationCompleteAdapterInitialization = 16,
+  LumenDriverOperationAssignSwapchain = 17,
+  LumenDriverOperationUnassignSwapchain = 18,
+  LumenDriverOperationAdapterRemoved = 19
 } LumenDriverOperation;
 
 typedef enum LumenDriverStatus {
@@ -70,7 +83,10 @@ typedef enum LumenDriverStatus {
   LumenDriverStatusInvalidState = 8,
   LumenDriverStatusQueueFull = 9,
   LumenDriverStatusNotReady = 10,
-  LumenDriverStatusPending = 11
+  LumenDriverStatusPending = 11,
+  LumenDriverStatusFeatureUnavailable = 12,
+  LumenDriverStatusLuidMismatch = 13,
+  LumenDriverStatusDeviceRemoved = 14
 } LumenDriverStatus;
 
 typedef struct LumenDriverAbiHeader {
@@ -109,6 +125,12 @@ typedef struct LumenDriverCoreState {
   uint16_t access_unit_queue_depth;
   uint16_t event_queue_depth;
   uint8_t reserved[4];
+  uint64_t render_adapter_luid;
+  uint64_t assigned_adapter_luid;
+  uint32_t iddcx_version;
+  uint32_t os_feature_flags;
+  uint32_t adapter_flags;
+  uint32_t backend_capability_mask;
 } LumenDriverCoreState;
 
 typedef struct LumenDriverCoreTransition {
@@ -130,8 +152,8 @@ extern "C" {
 static_assert(sizeof(LumenDriverAbiHeader) == 16, "LumenDriverAbiHeader layout changed");
 static_assert(sizeof(LumenDriverCoreRequest) == 80, "LumenDriverCoreRequest layout changed");
 static_assert(sizeof(LumenDriverCoreResponse) == 48, "LumenDriverCoreResponse layout changed");
-static_assert(sizeof(LumenDriverCoreState) == 112, "LumenDriverCoreState layout changed");
-static_assert(sizeof(LumenDriverCoreTransition) == 160, "LumenDriverCoreTransition layout changed");
+static_assert(sizeof(LumenDriverCoreState) == 144, "LumenDriverCoreState layout changed");
+static_assert(sizeof(LumenDriverCoreTransition) == 192, "LumenDriverCoreTransition layout changed");
 #endif
 
 #endif

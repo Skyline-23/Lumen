@@ -1,11 +1,12 @@
 use crate::{
     CoreRequest, CoreResponse, CoreState, CoreTransition, Operation, Status, ABI_MAGIC, ABI_MAJOR,
     ABI_MINOR, ABI_REQUEST_SIZE, ACCESS_UNIT_QUEUE_DEPTH, EVENT_QUEUE_DEPTH, MAX_ACCESS_UNIT_BYTES,
-    MAX_EVENT_BYTES, PENDING_READ_DEPTH, STATE_ENCODER_ACTIVE, STATE_KEYFRAME_PENDING,
-    STATE_MONITOR_ACTIVE,
+    MAX_EVENT_BYTES, PENDING_READ_DEPTH,
 };
 
+mod adapter;
 mod pending_reads;
+mod session;
 
 pub(crate) fn dispatch(mut state: CoreState, request: CoreRequest) -> CoreTransition {
     let operation = match validate_request(&request) {
@@ -26,15 +27,25 @@ pub(crate) fn dispatch(mut state: CoreState, request: CoreRequest) -> CoreTransi
                     | u64::try_from(PENDING_READ_DEPTH).unwrap_or(0),
             ],
         ),
-        Operation::ClaimOwner => claim_owner(state, request),
+        Operation::QueryBackendCapability => adapter::query_backend(state, request, argument0),
+        Operation::RecordOsFeatures => {
+            adapter::record_os_features(state, request, argument0, argument1, argument2)
+        }
+        Operation::PrepareAdapter => adapter::prepare_adapter(state, request, argument0, argument1),
+        Operation::CompleteAdapterInitialization => {
+            adapter::complete_initialization(state, request, argument0)
+        }
+        Operation::AssignSwapchain => {
+            adapter::assign_swapchain(state, request, argument0, argument1)
+        }
+        Operation::UnassignSwapchain => adapter::unassign_swapchain(state, request, argument0),
+        Operation::AdapterRemoved => adapter::adapter_removed(state, request, argument0),
+        Operation::ClaimOwner => session::claim_owner(state, request),
         Operation::ReleaseOwner => {
             if let Err(status) = require_owner(&state, &request) {
                 return finish(state, request.header.operation, status, [0; 2]);
             }
-            state = CoreState {
-                generation: next_generation(state.generation),
-                ..CoreState::initial()
-            };
+            state = session::released_state(state);
             finish(state, request.header.operation, Status::Ok, [0; 2])
         }
         Operation::QueryHealth => health(state, request),
@@ -51,12 +62,12 @@ pub(crate) fn dispatch(mut state: CoreState, request: CoreRequest) -> CoreTransi
             }
             match operation {
                 Operation::CreateMonitor => {
-                    create_monitor(state, request, argument0, argument1, argument2)
+                    session::create_monitor(state, request, argument0, argument1, argument2)
                 }
-                Operation::RemoveMonitor => remove_monitor(state, request, argument0),
-                Operation::StartEncoder => start_encoder(state, request),
-                Operation::StopEncoder => stop_encoder(state, request),
-                Operation::RequestKeyframe => request_keyframe(state, request),
+                Operation::RemoveMonitor => session::remove_monitor(state, request, argument0),
+                Operation::StartEncoder => session::start_encoder(state, request),
+                Operation::StopEncoder => session::stop_encoder(state, request),
+                Operation::RequestKeyframe => session::request_keyframe(state, request),
                 Operation::DequeueAccessUnit => {
                     pending_reads::dequeue_access_unit(state, request, argument0)
                 }
@@ -67,7 +78,14 @@ pub(crate) fn dispatch(mut state: CoreState, request: CoreRequest) -> CoreTransi
                 Operation::QueryCapabilities
                 | Operation::ClaimOwner
                 | Operation::ReleaseOwner
-                | Operation::QueryHealth => finish(
+                | Operation::QueryHealth
+                | Operation::QueryBackendCapability
+                | Operation::RecordOsFeatures
+                | Operation::PrepareAdapter
+                | Operation::CompleteAdapterInitialization
+                | Operation::AssignSwapchain
+                | Operation::UnassignSwapchain
+                | Operation::AdapterRemoved => finish(
                     state,
                     request.header.operation,
                     Status::InvalidArgument,
@@ -89,18 +107,6 @@ fn validate_request(request: &CoreRequest) -> Result<Operation, Status> {
     Operation::parse(request.header.operation).ok_or(Status::InvalidArgument)
 }
 
-fn claim_owner(mut state: CoreState, request: CoreRequest) -> CoreTransition {
-    let status = if request.owner_id == 0 {
-        Status::InvalidArgument
-    } else if state.owner_id == 0 || state.owner_id == request.owner_id {
-        state.owner_id = request.owner_id;
-        Status::Ok
-    } else {
-        Status::Busy
-    };
-    finish(state, request.header.operation, status, [0; 2])
-}
-
 fn require_owner(state: &CoreState, request: &CoreRequest) -> Result<(), Status> {
     if request.owner_id != 0 && state.owner_id == request.owner_id {
         Ok(())
@@ -116,78 +122,6 @@ fn require_owner_and_generation(state: &CoreState, request: &CoreRequest) -> Res
     } else {
         Err(Status::StaleGeneration)
     }
-}
-
-fn create_monitor(
-    mut state: CoreState,
-    request: CoreRequest,
-    monitor_id: u64,
-    packed_geometry: u64,
-    refresh_millihertz: u64,
-) -> CoreTransition {
-    let width = packed_geometry >> 32;
-    let height = packed_geometry & u64::from(u32::MAX);
-    let status = if state.flags & STATE_MONITOR_ACTIVE != 0 {
-        Status::Busy
-    } else if monitor_id == 0 || width == 0 || height == 0 || refresh_millihertz == 0 {
-        Status::InvalidArgument
-    } else {
-        state.monitor_id = monitor_id;
-        state.flags |= STATE_MONITOR_ACTIVE;
-        Status::Ok
-    };
-    finish(
-        state,
-        request.header.operation,
-        status,
-        [monitor_id, packed_geometry],
-    )
-}
-
-fn remove_monitor(mut state: CoreState, request: CoreRequest, monitor_id: u64) -> CoreTransition {
-    let status = if state.flags & STATE_ENCODER_ACTIVE != 0 {
-        Status::InvalidState
-    } else if state.flags & STATE_MONITOR_ACTIVE == 0 || state.monitor_id != monitor_id {
-        Status::NotReady
-    } else {
-        state.monitor_id = 0;
-        state.flags &= !(STATE_MONITOR_ACTIVE | STATE_KEYFRAME_PENDING);
-        Status::Ok
-    };
-    finish(state, request.header.operation, status, [0; 2])
-}
-
-fn start_encoder(mut state: CoreState, request: CoreRequest) -> CoreTransition {
-    let status = if state.flags & STATE_MONITOR_ACTIVE == 0 {
-        Status::NotReady
-    } else if state.flags & STATE_ENCODER_ACTIVE != 0 {
-        Status::Busy
-    } else {
-        state.flags |= STATE_ENCODER_ACTIVE;
-        Status::Ok
-    };
-    finish(state, request.header.operation, status, [0; 2])
-}
-
-fn stop_encoder(mut state: CoreState, request: CoreRequest) -> CoreTransition {
-    let status = if state.flags & STATE_ENCODER_ACTIVE == 0 {
-        Status::NotReady
-    } else {
-        state.flags &= !(STATE_ENCODER_ACTIVE | STATE_KEYFRAME_PENDING);
-        state.pending_access_unit_reads = [0; PENDING_READ_DEPTH];
-        Status::Ok
-    };
-    finish(state, request.header.operation, status, [0; 2])
-}
-
-fn request_keyframe(mut state: CoreState, request: CoreRequest) -> CoreTransition {
-    let status = if state.flags & STATE_ENCODER_ACTIVE == 0 {
-        Status::NotReady
-    } else {
-        state.flags |= STATE_KEYFRAME_PENDING;
-        Status::Ok
-    };
-    finish(state, request.header.operation, status, [0; 2])
 }
 
 fn health(state: CoreState, request: CoreRequest) -> CoreTransition {
@@ -211,11 +145,7 @@ fn health(state: CoreState, request: CoreRequest) -> CoreTransition {
     )
 }
 
-fn next_generation(current: u64) -> u64 {
-    current.checked_add(1).unwrap_or(1)
-}
-
-fn finish(
+pub(super) fn finish(
     mut state: CoreState,
     operation: u32,
     status: Status,

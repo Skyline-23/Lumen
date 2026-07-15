@@ -2,7 +2,7 @@ use std::mem::size_of;
 
 pub const ABI_MAGIC: u32 = 0x4C55_4D4E;
 pub const ABI_MAJOR: u16 = 1;
-pub const ABI_MINOR: u16 = 0;
+pub const ABI_MINOR: u16 = 1;
 pub const ABI_HEADER_SIZE: u32 = 16;
 pub const ABI_REQUEST_SIZE: u32 = 80;
 pub const ABI_RESPONSE_SIZE: u32 = 48;
@@ -11,6 +11,24 @@ pub const MAX_EVENT_BYTES: u64 = 256;
 pub const ACCESS_UNIT_QUEUE_DEPTH: u64 = 8;
 pub const EVENT_QUEUE_DEPTH: u64 = 32;
 pub const PENDING_READ_DEPTH: usize = 4;
+
+pub const IDDCX_VERSION_1_11: u64 = 0x1B00;
+pub const IDDCX_FEATURE_D3D12: u64 = 1 << 0;
+pub const ADAPTER_DEVICE_D3D11: u64 = 1 << 0;
+pub const ADAPTER_DEVICE_D3D12: u64 = 1 << 1;
+
+pub const BACKEND_D3D11: u32 = 1;
+pub const BACKEND_D3D12: u32 = 2;
+pub const SURFACE_D3D11_TEXTURE2D: u32 = 1;
+pub const SURFACE_D3D12_RESOURCE: u32 = 2;
+
+pub const ADAPTER_FEATURES_PROBED: u32 = 1 << 0;
+pub const ADAPTER_PREPARED: u32 = 1 << 1;
+pub const ADAPTER_INITIALIZED: u32 = 1 << 2;
+pub const ADAPTER_SWAPCHAIN_ASSIGNED: u32 = 1 << 3;
+pub const ADAPTER_REMOVED: u32 = 1 << 4;
+pub const BACKEND_CAPABILITY_D3D11: u32 = 1 << 0;
+pub const BACKEND_CAPABILITY_D3D12: u32 = 1 << 1;
 
 pub const STATE_MONITOR_ACTIVE: u32 = 1 << 0;
 pub const STATE_ENCODER_ACTIVE: u32 = 1 << 1;
@@ -31,6 +49,13 @@ pub enum Operation {
     DequeueEvent = 10,
     CancelPending = 11,
     QueryHealth = 12,
+    QueryBackendCapability = 13,
+    RecordOsFeatures = 14,
+    PrepareAdapter = 15,
+    CompleteAdapterInitialization = 16,
+    AssignSwapchain = 17,
+    UnassignSwapchain = 18,
+    AdapterRemoved = 19,
 }
 
 impl Operation {
@@ -48,6 +73,13 @@ impl Operation {
             Self::DequeueEvent => 10,
             Self::CancelPending => 11,
             Self::QueryHealth => 12,
+            Self::QueryBackendCapability => 13,
+            Self::RecordOsFeatures => 14,
+            Self::PrepareAdapter => 15,
+            Self::CompleteAdapterInitialization => 16,
+            Self::AssignSwapchain => 17,
+            Self::UnassignSwapchain => 18,
+            Self::AdapterRemoved => 19,
         }
     }
 
@@ -65,6 +97,13 @@ impl Operation {
             10 => Some(Self::DequeueEvent),
             11 => Some(Self::CancelPending),
             12 => Some(Self::QueryHealth),
+            13 => Some(Self::QueryBackendCapability),
+            14 => Some(Self::RecordOsFeatures),
+            15 => Some(Self::PrepareAdapter),
+            16 => Some(Self::CompleteAdapterInitialization),
+            17 => Some(Self::AssignSwapchain),
+            18 => Some(Self::UnassignSwapchain),
+            19 => Some(Self::AdapterRemoved),
             _ => None,
         }
     }
@@ -85,6 +124,9 @@ pub enum Status {
     QueueFull = 9,
     NotReady = 10,
     Pending = 11,
+    FeatureUnavailable = 12,
+    LuidMismatch = 13,
+    DeviceRemoved = 14,
 }
 
 impl Status {
@@ -102,6 +144,9 @@ impl Status {
             Self::QueueFull => 9,
             Self::NotReady => 10,
             Self::Pending => 11,
+            Self::FeatureUnavailable => 12,
+            Self::LuidMismatch => 13,
+            Self::DeviceRemoved => 14,
         }
     }
 }
@@ -184,6 +229,12 @@ pub struct CoreState {
     pub access_unit_queue_depth: u16,
     pub event_queue_depth: u16,
     pub reserved: [u8; 4],
+    pub render_adapter_luid: u64,
+    pub assigned_adapter_luid: u64,
+    pub iddcx_version: u32,
+    pub os_feature_flags: u32,
+    pub adapter_flags: u32,
+    pub backend_capability_mask: u32,
 }
 
 impl CoreState {
@@ -200,6 +251,12 @@ impl CoreState {
             access_unit_queue_depth: 0,
             event_queue_depth: 0,
             reserved: [0; 4],
+            render_adapter_luid: 0,
+            assigned_adapter_luid: 0,
+            iddcx_version: 0,
+            os_feature_flags: 0,
+            adapter_flags: 0,
+            backend_capability_mask: 0,
         }
     }
 }
@@ -214,5 +271,5 @@ pub struct CoreTransition {
 const _: () = assert!(size_of::<AbiHeader>() == 16);
 const _: () = assert!(size_of::<CoreRequest>() == 80);
 const _: () = assert!(size_of::<CoreResponse>() == 48);
-const _: () = assert!(size_of::<CoreState>() == 112);
-const _: () = assert!(size_of::<CoreTransition>() == 160);
+const _: () = assert!(size_of::<CoreState>() == 144);
+const _: () = assert!(size_of::<CoreTransition>() == 192);

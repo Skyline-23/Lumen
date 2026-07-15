@@ -1,15 +1,28 @@
 use lumen_windows_driver_core::{
     lumen_driver_core_dispatch, lumen_driver_core_initial_state, CoreRequest, CoreState, Operation,
-    Status, MAX_ACCESS_UNIT_BYTES, PENDING_READ_DEPTH,
+    Status, ADAPTER_DEVICE_D3D11, MAX_ACCESS_UNIT_BYTES, PENDING_READ_DEPTH,
 };
 
 const OWNER: u64 = 0xA11C_E001;
 
 fn ready_encoder() -> (CoreState, u64) {
     let initial = lumen_driver_core_initial_state();
+    let mut feature_probe = CoreRequest::new(Operation::RecordOsFeatures, 0, initial.generation);
+    feature_probe.arguments = [0x1A80, 1, 0, 0, 0];
+    let probed = lumen_driver_core_dispatch(initial, feature_probe);
+    let mut prepare = CoreRequest::new(Operation::PrepareAdapter, 0, initial.generation);
+    prepare.arguments = [0x0000_0002_0000_1234, ADAPTER_DEVICE_D3D11, 0, 0, 0];
+    let prepared = lumen_driver_core_dispatch(probed.state, prepare);
+    let mut complete = CoreRequest::new(
+        Operation::CompleteAdapterInitialization,
+        0,
+        initial.generation,
+    );
+    complete.arguments[0] = 1;
+    let initialized = lumen_driver_core_dispatch(prepared.state, complete);
     let claimed = lumen_driver_core_dispatch(
-        initial,
-        CoreRequest::new(Operation::ClaimOwner, OWNER, initial.generation),
+        initialized.state,
+        CoreRequest::new(Operation::ClaimOwner, OWNER, initialized.state.generation),
     );
     let mut create = CoreRequest::new(Operation::CreateMonitor, OWNER, claimed.state.generation);
     create.arguments = [7, (1920 << 32) | 1080, 120_000, 0, 0];
