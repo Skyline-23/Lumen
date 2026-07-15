@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::time::Duration;
 
 use mdns_sd::{ServiceDaemon, ServiceInfo};
@@ -36,6 +37,13 @@ impl MdnsService {
         let snapshot = authorities.settings().snapshot();
         let instance = instance_name(&snapshot.settings.general.name);
         let hostname = format!("{}.local.", dns_label(&instance));
+        let addresses = advertised_addresses_from_interfaces(
+            netdev::get_interfaces(),
+            arguments.get("address_family").unwrap_or("ipv4"),
+        );
+        if addresses.is_empty() {
+            return Err("no multicast LAN interface has a routable address".to_owned());
+        }
         let mut properties = HashMap::from([
             ("protocol-major".to_owned(), "2".to_owned()),
             (
@@ -57,12 +65,11 @@ impl MdnsService {
             SERVICE_TYPE,
             &instance,
             &hostname,
-            "",
+            &addresses[..],
             ports.native_session_quic,
             properties,
         )
-        .map_err(|error| format!("could not describe mDNS service: {error}"))?
-        .enable_addr_auto();
+        .map_err(|error| format!("could not describe mDNS service: {error}"))?;
         let fullname = service.get_fullname().to_owned();
         let daemon = ServiceDaemon::new()
             .map_err(|error| format!("could not create mDNS daemon: {error}"))?;
@@ -108,6 +115,68 @@ impl Drop for MdnsService {
     }
 }
 
+fn advertised_addresses_from_interfaces(
+    interfaces: Vec<netdev::Interface>,
+    address_family: &str,
+) -> Vec<IpAddr> {
+    let mut candidates = interfaces
+        .into_iter()
+        .filter(|interface| {
+            interface.is_up()
+                && interface.is_running()
+                && interface.is_multicast()
+                && !interface.is_loopback()
+                && !interface.is_point_to_point()
+        })
+        .filter_map(|interface| {
+            let addresses = advertised_addresses(&interface, address_family);
+            (!addresses.is_empty()).then_some((interface.name, addresses))
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| left.0.cmp(&right.0));
+    candidates
+        .into_iter()
+        .next()
+        .map(|(_, addresses)| addresses)
+        .unwrap_or_default()
+}
+
+fn advertised_addresses(interface: &netdev::Interface, address_family: &str) -> Vec<IpAddr> {
+    let mut addresses = interface
+        .ipv4
+        .iter()
+        .map(|network| network.addr())
+        .filter(|address| is_routable_ipv4(*address))
+        .map(IpAddr::V4)
+        .collect::<Vec<_>>();
+    if address_family == "both" {
+        addresses.extend(
+            interface
+                .ipv6
+                .iter()
+                .map(|network| network.addr())
+                .filter(|address| is_routable_ipv6(*address))
+                .map(IpAddr::V6),
+        );
+    }
+    addresses
+}
+
+fn is_routable_ipv4(address: Ipv4Addr) -> bool {
+    !address.is_loopback()
+        && !address.is_link_local()
+        && !address.is_unspecified()
+        && !address.is_multicast()
+        && address != Ipv4Addr::BROADCAST
+}
+
+fn is_routable_ipv6(address: Ipv6Addr) -> bool {
+    !address.is_loopback()
+        && !address.is_unicast_link_local()
+        && !address.is_unspecified()
+        && !address.is_multicast()
+}
+
 fn instance_name(hostname: &str) -> String {
     let mut output = String::with_capacity(hostname.len().min(63));
     for byte in hostname.bytes().take(63) {
@@ -130,5 +199,60 @@ fn dns_label(instance: &str) -> String {
         "lumen".to_owned()
     } else {
         label.to_ascii_lowercase()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
+    use netdev::interface::flags::{IFF_MULTICAST, IFF_POINTOPOINT, IFF_RUNNING, IFF_UP};
+    use netdev::ipnet::{Ipv4Net, Ipv6Net};
+
+    use super::*;
+
+    #[test]
+    fn filters_non_routable_addresses_from_an_interface() {
+        let mut interface = netdev::Interface::dummy();
+        interface.ipv4 = vec![
+            Ipv4Net::new(Ipv4Addr::LOCALHOST, 8).unwrap(),
+            Ipv4Net::new(Ipv4Addr::new(169, 254, 1, 2), 16).unwrap(),
+            Ipv4Net::new(Ipv4Addr::new(192, 168, 0, 51), 24).unwrap(),
+        ];
+        interface.ipv6 = vec![
+            Ipv6Net::new(Ipv6Addr::LOCALHOST, 128).unwrap(),
+            Ipv6Net::new("fe80::1".parse().unwrap(), 64).unwrap(),
+            Ipv6Net::new("fd00::51".parse().unwrap(), 64).unwrap(),
+        ];
+
+        assert_eq!(
+            advertised_addresses(&interface, "ipv4"),
+            [IpAddr::V4(Ipv4Addr::new(192, 168, 0, 51))]
+        );
+        assert_eq!(
+            advertised_addresses(&interface, "both"),
+            [
+                IpAddr::V4(Ipv4Addr::new(192, 168, 0, 51)),
+                IpAddr::V6("fd00::51".parse().unwrap()),
+            ]
+        );
+    }
+
+    #[test]
+    fn prefers_a_multicast_lan_interface_over_the_default_tunnel() {
+        let mut tunnel = netdev::Interface::dummy();
+        tunnel.name = "utun7".to_owned();
+        tunnel.flags = (IFF_UP | IFF_RUNNING | IFF_MULTICAST | IFF_POINTOPOINT) as u32;
+        tunnel.ipv4 = vec![Ipv4Net::new(Ipv4Addr::new(100, 85, 138, 127), 32).unwrap()];
+
+        let mut lan = netdev::Interface::dummy();
+        lan.name = "en0".to_owned();
+        lan.flags = (IFF_UP | IFF_RUNNING | IFF_MULTICAST) as u32;
+        lan.ipv4 = vec![Ipv4Net::new(Ipv4Addr::new(192, 168, 0, 51), 24).unwrap()];
+
+        assert_eq!(
+            advertised_addresses_from_interfaces(vec![tunnel, lan], "ipv4"),
+            [IpAddr::V4(Ipv4Addr::new(192, 168, 0, 51))]
+        );
     }
 }
