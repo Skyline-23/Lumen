@@ -109,6 +109,12 @@ pub enum PlatformControlEvent {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PlatformRuntimeEventDisposition {
+    Raised,
+    Cleared,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PlatformRuntimeEventSeverity {
     Warning,
     Error,
@@ -125,9 +131,10 @@ pub enum PlatformRuntimeEventCode {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PlatformRuntimeEvent {
+    pub disposition: PlatformRuntimeEventDisposition,
     pub severity: PlatformRuntimeEventSeverity,
     pub code: PlatformRuntimeEventCode,
-    pub message: String,
+    pub message: Option<String>,
 }
 
 pub trait PlatformSessionControl: Send + Sync {
@@ -273,6 +280,13 @@ pub struct LumenHostPlatformControlEvent {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LumenHostPlatformRuntimeEventDisposition {
+    Raised = 0,
+    Cleared = 1,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LumenHostPlatformRuntimeEventSeverity {
     Warning = 0,
     Error = 1,
@@ -291,6 +305,7 @@ pub enum LumenHostPlatformRuntimeEventCode {
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct LumenHostPlatformRuntimeEvent {
+    pub disposition: LumenHostPlatformRuntimeEventDisposition,
     pub severity: LumenHostPlatformRuntimeEventSeverity,
     pub code: LumenHostPlatformRuntimeEventCode,
     pub message: *const c_char,
@@ -576,9 +591,20 @@ impl PlatformSessionControl for CallbackPlatformSessionControl {
             .callbacks
             .publish_runtime_event
             .ok_or_else(|| "platform runtime event callback is missing".to_owned())?;
-        let message = CString::new(event.message)
+        let message = event
+            .message
+            .map(CString::new)
+            .transpose()
             .map_err(|_| "platform runtime event message contains a null byte".to_owned())?;
         let event = LumenHostPlatformRuntimeEvent {
+            disposition: match event.disposition {
+                PlatformRuntimeEventDisposition::Raised => {
+                    LumenHostPlatformRuntimeEventDisposition::Raised
+                }
+                PlatformRuntimeEventDisposition::Cleared => {
+                    LumenHostPlatformRuntimeEventDisposition::Cleared
+                }
+            },
             severity: match event.severity {
                 PlatformRuntimeEventSeverity::Warning => {
                     LumenHostPlatformRuntimeEventSeverity::Warning
@@ -602,7 +628,9 @@ impl PlatformSessionControl for CallbackPlatformSessionControl {
                     LumenHostPlatformRuntimeEventCode::UpnpPortRemoval
                 }
             },
-            message: message.as_ptr(),
+            message: message
+                .as_ref()
+                .map_or(std::ptr::null(), |message| message.as_ptr()),
         };
         let status = unsafe { callback(self.callbacks.context, &event) };
         if status == 0 {
@@ -742,7 +770,15 @@ mod tests {
     static STOPS: AtomicUsize = AtomicUsize::new(0);
     static FEEDBACK_READY: AtomicBool = AtomicBool::new(false);
     static CONTROL_EVENTS: Mutex<Vec<LumenHostPlatformControlEvent>> = Mutex::new(Vec::new());
-    static RUNTIME_EVENTS: Mutex<Vec<(u32, u32, String)>> = Mutex::new(Vec::new());
+    static RUNTIME_EVENTS: Mutex<Vec<RecordedRuntimeEvent>> = Mutex::new(Vec::new());
+
+    #[derive(Debug, Eq, PartialEq)]
+    struct RecordedRuntimeEvent {
+        disposition: LumenHostPlatformRuntimeEventDisposition,
+        severity: LumenHostPlatformRuntimeEventSeverity,
+        code: LumenHostPlatformRuntimeEventCode,
+        message: Option<String>,
+    }
 
     unsafe extern "C" fn start(
         _context: *mut c_void,
@@ -844,13 +880,17 @@ mod tests {
         event: *const LumenHostPlatformRuntimeEvent,
     ) -> i32 {
         let event = unsafe { &*event };
-        let message = unsafe { CStr::from_ptr(event.message) }
-            .to_string_lossy()
-            .into_owned();
-        RUNTIME_EVENTS
-            .lock()
-            .unwrap()
-            .push((event.severity as u32, event.code as u32, message));
+        let message = (!event.message.is_null()).then(|| {
+            unsafe { CStr::from_ptr(event.message) }
+                .to_string_lossy()
+                .into_owned()
+        });
+        RUNTIME_EVENTS.lock().unwrap().push(RecordedRuntimeEvent {
+            disposition: event.disposition,
+            severity: event.severity,
+            code: event.code,
+            message,
+        });
         0
     }
 
@@ -972,18 +1012,36 @@ mod tests {
         assert_eq!(adapter.poll_control_feedback().unwrap(), None);
         adapter
             .publish_runtime_event(PlatformRuntimeEvent {
+                disposition: PlatformRuntimeEventDisposition::Raised,
                 severity: PlatformRuntimeEventSeverity::Warning,
                 code: PlatformRuntimeEventCode::UpnpPortMapping,
-                message: "UDP 47998 is already mapped".to_owned(),
+                message: Some("UDP 47998 is already mapped".to_owned()),
+            })
+            .unwrap();
+        adapter
+            .publish_runtime_event(PlatformRuntimeEvent {
+                disposition: PlatformRuntimeEventDisposition::Cleared,
+                severity: PlatformRuntimeEventSeverity::Warning,
+                code: PlatformRuntimeEventCode::UpnpPortMapping,
+                message: None,
             })
             .unwrap();
         assert_eq!(
             *RUNTIME_EVENTS.lock().unwrap(),
-            vec![(
-                LumenHostPlatformRuntimeEventSeverity::Warning as u32,
-                LumenHostPlatformRuntimeEventCode::UpnpPortMapping as u32,
-                "UDP 47998 is already mapped".to_owned(),
-            )]
+            vec![
+                RecordedRuntimeEvent {
+                    disposition: LumenHostPlatformRuntimeEventDisposition::Raised,
+                    severity: LumenHostPlatformRuntimeEventSeverity::Warning,
+                    code: LumenHostPlatformRuntimeEventCode::UpnpPortMapping,
+                    message: Some("UDP 47998 is already mapped".to_owned()),
+                },
+                RecordedRuntimeEvent {
+                    disposition: LumenHostPlatformRuntimeEventDisposition::Cleared,
+                    severity: LumenHostPlatformRuntimeEventSeverity::Warning,
+                    code: LumenHostPlatformRuntimeEventCode::UpnpPortMapping,
+                    message: None,
+                },
+            ]
         );
     }
 

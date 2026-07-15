@@ -551,18 +551,21 @@ static int32_t LumenWorkerPublishRuntimeEvent(
   const LumenHostPlatformRuntimeEvent *event
 ) {
   (void) context;
-  if (!event || !event->message) {
+  if (!event) {
     return -1;
   }
-  NSString *message = [NSString stringWithUTF8String:event->message];
-  if (!message) {
+  NSString *message = event->message
+    ? [NSString stringWithUTF8String:event->message]
+    : nil;
+  if (event->disposition == LumenHostPlatformRuntimeEventDispositionRaised && !message) {
     return -1;
   }
   NSDictionary *userInfo = @{
     @"identifier": [NSString stringWithFormat:@"runtime-event-%u", (unsigned) event->code],
+    @"disposition": @((NSUInteger) event->disposition),
     @"severity": @((NSUInteger) event->severity),
     @"code": @((NSUInteger) event->code),
-    @"body": message,
+    @"body": message ?: @"",
     @"launchPath": @"/diagnostics",
   };
   [[NSDistributedNotificationCenter defaultCenter]
