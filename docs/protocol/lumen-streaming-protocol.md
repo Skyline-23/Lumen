@@ -40,7 +40,8 @@ session with a typed protocol error.
 
 Every session has a QUIC v1 control connection with TLS 1.3 and ALPN
 `lumen-stream/3`. Authentication, negotiation, reliable state, clock feedback,
-and recovery authority always remain on that connection.
+and recovery authority always remain on that connection. Native media key
+material uses the TLS exporter label `EXPORTER-Lumen-Session-v3`.
 
 Media always uses the single `lumen-udp-aead` transport after its UDP path is
 authenticated and validated. Lumen owns media pacing, deadlines, DSCP, loss
@@ -216,8 +217,8 @@ is never repeated in the header.
 
 | Offset | Size | Field |
 | ---: | ---: | --- |
-| 0 | 2 | magic `0x4C32` (`L2`) |
-| 2 | 1 | protocol version `2` |
+| 0 | 2 | magic `0x4C33` (`L3`) |
+| 2 | 1 | protocol version `3` |
 | 3 | 1 | datagram kind: video `1`, audio `2`, input motion `3` |
 | 4 | 2 | flags |
 | 6 | 2 | header bytes, initially `40` |
@@ -419,8 +420,8 @@ optional direct-media UDP port, host identity fingerprint, and enrollment
 requirement. When the owner enables UPnP, Lumen maps only the native QUIC and
 direct-media UDP ports.
 
-No RTSP, RTP, ENet, or legacy GameStream port is advertised or opened by a v2
-only host.
+No RTSP, RTP, ENet, or legacy GameStream port is advertised or opened by a
+v3-only host.
 
 The authoritative discovery field is mDNS TXT `quic-port`; authenticated HTTPS
 host discovery exposes the same value as `sessionQuicPort`. The default base
@@ -432,7 +433,7 @@ only when discovery is unavailable and the user supplied no explicit port.
 
 - **QUIC DATAGRAM** would reuse QUIC security and congestion state, but it adds
   another media behavior and transition state while coupling high-rate media to
-  the reliable control connection. Lumen v2 intentionally has no such fallback.
+  the reliable control connection. Lumen v3 intentionally has no such fallback.
 - **Raw UDP only** has the smallest media overhead but would duplicate
   authentication, NAT traversal, reliable control, and path recovery. Lumen
   uses it only after the QUIC-authenticated direct-path handshake.
@@ -447,7 +448,7 @@ only when discovery is unavailable and the user supplied no explicit port.
 
 ## Removal gate
 
-The v2-only release must satisfy all of these conditions:
+The v3-only release must satisfy all of these conditions:
 
 - Shadow completes a session without RTSP, SDP, RTP, ENet, or legacy launch
   fields;
