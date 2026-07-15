@@ -11,8 +11,8 @@ use std::time::Duration;
 use lumen_engine::{
     decode_client_control_message, decode_client_input_message, encode_codec_configuration_message,
     encode_host_control_message, encode_host_input_message, host_input_envelope, HostInputEnvelope,
-    HostSessionCapabilities, NativeInputAck, NATIVE_CONTROL_MESSAGE_LIMIT,
-    NATIVE_INPUT_MESSAGE_LIMIT,
+    HostSessionCapabilities, NativeInputAck, LUMEN_STREAMING_EXPORTER_LABEL,
+    LUMEN_STREAMING_PROTOCOL_ALPN, NATIVE_CONTROL_MESSAGE_LIMIT, NATIVE_INPUT_MESSAGE_LIMIT,
 };
 use quinn::crypto::rustls::QuicServerConfig;
 use quinn::{Endpoint, RecvStream, ServerConfig, TransportConfig, VarInt};
@@ -26,8 +26,6 @@ use crate::native_input::NativeInputSequence;
 use crate::network_ports::{NATIVE_QUIC_OFFSET, VIDEO_UDP_OFFSET};
 use crate::{HostArguments, NativeStreamControl, PlatformSessionControl};
 
-const ALPN: &[u8] = b"lumen-stream/2";
-const EXPORTER_LABEL: &[u8] = b"EXPORTER-Lumen-Session-v2";
 const SERVER_START_TIMEOUT: Duration = Duration::from_secs(2);
 const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const CONNECTION_STREAM_TIMEOUT: Duration = Duration::from_secs(2);
@@ -512,7 +510,7 @@ impl Drop for NativeInputResetGuard {
 fn session_material(connection: &quinn::Connection) -> Result<(u32, [u8; 16], [u8; 32]), String> {
     let mut material = [0_u8; 52];
     connection
-        .export_keying_material(&mut material, EXPORTER_LABEL, b"")
+        .export_keying_material(&mut material, LUMEN_STREAMING_EXPORTER_LABEL, b"")
         .map_err(|_| "could not derive QUIC session key material".to_owned())?;
     let mut epoch = u32::from_be_bytes(material[0..4].try_into().unwrap());
     if epoch == 0 {
@@ -525,19 +523,39 @@ fn session_material(connection: &quinn::Connection) -> Result<(u32, [u8; 16], [u
 
 fn default_host_capabilities() -> HostSessionCapabilities {
     HostSessionCapabilities {
-        supported_features: 0,
-        maximum_width: 7_680,
-        maximum_height: 4_320,
-        maximum_refresh_millihz: 240_000,
         maximum_datagram_payload: 1_200,
         maximum_receive_memory_bytes: 256 * 1024 * 1024,
-        supports_h264: true,
-        supports_hevc_main: true,
-        supports_hevc_main10: false,
-        supports_av1_main: false,
-        supports_av1_main10: false,
-        supports_hdr10: false,
+        video_capabilities: vec![
+            hardware_video_capability(lumen_engine::NativeVideoFormat {
+                codec: lumen_engine::NativeVideoCodec::H264 as i32,
+                profile: lumen_engine::NativeVideoProfile::H264High as i32,
+                chroma_subsampling: lumen_engine::NativeChromaSubsampling::Yuv420 as i32,
+                bit_depth: 8,
+                dynamic_range: lumen_engine::NativeDynamicRange::Sdr as i32,
+                color_range: lumen_engine::NativeColorRange::Limited as i32,
+            }),
+            hardware_video_capability(lumen_engine::NativeVideoFormat {
+                codec: lumen_engine::NativeVideoCodec::Hevc as i32,
+                profile: lumen_engine::NativeVideoProfile::HevcMain as i32,
+                chroma_subsampling: lumen_engine::NativeChromaSubsampling::Yuv420 as i32,
+                bit_depth: 8,
+                dynamic_range: lumen_engine::NativeDynamicRange::Sdr as i32,
+                color_range: lumen_engine::NativeColorRange::Limited as i32,
+            }),
+        ],
         supported_opus_channel_counts: vec![2, 6, 8],
+    }
+}
+
+fn hardware_video_capability(
+    format: lumen_engine::NativeVideoFormat,
+) -> lumen_engine::NativeVideoCapability {
+    lumen_engine::NativeVideoCapability {
+        format: Some(format),
+        max_width: 7_680,
+        max_height: 4_320,
+        max_refresh_millihz: 240_000,
+        hardware_accelerated: Some(true),
     }
 }
 
@@ -557,7 +575,7 @@ fn load_server_config(cert_path: &Path, key_path: &Path) -> Result<ServerConfig,
         .with_no_client_auth()
         .with_single_cert(certificates, key)
         .map_err(|error| format!("QUIC TLS identity is invalid: {error}"))?;
-    tls.alpn_protocols = vec![ALPN.to_vec()];
+    tls.alpn_protocols = vec![LUMEN_STREAMING_PROTOCOL_ALPN.to_vec()];
     let crypto = QuicServerConfig::try_from(tls)
         .map_err(|error| format!("QUIC TLS configuration is invalid: {error}"))?;
     let mut config = ServerConfig::with_crypto(Arc::new(crypto));
@@ -628,8 +646,9 @@ mod tests {
         decode_host_input_message, host_control_envelope, host_input_envelope,
         ClientControlEnvelope, ClientInputEnvelope, ClientSessionHello, CodecConfiguration,
         CodecConfigurationAck, MediaPathResponse, NativeAudioChannelMode, NativeAudioQuality,
-        NativeDisplayGamut, NativeDisplayTransfer, NativeDynamicRange, NativeKeyboardInput,
-        NativePolicyMode, NativeVideoCapability, NativeVideoCodec, StartSessionAck,
+        NativeChromaSubsampling, NativeColorRange, NativeDisplayGamut, NativeDisplayTransfer,
+        NativeDynamicRange, NativeKeyboardInput, NativePolicyMode, NativeVideoCapability,
+        NativeVideoCodec, NativeVideoFormat, NativeVideoProfile, StartSessionAck,
     };
     use quinn::crypto::rustls::QuicClientConfig;
     use rustls::pki_types::CertificateDer;
@@ -672,7 +691,7 @@ mod tests {
             let mut tls = rustls::ClientConfig::builder()
                 .with_root_certificates(roots)
                 .with_no_client_auth();
-            tls.alpn_protocols = vec![ALPN.to_vec()];
+            tls.alpn_protocols = vec![LUMEN_STREAMING_PROTOCOL_ALPN.to_vec()];
             let crypto = QuicClientConfig::try_from(tls).unwrap();
             let mut client = Endpoint::client(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).unwrap();
             let mut client_config = quinn::ClientConfig::new(Arc::new(crypto));
@@ -799,7 +818,7 @@ mod tests {
                 session_epoch: plan.session_epoch,
                 stream_id: plan.video_stream_id,
                 configuration_id: plan.video_configuration_id,
-                codec: plan.video_codec,
+                codec: plan.selected_video_codec().unwrap() as i32,
                 decoder_configuration_record: vec![1, 2, 3, 4],
             };
             assert!(shared_router
@@ -882,6 +901,63 @@ mod tests {
             .unwrap()
             .pending_native_media_key_from_test();
         assert_eq!(pending_key, Some(expected_media_key));
+        transport.stop().unwrap();
+    }
+
+    #[test]
+    fn quic_bootstrap_rejects_generation_two_alpn_before_control_stream_creation() {
+        // Given: a generation-three host and a client offering only the retired ALPN.
+        let root = tempfile::tempdir().unwrap();
+        let (certificate, certificate_der) = write_identity(root.path());
+        let (router, _) = test_router(root.path());
+        let arguments = test_arguments(root.path(), &certificate);
+        let shared_router = Arc::new(Mutex::new(router));
+        let mut transport = QuicSessionTransport::default();
+        transport
+            .start(
+                &arguments,
+                Arc::clone(&shared_router),
+                Arc::new(IdlePlatformSessionControl),
+            )
+            .unwrap();
+        let server = transport.local_address().unwrap();
+
+        // When: the client attempts a real QUIC handshake using lumen-stream/2.
+        let error = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let mut roots = rustls::RootCertStore::empty();
+                roots.add(certificate_der).unwrap();
+                let mut tls = rustls::ClientConfig::builder()
+                    .with_root_certificates(roots)
+                    .with_no_client_auth();
+                tls.alpn_protocols = vec![b"lumen-stream/2".to_vec()];
+                let crypto = QuicClientConfig::try_from(tls).unwrap();
+                let mut client =
+                    Endpoint::client(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).unwrap();
+                client.set_default_client_config(quinn::ClientConfig::new(Arc::new(crypto)));
+                client
+                    .connect(
+                        SocketAddr::from((Ipv4Addr::LOCALHOST, server.port())),
+                        "localhost",
+                    )
+                    .unwrap()
+                    .await
+                    .unwrap_err()
+            });
+
+        // Then: TLS rejects the stale generation before a session can mutate router state.
+        println!("generation-two ALPN rejection: {error}");
+        assert!(error
+            .to_string()
+            .contains("peer doesn't support any known protocol"));
+        assert!(shared_router
+            .lock()
+            .unwrap()
+            .pending_native_media_key(1)
+            .is_none());
         transport.stop().unwrap();
     }
 
@@ -997,26 +1073,29 @@ mod tests {
 
     fn native_hello(application_id: u32) -> ClientSessionHello {
         ClientSessionHello {
-            minimum_protocol_version: 2,
-            maximum_protocol_version: 2,
-            required_features: 0,
+            minimum_protocol_version: 3,
+            maximum_protocol_version: 3,
             width: 3_840,
             height: 2_160,
             refresh_millihz: 120_000,
             video_capabilities: vec![NativeVideoCapability {
-                codec: NativeVideoCodec::Hevc as i32,
-                max_bit_depth: 8,
-                supports_hdr10: false,
+                format: Some(NativeVideoFormat {
+                    codec: NativeVideoCodec::Hevc as i32,
+                    profile: NativeVideoProfile::HevcMain as i32,
+                    chroma_subsampling: NativeChromaSubsampling::Yuv420 as i32,
+                    bit_depth: 8,
+                    dynamic_range: NativeDynamicRange::Sdr as i32,
+                    color_range: NativeColorRange::Limited as i32,
+                }),
                 max_width: 3_840,
                 max_height: 2_160,
                 max_refresh_millihz: 120_000,
+                hardware_accelerated: Some(true),
             }],
-            requested_dynamic_range: NativeDynamicRange::Sdr as i32,
             requested_policy: NativePolicyMode::UltraLatency as i32,
             maximum_datagram_payload: 1_200,
             receive_memory_bytes: 64 * 1024 * 1024,
             opus_channel_counts: vec![2],
-            requested_video_codec: NativeVideoCodec::Hevc as i32,
             device_id: "device-42".to_owned(),
             access_token: "access-token".to_owned(),
             application_id,
@@ -1040,6 +1119,14 @@ mod tests {
             requested_audio_quality: NativeAudioQuality::High as i32,
             requested_audio_channel_mode: NativeAudioChannelMode::Stereo as i32,
             streaming_profile_revision: 1,
+            requested_video_format: Some(NativeVideoFormat {
+                codec: NativeVideoCodec::Hevc as i32,
+                profile: NativeVideoProfile::HevcMain as i32,
+                chroma_subsampling: NativeChromaSubsampling::Yuv420 as i32,
+                bit_depth: 8,
+                dynamic_range: NativeDynamicRange::Sdr as i32,
+                color_range: NativeColorRange::Limited as i32,
+            }),
         }
     }
 }

@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package lumen.streaming.v2;
+package lumen.streaming.v3;
 
 enum VideoCodec {
   VIDEO_CODEC_UNSPECIFIED = 0;
@@ -13,6 +13,30 @@ enum DynamicRange {
   DYNAMIC_RANGE_UNSPECIFIED = 0;
   DYNAMIC_RANGE_SDR = 1;
   DYNAMIC_RANGE_HDR10 = 2;
+}
+
+enum VideoProfile {
+  VIDEO_PROFILE_UNSPECIFIED = 0;
+  VIDEO_PROFILE_H264_MAIN = 1;
+  VIDEO_PROFILE_H264_HIGH = 2;
+  VIDEO_PROFILE_H264_HIGH_444_PREDICTIVE = 3;
+  VIDEO_PROFILE_HEVC_MAIN = 4;
+  VIDEO_PROFILE_HEVC_MAIN10 = 5;
+  VIDEO_PROFILE_HEVC_MAIN_444 = 6;
+  VIDEO_PROFILE_HEVC_MAIN_444_10 = 7;
+  VIDEO_PROFILE_AV1_MAIN = 8;
+}
+
+enum ChromaSubsampling {
+  CHROMA_SUBSAMPLING_UNSPECIFIED = 0;
+  CHROMA_SUBSAMPLING_YUV420 = 1;
+  CHROMA_SUBSAMPLING_YUV444 = 2;
+}
+
+enum ColorRange {
+  COLOR_RANGE_UNSPECIFIED = 0;
+  COLOR_RANGE_LIMITED = 1;
+  COLOR_RANGE_FULL = 2;
 }
 
 enum AudioChannelMode {
@@ -31,7 +55,7 @@ enum AudioQuality {
 enum NegotiationFailure {
   NEGOTIATION_FAILURE_UNSPECIFIED = 0;
   NEGOTIATION_FAILURE_UNSUPPORTED_PROTOCOL_VERSION = 1;
-  NEGOTIATION_FAILURE_UNSUPPORTED_REQUIRED_FEATURES = 2;
+  reserved 2;
   NEGOTIATION_FAILURE_INVALID_SESSION_EPOCH = 3;
   NEGOTIATION_FAILURE_INVALID_DISPLAY_MODE = 4;
   NEGOTIATION_FAILURE_INVALID_PRESENTATION_CONTRACT = 5;
@@ -99,29 +123,38 @@ enum GamepadButton {
   GAMEPAD_BUTTON_DPAD_RIGHT = 15;
 }
 
-message VideoCapability {
+message VideoFormat {
   VideoCodec codec = 1;
-  uint32 max_bit_depth = 2;
-  bool supports_hdr10 = 3;
-  uint32 max_width = 4;
-  uint32 max_height = 5;
-  uint32 max_refresh_millihz = 6;
+  VideoProfile profile = 2;
+  ChromaSubsampling chroma_subsampling = 3;
+  uint32 bit_depth = 4;
+  DynamicRange dynamic_range = 5;
+  ColorRange color_range = 6;
+}
+
+message VideoCapability {
+  reserved 1, 2, 3, 4, 5, 6;
+  VideoFormat format = 7;
+  uint32 max_width = 8;
+  uint32 max_height = 9;
+  uint32 max_refresh_millihz = 10;
+  optional bool hardware_accelerated = 11;
 }
 
 message ClientSessionHello {
   uint32 minimum_protocol_version = 1;
   uint32 maximum_protocol_version = 2;
-  uint64 required_features = 3;
+  reserved 3;
   uint32 width = 4;
   uint32 height = 5;
   uint32 refresh_millihz = 6;
   repeated VideoCapability video_capabilities = 7;
-  DynamicRange requested_dynamic_range = 8;
+  reserved 8;
   PolicyMode requested_policy = 9;
   uint32 maximum_datagram_payload = 10;
   uint64 receive_memory_bytes = 11;
   repeated uint32 opus_channel_counts = 12;
-  VideoCodec requested_video_codec = 13;
+  reserved 13;
   string device_id = 14;
   string access_token = 15;
   uint32 application_id = 16;
@@ -145,18 +178,17 @@ message ClientSessionHello {
   AudioQuality requested_audio_quality = 34;
   AudioChannelMode requested_audio_channel_mode = 35;
   uint64 streaming_profile_revision = 36;
+  VideoFormat requested_video_format = 37;
 }
 
 message HostSessionPlan {
   uint32 protocol_version = 1;
   uint32 session_epoch = 2;
-  uint64 selected_features = 3;
+  reserved 3;
   uint32 encoded_width = 4;
   uint32 encoded_height = 5;
   uint32 refresh_millihz = 6;
-  VideoCodec video_codec = 7;
-  uint32 bit_depth = 8;
-  DynamicRange dynamic_range = 9;
+  reserved 7, 8, 9;
   PolicyMode policy = 10;
   uint32 maximum_datagram_payload = 11;
   uint32 maximum_presentable_frames = 12;
@@ -191,6 +223,7 @@ message HostSessionPlan {
   uint32 maximum_data_shards = 41;
   uint32 maximum_parity_shards = 42;
   uint32 initial_parity_percentage = 43;
+  VideoCapability selected_video_capability = 44;
 }
 
 message CodecConfiguration {

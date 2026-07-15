@@ -469,7 +469,11 @@ impl ControlRouter {
                 || configuration.stream_id != pending.plan.video_stream_id
                 || configuration.configuration_id == 0
                 || configuration.decoder_configuration_record.is_empty()
-                || configuration.codec != pending.plan.video_codec
+                || pending
+                    .plan
+                    .selected_video_codec()
+                    .map(|codec| codec as i32)
+                    != Some(configuration.codec)
                 || pending.codec_configuration.as_ref().is_some_and(|current| {
                     current.configuration_id >= configuration.configuration_id
                 })
@@ -633,17 +637,17 @@ fn native_platform_session_plan(
 }
 
 fn platform_video_codec(plan: &HostSessionPlan) -> Option<PlatformVideoCodec> {
-    match NativeVideoCodec::try_from(plan.video_codec) {
-        Ok(NativeVideoCodec::H264) => Some(PlatformVideoCodec::H264),
-        Ok(NativeVideoCodec::Hevc) => Some(PlatformVideoCodec::Hevc),
-        Ok(NativeVideoCodec::Av1) => Some(PlatformVideoCodec::Av1),
-        _ => None,
+    match plan.selected_video_codec()? {
+        NativeVideoCodec::H264 => Some(PlatformVideoCodec::H264),
+        NativeVideoCodec::Hevc => Some(PlatformVideoCodec::Hevc),
+        NativeVideoCodec::Av1 => Some(PlatformVideoCodec::Av1),
+        NativeVideoCodec::Unspecified => None,
     }
 }
 
 fn native_session_offer(plan: &HostSessionPlan) -> Result<LumenSessionOffer, String> {
     Ok(LumenSessionOffer {
-        version: 2,
+        version: 3,
         hidpi: plan.sink_hidpi,
         scale_explicit: plan.sink_scale_explicit,
         mode_is_logical: plan.sink_mode_is_logical,

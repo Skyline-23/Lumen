@@ -5,7 +5,7 @@ use super::native_transport::{
     NATIVE_VIDEO_STREAM_ID,
 };
 
-const NATIVE_PROTOCOL_VERSION: u32 = 2;
+pub const NATIVE_PROTOCOL_VERSION: u32 = 3;
 const MINIMUM_DATAGRAM_PAYLOAD: u32 = 1_200;
 const INITIAL_PATH_ID: u32 = 1;
 const INITIAL_POLICY_REVISION: u32 = 1;
@@ -30,6 +30,36 @@ pub enum NativeDynamicRange {
     Unspecified = 0,
     Sdr = 1,
     Hdr10 = 2,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Enumeration)]
+#[repr(i32)]
+pub enum NativeVideoProfile {
+    Unspecified = 0,
+    H264Main = 1,
+    H264High = 2,
+    H264High444Predictive = 3,
+    HevcMain = 4,
+    HevcMain10 = 5,
+    HevcMain444 = 6,
+    HevcMain44410 = 7,
+    Av1Main = 8,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Enumeration)]
+#[repr(i32)]
+pub enum NativeChromaSubsampling {
+    Unspecified = 0,
+    Yuv420 = 1,
+    Yuv444 = 2,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Enumeration)]
+#[repr(i32)]
+pub enum NativeColorRange {
+    Unspecified = 0,
+    Limited = 1,
+    Full = 2,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Enumeration)]
@@ -65,7 +95,6 @@ pub enum NativeAudioQuality {
 pub enum NativeNegotiationFailure {
     Unspecified = 0,
     UnsupportedProtocolVersion = 1,
-    UnsupportedRequiredFeatures = 2,
     InvalidSessionEpoch = 3,
     InvalidDisplayMode = 4,
     InvalidPresentationContract = 5,
@@ -107,20 +136,34 @@ pub enum NativeDisplayTransfer {
     Hlg = 3,
 }
 
-#[derive(Clone, PartialEq, Message)]
-pub struct NativeVideoCapability {
+#[derive(Clone, Eq, PartialEq, Message)]
+pub struct NativeVideoFormat {
     #[prost(enumeration = "NativeVideoCodec", tag = "1")]
     pub codec: i32,
-    #[prost(uint32, tag = "2")]
-    pub max_bit_depth: u32,
-    #[prost(bool, tag = "3")]
-    pub supports_hdr10: bool,
+    #[prost(enumeration = "NativeVideoProfile", tag = "2")]
+    pub profile: i32,
+    #[prost(enumeration = "NativeChromaSubsampling", tag = "3")]
+    pub chroma_subsampling: i32,
     #[prost(uint32, tag = "4")]
+    pub bit_depth: u32,
+    #[prost(enumeration = "NativeDynamicRange", tag = "5")]
+    pub dynamic_range: i32,
+    #[prost(enumeration = "NativeColorRange", tag = "6")]
+    pub color_range: i32,
+}
+
+#[derive(Clone, Eq, PartialEq, Message)]
+pub struct NativeVideoCapability {
+    #[prost(message, optional, tag = "7")]
+    pub format: Option<NativeVideoFormat>,
+    #[prost(uint32, tag = "8")]
     pub max_width: u32,
-    #[prost(uint32, tag = "5")]
+    #[prost(uint32, tag = "9")]
     pub max_height: u32,
-    #[prost(uint32, tag = "6")]
+    #[prost(uint32, tag = "10")]
     pub max_refresh_millihz: u32,
+    #[prost(bool, optional, tag = "11")]
+    pub hardware_accelerated: Option<bool>,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -129,8 +172,6 @@ pub struct ClientSessionHello {
     pub minimum_protocol_version: u32,
     #[prost(uint32, tag = "2")]
     pub maximum_protocol_version: u32,
-    #[prost(uint64, tag = "3")]
-    pub required_features: u64,
     #[prost(uint32, tag = "4")]
     pub width: u32,
     #[prost(uint32, tag = "5")]
@@ -139,8 +180,6 @@ pub struct ClientSessionHello {
     pub refresh_millihz: u32,
     #[prost(message, repeated, tag = "7")]
     pub video_capabilities: Vec<NativeVideoCapability>,
-    #[prost(enumeration = "NativeDynamicRange", tag = "8")]
-    pub requested_dynamic_range: i32,
     #[prost(enumeration = "NativePolicyMode", tag = "9")]
     pub requested_policy: i32,
     #[prost(uint32, tag = "10")]
@@ -149,8 +188,6 @@ pub struct ClientSessionHello {
     pub receive_memory_bytes: u64,
     #[prost(uint32, repeated, tag = "12")]
     pub opus_channel_counts: Vec<u32>,
-    #[prost(enumeration = "NativeVideoCodec", tag = "13")]
-    pub requested_video_codec: i32,
     #[prost(string, tag = "14")]
     pub device_id: String,
     #[prost(string, tag = "15")]
@@ -197,6 +234,8 @@ pub struct ClientSessionHello {
     pub requested_audio_channel_mode: i32,
     #[prost(uint64, tag = "36")]
     pub streaming_profile_revision: u64,
+    #[prost(message, optional, tag = "37")]
+    pub requested_video_format: Option<NativeVideoFormat>,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -205,20 +244,12 @@ pub struct HostSessionPlan {
     pub protocol_version: u32,
     #[prost(uint32, tag = "2")]
     pub session_epoch: u32,
-    #[prost(uint64, tag = "3")]
-    pub selected_features: u64,
     #[prost(uint32, tag = "4")]
     pub encoded_width: u32,
     #[prost(uint32, tag = "5")]
     pub encoded_height: u32,
     #[prost(uint32, tag = "6")]
     pub refresh_millihz: u32,
-    #[prost(enumeration = "NativeVideoCodec", tag = "7")]
-    pub video_codec: i32,
-    #[prost(uint32, tag = "8")]
-    pub bit_depth: u32,
-    #[prost(enumeration = "NativeDynamicRange", tag = "9")]
-    pub dynamic_range: i32,
     #[prost(enumeration = "NativePolicyMode", tag = "10")]
     pub policy: i32,
     #[prost(uint32, tag = "11")]
@@ -287,6 +318,21 @@ pub struct HostSessionPlan {
     pub maximum_parity_shards: u32,
     #[prost(uint32, tag = "43")]
     pub initial_parity_percentage: u32,
+    #[prost(message, optional, tag = "44")]
+    pub selected_video_capability: Option<NativeVideoCapability>,
+}
+
+impl HostSessionPlan {
+    pub fn selected_video_format(&self) -> Option<&NativeVideoFormat> {
+        self.selected_video_capability
+            .as_ref()
+            .and_then(|capability| capability.format.as_ref())
+    }
+
+    pub fn selected_video_codec(&self) -> Option<NativeVideoCodec> {
+        self.selected_video_format()
+            .and_then(|format| NativeVideoCodec::try_from(format.codec).ok())
+    }
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -572,25 +618,15 @@ fn control_body(bytes: &[u8]) -> Result<&[u8], NativeControlWireError> {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HostSessionCapabilities {
-    pub supported_features: u64,
-    pub maximum_width: u32,
-    pub maximum_height: u32,
-    pub maximum_refresh_millihz: u32,
     pub maximum_datagram_payload: u32,
     pub maximum_receive_memory_bytes: u64,
-    pub supports_h264: bool,
-    pub supports_hevc_main: bool,
-    pub supports_hevc_main10: bool,
-    pub supports_av1_main: bool,
-    pub supports_av1_main10: bool,
-    pub supports_hdr10: bool,
+    pub video_capabilities: Vec<NativeVideoCapability>,
     pub supported_opus_channel_counts: Vec<u32>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NativeSessionError {
     UnsupportedProtocolVersion,
-    UnsupportedRequiredFeatures,
     InvalidSessionEpoch,
     InvalidDisplayMode,
     InvalidPresentationContract,
@@ -609,7 +645,6 @@ impl From<NativeSessionError> for NativeNegotiationFailure {
     fn from(error: NativeSessionError) -> Self {
         match error {
             NativeSessionError::UnsupportedProtocolVersion => Self::UnsupportedProtocolVersion,
-            NativeSessionError::UnsupportedRequiredFeatures => Self::UnsupportedRequiredFeatures,
             NativeSessionError::InvalidSessionEpoch => Self::InvalidSessionEpoch,
             NativeSessionError::InvalidDisplayMode => Self::InvalidDisplayMode,
             NativeSessionError::InvalidPresentationContract => Self::InvalidPresentationContract,
@@ -638,10 +673,12 @@ pub fn negotiate_native_session(
         .ok()
         .filter(|policy| *policy != NativePolicyMode::Unspecified)
         .ok_or(NativeSessionError::InvalidPolicyMode)?;
-    let requested_dynamic_range = NativeDynamicRange::try_from(client.requested_dynamic_range)
-        .ok()
-        .filter(|range| *range != NativeDynamicRange::Unspecified)
-        .ok_or(NativeSessionError::InvalidDynamicRange)?;
+    let requested_format = client
+        .requested_video_format
+        .as_ref()
+        .ok_or(NativeSessionError::UnsupportedProtocolVersion)?;
+    let requested_exact_format = exact_video_format(requested_format)
+        .ok_or(NativeSessionError::UnsupportedProtocolVersion)?;
     let sink_gamut = NativeDisplayGamut::try_from(client.sink_gamut)
         .ok()
         .filter(|gamut| *gamut != NativeDisplayGamut::Unspecified)
@@ -650,27 +687,13 @@ pub fn negotiate_native_session(
         .ok()
         .filter(|transfer| *transfer != NativeDisplayTransfer::Unspecified)
         .ok_or(NativeSessionError::InvalidPresentationContract)?;
-    let requested_video_codec = NativeVideoCodec::try_from(client.requested_video_codec)
-        .ok()
-        .filter(|codec| *codec != NativeVideoCodec::Unspecified)
-        .ok_or(NativeSessionError::InvalidVideoCodec)?;
-    let bit_depth = if requested_dynamic_range == NativeDynamicRange::Hdr10 {
-        10
-    } else {
-        8
-    };
-    if !host_supports_video_selection(host, requested_video_codec, requested_dynamic_range) {
-        return Err(NativeSessionError::UnsupportedVideoSelection);
-    }
-    let selected_video_capability = find_capability(
-        client,
-        requested_video_codec,
-        bit_depth,
-        requested_dynamic_range == NativeDynamicRange::Hdr10,
-    )
-    .ok_or(NativeSessionError::UnsupportedVideoSelection)?;
-    validate_display_capability(client, host, selected_video_capability)?;
-    let sink_transfer = if requested_dynamic_range == NativeDynamicRange::Hdr10 {
+    let client_video_capability =
+        find_exact_capability(&client.video_capabilities, requested_format)
+            .ok_or(NativeSessionError::UnsupportedVideoSelection)?;
+    let host_video_capability = find_exact_capability(&host.video_capabilities, requested_format)
+        .ok_or(NativeSessionError::UnsupportedVideoSelection)?;
+    validate_display_capabilities(client, client_video_capability, host_video_capability)?;
+    let sink_transfer = if requested_exact_format.dynamic_range == NativeDynamicRange::Hdr10 {
         requested_transfer
     } else {
         NativeDisplayTransfer::Sdr
@@ -710,13 +733,9 @@ pub fn negotiate_native_session(
     Ok(HostSessionPlan {
         protocol_version: NATIVE_PROTOCOL_VERSION,
         session_epoch,
-        selected_features: client.required_features,
         encoded_width: client.width,
         encoded_height: client.height,
         refresh_millihz: client.refresh_millihz,
-        video_codec: requested_video_codec as i32,
-        bit_depth,
-        dynamic_range: requested_dynamic_range as i32,
         policy: policy as i32,
         maximum_datagram_payload,
         maximum_presentable_frames: match policy {
@@ -741,7 +760,10 @@ pub fn negotiate_native_session(
         sink_supports_hdr_tile_overlay: client.sink_supports_hdr_tile_overlay,
         sink_supports_per_frame_hdr_metadata: client.sink_supports_per_frame_hdr_metadata,
         enhanced_audio_quality: audio_quality == NativeAudioQuality::High,
-        dynamic_range_transport: selected_dynamic_range_transport(client, requested_dynamic_range),
+        dynamic_range_transport: selected_dynamic_range_transport(
+            client,
+            requested_exact_format.dynamic_range,
+        ),
         sink_hidpi: client.sink_hidpi,
         sink_scale_explicit: client.sink_scale_explicit,
         sink_mode_is_logical: client.sink_mode_is_logical,
@@ -756,26 +778,86 @@ pub fn negotiate_native_session(
         maximum_data_shards: MAXIMUM_DATA_SHARDS,
         maximum_parity_shards: MAXIMUM_PARITY_SHARDS,
         initial_parity_percentage: INITIAL_PARITY_PERCENTAGE,
+        selected_video_capability: Some(NativeVideoCapability {
+            format: Some(requested_format.clone()),
+            max_width: client.width,
+            max_height: client.height,
+            max_refresh_millihz: client.refresh_millihz,
+            hardware_accelerated: Some(true),
+        }),
     })
 }
 
-fn host_supports_video_selection(
-    host: &HostSessionCapabilities,
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ExactVideoFormat {
     codec: NativeVideoCodec,
+    profile: NativeVideoProfile,
+    chroma_subsampling: NativeChromaSubsampling,
+    bit_depth: u32,
     dynamic_range: NativeDynamicRange,
-) -> bool {
-    match (codec, dynamic_range) {
-        (NativeVideoCodec::H264, NativeDynamicRange::Sdr) => host.supports_h264,
-        (NativeVideoCodec::Hevc, NativeDynamicRange::Sdr) => host.supports_hevc_main,
-        (NativeVideoCodec::Hevc, NativeDynamicRange::Hdr10) => {
-            host.supports_hevc_main10 && host.supports_hdr10
+    color_range: NativeColorRange,
+}
+
+fn exact_video_format(format: &NativeVideoFormat) -> Option<ExactVideoFormat> {
+    let exact = ExactVideoFormat {
+        codec: NativeVideoCodec::try_from(format.codec).ok()?,
+        profile: NativeVideoProfile::try_from(format.profile).ok()?,
+        chroma_subsampling: NativeChromaSubsampling::try_from(format.chroma_subsampling).ok()?,
+        bit_depth: format.bit_depth,
+        dynamic_range: NativeDynamicRange::try_from(format.dynamic_range).ok()?,
+        color_range: NativeColorRange::try_from(format.color_range).ok()?,
+    };
+    let profile_matches = match exact.profile {
+        NativeVideoProfile::H264Main | NativeVideoProfile::H264High => {
+            exact.codec == NativeVideoCodec::H264
+                && exact.chroma_subsampling == NativeChromaSubsampling::Yuv420
+                && exact.bit_depth == 8
         }
-        (NativeVideoCodec::Av1, NativeDynamicRange::Sdr) => host.supports_av1_main,
-        (NativeVideoCodec::Av1, NativeDynamicRange::Hdr10) => {
-            host.supports_av1_main10 && host.supports_hdr10
+        NativeVideoProfile::H264High444Predictive => {
+            exact.codec == NativeVideoCodec::H264
+                && exact.chroma_subsampling == NativeChromaSubsampling::Yuv444
+                && exact.bit_depth == 8
         }
-        _ => false,
-    }
+        NativeVideoProfile::HevcMain => {
+            exact.codec == NativeVideoCodec::Hevc
+                && exact.chroma_subsampling == NativeChromaSubsampling::Yuv420
+                && exact.bit_depth == 8
+        }
+        NativeVideoProfile::HevcMain10 => {
+            exact.codec == NativeVideoCodec::Hevc
+                && exact.chroma_subsampling == NativeChromaSubsampling::Yuv420
+                && exact.bit_depth == 10
+        }
+        NativeVideoProfile::HevcMain444 => {
+            exact.codec == NativeVideoCodec::Hevc
+                && exact.chroma_subsampling == NativeChromaSubsampling::Yuv444
+                && exact.bit_depth == 8
+        }
+        NativeVideoProfile::HevcMain44410 => {
+            exact.codec == NativeVideoCodec::Hevc
+                && exact.chroma_subsampling == NativeChromaSubsampling::Yuv444
+                && exact.bit_depth == 10
+        }
+        NativeVideoProfile::Av1Main => {
+            exact.codec == NativeVideoCodec::Av1
+                && exact.chroma_subsampling == NativeChromaSubsampling::Yuv420
+                && matches!(exact.bit_depth, 8 | 10)
+        }
+        NativeVideoProfile::Unspecified => false,
+    };
+    let range_matches = match exact.dynamic_range {
+        NativeDynamicRange::Sdr => true,
+        NativeDynamicRange::Hdr10 => {
+            exact.bit_depth == 10 && exact.color_range == NativeColorRange::Limited
+        }
+        NativeDynamicRange::Unspecified => false,
+    };
+    (profile_matches
+        && range_matches
+        && exact.codec != NativeVideoCodec::Unspecified
+        && exact.chroma_subsampling != NativeChromaSubsampling::Unspecified
+        && exact.color_range != NativeColorRange::Unspecified)
+        .then_some(exact)
 }
 
 fn validate_protocol(
@@ -788,8 +870,18 @@ fn validate_protocol(
     {
         return Err(NativeSessionError::UnsupportedProtocolVersion);
     }
-    if client.required_features & !host.supported_features != 0 {
-        return Err(NativeSessionError::UnsupportedRequiredFeatures);
+    if client.video_capabilities.is_empty()
+        || client.requested_video_format.is_none()
+        || client.video_capabilities.iter().any(|capability| {
+            capability.hardware_accelerated.is_none()
+                || capability
+                    .format
+                    .as_ref()
+                    .and_then(exact_video_format)
+                    .is_none()
+        })
+    {
+        return Err(NativeSessionError::UnsupportedProtocolVersion);
     }
     if session_epoch == 0 {
         return Err(NativeSessionError::InvalidSessionEpoch);
@@ -799,13 +891,20 @@ fn validate_protocol(
     {
         return Err(NativeSessionError::InvalidReceiveMemory);
     }
-    validate_presentation_contract(client)?;
+    let dynamic_range = client
+        .requested_video_format
+        .as_ref()
+        .and_then(exact_video_format)
+        .map(|format| format.dynamic_range)
+        .ok_or(NativeSessionError::UnsupportedProtocolVersion)?;
+    validate_presentation_contract(client, dynamic_range)?;
     Ok(())
 }
 
-fn validate_presentation_contract(client: &ClientSessionHello) -> Result<(), NativeSessionError> {
-    let dynamic_range = NativeDynamicRange::try_from(client.requested_dynamic_range)
-        .map_err(|_| NativeSessionError::InvalidDynamicRange)?;
+fn validate_presentation_contract(
+    client: &ClientSessionHello,
+    dynamic_range: NativeDynamicRange,
+) -> Result<(), NativeSessionError> {
     let transfer = NativeDisplayTransfer::try_from(client.sink_transfer)
         .map_err(|_| NativeSessionError::InvalidPresentationContract)?;
     let gamut = NativeDisplayGamut::try_from(client.sink_gamut)
@@ -846,33 +945,35 @@ fn selected_dynamic_range_transport(
     }
 }
 
-fn find_capability(
-    client: &ClientSessionHello,
-    codec: NativeVideoCodec,
-    minimum_bit_depth: u32,
-    require_hdr10: bool,
-) -> Option<&NativeVideoCapability> {
-    client.video_capabilities.iter().find(|capability| {
-        capability.codec == codec as i32
-            && capability.max_bit_depth >= minimum_bit_depth
-            && (!require_hdr10 || capability.supports_hdr10)
+fn find_exact_capability<'a>(
+    capabilities: &'a [NativeVideoCapability],
+    requested_format: &NativeVideoFormat,
+) -> Option<&'a NativeVideoCapability> {
+    capabilities.iter().find(|capability| {
+        capability.hardware_accelerated == Some(true)
+            && capability.format.as_ref() == Some(requested_format)
+            && capability
+                .format
+                .as_ref()
+                .and_then(exact_video_format)
+                .is_some()
     })
 }
 
-fn validate_display_capability(
+fn validate_display_capabilities(
     client: &ClientSessionHello,
-    host: &HostSessionCapabilities,
-    capability: &NativeVideoCapability,
+    client_capability: &NativeVideoCapability,
+    host_capability: &NativeVideoCapability,
 ) -> Result<(), NativeSessionError> {
     if client.width == 0
         || client.height == 0
         || client.refresh_millihz == 0
-        || client.width > host.maximum_width
-        || client.height > host.maximum_height
-        || client.refresh_millihz > host.maximum_refresh_millihz
-        || client.width > capability.max_width
-        || client.height > capability.max_height
-        || client.refresh_millihz > capability.max_refresh_millihz
+        || client.width > client_capability.max_width
+        || client.height > client_capability.max_height
+        || client.refresh_millihz > client_capability.max_refresh_millihz
+        || client.width > host_capability.max_width
+        || client.height > host_capability.max_height
+        || client.refresh_millihz > host_capability.max_refresh_millihz
     {
         Err(NativeSessionError::InvalidDisplayMode)
     } else {

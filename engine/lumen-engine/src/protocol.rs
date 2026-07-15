@@ -5,6 +5,7 @@ use crate::LumenEngineStatus;
 
 mod hdr_frame_state;
 mod hdr_regions;
+mod lumen_streaming_v3_provenance;
 mod native_input;
 mod native_session;
 #[cfg(test)]
@@ -15,6 +16,10 @@ mod native_transport_tests;
 mod session_offer;
 mod transport_plan;
 
+pub use lumen_streaming_v3_provenance::{
+    LUMEN_STREAMING_DESCRIPTOR_SHA256, LUMEN_STREAMING_EXPORTER_LABEL,
+    LUMEN_STREAMING_PROTOCOL_ALPN, LUMEN_STREAMING_PROTOCOL_PACKAGE, LUMEN_STREAMING_SCHEMA_SHA256,
+};
 pub use native_input::{
     client_input_envelope, client_motion_envelope, decode_client_input_message,
     decode_host_input_message, encode_client_input_message, encode_host_input_message,
@@ -32,10 +37,12 @@ pub use native_session::{
     host_control_envelope, negotiate_native_session, ClientControlEnvelope, ClientSessionHello,
     CodecConfiguration, CodecConfigurationAck, HostControlEnvelope, HostSessionCapabilities,
     HostSessionPlan, MediaPathChallenge, MediaPathResponse, MediaPathValidated,
-    NativeAudioChannelMode, NativeAudioQuality, NativeControlWireError, NativeDisplayGamut,
-    NativeDisplayTransfer, NativeDynamicRange, NativeNegotiationFailure, NativePolicyMode,
-    NativeProtocolError, NativeSessionError, NativeVideoCapability, NativeVideoCodec,
-    SessionStarted, SessionStopped, StartSessionAck, StopSession, NATIVE_CONTROL_MESSAGE_LIMIT,
+    NativeAudioChannelMode, NativeAudioQuality, NativeChromaSubsampling, NativeColorRange,
+    NativeControlWireError, NativeDisplayGamut, NativeDisplayTransfer, NativeDynamicRange,
+    NativeNegotiationFailure, NativePolicyMode, NativeProtocolError, NativeSessionError,
+    NativeVideoCapability, NativeVideoCodec, NativeVideoFormat, NativeVideoProfile, SessionStarted,
+    SessionStopped, StartSessionAck, StopSession, NATIVE_CONTROL_MESSAGE_LIMIT,
+    NATIVE_PROTOCOL_VERSION,
 };
 pub use native_transport::{
     decode_native_media_datagram, decode_native_video_access_unit, encode_native_media_header,

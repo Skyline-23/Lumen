@@ -1,0 +1,7 @@
+pub const LUMEN_STREAMING_PROTOCOL_PACKAGE: &str = "lumen.streaming.v3";
+pub const LUMEN_STREAMING_PROTOCOL_ALPN: &[u8] = b"lumen-stream/3";
+pub const LUMEN_STREAMING_EXPORTER_LABEL: &[u8] = b"EXPORTER-Lumen-Session-v3";
+pub const LUMEN_STREAMING_SCHEMA_SHA256: &str =
+    "1b8d614ea61f9d0549041dfe5b52a7b65cf8db5e259e98792255e3d20ee7db91";
+pub const LUMEN_STREAMING_DESCRIPTOR_SHA256: &str =
+    "a863587b617df6b2392346a38f5705274176e7cae13c27cff4a77c9ff42ba90f";
