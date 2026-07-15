@@ -229,7 +229,9 @@ let project = Project(
             dependencies: [
                 .target(name: "LumenMacBridge"),
                 .sdk(name: "CoreMedia", type: .framework),
-                .sdk(name: "CoreVideo", type: .framework)
+                .sdk(name: "CoreVideo", type: .framework),
+                .sdk(name: "CoreWLAN", type: .framework),
+                .sdk(name: "SystemConfiguration", type: .framework)
             ],
             settings: .settings(
                 base: [

@@ -379,10 +379,18 @@ public actor LumenHostSettingsStore {
             globalPrepCommands: prepCommands(defaults, Key.globalPrepCommands),
             globalStateCommands: prepCommands(defaults, Key.globalStateCommands),
             serverCommands: serverCommands(defaults, Key.serverCommands),
-            adapterSelector: defaults.string(forKey: Key.adapterSelector) ?? fallback.adapterSelector,
-            outputSelector: defaults.string(forKey: Key.outputSelector) ?? fallback.outputSelector,
+            adapterSelector: canonicalSelector(
+                defaults,
+                Key.adapterSelector,
+                fallback.adapterSelector
+            ),
+            outputSelector: canonicalSelector(
+                defaults,
+                Key.outputSelector,
+                fallback.outputSelector
+            ),
             fallbackDisplayMode: defaults.string(forKey: Key.fallbackDisplayMode) ?? fallback.fallbackDisplayMode,
-            audioSink: defaults.string(forKey: Key.audioSink) ?? fallback.audioSink,
+            audioSink: canonicalSelector(defaults, Key.audioSink, fallback.audioSink),
             streamAudio: bool(defaults, Key.streamAudio, fallback.streamAudio),
             keyboardInput: bool(defaults, Key.keyboardInput, fallback.keyboardInput),
             mouseInput: bool(defaults, Key.mouseInput, fallback.mouseInput),
@@ -459,6 +467,17 @@ public actor LumenHostSettingsStore {
 
     private nonisolated static func integer(_ defaults: UserDefaults, _ key: String, _ fallback: Int) -> Int {
         defaults.object(forKey: key) == nil ? fallback : defaults.integer(forKey: key)
+    }
+
+    private nonisolated static func canonicalSelector(
+        _ defaults: UserDefaults,
+        _ key: String,
+        _ fallback: String
+    ) -> String {
+        guard let value = defaults.string(forKey: key), !value.isEmpty else {
+            return fallback
+        }
+        return value
     }
 
     private nonisolated static func prepCommandRecords(_ commands: [LumenPrepCommand]) -> [[String: String]] {
