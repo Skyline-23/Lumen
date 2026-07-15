@@ -240,6 +240,14 @@ struct LumenApp: App {
             height: LumenMainWindowLayout.defaultContentSize.height
         )
         .windowResizability(.contentMinSize)
+        .commands {
+            CommandGroup(after: .appInfo) {
+                Button(LumenCopy.Action.restartLumen) {
+                    captureController.restartApplication()
+                }
+                .disabled(!captureController.canRestartApplication)
+            }
+        }
 
         MenuBarExtra {
             LumenMenuBarContent(

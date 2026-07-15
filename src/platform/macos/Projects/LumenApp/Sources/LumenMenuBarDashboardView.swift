@@ -173,9 +173,9 @@ struct LumenMenuBarDashboardView: View {
                 controller.refreshApplications()
             }
             menuButton(LumenCopy.Action.restartLumen, icon: .restart) {
-                controller.restartRuntimeCompanion()
+                controller.restartApplication()
             }
-            .disabled(!controller.canRestartRuntime)
+            .disabled(!controller.canRestartApplication)
 
             menuDivider
 

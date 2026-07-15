@@ -53,8 +53,10 @@ final class LumenCaptureController: NSObject, ObservableObject {
     @Published private(set) var isHostSettingsOperationInFlight = false
     @Published private(set) var applications: [LumenApplication] = []
     @Published private(set) var isApplicationOperationInFlight = false
+    @Published private(set) var isApplicationRestartInFlight = false
 
     private let adapter: any LumenHostRuntimeControlling
+    private let applicationRelauncher: any LumenApplicationRelaunching
     private let readinessStore: LumenHostReadinessStore
     private let ownerAccountStore: (any LumenOwnerAccountServicing)?
     private let hostSettingsStore: (any LumenHostSettingsServicing)?
@@ -73,6 +75,7 @@ final class LumenCaptureController: NSObject, ObservableObject {
 
     init(
         adapter: any LumenHostRuntimeControlling,
+        applicationRelauncher: any LumenApplicationRelaunching,
         readinessStore: LumenHostReadinessStore,
         ownerAccountStore: (any LumenOwnerAccountServicing)?,
         hostSettingsStore: (any LumenHostSettingsServicing)?,
@@ -80,6 +83,7 @@ final class LumenCaptureController: NSObject, ObservableObject {
         permissionDragPanelController: LumenPermissionDragPanelController
     ) {
         self.adapter = adapter
+        self.applicationRelauncher = applicationRelauncher
         self.readinessStore = readinessStore
         self.ownerAccountStore = ownerAccountStore
         self.hostSettingsStore = hostSettingsStore
@@ -181,6 +185,10 @@ final class LumenCaptureController: NSObject, ObservableObject {
 
     var canRestartRuntime: Bool {
         ownerAccessState.isAuthenticated
+    }
+
+    var canRestartApplication: Bool {
+        !isApplicationRestartInFlight
     }
 
     var isSystemAuthenticationAvailable: Bool {
@@ -516,6 +524,36 @@ final class LumenCaptureController: NSObject, ObservableObject {
             isRestartingCompanion = false
             shouldIgnoreNextCompanionStop = false
             setError(error.localizedDescription)
+        }
+    }
+
+    func restartApplication() {
+        guard canRestartApplication else {
+            return
+        }
+
+        setError(nil)
+        isApplicationRestartInFlight = true
+        isShuttingDown = true
+        adapter.stopRuntimeCompanion()
+
+        Task { @MainActor [weak self, applicationRelauncher] in
+            guard let self else {
+                return
+            }
+            do {
+                try await applicationRelauncher.relaunch()
+            } catch let relaunchError {
+                self.isShuttingDown = false
+                self.isApplicationRestartInFlight = false
+                do {
+                    try self.adapter.startRuntimeCompanion()
+                    self.refreshStatus()
+                    self.setError(relaunchError.localizedDescription)
+                } catch {
+                    self.setError(error.localizedDescription)
+                }
+            }
         }
     }
 
