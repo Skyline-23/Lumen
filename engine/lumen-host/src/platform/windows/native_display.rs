@@ -1,9 +1,15 @@
 use std::ffi::c_void;
 use std::mem::size_of;
+use std::path::PathBuf;
 use std::ptr::{null, null_mut};
 use std::sync::Mutex;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use lumen_engine::{
+    RecoveryJournalLoad, RecoveryJournalStore, RecoveryPhase, VirtualDisplayIdentity,
+    WorkspacePlatform, WorkspaceRecoveryJournal, WorkspaceRecoveryMetadata,
+};
 
 use windows_sys::core::GUID;
 use windows_sys::Win32::Devices::DeviceAndDriverInstallation::{
@@ -33,7 +39,13 @@ use windows_sys::Win32::Storage::FileSystem::{
 use windows_sys::Win32::System::Com::CoCreateGuid;
 use windows_sys::Win32::System::IO::DeviceIoControl;
 
-use crate::PlatformApplicationPlan;
+use crate::{HostArguments, HostAuthorityPaths, PlatformApplicationPlan};
+
+use super::display_isolation::{
+    first_frame_timed_out, monitor_required, DisplayIsolationLifecycle, FIRST_FRAME_TIMEOUT,
+};
+use super::display_topology::{AdapterLuid, WindowsPathIdentity};
+use super::native_display_topology::{apply_topology, query_active_topology, verify_topology};
 
 const VIRTUAL_DISPLAY_INTERFACE_GUID: GUID =
     GUID::from_u128(0xe5bcc234_1e0c_418a_a0d4_ef8b7501414d);
@@ -52,16 +64,18 @@ const fn control_code(function: u32) -> u32 {
 }
 
 pub(super) struct NativeWindowsDisplay {
-    base_output_name: String,
+    recovery_store: RecoveryJournalStore,
     active: Mutex<Option<ActiveDisplay>>,
 }
 
 impl NativeWindowsDisplay {
-    pub(super) fn new(base_output_name: String) -> Self {
-        Self {
-            base_output_name,
+    pub(super) fn new(arguments: &HostArguments) -> Result<Self, String> {
+        let recovery_store = RecoveryJournalStore::new(recovery_path(arguments)?);
+        recover_persisted_topology(&recovery_store)?;
+        Ok(Self {
+            recovery_store,
             active: Mutex::new(None),
-        }
+        })
     }
 
     pub(super) fn start(&self, plan: &PlatformApplicationPlan) -> Result<(), String> {
@@ -72,20 +86,71 @@ impl NativeWindowsDisplay {
         if active.is_some() {
             return Err("A Windows virtual display is already active".to_owned());
         }
-        if !plan.virtual_display && !plan.application.virtual_display {
-            return Ok(());
+        if !monitor_required(Some(plan.virtual_display), plan.application.virtual_display) {
+            return Err("Windows requires the first-party IDD monitor".to_owned());
         }
         let refresh_millihertz = plan
             .frames_per_second
             .checked_mul(1_000)
             .ok_or_else(|| "Windows virtual display refresh rate overflowed".to_owned())?;
-        let display = ActiveDisplay::create(
+        let physical = query_active_topology()?;
+        let topology = physical.to_physical_topology()?;
+        let guid = create_guid()?;
+        let now = timestamp_millis()?;
+        let journal = WorkspaceRecoveryJournal::new(
+            WorkspaceRecoveryMetadata {
+                platform: WorkspacePlatform::Windows,
+                generation: now.max(1),
+                session_id: guid_text(guid),
+                timestamp_unix_ms: now,
+                capture_managed: true,
+            },
+            topology,
+        )
+        .map_err(|error| format!("Windows display recovery journal is invalid: {error}"))?
+        .with_virtual_display(VirtualDisplayIdentity {
+            id: guid_text(guid),
+        });
+        self.recovery_store
+            .create(&journal)
+            .map_err(|error| format!("Windows display recovery snapshot failed: {error}"))?;
+        let mut display = match ActiveDisplay::create(
             plan.application.uuid.as_str(),
             plan.application.name.as_str(),
             plan.width,
             plan.height,
             refresh_millihertz,
-        )?;
+            guid,
+            journal,
+        ) {
+            Ok(display) => display,
+            Err(error) => {
+                let recovery = recover_persisted_topology(&self.recovery_store).err();
+                return Err(combine_error(error, recovery));
+            }
+        };
+        if let Err(error) = display.persist_phase(
+            &self.recovery_store,
+            RecoveryPhase::SnapshotPersisted,
+            RecoveryPhase::VirtualCreated,
+        ) {
+            let cleanup = cleanup_display(&mut display, &self.recovery_store);
+            if cleanup.is_some() {
+                *active = Some(display);
+            }
+            return Err(combine_error(error, cleanup));
+        }
+        if let Err(error) = display.persist_phase(
+            &self.recovery_store,
+            RecoveryPhase::VirtualCreated,
+            RecoveryPhase::VirtualConfigured,
+        ) {
+            let cleanup = cleanup_display(&mut display, &self.recovery_store);
+            if cleanup.is_some() {
+                *active = Some(display);
+            }
+            return Err(combine_error(error, cleanup));
+        }
         *active = Some(display);
         Ok(())
     }
@@ -95,10 +160,78 @@ impl NativeWindowsDisplay {
             .active
             .lock()
             .map_err(|_| "Windows display state lock is poisoned".to_owned())?;
-        Ok(active
+        active
             .as_ref()
             .map(|display| display.output_name.clone())
-            .unwrap_or_else(|| self.base_output_name.clone()))
+            .ok_or_else(|| "Windows IDD output is not active".to_owned())
+    }
+
+    pub(super) fn capture_started(&self) -> Result<(), String> {
+        let mut active = self
+            .active
+            .lock()
+            .map_err(|_| "Windows display state lock is poisoned".to_owned())?;
+        let display = active
+            .as_mut()
+            .ok_or_else(|| "Windows IDD output is not active".to_owned())?;
+        display.persist_phase(
+            &self.recovery_store,
+            RecoveryPhase::VirtualConfigured,
+            RecoveryPhase::CaptureStarting,
+        )?;
+        display.capture_started_at = Some(Instant::now());
+        Ok(())
+    }
+
+    pub(super) fn first_frame_ready(&self) -> Result<(), String> {
+        let mut active = self
+            .active
+            .lock()
+            .map_err(|_| "Windows display state lock is poisoned".to_owned())?;
+        let display = active
+            .as_mut()
+            .ok_or_else(|| "Windows IDD output is not active".to_owned())?;
+        if display.lifecycle.phase() == RecoveryPhase::Isolated {
+            return Ok(());
+        }
+        display.persist_phase(
+            &self.recovery_store,
+            RecoveryPhase::CaptureStarting,
+            RecoveryPhase::FirstFrameReady,
+        )?;
+        display.persist_phase(
+            &self.recovery_store,
+            RecoveryPhase::FirstFrameReady,
+            RecoveryPhase::IsolationStarted,
+        )?;
+        let active_topology = query_active_topology()?;
+        let isolated = active_topology.isolated_for(display.identity)?;
+        apply_topology(&isolated)?;
+        verify_topology(&isolated)?;
+        display.persist_phase(
+            &self.recovery_store,
+            RecoveryPhase::IsolationStarted,
+            RecoveryPhase::Isolated,
+        )
+    }
+
+    pub(super) fn check_first_frame_timeout(&self) -> Result<(), String> {
+        let active = self
+            .active
+            .lock()
+            .map_err(|_| "Windows display state lock is poisoned".to_owned())?;
+        let display = active
+            .as_ref()
+            .ok_or_else(|| "Windows IDD output is not active".to_owned())?;
+        if display.capture_started_at.is_some_and(|started| {
+            first_frame_timed_out(display.lifecycle.phase(), started.elapsed())
+        }) {
+            return Err(format!(
+                "Windows first encoded frame did not arrive within {} ms",
+                FIRST_FRAME_TIMEOUT.as_millis()
+            ));
+        }
+        Ok(())
     }
 
     pub(super) fn stop(&self) -> Result<(), String> {
@@ -106,11 +239,32 @@ impl NativeWindowsDisplay {
             .active
             .lock()
             .map_err(|_| "Windows display state lock is poisoned".to_owned())?;
-        let Some(display) = active.take() else {
+        let Some(display) = active.as_mut() else {
             return Ok(());
         };
-        let remove = display.remove().err();
-        remove.map_or(Ok(()), Err)
+        if matches!(
+            display.lifecycle.phase(),
+            RecoveryPhase::CaptureStarting
+                | RecoveryPhase::FirstFrameReady
+                | RecoveryPhase::IsolationStarted
+                | RecoveryPhase::Isolated
+        ) {
+            let phase = display.lifecycle.phase();
+            display.persist_phase(&self.recovery_store, phase, RecoveryPhase::CaptureStopped)?;
+        }
+        display.restore_and_verify(&self.recovery_store)?;
+        if !display.lifecycle.can_destroy_monitor() {
+            return Err("Windows physical topology is not verified for IDD removal".to_owned());
+        }
+        if !display.recovery_deleted {
+            self.recovery_store
+                .delete()
+                .map_err(|error| format!("Windows display recovery cleanup failed: {error}"))?;
+            display.recovery_deleted = true;
+        }
+        display.remove()?;
+        *active = None;
+        Ok(())
     }
 }
 
@@ -124,6 +278,11 @@ struct ActiveDisplay {
     driver: DriverHandle,
     guid: GUID,
     output_name: String,
+    identity: WindowsPathIdentity,
+    journal: WorkspaceRecoveryJournal,
+    lifecycle: DisplayIsolationLifecycle,
+    capture_started_at: Option<Instant>,
+    recovery_deleted: bool,
     removed: bool,
 }
 
@@ -134,19 +293,14 @@ impl ActiveDisplay {
         width: u32,
         height: u32,
         refresh_millihertz: u32,
+        guid: GUID,
+        journal: WorkspaceRecoveryJournal,
     ) -> Result<Self, String> {
         if width == 0 || height == 0 || refresh_millihertz == 0 {
             return Err("Windows virtual display dimensions are invalid".to_owned());
         }
         let driver = DriverHandle::open()?;
         driver.require_compatible_protocol()?;
-        let mut guid = GUID::from_u128(0);
-        let status = unsafe { CoCreateGuid(&mut guid) };
-        if status < 0 {
-            return Err(format!(
-                "Windows virtual display GUID creation failed: {status:#x}"
-            ));
-        }
         let output = driver.add_display(
             guid,
             driver_text(device_name, "Lumen"),
@@ -170,13 +324,62 @@ impl ActiveDisplay {
             driver,
             guid,
             output_name,
+            identity: WindowsPathIdentity {
+                adapter: AdapterLuid {
+                    high_part: output.adapter_luid.HighPart,
+                    low_part: output.adapter_luid.LowPart,
+                },
+                target_id: output.target_id,
+            },
+            journal,
+            lifecycle: DisplayIsolationLifecycle::new(),
+            capture_started_at: None,
+            recovery_deleted: false,
             removed: false,
         })
     }
 
-    fn remove(mut self) -> Result<(), String> {
+    fn persist_phase(
+        &mut self,
+        store: &RecoveryJournalStore,
+        expected: RecoveryPhase,
+        next: RecoveryPhase,
+    ) -> Result<(), String> {
+        self.lifecycle.transition(expected, next)?;
+        let updated = self.journal.clone().with_phase(next);
+        if let Err(error) = store.update(&updated) {
+            self.lifecycle = DisplayIsolationLifecycle::at(expected);
+            return Err(format!("Windows display recovery phase failed: {error}"));
+        }
+        self.journal = updated;
+        Ok(())
+    }
+
+    fn restore_and_verify(&mut self, store: &RecoveryJournalStore) -> Result<(), String> {
+        let physical =
+            super::display_topology::WindowsDisplayConfigSnapshot::from_physical_topology(
+                &self.journal.physical_topology,
+            )?;
+        apply_topology(&physical)?;
+        let phase = self.lifecycle.phase();
+        if phase != RecoveryPhase::PhysicalRestored && phase != RecoveryPhase::RestorationVerified {
+            self.persist_phase(store, phase, RecoveryPhase::PhysicalRestored)?;
+        }
+        verify_topology(&physical)?;
+        if self.lifecycle.phase() != RecoveryPhase::RestorationVerified {
+            self.persist_phase(
+                store,
+                RecoveryPhase::PhysicalRestored,
+                RecoveryPhase::RestorationVerified,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn remove(&mut self) -> Result<(), String> {
+        self.driver.remove_display(self.guid)?;
         self.removed = true;
-        self.driver.remove_display(self.guid)
+        Ok(())
     }
 }
 
@@ -186,6 +389,99 @@ impl Drop for ActiveDisplay {
             let _ = self.driver.remove_display(self.guid);
         }
     }
+}
+
+fn recovery_path(arguments: &HostArguments) -> Result<PathBuf, String> {
+    let paths = HostAuthorityPaths::from_arguments(arguments).map_err(|error| error.to_string())?;
+    let parent = paths
+        .settings
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .ok_or_else(|| "Windows display recovery directory is invalid".to_owned())?;
+    Ok(parent.join("display-recovery.json"))
+}
+
+fn recover_persisted_topology(store: &RecoveryJournalStore) -> Result<(), String> {
+    let journal = match store
+        .load()
+        .map_err(|error| format!("Windows display recovery load failed: {error}"))?
+    {
+        RecoveryJournalLoad::Missing => return Ok(()),
+        RecoveryJournalLoad::Verified(journal) => journal,
+        RecoveryJournalLoad::Quarantined(warning) => {
+            return Err(format!(
+                "Windows display recovery journal was quarantined ({:?}): {}",
+                warning.code,
+                warning.quarantined_path.display()
+            ));
+        }
+    };
+    if journal.platform != WorkspacePlatform::Windows {
+        return Err("Windows display recovery journal belongs to another platform".to_owned());
+    }
+    let physical = super::display_topology::WindowsDisplayConfigSnapshot::from_physical_topology(
+        &journal.physical_topology,
+    )?;
+    apply_topology(&physical)?;
+    let restored = journal.clone().with_phase(RecoveryPhase::PhysicalRestored);
+    store
+        .update(&restored)
+        .map_err(|error| format!("Windows display restore phase failed: {error}"))?;
+    verify_topology(&physical)?;
+    let verified = restored.with_phase(RecoveryPhase::RestorationVerified);
+    store
+        .update(&verified)
+        .map_err(|error| format!("Windows display verification phase failed: {error}"))?;
+    store
+        .delete()
+        .map_err(|error| format!("Windows display recovery cleanup failed: {error}"))
+}
+
+fn create_guid() -> Result<GUID, String> {
+    let mut guid = GUID::from_u128(0);
+    // SAFETY: Category 8 (FFI boundary). `guid` is a live writable GUID for the full call.
+    let status = unsafe { CoCreateGuid(&mut guid) };
+    if status < 0 {
+        Err(format!(
+            "Windows virtual display GUID creation failed: {status:#x}"
+        ))
+    } else {
+        Ok(guid)
+    }
+}
+
+fn guid_text(guid: GUID) -> String {
+    let value = (u128::from(guid.data1) << 96)
+        | (u128::from(guid.data2) << 80)
+        | (u128::from(guid.data3) << 64)
+        | u128::from(u64::from_be_bytes(guid.data4));
+    format!("{value:032x}")
+}
+
+fn timestamp_millis() -> Result<u64, String> {
+    let elapsed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| "Windows system clock is before the Unix epoch".to_owned())?;
+    u64::try_from(elapsed.as_millis())
+        .map_err(|_| "Windows system clock millisecond value overflowed".to_owned())
+}
+
+fn combine_error(primary: String, cleanup: Option<String>) -> String {
+    match cleanup {
+        Some(cleanup) => format!("{primary}; Windows display recovery also failed: {cleanup}"),
+        None => primary,
+    }
+}
+
+fn cleanup_display(display: &mut ActiveDisplay, store: &RecoveryJournalStore) -> Option<String> {
+    if let Err(error) = display.restore_and_verify(store) {
+        return Some(error);
+    }
+    if let Err(error) = store.delete() {
+        return Some(format!("Windows display recovery cleanup failed: {error}"));
+    }
+    display.recovery_deleted = true;
+    display.remove().err()
 }
 
 struct DriverHandle(usize);
@@ -412,9 +708,11 @@ fn wait_for_display_name(output: VirtualDisplayAddOutput) -> Result<String, Stri
 
 fn display_name(output: VirtualDisplayAddOutput) -> Option<String> {
     let (mut paths, _) = active_display_configuration()?;
-    let path = paths
-        .iter_mut()
-        .find(|path| path.targetInfo.id == output.target_id)?;
+    let path = paths.iter_mut().find(|path| {
+        path.targetInfo.id == output.target_id
+            && path.targetInfo.adapterId.LowPart == output.adapter_luid.LowPart
+            && path.targetInfo.adapterId.HighPart == output.adapter_luid.HighPart
+    })?;
     let mut source_name = DISPLAYCONFIG_SOURCE_DEVICE_NAME::default();
     source_name.header.r#type = DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME;
     source_name.header.size = size_of::<DISPLAYCONFIG_SOURCE_DEVICE_NAME>() as u32;

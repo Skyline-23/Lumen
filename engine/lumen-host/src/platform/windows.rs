@@ -1,3 +1,5 @@
+mod display_isolation;
+mod display_topology;
 #[cfg(windows)]
 mod input_policy;
 mod input_state;
@@ -12,6 +14,10 @@ mod native_capture;
 mod native_desktop_input;
 #[cfg(windows)]
 mod native_display;
+#[cfg(windows)]
+mod native_display_topology;
+#[cfg(windows)]
+mod native_display_topology_apply;
 #[cfg(windows)]
 mod native_input;
 #[cfg(windows)]
