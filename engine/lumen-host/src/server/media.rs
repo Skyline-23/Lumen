@@ -362,6 +362,10 @@ fn send_pending_video(
 }
 
 #[cfg(test)]
+#[path = "media/configuration_header_tests.rs"]
+mod configuration_header_tests;
+
+#[cfg(test)]
 fn send_video_frame(
     socket: &UdpSocket,
     delivery: &VideoDeliveryState,
