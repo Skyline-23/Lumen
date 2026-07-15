@@ -129,6 +129,57 @@ public enum LumenDisplayDisconnectWatchdogTrigger: String, Codable, Equatable, S
     case deadlineExceeded
 }
 
+public enum LumenDisplayDisconnectRestoreFailureCode: String, Codable, Equatable, Sendable {
+    case postconditionTimedOut
+    case transactionFailed
+}
+
+public struct LumenDisplayDisconnectRestoreFailedReceipt: Codable, Equatable, Sendable {
+    public let displayID: CGDirectDisplayID
+    public let generationID: String
+    public let trigger: LumenDisplayDisconnectWatchdogTrigger
+    public let code: LumenDisplayDisconnectRestoreFailureCode
+
+    public init(
+        displayID: CGDirectDisplayID,
+        generationID: String,
+        trigger: LumenDisplayDisconnectWatchdogTrigger,
+        code: LumenDisplayDisconnectRestoreFailureCode
+    ) {
+        self.displayID = displayID
+        self.generationID = generationID
+        self.trigger = trigger
+        self.code = code
+    }
+}
+
+@frozen public enum LumenDisplayDisconnectWatchdogRecoveryOutcome: Equatable, Sendable {
+    case skipped
+    case restored(LumenPhysicalDisplayControlReceipt)
+    case restoreFailed(LumenDisplayDisconnectRestoreFailedReceipt)
+
+    public var restoredReceipt: LumenPhysicalDisplayControlReceipt? {
+        guard case .restored(let receipt) = self else {
+            return nil
+        }
+        return receipt
+    }
+
+    public var restoreFailedReceipt: LumenDisplayDisconnectRestoreFailedReceipt? {
+        guard case .restoreFailed(let receipt) = self else {
+            return nil
+        }
+        return receipt
+    }
+
+    public var shouldRetainSafetyDisplay: Bool {
+        if case .restoreFailed = self {
+            return true
+        }
+        return false
+    }
+}
+
 public struct LumenDisplayDisconnectWatchdogRestorer {
     private let controller: any LumenPhysicalDisplayControlling
 
@@ -136,15 +187,27 @@ public struct LumenDisplayDisconnectWatchdogRestorer {
         self.controller = controller
     }
 
-    public func restoreIfAuthorized(
+    public func recoverIfAuthorized(
         authorization: LumenDisplayDisconnectAuthorization,
         marker: LumenDisplayDisconnectMutationMarker?,
-        trigger _: LumenDisplayDisconnectWatchdogTrigger
-    ) throws -> LumenPhysicalDisplayControlReceipt? {
+        trigger: LumenDisplayDisconnectWatchdogTrigger,
+        verifyRestored: () -> Bool
+    ) throws -> LumenDisplayDisconnectWatchdogRecoveryOutcome {
         guard let marker, marker.authorizes(authorization) else {
-            return nil
+            return .skipped
         }
-        return try controller.setEnabled(true, for: authorization.displayID)
+        let receipt = try controller.setEnabled(true, for: authorization.displayID)
+        guard verifyRestored() else {
+            return .restoreFailed(
+                LumenDisplayDisconnectRestoreFailedReceipt(
+                    displayID: authorization.displayID,
+                    generationID: authorization.generationID,
+                    trigger: trigger,
+                    code: .postconditionTimedOut
+                )
+            )
+        }
+        return .restored(receipt)
     }
 }
 

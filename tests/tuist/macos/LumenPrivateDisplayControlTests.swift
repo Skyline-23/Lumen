@@ -138,13 +138,14 @@ struct LumenPrivateDisplayControlTests {
         let restorer = LumenDisplayDisconnectWatchdogRestorer(controller: controller)
         let authorization = fixtureAuthorization()
 
-        let receipt = try restorer.restoreIfAuthorized(
+        let outcome = try restorer.recoverIfAuthorized(
             authorization: authorization,
             marker: nil,
-            trigger: .restoreRequested
+            trigger: .restoreRequested,
+            verifyRestored: { true }
         )
 
-        #expect(receipt == nil)
+        #expect(outcome == .skipped)
         #expect(controller.calls.isEmpty)
     }
 
@@ -160,12 +161,13 @@ struct LumenPrivateDisplayControlTests {
         ]
 
         for marker in forgedMarkers {
-            let receipt = try restorer.restoreIfAuthorized(
+            let outcome = try restorer.recoverIfAuthorized(
                 authorization: authorization,
                 marker: marker,
-                trigger: .parentExited
+                trigger: .parentExited,
+                verifyRestored: { true }
             )
-            #expect(receipt == nil)
+            #expect(outcome == .skipped)
         }
         #expect(controller.calls.isEmpty)
     }
@@ -176,14 +178,15 @@ struct LumenPrivateDisplayControlTests {
         let restorer = LumenDisplayDisconnectWatchdogRestorer(controller: controller)
         let authorization = fixtureAuthorization()
 
-        let receipt = try restorer.restoreIfAuthorized(
+        let outcome = try restorer.recoverIfAuthorized(
             authorization: authorization,
             marker: fixtureMarker(phase: .disableAttempted),
-            trigger: .parentExited
+            trigger: .parentExited,
+            verifyRestored: { true }
         )
 
-        #expect(receipt?.enabled == true)
-        #expect(receipt?.displayID == authorization.displayID)
+        #expect(outcome.restoredReceipt?.enabled == true)
+        #expect(outcome.restoredReceipt?.displayID == authorization.displayID)
         #expect(controller.calls == [.init(displayID: authorization.displayID, enabled: true)])
     }
 
@@ -193,13 +196,41 @@ struct LumenPrivateDisplayControlTests {
         let restorer = LumenDisplayDisconnectWatchdogRestorer(controller: controller)
         let authorization = fixtureAuthorization()
 
-        let receipt = try restorer.restoreIfAuthorized(
+        let outcome = try restorer.recoverIfAuthorized(
             authorization: authorization,
             marker: fixtureMarker(phase: .disableSucceeded),
-            trigger: .restoreRequested
+            trigger: .restoreRequested,
+            verifyRestored: { true }
         )
 
-        #expect(receipt?.enabled == true)
+        #expect(outcome.restoredReceipt?.enabled == true)
+        #expect(controller.calls == [.init(displayID: authorization.displayID, enabled: true)])
+    }
+
+    @Test("Failed restore postcondition retains safety recovery without a restored receipt")
+    func failedRestorePostconditionRetainsSafetyRecovery() throws {
+        let controller = FakePhysicalDisplayController()
+        let restorer = LumenDisplayDisconnectWatchdogRestorer(controller: controller)
+        let authorization = fixtureAuthorization()
+
+        let outcome = try restorer.recoverIfAuthorized(
+            authorization: authorization,
+            marker: fixtureMarker(phase: .disableSucceeded),
+            trigger: .parentExited,
+            verifyRestored: { false }
+        )
+
+        #expect(outcome.restoredReceipt == nil)
+        #expect(outcome.shouldRetainSafetyDisplay)
+        #expect(
+            outcome.restoreFailedReceipt
+                == LumenDisplayDisconnectRestoreFailedReceipt(
+                    displayID: authorization.displayID,
+                    generationID: authorization.generationID,
+                    trigger: .parentExited,
+                    code: .postconditionTimedOut
+                )
+        )
         #expect(controller.calls == [.init(displayID: authorization.displayID, enabled: true)])
     }
 

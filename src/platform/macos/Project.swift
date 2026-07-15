@@ -38,9 +38,12 @@ let rustEngineBuildScript = TargetScript.pre(
         .glob("\(repoRoot)/scripts/rust/build_lumen_engine.sh")
     ],
     outputPaths: [
-        .path("\(repoRoot)/build/rust-engine/$(CONFIGURATION)/$(CURRENT_ARCH)/liblumen_engine.a"),
-        .path("\(repoRoot)/build/rust-engine/$(CONFIGURATION)/$(CURRENT_ARCH)/liblumen_host.a"),
-        .path("\(repoRoot)/build/rust-engine/$(CONFIGURATION)/$(CURRENT_ARCH)/LumenRustHostWorker")
+        .path("\(repoRoot)/build/rust-engine/$(CONFIGURATION)/arm64/liblumen_engine.a"),
+        .path("\(repoRoot)/build/rust-engine/$(CONFIGURATION)/arm64/liblumen_host.a"),
+        .path("\(repoRoot)/build/rust-engine/$(CONFIGURATION)/arm64/LumenRustHostWorker"),
+        .path("\(repoRoot)/build/rust-engine/$(CONFIGURATION)/x86_64/liblumen_engine.a"),
+        .path("\(repoRoot)/build/rust-engine/$(CONFIGURATION)/x86_64/liblumen_host.a"),
+        .path("\(repoRoot)/build/rust-engine/$(CONFIGURATION)/x86_64/LumenRustHostWorker")
     ],
     basedOnDependencyAnalysis: false,
     shellPath: "/bin/zsh"

@@ -138,11 +138,13 @@ private enum LumenDisplayDisconnectCanaryMain {
                 _ = try? adapter.setEnabled(true, for: selected.displayID)
             }
             try? writeDurableData(Data(), to: restoreRequest)
-            _ = waitUntil(timeout: 6) {
-                watchdogs.allSatisfy { !$0.isRunning }
-            }
-            for watchdog in watchdogs where watchdog.isRunning {
-                watchdog.terminate()
+            if !FileManager.default.fileExists(atPath: mutationURL.path) {
+                _ = waitUntil(timeout: 6) {
+                    watchdogs.allSatisfy { !$0.isRunning }
+                }
+                for watchdog in watchdogs where watchdog.isRunning {
+                    watchdog.terminate()
+                }
             }
         }
 
@@ -260,6 +262,17 @@ private enum LumenDisplayDisconnectCanaryMain {
                 )
             }
         }) else {
+            let restoreFailed = (1...2).contains { index in
+                FileManager.default.fileExists(
+                    atPath: runDirectory
+                        .appendingPathComponent("watchdog-\(index)-restore-failed.json").path
+                )
+            }
+            if restoreFailed {
+                throw CanaryFailure.blocked(
+                    "Restore verification failed; watchdog safety displays remain active for retry"
+                )
+            }
             throw CanaryFailure.blocked("Watchdogs did not publish restoration receipts")
         }
         guard waitUntil(timeout: 8, condition: {
@@ -365,68 +378,13 @@ private enum LumenDisplayDisconnectCanaryMain {
         )
         let probe = try adapter.probe()
         let restorer = LumenDisplayDisconnectWatchdogRestorer(controller: adapter)
-        var armed = false
+        var shouldRetainSafetyDisplay = false
         var trigger = LumenDisplayDisconnectWatchdogTrigger.deadlineExceeded
 
         defer {
-            if armed {
-                do {
-                    let marker: LumenDisplayDisconnectMutationMarker? = try? readJSON(
-                        from: mutationURL
-                    )
-                    let receipt = try restorer.restoreIfAuthorized(
-                        authorization: authorization,
-                        marker: marker,
-                        trigger: trigger
-                    )
-                    if receipt != nil {
-                        _ = waitUntil(timeout: 8, condition: {
-                            guard let state = try? displayStates().first(where: {
-                                $0.displayID == selectedDisplayID
-                            }) else {
-                                return false
-                            }
-                            return state.active && state.nsscreenVisible
-                        })
-                        try writeArtifact(
-                            phase: "restored",
-                            selectedDisplayID: selectedDisplayID,
-                            safetyDisplayID: safetyDisplay.displayID,
-                            probe: probe,
-                            displays: try displayStates(),
-                            generationID: generationID,
-                            displayTransactionCount: 1,
-                            detail: "Authorized restore after \(trigger.rawValue)",
-                            to: runDirectory.appendingPathComponent(
-                                "watchdog-\(index)-restored.json"
-                            )
-                        )
-                    } else {
-                        try writeArtifact(
-                            phase: "restore-skipped",
-                            selectedDisplayID: selectedDisplayID,
-                            safetyDisplayID: safetyDisplay.displayID,
-                            probe: probe,
-                            displays: try displayStates(),
-                            generationID: generationID,
-                            displayTransactionCount: 0,
-                            detail: "No exact durable mutation marker for this generation",
-                            to: runDirectory.appendingPathComponent(
-                                "watchdog-\(index)-skipped.json"
-                            )
-                        )
-                    }
-                } catch {
-                    let failureURL = runDirectory.appendingPathComponent(
-                        "watchdog-\(index)-restore-failed.txt"
-                    )
-                    try? Data(String(describing: error).utf8).write(
-                        to: failureURL,
-                        options: .atomic
-                    )
-                }
+            if !shouldRetainSafetyDisplay {
+                safetyDisplay.destroy()
             }
-            safetyDisplay.destroy()
         }
 
         guard waitUntilPumpingMainRunLoop(timeout: 8, condition: {
@@ -460,7 +418,7 @@ private enum LumenDisplayDisconnectCanaryMain {
             throw CanaryFailure.blocked("Watchdog refused to arm without two active displays")
         }
 
-        armed = true
+        shouldRetainSafetyDisplay = true
         try writeArtifact(
             phase: "ready",
             selectedDisplayID: selectedDisplayID,
@@ -488,6 +446,98 @@ private enum LumenDisplayDisconnectCanaryMain {
                 break
             }
             RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        }
+
+        let restoreFailedURL = runDirectory.appendingPathComponent(
+            "watchdog-\(index)-restore-failed.json"
+        )
+        var restoreAttemptCount = 0
+        while true {
+            let marker: LumenDisplayDisconnectMutationMarker? = try? readJSON(
+                from: mutationURL
+            )
+            restoreAttemptCount += 1
+            do {
+                let outcome = try restorer.recoverIfAuthorized(
+                    authorization: authorization,
+                    marker: marker,
+                    trigger: trigger,
+                    verifyRestored: {
+                        waitUntil(timeout: 8, condition: {
+                            guard let state = try? displayStates().first(where: {
+                                $0.displayID == selectedDisplayID
+                            }) else {
+                                return false
+                            }
+                            return state.active && state.nsscreenVisible
+                        })
+                    }
+                )
+                switch outcome {
+                case .skipped:
+                    try? writeArtifact(
+                        phase: "restore-skipped",
+                        selectedDisplayID: selectedDisplayID,
+                        safetyDisplayID: safetyDisplay.displayID,
+                        probe: probe,
+                        displays: try displayStates(),
+                        generationID: generationID,
+                        displayTransactionCount: 0,
+                        detail: "No exact durable mutation marker for this generation",
+                        to: runDirectory.appendingPathComponent(
+                            "watchdog-\(index)-skipped.json"
+                        )
+                    )
+                    shouldRetainSafetyDisplay = outcome.shouldRetainSafetyDisplay
+                    return
+                case .restored:
+                    let restoredArtifact = try? writeArtifact(
+                        phase: "restored",
+                        selectedDisplayID: selectedDisplayID,
+                        safetyDisplayID: safetyDisplay.displayID,
+                        probe: probe,
+                        displays: try displayStates(),
+                        generationID: generationID,
+                        displayTransactionCount: restoreAttemptCount,
+                        detail: "Authorized restore after \(trigger.rawValue)",
+                        to: runDirectory.appendingPathComponent(
+                            "watchdog-\(index)-restored.json"
+                        )
+                    )
+                    if restoredArtifact != nil {
+                        shouldRetainSafetyDisplay = outcome.shouldRetainSafetyDisplay
+                        return
+                    }
+                case .restoreFailed(let failureReceipt):
+                    shouldRetainSafetyDisplay = outcome.shouldRetainSafetyDisplay
+                    try? writeDurableJSON(failureReceipt, to: restoreFailedURL)
+                    try? writeArtifact(
+                        phase: "restore-failed",
+                        selectedDisplayID: selectedDisplayID,
+                        safetyDisplayID: safetyDisplay.displayID,
+                        probe: probe,
+                        displays: try displayStates(),
+                        generationID: generationID,
+                        displayTransactionCount: restoreAttemptCount,
+                        detail: failureReceipt.code.rawValue,
+                        to: runDirectory.appendingPathComponent(
+                            "watchdog-\(index)-restore-failed-state.json"
+                        )
+                    )
+                }
+            } catch {
+                shouldRetainSafetyDisplay = true
+                try? writeDurableJSON(
+                    LumenDisplayDisconnectRestoreFailedReceipt(
+                        displayID: selectedDisplayID,
+                        generationID: generationID,
+                        trigger: trigger,
+                        code: .transactionFailed
+                    ),
+                    to: restoreFailedURL
+                )
+            }
+            RunLoop.main.run(until: Date().addingTimeInterval(1))
         }
     }
 }
