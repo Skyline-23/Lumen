@@ -1,4 +1,4 @@
-use std::ffi::c_void;
+use std::ffi::{c_char, c_void, CString};
 use std::sync::Mutex;
 
 use lumen_engine::settings::{PrepCommand, ServerCommand};
@@ -108,6 +108,28 @@ pub enum PlatformControlEvent {
     ExecuteServerCommand { index: u8 },
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PlatformRuntimeEventSeverity {
+    Warning,
+    Error,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PlatformRuntimeEventCode {
+    UpnpGatewayDiscovery,
+    UpnpLocalAddressDiscovery,
+    UpnpPortMapping,
+    UpnpIpv6Pinhole,
+    UpnpPortRemoval,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlatformRuntimeEvent {
+    pub severity: PlatformRuntimeEventSeverity,
+    pub code: PlatformRuntimeEventCode,
+    pub message: String,
+}
+
 pub trait PlatformSessionControl: Send + Sync {
     fn start_application(&self, _plan: PlatformApplicationPlan) -> Result<(), String> {
         Ok(())
@@ -150,6 +172,10 @@ pub trait PlatformSessionControl: Send + Sync {
 
     fn poll_control_feedback(&self) -> Result<Option<PlatformControlFeedback>, String> {
         Ok(None)
+    }
+
+    fn publish_runtime_event(&self, _event: PlatformRuntimeEvent) -> Result<(), String> {
+        Ok(())
     }
 }
 
@@ -245,6 +271,31 @@ pub struct LumenHostPlatformControlEvent {
     pub last_frame: i64,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LumenHostPlatformRuntimeEventSeverity {
+    Warning = 0,
+    Error = 1,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LumenHostPlatformRuntimeEventCode {
+    UpnpGatewayDiscovery = 0,
+    UpnpLocalAddressDiscovery = 1,
+    UpnpPortMapping = 2,
+    UpnpIpv6Pinhole = 3,
+    UpnpPortRemoval = 4,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct LumenHostPlatformRuntimeEvent {
+    pub severity: LumenHostPlatformRuntimeEventSeverity,
+    pub code: LumenHostPlatformRuntimeEventCode,
+    pub message: *const c_char,
+}
+
 impl From<PlatformSessionPlan> for LumenHostPlatformSessionPlan {
     fn from(plan: PlatformSessionPlan) -> Self {
         Self {
@@ -300,6 +351,8 @@ pub type LumenHostPlatformHandleControlEventCallback =
     unsafe extern "C" fn(*mut c_void, *const LumenHostPlatformControlEvent) -> i32;
 pub type LumenHostPlatformPollControlFeedbackCallback =
     unsafe extern "C" fn(*mut c_void, *mut LumenHostPlatformControlFeedback) -> i32;
+pub type LumenHostPlatformPublishRuntimeEventCallback =
+    unsafe extern "C" fn(*mut c_void, *const LumenHostPlatformRuntimeEvent) -> i32;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -311,6 +364,7 @@ pub struct LumenHostPlatformCallbacks {
     pub poll_encoded_audio: Option<LumenHostPlatformPollEncodedAudioCallback>,
     pub handle_control_event: Option<LumenHostPlatformHandleControlEventCallback>,
     pub poll_control_feedback: Option<LumenHostPlatformPollControlFeedbackCallback>,
+    pub publish_runtime_event: Option<LumenHostPlatformPublishRuntimeEventCallback>,
 }
 
 pub(crate) struct CallbackPlatformSessionControl {
@@ -334,6 +388,7 @@ impl CallbackPlatformSessionControl {
             || callbacks.poll_encoded_audio.is_none()
             || callbacks.handle_control_event.is_none()
             || callbacks.poll_control_feedback.is_none()
+            || callbacks.publish_runtime_event.is_none()
         {
             Err("platform session callbacks are incomplete".to_owned())
         } else {
@@ -515,6 +570,49 @@ impl PlatformSessionControl for CallbackPlatformSessionControl {
             )),
         }
     }
+
+    fn publish_runtime_event(&self, event: PlatformRuntimeEvent) -> Result<(), String> {
+        let callback = self
+            .callbacks
+            .publish_runtime_event
+            .ok_or_else(|| "platform runtime event callback is missing".to_owned())?;
+        let message = CString::new(event.message)
+            .map_err(|_| "platform runtime event message contains a null byte".to_owned())?;
+        let event = LumenHostPlatformRuntimeEvent {
+            severity: match event.severity {
+                PlatformRuntimeEventSeverity::Warning => {
+                    LumenHostPlatformRuntimeEventSeverity::Warning
+                }
+                PlatformRuntimeEventSeverity::Error => LumenHostPlatformRuntimeEventSeverity::Error,
+            },
+            code: match event.code {
+                PlatformRuntimeEventCode::UpnpGatewayDiscovery => {
+                    LumenHostPlatformRuntimeEventCode::UpnpGatewayDiscovery
+                }
+                PlatformRuntimeEventCode::UpnpLocalAddressDiscovery => {
+                    LumenHostPlatformRuntimeEventCode::UpnpLocalAddressDiscovery
+                }
+                PlatformRuntimeEventCode::UpnpPortMapping => {
+                    LumenHostPlatformRuntimeEventCode::UpnpPortMapping
+                }
+                PlatformRuntimeEventCode::UpnpIpv6Pinhole => {
+                    LumenHostPlatformRuntimeEventCode::UpnpIpv6Pinhole
+                }
+                PlatformRuntimeEventCode::UpnpPortRemoval => {
+                    LumenHostPlatformRuntimeEventCode::UpnpPortRemoval
+                }
+            },
+            message: message.as_ptr(),
+        };
+        let status = unsafe { callback(self.callbacks.context, &event) };
+        if status == 0 {
+            Ok(())
+        } else {
+            Err(format!(
+                "platform runtime event callback failed with status {status}"
+            ))
+        }
+    }
 }
 
 fn poll_video_callback(
@@ -637,12 +735,14 @@ fn resize_poll_buffer(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::CStr;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     static STARTS: AtomicUsize = AtomicUsize::new(0);
     static STOPS: AtomicUsize = AtomicUsize::new(0);
     static FEEDBACK_READY: AtomicBool = AtomicBool::new(false);
     static CONTROL_EVENTS: Mutex<Vec<LumenHostPlatformControlEvent>> = Mutex::new(Vec::new());
+    static RUNTIME_EVENTS: Mutex<Vec<(u32, u32, String)>> = Mutex::new(Vec::new());
 
     unsafe extern "C" fn start(
         _context: *mut c_void,
@@ -739,6 +839,21 @@ mod tests {
         PLATFORM_POLL_READY
     }
 
+    unsafe extern "C" fn publish_runtime_event(
+        _context: *mut c_void,
+        event: *const LumenHostPlatformRuntimeEvent,
+    ) -> i32 {
+        let event = unsafe { &*event };
+        let message = unsafe { CStr::from_ptr(event.message) }
+            .to_string_lossy()
+            .into_owned();
+        RUNTIME_EVENTS
+            .lock()
+            .unwrap()
+            .push((event.severity as u32, event.code as u32, message));
+        0
+    }
+
     fn callbacks() -> LumenHostPlatformCallbacks {
         LumenHostPlatformCallbacks {
             context: std::ptr::null_mut(),
@@ -748,6 +863,7 @@ mod tests {
             poll_encoded_audio: Some(poll_audio),
             handle_control_event: Some(handle_control_event),
             poll_control_feedback: Some(poll_control_feedback),
+            publish_runtime_event: Some(publish_runtime_event),
         }
     }
 
@@ -810,6 +926,7 @@ mod tests {
     #[test]
     fn callback_adapter_forwards_typed_control_events() {
         CONTROL_EVENTS.lock().unwrap().clear();
+        RUNTIME_EVENTS.lock().unwrap().clear();
         let adapter = CallbackPlatformSessionControl::new(callbacks()).unwrap();
         adapter
             .handle_control_event(66_051, PlatformControlEvent::RequestIdrFrame)
@@ -853,6 +970,21 @@ mod tests {
             })
         );
         assert_eq!(adapter.poll_control_feedback().unwrap(), None);
+        adapter
+            .publish_runtime_event(PlatformRuntimeEvent {
+                severity: PlatformRuntimeEventSeverity::Warning,
+                code: PlatformRuntimeEventCode::UpnpPortMapping,
+                message: "UDP 47998 is already mapped".to_owned(),
+            })
+            .unwrap();
+        assert_eq!(
+            *RUNTIME_EVENTS.lock().unwrap(),
+            vec![(
+                LumenHostPlatformRuntimeEventSeverity::Warning as u32,
+                LumenHostPlatformRuntimeEventCode::UpnpPortMapping as u32,
+                "UDP 47998 is already mapped".to_owned(),
+            )]
+        );
     }
 
     #[test]

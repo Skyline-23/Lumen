@@ -43,9 +43,12 @@ pub use native_input::{NativeInputError, PlatformNativeInputEvent};
 pub use platform::{
     IdlePlatformSessionControl, LumenHostPlatformCallbacks, LumenHostPlatformControlEvent,
     LumenHostPlatformControlEventKind, LumenHostPlatformEncodedAudioPacket,
-    LumenHostPlatformEncodedVideoFrame, LumenHostPlatformSessionPlan, LumenHostPlatformVideoCodec,
-    PlatformApplicationPlan, PlatformControlEvent, PlatformEncodedAudioPacket,
-    PlatformEncodedVideoFrame, PlatformSessionControl, PlatformSessionPlan, PlatformVideoCodec,
+    LumenHostPlatformEncodedVideoFrame, LumenHostPlatformRuntimeEvent,
+    LumenHostPlatformRuntimeEventCode, LumenHostPlatformRuntimeEventSeverity,
+    LumenHostPlatformSessionPlan, LumenHostPlatformVideoCodec, PlatformApplicationPlan,
+    PlatformControlEvent, PlatformEncodedAudioPacket, PlatformEncodedVideoFrame,
+    PlatformRuntimeEvent, PlatformRuntimeEventCode, PlatformRuntimeEventSeverity,
+    PlatformSessionControl, PlatformSessionPlan, PlatformVideoCodec,
 };
 pub use platform_feedback::{
     LumenHostPlatformControlFeedback, LumenHostPlatformControlFeedbackKind,

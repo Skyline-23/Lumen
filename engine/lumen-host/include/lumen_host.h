@@ -67,6 +67,25 @@ typedef struct LumenHostPlatformControlEvent {
   int64_t last_frame;
 } LumenHostPlatformControlEvent;
 
+typedef enum LumenHostPlatformRuntimeEventSeverity {
+  LumenHostPlatformRuntimeEventSeverityWarning = 0,
+  LumenHostPlatformRuntimeEventSeverityError = 1,
+} LumenHostPlatformRuntimeEventSeverity;
+
+typedef enum LumenHostPlatformRuntimeEventCode {
+  LumenHostPlatformRuntimeEventCodeUpnpGatewayDiscovery = 0,
+  LumenHostPlatformRuntimeEventCodeUpnpLocalAddressDiscovery = 1,
+  LumenHostPlatformRuntimeEventCodeUpnpPortMapping = 2,
+  LumenHostPlatformRuntimeEventCodeUpnpIpv6Pinhole = 3,
+  LumenHostPlatformRuntimeEventCodeUpnpPortRemoval = 4,
+} LumenHostPlatformRuntimeEventCode;
+
+typedef struct LumenHostPlatformRuntimeEvent {
+  LumenHostPlatformRuntimeEventSeverity severity;
+  LumenHostPlatformRuntimeEventCode code;
+  const char *message;
+} LumenHostPlatformRuntimeEvent;
+
 typedef enum LumenHostPlatformControlFeedbackKind {
   LumenHostPlatformControlFeedbackKindRumble = 0,
   LumenHostPlatformControlFeedbackKindRumbleTriggers = 1,
@@ -144,6 +163,10 @@ typedef int32_t (*LumenHostPlatformPollControlFeedbackCallback)(
   void *context,
   LumenHostPlatformControlFeedback *feedback
 );
+typedef int32_t (*LumenHostPlatformPublishRuntimeEventCallback)(
+  void *context,
+  const LumenHostPlatformRuntimeEvent *event
+);
 
 typedef struct LumenHostPlatformCallbacks {
   void *context;
@@ -153,6 +176,7 @@ typedef struct LumenHostPlatformCallbacks {
   LumenHostPlatformPollEncodedAudioCallback poll_encoded_audio;
   LumenHostPlatformHandleControlEventCallback handle_control_event;
   LumenHostPlatformPollControlFeedbackCallback poll_control_feedback;
+  LumenHostPlatformPublishRuntimeEventCallback publish_runtime_event;
 } LumenHostPlatformCallbacks;
 
 int32_t lumen_host_run(int argc, const char *const *argv);

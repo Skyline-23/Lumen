@@ -22,6 +22,13 @@ struct LumenDiagnosticsView: View {
             } header: {
                 pageHeader(LumenCopy.Navigation.diagnostics, subtitle: LumenCopy.Diagnostics.subtitle)
             }
+            if !controller.runtimeWarnings.isEmpty {
+                Section(LumenCopy.Diagnostics.runtimeWarnings) {
+                    ForEach(controller.runtimeWarnings) { warning in
+                        LumenRuntimeWarningBanner(warning: warning)
+                    }
+                }
+            }
             if let event = controller.lastRuntimeEventMessage, !event.isEmpty {
                 Section(LumenCopy.Diagnostics.lastRuntimeEvent) {
                     Text(event).textSelection(.enabled)

@@ -34,3 +34,15 @@ python3 tools/autoresearch/eval_host_stream.py --workspace src/platform/macos/Lu
 - Preserve one-way data flow: `View -> Action -> Controller/Reducer -> Actor or Service -> State -> View`. Views must not mutate service state directly, and asynchronous service callbacks must be reduced into state on the owning actor before presentation.
 - Keep platform and framework adapters behind injected protocols or narrow injected concrete boundaries. Core policy must remain testable without launching AppKit, the host worker, or a live capture session.
 - New concurrency code must not use `NSLock`. Prefer actor isolation; retain an existing serial queue only at an unavoidable C/Objective-C callback boundary and document why actor isolation cannot own that boundary.
+
+## Runtime Warning Rules
+
+- Non-fatal host and service warnings that can affect the user must cross a typed runtime-event boundary and be reduced into visible application state. Log-only warnings are insufficient.
+- Runtime warning UI must use stable typed codes, deduplicate repeated events, and keep retained warning state bounded. Do not parse log strings in the application UI.
+- Cross-process warnings must preserve severity, stable code, and a localized presentation boundary. The host emits machine-readable events; the application owns localized user-facing copy and presentation.
+
+## Git Flow Rules
+
+- Start each feature from the current `develop` branch on a short-lived `feat/<unit>` branch. Keep `main` release-only.
+- Preserve feature commits and merge completed features into `develop` with an explicit `git merge --no-ff` merge commit. Do not squash the feature history.
+- After a feature is merged, pushed, and verified, delete its feature branch locally and remotely.

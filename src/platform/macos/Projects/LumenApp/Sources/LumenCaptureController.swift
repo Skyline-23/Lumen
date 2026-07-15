@@ -43,6 +43,7 @@ final class LumenCaptureController: NSObject, ObservableObject {
     )
     @Published private(set) var lastErrorMessage: String?
     @Published private(set) var lastRuntimeEventMessage: String?
+    @Published private(set) var runtimeWarnings: [LumenRuntimeWarning] = []
     @Published private(set) var isAccessibilityPermissionGranted = true
     @Published private(set) var isScreenCapturePermissionGranted = true
     @Published private(set) var ownerAccessState = LumenOwnerAccessState.loading
@@ -102,11 +103,12 @@ final class LumenCaptureController: NSObject, ObservableObject {
             name: .lumenMacCaptureAdapterCompanionDidStop,
             object: adapter
         )
-        NotificationCenter.default.addObserver(
+        DistributedNotificationCenter.default().addObserver(
             self,
             selector: #selector(handleRuntimeEvent(_:)),
             name: .lumenRuntimeEvent,
-            object: nil
+            object: nil,
+            suspensionBehavior: .deliverImmediately
         )
         observeReadinessState()
         bootstrapOwnerAccess()
@@ -119,6 +121,7 @@ final class LumenCaptureController: NSObject, ObservableObject {
     deinit {
         readinessObservationTask?.cancel()
         NotificationCenter.default.removeObserver(self)
+        DistributedNotificationCenter.default().removeObserver(self)
     }
 
     var menuBarImage: NSImage {
@@ -726,9 +729,33 @@ final class LumenCaptureController: NSObject, ObservableObject {
         }
 
         let identifier = userInfo["identifier"] as? String ?? UUID().uuidString
-        let title = userInfo["title"] as? String ?? LumenCopy.productName
         let body = userInfo["body"] as? String ?? ""
         let launchPath = userInfo["launchPath"] as? String ?? "/"
+        let severity = (userInfo["severity"] as? NSNumber)?.intValue
+        let code = (userInfo["code"] as? NSNumber)?.intValue
+
+        if severity == 0, let code {
+            let warning = LumenRuntimeWarning(code: code, message: body)
+            let isDuplicate = runtimeWarnings.first(where: { $0.code == code }) == warning
+            runtimeWarnings.removeAll(where: { $0.code == code })
+            runtimeWarnings.insert(warning, at: 0)
+            if runtimeWarnings.count > 8 {
+                runtimeWarnings.removeLast(runtimeWarnings.count - 8)
+            }
+            lastRuntimeEventMessage = body
+            guard !isDuplicate else {
+                return
+            }
+            presentRuntimeNotification(
+                identifier: identifier,
+                title: LumenCopy.Diagnostics.runtimeWarning,
+                body: body,
+                launchPath: launchPath
+            )
+            return
+        }
+
+        let title = userInfo["title"] as? String ?? LumenCopy.productName
 
         lastRuntimeEventMessage = body
         presentRuntimeNotification(
