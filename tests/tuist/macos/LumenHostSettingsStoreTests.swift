@@ -90,6 +90,27 @@ final class LumenHostSettingsStoreTests: XCTestCase {
         XCTAssertTrue(serverArgument.contains("\"privilege\":\"user\""))
     }
 
+    func testRetiredEmptySelectorsDoNotDiscardValidHostSettings() async throws {
+        let suiteName = "LumenHostSettingsStoreTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        defaults.set("", forKey: "stream.adapter-selector")
+        defaults.set("", forKey: "stream.output-selector")
+        defaults.set("", forKey: "audio.sink")
+        defaults.set(48_989, forKey: "network.port")
+        defaults.set(true, forKey: "network.upnp")
+
+        let store = try LumenHostSettingsStore(suiteName: suiteName)
+        let settings = try await store.snapshot()
+
+        XCTAssertEqual(settings.adapterSelector, "automatic")
+        XCTAssertEqual(settings.outputSelector, "automatic")
+        XCTAssertEqual(settings.audioSink, "system-default")
+        XCTAssertEqual(settings.port, 48_989)
+        XCTAssertTrue(settings.upnpEnabled)
+    }
+
     func testInvalidHostValuesAreRejected() async throws {
         let suiteName = "LumenHostSettingsStoreTests.\(UUID().uuidString)"
         let store = try LumenHostSettingsStore(suiteName: suiteName)

@@ -1,18 +1,21 @@
 # Releasing Lumen
 
 This runbook covers signed macOS and Windows releases, GitHub Release
-publication, and Homebrew cask updates. Regular CI artifacts are intentionally
-not distribution-signed; public distribution starts only from a stable tag.
+publication, and Homebrew cask updates. The `develop` branch only runs tests;
+public distribution starts only from a push to `main`.
 
 ## Release topology
 
 | Trigger | Output | Signing | Publication |
 | --- | --- | --- | --- |
-| Push or pull request to `develop` or `main` | Rust checks, macOS DMG, Windows NSIS installer | Ad hoc/unsigned | GitHub Actions artifacts only |
-| Tag matching `v<major>.<minor>.<patch>` | macOS DMG and Windows NSIS installer | Developer ID + notarization, Authenticode + timestamp | GitHub Release, then `Skyline-23/homebrew-lumen` |
+| Push or pull request to `develop` | Rust tests and lint, macOS Tuist tests, Windows compile check | None | None |
+| Push to `main` with a new stable product version | macOS DMG and Windows NSIS installer | Developer ID + notarization, Authenticode + timestamp | Version tag, GitHub Release, then `Skyline-23/homebrew-lumen` |
 
-Only stable semantic-version tags such as `v0.5.0` trigger the release
-workflow. Prerelease names such as `v0.5.0-alpha.1` do not match it.
+Both `engine/lumen-engine/Cargo.toml` and `engine/lumen-host/Cargo.toml` are the
+release version authority. Their `[package].version` values must match each
+other and use stable semantic versioning. A push to `main` derives tag
+`v<version>`, rejects an already released version, and creates the tag at the
+triggering `main` commit only after both signed packages succeed.
 
 The release order is:
 
@@ -36,6 +39,7 @@ succeed.
 | macOS release architecture | `arm64` |
 | Windows release architecture | `x86_64` |
 | Stable tag format | `v<major>.<minor>.<patch>` |
+| Release version source | Matching Rust product crate package versions |
 
 Do not put passwords, private keys, certificate payloads, or API-key contents
 in this document, issues, commits, release notes, or command history.
@@ -65,7 +69,7 @@ List configured secret names without revealing their values:
 gh secret list --repo Skyline-23/Lumen
 ```
 
-The list must contain all eight names before creating a release tag.
+The list must contain all eight names before merging a release to `main`.
 
 ## Preparing Apple credentials
 
@@ -153,11 +157,12 @@ certificate provider's protected storage.
 
 ## Pre-release checklist
 
-Do not create the tag until every item below is true.
+Do not merge the release commit to `main` until every item below is true.
 
 - The intended `develop` commit has a green `CI` workflow.
-- `develop` has been reviewed and merged into `main`.
-- Local `main` is clean and matches `origin/main`.
+- `develop` has been reviewed and is ready to merge into `main`.
+- Local `develop` is clean and matches `origin/develop`.
+- Both Rust product crates declare the same new stable semantic version.
 - All eight GitHub secret names are present.
 - The target version has no existing tag or GitHub Release.
 - The release notes or generated commit range have been reviewed.
@@ -166,47 +171,35 @@ Do not create the tag until every item below is true.
 Run the mechanical checks from the repository root:
 
 ```bash
+VERSION="$(python3 -c 'import tomllib; print(tomllib.load(open("engine/lumen-host/Cargo.toml", "rb"))["package"]["version"])')"
 git fetch origin --tags
 git status --short
 git rev-parse HEAD
-git rev-parse origin/main
+git rev-parse origin/develop
 gh secret list --repo Skyline-23/Lumen
-gh release view "v<version>" --repo Skyline-23/Lumen
-git rev-parse "v<version>"
+gh release view "v${VERSION}" --repo Skyline-23/Lumen
+git rev-parse "v${VERSION}"
 ```
 
 The final two commands should report that the proposed version does not exist.
-If `HEAD` differs from `origin/main`, stop and reconcile the branch first.
+If `HEAD` differs from `origin/develop`, stop and reconcile the branch first.
 
 ## Publish a release
 
-Update and verify `main`:
+Merge the reviewed `develop` commit into `main` and push it:
 
 ```bash
 git switch main
 git pull --ff-only origin main
+git merge --no-ff develop
 git status --short
+git push origin main
 ```
 
-Create the tag on the exact reviewed `main` commit. A signed Git tag is
-preferred when the release operator has a configured signing key:
-
-```bash
-VERSION=0.5.0
-git tag -s "v${VERSION}" -m "Lumen v${VERSION}"
-git push origin "v${VERSION}"
-```
-
-If signed Git tags are not available, use an annotated tag only after recording
-that exception in the release process:
-
-```bash
-git tag -a "v${VERSION}" -m "Lumen v${VERSION}"
-git push origin "v${VERSION}"
-```
-
-The workflow checks that the tag exists but does not independently enforce a
-cryptographic Git-tag signature.
+The `main` push starts the release workflow. The workflow rejects mismatched,
+non-stable, or already tagged Rust crate versions. After macOS and Windows
+packages succeed, it creates `v${VERSION}` at the triggering `main` commit,
+publishes the GitHub Release, and updates Homebrew.
 
 Monitor the release:
 
@@ -271,9 +264,10 @@ gh run view <run-id> --log-failed --repo Skyline-23/Lumen
 gh run rerun <run-id> --failed --repo Skyline-23/Lumen
 ```
 
-Do not replace a published tag. If the tag has not produced a release and the
-commit itself is wrong, delete the remote and local tag only after confirming
-that no release exists, then create a new tag on the corrected commit.
+Do not replace a published tag. If the publish job left a tag without a Release,
+delete it only after confirming that no Release exists, then rerun the publish
+job. If the released commit itself is wrong, bump the patch version and merge a
+corrected commit to `main`.
 
 ### GitHub Release succeeded but Homebrew failed
 

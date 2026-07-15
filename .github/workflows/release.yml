@@ -2,15 +2,51 @@ name: Release
 
 on:
   push:
-    tags:
-      - "v[0-9]+.[0-9]+.[0-9]+"
+    branches: [main]
 
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
+  prepare:
+    name: Prepare release
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Resolve product version
+        id: version
+        shell: bash
+        run: |
+          engine_version="$(python3 -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["package"]["version"])' engine/lumen-engine/Cargo.toml)"
+          host_version="$(python3 -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["package"]["version"])' engine/lumen-host/Cargo.toml)"
+          [[ "${engine_version}" == "${host_version}" ]] || {
+            echo "Lumen crate versions must match: engine=${engine_version}, host=${host_version}" >&2
+            exit 1
+          }
+          [[ "${host_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "Lumen version must use stable semantic versioning: ${host_version}" >&2
+            exit 1
+          }
+          tag="v${host_version}"
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+            echo "Release tag ${tag} already exists. Bump both Rust product crate versions before merging to main." >&2
+            exit 1
+          fi
+          echo "version=${host_version}" >> "${GITHUB_OUTPUT}"
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+
   macos:
     name: Signed macOS package
+    needs: prepare
     runs-on: macos-26
     defaults:
       run:
@@ -90,7 +126,7 @@ jobs:
         env:
           LUMEN_BUILD_NUMBER: ${{ github.run_number }}
           LUMEN_OUTPUT_DIR: ${{ github.workspace }}/build/release-artifacts
-          LUMEN_VERSION: ${{ github.ref_name }}
+          LUMEN_VERSION: ${{ needs.prepare.outputs.version }}
         run: scripts/macos/package.sh --skip-tests
       - name: Upload macOS release artifact
         uses: actions/upload-artifact@v7
@@ -107,6 +143,7 @@ jobs:
 
   windows:
     name: Signed Windows package
+    needs: prepare
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -146,7 +183,7 @@ jobs:
       - name: Build NSIS installer
         shell: msys2 {0}
         env:
-          LUMEN_VERSION: ${{ github.ref_name }}
+          LUMEN_VERSION: ${{ needs.prepare.outputs.version }}
         run: scripts/ci/build_windows_package.sh
       - name: Sign Windows installer
         shell: pwsh
@@ -175,7 +212,7 @@ jobs:
 
   publish:
     name: Publish GitHub release
-    needs: [macos, windows]
+    needs: [prepare, macos, windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -189,15 +226,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
-          gh release create "${{ github.ref_name }}" artifacts/*
+          gh release create "${{ needs.prepare.outputs.tag }}" artifacts/*
           --repo "${{ github.repository }}"
-          --verify-tag
+          --target "${{ github.sha }}"
           --generate-notes
-          --title "Lumen ${{ github.ref_name }}"
+          --title "Lumen ${{ needs.prepare.outputs.tag }}"
 
   homebrew:
     name: Update Homebrew tap
-    needs: publish
+    needs: [prepare, publish]
     runs-on: macos-15
     defaults:
       run:
@@ -223,8 +260,8 @@ jobs:
       - name: Render and publish cask
         run: |
           source/scripts/release/render_homebrew_cask.sh \
-            "${{ github.ref_name }}" \
-            artifacts/Lumen-${GITHUB_REF_NAME#v}-macOS.dmg \
+            "${{ needs.prepare.outputs.version }}" \
+            artifacts/Lumen-${{ needs.prepare.outputs.version }}-macOS.dmg \
             homebrew-tap/Casks/lumen.rb
           cd homebrew-tap
           brew style --cask Casks/lumen.rb
@@ -235,5 +272,5 @@ jobs:
             print "Homebrew cask is already current."
             exit 0
           fi
-          git commit -m "chore: Update Lumen to ${GITHUB_REF_NAME#v}"
+          git commit -m "chore: Update Lumen to ${{ needs.prepare.outputs.version }}"
           git push

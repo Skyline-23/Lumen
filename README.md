@@ -98,7 +98,11 @@ python3 tools/quality/run_lumen_quality_gate.py --fast
 ## Branching
 
 Lumen uses Git Flow: feature branches target `develop`; releases move from
-`develop` to `main`; hotfixes are merged into both.
+`develop` to `main`; hotfixes are merged into both. Pushes and pull requests to
+`develop` run tests without producing distribution artifacts. A push to `main`
+builds and publishes the signed release after both Rust product crate versions
+are verified, then creates the matching stable semantic-version tag on that
+`main` commit.
 
 ## License
 

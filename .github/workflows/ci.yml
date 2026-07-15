@@ -2,10 +2,9 @@ name: CI
 
 on:
   pull_request:
-    branches: [develop, main]
+    branches: [develop]
   push:
-    branches: [develop, main]
-  workflow_dispatch:
+    branches: [develop]
 
 permissions:
   contents: read
@@ -16,7 +15,7 @@ concurrency:
 
 jobs:
   rust:
-    name: Rust checks
+    name: Rust tests and lint
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
@@ -27,15 +26,14 @@ jobs:
       - name: Test workspace
         run: cargo test --locked --workspace
       - name: Lint workspace
-        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 
-  macos-package:
-    name: macOS package
+  macos:
+    name: macOS tests
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 0
           submodules: recursive
       - name: Install build tools
         run: |
@@ -44,58 +42,33 @@ jobs:
           rustup target add aarch64-apple-darwin
           brew install opus
           brew install --cask tuist
-      - name: Build ad-hoc signed DMG
-        env:
-          LUMEN_BUILD_NUMBER: ${{ github.run_number }}
-          LUMEN_OUTPUT_DIR: ${{ github.workspace }}/build/ci-artifacts
-          LUMEN_SIGNING_IDENTITY: "-"
-          LUMEN_VERSION: 0.0.0
-        run: scripts/macos/package.sh --skip-tests
-      - name: Upload macOS package
-        uses: actions/upload-artifact@v7
-        with:
-          name: lumen-macos
-          path: build/ci-artifacts/Lumen-*-macOS.dmg
-          if-no-files-found: error
+      - name: Test Lumen app
+        working-directory: src/platform/macos
+        run: tuist test --no-selective-testing --no-binary-cache LumenTuistTests
+      - name: Build Lumen app
+        working-directory: src/platform/macos
+        run: |
+          opus_prefix="$(brew --prefix opus)"
+          export TUIST_LUMEN_OPUS_ARCHIVE="${opus_prefix}/lib/libopus.a"
+          tuist generate --no-open
+          tuist xcodebuild build \
+            -workspace Lumen.xcworkspace \
+            -scheme LumenApp \
+            -configuration Debug \
+            -destination 'generic/platform=macOS' \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO
 
-  windows-package:
-    name: Windows package
+  windows:
+    name: Windows compile check
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-          submodules: recursive
-      - uses: msys2/setup-msys2@v2
-        with:
-          msystem: UCRT64
-          path-type: inherit
-          update: true
-          install: >-
-            git
-            make
-            mingw-w64-ucrt-x86_64-MinHook
-            mingw-w64-ucrt-x86_64-cmake
-            mingw-w64-ucrt-x86_64-cppwinrt
-            mingw-w64-ucrt-x86_64-gcc
-            mingw-w64-ucrt-x86_64-libvpl
-            mingw-w64-ucrt-x86_64-nasm
-            mingw-w64-ucrt-x86_64-ninja
-            mingw-w64-ucrt-x86_64-nsis
-            mingw-w64-ucrt-x86_64-opus
-            mingw-w64-ucrt-x86_64-pkgconf
-            mingw-w64-ucrt-x86_64-zlib
-      - name: Add the GNU Rust target
+      - name: Install Rust
         shell: pwsh
-        run: rustup target add x86_64-pc-windows-gnu
-      - name: Build NSIS installer
-        shell: msys2 {0}
-        env:
-          LUMEN_VERSION: 0.0.0
-        run: scripts/ci/build_windows_package.sh
-      - name: Upload Windows package
-        uses: actions/upload-artifact@v7
-        with:
-          name: lumen-windows
-          path: cmake-build-release/cpack_artifacts/Lumen-0.0.0-Windows-x86_64.exe
-          if-no-files-found: error
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - name: Check workspace
+        run: cargo check --locked --workspace --all-targets --all-features
