@@ -185,6 +185,55 @@ fn generation_three_rejects_exact_profile_chroma_or_range_mismatch_without_fallb
         .all(|result| result == Err(NativeSessionError::UnsupportedVideoSelection)));
 }
 
+#[test]
+fn generation_three_rejects_unknown_exact_format_enums() {
+    // Given: one requested row whose profile discriminant is unknown to protocol v3.
+    let mut client = hello();
+    let requested = client.requested_video_format.as_mut().unwrap();
+    requested.profile = 999;
+    client.video_capabilities[1].format = Some(requested.clone());
+
+    // When: the malformed exact row reaches negotiation.
+    let result = negotiate_native_session(&client, &host(), 1);
+
+    // Then: it is rejected at the versioned boundary instead of defaulting a profile.
+    assert_eq!(result, Err(NativeSessionError::UnsupportedProtocolVersion));
+}
+
+#[test]
+fn exact_selection_requires_one_matching_host_row_without_cross_products() {
+    // Given: a client requesting HEVC Main10 while the host only has an H.264 row.
+    let client = hello();
+    let mut host = host();
+    host.video_capabilities = vec![capability(NativeVideoCodec::H264, 8, false)];
+
+    // When: negotiation intersects the exact row sets.
+    let result = negotiate_native_session(&client, &host, 1);
+
+    // Then: independent codec/profile/depth axes are not combined into a selection.
+    assert_eq!(result, Err(NativeSessionError::UnsupportedVideoSelection));
+}
+
+#[test]
+fn exact_selection_respects_both_client_and_host_geometry_limits() {
+    // Given: otherwise exact rows whose client or host width is below the requested mode.
+    let mut client_limited = hello();
+    client_limited.video_capabilities[1].max_width = client_limited.width - 1;
+    let mut host_limited = host();
+    host_limited.video_capabilities[2].max_width = hello().width - 1;
+
+    // When: each row set is negotiated independently.
+    let results = [
+        negotiate_native_session(&client_limited, &host(), 1),
+        negotiate_native_session(&hello(), &host_limited, 1),
+    ];
+
+    // Then: either side's row bound rejects the mode without selecting a larger cross-product.
+    assert!(results
+        .into_iter()
+        .all(|result| result == Err(NativeSessionError::InvalidDisplayMode)));
+}
+
 fn hello() -> ClientSessionHello {
     ClientSessionHello {
         minimum_protocol_version: 3,

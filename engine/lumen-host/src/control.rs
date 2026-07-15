@@ -19,7 +19,7 @@ const MAXIMUM_JSON_REQUEST_BYTES: usize = 32 * 1024;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct VideoDeliveryState {
-    pub(crate) codec: crate::PlatformVideoCodec,
+    pub(crate) video_format: crate::PlatformVideoFormat,
     pub(crate) acknowledged_configuration_id: Option<u32>,
     pub(crate) session_epoch: u32,
     pub(crate) path_id: u16,

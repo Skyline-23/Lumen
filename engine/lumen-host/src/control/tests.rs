@@ -300,6 +300,17 @@ fn native_hello_authenticates_negotiates_and_requires_the_exact_udp_path() {
     assert_eq!(platform_plan.height, 2_160);
     assert_eq!(platform_plan.frames_per_second, 120);
     assert_eq!(platform_plan.bitrate_kbps, 80_000);
+    assert_eq!(
+        platform_plan.video_format,
+        crate::PlatformVideoFormat {
+            codec: crate::PlatformVideoCodec::Hevc,
+            profile: crate::PlatformVideoProfile::HevcMain,
+            chroma_subsampling: crate::PlatformChromaSubsampling::Yuv420,
+            bit_depth: 8,
+            dynamic_range: crate::PlatformDynamicRange::Sdr,
+            color_range: crate::PlatformColorRange::Limited,
+        }
+    );
     assert_eq!(platform_plan.sink_scale_percent, 200);
     let video_delivery = router.video_delivery_state().unwrap();
     assert_eq!(video_delivery.session_epoch, context.session_epoch);

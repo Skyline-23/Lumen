@@ -31,10 +31,10 @@ use windows_api::Win32::Media::MediaFoundation::{
 use windows_api::Win32::System::Com::CoTaskMemFree;
 use windows_api::Win32::System::Variant::VARIANT;
 
-use crate::{PlatformSessionPlan, PlatformVideoCodec};
-use lumen_engine::{TRANSPORT_FRAME_GATED_HDR, TRANSPORT_FULL_FRAME_HDR};
-
 use super::native_capture::{NativeDesktopDuplication, NativeEncoderSurface};
+use crate::{
+    PlatformChromaSubsampling, PlatformDynamicRange, PlatformSessionPlan, PlatformVideoCodec,
+};
 
 const TRANSFORM_EVENT_TIMEOUT: Duration = Duration::from_secs(5);
 const INITIAL_FRAME_TIMEOUT: Duration = Duration::from_secs(5);
@@ -753,14 +753,13 @@ impl TryFrom<PlatformSessionPlan> for NativeVideoEncoderPlan {
         if plan.width == 0 || plan.height == 0 || plan.frames_per_second == 0 {
             return Err("Windows Media Foundation encoder geometry is invalid".to_owned());
         }
-        if plan.yuv444 {
+        if plan.video_format.chroma_subsampling != PlatformChromaSubsampling::Yuv420 {
             return Err("Windows Media Foundation native encoder requires 4:2:0 input".to_owned());
         }
-        let ten_bit = matches!(
-            plan.negotiated_dynamic_range_transport,
-            TRANSPORT_FULL_FRAME_HDR | TRANSPORT_FRAME_GATED_HDR
-        );
-        if ten_bit && plan.video_codec == PlatformVideoCodec::H264 {
+        let ten_bit = plan.video_format.bit_depth == 10;
+        if plan.video_format.dynamic_range == PlatformDynamicRange::Hdr10
+            && plan.video_format.codec == PlatformVideoCodec::H264
+        {
             return Err("H.264 cannot carry the negotiated HDR stream".to_owned());
         }
         let bitrate_bps = plan
@@ -769,7 +768,7 @@ impl TryFrom<PlatformSessionPlan> for NativeVideoEncoderPlan {
             .filter(|bitrate| *bitrate != 0)
             .ok_or_else(|| "Windows Media Foundation encoder bitrate is invalid".to_owned())?;
         Ok(Self {
-            codec: plan.video_codec,
+            codec: plan.video_format.codec,
             width: plan.width,
             height: plan.height,
             frames_per_second: plan.frames_per_second,

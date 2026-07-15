@@ -40,6 +40,46 @@ pub enum PlatformVideoCodec {
     Av1,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PlatformVideoProfile {
+    H264Main,
+    H264High,
+    H264High444Predictive,
+    HevcMain,
+    HevcMain10,
+    HevcMain444,
+    HevcMain44410,
+    Av1Main,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PlatformChromaSubsampling {
+    Yuv420,
+    Yuv444,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PlatformDynamicRange {
+    Sdr,
+    Hdr10,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PlatformColorRange {
+    Limited,
+    Full,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PlatformVideoFormat {
+    pub codec: PlatformVideoCodec,
+    pub profile: PlatformVideoProfile,
+    pub chroma_subsampling: PlatformChromaSubsampling,
+    pub bit_depth: u8,
+    pub dynamic_range: PlatformDynamicRange,
+    pub color_range: PlatformColorRange,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlatformApplicationPlan {
     pub application: ApplicationLaunchPlan,
@@ -59,8 +99,7 @@ pub struct PlatformSessionPlan {
     pub height: u32,
     pub frames_per_second: u32,
     pub bitrate_kbps: u32,
-    pub video_codec: PlatformVideoCodec,
-    pub yuv444: bool,
+    pub video_format: PlatformVideoFormat,
     pub audio_channels: u8,
     pub enhanced_audio_quality: bool,
     pub play_audio_on_host: bool,
@@ -216,6 +255,40 @@ pub enum LumenHostPlatformVideoCodec {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LumenHostPlatformVideoProfile {
+    H264Main = 0,
+    H264High = 1,
+    H264High444Predictive = 2,
+    HevcMain = 3,
+    HevcMain10 = 4,
+    HevcMain444 = 5,
+    HevcMain44410 = 6,
+    Av1Main = 7,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LumenHostPlatformChromaSubsampling {
+    Yuv420 = 0,
+    Yuv444 = 1,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LumenHostPlatformDynamicRange {
+    Sdr = 0,
+    Hdr10 = 1,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LumenHostPlatformColorRange {
+    Limited = 0,
+    Full = 1,
+}
+
+#[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LumenHostPlatformSessionPlan {
     pub width: u32,
@@ -223,7 +296,11 @@ pub struct LumenHostPlatformSessionPlan {
     pub frames_per_second: u32,
     pub bitrate_kbps: u32,
     pub video_codec: LumenHostPlatformVideoCodec,
-    pub yuv444: bool,
+    pub video_profile: LumenHostPlatformVideoProfile,
+    pub chroma_subsampling: LumenHostPlatformChromaSubsampling,
+    pub bit_depth: u8,
+    pub dynamic_range: LumenHostPlatformDynamicRange,
+    pub color_range: LumenHostPlatformColorRange,
     pub audio_channels: u8,
     pub enhanced_audio_quality: bool,
     pub play_audio_on_host: bool,
@@ -318,12 +395,36 @@ impl From<PlatformSessionPlan> for LumenHostPlatformSessionPlan {
             height: plan.height,
             frames_per_second: plan.frames_per_second,
             bitrate_kbps: plan.bitrate_kbps,
-            video_codec: match plan.video_codec {
+            video_codec: match plan.video_format.codec {
                 PlatformVideoCodec::H264 => LumenHostPlatformVideoCodec::H264,
                 PlatformVideoCodec::Hevc => LumenHostPlatformVideoCodec::Hevc,
                 PlatformVideoCodec::Av1 => LumenHostPlatformVideoCodec::Av1,
             },
-            yuv444: plan.yuv444,
+            video_profile: match plan.video_format.profile {
+                PlatformVideoProfile::H264Main => LumenHostPlatformVideoProfile::H264Main,
+                PlatformVideoProfile::H264High => LumenHostPlatformVideoProfile::H264High,
+                PlatformVideoProfile::H264High444Predictive => {
+                    LumenHostPlatformVideoProfile::H264High444Predictive
+                }
+                PlatformVideoProfile::HevcMain => LumenHostPlatformVideoProfile::HevcMain,
+                PlatformVideoProfile::HevcMain10 => LumenHostPlatformVideoProfile::HevcMain10,
+                PlatformVideoProfile::HevcMain444 => LumenHostPlatformVideoProfile::HevcMain444,
+                PlatformVideoProfile::HevcMain44410 => LumenHostPlatformVideoProfile::HevcMain44410,
+                PlatformVideoProfile::Av1Main => LumenHostPlatformVideoProfile::Av1Main,
+            },
+            chroma_subsampling: match plan.video_format.chroma_subsampling {
+                PlatformChromaSubsampling::Yuv420 => LumenHostPlatformChromaSubsampling::Yuv420,
+                PlatformChromaSubsampling::Yuv444 => LumenHostPlatformChromaSubsampling::Yuv444,
+            },
+            bit_depth: plan.video_format.bit_depth,
+            dynamic_range: match plan.video_format.dynamic_range {
+                PlatformDynamicRange::Sdr => LumenHostPlatformDynamicRange::Sdr,
+                PlatformDynamicRange::Hdr10 => LumenHostPlatformDynamicRange::Hdr10,
+            },
+            color_range: match plan.video_format.color_range {
+                PlatformColorRange::Limited => LumenHostPlatformColorRange::Limited,
+                PlatformColorRange::Full => LumenHostPlatformColorRange::Full,
+            },
             audio_channels: plan.audio_channels,
             enhanced_audio_quality: plan.enhanced_audio_quality,
             play_audio_on_host: plan.play_audio_on_host,
@@ -786,6 +887,17 @@ mod tests {
     ) -> i32 {
         let plan = unsafe { *plan };
         assert_eq!(plan.video_codec, LumenHostPlatformVideoCodec::Hevc);
+        assert_eq!(
+            plan.video_profile,
+            LumenHostPlatformVideoProfile::HevcMain10
+        );
+        assert_eq!(
+            plan.chroma_subsampling,
+            LumenHostPlatformChromaSubsampling::Yuv420
+        );
+        assert_eq!(plan.bit_depth, 10);
+        assert_eq!(plan.dynamic_range, LumenHostPlatformDynamicRange::Hdr10);
+        assert_eq!(plan.color_range, LumenHostPlatformColorRange::Limited);
         assert_eq!(plan.audio_channels, 8);
         STARTS.fetch_add(1, Ordering::Relaxed);
         0
@@ -918,8 +1030,14 @@ mod tests {
                 height: 2_290,
                 frames_per_second: 120,
                 bitrate_kbps: 80_000,
-                video_codec: PlatformVideoCodec::Hevc,
-                yuv444: false,
+                video_format: PlatformVideoFormat {
+                    codec: PlatformVideoCodec::Hevc,
+                    profile: PlatformVideoProfile::HevcMain10,
+                    chroma_subsampling: PlatformChromaSubsampling::Yuv420,
+                    bit_depth: 10,
+                    dynamic_range: PlatformDynamicRange::Hdr10,
+                    color_range: PlatformColorRange::Limited,
+                },
                 audio_channels: 8,
                 enhanced_audio_quality: true,
                 play_audio_on_host: false,

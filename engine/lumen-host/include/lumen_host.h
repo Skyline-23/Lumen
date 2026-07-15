@@ -14,13 +14,43 @@ typedef enum LumenHostPlatformVideoCodec {
   LumenHostPlatformVideoCodecAV1 = 2,
 } LumenHostPlatformVideoCodec;
 
+typedef enum LumenHostPlatformVideoProfile {
+  LumenHostPlatformVideoProfileH264Main = 0,
+  LumenHostPlatformVideoProfileH264High = 1,
+  LumenHostPlatformVideoProfileH264High444Predictive = 2,
+  LumenHostPlatformVideoProfileHEVCMain = 3,
+  LumenHostPlatformVideoProfileHEVCMain10 = 4,
+  LumenHostPlatformVideoProfileHEVCMain444 = 5,
+  LumenHostPlatformVideoProfileHEVCMain44410 = 6,
+  LumenHostPlatformVideoProfileAV1Main = 7,
+} LumenHostPlatformVideoProfile;
+
+typedef enum LumenHostPlatformChromaSubsampling {
+  LumenHostPlatformChromaSubsamplingYUV420 = 0,
+  LumenHostPlatformChromaSubsamplingYUV444 = 1,
+} LumenHostPlatformChromaSubsampling;
+
+typedef enum LumenHostPlatformDynamicRange {
+  LumenHostPlatformDynamicRangeSDR = 0,
+  LumenHostPlatformDynamicRangeHDR10 = 1,
+} LumenHostPlatformDynamicRange;
+
+typedef enum LumenHostPlatformColorRange {
+  LumenHostPlatformColorRangeLimited = 0,
+  LumenHostPlatformColorRangeFull = 1,
+} LumenHostPlatformColorRange;
+
 typedef struct LumenHostPlatformSessionPlan {
   uint32_t width;
   uint32_t height;
   uint32_t frames_per_second;
   uint32_t bitrate_kbps;
   LumenHostPlatformVideoCodec video_codec;
-  bool yuv444;
+  LumenHostPlatformVideoProfile video_profile;
+  LumenHostPlatformChromaSubsampling chroma_subsampling;
+  uint8_t bit_depth;
+  LumenHostPlatformDynamicRange dynamic_range;
+  LumenHostPlatformColorRange color_range;
   uint8_t audio_channels;
   bool enhanced_audio_quality;
   bool play_audio_on_host;
