@@ -1,3 +1,4 @@
+import Foundation
 import LumenEngineBridge
 
 @frozen public enum LumenMacWorkspacePolicy: CaseIterable, Equatable, Hashable, Sendable {
@@ -250,7 +251,7 @@ public enum LumenMacDisplayColorResolver {
 public actor LumenWorkspaceCoordinator {
     private let engine: LumenEngineHandle
 
-    public init() throws {
+    public init(recoveryJournalPath: String? = nil) throws {
         let actualVersion = LumenEngineBridgeABIVersion()
         guard actualVersion == LUMEN_ENGINE_ABI_VERSION else {
             throw LumenWorkspaceCoordinatorError.incompatibleABI(
@@ -258,7 +259,15 @@ public actor LumenWorkspaceCoordinator {
                 actual: actualVersion
             )
         }
-        guard let engine = lumen_workspace_engine_create() else {
+        let path = recoveryJournalPath ?? FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appending(path: "Lumen", directoryHint: .isDirectory)
+            .appending(path: "display-recovery.json", directoryHint: .notDirectory)
+            .path(percentEncoded: false)
+        let engine = path.withCString { pointer in
+            lumen_workspace_engine_create_recoverable(pointer)
+        }
+        guard let engine else {
             throw LumenWorkspaceCoordinatorError.allocationFailed
         }
         self.engine = LumenEngineHandle(engine, destructor: lumen_workspace_engine_destroy)
@@ -268,7 +277,7 @@ public actor LumenWorkspaceCoordinator {
         policy: LumenMacWorkspacePolicy,
         moveTargetWindows: Bool = false,
         manageCapture: Bool = true
-    ) throws {
+    ) throws -> Bool {
         let status = lumen_workspace_engine_begin_session(
             engine.rawValue,
             LumenWorkspaceSessionRequest(
@@ -277,7 +286,11 @@ public actor LumenWorkspaceCoordinator {
                 manage_capture: manageCapture
             )
         )
+        if status == LumenEngineStatusRecoveryRequired {
+            return false
+        }
         try requireSuccess(status)
+        return true
     }
 
     public func nextCommand() throws -> LumenMacWorkspaceCommand? {

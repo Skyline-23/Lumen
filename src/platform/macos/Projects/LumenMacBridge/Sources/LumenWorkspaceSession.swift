@@ -34,6 +34,7 @@ public struct LumenMacWorkspaceSessionRequest: Sendable {
 public enum LumenMacWorkspaceSessionError: Error, Equatable {
     case sessionAlreadyStarted
     case sessionNotStarted
+    case recoveryDidNotComplete
     case virtualDisplayOwnershipMismatch
 }
 
@@ -211,11 +212,26 @@ public actor LumenMacWorkspaceSession {
             throw LumenMacWorkspaceSessionError.sessionAlreadyStarted
         }
 
-        try await coordinator.beginSession(
+        let admitted = try await coordinator.beginSession(
             policy: request.policy,
             moveTargetWindows: !request.targetProcessIdentifiers.isEmpty,
             manageCapture: request.managesCapture
         )
+        if !admitted {
+            if let recoveryError = try await coordinator.executePendingCommandsRecovering(
+                using: executor
+            ) {
+                throw recoveryError
+            }
+            let recoveredAdmission = try await coordinator.beginSession(
+                policy: request.policy,
+                moveTargetWindows: !request.targetProcessIdentifiers.isEmpty,
+                manageCapture: request.managesCapture
+            )
+            guard recoveredAdmission else {
+                throw LumenMacWorkspaceSessionError.recoveryDidNotComplete
+            }
+        }
         do {
             try await coordinator.executePendingCommands(using: executor)
             started = true

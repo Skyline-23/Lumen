@@ -9,7 +9,7 @@
 extern "C" {
 #endif
 
-#define LUMEN_ENGINE_ABI_VERSION 61u
+#define LUMEN_ENGINE_ABI_VERSION 62u
 #define LUMEN_ENCRYPTED_CONTROL_HEADER_SIZE 8u
 #define LUMEN_CONTROL_FEEDBACK_MAX_SIZE 29u
 #define LUMEN_CONTROL_TERMINATION_SIZE 8u
@@ -26,7 +26,8 @@ typedef enum LumenEngineStatus {
   LumenEngineStatusAlreadyExists = 7,
   LumenEngineStatusAuthenticationFailed = 8,
   LumenEngineStatusStorageError = 9,
-  LumenEngineStatusCorruptData = 10
+  LumenEngineStatusCorruptData = 10,
+  LumenEngineStatusRecoveryRequired = 11
 } LumenEngineStatus;
 
 typedef enum LumenOwnerState {
@@ -1109,6 +1110,9 @@ size_t lumen_host_runtime_supervisor_copy_last_error(
 );
 
 LumenWorkspaceEngine *lumen_workspace_engine_create(void);
+LumenWorkspaceEngine *lumen_workspace_engine_create_recoverable(
+  const char *journal_path
+);
 void lumen_workspace_engine_destroy(LumenWorkspaceEngine *engine);
 
 LumenEngineStatus lumen_workspace_engine_begin_session(

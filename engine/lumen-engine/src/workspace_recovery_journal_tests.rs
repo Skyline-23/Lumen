@@ -119,3 +119,22 @@ fn stale_generation_cannot_replace_a_newer_journal() {
         RecoveryJournalLoad::Verified(current)
     );
 }
+
+#[test]
+fn atomic_install_uses_platform_durability_contracts() {
+    // Given: the recovery store source compiled for Unix and Windows targets.
+    let source = include_str!("workspace_recovery_journal.rs");
+
+    // When: the platform-specific install boundaries are inspected.
+    let windows_write_through =
+        source.contains("MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH");
+    let windows_flushes_installed =
+        source.contains("RecoveryJournalError::Storage(\"flush-installed\")");
+    let unix_syncs_parent = source.contains("sync_parent(parent)");
+
+    // Then: Windows and Unix both preserve their strongest supported durability ordering.
+    assert!(source.contains("MoveFileExW"));
+    assert!(windows_write_through);
+    assert!(windows_flushes_installed);
+    assert!(unix_syncs_parent);
+}

@@ -51,20 +51,22 @@ pub struct LumenWorkspaceCommand {
 }
 
 #[derive(Default)]
-struct AppliedResources {
-    snapshot: bool,
-    display: bool,
-    capture: bool,
+pub(crate) struct AppliedResources {
+    pub(crate) snapshot: bool,
+    pub(crate) display: bool,
+    pub(crate) capture: bool,
 }
 
 pub struct WorkspaceEngine {
     pub(crate) state: LumenWorkspaceState,
     pub(crate) generation: u64,
-    next_sequence: u32,
-    queued: VecDeque<LumenWorkspaceCommand>,
-    awaiting: Option<LumenWorkspaceCommand>,
-    resources: AppliedResources,
+    pub(crate) next_sequence: u32,
+    pub(crate) queued: VecDeque<LumenWorkspaceCommand>,
+    pub(crate) awaiting: Option<LumenWorkspaceCommand>,
+    pub(crate) resources: AppliedResources,
     manage_capture: bool,
+    pub(crate) recovery_store: Option<RecoveryJournalStore>,
+    pub(crate) recovery_journal: Option<WorkspaceRecoveryJournal>,
     pub(crate) last_failure: LumenEngineStatus,
 }
 
@@ -78,6 +80,8 @@ impl Default for WorkspaceEngine {
             awaiting: None,
             resources: AppliedResources::default(),
             manage_capture: true,
+            recovery_store: None,
+            recovery_journal: None,
             last_failure: LumenEngineStatus::Ok,
         }
     }
@@ -92,6 +96,10 @@ impl WorkspaceEngine {
     pub fn begin_session(&mut self, request: LumenWorkspaceSessionRequest) -> LumenEngineStatus {
         if self.state != LumenWorkspaceState::Idle || self.awaiting.is_some() {
             return LumenEngineStatus::InvalidState;
+        }
+        let recovery_status = self.recover_before_session();
+        if recovery_status != LumenEngineStatus::Ok {
+            return recovery_status;
         }
 
         self.generation = self.generation.wrapping_add(1).max(1);
@@ -156,14 +164,20 @@ impl WorkspaceEngine {
             self.last_failure = LumenEngineStatus::CommandFailed;
             if self.state == LumenWorkspaceState::Stopping {
                 self.record_cleanup_failure(command.kind);
-                self.finish_transition_if_ready();
             } else {
-                self.schedule_recovery();
+                let _ = self.schedule_recovery();
             }
             return LumenEngineStatus::CommandFailed;
         }
 
         self.record_success(command.kind);
+        if self.state == LumenWorkspaceState::Stopping {
+            let cleanup_status = self.advance_cleanup(command.kind);
+            if cleanup_status != LumenEngineStatus::Ok {
+                self.last_failure = cleanup_status;
+                return cleanup_status;
+            }
+        }
         self.finish_transition_if_ready();
         LumenEngineStatus::Ok
     }
@@ -176,11 +190,10 @@ impl WorkspaceEngine {
             return LumenEngineStatus::InvalidState;
         }
 
-        self.schedule_recovery();
-        LumenEngineStatus::Ok
+        self.schedule_recovery()
     }
 
-    fn enqueue(&mut self, kind: LumenWorkspaceCommandKind) {
+    pub(crate) fn enqueue(&mut self, kind: LumenWorkspaceCommandKind) {
         let command = LumenWorkspaceCommand {
             kind,
             generation: self.generation,
@@ -188,22 +201,6 @@ impl WorkspaceEngine {
         };
         self.next_sequence = self.next_sequence.wrapping_add(1);
         self.queued.push_back(command);
-    }
-
-    fn schedule_recovery(&mut self) {
-        self.state = LumenWorkspaceState::Stopping;
-        self.queued.clear();
-
-        if self.resources.capture {
-            self.enqueue(LumenWorkspaceCommandKind::StopCapture);
-        }
-        if self.resources.snapshot {
-            self.enqueue(LumenWorkspaceCommandKind::RestoreWorkspace);
-        }
-        if self.resources.display {
-            self.enqueue(LumenWorkspaceCommandKind::DestroyVirtualDisplay);
-        }
-        self.finish_transition_if_ready();
     }
 
     fn record_success(&mut self, kind: LumenWorkspaceCommandKind) {
@@ -221,16 +218,7 @@ impl WorkspaceEngine {
         }
     }
 
-    fn record_cleanup_failure(&mut self, kind: LumenWorkspaceCommandKind) {
-        match kind {
-            LumenWorkspaceCommandKind::StopCapture => self.resources.capture = false,
-            LumenWorkspaceCommandKind::RestoreWorkspace => self.resources.snapshot = false,
-            LumenWorkspaceCommandKind::DestroyVirtualDisplay => self.resources.display = false,
-            _ => {}
-        }
-    }
-
-    fn finish_transition_if_ready(&mut self) {
+    pub(crate) fn finish_transition_if_ready(&mut self) {
         if self.awaiting.is_some() || !self.queued.is_empty() {
             return;
         }
@@ -239,7 +227,12 @@ impl WorkspaceEngine {
             LumenWorkspaceState::Starting if !self.manage_capture || self.resources.capture => {
                 self.state = LumenWorkspaceState::Active;
             }
-            LumenWorkspaceState::Stopping => {
+            LumenWorkspaceState::Stopping
+                if !self.resources.capture
+                    && !self.resources.snapshot
+                    && !self.resources.display
+                    && self.recovery_journal.is_none() =>
+            {
                 self.state = LumenWorkspaceState::Idle;
             }
             _ => {}

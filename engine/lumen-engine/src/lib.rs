@@ -101,7 +101,7 @@ pub use protocol::{
 };
 pub use video_packetization::{plan_fec_blocks, plan_fec_shards};
 
-pub const ABI_VERSION: u32 = 61;
+pub const ABI_VERSION: u32 = 62;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -117,12 +117,15 @@ pub enum LumenEngineStatus {
     AuthenticationFailed = 8,
     StorageError = 9,
     CorruptData = 10,
+    RecoveryRequired = 11,
 }
 
 mod engine_ffi;
 mod host_engine;
+mod workspace_command_recovery;
 mod workspace_display;
 mod workspace_engine;
+mod workspace_engine_ffi;
 mod workspace_recovery;
 mod workspace_recovery_journal;
 mod workspace_recovery_model;
@@ -131,12 +134,15 @@ pub use engine_ffi::*;
 pub use host_engine::*;
 pub use workspace_display::*;
 pub use workspace_engine::*;
+pub use workspace_engine_ffi::*;
 pub use workspace_recovery::*;
 pub use workspace_recovery_journal::*;
 pub use workspace_recovery_model::*;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod workspace_engine_recovery_tests;
 #[cfg(test)]
 mod workspace_engine_tests;
 #[cfg(test)]

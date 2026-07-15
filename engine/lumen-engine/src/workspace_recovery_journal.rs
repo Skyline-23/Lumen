@@ -126,11 +126,7 @@ impl RecoveryJournalStore {
             .and_then(|_| temporary.flush())
             .and_then(|_| temporary.as_file().sync_all())
             .map_err(|_| RecoveryJournalError::Storage("write-temporary"))?;
-        temporary
-            .persist(&self.path)
-            .map_err(|_| RecoveryJournalError::Storage("atomic-replace"))?;
-        sync_parent(parent)?;
-        Ok(())
+        install_atomically(temporary, &self.path, parent)
     }
 
     fn quarantine(
@@ -181,7 +177,76 @@ fn sync_parent(parent: &Path) -> Result<(), RecoveryJournalError> {
         .map_err(|_| RecoveryJournalError::Storage("sync-directory"))
 }
 
-#[cfg(not(unix))]
-fn sync_parent(_parent: &Path) -> Result<(), RecoveryJournalError> {
+#[cfg(unix)]
+fn install_atomically(
+    temporary: tempfile::NamedTempFile,
+    path: &Path,
+    parent: &Path,
+) -> Result<(), RecoveryJournalError> {
+    temporary
+        .persist(path)
+        .map_err(|_| RecoveryJournalError::Storage("atomic-replace"))?;
+    sync_parent(parent)
+}
+
+#[cfg(windows)]
+fn install_atomically(
+    temporary: tempfile::NamedTempFile,
+    path: &Path,
+    _parent: &Path,
+) -> Result<(), RecoveryJournalError> {
+    use std::os::windows::ffi::OsStrExt as _;
+
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+
+    let (file, temporary_path) = temporary
+        .keep()
+        .map_err(|_| RecoveryJournalError::Storage("retain-temporary"))?;
+    file.sync_all()
+        .map_err(|_| RecoveryJournalError::Storage("flush-temporary"))?;
+    drop(file);
+    let source: Vec<u16> = temporary_path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let destination: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    // SAFETY: Category 8 (FFI boundary). Both vectors are NUL-terminated UTF-16
+    // buffers that remain live and immutable for the duration of MoveFileExW.
+    let moved = unsafe {
+        MoveFileExW(
+            source.as_ptr(),
+            destination.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if moved == 0 {
+        let _ = fs::remove_file(&temporary_path);
+        return Err(RecoveryJournalError::Storage(
+            "atomic-replace-write-through",
+        ));
+    }
+    fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .and_then(|installed| installed.sync_all())
+        .map_err(|_| RecoveryJournalError::Storage("flush-installed"))
+}
+
+#[cfg(not(any(unix, windows)))]
+fn install_atomically(
+    temporary: tempfile::NamedTempFile,
+    path: &Path,
+    _parent: &Path,
+) -> Result<(), RecoveryJournalError> {
+    temporary
+        .persist(path)
+        .map_err(|_| RecoveryJournalError::Storage("atomic-replace"))?;
     Ok(())
 }

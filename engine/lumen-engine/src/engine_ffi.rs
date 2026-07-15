@@ -1,39 +1,8 @@
 use super::*;
 
 #[repr(C)]
-pub struct LumenWorkspaceEngine {
-    inner: WorkspaceEngine,
-}
-
-#[repr(C)]
 pub struct LumenHostRuntimeEngine {
     inner: HostRuntimeEngine,
-}
-
-fn with_engine_mut(
-    engine: *mut LumenWorkspaceEngine,
-    operation: impl FnOnce(&mut WorkspaceEngine) -> LumenEngineStatus,
-) -> LumenEngineStatus {
-    let Some(mut engine) = NonNull::new(engine) else {
-        return LumenEngineStatus::InvalidArgument;
-    };
-    catch_unwind(AssertUnwindSafe(|| {
-        operation(unsafe { &mut engine.as_mut().inner })
-    }))
-    .unwrap_or(LumenEngineStatus::Panic)
-}
-
-fn with_engine(
-    engine: *const LumenWorkspaceEngine,
-    operation: impl FnOnce(&WorkspaceEngine) -> LumenEngineStatus,
-) -> LumenEngineStatus {
-    let Some(engine) = NonNull::new(engine.cast_mut()) else {
-        return LumenEngineStatus::InvalidArgument;
-    };
-    catch_unwind(AssertUnwindSafe(|| {
-        operation(unsafe { &engine.as_ref().inner })
-    }))
-    .unwrap_or(LumenEngineStatus::Panic)
 }
 
 fn with_host_engine_mut(
@@ -304,92 +273,4 @@ pub extern "C" fn lumen_host_runtime_engine_last_failure(
     engine: *const LumenHostRuntimeEngine,
 ) -> LumenEngineStatus {
     with_host_engine(engine, HostRuntimeEngine::last_failure)
-}
-
-#[no_mangle]
-pub extern "C" fn lumen_workspace_engine_create() -> *mut LumenWorkspaceEngine {
-    Box::into_raw(Box::new(LumenWorkspaceEngine {
-        inner: WorkspaceEngine::default(),
-    }))
-}
-
-#[no_mangle]
-/// # Safety
-///
-/// `engine` must be null or a live pointer returned by
-/// [`lumen_workspace_engine_create`] that has not already been destroyed.
-pub unsafe extern "C" fn lumen_workspace_engine_destroy(engine: *mut LumenWorkspaceEngine) {
-    if !engine.is_null() {
-        drop(unsafe { Box::from_raw(engine) });
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn lumen_workspace_engine_begin_session(
-    engine: *mut LumenWorkspaceEngine,
-    request: LumenWorkspaceSessionRequest,
-) -> LumenEngineStatus {
-    with_engine_mut(engine, |engine| engine.begin_session(request))
-}
-
-#[no_mangle]
-pub extern "C" fn lumen_workspace_engine_next_command(
-    engine: *mut LumenWorkspaceEngine,
-    command_out: *mut LumenWorkspaceCommand,
-) -> LumenEngineStatus {
-    let Some(mut command_out) = NonNull::new(command_out) else {
-        return LumenEngineStatus::InvalidArgument;
-    };
-    with_engine_mut(engine, |engine| match engine.next_command() {
-        Ok(command) => {
-            unsafe { *command_out.as_mut() = command };
-            LumenEngineStatus::Ok
-        }
-        Err(status) => status,
-    })
-}
-
-#[no_mangle]
-pub extern "C" fn lumen_workspace_engine_complete_command(
-    engine: *mut LumenWorkspaceEngine,
-    command: LumenWorkspaceCommand,
-    succeeded: bool,
-) -> LumenEngineStatus {
-    with_engine_mut(engine, |engine| engine.complete_command(command, succeeded))
-}
-
-#[no_mangle]
-pub extern "C" fn lumen_workspace_engine_end_session(
-    engine: *mut LumenWorkspaceEngine,
-) -> LumenEngineStatus {
-    with_engine_mut(engine, WorkspaceEngine::end_session)
-}
-
-#[no_mangle]
-pub extern "C" fn lumen_workspace_engine_state(
-    engine: *const LumenWorkspaceEngine,
-) -> LumenWorkspaceState {
-    let Some(engine) = NonNull::new(engine.cast_mut()) else {
-        return LumenWorkspaceState::Idle;
-    };
-    catch_unwind(AssertUnwindSafe(|| unsafe { engine.as_ref().inner.state }))
-        .unwrap_or(LumenWorkspaceState::Idle)
-}
-
-#[no_mangle]
-pub extern "C" fn lumen_workspace_engine_generation(engine: *const LumenWorkspaceEngine) -> u64 {
-    let Some(engine) = NonNull::new(engine.cast_mut()) else {
-        return 0;
-    };
-    catch_unwind(AssertUnwindSafe(|| unsafe {
-        engine.as_ref().inner.generation
-    }))
-    .unwrap_or(0)
-}
-
-#[no_mangle]
-pub extern "C" fn lumen_workspace_engine_last_failure(
-    engine: *const LumenWorkspaceEngine,
-) -> LumenEngineStatus {
-    with_engine(engine, |engine| engine.last_failure)
 }
