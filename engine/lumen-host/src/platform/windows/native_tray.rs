@@ -70,11 +70,11 @@ pub(crate) struct NativeWindowsTray {
 }
 
 impl NativeWindowsTray {
-    pub(crate) fn start(endpoint: String, locale: String) -> Result<Self, String> {
+    pub(crate) fn start(endpoint: String) -> Result<Self, String> {
         let (ready_sender, ready_receiver) = mpsc::sync_channel(1);
         let thread = thread::Builder::new()
             .name("lumen-windows-tray".to_owned())
-            .spawn(move || run_tray(endpoint, locale, ready_sender))
+            .spawn(move || run_tray(endpoint, ready_sender))
             .map_err(|error| format!("Windows tray thread failed to start: {error}"))?;
         match ready_receiver.recv() {
             Ok(Ok(window)) => Ok(Self {
@@ -116,44 +116,18 @@ struct TrayStrings {
 }
 
 impl TrayStrings {
-    fn localized(endpoint: &str, locale: &str) -> Self {
-        let normalized = locale.to_ascii_lowercase().replace('_', "-");
-        let (open, reload, force_stop, restart, quit) = if normalized.starts_with("ko") {
-            (
-                "Lumen 열기",
-                "애플리케이션 새로고침",
-                "스트림 강제 종료",
-                "Lumen 재시작",
-                "Lumen 종료",
-            )
-        } else if normalized.starts_with("ja") {
-            (
-                "Lumenを開く",
-                "アプリケーションを再読み込み",
-                "ストリームを強制停止",
-                "Lumenを再起動",
-                "Lumenを終了",
-            )
-        } else {
-            (
-                "Open Lumen",
-                "Reload applications",
-                "Force stop stream",
-                "Restart Lumen",
-                "Quit Lumen",
-            )
-        };
+    fn english(endpoint: &str) -> Self {
         Self {
-            open: format!("{open} ({endpoint})"),
-            reload,
-            force_stop,
-            restart,
-            quit,
+            open: format!("Open Lumen ({endpoint})"),
+            reload: "Reload applications",
+            force_stop: "Force stop stream",
+            restart: "Restart Lumen",
+            quit: "Quit Lumen",
         }
     }
 }
 
-fn run_tray(endpoint: String, locale: String, ready: mpsc::SyncSender<Result<usize, String>>) {
+fn run_tray(endpoint: String, ready: mpsc::SyncSender<Result<usize, String>>) {
     if !allow_shell_to_monitor_thread() {
         let _ = ready.send(Err(
             "Windows tray thread permissions could not be configured".to_owned(),
@@ -170,7 +144,7 @@ fn run_tray(endpoint: String, locale: String, ready: mpsc::SyncSender<Result<usi
     }
 
     TRAY_STRINGS.with(|storage| {
-        *storage.borrow_mut() = Some(TrayStrings::localized(&endpoint, &locale));
+        *storage.borrow_mut() = Some(TrayStrings::english(&endpoint));
     });
     TASKBAR_MESSAGE.with(|message| {
         *message.borrow_mut() = unsafe { RegisterWindowMessageW(TASKBAR_CREATED.as_ptr()) };

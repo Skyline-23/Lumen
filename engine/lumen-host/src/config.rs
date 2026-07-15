@@ -3,7 +3,6 @@ use std::ffi::OsString;
 use std::fmt;
 
 const REQUIRED_ARGUMENTS: &[&str] = &[
-    "locale",
     "host_name",
     "enable_discovery",
     "device_enrollment_enabled",
@@ -39,7 +38,7 @@ const REQUIRED_ARGUMENTS: &[&str] = &[
     "file_state",
 ];
 
-const OPTIONAL_ARGUMENTS: &[&str] = &["adapter_name", "output_name", "audio_sink", "external_ip"];
+const OPTIONAL_ARGUMENTS: &[&str] = &["adapter_name", "output_name", "audio_sink"];
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HostArguments {
@@ -171,7 +170,6 @@ impl HostArguments {
             self.require_one_of(key, &["true", "false"])?;
         }
         for key in [
-            "locale",
             "host_name",
             "fallback_mode",
             "file_apps",
@@ -241,7 +239,6 @@ impl HostArguments {
             .filter(|value| !value.is_empty())
             .unwrap_or_else(|| "Lumen".to_owned());
         Self::parse([
-            "locale=en".to_owned(),
             format!("host_name={host_name}"),
             "enable_discovery=true".to_owned(),
             "device_enrollment_enabled=true".to_owned(),
@@ -310,7 +307,6 @@ pub(crate) mod tests {
                     "workspace_policy" => "coexist",
                     "global_prep_cmd" | "global_state_cmd" | "server_cmd" => "[]",
                     "back_button_timeout" => "-1",
-                    "locale" => "en",
                     "host_name" => "Lumen",
                     "fallback_mode" => "1920x1080x60",
                     "file_apps" => "/tmp/apps.json",
@@ -332,11 +328,9 @@ pub(crate) mod tests {
 
     #[test]
     fn accepts_the_current_native_runtime_contract() {
-        let mut values = valid_arguments();
-        values.push("external_ip=203.0.113.10".to_owned());
-        let parsed = HostArguments::parse(values).unwrap();
+        let parsed = HostArguments::parse(valid_arguments()).unwrap();
         assert_eq!(parsed.get("port"), Some("47989"));
-        assert_eq!(parsed.len(), REQUIRED_ARGUMENTS.len() + 1);
+        assert_eq!(parsed.len(), REQUIRED_ARGUMENTS.len());
     }
 
     #[test]

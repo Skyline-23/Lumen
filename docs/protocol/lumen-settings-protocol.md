@@ -25,7 +25,7 @@ runtime values did not change.
 
 ## Envelopes
 
-A snapshot contains `schemaVersion`, the host-assigned `revision`, requested
+A snapshot contains `schemaVersion`, the host-assigned concurrency `revision`, requested
 `settings`, currently `effective` settings, `applyState`, and field
 `capabilities`. A patch contains `schemaVersion`, `baseRevision`, a stable
 `requestId`, and nested partial `changes`. An accepted response contains the new
@@ -43,6 +43,13 @@ forbidden key, or malformed command. Repeating the same accepted `requestId` and
 payload returns the original response, including after restart. Reusing the ID
 with a different payload is a conflict.
 
+`revision` is an internal optimistic-concurrency token, not a product version.
+The pre-release capability hard break keeps `schemaVersion: 1` while retiring
+the previous on-disk journal generation. On first open, that journal is
+discarded and reseeded at revision 1 with empty event and idempotency history;
+the first accepted patch advances to revision 2. No legacy field or revision
+migration is performed.
+
 ## Events and capabilities
 
 Every accepted patch, local authoritative update, and deferred application
@@ -51,10 +58,18 @@ strictly after its last observed revision. If that point is no longer retained,
 the host returns `revision-not-retained` and the client fetches a new snapshot.
 
 Capabilities describe every field's stable key, type, apply class, availability,
-allowed enum values, numeric bounds, and string constraints. Unsupported
+allowed enum values, user-facing value labels, numeric bounds, integer presets
+and steps, and string constraints. Finite host resources use enum capabilities
+with nonempty `allowedValues` and matching `allowedValueLabels`; clients present
+pickers and do not synthesize raw values. Unsupported
 platform-specific fields are present as unavailable metadata and cannot be
 patched. In particular, non-macOS hosts do not advertise macOS workspace policy
 as available.
+
+Host language is not a remote setting. `general.locale` is absent because
+language selection belongs to each client device. `network.externalIpMode`
+accepts only `automatic` or `disabled`; arbitrary external-IP text is not part
+of the settings contract.
 
 ## Security boundary
 

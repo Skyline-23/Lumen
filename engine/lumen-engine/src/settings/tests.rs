@@ -104,6 +104,7 @@ fn conformance_fixture_matches_runtime_field_catalog_and_constraints() {
     );
     let fields = field_catalog();
     let fixture_fields = fixture["fields"].as_array().unwrap();
+    assert_eq!(fixture_fields.len(), 31);
     assert_eq!(fixture_fields.len(), fields.len());
     for fixture_field in fixture_fields {
         let key = fixture_field["key"].as_str().unwrap();
@@ -122,6 +123,23 @@ fn conformance_fixture_matches_runtime_field_catalog_and_constraints() {
             })
             .unwrap_or_default();
         assert_eq!(values, runtime.allowed_values, "enum values for {key}");
+        let value_labels: BTreeMap<String, String> = fixture_field["valueLabels"]
+            .as_object()
+            .map(|labels| {
+                labels
+                    .iter()
+                    .filter_map(|(value, label)| {
+                        label
+                            .as_str()
+                            .map(|label| (value.clone(), label.to_owned()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert_eq!(
+            value_labels, runtime.allowed_value_labels,
+            "enum value labels for {key}"
+        );
         assert_eq!(
             fixture_field
                 .get("minimum")
@@ -148,9 +166,54 @@ fn conformance_fixture_matches_runtime_field_catalog_and_constraints() {
                 .map(str::to_owned),
             runtime.pattern
         );
+        let presets: Vec<_> = fixture_field["presets"]
+            .as_array()
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(serde_json::Value::as_i64)
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert_eq!(presets, runtime.presets, "integer presets for {key}");
+        assert_eq!(
+            fixture_field
+                .get("step")
+                .and_then(serde_json::Value::as_i64),
+            runtime.step,
+            "integer step for {key}"
+        );
     }
+    assert!(!fields.contains_key("general.locale"));
+    assert!(!fields.contains_key("network.externalIp"));
+    assert!(fields.contains_key("network.externalIpMode"));
     assert!(fields.contains_key("general.updateChannel"));
     assert!(fields.contains_key("general.notifyPreReleases"));
+    for key in [
+        "streaming.adapterSelector",
+        "streaming.outputSelector",
+        "streaming.fallbackDisplayMode",
+        "audio.sink",
+    ] {
+        let capability = &fields[key];
+        assert_eq!(capability.field_type, SettingsFieldType::Enum, "{key}");
+        assert!(!capability.allowed_values.is_empty(), "{key}");
+        assert_eq!(
+            capability.allowed_value_labels.len(),
+            capability.allowed_values.len(),
+            "{key}"
+        );
+    }
+    for key in [
+        "input.backButtonTimeoutMs",
+        "network.port",
+        "network.pingTimeoutMs",
+        "network.fecPercentage",
+    ] {
+        let capability = &fields[key];
+        assert!(!capability.presets.is_empty(), "{key}");
+        assert!(capability.step.is_some(), "{key}");
+    }
     let windows = SettingsCapabilities::for_platform(SettingsHostPlatform::Windows);
     assert_eq!(
         fixture["platformCapabilities"]["windows"]["workspace.policy"]["available"],
@@ -183,8 +246,14 @@ fn local_reconciliation_preserves_unapplied_desired_values() {
         ))
         .unwrap();
     let pending = authority.snapshot();
-    assert_eq!(pending.settings.streaming.fallback_display_mode, "2560x1440x120");
-    assert_ne!(pending.effective.streaming.fallback_display_mode, "2560x1440x120");
+    assert_eq!(
+        pending.settings.streaming.fallback_display_mode,
+        "2560x1440x120"
+    );
+    assert_ne!(
+        pending.effective.streaming.fallback_display_mode,
+        "2560x1440x120"
+    );
     assert_eq!(pending.settings.network.port, 48_200);
     assert_ne!(pending.effective.network.port, 48_200);
 
@@ -195,8 +264,14 @@ fn local_reconciliation_preserves_unapplied_desired_values() {
     assert_eq!(reconciled.settings.general.host_name, "Remote Host");
     assert!(!reconciled.settings.input.mouse);
     assert!(!reconciled.effective.input.mouse);
-    assert_eq!(reconciled.settings.streaming.fallback_display_mode, "2560x1440x120");
-    assert_ne!(reconciled.effective.streaming.fallback_display_mode, "2560x1440x120");
+    assert_eq!(
+        reconciled.settings.streaming.fallback_display_mode,
+        "2560x1440x120"
+    );
+    assert_ne!(
+        reconciled.effective.streaming.fallback_display_mode,
+        "2560x1440x120"
+    );
     assert_eq!(reconciled.settings.network.port, 48_200);
     assert_ne!(reconciled.effective.network.port, 48_200);
     assert_eq!(
@@ -323,12 +398,18 @@ fn next_session_and_worker_restart_values_remain_pending_until_reported_applied(
     );
     assert_eq!(response.requires, SettingsApplyRequirement::WorkerRestart);
     assert_eq!(response.effective.diagnostics.log_level, LogLevel::Debug);
-    assert_eq!(response.effective.streaming.fallback_display_mode, "1920x1080x60");
+    assert_eq!(
+        response.effective.streaming.fallback_display_mode,
+        "1920x1080x60"
+    );
     assert_eq!(response.effective.network.port, 47_989);
 
     let next_session = authority.mark_next_session_started().unwrap();
     assert_eq!(next_session.revision, 3);
-    assert_eq!(next_session.effective.streaming.fallback_display_mode, "2560x1440x120");
+    assert_eq!(
+        next_session.effective.streaming.fallback_display_mode,
+        "2560x1440x120"
+    );
     assert_eq!(next_session.effective.network.port, 47_989);
     assert_eq!(
         next_session.apply_state,
@@ -421,6 +502,20 @@ fn unknown_secret_path_and_control_location_fields_are_rejected_before_decode() 
     )
     .unwrap_err();
     assert_eq!(unknown.code, SettingsErrorCode::UnknownField);
+
+    for (request_id, changes) in [
+        ("retired-locale", r#"{"general":{"locale":"ko"}}"#),
+        (
+            "retired-external-ip",
+            r#"{"network":{"externalIp":"203.0.113.10"}}"#,
+        ),
+    ] {
+        let json = format!(
+            r#"{{"schemaVersion":1,"baseRevision":1,"requestId":"{request_id}","changes":{changes}}}"#
+        );
+        let error = SettingsAuthority::decode_patch_request(&json).unwrap_err();
+        assert_eq!(error.code, SettingsErrorCode::UnknownField, "{request_id}");
+    }
 
     for (key, value) in [
         ("credentialsFilePath", r#""/tmp/credentials""#),
@@ -608,6 +703,46 @@ fn factory_reset_removes_durable_settings_and_request_history() {
 }
 
 #[test]
+fn legacy_journal_is_reseeded_before_revisioned_patches_resume() {
+    let root = TempDir::new().unwrap();
+    let path = root.path().join("settings.json");
+    let legacy = PersistedSettingsState {
+        storage_version: 1,
+        revision: 37,
+        ..Default::default()
+    };
+    fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+
+    let mut authority = SettingsAuthority::open(
+        &path,
+        SettingsCapabilities::for_platform(SettingsHostPlatform::Macos),
+    )
+    .unwrap();
+    assert_eq!(authority.snapshot().schema_version, 1);
+    assert_eq!(authority.snapshot().revision, 1);
+    assert!(authority.events_since(1).unwrap().is_empty());
+
+    let response = authority
+        .apply_patch(patch_request(
+            1,
+            "first-after-reseed",
+            SettingsChanges {
+                general: Some(GeneralChanges {
+                    host_name: Some("Reseeded Host".to_owned()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        ))
+        .unwrap();
+    assert_eq!(response.revision, 2);
+
+    let persisted: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    assert_eq!(persisted["storageVersion"], 2);
+    assert_eq!(persisted["revision"], 2);
+}
+
+#[test]
 fn corrupt_or_internally_inconsistent_persisted_authority_is_rejected() {
     let root = TempDir::new().unwrap();
     let path = root.path().join("settings.json");
@@ -693,6 +828,8 @@ fn protocol_snapshots_never_contain_internal_paths_secrets_or_control_selector()
         "controlLocation",
         "deviceEnrollmentEnabled",
         "systemAuthenticationEnabled",
+        "\"locale\":",
+        "\"externalIp\":",
     ] {
         assert!(!json.contains(forbidden), "snapshot exposed {forbidden}");
     }
@@ -703,15 +840,14 @@ fn complete_portable_patch_round_trips_every_supported_non_file_setting() {
     let (_root, mut authority) = authority(SettingsHostPlatform::Macos);
     let mut expected = HostSettings::default();
     expected.workspace.policy = WorkspacePolicy::FocusedWorkspace;
-    expected.general.locale = "ko-KR".to_owned();
     expected.general.host_name = "Studio Lumen".to_owned();
     expected.general.discovery = false;
     expected.general.update_channel = UpdateChannel::PreRelease;
     expected.general.notify_pre_releases = true;
-    expected.streaming.adapter_selector = "adapter-0".to_owned();
-    expected.streaming.output_selector = "output-1".to_owned();
-    expected.streaming.fallback_display_mode = "2560x1440x119.88".to_owned();
-    expected.audio.sink = "sink-main".to_owned();
+    expected.streaming.adapter_selector = "automatic".to_owned();
+    expected.streaming.output_selector = "automatic".to_owned();
+    expected.streaming.fallback_display_mode = "2560x1440x120".to_owned();
+    expected.audio.sink = "system-default".to_owned();
     expected.audio.stream_audio = false;
     expected.input.keyboard = false;
     expected.input.mouse = false;
@@ -725,7 +861,7 @@ fn complete_portable_patch_round_trips_every_supported_non_file_setting() {
     expected.network.port = 48_000;
     expected.network.upnp = true;
     expected.network.remote_access_scope = RemoteAccessScope::Wan;
-    expected.network.external_ip = "203.0.113.10".to_owned();
+    expected.network.external_ip_mode = ExternalIpMode::Disabled;
     expected.network.lan_encryption = EncryptionMode::Required;
     expected.network.wan_encryption = EncryptionMode::Required;
     expected.network.ping_timeout_ms = 20_000;

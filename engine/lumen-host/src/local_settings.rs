@@ -36,14 +36,13 @@ pub(super) fn from_arguments(
             ("isolated-workspace", WorkspacePolicy::IsolatedWorkspace),
         ],
     )?;
-    settings.general.locale = text(arguments, "locale")?.to_owned();
     settings.general.host_name = text(arguments, "host_name")?.to_owned();
     settings.general.discovery = boolean(arguments, "enable_discovery")?;
     settings.general.notify_pre_releases = boolean(arguments, "notify_pre_releases")?;
-    settings.streaming.adapter_selector = optional_text(arguments, "adapter_name").to_owned();
-    settings.streaming.output_selector = optional_text(arguments, "output_name").to_owned();
+    settings.streaming.adapter_selector = selector(arguments, "adapter_name", "automatic");
+    settings.streaming.output_selector = selector(arguments, "output_name", "automatic");
     settings.streaming.fallback_display_mode = text(arguments, "fallback_mode")?.to_owned();
-    settings.audio.sink = optional_text(arguments, "audio_sink").to_owned();
+    settings.audio.sink = selector(arguments, "audio_sink", "system-default");
     settings.audio.stream_audio = boolean(arguments, "stream_audio")?;
     settings.input.keyboard = boolean(arguments, "keyboard")?;
     settings.input.mouse = boolean(arguments, "mouse")?;
@@ -69,7 +68,6 @@ pub(super) fn from_arguments(
             ("wan", RemoteAccessScope::Wan),
         ],
     )?;
-    settings.network.external_ip = optional_text(arguments, "external_ip").to_owned();
     settings.network.lan_encryption = encryption(arguments, "lan_encryption_mode")?;
     settings.network.wan_encryption = encryption(arguments, "wan_encryption_mode")?;
     settings.network.ping_timeout_ms = number(arguments, "ping_timeout")?;
@@ -165,8 +163,8 @@ fn text<'a>(arguments: &'a HostArguments, key: &str) -> Result<&'a str, String> 
         .ok_or_else(|| format!("native runtime setting {key} is missing"))
 }
 
-fn optional_text<'a>(arguments: &'a HostArguments, key: &str) -> &'a str {
-    arguments.get(key).unwrap_or_default()
+fn selector(arguments: &HostArguments, key: &str, fallback: &str) -> String {
+    arguments.get(key).unwrap_or(fallback).to_owned()
 }
 
 fn boolean(arguments: &HostArguments, key: &str) -> Result<bool, String> {

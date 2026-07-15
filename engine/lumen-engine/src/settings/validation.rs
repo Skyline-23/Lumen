@@ -1,16 +1,6 @@
 use super::*;
 
 pub(super) fn validate_settings(settings: &HostSettings) -> Result<(), SettingsProtocolError> {
-    if settings.general.locale.is_empty()
-        || settings.general.locale.len() > 32
-        || contains_control(&settings.general.locale)
-    {
-        return Err(SettingsProtocolError::field(
-            SettingsErrorCode::InvalidValue,
-            "general.locale",
-            "locale must be 1 to 32 printable characters",
-        ));
-    }
     let host_name = settings.general.host_name.trim();
     if host_name.is_empty() || host_name.chars().count() > 64 || contains_control(host_name) {
         return Err(SettingsProtocolError::field(
@@ -57,13 +47,6 @@ pub(super) fn validate_settings(settings: &HostSettings) -> Result<(), SettingsP
             SettingsErrorCode::InvalidValue,
             "network.port",
             "port must be between 1029 and 65515",
-        ));
-    }
-    if settings.network.external_ip.len() > 255 || contains_control(&settings.network.external_ip) {
-        return Err(SettingsProtocolError::field(
-            SettingsErrorCode::InvalidValue,
-            "network.externalIp",
-            "external IP must be at most 255 printable characters",
         ));
     }
     if !(1_000..=120_000).contains(&settings.network.ping_timeout_ms) {

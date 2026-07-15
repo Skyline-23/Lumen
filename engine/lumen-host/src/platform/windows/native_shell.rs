@@ -13,8 +13,7 @@ use crate::native_command::{
     LUMEN_HOST_COMMAND_SHUTDOWN,
 };
 use crate::windows_app::{
-    WindowsAppModel, WindowsAppSnapshot, WindowsApplicationLocale, WindowsApplicationLocaleChange,
-    WindowsNavigation, WindowsOwnerAccessState,
+    WindowsAppModel, WindowsAppSnapshot, WindowsNavigation, WindowsOwnerAccessState,
 };
 use crate::HostArguments;
 
@@ -27,7 +26,6 @@ static QUIT_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 enum WindowsUiError {
     Owner(lumen_engine::OwnerAccountError),
-    Detail(String),
 }
 
 impl WindowsUiError {
@@ -39,15 +37,11 @@ impl WindowsUiError {
             Self::Owner(OwnerAccountError::AuthenticationFailed) => 2,
             Self::Owner(OwnerAccountError::Storage) => 3,
             Self::Owner(OwnerAccountError::Corrupt) => 4,
-            Self::Detail(_) => -1,
         }
     }
 
     fn detail(&self) -> &str {
-        match self {
-            Self::Owner(_) => "",
-            Self::Detail(detail) => detail,
-        }
+        ""
     }
 }
 
@@ -61,7 +55,6 @@ impl NativeWindowsShell {
         let model = WindowsAppModel::from_arguments(arguments)?;
         let initial = model.snapshot()?;
         let tray_endpoint = format!("{}:{}", initial.host_name, initial.control_port);
-        let locale = initial.locale;
         SHOW_REQUESTED.store(false, Ordering::Release);
         QUIT_REQUESTED.store(false, Ordering::Release);
         let (ready_sender, ready_receiver) = mpsc::sync_channel(1);
@@ -73,7 +66,7 @@ impl NativeWindowsShell {
             .recv_timeout(Duration::from_secs(10))
             .map_err(|_| "Windows UI did not become ready".to_owned())??;
 
-        let tray = NativeWindowsTray::start(tray_endpoint, locale.code().to_owned())
+        let tray = NativeWindowsTray::start(tray_endpoint)
             .map_err(|error| eprintln!("Lumen Windows tray is unavailable: {error}"))
             .ok();
         Ok(Self {
@@ -112,12 +105,6 @@ fn run_ui(
             return;
         }
     };
-    if let Err(error) = slint::select_bundled_translation(initial.locale.code()) {
-        let _ = ready.send(Err(format!(
-            "Windows UI language could not be selected: {error}"
-        )));
-        return;
-    }
     let model = Rc::new(RefCell::new(model));
     apply_snapshot(&ui, &initial, None);
     wire_callbacks(&ui, Rc::clone(&model));
@@ -195,34 +182,6 @@ fn wire_callbacks(ui: &LumenWindowsApp, model: Rc<RefCell<WindowsAppModel>>) {
     });
 
     let weak = ui.as_weak();
-    let locale_model = Rc::clone(&model);
-    ui.on_select_locale(move |index| {
-        let locale = WindowsApplicationLocale::from_index(index);
-        let result = locale_model
-            .borrow_mut()
-            .select_locale(locale)
-            .and_then(|change| {
-                match change {
-                    WindowsApplicationLocaleChange::Unchanged => {}
-                    WindowsApplicationLocaleChange::Changed => {
-                        slint::select_bundled_translation(locale.code())
-                            .map_err(|error| format!("language selection failed: {error}"))?;
-                    }
-                }
-                Ok(change)
-            });
-        match result {
-            Ok(change) => {
-                refresh(&weak, &locale_model, None);
-                if change == WindowsApplicationLocaleChange::Changed {
-                    let _ = lumen_host_send_command(LUMEN_HOST_COMMAND_RESTART);
-                }
-            }
-            Err(error) => refresh(&weak, &locale_model, Some(WindowsUiError::Detail(error))),
-        }
-    });
-
-    let weak = ui.as_weak();
     let reload_model = Rc::clone(&model);
     ui.on_reload_applications(move || {
         let _ = lumen_host_send_command(LUMEN_HOST_COMMAND_RELOAD_APPLICATIONS);
@@ -289,6 +248,4 @@ fn apply_snapshot(
             .collect::<Vec<_>>(),
     )));
     ui.set_control_port(i32::from(snapshot.control_port));
-    ui.set_settings_revision(snapshot.settings_revision as i32);
-    ui.set_locale_index(snapshot.locale.index());
 }

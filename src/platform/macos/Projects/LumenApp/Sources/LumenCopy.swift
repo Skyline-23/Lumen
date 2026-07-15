@@ -154,22 +154,16 @@ enum LumenCopy {
     }
 
     enum Settings {
-        struct LocaleOption {
-            let code: String
-            let title: String
-        }
-
         static var subtitle: String { localized("Native host behavior and account controls") }
         static var security: String { localized("Security") }
         static var securitySubtitle: String { localized("Protect local access and recovery controls") }
         static var general: String { localized("General") }
-        static var generalSubtitle: String { localized("Computer identity, discovery, language, and logging") }
+        static var generalSubtitle: String { localized("Computer identity, discovery, and logging") }
         static var application: String { localized("Application") }
         static var hideDockIconWhenMainWindowCloses: String { localized("Hide Dock icon when the main window closes") }
         static var hideDockIconWhenMainWindowClosesDetail: String { localized("Lumen stays available from the menu bar. Showing the main window restores the Dock icon.") }
         static var host: String { localized("Host") }
         static var hostName: String { localized("Computer name") }
-        static var locale: String { localized("Language") }
         static var discovery: String { localized("Discoverable on the local network") }
         static var deviceEnrollment: String { localized("Allow new device enrollment") }
         static var notifyPreReleases: String { localized("Notify about pre-release updates") }
@@ -182,7 +176,7 @@ enum LumenCopy {
         static var audio: String { localized("Audio") }
         static var audioSubtitle: String { localized("Computer audio capture and device selection") }
         static var audioSink: String { localized("Audio device") }
-        static var audioSinkDetail: String { localized("Leave empty to use native system audio capture, or enter an input device name.") }
+        static var audioSinkDetail: String { localized("Uses the audio device selected by the host.") }
         static var streamAudio: String { localized("Stream computer audio") }
         static var input: String { localized("Input") }
         static var inputSubtitle: String { localized("Keyboard, pointer, touch, and controller forwarding") }
@@ -202,7 +196,7 @@ enum LumenCopy {
         static var addressFamily: String { localized("Address family") }
         static var port: String { localized("Base port") }
         static var upnp: String { localized("UPnP port mapping") }
-        static var externalIP: String { localized("External IP address") }
+        static var externalIPMode: String { localized("External IP detection") }
         static var encryption: String { localized("Encryption and recovery") }
         static var lanEncryption: String { localized("LAN encryption") }
         static var wanEncryption: String { localized("Remote encryption") }
@@ -221,6 +215,7 @@ enum LumenCopy {
         static var systemAuthentication: String { localized("Unlock with Touch ID") }
         static var systemAuthenticationDetail: String { localized("Touch ID confirmation is required when this option is enabled.") }
         static var automatic: String { localized("Automatic") }
+        static var systemDefault: String { localized("System Default") }
         static var disabled: String { localized("Disabled") }
         static let displayModeOptions = [
             "1280x720x60",
@@ -258,8 +253,12 @@ enum LumenCopy {
         static func percentageTitle(_ percentage: Int) -> String {
             localizedFormat("Percentage value", percentage.formatted())
         }
-        static let locales = LumenApplicationLocale.allCases.map { locale in
-            LocaleOption(code: locale.rawValue, title: locale.nativeTitle)
+
+        static func externalIPModeTitle(_ mode: LumenExternalIPMode) -> String {
+            switch mode {
+            case .automatic: automatic
+            case .disabled: disabled
+            }
         }
 
         static func addressFamilyTitle(_ family: LumenNetworkAddressFamily) -> String {

@@ -185,17 +185,6 @@ struct LumenSettingsView: View {
             }
             Section(LumenCopy.Settings.host) {
                 TextField(LumenCopy.Settings.hostName, text: $draft.hostName)
-                Picker(
-                    LumenCopy.Settings.locale,
-                    selection: Binding(
-                        get: { LumenApplicationLocale.resolve(draft.locale).rawValue },
-                        set: { draft.locale = $0 }
-                    )
-                ) {
-                    ForEach(LumenCopy.Settings.locales, id: \.code) { locale in
-                        Text(locale.title).tag(locale.code)
-                    }
-                }
                 Toggle(LumenCopy.Settings.discovery, isOn: $draft.discoveryEnabled)
                 Toggle(
                     LumenCopy.Settings.deviceEnrollment,
@@ -216,16 +205,12 @@ struct LumenSettingsView: View {
     private var streamingSettings: some View {
         Group {
             Section(LumenCopy.Settings.display) {
-                TextField(
-                    LumenCopy.Settings.adapterName,
-                    text: $draft.adapterName,
-                    prompt: Text(LumenCopy.Settings.automatic)
-                )
-                TextField(
-                    LumenCopy.Settings.outputName,
-                    text: $draft.outputName,
-                    prompt: Text(LumenCopy.Settings.automatic)
-                )
+                Picker(LumenCopy.Settings.adapterName, selection: $draft.adapterSelector) {
+                    Text(LumenCopy.Settings.automatic).tag("automatic")
+                }
+                Picker(LumenCopy.Settings.outputName, selection: $draft.outputSelector) {
+                    Text(LumenCopy.Settings.automatic).tag("automatic")
+                }
                 Picker(LumenCopy.Settings.fallbackDisplayMode, selection: $draft.fallbackDisplayMode) {
                     ForEach(displayModeOptions, id: \.self) { mode in
                         Text(LumenCopy.Settings.displayModeTitle(mode)).tag(mode)
@@ -243,11 +228,9 @@ struct LumenSettingsView: View {
     private var audioSettings: some View {
         Section(LumenCopy.Settings.audio) {
             Toggle(LumenCopy.Settings.streamAudio, isOn: $draft.streamAudio)
-            TextField(
-                LumenCopy.Settings.audioSink,
-                text: $draft.audioSink,
-                prompt: Text(LumenCopy.Settings.automatic)
-            )
+            Picker(LumenCopy.Settings.audioSink, selection: $draft.audioSink) {
+                Text(LumenCopy.Settings.systemDefault).tag("system-default")
+            }
             Text(LumenCopy.Settings.audioSinkDetail)
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -288,7 +271,11 @@ struct LumenSettingsView: View {
                     }
                 }
                 numberField(LumenCopy.Settings.port, value: $draft.port)
-                TextField(LumenCopy.Settings.externalIP, text: $draft.externalIP)
+                Picker(LumenCopy.Settings.externalIPMode, selection: $draft.externalIPMode) {
+                    ForEach(LumenExternalIPMode.allCases, id: \.self) { mode in
+                        Text(LumenCopy.Settings.externalIPModeTitle(mode)).tag(mode)
+                    }
+                }
             }
             Section(LumenCopy.Settings.encryption) {
                 Picker(LumenCopy.Settings.lanEncryption, selection: $draft.lanEncryption) {
