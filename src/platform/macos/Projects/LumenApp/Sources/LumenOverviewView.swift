@@ -8,6 +8,10 @@ struct LumenOverviewView: View {
             VStack(alignment: .leading, spacing: 22) {
                 pageHeader(LumenCopy.Navigation.overview, subtitle: LumenCopy.Overview.subtitle)
 
+                if let warning = controller.runtimeWarnings.first {
+                    LumenRuntimeWarningBanner(warning: warning)
+                }
+
                 HStack(spacing: 14) {
                     statusCard(
                         title: LumenCopy.Overview.hostRuntime,

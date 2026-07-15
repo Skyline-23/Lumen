@@ -12,6 +12,9 @@ struct LumenMenuBarDashboardView: View {
         VStack(alignment: .leading, spacing: 10) {
             header
             errorBanner
+            if let warning = controller.runtimeWarnings.first {
+                LumenRuntimeWarningBanner(warning: warning)
+            }
             systemStatus
             Divider()
             workspacePolicyControl

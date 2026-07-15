@@ -9,6 +9,7 @@
 
 static const size_t LumenWorkerMaximumVideoBytes = 32 * 1024 * 1024;
 static const size_t LumenWorkerMaximumPCMBytes = 1024 * 1024;
+static NSString *const LumenRuntimeEventNotification = @"LumenRuntimeEventNotification";
 static const int LumenWorkerAudioFrameCount = 240;
 
 static uint32_t LumenWorkerAudioTimestamp(uint64_t nanoseconds) {
@@ -545,6 +546,33 @@ static int32_t LumenWorkerPollControlFeedback(
   return feedback ? LumenHostPlatformPollStatusEmpty : LumenHostPlatformPollStatusError;
 }
 
+static int32_t LumenWorkerPublishRuntimeEvent(
+  void *context,
+  const LumenHostPlatformRuntimeEvent *event
+) {
+  (void) context;
+  if (!event || !event->message) {
+    return -1;
+  }
+  NSString *message = [NSString stringWithUTF8String:event->message];
+  if (!message) {
+    return -1;
+  }
+  NSDictionary *userInfo = @{
+    @"identifier": [NSString stringWithFormat:@"runtime-event-%u", (unsigned) event->code],
+    @"severity": @((NSUInteger) event->severity),
+    @"code": @((NSUInteger) event->code),
+    @"body": message,
+    @"launchPath": @"/diagnostics",
+  };
+  [[NSDistributedNotificationCenter defaultCenter]
+    postNotificationName:LumenRuntimeEventNotification
+    object:nil
+    userInfo:userInfo
+    deliverImmediately:YES];
+  return 0;
+}
+
 int main(int argc, const char *argv[]) {
   @autoreleasepool {
     LumenHostWorkerPlatform *platform = [[LumenHostWorkerPlatform alloc] init];
@@ -556,6 +584,7 @@ int main(int argc, const char *argv[]) {
       .poll_encoded_audio = LumenWorkerPollAudio,
       .handle_control_event = LumenWorkerHandleControlEvent,
       .poll_control_feedback = LumenWorkerPollControlFeedback,
+      .publish_runtime_event = LumenWorkerPublishRuntimeEvent,
     };
     return lumen_host_run_with_platform(argc, argv, &callbacks);
   }

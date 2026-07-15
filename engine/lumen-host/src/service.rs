@@ -90,13 +90,14 @@ impl<Stream, Control> NativeHostService<Stream, Control> {
         control: Control,
         platform: Arc<dyn PlatformSessionControl>,
     ) -> Self {
+        let upnp = UpnpService::with_event_sink(Arc::clone(&platform));
         Self {
             router: None,
             stream,
             control,
             platform,
             mdns: MdnsService::default(),
-            upnp: UpnpService::default(),
+            upnp,
         }
     }
 

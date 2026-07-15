@@ -299,6 +299,8 @@ enum LumenCopy {
 
     enum Diagnostics {
         static let subtitle = "Live state from the native host runtime"
+        static let runtimeWarning = "Runtime warning"
+        static let runtimeWarnings = "Runtime warnings"
         static let videoCapture = "Video capture"
         static let audioCapture = "Audio capture"
         static let applicationRecords = "Application records"
