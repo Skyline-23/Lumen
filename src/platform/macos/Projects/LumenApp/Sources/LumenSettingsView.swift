@@ -83,6 +83,9 @@ struct LumenSettingsView: View {
                         )
                     pageHeader(category.title, subtitle: category.subtitle)
                     Spacer()
+                    if controller.isHostSettingsOperationInFlight {
+                        ProgressView().controlSize(.small)
+                    }
                 }
                 .padding(.horizontal, 30)
                 .padding(.vertical, 24)
@@ -97,20 +100,6 @@ struct LumenSettingsView: View {
                 .pickerStyle(.menu)
                 .frame(maxWidth: 820, maxHeight: .infinity)
                 .frame(maxWidth: .infinity)
-
-                Divider()
-                HStack {
-                    Text(LumenCopy.Settings.autosaveNotice)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    if controller.isHostSettingsOperationInFlight {
-                        ProgressView().controlSize(.small)
-                    }
-                }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 14)
-                .background(.regularMaterial)
             }
         }
         .onAppear {

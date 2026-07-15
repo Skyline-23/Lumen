@@ -208,7 +208,6 @@ enum LumenCopy {
         static let undoCommand = "Undo command"
         static let logging = "Logging"
         static let logLevel = "Log level"
-        static let autosaveNotice = "Changes are saved automatically."
         static let systemAuthentication = "Unlock with Touch ID"
         static let systemAuthenticationDetail = "Touch ID confirmation is required when this option is enabled."
         static let automatic = "Automatic"
