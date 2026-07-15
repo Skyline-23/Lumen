@@ -31,7 +31,7 @@
 "Close" = "Close";
 "Command" = "Command";
 "Computer audio capture and device selection" = "Computer audio capture and device selection";
-"Computer identity, discovery, language, and logging" = "Computer identity, discovery, language, and logging";
+"Computer identity, discovery, and logging" = "Computer identity, discovery, and logging";
 "Computer name" = "Computer name";
 "Configured" = "Configured";
 "Confirm Touch ID before enabling it for Lumen" = "Confirm Touch ID before enabling it for Lumen";
@@ -67,7 +67,7 @@
 "Erase All Settings" = "Erase All Settings";
 "Error" = "Error";
 "Exit timeout: %@ seconds" = "Exit timeout: %@ seconds";
-"External IP address" = "External IP address";
+"External IP detection" = "External IP detection";
 "Factory Reset Lumen" = "Factory Reset Lumen";
 "Factory Reset Lumen..." = "Factory Reset Lumen...";
 "Factory Reset..." = "Factory Reset...";
@@ -99,11 +99,10 @@
 "Keyboard input" = "Keyboard input";
 "Keyboard, pointer, touch, and controller forwarding" = "Keyboard, pointer, touch, and controller forwarding";
 "LAN encryption" = "LAN encryption";
-"Language" = "Language";
 "Last error" = "Last error";
 "Last runtime event" = "Last runtime event";
 "Launch" = "Launch";
-"Leave empty to use native system audio capture, or enter an input device name." = "Leave empty to use native system audio capture, or enter an input device name.";
+"Uses the audio device selected by the host." = "Uses the audio device selected by the host.";
 "Lifecycle commands and host process automation" = "Lifecycle commands and host process automation";
 "Live state from the native host runtime" = "Live state from the native host runtime";
 "Local credentials" = "Local credentials";
@@ -177,6 +176,7 @@
 "Stream the desktop" = "Stream the desktop";
 "Streaming" = "Streaming";
 "System access" = "System access";
+"System Default" = "System Default";
 "Terminate when paused" = "Terminate when paused";
 "The password confirmation does not match." = "The password confirmation does not match.";
 "The password is stored only as an Argon2id hash on this computer." = "The password is stored only as an Argon2id hash on this computer.";

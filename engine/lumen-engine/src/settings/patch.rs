@@ -7,7 +7,6 @@ impl SettingsChanges {
             push_key(&mut keys, group.policy.is_some(), "workspace.policy");
         }
         if let Some(group) = &self.general {
-            push_key(&mut keys, group.locale.is_some(), "general.locale");
             push_key(&mut keys, group.host_name.is_some(), "general.hostName");
             push_key(&mut keys, group.discovery.is_some(), "general.discovery");
             push_key(
@@ -85,7 +84,11 @@ impl SettingsChanges {
                 group.remote_access_scope.is_some(),
                 "network.remoteAccessScope",
             );
-            push_key(&mut keys, group.external_ip.is_some(), "network.externalIp");
+            push_key(
+                &mut keys,
+                group.external_ip_mode.is_some(),
+                "network.externalIpMode",
+            );
             push_key(
                 &mut keys,
                 group.lan_encryption.is_some(),
@@ -197,8 +200,13 @@ pub(super) fn enum_value<'a>(settings: &'a HostSettings, field_key: &str) -> Opt
     match field_key {
         "workspace.policy" => Some(settings.workspace.policy.as_str()),
         "general.updateChannel" => Some(settings.general.update_channel.as_str()),
+        "streaming.adapterSelector" => Some(&settings.streaming.adapter_selector),
+        "streaming.outputSelector" => Some(&settings.streaming.output_selector),
+        "streaming.fallbackDisplayMode" => Some(&settings.streaming.fallback_display_mode),
+        "audio.sink" => Some(&settings.audio.sink),
         "network.addressFamily" => Some(settings.network.address_family.as_str()),
         "network.remoteAccessScope" => Some(settings.network.remote_access_scope.as_str()),
+        "network.externalIpMode" => Some(settings.network.external_ip_mode.as_str()),
         "network.lanEncryption" => Some(settings.network.lan_encryption.as_str()),
         "network.wanEncryption" => Some(settings.network.wan_encryption.as_str()),
         "diagnostics.logLevel" => Some(settings.diagnostics.log_level.as_str()),
@@ -224,7 +232,6 @@ pub(super) fn apply_changes(
         assign!(group.policy, target.workspace.policy, "workspace.policy");
     }
     if let Some(group) = &changes.general {
-        assign!(group.locale, target.general.locale, "general.locale");
         assign!(
             group.host_name,
             target.general.host_name,
@@ -319,9 +326,9 @@ pub(super) fn apply_changes(
             "network.remoteAccessScope"
         );
         assign!(
-            group.external_ip,
-            target.network.external_ip,
-            "network.externalIp"
+            group.external_ip_mode,
+            target.network.external_ip_mode,
+            "network.externalIpMode"
         );
         assign!(
             group.lan_encryption,
@@ -379,7 +386,6 @@ pub(super) fn full_changes(settings: &HostSettings) -> SettingsChanges {
             policy: Some(settings.workspace.policy),
         }),
         general: Some(GeneralChanges {
-            locale: Some(settings.general.locale.clone()),
             host_name: Some(settings.general.host_name.clone()),
             discovery: Some(settings.general.discovery),
             update_channel: Some(settings.general.update_channel),
@@ -409,7 +415,7 @@ pub(super) fn full_changes(settings: &HostSettings) -> SettingsChanges {
             port: Some(settings.network.port),
             upnp: Some(settings.network.upnp),
             remote_access_scope: Some(settings.network.remote_access_scope),
-            external_ip: Some(settings.network.external_ip.clone()),
+            external_ip_mode: Some(settings.network.external_ip_mode),
             lan_encryption: Some(settings.network.lan_encryption),
             wan_encryption: Some(settings.network.wan_encryption),
             ping_timeout_ms: Some(settings.network.ping_timeout_ms),
@@ -459,7 +465,6 @@ pub(super) fn differing_field_keys(left: &HostSettings, right: &HostSettings) ->
         right.workspace.policy,
         "workspace.policy"
     );
-    differs!(left.general.locale, right.general.locale, "general.locale");
     differs!(
         left.general.host_name,
         right.general.host_name,
@@ -546,9 +551,9 @@ pub(super) fn differing_field_keys(left: &HostSettings, right: &HostSettings) ->
         "network.remoteAccessScope"
     );
     differs!(
-        left.network.external_ip,
-        right.network.external_ip,
-        "network.externalIp"
+        left.network.external_ip_mode,
+        right.network.external_ip_mode,
+        "network.externalIpMode"
     );
     differs!(
         left.network.lan_encryption,

@@ -9,10 +9,16 @@ pub struct FieldCapability {
     pub available: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allowed_values: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub allowed_value_labels: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub minimum: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub maximum: Option<i64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub presets: Vec<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_length: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -62,6 +68,19 @@ impl SettingsCapabilities {
     pub fn set_allowed_values(&mut self, key: &str, values: &[&str]) {
         set_allowed_values(&mut self.fields, key, values);
     }
+
+    pub fn set_allowed_values_with_labels(&mut self, key: &str, values: &[(&str, &str)]) {
+        if let Some(field) = self.fields.get_mut(key) {
+            field.allowed_values = values
+                .iter()
+                .map(|(value, _)| (*value).to_owned())
+                .collect();
+            field.allowed_value_labels = values
+                .iter()
+                .map(|(value, label)| ((*value).to_owned(), (*label).to_owned()))
+                .collect();
+        }
+    }
 }
 
 fn set_unavailable(fields: &mut BTreeMap<String, FieldCapability>, key: &str, reason: &str) {
@@ -97,8 +116,11 @@ fn capability(
                 .iter()
                 .map(|value| (*value).to_owned())
                 .collect(),
+            allowed_value_labels: BTreeMap::new(),
             minimum,
             maximum,
+            presets: Vec::new(),
+            step: None,
             max_length: None,
             pattern: None,
             unavailable_reason: None,
@@ -123,7 +145,6 @@ pub(super) fn field_catalog() -> BTreeMap<String, FieldCapability> {
             None,
             None,
         ),
-        capability("general.locale", StringType, WorkerRestart, &[], None, None),
         capability("general.hostName", StringType, Live, &[], None, None),
         capability("general.discovery", Boolean, Live, &[], None, None),
         capability(
@@ -137,29 +158,43 @@ pub(super) fn field_catalog() -> BTreeMap<String, FieldCapability> {
         capability("general.notifyPreReleases", Boolean, Live, &[], None, None),
         capability(
             "streaming.adapterSelector",
-            StringType,
+            Enum,
             WorkerRestart,
-            &[],
+            &["automatic"],
             None,
             None,
         ),
         capability(
             "streaming.outputSelector",
-            StringType,
+            Enum,
             WorkerRestart,
-            &[],
+            &["automatic"],
             None,
             None,
         ),
         capability(
             "streaming.fallbackDisplayMode",
-            StringType,
+            Enum,
             NextSession,
-            &[],
+            &[
+                "1280x720x60",
+                "1920x1080x60",
+                "2560x1440x60",
+                "2560x1440x120",
+                "3840x2160x60",
+                "3840x2160x120",
+            ],
             None,
             None,
         ),
-        capability("audio.sink", StringType, NextSession, &[], None, None),
+        capability(
+            "audio.sink",
+            Enum,
+            NextSession,
+            &["system-default"],
+            None,
+            None,
+        ),
         capability("audio.streamAudio", Boolean, NextSession, &[], None, None),
         capability("input.keyboard", Boolean, Live, &[], None, None),
         capability("input.mouse", Boolean, Live, &[], None, None),
@@ -216,10 +251,10 @@ pub(super) fn field_catalog() -> BTreeMap<String, FieldCapability> {
             None,
         ),
         capability(
-            "network.externalIp",
-            StringType,
+            "network.externalIpMode",
+            Enum,
             WorkerRestart,
-            &[],
+            &["automatic", "disabled"],
             None,
             None,
         ),
@@ -292,19 +327,84 @@ pub(super) fn field_catalog() -> BTreeMap<String, FieldCapability> {
     ]
     .into_iter()
     .collect();
-    set_string_constraint(&mut fields, "general.locale", Some(32), None);
     set_string_constraint(&mut fields, "general.hostName", Some(64), None);
-    set_string_constraint(&mut fields, "streaming.adapterSelector", Some(256), None);
-    set_string_constraint(&mut fields, "streaming.outputSelector", Some(256), None);
-    set_string_constraint(
+    set_value_labels(
+        &mut fields,
+        "streaming.adapterSelector",
+        &[("automatic", "Automatic")],
+    );
+    set_value_labels(
+        &mut fields,
+        "streaming.outputSelector",
+        &[("automatic", "Automatic")],
+    );
+    set_value_labels(
         &mut fields,
         "streaming.fallbackDisplayMode",
-        None,
-        Some(r"^\d+x\d+x\d+(\.\d+)?$"),
+        &[
+            ("1280x720x60", "1280 × 720 at 60 Hz"),
+            ("1920x1080x60", "1920 × 1080 at 60 Hz"),
+            ("2560x1440x60", "2560 × 1440 at 60 Hz"),
+            ("2560x1440x120", "2560 × 1440 at 120 Hz"),
+            ("3840x2160x60", "3840 × 2160 at 60 Hz"),
+            ("3840x2160x120", "3840 × 2160 at 120 Hz"),
+        ],
     );
-    set_string_constraint(&mut fields, "audio.sink", Some(256), None);
-    set_string_constraint(&mut fields, "network.externalIp", Some(255), None);
+    set_value_labels(
+        &mut fields,
+        "audio.sink",
+        &[("system-default", "System Default")],
+    );
+    set_value_labels(
+        &mut fields,
+        "network.externalIpMode",
+        &[("automatic", "Automatic"), ("disabled", "Disabled")],
+    );
+    set_integer_metadata(
+        &mut fields,
+        "input.backButtonTimeoutMs",
+        &[-1, 250, 500, 750, 1_000, 1_500, 2_000],
+        250,
+    );
+    set_integer_metadata(&mut fields, "network.port", &[47_989], 1);
+    set_integer_metadata(
+        &mut fields,
+        "network.pingTimeoutMs",
+        &[1_000, 3_000, 5_000, 10_000, 15_000, 30_000, 60_000, 120_000],
+        1_000,
+    );
+    set_integer_metadata(
+        &mut fields,
+        "network.fecPercentage",
+        &[5, 10, 15, 20, 25, 30, 40, 50],
+        1,
+    );
     fields
+}
+
+fn set_value_labels(
+    fields: &mut BTreeMap<String, FieldCapability>,
+    key: &str,
+    labels: &[(&str, &str)],
+) {
+    if let Some(field) = fields.get_mut(key) {
+        field.allowed_value_labels = labels
+            .iter()
+            .map(|(value, label)| ((*value).to_owned(), (*label).to_owned()))
+            .collect();
+    }
+}
+
+fn set_integer_metadata(
+    fields: &mut BTreeMap<String, FieldCapability>,
+    key: &str,
+    presets: &[i64],
+    step: i64,
+) {
+    if let Some(field) = fields.get_mut(key) {
+        field.presets = presets.to_vec();
+        field.step = Some(step);
+    }
 }
 
 fn set_string_constraint(

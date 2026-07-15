@@ -31,7 +31,7 @@
 "Close" = "닫기";
 "Command" = "명령";
 "Computer audio capture and device selection" = "컴퓨터 오디오 캡처 및 기기 선택";
-"Computer identity, discovery, language, and logging" = "컴퓨터 정보, 검색, 언어 및 로그";
+"Computer identity, discovery, and logging" = "컴퓨터 정보, 검색 및 로그";
 "Computer name" = "컴퓨터 이름";
 "Configured" = "설정됨";
 "Confirm Touch ID before enabling it for Lumen" = "Lumen에서 Touch ID를 사용하려면 먼저 인증하세요";
@@ -67,7 +67,7 @@
 "Erase All Settings" = "모든 설정 지우기";
 "Error" = "오류";
 "Exit timeout: %@ seconds" = "종료 제한 시간: %@초";
-"External IP address" = "외부 IP 주소";
+"External IP detection" = "외부 IP 자동 감지";
 "Factory Reset Lumen" = "Lumen 초기화";
 "Factory Reset Lumen..." = "Lumen 초기화...";
 "Factory Reset..." = "초기화...";
@@ -99,11 +99,10 @@
 "Keyboard input" = "키보드 입력";
 "Keyboard, pointer, touch, and controller forwarding" = "키보드, 포인터, 터치 및 컨트롤러 전달";
 "LAN encryption" = "LAN 암호화";
-"Language" = "언어";
 "Last error" = "최근 오류";
 "Last runtime event" = "최근 런타임 이벤트";
 "Launch" = "실행";
-"Leave empty to use native system audio capture, or enter an input device name." = "기본 시스템 오디오 캡처를 사용하려면 비워 두거나 입력 기기 이름을 입력하세요.";
+"Uses the audio device selected by the host." = "호스트에서 선택한 오디오 기기를 사용합니다.";
 "Lifecycle commands and host process automation" = "수명 주기 명령 및 호스트 프로세스 자동화";
 "Live state from the native host runtime" = "네이티브 호스트 런타임의 실시간 상태";
 "Local credentials" = "로컬 인증 정보";
@@ -177,6 +176,7 @@
 "Stream the desktop" = "데스크톱 스트리밍";
 "Streaming" = "스트리밍";
 "System access" = "시스템 접근";
+"System Default" = "시스템 기본값";
 "Terminate when paused" = "일시 정지 시 종료";
 "The password confirmation does not match." = "암호 확인이 일치하지 않습니다.";
 "The password is stored only as an Argon2id hash on this computer." = "암호는 이 컴퓨터에 Argon2id 해시로만 저장됩니다.";

@@ -2,15 +2,17 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use lumen_engine::settings::{
-    SettingsAuthority, SettingsCapabilities, SettingsHostPlatform, SettingsProtocolError,
-};
+use lumen_engine::settings::{SettingsAuthority, SettingsCapabilities, SettingsProtocolError};
 use lumen_engine::{
     ApplicationCatalog, AuthAuthority, AuthErrorCode, CatalogError, HostIdentityAuthority,
     HostIdentityError,
 };
 
 use crate::HostArguments;
+
+mod resource_capabilities;
+
+use resource_capabilities::{advertise_native_resource_values, native_settings_capabilities};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HostAuthorityPaths {
@@ -116,6 +118,22 @@ pub struct HostAuthorities {
 
 impl HostAuthorities {
     pub fn open_native(paths: HostAuthorityPaths) -> Result<Self, HostAuthorityError> {
+        Self::open_with_capabilities(paths, native_settings_capabilities())
+    }
+
+    pub fn open_native_configured(
+        paths: HostAuthorityPaths,
+        arguments: &HostArguments,
+    ) -> Result<Self, HostAuthorityError> {
+        let mut capabilities = native_settings_capabilities();
+        advertise_native_resource_values(&mut capabilities, arguments);
+        Self::open_with_capabilities(paths, capabilities)
+    }
+
+    fn open_with_capabilities(
+        paths: HostAuthorityPaths,
+        capabilities: SettingsCapabilities,
+    ) -> Result<Self, HostAuthorityError> {
         for directory in paths.storage_directories() {
             if directory.as_os_str().is_empty() {
                 continue;
@@ -123,15 +141,8 @@ impl HostAuthorities {
             fs::create_dir_all(directory)
                 .map_err(|_| HostAuthorityError::Storage(directory.to_owned()))?;
         }
-        #[cfg(target_os = "macos")]
-        let platform = SettingsHostPlatform::Macos;
-        #[cfg(windows)]
-        let platform = SettingsHostPlatform::Windows;
-        let settings = SettingsAuthority::open(
-            paths.settings.clone(),
-            SettingsCapabilities::for_platform(platform),
-        )
-        .map_err(HostAuthorityError::Settings)?;
+        let settings = SettingsAuthority::open(paths.settings.clone(), capabilities)
+            .map_err(HostAuthorityError::Settings)?;
         let authentication =
             AuthAuthority::open(paths.owner_account.clone(), paths.devices.clone())
                 .map_err(HostAuthorityError::Authentication)?;

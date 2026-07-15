@@ -1,33 +1,7 @@
-import LumenAppArchitecture
 import LumenMacBridge
 import XCTest
 
 final class LumenHostSettingsStoreTests: XCTestCase {
-    func testApplicationLocalesExposeOnlyShippedLocalizations() {
-        XCTAssertEqual(LumenApplicationLocale.allCases.map(\.rawValue), ["en", "ko", "ja"])
-        XCTAssertEqual(LumenApplicationLocale.resolve("en-US"), .english)
-        XCTAssertEqual(LumenApplicationLocale.resolve("ko-KR"), .korean)
-        XCTAssertEqual(LumenApplicationLocale.resolve("ja-JP"), .japanese)
-        XCTAssertEqual(LumenApplicationLocale.resolve("fr-FR"), .english)
-    }
-
-    @MainActor
-    func testApplicationLocaleStorePersistsNativeSelectionAndRequestsRelaunch() throws {
-        let suiteName = "LumenHostSettingsStoreTests.Locale.\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-
-        let store = LumenApplicationLocaleStore(
-            userDefaults: defaults,
-            activeLanguage: { "en-US" }
-        )
-
-        XCTAssertTrue(store.select(.korean))
-        XCTAssertEqual(defaults.stringArray(forKey: "AppleLanguages"), ["ko"])
-        XCTAssertFalse(store.select(.english))
-        XCTAssertEqual(defaults.stringArray(forKey: "AppleLanguages"), ["en"])
-    }
-
     func testDefaultsMatchNativeHostContract() async throws {
         let suiteName = "LumenHostSettingsStoreTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
@@ -70,9 +44,9 @@ final class LumenHostSettingsStoreTests: XCTestCase {
         settings.globalPrepCommands = [LumenPrepCommand(run: "prepare", undo: "restore")]
         settings.globalStateCommands = [LumenPrepCommand(run: "state-on", undo: "state-off")]
         settings.serverCommands = [LumenServerCommand(name: "Wake", command: "wake-host")]
-        settings.adapterName = "Built-in"
-        settings.outputName = "Display 1"
-        settings.audioSink = "Studio Microphone"
+        settings.adapterSelector = "automatic"
+        settings.outputSelector = "automatic"
+        settings.audioSink = "system-default"
         settings.streamAudio = false
         settings.keyboardInput = false
         settings.mouseInput = false
@@ -86,7 +60,7 @@ final class LumenHostSettingsStoreTests: XCTestCase {
         settings.port = 48_989
         settings.upnpEnabled = true
         settings.remoteAccessScope = .anywhere
-        settings.externalIP = "203.0.113.4"
+        settings.externalIPMode = .disabled
         settings.lanEncryption = .required
         settings.wanEncryption = .required
         settings.pingTimeoutMilliseconds = 15_000
@@ -138,6 +112,7 @@ final class LumenHostSettingsStoreTests: XCTestCase {
         XCTAssertFalse(arguments.contains { $0.hasPrefix("output_name=") })
         XCTAssertFalse(arguments.contains { $0.hasPrefix("audio_sink=") })
         XCTAssertFalse(arguments.contains { $0.hasPrefix("external_ip=") })
+        XCTAssertFalse(arguments.contains { $0.hasPrefix("locale=") })
         XCTAssertTrue(settings.privateKeyPath.hasSuffix("/credentials/cakey.pem"))
         XCTAssertTrue(settings.certificatePath.hasSuffix("/credentials/cacert.pem"))
         XCTAssertEqual(settings.credentialsFilePath, settings.stateFilePath)

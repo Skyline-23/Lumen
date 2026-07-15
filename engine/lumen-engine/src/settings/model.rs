@@ -28,6 +28,7 @@ string_enum!(WorkspacePolicy {
 string_enum!(UpdateChannel { Stable => "stable", PreRelease => "pre-release" });
 string_enum!(AddressFamily { Ipv4 => "ipv4", Both => "both" });
 string_enum!(RemoteAccessScope { Pc => "pc", Lan => "lan", Wan => "wan" });
+string_enum!(ExternalIpMode { Automatic => "automatic", Disabled => "disabled" });
 string_enum!(EncryptionMode { Disabled => "disabled", Opportunistic => "opportunistic", Required => "required" });
 string_enum!(LogLevel { Verbose => "verbose", Debug => "debug", Info => "info", Warning => "warning", Error => "error", Fatal => "fatal", None => "none" });
 string_enum!(CommandPrivilege { User => "user", Administrator => "administrator" });
@@ -83,7 +84,6 @@ pub struct WorkspaceSettings {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GeneralSettings {
-    pub locale: String,
     pub host_name: String,
     pub discovery: bool,
     pub update_channel: UpdateChannel,
@@ -125,7 +125,7 @@ pub struct NetworkSettings {
     pub port: u16,
     pub upnp: bool,
     pub remote_access_scope: RemoteAccessScope,
-    pub external_ip: String,
+    pub external_ip_mode: ExternalIpMode,
     pub lan_encryption: EncryptionMode,
     pub wan_encryption: EncryptionMode,
     pub ping_timeout_ms: u32,
@@ -166,19 +166,18 @@ impl Default for HostSettings {
                 policy: WorkspacePolicy::Coexist,
             },
             general: GeneralSettings {
-                locale: "en".to_owned(),
                 host_name: "Lumen".to_owned(),
                 discovery: true,
                 update_channel: UpdateChannel::Stable,
                 notify_pre_releases: false,
             },
             streaming: StreamingSettings {
-                adapter_selector: String::new(),
-                output_selector: String::new(),
+                adapter_selector: "automatic".to_owned(),
+                output_selector: "automatic".to_owned(),
                 fallback_display_mode: "1920x1080x60".to_owned(),
             },
             audio: AudioSettings {
-                sink: String::new(),
+                sink: "system-default".to_owned(),
                 stream_audio: true,
             },
             input: InputSettings {
@@ -196,7 +195,7 @@ impl Default for HostSettings {
                 port: 47_989,
                 upnp: false,
                 remote_access_scope: RemoteAccessScope::Lan,
-                external_ip: String::new(),
+                external_ip_mode: ExternalIpMode::Automatic,
                 lan_encryption: EncryptionMode::Disabled,
                 wan_encryption: EncryptionMode::Opportunistic,
                 ping_timeout_ms: 10_000,

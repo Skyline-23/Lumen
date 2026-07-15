@@ -31,7 +31,7 @@
 "Close" = "閉じる";
 "Command" = "コマンド";
 "Computer audio capture and device selection" = "コンピュータ音声のキャプチャとデバイス選択";
-"Computer identity, discovery, language, and logging" = "コンピュータ情報、検出、言語、ログ";
+"Computer identity, discovery, and logging" = "コンピュータ情報、検出、ログ";
 "Computer name" = "コンピュータ名";
 "Configured" = "設定済み";
 "Confirm Touch ID before enabling it for Lumen" = "LumenでTouch IDを有効にする前に認証してください";
@@ -67,7 +67,7 @@
 "Erase All Settings" = "すべての設定を消去";
 "Error" = "エラー";
 "Exit timeout: %@ seconds" = "終了タイムアウト：%@秒";
-"External IP address" = "外部IPアドレス";
+"External IP detection" = "外部IPの自動検出";
 "Factory Reset Lumen" = "Lumenを初期化";
 "Factory Reset Lumen..." = "Lumenを初期化...";
 "Factory Reset..." = "初期化...";
@@ -99,11 +99,10 @@
 "Keyboard input" = "キーボード入力";
 "Keyboard, pointer, touch, and controller forwarding" = "キーボード、ポインタ、タッチ、コントローラの転送";
 "LAN encryption" = "LAN暗号化";
-"Language" = "言語";
 "Last error" = "直近のエラー";
 "Last runtime event" = "直近のランタイムイベント";
 "Launch" = "起動";
-"Leave empty to use native system audio capture, or enter an input device name." = "システム標準の音声キャプチャを使う場合は空欄にするか、入力デバイス名を入力してください。";
+"Uses the audio device selected by the host." = "ホストで選択されたオーディオデバイスを使用します。";
 "Lifecycle commands and host process automation" = "ライフサイクルコマンドとホストプロセスの自動化";
 "Live state from the native host runtime" = "ネイティブホストランタイムの現在の状態";
 "Local credentials" = "ローカル認証情報";
@@ -177,6 +176,7 @@
 "Stream the desktop" = "デスクトップをストリーミング";
 "Streaming" = "ストリーミング";
 "System access" = "システムアクセス";
+"System Default" = "システムデフォルト";
 "Terminate when paused" = "一時停止時に終了";
 "The password confirmation does not match." = "確認用パスワードが一致しません。";
 "The password is stored only as an Argon2id hash on this computer." = "パスワードはこのコンピュータにArgon2idハッシュとしてのみ保存されます。";

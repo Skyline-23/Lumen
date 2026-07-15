@@ -27,6 +27,11 @@ import Foundation
     case anywhere = "wan"
 }
 
+@frozen public enum LumenExternalIPMode: String, CaseIterable, Hashable, Sendable {
+    case automatic
+    case disabled
+}
+
 public struct LumenPrepCommand: Equatable, Sendable {
     public var run: String
     public var undo: String
@@ -50,7 +55,6 @@ public struct LumenServerCommand: Equatable, Sendable {
 public struct LumenNativeHostSettings: Equatable, Sendable {
     public var workspacePolicy: LumenMacWorkspacePolicy
     public var systemAuthenticationEnabled: Bool
-    public var locale: String
     public var hostName: String
     public var discoveryEnabled: Bool
     public var deviceEnrollmentEnabled: Bool
@@ -58,8 +62,8 @@ public struct LumenNativeHostSettings: Equatable, Sendable {
     public var globalPrepCommands: [LumenPrepCommand]
     public var globalStateCommands: [LumenPrepCommand]
     public var serverCommands: [LumenServerCommand]
-    public var adapterName: String
-    public var outputName: String
+    public var adapterSelector: String
+    public var outputSelector: String
     public var fallbackDisplayMode: String
     public var audioSink: String
     public var streamAudio: Bool
@@ -75,7 +79,7 @@ public struct LumenNativeHostSettings: Equatable, Sendable {
     public var port: Int
     public var upnpEnabled: Bool
     public var remoteAccessScope: LumenRemoteAccessScope
-    public var externalIP: String
+    public var externalIPMode: LumenExternalIPMode
     public var lanEncryption: LumenEncryptionMode
     public var wanEncryption: LumenEncryptionMode
     public var pingTimeoutMilliseconds: Int
@@ -95,7 +99,6 @@ public struct LumenNativeHostSettings: Equatable, Sendable {
         return Self(
             workspacePolicy: .coexist,
             systemAuthenticationEnabled: false,
-            locale: Locale.current.language.languageCode?.identifier ?? "en",
             hostName: Host.current().localizedName ?? "Lumen",
             discoveryEnabled: true,
             deviceEnrollmentEnabled: true,
@@ -103,10 +106,10 @@ public struct LumenNativeHostSettings: Equatable, Sendable {
             globalPrepCommands: [],
             globalStateCommands: [],
             serverCommands: [],
-            adapterName: "",
-            outputName: "",
+            adapterSelector: "automatic",
+            outputSelector: "automatic",
             fallbackDisplayMode: "1920x1080x60",
-            audioSink: "",
+            audioSink: "system-default",
             streamAudio: true,
             keyboardInput: true,
             mouseInput: true,
@@ -120,7 +123,7 @@ public struct LumenNativeHostSettings: Equatable, Sendable {
             port: 47_989,
             upnpEnabled: false,
             remoteAccessScope: .localNetwork,
-            externalIP: "",
+            externalIPMode: .automatic,
             lanEncryption: .disabled,
             wanEncryption: .opportunistic,
             pingTimeoutMilliseconds: 10_000,
@@ -137,7 +140,6 @@ public struct LumenNativeHostSettings: Equatable, Sendable {
 
     public var runtimeArguments: [String] {
         let requiredArguments = [
-            "locale=\(locale)",
             "host_name=\(hostName)",
             "enable_discovery=\(discoveryEnabled)",
             "device_enrollment_enabled=\(deviceEnrollmentEnabled)",
@@ -173,12 +175,11 @@ public struct LumenNativeHostSettings: Equatable, Sendable {
             "file_state=\(stateFilePath)"
         ]
         let optionalArguments = [
-            ("adapter_name", adapterName),
-            ("output_name", outputName),
-            ("audio_sink", audioSink),
-            ("external_ip", externalIP)
-        ].compactMap { name, value in
-            value.isEmpty ? nil : "\(name)=\(value)"
+            ("adapter_name", adapterSelector, "automatic"),
+            ("output_name", outputSelector, "automatic"),
+            ("audio_sink", audioSink, "system-default")
+        ].compactMap { name, value, automaticValue in
+            value == automaticValue ? nil : "\(name)=\(value)"
         }
         return requiredArguments + optionalArguments
     }
@@ -230,7 +231,6 @@ public actor LumenHostSettingsStore {
     private enum Key {
         static let workspacePolicy = "host.workspace-policy"
         static let systemAuthentication = "security.system-authentication"
-        static let locale = "general.locale"
         static let hostName = "host.name"
         static let discovery = "host.discovery"
         static let deviceEnrollment = "security.device-enrollment-enabled"
@@ -238,8 +238,8 @@ public actor LumenHostSettingsStore {
         static let globalPrepCommands = "commands.prep"
         static let globalStateCommands = "commands.state"
         static let serverCommands = "commands.server"
-        static let adapterName = "stream.adapter-name"
-        static let outputName = "stream.output-name"
+        static let adapterSelector = "stream.adapter-selector"
+        static let outputSelector = "stream.output-selector"
         static let fallbackDisplayMode = "stream.fallback-display-mode"
         static let audioSink = "audio.sink"
         static let streamAudio = "audio.stream"
@@ -255,7 +255,7 @@ public actor LumenHostSettingsStore {
         static let port = "network.port"
         static let upnp = "network.upnp"
         static let remoteAccessScope = "network.remote-access-scope"
-        static let externalIP = "network.external-ip"
+        static let externalIPMode = "network.external-ip-mode"
         static let lanEncryption = "network.lan-encryption"
         static let wanEncryption = "network.wan-encryption"
         static let pingTimeout = "network.ping-timeout-ms"
@@ -287,7 +287,6 @@ public actor LumenHostSettingsStore {
         let defaults = try makeDefaults()
         defaults.set(Self.workspaceName(settings.workspacePolicy), forKey: Key.workspacePolicy)
         defaults.set(settings.systemAuthenticationEnabled, forKey: Key.systemAuthentication)
-        defaults.set(settings.locale, forKey: Key.locale)
         defaults.set(settings.hostName, forKey: Key.hostName)
         defaults.set(settings.discoveryEnabled, forKey: Key.discovery)
         defaults.set(settings.deviceEnrollmentEnabled, forKey: Key.deviceEnrollment)
@@ -295,8 +294,8 @@ public actor LumenHostSettingsStore {
         defaults.set(Self.prepCommandRecords(settings.globalPrepCommands), forKey: Key.globalPrepCommands)
         defaults.set(Self.prepCommandRecords(settings.globalStateCommands), forKey: Key.globalStateCommands)
         defaults.set(Self.serverCommandRecords(settings.serverCommands), forKey: Key.serverCommands)
-        defaults.set(settings.adapterName, forKey: Key.adapterName)
-        defaults.set(settings.outputName, forKey: Key.outputName)
+        defaults.set(settings.adapterSelector, forKey: Key.adapterSelector)
+        defaults.set(settings.outputSelector, forKey: Key.outputSelector)
         defaults.set(settings.fallbackDisplayMode, forKey: Key.fallbackDisplayMode)
         defaults.set(settings.audioSink, forKey: Key.audioSink)
         defaults.set(settings.streamAudio, forKey: Key.streamAudio)
@@ -312,7 +311,7 @@ public actor LumenHostSettingsStore {
         defaults.set(settings.port, forKey: Key.port)
         defaults.set(settings.upnpEnabled, forKey: Key.upnp)
         defaults.set(settings.remoteAccessScope.rawValue, forKey: Key.remoteAccessScope)
-        defaults.set(settings.externalIP, forKey: Key.externalIP)
+        defaults.set(settings.externalIPMode.rawValue, forKey: Key.externalIPMode)
         defaults.set(settings.lanEncryption.rawValue, forKey: Key.lanEncryption)
         defaults.set(settings.wanEncryption.rawValue, forKey: Key.wanEncryption)
         defaults.set(settings.pingTimeoutMilliseconds, forKey: Key.pingTimeout)
@@ -375,7 +374,6 @@ public actor LumenHostSettingsStore {
         let settings = LumenNativeHostSettings(
             workspacePolicy: workspacePolicy(defaults.string(forKey: Key.workspacePolicy)) ?? fallback.workspacePolicy,
             systemAuthenticationEnabled: bool(defaults, Key.systemAuthentication, fallback.systemAuthenticationEnabled),
-            locale: defaults.string(forKey: Key.locale) ?? fallback.locale,
             hostName: defaults.string(forKey: Key.hostName) ?? fallback.hostName,
             discoveryEnabled: bool(defaults, Key.discovery, fallback.discoveryEnabled),
             deviceEnrollmentEnabled: bool(
@@ -387,8 +385,8 @@ public actor LumenHostSettingsStore {
             globalPrepCommands: prepCommands(defaults, Key.globalPrepCommands),
             globalStateCommands: prepCommands(defaults, Key.globalStateCommands),
             serverCommands: serverCommands(defaults, Key.serverCommands),
-            adapterName: defaults.string(forKey: Key.adapterName) ?? fallback.adapterName,
-            outputName: defaults.string(forKey: Key.outputName) ?? fallback.outputName,
+            adapterSelector: defaults.string(forKey: Key.adapterSelector) ?? fallback.adapterSelector,
+            outputSelector: defaults.string(forKey: Key.outputSelector) ?? fallback.outputSelector,
             fallbackDisplayMode: defaults.string(forKey: Key.fallbackDisplayMode) ?? fallback.fallbackDisplayMode,
             audioSink: defaults.string(forKey: Key.audioSink) ?? fallback.audioSink,
             streamAudio: bool(defaults, Key.streamAudio, fallback.streamAudio),
@@ -408,7 +406,9 @@ public actor LumenHostSettingsStore {
             port: integer(defaults, Key.port, fallback.port),
             upnpEnabled: bool(defaults, Key.upnp, fallback.upnpEnabled),
             remoteAccessScope: LumenRemoteAccessScope(rawValue: defaults.string(forKey: Key.remoteAccessScope) ?? "") ?? fallback.remoteAccessScope,
-            externalIP: defaults.string(forKey: Key.externalIP) ?? fallback.externalIP,
+            externalIPMode: LumenExternalIPMode(
+                rawValue: defaults.string(forKey: Key.externalIPMode) ?? ""
+            ) ?? fallback.externalIPMode,
             lanEncryption: LumenEncryptionMode(rawValue: integer(defaults, Key.lanEncryption, fallback.lanEncryption.rawValue)) ?? fallback.lanEncryption,
             wanEncryption: LumenEncryptionMode(rawValue: integer(defaults, Key.wanEncryption, fallback.wanEncryption.rawValue)) ?? fallback.wanEncryption,
             pingTimeoutMilliseconds: integer(defaults, Key.pingTimeout, fallback.pingTimeoutMilliseconds),
@@ -429,6 +429,9 @@ public actor LumenHostSettingsStore {
         settings.hostName = settings.hostName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !settings.hostName.isEmpty,
               settings.hostName.count <= 64,
+              settings.adapterSelector == "automatic",
+              settings.outputSelector == "automatic",
+              settings.audioSink == "system-default",
               (1_029...65_515).contains(settings.port),
               (1_000...120_000).contains(settings.pingTimeoutMilliseconds),
               (1...255).contains(settings.fecPercentage),
@@ -437,6 +440,14 @@ public actor LumenHostSettingsStore {
                   of: #"^\d+x\d+x\d+(\.\d+)?$"#,
                   options: .regularExpression
               ) != nil,
+              [
+                  "1280x720x60",
+                  "1920x1080x60",
+                  "2560x1440x60",
+                  "2560x1440x120",
+                  "3840x2160x60",
+                  "3840x2160x120"
+              ].contains(settings.fallbackDisplayMode),
               !settings.applicationsFilePath.isEmpty,
               !settings.credentialsFilePath.isEmpty,
               !settings.logFilePath.isEmpty,

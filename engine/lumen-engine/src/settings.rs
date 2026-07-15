@@ -6,7 +6,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 pub const SETTINGS_SCHEMA_VERSION: u32 = 1;
-const SETTINGS_STORAGE_VERSION: u32 = 1;
+const SETTINGS_STORAGE_VERSION: u32 = 2;
+const RETIRED_SETTINGS_STORAGE_VERSION: u32 = 1;
 const MAXIMUM_RETAINED_EVENTS: usize = 128;
 const MAXIMUM_RETAINED_REQUESTS: usize = 256;
 const MAXIMUM_COMMANDS_PER_LIST: usize = 64;
@@ -86,12 +87,28 @@ impl SettingsAuthority {
             ));
         }
         let state = match fs::read(&file_path) {
-            Ok(data) => serde_json::from_slice::<PersistedSettingsState>(&data).map_err(|_| {
-                SettingsProtocolError::new(
-                    SettingsErrorCode::CorruptData,
-                    "settings storage is not valid schema version 1 data",
-                )
-            })?,
+            Ok(data) => {
+                let document: serde_json::Value = serde_json::from_slice(&data).map_err(|_| {
+                    SettingsProtocolError::new(
+                        SettingsErrorCode::CorruptData,
+                        "settings storage is not valid schema version 1 data",
+                    )
+                })?;
+                if document["storageVersion"].as_u64()
+                    == Some(u64::from(RETIRED_SETTINGS_STORAGE_VERSION))
+                {
+                    let state = PersistedSettingsState::default();
+                    write_state_atomically(&file_path, &state)?;
+                    state
+                } else {
+                    serde_json::from_value::<PersistedSettingsState>(document).map_err(|_| {
+                        SettingsProtocolError::new(
+                            SettingsErrorCode::CorruptData,
+                            "settings storage is not valid schema version 1 data",
+                        )
+                    })?
+                }
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 PersistedSettingsState::default()
             }
@@ -370,6 +387,7 @@ impl SettingsAuthority {
     ) -> Result<SettingsSnapshot, SettingsProtocolError> {
         validate_settings(&settings)?;
         let changed_fields = differing_field_keys(&settings, &self.state.effective);
+        validate_capability_values(&settings, &changed_fields, &self.capabilities)?;
         if !changed_fields.is_empty() {
             let mut candidate = self.state.clone();
             let changes = full_changes(&settings);
@@ -473,6 +491,15 @@ fn validate_persisted_state(
             "settings storage violates the version 1 authority invariants",
         )
     };
+    let field_keys = capabilities
+        .fields
+        .keys()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    validate_capability_values(&state.settings, &field_keys, capabilities)
+        .map_err(|_| corrupt())?;
+    validate_capability_values(&state.effective, &field_keys, capabilities)
+        .map_err(|_| corrupt())?;
     if state.revision == 0
         || state.events.len() > MAXIMUM_RETAINED_EVENTS
         || state.requests.len() > MAXIMUM_RETAINED_REQUESTS

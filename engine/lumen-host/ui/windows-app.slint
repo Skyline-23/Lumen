@@ -138,8 +138,6 @@ export component LumenWindowsApp inherits Window {
     in property <string> host-name: "Lumen";
     in property <int> application-count: 0;
     in property <int> control-port: 47989;
-    in property <int> settings-revision: 0;
-    in-out property <int> locale-index: 0;
     in property <[string]> application-names: [];
     in property <bool> system-authentication-enabled: false;
     in property <string> system-authentication-label: @tr("Unlock with Windows Hello");
@@ -148,7 +146,6 @@ export component LumenWindowsApp inherits Window {
     callback login(string);
     callback lock();
     callback navigate(int);
-    callback select-locale(int);
     callback reload-applications();
     callback force-stop-stream();
     callback restart-host();
@@ -508,7 +505,7 @@ export component LumenWindowsApp inherits Window {
                     spacing: 18px;
                     PageHeader {
                         title: root.navigation == 2 ? @tr("Security") : root.navigation == 3 ? @tr("General") : root.navigation == 4 ? @tr("Streaming") : root.navigation == 5 ? @tr("Audio") : root.navigation == 6 ? @tr("Input") : root.navigation == 7 ? @tr("Network") : @tr("Advanced");
-                        subtitle: root.navigation == 2 ? @tr("Owner access, host locking, and system authentication") : root.navigation == 3 ? @tr("Computer identity, discovery, language, and logging") : root.navigation == 4 ? @tr("Codec, latency, quality, and stream display behavior") : root.navigation == 5 ? @tr("Computer audio capture and device selection") : root.navigation == 6 ? @tr("Keyboard, pointer, touch, and controller forwarding") : root.navigation == 7 ? @tr("Discovery, remote access, encryption, and recovery") : @tr("Lifecycle commands and host process automation");
+                        subtitle: root.navigation == 2 ? @tr("Owner access, host locking, and system authentication") : root.navigation == 3 ? @tr("Computer identity, discovery, and logging") : root.navigation == 4 ? @tr("Codec, latency, quality, and stream display behavior") : root.navigation == 5 ? @tr("Computer audio capture and device selection") : root.navigation == 6 ? @tr("Keyboard, pointer, touch, and controller forwarding") : root.navigation == 7 ? @tr("Discovery, remote access, encryption, and recovery") : @tr("Lifecycle commands and host process automation");
                     }
                     Rectangle {
                         border-radius: 10px;
@@ -520,28 +517,6 @@ export component LumenWindowsApp inherits Window {
                             if root.navigation == 2: SettingRow { title: @tr("Unlock with Windows Hello"); detail: @tr("System authentication is not enabled."); checked: false; }
                             if root.navigation == 2: ActionButton { width: 110px; text: @tr("Lock now"); clicked => { root.lock(); } }
                             if root.navigation == 3: SettingRow { title: @tr("Computer name"); detail: root.host-name; }
-                            if root.navigation == 3: Rectangle {
-                                height: 52px;
-                                HorizontalLayout {
-                                    padding-left: 14px;
-                                    padding-right: 14px;
-                                    spacing: 12px;
-                                    Text {
-                                        text: @tr("Language");
-                                        color: #24231f;
-                                        font-size: 13px;
-                                        vertical-alignment: center;
-                                    }
-                                    ComboBox {
-                                        width: 180px;
-                                        model: ["English", "한국어", "日本語"];
-                                        current-index: root.locale-index;
-                                        selected(value) => {
-                                            root.select-locale(self.current-index);
-                                        }
-                                    }
-                                }
-                            }
                             if root.navigation == 3: SettingRow { title: @tr("Discoverable on the local network"); detail: ""; checked: true; }
                             if root.navigation == 5: SettingRow { title: @tr("Stream computer audio"); detail: ""; checked: true; }
                             if root.navigation == 6: SettingRow { title: @tr("Keyboard input"); detail: ""; checked: true; }
@@ -554,7 +529,7 @@ export component LumenWindowsApp inherits Window {
                             Rectangle { vertical-stretch: 1; background: transparent; }
                         }
                     }
-                    Text { text: @tr("Revision {}", root.settings-revision); color: #85827b; font-size: 11px; }
+                    Text { text: @tr("Changes are saved automatically."); color: #85827b; font-size: 11px; }
                 }
             }
 

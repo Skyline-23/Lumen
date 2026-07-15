@@ -12,7 +12,6 @@ patch_group!(WorkspaceChanges {
     policy: WorkspacePolicy
 });
 patch_group!(GeneralChanges {
-    locale: String,
     host_name: String,
     discovery: bool,
     update_channel: UpdateChannel,
@@ -42,7 +41,7 @@ patch_group!(NetworkChanges {
     port: u16,
     upnp: bool,
     remote_access_scope: RemoteAccessScope,
-    external_ip: String,
+    external_ip_mode: ExternalIpMode,
     lan_encryption: EncryptionMode,
     wan_encryption: EncryptionMode,
     ping_timeout_ms: u32,

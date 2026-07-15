@@ -129,7 +129,7 @@ impl<Stream: NativeStreamControl, Control: NativeControlTransport> HostService
             .map_err(|error| ServiceError::Authority(error).to_string())?;
         let paths = HostAuthorityPaths::from_arguments(arguments)
             .map_err(|error| ServiceError::Authority(error.to_string()).to_string())?;
-        let mut authorities = HostAuthorities::open_native(paths)
+        let mut authorities = HostAuthorities::open_native_configured(paths, arguments)
             .map_err(|error| ServiceError::Authority(error.to_string()).to_string())?;
         authorities
             .reconcile_native_settings(arguments)
