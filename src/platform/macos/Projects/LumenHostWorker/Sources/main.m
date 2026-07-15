@@ -263,7 +263,7 @@ static uint32_t LumenWorkerVideoTimestamp(CMSampleBufferRef sampleBuffer) {
   request.refreshRate = plan->frames_per_second;
   request.scalePercent = 100;
   request.dimensionsAreLogical = NO;
-  request.hdrEnabled = NO;
+  request.hdrEnabled = plan->dynamic_range == LumenHostPlatformDynamicRangeHDR10;
   return [LumenMacWorkspaceSessionFacade.shared startSessionSync:request error:error];
 }
 
@@ -293,10 +293,33 @@ static uint32_t LumenWorkerVideoTimestamp(CMSampleBufferRef sampleBuffer) {
   video.codec = plan->video_codec == LumenHostPlatformVideoCodecH264
     ? LumenMacCaptureCodecH264
     : LumenMacCaptureCodecHEVC;
+  video.video_profile = (LumenMacCaptureVideoProfile) plan->video_profile;
+  video.chroma_subsampling = (LumenMacCaptureChromaSubsampling) plan->chroma_subsampling;
+  video.bit_depth = plan->bit_depth;
+  video.dynamic_range = (LumenMacCaptureDynamicRange) plan->dynamic_range;
+  video.color_range = (LumenMacCaptureColorRange) plan->color_range;
   video.target_frame_rate = (int32_t) plan->frames_per_second;
   video.target_video_bitrate_kbps = (int32_t) plan->bitrate_kbps;
   video.requested_width = (int32_t) plan->width;
   video.requested_height = (int32_t) plan->height;
+
+  video.sink_request.mode.hidpi = plan->sink_hidpi;
+  video.sink_request.mode.scale_explicit = plan->sink_scale_explicit;
+  video.sink_request.mode.mode_is_logical = plan->sink_mode_is_logical;
+  video.sink_request.mode.scale_percent = plan->sink_scale_percent;
+  video.sink_request.capability.gamut = plan->sink_gamut;
+  video.sink_request.capability.transfer = plan->sink_transfer;
+  video.sink_request.capability.current_edr_headroom = plan->sink_current_edr_headroom;
+  video.sink_request.capability.potential_edr_headroom = plan->sink_potential_edr_headroom;
+  video.sink_request.capability.current_peak_luminance_nits = plan->sink_current_peak_luminance_nits;
+  video.sink_request.capability.potential_peak_luminance_nits = plan->sink_potential_peak_luminance_nits;
+  video.sink_request.capability.supports_frame_gated_hdr = plan->sink_supports_frame_gated_hdr;
+  video.sink_request.capability.supports_hdr_tile_overlay = plan->sink_supports_hdr_tile_overlay;
+  video.sink_request.capability.supports_per_frame_hdr_metadata = plan->sink_supports_per_frame_hdr_metadata;
+  video.sink_request.dynamic_range_transport =
+    (LumenMacDynamicRangeTransport) plan->negotiated_dynamic_range_transport;
+  video.effective_display_state.gamut = plan->sink_gamut;
+  video.effective_display_state.transfer = plan->sink_transfer;
 
   char error[1024] = {0};
   if (!LumenMacBridgeControllerStartCapture(_bridge, video, error, sizeof(error))) {

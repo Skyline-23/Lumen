@@ -404,6 +404,11 @@ public struct LumenMacCaptureConfiguration: Equatable, Sendable {
 
     public let displayID: UInt32
     public let codec: LumenCaptureCodec
+    public let videoProfile: LumenCaptureVideoProfile
+    public let chromaSubsampling: LumenCaptureChromaSubsampling
+    public let bitDepth: Int
+    public let dynamicRange: LumenCaptureDynamicRange
+    public let colorRange: LumenCaptureColorRange
     public let preprocessStrategy: LumenCapturePreprocessStrategy
     public let queueProfile: LumenCaptureQueueProfile
     public let encoderInputStrategy: LumenCaptureEncoderInputStrategy
@@ -417,6 +422,11 @@ public struct LumenMacCaptureConfiguration: Equatable, Sendable {
     public init(
         displayID: UInt32,
         codec: LumenCaptureCodec = .hevc,
+        videoProfile: LumenCaptureVideoProfile? = nil,
+        chromaSubsampling: LumenCaptureChromaSubsampling? = nil,
+        bitDepth: Int? = nil,
+        dynamicRange: LumenCaptureDynamicRange? = nil,
+        colorRange: LumenCaptureColorRange? = nil,
         preprocessStrategy: LumenCapturePreprocessStrategy = .none,
         queueProfile: LumenCaptureQueueProfile = .auto,
         encoderInputStrategy: LumenCaptureEncoderInputStrategy = .auto,
@@ -427,8 +437,15 @@ public struct LumenMacCaptureConfiguration: Equatable, Sendable {
         sinkRequest: LumenBridgeSinkRequest = LumenBridgeSinkRequest(),
         effectiveDisplayState: LumenBridgeEffectiveDisplayState = LumenBridgeEffectiveDisplayState()
     ) {
+        let defaultsToHDR = codec == .hevc &&
+            lumenDynamicRangeTransportUsesHDR(sinkRequest.dynamicRangeTransport)
         self.displayID = displayID
         self.codec = codec
+        self.videoProfile = videoProfile ?? (codec == .h264 ? .h264High : (defaultsToHDR ? .hevcMain10 : .hevcMain))
+        self.chromaSubsampling = chromaSubsampling ?? .yuv420
+        self.bitDepth = bitDepth ?? (defaultsToHDR ? 10 : 8)
+        self.dynamicRange = dynamicRange ?? (defaultsToHDR ? .hdr10 : .sdr)
+        self.colorRange = colorRange ?? .limited
         self.preprocessStrategy = preprocessStrategy
         self.queueProfile = queueProfile
         self.encoderInputStrategy = encoderInputStrategy
@@ -444,6 +461,11 @@ public struct LumenMacCaptureConfiguration: Equatable, Sendable {
         Self(
             displayID: displayID,
             codec: codec,
+            videoProfile: videoProfile,
+            chromaSubsampling: chromaSubsampling,
+            bitDepth: bitDepth,
+            dynamicRange: dynamicRange,
+            colorRange: colorRange,
             preprocessStrategy: preprocessStrategy,
             queueProfile: queueProfile,
             encoderInputStrategy: encoderInputStrategy,
@@ -680,6 +702,11 @@ public struct LumenMacCaptureConfiguration: Equatable, Sendable {
     }
 
     public var effectiveCapturePixelFormat: UInt32 {
+        if chromaSubsampling == .yuv444 {
+            return bitDepth == 10
+                ? kCVPixelFormatType_444YpCbCr10BiPlanarFullRange
+                : kCVPixelFormatType_444YpCbCr8BiPlanarFullRange
+        }
         if codec == .hevc {
             return kCVPixelFormatType_32BGRA
         }
@@ -689,6 +716,17 @@ public struct LumenMacCaptureConfiguration: Equatable, Sendable {
         case .hevc:
             return usesHDRTransport ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
         }
+    }
+
+    var directCapturePixelFormat: OSType {
+        if chromaSubsampling == .yuv444 {
+            return bitDepth == 10
+                ? kCVPixelFormatType_444YpCbCr10BiPlanarFullRange
+                : kCVPixelFormatType_444YpCbCr8BiPlanarFullRange
+        }
+        return bitDepth == 10
+            ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
+            : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
     }
 
     private var effectivePixelCount: Int? {
@@ -1138,6 +1176,7 @@ public actor LumenBridgeRuntime {
     private let audioForwarder = LumenAudioCaptureForwarder()
     private let logger = Logger(subsystem: "dev.skyline23.lumen", category: "MacBridgeRuntime")
     private let captureLifecycle = LumenBridgeCaptureLifecycle()
+    private let encodedFrameReadiness = LumenFirstEncodedFrameGate()
     private var encodedCaptureSession: LumenEncodedCaptureSession?
     private var encodedCaptureStartupTask: Task<Void, Error>?
     private var activeCaptureConfiguration: LumenMacCaptureConfiguration?
@@ -1152,6 +1191,7 @@ public actor LumenBridgeRuntime {
     private var lastEncodedFrameSourceSequenceNumber: UInt64?
     private var lastEncodedFrameSourceDisplayTime: UInt64?
     private var lastCaptureRestartRequestUptimeNanoseconds: UInt64 = 0
+    private var activeCaptureGeneration: UInt64?
 
     public init() {}
 
@@ -1175,6 +1215,8 @@ public actor LumenBridgeRuntime {
         waitForStartupCompletion: Bool
     ) async throws {
         await stopCapture(resetRequestGeneration: false)
+        let captureGeneration = await encodedFrameReadiness.beginCapture()
+        activeCaptureGeneration = captureGeneration
 
         let frameCapacity = Self.recommendedVideoForwardingFrameCapacity(for: configuration)
         videoForwarder.reset()
@@ -1199,7 +1241,7 @@ public actor LumenBridgeRuntime {
             frameHandler: { frame in
                 videoForwarder.consume(frame: frame)
                 Task {
-                    await runtime.recordEncodedFrame(frame)
+                    await runtime.recordEncodedFrame(frame, generation: captureGeneration)
                 }
             },
             eventHandler: { event in
@@ -1239,6 +1281,45 @@ public actor LumenBridgeRuntime {
 
     public func stopCapture() async {
         await stopCapture(resetRequestGeneration: true)
+    }
+
+    public func waitForFirstEncodedFrame(timeoutNanoseconds: UInt64) async throws {
+        guard let activeCaptureGeneration else {
+            throw LumenFirstEncodedFrameReadinessError.captureNotRunning
+        }
+        try await encodedFrameReadiness.wait(
+            for: activeCaptureGeneration,
+            timeoutNanoseconds: timeoutNanoseconds
+        )
+    }
+
+    public func currentEncodedFrameSequenceNumber() -> UInt64? {
+        latestFrame?.sourceSequenceNumber
+    }
+
+    public func waitForEncodedFrame(
+        after sequenceNumber: UInt64,
+        timeoutNanoseconds: UInt64
+    ) async throws {
+        guard let activeCaptureGeneration else {
+            throw LumenFirstEncodedFrameReadinessError.captureNotRunning
+        }
+        try await encodedFrameReadiness.wait(
+            for: activeCaptureGeneration,
+            after: sequenceNumber,
+            timeoutNanoseconds: timeoutNanoseconds
+        )
+    }
+
+    public func verifyEncodedFrameContinuity(timeoutNanoseconds: UInt64) async throws {
+        guard let sequenceNumber = latestFrame?.sourceSequenceNumber else {
+            try await waitForFirstEncodedFrame(timeoutNanoseconds: timeoutNanoseconds)
+            return
+        }
+        try await waitForEncodedFrame(
+            after: sequenceNumber,
+            timeoutNanoseconds: timeoutNanoseconds
+        )
     }
 
     public func requestImmediateCaptureKeyFrame() async {
@@ -1285,6 +1366,10 @@ public actor LumenBridgeRuntime {
     private func stopCapture(resetRequestGeneration: Bool) async {
         encodedCaptureStartupTask?.cancel()
         encodedCaptureStartupTask = nil
+        if let activeCaptureGeneration {
+            await encodedFrameReadiness.stop(generation: activeCaptureGeneration)
+            self.activeCaptureGeneration = nil
+        }
         videoForwarder.setProducerActive(false)
         await captureLifecycle.beginStop()
         guard let session = encodedCaptureSession else {
@@ -1433,6 +1518,10 @@ public actor LumenBridgeRuntime {
         encodedCaptureStartupTask = nil
         encodedCaptureSession = nil
         activeCaptureConfiguration = nil
+        if let activeCaptureGeneration {
+            await encodedFrameReadiness.stop(generation: activeCaptureGeneration)
+            self.activeCaptureGeneration = nil
+        }
         videoForwarder.setProducerActive(false)
         await captureLifecycle.failStartup()
         latestFrame = nil
@@ -1540,8 +1629,13 @@ public actor LumenBridgeRuntime {
         )
     }
 
-    private func recordEncodedFrame(_ frame: LumenEncodedFrame) async {
+    private func recordEncodedFrame(_ frame: LumenEncodedFrame, generation: UInt64) async {
+        guard activeCaptureGeneration == generation else { return }
         latestFrame = LumenBridgeEncodedFrameSnapshot(frame: frame)
+        await encodedFrameReadiness.resolve(
+            generation: generation,
+            sequenceNumber: frame.sourceSequenceNumber
+        )
         logEncodedFrameDiagnosticsIfNeeded(frame, captureStatistics: nil)
     }
 

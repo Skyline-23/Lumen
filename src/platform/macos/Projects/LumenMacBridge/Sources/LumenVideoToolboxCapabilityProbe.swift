@@ -27,7 +27,7 @@ public struct LumenVideoToolboxProbeEnvironment: Hashable, Codable, Sendable {
     }
 }
 
-public enum LumenVideoToolboxProbeTarget: String, CaseIterable, Codable, Sendable {
+public enum LumenVideoToolboxProbeTarget: String, CaseIterable, Codable, Hashable, Sendable {
     case h264High444Predictive
     case hevcMain444
     case hevcMain44410
