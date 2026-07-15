@@ -1,51 +1,85 @@
 use crate::{
-    AppliedResources, LumenEngineStatus, LumenWorkspaceCommandKind, LumenWorkspaceState,
-    RecoveryJournalError, RecoveryJournalLoad, RecoveryJournalStore, RecoveryPhase,
-    WorkspaceEngine,
+    LumenEngineStatus, LumenWorkspaceCommandKind, LumenWorkspaceState, PhysicalDisplayTopology,
+    RecoveryJournalError, RecoveryPhase, WorkspaceCommandPayload, WorkspaceEngine,
+    WorkspaceRecoveryJournal,
 };
 
 impl WorkspaceEngine {
-    pub fn with_recovery_store(store: RecoveryJournalStore) -> Self {
-        let mut engine = Self::default();
-        engine.recovery_store = Some(store);
-        engine
+    pub(crate) fn prepare_command(&mut self, kind: LumenWorkspaceCommandKind) -> LumenEngineStatus {
+        match kind {
+            LumenWorkspaceCommandKind::StartCapture => {
+                self.persist_recovery_phase(RecoveryPhase::CaptureStarting)
+            }
+            LumenWorkspaceCommandKind::ApplyIsolation => {
+                self.persist_recovery_phase(RecoveryPhase::IsolationStarted)
+            }
+            LumenWorkspaceCommandKind::SnapshotWorkspace
+            | LumenWorkspaceCommandKind::CreateVirtualDisplay
+            | LumenWorkspaceCommandKind::ConfigureVirtualDisplay
+            | LumenWorkspaceCommandKind::PromoteVirtualMain
+            | LumenWorkspaceCommandKind::MoveTargetWindows
+            | LumenWorkspaceCommandKind::StopCapture
+            | LumenWorkspaceCommandKind::RestoreWorkspace
+            | LumenWorkspaceCommandKind::VerifyPhysicalDisplays
+            | LumenWorkspaceCommandKind::DestroyVirtualDisplay => LumenEngineStatus::Ok,
+        }
     }
 
-    pub(crate) fn recover_before_session(&mut self) -> LumenEngineStatus {
-        let Some(store) = &self.recovery_store else {
-            return LumenEngineStatus::Ok;
-        };
-        let journal = match store.load() {
-            Ok(RecoveryJournalLoad::Missing) => return LumenEngineStatus::Ok,
-            Ok(RecoveryJournalLoad::Verified(journal)) => journal,
-            Ok(RecoveryJournalLoad::Quarantined(_)) => {
-                self.last_failure = LumenEngineStatus::CorruptData;
-                return LumenEngineStatus::CorruptData;
+    pub(crate) fn record_command_success(
+        &mut self,
+        kind: LumenWorkspaceCommandKind,
+        payload: WorkspaceCommandPayload,
+    ) -> LumenEngineStatus {
+        match (kind, payload) {
+            (
+                LumenWorkspaceCommandKind::SnapshotWorkspace,
+                WorkspaceCommandPayload::PhysicalTopology(topology),
+            ) => self.record_snapshot(topology),
+            (
+                LumenWorkspaceCommandKind::CreateVirtualDisplay,
+                WorkspaceCommandPayload::VirtualDisplayIdentity(identity),
+            ) if self.virtual_display.as_ref() == Some(&identity) => {
+                self.resources.display = true;
+                self.persist_recovery_phase(RecoveryPhase::VirtualCreated)
             }
-            Err(error) => {
-                let status = journal_error_status(error);
-                self.last_failure = status;
-                return status;
+            (LumenWorkspaceCommandKind::ConfigureVirtualDisplay, WorkspaceCommandPayload::None) => {
+                self.persist_recovery_phase(RecoveryPhase::VirtualConfigured)
             }
-        };
-
-        self.generation = self.generation.max(journal.generation);
-        self.next_sequence = 0;
-        self.queued.clear();
-        self.awaiting = None;
-        self.resources = AppliedResources {
-            snapshot: journal.phase.verification_required(),
-            display: journal.virtual_display.is_some(),
-            capture: journal.phase.capture_may_be_running(),
-        };
-        self.recovery_journal = Some(journal);
-        self.state = LumenWorkspaceState::Stopping;
-        let status = self.enqueue_next_cleanup();
-        if status != LumenEngineStatus::Ok {
-            self.last_failure = status;
-            return status;
+            (LumenWorkspaceCommandKind::PromoteVirtualMain, WorkspaceCommandPayload::None) => {
+                self.persist_recovery_phase(RecoveryPhase::VirtualPromoted)
+            }
+            (LumenWorkspaceCommandKind::MoveTargetWindows, WorkspaceCommandPayload::None) => {
+                self.persist_recovery_phase(RecoveryPhase::TargetWindowsMoved)
+            }
+            (LumenWorkspaceCommandKind::ApplyIsolation, WorkspaceCommandPayload::None) => {
+                self.persist_recovery_phase(RecoveryPhase::Isolated)
+            }
+            (LumenWorkspaceCommandKind::StartCapture, WorkspaceCommandPayload::None) => {
+                self.resources.capture = true;
+                self.persist_recovery_phase(RecoveryPhase::FirstFrameReady)
+            }
+            (LumenWorkspaceCommandKind::StopCapture, WorkspaceCommandPayload::None) => {
+                self.resources.capture = false;
+                self.persist_recovery_phase(RecoveryPhase::CaptureStopped)
+            }
+            (LumenWorkspaceCommandKind::RestoreWorkspace, WorkspaceCommandPayload::None) => {
+                self.resources.physical_restored = true;
+                self.persist_recovery_phase(RecoveryPhase::PhysicalRestored)
+            }
+            (LumenWorkspaceCommandKind::VerifyPhysicalDisplays, WorkspaceCommandPayload::None) => {
+                let status = self.persist_recovery_phase(RecoveryPhase::RestorationVerified);
+                if status == LumenEngineStatus::Ok {
+                    self.resources.snapshot = false;
+                }
+                status
+            }
+            (LumenWorkspaceCommandKind::DestroyVirtualDisplay, WorkspaceCommandPayload::None) => {
+                self.resources.display = false;
+                self.virtual_display = None;
+                LumenEngineStatus::Ok
+            }
+            _ => LumenEngineStatus::InvalidArgument,
         }
-        LumenEngineStatus::RecoveryRequired
     }
 
     pub(crate) fn schedule_recovery(&mut self) -> LumenEngineStatus {
@@ -60,26 +94,8 @@ impl WorkspaceEngine {
 
     pub(crate) fn advance_cleanup(
         &mut self,
-        completed: LumenWorkspaceCommandKind,
+        _completed: LumenWorkspaceCommandKind,
     ) -> LumenEngineStatus {
-        let phase = match completed {
-            LumenWorkspaceCommandKind::StopCapture => Some(RecoveryPhase::CaptureStopped),
-            LumenWorkspaceCommandKind::RestoreWorkspace => Some(RecoveryPhase::RestorationVerified),
-            LumenWorkspaceCommandKind::SnapshotWorkspace
-            | LumenWorkspaceCommandKind::CreateVirtualDisplay
-            | LumenWorkspaceCommandKind::ConfigureVirtualDisplay
-            | LumenWorkspaceCommandKind::PromoteVirtualMain
-            | LumenWorkspaceCommandKind::MoveTargetWindows
-            | LumenWorkspaceCommandKind::ApplyIsolation
-            | LumenWorkspaceCommandKind::StartCapture
-            | LumenWorkspaceCommandKind::DestroyVirtualDisplay => None,
-        };
-        if let Some(phase) = phase {
-            let status = self.persist_recovery_phase(phase);
-            if status != LumenEngineStatus::Ok {
-                return status;
-            }
-        }
         self.enqueue_next_cleanup()
     }
 
@@ -89,9 +105,8 @@ impl WorkspaceEngine {
                 self.resources.capture = false;
                 let _ = self.enqueue_next_cleanup();
             }
-            LumenWorkspaceCommandKind::RestoreWorkspace => {
-                self.queued.clear();
-            }
+            LumenWorkspaceCommandKind::RestoreWorkspace
+            | LumenWorkspaceCommandKind::VerifyPhysicalDisplays => self.queued.clear(),
             LumenWorkspaceCommandKind::DestroyVirtualDisplay => {
                 self.resources.display = false;
                 self.finish_transition_if_ready();
@@ -104,6 +119,29 @@ impl WorkspaceEngine {
             | LumenWorkspaceCommandKind::ApplyIsolation
             | LumenWorkspaceCommandKind::StartCapture => {}
         }
+    }
+
+    fn record_snapshot(&mut self, topology: PhysicalDisplayTopology) -> LumenEngineStatus {
+        self.resources.snapshot = true;
+        self.resources.physical_restored = false;
+        self.physical_topology = Some(topology.clone());
+        let Some(store) = &self.recovery_store else {
+            return LumenEngineStatus::Ok;
+        };
+        let (Some(metadata), Some(identity)) =
+            (self.recovery_metadata.clone(), self.virtual_display.clone())
+        else {
+            return LumenEngineStatus::InvalidState;
+        };
+        let journal = match WorkspaceRecoveryJournal::new(metadata, topology) {
+            Ok(journal) => journal.with_virtual_display(identity),
+            Err(error) => return journal_error_status(error),
+        };
+        if let Err(error) = store.create(&journal) {
+            return journal_error_status(error);
+        }
+        self.recovery_journal = Some(journal);
+        LumenEngineStatus::Ok
     }
 
     fn persist_recovery_phase(&mut self, phase: RecoveryPhase) -> LumenEngineStatus {
@@ -121,7 +159,7 @@ impl WorkspaceEngine {
         LumenEngineStatus::Ok
     }
 
-    fn enqueue_next_cleanup(&mut self) -> LumenEngineStatus {
+    pub(crate) fn enqueue_next_cleanup(&mut self) -> LumenEngineStatus {
         if self.awaiting.is_some() || !self.queued.is_empty() {
             return LumenEngineStatus::Ok;
         }
@@ -129,8 +167,12 @@ impl WorkspaceEngine {
             self.enqueue(LumenWorkspaceCommandKind::StopCapture);
             return LumenEngineStatus::Ok;
         }
-        if self.resources.snapshot {
+        if self.resources.snapshot && !self.resources.physical_restored {
             self.enqueue(LumenWorkspaceCommandKind::RestoreWorkspace);
+            return LumenEngineStatus::Ok;
+        }
+        if self.resources.snapshot {
+            self.enqueue(LumenWorkspaceCommandKind::VerifyPhysicalDisplays);
             return LumenEngineStatus::Ok;
         }
         if self.recovery_journal.is_some() {
@@ -151,7 +193,7 @@ impl WorkspaceEngine {
     }
 }
 
-const fn journal_error_status(error: RecoveryJournalError) -> LumenEngineStatus {
+pub(crate) const fn journal_error_status(error: RecoveryJournalError) -> LumenEngineStatus {
     match error {
         RecoveryJournalError::UnsupportedVersion(_) | RecoveryJournalError::InvalidField(_) => {
             LumenEngineStatus::CorruptData

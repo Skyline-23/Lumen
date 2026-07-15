@@ -106,6 +106,8 @@ fn topology() -> PhysicalDisplayTopology {
             origin_y: 0,
             mirror_master_id: None,
             enabled: true,
+            active: true,
+            online: true,
         }],
         windows_adapter_luid: None,
         windows_target_paths: Vec::new(),
@@ -210,6 +212,7 @@ fn every_crash_phase_restores_before_destroying_virtual_display() {
                 generation: u64::try_from(index + 1).unwrap(),
                 session_id: format!("crash-{index}"),
                 timestamp_unix_ms: 1_784_000_000_000,
+                capture_managed: true,
             },
             topology(),
         )

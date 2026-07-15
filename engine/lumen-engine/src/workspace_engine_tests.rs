@@ -104,6 +104,7 @@ fn externally_managed_capture_keeps_workspace_transaction_separate() {
         teardown,
         vec![
             LumenWorkspaceCommandKind::RestoreWorkspace,
+            LumenWorkspaceCommandKind::VerifyPhysicalDisplays,
             LumenWorkspaceCommandKind::DestroyVirtualDisplay,
         ]
     );
@@ -154,6 +155,7 @@ fn teardown_stops_capture_before_restore_and_destroy() {
         vec![
             LumenWorkspaceCommandKind::StopCapture,
             LumenWorkspaceCommandKind::RestoreWorkspace,
+            LumenWorkspaceCommandKind::VerifyPhysicalDisplays,
             LumenWorkspaceCommandKind::DestroyVirtualDisplay,
         ]
     );
@@ -191,6 +193,12 @@ fn startup_failure_recovers_only_resources_that_exist() {
         engine.complete_command(restore, true),
         LumenEngineStatus::Ok
     );
+    let verify = engine.next_command().unwrap();
+    assert_eq!(
+        verify.kind,
+        LumenWorkspaceCommandKind::VerifyPhysicalDisplays
+    );
+    assert_eq!(engine.complete_command(verify, true), LumenEngineStatus::Ok);
     let destroy = engine.next_command().unwrap();
     assert_eq!(
         destroy.kind,
@@ -253,6 +261,12 @@ fn cleanup_failure_does_not_loop_or_skip_remaining_cleanup() {
         engine.complete_command(restore, true),
         LumenEngineStatus::Ok
     );
+    let verify = engine.next_command().unwrap();
+    assert_eq!(
+        verify.kind,
+        LumenWorkspaceCommandKind::VerifyPhysicalDisplays
+    );
+    assert_eq!(engine.complete_command(verify, true), LumenEngineStatus::Ok);
     let destroy = engine.next_command().unwrap();
     assert_eq!(
         destroy.kind,

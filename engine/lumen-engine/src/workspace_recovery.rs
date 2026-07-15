@@ -163,6 +163,7 @@ impl<A: WorkspacePlatformAdapter> RecoverableWorkspaceEngine<A> {
                 generation: self.generation,
                 session_id: session.session_id,
                 timestamp_unix_ms: session.timestamp_unix_ms,
+                capture_managed: true,
             },
             topology,
         )?;

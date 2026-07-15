@@ -3,11 +3,12 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-pub const WORKSPACE_RECOVERY_SCHEMA_VERSION: u32 = 1;
+pub const WORKSPACE_RECOVERY_SCHEMA_VERSION: u32 = 2;
 const MAXIMUM_DISPLAY_COUNT: usize = 64;
 const MAXIMUM_TARGET_PATH_COUNT: usize = 128;
 const MAXIMUM_IDENTIFIER_BYTES: usize = 512;
 
+#[repr(C)]
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum WorkspacePlatform {
@@ -23,6 +24,8 @@ pub enum RecoveryPhase {
     VirtualConfigured,
     CaptureStarting,
     FirstFrameReady,
+    VirtualPromoted,
+    TargetWindowsMoved,
     IsolationStarted,
     Isolated,
     CaptureStopped,
@@ -34,7 +37,12 @@ impl RecoveryPhase {
     pub(crate) const fn capture_may_be_running(self) -> bool {
         matches!(
             self,
-            Self::CaptureStarting | Self::FirstFrameReady | Self::IsolationStarted | Self::Isolated
+            Self::CaptureStarting
+                | Self::FirstFrameReady
+                | Self::VirtualPromoted
+                | Self::TargetWindowsMoved
+                | Self::IsolationStarted
+                | Self::Isolated
         )
     }
 
@@ -63,6 +71,8 @@ pub struct PhysicalDisplayState {
     pub origin_y: i32,
     pub mirror_master_id: Option<String>,
     pub enabled: bool,
+    pub active: bool,
+    pub online: bool,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -93,6 +103,7 @@ pub struct WorkspaceRecoveryJournal {
     pub virtual_display: Option<VirtualDisplayIdentity>,
     pub physical_topology: PhysicalDisplayTopology,
     pub timestamp_unix_ms: u64,
+    pub capture_managed: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -101,6 +112,7 @@ pub struct WorkspaceRecoveryMetadata {
     pub generation: u64,
     pub session_id: String,
     pub timestamp_unix_ms: u64,
+    pub capture_managed: bool,
 }
 
 impl WorkspaceRecoveryJournal {
@@ -117,6 +129,7 @@ impl WorkspaceRecoveryJournal {
             virtual_display: None,
             physical_topology,
             timestamp_unix_ms: metadata.timestamp_unix_ms,
+            capture_managed: metadata.capture_managed,
         };
         journal.validate()?;
         Ok(journal)

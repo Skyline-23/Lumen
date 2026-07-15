@@ -10,6 +10,26 @@ fn request() -> LumenWorkspaceSessionRequest {
     }
 }
 
+fn complete_ffi(
+    engine: *mut LumenWorkspaceEngine,
+    command: LumenWorkspaceCommand,
+    succeeded: bool,
+) -> LumenEngineStatus {
+    // SAFETY: Category 8 (FFI boundary). Test callers pass a live engine and
+    // no-payload cleanup commands, so the completion carries no raw JSON pointer.
+    unsafe {
+        lumen_workspace_engine_complete_command_with_payload(
+            engine,
+            command,
+            LumenWorkspaceCommandCompletion {
+                succeeded,
+                payload_kind: LumenWorkspaceCommandPayloadKind::None,
+                payload_json: std::ptr::null(),
+            },
+        )
+    }
+}
+
 fn complete_startup(engine: &mut WorkspaceEngine) {
     assert_eq!(engine.begin_session(request()), LumenEngineStatus::Ok);
     while let Ok(command) = engine.next_command() {
@@ -27,6 +47,7 @@ fn pending_journal(generation: u64) -> WorkspaceRecoveryJournal {
             generation,
             session_id: "ffi-recovery".to_owned(),
             timestamp_unix_ms: 1_784_000_000_000,
+            capture_managed: true,
         },
         PhysicalDisplayTopology {
             displays: vec![PhysicalDisplayState {
@@ -41,6 +62,8 @@ fn pending_journal(generation: u64) -> WorkspaceRecoveryJournal {
                 origin_y: 0,
                 mirror_master_id: None,
                 enabled: true,
+                active: true,
+                online: true,
             }],
             windows_adapter_luid: None,
             windows_target_paths: Vec::new(),
@@ -86,7 +109,9 @@ fn ffi_recovers_durable_journal_before_emitting_new_session_commands() {
     let journal_path = path.clone();
     let path = CString::new(path.to_string_lossy().as_bytes()).unwrap();
     // SAFETY: `path` owns a live NUL-terminated buffer for the duration of the call.
-    let engine = unsafe { lumen_workspace_engine_create_recoverable(path.as_ptr()) };
+    let engine = unsafe {
+        lumen_workspace_engine_create_recoverable(path.as_ptr(), WorkspacePlatform::Macos)
+    };
     assert!(!engine.is_null());
 
     // When: a new session requests admission.
@@ -94,18 +119,14 @@ fn ffi_recovers_durable_journal_before_emitting_new_session_commands() {
 
     // Then: recovery is required and no new-session snapshot can be emitted first.
     assert_eq!(status, LumenEngineStatus::RecoveryRequired);
-    let mut command = LumenWorkspaceCommand {
-        kind: LumenWorkspaceCommandKind::SnapshotWorkspace,
-        generation: 0,
-        sequence: 0,
-    };
+    let mut command = LumenWorkspaceCommand::placeholder();
     assert_eq!(
         lumen_workspace_engine_next_command(engine, &mut command),
         LumenEngineStatus::Ok
     );
     assert_eq!(command.kind, LumenWorkspaceCommandKind::StopCapture);
     assert_eq!(
-        lumen_workspace_engine_complete_command(engine, command, true),
+        complete_ffi(engine, command, true),
         LumenEngineStatus::Ok
     );
     assert_eq!(
@@ -115,7 +136,20 @@ fn ffi_recovers_durable_journal_before_emitting_new_session_commands() {
     assert_eq!(command.kind, LumenWorkspaceCommandKind::RestoreWorkspace);
     assert!(journal_path.exists());
     assert_eq!(
-        lumen_workspace_engine_complete_command(engine, command, true),
+        complete_ffi(engine, command, true),
+        LumenEngineStatus::Ok
+    );
+    assert!(journal_path.exists());
+    assert_eq!(
+        lumen_workspace_engine_next_command(engine, &mut command),
+        LumenEngineStatus::Ok
+    );
+    assert_eq!(
+        command.kind,
+        LumenWorkspaceCommandKind::VerifyPhysicalDisplays
+    );
+    assert_eq!(
+        complete_ffi(engine, command, true),
         LumenEngineStatus::Ok
     );
     assert!(!journal_path.exists());
@@ -128,7 +162,7 @@ fn ffi_recovers_durable_journal_before_emitting_new_session_commands() {
         LumenWorkspaceCommandKind::DestroyVirtualDisplay
     );
     assert_eq!(
-        lumen_workspace_engine_complete_command(engine, command, true),
+        complete_ffi(engine, command, true),
         LumenEngineStatus::Ok
     );
     assert_eq!(
@@ -153,22 +187,20 @@ fn ffi_restore_failure_preserves_journal_and_blocks_destroy() {
     store.create(&pending_journal(52)).unwrap();
     let path = CString::new(journal_path.to_string_lossy().as_bytes()).unwrap();
     // SAFETY: `path` owns a live NUL-terminated buffer for the duration of the call.
-    let engine = unsafe { lumen_workspace_engine_create_recoverable(path.as_ptr()) };
+    let engine = unsafe {
+        lumen_workspace_engine_create_recoverable(path.as_ptr(), WorkspacePlatform::Macos)
+    };
     assert_eq!(
         lumen_workspace_engine_begin_session(engine, request()),
         LumenEngineStatus::RecoveryRequired
     );
-    let mut command = LumenWorkspaceCommand {
-        kind: LumenWorkspaceCommandKind::SnapshotWorkspace,
-        generation: 0,
-        sequence: 0,
-    };
+    let mut command = LumenWorkspaceCommand::placeholder();
     assert_eq!(
         lumen_workspace_engine_next_command(engine, &mut command),
         LumenEngineStatus::Ok
     );
     assert_eq!(
-        lumen_workspace_engine_complete_command(engine, command, true),
+        complete_ffi(engine, command, true),
         LumenEngineStatus::Ok
     );
     assert_eq!(
@@ -179,7 +211,7 @@ fn ffi_restore_failure_preserves_journal_and_blocks_destroy() {
 
     // When: the platform reports that restore or verification failed.
     assert_eq!(
-        lumen_workspace_engine_complete_command(engine, command, false),
+        complete_ffi(engine, command, false),
         LumenEngineStatus::CommandFailed
     );
 

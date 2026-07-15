@@ -103,6 +103,7 @@ private actor LumenMacVirtualDisplayOwner {
     private var displayKey: String?
 
     func create(
+        identity: LumenMacVirtualDisplayIdentity,
         geometry: LumenMacDisplayGeometry,
         request: LumenMacWorkspaceSessionRequest
     ) throws -> UInt32 {
@@ -114,11 +115,11 @@ private actor LumenMacVirtualDisplayOwner {
             request: request
         )
         let display = try LumenMacVirtualDisplay.createRegisteredDisplay(
-            forKey: request.displayKey,
+            forKey: identity.id,
             configuration: configuration
         )
         self.display = display
-        displayKey = request.displayKey
+        displayKey = identity.id
         return display.displayID
     }
 
@@ -137,14 +138,11 @@ private actor LumenMacVirtualDisplayOwner {
         )
     }
 
-    func destroy(displayID: UInt32) throws {
-        guard let display, display.displayID == displayID else {
+    func destroy(identity: LumenMacVirtualDisplayIdentity) throws {
+        if let displayKey, displayKey != identity.id {
             throw LumenMacWorkspaceSessionError.virtualDisplayOwnershipMismatch
         }
-        guard let displayKey,
-              LumenMacVirtualDisplay.removeRegisteredDisplay(forKey: displayKey) else {
-            throw LumenMacWorkspaceSessionError.virtualDisplayOwnershipMismatch
-        }
+        _ = LumenMacVirtualDisplay.removeRegisteredDisplay(forKey: identity.id)
         self.display = nil
         self.displayKey = nil
     }
@@ -163,8 +161,12 @@ public actor LumenMacWorkspaceSession {
     ) throws {
         let displayOwner = LumenMacVirtualDisplayOwner()
         let operations = LumenMacWorkspaceNativeOperations(
-            createVirtualDisplay: { geometry in
-                try await displayOwner.create(geometry: geometry, request: request)
+            createVirtualDisplay: { identity, geometry in
+                try await displayOwner.create(
+                    identity: identity,
+                    geometry: geometry,
+                    request: request
+                )
             },
             configureVirtualDisplay: { displayID, geometry in
                 try await displayOwner.configure(
@@ -181,8 +183,8 @@ public actor LumenMacWorkspaceSession {
             stopCapture: {
                 await runtime.stopCapture()
             },
-            destroyVirtualDisplay: { displayID in
-                try await displayOwner.destroy(displayID: displayID)
+            destroyVirtualDisplay: { identity in
+                try await displayOwner.destroy(identity: identity)
             }
         )
         try self.init(
@@ -195,10 +197,11 @@ public actor LumenMacWorkspaceSession {
     init(
         request: LumenMacWorkspaceSessionRequest,
         operations: LumenMacWorkspaceNativeOperations,
-        displayWorkspace: any LumenMacDisplayWorkspaceManaging
+        displayWorkspace: any LumenMacDisplayWorkspaceManaging,
+        coordinator: LumenWorkspaceCoordinator? = nil
     ) throws {
         self.request = request
-        coordinator = try LumenWorkspaceCoordinator()
+        self.coordinator = try coordinator ?? LumenWorkspaceCoordinator()
         executor = try LumenMacWorkspaceExecutor(
             targetProcessIdentifiers: request.targetProcessIdentifiers,
             displayMode: request.displayMode,

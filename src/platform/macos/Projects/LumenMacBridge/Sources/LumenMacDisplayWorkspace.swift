@@ -8,24 +8,24 @@ public enum LumenMacDisplayWorkspaceError: Error, Equatable {
     case displayNotFound(UInt32)
     case displayConfigurationFailed(Int32)
     case accessibilityPermissionMissing
+    case invalidPersistedDisplayID(String)
+    case displayModeNotFound(UInt32)
+    case physicalTopologyMismatch
 }
 
 public protocol LumenMacDisplayWorkspaceManaging: Sendable {
-    func snapshotWorkspace(targetProcessIdentifiers: [Int32]) async throws
+    func snapshotWorkspace(
+        targetProcessIdentifiers: [Int32]
+    ) async throws -> LumenMacPhysicalDisplayTopology
     func promoteVirtualDisplay(_ displayID: UInt32) async throws
     func moveTargetWindows(to displayID: UInt32) async throws
     func isolateVirtualDisplay(_ displayID: UInt32) async throws
-    func restoreWorkspace() async throws
+    func restoreWorkspace(_ topology: LumenMacPhysicalDisplayTopology) async throws
+    func verifyWorkspace(_ topology: LumenMacPhysicalDisplayTopology) async throws
     func discardSnapshot() async
 }
 
 public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
-    private struct DisplaySnapshot: Sendable {
-        let displayID: CGDirectDisplayID
-        let origin: CGPoint
-        let mirrorMasterID: CGDirectDisplayID
-    }
-
     private struct WindowSnapshot {
         let element: AXUIElement
         let position: CGPoint
@@ -33,35 +33,33 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
     }
 
     private struct Snapshot {
-        let displays: [DisplaySnapshot]
-        let mainDisplayID: CGDirectDisplayID
         let windows: [WindowSnapshot]
     }
 
+    private let topologyController: any LumenMacDisplayTopologyControlling
     private var snapshot: Snapshot?
 
-    public init() {}
+    public init() {
+        topologyController = LumenCoreGraphicsDisplayTopologyController()
+    }
 
-    public func snapshotWorkspace(targetProcessIdentifiers: [Int32]) throws {
+    init(topologyController: any LumenMacDisplayTopologyControlling) {
+        self.topologyController = topologyController
+    }
+
+    public func snapshotWorkspace(
+        targetProcessIdentifiers: [Int32]
+    ) async throws -> LumenMacPhysicalDisplayTopology {
         guard snapshot == nil else {
             throw LumenMacDisplayWorkspaceError.snapshotAlreadyExists
         }
 
-        let displays = try activeDisplayIDs().map { displayID in
-            DisplaySnapshot(
-                displayID: displayID,
-                origin: CGDisplayBounds(displayID).origin,
-                mirrorMasterID: CGDisplayMirrorsDisplay(displayID)
-            )
-        }
+        let topology = try await topologyController.capture()
         let windows = try snapshotWindows(
             processIdentifiers: targetProcessIdentifiers.map { pid_t($0) }
         )
-        snapshot = Snapshot(
-            displays: displays,
-            mainDisplayID: CGMainDisplayID(),
-            windows: windows
-        )
+        snapshot = Snapshot(windows: windows)
+        return topology
     }
 
     public func promoteVirtualDisplay(_ displayID: UInt32) throws {
@@ -153,26 +151,16 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
         }
     }
 
-    public func restoreWorkspace() throws {
-        guard let snapshot else {
-            throw LumenMacDisplayWorkspaceError.snapshotMissing
-        }
-
-        try configureDisplays { configuration in
-            for display in snapshot.displays {
-                try configureDisplay(
-                    display.displayID,
-                    mirrorMasterID: display.mirrorMasterID,
-                    origin: display.origin,
-                    configuration: configuration
-                )
-            }
-        }
-
-        for window in snapshot.windows {
+    public func restoreWorkspace(_ topology: LumenMacPhysicalDisplayTopology) async throws {
+        try await topologyController.restore(topology)
+        for window in snapshot?.windows ?? [] {
             setWindowSize(window.size, on: window.element)
             setWindowPosition(window.position, on: window.element)
         }
+    }
+
+    public func verifyWorkspace(_ topology: LumenMacPhysicalDisplayTopology) async throws {
+        try await topologyController.verify(topology)
         self.snapshot = nil
     }
 

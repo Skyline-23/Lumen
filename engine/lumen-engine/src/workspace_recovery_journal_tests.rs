@@ -14,6 +14,8 @@ fn topology() -> PhysicalDisplayTopology {
             origin_y: 0,
             mirror_master_id: None,
             enabled: true,
+            active: true,
+            online: true,
         }],
         windows_adapter_luid: Some(WindowsAdapterLuid {
             high_part: 0x0102_0304,
@@ -30,6 +32,7 @@ fn journal(generation: u64) -> WorkspaceRecoveryJournal {
             generation,
             session_id: "session-42".to_owned(),
             timestamp_unix_ms: 1_784_000_000_000,
+            capture_managed: true,
         },
         topology(),
     )
@@ -50,7 +53,7 @@ fn journal_round_trip_preserves_versioned_topology_and_checksum() {
     // Then: a verified journal preserves all recovery-critical fields.
     assert_eq!(loaded, RecoveryJournalLoad::Verified(expected));
     let serialized = std::fs::read_to_string(store.path()).unwrap();
-    assert!(serialized.contains("\"schema_version\": 1"));
+    assert!(serialized.contains("\"schema_version\": 2"));
     assert!(serialized.contains("\"checksum_sha256\""));
 }
 

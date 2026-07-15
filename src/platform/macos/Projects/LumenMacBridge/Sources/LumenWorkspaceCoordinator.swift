@@ -38,6 +38,7 @@ public enum LumenMacWorkspaceAction: Equatable, Sendable {
     case startCapture
     case stopCapture
     case restoreWorkspace
+    case verifyPhysicalDisplays
     case destroyVirtualDisplay
 
     fileprivate init(engineValue: LumenWorkspaceCommandKind) throws {
@@ -60,6 +61,8 @@ public enum LumenMacWorkspaceAction: Equatable, Sendable {
             self = .stopCapture
         case LumenWorkspaceCommandRestoreWorkspace:
             self = .restoreWorkspace
+        case LumenWorkspaceCommandVerifyPhysicalDisplays:
+            self = .verifyPhysicalDisplays
         case LumenWorkspaceCommandDestroyVirtualDisplay:
             self = .destroyVirtualDisplay
         default:
@@ -87,6 +90,8 @@ public enum LumenMacWorkspaceAction: Equatable, Sendable {
             LumenWorkspaceCommandStopCapture
         case .restoreWorkspace:
             LumenWorkspaceCommandRestoreWorkspace
+        case .verifyPhysicalDisplays:
+            LumenWorkspaceCommandVerifyPhysicalDisplays
         case .destroyVirtualDisplay:
             LumenWorkspaceCommandDestroyVirtualDisplay
         }
@@ -97,18 +102,24 @@ public struct LumenMacWorkspaceCommand: Equatable, Sendable {
     public let action: LumenMacWorkspaceAction
     public let generation: UInt64
     public let sequence: UInt32
+    public let payload: LumenMacWorkspaceCommandPayload
 
-    fileprivate init(engineValue: LumenWorkspaceCommand) throws {
+    fileprivate init(
+        engineValue: LumenWorkspaceCommand,
+        payload: LumenMacWorkspaceCommandPayload
+    ) throws {
         action = try LumenMacWorkspaceAction(engineValue: engineValue.kind)
         generation = engineValue.generation
         sequence = engineValue.sequence
+        self.payload = payload
     }
 
     fileprivate var engineValue: LumenWorkspaceCommand {
         LumenWorkspaceCommand(
             kind: action.engineValue,
             generation: generation,
-            sequence: sequence
+            sequence: sequence,
+            payload_kind: payload.engineKind
         )
     }
 }
@@ -265,7 +276,7 @@ public actor LumenWorkspaceCoordinator {
             .appending(path: "display-recovery.json", directoryHint: .notDirectory)
             .path(percentEncoded: false)
         let engine = path.withCString { pointer in
-            lumen_workspace_engine_create_recoverable(pointer)
+            lumen_workspace_engine_create_recoverable(pointer, LumenWorkspacePlatformMacos)
         }
         guard let engine else {
             throw LumenWorkspaceCoordinatorError.allocationFailed
@@ -297,23 +308,29 @@ public actor LumenWorkspaceCoordinator {
         var command = LumenWorkspaceCommand(
             kind: LumenWorkspaceCommandSnapshotWorkspace,
             generation: 0,
-            sequence: 0
+            sequence: 0,
+            payload_kind: LumenWorkspaceCommandPayloadNone
         )
         let status = lumen_workspace_engine_next_command(engine.rawValue, &command)
         if status == LumenEngineStatusNoCommand {
             return nil
         }
         try requireSuccess(status)
-        return try LumenMacWorkspaceCommand(engineValue: command)
+        let payload = try LumenWorkspacePayloadCodec.decode(engine: engine.rawValue, command: command)
+        return try LumenMacWorkspaceCommand(engineValue: command, payload: payload)
     }
 
-    public func complete(_ command: LumenMacWorkspaceCommand, succeeded: Bool) throws {
-        let status = lumen_workspace_engine_complete_command(
-            engine.rawValue,
-            command.engineValue,
-            succeeded
+    public func complete(
+        _ command: LumenMacWorkspaceCommand,
+        result: LumenMacWorkspaceCommandResult
+    ) throws {
+        try requireSuccess(
+            LumenWorkspacePayloadCodec.complete(
+                engine: engine.rawValue,
+                command: command.engineValue,
+                result: result
+            )
         )
-        try requireSuccess(status)
     }
 
     public func endSession() throws {

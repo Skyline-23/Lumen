@@ -1,5 +1,5 @@
 public protocol LumenWorkspaceCommandExecuting: Sendable {
-    func execute(_ command: LumenMacWorkspaceCommand) async throws
+    func execute(_ command: LumenMacWorkspaceCommand) async throws -> LumenMacWorkspaceCommandResult
 }
 
 public extension LumenWorkspaceCoordinator {
@@ -8,10 +8,10 @@ public extension LumenWorkspaceCoordinator {
     ) async throws {
         while let command = try nextCommand() {
             do {
-                try await executor.execute(command)
-                try complete(command, succeeded: true)
+                let result = try await executor.execute(command)
+                try complete(command, result: result)
             } catch {
-                try? complete(command, succeeded: false)
+                try? complete(command, result: .failed)
                 throw error
             }
         }
@@ -23,13 +23,13 @@ public extension LumenWorkspaceCoordinator {
         var firstExecutionError: (any Error)?
         while let command = try nextCommand() {
             do {
-                try await executor.execute(command)
-                try complete(command, succeeded: true)
+                let result = try await executor.execute(command)
+                try complete(command, result: result)
             } catch {
                 if firstExecutionError == nil {
                     firstExecutionError = error
                 }
-                _ = try? complete(command, succeeded: false)
+                _ = try? complete(command, result: .failed)
             }
         }
         return firstExecutionError
@@ -37,18 +37,26 @@ public extension LumenWorkspaceCoordinator {
 }
 
 public struct LumenMacWorkspaceNativeOperations: Sendable {
-    public var createVirtualDisplay: @Sendable (LumenMacDisplayGeometry) async throws -> UInt32
+    public var createVirtualDisplay: @Sendable (
+        LumenMacVirtualDisplayIdentity,
+        LumenMacDisplayGeometry
+    ) async throws -> UInt32
     public var configureVirtualDisplay: @Sendable (UInt32, LumenMacDisplayGeometry) async throws -> Void
     public var startCapture: @Sendable (UInt32) async throws -> Void
     public var stopCapture: @Sendable () async throws -> Void
-    public var destroyVirtualDisplay: @Sendable (UInt32) async throws -> Void
+    public var destroyVirtualDisplay: @Sendable (LumenMacVirtualDisplayIdentity) async throws -> Void
 
     public init(
-        createVirtualDisplay: @escaping @Sendable (LumenMacDisplayGeometry) async throws -> UInt32,
+        createVirtualDisplay: @escaping @Sendable (
+            LumenMacVirtualDisplayIdentity,
+            LumenMacDisplayGeometry
+        ) async throws -> UInt32,
         configureVirtualDisplay: @escaping @Sendable (UInt32, LumenMacDisplayGeometry) async throws -> Void,
         startCapture: @escaping @Sendable (UInt32) async throws -> Void,
         stopCapture: @escaping @Sendable () async throws -> Void,
-        destroyVirtualDisplay: @escaping @Sendable (UInt32) async throws -> Void
+        destroyVirtualDisplay: @escaping @Sendable (
+            LumenMacVirtualDisplayIdentity
+        ) async throws -> Void
     ) {
         self.createVirtualDisplay = createVirtualDisplay
         self.configureVirtualDisplay = configureVirtualDisplay
@@ -60,6 +68,7 @@ public struct LumenMacWorkspaceNativeOperations: Sendable {
 
 public enum LumenMacWorkspaceExecutorError: Error, Equatable {
     case virtualDisplayMissing
+    case commandPayloadMismatch
 }
 
 public actor LumenMacWorkspaceExecutor: LumenWorkspaceCommandExecuting {
@@ -81,35 +90,57 @@ public actor LumenMacWorkspaceExecutor: LumenWorkspaceCommandExecuting {
         displayGeometry = try LumenMacDisplayGeometryResolver.resolve(displayMode)
     }
 
-    public func execute(_ command: LumenMacWorkspaceCommand) async throws {
+    public func execute(
+        _ command: LumenMacWorkspaceCommand
+    ) async throws -> LumenMacWorkspaceCommandResult {
         switch command.action {
         case .snapshotWorkspace:
-            try await displayWorkspace.snapshotWorkspace(
-                targetProcessIdentifiers: targetProcessIdentifiers
+            return .physicalTopology(
+                try await displayWorkspace.snapshotWorkspace(
+                    targetProcessIdentifiers: targetProcessIdentifiers
+                )
             )
         case .createVirtualDisplay:
-            virtualDisplayID = try await operations.createVirtualDisplay(displayGeometry)
+            let identity = try requireVirtualIdentity(command.payload)
+            virtualDisplayID = try await operations.createVirtualDisplay(identity, displayGeometry)
+            return .virtualDisplayIdentity(identity)
         case .configureVirtualDisplay:
             try await operations.configureVirtualDisplay(
                 try requireVirtualDisplay(),
                 displayGeometry
             )
+            return .succeeded
         case .promoteVirtualMain:
             try await displayWorkspace.promoteVirtualDisplay(try requireVirtualDisplay())
+            return .succeeded
         case .moveTargetWindows:
             try await displayWorkspace.moveTargetWindows(to: try requireVirtualDisplay())
+            return .succeeded
         case .applyIsolation:
             try await displayWorkspace.isolateVirtualDisplay(try requireVirtualDisplay())
+            return .succeeded
         case .startCapture:
             try await operations.startCapture(try requireVirtualDisplay())
+            return .succeeded
         case .stopCapture:
             try await operations.stopCapture()
+            return .succeeded
         case .restoreWorkspace:
-            try await displayWorkspace.restoreWorkspace()
+            try await displayWorkspace.restoreWorkspace(
+                try requirePhysicalTopology(command.payload)
+            )
+            return .succeeded
+        case .verifyPhysicalDisplays:
+            try await displayWorkspace.verifyWorkspace(
+                try requirePhysicalTopology(command.payload)
+            )
+            return .succeeded
         case .destroyVirtualDisplay:
-            let displayID = try requireVirtualDisplay()
-            try await operations.destroyVirtualDisplay(displayID)
+            try await operations.destroyVirtualDisplay(
+                try requireVirtualIdentity(command.payload)
+            )
             virtualDisplayID = nil
+            return .succeeded
         }
     }
 
@@ -122,5 +153,23 @@ public actor LumenMacWorkspaceExecutor: LumenWorkspaceCommandExecuting {
             throw LumenMacWorkspaceExecutorError.virtualDisplayMissing
         }
         return virtualDisplayID
+    }
+
+    private func requirePhysicalTopology(
+        _ payload: LumenMacWorkspaceCommandPayload
+    ) throws -> LumenMacPhysicalDisplayTopology {
+        guard case .physicalTopology(let topology) = payload else {
+            throw LumenMacWorkspaceExecutorError.commandPayloadMismatch
+        }
+        return topology
+    }
+
+    private func requireVirtualIdentity(
+        _ payload: LumenMacWorkspaceCommandPayload
+    ) throws -> LumenMacVirtualDisplayIdentity {
+        guard case .virtualDisplayIdentity(let identity) = payload else {
+            throw LumenMacWorkspaceExecutorError.commandPayloadMismatch
+        }
+        return identity
     }
 }

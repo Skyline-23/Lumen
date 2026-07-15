@@ -49,6 +49,7 @@ pub extern "C" fn lumen_workspace_engine_create() -> *mut LumenWorkspaceEngine {
 /// duration of this call.
 pub unsafe extern "C" fn lumen_workspace_engine_create_recoverable(
     journal_path: *const c_char,
+    platform: WorkspacePlatform,
 ) -> *mut LumenWorkspaceEngine {
     if journal_path.is_null() {
         return std::ptr::null_mut();
@@ -64,9 +65,10 @@ pub unsafe extern "C" fn lumen_workspace_engine_create_recoverable(
             return std::ptr::null_mut();
         }
         Box::into_raw(Box::new(LumenWorkspaceEngine {
-            inner: WorkspaceEngine::with_recovery_store(RecoveryJournalStore::new(PathBuf::from(
-                path,
-            ))),
+            inner: WorkspaceEngine::with_recovery_store(
+                RecoveryJournalStore::new(PathBuf::from(path)),
+                platform,
+            ),
         }))
     }))
     .unwrap_or(std::ptr::null_mut())
@@ -113,12 +115,82 @@ pub extern "C" fn lumen_workspace_engine_next_command(
 }
 
 #[no_mangle]
-pub extern "C" fn lumen_workspace_engine_complete_command(
+/// # Safety
+///
+/// A non-null `completion.payload_json` must point to a valid NUL-terminated
+/// JSON string for the duration of this call.
+pub unsafe extern "C" fn lumen_workspace_engine_complete_command_with_payload(
     engine: *mut LumenWorkspaceEngine,
     command: LumenWorkspaceCommand,
-    succeeded: bool,
+    completion: LumenWorkspaceCommandCompletion,
 ) -> LumenEngineStatus {
-    with_engine_mut(engine, |engine| engine.complete_command(command, succeeded))
+    // SAFETY: Category 8 (FFI boundary). The function contract requires any
+    // non-null payload pointer to remain a live NUL-terminated string here.
+    let completion = match unsafe { decode_ffi_completion(command, completion) } {
+        Ok(completion) => completion,
+        Err(status) => return status,
+    };
+    with_engine_mut(engine, |engine| {
+        engine.complete_command_with_payload(command, completion)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn lumen_workspace_engine_command_payload_json_size(
+    engine: *const LumenWorkspaceEngine,
+    command: LumenWorkspaceCommand,
+) -> usize {
+    let Some(engine) = NonNull::new(engine.cast_mut()) else {
+        return 0;
+    };
+    // SAFETY: Category 3 (dangling pointer). The caller keeps the engine live
+    // for this read, and no mutable reference is created by the query.
+    catch_unwind(AssertUnwindSafe(|| unsafe {
+        engine.as_ref().inner.command_payload(command)
+    }))
+    .ok()
+    .and_then(Result::ok)
+    .and_then(|payload| payload.json().ok().flatten())
+    .map_or(0, |json| json.len().saturating_add(1))
+}
+
+#[no_mangle]
+pub extern "C" fn lumen_workspace_engine_copy_command_payload_json(
+    engine: *const LumenWorkspaceEngine,
+    command: LumenWorkspaceCommand,
+    destination: *mut c_char,
+    capacity: usize,
+) -> LumenEngineStatus {
+    let Some(engine) = NonNull::new(engine.cast_mut()) else {
+        return LumenEngineStatus::InvalidArgument;
+    };
+    let Some(destination) = NonNull::new(destination.cast::<u8>()) else {
+        return LumenEngineStatus::InvalidArgument;
+    };
+    // SAFETY: Category 3 (dangling pointer). The caller keeps the engine live
+    // for this read-only payload query.
+    let payload = match catch_unwind(AssertUnwindSafe(|| unsafe {
+        engine.as_ref().inner.command_payload(command)
+    })) {
+        Ok(Ok(payload)) => payload,
+        Ok(Err(status)) => return status,
+        Err(_) => return LumenEngineStatus::Panic,
+    };
+    let json = match payload.json() {
+        Ok(Some(json)) => json,
+        Ok(None) => return LumenEngineStatus::InvalidArgument,
+        Err(status) => return status,
+    };
+    if capacity <= json.len() {
+        return LumenEngineStatus::InvalidArgument;
+    }
+    // SAFETY: Category 8 (FFI boundary). The caller provides `capacity`
+    // writable bytes, and the guard above proves JSON plus NUL fits.
+    unsafe {
+        std::ptr::copy_nonoverlapping(json.as_ptr(), destination.as_ptr(), json.len());
+        *destination.as_ptr().add(json.len()) = 0;
+    }
+    LumenEngineStatus::Ok
 }
 
 #[no_mangle]
