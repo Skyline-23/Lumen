@@ -184,7 +184,7 @@ struct LumenSettingsView: View {
                     .foregroundStyle(.secondary)
             }
             Section(LumenCopy.Settings.host) {
-                TextField(LumenCopy.Settings.hostName, text: $draft.hostName)
+                TextField(LumenCopy.Settings.name, text: $draft.name)
                 Toggle(LumenCopy.Settings.discovery, isOn: $draft.discoveryEnabled)
                 Toggle(
                     LumenCopy.Settings.deviceEnrollment,
@@ -214,11 +214,6 @@ struct LumenSettingsView: View {
                 Picker(LumenCopy.Settings.fallbackDisplayMode, selection: $draft.fallbackDisplayMode) {
                     ForEach(displayModeOptions, id: \.self) { mode in
                         Text(LumenCopy.Settings.displayModeTitle(mode)).tag(mode)
-                    }
-                }
-                Picker(LumenCopy.Workspace.label, selection: $draft.workspacePolicy) {
-                    ForEach(LumenMacWorkspacePolicy.allCases, id: \.self) { policy in
-                        Text(LumenCopy.Workspace.title(for: policy)).tag(policy)
                     }
                 }
             }
@@ -410,7 +405,7 @@ struct LumenSettingsView: View {
     private func scheduleSave(_ settings: LumenNativeHostSettings) {
         pendingSaveTask?.cancel()
         guard settings != persistedSettings,
-              !settings.hostName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+              !settings.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return
         }
         pendingSaveTask = Task { @MainActor in

@@ -11,7 +11,6 @@ protocol LumenOwnerAccountServicing: Sendable {
 protocol LumenHostSettingsServicing: Sendable {
     func snapshot() async throws -> LumenNativeHostSettings
     func save(_ settings: LumenNativeHostSettings) async throws
-    func setWorkspacePolicy(_ policy: LumenMacWorkspacePolicy) async throws
     func setSystemAuthenticationEnabled(_ enabled: Bool) async
 }
 

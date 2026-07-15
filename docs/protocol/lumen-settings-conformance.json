@@ -53,17 +53,14 @@
   ],
   "platformCapabilities": {
     "macos": {
-      "workspace.policy": {"available": true},
       "commandPrivileges": ["user"]
     },
     "windows": {
-      "workspace.policy": {"available": false},
       "commandPrivileges": ["user", "administrator"]
     }
   },
   "fields": [
-    {"key":"workspace.policy","type":"enum","applyClass":"next-session","availability":"host-capability","values":["coexist","promote-virtual-main","focused-workspace","isolated-workspace"]},
-    {"key":"general.hostName","type":"string","applyClass":"live","availability":"all","maxLength":64},
+    {"key":"general.name","type":"string","applyClass":"live","availability":"all","maxLength":64},
     {"key":"general.discovery","type":"boolean","applyClass":"live","availability":"all"},
     {"key":"general.updateChannel","type":"enum","applyClass":"live","availability":"all","values":["stable","pre-release"]},
     {"key":"general.notifyPreReleases","type":"boolean","applyClass":"live","availability":"all"},

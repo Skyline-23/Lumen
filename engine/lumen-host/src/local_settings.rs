@@ -36,7 +36,7 @@ pub(super) fn from_arguments(
             ("isolated-workspace", WorkspacePolicy::IsolatedWorkspace),
         ],
     )?;
-    settings.general.host_name = text(arguments, "host_name")?.to_owned();
+    settings.general.name = text(arguments, "host_name")?.to_owned();
     settings.general.discovery = boolean(arguments, "enable_discovery")?;
     settings.general.notify_pre_releases = boolean(arguments, "notify_pre_releases")?;
     settings.streaming.adapter_selector = selector(arguments, "adapter_name", "automatic");

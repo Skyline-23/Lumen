@@ -1,5 +1,6 @@
 use serde::Serialize;
 
+use super::wake_on_lan::{WakeOnLanCapability, WakeOnLanDescriptor};
 use super::{ControlResponse, ControlRouter};
 use crate::network_ports::HostPorts;
 use crate::HostArguments;
@@ -15,6 +16,7 @@ pub struct HostDiscoveryState {
     control_https_port: u16,
     current_application_id: u32,
     current_application_uuid: String,
+    wake_on_lan: WakeOnLanCapability,
 }
 
 impl HostDiscoveryState {
@@ -26,6 +28,7 @@ impl HostDiscoveryState {
             control_https_port: ports.control_https,
             current_application_id: 0,
             current_application_uuid: String::new(),
+            wake_on_lan: WakeOnLanCapability::detect(),
         })
     }
 
@@ -37,6 +40,15 @@ impl HostDiscoveryState {
             control_https_port: 47_990,
             current_application_id: 0,
             current_application_uuid: String::new(),
+            wake_on_lan: WakeOnLanCapability::Unsupported,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_with_wake_on_lan(mac_address: [u8; 6]) -> Self {
+        Self {
+            wake_on_lan: WakeOnLanCapability::test_supported(mac_address),
+            ..Self::test_default()
         }
     }
 
@@ -66,7 +78,7 @@ impl ControlRouter {
                     apps,
                     current_app: &self.discovery.current_application_uuid,
                     host_uuid: self.authorities().host_identity().unique_id(),
-                    host_name: &settings.settings.general.host_name,
+                    name: &settings.settings.general.name,
                 },
             ),
             Err(_) => ControlResponse::json(
@@ -85,14 +97,14 @@ impl ControlRouter {
     pub(super) fn dispatch_discovery_host(&self) -> ControlResponse {
         let identity = self.authorities().host_identity();
         let settings = self.authorities().settings().snapshot();
-        let host_name = &settings.settings.general.host_name;
+        let name = &settings.settings.general.name;
         let busy = self.discovery.current_application_id > 0;
         ControlResponse::json(
             200,
             &HostDiscoveryResponse {
                 status: true,
                 host: HostDescriptor {
-                    display_name: host_name,
+                    name,
                     device_authentication: "ready",
                     current_game_id: self.discovery.current_application_id,
                     server_state: if busy {
@@ -108,6 +120,7 @@ impl ControlRouter {
                     service_type: "_lumen._udp",
                     server_codec_mode_support: 0,
                     client_certificate_required: false,
+                    wake_on_lan: self.discovery.wake_on_lan.descriptor(),
                     audio_capabilities: AudioCapabilities {
                         schema_version: 1,
                         channel_modes: &AUDIO_CHANNEL_MODE_WIRE_VALUES,
@@ -131,7 +144,7 @@ struct ApplicationCatalogResponse<'a> {
     current_app: &'a str,
     #[serde(rename = "hostUUID")]
     host_uuid: &'a str,
-    host_name: &'a str,
+    name: &'a str,
 }
 
 #[derive(Serialize)]
@@ -143,7 +156,7 @@ struct HostDiscoveryResponse<'a> {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct HostDescriptor<'a> {
-    display_name: &'a str,
+    name: &'a str,
     device_authentication: &'static str,
     #[serde(rename = "currentGameID")]
     current_game_id: u32,
@@ -157,6 +170,7 @@ struct HostDescriptor<'a> {
     service_type: &'static str,
     server_codec_mode_support: u32,
     client_certificate_required: bool,
+    wake_on_lan: WakeOnLanDescriptor<'a>,
     audio_capabilities: AudioCapabilities,
 }
 

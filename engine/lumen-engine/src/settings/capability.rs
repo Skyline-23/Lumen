@@ -37,13 +37,6 @@ pub struct SettingsCapabilities {
 impl SettingsCapabilities {
     pub fn for_platform(platform: SettingsHostPlatform) -> Self {
         let mut fields = field_catalog();
-        if platform != SettingsHostPlatform::Macos {
-            set_unavailable(
-                &mut fields,
-                "workspace.policy",
-                "macOS workspace policy is unavailable on this host",
-            );
-        }
         let command_privileges = if platform == SettingsHostPlatform::Windows {
             &["user", "administrator"][..]
         } else {
@@ -80,13 +73,6 @@ impl SettingsCapabilities {
                 .map(|(value, label)| ((*value).to_owned(), (*label).to_owned()))
                 .collect();
         }
-    }
-}
-
-fn set_unavailable(fields: &mut BTreeMap<String, FieldCapability>, key: &str, reason: &str) {
-    if let Some(field) = fields.get_mut(key) {
-        field.available = false;
-        field.unavailable_reason = Some(reason.to_owned());
     }
 }
 
@@ -132,20 +118,7 @@ pub(super) fn field_catalog() -> BTreeMap<String, FieldCapability> {
     use SettingsApplyClass::{Live, NextSession, WorkerRestart};
     use SettingsFieldType::{Boolean, CommandList, Enum, Integer, String as StringType};
     let mut fields: BTreeMap<String, FieldCapability> = [
-        capability(
-            "workspace.policy",
-            Enum,
-            NextSession,
-            &[
-                "coexist",
-                "promote-virtual-main",
-                "focused-workspace",
-                "isolated-workspace",
-            ],
-            None,
-            None,
-        ),
-        capability("general.hostName", StringType, Live, &[], None, None),
+        capability("general.name", StringType, Live, &[], None, None),
         capability("general.discovery", Boolean, Live, &[], None, None),
         capability(
             "general.updateChannel",
@@ -327,7 +300,7 @@ pub(super) fn field_catalog() -> BTreeMap<String, FieldCapability> {
     ]
     .into_iter()
     .collect();
-    set_string_constraint(&mut fields, "general.hostName", Some(64), None);
+    set_string_constraint(&mut fields, "general.name", Some(64), None);
     set_value_labels(
         &mut fields,
         "streaming.adapterSelector",

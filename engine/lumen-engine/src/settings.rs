@@ -6,8 +6,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 pub const SETTINGS_SCHEMA_VERSION: u32 = 1;
-const SETTINGS_STORAGE_VERSION: u32 = 2;
-const RETIRED_SETTINGS_STORAGE_VERSION: u32 = 1;
+const SETTINGS_STORAGE_VERSION: u32 = 3;
+const RETIRED_SETTINGS_STORAGE_VERSIONS: &[u64] = &[1, 2];
 const MAXIMUM_RETAINED_EVENTS: usize = 128;
 const MAXIMUM_RETAINED_REQUESTS: usize = 256;
 const MAXIMUM_COMMANDS_PER_LIST: usize = 64;
@@ -94,8 +94,9 @@ impl SettingsAuthority {
                         "settings storage is not valid schema version 1 data",
                     )
                 })?;
-                if document["storageVersion"].as_u64()
-                    == Some(u64::from(RETIRED_SETTINGS_STORAGE_VERSION))
+                if document["storageVersion"]
+                    .as_u64()
+                    .is_some_and(|version| RETIRED_SETTINGS_STORAGE_VERSIONS.contains(&version))
                 {
                     let state = PersistedSettingsState::default();
                     write_state_atomically(&file_path, &state)?;
@@ -394,6 +395,7 @@ impl SettingsAuthority {
             apply_changes(&mut candidate.settings, &changes, |field_key| {
                 changed_fields.contains(&field_key)
             });
+            candidate.settings.workspace = settings.workspace.clone();
             candidate.effective = settings;
             candidate.apply_state = apply_state_for_requirement(pending_requirement(
                 &candidate.settings,

@@ -680,13 +680,16 @@ mod tests {
             assert_eq!(snapshot["revision"], 1);
             let patch = r#"{
               "schemaVersion":1,"baseRevision":1,"requestId":"ffi-1",
-              "changes":{"general":{"hostName":"Remote"},"streaming":{"fallbackDisplayMode":"2560x1440x120"},"network":{"port":48000}}
+              "changes":{"general":{"name":"Remote"},"streaming":{"fallbackDisplayMode":"2560x1440x120"},"network":{"port":48000}}
             }"#;
             let (status, response) = dispatch_json(authority, 1, patch, 0);
             assert_eq!(status, 200);
             assert_eq!(response["applyState"], "pending-worker-restart");
             let (_, next) = dispatch_json(authority, 3, "", 0);
-            assert_eq!(next["effective"]["streaming"]["fallbackDisplayMode"], "2560x1440x120");
+            assert_eq!(
+                next["effective"]["streaming"]["fallbackDisplayMode"],
+                "2560x1440x120"
+            );
             assert_eq!(next["effective"]["network"]["port"], 47_989);
             let (_, restarted) = dispatch_json(authority, 4, "", 0);
             assert_eq!(restarted["effective"]["network"]["port"], 48_000);
@@ -694,7 +697,7 @@ mod tests {
             assert_eq!(events["events"].as_array().unwrap().len(), 3);
             let (_, reset) = dispatch_json(authority, 6, "", 0);
             assert_eq!(reset["revision"], 1);
-            assert_eq!(reset["settings"]["general"]["hostName"], "Lumen");
+            assert_eq!(reset["settings"]["general"]["name"], "Lumen");
             lumen_settings_authority_destroy(authority);
         }
     }
@@ -706,10 +709,9 @@ mod tests {
             let authority = open(&root, 1);
             let (_, snapshot) = dispatch_json(authority, 0, "", 0);
             assert_eq!(snapshot["capabilities"]["hostPlatform"], "windows");
-            assert_eq!(
-                snapshot["capabilities"]["fields"]["workspace.policy"]["available"],
-                false
-            );
+            assert!(snapshot["capabilities"]["fields"]
+                .get("workspace.policy")
+                .is_none());
             for field in ["commands.prep", "commands.state", "commands.server"] {
                 assert_eq!(snapshot["capabilities"]["fields"][field]["available"], true);
                 assert_eq!(
@@ -719,14 +721,14 @@ mod tests {
             }
             let patch = r#"{
               "schemaVersion":1,"baseRevision":1,"requestId":"ffi-windows-1",
-              "changes":{"workspace":{"policy":"focused-workspace"},"general":{"hostName":"Must not apply"}}
+              "changes":{"workspace":{"policy":"focused-workspace"},"general":{"name":"Must not apply"}}
             }"#;
             let (status, error) = dispatch_json(authority, 1, patch, 0);
             assert_eq!(status, 400);
-            assert_eq!(error["code"], "unavailable-field");
+            assert_eq!(error["code"], "unknown-field");
             let (_, unchanged) = dispatch_json(authority, 0, "", 0);
             assert_eq!(unchanged["revision"], 1);
-            assert_eq!(unchanged["settings"]["general"]["hostName"], "Lumen");
+            assert_eq!(unchanged["settings"]["general"]["name"], "Lumen");
             lumen_settings_authority_destroy(authority);
         }
     }
@@ -769,10 +771,7 @@ mod tests {
         probe.prepare_count += 1;
         let bytes = std::slice::from_raw_parts(effective_json, effective_json_length);
         let effective: Value = serde_json::from_slice(bytes).unwrap();
-        probe.effective_host_name = effective["general"]["hostName"]
-            .as_str()
-            .unwrap()
-            .to_owned();
+        probe.effective_host_name = effective["general"]["name"].as_str().unwrap().to_owned();
         if probe.reject {
             static ERROR: &[u8] = b"injected runtime preparation failure\0";
             ERROR.as_ptr().cast()
@@ -834,7 +833,7 @@ mod tests {
             let authority = open(&root, 0);
             let patch = r#"{
               "schemaVersion":1,"baseRevision":1,"requestId":"ffi-transaction-1",
-              "changes":{"general":{"hostName":"Rust Transaction"}}
+              "changes":{"general":{"name":"Rust Transaction"}}
             }"#;
             let mut probe = RuntimeTransactionProbe {
                 reject: true,
@@ -848,7 +847,7 @@ mod tests {
             assert_eq!(probe.commit_count, 0);
             let (_, unchanged) = dispatch_json(authority, 0, "", 0);
             assert_eq!(unchanged["revision"], 1);
-            assert_eq!(unchanged["settings"]["general"]["hostName"], "Lumen");
+            assert_eq!(unchanged["settings"]["general"]["name"], "Lumen");
 
             probe.reject = false;
             let (status, committed) = transact_json(authority, 0, patch, &mut probe);
@@ -867,7 +866,7 @@ mod tests {
         unsafe {
             let authority = open(&root, 0);
             let mut local = HostSettings::default();
-            local.general.host_name = "Native Runtime".to_owned();
+            local.general.name = "Native Runtime".to_owned();
             let settings = serde_json::to_string(&local).unwrap();
             let mut response = LumenSettingsResponse::default();
 
@@ -883,10 +882,7 @@ mod tests {
             let bytes =
                 std::slice::from_raw_parts(response.body.cast::<u8>(), response.body_length);
             let snapshot: Value = serde_json::from_slice(bytes).unwrap();
-            assert_eq!(
-                snapshot["effective"]["general"]["hostName"],
-                "Native Runtime"
-            );
+            assert_eq!(snapshot["effective"]["general"]["name"], "Native Runtime");
             lumen_settings_response_destroy(&mut response);
             lumen_settings_authority_destroy(authority);
         }

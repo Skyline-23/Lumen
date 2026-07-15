@@ -17,8 +17,6 @@ struct LumenMenuBarDashboardView: View {
             }
             systemStatus
             Divider()
-            workspacePolicyControl
-            Divider()
             controls
         }
     }
@@ -117,46 +115,6 @@ struct LumenMenuBarDashboardView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Color.red.opacity(0.09), in: RoundedRectangle(cornerRadius: 7))
         }
-    }
-
-    private var workspacePolicyControl: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                LumenAssetIconView(.workspace)
-                    .frame(width: 15, height: 15)
-                    .foregroundStyle(.secondary)
-                Text(LumenCopy.Workspace.label)
-                    .font(.subheadline)
-                Spacer()
-                if controller.isHostSettingsOperationInFlight {
-                    ProgressView()
-                        .controlSize(.small)
-                }
-            }
-            Picker(
-                LumenCopy.Workspace.label,
-                selection: Binding(
-                    get: { controller.workspacePolicy },
-                    set: { policy in
-                        controller.setWorkspacePolicy(policy)
-                    }
-                )
-            ) {
-                ForEach(LumenMacWorkspacePolicy.allCases, id: \.self) { policy in
-                    Text(LumenCopy.Workspace.title(for: policy)).tag(policy)
-                }
-            }
-            .labelsHidden()
-            .pickerStyle(.menu)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .disabled(controller.isHostSettingsOperationInFlight)
-            Text(LumenCopy.Workspace.description(for: controller.workspacePolicy))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.leading, 23)
-        }
-        .padding(.horizontal, 4)
     }
 
     private var controls: some View {

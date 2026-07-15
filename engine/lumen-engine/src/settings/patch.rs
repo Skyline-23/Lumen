@@ -7,7 +7,7 @@ impl SettingsChanges {
             push_key(&mut keys, group.policy.is_some(), "workspace.policy");
         }
         if let Some(group) = &self.general {
-            push_key(&mut keys, group.host_name.is_some(), "general.hostName");
+            push_key(&mut keys, group.name.is_some(), "general.name");
             push_key(&mut keys, group.discovery.is_some(), "general.discovery");
             push_key(
                 &mut keys,
@@ -232,11 +232,7 @@ pub(super) fn apply_changes(
         assign!(group.policy, target.workspace.policy, "workspace.policy");
     }
     if let Some(group) = &changes.general {
-        assign!(
-            group.host_name,
-            target.general.host_name,
-            "general.hostName"
-        );
+        assign!(group.name, target.general.name, "general.name");
         assign!(
             group.discovery,
             target.general.discovery,
@@ -382,11 +378,9 @@ pub(super) fn copy_settings_by_class(
 
 pub(super) fn full_changes(settings: &HostSettings) -> SettingsChanges {
     SettingsChanges {
-        workspace: Some(WorkspaceChanges {
-            policy: Some(settings.workspace.policy),
-        }),
+        workspace: None,
         general: Some(GeneralChanges {
-            host_name: Some(settings.general.host_name.clone()),
+            name: Some(settings.general.name.clone()),
             discovery: Some(settings.general.discovery),
             update_channel: Some(settings.general.update_channel),
             notify_pre_releases: Some(settings.general.notify_pre_releases),
@@ -465,11 +459,7 @@ pub(super) fn differing_field_keys(left: &HostSettings, right: &HostSettings) ->
         right.workspace.policy,
         "workspace.policy"
     );
-    differs!(
-        left.general.host_name,
-        right.general.host_name,
-        "general.hostName"
-    );
+    differs!(left.general.name, right.general.name, "general.name");
     differs!(
         left.general.discovery,
         right.general.discovery,

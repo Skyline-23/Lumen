@@ -49,7 +49,6 @@ final class LumenCaptureController: NSObject, ObservableObject {
     @Published private(set) var ownerAccessState = LumenOwnerAccessState.loading
     @Published private(set) var isOwnerOperationInFlight = false
     @Published private(set) var hostSettings = LumenNativeHostSettings.defaults
-    @Published private(set) var workspacePolicy = LumenMacWorkspacePolicy.coexist
     @Published private(set) var isSystemAuthenticationEnabled = false
     @Published private(set) var isHostSettingsOperationInFlight = false
     @Published private(set) var applications: [LumenApplication] = []
@@ -420,28 +419,6 @@ final class LumenCaptureController: NSObject, ObservableObject {
         isHostSettingsOperationInFlight = false
     }
 
-    func setWorkspacePolicy(_ policy: LumenMacWorkspacePolicy) {
-        guard ownerAccessState.isAuthenticated,
-              !isHostSettingsOperationInFlight,
-              let hostSettingsStore else {
-            return
-        }
-        isHostSettingsOperationInFlight = true
-        setError(nil)
-        Task { @MainActor [weak self, hostSettingsStore] in
-            guard let self else {
-                return
-            }
-            defer { self.isHostSettingsOperationInFlight = false }
-            do {
-                try await hostSettingsStore.setWorkspacePolicy(policy)
-                self.applyHostSettingsSnapshot(try await hostSettingsStore.snapshot())
-            } catch {
-                self.setError(error.localizedDescription)
-            }
-        }
-    }
-
     func saveHostSettings(_ settings: LumenNativeHostSettings) {
         guard ownerAccessState.isAuthenticated,
               let hostSettingsStore else {
@@ -584,7 +561,6 @@ final class LumenCaptureController: NSObject, ObservableObject {
 
         LumenHostSettingsStore.resetStandardDefaults(bundleIdentifier: Bundle.main.bundleIdentifier)
         hostSettings = .defaults
-        workspacePolicy = hostSettings.workspacePolicy
         isSystemAuthenticationEnabled = false
 
         let configuration = NSWorkspace.OpenConfiguration()
@@ -818,7 +794,6 @@ final class LumenCaptureController: NSObject, ObservableObject {
 
     private func applyHostSettingsSnapshot(_ settings: LumenNativeHostSettings) {
         hostSettings = settings
-        workspacePolicy = settings.workspacePolicy
         isSystemAuthenticationEnabled = settings.systemAuthenticationEnabled
     }
 

@@ -37,7 +37,7 @@ final class LumenHostSettingsStoreTests: XCTestCase {
         var settings = try await store.snapshot()
         settings.workspacePolicy = .promoteVirtualMain
         settings.systemAuthenticationEnabled = true
-        settings.hostName = "Studio Host"
+        settings.name = "Studio Host"
         settings.discoveryEnabled = false
         settings.deviceEnrollmentEnabled = false
         settings.notifyPreReleases = true
@@ -94,7 +94,7 @@ final class LumenHostSettingsStoreTests: XCTestCase {
         let suiteName = "LumenHostSettingsStoreTests.\(UUID().uuidString)"
         let store = try LumenHostSettingsStore(suiteName: suiteName)
         var settings = try await store.snapshot()
-        settings.hostName = "  "
+        settings.name = "  "
 
         do {
             try await store.save(settings)
