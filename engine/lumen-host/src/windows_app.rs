@@ -1,7 +1,8 @@
 use std::path::PathBuf;
 
 use lumen_engine::settings::{
-    HostSettings, SettingsAuthority, SettingsCapabilities, SettingsHostPlatform,
+    GeneralChanges, HostSettings, SettingsAuthority, SettingsCapabilities, SettingsChanges,
+    SettingsHostPlatform, SettingsPatchRequest, SETTINGS_SCHEMA_VERSION,
 };
 use lumen_engine::{
     ApplicationCatalog, ApplicationDescriptor, LumenOwnerState, OwnerAccountError,
@@ -24,6 +25,58 @@ pub(crate) enum WindowsNavigation {
     Advanced,
     Diagnostics,
     About,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum WindowsApplicationLocale {
+    English,
+    Korean,
+    Japanese,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum WindowsApplicationLocaleChange {
+    Unchanged,
+    Changed,
+}
+
+impl WindowsApplicationLocale {
+    pub(crate) fn resolve(identifier: &str) -> Self {
+        let language = identifier
+            .split(['-', '_'])
+            .next()
+            .unwrap_or("en")
+            .to_ascii_lowercase();
+        match language.as_str() {
+            "ko" => Self::Korean,
+            "ja" => Self::Japanese,
+            _ => Self::English,
+        }
+    }
+
+    pub(crate) const fn code(self) -> &'static str {
+        match self {
+            Self::English => "en",
+            Self::Korean => "ko",
+            Self::Japanese => "ja",
+        }
+    }
+
+    pub(crate) const fn index(self) -> i32 {
+        match self {
+            Self::English => 0,
+            Self::Korean => 1,
+            Self::Japanese => 2,
+        }
+    }
+
+    pub(crate) const fn from_index(index: i32) -> Self {
+        match index {
+            1 => Self::Korean,
+            2 => Self::Japanese,
+            _ => Self::English,
+        }
+    }
 }
 
 impl WindowsNavigation {
@@ -78,6 +131,7 @@ pub(crate) struct WindowsAppSnapshot {
     pub(crate) applications: Vec<ApplicationDescriptor>,
     pub(crate) settings: HostSettings,
     pub(crate) settings_revision: u64,
+    pub(crate) locale: WindowsApplicationLocale,
 }
 
 pub(crate) struct WindowsAppModel {
@@ -124,6 +178,7 @@ impl WindowsAppModel {
         let applications = ApplicationCatalog::open(self.applications_path.clone())
             .and_then(|catalog| catalog.applications())
             .map_err(|error| format!("application catalog failed: {error:?}"))?;
+        let locale = WindowsApplicationLocale::resolve(&settings.settings.general.locale);
         Ok(WindowsAppSnapshot {
             owner_access: self.owner_access.clone(),
             navigation: self.navigation,
@@ -132,11 +187,43 @@ impl WindowsAppModel {
             applications,
             settings: settings.settings,
             settings_revision: settings.revision,
+            locale,
         })
     }
 
     pub(crate) fn select(&mut self, navigation: WindowsNavigation) {
         self.navigation = navigation;
+    }
+
+    pub(crate) fn select_locale(
+        &mut self,
+        locale: WindowsApplicationLocale,
+    ) -> Result<WindowsApplicationLocaleChange, String> {
+        let mut authority = SettingsAuthority::open(
+            self.settings_path.clone(),
+            SettingsCapabilities::for_platform(SettingsHostPlatform::Windows),
+        )
+        .map_err(|error| format!("settings store failed: {error:?}"))?;
+        let snapshot = authority.snapshot();
+        if WindowsApplicationLocale::resolve(&snapshot.settings.general.locale) == locale {
+            return Ok(WindowsApplicationLocaleChange::Unchanged);
+        }
+        let base_revision = snapshot.revision;
+        authority
+            .apply_patch(SettingsPatchRequest {
+                schema_version: SETTINGS_SCHEMA_VERSION,
+                base_revision,
+                request_id: format!("windows-locale-{base_revision}-{}", locale.code()),
+                changes: SettingsChanges {
+                    general: Some(GeneralChanges {
+                        locale: Some(locale.code().to_owned()),
+                        ..GeneralChanges::default()
+                    }),
+                    ..SettingsChanges::default()
+                },
+            })
+            .map(|_| WindowsApplicationLocaleChange::Changed)
+            .map_err(|error| format!("language setting failed: {error:?}"))
     }
 
     pub(crate) fn create_owner(
@@ -238,6 +325,38 @@ mod tests {
         assert_eq!(snapshot.settings_revision, 1);
         assert_eq!(snapshot.settings.general.host_name, "Lumen");
         assert!(snapshot.applications.is_empty());
+    }
+
+    #[test]
+    fn locale_selection_persists_supported_windows_application_language() {
+        let root = tempfile::tempdir().unwrap();
+        let mut model = model(root.path());
+
+        assert_eq!(WindowsApplicationLocale::resolve("en-US").index(), 0);
+        assert_eq!(WindowsApplicationLocale::resolve("ko-KR").index(), 1);
+        assert_eq!(WindowsApplicationLocale::resolve("ja-JP").index(), 2);
+        assert_eq!(
+            WindowsApplicationLocale::from_index(99),
+            WindowsApplicationLocale::English
+        );
+
+        let change = model
+            .select_locale(WindowsApplicationLocale::Japanese)
+            .unwrap();
+
+        assert_eq!(change, WindowsApplicationLocaleChange::Changed);
+        assert_eq!(model.snapshot().unwrap().settings_revision, 2);
+        assert_eq!(
+            model
+                .select_locale(WindowsApplicationLocale::Japanese)
+                .unwrap(),
+            WindowsApplicationLocaleChange::Unchanged
+        );
+        assert_eq!(model.snapshot().unwrap().settings_revision, 2);
+        assert_eq!(
+            model.snapshot().unwrap().locale,
+            WindowsApplicationLocale::Japanese
+        );
     }
 
     #[test]

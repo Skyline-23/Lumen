@@ -134,57 +134,6 @@ impl TrayStrings {
                 "Lumenを再起動",
                 "Lumenを終了",
             )
-        } else if normalized.starts_with("zh-hant")
-            || normalized.starts_with("zh-tw")
-            || normalized.starts_with("zh-hk")
-        {
-            (
-                "開啟 Lumen",
-                "重新載入應用程式",
-                "強制停止串流",
-                "重新啟動 Lumen",
-                "結束 Lumen",
-            )
-        } else if normalized.starts_with("zh") {
-            (
-                "打开 Lumen",
-                "重新加载应用程序",
-                "强制停止串流",
-                "重启 Lumen",
-                "退出 Lumen",
-            )
-        } else if normalized.starts_with("de") {
-            (
-                "Lumen öffnen",
-                "Anwendungen neu laden",
-                "Stream sofort beenden",
-                "Lumen neu starten",
-                "Lumen beenden",
-            )
-        } else if normalized.starts_with("es") {
-            (
-                "Abrir Lumen",
-                "Recargar aplicaciones",
-                "Detener transmisión",
-                "Reiniciar Lumen",
-                "Salir de Lumen",
-            )
-        } else if normalized.starts_with("fr") {
-            (
-                "Ouvrir Lumen",
-                "Recharger les applications",
-                "Arrêter le flux",
-                "Redémarrer Lumen",
-                "Quitter Lumen",
-            )
-        } else if normalized.starts_with("pt") {
-            (
-                "Abrir Lumen",
-                "Recarregar aplicativos",
-                "Interromper transmissão",
-                "Reiniciar Lumen",
-                "Sair do Lumen",
-            )
         } else {
             (
                 "Open Lumen",

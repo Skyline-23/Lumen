@@ -1,7 +1,33 @@
+import LumenAppArchitecture
 import LumenMacBridge
 import XCTest
 
 final class LumenHostSettingsStoreTests: XCTestCase {
+    func testApplicationLocalesExposeOnlyShippedLocalizations() {
+        XCTAssertEqual(LumenApplicationLocale.allCases.map(\.rawValue), ["en", "ko", "ja"])
+        XCTAssertEqual(LumenApplicationLocale.resolve("en-US"), .english)
+        XCTAssertEqual(LumenApplicationLocale.resolve("ko-KR"), .korean)
+        XCTAssertEqual(LumenApplicationLocale.resolve("ja-JP"), .japanese)
+        XCTAssertEqual(LumenApplicationLocale.resolve("fr-FR"), .english)
+    }
+
+    @MainActor
+    func testApplicationLocaleStorePersistsNativeSelectionAndRequestsRelaunch() throws {
+        let suiteName = "LumenHostSettingsStoreTests.Locale.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = LumenApplicationLocaleStore(
+            userDefaults: defaults,
+            activeLanguage: { "en-US" }
+        )
+
+        XCTAssertTrue(store.select(.korean))
+        XCTAssertEqual(defaults.stringArray(forKey: "AppleLanguages"), ["ko"])
+        XCTAssertFalse(store.select(.english))
+        XCTAssertEqual(defaults.stringArray(forKey: "AppleLanguages"), ["en"])
+    }
+
     func testDefaultsMatchNativeHostContract() async throws {
         let suiteName = "LumenHostSettingsStoreTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))

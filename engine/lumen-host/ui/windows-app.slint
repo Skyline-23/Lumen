@@ -1,4 +1,4 @@
-import { AboutSlint, LineEdit, ScrollView, Switch } from "std-widgets.slint";
+import { AboutSlint, ComboBox, LineEdit, ScrollView, Switch } from "std-widgets.slint";
 
 component ActionButton inherits Rectangle {
     in property <string> text;
@@ -122,19 +122,33 @@ export component LumenWindowsApp inherits Window {
     in-out property <int> auth-mode: 0;
     in-out property <int> navigation: 0;
     in property <string> owner-name: "";
-    in property <string> auth-error: "";
+    in property <int> auth-error-code: -1;
+    in property <string> auth-error-detail: "";
+    property <string> auth-error: root.auth-error-code == 0
+        ? @tr("Check the account fields and password confirmation.")
+        : root.auth-error-code == 1
+        ? @tr("An owner account already exists.")
+        : root.auth-error-code == 2
+        ? @tr("Authentication failure.")
+        : root.auth-error-code == 3
+        ? @tr("The owner account could not be saved.")
+        : root.auth-error-code == 4
+        ? @tr("The owner account data is damaged.")
+        : root.auth-error-detail;
     in property <string> host-name: "Lumen";
     in property <int> application-count: 0;
     in property <int> control-port: 47989;
     in property <int> settings-revision: 0;
+    in-out property <int> locale-index: 0;
     in property <[string]> application-names: [];
     in property <bool> system-authentication-enabled: false;
-    in property <string> system-authentication-label: "Unlock with Windows Hello";
+    in property <string> system-authentication-label: @tr("Unlock with Windows Hello");
 
     callback create-owner(string, string, string);
     callback login(string);
     callback lock();
     callback navigate(int);
+    callback select-locale(int);
     callback reload-applications();
     callback force-stop-stream();
     callback restart-host();
@@ -193,7 +207,10 @@ export component LumenWindowsApp inherits Window {
             }
 
             VerticalLayout {
-                padding: 32px;
+                padding-left: 44px;
+                padding-right: 32px;
+                padding-top: 32px;
+                padding-bottom: 32px;
                 spacing: 0px;
                 HorizontalLayout {
                     height: 28px;
@@ -203,26 +220,26 @@ export component LumenWindowsApp inherits Window {
                 }
                 Rectangle { vertical-stretch: 1; background: transparent; }
                 Text {
-                    text: "Your computer,\nready anywhere.";
+                    text: @tr("Your computer,\nready anywhere.");
                     color: #171714;
                     font-size: 36px;
                     font-weight: 600;
                 }
                 Rectangle { height: 14px; background: transparent; }
                 Text {
-                    text: "Set up one owner account. Lumen keeps\nstreaming, applications, and enrolled devices\nunder your control.";
+                    text: @tr("Set up one owner account. Lumen keeps\nstreaming, applications, and enrolled devices\nunder your control.");
                     color: #5c5952;
                     font-size: 14px;
                 }
                 Rectangle { height: 22px; background: transparent; }
                 VerticalLayout {
                     spacing: 10px;
-                    FeatureRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/local-credentials.svg"); title: "Local credentials"; }
-                    FeatureRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/host-controls.svg"); title: "Native host controls"; }
-                    FeatureRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/remote-access.svg"); title: "Remote device access"; }
+                    FeatureRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/local-credentials.svg"); title: @tr("Local credentials"); }
+                    FeatureRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/host-controls.svg"); title: @tr("Native host controls"); }
+                    FeatureRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/remote-access.svg"); title: @tr("Remote device access"); }
                 }
                 Rectangle { vertical-stretch: 1; background: transparent; }
-                Text { text: "Credentials never leave this computer in plaintext."; color: #817e76; font-size: 11px; }
+                Text { text: @tr("Credentials never leave this computer in plaintext."); color: #817e76; font-size: 11px; }
             }
         }
 
@@ -254,15 +271,15 @@ export component LumenWindowsApp inherits Window {
                         VerticalLayout {
                             spacing: 3px;
                             Text {
-                                text: root.auth-mode == 0 ? "Create the owner account" : "Unlock Lumen";
+                                text: root.auth-mode == 0 ? @tr("Create the owner account") : @tr("Unlock Lumen");
                                 color: #24231f;
                                 font-size: 15px;
                                 font-weight: 600;
                             }
                             Text {
                                 text: root.auth-mode == 0
-                                    ? "This account controls this host, enrolled devices, and remote settings."
-                                    : "Sign in to manage this host. Streaming services continue independently.";
+                                    ? @tr("This account controls this host, enrolled devices, and remote settings.")
+                                    : @tr("Sign in to manage this host. Streaming services continue independently.");
                                 color: #77746d;
                                 font-size: 11px;
                                 wrap: word-wrap;
@@ -273,12 +290,12 @@ export component LumenWindowsApp inherits Window {
                         if root.auth-mode == 0: VerticalLayout {
                             vertical-stretch: 0;
                             spacing: 10px;
-                            owner-input := LineEdit { height: 30px; vertical-stretch: 0; placeholder-text: "Owner ID"; }
-                            new-password := LineEdit { height: 30px; vertical-stretch: 0; placeholder-text: "Password (12 characters minimum)"; input-type: password; }
+                            owner-input := LineEdit { height: 30px; vertical-stretch: 0; placeholder-text: @tr("Owner ID"); }
+                            new-password := LineEdit { height: 30px; vertical-stretch: 0; placeholder-text: @tr("Password (12 characters minimum)"); input-type: password; }
                             confirmation := LineEdit {
                                 height: 30px;
                                 vertical-stretch: 0;
-                                placeholder-text: "Confirm password";
+                                placeholder-text: @tr("Confirm password");
                                 input-type: password;
                                 accepted => { root.create-owner(owner-input.text, new-password.text, confirmation.text); }
                             }
@@ -289,13 +306,13 @@ export component LumenWindowsApp inherits Window {
                                 Text { x: 12px; text: root.auth-error; color: #d14c43; font-size: 11px; vertical-alignment: center; }
                             }
                             ActionButton {
-                                text: "Create account";
+                                text: @tr("Create account");
                                 primary: true;
                                 enabled: owner-input.text != "" && new-password.text != "" && confirmation.text != "";
                                 clicked => { root.create-owner(owner-input.text, new-password.text, confirmation.text); }
                             }
                             Text {
-                                text: "The password is stored only as an Argon2id hash on this computer.";
+                                text: @tr("The password is stored only as an Argon2id hash on this computer.");
                                 color: #817e76;
                                 font-size: 11px;
                                 wrap: word-wrap;
@@ -308,14 +325,14 @@ export component LumenWindowsApp inherits Window {
                                 height: 26px;
                                 spacing: 9px;
                                 Image { source: @image-url("../../../src_assets/common/assets/icons/ui/complete.svg"); width: 16px; height: 16px; image-fit: contain; colorize: #5dcf92; }
-                                Text { text: "Owner account"; color: #4d4b45; font-size: 12px; vertical-alignment: center; }
+                                Text { text: @tr("Owner account"); color: #4d4b45; font-size: 12px; vertical-alignment: center; }
                                 Rectangle { horizontal-stretch: 1; background: transparent; }
                                 Text { text: root.owner-name; color: #8b8880; font-size: 11px; vertical-alignment: center; }
                             }
                             password-input := LineEdit {
                                 height: 30px;
                                 vertical-stretch: 0;
-                                placeholder-text: "Password";
+                                placeholder-text: @tr("Password");
                                 input-type: password;
                                 accepted => { root.login(password-input.text); }
                             }
@@ -331,7 +348,7 @@ export component LumenWindowsApp inherits Window {
                                 }
                             }
                             ActionButton {
-                                text: "Sign in";
+                                text: @tr("Sign in");
                                 primary: true;
                                 enabled: password-input.text != "";
                                 clicked => { root.login(password-input.text); }
@@ -340,9 +357,9 @@ export component LumenWindowsApp inherits Window {
                                 text: root.system-authentication-label;
                             }
                             HorizontalLayout {
-                                Text { text: "Forgot password?"; color: #1769c8; font-size: 12px; }
+                                Text { text: @tr("Forgot password?"); color: #1769c8; font-size: 12px; }
                                 Rectangle { horizontal-stretch: 1; background: transparent; }
-                                Text { text: "Quit"; color: #1769c8; font-size: 12px; }
+                                Text { text: @tr("Quit"); color: #1769c8; font-size: 12px; }
                             }
                         }
                     }
@@ -365,22 +382,22 @@ export component LumenWindowsApp inherits Window {
                 padding-top: 14px;
                 padding-bottom: 12px;
                 spacing: 4px;
-                NavigationRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/overview.svg"); title: "Overview"; selected: root.navigation == 0; clicked => { root.navigate(0); } }
-                NavigationRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/applications.svg"); title: "Applications"; selected: root.navigation == 1; clicked => { root.navigate(1); } }
+                NavigationRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/overview.svg"); title: @tr("Overview"); selected: root.navigation == 0; clicked => { root.navigate(0); } }
+                NavigationRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/applications.svg"); title: @tr("Applications"); selected: root.navigation == 1; clicked => { root.navigate(1); } }
                 Rectangle { height: 13px; background: transparent; }
-                Text { text: "SETTINGS"; color: #96938b; font-size: 10px; font-weight: 600; }
-                NavigationRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/unlock.svg"); title: "Security"; selected: root.navigation == 2; clicked => { root.navigate(2); } }
-                NavigationRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/settings.svg"); title: "General"; selected: root.navigation == 3; clicked => { root.navigate(3); } }
-                NavigationRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/current-stream.svg"); title: "Streaming"; selected: root.navigation == 4; clicked => { root.navigate(4); } }
-                NavigationRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/host-controls.svg"); title: "Audio"; selected: root.navigation == 5; clicked => { root.navigate(5); } }
-                NavigationRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/remote-access.svg"); title: "Input"; selected: root.navigation == 6; clicked => { root.navigate(6); } }
-                NavigationRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/workspace.svg"); title: "Network"; selected: root.navigation == 7; clicked => { root.navigate(7); } }
-                NavigationRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/restart.svg"); title: "Advanced"; selected: root.navigation == 8; clicked => { root.navigate(8); } }
+                Text { text: @tr("SETTINGS"); color: #96938b; font-size: 10px; font-weight: 600; }
+                NavigationRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/unlock.svg"); title: @tr("Security"); selected: root.navigation == 2; clicked => { root.navigate(2); } }
+                NavigationRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/settings.svg"); title: @tr("General"); selected: root.navigation == 3; clicked => { root.navigate(3); } }
+                NavigationRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/current-stream.svg"); title: @tr("Streaming"); selected: root.navigation == 4; clicked => { root.navigate(4); } }
+                NavigationRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/host-controls.svg"); title: @tr("Audio"); selected: root.navigation == 5; clicked => { root.navigate(5); } }
+                NavigationRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/remote-access.svg"); title: @tr("Input"); selected: root.navigation == 6; clicked => { root.navigate(6); } }
+                NavigationRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/workspace.svg"); title: @tr("Network"); selected: root.navigation == 7; clicked => { root.navigate(7); } }
+                NavigationRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/restart.svg"); title: @tr("Advanced"); selected: root.navigation == 8; clicked => { root.navigate(8); } }
                 Rectangle { height: 9px; background: transparent; }
-                NavigationRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/diagnostics.svg"); title: "Diagnostics"; selected: root.navigation == 9; clicked => { root.navigate(9); } }
-                NavigationRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/settings.svg"); title: "About"; selected: root.navigation == 10; clicked => { root.navigate(10); } }
+                NavigationRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/diagnostics.svg"); title: @tr("Diagnostics"); selected: root.navigation == 9; clicked => { root.navigate(9); } }
+                NavigationRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/settings.svg"); title: @tr("About"); selected: root.navigation == 10; clicked => { root.navigate(10); } }
                 Rectangle { vertical-stretch: 1; background: transparent; }
-                Text { text: "Signed in as"; color: #99968f; font-size: 10px; }
+                Text { text: @tr("Signed in as"); color: #99968f; font-size: 10px; }
                 Text { text: root.owner-name; color: #4a4842; font-size: 12px; font-weight: 500; }
             }
         }
@@ -391,52 +408,52 @@ export component LumenWindowsApp inherits Window {
                 VerticalLayout {
                     padding: 28px;
                     spacing: 20px;
-                    PageHeader { title: "Overview"; subtitle: "Host readiness and active streaming state"; }
+                    PageHeader { title: @tr("Overview"); subtitle: @tr("Host readiness and active streaming state"); }
                     HorizontalLayout {
                         height: 118px;
                         horizontal-stretch: 1;
                         vertical-stretch: 0;
                         spacing: 14px;
-                        StatusCard { icon: @image-url("../../../src_assets/common/assets/icons/ui/host-runtime.svg"); value: "Running"; label: "Host runtime"; ready: true; }
-                        StatusCard { icon: @image-url("../../../src_assets/common/assets/icons/ui/current-stream.svg"); value: "Idle"; label: "Current stream"; ready: false; }
-                        StatusCard { icon: @image-url("../../../src_assets/common/assets/icons/ui/applications.svg"); value: "\{root.application-count}"; label: "Applications"; ready: root.application-count > 0; }
+                        StatusCard { icon: @image-url("../../../src_assets/common/assets/icons/ui/host-runtime.svg"); value: @tr("Running"); label: @tr("Host runtime"); ready: true; }
+                        StatusCard { icon: @image-url("../../../src_assets/common/assets/icons/ui/current-stream.svg"); value: @tr("Idle"); label: @tr("Current stream"); ready: false; }
+                        StatusCard { icon: @image-url("../../../src_assets/common/assets/icons/ui/applications.svg"); value: "\{root.application-count}"; label: @tr("Applications"); ready: root.application-count > 0; }
                     }
                     SectionPanel {
                         height: 128px;
-                        title: "System access";
+                        title: @tr("System access");
                         VerticalLayout {
                             padding: 14px;
                             spacing: 9px;
-                            Text { text: "System access"; color: #272620; font-size: 13px; font-weight: 600; }
+                            Text { text: @tr("System access"); color: #272620; font-size: 13px; font-weight: 600; }
                             HorizontalLayout {
                                 height: 28px;
                                 Image { source: @image-url("../../../src_assets/common/assets/icons/ui/complete.svg"); width: 17px; height: 17px; image-fit: contain; colorize: #5dcf92; }
-                                Text { text: "Display capture"; color: #34332e; font-size: 12px; vertical-alignment: center; }
+                                Text { text: @tr("Display capture"); color: #34332e; font-size: 12px; vertical-alignment: center; }
                                 Rectangle { horizontal-stretch: 1; background: transparent; }
-                                Text { text: "Managed by Windows"; color: #817e76; font-size: 11px; vertical-alignment: center; }
+                                Text { text: @tr("Managed by Windows"); color: #817e76; font-size: 11px; vertical-alignment: center; }
                             }
                             HorizontalLayout {
                                 height: 28px;
                                 Image { source: @image-url("../../../src_assets/common/assets/icons/ui/complete.svg"); width: 17px; height: 17px; image-fit: contain; colorize: #5dcf92; }
-                                Text { text: "Input control"; color: #34332e; font-size: 12px; vertical-alignment: center; }
+                                Text { text: @tr("Input control"); color: #34332e; font-size: 12px; vertical-alignment: center; }
                                 Rectangle { horizontal-stretch: 1; background: transparent; }
-                                Text { text: "Managed by Windows"; color: #817e76; font-size: 11px; vertical-alignment: center; }
+                                Text { text: @tr("Managed by Windows"); color: #817e76; font-size: 11px; vertical-alignment: center; }
                             }
                         }
                     }
                     SectionPanel {
                         height: 110px;
-                        title: "Host controls";
+                        title: @tr("Host controls");
                         VerticalLayout {
                             padding: 14px;
                             spacing: 12px;
-                            Text { text: "Host controls"; color: #272620; font-size: 13px; font-weight: 600; }
+                            Text { text: @tr("Host controls"); color: #272620; font-size: 13px; font-weight: 600; }
                             HorizontalLayout {
                                 spacing: 10px;
-                                ActionButton { text: "Reload applications"; primary: true; clicked => { root.reload-applications(); } }
-                                ActionButton { text: "Force Stop Stream"; danger: true; clicked => { root.force-stop-stream(); } }
+                                ActionButton { text: @tr("Reload applications"); primary: true; clicked => { root.reload-applications(); } }
+                                ActionButton { text: @tr("Force Stop Stream"); danger: true; clicked => { root.force-stop-stream(); } }
                                 Rectangle { horizontal-stretch: 1; background: transparent; }
-                                ActionButton { text: "Restart host"; clicked => { root.restart-host(); } }
+                                ActionButton { text: @tr("Restart host"); clicked => { root.restart-host(); } }
                             }
                         }
                     }
@@ -450,9 +467,9 @@ export component LumenWindowsApp inherits Window {
                     HorizontalLayout {
                         height: 52px;
                         vertical-stretch: 0;
-                        PageHeader { title: "Applications"; subtitle: "Choose what remote clients can launch"; }
+                        PageHeader { title: @tr("Applications"); subtitle: @tr("Choose what remote clients can launch"); }
                         Rectangle { horizontal-stretch: 1; background: transparent; }
-                        ActionButton { width: 128px; text: "Add application"; primary: true; }
+                        ActionButton { width: 128px; text: @tr("Add application"); primary: true; }
                     }
                     if root.application-count == 0: Rectangle {
                         height: 210px;
@@ -464,8 +481,8 @@ export component LumenWindowsApp inherits Window {
                             alignment: center;
                             spacing: 8px;
                             Image { source: @image-url("../../../src_assets/common/assets/icons/ui/applications.svg"); width: 30px; height: 30px; image-fit: contain; }
-                            Text { text: "No applications"; color: #282721; font-size: 16px; font-weight: 600; horizontal-alignment: center; }
-                            Text { text: "Add a desktop or application entry for remote clients."; color: #77746d; font-size: 12px; horizontal-alignment: center; }
+                            Text { text: @tr("No applications"); color: #282721; font-size: 16px; font-weight: 600; horizontal-alignment: center; }
+                            Text { text: @tr("Add a desktop or application entry for remote clients."); color: #77746d; font-size: 12px; horizontal-alignment: center; }
                         }
                     }
                     for app-name in root.application-names: Rectangle {
@@ -490,8 +507,8 @@ export component LumenWindowsApp inherits Window {
                     padding: 28px;
                     spacing: 18px;
                     PageHeader {
-                        title: root.navigation == 2 ? "Security" : root.navigation == 3 ? "General" : root.navigation == 4 ? "Streaming" : root.navigation == 5 ? "Audio" : root.navigation == 6 ? "Input" : root.navigation == 7 ? "Network" : "Advanced";
-                        subtitle: root.navigation == 2 ? "Owner access, host locking, and system authentication" : root.navigation == 3 ? "Computer identity, discovery, language, and logging" : root.navigation == 4 ? "Codec, latency, quality, and stream display behavior" : root.navigation == 5 ? "Computer audio capture and device selection" : root.navigation == 6 ? "Keyboard, pointer, touch, and controller forwarding" : root.navigation == 7 ? "Discovery, remote access, encryption, and recovery" : "Lifecycle commands and host process automation";
+                        title: root.navigation == 2 ? @tr("Security") : root.navigation == 3 ? @tr("General") : root.navigation == 4 ? @tr("Streaming") : root.navigation == 5 ? @tr("Audio") : root.navigation == 6 ? @tr("Input") : root.navigation == 7 ? @tr("Network") : @tr("Advanced");
+                        subtitle: root.navigation == 2 ? @tr("Owner access, host locking, and system authentication") : root.navigation == 3 ? @tr("Computer identity, discovery, language, and logging") : root.navigation == 4 ? @tr("Codec, latency, quality, and stream display behavior") : root.navigation == 5 ? @tr("Computer audio capture and device selection") : root.navigation == 6 ? @tr("Keyboard, pointer, touch, and controller forwarding") : root.navigation == 7 ? @tr("Discovery, remote access, encryption, and recovery") : @tr("Lifecycle commands and host process automation");
                     }
                     Rectangle {
                         border-radius: 10px;
@@ -500,22 +517,44 @@ export component LumenWindowsApp inherits Window {
                         background: #ffffff;
                         min-height: 250px;
                         VerticalLayout {
-                            if root.navigation == 2: SettingRow { title: "Unlock with Windows Hello"; detail: "System authentication is not enabled."; checked: false; }
-                            if root.navigation == 2: ActionButton { width: 110px; text: "Lock now"; clicked => { root.lock(); } }
-                            if root.navigation == 3: SettingRow { title: "Computer name"; detail: root.host-name; }
-                            if root.navigation == 3: SettingRow { title: "Discoverable on the local network"; detail: ""; checked: true; }
-                            if root.navigation == 5: SettingRow { title: "Stream computer audio"; detail: ""; checked: true; }
-                            if root.navigation == 6: SettingRow { title: "Keyboard input"; detail: ""; checked: true; }
-                            if root.navigation == 6: SettingRow { title: "Mouse input"; detail: ""; checked: true; }
-                            if root.navigation == 6: SettingRow { title: "Game controller input"; detail: ""; checked: true; }
-                            if root.navigation == 7: SettingRow { title: "Base port"; detail: "\{root.control-port}"; }
-                            if root.navigation == 7: SettingRow { title: "UPnP port mapping"; detail: ""; checked: false; }
-                            if root.navigation == 8: SettingRow { title: "Preparation commands"; detail: "Configure commands that run before a streamed application starts."; }
-                            if root.navigation == 8: SettingRow { title: "Server commands"; detail: "Commands available to connected clients."; }
+                            if root.navigation == 2: SettingRow { title: @tr("Unlock with Windows Hello"); detail: @tr("System authentication is not enabled."); checked: false; }
+                            if root.navigation == 2: ActionButton { width: 110px; text: @tr("Lock now"); clicked => { root.lock(); } }
+                            if root.navigation == 3: SettingRow { title: @tr("Computer name"); detail: root.host-name; }
+                            if root.navigation == 3: Rectangle {
+                                height: 52px;
+                                HorizontalLayout {
+                                    padding-left: 14px;
+                                    padding-right: 14px;
+                                    spacing: 12px;
+                                    Text {
+                                        text: @tr("Language");
+                                        color: #24231f;
+                                        font-size: 13px;
+                                        vertical-alignment: center;
+                                    }
+                                    ComboBox {
+                                        width: 180px;
+                                        model: ["English", "한국어", "日本語"];
+                                        current-index: root.locale-index;
+                                        selected(value) => {
+                                            root.select-locale(self.current-index);
+                                        }
+                                    }
+                                }
+                            }
+                            if root.navigation == 3: SettingRow { title: @tr("Discoverable on the local network"); detail: ""; checked: true; }
+                            if root.navigation == 5: SettingRow { title: @tr("Stream computer audio"); detail: ""; checked: true; }
+                            if root.navigation == 6: SettingRow { title: @tr("Keyboard input"); detail: ""; checked: true; }
+                            if root.navigation == 6: SettingRow { title: @tr("Mouse input"); detail: ""; checked: true; }
+                            if root.navigation == 6: SettingRow { title: @tr("Game controller input"); detail: ""; checked: true; }
+                            if root.navigation == 7: SettingRow { title: @tr("Base port"); detail: "\{root.control-port}"; }
+                            if root.navigation == 7: SettingRow { title: @tr("UPnP port mapping"); detail: ""; checked: false; }
+                            if root.navigation == 8: SettingRow { title: @tr("Preparation commands"); detail: @tr("Configure commands that run before a streamed application starts."); }
+                            if root.navigation == 8: SettingRow { title: @tr("Server commands"); detail: @tr("Commands available to connected clients."); }
                             Rectangle { vertical-stretch: 1; background: transparent; }
                         }
                     }
-                    Text { text: "Changes are saved automatically.  Revision \{root.settings-revision}"; color: #85827b; font-size: 11px; }
+                    Text { text: @tr("Revision {}", root.settings-revision); color: #85827b; font-size: 11px; }
                 }
             }
 
@@ -523,23 +562,23 @@ export component LumenWindowsApp inherits Window {
                 VerticalLayout {
                     padding: 28px;
                     spacing: 18px;
-                    PageHeader { title: "Diagnostics"; subtitle: "Runtime state and troubleshooting information"; }
+                    PageHeader { title: @tr("Diagnostics"); subtitle: @tr("Runtime state and troubleshooting information"); }
                     SectionPanel {
                         height: 170px;
-                        title: "Runtime";
+                        title: @tr("Runtime");
                         VerticalLayout {
                             padding: 15px;
                             spacing: 12px;
-                            Text { text: "Runtime"; color: #282720; font-size: 13px; font-weight: 600; }
-                            SettingRow { title: "Host"; detail: root.host-name; }
-                            SettingRow { title: "Control port"; detail: "\{root.control-port}"; }
+                            Text { text: @tr("Runtime"); color: #282720; font-size: 13px; font-weight: 600; }
+                            SettingRow { title: @tr("Host"); detail: root.host-name; }
+                            SettingRow { title: @tr("Control port"); detail: "\{root.control-port}"; }
                         }
                     }
                     HorizontalLayout {
                         spacing: 10px;
-                        ActionButton { text: "Lock now"; clicked => { root.lock(); } }
+                        ActionButton { text: @tr("Lock now"); clicked => { root.lock(); } }
                         Rectangle { horizontal-stretch: 1; background: transparent; }
-                        ActionButton { text: "Quit Lumen"; danger: true; clicked => { root.quit-host(); } }
+                        ActionButton { text: @tr("Quit Lumen"); danger: true; clicked => { root.quit-host(); } }
                     }
                 }
             }
@@ -548,7 +587,7 @@ export component LumenWindowsApp inherits Window {
                 VerticalLayout {
                     padding: 28px;
                     spacing: 18px;
-                    PageHeader { title: "About Lumen"; subtitle: "Product and third-party attribution"; }
+                    PageHeader { title: @tr("About Lumen"); subtitle: @tr("Product and third-party attribution"); }
                     SectionPanel {
                         height: 188px;
                         title: "Lumen";
@@ -556,14 +595,14 @@ export component LumenWindowsApp inherits Window {
                             padding: 15px;
                             spacing: 8px;
                             Text { text: "Lumen"; color: #282720; font-size: 20px; font-weight: 600; }
-                            Text { text: "Self-hosted remote desktop streaming"; color: #77746d; font-size: 12px; }
-                            Text { text: "Third-party license texts are installed with the application."; color: #77746d; font-size: 11px; }
+                            Text { text: @tr("Self-hosted remote desktop streaming"); color: #77746d; font-size: 12px; }
+                            Text { text: @tr("Third-party license texts are installed with the application."); color: #77746d; font-size: 11px; }
                             Rectangle { vertical-stretch: 1; background: transparent; }
                         }
                     }
                     SectionPanel {
                         height: 124px;
-                        title: "Slint";
+                        title: @tr("Slint");
                         AboutSlint { }
                     }
                 }

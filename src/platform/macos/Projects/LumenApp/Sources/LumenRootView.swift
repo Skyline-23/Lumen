@@ -148,7 +148,9 @@ struct LumenRootView: View {
                         .font(.caption)
                         .foregroundStyle(palette.tertiaryText)
                 }
-                .padding(32)
+                .padding(.leading, 44)
+                .padding(.trailing, 32)
+                .padding(.vertical, 32)
             }
             .frame(width: 340)
             .clipped()

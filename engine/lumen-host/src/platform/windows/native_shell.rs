@@ -13,7 +13,8 @@ use crate::native_command::{
     LUMEN_HOST_COMMAND_SHUTDOWN,
 };
 use crate::windows_app::{
-    WindowsAppModel, WindowsAppSnapshot, WindowsNavigation, WindowsOwnerAccessState,
+    WindowsAppModel, WindowsAppSnapshot, WindowsApplicationLocale, WindowsApplicationLocaleChange,
+    WindowsNavigation, WindowsOwnerAccessState,
 };
 use crate::HostArguments;
 
@@ -23,6 +24,32 @@ slint::include_modules!();
 
 static SHOW_REQUESTED: AtomicBool = AtomicBool::new(false);
 static QUIT_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+enum WindowsUiError {
+    Owner(lumen_engine::OwnerAccountError),
+    Detail(String),
+}
+
+impl WindowsUiError {
+    fn code(&self) -> i32 {
+        use lumen_engine::OwnerAccountError;
+        match self {
+            Self::Owner(OwnerAccountError::InvalidArgument) => 0,
+            Self::Owner(OwnerAccountError::AlreadyExists) => 1,
+            Self::Owner(OwnerAccountError::AuthenticationFailed) => 2,
+            Self::Owner(OwnerAccountError::Storage) => 3,
+            Self::Owner(OwnerAccountError::Corrupt) => 4,
+            Self::Detail(_) => -1,
+        }
+    }
+
+    fn detail(&self) -> &str {
+        match self {
+            Self::Owner(_) => "",
+            Self::Detail(detail) => detail,
+        }
+    }
+}
 
 pub(crate) struct NativeWindowsShell {
     tray: Option<NativeWindowsTray>,
@@ -34,7 +61,7 @@ impl NativeWindowsShell {
         let model = WindowsAppModel::from_arguments(arguments)?;
         let initial = model.snapshot()?;
         let tray_endpoint = format!("{}:{}", initial.host_name, initial.control_port);
-        let locale = arguments.get("locale").unwrap_or("en").to_owned();
+        let locale = initial.locale;
         SHOW_REQUESTED.store(false, Ordering::Release);
         QUIT_REQUESTED.store(false, Ordering::Release);
         let (ready_sender, ready_receiver) = mpsc::sync_channel(1);
@@ -46,7 +73,7 @@ impl NativeWindowsShell {
             .recv_timeout(Duration::from_secs(10))
             .map_err(|_| "Windows UI did not become ready".to_owned())??;
 
-        let tray = NativeWindowsTray::start(tray_endpoint, locale)
+        let tray = NativeWindowsTray::start(tray_endpoint, locale.code().to_owned())
             .map_err(|error| eprintln!("Lumen Windows tray is unavailable: {error}"))
             .ok();
         Ok(Self {
@@ -85,6 +112,12 @@ fn run_ui(
             return;
         }
     };
+    if let Err(error) = slint::select_bundled_translation(initial.locale.code()) {
+        let _ = ready.send(Err(format!(
+            "Windows UI language could not be selected: {error}"
+        )));
+        return;
+    }
     let model = Rc::new(RefCell::new(model));
     apply_snapshot(&ui, &initial, None);
     wire_callbacks(&ui, Rc::clone(&model));
@@ -131,14 +164,18 @@ fn wire_callbacks(ui: &LumenWindowsApp, model: Rc<RefCell<WindowsAppModel>>) {
             password.as_str(),
             confirmation.as_str(),
         );
-        refresh(&weak, &create_model, result.err().map(owner_error_message));
+        refresh(
+            &weak,
+            &create_model,
+            result.err().map(WindowsUiError::Owner),
+        );
     });
 
     let weak = ui.as_weak();
     let login_model = Rc::clone(&model);
     ui.on_login(move |password| {
         let result = login_model.borrow_mut().login(password.as_str());
-        refresh(&weak, &login_model, result.err().map(owner_error_message));
+        refresh(&weak, &login_model, result.err().map(WindowsUiError::Owner));
     });
 
     let weak = ui.as_weak();
@@ -155,6 +192,34 @@ fn wire_callbacks(ui: &LumenWindowsApp, model: Rc<RefCell<WindowsAppModel>>) {
             .borrow_mut()
             .select(WindowsNavigation::from_index(index));
         refresh(&weak, &navigation_model, None);
+    });
+
+    let weak = ui.as_weak();
+    let locale_model = Rc::clone(&model);
+    ui.on_select_locale(move |index| {
+        let locale = WindowsApplicationLocale::from_index(index);
+        let result = locale_model
+            .borrow_mut()
+            .select_locale(locale)
+            .and_then(|change| {
+                match change {
+                    WindowsApplicationLocaleChange::Unchanged => {}
+                    WindowsApplicationLocaleChange::Changed => {
+                        slint::select_bundled_translation(locale.code())
+                            .map_err(|error| format!("language selection failed: {error}"))?;
+                    }
+                }
+                Ok(change)
+            });
+        match result {
+            Ok(change) => {
+                refresh(&weak, &locale_model, None);
+                if change == WindowsApplicationLocaleChange::Changed {
+                    let _ = lumen_host_send_command(LUMEN_HOST_COMMAND_RESTART);
+                }
+            }
+            Err(error) => refresh(&weak, &locale_model, Some(WindowsUiError::Detail(error))),
+        }
     });
 
     let weak = ui.as_weak();
@@ -177,21 +242,24 @@ fn wire_callbacks(ui: &LumenWindowsApp, model: Rc<RefCell<WindowsAppModel>>) {
 fn refresh(
     ui: &slint::Weak<LumenWindowsApp>,
     model: &Rc<RefCell<WindowsAppModel>>,
-    error: Option<&'static str>,
+    error: Option<WindowsUiError>,
 ) {
     let Some(ui) = ui.upgrade() else {
         return;
     };
     match model.borrow().snapshot() {
-        Ok(snapshot) => apply_snapshot(&ui, &snapshot, error),
-        Err(message) => ui.set_auth_error(message.into()),
+        Ok(snapshot) => apply_snapshot(&ui, &snapshot, error.as_ref()),
+        Err(message) => {
+            ui.set_auth_error_code(-1);
+            ui.set_auth_error_detail(message.into());
+        }
     }
 }
 
 fn apply_snapshot(
     ui: &LumenWindowsApp,
     snapshot: &WindowsAppSnapshot,
-    error: Option<&'static str>,
+    error: Option<&WindowsUiError>,
 ) {
     let (auth_mode, owner_name) = match &snapshot.owner_access {
         WindowsOwnerAccessState::SetupRequired => (0, ""),
@@ -208,7 +276,8 @@ fn apply_snapshot(
     };
     ui.set_auth_mode(auth_mode);
     ui.set_owner_name(owner_name.into());
-    ui.set_auth_error(error.unwrap_or_default().into());
+    ui.set_auth_error_code(error.map_or(-1, WindowsUiError::code));
+    ui.set_auth_error_detail(error.map_or("", WindowsUiError::detail).into());
     ui.set_navigation(snapshot.navigation.index());
     ui.set_host_name(snapshot.host_name.as_str().into());
     ui.set_application_count(snapshot.applications.len() as i32);
@@ -221,15 +290,5 @@ fn apply_snapshot(
     )));
     ui.set_control_port(i32::from(snapshot.control_port));
     ui.set_settings_revision(snapshot.settings_revision as i32);
-}
-
-fn owner_error_message(error: lumen_engine::OwnerAccountError) -> &'static str {
-    use lumen_engine::OwnerAccountError;
-    match error {
-        OwnerAccountError::InvalidArgument => "Check the account fields and password confirmation.",
-        OwnerAccountError::AlreadyExists => "An owner account already exists.",
-        OwnerAccountError::AuthenticationFailed => "Authentication failure.",
-        OwnerAccountError::Storage => "The owner account could not be saved.",
-        OwnerAccountError::Corrupt => "The owner account data is damaged.",
-    }
+    ui.set_locale_index(snapshot.locale.index());
 }

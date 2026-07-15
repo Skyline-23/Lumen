@@ -1,3 +1,4 @@
+import LumenAppArchitecture
 import LumenMacBridge
 import SwiftUI
 
@@ -184,7 +185,13 @@ struct LumenSettingsView: View {
             }
             Section(LumenCopy.Settings.host) {
                 TextField(LumenCopy.Settings.hostName, text: $draft.hostName)
-                Picker(LumenCopy.Settings.locale, selection: $draft.locale) {
+                Picker(
+                    LumenCopy.Settings.locale,
+                    selection: Binding(
+                        get: { LumenApplicationLocale.resolve(draft.locale).rawValue },
+                        set: { draft.locale = $0 }
+                    )
+                ) {
                     ForEach(LumenCopy.Settings.locales, id: \.code) { locale in
                         Text(locale.title).tag(locale.code)
                     }

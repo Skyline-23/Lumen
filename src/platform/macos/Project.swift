@@ -77,6 +77,11 @@ let nativeAssetsScript = TargetScript.post(
 
 let project = Project(
     name: "Lumen",
+    options: .options(
+        defaultKnownRegions: ["en", "ko", "ja"],
+        developmentRegion: "en",
+        disableSynthesizedResourceAccessors: true
+    ),
     settings: .settings(base: baseSettings),
     targets: [
         .target(
@@ -281,6 +286,7 @@ let project = Project(
                 "Projects/LumenApp/Sources/**/*.swift"
             ],
             resources: [
+                "Projects/LumenApp/Resources/**",
                 .folderReference(path: "../../../lumen.icon"),
                 "../../../icon.svg",
                 "../../../LICENSE",

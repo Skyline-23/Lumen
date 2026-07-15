@@ -1,0 +1,278 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: Lumen\n"
+"POT-Creation-Date: 2026-07-15 00:00+0000\n"
+"PO-Revision-Date: 2026-07-15 00:00+0000\n"
+"Language-Team: Korean\n"
+"MIME-Version: 1.0\n"
+"Language: ko\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+msgid "About"
+msgstr "정보"
+
+msgid "About Lumen"
+msgstr "Lumen 정보"
+
+msgid "Add a desktop or application entry for remote clients."
+msgstr "원격 클라이언트가 실행할 데스크톱 또는 앱을 추가하세요."
+
+msgid "Add application"
+msgstr "앱 추가"
+
+msgid "Advanced"
+msgstr "고급"
+
+msgid "Applications"
+msgstr "애플리케이션"
+
+msgid "Audio"
+msgstr "오디오"
+
+msgid "Base port"
+msgstr "기본 포트"
+
+msgid "Choose what remote clients can launch"
+msgstr "원격 클라이언트가 실행할 항목을 선택하세요"
+
+msgid "Codec, latency, quality, and stream display behavior"
+msgstr "코덱, 지연 시간, 품질 및 스트림 디스플레이 동작"
+
+msgid "Commands available to connected clients."
+msgstr "연결된 클라이언트에서 사용할 수 있는 명령입니다."
+
+msgid "Computer audio capture and device selection"
+msgstr "컴퓨터 오디오 캡처 및 기기 선택"
+
+msgid "Computer identity, discovery, language, and logging"
+msgstr "컴퓨터 정보, 검색, 언어 및 로그"
+
+msgid "Computer name"
+msgstr "컴퓨터 이름"
+
+msgid "Configure commands that run before a streamed application starts."
+msgstr "스트리밍 애플리케이션 시작 전에 실행할 명령을 구성합니다."
+
+msgid "Confirm password"
+msgstr "암호 확인"
+
+msgid "Control port"
+msgstr "제어 포트"
+
+msgid "Create account"
+msgstr "계정 생성"
+
+msgid "Create the owner account"
+msgstr "소유자 계정 생성"
+
+msgid "Credentials never leave this computer in plaintext."
+msgstr "인증 정보는 평문으로 이 컴퓨터를 벗어나지 않습니다."
+
+msgid "Current stream"
+msgstr "현재 스트림"
+
+msgid "Diagnostics"
+msgstr "진단"
+
+msgid "Discoverable on the local network"
+msgstr "로컬 네트워크에서 검색 허용"
+
+msgid "Discovery, remote access, encryption, and recovery"
+msgstr "검색, 원격 접속, 암호화 및 복구"
+
+msgid "Display capture"
+msgstr "디스플레이 캡처"
+
+msgid "Force Stop Stream"
+msgstr "스트림 강제 종료"
+
+msgid "Forgot password?"
+msgstr "암호를 잊으셨나요?"
+
+msgid "Game controller input"
+msgstr "게임 컨트롤러 입력"
+
+msgid "General"
+msgstr "일반"
+
+msgid "Host"
+msgstr "호스트"
+
+msgid "Host controls"
+msgstr "호스트 제어"
+
+msgid "Host readiness and active streaming state"
+msgstr "호스트 준비 상태 및 활성 스트리밍 상태"
+
+msgid "Host runtime"
+msgstr "호스트 런타임"
+
+msgid "Idle"
+msgstr "대기"
+
+msgid "Input"
+msgstr "입력"
+
+msgid "Input control"
+msgstr "입력 제어"
+
+msgid "Keyboard input"
+msgstr "키보드 입력"
+
+msgid "Keyboard, pointer, touch, and controller forwarding"
+msgstr "키보드, 포인터, 터치 및 컨트롤러 전달"
+
+msgid "Language"
+msgstr "언어"
+
+msgid "Lifecycle commands and host process automation"
+msgstr "수명 주기 명령 및 호스트 프로세스 자동화"
+
+msgid "Local credentials"
+msgstr "로컬 인증 정보"
+
+msgid "Lock now"
+msgstr "지금 잠그기"
+
+msgid "Managed by Windows"
+msgstr "Windows에서 관리"
+
+msgid "Mouse input"
+msgstr "마우스 입력"
+
+msgid "Native host controls"
+msgstr "네이티브 호스트 제어"
+
+msgid "Network"
+msgstr "네트워크"
+
+msgid "No applications"
+msgstr "앱 없음"
+
+msgid "Overview"
+msgstr "개요"
+
+msgid "Owner ID"
+msgstr "소유자 ID"
+
+msgid "Owner access, host locking, and system authentication"
+msgstr "소유자 접근, 호스트 잠금 및 시스템 인증"
+
+msgid "Owner account"
+msgstr "소유자 계정"
+
+msgid "Password"
+msgstr "암호"
+
+msgid "Password (12 characters minimum)"
+msgstr "암호(최소 12자)"
+
+msgid "Preparation commands"
+msgstr "준비 명령"
+
+msgid "Product and third-party attribution"
+msgstr "제품 및 서드파티 고지"
+
+msgid "Quit"
+msgstr "종료"
+
+msgid "Quit Lumen"
+msgstr "Lumen 종료"
+
+msgid "Reload applications"
+msgstr "앱 다시 불러오기"
+
+msgid "Remote device access"
+msgstr "원격 기기 접근"
+
+msgid "Restart host"
+msgstr "호스트 재시작"
+
+msgid "Revision {}"
+msgstr "리비전 {}"
+
+msgid "Running"
+msgstr "실행 중"
+
+msgid "Runtime"
+msgstr "런타임"
+
+msgid "Runtime state and troubleshooting information"
+msgstr "런타임 상태 및 문제 해결 정보"
+
+msgid "SETTINGS"
+msgstr "설정"
+
+msgid "Security"
+msgstr "보안"
+
+msgid "Self-hosted remote desktop streaming"
+msgstr "자체 호스팅 원격 데스크톱 스트리밍"
+
+msgid "Server commands"
+msgstr "서버 명령"
+
+msgid "Set up one owner account. Lumen keeps\nstreaming, applications, and enrolled devices\nunder your control."
+msgstr "소유자 계정 하나를 설정하세요.\n스트리밍, 애플리케이션, 등록된 기기를\nLumen에서 직접 관리할 수 있습니다."
+
+msgid "Sign in"
+msgstr "로그인"
+
+msgid "Sign in to manage this host. Streaming services continue independently."
+msgstr "이 호스트를 관리하려면 로그인하세요. 스트리밍 서비스는 별도로 계속 실행됩니다."
+
+msgid "Signed in as"
+msgstr "로그인 계정"
+
+msgid "Slint"
+msgstr "Slint"
+
+msgid "Stream computer audio"
+msgstr "컴퓨터 오디오 스트리밍"
+
+msgid "Streaming"
+msgstr "스트리밍"
+
+msgid "System access"
+msgstr "시스템 접근"
+
+msgid "System authentication is not enabled."
+msgstr "시스템 인증이 활성화되지 않았습니다."
+
+msgid "The password is stored only as an Argon2id hash on this computer."
+msgstr "암호는 이 컴퓨터에 Argon2id 해시로만 저장됩니다."
+
+msgid "Third-party license texts are installed with the application."
+msgstr "서드파티 라이선스 문서는 애플리케이션과 함께 설치됩니다."
+
+msgid "This account controls this host, enrolled devices, and remote settings."
+msgstr "이 계정으로 호스트, 등록된 기기 및 원격 설정을 관리합니다."
+
+msgid "UPnP port mapping"
+msgstr "UPnP 포트 매핑"
+
+msgid "Unlock Lumen"
+msgstr "Lumen 잠금 해제"
+
+msgid "Unlock with Windows Hello"
+msgstr "Windows Hello로 잠금 해제"
+
+msgid "Your computer,\nready anywhere."
+msgstr "내 컴퓨터를,\n어디서든 그대로."
+
+msgid "Check the account fields and password confirmation."
+msgstr "계정 입력 내용과 비밀번호 확인을 확인하세요."
+
+msgid "An owner account already exists."
+msgstr "소유자 계정이 이미 존재합니다."
+
+msgid "Authentication failure."
+msgstr "인증에 실패했습니다."
+
+msgid "The owner account could not be saved."
+msgstr "소유자 계정을 저장하지 못했습니다."
+
+msgid "The owner account data is damaged."
+msgstr "소유자 계정 데이터가 손상되었습니다."

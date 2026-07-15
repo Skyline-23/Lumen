@@ -10,6 +10,10 @@ struct LumenRuntimeWarning: Identifiable, Equatable {
     let message: String
 
     var id: Int { code }
+
+    var localizedMessage: String {
+        LumenCopy.Diagnostics.runtimeWarningMessage(code: code, fallback: message)
+    }
 }
 
 struct LumenRuntimeWarningBanner: View {
@@ -20,7 +24,7 @@ struct LumenRuntimeWarningBanner: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(LumenCopy.Diagnostics.runtimeWarning)
                     .font(.caption.weight(.semibold))
-                Text(warning.message)
+                Text(warning.localizedMessage)
                     .font(.caption)
                     .textSelection(.enabled)
             }
