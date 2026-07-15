@@ -131,6 +131,100 @@ struct LumenPrivateDisplayControlTests {
         }
         #expect(invoker.calls == [.init(displayID: 81, enabled: false)])
     }
+
+    @Test("Pre-mutation guard failure causes zero display transactions")
+    func preMutationFailureDoesNotRestore() throws {
+        let controller = FakePhysicalDisplayController()
+        let restorer = LumenDisplayDisconnectWatchdogRestorer(controller: controller)
+        let authorization = fixtureAuthorization()
+
+        let receipt = try restorer.restoreIfAuthorized(
+            authorization: authorization,
+            marker: nil,
+            trigger: .restoreRequested
+        )
+
+        #expect(receipt == nil)
+        #expect(controller.calls.isEmpty)
+    }
+
+    @Test("Forged generation and nonce cannot authorize restoration")
+    func mismatchedAuthorizationDoesNotRestore() throws {
+        let controller = FakePhysicalDisplayController()
+        let restorer = LumenDisplayDisconnectWatchdogRestorer(controller: controller)
+        let authorization = fixtureAuthorization()
+        let forgedMarkers = [
+            fixtureMarker(nonce: "forged"),
+            fixtureMarker(generationID: "other-generation"),
+            fixtureMarker(displayID: 404),
+        ]
+
+        for marker in forgedMarkers {
+            let receipt = try restorer.restoreIfAuthorized(
+                authorization: authorization,
+                marker: marker,
+                trigger: .parentExited
+            )
+            #expect(receipt == nil)
+        }
+        #expect(controller.calls.isEmpty)
+    }
+
+    @Test("Parent crash after durable disable attempt restores once")
+    func parentCrashRestoresAttemptedMutation() throws {
+        let controller = FakePhysicalDisplayController()
+        let restorer = LumenDisplayDisconnectWatchdogRestorer(controller: controller)
+        let authorization = fixtureAuthorization()
+
+        let receipt = try restorer.restoreIfAuthorized(
+            authorization: authorization,
+            marker: fixtureMarker(phase: .disableAttempted),
+            trigger: .parentExited
+        )
+
+        #expect(receipt?.enabled == true)
+        #expect(receipt?.displayID == authorization.displayID)
+        #expect(controller.calls == [.init(displayID: authorization.displayID, enabled: true)])
+    }
+
+    @Test("Interruption after successful disable restores once")
+    func requestedRestoreHandlesSuccessfulMutation() throws {
+        let controller = FakePhysicalDisplayController()
+        let restorer = LumenDisplayDisconnectWatchdogRestorer(controller: controller)
+        let authorization = fixtureAuthorization()
+
+        let receipt = try restorer.restoreIfAuthorized(
+            authorization: authorization,
+            marker: fixtureMarker(phase: .disableSucceeded),
+            trigger: .restoreRequested
+        )
+
+        #expect(receipt?.enabled == true)
+        #expect(controller.calls == [.init(displayID: authorization.displayID, enabled: true)])
+    }
+
+    private func fixtureAuthorization() -> LumenDisplayDisconnectAuthorization {
+        LumenDisplayDisconnectAuthorization(
+            parentProcessID: 123,
+            displayID: 81,
+            generationID: "generation",
+            nonce: "0123456789abcdef0123456789abcdef"
+        )
+    }
+
+    private func fixtureMarker(
+        displayID: CGDirectDisplayID = 81,
+        generationID: String = "generation",
+        nonce: String = "0123456789abcdef0123456789abcdef",
+        phase: LumenDisplayDisconnectMutationPhase = .disableAttempted
+    ) -> LumenDisplayDisconnectMutationMarker {
+        LumenDisplayDisconnectMutationMarker(
+            displayID: displayID,
+            generationID: generationID,
+            nonce: nonce,
+            phase: phase
+        )
+    }
 }
 
 private final class FakeDisplayEnabledSymbolResolver: LumenDisplayEnabledSymbolResolving {
@@ -169,5 +263,34 @@ private final class FakeDisplayEnabledInvoker: LumenDisplayEnabledInvoking {
     func setEnabled(_ enabled: Bool, for displayID: CGDirectDisplayID) -> Int32 {
         calls.append(Call(displayID: displayID, enabled: enabled))
         return status
+    }
+}
+
+private final class FakePhysicalDisplayController: LumenPhysicalDisplayControlling {
+    struct Call: Equatable {
+        let displayID: CGDirectDisplayID
+        let enabled: Bool
+    }
+
+    private(set) var calls: [Call] = []
+
+    func probe() -> LumenDisplayEnabledSymbolProbe {
+        LumenDisplayEnabledSymbolProbe(
+            source: .skyLightSLS,
+            symbolName: "SLSConfigureDisplayEnabled"
+        )
+    }
+
+    func setEnabled(
+        _ enabled: Bool,
+        for displayID: CGDirectDisplayID
+    ) -> LumenPhysicalDisplayControlReceipt {
+        calls.append(.init(displayID: displayID, enabled: enabled))
+        return LumenPhysicalDisplayControlReceipt(
+            displayID: displayID,
+            enabled: enabled,
+            source: .skyLightSLS,
+            symbolName: "SLSConfigureDisplayEnabled"
+        )
     }
 }

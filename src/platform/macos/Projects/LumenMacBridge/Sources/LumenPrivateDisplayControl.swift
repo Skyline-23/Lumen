@@ -58,6 +58,96 @@ public struct LumenDisplayEnabledSymbolProbe: Equatable, Sendable {
     public let symbolName: String
 }
 
+public protocol LumenPhysicalDisplayControlling {
+    func probe() throws -> LumenDisplayEnabledSymbolProbe
+    func setEnabled(
+        _ enabled: Bool,
+        for displayID: CGDirectDisplayID
+    ) throws -> LumenPhysicalDisplayControlReceipt
+}
+
+public struct LumenDisplayDisconnectAuthorization: Codable, Equatable, Sendable {
+    public let parentProcessID: Int32
+    public let displayID: CGDirectDisplayID
+    public let generationID: String
+    public let nonce: String
+
+    public init(
+        parentProcessID: Int32,
+        displayID: CGDirectDisplayID,
+        generationID: String,
+        nonce: String
+    ) {
+        self.parentProcessID = parentProcessID
+        self.displayID = displayID
+        self.generationID = generationID
+        self.nonce = nonce
+    }
+
+    public var isWellFormed: Bool {
+        parentProcessID > 0
+            && displayID != 0
+            && !generationID.isEmpty
+            && nonce.utf8.count >= 32
+    }
+}
+
+public enum LumenDisplayDisconnectMutationPhase: String, Codable, Equatable, Sendable {
+    case disableAttempted
+    case disableSucceeded
+}
+
+public struct LumenDisplayDisconnectMutationMarker: Codable, Equatable, Sendable {
+    public let displayID: CGDirectDisplayID
+    public let generationID: String
+    public let nonce: String
+    public let phase: LumenDisplayDisconnectMutationPhase
+
+    public init(
+        displayID: CGDirectDisplayID,
+        generationID: String,
+        nonce: String,
+        phase: LumenDisplayDisconnectMutationPhase
+    ) {
+        self.displayID = displayID
+        self.generationID = generationID
+        self.nonce = nonce
+        self.phase = phase
+    }
+
+    public func authorizes(_ authorization: LumenDisplayDisconnectAuthorization) -> Bool {
+        authorization.isWellFormed
+            && displayID == authorization.displayID
+            && generationID == authorization.generationID
+            && nonce == authorization.nonce
+    }
+}
+
+public enum LumenDisplayDisconnectWatchdogTrigger: String, Codable, Equatable, Sendable {
+    case restoreRequested
+    case parentExited
+    case deadlineExceeded
+}
+
+public struct LumenDisplayDisconnectWatchdogRestorer {
+    private let controller: any LumenPhysicalDisplayControlling
+
+    public init(controller: any LumenPhysicalDisplayControlling) {
+        self.controller = controller
+    }
+
+    public func restoreIfAuthorized(
+        authorization: LumenDisplayDisconnectAuthorization,
+        marker: LumenDisplayDisconnectMutationMarker?,
+        trigger _: LumenDisplayDisconnectWatchdogTrigger
+    ) throws -> LumenPhysicalDisplayControlReceipt? {
+        guard let marker, marker.authorizes(authorization) else {
+            return nil
+        }
+        return try controller.setEnabled(true, for: authorization.displayID)
+    }
+}
+
 public enum LumenPhysicalDisplayControlCode: String, Equatable, Sendable {
     case privateSymbolUnavailable = "mac.display_disconnect.private_symbol_unavailable"
     case transactionRejected = "mac.display_disconnect.transaction_rejected"
@@ -79,7 +169,7 @@ public struct LumenPhysicalDisplayControlFailure: Error, Equatable, Sendable {
     }
 }
 
-public struct LumenPhysicalDisplayControlAdapter {
+public struct LumenPhysicalDisplayControlAdapter: LumenPhysicalDisplayControlling {
     private static let skyLightPath =
         "/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight"
     private static let coreDisplayPath =
