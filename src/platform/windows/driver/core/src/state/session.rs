@@ -1,6 +1,6 @@
 use crate::{
     CoreRequest, CoreState, CoreTransition, Status, ADAPTER_INITIALIZED, PENDING_READ_DEPTH,
-    STATE_ENCODER_ACTIVE, STATE_KEYFRAME_PENDING, STATE_MONITOR_ACTIVE,
+    STATE_ENCODER_ACTIVE, STATE_KEYFRAME_PENDING, STATE_MONITOR_ACTIVE, STATE_MONITOR_ORPHANED,
 };
 
 use super::finish;
@@ -18,15 +18,21 @@ pub(super) fn claim_owner(mut state: CoreState, request: CoreRequest) -> CoreTra
 }
 
 pub(super) fn released_state(state: CoreState) -> CoreState {
-    CoreState {
+    let monitor_active = state.flags & STATE_MONITOR_ACTIVE != 0;
+    let mut released = CoreState {
         generation: state.generation.checked_add(1).unwrap_or(1),
+        monitor_id: if monitor_active { state.monitor_id } else { 0 },
         render_adapter_luid: state.render_adapter_luid,
         iddcx_version: state.iddcx_version,
         os_feature_flags: state.os_feature_flags,
         adapter_flags: state.adapter_flags,
         backend_capability_mask: state.backend_capability_mask,
         ..CoreState::initial()
+    };
+    if monitor_active {
+        released.flags = STATE_MONITOR_ACTIVE | STATE_MONITOR_ORPHANED;
     }
+    released
 }
 
 pub(super) fn create_monitor(
@@ -46,6 +52,7 @@ pub(super) fn create_monitor(
         Status::InvalidArgument
     } else {
         state.monitor_id = monitor_id;
+        state.flags &= !STATE_MONITOR_ORPHANED;
         state.flags |= STATE_MONITOR_ACTIVE;
         Status::Ok
     };
@@ -64,19 +71,55 @@ pub(super) fn remove_monitor(
 ) -> CoreTransition {
     let status = if state.flags & STATE_ENCODER_ACTIVE != 0 {
         Status::InvalidState
+    } else if state.flags & STATE_MONITOR_ORPHANED != 0 {
+        Status::AccessDenied
     } else if state.flags & STATE_MONITOR_ACTIVE == 0 || state.monitor_id != monitor_id {
         Status::NotReady
     } else {
         state.monitor_id = 0;
-        state.flags &= !(STATE_MONITOR_ACTIVE | STATE_KEYFRAME_PENDING);
+        state.flags &= !(STATE_MONITOR_ACTIVE | STATE_MONITOR_ORPHANED | STATE_KEYFRAME_PENDING);
         Status::Ok
     };
     finish(state, request.header.operation, status, [0; 2])
 }
 
+pub(super) fn query_monitor(state: CoreState, request: CoreRequest) -> CoreTransition {
+    finish(
+        state,
+        request.header.operation,
+        Status::Ok,
+        [state.monitor_id, u64::from(state.flags)],
+    )
+}
+
+pub(super) fn adopt_monitor(
+    mut state: CoreState,
+    request: CoreRequest,
+    monitor_id: u64,
+) -> CoreTransition {
+    let status = if state.flags & STATE_MONITOR_ACTIVE == 0 {
+        Status::NotReady
+    } else if state.flags & STATE_MONITOR_ORPHANED == 0 {
+        Status::Busy
+    } else if monitor_id == 0 || state.monitor_id != monitor_id {
+        Status::InvalidArgument
+    } else {
+        state.flags &= !STATE_MONITOR_ORPHANED;
+        Status::Ok
+    };
+    finish(
+        state,
+        request.header.operation,
+        status,
+        [state.monitor_id, u64::from(state.flags)],
+    )
+}
+
 pub(super) fn start_encoder(mut state: CoreState, request: CoreRequest) -> CoreTransition {
     let status = if state.flags & STATE_MONITOR_ACTIVE == 0 {
         Status::NotReady
+    } else if state.flags & STATE_MONITOR_ORPHANED != 0 {
+        Status::AccessDenied
     } else if state.flags & STATE_ENCODER_ACTIVE != 0 {
         Status::Busy
     } else {

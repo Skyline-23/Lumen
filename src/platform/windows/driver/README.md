@@ -8,7 +8,7 @@ The selected adapter's retained D3D11/D3D12 probe devices and DXGI identity are 
 
 The Windows driver project must be built with a 26H1 WDK that declares `IddCxCheckOsFeatureSupport`, `IDARG_OUT_FEATURES_SUPPORTED`, and the IddCx 1.11 D3D12 feature flag. The resulting 1.11 driver still checks the runtime version before calling the feature API on downlevel Windows.
 
-The device interface is restricted to LocalSystem by `D:P(A;;GA;;;SY)`. Lumen's Windows service already runs as LocalSystem. File creation claims the sole owner; a second file object receives busy. Access-unit and event requests use overlapped direct I/O, admit at most four pending reads of each type, and cap payloads at 4 MiB and 256 bytes. The driver does not contain policy, authentication, networking, packetization, or unbounded queues.
+The device interface is restricted to LocalSystem by `D:P(A;;GA;;;SY)`. Lumen's Windows service already runs as LocalSystem. File creation claims the sole owner; a second file object receives busy. File cleanup cancels pending I/O and releases ownership but deliberately preserves an active monitor as an orphan. A subsequent trusted owner must query and adopt that exact monitor before the host restores and verifies the durable physical topology and explicitly requests monitor removal. Device or adapter removal may still force monitor departure. Access-unit and event requests use overlapped direct I/O, admit at most four pending reads of each type, and cap payloads at 4 MiB and 256 bytes. The driver does not contain policy, authentication, networking, packetization, or unbounded queues.
 
 Run the platform-neutral ABI and state-machine checks from macOS or Windows:
 

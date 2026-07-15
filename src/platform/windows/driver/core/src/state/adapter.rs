@@ -3,7 +3,8 @@ use crate::{
     ADAPTER_FEATURES_PROBED, ADAPTER_INITIALIZED, ADAPTER_PREPARED, ADAPTER_REMOVED,
     BACKEND_CAPABILITY_D3D11, BACKEND_CAPABILITY_D3D12, BACKEND_D3D11, BACKEND_D3D12,
     EVENT_ADAPTER_REMOVED, IDDCX_FEATURE_D3D12, IDDCX_VERSION_1_11, STATE_ENCODER_ACTIVE,
-    STATE_KEYFRAME_PENDING, STATE_MONITOR_ACTIVE, SURFACE_D3D11_TEXTURE2D, SURFACE_D3D12_RESOURCE,
+    STATE_KEYFRAME_PENDING, STATE_MONITOR_ACTIVE, STATE_MONITOR_ORPHANED, SURFACE_D3D11_TEXTURE2D,
+    SURFACE_D3D12_RESOURCE,
 };
 
 use super::finish;
@@ -198,7 +199,10 @@ fn capability_count(state: &CoreState) -> u32 {
 fn clear_adapter_dependents(state: &mut CoreState) {
     state.render_adapter_luid = 0;
     state.monitor_id = 0;
-    state.flags &= !(STATE_MONITOR_ACTIVE | STATE_ENCODER_ACTIVE | STATE_KEYFRAME_PENDING);
+    state.flags &= !(STATE_MONITOR_ACTIVE
+        | STATE_MONITOR_ORPHANED
+        | STATE_ENCODER_ACTIVE
+        | STATE_KEYFRAME_PENDING);
     state.adapter_flags = 0;
     state.backend_capability_mask = 0;
     state.pending_access_unit_reads = [0; crate::PENDING_READ_DEPTH];

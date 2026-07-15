@@ -650,6 +650,22 @@ fn command_privilege_is_host_capability_driven() {
 }
 
 #[test]
+fn windows_does_not_advertise_a_physical_output_selector() {
+    // Given: platform-specific settings capabilities.
+    let macos = SettingsCapabilities::for_platform(SettingsHostPlatform::Macos);
+    let windows = SettingsCapabilities::for_platform(SettingsHostPlatform::Windows);
+
+    // When: output-selection availability is compared.
+    let macos_output = &macos.fields["streaming.outputSelector"];
+    let windows_output = &windows.fields["streaming.outputSelector"];
+
+    // Then: non-Windows keeps the field while Windows cannot advertise it as policy.
+    assert!(macos_output.available);
+    assert!(!windows_output.available);
+    assert_eq!(windows_output.allowed_values, ["automatic"]);
+}
+
+#[test]
 fn factory_reset_removes_durable_settings_and_request_history() {
     let root = TempDir::new().unwrap();
     let path = root.path().join("settings.json");

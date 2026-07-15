@@ -89,12 +89,12 @@ fn stale_session_cancellation_cannot_remove_reused_request_id() {
         released.state,
         CoreRequest::new(Operation::ClaimOwner, OWNER, released.state.generation),
     );
-    let mut create = CoreRequest::new(Operation::CreateMonitor, OWNER, claimed.state.generation);
-    create.arguments = [8, (1920 << 32) | 1080, 120_000, 0, 0];
-    let created = lumen_driver_core_dispatch(claimed.state, create);
+    let mut adopt = CoreRequest::new(Operation::AdoptMonitor, OWNER, claimed.state.generation);
+    adopt.arguments[0] = 7;
+    let adopted = lumen_driver_core_dispatch(claimed.state, adopt);
     let started = lumen_driver_core_dispatch(
-        created.state,
-        CoreRequest::new(Operation::StartEncoder, OWNER, created.state.generation),
+        adopted.state,
+        CoreRequest::new(Operation::StartEncoder, OWNER, adopted.state.generation),
     );
     let mut dequeue = CoreRequest::new(
         Operation::DequeueAccessUnit,

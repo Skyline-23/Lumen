@@ -45,6 +45,15 @@ impl SettingsCapabilities {
         for key in ["commands.prep", "commands.state", "commands.server"] {
             set_allowed_values(&mut fields, key, command_privileges);
         }
+        if platform == SettingsHostPlatform::Windows {
+            if let Some(output_selector) = fields.get_mut("streaming.outputSelector") {
+                output_selector.available = false;
+                output_selector.unavailable_reason = Some(
+                    "Windows streams always capture the mandatory first-party virtual display"
+                        .to_owned(),
+                );
+            }
+        }
         Self {
             host_platform: platform,
             fields,

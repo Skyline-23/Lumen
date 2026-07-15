@@ -173,3 +173,62 @@ fn malformed_or_inconsistent_recovery_paths_fail_closed() {
     assert!(malformed_result.is_err());
     assert!(inconsistent_result.is_err());
 }
+
+#[test]
+fn pre_isolation_hotplug_refreshes_only_the_physical_snapshot() {
+    // Given: two physical paths beside a separately identified IDD path.
+    let physical = WindowsDisplayConfigSnapshot {
+        paths: vec![record(1, 0), record(2, 2560)],
+    };
+    let mut virtual_path = record(90, 0);
+    virtual_path.target_adapter = AdapterLuid {
+        high_part: 9,
+        low_part: 9,
+    };
+    let virtual_identity = WindowsPathIdentity {
+        adapter: virtual_path.target_adapter,
+        target_id: virtual_path.target_id,
+    };
+    let active = WindowsDisplayConfigSnapshot {
+        paths: physical
+            .paths
+            .iter()
+            .cloned()
+            .chain(std::iter::once(virtual_path))
+            .collect(),
+    };
+
+    // When: the first-frame barrier refreshes the physical recovery snapshot.
+    let refreshed = active.physical_without(virtual_identity).unwrap();
+
+    // Then: every physical path is retained and the IDD path is excluded.
+    assert_eq!(refreshed, physical);
+}
+
+#[test]
+fn topology_notification_during_isolation_fails_closed() {
+    // Given: an exact virtual-only topology and a later physical hotplug notification.
+    let mut virtual_path = record(90, 0);
+    virtual_path.target_adapter = AdapterLuid {
+        high_part: 9,
+        low_part: 9,
+    };
+    let identity = WindowsPathIdentity {
+        adapter: virtual_path.target_adapter,
+        target_id: virtual_path.target_id,
+    };
+    let isolated = WindowsDisplayConfigSnapshot {
+        paths: vec![virtual_path.clone()],
+    };
+    let changed = WindowsDisplayConfigSnapshot {
+        paths: vec![virtual_path, record(7, 0)],
+    };
+
+    // When: the isolation guard compares the notified topology.
+    let unchanged = isolated.matches_exact_isolation(identity, &isolated);
+    let hotplugged = isolated.matches_exact_isolation(identity, &changed);
+
+    // Then: only the unchanged one-path topology remains admissible.
+    assert!(unchanged);
+    assert!(!hotplugged);
+}

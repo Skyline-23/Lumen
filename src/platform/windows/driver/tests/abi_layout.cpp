@@ -11,8 +11,13 @@ static_assert(offsetof(LumenDriverCoreResponse, generation) == 24);
 static_assert(offsetof(LumenDriverCoreState, pending_access_unit_reads) == 24);
 static_assert(offsetof(LumenDriverCoreState, pending_event_reads) == 56);
 static_assert(LUMEN_IOCTL_QUERY_CAPABILITIES == 0x00226400u);
+static_assert(LUMEN_IOCTL_CREATE_MONITOR == 0x0022E40Cu);
+static_assert(LUMEN_IOCTL_REMOVE_MONITOR == 0x0022E410u);
 static_assert(LUMEN_IOCTL_DEQUEUE_ACCESS_UNIT == 0x0022E422u);
 static_assert(LUMEN_IOCTL_DEQUEUE_EVENT == 0x0022E426u);
+static_assert(LUMEN_IOCTL_QUERY_HEALTH == 0x00226428u);
+static_assert(LUMEN_IOCTL_QUERY_MONITOR == 0x00226430u);
+static_assert(LUMEN_IOCTL_ADOPT_MONITOR == 0x0022E434u);
 
 int main() {
   std::cout << "{\"abi_layout\":\"ok\",\"request_size\":"

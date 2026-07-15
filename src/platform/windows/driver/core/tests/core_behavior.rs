@@ -1,6 +1,7 @@
 use lumen_windows_driver_core::{
     lumen_driver_core_dispatch, lumen_driver_core_initial_state, CoreRequest, Operation, Status,
     ADAPTER_DEVICE_D3D11, MAX_ACCESS_UNIT_BYTES, MAX_EVENT_BYTES, PENDING_READ_DEPTH,
+    STATE_MONITOR_ACTIVE, STATE_MONITOR_ORPHANED,
 };
 
 const OWNER: u64 = 0xA11C_E001;
@@ -200,11 +201,13 @@ fn release_owner_resets_pending_reads_and_advances_generation() {
         CoreRequest::new(Operation::ReleaseOwner, OWNER, generation),
     );
 
-    // Then: both read classes and all lifecycle state reset under one new generation.
+    // Then: reads and ownership reset while the monitor remains orphaned for recovery.
     assert_eq!(released.response.status, Status::Ok.raw());
     assert_eq!(released.response.generation, generation + 1);
     assert_eq!(released.state.owner_id, 0);
-    assert_eq!(released.state.monitor_id, 0);
+    assert_eq!(released.state.monitor_id, 7);
+    assert_ne!(released.state.flags & STATE_MONITOR_ACTIVE, 0);
+    assert_ne!(released.state.flags & STATE_MONITOR_ORPHANED, 0);
     assert_eq!(
         released.state.pending_access_unit_reads,
         [0; PENDING_READ_DEPTH]

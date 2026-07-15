@@ -1,6 +1,10 @@
 const DISPLAY: &str = include_str!("../src/platform/windows/native_display.rs");
 const INPUT: &str = include_str!("../src/platform/windows/native_input.rs");
 const TOPOLOGY: &str = include_str!("../src/platform/windows/native_display_topology.rs");
+const DRIVER_ABI: &str = include_str!("../src/platform/windows/driver_abi.rs");
+const DRIVER_HEADER: &str =
+    include_str!("../../../src/platform/windows/driver/include/lumen_driver_abi.h");
+const DRIVER_IO: &str = include_str!("../../../src/platform/windows/driver/shim/io.cpp");
 
 #[test]
 fn false_or_omitted_policy_has_no_success_without_idd_creation() {
@@ -90,5 +94,125 @@ fn startup_and_normal_cleanup_verify_restore_before_monitor_removal() {
 
     // Then: startup recovers first, while normal teardown restores before removal.
     assert!(constructor.contains("recover_persisted_topology"));
+    assert!(restore < remove);
+}
+
+#[test]
+fn host_uses_the_first_party_driver_abi_exactly() {
+    // Given: the host ABI module and the driver-owned public C header.
+    let rust_contract = [
+        "f04b8b5a",
+        "a603",
+        "4d32",
+        "ABI_REQUEST_SIZE: u32 = 80",
+        "IOCTL_QUERY_CAPABILITIES",
+        "IOCTL_CREATE_MONITOR",
+        "IOCTL_REMOVE_MONITOR",
+        "IOCTL_QUERY_HEALTH",
+        "IOCTL_QUERY_MONITOR",
+        "IOCTL_ADOPT_MONITOR",
+    ];
+    let header_contract = [
+        "f04b8b5a",
+        "a603",
+        "4d32",
+        "sizeof(LumenDriverCoreRequest) == 80",
+        "LUMEN_IOCTL_QUERY_CAPABILITIES",
+        "LUMEN_IOCTL_CREATE_MONITOR",
+        "LUMEN_IOCTL_REMOVE_MONITOR",
+        "LUMEN_IOCTL_QUERY_HEALTH",
+        "LUMEN_IOCTL_QUERY_MONITOR",
+        "LUMEN_IOCTL_ADOPT_MONITOR",
+    ];
+
+    // When: retired and first-party protocol markers are compared.
+    let exact = rust_contract
+        .iter()
+        .all(|marker| DRIVER_ABI.contains(marker))
+        && header_contract
+            .iter()
+            .all(|marker| DRIVER_HEADER.contains(marker));
+
+    // Then: only the first-party GUID, request shape, and IOCTL family remain.
+    assert!(exact);
+    assert!(!DISPLAY.contains("e5bcc234"));
+    assert!(!DISPLAY.contains("VirtualDisplayAddParameters"));
+    assert!(!DISPLAY.contains("IOCTL_ADD_VIRTUAL_DISPLAY"));
+}
+
+#[test]
+fn cleanup_never_removes_an_unverified_orphan_monitor() {
+    // Given: host and driver cleanup sources.
+    let display_drop = DISPLAY
+        .split("impl Drop for NativeWindowsDisplay")
+        .nth(1)
+        .expect("native display drop");
+    let file_cleanup = DRIVER_IO
+        .split("void LumenEvtFileCleanup")
+        .nth(1)
+        .expect("driver file cleanup")
+        .split("void LumenEvtIoDeviceControl")
+        .next()
+        .expect("bounded driver file cleanup");
+
+    // When: implicit cleanup paths are inspected.
+    let driver_removes = file_cleanup.contains("LumenRemoveMonitor");
+
+    // Then: handle loss preserves the orphan for the next recovery owner.
+    assert!(display_drop.contains("self.stop()"));
+    assert!(!DISPLAY.contains("impl Drop for ActiveDisplay"));
+    assert!(!driver_removes);
+    assert!(file_cleanup.contains("LumenDriverOperationReleaseOwner"));
+}
+
+#[test]
+fn hotplug_is_polled_before_and_after_isolation() {
+    // Given: the first-frame and already-isolated production paths.
+    let readiness = DISPLAY
+        .split("pub(super) fn first_frame_ready")
+        .nth(1)
+        .expect("first frame readiness");
+
+    // When: topology refresh and isolated validation calls are inspected.
+    let refresh = readiness
+        .find("refresh_physical_snapshot")
+        .expect("snapshot refresh");
+    let isolate = readiness
+        .find("apply_topology(&isolated)")
+        .expect("isolation apply");
+
+    // Then: refresh precedes isolation and later frames validate exact isolation.
+    assert!(refresh < isolate);
+    assert!(readiness.contains("validate_isolated_topology"));
+}
+
+#[test]
+fn create_and_configuration_failures_cross_the_recovery_barrier() {
+    // Given: production monitor creation, configuration, and cleanup paths.
+    let start = DISPLAY
+        .split("pub(super) fn start")
+        .nth(1)
+        .expect("display start")
+        .split("pub(super) fn current_output_name")
+        .next()
+        .expect("bounded display start");
+    let cleanup = DISPLAY
+        .split("fn cleanup_display")
+        .nth(1)
+        .expect("cleanup barrier")
+        .split("fn wait_for_new_display")
+        .next()
+        .expect("bounded cleanup barrier");
+
+    // When: failure handling and explicit monitor removal are ordered.
+    let restore = cleanup
+        .find("display.restore_and_verify")
+        .expect("cleanup restore");
+    let remove = cleanup.find("display.remove()").expect("cleanup removal");
+
+    // Then: creation recovery and configuration cleanup restore before any removal.
+    assert!(start.contains("recover_persisted_topology"));
+    assert!(start.contains("cleanup_display"));
+    assert!(!start.contains("remove_monitor"));
     assert!(restore < remove);
 }

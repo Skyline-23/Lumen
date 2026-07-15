@@ -6,7 +6,7 @@
 
 #define LUMEN_DRIVER_ABI_MAGIC 0x4C554D4Eu
 #define LUMEN_DRIVER_ABI_MAJOR 1u
-#define LUMEN_DRIVER_ABI_MINOR 2u
+#define LUMEN_DRIVER_ABI_MINOR 3u
 #define LUMEN_METHOD_BUFFERED 0u
 #define LUMEN_METHOD_OUT_DIRECT 2u
 #define LUMEN_FILE_READ_ACCESS 1u
@@ -21,6 +21,10 @@
 #define LUMEN_IDDCX_FEATURE_D3D12 (1u << 0u)
 #define LUMEN_ADAPTER_DEVICE_D3D11 (1u << 0u)
 #define LUMEN_ADAPTER_DEVICE_D3D12 (1u << 1u)
+#define LUMEN_STATE_MONITOR_ACTIVE (1u << 0u)
+#define LUMEN_STATE_ENCODER_ACTIVE (1u << 1u)
+#define LUMEN_STATE_KEYFRAME_PENDING (1u << 2u)
+#define LUMEN_STATE_MONITOR_ORPHANED (1u << 3u)
 #define LUMEN_DEVICE_INTERFACE_GUID_INIT \
   {0xf04b8b5a, 0xa603, 0x4d32, {0x96, 0xf8, 0x5f, 0x8c, 0x21, 0x08, 0xa1, 0xd0}}
 
@@ -48,6 +52,10 @@
   LUMEN_CTL_CODE(0x90Au, LUMEN_METHOD_BUFFERED, LUMEN_FILE_READ_ACCESS)
 #define LUMEN_IOCTL_QUERY_BACKEND_CAPABILITY \
   LUMEN_CTL_CODE(0x90Bu, LUMEN_METHOD_BUFFERED, LUMEN_FILE_READ_ACCESS)
+#define LUMEN_IOCTL_QUERY_MONITOR \
+  LUMEN_CTL_CODE(0x90Cu, LUMEN_METHOD_BUFFERED, LUMEN_FILE_READ_ACCESS)
+#define LUMEN_IOCTL_ADOPT_MONITOR \
+  LUMEN_CTL_CODE(0x90Du, LUMEN_METHOD_BUFFERED, LUMEN_FILE_READ_ACCESS | LUMEN_FILE_WRITE_ACCESS)
 
 typedef enum LumenDriverOperation {
   LumenDriverOperationQueryCapabilities = 1,
@@ -67,7 +75,9 @@ typedef enum LumenDriverOperation {
   LumenDriverOperationPrepareAdapter = 15,
   LumenDriverOperationCompleteAdapterInitialization = 16,
   LumenDriverOperationValidateAndAbandonSwapchain = 17,
-  LumenDriverOperationAdapterRemoved = 19
+  LumenDriverOperationQueryMonitor = 18,
+  LumenDriverOperationAdapterRemoved = 19,
+  LumenDriverOperationAdoptMonitor = 20
 } LumenDriverOperation;
 
 typedef enum LumenDriverStatus {

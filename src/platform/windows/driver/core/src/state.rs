@@ -50,6 +50,8 @@ pub(crate) fn dispatch(mut state: CoreState, request: CoreRequest) -> CoreTransi
         Operation::QueryHealth => health(state, request),
         Operation::CreateMonitor
         | Operation::RemoveMonitor
+        | Operation::QueryMonitor
+        | Operation::AdoptMonitor
         | Operation::StartEncoder
         | Operation::StopEncoder
         | Operation::RequestKeyframe
@@ -64,6 +66,8 @@ pub(crate) fn dispatch(mut state: CoreState, request: CoreRequest) -> CoreTransi
                     session::create_monitor(state, request, argument0, argument1, argument2)
                 }
                 Operation::RemoveMonitor => session::remove_monitor(state, request, argument0),
+                Operation::QueryMonitor => session::query_monitor(state, request),
+                Operation::AdoptMonitor => session::adopt_monitor(state, request, argument0),
                 Operation::StartEncoder => session::start_encoder(state, request),
                 Operation::StopEncoder => session::stop_encoder(state, request),
                 Operation::RequestKeyframe => session::request_keyframe(state, request),

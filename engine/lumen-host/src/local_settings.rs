@@ -40,7 +40,14 @@ pub(super) fn from_arguments(
     settings.general.discovery = boolean(arguments, "enable_discovery")?;
     settings.general.notify_pre_releases = boolean(arguments, "notify_pre_releases")?;
     settings.streaming.adapter_selector = selector(arguments, "adapter_name", "automatic");
-    settings.streaming.output_selector = selector(arguments, "output_name", "automatic");
+    #[cfg(not(windows))]
+    {
+        settings.streaming.output_selector = selector(arguments, "output_name", "automatic");
+    }
+    #[cfg(windows)]
+    {
+        settings.streaming.output_selector = "automatic".to_owned();
+    }
     settings.streaming.fallback_display_mode = text(arguments, "fallback_mode")?.to_owned();
     settings.audio.sink = selector(arguments, "audio_sink", "system-default");
     settings.audio.stream_audio = boolean(arguments, "stream_audio")?;

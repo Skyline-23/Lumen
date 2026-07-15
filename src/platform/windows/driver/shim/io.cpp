@@ -25,6 +25,10 @@ namespace {
         return LumenDriverOperationQueryHealth;
       case LUMEN_IOCTL_QUERY_BACKEND_CAPABILITY:
         return LumenDriverOperationQueryBackendCapability;
+      case LUMEN_IOCTL_QUERY_MONITOR:
+        return LumenDriverOperationQueryMonitor;
+      case LUMEN_IOCTL_ADOPT_MONITOR:
+        return LumenDriverOperationAdoptMonitor;
       default:
         return 0;
     }
@@ -241,12 +245,8 @@ void LumenEvtFileCleanup(WDFFILEOBJECT file_object) {
     cancel_pending_access_unit_reads(context);
   const NTSTATUS event_status =
     cancel_pending_reads(context, context->event_queue, 2);
-  if (!NT_SUCCESS(access_unit_status) || !NT_SUCCESS(event_status)) {
-    return;
-  }
-  if (context->monitor != nullptr) {
-    LumenRemoveMonitor(context);
-  }
+  UNREFERENCED_PARAMETER(access_unit_status);
+  UNREFERENCED_PARAMETER(event_status);
   const auto release = LumenRequest(LumenDriverOperationReleaseOwner, owner_id, context->core_state.generation);
   context->core_state =
     lumen_driver_core_dispatch(context->core_state, release).state;

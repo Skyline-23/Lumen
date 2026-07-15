@@ -2,7 +2,7 @@ use std::mem::size_of;
 
 pub const ABI_MAGIC: u32 = 0x4C55_4D4E;
 pub const ABI_MAJOR: u16 = 1;
-pub const ABI_MINOR: u16 = 2;
+pub const ABI_MINOR: u16 = 3;
 pub const ABI_HEADER_SIZE: u32 = 16;
 pub const ABI_REQUEST_SIZE: u32 = 80;
 pub const ABI_RESPONSE_SIZE: u32 = 48;
@@ -32,6 +32,7 @@ pub const BACKEND_CAPABILITY_D3D12: u32 = 1 << 1;
 pub const STATE_MONITOR_ACTIVE: u32 = 1 << 0;
 pub const STATE_ENCODER_ACTIVE: u32 = 1 << 1;
 pub const STATE_KEYFRAME_PENDING: u32 = 1 << 2;
+pub const STATE_MONITOR_ORPHANED: u32 = 1 << 3;
 
 pub const EVENT_ADAPTER_REMOVED: u64 = 1;
 
@@ -55,7 +56,9 @@ pub enum Operation {
     PrepareAdapter = 15,
     CompleteAdapterInitialization = 16,
     ValidateAndAbandonSwapchain = 17,
+    QueryMonitor = 18,
     AdapterRemoved = 19,
+    AdoptMonitor = 20,
 }
 
 impl Operation {
@@ -78,7 +81,9 @@ impl Operation {
             Self::PrepareAdapter => 15,
             Self::CompleteAdapterInitialization => 16,
             Self::ValidateAndAbandonSwapchain => 17,
+            Self::QueryMonitor => 18,
             Self::AdapterRemoved => 19,
+            Self::AdoptMonitor => 20,
         }
     }
 
@@ -101,7 +106,9 @@ impl Operation {
             15 => Some(Self::PrepareAdapter),
             16 => Some(Self::CompleteAdapterInitialization),
             17 => Some(Self::ValidateAndAbandonSwapchain),
+            18 => Some(Self::QueryMonitor),
             19 => Some(Self::AdapterRemoved),
+            20 => Some(Self::AdoptMonitor),
             _ => None,
         }
     }

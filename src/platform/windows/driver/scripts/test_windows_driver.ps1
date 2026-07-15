@@ -66,7 +66,10 @@ try {
         "unauthorized_open", "first_owner", "second_owner", "query_health",
         "malformed_version", "oversize_event", "stale_generation", "create_monitor",
         "start_encoder", "stop_cancels_access_unit_1", "restart_accepts_access_unit_1",
-        "stop_cancels_access_unit_2", "restart_accepts_access_unit_2", "cancel_event"
+        "stop_cancels_access_unit_2", "restart_accepts_access_unit_2", "cancel_event",
+        "orphan_health_1", "orphan_query_1", "orphan_adopt_1",
+        "orphan_health_2", "orphan_query_2", "orphan_adopt_2",
+        "orphan_remove_after_repeated_crash"
     )
     foreach ($probe in $requiredProbes) {
         if (@($allProbes | Where-Object probe -eq $probe).Count -ne 1) {

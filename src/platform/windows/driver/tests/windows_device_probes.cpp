@@ -200,6 +200,54 @@ namespace lumen_driver_qa {
     result = cancel_event(handle, generation);
     write_probe(receipt, "cancel_event", result);
     CloseHandle(handle);
-    return result;
+    if (result != 0) {
+      return result;
+    }
+
+    for (uint64_t recovery_cycle = 1; recovery_cycle <= 2; ++recovery_cycle) {
+      handle = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr);
+      if (handle == INVALID_HANDLE_VALUE) {
+        write_probe(receipt, recovery_cycle == 1 ? "orphan_open_1" : "orphan_open_2", 55);
+        return 55;
+      }
+      auto recovery_health = request(LumenDriverOperationQueryHealth, 0);
+      result = send_ioctl(handle, LUMEN_IOCTL_QUERY_HEALTH, &recovery_health, &response, sizeof(response)) == ERROR_SUCCESS ? 0 : 56;
+      write_probe(receipt, recovery_cycle == 1 ? "orphan_health_1" : "orphan_health_2", result);
+      if (result != 0) {
+        CloseHandle(handle);
+        return result;
+      }
+      const uint64_t recovery_generation = response.generation;
+      auto query_monitor = request(LumenDriverOperationQueryMonitor, recovery_generation);
+      result = send_ioctl(handle, LUMEN_IOCTL_QUERY_MONITOR, &query_monitor, &response, sizeof(response)) == ERROR_SUCCESS &&
+          response.values[0] == 7 &&
+          (response.values[1] & (LUMEN_STATE_MONITOR_ACTIVE | LUMEN_STATE_MONITOR_ORPHANED)) ==
+            (LUMEN_STATE_MONITOR_ACTIVE | LUMEN_STATE_MONITOR_ORPHANED) ? 0 : 57;
+      write_probe(receipt, recovery_cycle == 1 ? "orphan_query_1" : "orphan_query_2", result);
+      if (result != 0) {
+        CloseHandle(handle);
+        return result;
+      }
+      auto adopt = request(LumenDriverOperationAdoptMonitor, recovery_generation);
+      adopt.arguments[0] = 7;
+      result = send_ioctl(handle, LUMEN_IOCTL_ADOPT_MONITOR, &adopt, &response, sizeof(response)) == ERROR_SUCCESS &&
+          (response.values[1] & LUMEN_STATE_MONITOR_ORPHANED) == 0 ? 0 : 58;
+      write_probe(receipt, recovery_cycle == 1 ? "orphan_adopt_1" : "orphan_adopt_2", result);
+      if (result != 0) {
+        CloseHandle(handle);
+        return result;
+      }
+      if (recovery_cycle == 1) {
+        CloseHandle(handle);
+        continue;
+      }
+      auto remove = request(LumenDriverOperationRemoveMonitor, recovery_generation);
+      remove.arguments[0] = 7;
+      result = send_ioctl(handle, LUMEN_IOCTL_REMOVE_MONITOR, &remove, &response, sizeof(response)) == ERROR_SUCCESS ? 0 : 59;
+      write_probe(receipt, "orphan_remove_after_repeated_crash", result);
+      CloseHandle(handle);
+      return result;
+    }
+    return 60;
   }
 }  // namespace lumen_driver_qa

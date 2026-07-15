@@ -88,7 +88,7 @@ pub(super) struct WindowsPathRecord {
     pub bit_depth: u8,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) struct WindowsPathIdentity {
     pub adapter: AdapterLuid,
     pub target_id: u32,
@@ -209,6 +209,66 @@ impl WindowsDisplayConfigSnapshot {
             return Err("Windows could not select exactly one IDD target path".to_owned());
         }
         Ok(Self { paths })
+    }
+
+    pub(super) fn physical_without(&self, identity: WindowsPathIdentity) -> Result<Self, String> {
+        let matching = self
+            .paths
+            .iter()
+            .filter(|path| path_identity(path) == identity)
+            .count();
+        let paths = self
+            .paths
+            .iter()
+            .filter(|path| path_identity(path) != identity)
+            .cloned()
+            .collect::<Vec<_>>();
+        if matching != 1 || paths.is_empty() {
+            return Err(
+                "Windows hotplug snapshot could not separate one IDD path from physical paths"
+                    .to_owned(),
+            );
+        }
+        Ok(Self { paths })
+    }
+
+    #[cfg(windows)]
+    pub(super) fn new_path_since(&self, before: &Self) -> Result<WindowsPathIdentity, String> {
+        let previous = before
+            .paths
+            .iter()
+            .map(path_identity)
+            .collect::<BTreeSet<_>>();
+        let added = self
+            .paths
+            .iter()
+            .map(path_identity)
+            .filter(|identity| !previous.contains(identity))
+            .collect::<Vec<_>>();
+        match added.as_slice() {
+            [identity] => Ok(*identity),
+            _ => Err("Windows could not identify exactly one newly arrived IDD path".to_owned()),
+        }
+    }
+
+    pub(super) fn matches_exact_isolation(
+        &self,
+        identity: WindowsPathIdentity,
+        observed: &Self,
+    ) -> bool {
+        self.paths.len() == 1
+            && self
+                .paths
+                .iter()
+                .all(|path| path_identity(path) == identity)
+            && self == observed
+    }
+}
+
+fn path_identity(path: &WindowsPathRecord) -> WindowsPathIdentity {
+    WindowsPathIdentity {
+        adapter: path.target_adapter,
+        target_id: path.target_id,
     }
 }
 

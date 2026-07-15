@@ -34,6 +34,9 @@ pub(super) fn advertise_native_resource_values(
             "System Default",
         ),
     ] {
+        if cfg!(windows) && field == "streaming.outputSelector" {
+            continue;
+        }
         let mut values = vec![(default_value, default_label)];
         if let Some(configured) = arguments.get(argument) {
             values.push((configured, configured));
