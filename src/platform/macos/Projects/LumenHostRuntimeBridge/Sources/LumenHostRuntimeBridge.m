@@ -71,6 +71,17 @@ static void LumenHostHandleRuntimeStatus(
   void *context
 ) {
   (void) context;
+  NSError *recoveryError = nil;
+  const BOOL recovered = [LumenMacWorkspaceSessionFacade.shared
+    recoverPendingWorkspaceSyncWithError:&recoveryError];
+  (void) recovered;
+  if (recoveryError) {
+    fprintf(
+      stderr,
+      "Lumen workspace watchdog recovery failed after worker exit: %s\n",
+      recoveryError.localizedDescription.UTF8String ?: "unknown error"
+    );
+  }
   LumenHostPostRuntimeStatus(
     willRestart,
     exitCode,
@@ -145,6 +156,19 @@ bool LumenHostRuntimeControllerStart(
   if (!controller || !controller->supervisor) {
     LumenHostCopyLiteral(
       "LumenHostRuntimeControllerStart called with a null controller.",
+      errorDestination,
+      errorCapacity
+    );
+    return false;
+  }
+
+  NSError *recoveryError = nil;
+  const BOOL recovered = [LumenMacWorkspaceSessionFacade.shared
+    recoverPendingWorkspaceSyncWithError:&recoveryError];
+  (void) recovered;
+  if (recoveryError) {
+    LumenHostCopyLiteral(
+      recoveryError.localizedDescription.UTF8String,
       errorDestination,
       errorCapacity
     );

@@ -6,6 +6,7 @@ use thiserror::Error;
 pub const WORKSPACE_RECOVERY_SCHEMA_VERSION: u32 = 2;
 const MAXIMUM_DISPLAY_COUNT: usize = 64;
 const MAXIMUM_TARGET_PATH_COUNT: usize = 128;
+const MAXIMUM_WINDOW_COUNT: usize = 512;
 const MAXIMUM_IDENTIFIER_BYTES: usize = 512;
 
 #[repr(C)]
@@ -81,9 +82,21 @@ pub struct WindowsAdapterLuid {
     pub low_part: u32,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct MacWorkspaceWindowState {
+    pub process_id: i32,
+    pub window_id: u32,
+    pub origin_x: i32,
+    pub origin_y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct PhysicalDisplayTopology {
     pub displays: Vec<PhysicalDisplayState>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mac_windows: Vec<MacWorkspaceWindowState>,
     pub windows_adapter_luid: Option<WindowsAdapterLuid>,
     pub windows_target_paths: Vec<String>,
 }
@@ -163,6 +176,21 @@ impl WorkspaceRecoveryJournal {
         if self.physical_topology.windows_target_paths.len() > MAXIMUM_TARGET_PATH_COUNT {
             return Err(RecoveryJournalError::InvalidField(
                 "physical_topology.windows_target_paths",
+            ));
+        }
+        if self.physical_topology.mac_windows.len() > MAXIMUM_WINDOW_COUNT {
+            return Err(RecoveryJournalError::InvalidField(
+                "physical_topology.mac_windows",
+            ));
+        }
+        if self.physical_topology.mac_windows.iter().any(|window| {
+            window.process_id <= 0
+                || window.window_id == 0
+                || window.width == 0
+                || window.height == 0
+        }) {
+            return Err(RecoveryJournalError::InvalidField(
+                "physical_topology.mac_windows",
             ));
         }
         for display in &self.physical_topology.displays {

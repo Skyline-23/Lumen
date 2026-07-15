@@ -17,6 +17,7 @@ fn topology() -> PhysicalDisplayTopology {
             active: true,
             online: true,
         }],
+        mac_windows: Vec::new(),
         windows_adapter_luid: Some(WindowsAdapterLuid {
             high_part: 0x0102_0304,
             low_part: 0x0506_0708,

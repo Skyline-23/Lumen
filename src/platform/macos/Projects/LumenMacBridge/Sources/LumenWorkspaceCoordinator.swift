@@ -40,6 +40,7 @@ public enum LumenMacWorkspaceAction: Equatable, Sendable {
     case restoreWorkspace
     case verifyPhysicalDisplays
     case destroyVirtualDisplay
+    case awaitExternalFirstEncodedFrame
 
     fileprivate init(engineValue: LumenWorkspaceCommandKind) throws {
         switch engineValue {
@@ -65,6 +66,8 @@ public enum LumenMacWorkspaceAction: Equatable, Sendable {
             self = .verifyPhysicalDisplays
         case LumenWorkspaceCommandDestroyVirtualDisplay:
             self = .destroyVirtualDisplay
+        case LumenWorkspaceCommandAwaitExternalFirstEncodedFrame:
+            self = .awaitExternalFirstEncodedFrame
         default:
             throw LumenWorkspaceCoordinatorError.unknownCommand(engineValue.rawValue)
         }
@@ -94,6 +97,8 @@ public enum LumenMacWorkspaceAction: Equatable, Sendable {
             LumenWorkspaceCommandVerifyPhysicalDisplays
         case .destroyVirtualDisplay:
             LumenWorkspaceCommandDestroyVirtualDisplay
+        case .awaitExternalFirstEncodedFrame:
+            LumenWorkspaceCommandAwaitExternalFirstEncodedFrame
         }
     }
 }
@@ -262,6 +267,14 @@ public enum LumenMacDisplayColorResolver {
 public actor LumenWorkspaceCoordinator {
     private let engine: LumenEngineHandle
 
+    public nonisolated static var defaultRecoveryJournalPath: String {
+        FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appending(path: "Lumen", directoryHint: .isDirectory)
+            .appending(path: "display-recovery.json", directoryHint: .notDirectory)
+            .path(percentEncoded: false)
+    }
+
     public init(recoveryJournalPath: String? = nil) throws {
         let actualVersion = LumenEngineBridgeABIVersion()
         guard actualVersion == LUMEN_ENGINE_ABI_VERSION else {
@@ -270,11 +283,7 @@ public actor LumenWorkspaceCoordinator {
                 actual: actualVersion
             )
         }
-        let path = recoveryJournalPath ?? FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appending(path: "Lumen", directoryHint: .isDirectory)
-            .appending(path: "display-recovery.json", directoryHint: .notDirectory)
-            .path(percentEncoded: false)
+        let path = recoveryJournalPath ?? Self.defaultRecoveryJournalPath
         let engine = path.withCString { pointer in
             lumen_workspace_engine_create_recoverable(pointer, LumenWorkspacePlatformMacos)
         }

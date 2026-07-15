@@ -264,7 +264,7 @@ static uint32_t LumenWorkerVideoTimestamp(CMSampleBufferRef sampleBuffer) {
   request.scalePercent = 100;
   request.dimensionsAreLogical = NO;
   request.hdrEnabled = plan->dynamic_range == LumenHostPlatformDynamicRangeHDR10;
-  return [LumenMacWorkspaceSessionFacade.shared startSessionSync:request error:error];
+  return [LumenMacWorkspaceSessionFacade.shared prepareSessionSync:request error:error];
 }
 
 - (int32_t)startSession:(const LumenHostPlatformSessionPlan *)plan {
@@ -302,7 +302,6 @@ static uint32_t LumenWorkerVideoTimestamp(CMSampleBufferRef sampleBuffer) {
   video.target_video_bitrate_kbps = (int32_t) plan->bitrate_kbps;
   video.requested_width = (int32_t) plan->width;
   video.requested_height = (int32_t) plan->height;
-
   video.sink_request.mode.hidpi = plan->sink_hidpi;
   video.sink_request.mode.scale_explicit = plan->sink_scale_explicit;
   video.sink_request.mode.mode_is_logical = plan->sink_mode_is_logical;
@@ -324,6 +323,20 @@ static uint32_t LumenWorkerVideoTimestamp(CMSampleBufferRef sampleBuffer) {
   char error[1024] = {0};
   if (!LumenMacBridgeControllerStartCapture(_bridge, video, error, sizeof(error))) {
     fprintf(stderr, "Lumen video capture failed: %s\n", error);
+    [self stopSessionLocked];
+    os_unfair_lock_unlock(&_lock);
+    return -1;
+  }
+
+  NSError *activationError = nil;
+  if (![LumenMacWorkspaceSessionFacade.shared
+        activateSessionSyncWithDisplayKey:_workspaceKey
+        error:&activationError]) {
+    fprintf(
+      stderr,
+      "Lumen workspace activation failed after capture readiness: %s\n",
+      activationError.localizedDescription.UTF8String ?: "unknown error"
+    );
     [self stopSessionLocked];
     os_unfair_lock_unlock(&_lock);
     return -1;

@@ -78,25 +78,87 @@ public struct LumenMacWindowsAdapterLUID: Codable, Equatable, Sendable {
     }
 }
 
+public struct LumenMacWorkspaceWindowState: Codable, Equatable, Sendable {
+    public let processID: Int32
+    public let windowID: UInt32
+    public let originX: Int32
+    public let originY: Int32
+    public let width: UInt32
+    public let height: UInt32
+
+    public init(
+        processID: Int32,
+        windowID: UInt32,
+        originX: Int32,
+        originY: Int32,
+        width: UInt32,
+        height: UInt32
+    ) {
+        self.processID = processID
+        self.windowID = windowID
+        self.originX = originX
+        self.originY = originY
+        self.width = width
+        self.height = height
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case processID = "process_id"
+        case windowID = "window_id"
+        case originX = "origin_x"
+        case originY = "origin_y"
+        case width
+        case height
+    }
+}
+
 public struct LumenMacPhysicalDisplayTopology: Codable, Equatable, Sendable {
     public let displays: [LumenMacPhysicalDisplayState]
+    public let macWindows: [LumenMacWorkspaceWindowState]
     public let windowsAdapterLUID: LumenMacWindowsAdapterLUID?
     public let windowsTargetPaths: [String]
 
     public init(
         displays: [LumenMacPhysicalDisplayState],
+        macWindows: [LumenMacWorkspaceWindowState] = [],
         windowsAdapterLUID: LumenMacWindowsAdapterLUID?,
         windowsTargetPaths: [String]
     ) {
         self.displays = displays
+        self.macWindows = macWindows
         self.windowsAdapterLUID = windowsAdapterLUID
         self.windowsTargetPaths = windowsTargetPaths
     }
 
     enum CodingKeys: String, CodingKey {
         case displays
+        case macWindows = "mac_windows"
         case windowsAdapterLUID = "windows_adapter_luid"
         case windowsTargetPaths = "windows_target_paths"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        displays = try container.decode([LumenMacPhysicalDisplayState].self, forKey: .displays)
+        macWindows = try container.decodeIfPresent(
+            [LumenMacWorkspaceWindowState].self,
+            forKey: .macWindows
+        ) ?? []
+        windowsAdapterLUID = try container.decodeIfPresent(
+            LumenMacWindowsAdapterLUID.self,
+            forKey: .windowsAdapterLUID
+        )
+        windowsTargetPaths = try container.decode([String].self, forKey: .windowsTargetPaths)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(displays, forKey: .displays)
+        if !macWindows.isEmpty {
+            try container.encode(macWindows, forKey: .macWindows)
+        }
+        try container.encodeIfPresent(windowsAdapterLUID, forKey: .windowsAdapterLUID)
+        try container.encode(windowsTargetPaths, forKey: .windowsTargetPaths)
     }
 }
 

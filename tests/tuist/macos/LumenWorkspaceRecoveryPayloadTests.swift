@@ -180,6 +180,16 @@ final class LumenWorkspaceRecoveryPayloadTests: XCTestCase {
                     online: true
                 ),
             ],
+            macWindows: [
+                LumenMacWorkspaceWindowState(
+                    processID: 7_001,
+                    windowID: 88,
+                    originX: -640,
+                    originY: 120,
+                    width: 1_280,
+                    height: 720
+                ),
+            ],
             windowsAdapterLUID: nil,
             windowsTargetPaths: []
         )

@@ -45,6 +45,8 @@ public struct LumenMacWorkspaceNativeOperations: Sendable {
     public var startCapture: @Sendable (UInt32) async throws -> Void
     public var stopCapture: @Sendable () async throws -> Void
     public var destroyVirtualDisplay: @Sendable (LumenMacVirtualDisplayIdentity) async throws -> Void
+    public var waitForExternalFirstEncodedFrame: @Sendable () async throws -> Void
+    public var verifyCaptureContinuity: @Sendable () async throws -> Void
 
     public init(
         createVirtualDisplay: @escaping @Sendable (
@@ -56,13 +58,17 @@ public struct LumenMacWorkspaceNativeOperations: Sendable {
         stopCapture: @escaping @Sendable () async throws -> Void,
         destroyVirtualDisplay: @escaping @Sendable (
             LumenMacVirtualDisplayIdentity
-        ) async throws -> Void
+        ) async throws -> Void,
+        waitForExternalFirstEncodedFrame: @escaping @Sendable () async throws -> Void = {},
+        verifyCaptureContinuity: @escaping @Sendable () async throws -> Void = {}
     ) {
         self.createVirtualDisplay = createVirtualDisplay
         self.configureVirtualDisplay = configureVirtualDisplay
         self.startCapture = startCapture
         self.stopCapture = stopCapture
         self.destroyVirtualDisplay = destroyVirtualDisplay
+        self.waitForExternalFirstEncodedFrame = waitForExternalFirstEncodedFrame
+        self.verifyCaptureContinuity = verifyCaptureContinuity
     }
 }
 
@@ -118,6 +124,10 @@ public actor LumenMacWorkspaceExecutor: LumenWorkspaceCommandExecuting {
             return .succeeded
         case .applyIsolation:
             try await displayWorkspace.isolateVirtualDisplay(try requireVirtualDisplay())
+            try await operations.verifyCaptureContinuity()
+            return .succeeded
+        case .awaitExternalFirstEncodedFrame:
+            try await operations.waitForExternalFirstEncodedFrame()
             return .succeeded
         case .startCapture:
             try await operations.startCapture(try requireVirtualDisplay())

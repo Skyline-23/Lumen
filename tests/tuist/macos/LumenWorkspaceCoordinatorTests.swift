@@ -6,6 +6,8 @@ private enum WorkspaceExecutionEvent: Equatable {
     case create(LumenMacDisplayGeometry)
     case configure(UInt32, LumenMacDisplayGeometry)
     case isolate(UInt32)
+    case firstFrameBarrier
+    case captureContinuity
     case startCapture(UInt32)
     case stopCapture
     case restore
@@ -219,6 +221,99 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         XCTAssertTrue(events.contains(.isolate(55)))
         try await coordinator.endSession()
         try await coordinator.executePendingCommands(using: executor)
+    }
+
+    func testExternalCapturePreparationPausesBeforePhysicalIsolation() async throws {
+        let recorder = WorkspaceExecutionRecorder()
+        let operations = LumenMacWorkspaceNativeOperations(
+            createVirtualDisplay: { _, geometry in
+                await recorder.append(.create(geometry))
+                return 88
+            },
+            configureVirtualDisplay: { displayID, geometry in
+                await recorder.append(.configure(displayID, geometry))
+            },
+            startCapture: { _ in },
+            stopCapture: {},
+            destroyVirtualDisplay: { _ in await recorder.append(.destroy) },
+            waitForExternalFirstEncodedFrame: {
+                await recorder.append(.firstFrameBarrier)
+            },
+            verifyCaptureContinuity: {
+                await recorder.append(.captureContinuity)
+            }
+        )
+        let request = externalIsolatedRequest()
+        let session = try LumenMacWorkspaceSession(
+            request: request,
+            operations: operations,
+            displayWorkspace: WorkspaceDisplayMock(recorder: recorder),
+            coordinator: makeCoordinator()
+        )
+
+        try await session.prepare()
+
+        let preparedEvents = await recorder.recordedEvents()
+        XCTAssertFalse(preparedEvents.contains(.firstFrameBarrier))
+        XCTAssertFalse(preparedEvents.contains(.isolate(88)))
+        let preparedState = try await session.state()
+        XCTAssertEqual(preparedState, .starting)
+
+        try await session.activate()
+
+        let activeEvents = await recorder.recordedEvents()
+        let barrierIndex = try XCTUnwrap(activeEvents.firstIndex(of: .firstFrameBarrier))
+        let isolateIndex = try XCTUnwrap(activeEvents.firstIndex(of: .isolate(88)))
+        let continuityIndex = try XCTUnwrap(activeEvents.firstIndex(of: .captureContinuity))
+        XCTAssertLessThan(barrierIndex, isolateIndex)
+        XCTAssertLessThan(isolateIndex, continuityIndex)
+        let activeState = try await session.state()
+        XCTAssertEqual(activeState, .active)
+        try await session.stop()
+    }
+
+    func testFailedExternalFirstFrameBarrierLeavesPhysicalDisplaysUntouched() async throws {
+        enum ExpectedFailure: Error {
+            case firstFrameTimeout
+        }
+        let recorder = WorkspaceExecutionRecorder()
+        let operations = LumenMacWorkspaceNativeOperations(
+            createVirtualDisplay: { _, geometry in
+                await recorder.append(.create(geometry))
+                return 89
+            },
+            configureVirtualDisplay: { displayID, geometry in
+                await recorder.append(.configure(displayID, geometry))
+            },
+            startCapture: { _ in },
+            stopCapture: {},
+            destroyVirtualDisplay: { _ in await recorder.append(.destroy) },
+            waitForExternalFirstEncodedFrame: {
+                await recorder.append(.firstFrameBarrier)
+                throw ExpectedFailure.firstFrameTimeout
+            }
+        )
+        let session = try LumenMacWorkspaceSession(
+            request: externalIsolatedRequest(),
+            operations: operations,
+            displayWorkspace: WorkspaceDisplayMock(recorder: recorder),
+            coordinator: makeCoordinator()
+        )
+        try await session.prepare()
+
+        do {
+            try await session.activate()
+            XCTFail("expected first-frame barrier failure")
+        } catch ExpectedFailure.firstFrameTimeout {}
+
+        let events = await recorder.recordedEvents()
+        XCTAssertTrue(events.contains(.firstFrameBarrier))
+        XCTAssertFalse(events.contains(.isolate(89)))
+        XCTAssertTrue(events.contains(.restore))
+        XCTAssertTrue(events.contains(.verify))
+        XCTAssertTrue(events.contains(.destroy))
+        let recoveredState = try await session.state()
+        XCTAssertEqual(recoveredState, .idle)
     }
 
     func testWorkspaceSessionRunsRustPlannedLifecycleThroughNativeOperations() async throws {
@@ -454,6 +549,20 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
             .appending(path: "display-recovery.json", directoryHint: .notDirectory)
             .path(percentEncoded: false)
         return try LumenWorkspaceCoordinator(recoveryJournalPath: path)
+    }
+
+    private func externalIsolatedRequest() -> LumenMacWorkspaceSessionRequest {
+        LumenMacWorkspaceSessionRequest(
+            policy: .isolatedWorkspace,
+            displayMode: LumenMacDisplayModeRequest(
+                width: 1920,
+                height: 1080,
+                scalePercent: 100,
+                dimensionsAreLogical: false
+            ),
+            managesCapture: false,
+            captureConfiguration: LumenMacCaptureConfiguration(displayID: 0)
+        )
     }
 }
 

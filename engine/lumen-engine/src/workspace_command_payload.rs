@@ -167,6 +167,7 @@ const fn expected_completion_kind(
         | LumenWorkspaceCommandKind::MoveTargetWindows
         | LumenWorkspaceCommandKind::ApplyIsolation
         | LumenWorkspaceCommandKind::StartCapture
+        | LumenWorkspaceCommandKind::AwaitExternalFirstEncodedFrame
         | LumenWorkspaceCommandKind::StopCapture
         | LumenWorkspaceCommandKind::RestoreWorkspace
         | LumenWorkspaceCommandKind::VerifyPhysicalDisplays

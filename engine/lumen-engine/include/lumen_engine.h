@@ -67,7 +67,8 @@ typedef enum LumenWorkspaceCommandKind {
   LumenWorkspaceCommandStopCapture = 7,
   LumenWorkspaceCommandRestoreWorkspace = 8,
   LumenWorkspaceCommandVerifyPhysicalDisplays = 9,
-  LumenWorkspaceCommandDestroyVirtualDisplay = 10
+  LumenWorkspaceCommandDestroyVirtualDisplay = 10,
+  LumenWorkspaceCommandAwaitExternalFirstEncodedFrame = 11
 } LumenWorkspaceCommandKind;
 
 typedef enum LumenWorkspaceCommandPayloadKind {

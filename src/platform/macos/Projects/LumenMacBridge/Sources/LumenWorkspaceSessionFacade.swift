@@ -132,7 +132,7 @@ private actor LumenMacWorkspaceSessionRegistry {
         self.makeDisplayWorkspace = makeDisplayWorkspace
     }
 
-    func start(_ snapshot: LumenMacWorkspaceSessionRequestSnapshot) async throws -> UInt32 {
+    func prepare(_ snapshot: LumenMacWorkspaceSessionRequestSnapshot) async throws -> UInt32 {
         let request = snapshot.swiftValue(
             policy: try await settingsStore.workspacePolicy()
         )
@@ -148,10 +148,23 @@ private actor LumenMacWorkspaceSessionRegistry {
             runtime: runtime,
             displayWorkspace: makeDisplayWorkspace()
         )
-        try await session.start()
+        try await session.prepare()
         let displayID = try await session.displayID()
         sessions[request.displayKey] = session
         return displayID
+    }
+
+    func activate(displayKey: String) async throws -> Bool {
+        guard let session = sessions[displayKey] else {
+            return false
+        }
+        do {
+            try await session.activate()
+            return true
+        } catch {
+            sessions.removeValue(forKey: displayKey)
+            throw error
+        }
     }
 
     func stop(displayKey: String) async throws -> Bool {
@@ -168,6 +181,55 @@ private actor LumenMacWorkspaceSessionRegistry {
         for session in activeSessions.values {
             _ = try? await session.stop()
         }
+    }
+
+    func recoverPendingWorkspace() async throws -> Bool {
+        let journalPath = LumenWorkspaceCoordinator.defaultRecoveryJournalPath
+        guard FileManager.default.fileExists(atPath: journalPath) else {
+            return false
+        }
+        let coordinator = try LumenWorkspaceCoordinator(recoveryJournalPath: journalPath)
+        let operations = LumenMacWorkspaceNativeOperations(
+            createVirtualDisplay: { _, _ in
+                throw LumenMacWorkspaceSessionError.recoveryDidNotComplete
+            },
+            configureVirtualDisplay: { _, _ in
+                throw LumenMacWorkspaceSessionError.recoveryDidNotComplete
+            },
+            startCapture: { _ in
+                throw LumenMacWorkspaceSessionError.recoveryDidNotComplete
+            },
+            stopCapture: {
+                await self.runtime.stopCapture()
+            },
+            destroyVirtualDisplay: { identity in
+                _ = LumenMacVirtualDisplay.removeRegisteredDisplay(forKey: identity.id)
+            }
+        )
+        let executor = try LumenMacWorkspaceExecutor(
+            targetProcessIdentifiers: [],
+            displayMode: LumenMacDisplayModeRequest(
+                width: 1920,
+                height: 1080,
+                scalePercent: 100,
+                dimensionsAreLogical: false
+            ),
+            operations: operations,
+            displayWorkspace: makeDisplayWorkspace()
+        )
+        let admitted = try await coordinator.beginSession(
+            policy: .coexist,
+            manageCapture: false
+        )
+        guard !admitted else {
+            return false
+        }
+        if let recoveryError = try await coordinator.executePendingCommandsRecovering(
+            using: executor
+        ) {
+            throw recoveryError
+        }
+        return true
     }
 }
 
@@ -193,18 +255,32 @@ public final class LumenMacWorkspaceSessionFacade: NSObject, Sendable {
         super.init()
     }
 
-    public func startSessionSync(
+    public func prepareSessionSync(
         _ request: LumenMacWorkspaceSessionRequestBox,
         error errorPointer: NSErrorPointer
     ) -> UInt32 {
         let snapshot = request.snapshot()
         do {
             return try blockingRun {
-                try await self.registry.start(snapshot)
+                try await self.registry.prepare(snapshot)
             }
         } catch {
             errorPointer?.pointee = error as NSError
             return 0
+        }
+    }
+
+    public func activateSessionSync(
+        displayKey: String,
+        error errorPointer: NSErrorPointer
+    ) -> Bool {
+        do {
+            return try blockingRun {
+                try await self.registry.activate(displayKey: displayKey)
+            }
+        } catch {
+            errorPointer?.pointee = error as NSError
+            return false
         }
     }
 
@@ -225,6 +301,19 @@ public final class LumenMacWorkspaceSessionFacade: NSObject, Sendable {
     public func stopAllSessionsSync() {
         try? blockingRun {
             await self.registry.stopAll()
+        }
+    }
+
+    public func recoverPendingWorkspaceSync(
+        error errorPointer: NSErrorPointer
+    ) -> Bool {
+        do {
+            return try blockingRun {
+                try await self.registry.recoverPendingWorkspace()
+            }
+        } catch {
+            errorPointer?.pointee = error as NSError
+            return false
         }
     }
 

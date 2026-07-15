@@ -19,6 +19,7 @@ impl WorkspaceEngine {
                 LumenWorkspaceCommandKind::SnapshotWorkspace => {
                     WorkspaceCommandCompletion::physical_topology(PhysicalDisplayTopology {
                         displays: Vec::new(),
+                        mac_windows: Vec::new(),
                         windows_adapter_luid: None,
                         windows_target_paths: Vec::new(),
                     })
@@ -38,6 +39,7 @@ impl WorkspaceEngine {
                 | LumenWorkspaceCommandKind::MoveTargetWindows
                 | LumenWorkspaceCommandKind::ApplyIsolation
                 | LumenWorkspaceCommandKind::StartCapture
+                | LumenWorkspaceCommandKind::AwaitExternalFirstEncodedFrame
                 | LumenWorkspaceCommandKind::StopCapture
                 | LumenWorkspaceCommandKind::RestoreWorkspace
                 | LumenWorkspaceCommandKind::VerifyPhysicalDisplays
@@ -149,6 +151,7 @@ const fn command_payload_kind(kind: LumenWorkspaceCommandKind) -> LumenWorkspace
         | LumenWorkspaceCommandKind::MoveTargetWindows
         | LumenWorkspaceCommandKind::ApplyIsolation
         | LumenWorkspaceCommandKind::StartCapture
+        | LumenWorkspaceCommandKind::AwaitExternalFirstEncodedFrame
         | LumenWorkspaceCommandKind::StopCapture => LumenWorkspaceCommandPayloadKind::None,
     }
 }

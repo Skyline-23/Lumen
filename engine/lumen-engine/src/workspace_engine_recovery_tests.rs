@@ -65,6 +65,7 @@ fn pending_journal(generation: u64) -> WorkspaceRecoveryJournal {
                 active: true,
                 online: true,
             }],
+            mac_windows: Vec::new(),
             windows_adapter_luid: None,
             windows_target_paths: Vec::new(),
         },
@@ -125,20 +126,14 @@ fn ffi_recovers_durable_journal_before_emitting_new_session_commands() {
         LumenEngineStatus::Ok
     );
     assert_eq!(command.kind, LumenWorkspaceCommandKind::StopCapture);
-    assert_eq!(
-        complete_ffi(engine, command, true),
-        LumenEngineStatus::Ok
-    );
+    assert_eq!(complete_ffi(engine, command, true), LumenEngineStatus::Ok);
     assert_eq!(
         lumen_workspace_engine_next_command(engine, &mut command),
         LumenEngineStatus::Ok
     );
     assert_eq!(command.kind, LumenWorkspaceCommandKind::RestoreWorkspace);
     assert!(journal_path.exists());
-    assert_eq!(
-        complete_ffi(engine, command, true),
-        LumenEngineStatus::Ok
-    );
+    assert_eq!(complete_ffi(engine, command, true), LumenEngineStatus::Ok);
     assert!(journal_path.exists());
     assert_eq!(
         lumen_workspace_engine_next_command(engine, &mut command),
@@ -148,10 +143,7 @@ fn ffi_recovers_durable_journal_before_emitting_new_session_commands() {
         command.kind,
         LumenWorkspaceCommandKind::VerifyPhysicalDisplays
     );
-    assert_eq!(
-        complete_ffi(engine, command, true),
-        LumenEngineStatus::Ok
-    );
+    assert_eq!(complete_ffi(engine, command, true), LumenEngineStatus::Ok);
     assert!(!journal_path.exists());
     assert_eq!(
         lumen_workspace_engine_next_command(engine, &mut command),
@@ -161,10 +153,7 @@ fn ffi_recovers_durable_journal_before_emitting_new_session_commands() {
         command.kind,
         LumenWorkspaceCommandKind::DestroyVirtualDisplay
     );
-    assert_eq!(
-        complete_ffi(engine, command, true),
-        LumenEngineStatus::Ok
-    );
+    assert_eq!(complete_ffi(engine, command, true), LumenEngineStatus::Ok);
     assert_eq!(
         lumen_workspace_engine_begin_session(engine, request()),
         LumenEngineStatus::Ok
@@ -199,10 +188,7 @@ fn ffi_restore_failure_preserves_journal_and_blocks_destroy() {
         lumen_workspace_engine_next_command(engine, &mut command),
         LumenEngineStatus::Ok
     );
-    assert_eq!(
-        complete_ffi(engine, command, true),
-        LumenEngineStatus::Ok
-    );
+    assert_eq!(complete_ffi(engine, command, true), LumenEngineStatus::Ok);
     assert_eq!(
         lumen_workspace_engine_next_command(engine, &mut command),
         LumenEngineStatus::Ok

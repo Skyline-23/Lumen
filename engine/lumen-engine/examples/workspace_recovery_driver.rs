@@ -128,6 +128,7 @@ fn topology() -> PhysicalDisplayTopology {
             active: true,
             online: true,
         }],
+        mac_windows: Vec::new(),
         windows_adapter_luid: None,
         windows_target_paths: vec!["DISPLAYCONFIG_PATH_INFO:0".to_owned()],
     }

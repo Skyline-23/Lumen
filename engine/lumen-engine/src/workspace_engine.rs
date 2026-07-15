@@ -33,6 +33,7 @@ pub enum LumenWorkspaceCommandKind {
     RestoreWorkspace = 8,
     VerifyPhysicalDisplays = 9,
     DestroyVirtualDisplay = 10,
+    AwaitExternalFirstEncodedFrame = 11,
 }
 
 #[repr(C)]
@@ -142,6 +143,8 @@ impl WorkspaceEngine {
         self.enqueue(LumenWorkspaceCommandKind::ConfigureVirtualDisplay);
         if self.manage_capture {
             self.enqueue(LumenWorkspaceCommandKind::StartCapture);
+        } else if request.policy != LumenWorkspacePolicy::Coexist {
+            self.enqueue(LumenWorkspaceCommandKind::AwaitExternalFirstEncodedFrame);
         }
 
         if request.policy != LumenWorkspacePolicy::Coexist {

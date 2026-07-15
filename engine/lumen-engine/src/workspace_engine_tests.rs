@@ -112,6 +112,45 @@ fn externally_managed_capture_keeps_workspace_transaction_separate() {
 }
 
 #[test]
+fn external_capture_isolation_waits_at_typed_first_frame_boundary() {
+    let mut engine = WorkspaceEngine::default();
+    assert_eq!(
+        engine.begin_session(LumenWorkspaceSessionRequest {
+            policy: LumenWorkspacePolicy::IsolatedWorkspace,
+            move_target_windows: false,
+            manage_capture: false,
+        }),
+        LumenEngineStatus::Ok
+    );
+
+    for expected in [
+        LumenWorkspaceCommandKind::SnapshotWorkspace,
+        LumenWorkspaceCommandKind::CreateVirtualDisplay,
+        LumenWorkspaceCommandKind::ConfigureVirtualDisplay,
+    ] {
+        let command = engine.next_command().expect("preparation command");
+        assert_eq!(command.kind, expected);
+        assert_eq!(
+            engine.complete_command(command, true),
+            LumenEngineStatus::Ok
+        );
+    }
+
+    let barrier = engine.next_command().expect("first-frame barrier");
+    assert_eq!(
+        barrier.kind,
+        LumenWorkspaceCommandKind::AwaitExternalFirstEncodedFrame
+    );
+    assert_eq!(engine.state, LumenWorkspaceState::Starting);
+    assert_eq!(
+        engine.complete_command(barrier, true),
+        LumenEngineStatus::Ok
+    );
+    let promote = engine.next_command().expect("post-readiness promotion");
+    assert_eq!(promote.kind, LumenWorkspaceCommandKind::PromoteVirtualMain);
+}
+
+#[test]
 fn focused_workspace_promotes_and_moves_only_target_windows() {
     let mut engine = WorkspaceEngine::default();
     let kinds = command_kinds(

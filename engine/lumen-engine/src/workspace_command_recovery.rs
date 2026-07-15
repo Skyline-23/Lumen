@@ -10,6 +10,9 @@ impl WorkspaceEngine {
             LumenWorkspaceCommandKind::StartCapture => {
                 self.persist_recovery_phase(RecoveryPhase::CaptureStarting)
             }
+            LumenWorkspaceCommandKind::AwaitExternalFirstEncodedFrame => {
+                self.persist_recovery_phase(RecoveryPhase::CaptureStarting)
+            }
             LumenWorkspaceCommandKind::ApplyIsolation => {
                 self.persist_recovery_phase(RecoveryPhase::IsolationStarted)
             }
@@ -58,6 +61,10 @@ impl WorkspaceEngine {
                 self.resources.capture = true;
                 self.persist_recovery_phase(RecoveryPhase::FirstFrameReady)
             }
+            (
+                LumenWorkspaceCommandKind::AwaitExternalFirstEncodedFrame,
+                WorkspaceCommandPayload::None,
+            ) => self.persist_recovery_phase(RecoveryPhase::FirstFrameReady),
             (LumenWorkspaceCommandKind::StopCapture, WorkspaceCommandPayload::None) => {
                 self.resources.capture = false;
                 self.persist_recovery_phase(RecoveryPhase::CaptureStopped)
@@ -117,7 +124,8 @@ impl WorkspaceEngine {
             | LumenWorkspaceCommandKind::PromoteVirtualMain
             | LumenWorkspaceCommandKind::MoveTargetWindows
             | LumenWorkspaceCommandKind::ApplyIsolation
-            | LumenWorkspaceCommandKind::StartCapture => {}
+            | LumenWorkspaceCommandKind::StartCapture
+            | LumenWorkspaceCommandKind::AwaitExternalFirstEncodedFrame => {}
         }
     }
 

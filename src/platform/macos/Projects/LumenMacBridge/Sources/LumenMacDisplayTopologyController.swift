@@ -96,7 +96,7 @@ actor LumenCoreGraphicsDisplayTopologyController: LumenMacDisplayTopologyControl
         let actual = try capture()
         let actualByID = Dictionary(uniqueKeysWithValues: actual.displays.map { ($0.id, $0) })
         let expectedByID = Dictionary(uniqueKeysWithValues: topology.displays.map { ($0.id, $0) })
-        guard actualByID == expectedByID else {
+        guard expectedByID.allSatisfy({ actualByID[$0.key] == $0.value }) else {
             throw LumenMacDisplayWorkspaceError.physicalTopologyMismatch
         }
     }

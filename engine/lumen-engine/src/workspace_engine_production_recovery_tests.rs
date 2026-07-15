@@ -19,6 +19,7 @@ fn topology() -> PhysicalDisplayTopology {
             active: true,
             online: true,
         }],
+        mac_windows: Vec::new(),
         windows_adapter_luid: None,
         windows_target_paths: Vec::new(),
     }
@@ -132,6 +133,10 @@ fn production_ffi_persists_every_isolated_session_boundary() {
         (
             LumenWorkspaceCommandKind::ConfigureVirtualDisplay,
             RecoveryPhase::VirtualConfigured,
+        ),
+        (
+            LumenWorkspaceCommandKind::AwaitExternalFirstEncodedFrame,
+            RecoveryPhase::FirstFrameReady,
         ),
         (
             LumenWorkspaceCommandKind::PromoteVirtualMain,
