@@ -121,11 +121,27 @@ pub enum LumenEngineStatus {
 
 mod engine_ffi;
 mod host_engine;
+mod workspace_display;
 mod workspace_engine;
+mod workspace_recovery;
+mod workspace_recovery_journal;
+mod workspace_recovery_model;
 
 pub use engine_ffi::*;
 pub use host_engine::*;
+pub use workspace_display::*;
 pub use workspace_engine::*;
+pub use workspace_recovery::*;
+pub use workspace_recovery_journal::*;
+pub use workspace_recovery_model::*;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod workspace_engine_tests;
+#[cfg(test)]
+mod workspace_recovery_cancellation_tests;
+#[cfg(test)]
+mod workspace_recovery_journal_tests;
+#[cfg(test)]
+mod workspace_recovery_tests;
