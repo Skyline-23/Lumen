@@ -2,7 +2,7 @@ import ApplicationServices
 import CoreGraphics
 import Foundation
 
-public enum LumenMacDisplayWorkspaceError: Error, Equatable {
+public enum LumenMacDisplayWorkspaceError: LocalizedError, Equatable {
     case snapshotAlreadyExists
     case snapshotMissing
     case displayNotFound(UInt32)
@@ -16,6 +16,37 @@ public enum LumenMacDisplayWorkspaceError: Error, Equatable {
     case windowSnapshotUnavailable(Int32)
     case windowNotFound(Int32, UInt32)
     case windowTopologyMismatch(Int32, UInt32)
+
+    public var errorDescription: String? {
+        switch self {
+        case .snapshotAlreadyExists:
+            "a display workspace snapshot already exists"
+        case .snapshotMissing:
+            "the display workspace snapshot is missing"
+        case .displayNotFound(let displayID):
+            "display \(displayID) was not found"
+        case .displayConfigurationFailed(let status):
+            "CoreGraphics display configuration failed with status \(status)"
+        case .accessibilityPermissionMissing:
+            "Accessibility permission is required to restore managed windows"
+        case .invalidPersistedDisplayID(let displayID):
+            "persisted display identifier \(displayID) is invalid"
+        case .displayModeNotFound(let displayID):
+            "the persisted mode for display \(displayID) is unavailable"
+        case .physicalTopologyMismatch:
+            "the restored physical display topology did not converge"
+        case .isolationPostconditionFailed:
+            "physical display isolation did not reach its required topology"
+        case .isolationRollbackFailed:
+            "physical display isolation rollback failed"
+        case .windowSnapshotUnavailable(let processID):
+            "window snapshot is unavailable for process \(processID)"
+        case .windowNotFound(let processID, let windowID):
+            "window \(windowID) for process \(processID) was not found"
+        case .windowTopologyMismatch(let processID, let windowID):
+            "window \(windowID) for process \(processID) did not return to its saved topology"
+        }
+    }
 }
 
 public protocol LumenMacDisplayWorkspaceManaging: Sendable {

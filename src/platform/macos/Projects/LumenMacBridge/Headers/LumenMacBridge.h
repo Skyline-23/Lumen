@@ -236,6 +236,13 @@ typedef enum LumenMacBridgeQueueProfile {
   LumenMacBridgeQueueProfileAuto = 4
 } LumenMacBridgeQueueProfile;
 
+typedef enum LumenMacBridgeCapturePairStartStatus {
+  LumenMacBridgeCapturePairStartStatusReady = 0,
+  LumenMacBridgeCapturePairStartStatusVideoFailed = 1,
+  LumenMacBridgeCapturePairStartStatusAudioFailed = 2,
+  LumenMacBridgeCapturePairStartStatusUnknownFailed = 3
+} LumenMacBridgeCapturePairStartStatus;
+
 typedef struct LumenMacBridgeCaptureConfiguration {
   uint32_t display_id;
   LumenMacCaptureCodec codec;
@@ -337,6 +344,14 @@ LumenMacBridgeAudioCaptureConfiguration LumenMacBridgeControllerMakeSystemOutput
 bool LumenMacBridgeControllerStartCapture(
   LumenMacBridgeController *controller,
   LumenMacBridgeCaptureConfiguration configuration,
+  char *error_destination,
+  size_t error_capacity
+);
+
+LumenMacBridgeCapturePairStartStatus LumenMacBridgeControllerStartCapturePair(
+  LumenMacBridgeController *controller,
+  LumenMacBridgeCaptureConfiguration video_configuration,
+  LumenMacBridgeAudioCaptureConfiguration audio_configuration,
   char *error_destination,
   size_t error_capacity
 );

@@ -4,6 +4,51 @@ import CoreMedia
 import XCTest
 
 final class LumenTuistBootstrapTests: XCTestCase {
+    func testBridgeStartsVideoAndAudioCaptureConcurrently() async throws {
+        let probe = LumenConcurrentCaptureStartupProbe()
+
+        try await LumenBridgeCaptureStartupCoordinator.start(
+            video: {
+                await probe.enter()
+                try await Task.sleep(for: .milliseconds(50))
+                await probe.leave()
+            },
+            audio: {
+                await probe.enter()
+                try await Task.sleep(for: .milliseconds(50))
+                await probe.leave()
+            }
+        )
+
+        let maximumActiveCount = await probe.maximumActiveCount
+        XCTAssertEqual(maximumActiveCount, 2)
+    }
+
+    func testBridgeCaptureStartupPreservesTheFailingBoundary() async {
+        do {
+            try await LumenBridgeCaptureStartupCoordinator.start(
+                video: { throw LumenConcurrentCaptureStartupTestError.failed },
+                audio: {}
+            )
+            XCTFail("Expected video startup to fail")
+        } catch let error as LumenBridgeCaptureStartupError {
+            XCTAssertEqual(error.source, .video)
+            XCTAssertTrue(error.message.contains("test failure"))
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testWorkspaceStopFallsBackToDurableRecovery() async throws {
+        let result = try await LumenWorkspaceStopRecoveryCoordinator.stop(
+            stop: { throw LumenConcurrentCaptureStartupTestError.failed },
+            recover: { true }
+        )
+
+        XCTAssertTrue(result.usedDurableRecovery)
+        XCTAssertTrue(result.stopFailureMessage?.contains("test failure") == true)
+    }
+
     func testBridgeExposesBootstrapStatus() async {
         let status = await LumenBridgeRuntime.shared.statusSnapshot()
 
@@ -663,6 +708,28 @@ final class LumenTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(drainedEvent?.sourceDisplayTime, 10)
     }
 
+}
+
+private enum LumenConcurrentCaptureStartupTestError: LocalizedError {
+    case failed
+
+    var errorDescription: String? {
+        "test failure"
+    }
+}
+
+private actor LumenConcurrentCaptureStartupProbe {
+    private var activeCount = 0
+    private(set) var maximumActiveCount = 0
+
+    func enter() {
+        activeCount += 1
+        maximumActiveCount = max(maximumActiveCount, activeCount)
+    }
+
+    func leave() {
+        activeCount -= 1
+    }
 }
 
 private extension LumenTuistBootstrapTests {
