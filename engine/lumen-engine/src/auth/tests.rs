@@ -162,7 +162,7 @@ fn auth_fixture_defines_versioned_source_neutral_envelopes() {
     );
     assert_eq!(
         fixture["deviceEnrollmentPolicy"]["scope"],
-        "local-host-only"
+        "network-reachable-host"
     );
     assert_eq!(
         fixture["deviceEnrollmentPolicy"]["configKey"],

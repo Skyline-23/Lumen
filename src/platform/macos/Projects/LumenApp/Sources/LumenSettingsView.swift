@@ -276,7 +276,7 @@ struct LumenSettingsView: View {
                     LumenCopy.Settings.controlHTTPSPort,
                     port: networkPortPlan.controlHTTPSPort,
                     transport: "TCP",
-                    exposure: LumenCopy.Settings.lanOnly
+                    exposure: upnpExposure
                 )
                 networkPortRow(
                     LumenCopy.Settings.nativeMediaPort,
