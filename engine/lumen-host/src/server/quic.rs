@@ -12,8 +12,9 @@ use lumen_engine::{
     decode_client_control_message, decode_client_input_message, encode_codec_configuration_message,
     encode_host_control_message, encode_host_input_message, host_control_envelope,
     host_input_envelope, HostControlEnvelope, HostInputEnvelope, HostSessionCapabilities,
-    NativeInputAck, NativeNegotiationFailure, NativeProtocolError, LUMEN_STREAMING_EXPORTER_LABEL,
-    LUMEN_STREAMING_PROTOCOL_ALPN, NATIVE_CONTROL_MESSAGE_LIMIT, NATIVE_INPUT_MESSAGE_LIMIT,
+    NativeInputAck, NativeInputFailure, NativeInputFailureCode, NativeNegotiationFailure,
+    NativeProtocolError, LUMEN_STREAMING_EXPORTER_LABEL, LUMEN_STREAMING_PROTOCOL_ALPN,
+    NATIVE_CONTROL_MESSAGE_LIMIT, NATIVE_INPUT_MESSAGE_LIMIT,
 };
 use quinn::crypto::rustls::QuicServerConfig;
 use quinn::{Endpoint, RecvStream, ServerConfig, TransportConfig, VarInt};
@@ -26,8 +27,9 @@ use crate::control::NativeConnectionContext;
 use crate::native_input::NativeInputSequence;
 use crate::network_ports::{NATIVE_QUIC_OFFSET, VIDEO_UDP_OFFSET};
 use crate::{
-    HostArguments, NativeStreamControl, PlatformRuntimeEvent, PlatformRuntimeEventCode,
-    PlatformRuntimeEventDisposition, PlatformRuntimeEventSeverity, PlatformSessionControl,
+    HostArguments, NativeStreamControl, PlatformNativeInputEvent, PlatformRuntimeEvent,
+    PlatformRuntimeEventCode, PlatformRuntimeEventDisposition, PlatformRuntimeEventSeverity,
+    PlatformSessionControl,
 };
 
 const SERVER_START_TIMEOUT: Duration = Duration::from_secs(2);
@@ -555,6 +557,7 @@ async fn accept_native_input_stream(
     while let Some(frame) = read_input_frame(&mut receive).await? {
         let envelope = decode_client_input_message(&frame)
             .map_err(|error| format!("invalid QUIC input frame: {error:?}"))?;
+        let event_sequence = envelope.event_sequence;
         let event = sequence
             .accept(envelope)
             .map_err(|error| format!("invalid QUIC input event: {error}"))?;
@@ -565,15 +568,35 @@ async fn accept_native_input_stream(
         if !active {
             return Err("native input arrived outside an active session".to_owned());
         }
-        platform
-            .handle_native_input(session_epoch, event)
-            .map_err(|error| format!("native platform input failed: {error}"))?;
+        let payload = match platform.handle_native_input(session_epoch, event.clone()) {
+            Ok(()) => host_input_envelope::Payload::Ack(NativeInputAck {
+                highest_contiguous_event_sequence: sequence.highest_contiguous_event_sequence(),
+            }),
+            Err(error) => {
+                eprintln!(
+                    "Lumen native input rejected session-epoch={session_epoch} event-sequence={event_sequence} event={} error={error}",
+                    native_input_event_summary(&event)
+                );
+                let _ = platform.publish_runtime_event(PlatformRuntimeEvent {
+                    disposition: PlatformRuntimeEventDisposition::Raised,
+                    severity: PlatformRuntimeEventSeverity::Warning,
+                    code: PlatformRuntimeEventCode::NativeSessionPlatform,
+                    message: Some(format!(
+                        "Native input event {} was rejected: {error}",
+                        native_input_event_summary(&event)
+                    )),
+                });
+                host_input_envelope::Payload::Failure(NativeInputFailure {
+                    event_sequence,
+                    code: NativeInputFailureCode::PlatformRejected as i32,
+                    message: error,
+                })
+            }
+        };
         let response = HostInputEnvelope {
             session_epoch,
             command_sequence,
-            payload: Some(host_input_envelope::Payload::Ack(NativeInputAck {
-                highest_contiguous_event_sequence: sequence.highest_contiguous_event_sequence(),
-            })),
+            payload: Some(payload),
         };
         let encoded = encode_host_input_message(&response)
             .map_err(|error| format!("could not encode QUIC input response: {error:?}"))?;
@@ -590,6 +613,48 @@ async fn accept_native_input_stream(
         .await
         .map_err(|error| format!("QUIC input response was not acknowledged: {error}"))?;
     guard.reset()
+}
+
+fn native_input_event_summary(event: &PlatformNativeInputEvent) -> String {
+    match event {
+        PlatformNativeInputEvent::Keyboard { hid_usage, pressed, .. } => {
+            format!("keyboard(hidUsage={hid_usage:#x},pressed={pressed})")
+        }
+        PlatformNativeInputEvent::Text { composition_id, commit, .. } => {
+            format!("text(compositionId={composition_id},commit={commit})")
+        }
+        PlatformNativeInputEvent::PointerButton { pointer_id, button, pressed } => {
+            format!("pointerButton(pointerId={pointer_id},button={button},pressed={pressed})")
+        }
+        PlatformNativeInputEvent::GamepadConnection {
+            gamepad_id,
+            connected,
+            capabilities,
+        } => format!(
+            "gamepadConnection(gamepadId={gamepad_id},connected={connected},capabilities={capabilities:#x})"
+        ),
+        PlatformNativeInputEvent::GamepadButton {
+            gamepad_id,
+            button,
+            pressed,
+            analog_value,
+        } => format!(
+            "gamepadButton(gamepadId={gamepad_id},button={button:?},pressed={pressed},analogValue={analog_value})"
+        ),
+        PlatformNativeInputEvent::TouchContact { contact_id, phase, .. } => {
+            format!("touchContact(contactId={contact_id},phase={phase:?})")
+        }
+        PlatformNativeInputEvent::PenContact { pointer_id, phase, .. } => {
+            format!("penContact(pointerId={pointer_id},phase={phase:?})")
+        }
+        PlatformNativeInputEvent::RumbleAcknowledged {
+            command_sequence,
+            gamepad_id,
+            accepted,
+        } => format!(
+            "rumbleAcknowledged(commandSequence={command_sequence},gamepadId={gamepad_id},accepted={accepted})"
+        ),
+    }
 }
 
 async fn read_control_frame(receive: &mut RecvStream) -> Result<Option<Vec<u8>>, String> {
@@ -857,7 +922,8 @@ mod tests {
         decode_host_input_message, host_control_envelope, host_input_envelope,
         ClientControlEnvelope, ClientInputEnvelope, ClientSessionHello, CodecConfiguration,
         CodecConfigurationAck, MediaPathResponse, NativeAudioChannelMode, NativeAudioQuality,
-        NativeDisplayGamut, NativeDisplayTransfer, NativeDynamicRange, NativeKeyboardInput,
+        NativeDisplayGamut, NativeDisplayTransfer, NativeDynamicRange,
+        NativeGamepadConnectionInput, NativeInputFailureCode, NativeKeyboardInput,
         NativePolicyMode, NativeVideoCapability, NativeVideoCodec, StartSessionAck,
     };
     use quinn::crypto::rustls::QuicClientConfig;
@@ -874,6 +940,30 @@ mod tests {
         IdlePlatformSessionControl,
     };
 
+    struct RejectingGamepadPlatform;
+
+    impl PlatformSessionControl for RejectingGamepadPlatform {
+        fn start_session(&self, _plan: crate::PlatformSessionPlan) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn stop_session(&self) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn handle_native_input(
+            &self,
+            _session_epoch: u32,
+            event: PlatformNativeInputEvent,
+        ) -> Result<(), String> {
+            if matches!(event, PlatformNativeInputEvent::GamepadConnection { .. }) {
+                Err("virtual gamepad injection is unavailable".to_owned())
+            } else {
+                Ok(())
+            }
+        }
+    }
+
     #[test]
     fn quic_bootstrap_authenticates_and_derives_one_native_media_session() {
         let root = tempfile::tempdir().unwrap();
@@ -886,7 +976,7 @@ mod tests {
             .start(
                 &arguments,
                 Arc::clone(&shared_router),
-                Arc::new(IdlePlatformSessionControl),
+                Arc::new(RejectingGamepadPlatform),
             )
             .unwrap();
         let server = transport.local_address().unwrap();
@@ -1064,9 +1154,38 @@ mod tests {
             .await
             .unwrap();
 
-            let input = ClientInputEnvelope {
+            let rejected_input = ClientInputEnvelope {
                 session_epoch: plan.session_epoch,
                 event_sequence: 1,
+                payload: Some(client_input_envelope::Payload::GamepadConnection(
+                    NativeGamepadConnectionInput {
+                        gamepad_id: 0,
+                        connected: true,
+                        capabilities: 0x03,
+                    },
+                )),
+            };
+            input_send
+                .write_all(&lumen_engine::encode_client_input_message(&rejected_input).unwrap())
+                .await
+                .unwrap();
+            let failure = decode_host_input_message(
+                &read_input_frame(&mut input_receive).await.unwrap().unwrap(),
+            )
+            .unwrap();
+            let Some(host_input_envelope::Payload::Failure(failure)) = failure.payload else {
+                panic!("host input response was not a typed failure");
+            };
+            assert_eq!(failure.event_sequence, 1);
+            assert_eq!(
+                failure.code,
+                NativeInputFailureCode::PlatformRejected as i32
+            );
+            assert_eq!(failure.message, "virtual gamepad injection is unavailable");
+
+            let accepted_input = ClientInputEnvelope {
+                session_epoch: plan.session_epoch,
+                event_sequence: 2,
                 payload: Some(client_input_envelope::Payload::Keyboard(
                     NativeKeyboardInput {
                         hid_usage: 0x04,
@@ -1077,7 +1196,7 @@ mod tests {
                 )),
             };
             input_send
-                .write_all(&lumen_engine::encode_client_input_message(&input).unwrap())
+                .write_all(&lumen_engine::encode_client_input_message(&accepted_input).unwrap())
                 .await
                 .unwrap();
             let ack = decode_host_input_message(
@@ -1087,7 +1206,7 @@ mod tests {
             let Some(host_input_envelope::Payload::Ack(ack)) = ack.payload else {
                 panic!("host input response was not an acknowledgement");
             };
-            assert_eq!(ack.highest_contiguous_event_sequence, 1);
+            assert_eq!(ack.highest_contiguous_event_sequence, 2);
 
             input_send.finish().unwrap();
             assert!(read_input_frame(&mut input_receive)
