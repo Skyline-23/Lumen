@@ -260,12 +260,36 @@ struct LumenSettingsView: View {
         Group {
             Section(LumenCopy.Settings.network) {
                 Toggle(LumenCopy.Settings.upnp, isOn: $draft.upnpEnabled)
+                Text(LumenCopy.Settings.upnpMappingDetail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Picker(LumenCopy.Settings.addressFamily, selection: $draft.addressFamily) {
                     ForEach(LumenNetworkAddressFamily.allCases, id: \.self) { family in
                         Text(LumenCopy.Settings.addressFamilyTitle(family)).tag(family)
                     }
                 }
-                numberField(LumenCopy.Settings.port, value: $draft.port)
+                basePortField(value: $draft.port)
+                Text(LumenCopy.Settings.portPlanDetail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                networkPortRow(
+                    LumenCopy.Settings.controlHTTPSPort,
+                    port: networkPortPlan.controlHTTPSPort,
+                    transport: "TCP",
+                    exposure: LumenCopy.Settings.lanOnly
+                )
+                networkPortRow(
+                    LumenCopy.Settings.nativeMediaPort,
+                    port: networkPortPlan.nativeMediaUDPPort,
+                    transport: "UDP",
+                    exposure: upnpExposure
+                )
+                networkPortRow(
+                    LumenCopy.Settings.nativeSessionQUICPort,
+                    port: networkPortPlan.nativeSessionQUICPort,
+                    transport: "UDP",
+                    exposure: upnpExposure
+                )
                 Picker(LumenCopy.Settings.externalIPMode, selection: $draft.externalIPMode) {
                     ForEach(LumenExternalIPMode.allCases, id: \.self) { mode in
                         Text(LumenCopy.Settings.externalIPModeTitle(mode)).tag(mode)
@@ -329,11 +353,60 @@ struct LumenSettingsView: View {
         }
     }
 
-    private func numberField(_ title: String, value: Binding<Int>) -> some View {
+    private var networkPortPlan: LumenNetworkPortPlan {
+        draft.networkPortPlan
+    }
+
+    private var upnpExposure: String {
+        draft.upnpEnabled
+            ? LumenCopy.Settings.mappedByUPnP
+            : LumenCopy.Settings.notMappedByUPnP
+    }
+
+    private func basePortField(value: Binding<Int>) -> some View {
+        LabeledContent(LumenCopy.Settings.port) {
+            HStack(spacing: 10) {
+                VStack(alignment: .trailing, spacing: 2) {
+                    TextField(
+                        LumenCopy.Settings.port,
+                        value: value,
+                        format: .number,
+                        prompt: Text(String(LumenNetworkPortPlan.defaultBasePort))
+                    )
+                    .multilineTextAlignment(.trailing)
+                    .monospacedDigit()
+                    .frame(width: 100)
+                    Text(
+                        LumenCopy.Settings.defaultPort(
+                            LumenNetworkPortPlan.defaultBasePort
+                        )
+                    )
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                }
+                Button(LumenCopy.Settings.useDefaultPort) {
+                    value.wrappedValue = LumenNetworkPortPlan.defaultBasePort
+                }
+                .buttonStyle(.borderless)
+            }
+        }
+    }
+
+    private func networkPortRow(
+        _ title: String,
+        port: Int,
+        transport: String,
+        exposure: String
+    ) -> some View {
         LabeledContent(title) {
-            TextField(title, value: value, format: .number)
-                .multilineTextAlignment(.trailing)
-                .frame(width: 150)
+            HStack(spacing: 6) {
+                Text("\(port)")
+                    .monospacedDigit()
+                Text(transport)
+                Text("·")
+                Text(exposure)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 

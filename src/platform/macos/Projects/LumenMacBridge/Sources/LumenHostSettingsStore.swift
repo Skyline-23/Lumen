@@ -1,5 +1,32 @@
 import Foundation
 
+@frozen public struct LumenNetworkPortPlan: Equatable, Sendable {
+    public static let defaultBasePort = 47_989
+    public static let validBasePortRange = 1_029...65_514
+
+    public let basePort: Int
+    public let controlHTTPSPort: Int
+    public let nativeMediaUDPPort: Int
+    public let nativeSessionQUICPort: Int
+
+    public init?(basePort: Int) {
+        guard Self.validBasePortRange.contains(basePort) else {
+            return nil
+        }
+        self.basePort = basePort
+        controlHTTPSPort = basePort + 1
+        nativeMediaUDPPort = basePort + 9
+        nativeSessionQUICPort = basePort + 21
+    }
+
+    public static var `default`: Self {
+        guard let plan = Self(basePort: defaultBasePort) else {
+            preconditionFailure("The Lumen default base port must produce a valid port plan")
+        }
+        return plan
+    }
+}
+
 @frozen public enum LumenNetworkAddressFamily: String, CaseIterable, Hashable, Sendable {
     case ipv4
     case dualStack = "both"
@@ -92,6 +119,10 @@ public struct LumenNativeHostSettings: Equatable, Sendable {
     public var certificatePath: String
     public var stateFilePath: String
 
+    public var networkPortPlan: LumenNetworkPortPlan {
+        LumenNetworkPortPlan(basePort: port) ?? .default
+    }
+
     public static var defaults: Self {
         let supportDirectory = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -120,7 +151,7 @@ public struct LumenNativeHostSettings: Equatable, Sendable {
             nativePenAndTouch: true,
             rumbleForwarding: true,
             addressFamily: .ipv4,
-            port: 47_989,
+            port: LumenNetworkPortPlan.defaultBasePort,
             upnpEnabled: false,
             remoteAccessScope: .localNetwork,
             externalIPMode: .automatic,
@@ -434,7 +465,7 @@ public actor LumenHostSettingsStore {
               settings.adapterSelector == "automatic",
               settings.outputSelector == "automatic",
               settings.audioSink == "system-default",
-              (1_029...65_515).contains(settings.port),
+              LumenNetworkPortPlan.validBasePortRange.contains(settings.port),
               (1_000...120_000).contains(settings.pingTimeoutMilliseconds),
               (1...255).contains(settings.fecPercentage),
               (-1...60_000).contains(settings.controllerBackButtonTimeoutMilliseconds),

@@ -417,7 +417,10 @@ after declared decoder failure or repeated missed recovery deadlines.
 Lumen advertises `_lumen._udp` over mDNS with protocol major version, QUIC port,
 optional direct-media UDP port, host identity fingerprint, and enrollment
 requirement. When the owner enables UPnP, Lumen maps only the native QUIC and
-direct-media UDP ports.
+direct-media UDP ports. The HTTPS control endpoint remains LAN-only and is not
+published through UPnP; authentication, launch negotiation, input, telemetry,
+and reliable session state travel on the authenticated QUIC connection for a
+remote v3 session.
 
 No RTSP, RTP, ENet, or legacy GameStream port is advertised or opened by a v2
 only host.
@@ -425,7 +428,9 @@ only host.
 The authoritative discovery field is mDNS TXT `quic-port`; authenticated HTTPS
 host discovery exposes the same value as `sessionQuicPort`. The default base
 port is `47989`, the QUIC offset is `21`, and therefore the default QUIC control
-port is `48010`. Clients use the discovered value when present and use `48010`
+port is `48010`. Native media uses base offset `9` (`47998` by default), while
+LAN-only HTTPS control uses offset `1` (`47990` by default). Clients use the
+discovered value when present and use `48010`
 only when discovery is unavailable and the user supplied no explicit port.
 
 ## Alternatives considered
