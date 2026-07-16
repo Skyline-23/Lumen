@@ -202,6 +202,8 @@
 "UPnP could not determine this Mac's local network address." = "UPnP에서 이 Mac의 로컬 네트워크 주소를 확인하지 못했습니다.";
 "UPnP could not find a compatible gateway." = "UPnP와 호환되는 게이트웨이를 찾지 못했습니다.";
 "UPnP could not remove the previous port mapping." = "UPnP에서 이전 포트 매핑을 제거하지 못했습니다.";
+"The native session transport failed." = "네이티브 세션 전송에 실패했습니다.";
+"The native capture session could not start. Check Screen Recording permission and Diagnostics." = "네이티브 캡처 세션을 시작하지 못했습니다. 화면 기록 권한과 진단을 확인하세요.";
 "Undo command" = "실행 취소 명령";
 "Unlock Lumen" = "Lumen 잠금 해제";
 "Unlock Lumen settings with Touch ID" = "Touch ID로 Lumen 설정 잠금 해제";

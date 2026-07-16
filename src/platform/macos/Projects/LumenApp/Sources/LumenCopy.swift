@@ -328,6 +328,10 @@ enum LumenCopy {
                 localized("UPnP could not configure the requested IPv6 pinhole.")
             case 4:
                 localized("UPnP could not remove the previous port mapping.")
+            case 5:
+                localized("The native session transport failed.")
+            case 6:
+                localized("The native capture session could not start. Check Screen Recording permission and Diagnostics.")
             default:
                 fallback
             }

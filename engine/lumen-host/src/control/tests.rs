@@ -1,5 +1,9 @@
 use super::*;
-use crate::{HostAuthorities, HostAuthorityPaths, PlatformApplicationPlan, PlatformSessionPlan};
+use crate::{
+    HostAuthorities, HostAuthorityPaths, PlatformApplicationPlan, PlatformRuntimeEvent,
+    PlatformRuntimeEventCode, PlatformRuntimeEventDisposition, PlatformRuntimeEventSeverity,
+    PlatformSessionPlan,
+};
 use lumen_engine::{
     client_control_envelope, host_control_envelope, ClientControlEnvelope, ClientSessionHello,
     CodecConfiguration, CodecConfigurationAck, HostSessionCapabilities, MediaPathResponse,
@@ -93,6 +97,26 @@ impl PlatformSessionControl for RecordingPlatformSessionControl {
 
     fn stop_session(&self) -> Result<(), String> {
         self.stops.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+}
+
+#[derive(Default)]
+struct FailingPlatformSessionControl {
+    runtime_events: Mutex<Vec<PlatformRuntimeEvent>>,
+}
+
+impl PlatformSessionControl for FailingPlatformSessionControl {
+    fn start_session(&self, _plan: PlatformSessionPlan) -> Result<(), String> {
+        Err("screen recording permission denied".to_owned())
+    }
+
+    fn stop_session(&self) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn publish_runtime_event(&self, event: PlatformRuntimeEvent) -> Result<(), String> {
+        self.runtime_events.lock().unwrap().push(event);
         Ok(())
     }
 }
@@ -375,6 +399,90 @@ fn native_hello_authenticates_negotiates_and_requires_the_exact_udp_path() {
     assert_eq!(platform.application_stops.load(Ordering::Relaxed), 1);
     assert!(router.video_delivery_state().is_none());
     assert!(router.audio_delivery_state().is_none());
+}
+
+#[test]
+fn native_start_returns_the_platform_failure_and_publishes_a_typed_runtime_error() {
+    let platform = Arc::new(FailingPlatformSessionControl::default());
+    let (_root, mut router) = router_with_platform(platform.clone());
+    router
+        .authorities()
+        .applications()
+        .upsert(r#"{"uuid":"native-desktop","name":"Desktop"}"#)
+        .unwrap();
+    let application_id = router.authorities().applications().applications().unwrap()[0].id;
+    let context = native_context();
+    let hello = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 7,
+            payload: Some(client_control_envelope::Payload::Hello(native_hello(
+                application_id,
+            ))),
+        },
+        &context,
+    );
+    let host_control_envelope::Payload::SessionPlan(plan) = hello[0].payload.as_ref().unwrap()
+    else {
+        panic!("expected native session plan");
+    };
+    let endpoint = SocketAddr::new(context.peer_address, 52_000);
+    assert!(router.observe_native_media_path(
+        endpoint,
+        context.session_epoch,
+        plan.path_id as u16,
+        &context.media_challenge,
+    ));
+    let path = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 8,
+            payload: Some(client_control_envelope::Payload::MediaPath(
+                MediaPathResponse {
+                    session_epoch: context.session_epoch,
+                    path_id: plan.path_id,
+                    token: context.media_challenge.to_vec(),
+                },
+            )),
+        },
+        &context,
+    );
+    assert!(matches!(
+        path[0].payload,
+        Some(host_control_envelope::Payload::MediaPathValidated(_))
+    ));
+
+    let responses = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 9,
+            payload: Some(client_control_envelope::Payload::StartSession(
+                StartSessionAck {
+                    session_epoch: context.session_epoch,
+                },
+            )),
+        },
+        &context,
+    );
+
+    let host_control_envelope::Payload::Error(error) = responses[0].payload.as_ref().unwrap()
+    else {
+        panic!("expected native platform error");
+    };
+    assert_eq!(error.code, 7);
+    assert_eq!(
+        error.message,
+        "platform stream session could not be started: screen recording permission denied"
+    );
+    assert_eq!(
+        *platform.runtime_events.lock().unwrap(),
+        vec![PlatformRuntimeEvent {
+            disposition: PlatformRuntimeEventDisposition::Raised,
+            severity: PlatformRuntimeEventSeverity::Error,
+            code: PlatformRuntimeEventCode::NativeSessionPlatform,
+            message: Some(
+                "platform stream session could not be started: screen recording permission denied"
+                    .to_owned(),
+            ),
+        }]
+    );
 }
 
 #[test]

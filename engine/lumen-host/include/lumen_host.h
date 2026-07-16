@@ -83,6 +83,8 @@ typedef enum LumenHostPlatformRuntimeEventCode {
   LumenHostPlatformRuntimeEventCodeUpnpPortMapping = 2,
   LumenHostPlatformRuntimeEventCodeUpnpIpv6Pinhole = 3,
   LumenHostPlatformRuntimeEventCodeUpnpPortRemoval = 4,
+  LumenHostPlatformRuntimeEventCodeNativeSessionTransport = 5,
+  LumenHostPlatformRuntimeEventCodeNativeSessionPlatform = 6,
 } LumenHostPlatformRuntimeEventCode;
 
 typedef struct LumenHostPlatformRuntimeEvent {
@@ -143,6 +145,15 @@ typedef enum LumenHostCommandSendStatus {
 // must report the required payload_size without consuming the pending item;
 // Lumen retries once with a bounded Rust-owned buffer. Ready consumes exactly
 // one complete decoder-ready Annex-B frame or Opus packet.
+
+typedef enum LumenHostPlatformStartSessionStatus {
+  LumenHostPlatformStartSessionStatusReady = 0,
+  LumenHostPlatformStartSessionStatusInvalidConfiguration = -1,
+  LumenHostPlatformStartSessionStatusDisplayCreationFailed = -2,
+  LumenHostPlatformStartSessionStatusAudioEncoderFailed = -3,
+  LumenHostPlatformStartSessionStatusVideoCaptureFailed = -4,
+  LumenHostPlatformStartSessionStatusAudioCaptureFailed = -5,
+} LumenHostPlatformStartSessionStatus;
 
 typedef int32_t (*LumenHostPlatformStartSessionCallback)(
   void *context,

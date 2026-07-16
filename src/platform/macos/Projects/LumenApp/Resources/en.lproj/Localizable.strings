@@ -202,6 +202,8 @@
 "UPnP could not determine this Mac's local network address." = "UPnP could not determine this Mac's local network address.";
 "UPnP could not find a compatible gateway." = "UPnP could not find a compatible gateway.";
 "UPnP could not remove the previous port mapping." = "UPnP could not remove the previous port mapping.";
+"The native session transport failed." = "The native session transport failed.";
+"The native capture session could not start. Check Screen Recording permission and Diagnostics." = "The native capture session could not start. Check Screen Recording permission and Diagnostics.";
 "Undo command" = "Undo command";
 "Unlock Lumen" = "Unlock Lumen";
 "Unlock Lumen settings with Touch ID" = "Unlock Lumen settings with Touch ID";

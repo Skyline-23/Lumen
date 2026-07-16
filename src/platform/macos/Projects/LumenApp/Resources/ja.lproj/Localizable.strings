@@ -202,6 +202,8 @@
 "UPnP could not determine this Mac's local network address." = "UPnPでこのMacのローカルネットワークアドレスを特定できませんでした。";
 "UPnP could not find a compatible gateway." = "UPnPに対応するゲートウェイが見つかりませんでした。";
 "UPnP could not remove the previous port mapping." = "UPnPで以前のポートマッピングを削除できませんでした。";
+"The native session transport failed." = "ネイティブセッションの転送に失敗しました。";
+"The native capture session could not start. Check Screen Recording permission and Diagnostics." = "ネイティブキャプチャセッションを開始できませんでした。画面収録の権限と診断を確認してください。";
 "Undo command" = "取り消しコマンド";
 "Unlock Lumen" = "Lumenのロックを解除";
 "Unlock Lumen settings with Touch ID" = "Touch IDでLumenの設定をロック解除";

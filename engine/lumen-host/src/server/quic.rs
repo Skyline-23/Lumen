@@ -10,27 +10,33 @@ use std::time::Duration;
 
 use lumen_engine::{
     decode_client_control_message, decode_client_input_message, encode_codec_configuration_message,
-    encode_host_control_message, encode_host_input_message, host_input_envelope, HostInputEnvelope,
-    HostSessionCapabilities, NativeInputAck, NATIVE_CONTROL_MESSAGE_LIMIT,
+    encode_host_control_message, encode_host_input_message, host_control_envelope,
+    host_input_envelope, HostControlEnvelope, HostInputEnvelope, HostSessionCapabilities,
+    NativeInputAck, NativeNegotiationFailure, NativeProtocolError, NATIVE_CONTROL_MESSAGE_LIMIT,
     NATIVE_INPUT_MESSAGE_LIMIT,
 };
 use quinn::crypto::rustls::QuicServerConfig;
 use quinn::{Endpoint, RecvStream, ServerConfig, TransportConfig, VarInt};
 use rustls::pki_types::PrivateKeyDer;
-use tokio::sync::Notify;
+use tokio::sync::{mpsc as tokio_mpsc, Notify};
 
 use super::media::NativeUdpMediaTransport;
 use super::SharedControlRouter;
 use crate::control::NativeConnectionContext;
 use crate::native_input::NativeInputSequence;
 use crate::network_ports::{NATIVE_QUIC_OFFSET, VIDEO_UDP_OFFSET};
-use crate::{HostArguments, NativeStreamControl, PlatformSessionControl};
+use crate::{
+    HostArguments, NativeStreamControl, PlatformRuntimeEvent, PlatformRuntimeEventCode,
+    PlatformRuntimeEventDisposition, PlatformRuntimeEventSeverity, PlatformSessionControl,
+};
 
 const ALPN: &[u8] = b"lumen-stream/2";
 const EXPORTER_LABEL: &[u8] = b"EXPORTER-Lumen-Session-v2";
 const SERVER_START_TIMEOUT: Duration = Duration::from_secs(2);
 const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const CONNECTION_STREAM_TIMEOUT: Duration = Duration::from_secs(2);
+const ERROR_RESPONSE_DELIVERY_GRACE: Duration = Duration::from_millis(500);
+const ERROR_TRANSPORT: u32 = 9;
 
 #[derive(Default)]
 pub struct QuicSessionTransport {
@@ -178,6 +184,11 @@ struct QuicServerContext {
     stop: Arc<AtomicBool>,
 }
 
+enum ConnectionTaskCompletion {
+    Control(Result<(), String>),
+    Configuration(Result<(), String>),
+}
+
 fn run_server(
     config: ServerConfig,
     address: SocketAddr,
@@ -224,19 +235,31 @@ fn run_server(
             let configuration_notify = Arc::clone(&context.configuration_notify);
             let media_port = context.media_port;
             tokio::spawn(async move {
-                if let Ok(connection) = incoming.await {
-                    if let Err(_error) = handle_connection(
-                        connection,
-                        media_port,
-                        router,
-                        platform,
-                        configuration_notify,
-                    )
-                    .await
-                    {
-                        #[cfg(test)]
-                        eprintln!("QUIC session failed: {_error}");
+                let connection = match incoming.await {
+                    Ok(connection) => connection,
+                    Err(error) => {
+                        report_native_transport_error(
+                            platform.as_ref(),
+                            format!("QUIC TLS handshake failed: {error}"),
+                        );
+                        return;
                     }
+                };
+                let peer = connection.remote_address();
+                eprintln!("Lumen native QUIC stage=tls-ready peer={peer} alpn=lumen-stream/2");
+                if let Err(error) = handle_connection(
+                    connection,
+                    media_port,
+                    router,
+                    Arc::clone(&platform),
+                    configuration_notify,
+                )
+                .await
+                {
+                    report_native_transport_error(
+                        platform.as_ref(),
+                        format!("QUIC native session failed for {peer}: {error}"),
+                    );
                 }
             });
         }
@@ -257,6 +280,10 @@ async fn handle_connection(
             .await
             .map_err(|_| "QUIC client did not open the session-control stream".to_owned())?
             .map_err(|error| format!("could not accept QUIC session-control stream: {error}"))?;
+    eprintln!(
+        "Lumen native QUIC stage=control-stream-ready peer={}",
+        connection.remote_address()
+    );
     let (session_epoch, media_key, media_challenge) = session_material(&connection)?;
     let context = NativeConnectionContext {
         peer_address: connection.remote_address().ip(),
@@ -278,27 +305,106 @@ async fn handle_connection(
         )
         .await
     });
+    let first_frame = read_control_frame(&mut receive)
+        .await?
+        .ok_or_else(|| "QUIC session-control stream closed before the native hello".to_owned())?;
+    let first_request = decode_client_control_message(&first_frame)
+        .map_err(|error| format!("invalid QUIC control frame: {error:?}"))?;
+    let request_id = first_request.request_id;
+    eprintln!(
+        "Lumen native QUIC stage=first-control-ready peer={} request-id={request_id}",
+        connection.remote_address()
+    );
+    let configuration_send =
+        match tokio::time::timeout(CONNECTION_STREAM_TIMEOUT, connection.open_uni()).await {
+            Err(_) => {
+                let error = "QUIC client did not admit the codec-configuration stream".to_owned();
+                write_native_transport_error(&mut send, request_id, &error).await?;
+                return Err(error);
+            }
+            Ok(Err(error)) => {
+                let error = format!("could not open QUIC codec-configuration stream: {error}");
+                write_native_transport_error(&mut send, request_id, &error).await?;
+                return Err(error);
+            }
+            Ok(Ok(send)) => send,
+        };
+    eprintln!(
+        "Lumen native QUIC stage=codec-stream-ready peer={} stream-id={:?}",
+        connection.remote_address(),
+        configuration_send.id()
+    );
+    let _ = platform.publish_runtime_event(PlatformRuntimeEvent {
+        disposition: PlatformRuntimeEventDisposition::Cleared,
+        severity: PlatformRuntimeEventSeverity::Error,
+        code: PlatformRuntimeEventCode::NativeSessionTransport,
+        message: None,
+    });
     let configuration_stop = Arc::new(AtomicBool::new(false));
-    let configuration_connection = connection.clone();
     let configuration_router = Arc::clone(&router);
     let configuration_task_stop = Arc::clone(&configuration_stop);
     let configuration_task_notify = Arc::clone(&configuration_notify);
-    let configuration_task = tokio::spawn(async move {
-        publish_codec_configurations(
-            configuration_connection,
+    let (completion_send, mut completion_receive) = tokio_mpsc::channel(2);
+    let configuration_completion_send = completion_send.clone();
+    tokio::spawn(async move {
+        let result = publish_codec_configurations(
+            configuration_send,
             session_epoch,
             configuration_router,
             configuration_task_stop,
             configuration_task_notify,
         )
-        .await
+        .await;
+        let _ = configuration_completion_send
+            .send(ConnectionTaskCompletion::Configuration(result))
+            .await;
     });
-    let control_result = handle_control_stream(&mut send, &mut receive, &router, &context).await;
-    configuration_stop.store(true, Ordering::Release);
-    configuration_notify.notify_one();
-    let configuration_result = configuration_task
+    let control_completion_send = completion_send;
+    let control_task = tokio::spawn(async move {
+        let result: Result<(), String> = async {
+            let first_responses = {
+                let mut router = router
+                    .lock()
+                    .map_err(|_| "native control router lock is poisoned".to_owned())?;
+                router.dispatch_native_control(first_request, &context)
+            };
+            write_control_responses(&mut send, first_responses).await?;
+            handle_control_stream(&mut send, &mut receive, &router, &context).await
+        }
+        .await;
+        let _ = control_completion_send
+            .send(ConnectionTaskCompletion::Control(result))
+            .await;
+    });
+    let first_completion = completion_receive
+        .recv()
         .await
-        .map_err(|error| format!("codec configuration task failed: {error}"))?;
+        .ok_or_else(|| "QUIC connection tasks ended without a result".to_owned())?;
+    let (control_result, configuration_result) = match first_completion {
+        ConnectionTaskCompletion::Control(control_result) => {
+            configuration_stop.store(true, Ordering::Release);
+            configuration_notify.notify_one();
+            let configuration_result = match completion_receive
+                .recv()
+                .await
+                .ok_or_else(|| "codec configuration task ended without a result".to_owned())?
+            {
+                ConnectionTaskCompletion::Configuration(result) => result,
+                ConnectionTaskCompletion::Control(_) => {
+                    return Err("QUIC control task completed more than once".to_owned());
+                }
+            };
+            (control_result, configuration_result)
+        }
+        ConnectionTaskCompletion::Configuration(configuration_result) => {
+            control_task.abort();
+            let control_result = match &configuration_result {
+                Ok(()) => Err("codec configuration stream ended before session control".to_owned()),
+                Err(error) => Err(format!("codec configuration stream failed: {error}")),
+            };
+            (control_result, configuration_result)
+        }
+    };
     connection.close(VarInt::from_u32(0), b"session control closed");
     let input_result = input_task
         .await
@@ -309,16 +415,12 @@ async fn handle_connection(
 }
 
 async fn publish_codec_configurations(
-    connection: quinn::Connection,
+    mut send: quinn::SendStream,
     session_epoch: u32,
     router: SharedControlRouter,
     stop: Arc<AtomicBool>,
     notify: Arc<Notify>,
 ) -> Result<(), String> {
-    let mut send = tokio::time::timeout(CONNECTION_STREAM_TIMEOUT, connection.open_uni())
-        .await
-        .map_err(|_| "QUIC client did not admit the codec-configuration stream".to_owned())?
-        .map_err(|error| format!("could not open QUIC codec-configuration stream: {error}"))?;
     while !stop.load(Ordering::Acquire) {
         let configuration = router
             .lock()
@@ -330,6 +432,11 @@ async fn publish_codec_configurations(
             send.write_all(&encoded)
                 .await
                 .map_err(|error| format!("could not write codec configuration: {error}"))?;
+            eprintln!(
+                "Lumen native QUIC stage=codec-configuration-sent session-epoch={} configuration-id={}",
+                configuration.session_epoch,
+                configuration.configuration_id
+            );
         } else {
             notify.notified().await;
         }
@@ -352,13 +459,7 @@ async fn handle_control_stream(
             .lock()
             .map_err(|_| "native control router lock is poisoned".to_owned())?
             .dispatch_native_control(request, context);
-        for response in responses {
-            let encoded = encode_host_control_message(&response)
-                .map_err(|error| format!("could not encode QUIC control response: {error:?}"))?;
-            send.write_all(&encoded)
-                .await
-                .map_err(|error| format!("could not write QUIC control response: {error}"))?;
-        }
+        write_control_responses(send, responses).await?;
     }
     send.finish()
         .map_err(|error| format!("could not finish QUIC session-control stream: {error}"))?;
@@ -366,6 +467,53 @@ async fn handle_control_stream(
         .await
         .map_err(|error| format!("QUIC session-control response was not acknowledged: {error}"))?;
     Ok(())
+}
+
+async fn write_control_responses(
+    send: &mut quinn::SendStream,
+    responses: Vec<HostControlEnvelope>,
+) -> Result<(), String> {
+    for response in responses {
+        let encoded = encode_host_control_message(&response)
+            .map_err(|error| format!("could not encode QUIC control response: {error:?}"))?;
+        send.write_all(&encoded)
+            .await
+            .map_err(|error| format!("could not write QUIC control response: {error}"))?;
+    }
+    Ok(())
+}
+
+async fn write_native_transport_error(
+    send: &mut quinn::SendStream,
+    request_id: u64,
+    message: &str,
+) -> Result<(), String> {
+    write_control_responses(
+        send,
+        vec![HostControlEnvelope {
+            request_id,
+            payload: Some(host_control_envelope::Payload::Error(NativeProtocolError {
+                code: ERROR_TRANSPORT,
+                message: message.to_owned(),
+                negotiation_failure: NativeNegotiationFailure::Unspecified as i32,
+            })),
+        }],
+    )
+    .await?;
+    send.finish()
+        .map_err(|error| format!("could not finish QUIC transport-error response: {error}"))?;
+    tokio::time::sleep(ERROR_RESPONSE_DELIVERY_GRACE).await;
+    Ok(())
+}
+
+fn report_native_transport_error(platform: &dyn PlatformSessionControl, message: String) {
+    eprintln!("{message}");
+    let _ = platform.publish_runtime_event(PlatformRuntimeEvent {
+        disposition: PlatformRuntimeEventDisposition::Raised,
+        severity: PlatformRuntimeEventSeverity::Error,
+        code: PlatformRuntimeEventCode::NativeSessionTransport,
+        message: Some(message),
+    });
 }
 
 async fn accept_native_input_stream(
@@ -379,6 +527,10 @@ async fn accept_native_input_stream(
             .await
             .map_err(|_| "QUIC client did not open the reliable input stream".to_owned())?
             .map_err(|error| format!("could not accept QUIC reliable input stream: {error}"))?;
+    eprintln!(
+        "Lumen native QUIC stage=input-stream-ready peer={} session-epoch={session_epoch}",
+        connection.remote_address()
+    );
     let guard = NativeInputResetGuard::new(session_epoch, Arc::clone(&platform));
     let mut sequence = NativeInputSequence::new(session_epoch);
     let mut command_sequence = 1_u64;
@@ -882,6 +1034,83 @@ mod tests {
             .unwrap()
             .pending_native_media_key_from_test();
         assert_eq!(pending_key, Some(expected_media_key));
+        transport.stop().unwrap();
+    }
+
+    #[test]
+    fn quic_bootstrap_returns_a_typed_error_when_the_client_rejects_the_codec_stream() {
+        let root = tempfile::tempdir().unwrap();
+        let (certificate, certificate_der) = write_identity(root.path());
+        let (router, application_id) = test_router(root.path());
+        let arguments = test_arguments(root.path(), &certificate);
+        let shared_router = Arc::new(Mutex::new(router));
+        let mut transport = QuicSessionTransport::default();
+        transport
+            .start(
+                &arguments,
+                shared_router,
+                Arc::new(IdlePlatformSessionControl),
+            )
+            .unwrap();
+        let server = transport.local_address().unwrap();
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let mut roots = rustls::RootCertStore::empty();
+            roots.add(certificate_der).unwrap();
+            let mut tls = rustls::ClientConfig::builder()
+                .with_root_certificates(roots)
+                .with_no_client_auth();
+            tls.alpn_protocols = vec![ALPN.to_vec()];
+            let crypto = QuicClientConfig::try_from(tls).unwrap();
+            let mut client = Endpoint::client(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).unwrap();
+            let mut client_config = quinn::ClientConfig::new(Arc::new(crypto));
+            let mut client_transport = TransportConfig::default();
+            client_transport.max_concurrent_uni_streams(VarInt::from_u32(0));
+            client_config.transport_config(Arc::new(client_transport));
+            client.set_default_client_config(client_config);
+            let connection = client
+                .connect(
+                    SocketAddr::from((Ipv4Addr::LOCALHOST, server.port())),
+                    "localhost",
+                )
+                .unwrap()
+                .await
+                .unwrap();
+            let (mut send, mut receive) = connection.open_bi().await.unwrap();
+            let (_input_send, _input_receive) = connection.open_bi().await.unwrap();
+            let request = ClientControlEnvelope {
+                request_id: 7,
+                payload: Some(client_control_envelope::Payload::Hello(native_hello(
+                    application_id,
+                ))),
+            };
+            send.write_all(&lumen_engine::encode_client_control_message(&request).unwrap())
+                .await
+                .unwrap();
+
+            let response = tokio::time::timeout(
+                CONNECTION_STREAM_TIMEOUT + Duration::from_secs(1),
+                read_control_frame(&mut receive),
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+            let response = decode_host_control_message(&response).unwrap();
+            let host_control_envelope::Payload::Error(error) = response.payload.unwrap() else {
+                panic!("expected codec stream admission error");
+            };
+            assert_eq!(response.request_id, 7);
+            assert_eq!(error.code, 9);
+            assert!(error.message.contains("codec-configuration stream"));
+
+            connection.close(VarInt::from_u32(0), b"test complete");
+            client.wait_idle().await;
+        });
         transport.stop().unwrap();
     }
 
