@@ -25,13 +25,12 @@
 "Base port" = "ベースポート";
 "Default: %@" = "デフォルト: %@";
 "HTTPS control" = "HTTPS コントロール";
-"LAN only" = "LAN のみ";
 "Mapped by UPnP" = "UPnP で公開";
 "Native media" = "ネイティブメディア";
 "Not mapped" = "未公開";
 "Session QUIC" = "セッション QUIC";
 "The base port derives every Lumen endpoint shown below." = "ベースポートから以下のすべての Lumen エンドポイントが決まります。";
-"UPnP exposes only Session QUIC and Native media over UDP. HTTPS control stays LAN-only." = "UPnP はセッション QUIC とネイティブメディア UDP のみを外部公開します。HTTPS コントロールは LAN 専用です。";
+"UPnP exposes HTTPS control, Session QUIC, and Native media so authenticated WAN clients use the same host surface as LAN clients." = "UPnP は HTTPS コントロール、セッション QUIC、ネイティブメディアをすべて外部公開し、認証済み WAN クライアントが LAN と同じホスト機能を利用できるようにします。";
 "Use default" = "デフォルトを使用";
 "Cancel" = "キャンセル";
 "Changes apply to the next stream session." = "変更は次のストリームセッションから適用されます。";

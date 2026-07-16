@@ -75,7 +75,7 @@
     "factoryReset": "invalidate-all"
   },
   "deviceEnrollmentPolicy": {
-    "scope": "local-host-only",
+    "scope": "network-reachable-host",
     "configKey": "device_enrollment_enabled",
     "disabledError": "device-enrollment-disabled",
     "existingDeviceAuthentication": "unaffected"

@@ -205,12 +205,11 @@ enum LumenCopy {
         static var controlHTTPSPort: String { localized("HTTPS control") }
         static var nativeMediaPort: String { localized("Native media") }
         static var nativeSessionQUICPort: String { localized("Session QUIC") }
-        static var lanOnly: String { localized("LAN only") }
         static var mappedByUPnP: String { localized("Mapped by UPnP") }
         static var notMappedByUPnP: String { localized("Not mapped") }
         static var upnpMappingDetail: String {
             localized(
-                "UPnP exposes only Session QUIC and Native media over UDP. HTTPS control stays LAN-only."
+                "UPnP exposes HTTPS control, Session QUIC, and Native media so authenticated WAN clients use the same host surface as LAN clients."
             )
         }
         static var upnp: String { localized("UPnP port mapping") }
