@@ -195,6 +195,24 @@ enum LumenCopy {
         static var networkSubtitle: String { localized("Discovery, remote access, encryption, and recovery") }
         static var addressFamily: String { localized("Address family") }
         static var port: String { localized("Base port") }
+        static var useDefaultPort: String { localized("Use default") }
+        static func defaultPort(_ value: Int) -> String {
+            localizedFormat("Default: %@", value.formatted(.number.grouping(.never)))
+        }
+        static var portPlanDetail: String {
+            localized("The base port derives every Lumen endpoint shown below.")
+        }
+        static var controlHTTPSPort: String { localized("HTTPS control") }
+        static var nativeMediaPort: String { localized("Native media") }
+        static var nativeSessionQUICPort: String { localized("Session QUIC") }
+        static var lanOnly: String { localized("LAN only") }
+        static var mappedByUPnP: String { localized("Mapped by UPnP") }
+        static var notMappedByUPnP: String { localized("Not mapped") }
+        static var upnpMappingDetail: String {
+            localized(
+                "UPnP exposes only Session QUIC and Native media over UDP. HTTPS control stays LAN-only."
+            )
+        }
         static var upnp: String { localized("UPnP port mapping") }
         static var externalIPMode: String { localized("External IP detection") }
         static var encryption: String { localized("Encryption and recovery") }

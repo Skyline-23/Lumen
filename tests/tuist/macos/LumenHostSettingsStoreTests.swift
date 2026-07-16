@@ -20,6 +20,10 @@ final class LumenHostSettingsStoreTests: XCTestCase {
         XCTAssertTrue(settings.controllerInput)
         XCTAssertEqual(settings.addressFamily, .ipv4)
         XCTAssertEqual(settings.port, 47_989)
+        XCTAssertEqual(settings.networkPortPlan, .default)
+        XCTAssertEqual(settings.networkPortPlan.controlHTTPSPort, 47_990)
+        XCTAssertEqual(settings.networkPortPlan.nativeMediaUDPPort, 47_998)
+        XCTAssertEqual(settings.networkPortPlan.nativeSessionQUICPort, 48_010)
         XCTAssertFalse(settings.upnpEnabled)
         XCTAssertEqual(settings.lanEncryption, .disabled)
         XCTAssertEqual(settings.wanEncryption, .opportunistic)
@@ -120,6 +124,20 @@ final class LumenHostSettingsStoreTests: XCTestCase {
         do {
             try await store.save(settings)
             XCTFail("Expected invalid settings to be rejected")
+        } catch {
+            XCTAssertEqual(error as? LumenHostSettingsError, .invalidValue)
+        }
+    }
+
+    func testBasePortRejectsValuesThatOverflowTheSessionQUICOffset() async throws {
+        let suiteName = "LumenHostSettingsStoreTests.\(UUID().uuidString)"
+        let store = try LumenHostSettingsStore(suiteName: suiteName)
+        var settings = try await store.snapshot()
+        settings.port = 65_515
+
+        do {
+            try await store.save(settings)
+            XCTFail("Expected base port overflow to be rejected")
         } catch {
             XCTAssertEqual(error as? LumenHostSettingsError, .invalidValue)
         }

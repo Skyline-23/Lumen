@@ -25,3 +25,31 @@ pub(super) fn mappings(arguments: &HostArguments) -> Result<[PortMapping; 2], St
         },
     ])
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::tests::valid_arguments_for_runtime_tests;
+
+    #[test]
+    fn v3_exposes_only_quic_and_native_media_over_upnp() {
+        let mappings = mappings(&valid_arguments_for_runtime_tests()).unwrap();
+
+        assert_eq!(
+            mappings,
+            [
+                PortMapping {
+                    protocol: PortMappingProtocol::UDP,
+                    port: 48_010,
+                    description: "Lumen - Native Session QUIC",
+                },
+                PortMapping {
+                    protocol: PortMappingProtocol::UDP,
+                    port: 47_998,
+                    description: "Lumen - Native Media",
+                },
+            ]
+        );
+        assert!(mappings.iter().all(|mapping| mapping.port != 47_990));
+    }
+}
