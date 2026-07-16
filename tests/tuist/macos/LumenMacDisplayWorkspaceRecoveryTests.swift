@@ -45,7 +45,52 @@ private actor DisplayTopologyProbe: LumenMacDisplayTopologyControlling {
     }
 }
 
+private actor TransientVirtualDisplayTopologyController: LumenMacDisplayTopologyControlling {
+    private let physicalDisplayID: CGDirectDisplayID
+    private var restored: [LumenMacPhysicalDisplayTopology] = []
+
+    init(physicalDisplayID: CGDirectDisplayID) {
+        self.physicalDisplayID = physicalDisplayID
+    }
+
+    func capture() throws -> LumenMacPhysicalDisplayTopology {
+        throw LumenMacDisplayWorkspaceError.displayNotFound(102)
+    }
+
+    func restore(_ topology: LumenMacPhysicalDisplayTopology) {
+        restored.append(topology)
+    }
+
+    func verify(_: LumenMacPhysicalDisplayTopology) {}
+
+    func visibleDisplayIDs() -> Set<CGDirectDisplayID> {
+        [physicalDisplayID]
+    }
+
+    func restoredTopologies() -> [LumenMacPhysicalDisplayTopology] {
+        restored
+    }
+}
+
 final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
+    func testRestoreIgnoresTransientVirtualDisplayModeReadback() async throws {
+        let topology = displayTopology()
+        let physicalDisplayID = try XCTUnwrap(topology.displays.first.flatMap { UInt32($0.id) })
+        let controller = TransientVirtualDisplayTopologyController(
+            physicalDisplayID: physicalDisplayID
+        )
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: controller,
+            physicalDisplayController: RecordingPhysicalDisplayController(),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier()
+        )
+
+        try await workspace.restoreWorkspace(topology)
+
+        let restoredTopologies = await controller.restoredTopologies()
+        XCTAssertEqual(restoredTopologies, [topology])
+    }
+
     func testModeSelectionUsesCurrentModeWhenEnumerationOmitsIt() {
         let current = LumenMacPhysicalDisplayMode(
             width: 5120,

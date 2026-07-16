@@ -244,18 +244,20 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
     }
 
     public func restoreWorkspace(_ topology: LumenMacPhysicalDisplayTopology) async throws {
-        let current = try await topologyController.capture()
-        let currentByID = Dictionary(uniqueKeysWithValues: current.displays.map { ($0.id, $0) })
-        let displaysToEnable = topology.displays.filter { state in
-            (state.enabled || state.active) && currentByID[state.id]?.active != true
+        let expectedDisplays = try topology.displays.map { state -> (CGDirectDisplayID, LumenMacPhysicalDisplayState) in
+            guard let displayID = UInt32(state.id) else {
+                throw LumenMacDisplayWorkspaceError.invalidPersistedDisplayID(state.id)
+            }
+            return (displayID, state)
+        }
+        let visibleDisplayIDs = await topologyController.visibleDisplayIDs()
+        let displaysToEnable = expectedDisplays.filter { displayID, state in
+            (state.enabled || state.active) && !visibleDisplayIDs.contains(displayID)
         }
         if !displaysToEnable.isEmpty {
             _ = try physicalDisplayController.probe()
         }
-        for state in displaysToEnable {
-            guard let displayID = UInt32(state.id) else {
-                throw LumenMacDisplayWorkspaceError.invalidPersistedDisplayID(state.id)
-            }
+        for (displayID, _) in displaysToEnable {
             _ = try physicalDisplayController.setEnabled(true, for: displayID)
         }
         try await topologyController.restore(topology)
