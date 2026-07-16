@@ -1,4 +1,3 @@
-import AppKit
 import CoreGraphics
 import Foundation
 
@@ -10,31 +9,36 @@ protocol LumenMacDisplayTopologyControlling: Sendable {
 }
 
 actor LumenCoreGraphicsDisplayTopologyController: LumenMacDisplayTopologyControlling {
+    private static let productionVerificationAttempts = 20
+    private static let productionVerificationDelayNanoseconds: UInt64 = 100_000_000
     private let captureOverride: (@Sendable () async throws -> LumenMacPhysicalDisplayTopology)?
     private let restoreOverride: (@Sendable (LumenMacPhysicalDisplayTopology) async throws -> Void)?
     private let visibleDisplayIDsProvider: @Sendable () async -> Set<CGDirectDisplayID>
+    private let verificationAttempts: Int
+    private let verificationDelayNanoseconds: UInt64
 
     init() {
         captureOverride = nil
         restoreOverride = nil
         visibleDisplayIDsProvider = {
-            await MainActor.run {
-                Set(NSScreen.screens.compactMap { screen in
-                    (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?
-                        .uint32Value
-                })
-            }
+            Set(Self.activeDisplayIDs())
         }
+        verificationAttempts = Self.productionVerificationAttempts
+        verificationDelayNanoseconds = Self.productionVerificationDelayNanoseconds
     }
 
     init(
         capture: @escaping @Sendable () async throws -> LumenMacPhysicalDisplayTopology,
         restore: @escaping @Sendable (LumenMacPhysicalDisplayTopology) async throws -> Void,
-        visibleDisplayIDs: @escaping @Sendable () async -> Set<CGDirectDisplayID>
+        visibleDisplayIDs: @escaping @Sendable () async -> Set<CGDirectDisplayID>,
+        verificationAttempts: Int = 1,
+        verificationDelayNanoseconds: UInt64 = 0
     ) {
         captureOverride = capture
         restoreOverride = restore
         visibleDisplayIDsProvider = visibleDisplayIDs
+        self.verificationAttempts = max(1, verificationAttempts)
+        self.verificationDelayNanoseconds = verificationDelayNanoseconds
     }
 
     func capture() async throws -> LumenMacPhysicalDisplayTopology {
@@ -129,17 +133,23 @@ actor LumenCoreGraphicsDisplayTopologyController: LumenMacDisplayTopologyControl
     }
 
     func verify(_ topology: LumenMacPhysicalDisplayTopology) async throws {
-        let actual = try await capture()
-        let actualByID = Dictionary(uniqueKeysWithValues: actual.displays.map { ($0.id, $0) })
         let expectedByID = Dictionary(uniqueKeysWithValues: topology.displays.map { ($0.id, $0) })
-        let visibleDisplayIDs = await visibleDisplayIDs()
-        guard expectedByID.allSatisfy({ actualByID[$0.key] == $0.value }),
-              expectedByID.allSatisfy({ id, state in
-                guard let displayID = UInt32(id) else { return false }
-                return visibleDisplayIDs.contains(displayID) == (state.active && state.online)
-              }) else {
-            throw LumenMacDisplayWorkspaceError.physicalTopologyMismatch
+        for attempt in 0..<verificationAttempts {
+            let actual = try await capture()
+            let actualByID = Dictionary(uniqueKeysWithValues: actual.displays.map { ($0.id, $0) })
+            let visibleDisplayIDs = await visibleDisplayIDs()
+            if expectedByID.allSatisfy({ actualByID[$0.key] == $0.value }),
+               expectedByID.allSatisfy({ id, state in
+                   guard let displayID = UInt32(id) else { return false }
+                   return visibleDisplayIDs.contains(displayID) == (state.active && state.online)
+               }) {
+                return
+            }
+            if attempt + 1 < verificationAttempts, verificationDelayNanoseconds > 0 {
+                try await Task.sleep(nanoseconds: verificationDelayNanoseconds)
+            }
         }
+        throw LumenMacDisplayWorkspaceError.physicalTopologyMismatch
     }
 
     func visibleDisplayIDs() async -> Set<CGDirectDisplayID> {
@@ -160,15 +170,44 @@ actor LumenCoreGraphicsDisplayTopologyController: LumenMacDisplayTopologyControl
         return Array(displays.prefix(Int(count)))
     }
 
+    nonisolated private static func activeDisplayIDs() -> [CGDirectDisplayID] {
+        var count: UInt32 = 0
+        guard CGGetActiveDisplayList(0, nil, &count) == .success else {
+            return []
+        }
+        var displays = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        guard CGGetActiveDisplayList(count, &displays, &count) == .success else {
+            return []
+        }
+        return Array(displays.prefix(Int(count)))
+    }
+
     private func matchingMode(
         displayID: CGDirectDisplayID,
         expected: LumenMacPhysicalDisplayMode
     ) throws -> CGDisplayMode {
-        let modes = CGDisplayCopyAllDisplayModes(displayID, nil) as? [CGDisplayMode] ?? []
-        guard let mode = modes.first(where: { displayMode($0) == expected }) else {
+        let current = CGDisplayCopyDisplayMode(displayID)
+        let available = CGDisplayCopyAllDisplayModes(displayID, nil) as? [CGDisplayMode] ?? []
+        let candidates = [current].compactMap { $0 } + available
+        guard let index = Self.preferredModeIndex(
+            current: current.map(displayMode),
+            available: available.map(displayMode),
+            expected: expected
+        ) else {
             throw LumenMacDisplayWorkspaceError.displayModeNotFound(displayID)
         }
-        return mode
+        return candidates[index]
+    }
+
+    static func preferredModeIndex(
+        current: LumenMacPhysicalDisplayMode?,
+        available: [LumenMacPhysicalDisplayMode],
+        expected: LumenMacPhysicalDisplayMode
+    ) -> Int? {
+        if current == expected {
+            return 0
+        }
+        return available.firstIndex(of: expected).map { $0 + (current == nil ? 0 : 1) }
     }
 
     private func displayMode(_ mode: CGDisplayMode) -> LumenMacPhysicalDisplayMode {
