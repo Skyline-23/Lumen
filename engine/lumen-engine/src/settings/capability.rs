@@ -4,6 +4,11 @@ use super::*;
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct FieldCapability {
     pub field_key: String,
+    pub title: String,
+    pub section_id: String,
+    pub section_title: String,
+    pub order: u32,
+    pub editor: SettingsEditor,
     pub field_type: SettingsFieldType,
     pub apply_class: SettingsApplyClass,
     pub available: bool,
@@ -84,6 +89,11 @@ fn set_allowed_values(fields: &mut BTreeMap<String, FieldCapability>, key: &str,
 
 fn capability(
     key: &str,
+    title: &str,
+    section_id: &str,
+    section_title: &str,
+    order: u32,
+    editor: SettingsEditor,
     field_type: SettingsFieldType,
     apply_class: SettingsApplyClass,
     allowed_values: &[&str],
@@ -95,6 +105,11 @@ fn capability(
         field_key.clone(),
         FieldCapability {
             field_key,
+            title: title.to_owned(),
+            section_id: section_id.to_owned(),
+            section_title: section_title.to_owned(),
+            order,
+            editor,
             field_type,
             apply_class,
             available: true,
@@ -116,11 +131,29 @@ fn capability(
 
 pub(super) fn field_catalog() -> BTreeMap<String, FieldCapability> {
     use SettingsApplyClass::{Live, NextSession};
+    use SettingsEditor::{IntegerMenu, PrepCommandList, ServerCommandList, Text};
     use SettingsFieldType::{CommandList, Integer, String as StringType};
     let mut fields: BTreeMap<String, FieldCapability> = [
-        capability("general.name", StringType, Live, &[], None, None),
+        capability(
+            "general.name",
+            "Name",
+            "general",
+            "General",
+            10,
+            Text,
+            StringType,
+            Live,
+            &[],
+            None,
+            None,
+        ),
         capability(
             "network.fecPercentage",
+            "Forward error correction",
+            "network",
+            "Network",
+            20,
+            IntegerMenu,
             Integer,
             NextSession,
             &[],
@@ -129,6 +162,11 @@ pub(super) fn field_catalog() -> BTreeMap<String, FieldCapability> {
         ),
         capability(
             "commands.prep",
+            "Preparation commands",
+            "commands",
+            "Commands",
+            30,
+            PrepCommandList,
             CommandList,
             NextSession,
             &["user", "administrator"],
@@ -137,6 +175,11 @@ pub(super) fn field_catalog() -> BTreeMap<String, FieldCapability> {
         ),
         capability(
             "commands.state",
+            "State commands",
+            "commands",
+            "Commands",
+            40,
+            PrepCommandList,
             CommandList,
             NextSession,
             &["user", "administrator"],
@@ -145,6 +188,11 @@ pub(super) fn field_catalog() -> BTreeMap<String, FieldCapability> {
         ),
         capability(
             "commands.server",
+            "Server commands",
+            "commands",
+            "Commands",
+            50,
+            ServerCommandList,
             CommandList,
             NextSession,
             &["user", "administrator"],
@@ -172,6 +220,10 @@ fn set_integer_metadata(
 ) {
     if let Some(field) = fields.get_mut(key) {
         field.presets = presets.to_vec();
+        field.allowed_value_labels = presets
+            .iter()
+            .map(|value| (value.to_string(), format!("{value}%")))
+            .collect();
         field.step = Some(step);
     }
 }

@@ -703,9 +703,20 @@ mod tests {
             let authority = open(&root, 1);
             let (_, snapshot) = dispatch_json(authority, 0, "", 0);
             assert_eq!(snapshot["capabilities"]["hostPlatform"], "windows");
+            let fields = snapshot["capabilities"]["fields"].as_object().unwrap();
+            assert_eq!(fields.len(), 5);
             assert!(snapshot["capabilities"]["fields"]
                 .get("workspace.policy")
                 .is_none());
+            assert_eq!(fields["general.name"]["title"], "Name");
+            assert_eq!(fields["general.name"]["sectionId"], "general");
+            assert_eq!(fields["general.name"]["sectionTitle"], "General");
+            assert_eq!(fields["general.name"]["order"], 10);
+            assert_eq!(fields["general.name"]["editor"], "text");
+            assert_eq!(
+                fields["network.fecPercentage"]["allowedValueLabels"]["20"],
+                "20%"
+            );
             for field in ["commands.prep", "commands.state", "commands.server"] {
                 assert_eq!(snapshot["capabilities"]["fields"][field]["available"], true);
                 assert_eq!(
