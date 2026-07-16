@@ -272,7 +272,10 @@ static uint32_t LumenWorkerVideoTimestamp(CMSampleBufferRef sampleBuffer) {
     return LumenHostPlatformStartSessionStatusInvalidConfiguration;
   }
   os_unfair_lock_lock(&_lock);
-  [self stopSessionLocked];
+  if ([self stopSessionLocked] != 0) {
+    os_unfair_lock_unlock(&_lock);
+    return LumenHostPlatformStartSessionStatusInvalidConfiguration;
+  }
 
   NSError *displayError = nil;
   _displayID = [self createDisplayForPlan:plan error:&displayError];
@@ -293,7 +296,7 @@ static uint32_t LumenWorkerVideoTimestamp(CMSampleBufferRef sampleBuffer) {
   );
   if (![self createOpusEncoder:plan]) {
     fprintf(stderr, "Lumen audio encoder creation failed for %u channels\n", plan->audio_channels);
-    [self stopSessionLocked];
+    (void) [self stopSessionLocked];
     os_unfair_lock_unlock(&_lock);
     return LumenHostPlatformStartSessionStatusAudioEncoderFailed;
   }
@@ -332,13 +335,28 @@ static uint32_t LumenWorkerVideoTimestamp(CMSampleBufferRef sampleBuffer) {
   video.effective_display_state.gamut = plan->sink_gamut;
   video.effective_display_state.transfer = plan->sink_transfer;
 
+  LumenMacBridgeAudioCaptureConfiguration audio =
+    LumenMacBridgeControllerMakeSystemOutputAudioConfiguration(_displayID);
+  audio.sample_rate = 48000;
+  audio.channel_count = plan->audio_channels;
+  audio.frame_size = LumenWorkerAudioFrameCount;
+
   char error[1024] = {0};
-  if (!LumenMacBridgeControllerStartCapture(_bridge, video, error, sizeof(error))) {
-    fprintf(stderr, "Lumen video capture failed: %s\n", error);
-    [self stopSessionLocked];
+  LumenMacBridgeCapturePairStartStatus captureStatus =
+    LumenMacBridgeControllerStartCapturePair(_bridge, video, audio, error, sizeof(error));
+  if (captureStatus != LumenMacBridgeCapturePairStartStatusReady) {
+    fprintf(stderr, "Lumen capture startup failed status=%d: %s\n", captureStatus, error);
+    (void) [self stopSessionLocked];
     os_unfair_lock_unlock(&_lock);
-    return LumenHostPlatformStartSessionStatusVideoCaptureFailed;
+    if (captureStatus == LumenMacBridgeCapturePairStartStatusVideoFailed) {
+      return LumenHostPlatformStartSessionStatusVideoCaptureFailed;
+    }
+    if (captureStatus == LumenMacBridgeCapturePairStartStatusAudioFailed) {
+      return LumenHostPlatformStartSessionStatusAudioCaptureFailed;
+    }
+    return LumenHostPlatformStartSessionStatusInvalidConfiguration;
   }
+  fprintf(stderr, "Lumen platform session stage=capture-pair-ready display-id=%u\n", _displayID);
 
   if (plan->virtual_display) {
     NSError *activationError = nil;
@@ -350,7 +368,7 @@ static uint32_t LumenWorkerVideoTimestamp(CMSampleBufferRef sampleBuffer) {
         "Lumen workspace activation failed after capture readiness: %s\n",
         activationError.localizedDescription.UTF8String ?: "unknown error"
       );
-      [self stopSessionLocked];
+      (void) [self stopSessionLocked];
       os_unfair_lock_unlock(&_lock);
       return LumenHostPlatformStartSessionStatusInvalidConfiguration;
     }
@@ -359,22 +377,12 @@ static uint32_t LumenWorkerVideoTimestamp(CMSampleBufferRef sampleBuffer) {
     fprintf(stderr, "Lumen platform session stage=workspace-bypassed display-id=%u\n", _displayID);
   }
 
-  LumenMacBridgeAudioCaptureConfiguration audio =
-    LumenMacBridgeControllerMakeSystemOutputAudioConfiguration(_displayID);
-  audio.sample_rate = 48000;
-  audio.channel_count = plan->audio_channels;
-  audio.frame_size = LumenWorkerAudioFrameCount;
-  if (!LumenMacBridgeControllerStartAudioCapture(_bridge, audio, error, sizeof(error))) {
-    fprintf(stderr, "Lumen audio capture failed: %s\n", error);
-    [self stopSessionLocked];
-    os_unfair_lock_unlock(&_lock);
-    return LumenHostPlatformStartSessionStatusAudioCaptureFailed;
-  }
   os_unfair_lock_unlock(&_lock);
   return LumenHostPlatformStartSessionStatusReady;
 }
 
-- (void)stopSessionLocked {
+- (int32_t)stopSessionLocked {
+  int32_t status = 0;
   if (_bridge) {
     LumenMacBridgeControllerStopAudioCapture(_bridge);
     LumenMacBridgeControllerStopCapture(_bridge);
@@ -384,7 +392,15 @@ static uint32_t LumenWorkerVideoTimestamp(CMSampleBufferRef sampleBuffer) {
     BOOL stopped = [LumenMacWorkspaceSessionFacade.shared
       stopSessionSyncWithDisplayKey:_workspaceKey
       error:&error];
-    (void) stopped;
+    if (!stopped) {
+      fprintf(
+        stderr,
+        "Lumen workspace cleanup failed display-key=%s: %s\n",
+        _workspaceKey.UTF8String ?: "unknown",
+        error.localizedDescription.UTF8String ?: "workspace session was not found"
+      );
+      status = -1;
+    }
     _workspaceKey = nil;
   }
   if (_opus) {
@@ -397,13 +413,14 @@ static uint32_t LumenWorkerVideoTimestamp(CMSampleBufferRef sampleBuffer) {
   [_pcm setLength:0];
   _hasAudioTimestamp = NO;
   _audioChannels = 0;
+  return status;
 }
 
 - (int32_t)stopSession {
   os_unfair_lock_lock(&_lock);
-  [self stopSessionLocked];
+  int32_t status = [self stopSessionLocked];
   os_unfair_lock_unlock(&_lock);
-  return 0;
+  return status;
 }
 
 - (int32_t)handleControlEvent:(const LumenHostPlatformControlEvent *)event {

@@ -643,6 +643,35 @@ public final class LumenBridgeObjCFacade: NSObject {
         }
     }
 
+    public func startCapturePairSync(
+        _ videoConfiguration: LumenBridgeConfigurationBox,
+        audioConfiguration: LumenBridgeAudioConfigurationBox,
+        error errorPointer: NSErrorPointer
+    ) -> Int {
+        let runtime = runtime
+        let videoConfiguration = videoConfiguration.swiftValue
+        let audioConfiguration = audioConfiguration.swiftValue
+        do {
+            try blockingRun {
+                try await LumenBridgeCaptureStartupCoordinator.start(
+                    video: {
+                        try await runtime.startCapture(configuration: videoConfiguration)
+                    },
+                    audio: {
+                        try await runtime.startAudioCapture(configuration: audioConfiguration)
+                    }
+                )
+            }
+            return 0
+        } catch let error as LumenBridgeCaptureStartupError {
+            errorPointer?.pointee = error as NSError
+            return error.source.rawValue
+        } catch {
+            errorPointer?.pointee = error as NSError
+            return LumenBridgeCaptureStartupSource.unknown.rawValue
+        }
+    }
+
     public func stopCaptureSync() {
         let runtime = runtime
         try? blockingRun {

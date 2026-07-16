@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 import Synchronization
 
 @objcMembers
@@ -117,6 +118,10 @@ private struct LumenMacWorkspaceSessionRequestSnapshot: Sendable {
 }
 
 private actor LumenMacWorkspaceSessionRegistry {
+    private let logger = Logger(
+        subsystem: "dev.skyline23.lumen",
+        category: "MacWorkspaceSessionRegistry"
+    )
     private let settingsStore: LumenHostSettingsStore
     private let runtime: LumenBridgeRuntime
     private let makeDisplayWorkspace: @Sendable () -> any LumenMacDisplayWorkspaceManaging
@@ -171,7 +176,19 @@ private actor LumenMacWorkspaceSessionRegistry {
         guard let session = sessions.removeValue(forKey: displayKey) else {
             return false
         }
-        try await session.stop()
+        let result = try await LumenWorkspaceStopRecoveryCoordinator.stop(
+            stop: {
+                try await session.stop()
+            },
+            recover: {
+                try await self.recoverPendingWorkspace()
+            }
+        )
+        if result.usedDurableRecovery {
+            logger.warning(
+                "Recovered a failed in-memory workspace stop from the durable journal error=\(result.stopFailureMessage ?? "unknown", privacy: .public)"
+            )
+        }
         return true
     }
 

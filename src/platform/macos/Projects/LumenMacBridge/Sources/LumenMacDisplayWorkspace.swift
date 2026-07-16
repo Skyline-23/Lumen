@@ -2,7 +2,7 @@ import ApplicationServices
 import CoreGraphics
 import Foundation
 
-public enum LumenMacDisplayWorkspaceError: Error, Equatable {
+public enum LumenMacDisplayWorkspaceError: LocalizedError, Equatable {
     case snapshotAlreadyExists
     case snapshotMissing
     case displayNotFound(UInt32)
@@ -16,6 +16,37 @@ public enum LumenMacDisplayWorkspaceError: Error, Equatable {
     case windowSnapshotUnavailable(Int32)
     case windowNotFound(Int32, UInt32)
     case windowTopologyMismatch(Int32, UInt32)
+
+    public var errorDescription: String? {
+        switch self {
+        case .snapshotAlreadyExists:
+            "a display workspace snapshot already exists"
+        case .snapshotMissing:
+            "the display workspace snapshot is missing"
+        case .displayNotFound(let displayID):
+            "display \(displayID) was not found"
+        case .displayConfigurationFailed(let status):
+            "CoreGraphics display configuration failed with status \(status)"
+        case .accessibilityPermissionMissing:
+            "Accessibility permission is required to restore managed windows"
+        case .invalidPersistedDisplayID(let displayID):
+            "persisted display identifier \(displayID) is invalid"
+        case .displayModeNotFound(let displayID):
+            "the persisted mode for display \(displayID) is unavailable"
+        case .physicalTopologyMismatch:
+            "the restored physical display topology did not converge"
+        case .isolationPostconditionFailed:
+            "physical display isolation did not reach its required topology"
+        case .isolationRollbackFailed:
+            "physical display isolation rollback failed"
+        case .windowSnapshotUnavailable(let processID):
+            "window snapshot is unavailable for process \(processID)"
+        case .windowNotFound(let processID, let windowID):
+            "window \(windowID) for process \(processID) was not found"
+        case .windowTopologyMismatch(let processID, let windowID):
+            "window \(windowID) for process \(processID) did not return to its saved topology"
+        }
+    }
 }
 
 public protocol LumenMacDisplayWorkspaceManaging: Sendable {
@@ -213,18 +244,20 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
     }
 
     public func restoreWorkspace(_ topology: LumenMacPhysicalDisplayTopology) async throws {
-        let current = try await topologyController.capture()
-        let currentByID = Dictionary(uniqueKeysWithValues: current.displays.map { ($0.id, $0) })
-        let displaysToEnable = topology.displays.filter { state in
-            (state.enabled || state.active) && currentByID[state.id]?.active != true
+        let expectedDisplays = try topology.displays.map { state -> (CGDirectDisplayID, LumenMacPhysicalDisplayState) in
+            guard let displayID = UInt32(state.id) else {
+                throw LumenMacDisplayWorkspaceError.invalidPersistedDisplayID(state.id)
+            }
+            return (displayID, state)
+        }
+        let visibleDisplayIDs = await topologyController.visibleDisplayIDs()
+        let displaysToEnable = expectedDisplays.filter { displayID, state in
+            (state.enabled || state.active) && !visibleDisplayIDs.contains(displayID)
         }
         if !displaysToEnable.isEmpty {
             _ = try physicalDisplayController.probe()
         }
-        for state in displaysToEnable {
-            guard let displayID = UInt32(state.id) else {
-                throw LumenMacDisplayWorkspaceError.invalidPersistedDisplayID(state.id)
-            }
+        for (displayID, _) in displaysToEnable {
             _ = try physicalDisplayController.setEnabled(true, for: displayID)
         }
         try await topologyController.restore(topology)

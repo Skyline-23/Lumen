@@ -290,6 +290,29 @@ bool LumenMacBridgeControllerStartCapture(
   return started == YES;
 }
 
+LumenMacBridgeCapturePairStartStatus LumenMacBridgeControllerStartCapturePair(
+  LumenMacBridgeController *controller,
+  LumenMacBridgeCaptureConfiguration video_configuration,
+  LumenMacBridgeAudioCaptureConfiguration audio_configuration,
+  char *error_destination,
+  size_t error_capacity
+) {
+  if (!controller) {
+    copy_string_to_buffer(@"LumenMacBridgeControllerStartCapturePair called with a null controller.",
+                          error_destination,
+                          error_capacity);
+    return LumenMacBridgeCapturePairStartStatusUnknownFailed;
+  }
+
+  NSError *error = nil;
+  const NSInteger status = [LumenMacBridgeFacade(controller)
+    startCapturePairSync:to_configuration_box(video_configuration)
+    audioConfiguration:to_audio_configuration_box(audio_configuration)
+    error:&error];
+  copy_string_to_buffer(error.localizedDescription, error_destination, error_capacity);
+  return (LumenMacBridgeCapturePairStartStatus) status;
+}
+
 void LumenMacBridgeControllerStopCapture(
   LumenMacBridgeController *controller
 ) {
