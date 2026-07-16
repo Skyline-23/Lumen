@@ -60,10 +60,10 @@
     }
   },
   "fields": [
-    {"key":"general.name","type":"string","applyClass":"live","availability":"all","maxLength":64},
-    {"key":"network.fecPercentage","type":"integer","applyClass":"next-session","availability":"all","minimum":1,"maximum":255,"presets":[5,10,15,20,25,30,40,50],"step":1},
-    {"key":"commands.prep","type":"command-list","applyClass":"next-session","availability":"host-capability","values":["user","administrator"]},
-    {"key":"commands.state","type":"command-list","applyClass":"next-session","availability":"host-capability","values":["user","administrator"]},
-    {"key":"commands.server","type":"command-list","applyClass":"next-session","availability":"host-capability","values":["user","administrator"]}
+    {"key":"general.name","title":"Name","sectionId":"general","sectionTitle":"General","order":10,"editor":"text","type":"string","applyClass":"live","availability":"all","maxLength":64},
+    {"key":"network.fecPercentage","title":"Forward error correction","sectionId":"network","sectionTitle":"Network","order":20,"editor":"integer-menu","type":"integer","applyClass":"next-session","availability":"all","minimum":1,"maximum":255,"presets":[5,10,15,20,25,30,40,50],"step":1,"valueLabels":{"5":"5%","10":"10%","15":"15%","20":"20%","25":"25%","30":"30%","40":"40%","50":"50%"}},
+    {"key":"commands.prep","title":"Preparation commands","sectionId":"commands","sectionTitle":"Commands","order":30,"editor":"prep-command-list","type":"command-list","applyClass":"next-session","availability":"host-capability","values":["user","administrator"]},
+    {"key":"commands.state","title":"State commands","sectionId":"commands","sectionTitle":"Commands","order":40,"editor":"prep-command-list","type":"command-list","applyClass":"next-session","availability":"host-capability","values":["user","administrator"]},
+    {"key":"commands.server","title":"Server commands","sectionId":"commands","sectionTitle":"Commands","order":50,"editor":"server-command-list","type":"command-list","applyClass":"next-session","availability":"host-capability","values":["user","administrator"]}
   ]
 }

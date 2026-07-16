@@ -65,6 +65,14 @@ input policy, diagnostics, and update preferences is intentionally absent. The
 application owns those values and restarts the worker with one authoritative
 launch snapshot.
 
+Each public capability is also the authoritative presentation contract under
+`schemaVersion: 1`. Every field includes required `title`, `sectionId`,
+`sectionTitle`, unique `order`, and `editor` values. Editors are `text`,
+`integer-menu`, `prep-command-list`, or `server-command-list`. Clients derive
+the visible settings hierarchy, ordering, controls, presets, and value labels
+from this response; they do not maintain a parallel field catalog. FEC preset
+labels are percentage strings such as `"20": "20%"`.
+
 Remote-access scope and external-address selection are not product settings.
 An enrolled device may use the same authenticated HTTPS and native-session
 surfaces over LAN or WAN whenever routing permits. Lumen does not infer trust

@@ -36,6 +36,12 @@ string_enum!(SettingsApplyClass { Live => "live", NextSession => "next-session",
 string_enum!(SettingsApplyState { Applied => "applied", PendingNextSession => "pending-next-session", PendingWorkerRestart => "pending-worker-restart" });
 string_enum!(SettingsApplyRequirement { None => "none", NextSession => "next-session", WorkerRestart => "worker-restart" });
 string_enum!(SettingsFieldType { Boolean => "boolean", Integer => "integer", String => "string", Enum => "enum", CommandList => "command-list" });
+string_enum!(SettingsEditor {
+    Text => "text",
+    IntegerMenu => "integer-menu",
+    PrepCommandList => "prep-command-list",
+    ServerCommandList => "server-command-list",
+});
 string_enum!(SettingsErrorCode {
     UnsupportedSchema => "unsupported-schema",
     InvalidRequest => "invalid-request",

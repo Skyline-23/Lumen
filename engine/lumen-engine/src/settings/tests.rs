@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::BTreeSet;
 use tempfile::TempDir;
 
 fn authority(platform: SettingsHostPlatform) -> (TempDir, SettingsAuthority) {
@@ -111,6 +112,11 @@ fn conformance_fixture_matches_runtime_field_catalog_and_constraints() {
         let runtime = fields
             .get(key)
             .unwrap_or_else(|| panic!("missing runtime field {key}"));
+        assert_eq!(fixture_field["title"], runtime.title);
+        assert_eq!(fixture_field["sectionId"], runtime.section_id);
+        assert_eq!(fixture_field["sectionTitle"], runtime.section_title);
+        assert_eq!(fixture_field["order"], runtime.order);
+        assert_eq!(fixture_field["editor"], runtime.editor.as_str());
         assert_eq!(fixture_field["type"], runtime.field_type.as_str());
         assert_eq!(fixture_field["applyClass"], runtime.apply_class.as_str());
         let values: Vec<_> = fixture_field["values"]
@@ -202,8 +208,27 @@ fn conformance_fixture_matches_runtime_field_catalog_and_constraints() {
     let fec = &fields["network.fecPercentage"];
     assert!(!fec.presets.is_empty());
     assert!(fec.step.is_some());
+    assert_eq!(fec.allowed_value_labels["20"], "20%");
+    let orders = fields
+        .values()
+        .map(|field| field.order)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(orders.len(), fields.len());
     for key in ["commands.prep", "commands.state", "commands.server"] {
         assert_eq!(fields[key].apply_class, SettingsApplyClass::NextSession);
+    }
+}
+
+#[test]
+fn capability_presentation_metadata_is_required_under_schema_version_one() {
+    let capability =
+        &SettingsCapabilities::for_platform(SettingsHostPlatform::Macos).fields["general.name"];
+    let mut encoded = serde_json::to_value(capability).unwrap();
+    for required_key in ["title", "sectionId", "sectionTitle", "order", "editor"] {
+        let removed = encoded.as_object_mut().unwrap().remove(required_key);
+        assert!(removed.is_some());
+        assert!(serde_json::from_value::<FieldCapability>(encoded.clone()).is_err());
+        encoded = serde_json::to_value(capability).unwrap();
     }
 }
 
