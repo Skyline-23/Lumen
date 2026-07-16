@@ -25,11 +25,12 @@ pub use native_input::{
     decode_host_input_message, encode_client_input_message, encode_host_input_message,
     host_input_envelope, ClientInputEnvelope, ClientMotionEnvelope, HostInputEnvelope,
     NativeContactPhase, NativeGamepadButton, NativeGamepadButtonInput,
-    NativeGamepadConnectionInput, NativeGamepadMotionInput, NativeInputAck, NativeInputReset,
-    NativeInputWireError, NativeKeyboardInput, NativePenContactInput, NativePenMotionInput,
-    NativePointerButtonInput, NativePointerMotionInput, NativePointerMotionMode, NativeRumbleAck,
-    NativeRumbleCommand, NativeScrollInput, NativeTextInput, NativeTouchContactInput,
-    NativeTouchMotionInput, NATIVE_INPUT_MESSAGE_LIMIT,
+    NativeGamepadConnectionInput, NativeGamepadMotionInput, NativeInputAck, NativeInputFailure,
+    NativeInputFailureCode, NativeInputReset, NativeInputWireError, NativeKeyboardInput,
+    NativePenContactInput, NativePenMotionInput, NativePointerButtonInput,
+    NativePointerMotionInput, NativePointerMotionMode, NativeRumbleAck, NativeRumbleCommand,
+    NativeScrollInput, NativeTextInput, NativeTouchContactInput, NativeTouchMotionInput,
+    NATIVE_INPUT_MESSAGE_LIMIT,
 };
 pub use native_session::{
     client_control_envelope, decode_client_control_message, decode_host_control_message,

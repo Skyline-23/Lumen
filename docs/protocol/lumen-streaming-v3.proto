@@ -375,6 +375,17 @@ message InputAck {
   uint64 highest_contiguous_event_sequence = 1;
 }
 
+enum InputFailureCode {
+  INPUT_FAILURE_CODE_UNSPECIFIED = 0;
+  INPUT_FAILURE_CODE_PLATFORM_REJECTED = 1;
+}
+
+message InputFailure {
+  uint64 event_sequence = 1;
+  InputFailureCode code = 2;
+  string message = 3;
+}
+
 message InputReset {
   uint32 reason = 1;
 }
@@ -395,6 +406,7 @@ message HostInputEnvelope {
     InputAck ack = 10;
     InputReset reset = 11;
     RumbleCommand rumble = 12;
+    InputFailure failure = 13;
   }
 }
 

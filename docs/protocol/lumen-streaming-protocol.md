@@ -385,9 +385,14 @@ The reliable stream uses varint-length-delimited protobuf messages with a
 `pointer_button = 12`, `gamepad_connection = 13`, `gamepad_button = 14`,
 `touch_contact = 15`, `pen_contact = 16`, and `rumble_ack = 17`.
 `HostInputEnvelope` uses `session_epoch = 1`, `command_sequence = 2`, and
-payload oneof fields `ack = 10`, `reset = 11`, and `rumble = 12`. Protobuf
-serialization order does not carry meaning; sequence fields and the QUIC byte
-stream provide ordering.
+payload oneof fields `ack = 10`, `reset = 11`, `rumble = 12`, and
+`failure = 13`. `InputFailure` identifies the rejected client event with
+`event_sequence = 1`, a stable `code = 2`, and a diagnostic `message = 3`.
+`platform_rejected = 1` means the envelope was valid and consumed in order but
+the active host platform could not apply it. A failure consumes one contiguous
+host command sequence without closing the reliable stream; the client proceeds
+with the next input event sequence. Protobuf serialization order does not carry
+meaning; sequence fields and the QUIC byte stream provide ordering.
 
 Keyboard `modifiers` is the USB HID boot modifier byte. Bits `0...7` mean left
 control, left shift, left alt, left GUI, right control, right shift, right alt,

@@ -306,6 +306,23 @@ pub struct NativeInputAck {
     pub highest_contiguous_event_sequence: u64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Enumeration)]
+#[repr(i32)]
+pub enum NativeInputFailureCode {
+    Unspecified = 0,
+    PlatformRejected = 1,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct NativeInputFailure {
+    #[prost(uint64, tag = "1")]
+    pub event_sequence: u64,
+    #[prost(enumeration = "NativeInputFailureCode", tag = "2")]
+    pub code: i32,
+    #[prost(string, tag = "3")]
+    pub message: String,
+}
+
 #[derive(Clone, PartialEq, Message)]
 pub struct NativeInputReset {
     #[prost(uint32, tag = "1")]
@@ -334,7 +351,7 @@ pub struct HostInputEnvelope {
     pub session_epoch: u32,
     #[prost(uint64, tag = "2")]
     pub command_sequence: u64,
-    #[prost(oneof = "host_input_envelope::Payload", tags = "10, 11, 12")]
+    #[prost(oneof = "host_input_envelope::Payload", tags = "10, 11, 12, 13")]
     pub payload: Option<host_input_envelope::Payload>,
 }
 
@@ -349,6 +366,8 @@ pub mod host_input_envelope {
         Reset(NativeInputReset),
         #[prost(message, tag = "12")]
         Rumble(NativeRumbleCommand),
+        #[prost(message, tag = "13")]
+        Failure(NativeInputFailure),
     }
 }
 
@@ -487,6 +506,23 @@ mod tests {
             decode_host_input_message(encoded.as_slice()).unwrap(),
             output
         );
+    }
+
+    #[test]
+    fn native_input_failure_round_trips_the_rejected_event_identity() {
+        let output = HostInputEnvelope {
+            session_epoch: 7,
+            command_sequence: 12,
+            payload: Some(host_input_envelope::Payload::Failure(NativeInputFailure {
+                event_sequence: 9,
+                code: NativeInputFailureCode::PlatformRejected as i32,
+                message: "virtual gamepad injection is unavailable".to_owned(),
+            })),
+        };
+
+        let encoded = encode_host_input_message(&output).unwrap();
+
+        assert_eq!(decode_host_input_message(&encoded).unwrap(), output);
     }
 
     #[test]
