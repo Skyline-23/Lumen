@@ -2,8 +2,9 @@ use crate::{
     CoreRequest, CoreState, CoreTransition, Status, ADAPTER_DEVICE_D3D11, ADAPTER_DEVICE_D3D12,
     ADAPTER_FEATURES_PROBED, ADAPTER_INITIALIZED, ADAPTER_PREPARED, ADAPTER_REMOVED,
     BACKEND_CAPABILITY_D3D11, BACKEND_CAPABILITY_D3D12, BACKEND_D3D11, BACKEND_D3D12,
-    EVENT_ADAPTER_REMOVED, IDDCX_FEATURE_D3D12, IDDCX_VERSION_1_11, STATE_ENCODER_ACTIVE,
-    STATE_KEYFRAME_PENDING, STATE_MONITOR_ACTIVE, STATE_MONITOR_ORPHANED, SURFACE_D3D11_TEXTURE2D,
+    EVENT_ADAPTER_REMOVED, EVENT_SWAPCHAIN_LOST, IDDCX_FEATURE_D3D12, IDDCX_VERSION_1_11,
+    PENDING_READ_DEPTH, STATE_ENCODER_ACTIVE, STATE_KEYFRAME_PENDING, STATE_MONITOR_ACTIVE,
+    STATE_MONITOR_ORPHANED, STATE_SWAPCHAIN_ASSIGNED, SURFACE_D3D11_TEXTURE2D,
     SURFACE_D3D12_RESOURCE,
 };
 
@@ -131,8 +132,8 @@ pub(super) fn query_backend(state: CoreState, request: CoreRequest, index: u64) 
     }
 }
 
-pub(super) fn validate_and_abandon_swapchain(
-    state: CoreState,
+pub(super) fn assign_swapchain(
+    mut state: CoreState,
     request: CoreRequest,
     monitor_id: u64,
     assigned_luid: u64,
@@ -142,10 +143,15 @@ pub(super) fn validate_and_abandon_swapchain(
         || state.monitor_id != monitor_id
     {
         Status::NotReady
+    } else if state.flags & STATE_SWAPCHAIN_ASSIGNED != 0 {
+        Status::Busy
     } else if assigned_luid == 0 || assigned_luid != state.render_adapter_luid {
         Status::LuidMismatch
-    } else {
+    } else if state.backend_capability_mask == 0 {
         Status::ProcessorUnavailable
+    } else {
+        state.flags |= STATE_SWAPCHAIN_ASSIGNED;
+        Status::Ok
     };
     finish(
         state,
@@ -153,6 +159,29 @@ pub(super) fn validate_and_abandon_swapchain(
         status,
         [assigned_luid, monitor_id],
     )
+}
+
+pub(super) fn unassign_swapchain(
+    mut state: CoreState,
+    request: CoreRequest,
+    monitor_id: u64,
+) -> CoreTransition {
+    let status = if state.flags & STATE_SWAPCHAIN_ASSIGNED == 0
+        || monitor_id == 0
+        || state.monitor_id != monitor_id
+    {
+        Status::NotReady
+    } else {
+        let interrupted = state.flags & STATE_ENCODER_ACTIVE != 0;
+        state.flags &= !(STATE_SWAPCHAIN_ASSIGNED | STATE_ENCODER_ACTIVE | STATE_KEYFRAME_PENDING);
+        state.pending_frame_reads = [0; PENDING_READ_DEPTH];
+        if interrupted {
+            state.pending_event_code = u32::try_from(EVENT_SWAPCHAIN_LOST).unwrap_or(0);
+            state.pending_event_value = monitor_id;
+        }
+        Status::Ok
+    };
+    finish(state, request.header.operation, status, [monitor_id, 0])
 }
 
 pub(super) fn adapter_removed(
@@ -202,8 +231,9 @@ fn clear_adapter_dependents(state: &mut CoreState) {
     state.flags &= !(STATE_MONITOR_ACTIVE
         | STATE_MONITOR_ORPHANED
         | STATE_ENCODER_ACTIVE
-        | STATE_KEYFRAME_PENDING);
+        | STATE_KEYFRAME_PENDING
+        | STATE_SWAPCHAIN_ASSIGNED);
     state.adapter_flags = 0;
     state.backend_capability_mask = 0;
-    state.pending_access_unit_reads = [0; crate::PENDING_READ_DEPTH];
+    state.pending_frame_reads = [0; crate::PENDING_READ_DEPTH];
 }

@@ -10,11 +10,11 @@ namespace lumen_driver_qa {
     class AccessUnitRead final {
     public:
       AccessUnitRead(HANDLE handle, uint64_t generation, uint64_t request_id):
-          request_(request(LumenDriverOperationDequeueAccessUnit, generation)),
-          output_(LUMEN_MAX_ACCESS_UNIT_BYTES),
+          request_(request(LumenDriverOperationDequeueFrame, generation)),
+          output_(LUMEN_FRAME_RECORD_BYTES),
           pending_(handle) {
         request_.request_id = request_id;
-        request_.arguments[0] = LUMEN_MAX_ACCESS_UNIT_BYTES;
+        request_.arguments[0] = LUMEN_FRAME_RECORD_BYTES;
       }
 
       bool submit(HANDLE handle) {
@@ -23,7 +23,7 @@ namespace lumen_driver_qa {
         }
         const BOOL immediate = DeviceIoControl(
           handle,
-          LUMEN_IOCTL_DEQUEUE_ACCESS_UNIT,
+          LUMEN_IOCTL_DEQUEUE_FRAME,
           &request_,
           sizeof(request_),
           output_.data(),

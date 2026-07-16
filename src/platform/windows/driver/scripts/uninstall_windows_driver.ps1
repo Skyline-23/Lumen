@@ -10,7 +10,7 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 }
 
 try {
-    $devices = @(Get-PnpDevice | Where-Object InstanceId -Like "ROOT\LUMENIDDCX*")
+    $devices = @(Get-PnpDevice | Where-Object HardwareID -Contains "ROOT\LumenIddCx")
     $devcon = Get-ChildItem (Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\Tools") -Filter devcon.exe -Recurse |
         Where-Object { $_.FullName -match '\\x64\\' } |
         Sort-Object FullName -Descending |
@@ -27,7 +27,7 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "pnputil failed to remove $($package.Driver)." }
     }
 
-    $remainingDevices = @(Get-PnpDevice | Where-Object InstanceId -Like "ROOT\LUMENIDDCX*")
+    $remainingDevices = @(Get-PnpDevice | Where-Object HardwareID -Contains "ROOT\LumenIddCx")
     if ($remainingDevices.Count -ne 0) { throw "The Lumen root device remains after removal." }
     $remainingPackages = @(Get-WindowsDriver -Online -All | Where-Object OriginalFileName -Like "*\LumenIddCx.inf")
     if ($remainingPackages.Count -ne 0) { throw "The Lumen driver package remains after removal." }

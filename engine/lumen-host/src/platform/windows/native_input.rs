@@ -211,8 +211,7 @@ impl PlatformSessionControl for WindowsPlatformSessionControl {
     }
 
     fn start_session(&self, plan: PlatformSessionPlan) -> Result<(), String> {
-        self.media
-            .start(plan, self.display.current_output_name()?)?;
+        self.media.start(plan, self.display.capture_driver()?)?;
         if let Err(error) = self.display.capture_started() {
             let media = self.media.stop().err();
             let display = self.display.stop().err();

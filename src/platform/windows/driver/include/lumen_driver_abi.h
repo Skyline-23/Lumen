@@ -6,15 +6,15 @@
 
 #define LUMEN_DRIVER_ABI_MAGIC 0x4C554D4Eu
 #define LUMEN_DRIVER_ABI_MAJOR 1u
-#define LUMEN_DRIVER_ABI_MINOR 3u
+#define LUMEN_DRIVER_ABI_MINOR 4u
 #define LUMEN_METHOD_BUFFERED 0u
 #define LUMEN_METHOD_OUT_DIRECT 2u
 #define LUMEN_FILE_READ_ACCESS 1u
 #define LUMEN_FILE_WRITE_ACCESS 2u
 #define LUMEN_FILE_DEVICE_UNKNOWN 0x22u
-#define LUMEN_MAX_ACCESS_UNIT_BYTES (4u * 1024u * 1024u)
+#define LUMEN_FRAME_RECORD_BYTES 80u
 #define LUMEN_MAX_EVENT_BYTES 256u
-#define LUMEN_ACCESS_UNIT_QUEUE_DEPTH 8u
+#define LUMEN_FRAME_QUEUE_DEPTH 8u
 #define LUMEN_EVENT_QUEUE_DEPTH 32u
 #define LUMEN_PENDING_READ_DEPTH 4u
 #define LUMEN_IDDCX_VERSION_1_11 0x1B00u
@@ -25,6 +25,7 @@
 #define LUMEN_STATE_ENCODER_ACTIVE (1u << 1u)
 #define LUMEN_STATE_KEYFRAME_PENDING (1u << 2u)
 #define LUMEN_STATE_MONITOR_ORPHANED (1u << 3u)
+#define LUMEN_STATE_SWAPCHAIN_ASSIGNED (1u << 4u)
 #define LUMEN_DEVICE_INTERFACE_GUID_INIT \
   {0xf04b8b5a, 0xa603, 0x4d32, {0x96, 0xf8, 0x5f, 0x8c, 0x21, 0x08, 0xa1, 0xd0}}
 
@@ -44,7 +45,7 @@
   LUMEN_CTL_CODE(0x906u, LUMEN_METHOD_BUFFERED, LUMEN_FILE_READ_ACCESS | LUMEN_FILE_WRITE_ACCESS)
 #define LUMEN_IOCTL_REQUEST_KEYFRAME \
   LUMEN_CTL_CODE(0x907u, LUMEN_METHOD_BUFFERED, LUMEN_FILE_READ_ACCESS | LUMEN_FILE_WRITE_ACCESS)
-#define LUMEN_IOCTL_DEQUEUE_ACCESS_UNIT \
+#define LUMEN_IOCTL_DEQUEUE_FRAME \
   LUMEN_CTL_CODE(0x908u, LUMEN_METHOD_OUT_DIRECT, LUMEN_FILE_READ_ACCESS | LUMEN_FILE_WRITE_ACCESS)
 #define LUMEN_IOCTL_DEQUEUE_EVENT \
   LUMEN_CTL_CODE(0x909u, LUMEN_METHOD_OUT_DIRECT, LUMEN_FILE_READ_ACCESS | LUMEN_FILE_WRITE_ACCESS)
@@ -66,7 +67,7 @@ typedef enum LumenDriverOperation {
   LumenDriverOperationStartEncoder = 6,
   LumenDriverOperationStopEncoder = 7,
   LumenDriverOperationRequestKeyframe = 8,
-  LumenDriverOperationDequeueAccessUnit = 9,
+  LumenDriverOperationDequeueFrame = 9,
   LumenDriverOperationDequeueEvent = 10,
   LumenDriverOperationCancelPending = 11,
   LumenDriverOperationQueryHealth = 12,
@@ -74,10 +75,12 @@ typedef enum LumenDriverOperation {
   LumenDriverOperationRecordOsFeatures = 14,
   LumenDriverOperationPrepareAdapter = 15,
   LumenDriverOperationCompleteAdapterInitialization = 16,
-  LumenDriverOperationValidateAndAbandonSwapchain = 17,
+  LumenDriverOperationAssignSwapchain = 17,
   LumenDriverOperationQueryMonitor = 18,
   LumenDriverOperationAdapterRemoved = 19,
-  LumenDriverOperationAdoptMonitor = 20
+  LumenDriverOperationAdoptMonitor = 20,
+  LumenDriverOperationUnassignSwapchain = 21,
+  LumenDriverOperationCompleteFrame = 22
 } LumenDriverOperation;
 
 typedef enum LumenDriverStatus {
@@ -100,7 +103,8 @@ typedef enum LumenDriverStatus {
 } LumenDriverStatus;
 
 typedef enum LumenDriverEventCode {
-  LumenDriverEventAdapterRemoved = 1
+  LumenDriverEventAdapterRemoved = 1,
+  LumenDriverEventSwapchainLost = 2
 } LumenDriverEventCode;
 
 typedef struct LumenDriverAbiHeader {
@@ -127,16 +131,31 @@ typedef struct LumenDriverCoreResponse {
   uint64_t values[2];
 } LumenDriverCoreResponse;
 
+typedef struct LumenDriverFrameRecord {
+  LumenDriverAbiHeader header;
+  uint64_t generation;
+  uint64_t request_id;
+  uint64_t monitor_id;
+  uint64_t frame_id;
+  uint32_t presentation_time_90khz;
+  uint32_t width;
+  uint32_t height;
+  uint32_t format;
+  uint32_t color_space;
+  uint32_t surface_revision;
+  uint32_t reserved;
+} LumenDriverFrameRecord;
+
 typedef struct LumenDriverCoreState {
   uint64_t owner_id;
   uint64_t generation;
   uint64_t monitor_id;
-  uint64_t pending_access_unit_reads[LUMEN_PENDING_READ_DEPTH];
+  uint64_t pending_frame_reads[LUMEN_PENDING_READ_DEPTH];
   uint64_t pending_event_reads[LUMEN_PENDING_READ_DEPTH];
   uint64_t last_frame_id;
   uint32_t flags;
   uint32_t last_status;
-  uint16_t access_unit_queue_depth;
+  uint16_t frame_queue_depth;
   uint16_t event_queue_depth;
   uint8_t reserved[4];
   uint64_t render_adapter_luid;
@@ -168,6 +187,7 @@ extern "C" {
 static_assert(sizeof(LumenDriverAbiHeader) == 16, "LumenDriverAbiHeader layout changed");
 static_assert(sizeof(LumenDriverCoreRequest) == 80, "LumenDriverCoreRequest layout changed");
 static_assert(sizeof(LumenDriverCoreResponse) == 48, "LumenDriverCoreResponse layout changed");
+static_assert(sizeof(LumenDriverFrameRecord) == 80, "LumenDriverFrameRecord layout changed");
 static_assert(sizeof(LumenDriverCoreState) == 152, "LumenDriverCoreState layout changed");
 static_assert(sizeof(LumenDriverCoreTransition) == 200, "LumenDriverCoreTransition layout changed");
 #endif

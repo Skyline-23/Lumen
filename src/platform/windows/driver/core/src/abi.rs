@@ -2,13 +2,13 @@ use std::mem::size_of;
 
 pub const ABI_MAGIC: u32 = 0x4C55_4D4E;
 pub const ABI_MAJOR: u16 = 1;
-pub const ABI_MINOR: u16 = 3;
+pub const ABI_MINOR: u16 = 4;
 pub const ABI_HEADER_SIZE: u32 = 16;
 pub const ABI_REQUEST_SIZE: u32 = 80;
 pub const ABI_RESPONSE_SIZE: u32 = 48;
-pub const MAX_ACCESS_UNIT_BYTES: u64 = 4 * 1024 * 1024;
+pub const FRAME_RECORD_BYTES: u64 = 80;
 pub const MAX_EVENT_BYTES: u64 = 256;
-pub const ACCESS_UNIT_QUEUE_DEPTH: u64 = 8;
+pub const FRAME_QUEUE_DEPTH: u64 = 8;
 pub const EVENT_QUEUE_DEPTH: u64 = 32;
 pub const PENDING_READ_DEPTH: usize = 4;
 
@@ -33,8 +33,10 @@ pub const STATE_MONITOR_ACTIVE: u32 = 1 << 0;
 pub const STATE_ENCODER_ACTIVE: u32 = 1 << 1;
 pub const STATE_KEYFRAME_PENDING: u32 = 1 << 2;
 pub const STATE_MONITOR_ORPHANED: u32 = 1 << 3;
+pub const STATE_SWAPCHAIN_ASSIGNED: u32 = 1 << 4;
 
 pub const EVENT_ADAPTER_REMOVED: u64 = 1;
+pub const EVENT_SWAPCHAIN_LOST: u64 = 2;
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -47,7 +49,7 @@ pub enum Operation {
     StartEncoder = 6,
     StopEncoder = 7,
     RequestKeyframe = 8,
-    DequeueAccessUnit = 9,
+    DequeueFrame = 9,
     DequeueEvent = 10,
     CancelPending = 11,
     QueryHealth = 12,
@@ -55,10 +57,12 @@ pub enum Operation {
     RecordOsFeatures = 14,
     PrepareAdapter = 15,
     CompleteAdapterInitialization = 16,
-    ValidateAndAbandonSwapchain = 17,
+    AssignSwapchain = 17,
     QueryMonitor = 18,
     AdapterRemoved = 19,
     AdoptMonitor = 20,
+    UnassignSwapchain = 21,
+    CompleteFrame = 22,
 }
 
 impl Operation {
@@ -72,7 +76,7 @@ impl Operation {
             Self::StartEncoder => 6,
             Self::StopEncoder => 7,
             Self::RequestKeyframe => 8,
-            Self::DequeueAccessUnit => 9,
+            Self::DequeueFrame => 9,
             Self::DequeueEvent => 10,
             Self::CancelPending => 11,
             Self::QueryHealth => 12,
@@ -80,10 +84,12 @@ impl Operation {
             Self::RecordOsFeatures => 14,
             Self::PrepareAdapter => 15,
             Self::CompleteAdapterInitialization => 16,
-            Self::ValidateAndAbandonSwapchain => 17,
+            Self::AssignSwapchain => 17,
             Self::QueryMonitor => 18,
             Self::AdapterRemoved => 19,
             Self::AdoptMonitor => 20,
+            Self::UnassignSwapchain => 21,
+            Self::CompleteFrame => 22,
         }
     }
 
@@ -97,7 +103,7 @@ impl Operation {
             6 => Some(Self::StartEncoder),
             7 => Some(Self::StopEncoder),
             8 => Some(Self::RequestKeyframe),
-            9 => Some(Self::DequeueAccessUnit),
+            9 => Some(Self::DequeueFrame),
             10 => Some(Self::DequeueEvent),
             11 => Some(Self::CancelPending),
             12 => Some(Self::QueryHealth),
@@ -105,10 +111,12 @@ impl Operation {
             14 => Some(Self::RecordOsFeatures),
             15 => Some(Self::PrepareAdapter),
             16 => Some(Self::CompleteAdapterInitialization),
-            17 => Some(Self::ValidateAndAbandonSwapchain),
+            17 => Some(Self::AssignSwapchain),
             18 => Some(Self::QueryMonitor),
             19 => Some(Self::AdapterRemoved),
             20 => Some(Self::AdoptMonitor),
+            21 => Some(Self::UnassignSwapchain),
+            22 => Some(Self::CompleteFrame),
             _ => None,
         }
     }
@@ -228,12 +236,12 @@ pub struct CoreState {
     pub owner_id: u64,
     pub generation: u64,
     pub monitor_id: u64,
-    pub pending_access_unit_reads: [u64; PENDING_READ_DEPTH],
+    pub pending_frame_reads: [u64; PENDING_READ_DEPTH],
     pub pending_event_reads: [u64; PENDING_READ_DEPTH],
     pub last_frame_id: u64,
     pub flags: u32,
     pub last_status: u32,
-    pub access_unit_queue_depth: u16,
+    pub frame_queue_depth: u16,
     pub event_queue_depth: u16,
     pub reserved: [u8; 4],
     pub render_adapter_luid: u64,
@@ -252,12 +260,12 @@ impl CoreState {
             owner_id: 0,
             generation: 1,
             monitor_id: 0,
-            pending_access_unit_reads: [0; PENDING_READ_DEPTH],
+            pending_frame_reads: [0; PENDING_READ_DEPTH],
             pending_event_reads: [0; PENDING_READ_DEPTH],
             last_frame_id: 0,
             flags: 0,
             last_status: Status::Ok.raw(),
-            access_unit_queue_depth: 0,
+            frame_queue_depth: 0,
             event_queue_depth: 0,
             reserved: [0; 4],
             render_adapter_luid: 0,

@@ -49,8 +49,8 @@ fn media_io_is_direct_and_all_queues_are_fixed() {
 
     // Then: media output is direct I/O and no queue has an implicit size.
     assert!(header.contains("LUMEN_METHOD_OUT_DIRECT 2u"));
-    assert!(header.contains("LUMEN_MAX_ACCESS_UNIT_BYTES (4u * 1024u * 1024u)"));
-    assert!(header.contains("LUMEN_ACCESS_UNIT_QUEUE_DEPTH 8u"));
+    assert!(header.contains("LUMEN_FRAME_RECORD_BYTES 80u"));
+    assert!(header.contains("LUMEN_FRAME_QUEUE_DEPTH 8u"));
     assert!(header.contains("LUMEN_EVENT_QUEUE_DEPTH 32u"));
     assert!(header.contains("LUMEN_PENDING_READ_DEPTH 4u"));
 }
@@ -86,7 +86,7 @@ fn rejected_file_cleanup_cannot_drain_the_active_owner() {
 
     // When: WDF invokes cleanup for that rejected file object.
     let owner_guard = "if (context->core_state.owner_id != owner_id)";
-    let drain = "cancel_pending_access_unit_reads(context)";
+    let drain = "cancel_pending_frame_reads(context)";
     let owner_guard_index = io
         .find(owner_guard)
         .expect("cleanup must verify owner identity");

@@ -32,13 +32,18 @@ try {
         Select-Object -First 1 -ExpandProperty FullName
     if (-not $devcon) { throw "WDK devcon.exe x64 was not found." }
 
-    $devices = @(Get-PnpDevice -PresentOnly | Where-Object InstanceId -Like "ROOT\LUMENIDDCX*")
+    $devices = @(Get-PnpDevice -PresentOnly | Where-Object HardwareID -Contains "ROOT\LumenIddCx")
     if ($devices.Count -eq 0) {
         & $devcon install $inf "Root\LumenIddCx"
         if ($LASTEXITCODE -ne 0) { throw "devcon failed to create the root-enumerated adapter." }
     }
-    $devices = @(Get-PnpDevice -PresentOnly | Where-Object InstanceId -Like "ROOT\LUMENIDDCX*")
-    if ($devices.Count -ne 1) { throw "Expected exactly one Lumen IDD device; found $($devices.Count)." }
+    $devices = @()
+    for ($attempt = 0; $attempt -lt 60; $attempt++) {
+        $devices = @(Get-PnpDevice -PresentOnly | Where-Object HardwareID -Contains "ROOT\LumenIddCx")
+        if ($devices.Count -eq 1) { break }
+        Start-Sleep -Milliseconds 500
+    }
+    if ($devices.Count -ne 1) { throw "Expected exactly one Lumen IDD device after 30 seconds; found $($devices.Count)." }
     $installSucceeded = $true
 }
 finally {

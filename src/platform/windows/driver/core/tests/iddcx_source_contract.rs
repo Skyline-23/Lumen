@@ -49,28 +49,37 @@ fn feature_probe_and_luid_pin_precede_adapter_and_monitor_creation() {
 }
 
 #[test]
-fn swapchain_callback_validates_then_abandons_without_claiming_ownership() {
+fn swapchain_callback_owns_d3d12_frames_and_rolls_back_failed_assignment() {
     // Given: the IddCx swap-chain callback boundary.
     let callbacks = fs::read_to_string(driver_root().join("shim/iddcx_callbacks.cpp"))
         .expect("callback boundary must exist");
 
-    // When: the assignment transaction is inspected.
-    let validation = callbacks
-        .find("LumenDriverOperationValidateAndAbandonSwapchain")
-        .expect("Rust must validate assignment");
-    let assigned_luid = callbacks[validation..]
+    let processor = fs::read_to_string(driver_root().join("shim/frame_processor.cpp"))
+        .expect("frame processor must exist");
+
+    // When: the assignment and frame-acquisition transaction is inspected.
+    let assignment = callbacks
+        .find("LumenDriverOperationAssignSwapchain")
+        .expect("Rust must own assignment");
+    let assigned_luid = callbacks[assignment..]
         .find("RenderAdapterLuid")
-        .map(|offset| validation + offset)
+        .map(|offset| assignment + offset)
         .expect("OS-assigned LUID must cross the boundary");
+    let accepted = callbacks[assigned_luid..]
+        .find("return STATUS_SUCCESS")
+        .map(|offset| assigned_luid + offset)
+        .expect("successful assignment must stay active");
     let abandon = callbacks[assigned_luid..]
         .find("STATUS_GRAPHICS_INDIRECT_DISPLAY_ABANDON_SWAPCHAIN")
         .map(|offset| assigned_luid + offset)
-        .expect("IddCx must receive the only safe callback failure");
+        .expect("failed processor initialization must abandon safely");
 
-    // Then: validation precedes abandonment and no production assignment state is retained.
-    assert!(validation < assigned_luid && assigned_luid < abandon);
-    assert!(!callbacks.contains("assigned_adapter_luid"));
-    assert!(!callbacks.contains("LumenDriverOperationUnassignSwapchain"));
+    // Then: successful ownership is distinct from rollback and the D3D12 surface is acquired directly.
+    assert!(assignment < assigned_luid && assigned_luid < abandon && abandon < accepted);
+    assert!(callbacks.contains("LumenUnassignSwapChain"));
+    assert!(processor.contains("IddCxSwapChainSetDevice2"));
+    assert!(processor.contains("IddCxSwapChainReleaseAndAcquireBuffer2"));
+    assert!(processor.contains("D3D11On12CreateDevice"));
 }
 
 #[test]
@@ -132,4 +141,57 @@ fn secure_ioctl_commits_monitor_state_only_after_iddcx_succeeds() {
 
     // Then: neither tentative Rust transition can become authoritative after IddCx failure.
     assert!(create < remove && remove < commit);
+}
+
+#[test]
+fn d3d12_swapchain_frames_cross_one_same_adapter_shared_surface() {
+    let processor = fs::read_to_string(driver_root().join("shim/frame_processor.cpp"))
+        .expect("frame processor must exist");
+
+    let set_device = processor
+        .find("IddCxSwapChainSetDevice2")
+        .expect("Windows 11 26H1 must bind an IddCx D3D12 command queue");
+    let acquire = processor
+        .find("IddCxSwapChainReleaseAndAcquireBuffer2")
+        .expect("the IDD must acquire an ID3D12Resource directly");
+    let bridge = processor
+        .find("D3D11On12CreateDevice")
+        .expect("the D3D12 surface must bridge on the selected adapter");
+    let share = processor
+        .find("CreateSharedHandle")
+        .expect("the host boundary must receive a named GPU resource");
+
+    assert!(bridge < set_device);
+    assert_ne!(set_device, acquire);
+    assert!(processor.contains("CreateWrappedResource"));
+    assert!(processor.contains("CopyResource"));
+    assert!(share < processor.find("LumenDriverOperationDequeueFrame").unwrap());
+    assert!(processor.contains("Global\\\\LumenFrame-"));
+}
+
+#[test]
+fn native_host_uses_iddcx_frames_and_hevc_444_media_foundation_profiles() {
+    let host_root = driver_root()
+        .parent()
+        .and_then(|path| path.parent())
+        .and_then(|path| path.parent())
+        .and_then(|path| path.parent())
+        .expect("driver must live under src/platform/windows")
+        .join("engine/lumen-host/src/platform/windows");
+    let capture = fs::read_to_string(host_root.join("native_capture.rs"))
+        .expect("native capture boundary must exist");
+    let video = fs::read_to_string(host_root.join("native_video.rs"))
+        .expect("native video boundary must exist");
+
+    assert!(capture.contains("struct NativeIddCxCapture"));
+    assert!(capture.contains("OpenSharedResourceByName"));
+    assert!(capture.contains("AcquireSync(1"));
+    assert!(capture.contains("ReleaseSync(0"));
+
+    assert!(video.contains("NativeIddCxCapture"));
+    assert!(!video.contains("NativeDesktopDuplication"));
+    assert!(video.contains("MFVideoFormat_AYUV"));
+    assert!(video.contains("MFVideoFormat_Y410"));
+    assert!(video.contains("eAVEncH265VProfile_Main_444_8"));
+    assert!(video.contains("eAVEncH265VProfile_Main_444_10"));
 }

@@ -4,14 +4,11 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
 use std::time::Duration;
 
-use windows_sys::Win32::Graphics::Gdi::{
-    EnumDisplayDevicesW, DISPLAY_DEVICEW, DISPLAY_DEVICE_ATTACHED_TO_DESKTOP,
-};
-
 use crate::{PlatformEncodedAudioPacket, PlatformEncodedVideoFrame, PlatformSessionPlan};
 
 use super::media_queue::WindowsMediaPacketQueues;
 use super::native_audio::{self, NativeAudioConfiguration};
+use super::native_display_driver::DriverHandle;
 use super::native_video::{NativeEncodedVideoSample, NativeMediaFoundation};
 
 const MAXIMUM_VIDEO_BUFFER_BYTES: usize = 32 * 1024 * 1024;
@@ -20,7 +17,6 @@ pub(super) struct NativeWindowsMedia {
     packets: Arc<PacketQueueContext>,
     audio_configuration: NativeAudioConfiguration,
     media_foundation: NativeMediaFoundation,
-    configured_adapter: String,
     lifecycle: RwLock<MediaLifecycle>,
 }
 
@@ -84,7 +80,6 @@ impl NativeWindowsMedia {
             packets,
             audio_configuration,
             media_foundation,
-            configured_adapter: arguments.get("adapter_name").unwrap_or_default().to_owned(),
             lifecycle: RwLock::new(MediaLifecycle::default()),
         })
     }
@@ -92,7 +87,7 @@ impl NativeWindowsMedia {
     pub(super) fn start(
         &self,
         plan: PlatformSessionPlan,
-        configured_output: String,
+        driver: DriverHandle,
     ) -> Result<(), String> {
         let mut lifecycle = self
             .lifecycle
@@ -102,13 +97,7 @@ impl NativeWindowsMedia {
             return Err("Windows native media session is already running".to_owned());
         }
         self.reset_packets()?;
-        let output = select_output(
-            &self.configured_adapter,
-            &configured_output,
-            windows_display_names(&self.configured_adapter)?,
-        )?;
-        self.media_foundation
-            .start_encoder(plan, &self.configured_adapter, &output)?;
+        self.media_foundation.start_encoder(plan, driver)?;
 
         let stop_requested = Arc::new(AtomicBool::new(false));
         let audio_worker = if self.audio_configuration.enabled() {
@@ -263,68 +252,6 @@ impl NativeWindowsMedia {
             .then_some(lifecycle)
             .ok_or_else(|| "Windows native media session is not running".to_owned())
     }
-}
-
-fn select_output(
-    adapter_name: &str,
-    configured_output: &str,
-    outputs: Vec<String>,
-) -> Result<String, String> {
-    if outputs.is_empty() {
-        return Err(format!(
-            "Windows native media found no active display on adapter {adapter_name:?}"
-        ));
-    }
-    if configured_output.is_empty() {
-        return outputs
-            .into_iter()
-            .next()
-            .ok_or_else(|| "Windows native media found no active display".to_owned());
-    }
-    outputs
-        .into_iter()
-        .find(|output| output == configured_output)
-        .ok_or_else(|| {
-            format!(
-                "configured Windows display {configured_output:?} is unavailable on adapter {adapter_name:?}"
-            )
-        })
-}
-
-fn windows_display_names(adapter_name: &str) -> Result<Vec<String>, String> {
-    let mut outputs = Vec::new();
-    let mut index = 0;
-    loop {
-        let mut device = DISPLAY_DEVICEW {
-            cb: std::mem::size_of::<DISPLAY_DEVICEW>() as u32,
-            ..Default::default()
-        };
-        if unsafe { EnumDisplayDevicesW(std::ptr::null(), index, &mut device, 0) } == 0 {
-            break;
-        }
-        index += 1;
-        if device.StateFlags & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP == 0 {
-            continue;
-        }
-        let candidate_adapter = wide_text(&device.DeviceString)?;
-        if !adapter_name.is_empty() && candidate_adapter != adapter_name {
-            continue;
-        }
-        let output = wide_text(&device.DeviceName)?;
-        if !output.is_empty() && !outputs.contains(&output) {
-            outputs.push(output);
-        }
-    }
-    Ok(outputs)
-}
-
-fn wide_text(value: &[u16]) -> Result<String, String> {
-    let length = value
-        .iter()
-        .position(|unit| *unit == 0)
-        .unwrap_or(value.len());
-    String::from_utf16(&value[..length])
-        .map_err(|_| "Windows display identity is not valid UTF-16".to_owned())
 }
 
 impl Drop for NativeWindowsMedia {

@@ -1,6 +1,6 @@
 use crate::{
     CoreRequest, CoreResponse, CoreState, CoreTransition, Operation, Status, ABI_MAGIC, ABI_MAJOR,
-    ABI_MINOR, ABI_REQUEST_SIZE, ACCESS_UNIT_QUEUE_DEPTH, EVENT_QUEUE_DEPTH, MAX_ACCESS_UNIT_BYTES,
+    ABI_MINOR, ABI_REQUEST_SIZE, EVENT_QUEUE_DEPTH, FRAME_QUEUE_DEPTH, FRAME_RECORD_BYTES,
     MAX_EVENT_BYTES, PENDING_READ_DEPTH,
 };
 
@@ -20,9 +20,9 @@ pub(crate) fn dispatch(mut state: CoreState, request: CoreRequest) -> CoreTransi
             request.header.operation,
             Status::Ok,
             [
-                MAX_ACCESS_UNIT_BYTES,
+                FRAME_RECORD_BYTES,
                 (MAX_EVENT_BYTES << 48)
-                    | (ACCESS_UNIT_QUEUE_DEPTH << 32)
+                    | (FRAME_QUEUE_DEPTH << 32)
                     | (EVENT_QUEUE_DEPTH << 16)
                     | u64::try_from(PENDING_READ_DEPTH).unwrap_or(0),
             ],
@@ -35,9 +35,10 @@ pub(crate) fn dispatch(mut state: CoreState, request: CoreRequest) -> CoreTransi
         Operation::CompleteAdapterInitialization => {
             adapter::complete_initialization(state, request, argument0)
         }
-        Operation::ValidateAndAbandonSwapchain => {
-            adapter::validate_and_abandon_swapchain(state, request, argument0, argument1)
+        Operation::AssignSwapchain => {
+            adapter::assign_swapchain(state, request, argument0, argument1)
         }
+        Operation::UnassignSwapchain => adapter::unassign_swapchain(state, request, argument0),
         Operation::AdapterRemoved => adapter::adapter_removed(state, request, argument0),
         Operation::ClaimOwner => session::claim_owner(state, request),
         Operation::ReleaseOwner => {
@@ -55,7 +56,8 @@ pub(crate) fn dispatch(mut state: CoreState, request: CoreRequest) -> CoreTransi
         | Operation::StartEncoder
         | Operation::StopEncoder
         | Operation::RequestKeyframe
-        | Operation::DequeueAccessUnit
+        | Operation::DequeueFrame
+        | Operation::CompleteFrame
         | Operation::DequeueEvent
         | Operation::CancelPending => {
             if let Err(status) = require_owner_and_generation(&state, &request) {
@@ -71,8 +73,9 @@ pub(crate) fn dispatch(mut state: CoreState, request: CoreRequest) -> CoreTransi
                 Operation::StartEncoder => session::start_encoder(state, request),
                 Operation::StopEncoder => session::stop_encoder(state, request),
                 Operation::RequestKeyframe => session::request_keyframe(state, request),
-                Operation::DequeueAccessUnit => {
-                    pending_reads::dequeue_access_unit(state, request, argument0)
+                Operation::DequeueFrame => pending_reads::dequeue_frame(state, request, argument0),
+                Operation::CompleteFrame => {
+                    pending_reads::complete_frame(state, request, argument0)
                 }
                 Operation::DequeueEvent => pending_reads::dequeue_event(state, request, argument0),
                 Operation::CancelPending => {
@@ -86,7 +89,8 @@ pub(crate) fn dispatch(mut state: CoreState, request: CoreRequest) -> CoreTransi
                 | Operation::RecordOsFeatures
                 | Operation::PrepareAdapter
                 | Operation::CompleteAdapterInitialization
-                | Operation::ValidateAndAbandonSwapchain
+                | Operation::AssignSwapchain
+                | Operation::UnassignSwapchain
                 | Operation::AdapterRemoved => finish(
                     state,
                     request.header.operation,
@@ -128,7 +132,7 @@ fn require_owner_and_generation(state: &CoreState, request: &CoreRequest) -> Res
 
 fn health(state: CoreState, request: CoreRequest) -> CoreTransition {
     let access_unit_reads = state
-        .pending_access_unit_reads
+        .pending_frame_reads
         .iter()
         .filter(|request_id| **request_id != 0)
         .count();

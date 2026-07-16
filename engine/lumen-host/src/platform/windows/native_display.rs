@@ -165,15 +165,16 @@ impl NativeWindowsDisplay {
         Ok(())
     }
 
-    pub(super) fn current_output_name(&self) -> Result<String, String> {
+    pub(super) fn capture_driver(&self) -> Result<DriverHandle, String> {
         let active = self
             .active
             .lock()
             .map_err(|_| "Windows display state lock is poisoned".to_owned())?;
         active
             .as_ref()
-            .and_then(|display| display.output_name.clone())
-            .ok_or_else(|| "Windows IDD output is not active".to_owned())
+            .ok_or_else(|| "Windows IDD output is not active".to_owned())?
+            .driver
+            .duplicate()
     }
 
     pub(super) fn capture_started(&self) -> Result<(), String> {

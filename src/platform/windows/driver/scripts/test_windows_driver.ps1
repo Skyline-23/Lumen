@@ -77,7 +77,7 @@ try {
         }
     }
 
-    $devices = @(Get-PnpDevice -PresentOnly | Where-Object InstanceId -Like "ROOT\LUMENIDDCX*")
+    $devices = @(Get-PnpDevice -PresentOnly | Where-Object HardwareID -Contains "ROOT\LumenIddCx")
     if ($devices.Count -ne 1) { throw "Expected exactly one installed Lumen IDD device; found $($devices.Count)." }
     $pnputilOutput = & pnputil.exe /enum-devices /deviceid "ROOT\LumenIddCx" /drivers
     if ($LASTEXITCODE -ne 0) { throw "pnputil device query failed." }

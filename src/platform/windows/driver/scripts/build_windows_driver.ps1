@@ -36,13 +36,13 @@ if (-not $msbuild) {
 $kitsBin = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\bin"
 $kitsInclude = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\Include"
 $iddcxHeader = Get-ChildItem $kitsInclude -Filter iddcx.h -Recurse |
-    Sort-Object FullName -Descending |
+    Where-Object { $_.FullName -match '\\iddcx\\1\.11\\IddCx\.h$' } |
+    Sort-Object { [Version]$_.Directory.Parent.Parent.Parent.Name } -Descending |
     Select-Object -First 1 -ExpandProperty FullName
 if (-not $iddcxHeader -or -not (Select-String -Path $iddcxHeader -Pattern "IddCxCheckOsFeatureSupport" -Quiet)) {
     throw "The installed WDK does not expose IddCx 1.11 IddCxCheckOsFeatureSupport; install the Windows 11 26H1 WDK."
 }
 $inf2cat = Get-ChildItem $kitsBin -Filter inf2cat.exe -Recurse |
-    Where-Object { $_.FullName -match '\\x64\\' } |
     Sort-Object FullName -Descending |
     Select-Object -First 1 -ExpandProperty FullName
 $signtool = Get-ChildItem $kitsBin -Filter signtool.exe -Recurse |

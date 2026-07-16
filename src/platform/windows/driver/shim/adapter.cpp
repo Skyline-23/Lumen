@@ -26,7 +26,12 @@ namespace {
   }
 
   NTSTATUS record_os_features(LumenDeviceContext *context) {
-    const uint64_t version = IddCxGetVersion();
+    IDARG_OUT_GETVERSION version_output {};
+    const NTSTATUS version_status = IddCxGetVersion(&version_output);
+    if (!NT_SUCCESS(version_status)) {
+      return version_status;
+    }
+    const uint64_t version = version_output.IddCxVersion;
     uint64_t feature_query_succeeded = 1;
     uint64_t features = 0;
     if (version >= LUMEN_IDDCX_VERSION_1_11) {
@@ -428,7 +433,8 @@ NTSTATUS LumenCreateMonitor(
   monitor_context->width = static_cast<uint32_t>(request.arguments[1] >> 32u);
   monitor_context->height = static_cast<uint32_t>(request.arguments[1]);
   monitor_context->refresh_millihertz = static_cast<uint32_t>(request.arguments[2]);
-  status = IddCxMonitorArrival(output.MonitorObject);
+  IDARG_OUT_MONITORARRIVAL arrival {};
+  status = IddCxMonitorArrival(output.MonitorObject, &arrival);
   if (!NT_SUCCESS(status)) {
     WdfObjectDelete(output.MonitorObject);
     return status;

@@ -14,19 +14,21 @@
     <ProjectGuid>{E4506FD9-5EAC-4B95-B386-C87E0C32D829}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
     <RootNamespace>LumenIddCx</RootNamespace>
-    <WindowsTargetPlatformVersion>$(LatestTargetPlatformVersion)</WindowsTargetPlatformVersion>
+    <WindowsTargetPlatformVersion>10.0.28000.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <DriverType>UMDF</DriverType>
     <DriverTargetPlatform>Universal</DriverTargetPlatform>
-    <PlatformToolset>WindowsUserModeDriver10.0</PlatformToolset>
+    <PlatformToolset>v143</PlatformToolset>
     <TargetVersion>Windows10</TargetVersion>
     <_NT_TARGET_VERSION>0x0A000005</_NT_TARGET_VERSION>
     <UMDF_VERSION_MAJOR>2</UMDF_VERSION_MAJOR>
     <UMDF_VERSION_MINOR>33</UMDF_VERSION_MINOR>
     <UMDF_VERSION_MINOR_REQUIRED>25</UMDF_VERSION_MINOR_REQUIRED>
+    <IDDCX_VERSION_MAJOR>1</IDDCX_VERSION_MAJOR>
+    <IDDCX_VERSION_MINOR>11</IDDCX_VERSION_MINOR>
     <UseDebugLibraries>true</UseDebugLibraries>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
@@ -34,12 +36,14 @@
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <DriverType>UMDF</DriverType>
     <DriverTargetPlatform>Universal</DriverTargetPlatform>
-    <PlatformToolset>WindowsUserModeDriver10.0</PlatformToolset>
+    <PlatformToolset>v143</PlatformToolset>
     <TargetVersion>Windows10</TargetVersion>
     <_NT_TARGET_VERSION>0x0A000005</_NT_TARGET_VERSION>
     <UMDF_VERSION_MAJOR>2</UMDF_VERSION_MAJOR>
     <UMDF_VERSION_MINOR>33</UMDF_VERSION_MINOR>
     <UMDF_VERSION_MINOR_REQUIRED>25</UMDF_VERSION_MINOR_REQUIRED>
+    <IDDCX_VERSION_MAJOR>1</IDDCX_VERSION_MAJOR>
+    <IDDCX_VERSION_MINOR>11</IDDCX_VERSION_MINOR>
     <UseDebugLibraries>false</UseDebugLibraries>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
@@ -53,21 +57,27 @@
   </PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile>
-      <AdditionalIncludeDirectories>$(ProjectDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)include;$(WindowsSdkDir)Include\wdf\umdf\2.33;$(WindowsSdkDir)Include\$(WindowsTargetPlatformVersion)\um\iddcx\1.11;$(WindowsSdkDir)Include\$(WindowsTargetPlatformVersion)\km;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <ConformanceMode>true</ConformanceMode>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <ExceptionHandling>false</ExceptionHandling>
       <RuntimeTypeInfo>false</RuntimeTypeInfo>
       <WarningLevel>Level4</WarningLevel>
       <TreatWarningAsError>true</TreatWarningAsError>
+      <AdditionalOptions>/DUMDF_DRIVER /DIDDCX_VERSION_MAJOR=1 /DIDDCX_VERSION_MINOR=11 /DIDDCX_MINIMUM_VERSION_REQUIRED=3 /wd4005 /wd4324 /wd4471 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>IddCxStub.lib;$(LumenDriverCoreLibrary);d3d11.lib;d3d12.lib;dxgi.lib;advapi32.lib;bcrypt.lib;ntdll.lib;userenv.lib;ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(WindowsSdkDir)Lib\$(WindowsTargetPlatformVersion)\um\x64\iddcx\1.11;$(WindowsSdkDir)Lib\wdf\umdf\x64\2.33;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>IddCxStub.lib;WdfDriverStubUm.lib;$(LumenDriverCoreLibrary);d3d11.lib;d3d12.lib;dxgi.lib;advapi32.lib;bcrypt.lib;ntdll.lib;userenv.lib;ws2_32.lib;kernel32.lib;onecoreuap.lib;libcmt.lib;libvcruntime.lib;libucrt.lib;msvcprt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <EntryPointSymbol>FxDriverEntryUm</EntryPointSymbol>
+      <SubSystem>Windows</SubSystem>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="shim\driver.cpp" />
     <ClCompile Include="shim\adapter.cpp" />
     <ClCompile Include="shim\iddcx_callbacks.cpp" />
+    <ClCompile Include="shim\frame_processor.cpp" />
     <ClCompile Include="shim\io.cpp" />
     <ClInclude Include="shim\driver.h" />
     <ClInclude Include="include\lumen_driver_abi.h" />

@@ -11,19 +11,24 @@ use windows_sys::Win32::Devices::DeviceAndDriverInstallation::{
     SP_DEVICE_INTERFACE_DATA, SP_DEVICE_INTERFACE_DETAIL_DATA_W,
 };
 use windows_sys::Win32::Foundation::{
-    CloseHandle, GetLastError, GENERIC_READ, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE,
+    CloseHandle, DuplicateHandle, GetLastError, DUPLICATE_SAME_ACCESS, GENERIC_READ, GENERIC_WRITE,
+    HANDLE, INVALID_HANDLE_VALUE,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
 };
+use windows_sys::Win32::System::Threading::GetCurrentProcess;
 use windows_sys::Win32::System::IO::DeviceIoControl;
 
 use super::driver_abi::{
-    CoreRequest, CoreResponse, DEVICE_INTERFACE_GUID, IOCTL_ADOPT_MONITOR, IOCTL_CREATE_MONITOR,
+    CoreRequest, CoreResponse, FrameRecord, ABI_FRAME_SIZE, DEVICE_INTERFACE_GUID,
+    IOCTL_ADOPT_MONITOR, IOCTL_CREATE_MONITOR, IOCTL_DEQUEUE_FRAME, IOCTL_QUERY_BACKEND_CAPABILITY,
     IOCTL_QUERY_CAPABILITIES, IOCTL_QUERY_HEALTH, IOCTL_QUERY_MONITOR, IOCTL_REMOVE_MONITOR,
-    OPERATION_ADOPT_MONITOR, OPERATION_CREATE_MONITOR, OPERATION_QUERY_CAPABILITIES,
+    IOCTL_START_ENCODER, IOCTL_STOP_ENCODER, OPERATION_ADOPT_MONITOR, OPERATION_CREATE_MONITOR,
+    OPERATION_DEQUEUE_FRAME, OPERATION_QUERY_BACKEND_CAPABILITY, OPERATION_QUERY_CAPABILITIES,
     OPERATION_QUERY_HEALTH, OPERATION_QUERY_MONITOR, OPERATION_REMOVE_MONITOR,
-    STATE_MONITOR_ACTIVE, STATE_MONITOR_ORPHANED, STATUS_OK,
+    OPERATION_START_ENCODER, OPERATION_STOP_ENCODER, STATE_MONITOR_ACTIVE, STATE_MONITOR_ORPHANED,
+    STATUS_NOT_READY, STATUS_OK,
 };
 
 const DRIVER_INTERFACE_GUID: GUID = GUID::from_u128(DEVICE_INTERFACE_GUID);
@@ -38,6 +43,7 @@ pub(super) enum MonitorState {
 pub(super) struct DriverHandle {
     raw: usize,
     generation: u64,
+    next_request_id: u64,
 }
 
 impl DriverHandle {
@@ -46,6 +52,7 @@ impl DriverHandle {
         let mut driver = Self {
             raw: raw as usize,
             generation: 0,
+            next_request_id: 1,
         };
         let capabilities = driver.request(
             IOCTL_QUERY_CAPABILITIES,
@@ -121,6 +128,110 @@ impl DriverHandle {
         require_ok(response, "remove monitor")
     }
 
+    pub(super) fn duplicate(&self) -> Result<Self, String> {
+        let process = unsafe { GetCurrentProcess() };
+        let mut duplicated = std::ptr::null_mut();
+        let succeeded = unsafe {
+            DuplicateHandle(
+                process,
+                self.raw(),
+                process,
+                &mut duplicated,
+                0,
+                0,
+                DUPLICATE_SAME_ACCESS,
+            )
+        };
+        if succeeded == 0 || duplicated.is_null() {
+            return Err(format!(
+                "Windows driver handle duplication failed: {}",
+                unsafe { GetLastError() }
+            ));
+        }
+        Ok(Self {
+            raw: duplicated as usize,
+            generation: self.generation,
+            next_request_id: 1,
+        })
+    }
+
+    pub(super) fn render_adapter_luid(&self) -> Result<u64, String> {
+        let response = self.request(
+            IOCTL_QUERY_BACKEND_CAPABILITY,
+            OPERATION_QUERY_BACKEND_CAPABILITY,
+            [0; 5],
+        )?;
+        require_ok(response, "query render adapter")?;
+        if response.values[0] == 0 {
+            return Err("Windows driver returned an empty render adapter LUID".to_owned());
+        }
+        Ok(response.values[0])
+    }
+
+    pub(super) fn start_frame_delivery(&self) -> Result<(), String> {
+        require_ok(
+            self.request(IOCTL_START_ENCODER, OPERATION_START_ENCODER, [0; 5])?,
+            "start frame delivery",
+        )
+    }
+
+    pub(super) fn stop_frame_delivery(&self) -> Result<(), String> {
+        let response = self.request(IOCTL_STOP_ENCODER, OPERATION_STOP_ENCODER, [0; 5])?;
+        if matches!(response.status, STATUS_OK | STATUS_NOT_READY) {
+            Ok(())
+        } else {
+            Err(format!(
+                "Windows driver stop frame delivery returned status {}",
+                response.status
+            ))
+        }
+    }
+
+    pub(super) fn dequeue_frame(&mut self) -> Result<FrameRecord, String> {
+        let request_id = self.next_request_id;
+        self.next_request_id = self.next_request_id.checked_add(1).unwrap_or(1);
+        let mut request = CoreRequest::new(OPERATION_DEQUEUE_FRAME, self.generation);
+        request.request_id = request_id;
+        request.arguments[0] = u64::from(ABI_FRAME_SIZE);
+        let mut frame = FrameRecord::default();
+        let mut returned = 0;
+        let succeeded = unsafe {
+            DeviceIoControl(
+                self.raw(),
+                IOCTL_DEQUEUE_FRAME,
+                (&raw const request).cast::<c_void>(),
+                u32::try_from(size_of::<CoreRequest>())
+                    .map_err(|_| "Windows frame request size overflowed".to_owned())?,
+                (&raw mut frame).cast::<c_void>(),
+                ABI_FRAME_SIZE,
+                &mut returned,
+                null_mut(),
+            )
+        };
+        if succeeded == 0 {
+            return Err(format!("Windows driver frame dequeue failed: {}", unsafe {
+                GetLastError()
+            }));
+        }
+        if returned != ABI_FRAME_SIZE
+            || frame.header.magic != super::driver_abi::ABI_MAGIC
+            || frame.header.major != super::driver_abi::ABI_MAJOR
+            || frame.header.minor > super::driver_abi::ABI_MINOR
+            || frame.header.structure_size != ABI_FRAME_SIZE
+            || frame.header.operation != OPERATION_DEQUEUE_FRAME
+            || frame.generation != self.generation
+            || frame.request_id != request_id
+            || frame.monitor_id == 0
+            || frame.frame_id == 0
+            || frame.width == 0
+            || frame.height == 0
+            || frame.surface_revision == 0
+        {
+            return Err("Windows driver returned an invalid shared frame record".to_owned());
+        }
+        Ok(frame)
+    }
+
     fn request(
         &self,
         ioctl: u32,
@@ -165,6 +276,10 @@ impl DriverHandle {
     fn raw(&self) -> HANDLE {
         self.raw as HANDLE
     }
+}
+
+pub(super) fn shared_frame_name(monitor_id: u64, surface_revision: u32) -> String {
+    format!("Global\\LumenFrame-{monitor_id:016X}-{surface_revision:08X}")
 }
 
 impl Drop for DriverHandle {

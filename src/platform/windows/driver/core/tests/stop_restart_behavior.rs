@@ -1,6 +1,6 @@
 use lumen_windows_driver_core::{
     lumen_driver_core_dispatch, lumen_driver_core_initial_state, CoreRequest, CoreState, Operation,
-    Status, ADAPTER_DEVICE_D3D11, MAX_ACCESS_UNIT_BYTES, PENDING_READ_DEPTH,
+    Status, ADAPTER_DEVICE_D3D11, FRAME_RECORD_BYTES, PENDING_READ_DEPTH,
 };
 
 const OWNER: u64 = 0xA11C_E001;
@@ -27,9 +27,12 @@ fn ready_encoder() -> (CoreState, u64) {
     let mut create = CoreRequest::new(Operation::CreateMonitor, OWNER, claimed.state.generation);
     create.arguments = [7, (1920 << 32) | 1080, 120_000, 0, 0];
     let created = lumen_driver_core_dispatch(claimed.state, create);
+    let mut assign = CoreRequest::new(Operation::AssignSwapchain, 0, created.state.generation);
+    assign.arguments = [7, 0x0000_0002_0000_1234, 0, 0, 0];
+    let assigned = lumen_driver_core_dispatch(created.state, assign);
     let started = lumen_driver_core_dispatch(
-        created.state,
-        CoreRequest::new(Operation::StartEncoder, OWNER, created.state.generation),
+        assigned.state,
+        CoreRequest::new(Operation::StartEncoder, OWNER, assigned.state.generation),
     );
     assert_eq!(started.response.status, Status::Ok.raw());
     (started.state, started.response.generation)
@@ -37,9 +40,9 @@ fn ready_encoder() -> (CoreState, u64) {
 
 fn fill_access_unit_reads(mut state: CoreState, generation: u64, base: u64) -> CoreState {
     for offset in 0..u64::try_from(PENDING_READ_DEPTH).expect("depth fits in u64") {
-        let mut dequeue = CoreRequest::new(Operation::DequeueAccessUnit, OWNER, generation);
+        let mut dequeue = CoreRequest::new(Operation::DequeueFrame, OWNER, generation);
         dequeue.request_id = base + offset;
-        dequeue.arguments[0] = MAX_ACCESS_UNIT_BYTES;
+        dequeue.arguments[0] = FRAME_RECORD_BYTES;
         let transition = lumen_driver_core_dispatch(state, dequeue);
         assert_eq!(transition.response.status, Status::Pending.raw());
         state = transition.state;
@@ -49,7 +52,7 @@ fn fill_access_unit_reads(mut state: CoreState, generation: u64, base: u64) -> C
 
 #[test]
 fn repeated_stop_start_cycles_restore_full_pending_capacity() {
-    // Given: a live encoder whose bounded access-unit read ledger is repeatedly filled.
+    // Given: a live encoder whose bounded frame read ledger is repeatedly filled.
     let (mut state, generation) = ready_encoder();
 
     // When: two full pending-read generations are stopped and restarted.
@@ -60,10 +63,7 @@ fn repeated_stop_start_cycles_restore_full_pending_capacity() {
             CoreRequest::new(Operation::StopEncoder, OWNER, generation),
         );
         assert_eq!(stopped.response.status, Status::Ok.raw());
-        assert_eq!(
-            stopped.state.pending_access_unit_reads,
-            [0; PENDING_READ_DEPTH]
-        );
+        assert_eq!(stopped.state.pending_frame_reads, [0; PENDING_READ_DEPTH]);
         let restarted = lumen_driver_core_dispatch(
             stopped.state,
             CoreRequest::new(Operation::StartEncoder, OWNER, generation),
@@ -74,12 +74,12 @@ fn repeated_stop_start_cycles_restore_full_pending_capacity() {
 
     // Then: the next session still admits the complete fixed queue depth.
     let filled = fill_access_unit_reads(state, generation, 1_000);
-    assert!(filled.pending_access_unit_reads.iter().all(|id| *id != 0));
+    assert!(filled.pending_frame_reads.iter().all(|id| *id != 0));
 }
 
 #[test]
 fn stale_session_cancellation_cannot_remove_reused_request_id() {
-    // Given: a released owner whose new generation reused an access-unit request identifier.
+    // Given: a released owner whose new generation reused an frame request identifier.
     let (state, old_generation) = ready_encoder();
     let released = lumen_driver_core_dispatch(
         state,
@@ -92,17 +92,16 @@ fn stale_session_cancellation_cannot_remove_reused_request_id() {
     let mut adopt = CoreRequest::new(Operation::AdoptMonitor, OWNER, claimed.state.generation);
     adopt.arguments[0] = 7;
     let adopted = lumen_driver_core_dispatch(claimed.state, adopt);
+    let mut assign = CoreRequest::new(Operation::AssignSwapchain, 0, adopted.state.generation);
+    assign.arguments = [7, 0x0000_0002_0000_1234, 0, 0, 0];
+    let assigned = lumen_driver_core_dispatch(adopted.state, assign);
     let started = lumen_driver_core_dispatch(
-        adopted.state,
-        CoreRequest::new(Operation::StartEncoder, OWNER, adopted.state.generation),
+        assigned.state,
+        CoreRequest::new(Operation::StartEncoder, OWNER, assigned.state.generation),
     );
-    let mut dequeue = CoreRequest::new(
-        Operation::DequeueAccessUnit,
-        OWNER,
-        started.state.generation,
-    );
+    let mut dequeue = CoreRequest::new(Operation::DequeueFrame, OWNER, started.state.generation);
     dequeue.request_id = 77;
-    dequeue.arguments[0] = MAX_ACCESS_UNIT_BYTES;
+    dequeue.arguments[0] = FRAME_RECORD_BYTES;
     let pending = lumen_driver_core_dispatch(started.state, dequeue);
 
     // When: a cancellation from the released generation targets that reused identifier.
@@ -113,5 +112,5 @@ fn stale_session_cancellation_cannot_remove_reused_request_id() {
 
     // Then: generation validation rejects it and the new session's request remains pending.
     assert_eq!(cancelled.response.status, Status::StaleGeneration.raw());
-    assert!(cancelled.state.pending_access_unit_reads.contains(&77));
+    assert!(cancelled.state.pending_frame_reads.contains(&77));
 }

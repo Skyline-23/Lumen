@@ -36,19 +36,28 @@ NTSTATUS LumenEvtIddCxMonitorAssignSwapChain(
 ) {
   auto *monitor_context = LumenGetMonitorContext(monitor);
   auto *context = LumenGetDeviceContext(monitor_context->device);
-  auto validation = LumenRequest(
-    LumenDriverOperationValidateAndAbandonSwapchain,
+  auto assignment = LumenRequest(
+    LumenDriverOperationAssignSwapchain,
     0,
     context->core_state.generation
   );
-  validation.arguments[0] = monitor_context->monitor_id;
-  validation.arguments[1] = LumenPackLuid(input->RenderAdapterLuid);
-  const auto validated =
-    lumen_driver_core_dispatch(context->core_state, validation);
-  context->core_state = validated.state;
-  return STATUS_GRAPHICS_INDIRECT_DISPLAY_ABANDON_SWAPCHAIN;
+  assignment.arguments[0] = monitor_context->monitor_id;
+  assignment.arguments[1] = LumenPackLuid(input->RenderAdapterLuid);
+  const auto assigned = lumen_driver_core_dispatch(context->core_state, assignment);
+  if (assigned.response.status != LumenDriverStatusOk) {
+    return LumenStatusToNtStatus(assigned.response.status);
+  }
+  context->core_state = assigned.state;
+  const NTSTATUS status = LumenAssignSwapChain(context, monitor_context, input);
+  if (!NT_SUCCESS(status)) {
+    LumenUnassignSwapChain(context, monitor_context->monitor_id);
+    return STATUS_GRAPHICS_INDIRECT_DISPLAY_ABANDON_SWAPCHAIN;
+  }
+  return STATUS_SUCCESS;
 }
 
-NTSTATUS LumenEvtIddCxMonitorUnassignSwapChain(IDDCX_MONITOR) {
-  return STATUS_SUCCESS;
+NTSTATUS LumenEvtIddCxMonitorUnassignSwapChain(IDDCX_MONITOR monitor) {
+  auto *monitor_context = LumenGetMonitorContext(monitor);
+  auto *context = LumenGetDeviceContext(monitor_context->device);
+  return LumenUnassignSwapChain(context, monitor_context->monitor_id);
 }

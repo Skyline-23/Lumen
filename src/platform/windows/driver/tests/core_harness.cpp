@@ -111,49 +111,49 @@ int main() {
   );
   query_d3d11.arguments[0] = 1;
   const auto d3d11 = lumen_driver_core_dispatch(d3d12.state, query_d3d11);
-  auto matching_request = request(
-    LumenDriverOperationValidateAndAbandonSwapchain,
+  auto mismatch_request = request(
+    LumenDriverOperationAssignSwapchain,
     0,
     d3d11.state.generation
-  );
-  matching_request.arguments[0] = 7;
-  matching_request.arguments[1] = 0x0000000200001234ull;
-  const auto matching =
-    lumen_driver_core_dispatch(d3d11.state, matching_request);
-  auto mismatch_request = request(
-    LumenDriverOperationValidateAndAbandonSwapchain,
-    0,
-    matching.state.generation
   );
   mismatch_request.arguments[0] = 7;
   mismatch_request.arguments[1] = 0x0000000200001235ull;
   const auto mismatch =
-    lumen_driver_core_dispatch(matching.state, mismatch_request);
+    lumen_driver_core_dispatch(d3d11.state, mismatch_request);
+  auto matching_request = request(
+    LumenDriverOperationAssignSwapchain,
+    0,
+    mismatch.state.generation
+  );
+  matching_request.arguments[0] = 7;
+  matching_request.arguments[1] = 0x0000000200001234ull;
+  const auto matching =
+    lumen_driver_core_dispatch(mismatch.state, matching_request);
   const auto started = lumen_driver_core_dispatch(
-    mismatch.state,
-    request(LumenDriverOperationStartEncoder, kOwner, state.generation)
+    matching.state,
+    request(LumenDriverOperationStartEncoder, kOwner, matching.state.generation)
   );
   if (!status_is(created, LumenDriverStatusOk) ||
       !status_is(d3d12, LumenDriverStatusOk) ||
       !status_is(d3d11, LumenDriverStatusOk) ||
-      !status_is(matching, LumenDriverStatusProcessorUnavailable) ||
       !status_is(mismatch, LumenDriverStatusLuidMismatch) ||
+      !status_is(matching, LumenDriverStatusOk) ||
       !status_is(started, LumenDriverStatusOk)) {
     return 13;
   }
   state = started.state;
 
-  auto oversized = request(LumenDriverOperationDequeueAccessUnit, kOwner, state.generation);
+  auto oversized = request(LumenDriverOperationDequeueFrame, kOwner, state.generation);
   oversized.request_id = 1;
-  oversized.arguments[0] = uint64_t {LUMEN_MAX_ACCESS_UNIT_BYTES} + 1;
+  oversized.arguments[0] = uint64_t {LUMEN_FRAME_RECORD_BYTES} + 1;
   const auto oversized_result = lumen_driver_core_dispatch(state, oversized);
   if (!status_is(oversized_result, LumenDriverStatusOversize)) {
     return 14;
   }
 
-  auto pending = request(LumenDriverOperationDequeueAccessUnit, kOwner, state.generation);
+  auto pending = request(LumenDriverOperationDequeueFrame, kOwner, state.generation);
   pending.request_id = 2;
-  pending.arguments[0] = LUMEN_MAX_ACCESS_UNIT_BYTES;
+  pending.arguments[0] = LUMEN_FRAME_RECORD_BYTES;
   const auto pending_result = lumen_driver_core_dispatch(state, pending);
   if (!status_is(pending_result, LumenDriverStatusPending)) {
     return 15;
@@ -170,9 +170,9 @@ int main() {
 
   for (uint64_t cycle = 0; cycle < 2; ++cycle) {
     for (uint64_t slot = 0; slot < LUMEN_PENDING_READ_DEPTH; ++slot) {
-      auto queued = request(LumenDriverOperationDequeueAccessUnit, kOwner, state.generation);
+      auto queued = request(LumenDriverOperationDequeueFrame, kOwner, state.generation);
       queued.request_id = 100 + cycle * LUMEN_PENDING_READ_DEPTH + slot;
-      queued.arguments[0] = LUMEN_MAX_ACCESS_UNIT_BYTES;
+      queued.arguments[0] = LUMEN_FRAME_RECORD_BYTES;
       const auto queued_result = lumen_driver_core_dispatch(state, queued);
       if (!status_is(queued_result, LumenDriverStatusPending)) {
         return 17;
@@ -186,7 +186,7 @@ int main() {
     if (!status_is(stopped, LumenDriverStatusOk)) {
       return 18;
     }
-    for (uint64_t pending_id : stopped.state.pending_access_unit_reads) {
+    for (uint64_t pending_id : stopped.state.pending_frame_reads) {
       if (pending_id != 0) {
         return 19;
       }
@@ -248,8 +248,8 @@ int main() {
                "\"capabilities\":[{\"backend\":\"d3d12\",\"surface\":\"resource\"},"
                "{\"backend\":\"d3d11\",\"surface\":\"texture2d\"}],"
                "\"backend_before_init\":\"not_ready\","
-               "\"swapchain_assignment\":\"validated_then_abandoned_pending_processor\","
-               "\"mismatched_assignment\":\"luid_mismatch_rollback\","
+               "\"swapchain_assignment\":\"owned_until_unassigned\","
+               "\"mismatched_assignment\":\"luid_mismatch_rejected\","
                "\"adapter_removed_event\":\"delivered\","
                "\"malformed_version\":\"rejected\","
                "\"second_owner\":\"busy\",\"oversize\":\"rejected\","

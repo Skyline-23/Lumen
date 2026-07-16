@@ -1,6 +1,6 @@
 mod display_isolation;
 mod display_topology;
-#[cfg(windows)]
+#[cfg(any(test, windows))]
 mod driver_abi;
 #[cfg(windows)]
 mod input_policy;

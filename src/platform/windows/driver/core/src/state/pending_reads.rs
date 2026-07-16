@@ -1,26 +1,42 @@
 use crate::{
-    CoreRequest, CoreState, CoreTransition, Status, MAX_ACCESS_UNIT_BYTES, MAX_EVENT_BYTES,
+    CoreRequest, CoreState, CoreTransition, Status, FRAME_RECORD_BYTES, MAX_EVENT_BYTES,
     PENDING_READ_DEPTH, STATE_ENCODER_ACTIVE,
 };
 
-const READ_KIND_ACCESS_UNIT: u64 = 1;
+const READ_KIND_FRAME: u64 = 1;
 const READ_KIND_EVENT: u64 = 2;
 
-pub(super) fn dequeue_access_unit(
+pub(super) fn dequeue_frame(
     mut state: CoreState,
     request: CoreRequest,
     capacity: u64,
 ) -> CoreTransition {
     let status = if state.flags & STATE_ENCODER_ACTIVE == 0 {
         Status::NotReady
-    } else if capacity > MAX_ACCESS_UNIT_BYTES {
+    } else if capacity != FRAME_RECORD_BYTES {
         Status::Oversize
     } else if capacity == 0 || request.request_id == 0 {
         Status::InvalidArgument
     } else {
-        enqueue_pending(&mut state.pending_access_unit_reads, request.request_id)
+        enqueue_pending(&mut state.pending_frame_reads, request.request_id)
     };
     super::finish(state, request.header.operation, status, [0; 2])
+}
+
+pub(super) fn complete_frame(
+    mut state: CoreState,
+    request: CoreRequest,
+    frame_id: u64,
+) -> CoreTransition {
+    let status = if frame_id == 0 || frame_id != state.last_frame_id.saturating_add(1) {
+        Status::InvalidArgument
+    } else if remove_pending(&mut state.pending_frame_reads, request.request_id) {
+        state.last_frame_id = frame_id;
+        Status::Ok
+    } else {
+        Status::NotReady
+    };
+    super::finish(state, request.header.operation, status, [frame_id, 0])
 }
 
 pub(super) fn dequeue_event(
@@ -59,7 +75,7 @@ pub(super) fn cancel_pending(
     read_kind: u64,
 ) -> CoreTransition {
     let pending = match read_kind {
-        READ_KIND_ACCESS_UNIT => &mut state.pending_access_unit_reads,
+        READ_KIND_FRAME => &mut state.pending_frame_reads,
         READ_KIND_EVENT => &mut state.pending_event_reads,
         _ => {
             return super::finish(

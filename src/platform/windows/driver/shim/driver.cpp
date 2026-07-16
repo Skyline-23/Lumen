@@ -59,7 +59,7 @@ NTSTATUS LumenEvtDeviceAdd(WDFDRIVER, PWDFDEVICE_INIT device_init) {
 
   auto *context = LumenGetDeviceContext(device);
   context->core_state = lumen_driver_core_initial_state();
-  context->access_unit_queue = nullptr;
+  context->frame_queue = nullptr;
   context->event_queue = nullptr;
   context->adapter = nullptr;
   context->monitor = nullptr;
@@ -70,7 +70,37 @@ NTSTATUS LumenEvtDeviceAdd(WDFDRIVER, PWDFDEVICE_INIT device_init) {
   context->adapter_change_wait = nullptr;
   context->adapter_change_cookie = 0;
   context->adapter_change_work_item = nullptr;
+  context->frame_work_item = nullptr;
+  context->frame_request_event = nullptr;
+  context->frame_processor = nullptr;
+  context->pending_frame = {};
+  context->pending_frame_status = STATUS_SUCCESS;
+  context->pending_frame_ready = 0;
+  context->encoder_active = 0;
   context->adapter_monitoring = 0;
+
+  context->frame_request_event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+  if (context->frame_request_event == nullptr) {
+    return STATUS_INSUFFICIENT_RESOURCES;
+  }
+  WDF_WORKITEM_CONFIG frame_work_item_config;
+  WDF_WORKITEM_CONFIG_INIT(&frame_work_item_config, LumenEvtFrameWorkItem);
+  frame_work_item_config.AutomaticSerialization = TRUE;
+  WDF_OBJECT_ATTRIBUTES frame_work_item_attributes;
+  WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(
+    &frame_work_item_attributes,
+    LumenFrameWorkItemContext
+  );
+  frame_work_item_attributes.ParentObject = device;
+  status = WdfWorkItemCreate(
+    &frame_work_item_config,
+    &frame_work_item_attributes,
+    &context->frame_work_item
+  );
+  if (!NT_SUCCESS(status)) {
+    return status;
+  }
+  LumenGetFrameWorkItemContext(context->frame_work_item)->device = device;
 
   status = LumenInitializeAdapter(device, context);
   if (!NT_SUCCESS(status)) {
@@ -88,7 +118,7 @@ NTSTATUS LumenEvtDeviceAdd(WDFDRIVER, PWDFDEVICE_INIT device_init) {
   if (!NT_SUCCESS(status)) {
     return status;
   }
-  status = create_manual_queue(device, &context->access_unit_queue);
+  status = create_manual_queue(device, &context->frame_queue);
   if (!NT_SUCCESS(status)) {
     return status;
   }
@@ -97,6 +127,14 @@ NTSTATUS LumenEvtDeviceAdd(WDFDRIVER, PWDFDEVICE_INIT device_init) {
 
 void LumenEvtDeviceContextCleanup(WDFOBJECT object) {
   auto *context = LumenGetDeviceContext(static_cast<WDFDEVICE>(object));
+  LumenStopFrameProcessor(context);
+  if (context->frame_work_item != nullptr) {
+    WdfWorkItemFlush(context->frame_work_item);
+  }
+  if (context->frame_request_event != nullptr) {
+    CloseHandle(context->frame_request_event);
+    context->frame_request_event = nullptr;
+  }
   LumenStopAdapterMonitoring(context);
   if (context->core_state.render_adapter_luid == 0) {
     return;

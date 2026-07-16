@@ -2,15 +2,19 @@
 
 #include "lumen_driver_abi.h"
 
-#include <iddcx.h>
+#define NOMINMAX
+#include <windows.h>
 #include <wdf.h>
+#include <iddcx.h>
 #include <d3d11.h>
 #include <d3d12.h>
 #include <dxgi1_6.h>
 
+struct LumenFrameProcessor;
+
 struct LumenDeviceContext {
   LumenDriverCoreState core_state;
-  WDFQUEUE access_unit_queue;
+  WDFQUEUE frame_queue;
   WDFQUEUE event_queue;
   IDDCX_ADAPTER adapter;
   IDDCX_MONITOR monitor;
@@ -21,6 +25,13 @@ struct LumenDeviceContext {
   PTP_WAIT adapter_change_wait;
   DWORD adapter_change_cookie;
   WDFWORKITEM adapter_change_work_item;
+  WDFWORKITEM frame_work_item;
+  HANDLE frame_request_event;
+  LumenFrameProcessor *frame_processor;
+  LumenDriverFrameRecord pending_frame;
+  NTSTATUS pending_frame_status;
+  volatile LONG pending_frame_ready;
+  volatile LONG encoder_active;
   volatile LONG adapter_monitoring;
 };
 
@@ -51,6 +62,15 @@ WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(
   LumenGetAdapterChangeWorkItemContext
 );
 
+struct LumenFrameWorkItemContext {
+  WDFDEVICE device;
+};
+
+WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(
+  LumenFrameWorkItemContext,
+  LumenGetFrameWorkItemContext
+);
+
 EVT_WDF_DRIVER_DEVICE_ADD LumenEvtDeviceAdd;
 EVT_WDF_OBJECT_CONTEXT_CLEANUP LumenEvtDeviceContextCleanup;
 EVT_WDF_DEVICE_FILE_CREATE LumenEvtDeviceFileCreate;
@@ -65,6 +85,7 @@ EVT_IDD_CX_MONITOR_QUERY_TARGET_MODES LumenEvtIddCxMonitorQueryTargetModes;
 EVT_IDD_CX_MONITOR_ASSIGN_SWAPCHAIN LumenEvtIddCxMonitorAssignSwapChain;
 EVT_IDD_CX_MONITOR_UNASSIGN_SWAPCHAIN LumenEvtIddCxMonitorUnassignSwapChain;
 EVT_WDF_WORKITEM LumenEvtAdapterChangeWorkItem;
+EVT_WDF_WORKITEM LumenEvtFrameWorkItem;
 
 uint64_t LumenOwnerId(WDFFILEOBJECT file_object);
 LumenDriverCoreRequest LumenRequest(uint32_t operation, uint64_t owner_id, uint64_t generation);
@@ -72,6 +93,14 @@ NTSTATUS LumenStatusToNtStatus(uint32_t status);
 NTSTATUS LumenInitializeAdapter(WDFDEVICE device, LumenDeviceContext *context);
 void LumenStopAdapterMonitoring(LumenDeviceContext *context);
 NTSTATUS LumenCompletePendingEvent(LumenDeviceContext *context);
+NTSTATUS LumenAssignSwapChain(
+  LumenDeviceContext *context,
+  LumenMonitorContext *monitor_context,
+  const IDARG_IN_SETSWAPCHAIN *input
+);
+NTSTATUS LumenUnassignSwapChain(LumenDeviceContext *context, uint64_t monitor_id);
+void LumenStopFrameProcessor(LumenDeviceContext *context);
+void LumenSignalFrameRequest(LumenDeviceContext *context);
 NTSTATUS LumenCreateMonitor(
   LumenDeviceContext *context,
   const LumenDriverCoreRequest &request

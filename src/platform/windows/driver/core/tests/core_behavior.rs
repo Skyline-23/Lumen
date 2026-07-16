@@ -1,6 +1,6 @@
 use lumen_windows_driver_core::{
     lumen_driver_core_dispatch, lumen_driver_core_initial_state, CoreRequest, Operation, Status,
-    ADAPTER_DEVICE_D3D11, MAX_ACCESS_UNIT_BYTES, MAX_EVENT_BYTES, PENDING_READ_DEPTH,
+    ADAPTER_DEVICE_D3D11, FRAME_RECORD_BYTES, MAX_EVENT_BYTES, PENDING_READ_DEPTH,
     STATE_MONITOR_ACTIVE, STATE_MONITOR_ORPHANED,
 };
 
@@ -34,8 +34,11 @@ fn ready_encoder() -> (lumen_windows_driver_core::CoreState, u64) {
     let mut create = CoreRequest::new(Operation::CreateMonitor, OWNER, generation);
     create.arguments = [7, (1920 << 32) | 1080, 120_000, 0, 0];
     let created = lumen_driver_core_dispatch(state, create);
+    let mut assign = CoreRequest::new(Operation::AssignSwapchain, 0, generation);
+    assign.arguments = [7, 0x0000_0002_0000_1234, 0, 0, 0];
+    let assigned = lumen_driver_core_dispatch(created.state, assign);
     let started = lumen_driver_core_dispatch(
-        created.state,
+        assigned.state,
         CoreRequest::new(Operation::StartEncoder, OWNER, generation),
     );
     assert_eq!(started.response.status, Status::Ok.raw());
@@ -77,11 +80,11 @@ fn rejects_second_owner_without_disturbing_first_owner() {
 fn rejects_oversized_access_unit_and_event_reads() {
     // Given: a live encoder owned by the caller.
     let (state, generation) = ready_encoder();
-    let mut access_unit = CoreRequest::new(Operation::DequeueAccessUnit, OWNER, generation);
+    let mut access_unit = CoreRequest::new(Operation::DequeueFrame, OWNER, generation);
     access_unit.request_id = 1;
-    access_unit.arguments[0] = MAX_ACCESS_UNIT_BYTES + 1;
+    access_unit.arguments[0] = FRAME_RECORD_BYTES + 1;
 
-    // When: an oversized access-unit read and event read are submitted.
+    // When: an oversized frame read and event read are submitted.
     let access_unit_result = lumen_driver_core_dispatch(state, access_unit);
     let mut event = CoreRequest::new(Operation::DequeueEvent, OWNER, generation);
     event.request_id = 2;
@@ -92,7 +95,7 @@ fn rejects_oversized_access_unit_and_event_reads() {
     assert_eq!(access_unit_result.response.status, Status::Oversize.raw());
     assert_eq!(event_result.response.status, Status::Oversize.raw());
     assert_eq!(
-        event_result.state.pending_access_unit_reads,
+        event_result.state.pending_frame_reads,
         [0; PENDING_READ_DEPTH]
     );
     assert_eq!(
@@ -130,18 +133,18 @@ fn cancels_pending_read_and_enforces_pending_depth() {
     // Given: a live encoder with the maximum number of pending AU reads.
     let (mut state, generation) = ready_encoder();
     for request_id in 1..=u64::try_from(PENDING_READ_DEPTH).expect("depth fits in u64") {
-        let mut dequeue = CoreRequest::new(Operation::DequeueAccessUnit, OWNER, generation);
+        let mut dequeue = CoreRequest::new(Operation::DequeueFrame, OWNER, generation);
         dequeue.request_id = request_id;
-        dequeue.arguments[0] = MAX_ACCESS_UNIT_BYTES;
+        dequeue.arguments[0] = FRAME_RECORD_BYTES;
         let transition = lumen_driver_core_dispatch(state, dequeue);
         assert_eq!(transition.response.status, Status::Pending.raw());
         state = transition.state;
     }
 
     // When: one more read is submitted and the first pending read is cancelled.
-    let mut overflow = CoreRequest::new(Operation::DequeueAccessUnit, OWNER, generation);
+    let mut overflow = CoreRequest::new(Operation::DequeueFrame, OWNER, generation);
     overflow.request_id = 99;
-    overflow.arguments[0] = MAX_ACCESS_UNIT_BYTES;
+    overflow.arguments[0] = FRAME_RECORD_BYTES;
     let full = lumen_driver_core_dispatch(state, overflow);
     let mut cancel = CoreRequest::new(Operation::CancelPending, OWNER, generation);
     cancel.request_id = 1;
@@ -151,16 +154,16 @@ fn cancels_pending_read_and_enforces_pending_depth() {
     // Then: admission is bounded and cancellation releases exactly one slot.
     assert_eq!(full.response.status, Status::QueueFull.raw());
     assert_eq!(cancelled.response.status, Status::Cancelled.raw());
-    assert_eq!(cancelled.state.pending_access_unit_reads[0], 0);
+    assert_eq!(cancelled.state.pending_frame_reads[0], 0);
 }
 
 #[test]
 fn stop_encoder_clears_only_access_unit_pending_reads() {
-    // Given: a live encoder with one pending access-unit read and one event read.
+    // Given: a live encoder with one pending frame read and one event read.
     let (state, generation) = ready_encoder();
-    let mut access_unit = CoreRequest::new(Operation::DequeueAccessUnit, OWNER, generation);
+    let mut access_unit = CoreRequest::new(Operation::DequeueFrame, OWNER, generation);
     access_unit.request_id = 10;
-    access_unit.arguments[0] = MAX_ACCESS_UNIT_BYTES;
+    access_unit.arguments[0] = FRAME_RECORD_BYTES;
     let access_unit_pending = lumen_driver_core_dispatch(state, access_unit);
     let mut event = CoreRequest::new(Operation::DequeueEvent, OWNER, generation);
     event.request_id = 11;
@@ -175,10 +178,7 @@ fn stop_encoder_clears_only_access_unit_pending_reads() {
 
     // Then: AU reads are cancelled by encoder stop while event reads remain pending.
     assert_eq!(stopped.response.status, Status::Ok.raw());
-    assert_eq!(
-        stopped.state.pending_access_unit_reads,
-        [0; PENDING_READ_DEPTH]
-    );
+    assert_eq!(stopped.state.pending_frame_reads, [0; PENDING_READ_DEPTH]);
     assert_eq!(stopped.state.pending_event_reads[0], 11);
 }
 
@@ -186,9 +186,9 @@ fn stop_encoder_clears_only_access_unit_pending_reads() {
 fn release_owner_resets_pending_reads_and_advances_generation() {
     // Given: an owned live encoder with pending AU and event reads.
     let (state, generation) = ready_encoder();
-    let mut access_unit = CoreRequest::new(Operation::DequeueAccessUnit, OWNER, generation);
+    let mut access_unit = CoreRequest::new(Operation::DequeueFrame, OWNER, generation);
     access_unit.request_id = 20;
-    access_unit.arguments[0] = MAX_ACCESS_UNIT_BYTES;
+    access_unit.arguments[0] = FRAME_RECORD_BYTES;
     let access_unit_pending = lumen_driver_core_dispatch(state, access_unit);
     let mut event = CoreRequest::new(Operation::DequeueEvent, OWNER, generation);
     event.request_id = 21;
@@ -208,10 +208,7 @@ fn release_owner_resets_pending_reads_and_advances_generation() {
     assert_eq!(released.state.monitor_id, 7);
     assert_ne!(released.state.flags & STATE_MONITOR_ACTIVE, 0);
     assert_ne!(released.state.flags & STATE_MONITOR_ORPHANED, 0);
-    assert_eq!(
-        released.state.pending_access_unit_reads,
-        [0; PENDING_READ_DEPTH]
-    );
+    assert_eq!(released.state.pending_frame_reads, [0; PENDING_READ_DEPTH]);
     assert_eq!(released.state.pending_event_reads, [0; PENDING_READ_DEPTH]);
 }
 
@@ -219,16 +216,16 @@ fn release_owner_resets_pending_reads_and_advances_generation() {
 fn pending_read_status_precedence_is_stable() {
     // Given: an owner without an encoder and then a fully ready encoder.
     let (claimed, generation) = claim();
-    let mut unavailable = CoreRequest::new(Operation::DequeueAccessUnit, OWNER, generation);
+    let mut unavailable = CoreRequest::new(Operation::DequeueFrame, OWNER, generation);
     unavailable.request_id = 30;
-    unavailable.arguments[0] = MAX_ACCESS_UNIT_BYTES + 1;
+    unavailable.arguments[0] = FRAME_RECORD_BYTES + 1;
     let unavailable_result = lumen_driver_core_dispatch(claimed, unavailable);
     let (ready, ready_generation) = ready_encoder();
 
     // When: malformed pending reads violate more than one condition.
     let mut oversized_access_unit =
-        CoreRequest::new(Operation::DequeueAccessUnit, OWNER, ready_generation);
-    oversized_access_unit.arguments[0] = MAX_ACCESS_UNIT_BYTES + 1;
+        CoreRequest::new(Operation::DequeueFrame, OWNER, ready_generation);
+    oversized_access_unit.arguments[0] = FRAME_RECORD_BYTES + 1;
     let access_unit_result = lumen_driver_core_dispatch(ready, oversized_access_unit);
     let mut oversized_event = CoreRequest::new(Operation::DequeueEvent, OWNER, ready_generation);
     oversized_event.arguments[0] = MAX_EVENT_BYTES + 1;

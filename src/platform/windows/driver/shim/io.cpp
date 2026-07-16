@@ -17,8 +17,8 @@ namespace {
         return LumenDriverOperationStopEncoder;
       case LUMEN_IOCTL_REQUEST_KEYFRAME:
         return LumenDriverOperationRequestKeyframe;
-      case LUMEN_IOCTL_DEQUEUE_ACCESS_UNIT:
-        return LumenDriverOperationDequeueAccessUnit;
+      case LUMEN_IOCTL_DEQUEUE_FRAME:
+        return LumenDriverOperationDequeueFrame;
       case LUMEN_IOCTL_DEQUEUE_EVENT:
         return LumenDriverOperationDequeueEvent;
       case LUMEN_IOCTL_QUERY_HEALTH:
@@ -88,8 +88,8 @@ namespace {
     }
   }
 
-  NTSTATUS cancel_pending_access_unit_reads(LumenDeviceContext *context) {
-    return cancel_pending_reads(context, context->access_unit_queue, 1);
+  NTSTATUS cancel_pending_frame_reads(LumenDeviceContext *context) {
+    return cancel_pending_reads(context, context->frame_queue, 1);
   }
 
   void complete_response(WDFREQUEST request, const LumenDriverCoreTransition &transition) {
@@ -170,6 +170,84 @@ NTSTATUS LumenCompletePendingEvent(LumenDeviceContext *context) {
   return STATUS_SUCCESS;
 }
 
+void LumenEvtFrameWorkItem(WDFWORKITEM work_item) {
+  auto *work_item_context = LumenGetFrameWorkItemContext(work_item);
+  auto *context = LumenGetDeviceContext(work_item_context->device);
+  if (InterlockedCompareExchange(&context->pending_frame_ready, 1, 1) == 0) {
+    return;
+  }
+  WDFREQUEST pending_request = nullptr;
+  NTSTATUS status = WdfIoQueueRetrieveNextRequest(
+    context->frame_queue,
+    &pending_request
+  );
+  if (!NT_SUCCESS(status)) {
+    return;
+  }
+  void *input_buffer = nullptr;
+  status = WdfRequestRetrieveInputBuffer(
+    pending_request,
+    sizeof(LumenDriverCoreRequest),
+    &input_buffer,
+    nullptr
+  );
+  void *output_buffer = nullptr;
+  if (NT_SUCCESS(status)) {
+    status = WdfRequestRetrieveOutputBuffer(
+      pending_request,
+      sizeof(LumenDriverFrameRecord),
+      &output_buffer,
+      nullptr
+    );
+  }
+  if (!NT_SUCCESS(status)) {
+    cancel_core_read(context, pending_request, 1);
+    InterlockedExchange(&context->pending_frame_ready, 0);
+    WdfRequestComplete(pending_request, status);
+    LumenSignalFrameRequest(context);
+    return;
+  }
+  auto request = *static_cast<LumenDriverCoreRequest *>(input_buffer);
+  request.owner_id = LumenOwnerId(WdfRequestGetFileObject(pending_request));
+  if (!NT_SUCCESS(context->pending_frame_status)) {
+    cancel_core_read(context, pending_request, 1);
+    status = context->pending_frame_status;
+    InterlockedExchange(&context->pending_frame_ready, 0);
+    WdfRequestComplete(pending_request, status);
+    LumenSignalFrameRequest(context);
+    return;
+  }
+  auto completion = LumenRequest(
+    LumenDriverOperationCompleteFrame,
+    request.owner_id,
+    request.generation
+  );
+  completion.request_id = request.request_id;
+  completion.arguments[0] = context->pending_frame.frame_id;
+  const auto transition = lumen_driver_core_dispatch(
+    context->core_state,
+    completion
+  );
+  context->core_state = transition.state;
+  if (transition.response.status != LumenDriverStatusOk) {
+    InterlockedExchange(&context->pending_frame_ready, 0);
+    status = LumenStatusToNtStatus(transition.response.status);
+    WdfRequestComplete(pending_request, status);
+    LumenSignalFrameRequest(context);
+    return;
+  }
+  auto record = context->pending_frame;
+  record.request_id = request.request_id;
+  *static_cast<LumenDriverFrameRecord *>(output_buffer) = record;
+  InterlockedExchange(&context->pending_frame_ready, 0);
+  WdfRequestCompleteWithInformation(
+    pending_request,
+    STATUS_SUCCESS,
+    sizeof(LumenDriverFrameRecord)
+  );
+  LumenSignalFrameRequest(context);
+}
+
 uint64_t LumenOwnerId(WDFFILEOBJECT file_object) {
   return static_cast<uint64_t>(reinterpret_cast<uintptr_t>(file_object));
 }
@@ -229,7 +307,7 @@ void LumenEvtDeviceFileCreate(WDFDEVICE device, WDFREQUEST request, WDFFILEOBJEC
     lumen_driver_core_dispatch(context->core_state, claim);
   context->core_state = transition.state;
   if (transition.response.status == LumenDriverStatusOk) {
-    WdfIoQueueStart(context->access_unit_queue);
+    WdfIoQueueStart(context->frame_queue);
     WdfIoQueueStart(context->event_queue);
   }
   WdfRequestComplete(request, LumenStatusToNtStatus(transition.response.status));
@@ -241,8 +319,10 @@ void LumenEvtFileCleanup(WDFFILEOBJECT file_object) {
   if (context->core_state.owner_id != owner_id) {
     return;
   }
+  InterlockedExchange(&context->encoder_active, 0);
+  ResetEvent(context->frame_request_event);
   const NTSTATUS access_unit_status =
-    cancel_pending_access_unit_reads(context);
+    cancel_pending_frame_reads(context);
   const NTSTATUS event_status =
     cancel_pending_reads(context, context->event_queue, 2);
   UNREFERENCED_PARAMETER(access_unit_status);
@@ -275,7 +355,7 @@ void LumenEvtIoDeviceControl(WDFQUEUE queue, WDFREQUEST request, size_t output_l
     return;
   }
   core_request.owner_id = LumenOwnerId(WdfRequestGetFileObject(request));
-  if ((operation == LumenDriverOperationDequeueAccessUnit ||
+  if ((operation == LumenDriverOperationDequeueFrame ||
        operation == LumenDriverOperationDequeueEvent) &&
       (core_request.arguments[0] != output_length || output_length == 0)) {
     WdfRequestComplete(request, STATUS_INVALID_BUFFER_SIZE);
@@ -303,35 +383,49 @@ void LumenEvtIoDeviceControl(WDFQUEUE queue, WDFREQUEST request, size_t output_l
   }
   if (operation == LumenDriverOperationStopEncoder &&
       transition.response.status == LumenDriverStatusOk) {
-    status = cancel_pending_access_unit_reads(context);
+    InterlockedExchange(&context->encoder_active, 0);
+    ResetEvent(context->frame_request_event);
+    status = cancel_pending_frame_reads(context);
     if (!NT_SUCCESS(status)) {
       WdfRequestComplete(request, status);
       return;
     }
   }
   context->core_state = transition.state;
+  if (operation == LumenDriverOperationStartEncoder &&
+      transition.response.status == LumenDriverStatusOk) {
+    InterlockedExchange(&context->encoder_active, 1);
+    LumenSignalFrameRequest(context);
+  }
   if (transition.response.status != LumenDriverStatusPending) {
     complete_response(request, transition);
     return;
   }
 
   WDFQUEUE destination =
-    operation == LumenDriverOperationDequeueAccessUnit ? context->access_unit_queue : context->event_queue;
+    operation == LumenDriverOperationDequeueFrame ? context->frame_queue : context->event_queue;
   status = WdfRequestForwardToIoQueue(request, destination);
   if (!NT_SUCCESS(status)) {
     auto cancel =
       LumenRequest(LumenDriverOperationCancelPending, core_request.owner_id, context->core_state.generation);
     cancel.request_id = core_request.request_id;
     cancel.arguments[0] =
-      operation == LumenDriverOperationDequeueAccessUnit ? 1 : 2;
+      operation == LumenDriverOperationDequeueFrame ? 1 : 2;
     context->core_state =
       lumen_driver_core_dispatch(context->core_state, cancel).state;
     WdfRequestComplete(request, status);
+    return;
+  }
+  if (operation == LumenDriverOperationDequeueFrame) {
+    LumenSignalFrameRequest(context);
+    if (InterlockedCompareExchange(&context->pending_frame_ready, 1, 1) != 0) {
+      WdfWorkItemEnqueue(context->frame_work_item);
+    }
   }
 }
 
 void LumenEvtIoCancelledOnQueue(WDFQUEUE queue, WDFREQUEST request) {
   auto *context = LumenGetDeviceContext(WdfIoQueueGetDevice(queue));
-  cancel_core_read(context, request, queue == context->access_unit_queue ? 1 : 2);
+  cancel_core_read(context, request, queue == context->frame_queue ? 1 : 2);
   WdfRequestComplete(request, STATUS_CANCELLED);
 }

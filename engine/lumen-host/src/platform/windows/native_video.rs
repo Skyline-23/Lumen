@@ -10,28 +10,29 @@ use windows_api::core::Interface;
 use windows_api::Win32::Graphics::Direct3D11::{ID3D11Device, ID3D11Texture2D};
 use windows_api::Win32::Media::MediaFoundation::{
     eAVEncAV1VProfile_Main_420_10, eAVEncAV1VProfile_Main_420_8, eAVEncH264VProfile_High,
-    eAVEncH265VProfile_Main_420_10, eAVEncH265VProfile_Main_420_8,
-    CODECAPI_AVEncVideoForceKeyFrame, ICodecAPI, IMFActivate, IMFDXGIDeviceManager,
-    IMFMediaEventGenerator, IMFMediaType, IMFSample, IMFTransform, METransformHaveOutput,
-    METransformNeedInput, MFCreateAlignedMemoryBuffer, MFCreateDXGIDeviceManager,
-    MFCreateDXGISurfaceBuffer, MFCreateMediaType, MFCreateSample, MFMediaType_Video,
-    MFSampleExtension_CleanPoint, MFShutdown, MFStartup, MFTEnumEx, MFVideoFormat_AV1,
-    MFVideoFormat_H264, MFVideoFormat_HEVC, MFVideoFormat_NV12, MFVideoFormat_P010,
-    MFVideoInterlace_Progressive, MFSTARTUP_FULL, MFT_CATEGORY_VIDEO_ENCODER,
-    MFT_ENUM_FLAG_HARDWARE, MFT_ENUM_FLAG_SORTANDFILTER, MFT_MESSAGE_COMMAND_FLUSH,
-    MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, MFT_MESSAGE_NOTIFY_END_OF_STREAM,
-    MFT_MESSAGE_NOTIFY_END_STREAMING, MFT_MESSAGE_NOTIFY_START_OF_STREAM,
-    MFT_MESSAGE_SET_D3D_MANAGER, MFT_OUTPUT_DATA_BUFFER, MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES,
-    MFT_OUTPUT_STREAM_INFO, MFT_OUTPUT_STREAM_PROVIDES_SAMPLES, MFT_REGISTER_TYPE_INFO,
-    MF_EVENT_FLAG_NO_WAIT, MF_E_NO_EVENTS_AVAILABLE, MF_LOW_LATENCY, MF_MT_AVG_BITRATE,
-    MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE, MF_MT_INTERLACE_MODE, MF_MT_MAJOR_TYPE,
-    MF_MT_MPEG2_PROFILE, MF_MT_PIXEL_ASPECT_RATIO, MF_MT_SUBTYPE, MF_TRANSFORM_ASYNC_UNLOCK,
-    MF_VERSION,
+    eAVEncH265VProfile_Main_420_10, eAVEncH265VProfile_Main_420_8, eAVEncH265VProfile_Main_444_10,
+    eAVEncH265VProfile_Main_444_8, CODECAPI_AVEncVideoForceKeyFrame, ICodecAPI, IMFActivate,
+    IMFDXGIDeviceManager, IMFMediaEventGenerator, IMFMediaType, IMFSample, IMFTransform,
+    METransformHaveOutput, METransformNeedInput, MFCreateAlignedMemoryBuffer,
+    MFCreateDXGIDeviceManager, MFCreateDXGISurfaceBuffer, MFCreateMediaType, MFCreateSample,
+    MFMediaType_Video, MFSampleExtension_CleanPoint, MFShutdown, MFStartup, MFTEnumEx,
+    MFVideoFormat_AV1, MFVideoFormat_AYUV, MFVideoFormat_H264, MFVideoFormat_HEVC,
+    MFVideoFormat_NV12, MFVideoFormat_P010, MFVideoFormat_Y410, MFVideoInterlace_Progressive,
+    MFSTARTUP_FULL, MFT_CATEGORY_VIDEO_ENCODER, MFT_ENUM_FLAG_HARDWARE,
+    MFT_ENUM_FLAG_SORTANDFILTER, MFT_MESSAGE_COMMAND_FLUSH, MFT_MESSAGE_NOTIFY_BEGIN_STREAMING,
+    MFT_MESSAGE_NOTIFY_END_OF_STREAM, MFT_MESSAGE_NOTIFY_END_STREAMING,
+    MFT_MESSAGE_NOTIFY_START_OF_STREAM, MFT_MESSAGE_SET_D3D_MANAGER, MFT_OUTPUT_DATA_BUFFER,
+    MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES, MFT_OUTPUT_STREAM_INFO,
+    MFT_OUTPUT_STREAM_PROVIDES_SAMPLES, MFT_REGISTER_TYPE_INFO, MF_EVENT_FLAG_NO_WAIT,
+    MF_E_NO_EVENTS_AVAILABLE, MF_LOW_LATENCY, MF_MT_AVG_BITRATE, MF_MT_FRAME_RATE,
+    MF_MT_FRAME_SIZE, MF_MT_INTERLACE_MODE, MF_MT_MAJOR_TYPE, MF_MT_MPEG2_PROFILE,
+    MF_MT_PIXEL_ASPECT_RATIO, MF_MT_SUBTYPE, MF_TRANSFORM_ASYNC_UNLOCK, MF_VERSION,
 };
 use windows_api::Win32::System::Com::CoTaskMemFree;
 use windows_api::Win32::System::Variant::VARIANT;
 
-use super::native_capture::{NativeDesktopDuplication, NativeEncoderSurface};
+use super::native_capture::{NativeEncoderSurface, NativeIddCxCapture};
+use super::native_display_driver::DriverHandle;
 use crate::{
     PlatformChromaSubsampling, PlatformDynamicRange, PlatformSessionPlan, PlatformVideoCodec,
 };
@@ -45,6 +46,7 @@ type NativeVideoSink = Arc<dyn Fn(NativeEncodedVideoSample) -> Result<bool, Stri
 pub(super) struct NativeMediaFoundation {
     commands: mpsc::SyncSender<NativeMediaFoundationCommand>,
     state: Arc<Mutex<NativeVideoWorkerState>>,
+    capture_control: Mutex<Option<DriverHandle>>,
     worker: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -81,7 +83,7 @@ pub(super) struct NativeEncodedVideoSample {
 }
 
 struct NativeVideoRuntime {
-    duplication: NativeDesktopDuplication,
+    capture: NativeIddCxCapture,
     encoder: NativeVideoEncoderSession,
     plan: NativeVideoEncoderPlan,
     next_timestamp_hns: i64,
@@ -90,8 +92,7 @@ struct NativeVideoRuntime {
 enum NativeMediaFoundationCommand {
     Start {
         plan: NativeVideoEncoderPlan,
-        adapter_name: String,
-        output_name: String,
+        driver: DriverHandle,
         response: mpsc::SyncSender<Result<(), String>>,
     },
     StopSession {
@@ -111,6 +112,7 @@ struct NativeVideoEncoderPlan {
     frames_per_second: u32,
     bitrate_bps: u32,
     ten_bit: bool,
+    chroma_subsampling: PlatformChromaSubsampling,
 }
 
 impl NativeMediaFoundation {
@@ -127,6 +129,7 @@ impl NativeMediaFoundation {
             Ok(Ok(())) => Ok(Self {
                 commands: command_sender,
                 state,
+                capture_control: Mutex::new(None),
                 worker: Mutex::new(Some(worker)),
             }),
             Ok(Err(error)) => {
@@ -143,26 +146,42 @@ impl NativeMediaFoundation {
     pub(super) fn start_encoder(
         &self,
         plan: PlatformSessionPlan,
-        adapter_name: &str,
-        output_name: &str,
+        driver: DriverHandle,
     ) -> Result<(), String> {
         let plan = NativeVideoEncoderPlan::try_from(plan)?;
+        let capture_control = driver.duplicate()?;
         let (response, result) = mpsc::sync_channel(1);
         self.commands
             .send(NativeMediaFoundationCommand::Start {
                 plan,
-                adapter_name: adapter_name.to_owned(),
-                output_name: output_name.to_owned(),
+                driver,
                 response,
             })
             .map_err(|_| "Windows Media Foundation worker is unavailable".to_owned())?;
         result
             .recv()
-            .map_err(|_| "Windows Media Foundation start response was lost".to_owned())?
+            .map_err(|_| "Windows Media Foundation start response was lost".to_owned())??;
+        *self
+            .capture_control
+            .lock()
+            .map_err(|_| "Windows native capture control is poisoned".to_owned())? =
+            Some(capture_control);
+        Ok(())
     }
 
     pub(super) fn stop_encoder(&self) -> Result<(), String> {
-        self.request(|response| NativeMediaFoundationCommand::StopSession { response })
+        let control = self
+            .capture_control
+            .lock()
+            .map_err(|_| "Windows native capture control is poisoned".to_owned())?
+            .take();
+        let driver = control
+            .as_ref()
+            .and_then(|driver| driver.stop_frame_delivery().err());
+        let worker = self
+            .request(|response| NativeMediaFoundationCommand::StopSession { response })
+            .err();
+        combine_results([driver.map_or(Ok(()), Err), worker.map_or(Ok(()), Err)])
     }
 
     pub(super) fn request_key_frame(&self) -> Result<(), String> {
@@ -245,8 +264,7 @@ fn run_media_foundation(
             match command {
                 NativeMediaFoundationCommand::Start {
                     plan,
-                    adapter_name,
-                    output_name,
+                    driver,
                     response,
                 } => {
                     if runtime.is_some() {
@@ -255,7 +273,7 @@ fn run_media_foundation(
                         ));
                         continue;
                     }
-                    let result = start_runtime(&catalog, plan, &adapter_name, &output_name, &sink);
+                    let result = start_runtime(&catalog, plan, driver, &sink);
                     match result {
                         Ok(started) => {
                             runtime = Some(started);
@@ -320,14 +338,13 @@ fn run_media_foundation(
 fn start_runtime(
     catalog: &NativeVideoEncoderCatalog,
     plan: NativeVideoEncoderPlan,
-    adapter_name: &str,
-    output_name: &str,
+    driver: DriverHandle,
     sink: &NativeVideoSink,
 ) -> Result<NativeVideoRuntime, String> {
-    let duplication = NativeDesktopDuplication::open(adapter_name, output_name, plan.ten_bit)?;
-    let encoder = catalog.activate(plan, duplication.device())?;
+    let capture = NativeIddCxCapture::open(driver, plan.ten_bit)?;
+    let encoder = catalog.activate(plan, capture.device())?;
     let mut runtime = NativeVideoRuntime {
-        duplication,
+        capture,
         encoder,
         plan,
         next_timestamp_hns: 0,
@@ -471,16 +488,17 @@ impl NativeVideoRuntime {
         &mut self,
         timeout_milliseconds: u32,
     ) -> Result<Option<NativeEncodedVideoSample>, String> {
-        let Some(frame) = self.duplication.acquire_next_frame(timeout_milliseconds)? else {
+        let Some(frame) = self.capture.acquire_next_frame(timeout_milliseconds)? else {
             return Ok(None);
         };
         frame.validate()?;
-        let surface = self.duplication.convert_frame(
+        let surface = self.capture.convert_frame(
             &frame,
             self.plan.width,
             self.plan.height,
             self.plan.frames_per_second,
             self.plan.ten_bit,
+            self.plan.chroma_subsampling,
         )?;
         let timestamp = self.next_timestamp_hns;
         let encoded = self.encoder.encode(&surface, timestamp)?;
@@ -753,8 +771,13 @@ impl TryFrom<PlatformSessionPlan> for NativeVideoEncoderPlan {
         if plan.width == 0 || plan.height == 0 || plan.frames_per_second == 0 {
             return Err("Windows Media Foundation encoder geometry is invalid".to_owned());
         }
-        if plan.video_format.chroma_subsampling != PlatformChromaSubsampling::Yuv420 {
-            return Err("Windows Media Foundation native encoder requires 4:2:0 input".to_owned());
+        if plan.video_format.codec != PlatformVideoCodec::Hevc
+            && plan.video_format.chroma_subsampling == PlatformChromaSubsampling::Yuv444
+        {
+            return Err("Windows native 4:4:4 encoding requires HEVC".to_owned());
+        }
+        if !matches!(plan.video_format.bit_depth, 8 | 10) {
+            return Err("Windows native encoder requires 8-bit or 10-bit video".to_owned());
         }
         let ten_bit = plan.video_format.bit_depth == 10;
         if plan.video_format.dynamic_range == PlatformDynamicRange::Hdr10
@@ -774,6 +797,7 @@ impl TryFrom<PlatformSessionPlan> for NativeVideoEncoderPlan {
             frames_per_second: plan.frames_per_second,
             bitrate_bps,
             ten_bit,
+            chroma_subsampling: plan.video_format.chroma_subsampling,
         })
     }
 }
@@ -823,15 +847,7 @@ fn configure_transform(
         )
     })?;
     let output = video_media_type(plan, output_subtype(plan.codec), true)?;
-    let input = video_media_type(
-        plan,
-        if plan.ten_bit {
-            MFVideoFormat_P010
-        } else {
-            MFVideoFormat_NV12
-        },
-        false,
-    )?;
+    let input = video_media_type(plan, input_subtype(plan), false)?;
     unsafe { transform.SetOutputType(0, &output, 0) }.map_err(|error| {
         format!(
             "Windows Media Foundation rejected the {} output contract: {error}",
@@ -889,13 +905,32 @@ fn output_subtype(codec: PlatformVideoCodec) -> windows_api::core::GUID {
     }
 }
 
+fn input_subtype(plan: NativeVideoEncoderPlan) -> windows_api::core::GUID {
+    match (plan.chroma_subsampling, plan.ten_bit) {
+        (PlatformChromaSubsampling::Yuv420, false) => MFVideoFormat_NV12,
+        (PlatformChromaSubsampling::Yuv420, true) => MFVideoFormat_P010,
+        (PlatformChromaSubsampling::Yuv444, false) => MFVideoFormat_AYUV,
+        (PlatformChromaSubsampling::Yuv444, true) => MFVideoFormat_Y410,
+    }
+}
+
 fn output_profile(plan: NativeVideoEncoderPlan) -> u32 {
-    let profile = match (plan.codec, plan.ten_bit) {
-        (PlatformVideoCodec::H264, _) => eAVEncH264VProfile_High.0,
-        (PlatformVideoCodec::Hevc, false) => eAVEncH265VProfile_Main_420_8.0,
-        (PlatformVideoCodec::Hevc, true) => eAVEncH265VProfile_Main_420_10.0,
-        (PlatformVideoCodec::Av1, false) => eAVEncAV1VProfile_Main_420_8.0,
-        (PlatformVideoCodec::Av1, true) => eAVEncAV1VProfile_Main_420_10.0,
+    let profile = match (plan.codec, plan.chroma_subsampling, plan.ten_bit) {
+        (PlatformVideoCodec::H264, _, _) => eAVEncH264VProfile_High.0,
+        (PlatformVideoCodec::Hevc, PlatformChromaSubsampling::Yuv420, false) => {
+            eAVEncH265VProfile_Main_420_8.0
+        }
+        (PlatformVideoCodec::Hevc, PlatformChromaSubsampling::Yuv420, true) => {
+            eAVEncH265VProfile_Main_420_10.0
+        }
+        (PlatformVideoCodec::Hevc, PlatformChromaSubsampling::Yuv444, false) => {
+            eAVEncH265VProfile_Main_444_8.0
+        }
+        (PlatformVideoCodec::Hevc, PlatformChromaSubsampling::Yuv444, true) => {
+            eAVEncH265VProfile_Main_444_10.0
+        }
+        (PlatformVideoCodec::Av1, _, false) => eAVEncAV1VProfile_Main_420_8.0,
+        (PlatformVideoCodec::Av1, _, true) => eAVEncAV1VProfile_Main_420_10.0,
     };
     u32::try_from(profile).unwrap_or_default()
 }
@@ -948,5 +983,39 @@ fn codec_name(codec: PlatformVideoCodec) -> &'static str {
         PlatformVideoCodec::H264 => "H.264",
         PlatformVideoCodec::Hevc => "HEVC",
         PlatformVideoCodec::Av1 => "AV1",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn plan(ten_bit: bool) -> NativeVideoEncoderPlan {
+        NativeVideoEncoderPlan {
+            codec: PlatformVideoCodec::Hevc,
+            width: 3_840,
+            height: 2_160,
+            frames_per_second: 120,
+            bitrate_bps: 80_000_000,
+            ten_bit,
+            chroma_subsampling: PlatformChromaSubsampling::Yuv444,
+        }
+    }
+
+    #[test]
+    fn selects_media_foundation_hevc_444_contracts() {
+        let eight_bit = plan(false);
+        assert_eq!(input_subtype(eight_bit), MFVideoFormat_AYUV);
+        assert_eq!(
+            output_profile(eight_bit),
+            u32::try_from(eAVEncH265VProfile_Main_444_8.0).unwrap()
+        );
+
+        let ten_bit = plan(true);
+        assert_eq!(input_subtype(ten_bit), MFVideoFormat_Y410);
+        assert_eq!(
+            output_profile(ten_bit),
+            u32::try_from(eAVEncH265VProfile_Main_444_10.0).unwrap()
+        );
     }
 }

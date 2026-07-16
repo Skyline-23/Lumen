@@ -42,9 +42,9 @@ fn stop_encoder_synchronously_drains_wdf_access_unit_reads() {
         .find("operation == LumenDriverOperationStopEncoder")
         .expect("stop operation gate must exist");
     let drain = io[stop_gate..]
-        .find("cancel_pending_access_unit_reads(context)")
+        .find("cancel_pending_frame_reads(context)")
         .map(|offset| stop_gate + offset)
-        .expect("stop must drain pending access-unit reads");
+        .expect("stop must drain pending frame reads");
     let state_commit = io[stop_gate..]
         .find("context->core_state = transition.state")
         .map(|offset| stop_gate + offset)
@@ -145,6 +145,8 @@ fn windows_scripts_cleanup_every_failed_install_attempt() {
     assert!(build_try < build_certificate && build_certificate < build_finally);
     assert!(build_script.contains("Cert:\\CurrentUser\\My\\$($certificate.Thumbprint)"));
     assert!(install_script.contains("$installSucceeded = $false"));
+    assert!(install_script.contains("HardwareID -Contains \"ROOT\\LumenIddCx\""));
     assert!(install_script.contains("finally {"));
     assert!(install_script.contains("uninstall_windows_driver.ps1"));
+    assert!(uninstall.contains("HardwareID -Contains \"ROOT\\LumenIddCx\""));
 }

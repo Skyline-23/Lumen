@@ -1,6 +1,7 @@
 use crate::{
     CoreRequest, CoreState, CoreTransition, Status, ADAPTER_INITIALIZED, PENDING_READ_DEPTH,
     STATE_ENCODER_ACTIVE, STATE_KEYFRAME_PENDING, STATE_MONITOR_ACTIVE, STATE_MONITOR_ORPHANED,
+    STATE_SWAPCHAIN_ASSIGNED,
 };
 
 use super::finish;
@@ -69,7 +70,7 @@ pub(super) fn remove_monitor(
     request: CoreRequest,
     monitor_id: u64,
 ) -> CoreTransition {
-    let status = if state.flags & STATE_ENCODER_ACTIVE != 0 {
+    let status = if state.flags & (STATE_ENCODER_ACTIVE | STATE_SWAPCHAIN_ASSIGNED) != 0 {
         Status::InvalidState
     } else if state.flags & STATE_MONITOR_ORPHANED != 0 {
         Status::AccessDenied
@@ -77,7 +78,10 @@ pub(super) fn remove_monitor(
         Status::NotReady
     } else {
         state.monitor_id = 0;
-        state.flags &= !(STATE_MONITOR_ACTIVE | STATE_MONITOR_ORPHANED | STATE_KEYFRAME_PENDING);
+        state.flags &= !(STATE_MONITOR_ACTIVE
+            | STATE_MONITOR_ORPHANED
+            | STATE_KEYFRAME_PENDING
+            | STATE_SWAPCHAIN_ASSIGNED);
         Status::Ok
     };
     finish(state, request.header.operation, status, [0; 2])
@@ -116,7 +120,9 @@ pub(super) fn adopt_monitor(
 }
 
 pub(super) fn start_encoder(mut state: CoreState, request: CoreRequest) -> CoreTransition {
-    let status = if state.flags & STATE_MONITOR_ACTIVE == 0 {
+    let status = if state.flags & (STATE_MONITOR_ACTIVE | STATE_SWAPCHAIN_ASSIGNED)
+        != (STATE_MONITOR_ACTIVE | STATE_SWAPCHAIN_ASSIGNED)
+    {
         Status::NotReady
     } else if state.flags & STATE_MONITOR_ORPHANED != 0 {
         Status::AccessDenied
@@ -134,7 +140,7 @@ pub(super) fn stop_encoder(mut state: CoreState, request: CoreRequest) -> CoreTr
         Status::NotReady
     } else {
         state.flags &= !(STATE_ENCODER_ACTIVE | STATE_KEYFRAME_PENDING);
-        state.pending_access_unit_reads = [0; PENDING_READ_DEPTH];
+        state.pending_frame_reads = [0; PENDING_READ_DEPTH];
         Status::Ok
     };
     finish(state, request.header.operation, status, [0; 2])
