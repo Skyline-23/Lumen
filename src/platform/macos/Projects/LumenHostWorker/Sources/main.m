@@ -285,6 +285,12 @@ static uint32_t LumenWorkerVideoTimestamp(CMSampleBufferRef sampleBuffer) {
     os_unfair_lock_unlock(&_lock);
     return LumenHostPlatformStartSessionStatusDisplayCreationFailed;
   }
+  fprintf(
+    stderr,
+    "Lumen platform session stage=display-ready virtual=%s display-id=%u\n",
+    plan->virtual_display ? "true" : "false",
+    _displayID
+  );
   if (![self createOpusEncoder:plan]) {
     fprintf(stderr, "Lumen audio encoder creation failed for %u channels\n", plan->audio_channels);
     [self stopSessionLocked];
@@ -334,18 +340,23 @@ static uint32_t LumenWorkerVideoTimestamp(CMSampleBufferRef sampleBuffer) {
     return LumenHostPlatformStartSessionStatusVideoCaptureFailed;
   }
 
-  NSError *activationError = nil;
-  if (![LumenMacWorkspaceSessionFacade.shared
-        activateSessionSyncWithDisplayKey:_workspaceKey
-        error:&activationError]) {
-    fprintf(
-      stderr,
-      "Lumen workspace activation failed after capture readiness: %s\n",
-      activationError.localizedDescription.UTF8String ?: "unknown error"
-    );
-    [self stopSessionLocked];
-    os_unfair_lock_unlock(&_lock);
-    return -1;
+  if (plan->virtual_display) {
+    NSError *activationError = nil;
+    if (![LumenMacWorkspaceSessionFacade.shared
+          activateSessionSyncWithDisplayKey:_workspaceKey
+          error:&activationError]) {
+      fprintf(
+        stderr,
+        "Lumen workspace activation failed after capture readiness: %s\n",
+        activationError.localizedDescription.UTF8String ?: "unknown error"
+      );
+      [self stopSessionLocked];
+      os_unfair_lock_unlock(&_lock);
+      return LumenHostPlatformStartSessionStatusInvalidConfiguration;
+    }
+    fprintf(stderr, "Lumen platform session stage=workspace-active display-id=%u\n", _displayID);
+  } else {
+    fprintf(stderr, "Lumen platform session stage=workspace-bypassed display-id=%u\n", _displayID);
   }
 
   LumenMacBridgeAudioCaptureConfiguration audio =

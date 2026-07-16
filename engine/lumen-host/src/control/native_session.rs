@@ -282,12 +282,47 @@ impl ControlRouter {
         }]
     }
 
-    fn rollback_native_start(&self, application_started: bool, message: String) -> String {
+    fn rollback_native_start(&mut self, application_started: bool, message: String) -> String {
+        let session_error = self.platform.stop_session().err();
         if application_started {
             let _ = self.platform.stop_application();
         }
+        self.native.pending = None;
+        let message = match session_error {
+            Some(error) => format!("{message}; platform session rollback failed: {error}"),
+            None => message,
+        };
         self.publish_native_platform_error(message.clone());
         message
+    }
+
+    pub(crate) fn terminate_native_connection(&mut self, session_epoch: u32) -> Result<(), String> {
+        let Some(pending) = self.native.pending.as_ref() else {
+            return Ok(());
+        };
+        if pending.plan.session_epoch != session_epoch {
+            return Ok(());
+        }
+        let active = pending.active;
+        let application_started = pending.application_started;
+        let session_error = active
+            .then(|| self.platform.stop_session())
+            .and_then(Result::err);
+        let application_error = application_started
+            .then(|| self.platform.stop_application())
+            .and_then(Result::err);
+        if application_started {
+            self.discovery.clear_running_application();
+        }
+        self.native.pending = None;
+        match (session_error, application_error) {
+            (None, None) => Ok(()),
+            (session, application) => Err(format!(
+                "native connection cleanup failed: session={} application={}",
+                session.as_deref().unwrap_or("ok"),
+                application.as_deref().unwrap_or("ok")
+            )),
+        }
     }
 
     fn publish_native_platform_error(&self, message: String) {

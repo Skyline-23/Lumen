@@ -244,7 +244,9 @@ fn run_server(
                     }
                 };
                 let peer = connection.remote_address();
-                eprintln!("Lumen native QUIC stage=tls-ready peer={peer} alpn=lumen-stream/2");
+                let alpn =
+                    std::str::from_utf8(LUMEN_STREAMING_PROTOCOL_ALPN).unwrap_or("invalid-alpn");
+                eprintln!("Lumen native QUIC stage=tls-ready peer={peer} alpn={alpn}");
                 if let Err(error) = handle_connection(
                     connection,
                     media_port,
@@ -358,6 +360,7 @@ async fn handle_connection(
             .await;
     });
     let control_completion_send = completion_send;
+    let lifecycle_router = Arc::clone(&router);
     let control_task = tokio::spawn(async move {
         let result: Result<(), String> = async {
             let first_responses = {
@@ -404,12 +407,23 @@ async fn handle_connection(
         }
     };
     connection.close(VarInt::from_u32(0), b"session control closed");
-    let input_result = input_task
-        .await
-        .map_err(|error| format!("native input task failed: {error}"))?;
-    control_result?;
-    configuration_result?;
-    input_result
+    let input_result = match input_task.await {
+        Ok(result) => result,
+        Err(error) => Err(format!("native input task failed: {error}")),
+    };
+    let cleanup_result = match lifecycle_router.lock() {
+        Ok(mut router) => router.terminate_native_connection(session_epoch),
+        Err(_) => Err("native control router lock is poisoned".to_owned()),
+    };
+    if cleanup_result.is_ok() {
+        eprintln!(
+            "Lumen native QUIC stage=connection-cleanup-complete session-epoch={session_epoch}"
+        );
+    }
+    control_result
+        .and(configuration_result)
+        .and(input_result)
+        .and(cleanup_result)
 }
 
 async fn publish_codec_configurations(
@@ -881,7 +895,7 @@ mod tests {
             .enable_all()
             .build()
             .unwrap();
-        let expected_media_key = runtime.block_on(async {
+        runtime.block_on(async {
             let mut roots = rustls::RootCertStore::empty();
             roots.add(certificate_der).unwrap();
             let mut tls = rustls::ClientConfig::builder()
@@ -1090,14 +1104,13 @@ mod tests {
 
             connection.close(VarInt::from_u32(0), b"test complete");
             client.wait_idle().await;
-            expected_material.1
         });
 
         let pending_key = shared_router
             .lock()
             .unwrap()
             .pending_native_media_key_from_test();
-        assert_eq!(pending_key, Some(expected_media_key));
+        assert_eq!(pending_key, None);
         transport.stop().unwrap();
     }
 
