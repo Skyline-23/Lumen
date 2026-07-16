@@ -105,6 +105,7 @@ impl PlatformSessionControl for RecordingPlatformSessionControl {
 #[derive(Default)]
 struct FailingPlatformSessionControl {
     runtime_events: Mutex<Vec<PlatformRuntimeEvent>>,
+    stops: AtomicUsize,
 }
 
 impl PlatformSessionControl for FailingPlatformSessionControl {
@@ -113,6 +114,7 @@ impl PlatformSessionControl for FailingPlatformSessionControl {
     }
 
     fn stop_session(&self) -> Result<(), String> {
+        self.stops.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
 
@@ -480,6 +482,10 @@ fn native_start_returns_the_platform_failure_and_publishes_a_typed_runtime_error
             ),
         }]
     );
+    assert_eq!(platform.stops.load(Ordering::Relaxed), 1);
+    assert!(router
+        .pending_native_media_key(context.session_epoch)
+        .is_none());
 }
 
 #[test]
