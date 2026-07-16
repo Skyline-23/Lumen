@@ -680,21 +680,15 @@ mod tests {
             assert_eq!(snapshot["revision"], 1);
             let patch = r#"{
               "schemaVersion":1,"baseRevision":1,"requestId":"ffi-1",
-              "changes":{"general":{"name":"Remote"},"streaming":{"fallbackDisplayMode":"2560x1440x120"},"network":{"port":48000}}
+              "changes":{"general":{"name":"Remote"},"network":{"fecPercentage":30}}
             }"#;
             let (status, response) = dispatch_json(authority, 1, patch, 0);
             assert_eq!(status, 200);
-            assert_eq!(response["applyState"], "pending-worker-restart");
+            assert_eq!(response["applyState"], "pending-next-session");
             let (_, next) = dispatch_json(authority, 3, "", 0);
-            assert_eq!(
-                next["effective"]["streaming"]["fallbackDisplayMode"],
-                "2560x1440x120"
-            );
-            assert_eq!(next["effective"]["network"]["port"], 47_989);
-            let (_, restarted) = dispatch_json(authority, 4, "", 0);
-            assert_eq!(restarted["effective"]["network"]["port"], 48_000);
+            assert_eq!(next["effective"]["network"]["fecPercentage"], 30);
             let (_, events) = dispatch_json(authority, 2, "", 1);
-            assert_eq!(events["events"].as_array().unwrap().len(), 3);
+            assert_eq!(events["events"].as_array().unwrap().len(), 2);
             let (_, reset) = dispatch_json(authority, 6, "", 0);
             assert_eq!(reset["revision"], 1);
             assert_eq!(reset["settings"]["general"]["name"], "Lumen");

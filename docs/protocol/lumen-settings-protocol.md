@@ -57,19 +57,25 @@ transition advances the revision and appends a resumable event. A client resumes
 strictly after its last observed revision. If that point is no longer retained,
 the host returns `revision-not-retained` and the client fetches a new snapshot.
 
-Capabilities describe every field's stable key, type, apply class, availability,
-allowed enum values, user-facing value labels, numeric bounds, integer presets
-and steps, and string constraints. Finite host resources use enum capabilities
-with nonempty `allowedValues` and matching `allowedValueLabels`; clients present
-pickers and do not synthesize raw values. Unsupported
-platform-specific fields are present as unavailable metadata and cannot be
-patched. In particular, non-macOS hosts do not advertise macOS workspace policy
-as available.
+Capabilities expose only settings whose accepted PATCH changes the running host
+or the next native session: `general.name`, `network.fecPercentage`, and the
+three structured command lists. Local launch configuration such as listener
+address family, base port, UPnP, display/audio device selection, discovery,
+input policy, diagnostics, and update preferences is intentionally absent. The
+application owns those values and restarts the worker with one authoritative
+launch snapshot.
 
-Host language is not a remote setting. `general.locale` is absent because
-language selection belongs to each client device. `network.externalIpMode`
-accepts only `automatic` or `disabled`; arbitrary external-IP text is not part
-of the settings contract.
+Remote-access scope and external-address selection are not product settings.
+An enrolled device may use the same authenticated HTTPS and native-session
+surfaces over LAN or WAN whenever routing permits. Lumen does not infer trust
+from the peer's network location.
+
+LAN and WAN encryption selectors are also absent because the current native
+transport has no unencrypted mode. Control, discovery detail, applications,
+authentication, and settings use the TLS control server. Native session control
+uses QUIC with TLS 1.3. QUIC exporter material derives the per-session media key,
+and native UDP video/audio payloads use AES-128-GCM with authenticated headers.
+The former LAN/WAN selector values never selected any of these paths.
 
 ## Security boundary
 

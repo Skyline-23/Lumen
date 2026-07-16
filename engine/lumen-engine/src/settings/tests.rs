@@ -104,7 +104,7 @@ fn conformance_fixture_matches_runtime_field_catalog_and_constraints() {
     );
     let fields = field_catalog();
     let fixture_fields = fixture["fields"].as_array().unwrap();
-    assert_eq!(fixture_fields.len(), 30);
+    assert_eq!(fixture_fields.len(), 5);
     assert_eq!(fixture_fields.len(), fields.len());
     for fixture_field in fixture_fields {
         let key = fixture_field["key"].as_str().unwrap();
@@ -189,33 +189,21 @@ fn conformance_fixture_matches_runtime_field_catalog_and_constraints() {
     assert!(!fields.contains_key("workspace.policy"));
     assert!(fields.contains_key("general.name"));
     assert!(!fields.contains_key("network.externalIp"));
-    assert!(fields.contains_key("network.externalIpMode"));
-    assert!(fields.contains_key("general.updateChannel"));
-    assert!(fields.contains_key("general.notifyPreReleases"));
-    for key in [
-        "streaming.adapterSelector",
-        "streaming.outputSelector",
-        "streaming.fallbackDisplayMode",
-        "audio.sink",
-    ] {
-        let capability = &fields[key];
-        assert_eq!(capability.field_type, SettingsFieldType::Enum, "{key}");
-        assert!(!capability.allowed_values.is_empty(), "{key}");
-        assert_eq!(
-            capability.allowed_value_labels.len(),
-            capability.allowed_values.len(),
-            "{key}"
-        );
-    }
-    for key in [
-        "input.backButtonTimeoutMs",
-        "network.port",
-        "network.pingTimeoutMs",
-        "network.fecPercentage",
-    ] {
-        let capability = &fields[key];
-        assert!(!capability.presets.is_empty(), "{key}");
-        assert!(capability.step.is_some(), "{key}");
+    assert_eq!(
+        fields.keys().map(String::as_str).collect::<Vec<_>>(),
+        [
+            "commands.prep",
+            "commands.server",
+            "commands.state",
+            "general.name",
+            "network.fecPercentage",
+        ]
+    );
+    let fec = &fields["network.fecPercentage"];
+    assert!(!fec.presets.is_empty());
+    assert!(fec.step.is_some());
+    for key in ["commands.prep", "commands.state", "commands.server"] {
+        assert_eq!(fields[key].apply_class, SettingsApplyClass::NextSession);
     }
 }
 
@@ -231,12 +219,8 @@ fn local_reconciliation_preserves_unapplied_desired_values() {
                     name: Some("Remote Host".to_owned()),
                     ..Default::default()
                 }),
-                streaming: Some(StreamingChanges {
-                    fallback_display_mode: Some("2560x1440x120".to_owned()),
-                    ..Default::default()
-                }),
                 network: Some(NetworkChanges {
-                    port: Some(48_200),
+                    fec_percentage: Some(30),
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -244,16 +228,8 @@ fn local_reconciliation_preserves_unapplied_desired_values() {
         ))
         .unwrap();
     let pending = authority.snapshot();
-    assert_eq!(
-        pending.settings.streaming.fallback_display_mode,
-        "2560x1440x120"
-    );
-    assert_ne!(
-        pending.effective.streaming.fallback_display_mode,
-        "2560x1440x120"
-    );
-    assert_eq!(pending.settings.network.port, 48_200);
-    assert_ne!(pending.effective.network.port, 48_200);
+    assert_eq!(pending.settings.network.fec_percentage, 30);
+    assert_eq!(pending.effective.network.fec_percentage, 20);
 
     let mut local_runtime = pending.effective.clone();
     local_runtime.input.mouse = false;
@@ -262,19 +238,11 @@ fn local_reconciliation_preserves_unapplied_desired_values() {
     assert_eq!(reconciled.settings.general.name, "Remote Host");
     assert!(!reconciled.settings.input.mouse);
     assert!(!reconciled.effective.input.mouse);
-    assert_eq!(
-        reconciled.settings.streaming.fallback_display_mode,
-        "2560x1440x120"
-    );
-    assert_ne!(
-        reconciled.effective.streaming.fallback_display_mode,
-        "2560x1440x120"
-    );
-    assert_eq!(reconciled.settings.network.port, 48_200);
-    assert_ne!(reconciled.effective.network.port, 48_200);
+    assert_eq!(reconciled.settings.network.fec_percentage, 30);
+    assert_eq!(reconciled.effective.network.fec_percentage, 20);
     assert_eq!(
         reconciled.apply_state,
-        SettingsApplyState::PendingWorkerRestart
+        SettingsApplyState::PendingNextSession
     );
 }
 
@@ -299,7 +267,7 @@ fn invalid_field_rejects_the_entire_patch_without_revision_or_partial_write() {
         ))
         .unwrap_err();
 
-    assert_eq!(error.code, SettingsErrorCode::InvalidValue);
+    assert_eq!(error.code, SettingsErrorCode::UnknownField);
     assert_eq!(error.field.as_deref(), Some("network.port"));
     assert_eq!(authority.snapshot().revision, 1);
     assert_eq!(authority.snapshot().settings.general.name, "Lumen");
@@ -319,7 +287,7 @@ fn stale_revision_is_typed_and_accepted_retry_is_durable_and_idempotent() {
         "durable-idempotency-1",
         SettingsChanges {
             general: Some(GeneralChanges {
-                discovery: Some(false),
+                name: Some("Durable Host".to_owned()),
                 ..Default::default()
             }),
             ..Default::default()
@@ -355,7 +323,7 @@ fn stale_revision_is_typed_and_accepted_retry_is_durable_and_idempotent() {
         .apply_patch(SettingsPatchRequest {
             changes: SettingsChanges {
                 general: Some(GeneralChanges {
-                    discovery: Some(true),
+                    name: Some("Conflicting Host".to_owned()),
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -368,56 +336,42 @@ fn stale_revision_is_typed_and_accepted_retry_is_durable_and_idempotent() {
 }
 
 #[test]
-fn next_session_and_worker_restart_values_remain_pending_until_reported_applied() {
+fn next_session_values_remain_pending_until_session_start() {
     let (_root, mut authority) = authority(SettingsHostPlatform::Macos);
     let response = authority
         .apply_patch(patch_request(
             1,
             "apply-classes-1",
             SettingsChanges {
-                streaming: Some(StreamingChanges {
-                    fallback_display_mode: Some("2560x1440x120".to_owned()),
-                    ..Default::default()
-                }),
                 network: Some(NetworkChanges {
-                    port: Some(48_000),
+                    fec_percentage: Some(30),
                     ..Default::default()
                 }),
-                diagnostics: Some(DiagnosticsChanges {
-                    log_level: Some(LogLevel::Debug),
+                commands: Some(CommandsChanges {
+                    prep: Some(vec![PrepCommand {
+                        run: CommandInvocation {
+                            program: "lumen-prep".to_owned(),
+                            arguments: vec!["start".to_owned()],
+                        },
+                        undo: None,
+                        privilege: CommandPrivilege::User,
+                    }]),
+                    ..Default::default()
                 }),
                 ..Default::default()
             },
         ))
         .unwrap();
-    assert_eq!(
-        response.apply_state,
-        SettingsApplyState::PendingWorkerRestart
-    );
-    assert_eq!(response.requires, SettingsApplyRequirement::WorkerRestart);
-    assert_eq!(response.effective.diagnostics.log_level, LogLevel::Debug);
-    assert_eq!(
-        response.effective.streaming.fallback_display_mode,
-        "1920x1080x60"
-    );
-    assert_eq!(response.effective.network.port, 47_989);
+    assert_eq!(response.apply_state, SettingsApplyState::PendingNextSession);
+    assert_eq!(response.requires, SettingsApplyRequirement::NextSession);
+    assert_eq!(response.effective.network.fec_percentage, 20);
+    assert!(response.effective.commands.prep.is_empty());
 
     let next_session = authority.mark_next_session_started().unwrap();
     assert_eq!(next_session.revision, 3);
-    assert_eq!(
-        next_session.effective.streaming.fallback_display_mode,
-        "2560x1440x120"
-    );
-    assert_eq!(next_session.effective.network.port, 47_989);
-    assert_eq!(
-        next_session.apply_state,
-        SettingsApplyState::PendingWorkerRestart
-    );
-
-    let restarted = authority.mark_worker_restarted().unwrap();
-    assert_eq!(restarted.revision, 4);
-    assert_eq!(restarted.effective.network.port, 48_000);
-    assert_eq!(restarted.apply_state, SettingsApplyState::Applied);
+    assert_eq!(next_session.effective.network.fec_percentage, 30);
+    assert_eq!(next_session.effective.commands.prep.len(), 1);
+    assert_eq!(next_session.apply_state, SettingsApplyState::Applied);
 }
 
 #[test]
@@ -428,8 +382,8 @@ fn pushed_updates_are_revisioned_and_resumable() {
             1,
             "event-1",
             SettingsChanges {
-                input: Some(InputChanges {
-                    mouse: Some(false),
+                general: Some(GeneralChanges {
+                    name: Some("Remote Host".to_owned()),
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -449,7 +403,7 @@ fn pushed_updates_are_revisioned_and_resumable() {
             .collect::<Vec<_>>(),
         vec![2, 3]
     );
-    assert!(!events[0].settings.input.mouse);
+    assert_eq!(events[0].settings.general.name, "Remote Host");
     assert!(events[1].settings.general.notify_pre_releases);
     assert!(authority.events_since(3).unwrap().is_empty());
     let future = authority.events_since(4).unwrap_err();
@@ -472,7 +426,7 @@ fn bounded_event_history_requires_snapshot_only_after_resume_point_expires() {
                 &format!("retention-{index}"),
                 SettingsChanges {
                     general: Some(GeneralChanges {
-                        discovery: Some(index % 2 == 0),
+                        name: Some(format!("Retention Host {index}")),
                         ..Default::default()
                     }),
                     ..Default::default()
@@ -575,10 +529,7 @@ fn commands_require_explicit_privilege_and_use_injection_safe_argv_shape() {
             },
         ))
         .unwrap();
-    assert_eq!(
-        response.apply_state,
-        SettingsApplyState::PendingWorkerRestart
-    );
+    assert_eq!(response.apply_state, SettingsApplyState::PendingNextSession);
 
     let missing_privilege = SettingsAuthority::decode_patch_request(r#"{
           "schemaVersion":1,"baseRevision":2,"requestId":"commands-missing-privilege",
@@ -748,8 +699,8 @@ fn corrupt_or_internally_inconsistent_persisted_authority_is_rejected() {
             1,
             "persisted-corruption-1",
             SettingsChanges {
-                streaming: Some(StreamingChanges {
-                    fallback_display_mode: Some("2560x1440x120".to_owned()),
+                network: Some(NetworkChanges {
+                    fec_percentage: Some(30),
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -828,36 +779,11 @@ fn protocol_snapshots_never_contain_internal_paths_secrets_or_control_selector()
 }
 
 #[test]
-fn complete_portable_patch_round_trips_every_supported_non_file_setting() {
+fn complete_remote_patch_round_trips_every_public_setting() {
     let (_root, mut authority) = authority(SettingsHostPlatform::Macos);
     let mut expected = HostSettings::default();
     expected.general.name = "Studio Lumen".to_owned();
-    expected.general.discovery = false;
-    expected.general.update_channel = UpdateChannel::PreRelease;
-    expected.general.notify_pre_releases = true;
-    expected.streaming.adapter_selector = "automatic".to_owned();
-    expected.streaming.output_selector = "automatic".to_owned();
-    expected.streaming.fallback_display_mode = "2560x1440x120".to_owned();
-    expected.audio.sink = "system-default".to_owned();
-    expected.audio.stream_audio = false;
-    expected.input.keyboard = false;
-    expected.input.mouse = false;
-    expected.input.controller = false;
-    expected.input.back_button_timeout_ms = 2_500;
-    expected.input.map_right_alt_to_windows_key = true;
-    expected.input.high_resolution_scrolling = false;
-    expected.input.native_pen_touch = false;
-    expected.input.rumble_forwarding = false;
-    expected.network.address_family = AddressFamily::Both;
-    expected.network.port = 48_000;
-    expected.network.upnp = true;
-    expected.network.remote_access_scope = RemoteAccessScope::Wan;
-    expected.network.external_ip_mode = ExternalIpMode::Disabled;
-    expected.network.lan_encryption = EncryptionMode::Required;
-    expected.network.wan_encryption = EncryptionMode::Required;
-    expected.network.ping_timeout_ms = 20_000;
     expected.network.fec_percentage = 30;
-    expected.diagnostics.log_level = LogLevel::Warning;
     expected.commands.prep = vec![PrepCommand {
         run: CommandInvocation {
             program: "lumen-prep".to_owned(),
@@ -890,14 +816,29 @@ fn complete_portable_patch_round_trips_every_supported_non_file_setting() {
         .apply_patch(patch_request(
             1,
             "complete-portable-1",
-            full_changes(&expected),
+            SettingsChanges {
+                general: Some(GeneralChanges {
+                    name: Some(expected.general.name.clone()),
+                    ..Default::default()
+                }),
+                network: Some(NetworkChanges {
+                    fec_percentage: Some(expected.network.fec_percentage),
+                    ..Default::default()
+                }),
+                commands: Some(CommandsChanges {
+                    prep: Some(expected.commands.prep.clone()),
+                    state: Some(expected.commands.state.clone()),
+                    server: Some(expected.commands.server.clone()),
+                }),
+                ..Default::default()
+            },
         ))
         .unwrap();
-    assert_eq!(response.requires, SettingsApplyRequirement::WorkerRestart);
+    assert_eq!(response.requires, SettingsApplyRequirement::NextSession);
     assert_eq!(authority.snapshot().settings, expected);
     assert_ne!(authority.snapshot().effective, expected);
     assert_eq!(
-        authority.mark_worker_restarted().unwrap().effective,
+        authority.mark_next_session_started().unwrap().effective,
         expected
     );
 }

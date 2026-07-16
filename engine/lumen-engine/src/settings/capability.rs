@@ -115,146 +115,10 @@ fn capability(
 }
 
 pub(super) fn field_catalog() -> BTreeMap<String, FieldCapability> {
-    use SettingsApplyClass::{Live, NextSession, WorkerRestart};
-    use SettingsFieldType::{Boolean, CommandList, Enum, Integer, String as StringType};
+    use SettingsApplyClass::{Live, NextSession};
+    use SettingsFieldType::{CommandList, Integer, String as StringType};
     let mut fields: BTreeMap<String, FieldCapability> = [
         capability("general.name", StringType, Live, &[], None, None),
-        capability("general.discovery", Boolean, Live, &[], None, None),
-        capability(
-            "general.updateChannel",
-            Enum,
-            Live,
-            &["stable", "pre-release"],
-            None,
-            None,
-        ),
-        capability("general.notifyPreReleases", Boolean, Live, &[], None, None),
-        capability(
-            "streaming.adapterSelector",
-            Enum,
-            WorkerRestart,
-            &["automatic"],
-            None,
-            None,
-        ),
-        capability(
-            "streaming.outputSelector",
-            Enum,
-            WorkerRestart,
-            &["automatic"],
-            None,
-            None,
-        ),
-        capability(
-            "streaming.fallbackDisplayMode",
-            Enum,
-            NextSession,
-            &[
-                "1280x720x60",
-                "1920x1080x60",
-                "2560x1440x60",
-                "2560x1440x120",
-                "3840x2160x60",
-                "3840x2160x120",
-            ],
-            None,
-            None,
-        ),
-        capability(
-            "audio.sink",
-            Enum,
-            NextSession,
-            &["system-default"],
-            None,
-            None,
-        ),
-        capability("audio.streamAudio", Boolean, NextSession, &[], None, None),
-        capability("input.keyboard", Boolean, Live, &[], None, None),
-        capability("input.mouse", Boolean, Live, &[], None, None),
-        capability("input.controller", Boolean, Live, &[], None, None),
-        capability(
-            "input.backButtonTimeoutMs",
-            Integer,
-            Live,
-            &[],
-            Some(-1),
-            Some(60_000),
-        ),
-        capability(
-            "input.mapRightAltToWindowsKey",
-            Boolean,
-            Live,
-            &[],
-            None,
-            None,
-        ),
-        capability(
-            "input.highResolutionScrolling",
-            Boolean,
-            Live,
-            &[],
-            None,
-            None,
-        ),
-        capability("input.nativePenTouch", Boolean, Live, &[], None, None),
-        capability("input.rumbleForwarding", Boolean, Live, &[], None, None),
-        capability(
-            "network.addressFamily",
-            Enum,
-            WorkerRestart,
-            &["ipv4", "both"],
-            None,
-            None,
-        ),
-        capability(
-            "network.port",
-            Integer,
-            WorkerRestart,
-            &[],
-            Some(1_029),
-            Some(65_515),
-        ),
-        capability("network.upnp", Boolean, WorkerRestart, &[], None, None),
-        capability(
-            "network.remoteAccessScope",
-            Enum,
-            WorkerRestart,
-            &["pc", "lan", "wan"],
-            None,
-            None,
-        ),
-        capability(
-            "network.externalIpMode",
-            Enum,
-            WorkerRestart,
-            &["automatic", "disabled"],
-            None,
-            None,
-        ),
-        capability(
-            "network.lanEncryption",
-            Enum,
-            NextSession,
-            &["disabled", "opportunistic", "required"],
-            None,
-            None,
-        ),
-        capability(
-            "network.wanEncryption",
-            Enum,
-            NextSession,
-            &["disabled", "opportunistic", "required"],
-            None,
-            None,
-        ),
-        capability(
-            "network.pingTimeoutMs",
-            Integer,
-            NextSession,
-            &[],
-            Some(1_000),
-            Some(120_000),
-        ),
         capability(
             "network.fecPercentage",
             Integer,
@@ -264,19 +128,9 @@ pub(super) fn field_catalog() -> BTreeMap<String, FieldCapability> {
             Some(255),
         ),
         capability(
-            "diagnostics.logLevel",
-            Enum,
-            Live,
-            &[
-                "verbose", "debug", "info", "warning", "error", "fatal", "none",
-            ],
-            None,
-            None,
-        ),
-        capability(
             "commands.prep",
             CommandList,
-            WorkerRestart,
+            NextSession,
             &["user", "administrator"],
             None,
             None,
@@ -284,7 +138,7 @@ pub(super) fn field_catalog() -> BTreeMap<String, FieldCapability> {
         capability(
             "commands.state",
             CommandList,
-            WorkerRestart,
+            NextSession,
             &["user", "administrator"],
             None,
             None,
@@ -292,7 +146,7 @@ pub(super) fn field_catalog() -> BTreeMap<String, FieldCapability> {
         capability(
             "commands.server",
             CommandList,
-            WorkerRestart,
+            NextSession,
             &["user", "administrator"],
             None,
             None,
@@ -301,51 +155,6 @@ pub(super) fn field_catalog() -> BTreeMap<String, FieldCapability> {
     .into_iter()
     .collect();
     set_string_constraint(&mut fields, "general.name", Some(64), None);
-    set_value_labels(
-        &mut fields,
-        "streaming.adapterSelector",
-        &[("automatic", "Automatic")],
-    );
-    set_value_labels(
-        &mut fields,
-        "streaming.outputSelector",
-        &[("automatic", "Automatic")],
-    );
-    set_value_labels(
-        &mut fields,
-        "streaming.fallbackDisplayMode",
-        &[
-            ("1280x720x60", "1280 × 720 at 60 Hz"),
-            ("1920x1080x60", "1920 × 1080 at 60 Hz"),
-            ("2560x1440x60", "2560 × 1440 at 60 Hz"),
-            ("2560x1440x120", "2560 × 1440 at 120 Hz"),
-            ("3840x2160x60", "3840 × 2160 at 60 Hz"),
-            ("3840x2160x120", "3840 × 2160 at 120 Hz"),
-        ],
-    );
-    set_value_labels(
-        &mut fields,
-        "audio.sink",
-        &[("system-default", "System Default")],
-    );
-    set_value_labels(
-        &mut fields,
-        "network.externalIpMode",
-        &[("automatic", "Automatic"), ("disabled", "Disabled")],
-    );
-    set_integer_metadata(
-        &mut fields,
-        "input.backButtonTimeoutMs",
-        &[-1, 250, 500, 750, 1_000, 1_500, 2_000],
-        250,
-    );
-    set_integer_metadata(&mut fields, "network.port", &[47_989], 1);
-    set_integer_metadata(
-        &mut fields,
-        "network.pingTimeoutMs",
-        &[1_000, 3_000, 5_000, 10_000, 15_000, 30_000, 60_000, 120_000],
-        1_000,
-    );
     set_integer_metadata(
         &mut fields,
         "network.fecPercentage",
@@ -353,19 +162,6 @@ pub(super) fn field_catalog() -> BTreeMap<String, FieldCapability> {
         1,
     );
     fields
-}
-
-fn set_value_labels(
-    fields: &mut BTreeMap<String, FieldCapability>,
-    key: &str,
-    labels: &[(&str, &str)],
-) {
-    if let Some(field) = fields.get_mut(key) {
-        field.allowed_value_labels = labels
-            .iter()
-            .map(|(value, label)| ((*value).to_owned(), (*label).to_owned()))
-            .collect();
-    }
 }
 
 fn set_integer_metadata(

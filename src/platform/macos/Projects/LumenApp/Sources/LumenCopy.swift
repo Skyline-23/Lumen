@@ -166,33 +166,8 @@ enum LumenCopy {
         static var name: String { localized("Computer name") }
         static var discovery: String { localized("Discoverable on the local network") }
         static var deviceEnrollment: String { localized("Allow new device enrollment") }
-        static var notifyPreReleases: String { localized("Notify about pre-release updates") }
-        static var streaming: String { localized("Streaming") }
-        static var streamingSubtitle: String { localized("Display and capture device behavior") }
-        static var display: String { localized("Display") }
-        static var adapterName: String { localized("Display adapter") }
-        static var outputName: String { localized("Display output") }
-        static var fallbackDisplayMode: String { localized("Fallback display mode") }
-        static var audio: String { localized("Audio") }
-        static var audioSubtitle: String { localized("Computer audio capture and device selection") }
-        static var audioSink: String { localized("Audio device") }
-        static var audioSinkDetail: String { localized("Uses the audio device selected by the host.") }
-        static var streamAudio: String { localized("Stream computer audio") }
-        static var input: String { localized("Input") }
-        static var inputSubtitle: String { localized("Keyboard, pointer, touch, and controller forwarding") }
-        static var controller: String { localized("Controller") }
-        static var keyboard: String { localized("Keyboard") }
-        static var pointer: String { localized("Pointer and touch") }
-        static var keyboardInput: String { localized("Keyboard input") }
-        static var mouseInput: String { localized("Mouse input") }
-        static var controllerInput: String { localized("Game controller input") }
-        static var controllerBackButtonTimeout: String { localized("Back button timeout (ms)") }
-        static var mapRightAltToWindowsKey: String { localized("Map Right Alt to Windows key") }
-        static var highResolutionScrolling: String { localized("High-resolution scrolling") }
-        static var nativePenAndTouch: String { localized("Native pen and touch") }
-        static var rumbleForwarding: String { localized("Controller rumble") }
         static var network: String { localized("Network") }
-        static var networkSubtitle: String { localized("Discovery, remote access, encryption, and recovery") }
+        static var networkSubtitle: String { localized("Listener ports, WAN mapping, and media recovery") }
         static var addressFamily: String { localized("Address family") }
         static var port: String { localized("Base port") }
         static var useDefaultPort: String { localized("Use default") }
@@ -213,11 +188,6 @@ enum LumenCopy {
             )
         }
         static var upnp: String { localized("UPnP port mapping") }
-        static var externalIPMode: String { localized("External IP detection") }
-        static var encryption: String { localized("Encryption and recovery") }
-        static var lanEncryption: String { localized("LAN encryption") }
-        static var wanEncryption: String { localized("Remote encryption") }
-        static var pingTimeout: String { localized("Connection timeout (ms)") }
         static var fecPercentage: String { localized("Forward error correction (%)") }
         static var advanced: String { localized("Advanced") }
         static var advancedSubtitle: String { localized("Lifecycle commands and host process automation") }
@@ -227,55 +197,12 @@ enum LumenCopy {
         static var commandName: String { localized("Name") }
         static var command: String { localized("Command") }
         static var undoCommand: String { localized("Undo command") }
-        static var logging: String { localized("Logging") }
-        static var logLevel: String { localized("Log level") }
         static var systemAuthentication: String { localized("Unlock with Touch ID") }
         static var systemAuthenticationDetail: String { localized("Touch ID confirmation is required when this option is enabled.") }
-        static var automatic: String { localized("Automatic") }
-        static var systemDefault: String { localized("System Default") }
-        static var disabled: String { localized("Disabled") }
-        static let displayModeOptions = [
-            "1280x720x60",
-            "1920x1080x60",
-            "2560x1440x60",
-            "2560x1440x120",
-            "3840x2160x60",
-            "3840x2160x120",
-        ]
-        static let controllerTimeoutOptions = [-1, 250, 500, 750, 1_000, 1_500, 2_000]
-        static let connectionTimeoutOptions = [1_000, 3_000, 5_000, 10_000, 15_000, 30_000, 60_000, 120_000]
         static let fecOptions = [5, 10, 15, 20, 25, 30, 40, 50]
-
-        static func displayModeTitle(_ mode: String) -> String {
-            let components = mode.split(separator: "x")
-            guard components.count == 3 else {
-                return mode
-            }
-            return localizedFormat(
-                "%@ × %@ at %@ Hz",
-                String(components[0]),
-                String(components[1]),
-                String(components[2])
-            )
-        }
-
-        static func controllerTimeoutTitle(_ milliseconds: Int) -> String {
-            milliseconds < 0 ? disabled : millisecondsTitle(milliseconds)
-        }
-
-        static func millisecondsTitle(_ milliseconds: Int) -> String {
-            localizedFormat("%@ ms", milliseconds.formatted())
-        }
 
         static func percentageTitle(_ percentage: Int) -> String {
             localizedFormat("Percentage value", percentage.formatted())
-        }
-
-        static func externalIPModeTitle(_ mode: LumenExternalIPMode) -> String {
-            switch mode {
-            case .automatic: automatic
-            case .disabled: disabled
-            }
         }
 
         static func addressFamilyTitle(_ family: LumenNetworkAddressFamily) -> String {
@@ -285,25 +212,6 @@ enum LumenCopy {
             }
         }
 
-        static func encryptionTitle(_ mode: LumenEncryptionMode) -> String {
-            switch mode {
-            case .disabled: localized("Disabled")
-            case .opportunistic: localized("When supported")
-            case .required: localized("Required")
-            }
-        }
-
-        static func logLevelTitle(_ level: LumenLogLevel) -> String {
-            switch level {
-            case .verbose: localized("Verbose")
-            case .debug: localized("Debug")
-            case .info: localized("Info")
-            case .warning: localized("Warning")
-            case .error: localized("Error")
-            case .fatal: localized("Fatal only")
-            case .none: localized("None")
-            }
-        }
     }
 
     enum Diagnostics {
