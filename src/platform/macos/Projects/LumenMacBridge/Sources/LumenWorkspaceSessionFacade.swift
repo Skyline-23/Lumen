@@ -156,7 +156,7 @@ private actor LumenMacWorkspaceSessionRegistry {
 
     func activate(displayKey: String) async throws -> Bool {
         guard let session = sessions[displayKey] else {
-            return false
+            throw LumenMacWorkspaceSessionError.sessionNotStarted
         }
         do {
             try await session.activate()

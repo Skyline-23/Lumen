@@ -46,6 +46,61 @@ private actor DisplayTopologyProbe: LumenMacDisplayTopologyControlling {
 }
 
 final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
+    func testModeSelectionUsesCurrentModeWhenEnumerationOmitsIt() {
+        let current = LumenMacPhysicalDisplayMode(
+            width: 5120,
+            height: 2880,
+            refreshMillihertz: 240_000,
+            bitDepth: 8
+        )
+
+        XCTAssertEqual(
+            LumenCoreGraphicsDisplayTopologyController.preferredModeIndex(
+                current: current,
+                available: [],
+                expected: current
+            ),
+            0
+        )
+    }
+
+    func testProductionTopologyVerificationWaitsForDisplayReadbackToConverge() async throws {
+        let expected = displayTopology()
+        let mismatched = LumenMacPhysicalDisplayTopology(
+            displays: expected.displays.map { display in
+                LumenMacPhysicalDisplayState(
+                    id: display.id,
+                    mode: display.mode,
+                    originX: display.originX + 1,
+                    originY: display.originY,
+                    mirrorMasterID: display.mirrorMasterID,
+                    enabled: display.enabled,
+                    active: display.active,
+                    online: display.online
+                )
+            },
+            windowsAdapterLUID: nil,
+            windowsTargetPaths: []
+        )
+        let captures = Mutex(0)
+        let controller = LumenCoreGraphicsDisplayTopologyController(
+            capture: {
+                captures.withLock { count in
+                    count += 1
+                    return count == 1 ? mismatched : expected
+                }
+            },
+            restore: { _ in },
+            visibleDisplayIDs: {
+                Set(expected.displays.compactMap { UInt32($0.id) })
+            },
+            verificationAttempts: 2
+        )
+
+        try await controller.verify(expected)
+        XCTAssertEqual(captures.withLock { $0 }, 2)
+    }
+
     func testProductionTopologyVerificationRejectsCGDisplayMissingFromNSScreen() async throws {
         // Given: CoreGraphics reports the exact persisted topology but AppKit cannot see it.
         let topology = displayTopology()

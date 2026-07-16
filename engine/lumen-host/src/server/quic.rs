@@ -520,11 +520,17 @@ async fn accept_native_input_stream(
     router: SharedControlRouter,
     platform: Arc<dyn PlatformSessionControl>,
 ) -> Result<(), String> {
-    let (mut send, mut receive) =
-        tokio::time::timeout(CONNECTION_STREAM_TIMEOUT, connection.accept_bi())
-            .await
-            .map_err(|_| "QUIC client did not open the reliable input stream".to_owned())?
-            .map_err(|error| format!("could not accept QUIC reliable input stream: {error}"))?;
+    let (mut send, mut receive) = match connection.accept_bi().await {
+        Ok(stream) => stream,
+        Err(
+            quinn::ConnectionError::ApplicationClosed(_) | quinn::ConnectionError::LocallyClosed,
+        ) => return Ok(()),
+        Err(error) => {
+            return Err(format!(
+                "could not accept QUIC reliable input stream: {error}"
+            ))
+        }
+    };
     eprintln!(
         "Lumen native QUIC stage=input-stream-ready peer={} session-epoch={session_epoch}",
         connection.remote_address()
@@ -901,7 +907,6 @@ mod tests {
 
             let expected_material = session_material(&connection).unwrap();
             let (mut send, mut receive) = connection.open_bi().await.unwrap();
-            let (mut input_send, mut input_receive) = connection.open_bi().await.unwrap();
             let request = ClientControlEnvelope {
                 request_id: 7,
                 payload: Some(client_control_envelope::Payload::Hello(native_hello(
@@ -1003,6 +1008,8 @@ mod tests {
                 started.payload,
                 Some(host_control_envelope::Payload::SessionStarted(_))
             ));
+
+            let (mut input_send, mut input_receive) = connection.open_bi().await.unwrap();
 
             let configuration = CodecConfiguration {
                 session_epoch: plan.session_epoch,
@@ -1138,7 +1145,6 @@ mod tests {
                 .await
                 .unwrap();
             let (mut send, mut receive) = connection.open_bi().await.unwrap();
-            let (_input_send, _input_receive) = connection.open_bi().await.unwrap();
             let request = ClientControlEnvelope {
                 request_id: 7,
                 payload: Some(client_control_envelope::Payload::Hello(native_hello(
