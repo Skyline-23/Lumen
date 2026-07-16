@@ -292,6 +292,28 @@ low-overhead OBU form and every OBU sets `obu_has_size_field`. Annex B start
 codes, SDP parameter strings, and configuration bytes prepended to keyframes
 are forbidden.
 
+The client advertises credit for at least one host-initiated unidirectional
+stream before sending `ClientSessionHello`. After receiving that first control
+request, the host opens stream id 3 before returning the session plan. If the
+client does not admit that stream, the host returns `NativeProtocolError` code
+9 on the session-control stream for the hello request and terminates the
+connection. The host does not leave the client waiting indefinitely for codec
+configuration.
+
+Native protocol error codes are stable:
+
+| Code | Meaning |
+| ---: | --- |
+| 1 | invalid operation |
+| 2 | authentication |
+| 3 | application |
+| 4 | negotiation |
+| 5 | session conflict |
+| 6 | media path |
+| 7 | platform start or cleanup |
+| 8 | session state |
+| 9 | QUIC transport or fixed-stream admission |
+
 Every reconstructed video frame begins with this network-order descriptor,
 followed immediately by exactly `accessUnitBytes` codec bytes:
 

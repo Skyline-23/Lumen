@@ -749,11 +749,14 @@ final class LumenCaptureController: NSObject, ObservableObject {
 
         let title = userInfo["title"] as? String ?? LumenCopy.productName
 
-        lastRuntimeEventMessage = body
+        let localizedBody = code.map {
+            LumenCopy.Diagnostics.runtimeWarningMessage(code: $0, fallback: body)
+        } ?? body
+        lastRuntimeEventMessage = localizedBody
         presentRuntimeNotification(
             identifier: identifier,
             title: title,
-            body: body,
+            body: localizedBody,
             launchPath: launchPath
         )
     }

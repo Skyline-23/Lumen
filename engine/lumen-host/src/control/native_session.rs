@@ -10,7 +10,11 @@ use lumen_engine::{
 };
 
 use super::{AudioDeliveryState, ControlRouter, VideoDeliveryState};
-use crate::{PlatformApplicationPlan, PlatformSessionPlan, PlatformVideoCodec};
+use crate::{
+    PlatformApplicationPlan, PlatformRuntimeEvent, PlatformRuntimeEventCode,
+    PlatformRuntimeEventDisposition, PlatformRuntimeEventSeverity, PlatformSessionPlan,
+    PlatformVideoCodec,
+};
 
 const ERROR_INVALID_OPERATION: u32 = 1;
 const ERROR_AUTHENTICATION: u32 = 2;
@@ -239,23 +243,27 @@ impl ControlRouter {
             }
         };
         let application_started = !hello.resume;
-        if application_started && self.platform.start_application(application_plan).is_err() {
-            return vec![native_error(
-                request_id,
-                ERROR_PLATFORM,
-                "platform application could not be started",
-            )];
-        }
-        if self.platform.start_session(session_plan).is_err() {
-            if application_started {
-                let _ = self.platform.stop_application();
+        if application_started {
+            if let Err(error) = self.platform.start_application(application_plan) {
+                let message = format!("platform application could not be started: {error}");
+                self.publish_native_platform_error(message.clone());
+                return vec![native_error(request_id, ERROR_PLATFORM, message)];
             }
+        }
+        if let Err(error) = self.platform.start_session(session_plan) {
+            let message = format!("platform stream session could not be started: {error}");
             return vec![native_error(
                 request_id,
                 ERROR_PLATFORM,
-                "platform stream session could not be started",
+                self.rollback_native_start(application_started, message),
             )];
         }
+        let _ = self.platform.publish_runtime_event(PlatformRuntimeEvent {
+            disposition: PlatformRuntimeEventDisposition::Cleared,
+            severity: PlatformRuntimeEventSeverity::Error,
+            code: PlatformRuntimeEventCode::NativeSessionPlatform,
+            message: None,
+        });
         self.discovery
             .set_running_application(application.id, application.uuid);
         if let Some(pending) = self.native.pending.as_mut() {
@@ -270,6 +278,24 @@ impl ControlRouter {
                 },
             )),
         }]
+    }
+
+    fn rollback_native_start(&self, application_started: bool, message: String) -> String {
+        if application_started {
+            let _ = self.platform.stop_application();
+        }
+        self.publish_native_platform_error(message.clone());
+        message
+    }
+
+    fn publish_native_platform_error(&self, message: String) {
+        eprintln!("Lumen native session platform error: {message}");
+        let _ = self.platform.publish_runtime_event(PlatformRuntimeEvent {
+            disposition: PlatformRuntimeEventDisposition::Raised,
+            severity: PlatformRuntimeEventSeverity::Error,
+            code: PlatformRuntimeEventCode::NativeSessionPlatform,
+            message: Some(message),
+        });
     }
 
     fn dispatch_native_stop(
@@ -671,12 +697,12 @@ fn refresh_millihz_to_frames_per_second(refresh_millihz: u32) -> Result<u32, Str
         .ok_or_else(|| "native refresh rate is invalid".to_owned())
 }
 
-fn native_error(request_id: u64, code: u32, message: &'static str) -> HostControlEnvelope {
+fn native_error(request_id: u64, code: u32, message: impl Into<String>) -> HostControlEnvelope {
     HostControlEnvelope {
         request_id,
         payload: Some(host_control_envelope::Payload::Error(NativeProtocolError {
             code,
-            message: message.to_owned(),
+            message: message.into(),
             negotiation_failure: NativeNegotiationFailure::Unspecified as i32,
         })),
     }

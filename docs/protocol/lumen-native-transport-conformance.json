@@ -16,6 +16,17 @@
   "initialMaximumDatagramPayload": 1200,
   "frameIntervalBudgetMicrosecondsAt120Fps": 8333,
   "feedbackIntervalMilliseconds": 16,
+  "protocolErrors": {
+    "invalidOperation": 1,
+    "authentication": 2,
+    "application": 3,
+    "negotiation": 4,
+    "sessionConflict": 5,
+    "mediaPath": 6,
+    "platform": 7,
+    "sessionState": 8,
+    "transport": 9
+  },
   "mediaDatagramHeader": {
     "byteOrder": "network",
     "bytes": 40,
@@ -73,6 +84,10 @@
       { "name": "accessUnitBytes", "offset": 4, "bytes": 4 }
     ],
     "configurationTransport": "first-host-unidirectional-quic-stream",
+    "configurationStreamId": 3,
+    "clientMinimumHostUnidirectionalStreamCredit": 1,
+    "hostOpensConfigurationStreamAfterFirstControlRequest": true,
+    "configurationStreamAdmissionErrorCode": 9,
     "configurationMessage": "CodecConfiguration",
     "configurationIsPrependedToAccessUnit": false,
     "configurationBoundaryMeaning": "first-keyframe-using-acknowledged-configuration",

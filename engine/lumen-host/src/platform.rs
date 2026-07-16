@@ -127,6 +127,8 @@ pub enum PlatformRuntimeEventCode {
     UpnpPortMapping,
     UpnpIpv6Pinhole,
     UpnpPortRemoval,
+    NativeSessionTransport,
+    NativeSessionPlatform,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -300,6 +302,8 @@ pub enum LumenHostPlatformRuntimeEventCode {
     UpnpPortMapping = 2,
     UpnpIpv6Pinhole = 3,
     UpnpPortRemoval = 4,
+    NativeSessionTransport = 5,
+    NativeSessionPlatform = 6,
 }
 
 #[repr(C)]
@@ -441,9 +445,7 @@ impl PlatformSessionControl for CallbackPlatformSessionControl {
         if status == 0 {
             Ok(())
         } else {
-            Err(format!(
-                "platform start callback failed with status {status}"
-            ))
+            Err(platform_start_error(status))
         }
     }
 
@@ -627,6 +629,12 @@ impl PlatformSessionControl for CallbackPlatformSessionControl {
                 PlatformRuntimeEventCode::UpnpPortRemoval => {
                     LumenHostPlatformRuntimeEventCode::UpnpPortRemoval
                 }
+                PlatformRuntimeEventCode::NativeSessionTransport => {
+                    LumenHostPlatformRuntimeEventCode::NativeSessionTransport
+                }
+                PlatformRuntimeEventCode::NativeSessionPlatform => {
+                    LumenHostPlatformRuntimeEventCode::NativeSessionPlatform
+                }
             },
             message: message
                 .as_ref()
@@ -640,6 +648,19 @@ impl PlatformSessionControl for CallbackPlatformSessionControl {
                 "platform runtime event callback failed with status {status}"
             ))
         }
+    }
+}
+
+fn platform_start_error(status: i32) -> String {
+    match status {
+        -1 => "platform session configuration is invalid".to_owned(),
+        -2 => "platform display could not be created".to_owned(),
+        -3 => "platform audio encoder could not be created".to_owned(),
+        -4 => "platform video capture could not be started; verify Screen Recording permission"
+            .to_owned(),
+        -5 => "platform audio capture could not be started; verify Screen Recording permission"
+            .to_owned(),
+        other => format!("platform start callback failed with status {other}"),
     }
 }
 
@@ -789,6 +810,13 @@ mod tests {
         assert_eq!(plan.audio_channels, 8);
         STARTS.fetch_add(1, Ordering::Relaxed);
         0
+    }
+
+    unsafe extern "C" fn start_video_failure(
+        _context: *mut c_void,
+        _plan: *const LumenHostPlatformSessionPlan,
+    ) -> i32 {
+        -4
     }
 
     unsafe extern "C" fn stop(_context: *mut c_void) -> i32 {
@@ -964,6 +992,50 @@ mod tests {
     }
 
     #[test]
+    fn callback_adapter_preserves_the_platform_start_failure_stage() {
+        let adapter = CallbackPlatformSessionControl::new(LumenHostPlatformCallbacks {
+            start_session: Some(start_video_failure),
+            ..callbacks()
+        })
+        .unwrap();
+
+        let error = adapter
+            .start_session(PlatformSessionPlan {
+                width: 1_920,
+                height: 1_080,
+                frames_per_second: 60,
+                bitrate_kbps: 20_000,
+                video_codec: PlatformVideoCodec::H264,
+                yuv444: false,
+                audio_channels: 2,
+                enhanced_audio_quality: false,
+                play_audio_on_host: false,
+                virtual_display: true,
+                encoder_csc_mode: 0,
+                sink_hidpi: false,
+                sink_scale_explicit: false,
+                sink_mode_is_logical: false,
+                sink_scale_percent: 100,
+                sink_gamut: 0,
+                sink_transfer: 0,
+                sink_current_edr_headroom: 1.0,
+                sink_potential_edr_headroom: 1.0,
+                sink_current_peak_luminance_nits: 100,
+                sink_potential_peak_luminance_nits: 100,
+                sink_supports_frame_gated_hdr: false,
+                sink_supports_hdr_tile_overlay: false,
+                sink_supports_per_frame_hdr_metadata: false,
+                negotiated_dynamic_range_transport: 0,
+            })
+            .unwrap_err();
+
+        assert_eq!(
+            error,
+            "platform video capture could not be started; verify Screen Recording permission"
+        );
+    }
+
+    #[test]
     fn callback_adapter_forwards_typed_control_events() {
         CONTROL_EVENTS.lock().unwrap().clear();
         RUNTIME_EVENTS.lock().unwrap().clear();
@@ -1020,6 +1092,14 @@ mod tests {
             .unwrap();
         adapter
             .publish_runtime_event(PlatformRuntimeEvent {
+                disposition: PlatformRuntimeEventDisposition::Raised,
+                severity: PlatformRuntimeEventSeverity::Error,
+                code: PlatformRuntimeEventCode::NativeSessionPlatform,
+                message: Some("video capture permission denied".to_owned()),
+            })
+            .unwrap();
+        adapter
+            .publish_runtime_event(PlatformRuntimeEvent {
                 disposition: PlatformRuntimeEventDisposition::Cleared,
                 severity: PlatformRuntimeEventSeverity::Warning,
                 code: PlatformRuntimeEventCode::UpnpPortMapping,
@@ -1034,6 +1114,12 @@ mod tests {
                     severity: LumenHostPlatformRuntimeEventSeverity::Warning,
                     code: LumenHostPlatformRuntimeEventCode::UpnpPortMapping,
                     message: Some("UDP 47998 is already mapped".to_owned()),
+                },
+                RecordedRuntimeEvent {
+                    disposition: LumenHostPlatformRuntimeEventDisposition::Raised,
+                    severity: LumenHostPlatformRuntimeEventSeverity::Error,
+                    code: LumenHostPlatformRuntimeEventCode::NativeSessionPlatform,
+                    message: Some("video capture permission denied".to_owned()),
                 },
                 RecordedRuntimeEvent {
                     disposition: LumenHostPlatformRuntimeEventDisposition::Cleared,

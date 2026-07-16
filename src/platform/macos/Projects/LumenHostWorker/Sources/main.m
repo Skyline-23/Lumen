@@ -269,7 +269,7 @@ static uint32_t LumenWorkerVideoTimestamp(CMSampleBufferRef sampleBuffer) {
 
 - (int32_t)startSession:(const LumenHostPlatformSessionPlan *)plan {
   if (!plan || !_bridge) {
-    return -1;
+    return LumenHostPlatformStartSessionStatusInvalidConfiguration;
   }
   os_unfair_lock_lock(&_lock);
   [self stopSessionLocked];
@@ -277,13 +277,19 @@ static uint32_t LumenWorkerVideoTimestamp(CMSampleBufferRef sampleBuffer) {
   NSError *displayError = nil;
   _displayID = [self createDisplayForPlan:plan error:&displayError];
   if (_displayID == 0 || displayError) {
+    fprintf(
+      stderr,
+      "Lumen display creation failed: %s\n",
+      displayError.localizedDescription.UTF8String ?: "unknown display error"
+    );
     os_unfair_lock_unlock(&_lock);
-    return -1;
+    return LumenHostPlatformStartSessionStatusDisplayCreationFailed;
   }
   if (![self createOpusEncoder:plan]) {
+    fprintf(stderr, "Lumen audio encoder creation failed for %u channels\n", plan->audio_channels);
     [self stopSessionLocked];
     os_unfair_lock_unlock(&_lock);
-    return -1;
+    return LumenHostPlatformStartSessionStatusAudioEncoderFailed;
   }
 
   LumenMacBridgeControllerConfigureVideoForwarding(_bridge, 3, 16);
@@ -303,7 +309,7 @@ static uint32_t LumenWorkerVideoTimestamp(CMSampleBufferRef sampleBuffer) {
     fprintf(stderr, "Lumen video capture failed: %s\n", error);
     [self stopSessionLocked];
     os_unfair_lock_unlock(&_lock);
-    return -1;
+    return LumenHostPlatformStartSessionStatusVideoCaptureFailed;
   }
 
   LumenMacBridgeAudioCaptureConfiguration audio =
@@ -315,10 +321,10 @@ static uint32_t LumenWorkerVideoTimestamp(CMSampleBufferRef sampleBuffer) {
     fprintf(stderr, "Lumen audio capture failed: %s\n", error);
     [self stopSessionLocked];
     os_unfair_lock_unlock(&_lock);
-    return -1;
+    return LumenHostPlatformStartSessionStatusAudioCaptureFailed;
   }
   os_unfair_lock_unlock(&_lock);
-  return 0;
+  return LumenHostPlatformStartSessionStatusReady;
 }
 
 - (void)stopSessionLocked {
