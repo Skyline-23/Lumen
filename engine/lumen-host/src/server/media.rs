@@ -272,7 +272,7 @@ fn send_datagram(
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct VideoSessionIdentity {
-    codec: crate::PlatformVideoCodec,
+    video_format: crate::PlatformVideoFormat,
     session_epoch: u32,
     path_id: u16,
     key: [u8; 16],
@@ -290,7 +290,7 @@ struct VideoSenderState {
 impl VideoSenderState {
     fn prepare(&mut self, delivery: &VideoDeliveryState) -> Result<(), String> {
         let identity = VideoSessionIdentity {
-            codec: delivery.codec,
+            video_format: delivery.video_format,
             session_epoch: delivery.session_epoch,
             path_id: delivery.path_id,
             key: delivery.encryption_key,
@@ -314,7 +314,7 @@ impl VideoSenderState {
             },
             0,
         )?);
-        self.normalizer = Some(NativeVideoBitstreamNormalizer::new(delivery.codec));
+        self.normalizer = Some(NativeVideoBitstreamNormalizer::new(delivery.video_format));
         self.pending_frame = None;
         self.frame_index = 1;
         self.identity = Some(identity);
@@ -360,6 +360,10 @@ fn send_pending_video(
     }
     sender.send_staged(socket, &delivery).is_ok()
 }
+
+#[cfg(test)]
+#[path = "media/configuration_header_tests.rs"]
+mod configuration_header_tests;
 
 #[cfg(test)]
 fn send_video_frame(
@@ -512,7 +516,14 @@ mod tests {
         let sender_socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
         let mut sender = VideoSenderState::default();
         let delivery = VideoDeliveryState {
-            codec: crate::PlatformVideoCodec::H264,
+            video_format: crate::PlatformVideoFormat {
+                codec: crate::PlatformVideoCodec::H264,
+                profile: crate::PlatformVideoProfile::H264High,
+                chroma_subsampling: crate::PlatformChromaSubsampling::Yuv420,
+                bit_depth: 8,
+                dynamic_range: crate::PlatformDynamicRange::Sdr,
+                color_range: crate::PlatformColorRange::Limited,
+            },
             acknowledged_configuration_id: None,
             session_epoch: 7,
             path_id: 1,
@@ -527,12 +538,7 @@ mod tests {
                 &sender_socket,
                 &delivery,
                 &mut sender,
-                crate::PlatformEncodedVideoFrame {
-                    payload: h264_key_frame(0x65),
-                    decoder_configuration_record: None,
-                    presentation_time_90khz: 90_000,
-                    key_frame: true,
-                },
+                crate::media::native_video::test_fixtures::encoded_frame(delivery.video_format),
             ),
             Err("native video configuration is not acknowledged".to_owned())
         );
@@ -561,12 +567,7 @@ mod tests {
             &sender_socket,
             &next_delivery,
             &mut sender,
-            crate::PlatformEncodedVideoFrame {
-                payload: h264_key_frame(0x65),
-                decoder_configuration_record: None,
-                presentation_time_90khz: 90_001,
-                key_frame: true,
-            },
+            crate::media::native_video::test_fixtures::encoded_frame(next_delivery.video_format),
         )
         .unwrap();
         let (length, _) = receiver.recv_from(&mut packet).unwrap();
@@ -580,30 +581,46 @@ mod tests {
         );
     }
 
-    fn h264_key_frame(slice_header: u8) -> Vec<u8> {
-        vec![
-            0,
-            0,
-            0,
-            1,
-            0x67,
-            100,
-            0,
-            40,
-            0x80,
-            0,
-            0,
-            1,
-            0x68,
-            0xce,
-            0x3c,
-            0x80,
-            0,
-            0,
-            1,
-            slice_header,
-            0x88,
-        ]
+    #[test]
+    fn rejects_mismatched_sps_before_network_media() {
+        // Given: a 4:4:4 delivery plan and an encoder frame carrying a 4:2:0 SPS.
+        let receiver = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        receiver
+            .set_read_timeout(Some(Duration::from_millis(25)))
+            .unwrap();
+        let sender_socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let selected = crate::media::native_video::test_fixtures::H264_444;
+        let emitted = crate::media::native_video::test_fixtures::H264_420;
+        let delivery = VideoDeliveryState {
+            video_format: selected,
+            acknowledged_configuration_id: None,
+            session_epoch: 7,
+            path_id: 1,
+            policy_revision: 1,
+            maximum_datagram_payload: 1_200,
+            endpoint: receiver.local_addr().unwrap(),
+            encryption_key: [0x22; 16],
+            fec_percentage: 0,
+        };
+
+        // When: the frame reaches the sender's normalization boundary.
+        let result = send_video_frame(
+            &sender_socket,
+            &delivery,
+            &mut VideoSenderState::default(),
+            crate::media::native_video::test_fixtures::encoded_frame(emitted),
+        );
+
+        // Then: conformance fails and no media datagram reaches the network peer.
+        assert_eq!(
+            result,
+            Err("H.264 SPS does not match the selected video format".to_owned())
+        );
+        let mut datagram = [0_u8; 2_048];
+        assert!(matches!(
+            receiver.recv_from(&mut datagram).unwrap_err().kind(),
+            io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+        ));
     }
 
     #[test]

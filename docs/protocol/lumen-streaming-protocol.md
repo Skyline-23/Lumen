@@ -1,23 +1,23 @@
-# Lumen Streaming Protocol v2
+# Lumen Streaming Protocol v3
 
 ## Status and authority
 
-Lumen Streaming Protocol v2 is the only forward-looking transport contract
+Lumen Streaming Protocol v3 is the only forward-looking transport contract
 between Lumen and Shadow. It is a source-neutral, Lumen-owned protocol. It does
 not preserve GameStream, Sunshine, Moonlight, RTSP, SDP, RTP, ENet, or NVIDIA
 packet compatibility.
 
 The canonical machine-readable constants live in
 `lumen-native-transport-conformance.json`; control message field numbers and
-enums live in `lumen-streaming-v2.proto`. Rust owns negotiation, framing,
+enums live in `lumen-streaming-v3.proto`. Rust owns negotiation, framing,
 validation, pacing policy, recovery policy, and session state. Platform
 capture, encode, decode, display, audio, and input adapters expose capabilities
 and frames but cannot invent wire state.
 
 Protocol integers use network byte order unless a field explicitly says
 otherwise. Unknown fields are ignored only when their enclosing message is
-declared extensible. Unknown message kinds, invalid lengths, and unsupported
-required features terminate the session with a typed protocol error.
+declared extensible. Unknown message kinds and invalid lengths terminate the
+session with a typed protocol error.
 
 ## Design targets
 
@@ -39,8 +39,12 @@ required features terminate the session with a typed protocol error.
 ## Connection and media transport
 
 Every session has a QUIC v1 control connection with TLS 1.3 and ALPN
-`lumen-stream/2`. Authentication, negotiation, reliable state, clock feedback,
-and recovery authority always remain on that connection.
+`lumen-stream/3`. Authentication, negotiation, reliable state, clock feedback,
+and recovery authority always remain on that connection. Native media key
+material uses the TLS exporter label `EXPORTER-Lumen-Session-v3`.
+The exact-format generation retains `2` in `ClientSessionHello` minimum and
+maximum protocol versions and in `HostSessionPlan.protocolVersion`; ALPN and
+the required exact-format message fields identify generation 3.
 
 Media always uses the single `lumen-udp-aead` transport after its UDP path is
 authenticated and validated. Lumen owns media pacing, deadlines, DSCP, loss
@@ -148,25 +152,25 @@ switches codec during an active session.
 
 `ClientSessionHello` contains:
 
-- protocol version range and required feature bits;
+- protocol version range;
 - display size, scale, refresh rate, gamut, transfer function, luminance, and
   HDR metadata support;
-- supported video codecs, profiles, levels, bit depths, chroma formats, and
-  maximum decoder concurrency;
+- exact hardware video rows combining codec, profile, chroma subsampling, bit
+  depth, dynamic range, color range, maximum geometry, and maximum refresh;
 - supported Opus channel layouts and audio output capabilities;
 - input device and feedback capabilities;
 - maximum receive datagram payload and receive-memory budget;
-- the exact account-selected codec, dynamic range, audio channel mode, audio
-  quality, and nonzero streaming-profile revision;
+- the exact account-selected video format, audio channel mode, audio quality,
+  and nonzero streaming-profile revision;
 - requested presentation mode and runtime policy.
 
 `HostSessionPlan` contains the single selected contract:
 
-- session epoch and feature bits;
+- session epoch;
 - encoded size, frame rate, presentation mode, dynamic range, gamut, transfer
   function, and luminance contract;
-- video codec, profile, bit depth, chroma format, bitrate envelope, keyframe
-  policy, configuration id, and maximum in-flight frame count;
+- one exact selected hardware video row, bitrate envelope, keyframe policy,
+  configuration id, and maximum in-flight frame count;
 - Opus channel count, stream count, coupled-stream count, mapping, and fixed
   5 ms packet duration;
 - maximum datagram payload, data-shard limit, parity-shard limit, and initial
@@ -216,8 +220,8 @@ is never repeated in the header.
 
 | Offset | Size | Field |
 | ---: | ---: | --- |
-| 0 | 2 | magic `0x4C32` (`L2`) |
-| 2 | 1 | protocol version `2` |
+| 0 | 2 | magic `0x4C33` (`L3`) |
+| 2 | 1 | protocol version `3` |
 | 3 | 1 | datagram kind: video `1`, audio `2`, input motion `3` |
 | 4 | 2 | flags |
 | 6 | 2 | header bytes, initially `40` |
@@ -444,8 +448,8 @@ enrollment, access-token rotation, authenticated discovery, and settings for
 both LAN and WAN clients. Launch negotiation, input, telemetry, and reliable
 session state travel on the authenticated QUIC connection.
 
-No RTSP, RTP, ENet, or legacy GameStream port is advertised or opened by a v2
-only host.
+No RTSP, RTP, ENet, or legacy GameStream port is advertised or opened by a
+v3-only host.
 
 The authoritative discovery field is mDNS TXT `quic-port`; authenticated HTTPS
 host discovery exposes the same value as `sessionQuicPort`. The default base
@@ -459,7 +463,7 @@ only when discovery is unavailable and the user supplied no explicit port.
 
 - **QUIC DATAGRAM** would reuse QUIC security and congestion state, but it adds
   another media behavior and transition state while coupling high-rate media to
-  the reliable control connection. Lumen v2 intentionally has no such fallback.
+  the reliable control connection. Lumen v3 intentionally has no such fallback.
 - **Raw UDP only** has the smallest media overhead but would duplicate
   authentication, NAT traversal, reliable control, and path recovery. Lumen
   uses it only after the QUIC-authenticated direct-path handshake.
@@ -474,7 +478,7 @@ only when discovery is unavailable and the user supplied no explicit port.
 
 ## Removal gate
 
-The v2-only release must satisfy all of these conditions:
+The v3-only release must satisfy all of these conditions:
 
 - Shadow completes a session without RTSP, SDP, RTP, ENet, or legacy launch
   fields;

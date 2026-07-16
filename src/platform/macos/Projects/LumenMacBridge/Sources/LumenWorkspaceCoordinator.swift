@@ -1,3 +1,4 @@
+import Foundation
 import LumenEngineBridge
 
 @frozen public enum LumenMacWorkspacePolicy: CaseIterable, Equatable, Hashable, Sendable {
@@ -37,7 +38,9 @@ public enum LumenMacWorkspaceAction: Equatable, Sendable {
     case startCapture
     case stopCapture
     case restoreWorkspace
+    case verifyPhysicalDisplays
     case destroyVirtualDisplay
+    case awaitExternalFirstEncodedFrame
 
     fileprivate init(engineValue: LumenWorkspaceCommandKind) throws {
         switch engineValue {
@@ -59,8 +62,12 @@ public enum LumenMacWorkspaceAction: Equatable, Sendable {
             self = .stopCapture
         case LumenWorkspaceCommandRestoreWorkspace:
             self = .restoreWorkspace
+        case LumenWorkspaceCommandVerifyPhysicalDisplays:
+            self = .verifyPhysicalDisplays
         case LumenWorkspaceCommandDestroyVirtualDisplay:
             self = .destroyVirtualDisplay
+        case LumenWorkspaceCommandAwaitExternalFirstEncodedFrame:
+            self = .awaitExternalFirstEncodedFrame
         default:
             throw LumenWorkspaceCoordinatorError.unknownCommand(engineValue.rawValue)
         }
@@ -86,8 +93,12 @@ public enum LumenMacWorkspaceAction: Equatable, Sendable {
             LumenWorkspaceCommandStopCapture
         case .restoreWorkspace:
             LumenWorkspaceCommandRestoreWorkspace
+        case .verifyPhysicalDisplays:
+            LumenWorkspaceCommandVerifyPhysicalDisplays
         case .destroyVirtualDisplay:
             LumenWorkspaceCommandDestroyVirtualDisplay
+        case .awaitExternalFirstEncodedFrame:
+            LumenWorkspaceCommandAwaitExternalFirstEncodedFrame
         }
     }
 }
@@ -96,18 +107,24 @@ public struct LumenMacWorkspaceCommand: Equatable, Sendable {
     public let action: LumenMacWorkspaceAction
     public let generation: UInt64
     public let sequence: UInt32
+    public let payload: LumenMacWorkspaceCommandPayload
 
-    fileprivate init(engineValue: LumenWorkspaceCommand) throws {
+    fileprivate init(
+        engineValue: LumenWorkspaceCommand,
+        payload: LumenMacWorkspaceCommandPayload
+    ) throws {
         action = try LumenMacWorkspaceAction(engineValue: engineValue.kind)
         generation = engineValue.generation
         sequence = engineValue.sequence
+        self.payload = payload
     }
 
     fileprivate var engineValue: LumenWorkspaceCommand {
         LumenWorkspaceCommand(
             kind: action.engineValue,
             generation: generation,
-            sequence: sequence
+            sequence: sequence,
+            payload_kind: payload.engineKind
         )
     }
 }
@@ -250,7 +267,15 @@ public enum LumenMacDisplayColorResolver {
 public actor LumenWorkspaceCoordinator {
     private let engine: LumenEngineHandle
 
-    public init() throws {
+    public nonisolated static var defaultRecoveryJournalPath: String {
+        FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appending(path: "Lumen", directoryHint: .isDirectory)
+            .appending(path: "display-recovery.json", directoryHint: .notDirectory)
+            .path(percentEncoded: false)
+    }
+
+    public init(recoveryJournalPath: String? = nil) throws {
         let actualVersion = LumenEngineBridgeABIVersion()
         guard actualVersion == LUMEN_ENGINE_ABI_VERSION else {
             throw LumenWorkspaceCoordinatorError.incompatibleABI(
@@ -258,7 +283,11 @@ public actor LumenWorkspaceCoordinator {
                 actual: actualVersion
             )
         }
-        guard let engine = lumen_workspace_engine_create() else {
+        let path = recoveryJournalPath ?? Self.defaultRecoveryJournalPath
+        let engine = path.withCString { pointer in
+            lumen_workspace_engine_create_recoverable(pointer, LumenWorkspacePlatformMacos)
+        }
+        guard let engine else {
             throw LumenWorkspaceCoordinatorError.allocationFailed
         }
         self.engine = LumenEngineHandle(engine, destructor: lumen_workspace_engine_destroy)
@@ -268,7 +297,7 @@ public actor LumenWorkspaceCoordinator {
         policy: LumenMacWorkspacePolicy,
         moveTargetWindows: Bool = false,
         manageCapture: Bool = true
-    ) throws {
+    ) throws -> Bool {
         let status = lumen_workspace_engine_begin_session(
             engine.rawValue,
             LumenWorkspaceSessionRequest(
@@ -277,30 +306,40 @@ public actor LumenWorkspaceCoordinator {
                 manage_capture: manageCapture
             )
         )
+        if status == LumenEngineStatusRecoveryRequired {
+            return false
+        }
         try requireSuccess(status)
+        return true
     }
 
     public func nextCommand() throws -> LumenMacWorkspaceCommand? {
         var command = LumenWorkspaceCommand(
             kind: LumenWorkspaceCommandSnapshotWorkspace,
             generation: 0,
-            sequence: 0
+            sequence: 0,
+            payload_kind: LumenWorkspaceCommandPayloadNone
         )
         let status = lumen_workspace_engine_next_command(engine.rawValue, &command)
         if status == LumenEngineStatusNoCommand {
             return nil
         }
         try requireSuccess(status)
-        return try LumenMacWorkspaceCommand(engineValue: command)
+        let payload = try LumenWorkspacePayloadCodec.decode(engine: engine.rawValue, command: command)
+        return try LumenMacWorkspaceCommand(engineValue: command, payload: payload)
     }
 
-    public func complete(_ command: LumenMacWorkspaceCommand, succeeded: Bool) throws {
-        let status = lumen_workspace_engine_complete_command(
-            engine.rawValue,
-            command.engineValue,
-            succeeded
+    public func complete(
+        _ command: LumenMacWorkspaceCommand,
+        result: LumenMacWorkspaceCommandResult
+    ) throws {
+        try requireSuccess(
+            LumenWorkspacePayloadCodec.complete(
+                engine: engine.rawValue,
+                command: command.engineValue,
+                result: result
+            )
         )
-        try requireSuccess(status)
     }
 
     public func endSession() throws {

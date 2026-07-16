@@ -7,9 +7,10 @@ use crate::{
 use lumen_engine::{
     client_control_envelope, host_control_envelope, ClientControlEnvelope, ClientSessionHello,
     CodecConfiguration, CodecConfigurationAck, HostSessionCapabilities, MediaPathResponse,
-    NativeAudioChannelMode, NativeAudioQuality, NativeDisplayGamut, NativeDisplayTransfer,
-    NativeDynamicRange, NativePolicyMode, NativeVideoCapability, NativeVideoCodec, StartSessionAck,
-    StopSession,
+    NativeAudioChannelMode, NativeAudioQuality, NativeChromaSubsampling, NativeColorRange,
+    NativeDisplayGamut, NativeDisplayTransfer, NativeDynamicRange, NativeNegotiationFailure,
+    NativePolicyMode, NativeVideoCapability, NativeVideoCodec, NativeVideoFormat,
+    NativeVideoProfile, StartSessionAck, StopSession,
 };
 use serde_json::{json, Value};
 use std::fs;
@@ -139,27 +140,31 @@ fn local_peer() -> IpAddr {
 }
 
 fn native_hello(application_id: u32) -> ClientSessionHello {
+    let requested_video_format = NativeVideoFormat {
+        codec: NativeVideoCodec::Hevc as i32,
+        profile: NativeVideoProfile::HevcMain as i32,
+        chroma_subsampling: NativeChromaSubsampling::Yuv420 as i32,
+        bit_depth: 8,
+        dynamic_range: NativeDynamicRange::Sdr as i32,
+        color_range: NativeColorRange::Limited as i32,
+    };
     ClientSessionHello {
         minimum_protocol_version: 2,
         maximum_protocol_version: 2,
-        required_features: 0,
         width: 3_840,
         height: 2_160,
         refresh_millihz: 120_000,
         video_capabilities: vec![NativeVideoCapability {
-            codec: NativeVideoCodec::Hevc as i32,
-            max_bit_depth: 8,
-            supports_hdr10: false,
+            format: Some(requested_video_format.clone()),
             max_width: 3_840,
             max_height: 2_160,
             max_refresh_millihz: 120_000,
+            hardware_accelerated: Some(true),
         }],
-        requested_dynamic_range: NativeDynamicRange::Sdr as i32,
         requested_policy: NativePolicyMode::UltraLatency as i32,
         maximum_datagram_payload: 1_200,
         receive_memory_bytes: 64 * 1024 * 1024,
         opus_channel_counts: vec![2],
-        requested_video_codec: NativeVideoCodec::Hevc as i32,
         device_id: "device-42".to_owned(),
         access_token: "access-token".to_owned(),
         application_id,
@@ -183,6 +188,7 @@ fn native_hello(application_id: u32) -> ClientSessionHello {
         requested_audio_quality: NativeAudioQuality::High as i32,
         requested_audio_channel_mode: NativeAudioChannelMode::Stereo as i32,
         streaming_profile_revision: 1,
+        requested_video_format: Some(requested_video_format),
     }
 }
 
@@ -194,18 +200,9 @@ fn native_context() -> NativeConnectionContext {
         media_challenge: [0x55; 32],
         media_key: [0x66; 16],
         host_capabilities: HostSessionCapabilities {
-            supported_features: 0,
-            maximum_width: 7_680,
-            maximum_height: 4_320,
-            maximum_refresh_millihz: 240_000,
             maximum_datagram_payload: 1_200,
             maximum_receive_memory_bytes: 128 * 1024 * 1024,
-            supports_h264: true,
-            supports_hevc_main: true,
-            supports_hevc_main10: false,
-            supports_av1_main: false,
-            supports_av1_main10: false,
-            supports_hdr10: false,
+            video_capabilities: native_hello(1).video_capabilities,
             supported_opus_channel_counts: vec![2, 6, 8],
         },
     }
@@ -238,7 +235,7 @@ fn native_hello_authenticates_negotiates_and_requires_the_exact_udp_path() {
         _ => panic!("expected native session plan"),
     };
     assert_eq!(plan.session_epoch, context.session_epoch);
-    assert_eq!(plan.video_codec, NativeVideoCodec::Hevc as i32);
+    assert_eq!(plan.selected_video_codec(), Some(NativeVideoCodec::Hevc));
     let challenge = match responses[1].payload.as_ref().unwrap() {
         host_control_envelope::Payload::MediaPath(challenge) => challenge,
         _ => panic!("expected native media challenge"),
@@ -318,7 +315,7 @@ fn native_hello_authenticates_negotiates_and_requires_the_exact_udp_path() {
         session_epoch: context.session_epoch,
         stream_id: plan.video_stream_id,
         configuration_id: plan.video_configuration_id,
-        codec: plan.video_codec,
+        codec: plan.selected_video_format().unwrap().codec,
         decoder_configuration_record: vec![1, 2, 3, 4],
     };
     assert!(router.publish_native_codec_configuration(configuration.clone()));
@@ -483,6 +480,44 @@ fn native_start_returns_the_platform_failure_and_publishes_a_typed_runtime_error
             ),
         }]
     );
+}
+
+#[test]
+fn legacy_hello_without_exact_format_is_rejected_before_pending_session_mutation() {
+    let platform = Arc::new(RecordingPlatformSessionControl::default());
+    let (_root, mut router) = router_with_platform(platform.clone());
+    router
+        .authorities()
+        .applications()
+        .upsert(r#"{"uuid":"native-desktop","name":"Desktop"}"#)
+        .unwrap();
+    let application_id = router.authorities().applications().applications().unwrap()[0].id;
+    let context = native_context();
+    let mut hello = native_hello(application_id);
+    hello.minimum_protocol_version = 2;
+    hello.maximum_protocol_version = 2;
+    hello.requested_video_format = None;
+
+    let responses = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 77,
+            payload: Some(client_control_envelope::Payload::Hello(hello)),
+        },
+        &context,
+    );
+
+    let Some(host_control_envelope::Payload::Error(error)) = responses[0].payload.as_ref() else {
+        panic!("stale hello did not return a typed protocol error");
+    };
+    assert_eq!(responses.len(), 1);
+    assert_eq!(
+        error.negotiation_failure,
+        NativeNegotiationFailure::UnsupportedProtocolVersion as i32
+    );
+    assert!(router
+        .pending_native_media_key(context.session_epoch)
+        .is_none());
+    assert_eq!(platform.starts.lock().unwrap().len(), 0);
 }
 
 #[test]

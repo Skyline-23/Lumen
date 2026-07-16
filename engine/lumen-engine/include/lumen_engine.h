@@ -9,7 +9,7 @@
 extern "C" {
 #endif
 
-#define LUMEN_ENGINE_ABI_VERSION 61u
+#define LUMEN_ENGINE_ABI_VERSION 63u
 #define LUMEN_ENCRYPTED_CONTROL_HEADER_SIZE 8u
 #define LUMEN_CONTROL_FEEDBACK_MAX_SIZE 29u
 #define LUMEN_CONTROL_TERMINATION_SIZE 8u
@@ -26,7 +26,8 @@ typedef enum LumenEngineStatus {
   LumenEngineStatusAlreadyExists = 7,
   LumenEngineStatusAuthenticationFailed = 8,
   LumenEngineStatusStorageError = 9,
-  LumenEngineStatusCorruptData = 10
+  LumenEngineStatusCorruptData = 10,
+  LumenEngineStatusRecoveryRequired = 11
 } LumenEngineStatus;
 
 typedef enum LumenOwnerState {
@@ -50,6 +51,11 @@ typedef enum LumenWorkspaceState {
   LumenWorkspaceStateStopping = 3
 } LumenWorkspaceState;
 
+typedef enum LumenWorkspacePlatform {
+  LumenWorkspacePlatformMacos = 0,
+  LumenWorkspacePlatformWindows = 1
+} LumenWorkspacePlatform;
+
 typedef enum LumenWorkspaceCommandKind {
   LumenWorkspaceCommandSnapshotWorkspace = 0,
   LumenWorkspaceCommandCreateVirtualDisplay = 1,
@@ -60,8 +66,16 @@ typedef enum LumenWorkspaceCommandKind {
   LumenWorkspaceCommandStartCapture = 6,
   LumenWorkspaceCommandStopCapture = 7,
   LumenWorkspaceCommandRestoreWorkspace = 8,
-  LumenWorkspaceCommandDestroyVirtualDisplay = 9
+  LumenWorkspaceCommandVerifyPhysicalDisplays = 9,
+  LumenWorkspaceCommandDestroyVirtualDisplay = 10,
+  LumenWorkspaceCommandAwaitExternalFirstEncodedFrame = 11
 } LumenWorkspaceCommandKind;
+
+typedef enum LumenWorkspaceCommandPayloadKind {
+  LumenWorkspaceCommandPayloadNone = 0,
+  LumenWorkspaceCommandPayloadPhysicalTopology = 1,
+  LumenWorkspaceCommandPayloadVirtualDisplayIdentity = 2
+} LumenWorkspaceCommandPayloadKind;
 
 typedef struct LumenWorkspaceSessionRequest {
   LumenWorkspacePolicy policy;
@@ -73,7 +87,14 @@ typedef struct LumenWorkspaceCommand {
   LumenWorkspaceCommandKind kind;
   uint64_t generation;
   uint32_t sequence;
+  LumenWorkspaceCommandPayloadKind payload_kind;
 } LumenWorkspaceCommand;
+
+typedef struct LumenWorkspaceCommandCompletion {
+  bool succeeded;
+  LumenWorkspaceCommandPayloadKind payload_kind;
+  const char *payload_json;
+} LumenWorkspaceCommandCompletion;
 
 typedef enum LumenHostRuntimeState {
   LumenHostRuntimeStateStopped = 0,
@@ -1109,6 +1130,10 @@ size_t lumen_host_runtime_supervisor_copy_last_error(
 );
 
 LumenWorkspaceEngine *lumen_workspace_engine_create(void);
+LumenWorkspaceEngine *lumen_workspace_engine_create_recoverable(
+  const char *journal_path,
+  LumenWorkspacePlatform platform
+);
 void lumen_workspace_engine_destroy(LumenWorkspaceEngine *engine);
 
 LumenEngineStatus lumen_workspace_engine_begin_session(
@@ -1121,10 +1146,22 @@ LumenEngineStatus lumen_workspace_engine_next_command(
   LumenWorkspaceCommand *command_out
 );
 
-LumenEngineStatus lumen_workspace_engine_complete_command(
+LumenEngineStatus lumen_workspace_engine_complete_command_with_payload(
   LumenWorkspaceEngine *engine,
   LumenWorkspaceCommand command,
-  bool succeeded
+  LumenWorkspaceCommandCompletion completion
+);
+
+size_t lumen_workspace_engine_command_payload_json_size(
+  const LumenWorkspaceEngine *engine,
+  LumenWorkspaceCommand command
+);
+
+LumenEngineStatus lumen_workspace_engine_copy_command_payload_json(
+  const LumenWorkspaceEngine *engine,
+  LumenWorkspaceCommand command,
+  char *destination,
+  size_t capacity
 );
 
 LumenEngineStatus lumen_workspace_engine_end_session(

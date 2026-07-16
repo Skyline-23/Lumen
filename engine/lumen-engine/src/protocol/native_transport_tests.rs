@@ -2,9 +2,10 @@ use super::{
     decode_native_media_datagram, decode_native_video_access_unit, encode_native_media_header,
     encode_native_media_header_with_fec_block, encode_native_video_access_unit_descriptor,
     NativeFecBlockExtension, NativeMediaHeader, NativeMediaKind, NativeVideoAccessUnitDescriptor,
-    NATIVE_AUDIO_STREAM_ID, NATIVE_INPUT_MOTION_STREAM_ID, NATIVE_MEDIA_FLAG_FEC_BLOCK,
-    NATIVE_MEDIA_FLAG_KEYFRAME, NATIVE_MEDIA_FLAG_PARITY_SHARD, NATIVE_MEDIA_HEADER_BYTES,
-    NATIVE_MEDIA_MAGIC, NATIVE_MEDIA_VERSION, NATIVE_VIDEO_STREAM_ID,
+    LUMEN_STREAMING_EXPORTER_LABEL, LUMEN_STREAMING_PROTOCOL_ALPN, NATIVE_AUDIO_STREAM_ID,
+    NATIVE_INPUT_MOTION_STREAM_ID, NATIVE_MEDIA_FLAG_FEC_BLOCK, NATIVE_MEDIA_FLAG_KEYFRAME,
+    NATIVE_MEDIA_FLAG_PARITY_SHARD, NATIVE_MEDIA_HEADER_BYTES, NATIVE_MEDIA_MAGIC,
+    NATIVE_MEDIA_VERSION, NATIVE_VIDEO_STREAM_ID,
 };
 
 fn video_header() -> NativeMediaHeader {
@@ -33,7 +34,7 @@ fn native_media_header_uses_the_exact_network_order_layout() {
     assert_eq!(
         encoded,
         [
-            0x4c, 0x32, 0x02, 0x01, 0x00, 0x01, 0x00, 0x28, 0x01, 0x02, 0x03, 0x04, 0x00, 0x07,
+            0x4c, 0x33, 0x03, 0x01, 0x00, 0x01, 0x00, 0x28, 0x01, 0x02, 0x03, 0x04, 0x00, 0x07,
             0x00, 0x03, 0x00, 0x0b, 0x00, 0x01, 0x00, 0x04, 0x00, 0x02, 0x10, 0x11, 0x12, 0x13,
             0x20, 0x21, 0x22, 0x23, 0x00, 0x01, 0x00, 0x02, 0x30, 0x31, 0x32, 0x33,
         ]
@@ -174,7 +175,10 @@ fn native_transport_fixture_matches_the_rust_wire_constants() {
     assert_eq!(fixture["input"]["reliableEnvelope"], "ClientInputEnvelope");
     assert_eq!(fixture["input"]["clientEnvelopeFields"]["keyboard"], 10);
     assert_eq!(fixture["input"]["hostEnvelopeFields"]["rumble"], 12);
-    assert_eq!(fixture["input"]["motionEnvelopeFields"]["gamepadMotion"], 14);
+    assert_eq!(
+        fixture["input"]["motionEnvelopeFields"]["gamepadMotion"],
+        14
+    );
     assert_eq!(fixture["input"]["pointerButtons"]["forward"], 5);
     assert!(fixture.get("mandatoryFallbackMediaPlane").is_none());
     assert_eq!(fixture["requiredVideoContracts"][0], "hevc-main-sdr");
@@ -186,4 +190,45 @@ fn native_transport_fixture_matches_the_rust_wire_constants() {
         .as_array()
         .unwrap()
         .contains(&serde_json::Value::String("prores".to_owned())));
+}
+
+#[test]
+fn streaming_protocol_documented_media_identity_matches_the_fixture() {
+    // Given: the prose contract, machine-readable fixture, and generated identifiers.
+    let contract = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../docs/protocol/lumen-streaming-protocol.md"
+    ));
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../docs/protocol/lumen-native-transport-conformance.json"
+    )))
+    .unwrap();
+
+    // When: the documented table values and transport identifiers are parsed.
+    let documented_magic = contract
+        .lines()
+        .find(|line| line.starts_with("| 0 | 2 | magic `0x"))
+        .and_then(|line| line.split("`0x").nth(1))
+        .and_then(|value| value.split('`').next())
+        .and_then(|value| u16::from_str_radix(value, 16).ok())
+        .unwrap();
+    let documented_version = contract
+        .lines()
+        .find(|line| line.starts_with("| 2 | 1 | protocol version `"))
+        .and_then(|line| line.split('`').nth(1))
+        .and_then(|value| value.parse::<u8>().ok())
+        .unwrap();
+    let alpn = std::str::from_utf8(LUMEN_STREAMING_PROTOCOL_ALPN).unwrap();
+    let exporter = std::str::from_utf8(LUMEN_STREAMING_EXPORTER_LABEL).unwrap();
+
+    // Then: documentation, fixture, generated constants, and generation claims agree exactly.
+    assert_eq!(documented_magic, fixture["mediaDatagramHeader"]["magic"]);
+    assert_eq!(documented_version, fixture["version"]);
+    assert_eq!(documented_magic, NATIVE_MEDIA_MAGIC);
+    assert_eq!(documented_version, NATIVE_MEDIA_VERSION);
+    assert_eq!(fixture["alpn"], alpn);
+    assert!(contract.contains(&format!("`{alpn}`")));
+    assert!(contract.contains(&format!("`{exporter}`")));
+    assert!(!contract.contains("v2"));
 }

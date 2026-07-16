@@ -77,28 +77,31 @@ pub use protocol::{
     CodecConfigurationAck, DecodedNativeMediaDatagram, HostControlEnvelope, HostInputEnvelope,
     HostSessionCapabilities, HostSessionPlan, LumenSessionOffer, LumenSinkTransportPlan,
     LumenSinkTransportRequest, MediaPathChallenge, MediaPathResponse, MediaPathValidated,
-    NativeAudioChannelMode, NativeAudioQuality, NativeContactPhase, NativeControlWireError,
-    NativeDisplayGamut, NativeDisplayTransfer, NativeDynamicRange, NativeFecBlockExtension,
-    NativeGamepadButton, NativeGamepadButtonInput, NativeGamepadConnectionInput,
-    NativeGamepadMotionInput, NativeInputAck, NativeInputReset, NativeInputWireError,
-    NativeKeyboardInput, NativeMediaHeader, NativeMediaKind, NativeNegotiationFailure,
-    NativePenContactInput, NativePenMotionInput, NativePointerButtonInput,
-    NativePointerMotionInput, NativePointerMotionMode, NativePolicyMode, NativeProtocolError,
-    NativeRumbleAck, NativeRumbleCommand, NativeScrollInput, NativeSessionError, NativeTextInput,
-    NativeTouchContactInput, NativeTouchMotionInput, NativeTransportError,
-    NativeVideoAccessUnitDescriptor, NativeVideoCapability, NativeVideoCodec, SessionStarted,
-    SessionStopped, StartSessionAck, StopSession, NATIVE_AUDIO_STREAM_ID,
-    NATIVE_CONTROL_MESSAGE_LIMIT, NATIVE_FEC_BLOCK_EXTENSION_BYTES, NATIVE_FEC_BLOCK_HEADER_BYTES,
-    NATIVE_INITIAL_CONFIGURATION_ID, NATIVE_INPUT_MESSAGE_LIMIT, NATIVE_INPUT_MOTION_STREAM_ID,
-    NATIVE_MEDIA_FLAG_CONFIGURATION_BOUNDARY, NATIVE_MEDIA_FLAG_DISCONTINUITY,
-    NATIVE_MEDIA_FLAG_END_OF_STREAM, NATIVE_MEDIA_FLAG_FEC_BLOCK, NATIVE_MEDIA_FLAG_KEYFRAME,
-    NATIVE_MEDIA_FLAG_PARITY_SHARD, NATIVE_MEDIA_HEADER_BYTES, NATIVE_MEDIA_MAGIC,
-    NATIVE_MEDIA_VERSION, NATIVE_VIDEO_ACCESS_UNIT_DESCRIPTOR_BYTES, NATIVE_VIDEO_STREAM_ID,
-    TRANSPORT_FRAME_GATED_HDR, TRANSPORT_FULL_FRAME_HDR,
+    NativeAudioChannelMode, NativeAudioQuality, NativeChromaSubsampling, NativeColorRange,
+    NativeContactPhase, NativeControlWireError, NativeDisplayGamut, NativeDisplayTransfer,
+    NativeDynamicRange, NativeFecBlockExtension, NativeGamepadButton, NativeGamepadButtonInput,
+    NativeGamepadConnectionInput, NativeGamepadMotionInput, NativeInputAck, NativeInputReset,
+    NativeInputWireError, NativeKeyboardInput, NativeMediaHeader, NativeMediaKind,
+    NativeNegotiationFailure, NativePenContactInput, NativePenMotionInput,
+    NativePointerButtonInput, NativePointerMotionInput, NativePointerMotionMode, NativePolicyMode,
+    NativeProtocolError, NativeRumbleAck, NativeRumbleCommand, NativeScrollInput,
+    NativeSessionError, NativeTextInput, NativeTouchContactInput, NativeTouchMotionInput,
+    NativeTransportError, NativeVideoAccessUnitDescriptor, NativeVideoCapability, NativeVideoCodec,
+    NativeVideoFormat, NativeVideoProfile, SessionStarted, SessionStopped, StartSessionAck,
+    StopSession, LUMEN_STREAMING_DESCRIPTOR_SHA256, LUMEN_STREAMING_EXPORTER_LABEL,
+    LUMEN_STREAMING_PROTOCOL_ALPN, LUMEN_STREAMING_PROTOCOL_PACKAGE, LUMEN_STREAMING_SCHEMA_SHA256,
+    NATIVE_AUDIO_STREAM_ID, NATIVE_CONTROL_MESSAGE_LIMIT, NATIVE_FEC_BLOCK_EXTENSION_BYTES,
+    NATIVE_FEC_BLOCK_HEADER_BYTES, NATIVE_INITIAL_CONFIGURATION_ID, NATIVE_INPUT_MESSAGE_LIMIT,
+    NATIVE_INPUT_MOTION_STREAM_ID, NATIVE_MEDIA_FLAG_CONFIGURATION_BOUNDARY,
+    NATIVE_MEDIA_FLAG_DISCONTINUITY, NATIVE_MEDIA_FLAG_END_OF_STREAM, NATIVE_MEDIA_FLAG_FEC_BLOCK,
+    NATIVE_MEDIA_FLAG_KEYFRAME, NATIVE_MEDIA_FLAG_PARITY_SHARD, NATIVE_MEDIA_HEADER_BYTES,
+    NATIVE_MEDIA_MAGIC, NATIVE_MEDIA_VERSION, NATIVE_PROTOCOL_VERSION,
+    NATIVE_VIDEO_ACCESS_UNIT_DESCRIPTOR_BYTES, NATIVE_VIDEO_STREAM_ID, TRANSPORT_FRAME_GATED_HDR,
+    TRANSPORT_FULL_FRAME_HDR,
 };
 pub use video_packetization::{plan_fec_blocks, plan_fec_shards};
 
-pub const ABI_VERSION: u32 = 61;
+pub const ABI_VERSION: u32 = 63;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -114,15 +117,43 @@ pub enum LumenEngineStatus {
     AuthenticationFailed = 8,
     StorageError = 9,
     CorruptData = 10,
+    RecoveryRequired = 11,
 }
 
 mod engine_ffi;
 mod host_engine;
+mod workspace_command_payload;
+mod workspace_command_recovery;
+mod workspace_display;
 mod workspace_engine;
+mod workspace_engine_ffi;
+mod workspace_engine_lifecycle;
+mod workspace_recovery;
+mod workspace_recovery_admission;
+mod workspace_recovery_journal;
+mod workspace_recovery_model;
 
 pub use engine_ffi::*;
 pub use host_engine::*;
+pub use workspace_command_payload::*;
+pub use workspace_display::*;
 pub use workspace_engine::*;
+pub use workspace_engine_ffi::*;
+pub use workspace_recovery::*;
+pub use workspace_recovery_journal::*;
+pub use workspace_recovery_model::*;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod workspace_engine_production_recovery_tests;
+#[cfg(test)]
+mod workspace_engine_recovery_tests;
+#[cfg(test)]
+mod workspace_engine_tests;
+#[cfg(test)]
+mod workspace_recovery_cancellation_tests;
+#[cfg(test)]
+mod workspace_recovery_journal_tests;
+#[cfg(test)]
+mod workspace_recovery_tests;

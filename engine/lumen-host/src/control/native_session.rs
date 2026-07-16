@@ -4,16 +4,18 @@ use lumen_engine::{
     client_control_envelope, host_control_envelope, negotiate_native_session,
     ClientControlEnvelope, ClientSessionHello, CodecConfiguration, CodecConfigurationAck,
     HostControlEnvelope, HostSessionCapabilities, HostSessionPlan, LumenSessionOffer,
-    MediaPathChallenge, MediaPathResponse, MediaPathValidated, NativeNegotiationFailure,
-    NativeProtocolError, NativeSessionError, NativeVideoCodec, SessionStarted, SessionStopped,
+    MediaPathChallenge, MediaPathResponse, MediaPathValidated, NativeChromaSubsampling,
+    NativeColorRange, NativeDynamicRange, NativeNegotiationFailure, NativeProtocolError,
+    NativeSessionError, NativeVideoCodec, NativeVideoProfile, SessionStarted, SessionStopped,
     StartSessionAck, StopSession, NATIVE_VIDEO_STREAM_ID,
 };
 
 use super::{AudioDeliveryState, ControlRouter, VideoDeliveryState};
 use crate::{
-    PlatformApplicationPlan, PlatformRuntimeEvent, PlatformRuntimeEventCode,
-    PlatformRuntimeEventDisposition, PlatformRuntimeEventSeverity, PlatformSessionPlan,
-    PlatformVideoCodec,
+    PlatformApplicationPlan, PlatformChromaSubsampling, PlatformColorRange, PlatformDynamicRange,
+    PlatformRuntimeEvent, PlatformRuntimeEventCode, PlatformRuntimeEventDisposition,
+    PlatformRuntimeEventSeverity, PlatformSessionPlan, PlatformVideoCodec, PlatformVideoFormat,
+    PlatformVideoProfile,
 };
 
 const ERROR_INVALID_OPERATION: u32 = 1;
@@ -495,7 +497,11 @@ impl ControlRouter {
                 || configuration.stream_id != pending.plan.video_stream_id
                 || configuration.configuration_id == 0
                 || configuration.decoder_configuration_record.is_empty()
-                || configuration.codec != pending.plan.video_codec
+                || pending
+                    .plan
+                    .selected_video_codec()
+                    .map(|codec| codec as i32)
+                    != Some(configuration.codec)
                 || pending.codec_configuration.as_ref().is_some_and(|current| {
                     current.configuration_id >= configuration.configuration_id
                 })
@@ -537,7 +543,7 @@ impl ControlRouter {
             return None;
         }
         Some(VideoDeliveryState {
-            codec: platform_video_codec(&pending.plan)?,
+            video_format: platform_video_format(&pending.plan)?,
             acknowledged_configuration_id: pending.acknowledged_configuration_id,
             session_epoch: pending.plan.session_epoch,
             path_id: u16::try_from(pending.plan.path_id).ok()?,
@@ -623,15 +629,14 @@ fn native_platform_session_plan(
     hello: &ClientSessionHello,
     plan: &HostSessionPlan,
 ) -> Result<PlatformSessionPlan, String> {
-    let video_codec =
-        platform_video_codec(plan).ok_or_else(|| "native video codec is invalid".to_owned())?;
+    let video_format =
+        platform_video_format(plan).ok_or_else(|| "native video format is invalid".to_owned())?;
     Ok(PlatformSessionPlan {
         width: plan.encoded_width,
         height: plan.encoded_height,
         frames_per_second: refresh_millihz_to_frames_per_second(plan.refresh_millihz)?,
         bitrate_kbps: plan.bitrate_kbps,
-        video_codec,
-        yuv444: false,
+        video_format,
         audio_channels: u8::try_from(plan.opus_channel_count)
             .map_err(|_| "native audio channel count is invalid".to_owned())?,
         enhanced_audio_quality: plan.enhanced_audio_quality,
@@ -658,18 +663,52 @@ fn native_platform_session_plan(
     })
 }
 
-fn platform_video_codec(plan: &HostSessionPlan) -> Option<PlatformVideoCodec> {
-    match NativeVideoCodec::try_from(plan.video_codec) {
-        Ok(NativeVideoCodec::H264) => Some(PlatformVideoCodec::H264),
-        Ok(NativeVideoCodec::Hevc) => Some(PlatformVideoCodec::Hevc),
-        Ok(NativeVideoCodec::Av1) => Some(PlatformVideoCodec::Av1),
-        _ => None,
-    }
+fn platform_video_format(plan: &HostSessionPlan) -> Option<PlatformVideoFormat> {
+    let selected = plan.selected_video_format()?;
+    Some(PlatformVideoFormat {
+        codec: match NativeVideoCodec::try_from(selected.codec).ok()? {
+            NativeVideoCodec::H264 => PlatformVideoCodec::H264,
+            NativeVideoCodec::Hevc => PlatformVideoCodec::Hevc,
+            NativeVideoCodec::Av1 => PlatformVideoCodec::Av1,
+            NativeVideoCodec::Unspecified => return None,
+        },
+        profile: match NativeVideoProfile::try_from(selected.profile).ok()? {
+            NativeVideoProfile::H264Main => PlatformVideoProfile::H264Main,
+            NativeVideoProfile::H264High => PlatformVideoProfile::H264High,
+            NativeVideoProfile::H264High444Predictive => {
+                PlatformVideoProfile::H264High444Predictive
+            }
+            NativeVideoProfile::HevcMain => PlatformVideoProfile::HevcMain,
+            NativeVideoProfile::HevcMain10 => PlatformVideoProfile::HevcMain10,
+            NativeVideoProfile::HevcMain444 => PlatformVideoProfile::HevcMain444,
+            NativeVideoProfile::HevcMain44410 => PlatformVideoProfile::HevcMain44410,
+            NativeVideoProfile::Av1Main => PlatformVideoProfile::Av1Main,
+            NativeVideoProfile::Unspecified => return None,
+        },
+        chroma_subsampling: match NativeChromaSubsampling::try_from(selected.chroma_subsampling)
+            .ok()?
+        {
+            NativeChromaSubsampling::Yuv420 => PlatformChromaSubsampling::Yuv420,
+            NativeChromaSubsampling::Yuv444 => PlatformChromaSubsampling::Yuv444,
+            NativeChromaSubsampling::Unspecified => return None,
+        },
+        bit_depth: u8::try_from(selected.bit_depth).ok()?,
+        dynamic_range: match NativeDynamicRange::try_from(selected.dynamic_range).ok()? {
+            NativeDynamicRange::Sdr => PlatformDynamicRange::Sdr,
+            NativeDynamicRange::Hdr10 => PlatformDynamicRange::Hdr10,
+            NativeDynamicRange::Unspecified => return None,
+        },
+        color_range: match NativeColorRange::try_from(selected.color_range).ok()? {
+            NativeColorRange::Limited => PlatformColorRange::Limited,
+            NativeColorRange::Full => PlatformColorRange::Full,
+            NativeColorRange::Unspecified => return None,
+        },
+    })
 }
 
 fn native_session_offer(plan: &HostSessionPlan) -> Result<LumenSessionOffer, String> {
     Ok(LumenSessionOffer {
-        version: 2,
+        version: 3,
         hidpi: plan.sink_hidpi,
         scale_explicit: plan.sink_scale_explicit,
         mode_is_logical: plan.sink_mode_is_logical,

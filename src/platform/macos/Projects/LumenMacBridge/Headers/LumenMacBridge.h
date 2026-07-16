@@ -83,6 +83,31 @@ typedef enum LumenMacCaptureCodec {
   LumenMacCaptureCodecHEVC = 1
 } LumenMacCaptureCodec;
 
+typedef enum LumenMacCaptureVideoProfile {
+  LumenMacCaptureVideoProfileH264Main = 0,
+  LumenMacCaptureVideoProfileH264High = 1,
+  LumenMacCaptureVideoProfileH264High444Predictive = 2,
+  LumenMacCaptureVideoProfileHEVCMain = 3,
+  LumenMacCaptureVideoProfileHEVCMain10 = 4,
+  LumenMacCaptureVideoProfileHEVCMain444 = 5,
+  LumenMacCaptureVideoProfileHEVCMain44410 = 6
+} LumenMacCaptureVideoProfile;
+
+typedef enum LumenMacCaptureChromaSubsampling {
+  LumenMacCaptureChromaSubsamplingYUV420 = 0,
+  LumenMacCaptureChromaSubsamplingYUV444 = 1
+} LumenMacCaptureChromaSubsampling;
+
+typedef enum LumenMacCaptureDynamicRange {
+  LumenMacCaptureDynamicRangeSDR = 0,
+  LumenMacCaptureDynamicRangeHDR10 = 1
+} LumenMacCaptureDynamicRange;
+
+typedef enum LumenMacCaptureColorRange {
+  LumenMacCaptureColorRangeLimited = 0,
+  LumenMacCaptureColorRangeFull = 1
+} LumenMacCaptureColorRange;
+
 typedef enum LumenMacDynamicRangeTransport {
   LumenMacDynamicRangeTransportUnknown = 0,
   LumenMacDynamicRangeTransportSDR = 1,
@@ -214,6 +239,11 @@ typedef enum LumenMacBridgeQueueProfile {
 typedef struct LumenMacBridgeCaptureConfiguration {
   uint32_t display_id;
   LumenMacCaptureCodec codec;
+  LumenMacCaptureVideoProfile video_profile;
+  LumenMacCaptureChromaSubsampling chroma_subsampling;
+  uint8_t bit_depth;
+  LumenMacCaptureDynamicRange dynamic_range;
+  LumenMacCaptureColorRange color_range;
   LumenMacBridgePreprocessStrategy preprocess_strategy;
   LumenMacBridgeQueueProfile queue_profile;
   int32_t target_frame_rate;

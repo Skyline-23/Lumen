@@ -8,60 +8,98 @@ public enum LumenMacDisplayWorkspaceError: Error, Equatable {
     case displayNotFound(UInt32)
     case displayConfigurationFailed(Int32)
     case accessibilityPermissionMissing
+    case invalidPersistedDisplayID(String)
+    case displayModeNotFound(UInt32)
+    case physicalTopologyMismatch
+    case isolationPostconditionFailed
+    case isolationRollbackFailed
+    case windowSnapshotUnavailable(Int32)
+    case windowNotFound(Int32, UInt32)
+    case windowTopologyMismatch(Int32, UInt32)
 }
 
 public protocol LumenMacDisplayWorkspaceManaging: Sendable {
-    func snapshotWorkspace(targetProcessIdentifiers: [Int32]) async throws
+    func snapshotWorkspace(
+        targetProcessIdentifiers: [Int32]
+    ) async throws -> LumenMacPhysicalDisplayTopology
     func promoteVirtualDisplay(_ displayID: UInt32) async throws
     func moveTargetWindows(to displayID: UInt32) async throws
     func isolateVirtualDisplay(_ displayID: UInt32) async throws
-    func restoreWorkspace() async throws
+    func restoreWorkspace(_ topology: LumenMacPhysicalDisplayTopology) async throws
+    func verifyWorkspace(_ topology: LumenMacPhysicalDisplayTopology) async throws
     func discardSnapshot() async
 }
 
 public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
-    private struct DisplaySnapshot: Sendable {
-        let displayID: CGDirectDisplayID
-        let origin: CGPoint
-        let mirrorMasterID: CGDirectDisplayID
-    }
-
     private struct WindowSnapshot {
+        let processID: Int32
+        let windowID: UInt32
         let element: AXUIElement
         let position: CGPoint
         let size: CGSize
+
+        var persisted: LumenMacWorkspaceWindowState {
+            LumenMacWorkspaceWindowState(
+                processID: processID,
+                windowID: windowID,
+                originX: Int32(clamping: Int64(position.x.rounded())),
+                originY: Int32(clamping: Int64(position.y.rounded())),
+                width: UInt32(clamping: Int64(size.width.rounded())),
+                height: UInt32(clamping: Int64(size.height.rounded()))
+            )
+        }
     }
 
     private struct Snapshot {
-        let displays: [DisplaySnapshot]
-        let mainDisplayID: CGDirectDisplayID
+        let topology: LumenMacPhysicalDisplayTopology
         let windows: [WindowSnapshot]
     }
 
+    private let topologyController: any LumenMacDisplayTopologyControlling
+    private let physicalDisplayController: any LumenPhysicalDisplayControlling
+    private let disconnectCapabilityVerifier: any LumenDisplayDisconnectCapabilityVerifying
     private var snapshot: Snapshot?
 
-    public init() {}
+    public init() {
+        topologyController = LumenCoreGraphicsDisplayTopologyController()
+        physicalDisplayController = LumenPhysicalDisplayControlAdapter(
+            resolver: LumenDlsymDisplayEnabledSymbolResolver()
+        )
+        disconnectCapabilityVerifier = LumenDisplayDisconnectCapabilityFileVerifier.production
+    }
 
-    public func snapshotWorkspace(targetProcessIdentifiers: [Int32]) throws {
+    init(
+        topologyController: any LumenMacDisplayTopologyControlling,
+        physicalDisplayController: any LumenPhysicalDisplayControlling =
+            LumenPhysicalDisplayControlAdapter(
+                resolver: LumenDlsymDisplayEnabledSymbolResolver()
+            ),
+        disconnectCapabilityVerifier: any LumenDisplayDisconnectCapabilityVerifying
+    ) {
+        self.topologyController = topologyController
+        self.physicalDisplayController = physicalDisplayController
+        self.disconnectCapabilityVerifier = disconnectCapabilityVerifier
+    }
+
+    public func snapshotWorkspace(
+        targetProcessIdentifiers: [Int32]
+    ) async throws -> LumenMacPhysicalDisplayTopology {
         guard snapshot == nil else {
             throw LumenMacDisplayWorkspaceError.snapshotAlreadyExists
         }
 
-        let displays = try activeDisplayIDs().map { displayID in
-            DisplaySnapshot(
-                displayID: displayID,
-                origin: CGDisplayBounds(displayID).origin,
-                mirrorMasterID: CGDisplayMirrorsDisplay(displayID)
-            )
-        }
+        let topology = try await topologyController.capture()
         let windows = try snapshotWindows(
             processIdentifiers: targetProcessIdentifiers.map { pid_t($0) }
         )
-        snapshot = Snapshot(
-            displays: displays,
-            mainDisplayID: CGMainDisplayID(),
-            windows: windows
+        let durableTopology = LumenMacPhysicalDisplayTopology(
+            displays: topology.displays,
+            macWindows: windows.map(\.persisted),
+            windowsAdapterLUID: topology.windowsAdapterLUID,
+            windowsTargetPaths: topology.windowsTargetPaths
         )
+        snapshot = Snapshot(topology: durableTopology, windows: windows)
+        return durableTopology
     }
 
     public func promoteVirtualDisplay(_ displayID: UInt32) throws {
@@ -124,60 +162,133 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
         }
     }
 
-    public func isolateVirtualDisplay(_ displayID: UInt32) throws {
-        guard snapshot != nil else {
-            throw LumenMacDisplayWorkspaceError.snapshotMissing
-        }
-        let ids = try activeDisplayIDs()
-        guard ids.contains(displayID) else {
-            throw LumenMacDisplayWorkspaceError.displayNotFound(displayID)
-        }
-
-        try configureDisplays { configuration in
-            try configureDisplay(
-                displayID,
-                mirrorMasterID: kCGNullDirectDisplay,
-                origin: .zero,
-                configuration: configuration
-            )
-            var parkedIndex: CGFloat = 0
-            for activeDisplayID in ids where activeDisplayID != displayID {
-                try configureDisplay(
-                    activeDisplayID,
-                    mirrorMasterID: kCGNullDirectDisplay,
-                    origin: CGPoint(x: 20_000, y: 20_000 + parkedIndex * 2_000),
-                    configuration: configuration
-                )
-                parkedIndex += 1
-            }
-        }
-    }
-
-    public func restoreWorkspace() throws {
+    public func isolateVirtualDisplay(_ displayID: UInt32) async throws {
         guard let snapshot else {
             throw LumenMacDisplayWorkspaceError.snapshotMissing
         }
-
-        try configureDisplays { configuration in
-            for display in snapshot.displays {
-                try configureDisplay(
-                    display.displayID,
-                    mirrorMasterID: display.mirrorMasterID,
-                    origin: display.origin,
-                    configuration: configuration
-                )
-            }
+        let current = try await topologyController.capture()
+        let visibleDisplayIDs = await topologyController.visibleDisplayIDs()
+        guard current.displays.contains(where: {
+            $0.id == String(displayID) && $0.active && $0.online
+        }), visibleDisplayIDs.contains(displayID) else {
+            throw LumenMacDisplayWorkspaceError.displayNotFound(displayID)
         }
 
-        for window in snapshot.windows {
+        let physicalDisplayIDs = try snapshot.topology.displays
+            .filter { $0.enabled || $0.active }
+            .map { state -> CGDirectDisplayID in
+                guard let physicalDisplayID = UInt32(state.id), physicalDisplayID != displayID else {
+                    throw LumenMacDisplayWorkspaceError.invalidPersistedDisplayID(state.id)
+                }
+                return physicalDisplayID
+            }
+        let probe = try physicalDisplayController.probe()
+        try disconnectCapabilityVerifier.authorize(
+            probe: probe,
+            physicalDisplayIDs: physicalDisplayIDs
+        )
+
+        var disabled: [CGDirectDisplayID] = []
+        do {
+            for physicalDisplayID in physicalDisplayIDs {
+                _ = try physicalDisplayController.setEnabled(false, for: physicalDisplayID)
+                disabled.append(physicalDisplayID)
+            }
+            try await verifyIsolation(
+                virtualDisplayID: displayID,
+                physicalDisplayIDs: Set(physicalDisplayIDs)
+            )
+        } catch {
+            do {
+                for physicalDisplayID in disabled.reversed() {
+                    _ = try physicalDisplayController.setEnabled(true, for: physicalDisplayID)
+                }
+                try await topologyController.restore(snapshot.topology)
+                try await topologyController.verify(snapshot.topology)
+            } catch {
+                throw LumenMacDisplayWorkspaceError.isolationRollbackFailed
+            }
+            throw error
+        }
+    }
+
+    public func restoreWorkspace(_ topology: LumenMacPhysicalDisplayTopology) async throws {
+        let current = try await topologyController.capture()
+        let currentByID = Dictionary(uniqueKeysWithValues: current.displays.map { ($0.id, $0) })
+        let displaysToEnable = topology.displays.filter { state in
+            (state.enabled || state.active) && currentByID[state.id]?.active != true
+        }
+        if !displaysToEnable.isEmpty {
+            _ = try physicalDisplayController.probe()
+        }
+        for state in displaysToEnable {
+            guard let displayID = UInt32(state.id) else {
+                throw LumenMacDisplayWorkspaceError.invalidPersistedDisplayID(state.id)
+            }
+            _ = try physicalDisplayController.setEnabled(true, for: displayID)
+        }
+        try await topologyController.restore(topology)
+        let windows: [WindowSnapshot]
+        if let snapshot {
+            windows = snapshot.windows
+        } else {
+            windows = try resolvePersistedWindows(topology.macWindows)
+        }
+        for window in windows {
             setWindowSize(window.size, on: window.element)
             setWindowPosition(window.position, on: window.element)
+        }
+    }
+
+    public func verifyWorkspace(_ topology: LumenMacPhysicalDisplayTopology) async throws {
+        try await topologyController.verify(topology)
+        for expected in try resolvePersistedWindows(topology.macWindows) {
+            guard let actualPosition = windowPoint(
+                attribute: kAXPositionAttribute,
+                element: expected.element
+            ),
+            let actualSize = windowSize(
+                attribute: kAXSizeAttribute,
+                element: expected.element
+            ),
+            Int32(clamping: Int64(actualPosition.x.rounded()))
+                == Int32(clamping: Int64(expected.position.x.rounded())),
+            Int32(clamping: Int64(actualPosition.y.rounded()))
+                == Int32(clamping: Int64(expected.position.y.rounded())),
+            UInt32(clamping: Int64(actualSize.width.rounded()))
+                == UInt32(clamping: Int64(expected.size.width.rounded())),
+            UInt32(clamping: Int64(actualSize.height.rounded()))
+                == UInt32(clamping: Int64(expected.size.height.rounded())) else {
+                throw LumenMacDisplayWorkspaceError.windowTopologyMismatch(
+                    expected.processID,
+                    expected.windowID
+                )
+            }
         }
         self.snapshot = nil
     }
 
     public func discardSnapshot() {
         snapshot = nil
+    }
+
+    private func verifyIsolation(
+        virtualDisplayID: CGDirectDisplayID,
+        physicalDisplayIDs: Set<CGDirectDisplayID>
+    ) async throws {
+        let current = try await topologyController.capture()
+        let statesByID = Dictionary(uniqueKeysWithValues: current.displays.compactMap { state in
+            UInt32(state.id).map { ($0, state) }
+        })
+        let visibleDisplayIDs = await topologyController.visibleDisplayIDs()
+        guard let virtualState = statesByID[virtualDisplayID],
+              virtualState.online,
+              virtualState.active,
+              visibleDisplayIDs.contains(virtualDisplayID),
+              physicalDisplayIDs.allSatisfy({ statesByID[$0]?.active != true }),
+              physicalDisplayIDs.isDisjoint(with: visibleDisplayIDs) else {
+            throw LumenMacDisplayWorkspaceError.isolationPostconditionFailed
+        }
     }
 
     private func activeDisplayIDs() throws -> [CGDirectDisplayID] {
@@ -220,35 +331,6 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
         }
     }
 
-    private func configureDisplay(
-        _ displayID: CGDirectDisplayID,
-        mirrorMasterID: CGDirectDisplayID,
-        origin: CGPoint,
-        configuration: CGDisplayConfigRef
-    ) throws {
-        let mirrorResult = CGConfigureDisplayMirrorOfDisplay(
-            configuration,
-            displayID,
-            mirrorMasterID
-        )
-        guard mirrorResult == .success else {
-            throw LumenMacDisplayWorkspaceError.displayConfigurationFailed(
-                mirrorResult.rawValue
-            )
-        }
-        let originResult = CGConfigureDisplayOrigin(
-            configuration,
-            displayID,
-            Int32(origin.x.rounded()),
-            Int32(origin.y.rounded())
-        )
-        guard originResult == .success else {
-            throw LumenMacDisplayWorkspaceError.displayConfigurationFailed(
-                originResult.rawValue
-            )
-        }
-    }
-
     private func snapshotWindows(
         processIdentifiers: [pid_t]
     ) throws -> [WindowSnapshot] {
@@ -256,7 +338,8 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             throw LumenMacDisplayWorkspaceError.accessibilityPermissionMissing
         }
 
-        return processIdentifiers.flatMap { processIdentifier -> [WindowSnapshot] in
+        var snapshots: [WindowSnapshot] = []
+        for processIdentifier in processIdentifiers {
             let application = AXUIElementCreateApplication(processIdentifier)
             var copiedWindows: CFTypeRef?
             guard AXUIElementCopyAttributeValue(
@@ -265,23 +348,109 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
                 &copiedWindows
             ) == .success,
             let windows = copiedWindows as? [AXUIElement] else {
-                return []
+                throw LumenMacDisplayWorkspaceError.windowSnapshotUnavailable(
+                    Int32(processIdentifier)
+                )
             }
 
-            return windows.compactMap { window in
-                guard let position = windowPoint(
-                    attribute: kAXPositionAttribute,
-                    element: window
-                ),
-                let size = windowSize(
-                    attribute: kAXSizeAttribute,
-                    element: window
-                ) else {
-                    return nil
+            for window in windows {
+                guard let windowID = windowIdentifier(window),
+                      let position = windowPoint(
+                        attribute: kAXPositionAttribute,
+                        element: window
+                      ),
+                      let size = windowSize(
+                        attribute: kAXSizeAttribute,
+                        element: window
+                      ) else {
+                    throw LumenMacDisplayWorkspaceError.windowSnapshotUnavailable(
+                        Int32(processIdentifier)
+                    )
                 }
-                return WindowSnapshot(element: window, position: position, size: size)
+                snapshots.append(WindowSnapshot(
+                    processID: Int32(processIdentifier),
+                    windowID: windowID,
+                    element: window,
+                    position: position,
+                    size: size
+                ))
             }
         }
+        return snapshots
+    }
+
+    private func resolvePersistedWindows(
+        _ persistedWindows: [LumenMacWorkspaceWindowState]
+    ) throws -> [WindowSnapshot] {
+        guard persistedWindows.isEmpty || AXIsProcessTrusted() else {
+            throw LumenMacDisplayWorkspaceError.accessibilityPermissionMissing
+        }
+        return try persistedWindows.map { persisted in
+            let application = AXUIElementCreateApplication(pid_t(persisted.processID))
+            var copiedWindows: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(
+                application,
+                kAXWindowsAttribute as CFString,
+                &copiedWindows
+            ) == .success,
+            let windows = copiedWindows as? [AXUIElement],
+            let element = windows.first(where: { windowIdentifier($0) == persisted.windowID }) else {
+                throw LumenMacDisplayWorkspaceError.windowNotFound(
+                    persisted.processID,
+                    persisted.windowID
+                )
+            }
+            return WindowSnapshot(
+                processID: persisted.processID,
+                windowID: persisted.windowID,
+                element: element,
+                position: CGPoint(
+                    x: CGFloat(persisted.originX),
+                    y: CGFloat(persisted.originY)
+                ),
+                size: CGSize(
+                    width: CGFloat(persisted.width),
+                    height: CGFloat(persisted.height)
+                )
+            )
+        }
+    }
+
+    private func windowIdentifier(_ element: AXUIElement) -> UInt32? {
+        var processIdentifier: pid_t = 0
+        guard AXUIElementGetPid(element, &processIdentifier) == .success,
+              let position = windowPoint(
+                attribute: kAXPositionAttribute,
+                element: element
+              ),
+              let size = windowSize(
+                attribute: kAXSizeAttribute,
+                element: element
+              ),
+              let windowDescriptions = CGWindowListCopyWindowInfo(
+                .optionAll,
+                kCGNullWindowID
+              ) as? [[String: Any]] else {
+            return nil
+        }
+        let expectedBounds = CGRect(origin: position, size: size)
+        return windowDescriptions.lazy.compactMap { description -> UInt32? in
+            guard (description[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value
+                    == Int32(processIdentifier),
+                  let boundsDictionary = description[kCGWindowBounds as String] as? NSDictionary,
+                  let windowNumber = description[kCGWindowNumber as String] as? NSNumber else {
+                return nil
+            }
+            var bounds = CGRect.zero
+            guard CGRectMakeWithDictionaryRepresentation(boundsDictionary as CFDictionary, &bounds),
+                  abs(bounds.minX - expectedBounds.minX) <= 1,
+                  abs(bounds.minY - expectedBounds.minY) <= 1,
+                  abs(bounds.width - expectedBounds.width) <= 1,
+                  abs(bounds.height - expectedBounds.height) <= 1 else {
+                return nil
+            }
+            return windowNumber.uint32Value
+        }.first
     }
 
     private func windowPoint(

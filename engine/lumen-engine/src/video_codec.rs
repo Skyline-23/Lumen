@@ -28,10 +28,25 @@ mod tests {
 
     #[test]
     fn known_codecs_preserve_format_and_hdr_transport_capability() {
-        assert_eq!(resolve_video_codec(VIDEO_FORMAT_H264).unwrap().video_format, 0);
-        assert!(!resolve_video_codec(VIDEO_FORMAT_H264).unwrap().supports_hdr_transport);
-        assert!(resolve_video_codec(VIDEO_FORMAT_HEVC).unwrap().supports_hdr_transport);
-        assert!(resolve_video_codec(VIDEO_FORMAT_AV1).unwrap().supports_hdr_transport);
+        assert_eq!(
+            resolve_video_codec(VIDEO_FORMAT_H264).unwrap().video_format,
+            0
+        );
+        assert!(
+            !resolve_video_codec(VIDEO_FORMAT_H264)
+                .unwrap()
+                .supports_hdr_transport
+        );
+        assert!(
+            resolve_video_codec(VIDEO_FORMAT_HEVC)
+                .unwrap()
+                .supports_hdr_transport
+        );
+        assert!(
+            resolve_video_codec(VIDEO_FORMAT_AV1)
+                .unwrap()
+                .supports_hdr_transport
+        );
     }
 
     #[test]

@@ -91,6 +91,12 @@ static LumenBridgeObjCFacade *LumenMacBridgeFacade(LumenMacBridgeController *con
     LumenMacBridgeCaptureConfiguration result = {0};
     result.display_id = configuration.displayID;
     result.codec = (LumenMacCaptureCodec) (configuration.codecRawValue);
+    result.video_profile = (LumenMacCaptureVideoProfile) (configuration.videoProfileRawValue);
+    result.chroma_subsampling =
+      (LumenMacCaptureChromaSubsampling) (configuration.chromaSubsamplingRawValue);
+    result.bit_depth = (uint8_t) (configuration.bitDepth);
+    result.dynamic_range = (LumenMacCaptureDynamicRange) (configuration.dynamicRangeRawValue);
+    result.color_range = (LumenMacCaptureColorRange) (configuration.colorRangeRawValue);
     result.preprocess_strategy =
       (LumenMacBridgePreprocessStrategy) (configuration.preprocessStrategyRawValue);
     result.queue_profile = (LumenMacBridgeQueueProfile) (configuration.queueProfileRawValue);
@@ -180,6 +186,11 @@ static LumenBridgeObjCFacade *LumenMacBridgeFacade(LumenMacBridgeController *con
     return [[LumenBridgeConfigurationBox alloc]
       initWithDisplayID:configuration.display_id
            codecRawValue:(NSInteger) (configuration.codec)
+    videoProfileRawValue:(NSInteger) (configuration.video_profile)
+chromaSubsamplingRawValue:(NSInteger) (configuration.chroma_subsampling)
+                bitDepth:(NSInteger) (configuration.bit_depth)
+    dynamicRangeRawValue:(NSInteger) (configuration.dynamic_range)
+      colorRangeRawValue:(NSInteger) (configuration.color_range)
  preprocessStrategyRawValue:(NSInteger) (configuration.preprocess_strategy)
      queueProfileRawValue:(NSInteger) (configuration.queue_profile)
           targetFrameRate:(NSInteger) (configuration.target_frame_rate)

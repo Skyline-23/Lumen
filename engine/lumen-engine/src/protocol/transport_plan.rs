@@ -224,15 +224,21 @@ mod tests {
     #[test]
     fn video_codec_policy_keeps_h264_sdr_and_hdr_capable_codecs_negotiated() {
         assert_eq!(
-            resolve_video_transport(0, hdr_overlay_request()).unwrap().negotiated_transport,
+            resolve_video_transport(0, hdr_overlay_request())
+                .unwrap()
+                .negotiated_transport,
             TRANSPORT_SDR
         );
         assert_eq!(
-            resolve_video_transport(1, hdr_overlay_request()).unwrap().negotiated_transport,
+            resolve_video_transport(1, hdr_overlay_request())
+                .unwrap()
+                .negotiated_transport,
             TRANSPORT_SDR_BASE_HDR_OVERLAY
         );
         assert_eq!(
-            resolve_video_transport(2, hdr_overlay_request()).unwrap().negotiated_transport,
+            resolve_video_transport(2, hdr_overlay_request())
+                .unwrap()
+                .negotiated_transport,
             TRANSPORT_SDR_BASE_HDR_OVERLAY
         );
         assert_eq!(resolve_video_transport(99, hdr_overlay_request()), None);

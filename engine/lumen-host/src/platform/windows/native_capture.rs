@@ -1,6 +1,6 @@
 use std::mem::ManuallyDrop;
 
-use windows_api::core::{Interface, PCSTR};
+use windows_api::core::{Interface, PCSTR, PCWSTR};
 use windows_api::Win32::Foundation::{HMODULE, POINT, RECT};
 use windows_api::Win32::Graphics::Direct3D::Fxc::{
     D3DCompile, D3DCOMPILE_ENABLE_STRICTNESS, D3DCOMPILE_OPTIMIZATION_LEVEL3,
@@ -9,35 +9,40 @@ use windows_api::Win32::Graphics::Direct3D::{
     ID3DBlob, ID3DInclude, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST, D3D_DRIVER_TYPE_UNKNOWN,
 };
 use windows_api::Win32::Graphics::Direct3D11::{
-    D3D11CreateDevice, ID3D11Buffer, ID3D11Device, ID3D11DeviceContext, ID3D11PixelShader,
-    ID3D11RenderTargetView, ID3D11ShaderResourceView, ID3D11Texture2D, ID3D11VertexShader,
-    ID3D11VideoContext, ID3D11VideoContext1, ID3D11VideoDevice, D3D11_BIND_CONSTANT_BUFFER,
-    D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE, D3D11_BUFFER_DESC,
-    D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_CREATE_DEVICE_VIDEO_SUPPORT, D3D11_SDK_VERSION,
-    D3D11_SUBRESOURCE_DATA, D3D11_TEX2D_VPIV, D3D11_TEX2D_VPOV, D3D11_TEXTURE2D_DESC,
-    D3D11_USAGE_DEFAULT, D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE, D3D11_VIDEO_PROCESSOR_CAPS,
-    D3D11_VIDEO_PROCESSOR_CONTENT_DESC, D3D11_VIDEO_PROCESSOR_FORMAT_SUPPORT_INPUT,
-    D3D11_VIDEO_PROCESSOR_FORMAT_SUPPORT_OUTPUT, D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC,
-    D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC_0, D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC,
-    D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC_0, D3D11_VIDEO_PROCESSOR_STREAM,
-    D3D11_VIDEO_USAGE_PLAYBACK_NORMAL, D3D11_VIEWPORT, D3D11_VPIV_DIMENSION_TEXTURE2D,
-    D3D11_VPOV_DIMENSION_TEXTURE2D,
+    D3D11CreateDevice, ID3D11Buffer, ID3D11Device, ID3D11Device1, ID3D11DeviceContext,
+    ID3D11PixelShader, ID3D11RenderTargetView, ID3D11ShaderResourceView, ID3D11Texture2D,
+    ID3D11VertexShader, ID3D11VideoContext, ID3D11VideoContext1, ID3D11VideoDevice,
+    D3D11_BIND_CONSTANT_BUFFER, D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE,
+    D3D11_BUFFER_DESC, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_CREATE_DEVICE_VIDEO_SUPPORT,
+    D3D11_SDK_VERSION, D3D11_SUBRESOURCE_DATA, D3D11_TEX2D_VPIV, D3D11_TEX2D_VPOV,
+    D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT, D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE,
+    D3D11_VIDEO_PROCESSOR_CAPS, D3D11_VIDEO_PROCESSOR_CONTENT_DESC,
+    D3D11_VIDEO_PROCESSOR_FORMAT_SUPPORT_INPUT, D3D11_VIDEO_PROCESSOR_FORMAT_SUPPORT_OUTPUT,
+    D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC, D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC_0,
+    D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC, D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC_0,
+    D3D11_VIDEO_PROCESSOR_STREAM, D3D11_VIDEO_USAGE_PLAYBACK_NORMAL, D3D11_VIEWPORT,
+    D3D11_VPIV_DIMENSION_TEXTURE2D, D3D11_VPOV_DIMENSION_TEXTURE2D,
 };
 use windows_api::Win32::Graphics::Dxgi::Common::{
     DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709, DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020,
     DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709, DXGI_COLOR_SPACE_TYPE,
     DXGI_COLOR_SPACE_YCBCR_STUDIO_G2084_LEFT_P2020, DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P709,
-    DXGI_FORMAT, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_NV12, DXGI_FORMAT_P010,
-    DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_RATIONAL, DXGI_SAMPLE_DESC,
+    DXGI_FORMAT, DXGI_FORMAT_AYUV, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_NV12, DXGI_FORMAT_P010,
+    DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_Y410, DXGI_RATIONAL,
+    DXGI_SAMPLE_DESC,
 };
 use windows_api::Win32::Graphics::Dxgi::{
-    CreateDXGIFactory1, IDXGIAdapter1, IDXGIFactory1, IDXGIOutput, IDXGIOutput6,
+    CreateDXGIFactory1, IDXGIAdapter1, IDXGIFactory1, IDXGIKeyedMutex, IDXGIOutput, IDXGIOutput6,
     IDXGIOutputDuplication, DXGI_ERROR_NOT_FOUND, DXGI_ERROR_WAIT_TIMEOUT, DXGI_OUTDUPL_FRAME_INFO,
     DXGI_OUTDUPL_POINTER_SHAPE_INFO, DXGI_OUTDUPL_POINTER_SHAPE_TYPE_COLOR,
     DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MASKED_COLOR, DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MONOCHROME,
+    DXGI_SHARED_RESOURCE_READ, DXGI_SHARED_RESOURCE_WRITE,
 };
 
 use crate::cursor_mask::{expand_masked_color_cursor, expand_monochrome_cursor};
+use crate::PlatformChromaSubsampling;
+
+use super::native_display_driver::{shared_frame_name, DriverHandle};
 
 const MAXIMUM_POINTER_DIMENSION: u32 = 512;
 const SDR_CAPTURE_FORMATS: [DXGI_FORMAT; 1] = [DXGI_FORMAT_B8G8R8A8_UNORM];
@@ -104,10 +109,30 @@ pub(super) struct NativeDesktopDuplication {
     pointer_compositor: Option<NativePointerCompositor>,
 }
 
+pub(super) struct NativeIddCxCapture {
+    driver: DriverHandle,
+    device: ID3D11Device,
+    context: ID3D11DeviceContext,
+    device1: ID3D11Device1,
+    surface: Option<NativeSharedSurface>,
+    require_hdr: bool,
+}
+
 pub(super) struct NativeCapturedFrame {
-    duplication: IDXGIOutputDuplication,
+    release: NativeFrameRelease,
     texture: ID3D11Texture2D,
     pointer: Option<NativePointerOverlay>,
+}
+
+enum NativeFrameRelease {
+    Duplication(IDXGIOutputDuplication),
+    Shared(IDXGIKeyedMutex),
+}
+
+struct NativeSharedSurface {
+    revision: u32,
+    texture: ID3D11Texture2D,
+    keyed_mutex: IDXGIKeyedMutex,
 }
 
 pub(super) struct NativeEncoderSurface {
@@ -160,6 +185,122 @@ struct NativePointerCompositionSurfaces {
     source_view: ID3D11ShaderResourceView,
     output: ID3D11Texture2D,
     output_view: ID3D11RenderTargetView,
+}
+
+impl NativeIddCxCapture {
+    pub(super) fn open(driver: DriverHandle, require_hdr: bool) -> Result<Self, String> {
+        let factory = unsafe { CreateDXGIFactory1::<IDXGIFactory1>() }
+            .map_err(|error| format!("Windows DXGI factory creation failed: {error}"))?;
+        let adapter_luid = driver.render_adapter_luid()?;
+        let adapter = select_adapter_by_luid(&factory, adapter_luid)?;
+        let (device, context) = create_device(&adapter)?;
+        let device1 = device.cast::<ID3D11Device1>().map_err(|error| {
+            format!("Windows D3D11.1 shared-resource device is unavailable: {error}")
+        })?;
+        driver.start_frame_delivery()?;
+        Ok(Self {
+            driver,
+            device,
+            context,
+            device1,
+            surface: None,
+            require_hdr,
+        })
+    }
+
+    pub(super) fn acquire_next_frame(
+        &mut self,
+        timeout_milliseconds: u32,
+    ) -> Result<Option<NativeCapturedFrame>, String> {
+        let record = self.driver.dequeue_frame()?;
+        let format_value = i32::try_from(record.format)
+            .map_err(|_| "Windows IDD frame format is out of range".to_owned())?;
+        let format = DXGI_FORMAT(format_value);
+        if !matches!(
+            format,
+            DXGI_FORMAT_B8G8R8A8_UNORM | DXGI_FORMAT_R16G16B16A16_FLOAT
+        ) {
+            return Err(format!(
+                "Windows IDD frame format {:?} is unsupported",
+                format
+            ));
+        }
+        if self.require_hdr && format != DXGI_FORMAT_R16G16B16A16_FLOAT {
+            return Err("Windows HDR session requires a scRGB IDD surface".to_owned());
+        }
+        let needs_open = self
+            .surface
+            .as_ref()
+            .is_none_or(|surface| surface.revision != record.surface_revision);
+        if needs_open {
+            let name = shared_frame_name(record.monitor_id, record.surface_revision);
+            let name = name
+                .encode_utf16()
+                .chain(std::iter::once(0))
+                .collect::<Vec<_>>();
+            let access = DXGI_SHARED_RESOURCE_READ.0 | DXGI_SHARED_RESOURCE_WRITE.0;
+            let texture = unsafe {
+                self.device1
+                    .OpenSharedResourceByName::<_, ID3D11Texture2D>(PCWSTR(name.as_ptr()), access)
+            }
+            .map_err(|error| format!("Windows IDD shared frame open failed: {error}"))?;
+            let keyed_mutex = texture
+                .cast::<IDXGIKeyedMutex>()
+                .map_err(|error| format!("Windows IDD shared frame has no keyed mutex: {error}"))?;
+            self.surface = Some(NativeSharedSurface {
+                revision: record.surface_revision,
+                texture,
+                keyed_mutex,
+            });
+        }
+        let surface = self
+            .surface
+            .as_ref()
+            .ok_or_else(|| "Windows IDD shared frame is unavailable".to_owned())?;
+        unsafe { surface.keyed_mutex.AcquireSync(1, timeout_milliseconds) }
+            .map_err(|error| format!("Windows IDD shared frame wait failed: {error}"))?;
+        let frame = NativeCapturedFrame {
+            release: NativeFrameRelease::Shared(surface.keyed_mutex.clone()),
+            texture: surface.texture.clone(),
+            pointer: None,
+        };
+        if let Err(error) = frame.validate() {
+            drop(frame);
+            return Err(error);
+        }
+        Ok(Some(frame))
+    }
+
+    pub(super) fn device(&self) -> &ID3D11Device {
+        &self.device
+    }
+
+    pub(super) fn convert_frame(
+        &self,
+        frame: &NativeCapturedFrame,
+        output_width: u32,
+        output_height: u32,
+        frames_per_second: u32,
+        ten_bit: bool,
+        chroma_subsampling: PlatformChromaSubsampling,
+    ) -> Result<NativeEncoderSurface, String> {
+        convert_iddcx_frame(
+            &self.device,
+            &self.context,
+            frame,
+            output_width,
+            output_height,
+            frames_per_second,
+            ten_bit,
+            chroma_subsampling,
+        )
+    }
+}
+
+impl Drop for NativeIddCxCapture {
+    fn drop(&mut self) {
+        let _ = self.driver.stop_frame_delivery();
+    }
 }
 
 #[repr(C)]
@@ -272,7 +413,7 @@ impl NativeDesktopDuplication {
             }
         };
         Ok(Some(NativeCapturedFrame {
-            duplication: self.duplication.clone(),
+            release: NativeFrameRelease::Duplication(self.duplication.clone()),
             texture,
             pointer,
         }))
@@ -589,6 +730,111 @@ impl NativeDesktopDuplication {
 impl NativeEncoderSurface {
     pub(super) fn texture(&self) -> &ID3D11Texture2D {
         &self.texture
+    }
+}
+
+fn convert_iddcx_frame(
+    device: &ID3D11Device,
+    context: &ID3D11DeviceContext,
+    frame: &NativeCapturedFrame,
+    output_width: u32,
+    output_height: u32,
+    frames_per_second: u32,
+    ten_bit: bool,
+    chroma_subsampling: PlatformChromaSubsampling,
+) -> Result<NativeEncoderSurface, String> {
+    let mut input_description = D3D11_TEXTURE2D_DESC::default();
+    unsafe { frame.texture.GetDesc(&mut input_description) };
+    let output_format = encoder_surface_format(chroma_subsampling, ten_bit);
+    let video_device = device
+        .cast::<ID3D11VideoDevice>()
+        .map_err(|error| format!("Windows D3D11 video device is unavailable: {error}"))?;
+    let video_context = context
+        .cast::<ID3D11VideoContext>()
+        .map_err(|error| format!("Windows D3D11 video context is unavailable: {error}"))?;
+    let video_context1 = context.cast::<ID3D11VideoContext1>().map_err(|error| {
+        format!("Windows D3D11.1 color-managed video context is unavailable: {error}")
+    })?;
+    let (input_color_space, output_color_space) =
+        encoder_color_spaces(input_description.Format, ten_bit)?;
+    let content = D3D11_VIDEO_PROCESSOR_CONTENT_DESC {
+        InputFrameFormat: D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE,
+        InputFrameRate: DXGI_RATIONAL {
+            Numerator: frames_per_second,
+            Denominator: 1,
+        },
+        InputWidth: input_description.Width,
+        InputHeight: input_description.Height,
+        OutputFrameRate: DXGI_RATIONAL {
+            Numerator: frames_per_second,
+            Denominator: 1,
+        },
+        OutputWidth: output_width,
+        OutputHeight: output_height,
+        Usage: D3D11_VIDEO_USAGE_PLAYBACK_NORMAL,
+    };
+    let enumerator = unsafe { video_device.CreateVideoProcessorEnumerator(&content) }
+        .map_err(|error| format!("Windows video processor enumeration failed: {error}"))?;
+    require_format_support(&enumerator, input_description.Format, true)?;
+    require_format_support(&enumerator, output_format, false)?;
+    let processor = unsafe { video_device.CreateVideoProcessor(&enumerator, 0) }
+        .map_err(|error| format!("Windows video processor creation failed: {error}"))?;
+    let output_texture =
+        create_encoder_texture(device, output_width, output_height, output_format)?;
+    let input_view = create_input_view(&video_device, &enumerator, &frame.texture)?;
+    let output_view = create_output_view(&video_device, &enumerator, &output_texture)?;
+    unsafe {
+        video_context.VideoProcessorSetStreamFrameFormat(
+            &processor,
+            0,
+            D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE,
+        );
+        video_context1.VideoProcessorSetStreamColorSpace1(&processor, 0, input_color_space);
+        video_context1.VideoProcessorSetOutputColorSpace1(&processor, output_color_space);
+    }
+    let mut stream = D3D11_VIDEO_PROCESSOR_STREAM {
+        Enable: true.into(),
+        pInputSurface: ManuallyDrop::new(Some(input_view)),
+        ..Default::default()
+    };
+    let converted = unsafe {
+        video_context.VideoProcessorBlt(&processor, &output_view, 0, std::slice::from_ref(&stream))
+    }
+    .map_err(|error| format!("Windows IDD GPU video conversion failed: {error}"));
+    unsafe { ManuallyDrop::drop(&mut stream.pInputSurface) };
+    converted?;
+    unsafe { context.Flush() };
+    Ok(NativeEncoderSurface {
+        texture: output_texture,
+    })
+}
+
+fn encoder_surface_format(
+    chroma_subsampling: PlatformChromaSubsampling,
+    ten_bit: bool,
+) -> DXGI_FORMAT {
+    match (chroma_subsampling, ten_bit) {
+        (PlatformChromaSubsampling::Yuv420, false) => DXGI_FORMAT_NV12,
+        (PlatformChromaSubsampling::Yuv420, true) => DXGI_FORMAT_P010,
+        (PlatformChromaSubsampling::Yuv444, false) => DXGI_FORMAT_AYUV,
+        (PlatformChromaSubsampling::Yuv444, true) => DXGI_FORMAT_Y410,
+    }
+}
+
+#[cfg(test)]
+mod iddcx_tests {
+    use super::*;
+
+    #[test]
+    fn selects_packed_444_encoder_surfaces() {
+        assert_eq!(
+            encoder_surface_format(PlatformChromaSubsampling::Yuv444, false),
+            DXGI_FORMAT_AYUV
+        );
+        assert_eq!(
+            encoder_surface_format(PlatformChromaSubsampling::Yuv444, true),
+            DXGI_FORMAT_Y410
+        );
     }
 }
 
@@ -1135,7 +1381,14 @@ impl NativeCapturedFrame {
 
 impl Drop for NativeCapturedFrame {
     fn drop(&mut self) {
-        let _ = unsafe { self.duplication.ReleaseFrame() };
+        match &self.release {
+            NativeFrameRelease::Duplication(duplication) => {
+                let _ = unsafe { duplication.ReleaseFrame() };
+            }
+            NativeFrameRelease::Shared(keyed_mutex) => {
+                let _ = unsafe { keyed_mutex.ReleaseSync(0) };
+            }
+        }
     }
 }
 
@@ -1163,6 +1416,31 @@ fn select_output(
     }
     Err(format!(
         "Windows DXGI found no attached output matching adapter {adapter_name:?} and display {output_name:?}"
+    ))
+}
+
+fn select_adapter_by_luid(
+    factory: &IDXGIFactory1,
+    adapter_luid: u64,
+) -> Result<IDXGIAdapter1, String> {
+    let mut adapter_index = 0_u32;
+    loop {
+        let adapter = match unsafe { factory.EnumAdapters1(adapter_index) } {
+            Ok(adapter) => adapter,
+            Err(error) if error.code() == DXGI_ERROR_NOT_FOUND => break,
+            Err(error) => return Err(format!("Windows DXGI adapter enumeration failed: {error}")),
+        };
+        adapter_index = adapter_index.saturating_add(1);
+        let description = unsafe { adapter.GetDesc1() }
+            .map_err(|error| format!("Windows DXGI adapter description failed: {error}"))?;
+        let packed_luid = u64::from(description.AdapterLuid.LowPart)
+            | (u64::from(description.AdapterLuid.HighPart as u32) << 32);
+        if packed_luid == adapter_luid {
+            return Ok(adapter);
+        }
+    }
+    Err(format!(
+        "Windows DXGI found no render adapter matching LUID {adapter_luid:016X}"
     ))
 }
 

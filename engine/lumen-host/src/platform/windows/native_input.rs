@@ -163,9 +163,7 @@ impl WindowsPlatformSessionControl {
         let media = NativeWindowsMedia::new(arguments)?;
         Ok(Self {
             application: NativeWindowsApplication::default(),
-            display: NativeWindowsDisplay::new(
-                arguments.get("output_name").unwrap_or_default().to_owned(),
-            ),
+            display: NativeWindowsDisplay::new(arguments)?,
             media,
             input,
             input_policy,
@@ -213,15 +211,51 @@ impl PlatformSessionControl for WindowsPlatformSessionControl {
     }
 
     fn start_session(&self, plan: PlatformSessionPlan) -> Result<(), String> {
-        self.media.start(plan, self.display.current_output_name()?)
+        self.media.start(plan, self.display.capture_driver()?)?;
+        if let Err(error) = self.display.capture_started() {
+            let media = self.media.stop().err();
+            let display = self.display.stop().err();
+            return Err(cleanup_error(error, media, display));
+        }
+        Ok(())
     }
 
     fn stop_session(&self) -> Result<(), String> {
-        self.media.stop()
+        let media = self.media.stop().err();
+        let display = self.display.stop().err();
+        match (media, display) {
+            (None, None) => Ok(()),
+            (Some(error), None) | (None, Some(error)) => Err(error),
+            (Some(media), Some(display)) => Err(format!(
+                "{media}; Windows display cleanup also failed: {display}"
+            )),
+        }
     }
 
     fn poll_encoded_video(&self) -> Result<Option<PlatformEncodedVideoFrame>, String> {
-        self.media.poll_video()
+        match self.media.poll_video() {
+            Ok(Some(frame)) => match self.display.first_frame_ready() {
+                Ok(()) => Ok(Some(frame)),
+                Err(error) => {
+                    let media = self.media.stop().err();
+                    let display = self.display.stop().err();
+                    Err(cleanup_error(error, media, display))
+                }
+            },
+            Ok(None) => match self.display.check_first_frame_timeout() {
+                Ok(()) => Ok(None),
+                Err(error) => {
+                    let media = self.media.stop().err();
+                    let display = self.display.stop().err();
+                    Err(cleanup_error(error, media, display))
+                }
+            },
+            Err(error) => {
+                let media = self.media.stop().err();
+                let display = self.display.stop().err();
+                Err(cleanup_error(error, media, display))
+            }
+        }
     }
 
     fn poll_encoded_audio(&self) -> Result<Option<PlatformEncodedAudioPacket>, String> {
@@ -308,4 +342,13 @@ impl PlatformSessionControl for WindowsPlatformSessionControl {
         }
         Err("Windows native input produced too many stale feedback messages".to_owned())
     }
+}
+
+fn cleanup_error(primary: String, media: Option<String>, display: Option<String>) -> String {
+    [media, display]
+        .into_iter()
+        .flatten()
+        .fold(primary, |message, cleanup| {
+            format!("{message}; Windows stream cleanup also failed: {cleanup}")
+        })
 }

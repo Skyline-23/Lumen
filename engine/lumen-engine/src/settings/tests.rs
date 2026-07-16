@@ -601,6 +601,15 @@ fn command_privilege_is_host_capability_driven() {
 }
 
 #[test]
+fn windows_does_not_advertise_a_physical_output_selector() {
+    let macos = SettingsCapabilities::for_platform(SettingsHostPlatform::Macos);
+    let windows = SettingsCapabilities::for_platform(SettingsHostPlatform::Windows);
+
+    assert!(!macos.fields.contains_key("streaming.outputSelector"));
+    assert!(!windows.fields.contains_key("streaming.outputSelector"));
+}
+
+#[test]
 fn factory_reset_removes_durable_settings_and_request_history() {
     let root = TempDir::new().unwrap();
     let path = root.path().join("settings.json");

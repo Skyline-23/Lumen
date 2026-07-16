@@ -1,5 +1,5 @@
-pub const NATIVE_MEDIA_MAGIC: u16 = 0x4c32;
-pub const NATIVE_MEDIA_VERSION: u8 = 2;
+pub const NATIVE_MEDIA_MAGIC: u16 = 0x4c33;
+pub const NATIVE_MEDIA_VERSION: u8 = 3;
 pub const NATIVE_MEDIA_HEADER_BYTES: usize = 40;
 pub const NATIVE_VIDEO_STREAM_ID: u16 = 1;
 pub const NATIVE_AUDIO_STREAM_ID: u16 = 2;

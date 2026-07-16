@@ -6,10 +6,13 @@ private enum WorkspaceExecutionEvent: Equatable {
     case create(LumenMacDisplayGeometry)
     case configure(UInt32, LumenMacDisplayGeometry)
     case isolate(UInt32)
+    case firstFrameBarrier
+    case captureContinuity
     case startCapture(UInt32)
     case stopCapture
     case restore
-    case destroy(UInt32)
+    case verify
+    case destroy
 }
 
 private actor WorkspaceExecutionRecorder {
@@ -31,8 +34,11 @@ private actor WorkspaceDisplayMock: LumenMacDisplayWorkspaceManaging {
         self.recorder = recorder
     }
 
-    func snapshotWorkspace(targetProcessIdentifiers: [Int32]) async {
+    func snapshotWorkspace(
+        targetProcessIdentifiers: [Int32]
+    ) async -> LumenMacPhysicalDisplayTopology {
         await recorder.append(.snapshot(targetProcessIdentifiers))
+        return testTopology()
     }
 
     func promoteVirtualDisplay(_: UInt32) async {}
@@ -40,8 +46,11 @@ private actor WorkspaceDisplayMock: LumenMacDisplayWorkspaceManaging {
     func isolateVirtualDisplay(_ displayID: UInt32) async {
         await recorder.append(.isolate(displayID))
     }
-    func restoreWorkspace() async {
+    func restoreWorkspace(_: LumenMacPhysicalDisplayTopology) async {
         await recorder.append(.restore)
+    }
+    func verifyWorkspace(_: LumenMacPhysicalDisplayTopology) async {
+        await recorder.append(.verify)
     }
     func discardSnapshot() async {}
 }
@@ -66,7 +75,7 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
     }
 
     func testCoexistWorkspaceDoesNotPromoteOrMoveWindows() async throws {
-        let coordinator = try LumenWorkspaceCoordinator()
+        let coordinator = try makeCoordinator()
         try await coordinator.beginSession(policy: .coexist)
 
         let actions = try await completePendingCommands(coordinator)
@@ -85,7 +94,7 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
     }
 
     func testExternalCaptureOwnershipOmitsCaptureCommands() async throws {
-        let coordinator = try LumenWorkspaceCoordinator()
+        let coordinator = try makeCoordinator()
         try await coordinator.beginSession(policy: .coexist, manageCapture: false)
 
         let startupActions = try await completePendingCommands(coordinator)
@@ -96,11 +105,14 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         try await coordinator.endSession()
         let teardownActions = try await completePendingCommands(coordinator)
         XCTAssertFalse(teardownActions.contains(.stopCapture))
-        XCTAssertEqual(teardownActions, [.restoreWorkspace, .destroyVirtualDisplay])
+        XCTAssertEqual(
+            teardownActions,
+            [.restoreWorkspace, .verifyPhysicalDisplays, .destroyVirtualDisplay]
+        )
     }
 
     func testFocusedWorkspaceRestoresAfterCaptureStops() async throws {
-        let coordinator = try LumenWorkspaceCoordinator()
+        let coordinator = try makeCoordinator()
         try await coordinator.beginSession(policy: .focusedWorkspace)
 
         let startup = try await completePendingCommands(coordinator)
@@ -112,7 +124,12 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         let teardown = try await completePendingCommands(coordinator)
         XCTAssertEqual(
             teardown,
-            [.stopCapture, .restoreWorkspace, .destroyVirtualDisplay]
+            [
+                .stopCapture,
+                .restoreWorkspace,
+                .verifyPhysicalDisplays,
+                .destroyVirtualDisplay,
+            ]
         )
         let state = try await coordinator.currentState()
         XCTAssertEqual(state, .idle)
@@ -121,7 +138,7 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
     func testExecutorPassesRustGeometryToNativeDisplayOperations() async throws {
         let recorder = WorkspaceExecutionRecorder()
         let operations = LumenMacWorkspaceNativeOperations(
-            createVirtualDisplay: { geometry in
+            createVirtualDisplay: { _, geometry in
                 await recorder.append(.create(geometry))
                 return 42
             },
@@ -145,7 +162,7 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
             operations: operations,
             displayWorkspace: WorkspaceDisplayMock(recorder: recorder)
         )
-        let coordinator = try LumenWorkspaceCoordinator()
+        let coordinator = try makeCoordinator()
 
         try await coordinator.beginSession(policy: .coexist)
         try await coordinator.executePendingCommands(using: executor)
@@ -175,7 +192,7 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
     func testIsolatedWorkspaceExecutesTypedDisplayIsolation() async throws {
         let recorder = WorkspaceExecutionRecorder()
         let operations = LumenMacWorkspaceNativeOperations(
-            createVirtualDisplay: { _ in 55 },
+            createVirtualDisplay: { _, _ in 55 },
             configureVirtualDisplay: { _, _ in },
             startCapture: { _ in },
             stopCapture: {},
@@ -192,7 +209,7 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
             operations: operations,
             displayWorkspace: WorkspaceDisplayMock(recorder: recorder)
         )
-        let coordinator = try LumenWorkspaceCoordinator()
+        let coordinator = try makeCoordinator()
 
         try await coordinator.beginSession(
             policy: .isolatedWorkspace,
@@ -206,10 +223,103 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         try await coordinator.executePendingCommands(using: executor)
     }
 
+    func testExternalCapturePreparationPausesBeforePhysicalIsolation() async throws {
+        let recorder = WorkspaceExecutionRecorder()
+        let operations = LumenMacWorkspaceNativeOperations(
+            createVirtualDisplay: { _, geometry in
+                await recorder.append(.create(geometry))
+                return 88
+            },
+            configureVirtualDisplay: { displayID, geometry in
+                await recorder.append(.configure(displayID, geometry))
+            },
+            startCapture: { _ in },
+            stopCapture: {},
+            destroyVirtualDisplay: { _ in await recorder.append(.destroy) },
+            waitForExternalFirstEncodedFrame: {
+                await recorder.append(.firstFrameBarrier)
+            },
+            verifyCaptureContinuity: {
+                await recorder.append(.captureContinuity)
+            }
+        )
+        let request = externalIsolatedRequest()
+        let session = try LumenMacWorkspaceSession(
+            request: request,
+            operations: operations,
+            displayWorkspace: WorkspaceDisplayMock(recorder: recorder),
+            coordinator: makeCoordinator()
+        )
+
+        try await session.prepare()
+
+        let preparedEvents = await recorder.recordedEvents()
+        XCTAssertFalse(preparedEvents.contains(.firstFrameBarrier))
+        XCTAssertFalse(preparedEvents.contains(.isolate(88)))
+        let preparedState = try await session.state()
+        XCTAssertEqual(preparedState, .starting)
+
+        try await session.activate()
+
+        let activeEvents = await recorder.recordedEvents()
+        let barrierIndex = try XCTUnwrap(activeEvents.firstIndex(of: .firstFrameBarrier))
+        let isolateIndex = try XCTUnwrap(activeEvents.firstIndex(of: .isolate(88)))
+        let continuityIndex = try XCTUnwrap(activeEvents.firstIndex(of: .captureContinuity))
+        XCTAssertLessThan(barrierIndex, isolateIndex)
+        XCTAssertLessThan(isolateIndex, continuityIndex)
+        let activeState = try await session.state()
+        XCTAssertEqual(activeState, .active)
+        try await session.stop()
+    }
+
+    func testFailedExternalFirstFrameBarrierLeavesPhysicalDisplaysUntouched() async throws {
+        enum ExpectedFailure: Error {
+            case firstFrameTimeout
+        }
+        let recorder = WorkspaceExecutionRecorder()
+        let operations = LumenMacWorkspaceNativeOperations(
+            createVirtualDisplay: { _, geometry in
+                await recorder.append(.create(geometry))
+                return 89
+            },
+            configureVirtualDisplay: { displayID, geometry in
+                await recorder.append(.configure(displayID, geometry))
+            },
+            startCapture: { _ in },
+            stopCapture: {},
+            destroyVirtualDisplay: { _ in await recorder.append(.destroy) },
+            waitForExternalFirstEncodedFrame: {
+                await recorder.append(.firstFrameBarrier)
+                throw ExpectedFailure.firstFrameTimeout
+            }
+        )
+        let session = try LumenMacWorkspaceSession(
+            request: externalIsolatedRequest(),
+            operations: operations,
+            displayWorkspace: WorkspaceDisplayMock(recorder: recorder),
+            coordinator: makeCoordinator()
+        )
+        try await session.prepare()
+
+        do {
+            try await session.activate()
+            XCTFail("expected first-frame barrier failure")
+        } catch ExpectedFailure.firstFrameTimeout {}
+
+        let events = await recorder.recordedEvents()
+        XCTAssertTrue(events.contains(.firstFrameBarrier))
+        XCTAssertFalse(events.contains(.isolate(89)))
+        XCTAssertTrue(events.contains(.restore))
+        XCTAssertTrue(events.contains(.verify))
+        XCTAssertTrue(events.contains(.destroy))
+        let recoveredState = try await session.state()
+        XCTAssertEqual(recoveredState, .idle)
+    }
+
     func testWorkspaceSessionRunsRustPlannedLifecycleThroughNativeOperations() async throws {
         let recorder = WorkspaceExecutionRecorder()
         let operations = LumenMacWorkspaceNativeOperations(
-            createVirtualDisplay: { geometry in
+            createVirtualDisplay: { _, geometry in
                 await recorder.append(.create(geometry))
                 return 73
             },
@@ -222,8 +332,8 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
             stopCapture: {
                 await recorder.append(.stopCapture)
             },
-            destroyVirtualDisplay: { displayID in
-                await recorder.append(.destroy(displayID))
+            destroyVirtualDisplay: { _ in
+                await recorder.append(.destroy)
             }
         )
         let request = LumenMacWorkspaceSessionRequest(
@@ -238,7 +348,8 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         let session = try LumenMacWorkspaceSession(
             request: request,
             operations: operations,
-            displayWorkspace: WorkspaceDisplayMock(recorder: recorder)
+            displayWorkspace: WorkspaceDisplayMock(recorder: recorder),
+            coordinator: makeCoordinator()
         )
 
         try await session.start()
@@ -261,7 +372,8 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
                 .startCapture(73),
                 .stopCapture,
                 .restore,
-                .destroy(73),
+                .verify,
+                .destroy,
             ]
         )
     }
@@ -273,7 +385,7 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
 
         let recorder = WorkspaceExecutionRecorder()
         let operations = LumenMacWorkspaceNativeOperations(
-            createVirtualDisplay: { geometry in
+            createVirtualDisplay: { _, geometry in
                 await recorder.append(.create(geometry))
                 return 91
             },
@@ -287,8 +399,8 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
             stopCapture: {
                 await recorder.append(.stopCapture)
             },
-            destroyVirtualDisplay: { displayID in
-                await recorder.append(.destroy(displayID))
+            destroyVirtualDisplay: { _ in
+                await recorder.append(.destroy)
             }
         )
         let request = LumenMacWorkspaceSessionRequest(
@@ -303,7 +415,8 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         let session = try LumenMacWorkspaceSession(
             request: request,
             operations: operations,
-            displayWorkspace: WorkspaceDisplayMock(recorder: recorder)
+            displayWorkspace: WorkspaceDisplayMock(recorder: recorder),
+            coordinator: makeCoordinator()
         )
 
         do {
@@ -324,7 +437,8 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
                 .configure(91, geometry),
                 .startCapture(91),
                 .restore,
-                .destroy(91),
+                .verify,
+                .destroy,
             ]
         )
     }
@@ -410,8 +524,68 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         var actions: [LumenMacWorkspaceAction] = []
         while let command = try await coordinator.nextCommand() {
             actions.append(command.action)
-            try await coordinator.complete(command, succeeded: true)
+            let result: LumenMacWorkspaceCommandResult
+            switch command.action {
+            case .snapshotWorkspace:
+                result = .physicalTopology(testTopology())
+            case .createVirtualDisplay:
+                if case .virtualDisplayIdentity(let identity) = command.payload {
+                    result = .virtualDisplayIdentity(identity)
+                } else {
+                    XCTFail("expected virtual display identity payload")
+                    result = .failed
+                }
+            default:
+                result = .succeeded
+            }
+            try await coordinator.complete(command, result: result)
         }
         return actions
     }
+
+    private func makeCoordinator() throws -> LumenWorkspaceCoordinator {
+        let path = FileManager.default.temporaryDirectory
+            .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+            .appending(path: "display-recovery.json", directoryHint: .notDirectory)
+            .path(percentEncoded: false)
+        return try LumenWorkspaceCoordinator(recoveryJournalPath: path)
+    }
+
+    private func externalIsolatedRequest() -> LumenMacWorkspaceSessionRequest {
+        LumenMacWorkspaceSessionRequest(
+            policy: .isolatedWorkspace,
+            displayMode: LumenMacDisplayModeRequest(
+                width: 1920,
+                height: 1080,
+                scalePercent: 100,
+                dimensionsAreLogical: false
+            ),
+            managesCapture: false,
+            captureConfiguration: LumenMacCaptureConfiguration(displayID: 0)
+        )
+    }
+}
+
+private func testTopology() -> LumenMacPhysicalDisplayTopology {
+    LumenMacPhysicalDisplayTopology(
+        displays: [
+            LumenMacPhysicalDisplayState(
+                id: "1",
+                mode: LumenMacPhysicalDisplayMode(
+                    width: 2560,
+                    height: 1440,
+                    refreshMillihertz: 120_000,
+                    bitDepth: 10
+                ),
+                originX: 0,
+                originY: 0,
+                mirrorMasterID: nil,
+                enabled: true,
+                active: true,
+                online: true
+            ),
+        ],
+        windowsAdapterLUID: nil,
+        windowsTargetPaths: []
+    )
 }

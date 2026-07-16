@@ -145,6 +145,11 @@ public final class LumenBridgeEffectiveDisplayStateBox: NSObject {
 public final class LumenBridgeConfigurationBox: NSObject {
     public let displayID: UInt32
     public let codecRawValue: Int
+    public let videoProfileRawValue: Int
+    public let chromaSubsamplingRawValue: Int
+    public let bitDepth: Int
+    public let dynamicRangeRawValue: Int
+    public let colorRangeRawValue: Int
     public let preprocessStrategyRawValue: Int
     public let queueProfileRawValue: Int
     public let targetFrameRate: Int
@@ -157,6 +162,11 @@ public final class LumenBridgeConfigurationBox: NSObject {
     public init(
         displayID: UInt32,
         codecRawValue: Int,
+        videoProfileRawValue: Int,
+        chromaSubsamplingRawValue: Int,
+        bitDepth: Int,
+        dynamicRangeRawValue: Int,
+        colorRangeRawValue: Int,
         preprocessStrategyRawValue: Int,
         queueProfileRawValue: Int,
         targetFrameRate: Int,
@@ -168,6 +178,11 @@ public final class LumenBridgeConfigurationBox: NSObject {
     ) {
         self.displayID = displayID
         self.codecRawValue = codecRawValue
+        self.videoProfileRawValue = videoProfileRawValue
+        self.chromaSubsamplingRawValue = chromaSubsamplingRawValue
+        self.bitDepth = bitDepth
+        self.dynamicRangeRawValue = dynamicRangeRawValue
+        self.colorRangeRawValue = colorRangeRawValue
         self.preprocessStrategyRawValue = preprocessStrategyRawValue
         self.queueProfileRawValue = queueProfileRawValue
         self.targetFrameRate = targetFrameRate
@@ -219,6 +234,11 @@ public final class LumenBridgeConfigurationBox: NSObject {
         self.init(
             displayID: configuration.displayID,
             codecRawValue: LumenBridgeObjCFacade.rawValue(for: configuration.codec),
+            videoProfileRawValue: configuration.videoProfile.rawValue,
+            chromaSubsamplingRawValue: configuration.chromaSubsampling.rawValue,
+            bitDepth: configuration.bitDepth,
+            dynamicRangeRawValue: configuration.dynamicRange.rawValue,
+            colorRangeRawValue: configuration.colorRange.rawValue,
             preprocessStrategyRawValue: LumenBridgeObjCFacade.rawValue(for: configuration.preprocessStrategy),
             queueProfileRawValue: LumenBridgeObjCFacade.rawValue(for: configuration.queueProfile),
             targetFrameRate: configuration.targetFrameRate,
@@ -255,6 +275,11 @@ public final class LumenBridgeConfigurationBox: NSObject {
         return LumenMacCaptureConfiguration(
             displayID: displayID,
             codec: LumenBridgeObjCFacade.codec(fromRawValue: codecRawValue),
+            videoProfile: LumenCaptureVideoProfile(rawValue: videoProfileRawValue),
+            chromaSubsampling: LumenCaptureChromaSubsampling(rawValue: chromaSubsamplingRawValue),
+            bitDepth: bitDepth,
+            dynamicRange: LumenCaptureDynamicRange(rawValue: dynamicRangeRawValue),
+            colorRange: LumenCaptureColorRange(rawValue: colorRangeRawValue),
             preprocessStrategy: LumenBridgeObjCFacade.preprocessStrategy(fromRawValue: preprocessStrategyRawValue),
             queueProfile: LumenBridgeObjCFacade.queueProfile(fromRawValue: queueProfileRawValue),
             targetFrameRate: targetFrameRate,

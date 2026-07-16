@@ -34,6 +34,7 @@ public struct LumenMacWorkspaceSessionRequest: Sendable {
 public enum LumenMacWorkspaceSessionError: Error, Equatable {
     case sessionAlreadyStarted
     case sessionNotStarted
+    case recoveryDidNotComplete
     case virtualDisplayOwnershipMismatch
 }
 
@@ -102,6 +103,7 @@ private actor LumenMacVirtualDisplayOwner {
     private var displayKey: String?
 
     func create(
+        identity: LumenMacVirtualDisplayIdentity,
         geometry: LumenMacDisplayGeometry,
         request: LumenMacWorkspaceSessionRequest
     ) throws -> UInt32 {
@@ -113,11 +115,11 @@ private actor LumenMacVirtualDisplayOwner {
             request: request
         )
         let display = try LumenMacVirtualDisplay.createRegisteredDisplay(
-            forKey: request.displayKey,
+            forKey: identity.id,
             configuration: configuration
         )
         self.display = display
-        displayKey = request.displayKey
+        displayKey = identity.id
         return display.displayID
     }
 
@@ -136,24 +138,29 @@ private actor LumenMacVirtualDisplayOwner {
         )
     }
 
-    func destroy(displayID: UInt32) throws {
-        guard let display, display.displayID == displayID else {
+    func destroy(identity: LumenMacVirtualDisplayIdentity) throws {
+        if let displayKey, displayKey != identity.id {
             throw LumenMacWorkspaceSessionError.virtualDisplayOwnershipMismatch
         }
-        guard let displayKey,
-              LumenMacVirtualDisplay.removeRegisteredDisplay(forKey: displayKey) else {
-            throw LumenMacWorkspaceSessionError.virtualDisplayOwnershipMismatch
-        }
+        _ = LumenMacVirtualDisplay.removeRegisteredDisplay(forKey: identity.id)
         self.display = nil
         self.displayKey = nil
     }
 }
 
 public actor LumenMacWorkspaceSession {
+    private enum Phase {
+        case idle
+        case prepared
+        case active
+    }
+
+    private static let firstEncodedFrameTimeoutNanoseconds: UInt64 = 5_000_000_000
     private let request: LumenMacWorkspaceSessionRequest
     private let coordinator: LumenWorkspaceCoordinator
     private let executor: LumenMacWorkspaceExecutor
-    private var started = false
+    private var phase = Phase.idle
+    private var activationCommand: LumenMacWorkspaceCommand?
 
     public init(
         request: LumenMacWorkspaceSessionRequest,
@@ -162,8 +169,12 @@ public actor LumenMacWorkspaceSession {
     ) throws {
         let displayOwner = LumenMacVirtualDisplayOwner()
         let operations = LumenMacWorkspaceNativeOperations(
-            createVirtualDisplay: { geometry in
-                try await displayOwner.create(geometry: geometry, request: request)
+            createVirtualDisplay: { identity, geometry in
+                try await displayOwner.create(
+                    identity: identity,
+                    geometry: geometry,
+                    request: request
+                )
             },
             configureVirtualDisplay: { displayID, geometry in
                 try await displayOwner.configure(
@@ -176,12 +187,25 @@ public actor LumenMacWorkspaceSession {
                 try await runtime.startCapture(
                     configuration: request.captureConfiguration.replacingDisplayID(displayID)
                 )
+                try await runtime.waitForFirstEncodedFrame(
+                    timeoutNanoseconds: Self.firstEncodedFrameTimeoutNanoseconds
+                )
             },
             stopCapture: {
                 await runtime.stopCapture()
             },
-            destroyVirtualDisplay: { displayID in
-                try await displayOwner.destroy(displayID: displayID)
+            destroyVirtualDisplay: { identity in
+                try await displayOwner.destroy(identity: identity)
+            },
+            waitForExternalFirstEncodedFrame: {
+                try await runtime.waitForFirstEncodedFrame(
+                    timeoutNanoseconds: Self.firstEncodedFrameTimeoutNanoseconds
+                )
+            },
+            verifyCaptureContinuity: {
+                try await runtime.verifyEncodedFrameContinuity(
+                    timeoutNanoseconds: Self.firstEncodedFrameTimeoutNanoseconds
+                )
             }
         )
         try self.init(
@@ -194,10 +218,11 @@ public actor LumenMacWorkspaceSession {
     init(
         request: LumenMacWorkspaceSessionRequest,
         operations: LumenMacWorkspaceNativeOperations,
-        displayWorkspace: any LumenMacDisplayWorkspaceManaging
+        displayWorkspace: any LumenMacDisplayWorkspaceManaging,
+        coordinator: LumenWorkspaceCoordinator? = nil
     ) throws {
         self.request = request
-        coordinator = try LumenWorkspaceCoordinator()
+        self.coordinator = try coordinator ?? LumenWorkspaceCoordinator()
         executor = try LumenMacWorkspaceExecutor(
             targetProcessIdentifiers: request.targetProcessIdentifiers,
             displayMode: request.displayMode,
@@ -207,31 +232,100 @@ public actor LumenMacWorkspaceSession {
     }
 
     public func start() async throws {
-        guard !started else {
+        try await prepare()
+        try await activate()
+    }
+
+    public func prepare() async throws {
+        guard phase == .idle else {
             throw LumenMacWorkspaceSessionError.sessionAlreadyStarted
         }
 
-        try await coordinator.beginSession(
+        let admitted = try await coordinator.beginSession(
             policy: request.policy,
             moveTargetWindows: !request.targetProcessIdentifiers.isEmpty,
             manageCapture: request.managesCapture
         )
+        if !admitted {
+            if let recoveryError = try await coordinator.executePendingCommandsRecovering(
+                using: executor
+            ) {
+                throw recoveryError
+            }
+            let recoveredAdmission = try await coordinator.beginSession(
+                policy: request.policy,
+                moveTargetWindows: !request.targetProcessIdentifiers.isEmpty,
+                manageCapture: request.managesCapture
+            )
+            guard recoveredAdmission else {
+                throw LumenMacWorkspaceSessionError.recoveryDidNotComplete
+            }
+        }
         do {
-            try await coordinator.executePendingCommands(using: executor)
-            started = true
+            while let command = try await coordinator.nextCommand() {
+                if command.action == .awaitExternalFirstEncodedFrame {
+                    activationCommand = command
+                    phase = .prepared
+                    return
+                }
+                let result: LumenMacWorkspaceCommandResult
+                do {
+                    result = try await executor.execute(command)
+                } catch {
+                    _ = try? await coordinator.complete(command, result: .failed)
+                    throw error
+                }
+                try await coordinator.complete(command, result: result)
+            }
+            phase = .active
         } catch {
             _ = try? await coordinator.executePendingCommandsRecovering(using: executor)
+            phase = .idle
+            throw error
+        }
+    }
+
+    public func activate() async throws {
+        if phase == .active {
+            return
+        }
+        guard phase == .prepared, let activationCommand else {
+            throw LumenMacWorkspaceSessionError.sessionNotStarted
+        }
+        do {
+            let result = try await executor.execute(activationCommand)
+            try await coordinator.complete(activationCommand, result: result)
+            self.activationCommand = nil
+            try await coordinator.executePendingCommands(using: executor)
+            phase = .active
+        } catch {
+            _ = try? await coordinator.complete(activationCommand, result: .failed)
+            self.activationCommand = nil
+            _ = try? await coordinator.executePendingCommandsRecovering(using: executor)
+            phase = .idle
             throw error
         }
     }
 
     public func stop() async throws {
-        guard started else {
+        guard phase != .idle else {
             throw LumenMacWorkspaceSessionError.sessionNotStarted
+        }
+        if let activationCommand {
+            _ = try? await coordinator.complete(activationCommand, result: .failed)
+            self.activationCommand = nil
+            let cleanupError = try await coordinator.executePendingCommandsRecovering(
+                using: executor
+            )
+            phase = .idle
+            if let cleanupError {
+                throw cleanupError
+            }
+            return
         }
         try await coordinator.endSession()
         let cleanupError = try await coordinator.executePendingCommandsRecovering(using: executor)
-        started = false
+        phase = .idle
         if let cleanupError {
             throw cleanupError
         }

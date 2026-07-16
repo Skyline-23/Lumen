@@ -180,6 +180,21 @@ struct LumenCaptureColorContract: Equatable, Sendable {
 }
 
 enum LumenCaptureStreamConfigurationFactory {
+    static func make(configuration: LumenMacCaptureConfiguration) -> SCStreamConfiguration {
+        if configuration.chromaSubsampling == .yuv444,
+           configuration.dynamicRange == .hdr10,
+           #available(macOS 15.0, *) {
+            let result = SCStreamConfiguration(preset: .captureHDRStreamCanonicalDisplay)
+            result.captureDynamicRange = .hdrCanonicalDisplay
+            result.pixelFormat = kCVPixelFormatType_444YpCbCr10BiPlanarFullRange
+            result.colorSpaceName = CGColorSpace.itur_2100_PQ
+            result.colorMatrix = kCVImageBufferYCbCrMatrix_ITU_R_2020
+            result.showsCursor = true
+            return result
+        }
+        return make(usesHDRTransport: configuration.usesHDRTransport)
+    }
+
     static func make(usesHDRTransport: Bool) -> SCStreamConfiguration {
         let configuration: SCStreamConfiguration
         if !usesHDRTransport {
@@ -338,6 +353,26 @@ public struct LumenEncodedCaptureSessionStatistics: Equatable, Sendable {
     var minOutputCallbackLatencyMilliseconds: Double?
     var maxOutputCallbackLatencyMilliseconds: Double?
     var notes: [String] = []
+    var exactCaptureAudit = LumenExactCaptureAuditSnapshot()
+}
+
+struct LumenExactCaptureAuditSnapshot: Codable, Equatable, Sendable {
+    var inputFourCC: String?
+    var lumaPlaneWidth: Int?
+    var lumaPlaneHeight: Int?
+    var chromaPlaneWidth: Int?
+    var chromaPlaneHeight: Int?
+    var colorPrimaries: String?
+    var transferFunction: String?
+    var yCbCrMatrix: String?
+    var profile: String?
+    var hardwareUsed: Bool?
+    var configurationAtom: String?
+    var profileIdc: Int?
+    var chromaFormatIdc: Int?
+    var lumaBitDepth: Int?
+    var chromaBitDepth: Int?
+    var conversionCount: Int = 0
 }
 
 private struct LumenEncodedFrameContext {
@@ -359,6 +394,9 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
     private let queue = DispatchQueue(label: "dev.skyline23.lumen.sck.video", qos: .userInteractive)
     private var stream: SCStream?
     private var compressionSession: VTCompressionSession?
+    private var encodingPlan: LumenVideoToolboxEncodingPlan?
+    private var sourceContract: LumenExactCaptureSourceContract?
+    private var outputContract: LumenExactEncodedOutputContract?
     private var sequenceNumber: UInt64 = 0
     private var forceKeyFrame = false
     private var inflightFrameCount = 0
@@ -374,6 +412,7 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
     private var outputHeight = 0
     private var sourceColorContractStatus = "not-required"
     private var sourceColorContractFailureReported = false
+    private var terminalContractFailureReported = false
     private var statistics = LumenEncodedCaptureSessionStatistics()
 
     init(
@@ -401,14 +440,27 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
         outputWidth = configuration.effectivePreprocessStrategy == .downscale2x ? max(width / 2, 1) : width
         outputHeight = configuration.effectivePreprocessStrategy == .downscale2x ? max(height / 2, 1) : height
 
+        let plan = try await resolveEncodingPlan()
+        encodingPlan = plan
+        sourceContract = try LumenExactCaptureSourceContract(
+            configuration: configuration,
+            width: outputWidth,
+            height: outputHeight
+        )
+        outputContract = try LumenExactEncodedOutputContract(configuration: configuration)
+
         let streamConfiguration = LumenCaptureStreamConfigurationFactory.make(
-            usesHDRTransport: configuration.usesHDRTransport
+            configuration: configuration
         )
         streamConfiguration.width = outputWidth
         streamConfiguration.height = outputHeight
         streamConfiguration.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(configuration.effectiveTargetFrameRate))
         streamConfiguration.queueDepth = configuration.negotiatedQueueProfile.queueDepthHint
-        streamConfiguration.pixelFormat = capturePixelFormat
+        streamConfiguration.pixelFormat = plan.pixelFormat
+        if configuration.chromaSubsampling == .yuv444, configuration.dynamicRange == .sdr {
+            streamConfiguration.colorSpaceName = CGColorSpace.itur_709
+            streamConfiguration.colorMatrix = kCVImageBufferYCbCrMatrix_ITU_R_709_2
+        }
         streamConfiguration.scalesToFit = false
         streamConfiguration.preservesAspectRatio = true
         try createCompressionSession(width: outputWidth, height: outputHeight)
@@ -473,6 +525,39 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
         }
         lastSourceMachTime = sourceMachTime
 
+        if let mismatch = sourceContract?.mismatchDescription(
+            for: imageBuffer,
+            formatDescription: sampleBuffer.formatDescription
+        ) {
+            reportTerminalContractFailure(.sourceContractMismatch(mismatch), sourceDisplayTime: nil)
+            return
+        }
+        statistics.exactCaptureAudit.inputFourCC = auditFourCC(
+            CVPixelBufferGetPixelFormatType(imageBuffer)
+        )
+        statistics.exactCaptureAudit.lumaPlaneWidth = CVPixelBufferGetWidthOfPlane(imageBuffer, 0)
+        statistics.exactCaptureAudit.lumaPlaneHeight = CVPixelBufferGetHeightOfPlane(imageBuffer, 0)
+        statistics.exactCaptureAudit.chromaPlaneWidth = CVPixelBufferGetWidthOfPlane(imageBuffer, 1)
+        statistics.exactCaptureAudit.chromaPlaneHeight = CVPixelBufferGetHeightOfPlane(imageBuffer, 1)
+        let sourceFormatExtensions = sampleBuffer.formatDescription.flatMap {
+            CMFormatDescriptionGetExtensions($0) as? [CFString: Any]
+        }
+        statistics.exactCaptureAudit.colorPrimaries = (CVBufferCopyAttachment(
+            imageBuffer,
+            kCVImageBufferColorPrimariesKey,
+            nil
+        ) as? String) ?? (sourceFormatExtensions?[kCMFormatDescriptionExtension_ColorPrimaries] as? String)
+        statistics.exactCaptureAudit.transferFunction = (CVBufferCopyAttachment(
+            imageBuffer,
+            kCVImageBufferTransferFunctionKey,
+            nil
+        ) as? String) ?? (sourceFormatExtensions?[kCMFormatDescriptionExtension_TransferFunction] as? String)
+        statistics.exactCaptureAudit.yCbCrMatrix = (CVBufferCopyAttachment(
+            imageBuffer,
+            kCVImageBufferYCbCrMatrixKey,
+            nil
+        ) as? String) ?? (sourceFormatExtensions?[kCMFormatDescriptionExtension_YCbCrMatrix] as? String)
+
         guard isCompleteScreenFrame(sampleBuffer) else {
             statistics.droppedFrameCount &+= 1
             refreshStatisticsNotesIfNeeded()
@@ -500,19 +585,7 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
             return
         }
 
-        if let mismatch = sourceColorContractMismatch(for: imageBuffer) {
-            statistics.droppedFrameCount &+= 1
-            statistics.processingFailureCount &+= 1
-            sourceColorContractStatus = "rejected:\(mismatch)"
-            statistics.lastErrorDescription = "SCK color contract mismatch: \(mismatch)"
-            refreshStatisticsNotes()
-            statisticsHandler(statistics)
-            if !sourceColorContractFailureReported {
-                sourceColorContractFailureReported = true
-                eventHandler(.init(kind: .failed, message: statistics.lastErrorDescription))
-            }
-            return
-        }
+        sourceColorContractStatus = "verified"
         let context = UnsafeMutablePointer<LumenEncodedFrameContext>.allocate(capacity: 1)
         context.initialize(to: .init(
             sequenceNumber: sequenceNumber,
@@ -578,9 +651,7 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
     }
 
     private var capturePixelFormat: OSType {
-        return configuration.usesHDRTransport
-            ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
-            : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+        encodingPlan?.pixelFormat ?? configuration.directCapturePixelFormat
     }
 
     private func sourceColorContractMismatch(for imageBuffer: CVImageBuffer) -> String? {
@@ -599,6 +670,9 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
     }
 
     private func createCompressionSession(width: Int, height: Int) throws {
+        guard let encodingPlan else {
+            throw LumenExactCaptureError.invalidFormat("encoding plan was not resolved")
+        }
         let codecType: CMVideoCodecType
         switch configuration.codec {
         case .h264: codecType = kCMVideoCodecType_H264
@@ -617,7 +691,9 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
             width: Int32(width),
             height: Int32(height),
             codecType: codecType,
-            encoderSpecification: [kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder: true] as CFDictionary,
+            encoderSpecification: [
+                kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder: true
+            ] as CFDictionary,
             imageBufferAttributes: imageAttributes as CFDictionary,
             compressedDataAllocator: nil,
             outputCallback: lumenScreenCaptureCompressionOutputCallback,
@@ -633,7 +709,6 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
         try setProperty(kVTCompressionPropertyKey_AllowFrameReordering, value: false as CFBoolean)
         try setProperty(kVTCompressionPropertyKey_ExpectedFrameRate, value: configuration.effectiveTargetFrameRate as CFNumber)
         try setProperty(kVTCompressionPropertyKey_MaxKeyFrameInterval, value: configuration.effectiveTargetFrameRate as CFNumber)
-        try setProperty(kVTCompressionPropertyKey_MaxFrameDelayCount, value: 0 as CFNumber)
         if configuration.targetVideoBitRateKbps > 0 {
             try setProperty(
                 kVTCompressionPropertyKey_AverageBitRate,
@@ -641,12 +716,10 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
             )
         }
 
-        if configuration.codec == .hevc {
-            let profile = configuration.usesHDRTransport
-                ? kVTProfileLevel_HEVC_Main10_AutoLevel
-                : kVTProfileLevel_HEVC_Main_AutoLevel
-            try setProperty(kVTCompressionPropertyKey_ProfileLevel, value: profile)
-        }
+        try setProperty(
+            kVTCompressionPropertyKey_ProfileLevel,
+            value: encodingPlan.profile as CFString
+        )
         if let color = configuration.encodedColorConfiguration {
             try setProperty(kVTCompressionPropertyKey_ColorPrimaries, value: color.colorPrimaries.coreMediaValue)
             try setProperty(kVTCompressionPropertyKey_TransferFunction, value: color.transferFunction.coreMediaValue)
@@ -671,6 +744,60 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
         guard prepareStatus == noErr else {
             throw LumenScreenCaptureError.compressionSessionPreparationFailed(prepareStatus)
         }
+
+        var hardwareValue: CFTypeRef?
+        let hardwareStatus = withUnsafeMutablePointer(to: &hardwareValue) { pointer in
+            VTSessionCopyProperty(
+                session,
+                key: kVTCompressionPropertyKey_UsingHardwareAcceleratedVideoEncoder,
+                allocator: kCFAllocatorDefault,
+                valueOut: UnsafeMutableRawPointer(pointer)
+            )
+        }
+        guard hardwareStatus == noErr, hardwareValue as? Bool == true else {
+            throw LumenExactCaptureError.requiredHardwareEncoderUnavailable
+        }
+        statistics.exactCaptureAudit.profile = encodingPlan.profile
+        statistics.exactCaptureAudit.hardwareUsed = true
+    }
+
+    private func resolveEncodingPlan() async throws -> LumenVideoToolboxEncodingPlan {
+        var profiles: [LumenVideoToolboxProbeTarget: String] = [:]
+        if configuration.requiredHardware444ProbeTarget != nil {
+            let rows = await LumenVideoToolboxCapabilityProbe.advertisedRequiredHardware444()
+            for row in rows {
+                guard let target = LumenVideoToolboxProbeTarget(rawValue: row.requestedProfileFamily),
+                      let profile = row.profile else {
+                    continue
+                }
+                profiles[target] = profile
+            }
+        }
+        return try LumenVideoToolboxEncodingPlanResolver.resolve(
+            configuration: configuration,
+            availableHardware444Profiles: profiles
+        )
+    }
+
+    private func reportTerminalContractFailure(
+        _ error: LumenExactCaptureError,
+        sourceDisplayTime: UInt64?
+    ) {
+        statistics.droppedFrameCount &+= 1
+        statistics.processingFailureCount &+= 1
+        sourceColorContractStatus = "rejected:\(error.localizedDescription)"
+        statistics.lastErrorDescription = error.localizedDescription
+        refreshStatisticsNotes()
+        statisticsHandler(statistics)
+        guard !terminalContractFailureReported else { return }
+        terminalContractFailureReported = true
+        sourceColorContractFailureReported = true
+        eventHandler(.init(
+            kind: .failed,
+            message: error.localizedDescription,
+            sourceDisplayTime: sourceDisplayTime
+        ))
+        terminationHandler(error)
     }
 
     private func setProperty(_ key: CFString, value: CFTypeRef) throws {
@@ -705,6 +832,9 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
             "videoToolboxSourcePixelFormat=\(capturePixelFormat)",
             "sourceColorContract=\(sourceColorContractStatus)",
             "videoToolboxStagingMode=direct-cvpixelbuffer",
+            "videoToolboxConversionCount=0",
+            "videoToolboxProfile=\(encodingPlan?.profile ?? "unresolved")",
+            "videoToolboxHardwareRequired=true",
             "videoToolboxConfiguredSourceFrameCount=\(width)x\(height)",
             "videoToolboxSubmittedFrameCount=\(statistics.submittedFrameCount)",
             "videoToolboxPendingAdmissionDropCount=\(statistics.pendingAdmissionDropCount)",
@@ -794,6 +924,28 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
             return
         }
 
+        let configurationData = exactCodecConfigurationData(from: sampleBuffer)
+        if let mismatch = outputContract?.mismatchDescription(codecConfigurationData: configurationData) {
+            reportTerminalContractFailure(
+                .encodedOutputContractMismatch(mismatch),
+                sourceDisplayTime: context.displayTime
+            )
+            return
+        }
+        switch configuration.codec {
+        case .h264:
+            let parsed = configurationData.flatMap(LumenVideoToolboxCodecConfigurationParser.parseAVCC)
+            statistics.exactCaptureAudit.configurationAtom = "avcC"
+            statistics.exactCaptureAudit.profileIdc = parsed?.profileIdc
+        case .hevc:
+            let parsed = configurationData.flatMap(LumenVideoToolboxCodecConfigurationParser.parseHVCC)
+            statistics.exactCaptureAudit.configurationAtom = "hvcC"
+            statistics.exactCaptureAudit.chromaFormatIdc = parsed?.chromaFormatIdc
+            statistics.exactCaptureAudit.lumaBitDepth = parsed?.lumaBitDepth
+            statistics.exactCaptureAudit.chromaBitDepth = parsed?.chromaBitDepth
+        }
+        statisticsHandler(statistics)
+
         let latency = LumenMachTime.milliseconds(from: context.submissionMachTime, to: mach_absolute_time())
         let outputMachTime = mach_absolute_time()
         if let lastOutputMachTime {
@@ -850,6 +1002,25 @@ private func lumenScreenCaptureCompressionOutputCallback(
             sampleBuffer: sampleBuffer,
             contextPointer: sourceFrameRefCon
         )
+}
+
+private func exactCodecConfigurationData(from sampleBuffer: CMSampleBuffer) -> Data? {
+    guard let format = CMSampleBufferGetFormatDescription(sampleBuffer),
+          let extensions = CMFormatDescriptionGetExtensions(format) as? [CFString: Any],
+          let atoms = extensions[kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms]
+            as? [String: Any] else {
+        return nil
+    }
+    return (atoms["avcC"] as? Data) ?? (atoms["hvcC"] as? Data)
+}
+
+private func auditFourCC(_ value: OSType) -> String {
+    String(bytes: [
+        UInt8((value >> 24) & 0xff),
+        UInt8((value >> 16) & 0xff),
+        UInt8((value >> 8) & 0xff),
+        UInt8(value & 0xff)
+    ], encoding: .ascii) ?? String(value)
 }
 
 private enum LumenMachTime {
@@ -968,6 +1139,17 @@ actor LumenEncodedCaptureSession {
         let failedRuntime = runtime
         runtime = nil
         await failedRuntime?.stop()
+
+        if error is LumenExactCaptureError {
+            statistics.isRunning = false
+            statistics.lastErrorDescription = error.localizedDescription
+            callbacks.eventHandler?(.init(
+                kind: .failed,
+                message: error.localizedDescription,
+                automaticRestartCount: statistics.automaticRestartCount
+            ))
+            return
+        }
 
         guard statistics.automaticRestartCount < maximumAutomaticRestartCount else {
             statistics.isRunning = false
