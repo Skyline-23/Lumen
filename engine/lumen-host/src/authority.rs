@@ -12,7 +12,7 @@ use crate::HostArguments;
 
 mod resource_capabilities;
 
-use resource_capabilities::{advertise_native_resource_values, native_settings_capabilities};
+use resource_capabilities::native_settings_capabilities;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HostAuthorityPaths {
@@ -119,15 +119,6 @@ pub struct HostAuthorities {
 impl HostAuthorities {
     pub fn open_native(paths: HostAuthorityPaths) -> Result<Self, HostAuthorityError> {
         Self::open_with_capabilities(paths, native_settings_capabilities())
-    }
-
-    pub fn open_native_configured(
-        paths: HostAuthorityPaths,
-        arguments: &HostArguments,
-    ) -> Result<Self, HostAuthorityError> {
-        let mut capabilities = native_settings_capabilities();
-        advertise_native_resource_values(&mut capabilities, arguments);
-        Self::open_with_capabilities(paths, capabilities)
     }
 
     fn open_with_capabilities(

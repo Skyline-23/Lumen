@@ -5,9 +5,6 @@ import SwiftUI
 enum LumenSettingsCategory: String, CaseIterable, Hashable, Identifiable {
     case security
     case general
-    case streaming
-    case audio
-    case input
     case network
     case advanced
 
@@ -17,9 +14,6 @@ enum LumenSettingsCategory: String, CaseIterable, Hashable, Identifiable {
         switch self {
         case .security: LumenCopy.Settings.security
         case .general: LumenCopy.Settings.general
-        case .streaming: LumenCopy.Settings.streaming
-        case .audio: LumenCopy.Settings.audio
-        case .input: LumenCopy.Settings.input
         case .network: LumenCopy.Settings.network
         case .advanced: LumenCopy.Settings.advanced
         }
@@ -29,9 +23,6 @@ enum LumenSettingsCategory: String, CaseIterable, Hashable, Identifiable {
         switch self {
         case .security: LumenCopy.Settings.securitySubtitle
         case .general: LumenCopy.Settings.generalSubtitle
-        case .streaming: LumenCopy.Settings.streamingSubtitle
-        case .audio: LumenCopy.Settings.audioSubtitle
-        case .input: LumenCopy.Settings.inputSubtitle
         case .network: LumenCopy.Settings.networkSubtitle
         case .advanced: LumenCopy.Settings.advancedSubtitle
         }
@@ -41,9 +32,6 @@ enum LumenSettingsCategory: String, CaseIterable, Hashable, Identifiable {
         switch self {
         case .security: .unlock
         case .general: .settings
-        case .streaming: .currentStream
-        case .audio: .hostControls
-        case .input: .remoteAccess
         case .network: .workspace
         case .advanced: .restart
         }
@@ -131,12 +119,6 @@ struct LumenSettingsView: View {
             securitySettings
         case .general:
             generalSettings
-        case .streaming:
-            streamingSettings
-        case .audio:
-            audioSettings
-        case .input:
-            inputSettings
         case .network:
             networkSettings
         case .advanced:
@@ -190,68 +172,6 @@ struct LumenSettingsView: View {
                     LumenCopy.Settings.deviceEnrollment,
                     isOn: $draft.deviceEnrollmentEnabled
                 )
-                Toggle(LumenCopy.Settings.notifyPreReleases, isOn: $draft.notifyPreReleases)
-            }
-            Section(LumenCopy.Settings.logging) {
-                Picker(LumenCopy.Settings.logLevel, selection: $draft.logLevel) {
-                    ForEach(LumenLogLevel.allCases, id: \.self) { level in
-                        Text(LumenCopy.Settings.logLevelTitle(level)).tag(level)
-                    }
-                }
-            }
-        }
-    }
-
-    private var streamingSettings: some View {
-        Group {
-            Section(LumenCopy.Settings.display) {
-                Picker(LumenCopy.Settings.adapterName, selection: $draft.adapterSelector) {
-                    Text(LumenCopy.Settings.automatic).tag("automatic")
-                }
-                Picker(LumenCopy.Settings.outputName, selection: $draft.outputSelector) {
-                    Text(LumenCopy.Settings.automatic).tag("automatic")
-                }
-                Picker(LumenCopy.Settings.fallbackDisplayMode, selection: $draft.fallbackDisplayMode) {
-                    ForEach(displayModeOptions, id: \.self) { mode in
-                        Text(LumenCopy.Settings.displayModeTitle(mode)).tag(mode)
-                    }
-                }
-            }
-        }
-    }
-
-    private var audioSettings: some View {
-        Section(LumenCopy.Settings.audio) {
-            Toggle(LumenCopy.Settings.streamAudio, isOn: $draft.streamAudio)
-            Picker(LumenCopy.Settings.audioSink, selection: $draft.audioSink) {
-                Text(LumenCopy.Settings.systemDefault).tag("system-default")
-            }
-            Text(LumenCopy.Settings.audioSinkDetail)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private var inputSettings: some View {
-        Group {
-            Section(LumenCopy.Settings.controller) {
-                Toggle(LumenCopy.Settings.controllerInput, isOn: $draft.controllerInput)
-                integerMenu(
-                    LumenCopy.Settings.controllerBackButtonTimeout,
-                    value: $draft.controllerBackButtonTimeoutMilliseconds,
-                    options: LumenCopy.Settings.controllerTimeoutOptions,
-                    title: LumenCopy.Settings.controllerTimeoutTitle
-                )
-                Toggle(LumenCopy.Settings.rumbleForwarding, isOn: $draft.rumbleForwarding)
-            }
-            Section(LumenCopy.Settings.keyboard) {
-                Toggle(LumenCopy.Settings.keyboardInput, isOn: $draft.keyboardInput)
-                Toggle(LumenCopy.Settings.mapRightAltToWindowsKey, isOn: $draft.mapRightAltToWindowsKey)
-            }
-            Section(LumenCopy.Settings.pointer) {
-                Toggle(LumenCopy.Settings.mouseInput, isOn: $draft.mouseInput)
-                Toggle(LumenCopy.Settings.highResolutionScrolling, isOn: $draft.highResolutionScrolling)
-                Toggle(LumenCopy.Settings.nativePenAndTouch, isOn: $draft.nativePenAndTouch)
             }
         }
     }
@@ -289,29 +209,6 @@ struct LumenSettingsView: View {
                     port: networkPortPlan.nativeSessionQUICPort,
                     transport: "UDP",
                     exposure: upnpExposure
-                )
-                Picker(LumenCopy.Settings.externalIPMode, selection: $draft.externalIPMode) {
-                    ForEach(LumenExternalIPMode.allCases, id: \.self) { mode in
-                        Text(LumenCopy.Settings.externalIPModeTitle(mode)).tag(mode)
-                    }
-                }
-            }
-            Section(LumenCopy.Settings.encryption) {
-                Picker(LumenCopy.Settings.lanEncryption, selection: $draft.lanEncryption) {
-                    ForEach(LumenEncryptionMode.allCases, id: \.self) { mode in
-                        Text(LumenCopy.Settings.encryptionTitle(mode)).tag(mode)
-                    }
-                }
-                Picker(LumenCopy.Settings.wanEncryption, selection: $draft.wanEncryption) {
-                    ForEach(LumenEncryptionMode.allCases, id: \.self) { mode in
-                        Text(LumenCopy.Settings.encryptionTitle(mode)).tag(mode)
-                    }
-                }
-                integerMenu(
-                    LumenCopy.Settings.pingTimeout,
-                    value: $draft.pingTimeoutMilliseconds,
-                    options: LumenCopy.Settings.connectionTimeoutOptions,
-                    title: LumenCopy.Settings.millisecondsTitle
                 )
                 integerMenu(
                     LumenCopy.Settings.fecPercentage,
@@ -410,24 +307,6 @@ struct LumenSettingsView: View {
         }
     }
 
-    private func numberStepper(
-        _ title: String,
-        value: Binding<Int>,
-        range: ClosedRange<Int>,
-        step: Int = 1
-    ) -> some View {
-        LabeledContent(title) {
-            HStack(spacing: 10) {
-                Text(value.wrappedValue.formatted())
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-                    .frame(minWidth: 34, alignment: .trailing)
-                Stepper("", value: value, in: range, step: step)
-                    .labelsHidden()
-            }
-        }
-    }
-
     private func integerMenu(
         _ label: String,
         value: Binding<Int>,
@@ -439,13 +318,6 @@ struct LumenSettingsView: View {
                 Text(title(option)).tag(option)
             }
         }
-    }
-
-    private var displayModeOptions: [String] {
-        if LumenCopy.Settings.displayModeOptions.contains(draft.fallbackDisplayMode) {
-            return LumenCopy.Settings.displayModeOptions
-        }
-        return [draft.fallbackDisplayMode] + LumenCopy.Settings.displayModeOptions
     }
 
     private func integerMenuOptions(current: Int, options: [Int]) -> [Int] {
