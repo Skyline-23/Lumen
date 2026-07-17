@@ -137,7 +137,7 @@ export component LumenWindowsApp inherits Window {
         : root.auth-error-detail;
     in property <string> host-name: "Lumen";
     in property <int> application-count: 0;
-    in property <int> control-port: 47989;
+    in property <int> control-port: 47990;
     in property <[string]> application-names: [];
     in property <bool> system-authentication-enabled: false;
     in property <string> system-authentication-label: @tr("Unlock with Windows Hello");
@@ -522,7 +522,7 @@ export component LumenWindowsApp inherits Window {
                             if root.navigation == 6: SettingRow { title: @tr("Keyboard input"); detail: ""; checked: true; }
                             if root.navigation == 6: SettingRow { title: @tr("Mouse input"); detail: ""; checked: true; }
                             if root.navigation == 6: SettingRow { title: @tr("Game controller input"); detail: ""; checked: true; }
-                            if root.navigation == 7: SettingRow { title: @tr("Base port"); detail: "\{root.control-port}"; }
+                            if root.navigation == 7: SettingRow { title: @tr("Port"); detail: "\{root.control-port}"; }
                             if root.navigation == 7: SettingRow { title: @tr("UPnP port mapping"); detail: ""; checked: false; }
                             if root.navigation == 8: SettingRow { title: @tr("Preparation commands"); detail: @tr("Configure commands that run before a streamed application starts."); }
                             if root.navigation == 8: SettingRow { title: @tr("Server commands"); detail: @tr("Commands available to connected clients."); }

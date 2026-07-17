@@ -198,7 +198,7 @@ impl Default for HostSettings {
             },
             network: NetworkSettings {
                 address_family: AddressFamily::Ipv4,
-                port: 47_989,
+                port: 47_990,
                 upnp: false,
                 remote_access_scope: RemoteAccessScope::Lan,
                 external_ip_mode: ExternalIpMode::Automatic,

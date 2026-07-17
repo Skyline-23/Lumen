@@ -167,24 +167,18 @@ enum LumenCopy {
         static var discovery: String { localized("Discoverable on the local network") }
         static var deviceEnrollment: String { localized("Allow new device enrollment") }
         static var network: String { localized("Network") }
-        static var networkSubtitle: String { localized("Listener ports, WAN mapping, and media recovery") }
+        static var networkSubtitle: String { localized("Connection, WAN mapping, and media recovery") }
         static var addressFamily: String { localized("Address family") }
-        static var port: String { localized("Base port") }
-        static var useDefaultPort: String { localized("Use default") }
-        static func defaultPort(_ value: Int) -> String {
-            localizedFormat("Default: %@", value.formatted(.number.grouping(.never)))
+        static var port: String { localized("Port") }
+        static func connectionPortDetail(_ value: Int) -> String {
+            localizedFormat(
+                "Use this same port in Shadow. Default: %@",
+                value.formatted(.number.grouping(.never))
+            )
         }
-        static var portPlanDetail: String {
-            localized("The base port derives every Lumen endpoint shown below.")
-        }
-        static var controlHTTPSPort: String { localized("HTTPS control") }
-        static var nativeMediaPort: String { localized("Native media") }
-        static var nativeSessionQUICPort: String { localized("Session QUIC") }
-        static var mappedByUPnP: String { localized("Mapped by UPnP") }
-        static var notMappedByUPnP: String { localized("Not mapped") }
         static var upnpMappingDetail: String {
             localized(
-                "UPnP exposes HTTPS control, Session QUIC, and Native media so authenticated WAN clients use the same host surface as LAN clients."
+                "UPnP automatically maps the connection and streaming ports required by authenticated WAN clients."
             )
         }
         static var upnp: String { localized("UPnP port mapping") }

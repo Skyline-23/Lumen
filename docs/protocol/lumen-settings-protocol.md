@@ -60,7 +60,7 @@ the host returns `revision-not-retained` and the client fetches a new snapshot.
 Capabilities expose only settings whose accepted PATCH changes the running host
 or the next native session: `general.name`, `network.fecPercentage`, and the
 three structured command lists. Local launch configuration such as listener
-address family, base port, UPnP, display/audio device selection, discovery,
+address family, connection port, UPnP, display/audio device selection, discovery,
 input policy, diagnostics, and update preferences is intentionally absent. The
 application owns those values and restarts the worker with one authoritative
 launch snapshot.

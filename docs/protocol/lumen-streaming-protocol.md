@@ -457,10 +457,12 @@ No RTSP, RTP, ENet, or legacy GameStream port is advertised or opened by a
 v3-only host.
 
 The authoritative discovery field is mDNS TXT `quic-port`; authenticated HTTPS
-host discovery exposes the same value as `sessionQuicPort`. The default base
-port is `47989`, the QUIC offset is `21`, and therefore the default QUIC control
-port is `48010`. Native media uses base offset `9` (`47998` by default), while
-HTTPS control uses offset `1` (`47990` by default). Clients use the
+host discovery exposes the same value as `sessionQuicPort`. The user-facing
+connection port is the HTTPS control port and defaults to `47990`; this is the
+same port entered by a client adding the host manually. Internally, Lumen
+derives a base port one lower (`47989` by default), native media at base offset
+`9` (`47998` by default), and QUIC at base offset `21` (`48010` by default).
+Clients use the
 discovered value when present and use `48010`
 only when discovery is unavailable and the user supplied no explicit port.
 
