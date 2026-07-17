@@ -56,6 +56,18 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            build/rust-target
+            ~/.cache/tuist
+            ~/Library/Caches/org.swift.swiftpm
+            ~/Library/Developer/Xcode/DerivedData/SourcePackages
+          key: lumen-release-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'src/platform/macos/Project.swift') }}
+          restore-keys: |
+            lumen-release-${{ runner.os }}-${{ runner.arch }}-
       - name: Validate Apple release secrets
         env:
           APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
@@ -80,7 +92,7 @@ jobs:
           rustup toolchain install stable --profile minimal
           rustup default stable
           rustup target add aarch64-apple-darwin
-          brew install opus
+          rustup target add x86_64-apple-darwin
           brew install --cask tuist
       - name: Configure signing and notarization
         env:
@@ -127,7 +139,58 @@ jobs:
           LUMEN_BUILD_NUMBER: ${{ github.run_number }}
           LUMEN_OUTPUT_DIR: ${{ github.workspace }}/build/release-artifacts
           LUMEN_VERSION: ${{ needs.prepare.outputs.version }}
-        run: scripts/macos/package.sh --skip-tests
+        run: |
+          BUILD_ROOT="${GITHUB_WORKSPACE}/build/macos-release"
+          DERIVED_DATA="${BUILD_ROOT}/DerivedData"
+          STAGING_ROOT="${BUILD_ROOT}/dmg-root"
+          SOURCE_APP="${DERIVED_DATA}/Build/Products/Release/Lumen.app"
+          STAGED_APP="${STAGING_ROOT}/Lumen.app"
+          DMG_PATH="${LUMEN_OUTPUT_DIR}/Lumen-${LUMEN_VERSION}-macOS.dmg"
+
+          mkdir -p "${BUILD_ROOT}" "${LUMEN_OUTPUT_DIR}" "${STAGING_ROOT}"
+          CONFIGURATION=Release \
+          ARCHS="arm64 x86_64" \
+          CURRENT_ARCH=undefined_arch \
+            scripts/rust/build_lumen_engine.sh
+
+          cd src/platform/macos
+          tuist generate --no-open
+          tuist xcodebuild build \
+            -workspace Lumen.xcworkspace \
+            -scheme LumenApp \
+            -configuration Release \
+            -destination 'generic/platform=macOS' \
+            -derivedDataPath "${DERIVED_DATA}" \
+            'ARCHS=arm64 x86_64' \
+            ONLY_ACTIVE_ARCH=NO \
+            "MARKETING_VERSION=${LUMEN_VERSION}" \
+            "CURRENT_PROJECT_VERSION=${LUMEN_BUILD_NUMBER}" \
+            CODE_SIGNING_ALLOWED=YES \
+            CODE_SIGN_STYLE=Manual \
+            "CODE_SIGN_IDENTITY=${LUMEN_SIGNING_IDENTITY}" \
+            DEVELOPMENT_TEAM=Q23JLSJCCV
+          cd "${GITHUB_WORKSPACE}"
+
+          test -d "${SOURCE_APP}"
+          ditto "${SOURCE_APP}" "${STAGED_APP}"
+          codesign --verify --deep --strict --verbose=2 "${STAGED_APP}"
+          test "$(lipo -archs "${STAGED_APP}/Contents/MacOS/LumenHostWorker")" = 'x86_64 arm64' || \
+            test "$(lipo -archs "${STAGED_APP}/Contents/MacOS/LumenHostWorker")" = 'arm64 x86_64'
+          ln -s /Applications "${STAGING_ROOT}/Applications"
+          hdiutil create \
+            -volname Lumen \
+            -srcfolder "${STAGING_ROOT}" \
+            -format UDZO \
+            -imagekey zlib-level=9 \
+            -ov \
+            "${DMG_PATH}"
+          codesign --force --timestamp --sign "${LUMEN_SIGNING_IDENTITY}" "${DMG_PATH}"
+          codesign --verify --verbose=2 "${DMG_PATH}"
+          xcrun notarytool submit "${DMG_PATH}" \
+            --keychain-profile "${LUMEN_NOTARY_PROFILE}" \
+            --wait
+          xcrun stapler staple "${DMG_PATH}"
+          xcrun stapler validate "${DMG_PATH}"
       - name: Upload macOS release artifact
         uses: actions/upload-artifact@v7
         with:

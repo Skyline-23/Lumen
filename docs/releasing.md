@@ -280,18 +280,30 @@ failure.
 Do not move, delete, or overwrite its tag. Publish a new patch version and let
 the workflow advance the Homebrew cask to that immutable release.
 
-## Local package smoke test
+## Local release smoke test
 
-Local packaging is useful before merging but is not a substitute for the
-GitHub release workflow.
+Before merging to `main`, build both macOS architectures from the pinned
+SwiftOpus package and verify that the staged worker is universal. Signing,
+DMG creation, notarization, and stapling remain owned by the release workflow.
 
 ```bash
-LUMEN_VERSION=0.5.0 \
-LUMEN_SIGNING_IDENTITY='Developer ID Application: Buseong Kim (Q23JLSJCCV)' \
-LUMEN_NOTARY_PROFILE=lumen-release \
-scripts/macos/package.sh --skip-tests
+CONFIGURATION=Release ARCHS="arm64 x86_64" CURRENT_ARCH=undefined_arch \
+  scripts/rust/build_lumen_engine.sh
+cd src/platform/macos
+tuist generate --no-open
+tuist xcodebuild build \
+  -workspace Lumen.xcworkspace \
+  -scheme LumenApp \
+  -configuration Release \
+  -destination 'generic/platform=macOS' \
+  -derivedDataPath ../../../build/release-smoke \
+  'ARCHS=arm64 x86_64' \
+  ONLY_ACTIVE_ARCH=NO \
+  CODE_SIGNING_ALLOWED=NO
+cd ../../..
+lipo -archs \
+  build/release-smoke/Build/Products/Release/Lumen.app/Contents/MacOS/LumenHostWorker
 ```
 
-Use `--install` only when intentionally replacing `/Applications/Lumen.app`.
 See [Installing Lumen](installing.md) for canonical-path and duplicate-app
 rules.

@@ -69,18 +69,11 @@ Do not use raw `xcodebuild` for project validation. See the
 
 ## macOS packaging
 
-Create the DMG from the repository root:
-
-```bash
-scripts/macos/package.sh
-```
-
-Set `LUMEN_SIGNING_IDENTITY` and `LUMEN_NOTARY_PROFILE` for signed, notarized,
-and stapled artifacts. `--install` replaces `/Applications/Lumen.app` and
-launches it, so use that option only for an intentional runtime smoke test.
-`LUMEN_VERSION=v1.2.3` stamps a release version into the app and DMG filename.
-See [Releasing Lumen](docs/releasing.md) for the complete signing, secret,
-publishing, verification, and recovery runbook.
+The release workflow resolves SwiftOpus through SPM, builds the universal Rust
+worker and app, signs `Lumen.app`, creates the DMG, notarizes it, and staples
+the ticket. There is no separate local package wrapper. See
+[Releasing Lumen](docs/releasing.md) for the complete release and local
+smoke-test commands.
 
 ## Protocol maintenance
 

@@ -14,6 +14,10 @@ let baseSettings: SettingsDictionary = [
 ]
 
 let repoRoot = "$(SRCROOT)/../../.."
+let swiftOpusPackage = Package.package(
+    url: "https://github.com/Skyline-23/SwiftOpus.git",
+    .exact("0.5.0")
+)
 
 let rustEngineBuildScript = TargetScript.pre(
     script: #"""
@@ -59,15 +63,26 @@ let nativeAssetsScript = TargetScript.post(
     rsync -a "${REPO_ROOT}/src_assets/common/assets/" "${ASSETS_ROOT}/"
     rsync -a --exclude 'Info.plist' "${REPO_ROOT}/src_assets/macos/assets/" "${ASSETS_ROOT}/"
 
-    WORKER_ARCH="${CURRENT_ARCH:-}"
-    if [[ -z "${WORKER_ARCH}" || "${WORKER_ARCH}" == "undefined_arch" ]]; then
-      WORKER_ARCH="${ARCHS%% *}"
-    fi
-    WORKER_SOURCE="${REPO_ROOT}/build/rust-engine/${CONFIGURATION}/${WORKER_ARCH}/LumenRustHostWorker"
     WORKER_DESTINATION="${TARGET_BUILD_DIR}/${EXECUTABLE_FOLDER_PATH}/LumenHostWorker"
-    test -x "${WORKER_SOURCE}"
     rm -f "${WORKER_DESTINATION}"
-    ditto "${WORKER_SOURCE}" "${WORKER_DESTINATION}"
+    WORKER_ARCHS=(${(z)ARCHS})
+    if (( ${#WORKER_ARCHS} > 1 )); then
+      WORKER_SOURCES=()
+      for WORKER_ARCH in "${WORKER_ARCHS[@]}"; do
+        WORKER_SOURCE="${REPO_ROOT}/build/rust-engine/${CONFIGURATION}/${WORKER_ARCH}/LumenRustHostWorker"
+        test -x "${WORKER_SOURCE}"
+        WORKER_SOURCES+=("${WORKER_SOURCE}")
+      done
+      lipo -create "${WORKER_SOURCES[@]}" -output "${WORKER_DESTINATION}"
+    else
+      WORKER_ARCH="${CURRENT_ARCH:-}"
+      if [[ -z "${WORKER_ARCH}" || "${WORKER_ARCH}" == "undefined_arch" ]]; then
+        WORKER_ARCH="${ARCHS%% *}"
+      fi
+      WORKER_SOURCE="${REPO_ROOT}/build/rust-engine/${CONFIGURATION}/${WORKER_ARCH}/LumenRustHostWorker"
+      test -x "${WORKER_SOURCE}"
+      ditto "${WORKER_SOURCE}" "${WORKER_DESTINATION}"
+    fi
     chmod 755 "${WORKER_DESTINATION}"
     SIGNING_IDENTITY="${EXPANDED_CODE_SIGN_IDENTITY:--}"
     /usr/bin/codesign --force --options runtime --sign "${SIGNING_IDENTITY}" "${WORKER_DESTINATION}"
@@ -88,6 +103,7 @@ let project = Project(
         developmentRegion: "en",
         disableSynthesizedResourceAccessors: true
     ),
+    packages: [swiftOpusPackage],
     settings: .settings(base: baseSettings),
     targets: [
         .target(
@@ -135,6 +151,7 @@ let project = Project(
             ),
             dependencies: [
                 .target(name: "LumenEngineBridge"),
+                .package(product: "COpus"),
                 .sdk(name: "AppKit", type: .framework),
                 .sdk(name: "AVFoundation", type: .framework),
                 .sdk(name: "CoreVideo", type: .framework),

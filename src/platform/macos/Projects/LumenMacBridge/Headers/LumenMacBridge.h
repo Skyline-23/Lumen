@@ -347,9 +347,35 @@ typedef struct LumenMacBridgeStatusSnapshot {
 } LumenMacBridgeStatusSnapshot;
 
 typedef struct LumenMacBridgeController LumenMacBridgeController;
+typedef struct LumenMacOpusEncoder LumenMacOpusEncoder;
 
 LumenMacBridgeController *LumenMacBridgeControllerCreate(void);
 void LumenMacBridgeControllerDestroy(LumenMacBridgeController *controller);
+
+LumenMacOpusEncoder *LumenMacOpusEncoderCreate(
+  int32_t sample_rate,
+  int32_t channel_count,
+  int32_t stream_count,
+  int32_t coupled_stream_count,
+  const uint8_t *mapping,
+  int32_t bit_rate,
+  bool enhanced_quality,
+  char *error_destination,
+  size_t error_capacity
+);
+
+bool LumenMacOpusEncoderEncodeFloat32(
+  LumenMacOpusEncoder *encoder,
+  const float *samples,
+  int32_t frame_count,
+  uint8_t *packet_destination,
+  size_t packet_capacity,
+  size_t *packet_size_out,
+  char *error_destination,
+  size_t error_capacity
+);
+
+void LumenMacOpusEncoderDestroy(LumenMacOpusEncoder *encoder);
 
 LumenMacBridgeCaptureConfiguration LumenMacBridgeControllerMakePanelNativeConfiguration(
   uint32_t display_id

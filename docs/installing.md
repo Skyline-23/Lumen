@@ -68,16 +68,33 @@ The canonical installation has:
 
 ### Local developer installation
 
-The package script can intentionally replace the canonical application:
+Build the current architecture, verify the signed app, then replace the
+canonical application explicitly:
 
 ```bash
-scripts/macos/package.sh --install
+CONFIGURATION=Release ARCHS="$(uname -m)" CURRENT_ARCH=undefined_arch \
+  scripts/rust/build_lumen_engine.sh
+cd src/platform/macos
+tuist generate --no-open
+tuist xcodebuild build \
+  -workspace Lumen.xcworkspace \
+  -scheme LumenApp \
+  -configuration Release \
+  -destination 'generic/platform=macOS' \
+  -derivedDataPath ../../../build/local-install \
+  "ARCHS=$(uname -m)" \
+  ONLY_ACTIVE_ARCH=YES
+cd ../../..
+codesign --verify --deep --strict --verbose=2 \
+  build/local-install/Build/Products/Release/Lumen.app
+ditto build/local-install/Build/Products/Release/Lumen.app \
+  /Applications/Lumen.app
+open -na /Applications/Lumen.app
 ```
 
-`--install` stops existing Lumen processes, verifies the staged app, atomically
-replaces `/Applications/Lumen.app`, and launches that copy. Do not launch an
-app directly from DerivedData, `build/`, or `/private/tmp` while using the
-installed app.
+Stop an existing Lumen and worker process before replacing the bundle. Do not
+launch an app directly from DerivedData, `build/`, or `/private/tmp` while
+using the installed app.
 
 ### Check for duplicate applications
 

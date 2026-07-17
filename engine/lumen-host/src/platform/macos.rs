@@ -1,4 +1,4 @@
-use std::ffi::{c_char, c_int, c_uchar, c_void, CStr, CString};
+use std::ffi::{c_char, c_int, c_void, CStr, CString};
 use std::path::PathBuf;
 use std::ptr;
 use std::sync::Mutex;
@@ -21,13 +21,8 @@ const MAXIMUM_PCM_BYTES: usize = 1024 * 1024;
 const AUDIO_FRAME_COUNT: usize = 240;
 const AUDIO_PACKET_DURATION: Duration = Duration::from_millis(5);
 const MAXIMUM_AUDIO_CATCHUP: Duration = Duration::from_millis(100);
-const OPUS_APPLICATION_RESTRICTED_LOWDELAY: c_int = 2_051;
-const OPUS_SET_BITRATE_REQUEST: c_int = 4_002;
-const OPUS_SET_VBR_REQUEST: c_int = 4_006;
-const OPUS_SET_COMPLEXITY_REQUEST: c_int = 4_010;
-const OPUS_OK: c_int = 0;
-
 type BridgeController = c_void;
+type MacOpusEncoder = c_void;
 type SampleBuffer = *const c_void;
 type FormatDescription = *const c_void;
 type BlockBuffer = *const c_void;
@@ -210,6 +205,28 @@ type ActivateWorkspace =
     unsafe extern "C" fn(*const c_char, *mut c_char, usize) -> MacWorkspaceActivationResult;
 type StopWorkspace = unsafe extern "C" fn(*const c_char, *mut c_char, usize) -> bool;
 type PublishRuntimeEvent = unsafe extern "C" fn(u32, u32, u32, *const c_char);
+type CreateOpusEncoder = unsafe extern "C" fn(
+    i32,
+    i32,
+    i32,
+    i32,
+    *const u8,
+    i32,
+    bool,
+    *mut c_char,
+    usize,
+) -> *mut MacOpusEncoder;
+type EncodeOpusFloat32 = unsafe extern "C" fn(
+    *mut MacOpusEncoder,
+    *const f32,
+    i32,
+    *mut u8,
+    usize,
+    *mut usize,
+    *mut c_char,
+    usize,
+) -> bool;
+type DestroyOpusEncoder = unsafe extern "C" fn(*mut MacOpusEncoder);
 
 struct MacBridgeApi {
     handle: *mut c_void,
@@ -231,6 +248,9 @@ struct MacBridgeApi {
     activate_workspace: ActivateWorkspace,
     stop_workspace: StopWorkspace,
     publish_runtime_event: PublishRuntimeEvent,
+    create_opus_encoder: CreateOpusEncoder,
+    encode_opus_float32: EncodeOpusFloat32,
+    destroy_opus_encoder: DestroyOpusEncoder,
 }
 
 unsafe impl Send for MacBridgeApi {}
@@ -296,6 +316,9 @@ impl MacBridgeApi {
                 activate_workspace: load_symbol(handle, b"LumenMacWorkspaceActivateSession\0")?,
                 stop_workspace: load_symbol(handle, b"LumenMacWorkspaceStopSession\0")?,
                 publish_runtime_event: load_symbol(handle, b"LumenMacBridgePublishRuntimeEvent\0")?,
+                create_opus_encoder: load_symbol(handle, b"LumenMacOpusEncoderCreate\0")?,
+                encode_opus_float32: load_symbol(handle, b"LumenMacOpusEncoderEncodeFloat32\0")?,
+                destroy_opus_encoder: load_symbol(handle, b"LumenMacOpusEncoderDestroy\0")?,
             })
         }
     }
@@ -441,6 +464,7 @@ impl PlatformSessionControl for MacPlatformSessionControl {
             })
             .map_err(|status| format!("audio stream policy rejected the session: {status:?}"))?;
             state.opus = Some(NativeOpusEncoder::new(
+                &self.api,
                 &stream,
                 plan.enhanced_audio_quality,
             )?);
@@ -739,70 +763,71 @@ impl Drop for MacPlatformSessionControl {
     }
 }
 
-#[repr(C)]
-struct OpusMSEncoder {
-    _private: [u8; 0],
-}
-
 struct NativeOpusEncoder {
-    encoder: *mut OpusMSEncoder,
+    encoder: *mut MacOpusEncoder,
+    encode: EncodeOpusFloat32,
+    destroy: DestroyOpusEncoder,
 }
 
 unsafe impl Send for NativeOpusEncoder {}
 
 impl NativeOpusEncoder {
-    fn new(stream: &lumen_engine::LumenAudioStreamPlan, enhanced: bool) -> Result<Self, String> {
-        let mut error = OPUS_OK;
+    fn new(
+        api: &MacBridgeApi,
+        stream: &lumen_engine::LumenAudioStreamPlan,
+        enhanced: bool,
+    ) -> Result<Self, String> {
+        let mut error = [0_i8; 1024];
         let encoder = unsafe {
-            opus_multistream_encoder_create(
+            (api.create_opus_encoder)(
                 stream.sample_rate,
                 stream.channel_count,
                 stream.streams,
                 stream.coupled_streams,
                 stream.mapping.as_ptr(),
-                OPUS_APPLICATION_RESTRICTED_LOWDELAY,
-                &mut error,
+                stream.bitrate,
+                enhanced,
+                error.as_mut_ptr(),
+                error.len(),
             )
         };
-        if encoder.is_null() || error != OPUS_OK {
-            return Err(format!("Opus creation failed: {}", opus_error(error)));
+        if encoder.is_null() {
+            return Err(error_text(&error));
         }
-        let value = Self { encoder };
-        value.configure(OPUS_SET_BITRATE_REQUEST, stream.bitrate)?;
-        value.configure(OPUS_SET_COMPLEXITY_REQUEST, if enhanced { 10 } else { 5 })?;
-        value.configure(OPUS_SET_VBR_REQUEST, 0)?;
-        Ok(value)
-    }
-
-    fn configure(&self, request: c_int, value: c_int) -> Result<(), String> {
-        let status = unsafe { opus_multistream_encoder_ctl(self.encoder, request, value) };
-        (status == OPUS_OK)
-            .then_some(())
-            .ok_or_else(|| format!("Opus configuration failed: {}", opus_error(status)))
+        Ok(Self {
+            encoder,
+            encode: api.encode_opus_float32,
+            destroy: api.destroy_opus_encoder,
+        })
     }
 
     fn encode(&mut self, samples: &[f32], frame_count: i32) -> Result<Vec<u8>, String> {
         let mut packet = vec![0_u8; 1_275];
-        let bytes = unsafe {
-            opus_multistream_encode_float(
+        let mut packet_size = 0;
+        let mut error = [0_i8; 1024];
+        let encoded = unsafe {
+            (self.encode)(
                 self.encoder,
                 samples.as_ptr(),
                 frame_count,
                 packet.as_mut_ptr(),
-                packet.len() as c_int,
+                packet.len(),
+                &mut packet_size,
+                error.as_mut_ptr(),
+                error.len(),
             )
         };
-        if bytes < 0 {
-            return Err(format!("Opus encoding failed: {}", opus_error(bytes)));
+        if !encoded {
+            return Err(error_text(&error));
         }
-        packet.truncate(bytes as usize);
+        packet.truncate(packet_size);
         Ok(packet)
     }
 }
 
 impl Drop for NativeOpusEncoder {
     fn drop(&mut self) {
-        unsafe { opus_multistream_encoder_destroy(self.encoder) };
+        unsafe { (self.destroy)(self.encoder) };
     }
 }
 
@@ -1017,17 +1042,6 @@ fn audio_timestamp(nanoseconds: u64) -> u32 {
         + ((nanoseconds % 1_000_000_000) * 48_000) / 1_000_000_000) as u32
 }
 
-fn opus_error(error: c_int) -> String {
-    let message = unsafe { opus_strerror(error) };
-    if message.is_null() {
-        format!("error {error}")
-    } else {
-        unsafe { CStr::from_ptr(message) }
-            .to_string_lossy()
-            .into_owned()
-    }
-}
-
 #[repr(C)]
 struct CMTime {
     value: i64,
@@ -1072,25 +1086,6 @@ unsafe extern "C" {
         count: *mut usize,
         nal_length_size: *mut c_int,
     ) -> i32;
-    fn opus_multistream_encoder_create(
-        sample_rate: c_int,
-        channels: c_int,
-        streams: c_int,
-        coupled_streams: c_int,
-        mapping: *const c_uchar,
-        application: c_int,
-        error: *mut c_int,
-    ) -> *mut OpusMSEncoder;
-    fn opus_multistream_encoder_destroy(encoder: *mut OpusMSEncoder);
-    fn opus_multistream_encoder_ctl(encoder: *mut OpusMSEncoder, request: c_int, ...) -> c_int;
-    fn opus_multistream_encode_float(
-        encoder: *mut OpusMSEncoder,
-        pcm: *const f32,
-        frame_size: c_int,
-        data: *mut u8,
-        maximum_bytes: c_int,
-    ) -> c_int;
-    fn opus_strerror(error: c_int) -> *const c_char;
 }
 
 #[cfg(test)]
