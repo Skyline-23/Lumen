@@ -117,6 +117,33 @@ private struct LumenMacWorkspaceSessionRequestSnapshot: Sendable {
     }
 }
 
+@objcMembers
+public final class LumenMacWorkspaceActivationOutcomeBox: NSObject {
+    public let isolationStatusRawValue: UInt32
+    public let warningMessage: String
+
+    @nonobjc init(_ outcome: LumenMacWorkspaceActivationOutcome) {
+        switch outcome.isolationStatus {
+        case .notRequested:
+            isolationStatusRawValue = 0
+            warningMessage = ""
+        case .pending:
+            isolationStatusRawValue = 3
+            warningMessage = ""
+        case .applied:
+            isolationStatusRawValue = 1
+            warningMessage = ""
+        case .unavailable(let message):
+            isolationStatusRawValue = 2
+            warningMessage = message
+        case .failed(let message):
+            isolationStatusRawValue = 4
+            warningMessage = message
+        }
+        super.init()
+    }
+}
+
 private actor LumenMacWorkspaceSessionRegistry {
     private let logger = Logger(
         subsystem: "dev.skyline23.lumen",
@@ -159,13 +186,12 @@ private actor LumenMacWorkspaceSessionRegistry {
         return displayID
     }
 
-    func activate(displayKey: String) async throws -> Bool {
+    func activate(displayKey: String) async throws -> LumenMacWorkspaceActivationOutcome {
         guard let session = sessions[displayKey] else {
             throw LumenMacWorkspaceSessionError.sessionNotStarted
         }
         do {
-            try await session.activate()
-            return true
+            return try await session.activate()
         } catch {
             let activationError = error
             do {
@@ -302,14 +328,15 @@ public final class LumenMacWorkspaceSessionFacade: NSObject, Sendable {
     public func activateSessionSync(
         displayKey: String,
         error errorPointer: NSErrorPointer
-    ) -> Bool {
+    ) -> LumenMacWorkspaceActivationOutcomeBox? {
         do {
-            return try blockingRun {
+            let outcome = try blockingRun {
                 try await self.registry.activate(displayKey: displayKey)
             }
+            return LumenMacWorkspaceActivationOutcomeBox(outcome)
         } catch {
             errorPointer?.pointee = error as NSError
-            return false
+            return nil
         }
     }
 

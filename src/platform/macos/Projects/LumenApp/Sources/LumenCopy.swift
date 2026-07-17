@@ -219,7 +219,14 @@ enum LumenCopy {
         static var lastError: String { localized("Last error") }
 
         static func runtimeWarningMessage(code: Int, fallback: String) -> String {
-            switch code {
+            if code == 13 {
+                let summary = localized(
+                    "The stream is active, but Lumen could not safely turn off the physical display."
+                )
+                return fallback.isEmpty ? summary : "\(summary) \(fallback)"
+            }
+
+            return switch code {
             case 0:
                 localized("UPnP could not find a compatible gateway.")
             case 1:

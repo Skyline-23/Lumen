@@ -184,16 +184,35 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         do {
             try await workspace.isolateVirtualDisplay(99)
             XCTFail("expected missing capability receipt to reject isolation")
-        } catch let failure as LumenPhysicalDisplayControlFailure {
-            XCTAssertEqual(failure.code, .physicalDisplayDisconnectUnverified)
-            XCTAssertEqual(
-                failure.code.rawValue,
-                "mac.display_disconnect.physical_display_disconnect_unverified"
+        } catch LumenMacDisplayWorkspaceError.isolationUnavailable(let message) {
+            XCTAssertTrue(
+                message.contains("physicalDisplayDisconnectUnverified")
             )
         }
 
         XCTAssertTrue(fixture.controlCalls().isEmpty)
         XCTAssertEqual(fixture.physicalTopology(), isolationPhysicalTopology())
+    }
+
+    func testUnpublishedVirtualDisplaySkipsIsolationWithoutPhysicalMutation() async throws {
+        let topology = isolationPhysicalTopology()
+        let fixture = IsolationDisplayFixture(physicalTopology: topology)
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: IsolationTopologyController(fixture: fixture),
+            physicalDisplayController: RecordingPhysicalDisplayController(fixture: fixture),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier()
+        )
+        _ = try await workspace.snapshotWorkspace(targetProcessIdentifiers: [])
+
+        do {
+            try await workspace.isolateVirtualDisplay(114)
+            XCTFail("expected unpublished virtual display to skip isolation")
+        } catch LumenMacDisplayWorkspaceError.isolationUnavailable(let message) {
+            XCTAssertTrue(message.contains("display 114 was not found"))
+        }
+
+        XCTAssertTrue(fixture.controlCalls().isEmpty)
+        XCTAssertEqual(fixture.physicalTopology(), topology)
     }
 
     func testSnapshotSurvivesRestoreUntilIndependentVerificationSucceeds() async throws {

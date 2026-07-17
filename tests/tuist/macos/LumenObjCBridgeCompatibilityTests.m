@@ -7,6 +7,12 @@
 
 @implementation LumenObjCBridgeCompatibilityTests
 
+- (void)testWorkspaceActivationResultHasStableRustCompatibleLayout {
+  XCTAssertEqual(sizeof(LumenMacWorkspaceActivationResult), 8UL);
+  XCTAssertEqual(offsetof(LumenMacWorkspaceActivationResult, activated), 0UL);
+  XCTAssertEqual(offsetof(LumenMacWorkspaceActivationResult, isolation_status), 4UL);
+}
+
 - (void)testLumenMacBridgeCABIStatusAndConfigurationSmoke {
   LumenMacBridgeController *controller = LumenMacBridgeControllerCreate();
   XCTAssertNotEqual(controller, NULL);
