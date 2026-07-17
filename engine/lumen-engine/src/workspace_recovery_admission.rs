@@ -64,6 +64,7 @@ impl WorkspaceEngine {
         self.next_sequence = 0;
         self.queued.clear();
         self.awaiting = None;
+        self.cleanup_verification_failed = false;
         self.resources = AppliedResources {
             snapshot: journal.phase.verification_required(),
             display: journal.virtual_display.is_some(),

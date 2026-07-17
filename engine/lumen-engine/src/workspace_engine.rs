@@ -87,6 +87,7 @@ pub struct WorkspaceEngine {
     pub(crate) physical_topology: Option<PhysicalDisplayTopology>,
     pub(crate) virtual_display: Option<VirtualDisplayIdentity>,
     pub(crate) last_failure: LumenEngineStatus,
+    pub(crate) cleanup_verification_failed: bool,
 }
 
 impl Default for WorkspaceEngine {
@@ -106,6 +107,7 @@ impl Default for WorkspaceEngine {
             physical_topology: None,
             virtual_display: None,
             last_failure: LumenEngineStatus::Ok,
+            cleanup_verification_failed: false,
         }
     }
 }
@@ -129,6 +131,7 @@ impl WorkspaceEngine {
         self.next_sequence = 0;
         self.queued.clear();
         self.resources = AppliedResources::default();
+        self.cleanup_verification_failed = false;
         self.manage_capture = request.manage_capture;
         let recovery_status = self.prepare_new_recovery_session();
         if recovery_status != LumenEngineStatus::Ok {
@@ -141,12 +144,6 @@ impl WorkspaceEngine {
         self.enqueue(LumenWorkspaceCommandKind::SnapshotWorkspace);
         self.enqueue(LumenWorkspaceCommandKind::CreateVirtualDisplay);
         self.enqueue(LumenWorkspaceCommandKind::ConfigureVirtualDisplay);
-        if self.manage_capture {
-            self.enqueue(LumenWorkspaceCommandKind::StartCapture);
-        } else if request.policy != LumenWorkspacePolicy::Coexist {
-            self.enqueue(LumenWorkspaceCommandKind::AwaitExternalFirstEncodedFrame);
-        }
-
         if request.policy != LumenWorkspacePolicy::Coexist {
             self.enqueue(LumenWorkspaceCommandKind::PromoteVirtualMain);
         }
@@ -157,6 +154,11 @@ impl WorkspaceEngine {
             )
         {
             self.enqueue(LumenWorkspaceCommandKind::MoveTargetWindows);
+        }
+        if self.manage_capture {
+            self.enqueue(LumenWorkspaceCommandKind::StartCapture);
+        } else if request.policy != LumenWorkspacePolicy::Coexist {
+            self.enqueue(LumenWorkspaceCommandKind::AwaitExternalFirstEncodedFrame);
         }
         if request.policy == LumenWorkspacePolicy::IsolatedWorkspace {
             self.enqueue(LumenWorkspaceCommandKind::ApplyIsolation);

@@ -6,6 +6,8 @@ private enum WorkspaceExecutionEvent: Equatable {
     case create(LumenMacDisplayGeometry)
     case configure(UInt32, LumenMacDisplayGeometry)
     case resolve(UInt32)
+    case promote(UInt32)
+    case move(UInt32)
     case isolate(UInt32)
     case firstFrameBarrier
     case captureContinuity
@@ -46,13 +48,16 @@ private actor IsolationStatusRecorder {
 private actor WorkspaceDisplayMock: LumenMacDisplayWorkspaceManaging {
     private let recorder: WorkspaceExecutionRecorder
     private let isolationFailure: LumenMacDisplayWorkspaceError?
+    private var verificationFailuresRemaining: Int
 
     init(
         recorder: WorkspaceExecutionRecorder,
-        isolationFailure: LumenMacDisplayWorkspaceError? = nil
+        isolationFailure: LumenMacDisplayWorkspaceError? = nil,
+        verificationFailures: Int = 0
     ) {
         self.recorder = recorder
         self.isolationFailure = isolationFailure
+        self.verificationFailuresRemaining = verificationFailures
     }
 
     func snapshotWorkspace(
@@ -62,8 +67,12 @@ private actor WorkspaceDisplayMock: LumenMacDisplayWorkspaceManaging {
         return testTopology()
     }
 
-    func promoteVirtualDisplay(_: UInt32) async {}
-    func moveTargetWindows(to _: UInt32) async {}
+    func promoteVirtualDisplay(_ displayID: UInt32) async {
+        await recorder.append(.promote(displayID))
+    }
+    func moveTargetWindows(to displayID: UInt32) async {
+        await recorder.append(.move(displayID))
+    }
     func isolateVirtualDisplay(_ displayID: UInt32) async throws {
         await recorder.append(.isolate(displayID))
         if let isolationFailure {
@@ -73,8 +82,12 @@ private actor WorkspaceDisplayMock: LumenMacDisplayWorkspaceManaging {
     func restoreWorkspace(_: LumenMacPhysicalDisplayTopology) async {
         await recorder.append(.restore)
     }
-    func verifyWorkspace(_: LumenMacPhysicalDisplayTopology) async {
+    func verifyWorkspace(_: LumenMacPhysicalDisplayTopology) async throws {
         await recorder.append(.verify)
+        if verificationFailuresRemaining > 0 {
+            verificationFailuresRemaining -= 1
+            throw LumenMacDisplayWorkspaceError.physicalTopologyMismatch
+        }
     }
     func discardSnapshot() async {}
 }
@@ -300,10 +313,14 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         XCTAssertEqual(statuses, [.applied])
 
         let activeEvents = await recorder.recordedEvents()
+        let promoteIndex = try XCTUnwrap(activeEvents.firstIndex(of: .promote(88)))
+        let moveIndex = try XCTUnwrap(activeEvents.firstIndex(of: .move(88)))
         let resolveIndex = try XCTUnwrap(activeEvents.firstIndex(of: .resolve(88)))
         let barrierIndex = try XCTUnwrap(activeEvents.firstIndex(of: .firstFrameBarrier))
         let isolateIndex = try XCTUnwrap(activeEvents.firstIndex(of: .isolate(88)))
         let continuityIndex = try XCTUnwrap(activeEvents.firstIndex(of: .captureContinuity))
+        XCTAssertLessThan(promoteIndex, barrierIndex)
+        XCTAssertLessThan(moveIndex, barrierIndex)
         XCTAssertLessThan(resolveIndex, barrierIndex)
         XCTAssertLessThan(barrierIndex, isolateIndex)
         XCTAssertLessThan(isolateIndex, continuityIndex)
@@ -373,6 +390,89 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         XCTAssertTrue(stoppedEvents.contains(.restore))
         XCTAssertTrue(stoppedEvents.contains(.verify))
         XCTAssertTrue(stoppedEvents.contains(.destroy))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journalPath))
+    }
+
+    func testVerificationFailureDestroysOwnedDisplayBeforeDurableRecoveryClearsJournal() async throws {
+        let recorder = WorkspaceExecutionRecorder()
+        let operations = LumenMacWorkspaceNativeOperations(
+            createVirtualDisplay: { _, geometry in
+                await recorder.append(.create(geometry))
+                return 115
+            },
+            configureVirtualDisplay: { displayID, geometry in
+                await recorder.append(.configure(displayID, geometry))
+            },
+            verifyVirtualDisplay: { displayID in
+                await recorder.append(.resolve(displayID))
+            },
+            startCapture: { _ in },
+            stopCapture: { await recorder.append(.stopCapture) },
+            destroyVirtualDisplay: { _ in await recorder.append(.destroy) },
+            waitForExternalFirstEncodedFrame: {
+                await recorder.append(.firstFrameBarrier)
+            }
+        )
+        let journalPath = temporaryRecoveryJournalPath()
+        let session = try LumenMacWorkspaceSession(
+            request: externalIsolatedRequest(),
+            operations: operations,
+            displayWorkspace: WorkspaceDisplayMock(
+                recorder: recorder,
+                isolationFailure: .isolationUnavailable("display 115 was not published"),
+                verificationFailures: 1
+            ),
+            coordinator: LumenWorkspaceCoordinator(recoveryJournalPath: journalPath)
+        )
+
+        try await session.prepare()
+        _ = try await session.activate()
+        do {
+            try await session.stop()
+            XCTFail("expected physical verification failure to remain typed")
+        } catch LumenMacDisplayWorkspaceError.physicalTopologyMismatch {}
+
+        let failedStopEvents = await recorder.recordedEvents()
+        XCTAssertEqual(failedStopEvents.filter { $0 == .destroy }.count, 1)
+        let journalData = try Data(contentsOf: URL(fileURLWithPath: journalPath))
+        let journalObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: journalData) as? [String: Any]
+        )
+        let journal = try XCTUnwrap(journalObject["journal"] as? [String: Any])
+        XCTAssertEqual(journal["phase"] as? String, "physical-restored")
+
+        let recoveryRecorder = WorkspaceExecutionRecorder()
+        let recoveryCoordinator = try LumenWorkspaceCoordinator(recoveryJournalPath: journalPath)
+        let recoveryExecutor = try LumenMacWorkspaceExecutor(
+            targetProcessIdentifiers: [],
+            displayMode: LumenMacDisplayModeRequest(
+                width: 1_920,
+                height: 1_080,
+                scalePercent: 100,
+                dimensionsAreLogical: false
+            ),
+            operations: LumenMacWorkspaceNativeOperations(
+                createVirtualDisplay: { _, _ in 0 },
+                configureVirtualDisplay: { _, _ in },
+                verifyVirtualDisplay: { _ in },
+                startCapture: { _ in },
+                stopCapture: {},
+                destroyVirtualDisplay: { _ in await recoveryRecorder.append(.destroy) }
+            ),
+            displayWorkspace: WorkspaceDisplayMock(recorder: recoveryRecorder)
+        )
+        let admitted = try await recoveryCoordinator.beginSession(
+            policy: .coexist,
+            manageCapture: false
+        )
+        XCTAssertFalse(admitted)
+        let recoveryError = try await recoveryCoordinator.executePendingCommandsRecovering(
+            using: recoveryExecutor
+        )
+
+        XCTAssertNil(recoveryError)
+        let recoveryEvents = await recoveryRecorder.recordedEvents()
+        XCTAssertEqual(recoveryEvents.filter { $0 == .destroy }.count, 1)
         XCTAssertFalse(FileManager.default.fileExists(atPath: journalPath))
     }
 

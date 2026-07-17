@@ -468,8 +468,16 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
         let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
         let stream = SCStream(filter: filter, configuration: streamConfiguration, delegate: self)
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
-        try await stream.startCapture()
         self.stream = stream
+        do {
+            try await stream.startCapture()
+        } catch {
+            try? stream.removeStreamOutput(self, type: .screen)
+            if self.stream === stream {
+                self.stream = nil
+            }
+            throw error
+        }
         statistics.isRunning = true
         statistics.notes = makeStatisticsNotes(width: outputWidth, height: outputHeight)
         statisticsHandler(statistics)
@@ -486,8 +494,11 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
             }
             return
         }
-        self.stream = nil
         try? await stream.stopCapture()
+        try? stream.removeStreamOutput(self, type: .screen)
+        if self.stream === stream {
+            self.stream = nil
+        }
         queue.sync {
             if let compressionSession {
                 VTCompressionSessionCompleteFrames(compressionSession, untilPresentationTimeStamp: .invalid)
