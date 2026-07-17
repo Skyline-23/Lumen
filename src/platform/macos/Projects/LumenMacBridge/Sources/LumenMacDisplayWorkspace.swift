@@ -63,7 +63,7 @@ public protocol LumenMacDisplayWorkspaceManaging: Sendable {
 }
 
 public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
-    private static let productionDisplayReadinessAttempts = 20
+    private static let productionDisplayReadinessAttempts = 300
     private static let productionDisplayReadinessDelayNanoseconds: UInt64 = 100_000_000
     private struct WindowSnapshot {
         let processID: Int32
@@ -225,6 +225,7 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
         guard let snapshot else {
             throw LumenMacDisplayWorkspaceError.snapshotMissing
         }
+        try await awaitVirtualDisplay(displayID)
         let current = try await topologyController.capture()
         let visibleDisplayIDs = await topologyController.visibleDisplayIDs()
         guard current.displays.contains(where: {

@@ -14,10 +14,6 @@ let baseSettings: SettingsDictionary = [
 ]
 
 let repoRoot = "$(SRCROOT)/../../.."
-let runtimeDepsRoot = "\(repoRoot)/third-party/runtime-deps/dist/Darwin-arm64"
-let opusArchive = Environment.lumenOpusArchive.getString(
-    default: "\(runtimeDepsRoot)/lib/libopus.a"
-)
 
 let rustEngineBuildScript = TargetScript.pre(
     script: #"""
@@ -63,11 +59,18 @@ let nativeAssetsScript = TargetScript.post(
     rsync -a "${REPO_ROOT}/src_assets/common/assets/" "${ASSETS_ROOT}/"
     rsync -a --exclude 'Info.plist' "${REPO_ROOT}/src_assets/macos/assets/" "${ASSETS_ROOT}/"
 
-    WORKER_SOURCE="${BUILT_PRODUCTS_DIR}/LumenHostWorker"
+    WORKER_ARCH="${CURRENT_ARCH:-}"
+    if [[ -z "${WORKER_ARCH}" || "${WORKER_ARCH}" == "undefined_arch" ]]; then
+      WORKER_ARCH="${ARCHS%% *}"
+    fi
+    WORKER_SOURCE="${REPO_ROOT}/build/rust-engine/${CONFIGURATION}/${WORKER_ARCH}/LumenRustHostWorker"
     WORKER_DESTINATION="${TARGET_BUILD_DIR}/${EXECUTABLE_FOLDER_PATH}/LumenHostWorker"
     test -x "${WORKER_SOURCE}"
+    rm -f "${WORKER_DESTINATION}"
     ditto "${WORKER_SOURCE}" "${WORKER_DESTINATION}"
     chmod 755 "${WORKER_DESTINATION}"
+    SIGNING_IDENTITY="${EXPANDED_CODE_SIGN_IDENTITY:--}"
+    /usr/bin/codesign --force --options runtime --sign "${SIGNING_IDENTITY}" "${WORKER_DESTINATION}"
     """#,
     name: "Stage Lumen Native Assets",
     inputPaths: [
@@ -220,59 +223,6 @@ let project = Project(
             )
         ),
         .target(
-            name: "LumenHostWorker",
-            destinations: .macOS,
-            product: .commandLineTool,
-            bundleId: "dev.skyline23.lumen.hostworker",
-            deploymentTargets: .macOS("15.0"),
-            infoPlist: .extendingDefault(with: [
-                "CFBundleDisplayName": "Lumen Host Worker",
-                "NSBonjourServices": [
-                    "_lumen._udp"
-                ],
-                "NSLocalNetworkUsageDescription": "Lumen needs local network access to advertise this host and configure authenticated remote access."
-            ]),
-            sources: [
-                "Projects/LumenHostWorker/Sources/**/*.m"
-            ],
-            dependencies: [
-                .target(name: "LumenMacBridge"),
-                .sdk(name: "CoreMedia", type: .framework),
-                .sdk(name: "CoreVideo", type: .framework),
-                .sdk(name: "CoreWLAN", type: .framework),
-                .sdk(name: "SystemConfiguration", type: .framework)
-            ],
-            settings: .settings(
-                base: [
-                    "AD_HOC_CODE_SIGNING_ALLOWED": "NO",
-                    "CODE_SIGN_STYLE": "Manual",
-                    "CODE_SIGN_IDENTITY": "Developer ID Application: Buseong Kim (Q23JLSJCCV)",
-                    "CODE_SIGN_INJECT_BASE_ENTITLEMENTS": "NO",
-                    "CREATE_INFOPLIST_SECTION_IN_BINARY": "YES",
-                    "DEVELOPMENT_TEAM": "Q23JLSJCCV",
-                    "ENABLE_HARDENED_RUNTIME": "YES",
-                    "HEADER_SEARCH_PATHS": [
-                        "$(SRCROOT)/Projects/LumenMacBridge/Headers",
-                        "\(repoRoot)/engine/lumen-host/include",
-                        "\(runtimeDepsRoot)/include"
-                    ],
-                    "LD_RUNPATH_SEARCH_PATHS": "$(inherited) @executable_path/../Frameworks",
-                    "LIBRARY_SEARCH_PATHS": [
-                        "\(runtimeDepsRoot)/lib"
-                    ],
-                    "OTHER_LDFLAGS": .array([
-                        "$(inherited)",
-                        "-force_load",
-                        "\(repoRoot)/build/rust-engine/$(CONFIGURATION)/$(CURRENT_ARCH)/liblumen_host.a",
-                        opusArchive
-                    ]),
-                    "OTHER_CODE_SIGN_FLAGS": "--timestamp",
-                    "PRODUCT_NAME": "LumenHostWorker",
-                    "SKIP_INSTALL": "YES"
-                ]
-            )
-        ),
-        .target(
             name: "LumenDisplayDisconnectCanary",
             destinations: .macOS,
             product: .app,
@@ -345,7 +295,6 @@ let project = Project(
             ],
             scripts: [nativeAssetsScript],
             dependencies: [
-                .target(name: "LumenHostWorker"),
                 .target(name: "LumenAppArchitecture"),
                 .target(name: "LumenMacCaptureAdapter"),
                 .target(name: "LumenMacBridge"),

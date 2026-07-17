@@ -10,12 +10,16 @@ use crate::{LumenHostPlatformControlFeedback, PlatformControlFeedback, PlatformN
 
 mod application_environment;
 #[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "macos")]
 mod macos_native_input;
 #[cfg(not(windows))]
 mod portable_process;
 #[cfg(any(test, windows))]
 mod windows;
 
+#[cfg(target_os = "macos")]
+pub(crate) use macos::MacPlatformSessionControl;
 #[cfg(not(windows))]
 use portable_process::PortableApplication;
 #[cfg(windows)]

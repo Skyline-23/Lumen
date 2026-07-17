@@ -9,9 +9,11 @@ use std::ffi::CStr;
 use std::os::unix::ffi::OsStringExt;
 
 use crate::platform::CallbackPlatformSessionControl;
+#[cfg(target_os = "macos")]
+use crate::platform::MacPlatformSessionControl;
 #[cfg(windows)]
 use crate::platform::{NativeWindowsLifecycle, NativeWindowsShell, WindowsPlatformSessionControl};
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "macos")))]
 use crate::IdlePlatformSessionControl;
 #[cfg(windows)]
 use crate::NativeCommandSource;
@@ -65,8 +67,11 @@ where
 {
     let arguments =
         HostArguments::parse_process(arguments).map_err(NativeHostRunError::Configuration)?;
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "macos")))]
     let platform: Arc<dyn PlatformSessionControl> = Arc::new(IdlePlatformSessionControl);
+    #[cfg(target_os = "macos")]
+    let platform: Arc<dyn PlatformSessionControl> =
+        Arc::new(MacPlatformSessionControl::new().map_err(NativeHostRunError::CommandSource)?);
     #[cfg(windows)]
     let platform: Arc<dyn PlatformSessionControl> = Arc::new(
         WindowsPlatformSessionControl::new(&arguments)

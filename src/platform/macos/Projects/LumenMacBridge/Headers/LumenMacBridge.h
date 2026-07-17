@@ -276,6 +276,23 @@ typedef struct LumenMacBridgeAudioCaptureConfiguration {
   char input_id[256];
 } LumenMacBridgeAudioCaptureConfiguration;
 
+typedef struct LumenMacWorkspaceSessionRequest {
+  const char *display_key;
+  const char *display_name;
+  uint32_t width;
+  uint32_t height;
+  uint32_t scale_percent;
+  bool dimensions_are_logical;
+  double refresh_rate;
+  bool hdr_enabled;
+  int32_t sink_gamut;
+  int32_t sink_transfer;
+  float current_edr_headroom;
+  float potential_edr_headroom;
+  int32_t current_peak_luminance_nits;
+  int32_t potential_peak_luminance_nits;
+} LumenMacWorkspaceSessionRequest;
+
 typedef struct LumenMacBridgeAudioForwardingSnapshot {
   uint64_t frame_count;
   uint64_t event_count;
@@ -426,6 +443,31 @@ LumenMacBridgeAudioCaptureEventRecord LumenMacBridgeControllerPopNextForwardedAu
   LumenMacBridgeController *controller,
   char *message_destination,
   size_t message_capacity
+);
+
+uint32_t LumenMacWorkspacePrepareSession(
+  LumenMacWorkspaceSessionRequest request,
+  char *error_destination,
+  size_t error_capacity
+);
+
+bool LumenMacWorkspaceActivateSession(
+  const char *display_key,
+  char *error_destination,
+  size_t error_capacity
+);
+
+bool LumenMacWorkspaceStopSession(
+  const char *display_key,
+  char *error_destination,
+  size_t error_capacity
+);
+
+void LumenMacBridgePublishRuntimeEvent(
+  uint32_t disposition,
+  uint32_t severity,
+  uint32_t code,
+  const char *message
 );
 
 #ifdef __cplusplus

@@ -143,6 +143,7 @@ final class LumenWorkspaceRecoveryPayloadTests: XCTestCase {
         let operations = LumenMacWorkspaceNativeOperations(
             createVirtualDisplay: { _, _ in 410 },
             configureVirtualDisplay: { _, _ in },
+            verifyVirtualDisplay: { _ in },
             startCapture: { _ in },
             stopCapture: {},
             destroyVirtualDisplay: { identity in
@@ -194,6 +195,7 @@ final class LumenWorkspaceRecoveryPayloadTests: XCTestCase {
         let operations = LumenMacWorkspaceNativeOperations(
             createVirtualDisplay: { _, _ in 410 },
             configureVirtualDisplay: { _, _ in },
+            verifyVirtualDisplay: { _ in },
             startCapture: { _ in },
             stopCapture: {},
             destroyVirtualDisplay: { identity in

@@ -138,6 +138,14 @@ private actor LumenMacVirtualDisplayOwner {
         )
     }
 
+    func verify(displayID: UInt32) throws {
+        guard let display,
+              display.displayID == displayID,
+              LumenMacVirtualDisplay.registeredDisplay(forDisplayID: displayID) === display else {
+            throw LumenMacWorkspaceSessionError.virtualDisplayOwnershipMismatch
+        }
+    }
+
     func destroy(identity: LumenMacVirtualDisplayIdentity) throws {
         if let displayKey, displayKey != identity.id {
             throw LumenMacWorkspaceSessionError.virtualDisplayOwnershipMismatch
@@ -159,7 +167,6 @@ public actor LumenMacWorkspaceSession {
     private let request: LumenMacWorkspaceSessionRequest
     private let coordinator: LumenWorkspaceCoordinator
     private let executor: LumenMacWorkspaceExecutor
-    private let displayWorkspace: any LumenMacDisplayWorkspaceManaging
     private var phase = Phase.idle
     private var activationCommand: LumenMacWorkspaceCommand?
 
@@ -183,6 +190,9 @@ public actor LumenMacWorkspaceSession {
                     geometry: geometry,
                     refreshRate: request.refreshRate
                 )
+            },
+            verifyVirtualDisplay: { displayID in
+                try await displayOwner.verify(displayID: displayID)
             },
             startCapture: { displayID in
                 try await runtime.startCapture(
@@ -224,7 +234,6 @@ public actor LumenMacWorkspaceSession {
     ) throws {
         self.request = request
         self.coordinator = try coordinator ?? LumenWorkspaceCoordinator()
-        self.displayWorkspace = displayWorkspace
         executor = try LumenMacWorkspaceExecutor(
             targetProcessIdentifiers: request.targetProcessIdentifiers,
             displayMode: request.displayMode,
@@ -295,8 +304,7 @@ public actor LumenMacWorkspaceSession {
             throw LumenMacWorkspaceSessionError.sessionNotStarted
         }
         do {
-            let displayID = try await executor.activeVirtualDisplayID()
-            try await displayWorkspace.awaitVirtualDisplay(displayID)
+            try await executor.verifyOwnedVirtualDisplay()
             let result = try await executor.execute(activationCommand)
             try await coordinator.complete(activationCommand, result: result)
             self.activationCommand = nil
@@ -314,7 +322,17 @@ public actor LumenMacWorkspaceSession {
             } catch {
                 cleanupError = error
             }
+            let ownershipCleanupError: (any Error)?
+            do {
+                try await executor.destroyOwnedVirtualDisplay()
+                ownershipCleanupError = nil
+            } catch {
+                ownershipCleanupError = error
+            }
             phase = .idle
+            if let ownershipCleanupError {
+                throw ownershipCleanupError
+            }
             if let cleanupError {
                 throw cleanupError
             }
