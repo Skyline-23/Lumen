@@ -6,11 +6,22 @@
 
 #include "lumen_host.h"
 #include <opus/opus_multistream.h>
+#include <time.h>
 
 static const size_t LumenWorkerMaximumVideoBytes = 32 * 1024 * 1024;
 static const size_t LumenWorkerMaximumPCMBytes = 1024 * 1024;
 static NSString *const LumenRuntimeEventNotification = @"LumenRuntimeEventNotification";
 static const int LumenWorkerAudioFrameCount = 240;
+static const uint64_t LumenWorkerAudioPacketNanoseconds = 5000000ULL;
+static const uint64_t LumenWorkerMaximumAudioCatchupNanoseconds = 100000000ULL;
+
+static uint64_t LumenWorkerMonotonicNanoseconds(void) {
+  struct timespec time = {0};
+  if (clock_gettime(CLOCK_MONOTONIC_RAW, &time) != 0) {
+    return 0;
+  }
+  return ((uint64_t) time.tv_sec * 1000000000ULL) + (uint64_t) time.tv_nsec;
+}
 
 static uint32_t LumenWorkerAudioTimestamp(uint64_t nanoseconds) {
   const uint64_t seconds = nanoseconds / 1000000000ULL;
@@ -163,6 +174,7 @@ static uint32_t LumenWorkerVideoTimestamp(CMSampleBufferRef sampleBuffer) {
   NSMutableData *_pcm;
   NSMutableData *_audioScratch;
   uint32_t _nextAudioTimestamp;
+  uint64_t _nextAudioDeadlineNanoseconds;
   BOOL _hasAudioTimestamp;
   int _audioChannels;
   OpusMSEncoder *_opus;
@@ -357,6 +369,10 @@ static uint32_t LumenWorkerVideoTimestamp(CMSampleBufferRef sampleBuffer) {
     return LumenHostPlatformStartSessionStatusInvalidConfiguration;
   }
   fprintf(stderr, "Lumen platform session stage=capture-pair-ready display-id=%u\n", _displayID);
+  uint64_t audioClock = LumenWorkerMonotonicNanoseconds();
+  _nextAudioTimestamp = LumenWorkerAudioTimestamp(audioClock);
+  _nextAudioDeadlineNanoseconds = audioClock;
+  _hasAudioTimestamp = audioClock != 0;
 
   if (plan->virtual_display) {
     NSError *activationError = nil;
@@ -412,6 +428,7 @@ static uint32_t LumenWorkerVideoTimestamp(CMSampleBufferRef sampleBuffer) {
   _pendingAudio = nil;
   [_pcm setLength:0];
   _hasAudioTimestamp = NO;
+  _nextAudioDeadlineNanoseconds = 0;
   _audioChannels = 0;
   return status;
 }
@@ -482,9 +499,9 @@ static uint32_t LumenWorkerVideoTimestamp(CMSampleBufferRef sampleBuffer) {
   return LumenHostPlatformPollStatusReady;
 }
 
-- (BOOL)fillPendingAudio {
+- (int32_t)fillPendingAudio {
   if (_pendingAudio || !_opus || _audioChannels == 0) {
-    return _pendingAudio != nil;
+    return _pendingAudio ? LumenHostPlatformPollStatusReady : LumenHostPlatformPollStatusEmpty;
   }
   const size_t packetPCMBytes =
     (size_t) LumenWorkerAudioFrameCount * (size_t) _audioChannels * sizeof(float);
@@ -503,17 +520,23 @@ static uint32_t LumenWorkerVideoTimestamp(CMSampleBufferRef sampleBuffer) {
     if (record.sample_rate != 48000 || record.channel_count != _audioChannels ||
         copied != record.pcm_byte_count || copied > _audioScratch.length) {
       [_pcm setLength:0];
-      _hasAudioTimestamp = NO;
-      continue;
-    }
-    if (!_hasAudioTimestamp) {
-      _nextAudioTimestamp = LumenWorkerAudioTimestamp(record.host_time_nanoseconds);
-      _hasAudioTimestamp = YES;
+      return LumenHostPlatformPollStatusError;
     }
     [_pcm appendBytes:_audioScratch.bytes length:copied];
   }
-  if (_pcm.length < packetPCMBytes || !_hasAudioTimestamp) {
-    return NO;
+  uint64_t now = LumenWorkerMonotonicNanoseconds();
+  if (!_hasAudioTimestamp || now == 0) {
+    return LumenHostPlatformPollStatusError;
+  }
+  if (now < _nextAudioDeadlineNanoseconds) {
+    return LumenHostPlatformPollStatusEmpty;
+  }
+  if (now - _nextAudioDeadlineNanoseconds > LumenWorkerMaximumAudioCatchupNanoseconds) {
+    _nextAudioTimestamp = LumenWorkerAudioTimestamp(now);
+    _nextAudioDeadlineNanoseconds = now;
+  }
+  if (_pcm.length < packetPCMBytes) {
+    [_pcm setLength:packetPCMBytes];
   }
 
   unsigned char encoded[65536];
@@ -526,17 +549,14 @@ static uint32_t LumenWorkerVideoTimestamp(CMSampleBufferRef sampleBuffer) {
   );
   if (length < 0) {
     [_pcm setLength:0];
-    _hasAudioTimestamp = NO;
-    return NO;
+    return LumenHostPlatformPollStatusError;
   }
   _pendingAudio = [NSData dataWithBytes:encoded length:(NSUInteger) length];
   _pendingAudioTimestamp = _nextAudioTimestamp;
   _nextAudioTimestamp += LumenWorkerAudioFrameCount;
+  _nextAudioDeadlineNanoseconds += LumenWorkerAudioPacketNanoseconds;
   [_pcm replaceBytesInRange:NSMakeRange(0, packetPCMBytes) withBytes:NULL length:0];
-  if (_pcm.length == 0) {
-    _hasAudioTimestamp = NO;
-  }
-  return YES;
+  return LumenHostPlatformPollStatusReady;
 }
 
 - (int32_t)pollAudio:(uint8_t *)destination
@@ -546,9 +566,10 @@ static uint32_t LumenWorkerVideoTimestamp(CMSampleBufferRef sampleBuffer) {
     return LumenHostPlatformPollStatusError;
   }
   os_unfair_lock_lock(&_lock);
-  if (![self fillPendingAudio]) {
+  int32_t status = [self fillPendingAudio];
+  if (status != LumenHostPlatformPollStatusReady) {
     os_unfair_lock_unlock(&_lock);
-    return LumenHostPlatformPollStatusEmpty;
+    return status;
   }
   packet->payload_size = _pendingAudio.length;
   packet->presentation_time_48khz = _pendingAudioTimestamp;

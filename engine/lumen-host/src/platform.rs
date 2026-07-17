@@ -159,7 +159,7 @@ pub enum PlatformRuntimeEventSeverity {
     Error,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum PlatformRuntimeEventCode {
     UpnpGatewayDiscovery,
     UpnpLocalAddressDiscovery,
@@ -168,6 +168,12 @@ pub enum PlatformRuntimeEventCode {
     UpnpPortRemoval,
     NativeSessionTransport,
     NativeSessionPlatform,
+    NativeVideoCapturePoll,
+    NativeAudioCapturePoll,
+    NativeVideoPacketizer,
+    NativeAudioPacketizer,
+    NativeVideoUdpSend,
+    NativeAudioUdpSend,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -381,6 +387,12 @@ pub enum LumenHostPlatformRuntimeEventCode {
     UpnpPortRemoval = 4,
     NativeSessionTransport = 5,
     NativeSessionPlatform = 6,
+    NativeVideoCapturePoll = 7,
+    NativeAudioCapturePoll = 8,
+    NativeVideoPacketizer = 9,
+    NativeAudioPacketizer = 10,
+    NativeVideoUdpSend = 11,
+    NativeAudioUdpSend = 12,
 }
 
 #[repr(C)]
@@ -735,6 +747,24 @@ impl PlatformSessionControl for CallbackPlatformSessionControl {
                 }
                 PlatformRuntimeEventCode::NativeSessionPlatform => {
                     LumenHostPlatformRuntimeEventCode::NativeSessionPlatform
+                }
+                PlatformRuntimeEventCode::NativeVideoCapturePoll => {
+                    LumenHostPlatformRuntimeEventCode::NativeVideoCapturePoll
+                }
+                PlatformRuntimeEventCode::NativeAudioCapturePoll => {
+                    LumenHostPlatformRuntimeEventCode::NativeAudioCapturePoll
+                }
+                PlatformRuntimeEventCode::NativeVideoPacketizer => {
+                    LumenHostPlatformRuntimeEventCode::NativeVideoPacketizer
+                }
+                PlatformRuntimeEventCode::NativeAudioPacketizer => {
+                    LumenHostPlatformRuntimeEventCode::NativeAudioPacketizer
+                }
+                PlatformRuntimeEventCode::NativeVideoUdpSend => {
+                    LumenHostPlatformRuntimeEventCode::NativeVideoUdpSend
+                }
+                PlatformRuntimeEventCode::NativeAudioUdpSend => {
+                    LumenHostPlatformRuntimeEventCode::NativeAudioUdpSend
                 }
             },
             message: message

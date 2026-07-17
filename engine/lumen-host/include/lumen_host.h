@@ -115,6 +115,12 @@ typedef enum LumenHostPlatformRuntimeEventCode {
   LumenHostPlatformRuntimeEventCodeUpnpPortRemoval = 4,
   LumenHostPlatformRuntimeEventCodeNativeSessionTransport = 5,
   LumenHostPlatformRuntimeEventCodeNativeSessionPlatform = 6,
+  LumenHostPlatformRuntimeEventCodeNativeVideoCapturePoll = 7,
+  LumenHostPlatformRuntimeEventCodeNativeAudioCapturePoll = 8,
+  LumenHostPlatformRuntimeEventCodeNativeVideoPacketizer = 9,
+  LumenHostPlatformRuntimeEventCodeNativeAudioPacketizer = 10,
+  LumenHostPlatformRuntimeEventCodeNativeVideoUdpSend = 11,
+  LumenHostPlatformRuntimeEventCodeNativeAudioUdpSend = 12,
 } LumenHostPlatformRuntimeEventCode;
 
 typedef struct LumenHostPlatformRuntimeEvent {
