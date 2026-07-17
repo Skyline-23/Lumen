@@ -13,8 +13,10 @@ final class LumenLocalNetworkPermissionTests: XCTestCase {
             encoding: .utf8
         )
 
-        XCTAssertTrue(manifest.contains("NSLocalNetworkUsageDescription"))
-        XCTAssertTrue(manifest.contains("NSBonjourServices"))
+        XCTAssertEqual(manifest.components(separatedBy: "NSLocalNetworkUsageDescription").count - 1, 2)
+        XCTAssertEqual(manifest.components(separatedBy: "NSBonjourServices").count - 1, 2)
         XCTAssertTrue(manifest.contains("_lumen._udp"))
+        XCTAssertTrue(manifest.contains("CREATE_INFOPLIST_SECTION_IN_BINARY"))
+        XCTAssertTrue(manifest.contains("dev.skyline23.lumen.hostworker"))
     }
 }

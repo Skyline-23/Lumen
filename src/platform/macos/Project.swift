@@ -225,7 +225,13 @@ let project = Project(
             product: .commandLineTool,
             bundleId: "dev.skyline23.lumen.hostworker",
             deploymentTargets: .macOS("15.0"),
-            infoPlist: .default,
+            infoPlist: .extendingDefault(with: [
+                "CFBundleDisplayName": "Lumen Host Worker",
+                "NSBonjourServices": [
+                    "_lumen._udp"
+                ],
+                "NSLocalNetworkUsageDescription": "Lumen needs local network access to advertise this host and configure authenticated remote access."
+            ]),
             sources: [
                 "Projects/LumenHostWorker/Sources/**/*.m"
             ],
@@ -242,6 +248,7 @@ let project = Project(
                     "CODE_SIGN_STYLE": "Manual",
                     "CODE_SIGN_IDENTITY": "Developer ID Application: Buseong Kim (Q23JLSJCCV)",
                     "CODE_SIGN_INJECT_BASE_ENTITLEMENTS": "NO",
+                    "CREATE_INFOPLIST_SECTION_IN_BINARY": "YES",
                     "DEVELOPMENT_TEAM": "Q23JLSJCCV",
                     "ENABLE_HARDENED_RUNTIME": "YES",
                     "HEADER_SEARCH_PATHS": [
