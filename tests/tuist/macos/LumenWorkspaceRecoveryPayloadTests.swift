@@ -91,7 +91,7 @@ final class LumenWorkspaceRecoveryPayloadTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: journalURL.path))
     }
 
-    func testFreshExecutorBlocksDestroyWhenPhysicalReadbackFails() async throws {
+    func testFreshExecutorDestroysOwnedDisplayWhenPhysicalReadbackFails() async throws {
         // Given: a fresh executor has no in-memory snapshot and verification will fail.
         let journalURL = temporaryJournalURL()
         let topology = recoveryTopology()
@@ -109,11 +109,18 @@ final class LumenWorkspaceRecoveryPayloadTests: XCTestCase {
         // When: restore completes but independent display readback rejects the result.
         let error = try await coordinator.executePendingCommandsRecovering(using: executor)
 
-        // Then: the durable journal remains and no destroy payload is executed.
+        // Then: the physical recovery error and journal remain, but the owned
+        // virtual display is destroyed independently.
         XCTAssertNotNil(error)
         XCTAssertTrue(FileManager.default.fileExists(atPath: journalURL.path))
         let events = await recorder.recordedEvents()
-        XCTAssertEqual(events, [.restore(topology), .verify(topology)])
+        XCTAssertEqual(events.count, 3)
+        XCTAssertEqual(events[0], .restore(topology))
+        XCTAssertEqual(events[1], .verify(topology))
+        guard case .destroy(let identity) = events[2] else {
+            return XCTFail("expected persisted virtual identity")
+        }
+        XCTAssertFalse(identity.id.isEmpty)
         let nextCommand = try await coordinator.nextCommand()
         XCTAssertNil(nextCommand)
     }
@@ -167,11 +174,16 @@ final class LumenWorkspaceRecoveryPayloadTests: XCTestCase {
         // When: the fresh executor restores and performs production combined verification.
         let error = try await coordinator.executePendingCommandsRecovering(using: executor)
 
-        // Then: verification fails before destroy and the durable journal remains retryable.
+        // Then: verification fails and the durable journal remains retryable,
+        // while virtual-display destruction is not blocked by NSScreen readback.
         XCTAssertNotNil(error)
         XCTAssertTrue(FileManager.default.fileExists(atPath: journalURL.path))
         let events = await recorder.recordedEvents()
-        XCTAssertTrue(events.isEmpty)
+        XCTAssertEqual(events.count, 1)
+        guard case .destroy(let identity) = events[0] else {
+            return XCTFail("expected persisted virtual identity")
+        }
+        XCTAssertFalse(identity.id.isEmpty)
     }
 
     private func seedIsolatedProductionJournal(

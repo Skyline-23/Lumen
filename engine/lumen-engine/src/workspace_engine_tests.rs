@@ -22,7 +22,7 @@ fn command_kinds(
 }
 
 #[test]
-fn isolated_workspace_waits_for_capture_before_physical_mutation() {
+fn isolated_workspace_stabilizes_layout_before_capture_and_waits_before_physical_mutation() {
     // Given: a capture-managed isolated workspace request.
     let mut engine = WorkspaceEngine::default();
 
@@ -43,9 +43,9 @@ fn isolated_workspace_waits_for_capture_before_physical_mutation() {
             LumenWorkspaceCommandKind::SnapshotWorkspace,
             LumenWorkspaceCommandKind::CreateVirtualDisplay,
             LumenWorkspaceCommandKind::ConfigureVirtualDisplay,
-            LumenWorkspaceCommandKind::StartCapture,
             LumenWorkspaceCommandKind::PromoteVirtualMain,
             LumenWorkspaceCommandKind::MoveTargetWindows,
+            LumenWorkspaceCommandKind::StartCapture,
             LumenWorkspaceCommandKind::ApplyIsolation,
         ]
     );
@@ -136,6 +136,21 @@ fn external_capture_isolation_waits_at_typed_first_frame_boundary() {
         );
     }
 
+    let promote = engine.next_command().expect("pre-capture promotion");
+    assert_eq!(promote.kind, LumenWorkspaceCommandKind::PromoteVirtualMain);
+    assert_eq!(
+        engine.complete_command(promote, true),
+        LumenEngineStatus::Ok
+    );
+    let move_windows = engine.next_command().expect("pre-capture window move");
+    assert_eq!(
+        move_windows.kind,
+        LumenWorkspaceCommandKind::MoveTargetWindows
+    );
+    assert_eq!(
+        engine.complete_command(move_windows, true),
+        LumenEngineStatus::Ok
+    );
     let barrier = engine.next_command().expect("first-frame barrier");
     assert_eq!(
         barrier.kind,
@@ -146,8 +161,8 @@ fn external_capture_isolation_waits_at_typed_first_frame_boundary() {
         engine.complete_command(barrier, true),
         LumenEngineStatus::Ok
     );
-    let promote = engine.next_command().expect("post-readiness promotion");
-    assert_eq!(promote.kind, LumenWorkspaceCommandKind::PromoteVirtualMain);
+    let isolate = engine.next_command().expect("post-readiness isolation");
+    assert_eq!(isolate.kind, LumenWorkspaceCommandKind::ApplyIsolation);
 }
 
 #[test]
@@ -317,5 +332,50 @@ fn cleanup_failure_does_not_loop_or_skip_remaining_cleanup() {
     );
     assert_eq!(engine.next_command(), Err(LumenEngineStatus::NoCommand));
     assert_eq!(engine.state, LumenWorkspaceState::Idle);
+    assert_eq!(engine.last_failure, LumenEngineStatus::CommandFailed);
+}
+
+#[test]
+fn physical_verification_failure_still_destroys_the_owned_virtual_display_once() {
+    let mut engine = WorkspaceEngine::default();
+    command_kinds(
+        &mut engine,
+        LumenWorkspaceSessionRequest {
+            policy: LumenWorkspacePolicy::Coexist,
+            move_target_windows: false,
+            manage_capture: false,
+        },
+    );
+    assert_eq!(engine.end_session(), LumenEngineStatus::Ok);
+
+    let restore = engine.next_command().unwrap();
+    assert_eq!(restore.kind, LumenWorkspaceCommandKind::RestoreWorkspace);
+    assert_eq!(
+        engine.complete_command(restore, true),
+        LumenEngineStatus::Ok
+    );
+    let verify = engine.next_command().unwrap();
+    assert_eq!(
+        verify.kind,
+        LumenWorkspaceCommandKind::VerifyPhysicalDisplays
+    );
+    assert_eq!(
+        engine.complete_command(verify, false),
+        LumenEngineStatus::CommandFailed
+    );
+
+    let destroy = engine
+        .next_command()
+        .expect("virtual display destruction must remain independent");
+    assert_eq!(
+        destroy.kind,
+        LumenWorkspaceCommandKind::DestroyVirtualDisplay
+    );
+    assert_eq!(
+        engine.complete_command(destroy, true),
+        LumenEngineStatus::Ok
+    );
+    assert_eq!(engine.next_command(), Err(LumenEngineStatus::NoCommand));
+    assert_eq!(engine.state, LumenWorkspaceState::Stopping);
     assert_eq!(engine.last_failure, LumenEngineStatus::CommandFailed);
 }

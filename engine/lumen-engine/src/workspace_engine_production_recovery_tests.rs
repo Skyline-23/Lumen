@@ -135,16 +135,16 @@ fn production_ffi_persists_every_isolated_session_boundary() {
             RecoveryPhase::VirtualConfigured,
         ),
         (
-            LumenWorkspaceCommandKind::AwaitExternalFirstEncodedFrame,
-            RecoveryPhase::FirstFrameReady,
-        ),
-        (
             LumenWorkspaceCommandKind::PromoteVirtualMain,
             RecoveryPhase::VirtualPromoted,
         ),
         (
             LumenWorkspaceCommandKind::MoveTargetWindows,
             RecoveryPhase::TargetWindowsMoved,
+        ),
+        (
+            LumenWorkspaceCommandKind::AwaitExternalFirstEncodedFrame,
+            RecoveryPhase::FirstFrameReady,
         ),
     ] {
         let command = next(engine);
@@ -274,8 +274,26 @@ fn production_ffi_recovery_verifies_before_deleting_or_destroying() {
         LumenEngineStatus::CommandFailed
     );
 
-    // Then: verification failure preserves the journal and blocks virtual destruction.
+    // Then: verification failure preserves the journal but independently destroys
+    // the registry-owned virtual display exactly once.
     assert!(path.exists());
+    let destroy = next(engine);
+    assert_eq!(
+        destroy.kind,
+        LumenWorkspaceCommandKind::DestroyVirtualDisplay
+    );
+    let destroy_identity = payload_json(engine, destroy);
+    assert!(!destroy_identity.is_empty());
+    assert_eq!(
+        complete(
+            engine,
+            destroy,
+            LumenWorkspaceCommandPayloadKind::None,
+            None,
+            true
+        ),
+        LumenEngineStatus::Ok
+    );
     assert_eq!(
         lumen_workspace_engine_next_command(engine, &mut LumenWorkspaceCommand::placeholder()),
         LumenEngineStatus::NoCommand
