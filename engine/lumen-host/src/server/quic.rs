@@ -791,6 +791,14 @@ fn default_video_capabilities() -> Vec<lumen_engine::NativeVideoCapability> {
             NativeColorRange::Limited,
         ),
         (
+            NativeVideoCodec::Hevc,
+            NativeVideoProfile::HevcMain10,
+            NativeChromaSubsampling::Yuv420,
+            10,
+            NativeDynamicRange::Hdr10,
+            NativeColorRange::Limited,
+        ),
+        (
             NativeVideoCodec::H264,
             NativeVideoProfile::H264High444Predictive,
             NativeChromaSubsampling::Yuv444,
@@ -962,6 +970,67 @@ mod tests {
                 Ok(())
             }
         }
+    }
+
+    #[test]
+    fn host_advertises_independent_hevc_main10_420_and_444_hdr_rows() {
+        let capabilities = default_video_capabilities();
+        let formats = capabilities
+            .iter()
+            .filter(|capability| capability.hardware_accelerated == Some(true))
+            .filter_map(|capability| capability.format.as_ref())
+            .collect::<Vec<_>>();
+
+        assert!(formats.iter().any(|format| {
+            format.codec == NativeVideoCodec::Hevc as i32
+                && format.profile == lumen_engine::NativeVideoProfile::HevcMain10 as i32
+                && format.chroma_subsampling
+                    == lumen_engine::NativeChromaSubsampling::Yuv420 as i32
+                && format.bit_depth == 10
+                && format.dynamic_range == NativeDynamicRange::Hdr10 as i32
+                && format.color_range == lumen_engine::NativeColorRange::Limited as i32
+        }));
+        assert!(formats.iter().any(|format| {
+            format.codec == NativeVideoCodec::Hevc as i32
+                && format.profile == lumen_engine::NativeVideoProfile::HevcMain44410 as i32
+                && format.chroma_subsampling
+                    == lumen_engine::NativeChromaSubsampling::Yuv444 as i32
+                && format.bit_depth == 10
+                && format.dynamic_range == NativeDynamicRange::Hdr10 as i32
+                && format.color_range == lumen_engine::NativeColorRange::Limited as i32
+        }));
+
+        let requested_format = lumen_engine::NativeVideoFormat {
+            codec: NativeVideoCodec::Hevc as i32,
+            profile: lumen_engine::NativeVideoProfile::HevcMain10 as i32,
+            chroma_subsampling: lumen_engine::NativeChromaSubsampling::Yuv420 as i32,
+            bit_depth: 10,
+            dynamic_range: NativeDynamicRange::Hdr10 as i32,
+            color_range: lumen_engine::NativeColorRange::Limited as i32,
+        };
+        let mut hello = native_hello(1);
+        hello.video_capabilities = vec![NativeVideoCapability {
+            format: Some(requested_format.clone()),
+            max_width: 3_840,
+            max_height: 2_160,
+            max_refresh_millihz: 120_000,
+            hardware_accelerated: Some(true),
+        }];
+        hello.requested_video_format = Some(requested_format.clone());
+        hello.sink_gamut = NativeDisplayGamut::Rec2020 as i32;
+        hello.sink_transfer = NativeDisplayTransfer::Pq as i32;
+
+        let plan = lumen_engine::negotiate_native_session(
+            &hello,
+            &default_host_capabilities(),
+            7,
+        )
+        .expect("canonical HEVC Main10 4:2:0 HDR must negotiate");
+        assert_eq!(
+            plan.selected_video_capability
+                .and_then(|capability| capability.format),
+            Some(requested_format)
+        );
     }
 
     #[test]
