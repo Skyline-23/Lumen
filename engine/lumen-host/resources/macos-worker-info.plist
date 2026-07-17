@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDisplayName</key>
+  <string>Lumen Host Worker</string>
+  <key>CFBundleExecutable</key>
+  <string>LumenHostWorker</string>
+  <key>CFBundleIdentifier</key>
+  <string>dev.skyline23.lumen.hostworker</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleName</key>
+  <string>LumenHostWorker</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>NSBonjourServices</key>
+  <array>
+    <string>_lumen._udp</string>
+  </array>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>Lumen needs local network access to advertise this host and configure authenticated remote access.</string>
+</dict>
+</plist>

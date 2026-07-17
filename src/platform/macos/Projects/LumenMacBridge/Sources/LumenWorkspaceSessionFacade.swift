@@ -222,6 +222,9 @@ private actor LumenMacWorkspaceSessionRegistry {
             configureVirtualDisplay: { _, _ in
                 throw LumenMacWorkspaceSessionError.recoveryDidNotComplete
             },
+            verifyVirtualDisplay: { _ in
+                throw LumenMacWorkspaceSessionError.recoveryDidNotComplete
+            },
             startCapture: { _ in
                 throw LumenMacWorkspaceSessionError.recoveryDidNotComplete
             },

@@ -42,6 +42,7 @@ public struct LumenMacWorkspaceNativeOperations: Sendable {
         LumenMacDisplayGeometry
     ) async throws -> UInt32
     public var configureVirtualDisplay: @Sendable (UInt32, LumenMacDisplayGeometry) async throws -> Void
+    public var verifyVirtualDisplay: @Sendable (UInt32) async throws -> Void
     public var startCapture: @Sendable (UInt32) async throws -> Void
     public var stopCapture: @Sendable () async throws -> Void
     public var destroyVirtualDisplay: @Sendable (LumenMacVirtualDisplayIdentity) async throws -> Void
@@ -54,6 +55,7 @@ public struct LumenMacWorkspaceNativeOperations: Sendable {
             LumenMacDisplayGeometry
         ) async throws -> UInt32,
         configureVirtualDisplay: @escaping @Sendable (UInt32, LumenMacDisplayGeometry) async throws -> Void,
+        verifyVirtualDisplay: @escaping @Sendable (UInt32) async throws -> Void,
         startCapture: @escaping @Sendable (UInt32) async throws -> Void,
         stopCapture: @escaping @Sendable () async throws -> Void,
         destroyVirtualDisplay: @escaping @Sendable (
@@ -64,6 +66,7 @@ public struct LumenMacWorkspaceNativeOperations: Sendable {
     ) {
         self.createVirtualDisplay = createVirtualDisplay
         self.configureVirtualDisplay = configureVirtualDisplay
+        self.verifyVirtualDisplay = verifyVirtualDisplay
         self.startCapture = startCapture
         self.stopCapture = stopCapture
         self.destroyVirtualDisplay = destroyVirtualDisplay
@@ -83,6 +86,7 @@ public actor LumenMacWorkspaceExecutor: LumenWorkspaceCommandExecuting {
     private let operations: LumenMacWorkspaceNativeOperations
     private let displayGeometry: LumenMacDisplayGeometry
     private var virtualDisplayID: UInt32?
+    private var virtualDisplayIdentity: LumenMacVirtualDisplayIdentity?
 
     public init(
         targetProcessIdentifiers: [Int32],
@@ -109,6 +113,7 @@ public actor LumenMacWorkspaceExecutor: LumenWorkspaceCommandExecuting {
         case .createVirtualDisplay:
             let identity = try requireVirtualIdentity(command.payload)
             virtualDisplayID = try await operations.createVirtualDisplay(identity, displayGeometry)
+            virtualDisplayIdentity = identity
             return .virtualDisplayIdentity(identity)
         case .configureVirtualDisplay:
             try await operations.configureVirtualDisplay(
@@ -150,12 +155,26 @@ public actor LumenMacWorkspaceExecutor: LumenWorkspaceCommandExecuting {
                 try requireVirtualIdentity(command.payload)
             )
             virtualDisplayID = nil
+            virtualDisplayIdentity = nil
             return .succeeded
         }
     }
 
     public func activeVirtualDisplayID() throws -> UInt32 {
         try requireVirtualDisplay()
+    }
+
+    public func verifyOwnedVirtualDisplay() async throws {
+        try await operations.verifyVirtualDisplay(try requireVirtualDisplay())
+    }
+
+    public func destroyOwnedVirtualDisplay() async throws {
+        guard let virtualDisplayIdentity else {
+            return
+        }
+        try await operations.destroyVirtualDisplay(virtualDisplayIdentity)
+        virtualDisplayID = nil
+        self.virtualDisplayIdentity = nil
     }
 
     private func requireVirtualDisplay() throws -> UInt32 {

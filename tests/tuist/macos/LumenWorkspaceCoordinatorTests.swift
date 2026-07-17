@@ -59,38 +59,6 @@ private actor WorkspaceDisplayMock: LumenMacDisplayWorkspaceManaging {
     func discardSnapshot() async {}
 }
 
-private actor DisappearingWorkspaceDisplayMock: LumenMacDisplayWorkspaceManaging {
-    private let recorder: WorkspaceExecutionRecorder
-
-    init(recorder: WorkspaceExecutionRecorder) {
-        self.recorder = recorder
-    }
-
-    func snapshotWorkspace(
-        targetProcessIdentifiers: [Int32]
-    ) async -> LumenMacPhysicalDisplayTopology {
-        await recorder.append(.snapshot(targetProcessIdentifiers))
-        return testTopology()
-    }
-
-    func promoteVirtualDisplay(_: UInt32) async {}
-    func moveTargetWindows(to _: UInt32) async {}
-    func awaitVirtualDisplay(_ displayID: UInt32) async throws {
-        await recorder.append(.resolve(displayID))
-        throw LumenMacDisplayWorkspaceError.displayNotFound(displayID)
-    }
-    func isolateVirtualDisplay(_ displayID: UInt32) async {
-        await recorder.append(.isolate(displayID))
-    }
-    func restoreWorkspace(_: LumenMacPhysicalDisplayTopology) async {
-        await recorder.append(.restore)
-    }
-    func verifyWorkspace(_: LumenMacPhysicalDisplayTopology) async {
-        await recorder.append(.verify)
-    }
-    func discardSnapshot() async {}
-}
-
 final class LumenWorkspaceCoordinatorTests: XCTestCase {
     func testRetinaDesktopScalePreservesNativeStreamPixels() throws {
         let geometry = try LumenMacDisplayGeometryResolver.resolve(
@@ -181,6 +149,9 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
             configureVirtualDisplay: { displayID, geometry in
                 await recorder.append(.configure(displayID, geometry))
             },
+            verifyVirtualDisplay: { displayID in
+                await recorder.append(.resolve(displayID))
+            },
             startCapture: { displayID in
                 await recorder.append(.startCapture(displayID))
             },
@@ -230,6 +201,7 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         let operations = LumenMacWorkspaceNativeOperations(
             createVirtualDisplay: { _, _ in 55 },
             configureVirtualDisplay: { _, _ in },
+            verifyVirtualDisplay: { _ in },
             startCapture: { _ in },
             stopCapture: {},
             destroyVirtualDisplay: { _ in }
@@ -268,6 +240,9 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
             },
             configureVirtualDisplay: { displayID, geometry in
                 await recorder.append(.configure(displayID, geometry))
+            },
+            verifyVirtualDisplay: { displayID in
+                await recorder.append(.resolve(displayID))
             },
             startCapture: { _ in },
             stopCapture: {},
@@ -320,6 +295,10 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
             configureVirtualDisplay: { displayID, geometry in
                 await recorder.append(.configure(displayID, geometry))
             },
+            verifyVirtualDisplay: { displayID in
+                await recorder.append(.resolve(displayID))
+                throw LumenMacDisplayWorkspaceError.displayNotFound(displayID)
+            },
             startCapture: { _ in },
             stopCapture: {},
             destroyVirtualDisplay: { _ in await recorder.append(.destroy) },
@@ -331,7 +310,7 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         let session = try LumenMacWorkspaceSession(
             request: externalIsolatedRequest(),
             operations: operations,
-            displayWorkspace: DisappearingWorkspaceDisplayMock(recorder: recorder),
+            displayWorkspace: WorkspaceDisplayMock(recorder: recorder),
             coordinator: LumenWorkspaceCoordinator(recoveryJournalPath: journalPath)
         )
 
@@ -369,6 +348,7 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
             configureVirtualDisplay: { displayID, geometry in
                 await recorder.append(.configure(displayID, geometry))
             },
+            verifyVirtualDisplay: { _ in },
             startCapture: { _ in },
             stopCapture: {},
             destroyVirtualDisplay: { _ in await recorder.append(.destroy) },
@@ -410,6 +390,7 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
             configureVirtualDisplay: { displayID, geometry in
                 await recorder.append(.configure(displayID, geometry))
             },
+            verifyVirtualDisplay: { _ in },
             startCapture: { displayID in
                 await recorder.append(.startCapture(displayID))
             },
@@ -476,6 +457,7 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
             configureVirtualDisplay: { displayID, geometry in
                 await recorder.append(.configure(displayID, geometry))
             },
+            verifyVirtualDisplay: { _ in },
             startCapture: { displayID in
                 await recorder.append(.startCapture(displayID))
                 throw ExpectedFailure.captureStartup
