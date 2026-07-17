@@ -10,6 +10,7 @@ public enum LumenMacDisplayWorkspaceError: LocalizedError, Equatable {
     case accessibilityPermissionMissing
     case invalidPersistedDisplayID(String)
     case displayModeNotFound(UInt32)
+    case captureTopologyDidNotStabilize(UInt32)
     case physicalTopologyMismatch
     case isolationUnavailable(String)
     case isolationPostconditionFailed
@@ -34,6 +35,8 @@ public enum LumenMacDisplayWorkspaceError: LocalizedError, Equatable {
             "persisted display identifier \(displayID) is invalid"
         case .displayModeNotFound(let displayID):
             "the persisted mode for display \(displayID) is unavailable"
+        case .captureTopologyDidNotStabilize(let displayID):
+            "the capture topology for display \(displayID) did not stabilize"
         case .physicalTopologyMismatch:
             "the restored physical display topology did not converge"
         case .isolationUnavailable(let message):
@@ -58,6 +61,7 @@ public protocol LumenMacDisplayWorkspaceManaging: Sendable {
     ) async throws -> LumenMacPhysicalDisplayTopology
     func promoteVirtualDisplay(_ displayID: UInt32) async throws
     func moveTargetWindows(to displayID: UInt32) async throws
+    func verifyCaptureTopologyStable(_ displayID: UInt32) async throws
     func isolateVirtualDisplay(_ displayID: UInt32) async throws
     func restoreWorkspace(_ topology: LumenMacPhysicalDisplayTopology) async throws
     func verifyWorkspace(_ topology: LumenMacPhysicalDisplayTopology) async throws
@@ -92,6 +96,8 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
     private let topologyController: any LumenMacDisplayTopologyControlling
     private let physicalDisplayController: any LumenPhysicalDisplayControlling
     private let disconnectCapabilityVerifier: any LumenDisplayDisconnectCapabilityVerifying
+    private let captureStabilityAttempts: Int
+    private let captureStabilityDelayNanoseconds: UInt64
     private var snapshot: Snapshot?
 
     public init() {
@@ -100,6 +106,8 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             resolver: LumenDlsymDisplayEnabledSymbolResolver()
         )
         disconnectCapabilityVerifier = LumenDisplayDisconnectCapabilityFileVerifier.production
+        captureStabilityAttempts = 20
+        captureStabilityDelayNanoseconds = 100_000_000
     }
 
     init(
@@ -108,11 +116,15 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             LumenPhysicalDisplayControlAdapter(
                 resolver: LumenDlsymDisplayEnabledSymbolResolver()
             ),
-        disconnectCapabilityVerifier: any LumenDisplayDisconnectCapabilityVerifying
+        disconnectCapabilityVerifier: any LumenDisplayDisconnectCapabilityVerifying,
+        captureStabilityAttempts: Int = 2,
+        captureStabilityDelayNanoseconds: UInt64 = 0
     ) {
         self.topologyController = topologyController
         self.physicalDisplayController = physicalDisplayController
         self.disconnectCapabilityVerifier = disconnectCapabilityVerifier
+        self.captureStabilityAttempts = max(2, captureStabilityAttempts)
+        self.captureStabilityDelayNanoseconds = captureStabilityDelayNanoseconds
     }
 
     public func snapshotWorkspace(
@@ -194,6 +206,37 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             setWindowSize(size, on: window.element)
             setWindowPosition(position, on: window.element)
         }
+    }
+
+    public func verifyCaptureTopologyStable(_ displayID: UInt32) async throws {
+        var previousTopology: LumenMacPhysicalDisplayTopology?
+        var previousVisibleDisplayIDs: Set<CGDirectDisplayID>?
+
+        for attempt in 0..<captureStabilityAttempts {
+            let topology = try await topologyController.capture()
+            let visibleDisplayIDs = await topologyController.visibleDisplayIDs()
+            let displayIsCaptureReady = topology.displays.contains { state in
+                state.id == String(displayID) &&
+                    state.online &&
+                    state.active &&
+                    state.originX == 0 &&
+                    state.originY == 0
+            } && visibleDisplayIDs.contains(displayID)
+
+            if displayIsCaptureReady,
+               topology == previousTopology,
+               visibleDisplayIDs == previousVisibleDisplayIDs {
+                return
+            }
+
+            previousTopology = topology
+            previousVisibleDisplayIDs = visibleDisplayIDs
+            if attempt + 1 < captureStabilityAttempts, captureStabilityDelayNanoseconds > 0 {
+                try await Task.sleep(nanoseconds: captureStabilityDelayNanoseconds)
+            }
+        }
+
+        throw LumenMacDisplayWorkspaceError.captureTopologyDidNotStabilize(displayID)
     }
 
     public func isolateVirtualDisplay(_ displayID: UInt32) async throws {

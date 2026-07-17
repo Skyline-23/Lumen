@@ -36,6 +36,7 @@ public enum LumenMacWorkspaceSessionError: Error, Equatable {
     case sessionNotStarted
     case recoveryDidNotComplete
     case virtualDisplayOwnershipMismatch
+    case isolationCommandMissing
 }
 
 public struct LumenMacWorkspaceActivationOutcome: Equatable, Sendable {
@@ -178,7 +179,6 @@ public actor LumenMacWorkspaceSession {
     private let isolationStatusHandler: @Sendable (LumenMacWorkspaceIsolationStatus) async -> Void
     private var phase = Phase.idle
     private var activationCommand: LumenMacWorkspaceCommand?
-    private var isolationTask: Task<Void, Never>?
 
     public init(
         request: LumenMacWorkspaceSessionRequest,
@@ -220,11 +220,6 @@ public actor LumenMacWorkspaceSession {
             },
             waitForExternalFirstEncodedFrame: {
                 try await runtime.waitForFirstEncodedFrame(
-                    timeoutNanoseconds: Self.firstEncodedFrameTimeoutNanoseconds
-                )
-            },
-            verifyCaptureContinuity: {
-                try await runtime.verifyEncodedFrameContinuity(
                     timeoutNanoseconds: Self.firstEncodedFrameTimeoutNanoseconds
                 )
             }
@@ -291,10 +286,20 @@ public actor LumenMacWorkspaceSession {
         }
         do {
             while let command = try await coordinator.nextCommand() {
-                if command.action == .awaitExternalFirstEncodedFrame {
-                    activationCommand = command
-                    phase = .prepared
-                    return
+                do {
+                    if command.action == .startCapture ||
+                        command.action == .awaitExternalFirstEncodedFrame {
+                        try await executor.verifyCaptureTopologyStable()
+                        try await executor.verifyOwnedVirtualDisplay()
+                    }
+                    if command.action == .awaitExternalFirstEncodedFrame {
+                        activationCommand = command
+                        phase = .prepared
+                        return
+                    }
+                } catch {
+                    _ = try? await coordinator.complete(command, result: .failed)
+                    throw error
                 }
                 let result: LumenMacWorkspaceCommandResult
                 do {
@@ -324,17 +329,23 @@ public actor LumenMacWorkspaceSession {
             throw LumenMacWorkspaceSessionError.sessionNotStarted
         }
         do {
-            try await executor.verifyOwnedVirtualDisplay()
             let result = try await executor.execute(activationCommand)
             try await coordinator.complete(activationCommand, result: result)
             self.activationCommand = nil
-            phase = .active
-            let initialStatus: LumenMacWorkspaceIsolationStatus =
-                request.policy == .isolatedWorkspace ? .pending : .notRequested
-            isolationTask = Task { [weak self] in
-                await self?.completeDeferredIsolation()
+            let isolationStatus: LumenMacWorkspaceIsolationStatus
+            if request.policy == .isolatedWorkspace {
+                guard let isolationCommand = try await coordinator.nextCommand(),
+                      isolationCommand.action == .applyIsolation else {
+                    throw LumenMacWorkspaceSessionError.isolationCommandMissing
+                }
+                isolationStatus = await executor.preserveStableCaptureTopologyInsteadOfIsolation()
+                try await coordinator.complete(isolationCommand, result: .succeeded)
+                await isolationStatusHandler(isolationStatus)
+            } else {
+                isolationStatus = .notRequested
             }
-            return LumenMacWorkspaceActivationOutcome(isolationStatus: initialStatus)
+            phase = .active
+            return LumenMacWorkspaceActivationOutcome(isolationStatus: isolationStatus)
         } catch {
             let activationError = error
             _ = try? await coordinator.complete(activationCommand, result: .failed)
@@ -366,10 +377,6 @@ public actor LumenMacWorkspaceSession {
     }
 
     public func stop() async throws {
-        if let isolationTask {
-            await isolationTask.value
-            self.isolationTask = nil
-        }
         guard phase != .idle else {
             return
         }
@@ -403,37 +410,6 @@ public actor LumenMacWorkspaceSession {
         try await executor.activeVirtualDisplayID()
     }
 
-    private func completeDeferredIsolation() async {
-        do {
-            try await coordinator.executePendingCommands(using: executor)
-            let status = await executor.physicalIsolationStatus()
-            await isolationStatusHandler(status)
-        } catch {
-            let isolationError = error
-            let cleanupError: (any Error)?
-            do {
-                cleanupError = try await coordinator.executePendingCommandsRecovering(
-                    using: executor
-                )
-            } catch {
-                cleanupError = error
-            }
-            let ownershipCleanupError: (any Error)?
-            do {
-                try await executor.destroyOwnedVirtualDisplay()
-                ownershipCleanupError = nil
-            } catch {
-                ownershipCleanupError = error
-            }
-            phase = .idle
-            let failures = [isolationError, cleanupError, ownershipCleanupError]
-                .compactMap { $0 }
-                .map { String(describing: $0) }
-                .joined(separator: "; ")
-            await isolationStatusHandler(.failed(message: failures))
-        }
-        isolationTask = nil
-    }
 }
 
 private enum LumenMacWorkspaceIsolationRuntimeEventPublisher {

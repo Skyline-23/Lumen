@@ -4,31 +4,29 @@ import CoreMedia
 import XCTest
 
 final class LumenTuistBootstrapTests: XCTestCase {
-    func testBridgeStartsVideoAndAudioCaptureConcurrently() async throws {
-        let probe = LumenConcurrentCaptureStartupProbe()
+    func testBridgeCompletesVideoBeforeSchedulingAsynchronousAudio() async throws {
+        let probe = LumenCaptureStartupOrderProbe()
 
-        try await LumenBridgeCaptureStartupCoordinator.start(
+        try await LumenBridgeCaptureStartupCoordinator.startVisualFirst(
             video: {
-                await probe.enter()
+                await probe.append(.videoStarted)
                 try await Task.sleep(for: .milliseconds(50))
-                await probe.leave()
+                await probe.append(.videoReady)
             },
-            audio: {
-                await probe.enter()
-                try await Task.sleep(for: .milliseconds(50))
-                await probe.leave()
+            launchAudio: {
+                await probe.append(.audioScheduled)
             }
         )
 
-        let maximumActiveCount = await probe.maximumActiveCount
-        XCTAssertEqual(maximumActiveCount, 2)
+        let events = await probe.events
+        XCTAssertEqual(events, [.videoStarted, .videoReady, .audioScheduled])
     }
 
     func testBridgeCaptureStartupPreservesTheFailingBoundary() async {
         do {
-            try await LumenBridgeCaptureStartupCoordinator.start(
+            try await LumenBridgeCaptureStartupCoordinator.startVisualFirst(
                 video: { throw LumenConcurrentCaptureStartupTestError.failed },
-                audio: {}
+                launchAudio: {}
             )
             XCTFail("Expected video startup to fail")
         } catch let error as LumenBridgeCaptureStartupError {
@@ -718,17 +716,17 @@ private enum LumenConcurrentCaptureStartupTestError: LocalizedError {
     }
 }
 
-private actor LumenConcurrentCaptureStartupProbe {
-    private var activeCount = 0
-    private(set) var maximumActiveCount = 0
+private enum LumenCaptureStartupOrderEvent: Equatable {
+    case videoStarted
+    case videoReady
+    case audioScheduled
+}
 
-    func enter() {
-        activeCount += 1
-        maximumActiveCount = max(maximumActiveCount, activeCount)
-    }
+private actor LumenCaptureStartupOrderProbe {
+    private(set) var events: [LumenCaptureStartupOrderEvent] = []
 
-    func leave() {
-        activeCount -= 1
+    func append(_ event: LumenCaptureStartupOrderEvent) {
+        events.append(event)
     }
 }
 

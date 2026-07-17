@@ -392,6 +392,13 @@ bool LumenMacBridgeControllerStartAudioCapture(
   size_t error_capacity
 );
 
+bool LumenMacBridgeControllerStartAudioCaptureAsynchronously(
+  LumenMacBridgeController *controller,
+  LumenMacBridgeAudioCaptureConfiguration configuration,
+  char *error_destination,
+  size_t error_capacity
+);
+
 void LumenMacBridgeControllerStopAudioCapture(
   LumenMacBridgeController *controller
 );

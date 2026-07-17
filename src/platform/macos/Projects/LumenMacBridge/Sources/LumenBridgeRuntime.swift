@@ -1417,6 +1417,15 @@ public actor LumenBridgeRuntime {
         )
     }
 
+    public func startAudioCaptureAsynchronously(
+        configuration: LumenMacAudioCaptureConfiguration
+    ) async throws {
+        try await startAudioCapture(
+            configuration: configuration,
+            waitForStartupCompletion: false
+        )
+    }
+
     private func startAudioCapture(
         configuration: LumenMacAudioCaptureConfiguration,
         waitForStartupCompletion: Bool
@@ -1547,6 +1556,10 @@ public actor LumenBridgeRuntime {
         audioCaptureStartupTask = nil
         audioCaptureSession = nil
         activeAudioCaptureConfiguration = nil
+        recordAudioCaptureEvent(.init(
+            kind: .failed,
+            message: error.localizedDescription
+        ))
         audioForwarder.setProducerActive(false)
         logger.error("ScreenCaptureKit audio startup failed: \(String(describing: error), privacy: .public)")
         publishStatusDidChange(immediate: true)
