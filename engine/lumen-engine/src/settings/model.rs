@@ -169,7 +169,7 @@ impl Default for HostSettings {
     fn default() -> Self {
         Self {
             workspace: WorkspaceSettings {
-                policy: WorkspacePolicy::Coexist,
+                policy: WorkspacePolicy::IsolatedWorkspace,
             },
             general: GeneralSettings {
                 name: "Lumen".to_owned(),

@@ -129,7 +129,7 @@ public struct LumenNativeHostSettings: Equatable, Sendable {
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Lumen", isDirectory: true)
         return Self(
-            workspacePolicy: .coexist,
+            workspacePolicy: .isolatedWorkspace,
             systemAuthenticationEnabled: false,
             name: Host.current().localizedName ?? "Lumen",
             discoveryEnabled: true,
@@ -262,6 +262,7 @@ public enum LumenHostSettingsError: Error, Equatable, LocalizedError, Sendable {
 public actor LumenHostSettingsStore {
     private enum Key {
         static let workspacePolicy = "host.workspace-policy"
+        static let workspacePolicySemanticsVersion = "host.workspace-policy-semantics-version"
         static let systemAuthentication = "security.system-authentication"
         static let name = "host.name"
         static let discovery = "host.discovery"
@@ -319,6 +320,7 @@ public actor LumenHostSettingsStore {
         let settings = try Self.validated(settings)
         let defaults = try makeDefaults()
         defaults.set(Self.workspaceName(settings.workspacePolicy), forKey: Key.workspacePolicy)
+        defaults.set(1, forKey: Key.workspacePolicySemanticsVersion)
         defaults.set(settings.systemAuthenticationEnabled, forKey: Key.systemAuthentication)
         defaults.set(settings.name, forKey: Key.name)
         defaults.set(settings.discoveryEnabled, forKey: Key.discovery)
@@ -400,7 +402,7 @@ public actor LumenHostSettingsStore {
     private nonisolated static func load(defaults: UserDefaults) throws -> LumenNativeHostSettings {
         let fallback = LumenNativeHostSettings.defaults
         let settings = LumenNativeHostSettings(
-            workspacePolicy: workspacePolicy(defaults.string(forKey: Key.workspacePolicy)) ?? fallback.workspacePolicy,
+            workspacePolicy: productionWorkspacePolicy(defaults, fallback: fallback.workspacePolicy),
             systemAuthenticationEnabled: bool(defaults, Key.systemAuthentication, fallback.systemAuthenticationEnabled),
             name: defaults.string(forKey: Key.name) ?? fallback.name,
             discoveryEnabled: bool(defaults, Key.discovery, fallback.discoveryEnabled),
@@ -571,6 +573,19 @@ public actor LumenHostSettingsStore {
         case "isolated-workspace": .isolatedWorkspace
         default: nil
         }
+    }
+
+    private nonisolated static func productionWorkspacePolicy(
+        _ defaults: UserDefaults,
+        fallback: LumenMacWorkspacePolicy
+    ) -> LumenMacWorkspacePolicy {
+        guard defaults.integer(forKey: Key.workspacePolicySemanticsVersion) >= 1 else {
+            let policy = LumenMacWorkspacePolicy.isolatedWorkspace
+            defaults.set(workspaceName(policy), forKey: Key.workspacePolicy)
+            defaults.set(1, forKey: Key.workspacePolicySemanticsVersion)
+            return policy
+        }
+        return workspacePolicy(defaults.string(forKey: Key.workspacePolicy)) ?? fallback
     }
 }
 

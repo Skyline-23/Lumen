@@ -50,6 +50,14 @@ fn patch_is_host_revisioned_and_live_values_are_effective_after_ack() {
 }
 
 #[test]
+fn host_defaults_to_fail_closed_physical_display_isolation() {
+    assert_eq!(
+        HostSettings::default().workspace.policy,
+        WorkspacePolicy::IsolatedWorkspace
+    );
+}
+
+#[test]
 fn conformance_fixture_matches_runtime_field_catalog_and_constraints() {
     let fixture: serde_json::Value = serde_json::from_str(include_str!(
         "../../../../docs/protocol/lumen-settings-conformance.json"
