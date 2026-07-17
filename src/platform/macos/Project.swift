@@ -313,6 +313,10 @@ let project = Project(
                     "INFOPLIST_KEY_NSHighResolutionCapable": "YES",
                     "LSUIElement": "NO",
                     "NSAudioCaptureUsageDescription": "Lumen needs access to system audio to stream the selected Mac display with audio.",
+                    "NSBonjourServices": [
+                        "_lumen._udp"
+                    ],
+                    "NSLocalNetworkUsageDescription": "Lumen needs local network access to advertise this host and configure authenticated remote access.",
                     "NSMicrophoneUsageDescription": "Lumen needs microphone access when you choose microphone audio for a stream.",
                     "NSMainStoryboardFile": "",
                     "NSMainNibFile": "",
