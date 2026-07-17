@@ -167,8 +167,17 @@ private actor LumenMacWorkspaceSessionRegistry {
             try await session.activate()
             return true
         } catch {
-            sessions.removeValue(forKey: displayKey)
-            throw error
+            let activationError = error
+            do {
+                _ = try await recoverPendingWorkspace()
+                sessions.removeValue(forKey: displayKey)
+            } catch {
+                logger.error(
+                    "Workspace activation rollback remains pending display-key=\(displayKey, privacy: .public) error=\(String(describing: error), privacy: .public)"
+                )
+                throw error
+            }
+            throw activationError
         }
     }
 

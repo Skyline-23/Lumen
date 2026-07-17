@@ -36,6 +36,8 @@ const SERVER_START_TIMEOUT: Duration = Duration::from_secs(2);
 const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const CONNECTION_STREAM_TIMEOUT: Duration = Duration::from_secs(2);
 const ERROR_RESPONSE_DELIVERY_GRACE: Duration = Duration::from_millis(500);
+const SERVER_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
+const SERVER_KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(5);
 const ERROR_TRANSPORT: u32 = 9;
 
 #[derive(Default)]
@@ -223,6 +225,11 @@ fn run_server(
         if ready.send(Ok(local_address)).is_err() {
             return;
         }
+        eprintln!(
+            "Lumen native QUIC server ready address={local_address} idle-timeout-ms={} keepalive-ms={}",
+            SERVER_MAX_IDLE_TIMEOUT.as_millis(),
+            SERVER_KEEP_ALIVE_INTERVAL.as_millis()
+        );
         while !context.stop.load(Ordering::Acquire) {
             let incoming = match tokio::time::timeout(ACCEPT_POLL_INTERVAL, endpoint.accept()).await
             {
@@ -864,6 +871,12 @@ fn load_server_config(cert_path: &Path, key_path: &Path) -> Result<ServerConfig,
         .map_err(|error| format!("QUIC TLS configuration is invalid: {error}"))?;
     let mut config = ServerConfig::with_crypto(Arc::new(crypto));
     let mut transport = TransportConfig::default();
+    transport.max_idle_timeout(Some(
+        SERVER_MAX_IDLE_TIMEOUT
+            .try_into()
+            .map_err(|error| format!("QUIC idle timeout is invalid: {error}"))?,
+    ));
+    transport.keep_alive_interval(Some(SERVER_KEEP_ALIVE_INTERVAL));
     transport.max_concurrent_bidi_streams(VarInt::from_u32(3));
     // The client never opens unidirectional streams. The host opens one outbound codec stream.
     transport.max_concurrent_uni_streams(VarInt::from_u32(0));
