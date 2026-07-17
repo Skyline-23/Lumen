@@ -5,6 +5,7 @@ private enum WorkspaceExecutionEvent: Equatable {
     case snapshot([Int32])
     case create(LumenMacDisplayGeometry)
     case configure(UInt32, LumenMacDisplayGeometry)
+    case resolve(UInt32)
     case isolate(UInt32)
     case firstFrameBarrier
     case captureContinuity
@@ -43,6 +44,41 @@ private actor WorkspaceDisplayMock: LumenMacDisplayWorkspaceManaging {
 
     func promoteVirtualDisplay(_: UInt32) async {}
     func moveTargetWindows(to _: UInt32) async {}
+    func awaitVirtualDisplay(_ displayID: UInt32) async {
+        await recorder.append(.resolve(displayID))
+    }
+    func isolateVirtualDisplay(_ displayID: UInt32) async {
+        await recorder.append(.isolate(displayID))
+    }
+    func restoreWorkspace(_: LumenMacPhysicalDisplayTopology) async {
+        await recorder.append(.restore)
+    }
+    func verifyWorkspace(_: LumenMacPhysicalDisplayTopology) async {
+        await recorder.append(.verify)
+    }
+    func discardSnapshot() async {}
+}
+
+private actor DisappearingWorkspaceDisplayMock: LumenMacDisplayWorkspaceManaging {
+    private let recorder: WorkspaceExecutionRecorder
+
+    init(recorder: WorkspaceExecutionRecorder) {
+        self.recorder = recorder
+    }
+
+    func snapshotWorkspace(
+        targetProcessIdentifiers: [Int32]
+    ) async -> LumenMacPhysicalDisplayTopology {
+        await recorder.append(.snapshot(targetProcessIdentifiers))
+        return testTopology()
+    }
+
+    func promoteVirtualDisplay(_: UInt32) async {}
+    func moveTargetWindows(to _: UInt32) async {}
+    func awaitVirtualDisplay(_ displayID: UInt32) async throws {
+        await recorder.append(.resolve(displayID))
+        throw LumenMacDisplayWorkspaceError.displayNotFound(displayID)
+    }
     func isolateVirtualDisplay(_ displayID: UInt32) async {
         await recorder.append(.isolate(displayID))
     }
@@ -262,14 +298,62 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         try await session.activate()
 
         let activeEvents = await recorder.recordedEvents()
+        let resolveIndex = try XCTUnwrap(activeEvents.firstIndex(of: .resolve(88)))
         let barrierIndex = try XCTUnwrap(activeEvents.firstIndex(of: .firstFrameBarrier))
         let isolateIndex = try XCTUnwrap(activeEvents.firstIndex(of: .isolate(88)))
         let continuityIndex = try XCTUnwrap(activeEvents.firstIndex(of: .captureContinuity))
+        XCTAssertLessThan(resolveIndex, barrierIndex)
         XCTAssertLessThan(barrierIndex, isolateIndex)
         XCTAssertLessThan(isolateIndex, continuityIndex)
         let activeState = try await session.state()
         XCTAssertEqual(activeState, .active)
         try await session.stop()
+    }
+
+    func testPreparedDisplayDisappearanceRollsBackBeforeIsolationAndRemovesJournal() async throws {
+        let recorder = WorkspaceExecutionRecorder()
+        let operations = LumenMacWorkspaceNativeOperations(
+            createVirtualDisplay: { _, geometry in
+                await recorder.append(.create(geometry))
+                return 90
+            },
+            configureVirtualDisplay: { displayID, geometry in
+                await recorder.append(.configure(displayID, geometry))
+            },
+            startCapture: { _ in },
+            stopCapture: {},
+            destroyVirtualDisplay: { _ in await recorder.append(.destroy) },
+            waitForExternalFirstEncodedFrame: {
+                await recorder.append(.firstFrameBarrier)
+            }
+        )
+        let journalPath = temporaryRecoveryJournalPath()
+        let session = try LumenMacWorkspaceSession(
+            request: externalIsolatedRequest(),
+            operations: operations,
+            displayWorkspace: DisappearingWorkspaceDisplayMock(recorder: recorder),
+            coordinator: LumenWorkspaceCoordinator(recoveryJournalPath: journalPath)
+        )
+
+        try await session.prepare()
+        let preparedDisplayID = try await session.displayID()
+        XCTAssertEqual(preparedDisplayID, 90)
+
+        do {
+            try await session.activate()
+            XCTFail("expected the disappeared prepared display to fail closed")
+        } catch LumenMacDisplayWorkspaceError.displayNotFound(90) {}
+
+        let events = await recorder.recordedEvents()
+        XCTAssertTrue(events.contains(.resolve(90)))
+        XCTAssertFalse(events.contains(.firstFrameBarrier))
+        XCTAssertFalse(events.contains(.isolate(90)))
+        XCTAssertTrue(events.contains(.restore))
+        XCTAssertTrue(events.contains(.verify))
+        XCTAssertTrue(events.contains(.destroy))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journalPath))
+        let recoveredState = try await session.state()
+        XCTAssertEqual(recoveredState, .idle)
     }
 
     func testFailedExternalFirstFrameBarrierLeavesPhysicalDisplaysUntouched() async throws {
@@ -544,11 +628,14 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
     }
 
     private func makeCoordinator() throws -> LumenWorkspaceCoordinator {
-        let path = FileManager.default.temporaryDirectory
+        try LumenWorkspaceCoordinator(recoveryJournalPath: temporaryRecoveryJournalPath())
+    }
+
+    private func temporaryRecoveryJournalPath() -> String {
+        FileManager.default.temporaryDirectory
             .appending(path: UUID().uuidString, directoryHint: .isDirectory)
             .appending(path: "display-recovery.json", directoryHint: .notDirectory)
             .path(percentEncoded: false)
-        return try LumenWorkspaceCoordinator(recoveryJournalPath: path)
     }
 
     private func externalIsolatedRequest() -> LumenMacWorkspaceSessionRequest {

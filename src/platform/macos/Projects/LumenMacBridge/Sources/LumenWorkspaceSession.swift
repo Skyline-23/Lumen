@@ -159,6 +159,7 @@ public actor LumenMacWorkspaceSession {
     private let request: LumenMacWorkspaceSessionRequest
     private let coordinator: LumenWorkspaceCoordinator
     private let executor: LumenMacWorkspaceExecutor
+    private let displayWorkspace: any LumenMacDisplayWorkspaceManaging
     private var phase = Phase.idle
     private var activationCommand: LumenMacWorkspaceCommand?
 
@@ -223,6 +224,7 @@ public actor LumenMacWorkspaceSession {
     ) throws {
         self.request = request
         self.coordinator = try coordinator ?? LumenWorkspaceCoordinator()
+        self.displayWorkspace = displayWorkspace
         executor = try LumenMacWorkspaceExecutor(
             targetProcessIdentifiers: request.targetProcessIdentifiers,
             displayMode: request.displayMode,
@@ -293,17 +295,30 @@ public actor LumenMacWorkspaceSession {
             throw LumenMacWorkspaceSessionError.sessionNotStarted
         }
         do {
+            let displayID = try await executor.activeVirtualDisplayID()
+            try await displayWorkspace.awaitVirtualDisplay(displayID)
             let result = try await executor.execute(activationCommand)
             try await coordinator.complete(activationCommand, result: result)
             self.activationCommand = nil
             try await coordinator.executePendingCommands(using: executor)
             phase = .active
         } catch {
+            let activationError = error
             _ = try? await coordinator.complete(activationCommand, result: .failed)
             self.activationCommand = nil
-            _ = try? await coordinator.executePendingCommandsRecovering(using: executor)
+            let cleanupError: (any Error)?
+            do {
+                cleanupError = try await coordinator.executePendingCommandsRecovering(
+                    using: executor
+                )
+            } catch {
+                cleanupError = error
+            }
             phase = .idle
-            throw error
+            if let cleanupError {
+                throw cleanupError
+            }
+            throw activationError
         }
     }
 

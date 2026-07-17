@@ -55,6 +55,7 @@ public protocol LumenMacDisplayWorkspaceManaging: Sendable {
     ) async throws -> LumenMacPhysicalDisplayTopology
     func promoteVirtualDisplay(_ displayID: UInt32) async throws
     func moveTargetWindows(to displayID: UInt32) async throws
+    func awaitVirtualDisplay(_ displayID: UInt32) async throws
     func isolateVirtualDisplay(_ displayID: UInt32) async throws
     func restoreWorkspace(_ topology: LumenMacPhysicalDisplayTopology) async throws
     func verifyWorkspace(_ topology: LumenMacPhysicalDisplayTopology) async throws
@@ -62,6 +63,8 @@ public protocol LumenMacDisplayWorkspaceManaging: Sendable {
 }
 
 public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
+    private static let productionDisplayReadinessAttempts = 20
+    private static let productionDisplayReadinessDelayNanoseconds: UInt64 = 100_000_000
     private struct WindowSnapshot {
         let processID: Int32
         let windowID: UInt32
@@ -89,6 +92,8 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
     private let topologyController: any LumenMacDisplayTopologyControlling
     private let physicalDisplayController: any LumenPhysicalDisplayControlling
     private let disconnectCapabilityVerifier: any LumenDisplayDisconnectCapabilityVerifying
+    private let displayReadinessAttempts: Int
+    private let displayReadinessDelayNanoseconds: UInt64
     private var snapshot: Snapshot?
 
     public init() {
@@ -97,6 +102,8 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             resolver: LumenDlsymDisplayEnabledSymbolResolver()
         )
         disconnectCapabilityVerifier = LumenDisplayDisconnectCapabilityFileVerifier.production
+        displayReadinessAttempts = Self.productionDisplayReadinessAttempts
+        displayReadinessDelayNanoseconds = Self.productionDisplayReadinessDelayNanoseconds
     }
 
     init(
@@ -105,11 +112,15 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             LumenPhysicalDisplayControlAdapter(
                 resolver: LumenDlsymDisplayEnabledSymbolResolver()
             ),
-        disconnectCapabilityVerifier: any LumenDisplayDisconnectCapabilityVerifying
+        disconnectCapabilityVerifier: any LumenDisplayDisconnectCapabilityVerifying,
+        displayReadinessAttempts: Int = 1,
+        displayReadinessDelayNanoseconds: UInt64 = 0
     ) {
         self.topologyController = topologyController
         self.physicalDisplayController = physicalDisplayController
         self.disconnectCapabilityVerifier = disconnectCapabilityVerifier
+        self.displayReadinessAttempts = max(1, displayReadinessAttempts)
+        self.displayReadinessDelayNanoseconds = displayReadinessDelayNanoseconds
     }
 
     public func snapshotWorkspace(
@@ -191,6 +202,23 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             setWindowSize(size, on: window.element)
             setWindowPosition(position, on: window.element)
         }
+    }
+
+    public func awaitVirtualDisplay(_ displayID: UInt32) async throws {
+        for attempt in 0..<displayReadinessAttempts {
+            let topology = try? await topologyController.capture()
+            let visibleDisplayIDs = await topologyController.visibleDisplayIDs()
+            if topology?.displays.contains(where: {
+                $0.id == String(displayID) && $0.active && $0.online
+            }) == true, visibleDisplayIDs.contains(displayID) {
+                return
+            }
+            if attempt + 1 < displayReadinessAttempts,
+               displayReadinessDelayNanoseconds > 0 {
+                try await Task.sleep(nanoseconds: displayReadinessDelayNanoseconds)
+            }
+        }
+        throw LumenMacDisplayWorkspaceError.displayNotFound(displayID)
     }
 
     public func isolateVirtualDisplay(_ displayID: UInt32) async throws {
