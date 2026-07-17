@@ -198,6 +198,7 @@
 "UPnP could not remove the previous port mapping." = "UPnP에서 이전 포트 매핑을 제거하지 못했습니다.";
 "The native session transport failed." = "네이티브 세션 전송에 실패했습니다.";
 "The native capture session could not start. Check Screen Recording permission and Diagnostics." = "네이티브 캡처 세션을 시작하지 못했습니다. 화면 기록 권한과 진단을 확인하세요.";
+"The stream is active, but Lumen could not safely turn off the physical display." = "스트림은 활성화되었지만 Lumen이 물리 디스플레이를 안전하게 끄지 못했습니다.";
 "Undo command" = "실행 취소 명령";
 "Unlock Lumen" = "Lumen 잠금 해제";
 "Unlock Lumen settings with Touch ID" = "Touch ID로 Lumen 설정 잠금 해제";

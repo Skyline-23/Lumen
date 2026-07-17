@@ -293,6 +293,11 @@ typedef struct LumenMacWorkspaceSessionRequest {
   int32_t potential_peak_luminance_nits;
 } LumenMacWorkspaceSessionRequest;
 
+typedef struct LumenMacWorkspaceActivationResult {
+  bool activated;
+  uint32_t isolation_status;
+} LumenMacWorkspaceActivationResult;
+
 typedef struct LumenMacBridgeAudioForwardingSnapshot {
   uint64_t frame_count;
   uint64_t event_count;
@@ -451,10 +456,10 @@ uint32_t LumenMacWorkspacePrepareSession(
   size_t error_capacity
 );
 
-bool LumenMacWorkspaceActivateSession(
+LumenMacWorkspaceActivationResult LumenMacWorkspaceActivateSession(
   const char *display_key,
-  char *error_destination,
-  size_t error_capacity
+  char *status_destination,
+  size_t status_capacity
 );
 
 bool LumenMacWorkspaceStopSession(

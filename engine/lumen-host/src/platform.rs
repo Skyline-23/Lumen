@@ -178,6 +178,7 @@ pub enum PlatformRuntimeEventCode {
     NativeAudioPacketizer,
     NativeVideoUdpSend,
     NativeAudioUdpSend,
+    PhysicalDisplayIsolation,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -397,6 +398,7 @@ pub enum LumenHostPlatformRuntimeEventCode {
     NativeAudioPacketizer = 10,
     NativeVideoUdpSend = 11,
     NativeAudioUdpSend = 12,
+    PhysicalDisplayIsolation = 13,
 }
 
 #[repr(C)]
@@ -769,6 +771,9 @@ impl PlatformSessionControl for CallbackPlatformSessionControl {
                 }
                 PlatformRuntimeEventCode::NativeAudioUdpSend => {
                     LumenHostPlatformRuntimeEventCode::NativeAudioUdpSend
+                }
+                PlatformRuntimeEventCode::PhysicalDisplayIsolation => {
+                    LumenHostPlatformRuntimeEventCode::PhysicalDisplayIsolation
                 }
             },
             message: message

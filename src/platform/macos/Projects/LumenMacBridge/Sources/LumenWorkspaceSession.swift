@@ -38,6 +38,14 @@ public enum LumenMacWorkspaceSessionError: Error, Equatable {
     case virtualDisplayOwnershipMismatch
 }
 
+public struct LumenMacWorkspaceActivationOutcome: Equatable, Sendable {
+    public let isolationStatus: LumenMacWorkspaceIsolationStatus
+
+    public init(isolationStatus: LumenMacWorkspaceIsolationStatus) {
+        self.isolationStatus = isolationStatus
+    }
+}
+
 public enum LumenMacVirtualDisplayConfigurationFactory {
     public static func make(
         geometry: LumenMacDisplayGeometry,
@@ -167,8 +175,10 @@ public actor LumenMacWorkspaceSession {
     private let request: LumenMacWorkspaceSessionRequest
     private let coordinator: LumenWorkspaceCoordinator
     private let executor: LumenMacWorkspaceExecutor
+    private let isolationStatusHandler: @Sendable (LumenMacWorkspaceIsolationStatus) async -> Void
     private var phase = Phase.idle
     private var activationCommand: LumenMacWorkspaceCommand?
+    private var isolationTask: Task<Void, Never>?
 
     public init(
         request: LumenMacWorkspaceSessionRequest,
@@ -222,7 +232,10 @@ public actor LumenMacWorkspaceSession {
         try self.init(
             request: request,
             operations: operations,
-            displayWorkspace: displayWorkspace
+            displayWorkspace: displayWorkspace,
+            isolationStatusHandler: { status in
+                LumenMacWorkspaceIsolationRuntimeEventPublisher.publish(status)
+            }
         )
     }
 
@@ -230,10 +243,14 @@ public actor LumenMacWorkspaceSession {
         request: LumenMacWorkspaceSessionRequest,
         operations: LumenMacWorkspaceNativeOperations,
         displayWorkspace: any LumenMacDisplayWorkspaceManaging,
-        coordinator: LumenWorkspaceCoordinator? = nil
+        coordinator: LumenWorkspaceCoordinator? = nil,
+        isolationStatusHandler: @escaping @Sendable (
+            LumenMacWorkspaceIsolationStatus
+        ) async -> Void = { _ in }
     ) throws {
         self.request = request
         self.coordinator = try coordinator ?? LumenWorkspaceCoordinator()
+        self.isolationStatusHandler = isolationStatusHandler
         executor = try LumenMacWorkspaceExecutor(
             targetProcessIdentifiers: request.targetProcessIdentifiers,
             displayMode: request.displayMode,
@@ -296,9 +313,12 @@ public actor LumenMacWorkspaceSession {
         }
     }
 
-    public func activate() async throws {
+    @discardableResult
+    public func activate() async throws -> LumenMacWorkspaceActivationOutcome {
         if phase == .active {
-            return
+            return LumenMacWorkspaceActivationOutcome(
+                isolationStatus: await executor.physicalIsolationStatus()
+            )
         }
         guard phase == .prepared, let activationCommand else {
             throw LumenMacWorkspaceSessionError.sessionNotStarted
@@ -308,8 +328,13 @@ public actor LumenMacWorkspaceSession {
             let result = try await executor.execute(activationCommand)
             try await coordinator.complete(activationCommand, result: result)
             self.activationCommand = nil
-            try await coordinator.executePendingCommands(using: executor)
             phase = .active
+            let initialStatus: LumenMacWorkspaceIsolationStatus =
+                request.policy == .isolatedWorkspace ? .pending : .notRequested
+            isolationTask = Task { [weak self] in
+                await self?.completeDeferredIsolation()
+            }
+            return LumenMacWorkspaceActivationOutcome(isolationStatus: initialStatus)
         } catch {
             let activationError = error
             _ = try? await coordinator.complete(activationCommand, result: .failed)
@@ -341,8 +366,12 @@ public actor LumenMacWorkspaceSession {
     }
 
     public func stop() async throws {
+        if let isolationTask {
+            await isolationTask.value
+            self.isolationTask = nil
+        }
         guard phase != .idle else {
-            throw LumenMacWorkspaceSessionError.sessionNotStarted
+            return
         }
         if let activationCommand {
             _ = try? await coordinator.complete(activationCommand, result: .failed)
@@ -354,6 +383,7 @@ public actor LumenMacWorkspaceSession {
             if let cleanupError {
                 throw cleanupError
             }
+            await isolationStatusHandler(.notRequested)
             return
         }
         try await coordinator.endSession()
@@ -362,6 +392,7 @@ public actor LumenMacWorkspaceSession {
         if let cleanupError {
             throw cleanupError
         }
+        await isolationStatusHandler(.notRequested)
     }
 
     public func state() async throws -> LumenMacWorkspaceState {
@@ -370,5 +401,81 @@ public actor LumenMacWorkspaceSession {
 
     public func displayID() async throws -> UInt32 {
         try await executor.activeVirtualDisplayID()
+    }
+
+    private func completeDeferredIsolation() async {
+        do {
+            try await coordinator.executePendingCommands(using: executor)
+            let status = await executor.physicalIsolationStatus()
+            await isolationStatusHandler(status)
+        } catch {
+            let isolationError = error
+            let cleanupError: (any Error)?
+            do {
+                cleanupError = try await coordinator.executePendingCommandsRecovering(
+                    using: executor
+                )
+            } catch {
+                cleanupError = error
+            }
+            let ownershipCleanupError: (any Error)?
+            do {
+                try await executor.destroyOwnedVirtualDisplay()
+                ownershipCleanupError = nil
+            } catch {
+                ownershipCleanupError = error
+            }
+            phase = .idle
+            let failures = [isolationError, cleanupError, ownershipCleanupError]
+                .compactMap { $0 }
+                .map { String(describing: $0) }
+                .joined(separator: "; ")
+            await isolationStatusHandler(.failed(message: failures))
+        }
+        isolationTask = nil
+    }
+}
+
+private enum LumenMacWorkspaceIsolationRuntimeEventPublisher {
+    private static let notification = Notification.Name("LumenRuntimeEventNotification")
+    private static let isolationWarningCode = 13
+
+    static func publish(_ status: LumenMacWorkspaceIsolationStatus) {
+        let disposition: Int
+        let severity: Int
+        let code: Int
+        let body: String
+        switch status {
+        case .notRequested, .applied:
+            disposition = 1
+            severity = 0
+            code = isolationWarningCode
+            body = ""
+        case .pending:
+            return
+        case .unavailable(let message):
+            disposition = 0
+            severity = 0
+            code = isolationWarningCode
+            body = message
+        case .failed(let message):
+            disposition = 0
+            severity = 1
+            code = 6
+            body = message
+        }
+        DistributedNotificationCenter.default().postNotificationName(
+            notification,
+            object: nil,
+            userInfo: [
+                "identifier": "runtime-event-\(code)",
+                "disposition": disposition,
+                "severity": severity,
+                "code": code,
+                "body": body,
+                "launchPath": "/diagnostics",
+            ],
+            deliverImmediately: true
+        )
     }
 }

@@ -80,6 +80,14 @@ public enum LumenMacWorkspaceExecutorError: Error, Equatable {
     case commandPayloadMismatch
 }
 
+public enum LumenMacWorkspaceIsolationStatus: Equatable, Sendable {
+    case notRequested
+    case pending
+    case applied
+    case unavailable(message: String)
+    case failed(message: String)
+}
+
 public actor LumenMacWorkspaceExecutor: LumenWorkspaceCommandExecuting {
     private let displayWorkspace: any LumenMacDisplayWorkspaceManaging
     private let targetProcessIdentifiers: [Int32]
@@ -87,6 +95,7 @@ public actor LumenMacWorkspaceExecutor: LumenWorkspaceCommandExecuting {
     private let displayGeometry: LumenMacDisplayGeometry
     private var virtualDisplayID: UInt32?
     private var virtualDisplayIdentity: LumenMacVirtualDisplayIdentity?
+    private var isolationStatus = LumenMacWorkspaceIsolationStatus.notRequested
 
     public init(
         targetProcessIdentifiers: [Int32],
@@ -128,8 +137,13 @@ public actor LumenMacWorkspaceExecutor: LumenWorkspaceCommandExecuting {
             try await displayWorkspace.moveTargetWindows(to: try requireVirtualDisplay())
             return .succeeded
         case .applyIsolation:
-            try await displayWorkspace.isolateVirtualDisplay(try requireVirtualDisplay())
-            try await operations.verifyCaptureContinuity()
+            do {
+                try await displayWorkspace.isolateVirtualDisplay(try requireVirtualDisplay())
+                try await operations.verifyCaptureContinuity()
+                isolationStatus = .applied
+            } catch LumenMacDisplayWorkspaceError.isolationUnavailable(let message) {
+                isolationStatus = .unavailable(message: message)
+            }
             return .succeeded
         case .awaitExternalFirstEncodedFrame:
             try await operations.waitForExternalFirstEncodedFrame()
@@ -175,6 +189,10 @@ public actor LumenMacWorkspaceExecutor: LumenWorkspaceCommandExecuting {
         try await operations.destroyVirtualDisplay(virtualDisplayIdentity)
         virtualDisplayID = nil
         self.virtualDisplayIdentity = nil
+    }
+
+    public func physicalIsolationStatus() -> LumenMacWorkspaceIsolationStatus {
+        isolationStatus
     }
 
     private func requireVirtualDisplay() throws -> UInt32 {

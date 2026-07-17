@@ -28,11 +28,31 @@ private actor WorkspaceExecutionRecorder {
     }
 }
 
+private actor IsolationStatusRecorder {
+    private var statuses: [LumenMacWorkspaceIsolationStatus] = []
+
+    func append(_ status: LumenMacWorkspaceIsolationStatus) {
+        statuses.append(status)
+    }
+
+    func waitForStatusCount(_ count: Int) async -> [LumenMacWorkspaceIsolationStatus] {
+        while statuses.count < count {
+            try? await Task.sleep(nanoseconds: 1_000_000)
+        }
+        return statuses
+    }
+}
+
 private actor WorkspaceDisplayMock: LumenMacDisplayWorkspaceManaging {
     private let recorder: WorkspaceExecutionRecorder
+    private let isolationFailure: LumenMacDisplayWorkspaceError?
 
-    init(recorder: WorkspaceExecutionRecorder) {
+    init(
+        recorder: WorkspaceExecutionRecorder,
+        isolationFailure: LumenMacDisplayWorkspaceError? = nil
+    ) {
         self.recorder = recorder
+        self.isolationFailure = isolationFailure
     }
 
     func snapshotWorkspace(
@@ -44,11 +64,11 @@ private actor WorkspaceDisplayMock: LumenMacDisplayWorkspaceManaging {
 
     func promoteVirtualDisplay(_: UInt32) async {}
     func moveTargetWindows(to _: UInt32) async {}
-    func awaitVirtualDisplay(_ displayID: UInt32) async {
-        await recorder.append(.resolve(displayID))
-    }
-    func isolateVirtualDisplay(_ displayID: UInt32) async {
+    func isolateVirtualDisplay(_ displayID: UInt32) async throws {
         await recorder.append(.isolate(displayID))
+        if let isolationFailure {
+            throw isolationFailure
+        }
     }
     func restoreWorkspace(_: LumenMacPhysicalDisplayTopology) async {
         await recorder.append(.restore)
@@ -233,6 +253,7 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
 
     func testExternalCapturePreparationPausesBeforePhysicalIsolation() async throws {
         let recorder = WorkspaceExecutionRecorder()
+        let statusRecorder = IsolationStatusRecorder()
         let operations = LumenMacWorkspaceNativeOperations(
             createVirtualDisplay: { _, geometry in
                 await recorder.append(.create(geometry))
@@ -259,7 +280,10 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
             request: request,
             operations: operations,
             displayWorkspace: WorkspaceDisplayMock(recorder: recorder),
-            coordinator: makeCoordinator()
+            coordinator: makeCoordinator(),
+            isolationStatusHandler: { status in
+                await statusRecorder.append(status)
+            }
         )
 
         try await session.prepare()
@@ -270,7 +294,10 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         let preparedState = try await session.state()
         XCTAssertEqual(preparedState, .starting)
 
-        try await session.activate()
+        let outcome = try await session.activate()
+        XCTAssertEqual(outcome.isolationStatus, .pending)
+        let statuses = await statusRecorder.waitForStatusCount(1)
+        XCTAssertEqual(statuses, [.applied])
 
         let activeEvents = await recorder.recordedEvents()
         let resolveIndex = try XCTUnwrap(activeEvents.firstIndex(of: .resolve(88)))
@@ -283,6 +310,70 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         let activeState = try await session.state()
         XCTAssertEqual(activeState, .active)
         try await session.stop()
+    }
+
+    func testUnavailablePhysicalIsolationDoesNotBlockOrStopTheStreamSession() async throws {
+        let recorder = WorkspaceExecutionRecorder()
+        let statusRecorder = IsolationStatusRecorder()
+        let operations = LumenMacWorkspaceNativeOperations(
+            createVirtualDisplay: { _, geometry in
+                await recorder.append(.create(geometry))
+                return 114
+            },
+            configureVirtualDisplay: { displayID, geometry in
+                await recorder.append(.configure(displayID, geometry))
+            },
+            verifyVirtualDisplay: { displayID in
+                await recorder.append(.resolve(displayID))
+            },
+            startCapture: { _ in },
+            stopCapture: {},
+            destroyVirtualDisplay: { _ in await recorder.append(.destroy) },
+            waitForExternalFirstEncodedFrame: {
+                await recorder.append(.firstFrameBarrier)
+            },
+            verifyCaptureContinuity: {
+                await recorder.append(.captureContinuity)
+            }
+        )
+        let journalPath = temporaryRecoveryJournalPath()
+        let session = try LumenMacWorkspaceSession(
+            request: externalIsolatedRequest(),
+            operations: operations,
+            displayWorkspace: WorkspaceDisplayMock(
+                recorder: recorder,
+                isolationFailure: .isolationUnavailable("display 114 was not published")
+            ),
+            coordinator: LumenWorkspaceCoordinator(recoveryJournalPath: journalPath),
+            isolationStatusHandler: { status in
+                await statusRecorder.append(status)
+            }
+        )
+
+        try await session.prepare()
+        let outcome = try await session.activate()
+
+        XCTAssertEqual(outcome.isolationStatus, .pending)
+        let statuses = await statusRecorder.waitForStatusCount(1)
+        XCTAssertEqual(
+            statuses,
+            [.unavailable(message: "display 114 was not published")]
+        )
+        let activeState = try await session.state()
+        XCTAssertEqual(activeState, .active)
+        let activeEvents = await recorder.recordedEvents()
+        XCTAssertTrue(activeEvents.contains(.firstFrameBarrier))
+        XCTAssertTrue(activeEvents.contains(.isolate(114)))
+        XCTAssertFalse(activeEvents.contains(.captureContinuity))
+        XCTAssertFalse(activeEvents.contains(.restore))
+        XCTAssertFalse(activeEvents.contains(.destroy))
+
+        try await session.stop()
+        let stoppedEvents = await recorder.recordedEvents()
+        XCTAssertTrue(stoppedEvents.contains(.restore))
+        XCTAssertTrue(stoppedEvents.contains(.verify))
+        XCTAssertTrue(stoppedEvents.contains(.destroy))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journalPath))
     }
 
     func testPreparedDisplayDisappearanceRollsBackBeforeIsolationAndRemovesJournal() async throws {

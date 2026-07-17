@@ -130,6 +130,13 @@ struct MacWorkspaceSessionRequest {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
+struct MacWorkspaceActivationResult {
+    activated: bool,
+    isolation_status: u32,
+}
+
+#[repr(C)]
 #[derive(Clone, Copy, Default)]
 struct MacEncodedFrameRecord {
     has_value: bool,
@@ -179,7 +186,9 @@ type PopAudio = unsafe extern "C" fn(
 ) -> MacAudioFrameRecord;
 type RequestKeyFrame = unsafe extern "C" fn();
 type PrepareWorkspace = unsafe extern "C" fn(MacWorkspaceSessionRequest, *mut c_char, usize) -> u32;
-type UpdateWorkspace = unsafe extern "C" fn(*const c_char, *mut c_char, usize) -> bool;
+type ActivateWorkspace =
+    unsafe extern "C" fn(*const c_char, *mut c_char, usize) -> MacWorkspaceActivationResult;
+type StopWorkspace = unsafe extern "C" fn(*const c_char, *mut c_char, usize) -> bool;
 type PublishRuntimeEvent = unsafe extern "C" fn(u32, u32, u32, *const c_char);
 
 struct MacBridgeApi {
@@ -197,8 +206,8 @@ struct MacBridgeApi {
     pop_audio: PopAudio,
     request_key_frame: RequestKeyFrame,
     prepare_workspace: PrepareWorkspace,
-    activate_workspace: UpdateWorkspace,
-    stop_workspace: UpdateWorkspace,
+    activate_workspace: ActivateWorkspace,
+    stop_workspace: StopWorkspace,
     publish_runtime_event: PublishRuntimeEvent,
 }
 
@@ -469,14 +478,17 @@ impl PlatformSessionControl for MacPlatformSessionControl {
             state.next_audio_deadline = Some(Instant::now());
             if plan.virtual_display {
                 let key = state.workspace_key.as_ref().expect("workspace key");
-                if !unsafe {
+                let outcome = unsafe {
                     (self.api.activate_workspace)(key.as_ptr(), error.as_mut_ptr(), error.len())
-                } {
+                };
+                if !outcome.activated {
                     return Err(format!(
                         "workspace activation failed: {}",
                         error_text(&error)
                     ));
                 }
+                let event = workspace_isolation_event(outcome, error_text(&error))?;
+                self.publish_runtime_event(event)?;
             }
             Ok(())
         })();
@@ -805,6 +817,39 @@ fn copy_annex_b_sample(
     Ok((output, timestamp))
 }
 
+fn workspace_isolation_event(
+    outcome: MacWorkspaceActivationResult,
+    message: String,
+) -> Result<PlatformRuntimeEvent, String> {
+    let cleared = || PlatformRuntimeEvent {
+        disposition: PlatformRuntimeEventDisposition::Cleared,
+        severity: PlatformRuntimeEventSeverity::Warning,
+        code: crate::PlatformRuntimeEventCode::PhysicalDisplayIsolation,
+        message: None,
+    };
+    match outcome.isolation_status {
+        0 | 1 | 3 => Ok(cleared()),
+        2 => Ok(PlatformRuntimeEvent {
+            disposition: PlatformRuntimeEventDisposition::Raised,
+            severity: PlatformRuntimeEventSeverity::Warning,
+            code: crate::PlatformRuntimeEventCode::PhysicalDisplayIsolation,
+            message: Some(if message.is_empty() {
+                "physical display isolation is unavailable".to_owned()
+            } else {
+                message
+            }),
+        }),
+        4 => Err(if message.is_empty() {
+            "physical display isolation failed".to_owned()
+        } else {
+            message
+        }),
+        status => Err(format!(
+            "macOS workspace returned an invalid isolation status {status}"
+        )),
+    }
+}
+
 unsafe fn parameter_set(
     codec: i32,
     format: FormatDescription,
@@ -971,4 +1016,52 @@ unsafe extern "C" {
         maximum_bytes: c_int,
     ) -> c_int;
     fn opus_strerror(error: c_int) -> *const c_char;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::PlatformRuntimeEventCode;
+
+    #[test]
+    fn pending_isolation_keeps_session_start_nonfatal_and_clears_stale_warning() {
+        let event = workspace_isolation_event(
+            MacWorkspaceActivationResult {
+                activated: true,
+                isolation_status: 3,
+            },
+            String::new(),
+        )
+        .expect("pending isolation remains a valid active session");
+
+        assert_eq!(event.disposition, PlatformRuntimeEventDisposition::Cleared);
+        assert_eq!(event.severity, PlatformRuntimeEventSeverity::Warning);
+        assert_eq!(
+            event.code,
+            PlatformRuntimeEventCode::PhysicalDisplayIsolation
+        );
+    }
+
+    #[test]
+    fn unavailable_isolation_is_a_typed_nonfatal_warning() {
+        let event = workspace_isolation_event(
+            MacWorkspaceActivationResult {
+                activated: true,
+                isolation_status: 2,
+            },
+            "display 114 was not published".to_owned(),
+        )
+        .expect("unavailable isolation must not fail stream startup");
+
+        assert_eq!(event.disposition, PlatformRuntimeEventDisposition::Raised);
+        assert_eq!(event.severity, PlatformRuntimeEventSeverity::Warning);
+        assert_eq!(
+            event.code,
+            PlatformRuntimeEventCode::PhysicalDisplayIsolation
+        );
+        assert_eq!(
+            event.message.as_deref(),
+            Some("display 114 was not published")
+        );
+    }
 }

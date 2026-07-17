@@ -629,18 +629,22 @@ uint32_t LumenMacWorkspacePrepareSession(
   return displayID;
 }
 
-bool LumenMacWorkspaceActivateSession(
+LumenMacWorkspaceActivationResult LumenMacWorkspaceActivateSession(
   const char *display_key,
-  char *error_destination,
-  size_t error_capacity
+  char *status_destination,
+  size_t status_capacity
 ) {
   NSString *key = display_key ? [NSString stringWithUTF8String:display_key] : @"";
   NSError *error = nil;
-  BOOL activated = [LumenMacWorkspaceSessionFacade.shared
+  LumenMacWorkspaceActivationOutcomeBox *outcome = [LumenMacWorkspaceSessionFacade.shared
     activateSessionSyncWithDisplayKey:key
     error:&error];
-  copy_string_to_buffer(error.localizedDescription, error_destination, error_capacity);
-  return activated == YES;
+  NSString *status = outcome ? outcome.warningMessage : error.localizedDescription;
+  copy_string_to_buffer(status, status_destination, status_capacity);
+  return (LumenMacWorkspaceActivationResult) {
+    .activated = outcome != nil,
+    .isolation_status = outcome ? outcome.isolationStatusRawValue : 0,
+  };
 }
 
 bool LumenMacWorkspaceStopSession(
