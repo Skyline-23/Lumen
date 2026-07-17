@@ -188,28 +188,14 @@ struct LumenSettingsView: View {
                         Text(LumenCopy.Settings.addressFamilyTitle(family)).tag(family)
                     }
                 }
-                basePortField(value: $draft.port)
-                Text(LumenCopy.Settings.portPlanDetail)
+                connectionPortField(value: $draft.port)
+                Text(
+                    LumenCopy.Settings.connectionPortDetail(
+                        LumenNetworkPortPlan.defaultConnectionPort
+                    )
+                )
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                networkPortRow(
-                    LumenCopy.Settings.controlHTTPSPort,
-                    port: networkPortPlan.controlHTTPSPort,
-                    transport: "TCP",
-                    exposure: upnpExposure
-                )
-                networkPortRow(
-                    LumenCopy.Settings.nativeMediaPort,
-                    port: networkPortPlan.nativeMediaUDPPort,
-                    transport: "UDP",
-                    exposure: upnpExposure
-                )
-                networkPortRow(
-                    LumenCopy.Settings.nativeSessionQUICPort,
-                    port: networkPortPlan.nativeSessionQUICPort,
-                    transport: "UDP",
-                    exposure: upnpExposure
-                )
                 integerMenu(
                     LumenCopy.Settings.fecPercentage,
                     value: $draft.fecPercentage,
@@ -250,60 +236,17 @@ struct LumenSettingsView: View {
         }
     }
 
-    private var networkPortPlan: LumenNetworkPortPlan {
-        draft.networkPortPlan
-    }
-
-    private var upnpExposure: String {
-        draft.upnpEnabled
-            ? LumenCopy.Settings.mappedByUPnP
-            : LumenCopy.Settings.notMappedByUPnP
-    }
-
-    private func basePortField(value: Binding<Int>) -> some View {
+    private func connectionPortField(value: Binding<Int>) -> some View {
         LabeledContent(LumenCopy.Settings.port) {
-            HStack(spacing: 10) {
-                VStack(alignment: .trailing, spacing: 2) {
-                    TextField(
-                        LumenCopy.Settings.port,
-                        value: value,
-                        format: .number,
-                        prompt: Text(String(LumenNetworkPortPlan.defaultBasePort))
-                    )
-                    .multilineTextAlignment(.trailing)
-                    .monospacedDigit()
-                    .frame(width: 100)
-                    Text(
-                        LumenCopy.Settings.defaultPort(
-                            LumenNetworkPortPlan.defaultBasePort
-                        )
-                    )
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                }
-                Button(LumenCopy.Settings.useDefaultPort) {
-                    value.wrappedValue = LumenNetworkPortPlan.defaultBasePort
-                }
-                .buttonStyle(.borderless)
-            }
-        }
-    }
-
-    private func networkPortRow(
-        _ title: String,
-        port: Int,
-        transport: String,
-        exposure: String
-    ) -> some View {
-        LabeledContent(title) {
-            HStack(spacing: 6) {
-                Text("\(port)")
-                    .monospacedDigit()
-                Text(transport)
-                Text("·")
-                Text(exposure)
-                    .foregroundStyle(.secondary)
-            }
+            TextField(
+                LumenCopy.Settings.port,
+                value: value,
+                format: .number,
+                prompt: Text(String(LumenNetworkPortPlan.defaultConnectionPort))
+            )
+            .multilineTextAlignment(.trailing)
+            .monospacedDigit()
+            .frame(width: 110)
         }
     }
 

@@ -42,11 +42,11 @@ pub(super) fn validate_settings(settings: &HostSettings) -> Result<(), SettingsP
             "back button timeout must be between -1 and 60000",
         ));
     }
-    if !(1_029..=65_515).contains(&settings.network.port) {
+    if !(1_030..=65_515).contains(&settings.network.port) {
         return Err(SettingsProtocolError::field(
             SettingsErrorCode::InvalidValue,
             "network.port",
-            "port must be between 1029 and 65515",
+            "connection port must be between 1030 and 65515",
         ));
     }
     if !(1_000..=120_000).contains(&settings.network.ping_timeout_ms) {

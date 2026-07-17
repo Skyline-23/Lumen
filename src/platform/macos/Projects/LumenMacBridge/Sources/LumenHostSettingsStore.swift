@@ -1,27 +1,28 @@
 import Foundation
 
 @frozen public struct LumenNetworkPortPlan: Equatable, Sendable {
-    public static let defaultBasePort = 47_989
-    public static let validBasePortRange = 1_029...65_514
+    public static let defaultConnectionPort = 47_990
+    public static let validConnectionPortRange = 1_030...65_515
 
     public let basePort: Int
     public let controlHTTPSPort: Int
     public let nativeMediaUDPPort: Int
     public let nativeSessionQUICPort: Int
 
-    public init?(basePort: Int) {
-        guard Self.validBasePortRange.contains(basePort) else {
+    public init?(connectionPort: Int) {
+        guard Self.validConnectionPortRange.contains(connectionPort) else {
             return nil
         }
+        let basePort = connectionPort - 1
         self.basePort = basePort
-        controlHTTPSPort = basePort + 1
+        controlHTTPSPort = connectionPort
         nativeMediaUDPPort = basePort + 9
         nativeSessionQUICPort = basePort + 21
     }
 
     public static var `default`: Self {
-        guard let plan = Self(basePort: defaultBasePort) else {
-            preconditionFailure("The Lumen default base port must produce a valid port plan")
+        guard let plan = Self(connectionPort: defaultConnectionPort) else {
+            preconditionFailure("The Lumen default connection port must produce a valid port plan")
         }
         return plan
     }
@@ -120,7 +121,7 @@ public struct LumenNativeHostSettings: Equatable, Sendable {
     public var stateFilePath: String
 
     public var networkPortPlan: LumenNetworkPortPlan {
-        LumenNetworkPortPlan(basePort: port) ?? .default
+        LumenNetworkPortPlan(connectionPort: port) ?? .default
     }
 
     public static var defaults: Self {
@@ -151,7 +152,7 @@ public struct LumenNativeHostSettings: Equatable, Sendable {
             nativePenAndTouch: true,
             rumbleForwarding: true,
             addressFamily: .ipv4,
-            port: LumenNetworkPortPlan.defaultBasePort,
+            port: LumenNetworkPortPlan.defaultConnectionPort,
             upnpEnabled: false,
             remoteAccessScope: .localNetwork,
             externalIPMode: .automatic,
@@ -190,7 +191,7 @@ public struct LumenNativeHostSettings: Equatable, Sendable {
             "native_pen_touch=\(nativePenAndTouch)",
             "forward_rumble=\(rumbleForwarding)",
             "address_family=\(addressFamily.rawValue)",
-            "port=\(port)",
+            "port=\(networkPortPlan.basePort)",
             "upnp=\(upnpEnabled)",
             "origin_admin_allowed=\(remoteAccessScope.rawValue)",
             "lan_encryption_mode=\(lanEncryption.rawValue)",
@@ -284,6 +285,7 @@ public actor LumenHostSettingsStore {
         static let rumbleForwarding = "input.rumble"
         static let addressFamily = "network.address-family"
         static let port = "network.port"
+        static let portSemanticsVersion = "network.port-semantics-version"
         static let upnp = "network.upnp"
         static let remoteAccessScope = "network.remote-access-scope"
         static let externalIPMode = "network.external-ip-mode"
@@ -340,6 +342,7 @@ public actor LumenHostSettingsStore {
         defaults.set(settings.rumbleForwarding, forKey: Key.rumbleForwarding)
         defaults.set(settings.addressFamily.rawValue, forKey: Key.addressFamily)
         defaults.set(settings.port, forKey: Key.port)
+        defaults.set(1, forKey: Key.portSemanticsVersion)
         defaults.set(settings.upnpEnabled, forKey: Key.upnp)
         defaults.set(settings.remoteAccessScope.rawValue, forKey: Key.remoteAccessScope)
         defaults.set(settings.externalIPMode.rawValue, forKey: Key.externalIPMode)
@@ -436,7 +439,7 @@ public actor LumenHostSettingsStore {
             nativePenAndTouch: bool(defaults, Key.nativePenAndTouch, fallback.nativePenAndTouch),
             rumbleForwarding: bool(defaults, Key.rumbleForwarding, fallback.rumbleForwarding),
             addressFamily: LumenNetworkAddressFamily(rawValue: defaults.string(forKey: Key.addressFamily) ?? "") ?? fallback.addressFamily,
-            port: integer(defaults, Key.port, fallback.port),
+            port: connectionPort(defaults, fallback: fallback.port),
             upnpEnabled: bool(defaults, Key.upnp, fallback.upnpEnabled),
             remoteAccessScope: LumenRemoteAccessScope(rawValue: defaults.string(forKey: Key.remoteAccessScope) ?? "") ?? fallback.remoteAccessScope,
             externalIPMode: LumenExternalIPMode(
@@ -465,7 +468,7 @@ public actor LumenHostSettingsStore {
               settings.adapterSelector == "automatic",
               settings.outputSelector == "automatic",
               settings.audioSink == "system-default",
-              LumenNetworkPortPlan.validBasePortRange.contains(settings.port),
+              LumenNetworkPortPlan.validConnectionPortRange.contains(settings.port),
               (1_000...120_000).contains(settings.pingTimeoutMilliseconds),
               (1...255).contains(settings.fecPercentage),
               (-1...60_000).contains(settings.controllerBackButtonTimeoutMilliseconds),
@@ -498,6 +501,24 @@ public actor LumenHostSettingsStore {
 
     private nonisolated static func integer(_ defaults: UserDefaults, _ key: String, _ fallback: Int) -> Int {
         defaults.object(forKey: key) == nil ? fallback : defaults.integer(forKey: key)
+    }
+
+    private nonisolated static func connectionPort(_ defaults: UserDefaults, fallback: Int) -> Int {
+        guard defaults.object(forKey: Key.port) != nil else {
+            return fallback
+        }
+        let storedPort = defaults.integer(forKey: Key.port)
+        guard defaults.integer(forKey: Key.portSemanticsVersion) < 1 else {
+            return storedPort
+        }
+        let (migratedPort, overflowed) = storedPort.addingReportingOverflow(1)
+        guard !overflowed,
+              LumenNetworkPortPlan.validConnectionPortRange.contains(migratedPort) else {
+            return storedPort
+        }
+        defaults.set(migratedPort, forKey: Key.port)
+        defaults.set(1, forKey: Key.portSemanticsVersion)
+        return migratedPort
     }
 
     private nonisolated static func canonicalSelector(

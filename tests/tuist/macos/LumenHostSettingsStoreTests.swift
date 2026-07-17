@@ -19,11 +19,12 @@ final class LumenHostSettingsStoreTests: XCTestCase {
         XCTAssertTrue(settings.mouseInput)
         XCTAssertTrue(settings.controllerInput)
         XCTAssertEqual(settings.addressFamily, .ipv4)
-        XCTAssertEqual(settings.port, 47_989)
+        XCTAssertEqual(settings.port, 47_990)
         XCTAssertEqual(settings.networkPortPlan, .default)
         XCTAssertEqual(settings.networkPortPlan.controlHTTPSPort, 47_990)
         XCTAssertEqual(settings.networkPortPlan.nativeMediaUDPPort, 47_998)
         XCTAssertEqual(settings.networkPortPlan.nativeSessionQUICPort, 48_010)
+        XCTAssertTrue(settings.runtimeArguments.contains("port=47989"))
         XCTAssertFalse(settings.upnpEnabled)
         XCTAssertEqual(settings.lanEncryption, .disabled)
         XCTAssertEqual(settings.wanEncryption, .opportunistic)
@@ -61,7 +62,7 @@ final class LumenHostSettingsStoreTests: XCTestCase {
         settings.nativePenAndTouch = false
         settings.rumbleForwarding = false
         settings.addressFamily = .dualStack
-        settings.port = 48_989
+        settings.port = 48_990
         settings.upnpEnabled = true
         settings.remoteAccessScope = .anywhere
         settings.externalIPMode = .disabled
@@ -84,6 +85,7 @@ final class LumenHostSettingsStoreTests: XCTestCase {
         XCTAssertTrue(arguments.contains("upnp=true"))
         XCTAssertTrue(arguments.contains("origin_admin_allowed=wan"))
         XCTAssertTrue(arguments.contains("fec_percentage=30"))
+        XCTAssertTrue(arguments.contains("port=48989"))
         let prepArgument = try XCTUnwrap(arguments.first { $0.hasPrefix("global_prep_cmd=") })
         XCTAssertTrue(prepArgument.contains("\"run\":\"prepare\""))
         XCTAssertTrue(prepArgument.contains("\"undo\":\"restore\""))
@@ -102,7 +104,8 @@ final class LumenHostSettingsStoreTests: XCTestCase {
         defaults.set("", forKey: "stream.adapter-selector")
         defaults.set("", forKey: "stream.output-selector")
         defaults.set("", forKey: "audio.sink")
-        defaults.set(48_989, forKey: "network.port")
+        defaults.set(48_990, forKey: "network.port")
+        defaults.set(1, forKey: "network.port-semantics-version")
         defaults.set(true, forKey: "network.upnp")
 
         let store = try LumenHostSettingsStore(suiteName: suiteName)
@@ -111,8 +114,27 @@ final class LumenHostSettingsStoreTests: XCTestCase {
         XCTAssertEqual(settings.adapterSelector, "automatic")
         XCTAssertEqual(settings.outputSelector, "automatic")
         XCTAssertEqual(settings.audioSink, "system-default")
-        XCTAssertEqual(settings.port, 48_989)
+        XCTAssertEqual(settings.port, 48_990)
         XCTAssertTrue(settings.upnpEnabled)
+    }
+
+    func testLegacyBasePortMigratesToConnectionPortWithoutMovingListeners() async throws {
+        let suiteName = "LumenHostSettingsStoreTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        defaults.set(48_989, forKey: "network.port")
+
+        let store = try LumenHostSettingsStore(suiteName: suiteName)
+        let settings = try await store.snapshot()
+
+        XCTAssertEqual(settings.port, 48_990)
+        XCTAssertEqual(settings.networkPortPlan.controlHTTPSPort, 48_990)
+        XCTAssertEqual(settings.networkPortPlan.nativeMediaUDPPort, 48_998)
+        XCTAssertEqual(settings.networkPortPlan.nativeSessionQUICPort, 49_010)
+        XCTAssertTrue(settings.runtimeArguments.contains("port=48989"))
+        XCTAssertEqual(defaults.integer(forKey: "network.port"), 48_990)
+        XCTAssertEqual(defaults.integer(forKey: "network.port-semantics-version"), 1)
     }
 
     func testInvalidHostValuesAreRejected() async throws {
@@ -129,15 +151,15 @@ final class LumenHostSettingsStoreTests: XCTestCase {
         }
     }
 
-    func testBasePortRejectsValuesThatOverflowTheSessionQUICOffset() async throws {
+    func testConnectionPortRejectsValuesThatOverflowTheSessionQUICOffset() async throws {
         let suiteName = "LumenHostSettingsStoreTests.\(UUID().uuidString)"
         let store = try LumenHostSettingsStore(suiteName: suiteName)
         var settings = try await store.snapshot()
-        settings.port = 65_515
+        settings.port = 65_516
 
         do {
             try await store.save(settings)
-            XCTFail("Expected base port overflow to be rejected")
+            XCTFail("Expected connection port overflow to be rejected")
         } catch {
             XCTAssertEqual(error as? LumenHostSettingsError, .invalidValue)
         }

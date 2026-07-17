@@ -31,8 +31,8 @@ msgstr "アプリケーション"
 msgid "Audio"
 msgstr "オーディオ"
 
-msgid "Base port"
-msgstr "ベースポート"
+msgid "Port"
+msgstr "ポート"
 
 msgid "Choose what remote clients can launch"
 msgstr "リモートクライアントが起動できる項目を選択"

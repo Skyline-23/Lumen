@@ -188,7 +188,7 @@ mod tests {
             owner_access: WindowsOwnerAccessState::SetupRequired,
             navigation: WindowsNavigation::Overview,
             host_name: "Studio".to_owned(),
-            control_port: 47_989,
+            control_port: 47_990,
         }
     }
 

@@ -4,7 +4,7 @@ use lumen_engine::settings::{
 };
 use serde::Deserialize;
 
-use crate::HostArguments;
+use crate::{network_ports::HostPorts, HostArguments};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -64,7 +64,7 @@ pub(super) fn from_arguments(
         "address_family",
         &[("ipv4", AddressFamily::Ipv4), ("both", AddressFamily::Both)],
     )?;
-    settings.network.port = number(arguments, "port")?;
+    settings.network.port = HostPorts::from_arguments(arguments)?.control_https;
     settings.network.upnp = boolean(arguments, "upnp")?;
     settings.network.remote_access_scope = one_of(
         arguments,
@@ -227,5 +227,6 @@ mod tests {
         assert_eq!(settings.commands.server[0].invocation.arguments, ["wake"]);
         assert!(settings.general.discovery);
         assert!(settings.network.upnp);
+        assert_eq!(settings.network.port, 47_990);
     }
 }
