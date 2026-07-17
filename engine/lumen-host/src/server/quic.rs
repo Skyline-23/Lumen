@@ -984,8 +984,7 @@ mod tests {
         assert!(formats.iter().any(|format| {
             format.codec == NativeVideoCodec::Hevc as i32
                 && format.profile == lumen_engine::NativeVideoProfile::HevcMain10 as i32
-                && format.chroma_subsampling
-                    == lumen_engine::NativeChromaSubsampling::Yuv420 as i32
+                && format.chroma_subsampling == lumen_engine::NativeChromaSubsampling::Yuv420 as i32
                 && format.bit_depth == 10
                 && format.dynamic_range == NativeDynamicRange::Hdr10 as i32
                 && format.color_range == lumen_engine::NativeColorRange::Limited as i32
@@ -993,8 +992,7 @@ mod tests {
         assert!(formats.iter().any(|format| {
             format.codec == NativeVideoCodec::Hevc as i32
                 && format.profile == lumen_engine::NativeVideoProfile::HevcMain44410 as i32
-                && format.chroma_subsampling
-                    == lumen_engine::NativeChromaSubsampling::Yuv444 as i32
+                && format.chroma_subsampling == lumen_engine::NativeChromaSubsampling::Yuv444 as i32
                 && format.bit_depth == 10
                 && format.dynamic_range == NativeDynamicRange::Hdr10 as i32
                 && format.color_range == lumen_engine::NativeColorRange::Limited as i32
@@ -1020,12 +1018,8 @@ mod tests {
         hello.sink_gamut = NativeDisplayGamut::Rec2020 as i32;
         hello.sink_transfer = NativeDisplayTransfer::Pq as i32;
 
-        let plan = lumen_engine::negotiate_native_session(
-            &hello,
-            &default_host_capabilities(),
-            7,
-        )
-        .expect("canonical HEVC Main10 4:2:0 HDR must negotiate");
+        let plan = lumen_engine::negotiate_native_session(&hello, &default_host_capabilities(), 7)
+            .expect("canonical HEVC Main10 4:2:0 HDR must negotiate");
         assert_eq!(
             plan.selected_video_capability
                 .and_then(|capability| capability.format),
