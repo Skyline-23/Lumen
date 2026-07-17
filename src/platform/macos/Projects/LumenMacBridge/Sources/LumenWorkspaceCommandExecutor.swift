@@ -182,10 +182,6 @@ public actor LumenMacWorkspaceExecutor: LumenWorkspaceCommandExecuting {
         try await operations.verifyVirtualDisplay(try requireVirtualDisplay())
     }
 
-    public func verifyCaptureTopologyStable() async throws {
-        try await displayWorkspace.verifyCaptureTopologyStable(try requireVirtualDisplay())
-    }
-
     public func verifyOwnedCaptureContinuity() async throws {
         try await operations.verifyCaptureContinuity()
     }

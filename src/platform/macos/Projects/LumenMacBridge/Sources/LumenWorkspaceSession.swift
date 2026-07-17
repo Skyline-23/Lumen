@@ -289,7 +289,6 @@ public actor LumenMacWorkspaceSession {
                 do {
                     if command.action == .startCapture ||
                         command.action == .awaitExternalFirstEncodedFrame {
-                        try await executor.verifyCaptureTopologyStable()
                         try await executor.verifyOwnedVirtualDisplay()
                     }
                     if command.action == .awaitExternalFirstEncodedFrame {
