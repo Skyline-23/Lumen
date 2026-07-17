@@ -10,7 +10,7 @@ final class LumenHostSettingsStoreTests: XCTestCase {
         let store = try LumenHostSettingsStore(suiteName: suiteName)
         let settings = try await store.snapshot()
 
-        XCTAssertEqual(settings.workspacePolicy, .coexist)
+        XCTAssertEqual(settings.workspacePolicy, .isolatedWorkspace)
         XCTAssertFalse(settings.systemAuthenticationEnabled)
         XCTAssertTrue(settings.discoveryEnabled)
         XCTAssertTrue(settings.deviceEnrollmentEnabled)
@@ -25,12 +25,29 @@ final class LumenHostSettingsStoreTests: XCTestCase {
         XCTAssertEqual(settings.networkPortPlan.nativeMediaUDPPort, 47_998)
         XCTAssertEqual(settings.networkPortPlan.nativeSessionQUICPort, 48_010)
         XCTAssertTrue(settings.runtimeArguments.contains("port=47989"))
+        XCTAssertTrue(settings.runtimeArguments.contains("workspace_policy=isolated-workspace"))
         XCTAssertFalse(settings.upnpEnabled)
         XCTAssertEqual(settings.lanEncryption, .disabled)
         XCTAssertEqual(settings.wanEncryption, .opportunistic)
         XCTAssertEqual(settings.pingTimeoutMilliseconds, 10_000)
         XCTAssertEqual(settings.fecPercentage, 20)
         XCTAssertEqual(settings.logLevel, .info)
+    }
+
+    func testLegacyWorkspacePolicyMigratesToIsolatedWorkspace() async throws {
+        let suiteName = "LumenHostSettingsStoreTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        defaults.set("promote-virtual-main", forKey: "host.workspace-policy")
+
+        let store = try LumenHostSettingsStore(suiteName: suiteName)
+        let settings = try await store.snapshot()
+
+        XCTAssertEqual(settings.workspacePolicy, .isolatedWorkspace)
+        XCTAssertEqual(defaults.string(forKey: "host.workspace-policy"), "isolated-workspace")
+        XCTAssertEqual(defaults.integer(forKey: "host.workspace-policy-semantics-version"), 1)
+        XCTAssertTrue(settings.runtimeArguments.contains("workspace_policy=isolated-workspace"))
     }
 
     func testCompleteSnapshotPersistsAndBuildsRuntimeArguments() async throws {
