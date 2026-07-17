@@ -8,7 +8,6 @@ private enum WorkspaceExecutionEvent: Equatable {
     case resolve(UInt32)
     case promote(UInt32)
     case move(UInt32)
-    case stableTopology(UInt32)
     case isolate(UInt32)
     case firstFrameBarrier
     case startCapture(UInt32)
@@ -72,9 +71,6 @@ private actor WorkspaceDisplayMock: LumenMacDisplayWorkspaceManaging {
     }
     func moveTargetWindows(to displayID: UInt32) async {
         await recorder.append(.move(displayID))
-    }
-    func verifyCaptureTopologyStable(_ displayID: UInt32) async {
-        await recorder.append(.stableTopology(displayID))
     }
     func isolateVirtualDisplay(_ displayID: UInt32) async throws {
         await recorder.append(.isolate(displayID))
@@ -267,7 +263,7 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         try await coordinator.executePendingCommands(using: executor)
     }
 
-    func testExternalCaptureStabilizesTopologyBeforeBindingAndNeverMutatesItAfterFirstFrame() async throws {
+    func testExternalCaptureUsesRetainedOwnershipThenScreenCaptureFirstFrameReadiness() async throws {
         let recorder = WorkspaceExecutionRecorder()
         let statusRecorder = IsolationStatusRecorder()
         let operations = LumenMacWorkspaceNativeOperations(
@@ -306,11 +302,9 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         XCTAssertFalse(preparedEvents.contains(.isolate(88)))
         let promoteIndex = try XCTUnwrap(preparedEvents.firstIndex(of: .promote(88)))
         let moveIndex = try XCTUnwrap(preparedEvents.firstIndex(of: .move(88)))
-        let stableIndex = try XCTUnwrap(preparedEvents.firstIndex(of: .stableTopology(88)))
         let resolveIndex = try XCTUnwrap(preparedEvents.firstIndex(of: .resolve(88)))
-        XCTAssertLessThan(promoteIndex, stableIndex)
-        XCTAssertLessThan(moveIndex, stableIndex)
-        XCTAssertLessThan(stableIndex, resolveIndex)
+        XCTAssertLessThan(promoteIndex, resolveIndex)
+        XCTAssertLessThan(moveIndex, resolveIndex)
         let preparedState = try await session.state()
         XCTAssertEqual(preparedState, .starting)
 
@@ -328,13 +322,7 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         XCTAssertLessThan(moveIndex, barrierIndex)
         XCTAssertLessThan(resolveIndex, barrierIndex)
         XCTAssertFalse(activeEvents.contains(.isolate(88)))
-        XCTAssertEqual(
-            activeEvents.filter {
-                $0 == .promote(88) || $0 == .move(88) || $0 == .stableTopology(88)
-            }.count,
-            3,
-            "ScreenCaptureKit topology must remain unchanged after its first-frame barrier"
-        )
+        XCTAssertEqual(activeEvents.filter { $0 == .promote(88) || $0 == .move(88) }.count, 2)
         let activeState = try await session.state()
         XCTAssertEqual(activeState, .active)
         try await session.stop()
@@ -628,7 +616,6 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
                 .snapshot([]),
                 .create(geometry),
                 .configure(73, geometry),
-                .stableTopology(73),
                 .startCapture(73),
                 .stopCapture,
                 .restore,
@@ -696,7 +683,6 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
                 .snapshot([]),
                 .create(geometry),
                 .configure(91, geometry),
-                .stableTopology(91),
                 .startCapture(91),
                 .restore,
                 .verify,

@@ -381,6 +381,33 @@ private struct LumenEncodedFrameContext {
     let submissionMachTime: UInt64
 }
 
+enum LumenScreenCaptureDisplayResolver {
+    static func resolve<Value: Sendable>(
+        displayID: UInt32,
+        attempts: Int,
+        delayNanoseconds: UInt64,
+        isRetained: @escaping @Sendable () async -> Bool,
+        lookup: @escaping @Sendable () async throws -> Value?
+    ) async throws -> Value {
+        for attempt in 0..<max(attempts, 1) {
+            guard await isRetained() else {
+                throw LumenScreenCaptureError.displayOwnershipLost(displayID)
+            }
+            if let value = try await lookup() {
+                return value
+            }
+            if attempt + 1 < max(attempts, 1), delayNanoseconds > 0 {
+                try await Task.sleep(nanoseconds: delayNanoseconds)
+            }
+        }
+        throw LumenScreenCaptureError.displayUnavailable(displayID)
+    }
+}
+
+private struct LumenScreenCaptureDisplayHandle: @unchecked Sendable {
+    let value: SCDisplay
+}
+
 /// Safety: ScreenCaptureKit and VideoToolbox callbacks enter through `queue`.
 /// Mutable encode state is initialized before capture starts and is otherwise
 /// read or mutated only on that serial queue; lifecycle teardown synchronizes
@@ -430,10 +457,29 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
     }
 
     func start() async throws {
-        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-        guard let display = content.displays.first(where: { UInt32($0.displayID) == configuration.displayID }) else {
-            throw LumenScreenCaptureError.displayUnavailable(configuration.displayID)
-        }
+        let displayID = configuration.displayID
+        let expectsRetainedVirtualDisplay = LumenMacVirtualDisplay.registeredDisplay(
+            forDisplayID: displayID
+        ) != nil
+        let displayHandle: LumenScreenCaptureDisplayHandle = try await LumenScreenCaptureDisplayResolver.resolve(
+            displayID: displayID,
+            attempts: 50,
+            delayNanoseconds: 100_000_000,
+            isRetained: {
+                !expectsRetainedVirtualDisplay ||
+                    LumenMacVirtualDisplay.registeredDisplay(forDisplayID: displayID) != nil
+            },
+            lookup: {
+                let content = try await SCShareableContent.excludingDesktopWindows(
+                    false,
+                    onScreenWindowsOnly: true
+                )
+                return content.displays
+                    .first(where: { UInt32($0.displayID) == displayID })
+                    .map(LumenScreenCaptureDisplayHandle.init(value:))
+            }
+        )
+        let display = displayHandle.value
 
         let width = configuration.requestedWidth ?? display.width
         let height = configuration.requestedHeight ?? display.height
@@ -1054,6 +1100,7 @@ private enum LumenMachTime {
 
 enum LumenScreenCaptureError: Error, LocalizedError {
     case displayUnavailable(UInt32)
+    case displayOwnershipLost(UInt32)
     case compressionSessionCreationFailed(OSStatus)
     case compressionSessionPreparationFailed(OSStatus)
     case compressionPropertyFailed(String, OSStatus)
@@ -1061,6 +1108,7 @@ enum LumenScreenCaptureError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .displayUnavailable(let displayID): return "ScreenCaptureKit display \(displayID) is unavailable."
+        case .displayOwnershipLost(let displayID): return "Retained virtual display \(displayID) was released before ScreenCaptureKit became ready."
         case .compressionSessionCreationFailed(let status): return "Unable to create VideoToolbox compression session (OSStatus \(status))."
         case .compressionSessionPreparationFailed(let status): return "Unable to prepare VideoToolbox compression session (OSStatus \(status))."
         case .compressionPropertyFailed(let key, let status): return "Unable to set VideoToolbox property \(key) (OSStatus \(status))."

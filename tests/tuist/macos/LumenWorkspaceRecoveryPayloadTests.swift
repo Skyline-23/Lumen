@@ -47,7 +47,6 @@ private actor RecoveryPayloadDisplayWorkspace: LumenMacDisplayWorkspaceManaging 
 
     func promoteVirtualDisplay(_: UInt32) async {}
     func moveTargetWindows(to _: UInt32) async {}
-    func verifyCaptureTopologyStable(_: UInt32) async {}
     func isolateVirtualDisplay(_: UInt32) async {}
 
     func restoreWorkspace(_ topology: LumenMacPhysicalDisplayTopology) async {
