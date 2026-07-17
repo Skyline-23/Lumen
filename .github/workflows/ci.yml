@@ -19,10 +19,26 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            build/rust-target
+            ~/.cache/tuist
+            ~/Library/Caches/org.swift.swiftpm
+            ~/Library/Developer/Xcode/DerivedData/SourcePackages
+          key: lumen-rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            lumen-rust-${{ runner.os }}-${{ runner.arch }}-
       - name: Install Rust
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
+          rustup target add aarch64-apple-darwin
       - name: Test workspace
         run: cargo test --locked --workspace
       - name: Lint workspace
@@ -35,12 +51,23 @@ jobs:
       - uses: actions/checkout@v7
         with:
           submodules: recursive
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            build/rust-target
+            ~/.cache/tuist
+            ~/Library/Caches/org.swift.swiftpm
+            ~/Library/Developer/Xcode/DerivedData/SourcePackages
+          key: lumen-macos-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'src/platform/macos/Project.swift') }}
+          restore-keys: |
+            lumen-macos-${{ runner.os }}-${{ runner.arch }}-
       - name: Install build tools
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
           rustup target add aarch64-apple-darwin
-          brew install opus
           brew install --cask tuist
       - name: Build macOS Rust libraries
         run: |
@@ -50,15 +77,10 @@ jobs:
             scripts/rust/build_lumen_engine.sh
       - name: Test Lumen app
         working-directory: src/platform/macos
-        run: |
-          opus_prefix="$(brew --prefix opus)"
-          export TUIST_LUMEN_OPUS_ARCHIVE="${opus_prefix}/lib/libopus.a"
-          tuist test --no-selective-testing --no-binary-cache LumenTuistTests
+        run: tuist test --no-selective-testing --no-binary-cache LumenTuistTests
       - name: Build Lumen app
         working-directory: src/platform/macos
         run: |
-          opus_prefix="$(brew --prefix opus)"
-          export TUIST_LUMEN_OPUS_ARCHIVE="${opus_prefix}/lib/libopus.a"
           tuist generate --no-open
           tuist xcodebuild build \
             -workspace Lumen.xcworkspace \

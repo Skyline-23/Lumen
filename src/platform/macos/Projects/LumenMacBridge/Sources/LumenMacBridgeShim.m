@@ -2,6 +2,8 @@
 
 #import <LumenMacBridge/LumenMacBridge-Swift.h>
 #import <CoreFoundation/CoreFoundation.h>
+#include <opus_multistream.h>
+#include <limits.h>
 #include <string.h>
 #include <stdlib.h>
 
@@ -9,6 +11,10 @@ static NSString *const LumenRuntimeEventNotification = @"LumenRuntimeEventNotifi
 
 struct LumenMacBridgeController {
   void *facade;
+};
+
+struct LumenMacOpusEncoder {
+  OpusMSEncoder *encoder;
 };
 
 static LumenBridgeObjCFacade *LumenMacBridgeFacade(LumenMacBridgeController *controller) {
@@ -249,6 +255,112 @@ void LumenMacBridgeControllerDestroy(LumenMacBridgeController *controller) {
   }
   CFBridgingRelease(controller->facade);
   free(controller);
+}
+
+LumenMacOpusEncoder *LumenMacOpusEncoderCreate(
+  int32_t sample_rate,
+  int32_t channel_count,
+  int32_t stream_count,
+  int32_t coupled_stream_count,
+  const uint8_t *mapping,
+  int32_t bit_rate,
+  bool enhanced_quality,
+  char *error_destination,
+  size_t error_capacity
+) {
+  if (!mapping || channel_count <= 0 || stream_count <= 0 || bit_rate <= 0) {
+    copy_string_to_buffer(@"Opus configuration is invalid", error_destination, error_capacity);
+    return NULL;
+  }
+
+  int status = OPUS_OK;
+  OpusMSEncoder *native_encoder = opus_multistream_encoder_create(
+    sample_rate,
+    channel_count,
+    stream_count,
+    coupled_stream_count,
+    mapping,
+    OPUS_APPLICATION_RESTRICTED_LOWDELAY,
+    &status
+  );
+  if (!native_encoder || status != OPUS_OK) {
+    NSString *message = [NSString stringWithFormat:@"Opus creation failed: %s", opus_strerror(status)];
+    copy_string_to_buffer(message, error_destination, error_capacity);
+    return NULL;
+  }
+
+  status = opus_multistream_encoder_ctl(native_encoder, OPUS_SET_BITRATE(bit_rate));
+  if (status == OPUS_OK) {
+    status = opus_multistream_encoder_ctl(
+      native_encoder,
+      OPUS_SET_COMPLEXITY(enhanced_quality ? 10 : 5)
+    );
+  }
+  if (status == OPUS_OK) {
+    status = opus_multistream_encoder_ctl(native_encoder, OPUS_SET_VBR(0));
+  }
+  if (status != OPUS_OK) {
+    NSString *message = [NSString stringWithFormat:@"Opus configuration failed: %s", opus_strerror(status)];
+    copy_string_to_buffer(message, error_destination, error_capacity);
+    opus_multistream_encoder_destroy(native_encoder);
+    return NULL;
+  }
+
+  LumenMacOpusEncoder *encoder = calloc(1, sizeof(*encoder));
+  if (!encoder) {
+    copy_string_to_buffer(@"Opus encoder allocation failed", error_destination, error_capacity);
+    opus_multistream_encoder_destroy(native_encoder);
+    return NULL;
+  }
+  encoder->encoder = native_encoder;
+  return encoder;
+}
+
+bool LumenMacOpusEncoderEncodeFloat32(
+  LumenMacOpusEncoder *encoder,
+  const float *samples,
+  int32_t frame_count,
+  uint8_t *packet_destination,
+  size_t packet_capacity,
+  size_t *packet_size_out,
+  char *error_destination,
+  size_t error_capacity
+) {
+  if (packet_size_out) {
+    *packet_size_out = 0;
+  }
+  if (!encoder || !encoder->encoder || !samples || frame_count <= 0 ||
+      !packet_destination || packet_capacity == 0 || packet_capacity > INT_MAX) {
+    copy_string_to_buffer(@"Opus encode input is invalid", error_destination, error_capacity);
+    return false;
+  }
+
+  int encoded_size = opus_multistream_encode_float(
+    encoder->encoder,
+    samples,
+    frame_count,
+    packet_destination,
+    (opus_int32) packet_capacity
+  );
+  if (encoded_size < 0) {
+    NSString *message = [NSString stringWithFormat:@"Opus encoding failed: %s", opus_strerror(encoded_size)];
+    copy_string_to_buffer(message, error_destination, error_capacity);
+    return false;
+  }
+  if (packet_size_out) {
+    *packet_size_out = (size_t) encoded_size;
+  }
+  return true;
+}
+
+void LumenMacOpusEncoderDestroy(LumenMacOpusEncoder *encoder) {
+  if (!encoder) {
+    return;
+  }
+  if (encoder->encoder) {
+    opus_multistream_encoder_destroy(encoder->encoder);
+  }
+  free(encoder);
 }
 
 LumenMacBridgeCaptureConfiguration LumenMacBridgeControllerMakePanelNativeConfiguration(

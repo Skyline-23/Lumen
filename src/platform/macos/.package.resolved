@@ -1,12 +1,13 @@
 {
-  "originHash" : "1495c3a977ddab009c26c14832a9c46e7c7925a5856123040a1f8c5009132da4",
+  "originHash" : "368cb9d75fa023b36c6f217d76c84cefdda7f2fa7d9a333dd38caffd0c6565ce",
   "pins" : [
     {
-      "identity" : "macdisplaykit",
+      "identity" : "swiftopus",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/Skyline-23/MacDisplayKit.git",
+      "location" : "https://github.com/Skyline-23/SwiftOpus.git",
       "state" : {
-        "revision" : "3525b1f79ba6f25842f3b337704c011476ef1d94"
+        "revision" : "63cd222fa1e7f1558f82fa454945580490c1d590",
+        "version" : "0.5.0"
       }
     }
   ],
