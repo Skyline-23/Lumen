@@ -360,6 +360,27 @@ bool LumenMacBridgeControllerStartAudioCapture(
   return started == YES;
 }
 
+bool LumenMacBridgeControllerStartAudioCaptureAsynchronously(
+  LumenMacBridgeController *controller,
+  LumenMacBridgeAudioCaptureConfiguration configuration,
+  char *error_destination,
+  size_t error_capacity
+) {
+  if (!controller) {
+    copy_string_to_buffer(@"LumenMacBridgeControllerStartAudioCaptureAsynchronously called with a null controller.",
+                          error_destination,
+                          error_capacity);
+    return false;
+  }
+
+  NSError *error = nil;
+  const BOOL accepted = [LumenMacBridgeFacade(controller)
+    startAudioCaptureAsynchronouslySync:to_audio_configuration_box(configuration)
+    error:&error];
+  copy_string_to_buffer(error.localizedDescription, error_destination, error_capacity);
+  return accepted == YES;
+}
+
 void LumenMacBridgeControllerStopAudioCapture(
   LumenMacBridgeController *controller
 ) {

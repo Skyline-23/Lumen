@@ -89,15 +89,26 @@ private actor LumenSystemAudioCaptureRuntime: LumenAudioCaptureRuntime {
         let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
         let stream = SCStream(filter: filter, configuration: streamConfiguration, delegate: output)
         try stream.addStreamOutput(output, type: .audio, sampleHandlerQueue: queue)
-        try await stream.startCapture()
         self.stream = stream
+        do {
+            try await stream.startCapture()
+        } catch {
+            try? stream.removeStreamOutput(output, type: .audio)
+            if self.stream === stream {
+                self.stream = nil
+            }
+            throw error
+        }
         callbacks.eventHandler?(.init(kind: .started, message: "ScreenCaptureKit system audio capture started"))
     }
 
     func stop() async {
         guard let stream else { return }
-        self.stream = nil
         try? await stream.stopCapture()
+        try? stream.removeStreamOutput(output, type: .audio)
+        if self.stream === stream {
+            self.stream = nil
+        }
         callbacks.eventHandler?(.init(kind: .stopped, message: "ScreenCaptureKit system audio capture stopped", stopStatus: 0))
     }
 

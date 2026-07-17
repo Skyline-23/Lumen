@@ -182,6 +182,22 @@ public actor LumenMacWorkspaceExecutor: LumenWorkspaceCommandExecuting {
         try await operations.verifyVirtualDisplay(try requireVirtualDisplay())
     }
 
+    public func verifyCaptureTopologyStable() async throws {
+        try await displayWorkspace.verifyCaptureTopologyStable(try requireVirtualDisplay())
+    }
+
+    public func verifyOwnedCaptureContinuity() async throws {
+        try await operations.verifyCaptureContinuity()
+    }
+
+    public func preserveStableCaptureTopologyInsteadOfIsolation() -> LumenMacWorkspaceIsolationStatus {
+        let status = LumenMacWorkspaceIsolationStatus.unavailable(
+            message: "Physical display isolation was not attempted because the active ScreenCaptureKit topology must remain stable."
+        )
+        isolationStatus = status
+        return status
+    }
+
     public func destroyOwnedVirtualDisplay() async throws {
         guard let virtualDisplayIdentity else {
             return

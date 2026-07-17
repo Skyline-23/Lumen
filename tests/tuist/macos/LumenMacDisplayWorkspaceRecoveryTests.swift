@@ -73,6 +73,34 @@ private actor TransientVirtualDisplayTopologyController: LumenMacDisplayTopology
 }
 
 final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
+    func testCaptureTopologyRequiresTwoConsecutiveStableVisibleReadbacks() async throws {
+        let displayID: CGDirectDisplayID = 99
+        let stable = captureTopology(displayID: displayID, originX: 0)
+        let unsettled = captureTopology(displayID: displayID, originX: 1)
+        let captures = Mutex(0)
+        let controller = LumenCoreGraphicsDisplayTopologyController(
+            capture: {
+                captures.withLock { count in
+                    count += 1
+                    return count == 1 ? unsettled : stable
+                }
+            },
+            restore: { _ in },
+            visibleDisplayIDs: { [displayID] }
+        )
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: controller,
+            physicalDisplayController: RecordingPhysicalDisplayController(),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            captureStabilityAttempts: 3,
+            captureStabilityDelayNanoseconds: 0
+        )
+
+        try await workspace.verifyCaptureTopologyStable(displayID)
+
+        XCTAssertEqual(captures.withLock { $0 }, 3)
+    }
+
     func testRestoreIgnoresTransientVirtualDisplayModeReadback() async throws {
         let topology = displayTopology()
         let physicalDisplayID = try XCTUnwrap(topology.displays.first.flatMap { UInt32($0.id) })
@@ -424,6 +452,33 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
                         bitDepth: 8
                     ),
                     originX: 0,
+                    originY: 0,
+                    mirrorMasterID: nil,
+                    enabled: true,
+                    active: true,
+                    online: true
+                ),
+            ],
+            windowsAdapterLUID: nil,
+            windowsTargetPaths: []
+        )
+    }
+
+    private func captureTopology(
+        displayID: CGDirectDisplayID,
+        originX: Int32
+    ) -> LumenMacPhysicalDisplayTopology {
+        LumenMacPhysicalDisplayTopology(
+            displays: [
+                LumenMacPhysicalDisplayState(
+                    id: String(displayID),
+                    mode: LumenMacPhysicalDisplayMode(
+                        width: 1920,
+                        height: 1080,
+                        refreshMillihertz: 120_000,
+                        bitDepth: 10
+                    ),
+                    originX: originX,
                     originY: 0,
                     mirrorMasterID: nil,
                     enabled: true,

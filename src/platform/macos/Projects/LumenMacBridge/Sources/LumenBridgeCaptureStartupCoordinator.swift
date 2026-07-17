@@ -29,31 +29,22 @@ public struct LumenBridgeCaptureStartupError: LocalizedError, Sendable {
 public enum LumenBridgeCaptureStartupCoordinator {
     public typealias Operation = @Sendable () async throws -> Void
 
-    public static func start(
+    public static func startVisualFirst(
         video: @escaping Operation,
-        audio: @escaping Operation
+        launchAudio: @escaping Operation
     ) async throws {
-        async let videoFailure = failure(source: .video, operation: video)
-        async let audioFailure = failure(source: .audio, operation: audio)
-        let (resolvedVideoFailure, resolvedAudioFailure) = await (videoFailure, audioFailure)
-
-        if let resolvedVideoFailure {
-            throw resolvedVideoFailure
-        }
-        if let resolvedAudioFailure {
-            throw resolvedAudioFailure
-        }
+        try await run(source: .video, operation: video)
+        try await run(source: .audio, operation: launchAudio)
     }
 
-    private static func failure(
+    private static func run(
         source: LumenBridgeCaptureStartupSource,
         operation: @escaping Operation
-    ) async -> LumenBridgeCaptureStartupError? {
+    ) async throws {
         do {
             try await operation()
-            return nil
         } catch {
-            return LumenBridgeCaptureStartupError(
+            throw LumenBridgeCaptureStartupError(
                 source: source,
                 message: (error as NSError).localizedDescription
             )

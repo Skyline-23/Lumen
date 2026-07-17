@@ -163,18 +163,36 @@ struct MacAudioFrameRecord {
     pcm_byte_count: usize,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct MacAudioCaptureEventRecord {
+    has_value: bool,
+    kind: i32,
+    has_stop_status: bool,
+    stop_status: i32,
+    has_automatic_restart_count: bool,
+    automatic_restart_count: u64,
+    has_source_sequence_number: bool,
+    source_sequence_number: u64,
+}
+
 type CreateController = unsafe extern "C" fn() -> *mut BridgeController;
 type DestroyController = unsafe extern "C" fn(*mut BridgeController);
 type MakeVideoConfiguration = unsafe extern "C" fn(u32) -> MacCaptureConfiguration;
 type MakeAudioConfiguration = unsafe extern "C" fn(u32) -> MacAudioCaptureConfiguration;
 type ConfigureForwarding = unsafe extern "C" fn(*mut BridgeController, usize, usize);
-type StartCapturePair = unsafe extern "C" fn(
+type StartCapture = unsafe extern "C" fn(
     *mut BridgeController,
     MacCaptureConfiguration,
+    *mut c_char,
+    usize,
+) -> bool;
+type StartAudioCaptureAsynchronously = unsafe extern "C" fn(
+    *mut BridgeController,
     MacAudioCaptureConfiguration,
     *mut c_char,
     usize,
-) -> i32;
+) -> bool;
 type StopCapture = unsafe extern "C" fn(*mut BridgeController);
 type PopVideo =
     unsafe extern "C" fn(*mut BridgeController, *mut SampleBuffer) -> MacEncodedFrameRecord;
@@ -184,6 +202,8 @@ type PopAudio = unsafe extern "C" fn(
     usize,
     *mut usize,
 ) -> MacAudioFrameRecord;
+type PopAudioEvent =
+    unsafe extern "C" fn(*mut BridgeController, *mut c_char, usize) -> MacAudioCaptureEventRecord;
 type RequestKeyFrame = unsafe extern "C" fn();
 type PrepareWorkspace = unsafe extern "C" fn(MacWorkspaceSessionRequest, *mut c_char, usize) -> u32;
 type ActivateWorkspace =
@@ -199,11 +219,13 @@ struct MacBridgeApi {
     make_audio_configuration: MakeAudioConfiguration,
     configure_video_forwarding: ConfigureForwarding,
     configure_audio_forwarding: ConfigureForwarding,
-    start_capture_pair: StartCapturePair,
+    start_video_capture: StartCapture,
+    start_audio_capture_asynchronously: StartAudioCaptureAsynchronously,
     stop_video_capture: StopCapture,
     stop_audio_capture: StopCapture,
     pop_video: PopVideo,
     pop_audio: PopAudio,
+    pop_audio_event: PopAudioEvent,
     request_key_frame: RequestKeyFrame,
     prepare_workspace: PrepareWorkspace,
     activate_workspace: ActivateWorkspace,
@@ -244,9 +266,13 @@ impl MacBridgeApi {
                     handle,
                     b"LumenMacBridgeControllerConfigureAudioForwarding\0",
                 )?,
-                start_capture_pair: load_symbol(
+                start_video_capture: load_symbol(
                     handle,
-                    b"LumenMacBridgeControllerStartCapturePair\0",
+                    b"LumenMacBridgeControllerStartCapture\0",
+                )?,
+                start_audio_capture_asynchronously: load_symbol(
+                    handle,
+                    b"LumenMacBridgeControllerStartAudioCaptureAsynchronously\0",
                 )?,
                 stop_video_capture: load_symbol(handle, b"LumenMacBridgeControllerStopCapture\0")?,
                 stop_audio_capture: load_symbol(
@@ -257,6 +283,10 @@ impl MacBridgeApi {
                 pop_audio: load_symbol(
                     handle,
                     b"LumenMacBridgeControllerPopNextForwardedAudioFrame\0",
+                )?,
+                pop_audio_event: load_symbol(
+                    handle,
+                    b"LumenMacBridgeControllerPopNextForwardedAudioEvent\0",
                 )?,
                 request_key_frame: load_symbol(
                     handle,
@@ -287,6 +317,7 @@ struct MacSessionState {
     audio_scratch: Vec<u8>,
     next_audio_timestamp: u32,
     next_audio_deadline: Option<Instant>,
+    audio_capture_failure: Option<String>,
 }
 
 unsafe impl Send for MacSessionState {}
@@ -317,6 +348,7 @@ impl MacPlatformSessionControl {
                 audio_scratch: vec![0; MAXIMUM_PCM_BYTES],
                 next_audio_timestamp: 0,
                 next_audio_deadline: None,
+                audio_capture_failure: None,
             }),
             native_input: MacNativeInput::default(),
             application: PortableApplication::default(),
@@ -341,6 +373,7 @@ impl MacPlatformSessionControl {
         state.audio_channels = 0;
         state.pcm.clear();
         state.next_audio_deadline = None;
+        state.audio_capture_failure = None;
         failure.map_or(Ok(()), Err)
     }
 }
@@ -459,23 +492,17 @@ impl PlatformSessionControl for MacPlatformSessionControl {
             audio.channel_count = i32::from(plan.audio_channels);
             audio.frame_size = AUDIO_FRAME_COUNT as i32;
             let mut error = [0_i8; 1024];
-            let status = unsafe {
-                (self.api.start_capture_pair)(
+            let video_started = unsafe {
+                (self.api.start_video_capture)(
                     state.controller,
                     video,
-                    audio,
                     error.as_mut_ptr(),
                     error.len(),
                 )
             };
-            if status != 0 {
-                return Err(format!(
-                    "capture pair failed status={status}: {}",
-                    error_text(&error)
-                ));
+            if !video_started {
+                return Err(format!("video capture failed: {}", error_text(&error)));
             }
-            state.next_audio_timestamp = audio_timestamp(monotonic_nanoseconds());
-            state.next_audio_deadline = Some(Instant::now());
             if plan.virtual_display {
                 let key = state.workspace_key.as_ref().expect("workspace key");
                 let outcome = unsafe {
@@ -490,6 +517,25 @@ impl PlatformSessionControl for MacPlatformSessionControl {
                 let event = workspace_isolation_event(outcome, error_text(&error))?;
                 self.publish_runtime_event(event)?;
             }
+            error.fill(0);
+            let audio_accepted = unsafe {
+                (self.api.start_audio_capture_asynchronously)(
+                    state.controller,
+                    audio,
+                    error.as_mut_ptr(),
+                    error.len(),
+                )
+            };
+            state.audio_capture_failure = (!audio_accepted).then(|| {
+                let message = error_text(&error);
+                if message.is_empty() {
+                    "macOS audio capture could not be scheduled".to_owned()
+                } else {
+                    message
+                }
+            });
+            state.next_audio_timestamp = audio_timestamp(monotonic_nanoseconds());
+            state.next_audio_deadline = Some(Instant::now());
             Ok(())
         })();
         if let Err(startup_error) = startup {
@@ -540,6 +586,35 @@ impl PlatformSessionControl for MacPlatformSessionControl {
             .state
             .lock()
             .map_err(|_| "macOS audio state is unavailable".to_owned())?;
+        let mut event_message = [0_i8; 1024];
+        loop {
+            event_message.fill(0);
+            let event = unsafe {
+                (self.api.pop_audio_event)(
+                    state.controller,
+                    event_message.as_mut_ptr(),
+                    event_message.len(),
+                )
+            };
+            if !event.has_value {
+                break;
+            }
+            match event.kind {
+                0 => state.audio_capture_failure = None,
+                3 => {
+                    let message = error_text(&event_message);
+                    state.audio_capture_failure = Some(if message.is_empty() {
+                        "macOS audio capture failed".to_owned()
+                    } else {
+                        message
+                    });
+                }
+                _ => {}
+            }
+        }
+        if let Some(failure) = &state.audio_capture_failure {
+            return Err(failure.clone());
+        }
         let packet_bytes = AUDIO_FRAME_COUNT * state.audio_channels * std::mem::size_of::<f32>();
         for _ in 0..8 {
             if state.pcm.len() >= packet_bytes {

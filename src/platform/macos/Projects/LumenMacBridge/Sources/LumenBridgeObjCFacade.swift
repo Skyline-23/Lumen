@@ -653,12 +653,14 @@ public final class LumenBridgeObjCFacade: NSObject {
         let audioConfiguration = audioConfiguration.swiftValue
         do {
             try blockingRun {
-                try await LumenBridgeCaptureStartupCoordinator.start(
+                try await LumenBridgeCaptureStartupCoordinator.startVisualFirst(
                     video: {
                         try await runtime.startCapture(configuration: videoConfiguration)
                     },
-                    audio: {
-                        try await runtime.startAudioCapture(configuration: audioConfiguration)
+                    launchAudio: {
+                        try await runtime.startAudioCaptureAsynchronously(
+                            configuration: audioConfiguration
+                        )
                     }
                 )
             }
@@ -702,6 +704,23 @@ public final class LumenBridgeObjCFacade: NSObject {
         do {
             try blockingRun {
                 try await runtime.startAudioCapture(configuration: configuration)
+            }
+            return true
+        } catch {
+            errorPointer?.pointee = error as NSError
+            return false
+        }
+    }
+
+    public func startAudioCaptureAsynchronouslySync(
+        _ configuration: LumenBridgeAudioConfigurationBox,
+        error errorPointer: NSErrorPointer
+    ) -> Bool {
+        let runtime = runtime
+        let configuration = configuration.swiftValue
+        do {
+            try blockingRun {
+                try await runtime.startAudioCaptureAsynchronously(configuration: configuration)
             }
             return true
         } catch {
