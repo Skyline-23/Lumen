@@ -416,6 +416,40 @@ enum LumenScreenCaptureOutputRegistrationStage: String, Equatable, Sendable {
     case stopped
 }
 
+struct LumenScreenCaptureSystemAudioPreparation: Equatable, Sendable {
+    let configuration: LumenMacAudioCaptureConfiguration
+
+    init(
+        configuration: LumenMacAudioCaptureConfiguration,
+        videoDisplayID: UInt32
+    ) throws {
+        guard case .systemOutput(let audioDisplayID, _) = configuration.source else {
+            throw LumenAudioCaptureError.invalidSource
+        }
+        guard audioDisplayID == videoDisplayID else {
+            throw LumenAudioCaptureError.activeVideoDisplayMismatch(
+                audioDisplayID: audioDisplayID,
+                videoDisplayID: videoDisplayID
+            )
+        }
+        self.configuration = configuration
+    }
+
+    func apply(to streamConfiguration: SCStreamConfiguration) {
+        guard case .systemOutput(_, let excludesCurrentProcessAudio) = configuration.source else {
+            return
+        }
+        streamConfiguration.capturesAudio = true
+        streamConfiguration.sampleRate = configuration.sampleRate
+        streamConfiguration.channelCount = configuration.channelCount
+        streamConfiguration.excludesCurrentProcessAudio = excludesCurrentProcessAudio
+    }
+
+    func accepts(_ configuration: LumenMacAudioCaptureConfiguration) -> Bool {
+        self.configuration == configuration
+    }
+}
+
 struct LumenScreenCaptureOutputOwnership: Equatable, Sendable {
     private(set) var streamIdentity: UInt?
     private(set) var stage: LumenScreenCaptureOutputRegistrationStage = .unregistered
@@ -469,6 +503,7 @@ enum LumenScreenCaptureOutputOwnershipError: Error, Equatable {
 /// with the queue before releasing the compression session.
 private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
     private let configuration: LumenMacCaptureConfiguration
+    private let systemAudioPreparation: LumenScreenCaptureSystemAudioPreparation?
     private let frameHandler: @Sendable (LumenEncodedFrame) -> Void
     private let eventHandler: @Sendable (LumenEncodedCaptureSessionEvent) -> Void
     private let statisticsHandler: @Sendable (LumenEncodedCaptureSessionStatistics) -> Void
@@ -476,7 +511,6 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
     private let queue = DispatchQueue(label: "dev.skyline23.lumen.sck.video", qos: .userInteractive)
     private let audioQueue = DispatchQueue(label: "dev.skyline23.lumen.sck.shared-audio", qos: .userInteractive)
     private var stream: SCStream?
-    private var streamConfiguration: SCStreamConfiguration?
     private var sharedAudioOutput: LumenSystemAudioCaptureOutput?
     private var compressionSession: VTCompressionSession?
     private var encodingPlan: LumenVideoToolboxEncodingPlan?
@@ -503,11 +537,18 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
 
     init(
         configuration: LumenMacCaptureConfiguration,
+        preconfiguredSystemAudio: LumenMacAudioCaptureConfiguration?,
         callbacks: LumenEncodedCaptureCallbacks,
         statisticsHandler: @escaping @Sendable (LumenEncodedCaptureSessionStatistics) -> Void,
         terminationHandler: @escaping @Sendable (Error) -> Void
-    ) {
+    ) throws {
         self.configuration = configuration
+        self.systemAudioPreparation = try preconfiguredSystemAudio.map {
+            try LumenScreenCaptureSystemAudioPreparation(
+                configuration: $0,
+                videoDisplayID: configuration.displayID
+            )
+        }
         self.frameHandler = callbacks.frameHandler
         self.eventHandler = { callbacks.eventHandler?($0) }
         self.statisticsHandler = statisticsHandler
@@ -568,13 +609,13 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
         }
         streamConfiguration.scalesToFit = false
         streamConfiguration.preservesAspectRatio = true
+        systemAudioPreparation?.apply(to: streamConfiguration)
         try createCompressionSession(width: outputWidth, height: outputHeight)
 
         let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
         let stream = SCStream(filter: filter, configuration: streamConfiguration, delegate: self)
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
         self.stream = stream
-        self.streamConfiguration = streamConfiguration
         let streamIdentity = Self.identity(of: stream)
         queue.sync {
             outputOwnership.registerScreenOutput(streamIdentity: streamIdentity)
@@ -585,7 +626,6 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
             try? stream.removeStreamOutput(self, type: .screen)
             if self.stream === stream {
                 self.stream = nil
-                self.streamConfiguration = nil
             }
             throw error
         }
@@ -597,7 +637,7 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
         statisticsHandler(statistics)
         eventHandler(.init(
             kind: .started,
-            message: "ScreenCaptureKit capture started stream=\(streamIdentity) output-registration=\(outputOwnership.stage.rawValue)"
+            message: "ScreenCaptureKit capture started stream=\(streamIdentity) output-registration=\(outputOwnership.stage.rawValue) system-audio-preconfigured=\(systemAudioPreparation != nil)"
         ))
     }
 
@@ -617,7 +657,6 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
         let streamIdentity = Self.identity(of: stream)
         if self.stream === stream {
             self.stream = nil
-            self.streamConfiguration = nil
         }
         queue.sync {
             try? outputOwnership.stop(streamIdentity: streamIdentity)
@@ -646,7 +685,7 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
         configuration: LumenMacAudioCaptureConfiguration,
         callbacks: LumenAudioCaptureCallbacks
     ) async throws {
-        guard case .systemOutput(let displayID, let excludesCurrentProcessAudio) = configuration.source else {
+        guard case .systemOutput(let displayID, _) = configuration.source else {
             throw LumenAudioCaptureError.invalidSource
         }
         guard displayID == self.configuration.displayID else {
@@ -656,53 +695,38 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
             )
         }
         guard sharedAudioOutput == nil,
-              let stream,
-              let streamConfiguration else {
+              let stream else {
             if sharedAudioOutput != nil {
                 return
             }
             throw LumenScreenCaptureError.captureNotRunning
+        }
+        guard systemAudioPreparation?.accepts(configuration) == true else {
+            throw LumenScreenCaptureError.systemAudioWasNotPreconfigured
         }
 
         let output = LumenSystemAudioCaptureOutput(callbacks: callbacks)
         let streamIdentity = Self.identity(of: stream)
         try stream.addStreamOutput(output, type: .audio, sampleHandlerQueue: audioQueue)
         sharedAudioOutput = output
-        do {
-            streamConfiguration.capturesAudio = true
-            streamConfiguration.sampleRate = configuration.sampleRate
-            streamConfiguration.channelCount = configuration.channelCount
-            streamConfiguration.excludesCurrentProcessAudio = excludesCurrentProcessAudio
-            try await stream.updateConfiguration(streamConfiguration)
-            queue.sync {
-                try? outputOwnership.attachSharedAudioOutput(streamIdentity: streamIdentity)
-                refreshStatisticsNotes()
-                statisticsHandler(statistics)
-            }
-            callbacks.eventHandler?(.init(
-                kind: .started,
-                message: "ScreenCaptureKit system audio joined active video stream=\(streamIdentity) output-registration=\(outputOwnership.stage.rawValue)"
-            ))
-        } catch {
-            try? stream.removeStreamOutput(output, type: .audio)
-            if sharedAudioOutput === output {
-                sharedAudioOutput = nil
-            }
-            streamConfiguration.capturesAudio = false
-            throw error
+        queue.sync {
+            try? outputOwnership.attachSharedAudioOutput(streamIdentity: streamIdentity)
+            refreshStatisticsNotes()
+            statisticsHandler(statistics)
         }
+        callbacks.eventHandler?(.init(
+            kind: .started,
+            message: "ScreenCaptureKit system audio joined preconfigured video stream=\(streamIdentity) output-registration=\(outputOwnership.stage.rawValue)"
+        ))
     }
 
     func detachSystemAudio() async {
         guard let output = sharedAudioOutput,
-              let stream,
-              let streamConfiguration else {
+              let stream else {
             sharedAudioOutput = nil
             return
         }
         let streamIdentity = Self.identity(of: stream)
-        streamConfiguration.capturesAudio = false
-        try? await stream.updateConfiguration(streamConfiguration)
         try? stream.removeStreamOutput(output, type: .audio)
         if sharedAudioOutput === output {
             sharedAudioOutput = nil
@@ -1054,6 +1078,7 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
         return [
             "captureBackend=screen-capture-kit",
             "screenCaptureOutputRegistrationStage=\(outputOwnership.stage.rawValue)",
+            "screenCaptureSystemAudioPreconfigured=\(systemAudioPreparation != nil)",
             "screenCaptureOwnedSampleCount=\(outputOwnership.screenSampleCount)",
             "sourceCaptureSampleCount=\(statistics.sourceFrameCount)",
             "sourceApproxFrameRate=\(sourceApproxFrameRate)",
@@ -1280,6 +1305,7 @@ enum LumenScreenCaptureError: Error, LocalizedError {
     case displayOwnershipLost(UInt32)
     case captureNotRunning
     case outputOwnershipLost
+    case systemAudioWasNotPreconfigured
     case compressionSessionCreationFailed(OSStatus)
     case compressionSessionPreparationFailed(OSStatus)
     case compressionPropertyFailed(String, OSStatus)
@@ -1290,6 +1316,7 @@ enum LumenScreenCaptureError: Error, LocalizedError {
         case .displayOwnershipLost(let displayID): return "Retained virtual display \(displayID) was released before ScreenCaptureKit became ready."
         case .captureNotRunning: return "ScreenCaptureKit video stream is not running."
         case .outputOwnershipLost: return "ScreenCaptureKit delivered a sample from a stream that no longer owns the registered video output."
+        case .systemAudioWasNotPreconfigured: return "System audio must be configured before the shared ScreenCaptureKit video stream starts."
         case .compressionSessionCreationFailed(let status): return "Unable to create VideoToolbox compression session (OSStatus \(status))."
         case .compressionSessionPreparationFailed(let status): return "Unable to prepare VideoToolbox compression session (OSStatus \(status))."
         case .compressionPropertyFailed(let key, let status): return "Unable to set VideoToolbox property \(key) (OSStatus \(status))."
@@ -1299,6 +1326,7 @@ enum LumenScreenCaptureError: Error, LocalizedError {
 
 actor LumenEncodedCaptureSession {
     let configuration: LumenMacCaptureConfiguration
+    private let preconfiguredSystemAudio: LumenMacAudioCaptureConfiguration?
     private var runtime: LumenScreenCaptureVideoRuntime?
     private var statistics = LumenEncodedCaptureSessionStatistics()
     private var callbacks: LumenEncodedCaptureCallbacks?
@@ -1306,8 +1334,12 @@ actor LumenEncodedCaptureSession {
     private var isStopping = false
     private let maximumAutomaticRestartCount: UInt64 = 2
 
-    init(configuration: LumenMacCaptureConfiguration) {
+    init(
+        configuration: LumenMacCaptureConfiguration,
+        preconfiguredSystemAudio: LumenMacAudioCaptureConfiguration? = nil
+    ) {
         self.configuration = configuration
+        self.preconfiguredSystemAudio = preconfiguredSystemAudio
     }
 
     func start(callbacks: LumenEncodedCaptureCallbacks) async throws {
@@ -1365,8 +1397,9 @@ actor LumenEncodedCaptureSession {
         generation: UInt64
     ) async throws {
         let owner = self
-        let runtime = LumenScreenCaptureVideoRuntime(
+        let runtime = try LumenScreenCaptureVideoRuntime(
             configuration: configuration,
+            preconfiguredSystemAudio: preconfiguredSystemAudio,
             callbacks: callbacks,
             statisticsHandler: { statistics in
                 Task { await owner.updateStatistics(statistics) }

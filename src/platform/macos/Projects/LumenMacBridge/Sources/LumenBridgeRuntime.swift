@@ -1180,6 +1180,7 @@ public actor LumenBridgeRuntime {
     private var encodedCaptureSession: LumenEncodedCaptureSession?
     private var encodedCaptureStartupTask: Task<Void, Error>?
     private var activeCaptureConfiguration: LumenMacCaptureConfiguration?
+    private var activePreconfiguredSystemAudio: LumenMacAudioCaptureConfiguration?
     private var latestFrame: LumenBridgeEncodedFrameSnapshot?
     private var recentEvents: [LumenEncodedCaptureSessionEvent] = []
     private var audioCaptureSession: LumenAudioCaptureSession?
@@ -1206,12 +1207,25 @@ public actor LumenBridgeRuntime {
     ) async throws {
         try await startCapture(
             configuration: configuration,
+            preconfiguredSystemAudio: nil,
+            waitForStartupCompletion: true
+        )
+    }
+
+    public func startCapture(
+        configuration: LumenMacCaptureConfiguration,
+        preconfiguredSystemAudio: LumenMacAudioCaptureConfiguration
+    ) async throws {
+        try await startCapture(
+            configuration: configuration,
+            preconfiguredSystemAudio: preconfiguredSystemAudio,
             waitForStartupCompletion: true
         )
     }
 
     private func startCapture(
         configuration: LumenMacCaptureConfiguration,
+        preconfiguredSystemAudio: LumenMacAudioCaptureConfiguration?,
         waitForStartupCompletion: Bool
     ) async throws {
         await stopCapture(resetRequestGeneration: false)
@@ -1234,7 +1248,10 @@ public actor LumenBridgeRuntime {
             "Starting ScreenCaptureKit capture \(configuration.hdrConfigurationDebugSummary, privacy: .public) forwarding-frame-capacity=\(frameCapacity, privacy: .public)"
         )
 
-        let session = LumenEncodedCaptureSession(configuration: configuration)
+        let session = LumenEncodedCaptureSession(
+            configuration: configuration,
+            preconfiguredSystemAudio: preconfiguredSystemAudio
+        )
         let runtime = self
         let videoForwarder = self.videoForwarder
         let callbacks = LumenEncodedCaptureCallbacks(
@@ -1253,6 +1270,7 @@ public actor LumenBridgeRuntime {
         )
 
         activeCaptureConfiguration = configuration
+        activePreconfiguredSystemAudio = preconfiguredSystemAudio
         encodedCaptureSession = session
         publishStatusDidChange(immediate: true)
 
@@ -1342,6 +1360,7 @@ public actor LumenBridgeRuntime {
             logger.debug("Ignoring ScreenCaptureKit capture restart because no capture session is active reason=\(reason, privacy: .public)")
             return
         }
+        let preconfiguredSystemAudio = activePreconfiguredSystemAudio
 
         let now = DispatchTime.now().uptimeNanoseconds
         if lastCaptureRestartRequestUptimeNanoseconds != 0 &&
@@ -1359,6 +1378,7 @@ public actor LumenBridgeRuntime {
         await stopCapture(resetRequestGeneration: false)
         try? await startCapture(
             configuration: configuration,
+            preconfiguredSystemAudio: preconfiguredSystemAudio,
             waitForStartupCompletion: false
         )
     }
@@ -1375,6 +1395,7 @@ public actor LumenBridgeRuntime {
         guard let session = encodedCaptureSession else {
             encodedCaptureSession = nil
             activeCaptureConfiguration = nil
+            activePreconfiguredSystemAudio = nil
             latestFrame = nil
             recentEvents = []
             lastEncodedFrameDiagnosticsUptimeNanoseconds = 0
@@ -1389,6 +1410,7 @@ public actor LumenBridgeRuntime {
         await session.stop()
         encodedCaptureSession = nil
         activeCaptureConfiguration = nil
+        activePreconfiguredSystemAudio = nil
         lastEncodedFrameDiagnosticsUptimeNanoseconds = 0
         lastEncodedFrameSourceSequenceNumber = nil
         lastEncodedFrameSourceDisplayTime = nil
