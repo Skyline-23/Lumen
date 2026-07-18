@@ -141,6 +141,21 @@ fn advertised_addresses_from_interfaces(
         .unwrap_or_default()
 }
 
+pub(crate) fn preferred_multicast_lan_ipv4_address() -> Option<Ipv4Addr> {
+    preferred_multicast_lan_ipv4_address_from_interfaces(netdev::get_interfaces())
+}
+
+fn preferred_multicast_lan_ipv4_address_from_interfaces(
+    interfaces: Vec<netdev::Interface>,
+) -> Option<Ipv4Addr> {
+    advertised_addresses_from_interfaces(interfaces, "ipv4")
+        .into_iter()
+        .find_map(|address| match address {
+            IpAddr::V4(address) => Some(address),
+            IpAddr::V6(_) => None,
+        })
+}
+
 fn advertised_addresses(interface: &netdev::Interface, address_family: &str) -> Vec<IpAddr> {
     let mut addresses = interface
         .ipv4
@@ -265,8 +280,12 @@ mod tests {
         lan.ipv4 = vec![Ipv4Net::new(Ipv4Addr::new(192, 168, 0, 51), 24).unwrap()];
 
         assert_eq!(
-            advertised_addresses_from_interfaces(vec![tunnel, lan], "ipv4"),
+            advertised_addresses_from_interfaces(vec![tunnel.clone(), lan.clone()], "ipv4"),
             [IpAddr::V4(Ipv4Addr::new(192, 168, 0, 51))]
+        );
+        assert_eq!(
+            preferred_multicast_lan_ipv4_address_from_interfaces(vec![tunnel, lan]),
+            Some(Ipv4Addr::new(192, 168, 0, 51))
         );
     }
 }
