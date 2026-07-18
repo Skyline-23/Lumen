@@ -39,7 +39,9 @@ pub use native_command::{
     LUMEN_HOST_COMMAND_RELOAD_APPLICATIONS, LUMEN_HOST_COMMAND_RESTART,
     LUMEN_HOST_COMMAND_SHUTDOWN,
 };
-pub use native_input::{NativeInputError, PlatformNativeInputEvent};
+pub use native_input::{
+    NativeInputError, NativeMotionError, PlatformNativeInputEvent, PlatformNativeMotionEvent,
+};
 pub use platform::{
     IdlePlatformSessionControl, LumenHostPlatformCallbacks, LumenHostPlatformChromaSubsampling,
     LumenHostPlatformColorRange, LumenHostPlatformControlEvent, LumenHostPlatformControlEventKind,

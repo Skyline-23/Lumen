@@ -10,7 +10,7 @@ use lumen_engine::{
     StartSessionAck, StopSession, NATIVE_VIDEO_STREAM_ID,
 };
 
-use super::{AudioDeliveryState, ControlRouter, VideoDeliveryState};
+use super::{AudioDeliveryState, ControlRouter, InputMotionDeliveryState, VideoDeliveryState};
 use crate::{
     PlatformApplicationPlan, PlatformChromaSubsampling, PlatformColorRange, PlatformDynamicRange,
     PlatformRuntimeEvent, PlatformRuntimeEventCode, PlatformRuntimeEventDisposition,
@@ -570,6 +570,20 @@ impl ControlRouter {
 
     pub(crate) fn audio_delivery_state(&self) -> Option<AudioDeliveryState> {
         self.native_audio_delivery_state()
+    }
+
+    pub(crate) fn input_motion_delivery_state(&self) -> Option<InputMotionDeliveryState> {
+        let pending = self.native.pending.as_ref()?;
+        if !pending.active || !pending.media_validated {
+            return None;
+        }
+        Some(InputMotionDeliveryState {
+            session_epoch: pending.plan.session_epoch,
+            path_id: u16::try_from(pending.plan.path_id).ok()?,
+            policy_revision: u16::try_from(pending.plan.policy_revision).ok()?,
+            endpoint: pending.media_endpoint?,
+            encryption_key: pending.media_key,
+        })
     }
 
     fn native_video_delivery_state(&self) -> Option<VideoDeliveryState> {

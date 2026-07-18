@@ -6,7 +6,10 @@ use lumen_engine::{ApplicationLaunchPlan, LumenSessionOffer};
 
 #[cfg(test)]
 use crate::LumenHostPlatformControlFeedbackKind;
-use crate::{LumenHostPlatformControlFeedback, PlatformControlFeedback, PlatformNativeInputEvent};
+use crate::{
+    LumenHostPlatformControlFeedback, PlatformControlFeedback, PlatformNativeInputEvent,
+    PlatformNativeMotionEvent,
+};
 
 mod application_environment;
 #[cfg(target_os = "macos")]
@@ -179,6 +182,7 @@ pub enum PlatformRuntimeEventCode {
     NativeVideoUdpSend,
     NativeAudioUdpSend,
     PhysicalDisplayIsolation,
+    NativeInputMotion,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -225,6 +229,14 @@ pub trait PlatformSessionControl: Send + Sync {
         Err("native v2 input is unavailable on this platform adapter".to_owned())
     }
 
+    fn handle_native_motion(
+        &self,
+        _session_epoch: u32,
+        _event: PlatformNativeMotionEvent,
+    ) -> Result<(), String> {
+        Err("native motion input is unavailable on this platform adapter".to_owned())
+    }
+
     fn reset_native_input(&self, session_epoch: u32) -> Result<(), String> {
         self.handle_control_event(session_epoch, PlatformControlEvent::ResetInput)
     }
@@ -254,6 +266,14 @@ impl PlatformSessionControl for IdlePlatformSessionControl {
         &self,
         _session_epoch: u32,
         _event: PlatformNativeInputEvent,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn handle_native_motion(
+        &self,
+        _session_epoch: u32,
+        _event: PlatformNativeMotionEvent,
     ) -> Result<(), String> {
         Ok(())
     }
@@ -399,6 +419,7 @@ pub enum LumenHostPlatformRuntimeEventCode {
     NativeVideoUdpSend = 11,
     NativeAudioUdpSend = 12,
     PhysicalDisplayIsolation = 13,
+    NativeInputMotion = 14,
 }
 
 #[repr(C)]
@@ -774,6 +795,9 @@ impl PlatformSessionControl for CallbackPlatformSessionControl {
                 }
                 PlatformRuntimeEventCode::PhysicalDisplayIsolation => {
                     LumenHostPlatformRuntimeEventCode::PhysicalDisplayIsolation
+                }
+                PlatformRuntimeEventCode::NativeInputMotion => {
+                    LumenHostPlatformRuntimeEventCode::NativeInputMotion
                 }
             },
             message: message
