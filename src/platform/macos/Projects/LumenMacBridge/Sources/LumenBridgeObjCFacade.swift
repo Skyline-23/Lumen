@@ -653,24 +653,18 @@ public final class LumenBridgeObjCFacade: NSObject {
         let audioConfiguration = audioConfiguration.swiftValue
         do {
             try blockingRun {
-                try await LumenBridgeCaptureStartupCoordinator.startVisualFirst(
-                    video: {
-                        try await runtime.startCapture(
-                            configuration: videoConfiguration,
-                            preconfiguredSystemAudio: audioConfiguration
-                        )
-                    },
-                    launchAudio: {
-                        try await runtime.startAudioCaptureAsynchronously(
-                            configuration: audioConfiguration
-                        )
-                    }
+                try await runtime.startCapture(
+                    configuration: videoConfiguration,
+                    preconfiguredSystemAudio: audioConfiguration
                 )
             }
             return 0
         } catch let error as LumenBridgeCaptureStartupError {
             errorPointer?.pointee = error as NSError
             return error.source.rawValue
+        } catch let error as LumenAudioCaptureError {
+            errorPointer?.pointee = error as NSError
+            return LumenBridgeCaptureStartupSource.audio.rawValue
         } catch {
             errorPointer?.pointee = error as NSError
             return LumenBridgeCaptureStartupSource.unknown.rawValue

@@ -6,6 +6,7 @@
 #import "LumenMacBridge.h"
 
 #include <dlfcn.h>
+#include <math.h>
 
 static NSString *const LumenMacVirtualDisplayErrorDomain = @"dev.skyline23.lumen.virtual-display";
 
@@ -15,6 +16,7 @@ typedef NS_ENUM(NSInteger, LumenMacVirtualDisplayErrorCode) {
   LumenMacVirtualDisplayErrorObjectCreationFailed = 3,
   LumenMacVirtualDisplayErrorSettingsRejected = 4,
   LumenMacVirtualDisplayErrorMissingDisplayID = 5,
+  LumenMacVirtualDisplayErrorScreenCaptureDisplayCreationFailed = 6,
 };
 
 static void LumenAssignVirtualDisplayError(
@@ -464,6 +466,70 @@ static void LumenConfigureHDRDisplayInfo(
     return NO;
   }
   return YES;
+}
+
+- (nullable NSObject *)makeScreenCaptureDisplayWithError:(NSError **)error {
+  if (_display == nil || _displayID == 0) {
+    LumenAssignVirtualDisplayError(
+      error,
+      LumenMacVirtualDisplayErrorScreenCaptureDisplayCreationFailed,
+      @"The retained virtual display is no longer available for capture."
+    );
+    return nil;
+  }
+
+  Class displayClass = NSClassFromString(@"SCDisplay");
+  SEL initializer = sel_registerName("initWithDict:");
+  if (displayClass == Nil || ![displayClass instancesRespondToSelector:initializer]) {
+    LumenAssignVirtualDisplayError(
+      error,
+      LumenMacVirtualDisplayErrorScreenCaptureDisplayCreationFailed,
+      @"ScreenCaptureKit does not expose retained-display admission on this runtime."
+    );
+    return nil;
+  }
+
+  CGRect bounds = CGDisplayBounds(_displayID);
+  uint32_t width = (uint32_t)llround(CGRectGetWidth(bounds));
+  uint32_t height = (uint32_t)llround(CGRectGetHeight(bounds));
+  if (width == 0 || height == 0) {
+    width = _logicalWidth;
+    height = _logicalHeight;
+    bounds = CGRectMake(0, 0, width, height);
+  }
+  if (width == 0 || height == 0) {
+    LumenAssignVirtualDisplayError(
+      error,
+      LumenMacVirtualDisplayErrorScreenCaptureDisplayCreationFailed,
+      @"The retained virtual display has no capture geometry."
+    );
+    return nil;
+  }
+
+  NSDictionary *serializedDisplay = @{
+    @"SCDisplayID": @(_displayID),
+    @"SCDisplayWidth": @(width),
+    @"SCDisplayHeight": @(height),
+    @"SCDisplayBoundsOriginX": @(CGRectGetMinX(bounds)),
+    @"SCDisplayBoundsOriginY": @(CGRectGetMinY(bounds)),
+    @"SCDisplayBoundsWidth": @(width),
+    @"SCDisplayBoundsHeight": @(height),
+  };
+  NSObject *screenCaptureDisplay = ((id (*)(id, SEL, id))objc_msgSend)(
+    [displayClass alloc],
+    initializer,
+    serializedDisplay
+  );
+  NSNumber *admittedDisplayID = [screenCaptureDisplay valueForKey:@"displayID"];
+  if (screenCaptureDisplay == nil || admittedDisplayID.unsignedIntValue != _displayID) {
+    LumenAssignVirtualDisplayError(
+      error,
+      LumenMacVirtualDisplayErrorScreenCaptureDisplayCreationFailed,
+      @"ScreenCaptureKit rejected the retained virtual display authority."
+    );
+    return nil;
+  }
+  return screenCaptureDisplay;
 }
 
 - (BOOL)updateLogicalWidth:(uint32_t)logicalWidth

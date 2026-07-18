@@ -64,6 +64,8 @@ NS_SWIFT_NAME(LumenMacVirtualDisplay)
              logicalHeight:(uint32_t)logicalHeight
                refreshRate:(double)refreshRate
                       error:(NSError **)error;
+- (nullable NSObject *)makeScreenCaptureDisplayWithError:(NSError **)error
+  NS_SWIFT_NAME(makeScreenCaptureDisplay());
 - (void)destroy;
 
 - (instancetype)init NS_UNAVAILABLE;
