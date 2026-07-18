@@ -4,6 +4,55 @@ import CoreMedia
 import XCTest
 
 final class LumenTuistBootstrapTests: XCTestCase {
+    func testSystemAudioJoinsTheActiveVideoStreamForTheSameDisplay() throws {
+        let configuration = LumenMacAudioCaptureConfiguration.systemOutput(displayID: 118)
+
+        let route = try LumenSystemAudioCaptureRoute.resolve(
+            configuration: configuration,
+            activeVideoDisplayID: 118
+        )
+
+        XCTAssertEqual(route, .sharedVideoStream)
+    }
+
+    func testSystemAudioRejectsASecondStreamForAnotherActiveVideoDisplay() {
+        let configuration = LumenMacAudioCaptureConfiguration.systemOutput(displayID: 119)
+
+        XCTAssertThrowsError(
+            try LumenSystemAudioCaptureRoute.resolve(
+                configuration: configuration,
+                activeVideoDisplayID: 118
+            )
+        ) { error in
+            XCTAssertEqual(
+                error.localizedDescription,
+                "System audio display 119 does not match active video display 118."
+            )
+        }
+    }
+
+    func testSharedAudioRegistrationPreservesVideoOutputOwnershipForLaterFrames() throws {
+        var ownership = LumenScreenCaptureOutputOwnership()
+
+        ownership.registerScreenOutput(streamIdentity: 0x118)
+        try ownership.markCaptureStarted(streamIdentity: 0x118)
+        try ownership.recordScreenSample(streamIdentity: 0x118)
+        try ownership.attachSharedAudioOutput(streamIdentity: 0x118)
+        try ownership.recordScreenSample(streamIdentity: 0x118)
+        try ownership.recordScreenSample(streamIdentity: 0x118)
+
+        XCTAssertEqual(ownership.stage, .sharedAudioRegistered)
+        XCTAssertEqual(ownership.screenSampleCount, 3)
+        XCTAssertThrowsError(
+            try ownership.attachSharedAudioOutput(streamIdentity: 0x119)
+        ) { error in
+            XCTAssertEqual(
+                error as? LumenScreenCaptureOutputOwnershipError,
+                .streamIdentityMismatch
+            )
+        }
+    }
+
     func testBridgeCompletesVideoBeforeSchedulingAsynchronousAudio() async throws {
         let probe = LumenCaptureStartupOrderProbe()
 

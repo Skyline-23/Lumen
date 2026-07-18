@@ -408,6 +408,61 @@ private struct LumenScreenCaptureDisplayHandle: @unchecked Sendable {
     let value: SCDisplay
 }
 
+enum LumenScreenCaptureOutputRegistrationStage: String, Equatable, Sendable {
+    case unregistered
+    case screenRegistered = "screen-registered"
+    case captureStarted = "capture-started"
+    case sharedAudioRegistered = "screen-and-audio-registered"
+    case stopped
+}
+
+struct LumenScreenCaptureOutputOwnership: Equatable, Sendable {
+    private(set) var streamIdentity: UInt?
+    private(set) var stage: LumenScreenCaptureOutputRegistrationStage = .unregistered
+    private(set) var screenSampleCount: UInt64 = 0
+
+    mutating func registerScreenOutput(streamIdentity: UInt) {
+        self.streamIdentity = streamIdentity
+        stage = .screenRegistered
+    }
+
+    mutating func markCaptureStarted(streamIdentity: UInt) throws {
+        try requireOwner(streamIdentity)
+        stage = .captureStarted
+    }
+
+    mutating func attachSharedAudioOutput(streamIdentity: UInt) throws {
+        try requireOwner(streamIdentity)
+        stage = .sharedAudioRegistered
+    }
+
+    mutating func recordScreenSample(streamIdentity: UInt) throws {
+        try requireOwner(streamIdentity)
+        screenSampleCount &+= 1
+    }
+
+    mutating func detachSharedAudioOutput(streamIdentity: UInt) throws {
+        try requireOwner(streamIdentity)
+        stage = .captureStarted
+    }
+
+    mutating func stop(streamIdentity: UInt) throws {
+        try requireOwner(streamIdentity)
+        stage = .stopped
+        self.streamIdentity = nil
+    }
+
+    private func requireOwner(_ streamIdentity: UInt) throws {
+        guard self.streamIdentity == streamIdentity else {
+            throw LumenScreenCaptureOutputOwnershipError.streamIdentityMismatch
+        }
+    }
+}
+
+enum LumenScreenCaptureOutputOwnershipError: Error, Equatable {
+    case streamIdentityMismatch
+}
+
 /// Safety: ScreenCaptureKit and VideoToolbox callbacks enter through `queue`.
 /// Mutable encode state is initialized before capture starts and is otherwise
 /// read or mutated only on that serial queue; lifecycle teardown synchronizes
@@ -419,7 +474,10 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
     private let statisticsHandler: @Sendable (LumenEncodedCaptureSessionStatistics) -> Void
     private let terminationHandler: @Sendable (Error) -> Void
     private let queue = DispatchQueue(label: "dev.skyline23.lumen.sck.video", qos: .userInteractive)
+    private let audioQueue = DispatchQueue(label: "dev.skyline23.lumen.sck.shared-audio", qos: .userInteractive)
     private var stream: SCStream?
+    private var streamConfiguration: SCStreamConfiguration?
+    private var sharedAudioOutput: LumenSystemAudioCaptureOutput?
     private var compressionSession: VTCompressionSession?
     private var encodingPlan: LumenVideoToolboxEncodingPlan?
     private var sourceContract: LumenExactCaptureSourceContract?
@@ -441,6 +499,7 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
     private var sourceColorContractFailureReported = false
     private var terminalContractFailureReported = false
     private var statistics = LumenEncodedCaptureSessionStatistics()
+    private var outputOwnership = LumenScreenCaptureOutputOwnership()
 
     init(
         configuration: LumenMacCaptureConfiguration,
@@ -515,22 +574,35 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
         let stream = SCStream(filter: filter, configuration: streamConfiguration, delegate: self)
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
         self.stream = stream
+        self.streamConfiguration = streamConfiguration
+        let streamIdentity = Self.identity(of: stream)
+        queue.sync {
+            outputOwnership.registerScreenOutput(streamIdentity: streamIdentity)
+        }
         do {
             try await stream.startCapture()
         } catch {
             try? stream.removeStreamOutput(self, type: .screen)
             if self.stream === stream {
                 self.stream = nil
+                self.streamConfiguration = nil
             }
             throw error
+        }
+        queue.sync {
+            try? outputOwnership.markCaptureStarted(streamIdentity: streamIdentity)
         }
         statistics.isRunning = true
         statistics.notes = makeStatisticsNotes(width: outputWidth, height: outputHeight)
         statisticsHandler(statistics)
-        eventHandler(.init(kind: .started, message: "ScreenCaptureKit capture started"))
+        eventHandler(.init(
+            kind: .started,
+            message: "ScreenCaptureKit capture started stream=\(streamIdentity) output-registration=\(outputOwnership.stage.rawValue)"
+        ))
     }
 
     func stop() async {
+        await detachSystemAudio()
         queue.sync {
             stopping = true
         }
@@ -542,10 +614,13 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
         }
         try? await stream.stopCapture()
         try? stream.removeStreamOutput(self, type: .screen)
+        let streamIdentity = Self.identity(of: stream)
         if self.stream === stream {
             self.stream = nil
+            self.streamConfiguration = nil
         }
         queue.sync {
+            try? outputOwnership.stop(streamIdentity: streamIdentity)
             if let compressionSession {
                 VTCompressionSessionCompleteFrames(compressionSession, untilPresentationTimeStamp: .invalid)
             }
@@ -554,7 +629,11 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
         statistics.isRunning = false
         refreshStatisticsNotes()
         statisticsHandler(statistics)
-        eventHandler(.init(kind: .stopped, message: "ScreenCaptureKit capture stopped", stopStatus: 0))
+        eventHandler(.init(
+            kind: .stopped,
+            message: "ScreenCaptureKit capture stopped output-registration=\(outputOwnership.stage.rawValue) source-samples=\(outputOwnership.screenSampleCount)",
+            stopStatus: 0
+        ))
     }
 
     func requestImmediateKeyFrame() {
@@ -563,11 +642,103 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
         }
     }
 
+    func attachSystemAudio(
+        configuration: LumenMacAudioCaptureConfiguration,
+        callbacks: LumenAudioCaptureCallbacks
+    ) async throws {
+        guard case .systemOutput(let displayID, let excludesCurrentProcessAudio) = configuration.source else {
+            throw LumenAudioCaptureError.invalidSource
+        }
+        guard displayID == self.configuration.displayID else {
+            throw LumenAudioCaptureError.activeVideoDisplayMismatch(
+                audioDisplayID: displayID,
+                videoDisplayID: self.configuration.displayID
+            )
+        }
+        guard sharedAudioOutput == nil,
+              let stream,
+              let streamConfiguration else {
+            if sharedAudioOutput != nil {
+                return
+            }
+            throw LumenScreenCaptureError.captureNotRunning
+        }
+
+        let output = LumenSystemAudioCaptureOutput(callbacks: callbacks)
+        let streamIdentity = Self.identity(of: stream)
+        try stream.addStreamOutput(output, type: .audio, sampleHandlerQueue: audioQueue)
+        sharedAudioOutput = output
+        do {
+            streamConfiguration.capturesAudio = true
+            streamConfiguration.sampleRate = configuration.sampleRate
+            streamConfiguration.channelCount = configuration.channelCount
+            streamConfiguration.excludesCurrentProcessAudio = excludesCurrentProcessAudio
+            try await stream.updateConfiguration(streamConfiguration)
+            queue.sync {
+                try? outputOwnership.attachSharedAudioOutput(streamIdentity: streamIdentity)
+                refreshStatisticsNotes()
+                statisticsHandler(statistics)
+            }
+            callbacks.eventHandler?(.init(
+                kind: .started,
+                message: "ScreenCaptureKit system audio joined active video stream=\(streamIdentity) output-registration=\(outputOwnership.stage.rawValue)"
+            ))
+        } catch {
+            try? stream.removeStreamOutput(output, type: .audio)
+            if sharedAudioOutput === output {
+                sharedAudioOutput = nil
+            }
+            streamConfiguration.capturesAudio = false
+            throw error
+        }
+    }
+
+    func detachSystemAudio() async {
+        guard let output = sharedAudioOutput,
+              let stream,
+              let streamConfiguration else {
+            sharedAudioOutput = nil
+            return
+        }
+        let streamIdentity = Self.identity(of: stream)
+        streamConfiguration.capturesAudio = false
+        try? await stream.updateConfiguration(streamConfiguration)
+        try? stream.removeStreamOutput(output, type: .audio)
+        if sharedAudioOutput === output {
+            sharedAudioOutput = nil
+        }
+        queue.sync {
+            try? outputOwnership.detachSharedAudioOutput(streamIdentity: streamIdentity)
+            refreshStatisticsNotes()
+            statisticsHandler(statistics)
+        }
+        output.emitStopped()
+    }
+
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
         guard type == .screen,
               CMSampleBufferIsValid(sampleBuffer),
               let imageBuffer = sampleBuffer.imageBuffer,
               let compressionSession else {
+            return
+        }
+
+        do {
+            try outputOwnership.recordScreenSample(streamIdentity: Self.identity(of: stream))
+        } catch {
+            let ownershipError = LumenScreenCaptureError.outputOwnershipLost
+            statistics.processingFailureCount &+= 1
+            statistics.lastErrorDescription = ownershipError.localizedDescription
+            refreshStatisticsNotes()
+            statisticsHandler(statistics)
+            eventHandler(.init(
+                kind: .failed,
+                message: ownershipError.localizedDescription,
+                sourceDisplayTime: sampleBuffer.presentationTimeStamp.value >= 0
+                    ? UInt64(sampleBuffer.presentationTimeStamp.value)
+                    : 0
+            ))
+            terminationHandler(ownershipError)
             return
         }
 
@@ -882,6 +1053,8 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
         )
         return [
             "captureBackend=screen-capture-kit",
+            "screenCaptureOutputRegistrationStage=\(outputOwnership.stage.rawValue)",
+            "screenCaptureOwnedSampleCount=\(outputOwnership.screenSampleCount)",
             "sourceCaptureSampleCount=\(statistics.sourceFrameCount)",
             "sourceApproxFrameRate=\(sourceApproxFrameRate)",
             "videoToolboxTargetFrameRateHint=\(configuration.effectiveTargetFrameRate)",
@@ -898,6 +1071,10 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
             "videoToolboxMaxInflightStagingSlots=\(statistics.maximumInflightFrameCount)",
             "videoToolboxOutputApproxFrameRate=\(outputApproxFrameRate)"
         ]
+    }
+
+    private static func identity(of stream: SCStream) -> UInt {
+        UInt(bitPattern: Unmanaged.passUnretained(stream).toOpaque())
     }
 
     private func refreshStatisticsNotesIfNeeded() {
@@ -1101,6 +1278,8 @@ private enum LumenMachTime {
 enum LumenScreenCaptureError: Error, LocalizedError {
     case displayUnavailable(UInt32)
     case displayOwnershipLost(UInt32)
+    case captureNotRunning
+    case outputOwnershipLost
     case compressionSessionCreationFailed(OSStatus)
     case compressionSessionPreparationFailed(OSStatus)
     case compressionPropertyFailed(String, OSStatus)
@@ -1109,6 +1288,8 @@ enum LumenScreenCaptureError: Error, LocalizedError {
         switch self {
         case .displayUnavailable(let displayID): return "ScreenCaptureKit display \(displayID) is unavailable."
         case .displayOwnershipLost(let displayID): return "Retained virtual display \(displayID) was released before ScreenCaptureKit became ready."
+        case .captureNotRunning: return "ScreenCaptureKit video stream is not running."
+        case .outputOwnershipLost: return "ScreenCaptureKit delivered a sample from a stream that no longer owns the registered video output."
         case .compressionSessionCreationFailed(let status): return "Unable to create VideoToolbox compression session (OSStatus \(status))."
         case .compressionSessionPreparationFailed(let status): return "Unable to prepare VideoToolbox compression session (OSStatus \(status))."
         case .compressionPropertyFailed(let key, let status): return "Unable to set VideoToolbox property \(key) (OSStatus \(status))."
@@ -1147,6 +1328,23 @@ actor LumenEncodedCaptureSession {
 
     func requestImmediateKeyFrame() {
         runtime?.requestImmediateKeyFrame()
+    }
+
+    func attachSystemAudio(
+        configuration: LumenMacAudioCaptureConfiguration,
+        callbacks: LumenAudioCaptureCallbacks
+    ) async throws {
+        guard let runtime else {
+            throw LumenScreenCaptureError.captureNotRunning
+        }
+        try await runtime.attachSystemAudio(
+            configuration: configuration,
+            callbacks: callbacks
+        )
+    }
+
+    func detachSystemAudio() async {
+        await runtime?.detachSystemAudio()
     }
 
     func statisticsSnapshot() -> LumenEncodedCaptureSessionStatistics {
