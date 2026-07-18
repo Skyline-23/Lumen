@@ -1,0 +1,16 @@
+[package]
+name = "lumen-upnp"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Route-aware synchronous UPnP IGD discovery and port mapping"
+readme = "README.md"
+keywords = ["upnp", "igd", "ssdp", "nat", "port-mapping"]
+categories = ["network-programming"]
+
+[dependencies]
+attohttpc = { version = "0.30.1", default-features = false }
+roxmltree = "0.20"
+url = "2.5"

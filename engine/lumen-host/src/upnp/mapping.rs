@@ -1,4 +1,4 @@
-use igd_next::PortMappingProtocol;
+use lumen_upnp::PortMappingProtocol;
 
 use crate::network_ports::HostPorts;
 use crate::HostArguments;
@@ -14,17 +14,17 @@ pub(super) fn mappings(arguments: &HostArguments) -> Result<[PortMapping; 3], St
     let ports = HostPorts::from_arguments(arguments)?;
     Ok([
         PortMapping {
-            protocol: PortMappingProtocol::TCP,
+            protocol: PortMappingProtocol::Tcp,
             port: ports.control_https,
             description: "Lumen - HTTPS Control",
         },
         PortMapping {
-            protocol: PortMappingProtocol::UDP,
+            protocol: PortMappingProtocol::Udp,
             port: ports.native_session_quic,
             description: "Lumen - Native Session QUIC",
         },
         PortMapping {
-            protocol: PortMappingProtocol::UDP,
+            protocol: PortMappingProtocol::Udp,
             port: ports.native_media_udp,
             description: "Lumen - Native Media",
         },
@@ -44,17 +44,17 @@ mod tests {
             mappings,
             [
                 PortMapping {
-                    protocol: PortMappingProtocol::TCP,
+                    protocol: PortMappingProtocol::Tcp,
                     port: 47_990,
                     description: "Lumen - HTTPS Control",
                 },
                 PortMapping {
-                    protocol: PortMappingProtocol::UDP,
+                    protocol: PortMappingProtocol::Udp,
                     port: 48_010,
                     description: "Lumen - Native Session QUIC",
                 },
                 PortMapping {
-                    protocol: PortMappingProtocol::UDP,
+                    protocol: PortMappingProtocol::Udp,
                     port: 47_998,
                     description: "Lumen - Native Media",
                 },

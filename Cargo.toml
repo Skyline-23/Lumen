@@ -2,6 +2,7 @@
 members = [
     "engine/lumen-engine",
     "engine/lumen-host",
+    "engine/lumen-upnp",
     "src/platform/windows/driver/core",
 ]
 resolver = "2"

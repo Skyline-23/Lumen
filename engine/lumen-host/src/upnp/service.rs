@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use igd_next::{search_gateway, AddPortError, Gateway, SearchOptions};
+use lumen_upnp::{discover_gateway, DiscoveryOptions, Gateway, MappingError};
 
 use super::ipv6;
 use super::mapping::{mappings, PortMapping};
@@ -225,12 +225,10 @@ fn refresh_mappings(
         PlatformRuntimeEventCode::UpnpLocalAddressDiscovery,
     );
     let local_ip = IpAddr::V4(route.local_address);
-    let gateway = match search_gateway(SearchOptions {
-        bind_addr: SocketAddr::new(local_ip, 0),
-        broadcast_address: SocketAddr::new(IpAddr::V4(route.gateway_address), 1900),
-        timeout: Some(DISCOVERY_TIMEOUT),
-        single_search_timeout: Some(DISCOVERY_TIMEOUT),
-        ..Default::default()
+    let gateway = match discover_gateway(DiscoveryOptions {
+        bind_address: SocketAddr::new(local_ip, 0),
+        discovery_address: SocketAddr::new(IpAddr::V4(route.gateway_address), 1900),
+        timeout: DISCOVERY_TIMEOUT,
     }) {
         Ok(gateway) => gateway,
         Err(error) => {
@@ -246,7 +244,7 @@ fn refresh_mappings(
 
     if active
         .as_ref()
-        .is_some_and(|current| current.gateway.control_url != gateway.control_url)
+        .is_some_and(|current| current.gateway.control_url() != gateway.control_url())
     {
         if let Some(previous) = active.take() {
             remove_mappings(&previous, event_sink);
@@ -343,7 +341,7 @@ fn add_mapping_with_lease_fallback(
         ) {
             Ok(()) => Ok(()),
             Err(static_error) => match (&leased_error, &static_error) {
-                (AddPortError::PortInUse, _) | (_, AddPortError::PortInUse) => {
+                (MappingError::PortInUse, _) | (_, MappingError::PortInUse) => {
                     Err(AddMappingAttemptError::PortInUse)
                 }
                 _ => Err(AddMappingAttemptError::Other(format!(
