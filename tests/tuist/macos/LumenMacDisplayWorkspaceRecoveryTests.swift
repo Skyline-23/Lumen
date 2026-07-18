@@ -73,6 +73,18 @@ private actor TransientVirtualDisplayTopologyController: LumenMacDisplayTopology
 }
 
 final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
+    func testTopologyCaptureSkipsAnUnusableTransientVirtualDisplay() throws {
+        let physical = displayTopology().displays[0]
+
+        let states = LumenCoreGraphicsDisplayTopologyController.usableDisplayStates(
+            from: [2, 181]
+        ) { displayID in
+            displayID == 2 ? physical : nil
+        }
+
+        XCTAssertEqual(states, [physical])
+    }
+
     func testUnpublishedRetainedVirtualDisplayDefersPromotionToCaptureReadiness() async throws {
         let topology = displayTopology()
         let visibleDisplayIDs = Set(topology.displays.compactMap { UInt32($0.id) })

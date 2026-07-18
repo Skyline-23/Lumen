@@ -3,6 +3,36 @@ import Synchronization
 @testable import LumenMacBridge
 
 final class LumenScreenCaptureDisplayReadinessTests: XCTestCase {
+    func testDisplayLookupStartsOnceAndReusesThePreparedResult() async throws {
+        let lookup = LumenSingleFlightDisplayLookup<UInt32>()
+        let invocationCount = Mutex(0)
+
+        await lookup.begin(displayID: 121, ownerToken: 7) {
+            invocationCount.withLock { $0 += 1 }
+            return 121
+        }
+        await lookup.begin(displayID: 121, ownerToken: 7) {
+            invocationCount.withLock { $0 += 1 }
+            return 999
+        }
+
+        let resolved = try await lookup.resolve(displayID: 121, ownerToken: 7)
+        XCTAssertEqual(resolved, 121)
+        XCTAssertEqual(invocationCount.withLock { $0 }, 1)
+    }
+
+    func testDisplayLookupRejectsAStaleOwnerAndKeepsTheNewOwnerResult() async throws {
+        let lookup = LumenSingleFlightDisplayLookup<UInt32>()
+
+        await lookup.begin(displayID: 121, ownerToken: 7) { 121 }
+        await lookup.begin(displayID: 121, ownerToken: 8) { 122 }
+
+        let staleResult = try await lookup.resolve(displayID: 121, ownerToken: 7)
+        let currentResult = try await lookup.resolve(displayID: 121, ownerToken: 8)
+        XCTAssertNil(staleResult)
+        XCTAssertEqual(currentResult, 122)
+    }
+
     func testRetainedAuthorityEnumeratesWindowServerDisplayBeforeAdmission() async throws {
         let enumerationCount = Mutex(0)
 

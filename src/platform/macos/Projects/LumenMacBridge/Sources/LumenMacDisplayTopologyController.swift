@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import OSLog
 
 protocol LumenMacDisplayTopologyControlling: Sendable {
     func capture() async throws -> LumenMacPhysicalDisplayTopology
@@ -11,6 +12,10 @@ protocol LumenMacDisplayTopologyControlling: Sendable {
 actor LumenCoreGraphicsDisplayTopologyController: LumenMacDisplayTopologyControlling {
     private static let productionVerificationAttempts = 20
     private static let productionVerificationDelayNanoseconds: UInt64 = 100_000_000
+    private static let logger = Logger(
+        subsystem: "dev.skyline23.lumen",
+        category: "MacDisplayTopology"
+    )
     private let captureOverride: (@Sendable () async throws -> LumenMacPhysicalDisplayTopology)?
     private let restoreOverride: (@Sendable (LumenMacPhysicalDisplayTopology) async throws -> Void)?
     private let visibleDisplayIDsProvider: @Sendable () async -> Set<CGDirectDisplayID>
@@ -45,10 +50,13 @@ actor LumenCoreGraphicsDisplayTopologyController: LumenMacDisplayTopologyControl
         if let captureOverride {
             return try await captureOverride()
         }
-        let displays = try onlineDisplayIDs().map { displayID in
+        let displays = Self.usableDisplayStates(from: try onlineDisplayIDs()) { displayID in
             let bounds = CGDisplayBounds(displayID)
             guard let mode = CGDisplayCopyDisplayMode(displayID) else {
-                throw LumenMacDisplayWorkspaceError.displayNotFound(displayID)
+                Self.logger.warning(
+                    "stage=topology-capture-skip-mode-less-display display-id=\(displayID, privacy: .public)"
+                )
+                return nil
             }
             return LumenMacPhysicalDisplayState(
                 id: String(displayID),
@@ -66,6 +74,13 @@ actor LumenCoreGraphicsDisplayTopologyController: LumenMacDisplayTopologyControl
             windowsAdapterLUID: nil,
             windowsTargetPaths: []
         )
+    }
+
+    static func usableDisplayStates(
+        from displayIDs: [CGDirectDisplayID],
+        makeState: (CGDirectDisplayID) throws -> LumenMacPhysicalDisplayState?
+    ) rethrows -> [LumenMacPhysicalDisplayState] {
+        try displayIDs.compactMap(makeState)
     }
 
     func restore(_ topology: LumenMacPhysicalDisplayTopology) async throws {

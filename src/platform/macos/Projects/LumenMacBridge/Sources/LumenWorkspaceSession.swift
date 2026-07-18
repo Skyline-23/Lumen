@@ -115,7 +115,7 @@ private actor LumenMacVirtualDisplayOwner {
         identity: LumenMacVirtualDisplayIdentity,
         geometry: LumenMacDisplayGeometry,
         request: LumenMacWorkspaceSessionRequest
-    ) throws -> UInt32 {
+    ) async throws -> UInt32 {
         guard display == nil else {
             throw LumenMacWorkspaceSessionError.sessionAlreadyStarted
         }
@@ -129,6 +129,7 @@ private actor LumenMacVirtualDisplayOwner {
         )
         self.display = display
         displayKey = identity.id
+        await LumenScreenCaptureDisplayPrefetch.begin(displayID: display.displayID)
         return display.displayID
     }
 
@@ -155,9 +156,12 @@ private actor LumenMacVirtualDisplayOwner {
         }
     }
 
-    func destroy(identity: LumenMacVirtualDisplayIdentity) throws {
+    func destroy(identity: LumenMacVirtualDisplayIdentity) async throws {
         if let displayKey, displayKey != identity.id {
             throw LumenMacWorkspaceSessionError.virtualDisplayOwnershipMismatch
+        }
+        if let display {
+            await LumenScreenCaptureDisplayPrefetch.discard(displayID: display.displayID)
         }
         _ = LumenMacVirtualDisplay.removeRegisteredDisplay(forKey: identity.id)
         self.display = nil
