@@ -176,18 +176,13 @@ type DestroyController = unsafe extern "C" fn(*mut BridgeController);
 type MakeVideoConfiguration = unsafe extern "C" fn(u32) -> MacCaptureConfiguration;
 type MakeAudioConfiguration = unsafe extern "C" fn(u32) -> MacAudioCaptureConfiguration;
 type ConfigureForwarding = unsafe extern "C" fn(*mut BridgeController, usize, usize);
-type StartCapture = unsafe extern "C" fn(
+type StartCapturePair = unsafe extern "C" fn(
     *mut BridgeController,
     MacCaptureConfiguration,
-    *mut c_char,
-    usize,
-) -> bool;
-type StartAudioCaptureAsynchronously = unsafe extern "C" fn(
-    *mut BridgeController,
     MacAudioCaptureConfiguration,
     *mut c_char,
     usize,
-) -> bool;
+) -> i32;
 type StopCapture = unsafe extern "C" fn(*mut BridgeController);
 type PopVideo =
     unsafe extern "C" fn(*mut BridgeController, *mut SampleBuffer) -> MacEncodedFrameRecord;
@@ -236,8 +231,7 @@ struct MacBridgeApi {
     make_audio_configuration: MakeAudioConfiguration,
     configure_video_forwarding: ConfigureForwarding,
     configure_audio_forwarding: ConfigureForwarding,
-    start_video_capture: StartCapture,
-    start_audio_capture_asynchronously: StartAudioCaptureAsynchronously,
+    start_capture_pair: StartCapturePair,
     stop_video_capture: StopCapture,
     stop_audio_capture: StopCapture,
     pop_video: PopVideo,
@@ -286,13 +280,9 @@ impl MacBridgeApi {
                     handle,
                     b"LumenMacBridgeControllerConfigureAudioForwarding\0",
                 )?,
-                start_video_capture: load_symbol(
+                start_capture_pair: load_symbol(
                     handle,
-                    b"LumenMacBridgeControllerStartCapture\0",
-                )?,
-                start_audio_capture_asynchronously: load_symbol(
-                    handle,
-                    b"LumenMacBridgeControllerStartAudioCaptureAsynchronously\0",
+                    b"LumenMacBridgeControllerStartCapturePair\0",
                 )?,
                 stop_video_capture: load_symbol(handle, b"LumenMacBridgeControllerStopCapture\0")?,
                 stop_audio_capture: load_symbol(
@@ -516,17 +506,18 @@ impl PlatformSessionControl for MacPlatformSessionControl {
             audio.channel_count = i32::from(plan.audio_channels);
             audio.frame_size = AUDIO_FRAME_COUNT as i32;
             let mut error = [0_i8; 1024];
-            let video_started = unsafe {
-                (self.api.start_video_capture)(
+            let capture_status = unsafe {
+                (self.api.start_capture_pair)(
                     state.controller,
                     video,
+                    audio,
                     error.as_mut_ptr(),
                     error.len(),
                 )
             };
-            if !video_started {
-                return Err(format!("video capture failed: {}", error_text(&error)));
-            }
+            state.audio_capture_failure =
+                capture_pair_audio_failure(capture_status, error_text(&error))?;
+            error.fill(0);
             if plan.virtual_display {
                 let key = state.workspace_key.as_ref().expect("workspace key");
                 let outcome = unsafe {
@@ -541,23 +532,6 @@ impl PlatformSessionControl for MacPlatformSessionControl {
                 let event = workspace_isolation_event(outcome, error_text(&error))?;
                 self.publish_runtime_event(event)?;
             }
-            error.fill(0);
-            let audio_accepted = unsafe {
-                (self.api.start_audio_capture_asynchronously)(
-                    state.controller,
-                    audio,
-                    error.as_mut_ptr(),
-                    error.len(),
-                )
-            };
-            state.audio_capture_failure = (!audio_accepted).then(|| {
-                let message = error_text(&error);
-                if message.is_empty() {
-                    "macOS audio capture could not be scheduled".to_owned()
-                } else {
-                    message
-                }
-            });
             state.next_audio_timestamp = audio_timestamp(monotonic_nanoseconds());
             state.next_audio_deadline = Some(Instant::now());
             Ok(())
@@ -950,6 +924,19 @@ fn workspace_isolation_event(
     }
 }
 
+fn capture_pair_audio_failure(status: i32, error: String) -> Result<Option<String>, String> {
+    match status {
+        0 => Ok(None),
+        2 => Ok(Some(if error.is_empty() {
+            "macOS audio capture could not be scheduled".to_owned()
+        } else {
+            error
+        })),
+        1 => Err(format!("video capture failed: {error}")),
+        _ => Err(format!("capture pair failed: {error}")),
+    }
+}
+
 unsafe fn parameter_set(
     codec: i32,
     format: FormatDescription,
@@ -1132,6 +1119,23 @@ mod tests {
         assert_eq!(
             event.message.as_deref(),
             Some("display 114 was not published")
+        );
+    }
+
+    #[test]
+    fn capture_pair_keeps_audio_scheduling_failure_nonfatal() {
+        assert_eq!(
+            capture_pair_audio_failure(2, "audio route unavailable".to_owned()).unwrap(),
+            Some("audio route unavailable".to_owned())
+        );
+        assert_eq!(capture_pair_audio_failure(0, String::new()).unwrap(), None);
+    }
+
+    #[test]
+    fn capture_pair_preserves_video_start_failure_as_terminal() {
+        assert_eq!(
+            capture_pair_audio_failure(1, "capture rejected".to_owned()).unwrap_err(),
+            "video capture failed: capture rejected"
         );
     }
 }

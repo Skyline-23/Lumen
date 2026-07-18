@@ -655,7 +655,10 @@ public final class LumenBridgeObjCFacade: NSObject {
             try blockingRun {
                 try await LumenBridgeCaptureStartupCoordinator.startVisualFirst(
                     video: {
-                        try await runtime.startCapture(configuration: videoConfiguration)
+                        try await runtime.startCapture(
+                            configuration: videoConfiguration,
+                            preconfiguredSystemAudio: audioConfiguration
+                        )
                     },
                     launchAudio: {
                         try await runtime.startAudioCaptureAsynchronously(

@@ -1,6 +1,7 @@
 @testable import LumenMacBridge
 import CoreGraphics
 import CoreMedia
+import ScreenCaptureKit
 import XCTest
 
 final class LumenTuistBootstrapTests: XCTestCase {
@@ -51,6 +52,30 @@ final class LumenTuistBootstrapTests: XCTestCase {
                 .streamIdentityMismatch
             )
         }
+    }
+
+    func testSharedSystemAudioIsConfiguredBeforeScreenCaptureStarts() throws {
+        let audio = LumenMacAudioCaptureConfiguration.systemOutput(
+            displayID: 120,
+            sampleRate: 48_000,
+            channelCount: 2,
+            frameSize: 240,
+            excludesCurrentProcessAudio: true
+        )
+        let preparation = try LumenScreenCaptureSystemAudioPreparation(
+            configuration: audio,
+            videoDisplayID: 120
+        )
+        let streamConfiguration = SCStreamConfiguration()
+
+        preparation.apply(to: streamConfiguration)
+
+        XCTAssertTrue(streamConfiguration.capturesAudio)
+        XCTAssertEqual(streamConfiguration.sampleRate, 48_000)
+        XCTAssertEqual(streamConfiguration.channelCount, 2)
+        XCTAssertTrue(streamConfiguration.excludesCurrentProcessAudio)
+        XCTAssertTrue(preparation.accepts(audio))
+        XCTAssertFalse(preparation.accepts(.systemOutput(displayID: 120, channelCount: 6)))
     }
 
     func testBridgeCompletesVideoBeforeSchedulingAsynchronousAudio() async throws {
