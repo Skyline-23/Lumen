@@ -15,9 +15,9 @@ aes-gcm = "0.10"
 futures-util = "0.3"
 httparse = "1.10.1"
 if-addrs = "0.15"
-igd-next = "0.17.1"
 libc = "0.2"
 lumen-engine = { path = "../lumen-engine" }
+lumen-upnp = { path = "../lumen-upnp" }
 mdns-sd = { version = "0.20.1", default-features = false }
 netdev = "0.45"
 percent-encoding = "2.3.2"

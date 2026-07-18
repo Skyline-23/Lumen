@@ -141,19 +141,52 @@ fn advertised_addresses_from_interfaces(
         .unwrap_or_default()
 }
 
-pub(crate) fn preferred_multicast_lan_ipv4_address() -> Option<Ipv4Addr> {
-    preferred_multicast_lan_ipv4_address_from_interfaces(netdev::get_interfaces())
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct MulticastLanIpv4Route {
+    pub(crate) local_address: Ipv4Addr,
+    pub(crate) gateway_address: Ipv4Addr,
 }
 
-fn preferred_multicast_lan_ipv4_address_from_interfaces(
+pub(crate) fn preferred_multicast_lan_ipv4_route() -> Option<MulticastLanIpv4Route> {
+    preferred_multicast_lan_ipv4_route_from_interfaces(netdev::get_interfaces())
+}
+
+fn preferred_multicast_lan_ipv4_route_from_interfaces(
     interfaces: Vec<netdev::Interface>,
-) -> Option<Ipv4Addr> {
-    advertised_addresses_from_interfaces(interfaces, "ipv4")
+) -> Option<MulticastLanIpv4Route> {
+    let mut candidates = interfaces
         .into_iter()
-        .find_map(|address| match address {
-            IpAddr::V4(address) => Some(address),
-            IpAddr::V6(_) => None,
+        .filter(|interface| {
+            interface.is_up()
+                && interface.is_running()
+                && interface.is_multicast()
+                && !interface.is_loopback()
+                && !interface.is_point_to_point()
         })
+        .filter_map(|interface| {
+            let local_address = interface
+                .ipv4
+                .iter()
+                .map(|network| network.addr())
+                .find(|address| is_routable_ipv4(*address))?;
+            let gateway_address = interface
+                .gateway
+                .as_ref()?
+                .ipv4
+                .iter()
+                .copied()
+                .find(|address| is_routable_ipv4(*address))?;
+            Some((
+                interface.name,
+                MulticastLanIpv4Route {
+                    local_address,
+                    gateway_address,
+                },
+            ))
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| left.0.cmp(&right.0));
+    candidates.into_iter().next().map(|(_, route)| route)
 }
 
 fn advertised_addresses(interface: &netdev::Interface, address_family: &str) -> Vec<IpAddr> {
@@ -225,6 +258,7 @@ mod tests {
     use netdev::interface::flags::IFF_RUNNING;
     use netdev::interface::flags::{IFF_MULTICAST, IFF_POINTOPOINT, IFF_UP};
     use netdev::ipnet::{Ipv4Net, Ipv6Net};
+    use netdev::net::device::NetworkDevice;
 
     use super::*;
 
@@ -278,14 +312,20 @@ mod tests {
         lan.name = "en0".to_owned();
         lan.flags = active_multicast_flags();
         lan.ipv4 = vec![Ipv4Net::new(Ipv4Addr::new(192, 168, 0, 51), 24).unwrap()];
+        let mut gateway = NetworkDevice::new();
+        gateway.ipv4 = vec![Ipv4Addr::new(192, 168, 0, 1)];
+        lan.gateway = Some(gateway);
 
         assert_eq!(
             advertised_addresses_from_interfaces(vec![tunnel.clone(), lan.clone()], "ipv4"),
             [IpAddr::V4(Ipv4Addr::new(192, 168, 0, 51))]
         );
         assert_eq!(
-            preferred_multicast_lan_ipv4_address_from_interfaces(vec![tunnel, lan]),
-            Some(Ipv4Addr::new(192, 168, 0, 51))
+            preferred_multicast_lan_ipv4_route_from_interfaces(vec![tunnel, lan]),
+            Some(MulticastLanIpv4Route {
+                local_address: Ipv4Addr::new(192, 168, 0, 51),
+                gateway_address: Ipv4Addr::new(192, 168, 0, 1),
+            })
         );
     }
 }

@@ -4,12 +4,12 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use igd_next::{search_gateway, AddPortError, Gateway, SearchOptions};
+use lumen_upnp::{discover_gateway, DiscoveryOptions, Gateway, MappingError};
 
 use super::ipv6;
 use super::mapping::{mappings, PortMapping};
 use crate::{
-    discovery::preferred_multicast_lan_ipv4_address, HostArguments, IdlePlatformSessionControl,
+    discovery::preferred_multicast_lan_ipv4_route, HostArguments, IdlePlatformSessionControl,
     PlatformRuntimeEvent, PlatformRuntimeEventCode, PlatformRuntimeEventDisposition,
     PlatformRuntimeEventSeverity, PlatformSessionControl,
 };
@@ -56,7 +56,10 @@ struct ActiveMappings {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum MappingRefreshOutcome {
-    Ready { local_ip: IpAddr },
+    Ready {
+        local_ip: IpAddr,
+        gateway_ip: IpAddr,
+    },
     Retry,
 }
 
@@ -142,11 +145,15 @@ impl UpnpService {
                     let outcome = refresh_mappings(&plan, &mut active, event_sink.as_ref());
                     let decision = schedule.record(outcome);
                     if decision.became_ready {
-                        let MappingRefreshOutcome::Ready { local_ip } = outcome else {
+                        let MappingRefreshOutcome::Ready {
+                            local_ip,
+                            gateway_ip,
+                        } = outcome
+                        else {
                             unreachable!("ready transition requires a ready outcome")
                         };
                         eprintln!(
-                            "Lumen UPnP reconciliation ready local-address={local_ip} mappings={} refresh-seconds={}",
+                            "Lumen UPnP reconciliation ready local-address={local_ip} gateway-address={gateway_ip} mappings={} refresh-seconds={}",
                             mapping_summary(&plan),
                             REFRESH_INTERVAL.as_secs()
                         );
@@ -204,11 +211,11 @@ fn refresh_mappings(
     active: &mut Option<ActiveMappings>,
     event_sink: &dyn PlatformSessionControl,
 ) -> MappingRefreshOutcome {
-    let Some(lan_ip) = preferred_multicast_lan_ipv4_address() else {
+    let Some(route) = preferred_multicast_lan_ipv4_route() else {
         report_warning(
             event_sink,
             PlatformRuntimeEventCode::UpnpLocalAddressDiscovery,
-            "Lumen UPnP local address discovery failed: no routable multicast LAN interface is ready"
+            "Lumen UPnP route discovery failed: no routable multicast LAN interface with a gateway is ready"
                 .to_owned(),
         );
         return MappingRefreshOutcome::Retry;
@@ -217,12 +224,11 @@ fn refresh_mappings(
         event_sink,
         PlatformRuntimeEventCode::UpnpLocalAddressDiscovery,
     );
-    let local_ip = IpAddr::V4(lan_ip);
-    let gateway = match search_gateway(SearchOptions {
-        bind_addr: SocketAddr::new(local_ip, 0),
-        timeout: Some(DISCOVERY_TIMEOUT),
-        single_search_timeout: Some(DISCOVERY_TIMEOUT),
-        ..Default::default()
+    let local_ip = IpAddr::V4(route.local_address);
+    let gateway = match discover_gateway(DiscoveryOptions {
+        bind_address: SocketAddr::new(local_ip, 0),
+        discovery_address: SocketAddr::new(IpAddr::V4(route.gateway_address), 1900),
+        timeout: DISCOVERY_TIMEOUT,
     }) {
         Ok(gateway) => gateway,
         Err(error) => {
@@ -238,7 +244,7 @@ fn refresh_mappings(
 
     if active
         .as_ref()
-        .is_some_and(|current| current.gateway.control_url != gateway.control_url)
+        .is_some_and(|current| current.gateway.control_url() != gateway.control_url())
     {
         if let Some(previous) = active.take() {
             remove_mappings(&previous, event_sink);
@@ -278,7 +284,10 @@ fn refresh_mappings(
         mappings: mapped,
     });
     if failures.is_empty() {
-        MappingRefreshOutcome::Ready { local_ip }
+        MappingRefreshOutcome::Ready {
+            local_ip,
+            gateway_ip: IpAddr::V4(route.gateway_address),
+        }
     } else {
         MappingRefreshOutcome::Retry
     }
@@ -332,7 +341,7 @@ fn add_mapping_with_lease_fallback(
         ) {
             Ok(()) => Ok(()),
             Err(static_error) => match (&leased_error, &static_error) {
-                (AddPortError::PortInUse, _) | (_, AddPortError::PortInUse) => {
+                (MappingError::PortInUse, _) | (_, MappingError::PortInUse) => {
                     Err(AddMappingAttemptError::PortInUse)
                 }
                 _ => Err(AddMappingAttemptError::Other(format!(
@@ -415,9 +424,11 @@ mod tests {
         let second = schedule.record(MappingRefreshOutcome::Retry);
         let recovered = schedule.record(MappingRefreshOutcome::Ready {
             local_ip: "192.168.0.51".parse().unwrap(),
+            gateway_ip: "192.168.0.1".parse().unwrap(),
         });
         let steady = schedule.record(MappingRefreshOutcome::Ready {
             local_ip: "192.168.0.51".parse().unwrap(),
+            gateway_ip: "192.168.0.1".parse().unwrap(),
         });
 
         assert_eq!(first.delay, Duration::from_secs(1));

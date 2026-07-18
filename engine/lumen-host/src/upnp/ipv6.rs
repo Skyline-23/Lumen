@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use futures_util::TryStreamExt;
 use if_addrs::{get_if_addrs, IfAddr};
-use igd_next::PortMappingProtocol;
+use lumen_upnp::PortMappingProtocol;
 use rupnp::http::Uri;
 use rupnp::ssdp::{SearchTarget, URN};
 use rupnp::Service;
@@ -146,8 +146,8 @@ fn add_payload(internal_client: Ipv6Addr, mapping: PortMapping) -> String {
 
 fn protocol_number(protocol: PortMappingProtocol) -> u8 {
     match protocol {
-        PortMappingProtocol::TCP => 6,
-        PortMappingProtocol::UDP => 17,
+        PortMappingProtocol::Tcp => 6,
+        PortMappingProtocol::Udp => 17,
     }
 }
 
@@ -162,7 +162,7 @@ mod tests {
     #[test]
     fn named_mapping_builds_the_standard_ipv6_pinhole_arguments() {
         let mapping = PortMapping {
-            protocol: PortMappingProtocol::TCP,
+            protocol: PortMappingProtocol::Tcp,
             port: 48_000,
             description: "Lumen test",
         };
