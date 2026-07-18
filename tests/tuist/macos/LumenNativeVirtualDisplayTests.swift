@@ -34,7 +34,7 @@ final class LumenNativeVirtualDisplayTests: XCTestCase {
         XCTAssertFalse(LumenMacVirtualDisplay.removeRegisteredDisplay(forKey: "missing"))
     }
 
-    func testRetainedVirtualDisplayCreatesDirectScreenCaptureAuthority() throws {
+    func testRetainedVirtualDisplayPublishesAuthoritativeScreenCaptureDisplay() async throws {
         guard LumenMacVirtualDisplay.isSupported() else {
             throw XCTSkip("CGVirtualDisplay is unavailable on this runtime")
         }
@@ -55,8 +55,23 @@ final class LumenNativeVirtualDisplayTests: XCTestCase {
             _ = LumenMacVirtualDisplay.removeRegisteredDisplay(forKey: key)
         }
 
-        let admittedObject = try retained.makeScreenCaptureDisplay()
-        let admitted = try XCTUnwrap(admittedObject as? SCDisplay)
+        let content: SCShareableContent
+        do {
+            content = try await SCShareableContent.excludingDesktopWindows(
+                false,
+                onScreenWindowsOnly: true
+            )
+        } catch {
+            let error = error as NSError
+            if error.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain",
+               error.code == -3_801 {
+                throw XCTSkip("The XCTest runner does not hold ScreenCaptureKit TCC permission")
+            }
+            throw error
+        }
+        let admitted = try XCTUnwrap(
+            content.displays.first(where: { UInt32($0.displayID) == retained.displayID })
+        )
         XCTAssertEqual(UInt32(admitted.displayID), retained.displayID)
         _ = SCContentFilter(
             display: admitted,
@@ -65,7 +80,7 @@ final class LumenNativeVirtualDisplayTests: XCTestCase {
         )
     }
 
-    func testDirectScreenCaptureAuthorityStartsWithoutShareableContentEnumeration() async throws {
+    func testAuthoritativeShareableDisplayStartsScreenCapture() async throws {
         guard LumenMacVirtualDisplay.isSupported() else {
             throw XCTSkip("CGVirtualDisplay is unavailable on this runtime")
         }
@@ -85,8 +100,13 @@ final class LumenNativeVirtualDisplayTests: XCTestCase {
             forKey: key,
             configuration: configuration
         )
-        let admittedObject = try retained.makeScreenCaptureDisplay()
-        let admitted = try XCTUnwrap(admittedObject as? SCDisplay)
+        let content = try await SCShareableContent.excludingDesktopWindows(
+            false,
+            onScreenWindowsOnly: true
+        )
+        let admitted = try XCTUnwrap(
+            content.displays.first(where: { UInt32($0.displayID) == retained.displayID })
+        )
         let filter = SCContentFilter(
             display: admitted,
             excludingApplications: [],

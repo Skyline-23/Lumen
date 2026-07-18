@@ -3,37 +3,41 @@ import Synchronization
 @testable import LumenMacBridge
 
 final class LumenScreenCaptureDisplayReadinessTests: XCTestCase {
-    func testRetainedAuthorityBypassesGlobalShareableContentEnumeration() async throws {
+    func testRetainedAuthorityEnumeratesWindowServerDisplayBeforeAdmission() async throws {
         let enumerationCount = Mutex(0)
 
         let admission: LumenScreenCaptureDisplayAdmissionResult<UInt32> = try await
             LumenScreenCaptureDisplayAdmission.resolve(
                 displayID: 121,
-                hasRetainedAuthority: { true },
-                admitRetainedAuthority: { 121 },
+                isRetained: { true },
                 enumerateShareableContent: {
                     enumerationCount.withLock { $0 += 1 }
-                    return 2
+                    return 121
                 }
             )
 
         XCTAssertEqual(admission.value, 121)
-        XCTAssertEqual(admission.mode, .retainedAuthority)
-        XCTAssertEqual(enumerationCount.withLock { $0 }, 0)
+        XCTAssertEqual(admission.mode, .retainedShareableContent)
+        XCTAssertEqual(enumerationCount.withLock { $0 }, 1)
     }
 
-    func testLostRetainedAuthorityFailsWithoutEnumeratingAnotherDisplay() async {
+    func testLostRetainedAuthorityAfterEnumerationFailsClosed() async {
         let enumerationCount = Mutex(0)
+        let retentionChecks = Mutex(0)
 
         do {
             let _: LumenScreenCaptureDisplayAdmissionResult<UInt32> = try await
                 LumenScreenCaptureDisplayAdmission.resolve(
                     displayID: 121,
-                    hasRetainedAuthority: { true },
-                    admitRetainedAuthority: { nil },
+                    isRetained: {
+                        retentionChecks.withLock { count in
+                            count += 1
+                            return count == 1
+                        }
+                    },
                     enumerateShareableContent: {
                         enumerationCount.withLock { $0 += 1 }
-                        return 2
+                        return 121
                     }
                 )
             XCTFail("expected retained authority loss")
@@ -42,7 +46,7 @@ final class LumenScreenCaptureDisplayReadinessTests: XCTestCase {
             XCTFail("unexpected error: \(error)")
         }
 
-        XCTAssertEqual(enumerationCount.withLock { $0 }, 0)
+        XCTAssertEqual(enumerationCount.withLock { $0 }, 1)
     }
 
     func testRetainedDisplayWaitsForScreenCaptureKitPublication() async throws {

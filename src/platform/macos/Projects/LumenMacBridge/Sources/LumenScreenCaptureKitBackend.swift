@@ -406,7 +406,7 @@ enum LumenScreenCaptureDisplayResolver {
 }
 
 enum LumenScreenCaptureDisplayAdmissionMode: String, Equatable, Sendable {
-    case retainedAuthority = "retained-authority"
+    case retainedShareableContent = "retained-shareable-content"
     case shareableContentEnumeration = "shareable-content-enumeration"
 }
 
@@ -418,18 +418,19 @@ struct LumenScreenCaptureDisplayAdmissionResult<Value: Sendable>: Sendable {
 enum LumenScreenCaptureDisplayAdmission {
     static func resolve<Value: Sendable>(
         displayID: UInt32,
-        hasRetainedAuthority: @escaping @Sendable () async -> Bool,
-        admitRetainedAuthority: @escaping @Sendable () async throws -> Value?,
+        isRetained: @escaping @Sendable () async -> Bool,
         enumerateShareableContent: @escaping @Sendable () async throws -> Value
     ) async throws -> LumenScreenCaptureDisplayAdmissionResult<Value> {
-        if await hasRetainedAuthority() {
-            guard let value = try await admitRetainedAuthority() else {
+        let retainedAtStart = await isRetained()
+        let value = try await enumerateShareableContent()
+        if retainedAtStart {
+            guard await isRetained() else {
                 throw LumenScreenCaptureError.displayOwnershipLost(displayID)
             }
-            return .init(value: value, mode: .retainedAuthority)
+            return .init(value: value, mode: .retainedShareableContent)
         }
         return .init(
-            value: try await enumerateShareableContent(),
+            value: value,
             mode: .shareableContentEnumeration
         )
     }
@@ -606,36 +607,37 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
         do {
             admission = try await LumenScreenCaptureDisplayAdmission.resolve(
                 displayID: displayID,
-                hasRetainedAuthority: {
+                isRetained: {
                     LumenMacVirtualDisplay.registeredDisplay(forDisplayID: displayID) != nil
                 },
-                admitRetainedAuthority: {
-                    guard let retainedDisplay = LumenMacVirtualDisplay.registeredDisplay(
-                        forDisplayID: displayID
-                    ) else {
-                        return nil
-                    }
-                    let admittedObject = try retainedDisplay.makeScreenCaptureDisplay()
-                    guard LumenMacVirtualDisplay.registeredDisplay(forDisplayID: displayID) === retainedDisplay,
-                          let display = admittedObject as? SCDisplay else {
-                        throw LumenScreenCaptureError.displayOwnershipLost(displayID)
-                    }
-                    return LumenScreenCaptureDisplayHandle(value: display)
-                },
                 enumerateShareableContent: {
-                    try await LumenScreenCaptureDisplayResolver.resolve(
+                    let retainedIdentity = LumenMacVirtualDisplay.registeredDisplay(
+                        forDisplayID: displayID
+                    ).map(ObjectIdentifier.init)
+                    return try await LumenScreenCaptureDisplayResolver.resolve(
                         displayID: displayID,
-                        attempts: 1,
-                        delayNanoseconds: 0,
-                        isRetained: { true },
+                        attempts: retainedIdentity == nil ? 1 : 3,
+                        delayNanoseconds: 250_000_000,
+                        isRetained: {
+                            guard let retainedIdentity else { return true }
+                            guard let current = LumenMacVirtualDisplay.registeredDisplay(
+                                forDisplayID: displayID
+                            ) else {
+                                return false
+                            }
+                            return ObjectIdentifier(current) == retainedIdentity
+                        },
                         lookup: {
                             let content = try await SCShareableContent.excludingDesktopWindows(
                                 false,
                                 onScreenWindowsOnly: true
                             )
-                            return content.displays
-                                .first(where: { UInt32($0.displayID) == displayID })
-                                .map(LumenScreenCaptureDisplayHandle.init(value:))
+                            guard let target = content.displays.first(where: {
+                                UInt32($0.displayID) == displayID
+                            }) else {
+                                return nil
+                            }
+                            return LumenScreenCaptureDisplayHandle(value: target)
                         }
                     )
                 }
@@ -685,7 +687,11 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
         systemAudioPreparation?.apply(to: streamConfiguration)
         try createCompressionSession(width: outputWidth, height: outputHeight)
 
-        let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
+        let filter = SCContentFilter(
+            display: display,
+            excludingApplications: [],
+            exceptingWindows: []
+        )
         let stream = SCStream(filter: filter, configuration: streamConfiguration, delegate: self)
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
         self.stream = stream
@@ -720,7 +726,7 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
             try await stream.startCapture()
             streamStartDurationMilliseconds = Self.elapsedMilliseconds(since: streamStart)
             Self.startupLogger.notice(
-                "stage=stream-start-complete display-id=\(displayID, privacy: .public) stream=\(streamIdentity, privacy: .public) elapsed-ms=\(self.streamStartDurationMilliseconds, privacy: .public) audio-pre-registered=\(self.sharedAudioOutput != nil, privacy: .public)"
+                "stage=stream-start-complete display-id=\(displayID, privacy: .public) stream=\(streamIdentity, privacy: .public) elapsed-ms=\(self.streamStartDurationMilliseconds, privacy: .public) source-queue-depth=\(streamConfiguration.queueDepth, privacy: .public) audio-pre-registered=\(self.sharedAudioOutput != nil, privacy: .public)"
             )
         } catch {
             if let sharedAudioOutput {
