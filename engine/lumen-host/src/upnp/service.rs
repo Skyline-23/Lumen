@@ -1,4 +1,4 @@
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
+use std::net::{IpAddr, SocketAddr};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
@@ -9,8 +9,9 @@ use igd_next::{search_gateway, AddPortError, Gateway, SearchOptions};
 use super::ipv6;
 use super::mapping::{mappings, PortMapping};
 use crate::{
-    HostArguments, IdlePlatformSessionControl, PlatformRuntimeEvent, PlatformRuntimeEventCode,
-    PlatformRuntimeEventDisposition, PlatformRuntimeEventSeverity, PlatformSessionControl,
+    discovery::preferred_multicast_lan_ipv4_address, HostArguments, IdlePlatformSessionControl,
+    PlatformRuntimeEvent, PlatformRuntimeEventCode, PlatformRuntimeEventDisposition,
+    PlatformRuntimeEventSeverity, PlatformSessionControl,
 };
 
 const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(2);
@@ -203,7 +204,22 @@ fn refresh_mappings(
     active: &mut Option<ActiveMappings>,
     event_sink: &dyn PlatformSessionControl,
 ) -> MappingRefreshOutcome {
+    let Some(lan_ip) = preferred_multicast_lan_ipv4_address() else {
+        report_warning(
+            event_sink,
+            PlatformRuntimeEventCode::UpnpLocalAddressDiscovery,
+            "Lumen UPnP local address discovery failed: no routable multicast LAN interface is ready"
+                .to_owned(),
+        );
+        return MappingRefreshOutcome::Retry;
+    };
+    clear_warning(
+        event_sink,
+        PlatformRuntimeEventCode::UpnpLocalAddressDiscovery,
+    );
+    let local_ip = IpAddr::V4(lan_ip);
     let gateway = match search_gateway(SearchOptions {
+        bind_addr: SocketAddr::new(local_ip, 0),
         timeout: Some(DISCOVERY_TIMEOUT),
         single_search_timeout: Some(DISCOVERY_TIMEOUT),
         ..Default::default()
@@ -219,21 +235,6 @@ fn refresh_mappings(
         }
     };
     clear_warning(event_sink, PlatformRuntimeEventCode::UpnpGatewayDiscovery);
-    let local_ip = match local_ip_for_gateway(&gateway) {
-        Ok(address) => address,
-        Err(error) => {
-            report_warning(
-                event_sink,
-                PlatformRuntimeEventCode::UpnpLocalAddressDiscovery,
-                format!("Lumen UPnP local address discovery failed: {error}"),
-            );
-            return MappingRefreshOutcome::Retry;
-        }
-    };
-    clear_warning(
-        event_sink,
-        PlatformRuntimeEventCode::UpnpLocalAddressDiscovery,
-    );
 
     if active
         .as_ref()
@@ -356,22 +357,6 @@ fn mapping_summary(plan: &[PortMapping]) -> String {
         .map(|mapping| format!("{} {}", mapping.protocol, mapping.port))
         .collect::<Vec<_>>()
         .join(",")
-}
-
-fn local_ip_for_gateway(gateway: &Gateway) -> Result<IpAddr, String> {
-    let bind_address = match gateway.addr {
-        SocketAddr::V4(_) => SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
-        SocketAddr::V6(_) => SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0),
-    };
-    let socket = UdpSocket::bind(bind_address)
-        .map_err(|error| format!("could not bind route probe: {error}"))?;
-    socket
-        .connect(gateway.addr)
-        .map_err(|error| format!("could not route to gateway {}: {error}", gateway.addr))?;
-    socket
-        .local_addr()
-        .map(|address| address.ip())
-        .map_err(|error| format!("could not read route address: {error}"))
 }
 
 fn remove_mappings(active: &ActiveMappings, event_sink: &dyn PlatformSessionControl) {
