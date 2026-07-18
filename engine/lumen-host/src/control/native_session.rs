@@ -96,6 +96,10 @@ impl ControlRouter {
         context: &NativeConnectionContext,
     ) -> Vec<HostControlEnvelope> {
         let Some(pending) = self.native.pending.as_mut() else {
+            eprintln!(
+                "Lumen native QUIC stage=codec-configuration-ack-rejected reason=no-pending-session request-id={request_id} received-session-epoch={} received-stream-id={} received-configuration-id={}",
+                ack.session_epoch, ack.stream_id, ack.configuration_id
+            );
             return vec![native_error(
                 request_id,
                 ERROR_SESSION_STATE,
@@ -113,6 +117,19 @@ impl ControlRouter {
                     && ack.configuration_id == configuration.configuration_id
             });
         if !accepted {
+            let expected = pending.codec_configuration.as_ref();
+            eprintln!(
+                "Lumen native QUIC stage=codec-configuration-ack-rejected reason=contract-mismatch request-id={request_id} active={} sent={} context-session-epoch={} received-session-epoch={} received-stream-id={} received-configuration-id={} expected-session-epoch={} expected-stream-id={} expected-configuration-id={}",
+                pending.active,
+                pending.codec_configuration_sent,
+                context.session_epoch,
+                ack.session_epoch,
+                ack.stream_id,
+                ack.configuration_id,
+                expected.map_or(0, |configuration| configuration.session_epoch),
+                expected.map_or(0, |configuration| configuration.stream_id),
+                expected.map_or(0, |configuration| configuration.configuration_id)
+            );
             return vec![native_error(
                 request_id,
                 ERROR_INVALID_OPERATION,
@@ -120,6 +137,10 @@ impl ControlRouter {
             )];
         }
         pending.acknowledged_configuration_id = Some(ack.configuration_id);
+        eprintln!(
+            "Lumen native QUIC stage=codec-configuration-acknowledged session-epoch={} configuration-id={} request-id={request_id}",
+            ack.session_epoch, ack.configuration_id
+        );
         Vec::new()
     }
 
@@ -562,6 +583,18 @@ impl ControlRouter {
         let configuration = pending.codec_configuration.clone()?;
         pending.codec_configuration_sent = true;
         Some(configuration)
+    }
+
+    pub(crate) fn native_codec_configuration_is_acknowledged(
+        &self,
+        session_epoch: u32,
+        configuration_id: u32,
+    ) -> bool {
+        self.native.pending.as_ref().is_some_and(|pending| {
+            pending.active
+                && pending.plan.session_epoch == session_epoch
+                && pending.acknowledged_configuration_id == Some(configuration_id)
+        })
     }
 
     pub(crate) fn video_delivery_state(&self) -> Option<VideoDeliveryState> {

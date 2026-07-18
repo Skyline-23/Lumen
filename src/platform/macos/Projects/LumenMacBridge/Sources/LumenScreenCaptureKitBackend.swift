@@ -406,6 +406,7 @@ enum LumenScreenCaptureDisplayResolver {
 }
 
 enum LumenScreenCaptureDisplayAdmissionMode: String, Equatable, Sendable {
+    case prefetchedShareableContent = "prefetched-shareable-content"
     case retainedShareableContent = "retained-shareable-content"
     case shareableContentEnumeration = "shareable-content-enumeration"
 }
@@ -438,6 +439,97 @@ enum LumenScreenCaptureDisplayAdmission {
 
 struct LumenScreenCaptureDisplayHandle: @unchecked Sendable {
     let value: SCDisplay
+}
+
+actor LumenSingleFlightDisplayLookup<Value: Sendable> {
+    private struct Entry {
+        let ownerToken: UInt
+        let task: Task<Value?, Error>
+    }
+
+    private var entries: [UInt32: Entry] = [:]
+
+    func begin(
+        displayID: UInt32,
+        ownerToken: UInt,
+        lookup: @escaping @Sendable () async throws -> Value?
+    ) {
+        if entries[displayID]?.ownerToken == ownerToken {
+            return
+        }
+        entries.removeValue(forKey: displayID)?.task.cancel()
+        entries[displayID] = Entry(
+            ownerToken: ownerToken,
+            task: Task { try await lookup() }
+        )
+    }
+
+    func resolve(displayID: UInt32, ownerToken: UInt) async throws -> Value? {
+        guard let entry = entries[displayID], entry.ownerToken == ownerToken else {
+            return nil
+        }
+        defer {
+            if entries[displayID]?.ownerToken == ownerToken {
+                entries.removeValue(forKey: displayID)
+            }
+        }
+        return try await entry.task.value
+    }
+
+    func discard(displayID: UInt32) {
+        entries.removeValue(forKey: displayID)?.task.cancel()
+    }
+}
+
+enum LumenScreenCaptureDisplayPrefetch {
+    private static let lookups = LumenSingleFlightDisplayLookup<LumenScreenCaptureDisplayHandle>()
+    private static let logger = Logger(
+        subsystem: "dev.skyline23.lumen",
+        category: "ScreenCaptureStartup"
+    )
+
+    static func begin(displayID: UInt32) async {
+        guard let ownerToken = retainedOwnerToken(displayID: displayID) else {
+            return
+        }
+        logger.notice(
+            "stage=display-prefetch-begin display-id=\(displayID, privacy: .public) owner-token=\(ownerToken, privacy: .public)"
+        )
+        await lookups.begin(displayID: displayID, ownerToken: ownerToken) {
+            let content = try await SCShareableContent.excludingDesktopWindows(
+                false,
+                onScreenWindowsOnly: true
+            )
+            return content.displays.first(where: {
+                UInt32($0.displayID) == displayID
+            }).map(LumenScreenCaptureDisplayHandle.init(value:))
+        }
+    }
+
+    static func resolve(displayID: UInt32) async throws -> LumenScreenCaptureDisplayHandle? {
+        guard let ownerToken = retainedOwnerToken(displayID: displayID) else {
+            return nil
+        }
+        let start = DispatchTime.now().uptimeNanoseconds
+        let result = try await lookups.resolve(displayID: displayID, ownerToken: ownerToken)
+        let elapsedMilliseconds = Double(
+            DispatchTime.now().uptimeNanoseconds - start
+        ) / 1_000_000
+        logger.notice(
+            "stage=display-prefetch-resolved display-id=\(displayID, privacy: .public) owner-token=\(ownerToken, privacy: .public) found=\(result != nil, privacy: .public) wait-ms=\(elapsedMilliseconds, privacy: .public)"
+        )
+        return result
+    }
+
+    static func discard(displayID: UInt32) async {
+        await lookups.discard(displayID: displayID)
+    }
+
+    private static func retainedOwnerToken(displayID: UInt32) -> UInt? {
+        LumenMacVirtualDisplay.registeredDisplay(forDisplayID: displayID).map {
+            UInt(bitPattern: ObjectIdentifier($0))
+        }
+    }
 }
 
 enum LumenScreenCaptureOutputRegistrationStage: String, Equatable, Sendable {
@@ -605,43 +697,49 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
         let admissionStart = DispatchTime.now().uptimeNanoseconds
         let admission: LumenScreenCaptureDisplayAdmissionResult<LumenScreenCaptureDisplayHandle>
         do {
-            admission = try await LumenScreenCaptureDisplayAdmission.resolve(
-                displayID: displayID,
-                isRetained: {
-                    LumenMacVirtualDisplay.registeredDisplay(forDisplayID: displayID) != nil
-                },
-                enumerateShareableContent: {
-                    let retainedIdentity = LumenMacVirtualDisplay.registeredDisplay(
-                        forDisplayID: displayID
-                    ).map(ObjectIdentifier.init)
-                    return try await LumenScreenCaptureDisplayResolver.resolve(
-                        displayID: displayID,
-                        attempts: retainedIdentity == nil ? 1 : 3,
-                        delayNanoseconds: 250_000_000,
-                        isRetained: {
-                            guard let retainedIdentity else { return true }
-                            guard let current = LumenMacVirtualDisplay.registeredDisplay(
-                                forDisplayID: displayID
-                            ) else {
-                                return false
+            if let prefetched = try await LumenScreenCaptureDisplayPrefetch.resolve(
+                displayID: displayID
+            ) {
+                admission = .init(value: prefetched, mode: .prefetchedShareableContent)
+            } else {
+                admission = try await LumenScreenCaptureDisplayAdmission.resolve(
+                    displayID: displayID,
+                    isRetained: {
+                        LumenMacVirtualDisplay.registeredDisplay(forDisplayID: displayID) != nil
+                    },
+                    enumerateShareableContent: {
+                        let retainedIdentity = LumenMacVirtualDisplay.registeredDisplay(
+                            forDisplayID: displayID
+                        ).map(ObjectIdentifier.init)
+                        return try await LumenScreenCaptureDisplayResolver.resolve(
+                            displayID: displayID,
+                            attempts: retainedIdentity == nil ? 1 : 3,
+                            delayNanoseconds: 250_000_000,
+                            isRetained: {
+                                guard let retainedIdentity else { return true }
+                                guard let current = LumenMacVirtualDisplay.registeredDisplay(
+                                    forDisplayID: displayID
+                                ) else {
+                                    return false
+                                }
+                                return ObjectIdentifier(current) == retainedIdentity
+                            },
+                            lookup: {
+                                let content = try await SCShareableContent.excludingDesktopWindows(
+                                    false,
+                                    onScreenWindowsOnly: true
+                                )
+                                guard let target = content.displays.first(where: {
+                                    UInt32($0.displayID) == displayID
+                                }) else {
+                                    return nil
+                                }
+                                return LumenScreenCaptureDisplayHandle(value: target)
                             }
-                            return ObjectIdentifier(current) == retainedIdentity
-                        },
-                        lookup: {
-                            let content = try await SCShareableContent.excludingDesktopWindows(
-                                false,
-                                onScreenWindowsOnly: true
-                            )
-                            guard let target = content.displays.first(where: {
-                                UInt32($0.displayID) == displayID
-                            }) else {
-                                return nil
-                            }
-                            return LumenScreenCaptureDisplayHandle(value: target)
-                        }
-                    )
-                }
-            )
+                        )
+                    }
+                )
+            }
         } catch {
             let elapsed = Self.elapsedMilliseconds(since: admissionStart)
             Self.startupLogger.error(

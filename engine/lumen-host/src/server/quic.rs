@@ -38,6 +38,8 @@ const CONNECTION_STREAM_TIMEOUT: Duration = Duration::from_secs(2);
 const ERROR_RESPONSE_DELIVERY_GRACE: Duration = Duration::from_millis(500);
 const SERVER_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
 const SERVER_KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(5);
+const CODEC_CONFIGURATION_ACK_TIMEOUT: Duration = Duration::from_secs(15);
+const CODEC_CONFIGURATION_ACK_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const ERROR_TRANSPORT: u32 = 9;
 
 #[derive(Default)]
@@ -454,10 +456,35 @@ async fn publish_codec_configurations(
                 .await
                 .map_err(|error| format!("could not write codec configuration: {error}"))?;
             eprintln!(
-                "Lumen native QUIC stage=codec-configuration-sent session-epoch={} configuration-id={}",
+                "Lumen native QUIC stage=codec-configuration-sent session-epoch={} stream-id={} configuration-id={} codec={} record-bytes={}",
                 configuration.session_epoch,
-                configuration.configuration_id
+                configuration.stream_id,
+                configuration.configuration_id,
+                configuration.codec,
+                configuration.decoder_configuration_record.len()
             );
+            let acknowledgement = Box::pin(wait_for_codec_configuration_ack(
+                &router,
+                configuration.session_epoch,
+                configuration.configuration_id,
+                CODEC_CONFIGURATION_ACK_TIMEOUT,
+            ));
+            let peer_stream_state = Box::pin(send.stopped());
+            match futures_util::future::select(acknowledgement, peer_stream_state).await {
+                futures_util::future::Either::Left((result, _)) => result?,
+                futures_util::future::Either::Right((result, _)) => {
+                    let reason = match result {
+                        Ok(Some(code)) => format!("peer-stop-code={}", code.into_inner()),
+                        Ok(None) => "peer-consumed-finished-stream".to_owned(),
+                        Err(error) => format!("stream-state-error={error}"),
+                    };
+                    return Err(format!(
+                        "codec configuration stream stopped before acknowledgement session-epoch={} configuration-id={} {reason}",
+                        configuration.session_epoch,
+                        configuration.configuration_id
+                    ));
+                }
+            }
         } else {
             notify.notified().await;
         }
@@ -465,6 +492,33 @@ async fn publish_codec_configurations(
     send.finish()
         .map_err(|error| format!("could not finish codec-configuration stream: {error}"))?;
     Ok(())
+}
+
+async fn wait_for_codec_configuration_ack(
+    router: &SharedControlRouter,
+    session_epoch: u32,
+    configuration_id: u32,
+    timeout: Duration,
+) -> Result<(), String> {
+    tokio::time::timeout(timeout, async {
+        loop {
+            let acknowledged = router
+                .lock()
+                .map_err(|_| "native control router lock is poisoned".to_owned())?
+                .native_codec_configuration_is_acknowledged(session_epoch, configuration_id);
+            if acknowledged {
+                return Ok(());
+            }
+            tokio::time::sleep(CODEC_CONFIGURATION_ACK_POLL_INTERVAL).await;
+        }
+    })
+    .await
+    .map_err(|_| {
+        format!(
+            "codec configuration acknowledgement timed out session-epoch={session_epoch} configuration-id={configuration_id} timeout-ms={}",
+            timeout.as_millis()
+        )
+    })?
 }
 
 async fn handle_control_stream(
@@ -1038,6 +1092,29 @@ mod tests {
                 .and_then(|capability| capability.format),
             Some(requested_format)
         );
+    }
+
+    #[test]
+    fn codec_configuration_ack_wait_is_bounded() {
+        let temporary = tempfile::tempdir().unwrap();
+        let (router, _) = test_router(temporary.path());
+        let shared = Arc::new(Mutex::new(router));
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+
+        let error = runtime
+            .block_on(wait_for_codec_configuration_ack(
+                &shared,
+                77,
+                1,
+                Duration::from_millis(5),
+            ))
+            .unwrap_err();
+
+        assert!(error.contains("acknowledgement timed out"));
+        assert!(error.contains("session-epoch=77"));
     }
 
     #[test]
