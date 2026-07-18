@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use igd_next::{search_gateway, Gateway, SearchOptions};
+use igd_next::{search_gateway, AddPortError, Gateway, SearchOptions};
 
 use super::ipv6;
 use super::mapping::{mappings, PortMapping};
@@ -15,6 +15,14 @@ use crate::{
 
 const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(2);
 const REFRESH_INTERVAL: Duration = Duration::from_secs(120);
+const FAILURE_BACKOFF: [Duration; 6] = [
+    Duration::from_secs(1),
+    Duration::from_secs(2),
+    Duration::from_secs(5),
+    Duration::from_secs(10),
+    Duration::from_secs(30),
+    Duration::from_secs(60),
+];
 const LEASE_SECONDS: u32 = 3_600;
 const WARNING_CODES: [PlatformRuntimeEventCode; 5] = [
     PlatformRuntimeEventCode::UpnpGatewayDiscovery,
@@ -43,6 +51,55 @@ struct Worker {
 struct ActiveMappings {
     gateway: Gateway,
     mappings: Vec<PortMapping>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MappingRefreshOutcome {
+    Ready { local_ip: IpAddr },
+    Retry,
+}
+
+#[derive(Default)]
+struct ReconciliationSchedule {
+    consecutive_failures: usize,
+    was_ready: bool,
+}
+
+struct ReconciliationDecision {
+    delay: Duration,
+    became_ready: bool,
+}
+
+enum AddMappingAttemptError {
+    PortInUse,
+    Other(String),
+}
+
+impl ReconciliationSchedule {
+    fn record(&mut self, outcome: MappingRefreshOutcome) -> ReconciliationDecision {
+        match outcome {
+            MappingRefreshOutcome::Ready { .. } => {
+                let became_ready = !self.was_ready;
+                self.was_ready = true;
+                self.consecutive_failures = 0;
+                ReconciliationDecision {
+                    delay: REFRESH_INTERVAL,
+                    became_ready,
+                }
+            }
+            MappingRefreshOutcome::Retry => {
+                self.was_ready = false;
+                let delay = FAILURE_BACKOFF[self
+                    .consecutive_failures
+                    .min(FAILURE_BACKOFF.len().saturating_sub(1))];
+                self.consecutive_failures = self.consecutive_failures.saturating_add(1);
+                ReconciliationDecision {
+                    delay,
+                    became_ready: false,
+                }
+            }
+        }
+    }
 }
 
 impl UpnpService {
@@ -79,8 +136,20 @@ impl UpnpService {
             .spawn(move || {
                 let mut active = None;
                 let mut ipv6_pinholes = None;
+                let mut schedule = ReconciliationSchedule::default();
                 loop {
-                    refresh_mappings(&plan, &mut active, event_sink.as_ref());
+                    let outcome = refresh_mappings(&plan, &mut active, event_sink.as_ref());
+                    let decision = schedule.record(outcome);
+                    if decision.became_ready {
+                        let MappingRefreshOutcome::Ready { local_ip } = outcome else {
+                            unreachable!("ready transition requires a ready outcome")
+                        };
+                        eprintln!(
+                            "Lumen UPnP reconciliation ready local-address={local_ip} mappings={} refresh-seconds={}",
+                            mapping_summary(&plan),
+                            REFRESH_INTERVAL.as_secs()
+                        );
+                    }
                     if let Some(runtime) = &ipv6_runtime {
                         match runtime.block_on(ipv6::refresh(&plan, &mut ipv6_pinholes)) {
                             Ok(()) => clear_warning(
@@ -94,7 +163,7 @@ impl UpnpService {
                             ),
                         }
                     }
-                    match receiver.recv_timeout(REFRESH_INTERVAL) {
+                    match receiver.recv_timeout(decision.delay) {
                         Ok(()) | Err(RecvTimeoutError::Disconnected) => break,
                         Err(RecvTimeoutError::Timeout) => {}
                     }
@@ -133,7 +202,7 @@ fn refresh_mappings(
     plan: &[PortMapping],
     active: &mut Option<ActiveMappings>,
     event_sink: &dyn PlatformSessionControl,
-) {
+) -> MappingRefreshOutcome {
     let gateway = match search_gateway(SearchOptions {
         timeout: Some(DISCOVERY_TIMEOUT),
         single_search_timeout: Some(DISCOVERY_TIMEOUT),
@@ -146,7 +215,7 @@ fn refresh_mappings(
                 PlatformRuntimeEventCode::UpnpGatewayDiscovery,
                 format!("Lumen UPnP gateway discovery failed: {error}"),
             );
-            return;
+            return MappingRefreshOutcome::Retry;
         }
     };
     clear_warning(event_sink, PlatformRuntimeEventCode::UpnpGatewayDiscovery);
@@ -158,7 +227,7 @@ fn refresh_mappings(
                 PlatformRuntimeEventCode::UpnpLocalAddressDiscovery,
                 format!("Lumen UPnP local address discovery failed: {error}"),
             );
-            return;
+            return MappingRefreshOutcome::Retry;
         }
     };
     clear_warning(
@@ -207,6 +276,11 @@ fn refresh_mappings(
         gateway,
         mappings: mapped,
     });
+    if failures.is_empty() {
+        MappingRefreshOutcome::Ready { local_ip }
+    } else {
+        MappingRefreshOutcome::Retry
+    }
 }
 
 fn add_mapping(
@@ -214,6 +288,32 @@ fn add_mapping(
     mapping: PortMapping,
     local_address: SocketAddr,
 ) -> Result<(), String> {
+    match add_mapping_with_lease_fallback(gateway, mapping, local_address) {
+        Ok(()) => Ok(()),
+        Err(AddMappingAttemptError::PortInUse) => {
+            gateway
+                .remove_port(mapping.protocol, mapping.port)
+                .map_err(|error| {
+                    format!(
+                        "conflicting mapping could not be removed before reconciliation: {error}"
+                    )
+                })?;
+            add_mapping_with_lease_fallback(gateway, mapping, local_address).map_err(|error| {
+                format!(
+                    "mapping remained unavailable after stale ownership removal: {}",
+                    error.message()
+                )
+            })
+        }
+        Err(AddMappingAttemptError::Other(error)) => Err(error),
+    }
+}
+
+fn add_mapping_with_lease_fallback(
+    gateway: &Gateway,
+    mapping: PortMapping,
+    local_address: SocketAddr,
+) -> Result<(), AddMappingAttemptError> {
     match gateway.add_port(
         mapping.protocol,
         mapping.port,
@@ -222,20 +322,40 @@ fn add_mapping(
         mapping.description,
     ) {
         Ok(()) => Ok(()),
-        Err(leased_error) => gateway
-            .add_port(
-                mapping.protocol,
-                mapping.port,
-                local_address,
-                0,
-                mapping.description,
-            )
-            .map_err(|static_error| {
-                format!(
+        Err(leased_error) => match gateway.add_port(
+            mapping.protocol,
+            mapping.port,
+            local_address,
+            0,
+            mapping.description,
+        ) {
+            Ok(()) => Ok(()),
+            Err(static_error) => match (&leased_error, &static_error) {
+                (AddPortError::PortInUse, _) | (_, AddPortError::PortInUse) => {
+                    Err(AddMappingAttemptError::PortInUse)
+                }
+                _ => Err(AddMappingAttemptError::Other(format!(
                     "leased mapping failed: {leased_error}; static mapping failed: {static_error}"
-                )
-            }),
+                ))),
+            },
+        },
     }
+}
+
+impl AddMappingAttemptError {
+    fn message(&self) -> String {
+        match self {
+            Self::PortInUse => "port is still owned by another mapping".to_owned(),
+            Self::Other(message) => message.clone(),
+        }
+    }
+}
+
+fn mapping_summary(plan: &[PortMapping]) -> String {
+    plan.iter()
+        .map(|mapping| format!("{} {}", mapping.protocol, mapping.port))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn local_ip_for_gateway(gateway: &Gateway) -> Result<IpAddr, String> {
@@ -296,4 +416,54 @@ fn clear_warning(event_sink: &dyn PlatformSessionControl, code: PlatformRuntimeE
         code,
         message: None,
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transient_route_failure_reconciles_quickly_then_returns_to_lease_refresh() {
+        let mut schedule = ReconciliationSchedule::default();
+
+        let first = schedule.record(MappingRefreshOutcome::Retry);
+        let second = schedule.record(MappingRefreshOutcome::Retry);
+        let recovered = schedule.record(MappingRefreshOutcome::Ready {
+            local_ip: "192.168.0.51".parse().unwrap(),
+        });
+        let steady = schedule.record(MappingRefreshOutcome::Ready {
+            local_ip: "192.168.0.51".parse().unwrap(),
+        });
+
+        assert_eq!(first.delay, Duration::from_secs(1));
+        assert_eq!(second.delay, Duration::from_secs(2));
+        assert_eq!(recovered.delay, REFRESH_INTERVAL);
+        assert!(recovered.became_ready);
+        assert_eq!(steady.delay, REFRESH_INTERVAL);
+        assert!(!steady.became_ready);
+    }
+
+    #[test]
+    fn repeated_route_failure_is_bounded_without_a_busy_loop() {
+        let mut schedule = ReconciliationSchedule::default();
+        let delays = (0..10)
+            .map(|_| schedule.record(MappingRefreshOutcome::Retry).delay)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            delays,
+            vec![
+                Duration::from_secs(1),
+                Duration::from_secs(2),
+                Duration::from_secs(5),
+                Duration::from_secs(10),
+                Duration::from_secs(30),
+                Duration::from_secs(60),
+                Duration::from_secs(60),
+                Duration::from_secs(60),
+                Duration::from_secs(60),
+                Duration::from_secs(60),
+            ]
+        );
+    }
 }
