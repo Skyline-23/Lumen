@@ -4,6 +4,7 @@ import CoreMedia
 import CoreVideo
 import Darwin
 import Foundation
+import OSLog
 import ScreenCaptureKit
 import VideoToolbox
 
@@ -404,7 +405,37 @@ enum LumenScreenCaptureDisplayResolver {
     }
 }
 
-private struct LumenScreenCaptureDisplayHandle: @unchecked Sendable {
+enum LumenScreenCaptureDisplayAdmissionMode: String, Equatable, Sendable {
+    case retainedAuthority = "retained-authority"
+    case shareableContentEnumeration = "shareable-content-enumeration"
+}
+
+struct LumenScreenCaptureDisplayAdmissionResult<Value: Sendable>: Sendable {
+    let value: Value
+    let mode: LumenScreenCaptureDisplayAdmissionMode
+}
+
+enum LumenScreenCaptureDisplayAdmission {
+    static func resolve<Value: Sendable>(
+        displayID: UInt32,
+        hasRetainedAuthority: @escaping @Sendable () async -> Bool,
+        admitRetainedAuthority: @escaping @Sendable () async throws -> Value?,
+        enumerateShareableContent: @escaping @Sendable () async throws -> Value
+    ) async throws -> LumenScreenCaptureDisplayAdmissionResult<Value> {
+        if await hasRetainedAuthority() {
+            guard let value = try await admitRetainedAuthority() else {
+                throw LumenScreenCaptureError.displayOwnershipLost(displayID)
+            }
+            return .init(value: value, mode: .retainedAuthority)
+        }
+        return .init(
+            value: try await enumerateShareableContent(),
+            mode: .shareableContentEnumeration
+        )
+    }
+}
+
+struct LumenScreenCaptureDisplayHandle: @unchecked Sendable {
     let value: SCDisplay
 }
 
@@ -462,7 +493,9 @@ struct LumenScreenCaptureOutputOwnership: Equatable, Sendable {
 
     mutating func markCaptureStarted(streamIdentity: UInt) throws {
         try requireOwner(streamIdentity)
-        stage = .captureStarted
+        if stage != .sharedAudioRegistered {
+            stage = .captureStarted
+        }
     }
 
     mutating func attachSharedAudioOutput(streamIdentity: UInt) throws {
@@ -502,8 +535,13 @@ enum LumenScreenCaptureOutputOwnershipError: Error, Equatable {
 /// read or mutated only on that serial queue; lifecycle teardown synchronizes
 /// with the queue before releasing the compression session.
 private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
+    private static let startupLogger = Logger(
+        subsystem: "dev.skyline23.lumen",
+        category: "ScreenCaptureStartup"
+    )
     private let configuration: LumenMacCaptureConfiguration
     private let systemAudioPreparation: LumenScreenCaptureSystemAudioPreparation?
+    private let preconfiguredSystemAudioCallbacks: LumenAudioCaptureCallbacks?
     private let frameHandler: @Sendable (LumenEncodedFrame) -> Void
     private let eventHandler: @Sendable (LumenEncodedCaptureSessionEvent) -> Void
     private let statisticsHandler: @Sendable (LumenEncodedCaptureSessionStatistics) -> Void
@@ -534,10 +572,14 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
     private var terminalContractFailureReported = false
     private var statistics = LumenEncodedCaptureSessionStatistics()
     private var outputOwnership = LumenScreenCaptureOutputOwnership()
+    private var displayAdmissionMode = LumenScreenCaptureDisplayAdmissionMode.shareableContentEnumeration
+    private var displayAdmissionDurationMilliseconds = 0.0
+    private var streamStartDurationMilliseconds = 0.0
 
     init(
         configuration: LumenMacCaptureConfiguration,
         preconfiguredSystemAudio: LumenMacAudioCaptureConfiguration?,
+        preconfiguredSystemAudioCallbacks: LumenAudioCaptureCallbacks?,
         callbacks: LumenEncodedCaptureCallbacks,
         statisticsHandler: @escaping @Sendable (LumenEncodedCaptureSessionStatistics) -> Void,
         terminationHandler: @escaping @Sendable (Error) -> Void
@@ -549,6 +591,7 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
                 videoDisplayID: configuration.displayID
             )
         }
+        self.preconfiguredSystemAudioCallbacks = preconfiguredSystemAudioCallbacks
         self.frameHandler = callbacks.frameHandler
         self.eventHandler = { callbacks.eventHandler?($0) }
         self.statisticsHandler = statisticsHandler
@@ -558,28 +601,58 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
 
     func start() async throws {
         let displayID = configuration.displayID
-        let expectsRetainedVirtualDisplay = LumenMacVirtualDisplay.registeredDisplay(
-            forDisplayID: displayID
-        ) != nil
-        let displayHandle: LumenScreenCaptureDisplayHandle = try await LumenScreenCaptureDisplayResolver.resolve(
-            displayID: displayID,
-            attempts: 50,
-            delayNanoseconds: 100_000_000,
-            isRetained: {
-                !expectsRetainedVirtualDisplay ||
+        let admissionStart = DispatchTime.now().uptimeNanoseconds
+        let admission: LumenScreenCaptureDisplayAdmissionResult<LumenScreenCaptureDisplayHandle>
+        do {
+            admission = try await LumenScreenCaptureDisplayAdmission.resolve(
+                displayID: displayID,
+                hasRetainedAuthority: {
                     LumenMacVirtualDisplay.registeredDisplay(forDisplayID: displayID) != nil
-            },
-            lookup: {
-                let content = try await SCShareableContent.excludingDesktopWindows(
-                    false,
-                    onScreenWindowsOnly: true
-                )
-                return content.displays
-                    .first(where: { UInt32($0.displayID) == displayID })
-                    .map(LumenScreenCaptureDisplayHandle.init(value:))
-            }
+                },
+                admitRetainedAuthority: {
+                    guard let retainedDisplay = LumenMacVirtualDisplay.registeredDisplay(
+                        forDisplayID: displayID
+                    ) else {
+                        return nil
+                    }
+                    let admittedObject = try retainedDisplay.makeScreenCaptureDisplay()
+                    guard LumenMacVirtualDisplay.registeredDisplay(forDisplayID: displayID) === retainedDisplay,
+                          let display = admittedObject as? SCDisplay else {
+                        throw LumenScreenCaptureError.displayOwnershipLost(displayID)
+                    }
+                    return LumenScreenCaptureDisplayHandle(value: display)
+                },
+                enumerateShareableContent: {
+                    try await LumenScreenCaptureDisplayResolver.resolve(
+                        displayID: displayID,
+                        attempts: 1,
+                        delayNanoseconds: 0,
+                        isRetained: { true },
+                        lookup: {
+                            let content = try await SCShareableContent.excludingDesktopWindows(
+                                false,
+                                onScreenWindowsOnly: true
+                            )
+                            return content.displays
+                                .first(where: { UInt32($0.displayID) == displayID })
+                                .map(LumenScreenCaptureDisplayHandle.init(value:))
+                        }
+                    )
+                }
+            )
+        } catch {
+            let elapsed = Self.elapsedMilliseconds(since: admissionStart)
+            Self.startupLogger.error(
+                "stage=display-admission-failed display-id=\(displayID, privacy: .public) elapsed-ms=\(elapsed, privacy: .public) error=\(String(describing: error), privacy: .public)"
+            )
+            throw error
+        }
+        displayAdmissionMode = admission.mode
+        displayAdmissionDurationMilliseconds = Self.elapsedMilliseconds(since: admissionStart)
+        Self.startupLogger.notice(
+            "stage=display-admission-complete display-id=\(displayID, privacy: .public) mode=\(admission.mode.rawValue, privacy: .public) elapsed-ms=\(self.displayAdmissionDurationMilliseconds, privacy: .public)"
         )
-        let display = displayHandle.value
+        let display = admission.value.value
 
         let width = configuration.requestedWidth ?? display.width
         let height = configuration.requestedHeight ?? display.height
@@ -621,8 +694,39 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
             outputOwnership.registerScreenOutput(streamIdentity: streamIdentity)
         }
         do {
+            if systemAudioPreparation != nil,
+               let preconfiguredSystemAudioCallbacks {
+                let audioOutput = LumenSystemAudioCaptureOutput(
+                    callbacks: preconfiguredSystemAudioCallbacks
+                )
+                do {
+                    try stream.addStreamOutput(
+                        audioOutput,
+                        type: .audio,
+                        sampleHandlerQueue: audioQueue
+                    )
+                } catch {
+                    throw LumenBridgeCaptureStartupError(
+                        source: .audio,
+                        message: (error as NSError).localizedDescription
+                    )
+                }
+                sharedAudioOutput = audioOutput
+                queue.sync {
+                    try? outputOwnership.attachSharedAudioOutput(streamIdentity: streamIdentity)
+                }
+            }
+            let streamStart = DispatchTime.now().uptimeNanoseconds
             try await stream.startCapture()
+            streamStartDurationMilliseconds = Self.elapsedMilliseconds(since: streamStart)
+            Self.startupLogger.notice(
+                "stage=stream-start-complete display-id=\(displayID, privacy: .public) stream=\(streamIdentity, privacy: .public) elapsed-ms=\(self.streamStartDurationMilliseconds, privacy: .public) audio-pre-registered=\(self.sharedAudioOutput != nil, privacy: .public)"
+            )
         } catch {
+            if let sharedAudioOutput {
+                try? stream.removeStreamOutput(sharedAudioOutput, type: .audio)
+                self.sharedAudioOutput = nil
+            }
             try? stream.removeStreamOutput(self, type: .screen)
             if self.stream === stream {
                 self.stream = nil
@@ -635,9 +739,15 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
         statistics.isRunning = true
         statistics.notes = makeStatisticsNotes(width: outputWidth, height: outputHeight)
         statisticsHandler(statistics)
+        if let preconfiguredSystemAudioCallbacks {
+            preconfiguredSystemAudioCallbacks.eventHandler?(.init(
+                kind: .started,
+                message: "ScreenCaptureKit system audio started with pre-registered shared stream=\(streamIdentity)"
+            ))
+        }
         eventHandler(.init(
             kind: .started,
-            message: "ScreenCaptureKit capture started stream=\(streamIdentity) output-registration=\(outputOwnership.stage.rawValue) system-audio-preconfigured=\(systemAudioPreparation != nil)"
+            message: "ScreenCaptureKit capture started stream=\(streamIdentity) output-registration=\(outputOwnership.stage.rawValue) system-audio-preconfigured=\(systemAudioPreparation != nil) display-admission=\(displayAdmissionMode.rawValue) display-admission-ms=\(displayAdmissionDurationMilliseconds) stream-start-ms=\(streamStartDurationMilliseconds)"
         ))
     }
 
@@ -1079,6 +1189,9 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
             "captureBackend=screen-capture-kit",
             "screenCaptureOutputRegistrationStage=\(outputOwnership.stage.rawValue)",
             "screenCaptureSystemAudioPreconfigured=\(systemAudioPreparation != nil)",
+            "screenCaptureDisplayAdmissionMode=\(displayAdmissionMode.rawValue)",
+            "screenCaptureDisplayAdmissionMilliseconds=\(displayAdmissionDurationMilliseconds)",
+            "screenCaptureStreamStartMilliseconds=\(streamStartDurationMilliseconds)",
             "screenCaptureOwnedSampleCount=\(outputOwnership.screenSampleCount)",
             "sourceCaptureSampleCount=\(statistics.sourceFrameCount)",
             "sourceApproxFrameRate=\(sourceApproxFrameRate)",
@@ -1100,6 +1213,10 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
 
     private static func identity(of stream: SCStream) -> UInt {
         UInt(bitPattern: Unmanaged.passUnretained(stream).toOpaque())
+    }
+
+    private static func elapsedMilliseconds(since start: UInt64) -> Double {
+        Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000
     }
 
     private func refreshStatisticsNotesIfNeeded() {
@@ -1327,6 +1444,7 @@ enum LumenScreenCaptureError: Error, LocalizedError {
 actor LumenEncodedCaptureSession {
     let configuration: LumenMacCaptureConfiguration
     private let preconfiguredSystemAudio: LumenMacAudioCaptureConfiguration?
+    private let preconfiguredSystemAudioCallbacks: LumenAudioCaptureCallbacks?
     private var runtime: LumenScreenCaptureVideoRuntime?
     private var statistics = LumenEncodedCaptureSessionStatistics()
     private var callbacks: LumenEncodedCaptureCallbacks?
@@ -1336,10 +1454,12 @@ actor LumenEncodedCaptureSession {
 
     init(
         configuration: LumenMacCaptureConfiguration,
-        preconfiguredSystemAudio: LumenMacAudioCaptureConfiguration? = nil
+        preconfiguredSystemAudio: LumenMacAudioCaptureConfiguration? = nil,
+        preconfiguredSystemAudioCallbacks: LumenAudioCaptureCallbacks? = nil
     ) {
         self.configuration = configuration
         self.preconfiguredSystemAudio = preconfiguredSystemAudio
+        self.preconfiguredSystemAudioCallbacks = preconfiguredSystemAudioCallbacks
     }
 
     func start(callbacks: LumenEncodedCaptureCallbacks) async throws {
@@ -1400,6 +1520,7 @@ actor LumenEncodedCaptureSession {
         let runtime = try LumenScreenCaptureVideoRuntime(
             configuration: configuration,
             preconfiguredSystemAudio: preconfiguredSystemAudio,
+            preconfiguredSystemAudioCallbacks: preconfiguredSystemAudioCallbacks,
             callbacks: callbacks,
             statisticsHandler: { statistics in
                 Task { await owner.updateStatistics(statistics) }

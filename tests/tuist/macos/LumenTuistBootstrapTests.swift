@@ -36,9 +36,9 @@ final class LumenTuistBootstrapTests: XCTestCase {
         var ownership = LumenScreenCaptureOutputOwnership()
 
         ownership.registerScreenOutput(streamIdentity: 0x118)
+        try ownership.attachSharedAudioOutput(streamIdentity: 0x118)
         try ownership.markCaptureStarted(streamIdentity: 0x118)
         try ownership.recordScreenSample(streamIdentity: 0x118)
-        try ownership.attachSharedAudioOutput(streamIdentity: 0x118)
         try ownership.recordScreenSample(streamIdentity: 0x118)
         try ownership.recordScreenSample(streamIdentity: 0x118)
 
@@ -78,7 +78,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
         XCTAssertFalse(preparation.accepts(.systemOutput(displayID: 120, channelCount: 6)))
     }
 
-    func testBridgeCompletesVideoBeforeSchedulingAsynchronousAudio() async throws {
+    func testLegacyVisualFirstCoordinatorStillPreservesTypedBoundaries() async throws {
         let probe = LumenCaptureStartupOrderProbe()
 
         try await LumenBridgeCaptureStartupCoordinator.startVisualFirst(
