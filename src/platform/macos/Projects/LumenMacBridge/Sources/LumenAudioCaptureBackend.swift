@@ -54,6 +54,57 @@ private protocol LumenAudioCaptureRuntime: Sendable {
     func stop() async
 }
 
+enum LumenSystemAudioCaptureRoute: Equatable, Sendable {
+    case sharedVideoStream
+    case standaloneStream
+
+    static func resolve(
+        configuration: LumenMacAudioCaptureConfiguration,
+        activeVideoDisplayID: UInt32?
+    ) throws -> Self {
+        guard case .systemOutput(let displayID, _) = configuration.source else {
+            return .standaloneStream
+        }
+        guard let activeVideoDisplayID else {
+            return .standaloneStream
+        }
+        guard displayID == activeVideoDisplayID else {
+            throw LumenAudioCaptureError.activeVideoDisplayMismatch(
+                audioDisplayID: displayID,
+                videoDisplayID: activeVideoDisplayID
+            )
+        }
+        return .sharedVideoStream
+    }
+}
+
+private actor LumenSharedSystemAudioCaptureRuntime: LumenAudioCaptureRuntime {
+    private let videoSession: LumenEncodedCaptureSession
+    private let configuration: LumenMacAudioCaptureConfiguration
+    private let callbacks: LumenAudioCaptureCallbacks
+
+    init(
+        videoSession: LumenEncodedCaptureSession,
+        configuration: LumenMacAudioCaptureConfiguration,
+        callbacks: LumenAudioCaptureCallbacks
+    ) {
+        self.videoSession = videoSession
+        self.configuration = configuration
+        self.callbacks = callbacks
+    }
+
+    func start() async throws {
+        try await videoSession.attachSystemAudio(
+            configuration: configuration,
+            callbacks: callbacks
+        )
+    }
+
+    func stop() async {
+        await videoSession.detachSystemAudio()
+    }
+}
+
 private actor LumenSystemAudioCaptureRuntime: LumenAudioCaptureRuntime {
     private let configuration: LumenMacAudioCaptureConfiguration
     private let callbacks: LumenAudioCaptureCallbacks
@@ -114,7 +165,7 @@ private actor LumenSystemAudioCaptureRuntime: LumenAudioCaptureRuntime {
 
 }
 
-private final class LumenSystemAudioCaptureOutput: NSObject, SCStreamOutput, SCStreamDelegate {
+final class LumenSystemAudioCaptureOutput: NSObject, SCStreamOutput, SCStreamDelegate {
     private let callbacks: LumenAudioCaptureCallbacks
     private var sequenceNumber: UInt64 = 0
 
@@ -138,6 +189,14 @@ private final class LumenSystemAudioCaptureOutput: NSObject, SCStreamOutput, SCS
 
     func stream(_ stream: SCStream, didStopWithError error: any Error) {
         callbacks.eventHandler?(.init(kind: .failed, message: error.localizedDescription))
+    }
+
+    func emitStopped() {
+        callbacks.eventHandler?(.init(
+            kind: .stopped,
+            message: "ScreenCaptureKit shared system audio capture stopped",
+            stopStatus: 0
+        ))
     }
 }
 
@@ -221,10 +280,15 @@ private actor LumenMicrophoneCaptureRuntime: LumenAudioCaptureRuntime {
 
 actor LumenAudioCaptureSession {
     let configuration: LumenMacAudioCaptureConfiguration
+    private let sharedVideoSession: LumenEncodedCaptureSession?
     private var runtime: (any LumenAudioCaptureRuntime)?
 
-    init(configuration: LumenMacAudioCaptureConfiguration) {
+    init(
+        configuration: LumenMacAudioCaptureConfiguration,
+        sharedVideoSession: LumenEncodedCaptureSession? = nil
+    ) {
         self.configuration = configuration
+        self.sharedVideoSession = sharedVideoSession
     }
 
     func start(callbacks: LumenAudioCaptureCallbacks) async throws {
@@ -233,7 +297,15 @@ actor LumenAudioCaptureSession {
         case .microphone:
             runtime = LumenMicrophoneCaptureRuntime(configuration: configuration, callbacks: callbacks)
         case .systemOutput:
-            runtime = LumenSystemAudioCaptureRuntime(configuration: configuration, callbacks: callbacks)
+            if let sharedVideoSession {
+                runtime = LumenSharedSystemAudioCaptureRuntime(
+                    videoSession: sharedVideoSession,
+                    configuration: configuration,
+                    callbacks: callbacks
+                )
+            } else {
+                runtime = LumenSystemAudioCaptureRuntime(configuration: configuration, callbacks: callbacks)
+            }
         }
         self.runtime = runtime
         do {
@@ -251,9 +323,10 @@ actor LumenAudioCaptureSession {
     }
 }
 
-private enum LumenAudioCaptureError: Error, LocalizedError {
+enum LumenAudioCaptureError: Error, LocalizedError {
     case invalidSource
     case displayUnavailable(UInt32)
+    case activeVideoDisplayMismatch(audioDisplayID: UInt32, videoDisplayID: UInt32)
     case microphoneUnavailable
     case audioConversionUnavailable
     case invalidSampleBuffer
@@ -263,6 +336,8 @@ private enum LumenAudioCaptureError: Error, LocalizedError {
         switch self {
         case .invalidSource: return "Invalid audio capture source."
         case .displayUnavailable(let displayID): return "ScreenCaptureKit display \(displayID) is unavailable for audio capture."
+        case .activeVideoDisplayMismatch(let audioDisplayID, let videoDisplayID):
+            return "System audio display \(audioDisplayID) does not match active video display \(videoDisplayID)."
         case .microphoneUnavailable: return "The default microphone is unavailable."
         case .audioConversionUnavailable: return "The requested microphone PCM conversion is unavailable."
         case .invalidSampleBuffer: return "The audio sample buffer is invalid."

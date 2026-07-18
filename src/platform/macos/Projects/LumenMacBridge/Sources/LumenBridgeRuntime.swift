@@ -1435,9 +1435,25 @@ public actor LumenBridgeRuntime {
         audioForwarder.reset()
         audioForwarder.setProducerActive(false)
         let runtime = self
-        let session = LumenAudioCaptureSession(configuration: configuration)
+        let activeVideoDisplayID = encodedCaptureSession == nil
+            ? nil
+            : activeCaptureConfiguration?.displayID
+        let audioRoute = try LumenSystemAudioCaptureRoute.resolve(
+            configuration: configuration,
+            activeVideoDisplayID: activeVideoDisplayID
+        )
+        let sharedVideoSession: LumenEncodedCaptureSession? = switch audioRoute {
+        case .sharedVideoStream:
+            encodedCaptureSession
+        case .standaloneStream:
+            nil
+        }
+        let session = LumenAudioCaptureSession(
+            configuration: configuration,
+            sharedVideoSession: sharedVideoSession
+        )
         logger.notice(
-            "Starting ScreenCaptureKit audio capture source=\(configuration.source.kind.rawValue, privacy: .public) sample-rate=\(configuration.sampleRate, privacy: .public) channels=\(configuration.channelCount, privacy: .public) frame-size=\(configuration.frameSize, privacy: .public)"
+            "Starting ScreenCaptureKit audio capture source=\(configuration.source.kind.rawValue, privacy: .public) route=\(String(describing: audioRoute), privacy: .public) sample-rate=\(configuration.sampleRate, privacy: .public) channels=\(configuration.channelCount, privacy: .public) frame-size=\(configuration.frameSize, privacy: .public)"
         )
         let callbacks = LumenAudioCaptureCallbacks(
             frameHandler: { frame in
@@ -1746,6 +1762,8 @@ public actor LumenBridgeRuntime {
         }
 
         let interestingPrefixes = [
+            "screenCaptureOutputRegistrationStage=",
+            "screenCaptureOwnedSampleCount=",
             "sourceBackend=",
             "skyLightAutotuningSource=",
             "skyLightCandidateResult=",
