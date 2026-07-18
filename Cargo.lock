@@ -3175,6 +3175,7 @@ dependencies = [
  "mdns-sd",
  "netdev",
  "percent-encoding",
+ "prost",
  "quinn",
  "rcgen",
  "reed-solomon-erasure",

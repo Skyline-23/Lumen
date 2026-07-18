@@ -699,6 +699,23 @@ impl PlatformSessionControl for MacPlatformSessionControl {
         self.native_input.handle(session_epoch, event)
     }
 
+    fn handle_native_motion(
+        &self,
+        session_epoch: u32,
+        event: crate::PlatformNativeMotionEvent,
+    ) -> Result<(), String> {
+        let display_id = self
+            .state
+            .lock()
+            .map_err(|_| "macOS platform session state is unavailable".to_owned())?
+            .display_id;
+        if display_id == 0 {
+            return Err("macOS native motion has no active display".to_owned());
+        }
+        self.native_input
+            .handle_motion(session_epoch, display_id, event)
+    }
+
     fn reset_native_input(&self, session_epoch: u32) -> Result<(), String> {
         self.native_input.reset(session_epoch)
     }

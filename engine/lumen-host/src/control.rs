@@ -40,6 +40,15 @@ pub(crate) struct AudioDeliveryState {
     pub(crate) encryption_key: [u8; 16],
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct InputMotionDeliveryState {
+    pub(crate) session_epoch: u32,
+    pub(crate) path_id: u16,
+    pub(crate) policy_revision: u16,
+    pub(crate) endpoint: SocketAddr,
+    pub(crate) encryption_key: [u8; 16],
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ControlMethod {
     Get,

@@ -7,7 +7,10 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use super::SharedControlRouter;
-use crate::control::{AudioDeliveryState, VideoDeliveryState};
+use crate::control::{AudioDeliveryState, InputMotionDeliveryState, VideoDeliveryState};
+use crate::media::native_motion::{
+    NativeMotionDatagramError, NativeMotionIdentity, NativeMotionReceiver,
+};
 use crate::media::native_packet::{NativeMediaPacketizer, NativeMediaPacketizerConfig};
 use crate::media::native_path::{
     decode_native_path_probe, encode_native_path_probe, native_path_probe_identity,
@@ -22,8 +25,8 @@ use crate::{
     PlatformRuntimeEventSeverity, PlatformSessionControl,
 };
 use lumen_engine::{
-    CodecConfiguration, NativeVideoCodec, NATIVE_AUDIO_STREAM_ID, NATIVE_INITIAL_CONFIGURATION_ID,
-    NATIVE_VIDEO_STREAM_ID,
+    decode_native_media_datagram, CodecConfiguration, NativeMediaKind, NativeVideoCodec,
+    NATIVE_AUDIO_STREAM_ID, NATIVE_INITIAL_CONFIGURATION_ID, NATIVE_VIDEO_STREAM_ID,
 };
 
 const MEDIA_SEND_POLL_INTERVAL: Duration = Duration::from_millis(1);
@@ -61,6 +64,38 @@ impl MediaAttempt {
 #[derive(Default)]
 struct MediaFailureReporter {
     active: HashSet<PlatformRuntimeEventCode>,
+}
+
+#[derive(Default)]
+struct InputMotionFailureReporter {
+    active: bool,
+}
+
+impl InputMotionFailureReporter {
+    fn applied(&mut self, platform: &dyn PlatformSessionControl) {
+        if self.active {
+            self.active = false;
+            let _ = platform.publish_runtime_event(PlatformRuntimeEvent {
+                disposition: PlatformRuntimeEventDisposition::Cleared,
+                severity: PlatformRuntimeEventSeverity::Warning,
+                code: PlatformRuntimeEventCode::NativeInputMotion,
+                message: None,
+            });
+        }
+    }
+
+    fn rejected(&mut self, message: String, platform: &dyn PlatformSessionControl) {
+        if self.active {
+            return;
+        }
+        self.active = true;
+        let _ = platform.publish_runtime_event(PlatformRuntimeEvent {
+            disposition: PlatformRuntimeEventDisposition::Raised,
+            severity: PlatformRuntimeEventSeverity::Warning,
+            code: PlatformRuntimeEventCode::NativeInputMotion,
+            message: Some(format!("native-input-motion-apply-failed: {message}")),
+        });
+    }
 }
 
 impl MediaFailureReporter {
@@ -216,10 +251,21 @@ fn native_receive_loop(
     let mut video_sender = VideoSenderState::default();
     let mut audio_sender = AudioSenderState::default();
     let mut failure_reporter = MediaFailureReporter::default();
+    let mut motion_receiver = NativeMotionReceiver::default();
+    let mut motion_failure_reporter = InputMotionFailureReporter::default();
     while !stop.load(Ordering::Acquire) {
         let received = match socket.recv_from(&mut datagram) {
             Ok((length, peer)) => {
-                let _ = handle_native_path_probe(&socket, &router, peer, &datagram[..length]);
+                if !handle_native_path_probe(&socket, &router, peer, &datagram[..length]) {
+                    let _ = handle_native_motion_datagram(
+                        &router,
+                        platform.as_ref(),
+                        peer,
+                        &datagram[..length],
+                        &mut motion_receiver,
+                        &mut motion_failure_reporter,
+                    );
+                }
                 true
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => false,
@@ -235,6 +281,140 @@ fn native_receive_loop(
             thread::sleep(MEDIA_SEND_POLL_INTERVAL);
         }
     }
+}
+
+fn handle_native_motion_datagram(
+    router: &SharedControlRouter,
+    platform: &dyn PlatformSessionControl,
+    peer: SocketAddr,
+    datagram: &[u8],
+    receiver: &mut NativeMotionReceiver,
+    failure_reporter: &mut InputMotionFailureReporter,
+) -> bool {
+    let Ok(decoded) = decode_native_media_datagram(datagram) else {
+        return false;
+    };
+    if decoded.header.kind != NativeMediaKind::InputMotion {
+        return false;
+    }
+    let Some(delivery) = router
+        .lock()
+        .ok()
+        .and_then(|router| router.input_motion_delivery_state())
+    else {
+        log_motion_rejection("inactive-session", peer, decoded.header.session_epoch, None);
+        return true;
+    };
+    apply_native_motion_datagram(
+        platform,
+        peer,
+        datagram,
+        &delivery,
+        receiver,
+        failure_reporter,
+    );
+    true
+}
+
+fn apply_native_motion_datagram(
+    platform: &dyn PlatformSessionControl,
+    peer: SocketAddr,
+    datagram: &[u8],
+    delivery: &InputMotionDeliveryState,
+    receiver: &mut NativeMotionReceiver,
+    failure_reporter: &mut InputMotionFailureReporter,
+) {
+    if peer != delivery.endpoint {
+        log_motion_rejection(
+            "endpoint-mismatch",
+            peer,
+            delivery.session_epoch,
+            Some(delivery.endpoint),
+        );
+        return;
+    }
+    let identity = NativeMotionIdentity {
+        session_epoch: delivery.session_epoch,
+        path_id: delivery.path_id,
+        policy_revision: delivery.policy_revision,
+    };
+    let accepted = match receiver.accept(datagram, identity, &delivery.encryption_key) {
+        Ok(accepted) => accepted,
+        Err(error) => {
+            log_motion_decode_rejection(peer, identity, error);
+            return;
+        }
+    };
+    let payload = motion_payload_name(&accepted.event);
+    if should_log_motion(accepted.motion_sequence) {
+        for stage in ["authenticated", "decoded", "sequence-accepted"] {
+            eprintln!(
+                "Lumen native motion stage={stage} session-epoch={} path-id={} policy-revision={} packet-sequence={} motion-sequence={} capture-timestamp-us={} payload={} peer={peer}",
+                accepted.identity.session_epoch,
+                accepted.identity.path_id,
+                accepted.identity.policy_revision,
+                accepted.packet_sequence,
+                accepted.motion_sequence,
+                accepted.capture_timestamp_us,
+                payload,
+            );
+        }
+    }
+    match platform.handle_native_motion(accepted.identity.session_epoch, accepted.event) {
+        Ok(()) => {
+            failure_reporter.applied(platform);
+            if should_log_motion(accepted.motion_sequence) {
+                eprintln!(
+                    "Lumen native motion stage=applied session-epoch={} motion-sequence={} payload={} peer={peer}",
+                    accepted.identity.session_epoch, accepted.motion_sequence, payload
+                );
+            }
+        }
+        Err(error) => {
+            eprintln!(
+                "Lumen native motion stage=apply-rejected session-epoch={} motion-sequence={} payload={} peer={peer} error={error}",
+                accepted.identity.session_epoch, accepted.motion_sequence, payload
+            );
+            failure_reporter.rejected(error, platform);
+        }
+    }
+}
+
+fn motion_payload_name(event: &crate::PlatformNativeMotionEvent) -> &'static str {
+    match event {
+        crate::PlatformNativeMotionEvent::Pointer { .. } => "pointer",
+        crate::PlatformNativeMotionEvent::Scroll { .. } => "scroll",
+        crate::PlatformNativeMotionEvent::Touch { .. } => "touch",
+        crate::PlatformNativeMotionEvent::Pen { .. } => "pen",
+        crate::PlatformNativeMotionEvent::Gamepad { .. } => "gamepad",
+    }
+}
+
+fn should_log_motion(sequence: u32) -> bool {
+    sequence <= 3 || sequence % 120 == 0
+}
+
+fn log_motion_rejection(
+    reason: &'static str,
+    peer: SocketAddr,
+    session_epoch: u32,
+    expected_peer: Option<SocketAddr>,
+) {
+    eprintln!(
+        "Lumen native motion stage=rejected reason={reason} session-epoch={session_epoch} peer={peer} expected-peer={}",
+        expected_peer.map_or_else(|| "none".to_owned(), |value| value.to_string())
+    );
+}
+
+fn log_motion_decode_rejection(
+    peer: SocketAddr,
+    identity: NativeMotionIdentity,
+    error: NativeMotionDatagramError,
+) {
+    eprintln!(
+        "Lumen native motion stage=rejected reason={error:?} session-epoch={} path-id={} policy-revision={} peer={peer}",
+        identity.session_epoch, identity.path_id, identity.policy_revision
+    );
 }
 
 fn handle_native_path_probe(
@@ -711,6 +891,7 @@ mod tests {
     struct ScriptedMediaPlatform {
         audio: Mutex<VecDeque<Result<Option<crate::PlatformEncodedAudioPacket>, String>>>,
         video: Mutex<VecDeque<Result<Option<crate::PlatformEncodedVideoFrame>, String>>>,
+        motions: Mutex<Vec<(u32, crate::PlatformNativeMotionEvent)>>,
         events: Mutex<Vec<PlatformRuntimeEvent>>,
     }
 
@@ -729,6 +910,15 @@ mod tests {
 
         fn poll_encoded_video(&self) -> Result<Option<crate::PlatformEncodedVideoFrame>, String> {
             self.video.lock().unwrap().pop_front().unwrap_or(Ok(None))
+        }
+
+        fn handle_native_motion(
+            &self,
+            session_epoch: u32,
+            event: crate::PlatformNativeMotionEvent,
+        ) -> Result<(), String> {
+            self.motions.lock().unwrap().push((session_epoch, event));
+            Ok(())
         }
 
         fn publish_runtime_event(&self, event: PlatformRuntimeEvent) -> Result<(), String> {
@@ -770,6 +960,64 @@ mod tests {
         assert!(UdpSocket::bind(address).is_err());
         transport.stop().unwrap();
         UdpSocket::bind(address).unwrap();
+    }
+
+    #[test]
+    fn authenticates_sequences_and_applies_native_motion_to_the_platform() {
+        let peer = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 49_998);
+        let identity = NativeMotionIdentity {
+            session_epoch: 77,
+            path_id: 5,
+            policy_revision: 2,
+        };
+        let key = [0x73; 16];
+        let delivery = InputMotionDeliveryState {
+            session_epoch: identity.session_epoch,
+            path_id: identity.path_id,
+            policy_revision: identity.policy_revision,
+            endpoint: peer,
+            encryption_key: key,
+        };
+        let platform = ScriptedMediaPlatform {
+            audio: Mutex::new(VecDeque::new()),
+            video: Mutex::new(VecDeque::new()),
+            motions: Mutex::new(Vec::new()),
+            events: Mutex::new(Vec::new()),
+        };
+        let mut receiver = NativeMotionReceiver::default();
+        let mut reporter = InputMotionFailureReporter::default();
+        let datagram =
+            crate::media::native_motion::test_pointer_motion_datagram(identity, &key, 9, 11);
+
+        apply_native_motion_datagram(
+            &platform,
+            peer,
+            &datagram,
+            &delivery,
+            &mut receiver,
+            &mut reporter,
+        );
+        apply_native_motion_datagram(
+            &platform,
+            peer,
+            &datagram,
+            &delivery,
+            &mut receiver,
+            &mut reporter,
+        );
+
+        let motions = platform.motions.lock().unwrap();
+        assert_eq!(motions.len(), 1, "a replay must not reach the platform");
+        assert_eq!(motions[0].0, 77);
+        assert!(matches!(
+            motions[0].1,
+            crate::PlatformNativeMotionEvent::Pointer {
+                delta_x: 4,
+                delta_y: -2,
+                ..
+            }
+        ));
+        assert!(platform.events.lock().unwrap().is_empty());
     }
 
     #[test]
@@ -986,6 +1234,7 @@ mod tests {
                     crate::media::native_video::test_fixtures::encoded_frame(video_format),
                 )),
             ])),
+            motions: Mutex::new(Vec::new()),
             events: Mutex::new(Vec::new()),
         };
         let audio_delivery = AudioDeliveryState {
@@ -1121,6 +1370,7 @@ mod tests {
                 })),
             ])),
             video: Mutex::new(VecDeque::new()),
+            motions: Mutex::new(Vec::new()),
             events: Mutex::new(Vec::new()),
         };
         let delivery = AudioDeliveryState {

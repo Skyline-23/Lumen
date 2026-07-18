@@ -544,11 +544,10 @@ public struct LumenMacCaptureConfiguration: Equatable, Sendable {
         }
 
         if effectiveTargetFrameRate >= 120 {
-            if negotiatedDynamicRangeTransport == LumenMacDynamicRangeTransportSDRBaseHDROverlay,
-               usesVeryHighResolutionWorkload {
-                return .q2
-            }
-            return .q1
+            // ScreenCaptureKit needs one surface in delivery, one potentially
+            // retained by VideoToolbox, and one free surface for WindowServer.
+            // A two-surface pool can freeze after the first frame at 120 Hz.
+            return .q3
         }
 
         if negotiatedDynamicRangeTransport == LumenMacDynamicRangeTransportSDRBaseHDROverlay {
@@ -569,6 +568,18 @@ public struct LumenMacCaptureConfiguration: Equatable, Sendable {
     public var prefersRealtimeHDRMetadata: Bool {
         negotiatedDynamicRangeTransport != LumenMacDynamicRangeTransportSDR &&
             sinkRequest.capability.supportsPerFrameHDRMetadata
+    }
+
+    var forwardingQueueDepthReserve: Int {
+        guard queueProfile == .auto else {
+            return queueProfile.queueDepthHint
+        }
+
+        // ScreenCaptureKit source surfaces and the downstream freshness mailbox
+        // have different ownership constraints. Keep the source pool at three for
+        // 120 Hz, while the forwarding side stays shallow unless large/HDR frames
+        // need one additional metadata slot.
+        return usesHighResolutionWorkload || prefersRealtimeHDRMetadata ? 2 : 1
     }
 
     public var lumenProtocolAdapter: LumenMacProtocolAdapter {
@@ -1153,7 +1164,7 @@ public actor LumenBridgeRuntime {
     ) -> Int {
         // Favor freshness over throughput. Deep forwarding queues translate directly into
         // input lag when the producer starts missing cadence.
-        let queueDepthReserve = max(configuration.negotiatedQueueProfile.queueDepthHint, 1)
+        let queueDepthReserve = max(configuration.forwardingQueueDepthReserve, 1)
         let hdrMetadataSlack = configuration.prefersRealtimeHDRMetadata ? 1 : 0
         let targetFrameRate = configuration.effectiveTargetFrameRate
 

@@ -1,18 +1,24 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
+use core_graphics::display::CGDisplay;
 use core_graphics::event::{
     CGEvent, CGEventFlags, CGEventTapLocation, CGEventType, CGMouseButton, EventField,
+    ScrollEventUnit,
 };
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+use core_graphics::geometry::CGPoint;
+use lumen_engine::NativePointerMotionMode;
 
-use crate::PlatformNativeInputEvent;
+use crate::{PlatformNativeInputEvent, PlatformNativeMotionEvent};
 
 #[derive(Debug, Default)]
 struct MacInputState {
     pressed_keys: HashSet<u16>,
     pressed_buttons: HashSet<u8>,
     compositions: HashMap<u64, MacComposition>,
+    scroll_remainder_x: i32,
+    scroll_remainder_y: i32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -110,6 +116,71 @@ impl MacNativeInput {
         }
     }
 
+    pub(crate) fn handle_motion(
+        &self,
+        session_epoch: u32,
+        display_id: u32,
+        event: PlatformNativeMotionEvent,
+    ) -> Result<(), String> {
+        let mut states = self
+            .state
+            .lock()
+            .map_err(|_| "macOS native input state is unavailable".to_owned())?;
+        let state = states.entry(session_epoch).or_default();
+        match event {
+            PlatformNativeMotionEvent::Pointer {
+                pointer_id: _,
+                mode,
+                delta_x,
+                delta_y,
+                normalized_x,
+                normalized_y,
+            } => post_pointer_motion(
+                display_id,
+                state,
+                mode,
+                delta_x,
+                delta_y,
+                normalized_x,
+                normalized_y,
+            ),
+            PlatformNativeMotionEvent::Scroll {
+                pointer_id: _,
+                delta_x_1024_points,
+                delta_y_1024_points,
+            } => {
+                state.scroll_remainder_x =
+                    state.scroll_remainder_x.saturating_add(delta_x_1024_points);
+                state.scroll_remainder_y =
+                    state.scroll_remainder_y.saturating_add(delta_y_1024_points);
+                let horizontal = state.scroll_remainder_x / 1024;
+                let vertical = state.scroll_remainder_y / 1024;
+                state.scroll_remainder_x %= 1024;
+                state.scroll_remainder_y %= 1024;
+                if horizontal == 0 && vertical == 0 {
+                    return Ok(());
+                }
+                let event = CGEvent::new_scroll_event(
+                    event_source()?,
+                    ScrollEventUnit::PIXEL,
+                    2,
+                    vertical,
+                    horizontal,
+                    0,
+                )
+                .map_err(|_| "could not create macOS scroll event".to_owned())?;
+                event.post(CGEventTapLocation::HID);
+                Ok(())
+            }
+            PlatformNativeMotionEvent::Touch { .. } | PlatformNativeMotionEvent::Pen { .. } => {
+                Err("macOS native touch and pen motion injection is not implemented".to_owned())
+            }
+            PlatformNativeMotionEvent::Gamepad { .. } => {
+                Err("macOS virtual gamepad motion injection is not implemented".to_owned())
+            }
+        }
+    }
+
     pub(crate) fn reset(&self, session_epoch: u32) -> Result<(), String> {
         let state = self
             .state
@@ -139,6 +210,82 @@ impl MacNativeInput {
         } else {
             Err(errors.join("; "))
         }
+    }
+}
+
+fn post_pointer_motion(
+    display_id: u32,
+    state: &MacInputState,
+    mode: NativePointerMotionMode,
+    delta_x: i32,
+    delta_y: i32,
+    normalized_x: f32,
+    normalized_y: f32,
+) -> Result<(), String> {
+    let source = event_source()?;
+    let current = CGEvent::new(source.clone())
+        .map_err(|_| "could not inspect the macOS pointer location".to_owned())?
+        .location();
+    let bounds = CGDisplay::new(display_id).bounds();
+    if bounds.size.width <= 0.0 || bounds.size.height <= 0.0 {
+        return Err(format!(
+            "macOS native motion display {display_id} has no published bounds"
+        ));
+    }
+    let target = match mode {
+        NativePointerMotionMode::Relative => {
+            let origin = if point_in_rect(current, bounds) {
+                current
+            } else {
+                CGPoint::new(
+                    bounds.origin.x + bounds.size.width / 2.0,
+                    bounds.origin.y + bounds.size.height / 2.0,
+                )
+            };
+            CGPoint::new(
+                (origin.x + f64::from(delta_x))
+                    .clamp(bounds.origin.x, bounds.origin.x + bounds.size.width - 1.0),
+                (origin.y + f64::from(delta_y))
+                    .clamp(bounds.origin.y, bounds.origin.y + bounds.size.height - 1.0),
+            )
+        }
+        NativePointerMotionMode::Absolute => CGPoint::new(
+            bounds.origin.x + f64::from(normalized_x) * (bounds.size.width - 1.0),
+            bounds.origin.y + f64::from(normalized_y) * (bounds.size.height - 1.0),
+        ),
+        NativePointerMotionMode::Unspecified => {
+            return Err("macOS native pointer motion mode is unspecified".to_owned())
+        }
+    };
+    let (event_type, button) = drag_event(state);
+    let event = CGEvent::new_mouse_event(source, event_type, target, button)
+        .map_err(|_| "could not create macOS pointer motion event".to_owned())?;
+    event.set_integer_value_field(EventField::MOUSE_EVENT_DELTA_X, i64::from(delta_x));
+    event.set_integer_value_field(EventField::MOUSE_EVENT_DELTA_Y, i64::from(delta_y));
+    event.post(CGEventTapLocation::HID);
+    Ok(())
+}
+
+fn point_in_rect(point: CGPoint, bounds: core_graphics::geometry::CGRect) -> bool {
+    point.x >= bounds.origin.x
+        && point.x < bounds.origin.x + bounds.size.width
+        && point.y >= bounds.origin.y
+        && point.y < bounds.origin.y + bounds.size.height
+}
+
+fn drag_event(state: &MacInputState) -> (CGEventType, CGMouseButton) {
+    if state.pressed_buttons.contains(&1) {
+        (CGEventType::LeftMouseDragged, CGMouseButton::Left)
+    } else if state.pressed_buttons.contains(&3) {
+        (CGEventType::RightMouseDragged, CGMouseButton::Right)
+    } else if state
+        .pressed_buttons
+        .iter()
+        .any(|button| (2..=5).contains(button))
+    {
+        (CGEventType::OtherMouseDragged, CGMouseButton::Center)
+    } else {
+        (CGEventType::MouseMoved, CGMouseButton::Left)
     }
 }
 

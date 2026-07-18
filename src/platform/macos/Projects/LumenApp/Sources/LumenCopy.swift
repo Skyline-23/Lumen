@@ -226,6 +226,13 @@ enum LumenCopy {
                 return fallback.isEmpty ? summary : "\(summary) \(fallback)"
             }
 
+            if code == 14 {
+                let summary = localized(
+                    "Lumen could not apply remote pointer motion to the active display."
+                )
+                return fallback.isEmpty ? summary : "\(summary) \(fallback)"
+            }
+
             return switch code {
             case 0:
                 localized("UPnP could not find a compatible gateway.")

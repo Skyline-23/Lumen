@@ -1,7 +1,8 @@
 use std::fmt;
 
 use lumen_engine::{
-    client_input_envelope, ClientInputEnvelope, NativeContactPhase, NativeGamepadButton,
+    client_input_envelope, client_motion_envelope, ClientInputEnvelope, NativeContactPhase,
+    NativeGamepadButton, NativePointerMotionMode,
 };
 
 const MAXIMUM_GAMEPADS: u32 = 16;
@@ -62,6 +63,53 @@ pub enum PlatformNativeInputEvent {
     },
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum PlatformNativeMotionEvent {
+    Pointer {
+        pointer_id: u32,
+        mode: NativePointerMotionMode,
+        delta_x: i32,
+        delta_y: i32,
+        normalized_x: f32,
+        normalized_y: f32,
+    },
+    Scroll {
+        pointer_id: u32,
+        delta_x_1024_points: i32,
+        delta_y_1024_points: i32,
+    },
+    Touch {
+        contact_id: u32,
+        normalized_x: f32,
+        normalized_y: f32,
+        pressure: f32,
+    },
+    Pen {
+        pointer_id: u32,
+        normalized_x: f32,
+        normalized_y: f32,
+        pressure: f32,
+        tilt_x_degrees: f32,
+        tilt_y_degrees: f32,
+        rotation_degrees: f32,
+    },
+    Gamepad {
+        gamepad_id: u8,
+        left_stick_x: i16,
+        left_stick_y: i16,
+        right_stick_x: i16,
+        right_stick_y: i16,
+        left_trigger: u16,
+        right_trigger: u16,
+        gyro_x: f32,
+        gyro_y: f32,
+        gyro_z: f32,
+        acceleration_x: f32,
+        acceleration_y: f32,
+        acceleration_z: f32,
+    },
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum NativeInputError {
     SessionEpochMismatch { expected: u32, received: u32 },
@@ -79,6 +127,18 @@ pub enum NativeInputError {
     InvalidContactGeometry,
     InvalidPenButtons(u32),
     InvalidRumbleAcknowledgement,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum NativeMotionError {
+    MissingPayload,
+    InvalidPointerMode(i32),
+    InvalidPointerGeometry,
+    InvalidContactGeometry,
+    InvalidGamepad(u32),
+    InvalidGamepadAxis(i32),
+    InvalidAnalogValue(u32),
+    InvalidMotionVector,
 }
 
 impl fmt::Display for NativeInputError {
@@ -129,6 +189,35 @@ impl fmt::Display for NativeInputError {
             }
             Self::InvalidRumbleAcknowledgement => {
                 formatter.write_str("native rumble acknowledgement identity is invalid")
+            }
+        }
+    }
+}
+
+impl fmt::Display for NativeMotionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingPayload => formatter.write_str("native motion payload is missing"),
+            Self::InvalidPointerMode(mode) => {
+                write!(formatter, "native pointer motion mode {mode} is invalid")
+            }
+            Self::InvalidPointerGeometry => {
+                formatter.write_str("native pointer geometry is invalid")
+            }
+            Self::InvalidContactGeometry => {
+                formatter.write_str("native motion contact geometry is invalid")
+            }
+            Self::InvalidGamepad(gamepad) => {
+                write!(formatter, "native motion gamepad {gamepad} is invalid")
+            }
+            Self::InvalidGamepadAxis(value) => {
+                write!(formatter, "native gamepad motion axis {value} is invalid")
+            }
+            Self::InvalidAnalogValue(value) => {
+                write!(formatter, "native motion analog value {value} is invalid")
+            }
+            Self::InvalidMotionVector => {
+                formatter.write_str("native motion vector contains a non-finite value")
             }
         }
     }
@@ -298,6 +387,119 @@ impl TryFrom<client_input_envelope::Payload> for PlatformNativeInputEvent {
     }
 }
 
+impl TryFrom<client_motion_envelope::Payload> for PlatformNativeMotionEvent {
+    type Error = NativeMotionError;
+
+    fn try_from(payload: client_motion_envelope::Payload) -> Result<Self, Self::Error> {
+        match payload {
+            client_motion_envelope::Payload::PointerMotion(input) => {
+                let mode = NativePointerMotionMode::try_from(input.mode)
+                    .ok()
+                    .filter(|mode| *mode != NativePointerMotionMode::Unspecified)
+                    .ok_or(NativeMotionError::InvalidPointerMode(input.mode))?;
+                if mode == NativePointerMotionMode::Absolute
+                    && !normalized_pair(input.normalized_x, input.normalized_y)
+                {
+                    return Err(NativeMotionError::InvalidPointerGeometry);
+                }
+                Ok(Self::Pointer {
+                    pointer_id: input.pointer_id,
+                    mode,
+                    delta_x: input.delta_x,
+                    delta_y: input.delta_y,
+                    normalized_x: input.normalized_x,
+                    normalized_y: input.normalized_y,
+                })
+            }
+            client_motion_envelope::Payload::Scroll(input) => Ok(Self::Scroll {
+                pointer_id: input.pointer_id,
+                delta_x_1024_points: input.delta_x_1024_points,
+                delta_y_1024_points: input.delta_y_1024_points,
+            }),
+            client_motion_envelope::Payload::TouchMotion(input) => {
+                validate_contact(input.normalized_x, input.normalized_y, input.pressure)
+                    .map_err(|_| NativeMotionError::InvalidContactGeometry)?;
+                Ok(Self::Touch {
+                    contact_id: input.contact_id,
+                    normalized_x: input.normalized_x,
+                    normalized_y: input.normalized_y,
+                    pressure: input.pressure,
+                })
+            }
+            client_motion_envelope::Payload::PenMotion(input) => {
+                validate_contact(input.normalized_x, input.normalized_y, input.pressure)
+                    .map_err(|_| NativeMotionError::InvalidContactGeometry)?;
+                if ![
+                    input.tilt_x_degrees,
+                    input.tilt_y_degrees,
+                    input.rotation_degrees,
+                ]
+                .into_iter()
+                .all(f32::is_finite)
+                {
+                    return Err(NativeMotionError::InvalidMotionVector);
+                }
+                Ok(Self::Pen {
+                    pointer_id: input.pointer_id,
+                    normalized_x: input.normalized_x,
+                    normalized_y: input.normalized_y,
+                    pressure: input.pressure,
+                    tilt_x_degrees: input.tilt_x_degrees,
+                    tilt_y_degrees: input.tilt_y_degrees,
+                    rotation_degrees: input.rotation_degrees,
+                })
+            }
+            client_motion_envelope::Payload::GamepadMotion(input) => {
+                let axes = [
+                    input.left_stick_x,
+                    input.left_stick_y,
+                    input.right_stick_x,
+                    input.right_stick_y,
+                ];
+                let invalid_axis = axes
+                    .into_iter()
+                    .find(|value| i16::try_from(*value).is_err());
+                if let Some(value) = invalid_axis {
+                    return Err(NativeMotionError::InvalidGamepadAxis(value));
+                }
+                if input.left_trigger > MAXIMUM_ANALOG_VALUE {
+                    return Err(NativeMotionError::InvalidAnalogValue(input.left_trigger));
+                }
+                if input.right_trigger > MAXIMUM_ANALOG_VALUE {
+                    return Err(NativeMotionError::InvalidAnalogValue(input.right_trigger));
+                }
+                let vectors = [
+                    input.gyro_x,
+                    input.gyro_y,
+                    input.gyro_z,
+                    input.acceleration_x,
+                    input.acceleration_y,
+                    input.acceleration_z,
+                ];
+                if !vectors.into_iter().all(f32::is_finite) {
+                    return Err(NativeMotionError::InvalidMotionVector);
+                }
+                Ok(Self::Gamepad {
+                    gamepad_id: gamepad_id(input.gamepad_id)
+                        .map_err(|_| NativeMotionError::InvalidGamepad(input.gamepad_id))?,
+                    left_stick_x: input.left_stick_x as i16,
+                    left_stick_y: input.left_stick_y as i16,
+                    right_stick_x: input.right_stick_x as i16,
+                    right_stick_y: input.right_stick_y as i16,
+                    left_trigger: input.left_trigger as u16,
+                    right_trigger: input.right_trigger as u16,
+                    gyro_x: input.gyro_x,
+                    gyro_y: input.gyro_y,
+                    gyro_z: input.gyro_z,
+                    acceleration_x: input.acceleration_x,
+                    acceleration_y: input.acceleration_y,
+                    acceleration_z: input.acceleration_z,
+                })
+            }
+        }
+    }
+}
+
 fn gamepad_id(value: u32) -> Result<u8, NativeInputError> {
     if value >= MAXIMUM_GAMEPADS {
         return Err(NativeInputError::InvalidGamepad(value));
@@ -321,6 +523,12 @@ fn validate_contact(x: f32, y: f32, pressure: f32) -> Result<(), NativeInputErro
     } else {
         Err(NativeInputError::InvalidContactGeometry)
     }
+}
+
+fn normalized_pair(x: f32, y: f32) -> bool {
+    [x, y]
+        .into_iter()
+        .all(|value| value.is_finite() && (0.0..=1.0).contains(&value))
 }
 
 #[cfg(test)]
