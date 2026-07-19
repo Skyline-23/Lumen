@@ -78,6 +78,7 @@ fn pending_journal(generation: u64) -> WorkspaceRecoveryJournal {
     .with_virtual_display(VirtualDisplayIdentity {
         id: "virtual-1".to_owned(),
     })
+    .with_physical_mutation_applied(true)
     .with_phase(RecoveryPhase::IsolationStarted)
 }
 

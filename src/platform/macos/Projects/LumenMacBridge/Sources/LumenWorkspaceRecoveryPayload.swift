@@ -195,6 +195,7 @@ public enum LumenMacWorkspaceCommandPayload: Equatable, Sendable {
 public enum LumenMacWorkspaceCommandResult: Equatable, Sendable {
     case succeeded
     case failed
+    case physicalMutationApplied(Bool)
     case physicalTopology(LumenMacPhysicalDisplayTopology)
     case virtualDisplayIdentity(LumenMacVirtualDisplayIdentity)
 }

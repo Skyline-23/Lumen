@@ -299,7 +299,7 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         let isolateIndex = try XCTUnwrap(preparedEvents.firstIndex(of: .isolate(88)))
         let resolveIndex = try XCTUnwrap(preparedEvents.firstIndex(of: .resolve(88)))
         XCTAssertLessThan(resolveIndex, isolateIndex)
-        XCTAssertFalse(preparedEvents.contains(.promote(88)))
+        XCTAssertTrue(preparedEvents.contains(.promote(88)))
         XCTAssertFalse(preparedEvents.contains(.move(88)))
         let preparedState = try await session.state()
         XCTAssertEqual(preparedState, .starting)
@@ -406,7 +406,6 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
             operations: operations,
             displayWorkspace: WorkspaceDisplayMock(
                 recorder: recorder,
-                isolationFailure: .isolationUnavailable("display 115 was not published"),
                 verificationFailures: 1
             ),
             coordinator: LumenWorkspaceCoordinator(recoveryJournalPath: journalPath)
@@ -501,8 +500,8 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         XCTAssertTrue(events.contains(.resolve(90)))
         XCTAssertFalse(events.contains(.firstFrameBarrier))
         XCTAssertFalse(events.contains(.isolate(90)))
-        XCTAssertFalse(events.contains(.restore))
-        XCTAssertFalse(events.contains(.verify))
+        XCTAssertTrue(events.contains(.restore))
+        XCTAssertTrue(events.contains(.verify))
         XCTAssertTrue(events.contains(.destroy))
         XCTAssertFalse(FileManager.default.fileExists(atPath: journalPath))
         let recoveredState = try await session.state()

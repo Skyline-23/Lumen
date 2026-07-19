@@ -54,8 +54,15 @@ impl WorkspaceEngine {
             (LumenWorkspaceCommandKind::MoveTargetWindows, WorkspaceCommandPayload::None) => {
                 self.record_window_mutation(RecoveryPhase::TargetWindowsMoved)
             }
-            (LumenWorkspaceCommandKind::ApplyIsolation, WorkspaceCommandPayload::None) => {
-                self.record_physical_mutation(RecoveryPhase::Isolated)
+            (
+                LumenWorkspaceCommandKind::ApplyIsolation,
+                WorkspaceCommandPayload::PhysicalMutationApplied(applied),
+            ) => {
+                if applied {
+                    self.record_physical_mutation(RecoveryPhase::Isolated)
+                } else {
+                    LumenEngineStatus::Ok
+                }
             }
             (LumenWorkspaceCommandKind::StartCapture, WorkspaceCommandPayload::None) => {
                 self.resources.capture = true;

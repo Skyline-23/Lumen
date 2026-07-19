@@ -367,6 +367,8 @@ static void LumenConfigureHDRDisplayInfo(
     }
     [_settings setValue:@[_mode] forKey:@"modes"];
     [_settings setValue:@(configuration.highDensity) forKey:@"hiDPI"];
+    [_settings setValue:@0 forKey:@"rotation"];
+    [_settings setValue:@(configuration.hdrEnabled) forKey:@"isReference"];
     if ([_settings respondsToSelector:sel_registerName("setRefreshDeadline:")]) {
       ((void (*)(id, SEL, double))objc_msgSend)(
         _settings,

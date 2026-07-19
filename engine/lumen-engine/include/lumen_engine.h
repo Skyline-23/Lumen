@@ -9,7 +9,7 @@
 extern "C" {
 #endif
 
-#define LUMEN_ENGINE_ABI_VERSION 63u
+#define LUMEN_ENGINE_ABI_VERSION 64u
 #define LUMEN_ENCRYPTED_CONTROL_HEADER_SIZE 8u
 #define LUMEN_CONTROL_FEEDBACK_MAX_SIZE 29u
 #define LUMEN_CONTROL_TERMINATION_SIZE 8u
@@ -74,7 +74,8 @@ typedef enum LumenWorkspaceCommandKind {
 typedef enum LumenWorkspaceCommandPayloadKind {
   LumenWorkspaceCommandPayloadNone = 0,
   LumenWorkspaceCommandPayloadPhysicalTopology = 1,
-  LumenWorkspaceCommandPayloadVirtualDisplayIdentity = 2
+  LumenWorkspaceCommandPayloadVirtualDisplayIdentity = 2,
+  LumenWorkspaceCommandPayloadPhysicalMutationApplied = 3
 } LumenWorkspaceCommandPayloadKind;
 
 typedef struct LumenWorkspaceSessionRequest {

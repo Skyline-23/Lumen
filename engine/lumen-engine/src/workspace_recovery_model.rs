@@ -166,9 +166,7 @@ impl WorkspaceRecoveryJournal {
         self.phase = phase;
         if matches!(
             phase,
-            RecoveryPhase::VirtualPromoted
-                | RecoveryPhase::IsolationStarted
-                | RecoveryPhase::Isolated
+            RecoveryPhase::VirtualPromoted | RecoveryPhase::Isolated
         ) {
             self.physical_mutation_applied = Some(true);
         }

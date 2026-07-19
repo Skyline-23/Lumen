@@ -102,7 +102,7 @@ pub use protocol::{
 };
 pub use video_packetization::{plan_fec_blocks, plan_fec_shards};
 
-pub const ABI_VERSION: u32 = 63;
+pub const ABI_VERSION: u32 = 64;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

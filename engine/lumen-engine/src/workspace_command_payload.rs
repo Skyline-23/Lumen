@@ -11,6 +11,7 @@ pub enum LumenWorkspaceCommandPayloadKind {
     None = 0,
     PhysicalTopology = 1,
     VirtualDisplayIdentity = 2,
+    PhysicalMutationApplied = 3,
 }
 
 #[repr(C)]
@@ -26,6 +27,7 @@ pub enum WorkspaceCommandPayload {
     None,
     PhysicalTopology(PhysicalDisplayTopology),
     VirtualDisplayIdentity(VirtualDisplayIdentity),
+    PhysicalMutationApplied(bool),
 }
 
 impl WorkspaceCommandPayload {
@@ -35,6 +37,9 @@ impl WorkspaceCommandPayload {
             Self::PhysicalTopology(_) => LumenWorkspaceCommandPayloadKind::PhysicalTopology,
             Self::VirtualDisplayIdentity(_) => {
                 LumenWorkspaceCommandPayloadKind::VirtualDisplayIdentity
+            }
+            Self::PhysicalMutationApplied(_) => {
+                LumenWorkspaceCommandPayloadKind::PhysicalMutationApplied
             }
         }
     }
@@ -46,6 +51,9 @@ impl WorkspaceCommandPayload {
                 .map(Some)
                 .map_err(|_| LumenEngineStatus::CorruptData),
             Self::VirtualDisplayIdentity(identity) => serde_json::to_string(identity)
+                .map(Some)
+                .map_err(|_| LumenEngineStatus::CorruptData),
+            Self::PhysicalMutationApplied(applied) => serde_json::to_string(applied)
                 .map(Some)
                 .map_err(|_| LumenEngineStatus::CorruptData),
         }
@@ -86,6 +94,13 @@ impl WorkspaceCommandCompletion {
             payload: WorkspaceCommandPayload::VirtualDisplayIdentity(identity),
         }
     }
+
+    pub const fn physical_mutation_applied(applied: bool) -> Self {
+        Self {
+            succeeded: true,
+            payload: WorkspaceCommandPayload::PhysicalMutationApplied(applied),
+        }
+    }
 }
 
 impl WorkspaceEngine {
@@ -108,6 +123,9 @@ impl WorkspaceEngine {
                 .clone()
                 .map(WorkspaceCommandPayload::VirtualDisplayIdentity)
                 .ok_or(LumenEngineStatus::CorruptData),
+            LumenWorkspaceCommandPayloadKind::PhysicalMutationApplied => {
+                Err(LumenEngineStatus::InvalidArgument)
+            }
         }
     }
 }
@@ -120,7 +138,8 @@ pub(crate) unsafe fn decode_ffi_completion(
         return match completion.payload_kind {
             LumenWorkspaceCommandPayloadKind::None => Ok(WorkspaceCommandCompletion::failed()),
             LumenWorkspaceCommandPayloadKind::PhysicalTopology
-            | LumenWorkspaceCommandPayloadKind::VirtualDisplayIdentity => {
+            | LumenWorkspaceCommandPayloadKind::VirtualDisplayIdentity
+            | LumenWorkspaceCommandPayloadKind::PhysicalMutationApplied => {
                 Err(LumenEngineStatus::InvalidArgument)
             }
         };
@@ -138,6 +157,11 @@ pub(crate) unsafe fn decode_ffi_completion(
             // SAFETY: Category 8 (FFI boundary). The outer FFI contract keeps
             // this non-null NUL-terminated JSON pointer live for the call.
             WorkspaceCommandPayload::VirtualDisplayIdentity(unsafe {
+                decode_payload(completion.payload_json)?
+            })
+        }
+        LumenWorkspaceCommandPayloadKind::PhysicalMutationApplied => {
+            WorkspaceCommandPayload::PhysicalMutationApplied(unsafe {
                 decode_payload(completion.payload_json)?
             })
         }
@@ -162,10 +186,12 @@ const fn expected_completion_kind(
         LumenWorkspaceCommandKind::CreateVirtualDisplay => {
             LumenWorkspaceCommandPayloadKind::VirtualDisplayIdentity
         }
+        LumenWorkspaceCommandKind::ApplyIsolation => {
+            LumenWorkspaceCommandPayloadKind::PhysicalMutationApplied
+        }
         LumenWorkspaceCommandKind::ConfigureVirtualDisplay
         | LumenWorkspaceCommandKind::PromoteVirtualMain
         | LumenWorkspaceCommandKind::MoveTargetWindows
-        | LumenWorkspaceCommandKind::ApplyIsolation
         | LumenWorkspaceCommandKind::StartCapture
         | LumenWorkspaceCommandKind::AwaitExternalFirstEncodedFrame
         | LumenWorkspaceCommandKind::StopCapture

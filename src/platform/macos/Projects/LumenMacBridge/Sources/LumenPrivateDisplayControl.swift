@@ -4,8 +4,7 @@ import Foundation
 
 public enum LumenDisplayEnabledSymbolSource: String, Codable, Equatable, Sendable {
     case skyLightSLS
-    case skyLightCGS
-    case verifiedCoreDisplay
+    case coreGraphicsCGS
 }
 
 public struct LumenDisplayEnabledSymbolRequest: Equatable, Sendable {
@@ -32,18 +31,6 @@ public protocol LumenDisplayEnabledSymbolResolving {
     func resolve(
         _ request: LumenDisplayEnabledSymbolRequest
     ) -> (any LumenDisplayEnabledInvoking)?
-}
-
-public struct LumenVerifiedCoreDisplayEnabledABI: Equatable, Sendable {
-    public let symbolName: String
-    public let evidenceIdentifier: String
-
-    public init(symbolName: String, evidenceIdentifier: String) {
-        precondition(!symbolName.isEmpty)
-        precondition(!evidenceIdentifier.isEmpty)
-        self.symbolName = symbolName
-        self.evidenceIdentifier = evidenceIdentifier
-    }
 }
 
 public struct LumenPhysicalDisplayControlReceipt: Equatable, Sendable {
@@ -235,20 +222,14 @@ public struct LumenPhysicalDisplayControlFailure: Error, Equatable, Sendable {
 }
 
 public struct LumenPhysicalDisplayControlAdapter: LumenPhysicalDisplayControlling {
+    private static let coreGraphicsPath =
+        "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics"
     private static let skyLightPath =
         "/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight"
-    private static let coreDisplayPath =
-        "/System/Library/Frameworks/CoreDisplay.framework/CoreDisplay"
-
     private let resolver: any LumenDisplayEnabledSymbolResolving
-    private let verifiedCoreDisplayABI: LumenVerifiedCoreDisplayEnabledABI?
 
-    public init(
-        resolver: any LumenDisplayEnabledSymbolResolving,
-        verifiedCoreDisplayABI: LumenVerifiedCoreDisplayEnabledABI? = nil
-    ) {
+    public init(resolver: any LumenDisplayEnabledSymbolResolving) {
         self.resolver = resolver
-        self.verifiedCoreDisplayABI = verifiedCoreDisplayABI
     }
 
     public func setEnabled(
@@ -293,28 +274,18 @@ public struct LumenPhysicalDisplayControlAdapter: LumenPhysicalDisplayControllin
     }
 
     private var symbolRequests: [LumenDisplayEnabledSymbolRequest] {
-        var requests = [
+        [
+            LumenDisplayEnabledSymbolRequest(
+                source: .coreGraphicsCGS,
+                frameworkPath: Self.coreGraphicsPath,
+                symbolName: "CGSConfigureDisplayEnabled"
+            ),
             LumenDisplayEnabledSymbolRequest(
                 source: .skyLightSLS,
                 frameworkPath: Self.skyLightPath,
                 symbolName: "SLSConfigureDisplayEnabled"
             ),
-            LumenDisplayEnabledSymbolRequest(
-                source: .skyLightCGS,
-                frameworkPath: Self.skyLightPath,
-                symbolName: "CGSConfigureDisplayEnabled"
-            ),
         ]
-        if let verifiedCoreDisplayABI {
-            requests.append(
-                LumenDisplayEnabledSymbolRequest(
-                    source: .verifiedCoreDisplay,
-                    frameworkPath: Self.coreDisplayPath,
-                    symbolName: verifiedCoreDisplayABI.symbolName
-                )
-            )
-        }
-        return requests
     }
 }
 
@@ -334,6 +305,49 @@ public final class LumenDlsymDisplayEnabledSymbolResolver:
             return nil
         }
         return LumenDlsymDisplayEnabledInvoker(handle: handle, symbol: symbol)
+    }
+}
+
+public final class LumenSystemDisplayEnabledSymbolResolver:
+    LumenDisplayEnabledSymbolResolving
+{
+    private let dynamicResolver = LumenDlsymDisplayEnabledSymbolResolver()
+
+    public init() {}
+
+    public func resolve(
+        _ request: LumenDisplayEnabledSymbolRequest
+    ) -> (any LumenDisplayEnabledInvoking)? {
+        if request.source == .coreGraphicsCGS {
+            return LumenDirectCGSDisplayEnabledInvoker()
+        }
+        return dynamicResolver.resolve(request)
+    }
+}
+
+private struct LumenDirectCGSDisplayEnabledInvoker: LumenDisplayEnabledInvoking {
+    func setEnabled(_ enabled: Bool, for displayID: CGDirectDisplayID) -> Int32 {
+        var configuration: CGDisplayConfigRef?
+        let beginStatus = CGBeginDisplayConfiguration(&configuration)
+        guard beginStatus == .success, let configuration else {
+            return beginStatus.rawValue
+        }
+
+        let mutationStatus = LumenMacDirectCGSConfigureDisplayEnabled(
+            configuration,
+            displayID,
+            enabled
+        )
+        guard mutationStatus == CGError.success.rawValue else {
+            CGCancelDisplayConfiguration(configuration)
+            return mutationStatus
+        }
+
+        let completeStatus = CGCompleteDisplayConfiguration(configuration, .permanently)
+        if completeStatus != .success {
+            CGCancelDisplayConfiguration(configuration)
+        }
+        return completeStatus.rawValue
     }
 }
 
@@ -369,7 +383,9 @@ private final class LumenDlsymDisplayEnabledInvoker: LumenDisplayEnabledInvoking
             return mutationStatus.rawValue
         }
 
-        let completeStatus = CGCompleteDisplayConfiguration(configuration, .forSession)
+        // Display connection state must survive the mutating process long
+        // enough for independent watchdog recovery to observe and reverse it.
+        let completeStatus = CGCompleteDisplayConfiguration(configuration, .permanently)
         if completeStatus != .success {
             CGCancelDisplayConfiguration(configuration)
         }
