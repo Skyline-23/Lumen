@@ -135,7 +135,7 @@ pub(crate) fn runtime() -> tokio::runtime::Runtime {
 }
 
 #[test]
-fn physical_isolation_precedes_capture_binding_and_first_encoded_frame() {
+fn physical_isolation_follows_capture_binding_and_first_encoded_frame() {
     // Given: an empty recovery store and a first-frame-capable adapter.
     let directory = tempfile::tempdir().unwrap();
     let store = RecoveryJournalStore::new(directory.path().join("display-recovery.json"));
@@ -145,23 +145,23 @@ fn physical_isolation_precedes_capture_binding_and_first_encoded_frame() {
     // When: a workspace session starts successfully.
     runtime().block_on(engine.start_session(session())).unwrap();
 
-    // Then: WindowServer finishes physical isolation before capture binds to the
-    // stable virtual-display topology.
+    // Then: capture proves the retained virtual display can produce a frame
+    // before WindowServer is allowed to disable a physical display.
     assert_eq!(
         engine.adapter().events,
         vec![
             "snapshot",
             "create-virtual",
             "configure-virtual",
-            "isolate-physical",
             "capture-started",
+            "isolate-physical",
         ]
     );
-    assert_eq!(engine.active_phase(), Some(RecoveryPhase::FirstFrameReady));
+    assert_eq!(engine.active_phase(), Some(RecoveryPhase::Isolated));
 }
 
 #[test]
-fn hung_first_frame_restores_the_already_isolated_workspace() {
+fn hung_first_frame_recovers_without_attempting_physical_isolation() {
     // Given: an adapter whose capture never produces a first frame.
     let directory = tempfile::tempdir().unwrap();
     let store = RecoveryJournalStore::new(directory.path().join("display-recovery.json"));
@@ -176,20 +176,23 @@ fn hung_first_frame_restores_the_already_isolated_workspace() {
         .block_on(engine.start_session(session()))
         .unwrap_err();
 
-    // Then: timeout recovery restores the topology that was isolated before
-    // ScreenCaptureKit started.
+    // Then: timeout recovery never reaches physical isolation and still
+    // restores/verifies the durable pre-session topology before cleanup.
     assert!(matches!(
         error,
         WorkspaceLifecycleError::FirstFrameTimeout { .. }
     ));
-    assert!(engine.adapter().events.contains(&"isolate-physical"));
     assert_eq!(
-        &engine.adapter().events[5..],
-        &[
+        engine.adapter().events,
+        vec![
+            "snapshot",
+            "create-virtual",
+            "configure-virtual",
+            "capture-started",
             "stop-capture",
             "restore-physical",
             "verify-physical",
-            "destroy-virtual"
+            "destroy-virtual",
         ]
     );
 }

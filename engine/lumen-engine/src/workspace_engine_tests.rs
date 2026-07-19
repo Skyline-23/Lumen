@@ -22,7 +22,7 @@ fn command_kinds(
 }
 
 #[test]
-fn isolated_workspace_disconnects_physical_displays_before_capture_binds() {
+fn isolated_workspace_disconnects_physical_displays_after_first_frame_readiness() {
     // Given: a capture-managed isolated workspace request.
     let mut engine = WorkspaceEngine::default();
 
@@ -45,8 +45,8 @@ fn isolated_workspace_disconnects_physical_displays_before_capture_binds() {
             LumenWorkspaceCommandKind::ConfigureVirtualDisplay,
             LumenWorkspaceCommandKind::PromoteVirtualMain,
             LumenWorkspaceCommandKind::MoveTargetWindows,
-            LumenWorkspaceCommandKind::ApplyIsolation,
             LumenWorkspaceCommandKind::StartCapture,
+            LumenWorkspaceCommandKind::ApplyIsolation,
         ]
     );
     assert_eq!(engine.state, LumenWorkspaceState::Active);
@@ -109,7 +109,7 @@ fn externally_managed_capture_keeps_workspace_transaction_separate() {
 }
 
 #[test]
-fn external_capture_isolates_before_the_typed_first_frame_boundary() {
+fn external_capture_isolates_after_the_typed_first_frame_boundary() {
     let mut engine = WorkspaceEngine::default();
     assert_eq!(
         engine.begin_session(LumenWorkspaceSessionRequest {
@@ -134,12 +134,6 @@ fn external_capture_isolates_before_the_typed_first_frame_boundary() {
         );
     }
 
-    let isolate = engine.next_command().expect("pre-capture isolation");
-    assert_eq!(isolate.kind, LumenWorkspaceCommandKind::ApplyIsolation);
-    assert_eq!(
-        engine.complete_command(isolate, true),
-        LumenEngineStatus::Ok
-    );
     let barrier = engine.next_command().expect("first-frame barrier");
     assert_eq!(
         barrier.kind,
@@ -148,6 +142,12 @@ fn external_capture_isolates_before_the_typed_first_frame_boundary() {
     assert_eq!(engine.state, LumenWorkspaceState::Starting);
     assert_eq!(
         engine.complete_command(barrier, true),
+        LumenEngineStatus::Ok
+    );
+    let isolate = engine.next_command().expect("post-first-frame isolation");
+    assert_eq!(isolate.kind, LumenWorkspaceCommandKind::ApplyIsolation);
+    assert_eq!(
+        engine.complete_command(isolate, true),
         LumenEngineStatus::Ok
     );
     assert_eq!(engine.next_command(), Err(LumenEngineStatus::NoCommand));
@@ -166,20 +166,18 @@ fn unavailable_physical_isolation_is_nonfatal_after_virtual_main_promotion() {
         LumenEngineStatus::Ok
     );
 
-    loop {
-        let command = engine.next_command().expect("startup command");
-        if command.kind == LumenWorkspaceCommandKind::ApplyIsolation {
-            assert_eq!(
-                engine.complete_command_with_payload(
-                    command,
-                    WorkspaceCommandCompletion::physical_mutation_applied(false),
-                ),
-                LumenEngineStatus::Ok
-            );
-            assert!(engine.resources.physical_mutation_applied);
-            break;
-        }
-        assert_eq!(engine.complete_command(command, true), LumenEngineStatus::Ok);
+    for expected in [
+        LumenWorkspaceCommandKind::SnapshotWorkspace,
+        LumenWorkspaceCommandKind::CreateVirtualDisplay,
+        LumenWorkspaceCommandKind::ConfigureVirtualDisplay,
+        LumenWorkspaceCommandKind::PromoteVirtualMain,
+    ] {
+        let command = engine.next_command().expect("preparation command");
+        assert_eq!(command.kind, expected);
+        assert_eq!(
+            engine.complete_command(command, true),
+            LumenEngineStatus::Ok
+        );
     }
 
     let barrier = engine.next_command().expect("first-frame barrier");
@@ -187,6 +185,22 @@ fn unavailable_physical_isolation_is_nonfatal_after_virtual_main_promotion() {
         barrier.kind,
         LumenWorkspaceCommandKind::AwaitExternalFirstEncodedFrame
     );
+    assert_eq!(
+        engine.complete_command(barrier, true),
+        LumenEngineStatus::Ok
+    );
+    let isolate = engine.next_command().expect("post-first-frame isolation");
+    assert_eq!(isolate.kind, LumenWorkspaceCommandKind::ApplyIsolation);
+    assert_eq!(
+        engine.complete_command_with_payload(
+            isolate,
+            WorkspaceCommandCompletion::physical_mutation_applied(false),
+        ),
+        LumenEngineStatus::Ok
+    );
+    assert!(engine.resources.physical_mutation_applied);
+    assert_eq!(engine.next_command(), Err(LumenEngineStatus::NoCommand));
+    assert_eq!(engine.state, LumenWorkspaceState::Active);
 }
 
 #[test]

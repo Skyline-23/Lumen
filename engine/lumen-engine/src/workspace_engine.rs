@@ -157,13 +157,13 @@ impl WorkspaceEngine {
         if request.move_target_windows || request.policy == LumenWorkspacePolicy::FocusedWorkspace {
             self.enqueue(LumenWorkspaceCommandKind::MoveTargetWindows);
         }
-        if request.policy == LumenWorkspacePolicy::IsolatedWorkspace {
-            self.enqueue(LumenWorkspaceCommandKind::ApplyIsolation);
-        }
         if self.manage_capture {
             self.enqueue(LumenWorkspaceCommandKind::StartCapture);
         } else {
             self.enqueue(LumenWorkspaceCommandKind::AwaitExternalFirstEncodedFrame);
+        }
+        if request.policy == LumenWorkspacePolicy::IsolatedWorkspace {
+            self.enqueue(LumenWorkspaceCommandKind::ApplyIsolation);
         }
         self.finish_transition_if_ready();
         LumenEngineStatus::Ok
