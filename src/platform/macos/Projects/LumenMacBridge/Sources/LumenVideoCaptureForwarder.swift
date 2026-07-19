@@ -72,9 +72,17 @@ private struct LumenVideoIngressState: Sendable {
     var eventCount: UInt64 = 0
     var droppedFrameCount: UInt64 = 0
     var droppedEventCount: UInt64 = 0
+    var awaitingRecoveryKeyFrame = false
     var lastFrame: LumenBridgeDrainedVideoFrame?
     var lastEvent: LumenBridgeDrainedVideoEvent?
     var producerActive = false
+}
+
+enum LumenVideoForwardingAdmission: Equatable, Sendable {
+    case queued
+    case recoveryKeyFrameRequired
+    case waitingForRecoveryKeyFrame
+    case recoveredAtKeyFrame
 }
 
 /// Synchronous capture callbacks cannot hop to an actor without adding a frame of
@@ -136,7 +144,8 @@ final class LumenVideoCaptureForwarder: Sendable {
         }
     }
 
-    func consume(frame: LumenEncodedFrame) {
+    @discardableResult
+    func consume(frame: LumenEncodedFrame) -> LumenVideoForwardingAdmission {
         consume(
             sampleBuffer: frame.sampleBuffer,
             codec: frame.codec,
@@ -148,6 +157,7 @@ final class LumenVideoCaptureForwarder: Sendable {
         )
     }
 
+    @discardableResult
     func consume(
         sampleBuffer: CMSampleBuffer,
         codec: LumenCaptureCodec,
@@ -157,7 +167,7 @@ final class LumenVideoCaptureForwarder: Sendable {
         isKeyFrame: Bool,
         isHDRSignaled: Bool,
         isReplay: Bool = false
-    ) {
+    ) -> LumenVideoForwardingAdmission {
         let frame = LumenBridgeDrainedVideoFrame(
             codec: codec,
             payloadSize: sampleBuffer.totalSampleSize,
@@ -169,12 +179,23 @@ final class LumenVideoCaptureForwarder: Sendable {
             isReplay: isReplay,
             sampleBuffer: sampleBuffer
         )
-        state.withLock { value in
+        return state.withLock { value in
             value.frameCount &+= 1
             value.lastFrame = frame
+            if value.awaitingRecoveryKeyFrame {
+                guard isKeyFrame else {
+                    value.droppedFrameCount &+= 1
+                    return .waitingForRecoveryKeyFrame
+                }
+                value.awaitingRecoveryKeyFrame = false
+                value.frames.removeAll(keepingCapacity: true)
+                value.frames.append(frame)
+                return .recoveredAtKeyFrame
+            }
             if value.frames.count >= value.frameCapacity {
                 let droppedSourceDisplayTime = value.frames.first?.sourceDisplayTime
-                value.droppedFrameCount &+= UInt64(value.frames.count)
+                let queuedDropCount = value.frames.count
+                value.droppedFrameCount &+= UInt64(queuedDropCount)
                 value.frames.removeAll(keepingCapacity: true)
                 let overflowEvent = LumenBridgeDrainedVideoEvent(
                     kind: .droppedFrame,
@@ -190,8 +211,16 @@ final class LumenVideoCaptureForwarder: Sendable {
                     value.droppedEventCount &+= 1
                 }
                 value.events.append(overflowEvent)
+                if !isKeyFrame {
+                    value.droppedFrameCount &+= 1
+                    value.awaitingRecoveryKeyFrame = true
+                    return .recoveryKeyFrameRequired
+                }
+                value.frames.append(frame)
+                return .recoveredAtKeyFrame
             }
             value.frames.append(frame)
+            return .queued
         }
     }
 

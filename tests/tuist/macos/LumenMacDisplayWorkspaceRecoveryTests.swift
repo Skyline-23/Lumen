@@ -360,6 +360,30 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         XCTAssertEqual(fixture.physicalTopology(), topology)
     }
 
+    func testRetainedModeLessVirtualDisplayCanIsolateAfterActiveReadback() async throws {
+        let topology = isolationPhysicalTopology()
+        let fixture = IsolationDisplayFixture(physicalTopology: topology)
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: IsolationTopologyController(fixture: fixture),
+            physicalDisplayController: RecordingPhysicalDisplayController(fixture: fixture),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier()
+        )
+        _ = try await workspace.snapshotWorkspace(targetProcessIdentifiers: [])
+        fixture.publishModeLessVirtualDisplay(123)
+
+        try await workspace.isolateVirtualDisplay(123)
+
+        XCTAssertEqual(
+            fixture.controlCalls(),
+            topology.displays.compactMap { display in
+                UInt32(display.id).map { PhysicalControlCall(displayID: $0, enabled: false) }
+            }
+        )
+        XCTAssertTrue(
+            fixture.physicalTopology().displays.allSatisfy { !$0.active && !$0.enabled }
+        )
+    }
+
     func testSnapshotSurvivesRestoreUntilIndependentVerificationSucceeds() async throws {
         // Given: a workspace owns a snapshot and its first physical readback will fail.
         let topology = displayTopology()
@@ -677,6 +701,12 @@ private final class IsolationDisplayFixture: Sendable {
                 windowsAdapterLUID: nil,
                 windowsTargetPaths: []
             )
+            state.visibleDisplayIDs.insert(displayID)
+        }
+    }
+
+    func publishModeLessVirtualDisplay(_ displayID: UInt32) {
+        storage.withLock { state in
             state.visibleDisplayIDs.insert(displayID)
         }
     }

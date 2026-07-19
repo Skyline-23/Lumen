@@ -1283,8 +1283,11 @@ public actor LumenBridgeRuntime {
         let videoForwarder = self.videoForwarder
         let callbacks = LumenEncodedCaptureCallbacks(
             frameHandler: { frame in
-                videoForwarder.consume(frame: frame)
+                let admission = videoForwarder.consume(frame: frame)
                 Task {
+                    if admission == .recoveryKeyFrameRequired {
+                        await runtime.requestImmediateCaptureKeyFrame()
+                    }
                     await runtime.recordEncodedFrame(frame, generation: captureGeneration)
                 }
             },
