@@ -1260,6 +1260,9 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
 
         try setProperty(kVTCompressionPropertyKey_RealTime, value: true as CFBoolean)
         try setProperty(kVTCompressionPropertyKey_AllowFrameReordering, value: false as CFBoolean)
+        if configuration.codec == .hevc {
+            try setProperty(kVTCompressionPropertyKey_AllowOpenGOP, value: false as CFBoolean)
+        }
         try setProperty(kVTCompressionPropertyKey_ExpectedFrameRate, value: configuration.effectiveTargetFrameRate as CFNumber)
         try setProperty(kVTCompressionPropertyKey_MaxKeyFrameInterval, value: configuration.effectiveTargetFrameRate as CFNumber)
         if configuration.targetVideoBitRateKbps > 0 {
