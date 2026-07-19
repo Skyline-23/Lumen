@@ -382,6 +382,42 @@ private struct LumenEncodedFrameContext {
     let submissionMachTime: UInt64
 }
 
+enum LumenCodecAckVideoAdmissionDecision: Equatable, Sendable {
+    case submitInitialKeyFrame
+    case coalesceUntilAcknowledged
+    case submit
+}
+
+struct LumenCodecAckVideoAdmissionGate: Equatable, Sendable {
+    private(set) var isAwaitingAcknowledgement = false
+    private(set) var isOpen = false
+
+    mutating func admitSourceFrame() -> LumenCodecAckVideoAdmissionDecision {
+        if isOpen {
+            return .submit
+        }
+        if isAwaitingAcknowledgement {
+            return .coalesceUntilAcknowledged
+        }
+        isAwaitingAcknowledgement = true
+        return .submitInitialKeyFrame
+    }
+
+    mutating func acknowledgeConfiguration() -> Bool {
+        guard isAwaitingAcknowledgement, !isOpen else { return false }
+        isOpen = true
+        isAwaitingAcknowledgement = false
+        return true
+    }
+}
+
+private struct LumenPendingCodecAckVideoSource {
+    let imageBuffer: CVPixelBuffer
+    let presentationTime: CMTime
+    let displayTime: UInt64
+    let duration: CMTime
+}
+
 enum LumenScreenCaptureDisplayResolver {
     static func resolve<Value: Sendable>(
         displayID: UInt32,
@@ -649,6 +685,8 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
     private var outputContract: LumenExactEncodedOutputContract?
     private var sequenceNumber: UInt64 = 0
     private var forceKeyFrame = false
+    private var codecAckAdmission = LumenCodecAckVideoAdmissionGate()
+    private var pendingCodecAckSource: LumenPendingCodecAckVideoSource?
     private var inflightFrameCount = 0
     private var stopping = false
     private var firstSourceMachTime: UInt64?
@@ -895,6 +933,28 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
         }
     }
 
+    func resumeVideoEncodingAfterCodecAck() async -> Bool {
+        await withCheckedContinuation { continuation in
+            queue.async { [weak self] in
+                guard let self,
+                      self.codecAckAdmission.acknowledgeConfiguration() else {
+                    continuation.resume(returning: false)
+                    return
+                }
+                let pendingSource = self.pendingCodecAckSource
+                self.pendingCodecAckSource = nil
+                if let pendingSource {
+                    self.submitSource(pendingSource, forceKeyFrame: false)
+                }
+                self.eventHandler(.init(
+                    kind: .started,
+                    message: "VideoToolbox encoding resumed after codec acknowledgement coalesced-source=\(pendingSource != nil)"
+                ))
+                continuation.resume(returning: true)
+            }
+        }
+    }
+
     func attachSystemAudio(
         configuration: LumenMacAudioCaptureConfiguration,
         callbacks: LumenAudioCaptureCallbacks
@@ -1037,6 +1097,35 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
         let displayTime = LumenMachTime.ticks(for: presentationTime) ?? sourceMachTime
         let duration = CMTime(value: 1, timescale: CMTimeScale(configuration.effectiveTargetFrameRate))
 
+        let source = LumenPendingCodecAckVideoSource(
+            imageBuffer: imageBuffer,
+            presentationTime: presentationTime,
+            displayTime: displayTime,
+            duration: duration
+        )
+        switch codecAckAdmission.admitSourceFrame() {
+        case .submitInitialKeyFrame:
+            submitSource(source, forceKeyFrame: true)
+        case .coalesceUntilAcknowledged:
+            pendingCodecAckSource = source
+            statistics.pendingAdmissionDropCount &+= 1
+            refreshStatisticsNotesIfNeeded()
+        case .submit:
+            let forceKeyFrame = forceKeyFrame
+            self.forceKeyFrame = false
+            submitSource(source, forceKeyFrame: forceKeyFrame)
+        }
+    }
+
+    private func submitSource(
+        _ source: LumenPendingCodecAckVideoSource,
+        forceKeyFrame: Bool
+    ) {
+        guard let compressionSession else {
+            reportTerminalContractFailure(.invalidFormat("VideoToolbox compression session is unavailable"), sourceDisplayTime: source.displayTime)
+            return
+        }
+
         guard inflightFrameCount < maximumPendingFrameCount else {
             statistics.droppedFrameCount &+= 1
             statistics.pendingAdmissionDropCount &+= 1
@@ -1045,7 +1134,7 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
                 eventHandler(.init(
                     kind: .coalescedFrame,
                     message: "Dropped fresh ScreenCaptureKit frame before VT admission to cap pending latency",
-                    sourceDisplayTime: displayTime
+                    sourceDisplayTime: source.displayTime
                 ))
             }
             return
@@ -1055,21 +1144,19 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
         let context = UnsafeMutablePointer<LumenEncodedFrameContext>.allocate(capacity: 1)
         context.initialize(to: .init(
             sequenceNumber: sequenceNumber,
-            displayTime: displayTime,
+            displayTime: source.displayTime,
             submissionMachTime: mach_absolute_time()
         ))
 
-        var properties: CFDictionary?
-        if forceKeyFrame {
-            forceKeyFrame = false
-            properties = [kVTEncodeFrameOptionKey_ForceKeyFrame: true] as CFDictionary
-        }
+        let properties = forceKeyFrame
+            ? [kVTEncodeFrameOptionKey_ForceKeyFrame: true] as CFDictionary
+            : nil
 
         let status = VTCompressionSessionEncodeFrame(
             compressionSession,
-            imageBuffer: imageBuffer,
-            presentationTimeStamp: presentationTime,
-            duration: duration,
+            imageBuffer: source.imageBuffer,
+            presentationTimeStamp: source.presentationTime,
+            duration: source.duration,
             frameProperties: properties,
             sourceFrameRefcon: context,
             infoFlagsOut: nil
@@ -1310,6 +1397,8 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
             "videoToolboxConfiguredSourceFrameCount=\(width)x\(height)",
             "videoToolboxSubmittedFrameCount=\(statistics.submittedFrameCount)",
             "videoToolboxPendingAdmissionDropCount=\(statistics.pendingAdmissionDropCount)",
+            "videoToolboxCodecAckGateOpen=\(codecAckAdmission.isOpen)",
+            "videoToolboxCodecAckPendingSource=\(pendingCodecAckSource != nil)",
             "videoToolboxMaxInflightStagingSlots=\(statistics.maximumInflightFrameCount)",
             "videoToolboxOutputApproxFrameRate=\(outputApproxFrameRate)"
         ]
@@ -1584,6 +1673,11 @@ actor LumenEncodedCaptureSession {
 
     func requestImmediateKeyFrame() {
         runtime?.requestImmediateKeyFrame()
+    }
+
+    func resumeVideoEncodingAfterCodecAck() async -> Bool {
+        guard let runtime else { return false }
+        return await runtime.resumeVideoEncodingAfterCodecAck()
     }
 
     func attachSystemAudio(

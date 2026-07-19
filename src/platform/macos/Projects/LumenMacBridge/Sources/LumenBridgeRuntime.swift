@@ -1382,6 +1382,21 @@ public actor LumenBridgeRuntime {
         await encodedCaptureSession.requestImmediateKeyFrame()
     }
 
+    public func resumeVideoEncodingAfterCodecAck() async -> Bool {
+        guard await captureLifecycle.shouldRequestImmediateKeyFrame,
+              let encodedCaptureSession else {
+            logger.error("Rejecting codec acknowledgement because ScreenCaptureKit capture is not running")
+            return false
+        }
+        let resumed = await encodedCaptureSession.resumeVideoEncodingAfterCodecAck()
+        if resumed {
+            logger.notice("Resumed VideoToolbox encoding after codec configuration acknowledgement")
+        } else {
+            logger.error("Codec acknowledgement did not match a paused VideoToolbox admission boundary")
+        }
+        return resumed
+    }
+
     public func restartCapture(reason: String) async {
         guard let configuration = activeCaptureConfiguration else {
             logger.debug("Ignoring ScreenCaptureKit capture restart because no capture session is active reason=\(reason, privacy: .public)")

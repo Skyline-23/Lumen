@@ -5,6 +5,22 @@ import ScreenCaptureKit
 import XCTest
 
 final class LumenTuistBootstrapTests: XCTestCase {
+    func testCodecAckGateSubmitsOneKeyFrameThenCoalescesUntilAcknowledged() {
+        var gate = LumenCodecAckVideoAdmissionGate()
+
+        XCTAssertEqual(gate.admitSourceFrame(), .submitInitialKeyFrame)
+        XCTAssertEqual(gate.admitSourceFrame(), .coalesceUntilAcknowledged)
+        XCTAssertEqual(gate.admitSourceFrame(), .coalesceUntilAcknowledged)
+        XCTAssertTrue(gate.isAwaitingAcknowledgement)
+        XCTAssertFalse(gate.isOpen)
+
+        XCTAssertTrue(gate.acknowledgeConfiguration())
+        XCTAssertFalse(gate.isAwaitingAcknowledgement)
+        XCTAssertTrue(gate.isOpen)
+        XCTAssertEqual(gate.admitSourceFrame(), .submit)
+        XCTAssertFalse(gate.acknowledgeConfiguration())
+    }
+
     func testSystemAudioJoinsTheActiveVideoStreamForTheSameDisplay() throws {
         let configuration = LumenMacAudioCaptureConfiguration.systemOutput(displayID: 118)
 

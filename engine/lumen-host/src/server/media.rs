@@ -621,8 +621,6 @@ struct VideoSenderState {
     normalizer: Option<NativeVideoBitstreamNormalizer>,
     pending_frame: Option<NormalizedNativeVideoFrame>,
     pending_configuration_boundary: Option<u32>,
-    awaiting_acknowledged_key_frame: Option<u32>,
-    pre_ack_reference_drop_count: u64,
     frame_index: u32,
 }
 
@@ -656,8 +654,6 @@ impl VideoSenderState {
         self.normalizer = Some(NativeVideoBitstreamNormalizer::new(delivery.video_format));
         self.pending_frame = None;
         self.pending_configuration_boundary = None;
-        self.awaiting_acknowledged_key_frame = None;
-        self.pre_ack_reference_drop_count = 0;
         self.frame_index = 1;
         self.identity = Some(identity);
         Ok(())
@@ -709,8 +705,7 @@ fn poll_and_send_video(
             }
         };
         let configuration = match sender.stage(frame) {
-            Ok(VideoStageOutcome::Staged(configuration)) => configuration,
-            Ok(VideoStageOutcome::DroppedAwaitingKeyFrame) => return MediaAttempt::Waiting,
+            Ok(configuration) => configuration,
             Err(message) => return MediaAttempt::Failed(video_packetizer_failure(message)),
         };
         if let Some(configuration) = configuration {
@@ -722,25 +717,24 @@ fn poll_and_send_video(
             }
         }
     }
+    if let Some(configuration_id) = sender.acknowledged_configuration_boundary(delivery) {
+        if let Err(message) = platform.handle_control_event(
+            delivery.session_epoch,
+            crate::PlatformControlEvent::ResumeVideoEncodingAfterCodecAck,
+        ) {
+            return MediaAttempt::Failed(video_packetizer_failure(format!(
+                "could not resume video encoding after codec acknowledgement: {message}"
+            )));
+        }
+        sender.release_configuration_boundary(configuration_id);
+        eprintln!(
+            "Lumen native media stage=codec-ack-encoding-resumed session-epoch={} configuration-id={configuration_id}",
+            delivery.session_epoch
+        );
+    }
     match sender.send_staged(socket, delivery) {
         Ok(()) => MediaAttempt::Sent,
         Err(VideoSendError::WaitingForConfiguration) => MediaAttempt::Waiting,
-        Err(VideoSendError::NeedsAcknowledgedKeyFrame(configuration_id)) => {
-            if let Err(message) = platform.handle_control_event(
-                delivery.session_epoch,
-                crate::PlatformControlEvent::RequestIdrFrame,
-            ) {
-                return MediaAttempt::Failed(video_packetizer_failure(format!(
-                    "could not request an acknowledged video key frame: {message}"
-                )));
-            }
-            sender.begin_acknowledged_key_frame_resync(configuration_id);
-            eprintln!(
-                "Lumen native media stage=codec-ack-keyframe-requested session-epoch={} configuration-id={configuration_id}",
-                delivery.session_epoch
-            );
-            MediaAttempt::Waiting
-        }
         Err(VideoSendError::Failure(failure)) => MediaAttempt::Failed(failure),
     }
 }
@@ -764,9 +758,6 @@ fn send_video_frame(
             VideoSendError::WaitingForConfiguration => {
                 "native video configuration is not acknowledged".to_owned()
             }
-            VideoSendError::NeedsAcknowledgedKeyFrame(_) => {
-                "native video configuration acknowledgement requires a fresh key frame".to_owned()
-            }
             VideoSendError::Failure(failure) => failure.message,
         })
 }
@@ -774,13 +765,7 @@ fn send_video_frame(
 #[derive(Debug)]
 enum VideoSendError {
     WaitingForConfiguration,
-    NeedsAcknowledgedKeyFrame(u32),
     Failure(MediaFailure),
-}
-
-enum VideoStageOutcome {
-    Staged(Option<NativeVideoConfiguration>),
-    DroppedAwaitingKeyFrame,
 }
 
 fn video_packetizer_failure(message: String) -> MediaFailure {
@@ -796,23 +781,9 @@ impl VideoSenderState {
     fn stage(
         &mut self,
         frame: crate::PlatformEncodedVideoFrame,
-    ) -> Result<VideoStageOutcome, String> {
+    ) -> Result<Option<NativeVideoConfiguration>, String> {
         if self.pending_frame.is_some() {
             return Err("native video sender already has a pending frame".to_owned());
-        }
-        if self.awaiting_acknowledged_key_frame.is_some() && !frame.key_frame {
-            self.pre_ack_reference_drop_count = self.pre_ack_reference_drop_count.saturating_add(1);
-            if self.pre_ack_reference_drop_count == 1
-                || self.pre_ack_reference_drop_count % 120 == 0
-            {
-                eprintln!(
-                    "Lumen native media stage=pre-ack-reference-frame-dropped session-epoch={} configuration-id={} count={}",
-                    self.identity.as_ref().map_or(0, |identity| identity.session_epoch),
-                    self.awaiting_acknowledged_key_frame.unwrap_or_default(),
-                    self.pre_ack_reference_drop_count,
-                );
-            }
-            return Ok(VideoStageOutcome::DroppedAwaitingKeyFrame);
         }
         let normalized = self
             .normalizer
@@ -823,22 +794,20 @@ impl VideoSenderState {
         if let Some(configuration) = &configuration {
             self.pending_configuration_boundary = Some(configuration.configuration_id);
         }
-        if let Some(configuration_id) = self.awaiting_acknowledged_key_frame.take() {
-            eprintln!(
-                "Lumen native media stage=codec-ack-keyframe-ready session-epoch={} configuration-id={configuration_id} dropped-pre-ack-frames={}",
-                self.identity.as_ref().map_or(0, |identity| identity.session_epoch),
-                self.pre_ack_reference_drop_count
-            );
-        }
         self.pending_frame = Some(normalized);
-        Ok(VideoStageOutcome::Staged(configuration))
+        Ok(configuration)
     }
 
-    fn begin_acknowledged_key_frame_resync(&mut self, configuration_id: u32) {
-        self.pending_frame = None;
-        self.pending_configuration_boundary = None;
-        self.awaiting_acknowledged_key_frame = Some(configuration_id);
-        self.pre_ack_reference_drop_count = 0;
+    fn acknowledged_configuration_boundary(&self, delivery: &VideoDeliveryState) -> Option<u32> {
+        let configuration_id = self.pending_configuration_boundary?;
+        (delivery.acknowledged_configuration_id == Some(configuration_id))
+            .then_some(configuration_id)
+    }
+
+    fn release_configuration_boundary(&mut self, configuration_id: u32) {
+        if self.pending_configuration_boundary == Some(configuration_id) {
+            self.pending_configuration_boundary = None;
+        }
     }
 
     fn send_staged(
@@ -851,13 +820,6 @@ impl VideoSenderState {
                 "native video sender has no pending frame".to_owned(),
             ))
         })?;
-        if self.pending_configuration_boundary == Some(normalized.configuration_id)
-            && delivery.acknowledged_configuration_id == Some(normalized.configuration_id)
-        {
-            return Err(VideoSendError::NeedsAcknowledgedKeyFrame(
-                normalized.configuration_id,
-            ));
-        }
         if delivery.acknowledged_configuration_id != Some(normalized.configuration_id) {
             return Err(VideoSendError::WaitingForConfiguration);
         }
@@ -914,7 +876,6 @@ impl VideoSenderState {
             );
         }
         self.pending_frame = None;
-        self.pending_configuration_boundary = None;
         Ok(())
     }
 }
@@ -1141,19 +1102,11 @@ mod tests {
             acknowledged_configuration_id: Some(1),
             ..delivery
         };
-        assert!(matches!(
-            sender.send_staged(&sender_socket, &delivery),
-            Err(VideoSendError::NeedsAcknowledgedKeyFrame(1))
-        ));
-        sender.begin_acknowledged_key_frame_resync(1);
-        assert!(matches!(
-            sender
-                .stage(crate::media::native_video::test_fixtures::encoded_frame(
-                    delivery.video_format
-                ))
-                .unwrap(),
-            VideoStageOutcome::Staged(None)
-        ));
+        assert_eq!(
+            sender.acknowledged_configuration_boundary(&delivery),
+            Some(1)
+        );
+        sender.release_configuration_boundary(1);
         sender.send_staged(&sender_socket, &delivery).unwrap();
         let mut packet = [0_u8; 2_048];
         let (length, _) = receiver.recv_from(&mut packet).unwrap();
@@ -1187,16 +1140,11 @@ mod tests {
             acknowledged_configuration_id: Some(1),
             ..next_unacknowledged_delivery
         };
-        assert!(matches!(
-            sender.send_staged(&sender_socket, &next_delivery),
-            Err(VideoSendError::NeedsAcknowledgedKeyFrame(1))
-        ));
-        sender.begin_acknowledged_key_frame_resync(1);
-        sender
-            .stage(crate::media::native_video::test_fixtures::encoded_frame(
-                next_delivery.video_format,
-            ))
-            .unwrap();
+        assert_eq!(
+            sender.acknowledged_configuration_boundary(&next_delivery),
+            Some(1)
+        );
+        sender.release_configuration_boundary(1);
         sender.send_staged(&sender_socket, &next_delivery).unwrap();
         let (length, _) = receiver.recv_from(&mut packet).unwrap();
         assert_eq!(length, 1_200);
@@ -1210,7 +1158,7 @@ mod tests {
     }
 
     #[test]
-    fn codec_ack_requests_a_fresh_key_frame_and_drops_the_broken_reference_gap() {
+    fn codec_ack_releases_the_retained_key_frame_before_the_first_dependent_frame() {
         let receiver = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
         receiver
             .set_read_timeout(Some(Duration::from_secs(1)))
@@ -1230,11 +1178,6 @@ mod tests {
                     crate::media::native_video::test_fixtures::encoded_frame(video_format),
                 )),
                 Ok(Some(inter_frame(90_001))),
-                Ok(Some(inter_frame(90_002))),
-                Ok(Some(
-                    crate::media::native_video::test_fixtures::encoded_frame(video_format),
-                )),
-                Ok(Some(inter_frame(90_003))),
             ])),
             controls: Mutex::new(Vec::new()),
             motions: Mutex::new(Vec::new()),
@@ -1275,36 +1218,16 @@ mod tests {
                 &mut sender,
                 |_| true,
             ),
-            MediaAttempt::Waiting
+            MediaAttempt::Sent
         ));
         assert!(matches!(
             platform.controls.lock().unwrap().as_slice(),
-            [(77, crate::PlatformControlEvent::RequestIdrFrame)]
+            [(
+                77,
+                crate::PlatformControlEvent::ResumeVideoEncodingAfterCodecAck
+            )]
         ));
 
-        for _ in 0..2 {
-            assert!(matches!(
-                poll_and_send_video(
-                    &sender_socket,
-                    &acknowledged,
-                    &platform,
-                    &mut sender,
-                    |_| true,
-                ),
-                MediaAttempt::Waiting
-            ));
-        }
-        assert_eq!(sender.pre_ack_reference_drop_count, 2);
-        assert!(matches!(
-            poll_and_send_video(
-                &sender_socket,
-                &acknowledged,
-                &platform,
-                &mut sender,
-                |_| true,
-            ),
-            MediaAttempt::Sent
-        ));
         assert!(matches!(
             poll_and_send_video(
                 &sender_socket,
@@ -1565,7 +1488,7 @@ mod tests {
                 &mut video_sender,
                 |_| true,
             ),
-            MediaAttempt::Waiting
+            MediaAttempt::Sent
         ));
         assert!(matches!(
             poll_and_send_video(
@@ -1588,18 +1511,11 @@ mod tests {
             MediaAttempt::Sent
         ));
         assert!(matches!(
-            poll_and_send_video(
-                &sender_socket,
-                &video_delivery,
-                &platform,
-                &mut video_sender,
-                |_| true,
-            ),
-            MediaAttempt::Sent
-        ));
-        assert!(matches!(
             platform.controls.lock().unwrap().as_slice(),
-            [(77, crate::PlatformControlEvent::RequestIdrFrame)]
+            [(
+                77,
+                crate::PlatformControlEvent::ResumeVideoEncodingAfterCodecAck
+            )]
         ));
 
         let mut datagram = [0_u8; 2_048];
