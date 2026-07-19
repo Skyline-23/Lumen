@@ -162,6 +162,70 @@ final class LumenVideoToolboxCapabilityProbeTests: XCTestCase {
         try assertHardwareDecode(recoveryChain)
     }
 
+    func testForwarderOverflowPublishesOnlyFreshHardwareDecodableRecoveryChain() throws {
+        let width = 3_512
+        let height = 2_420
+        let collector = LumenVTReferenceChainCollector()
+        let session = try makeMain10CompressionSession(
+            width: width,
+            height: height,
+            collector: collector
+        )
+        defer { VTCompressionSessionInvalidate(session) }
+
+        for frameIndex in 0 ..< 5 {
+            try encode(
+                makeMain10PixelBuffer(
+                    width: width,
+                    height: height,
+                    luma: UInt16(128 + frameIndex * 64)
+                ),
+                session: session,
+                timestamp: CMTime(value: CMTimeValue(frameIndex), timescale: 120),
+                forceKeyFrame: frameIndex == 0 || frameIndex == 3
+            )
+        }
+        XCTAssertEqual(
+            VTCompressionSessionCompleteFrames(session, untilPresentationTimeStamp: .invalid),
+            noErr
+        )
+        let samples = collector.waitForSamples(5, timeout: 15)
+        XCTAssertEqual(samples.count, 5)
+        XCTAssertTrue(isKeyFrame(samples[0]))
+        XCTAssertTrue(isKeyFrame(samples[3]))
+
+        let forwarder = LumenVideoCaptureForwarder()
+        forwarder.setFrameCapacity(1)
+        for index in 0 ... 3 {
+            forwarder.consume(
+                sampleBuffer: samples[index],
+                codec: .hevc,
+                sourceSequenceNumber: UInt64(index + 1),
+                sourceDisplayTime: UInt64(index + 1),
+                isKeyFrame: isKeyFrame(samples[index]),
+                isHDRSignaled: true
+            )
+        }
+        let recoveredKeyFrame = try XCTUnwrap(forwarder.popNextFrame())
+        XCTAssertEqual(recoveredKeyFrame.sourceSequenceNumber, 4)
+        XCTAssertTrue(recoveredKeyFrame.isKeyFrame)
+
+        forwarder.consume(
+            sampleBuffer: samples[4],
+            codec: .hevc,
+            sourceSequenceNumber: 5,
+            sourceDisplayTime: 5,
+            isKeyFrame: false,
+            isHDRSignaled: true
+        )
+        let recoveredDependentFrame = try XCTUnwrap(forwarder.popNextFrame())
+        XCTAssertEqual(recoveredDependentFrame.sourceSequenceNumber, 5)
+        try assertHardwareDecode([
+            recoveredKeyFrame.sampleBuffer,
+            recoveredDependentFrame.sampleBuffer,
+        ])
+    }
+
     func testRequiredHardware420ProfilesRemainDiscoverable() throws {
         let h264Profiles = try supportedProfiles(codec: kCMVideoCodecType_H264)
         let hevcProfiles = try supportedProfiles(codec: kCMVideoCodecType_HEVC)
@@ -386,6 +450,19 @@ final class LumenVideoToolboxCapabilityProbeTests: XCTestCase {
         XCTAssertEqual(VTSessionSetProperty(resolved, key: kVTCompressionPropertyKey_TransferFunction, value: kCMFormatDescriptionTransferFunction_SMPTE_ST_2084_PQ), noErr)
         XCTAssertEqual(VTSessionSetProperty(resolved, key: kVTCompressionPropertyKey_YCbCrMatrix, value: kCMFormatDescriptionYCbCrMatrix_ITU_R_2020), noErr)
         XCTAssertEqual(VTCompressionSessionPrepareToEncodeFrames(resolved), noErr)
+        var openGOPValue: CFTypeRef?
+        XCTAssertEqual(
+            withUnsafeMutablePointer(to: &openGOPValue) { pointer in
+                VTSessionCopyProperty(
+                    resolved,
+                    key: kVTCompressionPropertyKey_AllowOpenGOP,
+                    allocator: kCFAllocatorDefault,
+                    valueOut: UnsafeMutableRawPointer(pointer)
+                )
+            },
+            noErr
+        )
+        XCTAssertEqual(openGOPValue as? Bool, false)
         return resolved
     }
 

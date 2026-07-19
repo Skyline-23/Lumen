@@ -374,6 +374,7 @@ struct LumenExactCaptureAuditSnapshot: Codable, Equatable, Sendable {
     var lumaBitDepth: Int?
     var chromaBitDepth: Int?
     var conversionCount: Int = 0
+    var allowOpenGOP: Bool?
 }
 
 private struct LumenEncodedFrameContext {
@@ -1017,7 +1018,7 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
         guard type == .screen,
               CMSampleBufferIsValid(sampleBuffer),
               let imageBuffer = sampleBuffer.imageBuffer,
-              let compressionSession else {
+              compressionSession != nil else {
             return
         }
 
@@ -1127,6 +1128,9 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
         }
 
         guard inflightFrameCount < maximumPendingFrameCount else {
+            if forceKeyFrame {
+                self.forceKeyFrame = true
+            }
             statistics.droppedFrameCount &+= 1
             statistics.pendingAdmissionDropCount &+= 1
             refreshStatisticsNotesIfNeeded()
@@ -1301,6 +1305,24 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
             throw LumenScreenCaptureError.compressionSessionPreparationFailed(prepareStatus)
         }
 
+        if configuration.codec == .hevc {
+            var openGOPValue: CFTypeRef?
+            let openGOPStatus = withUnsafeMutablePointer(to: &openGOPValue) { pointer in
+                VTSessionCopyProperty(
+                    session,
+                    key: kVTCompressionPropertyKey_AllowOpenGOP,
+                    allocator: kCFAllocatorDefault,
+                    valueOut: UnsafeMutableRawPointer(pointer)
+                )
+            }
+            guard openGOPStatus == noErr, openGOPValue as? Bool == false else {
+                throw LumenExactCaptureError.invalidFormat(
+                    "VideoToolbox did not retain the required closed-GOP HEVC contract"
+                )
+            }
+            statistics.exactCaptureAudit.allowOpenGOP = false
+        }
+
         var hardwareValue: CFTypeRef?
         let hardwareStatus = withUnsafeMutablePointer(to: &hardwareValue) { pointer in
             VTSessionCopyProperty(
@@ -1397,6 +1419,7 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
             "videoToolboxConversionCount=0",
             "videoToolboxProfile=\(encodingPlan?.profile ?? "unresolved")",
             "videoToolboxHardwareRequired=true",
+            "videoToolboxAllowOpenGOP=\(statistics.exactCaptureAudit.allowOpenGOP.map { String($0) } ?? "n/a")",
             "videoToolboxConfiguredSourceFrameCount=\(width)x\(height)",
             "videoToolboxSubmittedFrameCount=\(statistics.submittedFrameCount)",
             "videoToolboxPendingAdmissionDropCount=\(statistics.pendingAdmissionDropCount)",

@@ -749,7 +749,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(snapshot.lastEventKind, .droppedFrame)
     }
 
-    func testBridgeForwardingDropsOldestFramesWhenCapacityIsExceeded() async throws {
+    func testBridgeForwardingRequiresFreshKeyFrameAfterCapacityOverflow() async throws {
         let runtime = LumenBridgeRuntime()
         await runtime.debugResetVideoForwarding()
         await runtime.configureVideoForwarding(frameCapacity: 1, eventCapacity: 1)
@@ -783,19 +783,63 @@ final class LumenTuistBootstrapTests: XCTestCase {
         let snapshot = await runtime.videoForwardingSnapshot()
         XCTAssertEqual(snapshot.frameCount, 2)
         XCTAssertEqual(snapshot.eventCount, 1)
-        XCTAssertEqual(snapshot.queuedFrameCount, 1)
+        XCTAssertEqual(snapshot.queuedFrameCount, 0)
         XCTAssertEqual(snapshot.queuedEventCount, 1)
-        XCTAssertEqual(snapshot.droppedFrameCount, 1)
+        XCTAssertEqual(snapshot.droppedFrameCount, 2)
         XCTAssertEqual(snapshot.lastEventKind, .droppedFrame)
 
-        let drainedFrame = await runtime.drainNextVideoForwardedFrame()
-        XCTAssertEqual(drainedFrame?.sourceSequenceNumber, 2)
-        XCTAssertEqual(try Self.payloadBytes(from: try XCTUnwrap(drainedFrame?.sampleBuffer)), Data([0x02]))
+        let discardedFrame = await runtime.drainNextVideoForwardedFrame()
+        XCTAssertNil(discardedFrame)
 
         let drainedEvent = await runtime.drainNextVideoForwardedEvent()
         XCTAssertEqual(drainedEvent?.kind, .droppedFrame)
         XCTAssertEqual(drainedEvent?.message, "core-forwarder-overflow")
         XCTAssertEqual(drainedEvent?.sourceDisplayTime, 10)
+    }
+
+    func testBridgeForwardingDropsDependentsUntilRecoveryKeyFrame() async throws {
+        let runtime = LumenBridgeRuntime()
+        await runtime.debugResetVideoForwarding()
+        await runtime.configureVideoForwarding(frameCapacity: 1, eventCapacity: 2)
+
+        for (sequence, keyFrame) in [(1, true), (2, false), (3, false), (4, true)] {
+            await runtime.debugForwardSyntheticFrame(
+                sampleBuffer: try Self.makeEncodedSampleBuffer(
+                    payload: Data([UInt8(sequence)]),
+                    codecType: kCMVideoCodecType_HEVC
+                ),
+                codec: .hevc,
+                sourceSequenceNumber: UInt64(sequence),
+                sourceDisplayTime: UInt64(sequence * 10),
+                isKeyFrame: keyFrame,
+                isHDRSignaled: true
+            )
+        }
+
+        let recoveredFrame = await runtime.drainNextVideoForwardedFrame()
+        let recovered = try XCTUnwrap(recoveredFrame)
+        XCTAssertEqual(recovered.sourceSequenceNumber, 4)
+        XCTAssertTrue(recovered.isKeyFrame)
+        XCTAssertEqual(try Self.payloadBytes(from: recovered.sampleBuffer), Data([0x04]))
+
+        await runtime.debugForwardSyntheticFrame(
+            sampleBuffer: try Self.makeEncodedSampleBuffer(
+                payload: Data([0x05]),
+                codecType: kCMVideoCodecType_HEVC
+            ),
+            codec: .hevc,
+            sourceSequenceNumber: 5,
+            sourceDisplayTime: 50,
+            isKeyFrame: false,
+            isHDRSignaled: true
+        )
+
+        let snapshot = await runtime.videoForwardingSnapshot()
+        XCTAssertEqual(snapshot.frameCount, 5)
+        XCTAssertEqual(snapshot.droppedFrameCount, 3)
+        XCTAssertEqual(snapshot.queuedFrameCount, 1)
+        let dependent = await runtime.drainNextVideoForwardedFrame()
+        XCTAssertEqual(dependent?.sourceSequenceNumber, 5)
     }
 
 }
