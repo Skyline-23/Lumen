@@ -222,9 +222,12 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
         do {
             let current = try await topologyController.capture()
             let visibleDisplayIDs = await topologyController.visibleDisplayIDs()
-            guard current.displays.contains(where: {
-                $0.id == String(displayID) && $0.active && $0.online
-            }), visibleDisplayIDs.contains(displayID) else {
+            guard visibleDisplayIDs.contains(displayID) else {
+                throw LumenMacDisplayWorkspaceError.displayNotFound(displayID)
+            }
+            if let publishedVirtualDisplay = current.displays.first(where: {
+                $0.id == String(displayID)
+            }), !publishedVirtualDisplay.active || !publishedVirtualDisplay.online {
                 throw LumenMacDisplayWorkspaceError.displayNotFound(displayID)
             }
 
@@ -347,9 +350,10 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             UInt32(state.id).map { ($0, state) }
         })
         let visibleDisplayIDs = await topologyController.visibleDisplayIDs()
-        guard let virtualState = statesByID[virtualDisplayID],
-              virtualState.online,
-              virtualState.active,
+        let publishedVirtualDisplayIsActive = statesByID[virtualDisplayID].map {
+            $0.online && $0.active
+        } ?? true
+        guard publishedVirtualDisplayIsActive,
               visibleDisplayIDs.contains(virtualDisplayID),
               physicalDisplayIDs.allSatisfy({ statesByID[$0]?.active != true }),
               physicalDisplayIDs.isDisjoint(with: visibleDisplayIDs) else {
