@@ -200,6 +200,10 @@ impl<A: WorkspacePlatformAdapter> RecoverableWorkspaceEngine<A> {
             .configure_virtual_display(&virtual_display)
             .await?;
         self.update_phase(RecoveryPhase::VirtualConfigured)?;
+        self.update_phase(RecoveryPhase::IsolationStarted)?;
+        let topology = self.active_topology()?.clone();
+        self.adapter.isolate_physical_displays(&topology).await?;
+        self.update_phase(RecoveryPhase::Isolated)?;
         self.update_phase(RecoveryPhase::CaptureStarting)?;
         match tokio::time::timeout(
             self.first_frame_timeout,
@@ -215,10 +219,7 @@ impl<A: WorkspacePlatformAdapter> RecoverableWorkspaceEngine<A> {
             }
         }
         self.update_phase(RecoveryPhase::FirstFrameReady)?;
-        self.update_phase(RecoveryPhase::IsolationStarted)?;
-        let topology = self.active_topology()?.clone();
-        self.adapter.isolate_physical_displays(&topology).await?;
-        self.update_phase(RecoveryPhase::Isolated)
+        Ok(())
     }
 
     async fn cleanup_active(&mut self) -> Result<(), WorkspaceLifecycleError> {

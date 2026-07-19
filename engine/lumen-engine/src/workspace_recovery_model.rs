@@ -67,6 +67,14 @@ pub struct PhysicalDisplayMode {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct PhysicalDisplayState {
     pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vendor_id: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub product_id: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub serial_number: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub builtin: Option<bool>,
     pub mode: PhysicalDisplayMode,
     pub origin_x: i32,
     pub origin_y: i32,
@@ -117,6 +125,10 @@ pub struct WorkspaceRecoveryJournal {
     pub physical_topology: PhysicalDisplayTopology,
     pub timestamp_unix_ms: u64,
     pub capture_managed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub physical_mutation_applied: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_mutation_applied: Option<bool>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -143,6 +155,8 @@ impl WorkspaceRecoveryJournal {
             physical_topology,
             timestamp_unix_ms: metadata.timestamp_unix_ms,
             capture_managed: metadata.capture_managed,
+            physical_mutation_applied: Some(false),
+            window_mutation_applied: Some(false),
         };
         journal.validate()?;
         Ok(journal)
@@ -150,12 +164,54 @@ impl WorkspaceRecoveryJournal {
 
     pub fn with_phase(mut self, phase: RecoveryPhase) -> Self {
         self.phase = phase;
+        if matches!(
+            phase,
+            RecoveryPhase::VirtualPromoted
+                | RecoveryPhase::IsolationStarted
+                | RecoveryPhase::Isolated
+        ) {
+            self.physical_mutation_applied = Some(true);
+        }
+        if phase == RecoveryPhase::TargetWindowsMoved {
+            self.window_mutation_applied = Some(true);
+        }
         self
     }
 
     pub fn with_virtual_display(mut self, identity: VirtualDisplayIdentity) -> Self {
         self.virtual_display = Some(identity);
         self
+    }
+
+    pub fn with_physical_mutation_applied(mut self, applied: bool) -> Self {
+        self.physical_mutation_applied = Some(applied);
+        self
+    }
+
+    pub fn with_window_mutation_applied(mut self, applied: bool) -> Self {
+        self.window_mutation_applied = Some(applied);
+        self
+    }
+
+    pub(crate) fn physical_mutation_was_applied(&self) -> bool {
+        self.physical_mutation_applied
+            .unwrap_or_else(|| self.phase.physical_restore_required())
+    }
+
+    pub(crate) fn physical_restore_required(&self) -> bool {
+        self.workspace_mutation_was_applied() && self.phase.physical_restore_required()
+    }
+
+    pub(crate) fn restoration_verification_required(&self) -> bool {
+        self.workspace_mutation_was_applied() && self.phase.verification_required()
+    }
+
+    pub(crate) fn window_mutation_was_applied(&self) -> bool {
+        self.window_mutation_applied.unwrap_or(false)
+    }
+
+    pub(crate) fn workspace_mutation_was_applied(&self) -> bool {
+        self.physical_mutation_was_applied() || self.window_mutation_was_applied()
     }
 
     pub(crate) fn validate(&self) -> Result<(), RecoveryJournalError> {

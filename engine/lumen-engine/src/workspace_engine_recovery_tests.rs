@@ -52,6 +52,10 @@ fn pending_journal(generation: u64) -> WorkspaceRecoveryJournal {
         PhysicalDisplayTopology {
             displays: vec![PhysicalDisplayState {
                 id: "physical-1".to_owned(),
+                vendor_id: None,
+                product_id: None,
+                serial_number: None,
+                builtin: None,
                 mode: PhysicalDisplayMode {
                     width: 2560,
                     height: 1440,
@@ -78,7 +82,7 @@ fn pending_journal(generation: u64) -> WorkspaceRecoveryJournal {
 }
 
 #[test]
-fn failed_restore_is_a_hard_barrier_before_virtual_destroy() {
+fn failed_restore_preserves_the_journal_but_still_destroys_the_virtual_display() {
     // Given: cleanup has stopped capture and is restoring an isolated workspace.
     let mut engine = WorkspaceEngine::default();
     complete_startup(&mut engine);
@@ -95,7 +99,17 @@ fn failed_restore_is_a_hard_barrier_before_virtual_destroy() {
         LumenEngineStatus::CommandFailed
     );
 
-    // Then: destroy is never emitted and the planner remains stopped for recovery.
+    // Then: physical recovery remains pending, but owned virtual display cleanup
+    // is independent so a reconnect cannot be poisoned by an orphan display.
+    let destroy = engine.next_command().expect("virtual display destroy");
+    assert_eq!(
+        destroy.kind,
+        LumenWorkspaceCommandKind::DestroyVirtualDisplay
+    );
+    assert_eq!(
+        engine.complete_command(destroy, true),
+        LumenEngineStatus::Ok
+    );
     assert_eq!(engine.next_command(), Err(LumenEngineStatus::NoCommand));
     assert_eq!(engine.state, LumenWorkspaceState::Stopping);
 }
@@ -168,7 +182,7 @@ fn ffi_recovers_durable_journal_before_emitting_new_session_commands() {
 }
 
 #[test]
-fn ffi_restore_failure_preserves_journal_and_blocks_destroy() {
+fn ffi_restore_failure_preserves_journal_and_allows_owned_display_destroy() {
     // Given: production recovery reaches the restore command with a durable journal.
     let directory = tempfile::tempdir().unwrap();
     let journal_path = directory.path().join("display-recovery.json");
@@ -201,7 +215,18 @@ fn ffi_restore_failure_preserves_journal_and_blocks_destroy() {
         LumenEngineStatus::CommandFailed
     );
 
-    // Then: the journal survives restart and no destroy command is available.
+    // Then: the journal survives for typed physical recovery, while the owned
+    // virtual display still receives its independent destroy command.
+    assert!(journal_path.exists());
+    assert_eq!(
+        lumen_workspace_engine_next_command(engine, &mut command),
+        LumenEngineStatus::Ok
+    );
+    assert_eq!(
+        command.kind,
+        LumenWorkspaceCommandKind::DestroyVirtualDisplay
+    );
+    assert_eq!(complete_ffi(engine, command, true), LumenEngineStatus::Ok);
     assert!(journal_path.exists());
     assert_eq!(
         lumen_workspace_engine_next_command(engine, &mut command),

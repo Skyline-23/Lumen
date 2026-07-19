@@ -36,7 +36,6 @@ public enum LumenMacWorkspaceSessionError: Error, Equatable {
     case sessionNotStarted
     case recoveryDidNotComplete
     case virtualDisplayOwnershipMismatch
-    case isolationCommandMissing
 }
 
 public struct LumenMacWorkspaceActivationOutcome: Equatable, Sendable {
@@ -291,7 +290,8 @@ public actor LumenMacWorkspaceSession {
         do {
             while let command = try await coordinator.nextCommand() {
                 do {
-                    if command.action == .startCapture ||
+                    if command.action == .applyIsolation ||
+                        command.action == .startCapture ||
                         command.action == .awaitExternalFirstEncodedFrame {
                         try await executor.verifyOwnedVirtualDisplay()
                     }
@@ -335,17 +335,9 @@ public actor LumenMacWorkspaceSession {
             let result = try await executor.execute(activationCommand)
             try await coordinator.complete(activationCommand, result: result)
             self.activationCommand = nil
-            let isolationStatus: LumenMacWorkspaceIsolationStatus
+            let isolationStatus = await executor.physicalIsolationStatus()
             if request.policy == .isolatedWorkspace {
-                guard let isolationCommand = try await coordinator.nextCommand(),
-                      isolationCommand.action == .applyIsolation else {
-                    throw LumenMacWorkspaceSessionError.isolationCommandMissing
-                }
-                isolationStatus = await executor.preserveStableCaptureTopologyInsteadOfIsolation()
-                try await coordinator.complete(isolationCommand, result: .succeeded)
                 await isolationStatusHandler(isolationStatus)
-            } else {
-                isolationStatus = .notRequested
             }
             phase = .active
             return LumenMacWorkspaceActivationOutcome(isolationStatus: isolationStatus)

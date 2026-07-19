@@ -103,7 +103,7 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         try await workspace.promoteVirtualDisplay(117)
     }
 
-    func testRestoreIgnoresTransientVirtualDisplayModeReadback() async throws {
+    func testRestoreSkipsCoreGraphicsMutationWhenPhysicalTopologyAlreadyConverged() async throws {
         let topology = displayTopology()
         let physicalDisplayID = try XCTUnwrap(topology.displays.first.flatMap { UInt32($0.id) })
         let controller = TransientVirtualDisplayTopologyController(
@@ -118,7 +118,7 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         try await workspace.restoreWorkspace(topology)
 
         let restoredTopologies = await controller.restoredTopologies()
-        XCTAssertEqual(restoredTopologies, [topology])
+        XCTAssertTrue(restoredTopologies.isEmpty)
     }
 
     func testModeSelectionUsesCurrentModeWhenEnumerationOmitsIt() {
@@ -136,6 +136,121 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
                 expected: current
             ),
             0
+        )
+    }
+
+    func testStableHardwareIdentityRemapsChangedCoreGraphicsDisplayID() throws {
+        let expected = LumenMacPhysicalDisplayTopology(
+            displays: [physicalDisplayState(
+                id: "2",
+                originX: 0,
+                vendorID: 1_554,
+                productID: 4_096,
+                serialNumber: 77,
+                builtin: true
+            )],
+            windowsAdapterLUID: nil,
+            windowsTargetPaths: []
+        )
+        let current = physicalDisplayState(
+            id: "1",
+            originX: 0,
+            vendorID: 1_554,
+            productID: 4_096,
+            serialNumber: 77,
+            builtin: true
+        )
+
+        let resolved = try LumenCoreGraphicsDisplayTopologyController.resolveDisplayIDs(
+            for: expected,
+            candidates: [current]
+        )
+
+        XCTAssertEqual(resolved, ["2": 1])
+    }
+
+    func testLegacySingleDisplayJournalRemapsOnlyOneMatchingNonLumenDisplay() throws {
+        let expected = LumenMacPhysicalDisplayTopology(
+            displays: [physicalDisplayState(id: "2", originX: 0)],
+            windowsAdapterLUID: nil,
+            windowsTargetPaths: []
+        )
+        let physical = physicalDisplayState(id: "1", originX: 0)
+        let lumenVirtual = physicalDisplayState(
+            id: "26",
+            originX: 0,
+            vendorID: 6_973,
+            productID: 0xA901,
+            serialNumber: 1,
+            builtin: false
+        )
+
+        let resolved = try LumenCoreGraphicsDisplayTopologyController.resolveDisplayIDs(
+            for: expected,
+            candidates: [physical, lumenVirtual]
+        )
+
+        XCTAssertEqual(resolved, ["2": 1])
+    }
+
+    func testLegacyJournalRefusesAmbiguousPhysicalDisplayRemap() {
+        let expected = LumenMacPhysicalDisplayTopology(
+            displays: [physicalDisplayState(id: "2", originX: 0)],
+            windowsAdapterLUID: nil,
+            windowsTargetPaths: []
+        )
+
+        XCTAssertThrowsError(
+            try LumenCoreGraphicsDisplayTopologyController.resolveDisplayIDs(
+                for: expected,
+                candidates: [
+                    physicalDisplayState(id: "1", originX: 0),
+                    physicalDisplayState(id: "3", originX: 0),
+                ]
+            )
+        )
+    }
+
+    func testLegacyCorruptModeConvergesOnlyToOneActiveBuiltinDisplay() throws {
+        let expected = LumenMacPhysicalDisplayTopology(
+            displays: [LumenMacPhysicalDisplayState(
+                id: "2",
+                mode: LumenMacPhysicalDisplayMode(
+                    width: 5_120,
+                    height: 2_880,
+                    refreshMillihertz: 240_000,
+                    bitDepth: 8
+                ),
+                originX: 0,
+                originY: 0,
+                mirrorMasterID: nil,
+                enabled: true,
+                active: true,
+                online: true
+            )],
+            windowsAdapterLUID: nil,
+            windowsTargetPaths: []
+        )
+        let currentBuiltin = physicalDisplayState(
+            id: "1",
+            originX: 0,
+            vendorID: 1_552,
+            productID: 41_049,
+            serialNumber: 4_251_086_178,
+            builtin: true
+        )
+        let resolved = try LumenCoreGraphicsDisplayTopologyController.resolveDisplayIDs(
+            for: expected,
+            candidates: [currentBuiltin]
+        )
+
+        XCTAssertEqual(resolved, ["2": 1])
+        XCTAssertTrue(
+            LumenCoreGraphicsDisplayTopologyController.matches(
+                actual: currentBuiltin,
+                expected: try XCTUnwrap(expected.displays.first),
+                resolvedIDs: resolved
+            )
         )
     }
 
@@ -480,11 +595,19 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
     private func physicalDisplayState(
         id: String,
         originX: Int32,
+        vendorID: UInt32? = nil,
+        productID: UInt32? = nil,
+        serialNumber: UInt32? = nil,
+        builtin: Bool? = nil,
         enabled: Bool = true,
         active: Bool = true
     ) -> LumenMacPhysicalDisplayState {
         LumenMacPhysicalDisplayState(
             id: id,
+            vendorID: vendorID,
+            productID: productID,
+            serialNumber: serialNumber,
+            builtin: builtin,
             mode: LumenMacPhysicalDisplayMode(
                 width: 2560,
                 height: 1440,

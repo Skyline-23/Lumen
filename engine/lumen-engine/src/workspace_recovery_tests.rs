@@ -96,6 +96,10 @@ fn topology() -> PhysicalDisplayTopology {
     PhysicalDisplayTopology {
         displays: vec![PhysicalDisplayState {
             id: "physical-1".to_owned(),
+            vendor_id: None,
+            product_id: None,
+            serial_number: None,
+            builtin: None,
             mode: PhysicalDisplayMode {
                 width: 2560,
                 height: 1440,
@@ -131,7 +135,7 @@ pub(crate) fn runtime() -> tokio::runtime::Runtime {
 }
 
 #[test]
-fn first_encoded_frame_precedes_physical_isolation() {
+fn physical_isolation_precedes_capture_binding_and_first_encoded_frame() {
     // Given: an empty recovery store and a first-frame-capable adapter.
     let directory = tempfile::tempdir().unwrap();
     let store = RecoveryJournalStore::new(directory.path().join("display-recovery.json"));
@@ -141,22 +145,23 @@ fn first_encoded_frame_precedes_physical_isolation() {
     // When: a workspace session starts successfully.
     runtime().block_on(engine.start_session(session())).unwrap();
 
-    // Then: isolation occurs only after capture reports its first encoded frame.
+    // Then: WindowServer finishes physical isolation before capture binds to the
+    // stable virtual-display topology.
     assert_eq!(
         engine.adapter().events,
         vec![
             "snapshot",
             "create-virtual",
             "configure-virtual",
-            "capture-started",
             "isolate-physical",
+            "capture-started",
         ]
     );
-    assert_eq!(engine.active_phase(), Some(RecoveryPhase::Isolated));
+    assert_eq!(engine.active_phase(), Some(RecoveryPhase::FirstFrameReady));
 }
 
 #[test]
-fn hung_first_frame_times_out_without_isolating() {
+fn hung_first_frame_restores_the_already_isolated_workspace() {
     // Given: an adapter whose capture never produces a first frame.
     let directory = tempfile::tempdir().unwrap();
     let store = RecoveryJournalStore::new(directory.path().join("display-recovery.json"));
@@ -171,14 +176,15 @@ fn hung_first_frame_times_out_without_isolating() {
         .block_on(engine.start_session(session()))
         .unwrap_err();
 
-    // Then: timeout recovery restores topology and never isolates it.
+    // Then: timeout recovery restores the topology that was isolated before
+    // ScreenCaptureKit started.
     assert!(matches!(
         error,
         WorkspaceLifecycleError::FirstFrameTimeout { .. }
     ));
-    assert!(!engine.adapter().events.contains(&"isolate-physical"));
+    assert!(engine.adapter().events.contains(&"isolate-physical"));
     assert_eq!(
-        &engine.adapter().events[4..],
+        &engine.adapter().events[5..],
         &[
             "stop-capture",
             "restore-physical",

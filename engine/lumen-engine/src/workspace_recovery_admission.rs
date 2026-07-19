@@ -66,10 +66,12 @@ impl WorkspaceEngine {
         self.awaiting = None;
         self.cleanup_verification_failed = false;
         self.resources = AppliedResources {
-            snapshot: journal.phase.verification_required(),
+            snapshot: journal.restoration_verification_required(),
             display: journal.virtual_display.is_some(),
             capture: journal.capture_managed && journal.phase.capture_may_be_running(),
-            physical_restored: !journal.phase.physical_restore_required(),
+            physical_mutation_applied: journal.physical_mutation_was_applied(),
+            window_mutation_applied: journal.window_mutation_was_applied(),
+            physical_restored: !journal.physical_restore_required(),
         };
         self.recovery_metadata = Some(WorkspaceRecoveryMetadata {
             platform: journal.platform,
