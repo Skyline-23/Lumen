@@ -88,6 +88,7 @@ typedef enum LumenHostPlatformControlEventKind {
   LumenHostPlatformControlEventKindRequestIdrFrame = 0,
   LumenHostPlatformControlEventKindInvalidateReferenceFrames = 1,
   LumenHostPlatformControlEventKindResetInput = 2,
+  LumenHostPlatformControlEventKindResumeVideoEncodingAfterCodecAck = 3,
 } LumenHostPlatformControlEventKind;
 
 typedef struct LumenHostPlatformControlEvent {

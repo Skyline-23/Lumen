@@ -195,6 +195,7 @@ type PopAudio = unsafe extern "C" fn(
 type PopAudioEvent =
     unsafe extern "C" fn(*mut BridgeController, *mut c_char, usize) -> MacAudioCaptureEventRecord;
 type RequestKeyFrame = unsafe extern "C" fn();
+type ResumeVideoEncodingAfterCodecAck = unsafe extern "C" fn() -> bool;
 type PrepareWorkspace = unsafe extern "C" fn(MacWorkspaceSessionRequest, *mut c_char, usize) -> u32;
 type ActivateWorkspace =
     unsafe extern "C" fn(*const c_char, *mut c_char, usize) -> MacWorkspaceActivationResult;
@@ -238,6 +239,7 @@ struct MacBridgeApi {
     pop_audio: PopAudio,
     pop_audio_event: PopAudioEvent,
     request_key_frame: RequestKeyFrame,
+    resume_video_encoding_after_codec_ack: ResumeVideoEncodingAfterCodecAck,
     prepare_workspace: PrepareWorkspace,
     activate_workspace: ActivateWorkspace,
     stop_workspace: StopWorkspace,
@@ -301,6 +303,10 @@ impl MacBridgeApi {
                 request_key_frame: load_symbol(
                     handle,
                     b"LumenMacBridgeRequestImmediateCaptureKeyFrame\0",
+                )?,
+                resume_video_encoding_after_codec_ack: load_symbol(
+                    handle,
+                    b"LumenMacBridgeResumeVideoEncodingAfterCodecAck\0",
                 )?,
                 prepare_workspace: load_symbol(handle, b"LumenMacWorkspacePrepareSession\0")?,
                 activate_workspace: load_symbol(handle, b"LumenMacWorkspaceActivateSession\0")?,
@@ -683,6 +689,14 @@ impl PlatformSessionControl for MacPlatformSessionControl {
             | PlatformControlEvent::InvalidateReferenceFrames { .. } => {
                 unsafe { (self.api.request_key_frame)() };
                 Ok(())
+            }
+            PlatformControlEvent::ResumeVideoEncodingAfterCodecAck => {
+                unsafe { (self.api.resume_video_encoding_after_codec_ack)() }
+                    .then_some(())
+                    .ok_or_else(|| {
+                        "macOS video encoding could not resume after codec acknowledgement"
+                            .to_owned()
+                    })
             }
             PlatformControlEvent::ResetInput => Ok(()),
             PlatformControlEvent::ExecuteServerCommand { index } => {

@@ -150,6 +150,7 @@ pub struct PlatformEncodedAudioPacket {
 pub enum PlatformControlEvent {
     RequestIdrFrame,
     InvalidateReferenceFrames { first_frame: i64, last_frame: i64 },
+    ResumeVideoEncodingAfterCodecAck,
     ResetInput,
     ExecuteServerCommand { index: u8 },
 }
@@ -377,6 +378,7 @@ pub enum LumenHostPlatformControlEventKind {
     RequestIdrFrame = 0,
     InvalidateReferenceFrames = 1,
     ResetInput = 2,
+    ResumeVideoEncodingAfterCodecAck = 3,
 }
 
 #[repr(C)]
@@ -677,6 +679,14 @@ impl PlatformSessionControl for CallbackPlatformSessionControl {
                 first_frame: *first_frame,
                 last_frame: *last_frame,
             },
+            PlatformControlEvent::ResumeVideoEncodingAfterCodecAck => {
+                LumenHostPlatformControlEvent {
+                    kind: LumenHostPlatformControlEventKind::ResumeVideoEncodingAfterCodecAck,
+                    control_connect_data,
+                    first_frame: 0,
+                    last_frame: 0,
+                }
+            }
             PlatformControlEvent::ResetInput => LumenHostPlatformControlEvent {
                 kind: LumenHostPlatformControlEventKind::ResetInput,
                 control_connect_data,

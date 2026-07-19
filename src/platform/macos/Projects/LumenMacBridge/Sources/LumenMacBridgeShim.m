@@ -441,6 +441,10 @@ void LumenMacBridgeRequestImmediateCaptureKeyFrame(void) {
   [LumenBridgeObjCFacade requestImmediateCaptureKeyFrameSharedSync];
 }
 
+bool LumenMacBridgeResumeVideoEncodingAfterCodecAck(void) {
+  return [LumenBridgeObjCFacade resumeVideoEncodingAfterCodecAckSharedSync];
+}
+
 void LumenMacBridgeRestartCapture(const char *reason) {
   NSString *restartReason =
     reason != NULL ?

@@ -409,6 +409,7 @@ void LumenMacBridgeControllerStopCapture(
 );
 
 void LumenMacBridgeRequestImmediateCaptureKeyFrame(void);
+bool LumenMacBridgeResumeVideoEncodingAfterCodecAck(void);
 void LumenMacBridgeRestartCapture(const char *reason);
 
 bool LumenMacBridgeControllerStartAudioCapture(

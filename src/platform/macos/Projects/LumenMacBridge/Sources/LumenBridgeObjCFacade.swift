@@ -605,6 +605,10 @@ public final class LumenBridgeObjCFacade: NSObject {
         }
     }
 
+    @objc public static func resumeVideoEncodingAfterCodecAckSharedSync() -> Bool {
+        LumenBridgeObjCFacade().resumeVideoEncodingAfterCodecAckSync()
+    }
+
     @objc public static func restartCaptureSharedSync(_ reason: String) {
         let semaphore = DispatchSemaphore(value: 0)
         Task {
@@ -683,6 +687,13 @@ public final class LumenBridgeObjCFacade: NSObject {
         try? blockingRun {
             await runtime.requestImmediateCaptureKeyFrame()
         }
+    }
+
+    public func resumeVideoEncodingAfterCodecAckSync() -> Bool {
+        let runtime = runtime
+        return (try? blockingRun {
+            await runtime.resumeVideoEncodingAfterCodecAck()
+        }) ?? false
     }
 
     public func restartCaptureSync(_ reason: String) {
