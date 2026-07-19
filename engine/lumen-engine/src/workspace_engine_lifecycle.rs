@@ -37,7 +37,6 @@ impl WorkspaceEngine {
                 LumenWorkspaceCommandKind::ConfigureVirtualDisplay
                 | LumenWorkspaceCommandKind::PromoteVirtualMain
                 | LumenWorkspaceCommandKind::MoveTargetWindows
-                | LumenWorkspaceCommandKind::ApplyIsolation
                 | LumenWorkspaceCommandKind::StartCapture
                 | LumenWorkspaceCommandKind::AwaitExternalFirstEncodedFrame
                 | LumenWorkspaceCommandKind::StopCapture
@@ -45,6 +44,9 @@ impl WorkspaceEngine {
                 | LumenWorkspaceCommandKind::VerifyPhysicalDisplays
                 | LumenWorkspaceCommandKind::DestroyVirtualDisplay => {
                     WorkspaceCommandCompletion::succeeded()
+                }
+                LumenWorkspaceCommandKind::ApplyIsolation => {
+                    WorkspaceCommandCompletion::physical_mutation_applied(true)
                 }
             }
         } else {

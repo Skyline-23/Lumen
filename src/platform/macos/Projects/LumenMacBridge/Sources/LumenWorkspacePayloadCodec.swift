@@ -98,6 +98,12 @@ enum LumenWorkspacePayloadCodec {
             return (true, LumenWorkspaceCommandPayloadNone, nil)
         case .failed:
             return (false, LumenWorkspaceCommandPayloadNone, nil)
+        case .physicalMutationApplied(let applied):
+            return (
+                true,
+                LumenWorkspaceCommandPayloadPhysicalMutationApplied,
+                try jsonString(applied)
+            )
         case .physicalTopology(let topology):
             return (
                 true,

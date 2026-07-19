@@ -12,6 +12,8 @@ private let lumenProductID: UInt32 = 0xA901
 private let canarySafetySerialBase: UInt32 = 0x4C4D_0000
 private let canarySafetyWidth: UInt32 = 1_920
 private let canarySafetyHeight: UInt32 = 1_080
+private let displayMutationConvergenceTimeout: TimeInterval = 30
+private let watchdogRestoreDeadline: TimeInterval = 60
 
 private enum CanaryFailure: Error, CustomStringConvertible {
     case blocked(String)
@@ -148,7 +150,7 @@ private enum LumenDisplayDisconnectCanaryMain {
         try writeDurableJSON(authorization, to: authorizationURL)
 
         let adapter = LumenPhysicalDisplayControlAdapter(
-            resolver: LumenDlsymDisplayEnabledSymbolResolver()
+            resolver: LumenSystemDisplayEnabledSymbolResolver()
         )
         let probe = try adapter.probe()
         try writeArtifact(
@@ -164,6 +166,14 @@ private enum LumenDisplayDisconnectCanaryMain {
         )
         let safetyDisplays = try createCanarySafetyDisplays(
             selectedPhysicalDisplayID: selected.displayID
+        )
+        try promoteSafetyDisplayToMain(
+            safetyDisplayID: safetyDisplays[0].displayID
+        )
+        try verifySafetyDesktopStability(
+            safetyDisplayIDs: Set(safetyDisplays.map(\.displayID)),
+            mainDisplayID: safetyDisplays[0].displayID,
+            duration: 2
         )
         let executableURL = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
         let restoreRequest = runDirectory.appendingPathComponent("restore.request")
@@ -183,7 +193,9 @@ private enum LumenDisplayDisconnectCanaryMain {
                     watchdog.terminate()
                 }
             }
-            let physicalDisplayIsSafe = waitUntilPumpingMainRunLoop(timeout: 8) {
+            let physicalDisplayIsSafe = waitUntilPumpingMainRunLoop(
+                timeout: displayMutationConvergenceTimeout
+            ) {
                 guard let state = try? displayStates().first(where: {
                     $0.displayID == selected.displayID
                 }) else {
@@ -191,7 +203,11 @@ private enum LumenDisplayDisconnectCanaryMain {
                 }
                 return state.active && state.nsscreenVisible
             }
-            if physicalDisplayIsSafe {
+            let physicalLayoutIsSafe = (try? restorePhysicalDisplayAsMain(
+                selectedPhysicalDisplayID: selected.displayID,
+                safetyDisplays: safetyDisplays
+            )) != nil
+            if physicalDisplayIsSafe && physicalLayoutIsSafe {
                 for display in safetyDisplays {
                     display.destroy()
                 }
@@ -276,25 +292,17 @@ private enum LumenDisplayDisconnectCanaryMain {
             ),
             to: mutationURL
         )
-        guard waitUntilPumpingMainRunLoop(timeout: 8, condition: {
-            guard let state = try? displayStates().first(where: {
-                $0.displayID == selected.displayID
-            }) else {
-                return false
-            }
-            return state.active == false && state.nsscreenVisible == false
-        }) else {
+        guard waitUntilPumpingMainRunLoop(
+            timeout: displayMutationConvergenceTimeout,
+            condition: { isDisplayDisconnected(selected.displayID) }
+        ) else {
             throw CanaryFailure.blocked(
                 "Selected display remained active or visible to NSScreen after disable transaction"
             )
         }
 
         let during = try displayStates()
-        guard during.contains(where: { state in
-            state.displayID == selected.displayID
-                && !state.active
-                && !state.nsscreenVisible
-        }) else {
+        guard isDisplayDisconnected(selected.displayID) else {
             throw CanaryFailure.blocked("Disabled display state was not observable")
         }
         try writeArtifact(
@@ -310,14 +318,17 @@ private enum LumenDisplayDisconnectCanaryMain {
         )
 
         try writeDurableData(Data(), to: restoreRequest)
-        guard waitUntilPumpingMainRunLoop(timeout: 12, condition: {
-            (1...2).allSatisfy { index in
-                FileManager.default.fileExists(
-                    atPath: runDirectory
-                        .appendingPathComponent("watchdog-\(index)-restored.json").path
-                )
+        guard waitUntilPumpingMainRunLoop(
+            timeout: displayMutationConvergenceTimeout,
+            condition: {
+                (1...2).allSatisfy { index in
+                    FileManager.default.fileExists(
+                        atPath: runDirectory
+                            .appendingPathComponent("watchdog-\(index)-restored.json").path
+                    )
+                }
             }
-        }) else {
+        ) else {
             let restoreFailed = (1...2).contains { index in
                 FileManager.default.fileExists(
                     atPath: runDirectory
@@ -331,14 +342,17 @@ private enum LumenDisplayDisconnectCanaryMain {
             }
             throw CanaryFailure.blocked("Watchdogs did not publish restoration receipts")
         }
-        guard waitUntilPumpingMainRunLoop(timeout: 8, condition: {
-            guard let state = try? displayStates().first(where: {
-                $0.displayID == selected.displayID
-            }) else {
-                return false
+        guard waitUntilPumpingMainRunLoop(
+            timeout: displayMutationConvergenceTimeout,
+            condition: {
+                guard let state = try? displayStates().first(where: {
+                    $0.displayID == selected.displayID
+                }) else {
+                    return false
+                }
+                return state.active && state.nsscreenVisible
             }
-            return state.active && state.nsscreenVisible
-        }) else {
+        ) else {
             throw CanaryFailure.blocked(
                 "Selected display did not return to CoreGraphics and NSScreen"
             )
@@ -421,6 +435,7 @@ private enum LumenDisplayDisconnectCanaryMain {
             }
         }
         let displayIDs = Set(displays.map(\.displayID))
+        try promoteSafetyDisplayToMain(safetyDisplayID: displays[0].displayID)
 
         guard waitUntilPumpingMainRunLoop(timeout: 8, condition: {
             let published = ((try? displayStates()) ?? []).filter {
@@ -481,7 +496,7 @@ private enum LumenDisplayDisconnectCanaryMain {
             throw CanaryFailure.blocked("Watchdog authorization does not match this generation")
         }
         let adapter = LumenPhysicalDisplayControlAdapter(
-            resolver: LumenDlsymDisplayEnabledSymbolResolver()
+            resolver: LumenSystemDisplayEnabledSymbolResolver()
         )
         let probe = try adapter.probe()
         let restorer = LumenDisplayDisconnectWatchdogRestorer(controller: adapter)
@@ -512,7 +527,7 @@ private enum LumenDisplayDisconnectCanaryMain {
             to: runDirectory.appendingPathComponent("watchdog-\(index)-ready.json")
         )
 
-        let deadline = Date().addingTimeInterval(25)
+        let deadline = Date().addingTimeInterval(watchdogRestoreDeadline)
         while true {
             if FileManager.default.fileExists(atPath: restoreRequest.path) {
                 trigger = .restoreRequested
@@ -544,14 +559,12 @@ private enum LumenDisplayDisconnectCanaryMain {
                     marker: marker,
                     trigger: trigger,
                     verifyRestored: {
-                        waitUntil(timeout: 8, condition: {
-                            guard let state = try? displayStates().first(where: {
-                                $0.displayID == selectedDisplayID
-                            }) else {
-                                return false
+                        waitUntil(
+                            timeout: displayMutationConvergenceTimeout,
+                            condition: {
+                                isDisplayConnectedInCoreGraphics(selectedDisplayID)
                             }
-                            return state.active && state.nsscreenVisible
-                        })
+                        )
                     }
                 )
                 switch outcome {
@@ -680,6 +693,22 @@ private func isCanarySafetyDisplay(_ state: DisplayState) -> Bool {
             || state.serialNumber == canarySafetySerialBase + 2)
 }
 
+private func isDisplayDisconnected(_ displayID: CGDirectDisplayID) -> Bool {
+    let visibleDisplayIDs = MainActor.assumeIsolated {
+        Set(NSScreen.screens.compactMap { screen in
+            (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?
+                .uint32Value
+        })
+    }
+    return CGDisplayIsActive(displayID) == 0
+        && CGDisplayIsOnline(displayID) == 0
+        && !visibleDisplayIDs.contains(displayID)
+}
+
+private func isDisplayConnectedInCoreGraphics(_ displayID: CGDirectDisplayID) -> Bool {
+    CGDisplayIsActive(displayID) != 0 && CGDisplayIsOnline(displayID) != 0
+}
+
 private func optionalDisplayID(_ displayID: CGDirectDisplayID) -> UInt32? {
     displayID == kCGNullDirectDisplay ? nil : displayID
 }
@@ -768,7 +797,7 @@ private func configureAsIndependentOutput(
             )
         }
 
-        let completeResult = CGCompleteDisplayConfiguration(configuration, .forSession)
+        let completeResult = CGCompleteDisplayConfiguration(configuration, .forAppOnly)
         guard completeResult == .success else {
             throw CanaryFailure.blocked(
                 "Could not commit independent safety display configuration: \(completeResult.rawValue)"
@@ -780,9 +809,140 @@ private func configureAsIndependentOutput(
     }
 }
 
+private func promoteSafetyDisplayToMain(
+    safetyDisplayID: CGDirectDisplayID
+) throws {
+    let states = try displayStates().filter(\.active)
+    guard let safety = states.first(where: { $0.displayID == safetyDisplayID }) else {
+        throw CanaryFailure.blocked("Safety display is unavailable for main-display promotion")
+    }
+    let remaining = states
+        .filter { $0.displayID != safetyDisplayID }
+        .sorted { lhs, rhs in
+            if lhs.builtin != rhs.builtin {
+                return lhs.builtin == true
+            }
+            return lhs.displayID < rhs.displayID
+        }
+    var nextX = max(1, safety.width)
+    var origins: [(CGDirectDisplayID, Int32, Int32)] = [
+        (safetyDisplayID, 0, 0),
+    ]
+    for state in remaining {
+        origins.append((
+            state.displayID,
+            Int32(clamping: Int64(nextX.rounded())),
+            0
+        ))
+        nextX += max(1, state.width)
+    }
+    try configureDisplayOrigins(origins)
+    guard waitUntilPumpingMainRunLoop(
+        timeout: displayMutationConvergenceTimeout,
+        condition: { CGMainDisplayID() == safetyDisplayID }
+    ) else {
+        throw CanaryFailure.blocked("Safety display did not become the main display")
+    }
+}
+
+private func restorePhysicalDisplayAsMain(
+    selectedPhysicalDisplayID: CGDirectDisplayID,
+    safetyDisplays: [LumenMacVirtualDisplay]
+) throws {
+    let physicalBounds = CGDisplayBounds(selectedPhysicalDisplayID)
+    var nextX = max(1, physicalBounds.width)
+    var origins: [(CGDirectDisplayID, Int32, Int32)] = [
+        (selectedPhysicalDisplayID, 0, 0),
+    ]
+    for display in safetyDisplays {
+        origins.append((
+            display.displayID,
+            Int32(clamping: Int64(nextX.rounded())),
+            0
+        ))
+        nextX += max(1, CGDisplayBounds(display.displayID).width)
+    }
+    try configureDisplayOrigins(origins)
+    guard waitUntilPumpingMainRunLoop(
+        timeout: displayMutationConvergenceTimeout,
+        condition: { CGMainDisplayID() == selectedPhysicalDisplayID }
+    ) else {
+        throw CanaryFailure.blocked("Physical display did not return as the main display")
+    }
+}
+
+private func verifySafetyDesktopStability(
+    safetyDisplayIDs: Set<CGDirectDisplayID>,
+    mainDisplayID: CGDirectDisplayID,
+    duration: TimeInterval
+) throws {
+    let deadline = ProcessInfo.processInfo.systemUptime + duration
+    while ProcessInfo.processInfo.systemUptime < deadline {
+        let states = try displayStates()
+        let safetyStates = states.filter { safetyDisplayIDs.contains($0.displayID) }
+        guard CGMainDisplayID() == mainDisplayID,
+              Set(safetyStates.map(\.displayID)) == safetyDisplayIDs,
+              safetyStates.allSatisfy({
+                  $0.active
+                      && $0.online
+                      && $0.nsscreenVisible
+                      && $0.usableForDesktopGUI == true
+                      && !$0.inMirrorSet
+              }) else {
+            throw CanaryFailure.blocked(
+                "Safety desktop did not remain stable before physical mutation"
+            )
+        }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+    }
+}
+
+private func configureDisplayOrigins(
+    _ origins: [(CGDirectDisplayID, Int32, Int32)]
+) throws {
+    var configuration: CGDisplayConfigRef?
+    let beginResult = CGBeginDisplayConfiguration(&configuration)
+    guard beginResult == .success, let configuration else {
+        throw CanaryFailure.blocked(
+            "Could not begin display origin configuration: \(beginResult.rawValue)"
+        )
+    }
+    do {
+        for (displayID, _, _) in origins {
+            let result = CGConfigureDisplayMirrorOfDisplay(
+                configuration,
+                displayID,
+                kCGNullDirectDisplay
+            )
+            guard result == .success else {
+                throw CanaryFailure.blocked(
+                    "Could not mark display \(displayID) independent: \(result.rawValue)"
+                )
+            }
+        }
+        for (displayID, x, y) in origins {
+            let result = CGConfigureDisplayOrigin(configuration, displayID, x, y)
+            guard result == .success else {
+                throw CanaryFailure.blocked(
+                    "Could not configure display \(displayID) origin: \(result.rawValue)"
+                )
+            }
+        }
+        let completeResult = CGCompleteDisplayConfiguration(configuration, .forAppOnly)
+        guard completeResult == .success else {
+            throw CanaryFailure.blocked(
+                "Could not commit display origin configuration: \(completeResult.rawValue)"
+            )
+        }
+    } catch {
+        CGCancelDisplayConfiguration(configuration)
+        throw error
+    }
+}
+
 private func waitUntil(timeout: TimeInterval, condition: () -> Bool) -> Bool {
-    let deadline = Date().addingTimeInterval(timeout)
-    while Date() < deadline {
+    let deadline = ProcessInfo.processInfo.systemUptime + timeout
+    while ProcessInfo.processInfo.systemUptime < deadline {
         if condition() {
             return true
         }
@@ -795,12 +955,13 @@ private func waitUntilPumpingMainRunLoop(
     timeout: TimeInterval,
     condition: () -> Bool
 ) -> Bool {
-    let deadline = Date().addingTimeInterval(timeout)
-    while Date() < deadline {
+    let deadline = ProcessInfo.processInfo.systemUptime + timeout
+    while ProcessInfo.processInfo.systemUptime < deadline {
         if condition() {
             return true
         }
         RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        Thread.sleep(forTimeInterval: 0.01)
     }
     return condition()
 }

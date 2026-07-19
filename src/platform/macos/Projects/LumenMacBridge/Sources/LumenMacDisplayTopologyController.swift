@@ -457,7 +457,7 @@ actor LumenCoreGraphicsDisplayTopologyController: LumenMacDisplayTopologyControl
         }
         do {
             try body(configuration)
-            let result = CGCompleteDisplayConfiguration(configuration, .forSession)
+            let result = CGCompleteDisplayConfiguration(configuration, .forAppOnly)
             guard result == .success else {
                 throw LumenMacDisplayWorkspaceError.displayConfigurationFailed(result.rawValue)
             }

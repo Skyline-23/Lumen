@@ -148,7 +148,9 @@ impl WorkspaceEngine {
         self.enqueue(LumenWorkspaceCommandKind::ConfigureVirtualDisplay);
         if matches!(
             request.policy,
-            LumenWorkspacePolicy::PromoteVirtualMain | LumenWorkspacePolicy::FocusedWorkspace
+            LumenWorkspacePolicy::PromoteVirtualMain
+                | LumenWorkspacePolicy::FocusedWorkspace
+                | LumenWorkspacePolicy::IsolatedWorkspace
         ) {
             self.enqueue(LumenWorkspaceCommandKind::PromoteVirtualMain);
         }

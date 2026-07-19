@@ -282,12 +282,13 @@ the workflow advance the Homebrew cask to that immutable release.
 
 ## Local release smoke test
 
-Before merging to `main`, build both macOS architectures from the pinned
-SwiftOpus package and verify that the staged worker is universal. Signing,
-DMG creation, notarization, and stapling remain owned by the release workflow.
+Before merging to `main`, build the Apple Silicon macOS application from the
+pinned SwiftOpus package and verify that the staged worker is arm64-only.
+Signing, DMG creation, notarization, and stapling remain owned by the release
+workflow.
 
 ```bash
-CONFIGURATION=Release ARCHS="arm64 x86_64" CURRENT_ARCH=undefined_arch \
+CONFIGURATION=Release ARCHS=arm64 CURRENT_ARCH=arm64 \
   scripts/rust/build_lumen_engine.sh
 cd src/platform/macos
 tuist generate --no-open
@@ -297,8 +298,8 @@ tuist xcodebuild build \
   -configuration Release \
   -destination 'generic/platform=macOS' \
   -derivedDataPath ../../../build/release-smoke \
-  'ARCHS=arm64 x86_64' \
-  ONLY_ACTIVE_ARCH=NO \
+  ARCHS=arm64 \
+  ONLY_ACTIVE_ARCH=YES \
   CODE_SIGNING_ALLOWED=NO
 cd ../../..
 lipo -archs \

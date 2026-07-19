@@ -11,8 +11,8 @@ struct LumenDisplayDisconnectCapabilityTests {
         hardwareIdentity: "platform-uuid|Mac16,1|J514cAP"
     )
     private let probe = LumenDisplayEnabledSymbolProbe(
-        source: .skyLightSLS,
-        symbolName: "SLSConfigureDisplayEnabled"
+        source: .coreGraphicsCGS,
+        symbolName: "CGSConfigureDisplayEnabled"
     )
 
     @Test("An exact unexpired receipt authorizes the requested private display boundary")
@@ -92,7 +92,7 @@ struct LumenDisplayDisconnectCapabilityTests {
         try store.persist(valid)
         #expect(throws: LumenPhysicalDisplayControlFailure.self) {
             try verifier.authorize(
-                probe: .init(source: .skyLightCGS, symbolName: "CGSConfigureDisplayEnabled"),
+                probe: .init(source: .skyLightSLS, symbolName: "SLSConfigureDisplayEnabled"),
                 physicalDisplayIDs: [41, 42]
             )
         }

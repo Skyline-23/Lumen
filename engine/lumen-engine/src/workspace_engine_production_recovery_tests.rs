@@ -139,6 +139,10 @@ fn production_ffi_persists_every_isolated_session_boundary() {
             RecoveryPhase::VirtualConfigured,
         ),
         (
+            LumenWorkspaceCommandKind::PromoteVirtualMain,
+            RecoveryPhase::VirtualPromoted,
+        ),
+        (
             LumenWorkspaceCommandKind::ApplyIsolation,
             RecoveryPhase::Isolated,
         ),
@@ -161,8 +165,16 @@ fn production_ffi_persists_every_isolated_session_boundary() {
             complete(
                 engine,
                 command,
-                LumenWorkspaceCommandPayloadKind::None,
-                None,
+                if kind == LumenWorkspaceCommandKind::ApplyIsolation {
+                    LumenWorkspaceCommandPayloadKind::PhysicalMutationApplied
+                } else {
+                    LumenWorkspaceCommandPayloadKind::None
+                },
+                if kind == LumenWorkspaceCommandKind::ApplyIsolation {
+                    Some("true")
+                } else {
+                    None
+                },
                 true,
             ),
             LumenEngineStatus::Ok

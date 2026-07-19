@@ -43,6 +43,7 @@ fn isolated_workspace_disconnects_physical_displays_before_capture_binds() {
             LumenWorkspaceCommandKind::SnapshotWorkspace,
             LumenWorkspaceCommandKind::CreateVirtualDisplay,
             LumenWorkspaceCommandKind::ConfigureVirtualDisplay,
+            LumenWorkspaceCommandKind::PromoteVirtualMain,
             LumenWorkspaceCommandKind::MoveTargetWindows,
             LumenWorkspaceCommandKind::ApplyIsolation,
             LumenWorkspaceCommandKind::StartCapture,
@@ -123,6 +124,7 @@ fn external_capture_isolates_before_the_typed_first_frame_boundary() {
         LumenWorkspaceCommandKind::SnapshotWorkspace,
         LumenWorkspaceCommandKind::CreateVirtualDisplay,
         LumenWorkspaceCommandKind::ConfigureVirtualDisplay,
+        LumenWorkspaceCommandKind::PromoteVirtualMain,
     ] {
         let command = engine.next_command().expect("preparation command");
         assert_eq!(command.kind, expected);
@@ -150,6 +152,41 @@ fn external_capture_isolates_before_the_typed_first_frame_boundary() {
     );
     assert_eq!(engine.next_command(), Err(LumenEngineStatus::NoCommand));
     assert_eq!(engine.state, LumenWorkspaceState::Active);
+}
+
+#[test]
+fn unavailable_physical_isolation_is_nonfatal_after_virtual_main_promotion() {
+    let mut engine = WorkspaceEngine::default();
+    assert_eq!(
+        engine.begin_session(LumenWorkspaceSessionRequest {
+            policy: LumenWorkspacePolicy::IsolatedWorkspace,
+            move_target_windows: false,
+            manage_capture: false,
+        }),
+        LumenEngineStatus::Ok
+    );
+
+    loop {
+        let command = engine.next_command().expect("startup command");
+        if command.kind == LumenWorkspaceCommandKind::ApplyIsolation {
+            assert_eq!(
+                engine.complete_command_with_payload(
+                    command,
+                    WorkspaceCommandCompletion::physical_mutation_applied(false),
+                ),
+                LumenEngineStatus::Ok
+            );
+            assert!(engine.resources.physical_mutation_applied);
+            break;
+        }
+        assert_eq!(engine.complete_command(command, true), LumenEngineStatus::Ok);
+    }
+
+    let barrier = engine.next_command().expect("first-frame barrier");
+    assert_eq!(
+        barrier.kind,
+        LumenWorkspaceCommandKind::AwaitExternalFirstEncodedFrame
+    );
 }
 
 #[test]

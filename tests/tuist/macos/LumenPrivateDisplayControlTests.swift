@@ -4,8 +4,8 @@ import Testing
 
 @Suite("Private display control symbol selection")
 struct LumenPrivateDisplayControlTests {
-    @Test("SLS is preferred over every fallback")
-    func slsHasHighestPriority() throws {
+    @Test("CoreGraphics CGS is preferred for connection mutation")
+    func coreGraphicsCGSHasHighestPriority() throws {
         let sls = FakeDisplayEnabledInvoker()
         let cgs = FakeDisplayEnabledInvoker()
         let resolver = FakeDisplayEnabledSymbolResolver(
@@ -18,34 +18,34 @@ struct LumenPrivateDisplayControlTests {
 
         let receipt = try adapter.setEnabled(false, for: 42)
 
-        #expect(receipt.source == .skyLightSLS)
-        #expect(sls.calls == [.init(displayID: 42, enabled: false)])
-        #expect(cgs.calls.isEmpty)
-        #expect(resolver.requests.map(\.symbolName) == ["SLSConfigureDisplayEnabled"])
+        #expect(receipt.source == .coreGraphicsCGS)
+        #expect(cgs.calls == [.init(displayID: 42, enabled: false)])
+        #expect(sls.calls.isEmpty)
+        #expect(resolver.requests.map(\.symbolName) == ["CGSConfigureDisplayEnabled"])
     }
 
-    @Test("CGS is used only when SLS is absent")
-    func cgsIsSecondPriority() throws {
-        let cgs = FakeDisplayEnabledInvoker()
+    @Test("SkyLight SLS remains a runtime fallback")
+    func slsIsSecondPriority() throws {
+        let sls = FakeDisplayEnabledInvoker()
         let resolver = FakeDisplayEnabledSymbolResolver(
-            invokers: ["CGSConfigureDisplayEnabled": cgs]
+            invokers: ["SLSConfigureDisplayEnabled": sls]
         )
         let adapter = LumenPhysicalDisplayControlAdapter(resolver: resolver)
 
         let receipt = try adapter.setEnabled(true, for: 7)
 
-        #expect(receipt.source == .skyLightCGS)
-        #expect(cgs.calls == [.init(displayID: 7, enabled: true)])
+        #expect(receipt.source == .skyLightSLS)
+        #expect(sls.calls == [.init(displayID: 7, enabled: true)])
         #expect(
             resolver.requests.map(\.symbolName) == [
-                "SLSConfigureDisplayEnabled",
                 "CGSConfigureDisplayEnabled",
+                "SLSConfigureDisplayEnabled",
             ]
         )
     }
 
-    @Test("CoreDisplay is never guessed without independent ABI proof")
-    func coreDisplayIsNotSpeculativelyProbed() {
+    @Test("Unsupported legacy symbols are never guessed")
+    func legacySymbolsAreNotSpeculativelyProbed() {
         let speculativeCoreDisplay = FakeDisplayEnabledInvoker()
         let resolver = FakeDisplayEnabledSymbolResolver(
             invokers: ["CoreDisplay_Display_SetEnabled": speculativeCoreDisplay]
@@ -58,36 +58,8 @@ struct LumenPrivateDisplayControlTests {
         #expect(speculativeCoreDisplay.calls.isEmpty)
         #expect(
             resolver.requests.map(\.symbolName) == [
-                "SLSConfigureDisplayEnabled",
                 "CGSConfigureDisplayEnabled",
-            ]
-        )
-    }
-
-    @Test("An independently verified CoreDisplay ABI is the final fallback")
-    func verifiedCoreDisplayIsFinalFallback() throws {
-        let coreDisplay = FakeDisplayEnabledInvoker()
-        let resolver = FakeDisplayEnabledSymbolResolver(
-            invokers: ["VerifiedCoreDisplaySetEnabled": coreDisplay]
-        )
-        let proof = LumenVerifiedCoreDisplayEnabledABI(
-            symbolName: "VerifiedCoreDisplaySetEnabled",
-            evidenceIdentifier: "fixture-abi-proof"
-        )
-        let adapter = LumenPhysicalDisplayControlAdapter(
-            resolver: resolver,
-            verifiedCoreDisplayABI: proof
-        )
-
-        let receipt = try adapter.setEnabled(false, for: 13)
-
-        #expect(receipt.source == .verifiedCoreDisplay)
-        #expect(coreDisplay.calls == [.init(displayID: 13, enabled: false)])
-        #expect(
-            resolver.requests.map(\.symbolName) == [
                 "SLSConfigureDisplayEnabled",
-                "CGSConfigureDisplayEnabled",
-                "VerifiedCoreDisplaySetEnabled",
             ]
         )
     }
@@ -114,7 +86,7 @@ struct LumenPrivateDisplayControlTests {
     func rejectedMutationIsTyped() {
         let invoker = FakeDisplayEnabledInvoker(status: 1_003)
         let resolver = FakeDisplayEnabledSymbolResolver(
-            invokers: ["SLSConfigureDisplayEnabled": invoker]
+            invokers: ["CGSConfigureDisplayEnabled": invoker]
         )
         let adapter = LumenPhysicalDisplayControlAdapter(resolver: resolver)
 
@@ -125,7 +97,7 @@ struct LumenPrivateDisplayControlTests {
             #expect(failure.code == .transactionRejected)
             #expect(failure.code.rawValue == "mac.display_disconnect.transaction_rejected")
             #expect(failure.status == 1_003)
-            #expect(failure.source == .skyLightSLS)
+            #expect(failure.source == .coreGraphicsCGS)
         } catch {
             Issue.record("Unexpected error: \(error)")
         }

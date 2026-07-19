@@ -97,7 +97,7 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
     public init() {
         topologyController = LumenCoreGraphicsDisplayTopologyController()
         physicalDisplayController = LumenPhysicalDisplayControlAdapter(
-            resolver: LumenDlsymDisplayEnabledSymbolResolver()
+            resolver: LumenSystemDisplayEnabledSymbolResolver()
         )
         disconnectCapabilityVerifier = LumenDisplayDisconnectCapabilityFileVerifier.production
     }
@@ -106,7 +106,7 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
         topologyController: any LumenMacDisplayTopologyControlling,
         physicalDisplayController: any LumenPhysicalDisplayControlling =
             LumenPhysicalDisplayControlAdapter(
-                resolver: LumenDlsymDisplayEnabledSymbolResolver()
+                resolver: LumenSystemDisplayEnabledSymbolResolver()
             ),
         disconnectCapabilityVerifier: any LumenDisplayDisconnectCapabilityVerifying
     ) {
@@ -151,6 +151,18 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
 
         let virtualOrigin = CGDisplayBounds(displayID).origin
         try configureDisplays { configuration in
+            for activeDisplayID in ids {
+                let result = CGConfigureDisplayMirrorOfDisplay(
+                    configuration,
+                    activeDisplayID,
+                    kCGNullDirectDisplay
+                )
+                guard result == .success else {
+                    throw LumenMacDisplayWorkspaceError.displayConfigurationFailed(
+                        result.rawValue
+                    )
+                }
+            }
             for activeDisplayID in ids {
                 let origin = CGDisplayBounds(activeDisplayID).origin
                 let translated = CGPoint(
@@ -373,7 +385,7 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
 
         do {
             try body(configuration)
-            let completeResult = CGCompleteDisplayConfiguration(configuration, .forSession)
+            let completeResult = CGCompleteDisplayConfiguration(configuration, .forAppOnly)
             guard completeResult == .success else {
                 throw LumenMacDisplayWorkspaceError.displayConfigurationFailed(
                     completeResult.rawValue

@@ -1,6 +1,7 @@
 #ifndef LUMEN_MAC_BRIDGE_H
 #define LUMEN_MAC_BRIDGE_H
 
+#include <CoreGraphics/CoreGraphics.h>
 #include <CoreMedia/CoreMedia.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -73,6 +74,12 @@ NS_SWIFT_NAME(LumenMacVirtualDisplay)
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+int32_t LumenMacDirectCGSConfigureDisplayEnabled(
+  CGDisplayConfigRef configuration,
+  CGDirectDisplayID display_id,
+  bool enabled
+);
 
 // Stable C shapes used only at the Swift/Objective-C platform boundary. Shared
 // policy and the packaged host runtime are Rust-owned; these records carry

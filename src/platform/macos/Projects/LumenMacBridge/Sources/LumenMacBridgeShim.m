@@ -9,6 +9,20 @@
 
 static NSString *const LumenRuntimeEventNotification = @"LumenRuntimeEventNotification";
 
+extern CGError CGSConfigureDisplayEnabled(
+  CGDisplayConfigRef configuration,
+  CGDirectDisplayID displayID,
+  bool enabled
+);
+
+int32_t LumenMacDirectCGSConfigureDisplayEnabled(
+  CGDisplayConfigRef configuration,
+  CGDirectDisplayID displayID,
+  bool enabled
+) {
+  return (int32_t)CGSConfigureDisplayEnabled(configuration, displayID, enabled);
+}
+
 struct LumenMacBridgeController {
   void *facade;
 };

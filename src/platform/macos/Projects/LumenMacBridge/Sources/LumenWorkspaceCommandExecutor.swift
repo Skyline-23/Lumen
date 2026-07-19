@@ -140,10 +140,11 @@ public actor LumenMacWorkspaceExecutor: LumenWorkspaceCommandExecuting {
             do {
                 try await displayWorkspace.isolateVirtualDisplay(try requireVirtualDisplay())
                 isolationStatus = .applied
+                return .physicalMutationApplied(true)
             } catch LumenMacDisplayWorkspaceError.isolationUnavailable(let message) {
                 isolationStatus = .unavailable(message: message)
+                return .physicalMutationApplied(false)
             }
-            return .succeeded
         case .awaitExternalFirstEncodedFrame:
             try await operations.waitForExternalFirstEncodedFrame()
             return .succeeded
