@@ -36,6 +36,7 @@ public enum LumenMacWorkspaceSessionError: Error, Equatable {
     case sessionNotStarted
     case recoveryDidNotComplete
     case virtualDisplayOwnershipMismatch
+    case isolationCommandMissing
 }
 
 public struct LumenMacWorkspaceActivationOutcome: Equatable, Sendable {
@@ -182,6 +183,7 @@ public actor LumenMacWorkspaceSession {
     private let isolationStatusHandler: @Sendable (LumenMacWorkspaceIsolationStatus) async -> Void
     private var phase = Phase.idle
     private var activationCommand: LumenMacWorkspaceCommand?
+    private var isolationTask: Task<Void, Never>?
 
     public init(
         request: LumenMacWorkspaceSessionRequest,
@@ -325,7 +327,9 @@ public actor LumenMacWorkspaceSession {
     public func activate() async throws -> LumenMacWorkspaceActivationOutcome {
         if phase == .active {
             return LumenMacWorkspaceActivationOutcome(
-                isolationStatus: await executor.physicalIsolationStatus()
+                isolationStatus: isolationTask == nil
+                    ? await executor.physicalIsolationStatus()
+                    : .pending
             )
         }
         guard phase == .prepared, let activationCommand else {
@@ -335,12 +339,14 @@ public actor LumenMacWorkspaceSession {
             let result = try await executor.execute(activationCommand)
             try await coordinator.complete(activationCommand, result: result)
             self.activationCommand = nil
-            let isolationStatus = await executor.physicalIsolationStatus()
-            if request.policy == .isolatedWorkspace {
-                await isolationStatusHandler(isolationStatus)
-            }
             phase = .active
-            return LumenMacWorkspaceActivationOutcome(isolationStatus: isolationStatus)
+            if request.policy == .isolatedWorkspace {
+                isolationTask = Task { [weak self] in
+                    await self?.completeDeferredIsolation()
+                }
+                return LumenMacWorkspaceActivationOutcome(isolationStatus: .pending)
+            }
+            return LumenMacWorkspaceActivationOutcome(isolationStatus: .notRequested)
         } catch {
             let activationError = error
             _ = try? await coordinator.complete(activationCommand, result: .failed)
@@ -372,6 +378,10 @@ public actor LumenMacWorkspaceSession {
     }
 
     public func stop() async throws {
+        if let isolationTask {
+            await isolationTask.value
+            self.isolationTask = nil
+        }
         guard phase != .idle else {
             return
         }
@@ -403,6 +413,50 @@ public actor LumenMacWorkspaceSession {
 
     public func displayID() async throws -> UInt32 {
         try await executor.activeVirtualDisplayID()
+    }
+
+    private func completeDeferredIsolation() async {
+        var isolationCommand: LumenMacWorkspaceCommand?
+        do {
+            guard let command = try await coordinator.nextCommand(),
+                  command.action == .applyIsolation else {
+                throw LumenMacWorkspaceSessionError.isolationCommandMissing
+            }
+            isolationCommand = command
+            try await executor.verifyOwnedVirtualDisplay()
+            let result = try await executor.execute(command)
+            try await coordinator.complete(command, result: result)
+            isolationCommand = nil
+            try await coordinator.executePendingCommands(using: executor)
+            await isolationStatusHandler(await executor.physicalIsolationStatus())
+        } catch {
+            let isolationError = error
+            if let isolationCommand {
+                _ = try? await coordinator.complete(isolationCommand, result: .failed)
+            }
+            let cleanupError: (any Error)?
+            do {
+                cleanupError = try await coordinator.executePendingCommandsRecovering(
+                    using: executor
+                )
+            } catch {
+                cleanupError = error
+            }
+            let ownershipCleanupError: (any Error)?
+            do {
+                try await executor.destroyOwnedVirtualDisplay()
+                ownershipCleanupError = nil
+            } catch {
+                ownershipCleanupError = error
+            }
+            phase = .idle
+            let failures = [isolationError, cleanupError, ownershipCleanupError]
+                .compactMap { $0 }
+                .map { String(describing: $0) }
+                .joined(separator: "; ")
+            await isolationStatusHandler(.failed(message: failures))
+        }
+        isolationTask = nil
     }
 
 }

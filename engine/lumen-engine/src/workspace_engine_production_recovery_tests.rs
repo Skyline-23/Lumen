@@ -143,12 +143,12 @@ fn production_ffi_persists_every_isolated_session_boundary() {
             RecoveryPhase::VirtualPromoted,
         ),
         (
-            LumenWorkspaceCommandKind::ApplyIsolation,
-            RecoveryPhase::Isolated,
-        ),
-        (
             LumenWorkspaceCommandKind::AwaitExternalFirstEncodedFrame,
             RecoveryPhase::FirstFrameReady,
+        ),
+        (
+            LumenWorkspaceCommandKind::ApplyIsolation,
+            RecoveryPhase::Isolated,
         ),
     ] {
         let command = next(engine);
@@ -192,7 +192,7 @@ fn production_ffi_persists_every_isolated_session_boundary() {
     else {
         panic!("expected active isolated journal");
     };
-    assert_eq!(active.phase, RecoveryPhase::FirstFrameReady);
+    assert_eq!(active.phase, RecoveryPhase::Isolated);
     assert_eq!(
         lumen_workspace_engine_state(engine),
         LumenWorkspaceState::Active

@@ -119,6 +119,49 @@ final class LumenVideoToolboxCapabilityProbeTests: XCTestCase {
         try assertSerializedReferenceChainHardwareDecode(at: artifactDirectory)
     }
 
+    func testPeriodicMain10KeyFrameStartsAnIndependentHardwareDecodableGOP() throws {
+        let width = 3_512
+        let height = 2_420
+        let collector = LumenVTReferenceChainCollector()
+        let session = try makeMain10CompressionSession(
+            width: width,
+            height: height,
+            collector: collector,
+            maximumKeyFrameInterval: 3
+        )
+        defer { VTCompressionSessionInvalidate(session) }
+
+        for frameIndex in 0 ..< 6 {
+            let frame = try makeMain10PixelBuffer(
+                width: width,
+                height: height,
+                luma: UInt16(128 + frameIndex * 64)
+            )
+            try encode(
+                frame,
+                session: session,
+                timestamp: CMTime(value: CMTimeValue(frameIndex), timescale: 120),
+                forceKeyFrame: frameIndex == 0
+            )
+        }
+        XCTAssertEqual(
+            VTCompressionSessionCompleteFrames(session, untilPresentationTimeStamp: .invalid),
+            noErr
+        )
+        let samples = collector.waitForSamples(6, timeout: 15)
+        XCTAssertEqual(samples.count, 6)
+        let periodicKeyFrameIndex = try XCTUnwrap(
+            samples.indices.dropFirst().first(where: { isKeyFrame(samples[$0]) })
+        )
+        XCTAssertLessThanOrEqual(periodicKeyFrameIndex + 2, samples.count - 1)
+
+        let recoveryChain = Array(samples[periodicKeyFrameIndex ... periodicKeyFrameIndex + 2])
+        XCTAssertTrue(isKeyFrame(recoveryChain[0]))
+        XCTAssertFalse(isKeyFrame(recoveryChain[1]))
+        XCTAssertFalse(isKeyFrame(recoveryChain[2]))
+        try assertHardwareDecode(recoveryChain)
+    }
+
     func testRequiredHardware420ProfilesRemainDiscoverable() throws {
         let h264Profiles = try supportedProfiles(codec: kCMVideoCodecType_H264)
         let hevcProfiles = try supportedProfiles(codec: kCMVideoCodecType_HEVC)
@@ -307,7 +350,8 @@ final class LumenVideoToolboxCapabilityProbeTests: XCTestCase {
     private func makeMain10CompressionSession(
         width: Int,
         height: Int,
-        collector: LumenVTReferenceChainCollector
+        collector: LumenVTReferenceChainCollector,
+        maximumKeyFrameInterval: Int = 120
     ) throws -> VTCompressionSession {
         var session: VTCompressionSession?
         let status = VTCompressionSessionCreate(
@@ -333,8 +377,9 @@ final class LumenVideoToolboxCapabilityProbeTests: XCTestCase {
         let resolved = try XCTUnwrap(session)
         XCTAssertEqual(VTSessionSetProperty(resolved, key: kVTCompressionPropertyKey_RealTime, value: true as CFBoolean), noErr)
         XCTAssertEqual(VTSessionSetProperty(resolved, key: kVTCompressionPropertyKey_AllowFrameReordering, value: false as CFBoolean), noErr)
+        XCTAssertEqual(VTSessionSetProperty(resolved, key: kVTCompressionPropertyKey_AllowOpenGOP, value: false as CFBoolean), noErr)
         XCTAssertEqual(VTSessionSetProperty(resolved, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: 120 as CFNumber), noErr)
-        XCTAssertEqual(VTSessionSetProperty(resolved, key: kVTCompressionPropertyKey_MaxKeyFrameInterval, value: 120 as CFNumber), noErr)
+        XCTAssertEqual(VTSessionSetProperty(resolved, key: kVTCompressionPropertyKey_MaxKeyFrameInterval, value: maximumKeyFrameInterval as CFNumber), noErr)
         XCTAssertEqual(VTSessionSetProperty(resolved, key: kVTCompressionPropertyKey_AverageBitRate, value: 20_000_000 as CFNumber), noErr)
         XCTAssertEqual(VTSessionSetProperty(resolved, key: kVTCompressionPropertyKey_ProfileLevel, value: "HEVC_Main10_AutoLevel" as CFString), noErr)
         XCTAssertEqual(VTSessionSetProperty(resolved, key: kVTCompressionPropertyKey_ColorPrimaries, value: kCMFormatDescriptionColorPrimaries_ITU_R_2020), noErr)
@@ -438,7 +483,7 @@ final class LumenVideoToolboxCapabilityProbeTests: XCTestCase {
             )
         }
         XCTAssertEqual(VTDecompressionSessionWaitForAsynchronousFrames(resolved), noErr)
-        XCTAssertEqual(statuses.values, [noErr, noErr, noErr])
+        XCTAssertEqual(statuses.values, Array(repeating: noErr, count: samples.count))
     }
 
     private func writeReferenceChainArtifactsIfRequested(_ samples: [CMSampleBuffer]) throws -> URL {

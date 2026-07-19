@@ -260,7 +260,7 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         try await coordinator.executePendingCommands(using: executor)
     }
 
-    func testExternalCaptureDisconnectsPhysicalDisplaysBeforeScreenCaptureFirstFrameReadiness() async throws {
+    func testExternalCaptureStartsPhysicalIsolationImmediatelyAfterFirstFrameReadiness() async throws {
         let recorder = WorkspaceExecutionRecorder()
         let statusRecorder = IsolationStatusRecorder()
         let operations = LumenMacWorkspaceNativeOperations(
@@ -296,24 +296,27 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
 
         let preparedEvents = await recorder.recordedEvents()
         XCTAssertFalse(preparedEvents.contains(.firstFrameBarrier))
-        let isolateIndex = try XCTUnwrap(preparedEvents.firstIndex(of: .isolate(88)))
         let resolveIndex = try XCTUnwrap(preparedEvents.firstIndex(of: .resolve(88)))
-        XCTAssertLessThan(resolveIndex, isolateIndex)
         XCTAssertTrue(preparedEvents.contains(.promote(88)))
         XCTAssertFalse(preparedEvents.contains(.move(88)))
+        XCTAssertFalse(preparedEvents.contains(.isolate(88)))
         let preparedState = try await session.state()
         XCTAssertEqual(preparedState, .starting)
 
         let outcome = try await session.activate()
         let expectedIsolationStatus = LumenMacWorkspaceIsolationStatus.applied
-        XCTAssertEqual(outcome.isolationStatus, expectedIsolationStatus)
+        XCTAssertEqual(outcome.isolationStatus, .pending)
         let statuses = await statusRecorder.waitForStatusCount(1)
         XCTAssertEqual(statuses, [expectedIsolationStatus])
 
         let activeEvents = await recorder.recordedEvents()
         let barrierIndex = try XCTUnwrap(activeEvents.firstIndex(of: .firstFrameBarrier))
+        let isolateIndex = try XCTUnwrap(activeEvents.firstIndex(of: .isolate(88)))
+        let finalResolveIndex = try XCTUnwrap(activeEvents.lastIndex(of: .resolve(88)))
         XCTAssertLessThan(resolveIndex, barrierIndex)
-        XCTAssertLessThan(isolateIndex, barrierIndex)
+        XCTAssertLessThan(barrierIndex, finalResolveIndex)
+        XCTAssertLessThan(finalResolveIndex, isolateIndex)
+        XCTAssertLessThan(barrierIndex, isolateIndex)
         XCTAssertEqual(activeEvents.filter { $0 == .isolate(88) }.count, 1)
         let activeState = try await session.state()
         XCTAssertEqual(activeState, .active)
@@ -361,7 +364,7 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         let expectedIsolationStatus = LumenMacWorkspaceIsolationStatus.unavailable(
             message: "display 114 was not published"
         )
-        XCTAssertEqual(outcome.isolationStatus, expectedIsolationStatus)
+        XCTAssertEqual(outcome.isolationStatus, .pending)
         let statuses = await statusRecorder.waitForStatusCount(1)
         XCTAssertEqual(statuses, [expectedIsolationStatus])
         let activeState = try await session.state()
@@ -545,7 +548,7 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
 
         let events = await recorder.recordedEvents()
         XCTAssertTrue(events.contains(.firstFrameBarrier))
-        XCTAssertTrue(events.contains(.isolate(89)))
+        XCTAssertFalse(events.contains(.isolate(89)))
         XCTAssertTrue(events.contains(.restore))
         XCTAssertTrue(events.contains(.verify))
         XCTAssertTrue(events.contains(.destroy))
