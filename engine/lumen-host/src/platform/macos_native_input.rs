@@ -7,7 +7,7 @@ use core_graphics::event::{
     ScrollEventUnit,
 };
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
-use core_graphics::geometry::CGPoint;
+use core_graphics::geometry::{CGPoint, CGRect, CGSize};
 use lumen_engine::NativePointerMotionMode;
 
 use crate::{PlatformNativeInputEvent, PlatformNativeMotionEvent};
@@ -28,9 +28,35 @@ struct MacComposition {
     selection_length_utf8: usize,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct MacPointerMotionInput {
+    mode: NativePointerMotionMode,
+    delta_x: i32,
+    delta_y: i32,
+    normalized_x: f32,
+    normalized_y: f32,
+}
+
 #[derive(Default)]
 pub(crate) struct MacNativeInput {
     state: Mutex<HashMap<u32, MacInputState>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct MacInputDisplayBounds {
+    pub(crate) width: f64,
+    pub(crate) height: f64,
+}
+
+impl MacInputDisplayBounds {
+    fn rect(self) -> Option<CGRect> {
+        (self.width > 0.0 && self.height > 0.0).then(|| {
+            CGRect::new(
+                &CGPoint::new(0.0, 0.0),
+                &CGSize::new(self.width, self.height),
+            )
+        })
+    }
 }
 
 impl MacNativeInput {
@@ -120,6 +146,7 @@ impl MacNativeInput {
         &self,
         session_epoch: u32,
         display_id: u32,
+        planned_bounds: Option<MacInputDisplayBounds>,
         event: PlatformNativeMotionEvent,
     ) -> Result<(), String> {
         let mut states = self
@@ -137,12 +164,15 @@ impl MacNativeInput {
                 normalized_y,
             } => post_pointer_motion(
                 display_id,
+                planned_bounds,
                 state,
-                mode,
-                delta_x,
-                delta_y,
-                normalized_x,
-                normalized_y,
+                MacPointerMotionInput {
+                    mode,
+                    delta_x,
+                    delta_y,
+                    normalized_x,
+                    normalized_y,
+                },
             ),
             PlatformNativeMotionEvent::Scroll {
                 pointer_id: _,
@@ -215,24 +245,51 @@ impl MacNativeInput {
 
 fn post_pointer_motion(
     display_id: u32,
+    planned_bounds: Option<MacInputDisplayBounds>,
     state: &MacInputState,
-    mode: NativePointerMotionMode,
-    delta_x: i32,
-    delta_y: i32,
-    normalized_x: f32,
-    normalized_y: f32,
+    input: MacPointerMotionInput,
 ) -> Result<(), String> {
     let source = event_source()?;
     let current = CGEvent::new(source.clone())
         .map_err(|_| "could not inspect the macOS pointer location".to_owned())?
         .location();
-    let bounds = CGDisplay::new(display_id).bounds();
-    if bounds.size.width <= 0.0 || bounds.size.height <= 0.0 {
-        return Err(format!(
-            "macOS native motion display {display_id} has no published bounds"
-        ));
-    }
-    let target = match mode {
+    let published_bounds = CGDisplay::new(display_id).bounds();
+    let bounds =
+        if published_bounds.size.width > 0.0 && published_bounds.size.height > 0.0 {
+            published_bounds
+        } else {
+            planned_bounds.and_then(MacInputDisplayBounds::rect).ok_or_else(|| {
+            format!("macOS native motion display {display_id} has no published or planned bounds")
+        })?
+        };
+    let target = pointer_target(
+        current,
+        bounds,
+        input.mode,
+        input.delta_x,
+        input.delta_y,
+        input.normalized_x,
+        input.normalized_y,
+    )?;
+    let (event_type, button) = drag_event(state);
+    let event = CGEvent::new_mouse_event(source, event_type, target, button)
+        .map_err(|_| "could not create macOS pointer motion event".to_owned())?;
+    event.set_integer_value_field(EventField::MOUSE_EVENT_DELTA_X, i64::from(input.delta_x));
+    event.set_integer_value_field(EventField::MOUSE_EVENT_DELTA_Y, i64::from(input.delta_y));
+    event.post(CGEventTapLocation::HID);
+    Ok(())
+}
+
+fn pointer_target(
+    current: CGPoint,
+    bounds: CGRect,
+    mode: NativePointerMotionMode,
+    delta_x: i32,
+    delta_y: i32,
+    normalized_x: f32,
+    normalized_y: f32,
+) -> Result<CGPoint, String> {
+    match mode {
         NativePointerMotionMode::Relative => {
             let origin = if point_in_rect(current, bounds) {
                 current
@@ -242,28 +299,21 @@ fn post_pointer_motion(
                     bounds.origin.y + bounds.size.height / 2.0,
                 )
             };
-            CGPoint::new(
+            Ok(CGPoint::new(
                 (origin.x + f64::from(delta_x))
                     .clamp(bounds.origin.x, bounds.origin.x + bounds.size.width - 1.0),
                 (origin.y + f64::from(delta_y))
                     .clamp(bounds.origin.y, bounds.origin.y + bounds.size.height - 1.0),
-            )
+            ))
         }
-        NativePointerMotionMode::Absolute => CGPoint::new(
+        NativePointerMotionMode::Absolute => Ok(CGPoint::new(
             bounds.origin.x + f64::from(normalized_x) * (bounds.size.width - 1.0),
             bounds.origin.y + f64::from(normalized_y) * (bounds.size.height - 1.0),
-        ),
+        )),
         NativePointerMotionMode::Unspecified => {
-            return Err("macOS native pointer motion mode is unspecified".to_owned())
+            Err("macOS native pointer motion mode is unspecified".to_owned())
         }
-    };
-    let (event_type, button) = drag_event(state);
-    let event = CGEvent::new_mouse_event(source, event_type, target, button)
-        .map_err(|_| "could not create macOS pointer motion event".to_owned())?;
-    event.set_integer_value_field(EventField::MOUSE_EVENT_DELTA_X, i64::from(delta_x));
-    event.set_integer_value_field(EventField::MOUSE_EVENT_DELTA_Y, i64::from(delta_y));
-    event.post(CGEventTapLocation::HID);
-    Ok(())
+    }
 }
 
 fn point_in_rect(point: CGPoint, bounds: core_graphics::geometry::CGRect) -> bool {
@@ -479,5 +529,39 @@ mod tests {
         assert_eq!(mac_key_code(0xe4), Some(0x3e));
         assert_eq!(mac_key_code(0x48), None);
         assert!(mac_modifier_flags(0xff).contains(CGEventFlags::CGEventFlagCommand));
+    }
+
+    #[test]
+    fn planned_virtual_bounds_map_relative_and_absolute_pointer_motion() {
+        let bounds = MacInputDisplayBounds {
+            width: 2340.0,
+            height: 1612.0,
+        }
+        .rect()
+        .expect("planned bounds");
+        let relative = pointer_target(
+            CGPoint::new(4000.0, 4000.0),
+            bounds,
+            NativePointerMotionMode::Relative,
+            10,
+            -12,
+            0.0,
+            0.0,
+        )
+        .expect("relative target");
+        assert_eq!(relative.x, 1180.0);
+        assert_eq!(relative.y, 794.0);
+        let absolute = pointer_target(
+            CGPoint::new(0.0, 0.0),
+            bounds,
+            NativePointerMotionMode::Absolute,
+            0,
+            0,
+            1.0,
+            1.0,
+        )
+        .expect("absolute target");
+        assert_eq!(absolute.x, 2339.0);
+        assert_eq!(absolute.y, 1611.0);
     }
 }

@@ -4,7 +4,10 @@ use std::ptr;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use lumen_engine::{resolve_audio_stream, LumenAudioStreamRequest};
+use lumen_engine::{
+    resolve_audio_stream, resolve_display_geometry, LumenAudioStreamRequest,
+    LumenDisplayModeRequest,
+};
 
 use crate::{
     PlatformApplicationPlan, PlatformControlEvent, PlatformEncodedAudioPacket,
@@ -13,7 +16,7 @@ use crate::{
     PlatformSessionPlan,
 };
 
-use super::macos_native_input::MacNativeInput;
+use super::macos_native_input::{MacInputDisplayBounds, MacNativeInput};
 use super::portable_process::PortableApplication;
 
 const MAXIMUM_VIDEO_BYTES: usize = 32 * 1024 * 1024;
@@ -330,6 +333,7 @@ struct MacSessionState {
     controller: *mut BridgeController,
     workspace_key: Option<CString>,
     display_id: u32,
+    input_display_bounds: Option<MacInputDisplayBounds>,
     opus: Option<NativeOpusEncoder>,
     audio_channels: usize,
     pcm: Vec<u8>,
@@ -361,6 +365,7 @@ impl MacPlatformSessionControl {
                 controller,
                 workspace_key: None,
                 display_id: 0,
+                input_display_bounds: None,
                 opus: None,
                 audio_channels: 0,
                 pcm: Vec::new(),
@@ -388,6 +393,7 @@ impl MacPlatformSessionControl {
             }
         }
         state.display_id = 0;
+        state.input_display_bounds = None;
         state.opus = None;
         state.audio_channels = 0;
         state.pcm.clear();
@@ -453,6 +459,24 @@ impl PlatformSessionControl for MacPlatformSessionControl {
                 unsafe { CGMainDisplayID() }
             };
             state.display_id = display_id;
+            state.input_display_bounds = if plan.virtual_display {
+                let geometry = resolve_display_geometry(LumenDisplayModeRequest {
+                    width: plan.width,
+                    height: plan.height,
+                    scale_percent: u32::try_from(plan.sink_scale_percent)
+                        .map_err(|_| "macOS native input display scale is invalid".to_owned())?,
+                    dimensions_are_logical: plan.sink_mode_is_logical,
+                })
+                .map_err(|status| {
+                    format!("macOS native input display geometry is invalid: {status:?}")
+                })?;
+                Some(MacInputDisplayBounds {
+                    width: f64::from(geometry.logical_width),
+                    height: f64::from(geometry.logical_height),
+                })
+            } else {
+                None
+            };
             let stream = resolve_audio_stream(LumenAudioStreamRequest {
                 channels: i32::from(plan.audio_channels),
                 packet_duration_milliseconds: 5,
@@ -718,16 +742,18 @@ impl PlatformSessionControl for MacPlatformSessionControl {
         session_epoch: u32,
         event: crate::PlatformNativeMotionEvent,
     ) -> Result<(), String> {
-        let display_id = self
-            .state
-            .lock()
-            .map_err(|_| "macOS platform session state is unavailable".to_owned())?
-            .display_id;
+        let (display_id, input_display_bounds) = {
+            let state = self
+                .state
+                .lock()
+                .map_err(|_| "macOS platform session state is unavailable".to_owned())?;
+            (state.display_id, state.input_display_bounds)
+        };
         if display_id == 0 {
             return Err("macOS native motion has no active display".to_owned());
         }
         self.native_input
-            .handle_motion(session_epoch, display_id, event)
+            .handle_motion(session_epoch, display_id, input_display_bounds, event)
     }
 
     fn reset_native_input(&self, session_epoch: u32) -> Result<(), String> {
