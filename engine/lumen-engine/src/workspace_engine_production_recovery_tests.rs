@@ -6,6 +6,10 @@ fn topology() -> PhysicalDisplayTopology {
     PhysicalDisplayTopology {
         displays: vec![PhysicalDisplayState {
             id: "physical-41".to_owned(),
+            vendor_id: None,
+            product_id: None,
+            serial_number: None,
+            builtin: None,
             mode: PhysicalDisplayMode {
                 width: 3024,
                 height: 1964,
@@ -135,12 +139,8 @@ fn production_ffi_persists_every_isolated_session_boundary() {
             RecoveryPhase::VirtualConfigured,
         ),
         (
-            LumenWorkspaceCommandKind::PromoteVirtualMain,
-            RecoveryPhase::VirtualPromoted,
-        ),
-        (
-            LumenWorkspaceCommandKind::MoveTargetWindows,
-            RecoveryPhase::TargetWindowsMoved,
+            LumenWorkspaceCommandKind::ApplyIsolation,
+            RecoveryPhase::Isolated,
         ),
         (
             LumenWorkspaceCommandKind::AwaitExternalFirstEncodedFrame,
@@ -149,6 +149,14 @@ fn production_ffi_persists_every_isolated_session_boundary() {
     ] {
         let command = next(engine);
         assert_eq!(command.kind, kind);
+        if kind == LumenWorkspaceCommandKind::ApplyIsolation {
+            let RecoveryJournalLoad::Verified(started) =
+                RecoveryJournalStore::new(path.clone()).load().unwrap()
+            else {
+                panic!("expected isolation intent to be durable");
+            };
+            assert_eq!(started.phase, RecoveryPhase::IsolationStarted);
+        }
         assert_eq!(
             complete(
                 engine,
@@ -166,31 +174,13 @@ fn production_ffi_persists_every_isolated_session_boundary() {
         };
         assert_eq!(journal.phase, phase);
     }
-    let isolate = next(engine);
-    assert_eq!(isolate.kind, LumenWorkspaceCommandKind::ApplyIsolation);
-    let RecoveryJournalLoad::Verified(started) =
-        RecoveryJournalStore::new(path.clone()).load().unwrap()
-    else {
-        panic!("expected isolation intent to be durable");
-    };
-    assert_eq!(started.phase, RecoveryPhase::IsolationStarted);
-    assert_eq!(
-        complete(
-            engine,
-            isolate,
-            LumenWorkspaceCommandPayloadKind::None,
-            None,
-            true,
-        ),
-        LumenEngineStatus::Ok
-    );
 
     // Then: the journal remains present and identifies the active isolated session.
     let RecoveryJournalLoad::Verified(active) = RecoveryJournalStore::new(path).load().unwrap()
     else {
         panic!("expected active isolated journal");
     };
-    assert_eq!(active.phase, RecoveryPhase::Isolated);
+    assert_eq!(active.phase, RecoveryPhase::FirstFrameReady);
     assert_eq!(
         lumen_workspace_engine_state(engine),
         LumenWorkspaceState::Active

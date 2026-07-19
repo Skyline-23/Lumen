@@ -69,6 +69,8 @@ pub(crate) struct AppliedResources {
     pub(crate) snapshot: bool,
     pub(crate) display: bool,
     pub(crate) capture: bool,
+    pub(crate) physical_mutation_applied: bool,
+    pub(crate) window_mutation_applied: bool,
     pub(crate) physical_restored: bool,
 }
 
@@ -144,24 +146,22 @@ impl WorkspaceEngine {
         self.enqueue(LumenWorkspaceCommandKind::SnapshotWorkspace);
         self.enqueue(LumenWorkspaceCommandKind::CreateVirtualDisplay);
         self.enqueue(LumenWorkspaceCommandKind::ConfigureVirtualDisplay);
-        if request.policy != LumenWorkspacePolicy::Coexist {
+        if matches!(
+            request.policy,
+            LumenWorkspacePolicy::PromoteVirtualMain | LumenWorkspacePolicy::FocusedWorkspace
+        ) {
             self.enqueue(LumenWorkspaceCommandKind::PromoteVirtualMain);
         }
-        if request.move_target_windows
-            || matches!(
-                request.policy,
-                LumenWorkspacePolicy::FocusedWorkspace | LumenWorkspacePolicy::IsolatedWorkspace
-            )
-        {
+        if request.move_target_windows || request.policy == LumenWorkspacePolicy::FocusedWorkspace {
             self.enqueue(LumenWorkspaceCommandKind::MoveTargetWindows);
-        }
-        if self.manage_capture {
-            self.enqueue(LumenWorkspaceCommandKind::StartCapture);
-        } else if request.policy != LumenWorkspacePolicy::Coexist {
-            self.enqueue(LumenWorkspaceCommandKind::AwaitExternalFirstEncodedFrame);
         }
         if request.policy == LumenWorkspacePolicy::IsolatedWorkspace {
             self.enqueue(LumenWorkspaceCommandKind::ApplyIsolation);
+        }
+        if self.manage_capture {
+            self.enqueue(LumenWorkspaceCommandKind::StartCapture);
+        } else {
+            self.enqueue(LumenWorkspaceCommandKind::AwaitExternalFirstEncodedFrame);
         }
         self.finish_transition_if_ready();
         LumenEngineStatus::Ok

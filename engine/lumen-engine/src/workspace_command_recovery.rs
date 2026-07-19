@@ -49,13 +49,13 @@ impl WorkspaceEngine {
                 self.persist_recovery_phase(RecoveryPhase::VirtualConfigured)
             }
             (LumenWorkspaceCommandKind::PromoteVirtualMain, WorkspaceCommandPayload::None) => {
-                self.persist_recovery_phase(RecoveryPhase::VirtualPromoted)
+                self.record_physical_mutation(RecoveryPhase::VirtualPromoted)
             }
             (LumenWorkspaceCommandKind::MoveTargetWindows, WorkspaceCommandPayload::None) => {
-                self.persist_recovery_phase(RecoveryPhase::TargetWindowsMoved)
+                self.record_window_mutation(RecoveryPhase::TargetWindowsMoved)
             }
             (LumenWorkspaceCommandKind::ApplyIsolation, WorkspaceCommandPayload::None) => {
-                self.persist_recovery_phase(RecoveryPhase::Isolated)
+                self.record_physical_mutation(RecoveryPhase::Isolated)
             }
             (LumenWorkspaceCommandKind::StartCapture, WorkspaceCommandPayload::None) => {
                 self.resources.capture = true;
@@ -112,7 +112,10 @@ impl WorkspaceEngine {
                 self.resources.capture = false;
                 let _ = self.enqueue_next_cleanup();
             }
-            LumenWorkspaceCommandKind::RestoreWorkspace => self.queued.clear(),
+            LumenWorkspaceCommandKind::RestoreWorkspace => {
+                self.cleanup_verification_failed = true;
+                let _ = self.enqueue_next_cleanup();
+            }
             LumenWorkspaceCommandKind::VerifyPhysicalDisplays => {
                 self.cleanup_verification_failed = true;
                 let _ = self.enqueue_next_cleanup();
@@ -134,7 +137,9 @@ impl WorkspaceEngine {
 
     fn record_snapshot(&mut self, topology: PhysicalDisplayTopology) -> LumenEngineStatus {
         self.resources.snapshot = true;
-        self.resources.physical_restored = false;
+        self.resources.physical_mutation_applied = false;
+        self.resources.window_mutation_applied = false;
+        self.resources.physical_restored = true;
         self.physical_topology = Some(topology.clone());
         let Some(store) = &self.recovery_store else {
             return LumenEngineStatus::Ok;
@@ -170,6 +175,42 @@ impl WorkspaceEngine {
         LumenEngineStatus::Ok
     }
 
+    fn record_physical_mutation(&mut self, phase: RecoveryPhase) -> LumenEngineStatus {
+        self.resources.physical_mutation_applied = true;
+        self.resources.physical_restored = false;
+        let Some(current) = self.recovery_journal.as_ref().cloned() else {
+            return LumenEngineStatus::Ok;
+        };
+        let Some(store) = &self.recovery_store else {
+            return LumenEngineStatus::StorageError;
+        };
+        let updated = current
+            .with_physical_mutation_applied(true)
+            .with_phase(phase);
+        if let Err(error) = store.update(&updated) {
+            return journal_error_status(error);
+        }
+        self.recovery_journal = Some(updated);
+        LumenEngineStatus::Ok
+    }
+
+    fn record_window_mutation(&mut self, phase: RecoveryPhase) -> LumenEngineStatus {
+        self.resources.window_mutation_applied = true;
+        self.resources.physical_restored = false;
+        let Some(current) = self.recovery_journal.as_ref().cloned() else {
+            return LumenEngineStatus::Ok;
+        };
+        let Some(store) = &self.recovery_store else {
+            return LumenEngineStatus::StorageError;
+        };
+        let updated = current.with_window_mutation_applied(true).with_phase(phase);
+        if let Err(error) = store.update(&updated) {
+            return journal_error_status(error);
+        }
+        self.recovery_journal = Some(updated);
+        LumenEngineStatus::Ok
+    }
+
     pub(crate) fn enqueue_next_cleanup(&mut self) -> LumenEngineStatus {
         if self.awaiting.is_some() || !self.queued.is_empty() {
             return LumenEngineStatus::Ok;
@@ -178,7 +219,11 @@ impl WorkspaceEngine {
             self.enqueue(LumenWorkspaceCommandKind::StopCapture);
             return LumenEngineStatus::Ok;
         }
-        if self.resources.snapshot && !self.resources.physical_restored {
+        if self.resources.snapshot
+            && (self.resources.physical_mutation_applied || self.resources.window_mutation_applied)
+            && !self.resources.physical_restored
+            && !self.cleanup_verification_failed
+        {
             self.enqueue(LumenWorkspaceCommandKind::RestoreWorkspace);
             return LumenEngineStatus::Ok;
         }
@@ -188,9 +233,14 @@ impl WorkspaceEngine {
             }
             return LumenEngineStatus::Ok;
         }
-        if self.resources.snapshot {
+        if self.resources.snapshot
+            && (self.resources.physical_mutation_applied || self.resources.window_mutation_applied)
+        {
             self.enqueue(LumenWorkspaceCommandKind::VerifyPhysicalDisplays);
             return LumenEngineStatus::Ok;
+        }
+        if self.resources.snapshot {
+            self.resources.snapshot = false;
         }
         if self.recovery_journal.is_some() {
             let Some(store) = &self.recovery_store else {

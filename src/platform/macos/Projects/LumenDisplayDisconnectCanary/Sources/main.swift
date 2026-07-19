@@ -7,6 +7,11 @@ import Security
 
 private let lumenVendorID: UInt32 = 6_973
 private let lumenProductID: UInt32 = 0xA901
+// Give each safety output a stable namespaced serial and a normal desktop-sized
+// mode so WindowServer publishes it as an independent desktop.
+private let canarySafetySerialBase: UInt32 = 0x4C4D_0000
+private let canarySafetyWidth: UInt32 = 1_920
+private let canarySafetyHeight: UInt32 = 1_080
 
 private enum CanaryFailure: Error, CustomStringConvertible {
     case blocked(String)
@@ -27,6 +32,11 @@ private struct DisplayState: Codable {
     let vendorID: UInt32
     let productID: UInt32
     let serialNumber: UInt32
+    let mirrorMasterID: UInt32?
+    let inMirrorSet: Bool
+    let alwaysInMirrorSet: Bool
+    let modeIOFlags: UInt32?
+    let usableForDesktopGUI: Bool?
     let nsscreenVisible: Bool
     let x: Double
     let y: Double
@@ -55,12 +65,32 @@ private enum LumenDisplayDisconnectCanaryMain {
             {
                 try runWatchdog(arguments: Array(CommandLine.arguments.dropFirst(2)))
             } else {
-                try runCanary()
+                runCanaryApplication()
             }
         } catch {
             FileHandle.standardError.write(Data("canary_error=\(error)\n".utf8))
             Darwin.exit(1)
         }
+    }
+
+    private static func runCanaryApplication() -> Never {
+        MainActor.assumeIsolated {
+            let application = NSApplication.shared
+            application.setActivationPolicy(.accessory)
+            application.finishLaunching()
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(500))
+                do {
+                    try runCanary()
+                    Darwin.exit(0)
+                } catch {
+                    FileHandle.standardError.write(Data("canary_error=\(error)\n".utf8))
+                    Darwin.exit(1)
+                }
+            }
+            application.run()
+        }
+        Darwin.exit(1)
     }
 
     private static func runCanary() throws {
@@ -69,15 +99,14 @@ private enum LumenDisplayDisconnectCanaryMain {
                 "Set LUMEN_RUN_DISPLAY_DISCONNECT_CANARY=1 to authorize display mutation"
             )
         }
+        if ProcessInfo.processInfo.environment["LUMEN_VIRTUAL_DISPLAY_PROBE_ONLY"] == "1" {
+            try runVirtualDisplayPublicationProbe()
+            return
+        }
         let capabilityStore = LumenDisplayDisconnectCapabilityFileStore.production
         try capabilityStore.revoke()
 
         let environment = ProcessInfo.processInfo.environment
-        MainActor.assumeIsolated {
-            let application = NSApplication.shared
-            application.setActivationPolicy(.prohibited)
-            application.finishLaunching()
-        }
         let artifactRoot = URL(
             fileURLWithPath: environment["LUMEN_DISPLAY_CANARY_ARTIFACT_DIR"]
                 ?? "/tmp/lumen-display-disconnect-canary",
@@ -133,6 +162,9 @@ private enum LumenDisplayDisconnectCanaryMain {
             detail: "Authorization persisted; no display transaction issued",
             to: runDirectory.appendingPathComponent("pre-mutation.json")
         )
+        let safetyDisplays = try createCanarySafetyDisplays(
+            selectedPhysicalDisplayID: selected.displayID
+        )
         let executableURL = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
         let restoreRequest = runDirectory.appendingPathComponent("restore.request")
         var watchdogs: [Process] = []
@@ -149,6 +181,25 @@ private enum LumenDisplayDisconnectCanaryMain {
                 }
                 for watchdog in watchdogs where watchdog.isRunning {
                     watchdog.terminate()
+                }
+            }
+            let physicalDisplayIsSafe = waitUntilPumpingMainRunLoop(timeout: 8) {
+                guard let state = try? displayStates().first(where: {
+                    $0.displayID == selected.displayID
+                }) else {
+                    return false
+                }
+                return state.active && state.nsscreenVisible
+            }
+            if physicalDisplayIsSafe {
+                for display in safetyDisplays {
+                    display.destroy()
+                }
+            } else {
+                // Fail closed: retaining the two safety outputs is safer than leaving
+                // the user with no visible display after an unverified restore.
+                while true {
+                    RunLoop.main.run(until: Date().addingTimeInterval(1))
                 }
             }
         }
@@ -174,7 +225,7 @@ private enum LumenDisplayDisconnectCanaryMain {
 
         for index in 1...2 {
             let readyURL = runDirectory.appendingPathComponent("watchdog-\(index)-ready.json")
-            guard waitUntil(timeout: 12, condition: {
+            guard waitUntilPumpingMainRunLoop(timeout: 12, condition: {
                 FileManager.default.fileExists(atPath: readyURL.path)
             }) else {
                 throw CanaryFailure.blocked("Watchdog \(index) did not become ready")
@@ -185,14 +236,14 @@ private enum LumenDisplayDisconnectCanaryMain {
         }
 
         let before = try displayStates()
-        let safetyDisplays = before.filter { state in
-            state.active && state.nsscreenVisible && isLumenVirtual(state)
+        let observedSafetyDisplays = before.filter { state in
+            state.active && state.nsscreenVisible && isCanarySafetyDisplay(state)
         }
         guard before.contains(where: { state in
             state.displayID == selected.displayID
                 && state.active
                 && state.nsscreenVisible
-        }), safetyDisplays.count >= 2 else {
+        }), observedSafetyDisplays.count >= 2 else {
             throw CanaryFailure.blocked("Two active Lumen safety displays are required")
         }
         try writeArtifact(
@@ -203,7 +254,7 @@ private enum LumenDisplayDisconnectCanaryMain {
             displays: before,
             generationID: generationID,
             displayTransactionCount: 0,
-            detail: "Two independent watchdogs are active",
+            detail: "Two safety displays and two independent restore watchdogs are active",
             to: runDirectory.appendingPathComponent("before.json")
         )
 
@@ -225,7 +276,7 @@ private enum LumenDisplayDisconnectCanaryMain {
             ),
             to: mutationURL
         )
-        guard waitUntil(timeout: 8, condition: {
+        guard waitUntilPumpingMainRunLoop(timeout: 8, condition: {
             guard let state = try? displayStates().first(where: {
                 $0.displayID == selected.displayID
             }) else {
@@ -259,7 +310,7 @@ private enum LumenDisplayDisconnectCanaryMain {
         )
 
         try writeDurableData(Data(), to: restoreRequest)
-        guard waitUntil(timeout: 12, condition: {
+        guard waitUntilPumpingMainRunLoop(timeout: 12, condition: {
             (1...2).allSatisfy { index in
                 FileManager.default.fileExists(
                     atPath: runDirectory
@@ -280,7 +331,7 @@ private enum LumenDisplayDisconnectCanaryMain {
             }
             throw CanaryFailure.blocked("Watchdogs did not publish restoration receipts")
         }
-        guard waitUntil(timeout: 8, condition: {
+        guard waitUntilPumpingMainRunLoop(timeout: 8, condition: {
             guard let state = try? displayStates().first(where: {
                 $0.displayID == selected.displayID
             }) else {
@@ -294,10 +345,18 @@ private enum LumenDisplayDisconnectCanaryMain {
         }
         disabled = false
 
-        guard waitUntil(timeout: 8, condition: {
+        guard waitUntilPumpingMainRunLoop(timeout: 8, condition: {
             watchdogs.allSatisfy { !$0.isRunning }
         }) else {
             throw CanaryFailure.blocked("Watchdogs did not exit after restoration")
+        }
+        for display in safetyDisplays {
+            display.destroy()
+        }
+        guard waitUntilPumpingMainRunLoop(timeout: 8, condition: {
+            ((try? displayStates()) ?? []).allSatisfy { !isCanarySafetyDisplay($0) }
+        }) else {
+            throw CanaryFailure.blocked("A canary safety display remained online")
         }
         let after = try displayStates()
         guard after.contains(where: { state in
@@ -345,6 +404,47 @@ private enum LumenDisplayDisconnectCanaryMain {
         )
     }
 
+    private static func runVirtualDisplayPublicationProbe() throws {
+        let before = try displayStates()
+        let physicalDisplays = before.filter {
+            $0.active && $0.online && $0.nsscreenVisible && !isLumenVirtual($0)
+        }
+        guard physicalDisplays.count == 1, let physicalDisplay = physicalDisplays.first else {
+            throw CanaryFailure.blocked("Publication probe requires exactly one physical desktop")
+        }
+        let displays = try createCanarySafetyDisplays(
+            selectedPhysicalDisplayID: physicalDisplay.displayID
+        )
+        defer {
+            for display in displays {
+                display.destroy()
+            }
+        }
+        let displayIDs = Set(displays.map(\.displayID))
+
+        guard waitUntilPumpingMainRunLoop(timeout: 8, condition: {
+            let published = ((try? displayStates()) ?? []).filter {
+                displayIDs.contains($0.displayID)
+                    && $0.active
+                    && $0.online
+                    && $0.nsscreenVisible
+                    && $0.usableForDesktopGUI == true
+                    && !$0.inMirrorSet
+            }
+            return Set(published.map(\.displayID)) == displayIDs
+        }) else {
+            let states = (try? displayStates()) ?? []
+            let encoded = try JSONEncoder().encode(states)
+            FileHandle.standardError.write(Data("probe_unready display_ids=\(displayIDs.sorted()) states=".utf8))
+            FileHandle.standardError.write(encoded)
+            FileHandle.standardError.write(Data("\n".utf8))
+            throw CanaryFailure.blocked("Safety displays did not publish as independent desktops")
+        }
+        FileHandle.standardOutput.write(
+            Data("probe_ready display_ids=\(displayIDs.sorted())\n".utf8)
+        )
+    }
+
     private static func runWatchdog(arguments: [String]) throws {
         let environment = ProcessInfo.processInfo.environment
         guard environment["LUMEN_RUN_DISPLAY_DISCONNECT_CANARY"] == "1" else {
@@ -380,56 +480,17 @@ private enum LumenDisplayDisconnectCanaryMain {
         else {
             throw CanaryFailure.blocked("Watchdog authorization does not match this generation")
         }
-        MainActor.assumeIsolated {
-            let application = NSApplication.shared
-            application.setActivationPolicy(.prohibited)
-            application.finishLaunching()
-        }
-        let configuration = LumenMacVirtualDisplayConfiguration()
-        configuration.name = "Lumen Canary Safety \(index)"
-        configuration.serialNumber = UInt32(9_000 + index)
-        configuration.backingWidth = 1_024
-        configuration.backingHeight = 768
-        configuration.logicalWidth = 1_024
-        configuration.logicalHeight = 768
-        configuration.highDensity = false
-        let safetyDisplay = try LumenMacVirtualDisplay(configuration: configuration)
         let adapter = LumenPhysicalDisplayControlAdapter(
             resolver: LumenDlsymDisplayEnabledSymbolResolver()
         )
         let probe = try adapter.probe()
         let restorer = LumenDisplayDisconnectWatchdogRestorer(controller: adapter)
-        var shouldRetainSafetyDisplay = false
         var trigger = LumenDisplayDisconnectWatchdogTrigger.deadlineExceeded
 
-        defer {
-            if !shouldRetainSafetyDisplay {
-                safetyDisplay.destroy()
-            }
-        }
-
-        guard waitUntilPumpingMainRunLoop(timeout: 8, condition: {
-            (try? displayStates().contains(where: {
-                $0.displayID == safetyDisplay.displayID
-                    && $0.active
-                    && $0.nsscreenVisible
-            })) == true
-        }) else {
-            try? writeArtifact(
-                phase: "blocked",
-                selectedDisplayID: selectedDisplayID,
-                safetyDisplayID: safetyDisplay.displayID,
-                probe: probe,
-                displays: try displayStates(),
-                generationID: generationID,
-                displayTransactionCount: 0,
-                detail: "CGVirtualDisplay returned an ID but WindowServer did not publish it",
-                to: runDirectory.appendingPathComponent("watchdog-\(index)-blocked.json")
-            )
-            throw CanaryFailure.blocked("Lumen safety display did not become active")
-        }
         let readyDisplays = try displayStates()
-        guard readyDisplays.filter({ $0.active && $0.nsscreenVisible }).count >= 2,
+        guard readyDisplays.filter({
+            $0.active && $0.nsscreenVisible && isCanarySafetyDisplay($0)
+        }).count >= 2,
               readyDisplays.contains(where: { state in
                   state.displayID == selectedDisplayID
                       && state.active
@@ -439,11 +500,10 @@ private enum LumenDisplayDisconnectCanaryMain {
             throw CanaryFailure.blocked("Watchdog refused to arm without two active displays")
         }
 
-        shouldRetainSafetyDisplay = true
         try writeArtifact(
             phase: "ready",
             selectedDisplayID: selectedDisplayID,
-            safetyDisplayID: safetyDisplay.displayID,
+            safetyDisplayID: nil,
             probe: probe,
             displays: readyDisplays,
             generationID: generationID,
@@ -499,7 +559,7 @@ private enum LumenDisplayDisconnectCanaryMain {
                     try? writeArtifact(
                         phase: "restore-skipped",
                         selectedDisplayID: selectedDisplayID,
-                        safetyDisplayID: safetyDisplay.displayID,
+                        safetyDisplayID: nil,
                         probe: probe,
                         displays: try displayStates(),
                         generationID: generationID,
@@ -509,13 +569,13 @@ private enum LumenDisplayDisconnectCanaryMain {
                             "watchdog-\(index)-skipped.json"
                         )
                     )
-                    shouldRetainSafetyDisplay = outcome.shouldRetainSafetyDisplay
                     return
                 case .restored:
-                    let restoredArtifact = try? writeArtifact(
+                    do {
+                        try writeArtifact(
                         phase: "restored",
                         selectedDisplayID: selectedDisplayID,
-                        safetyDisplayID: safetyDisplay.displayID,
+                        safetyDisplayID: nil,
                         probe: probe,
                         displays: try displayStates(),
                         generationID: generationID,
@@ -524,18 +584,17 @@ private enum LumenDisplayDisconnectCanaryMain {
                         to: runDirectory.appendingPathComponent(
                             "watchdog-\(index)-restored.json"
                         )
-                    )
-                    if restoredArtifact != nil {
-                        shouldRetainSafetyDisplay = outcome.shouldRetainSafetyDisplay
+                        )
                         return
+                    } catch {
+                        // Keep retrying until the durable restoration receipt is written.
                     }
                 case .restoreFailed(let failureReceipt):
-                    shouldRetainSafetyDisplay = outcome.shouldRetainSafetyDisplay
                     try? writeDurableJSON(failureReceipt, to: restoreFailedURL)
                     try? writeArtifact(
                         phase: "restore-failed",
                         selectedDisplayID: selectedDisplayID,
-                        safetyDisplayID: safetyDisplay.displayID,
+                        safetyDisplayID: nil,
                         probe: probe,
                         displays: try displayStates(),
                         generationID: generationID,
@@ -547,7 +606,6 @@ private enum LumenDisplayDisconnectCanaryMain {
                     )
                 }
             } catch {
-                shouldRetainSafetyDisplay = true
                 try? writeDurableJSON(
                     LumenDisplayDisconnectRestoreFailedReceipt(
                         displayID: selectedDisplayID,
@@ -584,6 +642,7 @@ private func displayStates() throws -> [DisplayState] {
     }
     return displayIDs.prefix(Int(count)).map { displayID in
         let bounds = CGDisplayBounds(displayID)
+        let mode = CGDisplayCopyDisplayMode(displayID)
         return DisplayState(
             displayID: displayID,
             active: CGDisplayIsActive(displayID) != 0,
@@ -592,6 +651,11 @@ private func displayStates() throws -> [DisplayState] {
             vendorID: CGDisplayVendorNumber(displayID),
             productID: CGDisplayModelNumber(displayID),
             serialNumber: CGDisplaySerialNumber(displayID),
+            mirrorMasterID: optionalDisplayID(CGDisplayMirrorsDisplay(displayID)),
+            inMirrorSet: CGDisplayIsInMirrorSet(displayID) != 0,
+            alwaysInMirrorSet: CGDisplayIsAlwaysInMirrorSet(displayID) != 0,
+            modeIOFlags: mode?.ioFlags,
+            usableForDesktopGUI: mode?.isUsableForDesktopGUI(),
             nsscreenVisible: visibleDisplayIDs.contains(displayID),
             x: bounds.origin.x,
             y: bounds.origin.y,
@@ -602,7 +666,118 @@ private func displayStates() throws -> [DisplayState] {
 }
 
 private func isLumenVirtual(_ state: DisplayState) -> Bool {
+    isProductionLumenVirtual(state) || isCanarySafetyDisplay(state)
+}
+
+private func isProductionLumenVirtual(_ state: DisplayState) -> Bool {
     state.vendorID == lumenVendorID && state.productID == lumenProductID
+}
+
+private func isCanarySafetyDisplay(_ state: DisplayState) -> Bool {
+    state.vendorID == lumenVendorID
+        && state.productID == lumenProductID
+        && (state.serialNumber == canarySafetySerialBase + 1
+            || state.serialNumber == canarySafetySerialBase + 2)
+}
+
+private func optionalDisplayID(_ displayID: CGDirectDisplayID) -> UInt32? {
+    displayID == kCGNullDirectDisplay ? nil : displayID
+}
+
+private func createCanarySafetyDisplays(
+    selectedPhysicalDisplayID: CGDirectDisplayID
+) throws -> [LumenMacVirtualDisplay] {
+    var displays: [LumenMacVirtualDisplay] = []
+    do {
+        for index in 1...2 {
+            let configuration = LumenMacVirtualDisplayConfiguration()
+            configuration.name = "Lumen Canary Safety \(index)"
+            configuration.serialNumber = canarySafetySerialBase + UInt32(index)
+            configuration.backingWidth = canarySafetyWidth
+            configuration.backingHeight = canarySafetyHeight
+            configuration.logicalWidth = canarySafetyWidth
+            configuration.logicalHeight = canarySafetyHeight
+            configuration.highDensity = false
+            let display = try LumenMacVirtualDisplay(configuration: configuration)
+            displays.append(display)
+
+            guard waitUntilPumpingMainRunLoop(timeout: 8, condition: {
+                ((try? displayStates()) ?? []).contains(where: {
+                    $0.displayID == display.displayID
+                        && $0.active
+                        && $0.nsscreenVisible
+                        && isCanarySafetyDisplay($0)
+                })
+            }) else {
+                throw CanaryFailure.blocked(
+                    "Canary safety display \(index) did not publish through WindowServer"
+                )
+            }
+            try configureAsIndependentOutput(
+                displayID: display.displayID,
+                selectedPhysicalDisplayID: selectedPhysicalDisplayID,
+                index: index
+            )
+        }
+        return displays
+    } catch {
+        for display in displays {
+            display.destroy()
+        }
+        throw error
+    }
+}
+
+private func configureAsIndependentOutput(
+    displayID: CGDirectDisplayID,
+    selectedPhysicalDisplayID: CGDirectDisplayID,
+    index: Int
+) throws {
+    var configuration: CGDisplayConfigRef?
+    let beginResult = CGBeginDisplayConfiguration(&configuration)
+    guard beginResult == .success, let configuration else {
+        throw CanaryFailure.blocked(
+            "Could not begin independent safety display configuration: \(beginResult.rawValue)"
+        )
+    }
+
+    do {
+        let unmirrorResult = CGConfigureDisplayMirrorOfDisplay(
+            configuration,
+            displayID,
+            kCGNullDirectDisplay
+        )
+        guard unmirrorResult == .success else {
+            throw CanaryFailure.blocked(
+                "Could not mark safety display independent: \(unmirrorResult.rawValue)"
+            )
+        }
+
+        let physicalBounds = CGDisplayBounds(selectedPhysicalDisplayID)
+        let safetyBounds = CGDisplayBounds(displayID)
+        let x = physicalBounds.maxX + (CGFloat(index - 1) * max(1, safetyBounds.width))
+        let originResult = CGConfigureDisplayOrigin(
+            configuration,
+            displayID,
+            Int32(clamping: Int64(x.rounded())),
+            Int32(clamping: Int64(physicalBounds.minY.rounded()))
+        )
+        guard originResult == .success else {
+            throw CanaryFailure.blocked(
+                "Could not place safety display as an extended output: \(originResult.rawValue)"
+            )
+        }
+
+        let completeResult = CGCompleteDisplayConfiguration(configuration, .forSession)
+        guard completeResult == .success else {
+            throw CanaryFailure.blocked(
+                "Could not commit independent safety display configuration: \(completeResult.rawValue)"
+            )
+        }
+    } catch {
+        CGCancelDisplayConfiguration(configuration)
+        throw error
+    }
 }
 
 private func waitUntil(timeout: TimeInterval, condition: () -> Bool) -> Bool {

@@ -246,7 +246,7 @@ let project = Project(
             bundleId: "dev.skyline23.lumen.displaydisconnectcanary",
             deploymentTargets: .macOS("15.0"),
             infoPlist: .extendingDefault(with: [
-                "LSBackgroundOnly": true,
+                "LSUIElement": true,
                 "NSPrincipalClass": "NSApplication"
             ]),
             sources: [

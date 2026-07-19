@@ -141,10 +141,7 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         try await coordinator.endSession()
         let teardownActions = try await completePendingCommands(coordinator)
         XCTAssertFalse(teardownActions.contains(.stopCapture))
-        XCTAssertEqual(
-            teardownActions,
-            [.restoreWorkspace, .verifyPhysicalDisplays, .destroyVirtualDisplay]
-        )
+        XCTAssertEqual(teardownActions, [.destroyVirtualDisplay])
     }
 
     func testFocusedWorkspaceRestoresAfterCaptureStops() async throws {
@@ -263,7 +260,7 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         try await coordinator.executePendingCommands(using: executor)
     }
 
-    func testExternalCaptureUsesRetainedOwnershipThenScreenCaptureFirstFrameReadiness() async throws {
+    func testExternalCaptureDisconnectsPhysicalDisplaysBeforeScreenCaptureFirstFrameReadiness() async throws {
         let recorder = WorkspaceExecutionRecorder()
         let statusRecorder = IsolationStatusRecorder()
         let operations = LumenMacWorkspaceNativeOperations(
@@ -299,30 +296,25 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
 
         let preparedEvents = await recorder.recordedEvents()
         XCTAssertFalse(preparedEvents.contains(.firstFrameBarrier))
-        XCTAssertFalse(preparedEvents.contains(.isolate(88)))
-        let promoteIndex = try XCTUnwrap(preparedEvents.firstIndex(of: .promote(88)))
-        let moveIndex = try XCTUnwrap(preparedEvents.firstIndex(of: .move(88)))
+        let isolateIndex = try XCTUnwrap(preparedEvents.firstIndex(of: .isolate(88)))
         let resolveIndex = try XCTUnwrap(preparedEvents.firstIndex(of: .resolve(88)))
-        XCTAssertLessThan(promoteIndex, resolveIndex)
-        XCTAssertLessThan(moveIndex, resolveIndex)
+        XCTAssertLessThan(resolveIndex, isolateIndex)
+        XCTAssertFalse(preparedEvents.contains(.promote(88)))
+        XCTAssertFalse(preparedEvents.contains(.move(88)))
         let preparedState = try await session.state()
         XCTAssertEqual(preparedState, .starting)
 
         let outcome = try await session.activate()
-        let expectedIsolationStatus = LumenMacWorkspaceIsolationStatus.unavailable(
-            message: "Physical display isolation was not attempted because the active ScreenCaptureKit topology must remain stable."
-        )
+        let expectedIsolationStatus = LumenMacWorkspaceIsolationStatus.applied
         XCTAssertEqual(outcome.isolationStatus, expectedIsolationStatus)
         let statuses = await statusRecorder.waitForStatusCount(1)
         XCTAssertEqual(statuses, [expectedIsolationStatus])
 
         let activeEvents = await recorder.recordedEvents()
         let barrierIndex = try XCTUnwrap(activeEvents.firstIndex(of: .firstFrameBarrier))
-        XCTAssertLessThan(promoteIndex, barrierIndex)
-        XCTAssertLessThan(moveIndex, barrierIndex)
         XCTAssertLessThan(resolveIndex, barrierIndex)
-        XCTAssertFalse(activeEvents.contains(.isolate(88)))
-        XCTAssertEqual(activeEvents.filter { $0 == .promote(88) || $0 == .move(88) }.count, 2)
+        XCTAssertLessThan(isolateIndex, barrierIndex)
+        XCTAssertEqual(activeEvents.filter { $0 == .isolate(88) }.count, 1)
         let activeState = try await session.state()
         XCTAssertEqual(activeState, .active)
         try await session.stop()
@@ -367,7 +359,7 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         let outcome = try await session.activate()
 
         let expectedIsolationStatus = LumenMacWorkspaceIsolationStatus.unavailable(
-            message: "Physical display isolation was not attempted because the active ScreenCaptureKit topology must remain stable."
+            message: "display 114 was not published"
         )
         XCTAssertEqual(outcome.isolationStatus, expectedIsolationStatus)
         let statuses = await statusRecorder.waitForStatusCount(1)
@@ -376,7 +368,7 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         XCTAssertEqual(activeState, .active)
         let activeEvents = await recorder.recordedEvents()
         XCTAssertTrue(activeEvents.contains(.firstFrameBarrier))
-        XCTAssertFalse(activeEvents.contains(.isolate(114)))
+        XCTAssertTrue(activeEvents.contains(.isolate(114)))
         XCTAssertFalse(activeEvents.contains(.restore))
         XCTAssertFalse(activeEvents.contains(.destroy))
 
@@ -509,15 +501,15 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         XCTAssertTrue(events.contains(.resolve(90)))
         XCTAssertFalse(events.contains(.firstFrameBarrier))
         XCTAssertFalse(events.contains(.isolate(90)))
-        XCTAssertTrue(events.contains(.restore))
-        XCTAssertTrue(events.contains(.verify))
+        XCTAssertFalse(events.contains(.restore))
+        XCTAssertFalse(events.contains(.verify))
         XCTAssertTrue(events.contains(.destroy))
         XCTAssertFalse(FileManager.default.fileExists(atPath: journalPath))
         let recoveredState = try await session.state()
         XCTAssertEqual(recoveredState, .idle)
     }
 
-    func testFailedExternalFirstFrameBarrierLeavesPhysicalDisplaysUntouched() async throws {
+    func testFailedExternalFirstFrameBarrierRestoresPhysicalDisplaysBeforeDestroy() async throws {
         enum ExpectedFailure: Error {
             case firstFrameTimeout
         }
@@ -554,7 +546,7 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
 
         let events = await recorder.recordedEvents()
         XCTAssertTrue(events.contains(.firstFrameBarrier))
-        XCTAssertFalse(events.contains(.isolate(89)))
+        XCTAssertTrue(events.contains(.isolate(89)))
         XCTAssertTrue(events.contains(.restore))
         XCTAssertTrue(events.contains(.verify))
         XCTAssertTrue(events.contains(.destroy))
@@ -618,8 +610,6 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
                 .configure(73, geometry),
                 .startCapture(73),
                 .stopCapture,
-                .restore,
-                .verify,
                 .destroy,
             ]
         )
@@ -684,8 +674,6 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
                 .create(geometry),
                 .configure(91, geometry),
                 .startCapture(91),
-                .restore,
-                .verify,
                 .destroy,
             ]
         )

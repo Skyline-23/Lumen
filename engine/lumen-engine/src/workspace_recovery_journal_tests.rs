@@ -4,6 +4,10 @@ fn topology() -> PhysicalDisplayTopology {
     PhysicalDisplayTopology {
         displays: vec![PhysicalDisplayState {
             id: "physical-1".to_owned(),
+            vendor_id: Some(1_554),
+            product_id: Some(4_096),
+            serial_number: Some(77),
+            builtin: Some(true),
             mode: PhysicalDisplayMode {
                 width: 3840,
                 height: 2160,

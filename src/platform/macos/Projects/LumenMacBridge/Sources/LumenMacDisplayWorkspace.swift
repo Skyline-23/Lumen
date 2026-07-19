@@ -262,23 +262,26 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
     }
 
     public func restoreWorkspace(_ topology: LumenMacPhysicalDisplayTopology) async throws {
-        let expectedDisplays = try topology.displays.map { state -> (CGDirectDisplayID, LumenMacPhysicalDisplayState) in
-            guard let displayID = UInt32(state.id) else {
-                throw LumenMacDisplayWorkspaceError.invalidPersistedDisplayID(state.id)
+        if (try? await topologyController.verify(topology)) == nil {
+            let resolvedIDs = try await topologyController.resolvedDisplayIDs(for: topology)
+            let expectedDisplays = try topology.displays.map { state -> (CGDirectDisplayID, LumenMacPhysicalDisplayState) in
+                guard let displayID = resolvedIDs[state.id] else {
+                    throw LumenMacDisplayWorkspaceError.invalidPersistedDisplayID(state.id)
+                }
+                return (displayID, state)
             }
-            return (displayID, state)
+            let visibleDisplayIDs = await topologyController.visibleDisplayIDs()
+            let displaysToEnable = expectedDisplays.filter { displayID, state in
+                (state.enabled || state.active) && !visibleDisplayIDs.contains(displayID)
+            }
+            if !displaysToEnable.isEmpty {
+                _ = try physicalDisplayController.probe()
+            }
+            for (displayID, _) in displaysToEnable {
+                _ = try physicalDisplayController.setEnabled(true, for: displayID)
+            }
+            try await topologyController.restore(topology)
         }
-        let visibleDisplayIDs = await topologyController.visibleDisplayIDs()
-        let displaysToEnable = expectedDisplays.filter { displayID, state in
-            (state.enabled || state.active) && !visibleDisplayIDs.contains(displayID)
-        }
-        if !displaysToEnable.isEmpty {
-            _ = try physicalDisplayController.probe()
-        }
-        for (displayID, _) in displaysToEnable {
-            _ = try physicalDisplayController.setEnabled(true, for: displayID)
-        }
-        try await topologyController.restore(topology)
         let windows: [WindowSnapshot]
         if let snapshot {
             windows = snapshot.windows

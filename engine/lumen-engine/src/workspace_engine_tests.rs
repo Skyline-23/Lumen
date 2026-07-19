@@ -22,7 +22,7 @@ fn command_kinds(
 }
 
 #[test]
-fn isolated_workspace_stabilizes_layout_before_capture_and_waits_before_physical_mutation() {
+fn isolated_workspace_disconnects_physical_displays_before_capture_binds() {
     // Given: a capture-managed isolated workspace request.
     let mut engine = WorkspaceEngine::default();
 
@@ -43,10 +43,9 @@ fn isolated_workspace_stabilizes_layout_before_capture_and_waits_before_physical
             LumenWorkspaceCommandKind::SnapshotWorkspace,
             LumenWorkspaceCommandKind::CreateVirtualDisplay,
             LumenWorkspaceCommandKind::ConfigureVirtualDisplay,
-            LumenWorkspaceCommandKind::PromoteVirtualMain,
             LumenWorkspaceCommandKind::MoveTargetWindows,
-            LumenWorkspaceCommandKind::StartCapture,
             LumenWorkspaceCommandKind::ApplyIsolation,
+            LumenWorkspaceCommandKind::StartCapture,
         ]
     );
     assert_eq!(engine.state, LumenWorkspaceState::Active);
@@ -89,6 +88,7 @@ fn externally_managed_capture_keeps_workspace_transaction_separate() {
     );
 
     assert!(!startup.contains(&LumenWorkspaceCommandKind::StartCapture));
+    assert!(startup.contains(&LumenWorkspaceCommandKind::AwaitExternalFirstEncodedFrame));
     assert_eq!(engine.state, LumenWorkspaceState::Active);
     assert_eq!(engine.end_session(), LumenEngineStatus::Ok);
 
@@ -102,17 +102,13 @@ fn externally_managed_capture_keeps_workspace_transaction_separate() {
     }
     assert_eq!(
         teardown,
-        vec![
-            LumenWorkspaceCommandKind::RestoreWorkspace,
-            LumenWorkspaceCommandKind::VerifyPhysicalDisplays,
-            LumenWorkspaceCommandKind::DestroyVirtualDisplay,
-        ]
+        vec![LumenWorkspaceCommandKind::DestroyVirtualDisplay]
     );
     assert_eq!(engine.state, LumenWorkspaceState::Idle);
 }
 
 #[test]
-fn external_capture_isolation_waits_at_typed_first_frame_boundary() {
+fn external_capture_isolates_before_the_typed_first_frame_boundary() {
     let mut engine = WorkspaceEngine::default();
     assert_eq!(
         engine.begin_session(LumenWorkspaceSessionRequest {
@@ -136,19 +132,10 @@ fn external_capture_isolation_waits_at_typed_first_frame_boundary() {
         );
     }
 
-    let promote = engine.next_command().expect("pre-capture promotion");
-    assert_eq!(promote.kind, LumenWorkspaceCommandKind::PromoteVirtualMain);
+    let isolate = engine.next_command().expect("pre-capture isolation");
+    assert_eq!(isolate.kind, LumenWorkspaceCommandKind::ApplyIsolation);
     assert_eq!(
-        engine.complete_command(promote, true),
-        LumenEngineStatus::Ok
-    );
-    let move_windows = engine.next_command().expect("pre-capture window move");
-    assert_eq!(
-        move_windows.kind,
-        LumenWorkspaceCommandKind::MoveTargetWindows
-    );
-    assert_eq!(
-        engine.complete_command(move_windows, true),
+        engine.complete_command(isolate, true),
         LumenEngineStatus::Ok
     );
     let barrier = engine.next_command().expect("first-frame barrier");
@@ -161,8 +148,8 @@ fn external_capture_isolation_waits_at_typed_first_frame_boundary() {
         engine.complete_command(barrier, true),
         LumenEngineStatus::Ok
     );
-    let isolate = engine.next_command().expect("post-readiness isolation");
-    assert_eq!(isolate.kind, LumenWorkspaceCommandKind::ApplyIsolation);
+    assert_eq!(engine.next_command(), Err(LumenEngineStatus::NoCommand));
+    assert_eq!(engine.state, LumenWorkspaceState::Active);
 }
 
 #[test]
@@ -241,18 +228,6 @@ fn startup_failure_recovers_only_resources_that_exist() {
         LumenEngineStatus::CommandFailed
     );
 
-    let restore = engine.next_command().unwrap();
-    assert_eq!(restore.kind, LumenWorkspaceCommandKind::RestoreWorkspace);
-    assert_eq!(
-        engine.complete_command(restore, true),
-        LumenEngineStatus::Ok
-    );
-    let verify = engine.next_command().unwrap();
-    assert_eq!(
-        verify.kind,
-        LumenWorkspaceCommandKind::VerifyPhysicalDisplays
-    );
-    assert_eq!(engine.complete_command(verify, true), LumenEngineStatus::Ok);
     let destroy = engine.next_command().unwrap();
     assert_eq!(
         destroy.kind,
@@ -309,18 +284,6 @@ fn cleanup_failure_does_not_loop_or_skip_remaining_cleanup() {
         engine.complete_command(stop, false),
         LumenEngineStatus::CommandFailed
     );
-    let restore = engine.next_command().unwrap();
-    assert_eq!(restore.kind, LumenWorkspaceCommandKind::RestoreWorkspace);
-    assert_eq!(
-        engine.complete_command(restore, true),
-        LumenEngineStatus::Ok
-    );
-    let verify = engine.next_command().unwrap();
-    assert_eq!(
-        verify.kind,
-        LumenWorkspaceCommandKind::VerifyPhysicalDisplays
-    );
-    assert_eq!(engine.complete_command(verify, true), LumenEngineStatus::Ok);
     let destroy = engine.next_command().unwrap();
     assert_eq!(
         destroy.kind,
@@ -341,7 +304,7 @@ fn physical_verification_failure_still_destroys_the_owned_virtual_display_once()
     command_kinds(
         &mut engine,
         LumenWorkspaceSessionRequest {
-            policy: LumenWorkspacePolicy::Coexist,
+            policy: LumenWorkspacePolicy::FocusedWorkspace,
             move_target_windows: false,
             manage_capture: false,
         },

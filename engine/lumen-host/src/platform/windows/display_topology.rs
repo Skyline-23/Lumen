@@ -120,6 +120,10 @@ impl WindowsDisplayConfigSnapshot {
             sources.entry(source_key).or_insert_with(|| id.clone());
             displays.push(PhysicalDisplayState {
                 id,
+                vendor_id: None,
+                product_id: None,
+                serial_number: None,
+                builtin: None,
                 mode: PhysicalDisplayMode {
                     width: source_mode.width,
                     height: source_mode.height,

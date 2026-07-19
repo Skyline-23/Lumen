@@ -235,6 +235,10 @@ final class LumenWorkspaceRecoveryPayloadTests: XCTestCase {
             displays: [
                 LumenMacPhysicalDisplayState(
                     id: "410",
+                    vendorID: 1_554,
+                    productID: 4_096,
+                    serialNumber: 77,
+                    builtin: true,
                     mode: LumenMacPhysicalDisplayMode(
                         width: 3024,
                         height: 1964,

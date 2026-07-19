@@ -23,6 +23,10 @@ public struct LumenMacPhysicalDisplayMode: Codable, Equatable, Sendable {
 
 public struct LumenMacPhysicalDisplayState: Codable, Equatable, Sendable {
     public let id: String
+    public let vendorID: UInt32?
+    public let productID: UInt32?
+    public let serialNumber: UInt32?
+    public let builtin: Bool?
     public let mode: LumenMacPhysicalDisplayMode
     public let originX: Int32
     public let originY: Int32
@@ -33,6 +37,10 @@ public struct LumenMacPhysicalDisplayState: Codable, Equatable, Sendable {
 
     public init(
         id: String,
+        vendorID: UInt32? = nil,
+        productID: UInt32? = nil,
+        serialNumber: UInt32? = nil,
+        builtin: Bool? = nil,
         mode: LumenMacPhysicalDisplayMode,
         originX: Int32,
         originY: Int32,
@@ -42,6 +50,10 @@ public struct LumenMacPhysicalDisplayState: Codable, Equatable, Sendable {
         online: Bool
     ) {
         self.id = id
+        self.vendorID = vendorID
+        self.productID = productID
+        self.serialNumber = serialNumber
+        self.builtin = builtin
         self.mode = mode
         self.originX = originX
         self.originY = originY
@@ -53,6 +65,10 @@ public struct LumenMacPhysicalDisplayState: Codable, Equatable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case id
+        case vendorID = "vendor_id"
+        case productID = "product_id"
+        case serialNumber = "serial_number"
+        case builtin
         case mode
         case originX = "origin_x"
         case originY = "origin_y"
