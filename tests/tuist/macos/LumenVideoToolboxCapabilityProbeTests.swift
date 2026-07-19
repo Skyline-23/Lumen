@@ -115,7 +115,8 @@ final class LumenVideoToolboxCapabilityProbeTests: XCTestCase {
         XCTAssertFalse(isKeyFrame(samples[1]))
         XCTAssertFalse(isKeyFrame(samples[2]))
         try assertHardwareDecode(samples)
-        try writeReferenceChainArtifactsIfRequested(samples)
+        let artifactDirectory = try writeReferenceChainArtifactsIfRequested(samples)
+        try assertSerializedReferenceChainHardwareDecode(at: artifactDirectory)
     }
 
     func testRequiredHardware420ProfilesRemainDiscoverable() throws {
@@ -440,7 +441,7 @@ final class LumenVideoToolboxCapabilityProbeTests: XCTestCase {
         XCTAssertEqual(statuses.values, [noErr, noErr, noErr])
     }
 
-    private func writeReferenceChainArtifactsIfRequested(_ samples: [CMSampleBuffer]) throws {
+    private func writeReferenceChainArtifactsIfRequested(_ samples: [CMSampleBuffer]) throws -> URL {
         let path = ProcessInfo.processInfo.environment["LUMEN_CODEC_ACK_REFERENCE_ARTIFACT_DIR"]
             ?? "/tmp/LumenCodecAckReferenceChain-latest"
         let directory = URL(fileURLWithPath: path, isDirectory: true)
@@ -456,6 +457,198 @@ final class LumenVideoToolboxCapabilityProbeTests: XCTestCase {
         try hvcC.write(to: directory.appendingPathComponent("configuration.hvcc"), options: .atomic)
         try annexBStream(samples: samples, format: format)
             .write(to: directory.appendingPathComponent("stream.hevc"), options: .atomic)
+        return directory
+    }
+
+    private func assertSerializedReferenceChainHardwareDecode(at directory: URL) throws {
+        let hvcC = try Data(contentsOf: directory.appendingPathComponent("configuration.hvcc"))
+        let frames = try (1 ... 3).map { index in
+            try Data(contentsOf: directory.appendingPathComponent("frame-\(index).bin"))
+        }
+        XCTAssertGreaterThan(hvcC.count, 23)
+        XCTAssertEqual(frames.count, 3)
+
+        var formatDescription: CMVideoFormatDescription?
+        let formatStatus = CMVideoFormatDescriptionCreate(
+            allocator: kCFAllocatorDefault,
+            codecType: kCMVideoCodecType_HEVC,
+            width: 3_512,
+            height: 2_420,
+            extensions: [
+                kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms: ["hvcC": hvcC],
+                kCMFormatDescriptionExtension_ColorPrimaries: kCMFormatDescriptionColorPrimaries_ITU_R_2020,
+                kCMFormatDescriptionExtension_TransferFunction: kCMFormatDescriptionTransferFunction_SMPTE_ST_2084_PQ,
+                kCMFormatDescriptionExtension_YCbCrMatrix: kCMFormatDescriptionYCbCrMatrix_ITU_R_2020,
+                kCMFormatDescriptionExtension_FullRangeVideo: false
+            ] as CFDictionary,
+            formatDescriptionOut: &formatDescription
+        )
+        XCTAssertEqual(formatStatus, noErr)
+        let format = try XCTUnwrap(formatDescription)
+
+        let samples = try frames.enumerated().map { index, frame in
+            try makeSerializedSampleBuffer(
+                data: frame,
+                format: format,
+                frameIndex: index,
+                isKeyFrame: index == 0
+            )
+        }
+        let statuses = LumenVTDecodeStatusCollector()
+        var session: VTDecompressionSession?
+        let createStatus = VTDecompressionSessionCreate(
+            allocator: kCFAllocatorDefault,
+            formatDescription: format,
+            decoderSpecification: [
+                kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder: true
+            ] as CFDictionary,
+            imageBufferAttributes: [
+                kCVPixelBufferWidthKey: 3_512,
+                kCVPixelBufferHeightKey: 2_420,
+                kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange,
+                kCVPixelBufferIOSurfacePropertiesKey: [:]
+            ] as CFDictionary,
+            outputCallback: nil,
+            decompressionSessionOut: &session
+        )
+        XCTAssertEqual(createStatus, noErr)
+        let resolved = try XCTUnwrap(session)
+        defer { VTDecompressionSessionInvalidate(resolved) }
+
+        var hardwareValue: CFTypeRef?
+        let hardwareStatus = withUnsafeMutablePointer(to: &hardwareValue) { pointer in
+            VTSessionCopyProperty(
+                resolved,
+                key: kVTDecompressionPropertyKey_UsingHardwareAcceleratedVideoDecoder,
+                allocator: kCFAllocatorDefault,
+                valueOut: UnsafeMutableRawPointer(pointer)
+            )
+        }
+        XCTAssertEqual(hardwareStatus, noErr)
+        let hardwareAccelerated = hardwareValue as? Bool == true
+        XCTAssertTrue(hardwareAccelerated)
+
+        for sample in samples {
+            XCTAssertEqual(
+                VTDecompressionSessionDecodeFrame(
+                    resolved,
+                    sampleBuffer: sample,
+                    flags: [._EnableAsynchronousDecompression],
+                    infoFlagsOut: nil,
+                    completionHandler: { status, _, imageBuffer, _, _, _ in
+                        XCTAssertNotNil(imageBuffer)
+                        statuses.append(status)
+                    }
+                ),
+                noErr
+            )
+        }
+        XCTAssertEqual(VTDecompressionSessionWaitForAsynchronousFrames(resolved), noErr)
+        let callbackStatuses = statuses.values
+        XCTAssertEqual(callbackStatuses, [noErr, noErr, noErr])
+
+        let proof = try JSONSerialization.data(
+            withJSONObject: [
+                "codec": "hevc",
+                "profile": "main10",
+                "chroma": "yuv420",
+                "bitDepth": 10,
+                "dynamicRange": "hdr10",
+                "colorRange": "limited",
+                "width": 3_512,
+                "height": 2_420,
+                "frameRate": 120,
+                "hvcCBytes": hvcC.count,
+                "frameBytes": frames.map(\.count),
+                "hardwareDecoder": hardwareAccelerated,
+                "callbackStatuses": callbackStatuses
+            ],
+            options: [.prettyPrinted, .sortedKeys]
+        )
+        try proof.write(
+            to: directory.appendingPathComponent("mac-hardware-decode-proof.json"),
+            options: .atomic
+        )
+        print(
+            "serialized-hardware-decode-passed hardware=\(hardwareAccelerated) "
+                + "callbacks=\(callbackStatuses) frame-bytes=\(frames.map(\.count))"
+        )
+    }
+
+    private func makeSerializedSampleBuffer(
+        data: Data,
+        format: CMVideoFormatDescription,
+        frameIndex: Int,
+        isKeyFrame: Bool
+    ) throws -> CMSampleBuffer {
+        var blockBuffer: CMBlockBuffer?
+        XCTAssertEqual(
+            CMBlockBufferCreateWithMemoryBlock(
+                allocator: kCFAllocatorDefault,
+                memoryBlock: nil,
+                blockLength: data.count,
+                blockAllocator: kCFAllocatorDefault,
+                customBlockSource: nil,
+                offsetToData: 0,
+                dataLength: data.count,
+                flags: 0,
+                blockBufferOut: &blockBuffer
+            ),
+            kCMBlockBufferNoErr
+        )
+        let resolvedBlock = try XCTUnwrap(blockBuffer)
+        let copyStatus = data.withUnsafeBytes { bytes in
+            CMBlockBufferReplaceDataBytes(
+                with: bytes.baseAddress!,
+                blockBuffer: resolvedBlock,
+                offsetIntoDestination: 0,
+                dataLength: data.count
+            )
+        }
+        XCTAssertEqual(copyStatus, kCMBlockBufferNoErr)
+
+        var timing = CMSampleTimingInfo(
+            duration: CMTime(value: 1, timescale: 120),
+            presentationTimeStamp: CMTime(value: CMTimeValue(frameIndex), timescale: 120),
+            decodeTimeStamp: .invalid
+        )
+        var sampleSize = data.count
+        var sampleBuffer: CMSampleBuffer?
+        XCTAssertEqual(
+            CMSampleBufferCreateReady(
+                allocator: kCFAllocatorDefault,
+                dataBuffer: resolvedBlock,
+                formatDescription: format,
+                sampleCount: 1,
+                sampleTimingEntryCount: 1,
+                sampleTimingArray: &timing,
+                sampleSizeEntryCount: 1,
+                sampleSizeArray: &sampleSize,
+                sampleBufferOut: &sampleBuffer
+            ),
+            noErr
+        )
+        let resolvedSample = try XCTUnwrap(sampleBuffer)
+        let attachments = try XCTUnwrap(CMSampleBufferGetSampleAttachmentsArray(
+            resolvedSample,
+            createIfNecessary: true
+        ))
+        let attachment = unsafeBitCast(
+            CFArrayGetValueAtIndex(attachments, 0),
+            to: CFMutableDictionary.self
+        )
+        let dependencyValue = isKeyFrame ? kCFBooleanFalse! : kCFBooleanTrue!
+        CFDictionarySetValue(
+            attachment,
+            Unmanaged.passUnretained(kCMSampleAttachmentKey_NotSync).toOpaque(),
+            Unmanaged.passUnretained(dependencyValue).toOpaque()
+        )
+        CFDictionarySetValue(
+            attachment,
+            Unmanaged.passUnretained(kCMSampleAttachmentKey_DependsOnOthers).toOpaque(),
+            Unmanaged.passUnretained(dependencyValue).toOpaque()
+        )
+        return resolvedSample
     }
 
     private func sampleData(_ sample: CMSampleBuffer) throws -> Data {
