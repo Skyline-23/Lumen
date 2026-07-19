@@ -193,6 +193,28 @@ enum ConnectionTaskCompletion {
     Configuration(Result<(), String>),
 }
 
+#[derive(Default)]
+struct ControlStreamLifecycle {
+    acknowledged_stop: bool,
+}
+
+impl ControlStreamLifecycle {
+    fn observe_responses(&mut self, responses: &[HostControlEnvelope]) {
+        self.acknowledged_stop |= responses.iter().any(|response| {
+            matches!(
+                response.payload,
+                Some(host_control_envelope::Payload::SessionStopped(_))
+            )
+        });
+    }
+
+    fn validate_eof(self) -> Result<(), String> {
+        self.acknowledged_stop.then_some(()).ok_or_else(|| {
+            "QUIC session-control stream ended without an acknowledged StopSession".to_owned()
+        })
+    }
+}
+
 fn run_server(
     config: ServerConfig,
     address: SocketAddr,
@@ -392,6 +414,7 @@ async fn handle_connection(
         .recv()
         .await
         .ok_or_else(|| "QUIC connection tasks ended without a result".to_owned())?;
+    log_connection_task_completion(session_epoch, &first_completion);
     let (control_result, configuration_result) = match first_completion {
         ConnectionTaskCompletion::Control(control_result) => {
             configuration_stop.store(true, Ordering::Release);
@@ -437,6 +460,23 @@ async fn handle_connection(
         .and(cleanup_result)
 }
 
+fn log_connection_task_completion(session_epoch: u32, completion: &ConnectionTaskCompletion) {
+    match completion {
+        ConnectionTaskCompletion::Control(Ok(())) => eprintln!(
+            "Lumen native QUIC stage=connection-task-complete session-epoch={session_epoch} task=control outcome=stopped"
+        ),
+        ConnectionTaskCompletion::Control(Err(error)) => eprintln!(
+            "Lumen native QUIC stage=connection-task-complete session-epoch={session_epoch} task=control outcome=failed error={error}"
+        ),
+        ConnectionTaskCompletion::Configuration(Ok(())) => eprintln!(
+            "Lumen native QUIC stage=connection-task-complete session-epoch={session_epoch} task=codec-configuration outcome=stopped"
+        ),
+        ConnectionTaskCompletion::Configuration(Err(error)) => eprintln!(
+            "Lumen native QUIC stage=connection-task-complete session-epoch={session_epoch} task=codec-configuration outcome=failed error={error}"
+        ),
+    }
+}
+
 async fn publish_codec_configurations(
     mut send: quinn::SendStream,
     session_epoch: u32,
@@ -468,10 +508,15 @@ async fn publish_codec_configurations(
                 configuration.session_epoch,
                 configuration.configuration_id,
                 CODEC_CONFIGURATION_ACK_TIMEOUT,
+                &stop,
             ));
             let peer_stream_state = Box::pin(send.stopped());
             match futures_util::future::select(acknowledgement, peer_stream_state).await {
-                futures_util::future::Either::Left((result, _)) => result?,
+                futures_util::future::Either::Left((result, _)) => {
+                    if result? == CodecConfigurationAckWaitOutcome::Stopped {
+                        break;
+                    }
+                }
                 futures_util::future::Either::Right((result, _)) => {
                     let reason = match result {
                         Ok(Some(code)) => format!("peer-stop-code={}", code.into_inner()),
@@ -494,20 +539,30 @@ async fn publish_codec_configurations(
     Ok(())
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CodecConfigurationAckWaitOutcome {
+    Acknowledged,
+    Stopped,
+}
+
 async fn wait_for_codec_configuration_ack(
     router: &SharedControlRouter,
     session_epoch: u32,
     configuration_id: u32,
     timeout: Duration,
-) -> Result<(), String> {
+    stop: &AtomicBool,
+) -> Result<CodecConfigurationAckWaitOutcome, String> {
     tokio::time::timeout(timeout, async {
         loop {
+            if stop.load(Ordering::Acquire) {
+                return Ok(CodecConfigurationAckWaitOutcome::Stopped);
+            }
             let acknowledged = router
                 .lock()
                 .map_err(|_| "native control router lock is poisoned".to_owned())?
                 .native_codec_configuration_is_acknowledged(session_epoch, configuration_id);
             if acknowledged {
-                return Ok(());
+                return Ok(CodecConfigurationAckWaitOutcome::Acknowledged);
             }
             tokio::time::sleep(CODEC_CONFIGURATION_ACK_POLL_INTERVAL).await;
         }
@@ -527,6 +582,7 @@ async fn handle_control_stream(
     router: &SharedControlRouter,
     context: &NativeConnectionContext,
 ) -> Result<(), String> {
+    let mut lifecycle = ControlStreamLifecycle::default();
     while let Some(frame) = read_control_frame(receive).await? {
         let request = decode_client_control_message(&frame)
             .map_err(|error| format!("invalid QUIC control frame: {error:?}"))?;
@@ -534,8 +590,10 @@ async fn handle_control_stream(
             .lock()
             .map_err(|_| "native control router lock is poisoned".to_owned())?
             .dispatch_native_control(request, context);
+        lifecycle.observe_responses(&responses);
         write_control_responses(send, responses).await?;
     }
+    lifecycle.validate_eof()?;
     send.finish()
         .map_err(|error| format!("could not finish QUIC session-control stream: {error}"))?;
     send.stopped()
@@ -999,7 +1057,8 @@ mod tests {
         CodecConfigurationAck, MediaPathResponse, NativeAudioChannelMode, NativeAudioQuality,
         NativeDisplayGamut, NativeDisplayTransfer, NativeDynamicRange,
         NativeGamepadConnectionInput, NativeInputFailureCode, NativeKeyboardInput,
-        NativePolicyMode, NativeVideoCapability, NativeVideoCodec, StartSessionAck,
+        NativePolicyMode, NativeVideoCapability, NativeVideoCodec, SessionStopped, StartSessionAck,
+        StopSession,
     };
     use quinn::crypto::rustls::QuicClientConfig;
     use rustls::pki_types::CertificateDer;
@@ -1014,6 +1073,23 @@ mod tests {
         ControlRouter, HostAuthorities, HostAuthorityPaths, HostDiscoveryState,
         IdlePlatformSessionControl,
     };
+
+    #[test]
+    fn control_stream_eof_requires_an_acknowledged_stop() {
+        assert_eq!(
+            ControlStreamLifecycle::default().validate_eof(),
+            Err("QUIC session-control stream ended without an acknowledged StopSession".to_owned())
+        );
+
+        let mut lifecycle = ControlStreamLifecycle::default();
+        lifecycle.observe_responses(&[HostControlEnvelope {
+            request_id: 11,
+            payload: Some(host_control_envelope::Payload::SessionStopped(
+                SessionStopped { session_epoch: 42 },
+            )),
+        }]);
+        assert_eq!(lifecycle.validate_eof(), Ok(()));
+    }
 
     struct RejectingGamepadPlatform;
 
@@ -1110,11 +1186,35 @@ mod tests {
                 77,
                 1,
                 Duration::from_millis(5),
+                &AtomicBool::new(false),
             ))
             .unwrap_err();
 
         assert!(error.contains("acknowledgement timed out"));
         assert!(error.contains("session-epoch=77"));
+    }
+
+    #[test]
+    fn codec_configuration_ack_wait_stops_without_timing_out() {
+        let temporary = tempfile::tempdir().unwrap();
+        let (router, _) = test_router(temporary.path());
+        let shared = Arc::new(Mutex::new(router));
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+
+        let outcome = runtime
+            .block_on(wait_for_codec_configuration_ack(
+                &shared,
+                77,
+                1,
+                Duration::from_secs(15),
+                &AtomicBool::new(true),
+            ))
+            .unwrap();
+
+        assert_eq!(outcome, CodecConfigurationAckWaitOutcome::Stopped);
     }
 
     #[test]
@@ -1366,6 +1466,25 @@ mod tests {
                 .await
                 .unwrap()
                 .is_none());
+
+            let stop = ClientControlEnvelope {
+                request_id: 11,
+                payload: Some(client_control_envelope::Payload::StopSession(StopSession {
+                    session_epoch: plan.session_epoch,
+                })),
+            };
+            send.write_all(&lumen_engine::encode_client_control_message(&stop).unwrap())
+                .await
+                .unwrap();
+            let stopped = decode_host_control_message(
+                &read_control_frame(&mut receive).await.unwrap().unwrap(),
+            )
+            .unwrap();
+            assert!(matches!(
+                stopped.payload,
+                Some(host_control_envelope::Payload::SessionStopped(_))
+            ));
+
             send.finish().unwrap();
             assert!(read_control_frame(&mut receive).await.unwrap().is_none());
             assert!(configuration_receive
