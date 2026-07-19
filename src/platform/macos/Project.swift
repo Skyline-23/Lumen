@@ -1,6 +1,7 @@
 import ProjectDescription
 
 let baseSettings: SettingsDictionary = [
+    "ARCHS": "arm64",
     "CLANG_CXX_LANGUAGE_STANDARD": "gnu++23",
     "CLANG_ENABLE_MODULES": "YES",
     "CLANG_WARN_DOCUMENTATION_COMMENTS": "NO",
@@ -40,10 +41,7 @@ let rustEngineBuildScript = TargetScript.pre(
     outputPaths: [
         .path("\(repoRoot)/build/rust-engine/$(CONFIGURATION)/arm64/liblumen_engine.a"),
         .path("\(repoRoot)/build/rust-engine/$(CONFIGURATION)/arm64/liblumen_host.a"),
-        .path("\(repoRoot)/build/rust-engine/$(CONFIGURATION)/arm64/LumenRustHostWorker"),
-        .path("\(repoRoot)/build/rust-engine/$(CONFIGURATION)/x86_64/liblumen_engine.a"),
-        .path("\(repoRoot)/build/rust-engine/$(CONFIGURATION)/x86_64/liblumen_host.a"),
-        .path("\(repoRoot)/build/rust-engine/$(CONFIGURATION)/x86_64/LumenRustHostWorker")
+        .path("\(repoRoot)/build/rust-engine/$(CONFIGURATION)/arm64/LumenRustHostWorker")
     ],
     basedOnDependencyAnalysis: false,
     shellPath: "/bin/zsh"
@@ -65,24 +63,9 @@ let nativeAssetsScript = TargetScript.post(
 
     WORKER_DESTINATION="${TARGET_BUILD_DIR}/${EXECUTABLE_FOLDER_PATH}/LumenHostWorker"
     rm -f "${WORKER_DESTINATION}"
-    WORKER_ARCHS=(${(z)ARCHS})
-    if (( ${#WORKER_ARCHS} > 1 )); then
-      WORKER_SOURCES=()
-      for WORKER_ARCH in "${WORKER_ARCHS[@]}"; do
-        WORKER_SOURCE="${REPO_ROOT}/build/rust-engine/${CONFIGURATION}/${WORKER_ARCH}/LumenRustHostWorker"
-        test -x "${WORKER_SOURCE}"
-        WORKER_SOURCES+=("${WORKER_SOURCE}")
-      done
-      lipo -create "${WORKER_SOURCES[@]}" -output "${WORKER_DESTINATION}"
-    else
-      WORKER_ARCH="${CURRENT_ARCH:-}"
-      if [[ -z "${WORKER_ARCH}" || "${WORKER_ARCH}" == "undefined_arch" ]]; then
-        WORKER_ARCH="${ARCHS%% *}"
-      fi
-      WORKER_SOURCE="${REPO_ROOT}/build/rust-engine/${CONFIGURATION}/${WORKER_ARCH}/LumenRustHostWorker"
-      test -x "${WORKER_SOURCE}"
-      ditto "${WORKER_SOURCE}" "${WORKER_DESTINATION}"
-    fi
+    WORKER_SOURCE="${REPO_ROOT}/build/rust-engine/${CONFIGURATION}/arm64/LumenRustHostWorker"
+    test -x "${WORKER_SOURCE}"
+    ditto "${WORKER_SOURCE}" "${WORKER_DESTINATION}"
     chmod 755 "${WORKER_DESTINATION}"
     SIGNING_IDENTITY="${EXPANDED_CODE_SIGN_IDENTITY:--}"
     /usr/bin/codesign --force --options runtime --sign "${SIGNING_IDENTITY}" "${WORKER_DESTINATION}"

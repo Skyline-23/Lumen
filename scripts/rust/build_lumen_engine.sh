@@ -32,11 +32,8 @@ for ARCH in ${(z)REQUESTED_ARCHS}; do
     arm64)
       RUST_TARGET="aarch64-apple-darwin"
       ;;
-    x86_64)
-      RUST_TARGET="x86_64-apple-darwin"
-      ;;
     *)
-      echo "error: unsupported macOS Rust architecture: ${ARCH}" >&2
+      echo "error: Lumen for macOS supports Apple Silicon only; unsupported architecture: ${ARCH}" >&2
       exit 1
       ;;
   esac

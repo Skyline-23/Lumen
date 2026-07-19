@@ -92,7 +92,6 @@ jobs:
           rustup toolchain install stable --profile minimal
           rustup default stable
           rustup target add aarch64-apple-darwin
-          rustup target add x86_64-apple-darwin
           brew install --cask tuist
       - name: Configure signing and notarization
         env:
@@ -149,8 +148,8 @@ jobs:
 
           mkdir -p "${BUILD_ROOT}" "${LUMEN_OUTPUT_DIR}" "${STAGING_ROOT}"
           CONFIGURATION=Release \
-          ARCHS="arm64 x86_64" \
-          CURRENT_ARCH=undefined_arch \
+          ARCHS=arm64 \
+          CURRENT_ARCH=arm64 \
             scripts/rust/build_lumen_engine.sh
 
           cd src/platform/macos
@@ -161,8 +160,8 @@ jobs:
             -configuration Release \
             -destination 'generic/platform=macOS' \
             -derivedDataPath "${DERIVED_DATA}" \
-            'ARCHS=arm64 x86_64' \
-            ONLY_ACTIVE_ARCH=NO \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
             "MARKETING_VERSION=${LUMEN_VERSION}" \
             "CURRENT_PROJECT_VERSION=${LUMEN_BUILD_NUMBER}" \
             CODE_SIGNING_ALLOWED=YES \
@@ -174,8 +173,7 @@ jobs:
           test -d "${SOURCE_APP}"
           ditto "${SOURCE_APP}" "${STAGED_APP}"
           codesign --verify --deep --strict --verbose=2 "${STAGED_APP}"
-          test "$(lipo -archs "${STAGED_APP}/Contents/MacOS/LumenHostWorker")" = 'x86_64 arm64' || \
-            test "$(lipo -archs "${STAGED_APP}/Contents/MacOS/LumenHostWorker")" = 'arm64 x86_64'
+          test "$(lipo -archs "${STAGED_APP}/Contents/MacOS/LumenHostWorker")" = 'arm64'
           ln -s /Applications "${STAGING_ROOT}/Applications"
           hdiutil create \
             -volname Lumen \
