@@ -383,17 +383,17 @@ private struct LumenEncodedFrameContext {
     let submissionMachTime: UInt64
 }
 
-enum LumenCodecAckVideoAdmissionDecision: Equatable, Sendable {
+enum LumenVideoBootstrapAdmissionDecision: Equatable, Sendable {
     case submitInitialKeyFrame
     case coalesceUntilAcknowledged
     case submit
 }
 
-struct LumenCodecAckVideoAdmissionGate: Equatable, Sendable {
+struct LumenVideoBootstrapAdmissionGate: Equatable, Sendable {
     private(set) var isAwaitingAcknowledgement = false
     private(set) var isOpen = false
 
-    mutating func admitSourceFrame() -> LumenCodecAckVideoAdmissionDecision {
+    mutating func admitSourceFrame() -> LumenVideoBootstrapAdmissionDecision {
         if isOpen {
             return .submit
         }
@@ -410,9 +410,14 @@ struct LumenCodecAckVideoAdmissionGate: Equatable, Sendable {
         isAwaitingAcknowledgement = false
         return true
     }
+
+    mutating func beginBootstrapGeneration() {
+        isOpen = false
+        isAwaitingAcknowledgement = false
+    }
 }
 
-private struct LumenPendingCodecAckVideoSource {
+private struct LumenPendingVideoBootstrapSource {
     let imageBuffer: CVPixelBuffer
     let presentationTime: CMTime
     let displayTime: UInt64
@@ -686,8 +691,8 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
     private var outputContract: LumenExactEncodedOutputContract?
     private var sequenceNumber: UInt64 = 0
     private var forceKeyFrame = false
-    private var codecAckAdmission = LumenCodecAckVideoAdmissionGate()
-    private var pendingCodecAckSource: LumenPendingCodecAckVideoSource?
+    private var videoBootstrapAdmission = LumenVideoBootstrapAdmissionGate()
+    private var pendingVideoBootstrapSource: LumenPendingVideoBootstrapSource?
     private var inflightFrameCount = 0
     private var stopping = false
     private var firstSourceMachTime: UInt64?
@@ -930,7 +935,10 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
 
     func requestImmediateKeyFrame() {
         queue.async { [weak self] in
-            self?.forceKeyFrame = true
+            guard let self else { return }
+            self.videoBootstrapAdmission.beginBootstrapGeneration()
+            self.pendingVideoBootstrapSource = nil
+            self.forceKeyFrame = true
         }
     }
 
@@ -938,12 +946,12 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
         await withCheckedContinuation { continuation in
             queue.async { [weak self] in
                 guard let self,
-                      self.codecAckAdmission.acknowledgeConfiguration() else {
+                      self.videoBootstrapAdmission.acknowledgeConfiguration() else {
                     continuation.resume(returning: false)
                     return
                 }
-                let pendingSource = self.pendingCodecAckSource
-                self.pendingCodecAckSource = nil
+                let pendingSource = self.pendingVideoBootstrapSource
+                self.pendingVideoBootstrapSource = nil
                 if let pendingSource {
                     self.submitSource(pendingSource, forceKeyFrame: false)
                 }
@@ -1098,17 +1106,17 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
         let displayTime = LumenMachTime.ticks(for: presentationTime) ?? sourceMachTime
         let duration = CMTime(value: 1, timescale: CMTimeScale(configuration.effectiveTargetFrameRate))
 
-        let source = LumenPendingCodecAckVideoSource(
+        let source = LumenPendingVideoBootstrapSource(
             imageBuffer: imageBuffer,
             presentationTime: presentationTime,
             displayTime: displayTime,
             duration: duration
         )
-        switch codecAckAdmission.admitSourceFrame() {
+        switch videoBootstrapAdmission.admitSourceFrame() {
         case .submitInitialKeyFrame:
             submitSource(source, forceKeyFrame: true)
         case .coalesceUntilAcknowledged:
-            pendingCodecAckSource = source
+            pendingVideoBootstrapSource = source
             statistics.pendingAdmissionDropCount &+= 1
             refreshStatisticsNotesIfNeeded()
         case .submit:
@@ -1119,7 +1127,7 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
     }
 
     private func submitSource(
-        _ source: LumenPendingCodecAckVideoSource,
+        _ source: LumenPendingVideoBootstrapSource,
         forceKeyFrame: Bool
     ) {
         guard let compressionSession else {
@@ -1423,8 +1431,8 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
             "videoToolboxConfiguredSourceFrameCount=\(width)x\(height)",
             "videoToolboxSubmittedFrameCount=\(statistics.submittedFrameCount)",
             "videoToolboxPendingAdmissionDropCount=\(statistics.pendingAdmissionDropCount)",
-            "videoToolboxCodecAckGateOpen=\(codecAckAdmission.isOpen)",
-            "videoToolboxCodecAckPendingSource=\(pendingCodecAckSource != nil)",
+            "videoToolboxBootstrapGateOpen=\(videoBootstrapAdmission.isOpen)",
+            "videoToolboxBootstrapPendingSource=\(pendingVideoBootstrapSource != nil)",
             "videoToolboxMaxInflightStagingSlots=\(statistics.maximumInflightFrameCount)",
             "videoToolboxOutputApproxFrameRate=\(outputApproxFrameRate)"
         ]

@@ -5,8 +5,8 @@ import ScreenCaptureKit
 import XCTest
 
 final class LumenTuistBootstrapTests: XCTestCase {
-    func testCodecAckGateSubmitsOneKeyFrameThenCoalescesUntilAcknowledged() {
-        var gate = LumenCodecAckVideoAdmissionGate()
+    func testBootstrapGateSubmitsOneKeyFrameThenCoalescesUntilDecoded() {
+        var gate = LumenVideoBootstrapAdmissionGate()
 
         XCTAssertEqual(gate.admitSourceFrame(), .submitInitialKeyFrame)
         XCTAssertEqual(gate.admitSourceFrame(), .coalesceUntilAcknowledged)
@@ -19,6 +19,11 @@ final class LumenTuistBootstrapTests: XCTestCase {
         XCTAssertTrue(gate.isOpen)
         XCTAssertEqual(gate.admitSourceFrame(), .submit)
         XCTAssertFalse(gate.acknowledgeConfiguration())
+
+        gate.beginBootstrapGeneration()
+        XCTAssertFalse(gate.isOpen)
+        XCTAssertFalse(gate.isAwaitingAcknowledgement)
+        XCTAssertEqual(gate.admitSourceFrame(), .submitInitialKeyFrame)
     }
 
     func testSystemAudioJoinsTheActiveVideoStreamForTheSameDisplay() throws {
