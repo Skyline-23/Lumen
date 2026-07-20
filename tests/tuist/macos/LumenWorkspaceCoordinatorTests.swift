@@ -10,6 +10,7 @@ private enum WorkspaceExecutionEvent: Equatable {
     case move(UInt32)
     case isolate(UInt32)
     case firstFrameBarrier
+    case captureContinuity
     case startCapture(UInt32)
     case stopCapture
     case restore
@@ -279,6 +280,9 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
             destroyVirtualDisplay: { _ in await recorder.append(.destroy) },
             waitForExternalFirstEncodedFrame: {
                 await recorder.append(.firstFrameBarrier)
+            },
+            verifyCaptureContinuity: {
+                await recorder.append(.captureContinuity)
             }
         )
         let request = externalIsolatedRequest()
@@ -312,10 +316,12 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         let activeEvents = await recorder.recordedEvents()
         let barrierIndex = try XCTUnwrap(activeEvents.firstIndex(of: .firstFrameBarrier))
         let isolateIndex = try XCTUnwrap(activeEvents.firstIndex(of: .isolate(88)))
+        let continuityIndex = try XCTUnwrap(activeEvents.firstIndex(of: .captureContinuity))
         let finalResolveIndex = try XCTUnwrap(activeEvents.lastIndex(of: .resolve(88)))
         XCTAssertLessThan(resolveIndex, barrierIndex)
         XCTAssertLessThan(barrierIndex, finalResolveIndex)
         XCTAssertLessThan(finalResolveIndex, isolateIndex)
+        XCTAssertLessThan(isolateIndex, continuityIndex)
         XCTAssertLessThan(barrierIndex, isolateIndex)
         XCTAssertEqual(activeEvents.filter { $0 == .isolate(88) }.count, 1)
         let activeState = try await session.state()
