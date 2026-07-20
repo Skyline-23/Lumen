@@ -10,7 +10,8 @@ use super::{
     NativeDisplayGamut, NativeDisplayTransfer, NativeDynamicRange, NativePolicyMode,
     NativeSessionError, NativeVideoBootstrapResultCode, NativeVideoCapability, NativeVideoCodec,
     NativeVideoFormat, NativeVideoKeyframeRequestReason, NativeVideoProfile, SessionStarted,
-    VideoBootstrapResult, VideoKeyframeRequest, NATIVE_PROTOCOL_VERSION, NATIVE_VIDEO_STREAM_ID,
+    VideoBootstrapResult, VideoKeyframeRequest, NATIVE_FEC_BLOCK_HEADER_BYTES,
+    NATIVE_PROTOCOL_VERSION, NATIVE_VIDEO_STREAM_ID,
 };
 
 const V2_HELLO_ENVELOPE_BYTES: &[u8] = &[
@@ -530,7 +531,9 @@ fn generation_four_rejects_loose_maximum_bit_depth_inference() {
 
 #[test]
 fn negotiates_the_exact_account_selected_hevc_hdr_profile() {
-    let plan = negotiate_native_session(&hello(), &host(), 0x0102_0304).unwrap();
+    let mut host_capabilities = host();
+    host_capabilities.maximum_datagram_payload = 1_191;
+    let plan = negotiate_native_session(&hello(), &host_capabilities, 0x0102_0304).unwrap();
 
     assert_eq!(plan.protocol_version, NATIVE_PROTOCOL_VERSION);
     assert_eq!(plan.session_epoch, 0x0102_0304);
@@ -545,7 +548,7 @@ fn negotiates_the_exact_account_selected_hevc_hdr_profile() {
         selected_format.dynamic_range,
         NativeDynamicRange::Hdr10 as i32
     );
-    assert_eq!(plan.maximum_datagram_payload, 1_400);
+    assert_eq!(plan.maximum_datagram_payload, 1_191);
     assert_eq!(plan.maximum_presentable_frames, 2);
     assert_eq!(plan.policy_revision, 1);
     assert_eq!(plan.opus_channel_count, 8);
@@ -626,10 +629,17 @@ fn rejects_invalid_version_feature_datagram_and_memory_contracts() {
     );
 
     client = hello();
-    client.maximum_datagram_payload = 1_199;
+    client.maximum_datagram_payload = NATIVE_FEC_BLOCK_HEADER_BYTES as u32;
     assert_eq!(
         negotiate_native_session(&client, &host(), 1),
         Err(NativeSessionError::DatagramPayloadTooSmall)
+    );
+    client.maximum_datagram_payload = NATIVE_FEC_BLOCK_HEADER_BYTES as u32 + 1;
+    assert_eq!(
+        negotiate_native_session(&client, &host(), 1)
+            .unwrap()
+            .maximum_datagram_payload,
+        NATIVE_FEC_BLOCK_HEADER_BYTES as u32 + 1
     );
 
     client = hello();
