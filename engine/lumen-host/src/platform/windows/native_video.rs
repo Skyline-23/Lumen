@@ -87,6 +87,7 @@ struct NativeVideoRuntime {
     encoder: NativeVideoEncoderSession,
     plan: NativeVideoEncoderPlan,
     next_timestamp_hns: i64,
+    awaiting_bootstrap_result: bool,
 }
 
 enum NativeMediaFoundationCommand {
@@ -99,6 +100,9 @@ enum NativeMediaFoundationCommand {
         response: mpsc::SyncSender<Result<(), String>>,
     },
     RequestKeyFrame {
+        response: mpsc::SyncSender<Result<(), String>>,
+    },
+    ResumeAfterBootstrap {
         response: mpsc::SyncSender<Result<(), String>>,
     },
     Shutdown,
@@ -186,6 +190,10 @@ impl NativeMediaFoundation {
 
     pub(super) fn request_key_frame(&self) -> Result<(), String> {
         self.request(|response| NativeMediaFoundationCommand::RequestKeyFrame { response })
+    }
+
+    pub(super) fn resume_after_bootstrap(&self) -> Result<(), String> {
+        self.request(|response| NativeMediaFoundationCommand::ResumeAfterBootstrap { response })
     }
 
     pub(super) fn take_error(&self) -> Result<Option<String>, String> {
@@ -295,11 +303,32 @@ fn run_media_foundation(
                     let result = runtime
                         .as_mut()
                         .ok_or_else(|| "Windows native video session is not running".to_owned())
-                        .and_then(|runtime| runtime.encoder.force_key_frame());
+                        .and_then(|runtime| {
+                            if runtime.awaiting_bootstrap_result {
+                                Ok(())
+                            } else {
+                                runtime.encoder.force_key_frame()
+                            }
+                        });
+                    let _ = response.send(result);
+                }
+                NativeMediaFoundationCommand::ResumeAfterBootstrap { response } => {
+                    let result = runtime
+                        .as_mut()
+                        .ok_or_else(|| "Windows native video session is not running".to_owned())
+                        .and_then(NativeVideoRuntime::resume_after_bootstrap);
                     let _ = response.send(result);
                 }
                 NativeMediaFoundationCommand::Shutdown => break 'worker,
             }
+            continue;
+        }
+        if runtime
+            .as_ref()
+            .expect("active Windows worker owns a video runtime")
+            .awaiting_bootstrap_result
+        {
+            thread::sleep(Duration::from_millis(1));
             continue;
         }
         let encoded = runtime
@@ -308,7 +337,14 @@ fn run_media_foundation(
             .encode_next(ACTIVE_CAPTURE_POLL_MILLISECONDS);
         match encoded.and_then(|sample| {
             if let Some(sample) = sample {
+                let is_key_frame = sample.key_frame;
                 let request_key_frame = sink(sample)?;
+                if is_key_frame {
+                    runtime
+                        .as_mut()
+                        .expect("encoded frame came from an active runtime")
+                        .pause_after_bootstrap()?;
+                }
                 if request_key_frame {
                     runtime
                         .as_mut()
@@ -348,6 +384,7 @@ fn start_runtime(
         encoder,
         plan,
         next_timestamp_hns: 0,
+        awaiting_bootstrap_result: false,
     };
     runtime.encoder.force_key_frame()?;
     let deadline = Instant::now() + INITIAL_FRAME_TIMEOUT;
@@ -364,7 +401,9 @@ fn start_runtime(
                     .to_owned(),
             );
         }
-        if sink(encoded)? {
+        let request_key_frame = sink(encoded)?;
+        runtime.pause_after_bootstrap()?;
+        if request_key_frame {
             runtime.encoder.force_key_frame()?;
         }
         return Ok(runtime);
@@ -484,6 +523,24 @@ impl NativeVideoEncoderCatalog {
 }
 
 impl NativeVideoRuntime {
+    fn pause_after_bootstrap(&mut self) -> Result<(), String> {
+        if self.awaiting_bootstrap_result {
+            return Ok(());
+        }
+        self.capture.pause_frame_delivery()?;
+        self.awaiting_bootstrap_result = true;
+        Ok(())
+    }
+
+    fn resume_after_bootstrap(&mut self) -> Result<(), String> {
+        if !self.awaiting_bootstrap_result {
+            return Err("Windows video bootstrap is not awaiting a decoder result".to_owned());
+        }
+        self.capture.resume_frame_delivery()?;
+        self.awaiting_bootstrap_result = false;
+        Ok(())
+    }
+
     fn encode_next(
         &mut self,
         timeout_milliseconds: u32,

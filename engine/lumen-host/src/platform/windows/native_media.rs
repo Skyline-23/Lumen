@@ -144,6 +144,13 @@ impl NativeWindowsMedia {
         result
     }
 
+    pub(super) fn resume_after_bootstrap(&self) -> Result<(), String> {
+        let lifecycle = self.running_session()?;
+        let result = self.media_foundation.resume_after_bootstrap();
+        drop(lifecycle);
+        result
+    }
+
     pub(super) fn invalidate_reference_frames(
         &self,
         first_frame: i64,

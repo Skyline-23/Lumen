@@ -281,7 +281,9 @@ impl PlatformSessionControl for WindowsPlatformSessionControl {
                 Ok(())
             }
             PlatformControlEvent::RequestIdrFrame => self.media.request_key_frame(),
-            PlatformControlEvent::ResumeVideoEncodingAfterCodecAck => Ok(()),
+            PlatformControlEvent::ResumeVideoEncodingAfterCodecAck => {
+                self.media.resume_after_bootstrap()
+            }
             PlatformControlEvent::InvalidateReferenceFrames {
                 first_frame,
                 last_frame,
