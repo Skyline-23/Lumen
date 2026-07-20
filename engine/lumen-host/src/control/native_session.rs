@@ -24,11 +24,41 @@ const ERROR_NEGOTIATION: u32 = 4;
 const ERROR_SESSION_CONFLICT: u32 = 5;
 const ERROR_PLATFORM: u32 = 7;
 const ERROR_SESSION_STATE: u32 = 8;
+const NATIVE_MEDIA_FEEDBACK_WINDOW_MILLISECONDS: u32 = 250;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct NativeConnectionContext {
     pub(crate) session_epoch: u32,
     pub(crate) host_capabilities: HostSessionCapabilities,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeMediaFeedbackDisposition {
+    AppliedVideo,
+    AcceptedAudio,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeMediaFeedbackRejection {
+    SessionUnavailable,
+    SessionInactive,
+    SessionEpochMismatch,
+    StreamMismatch,
+    WindowDurationMismatch,
+    InvalidSequenceRange,
+}
+
+impl NativeMediaFeedbackRejection {
+    pub(crate) const fn code(self) -> &'static str {
+        match self {
+            Self::SessionUnavailable => "session-unavailable",
+            Self::SessionInactive => "session-inactive",
+            Self::SessionEpochMismatch => "session-epoch-mismatch",
+            Self::StreamMismatch => "stream-mismatch",
+            Self::WindowDurationMismatch => "window-duration-mismatch",
+            Self::InvalidSequenceRange => "invalid-sequence-range",
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -316,19 +346,31 @@ impl ControlRouter {
 
     pub(crate) fn observe_native_media_feedback(
         &mut self,
-        feedback: MediaFeedback,
+        feedback: &MediaFeedback,
         session_epoch: u32,
-    ) -> bool {
+    ) -> Result<NativeMediaFeedbackDisposition, NativeMediaFeedbackRejection> {
         let Some(pending) = self.native.pending.as_mut() else {
-            return false;
+            return Err(NativeMediaFeedbackRejection::SessionUnavailable);
         };
-        if !pending.active
-            || session_epoch != pending.plan.session_epoch
-            || feedback.stream_id != pending.plan.video_stream_id
-            || feedback.window_milliseconds != 250
-            || feedback.first_datagram_sequence > feedback.highest_datagram_sequence
+        if session_epoch != pending.plan.session_epoch {
+            return Err(NativeMediaFeedbackRejection::SessionEpochMismatch);
+        }
+        if feedback.stream_id != pending.plan.video_stream_id
+            && feedback.stream_id != pending.plan.audio_stream_id
         {
-            return false;
+            return Err(NativeMediaFeedbackRejection::StreamMismatch);
+        }
+        if !pending.active {
+            return Err(NativeMediaFeedbackRejection::SessionInactive);
+        }
+        if feedback.window_milliseconds != NATIVE_MEDIA_FEEDBACK_WINDOW_MILLISECONDS {
+            return Err(NativeMediaFeedbackRejection::WindowDurationMismatch);
+        }
+        if feedback.first_datagram_sequence > feedback.highest_datagram_sequence {
+            return Err(NativeMediaFeedbackRejection::InvalidSequenceRange);
+        }
+        if feedback.stream_id == pending.plan.audio_stream_id {
+            return Ok(NativeMediaFeedbackDisposition::AcceptedAudio);
         }
         let total = feedback
             .received_datagrams
@@ -374,7 +416,7 @@ impl ControlRouter {
                 .min(pending.plan.bitrate_kbps);
             pending.admission_divisor = 1;
         }
-        true
+        Ok(NativeMediaFeedbackDisposition::AppliedVideo)
     }
 
     fn dispatch_native_start(

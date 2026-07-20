@@ -10,7 +10,7 @@ mod native_session;
 mod settings;
 mod wake_on_lan;
 
-pub(crate) use native_session::NativeConnectionContext;
+pub(crate) use native_session::{NativeConnectionContext, NativeMediaFeedbackDisposition};
 
 pub use discovery::HostDiscoveryState;
 

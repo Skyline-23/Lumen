@@ -131,6 +131,14 @@ starts at 1 and is contiguous. `MediaFeedback` is tag 10 and reports the exact
 datagram sequence window, receive/recovery/loss/reorder counts, jitter, decoder
 queue depth, presentation drops, and window duration.
 
+Feedback may identify the negotiated video or audio stream. Video feedback
+drives the adaptive delivery state. Structurally valid audio feedback is
+consumed without changing video loss EWMA, FEC, bitrate, or admission state.
+Every report still requires an active session, an exact 250 ms window, and an
+ordered inclusive sequence range; datagram sequence windows are independent
+per logical media stream while the telemetry-envelope sequence remains global.
+Unknown stream IDs are rejected.
+
 The host adapts parity in five-point steps inside 5...50 using loss EWMA. It
 must also reduce admission or bitrate under sustained high loss without
 changing the negotiated codec, resolution, refresh, dynamic range, or hardware

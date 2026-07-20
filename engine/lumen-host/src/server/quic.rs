@@ -24,7 +24,7 @@ use tokio::sync::Notify;
 
 use super::media::run_native_media_loop;
 use super::SharedControlRouter;
-use crate::control::NativeConnectionContext;
+use crate::control::{NativeConnectionContext, NativeMediaFeedbackDisposition};
 use crate::native_input::NativeInputSequence;
 use crate::network_ports::NATIVE_QUIC_OFFSET;
 use crate::{
@@ -976,6 +976,7 @@ async fn accept_native_telemetry_stream(
         receive.id()
     );
     let mut expected_sequence = 1_u64;
+    let mut logged_audio_feedback = false;
     while let Some(frame) =
         read_length_delimited_frame(&mut receive, NATIVE_CONTROL_MESSAGE_LIMIT, "telemetry").await?
     {
@@ -994,12 +995,52 @@ async fn accept_native_telemetry_stream(
         else {
             return Err("QUIC telemetry envelope has no payload".to_owned());
         };
-        let accepted = router
+        let disposition = router
             .lock()
             .map_err(|_| "native control router lock is poisoned".to_owned())?
-            .observe_native_media_feedback(feedback, session_epoch);
-        if !accepted {
-            return Err("QUIC media feedback was rejected".to_owned());
+            .observe_native_media_feedback(&feedback, session_epoch);
+        match disposition {
+            Ok(NativeMediaFeedbackDisposition::AppliedVideo) => {}
+            Ok(NativeMediaFeedbackDisposition::AcceptedAudio) => {
+                if !logged_audio_feedback {
+                    eprintln!(
+                        "Lumen native QUIC stage=media-feedback-accepted-audio session-epoch={session_epoch} telemetry-sequence={} stream-id={} first-sequence={} highest-sequence={} received-datagrams={} recovered-shards={} unrecoverable-objects={} late-objects={} reordered-datagrams={} jitter-us={} decoder-queue-depth={} presentation-drops={} window-ms={}",
+                        envelope.sequence,
+                        feedback.stream_id,
+                        feedback.first_datagram_sequence,
+                        feedback.highest_datagram_sequence,
+                        feedback.received_datagrams,
+                        feedback.recovered_shards,
+                        feedback.unrecoverable_objects,
+                        feedback.late_objects,
+                        feedback.reordered_datagrams,
+                        feedback.estimated_jitter_us,
+                        feedback.decoder_queue_depth,
+                        feedback.presentation_drops,
+                        feedback.window_milliseconds,
+                    );
+                    logged_audio_feedback = true;
+                }
+            }
+            Err(reason) => {
+                return Err(format!(
+                    "QUIC media feedback was rejected reason={} telemetry-sequence={} stream-id={} first-sequence={} highest-sequence={} received-datagrams={} recovered-shards={} unrecoverable-objects={} late-objects={} reordered-datagrams={} jitter-us={} decoder-queue-depth={} presentation-drops={} window-ms={}",
+                    reason.code(),
+                    envelope.sequence,
+                    feedback.stream_id,
+                    feedback.first_datagram_sequence,
+                    feedback.highest_datagram_sequence,
+                    feedback.received_datagrams,
+                    feedback.recovered_shards,
+                    feedback.unrecoverable_objects,
+                    feedback.late_objects,
+                    feedback.reordered_datagrams,
+                    feedback.estimated_jitter_us,
+                    feedback.decoder_queue_depth,
+                    feedback.presentation_drops,
+                    feedback.window_milliseconds,
+                ));
+            }
         }
     }
     send.finish()
@@ -1523,8 +1564,25 @@ mod tests {
                 if ack.highest_contiguous_event_sequence == 1
         ));
 
-        let telemetry = ClientTelemetryEnvelope {
+        let audio_telemetry = ClientTelemetryEnvelope {
             sequence: 1,
+            payload: Some(client_telemetry_envelope::Payload::MediaFeedback(
+                MediaFeedback {
+                    stream_id: plan.audio_stream_id,
+                    highest_datagram_sequence: 3,
+                    received_datagrams: 3,
+                    window_milliseconds: 250,
+                    first_datagram_sequence: 1,
+                    ..MediaFeedback::default()
+                },
+            )),
+        };
+        telemetry_send
+            .write_all(&encode_client_telemetry_message(&audio_telemetry).unwrap())
+            .await
+            .unwrap();
+        let video_telemetry = ClientTelemetryEnvelope {
+            sequence: 2,
             payload: Some(client_telemetry_envelope::Payload::MediaFeedback(
                 MediaFeedback {
                     stream_id: plan.video_stream_id,
@@ -1538,7 +1596,7 @@ mod tests {
             )),
         };
         telemetry_send
-            .write_all(&encode_client_telemetry_message(&telemetry).unwrap())
+            .write_all(&encode_client_telemetry_message(&video_telemetry).unwrap())
             .await
             .unwrap();
         tokio::time::timeout(Duration::from_secs(1), async {
@@ -1551,7 +1609,7 @@ mod tests {
             }
         })
         .await
-        .expect("telemetry stream 8 was not admitted after its first valid frame");
+        .expect("audio and video feedback were not admitted on telemetry stream 8");
 
         let stop = ClientControlEnvelope {
             request_id: 3,

@@ -1,3 +1,4 @@
+use super::native_session::NativeMediaFeedbackRejection;
 use super::*;
 use crate::{
     HostAuthorities, HostAuthorityPaths, PlatformApplicationPlan, PlatformControlEvent,
@@ -544,41 +545,83 @@ fn newer_bootstrap_replaces_an_obsolete_unacknowledged_generation() {
 }
 
 #[test]
-fn media_feedback_adapts_fec_and_exposes_bitrate_and_admission_hooks() {
+fn media_feedback_accepts_audio_neutrally_and_adapts_video_delivery() {
     let platform = Arc::new(RecordingPlatformSessionControl::default());
     let (_root, mut router, context, plan) = started_native_router(platform);
     let initial = router.video_delivery_state().unwrap();
 
-    assert!(router.observe_native_media_feedback(
-        MediaFeedback {
-            stream_id: plan.video_stream_id,
-            highest_datagram_sequence: 200,
-            received_datagrams: 100,
-            recovered_shards: 0,
-            unrecoverable_objects: 100,
-            late_objects: 0,
-            reordered_datagrams: 0,
-            estimated_jitter_us: 4_000,
-            decoder_queue_depth: 3,
-            presentation_drops: 1,
-            window_milliseconds: 250,
-            first_datagram_sequence: 1,
-        },
-        context.session_epoch,
-    ));
+    let audio_feedback = MediaFeedback {
+        stream_id: plan.audio_stream_id,
+        highest_datagram_sequence: 3,
+        received_datagrams: 3,
+        unrecoverable_objects: 2,
+        late_objects: 1,
+        decoder_queue_depth: 8,
+        presentation_drops: 2,
+        window_milliseconds: 250,
+        first_datagram_sequence: 1,
+        ..MediaFeedback::default()
+    };
+    assert_eq!(
+        router.observe_native_media_feedback(&audio_feedback, context.session_epoch),
+        Ok(NativeMediaFeedbackDisposition::AcceptedAudio)
+    );
+    assert_eq!(router.video_delivery_state().unwrap(), initial);
+
+    let congested_feedback = MediaFeedback {
+        stream_id: plan.video_stream_id,
+        highest_datagram_sequence: 200,
+        received_datagrams: 100,
+        recovered_shards: 0,
+        unrecoverable_objects: 100,
+        late_objects: 0,
+        reordered_datagrams: 0,
+        estimated_jitter_us: 4_000,
+        decoder_queue_depth: 3,
+        presentation_drops: 1,
+        window_milliseconds: 250,
+        first_datagram_sequence: 1,
+    };
+    assert_eq!(
+        router.observe_native_media_feedback(&congested_feedback, context.session_epoch),
+        Ok(NativeMediaFeedbackDisposition::AppliedVideo)
+    );
     let adapted = router.video_delivery_state().unwrap();
     assert_eq!(adapted.fec_percentage, (initial.fec_percentage + 5).min(50));
     assert!(adapted.target_bitrate_kbps < initial.target_bitrate_kbps);
     assert_eq!(adapted.admission_divisor, 2);
 
-    assert!(!router.observe_native_media_feedback(
-        MediaFeedback {
-            stream_id: plan.audio_stream_id,
-            window_milliseconds: 250,
-            ..MediaFeedback::default()
-        },
-        context.session_epoch,
-    ));
+    let wrong_stream = MediaFeedback {
+        stream_id: u32::MAX,
+        window_milliseconds: 250,
+        ..MediaFeedback::default()
+    };
+    assert_eq!(
+        router.observe_native_media_feedback(&wrong_stream, context.session_epoch),
+        Err(NativeMediaFeedbackRejection::StreamMismatch)
+    );
+
+    let nonempty_zero_duration = MediaFeedback {
+        stream_id: plan.audio_stream_id,
+        received_datagrams: 1,
+        ..MediaFeedback::default()
+    };
+    assert_eq!(
+        router.observe_native_media_feedback(&nonempty_zero_duration, context.session_epoch),
+        Err(NativeMediaFeedbackRejection::WindowDurationMismatch)
+    );
+
+    let reversed_range = MediaFeedback {
+        stream_id: plan.audio_stream_id,
+        highest_datagram_sequence: 3,
+        first_datagram_sequence: 4,
+        window_milliseconds: 250,
+        ..MediaFeedback::default()
+    };
+    assert_eq!(
+        router.observe_native_media_feedback(&reversed_range, context.session_epoch),
+        Err(NativeMediaFeedbackRejection::InvalidSequenceRange)
+    );
 }
 
 #[test]
