@@ -179,6 +179,8 @@ public actor LumenMacWorkspaceSession {
 
     private static let firstEncodedFrameTimeoutNanoseconds: UInt64 = 5_000_000_000
     private static let isolationCaptureContinuityTimeoutNanoseconds: UInt64 = 2_000_000_000
+    private static let promotionRetryNanoseconds: UInt64 = 50_000_000
+    private static let promotionRetryCount = 20
     private let request: LumenMacWorkspaceSessionRequest
     private let coordinator: LumenWorkspaceCoordinator
     private let executor: LumenMacWorkspaceExecutor
@@ -351,6 +353,7 @@ public actor LumenMacWorkspaceSession {
         do {
             let result = try await executor.execute(activationCommand)
             try await coordinator.complete(activationCommand, result: result)
+            await promoteVirtualDisplayAfterCaptureReadiness()
             await executor.positionPointerOnVirtualDisplay()
             self.activationCommand = nil
             phase = .active
@@ -473,6 +476,28 @@ public actor LumenMacWorkspaceSession {
             await isolationStatusHandler(.failed(message: failures))
         }
         isolationTask = nil
+    }
+
+    private func promoteVirtualDisplayAfterCaptureReadiness() async {
+        for attempt in 0..<Self.promotionRetryCount {
+            do {
+                if try await executor.promoteOwnedVirtualDisplay() {
+                    return
+                }
+            } catch {
+                FileHandle.standardError.write(
+                    Data("Lumen virtual display promotion failed: \(error)\n".utf8)
+                )
+                return
+            }
+            guard attempt + 1 < Self.promotionRetryCount else {
+                break
+            }
+            try? await Task.sleep(nanoseconds: Self.promotionRetryNanoseconds)
+        }
+        FileHandle.standardError.write(
+            Data("Lumen virtual display promotion deferred after capture readiness\n".utf8)
+        )
     }
 
 }

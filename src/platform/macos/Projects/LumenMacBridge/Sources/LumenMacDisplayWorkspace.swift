@@ -56,7 +56,8 @@ public protocol LumenMacDisplayWorkspaceManaging: Sendable {
     func snapshotWorkspace(
         targetProcessIdentifiers: [Int32]
     ) async throws -> LumenMacPhysicalDisplayTopology
-    func promoteVirtualDisplay(_ displayID: UInt32) async throws
+    @discardableResult
+    func promoteVirtualDisplay(_ displayID: UInt32) async throws -> Bool
     func moveTargetWindows(to displayID: UInt32) async throws
     func isolateVirtualDisplay(_ displayID: UInt32) async throws
     func restoreWorkspace(_ topology: LumenMacPhysicalDisplayTopology) async throws
@@ -136,17 +137,18 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
         return durableTopology
     }
 
-    public func promoteVirtualDisplay(_ displayID: UInt32) async throws {
+    @discardableResult
+    public func promoteVirtualDisplay(_ displayID: UInt32) async throws -> Bool {
         guard snapshot != nil else {
             throw LumenMacDisplayWorkspaceError.snapshotMissing
         }
         let visibleDisplayIDs = await topologyController.visibleDisplayIDs()
         guard visibleDisplayIDs.contains(displayID) else {
-            return
+            return false
         }
         let ids = try activeDisplayIDs()
         guard ids.contains(displayID) else {
-            return
+            return false
         }
 
         let virtualOrigin = CGDisplayBounds(displayID).origin
@@ -182,6 +184,7 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
                 }
             }
         }
+        return true
     }
 
     public func moveTargetWindows(to displayID: UInt32) throws {

@@ -68,8 +68,9 @@ private actor WorkspaceDisplayMock: LumenMacDisplayWorkspaceManaging {
         return testTopology()
     }
 
-    func promoteVirtualDisplay(_ displayID: UInt32) async {
+    func promoteVirtualDisplay(_ displayID: UInt32) async -> Bool {
         await recorder.append(.promote(displayID))
+        return true
     }
     func moveTargetWindows(to displayID: UInt32) async {
         await recorder.append(.move(displayID))
@@ -320,6 +321,9 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         let activeEvents = await recorder.recordedEvents()
         let geometry = try LumenMacDisplayGeometryResolver.resolve(request.displayMode)
         let barrierIndex = try XCTUnwrap(activeEvents.firstIndex(of: .firstFrameBarrier))
+        let promotionIndices = activeEvents.indices.filter {
+            activeEvents[$0] == .promote(88)
+        }
         let isolateIndex = try XCTUnwrap(activeEvents.firstIndex(of: .isolate(88)))
         let continuityIndex = try XCTUnwrap(activeEvents.firstIndex(of: .captureContinuity))
         let pointerIndices = activeEvents.indices.filter {
@@ -327,6 +331,10 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         }
         let finalResolveIndex = try XCTUnwrap(activeEvents.lastIndex(of: .resolve(88)))
         XCTAssertLessThan(resolveIndex, barrierIndex)
+        XCTAssertEqual(promotionIndices.count, 2)
+        XCTAssertLessThan(promotionIndices[0], barrierIndex)
+        XCTAssertLessThan(barrierIndex, promotionIndices[1])
+        XCTAssertLessThan(promotionIndices[1], pointerIndices[0])
         XCTAssertLessThan(barrierIndex, finalResolveIndex)
         XCTAssertLessThan(finalResolveIndex, isolateIndex)
         XCTAssertEqual(pointerIndices.count, 2)
