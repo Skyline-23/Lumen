@@ -10,7 +10,7 @@ pub(super) struct PortMapping {
     pub(super) description: &'static str,
 }
 
-pub(super) fn mappings(arguments: &HostArguments) -> Result<[PortMapping; 3], String> {
+pub(super) fn mappings(arguments: &HostArguments) -> Result<[PortMapping; 2], String> {
     let ports = HostPorts::from_arguments(arguments)?;
     Ok([
         PortMapping {
@@ -23,11 +23,6 @@ pub(super) fn mappings(arguments: &HostArguments) -> Result<[PortMapping; 3], St
             port: ports.native_session_quic,
             description: "Lumen - Native Session QUIC",
         },
-        PortMapping {
-            protocol: PortMappingProtocol::Udp,
-            port: ports.native_media_udp,
-            description: "Lumen - Native Media",
-        },
     ])
 }
 
@@ -37,7 +32,7 @@ mod tests {
     use crate::config::tests::valid_arguments_for_runtime_tests;
 
     #[test]
-    fn v3_exposes_https_quic_and_native_media_over_upnp() {
+    fn v4_exposes_only_https_and_quic_over_upnp() {
         let mappings = mappings(&valid_arguments_for_runtime_tests()).unwrap();
 
         assert_eq!(
@@ -52,11 +47,6 @@ mod tests {
                     protocol: PortMappingProtocol::Udp,
                     port: 48_010,
                     description: "Lumen - Native Session QUIC",
-                },
-                PortMapping {
-                    protocol: PortMappingProtocol::Udp,
-                    port: 47_998,
-                    description: "Lumen - Native Media",
                 },
             ]
         );

@@ -1,5 +1,4 @@
 use serde::Serialize;
-use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::Notify;
 
@@ -21,32 +20,27 @@ const MAXIMUM_JSON_REQUEST_BYTES: usize = 32 * 1024;
 pub(crate) struct VideoDeliveryState {
     pub(crate) video_format: crate::PlatformVideoFormat,
     pub(crate) acknowledged_configuration_id: Option<u32>,
+    pub(crate) acknowledged_generation_id: Option<u32>,
     pub(crate) session_epoch: u32,
-    pub(crate) path_id: u16,
     pub(crate) policy_revision: u16,
     pub(crate) maximum_datagram_payload: usize,
-    pub(crate) endpoint: SocketAddr,
-    pub(crate) encryption_key: [u8; 16],
+    pub(crate) maximum_object_delay_us: u32,
     pub(crate) fec_percentage: u16,
+    pub(crate) target_bitrate_kbps: u32,
+    pub(crate) admission_divisor: u8,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct AudioDeliveryState {
     pub(crate) session_epoch: u32,
-    pub(crate) path_id: u16,
     pub(crate) policy_revision: u16,
     pub(crate) maximum_datagram_payload: usize,
-    pub(crate) endpoint: SocketAddr,
-    pub(crate) encryption_key: [u8; 16],
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct InputMotionDeliveryState {
     pub(crate) session_epoch: u32,
-    pub(crate) path_id: u16,
     pub(crate) policy_revision: u16,
-    pub(crate) endpoint: SocketAddr,
-    pub(crate) encryption_key: [u8; 16],
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -117,6 +111,7 @@ pub struct ControlRouter {
     platform: Arc<dyn PlatformSessionControl>,
     native: native_session::NativeSessionState,
     codec_configuration_notify: Arc<Notify>,
+    video_bootstrap_notify: Arc<Notify>,
 }
 
 impl ControlRouter {
@@ -135,11 +130,16 @@ impl ControlRouter {
             platform,
             native: native_session::NativeSessionState::default(),
             codec_configuration_notify: Arc::new(Notify::new()),
+            video_bootstrap_notify: Arc::new(Notify::new()),
         }
     }
 
     pub(crate) fn native_codec_configuration_notify(&self) -> Arc<Notify> {
         Arc::clone(&self.codec_configuration_notify)
+    }
+
+    pub(crate) fn native_video_bootstrap_notify(&self) -> Arc<Notify> {
+        Arc::clone(&self.video_bootstrap_notify)
     }
 
     pub fn authorities(&self) -> &HostAuthorities {

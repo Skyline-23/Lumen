@@ -8,7 +8,7 @@ use crate::{
 
 #[test]
 fn normalizes_every_matching_exact_avc_and_hevc_configuration() {
-    // Given: every exact AVC/HEVC 4:2:0 and 4:4:4 format supported by protocol v3.
+    // Given: every exact AVC/HEVC 4:2:0 and 4:4:4 format supported by protocol v4.
     let formats = matching_formats();
 
     // When: each matching key frame reaches a fresh normalizer.
