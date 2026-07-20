@@ -48,6 +48,10 @@ public struct LumenMacWorkspaceNativeOperations: Sendable {
     public var destroyVirtualDisplay: @Sendable (LumenMacVirtualDisplayIdentity) async throws -> Void
     public var waitForExternalFirstEncodedFrame: @Sendable () async throws -> Void
     public var verifyCaptureContinuity: @Sendable () async throws -> Void
+    public var positionPointer: @Sendable (
+        UInt32,
+        LumenMacDisplayGeometry
+    ) async -> Void
 
     public init(
         createVirtualDisplay: @escaping @Sendable (
@@ -62,7 +66,11 @@ public struct LumenMacWorkspaceNativeOperations: Sendable {
             LumenMacVirtualDisplayIdentity
         ) async throws -> Void,
         waitForExternalFirstEncodedFrame: @escaping @Sendable () async throws -> Void = {},
-        verifyCaptureContinuity: @escaping @Sendable () async throws -> Void = {}
+        verifyCaptureContinuity: @escaping @Sendable () async throws -> Void = {},
+        positionPointer: @escaping @Sendable (
+            UInt32,
+            LumenMacDisplayGeometry
+        ) async -> Void = { _, _ in }
     ) {
         self.createVirtualDisplay = createVirtualDisplay
         self.configureVirtualDisplay = configureVirtualDisplay
@@ -72,6 +80,7 @@ public struct LumenMacWorkspaceNativeOperations: Sendable {
         self.destroyVirtualDisplay = destroyVirtualDisplay
         self.waitForExternalFirstEncodedFrame = waitForExternalFirstEncodedFrame
         self.verifyCaptureContinuity = verifyCaptureContinuity
+        self.positionPointer = positionPointer
     }
 }
 
@@ -184,6 +193,13 @@ public actor LumenMacWorkspaceExecutor: LumenWorkspaceCommandExecuting {
 
     public func verifyOwnedCaptureContinuity() async throws {
         try await operations.verifyCaptureContinuity()
+    }
+
+    public func positionPointerOnVirtualDisplay() async {
+        guard let virtualDisplayID else {
+            return
+        }
+        await operations.positionPointer(virtualDisplayID, displayGeometry)
     }
 
     public func destroyOwnedVirtualDisplay() async throws {

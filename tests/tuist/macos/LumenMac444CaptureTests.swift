@@ -40,6 +40,7 @@ final class LumenMac444CaptureTests: XCTestCase {
         let streamConfiguration = LumenCaptureStreamConfigurationFactory.make(configuration: hevc10)
         XCTAssertEqual(streamConfiguration.pixelFormat, kCVPixelFormatType_444YpCbCr10BiPlanarFullRange)
         XCTAssertEqual(streamConfiguration.captureDynamicRange, .hdrCanonicalDisplay)
+        XCTAssertTrue(streamConfiguration.showsCursor)
     }
 
     func test444EncodingPlanUsesOnlyRuntimeProbedHardwareProfile() throws {

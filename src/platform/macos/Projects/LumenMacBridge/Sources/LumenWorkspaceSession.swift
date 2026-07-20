@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 public struct LumenMacWorkspaceSessionRequest: Sendable {
@@ -233,6 +234,12 @@ public actor LumenMacWorkspaceSession {
                 try await runtime.verifyEncodedFrameContinuity(
                     timeoutNanoseconds: Self.isolationCaptureContinuityTimeoutNanoseconds
                 )
+            },
+            positionPointer: { displayID, geometry in
+                LumenMacPointerPositioner.centerPointer(
+                    on: displayID,
+                    geometry: geometry
+                )
             }
         )
         try self.init(
@@ -344,6 +351,7 @@ public actor LumenMacWorkspaceSession {
         do {
             let result = try await executor.execute(activationCommand)
             try await coordinator.complete(activationCommand, result: result)
+            await executor.positionPointerOnVirtualDisplay()
             self.activationCommand = nil
             phase = .active
             if request.policy == .isolatedWorkspace {
@@ -431,6 +439,7 @@ public actor LumenMacWorkspaceSession {
             isolationCommand = command
             try await executor.verifyOwnedVirtualDisplay()
             let result = try await executor.execute(command)
+            await executor.positionPointerOnVirtualDisplay()
             try await executor.verifyOwnedCaptureContinuity()
             try await coordinator.complete(command, result: result)
             isolationCommand = nil
@@ -466,6 +475,33 @@ public actor LumenMacWorkspaceSession {
         isolationTask = nil
     }
 
+}
+
+enum LumenMacPointerPositioner {
+    static func centerPoint(geometry: LumenMacDisplayGeometry) -> CGPoint {
+        CGPoint(
+            x: CGFloat(geometry.logicalWidth) / 2,
+            y: CGFloat(geometry.logicalHeight) / 2
+        )
+    }
+
+    static func centerPointer(
+        on displayID: CGDirectDisplayID,
+        geometry: LumenMacDisplayGeometry
+    ) {
+        let result = CGDisplayMoveCursorToPoint(displayID, centerPoint(geometry: geometry))
+        guard result != .success else {
+            return
+        }
+        FileHandle.standardError.write(
+            Data(
+                (
+                    "Lumen pointer initialization failed " +
+                        "display-id=\(displayID) status=\(result.rawValue)\n"
+                ).utf8
+            )
+        )
+    }
 }
 
 private enum LumenMacWorkspaceIsolationRuntimeEventPublisher {
