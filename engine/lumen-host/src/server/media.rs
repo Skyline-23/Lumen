@@ -622,6 +622,13 @@ struct VideoSenderState {
     pending_frame: Option<NormalizedNativeVideoFrame>,
     pending_configuration_boundary: Option<u32>,
     frame_index: u32,
+    last_sent_frame: Option<SentVideoFrame>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SentVideoFrame {
+    frame_id: u32,
+    key_frame: bool,
 }
 
 impl VideoSenderState {
@@ -655,8 +662,13 @@ impl VideoSenderState {
         self.pending_frame = None;
         self.pending_configuration_boundary = None;
         self.frame_index = 1;
+        self.last_sent_frame = None;
         self.identity = Some(identity);
         Ok(())
+    }
+
+    fn take_last_sent_frame(&mut self) -> Option<SentVideoFrame> {
+        self.last_sent_frame.take()
     }
 }
 
@@ -674,11 +686,21 @@ fn send_pending_video(
         Some(delivery) => delivery,
         None => return MediaAttempt::Inactive,
     };
-    poll_and_send_video(socket, &delivery, platform, sender, |configuration| {
+    let attempt = poll_and_send_video(socket, &delivery, platform, sender, |configuration| {
         router
             .lock()
             .is_ok_and(|mut router| router.publish_native_codec_configuration(configuration))
-    })
+    });
+    if let Some(sent) = sender.take_last_sent_frame() {
+        let _ = router.lock().map(|mut router| {
+            router.observe_native_video_frame_sent(
+                delivery.session_epoch,
+                sent.frame_id,
+                sent.key_frame,
+            )
+        });
+    }
+    attempt
 }
 
 fn poll_and_send_video(
@@ -875,6 +897,10 @@ impl VideoSenderState {
                 delivery.session_epoch, delivery.endpoint
             );
         }
+        self.last_sent_frame = Some(SentVideoFrame {
+            frame_id: frame_index,
+            key_frame: normalized.frame.key_frame,
+        });
         self.pending_frame = None;
         Ok(())
     }
@@ -1262,6 +1288,47 @@ mod tests {
             second.header.flags & lumen_engine::NATIVE_MEDIA_FLAG_KEYFRAME,
             0
         );
+    }
+
+    #[test]
+    fn successful_video_send_exposes_the_exact_keyframe_for_repair_completion() {
+        let receiver = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let sender_socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let video_format = crate::media::native_video::test_fixtures::H264_420;
+        let platform = ScriptedMediaPlatform {
+            audio: Mutex::new(VecDeque::new()),
+            video: Mutex::new(VecDeque::from([Ok(Some(
+                crate::media::native_video::test_fixtures::encoded_frame(video_format),
+            ))])),
+            controls: Mutex::new(Vec::new()),
+            motions: Mutex::new(Vec::new()),
+            events: Mutex::new(Vec::new()),
+        };
+        let delivery = VideoDeliveryState {
+            video_format,
+            acknowledged_configuration_id: Some(1),
+            session_epoch: 78,
+            path_id: 1,
+            policy_revision: 1,
+            maximum_datagram_payload: 1_200,
+            endpoint: receiver.local_addr().unwrap(),
+            encryption_key: [0x53; 16],
+            fec_percentage: 0,
+        };
+        let mut sender = VideoSenderState::default();
+
+        assert!(matches!(
+            poll_and_send_video(&sender_socket, &delivery, &platform, &mut sender, |_| true,),
+            MediaAttempt::Sent
+        ));
+        assert_eq!(
+            sender.take_last_sent_frame(),
+            Some(SentVideoFrame {
+                frame_id: 1,
+                key_frame: true,
+            })
+        );
+        assert_eq!(sender.take_last_sent_frame(), None);
     }
 
     #[test]

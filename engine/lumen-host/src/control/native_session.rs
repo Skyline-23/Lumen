@@ -6,8 +6,9 @@ use lumen_engine::{
     HostControlEnvelope, HostSessionCapabilities, HostSessionPlan, LumenSessionOffer,
     MediaPathChallenge, MediaPathResponse, MediaPathValidated, NativeChromaSubsampling,
     NativeColorRange, NativeDynamicRange, NativeNegotiationFailure, NativeProtocolError,
-    NativeSessionError, NativeVideoCodec, NativeVideoProfile, SessionStarted, SessionStopped,
-    StartSessionAck, StopSession, NATIVE_VIDEO_STREAM_ID,
+    NativeSessionError, NativeVideoCodec, NativeVideoKeyframeRequestReason, NativeVideoProfile,
+    SessionStarted, SessionStopped, StartSessionAck, StopSession, VideoKeyframeRequest,
+    NATIVE_VIDEO_STREAM_ID,
 };
 
 use super::{AudioDeliveryState, ControlRouter, InputMotionDeliveryState, VideoDeliveryState};
@@ -56,6 +57,8 @@ struct PendingNativeSession {
     codec_configuration: Option<CodecConfiguration>,
     codec_configuration_sent: bool,
     acknowledged_configuration_id: Option<u32>,
+    video_keyframe_request: Option<VideoKeyframeRequest>,
+    last_sent_video_frame_id: u32,
 }
 
 impl ControlRouter {
@@ -81,12 +84,94 @@ impl ControlRouter {
             Some(client_control_envelope::Payload::CodecConfigurationAck(ack)) => {
                 self.dispatch_native_codec_configuration_ack(request_id, ack, context)
             }
+            Some(client_control_envelope::Payload::VideoKeyframeRequest(request)) => {
+                self.dispatch_native_video_keyframe_request(request_id, request, context)
+            }
             None => vec![native_error(
                 request_id,
                 ERROR_INVALID_OPERATION,
                 "native session operation is not valid in the current state",
             )],
         }
+    }
+
+    fn dispatch_native_video_keyframe_request(
+        &mut self,
+        request_id: u64,
+        request: VideoKeyframeRequest,
+        context: &NativeConnectionContext,
+    ) -> Vec<HostControlEnvelope> {
+        let reason = NativeVideoKeyframeRequestReason::try_from(request.reason).ok();
+        let Some(pending) = self.native.pending.as_ref() else {
+            return vec![native_error(
+                request_id,
+                ERROR_SESSION_STATE,
+                "native session has not been negotiated",
+            )];
+        };
+        if !pending.active
+            || pending.acknowledged_configuration_id.is_none()
+            || context.session_epoch != pending.plan.session_epoch
+            || request.session_epoch != pending.plan.session_epoch
+            || request.stream_id != pending.plan.video_stream_id
+            || request.stream_id != u32::from(NATIVE_VIDEO_STREAM_ID)
+            || request.after_frame_id > pending.last_sent_video_frame_id
+            || reason.is_none_or(|reason| reason == NativeVideoKeyframeRequestReason::Unspecified)
+        {
+            eprintln!(
+                "Lumen native media stage=video-keyframe-request-rejected request-id={request_id} context-session-epoch={} received-session-epoch={} received-stream-id={} received-after-frame-id={} received-reason={} active={} acknowledged-configuration-id={} expected-session-epoch={} expected-stream-id={} last-sent-frame-id={}",
+                context.session_epoch,
+                request.session_epoch,
+                request.stream_id,
+                request.after_frame_id,
+                request.reason,
+                pending.active,
+                pending.acknowledged_configuration_id.unwrap_or_default(),
+                pending.plan.session_epoch,
+                pending.plan.video_stream_id,
+                pending.last_sent_video_frame_id,
+            );
+            return vec![native_error(
+                request_id,
+                ERROR_INVALID_OPERATION,
+                "video keyframe request was rejected",
+            )];
+        }
+        if let Some(outstanding) = pending.video_keyframe_request.as_ref() {
+            eprintln!(
+                "Lumen native media stage=video-keyframe-request-coalesced session-epoch={} request-id={request_id} after-frame-id={} outstanding-after-frame-id={} reason={} outstanding-reason={}",
+                request.session_epoch,
+                request.after_frame_id,
+                outstanding.after_frame_id,
+                request.reason,
+                outstanding.reason,
+            );
+            return Vec::new();
+        }
+        let configuration_id = pending.acknowledged_configuration_id.unwrap_or_default();
+        if let Err(error) = self.platform.handle_control_event(
+            context.session_epoch,
+            crate::PlatformControlEvent::RequestIdrFrame,
+        ) {
+            return vec![native_error(
+                request_id,
+                ERROR_PLATFORM,
+                format!("video keyframe could not be requested: {error}"),
+            )];
+        }
+        self.native
+            .pending
+            .as_mut()
+            .expect("validated pending native session")
+            .video_keyframe_request = Some(request.clone());
+        eprintln!(
+            "Lumen native media stage=video-keyframe-request-accepted session-epoch={} request-id={request_id} after-frame-id={} reason={} configuration-id={}",
+            request.session_epoch,
+            request.after_frame_id,
+            request.reason,
+            configuration_id,
+        );
+        Vec::new()
     }
 
     fn dispatch_native_codec_configuration_ack(
@@ -490,6 +575,8 @@ impl ControlRouter {
             codec_configuration: None,
             codec_configuration_sent: false,
             acknowledged_configuration_id: None,
+            video_keyframe_request: None,
+            last_sent_video_frame_id: 0,
         });
         vec![
             HostControlEnvelope {
@@ -595,6 +682,49 @@ impl ControlRouter {
                 && pending.plan.session_epoch == session_epoch
                 && pending.acknowledged_configuration_id == Some(configuration_id)
         })
+    }
+
+    pub(crate) fn observe_native_video_frame_sent(
+        &mut self,
+        session_epoch: u32,
+        frame_id: u32,
+        key_frame: bool,
+    ) -> bool {
+        let Some(pending) = self.native.pending.as_mut() else {
+            return false;
+        };
+        if !pending.active
+            || pending.plan.session_epoch != session_epoch
+            || frame_id == 0
+            || frame_id <= pending.last_sent_video_frame_id
+        {
+            return false;
+        }
+        pending.last_sent_video_frame_id = frame_id;
+        let completed = key_frame
+            && pending
+                .video_keyframe_request
+                .as_ref()
+                .is_some_and(|request| frame_id > request.after_frame_id);
+        if completed {
+            let request = pending
+                .video_keyframe_request
+                .take()
+                .expect("completed video keyframe request");
+            eprintln!(
+                "Lumen native media stage=video-keyframe-request-completed session-epoch={session_epoch} after-frame-id={} keyframe-id={frame_id} reason={}",
+                request.after_frame_id, request.reason
+            );
+        }
+        completed
+    }
+
+    #[cfg(test)]
+    pub(crate) fn native_video_keyframe_request_is_outstanding(&self) -> bool {
+        self.native
+            .pending
+            .as_ref()
+            .is_some_and(|pending| pending.video_keyframe_request.is_some())
     }
 
     pub(crate) fn video_delivery_state(&self) -> Option<VideoDeliveryState> {
