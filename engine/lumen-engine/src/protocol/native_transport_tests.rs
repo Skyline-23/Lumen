@@ -157,6 +157,37 @@ fn native_transport_fixture_matches_the_rust_wire_constants() {
         NATIVE_MEDIA_HEADER_BYTES
     );
     assert_eq!(fixture["feedbackIntervalMilliseconds"], 16);
+    assert_eq!(
+        fixture["videoKeyframeRepair"]["transport"],
+        "session-control-bidi"
+    );
+    assert_eq!(
+        fixture["videoKeyframeRepair"]["clientControlEnvelopeTag"],
+        15
+    );
+    assert_eq!(fixture["videoKeyframeRepair"]["streamId"], 1);
+    assert_eq!(
+        fixture["videoKeyframeRepair"]["requestFields"]["sessionEpoch"],
+        1
+    );
+    assert_eq!(
+        fixture["videoKeyframeRepair"]["requestFields"]["streamId"],
+        2
+    );
+    assert_eq!(
+        fixture["videoKeyframeRepair"]["requestFields"]["afterFrameId"],
+        3
+    );
+    assert_eq!(fixture["videoKeyframeRepair"]["requestFields"]["reason"], 4);
+    assert_eq!(
+        fixture["videoKeyframeRepair"]["reasons"]["incompleteUnit"],
+        1
+    );
+    assert_eq!(
+        fixture["videoKeyframeRepair"]["reasons"]["decoderRecovery"],
+        2
+    );
+    assert_eq!(fixture["videoKeyframeRepair"]["legacyFallback"], false);
     assert_eq!(fixture["mediaPlane"], "lumen-udp-aead");
     assert_eq!(fixture["logicalStreamIds"]["video"], NATIVE_VIDEO_STREAM_ID);
     assert_eq!(fixture["logicalStreamIds"]["audio"], NATIVE_AUDIO_STREAM_ID);

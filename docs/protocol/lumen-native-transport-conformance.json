@@ -17,6 +17,24 @@
   "initialMaximumDatagramPayload": 1200,
   "frameIntervalBudgetMicrosecondsAt120Fps": 8333,
   "feedbackIntervalMilliseconds": 16,
+  "videoKeyframeRepair": {
+    "transport": "session-control-bidi",
+    "clientControlEnvelopeTag": 15,
+    "streamId": 1,
+    "requestFields": {
+      "sessionEpoch": 1,
+      "streamId": 2,
+      "afterFrameId": 3,
+      "reason": 4
+    },
+    "reasons": {
+      "unspecified": 0,
+      "incompleteUnit": 1,
+      "decoderRecovery": 2
+    },
+    "coalescing": "one-outstanding-until-fresh-keyframe-sent",
+    "legacyFallback": false
+  },
   "protocolErrors": {
     "invalidOperation": 1,
     "authentication": 2,
