@@ -220,17 +220,6 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             throw LumenMacDisplayWorkspaceError.snapshotMissing
         }
         do {
-            let current = try await topologyController.capture()
-            let visibleDisplayIDs = await topologyController.visibleDisplayIDs()
-            guard visibleDisplayIDs.contains(displayID) else {
-                throw LumenMacDisplayWorkspaceError.displayNotFound(displayID)
-            }
-            if let publishedVirtualDisplay = current.displays.first(where: {
-                $0.id == String(displayID)
-            }), !publishedVirtualDisplay.active || !publishedVirtualDisplay.online {
-                throw LumenMacDisplayWorkspaceError.displayNotFound(displayID)
-            }
-
             let physicalDisplayIDs = try snapshot.topology.displays
                 .filter { $0.enabled || $0.active }
                 .map { state -> CGDirectDisplayID in
@@ -252,7 +241,6 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
                     disabled.append(physicalDisplayID)
                 }
                 try await verifyIsolation(
-                    virtualDisplayID: displayID,
                     physicalDisplayIDs: Set(physicalDisplayIDs)
                 )
             } catch {
@@ -342,7 +330,6 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
     }
 
     private func verifyIsolation(
-        virtualDisplayID: CGDirectDisplayID,
         physicalDisplayIDs: Set<CGDirectDisplayID>
     ) async throws {
         let current = try await topologyController.capture()
@@ -350,12 +337,7 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             UInt32(state.id).map { ($0, state) }
         })
         let visibleDisplayIDs = await topologyController.visibleDisplayIDs()
-        let publishedVirtualDisplayIsActive = statesByID[virtualDisplayID].map {
-            $0.online && $0.active
-        } ?? true
-        guard publishedVirtualDisplayIsActive,
-              visibleDisplayIDs.contains(virtualDisplayID),
-              physicalDisplayIDs.allSatisfy({ statesByID[$0]?.active != true }),
+        guard physicalDisplayIDs.allSatisfy({ statesByID[$0]?.active != true }),
               physicalDisplayIDs.isDisjoint(with: visibleDisplayIDs) else {
             throw LumenMacDisplayWorkspaceError.isolationPostconditionFailed
         }

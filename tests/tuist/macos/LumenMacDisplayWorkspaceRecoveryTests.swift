@@ -339,7 +339,7 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         XCTAssertEqual(fixture.physicalTopology(), isolationPhysicalTopology())
     }
 
-    func testUnpublishedVirtualDisplaySkipsIsolationWithoutPhysicalMutation() async throws {
+    func testCaptureProvenUnpublishedVirtualDisplayCanIsolatePhysicalDisplays() async throws {
         let topology = isolationPhysicalTopology()
         let fixture = IsolationDisplayFixture(physicalTopology: topology)
         let workspace = LumenMacDisplayWorkspace(
@@ -349,15 +349,17 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         )
         _ = try await workspace.snapshotWorkspace(targetProcessIdentifiers: [])
 
-        do {
-            try await workspace.isolateVirtualDisplay(114)
-            XCTFail("expected unpublished virtual display to skip isolation")
-        } catch LumenMacDisplayWorkspaceError.isolationUnavailable(let message) {
-            XCTAssertTrue(message.contains("display 114 was not found"))
-        }
+        try await workspace.isolateVirtualDisplay(114)
 
-        XCTAssertTrue(fixture.controlCalls().isEmpty)
-        XCTAssertEqual(fixture.physicalTopology(), topology)
+        XCTAssertEqual(
+            fixture.controlCalls(),
+            topology.displays.compactMap { display in
+                UInt32(display.id).map { PhysicalControlCall(displayID: $0, enabled: false) }
+            }
+        )
+        XCTAssertTrue(
+            fixture.physicalTopology().displays.allSatisfy { !$0.active && !$0.enabled }
+        )
     }
 
     func testRetainedModeLessVirtualDisplayCanIsolateAfterActiveReadback() async throws {
