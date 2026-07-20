@@ -182,6 +182,7 @@ private actor LumenMacWorkspaceSessionRegistry {
         )
         try await session.prepare()
         let displayID = try await session.displayID()
+        await LumenScreenCaptureDisplayPrefetch.begin(displayID: displayID)
         sessions[request.displayKey] = session
         return displayID
     }

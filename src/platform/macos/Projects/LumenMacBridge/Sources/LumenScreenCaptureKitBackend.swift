@@ -425,6 +425,9 @@ private struct LumenPendingVideoBootstrapSource {
 }
 
 enum LumenScreenCaptureDisplayResolver {
+    static let retainedDisplayPublicationAttempts = 4
+    static let retainedDisplayPublicationRetryNanoseconds: UInt64 = 250_000_000
+
     static func resolve<Value: Sendable>(
         displayID: UInt32,
         attempts: Int,
@@ -757,8 +760,12 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
                         ).map(ObjectIdentifier.init)
                         return try await LumenScreenCaptureDisplayResolver.resolve(
                             displayID: displayID,
-                            attempts: retainedIdentity == nil ? 1 : 3,
-                            delayNanoseconds: 250_000_000,
+                            attempts: retainedIdentity == nil
+                                ? 1
+                                : LumenScreenCaptureDisplayResolver.retainedDisplayPublicationAttempts,
+                            delayNanoseconds: retainedIdentity == nil
+                                ? 0
+                                : LumenScreenCaptureDisplayResolver.retainedDisplayPublicationRetryNanoseconds,
                             isRetained: {
                                 guard let retainedIdentity else { return true }
                                 guard let current = LumenMacVirtualDisplay.registeredDisplay(

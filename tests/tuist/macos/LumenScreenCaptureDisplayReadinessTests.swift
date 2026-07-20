@@ -81,22 +81,23 @@ final class LumenScreenCaptureDisplayReadinessTests: XCTestCase {
 
     func testRetainedDisplayWaitsForScreenCaptureKitPublication() async throws {
         let attempts = Mutex(0)
+        let publicationAttempt = 4
 
         let resolved: UInt32 = try await LumenScreenCaptureDisplayResolver.resolve(
             displayID: 117,
-            attempts: 3,
+            attempts: LumenScreenCaptureDisplayResolver.retainedDisplayPublicationAttempts,
             delayNanoseconds: 0,
             isRetained: { true },
             lookup: {
                 attempts.withLock { count in
                     count += 1
-                    return count == 3 ? 117 : nil
+                    return count == publicationAttempt ? 117 : nil
                 }
             }
         )
 
         XCTAssertEqual(resolved, 117)
-        XCTAssertEqual(attempts.withLock { $0 }, 3)
+        XCTAssertEqual(attempts.withLock { $0 }, publicationAttempt)
     }
 
     func testDisplayDisappearanceFailsBeforeBindingScreenCaptureKit() async {

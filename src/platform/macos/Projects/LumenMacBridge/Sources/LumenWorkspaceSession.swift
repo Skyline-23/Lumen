@@ -130,7 +130,6 @@ private actor LumenMacVirtualDisplayOwner {
         )
         self.display = display
         displayKey = identity.id
-        await LumenScreenCaptureDisplayPrefetch.begin(displayID: display.displayID)
         return display.displayID
     }
 
