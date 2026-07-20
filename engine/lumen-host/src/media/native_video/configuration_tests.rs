@@ -129,5 +129,7 @@ fn slice_frame(codec: PlatformVideoCodec, record: Vec<u8>) -> PlatformEncodedVid
         decoder_configuration_record: Some(record),
         presentation_time_90khz: 90_000,
         key_frame: true,
+        requires_bootstrap_acknowledgement: false,
+        repair_keyframe: false,
     }
 }

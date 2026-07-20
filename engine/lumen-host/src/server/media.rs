@@ -45,6 +45,7 @@ enum MediaAttempt {
     Sent,
     Dropped,
     Failed(MediaFailure),
+    Terminal(MediaFailure),
 }
 
 #[derive(Default)]
@@ -61,6 +62,7 @@ impl MediaFailureReporter {
     ) {
         match attempt {
             MediaAttempt::Failed(failure) => self.raise(failure, platform),
+            MediaAttempt::Terminal(failure) => self.raise_terminal(failure, platform),
             MediaAttempt::Inactive | MediaAttempt::Sent | MediaAttempt::Dropped => {
                 self.clear_kind(kind, platform)
             }
@@ -102,6 +104,29 @@ impl MediaFailureReporter {
             message: Some(message),
         });
     }
+
+    fn raise_terminal(&mut self, failure: &MediaFailure, platform: &dyn PlatformSessionControl) {
+        let message = media_failure_message(failure);
+        eprintln!("Lumen native media error code={message}");
+        let _ = platform.publish_runtime_event(PlatformRuntimeEvent {
+            disposition: PlatformRuntimeEventDisposition::Raised,
+            severity: PlatformRuntimeEventSeverity::Error,
+            code: failure.code,
+            message: Some(message),
+        });
+    }
+}
+
+fn media_failure_message(failure: &MediaFailure) -> String {
+    format!(
+        "native-media-{}-{}: {}",
+        match failure.kind {
+            MediaKind::Video => "video",
+            MediaKind::Audio => "audio",
+        },
+        failure.stage,
+        failure.message
+    )
 }
 
 fn failure_codes(kind: MediaKind) -> [PlatformRuntimeEventCode; 3] {
@@ -160,6 +185,12 @@ pub(super) async fn run_native_media_loop(
                     &mut video,
                 ).await;
                 failures.observe(MediaKind::Video, &video_attempt, platform.as_ref());
+                if let MediaAttempt::Terminal(failure) = video_attempt {
+                    return Err(format!(
+                        "native video {} failed: {}",
+                        failure.stage, failure.message
+                    ));
+                }
             }
         }
     }
@@ -370,7 +401,43 @@ struct VideoSenderState {
     pending_frame: Option<NormalizedNativeVideoFrame>,
     pending_since: Option<Instant>,
     repair_required: bool,
+    repair_after_bootstrap: bool,
     frame_id: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct VideoBootstrapClassification {
+    reason: NativeVideoBootstrapReason,
+    requires_encoder_resume: bool,
+}
+
+fn classify_video_bootstrap(
+    has_new_configuration: bool,
+    has_acknowledged_generation: bool,
+    repair_keyframe: bool,
+    platform_requires_acknowledgement: bool,
+) -> VideoBootstrapClassification {
+    if !has_acknowledged_generation {
+        VideoBootstrapClassification {
+            reason: NativeVideoBootstrapReason::Initial,
+            requires_encoder_resume: true,
+        }
+    } else if repair_keyframe {
+        VideoBootstrapClassification {
+            reason: NativeVideoBootstrapReason::Repair,
+            requires_encoder_resume: true,
+        }
+    } else if has_new_configuration {
+        VideoBootstrapClassification {
+            reason: NativeVideoBootstrapReason::ConfigurationChange,
+            requires_encoder_resume: platform_requires_acknowledgement,
+        }
+    } else {
+        VideoBootstrapClassification {
+            reason: NativeVideoBootstrapReason::Periodic,
+            requires_encoder_resume: platform_requires_acknowledgement,
+        }
+    }
 }
 
 impl VideoSenderState {
@@ -393,9 +460,34 @@ impl VideoSenderState {
         self.pending_frame = None;
         self.pending_since = None;
         self.repair_required = false;
+        self.repair_after_bootstrap = false;
         self.frame_id = 1;
         self.identity = Some(identity);
         Ok(())
+    }
+
+    fn pending_bootstrap_frame_should_drop(
+        &mut self,
+        repair_keyframe: bool,
+        age: Option<Duration>,
+        maximum_object_delay_us: u32,
+    ) -> bool {
+        if repair_keyframe {
+            return false;
+        }
+        let should_drop = self.repair_after_bootstrap
+            || age.is_some_and(|age| object_deadline_exceeded(age, maximum_object_delay_us));
+        self.repair_after_bootstrap |= should_drop;
+        should_drop
+    }
+
+    fn take_post_bootstrap_repair_request(&mut self, bootstrap_pending: bool) -> bool {
+        if bootstrap_pending || !self.repair_after_bootstrap {
+            return false;
+        }
+        self.repair_after_bootstrap = false;
+        self.repair_required = true;
+        true
     }
 }
 
@@ -414,6 +506,21 @@ async fn poll_and_send_video(
     };
     if let Err(message) = sender.prepare(&delivery) {
         return MediaAttempt::Failed(video_failure("packetizer-failed", message));
+    }
+    if sender.take_post_bootstrap_repair_request(delivery.bootstrap_pending) {
+        if let Err(message) = platform.handle_control_event(
+            delivery.session_epoch,
+            crate::PlatformControlEvent::RequestIdrFrame,
+        ) {
+            return MediaAttempt::Terminal(video_capture_failure(
+                "post-bootstrap-keyframe-request-failed",
+                message,
+            ));
+        }
+        eprintln!(
+            "Lumen object delivery stage=post-bootstrap-repair-requested session-epoch={}",
+            delivery.session_epoch
+        );
     }
     if sender.pending_frame.is_none() {
         let frame = match platform.poll_encoded_video() {
@@ -461,6 +568,36 @@ async fn poll_and_send_video(
     if delivery.acknowledged_configuration_id != Some(normalized.configuration_id) {
         return MediaAttempt::Waiting;
     }
+    if !normalized.frame.key_frame && (sender.repair_required || delivery.repair_keyframe_requested)
+    {
+        sender.pending_frame = None;
+        sender.pending_since = None;
+        return MediaAttempt::Dropped;
+    }
+    if delivery.bootstrap_pending {
+        // Retain at most one fresh dependent frame for one negotiated object deadline. If the
+        // bootstrap ACK is slower, drain later encoded frames without requesting another IDR;
+        // one owned repair is requested only after the pending generation is acknowledged.
+        let repair_keyframe = normalized.frame.repair_keyframe;
+        if normalized.frame.key_frame && repair_keyframe {
+            sender.pending_since = None;
+            return MediaAttempt::Waiting;
+        }
+        let pending_age = sender
+            .pending_since
+            .map(|pending_since| pending_since.elapsed());
+        if sender.pending_bootstrap_frame_should_drop(
+            repair_keyframe,
+            pending_age,
+            delivery.maximum_object_delay_us,
+        ) {
+            sender.pending_frame = None;
+            sender.pending_since = None;
+            sender.repair_after_bootstrap = true;
+            return MediaAttempt::Dropped;
+        }
+        return MediaAttempt::Waiting;
+    }
     if !normalized.frame.key_frame
         && sender.pending_since.is_some_and(|pending_since| {
             object_deadline_exceeded(pending_since.elapsed(), delivery.maximum_object_delay_us)
@@ -470,10 +607,15 @@ async fn poll_and_send_video(
         sender.pending_frame = None;
         sender.pending_since = None;
         sender.repair_required = true;
-        let _ = platform.handle_control_event(
+        if let Err(message) = platform.handle_control_event(
             delivery.session_epoch,
             crate::PlatformControlEvent::RequestIdrFrame,
-        );
+        ) {
+            return MediaAttempt::Terminal(video_capture_failure(
+                "stale-frame-keyframe-request-failed",
+                message,
+            ));
+        }
         eprintln!(
             "Lumen object delivery stage=stale-video-delta-dropped session-epoch={} generation-id={} frame-id={} deadline-us={} target-bitrate-kbps={} admission-divisor={}",
             delivery.session_epoch,
@@ -487,27 +629,25 @@ async fn poll_and_send_video(
     }
     let frame_id = sender.frame_id;
     if normalized.frame.key_frame {
-        let reason = if normalized.new_configuration.is_some()
-            && delivery.acknowledged_generation_id.is_some()
-        {
-            NativeVideoBootstrapReason::ConfigurationChange
-        } else if delivery.acknowledged_generation_id.is_none() {
-            NativeVideoBootstrapReason::Initial
-        } else if sender.repair_required {
-            NativeVideoBootstrapReason::Repair
-        } else {
+        let classification = classify_video_bootstrap(
+            normalized.new_configuration.is_some(),
+            delivery.acknowledged_generation_id.is_some(),
+            normalized.frame.repair_keyframe,
+            normalized.frame.requires_bootstrap_acknowledgement,
+        );
+        if classification.reason == NativeVideoBootstrapReason::Periodic {
             eprintln!(
-                "Lumen object delivery stage=unexpected-keyframe-promoted-to-repair session-epoch={} frame-id={frame_id}",
+                "Lumen object delivery stage=periodic-keyframe-bootstrap session-epoch={} frame-id={frame_id}",
                 delivery.session_epoch
             );
-            NativeVideoBootstrapReason::Repair
-        };
+        }
         let published = router.lock().ok().and_then(|mut router| {
             router.publish_native_video_bootstrap(
                 normalized.configuration_id,
                 frame_id,
                 timestamp_to_microseconds(normalized.frame.presentation_time_90khz, 90_000),
-                reason,
+                classification.reason,
+                classification.requires_encoder_resume,
                 normalized.frame.payload.clone(),
             )
         });
@@ -525,7 +665,9 @@ async fn poll_and_send_video(
         };
         sender.pending_frame = None;
         sender.pending_since = None;
-        sender.repair_required = false;
+        if classification.reason == NativeVideoBootstrapReason::Repair {
+            sender.repair_required = false;
+        }
         return MediaAttempt::Waiting;
     }
 
@@ -604,6 +746,15 @@ fn video_failure(stage: &'static str, message: String) -> MediaFailure {
     }
 }
 
+fn video_capture_failure(stage: &'static str, message: String) -> MediaFailure {
+    MediaFailure {
+        code: PlatformRuntimeEventCode::NativeVideoCapturePoll,
+        kind: MediaKind::Video,
+        stage,
+        message,
+    }
+}
+
 fn codec_configuration(
     delivery: &VideoDeliveryState,
     configuration: NativeVideoConfiguration,
@@ -631,7 +782,8 @@ fn object_deadline_exceeded(age: Duration, maximum_object_delay_us: u32) -> bool
 
 #[cfg(test)]
 mod tests {
-    use super::object_deadline_exceeded;
+    use super::{classify_video_bootstrap, object_deadline_exceeded, VideoSenderState};
+    use lumen_engine::NativeVideoBootstrapReason;
     use std::time::Duration;
 
     #[test]
@@ -644,5 +796,50 @@ mod tests {
             Duration::from_micros(25_001),
             25_000
         ));
+    }
+
+    #[test]
+    fn frame_121_periodic_keyframe_does_not_claim_repair_resume_ownership() {
+        let initial = classify_video_bootstrap(true, false, true, true);
+        assert_eq!(initial.reason, NativeVideoBootstrapReason::Initial);
+        assert!(initial.requires_encoder_resume);
+
+        let periodic = classify_video_bootstrap(false, true, false, false);
+        assert_eq!(periodic.reason, NativeVideoBootstrapReason::Periodic);
+        assert!(!periodic.requires_encoder_resume);
+
+        let repair = classify_video_bootstrap(true, true, true, true);
+        assert_eq!(repair.reason, NativeVideoBootstrapReason::Repair);
+        assert!(repair.requires_encoder_resume);
+    }
+
+    #[test]
+    fn pending_periodic_bootstrap_drains_then_requests_one_post_ack_repair() {
+        let mut sender = VideoSenderState::default();
+        assert!(!sender.pending_bootstrap_frame_should_drop(
+            false,
+            Some(Duration::from_micros(16_668)),
+            16_668,
+        ));
+        assert!(!sender.take_post_bootstrap_repair_request(false));
+
+        assert!(sender.pending_bootstrap_frame_should_drop(
+            false,
+            Some(Duration::from_micros(16_669)),
+            16_668,
+        ));
+        assert!(sender.pending_bootstrap_frame_should_drop(false, Some(Duration::ZERO), 16_668,));
+        assert!(!sender.take_post_bootstrap_repair_request(true));
+        assert!(sender.take_post_bootstrap_repair_request(false));
+        assert!(!sender.take_post_bootstrap_repair_request(false));
+        assert!(sender.repair_required);
+
+        let mut owned = VideoSenderState::default();
+        assert!(!owned.pending_bootstrap_frame_should_drop(
+            true,
+            Some(Duration::from_secs(1)),
+            16_668,
+        ));
+        assert!(!owned.take_post_bootstrap_repair_request(false));
     }
 }

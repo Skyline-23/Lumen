@@ -45,6 +45,8 @@ static LumenBridgeObjCFacade *LumenMacBridgeFacade(LumenMacBridgeController *con
     record.has_output_callback_latency_milliseconds = box.hasOutputCallbackLatencyMilliseconds;
     record.output_callback_latency_milliseconds = box.outputCallbackLatencyMilliseconds;
     record.is_key_frame = box.isKeyFrame;
+    record.requires_bootstrap_acknowledgement = box.requiresBootstrapAcknowledgement;
+    record.repair_key_frame = box.isRepairKeyFrame;
     record.is_hdr_signaled = box.isHDRSignaled;
     record.is_replay = box.isReplay;
     return record;
@@ -664,6 +666,8 @@ LumenMacEncodedCaptureFrameRecord LumenMacBridgeControllerPopNextForwardedFrame(
   record.has_output_callback_latency_milliseconds = box.hasOutputCallbackLatencyMilliseconds;
   record.output_callback_latency_milliseconds = box.outputCallbackLatencyMilliseconds;
   record.is_key_frame = box.isKeyFrame;
+  record.requires_bootstrap_acknowledgement = box.requiresBootstrapAcknowledgement;
+  record.repair_key_frame = box.isRepairKeyFrame;
   record.is_hdr_signaled = box.isHDRSignaled;
   record.is_replay = box.isReplay;
 

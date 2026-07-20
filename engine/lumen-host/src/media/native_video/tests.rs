@@ -121,6 +121,8 @@ fn requires_explicit_av1_configuration_and_keeps_sized_obus() {
         decoder_configuration_record: Some(configuration.clone()),
         presentation_time_90khz: 90_000,
         key_frame: true,
+        requires_bootstrap_acknowledgement: false,
+        repair_keyframe: false,
     }) else {
         panic!("valid AV1 configuration was rejected");
     };

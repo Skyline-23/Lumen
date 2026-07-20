@@ -33,7 +33,8 @@
   "videoBootstrap": {
     "resultControlTag": 16,
     "initialGenerationId": 1,
-    "periodicByDefault": false,
+    "periodicByDefault": true,
+    "periodicEncoderResume": "only-when-platform-paused",
     "deltaAdmission": "after-hardware-decoded-result",
     "resultCodes": {
       "unspecified": 0,

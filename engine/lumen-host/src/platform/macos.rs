@@ -145,6 +145,8 @@ struct MacEncodedFrameRecord {
     has_output_callback_latency_milliseconds: bool,
     output_callback_latency_milliseconds: f64,
     is_key_frame: bool,
+    requires_bootstrap_acknowledgement: bool,
+    repair_key_frame: bool,
     is_hdr_signaled: bool,
     is_replay: bool,
 }
@@ -606,6 +608,8 @@ impl PlatformSessionControl for MacPlatformSessionControl {
             decoder_configuration_record: None,
             presentation_time_90khz: timestamp,
             key_frame: record.is_key_frame,
+            requires_bootstrap_acknowledgement: record.requires_bootstrap_acknowledgement,
+            repair_keyframe: record.repair_key_frame,
         }))
     }
 

@@ -136,6 +136,10 @@ pub struct PlatformEncodedVideoFrame {
     pub decoder_configuration_record: Option<Vec<u8>>,
     pub presentation_time_90khz: u32,
     pub key_frame: bool,
+    /// True only when the platform paused encoder admission for this key frame.
+    pub requires_bootstrap_acknowledgement: bool,
+    /// True only when this key frame was emitted for an owned repair request.
+    pub repair_keyframe: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -362,6 +366,11 @@ pub struct LumenHostPlatformEncodedVideoFrame {
     pub payload_size: usize,
     pub presentation_time_90khz: u32,
     pub key_frame: bool,
+    /// True when encoder admission remains paused until codec acknowledgement.
+    pub requires_bootstrap_acknowledgement: bool,
+    /// True when this key frame was emitted for an owned decoder-repair request.
+    /// `requires_bootstrap_acknowledgement` must also be true.
+    pub repair_key_frame: bool,
 }
 
 #[repr(C)]
@@ -622,6 +631,8 @@ impl PlatformSessionControl for CallbackPlatformSessionControl {
             decoder_configuration_record: None,
             presentation_time_90khz: metadata.presentation_time_90khz,
             key_frame: metadata.key_frame,
+            requires_bootstrap_acknowledgement: metadata.requires_bootstrap_acknowledgement,
+            repair_keyframe: metadata.repair_key_frame,
         }))
     }
 
@@ -873,6 +884,20 @@ fn finish_video_poll(
         PLATFORM_POLL_READY if metadata.payload_size == 0 => {
             Err("platform video poll returned an empty frame".to_owned())
         }
+        PLATFORM_POLL_READY
+            if !metadata.key_frame
+                && (metadata.requires_bootstrap_acknowledgement || metadata.repair_key_frame) =>
+        {
+            Err("platform video poll attached bootstrap ownership to a delta frame".to_owned())
+        }
+        PLATFORM_POLL_READY
+            if metadata.repair_key_frame && !metadata.requires_bootstrap_acknowledgement =>
+        {
+            Err(
+                "platform video poll returned repair ownership without paused encoder admission"
+                    .to_owned(),
+            )
+        }
         PLATFORM_POLL_READY if metadata.payload_size <= payload.len() => {
             Ok((Some(payload[..metadata.payload_size].to_vec()), metadata))
         }
@@ -1020,6 +1045,8 @@ mod tests {
             (*frame).payload_size = PAYLOAD.len();
             (*frame).presentation_time_90khz = 90_000;
             (*frame).key_frame = true;
+            (*frame).requires_bootstrap_acknowledgement = true;
+            (*frame).repair_key_frame = true;
         }
         if destination_capacity < PAYLOAD.len() {
             return PLATFORM_POLL_BUFFER_TOO_SMALL;
@@ -1168,6 +1195,8 @@ mod tests {
                 decoder_configuration_record: None,
                 presentation_time_90khz: 90_000,
                 key_frame: true,
+                requires_bootstrap_acknowledgement: true,
+                repair_keyframe: true,
             }
         );
         assert_eq!(
@@ -1358,6 +1387,27 @@ mod tests {
             &[0; 4],
             LumenHostPlatformEncodedVideoFrame {
                 payload_size: 5,
+                ..Default::default()
+            }
+        )
+        .is_err());
+        assert!(finish_video_poll(
+            PLATFORM_POLL_READY,
+            &[0; 4],
+            LumenHostPlatformEncodedVideoFrame {
+                payload_size: 1,
+                requires_bootstrap_acknowledgement: true,
+                ..Default::default()
+            }
+        )
+        .is_err());
+        assert!(finish_video_poll(
+            PLATFORM_POLL_READY,
+            &[0; 4],
+            LumenHostPlatformEncodedVideoFrame {
+                payload_size: 1,
+                key_frame: true,
+                repair_key_frame: true,
                 ..Default::default()
             }
         )

@@ -28,6 +28,8 @@ fn packetizes_only_video_deltas_with_generation_bound_compact_headers() {
         decoder_configuration_record: None,
         presentation_time_90khz: 90_000,
         key_frame: false,
+        requires_bootstrap_acknowledgement: false,
+        repair_keyframe: false,
     };
 
     let packetized = packetizer.packetize_video_delta(&delta, 9, 0).unwrap();
@@ -71,6 +73,8 @@ fn reed_solomon_parity_recovers_missing_plaintext_delta_shards() {
         decoder_configuration_record: None,
         presentation_time_90khz: 45_000,
         key_frame: false,
+        requires_bootstrap_acknowledgement: false,
+        repair_keyframe: false,
     };
     let packetized = packetizer.packetize_video_delta(&frame, 4, 34).unwrap();
     let first = decode_native_media_datagram(&packetized.datagrams[0]).unwrap();
@@ -113,6 +117,8 @@ fn splits_large_delta_objects_into_block_local_fec_metadata() {
         decoder_configuration_record: None,
         presentation_time_90khz: 90_000,
         key_frame: false,
+        requires_bootstrap_acknowledgement: false,
+        repair_keyframe: false,
     };
 
     let packetized = packetizer.packetize_video_delta(&frame, 12, 1).unwrap();
@@ -179,6 +185,8 @@ fn reconfiguration_preserves_datagram_sequence_and_generation_is_explicit() {
         decoder_configuration_record: None,
         presentation_time_90khz: 90_000,
         key_frame: false,
+        requires_bootstrap_acknowledgement: false,
+        repair_keyframe: false,
     };
     let first = packetizer.packetize_video_delta(&frame, 1, 0).unwrap();
     packetizer.reconfigure(96).unwrap();

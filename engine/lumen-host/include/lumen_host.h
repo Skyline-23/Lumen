@@ -76,6 +76,11 @@ typedef struct LumenHostPlatformEncodedVideoFrame {
   size_t payload_size;
   uint32_t presentation_time_90khz;
   bool key_frame;
+  // True when encoder admission remains paused until codec acknowledgement.
+  bool requires_bootstrap_acknowledgement;
+  // True when this key frame was emitted for an owned decoder-repair request;
+  // requires_bootstrap_acknowledgement must also be true.
+  bool repair_key_frame;
 } LumenHostPlatformEncodedVideoFrame;
 
 typedef struct LumenHostPlatformEncodedAudioPacket {

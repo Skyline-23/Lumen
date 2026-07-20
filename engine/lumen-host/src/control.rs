@@ -21,6 +21,8 @@ pub(crate) struct VideoDeliveryState {
     pub(crate) video_format: crate::PlatformVideoFormat,
     pub(crate) acknowledged_configuration_id: Option<u32>,
     pub(crate) acknowledged_generation_id: Option<u32>,
+    pub(crate) bootstrap_pending: bool,
+    pub(crate) repair_keyframe_requested: bool,
     pub(crate) session_epoch: u32,
     pub(crate) policy_revision: u16,
     pub(crate) maximum_datagram_payload: usize,

@@ -77,8 +77,11 @@ struct PendingNativeSession {
     acknowledged_configuration_id: Option<u32>,
     video_bootstrap: Option<VideoBootstrap>,
     video_bootstrap_sent: bool,
+    video_bootstrap_requires_encoder_resume: bool,
+    video_bootstrap_consumes_keyframe_request: bool,
     acknowledged_generation_id: Option<u32>,
     video_bootstrap_failure: Option<String>,
+    last_video_bootstrap_acknowledgement: Option<VideoBootstrapResult>,
     next_generation_id: u32,
     video_keyframe_request: Option<VideoKeyframeRequest>,
     last_sent_video_frame_id: u32,
@@ -279,6 +282,13 @@ impl ControlRouter {
                 "native session has not been negotiated",
             )];
         };
+        if pending.last_video_bootstrap_acknowledgement.as_ref() == Some(&result) {
+            eprintln!(
+                "Lumen native media stage=video-bootstrap-result-ignored reason=duplicate-acknowledgement session-epoch={} generation-id={} request-id={request_id}",
+                result.session_epoch, result.generation_id
+            );
+            return Vec::new();
+        }
         if pending.video_bootstrap.as_ref().is_some_and(|bootstrap| {
             result.session_epoch == bootstrap.session_epoch
                 && result.stream_id == bootstrap.stream_id
@@ -322,24 +332,36 @@ impl ControlRouter {
             pending.video_bootstrap_failure = Some(message.clone());
             return vec![native_error(request_id, ERROR_PLATFORM, message)];
         }
-        if let Err(error) = self.platform.handle_control_event(
-            context.session_epoch,
-            crate::PlatformControlEvent::ResumeVideoEncodingAfterCodecAck,
-        ) {
-            pending.video_bootstrap_failure = Some(error.clone());
-            return vec![native_error(
-                request_id,
-                ERROR_PLATFORM,
-                format!("video encoding could not resume after bootstrap: {error}"),
-            )];
+        let requires_encoder_resume = pending.video_bootstrap_requires_encoder_resume;
+        if requires_encoder_resume {
+            if let Err(error) = self.platform.handle_control_event(
+                context.session_epoch,
+                crate::PlatformControlEvent::ResumeVideoEncodingAfterCodecAck,
+            ) {
+                pending.video_bootstrap_failure = Some(error.clone());
+                return vec![native_error(
+                    request_id,
+                    ERROR_PLATFORM,
+                    format!("video encoding could not resume after bootstrap: {error}"),
+                )];
+            }
         }
         pending.acknowledged_generation_id = Some(result.generation_id);
+        pending.last_video_bootstrap_acknowledgement = Some(result.clone());
         pending.video_bootstrap = None;
         pending.video_bootstrap_sent = false;
-        pending.video_keyframe_request = None;
+        pending.video_bootstrap_requires_encoder_resume = false;
+        if pending.video_bootstrap_consumes_keyframe_request {
+            pending.video_keyframe_request = None;
+        }
+        pending.video_bootstrap_consumes_keyframe_request = false;
         eprintln!(
-            "Lumen native media stage=video-bootstrap-acknowledged session-epoch={} configuration-id={} generation-id={} frame-id={} request-id={request_id}",
-            result.session_epoch, result.configuration_id, result.generation_id, result.frame_id
+            "Lumen native media stage=video-bootstrap-acknowledged session-epoch={} configuration-id={} generation-id={} frame-id={} requires-encoder-resume={} request-id={request_id}",
+            result.session_epoch,
+            result.configuration_id,
+            result.generation_id,
+            result.frame_id,
+            requires_encoder_resume,
         );
         Vec::new()
     }
@@ -701,8 +723,11 @@ impl ControlRouter {
             acknowledged_configuration_id: None,
             video_bootstrap: None,
             video_bootstrap_sent: false,
+            video_bootstrap_requires_encoder_resume: false,
+            video_bootstrap_consumes_keyframe_request: false,
             acknowledged_generation_id: None,
             video_bootstrap_failure: None,
+            last_video_bootstrap_acknowledgement: None,
             next_generation_id: 1,
             video_keyframe_request: None,
             last_sent_video_frame_id: 0,
@@ -795,6 +820,7 @@ impl ControlRouter {
         frame_id: u32,
         capture_timestamp_us: u32,
         reason: NativeVideoBootstrapReason,
+        requires_encoder_resume: bool,
         access_unit: Vec<u8>,
     ) -> Option<u32> {
         let pending = self.native.pending.as_mut()?;
@@ -810,11 +836,11 @@ impl ControlRouter {
         pending.next_generation_id = generation_id.checked_add(1)?;
         pending.acknowledged_generation_id = None;
         pending.video_bootstrap_failure = None;
-        let reason = if pending.video_keyframe_request.is_some() {
-            NativeVideoBootstrapReason::Repair
-        } else {
-            reason
-        };
+        let consumes_keyframe_request = pending.video_keyframe_request.is_some()
+            && reason == NativeVideoBootstrapReason::Repair
+            && requires_encoder_resume;
+        pending.video_bootstrap_requires_encoder_resume = requires_encoder_resume;
+        pending.video_bootstrap_consumes_keyframe_request = consumes_keyframe_request;
         pending.video_bootstrap = Some(VideoBootstrap {
             session_epoch: pending.plan.session_epoch,
             stream_id: u32::from(NATIVE_VIDEO_STREAM_ID),
@@ -939,6 +965,8 @@ impl ControlRouter {
             video_format: platform_video_format(&pending.plan)?,
             acknowledged_configuration_id: pending.acknowledged_configuration_id,
             acknowledged_generation_id: pending.acknowledged_generation_id,
+            bootstrap_pending: pending.video_bootstrap.is_some(),
+            repair_keyframe_requested: pending.video_keyframe_request.is_some(),
             session_epoch: pending.plan.session_epoch,
             policy_revision: u16::try_from(pending.plan.policy_revision).ok()?,
             maximum_datagram_payload: usize::try_from(pending.plan.maximum_datagram_payload)

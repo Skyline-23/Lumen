@@ -20,8 +20,12 @@ final class LumenTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(gate.admitSourceFrame(), .submit)
         XCTAssertFalse(gate.acknowledgeConfiguration())
 
-        gate.beginBootstrapGeneration()
+        XCTAssertTrue(gate.beginBootstrapGeneration())
+        XCTAssertFalse(gate.beginBootstrapGeneration())
         XCTAssertFalse(gate.isOpen)
+        XCTAssertFalse(gate.isAwaitingAcknowledgement)
+        XCTAssertEqual(gate.admitSourceFrame(), .submitInitialKeyFrame)
+        gate.cancelBootstrapSubmission()
         XCTAssertFalse(gate.isAwaitingAcknowledgement)
         XCTAssertEqual(gate.admitSourceFrame(), .submitInitialKeyFrame)
     }
@@ -807,7 +811,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
         await runtime.debugResetVideoForwarding()
         await runtime.configureVideoForwarding(frameCapacity: 1, eventCapacity: 2)
 
-        for (sequence, keyFrame) in [(1, true), (2, false), (3, false), (4, true)] {
+        for (sequence, keyFrame) in [(1, true), (2, false), (3, true), (4, true)] {
             await runtime.debugForwardSyntheticFrame(
                 sampleBuffer: try Self.makeEncodedSampleBuffer(
                     payload: Data([UInt8(sequence)]),
@@ -817,6 +821,8 @@ final class LumenTuistBootstrapTests: XCTestCase {
                 sourceSequenceNumber: UInt64(sequence),
                 sourceDisplayTime: UInt64(sequence * 10),
                 isKeyFrame: keyFrame,
+                requiresBootstrapAcknowledgement: sequence == 4,
+                isRepairKeyFrame: sequence == 4,
                 isHDRSignaled: true
             )
         }

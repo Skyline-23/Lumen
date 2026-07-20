@@ -80,6 +80,7 @@ pub(super) struct NativeEncodedVideoSample {
     pub(super) payload: Vec<u8>,
     pub(super) presentation_time_90khz: u32,
     pub(super) key_frame: bool,
+    pub(super) repair_keyframe: bool,
 }
 
 struct NativeVideoRuntime {
@@ -88,6 +89,7 @@ struct NativeVideoRuntime {
     plan: NativeVideoEncoderPlan,
     next_timestamp_hns: i64,
     awaiting_bootstrap_result: bool,
+    repair_keyframe_pending: bool,
 }
 
 enum NativeMediaFoundationCommand {
@@ -307,7 +309,7 @@ fn run_media_foundation(
                             if runtime.awaiting_bootstrap_result {
                                 Ok(())
                             } else {
-                                runtime.encoder.force_key_frame()
+                                runtime.request_repair_key_frame()
                             }
                         });
                     let _ = response.send(result);
@@ -349,8 +351,7 @@ fn run_media_foundation(
                     runtime
                         .as_mut()
                         .expect("encoded frame came from an active runtime")
-                        .encoder
-                        .force_key_frame()?;
+                        .request_repair_key_frame()?;
                 }
             }
             Ok(())
@@ -385,6 +386,7 @@ fn start_runtime(
         plan,
         next_timestamp_hns: 0,
         awaiting_bootstrap_result: false,
+        repair_keyframe_pending: false,
     };
     runtime.encoder.force_key_frame()?;
     let deadline = Instant::now() + INITIAL_FRAME_TIMEOUT;
@@ -404,7 +406,7 @@ fn start_runtime(
         let request_key_frame = sink(encoded)?;
         runtime.pause_after_bootstrap()?;
         if request_key_frame {
-            runtime.encoder.force_key_frame()?;
+            runtime.request_repair_key_frame()?;
         }
         return Ok(runtime);
     }
@@ -523,6 +525,15 @@ impl NativeVideoEncoderCatalog {
 }
 
 impl NativeVideoRuntime {
+    fn request_repair_key_frame(&mut self) -> Result<(), String> {
+        if self.repair_keyframe_pending {
+            return Ok(());
+        }
+        self.encoder.force_key_frame()?;
+        self.repair_keyframe_pending = true;
+        Ok(())
+    }
+
     fn pause_after_bootstrap(&mut self) -> Result<(), String> {
         if self.awaiting_bootstrap_result {
             return Ok(());
@@ -558,7 +569,11 @@ impl NativeVideoRuntime {
             self.plan.chroma_subsampling,
         )?;
         let timestamp = self.next_timestamp_hns;
-        let encoded = self.encoder.encode(&surface, timestamp)?;
+        let mut encoded = self.encoder.encode(&surface, timestamp)?;
+        if encoded.key_frame {
+            encoded.repair_keyframe = self.repair_keyframe_pending;
+            self.repair_keyframe_pending = false;
+        }
         self.next_timestamp_hns = self
             .next_timestamp_hns
             .checked_add(self.encoder.frame_duration_hns)
@@ -794,6 +809,7 @@ fn encoded_video_sample(sample: &IMFSample) -> Result<NativeEncodedVideoSample, 
         payload,
         presentation_time_90khz,
         key_frame,
+        repair_keyframe: false,
     })
 }
 

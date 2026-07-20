@@ -26,6 +26,8 @@ public struct LumenBridgeDrainedVideoFrame: Sendable {
     public let sourceDisplayTime: UInt64
     public let outputCallbackLatencyMilliseconds: Double?
     public let isKeyFrame: Bool
+    public let requiresBootstrapAcknowledgement: Bool
+    public let isRepairKeyFrame: Bool
     public let isHDRSignaled: Bool
     public let isReplay: Bool
     private let sampleBufferHandle: LumenSampleBufferHandle
@@ -39,6 +41,8 @@ public struct LumenBridgeDrainedVideoFrame: Sendable {
         sourceDisplayTime: UInt64,
         outputCallbackLatencyMilliseconds: Double?,
         isKeyFrame: Bool,
+        requiresBootstrapAcknowledgement: Bool,
+        isRepairKeyFrame: Bool,
         isHDRSignaled: Bool,
         isReplay: Bool,
         sampleBuffer: CMSampleBuffer
@@ -49,6 +53,8 @@ public struct LumenBridgeDrainedVideoFrame: Sendable {
         self.sourceDisplayTime = sourceDisplayTime
         self.outputCallbackLatencyMilliseconds = outputCallbackLatencyMilliseconds
         self.isKeyFrame = isKeyFrame
+        self.requiresBootstrapAcknowledgement = requiresBootstrapAcknowledgement
+        self.isRepairKeyFrame = isRepairKeyFrame
         self.isHDRSignaled = isHDRSignaled
         self.isReplay = isReplay
         sampleBufferHandle = LumenSampleBufferHandle(retaining: sampleBuffer)
@@ -153,6 +159,8 @@ final class LumenVideoCaptureForwarder: Sendable {
             sourceDisplayTime: frame.sourceDisplayTime,
             outputCallbackLatencyMilliseconds: frame.outputCallbackLatencyMilliseconds,
             isKeyFrame: frame.isKeyFrame,
+            requiresBootstrapAcknowledgement: frame.requiresBootstrapAcknowledgement,
+            isRepairKeyFrame: frame.isRepairKeyFrame,
             isHDRSignaled: frame.isHDRSignaled
         )
     }
@@ -165,6 +173,8 @@ final class LumenVideoCaptureForwarder: Sendable {
         sourceDisplayTime: UInt64,
         outputCallbackLatencyMilliseconds: Double? = nil,
         isKeyFrame: Bool,
+        requiresBootstrapAcknowledgement: Bool = false,
+        isRepairKeyFrame: Bool = false,
         isHDRSignaled: Bool,
         isReplay: Bool = false
     ) -> LumenVideoForwardingAdmission {
@@ -175,6 +185,8 @@ final class LumenVideoCaptureForwarder: Sendable {
             sourceDisplayTime: sourceDisplayTime,
             outputCallbackLatencyMilliseconds: outputCallbackLatencyMilliseconds,
             isKeyFrame: isKeyFrame,
+            requiresBootstrapAcknowledgement: requiresBootstrapAcknowledgement,
+            isRepairKeyFrame: isRepairKeyFrame,
             isHDRSignaled: isHDRSignaled,
             isReplay: isReplay,
             sampleBuffer: sampleBuffer
@@ -183,7 +195,9 @@ final class LumenVideoCaptureForwarder: Sendable {
             value.frameCount &+= 1
             value.lastFrame = frame
             if value.awaitingRecoveryKeyFrame {
-                guard isKeyFrame else {
+                guard isKeyFrame,
+                      requiresBootstrapAcknowledgement,
+                      isRepairKeyFrame else {
                     value.droppedFrameCount &+= 1
                     return .waitingForRecoveryKeyFrame
                 }

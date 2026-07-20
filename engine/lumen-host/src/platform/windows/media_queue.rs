@@ -115,6 +115,8 @@ mod tests {
             decoder_configuration_record: None,
             presentation_time_90khz: u32::from(value),
             key_frame,
+            requires_bootstrap_acknowledgement: false,
+            repair_keyframe: false,
         }
     }
 }

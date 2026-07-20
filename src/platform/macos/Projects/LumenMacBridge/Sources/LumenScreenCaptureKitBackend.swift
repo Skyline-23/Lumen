@@ -276,6 +276,8 @@ struct LumenEncodedFrame: Sendable {
     let sourceDisplayTime: UInt64
     let outputCallbackLatencyMilliseconds: Double?
     let isKeyFrame: Bool
+    let requiresBootstrapAcknowledgement: Bool
+    let isRepairKeyFrame: Bool
     let isHDRSignaled: Bool
     let hdrValidationReport: LumenHDRValidationReport
 
@@ -286,6 +288,8 @@ struct LumenEncodedFrame: Sendable {
         sourceDisplayTime: UInt64,
         outputCallbackLatencyMilliseconds: Double?,
         isKeyFrame: Bool,
+        requiresBootstrapAcknowledgement: Bool,
+        isRepairKeyFrame: Bool,
         isHDRSignaled: Bool,
         hdrValidationReport: LumenHDRValidationReport
     ) {
@@ -295,6 +299,8 @@ struct LumenEncodedFrame: Sendable {
         self.sourceDisplayTime = sourceDisplayTime
         self.outputCallbackLatencyMilliseconds = outputCallbackLatencyMilliseconds
         self.isKeyFrame = isKeyFrame
+        self.requiresBootstrapAcknowledgement = requiresBootstrapAcknowledgement
+        self.isRepairKeyFrame = isRepairKeyFrame
         self.isHDRSignaled = isHDRSignaled
         self.hdrValidationReport = hdrValidationReport
     }
@@ -381,6 +387,7 @@ private struct LumenEncodedFrameContext {
     let sequenceNumber: UInt64
     let displayTime: UInt64
     let submissionMachTime: UInt64
+    let requiresBootstrapAcknowledgement: Bool
 }
 
 enum LumenVideoBootstrapAdmissionDecision: Equatable, Sendable {
@@ -411,8 +418,15 @@ struct LumenVideoBootstrapAdmissionGate: Equatable, Sendable {
         return true
     }
 
-    mutating func beginBootstrapGeneration() {
+    mutating func beginBootstrapGeneration() -> Bool {
+        guard isOpen else { return false }
         isOpen = false
+        isAwaitingAcknowledgement = false
+        return true
+    }
+
+    mutating func cancelBootstrapSubmission() {
+        guard isAwaitingAcknowledgement, !isOpen else { return }
         isAwaitingAcknowledgement = false
     }
 }
@@ -693,7 +707,6 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
     private var sourceContract: LumenExactCaptureSourceContract?
     private var outputContract: LumenExactEncodedOutputContract?
     private var sequenceNumber: UInt64 = 0
-    private var forceKeyFrame = false
     private var videoBootstrapAdmission = LumenVideoBootstrapAdmissionGate()
     private var pendingVideoBootstrapSource: LumenPendingVideoBootstrapSource?
     private var inflightFrameCount = 0
@@ -943,9 +956,9 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
     func requestImmediateKeyFrame() {
         queue.async { [weak self] in
             guard let self else { return }
-            self.videoBootstrapAdmission.beginBootstrapGeneration()
-            self.pendingVideoBootstrapSource = nil
-            self.forceKeyFrame = true
+            if self.videoBootstrapAdmission.beginBootstrapGeneration() {
+                self.pendingVideoBootstrapSource = nil
+            }
         }
     }
 
@@ -1121,31 +1134,29 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
         )
         switch videoBootstrapAdmission.admitSourceFrame() {
         case .submitInitialKeyFrame:
-            submitSource(source, forceKeyFrame: true)
+            if !submitSource(source, forceKeyFrame: true) {
+                videoBootstrapAdmission.cancelBootstrapSubmission()
+            }
         case .coalesceUntilAcknowledged:
             pendingVideoBootstrapSource = source
             statistics.pendingAdmissionDropCount &+= 1
             refreshStatisticsNotesIfNeeded()
         case .submit:
-            let forceKeyFrame = forceKeyFrame
-            self.forceKeyFrame = false
-            submitSource(source, forceKeyFrame: forceKeyFrame)
+            submitSource(source, forceKeyFrame: false)
         }
     }
 
+    @discardableResult
     private func submitSource(
         _ source: LumenPendingVideoBootstrapSource,
         forceKeyFrame: Bool
-    ) {
+    ) -> Bool {
         guard let compressionSession else {
             reportTerminalContractFailure(.invalidFormat("VideoToolbox compression session is unavailable"), sourceDisplayTime: source.displayTime)
-            return
+            return false
         }
 
         guard inflightFrameCount < maximumPendingFrameCount else {
-            if forceKeyFrame {
-                self.forceKeyFrame = true
-            }
             statistics.droppedFrameCount &+= 1
             statistics.pendingAdmissionDropCount &+= 1
             refreshStatisticsNotesIfNeeded()
@@ -1156,7 +1167,7 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
                     sourceDisplayTime: source.displayTime
                 ))
             }
-            return
+            return false
         }
 
         sourceColorContractStatus = "verified"
@@ -1164,7 +1175,8 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
         context.initialize(to: .init(
             sequenceNumber: sequenceNumber,
             displayTime: source.displayTime,
-            submissionMachTime: mach_absolute_time()
+            submissionMachTime: mach_absolute_time(),
+            requiresBootstrapAcknowledgement: forceKeyFrame
         ))
 
         let properties = forceKeyFrame
@@ -1187,11 +1199,13 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
             statistics.lastErrorDescription = "VTCompressionSessionEncodeFrame failed with OSStatus \(status)"
             statisticsHandler(statistics)
             eventHandler(.init(kind: .failed, message: statistics.lastErrorDescription, stopStatus: status))
+            return false
         } else {
             inflightFrameCount += 1
             statistics.submittedFrameCount &+= 1
             statistics.maximumInflightFrameCount = max(statistics.maximumInflightFrameCount, inflightFrameCount)
             refreshStatisticsNotesIfNeeded()
+            return true
         }
     }
 
@@ -1522,6 +1536,9 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
               !infoFlags.contains(.frameDropped),
               let sampleBuffer,
               CMSampleBufferDataIsReady(sampleBuffer) else {
+            if context.requiresBootstrapAcknowledgement {
+                videoBootstrapAdmission.cancelBootstrapSubmission()
+            }
             statistics.droppedFrameCount &+= 1
             statistics.lastErrorDescription = status == noErr ? "VideoToolbox dropped frame" : "VideoToolbox callback OSStatus \(status)"
             statisticsHandler(statistics)
@@ -1570,6 +1587,14 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
 
         let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[CFString: Any]]
         let isKeyFrame = (attachments?.first?[kCMSampleAttachmentKey_NotSync] as? Bool) != true
+        if context.requiresBootstrapAcknowledgement, !isKeyFrame {
+            videoBootstrapAdmission.cancelBootstrapSubmission()
+            reportTerminalContractFailure(
+                .requiredKeyFrameNotProduced,
+                sourceDisplayTime: context.displayTime
+            )
+            return
+        }
         let hdr = configuration.encodedColorConfiguration
         let formatExtensions = sampleBuffer.formatDescription.flatMap {
             CMFormatDescriptionGetExtensions($0) as? [String: Any]
@@ -1582,6 +1607,8 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
                 sourceDisplayTime: context.displayTime,
                 outputCallbackLatencyMilliseconds: latency,
                 isKeyFrame: isKeyFrame,
+                requiresBootstrapAcknowledgement: context.requiresBootstrapAcknowledgement,
+                isRepairKeyFrame: context.requiresBootstrapAcknowledgement,
                 isHDRSignaled: hdr.map { $0.transferFunction != .ituR709 } ?? false,
                 hdrValidationReport: .init(
                     colorPrimaries: formatExtensions?[kCMFormatDescriptionExtension_ColorPrimaries as String] as? String ?? hdr?.colorPrimaries.rawValue,

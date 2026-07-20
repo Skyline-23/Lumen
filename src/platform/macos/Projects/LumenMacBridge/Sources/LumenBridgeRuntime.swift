@@ -2032,6 +2032,8 @@ public actor LumenBridgeRuntime {
         sourceDisplayTime: UInt64 = 1,
         outputCallbackLatencyMilliseconds: Double? = nil,
         isKeyFrame: Bool = true,
+        requiresBootstrapAcknowledgement: Bool = false,
+        isRepairKeyFrame: Bool = false,
         isHDRSignaled: Bool = false
     ) {
         videoForwarder.consume(
@@ -2041,6 +2043,8 @@ public actor LumenBridgeRuntime {
             sourceDisplayTime: sourceDisplayTime,
             outputCallbackLatencyMilliseconds: outputCallbackLatencyMilliseconds,
             isKeyFrame: isKeyFrame,
+            requiresBootstrapAcknowledgement: requiresBootstrapAcknowledgement,
+            isRepairKeyFrame: isRepairKeyFrame,
             isHDRSignaled: isHDRSignaled
         )
     }

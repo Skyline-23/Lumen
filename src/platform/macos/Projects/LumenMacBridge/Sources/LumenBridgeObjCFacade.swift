@@ -513,6 +513,8 @@ public final class LumenBridgeDrainedFrameBox: NSObject {
     public let hasOutputCallbackLatencyMilliseconds: Bool
     public let outputCallbackLatencyMilliseconds: Double
     public let isKeyFrame: Bool
+    public let requiresBootstrapAcknowledgement: Bool
+    public let isRepairKeyFrame: Bool
     public let isHDRSignaled: Bool
     public let isReplay: Bool
     public let sampleBuffer: CMSampleBuffer
@@ -525,6 +527,8 @@ public final class LumenBridgeDrainedFrameBox: NSObject {
         self.hasOutputCallbackLatencyMilliseconds = frame.outputCallbackLatencyMilliseconds != nil
         self.outputCallbackLatencyMilliseconds = frame.outputCallbackLatencyMilliseconds ?? 0
         self.isKeyFrame = frame.isKeyFrame
+        self.requiresBootstrapAcknowledgement = frame.requiresBootstrapAcknowledgement
+        self.isRepairKeyFrame = frame.isRepairKeyFrame
         self.isHDRSignaled = frame.isHDRSignaled
         self.isReplay = frame.isReplay
         self.sampleBuffer = frame.sampleBuffer

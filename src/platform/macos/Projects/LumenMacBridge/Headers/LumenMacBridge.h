@@ -215,6 +215,8 @@ typedef struct LumenMacEncodedCaptureFrameRecord {
   bool has_output_callback_latency_milliseconds;
   double output_callback_latency_milliseconds;
   bool is_key_frame;
+  bool requires_bootstrap_acknowledgement;
+  bool repair_key_frame;
   bool is_hdr_signaled;
   bool is_replay;
 } LumenMacEncodedCaptureFrameRecord;

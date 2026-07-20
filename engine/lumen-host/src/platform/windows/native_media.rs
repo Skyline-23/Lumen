@@ -55,6 +55,9 @@ impl PacketQueueContext {
                 decoder_configuration_record: None,
                 presentation_time_90khz: sample.presentation_time_90khz,
                 key_frame: sample.key_frame,
+                // The Windows Media Foundation worker pauses capture after every key frame.
+                requires_bootstrap_acknowledgement: sample.key_frame,
+                repair_keyframe: sample.repair_keyframe,
             });
         Ok(request_key_frame)
     }

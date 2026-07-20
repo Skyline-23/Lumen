@@ -76,8 +76,20 @@ unacknowledged bootstrap never opens delta delivery.
 
 A `VideoKeyframeRequest` carries the currently acknowledged generation id.
 Stale-generation repair requests are ignored. Initial, configuration-change,
-and explicit repair events create a new generation. Protocol v4 does not create
-periodic reliable bootstraps by default.
+explicit repair, and encoder-originated periodic keyframes create a new
+generation. A decoded bootstrap issues a platform resume only when its encoded
+frame carries that platform's pause ownership. A natural macOS periodic
+keyframe therefore advances delivery without a resume; the Windows adapter,
+which pauses after every keyframe, resumes its owned periodic boundary. Initial
+and repair bootstraps still resume only the exact pending encoder admission
+boundary.
+
+While a periodic bootstrap is pending, the host retains at most one dependent
+frame for one negotiated object deadline. If the result is slower, it drains
+and drops later dependent frames without requesting another generation. After
+the periodic generation is acknowledged, it requests exactly one owned repair
+only when a dependent frame was dropped; otherwise the held frame resumes
+delivery directly.
 
 ## QUIC DATAGRAM object plane
 
