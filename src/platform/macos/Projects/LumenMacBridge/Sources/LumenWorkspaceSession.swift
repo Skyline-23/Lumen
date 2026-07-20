@@ -177,6 +177,7 @@ public actor LumenMacWorkspaceSession {
     }
 
     private static let firstEncodedFrameTimeoutNanoseconds: UInt64 = 5_000_000_000
+    private static let isolationCaptureContinuityTimeoutNanoseconds: UInt64 = 2_000_000_000
     private let request: LumenMacWorkspaceSessionRequest
     private let coordinator: LumenWorkspaceCoordinator
     private let executor: LumenMacWorkspaceExecutor
@@ -226,6 +227,11 @@ public actor LumenMacWorkspaceSession {
             waitForExternalFirstEncodedFrame: {
                 try await runtime.waitForFirstEncodedFrame(
                     timeoutNanoseconds: Self.firstEncodedFrameTimeoutNanoseconds
+                )
+            },
+            verifyCaptureContinuity: {
+                try await runtime.verifyEncodedFrameContinuity(
+                    timeoutNanoseconds: Self.isolationCaptureContinuityTimeoutNanoseconds
                 )
             }
         )
@@ -425,6 +431,7 @@ public actor LumenMacWorkspaceSession {
             isolationCommand = command
             try await executor.verifyOwnedVirtualDisplay()
             let result = try await executor.execute(command)
+            try await executor.verifyOwnedCaptureContinuity()
             try await coordinator.complete(command, result: result)
             isolationCommand = nil
             try await coordinator.executePendingCommands(using: executor)
