@@ -10,6 +10,7 @@ private enum WorkspaceExecutionEvent: Equatable {
     case move(UInt32)
     case isolate(UInt32)
     case firstFrameBarrier
+    case positionPointer(UInt32, LumenMacDisplayGeometry)
     case captureContinuity
     case startCapture(UInt32)
     case stopCapture
@@ -283,6 +284,9 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
             },
             verifyCaptureContinuity: {
                 await recorder.append(.captureContinuity)
+            },
+            positionPointer: { displayID, geometry in
+                await recorder.append(.positionPointer(displayID, geometry))
             }
         )
         let request = externalIsolatedRequest()
@@ -314,19 +318,44 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         XCTAssertEqual(statuses, [expectedIsolationStatus])
 
         let activeEvents = await recorder.recordedEvents()
+        let geometry = try LumenMacDisplayGeometryResolver.resolve(request.displayMode)
         let barrierIndex = try XCTUnwrap(activeEvents.firstIndex(of: .firstFrameBarrier))
         let isolateIndex = try XCTUnwrap(activeEvents.firstIndex(of: .isolate(88)))
         let continuityIndex = try XCTUnwrap(activeEvents.firstIndex(of: .captureContinuity))
+        let pointerIndices = activeEvents.indices.filter {
+            activeEvents[$0] == .positionPointer(88, geometry)
+        }
         let finalResolveIndex = try XCTUnwrap(activeEvents.lastIndex(of: .resolve(88)))
         XCTAssertLessThan(resolveIndex, barrierIndex)
         XCTAssertLessThan(barrierIndex, finalResolveIndex)
         XCTAssertLessThan(finalResolveIndex, isolateIndex)
+        XCTAssertEqual(pointerIndices.count, 2)
+        XCTAssertLessThan(barrierIndex, pointerIndices[0])
+        XCTAssertLessThan(pointerIndices[0], isolateIndex)
+        XCTAssertLessThan(isolateIndex, pointerIndices[1])
+        XCTAssertLessThan(pointerIndices[1], continuityIndex)
         XCTAssertLessThan(isolateIndex, continuityIndex)
         XCTAssertLessThan(barrierIndex, isolateIndex)
         XCTAssertEqual(activeEvents.filter { $0 == .isolate(88) }.count, 1)
         let activeState = try await session.state()
         XCTAssertEqual(activeState, .active)
         try await session.stop()
+    }
+
+    func testPointerCenterUsesVirtualDisplayLogicalGeometry() throws {
+        let geometry = try LumenMacDisplayGeometryResolver.resolve(
+            LumenMacDisplayModeRequest(
+                width: 3512,
+                height: 2420,
+                scalePercent: 150,
+                dimensionsAreLogical: false
+            )
+        )
+
+        let point = LumenMacPointerPositioner.centerPoint(geometry: geometry)
+
+        XCTAssertEqual(point.x, CGFloat(geometry.logicalWidth) / 2)
+        XCTAssertEqual(point.y, CGFloat(geometry.logicalHeight) / 2)
     }
 
     func testUnavailablePhysicalIsolationDoesNotBlockOrStopTheStreamSession() async throws {
