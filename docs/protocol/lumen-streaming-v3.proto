@@ -240,6 +240,19 @@ message CodecConfigurationAck {
   uint32 configuration_id = 3;
 }
 
+enum VideoKeyframeRequestReason {
+  VIDEO_KEYFRAME_REQUEST_REASON_UNSPECIFIED = 0;
+  VIDEO_KEYFRAME_REQUEST_REASON_INCOMPLETE_UNIT = 1;
+  VIDEO_KEYFRAME_REQUEST_REASON_DECODER_RECOVERY = 2;
+}
+
+message VideoKeyframeRequest {
+  uint32 session_epoch = 1;
+  uint32 stream_id = 2;
+  uint32 after_frame_id = 3;
+  VideoKeyframeRequestReason reason = 4;
+}
+
 message KeyboardInput {
   uint32 hid_usage = 1;
   bool pressed = 2;
@@ -458,6 +471,7 @@ message ClientControlEnvelope {
     MediaPathResponse media_path = 12;
     StopSession stop_session = 13;
     CodecConfigurationAck codec_configuration_ack = 14;
+    VideoKeyframeRequest video_keyframe_request = 15;
   }
 }
 
