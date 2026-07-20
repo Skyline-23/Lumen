@@ -41,9 +41,9 @@ pub use native_session::{
     NativeAudioChannelMode, NativeAudioQuality, NativeChromaSubsampling, NativeColorRange,
     NativeControlWireError, NativeDisplayGamut, NativeDisplayTransfer, NativeDynamicRange,
     NativeNegotiationFailure, NativePolicyMode, NativeProtocolError, NativeSessionError,
-    NativeVideoCapability, NativeVideoCodec, NativeVideoFormat, NativeVideoProfile, SessionStarted,
-    SessionStopped, StartSessionAck, StopSession, NATIVE_CONTROL_MESSAGE_LIMIT,
-    NATIVE_PROTOCOL_VERSION,
+    NativeVideoCapability, NativeVideoCodec, NativeVideoFormat, NativeVideoKeyframeRequestReason,
+    NativeVideoProfile, SessionStarted, SessionStopped, StartSessionAck, StopSession,
+    VideoKeyframeRequest, NATIVE_CONTROL_MESSAGE_LIMIT, NATIVE_PROTOCOL_VERSION,
 };
 pub use native_transport::{
     decode_native_media_datagram, decode_native_video_access_unit, encode_native_media_header,

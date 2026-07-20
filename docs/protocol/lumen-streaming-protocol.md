@@ -337,12 +337,15 @@ and send stages. Under pressure it drops complete non-key frames before encode
 or before packetization. It does not drain stale fragments after their
 presentation deadline.
 
-Normal video datagrams are not retransmitted. A missing keyframe shard may be
-repaired only when measured RTT is shorter than its remaining presentation
-deadline. Otherwise the client requests a fresh keyframe. Decoder
-configurations remain reliable. FEC is raised only for observed non-congestion
-loss; adding parity during congestion is forbidden because it worsens the
-bottleneck.
+Normal video datagrams are not retransmitted. After the client declares an
+incomplete video frame unrecoverable, it immediately sends one reliable
+`VideoKeyframeRequest` on the existing session-control stream. The request
+identifies the active epoch, fixed video stream id, last completely delivered
+frame id, and whether recovery is required for an incomplete unit or decoder
+state. The host coalesces duplicate requests until it sends a fresh keyframe
+using the currently acknowledged codec configuration. Decoder configurations
+remain reliable. FEC is raised only for observed non-congestion loss; adding
+parity during congestion is forbidden because it worsens the bottleneck.
 
 When HDR is selected, HDR static session metadata is part of the session plan.
 Per-frame dynamic range and overlay state are carried in the protected frame

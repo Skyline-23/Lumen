@@ -359,6 +359,26 @@ pub struct CodecConfigurationAck {
     pub configuration_id: u32,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Enumeration)]
+#[repr(i32)]
+pub enum NativeVideoKeyframeRequestReason {
+    Unspecified = 0,
+    IncompleteUnit = 1,
+    DecoderRecovery = 2,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct VideoKeyframeRequest {
+    #[prost(uint32, tag = "1")]
+    pub session_epoch: u32,
+    #[prost(uint32, tag = "2")]
+    pub stream_id: u32,
+    #[prost(uint32, tag = "3")]
+    pub after_frame_id: u32,
+    #[prost(enumeration = "NativeVideoKeyframeRequestReason", tag = "4")]
+    pub reason: i32,
+}
+
 #[derive(Clone, PartialEq, Message)]
 pub struct NativeProtocolError {
     #[prost(uint32, tag = "1")]
@@ -429,7 +449,7 @@ pub struct ClientControlEnvelope {
     pub request_id: u64,
     #[prost(
         oneof = "client_control_envelope::Payload",
-        tags = "10, 11, 12, 13, 14"
+        tags = "10, 11, 12, 13, 14, 15"
     )]
     pub payload: Option<client_control_envelope::Payload>,
 }
@@ -437,6 +457,7 @@ pub struct ClientControlEnvelope {
 pub mod client_control_envelope {
     use super::{
         ClientSessionHello, CodecConfigurationAck, MediaPathResponse, StartSessionAck, StopSession,
+        VideoKeyframeRequest,
     };
     use prost::Oneof;
 
@@ -452,6 +473,8 @@ pub mod client_control_envelope {
         StopSession(StopSession),
         #[prost(message, tag = "14")]
         CodecConfigurationAck(CodecConfigurationAck),
+        #[prost(message, tag = "15")]
+        VideoKeyframeRequest(VideoKeyframeRequest),
     }
 }
 

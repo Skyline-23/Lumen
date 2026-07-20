@@ -8,7 +8,8 @@ use super::{
     NativeAudioChannelMode, NativeAudioQuality, NativeChromaSubsampling, NativeColorRange,
     NativeControlWireError, NativeDisplayGamut, NativeDisplayTransfer, NativeDynamicRange,
     NativePolicyMode, NativeSessionError, NativeVideoCapability, NativeVideoCodec,
-    NativeVideoFormat, NativeVideoProfile, SessionStarted,
+    NativeVideoFormat, NativeVideoKeyframeRequestReason, NativeVideoProfile, SessionStarted,
+    VideoKeyframeRequest, NATIVE_VIDEO_STREAM_ID,
 };
 
 const V2_HELLO_ENVELOPE_BYTES: &[u8] = &[
@@ -293,6 +294,26 @@ fn bounded_client_control_envelope_round_trips_one_typed_operation() {
     let decoded = decode_client_control_message(&encoded).unwrap();
 
     assert_eq!(decoded, envelope);
+}
+
+#[test]
+fn video_keyframe_request_uses_collision_free_control_tag_fifteen() {
+    let envelope = ClientControlEnvelope {
+        request_id: 19,
+        payload: Some(client_control_envelope::Payload::VideoKeyframeRequest(
+            VideoKeyframeRequest {
+                session_epoch: 0x0102_0304,
+                stream_id: u32::from(NATIVE_VIDEO_STREAM_ID),
+                after_frame_id: 77,
+                reason: NativeVideoKeyframeRequestReason::IncompleteUnit as i32,
+            },
+        )),
+    };
+
+    let encoded = encode_client_control_message(&envelope).unwrap();
+
+    assert_eq!(decode_client_control_message(&encoded).unwrap(), envelope);
+    assert_eq!(encoded[3], 0x7a);
 }
 
 #[test]
