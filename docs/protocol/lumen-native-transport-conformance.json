@@ -1,274 +1,110 @@
 {
   "protocol": "lumen-stream",
-  "version": 3,
-  "alpn": "lumen-stream/3",
-  "sessionProtocolVersion": 2,
-  "controlTransport": "quic-v1",
-  "mediaPlane": "lumen-udp-aead",
-  "security": "tls-1.3",
-  "discoveryService": "_lumen._udp",
-  "discovery": {
-    "quicPortTxtField": "quic-port",
-    "httpsField": "sessionQuicPort",
-    "basePort": 47989,
-    "quicPortOffset": 21,
-    "defaultQuicPort": 48010
+  "transportName": "Lumen Object Transport",
+  "version": 4,
+  "alpn": "lumen-stream/4",
+  "sessionProtocolVersion": 4,
+  "controlTransport": "quic-v1-tls-1.3",
+  "mediaPlane": "quic-datagram",
+  "applicationMediaEncryption": false,
+  "directMediaUdp": false,
+  "clientBidirectionalStreams": {
+    "control": 0,
+    "reliableInput": 4,
+    "telemetry": 8
   },
-  "initialMaximumDatagramPayload": 1200,
-  "frameIntervalBudgetMicrosecondsAt120Fps": 8333,
-  "feedbackIntervalMilliseconds": 16,
-  "videoKeyframeRepair": {
-    "transport": "session-control-bidi",
-    "clientControlEnvelopeTag": 15,
-    "streamId": 1,
-    "requestFields": {
-      "sessionEpoch": 1,
-      "streamId": 2,
-      "afterFrameId": 3,
-      "reason": 4
-    },
-    "reasons": {
+  "hostUnidirectionalStreams": {
+    "codecConfiguration": 3,
+    "firstVideoBootstrap": 7,
+    "videoBootstrapStride": 4,
+    "clientMinimumCredit": 8
+  },
+  "messageLimits": {
+    "controlBytes": 32768,
+    "inputBytes": 32768,
+    "telemetryBytes": 32768,
+    "codecConfigurationBytes": 32768,
+    "videoBootstrapBytes": 16777216
+  },
+  "hostSessionPlan": {
+    "selectedVideoCapabilityField": 44,
+    "maximumObjectDelayUsField": 45
+  },
+  "videoBootstrap": {
+    "resultControlTag": 16,
+    "initialGenerationId": 1,
+    "periodicByDefault": false,
+    "deltaAdmission": "after-hardware-decoded-result",
+    "resultCodes": {
       "unspecified": 0,
-      "incompleteUnit": 1,
-      "decoderRecovery": 2
-    },
-    "coalescing": "one-outstanding-until-fresh-keyframe-sent",
-    "legacyFallback": false
-  },
-  "protocolErrors": {
-    "invalidOperation": 1,
-    "authentication": 2,
-    "application": 3,
-    "negotiation": 4,
-    "sessionConflict": 5,
-    "mediaPath": 6,
-    "platform": 7,
-    "sessionState": 8,
-    "transport": 9
+      "decoded": 1,
+      "decoderRejected": 2,
+      "stale": 3
+    }
   },
   "mediaDatagramHeader": {
     "byteOrder": "network",
-    "bytes": 40,
-    "magic": 19507,
+    "bytes": 28,
+    "fecBlockBytes": 36,
     "fields": [
-      { "name": "magic", "offset": 0, "bytes": 2 },
-      { "name": "version", "offset": 2, "bytes": 1 },
-      { "name": "kind", "offset": 3, "bytes": 1 },
-      { "name": "flags", "offset": 4, "bytes": 2 },
-      { "name": "headerBytes", "offset": 6, "bytes": 2 },
-      { "name": "sessionEpoch", "offset": 8, "bytes": 4 },
-      { "name": "pathId", "offset": 12, "bytes": 2 },
-      { "name": "policyRevision", "offset": 14, "bytes": 2 },
-      { "name": "streamId", "offset": 16, "bytes": 2 },
-      { "name": "shardIndex", "offset": 18, "bytes": 2 },
-      { "name": "dataShards", "offset": 20, "bytes": 2 },
-      { "name": "parityShards", "offset": 22, "bytes": 2 },
-      { "name": "packetSequence", "offset": 24, "bytes": 4 },
-      { "name": "frameId", "offset": 28, "bytes": 4 },
-      { "name": "frameBytes", "offset": 32, "bytes": 4 },
-      { "name": "captureTimestampUs", "offset": 36, "bytes": 4 }
+      { "name": "kind", "offset": 0, "bytes": 1 },
+      { "name": "flags", "offset": 1, "bytes": 1 },
+      { "name": "headerBytes", "offset": 2, "bytes": 2 },
+      { "name": "generationId", "offset": 4, "bytes": 4 },
+      { "name": "datagramSequence", "offset": 8, "bytes": 4 },
+      { "name": "objectId", "offset": 12, "bytes": 4 },
+      { "name": "objectBytes", "offset": 16, "bytes": 4 },
+      { "name": "captureTimestampUs", "offset": 20, "bytes": 4 },
+      { "name": "shardIndex", "offset": 24, "bytes": 1 },
+      { "name": "dataShards", "offset": 25, "bytes": 1 },
+      { "name": "parityShards", "offset": 26, "bytes": 1 },
+      { "name": "reserved", "offset": 27, "bytes": 1 }
     ]
   },
   "mediaKinds": {
-    "video": 1,
-    "audio": 2,
-    "inputMotion": 3
-  },
-  "logicalStreamIds": {
-    "video": 1,
+    "videoDelta": 1,
     "audio": 2,
     "inputMotion": 3
   },
   "flags": {
-    "keyframe": 1,
-    "configurationBoundary": 2,
-    "discontinuity": 4,
-    "endOfStream": 8,
     "parityShard": 16,
     "fecBlock": 32
   },
   "fecBlockExtension": {
     "bytes": 8,
     "fields": [
-      { "name": "blockIndex", "offset": 40, "bytes": 2 },
-      { "name": "blockCount", "offset": 42, "bytes": 2 },
-      { "name": "framePayloadOffset", "offset": 44, "bytes": 4 }
+      { "name": "blockIndex", "offset": 28, "bytes": 1 },
+      { "name": "blockCount", "offset": 29, "bytes": 1 },
+      { "name": "reserved", "offset": 30, "bytes": 2 },
+      { "name": "objectPayloadOffset", "offset": 32, "bytes": 4 }
     ]
-  },
-  "videoAccessUnit": {
-    "descriptorBytes": 8,
-    "byteOrder": "network",
-    "fields": [
-      { "name": "configurationId", "offset": 0, "bytes": 4 },
-      { "name": "accessUnitBytes", "offset": 4, "bytes": 4 }
-    ],
-    "configurationTransport": "first-host-unidirectional-quic-stream",
-    "configurationStreamId": 3,
-    "clientMinimumHostUnidirectionalStreamCredit": 1,
-    "hostOpensConfigurationStreamAfterFirstControlRequest": true,
-    "configurationStreamAdmissionErrorCode": 9,
-    "configurationMessage": "CodecConfiguration",
-    "configurationIsPrependedToAccessUnit": false,
-    "configurationBoundaryMeaning": "first-keyframe-using-acknowledged-configuration",
-    "codecPayloads": {
-      "h264": {
-        "configurationRecord": "AVCDecoderConfigurationRecord",
-        "accessUnit": "four-byte-network-length-prefixed-nal-units"
-      },
-      "hevc": {
-        "configurationRecord": "HEVCDecoderConfigurationRecord",
-        "accessUnit": "four-byte-network-length-prefixed-nal-units"
-      },
-      "av1": {
-        "configurationRecord": "AV1CodecConfigurationRecord",
-        "accessUnit": "low-overhead-obu-stream-with-obu_has_size_field-set"
-      }
-    }
   },
   "fec": {
     "algorithm": "systematic-reed-solomon-vandermonde-gf256",
     "fieldPolynomial": 285,
     "generator": 2,
-    "generatorMatrix": {
-      "vandermondeElement": "V[r,c]=gf256_pow(byte(r),c)",
-      "systematicTransform": "G=V*inverse(V[0:dataShards,0:dataShards])",
-      "dataRows": "G[0:dataShards]=identity",
-      "parityRow": "G[dataShards+parityIndex]",
-      "reconstruction": "invert-any-dataShards-present-rows-of-G"
-    },
     "maximumTotalShardsPerBlock": 256,
-    "dataShardOrder": "0-through-dataShards-minus-1",
-    "parityShardOrder": "dataShards-through-dataShards-plus-parityShards-minus-1",
-    "parityCount": "ceil(dataShards-times-parityPercentage-divided-by-100)",
-    "padding": "zero-pad-every-data-shard-to-the-block-shard-size-before-parity",
-    "reconstruction": "reconstruct-missing-shards-per-block-concatenate-data-shards-in-index-order-then-truncate-to-the-block-byte-range"
+    "padding": "zero-pad-data-before-parity",
+    "scope": "plaintext-quic-datagram-payload"
   },
-  "audioUnit": {
-    "payload": "one-raw-opus-multistream-packet",
-    "sampleRate": 48000,
-    "durationFrames": 240,
-    "durationMicroseconds": 5000,
-    "frameIdMeaning": "monotonic-audio-unit-id-within-session-epoch",
-    "captureTimestampMeaning": "first-pcm-sample-time-on-the-shared-session-clock-in-microseconds-modulo-2^32",
-    "topologyAuthority": [
-      "HostSessionPlan.opus_channel_count",
-      "HostSessionPlan.opus_stream_count",
-      "HostSessionPlan.opus_coupled_stream_count",
-      "HostSessionPlan.opus_mapping"
-    ],
-    "payloadContainsTopology": false
+  "telemetry": {
+    "streamId": 8,
+    "envelope": "ClientTelemetryEnvelope",
+    "mediaFeedbackTag": 10,
+    "sequence": "nonzero-contiguous",
+    "parityStepPercentage": 5,
+    "parityRangePercentage": [5, 50]
   },
-  "input": {
-    "reliableTransport": "second-client-bidirectional-quic-stream",
-    "reliableEnvelope": "ClientInputEnvelope",
-    "hostEnvelope": "HostInputEnvelope",
-    "motionTransport": "lumen-udp-aead",
-    "motionKind": 3,
-    "motionStreamId": 3,
-    "motionEnvelope": "ClientMotionEnvelope",
-    "motionFec": false,
-    "reliablePayloads": [
-      "keyboard",
-      "text",
-      "pointer_button",
-      "gamepad_connection",
-      "gamepad_button",
-      "touch_contact",
-      "pen_contact",
-      "rumble_ack"
-    ],
-    "latestWinsMotionPayloads": [
-      "pointer_motion",
-      "scroll",
-      "touch_motion",
-      "pen_motion",
-      "gamepad_motion"
-    ],
-    "rumbleDirection": "host-to-client-reliable",
-    "clientEnvelopeFields": {
-      "sessionEpoch": 1,
-      "eventSequence": 2,
-      "keyboard": 10,
-      "text": 11,
-      "pointerButton": 12,
-      "gamepadConnection": 13,
-      "gamepadButton": 14,
-      "touchContact": 15,
-      "penContact": 16,
-      "rumbleAck": 17
-    },
-    "hostEnvelopeFields": {
-      "sessionEpoch": 1,
-      "commandSequence": 2,
-      "ack": 10,
-      "reset": 11,
-      "rumble": 12
-    },
-    "motionEnvelopeFields": {
-      "motionSequence": 1,
-      "pointerMotion": 10,
-      "scroll": 11,
-      "touchMotion": 12,
-      "penMotion": 13,
-      "gamepadMotion": 14
-    },
-    "keyboardCodeSpace": "usb-hid-keyboard-usage",
-    "keyboardModifierBits": [
-      "left-control",
-      "left-shift",
-      "left-alt",
-      "left-gui",
-      "right-control",
-      "right-shift",
-      "right-alt",
-      "right-gui"
-    ],
-    "pointerButtons": {
-      "primary": 1,
-      "middle": 2,
-      "secondary": 3,
-      "back": 4,
-      "forward": 5
-    },
-    "gamepadIdRange": [0, 15],
-    "textEncoding": "utf-8",
-    "textSelectionUnits": "utf-8-bytes",
-    "normalizedCoordinateRange": [0.0, 1.0],
-    "stickRange": [-32768, 32767],
-    "triggerAndMotorRange": [0, 65535]
-  },
-  "runtimePolicies": {
-    "ultraLatency": {
-      "maximumPresentableFrames": 1,
-      "normalFrameRetransmission": false
-    },
-    "balanced": {
-      "maximumPresentableFrames": 2,
-      "deadlineAwareKeyframeRepair": true
-    },
-    "quality": {
-      "maximumPresentableFrames": 3,
-      "deadlineAwareKeyframeRepair": true
-    }
-  },
-  "qualityPromotionStableMilliseconds": 2000,
-  "latencyDemotionMissedDeadlineCount": 3,
-  "requiredVideoContracts": [
-    "hevc-main-sdr"
-  ],
-  "optionalVideoContracts": [
-    "h264-sdr",
-    "hevc-main10-hdr",
-    "av1-main-sdr",
-    "av1-main10-hdr"
-  ],
   "forbiddenCompatibilityProtocols": [
+    "lumen-stream/3",
+    "direct-media-udp",
+    "media-path-probe",
+    "exporter-media-key",
+    "application-aes-gcm",
     "gamestream",
     "rtsp",
     "sdp",
     "rtp",
-    "enet",
-    "nv-video-header",
-    "prores"
+    "enet"
   ]
 }

@@ -80,7 +80,7 @@ smoke-test commands.
 - [Streaming protocol](docs/protocol/lumen-streaming-protocol.md)
 - [Settings protocol](docs/protocol/lumen-settings-protocol.md)
 - [MIT migration contract](docs/mit-migration.md)
-- `docs/protocol/lumen-streaming-v2.proto`: native v2 control authority
+- `docs/protocol/lumen-streaming-v4.proto`: native v4 control and object authority
 
 After editing the native protocol contract, run:
 

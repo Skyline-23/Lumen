@@ -11,8 +11,8 @@ Rust owns:
 - owner accounts, enrolled devices, credentials, and host identity;
 - revisioned settings and the application catalog;
 - launch admission, session negotiation, and control-channel routing;
-- HTTPS account/device control, TLS 1.3 QUIC session control, native UDP media,
-  mDNS, and IPv4/IPv6 UPnP;
+- HTTPS account/device control, TLS 1.3 QUIC session control, QUIC object
+  streams/datagrams, mDNS, and IPv4/IPv6 UPnP;
 - audio layout, video transport, HDR, bitrate, FEC, and fallback policy;
 - process orchestration, recovery, and factory reset.
 

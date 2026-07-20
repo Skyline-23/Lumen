@@ -81,9 +81,11 @@ from the peer's network location.
 LAN and WAN encryption selectors are also absent because the current native
 transport has no unencrypted mode. Control, discovery detail, applications,
 authentication, and settings use the TLS control server. Native session control
-uses QUIC with TLS 1.3. QUIC exporter material derives the per-session media key,
-and native UDP video/audio payloads use AES-128-GCM with authenticated headers.
-The former LAN/WAN selector values never selected any of these paths.
+uses QUIC with TLS 1.3. Reliable bootstrap/configuration objects use QUIC
+streams and deadline-bound audio/video delta objects use QUIC DATAGRAM. The
+transport does not expose a separate native UDP socket, application media key,
+or application-layer encryption selector. The former LAN/WAN selector values
+never selected any of these paths.
 
 ## Security boundary
 

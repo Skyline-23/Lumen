@@ -5,7 +5,7 @@ use crate::LumenEngineStatus;
 
 mod hdr_frame_state;
 mod hdr_regions;
-mod lumen_streaming_v3_provenance;
+mod lumen_streaming_v4_provenance;
 mod native_input;
 mod native_session;
 #[cfg(test)]
@@ -16,9 +16,9 @@ mod native_transport_tests;
 mod session_offer;
 mod transport_plan;
 
-pub use lumen_streaming_v3_provenance::{
-    LUMEN_STREAMING_DESCRIPTOR_SHA256, LUMEN_STREAMING_EXPORTER_LABEL,
-    LUMEN_STREAMING_PROTOCOL_ALPN, LUMEN_STREAMING_PROTOCOL_PACKAGE, LUMEN_STREAMING_SCHEMA_SHA256,
+pub use lumen_streaming_v4_provenance::{
+    LUMEN_STREAMING_DESCRIPTOR_SHA256, LUMEN_STREAMING_PROTOCOL_ALPN,
+    LUMEN_STREAMING_PROTOCOL_PACKAGE, LUMEN_STREAMING_SCHEMA_SHA256,
 };
 pub use native_input::{
     client_input_envelope, client_motion_envelope, decode_client_input_message,
@@ -33,29 +33,29 @@ pub use native_input::{
     NATIVE_INPUT_MESSAGE_LIMIT,
 };
 pub use native_session::{
-    client_control_envelope, decode_client_control_message, decode_host_control_message,
-    encode_client_control_message, encode_codec_configuration_message, encode_host_control_message,
-    host_control_envelope, negotiate_native_session, ClientControlEnvelope, ClientSessionHello,
-    CodecConfiguration, CodecConfigurationAck, HostControlEnvelope, HostSessionCapabilities,
-    HostSessionPlan, MediaPathChallenge, MediaPathResponse, MediaPathValidated,
-    NativeAudioChannelMode, NativeAudioQuality, NativeChromaSubsampling, NativeColorRange,
-    NativeControlWireError, NativeDisplayGamut, NativeDisplayTransfer, NativeDynamicRange,
-    NativeNegotiationFailure, NativePolicyMode, NativeProtocolError, NativeSessionError,
+    client_control_envelope, client_telemetry_envelope, decode_client_control_message,
+    decode_client_telemetry_message, decode_host_control_message, decode_video_bootstrap_message,
+    encode_client_control_message, encode_client_telemetry_message,
+    encode_codec_configuration_message, encode_host_control_message,
+    encode_video_bootstrap_message, host_control_envelope, negotiate_native_session,
+    ClientControlEnvelope, ClientSessionHello, ClientTelemetryEnvelope, CodecConfiguration,
+    CodecConfigurationAck, HostControlEnvelope, HostSessionCapabilities, HostSessionPlan,
+    MediaFeedback, NativeAudioChannelMode, NativeAudioQuality, NativeChromaSubsampling,
+    NativeColorRange, NativeControlWireError, NativeDisplayGamut, NativeDisplayTransfer,
+    NativeDynamicRange, NativeNegotiationFailure, NativePolicyMode, NativeProtocolError,
+    NativeSessionError, NativeVideoBootstrapReason, NativeVideoBootstrapResultCode,
     NativeVideoCapability, NativeVideoCodec, NativeVideoFormat, NativeVideoKeyframeRequestReason,
     NativeVideoProfile, SessionStarted, SessionStopped, StartSessionAck, StopSession,
-    VideoKeyframeRequest, NATIVE_CONTROL_MESSAGE_LIMIT, NATIVE_PROTOCOL_VERSION,
+    VideoBootstrap, VideoBootstrapResult, VideoKeyframeRequest, NATIVE_CONTROL_MESSAGE_LIMIT,
+    NATIVE_PROTOCOL_VERSION, NATIVE_VIDEO_BOOTSTRAP_MESSAGE_LIMIT,
 };
 pub use native_transport::{
-    decode_native_media_datagram, decode_native_video_access_unit, encode_native_media_header,
-    encode_native_media_header_with_fec_block, encode_native_video_access_unit_descriptor,
-    DecodedNativeMediaDatagram, NativeFecBlockExtension, NativeMediaHeader, NativeMediaKind,
-    NativeTransportError, NativeVideoAccessUnitDescriptor, NATIVE_AUDIO_STREAM_ID,
+    decode_native_media_datagram, encode_native_media_header,
+    encode_native_media_header_with_fec_block, DecodedNativeMediaDatagram, NativeFecBlockExtension,
+    NativeMediaHeader, NativeMediaKind, NativeTransportError, NATIVE_AUDIO_STREAM_ID,
     NATIVE_FEC_BLOCK_EXTENSION_BYTES, NATIVE_FEC_BLOCK_HEADER_BYTES,
-    NATIVE_INITIAL_CONFIGURATION_ID, NATIVE_INPUT_MOTION_STREAM_ID,
-    NATIVE_MEDIA_FLAG_CONFIGURATION_BOUNDARY, NATIVE_MEDIA_FLAG_DISCONTINUITY,
-    NATIVE_MEDIA_FLAG_END_OF_STREAM, NATIVE_MEDIA_FLAG_FEC_BLOCK, NATIVE_MEDIA_FLAG_KEYFRAME,
-    NATIVE_MEDIA_FLAG_PARITY_SHARD, NATIVE_MEDIA_HEADER_BYTES, NATIVE_MEDIA_MAGIC,
-    NATIVE_MEDIA_VERSION, NATIVE_VIDEO_ACCESS_UNIT_DESCRIPTOR_BYTES, NATIVE_VIDEO_STREAM_ID,
+    NATIVE_INITIAL_CONFIGURATION_ID, NATIVE_INPUT_MOTION_STREAM_ID, NATIVE_MEDIA_FLAG_FEC_BLOCK,
+    NATIVE_MEDIA_FLAG_PARITY_SHARD, NATIVE_MEDIA_HEADER_BYTES, NATIVE_VIDEO_STREAM_ID,
 };
 
 pub use session_offer::{parse_session_offer, LumenSessionOffer};

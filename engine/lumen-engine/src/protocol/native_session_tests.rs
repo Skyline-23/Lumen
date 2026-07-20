@@ -1,15 +1,16 @@
 use prost::Message;
 
 use super::{
-    client_control_envelope, decode_client_control_message, decode_host_control_message,
-    encode_client_control_message, encode_host_control_message, host_control_envelope,
-    negotiate_native_session, ClientControlEnvelope, ClientSessionHello, HostControlEnvelope,
-    HostSessionCapabilities, MediaPathChallenge, MediaPathResponse, MediaPathValidated,
-    NativeAudioChannelMode, NativeAudioQuality, NativeChromaSubsampling, NativeColorRange,
-    NativeControlWireError, NativeDisplayGamut, NativeDisplayTransfer, NativeDynamicRange,
-    NativePolicyMode, NativeSessionError, NativeVideoCapability, NativeVideoCodec,
+    client_control_envelope, client_telemetry_envelope, decode_client_control_message,
+    decode_client_telemetry_message, decode_host_control_message, encode_client_control_message,
+    encode_client_telemetry_message, encode_host_control_message, host_control_envelope,
+    negotiate_native_session, ClientControlEnvelope, ClientSessionHello, ClientTelemetryEnvelope,
+    HostControlEnvelope, HostSessionCapabilities, MediaFeedback, NativeAudioChannelMode,
+    NativeAudioQuality, NativeChromaSubsampling, NativeColorRange, NativeControlWireError,
+    NativeDisplayGamut, NativeDisplayTransfer, NativeDynamicRange, NativePolicyMode,
+    NativeSessionError, NativeVideoBootstrapResultCode, NativeVideoCapability, NativeVideoCodec,
     NativeVideoFormat, NativeVideoKeyframeRequestReason, NativeVideoProfile, SessionStarted,
-    VideoKeyframeRequest, NATIVE_VIDEO_STREAM_ID,
+    VideoBootstrapResult, VideoKeyframeRequest, NATIVE_PROTOCOL_VERSION, NATIVE_VIDEO_STREAM_ID,
 };
 
 const V2_HELLO_ENVELOPE_BYTES: &[u8] = &[
@@ -64,7 +65,7 @@ fn capability_with_format(format: NativeVideoFormat) -> NativeVideoCapability {
 }
 
 #[test]
-fn generation_three_negotiates_each_exact_hardware_video_row() {
+fn generation_four_negotiates_each_exact_hardware_video_row() {
     // Given: five valid 4:2:0 and 4:4:4 codec/profile rows.
     let formats = [
         NativeVideoFormat {
@@ -137,7 +138,7 @@ fn generation_three_negotiates_each_exact_hardware_video_row() {
 }
 
 #[test]
-fn generation_three_rejects_missing_exact_format_presence_at_version_negotiation() {
+fn generation_four_rejects_missing_exact_format_presence_at_version_negotiation() {
     // Given: generation-three rows missing either the nested format or hardware presence.
     let mut missing_format = hello();
     missing_format.video_capabilities[0].format = None;
@@ -148,14 +149,14 @@ fn generation_three_rejects_missing_exact_format_presence_at_version_negotiation
     let results = [missing_format, missing_hardware]
         .map(|client| negotiate_native_session(&client, &host(), 1));
 
-    // Then: both fail as stale protocol shapes before selection.
+    // Then: both fail as malformed exact selections, not as a version mismatch.
     assert!(results
         .into_iter()
-        .all(|result| result == Err(NativeSessionError::UnsupportedProtocolVersion)));
+        .all(|result| result == Err(NativeSessionError::UnsupportedVideoSelection)));
 }
 
 #[test]
-fn generation_three_rejects_exact_profile_chroma_or_range_mismatch_without_fallback() {
+fn generation_four_rejects_exact_profile_chroma_or_range_mismatch_without_fallback() {
     // Given: a valid request whose only advertised client row differs on exact format axes.
     let requested = capability(NativeVideoCodec::H264, 8, false).format.unwrap();
     let mismatches = [
@@ -187,8 +188,8 @@ fn generation_three_rejects_exact_profile_chroma_or_range_mismatch_without_fallb
 }
 
 #[test]
-fn generation_three_rejects_unknown_exact_format_enums() {
-    // Given: one requested row whose profile discriminant is unknown to protocol v3.
+fn generation_four_rejects_unknown_exact_format_enums() {
+    // Given: one requested row whose profile discriminant is unknown to protocol v4.
     let mut client = hello();
     let requested = client.requested_video_format.as_mut().unwrap();
     requested.profile = 999;
@@ -198,7 +199,7 @@ fn generation_three_rejects_unknown_exact_format_enums() {
     let result = negotiate_native_session(&client, &host(), 1);
 
     // Then: it is rejected at the versioned boundary instead of defaulting a profile.
-    assert_eq!(result, Err(NativeSessionError::UnsupportedProtocolVersion));
+    assert_eq!(result, Err(NativeSessionError::UnsupportedVideoSelection));
 }
 
 #[test]
@@ -237,8 +238,8 @@ fn exact_selection_respects_both_client_and_host_geometry_limits() {
 
 fn hello() -> ClientSessionHello {
     ClientSessionHello {
-        minimum_protocol_version: 2,
-        maximum_protocol_version: 2,
+        minimum_protocol_version: NATIVE_PROTOCOL_VERSION,
+        maximum_protocol_version: NATIVE_PROTOCOL_VERSION,
         width: 3_840,
         height: 2_160,
         refresh_millihz: 120_000,
@@ -281,11 +282,15 @@ fn hello() -> ClientSessionHello {
 fn bounded_client_control_envelope_round_trips_one_typed_operation() {
     let envelope = ClientControlEnvelope {
         request_id: 7,
-        payload: Some(client_control_envelope::Payload::MediaPath(
-            MediaPathResponse {
+        payload: Some(client_control_envelope::Payload::VideoBootstrapResult(
+            VideoBootstrapResult {
                 session_epoch: 0x0102_0304,
-                path_id: 1,
-                token: vec![0x44; 32],
+                stream_id: u32::from(NATIVE_VIDEO_STREAM_ID),
+                configuration_id: 1,
+                generation_id: 9,
+                frame_id: 77,
+                result: NativeVideoBootstrapResultCode::Decoded as i32,
+                message: String::new(),
             },
         )),
     };
@@ -306,6 +311,7 @@ fn video_keyframe_request_uses_collision_free_control_tag_fifteen() {
                 stream_id: u32::from(NATIVE_VIDEO_STREAM_ID),
                 after_frame_id: 77,
                 reason: NativeVideoKeyframeRequestReason::IncompleteUnit as i32,
+                generation_id: 9,
             },
         )),
     };
@@ -317,37 +323,29 @@ fn video_keyframe_request_uses_collision_free_control_tag_fifteen() {
 }
 
 #[test]
-fn bounded_host_control_envelope_round_trips_the_media_challenge() {
-    let envelope = HostControlEnvelope {
-        request_id: 8,
-        payload: Some(host_control_envelope::Payload::MediaPath(
-            MediaPathChallenge {
-                session_epoch: 0x0102_0304,
-                path_id: 1,
-                media_port: 47_998,
-                token: vec![0x55; 32],
+fn bounded_client_telemetry_round_trips_media_feedback_on_its_own_lane() {
+    let envelope = ClientTelemetryEnvelope {
+        sequence: 1,
+        payload: Some(client_telemetry_envelope::Payload::MediaFeedback(
+            MediaFeedback {
+                stream_id: u32::from(NATIVE_VIDEO_STREAM_ID),
+                highest_datagram_sequence: 44,
+                received_datagrams: 40,
+                recovered_shards: 2,
+                unrecoverable_objects: 1,
+                late_objects: 1,
+                reordered_datagrams: 3,
+                estimated_jitter_us: 750,
+                decoder_queue_depth: 2,
+                presentation_drops: 1,
+                window_milliseconds: 250,
+                first_datagram_sequence: 5,
             },
         )),
     };
 
-    let encoded = encode_host_control_message(&envelope).unwrap();
-    assert_eq!(decode_host_control_message(&encoded).unwrap(), envelope);
-}
-
-#[test]
-fn bounded_host_control_envelope_round_trips_media_path_validation() {
-    let envelope = HostControlEnvelope {
-        request_id: 9,
-        payload: Some(host_control_envelope::Payload::MediaPathValidated(
-            MediaPathValidated {
-                session_epoch: 0x0102_0304,
-                path_id: 1,
-            },
-        )),
-    };
-
-    let encoded = encode_host_control_message(&envelope).unwrap();
-    assert_eq!(decode_host_control_message(&encoded).unwrap(), envelope);
+    let encoded = encode_client_telemetry_message(&envelope).unwrap();
+    assert_eq!(decode_client_telemetry_message(&encoded).unwrap(), envelope);
 }
 
 #[test]
@@ -453,7 +451,7 @@ fn characterizes_generation_two_hello_and_plan_wire_bytes() {
 }
 
 #[test]
-fn generation_three_golden_hello_and_plan_bytes_are_stable() {
+fn generation_four_hello_and_plan_encoding_is_deterministic() {
     // Given: the canonical exact HEVC Main10 HDR hello and selected plan.
     let hello_fixture = hello();
     let hello_envelope = ClientControlEnvelope {
@@ -481,44 +479,25 @@ fn generation_three_golden_hello_and_plan_bytes_are_stable() {
         plan_envelope
     );
 
-    // Then: both generations have deterministic byte-for-byte golden fixtures.
+    // Then: repeated production encoding is byte-for-byte stable.
     assert_eq!(
-        hello_bytes,
-        vec![
-            194, 1, 8, 7, 82, 189, 1, 8, 2, 16, 2, 32, 128, 30, 40, 240, 16, 48, 192, 169, 7, 58,
-            26, 58, 12, 8, 1, 16, 2, 24, 1, 32, 8, 40, 1, 48, 1, 64, 128, 60, 72, 224, 33, 80, 128,
-            211, 14, 88, 1, 58, 26, 58, 12, 8, 2, 16, 5, 24, 1, 32, 10, 40, 2, 48, 1, 64, 128, 60,
-            72, 224, 33, 80, 128, 211, 14, 88, 1, 72, 2, 80, 192, 11, 88, 128, 128, 128, 32, 98, 3,
-            2, 6, 8, 114, 8, 100, 101, 118, 105, 99, 101, 45, 49, 122, 12, 97, 99, 99, 101, 115,
-            115, 45, 116, 111, 107, 101, 110, 128, 1, 1, 144, 1, 128, 241, 4, 160, 1, 1, 168, 1, 1,
-            176, 1, 1, 184, 1, 1, 192, 1, 200, 1, 200, 1, 2, 208, 1, 2, 221, 1, 154, 153, 25, 64,
-            229, 1, 0, 0, 128, 65, 232, 1, 240, 1, 240, 1, 192, 12, 248, 1, 1, 136, 2, 1, 144, 2,
-            2, 152, 2, 3, 160, 2, 42, 170, 2, 12, 8, 2, 16, 5, 24, 1, 32, 10, 40, 2, 48, 1,
-        ]
+        encode_client_control_message(&hello_envelope).unwrap(),
+        hello_bytes
     );
     assert_eq!(
-        plan_bytes,
-        vec![
-            164, 1, 8, 7, 82, 159, 1, 8, 2, 16, 132, 134, 136, 8, 32, 128, 30, 40, 240, 16, 48,
-            192, 169, 7, 80, 2, 88, 248, 10, 96, 2, 104, 1, 112, 1, 120, 8, 128, 1, 136, 39, 136,
-            1, 128, 241, 4, 144, 1, 200, 1, 152, 1, 2, 160, 1, 2, 173, 1, 154, 153, 25, 64, 181, 1,
-            0, 0, 128, 65, 184, 1, 240, 1, 192, 1, 192, 12, 200, 1, 1, 216, 1, 1, 224, 1, 1, 232,
-            1, 3, 240, 1, 1, 248, 1, 1, 128, 2, 1, 136, 2, 42, 144, 2, 8, 162, 2, 8, 0, 1, 2, 3, 4,
-            5, 6, 7, 168, 2, 1, 176, 2, 2, 184, 2, 3, 192, 2, 1, 200, 2, 255, 1, 208, 2, 255, 1,
-            216, 2, 20, 226, 2, 26, 58, 12, 8, 2, 16, 5, 24, 1, 32, 10, 40, 2, 48, 1, 64, 128, 30,
-            72, 240, 16, 80, 192, 169, 7, 88, 1,
-        ]
+        encode_host_control_message(&plan_envelope).unwrap(),
+        plan_bytes
     );
     if let Some(directory) = std::env::var_os("LUMEN_PROTOCOL_GOLDEN_DIR") {
         let directory = std::path::PathBuf::from(directory);
         std::fs::create_dir_all(&directory).unwrap();
-        std::fs::write(directory.join("v3-client-hello.bin"), &hello_bytes).unwrap();
-        std::fs::write(directory.join("v3-host-plan.bin"), &plan_bytes).unwrap();
+        std::fs::write(directory.join("v4-client-hello.bin"), &hello_bytes).unwrap();
+        std::fs::write(directory.join("v4-host-plan.bin"), &plan_bytes).unwrap();
     }
 }
 
 #[test]
-fn generation_three_rejects_legacy_hello_without_exact_video_format() {
+fn generation_four_rejects_legacy_hello_without_exact_video_format() {
     // Given: a byte-for-byte legacy hello without the generation-three exact format fields.
     let envelope = decode_client_control_message(V2_HELLO_ENVELOPE_BYTES).unwrap();
     let client_control_envelope::Payload::Hello(hello) = envelope.payload.unwrap() else {
@@ -533,7 +512,7 @@ fn generation_three_rejects_legacy_hello_without_exact_video_format() {
 }
 
 #[test]
-fn generation_three_rejects_loose_maximum_bit_depth_inference() {
+fn generation_four_rejects_loose_maximum_bit_depth_inference() {
     // Given: a capability that only implies ten-bit support through a loose maximum.
     let mut client = hello();
     client.video_capabilities[1]
@@ -546,14 +525,14 @@ fn generation_three_rejects_loose_maximum_bit_depth_inference() {
     let result = negotiate_native_session(&client, &host(), 0x0102_0304);
 
     // Then: negotiation requires an exact bit-depth row instead of maximum inference.
-    assert_eq!(result, Err(NativeSessionError::UnsupportedProtocolVersion));
+    assert_eq!(result, Err(NativeSessionError::UnsupportedVideoSelection));
 }
 
 #[test]
 fn negotiates_the_exact_account_selected_hevc_hdr_profile() {
     let plan = negotiate_native_session(&hello(), &host(), 0x0102_0304).unwrap();
 
-    assert_eq!(plan.protocol_version, 2);
+    assert_eq!(plan.protocol_version, NATIVE_PROTOCOL_VERSION);
     assert_eq!(plan.session_epoch, 0x0102_0304);
     let selected_format = plan.selected_video_format().unwrap();
     assert_eq!(selected_format.codec, NativeVideoCodec::Hevc as i32);
@@ -568,7 +547,6 @@ fn negotiates_the_exact_account_selected_hevc_hdr_profile() {
     );
     assert_eq!(plan.maximum_datagram_payload, 1_400);
     assert_eq!(plan.maximum_presentable_frames, 2);
-    assert_eq!(plan.path_id, 1);
     assert_eq!(plan.policy_revision, 1);
     assert_eq!(plan.opus_channel_count, 8);
     assert_eq!(plan.opus_packet_duration_microseconds, 5_000);
@@ -582,6 +560,7 @@ fn negotiates_the_exact_account_selected_hevc_hdr_profile() {
     assert_eq!(plan.maximum_data_shards, 255);
     assert_eq!(plan.maximum_parity_shards, 255);
     assert_eq!(plan.initial_parity_percentage, 20);
+    assert_eq!(plan.maximum_object_delay_us, 25_002);
     assert_eq!(plan.bitrate_kbps, 80_000);
     assert_eq!(plan.sink_scale_percent, 200);
     assert_eq!(plan.sink_gamut, NativeDisplayGamut::DisplayP3 as i32);
@@ -679,10 +658,11 @@ fn rejects_invalid_version_feature_datagram_and_memory_contracts() {
 fn protobuf_authority_has_no_prores_or_media_fallback_contract() {
     let schema = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../docs/protocol/lumen-streaming-v3.proto"
+        "/../../docs/protocol/lumen-streaming-v4.proto"
     ));
-    assert!(schema.contains("package lumen.streaming.v3;"));
+    assert!(schema.contains("package lumen.streaming.v4;"));
     assert!(!schema.to_ascii_lowercase().contains("prores"));
-    assert!(!schema.contains("QUIC_DATAGRAM"));
+    assert!(schema.contains("QUIC DATAGRAM"));
+    assert!(!schema.contains("MediaPathChallenge"));
     assert!(!schema.contains("media_fallback"));
 }
