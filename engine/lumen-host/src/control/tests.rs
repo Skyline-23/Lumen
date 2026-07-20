@@ -23,7 +23,7 @@ fn router() -> (tempfile::TempDir, ControlRouter) {
     router_with_platform(Arc::new(IdlePlatformSessionControl))
 }
 
-fn router_with_platform(
+pub(crate) fn router_with_platform(
     platform: Arc<dyn PlatformSessionControl>,
 ) -> (tempfile::TempDir, ControlRouter) {
     router_with_discovery(platform, HostDiscoveryState::test_default())
@@ -150,7 +150,7 @@ fn body(response: &ControlResponse) -> Value {
     serde_json::from_slice(&response.body).unwrap()
 }
 
-fn native_hello(application_id: u32) -> ClientSessionHello {
+pub(crate) fn native_hello(application_id: u32) -> ClientSessionHello {
     let requested_video_format = NativeVideoFormat {
         codec: NativeVideoCodec::Hevc as i32,
         profile: NativeVideoProfile::HevcMain as i32,

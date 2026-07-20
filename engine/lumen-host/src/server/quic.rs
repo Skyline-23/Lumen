@@ -348,30 +348,10 @@ async fn handle_connection(
         code: PlatformRuntimeEventCode::NativeSessionTransport,
         message: None,
     });
-    let (input_send, input_receive) =
-        tokio::time::timeout(CONNECTION_STREAM_TIMEOUT, connection.accept_bi())
-            .await
-            .map_err(|_| "QUIC client did not open reliable input stream 4".to_owned())?
-            .map_err(|error| format!("could not accept QUIC reliable input stream: {error}"))?;
-    if input_send.id().index() != 1 || input_receive.id().index() != 1 {
-        return Err("reliable input is not client bidi stream 4".to_owned());
-    }
-    input_send
-        .set_priority(PRIORITY_INPUT)
-        .map_err(|error| format!("could not prioritize reliable-input stream: {error}"))?;
-    let (telemetry_send, telemetry_receive) =
-        tokio::time::timeout(CONNECTION_STREAM_TIMEOUT, connection.accept_bi())
-            .await
-            .map_err(|_| "QUIC client did not open telemetry stream 8".to_owned())?
-            .map_err(|error| format!("could not accept QUIC telemetry stream: {error}"))?;
-    if telemetry_send.id().index() != 2 || telemetry_receive.id().index() != 2 {
-        return Err("telemetry is not client bidi stream 8".to_owned());
-    }
-    telemetry_send
-        .set_priority(PRIORITY_TELEMETRY)
-        .map_err(|error| format!("could not prioritize telemetry stream: {error}"))?;
-
     let task_stop = Arc::new(AtomicBool::new(false));
+    // Client streams 4 and 8 are not peer-visible until a STREAM frame is transmitted. Do not
+    // make either idle stream a prerequisite for returning the session plan on control stream 0.
+    let first_control_response_notify = Arc::new(Notify::new());
     let configuration_router = Arc::clone(&router);
     let configuration_task_stop = Arc::clone(&task_stop);
     let configuration_task_notify = Arc::clone(&configuration_notify);
@@ -399,25 +379,17 @@ async fn handle_connection(
         )
         .await
     });
-    let input_router = Arc::clone(&router);
-    let input_platform = Arc::clone(&platform);
-    let mut input_task = tokio::spawn(async move {
-        accept_native_input_stream(
-            input_send,
-            input_receive,
+    let auxiliary_connection = connection.clone();
+    let auxiliary_router = Arc::clone(&router);
+    let auxiliary_platform = Arc::clone(&platform);
+    let auxiliary_first_control_response_notify = Arc::clone(&first_control_response_notify);
+    let mut auxiliary_task = tokio::spawn(async move {
+        auxiliary_first_control_response_notify.notified().await;
+        accept_native_auxiliary_streams(
+            auxiliary_connection,
             session_epoch,
-            input_router,
-            input_platform,
-        )
-        .await
-    });
-    let telemetry_router = Arc::clone(&router);
-    let mut telemetry_task = tokio::spawn(async move {
-        accept_native_telemetry_stream(
-            telemetry_send,
-            telemetry_receive,
-            session_epoch,
-            telemetry_router,
+            auxiliary_router,
+            auxiliary_platform,
         )
         .await
     });
@@ -443,6 +415,7 @@ async fn handle_connection(
                 router.dispatch_native_control(first_request, &context)
             };
             write_control_responses(&mut send, first_responses).await?;
+            first_control_response_notify.notify_one();
             handle_control_stream(&mut send, &mut receive, &router, &context).await
         }
         .await;
@@ -452,8 +425,7 @@ async fn handle_connection(
         result = &mut control_task => join_task("control", result),
         result = &mut configuration_task => join_task("codec configuration", result),
         result = &mut bootstrap_task => join_task("video bootstrap", result),
-        result = &mut input_task => join_task("reliable input", result),
-        result = &mut telemetry_task => join_task("telemetry", result),
+        result = &mut auxiliary_task => join_task("native auxiliary streams", result),
         result = &mut media_task => join_task("QUIC datagram media", result),
     };
     task_stop.store(true, Ordering::Release);
@@ -471,8 +443,7 @@ async fn handle_connection(
     control_task.abort();
     configuration_task.abort();
     bootstrap_task.abort();
-    input_task.abort();
-    telemetry_task.abort();
+    auxiliary_task.abort();
     media_task.abort();
     let cleanup_result = match lifecycle_router.lock() {
         Ok(mut router) => router.terminate_native_connection(session_epoch),
@@ -791,6 +762,132 @@ fn report_native_transport_error(platform: &dyn PlatformSessionControl, message:
         code: PlatformRuntimeEventCode::NativeSessionTransport,
         message: Some(message),
     });
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NativeAuxiliaryStreamKind {
+    ReliableInput,
+    Telemetry,
+}
+
+type NativeAuxiliaryStreamTaskResult =
+    Result<(NativeAuxiliaryStreamKind, Result<(), String>), tokio::task::JoinError>;
+
+impl NativeAuxiliaryStreamKind {
+    const fn task_name(self) -> &'static str {
+        match self {
+            Self::ReliableInput => "reliable input",
+            Self::Telemetry => "telemetry",
+        }
+    }
+
+    const fn stream_index(self) -> u64 {
+        match self {
+            Self::ReliableInput => 1,
+            Self::Telemetry => 2,
+        }
+    }
+
+    const fn stream_id(self) -> u64 {
+        self.stream_index() * 4
+    }
+
+    const fn next(self) -> Option<Self> {
+        match self {
+            Self::ReliableInput => Some(Self::Telemetry),
+            Self::Telemetry => None,
+        }
+    }
+}
+
+async fn accept_native_auxiliary_streams(
+    connection: quinn::Connection,
+    session_epoch: u32,
+    router: SharedControlRouter,
+    platform: Arc<dyn PlatformSessionControl>,
+) -> Result<(), String> {
+    let mut next_kind = Some(NativeAuxiliaryStreamKind::ReliableInput);
+    let mut stream_tasks = tokio::task::JoinSet::new();
+    loop {
+        let Some(kind) = next_kind else {
+            return join_native_auxiliary_stream_task(stream_tasks.join_next().await);
+        };
+        tokio::select! {
+            // Admission is intentionally unbounded: valid input and telemetry cannot exist before
+            // the session plan, and either stream may remain idle for the connection lifetime.
+            accepted = connection.accept_bi() => {
+                let (send, receive) = accepted.map_err(|error| {
+                    format!("could not accept QUIC {} stream: {error}", kind.task_name())
+                })?;
+                if send.id().index() != kind.stream_index()
+                    || receive.id().index() != kind.stream_index()
+                {
+                    return Err(format!(
+                        "{} is not client bidi stream {}",
+                        kind.task_name(),
+                        kind.stream_id()
+                    ));
+                }
+                match kind {
+                    NativeAuxiliaryStreamKind::ReliableInput => {
+                        send.set_priority(PRIORITY_INPUT).map_err(|error| {
+                            format!("could not prioritize reliable-input stream: {error}")
+                        })?;
+                        let input_router = Arc::clone(&router);
+                        let input_platform = Arc::clone(&platform);
+                        stream_tasks.spawn(async move {
+                            (
+                                NativeAuxiliaryStreamKind::ReliableInput,
+                                accept_native_input_stream(
+                                    send,
+                                    receive,
+                                    session_epoch,
+                                    input_router,
+                                    input_platform,
+                                )
+                                .await,
+                            )
+                        });
+                    }
+                    NativeAuxiliaryStreamKind::Telemetry => {
+                        send.set_priority(PRIORITY_TELEMETRY).map_err(|error| {
+                            format!("could not prioritize telemetry stream: {error}")
+                        })?;
+                        let telemetry_router = Arc::clone(&router);
+                        stream_tasks.spawn(async move {
+                            (
+                                NativeAuxiliaryStreamKind::Telemetry,
+                                accept_native_telemetry_stream(
+                                    send,
+                                    receive,
+                                    session_epoch,
+                                    telemetry_router,
+                                )
+                                .await,
+                            )
+                        });
+                    }
+                }
+                next_kind = kind.next();
+            }
+            completed = stream_tasks.join_next(), if !stream_tasks.is_empty() => {
+                return join_native_auxiliary_stream_task(completed);
+            }
+        }
+    }
+}
+
+fn join_native_auxiliary_stream_task(
+    result: Option<NativeAuxiliaryStreamTaskResult>,
+) -> Result<(), String> {
+    match result {
+        Some(Ok((_, Ok(())))) => Ok(()),
+        Some(Ok((kind, Err(error)))) => Err(format!("{}: {error}", kind.task_name())),
+        Some(Err(error)) => Err(format!(
+            "native auxiliary stream task failed to join: {error}"
+        )),
+        None => Err("native auxiliary stream task set ended without a result".to_owned()),
+    }
 }
 
 async fn accept_native_input_stream(
@@ -1210,9 +1307,65 @@ fn bind_ip(arguments: &HostArguments) -> Result<IpAddr, String> {
 
 #[cfg(test)]
 mod tests {
-    use lumen_engine::{host_control_envelope, SessionStopped, NATIVE_PROTOCOL_VERSION};
+    use std::fs;
+    use std::sync::Mutex;
+
+    use lumen_engine::{
+        client_control_envelope, client_input_envelope, client_telemetry_envelope,
+        decode_host_control_message, decode_host_input_message, encode_client_control_message,
+        encode_client_input_message, encode_client_telemetry_message, host_control_envelope,
+        host_input_envelope, ClientControlEnvelope, ClientInputEnvelope, ClientTelemetryEnvelope,
+        MediaFeedback, NativeKeyboardInput, SessionStopped, StartSessionAck, StopSession,
+        NATIVE_PROTOCOL_VERSION,
+    };
+    use quinn::crypto::rustls::QuicClientConfig;
+
+    use crate::control::tests::{native_hello, router_with_platform};
+    use crate::IdlePlatformSessionControl;
 
     use super::*;
+
+    fn native_test_router() -> (
+        tempfile::TempDir,
+        SharedControlRouter,
+        Arc<dyn PlatformSessionControl>,
+        u32,
+    ) {
+        let platform: Arc<dyn PlatformSessionControl> = Arc::new(IdlePlatformSessionControl);
+        let (root, router) = router_with_platform(Arc::clone(&platform));
+        router
+            .authorities()
+            .applications()
+            .upsert(r#"{"uuid":"native-desktop","name":"Desktop"}"#)
+            .unwrap();
+        let application_id = router.authorities().applications().applications().unwrap()[0].id;
+        (root, Arc::new(Mutex::new(router)), platform, application_id)
+    }
+
+    fn loopback_quic_configs(root: &tempfile::TempDir) -> (ServerConfig, quinn::ClientConfig) {
+        let certified = rcgen::generate_simple_self_signed(vec!["localhost".to_owned()]).unwrap();
+        let certificate = certified.cert.der().clone();
+        let certificate_path = root.path().join("quic-cert.pem");
+        let key_path = root.path().join("quic-key.pem");
+        fs::write(&certificate_path, certified.cert.pem()).unwrap();
+        fs::write(&key_path, certified.signing_key.serialize_pem()).unwrap();
+        let server_config = load_server_config(&certificate_path, &key_path).unwrap();
+
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add(certificate).unwrap();
+        let mut tls = rustls::ClientConfig::builder()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        tls.alpn_protocols = vec![LUMEN_STREAMING_PROTOCOL_ALPN.to_vec()];
+        let crypto = QuicClientConfig::try_from(tls).unwrap();
+        let mut client_config = quinn::ClientConfig::new(Arc::new(crypto));
+        let mut transport = TransportConfig::default();
+        transport.max_concurrent_uni_streams(VarInt::from_u32(8));
+        transport.datagram_receive_buffer_size(Some(4 * 1024 * 1024));
+        transport.datagram_send_buffer_size(4 * 1024 * 1024);
+        client_config.transport_config(Arc::new(transport));
+        (server_config, client_config)
+    }
 
     #[test]
     fn control_stream_eof_requires_an_acknowledged_stop() {
@@ -1242,5 +1395,205 @@ mod tests {
         assert!(PRIORITY_CONTROL > PRIORITY_CODEC_CONFIGURATION);
         assert!(PRIORITY_INPUT > PRIORITY_VIDEO_BOOTSTRAP);
         assert!(PRIORITY_VIDEO_BOOTSTRAP > PRIORITY_TELEMETRY);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn session_plan_precedes_lazy_auxiliary_stream_admission() {
+        let (root, router, platform, application_id) = native_test_router();
+        let (server_config, client_config) = loopback_quic_configs(&root);
+        let server_endpoint = Endpoint::server(
+            server_config,
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+        )
+        .unwrap();
+        let server_address = server_endpoint.local_addr().unwrap();
+        let mut client_endpoint =
+            Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap();
+        client_endpoint.set_default_client_config(client_config);
+        let connecting = client_endpoint
+            .connect(server_address, "localhost")
+            .unwrap();
+        let incoming = server_endpoint.accept().await.unwrap();
+        let (client_connection, server_connection) = tokio::join!(connecting, incoming);
+        let client_connection = client_connection.unwrap();
+        let server_connection = server_connection.unwrap();
+
+        let configuration_notify = router.lock().unwrap().native_codec_configuration_notify();
+        let bootstrap_notify = router.lock().unwrap().native_video_bootstrap_notify();
+        let server_task = tokio::spawn(handle_connection(
+            server_connection,
+            Arc::clone(&router),
+            Arc::clone(&platform),
+            configuration_notify,
+            bootstrap_notify,
+        ));
+
+        let (mut control_send, mut control_receive) = client_connection.open_bi().await.unwrap();
+        assert_eq!(control_send.id().index(), 0);
+        let (mut input_send, mut input_receive) = client_connection.open_bi().await.unwrap();
+        assert_eq!(input_send.id().index(), 1);
+        let (mut telemetry_send, _telemetry_receive) = client_connection.open_bi().await.unwrap();
+        assert_eq!(telemetry_send.id().index(), 2);
+
+        let hello = ClientControlEnvelope {
+            request_id: 1,
+            payload: Some(client_control_envelope::Payload::Hello(native_hello(
+                application_id,
+            ))),
+        };
+        control_send
+            .write_all(&encode_client_control_message(&hello).unwrap())
+            .await
+            .unwrap();
+
+        let response = tokio::time::timeout(
+            Duration::from_secs(1),
+            read_control_frame(&mut control_receive),
+        )
+        .await
+        .expect("session plan must not wait for idle client streams 4 and 8")
+        .unwrap()
+        .unwrap();
+        let response = decode_host_control_message(&response).unwrap();
+        assert_eq!(response.request_id, 1);
+        let plan = match response.payload {
+            Some(host_control_envelope::Payload::SessionPlan(plan)) => plan,
+            Some(host_control_envelope::Payload::Error(error)) => panic!(
+                "expected native session plan, received protocol error code={} negotiation-failure={} message={}",
+                error.code, error.negotiation_failure, error.message
+            ),
+            _ => panic!("expected native session plan, received another control payload"),
+        };
+
+        let start = ClientControlEnvelope {
+            request_id: 2,
+            payload: Some(client_control_envelope::Payload::StartSession(
+                StartSessionAck {
+                    session_epoch: plan.session_epoch,
+                },
+            )),
+        };
+        control_send
+            .write_all(&encode_client_control_message(&start).unwrap())
+            .await
+            .unwrap();
+        let response = tokio::time::timeout(
+            Duration::from_secs(1),
+            read_control_frame(&mut control_receive),
+        )
+        .await
+        .expect("session start must not wait for idle client streams 4 and 8")
+        .unwrap()
+        .unwrap();
+        let response = decode_host_control_message(&response).unwrap();
+        assert_eq!(response.request_id, 2);
+        assert!(matches!(
+            response.payload,
+            Some(host_control_envelope::Payload::SessionStarted(_))
+        ));
+
+        let initial_delivery_state = router.lock().unwrap().video_delivery_state().unwrap();
+        let input = ClientInputEnvelope {
+            session_epoch: plan.session_epoch,
+            event_sequence: 1,
+            payload: Some(client_input_envelope::Payload::Keyboard(
+                NativeKeyboardInput {
+                    hid_usage: 4,
+                    pressed: true,
+                    modifiers: 0,
+                    repeat: false,
+                },
+            )),
+        };
+        input_send
+            .write_all(&encode_client_input_message(&input).unwrap())
+            .await
+            .unwrap();
+        let response =
+            tokio::time::timeout(Duration::from_secs(1), read_input_frame(&mut input_receive))
+                .await
+                .expect("reliable input stream 4 was not admitted after its first valid frame")
+                .unwrap()
+                .unwrap();
+        let response = decode_host_input_message(&response).unwrap();
+        assert_eq!(response.session_epoch, plan.session_epoch);
+        assert!(matches!(
+            response.payload,
+            Some(host_input_envelope::Payload::Ack(ack))
+                if ack.highest_contiguous_event_sequence == 1
+        ));
+
+        let telemetry = ClientTelemetryEnvelope {
+            sequence: 1,
+            payload: Some(client_telemetry_envelope::Payload::MediaFeedback(
+                MediaFeedback {
+                    stream_id: plan.video_stream_id,
+                    highest_datagram_sequence: 200,
+                    received_datagrams: 100,
+                    unrecoverable_objects: 100,
+                    window_milliseconds: 250,
+                    first_datagram_sequence: 1,
+                    ..MediaFeedback::default()
+                },
+            )),
+        };
+        telemetry_send
+            .write_all(&encode_client_telemetry_message(&telemetry).unwrap())
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                let delivery_state = router.lock().unwrap().video_delivery_state().unwrap();
+                if delivery_state != initial_delivery_state {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("telemetry stream 8 was not admitted after its first valid frame");
+
+        let stop = ClientControlEnvelope {
+            request_id: 3,
+            payload: Some(client_control_envelope::Payload::StopSession(StopSession {
+                session_epoch: plan.session_epoch,
+            })),
+        };
+        control_send
+            .write_all(&encode_client_control_message(&stop).unwrap())
+            .await
+            .unwrap();
+        let response = tokio::time::timeout(
+            Duration::from_secs(1),
+            read_control_frame(&mut control_receive),
+        )
+        .await
+        .expect("stop response was not returned")
+        .unwrap()
+        .unwrap();
+        let response = decode_host_control_message(&response).unwrap();
+        assert_eq!(response.request_id, 3);
+        assert!(matches!(
+            response.payload,
+            Some(host_control_envelope::Payload::SessionStopped(_))
+        ));
+        control_send.finish().unwrap();
+        let control_eof = tokio::time::timeout(
+            Duration::from_secs(1),
+            read_control_frame(&mut control_receive),
+        )
+        .await
+        .expect("server did not finish the acknowledged control stream")
+        .unwrap();
+        assert!(control_eof.is_none());
+
+        let server_result = tokio::time::timeout(Duration::from_secs(1), server_task)
+            .await
+            .expect("server connection task did not stop")
+            .unwrap();
+        assert!(server_result.is_ok(), "{server_result:?}");
+        client_connection.close(VarInt::from_u32(0), b"test complete");
+        client_endpoint.close(VarInt::from_u32(0), b"test complete");
+        server_endpoint.close(VarInt::from_u32(0), b"test complete");
     }
 }
