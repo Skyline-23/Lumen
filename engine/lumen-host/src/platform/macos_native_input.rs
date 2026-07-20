@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use core_graphics::display::CGDisplay;
@@ -11,6 +12,14 @@ use core_graphics::geometry::{CGPoint, CGRect, CGSize};
 use lumen_engine::NativePointerMotionMode;
 
 use crate::{PlatformNativeInputEvent, PlatformNativeMotionEvent};
+
+static POST_EVENT_ACCESS_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+#[link(name = "ApplicationServices", kind = "framework")]
+unsafe extern "C" {
+    fn CGPreflightPostEventAccess() -> bool;
+    fn CGRequestPostEventAccess() -> bool;
+}
 
 #[derive(Debug, Default)]
 struct MacInputState {
@@ -391,8 +400,28 @@ fn post_button(button: u8, pressed: bool) -> Result<(), String> {
 }
 
 fn event_source() -> Result<CGEventSource, String> {
+    ensure_post_event_access()?;
     CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| "could not create macOS HID event source".to_owned())
+}
+
+fn ensure_post_event_access() -> Result<(), String> {
+    // SAFETY: Category 8 (FFI boundary). These CoreGraphics functions take no pointers and
+    // return the current process' event-synthesis authorization state.
+    if unsafe { CGPreflightPostEventAccess() } {
+        return Ok(());
+    }
+    if !POST_EVENT_ACCESS_REQUESTED.swap(true, Ordering::AcqRel) {
+        // SAFETY: Category 8 (FFI boundary). The function has no arguments and may present the
+        // system authorization prompt for this signed helper process.
+        if unsafe { CGRequestPostEventAccess() } {
+            return Ok(());
+        }
+    }
+    Err(
+        "macOS event synthesis is not authorized; allow LumenHostWorker in Privacy & Security > Accessibility"
+            .to_owned(),
+    )
 }
 
 fn mac_modifier_flags(modifiers: u8) -> CGEventFlags {
