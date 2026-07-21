@@ -438,29 +438,310 @@ private struct LumenPendingVideoBootstrapSource {
     let duration: CMTime
 }
 
+struct LumenScreenCaptureDisplayReadinessSnapshot: Equatable, Sendable {
+    let ownerToken: UInt?
+    let isOnline: Bool
+    let isActive: Bool
+    let hasCurrentMode: Bool
+
+    var isModeReady: Bool {
+        isOnline && isActive && hasCurrentMode
+    }
+}
+
+struct LumenScreenCaptureDisplayReadinessTiming: Equatable, Sendable {
+    let overallDeadlineNanoseconds: UInt64
+    let queryTimeoutNanoseconds: UInt64
+    let retryDelayNanoseconds: UInt64
+    let maximumOutstandingQueries: Int
+
+    init(
+        overallDeadlineNanoseconds: UInt64,
+        queryTimeoutNanoseconds: UInt64,
+        retryDelayNanoseconds: UInt64,
+        maximumOutstandingQueries: Int = 2
+    ) {
+        self.overallDeadlineNanoseconds = overallDeadlineNanoseconds
+        self.queryTimeoutNanoseconds = queryTimeoutNanoseconds
+        self.retryDelayNanoseconds = retryDelayNanoseconds
+        self.maximumOutstandingQueries = max(maximumOutstandingQueries, 1)
+    }
+
+    static let production = Self(
+        overallDeadlineNanoseconds: 15_000_000_000,
+        // Successful publication has taken up to 2.37 seconds in production;
+        // failed enumerations have stalled for 16-41 seconds.
+        queryTimeoutNanoseconds: 3_000_000_000,
+        retryDelayNanoseconds: 100_000_000,
+        maximumOutstandingQueries: 2
+    )
+}
+
+enum LumenScreenCaptureDisplayAuthority: Equatable, Sendable {
+    case retained(ownerToken: UInt)
+    case exactExternal
+}
+
+private enum LumenScreenCaptureTimedQueryOutcome<Value: Sendable>: @unchecked Sendable {
+    case value(Value?)
+    case failure(any Error)
+    case timedOut
+}
+
+private actor LumenScreenCaptureTimedQueryRace<Value: Sendable> {
+    private let generation: UInt64
+    private var outcome: LumenScreenCaptureTimedQueryOutcome<Value>?
+    private var continuation: CheckedContinuation<LumenScreenCaptureTimedQueryOutcome<Value>, Never>?
+
+    init(generation: UInt64) {
+        self.generation = generation
+    }
+
+    func finish(
+        generation: UInt64,
+        outcome: LumenScreenCaptureTimedQueryOutcome<Value>
+    ) {
+        guard generation == self.generation, self.outcome == nil else {
+            return
+        }
+        self.outcome = outcome
+        continuation?.resume(returning: outcome)
+        continuation = nil
+    }
+
+    func wait() async -> LumenScreenCaptureTimedQueryOutcome<Value> {
+        if let outcome {
+            return outcome
+        }
+        return await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+}
+
+actor LumenScreenCaptureQueryBudget {
+    private let maximumOutstandingQueries: Int
+    private var nextGeneration: UInt64 = 0
+    private var outstandingGenerations: Set<UInt64> = []
+
+    init(maximumOutstandingQueries: Int) {
+        self.maximumOutstandingQueries = max(maximumOutstandingQueries, 1)
+    }
+
+    func begin() -> UInt64? {
+        guard outstandingGenerations.count < maximumOutstandingQueries else {
+            return nil
+        }
+        nextGeneration &+= 1
+        outstandingGenerations.insert(nextGeneration)
+        return nextGeneration
+    }
+
+    func finish(generation: UInt64) {
+        outstandingGenerations.remove(generation)
+    }
+
+    func outstandingCount() -> Int {
+        outstandingGenerations.count
+    }
+}
+
 enum LumenScreenCaptureDisplayResolver {
-    static let retainedDisplayPublicationAttempts = 4
-    static let retainedDisplayPublicationRetryNanoseconds: UInt64 = 250_000_000
+    typealias MonotonicNow = @Sendable () async -> UInt64
+    typealias MonotonicSleep = @Sendable (UInt64) async -> Void
+    private static let logger = Logger(
+        subsystem: "dev.skyline23.lumen",
+        category: "ScreenCaptureStartup"
+    )
 
     static func resolve<Value: Sendable>(
         displayID: UInt32,
-        attempts: Int,
-        delayNanoseconds: UInt64,
-        isRetained: @escaping @Sendable () async -> Bool,
-        lookup: @escaping @Sendable () async throws -> Value?
+        authority: LumenScreenCaptureDisplayAuthority,
+        timing: LumenScreenCaptureDisplayReadinessTiming,
+        queryBudget: LumenScreenCaptureQueryBudget,
+        now: @escaping MonotonicNow,
+        sleepUntil: @escaping MonotonicSleep,
+        readiness: @escaping @Sendable () async -> LumenScreenCaptureDisplayReadinessSnapshot,
+        lookup: @escaping @Sendable (_ generation: UInt64) async throws -> Value?
     ) async throws -> Value {
-        for attempt in 0..<max(attempts, 1) {
-            guard await isRetained() else {
+        let startedAt = await now()
+        let overallDeadline = addingClamped(
+            startedAt,
+            timing.overallDeadlineNanoseconds
+        )
+        while true {
+            try Task.checkCancellation()
+            let currentTime = await now()
+            guard currentTime <= overallDeadline else {
+                throw LumenScreenCaptureError.displayUnavailable(displayID)
+            }
+
+            let beforeQuery = await readiness()
+            try validateOwnership(
+                beforeQuery,
+                displayID: displayID,
+                authority: authority
+            )
+            guard beforeQuery.isModeReady else {
+                guard currentTime < overallDeadline else {
+                    throw LumenScreenCaptureError.displayUnavailable(displayID)
+                }
+                await sleepUntil(
+                    min(
+                        addingClamped(currentTime, timing.retryDelayNanoseconds),
+                        overallDeadline
+                    )
+                )
+                continue
+            }
+
+            guard let queryGeneration = await queryBudget.begin() else {
+                guard currentTime < overallDeadline else {
+                    throw LumenScreenCaptureError.displayUnavailable(displayID)
+                }
+                await sleepUntil(
+                    min(
+                        addingClamped(currentTime, timing.retryDelayNanoseconds),
+                        overallDeadline
+                    )
+                )
+                continue
+            }
+            let queryDeadline = min(
+                addingClamped(currentTime, timing.queryTimeoutNanoseconds),
+                overallDeadline
+            )
+            logger.notice(
+                "stage=display-query-generation-start display-id=\(displayID, privacy: .public) generation=\(queryGeneration, privacy: .public)"
+            )
+            let outcome = await performTimedQuery(
+                displayID: displayID,
+                generation: queryGeneration,
+                deadline: queryDeadline,
+                now: now,
+                sleepUntil: sleepUntil,
+                queryBudget: queryBudget,
+                lookup: lookup
+            )
+
+            switch outcome {
+            case .value(let value):
+                try Task.checkCancellation()
+                let completedAt = await now()
+                try Task.checkCancellation()
+                guard completedAt <= overallDeadline else {
+                    throw LumenScreenCaptureError.displayUnavailable(displayID)
+                }
+                let afterQuery = await readiness()
+                try Task.checkCancellation()
+                try validateOwnership(
+                    afterQuery,
+                    displayID: displayID,
+                    authority: authority
+                )
+                guard afterQuery.isModeReady else {
+                    continue
+                }
+                if let value {
+                    try Task.checkCancellation()
+                    return value
+                }
+            case .failure(let error):
+                let afterQuery = await readiness()
+                try Task.checkCancellation()
+                try validateOwnership(
+                    afterQuery,
+                    displayID: displayID,
+                    authority: authority
+                )
+                throw error
+            case .timedOut:
+                logger.warning(
+                    "stage=display-query-timeout display-id=\(displayID, privacy: .public) generation=\(queryGeneration, privacy: .public)"
+                )
+                break
+            }
+
+            let retryTime = await now()
+            guard retryTime < overallDeadline else {
+                throw LumenScreenCaptureError.displayUnavailable(displayID)
+            }
+            await sleepUntil(
+                min(
+                    addingClamped(retryTime, timing.retryDelayNanoseconds),
+                    overallDeadline
+                )
+            )
+        }
+    }
+
+    static func addingClamped(_ lhs: UInt64, _ rhs: UInt64) -> UInt64 {
+        let (result, overflow) = lhs.addingReportingOverflow(rhs)
+        return overflow ? UInt64.max : result
+    }
+
+    private static func validateOwnership(
+        _ snapshot: LumenScreenCaptureDisplayReadinessSnapshot,
+        displayID: UInt32,
+        authority: LumenScreenCaptureDisplayAuthority
+    ) throws {
+        switch authority {
+        case .retained(let ownerToken):
+            guard snapshot.ownerToken == ownerToken else {
                 throw LumenScreenCaptureError.displayOwnershipLost(displayID)
             }
-            if let value = try await lookup() {
-                return value
-            }
-            if attempt + 1 < max(attempts, 1), delayNanoseconds > 0 {
-                try await Task.sleep(nanoseconds: delayNanoseconds)
+        case .exactExternal:
+            guard snapshot.ownerToken == nil else {
+                throw LumenScreenCaptureError.displayUnavailable(displayID)
             }
         }
-        throw LumenScreenCaptureError.displayUnavailable(displayID)
+    }
+
+    private static func performTimedQuery<Value: Sendable>(
+        displayID: UInt32,
+        generation: UInt64,
+        deadline: UInt64,
+        now: @escaping MonotonicNow,
+        sleepUntil: @escaping MonotonicSleep,
+        queryBudget: LumenScreenCaptureQueryBudget,
+        lookup: @escaping @Sendable (_ generation: UInt64) async throws -> Value?
+    ) async -> LumenScreenCaptureTimedQueryOutcome<Value> {
+        let race = LumenScreenCaptureTimedQueryRace<Value>(generation: generation)
+        let queryTask = Task {
+            let outcome: LumenScreenCaptureTimedQueryOutcome<Value>
+            do {
+                outcome = .value(try await lookup(generation))
+            } catch {
+                outcome = .failure(error)
+            }
+            let completedAt = await now()
+            if completedAt <= deadline {
+                await race.finish(generation: generation, outcome: outcome)
+            } else {
+                logger.warning(
+                    "stage=display-query-late-result-discarded display-id=\(displayID, privacy: .public) generation=\(generation, privacy: .public)"
+                )
+            }
+            await queryBudget.finish(generation: generation)
+        }
+        let timeoutTask = Task {
+            // Reserve the exact boundary for a query that completed on time.
+            await sleepUntil(addingClamped(deadline, 1))
+            await race.finish(generation: generation, outcome: .timedOut)
+        }
+        let outcome = await withTaskCancellationHandler {
+            await race.wait()
+        } onCancel: {
+            Task {
+                await race.finish(
+                    generation: generation,
+                    outcome: .failure(CancellationError())
+                )
+            }
+        }
+        queryTask.cancel()
+        timeoutTask.cancel()
+        return outcome
     }
 }
 
@@ -478,21 +759,14 @@ struct LumenScreenCaptureDisplayAdmissionResult<Value: Sendable>: Sendable {
 enum LumenScreenCaptureDisplayAdmission {
     static func resolve<Value: Sendable>(
         displayID: UInt32,
-        isRetained: @escaping @Sendable () async -> Bool,
-        enumerateShareableContent: @escaping @Sendable () async throws -> Value
+        prefetched: @escaping @Sendable () async throws -> Value?,
+        enumerateShareableContent: @escaping @Sendable () async throws ->
+            LumenScreenCaptureDisplayAdmissionResult<Value>
     ) async throws -> LumenScreenCaptureDisplayAdmissionResult<Value> {
-        let retainedAtStart = await isRetained()
-        let value = try await enumerateShareableContent()
-        if retainedAtStart {
-            guard await isRetained() else {
-                throw LumenScreenCaptureError.displayOwnershipLost(displayID)
-            }
-            return .init(value: value, mode: .retainedShareableContent)
+        if let value = try await prefetched() {
+            return .init(value: value, mode: .prefetchedShareableContent)
         }
-        return .init(
-            value: value,
-            mode: .shareableContentEnumeration
-        )
+        return try await enumerateShareableContent()
     }
 }
 
@@ -500,94 +774,366 @@ struct LumenScreenCaptureDisplayHandle: @unchecked Sendable {
     let value: SCDisplay
 }
 
-actor LumenSingleFlightDisplayLookup<Value: Sendable> {
-    private struct Entry {
-        let ownerToken: UInt
-        let task: Task<Value?, Error>
+struct LumenRetainedVirtualDisplayReference: @unchecked Sendable {
+    let display: LumenMacVirtualDisplay
+
+    var ownerToken: UInt {
+        UInt(bitPattern: ObjectIdentifier(display))
     }
 
-    private var entries: [UInt32: Entry] = [:]
-
-    func begin(
-        displayID: UInt32,
-        ownerToken: UInt,
-        lookup: @escaping @Sendable () async throws -> Value?
-    ) {
-        if entries[displayID]?.ownerToken == ownerToken {
-            return
-        }
-        entries.removeValue(forKey: displayID)?.task.cancel()
-        entries[displayID] = Entry(
-            ownerToken: ownerToken,
-            task: Task { try await lookup() }
-        )
-    }
-
-    func resolve(displayID: UInt32, ownerToken: UInt) async throws -> Value? {
-        guard let entry = entries[displayID], entry.ownerToken == ownerToken else {
-            return nil
-        }
-        defer {
-            if entries[displayID]?.ownerToken == ownerToken {
-                entries.removeValue(forKey: displayID)
-            }
-        }
-        return try await entry.task.value
-    }
-
-    func discard(displayID: UInt32) {
-        entries.removeValue(forKey: displayID)?.task.cancel()
+    func isCurrent(displayID: UInt32) -> Bool {
+        display.displayID == displayID &&
+            LumenMacVirtualDisplay.registeredDisplay(forDisplayID: displayID) === display
     }
 }
 
-enum LumenScreenCaptureDisplayPrefetch {
-    private static let lookups = LumenSingleFlightDisplayLookup<LumenScreenCaptureDisplayHandle>()
+actor LumenExpectedDisplayOwnerStore<Owner: Sendable> {
+    private var owners: [UInt32: Owner] = [:]
+
+    func set(_ owner: Owner, displayID: UInt32) {
+        owners[displayID] = owner
+    }
+
+    func owner(displayID: UInt32) -> Owner? {
+        owners[displayID]
+    }
+
+    func discard(displayID: UInt32) {
+        owners.removeValue(forKey: displayID)
+    }
+}
+
+private struct LumenScreenCapturePreparedDisplay: @unchecked Sendable {
+    let handle: LumenScreenCaptureDisplayHandle
+    let owner: LumenRetainedVirtualDisplayReference
+}
+
+actor LumenPreparedDisplayStore<Value: Sendable> {
+    private struct Entry {
+        let ownerToken: UInt
+        let generation: UInt64
+        var value: Value?
+        var expiresAt: UInt64?
+    }
+
+    private var entries: [UInt32: Entry] = [:]
+    private var generations: [UInt32: UInt64] = [:]
+
+    func begin(
+        displayID: UInt32,
+        ownerToken: UInt
+    ) -> UInt64 {
+        let generation = (generations[displayID] ?? 0) &+ 1
+        generations[displayID] = generation
+        entries[displayID] = Entry(
+            ownerToken: ownerToken,
+            generation: generation,
+            value: nil,
+            expiresAt: nil
+        )
+        return generation
+    }
+
+    func complete(
+        displayID: UInt32,
+        ownerToken: UInt,
+        generation: UInt64,
+        value: Value,
+        expiresAt: UInt64
+    ) throws {
+        try Task.checkCancellation()
+        guard var entry = entries[displayID],
+              entry.ownerToken == ownerToken,
+              entry.generation == generation else {
+            return
+        }
+        entry.value = value
+        entry.expiresAt = expiresAt
+        entries[displayID] = entry
+    }
+
+    func take(
+        displayID: UInt32,
+        ownerToken: UInt,
+        now: UInt64
+    ) -> Value? {
+        guard let entry = entries[displayID] else {
+            return nil
+        }
+        guard entry.ownerToken == ownerToken else {
+            entries.removeValue(forKey: displayID)
+            return nil
+        }
+        entries.removeValue(forKey: displayID)
+        guard let expiresAt = entry.expiresAt,
+              now <= expiresAt else {
+            return nil
+        }
+        return entry.value
+    }
+
+    func discard(displayID: UInt32, generation: UInt64? = nil) {
+        guard generation == nil || entries[displayID]?.generation == generation else {
+            return
+        }
+        entries.removeValue(forKey: displayID)
+    }
+}
+
+enum LumenScreenCaptureDisplayReadiness {
+    private static let productionQueryBudget = LumenScreenCaptureQueryBudget(
+        maximumOutstandingQueries: LumenScreenCaptureDisplayReadinessTiming
+            .production
+            .maximumOutstandingQueries
+    )
     private static let logger = Logger(
         subsystem: "dev.skyline23.lumen",
         category: "ScreenCaptureStartup"
     )
 
-    static func begin(displayID: UInt32) async {
-        guard let ownerToken = retainedOwnerToken(displayID: displayID) else {
-            return
-        }
-        logger.notice(
-            "stage=display-prefetch-begin display-id=\(displayID, privacy: .public) owner-token=\(ownerToken, privacy: .public)"
+    static func resolveProduction(
+        displayID: UInt32
+    ) async throws -> LumenScreenCaptureDisplayHandle {
+        let expectedOwner = await LumenScreenCaptureDisplayPrefetch.expectedOwner(
+            displayID: displayID
         )
-        await lookups.begin(displayID: displayID, ownerToken: ownerToken) {
-            let content = try await SCShareableContent.excludingDesktopWindows(
-                false,
-                onScreenWindowsOnly: true
+        if let expectedOwner {
+            return try await resolveOwned(
+                displayID: displayID,
+                expectedOwner: expectedOwner
             )
-            return content.displays.first(where: {
-                UInt32($0.displayID) == displayID
-            }).map(LumenScreenCaptureDisplayHandle.init(value:))
+        }
+        return try await resolveExactExternal(displayID: displayID)
+    }
+
+    static func resolveOwned(
+        displayID: UInt32,
+        expectedOwner: LumenRetainedVirtualDisplayReference? = nil
+    ) async throws -> LumenScreenCaptureDisplayHandle {
+        let owner: LumenRetainedVirtualDisplayReference
+        if let expectedOwner {
+            owner = expectedOwner
+        } else if let retained = LumenMacVirtualDisplay.registeredDisplay(
+            forDisplayID: displayID
+        ) {
+            owner = LumenRetainedVirtualDisplayReference(display: retained)
+        } else {
+            throw LumenScreenCaptureError.displayOwnershipLost(displayID)
+        }
+        guard owner.isCurrent(displayID: displayID) else {
+            throw LumenScreenCaptureError.displayOwnershipLost(displayID)
+        }
+        return try await resolve(
+            displayID: displayID,
+            authority: .retained(ownerToken: owner.ownerToken),
+            readiness: { snapshot(displayID: displayID, owner: owner) }
+        )
+    }
+
+    static func resolveExactExternal(
+        displayID: UInt32
+    ) async throws -> LumenScreenCaptureDisplayHandle {
+        try await resolve(
+            displayID: displayID,
+            authority: .exactExternal,
+            readiness: { snapshot(displayID: displayID) }
+        )
+    }
+
+    static func snapshot(
+        displayID: UInt32,
+        owner: LumenRetainedVirtualDisplayReference? = nil
+    ) -> LumenScreenCaptureDisplayReadinessSnapshot {
+        let currentOwner = LumenMacVirtualDisplay.registeredDisplay(
+            forDisplayID: displayID
+        )
+        let ownerToken: UInt?
+        if let owner, currentOwner === owner.display {
+            ownerToken = owner.ownerToken
+        } else {
+            ownerToken = currentOwner.map {
+                UInt(bitPattern: ObjectIdentifier($0))
+            }
+        }
+        return LumenScreenCaptureDisplayReadinessSnapshot(
+            ownerToken: ownerToken,
+            isOnline: CGDisplayIsOnline(displayID) != 0,
+            isActive: CGDisplayIsActive(displayID) != 0,
+            hasCurrentMode: CGDisplayCopyDisplayMode(displayID) != nil
+        )
+    }
+
+    private static func resolve(
+        displayID: UInt32,
+        authority: LumenScreenCaptureDisplayAuthority,
+        readiness: @escaping @Sendable () async -> LumenScreenCaptureDisplayReadinessSnapshot
+    ) async throws -> LumenScreenCaptureDisplayHandle {
+        let authorityLabel: String
+        let ownerToken: UInt
+        switch authority {
+        case .retained(let token):
+            authorityLabel = "retained"
+            ownerToken = token
+        case .exactExternal:
+            authorityLabel = "exact-external"
+            ownerToken = 0
+        }
+        let startedAt = DispatchTime.now().uptimeNanoseconds
+        do {
+            let handle: LumenScreenCaptureDisplayHandle = try await
+                LumenScreenCaptureDisplayResolver.resolve(
+                    displayID: displayID,
+                    authority: authority,
+                    timing: .production,
+                    queryBudget: productionQueryBudget,
+                    now: { DispatchTime.now().uptimeNanoseconds },
+                    sleepUntil: { deadline in
+                        let current = DispatchTime.now().uptimeNanoseconds
+                        guard deadline > current else { return }
+                        try? await Task.sleep(nanoseconds: deadline - current)
+                    },
+                    readiness: readiness,
+                    lookup: { generation in
+                        logger.notice(
+                            "stage=display-query-begin display-id=\(displayID, privacy: .public) authority=\(authorityLabel, privacy: .public) owner-token=\(ownerToken, privacy: .public) generation=\(generation, privacy: .public)"
+                        )
+                        let content = try await SCShareableContent.excludingDesktopWindows(
+                            false,
+                            onScreenWindowsOnly: true
+                        )
+                        let observedDisplayIDs = content.displays
+                            .map { String(UInt32($0.displayID)) }
+                            .joined(separator: ",")
+                        let target = content.displays.first(where: {
+                            UInt32($0.displayID) == displayID
+                        })
+                        logger.notice(
+                            "stage=display-query-complete display-id=\(displayID, privacy: .public) authority=\(authorityLabel, privacy: .public) owner-token=\(ownerToken, privacy: .public) generation=\(generation, privacy: .public) found=\(target != nil, privacy: .public) observed-display-ids=\(observedDisplayIDs, privacy: .public)"
+                        )
+                        return target.map(LumenScreenCaptureDisplayHandle.init(value:))
+                    }
+                )
+            logger.notice(
+                "stage=display-readiness-complete display-id=\(displayID, privacy: .public) authority=\(authorityLabel, privacy: .public) owner-token=\(ownerToken, privacy: .public) elapsed-ms=\(elapsedMilliseconds(since: startedAt), privacy: .public)"
+            )
+            return handle
+        } catch {
+            logger.error(
+                "stage=display-readiness-failed display-id=\(displayID, privacy: .public) authority=\(authorityLabel, privacy: .public) owner-token=\(ownerToken, privacy: .public) elapsed-ms=\(elapsedMilliseconds(since: startedAt), privacy: .public) error=\(String(describing: error), privacy: .public)"
+            )
+            throw error
+        }
+    }
+
+    private static func elapsedMilliseconds(since start: UInt64) -> Double {
+        let current = DispatchTime.now().uptimeNanoseconds
+        guard current >= start else { return 0 }
+        return Double(current - start) / 1_000_000
+    }
+}
+
+enum LumenScreenCaptureDisplayPrefetch {
+    private static let preparedDisplays = LumenPreparedDisplayStore<LumenScreenCapturePreparedDisplay>()
+    private static let expectedOwners = LumenExpectedDisplayOwnerStore<LumenRetainedVirtualDisplayReference>()
+    private static let logger = Logger(
+        subsystem: "dev.skyline23.lumen",
+        category: "ScreenCaptureStartup"
+    )
+
+    static func prepare(displayID: UInt32) async throws {
+        guard let retainedDisplay = LumenMacVirtualDisplay.registeredDisplay(
+            forDisplayID: displayID
+        ) else {
+            throw LumenScreenCaptureError.displayOwnershipLost(displayID)
+        }
+        let owner = LumenRetainedVirtualDisplayReference(display: retainedDisplay)
+        let ownerToken = owner.ownerToken
+        await expectedOwners.set(owner, displayID: displayID)
+        let generation = await preparedDisplays.begin(
+            displayID: displayID,
+            ownerToken: ownerToken
+        )
+        logger.notice(
+            "stage=display-prefetch-begin display-id=\(displayID, privacy: .public) owner-token=\(ownerToken, privacy: .public) generation=\(generation, privacy: .public)"
+        )
+        do {
+            let handle = try await LumenScreenCaptureDisplayReadiness.resolveOwned(
+                displayID: displayID,
+                expectedOwner: owner
+            )
+            try Task.checkCancellation()
+            let completedAt = DispatchTime.now().uptimeNanoseconds
+            try Task.checkCancellation()
+            try await preparedDisplays.complete(
+                displayID: displayID,
+                ownerToken: ownerToken,
+                generation: generation,
+                value: LumenScreenCapturePreparedDisplay(
+                    handle: handle,
+                    owner: owner
+                ),
+                expiresAt: LumenScreenCaptureDisplayResolver.addingClamped(
+                    completedAt,
+                    LumenScreenCaptureDisplayReadinessTiming.production.overallDeadlineNanoseconds
+                )
+            )
+        } catch {
+            await preparedDisplays.discard(displayID: displayID, generation: generation)
+            throw error
         }
     }
 
     static func resolve(displayID: UInt32) async throws -> LumenScreenCaptureDisplayHandle? {
-        guard let ownerToken = retainedOwnerToken(displayID: displayID) else {
+        let before = LumenScreenCaptureDisplayReadiness.snapshot(displayID: displayID)
+        guard let ownerToken = before.ownerToken, before.isModeReady else {
+            await preparedDisplays.discard(displayID: displayID)
+            logger.warning(
+                "stage=display-prefetch-rejected display-id=\(displayID, privacy: .public) reason=owner-or-mode-not-ready"
+            )
             return nil
         }
         let start = DispatchTime.now().uptimeNanoseconds
-        let result = try await lookups.resolve(displayID: displayID, ownerToken: ownerToken)
+        let prepared = await preparedDisplays.take(
+            displayID: displayID,
+            ownerToken: ownerToken,
+            now: start
+        )
+        guard let prepared,
+              prepared.owner.ownerToken == ownerToken,
+              prepared.owner.isCurrent(displayID: displayID) else {
+            logger.warning(
+                "stage=display-prefetch-rejected display-id=\(displayID, privacy: .public) owner-token=\(ownerToken, privacy: .public) reason=stale-or-expired"
+            )
+            return nil
+        }
+        let after = LumenScreenCaptureDisplayReadiness.snapshot(
+            displayID: displayID,
+            owner: prepared.owner
+        )
+        guard after.ownerToken == ownerToken, after.isModeReady else {
+            logger.warning(
+                "stage=display-prefetch-rejected display-id=\(displayID, privacy: .public) owner-token=\(ownerToken, privacy: .public) reason=post-take-validation-failed"
+            )
+            return nil
+        }
         let elapsedMilliseconds = Double(
             DispatchTime.now().uptimeNanoseconds - start
         ) / 1_000_000
         logger.notice(
-            "stage=display-prefetch-resolved display-id=\(displayID, privacy: .public) owner-token=\(ownerToken, privacy: .public) found=\(result != nil, privacy: .public) wait-ms=\(elapsedMilliseconds, privacy: .public)"
+            "stage=display-prefetch-resolved display-id=\(displayID, privacy: .public) owner-token=\(ownerToken, privacy: .public) found=true wait-ms=\(elapsedMilliseconds, privacy: .public)"
         )
-        return result
+        return prepared.handle
     }
 
     static func discard(displayID: UInt32) async {
-        await lookups.discard(displayID: displayID)
+        await preparedDisplays.discard(displayID: displayID)
+        await expectedOwners.discard(displayID: displayID)
     }
 
-    private static func retainedOwnerToken(displayID: UInt32) -> UInt? {
-        LumenMacVirtualDisplay.registeredDisplay(forDisplayID: displayID).map {
-            UInt(bitPattern: ObjectIdentifier($0))
-        }
+    static func expectedOwner(
+        displayID: UInt32
+    ) async -> LumenRetainedVirtualDisplayReference? {
+        await expectedOwners.owner(displayID: displayID)
     }
 }
 
@@ -757,53 +1303,28 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
         let admissionStart = DispatchTime.now().uptimeNanoseconds
         let admission: LumenScreenCaptureDisplayAdmissionResult<LumenScreenCaptureDisplayHandle>
         do {
-            if let prefetched = try await LumenScreenCaptureDisplayPrefetch.resolve(
-                displayID: displayID
-            ) {
-                admission = .init(value: prefetched, mode: .prefetchedShareableContent)
-            } else {
-                admission = try await LumenScreenCaptureDisplayAdmission.resolve(
-                    displayID: displayID,
-                    isRetained: {
-                        LumenMacVirtualDisplay.registeredDisplay(forDisplayID: displayID) != nil
-                    },
-                    enumerateShareableContent: {
-                        let retainedIdentity = LumenMacVirtualDisplay.registeredDisplay(
-                            forDisplayID: displayID
-                        ).map(ObjectIdentifier.init)
-                        return try await LumenScreenCaptureDisplayResolver.resolve(
-                            displayID: displayID,
-                            attempts: retainedIdentity == nil
-                                ? 1
-                                : LumenScreenCaptureDisplayResolver.retainedDisplayPublicationAttempts,
-                            delayNanoseconds: retainedIdentity == nil
-                                ? 0
-                                : LumenScreenCaptureDisplayResolver.retainedDisplayPublicationRetryNanoseconds,
-                            isRetained: {
-                                guard let retainedIdentity else { return true }
-                                guard let current = LumenMacVirtualDisplay.registeredDisplay(
-                                    forDisplayID: displayID
-                                ) else {
-                                    return false
-                                }
-                                return ObjectIdentifier(current) == retainedIdentity
-                            },
-                            lookup: {
-                                let content = try await SCShareableContent.excludingDesktopWindows(
-                                    false,
-                                    onScreenWindowsOnly: true
-                                )
-                                guard let target = content.displays.first(where: {
-                                    UInt32($0.displayID) == displayID
-                                }) else {
-                                    return nil
-                                }
-                                return LumenScreenCaptureDisplayHandle(value: target)
-                            }
-                        )
-                    }
-                )
-            }
+            admission = try await LumenScreenCaptureDisplayAdmission.resolve(
+                displayID: displayID,
+                prefetched: {
+                    try await LumenScreenCaptureDisplayPrefetch.resolve(
+                        displayID: displayID
+                    )
+                },
+                enumerateShareableContent: {
+                    let expectedOwner = await LumenScreenCaptureDisplayPrefetch.expectedOwner(
+                        displayID: displayID
+                    )
+                    let handle = try await LumenScreenCaptureDisplayReadiness.resolveProduction(
+                        displayID: displayID
+                    )
+                    return LumenScreenCaptureDisplayAdmissionResult(
+                        value: handle,
+                        mode: expectedOwner == nil
+                            ? .shareableContentEnumeration
+                            : .retainedShareableContent
+                    )
+                }
+            )
         } catch {
             let elapsed = Self.elapsedMilliseconds(since: admissionStart)
             Self.startupLogger.error(

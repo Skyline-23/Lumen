@@ -58,6 +58,9 @@ NS_SWIFT_NAME(LumenMacVirtualDisplay)
 + (instancetype)registeredDisplayForKey:(NSString *)key;
 + (instancetype)registeredDisplayForDisplayID:(uint32_t)displayID;
 + (BOOL)removeRegisteredDisplayForKey:(NSString *)key;
++ (BOOL)removeRegisteredDisplayForKey:(NSString *)key
+                  ifMatchingDisplay:(LumenMacVirtualDisplay *)expectedDisplay
+    NS_SWIFT_NAME(removeRegisteredDisplay(forKey:ifMatchingDisplay:));
 + (void)destroyAllRegisteredDisplays;
 - (instancetype)initWithConfiguration:(LumenMacVirtualDisplayConfiguration *)configuration
                                  error:(NSError **)error NS_DESIGNATED_INITIALIZER;

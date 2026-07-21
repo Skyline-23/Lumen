@@ -45,7 +45,7 @@ public final class LumenMacWorkspaceSessionRequestBox: NSObject {
     }
 }
 
-private struct LumenMacWorkspaceSessionRequestSnapshot: Sendable {
+struct LumenMacWorkspaceSessionRequestSnapshot: Sendable {
     let displayKey: String
     let displayName: String
     let width: UInt32
@@ -144,59 +144,268 @@ public final class LumenMacWorkspaceActivationOutcomeBox: NSObject {
     }
 }
 
-private actor LumenMacWorkspaceSessionRegistry {
+protocol LumenMacWorkspaceSessionLifecycle: Sendable {
+    func prepare() async throws
+    func activate() async throws -> LumenMacWorkspaceActivationOutcome
+    func stop() async throws
+    func displayID() async throws -> UInt32
+}
+
+extension LumenMacWorkspaceSession: LumenMacWorkspaceSessionLifecycle {}
+
+actor LumenMacWorkspacePreparationLease {
+    struct Token: Equatable, Sendable {
+        let value: UUID
+    }
+
+    private var activeToken: Token?
+
+    init(token: Token) {
+        activeToken = token
+    }
+
+    func validate(_ token: Token) throws {
+        try Task.checkCancellation()
+        guard activeToken == token else {
+            throw CancellationError()
+        }
+    }
+
+    func revoke(_ token: Token) {
+        guard activeToken == token else { return }
+        activeToken = nil
+    }
+}
+
+struct LumenMacWorkspaceLifecycleAdmission {
+    enum Operation: Equatable, Sendable {
+        case prepare
+        case activate
+        case stop
+        case stopAll
+        case recover
+    }
+
+    private(set) var operation: Operation?
+
+    mutating func begin(
+        _ operation: Operation,
+        activeSessionCount: Int
+    ) throws {
+        guard self.operation == nil else {
+            throw LumenMacWorkspaceSessionError.sessionAlreadyStarted
+        }
+        if operation == .prepare {
+            guard activeSessionCount == 0 else {
+                throw LumenMacWorkspaceSessionError.sessionAlreadyStarted
+            }
+        }
+        self.operation = operation
+    }
+
+    mutating func takeOver(
+        _ expected: Operation,
+        with replacement: Operation
+    ) throws {
+        guard operation == expected else {
+            throw LumenMacWorkspaceSessionError.sessionAlreadyStarted
+        }
+        operation = replacement
+    }
+
+    mutating func end(_ operation: Operation) {
+        guard self.operation == operation else {
+            return
+        }
+        self.operation = nil
+    }
+}
+
+actor LumenMacWorkspaceSessionRegistry {
+    typealias ResolvePolicy = @Sendable () async throws -> LumenMacWorkspacePolicy
+    typealias PreparationFence = @Sendable () async throws -> Void
+    typealias MakeSession = @Sendable (
+        LumenMacWorkspaceSessionRequest,
+        @escaping PreparationFence
+    ) throws -> any LumenMacWorkspaceSessionLifecycle
+    typealias RecoverDurableWorkspace = @Sendable () async throws -> Bool
+    typealias AwaitPublicationBoundary = @Sendable () async -> Void
+
+    private struct PreparedSession: Sendable {
+        let displayKey: String
+        let displayID: UInt32
+        let session: any LumenMacWorkspaceSessionLifecycle
+    }
+
+    private struct ProvisionalSession: Sendable {
+        let token: LumenMacWorkspacePreparationLease.Token
+        let displayKey: String
+        let lease: LumenMacWorkspacePreparationLease
+        let task: Task<PreparedSession, Error>
+    }
+
+    private struct PreparationTaskError: Error, @unchecked Sendable {
+        let underlyingError: any Error
+        let session: any LumenMacWorkspaceSessionLifecycle
+    }
+
+    private struct TeardownOutcome: Sendable {
+        let provisionalToken: LumenMacWorkspacePreparationLease.Token?
+        let displayKeys: Set<String>
+        let recoveredWorkspace: Bool
+    }
+
+    private struct TeardownFlight: Sendable {
+        let id: UUID
+        let operation: LumenMacWorkspaceLifecycleAdmission.Operation
+        let displayKeys: Set<String>
+        let task: Task<TeardownOutcome, Error>
+    }
+
     private let logger = Logger(
         subsystem: "dev.skyline23.lumen",
         category: "MacWorkspaceSessionRegistry"
     )
-    private let settingsStore: LumenHostSettingsStore
-    private let runtime: LumenBridgeRuntime
-    private let makeDisplayWorkspace: @Sendable () -> any LumenMacDisplayWorkspaceManaging
-    private var sessions: [String: LumenMacWorkspaceSession] = [:]
+    private let resolvePolicy: ResolvePolicy
+    private let makeSession: MakeSession
+    private let recoverDurableWorkspace: RecoverDurableWorkspace
+    private let awaitPublicationBoundary: AwaitPublicationBoundary
+    private var sessions: [String: any LumenMacWorkspaceSessionLifecycle] = [:]
+    private var provisionalSession: ProvisionalSession?
+    private var teardownFlight: TeardownFlight?
+    private var lifecycleAdmission = LumenMacWorkspaceLifecycleAdmission()
+    private var lifecycleWaiters: [CheckedContinuation<Void, Never>] = []
 
     init(
         settingsStore: LumenHostSettingsStore,
         runtime: LumenBridgeRuntime,
         makeDisplayWorkspace: @escaping @Sendable () -> any LumenMacDisplayWorkspaceManaging
     ) {
-        self.settingsStore = settingsStore
-        self.runtime = runtime
-        self.makeDisplayWorkspace = makeDisplayWorkspace
+        resolvePolicy = {
+            try await settingsStore.workspacePolicy()
+        }
+        makeSession = { request, preparationFence in
+            try LumenMacWorkspaceSession(
+                request: request,
+                runtime: runtime,
+                displayWorkspace: makeDisplayWorkspace(),
+                preparationFence: preparationFence
+            )
+        }
+        recoverDurableWorkspace = {
+            try await LumenMacWorkspaceDurableRecovery.perform(
+                runtime: runtime,
+                makeDisplayWorkspace: makeDisplayWorkspace
+            )
+        }
+        awaitPublicationBoundary = {}
+    }
+
+    init(
+        resolvePolicy: @escaping ResolvePolicy,
+        makeSession: @escaping MakeSession,
+        recoverDurableWorkspace: @escaping RecoverDurableWorkspace,
+        awaitPublicationBoundary: @escaping AwaitPublicationBoundary = {}
+    ) {
+        self.resolvePolicy = resolvePolicy
+        self.makeSession = makeSession
+        self.recoverDurableWorkspace = recoverDurableWorkspace
+        self.awaitPublicationBoundary = awaitPublicationBoundary
     }
 
     func prepare(_ snapshot: LumenMacWorkspaceSessionRequestSnapshot) async throws -> UInt32 {
-        let request = snapshot.swiftValue(
-            policy: try await settingsStore.workspacePolicy()
-        )
-        guard !request.displayKey.isEmpty else {
+        guard !snapshot.displayKey.isEmpty else {
             throw LumenMacWorkspaceSessionFacadeError.emptyDisplayKey
         }
-        guard sessions[request.displayKey] == nil else {
+        guard provisionalSession == nil, teardownFlight == nil else {
             throw LumenMacWorkspaceSessionError.sessionAlreadyStarted
         }
-
-        let session = try LumenMacWorkspaceSession(
-            request: request,
-            runtime: runtime,
-            displayWorkspace: makeDisplayWorkspace()
+        try lifecycleAdmission.begin(.prepare, activeSessionCount: sessions.count)
+        let token = LumenMacWorkspacePreparationLease.Token(value: UUID())
+        let lease = LumenMacWorkspacePreparationLease(token: token)
+        let resolvePolicy = self.resolvePolicy
+        let makeSession = self.makeSession
+        let recoverDurableWorkspace = self.recoverDurableWorkspace
+        let task = Task<PreparedSession, Error> {
+            let fence: PreparationFence = {
+                try await lease.validate(token)
+            }
+            try await fence()
+            let request = snapshot.swiftValue(policy: try await resolvePolicy())
+            try await fence()
+            _ = try await recoverDurableWorkspace()
+            try await fence()
+            let session = try makeSession(request, fence)
+            do {
+                try await session.prepare()
+                try await fence()
+                let displayID = try await session.displayID()
+                try await fence()
+                return PreparedSession(
+                    displayKey: request.displayKey,
+                    displayID: displayID,
+                    session: session
+                )
+            } catch {
+                throw PreparationTaskError(
+                    underlyingError: error,
+                    session: session
+                )
+            }
+        }
+        let provisional = ProvisionalSession(
+            token: token,
+            displayKey: snapshot.displayKey,
+            lease: lease,
+            task: task
         )
-        try await session.prepare()
-        let displayID = try await session.displayID()
-        await LumenScreenCaptureDisplayPrefetch.begin(displayID: displayID)
-        sessions[request.displayKey] = session
-        return displayID
+        provisionalSession = provisional
+        do {
+            let prepared = try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: {
+                task.cancel()
+                Task { await lease.revoke(token) }
+            }
+            await awaitPublicationBoundary()
+            try Task.checkCancellation()
+            try await lease.validate(token)
+            guard provisionalSession?.token == token,
+                  lifecycleAdmission.operation == .prepare else {
+                throw CancellationError()
+            }
+            sessions[prepared.displayKey] = prepared.session
+            provisionalSession = nil
+            endLifecycleOperation(.prepare)
+            return prepared.displayID
+        } catch {
+            let preparationError = (error as? PreparationTaskError)?.underlyingError ?? error
+            do {
+                _ = try await runTeardown(
+                    operation: .recover,
+                    requestedDisplayKey: snapshot.displayKey,
+                    includesAllSessions: false,
+                    recoversDurableWorkspaceWhenEmpty: true
+                )
+            } catch {
+                throw error
+            }
+            throw preparationError
+        }
     }
 
     func activate(displayKey: String) async throws -> LumenMacWorkspaceActivationOutcome {
         guard let session = sessions[displayKey] else {
             throw LumenMacWorkspaceSessionError.sessionNotStarted
         }
+        try lifecycleAdmission.begin(.activate, activeSessionCount: sessions.count)
+        defer { endLifecycleOperation(.activate) }
         do {
             return try await session.activate()
         } catch {
             let activationError = error
             do {
-                _ = try await recoverPendingWorkspace()
+                _ = try await recoverDurableWorkspace()
                 sessions.removeValue(forKey: displayKey)
             } catch {
                 logger.error(
@@ -209,34 +418,201 @@ private actor LumenMacWorkspaceSessionRegistry {
     }
 
     func stop(displayKey: String) async throws -> Bool {
-        guard let session = sessions.removeValue(forKey: displayKey) else {
-            return false
-        }
-        let result = try await LumenWorkspaceStopRecoveryCoordinator.stop(
-            stop: {
-                try await session.stop()
-            },
-            recover: {
-                try await self.recoverPendingWorkspace()
+        if let teardownFlight {
+            guard teardownFlight.displayKeys.contains(displayKey) else {
+                return false
             }
-        )
-        if result.usedDurableRecovery {
-            logger.warning(
-                "Recovered a failed in-memory workspace stop from the durable journal error=\(result.stopFailureMessage ?? "unknown", privacy: .public)"
-            )
+        } else {
+            guard provisionalSession?.displayKey == displayKey ||
+                sessions[displayKey] != nil else {
+                return false
+            }
         }
+        _ = try await runTeardown(
+            operation: .stop,
+            requestedDisplayKey: displayKey,
+            includesAllSessions: false,
+            recoversDurableWorkspaceWhenEmpty: false
+        )
         return true
     }
 
     func stopAll() async {
-        let activeSessions = sessions
-        sessions.removeAll()
-        for session in activeSessions.values {
-            _ = try? await session.stop()
+        guard teardownFlight != nil || provisionalSession != nil || !sessions.isEmpty else {
+            return
+        }
+        do {
+            _ = try await runTeardown(
+                operation: .stopAll,
+                requestedDisplayKey: nil,
+                includesAllSessions: true,
+                recoversDurableWorkspaceWhenEmpty: false
+            )
+        } catch {
+            logger.error(
+                "Workspace stop-all retained cleanup state error=\(String(describing: error), privacy: .public)"
+            )
         }
     }
 
     func recoverPendingWorkspace() async throws -> Bool {
+        let outcome = try await runTeardown(
+            operation: .recover,
+            requestedDisplayKey: nil,
+            includesAllSessions: true,
+            recoversDurableWorkspaceWhenEmpty: true
+        )
+        return outcome?.recoveredWorkspace ?? false
+    }
+
+    private func runTeardown(
+        operation: LumenMacWorkspaceLifecycleAdmission.Operation,
+        requestedDisplayKey: String?,
+        includesAllSessions: Bool,
+        recoversDurableWorkspaceWhenEmpty: Bool
+    ) async throws -> TeardownOutcome? {
+        if let teardownFlight {
+            return try await joinTeardown(teardownFlight)
+        }
+        while lifecycleAdmission.operation != nil,
+              lifecycleAdmission.operation != .prepare {
+            await waitForLifecycleIdle()
+            if let teardownFlight {
+                return try await joinTeardown(teardownFlight)
+            }
+        }
+
+        let provisional: ProvisionalSession?
+        if let current = provisionalSession,
+           includesAllSessions || current.displayKey == requestedDisplayKey {
+            provisional = current
+        } else {
+            provisional = nil
+        }
+        let selectedSessions: [String: any LumenMacWorkspaceSessionLifecycle]
+        if includesAllSessions {
+            selectedSessions = sessions
+        } else if let requestedDisplayKey,
+                  let session = sessions[requestedDisplayKey] {
+            selectedSessions = [requestedDisplayKey: session]
+        } else {
+            selectedSessions = [:]
+        }
+        guard provisional != nil ||
+            !selectedSessions.isEmpty ||
+            recoversDurableWorkspaceWhenEmpty else {
+            return nil
+        }
+
+        if lifecycleAdmission.operation == .prepare {
+            try lifecycleAdmission.takeOver(.prepare, with: operation)
+        } else {
+            try lifecycleAdmission.begin(operation, activeSessionCount: sessions.count)
+        }
+        let recoverDurableWorkspace = self.recoverDurableWorkspace
+        let flightID = UUID()
+        let task = Task<TeardownOutcome, Error> {
+            var recoveredWorkspace = false
+            if let provisional {
+                await provisional.lease.revoke(provisional.token)
+                provisional.task.cancel()
+                switch await provisional.task.result {
+                case .success(let prepared):
+                    _ = try await LumenWorkspaceStopRecoveryCoordinator.stop(
+                        stop: { try await prepared.session.stop() },
+                        recover: recoverDurableWorkspace
+                    )
+                    recoveredWorkspace = true
+                case .failure(let error):
+                    if let preparationError = error as? PreparationTaskError {
+                        _ = try await LumenWorkspaceStopRecoveryCoordinator.stop(
+                            stop: { try await preparationError.session.stop() },
+                            recover: recoverDurableWorkspace
+                        )
+                        recoveredWorkspace = true
+                    } else {
+                        recoveredWorkspace = try await recoverDurableWorkspace()
+                    }
+                }
+            }
+            for session in selectedSessions.values {
+                _ = try await LumenWorkspaceStopRecoveryCoordinator.stop(
+                    stop: { try await session.stop() },
+                    recover: recoverDurableWorkspace
+                )
+                recoveredWorkspace = true
+            }
+            if provisional == nil,
+               selectedSessions.isEmpty,
+               recoversDurableWorkspaceWhenEmpty {
+                recoveredWorkspace = try await recoverDurableWorkspace()
+            }
+            return TeardownOutcome(
+                provisionalToken: provisional?.token,
+                displayKeys: Set(selectedSessions.keys),
+                recoveredWorkspace: recoveredWorkspace
+            )
+        }
+        let flight = TeardownFlight(
+            id: flightID,
+            operation: operation,
+            displayKeys: Set(selectedSessions.keys).union(
+                provisional.map { [$0.displayKey] } ?? []
+            ),
+            task: task
+        )
+        teardownFlight = flight
+        return try await joinTeardown(flight)
+    }
+
+    private func joinTeardown(
+        _ flight: TeardownFlight
+    ) async throws -> TeardownOutcome {
+        do {
+            let outcome = try await flight.task.value
+            if teardownFlight?.id == flight.id {
+                if provisionalSession?.token == outcome.provisionalToken {
+                    provisionalSession = nil
+                }
+                for displayKey in outcome.displayKeys {
+                    sessions.removeValue(forKey: displayKey)
+                }
+                teardownFlight = nil
+                endLifecycleOperation(flight.operation)
+            }
+            return outcome
+        } catch {
+            if teardownFlight?.id == flight.id {
+                teardownFlight = nil
+                endLifecycleOperation(flight.operation)
+            }
+            throw error
+        }
+    }
+
+    private func waitForLifecycleIdle() async {
+        guard lifecycleAdmission.operation != nil else { return }
+        await withCheckedContinuation { continuation in
+            lifecycleWaiters.append(continuation)
+        }
+    }
+
+    private func endLifecycleOperation(
+        _ operation: LumenMacWorkspaceLifecycleAdmission.Operation
+    ) {
+        lifecycleAdmission.end(operation)
+        guard lifecycleAdmission.operation == nil else { return }
+        let waiters = lifecycleWaiters
+        lifecycleWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
+}
+
+private enum LumenMacWorkspaceDurableRecovery {
+    static func perform(
+        runtime: LumenBridgeRuntime,
+        makeDisplayWorkspace: @escaping @Sendable () -> any LumenMacDisplayWorkspaceManaging
+    ) async throws -> Bool {
         let journalPath = LumenWorkspaceCoordinator.defaultRecoveryJournalPath
         guard FileManager.default.fileExists(atPath: journalPath) else {
             return false
@@ -256,10 +632,12 @@ private actor LumenMacWorkspaceSessionRegistry {
                 throw LumenMacWorkspaceSessionError.recoveryDidNotComplete
             },
             stopCapture: {
-                await self.runtime.stopCapture()
+                await runtime.stopCapture()
             },
             destroyVirtualDisplay: { identity in
-                _ = LumenMacVirtualDisplay.removeRegisteredDisplay(forKey: identity.id)
+                try await LumenMacOwnedVirtualDisplayRegistry.shared.recoverDisplay(
+                    forKey: identity.id
+                )
             }
         )
         let executor = try LumenMacWorkspaceExecutor(

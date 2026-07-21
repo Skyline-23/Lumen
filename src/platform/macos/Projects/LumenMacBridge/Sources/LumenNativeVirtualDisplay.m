@@ -205,6 +205,15 @@ static void LumenConfigureHDRDisplayInfo(
   return registry;
 }
 
++ (NSMutableSet<NSString *> *)displayRegistryReservations {
+  static NSMutableSet<NSString *> *reservations;
+  static dispatch_once_t onceToken;
+  dispatch_once(&onceToken, ^{
+    reservations = [NSMutableSet set];
+  });
+  return reservations;
+}
+
 + (dispatch_queue_t)displayRegistryQueue {
   static dispatch_queue_t queue;
   static dispatch_once_t onceToken;
@@ -236,17 +245,48 @@ static void LumenConfigureHDRDisplayInfo(
     return nil;
   }
 
-  LumenMacVirtualDisplay *display = [[self alloc] initWithConfiguration:configuration error:error];
-  if (display == nil) {
+  __block BOOL reserved = NO;
+  dispatch_sync(self.displayRegistryQueue, ^{
+    if (self.displayRegistry[key] == nil &&
+        ![self.displayRegistryReservations containsObject:key]) {
+      [self.displayRegistryReservations addObject:key];
+      reserved = YES;
+    }
+  });
+  if (!reserved) {
+    LumenAssignVirtualDisplayError(
+      error,
+      LumenMacVirtualDisplayErrorInvalidConfiguration,
+      @"The virtual display key is already owned."
+    );
     return nil;
   }
 
-  __block LumenMacVirtualDisplay *replacedDisplay;
+  LumenMacVirtualDisplay *display = [[self alloc] initWithConfiguration:configuration error:error];
+  if (display == nil) {
+    dispatch_sync(self.displayRegistryQueue, ^{
+      [self.displayRegistryReservations removeObject:key];
+    });
+    return nil;
+  }
+
+  __block BOOL inserted = NO;
   dispatch_sync(self.displayRegistryQueue, ^{
-    replacedDisplay = self.displayRegistry[key];
-    self.displayRegistry[key] = display;
+    [self.displayRegistryReservations removeObject:key];
+    if (self.displayRegistry[key] == nil) {
+      self.displayRegistry[key] = display;
+      inserted = YES;
+    }
   });
-  [replacedDisplay destroy];
+  if (!inserted) {
+    [display destroy];
+    LumenAssignVirtualDisplayError(
+      error,
+      LumenMacVirtualDisplayErrorInvalidConfiguration,
+      @"The virtual display key is already owned."
+    );
+    return nil;
+  }
   return display;
 }
 
@@ -275,6 +315,21 @@ static void LumenConfigureHDRDisplayInfo(
   __block LumenMacVirtualDisplay *display;
   dispatch_sync(self.displayRegistryQueue, ^{
     display = self.displayRegistry[key];
+    [self.displayRegistry removeObjectForKey:key];
+  });
+  [display destroy];
+  return display != nil;
+}
+
++ (BOOL)removeRegisteredDisplayForKey:(NSString *)key
+                  ifMatchingDisplay:(LumenMacVirtualDisplay *)expectedDisplay {
+  __block LumenMacVirtualDisplay *display;
+  dispatch_sync(self.displayRegistryQueue, ^{
+    display = self.displayRegistry[key];
+    if (display != expectedDisplay) {
+      display = nil;
+      return;
+    }
     [self.displayRegistry removeObjectForKey:key];
   });
   [display destroy];

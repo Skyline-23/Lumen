@@ -122,8 +122,14 @@ private actor LumenSystemAudioCaptureRuntime: LumenAudioCaptureRuntime {
         guard case .systemOutput(let displayID, let excludesCurrentProcessAudio) = configuration.source else {
             throw LumenAudioCaptureError.invalidSource
         }
-        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-        guard let display = content.displays.first(where: { UInt32($0.displayID) == displayID }) else {
+        let display: SCDisplay
+        do {
+            display = try await LumenScreenCaptureDisplayReadiness.resolveProduction(
+                displayID: displayID
+            ).value
+        } catch LumenScreenCaptureError.displayOwnershipLost {
+            throw LumenAudioCaptureError.displayOwnershipLost(displayID)
+        } catch LumenScreenCaptureError.displayUnavailable {
             throw LumenAudioCaptureError.displayUnavailable(displayID)
         }
 
@@ -326,6 +332,7 @@ actor LumenAudioCaptureSession {
 enum LumenAudioCaptureError: Error, LocalizedError {
     case invalidSource
     case displayUnavailable(UInt32)
+    case displayOwnershipLost(UInt32)
     case activeVideoDisplayMismatch(audioDisplayID: UInt32, videoDisplayID: UInt32)
     case microphoneUnavailable
     case audioConversionUnavailable
@@ -336,6 +343,8 @@ enum LumenAudioCaptureError: Error, LocalizedError {
         switch self {
         case .invalidSource: return "Invalid audio capture source."
         case .displayUnavailable(let displayID): return "ScreenCaptureKit display \(displayID) is unavailable for audio capture."
+        case .displayOwnershipLost(let displayID):
+            return "Retained virtual display \(displayID) was released before audio capture could start."
         case .activeVideoDisplayMismatch(let audioDisplayID, let videoDisplayID):
             return "System audio display \(audioDisplayID) does not match active video display \(videoDisplayID)."
         case .microphoneUnavailable: return "The default microphone is unavailable."

@@ -34,6 +34,58 @@ final class LumenNativeVirtualDisplayTests: XCTestCase {
         XCTAssertFalse(LumenMacVirtualDisplay.removeRegisteredDisplay(forKey: "missing"))
     }
 
+    func testRegistryRejectsDuplicateKeysAndConditionallyRemovesOnlyTheExactOwner() throws {
+        guard LumenMacVirtualDisplay.isSupported() else {
+            throw XCTSkip("CGVirtualDisplay is unavailable on this runtime")
+        }
+        let originalKey = "conditional-owner-\(UUID().uuidString)"
+        let configuration = LumenMacVirtualDisplayConfiguration()
+        configuration.name = "Lumen Registry Ownership Test"
+        configuration.backingWidth = 1_280
+        configuration.backingHeight = 720
+        configuration.logicalWidth = 1_280
+        configuration.logicalHeight = 720
+        configuration.refreshRate = 60
+
+        let original = try LumenMacVirtualDisplay.createRegisteredDisplay(
+            forKey: originalKey,
+            configuration: configuration
+        )
+        let mismatchedOwner = try XCTUnwrap(
+            (LumenMacVirtualDisplay.self as AnyObject)
+                .perform(NSSelectorFromString("alloc"))?
+                .takeUnretainedValue() as? LumenMacVirtualDisplay
+        )
+        defer {
+            _ = LumenMacVirtualDisplay.removeRegisteredDisplay(
+                forKey: originalKey,
+                ifMatchingDisplay: original
+            )
+        }
+
+        XCTAssertThrowsError(
+            try LumenMacVirtualDisplay.createRegisteredDisplay(
+                forKey: originalKey,
+                configuration: configuration
+            )
+        )
+        XCTAssertTrue(LumenMacVirtualDisplay.registeredDisplay(forKey: originalKey) === original)
+        XCTAssertFalse(
+            LumenMacVirtualDisplay.removeRegisteredDisplay(
+                forKey: originalKey,
+                ifMatchingDisplay: mismatchedOwner
+            )
+        )
+        XCTAssertTrue(LumenMacVirtualDisplay.registeredDisplay(forKey: originalKey) === original)
+        XCTAssertTrue(
+            LumenMacVirtualDisplay.removeRegisteredDisplay(
+                forKey: originalKey,
+                ifMatchingDisplay: original
+            )
+        )
+        XCTAssertNil(LumenMacVirtualDisplay.registeredDisplay(forKey: originalKey))
+    }
+
     func testRetainedVirtualDisplayPublishesAuthoritativeScreenCaptureDisplay() async throws {
         guard LumenMacVirtualDisplay.isSupported() else {
             throw XCTSkip("CGVirtualDisplay is unavailable on this runtime")

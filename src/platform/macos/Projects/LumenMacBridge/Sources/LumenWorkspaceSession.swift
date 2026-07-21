@@ -108,9 +108,127 @@ public enum LumenMacVirtualDisplayConfigurationFactory {
     }
 }
 
-private actor LumenMacVirtualDisplayOwner {
+struct LumenMacVirtualDisplayRegistryAccess: Sendable {
+    let currentOwner: @Sendable (String) -> LumenRetainedVirtualDisplayReference?
+    let displayID: @Sendable (LumenRetainedVirtualDisplayReference) -> UInt32
+    let discardCaptureState: @Sendable (UInt32) async -> Void
+    let removeMatchingOwner: @Sendable (
+        String,
+        LumenRetainedVirtualDisplayReference
+    ) -> Bool
+
+    static let production = Self(
+        currentOwner: { key in
+            LumenMacVirtualDisplay.registeredDisplay(forKey: key).map {
+                LumenRetainedVirtualDisplayReference(display: $0)
+            }
+        },
+        displayID: { $0.display.displayID },
+        discardCaptureState: { displayID in
+            await LumenScreenCaptureDisplayPrefetch.discard(displayID: displayID)
+        },
+        removeMatchingOwner: { key, owner in
+            LumenMacVirtualDisplay.removeRegisteredDisplay(
+                forKey: key,
+                ifMatchingDisplay: owner.display
+            )
+        }
+    )
+}
+
+actor LumenMacOwnedVirtualDisplayRegistry {
+    private struct Record {
+        let owner: LumenRetainedVirtualDisplayReference
+        let displayID: UInt32
+    }
+
+    static let shared = LumenMacOwnedVirtualDisplayRegistry(
+        access: .production
+    )
+
+    private let access: LumenMacVirtualDisplayRegistryAccess
+    private var owners: [String: Record] = [:]
+    private var releasingKeys: Set<String> = []
+
+    init(access: LumenMacVirtualDisplayRegistryAccess) {
+        self.access = access
+    }
+
+    func register(
+        _ owner: LumenRetainedVirtualDisplayReference,
+        forKey key: String
+    ) throws {
+        let displayID = access.displayID(owner)
+        guard access.currentOwner(key)?.display === owner.display,
+              displayID != 0,
+              !releasingKeys.contains(key),
+              owners[key].map({ $0.owner.display === owner.display }) ?? true else {
+            throw LumenMacWorkspaceSessionError.virtualDisplayOwnershipMismatch
+        }
+        owners[key] = Record(owner: owner, displayID: displayID)
+    }
+
+    func destroy(
+        _ owner: LumenRetainedVirtualDisplayReference,
+        forKey key: String
+    ) async throws {
+        guard let record = owners[key],
+              record.owner.display === owner.display,
+              access.currentOwner(key)?.display === owner.display,
+              !releasingKeys.contains(key) else {
+            throw LumenMacWorkspaceSessionError.virtualDisplayOwnershipMismatch
+        }
+        releasingKeys.insert(key)
+        defer { releasingKeys.remove(key) }
+        await access.discardCaptureState(record.displayID)
+        guard owners[key]?.owner.display === owner.display,
+              access.currentOwner(key)?.display === owner.display,
+              access.removeMatchingOwner(key, owner) else {
+            throw LumenMacWorkspaceSessionError.virtualDisplayOwnershipMismatch
+        }
+        owners.removeValue(forKey: key)
+    }
+
+    func recoverDisplay(forKey key: String) async throws {
+        guard let record = owners[key] else {
+            guard access.currentOwner(key) == nil else {
+                throw LumenMacWorkspaceSessionError.virtualDisplayOwnershipMismatch
+            }
+            return
+        }
+        guard !releasingKeys.contains(key) else {
+            throw LumenMacWorkspaceSessionError.virtualDisplayOwnershipMismatch
+        }
+        guard let currentOwner = access.currentOwner(key) else {
+            releasingKeys.insert(key)
+            defer { releasingKeys.remove(key) }
+            await access.discardCaptureState(record.displayID)
+            owners.removeValue(forKey: key)
+            return
+        }
+        guard currentOwner.display === record.owner.display else {
+            throw LumenMacWorkspaceSessionError.virtualDisplayOwnershipMismatch
+        }
+        releasingKeys.insert(key)
+        defer { releasingKeys.remove(key) }
+        await access.discardCaptureState(record.displayID)
+        guard owners[key]?.owner.display === record.owner.display,
+              access.currentOwner(key)?.display === record.owner.display,
+              access.removeMatchingOwner(key, record.owner) else {
+            throw LumenMacWorkspaceSessionError.virtualDisplayOwnershipMismatch
+        }
+        owners.removeValue(forKey: key)
+    }
+}
+
+actor LumenMacVirtualDisplayOwner {
+    private let ownershipRegistry: LumenMacOwnedVirtualDisplayRegistry
     private var display: LumenMacVirtualDisplay?
     private var displayKey: String?
+
+    init(ownershipRegistry: LumenMacOwnedVirtualDisplayRegistry) {
+        self.ownershipRegistry = ownershipRegistry
+    }
 
     func create(
         identity: LumenMacVirtualDisplayIdentity,
@@ -128,6 +246,19 @@ private actor LumenMacVirtualDisplayOwner {
             forKey: identity.id,
             configuration: configuration
         )
+        let owner = LumenRetainedVirtualDisplayReference(display: display)
+        do {
+            try await ownershipRegistry.register(
+                owner,
+                forKey: identity.id
+            )
+        } catch {
+            _ = LumenMacVirtualDisplay.removeRegisteredDisplay(
+                forKey: identity.id,
+                ifMatchingDisplay: display
+            )
+            throw error
+        }
         self.display = display
         displayKey = identity.id
         return display.displayID
@@ -137,7 +268,7 @@ private actor LumenMacVirtualDisplayOwner {
         displayID: UInt32,
         geometry: LumenMacDisplayGeometry,
         refreshRate: Double
-    ) throws {
+    ) async throws {
         guard let display, display.displayID == displayID else {
             throw LumenMacWorkspaceSessionError.virtualDisplayOwnershipMismatch
         }
@@ -146,6 +277,7 @@ private actor LumenMacVirtualDisplayOwner {
             logicalHeight: geometry.logicalHeight,
             refreshRate: refreshRate
         )
+        try await LumenScreenCaptureDisplayPrefetch.prepare(displayID: displayID)
     }
 
     func verify(displayID: UInt32) throws {
@@ -160,10 +292,16 @@ private actor LumenMacVirtualDisplayOwner {
         if let displayKey, displayKey != identity.id {
             throw LumenMacWorkspaceSessionError.virtualDisplayOwnershipMismatch
         }
-        if let display {
-            await LumenScreenCaptureDisplayPrefetch.discard(displayID: display.displayID)
+        guard let display else {
+            try await ownershipRegistry.recoverDisplay(
+                forKey: identity.id
+            )
+            return
         }
-        _ = LumenMacVirtualDisplay.removeRegisteredDisplay(forKey: identity.id)
+        try await ownershipRegistry.destroy(
+            LumenRetainedVirtualDisplayReference(display: display),
+            forKey: identity.id
+        )
         self.display = nil
         self.displayKey = nil
     }
@@ -174,6 +312,7 @@ public actor LumenMacWorkspaceSession {
         case idle
         case prepared
         case active
+        case recoveryPending
     }
 
     private static let firstEncodedFrameTimeoutNanoseconds: UInt64 = 5_000_000_000
@@ -183,6 +322,7 @@ public actor LumenMacWorkspaceSession {
     private let request: LumenMacWorkspaceSessionRequest
     private let coordinator: LumenWorkspaceCoordinator
     private let executor: LumenMacWorkspaceExecutor
+    private let preparationFence: @Sendable () async throws -> Void
     private let isolationStatusHandler: @Sendable (LumenMacWorkspaceIsolationStatus) async -> Void
     private var phase = Phase.idle
     private var activationCommand: LumenMacWorkspaceCommand?
@@ -191,9 +331,14 @@ public actor LumenMacWorkspaceSession {
     public init(
         request: LumenMacWorkspaceSessionRequest,
         runtime: LumenBridgeRuntime,
-        displayWorkspace: any LumenMacDisplayWorkspaceManaging
+        displayWorkspace: any LumenMacDisplayWorkspaceManaging,
+        preparationFence: @escaping @Sendable () async throws -> Void = {
+            try Task.checkCancellation()
+        }
     ) throws {
-        let displayOwner = LumenMacVirtualDisplayOwner()
+        let displayOwner = LumenMacVirtualDisplayOwner(
+            ownershipRegistry: .shared
+        )
         let operations = LumenMacWorkspaceNativeOperations(
             createVirtualDisplay: { identity, geometry in
                 try await displayOwner.create(
@@ -247,6 +392,7 @@ public actor LumenMacWorkspaceSession {
             request: request,
             operations: operations,
             displayWorkspace: displayWorkspace,
+            preparationFence: preparationFence,
             isolationStatusHandler: { status in
                 LumenMacWorkspaceIsolationRuntimeEventPublisher.publish(status)
             }
@@ -258,12 +404,16 @@ public actor LumenMacWorkspaceSession {
         operations: LumenMacWorkspaceNativeOperations,
         displayWorkspace: any LumenMacDisplayWorkspaceManaging,
         coordinator: LumenWorkspaceCoordinator? = nil,
+        preparationFence: @escaping @Sendable () async throws -> Void = {
+            try Task.checkCancellation()
+        },
         isolationStatusHandler: @escaping @Sendable (
             LumenMacWorkspaceIsolationStatus
         ) async -> Void = { _ in }
     ) throws {
         self.request = request
         self.coordinator = try coordinator ?? LumenWorkspaceCoordinator()
+        self.preparationFence = preparationFence
         self.isolationStatusHandler = isolationStatusHandler
         executor = try LumenMacWorkspaceExecutor(
             targetProcessIdentifiers: request.targetProcessIdentifiers,
@@ -282,36 +432,42 @@ public actor LumenMacWorkspaceSession {
         guard phase == .idle else {
             throw LumenMacWorkspaceSessionError.sessionAlreadyStarted
         }
-
-        let admitted = try await coordinator.beginSession(
-            policy: request.policy,
-            moveTargetWindows: !request.targetProcessIdentifiers.isEmpty,
-            manageCapture: request.managesCapture
-        )
-        if !admitted {
-            if let recoveryError = try await coordinator.executePendingCommandsRecovering(
-                using: executor
-            ) {
-                throw recoveryError
-            }
-            let recoveredAdmission = try await coordinator.beginSession(
+        do {
+            try await preparationFence()
+            let admitted = try await coordinator.beginSession(
                 policy: request.policy,
                 moveTargetWindows: !request.targetProcessIdentifiers.isEmpty,
                 manageCapture: request.managesCapture
             )
-            guard recoveredAdmission else {
-                throw LumenMacWorkspaceSessionError.recoveryDidNotComplete
+            try await preparationFence()
+            if !admitted {
+                if let recoveryError = try await coordinator.executePendingCommandsRecovering(
+                    using: executor
+                ) {
+                    throw recoveryError
+                }
+                try await preparationFence()
+                let recoveredAdmission = try await coordinator.beginSession(
+                    policy: request.policy,
+                    moveTargetWindows: !request.targetProcessIdentifiers.isEmpty,
+                    manageCapture: request.managesCapture
+                )
+                try await preparationFence()
+                guard recoveredAdmission else {
+                    throw LumenMacWorkspaceSessionError.recoveryDidNotComplete
+                }
             }
-        }
-        do {
             while let command = try await coordinator.nextCommand() {
+                try await preparationFence()
                 do {
                     if command.action == .applyIsolation ||
                         command.action == .startCapture ||
                         command.action == .awaitExternalFirstEncodedFrame {
                         try await executor.verifyOwnedVirtualDisplay()
+                        try await preparationFence()
                     }
                     if command.action == .awaitExternalFirstEncodedFrame {
+                        try await preparationFence()
                         activationCommand = command
                         phase = .prepared
                         return
@@ -323,17 +479,32 @@ public actor LumenMacWorkspaceSession {
                 let result: LumenMacWorkspaceCommandResult
                 do {
                     result = try await executor.execute(command)
+                    try await preparationFence()
                 } catch {
                     _ = try? await coordinator.complete(command, result: .failed)
                     throw error
                 }
                 try await coordinator.complete(command, result: result)
+                try await preparationFence()
             }
+            try await preparationFence()
             phase = .active
         } catch {
-            _ = try? await coordinator.executePendingCommandsRecovering(using: executor)
+            let preparationError = error
+            let cleanupError: (any Error)?
+            do {
+                cleanupError = try await coordinator.executePendingCommandsRecovering(
+                    using: executor
+                )
+            } catch {
+                cleanupError = error
+            }
+            if let cleanupError {
+                phase = .recoveryPending
+                throw cleanupError
+            }
             phase = .idle
-            throw error
+            throw preparationError
         }
     }
 
@@ -382,13 +553,15 @@ public actor LumenMacWorkspaceSession {
             } catch {
                 ownershipCleanupError = error
             }
-            phase = .idle
             if let ownershipCleanupError {
+                phase = .recoveryPending
                 throw ownershipCleanupError
             }
             if let cleanupError {
+                phase = .recoveryPending
                 throw cleanupError
             }
+            phase = .idle
             throw activationError
         }
     }
@@ -397,6 +570,9 @@ public actor LumenMacWorkspaceSession {
         if let isolationTask {
             await isolationTask.value
             self.isolationTask = nil
+        }
+        if phase == .recoveryPending {
+            throw LumenMacWorkspaceSessionError.recoveryDidNotComplete
         }
         guard phase != .idle else {
             return
@@ -407,19 +583,29 @@ public actor LumenMacWorkspaceSession {
             let cleanupError = try await coordinator.executePendingCommandsRecovering(
                 using: executor
             )
-            phase = .idle
             if let cleanupError {
+                phase = .recoveryPending
                 throw cleanupError
             }
+            phase = .idle
             await isolationStatusHandler(.notRequested)
             return
         }
-        try await coordinator.endSession()
-        let cleanupError = try await coordinator.executePendingCommandsRecovering(using: executor)
-        phase = .idle
+        let cleanupError: (any Error)?
+        do {
+            try await coordinator.endSession()
+            cleanupError = try await coordinator.executePendingCommandsRecovering(
+                using: executor
+            )
+        } catch {
+            phase = .recoveryPending
+            throw error
+        }
         if let cleanupError {
+            phase = .recoveryPending
             throw cleanupError
         }
+        phase = .idle
         await isolationStatusHandler(.notRequested)
     }
 
@@ -467,7 +653,9 @@ public actor LumenMacWorkspaceSession {
             } catch {
                 ownershipCleanupError = error
             }
-            phase = .idle
+            phase = cleanupError == nil && ownershipCleanupError == nil
+                ? .idle
+                : .recoveryPending
             let failures = [isolationError, cleanupError, ownershipCleanupError]
                 .compactMap { $0 }
                 .map { String(describing: $0) }
