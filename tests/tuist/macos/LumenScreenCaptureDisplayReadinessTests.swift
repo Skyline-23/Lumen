@@ -327,7 +327,7 @@ final class LumenScreenCaptureDisplayReadinessTests: XCTestCase {
         }
     }
 
-    func testRetainedPublishedGeometryAdmitsQueryWhenCurrentModeIsHidden() async throws {
+    func testRetainedConfiguredGeometryAdmitsQueryWhenPublicModeIsHidden() async throws {
         let clock = DisplayReadinessVirtualClock()
         let state = DisplayReadinessState(ownerToken: 7, modeReady: false)
         let lookupCount = DisplayReadinessCounter()
@@ -355,7 +355,7 @@ final class LumenScreenCaptureDisplayReadinessTests: XCTestCase {
         try await clock.waitForSleeper(at: 1)
         let lookupCountBeforeReadiness = await lookupCount.value()
         XCTAssertEqual(lookupCountBeforeReadiness, 0)
-        await state.publishRetainedPixelGeometry(width: 320, height: 180)
+        await state.publishRetainedConfiguredGeometry(width: 320, height: 180)
         await clock.advance(to: 1)
 
         let resolved = try await task.value
@@ -381,12 +381,12 @@ final class LumenScreenCaptureDisplayReadinessTests: XCTestCase {
                         isOnline: true,
                         isActive: true,
                         hasCurrentMode: false,
-                        pixelWidth: 320,
-                        pixelHeight: 180
+                        configuredPixelWidth: 320,
+                        configuredPixelHeight: 180
                     )
                 },
                 lookup: { _ in
-                    XCTFail("mode-less external displays must not be queried")
+                    XCTFail("external displays must ignore retained configured geometry")
                     return UInt32(22)
                 }
             )
@@ -637,6 +637,8 @@ private actor DisplayReadinessState {
     private var hasCurrentMode: Bool
     private var pixelWidth: Int
     private var pixelHeight: Int
+    private var configuredPixelWidth: Int
+    private var configuredPixelHeight: Int
 
     init(ownerToken: UInt?, modeReady: Bool) {
         self.ownerToken = ownerToken
@@ -645,6 +647,8 @@ private actor DisplayReadinessState {
         hasCurrentMode = modeReady
         pixelWidth = 0
         pixelHeight = 0
+        configuredPixelWidth = 0
+        configuredPixelHeight = 0
     }
 
     func snapshot() -> LumenScreenCaptureDisplayReadinessSnapshot {
@@ -654,7 +658,9 @@ private actor DisplayReadinessState {
             isActive: isActive,
             hasCurrentMode: hasCurrentMode,
             pixelWidth: pixelWidth,
-            pixelHeight: pixelHeight
+            pixelHeight: pixelHeight,
+            configuredPixelWidth: configuredPixelWidth,
+            configuredPixelHeight: configuredPixelHeight
         )
     }
 
@@ -662,12 +668,14 @@ private actor DisplayReadinessState {
         self.ownerToken = ownerToken
     }
 
-    func publishRetainedPixelGeometry(width: Int, height: Int) {
+    func publishRetainedConfiguredGeometry(width: Int, height: Int) {
         isOnline = true
         isActive = true
         hasCurrentMode = false
-        pixelWidth = width
-        pixelHeight = height
+        pixelWidth = 0
+        pixelHeight = 0
+        configuredPixelWidth = width
+        configuredPixelHeight = height
     }
 }
 

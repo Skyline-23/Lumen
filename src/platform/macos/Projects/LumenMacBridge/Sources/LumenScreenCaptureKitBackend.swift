@@ -449,6 +449,8 @@ struct LumenScreenCaptureDisplayReadinessSnapshot: Equatable, Sendable {
     let hasCurrentMode: Bool
     let pixelWidth: Int
     let pixelHeight: Int
+    let configuredPixelWidth: Int
+    let configuredPixelHeight: Int
 
     init(
         ownerToken: UInt?,
@@ -456,7 +458,9 @@ struct LumenScreenCaptureDisplayReadinessSnapshot: Equatable, Sendable {
         isActive: Bool,
         hasCurrentMode: Bool,
         pixelWidth: Int = 0,
-        pixelHeight: Int = 0
+        pixelHeight: Int = 0,
+        configuredPixelWidth: Int = 0,
+        configuredPixelHeight: Int = 0
     ) {
         self.ownerToken = ownerToken
         self.isOnline = isOnline
@@ -464,6 +468,8 @@ struct LumenScreenCaptureDisplayReadinessSnapshot: Equatable, Sendable {
         self.hasCurrentMode = hasCurrentMode
         self.pixelWidth = pixelWidth
         self.pixelHeight = pixelHeight
+        self.configuredPixelWidth = configuredPixelWidth
+        self.configuredPixelHeight = configuredPixelHeight
     }
 
     func isModeReady(
@@ -478,8 +484,11 @@ struct LumenScreenCaptureDisplayReadinessSnapshot: Equatable, Sendable {
         switch authority {
         case .retained:
             // An app-only virtual-display topology can publish active CoreGraphics
-            // pixel geometry while CGDisplayCopyDisplayMode remains unavailable.
-            return pixelWidth > 0 && pixelHeight > 0
+            // state while its public mode and pixel geometry remain unavailable.
+            // The retained object's nonzero configured geometry is safe to use
+            // here because ownership is validated around the exact-ID query.
+            return (pixelWidth > 0 && pixelHeight > 0) ||
+                (configuredPixelWidth > 0 && configuredPixelHeight > 0)
         case .exactExternal:
             return false
         }
@@ -994,12 +1003,15 @@ enum LumenScreenCaptureDisplayReadiness {
             forDisplayID: displayID
         )
         let ownerToken: UInt?
+        let configuredOwner: LumenMacVirtualDisplay?
         if let owner, currentOwner === owner.display {
             ownerToken = owner.ownerToken
+            configuredOwner = owner.display
         } else {
             ownerToken = currentOwner.map {
                 UInt(bitPattern: ObjectIdentifier($0))
             }
+            configuredOwner = currentOwner
         }
         return LumenScreenCaptureDisplayReadinessSnapshot(
             ownerToken: ownerToken,
@@ -1007,7 +1019,9 @@ enum LumenScreenCaptureDisplayReadiness {
             isActive: CGDisplayIsActive(displayID) != 0,
             hasCurrentMode: CGDisplayCopyDisplayMode(displayID) != nil,
             pixelWidth: CGDisplayPixelsWide(displayID),
-            pixelHeight: CGDisplayPixelsHigh(displayID)
+            pixelHeight: CGDisplayPixelsHigh(displayID),
+            configuredPixelWidth: Int(configuredOwner?.backingWidth ?? 0),
+            configuredPixelHeight: Int(configuredOwner?.backingHeight ?? 0)
         )
     }
 
@@ -1030,7 +1044,7 @@ enum LumenScreenCaptureDisplayReadiness {
         let initialSnapshot = await readiness()
         let initialModeReady = initialSnapshot.isModeReady(for: authority)
         writeScreenCaptureStartupDiagnostic(
-            "stage=display-readiness-begin display-id=\(displayID) authority=\(authorityLabel) owner-token=\(ownerToken) online=\(initialSnapshot.isOnline) active=\(initialSnapshot.isActive) current-mode=\(initialSnapshot.hasCurrentMode) pixel-size=\(initialSnapshot.pixelWidth)x\(initialSnapshot.pixelHeight) mode-ready=\(initialModeReady)"
+            "stage=display-readiness-begin display-id=\(displayID) authority=\(authorityLabel) owner-token=\(ownerToken) online=\(initialSnapshot.isOnline) active=\(initialSnapshot.isActive) current-mode=\(initialSnapshot.hasCurrentMode) pixel-size=\(initialSnapshot.pixelWidth)x\(initialSnapshot.pixelHeight) configured-size=\(initialSnapshot.configuredPixelWidth)x\(initialSnapshot.configuredPixelHeight) mode-ready=\(initialModeReady)"
         )
         do {
             let handle: LumenScreenCaptureDisplayHandle = try await
@@ -1086,7 +1100,7 @@ enum LumenScreenCaptureDisplayReadiness {
                 "stage=display-readiness-failed display-id=\(displayID, privacy: .public) authority=\(authorityLabel, privacy: .public) owner-token=\(ownerToken, privacy: .public) elapsed-ms=\(elapsedMilliseconds(since: startedAt), privacy: .public) error=\(String(describing: error), privacy: .public)"
             )
             writeScreenCaptureStartupDiagnostic(
-                "stage=display-readiness-failed display-id=\(displayID) authority=\(authorityLabel) owner-token=\(ownerToken) online=\(failureSnapshot.isOnline) active=\(failureSnapshot.isActive) current-mode=\(failureSnapshot.hasCurrentMode) pixel-size=\(failureSnapshot.pixelWidth)x\(failureSnapshot.pixelHeight) mode-ready=\(failureModeReady) elapsed-ms=\(elapsedMilliseconds(since: startedAt)) error=\(String(describing: error))"
+                "stage=display-readiness-failed display-id=\(displayID) authority=\(authorityLabel) owner-token=\(ownerToken) online=\(failureSnapshot.isOnline) active=\(failureSnapshot.isActive) current-mode=\(failureSnapshot.hasCurrentMode) pixel-size=\(failureSnapshot.pixelWidth)x\(failureSnapshot.pixelHeight) configured-size=\(failureSnapshot.configuredPixelWidth)x\(failureSnapshot.configuredPixelHeight) mode-ready=\(failureModeReady) elapsed-ms=\(elapsedMilliseconds(since: startedAt)) error=\(String(describing: error))"
             )
             throw error
         }
