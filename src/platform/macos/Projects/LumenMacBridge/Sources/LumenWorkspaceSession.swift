@@ -277,7 +277,6 @@ actor LumenMacVirtualDisplayOwner {
             logicalHeight: geometry.logicalHeight,
             refreshRate: refreshRate
         )
-        try await LumenScreenCaptureDisplayPrefetch.prepare(displayID: displayID)
     }
 
     func verify(displayID: UInt32) throws {
@@ -356,6 +355,9 @@ public actor LumenMacWorkspaceSession {
             },
             verifyVirtualDisplay: { displayID in
                 try await displayOwner.verify(displayID: displayID)
+            },
+            prepareCaptureDisplay: { displayID in
+                try await LumenScreenCaptureDisplayPrefetch.prepare(displayID: displayID)
             },
             startCapture: { displayID in
                 try await runtime.startCapture(
@@ -464,6 +466,11 @@ public actor LumenMacWorkspaceSession {
                         command.action == .startCapture ||
                         command.action == .awaitExternalFirstEncodedFrame {
                         try await executor.verifyOwnedVirtualDisplay()
+                        try await preparationFence()
+                    }
+                    if command.action == .startCapture ||
+                        command.action == .awaitExternalFirstEncodedFrame {
+                        try await executor.prepareOwnedVirtualDisplayForCapture()
                         try await preparationFence()
                     }
                     if command.action == .awaitExternalFirstEncodedFrame {

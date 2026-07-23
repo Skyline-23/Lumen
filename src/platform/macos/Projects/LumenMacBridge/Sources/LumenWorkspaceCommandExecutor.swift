@@ -43,6 +43,7 @@ public struct LumenMacWorkspaceNativeOperations: Sendable {
     ) async throws -> UInt32
     public var configureVirtualDisplay: @Sendable (UInt32, LumenMacDisplayGeometry) async throws -> Void
     public var verifyVirtualDisplay: @Sendable (UInt32) async throws -> Void
+    public var prepareCaptureDisplay: @Sendable (UInt32) async throws -> Void
     public var startCapture: @Sendable (UInt32) async throws -> Void
     public var stopCapture: @Sendable () async throws -> Void
     public var destroyVirtualDisplay: @Sendable (LumenMacVirtualDisplayIdentity) async throws -> Void
@@ -60,6 +61,7 @@ public struct LumenMacWorkspaceNativeOperations: Sendable {
         ) async throws -> UInt32,
         configureVirtualDisplay: @escaping @Sendable (UInt32, LumenMacDisplayGeometry) async throws -> Void,
         verifyVirtualDisplay: @escaping @Sendable (UInt32) async throws -> Void,
+        prepareCaptureDisplay: @escaping @Sendable (UInt32) async throws -> Void = { _ in },
         startCapture: @escaping @Sendable (UInt32) async throws -> Void,
         stopCapture: @escaping @Sendable () async throws -> Void,
         destroyVirtualDisplay: @escaping @Sendable (
@@ -75,6 +77,7 @@ public struct LumenMacWorkspaceNativeOperations: Sendable {
         self.createVirtualDisplay = createVirtualDisplay
         self.configureVirtualDisplay = configureVirtualDisplay
         self.verifyVirtualDisplay = verifyVirtualDisplay
+        self.prepareCaptureDisplay = prepareCaptureDisplay
         self.startCapture = startCapture
         self.stopCapture = stopCapture
         self.destroyVirtualDisplay = destroyVirtualDisplay
@@ -189,6 +192,10 @@ public actor LumenMacWorkspaceExecutor: LumenWorkspaceCommandExecuting {
 
     public func verifyOwnedVirtualDisplay() async throws {
         try await operations.verifyVirtualDisplay(try requireVirtualDisplay())
+    }
+
+    public func prepareOwnedVirtualDisplayForCapture() async throws {
+        try await operations.prepareCaptureDisplay(try requireVirtualDisplay())
     }
 
     public func verifyOwnedCaptureContinuity() async throws {

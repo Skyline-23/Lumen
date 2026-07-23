@@ -438,6 +438,10 @@ private struct LumenPendingVideoBootstrapSource {
     let duration: CMTime
 }
 
+private func writeScreenCaptureStartupDiagnostic(_ message: String) {
+    FileHandle.standardError.write(Data("Lumen ScreenCaptureKit \(message)\n".utf8))
+}
+
 struct LumenScreenCaptureDisplayReadinessSnapshot: Equatable, Sendable {
     let ownerToken: UInt?
     let isOnline: Bool
@@ -614,6 +618,9 @@ enum LumenScreenCaptureDisplayResolver {
             logger.notice(
                 "stage=display-query-generation-start display-id=\(displayID, privacy: .public) generation=\(queryGeneration, privacy: .public)"
             )
+            writeScreenCaptureStartupDiagnostic(
+                "stage=display-query-generation-start display-id=\(displayID) generation=\(queryGeneration)"
+            )
             let outcome = await performTimedQuery(
                 displayID: displayID,
                 generation: queryGeneration,
@@ -658,6 +665,9 @@ enum LumenScreenCaptureDisplayResolver {
             case .timedOut:
                 logger.warning(
                     "stage=display-query-timeout display-id=\(displayID, privacy: .public) generation=\(queryGeneration, privacy: .public)"
+                )
+                writeScreenCaptureStartupDiagnostic(
+                    "stage=display-query-timeout display-id=\(displayID) generation=\(queryGeneration)"
                 )
                 break
             }
@@ -720,6 +730,9 @@ enum LumenScreenCaptureDisplayResolver {
             } else {
                 logger.warning(
                     "stage=display-query-late-result-discarded display-id=\(displayID, privacy: .public) generation=\(generation, privacy: .public)"
+                )
+                writeScreenCaptureStartupDiagnostic(
+                    "stage=display-query-late-result-discarded display-id=\(displayID) generation=\(generation)"
                 )
             }
             await queryBudget.finish(generation: generation)
@@ -979,6 +992,10 @@ enum LumenScreenCaptureDisplayReadiness {
             ownerToken = 0
         }
         let startedAt = DispatchTime.now().uptimeNanoseconds
+        let initialSnapshot = await readiness()
+        writeScreenCaptureStartupDiagnostic(
+            "stage=display-readiness-begin display-id=\(displayID) authority=\(authorityLabel) owner-token=\(ownerToken) online=\(initialSnapshot.isOnline) active=\(initialSnapshot.isActive) current-mode=\(initialSnapshot.hasCurrentMode) mode-ready=\(initialSnapshot.isModeReady)"
+        )
         do {
             let handle: LumenScreenCaptureDisplayHandle = try await
                 LumenScreenCaptureDisplayResolver.resolve(
@@ -997,6 +1014,9 @@ enum LumenScreenCaptureDisplayReadiness {
                         logger.notice(
                             "stage=display-query-begin display-id=\(displayID, privacy: .public) authority=\(authorityLabel, privacy: .public) owner-token=\(ownerToken, privacy: .public) generation=\(generation, privacy: .public)"
                         )
+                        writeScreenCaptureStartupDiagnostic(
+                            "stage=display-query-begin display-id=\(displayID) authority=\(authorityLabel) owner-token=\(ownerToken) generation=\(generation)"
+                        )
                         let content = try await SCShareableContent.excludingDesktopWindows(
                             false,
                             onScreenWindowsOnly: true
@@ -1010,16 +1030,26 @@ enum LumenScreenCaptureDisplayReadiness {
                         logger.notice(
                             "stage=display-query-complete display-id=\(displayID, privacy: .public) authority=\(authorityLabel, privacy: .public) owner-token=\(ownerToken, privacy: .public) generation=\(generation, privacy: .public) found=\(target != nil, privacy: .public) observed-display-ids=\(observedDisplayIDs, privacy: .public)"
                         )
+                        writeScreenCaptureStartupDiagnostic(
+                            "stage=display-query-complete display-id=\(displayID) authority=\(authorityLabel) owner-token=\(ownerToken) generation=\(generation) found=\(target != nil) observed-display-ids=\(observedDisplayIDs)"
+                        )
                         return target.map(LumenScreenCaptureDisplayHandle.init(value:))
                     }
                 )
             logger.notice(
                 "stage=display-readiness-complete display-id=\(displayID, privacy: .public) authority=\(authorityLabel, privacy: .public) owner-token=\(ownerToken, privacy: .public) elapsed-ms=\(elapsedMilliseconds(since: startedAt), privacy: .public)"
             )
+            writeScreenCaptureStartupDiagnostic(
+                "stage=display-readiness-complete display-id=\(displayID) authority=\(authorityLabel) owner-token=\(ownerToken) elapsed-ms=\(elapsedMilliseconds(since: startedAt))"
+            )
             return handle
         } catch {
+            let failureSnapshot = await readiness()
             logger.error(
                 "stage=display-readiness-failed display-id=\(displayID, privacy: .public) authority=\(authorityLabel, privacy: .public) owner-token=\(ownerToken, privacy: .public) elapsed-ms=\(elapsedMilliseconds(since: startedAt), privacy: .public) error=\(String(describing: error), privacy: .public)"
+            )
+            writeScreenCaptureStartupDiagnostic(
+                "stage=display-readiness-failed display-id=\(displayID) authority=\(authorityLabel) owner-token=\(ownerToken) online=\(failureSnapshot.isOnline) active=\(failureSnapshot.isActive) current-mode=\(failureSnapshot.hasCurrentMode) mode-ready=\(failureSnapshot.isModeReady) elapsed-ms=\(elapsedMilliseconds(since: startedAt)) error=\(String(describing: error))"
             )
             throw error
         }
@@ -1056,6 +1086,9 @@ enum LumenScreenCaptureDisplayPrefetch {
         logger.notice(
             "stage=display-prefetch-begin display-id=\(displayID, privacy: .public) owner-token=\(ownerToken, privacy: .public) generation=\(generation, privacy: .public)"
         )
+        writeScreenCaptureStartupDiagnostic(
+            "stage=display-prefetch-begin display-id=\(displayID) owner-token=\(ownerToken) generation=\(generation)"
+        )
         do {
             let handle = try await LumenScreenCaptureDisplayReadiness.resolveOwned(
                 displayID: displayID,
@@ -1077,8 +1110,14 @@ enum LumenScreenCaptureDisplayPrefetch {
                     LumenScreenCaptureDisplayReadinessTiming.production.overallDeadlineNanoseconds
                 )
             )
+            writeScreenCaptureStartupDiagnostic(
+                "stage=display-prefetch-ready display-id=\(displayID) owner-token=\(ownerToken) generation=\(generation)"
+            )
         } catch {
             await preparedDisplays.discard(displayID: displayID, generation: generation)
+            writeScreenCaptureStartupDiagnostic(
+                "stage=display-prefetch-failed display-id=\(displayID) owner-token=\(ownerToken) generation=\(generation) error=\(String(describing: error))"
+            )
             throw error
         }
     }

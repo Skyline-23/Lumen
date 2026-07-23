@@ -13,6 +13,7 @@ private enum WorkspaceExecutionEvent: Equatable {
     case create(LumenMacDisplayGeometry)
     case configure(UInt32, LumenMacDisplayGeometry)
     case resolve(UInt32)
+    case prepareCapture(UInt32)
     case promote(UInt32)
     case move(UInt32)
     case isolate(UInt32)
@@ -941,6 +942,9 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
             verifyVirtualDisplay: { displayID in
                 await recorder.append(.resolve(displayID))
             },
+            prepareCaptureDisplay: { displayID in
+                await recorder.append(.prepareCapture(displayID))
+            },
             startCapture: { _ in },
             stopCapture: {},
             destroyVirtualDisplay: { _ in await recorder.append(.destroy) },
@@ -970,7 +974,12 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         let preparedEvents = await recorder.recordedEvents()
         XCTAssertFalse(preparedEvents.contains(.firstFrameBarrier))
         let resolveIndex = try XCTUnwrap(preparedEvents.firstIndex(of: .resolve(88)))
-        XCTAssertTrue(preparedEvents.contains(.promote(88)))
+        let promotionIndex = try XCTUnwrap(preparedEvents.firstIndex(of: .promote(88)))
+        let capturePreparationIndex = try XCTUnwrap(
+            preparedEvents.firstIndex(of: .prepareCapture(88))
+        )
+        XCTAssertLessThan(promotionIndex, resolveIndex)
+        XCTAssertLessThan(resolveIndex, capturePreparationIndex)
         XCTAssertFalse(preparedEvents.contains(.move(88)))
         XCTAssertFalse(preparedEvents.contains(.isolate(88)))
         let preparedState = try await session.state()
@@ -1177,7 +1186,7 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: journalPath))
     }
 
-    func testDisplayReadinessFailureRollsBackOwnedDisplayBeforePromotion() async throws {
+    func testDisplayReadinessFailureRestoresPromotedWorkspaceBeforeOwnedDisplayRollback() async throws {
         let recorder = WorkspaceExecutionRecorder()
         let operations = LumenMacWorkspaceNativeOperations(
             createVirtualDisplay: { _, geometry in
@@ -1186,10 +1195,13 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
             },
             configureVirtualDisplay: { displayID, geometry in
                 await recorder.append(.configure(displayID, geometry))
-                throw LumenScreenCaptureError.displayUnavailable(displayID)
             },
             verifyVirtualDisplay: { displayID in
                 await recorder.append(.resolve(displayID))
+            },
+            prepareCaptureDisplay: { displayID in
+                await recorder.append(.prepareCapture(displayID))
+                throw LumenScreenCaptureError.displayUnavailable(displayID)
             },
             startCapture: { _ in },
             stopCapture: {},
@@ -1216,12 +1228,20 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
             externalIsolatedRequest().displayMode
         )
         XCTAssertTrue(events.contains(.configure(90, geometry)))
-        XCTAssertFalse(events.contains(.resolve(90)))
-        XCTAssertFalse(events.contains(.promote(90)))
+        let promotionIndex = try XCTUnwrap(events.firstIndex(of: .promote(90)))
+        let resolveIndex = try XCTUnwrap(events.firstIndex(of: .resolve(90)))
+        let capturePreparationIndex = try XCTUnwrap(
+            events.firstIndex(of: .prepareCapture(90))
+        )
+        let restoreIndex = try XCTUnwrap(events.firstIndex(of: .restore))
+        let destroyIndex = try XCTUnwrap(events.firstIndex(of: .destroy))
+        XCTAssertLessThan(promotionIndex, resolveIndex)
+        XCTAssertLessThan(resolveIndex, capturePreparationIndex)
+        XCTAssertLessThan(capturePreparationIndex, restoreIndex)
+        XCTAssertLessThan(restoreIndex, destroyIndex)
         XCTAssertFalse(events.contains(.firstFrameBarrier))
         XCTAssertFalse(events.contains(.isolate(90)))
-        XCTAssertFalse(events.contains(.restore))
-        XCTAssertFalse(events.contains(.verify))
+        XCTAssertTrue(events.contains(.verify))
         XCTAssertTrue(events.contains(.destroy))
         XCTAssertFalse(FileManager.default.fileExists(atPath: journalPath))
         let recoveredState = try await session.state()
@@ -1329,6 +1349,9 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
                 await recorder.append(.configure(displayID, geometry))
             },
             verifyVirtualDisplay: { _ in },
+            prepareCaptureDisplay: { displayID in
+                await recorder.append(.prepareCapture(displayID))
+            },
             startCapture: { displayID in
                 await recorder.append(.startCapture(displayID))
             },
@@ -1372,6 +1395,7 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
                 .snapshot([]),
                 .create(geometry),
                 .configure(73, geometry),
+                .prepareCapture(73),
                 .startCapture(73),
                 .stopCapture,
                 .destroy,
