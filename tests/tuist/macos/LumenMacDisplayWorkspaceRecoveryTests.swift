@@ -85,22 +85,26 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         XCTAssertEqual(states, [physical])
     }
 
-    func testUnpublishedRetainedVirtualDisplayDefersPromotionToCaptureReadiness() async throws {
-        let topology = displayTopology()
-        let visibleDisplayIDs = Set(topology.displays.compactMap { UInt32($0.id) })
-        let controller = LumenCoreGraphicsDisplayTopologyController(
-            capture: { topology },
-            restore: { _ in },
-            visibleDisplayIDs: { visibleDisplayIDs }
+    func testExactActiveVirtualDisplayMissingFromEnumerationRemainsPromotable() {
+        XCTAssertEqual(
+            LumenMacDisplayWorkspace.promotionDisplayIDs(
+                displayID: 117,
+                visibleDisplayIDs: [2],
+                activeDisplayIDs: [2],
+                exactDisplayIsOnline: true,
+                exactDisplayIsActive: true
+            ),
+            [2, 117]
         )
-        let workspace = LumenMacDisplayWorkspace(
-            topologyController: controller,
-            physicalDisplayController: RecordingPhysicalDisplayController(),
-            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier()
+        XCTAssertNil(
+            LumenMacDisplayWorkspace.promotionDisplayIDs(
+                displayID: 117,
+                visibleDisplayIDs: [2, 117],
+                activeDisplayIDs: [2],
+                exactDisplayIsOnline: true,
+                exactDisplayIsActive: false
+            )
         )
-        _ = try await workspace.snapshotWorkspace(targetProcessIdentifiers: [])
-
-        try await workspace.promoteVirtualDisplay(117)
     }
 
     func testRestoreSkipsCoreGraphicsMutationWhenPhysicalTopologyAlreadyConverged() async throws {

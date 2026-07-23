@@ -294,15 +294,18 @@ private actor IsolationStatusRecorder {
 private actor WorkspaceDisplayMock: LumenMacDisplayWorkspaceManaging {
     private let recorder: WorkspaceExecutionRecorder
     private let isolationFailure: LumenMacDisplayWorkspaceError?
+    private var promotionResults: [Bool]
     private var verificationFailuresRemaining: Int
 
     init(
         recorder: WorkspaceExecutionRecorder,
         isolationFailure: LumenMacDisplayWorkspaceError? = nil,
+        promotionResults: [Bool] = [true],
         verificationFailures: Int = 0
     ) {
         self.recorder = recorder
         self.isolationFailure = isolationFailure
+        self.promotionResults = promotionResults
         self.verificationFailuresRemaining = verificationFailures
     }
 
@@ -315,7 +318,10 @@ private actor WorkspaceDisplayMock: LumenMacDisplayWorkspaceManaging {
 
     func promoteVirtualDisplay(_ displayID: UInt32) async -> Bool {
         await recorder.append(.promote(displayID))
-        return true
+        guard promotionResults.count > 1 else {
+            return promotionResults.first ?? true
+        }
+        return promotionResults.removeFirst()
     }
     func moveTargetWindows(to displayID: UInt32) async {
         await recorder.append(.move(displayID))
@@ -978,8 +984,8 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         let capturePreparationIndex = try XCTUnwrap(
             preparedEvents.firstIndex(of: .prepareCapture(88))
         )
-        XCTAssertLessThan(promotionIndex, resolveIndex)
-        XCTAssertLessThan(resolveIndex, capturePreparationIndex)
+        XCTAssertLessThan(resolveIndex, promotionIndex)
+        XCTAssertLessThan(promotionIndex, capturePreparationIndex)
         XCTAssertFalse(preparedEvents.contains(.move(88)))
         XCTAssertFalse(preparedEvents.contains(.isolate(88)))
         let preparedState = try await session.state()
@@ -1235,14 +1241,133 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         )
         let restoreIndex = try XCTUnwrap(events.firstIndex(of: .restore))
         let destroyIndex = try XCTUnwrap(events.firstIndex(of: .destroy))
-        XCTAssertLessThan(promotionIndex, resolveIndex)
-        XCTAssertLessThan(resolveIndex, capturePreparationIndex)
+        XCTAssertLessThan(resolveIndex, promotionIndex)
+        XCTAssertLessThan(promotionIndex, capturePreparationIndex)
         XCTAssertLessThan(capturePreparationIndex, restoreIndex)
         XCTAssertLessThan(restoreIndex, destroyIndex)
         XCTAssertFalse(events.contains(.firstFrameBarrier))
         XCTAssertFalse(events.contains(.isolate(90)))
         XCTAssertTrue(events.contains(.verify))
         XCTAssertTrue(events.contains(.destroy))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journalPath))
+        let recoveredState = try await session.state()
+        XCTAssertEqual(recoveredState, .idle)
+    }
+
+    func testFailedOwnedDisplayPromotionStopsBeforeCaptureAndRollsBack() async throws {
+        let recorder = WorkspaceExecutionRecorder()
+        let operations = LumenMacWorkspaceNativeOperations(
+            createVirtualDisplay: { _, geometry in
+                await recorder.append(.create(geometry))
+                return 118
+            },
+            configureVirtualDisplay: { displayID, geometry in
+                await recorder.append(.configure(displayID, geometry))
+            },
+            verifyVirtualDisplay: { displayID in
+                await recorder.append(.resolve(displayID))
+            },
+            prepareCaptureDisplay: { displayID in
+                await recorder.append(.prepareCapture(displayID))
+            },
+            startCapture: { _ in },
+            stopCapture: {},
+            destroyVirtualDisplay: { _ in await recorder.append(.destroy) },
+            waitForExternalFirstEncodedFrame: {
+                await recorder.append(.firstFrameBarrier)
+            }
+        )
+        let journalPath = temporaryRecoveryJournalPath()
+        let session = try LumenMacWorkspaceSession(
+            request: externalIsolatedRequest(),
+            operations: operations,
+            displayWorkspace: WorkspaceDisplayMock(
+                recorder: recorder,
+                promotionResults: [false]
+            ),
+            coordinator: LumenWorkspaceCoordinator(recoveryJournalPath: journalPath)
+        )
+
+        do {
+            try await session.prepare()
+            XCTFail("expected failed virtual display promotion to fail closed")
+        } catch LumenMacDisplayWorkspaceError.virtualDisplayPromotionUnavailable(118) {}
+
+        let events = await recorder.recordedEvents()
+        let ownerVerificationIndex = try XCTUnwrap(events.firstIndex(of: .resolve(118)))
+        let promotionIndex = try XCTUnwrap(events.firstIndex(of: .promote(118)))
+        let destroyIndex = try XCTUnwrap(events.firstIndex(of: .destroy))
+        XCTAssertLessThan(ownerVerificationIndex, promotionIndex)
+        XCTAssertLessThan(promotionIndex, destroyIndex)
+        XCTAssertFalse(events.contains(.prepareCapture(118)))
+        XCTAssertFalse(events.contains(.firstFrameBarrier))
+        XCTAssertFalse(events.contains(.isolate(118)))
+        XCTAssertFalse(events.contains(.restore))
+        XCTAssertFalse(events.contains(.verify))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journalPath))
+        let recoveredState = try await session.state()
+        XCTAssertEqual(recoveredState, .idle)
+    }
+
+    func testPostReadinessPromotionFailureRestoresWithoutIsolation() async throws {
+        let recorder = WorkspaceExecutionRecorder()
+        let operations = LumenMacWorkspaceNativeOperations(
+            createVirtualDisplay: { _, geometry in
+                await recorder.append(.create(geometry))
+                return 119
+            },
+            configureVirtualDisplay: { displayID, geometry in
+                await recorder.append(.configure(displayID, geometry))
+            },
+            verifyVirtualDisplay: { displayID in
+                await recorder.append(.resolve(displayID))
+            },
+            prepareCaptureDisplay: { displayID in
+                await recorder.append(.prepareCapture(displayID))
+            },
+            startCapture: { _ in },
+            stopCapture: {},
+            destroyVirtualDisplay: { _ in await recorder.append(.destroy) },
+            waitForExternalFirstEncodedFrame: {
+                await recorder.append(.firstFrameBarrier)
+            },
+            verifyCaptureContinuity: {
+                await recorder.append(.captureContinuity)
+            }
+        )
+        let journalPath = temporaryRecoveryJournalPath()
+        let session = try LumenMacWorkspaceSession(
+            request: externalIsolatedRequest(),
+            operations: operations,
+            displayWorkspace: WorkspaceDisplayMock(
+                recorder: recorder,
+                promotionResults: [true, false]
+            ),
+            coordinator: LumenWorkspaceCoordinator(recoveryJournalPath: journalPath)
+        )
+
+        try await session.prepare()
+        do {
+            _ = try await session.activate()
+            XCTFail("expected post-readiness promotion to fail closed")
+        } catch LumenMacDisplayWorkspaceError.virtualDisplayPromotionUnavailable(119) {}
+
+        let events = await recorder.recordedEvents()
+        let barrierIndex = try XCTUnwrap(events.firstIndex(of: .firstFrameBarrier))
+        let promotionIndices = events.indices.filter {
+            events[$0] == .promote(119)
+        }
+        let restoreIndex = try XCTUnwrap(events.firstIndex(of: .restore))
+        let verifyIndex = try XCTUnwrap(events.firstIndex(of: .verify))
+        let destroyIndex = try XCTUnwrap(events.firstIndex(of: .destroy))
+        XCTAssertEqual(promotionIndices.count, 2)
+        XCTAssertLessThan(promotionIndices[0], barrierIndex)
+        XCTAssertLessThan(barrierIndex, promotionIndices[1])
+        XCTAssertLessThan(promotionIndices[1], restoreIndex)
+        XCTAssertLessThan(restoreIndex, verifyIndex)
+        XCTAssertLessThan(verifyIndex, destroyIndex)
+        XCTAssertFalse(events.contains(.isolate(119)))
+        XCTAssertFalse(events.contains(.captureContinuity))
         XCTAssertFalse(FileManager.default.fileExists(atPath: journalPath))
         let recoveredState = try await session.state()
         XCTAssertEqual(recoveredState, .idle)

@@ -316,8 +316,6 @@ public actor LumenMacWorkspaceSession {
 
     private static let firstEncodedFrameTimeoutNanoseconds: UInt64 = 5_000_000_000
     private static let isolationCaptureContinuityTimeoutNanoseconds: UInt64 = 2_000_000_000
-    private static let promotionRetryNanoseconds: UInt64 = 50_000_000
-    private static let promotionRetryCount = 20
     private let request: LumenMacWorkspaceSessionRequest
     private let coordinator: LumenWorkspaceCoordinator
     private let executor: LumenMacWorkspaceExecutor
@@ -529,8 +527,8 @@ public actor LumenMacWorkspaceSession {
         }
         do {
             let result = try await executor.execute(activationCommand)
+            try await requireVirtualDisplayPromotionAfterCaptureReadiness()
             try await coordinator.complete(activationCommand, result: result)
-            await promoteVirtualDisplayAfterCaptureReadiness()
             await executor.positionPointerOnVirtualDisplay()
             self.activationCommand = nil
             phase = .active
@@ -672,25 +670,21 @@ public actor LumenMacWorkspaceSession {
         isolationTask = nil
     }
 
-    private func promoteVirtualDisplayAfterCaptureReadiness() async {
-        for attempt in 0..<Self.promotionRetryCount {
-            do {
-                if try await executor.promoteOwnedVirtualDisplay() {
-                    return
-                }
-            } catch {
-                FileHandle.standardError.write(
-                    Data("Lumen virtual display promotion failed: \(error)\n".utf8)
-                )
-                return
-            }
-            guard attempt + 1 < Self.promotionRetryCount else {
-                break
-            }
-            try? await Task.sleep(nanoseconds: Self.promotionRetryNanoseconds)
+    private func requireVirtualDisplayPromotionAfterCaptureReadiness() async throws {
+        guard request.policy != .coexist else {
+            return
+        }
+        let displayID = try await executor.activeVirtualDisplayID()
+        guard try await executor.promoteOwnedVirtualDisplay() else {
+            throw LumenMacDisplayWorkspaceError.virtualDisplayPromotionUnavailable(displayID)
         }
         FileHandle.standardError.write(
-            Data("Lumen virtual display promotion deferred after capture readiness\n".utf8)
+            Data(
+                (
+                    "Lumen virtual display promotion complete after capture readiness " +
+                        "display-id=\(displayID)\n"
+                ).utf8
+            )
         )
     }
 

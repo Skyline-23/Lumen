@@ -143,7 +143,11 @@ public actor LumenMacWorkspaceExecutor: LumenWorkspaceCommandExecuting {
             )
             return .succeeded
         case .promoteVirtualMain:
-            _ = try await displayWorkspace.promoteVirtualDisplay(try requireVirtualDisplay())
+            let displayID = try requireVirtualDisplay()
+            try await operations.verifyVirtualDisplay(displayID)
+            guard try await displayWorkspace.promoteVirtualDisplay(displayID) else {
+                throw LumenMacDisplayWorkspaceError.virtualDisplayPromotionUnavailable(displayID)
+            }
             return .succeeded
         case .moveTargetWindows:
             try await displayWorkspace.moveTargetWindows(to: try requireVirtualDisplay())
@@ -211,7 +215,9 @@ public actor LumenMacWorkspaceExecutor: LumenWorkspaceCommandExecuting {
 
     @discardableResult
     public func promoteOwnedVirtualDisplay() async throws -> Bool {
-        try await displayWorkspace.promoteVirtualDisplay(try requireVirtualDisplay())
+        let displayID = try requireVirtualDisplay()
+        try await operations.verifyVirtualDisplay(displayID)
+        return try await displayWorkspace.promoteVirtualDisplay(displayID)
     }
 
     public func destroyOwnedVirtualDisplay() async throws {

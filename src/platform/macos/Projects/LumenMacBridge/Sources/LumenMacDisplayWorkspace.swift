@@ -6,6 +6,7 @@ public enum LumenMacDisplayWorkspaceError: LocalizedError, Equatable {
     case snapshotAlreadyExists
     case snapshotMissing
     case displayNotFound(UInt32)
+    case virtualDisplayPromotionUnavailable(UInt32)
     case displayConfigurationFailed(Int32)
     case accessibilityPermissionMissing
     case invalidPersistedDisplayID(String)
@@ -26,6 +27,8 @@ public enum LumenMacDisplayWorkspaceError: LocalizedError, Equatable {
             "the display workspace snapshot is missing"
         case .displayNotFound(let displayID):
             "display \(displayID) was not found"
+        case .virtualDisplayPromotionUnavailable(let displayID):
+            "owned virtual display \(displayID) could not be promoted into the capture workspace"
         case .displayConfigurationFailed(let status):
             "CoreGraphics display configuration failed with status \(status)"
         case .accessibilityPermissionMissing:
@@ -143,11 +146,14 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             throw LumenMacDisplayWorkspaceError.snapshotMissing
         }
         let visibleDisplayIDs = await topologyController.visibleDisplayIDs()
-        guard visibleDisplayIDs.contains(displayID) else {
-            return false
-        }
-        let ids = try activeDisplayIDs()
-        guard ids.contains(displayID) else {
+        let activeDisplayIDs = try activeDisplayIDs()
+        guard let ids = Self.promotionDisplayIDs(
+            displayID: displayID,
+            visibleDisplayIDs: visibleDisplayIDs,
+            activeDisplayIDs: activeDisplayIDs,
+            exactDisplayIsOnline: CGDisplayIsOnline(displayID) != 0,
+            exactDisplayIsActive: CGDisplayIsActive(displayID) != 0
+        ) else {
             return false
         }
 
@@ -185,6 +191,27 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             }
         }
         return true
+    }
+
+    nonisolated static func promotionDisplayIDs(
+        displayID: CGDirectDisplayID,
+        visibleDisplayIDs: Set<CGDirectDisplayID>,
+        activeDisplayIDs: [CGDirectDisplayID],
+        exactDisplayIsOnline: Bool,
+        exactDisplayIsActive: Bool
+    ) -> [CGDirectDisplayID]? {
+        guard (
+            visibleDisplayIDs.contains(displayID) &&
+                activeDisplayIDs.contains(displayID)
+        ) ||
+            (exactDisplayIsOnline && exactDisplayIsActive)
+        else {
+            return nil
+        }
+        guard !activeDisplayIDs.contains(displayID) else {
+            return activeDisplayIDs
+        }
+        return activeDisplayIDs + [displayID]
     }
 
     public func moveTargetWindows(to displayID: UInt32) throws {
