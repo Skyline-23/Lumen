@@ -447,9 +447,42 @@ struct LumenScreenCaptureDisplayReadinessSnapshot: Equatable, Sendable {
     let isOnline: Bool
     let isActive: Bool
     let hasCurrentMode: Bool
+    let pixelWidth: Int
+    let pixelHeight: Int
 
-    var isModeReady: Bool {
-        isOnline && isActive && hasCurrentMode
+    init(
+        ownerToken: UInt?,
+        isOnline: Bool,
+        isActive: Bool,
+        hasCurrentMode: Bool,
+        pixelWidth: Int = 0,
+        pixelHeight: Int = 0
+    ) {
+        self.ownerToken = ownerToken
+        self.isOnline = isOnline
+        self.isActive = isActive
+        self.hasCurrentMode = hasCurrentMode
+        self.pixelWidth = pixelWidth
+        self.pixelHeight = pixelHeight
+    }
+
+    func isModeReady(
+        for authority: LumenScreenCaptureDisplayAuthority
+    ) -> Bool {
+        guard isOnline, isActive else {
+            return false
+        }
+        if hasCurrentMode {
+            return true
+        }
+        switch authority {
+        case .retained:
+            // An app-only virtual-display topology can publish active CoreGraphics
+            // pixel geometry while CGDisplayCopyDisplayMode remains unavailable.
+            return pixelWidth > 0 && pixelHeight > 0
+        case .exactExternal:
+            return false
+        }
     }
 }
 
@@ -586,7 +619,7 @@ enum LumenScreenCaptureDisplayResolver {
                 displayID: displayID,
                 authority: authority
             )
-            guard beforeQuery.isModeReady else {
+            guard beforeQuery.isModeReady(for: authority) else {
                 guard currentTime < overallDeadline else {
                     throw LumenScreenCaptureError.displayUnavailable(displayID)
                 }
@@ -646,7 +679,7 @@ enum LumenScreenCaptureDisplayResolver {
                     displayID: displayID,
                     authority: authority
                 )
-                guard afterQuery.isModeReady else {
+                guard afterQuery.isModeReady(for: authority) else {
                     continue
                 }
                 if let value {
@@ -972,7 +1005,9 @@ enum LumenScreenCaptureDisplayReadiness {
             ownerToken: ownerToken,
             isOnline: CGDisplayIsOnline(displayID) != 0,
             isActive: CGDisplayIsActive(displayID) != 0,
-            hasCurrentMode: CGDisplayCopyDisplayMode(displayID) != nil
+            hasCurrentMode: CGDisplayCopyDisplayMode(displayID) != nil,
+            pixelWidth: CGDisplayPixelsWide(displayID),
+            pixelHeight: CGDisplayPixelsHigh(displayID)
         )
     }
 
@@ -993,8 +1028,9 @@ enum LumenScreenCaptureDisplayReadiness {
         }
         let startedAt = DispatchTime.now().uptimeNanoseconds
         let initialSnapshot = await readiness()
+        let initialModeReady = initialSnapshot.isModeReady(for: authority)
         writeScreenCaptureStartupDiagnostic(
-            "stage=display-readiness-begin display-id=\(displayID) authority=\(authorityLabel) owner-token=\(ownerToken) online=\(initialSnapshot.isOnline) active=\(initialSnapshot.isActive) current-mode=\(initialSnapshot.hasCurrentMode) mode-ready=\(initialSnapshot.isModeReady)"
+            "stage=display-readiness-begin display-id=\(displayID) authority=\(authorityLabel) owner-token=\(ownerToken) online=\(initialSnapshot.isOnline) active=\(initialSnapshot.isActive) current-mode=\(initialSnapshot.hasCurrentMode) pixel-size=\(initialSnapshot.pixelWidth)x\(initialSnapshot.pixelHeight) mode-ready=\(initialModeReady)"
         )
         do {
             let handle: LumenScreenCaptureDisplayHandle = try await
@@ -1045,11 +1081,12 @@ enum LumenScreenCaptureDisplayReadiness {
             return handle
         } catch {
             let failureSnapshot = await readiness()
+            let failureModeReady = failureSnapshot.isModeReady(for: authority)
             logger.error(
                 "stage=display-readiness-failed display-id=\(displayID, privacy: .public) authority=\(authorityLabel, privacy: .public) owner-token=\(ownerToken, privacy: .public) elapsed-ms=\(elapsedMilliseconds(since: startedAt), privacy: .public) error=\(String(describing: error), privacy: .public)"
             )
             writeScreenCaptureStartupDiagnostic(
-                "stage=display-readiness-failed display-id=\(displayID) authority=\(authorityLabel) owner-token=\(ownerToken) online=\(failureSnapshot.isOnline) active=\(failureSnapshot.isActive) current-mode=\(failureSnapshot.hasCurrentMode) mode-ready=\(failureSnapshot.isModeReady) elapsed-ms=\(elapsedMilliseconds(since: startedAt)) error=\(String(describing: error))"
+                "stage=display-readiness-failed display-id=\(displayID) authority=\(authorityLabel) owner-token=\(ownerToken) online=\(failureSnapshot.isOnline) active=\(failureSnapshot.isActive) current-mode=\(failureSnapshot.hasCurrentMode) pixel-size=\(failureSnapshot.pixelWidth)x\(failureSnapshot.pixelHeight) mode-ready=\(failureModeReady) elapsed-ms=\(elapsedMilliseconds(since: startedAt)) error=\(String(describing: error))"
             )
             throw error
         }
@@ -1124,7 +1161,17 @@ enum LumenScreenCaptureDisplayPrefetch {
 
     static func resolve(displayID: UInt32) async throws -> LumenScreenCaptureDisplayHandle? {
         let before = LumenScreenCaptureDisplayReadiness.snapshot(displayID: displayID)
-        guard let ownerToken = before.ownerToken, before.isModeReady else {
+        guard let ownerToken = before.ownerToken else {
+            await preparedDisplays.discard(displayID: displayID)
+            logger.warning(
+                "stage=display-prefetch-rejected display-id=\(displayID, privacy: .public) reason=owner-or-mode-not-ready"
+            )
+            return nil
+        }
+        let authority = LumenScreenCaptureDisplayAuthority.retained(
+            ownerToken: ownerToken
+        )
+        guard before.isModeReady(for: authority) else {
             await preparedDisplays.discard(displayID: displayID)
             logger.warning(
                 "stage=display-prefetch-rejected display-id=\(displayID, privacy: .public) reason=owner-or-mode-not-ready"
@@ -1149,7 +1196,8 @@ enum LumenScreenCaptureDisplayPrefetch {
             displayID: displayID,
             owner: prepared.owner
         )
-        guard after.ownerToken == ownerToken, after.isModeReady else {
+        guard after.ownerToken == ownerToken,
+              after.isModeReady(for: authority) else {
             logger.warning(
                 "stage=display-prefetch-rejected display-id=\(displayID, privacy: .public) owner-token=\(ownerToken, privacy: .public) reason=post-take-validation-failed"
             )

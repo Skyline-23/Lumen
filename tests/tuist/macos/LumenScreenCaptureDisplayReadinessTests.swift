@@ -327,7 +327,7 @@ final class LumenScreenCaptureDisplayReadinessTests: XCTestCase {
         }
     }
 
-    func testCoreGraphicsMustBeOnlineActiveAndModeReadyBeforeExactQuery() async throws {
+    func testRetainedPublishedGeometryAdmitsQueryWhenCurrentModeIsHidden() async throws {
         let clock = DisplayReadinessVirtualClock()
         let state = DisplayReadinessState(ownerToken: 7, modeReady: false)
         let lookupCount = DisplayReadinessCounter()
@@ -355,13 +355,46 @@ final class LumenScreenCaptureDisplayReadinessTests: XCTestCase {
         try await clock.waitForSleeper(at: 1)
         let lookupCountBeforeReadiness = await lookupCount.value()
         XCTAssertEqual(lookupCountBeforeReadiness, 0)
-        await state.setModeReady(true)
+        await state.publishRetainedPixelGeometry(width: 320, height: 180)
         await clock.advance(to: 1)
 
         let resolved = try await task.value
         let lookupCountAfterReadiness = await lookupCount.value()
         XCTAssertEqual(resolved, 22)
         XCTAssertEqual(lookupCountAfterReadiness, 1)
+
+        do {
+            let _: UInt32 = try await LumenScreenCaptureDisplayResolver.resolve(
+                displayID: 22,
+                authority: .exactExternal,
+                timing: .init(
+                    overallDeadlineNanoseconds: 0,
+                    queryTimeoutNanoseconds: 0,
+                    retryDelayNanoseconds: 0
+                ),
+                queryBudget: LumenScreenCaptureQueryBudget(maximumOutstandingQueries: 1),
+                now: { await clock.currentTime() },
+                sleepUntil: { await clock.sleep(until: $0) },
+                readiness: {
+                    .init(
+                        ownerToken: nil,
+                        isOnline: true,
+                        isActive: true,
+                        hasCurrentMode: false,
+                        pixelWidth: 320,
+                        pixelHeight: 180
+                    )
+                },
+                lookup: { _ in
+                    XCTFail("mode-less external displays must not be queried")
+                    return UInt32(22)
+                }
+            )
+            XCTFail("expected a mode-less external display to fail closed")
+        } catch LumenScreenCaptureError.displayUnavailable(22) {
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
     }
 
     func testRetainedAndExactExternalResolversNeverFallBackToAnotherDisplay() async throws {
@@ -599,19 +632,29 @@ private actor DisplayReadinessQueryControl<Value: Sendable> {
 
 private actor DisplayReadinessState {
     private var ownerToken: UInt?
-    private var modeReady: Bool
+    private var isOnline: Bool
+    private var isActive: Bool
+    private var hasCurrentMode: Bool
+    private var pixelWidth: Int
+    private var pixelHeight: Int
 
     init(ownerToken: UInt?, modeReady: Bool) {
         self.ownerToken = ownerToken
-        self.modeReady = modeReady
+        isOnline = modeReady
+        isActive = modeReady
+        hasCurrentMode = modeReady
+        pixelWidth = 0
+        pixelHeight = 0
     }
 
     func snapshot() -> LumenScreenCaptureDisplayReadinessSnapshot {
         .init(
             ownerToken: ownerToken,
-            isOnline: modeReady,
-            isActive: modeReady,
-            hasCurrentMode: modeReady
+            isOnline: isOnline,
+            isActive: isActive,
+            hasCurrentMode: hasCurrentMode,
+            pixelWidth: pixelWidth,
+            pixelHeight: pixelHeight
         )
     }
 
@@ -619,8 +662,12 @@ private actor DisplayReadinessState {
         self.ownerToken = ownerToken
     }
 
-    func setModeReady(_ modeReady: Bool) {
-        self.modeReady = modeReady
+    func publishRetainedPixelGeometry(width: Int, height: Int) {
+        isOnline = true
+        isActive = true
+        hasCurrentMode = false
+        pixelWidth = width
+        pixelHeight = height
     }
 }
 
