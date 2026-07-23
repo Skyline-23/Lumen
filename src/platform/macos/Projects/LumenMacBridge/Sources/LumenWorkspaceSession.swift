@@ -470,6 +470,8 @@ public actor LumenMacWorkspaceSession {
                         command.action == .awaitExternalFirstEncodedFrame {
                         try await executor.prepareOwnedVirtualDisplayForCapture()
                         try await preparationFence()
+                        try await requireVirtualDisplayPromotionAfterCaptureReadiness()
+                        try await preparationFence()
                     }
                     if command.action == .awaitExternalFirstEncodedFrame {
                         try await preparationFence()
@@ -527,7 +529,6 @@ public actor LumenMacWorkspaceSession {
         }
         do {
             let result = try await executor.execute(activationCommand)
-            try await requireVirtualDisplayPromotionAfterCaptureReadiness()
             try await coordinator.complete(activationCommand, result: result)
             await executor.positionPointerOnVirtualDisplay()
             self.activationCommand = nil

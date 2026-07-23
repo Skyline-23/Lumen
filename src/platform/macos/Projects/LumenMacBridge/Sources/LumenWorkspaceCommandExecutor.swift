@@ -152,7 +152,8 @@ public actor LumenMacWorkspaceExecutor: LumenWorkspaceCommandExecuting {
                 logicalSize: CGSize(
                     width: CGFloat(displayGeometry.logicalWidth),
                     height: CGFloat(displayGeometry.logicalHeight)
-                )
+                ),
+                convergence: .deferredUntilCaptureReady
             ) else {
                 throw LumenMacDisplayWorkspaceError.virtualDisplayPromotionUnavailable(displayID)
             }
@@ -230,7 +231,8 @@ public actor LumenMacWorkspaceExecutor: LumenWorkspaceCommandExecuting {
             logicalSize: CGSize(
                 width: CGFloat(displayGeometry.logicalWidth),
                 height: CGFloat(displayGeometry.logicalHeight)
-            )
+            ),
+            convergence: .required
         )
     }
 

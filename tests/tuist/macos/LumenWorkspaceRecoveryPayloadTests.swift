@@ -45,7 +45,11 @@ private actor RecoveryPayloadDisplayWorkspace: LumenMacDisplayWorkspaceManaging 
         topology
     }
 
-    func promoteVirtualDisplay(_: UInt32, logicalSize _: CGSize) async -> Bool { true }
+    func promoteVirtualDisplay(
+        _: UInt32,
+        logicalSize _: CGSize,
+        convergence _: LumenMacDisplayPromotionConvergence
+    ) async -> Bool { true }
     func moveTargetWindows(to _: UInt32) async {}
     func isolateVirtualDisplay(_: UInt32) async {}
 

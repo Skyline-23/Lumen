@@ -55,6 +55,11 @@ public enum LumenMacDisplayWorkspaceError: LocalizedError, Equatable {
     }
 }
 
+@frozen public enum LumenMacDisplayPromotionConvergence: Equatable, Sendable {
+    case deferredUntilCaptureReady
+    case required
+}
+
 public protocol LumenMacDisplayWorkspaceManaging: Sendable {
     func snapshotWorkspace(
         targetProcessIdentifiers: [Int32]
@@ -62,7 +67,8 @@ public protocol LumenMacDisplayWorkspaceManaging: Sendable {
     @discardableResult
     func promoteVirtualDisplay(
         _ displayID: UInt32,
-        logicalSize: CGSize
+        logicalSize: CGSize,
+        convergence: LumenMacDisplayPromotionConvergence
     ) async throws -> Bool
     func moveTargetWindows(to displayID: UInt32) async throws
     func isolateVirtualDisplay(_ displayID: UInt32) async throws
@@ -149,7 +155,8 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
     @discardableResult
     public func promoteVirtualDisplay(
         _ displayID: UInt32,
-        logicalSize: CGSize
+        logicalSize: CGSize,
+        convergence: LumenMacDisplayPromotionConvergence
     ) async throws -> Bool {
         guard let snapshot else {
             throw LumenMacDisplayWorkspaceError.snapshotMissing
@@ -213,6 +220,16 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
                     )
                 }
             }
+        }
+        guard case .required = convergence else {
+            logPromotionState(
+                displayID: displayID,
+                mainDisplayID: CGMainDisplayID(),
+                activeDisplayIDs: activeDisplayIDs,
+                targetBounds: CGDisplayBounds(displayID),
+                result: "configured-pending-capture-readiness"
+            )
+            return true
         }
         return try await waitForPromotionConvergence(
             displayID: displayID,
