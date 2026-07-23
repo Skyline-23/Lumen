@@ -93,11 +93,12 @@ struct LumenMacWorkspaceSessionRequestSnapshot: Sendable {
         return LumenMacWorkspaceSessionRequest(
             displayKey: displayKey,
             policy: policy,
+            // Client sink scaling does not define the host-owned desktop mode.
             displayMode: LumenMacDisplayModeRequest(
                 width: width,
                 height: height,
-                scalePercent: scalePercent,
-                dimensionsAreLogical: dimensionsAreLogical
+                scalePercent: 100,
+                dimensionsAreLogical: false
             ),
             displayName: displayName,
             refreshRate: refreshRate,

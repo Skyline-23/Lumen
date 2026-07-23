@@ -1752,12 +1752,12 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         XCTAssertEqual(configuration.potentialPeakLuminanceNits, 1600)
     }
 
-    func testWorkspaceRequestBoxBuildsExternalCaptureSession() throws {
+    func testWorkspaceRequestBoxSeparatesClientSinkScaleFromHostDisplayMode() throws {
         let box = LumenMacWorkspaceSessionRequestBox()
         box.displayKey = "client-key"
-        box.width = 2732
-        box.height = 2048
-        box.scalePercent = 77
+        box.width = 640
+        box.height = 360
+        box.scalePercent = 200
         box.refreshRate = 120
         box.hdrEnabled = true
         box.clientSinkGamutRawValue = 3
@@ -1770,8 +1770,21 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         XCTAssertEqual(request.displayKey, "client-key")
         XCTAssertEqual(request.policy, .isolatedWorkspace)
         XCTAssertFalse(request.managesCapture)
-        XCTAssertEqual(request.displayMode.scalePercent, 77)
+        XCTAssertEqual(request.displayMode.width, 640)
+        XCTAssertEqual(request.displayMode.height, 360)
+        XCTAssertEqual(request.displayMode.scalePercent, 100)
+        XCTAssertFalse(request.displayMode.dimensionsAreLogical)
+        XCTAssertEqual(request.captureConfiguration.sinkRequest.mode.scalePercent, 200)
+        XCTAssertTrue(request.captureConfiguration.sinkRequest.mode.hidpi)
         XCTAssertTrue(request.captureConfiguration.usesHDRTransport)
+        let geometry = try LumenMacDisplayGeometryResolver.resolve(request.displayMode)
+        let configuration = try LumenMacVirtualDisplayConfigurationFactory.make(
+            geometry: geometry,
+            request: request
+        )
+        XCTAssertEqual(configuration.backingWidth, 640)
+        XCTAssertEqual(configuration.logicalWidth, 640)
+        XCTAssertFalse(configuration.highDensity)
         XCTAssertEqual(
             request.captureConfiguration.sinkRequest.capability.potentialPeakLuminanceNits,
             1600
