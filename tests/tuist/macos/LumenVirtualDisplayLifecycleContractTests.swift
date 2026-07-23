@@ -9,7 +9,7 @@ struct LumenVirtualDisplayLifecycleContractTests {
             "src/platform/macos/Projects/LumenMacBridge/Sources/LumenMacDisplayWorkspace.swift"
         )
         let start = try #require(
-            source.range(of: "    public func promoteVirtualDisplay(_ displayID: UInt32)")
+            source.range(of: "    public func promoteVirtualDisplay(")
         )
         let tail = source[start.lowerBound...]
         let end = try #require(

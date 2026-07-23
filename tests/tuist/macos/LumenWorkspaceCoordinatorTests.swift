@@ -316,7 +316,10 @@ private actor WorkspaceDisplayMock: LumenMacDisplayWorkspaceManaging {
         return testTopology()
     }
 
-    func promoteVirtualDisplay(_ displayID: UInt32) async -> Bool {
+    func promoteVirtualDisplay(
+        _ displayID: UInt32,
+        logicalSize _: CGSize
+    ) async -> Bool {
         await recorder.append(.promote(displayID))
         guard promotionResults.count > 1 else {
             return promotionResults.first ?? true

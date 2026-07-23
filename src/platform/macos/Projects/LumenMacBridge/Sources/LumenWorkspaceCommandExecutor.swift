@@ -1,3 +1,5 @@
+import CoreGraphics
+
 public protocol LumenWorkspaceCommandExecuting: Sendable {
     func execute(_ command: LumenMacWorkspaceCommand) async throws -> LumenMacWorkspaceCommandResult
 }
@@ -145,7 +147,13 @@ public actor LumenMacWorkspaceExecutor: LumenWorkspaceCommandExecuting {
         case .promoteVirtualMain:
             let displayID = try requireVirtualDisplay()
             try await operations.verifyVirtualDisplay(displayID)
-            guard try await displayWorkspace.promoteVirtualDisplay(displayID) else {
+            guard try await displayWorkspace.promoteVirtualDisplay(
+                displayID,
+                logicalSize: CGSize(
+                    width: CGFloat(displayGeometry.logicalWidth),
+                    height: CGFloat(displayGeometry.logicalHeight)
+                )
+            ) else {
                 throw LumenMacDisplayWorkspaceError.virtualDisplayPromotionUnavailable(displayID)
             }
             return .succeeded
@@ -217,7 +225,13 @@ public actor LumenMacWorkspaceExecutor: LumenWorkspaceCommandExecuting {
     public func promoteOwnedVirtualDisplay() async throws -> Bool {
         let displayID = try requireVirtualDisplay()
         try await operations.verifyVirtualDisplay(displayID)
-        return try await displayWorkspace.promoteVirtualDisplay(displayID)
+        return try await displayWorkspace.promoteVirtualDisplay(
+            displayID,
+            logicalSize: CGSize(
+                width: CGFloat(displayGeometry.logicalWidth),
+                height: CGFloat(displayGeometry.logicalHeight)
+            )
+        )
     }
 
     public func destroyOwnedVirtualDisplay() async throws {

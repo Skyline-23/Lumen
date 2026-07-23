@@ -107,6 +107,102 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         )
     }
 
+    func testPromotionSeparatesAnOverlappingPhysicalDisplayAndRequiresTheOwnedDisplayAsMain() throws {
+        let overlappingBounds: [CGDirectDisplayID: CGRect] = [
+            2: CGRect(x: 0, y: 0, width: 2_560, height: 1_440),
+            117: CGRect(x: 0, y: 0, width: 320, height: 180),
+        ]
+
+        let placements = try XCTUnwrap(
+            LumenMacDisplayWorkspace.promotionPlacements(
+                displayID: 117,
+                displayIDs: [2, 117],
+                boundsByDisplayID: overlappingBounds,
+                builtInDisplayIDs: [2],
+                targetSize: CGSize(width: 320, height: 180)
+            )
+        )
+
+        XCTAssertEqual(placements.map { $0.displayID }, [117, 2])
+        XCTAssertEqual(placements.map { $0.origin }, [
+            .zero,
+            CGPoint(x: 320, y: 0),
+        ])
+        var modeLessBounds = overlappingBounds
+        modeLessBounds[117] = .zero
+        let modeLessPlacements = try XCTUnwrap(
+            LumenMacDisplayWorkspace.promotionPlacements(
+                displayID: 117,
+                displayIDs: [2, 117],
+                boundsByDisplayID: modeLessBounds,
+                builtInDisplayIDs: [2],
+                targetSize: CGSize(width: 320, height: 180)
+            )
+        )
+        XCTAssertEqual(modeLessPlacements.map { $0.origin }, [
+            .zero,
+            CGPoint(x: 320, y: 0),
+        ])
+        XCTAssertFalse(
+            LumenMacDisplayWorkspace.promotionIsComplete(
+                displayID: 117,
+                mainDisplayID: 2,
+                activeDisplayIDs: [2, 117],
+                requiredActiveDisplayIDs: [2],
+                exactDisplayIsOnline: true,
+                exactDisplayIsActive: true,
+                boundsByDisplayID: overlappingBounds
+            )
+        )
+        XCTAssertFalse(
+            LumenMacDisplayWorkspace.promotionIsComplete(
+                displayID: 117,
+                mainDisplayID: 117,
+                activeDisplayIDs: [2, 117],
+                requiredActiveDisplayIDs: [2],
+                exactDisplayIsOnline: true,
+                exactDisplayIsActive: true,
+                boundsByDisplayID: overlappingBounds
+            )
+        )
+        XCTAssertFalse(
+            LumenMacDisplayWorkspace.promotionIsComplete(
+                displayID: 117,
+                mainDisplayID: 117,
+                activeDisplayIDs: [],
+                requiredActiveDisplayIDs: [2],
+                exactDisplayIsOnline: true,
+                exactDisplayIsActive: true,
+                boundsByDisplayID: overlappingBounds
+            )
+        )
+        XCTAssertFalse(
+            LumenMacDisplayWorkspace.promotionIsComplete(
+                displayID: 117,
+                mainDisplayID: 117,
+                activeDisplayIDs: [2, 117],
+                requiredActiveDisplayIDs: [2],
+                exactDisplayIsOnline: true,
+                exactDisplayIsActive: true,
+                boundsByDisplayID: modeLessBounds
+            )
+        )
+
+        var separatedBounds = overlappingBounds
+        separatedBounds[2]?.origin = CGPoint(x: 320, y: 0)
+        XCTAssertTrue(
+            LumenMacDisplayWorkspace.promotionIsComplete(
+                displayID: 117,
+                mainDisplayID: 117,
+                activeDisplayIDs: [2, 117],
+                requiredActiveDisplayIDs: [2],
+                exactDisplayIsOnline: true,
+                exactDisplayIsActive: true,
+                boundsByDisplayID: separatedBounds
+            )
+        )
+    }
+
     func testRestoreSkipsCoreGraphicsMutationWhenPhysicalTopologyAlreadyConverged() async throws {
         let topology = displayTopology()
         let physicalDisplayID = try XCTUnwrap(topology.displays.first.flatMap { UInt32($0.id) })

@@ -60,7 +60,10 @@ public protocol LumenMacDisplayWorkspaceManaging: Sendable {
         targetProcessIdentifiers: [Int32]
     ) async throws -> LumenMacPhysicalDisplayTopology
     @discardableResult
-    func promoteVirtualDisplay(_ displayID: UInt32) async throws -> Bool
+    func promoteVirtualDisplay(
+        _ displayID: UInt32,
+        logicalSize: CGSize
+    ) async throws -> Bool
     func moveTargetWindows(to displayID: UInt32) async throws
     func isolateVirtualDisplay(_ displayID: UInt32) async throws
     func restoreWorkspace(_ topology: LumenMacPhysicalDisplayTopology) async throws
@@ -69,6 +72,9 @@ public protocol LumenMacDisplayWorkspaceManaging: Sendable {
 }
 
 public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
+    private static let promotionConvergenceTimeout: TimeInterval = 5
+    private static let promotionPollNanoseconds: UInt64 = 50_000_000
+
     private struct WindowSnapshot {
         let processID: Int32
         let windowID: UInt32
@@ -141,10 +147,21 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
     }
 
     @discardableResult
-    public func promoteVirtualDisplay(_ displayID: UInt32) async throws -> Bool {
-        guard snapshot != nil else {
+    public func promoteVirtualDisplay(
+        _ displayID: UInt32,
+        logicalSize: CGSize
+    ) async throws -> Bool {
+        guard let snapshot else {
             throw LumenMacDisplayWorkspaceError.snapshotMissing
         }
+        let requiredActiveDisplayIDs: Set<CGDirectDisplayID> = Set(
+            snapshot.topology.displays.compactMap { state -> CGDirectDisplayID? in
+                guard state.active, state.online else {
+                    return nil
+                }
+                return UInt32(state.id)
+            }
+        )
         let visibleDisplayIDs = await topologyController.visibleDisplayIDs()
         let activeDisplayIDs = try activeDisplayIDs()
         guard let ids = Self.promotionDisplayIDs(
@@ -157,7 +174,19 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             return false
         }
 
-        let virtualOrigin = CGDisplayBounds(displayID).origin
+        let boundsByDisplayID = Dictionary(
+            uniqueKeysWithValues: ids.map { ($0, CGDisplayBounds($0)) }
+        )
+        let builtInDisplayIDs = Set(ids.filter { CGDisplayIsBuiltin($0) != 0 })
+        guard let placements = Self.promotionPlacements(
+            displayID: displayID,
+            displayIDs: ids,
+            boundsByDisplayID: boundsByDisplayID,
+            builtInDisplayIDs: builtInDisplayIDs,
+            targetSize: logicalSize
+        ) else {
+            return false
+        }
         try configureDisplays { configuration in
             for activeDisplayID in ids {
                 let result = CGConfigureDisplayMirrorOfDisplay(
@@ -171,17 +200,12 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
                     )
                 }
             }
-            for activeDisplayID in ids {
-                let origin = CGDisplayBounds(activeDisplayID).origin
-                let translated = CGPoint(
-                    x: origin.x - virtualOrigin.x,
-                    y: origin.y - virtualOrigin.y
-                )
+            for placement in placements {
                 let result = CGConfigureDisplayOrigin(
                     configuration,
-                    activeDisplayID,
-                    Int32(translated.x.rounded()),
-                    Int32(translated.y.rounded())
+                    placement.displayID,
+                    Int32(clamping: Int64(placement.origin.x.rounded())),
+                    Int32(clamping: Int64(placement.origin.y.rounded()))
                 )
                 guard result == .success else {
                     throw LumenMacDisplayWorkspaceError.displayConfigurationFailed(
@@ -190,7 +214,10 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
                 }
             }
         }
-        return true
+        return try await waitForPromotionConvergence(
+            displayID: displayID,
+            requiredActiveDisplayIDs: requiredActiveDisplayIDs
+        )
     }
 
     nonisolated static func promotionDisplayIDs(
@@ -212,6 +239,78 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             return activeDisplayIDs
         }
         return activeDisplayIDs + [displayID]
+    }
+
+    nonisolated static func promotionPlacements(
+        displayID: CGDirectDisplayID,
+        displayIDs: [CGDirectDisplayID],
+        boundsByDisplayID: [CGDirectDisplayID: CGRect],
+        builtInDisplayIDs: Set<CGDirectDisplayID>,
+        targetSize: CGSize
+    ) -> [(displayID: CGDirectDisplayID, origin: CGPoint)]? {
+        guard displayIDs.contains(displayID),
+              targetSize.width > 0,
+              targetSize.height > 0 else {
+            return nil
+        }
+        let remaining = displayIDs
+            .filter { $0 != displayID }
+            .sorted { lhs, rhs in
+                let lhsBuiltIn = builtInDisplayIDs.contains(lhs)
+                let rhsBuiltIn = builtInDisplayIDs.contains(rhs)
+                if lhsBuiltIn != rhsBuiltIn {
+                    return lhsBuiltIn
+                }
+                return lhs < rhs
+            }
+        var nextX = targetSize.width
+        var placements: [(displayID: CGDirectDisplayID, origin: CGPoint)] = [
+            (displayID, .zero),
+        ]
+        for remainingDisplayID in remaining {
+            guard let bounds = boundsByDisplayID[remainingDisplayID],
+                  bounds.width > 0,
+                  bounds.height > 0 else {
+                return nil
+            }
+            placements.append((
+                remainingDisplayID,
+                CGPoint(x: nextX, y: 0)
+            ))
+            nextX += max(1, bounds.width)
+        }
+        return placements
+    }
+
+    nonisolated static func promotionIsComplete(
+        displayID: CGDirectDisplayID,
+        mainDisplayID: CGDirectDisplayID,
+        activeDisplayIDs: [CGDirectDisplayID],
+        requiredActiveDisplayIDs: Set<CGDirectDisplayID>,
+        exactDisplayIsOnline: Bool,
+        exactDisplayIsActive: Bool,
+        boundsByDisplayID: [CGDirectDisplayID: CGRect]
+    ) -> Bool {
+        guard mainDisplayID == displayID,
+              requiredActiveDisplayIDs.isSubset(of: Set(activeDisplayIDs)),
+              exactDisplayIsOnline,
+              exactDisplayIsActive,
+              let targetBounds = boundsByDisplayID[displayID],
+              targetBounds.width > 0,
+              targetBounds.height > 0,
+              targetBounds.origin.x.rounded() == 0,
+              targetBounds.origin.y.rounded() == 0 else {
+            return false
+        }
+        for activeDisplayID in activeDisplayIDs where activeDisplayID != displayID {
+            guard let activeBounds = boundsByDisplayID[activeDisplayID],
+                  activeBounds.width > 0,
+                  activeBounds.height > 0,
+                  !targetBounds.intersects(activeBounds) else {
+                return false
+            }
+        }
+        return true
     }
 
     public func moveTargetWindows(to displayID: UInt32) throws {
@@ -386,6 +485,80 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             throw LumenMacDisplayWorkspaceError.displayConfigurationFailed(result.rawValue)
         }
         return Array(displays.prefix(Int(displayCount)))
+    }
+
+    private func waitForPromotionConvergence(
+        displayID: CGDirectDisplayID,
+        requiredActiveDisplayIDs: Set<CGDirectDisplayID>
+    ) async throws -> Bool {
+        let deadline = ProcessInfo.processInfo.systemUptime
+            + Self.promotionConvergenceTimeout
+        while true {
+            try Task.checkCancellation()
+            guard let activeDisplayIDs = try? activeDisplayIDs() else {
+                if ProcessInfo.processInfo.systemUptime >= deadline {
+                    logPromotionState(
+                        displayID: displayID,
+                        mainDisplayID: CGMainDisplayID(),
+                        activeDisplayIDs: [],
+                        targetBounds: CGDisplayBounds(displayID),
+                        result: "timeout-active-enumeration"
+                    )
+                    return false
+                }
+                try await Task.sleep(nanoseconds: Self.promotionPollNanoseconds)
+                continue
+            }
+            let boundsByDisplayID = Dictionary(
+                uniqueKeysWithValues: Set(activeDisplayIDs + [displayID]).map {
+                    ($0, CGDisplayBounds($0))
+                }
+            )
+            let mainDisplayID = CGMainDisplayID()
+            let isComplete = Self.promotionIsComplete(
+                displayID: displayID,
+                mainDisplayID: mainDisplayID,
+                activeDisplayIDs: activeDisplayIDs,
+                requiredActiveDisplayIDs: requiredActiveDisplayIDs,
+                exactDisplayIsOnline: CGDisplayIsOnline(displayID) != 0,
+                exactDisplayIsActive: CGDisplayIsActive(displayID) != 0,
+                boundsByDisplayID: boundsByDisplayID
+            )
+            if isComplete ||
+                ProcessInfo.processInfo.systemUptime >= deadline {
+                logPromotionState(
+                    displayID: displayID,
+                    mainDisplayID: mainDisplayID,
+                    activeDisplayIDs: activeDisplayIDs,
+                    targetBounds: boundsByDisplayID[displayID] ?? .zero,
+                    result: isComplete ? "ready" : "timeout"
+                )
+                return isComplete
+            }
+            try await Task.sleep(nanoseconds: Self.promotionPollNanoseconds)
+        }
+    }
+
+    private func logPromotionState(
+        displayID: CGDirectDisplayID,
+        mainDisplayID: CGDirectDisplayID,
+        activeDisplayIDs: [CGDirectDisplayID],
+        targetBounds: CGRect,
+        result: String
+    ) {
+        let activeIDs = activeDisplayIDs
+            .sorted()
+            .map(String.init)
+            .joined(separator: ",")
+        let message =
+            "Lumen virtual display promotion state " +
+            "display-id=\(displayID) main-display-id=\(mainDisplayID) " +
+            "target-origin=\(Int(targetBounds.origin.x.rounded()))," +
+            "\(Int(targetBounds.origin.y.rounded())) " +
+            "target-size=\(Int(targetBounds.width.rounded()))x" +
+            "\(Int(targetBounds.height.rounded())) " +
+            "active-display-ids=\(activeIDs) result=\(result)\n"
+        FileHandle.standardError.write(Data(message.utf8))
     }
 
     private func configureDisplays(
