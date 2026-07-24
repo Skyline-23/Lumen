@@ -376,7 +376,7 @@ final class LumenScreenCaptureDisplayReadinessTests: XCTestCase {
                 for: .retained(ownerToken: 7)
             )
         )
-        XCTAssertTrue(
+        XCTAssertFalse(
             inactiveMirrorSink.isPreparedHandleReady(
                 for: .retained(ownerToken: 7)
             )

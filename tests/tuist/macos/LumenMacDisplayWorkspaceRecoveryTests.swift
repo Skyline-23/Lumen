@@ -96,6 +96,7 @@ private actor DisplayMirrorProbe: LumenMacDisplayMirrorControlling {
     private let initialTargetIsActive: Bool
     private var targetReadinessSequence: [(online: Bool, active: Bool)]
     private let reportedMirrorSourceAfterApply: UInt32?
+    private let mirroredSourceBounds: CGRect?
     private let mirroredTargetIsActive: Bool
     private var applied = false
     private var staged = false
@@ -112,6 +113,7 @@ private actor DisplayMirrorProbe: LumenMacDisplayMirrorControlling {
         targetReadinessSequence: [(online: Bool, active: Bool)] = [],
         boundsByDisplayID: [UInt32: CGRect] = [:],
         ownerToken: UInt? = 0xCAFE,
+        mirroredSourceBounds: CGRect? = nil,
         mirroredTargetIsActive: Bool = true
     ) {
         self.sourceDisplayID = sourceDisplayID
@@ -120,6 +122,7 @@ private actor DisplayMirrorProbe: LumenMacDisplayMirrorControlling {
         self.initialTargetIsActive = initialTargetIsActive
         self.targetReadinessSequence = targetReadinessSequence
         self.reportedMirrorSourceAfterApply = reportedMirrorSourceAfterApply
+        self.mirroredSourceBounds = mirroredSourceBounds
         self.mirroredTargetIsActive = mirroredTargetIsActive
         self.boundsByDisplayID = boundsByDisplayID
         self.ownerToken = ownerToken
@@ -136,25 +139,46 @@ private actor DisplayMirrorProbe: LumenMacDisplayMirrorControlling {
         targetDisplayID: UInt32,
         sourceDisplayID: UInt32
     ) -> LumenMacDisplayMirrorState {
-        let targetReadiness = staged
+        let targetIsOwnedVirtualDisplay = targetDisplayID == self.targetDisplayID
+        let sourceIsOwnedVirtualDisplay = sourceDisplayID == self.targetDisplayID
+        let ownedDisplayReadiness = staged
             ? (online: true, active: true)
             : targetReadinessSequence.isEmpty
                 ? (online: initialTargetIsOnline, active: initialTargetIsActive)
                 : targetReadinessSequence.removeFirst()
+        let sourceBounds = sourceIsOwnedVirtualDisplay
+            ? applied
+                ? mirroredSourceBounds ?? targetBounds
+                : targetBounds
+            : boundsByDisplayID[sourceDisplayID]
+                ?? CGRect(x: 0, y: 0, width: 2_560, height: 1_440)
+        let resolvedTargetBounds = targetIsOwnedVirtualDisplay
+            ? targetBounds
+            : boundsByDisplayID[targetDisplayID]
+                ?? CGRect(x: 0, y: 0, width: 2_560, height: 1_440)
         return LumenMacDisplayMirrorState(
-            mainDisplayID: self.sourceDisplayID,
+            mainDisplayID: applied ? sourceDisplayID : self.sourceDisplayID,
             mirrorSourceDisplayID: applied
                 ? reportedMirrorSourceAfterApply
                 : nil,
-            sourceIsOnline: sourceDisplayID == self.sourceDisplayID,
-            sourceIsActive: sourceDisplayID == self.sourceDisplayID,
-            sourceIsOwnedVirtualDisplay: false,
-            targetIsOnline: targetDisplayID == self.targetDisplayID &&
-                targetReadiness.online,
-            targetIsActive: targetDisplayID == self.targetDisplayID &&
-                (applied ? mirroredTargetIsActive : targetReadiness.active),
-            targetBounds: targetBounds,
-            targetOwnerToken: targetDisplayID == self.targetDisplayID
+            sourceIsOnline:
+                sourceDisplayID == self.sourceDisplayID ||
+                (sourceIsOwnedVirtualDisplay && ownedDisplayReadiness.online),
+            sourceIsActive:
+                sourceDisplayID == self.sourceDisplayID ||
+                (sourceIsOwnedVirtualDisplay && ownedDisplayReadiness.active),
+            sourceIsOwnedVirtualDisplay: sourceIsOwnedVirtualDisplay,
+            sourceBounds: sourceBounds,
+            sourceOwnerToken: sourceIsOwnedVirtualDisplay ? ownerToken : nil,
+            targetIsOnline:
+                targetDisplayID == self.sourceDisplayID ||
+                (targetIsOwnedVirtualDisplay && ownedDisplayReadiness.online),
+            targetIsActive: applied
+                ? mirroredTargetIsActive
+                : targetDisplayID == self.sourceDisplayID ||
+                    (targetIsOwnedVirtualDisplay && ownedDisplayReadiness.active),
+            targetBounds: resolvedTargetBounds,
+            targetOwnerToken: targetIsOwnedVirtualDisplay
                 ? ownerToken
                 : nil
         )
@@ -330,7 +354,7 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         )
     }
 
-    func testOwnedDesktopMirrorAcceptsInactiveOnlineSinkAndUnmirrorsDuringRestore() async throws {
+    func testOwnedVirtualDesktopSourceMirrorsPhysicalTargetAndRestoresTopology() async throws {
         let topology = displayTopology()
         let sourceDisplayID = try XCTUnwrap(
             topology.displays.first.flatMap { UInt32($0.id) }
@@ -340,7 +364,8 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         let mirrorProbe = DisplayMirrorProbe(
             sourceDisplayID: sourceDisplayID,
             targetDisplayID: targetDisplayID,
-            reportedMirrorSourceAfterApply: sourceDisplayID,
+            reportedMirrorSourceAfterApply: targetDisplayID,
+            initialTargetBounds: CGRect(x: -640, y: 0, width: 640, height: 360),
             mirroredTargetIsActive: false
         )
         let workspace = LumenMacDisplayWorkspace(
@@ -360,8 +385,8 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
 
         let events = await mirrorProbe.recordedEvents()
         XCTAssertEqual(events, [
-            .mirror(target: targetDisplayID, source: sourceDisplayID),
-            .unmirror(target: targetDisplayID),
+            .mirror(target: sourceDisplayID, source: targetDisplayID),
+            .unmirror(target: sourceDisplayID),
         ])
         let restoredTopologies = await topologyProbe.restoredTopologies()
         XCTAssertTrue(restoredTopologies.isEmpty)
@@ -651,7 +676,7 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         XCTAssertTrue(events.isEmpty)
     }
 
-    func testOwnedDesktopMirrorPostconditionFailureUnmirrorsOnlyExactTarget() async throws {
+    func testCollapsedVirtualDesktopSourceUnmirrorsPhysicalTargetAndRestoresTopology() async throws {
         let topology = displayTopology()
         let sourceDisplayID = try XCTUnwrap(
             topology.displays.first.flatMap { UInt32($0.id) }
@@ -661,7 +686,9 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         let mirrorProbe = DisplayMirrorProbe(
             sourceDisplayID: sourceDisplayID,
             targetDisplayID: targetDisplayID,
-            reportedMirrorSourceAfterApply: nil
+            reportedMirrorSourceAfterApply: targetDisplayID,
+            initialTargetBounds: CGRect(x: -640, y: 0, width: 640, height: 360),
+            mirroredSourceBounds: CGRect(x: 0, y: 0, width: 1, height: 1)
         )
         let workspace = LumenMacDisplayWorkspace(
             topologyController: topologyProbe,
@@ -671,6 +698,7 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         )
         _ = try await workspace.snapshotWorkspace(targetProcessIdentifiers: [])
         await topologyProbe.allowVerification()
+        await topologyProbe.failVerificationUntilRestore()
 
         do {
             try await workspace.mirrorOwnedVirtualDisplay(
@@ -686,11 +714,11 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
 
         let events = await mirrorProbe.recordedEvents()
         XCTAssertEqual(events, [
-            .mirror(target: targetDisplayID, source: sourceDisplayID),
-            .unmirror(target: targetDisplayID),
+            .mirror(target: sourceDisplayID, source: targetDisplayID),
+            .unmirror(target: sourceDisplayID),
         ])
         let restoredTopologies = await topologyProbe.restoredTopologies()
-        XCTAssertTrue(restoredTopologies.isEmpty)
+        XCTAssertEqual(restoredTopologies, [topology])
     }
 
     func testRestoreSkipsCoreGraphicsMutationWhenPhysicalTopologyAlreadyConverged() async throws {

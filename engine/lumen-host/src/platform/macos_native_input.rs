@@ -290,8 +290,8 @@ fn preferred_pointer_bounds(
     published_bounds: CGRect,
     planned_bounds: Option<MacInputDisplayBounds>,
 ) -> Result<CGRect, String> {
-    // Desktop mirror input targets the retained physical source; its published bounds must win
-    // over the virtual capture geometry whenever CoreGraphics has them available.
+    // Input targets the active session display. Its published bounds must win over the planned
+    // virtual geometry whenever CoreGraphics has them available.
     if published_bounds.size.width > 0.0 && published_bounds.size.height > 0.0 {
         return Ok(published_bounds);
     }
@@ -608,14 +608,14 @@ mod tests {
     }
 
     #[test]
-    fn published_source_bounds_take_precedence_over_planned_virtual_bounds() {
+    fn published_session_bounds_take_precedence_over_planned_virtual_bounds() {
         let published = CGRect::new(&CGPoint::new(1440.0, 0.0), &CGSize::new(2560.0, 1440.0));
         let planned = MacInputDisplayBounds {
             width: 960.0,
             height: 540.0,
         };
         let selected = preferred_pointer_bounds(76, published, Some(planned))
-            .expect("published source bounds");
+            .expect("published session bounds");
         assert_eq!(selected.origin.x, 1440.0);
         assert_eq!(selected.size.width, 2560.0);
         assert_eq!(selected.size.height, 1440.0);

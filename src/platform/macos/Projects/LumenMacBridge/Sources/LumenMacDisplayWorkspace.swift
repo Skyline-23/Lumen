@@ -33,7 +33,8 @@ public enum LumenMacDisplayWorkspaceError: LocalizedError, Equatable {
         case .virtualDisplayPromotionUnavailable(let displayID):
             "owned virtual display \(displayID) could not be promoted into the capture workspace"
         case let .virtualDisplayMirrorUnavailable(displayID, sourceDisplayID):
-            "owned virtual display \(displayID) could not mirror desktop source \(sourceDisplayID)"
+            "owned virtual display \(displayID) could not become the capture source " +
+                "for physical desktop display \(sourceDisplayID)"
         case .virtualDisplayMirrorRollbackFailed(let displayID):
             "owned virtual display \(displayID) could not leave desktop mirror topology"
         case let .virtualDisplayOwnershipLost(displayID, expectedOwnerToken, actualOwnerToken):
@@ -85,6 +86,8 @@ struct LumenMacDisplayMirrorState: Equatable, Sendable {
     let sourceIsOnline: Bool
     let sourceIsActive: Bool
     let sourceIsOwnedVirtualDisplay: Bool
+    let sourceBounds: CGRect
+    let sourceOwnerToken: UInt?
     let targetIsOnline: Bool
     let targetIsActive: Bool
     let targetBounds: CGRect
@@ -135,6 +138,8 @@ struct LumenCoreGraphicsDisplayMirrorController:
                 LumenMacVirtualDisplay.registeredDisplay(
                     forDisplayID: sourceDisplayID
                 ) != nil,
+            sourceBounds: CGDisplayBounds(sourceDisplayID),
+            sourceOwnerToken: Self.ownerToken(for: sourceDisplayID),
             targetIsOnline: CGDisplayIsOnline(targetDisplayID) != 0,
             targetIsActive: CGDisplayIsActive(targetDisplayID) != 0,
             targetBounds: CGDisplayBounds(targetDisplayID),
@@ -330,8 +335,8 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
     private let disconnectCapabilityVerifier: any LumenDisplayDisconnectCapabilityVerifying
     private var snapshot: Snapshot?
     private var mirroredDisplayIDs: (
-        targetDisplayID: UInt32,
-        sourceDisplayID: UInt32
+        physicalTargetDisplayID: UInt32,
+        sessionSourceDisplayID: UInt32
     )?
 
     public init() {
@@ -612,8 +617,8 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             )
         }
         let before = await mirrorController.state(
-            targetDisplayID: displayID,
-            sourceDisplayID: sourceDisplayID
+            targetDisplayID: sourceDisplayID,
+            sourceDisplayID: displayID
         )
         logDesktopMirrorState(
             phase: "before",
@@ -621,29 +626,35 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             displayID: displayID,
             sourceDisplayID: sourceDisplayID
         )
-        guard let expectedTargetOwnerToken = before.targetOwnerToken,
+        guard let expectedSourceOwnerToken = before.sourceOwnerToken,
               before.mainDisplayID == sourceDisplayID,
               before.mirrorSourceDisplayID == nil,
               before.sourceIsOnline,
               before.sourceIsActive,
-              !before.sourceIsOwnedVirtualDisplay,
+              before.sourceIsOwnedVirtualDisplay,
+              Self.hasUsableDisplayBounds(before.sourceBounds),
               before.targetIsOnline,
-              before.targetIsActive else {
+              before.targetIsActive,
+              before.targetOwnerToken == nil else {
             throw LumenMacDisplayWorkspaceError.virtualDisplayMirrorUnavailable(
                 displayID,
                 sourceDisplayID
             )
         }
+        let expectedSourceSize = before.sourceBounds.size
 
         try await mirrorController.mirror(
-            targetDisplayID: displayID,
-            sourceDisplayID: sourceDisplayID
+            targetDisplayID: sourceDisplayID,
+            sourceDisplayID: displayID
         )
-        mirroredDisplayIDs = (displayID, sourceDisplayID)
+        mirroredDisplayIDs = (
+            physicalTargetDisplayID: sourceDisplayID,
+            sessionSourceDisplayID: displayID
+        )
         do {
             let after = await mirrorController.state(
-                targetDisplayID: displayID,
-                sourceDisplayID: sourceDisplayID
+                targetDisplayID: sourceDisplayID,
+                sourceDisplayID: displayID
             )
             logDesktopMirrorState(
                 phase: "after",
@@ -651,24 +662,26 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
                 displayID: displayID,
                 sourceDisplayID: sourceDisplayID
             )
-            guard after.mainDisplayID == sourceDisplayID,
-                  after.mirrorSourceDisplayID == sourceDisplayID,
+            guard after.mainDisplayID == displayID,
+                  after.mirrorSourceDisplayID == displayID,
                   after.sourceIsOnline,
                   after.sourceIsActive,
-                  !after.sourceIsOwnedVirtualDisplay,
+                  after.sourceIsOwnedVirtualDisplay,
+                  Self.hasUsableDisplayBounds(after.sourceBounds),
+                  after.sourceBounds.size == expectedSourceSize,
+                  after.sourceOwnerToken == expectedSourceOwnerToken,
                   after.targetIsOnline,
-                  after.targetOwnerToken == expectedTargetOwnerToken else {
+                  after.targetOwnerToken == nil else {
                 throw LumenMacDisplayWorkspaceError.virtualDisplayMirrorUnavailable(
                     displayID,
                     sourceDisplayID
                 )
             }
-            try await topologyController.verify(snapshot.topology)
         } catch {
             let originalError = error
             do {
                 try await releaseDesktopMirror(
-                    targetDisplayID: displayID,
+                    targetDisplayID: sourceDisplayID,
                     topology: snapshot.topology
                 )
             } catch {
@@ -1011,12 +1024,12 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
         if let mirroredDisplayIDs {
             do {
                 try await releaseDesktopMirror(
-                    targetDisplayID: mirroredDisplayIDs.targetDisplayID,
+                    targetDisplayID: mirroredDisplayIDs.physicalTargetDisplayID,
                     topology: topology
                 )
             } catch {
                 throw LumenMacDisplayWorkspaceError.virtualDisplayMirrorRollbackFailed(
-                    mirroredDisplayIDs.targetDisplayID
+                    mirroredDisplayIDs.sessionSourceDisplayID
                 )
             }
         }
@@ -1125,24 +1138,30 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
         sourceDisplayID: UInt32
     ) {
         let mirrorSource = state.mirrorSourceDisplayID.map(String.init) ?? "none"
-        let ownerToken = state.targetOwnerToken.map(String.init) ?? "none"
+        let sourceOwnerToken = state.sourceOwnerToken.map(String.init) ?? "none"
+        let targetOwnerToken = state.targetOwnerToken.map(String.init) ?? "none"
         let message =
             "Lumen desktop mirror state " +
             "phase=\(phase) " +
-            "display-id=\(displayID) " +
-            "source-display-id=\(sourceDisplayID) " +
+            "session-display-id=\(displayID) " +
+            "physical-target-display-id=\(sourceDisplayID) " +
             "main-display-id=\(state.mainDisplayID) " +
             "mirror-source-id=\(mirrorSource) " +
-            "source-online=\(state.sourceIsOnline) " +
-            "source-active=\(state.sourceIsActive) " +
-            "source-owned=\(state.sourceIsOwnedVirtualDisplay) " +
-            "target-online=\(state.targetIsOnline) " +
-            "target-active=\(state.targetIsActive) " +
-            "target-origin=\(Int(state.targetBounds.origin.x.rounded()))," +
+            "session-online=\(state.sourceIsOnline) " +
+            "session-active=\(state.sourceIsActive) " +
+            "session-owned=\(state.sourceIsOwnedVirtualDisplay) " +
+            "session-origin=\(Int(state.sourceBounds.origin.x.rounded()))," +
+            "\(Int(state.sourceBounds.origin.y.rounded())) " +
+            "session-size=\(Int(state.sourceBounds.width.rounded()))x" +
+            "\(Int(state.sourceBounds.height.rounded())) " +
+            "session-owner-token=\(sourceOwnerToken) " +
+            "physical-target-online=\(state.targetIsOnline) " +
+            "physical-target-active=\(state.targetIsActive) " +
+            "physical-target-origin=\(Int(state.targetBounds.origin.x.rounded()))," +
             "\(Int(state.targetBounds.origin.y.rounded())) " +
-            "target-size=\(Int(state.targetBounds.width.rounded()))x" +
+            "physical-target-size=\(Int(state.targetBounds.width.rounded()))x" +
             "\(Int(state.targetBounds.height.rounded())) " +
-            "owner-token=\(ownerToken)\n"
+            "physical-target-owner-token=\(targetOwnerToken)\n"
         FileHandle.standardError.write(Data(message.utf8))
     }
 
@@ -1151,6 +1170,9 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
         topology: LumenMacPhysicalDisplayTopology
     ) async throws {
         try await mirrorController.unmirror(targetDisplayID: targetDisplayID)
+        if (try? await topologyController.verify(topology)) == nil {
+            try await topologyController.restore(topology)
+        }
         try await topologyController.verify(topology)
         mirroredDisplayIDs = nil
     }

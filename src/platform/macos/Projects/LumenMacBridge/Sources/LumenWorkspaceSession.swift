@@ -416,11 +416,6 @@ public actor LumenMacWorkspaceSession {
                     on: displayID,
                     geometry: geometry
                 )
-            },
-            positionPointerOnSourceDisplay: { displayID in
-                LumenMacPointerPositioner.centerPointerOnPublishedDisplay(
-                    displayID
-                )
             }
         )
         try self.init(
@@ -726,7 +721,8 @@ public actor LumenMacWorkspaceSession {
                 Data(
                     (
                         "Lumen virtual desktop mirror ready " +
-                            "display-id=\(displayID) source-display-id=\(sourceDisplayID)\n"
+                            "session-display-id=\(displayID) " +
+                            "physical-target-display-id=\(sourceDisplayID)\n"
                     ).utf8
                 )
             )
@@ -777,29 +773,6 @@ enum LumenMacPointerPositioner {
         )
     }
 
-    static func centerPointerOnPublishedDisplay(
-        _ displayID: CGDirectDisplayID
-    ) {
-        let bounds = CGDisplayBounds(displayID)
-        guard bounds.width > 0, bounds.height > 0 else {
-            return
-        }
-        let result = CGDisplayMoveCursorToPoint(
-            displayID,
-            CGPoint(x: bounds.width / 2, y: bounds.height / 2)
-        )
-        guard result != .success else {
-            return
-        }
-        FileHandle.standardError.write(
-            Data(
-                (
-                    "Lumen pointer initialization failed " +
-                        "display-id=\(displayID) status=\(result.rawValue)\n"
-                ).utf8
-            )
-        )
-    }
 }
 
 private enum LumenMacWorkspaceIsolationRuntimeEventPublisher {

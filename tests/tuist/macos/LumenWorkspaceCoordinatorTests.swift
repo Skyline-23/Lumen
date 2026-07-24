@@ -34,7 +34,6 @@ private enum WorkspaceExecutionEvent: Equatable {
     case isolate(UInt32)
     case firstFrameBarrier
     case positionPointer(UInt32, LumenMacDisplayGeometry)
-    case positionSourcePointer(UInt32)
     case captureContinuity
     case startCapture(UInt32)
     case stopCapture
@@ -1170,8 +1169,8 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
             waitForExternalFirstEncodedFrame: {
                 await recorder.append(.firstFrameBarrier)
             },
-            positionPointerOnSourceDisplay: { displayID in
-                await recorder.append(.positionSourcePointer(displayID))
+            positionPointer: { displayID, geometry in
+                await recorder.append(.positionPointer(displayID, geometry))
             }
         )
         let request = LumenMacWorkspaceSessionRequest(
@@ -1203,8 +1202,9 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
             let outcome = try await session.activate()
             XCTAssertEqual(outcome.isolationStatus, .notRequested)
             let activeEvents = await recorder.recordedEvents()
+            let geometry = try LumenMacDisplayGeometryResolver.resolve(request.displayMode)
             XCTAssertTrue(activeEvents.contains(.firstFrameBarrier))
-            XCTAssertTrue(activeEvents.contains(.positionSourcePointer(3)))
+            XCTAssertTrue(activeEvents.contains(.positionPointer(89, geometry)))
             XCTAssertFalse(activeEvents.contains(.isolate(89)))
             lifecycleEvents = activeEvents
         }

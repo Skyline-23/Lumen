@@ -497,22 +497,7 @@ struct LumenScreenCaptureDisplayReadinessSnapshot: Equatable, Sendable {
     func isPreparedHandleReady(
         for authority: LumenScreenCaptureDisplayAuthority
     ) -> Bool {
-        switch authority {
-        case .retained:
-            guard isOnline else {
-                return false
-            }
-            if isActive {
-                return isModeReady(for: authority)
-            }
-            // A CoreGraphics mirror sink can remain online while no longer
-            // being independently drawable. The handle was admitted before
-            // mirroring, so retain it only while the exact owned display and
-            // its configured geometry still exist.
-            return configuredPixelWidth > 0 && configuredPixelHeight > 0
-        case .exactExternal:
-            return isModeReady(for: authority)
-        }
+        isModeReady(for: authority)
     }
 }
 

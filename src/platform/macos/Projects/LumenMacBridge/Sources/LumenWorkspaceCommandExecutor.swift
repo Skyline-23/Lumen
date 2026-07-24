@@ -55,7 +55,6 @@ public struct LumenMacWorkspaceNativeOperations: Sendable {
         UInt32,
         LumenMacDisplayGeometry
     ) async -> Void
-    public var positionPointerOnSourceDisplay: @Sendable (UInt32) async -> Void
 
     public init(
         createVirtualDisplay: @escaping @Sendable (
@@ -75,8 +74,7 @@ public struct LumenMacWorkspaceNativeOperations: Sendable {
         positionPointer: @escaping @Sendable (
             UInt32,
             LumenMacDisplayGeometry
-        ) async -> Void = { _, _ in },
-        positionPointerOnSourceDisplay: @escaping @Sendable (UInt32) async -> Void = { _ in }
+        ) async -> Void = { _, _ in }
     ) {
         self.createVirtualDisplay = createVirtualDisplay
         self.configureVirtualDisplay = configureVirtualDisplay
@@ -88,7 +86,6 @@ public struct LumenMacWorkspaceNativeOperations: Sendable {
         self.waitForExternalFirstEncodedFrame = waitForExternalFirstEncodedFrame
         self.verifyCaptureContinuity = verifyCaptureContinuity
         self.positionPointer = positionPointer
-        self.positionPointerOnSourceDisplay = positionPointerOnSourceDisplay
     }
 }
 
@@ -235,15 +232,10 @@ public actor LumenMacWorkspaceExecutor: LumenWorkspaceCommandExecuting {
     }
 
     public func positionPointerOnSessionDisplay() async {
-        switch contentSource {
-        case .targetWindows:
-            guard let virtualDisplayID else {
-                return
-            }
-            await operations.positionPointer(virtualDisplayID, displayGeometry)
-        case .desktopMirror(let sourceDisplayID):
-            await operations.positionPointerOnSourceDisplay(sourceDisplayID)
+        guard let virtualDisplayID else {
+            return
         }
+        await operations.positionPointer(virtualDisplayID, displayGeometry)
     }
 
     @discardableResult
