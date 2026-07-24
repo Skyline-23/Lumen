@@ -186,6 +186,7 @@ static void LumenConfigureHDRDisplayInfo(
 @property(nonatomic) uint32_t backingHeight;
 @property(nonatomic) uint32_t logicalWidth;
 @property(nonatomic) uint32_t logicalHeight;
+@property(nonatomic) double refreshRate;
 @property(nonatomic, strong) id descriptor;
 @property(nonatomic, strong) id mode;
 @property(nonatomic, strong) id settings;
@@ -193,6 +194,14 @@ static void LumenConfigureHDRDisplayInfo(
 @property(nonatomic, strong) dispatch_queue_t callbackQueue;
 @property(nonatomic) LumenMacVirtualDisplayTransfer transfer;
 @property(nonatomic) BOOL hdrEnabled;
+
+- (nullable id)createModeWithLogicalWidth:(uint32_t)logicalWidth
+                            logicalHeight:(uint32_t)logicalHeight
+                              refreshRate:(double)refreshRate
+                                 transfer:(LumenMacVirtualDisplayTransfer)transfer
+                               hdrEnabled:(BOOL)hdrEnabled
+                                    error:(NSError **)error;
+- (BOOL)applyVirtualDisplaySettings:(id)settings;
 @end
 
 @implementation LumenMacVirtualDisplay
@@ -438,16 +447,17 @@ static void LumenConfigureHDRDisplayInfo(
       return nil;
     }
 
-    if (![self createModeWithLogicalWidth:configuration.logicalWidth
-                            logicalHeight:configuration.logicalHeight
-                              refreshRate:configuration.refreshRate
-                                 transfer:configuration.transfer
-                              hdrEnabled:configuration.hdrEnabled
-                                    error:error]) {
+    id initialMode = [self createModeWithLogicalWidth:configuration.logicalWidth
+                                        logicalHeight:configuration.logicalHeight
+                                          refreshRate:configuration.refreshRate
+                                             transfer:configuration.transfer
+                                           hdrEnabled:configuration.hdrEnabled
+                                                error:error];
+    if (initialMode == nil) {
       [self destroy];
       return nil;
     }
-    [_settings setValue:@[_mode] forKey:@"modes"];
+    [_settings setValue:@[initialMode] forKey:@"modes"];
     [_settings setValue:@(configuration.highDensity) forKey:@"hiDPI"];
     [_settings setValue:@0 forKey:@"rotation"];
     [_settings setValue:@(configuration.hdrEnabled) forKey:@"isReference"];
@@ -459,11 +469,7 @@ static void LumenConfigureHDRDisplayInfo(
       );
     }
 
-    BOOL applied = ((BOOL (*)(id, SEL, id))objc_msgSend)(
-      _display,
-      sel_registerName("applySettings:"),
-      _settings
-    );
+    BOOL applied = [self applyVirtualDisplaySettings:_settings];
     if (!applied) {
       LumenAssignVirtualDisplayError(
         error,
@@ -489,6 +495,8 @@ static void LumenConfigureHDRDisplayInfo(
     _backingHeight = configuration.backingHeight;
     _logicalWidth = configuration.logicalWidth;
     _logicalHeight = configuration.logicalHeight;
+    _refreshRate = configuration.refreshRate;
+    _mode = initialMode;
     _transfer = configuration.transfer;
     _hdrEnabled = configuration.hdrEnabled;
   } @catch (NSException *exception) {
@@ -503,23 +511,24 @@ static void LumenConfigureHDRDisplayInfo(
   return self;
 }
 
-- (BOOL)createModeWithLogicalWidth:(uint32_t)logicalWidth
-                     logicalHeight:(uint32_t)logicalHeight
-                       refreshRate:(double)refreshRate
-                          transfer:(LumenMacVirtualDisplayTransfer)transfer
-                       hdrEnabled:(BOOL)hdrEnabled
-                             error:(NSError **)error {
+- (nullable id)createModeWithLogicalWidth:(uint32_t)logicalWidth
+                            logicalHeight:(uint32_t)logicalHeight
+                              refreshRate:(double)refreshRate
+                                 transfer:(LumenMacVirtualDisplayTransfer)transfer
+                               hdrEnabled:(BOOL)hdrEnabled
+                                    error:(NSError **)error {
   Class modeClass = NSClassFromString(@"CGVirtualDisplayMode");
   LumenMacVirtualDisplayConfiguration *transferConfiguration = [LumenMacVirtualDisplayConfiguration new];
   transferConfiguration.transfer = transfer;
   transferConfiguration.hdrEnabled = hdrEnabled;
   const int transferCode = LumenTransferFunctionCode(transferConfiguration);
+  id mode;
 
   if (hdrEnabled &&
       [modeClass instancesRespondToSelector:sel_registerName(
         "initWithWidth:height:refreshRate:transferFunction:"
       )]) {
-    _mode = ((id (*)(id, SEL, NSUInteger, NSUInteger, double, unsigned int))objc_msgSend)(
+    mode = ((id (*)(id, SEL, NSUInteger, NSUInteger, double, unsigned int))objc_msgSend)(
       [modeClass alloc],
       sel_registerName("initWithWidth:height:refreshRate:transferFunction:"),
       (NSUInteger)logicalWidth,
@@ -528,7 +537,7 @@ static void LumenConfigureHDRDisplayInfo(
       (unsigned int)MAX(transferCode, 0)
     );
   } else {
-    _mode = ((id (*)(id, SEL, NSUInteger, NSUInteger, double))objc_msgSend)(
+    mode = ((id (*)(id, SEL, NSUInteger, NSUInteger, double))objc_msgSend)(
       [modeClass alloc],
       sel_registerName("initWithWidth:height:refreshRate:"),
       (NSUInteger)logicalWidth,
@@ -536,15 +545,23 @@ static void LumenConfigureHDRDisplayInfo(
       refreshRate
     );
   }
-  if (_mode == nil) {
+  if (mode == nil) {
     LumenAssignVirtualDisplayError(
       error,
       LumenMacVirtualDisplayErrorObjectCreationFailed,
       @"Failed to create the requested virtual display mode."
     );
-    return NO;
+    return nil;
   }
-  return YES;
+  return mode;
+}
+
+- (BOOL)applyVirtualDisplaySettings:(id)settings {
+  return ((BOOL (*)(id, SEL, id))objc_msgSend)(
+    _display,
+    sel_registerName("applySettings:"),
+    settings
+  );
 }
 
 - (BOOL)updateLogicalWidth:(uint32_t)logicalWidth
@@ -559,35 +576,47 @@ static void LumenConfigureHDRDisplayInfo(
     );
     return NO;
   }
-
+  id previousMode = _mode;
+  id previousModes = [_settings valueForKey:@"modes"];
+  id restoreModes = previousModes;
+  if (restoreModes == nil && previousMode != nil) {
+    restoreModes = @[previousMode];
+  }
   @try {
-    if (![self createModeWithLogicalWidth:logicalWidth
-                            logicalHeight:logicalHeight
-                              refreshRate:refreshRate
-                                 transfer:_transfer
-                               hdrEnabled:_hdrEnabled
-                                    error:error]) {
+    id candidateMode = [self createModeWithLogicalWidth:logicalWidth
+                                          logicalHeight:logicalHeight
+                                            refreshRate:refreshRate
+                                               transfer:_transfer
+                                             hdrEnabled:_hdrEnabled
+                                                  error:error];
+    if (candidateMode == nil) {
       return NO;
     }
-    [_settings setValue:@[_mode] forKey:@"modes"];
-    BOOL applied = ((BOOL (*)(id, SEL, id))objc_msgSend)(
-      _display,
-      sel_registerName("applySettings:"),
-      _settings
-    );
+    [_settings setValue:@[candidateMode] forKey:@"modes"];
+    BOOL applied = [self applyVirtualDisplaySettings:_settings];
     if (!applied) {
+      if (restoreModes != nil) {
+        [_settings setValue:restoreModes forKey:@"modes"];
+      }
       LumenAssignVirtualDisplayError(
         error,
         LumenMacVirtualDisplayErrorSettingsRejected,
         @"macOS rejected the updated virtual display mode."
       );
+      return NO;
     }
-    if (applied) {
-      _logicalWidth = logicalWidth;
-      _logicalHeight = logicalHeight;
-    }
-    return applied;
+    _mode = candidateMode;
+    _logicalWidth = logicalWidth;
+    _logicalHeight = logicalHeight;
+    _refreshRate = refreshRate;
+    return YES;
   } @catch (NSException *exception) {
+    if (restoreModes != nil) {
+      @try {
+        [_settings setValue:restoreModes forKey:@"modes"];
+      } @catch (__unused NSException *restoreException) {
+      }
+    }
     LumenAssignVirtualDisplayError(
       error,
       LumenMacVirtualDisplayErrorSettingsRejected,
@@ -605,6 +634,7 @@ static void LumenConfigureHDRDisplayInfo(
   _backingHeight = 0;
   _logicalWidth = 0;
   _logicalHeight = 0;
+  _refreshRate = 0;
   _hdrEnabled = NO;
   if (display != nil && [display respondsToSelector:sel_registerName("destroy")]) {
     ((void (*)(id, SEL))objc_msgSend)(display, sel_registerName("destroy"));

@@ -4,17 +4,21 @@
 
 static BOOL LumenDisplayExistedBeforeModeCreation = NO;
 
+@interface LumenMacVirtualDisplay (LumenModeUpdateTesting)
+- (BOOL)applyVirtualDisplaySettings:(id)settings;
+@end
+
 @interface LumenVirtualDisplayConstructionOrderProbe : LumenMacVirtualDisplay
 @end
 
 @implementation LumenVirtualDisplayConstructionOrderProbe
 
-- (BOOL)createModeWithLogicalWidth:(uint32_t)logicalWidth
-                     logicalHeight:(uint32_t)logicalHeight
-                       refreshRate:(double)refreshRate
-                          transfer:(LumenMacVirtualDisplayTransfer)transfer
-                        hdrEnabled:(BOOL)hdrEnabled
-                             error:(NSError **)error {
+- (nullable id)createModeWithLogicalWidth:(uint32_t)logicalWidth
+                            logicalHeight:(uint32_t)logicalHeight
+                              refreshRate:(double)refreshRate
+                                 transfer:(LumenMacVirtualDisplayTransfer)transfer
+                               hdrEnabled:(BOOL)hdrEnabled
+                                    error:(NSError **)error {
   (void)logicalWidth;
   (void)logicalHeight;
   (void)refreshRate;
@@ -22,7 +26,23 @@ static BOOL LumenDisplayExistedBeforeModeCreation = NO;
   (void)hdrEnabled;
   (void)error;
   LumenDisplayExistedBeforeModeCreation = [self valueForKey:@"display"] != nil;
-  return NO;
+  return nil;
+}
+
+@end
+
+@interface LumenVirtualDisplayRejectedUpdateProbe : LumenMacVirtualDisplay
+@property(nonatomic) BOOL rejectNextSettings;
+@end
+
+@implementation LumenVirtualDisplayRejectedUpdateProbe
+
+- (BOOL)applyVirtualDisplaySettings:(id)settings {
+  if (self.rejectNextSettings) {
+    self.rejectNextSettings = NO;
+    return NO;
+  }
+  return [super applyVirtualDisplaySettings:settings];
 }
 
 @end
@@ -72,6 +92,53 @@ static BOOL LumenDisplayExistedBeforeModeCreation = NO;
 
   XCTAssertNil(display);
   XCTAssertTrue(LumenDisplayExistedBeforeModeCreation);
+}
+
+- (void)testRejectedVirtualDisplayModeUpdatePreservesCommittedState {
+  if (![LumenMacVirtualDisplay isSupported]) {
+    XCTSkip(@"CGVirtualDisplay is unavailable on this runtime");
+  }
+
+  LumenMacVirtualDisplayConfiguration *configuration =
+    [[LumenMacVirtualDisplayConfiguration alloc] init];
+  configuration.name = @"Lumen Rejected Mode Update Probe";
+  configuration.backingWidth = 1280;
+  configuration.backingHeight = 720;
+  configuration.logicalWidth = 640;
+  configuration.logicalHeight = 360;
+  configuration.refreshRate = 60;
+
+  NSError *error = nil;
+  LumenVirtualDisplayRejectedUpdateProbe *display =
+    [[LumenVirtualDisplayRejectedUpdateProbe alloc]
+      initWithConfiguration:configuration
+                      error:&error];
+  XCTAssertNotNil(display);
+  XCTAssertNil(error);
+
+  id initialMode = [display valueForKey:@"mode"];
+  id settings = [display valueForKey:@"settings"];
+  display.rejectNextSettings = YES;
+  XCTAssertFalse(
+    [display updateLogicalWidth:800
+                  logicalHeight:450
+                    refreshRate:75
+                           error:&error]
+  );
+  XCTAssertNotNil(error);
+  XCTAssertEqual([display valueForKey:@"mode"], initialMode);
+  XCTAssertEqualObjects([[settings valueForKey:@"modes"] firstObject], initialMode);
+  XCTAssertEqual([[display valueForKey:@"logicalWidth"] unsignedIntValue], 640u);
+  XCTAssertEqual([[display valueForKey:@"logicalHeight"] unsignedIntValue], 360u);
+
+  NSNumber *retainedRefreshRate = nil;
+  @try {
+    retainedRefreshRate = [display valueForKey:@"refreshRate"];
+  } @catch (NSException *exception) {
+    XCTFail(@"Missing committed refresh-rate state: %@", exception.reason);
+  }
+  XCTAssertEqualWithAccuracy(retainedRefreshRate.doubleValue, 60.0, 0.0001);
+  [display destroy];
 }
 
 - (void)testLumenMacBridgeCABIStatusAndConfigurationSmoke {
