@@ -351,6 +351,7 @@ struct MacSessionState {
     controller: *mut BridgeController,
     workspace_key: Option<CString>,
     display_id: u32,
+    input_display_id: u32,
     input_display_bounds: Option<MacInputDisplayBounds>,
     desktop_mirror_source_display_id: u32,
     opus: Option<NativeOpusEncoder>,
@@ -389,6 +390,7 @@ impl MacPlatformSessionControl {
                 controller,
                 workspace_key: None,
                 display_id: 0,
+                input_display_id: 0,
                 input_display_bounds: None,
                 desktop_mirror_source_display_id: 0,
                 opus: None,
@@ -436,6 +438,7 @@ impl MacPlatformSessionControl {
             }
         }
         state.display_id = 0;
+        state.input_display_id = 0;
         state.input_display_bounds = None;
         state.opus = None;
         state.audio_channels = 0;
@@ -520,7 +523,22 @@ impl PlatformSessionControl for MacPlatformSessionControl {
                 unsafe { CGMainDisplayID() }
             };
             state.display_id = display_id;
-            state.input_display_bounds = if plan.virtual_display {
+            // The desktop source candidate is only safe for input after the Swift workspace
+            // admission has returned successfully. Until then, keep the input target unset.
+            let workspace_prepared = !plan.virtual_display || state.workspace_key.is_some();
+            let source_candidate = if plan.virtual_display {
+                state.desktop_mirror_source_display_id
+            } else {
+                0
+            };
+            state.input_display_id = input_display_id_after_workspace_prepare(
+                display_id,
+                source_candidate,
+                workspace_prepared,
+            );
+            state.input_display_bounds = if plan.virtual_display
+                && state.desktop_mirror_source_display_id == 0
+            {
                 let geometry = resolve_display_geometry(LumenDisplayModeRequest {
                     width: plan.width,
                     height: plan.height,
@@ -810,7 +828,7 @@ impl PlatformSessionControl for MacPlatformSessionControl {
                 .state
                 .lock()
                 .map_err(|_| "macOS platform session state is unavailable".to_owned())?;
-            (state.display_id, state.input_display_bounds)
+            (state.input_display_id, state.input_display_bounds)
         };
         if display_id == 0 {
             return Err("macOS native motion has no active display".to_owned());
@@ -1070,6 +1088,21 @@ fn desktop_mirror_source_candidate_display_id(
         .ok_or_else(|| "macOS desktop capture has no current source display".to_owned())
 }
 
+fn input_display_id_after_workspace_prepare(
+    capture_display_id: u32,
+    candidate_display_id: u32,
+    workspace_prepared: bool,
+) -> u32 {
+    if !workspace_prepared {
+        return 0;
+    }
+    if candidate_display_id != 0 {
+        candidate_display_id
+    } else {
+        capture_display_id
+    }
+}
+
 unsafe fn parameter_set(
     codec: i32,
     format: FormatDescription,
@@ -1289,6 +1322,13 @@ mod tests {
             desktop_mirror_source_candidate_display_id(true, true, 0).unwrap_err(),
             "macOS desktop capture has no current source display"
         );
+    }
+
+    #[test]
+    fn input_display_id_remains_unselected_until_workspace_prepare_succeeds() {
+        assert_eq!(input_display_id_after_workspace_prepare(81, 3, false), 0);
+        assert_eq!(input_display_id_after_workspace_prepare(81, 3, true), 3);
+        assert_eq!(input_display_id_after_workspace_prepare(81, 0, true), 81);
     }
 
     #[test]

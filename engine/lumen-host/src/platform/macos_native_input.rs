@@ -262,15 +262,11 @@ fn post_pointer_motion(
     let current = CGEvent::new(source.clone())
         .map_err(|_| "could not inspect the macOS pointer location".to_owned())?
         .location();
-    let published_bounds = CGDisplay::new(display_id).bounds();
-    let bounds =
-        if published_bounds.size.width > 0.0 && published_bounds.size.height > 0.0 {
-            published_bounds
-        } else {
-            planned_bounds.and_then(MacInputDisplayBounds::rect).ok_or_else(|| {
-            format!("macOS native motion display {display_id} has no published or planned bounds")
-        })?
-        };
+    let bounds = preferred_pointer_bounds(
+        display_id,
+        CGDisplay::new(display_id).bounds(),
+        planned_bounds,
+    )?;
     let target = pointer_target(
         current,
         bounds,
@@ -287,6 +283,23 @@ fn post_pointer_motion(
     event.set_integer_value_field(EventField::MOUSE_EVENT_DELTA_Y, i64::from(input.delta_y));
     event.post(CGEventTapLocation::HID);
     Ok(())
+}
+
+fn preferred_pointer_bounds(
+    display_id: u32,
+    published_bounds: CGRect,
+    planned_bounds: Option<MacInputDisplayBounds>,
+) -> Result<CGRect, String> {
+    // Desktop mirror input targets the retained physical source; its published bounds must win
+    // over the virtual capture geometry whenever CoreGraphics has them available.
+    if published_bounds.size.width > 0.0 && published_bounds.size.height > 0.0 {
+        return Ok(published_bounds);
+    }
+    planned_bounds
+        .and_then(MacInputDisplayBounds::rect)
+        .ok_or_else(|| {
+            format!("macOS native motion display {display_id} has no published or planned bounds")
+        })
 }
 
 fn pointer_target(
@@ -592,5 +605,19 @@ mod tests {
         .expect("absolute target");
         assert_eq!(absolute.x, 2339.0);
         assert_eq!(absolute.y, 1611.0);
+    }
+
+    #[test]
+    fn published_source_bounds_take_precedence_over_planned_virtual_bounds() {
+        let published = CGRect::new(&CGPoint::new(1440.0, 0.0), &CGSize::new(2560.0, 1440.0));
+        let planned = MacInputDisplayBounds {
+            width: 960.0,
+            height: 540.0,
+        };
+        let selected = preferred_pointer_bounds(76, published, Some(planned))
+            .expect("published source bounds");
+        assert_eq!(selected.origin.x, 1440.0);
+        assert_eq!(selected.size.width, 2560.0);
+        assert_eq!(selected.size.height, 1440.0);
     }
 }
