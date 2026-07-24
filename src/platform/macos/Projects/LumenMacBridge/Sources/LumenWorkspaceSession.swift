@@ -278,7 +278,8 @@ struct LumenMacVirtualDisplayPublicationTiming: Equatable, Sendable {
     static let production = Self(
         overallDeadlineNanoseconds: 8_000_000_000,
         // Mode publication can enqueue a later independent-output change.
-        // Keep mirror topology untouched until the exact display stays quiet.
+        // Hold the exact retained display at its content-specific safety boundary
+        // until the published state remains quiet.
         stableWindowNanoseconds: 3_000_000_000,
         pollNanoseconds: 50_000_000
     )
