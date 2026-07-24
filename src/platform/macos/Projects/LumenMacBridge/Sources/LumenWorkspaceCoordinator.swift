@@ -342,6 +342,12 @@ public actor LumenWorkspaceCoordinator {
         )
     }
 
+    public func recordDesktopMirrorApplied() throws {
+        try requireSuccess(
+            lumen_workspace_engine_record_desktop_mirror_applied(engine.rawValue)
+        )
+    }
+
     public func endSession() throws {
         try requireSuccess(lumen_workspace_engine_end_session(engine.rawValue))
     }

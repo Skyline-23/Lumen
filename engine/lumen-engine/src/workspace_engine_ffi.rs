@@ -136,6 +136,13 @@ pub unsafe extern "C" fn lumen_workspace_engine_complete_command_with_payload(
 }
 
 #[no_mangle]
+pub extern "C" fn lumen_workspace_engine_record_desktop_mirror_applied(
+    engine: *mut LumenWorkspaceEngine,
+) -> LumenEngineStatus {
+    with_engine_mut(engine, WorkspaceEngine::record_desktop_mirror_applied)
+}
+
+#[no_mangle]
 pub extern "C" fn lumen_workspace_engine_command_payload_json_size(
     engine: *const LumenWorkspaceEngine,
     command: LumenWorkspaceCommand,

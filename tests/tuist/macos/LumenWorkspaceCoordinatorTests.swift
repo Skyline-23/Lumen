@@ -60,6 +60,16 @@ private enum WorkspaceRegistryTestError: Error {
     case injectedRecoveryFailure
 }
 
+private enum DesktopMirrorCaptureAdmissionOutcome: Equatable, Sendable {
+    case success
+    case failure
+    case cancellation
+}
+
+private enum DesktopMirrorCaptureAdmissionFailure: Error {
+    case injected
+}
+
 private actor WorkspaceRegistrySuspension {
     private let honorsCancellation: Bool
     private var continuation: CheckedContinuation<Void, Never>?
@@ -1109,7 +1119,7 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         try await session.stop()
     }
 
-    func testDesktopMirrorUsesPrefetchedOwnedDisplayWithoutPromotionOrIsolation() async throws {
+    func testDesktopMirrorCommitsTopologyBeforeFreshCaptureAdmission() async throws {
         for managesCapture in [false, true] {
             let preparedEvents = try await runDesktopMirrorPreparation(
                 managesCapture: managesCapture
@@ -1135,20 +1145,69 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
             let mirrorIndex = try XCTUnwrap(
                 preparedEvents.firstIndex(of: .mirror(89, 3))
             )
-            XCTAssertLessThan(stageIndex, prefetchIndex)
-            XCTAssertLessThan(prefetchIndex, mirrorIndex)
+            XCTAssertLessThan(stageIndex, mirrorIndex)
+            XCTAssertLessThan(mirrorIndex, prefetchIndex)
             XCTAssertFalse(preparedEvents.contains {
                 if case .promote = $0 { return true }
                 return false
             })
             XCTAssertFalse(preparedEvents.contains(.isolate(89)))
+            let restoreIndex = try XCTUnwrap(
+                preparedEvents.firstIndex(of: .restore)
+            )
+            let verifyIndex = try XCTUnwrap(
+                preparedEvents.firstIndex(of: .verify)
+            )
+            let destroyIndex = try XCTUnwrap(
+                preparedEvents.firstIndex(of: .destroy)
+            )
+            XCTAssertLessThan(prefetchIndex, restoreIndex)
+            XCTAssertLessThan(restoreIndex, verifyIndex)
+            XCTAssertLessThan(verifyIndex, destroyIndex)
+        }
+    }
+
+    func testDesktopMirrorCaptureAdmissionFailureRestoresTrackedTopology() async throws {
+        for managesCapture in [false, true] {
+            for outcome in [
+                DesktopMirrorCaptureAdmissionOutcome.failure,
+                .cancellation,
+            ] {
+                let events = try await runDesktopMirrorPreparation(
+                    managesCapture: managesCapture,
+                    captureAdmissionOutcome: outcome
+                )
+                let mirrorIndex = try XCTUnwrap(
+                    events.firstIndex(of: .mirror(89, 3))
+                )
+                let prefetchIndex = try XCTUnwrap(
+                    events.firstIndex(of: .prepareCapture(89))
+                )
+                let restoreIndex = try XCTUnwrap(
+                    events.firstIndex(of: .restore)
+                )
+                let verifyIndex = try XCTUnwrap(
+                    events.firstIndex(of: .verify)
+                )
+                let destroyIndex = try XCTUnwrap(
+                    events.firstIndex(of: .destroy)
+                )
+                XCTAssertLessThan(mirrorIndex, prefetchIndex)
+                XCTAssertLessThan(prefetchIndex, restoreIndex)
+                XCTAssertLessThan(restoreIndex, verifyIndex)
+                XCTAssertLessThan(verifyIndex, destroyIndex)
+            }
         }
     }
 
     private func runDesktopMirrorPreparation(
-        managesCapture: Bool
+        managesCapture: Bool,
+        captureAdmissionOutcome: DesktopMirrorCaptureAdmissionOutcome = .success
     ) async throws -> [WorkspaceExecutionEvent] {
         let recorder = WorkspaceExecutionRecorder()
+        let cancellationSuspension = captureAdmissionOutcome == .cancellation
+            ? WorkspaceRegistrySuspension(honorsCancellation: true)
+            : nil
         let operations = LumenMacWorkspaceNativeOperations(
             createVirtualDisplay: { _, geometry in
                 await recorder.append(.create(geometry))
@@ -1162,6 +1221,17 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
             },
             prepareCaptureDisplay: { displayID in
                 await recorder.append(.prepareCapture(displayID))
+                switch captureAdmissionOutcome {
+                case .success:
+                    return
+                case .failure:
+                    throw DesktopMirrorCaptureAdmissionFailure.injected
+                case .cancellation:
+                    guard let cancellationSuspension else {
+                        throw DesktopMirrorCaptureAdmissionFailure.injected
+                    }
+                    try await cancellationSuspension.suspend()
+                }
             },
             startCapture: { _ in },
             stopCapture: {},
@@ -1192,12 +1262,48 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
             coordinator: makeCoordinator()
         )
 
-        try await session.prepare()
-        let lifecycleEvents: [WorkspaceExecutionEvent]
+        let prepareTask = Task {
+            try await session.prepare()
+        }
+        if let cancellationSuspension {
+            do {
+                try await waitForWorkspaceRegistryCondition(
+                    "desktop mirror capture admission suspension"
+                ) {
+                    await cancellationSuspension.hasEntered()
+                }
+            } catch {
+                prepareTask.cancel()
+                await cancellationSuspension.release()
+                _ = try? await prepareTask.value
+                throw error
+            }
+            prepareTask.cancel()
+        }
+        do {
+            try await prepareTask.value
+        } catch {
+            switch captureAdmissionOutcome {
+            case .success:
+                throw error
+            case .failure:
+                guard error is DesktopMirrorCaptureAdmissionFailure else {
+                    throw error
+                }
+            case .cancellation:
+                guard error is CancellationError else {
+                    throw error
+                }
+            }
+            return await recorder.recordedEvents()
+        }
+        guard captureAdmissionOutcome == .success else {
+            XCTFail("capture admission failure unexpectedly prepared a session")
+            return await recorder.recordedEvents()
+        }
         if managesCapture {
             let state = try await session.state()
             XCTAssertEqual(state, .active)
-            lifecycleEvents = await recorder.recordedEvents()
         } else {
             let outcome = try await session.activate()
             XCTAssertEqual(outcome.isolationStatus, .notRequested)
@@ -1206,10 +1312,9 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
             XCTAssertTrue(activeEvents.contains(.firstFrameBarrier))
             XCTAssertTrue(activeEvents.contains(.positionPointer(89, geometry)))
             XCTAssertFalse(activeEvents.contains(.isolate(89)))
-            lifecycleEvents = activeEvents
         }
         try await session.stop()
-        return lifecycleEvents
+        return await recorder.recordedEvents()
     }
 
     func testPointerCenterUsesVirtualDisplayLogicalGeometry() throws {

@@ -77,6 +77,45 @@ fn coexist_does_not_mutate_existing_workspace() {
 }
 
 #[test]
+fn desktop_mirror_admission_failure_restores_the_recorded_physical_mutation() {
+    let mut engine = WorkspaceEngine::default();
+    assert_eq!(
+        engine.begin_session(LumenWorkspaceSessionRequest {
+            policy: LumenWorkspacePolicy::Coexist,
+            move_target_windows: false,
+            manage_capture: true,
+        }),
+        LumenEngineStatus::Ok
+    );
+    for expected in [
+        LumenWorkspaceCommandKind::SnapshotWorkspace,
+        LumenWorkspaceCommandKind::CreateVirtualDisplay,
+        LumenWorkspaceCommandKind::ConfigureVirtualDisplay,
+    ] {
+        let command = engine.next_command().expect("workspace preparation command");
+        assert_eq!(command.kind, expected);
+        assert_eq!(
+            engine.complete_command(command, true),
+            LumenEngineStatus::Ok
+        );
+    }
+
+    let capture = engine.next_command().expect("capture admission command");
+    assert_eq!(capture.kind, LumenWorkspaceCommandKind::StartCapture);
+    assert_eq!(
+        engine.record_desktop_mirror_applied(),
+        LumenEngineStatus::Ok
+    );
+    assert_eq!(
+        engine.complete_command(capture, false),
+        LumenEngineStatus::CommandFailed
+    );
+
+    let restore = engine.next_command().expect("desktop mirror restore command");
+    assert_eq!(restore.kind, LumenWorkspaceCommandKind::RestoreWorkspace);
+}
+
+#[test]
 fn externally_managed_capture_keeps_workspace_transaction_separate() {
     let mut engine = WorkspaceEngine::default();
     let startup = command_kinds(

@@ -5,6 +5,25 @@ use crate::{
 };
 
 impl WorkspaceEngine {
+    pub fn record_desktop_mirror_applied(&mut self) -> LumenEngineStatus {
+        let awaiting_capture_admission = self.awaiting.is_some_and(|command| {
+            matches!(
+                command.kind,
+                LumenWorkspaceCommandKind::StartCapture
+                    | LumenWorkspaceCommandKind::AwaitExternalFirstEncodedFrame
+            )
+        });
+        if self.state != LumenWorkspaceState::Starting
+            || !awaiting_capture_admission
+            || !self.resources.snapshot
+            || !self.resources.display
+            || self.resources.physical_mutation_applied
+        {
+            return LumenEngineStatus::InvalidState;
+        }
+        self.record_physical_mutation(RecoveryPhase::VirtualPromoted)
+    }
+
     pub(crate) fn prepare_command(&mut self, kind: LumenWorkspaceCommandKind) -> LumenEngineStatus {
         match kind {
             LumenWorkspaceCommandKind::StartCapture => {

@@ -499,14 +499,21 @@ public actor LumenMacWorkspaceSession {
                     }
                     if command.action == .startCapture ||
                         command.action == .awaitExternalFirstEncodedFrame {
-                        if case .desktopMirror = request.contentSource {
+                        if isDesktopMirror {
                             try await executor.stageOwnedVirtualDisplayUnmirrored()
                             try await preparationFence()
+                            try await materializeCaptureContent()
+                            try await coordinator.recordDesktopMirrorApplied()
+                            try await preparationFence()
+                            // Admit a fresh ScreenCaptureKit display only after the
+                            // virtual source topology has committed.
                         }
                         try await executor.prepareOwnedVirtualDisplayForCapture()
                         try await preparationFence()
-                        try await requireCaptureContentAfterReadiness()
-                        try await preparationFence()
+                        if !isDesktopMirror {
+                            try await materializeCaptureContent()
+                            try await preparationFence()
+                        }
                     }
                     if command.action == .awaitExternalFirstEncodedFrame {
                         try await preparationFence()
@@ -707,13 +714,20 @@ public actor LumenMacWorkspaceSession {
     }
 
     private var effectivePolicy: LumenMacWorkspacePolicy {
-        if case .desktopMirror = request.contentSource {
+        if isDesktopMirror {
             return .coexist
         }
         return request.policy
     }
 
-    private func requireCaptureContentAfterReadiness() async throws {
+    private var isDesktopMirror: Bool {
+        if case .desktopMirror = request.contentSource {
+            return true
+        }
+        return false
+    }
+
+    private func materializeCaptureContent() async throws {
         if case .desktopMirror(let sourceDisplayID) = request.contentSource {
             let displayID = try await executor.activeVirtualDisplayID()
             try await executor.mirrorOwnedVirtualDisplay()
