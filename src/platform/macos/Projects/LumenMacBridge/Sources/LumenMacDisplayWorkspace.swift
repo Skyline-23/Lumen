@@ -720,11 +720,47 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
 
         var targetTransactionAttempted = false
         do {
-            try await waitForDesktopMirrorTargetReadiness(
+            let readyState = try await waitForDesktopMirrorTargetReadiness(
                 targetDisplayID: displayID,
                 sourceDisplayID: sourceDisplayID,
                 expectedOwnerToken: expectedOwnerToken
             )
+            let existingOrigin = readyState.targetBounds.origin
+            if Self.isValidDesktopMirrorStageState(
+                readyState,
+                targetDisplayID: displayID,
+                sourceDisplayID: sourceDisplayID,
+                physicalBounds: geometry.physicalBounds,
+                targetOrigin: existingOrigin,
+                expectedOwnerToken: expectedOwnerToken
+            ) {
+                try await topologyController.verify(snapshot.topology)
+                let preservedState = await mirrorController.state(
+                    targetDisplayID: displayID,
+                    sourceDisplayID: sourceDisplayID
+                )
+                guard Self.isValidDesktopMirrorStageState(
+                    preservedState,
+                    targetDisplayID: displayID,
+                    sourceDisplayID: sourceDisplayID,
+                    physicalBounds: geometry.physicalBounds,
+                    targetOrigin: existingOrigin,
+                    expectedOwnerToken: expectedOwnerToken
+                ) else {
+                    throw LumenMacDisplayWorkspaceError.virtualDisplayMirrorUnavailable(
+                        displayID,
+                        sourceDisplayID
+                    )
+                }
+                logDesktopMirrorStageReady(
+                    displayID: displayID,
+                    ownerToken: expectedOwnerToken,
+                    targetBounds: preservedState.targetBounds,
+                    physicalDisplayIDs: geometry.physicalDisplayIDs,
+                    placement: "preserved"
+                )
+                return
+            }
             targetTransactionAttempted = true
             try await mirrorController.stageUnmirrored(
                 targetDisplayID: displayID,
@@ -765,7 +801,8 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
                 displayID: displayID,
                 ownerToken: expectedOwnerToken,
                 targetBounds: finalState.targetBounds,
-                physicalDisplayIDs: geometry.physicalDisplayIDs
+                physicalDisplayIDs: geometry.physicalDisplayIDs,
+                placement: "configured"
             )
         } catch {
             let originalError = error
@@ -1048,7 +1085,8 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
         displayID: UInt32,
         ownerToken: UInt,
         targetBounds: CGRect,
-        physicalDisplayIDs: [CGDirectDisplayID]
+        physicalDisplayIDs: [CGDirectDisplayID],
+        placement: String
     ) {
         let physicalIDs = physicalDisplayIDs
             .sorted()
@@ -1062,7 +1100,8 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             "\(Int(targetBounds.origin.y.rounded())) " +
             "target-size=\(Int(targetBounds.width.rounded()))x" +
             "\(Int(targetBounds.height.rounded())) " +
-            "physical-display-ids=\(physicalIDs) result=ready\n"
+            "physical-display-ids=\(physicalIDs) " +
+            "placement=\(placement) result=ready\n"
         FileHandle.standardError.write(Data(message.utf8))
     }
 
@@ -1111,7 +1150,7 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
         targetDisplayID: UInt32,
         sourceDisplayID: UInt32,
         expectedOwnerToken: UInt
-    ) async throws {
+    ) async throws -> LumenMacDisplayMirrorState {
         let deadline = ProcessInfo.processInfo.systemUptime
             + Self.desktopMirrorConvergenceTimeout
         while true {
@@ -1134,7 +1173,7 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
                 )
             }
             if state.targetIsOnline, state.targetIsActive {
-                return
+                return state
             }
             if ProcessInfo.processInfo.systemUptime >= deadline {
                 throw LumenMacDisplayWorkspaceError.virtualDisplayMirrorUnavailable(

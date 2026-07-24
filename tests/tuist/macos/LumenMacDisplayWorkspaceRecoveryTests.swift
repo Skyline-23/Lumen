@@ -107,6 +107,7 @@ private actor DisplayMirrorProbe: LumenMacDisplayMirrorControlling {
         reportedMirrorSourceAfterApply: UInt32?,
         initialTargetIsOnline: Bool = true,
         initialTargetIsActive: Bool = true,
+        initialTargetBounds: CGRect = .zero,
         targetReadinessSequence: [(online: Bool, active: Bool)] = [],
         boundsByDisplayID: [UInt32: CGRect] = [:],
         ownerToken: UInt? = 0xCAFE
@@ -119,6 +120,7 @@ private actor DisplayMirrorProbe: LumenMacDisplayMirrorControlling {
         self.reportedMirrorSourceAfterApply = reportedMirrorSourceAfterApply
         self.boundsByDisplayID = boundsByDisplayID
         self.ownerToken = ownerToken
+        targetBounds = initialTargetBounds
     }
 
     func displayBounds(for displayIDs: [UInt32]) async throws -> [UInt32: CGRect] {
@@ -427,6 +429,50 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         XCTAssertEqual(state.targetBounds.origin.x.rounded(.up), expectedOrigin.x.rounded(.up))
         XCTAssertEqual(state.targetBounds.origin.y.rounded(.down), expectedOrigin.y.rounded(.down))
         XCTAssertTrue(physicalBounds.allSatisfy { !$0.intersects(state.targetBounds) })
+        let restoredTopologies = await topologyProbe.restoredTopologies()
+        XCTAssertTrue(restoredTopologies.isEmpty)
+    }
+
+    func testDesktopMirrorStagePreservesAlreadySafeOwnedPlacement() async throws {
+        let topology = displayTopology()
+        let sourceDisplayID = try XCTUnwrap(
+            topology.displays.first.flatMap { UInt32($0.id) }
+        )
+        let targetDisplayID: UInt32 = 120
+        let physicalBounds = CGRect(x: 0, y: 0, width: 2560, height: 1440)
+        let initialTargetBounds = CGRect(x: -640, y: 0, width: 640, height: 360)
+        let topologyProbe = DisplayTopologyProbe(topology: topology)
+        let mirrorProbe = DisplayMirrorProbe(
+            sourceDisplayID: sourceDisplayID,
+            targetDisplayID: targetDisplayID,
+            reportedMirrorSourceAfterApply: nil,
+            initialTargetBounds: initialTargetBounds,
+            boundsByDisplayID: [
+                sourceDisplayID: physicalBounds,
+            ]
+        )
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: topologyProbe,
+            mirrorController: mirrorProbe,
+            physicalDisplayController: RecordingPhysicalDisplayController(),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier()
+        )
+        _ = try await workspace.snapshotWorkspace(targetProcessIdentifiers: [])
+        await topologyProbe.allowVerification()
+
+        try await workspace.stageVirtualDisplayUnmirrored(
+            targetDisplayID,
+            sourceDisplayID: sourceDisplayID
+        )
+
+        let events = await mirrorProbe.recordedEvents()
+        XCTAssertTrue(events.isEmpty)
+        let state = await mirrorProbe.state(
+            targetDisplayID: targetDisplayID,
+            sourceDisplayID: sourceDisplayID
+        )
+        XCTAssertEqual(state.targetBounds, initialTargetBounds)
+        XCTAssertTrue(physicalBounds.intersection(state.targetBounds).isEmpty)
         let restoredTopologies = await topologyProbe.restoredTopologies()
         XCTAssertTrue(restoredTopologies.isEmpty)
     }

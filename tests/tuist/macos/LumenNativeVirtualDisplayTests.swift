@@ -117,6 +117,14 @@ final class LumenNativeVirtualDisplayTests: XCTestCase {
             logicalHeight: configuration.logicalHeight,
             refreshRate: configuration.refreshRate
         )
+        let physicalBounds = physicalTopology.displays.compactMap { state in
+            UInt32(state.id).map(CGDisplayBounds)
+        }
+        let initialBounds = CGDisplayBounds(retained.displayID)
+        let initialPlacementWasSafe =
+            CGDisplayMirrorsDisplay(retained.displayID) == kCGNullDirectDisplay &&
+            !initialBounds.isEmpty &&
+            physicalBounds.allSatisfy { !$0.intersects(initialBounds) }
         try await workspace.stageVirtualDisplayUnmirrored(
             retained.displayID,
             sourceDisplayID: physicalMainDisplayID
@@ -126,16 +134,11 @@ final class LumenNativeVirtualDisplayTests: XCTestCase {
             CGDisplayMirrorsDisplay(retained.displayID),
             kCGNullDirectDisplay
         )
-        let physicalBounds = physicalTopology.displays.compactMap { state in
-            UInt32(state.id).map(CGDisplayBounds)
-        }
-        let physicalUnion = try XCTUnwrap(physicalBounds.first).union(
-            physicalBounds.dropFirst().reduce(.null) { $0.union($1) }
-        )
         let stagedBounds = CGDisplayBounds(retained.displayID)
-        XCTAssertEqual(stagedBounds.origin.x.rounded(.up), physicalUnion.maxX.rounded(.up))
-        XCTAssertEqual(stagedBounds.origin.y.rounded(.down), physicalUnion.minY.rounded(.down))
         XCTAssertTrue(physicalBounds.allSatisfy { !$0.intersects(stagedBounds) })
+        if initialPlacementWasSafe {
+            XCTAssertEqual(stagedBounds, initialBounds)
+        }
 
         let content: SCShareableContent
         do {
