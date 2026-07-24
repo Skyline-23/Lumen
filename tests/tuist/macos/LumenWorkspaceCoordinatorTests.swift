@@ -26,6 +26,7 @@ private enum WorkspaceExecutionEvent: Equatable {
     case create(LumenMacDisplayGeometry)
     case configure(UInt32, LumenMacDisplayGeometry)
     case resolve(UInt32)
+    case prepareDesktopMirror(UInt32, UInt32)
     case prepareCapture(UInt32)
     case promote(UInt32, LumenMacDisplayPromotionConvergence)
     case mirror(UInt32, UInt32)
@@ -348,6 +349,12 @@ private actor WorkspaceDisplayMock: LumenMacDisplayWorkspaceManaging {
         sourceDisplayID: UInt32
     ) async {
         await recorder.append(.mirror(displayID, sourceDisplayID))
+    }
+    func stageVirtualDisplayUnmirrored(
+        _ displayID: UInt32,
+        sourceDisplayID: UInt32
+    ) async {
+        await recorder.append(.prepareDesktopMirror(displayID, sourceDisplayID))
     }
     func moveTargetWindows(to displayID: UInt32) async {
         await recorder.append(.move(displayID))
@@ -1104,6 +1111,44 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
     }
 
     func testDesktopMirrorUsesPrefetchedOwnedDisplayWithoutPromotionOrIsolation() async throws {
+        for managesCapture in [false, true] {
+            let preparedEvents = try await runDesktopMirrorPreparation(
+                managesCapture: managesCapture
+            )
+            let stageEvents = preparedEvents.filter {
+                $0 == .prepareDesktopMirror(89, 3)
+            }
+            let prefetchEvents = preparedEvents.filter {
+                $0 == .prepareCapture(89)
+            }
+            let mirrorEvents = preparedEvents.filter {
+                $0 == .mirror(89, 3)
+            }
+            XCTAssertEqual(stageEvents.count, 1)
+            XCTAssertEqual(prefetchEvents.count, 1)
+            XCTAssertEqual(mirrorEvents.count, 1)
+            let stageIndex = try XCTUnwrap(
+                preparedEvents.firstIndex(of: .prepareDesktopMirror(89, 3))
+            )
+            let prefetchIndex = try XCTUnwrap(
+                preparedEvents.firstIndex(of: .prepareCapture(89))
+            )
+            let mirrorIndex = try XCTUnwrap(
+                preparedEvents.firstIndex(of: .mirror(89, 3))
+            )
+            XCTAssertLessThan(stageIndex, prefetchIndex)
+            XCTAssertLessThan(prefetchIndex, mirrorIndex)
+            XCTAssertFalse(preparedEvents.contains {
+                if case .promote = $0 { return true }
+                return false
+            })
+            XCTAssertFalse(preparedEvents.contains(.isolate(89)))
+        }
+    }
+
+    private func runDesktopMirrorPreparation(
+        managesCapture: Bool
+    ) async throws -> [WorkspaceExecutionEvent] {
         let recorder = WorkspaceExecutionRecorder()
         let operations = LumenMacWorkspaceNativeOperations(
             createVirtualDisplay: { _, geometry in
@@ -1138,7 +1183,7 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
                 scalePercent: 100,
                 dimensionsAreLogical: false
             ),
-            managesCapture: false,
+            managesCapture: managesCapture,
             captureConfiguration: LumenMacCaptureConfiguration(displayID: 0)
         )
         let session = try LumenMacWorkspaceSession(
@@ -1149,28 +1194,22 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         )
 
         try await session.prepare()
-        let preparedEvents = await recorder.recordedEvents()
-        let prefetchIndex = try XCTUnwrap(
-            preparedEvents.firstIndex(of: .prepareCapture(89))
-        )
-        let mirrorIndex = try XCTUnwrap(
-            preparedEvents.firstIndex(of: .mirror(89, 3))
-        )
-        XCTAssertLessThan(prefetchIndex, mirrorIndex)
-        XCTAssertFalse(preparedEvents.contains {
-            if case .promote = $0 { return true }
-            return false
-        })
-        XCTAssertFalse(preparedEvents.contains(.isolate(89)))
-
-        let outcome = try await session.activate()
-        XCTAssertEqual(outcome.isolationStatus, .notRequested)
-        let activeEvents = await recorder.recordedEvents()
-        XCTAssertTrue(activeEvents.contains(.firstFrameBarrier))
-        XCTAssertTrue(activeEvents.contains(.positionSourcePointer(3)))
-        XCTAssertFalse(activeEvents.contains(.isolate(89)))
-
+        let lifecycleEvents: [WorkspaceExecutionEvent]
+        if managesCapture {
+            let state = try await session.state()
+            XCTAssertEqual(state, .active)
+            lifecycleEvents = await recorder.recordedEvents()
+        } else {
+            let outcome = try await session.activate()
+            XCTAssertEqual(outcome.isolationStatus, .notRequested)
+            let activeEvents = await recorder.recordedEvents()
+            XCTAssertTrue(activeEvents.contains(.firstFrameBarrier))
+            XCTAssertTrue(activeEvents.contains(.positionSourcePointer(3)))
+            XCTAssertFalse(activeEvents.contains(.isolate(89)))
+            lifecycleEvents = activeEvents
+        }
         try await session.stop()
+        return lifecycleEvents
     }
 
     func testPointerCenterUsesVirtualDisplayLogicalGeometry() throws {

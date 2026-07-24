@@ -504,6 +504,10 @@ public actor LumenMacWorkspaceSession {
                     }
                     if command.action == .startCapture ||
                         command.action == .awaitExternalFirstEncodedFrame {
+                        if case .desktopMirror = request.contentSource {
+                            try await executor.stageOwnedVirtualDisplayUnmirrored()
+                            try await preparationFence()
+                        }
                         try await executor.prepareOwnedVirtualDisplayForCapture()
                         try await preparationFence()
                         try await requireCaptureContentAfterReadiness()

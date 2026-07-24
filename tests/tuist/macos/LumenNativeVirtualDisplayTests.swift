@@ -99,6 +99,11 @@ final class LumenNativeVirtualDisplayTests: XCTestCase {
         configuration.logicalHeight = 720
         configuration.refreshRate = 60
 
+        let physicalMainDisplayID = CGMainDisplayID()
+        let workspace = LumenMacDisplayWorkspace()
+        let physicalTopology = try await workspace.snapshotWorkspace(
+            targetProcessIdentifiers: []
+        )
         let retained = try LumenMacVirtualDisplay.createRegisteredDisplay(
             forKey: key,
             configuration: configuration
@@ -106,6 +111,31 @@ final class LumenNativeVirtualDisplayTests: XCTestCase {
         defer {
             _ = LumenMacVirtualDisplay.removeRegisteredDisplay(forKey: key)
         }
+
+        try retained.updateLogicalWidth(
+            configuration.logicalWidth,
+            logicalHeight: configuration.logicalHeight,
+            refreshRate: configuration.refreshRate
+        )
+        try await workspace.stageVirtualDisplayUnmirrored(
+            retained.displayID,
+            sourceDisplayID: physicalMainDisplayID
+        )
+        XCTAssertEqual(CGMainDisplayID(), physicalMainDisplayID)
+        XCTAssertEqual(
+            CGDisplayMirrorsDisplay(retained.displayID),
+            kCGNullDirectDisplay
+        )
+        let physicalBounds = physicalTopology.displays.compactMap { state in
+            UInt32(state.id).map(CGDisplayBounds)
+        }
+        let physicalUnion = try XCTUnwrap(physicalBounds.first).union(
+            physicalBounds.dropFirst().reduce(.null) { $0.union($1) }
+        )
+        let stagedBounds = CGDisplayBounds(retained.displayID)
+        XCTAssertEqual(stagedBounds.origin.x.rounded(.up), physicalUnion.maxX.rounded(.up))
+        XCTAssertEqual(stagedBounds.origin.y.rounded(.down), physicalUnion.minY.rounded(.down))
+        XCTAssertTrue(physicalBounds.allSatisfy { !$0.intersects(stagedBounds) })
 
         let content: SCShareableContent
         do {

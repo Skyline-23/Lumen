@@ -50,6 +50,10 @@ private actor RecoveryPayloadDisplayWorkspace: LumenMacDisplayWorkspaceManaging 
         logicalSize _: CGSize,
         convergence _: LumenMacDisplayPromotionConvergence
     ) async -> Bool { true }
+    func stageVirtualDisplayUnmirrored(
+        _: UInt32,
+        sourceDisplayID _: UInt32
+    ) async {}
     func mirrorOwnedVirtualDisplay(
         _: UInt32,
         sourceDisplayID _: UInt32

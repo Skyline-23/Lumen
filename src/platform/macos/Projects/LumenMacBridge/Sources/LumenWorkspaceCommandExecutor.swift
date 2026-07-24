@@ -217,6 +217,19 @@ public actor LumenMacWorkspaceExecutor: LumenWorkspaceCommandExecuting {
         try await operations.prepareCaptureDisplay(try requireVirtualDisplay())
     }
 
+    public func stageOwnedVirtualDisplayUnmirrored() async throws {
+        guard case .desktopMirror(let sourceDisplayID) = contentSource else {
+            return
+        }
+        let displayID = try requireVirtualDisplay()
+        try await operations.verifyVirtualDisplay(displayID)
+        try await displayWorkspace.stageVirtualDisplayUnmirrored(
+            displayID,
+            sourceDisplayID: sourceDisplayID
+        )
+        try await operations.verifyVirtualDisplay(displayID)
+    }
+
     public func verifyOwnedCaptureContinuity() async throws {
         try await operations.verifyCaptureContinuity()
     }
