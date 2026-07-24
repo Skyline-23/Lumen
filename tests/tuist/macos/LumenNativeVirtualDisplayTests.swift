@@ -113,7 +113,52 @@ final class LumenNativeVirtualDisplayTests: XCTestCase {
         XCTAssertEqual(completedAt, 3_000_000_000)
     }
 
+    func testModeSettlementWaitsForLateIndependentOutputBeforeTopology() async throws {
+        let clock = LumenVirtualDisplayPublicationClock()
+        let ownerToken: UInt = 42
+        let timing = LumenMacVirtualDisplayPublicationTiming(
+            overallDeadlineNanoseconds: 6_000_000_000,
+            stableWindowNanoseconds: 2_000_000_000,
+            pollNanoseconds: 500_000_000
+        )
+
+        try await LumenMacVirtualDisplayPublicationStabilizer.waitForModeSettlement(
+            displayID: 78,
+            expectedOwnerToken: ownerToken,
+            timing: timing,
+            now: {
+                await clock.now()
+            },
+            sleepUntil: { deadline in
+                await clock.sleep(until: deadline)
+            },
+            snapshot: {
+                let now = await clock.now()
+                return LumenScreenCaptureDisplayReadinessSnapshot(
+                    ownerToken: ownerToken,
+                    isOnline: now < 1_500_000_000,
+                    isActive: now < 1_500_000_000,
+                    hasCurrentMode: true,
+                    pixelWidth: 640,
+                    pixelHeight: 360,
+                    configuredPixelWidth: 640,
+                    configuredPixelHeight: 360
+                )
+            }
+        )
+
+        let completedAt = await clock.now()
+        XCTAssertEqual(completedAt, 3_500_000_000)
+    }
+
     func testPublicationFailureDescribesTheOwnedDisplayBoundary() {
+        XCTAssertEqual(
+            LumenMacWorkspaceSessionError
+                .virtualDisplayModeSettlementUnavailable(76)
+                .errorDescription,
+            "owned virtual display 76 did not finish its mode publication " +
+                "before the settlement deadline"
+        )
         XCTAssertEqual(
             LumenMacWorkspaceSessionError
                 .virtualDisplayPublicationUnavailable(77)
@@ -214,6 +259,28 @@ final class LumenNativeVirtualDisplayTests: XCTestCase {
             logicalHeight: configuration.logicalHeight,
             refreshRate: configuration.refreshRate
         )
+        let retainedDisplayID = retained.displayID
+        let owner = LumenRetainedVirtualDisplayReference(display: retained)
+        try await LumenMacVirtualDisplayPublicationStabilizer.waitForModeSettlement(
+            displayID: retainedDisplayID,
+            expectedOwnerToken: owner.ownerToken,
+            timing: .production,
+            now: {
+                DispatchTime.now().uptimeNanoseconds
+            },
+            sleepUntil: { deadline in
+                let now = DispatchTime.now().uptimeNanoseconds
+                if deadline > now {
+                    try await Task.sleep(nanoseconds: deadline - now)
+                }
+            },
+            snapshot: {
+                LumenScreenCaptureDisplayReadiness.snapshot(
+                    displayID: retainedDisplayID,
+                    owner: owner
+                )
+            }
+        )
         let physicalBounds = physicalTopology.displays.compactMap { state in
             UInt32(state.id).map(CGDisplayBounds)
         }
@@ -226,8 +293,6 @@ final class LumenNativeVirtualDisplayTests: XCTestCase {
             retained.displayID,
             sourceDisplayID: physicalMainDisplayID
         )
-        let retainedDisplayID = retained.displayID
-        let owner = LumenRetainedVirtualDisplayReference(display: retained)
         try await LumenMacVirtualDisplayPublicationStabilizer.wait(
             displayID: retainedDisplayID,
             expectedOwnerToken: owner.ownerToken,

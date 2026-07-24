@@ -45,6 +45,7 @@ public struct LumenMacWorkspaceNativeOperations: Sendable {
     ) async throws -> UInt32
     public var configureVirtualDisplay: @Sendable (UInt32, LumenMacDisplayGeometry) async throws -> Void
     public var verifyVirtualDisplay: @Sendable (UInt32) async throws -> Void
+    public var settleVirtualDisplayMode: @Sendable (UInt32) async throws -> Void
     public var stabilizeVirtualDisplay: @Sendable (UInt32) async throws -> Void
     public var prepareCaptureDisplay: @Sendable (UInt32) async throws -> Void
     public var startCapture: @Sendable (UInt32) async throws -> Void
@@ -64,6 +65,7 @@ public struct LumenMacWorkspaceNativeOperations: Sendable {
         ) async throws -> UInt32,
         configureVirtualDisplay: @escaping @Sendable (UInt32, LumenMacDisplayGeometry) async throws -> Void,
         verifyVirtualDisplay: @escaping @Sendable (UInt32) async throws -> Void,
+        settleVirtualDisplayMode: @escaping @Sendable (UInt32) async throws -> Void = { _ in },
         stabilizeVirtualDisplay: @escaping @Sendable (UInt32) async throws -> Void = { _ in },
         prepareCaptureDisplay: @escaping @Sendable (UInt32) async throws -> Void = { _ in },
         startCapture: @escaping @Sendable (UInt32) async throws -> Void,
@@ -81,6 +83,7 @@ public struct LumenMacWorkspaceNativeOperations: Sendable {
         self.createVirtualDisplay = createVirtualDisplay
         self.configureVirtualDisplay = configureVirtualDisplay
         self.verifyVirtualDisplay = verifyVirtualDisplay
+        self.settleVirtualDisplayMode = settleVirtualDisplayMode
         self.stabilizeVirtualDisplay = stabilizeVirtualDisplay
         self.prepareCaptureDisplay = prepareCaptureDisplay
         self.startCapture = startCapture
@@ -219,6 +222,10 @@ public actor LumenMacWorkspaceExecutor: LumenWorkspaceCommandExecuting {
 
     public func stabilizeOwnedVirtualDisplay() async throws {
         try await operations.stabilizeVirtualDisplay(try requireVirtualDisplay())
+    }
+
+    public func settleOwnedVirtualDisplayMode() async throws {
+        try await operations.settleVirtualDisplayMode(try requireVirtualDisplay())
     }
 
     public func stageOwnedVirtualDisplayUnmirrored() async throws {

@@ -208,6 +208,25 @@ struct LumenCoreGraphicsDisplayMirrorController:
             )
         }
         do {
+            if origin != nil, CGDisplayIsActive(targetDisplayID) == 0 {
+                // A settled private mode update can leave its exact virtual
+                // output inactive. Reassert that output's published mode in
+                // the same app-only transaction that stages its safe origin.
+                guard let currentMode = CGDisplayCopyDisplayMode(targetDisplayID) else {
+                    throw LumenMacDisplayWorkspaceError.displayConfigurationFailed(-1)
+                }
+                let modeResult = CGConfigureDisplayWithDisplayMode(
+                    configuration,
+                    targetDisplayID,
+                    currentMode,
+                    nil
+                )
+                guard modeResult == .success else {
+                    throw LumenMacDisplayWorkspaceError.displayConfigurationFailed(
+                        modeResult.rawValue
+                    )
+                }
+            }
             let mirrorResult = CGConfigureDisplayMirrorOfDisplay(
                 configuration,
                 targetDisplayID,
@@ -746,11 +765,7 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
 
         var targetTransactionAttempted = false
         do {
-            let readyState = try await waitForDesktopMirrorTargetReadiness(
-                targetDisplayID: displayID,
-                sourceDisplayID: sourceDisplayID,
-                expectedOwnerToken: expectedOwnerToken
-            )
+            let readyState = before
             let existingOrigin = readyState.targetBounds.origin
             if Self.isValidDesktopMirrorStageState(
                 readyState,
@@ -1204,45 +1219,6 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             }
             if ProcessInfo.processInfo.systemUptime >= deadline {
                 return false
-            }
-            try await Task.sleep(nanoseconds: Self.desktopMirrorPollNanoseconds)
-        }
-    }
-
-    private func waitForDesktopMirrorTargetReadiness(
-        targetDisplayID: UInt32,
-        sourceDisplayID: UInt32,
-        expectedOwnerToken: UInt
-    ) async throws -> LumenMacDisplayMirrorState {
-        let deadline = ProcessInfo.processInfo.systemUptime
-            + Self.desktopMirrorConvergenceTimeout
-        while true {
-            try Task.checkCancellation()
-            let state = await mirrorController.state(
-                targetDisplayID: targetDisplayID,
-                sourceDisplayID: sourceDisplayID
-            )
-            guard Self.isValidDesktopMirrorState(
-                state,
-                targetDisplayID: targetDisplayID,
-                sourceDisplayID: sourceDisplayID,
-                requireUnmirrored: false,
-                requireTargetReady: false,
-                expectedOwnerToken: expectedOwnerToken
-            ) else {
-                throw LumenMacDisplayWorkspaceError.virtualDisplayMirrorUnavailable(
-                    targetDisplayID,
-                    sourceDisplayID
-                )
-            }
-            if state.targetIsOnline, state.targetIsActive {
-                return state
-            }
-            if ProcessInfo.processInfo.systemUptime >= deadline {
-                throw LumenMacDisplayWorkspaceError.virtualDisplayMirrorUnavailable(
-                    targetDisplayID,
-                    sourceDisplayID
-                )
             }
             try await Task.sleep(nanoseconds: Self.desktopMirrorPollNanoseconds)
         }

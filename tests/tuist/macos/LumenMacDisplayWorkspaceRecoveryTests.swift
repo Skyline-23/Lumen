@@ -392,7 +392,7 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         XCTAssertTrue(restoredTopologies.isEmpty)
     }
 
-    func testDesktopMirrorStageUnmirrorsOnlyExactTargetAndPreservesPhysicalTopology() async throws {
+    func testDesktopMirrorStageReassertsExactInactiveTargetAndPreservesPhysicalTopology() async throws {
         let topology = displayTopology()
         let sourceDisplayID = try XCTUnwrap(
             topology.displays.first.flatMap { UInt32($0.id) }
@@ -405,10 +405,6 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
             reportedMirrorSourceAfterApply: nil,
             initialTargetIsOnline: false,
             initialTargetIsActive: false,
-            targetReadinessSequence: [
-                (online: false, active: false),
-                (online: true, active: true),
-            ],
             boundsByDisplayID: [
                 sourceDisplayID: CGRect(x: 0, y: 0, width: 2560, height: 1440),
             ]

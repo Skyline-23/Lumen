@@ -26,6 +26,7 @@ private enum WorkspaceExecutionEvent: Equatable {
     case create(LumenMacDisplayGeometry)
     case configure(UInt32, LumenMacDisplayGeometry)
     case resolve(UInt32)
+    case settle(UInt32)
     case stabilize(UInt32)
     case prepareDesktopMirror(UInt32, UInt32)
     case prepareCapture(UInt32)
@@ -1144,10 +1145,23 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
             let stabilizationEvents = preparedEvents.filter {
                 $0 == .stabilize(89)
             }
+            let settlementEvents = preparedEvents.filter {
+                $0 == .settle(89)
+            }
             XCTAssertEqual(stageEvents.count, 1)
             XCTAssertEqual(prefetchEvents.count, 1)
             XCTAssertEqual(mirrorEvents.count, 1)
             XCTAssertEqual(stabilizationEvents.count, 1)
+            XCTAssertEqual(settlementEvents.count, 1)
+            let configureIndex = try XCTUnwrap(
+                preparedEvents.firstIndex {
+                    if case .configure(89, _) = $0 { return true }
+                    return false
+                }
+            )
+            let settlementIndex = try XCTUnwrap(
+                preparedEvents.firstIndex(of: .settle(89))
+            )
             let stageIndex = try XCTUnwrap(
                 preparedEvents.firstIndex(of: .prepareDesktopMirror(89, 3))
             )
@@ -1160,6 +1174,8 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
             let stabilizationIndex = try XCTUnwrap(
                 preparedEvents.firstIndex(of: .stabilize(89))
             )
+            XCTAssertLessThan(configureIndex, settlementIndex)
+            XCTAssertLessThan(settlementIndex, stageIndex)
             XCTAssertLessThan(stageIndex, mirrorIndex)
             XCTAssertLessThan(mirrorIndex, stabilizationIndex)
             XCTAssertLessThan(stabilizationIndex, prefetchIndex)
@@ -1234,6 +1250,9 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
             },
             verifyVirtualDisplay: { displayID in
                 await recorder.append(.resolve(displayID))
+            },
+            settleVirtualDisplayMode: { displayID in
+                await recorder.append(.settle(displayID))
             },
             stabilizeVirtualDisplay: { displayID in
                 await recorder.append(.stabilize(displayID))

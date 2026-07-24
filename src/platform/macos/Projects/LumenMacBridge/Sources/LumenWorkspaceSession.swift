@@ -40,11 +40,12 @@ public struct LumenMacWorkspaceSessionRequest: Sendable {
     }
 }
 
-public enum LumenMacWorkspaceSessionError: Error, Equatable, LocalizedError {
+public enum LumenMacWorkspaceSessionError: Error, Equatable, LocalizedError, Sendable {
     case sessionAlreadyStarted
     case sessionNotStarted
     case recoveryDidNotComplete
     case virtualDisplayOwnershipMismatch
+    case virtualDisplayModeSettlementUnavailable(UInt32)
     case virtualDisplayPublicationUnavailable(UInt32)
     case isolationCommandMissing
 
@@ -58,6 +59,9 @@ public enum LumenMacWorkspaceSessionError: Error, Equatable, LocalizedError {
             "the previous workspace recovery did not complete"
         case .virtualDisplayOwnershipMismatch:
             "the owned virtual display identity changed during the workspace lifecycle"
+        case .virtualDisplayModeSettlementUnavailable(let displayID):
+            "owned virtual display \(displayID) did not finish its mode publication " +
+                "before the settlement deadline"
         case .virtualDisplayPublicationUnavailable(let displayID):
             "owned virtual display \(displayID) did not reach stable capture readiness " +
                 "before the publication deadline"
@@ -298,6 +302,61 @@ enum LumenMacVirtualDisplayPublicationStabilizer {
         sleepUntil: @escaping MonotonicSleep,
         snapshot: @escaping Snapshot
     ) async throws {
+        try await waitForStableSnapshot(
+            expectedOwnerToken: expectedOwnerToken,
+            timing: timing,
+            unavailableError: .virtualDisplayPublicationUnavailable(displayID),
+            now: now,
+            sleepUntil: sleepUntil,
+            snapshot: snapshot,
+            isReady: {
+                $0.isModeReady(
+                    for: .retained(ownerToken: expectedOwnerToken)
+                )
+            }
+        )
+    }
+
+    static func waitForModeSettlement(
+        displayID: UInt32,
+        expectedOwnerToken: UInt,
+        timing: LumenMacVirtualDisplayPublicationTiming,
+        now: @escaping MonotonicNow,
+        sleepUntil: @escaping MonotonicSleep,
+        snapshot: @escaping Snapshot
+    ) async throws {
+        try await waitForStableSnapshot(
+            expectedOwnerToken: expectedOwnerToken,
+            timing: timing,
+            unavailableError: .virtualDisplayModeSettlementUnavailable(displayID),
+            now: now,
+            sleepUntil: sleepUntil,
+            snapshot: snapshot,
+            isReady: {
+                // The delayed independent-output transaction can legitimately
+                // leave the retained display inactive. Its exact mode contract
+                // must become quiet before topology staging reactivates it.
+                $0.hasCurrentMode ||
+                    ($0.pixelWidth > 0 && $0.pixelHeight > 0) ||
+                    (
+                        $0.configuredPixelWidth > 0 &&
+                            $0.configuredPixelHeight > 0
+                    )
+            }
+        )
+    }
+
+    private static func waitForStableSnapshot(
+        expectedOwnerToken: UInt,
+        timing: LumenMacVirtualDisplayPublicationTiming,
+        unavailableError: LumenMacWorkspaceSessionError,
+        now: @escaping MonotonicNow,
+        sleepUntil: @escaping MonotonicSleep,
+        snapshot: @escaping Snapshot,
+        isReady: @escaping @Sendable (
+            LumenScreenCaptureDisplayReadinessSnapshot
+        ) -> Bool
+    ) async throws {
         let startedAt = await now()
         let deadline = addingClamped(
             startedAt,
@@ -310,19 +369,15 @@ enum LumenMacVirtualDisplayPublicationStabilizer {
             try Task.checkCancellation()
             let currentTime = await now()
             guard currentTime <= deadline else {
-                throw LumenMacWorkspaceSessionError
-                    .virtualDisplayPublicationUnavailable(displayID)
+                throw unavailableError
             }
 
             let currentSnapshot = await snapshot()
             guard currentSnapshot.ownerToken == expectedOwnerToken else {
                 throw LumenMacWorkspaceSessionError.virtualDisplayOwnershipMismatch
             }
-            let isReady = currentSnapshot.isModeReady(
-                for: .retained(ownerToken: expectedOwnerToken)
-            )
 
-            if isReady {
+            if isReady(currentSnapshot) {
                 if stableSnapshot != currentSnapshot {
                     stableSnapshot = currentSnapshot
                     stableSince = currentTime
@@ -338,8 +393,7 @@ enum LumenMacVirtualDisplayPublicationStabilizer {
             }
 
             guard currentTime < deadline else {
-                throw LumenMacWorkspaceSessionError
-                    .virtualDisplayPublicationUnavailable(displayID)
+                throw unavailableError
             }
             let pollDeadline = addingClamped(
                 currentTime,
@@ -416,6 +470,81 @@ actor LumenMacVirtualDisplayOwner {
             logicalHeight: geometry.logicalHeight,
             refreshRate: refreshRate
         )
+    }
+
+    func settleMode(displayID: UInt32) async throws {
+        guard let display, display.displayID == displayID else {
+            throw LumenMacWorkspaceSessionError.virtualDisplayOwnershipMismatch
+        }
+        let owner = LumenRetainedVirtualDisplayReference(display: display)
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        do {
+            try await LumenMacVirtualDisplayPublicationStabilizer
+                .waitForModeSettlement(
+                    displayID: displayID,
+                    expectedOwnerToken: owner.ownerToken,
+                    timing: .production,
+                    now: {
+                        DispatchTime.now().uptimeNanoseconds
+                    },
+                    sleepUntil: { deadline in
+                        let now = DispatchTime.now().uptimeNanoseconds
+                        if deadline > now {
+                            try await Task.sleep(nanoseconds: deadline - now)
+                        }
+                    },
+                    snapshot: {
+                        LumenScreenCaptureDisplayReadiness.snapshot(
+                            displayID: displayID,
+                            owner: owner
+                        )
+                    }
+                )
+        } catch {
+            let snapshot = LumenScreenCaptureDisplayReadiness.snapshot(
+                displayID: displayID,
+                owner: owner
+            )
+            let elapsedMilliseconds =
+                (ProcessInfo.processInfo.systemUptime - startedAt) * 1_000
+            let observedOwner = snapshot.ownerToken.map(String.init) ?? "none"
+            let description =
+                (error as? any LocalizedError)?.errorDescription ??
+                String(describing: error)
+            let message =
+                "Lumen virtual display mode settlement failed " +
+                "display-id=\(displayID) " +
+                "expected-owner-token=\(owner.ownerToken) " +
+                "observed-owner-token=\(observedOwner) " +
+                "online=\(snapshot.isOnline) " +
+                "active=\(snapshot.isActive) " +
+                "current-mode=\(snapshot.hasCurrentMode) " +
+                "pixel-size=\(snapshot.pixelWidth)x\(snapshot.pixelHeight) " +
+                "configured-size=\(snapshot.configuredPixelWidth)x" +
+                "\(snapshot.configuredPixelHeight) " +
+                "elapsed-ms=\(elapsedMilliseconds) " +
+                "error=\(description)\n"
+            FileHandle.standardError.write(Data(message.utf8))
+            throw error
+        }
+        let snapshot = LumenScreenCaptureDisplayReadiness.snapshot(
+            displayID: displayID,
+            owner: owner
+        )
+        let elapsedMilliseconds =
+            (ProcessInfo.processInfo.systemUptime - startedAt) * 1_000
+        let message =
+            "Lumen virtual display mode settled " +
+            "display-id=\(displayID) " +
+            "owner-token=\(owner.ownerToken) " +
+            "online=\(snapshot.isOnline) " +
+            "active=\(snapshot.isActive) " +
+            "current-mode=\(snapshot.hasCurrentMode) " +
+            "pixel-size=\(snapshot.pixelWidth)x\(snapshot.pixelHeight) " +
+            "configured-size=\(snapshot.configuredPixelWidth)x" +
+            "\(snapshot.configuredPixelHeight) " +
+            "elapsed-ms=\(elapsedMilliseconds)\n"
+        FileHandle.standardError.write(Data(message.utf8))
     }
 
     func stabilize(displayID: UInt32) async throws {
@@ -560,6 +689,9 @@ public actor LumenMacWorkspaceSession {
             },
             verifyVirtualDisplay: { displayID in
                 try await displayOwner.verify(displayID: displayID)
+            },
+            settleVirtualDisplayMode: { displayID in
+                try await displayOwner.settleMode(displayID: displayID)
             },
             stabilizeVirtualDisplay: { displayID in
                 try await displayOwner.stabilize(displayID: displayID)
@@ -711,9 +843,15 @@ public actor LumenMacWorkspaceSession {
                 do {
                     result = try await executor.execute(command)
                     try await preparationFence()
-                    if command.action == .configureVirtualDisplay,
-                       !isDesktopMirror {
-                        try await executor.stabilizeOwnedVirtualDisplay()
+                    if command.action == .configureVirtualDisplay {
+                        if isDesktopMirror {
+                            // A private settings apply can enqueue a later
+                            // independent-output transaction. Let that exact
+                            // retained mode settle before committing the mirror.
+                            try await executor.settleOwnedVirtualDisplayMode()
+                        } else {
+                            try await executor.stabilizeOwnedVirtualDisplay()
+                        }
                         try await preparationFence()
                     }
                 } catch {
