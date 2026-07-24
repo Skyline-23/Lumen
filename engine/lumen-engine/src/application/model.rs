@@ -65,3 +65,9 @@ pub struct ApplicationLaunchPlan {
     pub terminate_on_pause: bool,
     pub gamepad: String,
 }
+
+impl ApplicationLaunchPlan {
+    pub fn captures_desktop(&self) -> bool {
+        self.command.is_empty() && self.detached_commands.is_empty()
+    }
+}

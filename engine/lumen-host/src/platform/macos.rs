@@ -125,6 +125,7 @@ struct MacWorkspaceSessionRequest {
     potential_edr_headroom: f32,
     current_peak_luminance_nits: i32,
     potential_peak_luminance_nits: i32,
+    desktop_mirror_source_display_id: u32,
 }
 
 #[repr(C)]
@@ -351,6 +352,7 @@ struct MacSessionState {
     workspace_key: Option<CString>,
     display_id: u32,
     input_display_bounds: Option<MacInputDisplayBounds>,
+    desktop_mirror_source_display_id: u32,
     opus: Option<NativeOpusEncoder>,
     audio_channels: usize,
     pcm: Vec<u8>,
@@ -388,6 +390,7 @@ impl MacPlatformSessionControl {
                 workspace_key: None,
                 display_id: 0,
                 input_display_bounds: None,
+                desktop_mirror_source_display_id: 0,
                 opus: None,
                 audio_channels: 0,
                 pcm: Vec::new(),
@@ -445,11 +448,28 @@ impl MacPlatformSessionControl {
 
 impl PlatformSessionControl for MacPlatformSessionControl {
     fn start_application(&self, plan: PlatformApplicationPlan) -> Result<(), String> {
-        self.application.start(plan)
+        let source_display_id = desktop_mirror_source_candidate_display_id(
+            plan.application.captures_desktop(),
+            plan.virtual_display,
+            unsafe { CGMainDisplayID() },
+        )?;
+        self.application.start(plan)?;
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "macOS platform session state is unavailable".to_owned())?;
+        state.desktop_mirror_source_display_id = source_display_id;
+        Ok(())
     }
 
     fn stop_application(&self) -> Result<(), String> {
-        self.application.stop()
+        self.application.stop()?;
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "macOS platform session state is unavailable".to_owned())?;
+        state.desktop_mirror_source_display_id = 0;
+        Ok(())
     }
 
     fn start_session(&self, plan: PlatformSessionPlan) -> Result<(), String> {
@@ -483,6 +503,7 @@ impl PlatformSessionControl for MacPlatformSessionControl {
                     potential_edr_headroom: plan.sink_potential_edr_headroom,
                     current_peak_luminance_nits: plan.sink_current_peak_luminance_nits,
                     potential_peak_luminance_nits: plan.sink_potential_peak_luminance_nits,
+                    desktop_mirror_source_display_id: state.desktop_mirror_source_display_id,
                 };
                 let display_id = unsafe {
                     (self.api.prepare_workspace)(request, error.as_mut_ptr(), error.len())
@@ -1036,6 +1057,19 @@ fn capture_pair_audio_failure(status: i32, error: String) -> Result<Option<Strin
     }
 }
 
+fn desktop_mirror_source_candidate_display_id(
+    captures_desktop: bool,
+    virtual_display: bool,
+    main_display_id: u32,
+) -> Result<u32, String> {
+    if !captures_desktop || !virtual_display {
+        return Ok(0);
+    }
+    (main_display_id != 0)
+        .then_some(main_display_id)
+        .ok_or_else(|| "macOS desktop capture has no current source display".to_owned())
+}
+
 unsafe fn parameter_set(
     codec: i32,
     format: FormatDescription,
@@ -1234,6 +1268,35 @@ mod tests {
         assert_eq!(
             capture_pair_audio_failure(1, "capture rejected".to_owned()).unwrap_err(),
             "video capture failed: capture rejected"
+        );
+    }
+
+    #[test]
+    fn desktop_mirror_source_candidate_requires_desktop_intent_and_virtual_display() {
+        assert_eq!(
+            desktop_mirror_source_candidate_display_id(true, true, 3).unwrap(),
+            3
+        );
+        assert_eq!(
+            desktop_mirror_source_candidate_display_id(false, true, 3).unwrap(),
+            0
+        );
+        assert_eq!(
+            desktop_mirror_source_candidate_display_id(true, false, 3).unwrap(),
+            0
+        );
+        assert_eq!(
+            desktop_mirror_source_candidate_display_id(true, true, 0).unwrap_err(),
+            "macOS desktop capture has no current source display"
+        );
+    }
+
+    #[test]
+    fn workspace_request_keeps_the_bridge_layout_stable() {
+        assert_eq!(std::mem::size_of::<MacWorkspaceSessionRequest>(), 72);
+        assert_eq!(
+            std::mem::offset_of!(MacWorkspaceSessionRequest, desktop_mirror_source_display_id),
+            68
         );
     }
 }

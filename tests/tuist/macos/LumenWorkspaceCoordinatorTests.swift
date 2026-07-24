@@ -246,7 +246,8 @@ private func workspaceRegistrySnapshot(
         currentEDRHeadroom: 0,
         potentialEDRHeadroom: 0,
         currentPeakLuminanceNits: 0,
-        potentialPeakLuminanceNits: 0
+        potentialPeakLuminanceNits: 0,
+        desktopMirrorSourceDisplayID: 0
     )
 }
 
@@ -1788,6 +1789,18 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         XCTAssertEqual(
             request.captureConfiguration.sinkRequest.capability.potentialPeakLuminanceNits,
             1600
+        )
+    }
+
+    func testWorkspaceRequestBoxCarriesExplicitDesktopMirrorSource() {
+        let box = LumenMacWorkspaceSessionRequestBox()
+        box.desktopMirrorSourceDisplayID = 3
+
+        let request = box.makeRequest(policy: .isolatedWorkspace)
+
+        XCTAssertEqual(
+            request.contentSource,
+            .desktopMirror(sourceDisplayID: 3)
         )
     }
 

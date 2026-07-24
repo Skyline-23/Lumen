@@ -1,9 +1,15 @@
 import CoreGraphics
 import Foundation
 
+@frozen public enum LumenMacWorkspaceContentSource: Equatable, Sendable {
+    case targetWindows
+    case desktopMirror(sourceDisplayID: UInt32)
+}
+
 public struct LumenMacWorkspaceSessionRequest: Sendable {
     public let displayKey: String
     public let policy: LumenMacWorkspacePolicy
+    public let contentSource: LumenMacWorkspaceContentSource
     public let targetProcessIdentifiers: [Int32]
     public let displayMode: LumenMacDisplayModeRequest
     public let displayName: String
@@ -14,6 +20,7 @@ public struct LumenMacWorkspaceSessionRequest: Sendable {
     public init(
         displayKey: String = UUID().uuidString,
         policy: LumenMacWorkspacePolicy = .coexist,
+        contentSource: LumenMacWorkspaceContentSource = .targetWindows,
         targetProcessIdentifiers: [Int32] = [],
         displayMode: LumenMacDisplayModeRequest,
         displayName: String = "Lumen Display",
@@ -23,6 +30,7 @@ public struct LumenMacWorkspaceSessionRequest: Sendable {
     ) {
         self.displayKey = displayKey
         self.policy = policy
+        self.contentSource = contentSource
         self.targetProcessIdentifiers = targetProcessIdentifiers
         self.displayMode = displayMode
         self.displayName = displayName

@@ -18,6 +18,7 @@ public final class LumenMacWorkspaceSessionRequestBox: NSObject {
     public var potentialEDRHeadroom: Float = 0
     public var currentPeakLuminanceNits = 0
     public var potentialPeakLuminanceNits = 0
+    public var desktopMirrorSourceDisplayID: UInt32 = 0
 
     @nonobjc fileprivate func snapshot() -> LumenMacWorkspaceSessionRequestSnapshot {
         LumenMacWorkspaceSessionRequestSnapshot(
@@ -34,7 +35,8 @@ public final class LumenMacWorkspaceSessionRequestBox: NSObject {
             currentEDRHeadroom: currentEDRHeadroom,
             potentialEDRHeadroom: potentialEDRHeadroom,
             currentPeakLuminanceNits: currentPeakLuminanceNits,
-            potentialPeakLuminanceNits: potentialPeakLuminanceNits
+            potentialPeakLuminanceNits: potentialPeakLuminanceNits,
+            desktopMirrorSourceDisplayID: desktopMirrorSourceDisplayID
         )
     }
 
@@ -60,6 +62,7 @@ struct LumenMacWorkspaceSessionRequestSnapshot: Sendable {
     let potentialEDRHeadroom: Float
     let currentPeakLuminanceNits: Int
     let potentialPeakLuminanceNits: Int
+    let desktopMirrorSourceDisplayID: UInt32
 
     func swiftValue(
         policy: LumenMacWorkspacePolicy
@@ -93,6 +96,9 @@ struct LumenMacWorkspaceSessionRequestSnapshot: Sendable {
         return LumenMacWorkspaceSessionRequest(
             displayKey: displayKey,
             policy: policy,
+            contentSource: desktopMirrorSourceDisplayID == 0
+                ? .targetWindows
+                : .desktopMirror(sourceDisplayID: desktopMirrorSourceDisplayID),
             // Client sink scaling does not define the host-owned desktop mode.
             displayMode: LumenMacDisplayModeRequest(
                 width: width,

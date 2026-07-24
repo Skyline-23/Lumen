@@ -311,6 +311,7 @@ typedef struct LumenMacWorkspaceSessionRequest {
   float potential_edr_headroom;
   int32_t current_peak_luminance_nits;
   int32_t potential_peak_luminance_nits;
+  uint32_t desktop_mirror_source_display_id;
 } LumenMacWorkspaceSessionRequest;
 
 typedef struct LumenMacWorkspaceActivationResult {

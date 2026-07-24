@@ -836,6 +836,7 @@ uint32_t LumenMacWorkspacePrepareSession(
   box.potentialEDRHeadroom = request.potential_edr_headroom;
   box.currentPeakLuminanceNits = request.current_peak_luminance_nits;
   box.potentialPeakLuminanceNits = request.potential_peak_luminance_nits;
+  box.desktopMirrorSourceDisplayID = request.desktop_mirror_source_display_id;
   NSError *error = nil;
   uint32_t displayID = [LumenMacWorkspaceSessionFacade.shared prepareSessionSync:box error:&error];
   copy_string_to_buffer(error.localizedDescription, error_destination, error_capacity);
