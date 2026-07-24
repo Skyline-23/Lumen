@@ -2030,6 +2030,7 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
             )
         )
         let request = LumenMacWorkspaceSessionRequest(
+            displayKey: "hdr-contract-display",
             displayMode: LumenMacDisplayModeRequest(
                 width: 2388,
                 height: 1668,
@@ -2045,6 +2046,40 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
             geometry: geometry,
             request: request
         )
+        let matchingConfiguration = try LumenMacVirtualDisplayConfigurationFactory.make(
+            geometry: geometry,
+            request: request
+        )
+        let distinctRequest = LumenMacWorkspaceSessionRequest(
+            displayKey: "distinct-hdr-contract-display",
+            displayMode: request.displayMode,
+            refreshRate: request.refreshRate,
+            captureConfiguration: capture
+        )
+        let distinctConfiguration = try LumenMacVirtualDisplayConfigurationFactory.make(
+            geometry: geometry,
+            request: distinctRequest
+        )
+        let collidingRequest = LumenMacWorkspaceSessionRequest(
+            displayKey: "lumen-workspace-100000000326246",
+            displayMode: request.displayMode,
+            refreshRate: request.refreshRate,
+            captureConfiguration: capture
+        )
+        let otherCollidingRequest = LumenMacWorkspaceSessionRequest(
+            displayKey: "lumen-workspace-100000001467780",
+            displayMode: request.displayMode,
+            refreshRate: request.refreshRate,
+            captureConfiguration: capture
+        )
+        let collidingConfiguration = try LumenMacVirtualDisplayConfigurationFactory.make(
+            geometry: geometry,
+            request: collidingRequest
+        )
+        let otherCollidingConfiguration = try LumenMacVirtualDisplayConfigurationFactory.make(
+            geometry: geometry,
+            request: otherCollidingRequest
+        )
 
         XCTAssertEqual(configuration.backingWidth, 2388)
         XCTAssertEqual(configuration.logicalWidth, 1592)
@@ -2055,6 +2090,17 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         XCTAssertEqual(configuration.transfer.rawValue, 1)
         XCTAssertEqual(configuration.currentPeakLuminanceNits, 120)
         XCTAssertEqual(configuration.potentialPeakLuminanceNits, 1600)
+        XCTAssertNotEqual(configuration.serialNumber, 0)
+        XCTAssertEqual(configuration.serialNumber, matchingConfiguration.serialNumber)
+        XCTAssertEqual(configuration.productID, matchingConfiguration.productID)
+        XCTAssertNotEqual(
+            [configuration.productID, configuration.serialNumber],
+            [distinctConfiguration.productID, distinctConfiguration.serialNumber]
+        )
+        XCTAssertNotEqual(
+            [collidingConfiguration.productID, collidingConfiguration.serialNumber],
+            [otherCollidingConfiguration.productID, otherCollidingConfiguration.serialNumber]
+        )
     }
 
     func testWorkspaceRequestBoxSeparatesClientSinkScaleFromHostDisplayMode() throws {

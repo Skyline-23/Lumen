@@ -348,7 +348,7 @@ actor LumenCoreGraphicsDisplayTopologyController: LumenMacDisplayTopologyControl
     nonisolated private static func isLumenVirtualDisplay(
         _ state: LumenMacPhysicalDisplayState
     ) -> Bool {
-        state.vendorID == 6_973 && state.productID == 0xA901
+        state.vendorID == 6_973
     }
 
     nonisolated static func matches(

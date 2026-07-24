@@ -385,10 +385,7 @@ static void LumenConfigureHDRDisplayInfo(
   @try {
     Class descriptorClass = NSClassFromString(@"CGVirtualDisplayDescriptor");
     _descriptor = [[descriptorClass alloc] init];
-    _callbackQueue = dispatch_queue_create(
-      "dev.skyline23.lumen.native-virtual-display",
-      DISPATCH_QUEUE_SERIAL
-    );
+    _callbackQueue = dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0);
     if (_descriptor == nil || _callbackQueue == nil) {
       LumenAssignVirtualDisplayError(
         error,
@@ -575,6 +572,11 @@ static void LumenConfigureHDRDisplayInfo(
       @"Cannot update an inactive virtual display or apply an empty mode."
     );
     return NO;
+  }
+  if (_logicalWidth == logicalWidth &&
+      _logicalHeight == logicalHeight &&
+      _refreshRate == refreshRate) {
+    return YES;
   }
   id previousMode = _mode;
   id previousModes = [_settings valueForKey:@"modes"];

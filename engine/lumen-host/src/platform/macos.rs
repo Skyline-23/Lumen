@@ -24,6 +24,7 @@ const MAXIMUM_PCM_BYTES: usize = 1024 * 1024;
 const AUDIO_FRAME_COUNT: usize = 240;
 const AUDIO_PACKET_DURATION: Duration = Duration::from_millis(5);
 const MAXIMUM_AUDIO_CATCHUP: Duration = Duration::from_millis(100);
+const MACOS_WORKSPACE_DISPLAY_KEY: &str = "dev.skyline23.lumen.workspace.primary.v1";
 type BridgeController = c_void;
 type MacOpusEncoder = c_void;
 type SampleBuffer = *const c_void;
@@ -482,9 +483,8 @@ impl PlatformSessionControl for MacPlatformSessionControl {
             .map_err(|_| "macOS platform session state is unavailable".to_owned())?;
         self.stop_locked(&mut state)?;
         let startup = (|| -> Result<(), String> {
-            let workspace_key =
-                CString::new(format!("lumen-workspace-{}", monotonic_nanoseconds()))
-                    .map_err(|_| "workspace key is invalid".to_owned())?;
+            let workspace_key = CString::new(MACOS_WORKSPACE_DISPLAY_KEY)
+                .map_err(|_| "workspace key is invalid".to_owned())?;
             let display_name = CString::new("Lumen Display").expect("static display name");
             let display_id = if plan.virtual_display {
                 let mut error = [0_i8; 1024];
@@ -1321,6 +1321,17 @@ mod tests {
         assert_eq!(
             std::mem::offset_of!(MacWorkspaceSessionRequest, desktop_mirror_source_display_id),
             68
+        );
+    }
+
+    #[test]
+    fn workspace_display_identity_is_stable_across_session_restarts() {
+        assert_eq!(
+            CString::new(MACOS_WORKSPACE_DISPLAY_KEY)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "dev.skyline23.lumen.workspace.primary.v1"
         );
     }
 }

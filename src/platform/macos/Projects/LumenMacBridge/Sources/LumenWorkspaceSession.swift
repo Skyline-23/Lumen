@@ -79,6 +79,11 @@ public struct LumenMacWorkspaceActivationOutcome: Equatable, Sendable {
     }
 }
 
+struct LumenMacVirtualDisplayPersistentIdentity: Equatable, Sendable {
+    let productID: UInt32
+    let serialNumber: UInt32
+}
+
 public enum LumenMacVirtualDisplayConfigurationFactory {
     public static func make(
         geometry: LumenMacDisplayGeometry,
@@ -91,6 +96,11 @@ public enum LumenMacVirtualDisplayConfigurationFactory {
         )
         let configuration = LumenMacVirtualDisplayConfiguration()
         configuration.name = request.displayName
+        let identity = persistentIdentity(
+            forDisplayKey: request.displayKey
+        )
+        configuration.productID = identity.productID
+        configuration.serialNumber = identity.serialNumber
         configuration.backingWidth = geometry.backingWidth
         configuration.backingHeight = geometry.backingHeight
         configuration.logicalWidth = geometry.logicalWidth
@@ -112,6 +122,22 @@ public enum LumenMacVirtualDisplayConfigurationFactory {
         configuration.currentPeakLuminanceNits = Double(capability.currentPeakLuminanceNits)
         configuration.potentialPeakLuminanceNits = Double(capability.potentialPeakLuminanceNits)
         return configuration
+    }
+
+    static func persistentIdentity(
+        forDisplayKey displayKey: String
+    ) -> LumenMacVirtualDisplayPersistentIdentity {
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        for byte in "dev.skyline23.lumen.virtual-display:\(displayKey)".utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 1_099_511_628_211
+        }
+        let rawProductID = UInt32((hash >> 32) & 0xFFFF)
+        let rawSerialNumber = UInt32(truncatingIfNeeded: hash)
+        return LumenMacVirtualDisplayPersistentIdentity(
+            productID: rawProductID == 0 ? 1 : rawProductID,
+            serialNumber: rawSerialNumber == 0 ? 1 : rawSerialNumber
+        )
     }
 
     private static func protocolRawGamut(_ gamut: LumenClientSinkGamut) -> Int32 {

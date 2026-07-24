@@ -32,12 +32,14 @@ static BOOL LumenDisplayExistedBeforeModeCreation = NO;
 @end
 
 @interface LumenVirtualDisplayRejectedUpdateProbe : LumenMacVirtualDisplay
+@property(nonatomic) NSUInteger settingsApplicationCount;
 @property(nonatomic) BOOL rejectNextSettings;
 @end
 
 @implementation LumenVirtualDisplayRejectedUpdateProbe
 
 - (BOOL)applyVirtualDisplaySettings:(id)settings {
+  self.settingsApplicationCount += 1;
   if (self.rejectNextSettings) {
     self.rejectNextSettings = NO;
     return NO;
@@ -138,6 +140,63 @@ static BOOL LumenDisplayExistedBeforeModeCreation = NO;
     XCTFail(@"Missing committed refresh-rate state: %@", exception.reason);
   }
   XCTAssertEqualWithAccuracy(retainedRefreshRate.doubleValue, 60.0, 0.0001);
+  [display destroy];
+}
+
+- (void)testIdenticalVirtualDisplayModeUpdateKeepsThePublishedSettings {
+  if (![LumenMacVirtualDisplay isSupported]) {
+    XCTSkip(@"CGVirtualDisplay is unavailable on this runtime");
+  }
+
+  LumenMacVirtualDisplayConfiguration *configuration =
+    [[LumenMacVirtualDisplayConfiguration alloc] init];
+  configuration.name = @"Lumen Identical Mode Update Probe";
+  configuration.backingWidth = 640;
+  configuration.backingHeight = 360;
+  configuration.logicalWidth = 320;
+  configuration.logicalHeight = 180;
+  configuration.refreshRate = 120;
+  configuration.highDensity = YES;
+  configuration.serialNumber = 0x12345678u;
+
+  NSError *error = nil;
+  LumenVirtualDisplayRejectedUpdateProbe *display =
+    [[LumenVirtualDisplayRejectedUpdateProbe alloc]
+      initWithConfiguration:configuration
+                      error:&error];
+  XCTAssertNotNil(display);
+  XCTAssertNil(error);
+  XCTAssertEqual(display.settingsApplicationCount, 1u);
+  XCTAssertEqual(
+    [[[display valueForKey:@"settings"] valueForKey:@"hiDPI"] unsignedIntValue],
+    1u
+  );
+  id descriptor = [display valueForKey:@"descriptor"];
+  XCTAssertEqual(
+    [[descriptor valueForKey:@"serialNum"] unsignedIntValue],
+    configuration.serialNumber
+  );
+  XCTAssertEqual(
+    [[descriptor valueForKey:@"serialNumber"] unsignedIntValue],
+    configuration.serialNumber
+  );
+  dispatch_queue_t callbackQueue = [descriptor valueForKey:@"queue"];
+  XCTAssertNotNil(callbackQueue);
+  XCTAssertEqual(
+    dispatch_queue_get_qos_class(callbackQueue, NULL),
+    QOS_CLASS_USER_INITIATED
+  );
+
+  id publishedMode = [display valueForKey:@"mode"];
+  XCTAssertTrue(
+    [display updateLogicalWidth:configuration.logicalWidth
+                  logicalHeight:configuration.logicalHeight
+                    refreshRate:configuration.refreshRate
+                           error:&error]
+  );
+  XCTAssertNil(error);
+  XCTAssertEqual(display.settingsApplicationCount, 1u);
+  XCTAssertEqual([display valueForKey:@"mode"], publishedMode);
   [display destroy];
 }
 

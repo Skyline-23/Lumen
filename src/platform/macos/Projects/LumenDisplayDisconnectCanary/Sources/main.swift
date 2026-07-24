@@ -6,7 +6,6 @@ import LumenMacBridge
 import Security
 
 private let lumenVendorID: UInt32 = 6_973
-private let lumenProductID: UInt32 = 0xA901
 // Give each safety output a stable namespaced serial and a normal desktop-sized
 // mode so WindowServer publishes it as an independent desktop.
 private let canarySafetySerialBase: UInt32 = 0x4C4D_0000
@@ -683,12 +682,11 @@ private func isLumenVirtual(_ state: DisplayState) -> Bool {
 }
 
 private func isProductionLumenVirtual(_ state: DisplayState) -> Bool {
-    state.vendorID == lumenVendorID && state.productID == lumenProductID
+    state.vendorID == lumenVendorID
 }
 
 private func isCanarySafetyDisplay(_ state: DisplayState) -> Bool {
     state.vendorID == lumenVendorID
-        && state.productID == lumenProductID
         && (state.serialNumber == canarySafetySerialBase + 1
             || state.serialNumber == canarySafetySerialBase + 2)
 }
