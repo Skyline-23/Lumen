@@ -40,13 +40,31 @@ public struct LumenMacWorkspaceSessionRequest: Sendable {
     }
 }
 
-public enum LumenMacWorkspaceSessionError: Error, Equatable {
+public enum LumenMacWorkspaceSessionError: Error, Equatable, LocalizedError {
     case sessionAlreadyStarted
     case sessionNotStarted
     case recoveryDidNotComplete
     case virtualDisplayOwnershipMismatch
     case virtualDisplayPublicationUnavailable(UInt32)
     case isolationCommandMissing
+
+    public var errorDescription: String? {
+        switch self {
+        case .sessionAlreadyStarted:
+            "a workspace session is already started"
+        case .sessionNotStarted:
+            "the workspace session has not started"
+        case .recoveryDidNotComplete:
+            "the previous workspace recovery did not complete"
+        case .virtualDisplayOwnershipMismatch:
+            "the owned virtual display identity changed during the workspace lifecycle"
+        case .virtualDisplayPublicationUnavailable(let displayID):
+            "owned virtual display \(displayID) did not reach stable capture readiness " +
+                "before the publication deadline"
+        case .isolationCommandMissing:
+            "the workspace isolation command is missing"
+        }
+    }
 }
 
 public struct LumenMacWorkspaceActivationOutcome: Equatable, Sendable {
@@ -405,26 +423,58 @@ actor LumenMacVirtualDisplayOwner {
         }
         let owner = LumenRetainedVirtualDisplayReference(display: display)
         let startedAt = ProcessInfo.processInfo.systemUptime
-        try await LumenMacVirtualDisplayPublicationStabilizer.wait(
-            displayID: displayID,
-            expectedOwnerToken: owner.ownerToken,
-            timing: .production,
-            now: {
-                DispatchTime.now().uptimeNanoseconds
-            },
-            sleepUntil: { deadline in
-                let now = DispatchTime.now().uptimeNanoseconds
-                if deadline > now {
-                    try await Task.sleep(nanoseconds: deadline - now)
+        do {
+            try await LumenMacVirtualDisplayPublicationStabilizer.wait(
+                displayID: displayID,
+                expectedOwnerToken: owner.ownerToken,
+                timing: .production,
+                now: {
+                    DispatchTime.now().uptimeNanoseconds
+                },
+                sleepUntil: { deadline in
+                    let now = DispatchTime.now().uptimeNanoseconds
+                    if deadline > now {
+                        try await Task.sleep(nanoseconds: deadline - now)
+                    }
+                },
+                snapshot: {
+                    LumenScreenCaptureDisplayReadiness.snapshot(
+                        displayID: displayID,
+                        owner: owner
+                    )
                 }
-            },
-            snapshot: {
-                LumenScreenCaptureDisplayReadiness.snapshot(
-                    displayID: displayID,
-                    owner: owner
-                )
-            }
-        )
+            )
+        } catch {
+            let snapshot = LumenScreenCaptureDisplayReadiness.snapshot(
+                displayID: displayID,
+                owner: owner
+            )
+            let elapsedMilliseconds =
+                (ProcessInfo.processInfo.systemUptime - startedAt) * 1_000
+            let observedOwner = snapshot.ownerToken.map(String.init) ?? "none"
+            let modeReady = snapshot.isModeReady(
+                for: .retained(ownerToken: owner.ownerToken)
+            )
+            let description =
+                (error as? any LocalizedError)?.errorDescription ??
+                String(describing: error)
+            let message =
+                "Lumen virtual display publication failed " +
+                "display-id=\(displayID) " +
+                "expected-owner-token=\(owner.ownerToken) " +
+                "observed-owner-token=\(observedOwner) " +
+                "online=\(snapshot.isOnline) " +
+                "active=\(snapshot.isActive) " +
+                "current-mode=\(snapshot.hasCurrentMode) " +
+                "pixel-size=\(snapshot.pixelWidth)x\(snapshot.pixelHeight) " +
+                "configured-size=\(snapshot.configuredPixelWidth)x" +
+                "\(snapshot.configuredPixelHeight) " +
+                "mode-ready=\(modeReady) " +
+                "elapsed-ms=\(elapsedMilliseconds) " +
+                "error=\(description)\n"
+            FileHandle.standardError.write(Data(message.utf8))
+            throw error
+        }
         let elapsedMilliseconds =
             (ProcessInfo.processInfo.systemUptime - startedAt) * 1_000
         let message =

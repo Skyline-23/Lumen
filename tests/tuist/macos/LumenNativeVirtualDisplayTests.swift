@@ -113,6 +113,16 @@ final class LumenNativeVirtualDisplayTests: XCTestCase {
         XCTAssertEqual(completedAt, 3_000_000_000)
     }
 
+    func testPublicationFailureDescribesTheOwnedDisplayBoundary() {
+        XCTAssertEqual(
+            LumenMacWorkspaceSessionError
+                .virtualDisplayPublicationUnavailable(77)
+                .errorDescription,
+            "owned virtual display 77 did not reach stable capture readiness " +
+                "before the publication deadline"
+        )
+    }
+
     func testVirtualDisplayRegistryHandlesUnknownKeysWithoutSideEffects() {
         LumenMacVirtualDisplay.destroyAllRegisteredDisplays()
 
