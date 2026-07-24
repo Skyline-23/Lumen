@@ -87,6 +87,7 @@ struct LumenMacDisplayMirrorState: Equatable, Sendable {
     let sourceIsActive: Bool
     let sourceIsOwnedVirtualDisplay: Bool
     let sourceBounds: CGRect
+    let sourceConfiguredSize: CGSize?
     let sourceOwnerToken: UInt?
     let targetIsOnline: Bool
     let targetIsActive: Bool
@@ -127,6 +128,9 @@ struct LumenCoreGraphicsDisplayMirrorController:
         sourceDisplayID: UInt32
     ) -> LumenMacDisplayMirrorState {
         let mirroredDisplayID = CGDisplayMirrorsDisplay(targetDisplayID)
+        let sourceDisplay = LumenMacVirtualDisplay.registeredDisplay(
+            forDisplayID: sourceDisplayID
+        )
         return LumenMacDisplayMirrorState(
             mainDisplayID: CGMainDisplayID(),
             mirrorSourceDisplayID: mirroredDisplayID == kCGNullDirectDisplay
@@ -134,12 +138,17 @@ struct LumenCoreGraphicsDisplayMirrorController:
                 : mirroredDisplayID,
             sourceIsOnline: CGDisplayIsOnline(sourceDisplayID) != 0,
             sourceIsActive: CGDisplayIsActive(sourceDisplayID) != 0,
-            sourceIsOwnedVirtualDisplay:
-                LumenMacVirtualDisplay.registeredDisplay(
-                    forDisplayID: sourceDisplayID
-                ) != nil,
+            sourceIsOwnedVirtualDisplay: sourceDisplay != nil,
             sourceBounds: CGDisplayBounds(sourceDisplayID),
-            sourceOwnerToken: Self.ownerToken(for: sourceDisplayID),
+            sourceConfiguredSize: sourceDisplay.map {
+                CGSize(
+                    width: CGFloat($0.logicalWidth),
+                    height: CGFloat($0.logicalHeight)
+                )
+            },
+            sourceOwnerToken: sourceDisplay.map {
+                LumenRetainedVirtualDisplayReference(display: $0).ownerToken
+            },
             targetIsOnline: CGDisplayIsOnline(targetDisplayID) != 0,
             targetIsActive: CGDisplayIsActive(targetDisplayID) != 0,
             targetBounds: CGDisplayBounds(targetDisplayID),
@@ -208,25 +217,6 @@ struct LumenCoreGraphicsDisplayMirrorController:
             )
         }
         do {
-            if origin != nil, CGDisplayIsActive(targetDisplayID) == 0 {
-                // A settled private mode update can leave its exact virtual
-                // output inactive. Reassert that output's published mode in
-                // the same app-only transaction that stages its safe origin.
-                guard let currentMode = CGDisplayCopyDisplayMode(targetDisplayID) else {
-                    throw LumenMacDisplayWorkspaceError.displayConfigurationFailed(-1)
-                }
-                let modeResult = CGConfigureDisplayWithDisplayMode(
-                    configuration,
-                    targetDisplayID,
-                    currentMode,
-                    nil
-                )
-                guard modeResult == .success else {
-                    throw LumenMacDisplayWorkspaceError.displayConfigurationFailed(
-                        modeResult.rawValue
-                    )
-                }
-            }
             let mirrorResult = CGConfigureDisplayMirrorOfDisplay(
                 configuration,
                 targetDisplayID,
@@ -646,21 +636,37 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             sourceDisplayID: sourceDisplayID
         )
         guard let expectedSourceOwnerToken = before.sourceOwnerToken,
-              before.mainDisplayID == sourceDisplayID,
-              before.mirrorSourceDisplayID == nil,
-              before.sourceIsOnline,
-              before.sourceIsActive,
-              before.sourceIsOwnedVirtualDisplay,
-              Self.hasUsableDisplayBounds(before.sourceBounds),
-              before.targetIsOnline,
-              before.targetIsActive,
-              before.targetOwnerToken == nil else {
+              let expectedSourceSize = before.sourceConfiguredSize,
+              Self.isValidDesktopMirrorPrecondition(
+                  before,
+                  displayID: displayID,
+                  sourceDisplayID: sourceDisplayID,
+                  expectedOwnerToken: expectedSourceOwnerToken,
+                  expectedSourceSize: expectedSourceSize
+              ) else {
             throw LumenMacDisplayWorkspaceError.virtualDisplayMirrorUnavailable(
                 displayID,
                 sourceDisplayID
             )
         }
-        let expectedSourceSize = before.sourceBounds.size
+
+        try await topologyController.verify(snapshot.topology)
+        let verifiedBefore = await mirrorController.state(
+            targetDisplayID: sourceDisplayID,
+            sourceDisplayID: displayID
+        )
+        guard Self.isValidDesktopMirrorPrecondition(
+            verifiedBefore,
+            displayID: displayID,
+            sourceDisplayID: sourceDisplayID,
+            expectedOwnerToken: expectedSourceOwnerToken,
+            expectedSourceSize: expectedSourceSize
+        ) else {
+            throw LumenMacDisplayWorkspaceError.virtualDisplayMirrorUnavailable(
+                displayID,
+                sourceDisplayID
+            )
+        }
 
         try await mirrorController.mirror(
             targetDisplayID: sourceDisplayID,
@@ -671,9 +677,11 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             sessionSourceDisplayID: displayID
         )
         do {
-            let after = await mirrorController.state(
-                targetDisplayID: sourceDisplayID,
-                sourceDisplayID: displayID
+            let after = try await waitForDesktopMirrorConvergence(
+                displayID: displayID,
+                sourceDisplayID: sourceDisplayID,
+                expectedOwnerToken: expectedSourceOwnerToken,
+                expectedSourceSize: expectedSourceSize
             )
             logDesktopMirrorState(
                 phase: "after",
@@ -681,21 +689,6 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
                 displayID: displayID,
                 sourceDisplayID: sourceDisplayID
             )
-            guard after.mainDisplayID == displayID,
-                  after.mirrorSourceDisplayID == displayID,
-                  after.sourceIsOnline,
-                  after.sourceIsActive,
-                  after.sourceIsOwnedVirtualDisplay,
-                  Self.hasUsableDisplayBounds(after.sourceBounds),
-                  after.sourceBounds.size == expectedSourceSize,
-                  after.sourceOwnerToken == expectedSourceOwnerToken,
-                  after.targetIsOnline,
-                  after.targetOwnerToken == nil else {
-                throw LumenMacDisplayWorkspaceError.virtualDisplayMirrorUnavailable(
-                    displayID,
-                    sourceDisplayID
-                )
-            }
         } catch {
             let originalError = error
             do {
@@ -708,6 +701,89 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
                     .virtualDisplayMirrorRollbackFailed(displayID)
             }
             throw originalError
+        }
+    }
+
+    nonisolated private static func isValidDesktopMirrorPrecondition(
+        _ state: LumenMacDisplayMirrorState,
+        displayID: UInt32,
+        sourceDisplayID: UInt32,
+        expectedOwnerToken: UInt,
+        expectedSourceSize: CGSize
+    ) -> Bool {
+        state.mainDisplayID == sourceDisplayID &&
+            state.mirrorSourceDisplayID == nil &&
+            state.sourceIsOnline &&
+            state.sourceIsActive &&
+            state.sourceIsOwnedVirtualDisplay &&
+            Self.hasUsableDisplayBounds(state.sourceBounds) &&
+            state.sourceBounds.size == expectedSourceSize &&
+            state.sourceConfiguredSize == expectedSourceSize &&
+            expectedSourceSize.width > 0 &&
+            expectedSourceSize.height > 0 &&
+            state.sourceOwnerToken == expectedOwnerToken &&
+            state.targetIsOnline &&
+            state.targetIsActive &&
+            state.targetOwnerToken == nil &&
+            displayID != sourceDisplayID
+    }
+
+    nonisolated private static func isValidDesktopMirrorPostcondition(
+        _ state: LumenMacDisplayMirrorState,
+        displayID: UInt32,
+        expectedOwnerToken: UInt,
+        expectedSourceSize: CGSize
+    ) -> Bool {
+        state.mainDisplayID == displayID &&
+            state.mirrorSourceDisplayID == displayID &&
+            state.sourceIsOnline &&
+            state.sourceIsActive &&
+            state.sourceIsOwnedVirtualDisplay &&
+            Self.hasUsableDisplayBounds(state.sourceBounds) &&
+            state.sourceBounds.size == expectedSourceSize &&
+            state.sourceConfiguredSize == expectedSourceSize &&
+            state.sourceOwnerToken == expectedOwnerToken &&
+            state.targetIsOnline &&
+            state.targetOwnerToken == nil
+    }
+
+    private func waitForDesktopMirrorConvergence(
+        displayID: UInt32,
+        sourceDisplayID: UInt32,
+        expectedOwnerToken: UInt,
+        expectedSourceSize: CGSize
+    ) async throws -> LumenMacDisplayMirrorState {
+        let deadline = ProcessInfo.processInfo.systemUptime
+            + Self.desktopMirrorConvergenceTimeout
+        while true {
+            try Task.checkCancellation()
+            let state = await mirrorController.state(
+                targetDisplayID: sourceDisplayID,
+                sourceDisplayID: displayID
+            )
+            if Self.isValidDesktopMirrorPostcondition(
+                state,
+                displayID: displayID,
+                expectedOwnerToken: expectedOwnerToken,
+                expectedSourceSize: expectedSourceSize
+            ) {
+                return state
+            }
+            guard ProcessInfo.processInfo.systemUptime < deadline else {
+                logDesktopMirrorState(
+                    phase: "convergence-timeout",
+                    state: state,
+                    displayID: displayID,
+                    sourceDisplayID: sourceDisplayID
+                )
+                throw LumenMacDisplayWorkspaceError.virtualDisplayMirrorUnavailable(
+                    displayID,
+                    sourceDisplayID
+                )
+            }
+            try await Task.sleep(
+                nanoseconds: Self.desktopMirrorPollNanoseconds
+            )
         }
     }
 
@@ -1155,6 +1231,9 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
         let mirrorSource = state.mirrorSourceDisplayID.map(String.init) ?? "none"
         let sourceOwnerToken = state.sourceOwnerToken.map(String.init) ?? "none"
         let targetOwnerToken = state.targetOwnerToken.map(String.init) ?? "none"
+        let configuredSourceSize = state.sourceConfiguredSize.map {
+            "\(Int($0.width.rounded()))x\(Int($0.height.rounded()))"
+        } ?? "none"
         let message =
             "Lumen desktop mirror state " +
             "phase=\(phase) " +
@@ -1169,6 +1248,7 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             "\(Int(state.sourceBounds.origin.y.rounded())) " +
             "session-size=\(Int(state.sourceBounds.width.rounded()))x" +
             "\(Int(state.sourceBounds.height.rounded())) " +
+            "session-configured-size=\(configuredSourceSize) " +
             "session-owner-token=\(sourceOwnerToken) " +
             "physical-target-online=\(state.targetIsOnline) " +
             "physical-target-active=\(state.targetIsActive) " +

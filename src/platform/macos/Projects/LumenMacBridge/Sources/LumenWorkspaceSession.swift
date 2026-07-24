@@ -359,9 +359,9 @@ enum LumenMacVirtualDisplayPublicationStabilizer {
             sleepUntil: sleepUntil,
             snapshot: snapshot,
             isReady: {
-                // The delayed independent-output transaction can legitimately
-                // leave the retained display inactive. Its exact mode contract
-                // must become quiet before topology staging reactivates it.
+                // CGVirtualDisplay can hold its accepted mode while the output
+                // is not yet part of the public active topology. Stabilize that
+                // retained contract before the separate activation transaction.
                 $0.hasCurrentMode ||
                     ($0.pixelWidth > 0 && $0.pixelHeight > 0) ||
                     (
@@ -871,9 +871,6 @@ public actor LumenMacWorkspaceSession {
                     try await preparationFence()
                     if command.action == .configureVirtualDisplay {
                         if isDesktopMirror {
-                            // A private settings apply can enqueue a later
-                            // independent-output transaction. Let that exact
-                            // retained mode settle before committing the mirror.
                             try await executor.settleOwnedVirtualDisplayMode()
                         } else {
                             try await executor.stabilizeOwnedVirtualDisplay()

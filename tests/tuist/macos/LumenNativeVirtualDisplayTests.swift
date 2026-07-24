@@ -62,7 +62,7 @@ final class LumenNativeVirtualDisplayTests: XCTestCase {
 
         try display.updateLogicalWidth(640, logicalHeight: 360, refreshRate: 60)
         let duplicateMode = try XCTUnwrap(display.value(forKey: "mode") as? NSObject)
-        XCTAssertNotIdentical(duplicateMode, initialMode)
+        XCTAssertIdentical(duplicateMode, initialMode)
 
         try display.updateLogicalWidth(800, logicalHeight: 450, refreshRate: 60)
         let updatedMode = try XCTUnwrap(display.value(forKey: "mode") as? NSObject)
@@ -113,12 +113,12 @@ final class LumenNativeVirtualDisplayTests: XCTestCase {
         XCTAssertEqual(completedAt, 3_000_000_000)
     }
 
-    func testModeSettlementWaitsForLateIndependentOutputBeforeTopology() async throws {
+    func testModeSettlementAcceptsAStableRetainedModeBeforeActivation() async throws {
         let clock = LumenVirtualDisplayPublicationClock()
         let ownerToken: UInt = 42
         let timing = LumenMacVirtualDisplayPublicationTiming(
-            overallDeadlineNanoseconds: 6_000_000_000,
-            stableWindowNanoseconds: 2_000_000_000,
+            overallDeadlineNanoseconds: 3_000_000_000,
+            stableWindowNanoseconds: 1_000_000_000,
             pollNanoseconds: 500_000_000
         )
 
@@ -133,12 +133,11 @@ final class LumenNativeVirtualDisplayTests: XCTestCase {
                 await clock.sleep(until: deadline)
             },
             snapshot: {
-                let now = await clock.now()
                 return LumenScreenCaptureDisplayReadinessSnapshot(
                     ownerToken: ownerToken,
-                    isOnline: now < 1_500_000_000,
-                    isActive: now < 1_500_000_000,
-                    hasCurrentMode: true,
+                    isOnline: false,
+                    isActive: false,
+                    hasCurrentMode: false,
                     pixelWidth: 640,
                     pixelHeight: 360,
                     configuredPixelWidth: 640,
@@ -148,7 +147,7 @@ final class LumenNativeVirtualDisplayTests: XCTestCase {
         )
 
         let completedAt = await clock.now()
-        XCTAssertEqual(completedAt, 3_500_000_000)
+        XCTAssertEqual(completedAt, 1_000_000_000)
     }
 
     func testPublicationFailureDescribesTheOwnedDisplayBoundary() {
@@ -232,20 +231,66 @@ final class LumenNativeVirtualDisplayTests: XCTestCase {
         guard LumenMacVirtualDisplay.isSupported() else {
             throw XCTSkip("CGVirtualDisplay is unavailable on this runtime")
         }
-        let key = "direct-screen-capture-admission-test"
+        let key = "direct-screen-capture-admission-v2"
         let configuration = LumenMacVirtualDisplayConfiguration()
         configuration.name = "Lumen Admission Test"
-        configuration.backingWidth = 1_280
-        configuration.backingHeight = 720
-        configuration.logicalWidth = 1_280
-        configuration.logicalHeight = 720
-        configuration.refreshRate = 60
+        let identity = LumenMacVirtualDisplayConfigurationFactory.persistentIdentity(
+            forDisplayKey: key
+        )
+        configuration.productID = identity.productID
+        configuration.serialNumber = identity.serialNumber
+        configuration.backingWidth = 1_920
+        configuration.backingHeight = 1_080
+        configuration.logicalWidth = 960
+        configuration.logicalHeight = 540
+        configuration.refreshRate = 120
+        configuration.highDensity = true
 
         let physicalMainDisplayID = CGMainDisplayID()
         let workspace = LumenMacDisplayWorkspace()
         let physicalTopology = try await workspace.snapshotWorkspace(
             targetProcessIdentifiers: []
         )
+        let firstOwner = try LumenMacVirtualDisplay.createRegisteredDisplay(
+            forKey: key,
+            configuration: configuration
+        )
+        let firstDisplayID = firstOwner.displayID
+        XCTAssertTrue(
+            LumenMacVirtualDisplay.removeRegisteredDisplay(
+                forKey: key,
+                ifMatchingDisplay: firstOwner
+            )
+        )
+        let disconnectDeadline = DispatchTime.now().uptimeNanoseconds + 5_000_000_000
+        while true {
+            var onlineCount: UInt32 = 0
+            guard CGGetOnlineDisplayList(0, nil, &onlineCount) == .success else {
+                XCTFail("The online display inventory could not be read")
+                return
+            }
+            var onlineDisplayIDs = [CGDirectDisplayID](
+                repeating: 0,
+                count: Int(onlineCount)
+            )
+            guard CGGetOnlineDisplayList(
+                onlineCount,
+                &onlineDisplayIDs,
+                &onlineCount
+            ) == .success else {
+                XCTFail("The online display inventory could not be read")
+                return
+            }
+            if !onlineDisplayIDs.prefix(Int(onlineCount)).contains(firstDisplayID) {
+                break
+            }
+            guard DispatchTime.now().uptimeNanoseconds < disconnectDeadline else {
+                XCTFail("The first retained virtual display did not disconnect before recreation")
+                return
+            }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+
         let retained = try LumenMacVirtualDisplay.createRegisteredDisplay(
             forKey: key,
             configuration: configuration
@@ -261,92 +306,93 @@ final class LumenNativeVirtualDisplayTests: XCTestCase {
         )
         let retainedDisplayID = retained.displayID
         let owner = LumenRetainedVirtualDisplayReference(display: retained)
-        try await LumenMacVirtualDisplayPublicationStabilizer.waitForModeSettlement(
-            displayID: retainedDisplayID,
-            expectedOwnerToken: owner.ownerToken,
-            timing: .production,
-            now: {
-                DispatchTime.now().uptimeNanoseconds
-            },
-            sleepUntil: { deadline in
-                let now = DispatchTime.now().uptimeNanoseconds
-                if deadline > now {
-                    try await Task.sleep(nanoseconds: deadline - now)
-                }
-            },
-            snapshot: {
-                LumenScreenCaptureDisplayReadiness.snapshot(
-                    displayID: retainedDisplayID,
-                    owner: owner
-                )
-            }
-        )
-        let physicalBounds = physicalTopology.displays.compactMap { state in
-            UInt32(state.id).map(CGDisplayBounds)
-        }
-        let initialBounds = CGDisplayBounds(retained.displayID)
-        let initialPlacementWasSafe =
-            CGDisplayMirrorsDisplay(retained.displayID) == kCGNullDirectDisplay &&
-            !initialBounds.isEmpty &&
-            physicalBounds.allSatisfy { !$0.intersects(initialBounds) }
-        try await workspace.stageVirtualDisplayUnmirrored(
-            retained.displayID,
-            sourceDisplayID: physicalMainDisplayID
-        )
-        try await LumenMacVirtualDisplayPublicationStabilizer.wait(
-            displayID: retainedDisplayID,
-            expectedOwnerToken: owner.ownerToken,
-            timing: .production,
-            now: {
-                DispatchTime.now().uptimeNanoseconds
-            },
-            sleepUntil: { deadline in
-                let now = DispatchTime.now().uptimeNanoseconds
-                if deadline > now {
-                    try await Task.sleep(nanoseconds: deadline - now)
-                }
-            },
-            snapshot: {
-                LumenScreenCaptureDisplayReadiness.snapshot(
-                    displayID: retainedDisplayID,
-                    owner: owner
-                )
-            }
-        )
-        XCTAssertEqual(CGMainDisplayID(), physicalMainDisplayID)
-        XCTAssertEqual(
-            CGDisplayMirrorsDisplay(retained.displayID),
-            kCGNullDirectDisplay
-        )
-        let stagedBounds = CGDisplayBounds(retained.displayID)
-        XCTAssertTrue(physicalBounds.allSatisfy { !$0.intersects(stagedBounds) })
-        if initialPlacementWasSafe {
-            XCTAssertEqual(stagedBounds, initialBounds)
-        }
-
-        let content: SCShareableContent
         do {
-            content = try await SCShareableContent.excludingDesktopWindows(
+            try await LumenMacVirtualDisplayPublicationStabilizer.waitForModeSettlement(
+                displayID: retainedDisplayID,
+                expectedOwnerToken: owner.ownerToken,
+                timing: .production,
+                now: {
+                    DispatchTime.now().uptimeNanoseconds
+                },
+                sleepUntil: { deadline in
+                    let now = DispatchTime.now().uptimeNanoseconds
+                    if deadline > now {
+                        try await Task.sleep(nanoseconds: deadline - now)
+                    }
+                },
+                snapshot: {
+                    LumenScreenCaptureDisplayReadiness.snapshot(
+                        displayID: retainedDisplayID,
+                        owner: owner
+                    )
+                }
+            )
+            try await workspace.stageVirtualDisplayUnmirrored(
+                retainedDisplayID,
+                sourceDisplayID: physicalMainDisplayID
+            )
+            try await workspace.mirrorOwnedVirtualDisplay(
+                retainedDisplayID,
+                sourceDisplayID: physicalMainDisplayID
+            )
+            try await LumenMacVirtualDisplayPublicationStabilizer.wait(
+                displayID: retainedDisplayID,
+                expectedOwnerToken: owner.ownerToken,
+                timing: .production,
+                now: {
+                    DispatchTime.now().uptimeNanoseconds
+                },
+                sleepUntil: { deadline in
+                    let now = DispatchTime.now().uptimeNanoseconds
+                    if deadline > now {
+                        try await Task.sleep(nanoseconds: deadline - now)
+                    }
+                },
+                snapshot: {
+                    LumenScreenCaptureDisplayReadiness.snapshot(
+                        displayID: retainedDisplayID,
+                        owner: owner
+                    )
+                }
+            )
+            XCTAssertEqual(CGMainDisplayID(), retainedDisplayID)
+            XCTAssertEqual(
+                CGDisplayMirrorsDisplay(physicalMainDisplayID),
+                retainedDisplayID
+            )
+
+            let content = try await SCShareableContent.excludingDesktopWindows(
                 false,
                 onScreenWindowsOnly: true
             )
+            let admitted = try XCTUnwrap(
+                content.displays.first(where: {
+                    UInt32($0.displayID) == retainedDisplayID
+                })
+            )
+            XCTAssertEqual(UInt32(admitted.displayID), retainedDisplayID)
+            _ = SCContentFilter(
+                display: admitted,
+                excludingApplications: [],
+                exceptingWindows: []
+            )
+            try await workspace.restoreWorkspace(physicalTopology)
         } catch {
-            let error = error as NSError
-            if error.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain",
-               error.code == -3_801 {
+            let originalError = error
+            do {
+                try await workspace.restoreWorkspace(physicalTopology)
+            } catch {
+                throw LumenMacDisplayWorkspaceError.virtualDisplayMirrorRollbackFailed(
+                    retainedDisplayID
+                )
+            }
+            let nsError = originalError as NSError
+            if nsError.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain",
+               nsError.code == -3_801 {
                 throw XCTSkip("The XCTest runner does not hold ScreenCaptureKit TCC permission")
             }
-            throw error
+            throw originalError
         }
-        let admitted = try XCTUnwrap(
-            content.displays.first(where: { UInt32($0.displayID) == retained.displayID })
-        )
-        XCTAssertEqual(UInt32(admitted.displayID), retained.displayID)
-        _ = SCContentFilter(
-            display: admitted,
-            excludingApplications: [],
-            exceptingWindows: []
-        )
     }
 
     func testAuthoritativeShareableDisplayStartsScreenCapture() async throws {

@@ -94,7 +94,8 @@ private actor DisplayMirrorProbe: LumenMacDisplayMirrorControlling {
     private let ownerToken: UInt?
     private let initialTargetIsOnline: Bool
     private let initialTargetIsActive: Bool
-    private var targetReadinessSequence: [(online: Bool, active: Bool)]
+    private let configuredTargetSize: CGSize
+    private var postMirrorReadinessSequence: [(online: Bool, active: Bool)]
     private let reportedMirrorSourceAfterApply: UInt32?
     private let mirroredSourceBounds: CGRect?
     private let mirroredTargetIsActive: Bool
@@ -110,7 +111,8 @@ private actor DisplayMirrorProbe: LumenMacDisplayMirrorControlling {
         initialTargetIsOnline: Bool = true,
         initialTargetIsActive: Bool = true,
         initialTargetBounds: CGRect = .zero,
-        targetReadinessSequence: [(online: Bool, active: Bool)] = [],
+        configuredTargetSize: CGSize? = nil,
+        postMirrorReadinessSequence: [(online: Bool, active: Bool)] = [],
         boundsByDisplayID: [UInt32: CGRect] = [:],
         ownerToken: UInt? = 0xCAFE,
         mirroredSourceBounds: CGRect? = nil,
@@ -120,7 +122,9 @@ private actor DisplayMirrorProbe: LumenMacDisplayMirrorControlling {
         self.targetDisplayID = targetDisplayID
         self.initialTargetIsOnline = initialTargetIsOnline
         self.initialTargetIsActive = initialTargetIsActive
-        self.targetReadinessSequence = targetReadinessSequence
+        self.configuredTargetSize = configuredTargetSize
+            ?? initialTargetBounds.size
+        self.postMirrorReadinessSequence = postMirrorReadinessSequence
         self.reportedMirrorSourceAfterApply = reportedMirrorSourceAfterApply
         self.mirroredSourceBounds = mirroredSourceBounds
         self.mirroredTargetIsActive = mirroredTargetIsActive
@@ -141,14 +145,25 @@ private actor DisplayMirrorProbe: LumenMacDisplayMirrorControlling {
     ) -> LumenMacDisplayMirrorState {
         let targetIsOwnedVirtualDisplay = targetDisplayID == self.targetDisplayID
         let sourceIsOwnedVirtualDisplay = sourceDisplayID == self.targetDisplayID
-        let ownedDisplayReadiness = staged
-            ? (online: true, active: true)
-            : targetReadinessSequence.isEmpty
-                ? (online: initialTargetIsOnline, active: initialTargetIsActive)
-                : targetReadinessSequence.removeFirst()
+        let ownedDisplayReadiness: (online: Bool, active: Bool)
+        if staged {
+            ownedDisplayReadiness = (online: true, active: true)
+        } else if applied {
+            ownedDisplayReadiness = postMirrorReadinessSequence.isEmpty
+                ? (online: true, active: true)
+                : postMirrorReadinessSequence.removeFirst()
+        } else {
+            ownedDisplayReadiness = (
+                online: initialTargetIsOnline,
+                active: initialTargetIsActive
+            )
+        }
         let sourceBounds = sourceIsOwnedVirtualDisplay
             ? applied
-                ? mirroredSourceBounds ?? targetBounds
+                ? mirroredSourceBounds ?? CGRect(
+                    origin: .zero,
+                    size: configuredTargetSize
+                )
                 : targetBounds
             : boundsByDisplayID[sourceDisplayID]
                 ?? CGRect(x: 0, y: 0, width: 2_560, height: 1_440)
@@ -169,6 +184,9 @@ private actor DisplayMirrorProbe: LumenMacDisplayMirrorControlling {
                 (sourceIsOwnedVirtualDisplay && ownedDisplayReadiness.active),
             sourceIsOwnedVirtualDisplay: sourceIsOwnedVirtualDisplay,
             sourceBounds: sourceBounds,
+            sourceConfiguredSize: sourceIsOwnedVirtualDisplay
+                ? configuredTargetSize
+                : nil,
             sourceOwnerToken: sourceIsOwnedVirtualDisplay ? ownerToken : nil,
             targetIsOnline:
                 targetDisplayID == self.sourceDisplayID ||
@@ -354,7 +372,7 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         )
     }
 
-    func testOwnedVirtualDesktopSourceMirrorsPhysicalTargetAndRestoresTopology() async throws {
+    func testReadyOwnedVirtualDesktopSourceMirrorsPhysicalTargetAndRestoresTopology() async throws {
         let topology = displayTopology()
         let sourceDisplayID = try XCTUnwrap(
             topology.displays.first.flatMap { UInt32($0.id) }
@@ -365,7 +383,10 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
             sourceDisplayID: sourceDisplayID,
             targetDisplayID: targetDisplayID,
             reportedMirrorSourceAfterApply: targetDisplayID,
-            initialTargetBounds: CGRect(x: -640, y: 0, width: 640, height: 360),
+            initialTargetIsOnline: true,
+            initialTargetIsActive: true,
+            initialTargetBounds: CGRect(x: 2_560, y: 0, width: 960, height: 540),
+            configuredTargetSize: CGSize(width: 960, height: 540),
             mirroredTargetIsActive: false
         )
         let workspace = LumenMacDisplayWorkspace(
@@ -390,6 +411,45 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         ])
         let restoredTopologies = await topologyProbe.restoredTopologies()
         XCTAssertTrue(restoredTopologies.isEmpty)
+    }
+
+    func testDesktopMirrorRejectsPhysicalTopologyDriftBeforeMutation() async throws {
+        let topology = displayTopology()
+        let sourceDisplayID = try XCTUnwrap(
+            topology.displays.first.flatMap { UInt32($0.id) }
+        )
+        let targetDisplayID: UInt32 = 120
+        let topologyProbe = DisplayTopologyProbe(topology: topology)
+        let mirrorProbe = DisplayMirrorProbe(
+            sourceDisplayID: sourceDisplayID,
+            targetDisplayID: targetDisplayID,
+            reportedMirrorSourceAfterApply: targetDisplayID,
+            initialTargetIsOnline: true,
+            initialTargetIsActive: true,
+            initialTargetBounds: CGRect(x: 2_560, y: 0, width: 960, height: 540),
+            configuredTargetSize: CGSize(width: 960, height: 540)
+        )
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: topologyProbe,
+            mirrorController: mirrorProbe,
+            physicalDisplayController: RecordingPhysicalDisplayController(),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier()
+        )
+        _ = try await workspace.snapshotWorkspace(targetProcessIdentifiers: [])
+        await topologyProbe.allowVerification()
+        await topologyProbe.failVerificationUntilRestore()
+
+        do {
+            try await workspace.mirrorOwnedVirtualDisplay(
+                targetDisplayID,
+                sourceDisplayID: sourceDisplayID
+            )
+            XCTFail("physical topology drift must fail before mirror mutation")
+        } catch is DisplayTopologyProbeFailure {
+        }
+
+        let events = await mirrorProbe.recordedEvents()
+        XCTAssertTrue(events.isEmpty)
     }
 
     func testDesktopMirrorStageReassertsExactInactiveTargetAndPreservesPhysicalTopology() async throws {
@@ -694,7 +754,6 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         )
         _ = try await workspace.snapshotWorkspace(targetProcessIdentifiers: [])
         await topologyProbe.allowVerification()
-        await topologyProbe.failVerificationUntilRestore()
 
         do {
             try await workspace.mirrorOwnedVirtualDisplay(
@@ -714,7 +773,7 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
             .unmirror(target: sourceDisplayID),
         ])
         let restoredTopologies = await topologyProbe.restoredTopologies()
-        XCTAssertEqual(restoredTopologies, [topology])
+        XCTAssertTrue(restoredTopologies.isEmpty)
     }
 
     func testRestoreSkipsCoreGraphicsMutationWhenPhysicalTopologyAlreadyConverged() async throws {
@@ -794,7 +853,7 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
             id: "26",
             originX: 0,
             vendorID: 6_973,
-            productID: 0xA901,
+            productID: 0x6C21,
             serialNumber: 1,
             builtin: false
         )
