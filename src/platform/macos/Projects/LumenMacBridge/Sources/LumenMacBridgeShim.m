@@ -1,6 +1,7 @@
 #import "LumenMacBridge.h"
 
 #import <LumenMacBridge/LumenMacBridge-Swift.h>
+#import <AppKit/AppKit.h>
 #import <CoreFoundation/CoreFoundation.h>
 #include <opus_multistream.h>
 #include <limits.h>
@@ -21,6 +22,63 @@ int32_t LumenMacDirectCGSConfigureDisplayEnabled(
   bool enabled
 ) {
   return (int32_t)CGSConfigureDisplayEnabled(configuration, displayID, enabled);
+}
+
+bool LumenMacApplicationPrepareMainThread(void) {
+  if (![NSThread isMainThread]) {
+    return false;
+  }
+  NSApplication *application = [NSApplication sharedApplication];
+  [application setActivationPolicy:NSApplicationActivationPolicyAccessory];
+  [application finishLaunching];
+  return true;
+}
+
+bool LumenMacApplicationRunMainThread(
+  LumenMacApplicationReadinessCallback readinessCallback,
+  void *readinessContext
+) {
+  if (!readinessCallback) {
+    return false;
+  }
+  if (![NSThread isMainThread]) {
+    readinessCallback(readinessContext, false);
+    return false;
+  }
+  __block bool readinessDelivered = false;
+  CFRunLoopPerformBlock(CFRunLoopGetMain(), kCFRunLoopCommonModes, ^{
+    if (readinessDelivered) {
+      return;
+    }
+    readinessDelivered = true;
+    readinessCallback(readinessContext, true);
+  });
+  [[NSApplication sharedApplication] run];
+  if (!readinessDelivered) {
+    readinessDelivered = true;
+    readinessCallback(readinessContext, false);
+  }
+  return true;
+}
+
+void LumenMacApplicationStopMainThread(void) {
+  CFRunLoopRef runLoop = CFRunLoopGetMain();
+  CFRunLoopPerformBlock(runLoop, kCFRunLoopCommonModes, ^{
+    NSApplication *application = [NSApplication sharedApplication];
+    [application stop:nil];
+    NSEvent *wakeEvent = [NSEvent
+      otherEventWithType:NSEventTypeApplicationDefined
+      location:NSZeroPoint
+      modifierFlags:0
+      timestamp:[NSProcessInfo processInfo].systemUptime
+      windowNumber:0
+      context:nil
+      subtype:0
+      data1:0
+      data2:0];
+    [application postEvent:wakeEvent atStart:NO];
+  });
+  CFRunLoopWakeUp(runLoop);
 }
 
 struct LumenMacBridgeController {

@@ -84,6 +84,14 @@ int32_t LumenMacDirectCGSConfigureDisplayEnabled(
   bool enabled
 );
 
+bool LumenMacApplicationPrepareMainThread(void);
+typedef void (*LumenMacApplicationReadinessCallback)(void *context, bool ready);
+bool LumenMacApplicationRunMainThread(
+  LumenMacApplicationReadinessCallback readiness_callback,
+  void *readiness_context
+);
+void LumenMacApplicationStopMainThread(void);
+
 // Stable C shapes used only at the Swift/Objective-C platform boundary. Shared
 // policy and the packaged host runtime are Rust-owned; these records carry
 // native media metadata without restoring a C++ authority.

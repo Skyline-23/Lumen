@@ -3,6 +3,23 @@ import Testing
 
 @Suite("macOS architecture contract")
 struct LumenMacArchitectureContractTests {
+    @Test("Host worker declares the AppKit event-loop bundle contract")
+    func hostWorkerDeclaresAppKitEventLoopContract() throws {
+        let workerInfoURL = try repositoryRoot().appendingPathComponent(
+            "engine/lumen-host/resources/macos-worker-info.plist"
+        )
+        let propertyList = try #require(
+            PropertyListSerialization.propertyList(
+                from: Data(contentsOf: workerInfoURL),
+                format: nil
+            ) as? [String: Any]
+        )
+
+        #expect(propertyList["LSUIElement"] as? Bool == true)
+        #expect(propertyList["NSHighResolutionCapable"] as? Bool == true)
+        #expect(propertyList["NSPrincipalClass"] as? String == "NSApplication")
+    }
+
     @Test("macOS build and release surfaces are Apple Silicon only")
     func macOSBuildAndReleaseAreArm64Only() throws {
         let repositoryRoot = try repositoryRoot()

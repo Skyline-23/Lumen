@@ -1,7 +1,7 @@
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
 use std::path::PathBuf;
 use std::ptr;
-use std::sync::Mutex;
+use std::sync::{mpsc::SyncSender, Mutex};
 use std::time::{Duration, Instant};
 
 use lumen_engine::{
@@ -178,6 +178,11 @@ struct MacAudioCaptureEventRecord {
 
 type CreateController = unsafe extern "C" fn() -> *mut BridgeController;
 type DestroyController = unsafe extern "C" fn(*mut BridgeController);
+type ApplicationReadinessCallback = unsafe extern "C" fn(*mut c_void, bool);
+type PrepareApplicationMainThread = unsafe extern "C" fn() -> bool;
+type RunApplicationMainThread =
+    unsafe extern "C" fn(ApplicationReadinessCallback, *mut c_void) -> bool;
+type StopApplicationMainThread = unsafe extern "C" fn();
 type MakeVideoConfiguration = unsafe extern "C" fn(u32) -> MacCaptureConfiguration;
 type MakeAudioConfiguration = unsafe extern "C" fn(u32) -> MacAudioCaptureConfiguration;
 type ConfigureForwarding = unsafe extern "C" fn(*mut BridgeController, usize, usize);
@@ -230,7 +235,11 @@ type EncodeOpusFloat32 = unsafe extern "C" fn(
 type DestroyOpusEncoder = unsafe extern "C" fn(*mut MacOpusEncoder);
 
 struct MacBridgeApi {
-    handle: *mut c_void,
+    // AppKit schedules process-lifetime run-loop callbacks into this image.
+    _handle: *mut c_void,
+    prepare_application_main_thread: PrepareApplicationMainThread,
+    run_application_main_thread: RunApplicationMainThread,
+    stop_application_main_thread: StopApplicationMainThread,
     create_controller: CreateController,
     destroy_controller: DestroyController,
     make_video_configuration: MakeVideoConfiguration,
@@ -268,7 +277,19 @@ impl MacBridgeApi {
         }
         unsafe {
             Ok(Self {
-                handle,
+                _handle: handle,
+                prepare_application_main_thread: load_symbol(
+                    handle,
+                    b"LumenMacApplicationPrepareMainThread\0",
+                )?,
+                run_application_main_thread: load_symbol(
+                    handle,
+                    b"LumenMacApplicationRunMainThread\0",
+                )?,
+                stop_application_main_thread: load_symbol(
+                    handle,
+                    b"LumenMacApplicationStopMainThread\0",
+                )?,
                 create_controller: load_symbol(handle, b"LumenMacBridgeControllerCreate\0")?,
                 destroy_controller: load_symbol(handle, b"LumenMacBridgeControllerDestroy\0")?,
                 make_video_configuration: load_symbol(
@@ -325,12 +346,6 @@ impl MacBridgeApi {
     }
 }
 
-impl Drop for MacBridgeApi {
-    fn drop(&mut self) {
-        unsafe { dlclose(self.handle) };
-    }
-}
-
 struct MacSessionState {
     controller: *mut BridgeController,
     workspace_key: Option<CString>,
@@ -357,6 +372,11 @@ pub(crate) struct MacPlatformSessionControl {
 impl MacPlatformSessionControl {
     pub(crate) fn new() -> Result<Self, String> {
         let api = MacBridgeApi::load()?;
+        if !unsafe { (api.prepare_application_main_thread)() } {
+            return Err(
+                "macOS application lifecycle must be prepared on the main thread".to_owned(),
+            );
+        }
         let controller = unsafe { (api.create_controller)() };
         if controller.is_null() {
             return Err("could not create the macOS capture bridge".to_owned());
@@ -379,6 +399,24 @@ impl MacPlatformSessionControl {
             native_input: MacNativeInput::default(),
             application: PortableApplication::default(),
         })
+    }
+
+    pub(crate) fn run_application_event_loop(
+        &self,
+        readiness: SyncSender<bool>,
+    ) -> Result<(), String> {
+        unsafe extern "C" fn publish_readiness(context: *mut c_void, ready: bool) {
+            let readiness = unsafe { Box::from_raw(context.cast::<SyncSender<bool>>()) };
+            let _ = readiness.send(ready);
+        }
+        let context = Box::into_raw(Box::new(readiness)).cast::<c_void>();
+        unsafe { (self.api.run_application_main_thread)(publish_readiness, context) }
+            .then_some(())
+            .ok_or_else(|| "macOS application event loop must run on the main thread".to_owned())
+    }
+
+    pub(crate) fn stop_application_event_loop(&self) {
+        unsafe { (self.api.stop_application_main_thread)() };
     }
 
     fn stop_locked(&self, state: &mut MacSessionState) -> Result<(), String> {
@@ -1104,7 +1142,6 @@ const RTLD_NOW: c_int = 0x2;
 unsafe extern "C" {
     fn dlopen(path: *const c_char, mode: c_int) -> *mut c_void;
     fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
-    fn dlclose(handle: *mut c_void) -> c_int;
     fn dlerror() -> *const c_char;
     fn CGMainDisplayID() -> u32;
     fn CFRelease(value: *const c_void);
