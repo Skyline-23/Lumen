@@ -493,6 +493,27 @@ struct LumenScreenCaptureDisplayReadinessSnapshot: Equatable, Sendable {
             return false
         }
     }
+
+    func isPreparedHandleReady(
+        for authority: LumenScreenCaptureDisplayAuthority
+    ) -> Bool {
+        switch authority {
+        case .retained:
+            guard isOnline else {
+                return false
+            }
+            if isActive {
+                return isModeReady(for: authority)
+            }
+            // A CoreGraphics mirror sink can remain online while no longer
+            // being independently drawable. The handle was admitted before
+            // mirroring, so retain it only while the exact owned display and
+            // its configured geometry still exist.
+            return configuredPixelWidth > 0 && configuredPixelHeight > 0
+        case .exactExternal:
+            return isModeReady(for: authority)
+        }
+    }
 }
 
 struct LumenScreenCaptureDisplayReadinessTiming: Equatable, Sendable {
@@ -1185,7 +1206,7 @@ enum LumenScreenCaptureDisplayPrefetch {
         let authority = LumenScreenCaptureDisplayAuthority.retained(
             ownerToken: ownerToken
         )
-        guard before.isModeReady(for: authority) else {
+        guard before.isPreparedHandleReady(for: authority) else {
             await preparedDisplays.discard(displayID: displayID)
             logger.warning(
                 "stage=display-prefetch-rejected display-id=\(displayID, privacy: .public) reason=owner-or-mode-not-ready"
@@ -1211,7 +1232,7 @@ enum LumenScreenCaptureDisplayPrefetch {
             owner: prepared.owner
         )
         guard after.ownerToken == ownerToken,
-              after.isModeReady(for: authority) else {
+              after.isPreparedHandleReady(for: authority) else {
             logger.warning(
                 "stage=display-prefetch-rejected display-id=\(displayID, privacy: .public) owner-token=\(ownerToken, privacy: .public) reason=post-take-validation-failed"
             )

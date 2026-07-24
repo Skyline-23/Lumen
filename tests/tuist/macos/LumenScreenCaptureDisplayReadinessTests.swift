@@ -363,6 +363,30 @@ final class LumenScreenCaptureDisplayReadinessTests: XCTestCase {
         XCTAssertEqual(resolved, 22)
         XCTAssertEqual(lookupCountAfterReadiness, 1)
 
+        let inactiveMirrorSink = LumenScreenCaptureDisplayReadinessSnapshot(
+            ownerToken: 7,
+            isOnline: true,
+            isActive: false,
+            hasCurrentMode: false,
+            configuredPixelWidth: 320,
+            configuredPixelHeight: 180
+        )
+        XCTAssertFalse(
+            inactiveMirrorSink.isModeReady(
+                for: .retained(ownerToken: 7)
+            )
+        )
+        XCTAssertTrue(
+            inactiveMirrorSink.isPreparedHandleReady(
+                for: .retained(ownerToken: 7)
+            )
+        )
+        XCTAssertFalse(
+            inactiveMirrorSink.isPreparedHandleReady(
+                for: .exactExternal
+            )
+        )
+
         do {
             let _: UInt32 = try await LumenScreenCaptureDisplayResolver.resolve(
                 displayID: 22,

@@ -96,6 +96,7 @@ private actor DisplayMirrorProbe: LumenMacDisplayMirrorControlling {
     private let initialTargetIsActive: Bool
     private var targetReadinessSequence: [(online: Bool, active: Bool)]
     private let reportedMirrorSourceAfterApply: UInt32?
+    private let mirroredTargetIsActive: Bool
     private var applied = false
     private var staged = false
     private var targetBounds: CGRect = .zero
@@ -110,7 +111,8 @@ private actor DisplayMirrorProbe: LumenMacDisplayMirrorControlling {
         initialTargetBounds: CGRect = .zero,
         targetReadinessSequence: [(online: Bool, active: Bool)] = [],
         boundsByDisplayID: [UInt32: CGRect] = [:],
-        ownerToken: UInt? = 0xCAFE
+        ownerToken: UInt? = 0xCAFE,
+        mirroredTargetIsActive: Bool = true
     ) {
         self.sourceDisplayID = sourceDisplayID
         self.targetDisplayID = targetDisplayID
@@ -118,6 +120,7 @@ private actor DisplayMirrorProbe: LumenMacDisplayMirrorControlling {
         self.initialTargetIsActive = initialTargetIsActive
         self.targetReadinessSequence = targetReadinessSequence
         self.reportedMirrorSourceAfterApply = reportedMirrorSourceAfterApply
+        self.mirroredTargetIsActive = mirroredTargetIsActive
         self.boundsByDisplayID = boundsByDisplayID
         self.ownerToken = ownerToken
         targetBounds = initialTargetBounds
@@ -149,7 +152,7 @@ private actor DisplayMirrorProbe: LumenMacDisplayMirrorControlling {
             targetIsOnline: targetDisplayID == self.targetDisplayID &&
                 targetReadiness.online,
             targetIsActive: targetDisplayID == self.targetDisplayID &&
-                targetReadiness.active,
+                (applied ? mirroredTargetIsActive : targetReadiness.active),
             targetBounds: targetBounds,
             targetOwnerToken: targetDisplayID == self.targetDisplayID
                 ? ownerToken
@@ -327,7 +330,7 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         )
     }
 
-    func testOwnedDesktopMirrorPreservesPhysicalTopologyAndUnmirrorsDuringRestore() async throws {
+    func testOwnedDesktopMirrorAcceptsInactiveOnlineSinkAndUnmirrorsDuringRestore() async throws {
         let topology = displayTopology()
         let sourceDisplayID = try XCTUnwrap(
             topology.displays.first.flatMap { UInt32($0.id) }
@@ -337,7 +340,8 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         let mirrorProbe = DisplayMirrorProbe(
             sourceDisplayID: sourceDisplayID,
             targetDisplayID: targetDisplayID,
-            reportedMirrorSourceAfterApply: sourceDisplayID
+            reportedMirrorSourceAfterApply: sourceDisplayID,
+            mirroredTargetIsActive: false
         )
         let workspace = LumenMacDisplayWorkspace(
             topologyController: topologyProbe,

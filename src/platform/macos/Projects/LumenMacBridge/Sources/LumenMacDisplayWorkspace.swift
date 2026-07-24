@@ -615,7 +615,14 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             targetDisplayID: displayID,
             sourceDisplayID: sourceDisplayID
         )
-        guard before.mainDisplayID == sourceDisplayID,
+        logDesktopMirrorState(
+            phase: "before",
+            state: before,
+            displayID: displayID,
+            sourceDisplayID: sourceDisplayID
+        )
+        guard let expectedTargetOwnerToken = before.targetOwnerToken,
+              before.mainDisplayID == sourceDisplayID,
               before.mirrorSourceDisplayID == nil,
               before.sourceIsOnline,
               before.sourceIsActive,
@@ -638,13 +645,19 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
                 targetDisplayID: displayID,
                 sourceDisplayID: sourceDisplayID
             )
+            logDesktopMirrorState(
+                phase: "after",
+                state: after,
+                displayID: displayID,
+                sourceDisplayID: sourceDisplayID
+            )
             guard after.mainDisplayID == sourceDisplayID,
                   after.mirrorSourceDisplayID == sourceDisplayID,
                   after.sourceIsOnline,
                   after.sourceIsActive,
                   !after.sourceIsOwnedVirtualDisplay,
                   after.targetIsOnline,
-                  after.targetIsActive else {
+                  after.targetOwnerToken == expectedTargetOwnerToken else {
                 throw LumenMacDisplayWorkspaceError.virtualDisplayMirrorUnavailable(
                     displayID,
                     sourceDisplayID
@@ -1102,6 +1115,34 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             "\(Int(targetBounds.height.rounded())) " +
             "physical-display-ids=\(physicalIDs) " +
             "placement=\(placement) result=ready\n"
+        FileHandle.standardError.write(Data(message.utf8))
+    }
+
+    private func logDesktopMirrorState(
+        phase: String,
+        state: LumenMacDisplayMirrorState,
+        displayID: UInt32,
+        sourceDisplayID: UInt32
+    ) {
+        let mirrorSource = state.mirrorSourceDisplayID.map(String.init) ?? "none"
+        let ownerToken = state.targetOwnerToken.map(String.init) ?? "none"
+        let message =
+            "Lumen desktop mirror state " +
+            "phase=\(phase) " +
+            "display-id=\(displayID) " +
+            "source-display-id=\(sourceDisplayID) " +
+            "main-display-id=\(state.mainDisplayID) " +
+            "mirror-source-id=\(mirrorSource) " +
+            "source-online=\(state.sourceIsOnline) " +
+            "source-active=\(state.sourceIsActive) " +
+            "source-owned=\(state.sourceIsOwnedVirtualDisplay) " +
+            "target-online=\(state.targetIsOnline) " +
+            "target-active=\(state.targetIsActive) " +
+            "target-origin=\(Int(state.targetBounds.origin.x.rounded()))," +
+            "\(Int(state.targetBounds.origin.y.rounded())) " +
+            "target-size=\(Int(state.targetBounds.width.rounded()))x" +
+            "\(Int(state.targetBounds.height.rounded())) " +
+            "owner-token=\(ownerToken)\n"
         FileHandle.standardError.write(Data(message.utf8))
     }
 
