@@ -881,7 +881,10 @@ fn join_native_auxiliary_stream_task(
     result: Option<NativeAuxiliaryStreamTaskResult>,
 ) -> Result<(), String> {
     match result {
-        Some(Ok((_, Ok(())))) => Ok(()),
+        Some(Ok((kind, Ok(())))) => Err(format!(
+            "{} ended while the control session was active",
+            kind.task_name()
+        )),
         Some(Ok((kind, Err(error)))) => Err(format!("{}: {error}", kind.task_name())),
         Some(Err(error)) => Err(format!(
             "native auxiliary stream task failed to join: {error}"
@@ -957,16 +960,15 @@ async fn accept_native_input_stream(
             .checked_add(1)
             .ok_or_else(|| "native input command sequence exhausted".to_owned())?;
     }
-    send.finish()
-        .map_err(|error| format!("could not finish QUIC input stream: {error}"))?;
-    send.stopped()
-        .await
-        .map_err(|error| format!("QUIC input response was not acknowledged: {error}"))?;
-    guard.reset()
+    guard.reset()?;
+    eprintln!(
+        "Lumen native QUIC stage=input-peer-send-closed session-epoch={session_epoch} response-lane=held"
+    );
+    hold_native_auxiliary_response_until_session_end(send).await
 }
 
 async fn accept_native_telemetry_stream(
-    mut send: quinn::SendStream,
+    send: quinn::SendStream,
     mut receive: quinn::RecvStream,
     session_epoch: u32,
     router: SharedControlRouter,
@@ -1043,12 +1045,18 @@ async fn accept_native_telemetry_stream(
             }
         }
     }
-    send.finish()
-        .map_err(|error| format!("could not finish QUIC telemetry stream: {error}"))?;
-    send.stopped()
-        .await
-        .map_err(|error| format!("QUIC telemetry response was not acknowledged: {error}"))?;
-    Ok(())
+    eprintln!(
+        "Lumen native QUIC stage=telemetry-peer-send-closed session-epoch={session_epoch} response-lane=held"
+    );
+    hold_native_auxiliary_response_until_session_end(send).await
+}
+
+async fn hold_native_auxiliary_response_until_session_end(
+    _send: quinn::SendStream,
+) -> Result<(), String> {
+    // Peer FIN closes only the client-to-host half. Control owns connection teardown, so retain
+    // the host response half until the outer session task aborts it after StopSession or failure.
+    std::future::pending().await
 }
 
 fn native_input_event_summary(event: &PlatformNativeInputEvent) -> String {
@@ -1473,7 +1481,8 @@ mod tests {
         assert_eq!(control_send.id().index(), 0);
         let (mut input_send, mut input_receive) = client_connection.open_bi().await.unwrap();
         assert_eq!(input_send.id().index(), 1);
-        let (mut telemetry_send, _telemetry_receive) = client_connection.open_bi().await.unwrap();
+        let (mut telemetry_send, mut telemetry_receive) =
+            client_connection.open_bi().await.unwrap();
         assert_eq!(telemetry_send.id().index(), 2);
 
         let hello = ClientControlEnvelope {
@@ -1610,6 +1619,31 @@ mod tests {
         })
         .await
         .expect("audio and video feedback were not admitted on telemetry stream 8");
+
+        input_send.finish().unwrap();
+        telemetry_send.finish().unwrap();
+        let (input_response, telemetry_response) = tokio::join!(
+            tokio::time::timeout(
+                Duration::from_millis(250),
+                read_input_frame(&mut input_receive)
+            ),
+            tokio::time::timeout(
+                Duration::from_millis(250),
+                read_length_delimited_frame(
+                    &mut telemetry_receive,
+                    NATIVE_CONTROL_MESSAGE_LIMIT,
+                    "telemetry",
+                )
+            ),
+        );
+        assert!(
+            input_response.is_err(),
+            "host ended ordered input feedback before the control session stopped"
+        );
+        assert!(
+            telemetry_response.is_err(),
+            "host ended telemetry response before the control session stopped"
+        );
 
         let stop = ClientControlEnvelope {
             request_id: 3,
