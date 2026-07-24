@@ -93,19 +93,25 @@ struct LumenMacWorkspaceSessionRequestSnapshot: Sendable {
             ),
             dynamicRangeTransport: dynamicRangeTransport
         )
+        let displayMode = desktopMirrorSourceDisplayID == 0
+            ? LumenMacDisplayModeRequest(
+                width: width,
+                height: height,
+                scalePercent: 100,
+                dimensionsAreLogical: false
+            )
+            : LumenMacDesktopMirrorDisplayModeResolver.resolve(
+                captureWidth: width,
+                captureHeight: height,
+                sinkMode: sinkRequest.mode
+            )
         return LumenMacWorkspaceSessionRequest(
             displayKey: displayKey,
             policy: policy,
             contentSource: desktopMirrorSourceDisplayID == 0
                 ? .targetWindows
                 : .desktopMirror(sourceDisplayID: desktopMirrorSourceDisplayID),
-            // Client sink scaling does not define the host-owned desktop mode.
-            displayMode: LumenMacDisplayModeRequest(
-                width: width,
-                height: height,
-                scalePercent: 100,
-                dimensionsAreLogical: false
-            ),
+            displayMode: displayMode,
             displayName: displayName,
             refreshRate: refreshRate,
             managesCapture: false,
@@ -121,6 +127,76 @@ struct LumenMacWorkspaceSessionRequestSnapshot: Sendable {
                 )
             )
         )
+    }
+}
+
+private enum LumenMacDesktopMirrorDisplayModeResolver {
+    private static let minimumLogicalWidth: UInt64 = 800
+    private static let minimumHiDPILogicalHeight: UInt64 = 540
+    private static let minimumOneXLogicalHeight: UInt64 = 576
+    private static let maximumEvenDimension = UInt64(UInt32.max - 1)
+
+    static func resolve(
+        captureWidth: UInt32,
+        captureHeight: UInt32,
+        sinkMode: LumenBridgeSinkMode
+    ) -> LumenMacDisplayModeRequest {
+        let scalePercent = UInt64(max(sinkMode.scalePercent, 100))
+        let requestedLogicalWidth = sinkMode.modeIsLogical
+            ? UInt64(captureWidth)
+            : UInt64(captureWidth) * 100 / scalePercent
+        let requestedLogicalHeight = sinkMode.modeIsLogical
+            ? UInt64(captureHeight)
+            : UInt64(captureHeight) * 100 / scalePercent
+        let minimumHeight = sinkMode.hidpi
+            ? minimumHiDPILogicalHeight
+            : minimumOneXLogicalHeight
+        let logicalSize = scaleToSupportedMinimum(
+            width: max(requestedLogicalWidth, 2),
+            height: max(requestedLogicalHeight, 2),
+            minimumWidth: minimumLogicalWidth,
+            minimumHeight: minimumHeight
+        )
+        let backingScale: UInt64 = sinkMode.hidpi ? 2 : 1
+        return LumenMacDisplayModeRequest(
+            width: boundedEven(logicalSize.width * backingScale),
+            height: boundedEven(logicalSize.height * backingScale),
+            scalePercent: UInt32(backingScale * 100),
+            dimensionsAreLogical: false
+        )
+    }
+
+    private static func scaleToSupportedMinimum(
+        width: UInt64,
+        height: UInt64,
+        minimumWidth: UInt64,
+        minimumHeight: UInt64
+    ) -> (width: UInt64, height: UInt64) {
+        guard width < minimumWidth || height < minimumHeight else {
+            return (even(width), even(height))
+        }
+        if minimumWidth * height >= minimumHeight * width {
+            return (
+                even(minimumWidth),
+                even(dividingRoundUp(height * minimumWidth, by: width))
+            )
+        }
+        return (
+            even(dividingRoundUp(width * minimumHeight, by: height)),
+            even(minimumHeight)
+        )
+    }
+
+    private static func dividingRoundUp(_ numerator: UInt64, by denominator: UInt64) -> UInt64 {
+        numerator / denominator + (numerator % denominator == 0 ? 0 : 1)
+    }
+
+    private static func even(_ value: UInt64) -> UInt64 {
+        min((value + 1) & ~1, maximumEvenDimension)
+    }
+
+    private static func boundedEven(_ value: UInt64) -> UInt32 {
+        UInt32(even(value))
     }
 }
 

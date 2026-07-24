@@ -2142,8 +2142,11 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         )
     }
 
-    func testWorkspaceRequestBoxCarriesExplicitDesktopMirrorSource() {
+    func testWorkspaceRequestBoxSeparatesCaptureSizeFromSupportedDesktopMirrorMode() throws {
         let box = LumenMacWorkspaceSessionRequestBox()
+        box.width = 640
+        box.height = 360
+        box.scalePercent = 200
         box.desktopMirrorSourceDisplayID = 3
 
         let request = box.makeRequest(policy: .isolatedWorkspace)
@@ -2152,6 +2155,23 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
             request.contentSource,
             .desktopMirror(sourceDisplayID: 3)
         )
+        XCTAssertEqual(request.captureConfiguration.requestedWidth, 640)
+        XCTAssertEqual(request.captureConfiguration.requestedHeight, 360)
+        XCTAssertEqual(request.displayMode.width, 1_920)
+        XCTAssertEqual(request.displayMode.height, 1_080)
+        XCTAssertEqual(request.displayMode.scalePercent, 200)
+        XCTAssertFalse(request.displayMode.dimensionsAreLogical)
+
+        let geometry = try LumenMacDisplayGeometryResolver.resolve(request.displayMode)
+        let configuration = try LumenMacVirtualDisplayConfigurationFactory.make(
+            geometry: geometry,
+            request: request
+        )
+        XCTAssertEqual(configuration.backingWidth, 1_920)
+        XCTAssertEqual(configuration.backingHeight, 1_080)
+        XCTAssertEqual(configuration.logicalWidth, 960)
+        XCTAssertEqual(configuration.logicalHeight, 540)
+        XCTAssertTrue(configuration.highDensity)
     }
 
     private func completePendingCommands(
