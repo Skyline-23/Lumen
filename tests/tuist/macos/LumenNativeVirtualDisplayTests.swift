@@ -26,6 +26,36 @@ final class LumenNativeVirtualDisplayTests: XCTestCase {
         XCTAssertThrowsError(try LumenMacVirtualDisplay(configuration: configuration))
     }
 
+    func testSDRVirtualDisplayUsesLegacyModeWithoutTransferFunction() throws {
+        guard LumenMacVirtualDisplay.isSupported() else {
+            throw XCTSkip("CGVirtualDisplay is unavailable on this runtime")
+        }
+        let configuration = LumenMacVirtualDisplayConfiguration()
+        configuration.name = "Lumen SDR Mode Contract Test"
+        configuration.backingWidth = 1_280
+        configuration.backingHeight = 720
+        configuration.logicalWidth = 640
+        configuration.logicalHeight = 360
+        configuration.refreshRate = 60
+        configuration.hdrEnabled = false
+        configuration.transfer = .PQ
+
+        let display = try LumenMacVirtualDisplay(configuration: configuration)
+        defer { display.destroy() }
+        let initialMode = try XCTUnwrap(display.value(forKey: "mode") as? NSObject)
+        let initialTransferFunction = try XCTUnwrap(
+            initialMode.value(forKey: "transferFunction") as? NSNumber
+        )
+        XCTAssertEqual(initialTransferFunction.uint32Value, 0)
+
+        try display.updateLogicalWidth(800, logicalHeight: 450, refreshRate: 60)
+        let updatedMode = try XCTUnwrap(display.value(forKey: "mode") as? NSObject)
+        let updatedTransferFunction = try XCTUnwrap(
+            updatedMode.value(forKey: "transferFunction") as? NSNumber
+        )
+        XCTAssertEqual(updatedTransferFunction.uint32Value, 0)
+    }
+
     func testVirtualDisplayRegistryHandlesUnknownKeysWithoutSideEffects() {
         LumenMacVirtualDisplay.destroyAllRegisteredDisplays()
 

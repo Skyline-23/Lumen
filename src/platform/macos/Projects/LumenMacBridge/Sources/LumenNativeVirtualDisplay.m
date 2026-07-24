@@ -192,6 +192,7 @@ static void LumenConfigureHDRDisplayInfo(
 @property(nonatomic, strong) id display;
 @property(nonatomic, strong) dispatch_queue_t callbackQueue;
 @property(nonatomic) LumenMacVirtualDisplayTransfer transfer;
+@property(nonatomic) BOOL hdrEnabled;
 @end
 
 @implementation LumenMacVirtualDisplay
@@ -478,6 +479,7 @@ static void LumenConfigureHDRDisplayInfo(
     _logicalWidth = configuration.logicalWidth;
     _logicalHeight = configuration.logicalHeight;
     _transfer = configuration.transfer;
+    _hdrEnabled = configuration.hdrEnabled;
   } @catch (NSException *exception) {
     LumenAssignVirtualDisplayError(
       error,
@@ -502,7 +504,10 @@ static void LumenConfigureHDRDisplayInfo(
   transferConfiguration.hdrEnabled = hdrEnabled;
   const int transferCode = LumenTransferFunctionCode(transferConfiguration);
 
-  if ([modeClass instancesRespondToSelector:sel_registerName("initWithWidth:height:refreshRate:transferFunction:")]) {
+  if (hdrEnabled &&
+      [modeClass instancesRespondToSelector:sel_registerName(
+        "initWithWidth:height:refreshRate:transferFunction:"
+      )]) {
     _mode = ((id (*)(id, SEL, NSUInteger, NSUInteger, double, unsigned int))objc_msgSend)(
       [modeClass alloc],
       sel_registerName("initWithWidth:height:refreshRate:transferFunction:"),
@@ -549,7 +554,7 @@ static void LumenConfigureHDRDisplayInfo(
                             logicalHeight:logicalHeight
                               refreshRate:refreshRate
                                  transfer:_transfer
-                               hdrEnabled:_transfer != LumenMacVirtualDisplayTransferSDR
+                               hdrEnabled:_hdrEnabled
                                     error:error]) {
       return NO;
     }
@@ -589,6 +594,7 @@ static void LumenConfigureHDRDisplayInfo(
   _backingHeight = 0;
   _logicalWidth = 0;
   _logicalHeight = 0;
+  _hdrEnabled = NO;
   if (display != nil && [display respondsToSelector:sel_registerName("destroy")]) {
     ((void (*)(id, SEL))objc_msgSend)(display, sel_registerName("destroy"));
   }
