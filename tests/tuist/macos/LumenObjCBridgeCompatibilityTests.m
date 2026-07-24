@@ -2,6 +2,31 @@
 
 #import <LumenMacBridge/LumenMacBridge.h>
 
+static BOOL LumenDisplayExistedBeforeModeCreation = NO;
+
+@interface LumenVirtualDisplayConstructionOrderProbe : LumenMacVirtualDisplay
+@end
+
+@implementation LumenVirtualDisplayConstructionOrderProbe
+
+- (BOOL)createModeWithLogicalWidth:(uint32_t)logicalWidth
+                     logicalHeight:(uint32_t)logicalHeight
+                       refreshRate:(double)refreshRate
+                          transfer:(LumenMacVirtualDisplayTransfer)transfer
+                        hdrEnabled:(BOOL)hdrEnabled
+                             error:(NSError **)error {
+  (void)logicalWidth;
+  (void)logicalHeight;
+  (void)refreshRate;
+  (void)transfer;
+  (void)hdrEnabled;
+  (void)error;
+  LumenDisplayExistedBeforeModeCreation = [self valueForKey:@"display"] != nil;
+  return NO;
+}
+
+@end
+
 @interface LumenObjCBridgeCompatibilityTests : XCTestCase
 @end
 
@@ -22,6 +47,31 @@
     offsetof(LumenMacWorkspaceSessionRequest, desktop_mirror_source_display_id),
     68UL
   );
+}
+
+- (void)testVirtualDisplayExistsBeforeModeCreation {
+  if (![LumenMacVirtualDisplay isSupported]) {
+    XCTSkip(@"CGVirtualDisplay is unavailable on this runtime");
+  }
+
+  LumenMacVirtualDisplayConfiguration *configuration =
+    [[LumenMacVirtualDisplayConfiguration alloc] init];
+  configuration.name = @"Lumen Construction Order Probe";
+  configuration.backingWidth = 1280;
+  configuration.backingHeight = 720;
+  configuration.logicalWidth = 640;
+  configuration.logicalHeight = 360;
+  configuration.refreshRate = 60;
+
+  LumenDisplayExistedBeforeModeCreation = NO;
+  NSError *error = nil;
+  LumenVirtualDisplayConstructionOrderProbe *display =
+    [[LumenVirtualDisplayConstructionOrderProbe alloc]
+      initWithConfiguration:configuration
+                      error:&error];
+
+  XCTAssertNil(display);
+  XCTAssertTrue(LumenDisplayExistedBeforeModeCreation);
 }
 
 - (void)testLumenMacBridgeCABIStatusAndConfigurationSmoke {

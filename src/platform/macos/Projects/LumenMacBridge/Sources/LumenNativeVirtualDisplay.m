@@ -375,14 +375,12 @@ static void LumenConfigureHDRDisplayInfo(
 
   @try {
     Class descriptorClass = NSClassFromString(@"CGVirtualDisplayDescriptor");
-    Class settingsClass = NSClassFromString(@"CGVirtualDisplaySettings");
     _descriptor = [[descriptorClass alloc] init];
-    _settings = [[settingsClass alloc] init];
     _callbackQueue = dispatch_queue_create(
       "dev.skyline23.lumen.native-virtual-display",
       DISPATCH_QUEUE_SERIAL
     );
-    if (_descriptor == nil || _settings == nil || _callbackQueue == nil) {
+    if (_descriptor == nil || _callbackQueue == nil) {
       LumenAssignVirtualDisplayError(
         error,
         LumenMacVirtualDisplayErrorObjectCreationFailed,
@@ -413,26 +411,6 @@ static void LumenConfigureHDRDisplayInfo(
     [_descriptor setValue:_callbackQueue forKey:@"queue"];
     LumenConfigureHDRDisplayInfo(_descriptor, configuration);
 
-    if (![self createModeWithLogicalWidth:configuration.logicalWidth
-                            logicalHeight:configuration.logicalHeight
-                              refreshRate:configuration.refreshRate
-                                 transfer:configuration.transfer
-                              hdrEnabled:configuration.hdrEnabled
-                                    error:error]) {
-      return nil;
-    }
-    [_settings setValue:@[_mode] forKey:@"modes"];
-    [_settings setValue:@(configuration.highDensity) forKey:@"hiDPI"];
-    [_settings setValue:@0 forKey:@"rotation"];
-    [_settings setValue:@(configuration.hdrEnabled) forKey:@"isReference"];
-    if ([_settings respondsToSelector:sel_registerName("setRefreshDeadline:")]) {
-      ((void (*)(id, SEL, double))objc_msgSend)(
-        _settings,
-        sel_registerName("setRefreshDeadline:"),
-        0.0
-      );
-    }
-
     Class displayClass = NSClassFromString(@"CGVirtualDisplay");
     _display = ((id (*)(id, SEL, id))objc_msgSend)(
       [displayClass alloc],
@@ -446,6 +424,39 @@ static void LumenConfigureHDRDisplayInfo(
         @"Failed to create the virtual display instance."
       );
       return nil;
+    }
+
+    Class settingsClass = NSClassFromString(@"CGVirtualDisplaySettings");
+    _settings = [[settingsClass alloc] init];
+    if (_settings == nil) {
+      LumenAssignVirtualDisplayError(
+        error,
+        LumenMacVirtualDisplayErrorObjectCreationFailed,
+        @"Failed to allocate the virtual display settings."
+      );
+      [self destroy];
+      return nil;
+    }
+
+    if (![self createModeWithLogicalWidth:configuration.logicalWidth
+                            logicalHeight:configuration.logicalHeight
+                              refreshRate:configuration.refreshRate
+                                 transfer:configuration.transfer
+                              hdrEnabled:configuration.hdrEnabled
+                                    error:error]) {
+      [self destroy];
+      return nil;
+    }
+    [_settings setValue:@[_mode] forKey:@"modes"];
+    [_settings setValue:@(configuration.highDensity) forKey:@"hiDPI"];
+    [_settings setValue:@0 forKey:@"rotation"];
+    [_settings setValue:@(configuration.hdrEnabled) forKey:@"isReference"];
+    if ([_settings respondsToSelector:sel_registerName("setRefreshDeadline:")]) {
+      ((void (*)(id, SEL, double))objc_msgSend)(
+        _settings,
+        sel_registerName("setRefreshDeadline:"),
+        0.0
+      );
     }
 
     BOOL applied = ((BOOL (*)(id, SEL, id))objc_msgSend)(
