@@ -20,6 +20,18 @@ private final class LumenDirectScreenCaptureOutputProbe: NSObject, SCStreamOutpu
     }
 }
 
+private actor LumenVirtualDisplayPublicationClock {
+    private var uptimeNanoseconds: UInt64 = 0
+
+    func now() -> UInt64 {
+        uptimeNanoseconds
+    }
+
+    func sleep(until deadline: UInt64) {
+        uptimeNanoseconds = max(uptimeNanoseconds, deadline)
+    }
+}
+
 final class LumenNativeVirtualDisplayTests: XCTestCase {
     func testNativeVirtualDisplayRejectsEmptyGeometry() {
         let configuration = LumenMacVirtualDisplayConfiguration()
@@ -54,6 +66,46 @@ final class LumenNativeVirtualDisplayTests: XCTestCase {
             updatedMode.value(forKey: "transferFunction") as? NSNumber
         )
         XCTAssertEqual(updatedTransferFunction.uint32Value, 0)
+    }
+
+    func testPublicationStabilizerRestartsContinuousReadyWindowAfterStateChange() async throws {
+        let clock = LumenVirtualDisplayPublicationClock()
+        let ownerToken: UInt = 41
+        let timing = LumenMacVirtualDisplayPublicationTiming(
+            overallDeadlineNanoseconds: 6_000_000_000,
+            stableWindowNanoseconds: 2_000_000_000,
+            pollNanoseconds: 500_000_000
+        )
+
+        try await LumenMacVirtualDisplayPublicationStabilizer.wait(
+            displayID: 77,
+            expectedOwnerToken: ownerToken,
+            timing: timing,
+            now: {
+                await clock.now()
+            },
+            sleepUntil: { deadline in
+                await clock.sleep(until: deadline)
+            },
+            snapshot: {
+                let now = await clock.now()
+                let pixelWidth = now < 1_000_000_000 ? 640 : 1_280
+                let pixelHeight = now < 1_000_000_000 ? 360 : 720
+                return LumenScreenCaptureDisplayReadinessSnapshot(
+                    ownerToken: ownerToken,
+                    isOnline: true,
+                    isActive: true,
+                    hasCurrentMode: true,
+                    pixelWidth: pixelWidth,
+                    pixelHeight: pixelHeight,
+                    configuredPixelWidth: pixelWidth,
+                    configuredPixelHeight: pixelHeight
+                )
+            }
+        )
+
+        let completedAt = await clock.now()
+        XCTAssertEqual(completedAt, 3_000_000_000)
     }
 
     func testVirtualDisplayRegistryHandlesUnknownKeysWithoutSideEffects() {

@@ -45,6 +45,7 @@ public enum LumenMacWorkspaceSessionError: Error, Equatable {
     case sessionNotStarted
     case recoveryDidNotComplete
     case virtualDisplayOwnershipMismatch
+    case virtualDisplayPublicationUnavailable(UInt32)
     case isolationCommandMissing
 }
 
@@ -251,6 +252,98 @@ actor LumenMacOwnedVirtualDisplayRegistry {
     }
 }
 
+struct LumenMacVirtualDisplayPublicationTiming: Equatable, Sendable {
+    let overallDeadlineNanoseconds: UInt64
+    let stableWindowNanoseconds: UInt64
+    let pollNanoseconds: UInt64
+
+    static let production = Self(
+        overallDeadlineNanoseconds: 8_000_000_000,
+        // Mode publication can enqueue a later independent-output change.
+        // Keep mirror topology untouched until the exact display stays quiet.
+        stableWindowNanoseconds: 3_000_000_000,
+        pollNanoseconds: 50_000_000
+    )
+}
+
+enum LumenMacVirtualDisplayPublicationStabilizer {
+    typealias MonotonicNow = @Sendable () async -> UInt64
+    typealias MonotonicSleep = @Sendable (UInt64) async throws -> Void
+    typealias Snapshot = @Sendable () async -> LumenScreenCaptureDisplayReadinessSnapshot
+
+    static func wait(
+        displayID: UInt32,
+        expectedOwnerToken: UInt,
+        timing: LumenMacVirtualDisplayPublicationTiming,
+        now: @escaping MonotonicNow,
+        sleepUntil: @escaping MonotonicSleep,
+        snapshot: @escaping Snapshot
+    ) async throws {
+        let startedAt = await now()
+        let deadline = addingClamped(
+            startedAt,
+            timing.overallDeadlineNanoseconds
+        )
+        var stableSnapshot: LumenScreenCaptureDisplayReadinessSnapshot?
+        var stableSince: UInt64?
+
+        while true {
+            try Task.checkCancellation()
+            let currentTime = await now()
+            guard currentTime <= deadline else {
+                throw LumenMacWorkspaceSessionError
+                    .virtualDisplayPublicationUnavailable(displayID)
+            }
+
+            let currentSnapshot = await snapshot()
+            guard currentSnapshot.ownerToken == expectedOwnerToken else {
+                throw LumenMacWorkspaceSessionError.virtualDisplayOwnershipMismatch
+            }
+            let isReady =
+                currentSnapshot.isOnline &&
+                currentSnapshot.isActive &&
+                currentSnapshot.hasCurrentMode &&
+                currentSnapshot.pixelWidth > 0 &&
+                currentSnapshot.pixelHeight > 0
+
+            if isReady {
+                if stableSnapshot != currentSnapshot {
+                    stableSnapshot = currentSnapshot
+                    stableSince = currentTime
+                }
+                if let stableSince,
+                   currentTime >= stableSince,
+                   currentTime - stableSince >= timing.stableWindowNanoseconds {
+                    return
+                }
+            } else {
+                stableSnapshot = nil
+                stableSince = nil
+            }
+
+            guard currentTime < deadline else {
+                throw LumenMacWorkspaceSessionError
+                    .virtualDisplayPublicationUnavailable(displayID)
+            }
+            let pollDeadline = addingClamped(
+                currentTime,
+                timing.pollNanoseconds
+            )
+            let stableDeadline = stableSince.map {
+                addingClamped($0, timing.stableWindowNanoseconds)
+            } ?? UInt64.max
+            try await sleepUntil(
+                min(pollDeadline, stableDeadline, deadline)
+            )
+        }
+    }
+
+    private static func addingClamped(_ lhs: UInt64, _ rhs: UInt64) -> UInt64 {
+        let (result, overflow) = lhs.addingReportingOverflow(rhs)
+        return overflow ? UInt64.max : result
+    }
+}
+
 actor LumenMacVirtualDisplayOwner {
     private let ownershipRegistry: LumenMacOwnedVirtualDisplayRegistry
     private var display: LumenMacVirtualDisplay?
@@ -307,6 +400,36 @@ actor LumenMacVirtualDisplayOwner {
             logicalHeight: geometry.logicalHeight,
             refreshRate: refreshRate
         )
+        let owner = LumenRetainedVirtualDisplayReference(display: display)
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        try await LumenMacVirtualDisplayPublicationStabilizer.wait(
+            displayID: displayID,
+            expectedOwnerToken: owner.ownerToken,
+            timing: .production,
+            now: {
+                DispatchTime.now().uptimeNanoseconds
+            },
+            sleepUntil: { deadline in
+                let now = DispatchTime.now().uptimeNanoseconds
+                if deadline > now {
+                    try await Task.sleep(nanoseconds: deadline - now)
+                }
+            },
+            snapshot: {
+                LumenScreenCaptureDisplayReadiness.snapshot(
+                    displayID: displayID,
+                    owner: owner
+                )
+            }
+        )
+        let elapsedMilliseconds =
+            (ProcessInfo.processInfo.systemUptime - startedAt) * 1_000
+        let message =
+            "Lumen virtual display publication stabilized " +
+            "display-id=\(displayID) " +
+            "owner-token=\(owner.ownerToken) " +
+            "elapsed-ms=\(elapsedMilliseconds)\n"
+        FileHandle.standardError.write(Data(message.utf8))
     }
 
     func verify(displayID: UInt32) throws {
