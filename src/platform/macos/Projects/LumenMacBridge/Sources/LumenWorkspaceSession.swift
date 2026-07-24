@@ -299,12 +299,9 @@ enum LumenMacVirtualDisplayPublicationStabilizer {
             guard currentSnapshot.ownerToken == expectedOwnerToken else {
                 throw LumenMacWorkspaceSessionError.virtualDisplayOwnershipMismatch
             }
-            let isReady =
-                currentSnapshot.isOnline &&
-                currentSnapshot.isActive &&
-                currentSnapshot.hasCurrentMode &&
-                currentSnapshot.pixelWidth > 0 &&
-                currentSnapshot.pixelHeight > 0
+            let isReady = currentSnapshot.isModeReady(
+                for: .retained(ownerToken: expectedOwnerToken)
+            )
 
             if isReady {
                 if stableSnapshot != currentSnapshot {
@@ -400,6 +397,12 @@ actor LumenMacVirtualDisplayOwner {
             logicalHeight: geometry.logicalHeight,
             refreshRate: refreshRate
         )
+    }
+
+    func stabilize(displayID: UInt32) async throws {
+        guard let display, display.displayID == displayID else {
+            throw LumenMacWorkspaceSessionError.virtualDisplayOwnershipMismatch
+        }
         let owner = LumenRetainedVirtualDisplayReference(display: display)
         let startedAt = ProcessInfo.processInfo.systemUptime
         try await LumenMacVirtualDisplayPublicationStabilizer.wait(
@@ -506,6 +509,9 @@ public actor LumenMacWorkspaceSession {
             },
             verifyVirtualDisplay: { displayID in
                 try await displayOwner.verify(displayID: displayID)
+            },
+            stabilizeVirtualDisplay: { displayID in
+                try await displayOwner.stabilize(displayID: displayID)
             },
             prepareCaptureDisplay: { displayID in
                 try await LumenScreenCaptureDisplayPrefetch.prepare(displayID: displayID)
@@ -630,6 +636,8 @@ public actor LumenMacWorkspaceSession {
                             try await preparationFence()
                             // Admit a fresh ScreenCaptureKit display only after the
                             // virtual source topology has committed.
+                            try await executor.stabilizeOwnedVirtualDisplay()
+                            try await preparationFence()
                         }
                         try await executor.prepareOwnedVirtualDisplayForCapture()
                         try await preparationFence()
@@ -652,6 +660,11 @@ public actor LumenMacWorkspaceSession {
                 do {
                     result = try await executor.execute(command)
                     try await preparationFence()
+                    if command.action == .configureVirtualDisplay,
+                       !isDesktopMirror {
+                        try await executor.stabilizeOwnedVirtualDisplay()
+                        try await preparationFence()
+                    }
                 } catch {
                     _ = try? await coordinator.complete(command, result: .failed)
                     throw error

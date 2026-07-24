@@ -60,8 +60,13 @@ final class LumenNativeVirtualDisplayTests: XCTestCase {
         )
         XCTAssertEqual(initialTransferFunction.uint32Value, 0)
 
+        try display.updateLogicalWidth(640, logicalHeight: 360, refreshRate: 60)
+        let duplicateMode = try XCTUnwrap(display.value(forKey: "mode") as? NSObject)
+        XCTAssertNotIdentical(duplicateMode, initialMode)
+
         try display.updateLogicalWidth(800, logicalHeight: 450, refreshRate: 60)
         let updatedMode = try XCTUnwrap(display.value(forKey: "mode") as? NSObject)
+        XCTAssertNotIdentical(updatedMode, initialMode)
         let updatedTransferFunction = try XCTUnwrap(
             updatedMode.value(forKey: "transferFunction") as? NSNumber
         )
@@ -95,7 +100,7 @@ final class LumenNativeVirtualDisplayTests: XCTestCase {
                     ownerToken: ownerToken,
                     isOnline: true,
                     isActive: true,
-                    hasCurrentMode: true,
+                    hasCurrentMode: now < 1_000_000_000,
                     pixelWidth: pixelWidth,
                     pixelHeight: pixelHeight,
                     configuredPixelWidth: pixelWidth,
@@ -210,6 +215,28 @@ final class LumenNativeVirtualDisplayTests: XCTestCase {
         try await workspace.stageVirtualDisplayUnmirrored(
             retained.displayID,
             sourceDisplayID: physicalMainDisplayID
+        )
+        let retainedDisplayID = retained.displayID
+        let owner = LumenRetainedVirtualDisplayReference(display: retained)
+        try await LumenMacVirtualDisplayPublicationStabilizer.wait(
+            displayID: retainedDisplayID,
+            expectedOwnerToken: owner.ownerToken,
+            timing: .production,
+            now: {
+                DispatchTime.now().uptimeNanoseconds
+            },
+            sleepUntil: { deadline in
+                let now = DispatchTime.now().uptimeNanoseconds
+                if deadline > now {
+                    try await Task.sleep(nanoseconds: deadline - now)
+                }
+            },
+            snapshot: {
+                LumenScreenCaptureDisplayReadiness.snapshot(
+                    displayID: retainedDisplayID,
+                    owner: owner
+                )
+            }
         )
         XCTAssertEqual(CGMainDisplayID(), physicalMainDisplayID)
         XCTAssertEqual(

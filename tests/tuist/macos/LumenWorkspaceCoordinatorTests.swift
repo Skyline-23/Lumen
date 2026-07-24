@@ -26,6 +26,7 @@ private enum WorkspaceExecutionEvent: Equatable {
     case create(LumenMacDisplayGeometry)
     case configure(UInt32, LumenMacDisplayGeometry)
     case resolve(UInt32)
+    case stabilize(UInt32)
     case prepareDesktopMirror(UInt32, UInt32)
     case prepareCapture(UInt32)
     case promote(UInt32, LumenMacDisplayPromotionConvergence)
@@ -1021,6 +1022,9 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
             verifyVirtualDisplay: { displayID in
                 await recorder.append(.resolve(displayID))
             },
+            stabilizeVirtualDisplay: { displayID in
+                await recorder.append(.stabilize(displayID))
+            },
             prepareCaptureDisplay: { displayID in
                 await recorder.append(.prepareCapture(displayID))
             },
@@ -1058,6 +1062,9 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
                 of: .promote(88, .deferredUntilCaptureReady)
             )
         )
+        let stabilizationIndex = try XCTUnwrap(
+            preparedEvents.firstIndex(of: .stabilize(88))
+        )
         let capturePreparationIndex = try XCTUnwrap(
             preparedEvents.firstIndex(of: .prepareCapture(88))
         )
@@ -1075,6 +1082,7 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
             1
         )
         XCTAssertLessThan(resolveIndex, promotionIndex)
+        XCTAssertLessThan(stabilizationIndex, promotionIndex)
         XCTAssertLessThan(promotionIndex, capturePreparationIndex)
         XCTAssertLessThan(capturePreparationIndex, preparedStrictPromotionIndex)
         XCTAssertFalse(preparedEvents.contains(.move(88)))
@@ -1133,9 +1141,13 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
             let mirrorEvents = preparedEvents.filter {
                 $0 == .mirror(89, 3)
             }
+            let stabilizationEvents = preparedEvents.filter {
+                $0 == .stabilize(89)
+            }
             XCTAssertEqual(stageEvents.count, 1)
             XCTAssertEqual(prefetchEvents.count, 1)
             XCTAssertEqual(mirrorEvents.count, 1)
+            XCTAssertEqual(stabilizationEvents.count, 1)
             let stageIndex = try XCTUnwrap(
                 preparedEvents.firstIndex(of: .prepareDesktopMirror(89, 3))
             )
@@ -1145,8 +1157,12 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
             let mirrorIndex = try XCTUnwrap(
                 preparedEvents.firstIndex(of: .mirror(89, 3))
             )
+            let stabilizationIndex = try XCTUnwrap(
+                preparedEvents.firstIndex(of: .stabilize(89))
+            )
             XCTAssertLessThan(stageIndex, mirrorIndex)
-            XCTAssertLessThan(mirrorIndex, prefetchIndex)
+            XCTAssertLessThan(mirrorIndex, stabilizationIndex)
+            XCTAssertLessThan(stabilizationIndex, prefetchIndex)
             XCTAssertFalse(preparedEvents.contains {
                 if case .promote = $0 { return true }
                 return false
@@ -1218,6 +1234,9 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
             },
             verifyVirtualDisplay: { displayID in
                 await recorder.append(.resolve(displayID))
+            },
+            stabilizeVirtualDisplay: { displayID in
+                await recorder.append(.stabilize(displayID))
             },
             prepareCaptureDisplay: { displayID in
                 await recorder.append(.prepareCapture(displayID))
