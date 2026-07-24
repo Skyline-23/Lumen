@@ -15,19 +15,58 @@ fn complete_ffi(
     command: LumenWorkspaceCommand,
     succeeded: bool,
 ) -> LumenEngineStatus {
+    complete_ffi_payload(
+        engine,
+        command,
+        LumenWorkspaceCommandPayloadKind::None,
+        None,
+        succeeded,
+    )
+}
+
+fn complete_ffi_payload(
+    engine: *mut LumenWorkspaceEngine,
+    command: LumenWorkspaceCommand,
+    payload_kind: LumenWorkspaceCommandPayloadKind,
+    payload_json: Option<&str>,
+    succeeded: bool,
+) -> LumenEngineStatus {
+    let payload = payload_json.map(|value| CString::new(value).unwrap());
     // SAFETY: Category 8 (FFI boundary). Test callers pass a live engine and
-    // no-payload cleanup commands, so the completion carries no raw JSON pointer.
+    // keep the optional NUL-terminated payload alive through the completion call.
     unsafe {
         lumen_workspace_engine_complete_command_with_payload(
             engine,
             command,
             LumenWorkspaceCommandCompletion {
                 succeeded,
-                payload_kind: LumenWorkspaceCommandPayloadKind::None,
-                payload_json: std::ptr::null(),
+                payload_kind,
+                payload_json: payload
+                    .as_ref()
+                    .map_or(std::ptr::null(), |value| value.as_ptr()),
             },
         )
     }
+}
+
+fn command_payload_json(
+    engine: *mut LumenWorkspaceEngine,
+    command: LumenWorkspaceCommand,
+) -> String {
+    let size = lumen_workspace_engine_command_payload_json_size(engine, command);
+    assert!(size > 1);
+    let mut bytes = vec![0_u8; size];
+    assert_eq!(
+        lumen_workspace_engine_copy_command_payload_json(
+            engine,
+            command,
+            bytes.as_mut_ptr().cast(),
+            bytes.len(),
+        ),
+        LumenEngineStatus::Ok
+    );
+    bytes.pop();
+    String::from_utf8(bytes).unwrap()
 }
 
 fn complete_startup(engine: &mut WorkspaceEngine) {
@@ -159,7 +198,7 @@ fn ffi_recovers_durable_journal_before_emitting_new_session_commands() {
         LumenWorkspaceCommandKind::VerifyPhysicalDisplays
     );
     assert_eq!(complete_ffi(engine, command, true), LumenEngineStatus::Ok);
-    assert!(!journal_path.exists());
+    assert!(journal_path.exists());
     assert_eq!(
         lumen_workspace_engine_next_command(engine, &mut command),
         LumenEngineStatus::Ok
@@ -169,6 +208,7 @@ fn ffi_recovers_durable_journal_before_emitting_new_session_commands() {
         LumenWorkspaceCommandKind::DestroyVirtualDisplay
     );
     assert_eq!(complete_ffi(engine, command, true), LumenEngineStatus::Ok);
+    assert!(!journal_path.exists());
     assert_eq!(
         lumen_workspace_engine_begin_session(engine, request()),
         LumenEngineStatus::Ok
@@ -239,4 +279,128 @@ fn ffi_restore_failure_preserves_journal_and_allows_owned_display_destroy() {
     );
     // SAFETY: this non-null engine was created above and has not been destroyed yet.
     unsafe { lumen_workspace_engine_destroy(engine) };
+}
+
+#[test]
+fn ffi_destroy_failure_retains_journal_for_exact_display_retry() {
+    // Given: a live coexist session owns a virtual display without mutating physical topology.
+    let directory = tempfile::tempdir().unwrap();
+    let journal_path = directory.path().join("display-recovery.json");
+    let path = CString::new(journal_path.to_string_lossy().as_bytes()).unwrap();
+    // SAFETY: `path` owns a live NUL-terminated buffer for the duration of the call.
+    let engine = unsafe {
+        lumen_workspace_engine_create_recoverable(path.as_ptr(), WorkspacePlatform::Macos)
+    };
+    assert_eq!(
+        lumen_workspace_engine_begin_session(
+            engine,
+            LumenWorkspaceSessionRequest {
+                policy: LumenWorkspacePolicy::Coexist,
+                move_target_windows: false,
+                manage_capture: false,
+            },
+        ),
+        LumenEngineStatus::Ok
+    );
+    let mut command = LumenWorkspaceCommand::placeholder();
+    let snapshot_topology = pending_journal(63).physical_topology;
+    let snapshot_json = serde_json::to_string(&snapshot_topology).unwrap();
+    assert_eq!(
+        lumen_workspace_engine_next_command(engine, &mut command),
+        LumenEngineStatus::Ok
+    );
+    assert_eq!(command.kind, LumenWorkspaceCommandKind::SnapshotWorkspace);
+    assert_eq!(
+        complete_ffi_payload(
+            engine,
+            command,
+            LumenWorkspaceCommandPayloadKind::PhysicalTopology,
+            Some(&snapshot_json),
+            true,
+        ),
+        LumenEngineStatus::Ok
+    );
+    assert!(journal_path.exists());
+    assert_eq!(
+        lumen_workspace_engine_next_command(engine, &mut command),
+        LumenEngineStatus::Ok
+    );
+    assert_eq!(
+        command.kind,
+        LumenWorkspaceCommandKind::CreateVirtualDisplay
+    );
+    let identity_json = command_payload_json(engine, command);
+    assert_eq!(
+        complete_ffi_payload(
+            engine,
+            command,
+            LumenWorkspaceCommandPayloadKind::VirtualDisplayIdentity,
+            Some(&identity_json),
+            true,
+        ),
+        LumenEngineStatus::Ok
+    );
+    for expected in [
+        LumenWorkspaceCommandKind::ConfigureVirtualDisplay,
+        LumenWorkspaceCommandKind::AwaitExternalFirstEncodedFrame,
+    ] {
+        assert_eq!(
+            lumen_workspace_engine_next_command(engine, &mut command),
+            LumenEngineStatus::Ok
+        );
+        assert_eq!(command.kind, expected);
+        assert_eq!(complete_ffi(engine, command, true), LumenEngineStatus::Ok);
+    }
+    assert_eq!(
+        lumen_workspace_engine_end_session(engine),
+        LumenEngineStatus::Ok
+    );
+    assert_eq!(
+        lumen_workspace_engine_next_command(engine, &mut command),
+        LumenEngineStatus::Ok
+    );
+    assert_eq!(
+        command.kind,
+        LumenWorkspaceCommandKind::DestroyVirtualDisplay
+    );
+    assert!(journal_path.exists());
+
+    // When: exact topology release or display destruction fails.
+    assert_eq!(
+        complete_ffi(engine, command, false),
+        LumenEngineStatus::CommandFailed
+    );
+
+    // Then: no implicit retry loops, but the durable identity remains for a new recovery owner.
+    assert!(journal_path.exists());
+    assert_eq!(
+        lumen_workspace_engine_next_command(engine, &mut command),
+        LumenEngineStatus::NoCommand
+    );
+    // SAFETY: this non-null engine was created above and has not been destroyed yet.
+    unsafe { lumen_workspace_engine_destroy(engine) };
+
+    // When: a fresh recovery owner retries the exact retained display.
+    let retry_engine = unsafe {
+        lumen_workspace_engine_create_recoverable(path.as_ptr(), WorkspacePlatform::Macos)
+    };
+    assert_eq!(
+        lumen_workspace_engine_begin_session(retry_engine, request()),
+        LumenEngineStatus::RecoveryRequired
+    );
+    assert_eq!(
+        lumen_workspace_engine_next_command(retry_engine, &mut command),
+        LumenEngineStatus::Ok
+    );
+    assert_eq!(
+        command.kind,
+        LumenWorkspaceCommandKind::DestroyVirtualDisplay
+    );
+    assert_eq!(
+        complete_ffi(retry_engine, command, true),
+        LumenEngineStatus::Ok
+    );
+    assert!(!journal_path.exists());
+    // SAFETY: this non-null engine was created above and has not been destroyed yet.
+    unsafe { lumen_workspace_engine_destroy(retry_engine) };
 }

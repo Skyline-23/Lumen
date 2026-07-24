@@ -4,8 +4,21 @@ import Synchronization
 
 private struct WorkspaceVirtualDisplayRegistryState {
     var currentOwner: LumenRetainedVirtualDisplayReference?
+    var topologyReleaseFailuresRemaining = 0
+    var releasedTopologyDisplayIDs: [UInt32] = []
     var removedOwnerTokens: [UInt] = []
     var discardedCaptureDisplayIDs: [UInt32] = []
+    var cleanupEvents: [WorkspaceVirtualDisplayCleanupEvent] = []
+}
+
+private enum WorkspaceVirtualDisplayCleanupEvent: Equatable {
+    case releaseTopology(UInt32)
+    case discardCapture(UInt32)
+    case removeOwner
+}
+
+private enum WorkspaceVirtualDisplayCleanupFailure: Error {
+    case releaseTopology
 }
 
 private enum WorkspaceExecutionEvent: Equatable {
@@ -15,10 +28,12 @@ private enum WorkspaceExecutionEvent: Equatable {
     case resolve(UInt32)
     case prepareCapture(UInt32)
     case promote(UInt32, LumenMacDisplayPromotionConvergence)
+    case mirror(UInt32, UInt32)
     case move(UInt32)
     case isolate(UInt32)
     case firstFrameBarrier
     case positionPointer(UInt32, LumenMacDisplayGeometry)
+    case positionSourcePointer(UInt32)
     case captureContinuity
     case startCapture(UInt32)
     case stopCapture
@@ -327,6 +342,12 @@ private actor WorkspaceDisplayMock: LumenMacDisplayWorkspaceManaging {
             return promotionResults.first ?? true
         }
         return promotionResults.removeFirst()
+    }
+    func mirrorOwnedVirtualDisplay(
+        _ displayID: UInt32,
+        sourceDisplayID: UInt32
+    ) async {
+        await recorder.append(.mirror(displayID, sourceDisplayID))
     }
     func moveTargetWindows(to displayID: UInt32) async {
         await recorder.append(.move(displayID))
@@ -710,11 +731,22 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
                     return state.withLock { $0.currentOwner }
                 },
                 displayID: { _ in 22 },
+                releaseDisplayTopology: { displayID in
+                    try state.withLock {
+                        $0.releasedTopologyDisplayIDs.append(displayID)
+                        $0.cleanupEvents.append(.releaseTopology(displayID))
+                        guard $0.topologyReleaseFailuresRemaining == 0 else {
+                            $0.topologyReleaseFailuresRemaining -= 1
+                            throw WorkspaceVirtualDisplayCleanupFailure.releaseTopology
+                        }
+                    }
+                },
                 discardCaptureState: { displayID in
                     await preparedDisplays.discard(displayID: displayID)
                     await expectedOwners.discard(displayID: displayID)
                     state.withLock {
                         $0.discardedCaptureDisplayIDs.append(displayID)
+                        $0.cleanupEvents.append(.discardCapture(displayID))
                     }
                 },
                 removeMatchingOwner: { requestedKey, expectedOwner in
@@ -724,6 +756,7 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
                             return false
                         }
                         current.removedOwnerTokens.append(expectedOwner.ownerToken)
+                        current.cleanupEvents.append(.removeOwner)
                         current.currentOwner = nil
                         return true
                     }
@@ -749,18 +782,37 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         } catch LumenMacWorkspaceSessionError.virtualDisplayOwnershipMismatch {
         }
         XCTAssertTrue(state.withLock { $0.currentOwner?.display === replacement })
+        XCTAssertTrue(state.withLock { $0.releasedTopologyDisplayIDs.isEmpty })
         XCTAssertTrue(state.withLock { $0.removedOwnerTokens.isEmpty })
         XCTAssertTrue(state.withLock { $0.discardedCaptureDisplayIDs.isEmpty })
+        XCTAssertTrue(state.withLock { $0.cleanupEvents.isEmpty })
 
         state.withLock {
             $0.currentOwner = LumenRetainedVirtualDisplayReference(display: original)
+            $0.topologyReleaseFailuresRemaining = 1
         }
-        try await retryOwner.destroy(
-            identity: LumenMacVirtualDisplayIdentity(id: key)
-        )
+        do {
+            try await retryOwner.destroy(
+                identity: LumenMacVirtualDisplayIdentity(id: key)
+            )
+            XCTFail("failed topology release must retain the exact owner")
+        } catch WorkspaceVirtualDisplayCleanupFailure.releaseTopology {
+        }
+        XCTAssertTrue(state.withLock { $0.currentOwner?.display === original })
+        XCTAssertTrue(state.withLock { $0.removedOwnerTokens.isEmpty })
+        XCTAssertTrue(state.withLock { $0.discardedCaptureDisplayIDs.isEmpty })
+
+        try await registry.recoverDisplay(forKey: key)
         XCTAssertNil(state.withLock { $0.currentOwner })
+        XCTAssertEqual(state.withLock { $0.releasedTopologyDisplayIDs }, [22, 22])
         XCTAssertEqual(state.withLock { $0.removedOwnerTokens }, [UInt(bitPattern: ObjectIdentifier(original))])
         XCTAssertEqual(state.withLock { $0.discardedCaptureDisplayIDs }, [22])
+        XCTAssertEqual(state.withLock { $0.cleanupEvents }, [
+            .releaseTopology(22),
+            .releaseTopology(22),
+            .discardCapture(22),
+            .removeOwner,
+        ])
         let recoveredExpectedOwner = await expectedOwners.owner(displayID: 22)
         let recoveredPreparedDisplay = await preparedDisplays.take(
             displayID: 22,
@@ -1048,6 +1100,76 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         XCTAssertEqual(activeEvents.filter { $0 == .isolate(88) }.count, 1)
         let activeState = try await session.state()
         XCTAssertEqual(activeState, .active)
+        try await session.stop()
+    }
+
+    func testDesktopMirrorUsesPrefetchedOwnedDisplayWithoutPromotionOrIsolation() async throws {
+        let recorder = WorkspaceExecutionRecorder()
+        let operations = LumenMacWorkspaceNativeOperations(
+            createVirtualDisplay: { _, geometry in
+                await recorder.append(.create(geometry))
+                return 89
+            },
+            configureVirtualDisplay: { displayID, geometry in
+                await recorder.append(.configure(displayID, geometry))
+            },
+            verifyVirtualDisplay: { displayID in
+                await recorder.append(.resolve(displayID))
+            },
+            prepareCaptureDisplay: { displayID in
+                await recorder.append(.prepareCapture(displayID))
+            },
+            startCapture: { _ in },
+            stopCapture: {},
+            destroyVirtualDisplay: { _ in await recorder.append(.destroy) },
+            waitForExternalFirstEncodedFrame: {
+                await recorder.append(.firstFrameBarrier)
+            },
+            positionPointerOnSourceDisplay: { displayID in
+                await recorder.append(.positionSourcePointer(displayID))
+            }
+        )
+        let request = LumenMacWorkspaceSessionRequest(
+            policy: .isolatedWorkspace,
+            contentSource: .desktopMirror(sourceDisplayID: 3),
+            displayMode: LumenMacDisplayModeRequest(
+                width: 640,
+                height: 360,
+                scalePercent: 100,
+                dimensionsAreLogical: false
+            ),
+            managesCapture: false,
+            captureConfiguration: LumenMacCaptureConfiguration(displayID: 0)
+        )
+        let session = try LumenMacWorkspaceSession(
+            request: request,
+            operations: operations,
+            displayWorkspace: WorkspaceDisplayMock(recorder: recorder),
+            coordinator: makeCoordinator()
+        )
+
+        try await session.prepare()
+        let preparedEvents = await recorder.recordedEvents()
+        let prefetchIndex = try XCTUnwrap(
+            preparedEvents.firstIndex(of: .prepareCapture(89))
+        )
+        let mirrorIndex = try XCTUnwrap(
+            preparedEvents.firstIndex(of: .mirror(89, 3))
+        )
+        XCTAssertLessThan(prefetchIndex, mirrorIndex)
+        XCTAssertFalse(preparedEvents.contains {
+            if case .promote = $0 { return true }
+            return false
+        })
+        XCTAssertFalse(preparedEvents.contains(.isolate(89)))
+
+        let outcome = try await session.activate()
+        XCTAssertEqual(outcome.isolationStatus, .notRequested)
+        let activeEvents = await recorder.recordedEvents()
+        XCTAssertTrue(activeEvents.contains(.firstFrameBarrier))
+        XCTAssertTrue(activeEvents.contains(.positionSourcePointer(3)))
+        XCTAssertFalse(activeEvents.contains(.isolate(89)))
+
         try await session.stop()
     }
 

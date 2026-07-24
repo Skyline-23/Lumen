@@ -55,6 +55,7 @@ public struct LumenMacWorkspaceNativeOperations: Sendable {
         UInt32,
         LumenMacDisplayGeometry
     ) async -> Void
+    public var positionPointerOnSourceDisplay: @Sendable (UInt32) async -> Void
 
     public init(
         createVirtualDisplay: @escaping @Sendable (
@@ -74,7 +75,8 @@ public struct LumenMacWorkspaceNativeOperations: Sendable {
         positionPointer: @escaping @Sendable (
             UInt32,
             LumenMacDisplayGeometry
-        ) async -> Void = { _, _ in }
+        ) async -> Void = { _, _ in },
+        positionPointerOnSourceDisplay: @escaping @Sendable (UInt32) async -> Void = { _ in }
     ) {
         self.createVirtualDisplay = createVirtualDisplay
         self.configureVirtualDisplay = configureVirtualDisplay
@@ -86,6 +88,7 @@ public struct LumenMacWorkspaceNativeOperations: Sendable {
         self.waitForExternalFirstEncodedFrame = waitForExternalFirstEncodedFrame
         self.verifyCaptureContinuity = verifyCaptureContinuity
         self.positionPointer = positionPointer
+        self.positionPointerOnSourceDisplay = positionPointerOnSourceDisplay
     }
 }
 
@@ -104,6 +107,7 @@ public enum LumenMacWorkspaceIsolationStatus: Equatable, Sendable {
 
 public actor LumenMacWorkspaceExecutor: LumenWorkspaceCommandExecuting {
     private let displayWorkspace: any LumenMacDisplayWorkspaceManaging
+    private let contentSource: LumenMacWorkspaceContentSource
     private let targetProcessIdentifiers: [Int32]
     private let operations: LumenMacWorkspaceNativeOperations
     private let displayGeometry: LumenMacDisplayGeometry
@@ -113,11 +117,13 @@ public actor LumenMacWorkspaceExecutor: LumenWorkspaceCommandExecuting {
 
     public init(
         targetProcessIdentifiers: [Int32],
+        contentSource: LumenMacWorkspaceContentSource = .targetWindows,
         displayMode: LumenMacDisplayModeRequest,
         operations: LumenMacWorkspaceNativeOperations,
         displayWorkspace: any LumenMacDisplayWorkspaceManaging
     ) throws {
         self.targetProcessIdentifiers = targetProcessIdentifiers
+        self.contentSource = contentSource
         self.operations = operations
         self.displayWorkspace = displayWorkspace
         displayGeometry = try LumenMacDisplayGeometryResolver.resolve(displayMode)
@@ -215,11 +221,16 @@ public actor LumenMacWorkspaceExecutor: LumenWorkspaceCommandExecuting {
         try await operations.verifyCaptureContinuity()
     }
 
-    public func positionPointerOnVirtualDisplay() async {
-        guard let virtualDisplayID else {
-            return
+    public func positionPointerOnSessionDisplay() async {
+        switch contentSource {
+        case .targetWindows:
+            guard let virtualDisplayID else {
+                return
+            }
+            await operations.positionPointer(virtualDisplayID, displayGeometry)
+        case .desktopMirror(let sourceDisplayID):
+            await operations.positionPointerOnSourceDisplay(sourceDisplayID)
         }
-        await operations.positionPointer(virtualDisplayID, displayGeometry)
     }
 
     @discardableResult
@@ -234,6 +245,19 @@ public actor LumenMacWorkspaceExecutor: LumenWorkspaceCommandExecuting {
             ),
             convergence: .required
         )
+    }
+
+    public func mirrorOwnedVirtualDisplay() async throws {
+        guard case .desktopMirror(let sourceDisplayID) = contentSource else {
+            return
+        }
+        let displayID = try requireVirtualDisplay()
+        try await operations.verifyVirtualDisplay(displayID)
+        try await displayWorkspace.mirrorOwnedVirtualDisplay(
+            displayID,
+            sourceDisplayID: sourceDisplayID
+        )
+        try await operations.verifyVirtualDisplay(displayID)
     }
 
     public func destroyOwnedVirtualDisplay() async throws {

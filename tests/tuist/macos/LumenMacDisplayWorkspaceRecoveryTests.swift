@@ -72,6 +72,66 @@ private actor TransientVirtualDisplayTopologyController: LumenMacDisplayTopology
     }
 }
 
+private enum DisplayMirrorEvent: Equatable {
+    case mirror(target: UInt32, source: UInt32)
+    case unmirror(target: UInt32)
+}
+
+private actor DisplayMirrorProbe: LumenMacDisplayMirrorControlling {
+    private let sourceDisplayID: UInt32
+    private let targetDisplayID: UInt32
+    private let reportedMirrorSourceAfterApply: UInt32?
+    private var applied = false
+    private var events: [DisplayMirrorEvent] = []
+
+    init(
+        sourceDisplayID: UInt32,
+        targetDisplayID: UInt32,
+        reportedMirrorSourceAfterApply: UInt32?
+    ) {
+        self.sourceDisplayID = sourceDisplayID
+        self.targetDisplayID = targetDisplayID
+        self.reportedMirrorSourceAfterApply = reportedMirrorSourceAfterApply
+    }
+
+    func state(
+        targetDisplayID: UInt32,
+        sourceDisplayID: UInt32
+    ) -> LumenMacDisplayMirrorState {
+        LumenMacDisplayMirrorState(
+            mainDisplayID: self.sourceDisplayID,
+            mirrorSourceDisplayID: applied
+                ? reportedMirrorSourceAfterApply
+                : nil,
+            sourceIsOnline: sourceDisplayID == self.sourceDisplayID,
+            sourceIsActive: sourceDisplayID == self.sourceDisplayID,
+            sourceIsOwnedVirtualDisplay: false,
+            targetIsOnline: targetDisplayID == self.targetDisplayID,
+            targetIsActive: targetDisplayID == self.targetDisplayID
+        )
+    }
+
+    func mirror(
+        targetDisplayID: UInt32,
+        sourceDisplayID: UInt32
+    ) {
+        events.append(.mirror(
+            target: targetDisplayID,
+            source: sourceDisplayID
+        ))
+        applied = true
+    }
+
+    func unmirror(targetDisplayID: UInt32) {
+        events.append(.unmirror(target: targetDisplayID))
+        applied = false
+    }
+
+    func recordedEvents() -> [DisplayMirrorEvent] {
+        events
+    }
+}
+
 final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
     func testTopologyCaptureSkipsAnUnusableTransientVirtualDisplay() throws {
         let physical = displayTopology().displays[0]
@@ -201,6 +261,84 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
                 boundsByDisplayID: separatedBounds
             )
         )
+    }
+
+    func testOwnedDesktopMirrorPreservesPhysicalTopologyAndUnmirrorsDuringRestore() async throws {
+        let topology = displayTopology()
+        let sourceDisplayID = try XCTUnwrap(
+            topology.displays.first.flatMap { UInt32($0.id) }
+        )
+        let targetDisplayID: UInt32 = 117
+        let topologyProbe = DisplayTopologyProbe(topology: topology)
+        let mirrorProbe = DisplayMirrorProbe(
+            sourceDisplayID: sourceDisplayID,
+            targetDisplayID: targetDisplayID,
+            reportedMirrorSourceAfterApply: sourceDisplayID
+        )
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: topologyProbe,
+            mirrorController: mirrorProbe,
+            physicalDisplayController: RecordingPhysicalDisplayController(),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier()
+        )
+        _ = try await workspace.snapshotWorkspace(targetProcessIdentifiers: [])
+        await topologyProbe.allowVerification()
+
+        try await workspace.mirrorOwnedVirtualDisplay(
+            targetDisplayID,
+            sourceDisplayID: sourceDisplayID
+        )
+        try await workspace.restoreWorkspace(topology)
+
+        let events = await mirrorProbe.recordedEvents()
+        XCTAssertEqual(events, [
+            .mirror(target: targetDisplayID, source: sourceDisplayID),
+            .unmirror(target: targetDisplayID),
+        ])
+        let restoredTopologies = await topologyProbe.restoredTopologies()
+        XCTAssertTrue(restoredTopologies.isEmpty)
+    }
+
+    func testOwnedDesktopMirrorPostconditionFailureUnmirrorsOnlyExactTarget() async throws {
+        let topology = displayTopology()
+        let sourceDisplayID = try XCTUnwrap(
+            topology.displays.first.flatMap { UInt32($0.id) }
+        )
+        let targetDisplayID: UInt32 = 118
+        let topologyProbe = DisplayTopologyProbe(topology: topology)
+        let mirrorProbe = DisplayMirrorProbe(
+            sourceDisplayID: sourceDisplayID,
+            targetDisplayID: targetDisplayID,
+            reportedMirrorSourceAfterApply: nil
+        )
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: topologyProbe,
+            mirrorController: mirrorProbe,
+            physicalDisplayController: RecordingPhysicalDisplayController(),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier()
+        )
+        _ = try await workspace.snapshotWorkspace(targetProcessIdentifiers: [])
+        await topologyProbe.allowVerification()
+
+        do {
+            try await workspace.mirrorOwnedVirtualDisplay(
+                targetDisplayID,
+                sourceDisplayID: sourceDisplayID
+            )
+            XCTFail("mirror postcondition mismatch must fail closed")
+        } catch LumenMacDisplayWorkspaceError.virtualDisplayMirrorUnavailable(
+            targetDisplayID,
+            sourceDisplayID
+        ) {
+        }
+
+        let events = await mirrorProbe.recordedEvents()
+        XCTAssertEqual(events, [
+            .mirror(target: targetDisplayID, source: sourceDisplayID),
+            .unmirror(target: targetDisplayID),
+        ])
+        let restoredTopologies = await topologyProbe.restoredTopologies()
+        XCTAssertTrue(restoredTopologies.isEmpty)
     }
 
     func testRestoreSkipsCoreGraphicsMutationWhenPhysicalTopologyAlreadyConverged() async throws {

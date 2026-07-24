@@ -119,6 +119,7 @@ public enum LumenMacVirtualDisplayConfigurationFactory {
 struct LumenMacVirtualDisplayRegistryAccess: Sendable {
     let currentOwner: @Sendable (String) -> LumenRetainedVirtualDisplayReference?
     let displayID: @Sendable (LumenRetainedVirtualDisplayReference) -> UInt32
+    let releaseDisplayTopology: @Sendable (UInt32) async throws -> Void
     let discardCaptureState: @Sendable (UInt32) async -> Void
     let removeMatchingOwner: @Sendable (
         String,
@@ -132,6 +133,10 @@ struct LumenMacVirtualDisplayRegistryAccess: Sendable {
             }
         },
         displayID: { $0.display.displayID },
+        releaseDisplayTopology: { displayID in
+            try LumenCoreGraphicsDisplayMirrorController()
+                .unmirror(targetDisplayID: displayID)
+        },
         discardCaptureState: { displayID in
             await LumenScreenCaptureDisplayPrefetch.discard(displayID: displayID)
         },
@@ -188,6 +193,11 @@ actor LumenMacOwnedVirtualDisplayRegistry {
         }
         releasingKeys.insert(key)
         defer { releasingKeys.remove(key) }
+        try await access.releaseDisplayTopology(record.displayID)
+        guard owners[key]?.owner.display === owner.display,
+              access.currentOwner(key)?.display === owner.display else {
+            throw LumenMacWorkspaceSessionError.virtualDisplayOwnershipMismatch
+        }
         await access.discardCaptureState(record.displayID)
         guard owners[key]?.owner.display === owner.display,
               access.currentOwner(key)?.display === owner.display,
@@ -210,6 +220,13 @@ actor LumenMacOwnedVirtualDisplayRegistry {
         guard let currentOwner = access.currentOwner(key) else {
             releasingKeys.insert(key)
             defer { releasingKeys.remove(key) }
+            if access.displayID(record.owner) == record.displayID,
+               record.displayID != 0 {
+                try await access.releaseDisplayTopology(record.displayID)
+                guard access.displayID(record.owner) == record.displayID else {
+                    throw LumenMacWorkspaceSessionError.virtualDisplayOwnershipMismatch
+                }
+            }
             await access.discardCaptureState(record.displayID)
             owners.removeValue(forKey: key)
             return
@@ -219,6 +236,11 @@ actor LumenMacOwnedVirtualDisplayRegistry {
         }
         releasingKeys.insert(key)
         defer { releasingKeys.remove(key) }
+        try await access.releaseDisplayTopology(record.displayID)
+        guard owners[key]?.owner.display === record.owner.display,
+              access.currentOwner(key)?.display === record.owner.display else {
+            throw LumenMacWorkspaceSessionError.virtualDisplayOwnershipMismatch
+        }
         await access.discardCaptureState(record.displayID)
         guard owners[key]?.owner.display === record.owner.display,
               access.currentOwner(key)?.display === record.owner.display,
@@ -394,6 +416,11 @@ public actor LumenMacWorkspaceSession {
                     on: displayID,
                     geometry: geometry
                 )
+            },
+            positionPointerOnSourceDisplay: { displayID in
+                LumenMacPointerPositioner.centerPointerOnPublishedDisplay(
+                    displayID
+                )
             }
         )
         try self.init(
@@ -425,6 +452,7 @@ public actor LumenMacWorkspaceSession {
         self.isolationStatusHandler = isolationStatusHandler
         executor = try LumenMacWorkspaceExecutor(
             targetProcessIdentifiers: request.targetProcessIdentifiers,
+            contentSource: request.contentSource,
             displayMode: request.displayMode,
             operations: operations,
             displayWorkspace: displayWorkspace
@@ -443,7 +471,7 @@ public actor LumenMacWorkspaceSession {
         do {
             try await preparationFence()
             let admitted = try await coordinator.beginSession(
-                policy: request.policy,
+                policy: effectivePolicy,
                 moveTargetWindows: !request.targetProcessIdentifiers.isEmpty,
                 manageCapture: request.managesCapture
             )
@@ -456,7 +484,7 @@ public actor LumenMacWorkspaceSession {
                 }
                 try await preparationFence()
                 let recoveredAdmission = try await coordinator.beginSession(
-                    policy: request.policy,
+                    policy: effectivePolicy,
                     moveTargetWindows: !request.targetProcessIdentifiers.isEmpty,
                     manageCapture: request.managesCapture
                 )
@@ -478,7 +506,7 @@ public actor LumenMacWorkspaceSession {
                         command.action == .awaitExternalFirstEncodedFrame {
                         try await executor.prepareOwnedVirtualDisplayForCapture()
                         try await preparationFence()
-                        try await requireVirtualDisplayPromotionAfterCaptureReadiness()
+                        try await requireCaptureContentAfterReadiness()
                         try await preparationFence()
                     }
                     if command.action == .awaitExternalFirstEncodedFrame {
@@ -538,10 +566,10 @@ public actor LumenMacWorkspaceSession {
         do {
             let result = try await executor.execute(activationCommand)
             try await coordinator.complete(activationCommand, result: result)
-            await executor.positionPointerOnVirtualDisplay()
+            await executor.positionPointerOnSessionDisplay()
             self.activationCommand = nil
             phase = .active
-            if request.policy == .isolatedWorkspace {
+            if effectivePolicy == .isolatedWorkspace {
                 isolationTask = Task { [weak self] in
                     await self?.completeDeferredIsolation()
                 }
@@ -641,7 +669,7 @@ public actor LumenMacWorkspaceSession {
             isolationCommand = command
             try await executor.verifyOwnedVirtualDisplay()
             let result = try await executor.execute(command)
-            await executor.positionPointerOnVirtualDisplay()
+            await executor.positionPointerOnSessionDisplay()
             try await executor.verifyOwnedCaptureContinuity()
             try await coordinator.complete(command, result: result)
             isolationCommand = nil
@@ -679,7 +707,27 @@ public actor LumenMacWorkspaceSession {
         isolationTask = nil
     }
 
-    private func requireVirtualDisplayPromotionAfterCaptureReadiness() async throws {
+    private var effectivePolicy: LumenMacWorkspacePolicy {
+        if case .desktopMirror = request.contentSource {
+            return .coexist
+        }
+        return request.policy
+    }
+
+    private func requireCaptureContentAfterReadiness() async throws {
+        if case .desktopMirror(let sourceDisplayID) = request.contentSource {
+            let displayID = try await executor.activeVirtualDisplayID()
+            try await executor.mirrorOwnedVirtualDisplay()
+            FileHandle.standardError.write(
+                Data(
+                    (
+                        "Lumen virtual desktop mirror ready " +
+                            "display-id=\(displayID) source-display-id=\(sourceDisplayID)\n"
+                    ).utf8
+                )
+            )
+            return
+        }
         guard request.policy != .coexist else {
             return
         }
@@ -712,6 +760,30 @@ enum LumenMacPointerPositioner {
         geometry: LumenMacDisplayGeometry
     ) {
         let result = CGDisplayMoveCursorToPoint(displayID, centerPoint(geometry: geometry))
+        guard result != .success else {
+            return
+        }
+        FileHandle.standardError.write(
+            Data(
+                (
+                    "Lumen pointer initialization failed " +
+                        "display-id=\(displayID) status=\(result.rawValue)\n"
+                ).utf8
+            )
+        )
+    }
+
+    static func centerPointerOnPublishedDisplay(
+        _ displayID: CGDirectDisplayID
+    ) {
+        let bounds = CGDisplayBounds(displayID)
+        guard bounds.width > 0, bounds.height > 0 else {
+            return
+        }
+        let result = CGDisplayMoveCursorToPoint(
+            displayID,
+            CGPoint(x: bounds.width / 2, y: bounds.height / 2)
+        )
         guard result != .success else {
             return
         }

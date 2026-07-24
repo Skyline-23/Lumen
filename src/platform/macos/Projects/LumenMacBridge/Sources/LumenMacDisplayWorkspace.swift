@@ -7,6 +7,8 @@ public enum LumenMacDisplayWorkspaceError: LocalizedError, Equatable {
     case snapshotMissing
     case displayNotFound(UInt32)
     case virtualDisplayPromotionUnavailable(UInt32)
+    case virtualDisplayMirrorUnavailable(UInt32, UInt32)
+    case virtualDisplayMirrorRollbackFailed(UInt32)
     case displayConfigurationFailed(Int32)
     case accessibilityPermissionMissing
     case invalidPersistedDisplayID(String)
@@ -29,6 +31,10 @@ public enum LumenMacDisplayWorkspaceError: LocalizedError, Equatable {
             "display \(displayID) was not found"
         case .virtualDisplayPromotionUnavailable(let displayID):
             "owned virtual display \(displayID) could not be promoted into the capture workspace"
+        case let .virtualDisplayMirrorUnavailable(displayID, sourceDisplayID):
+            "owned virtual display \(displayID) could not mirror desktop source \(sourceDisplayID)"
+        case .virtualDisplayMirrorRollbackFailed(let displayID):
+            "owned virtual display \(displayID) could not leave desktop mirror topology"
         case .displayConfigurationFailed(let status):
             "CoreGraphics display configuration failed with status \(status)"
         case .accessibilityPermissionMissing:
@@ -55,6 +61,109 @@ public enum LumenMacDisplayWorkspaceError: LocalizedError, Equatable {
     }
 }
 
+struct LumenMacDisplayMirrorState: Equatable, Sendable {
+    let mainDisplayID: UInt32
+    let mirrorSourceDisplayID: UInt32?
+    let sourceIsOnline: Bool
+    let sourceIsActive: Bool
+    let sourceIsOwnedVirtualDisplay: Bool
+    let targetIsOnline: Bool
+    let targetIsActive: Bool
+}
+
+protocol LumenMacDisplayMirrorControlling: Sendable {
+    func state(
+        targetDisplayID: UInt32,
+        sourceDisplayID: UInt32
+    ) async -> LumenMacDisplayMirrorState
+    func mirror(
+        targetDisplayID: UInt32,
+        sourceDisplayID: UInt32
+    ) async throws
+    func unmirror(targetDisplayID: UInt32) async throws
+}
+
+struct LumenCoreGraphicsDisplayMirrorController:
+    LumenMacDisplayMirrorControlling {
+    func state(
+        targetDisplayID: UInt32,
+        sourceDisplayID: UInt32
+    ) -> LumenMacDisplayMirrorState {
+        let mirroredDisplayID = CGDisplayMirrorsDisplay(targetDisplayID)
+        return LumenMacDisplayMirrorState(
+            mainDisplayID: CGMainDisplayID(),
+            mirrorSourceDisplayID: mirroredDisplayID == kCGNullDirectDisplay
+                ? nil
+                : mirroredDisplayID,
+            sourceIsOnline: CGDisplayIsOnline(sourceDisplayID) != 0,
+            sourceIsActive: CGDisplayIsActive(sourceDisplayID) != 0,
+            sourceIsOwnedVirtualDisplay:
+                LumenMacVirtualDisplay.registeredDisplay(
+                    forDisplayID: sourceDisplayID
+                ) != nil,
+            targetIsOnline: CGDisplayIsOnline(targetDisplayID) != 0,
+            targetIsActive: CGDisplayIsActive(targetDisplayID) != 0
+        )
+    }
+
+    func mirror(
+        targetDisplayID: UInt32,
+        sourceDisplayID: UInt32
+    ) throws {
+        try configureMirror(
+            targetDisplayID: targetDisplayID,
+            sourceDisplayID: sourceDisplayID
+        )
+    }
+
+    func unmirror(targetDisplayID: UInt32) throws {
+        guard CGDisplayMirrorsDisplay(targetDisplayID) != kCGNullDirectDisplay else {
+            return
+        }
+        try configureMirror(
+            targetDisplayID: targetDisplayID,
+            sourceDisplayID: kCGNullDirectDisplay
+        )
+    }
+
+    private func configureMirror(
+        targetDisplayID: UInt32,
+        sourceDisplayID: UInt32
+    ) throws {
+        var configuration: CGDisplayConfigRef?
+        let beginResult = CGBeginDisplayConfiguration(&configuration)
+        guard beginResult == .success, let configuration else {
+            throw LumenMacDisplayWorkspaceError.displayConfigurationFailed(
+                beginResult.rawValue
+            )
+        }
+        do {
+            let mirrorResult = CGConfigureDisplayMirrorOfDisplay(
+                configuration,
+                targetDisplayID,
+                sourceDisplayID
+            )
+            guard mirrorResult == .success else {
+                throw LumenMacDisplayWorkspaceError.displayConfigurationFailed(
+                    mirrorResult.rawValue
+                )
+            }
+            let completeResult = CGCompleteDisplayConfiguration(
+                configuration,
+                .forAppOnly
+            )
+            guard completeResult == .success else {
+                throw LumenMacDisplayWorkspaceError.displayConfigurationFailed(
+                    completeResult.rawValue
+                )
+            }
+        } catch {
+            CGCancelDisplayConfiguration(configuration)
+            throw error
+        }
+    }
+}
+
 @frozen public enum LumenMacDisplayPromotionConvergence: Equatable, Sendable {
     case deferredUntilCaptureReady
     case required
@@ -70,6 +179,10 @@ public protocol LumenMacDisplayWorkspaceManaging: Sendable {
         logicalSize: CGSize,
         convergence: LumenMacDisplayPromotionConvergence
     ) async throws -> Bool
+    func mirrorOwnedVirtualDisplay(
+        _ displayID: UInt32,
+        sourceDisplayID: UInt32
+    ) async throws
     func moveTargetWindows(to displayID: UInt32) async throws
     func isolateVirtualDisplay(_ displayID: UInt32) async throws
     func restoreWorkspace(_ topology: LumenMacPhysicalDisplayTopology) async throws
@@ -106,12 +219,18 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
     }
 
     private let topologyController: any LumenMacDisplayTopologyControlling
+    private let mirrorController: any LumenMacDisplayMirrorControlling
     private let physicalDisplayController: any LumenPhysicalDisplayControlling
     private let disconnectCapabilityVerifier: any LumenDisplayDisconnectCapabilityVerifying
     private var snapshot: Snapshot?
+    private var mirroredDisplayIDs: (
+        targetDisplayID: UInt32,
+        sourceDisplayID: UInt32
+    )?
 
     public init() {
         topologyController = LumenCoreGraphicsDisplayTopologyController()
+        mirrorController = LumenCoreGraphicsDisplayMirrorController()
         physicalDisplayController = LumenPhysicalDisplayControlAdapter(
             resolver: LumenSystemDisplayEnabledSymbolResolver()
         )
@@ -120,6 +239,8 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
 
     init(
         topologyController: any LumenMacDisplayTopologyControlling,
+        mirrorController: any LumenMacDisplayMirrorControlling =
+            LumenCoreGraphicsDisplayMirrorController(),
         physicalDisplayController: any LumenPhysicalDisplayControlling =
             LumenPhysicalDisplayControlAdapter(
                 resolver: LumenSystemDisplayEnabledSymbolResolver()
@@ -127,6 +248,7 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
         disconnectCapabilityVerifier: any LumenDisplayDisconnectCapabilityVerifying
     ) {
         self.topologyController = topologyController
+        self.mirrorController = mirrorController
         self.physicalDisplayController = physicalDisplayController
         self.disconnectCapabilityVerifier = disconnectCapabilityVerifier
     }
@@ -361,6 +483,83 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
         }
     }
 
+    public func mirrorOwnedVirtualDisplay(
+        _ displayID: UInt32,
+        sourceDisplayID: UInt32
+    ) async throws {
+        guard let snapshot else {
+            throw LumenMacDisplayWorkspaceError.snapshotMissing
+        }
+        guard mirroredDisplayIDs == nil,
+              displayID != 0,
+              sourceDisplayID != 0,
+              displayID != sourceDisplayID,
+              snapshot.topology.displays.contains(where: { state in
+                  state.id == String(sourceDisplayID) &&
+                      state.enabled &&
+                      state.active &&
+                      state.online
+              }) else {
+            throw LumenMacDisplayWorkspaceError.virtualDisplayMirrorUnavailable(
+                displayID,
+                sourceDisplayID
+            )
+        }
+        let before = await mirrorController.state(
+            targetDisplayID: displayID,
+            sourceDisplayID: sourceDisplayID
+        )
+        guard before.mainDisplayID == sourceDisplayID,
+              before.mirrorSourceDisplayID == nil,
+              before.sourceIsOnline,
+              before.sourceIsActive,
+              !before.sourceIsOwnedVirtualDisplay,
+              before.targetIsOnline,
+              before.targetIsActive else {
+            throw LumenMacDisplayWorkspaceError.virtualDisplayMirrorUnavailable(
+                displayID,
+                sourceDisplayID
+            )
+        }
+
+        try await mirrorController.mirror(
+            targetDisplayID: displayID,
+            sourceDisplayID: sourceDisplayID
+        )
+        mirroredDisplayIDs = (displayID, sourceDisplayID)
+        do {
+            let after = await mirrorController.state(
+                targetDisplayID: displayID,
+                sourceDisplayID: sourceDisplayID
+            )
+            guard after.mainDisplayID == sourceDisplayID,
+                  after.mirrorSourceDisplayID == sourceDisplayID,
+                  after.sourceIsOnline,
+                  after.sourceIsActive,
+                  !after.sourceIsOwnedVirtualDisplay,
+                  after.targetIsOnline,
+                  after.targetIsActive else {
+                throw LumenMacDisplayWorkspaceError.virtualDisplayMirrorUnavailable(
+                    displayID,
+                    sourceDisplayID
+                )
+            }
+            try await topologyController.verify(snapshot.topology)
+        } catch {
+            let originalError = error
+            do {
+                try await releaseDesktopMirror(
+                    targetDisplayID: displayID,
+                    topology: snapshot.topology
+                )
+            } catch {
+                throw LumenMacDisplayWorkspaceError
+                    .virtualDisplayMirrorRollbackFailed(displayID)
+            }
+            throw originalError
+        }
+    }
+
     public func isolateVirtualDisplay(_ displayID: UInt32) async throws {
         guard let snapshot else {
             throw LumenMacDisplayWorkspaceError.snapshotMissing
@@ -411,6 +610,18 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
     }
 
     public func restoreWorkspace(_ topology: LumenMacPhysicalDisplayTopology) async throws {
+        if let mirroredDisplayIDs {
+            do {
+                try await releaseDesktopMirror(
+                    targetDisplayID: mirroredDisplayIDs.targetDisplayID,
+                    topology: topology
+                )
+            } catch {
+                throw LumenMacDisplayWorkspaceError.virtualDisplayMirrorRollbackFailed(
+                    mirroredDisplayIDs.targetDisplayID
+                )
+            }
+        }
         if (try? await topologyController.verify(topology)) == nil {
             let resolvedIDs = try await topologyController.resolvedDisplayIDs(for: topology)
             let expectedDisplays = try topology.displays.map { state -> (CGDirectDisplayID, LumenMacPhysicalDisplayState) in
@@ -473,6 +684,15 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
 
     public func discardSnapshot() {
         snapshot = nil
+    }
+
+    private func releaseDesktopMirror(
+        targetDisplayID: UInt32,
+        topology: LumenMacPhysicalDisplayTopology
+    ) async throws {
+        try await mirrorController.unmirror(targetDisplayID: targetDisplayID)
+        try await topologyController.verify(topology)
+        mirroredDisplayIDs = nil
     }
 
     private func verifyIsolation(

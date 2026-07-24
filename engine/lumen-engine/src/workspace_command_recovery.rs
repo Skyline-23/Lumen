@@ -127,10 +127,7 @@ impl WorkspaceEngine {
                 self.cleanup_verification_failed = true;
                 let _ = self.enqueue_next_cleanup();
             }
-            LumenWorkspaceCommandKind::DestroyVirtualDisplay => {
-                self.resources.display = false;
-                self.finish_transition_if_ready();
-            }
+            LumenWorkspaceCommandKind::DestroyVirtualDisplay => {}
             LumenWorkspaceCommandKind::SnapshotWorkspace
             | LumenWorkspaceCommandKind::CreateVirtualDisplay
             | LumenWorkspaceCommandKind::ConfigureVirtualDisplay
@@ -246,6 +243,10 @@ impl WorkspaceEngine {
             self.enqueue(LumenWorkspaceCommandKind::VerifyPhysicalDisplays);
             return LumenEngineStatus::Ok;
         }
+        if self.resources.display {
+            self.enqueue(LumenWorkspaceCommandKind::DestroyVirtualDisplay);
+            return LumenEngineStatus::Ok;
+        }
         if self.resources.snapshot {
             self.resources.snapshot = false;
         }
@@ -257,10 +258,6 @@ impl WorkspaceEngine {
                 return journal_error_status(error);
             }
             self.recovery_journal = None;
-        }
-        if self.resources.display {
-            self.enqueue(LumenWorkspaceCommandKind::DestroyVirtualDisplay);
-            return LumenEngineStatus::Ok;
         }
         self.finish_transition_if_ready();
         LumenEngineStatus::Ok
