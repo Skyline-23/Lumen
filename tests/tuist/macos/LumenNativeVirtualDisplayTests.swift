@@ -1,24 +1,6 @@
 import XCTest
 import CoreGraphics
-import ScreenCaptureKit
 @testable import LumenMacBridge
-
-private final class LumenDirectScreenCaptureOutputProbe: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
-    let firstSample: XCTestExpectation
-
-    init(firstSample: XCTestExpectation) {
-        self.firstSample = firstSample
-    }
-
-    func stream(
-        _ stream: SCStream,
-        didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
-        of type: SCStreamOutputType
-    ) {
-        guard type == .screen, CMSampleBufferIsValid(sampleBuffer) else { return }
-        firstSample.fulfill()
-    }
-}
 
 private actor LumenVirtualDisplayPublicationClock {
     private var uptimeNanoseconds: UInt64 = 0
@@ -96,7 +78,7 @@ final class LumenNativeVirtualDisplayTests: XCTestCase {
                 let now = await clock.now()
                 let pixelWidth = now < 1_000_000_000 ? 640 : 1_280
                 let pixelHeight = now < 1_000_000_000 ? 360 : 720
-                return LumenScreenCaptureDisplayReadinessSnapshot(
+                return LumenCaptureDisplayReadinessSnapshot(
                     ownerToken: ownerToken,
                     isOnline: true,
                     isActive: true,
@@ -133,7 +115,7 @@ final class LumenNativeVirtualDisplayTests: XCTestCase {
                 await clock.sleep(until: deadline)
             },
             snapshot: {
-                return LumenScreenCaptureDisplayReadinessSnapshot(
+                return LumenCaptureDisplayReadinessSnapshot(
                     ownerToken: ownerToken,
                     isOnline: false,
                     isActive: false,
@@ -227,234 +209,4 @@ final class LumenNativeVirtualDisplayTests: XCTestCase {
         XCTAssertNil(LumenMacVirtualDisplay.registeredDisplay(forKey: originalKey))
     }
 
-    func testRetainedVirtualDisplayPublishesAuthoritativeScreenCaptureDisplay() async throws {
-        guard LumenMacVirtualDisplay.isSupported() else {
-            throw XCTSkip("CGVirtualDisplay is unavailable on this runtime")
-        }
-        let key = "direct-screen-capture-admission-v2"
-        let configuration = LumenMacVirtualDisplayConfiguration()
-        configuration.name = "Lumen Admission Test"
-        let identity = LumenMacVirtualDisplayConfigurationFactory.persistentIdentity(
-            forDisplayKey: key
-        )
-        configuration.productID = identity.productID
-        configuration.serialNumber = identity.serialNumber
-        configuration.backingWidth = 1_920
-        configuration.backingHeight = 1_080
-        configuration.logicalWidth = 960
-        configuration.logicalHeight = 540
-        configuration.refreshRate = 120
-        configuration.highDensity = true
-
-        let physicalMainDisplayID = CGMainDisplayID()
-        let workspace = LumenMacDisplayWorkspace()
-        let physicalTopology = try await workspace.snapshotWorkspace(
-            targetProcessIdentifiers: []
-        )
-        let firstOwner = try LumenMacVirtualDisplay.createRegisteredDisplay(
-            forKey: key,
-            configuration: configuration
-        )
-        let firstDisplayID = firstOwner.displayID
-        XCTAssertTrue(
-            LumenMacVirtualDisplay.removeRegisteredDisplay(
-                forKey: key,
-                ifMatchingDisplay: firstOwner
-            )
-        )
-        let disconnectDeadline = DispatchTime.now().uptimeNanoseconds + 5_000_000_000
-        while true {
-            var onlineCount: UInt32 = 0
-            guard CGGetOnlineDisplayList(0, nil, &onlineCount) == .success else {
-                XCTFail("The online display inventory could not be read")
-                return
-            }
-            var onlineDisplayIDs = [CGDirectDisplayID](
-                repeating: 0,
-                count: Int(onlineCount)
-            )
-            guard CGGetOnlineDisplayList(
-                onlineCount,
-                &onlineDisplayIDs,
-                &onlineCount
-            ) == .success else {
-                XCTFail("The online display inventory could not be read")
-                return
-            }
-            if !onlineDisplayIDs.prefix(Int(onlineCount)).contains(firstDisplayID) {
-                break
-            }
-            guard DispatchTime.now().uptimeNanoseconds < disconnectDeadline else {
-                XCTFail("The first retained virtual display did not disconnect before recreation")
-                return
-            }
-            try await Task.sleep(nanoseconds: 50_000_000)
-        }
-
-        let retained = try LumenMacVirtualDisplay.createRegisteredDisplay(
-            forKey: key,
-            configuration: configuration
-        )
-        defer {
-            _ = LumenMacVirtualDisplay.removeRegisteredDisplay(forKey: key)
-        }
-
-        try retained.updateLogicalWidth(
-            configuration.logicalWidth,
-            logicalHeight: configuration.logicalHeight,
-            refreshRate: configuration.refreshRate
-        )
-        let retainedDisplayID = retained.displayID
-        let owner = LumenRetainedVirtualDisplayReference(display: retained)
-        do {
-            try await LumenMacVirtualDisplayPublicationStabilizer.waitForModeSettlement(
-                displayID: retainedDisplayID,
-                expectedOwnerToken: owner.ownerToken,
-                timing: .production,
-                now: {
-                    DispatchTime.now().uptimeNanoseconds
-                },
-                sleepUntil: { deadline in
-                    let now = DispatchTime.now().uptimeNanoseconds
-                    if deadline > now {
-                        try await Task.sleep(nanoseconds: deadline - now)
-                    }
-                },
-                snapshot: {
-                    LumenScreenCaptureDisplayReadiness.snapshot(
-                        displayID: retainedDisplayID,
-                        owner: owner
-                    )
-                }
-            )
-            try await workspace.stageVirtualDisplayUnmirrored(
-                retainedDisplayID,
-                sourceDisplayID: physicalMainDisplayID
-            )
-            try await workspace.mirrorOwnedVirtualDisplay(
-                retainedDisplayID,
-                sourceDisplayID: physicalMainDisplayID
-            )
-            try await LumenMacVirtualDisplayPublicationStabilizer.wait(
-                displayID: retainedDisplayID,
-                expectedOwnerToken: owner.ownerToken,
-                timing: .production,
-                now: {
-                    DispatchTime.now().uptimeNanoseconds
-                },
-                sleepUntil: { deadline in
-                    let now = DispatchTime.now().uptimeNanoseconds
-                    if deadline > now {
-                        try await Task.sleep(nanoseconds: deadline - now)
-                    }
-                },
-                snapshot: {
-                    LumenScreenCaptureDisplayReadiness.snapshot(
-                        displayID: retainedDisplayID,
-                        owner: owner
-                    )
-                }
-            )
-            XCTAssertEqual(CGMainDisplayID(), retainedDisplayID)
-            XCTAssertEqual(
-                CGDisplayMirrorsDisplay(physicalMainDisplayID),
-                retainedDisplayID
-            )
-
-            let content = try await SCShareableContent.excludingDesktopWindows(
-                false,
-                onScreenWindowsOnly: true
-            )
-            let admitted = try XCTUnwrap(
-                content.displays.first(where: {
-                    UInt32($0.displayID) == retainedDisplayID
-                })
-            )
-            XCTAssertEqual(UInt32(admitted.displayID), retainedDisplayID)
-            _ = SCContentFilter(
-                display: admitted,
-                excludingApplications: [],
-                exceptingWindows: []
-            )
-            try await workspace.restoreWorkspace(physicalTopology)
-        } catch {
-            let originalError = error
-            do {
-                try await workspace.restoreWorkspace(physicalTopology)
-            } catch {
-                throw LumenMacDisplayWorkspaceError.virtualDisplayMirrorRollbackFailed(
-                    retainedDisplayID
-                )
-            }
-            let nsError = originalError as NSError
-            if nsError.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain",
-               nsError.code == -3_801 {
-                throw XCTSkip("The XCTest runner does not hold ScreenCaptureKit TCC permission")
-            }
-            throw originalError
-        }
-    }
-
-    func testAuthoritativeShareableDisplayStartsScreenCapture() async throws {
-        guard LumenMacVirtualDisplay.isSupported() else {
-            throw XCTSkip("CGVirtualDisplay is unavailable on this runtime")
-        }
-        guard CGPreflightScreenCaptureAccess() else {
-            throw XCTSkip("The XCTest runner does not hold ScreenCaptureKit TCC permission")
-        }
-        let key = "direct-screen-capture-stream-test"
-        let configuration = LumenMacVirtualDisplayConfiguration()
-        configuration.name = "Lumen Direct Capture Test"
-        configuration.backingWidth = 1_280
-        configuration.backingHeight = 720
-        configuration.logicalWidth = 1_280
-        configuration.logicalHeight = 720
-        configuration.refreshRate = 60
-
-        let retained = try LumenMacVirtualDisplay.createRegisteredDisplay(
-            forKey: key,
-            configuration: configuration
-        )
-        let content = try await SCShareableContent.excludingDesktopWindows(
-            false,
-            onScreenWindowsOnly: true
-        )
-        let admitted = try XCTUnwrap(
-            content.displays.first(where: { UInt32($0.displayID) == retained.displayID })
-        )
-        let filter = SCContentFilter(
-            display: admitted,
-            excludingApplications: [],
-            exceptingWindows: []
-        )
-        let streamConfiguration = SCStreamConfiguration()
-        streamConfiguration.width = 1_280
-        streamConfiguration.height = 720
-        streamConfiguration.minimumFrameInterval = CMTime(value: 1, timescale: 60)
-        streamConfiguration.queueDepth = 2
-        let firstSample = expectation(description: "direct retained display sample")
-        let output = LumenDirectScreenCaptureOutputProbe(firstSample: firstSample)
-        let queue = DispatchQueue(label: "dev.skyline23.lumen.test.direct-sck")
-        let stream = SCStream(filter: filter, configuration: streamConfiguration, delegate: output)
-
-        do {
-            try stream.addStreamOutput(output, type: .screen, sampleHandlerQueue: queue)
-            try await stream.startCapture()
-            await fulfillment(of: [firstSample], timeout: 5)
-            try await stream.stopCapture()
-            try stream.removeStreamOutput(output, type: .screen)
-            XCTAssertTrue(LumenMacVirtualDisplay.removeRegisteredDisplay(forKey: key))
-        } catch {
-            try? await stream.stopCapture()
-            try? stream.removeStreamOutput(output, type: .screen)
-            _ = LumenMacVirtualDisplay.removeRegisteredDisplay(forKey: key)
-            let error = error as NSError
-            if error.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain",
-               error.code == -3_801 {
-                firstSample.fulfill()
-                throw XCTSkip("The XCTest runner does not hold ScreenCaptureKit TCC permission")
-            }
-            throw error
-        }
-    }
 }
