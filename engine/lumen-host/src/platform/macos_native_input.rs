@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use core_graphics::display::CGDisplay;
 use core_graphics::event::{
@@ -14,6 +14,7 @@ use lumen_engine::NativePointerMotionMode;
 use crate::{PlatformNativeInputEvent, PlatformNativeMotionEvent};
 
 static POST_EVENT_ACCESS_REQUESTED: AtomicBool = AtomicBool::new(false);
+const MAX_NATIVE_INPUT_RESET_ATTEMPTS: usize = 2;
 
 #[link(name = "ApplicationServices", kind = "framework")]
 unsafe extern "C" {
@@ -46,9 +47,33 @@ struct MacPointerMotionInput {
     normalized_y: f32,
 }
 
+trait MacInputEventPoster: Send + Sync {
+    fn post_key(&self, hid_usage: u16, pressed: bool, modifiers: u8) -> Result<(), String>;
+    fn post_button(&self, button: u8, pressed: bool) -> Result<(), String>;
+}
+
 #[derive(Default)]
+struct CoreGraphicsMacInputEventPoster;
+
+impl MacInputEventPoster for CoreGraphicsMacInputEventPoster {
+    fn post_key(&self, hid_usage: u16, pressed: bool, modifiers: u8) -> Result<(), String> {
+        post_key_event(hid_usage, pressed, modifiers)
+    }
+
+    fn post_button(&self, button: u8, pressed: bool) -> Result<(), String> {
+        post_button_event(button, pressed)
+    }
+}
+
 pub(crate) struct MacNativeInput {
     state: Mutex<HashMap<u32, MacInputState>>,
+    poster: Arc<dyn MacInputEventPoster>,
+}
+
+impl Default for MacNativeInput {
+    fn default() -> Self {
+        Self::with_poster(Arc::new(CoreGraphicsMacInputEventPoster))
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -69,6 +94,13 @@ impl MacInputDisplayBounds {
 }
 
 impl MacNativeInput {
+    fn with_poster(poster: Arc<dyn MacInputEventPoster>) -> Self {
+        Self {
+            state: Mutex::default(),
+            poster,
+        }
+    }
+
     pub(crate) fn handle(
         &self,
         session_epoch: u32,
@@ -87,15 +119,16 @@ impl MacNativeInput {
                 repeat,
             } => {
                 let was_pressed = state.pressed_keys.contains(&hid_usage);
+                if (pressed && was_pressed && !repeat) || (!pressed && !was_pressed) {
+                    return Ok(());
+                }
+                self.poster.post_key(hid_usage, pressed, modifiers)?;
                 if pressed {
                     state.pressed_keys.insert(hid_usage);
                 } else {
                     state.pressed_keys.remove(&hid_usage);
                 }
-                if (pressed && was_pressed && !repeat) || (!pressed && !was_pressed) {
-                    return Ok(());
-                }
-                post_key(hid_usage, pressed, modifiers)
+                Ok(())
             }
             PlatformNativeInputEvent::Text {
                 text,
@@ -128,14 +161,16 @@ impl MacNativeInput {
                 button,
                 pressed,
             } => {
-                let changed = if pressed {
-                    state.pressed_buttons.insert(button)
+                let was_pressed = state.pressed_buttons.contains(&button);
+                if pressed == was_pressed {
+                    Ok(())
                 } else {
-                    state.pressed_buttons.remove(&button)
-                };
-                if changed {
-                    post_button(button, pressed)
-                } else {
+                    self.poster.post_button(button, pressed)?;
+                    if pressed {
+                        state.pressed_buttons.insert(button);
+                    } else {
+                        state.pressed_buttons.remove(&button);
+                    }
                     Ok(())
                 }
             }
@@ -221,34 +256,63 @@ impl MacNativeInput {
     }
 
     pub(crate) fn reset(&self, session_epoch: u32) -> Result<(), String> {
-        let state = self
+        let mut states = self
             .state
             .lock()
-            .map_err(|_| "macOS native input state is unavailable".to_owned())?
-            .remove(&session_epoch);
-        let Some(state) = state else {
-            return Ok(());
-        };
-        let mut errors = Vec::new();
-        let mut keys: Vec<_> = state.pressed_keys.into_iter().collect();
-        keys.sort_unstable();
-        for hid_usage in keys {
-            if let Err(error) = post_key(hid_usage, false, 0) {
-                errors.push(error);
+            .map_err(|_| "macOS native input state is unavailable".to_owned())?;
+        for attempt in 0..MAX_NATIVE_INPUT_RESET_ATTEMPTS {
+            let mut errors = Vec::new();
+            {
+                let Some(state) = states.get_mut(&session_epoch) else {
+                    return Ok(());
+                };
+
+                let mut keys: Vec<_> = state.pressed_keys.iter().copied().collect();
+                keys.sort_unstable();
+                let mut released_keys = Vec::new();
+                for hid_usage in keys {
+                    match self.poster.post_key(hid_usage, false, 0) {
+                        Ok(()) => released_keys.push(hid_usage),
+                        Err(error) => errors.push(error),
+                    }
+                }
+                for hid_usage in released_keys {
+                    state.pressed_keys.remove(&hid_usage);
+                }
+
+                let mut buttons: Vec<_> = state.pressed_buttons.iter().copied().collect();
+                buttons.sort_unstable();
+                let mut released_buttons = Vec::new();
+                for button in buttons {
+                    match self.poster.post_button(button, false) {
+                        Ok(()) => released_buttons.push(button),
+                        Err(error) => errors.push(error),
+                    }
+                }
+                for button in released_buttons {
+                    state.pressed_buttons.remove(&button);
+                }
+            }
+
+            if errors.is_empty() {
+                states.remove(&session_epoch);
+                return Ok(());
+            }
+            if attempt + 1 == MAX_NATIVE_INPUT_RESET_ATTEMPTS {
+                if let Some(state) = states.get_mut(&session_epoch) {
+                    state.compositions.clear();
+                    state.scroll_remainder_x = 0;
+                    state.scroll_remainder_y = 0;
+                }
+                // Failed entries were retained for the bounded second pass above. Once both
+                // passes fail, discard this epoch's ledger after returning the terminal error
+                // so a dead session cannot retain an unbounded stale entry; the QUIC guard
+                // reports the terminal failure through the typed runtime-event boundary.
+                states.remove(&session_epoch);
+                return Err(errors.join("; "));
             }
         }
-        let mut buttons: Vec<_> = state.pressed_buttons.into_iter().collect();
-        buttons.sort_unstable();
-        for button in buttons {
-            if let Err(error) = post_button(button, false) {
-                errors.push(error);
-            }
-        }
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(errors.join("; "))
-        }
+        unreachable!("native input reset attempts are bounded above");
     }
 }
 
@@ -361,7 +425,7 @@ fn drag_event(state: &MacInputState) -> (CGEventType, CGMouseButton) {
     }
 }
 
-fn post_key(hid_usage: u16, pressed: bool, modifiers: u8) -> Result<(), String> {
+fn post_key_event(hid_usage: u16, pressed: bool, modifiers: u8) -> Result<(), String> {
     let key_code = mac_key_code(hid_usage)
         .ok_or_else(|| format!("unsupported macOS USB HID keyboard usage {hid_usage:#x}"))?;
     let event = CGEvent::new_keyboard_event(event_source()?, key_code, pressed)
@@ -382,7 +446,7 @@ fn post_text(text: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn post_button(button: u8, pressed: bool) -> Result<(), String> {
+fn post_button_event(button: u8, pressed: bool) -> Result<(), String> {
     let source = event_source()?;
     let location = CGEvent::new(source.clone())
         .map_err(|_| "could not inspect the macOS pointer location".to_owned())?
@@ -563,7 +627,287 @@ fn mac_key_code(hid_usage: u16) -> Option<u16> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::VecDeque;
+    use std::sync::{Arc, Mutex};
+
     use super::*;
+
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    enum PostedEvent {
+        Key {
+            hid_usage: u16,
+            pressed: bool,
+            modifiers: u8,
+        },
+        Button {
+            button: u8,
+            pressed: bool,
+        },
+    }
+
+    struct RecordingPoster {
+        outcomes: Mutex<VecDeque<Result<(), String>>>,
+        events: Mutex<Vec<PostedEvent>>,
+    }
+
+    impl RecordingPoster {
+        fn new(outcomes: impl IntoIterator<Item = Result<(), String>>) -> Self {
+            Self {
+                outcomes: Mutex::new(outcomes.into_iter().collect()),
+                events: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn events(&self) -> Vec<PostedEvent> {
+            self.events.lock().unwrap().clone()
+        }
+
+        fn record(&self, event: PostedEvent) -> Result<(), String> {
+            self.events.lock().unwrap().push(event);
+            self.outcomes.lock().unwrap().pop_front().unwrap_or(Ok(()))
+        }
+    }
+
+    impl MacInputEventPoster for RecordingPoster {
+        fn post_key(&self, hid_usage: u16, pressed: bool, modifiers: u8) -> Result<(), String> {
+            self.record(PostedEvent::Key {
+                hid_usage,
+                pressed,
+                modifiers,
+            })
+        }
+
+        fn post_button(&self, button: u8, pressed: bool) -> Result<(), String> {
+            self.record(PostedEvent::Button { button, pressed })
+        }
+    }
+
+    #[test]
+    fn failed_left_release_remains_pressed_for_reset_retry() {
+        let poster = Arc::new(RecordingPoster::new([
+            Ok(()),
+            Err("left-up failed".to_owned()),
+            Err("reset attempt one failed".to_owned()),
+            Ok(()),
+        ]));
+        let input = MacNativeInput::with_poster(poster.clone());
+        let press = PlatformNativeInputEvent::PointerButton {
+            pointer_id: 0,
+            button: 1,
+            pressed: true,
+        };
+        let release = PlatformNativeInputEvent::PointerButton {
+            pointer_id: 0,
+            button: 1,
+            pressed: false,
+        };
+
+        input.handle(7, press).unwrap();
+        assert_eq!(input.handle(7, release), Err("left-up failed".to_owned()));
+        input.reset(7).unwrap();
+        input.reset(7).unwrap();
+
+        assert_eq!(
+            poster.events(),
+            vec![
+                PostedEvent::Button {
+                    button: 1,
+                    pressed: true,
+                },
+                PostedEvent::Button {
+                    button: 1,
+                    pressed: false,
+                },
+                PostedEvent::Button {
+                    button: 1,
+                    pressed: false,
+                },
+                PostedEvent::Button {
+                    button: 1,
+                    pressed: false,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn failed_key_release_remains_pressed_for_reset_retry() {
+        let poster = Arc::new(RecordingPoster::new([
+            Ok(()),
+            Err("key-up failed".to_owned()),
+            Err("reset attempt one failed".to_owned()),
+            Ok(()),
+        ]));
+        let input = MacNativeInput::with_poster(poster.clone());
+        let press = PlatformNativeInputEvent::Keyboard {
+            hid_usage: 0x04,
+            pressed: true,
+            modifiers: 0x88,
+            repeat: false,
+        };
+        let release = PlatformNativeInputEvent::Keyboard {
+            hid_usage: 0x04,
+            pressed: false,
+            modifiers: 0,
+            repeat: false,
+        };
+
+        input.handle(9, press).unwrap();
+        assert_eq!(input.handle(9, release), Err("key-up failed".to_owned()));
+        input.reset(9).unwrap();
+        input.reset(9).unwrap();
+
+        assert_eq!(
+            poster.events(),
+            vec![
+                PostedEvent::Key {
+                    hid_usage: 0x04,
+                    pressed: true,
+                    modifiers: 0x88,
+                },
+                PostedEvent::Key {
+                    hid_usage: 0x04,
+                    pressed: false,
+                    modifiers: 0,
+                },
+                PostedEvent::Key {
+                    hid_usage: 0x04,
+                    pressed: false,
+                    modifiers: 0,
+                },
+                PostedEvent::Key {
+                    hid_usage: 0x04,
+                    pressed: false,
+                    modifiers: 0,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn failed_button_press_does_not_leave_a_pressed_ledger_entry() {
+        let poster = Arc::new(RecordingPoster::new([Err("left-down failed".to_owned())]));
+        let input = MacNativeInput::with_poster(poster.clone());
+        let press = PlatformNativeInputEvent::PointerButton {
+            pointer_id: 0,
+            button: 1,
+            pressed: true,
+        };
+
+        assert_eq!(input.handle(11, press), Err("left-down failed".to_owned()));
+        input.reset(11).unwrap();
+
+        assert_eq!(
+            poster.events(),
+            vec![PostedEvent::Button {
+                button: 1,
+                pressed: true,
+            }]
+        );
+    }
+
+    #[test]
+    fn failed_reset_retains_one_retry_then_discards_the_epoch_after_final_failure() {
+        let poster = Arc::new(RecordingPoster::new([
+            Ok(()),
+            Err("left-up failed".to_owned()),
+            Err("reset attempt one failed".to_owned()),
+            Err("reset attempt two failed".to_owned()),
+        ]));
+        let input = MacNativeInput::with_poster(poster.clone());
+        let press = PlatformNativeInputEvent::PointerButton {
+            pointer_id: 0,
+            button: 1,
+            pressed: true,
+        };
+        let release = PlatformNativeInputEvent::PointerButton {
+            pointer_id: 0,
+            button: 1,
+            pressed: false,
+        };
+
+        input.handle(12, press).unwrap();
+        assert!(input.handle(12, release).is_err());
+        assert!(input.reset(12).is_err());
+        input.reset(12).unwrap();
+
+        assert_eq!(
+            poster.events(),
+            vec![
+                PostedEvent::Button {
+                    button: 1,
+                    pressed: true,
+                },
+                PostedEvent::Button {
+                    button: 1,
+                    pressed: false,
+                },
+                PostedEvent::Button {
+                    button: 1,
+                    pressed: false,
+                },
+                PostedEvent::Button {
+                    button: 1,
+                    pressed: false,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn reset_retries_only_failed_items_after_partial_release() {
+        let poster = Arc::new(RecordingPoster::new([
+            Ok(()),
+            Ok(()),
+            Ok(()),
+            Err("button-up failed".to_owned()),
+            Ok(()),
+        ]));
+        let input = MacNativeInput::with_poster(poster.clone());
+        let key_press = PlatformNativeInputEvent::Keyboard {
+            hid_usage: 0x04,
+            pressed: true,
+            modifiers: 0,
+            repeat: false,
+        };
+        let button_press = PlatformNativeInputEvent::PointerButton {
+            pointer_id: 0,
+            button: 1,
+            pressed: true,
+        };
+
+        input.handle(13, key_press).unwrap();
+        input.handle(13, button_press).unwrap();
+        input.reset(13).unwrap();
+
+        assert_eq!(
+            poster.events(),
+            vec![
+                PostedEvent::Key {
+                    hid_usage: 0x04,
+                    pressed: true,
+                    modifiers: 0,
+                },
+                PostedEvent::Button {
+                    button: 1,
+                    pressed: true,
+                },
+                PostedEvent::Key {
+                    hid_usage: 0x04,
+                    pressed: false,
+                    modifiers: 0,
+                },
+                PostedEvent::Button {
+                    button: 1,
+                    pressed: false,
+                },
+                PostedEvent::Button {
+                    button: 1,
+                    pressed: false,
+                },
+            ]
+        );
+    }
 
     #[test]
     fn usb_hid_mapping_preserves_physical_keys_and_multilingual_modifiers() {

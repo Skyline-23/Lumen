@@ -1174,16 +1174,43 @@ impl NativeInputResetGuard {
         }
     }
 
+    fn report_reset_failure(&self, error: &str) {
+        let message = format!(
+            "native-input-reset-failed: session-epoch={}: {error}",
+            self.session_epoch
+        );
+        eprintln!("Lumen native QUIC stage={message}");
+        if let Err(publish_error) = self.platform.publish_runtime_event(PlatformRuntimeEvent {
+            disposition: PlatformRuntimeEventDisposition::Raised,
+            severity: PlatformRuntimeEventSeverity::Error,
+            code: PlatformRuntimeEventCode::NativeSessionPlatform,
+            message: Some(message),
+        }) {
+            eprintln!(
+                "Lumen native QUIC stage=native-input-reset-diagnostic-failed session-epoch={} error={publish_error}",
+                self.session_epoch
+            );
+        }
+    }
+
     fn reset(mut self) -> Result<(), String> {
+        let result = self.platform.reset_native_input(self.session_epoch);
         self.active = false;
-        self.platform.reset_native_input(self.session_epoch)
+        if let Err(error) = &result {
+            self.report_reset_failure(error);
+        }
+        result
     }
 }
 
 impl Drop for NativeInputResetGuard {
     fn drop(&mut self) {
         if self.active {
-            let _ = self.platform.reset_native_input(self.session_epoch);
+            let result = self.platform.reset_native_input(self.session_epoch);
+            self.active = false;
+            if let Err(error) = result {
+                self.report_reset_failure(&error);
+            }
         }
     }
 }
@@ -1356,6 +1383,7 @@ fn bind_ip(arguments: &HostArguments) -> Result<IpAddr, String> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::VecDeque;
     use std::fs;
     use std::sync::Mutex;
 
@@ -1370,7 +1398,7 @@ mod tests {
     use quinn::crypto::rustls::QuicClientConfig;
 
     use crate::control::tests::{native_hello, router_with_platform};
-    use crate::IdlePlatformSessionControl;
+    use crate::{IdlePlatformSessionControl, PlatformSessionPlan};
 
     use super::*;
 
@@ -1389,6 +1417,50 @@ mod tests {
             .unwrap();
         let application_id = router.authorities().applications().applications().unwrap()[0].id;
         (root, Arc::new(Mutex::new(router)), platform, application_id)
+    }
+
+    struct ResetRecordingPlatform {
+        results: Mutex<VecDeque<Result<(), String>>>,
+        resets: Mutex<Vec<u32>>,
+        runtime_events: Mutex<Vec<PlatformRuntimeEvent>>,
+    }
+
+    impl ResetRecordingPlatform {
+        fn new(results: impl IntoIterator<Item = Result<(), String>>) -> Self {
+            Self {
+                results: Mutex::new(results.into_iter().collect()),
+                resets: Mutex::new(Vec::new()),
+                runtime_events: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn reset_epochs(&self) -> Vec<u32> {
+            self.resets.lock().unwrap().clone()
+        }
+
+        fn runtime_events(&self) -> Vec<PlatformRuntimeEvent> {
+            self.runtime_events.lock().unwrap().clone()
+        }
+    }
+
+    impl PlatformSessionControl for ResetRecordingPlatform {
+        fn start_session(&self, _plan: PlatformSessionPlan) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn stop_session(&self) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn reset_native_input(&self, session_epoch: u32) -> Result<(), String> {
+            self.resets.lock().unwrap().push(session_epoch);
+            self.results.lock().unwrap().pop_front().unwrap_or(Ok(()))
+        }
+
+        fn publish_runtime_event(&self, event: PlatformRuntimeEvent) -> Result<(), String> {
+            self.runtime_events.lock().unwrap().push(event);
+            Ok(())
+        }
     }
 
     fn loopback_quic_configs(root: &tempfile::TempDir) -> (ServerConfig, quinn::ClientConfig) {
@@ -1431,6 +1503,70 @@ mod tests {
             )),
         }]);
         assert_eq!(lifecycle.validate_eof(), Ok(()));
+    }
+
+    #[test]
+    fn explicit_input_reset_calls_platform_once_on_success() {
+        let platform = Arc::new(ResetRecordingPlatform::new([Ok(())]));
+        let guard = NativeInputResetGuard::new(42, platform.clone());
+
+        assert_eq!(guard.reset(), Ok(()));
+        assert_eq!(platform.reset_epochs(), vec![42]);
+        assert!(platform.runtime_events().is_empty());
+    }
+
+    #[test]
+    fn explicit_input_reset_calls_platform_once_and_reports_failure() {
+        let platform = Arc::new(ResetRecordingPlatform::new([
+            Err("reset failed".to_owned()),
+        ]));
+        let guard = NativeInputResetGuard::new(44, platform.clone());
+
+        let error = guard
+            .reset()
+            .expect_err("reset must retain the final error");
+
+        assert!(error.contains("reset failed"), "{error}");
+        assert_eq!(platform.reset_epochs(), vec![44]);
+        assert_eq!(platform.runtime_events().len(), 1);
+        let event = &platform.runtime_events()[0];
+        assert_eq!(event.disposition, PlatformRuntimeEventDisposition::Raised);
+        assert_eq!(event.severity, PlatformRuntimeEventSeverity::Error);
+        assert_eq!(event.code, PlatformRuntimeEventCode::NativeSessionPlatform);
+        assert!(event
+            .message
+            .as_deref()
+            .is_some_and(|message| message.contains("reset failed")));
+    }
+
+    #[test]
+    fn dropped_input_reset_guard_attempts_one_reset() {
+        let platform = Arc::new(ResetRecordingPlatform::new([Ok(())]));
+        let guard = NativeInputResetGuard::new(43, platform.clone());
+
+        drop(guard);
+
+        assert_eq!(platform.reset_epochs(), vec![43]);
+        assert!(platform.runtime_events().is_empty());
+    }
+
+    #[test]
+    fn dropped_input_reset_guard_reports_bounded_final_failure() {
+        let platform = Arc::new(ResetRecordingPlatform::new([Err(
+            "drop reset failed".to_owned()
+        )]));
+        let guard = NativeInputResetGuard::new(45, platform.clone());
+
+        drop(guard);
+
+        assert_eq!(platform.reset_epochs(), vec![45]);
+        assert_eq!(platform.runtime_events().len(), 1);
+        let event = &platform.runtime_events()[0];
+        assert_eq!(event.code, PlatformRuntimeEventCode::NativeSessionPlatform);
+        assert!(event
+            .message
+            .as_deref()
+            .is_some_and(|message| message.contains("drop reset failed")));
     }
 
     #[test]
