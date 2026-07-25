@@ -841,7 +841,13 @@ public actor LumenMacWorkspaceSession {
                             try await executor.stageOwnedVirtualDisplayUnmirrored()
                             try await preparationFence()
                             try await materializeCaptureContent()
-                            try await coordinator.recordDesktopMirrorApplied()
+                            // Isolated desktop mirrors already journal the
+                            // preceding PromoteVirtualMain mutation. The
+                            // coexist path has no earlier mutation and must
+                            // record the mirror before capture admission.
+                            if effectivePolicy == .coexist {
+                                try await coordinator.recordDesktopMirrorApplied()
+                            }
                             try await preparationFence()
                             // Admit a fresh ScreenCaptureKit display only after the
                             // virtual source topology has committed.
@@ -1062,7 +1068,7 @@ public actor LumenMacWorkspaceSession {
     }
 
     private var effectivePolicy: LumenMacWorkspacePolicy {
-        if isDesktopMirror {
+        if isDesktopMirror, request.policy != .isolatedWorkspace {
             return .coexist
         }
         return request.policy

@@ -1131,7 +1131,8 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
     func testDesktopMirrorCommitsTopologyBeforeFreshCaptureAdmission() async throws {
         for managesCapture in [false, true] {
             let preparedEvents = try await runDesktopMirrorPreparation(
-                managesCapture: managesCapture
+                managesCapture: managesCapture,
+                policy: .isolatedWorkspace
             )
             let stageEvents = preparedEvents.filter {
                 $0 == .prepareDesktopMirror(89, 3)
@@ -1179,11 +1180,18 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
             XCTAssertLessThan(stageIndex, mirrorIndex)
             XCTAssertLessThan(mirrorIndex, stabilizationIndex)
             XCTAssertLessThan(stabilizationIndex, prefetchIndex)
-            XCTAssertFalse(preparedEvents.contains {
-                if case .promote = $0 { return true }
-                return false
-            })
-            XCTAssertFalse(preparedEvents.contains(.isolate(89)))
+            XCTAssertTrue(
+                preparedEvents.contains(
+                    .promote(89, .deferredUntilCaptureReady)
+                )
+            )
+            let firstFrameIndex = try XCTUnwrap(
+                preparedEvents.firstIndex(of: .firstFrameBarrier)
+            )
+            let isolateIndex = try XCTUnwrap(
+                preparedEvents.firstIndex(of: .isolate(89))
+            )
+            XCTAssertLessThan(firstFrameIndex, isolateIndex)
             let restoreIndex = try XCTUnwrap(
                 preparedEvents.firstIndex(of: .restore)
             )
@@ -1194,8 +1202,34 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
                 preparedEvents.firstIndex(of: .destroy)
             )
             XCTAssertLessThan(prefetchIndex, restoreIndex)
+            XCTAssertLessThan(isolateIndex, restoreIndex)
             XCTAssertLessThan(restoreIndex, verifyIndex)
             XCTAssertLessThan(verifyIndex, destroyIndex)
+
+            let coexistEvents = try await runDesktopMirrorPreparation(
+                managesCapture: managesCapture,
+                policy: .coexist
+            )
+            XCTAssertFalse(coexistEvents.contains {
+                if case .promote = $0 { return true }
+                return false
+            })
+            XCTAssertFalse(coexistEvents.contains(.isolate(89)))
+            XCTAssertEqual(
+                coexistEvents.filter { $0 == .mirror(89, 3) }.count,
+                1
+            )
+            let coexistRestoreIndex = try XCTUnwrap(
+                coexistEvents.firstIndex(of: .restore)
+            )
+            let coexistVerifyIndex = try XCTUnwrap(
+                coexistEvents.firstIndex(of: .verify)
+            )
+            let coexistDestroyIndex = try XCTUnwrap(
+                coexistEvents.firstIndex(of: .destroy)
+            )
+            XCTAssertLessThan(coexistRestoreIndex, coexistVerifyIndex)
+            XCTAssertLessThan(coexistVerifyIndex, coexistDestroyIndex)
         }
     }
 
@@ -1207,10 +1241,14 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
             ] {
                 let events = try await runDesktopMirrorPreparation(
                     managesCapture: managesCapture,
+                    policy: .isolatedWorkspace,
                     captureAdmissionOutcome: outcome
                 )
                 let mirrorIndex = try XCTUnwrap(
                     events.firstIndex(of: .mirror(89, 3))
+                )
+                let promotionIndex = try XCTUnwrap(
+                    events.firstIndex(of: .promote(89, .deferredUntilCaptureReady))
                 )
                 let prefetchIndex = try XCTUnwrap(
                     events.firstIndex(of: .prepareCapture(89))
@@ -1224,6 +1262,7 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
                 let destroyIndex = try XCTUnwrap(
                     events.firstIndex(of: .destroy)
                 )
+                XCTAssertLessThan(promotionIndex, mirrorIndex)
                 XCTAssertLessThan(mirrorIndex, prefetchIndex)
                 XCTAssertLessThan(prefetchIndex, restoreIndex)
                 XCTAssertLessThan(restoreIndex, verifyIndex)
@@ -1234,6 +1273,7 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
 
     private func runDesktopMirrorPreparation(
         managesCapture: Bool,
+        policy: LumenMacWorkspacePolicy,
         captureAdmissionOutcome: DesktopMirrorCaptureAdmissionOutcome = .success
     ) async throws -> [WorkspaceExecutionEvent] {
         let recorder = WorkspaceExecutionRecorder()
@@ -1271,7 +1311,9 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
                     try await cancellationSuspension.suspend()
                 }
             },
-            startCapture: { _ in },
+            startCapture: { _ in
+                await recorder.append(.firstFrameBarrier)
+            },
             stopCapture: {},
             destroyVirtualDisplay: { _ in await recorder.append(.destroy) },
             waitForExternalFirstEncodedFrame: {
@@ -1282,7 +1324,7 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
             }
         )
         let request = LumenMacWorkspaceSessionRequest(
-            policy: .isolatedWorkspace,
+            policy: policy,
             contentSource: .desktopMirror(sourceDisplayID: 3),
             displayMode: LumenMacDisplayModeRequest(
                 width: 640,
@@ -1344,12 +1386,14 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
             XCTAssertEqual(state, .active)
         } else {
             let outcome = try await session.activate()
-            XCTAssertEqual(outcome.isolationStatus, .notRequested)
+            XCTAssertEqual(
+                outcome.isolationStatus,
+                policy == .isolatedWorkspace ? .pending : .notRequested
+            )
             let activeEvents = await recorder.recordedEvents()
             let geometry = try LumenMacDisplayGeometryResolver.resolve(request.displayMode)
             XCTAssertTrue(activeEvents.contains(.firstFrameBarrier))
             XCTAssertTrue(activeEvents.contains(.positionPointer(89, geometry)))
-            XCTAssertFalse(activeEvents.contains(.isolate(89)))
         }
         try await session.stop()
         return await recorder.recordedEvents()
