@@ -742,20 +742,10 @@ impl PlatformSessionControl for MacPlatformSessionControl {
             let bytes = state.audio_scratch[..copied].to_vec();
             state.pcm.extend_from_slice(&bytes);
         }
-        let Some(mut deadline) = state.next_audio_deadline else {
+        let now = Instant::now();
+        let Some(deadline) = ready_audio_packet_deadline(&mut state, now, packet_bytes) else {
             return Ok(None);
         };
-        let now = Instant::now();
-        if now < deadline {
-            return Ok(None);
-        }
-        if now.duration_since(deadline) > MAXIMUM_AUDIO_CATCHUP {
-            state.next_audio_timestamp = audio_timestamp(monotonic_nanoseconds());
-            deadline = now;
-        }
-        if state.pcm.len() < packet_bytes {
-            state.pcm.resize(packet_bytes, 0);
-        }
         let samples = state.pcm[..packet_bytes]
             .chunks_exact(4)
             .map(|bytes| f32::from_le_bytes(bytes.try_into().expect("four PCM bytes")))
@@ -1065,6 +1055,22 @@ fn capture_pair_audio_failure(status: i32, error: String) -> Result<Option<Strin
     }
 }
 
+fn ready_audio_packet_deadline(
+    state: &mut MacSessionState,
+    now: Instant,
+    packet_bytes: usize,
+) -> Option<Instant> {
+    let mut deadline = state.next_audio_deadline?;
+    if now < deadline || state.pcm.len() < packet_bytes {
+        return None;
+    }
+    if now.duration_since(deadline) > MAXIMUM_AUDIO_CATCHUP {
+        state.next_audio_timestamp = audio_timestamp(monotonic_nanoseconds());
+        deadline = now;
+    }
+    Some(deadline)
+}
+
 fn desktop_mirror_source_candidate_display_id(
     captures_desktop: bool,
     virtual_display: bool,
@@ -1287,6 +1293,39 @@ mod tests {
             capture_pair_audio_failure(1, "capture rejected".to_owned()).unwrap_err(),
             "video capture failed: capture rejected"
         );
+    }
+
+    #[test]
+    fn incomplete_real_pcm_does_not_advance_audio_clock_or_catch_up() {
+        let now = Instant::now();
+        let deadline = now - MAXIMUM_AUDIO_CATCHUP - Duration::from_millis(1);
+        let packet_bytes = AUDIO_FRAME_COUNT * 2 * std::mem::size_of::<f32>();
+
+        for pcm_length in [0, packet_bytes - std::mem::size_of::<f32>()] {
+            let mut state = MacSessionState {
+                controller: ptr::null_mut(),
+                workspace_key: None,
+                display_id: 0,
+                input_display_id: 0,
+                input_display_bounds: None,
+                desktop_mirror_source_display_id: 0,
+                opus: None,
+                audio_channels: 2,
+                pcm: vec![0; pcm_length],
+                audio_scratch: vec![0; MAXIMUM_PCM_BYTES],
+                next_audio_timestamp: 42,
+                next_audio_deadline: Some(deadline),
+                audio_capture_failure: None,
+            };
+
+            assert_eq!(
+                ready_audio_packet_deadline(&mut state, now, packet_bytes),
+                None
+            );
+            assert_eq!(state.pcm.len(), pcm_length);
+            assert_eq!(state.next_audio_timestamp, 42);
+            assert_eq!(state.next_audio_deadline, Some(deadline));
+        }
     }
 
     #[test]

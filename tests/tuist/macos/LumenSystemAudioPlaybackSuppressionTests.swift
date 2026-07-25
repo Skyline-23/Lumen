@@ -150,6 +150,123 @@ final class LumenSystemAudioPlaybackSuppressionTests: XCTestCase {
         XCTAssertEqual(tapEvents, [[44], []])
     }
 
+    func testActivationRejectsAggregateThatRetainsTheWrongProcessTapUID() async {
+        let hal = RecordingSystemAudioSuppressionHAL(
+            aggregateTapUID: "not-the-created-tap"
+        )
+        let source = LumenSystemAudioPlaybackSuppression(hal: hal)
+
+        do {
+            try await source.activate(
+                configuration: testConfiguration,
+                callbacks: noOpCallbacks
+            )
+            XCTFail("Activation must reject an aggregate with the wrong retained tap UID")
+        } catch let error as LumenSystemAudioPlaybackSuppressionError {
+            guard case .activationFailed(
+                let stage,
+                let status,
+                let message,
+                let cleanupFailures
+            ) = error else {
+                return XCTFail("Unexpected typed source error: \(error)")
+            }
+            XCTAssertEqual(stage, .createAggregateDevice)
+            XCTAssertEqual(status, -704)
+            XCTAssertEqual(
+                message,
+                "The private aggregate did not retain the exact session process tap."
+            )
+            XCTAssertTrue(cleanupFailures.isEmpty)
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+
+        XCTAssertEqual(
+            hal.events.map(\.shortName),
+            [
+                "tap-create",
+                "tap-format",
+                "aggregate-create",
+                "aggregate-destroy",
+                "tap-destroy",
+            ]
+        )
+    }
+
+    func testActivationRejectsAggregateWithNoInputStreams() async {
+        let hal = RecordingSystemAudioSuppressionHAL(
+            aggregateInputStreamCount: 0
+        )
+        let source = LumenSystemAudioPlaybackSuppression(hal: hal)
+
+        do {
+            try await source.activate(
+                configuration: testConfiguration,
+                callbacks: noOpCallbacks
+            )
+            XCTFail("Activation must reject an aggregate with no input streams")
+        } catch let error as LumenSystemAudioPlaybackSuppressionError {
+            guard case .activationFailed(
+                let stage,
+                let status,
+                let message,
+                let cleanupFailures
+            ) = error else {
+                return XCTFail("Unexpected typed source error: \(error)")
+            }
+            XCTAssertEqual(stage, .createAggregateDevice)
+            XCTAssertEqual(status, -705)
+            XCTAssertEqual(
+                message,
+                "The private aggregate published no input stream for the session process tap."
+            )
+            XCTAssertTrue(cleanupFailures.isEmpty)
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+
+        XCTAssertEqual(
+            hal.events.map(\.shortName),
+            [
+                "tap-create",
+                "tap-format",
+                "aggregate-create",
+                "aggregate-destroy",
+                "tap-destroy",
+            ]
+        )
+    }
+
+    func testAudioObjectIDListUsesTheCompletedPropertyQueryByteCount() throws {
+        XCTAssertEqual(
+            try lumenAudioObjectIDs(
+                from: [71],
+                returnedDataSize: 0
+            ),
+            []
+        )
+        XCTAssertEqual(
+            try lumenAudioObjectIDs(
+                from: [71, 72],
+                returnedDataSize: UInt32(MemoryLayout<AudioObjectID>.stride)
+            ),
+            [71]
+        )
+        XCTAssertThrowsError(
+            try lumenAudioObjectIDs(
+                from: [71],
+                returnedDataSize: UInt32(MemoryLayout<AudioObjectID>.stride + 1)
+            )
+        )
+        XCTAssertThrowsError(
+            try lumenAudioObjectIDs(
+                from: [kAudioObjectUnknown],
+                returnedDataSize: UInt32(MemoryLayout<AudioObjectID>.stride)
+            )
+        )
+    }
+
     func testActivationFailureDestroysEveryCreatedResourceInReverse() async {
         let hal = RecordingSystemAudioSuppressionHAL(
             activationFailureStage: .startIO
@@ -910,6 +1027,8 @@ private final class RecordingSystemAudioSuppressionHAL:
     >(nil)
     private let trace: SystemAudioSuppressionTrace?
     private let currentProcessObjectID: AudioObjectID?
+    private let aggregateTapUID: String
+    private let aggregateInputStreamCount: Int
     private let streamFormat:
         LumenSystemAudioPlaybackSuppressionStreamFormat
     private let activationFailureStage:
@@ -924,6 +1043,8 @@ private final class RecordingSystemAudioSuppressionHAL:
     init(
         trace: SystemAudioSuppressionTrace? = nil,
         currentProcessObjectID: AudioObjectID? = 44,
+        aggregateTapUID: String = "test-tap",
+        aggregateInputStreamCount: Int = 1,
         streamFormat:
             LumenSystemAudioPlaybackSuppressionStreamFormat = .init(
                 sampleRate: 48_000,
@@ -941,6 +1062,8 @@ private final class RecordingSystemAudioSuppressionHAL:
     ) {
         self.trace = trace
         self.currentProcessObjectID = currentProcessObjectID
+        self.aggregateTapUID = aggregateTapUID
+        self.aggregateInputStreamCount = aggregateInputStreamCount
         self.streamFormat = streamFormat
         self.activationFailureStage = activationFailureStage
         self.cancelAfterStage = cancelAfterStage
@@ -992,6 +1115,24 @@ private final class RecordingSystemAudioSuppressionHAL:
         record(.createAggregateDevice(tapUID: tapUID))
         try failIfRequested(.createAggregateDevice)
         return 22
+    }
+
+    func validateAggregateDevice(
+        deviceID: AudioObjectID,
+        tapUID: String
+    ) throws {
+        guard tapUID == aggregateTapUID else {
+            throw LumenSystemAudioPlaybackSuppressionHALOperationError(
+                status: -704,
+                message: "The private aggregate did not retain the exact session process tap."
+            )
+        }
+        guard aggregateInputStreamCount > 0 else {
+            throw LumenSystemAudioPlaybackSuppressionHALOperationError(
+                status: -705,
+                message: "The private aggregate published no input stream for the session process tap."
+            )
+        }
     }
 
     func createIOProc(

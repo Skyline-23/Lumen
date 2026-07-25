@@ -119,6 +119,15 @@ struct LumenSystemAudioPlaybackSuppressionHALOperationError:
     Sendable
 {
     let status: OSStatus
+    let message: String?
+
+    init(
+        status: OSStatus,
+        message: String? = nil
+    ) {
+        self.status = status
+        self.message = message
+    }
 }
 
 struct LumenSystemAudioPlaybackSuppressionCleanupFailure:
@@ -204,6 +213,10 @@ protocol LumenSystemAudioPlaybackSuppressionHAL: Sendable {
         tapID: AudioObjectID
     ) throws -> LumenSystemAudioPlaybackSuppressionStreamFormat
     func createAggregateDevice(tapUID: String) throws -> AudioObjectID
+    func validateAggregateDevice(
+        deviceID: AudioObjectID,
+        tapUID: String
+    ) throws
     func createIOProc(
         deviceID: AudioObjectID,
         streamFormat:
@@ -558,6 +571,10 @@ actor LumenSystemAudioPlaybackSuppression {
                 tapUID: tap.uid
             )
             resources.aggregateDeviceID = aggregateDeviceID
+            try hal.validateAggregateDevice(
+                deviceID: aggregateDeviceID,
+                tapUID: tap.uid
+            )
 
             try Task.checkCancellation()
             stage = .createIOProc
@@ -606,7 +623,8 @@ actor LumenSystemAudioPlaybackSuppression {
                 .activationFailed(
                     stage: stage,
                     status: error.status,
-                    message: "Core Audio rejected the session-scoped tap boundary.",
+                    message: error.message ??
+                        "Core Audio rejected the session-scoped tap boundary.",
                     cleanupFailures: failures
                 )
         } catch {
@@ -1049,6 +1067,26 @@ final class LumenCoreAudioSystemAudioPlaybackSuppressionHAL:
         return deviceID
     }
 
+    func validateAggregateDevice(
+        deviceID: AudioObjectID,
+        tapUID: String
+    ) throws {
+        let retainedTapUIDs = try aggregateTapUIDs(deviceID: deviceID)
+        guard retainedTapUIDs == [tapUID] else {
+            throw LumenSystemAudioPlaybackSuppressionHALOperationError(
+                status: kAudioHardwareBadDeviceError,
+                message: "The private aggregate did not retain the exact session process tap."
+            )
+        }
+        let inputStreamIDs = try inputStreamIDs(deviceID: deviceID)
+        guard !inputStreamIDs.isEmpty else {
+            throw LumenSystemAudioPlaybackSuppressionHALOperationError(
+                status: kAudioHardwareBadDeviceError,
+                message: "The private aggregate published no input stream for the session process tap."
+            )
+        }
+    }
+
     func createIOProc(
         deviceID: AudioObjectID,
         streamFormat:
@@ -1149,6 +1187,96 @@ final class LumenCoreAudioSystemAudioPlaybackSuppressionHAL:
         AudioHardwareDestroyProcessTap(tapID)
     }
 
+    private func aggregateTapUIDs(
+        deviceID: AudioObjectID
+    ) throws -> [String] {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioAggregateDevicePropertyTapList,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var retainedTapList: Unmanaged<CFArray>?
+        var dataSize = UInt32(MemoryLayout.size(ofValue: retainedTapList))
+        try requireSuccess(
+            AudioObjectGetPropertyData(
+                deviceID,
+                &address,
+                0,
+                nil,
+                &dataSize,
+                &retainedTapList
+            )
+        )
+        guard let retainedTapList else {
+            throw LumenSystemAudioPlaybackSuppressionHALOperationError(
+                status: kAudioHardwareBadPropertySizeError
+            )
+        }
+        let tapList = retainedTapList.takeRetainedValue() as NSArray
+        var tapUIDs = [String]()
+        tapUIDs.reserveCapacity(tapList.count)
+        for value in tapList {
+            guard let tapUID = value as? String else {
+                throw LumenSystemAudioPlaybackSuppressionHALOperationError(
+                    status: kAudioHardwareBadPropertySizeError
+                )
+            }
+            tapUIDs.append(tapUID)
+        }
+        return tapUIDs
+    }
+
+    private func inputStreamIDs(
+        deviceID: AudioObjectID
+    ) throws -> [AudioObjectID] {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyStreams,
+            mScope: kAudioObjectPropertyScopeInput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var dataSize: UInt32 = 0
+        try requireSuccess(
+            AudioObjectGetPropertyDataSize(
+                deviceID,
+                &address,
+                0,
+                nil,
+                &dataSize
+            )
+        )
+        let elementSize = UInt32(MemoryLayout<AudioObjectID>.stride)
+        guard dataSize % elementSize == 0 else {
+            throw LumenSystemAudioPlaybackSuppressionHALOperationError(
+                status: kAudioHardwareBadPropertySizeError
+            )
+        }
+        let elementCount = Int(dataSize / elementSize)
+        guard elementCount > 0 else {
+            return []
+        }
+        var streamIDs = [AudioObjectID](
+            repeating: kAudioObjectUnknown,
+            count: elementCount
+        )
+        var returnedDataSize = dataSize
+        try streamIDs.withUnsafeMutableBufferPointer { buffer in
+            try requireSuccess(
+                AudioObjectGetPropertyData(
+                    deviceID,
+                    &address,
+                    0,
+                    nil,
+                    &returnedDataSize,
+                    buffer.baseAddress!
+                )
+            )
+        }
+        return try lumenAudioObjectIDs(
+            from: streamIDs,
+            returnedDataSize: returnedDataSize
+        )
+    }
+
     private func deviceBufferFrameSize(
         deviceID: AudioObjectID
     ) throws -> Int {
@@ -1192,4 +1320,29 @@ final class LumenCoreAudioSystemAudioPlaybackSuppressionHAL:
             Double(timebase.denom)
         )
     }
+}
+
+func lumenAudioObjectIDs(
+    from storage: [AudioObjectID],
+    returnedDataSize: UInt32
+) throws -> [AudioObjectID] {
+    let elementSize = UInt32(MemoryLayout<AudioObjectID>.stride)
+    guard returnedDataSize % elementSize == 0 else {
+        throw LumenSystemAudioPlaybackSuppressionHALOperationError(
+            status: kAudioHardwareBadPropertySizeError
+        )
+    }
+    let returnedCount = Int(returnedDataSize / elementSize)
+    guard returnedCount <= storage.count else {
+        throw LumenSystemAudioPlaybackSuppressionHALOperationError(
+            status: kAudioHardwareBadPropertySizeError
+        )
+    }
+    let result = Array(storage.prefix(returnedCount))
+    guard result.allSatisfy({ $0 != kAudioObjectUnknown }) else {
+        throw LumenSystemAudioPlaybackSuppressionHALOperationError(
+            status: kAudioHardwareBadDeviceError
+        )
+    }
+    return result
 }
