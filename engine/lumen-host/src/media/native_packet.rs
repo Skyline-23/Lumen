@@ -10,6 +10,8 @@ use crate::{PlatformEncodedAudioPacket, PlatformEncodedVideoFrame};
 const REQUIRED_AUDIO_DURATION_FRAMES: u32 = 240;
 const MAXIMUM_AUDIO_PAYLOAD_BYTES: usize = 1_400;
 const MAXIMUM_REED_SOLOMON_SHARDS: usize = 256;
+const TARGET_FEC_DATA_SHARDS_PER_BLOCK: usize = 32;
+const MAXIMUM_FEC_BLOCKS: usize = u8::MAX as usize;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NativeMediaPacketizerConfig {
@@ -31,9 +33,19 @@ struct NativeUnitMetadata {
     parity_percentage: u16,
 }
 
+struct CachedFecCodec {
+    data_shards: usize,
+    parity_shards: usize,
+    codec: ReedSolomon,
+}
+
 pub struct NativeMediaPacketizer {
     config: NativeMediaPacketizerConfig,
     next_sequence: u32,
+    full_fec_codec: Option<CachedFecCodec>,
+    tail_fec_codec: Option<CachedFecCodec>,
+    #[cfg(test)]
+    fec_codec_construction_count: usize,
 }
 
 impl NativeMediaPacketizer {
@@ -46,7 +58,16 @@ impl NativeMediaPacketizer {
         Ok(Self {
             config,
             next_sequence: initial_sequence,
+            full_fec_codec: None,
+            tail_fec_codec: None,
+            #[cfg(test)]
+            fec_codec_construction_count: 0,
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fec_codec_construction_count(&self) -> usize {
+        self.fec_codec_construction_count
     }
 
     pub fn reconfigure(&mut self, maximum_datagram_payload: usize) -> Result<(), String> {
@@ -63,6 +84,51 @@ impl NativeMediaPacketizer {
         }
         self.config.generation_id = generation_id;
         Ok(())
+    }
+
+    fn encode_fec_shards(
+        &mut self,
+        data_shards: usize,
+        parity_shards: usize,
+        full_block: bool,
+        shards: &mut [Vec<u8>],
+    ) -> Result<(), String> {
+        let codec_matches = |cached: &CachedFecCodec| {
+            cached.data_shards == data_shards && cached.parity_shards == parity_shards
+        };
+        let cache_hit = if full_block {
+            self.full_fec_codec.as_ref().is_some_and(codec_matches)
+        } else {
+            self.tail_fec_codec.as_ref().is_some_and(codec_matches)
+        };
+        if !cache_hit {
+            let codec = ReedSolomon::new(data_shards, parity_shards)
+                .map_err(|error| format!("native media parity encoding failed: {error}"))?;
+            let cached = CachedFecCodec {
+                data_shards,
+                parity_shards,
+                codec,
+            };
+            if full_block {
+                self.full_fec_codec = Some(cached);
+            } else {
+                self.tail_fec_codec = Some(cached);
+            }
+            #[cfg(test)]
+            {
+                self.fec_codec_construction_count += 1;
+            }
+        }
+        let cached = if full_block {
+            self.full_fec_codec.as_ref()
+        } else {
+            self.tail_fec_codec.as_ref()
+        };
+        cached
+            .expect("FEC codec cache contains the requested codec")
+            .codec
+            .encode(shards)
+            .map_err(|error| format!("native media parity encoding failed: {error}"))
     }
 
     pub fn packetize_video_delta(
@@ -130,16 +196,37 @@ impl NativeMediaPacketizer {
         let maximum_data_shards = maximum_data_shards(metadata.parity_percentage);
         let base_shard_bytes = self.config.maximum_datagram_payload - NATIVE_MEDIA_HEADER_BYTES;
         let base_data_shards = payload.len().div_ceil(base_shard_bytes);
-        let uses_fec_blocks = base_data_shards
+        let exceeds_reed_solomon_limit = base_data_shards
             .checked_add(parity_shards(base_data_shards, metadata.parity_percentage))
             .is_none_or(|total| total > MAXIMUM_REED_SOLOMON_SHARDS);
+        let uses_fec_blocks = exceeds_reed_solomon_limit
+            || (metadata.parity_percentage != 0
+                && base_data_shards > TARGET_FEC_DATA_SHARDS_PER_BLOCK);
         let header_bytes = if uses_fec_blocks {
             NATIVE_FEC_BLOCK_HEADER_BYTES
         } else {
             NATIVE_MEDIA_HEADER_BYTES
         };
         let shard_bytes = self.config.maximum_datagram_payload - header_bytes;
-        let block_payload_bytes = maximum_data_shards
+        let minimum_data_shards_per_block = if uses_fec_blocks {
+            let payload_bytes_per_shard_across_all_blocks = MAXIMUM_FEC_BLOCKS
+                .checked_mul(shard_bytes)
+                .ok_or_else(|| "native media FEC block size overflowed".to_owned())?;
+            payload
+                .len()
+                .div_ceil(payload_bytes_per_shard_across_all_blocks)
+        } else {
+            1
+        };
+        let preferred_data_shards_per_block = if metadata.parity_percentage == 0 {
+            maximum_data_shards
+        } else {
+            TARGET_FEC_DATA_SHARDS_PER_BLOCK
+        };
+        let data_shards_per_block = preferred_data_shards_per_block
+            .max(minimum_data_shards_per_block)
+            .min(maximum_data_shards);
+        let block_payload_bytes = data_shards_per_block
             .checked_mul(shard_bytes)
             .ok_or_else(|| "native media FEC block size overflowed".to_owned())?;
         let block_count = payload.len().div_ceil(block_payload_bytes);
@@ -185,9 +272,12 @@ impl NativeMediaPacketizer {
                 .collect::<Vec<_>>();
             shards.extend((0..parity_shards).map(|_| vec![0_u8; shard_bytes]));
             if parity_shards != 0 {
-                ReedSolomon::new(data_shards, parity_shards)
-                    .and_then(|codec| codec.encode(&mut shards))
-                    .map_err(|error| format!("native media parity encoding failed: {error}"))?;
+                self.encode_fec_shards(
+                    data_shards,
+                    parity_shards,
+                    uses_fec_blocks && block.len() == block_payload_bytes,
+                    &mut shards,
+                )?;
             }
             let object_payload_offset = u32::try_from(block_index * block_payload_bytes)
                 .map_err(|_| "native media FEC block offset overflowed".to_owned())?;

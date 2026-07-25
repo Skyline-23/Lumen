@@ -88,6 +88,9 @@ windows-sys = { version = "0.61.2", features = [
 [target.'cfg(target_os = "macos")'.dependencies]
 core-graphics = { version = "0.24.0", features = ["highsierra"] }
 
+[target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
+reed-solomon-erasure = { version = "6.0.0", features = ["simd-accel"] }
+
 [build-dependencies]
 slint-build = "=1.13.1"
 
