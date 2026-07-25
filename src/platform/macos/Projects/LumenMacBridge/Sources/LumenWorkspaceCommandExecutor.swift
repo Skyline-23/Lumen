@@ -156,6 +156,9 @@ public actor LumenMacWorkspaceExecutor: LumenWorkspaceCommandExecuting {
         case .promoteVirtualMain:
             let displayID = try requireVirtualDisplay()
             try await operations.verifyVirtualDisplay(displayID)
+            if case .desktopMirror = contentSource {
+                return .succeeded
+            }
             guard try await displayWorkspace.promoteVirtualDisplay(
                 displayID,
                 logicalSize: CGSize(

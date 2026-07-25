@@ -1128,7 +1128,7 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         try await session.stop()
     }
 
-    func testDesktopMirrorCommitsTopologyBeforeFreshCaptureAdmission() async throws {
+    func testDesktopMirrorStagesRetainedSourceWithoutGenericMainPromotionBeforeFreshCaptureAdmission() async throws {
         for managesCapture in [false, true] {
             let preparedEvents = try await runDesktopMirrorPreparation(
                 managesCapture: managesCapture,
@@ -1180,10 +1180,11 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
             XCTAssertLessThan(stageIndex, mirrorIndex)
             XCTAssertLessThan(mirrorIndex, stabilizationIndex)
             XCTAssertLessThan(stabilizationIndex, prefetchIndex)
-            XCTAssertTrue(
-                preparedEvents.contains(
-                    .promote(89, .deferredUntilCaptureReady)
-                )
+            XCTAssertFalse(
+                preparedEvents.contains {
+                    if case .promote = $0 { return true }
+                    return false
+                }
             )
             let firstFrameIndex = try XCTUnwrap(
                 preparedEvents.firstIndex(of: .firstFrameBarrier)
@@ -1247,9 +1248,6 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
                 let mirrorIndex = try XCTUnwrap(
                     events.firstIndex(of: .mirror(89, 3))
                 )
-                let promotionIndex = try XCTUnwrap(
-                    events.firstIndex(of: .promote(89, .deferredUntilCaptureReady))
-                )
                 let prefetchIndex = try XCTUnwrap(
                     events.firstIndex(of: .prepareCapture(89))
                 )
@@ -1262,7 +1260,10 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
                 let destroyIndex = try XCTUnwrap(
                     events.firstIndex(of: .destroy)
                 )
-                XCTAssertLessThan(promotionIndex, mirrorIndex)
+                XCTAssertFalse(events.contains {
+                    if case .promote = $0 { return true }
+                    return false
+                })
                 XCTAssertLessThan(mirrorIndex, prefetchIndex)
                 XCTAssertLessThan(prefetchIndex, restoreIndex)
                 XCTAssertLessThan(restoreIndex, verifyIndex)
