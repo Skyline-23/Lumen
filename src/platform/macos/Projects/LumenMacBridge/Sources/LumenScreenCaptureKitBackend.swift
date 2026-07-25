@@ -6,6 +6,7 @@ import Darwin
 import Foundation
 import OSLog
 import ScreenCaptureKit
+import Synchronization
 import VideoToolbox
 
 struct LumenVideoChromaticityPoint: Equatable, Sendable {
@@ -383,7 +384,7 @@ struct LumenExactCaptureAuditSnapshot: Codable, Equatable, Sendable {
     var allowOpenGOP: Bool?
 }
 
-private struct LumenEncodedFrameContext {
+private struct LumenEncodedFrameContext: Sendable {
     let sequenceNumber: UInt64
     let displayTime: UInt64
     let submissionMachTime: UInt64
@@ -431,11 +432,285 @@ struct LumenVideoBootstrapAdmissionGate: Equatable, Sendable {
     }
 }
 
-private struct LumenPendingVideoBootstrapSource {
+private struct LumenPendingVideoBootstrapSource: @unchecked Sendable {
     let imageBuffer: CVPixelBuffer
     let presentationTime: CMTime
     let displayTime: UInt64
     let duration: CMTime
+    let sequenceNumber: UInt64
+}
+
+enum LumenEncoderSubmissionAttempt<Result: Sendable>: Sendable {
+    case cancelled
+    case submitted(Result)
+}
+
+/// Keeps the synchronous VideoToolbox admission call off the ScreenCaptureKit
+/// callback queue without invoking one non-Sendable compression session from
+/// multiple threads. One source may be submitting and one latest source may
+/// wait; newer waiting sources replace the older one.
+final class LumenLatestFrameSerialEncoderAdmission<Source: Sendable, Result: Sendable>: @unchecked Sendable {
+    private let ownerQueue: DispatchQueue
+    private let submissionQueue: DispatchQueue
+    private let hasSubmissionCapacity: @Sendable () -> Bool
+    private let entryHandler: @Sendable (Source) -> Void
+    private let submit:
+        @Sendable (Source, @Sendable () -> Bool) ->
+        LumenEncoderSubmissionAttempt<Result>
+    private let completion: @Sendable (Source, Result) -> Void
+    private var nextEntryID: UInt64 = 0
+    private var activeEntryID: UInt64?
+    private var activeSource: Source?
+    private var activeSourceEnteredSubmission = false
+    private var pendingSource: Source?
+    private var stopping = false
+
+    init(
+        ownerQueue: DispatchQueue,
+        submissionQueue: DispatchQueue,
+        hasSubmissionCapacity: @escaping @Sendable () -> Bool = { true },
+        entryHandler: @escaping @Sendable (Source) -> Void = { _ in },
+        submit: @escaping @Sendable (
+            Source,
+            @Sendable () -> Bool
+        ) -> LumenEncoderSubmissionAttempt<Result>,
+        completion: @escaping @Sendable (Source, Result) -> Void
+    ) {
+        self.ownerQueue = ownerQueue
+        self.submissionQueue = submissionQueue
+        self.hasSubmissionCapacity = hasSubmissionCapacity
+        self.entryHandler = entryHandler
+        self.submit = submit
+        self.completion = completion
+    }
+
+    /// Returns the older pending source replaced by `source`, if any.
+    @discardableResult
+    func offer(_ source: Source) -> Source? {
+        dispatchPrecondition(condition: .onQueue(ownerQueue))
+        guard !stopping else {
+            return source
+        }
+        promotePendingIfPossible()
+        guard activeEntryID == nil,
+              hasSubmissionCapacity() else {
+            let replacedSource = pendingSource
+            pendingSource = source
+            return replacedSource
+        }
+        startSubmission(source)
+        return nil
+    }
+
+    /// Stops new admission and returns every source that never entered the
+    /// injected submit boundary. Calls already at that boundary remain active
+    /// and are drained by `waitUntilSubmissionReturns()`.
+    @discardableResult
+    func beginStopping() -> [Source] {
+        dispatchPrecondition(condition: .onQueue(ownerQueue))
+        guard !stopping else {
+            return []
+        }
+        stopping = true
+
+        var cancelledSources: [Source] = []
+        if let activeSource,
+           !activeSourceEnteredSubmission {
+            cancelledSources.append(activeSource)
+            clearActiveSubmission()
+        }
+        if let pendingSource {
+            cancelledSources.append(pendingSource)
+            self.pendingSource = nil
+        }
+        return cancelledSources
+    }
+
+    func waitUntilSubmissionReturns() {
+        dispatchPrecondition(condition: .notOnQueue(submissionQueue))
+        submissionQueue.sync(flags: .barrier) {}
+    }
+
+    func resumePendingIfPossible() {
+        dispatchPrecondition(condition: .onQueue(ownerQueue))
+        promotePendingIfPossible()
+    }
+
+    private func startSubmission(_ source: Source) {
+        dispatchPrecondition(condition: .onQueue(ownerQueue))
+        precondition(activeEntryID == nil)
+        nextEntryID &+= 1
+        let entryID = nextEntryID
+        activeEntryID = entryID
+        activeSource = source
+        activeSourceEnteredSubmission = false
+        submissionQueue.async { [self] in
+            let attempt = submit(source) {
+                ownerQueue.sync { [self] in
+                    didEnterSubmission(source, entryID: entryID)
+                }
+            }
+            switch attempt {
+            case .cancelled:
+                ownerQueue.async { [self] in
+                    finishCancelledSubmission(entryID: entryID)
+                }
+            case .submitted(let result):
+                ownerQueue.async { [self] in
+                    finishSubmission(
+                        source,
+                        entryID: entryID,
+                        result: result
+                    )
+                }
+            }
+        }
+    }
+
+    private func didEnterSubmission(_ source: Source, entryID: UInt64) -> Bool {
+        dispatchPrecondition(condition: .onQueue(ownerQueue))
+        guard !stopping,
+              activeEntryID == entryID else {
+            return false
+        }
+        activeSourceEnteredSubmission = true
+        entryHandler(source)
+        return true
+    }
+
+    private func finishCancelledSubmission(entryID: UInt64) {
+        dispatchPrecondition(condition: .onQueue(ownerQueue))
+        guard activeEntryID == entryID else {
+            return
+        }
+        clearActiveSubmission()
+        promotePendingIfPossible()
+    }
+
+    private func finishSubmission(
+        _ source: Source,
+        entryID: UInt64,
+        result: Result
+    ) {
+        dispatchPrecondition(condition: .onQueue(ownerQueue))
+        guard activeEntryID == entryID else {
+            return
+        }
+        completion(source, result)
+        clearActiveSubmission()
+        promotePendingIfPossible()
+    }
+
+    private func promotePendingIfPossible() {
+        dispatchPrecondition(condition: .onQueue(ownerQueue))
+        guard !stopping,
+              activeEntryID == nil,
+              hasSubmissionCapacity(),
+              let pendingSource else {
+            return
+        }
+        self.pendingSource = nil
+        startSubmission(pendingSource)
+    }
+
+    private func clearActiveSubmission() {
+        dispatchPrecondition(condition: .onQueue(ownerQueue))
+        activeEntryID = nil
+        activeSource = nil
+        activeSourceEnteredSubmission = false
+    }
+}
+
+/// Tracks every accepted frame until its VideoToolbox callback has finished on
+/// the runtime owner queue. Stop uses the same lifecycle object to keep
+/// invalidation and the `.stopped` event behind all queued output processing.
+final class LumenVideoToolboxOutputLifecycle<Context: Sendable>: @unchecked Sendable {
+    private let ownerQueue: DispatchQueue
+    private let pendingOutputs = DispatchGroup()
+    private let notificationQueue = DispatchQueue(
+        label: "dev.skyline23.lumen.sck.video.vt-output-drain",
+        qos: .userInteractive
+    )
+    private var contexts: [UInt64: Context] = [:]
+
+    init(ownerQueue: DispatchQueue) {
+        self.ownerQueue = ownerQueue
+    }
+
+    func registerSubmission(id: UInt64, context: Context) {
+        dispatchPrecondition(condition: .onQueue(ownerQueue))
+        precondition(contexts[id] == nil)
+        contexts[id] = context
+        pendingOutputs.enter()
+    }
+
+    @discardableResult
+    func cancelSubmission(id: UInt64) -> Context? {
+        dispatchPrecondition(condition: .onQueue(ownerQueue))
+        guard let context = contexts.removeValue(forKey: id) else {
+            return nil
+        }
+        pendingOutputs.leave()
+        return context
+    }
+
+    func enqueueOutput(
+        id: UInt64?,
+        processing: @escaping @Sendable (Context?) -> Void
+    ) {
+        ownerQueue.async { [self] in
+            let context = id.flatMap { contexts.removeValue(forKey: $0) }
+            defer {
+                if context != nil {
+                    pendingOutputs.leave()
+                }
+            }
+            processing(context)
+        }
+    }
+
+    func completeAndInvalidate(
+        completeFrames: @Sendable () -> OSStatus,
+        invalidate: @Sendable () -> Void,
+        completionFailure: @Sendable (OSStatus, [Context]) -> Void
+    ) async {
+        dispatchPrecondition(condition: .notOnQueue(ownerQueue))
+        let status = completeFrames()
+        guard status == noErr else {
+            invalidate()
+            let cancelledContexts = ownerQueue.sync { [self] in
+                cancelAllSubmissions()
+            }
+            completionFailure(status, cancelledContexts)
+            return
+        }
+        await withCheckedContinuation { continuation in
+            pendingOutputs.notify(queue: notificationQueue) {
+                continuation.resume()
+            }
+        }
+        invalidate()
+    }
+
+    private func cancelAllSubmissions() -> [Context] {
+        dispatchPrecondition(condition: .onQueue(ownerQueue))
+        let cancelledContexts = Array(contexts.values)
+        contexts.removeAll(keepingCapacity: false)
+        for _ in cancelledContexts {
+            pendingOutputs.leave()
+        }
+        return cancelledContexts
+    }
+}
+
+private struct LumenVideoEncoderSubmission: Sendable {
+    let source: LumenPendingVideoBootstrapSource
+    let forceKeyFrame: Bool
+}
+
+private struct LumenVideoEncoderSubmissionResult: Sendable {
+    let status: OSStatus
+    let infoFlags: VTEncodeInfoFlags
 }
 
 private func writeScreenCaptureStartupDiagnostic(_ message: String) {
@@ -1248,42 +1523,7 @@ enum LumenScreenCaptureOutputRegistrationStage: String, Equatable, Sendable {
     case unregistered
     case screenRegistered = "screen-registered"
     case captureStarted = "capture-started"
-    case sharedAudioRegistered = "screen-and-audio-registered"
     case stopped
-}
-
-struct LumenScreenCaptureSystemAudioPreparation: Equatable, Sendable {
-    let configuration: LumenMacAudioCaptureConfiguration
-
-    init(
-        configuration: LumenMacAudioCaptureConfiguration,
-        videoDisplayID: UInt32
-    ) throws {
-        guard case .systemOutput(let audioDisplayID, _) = configuration.source else {
-            throw LumenAudioCaptureError.invalidSource
-        }
-        guard audioDisplayID == videoDisplayID else {
-            throw LumenAudioCaptureError.activeVideoDisplayMismatch(
-                audioDisplayID: audioDisplayID,
-                videoDisplayID: videoDisplayID
-            )
-        }
-        self.configuration = configuration
-    }
-
-    func apply(to streamConfiguration: SCStreamConfiguration) {
-        guard case .systemOutput(_, let excludesCurrentProcessAudio) = configuration.source else {
-            return
-        }
-        streamConfiguration.capturesAudio = true
-        streamConfiguration.sampleRate = configuration.sampleRate
-        streamConfiguration.channelCount = configuration.channelCount
-        streamConfiguration.excludesCurrentProcessAudio = excludesCurrentProcessAudio
-    }
-
-    func accepts(_ configuration: LumenMacAudioCaptureConfiguration) -> Bool {
-        self.configuration == configuration
-    }
 }
 
 struct LumenScreenCaptureOutputOwnership: Equatable, Sendable {
@@ -1298,24 +1538,12 @@ struct LumenScreenCaptureOutputOwnership: Equatable, Sendable {
 
     mutating func markCaptureStarted(streamIdentity: UInt) throws {
         try requireOwner(streamIdentity)
-        if stage != .sharedAudioRegistered {
-            stage = .captureStarted
-        }
-    }
-
-    mutating func attachSharedAudioOutput(streamIdentity: UInt) throws {
-        try requireOwner(streamIdentity)
-        stage = .sharedAudioRegistered
+        stage = .captureStarted
     }
 
     mutating func recordScreenSample(streamIdentity: UInt) throws {
         try requireOwner(streamIdentity)
         screenSampleCount &+= 1
-    }
-
-    mutating func detachSharedAudioOutput(streamIdentity: UInt) throws {
-        try requireOwner(streamIdentity)
-        stage = .captureStarted
     }
 
     mutating func stop(streamIdentity: UInt) throws {
@@ -1335,31 +1563,180 @@ enum LumenScreenCaptureOutputOwnershipError: Error, Equatable {
     case streamIdentityMismatch
 }
 
+protocol LumenEncodedCaptureRuntime: AnyObject, Sendable {
+    func start() async throws
+    func stop() async
+    func requestImmediateKeyFrame()
+    func resumeVideoEncodingAfterCodecAck() async -> Bool
+}
+
+struct LumenEncodedCaptureRuntimeContext: Sendable {
+    let configuration: LumenMacCaptureConfiguration
+    let callbacks: LumenEncodedCaptureCallbacks
+    let statisticsHandler:
+        @Sendable (LumenEncodedCaptureSessionStatistics) -> Void
+    let terminationHandler: @Sendable (any Error) -> Void
+}
+
+actor LumenCaptureStartFlight {
+    struct Completion {
+        let terminationError: (any Error)?
+        let startError: (any Error)?
+    }
+
+    private var startCompleted = false
+    private var startError: (any Error)?
+    private var stopRequested = false
+    private var settled = false
+    private var settlementWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func finishStart(
+        terminationError: (any Error)?,
+        error: (any Error)? = nil
+    ) -> Completion {
+        if !startCompleted {
+            startCompleted = true
+            startError = error
+        }
+        return Completion(
+            terminationError: terminationError,
+            startError: startError
+        )
+    }
+
+    func requestStop() {
+        stopRequested = true
+    }
+
+    func isStopRequested() -> Bool {
+        stopRequested
+    }
+
+    func settle() {
+        guard !settled else {
+            return
+        }
+        settled = true
+        let waiters = settlementWaiters
+        settlementWaiters.removeAll(keepingCapacity: false)
+        waiters.forEach { $0.resume() }
+    }
+
+    func waitUntilSettled() async {
+        guard !settled else {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            if settled {
+                continuation.resume()
+            } else {
+                settlementWaiters.append(continuation)
+            }
+        }
+    }
+}
+
+private final class LumenCaptureTerminationLatch: @unchecked Sendable {
+    private struct State {
+        var startCompleted = false
+        var terminationError: (any Error)?
+    }
+
+    private let state = Mutex(State())
+
+    func record(_ error: any Error) -> Bool {
+        state.withLock { state in
+            guard !state.startCompleted else {
+                return false
+            }
+            if state.terminationError == nil {
+                state.terminationError = error
+            }
+            return true
+        }
+    }
+
+    func complete() -> (any Error)? {
+        state.withLock { state in
+            state.startCompleted = true
+            return state.terminationError
+        }
+    }
+}
+
+final class LumenCaptureCallbackGate: @unchecked Sendable {
+    private let accepting = Atomic(true)
+
+    func close() {
+        accepting.store(false, ordering: .releasing)
+    }
+
+    func isOpen() -> Bool {
+        accepting.load(ordering: .acquiring)
+    }
+}
+
+protocol LumenEncodedCaptureRuntimeFactory: Sendable {
+    func makeRuntime(
+        context: LumenEncodedCaptureRuntimeContext
+    ) throws -> any LumenEncodedCaptureRuntime
+}
+
+struct LumenProductionEncodedCaptureRuntimeFactory:
+    LumenEncodedCaptureRuntimeFactory
+{
+    func makeRuntime(
+        context: LumenEncodedCaptureRuntimeContext
+    ) throws -> any LumenEncodedCaptureRuntime {
+        try LumenScreenCaptureVideoRuntime(
+            configuration: context.configuration,
+            callbacks: context.callbacks,
+            statisticsHandler: context.statisticsHandler,
+            terminationHandler: context.terminationHandler
+        )
+    }
+}
+
 /// Safety: ScreenCaptureKit and VideoToolbox callbacks enter through `queue`.
 /// Mutable encode state is initialized before capture starts and is otherwise
-/// read or mutated only on that serial queue; lifecycle teardown synchronizes
-/// with the queue before releasing the compression session.
-private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
+/// read or mutated only on that serial queue. The separate `encoderQueue` owns
+/// ordered synchronous C/VideoToolbox admission calls, which can block in XPC;
+/// teardown drains those calls and their queued outputs before invalidation.
+private final class LumenScreenCaptureVideoRuntime:
+    NSObject,
+    SCStreamOutput,
+    SCStreamDelegate,
+    LumenEncodedCaptureRuntime,
+    @unchecked Sendable
+{
     private static let startupLogger = Logger(
         subsystem: "dev.skyline23.lumen",
         category: "ScreenCaptureStartup"
     )
     private let configuration: LumenMacCaptureConfiguration
-    private let systemAudioPreparation: LumenScreenCaptureSystemAudioPreparation?
-    private let preconfiguredSystemAudioCallbacks: LumenAudioCaptureCallbacks?
     private let frameHandler: @Sendable (LumenEncodedFrame) -> Void
     private let eventHandler: @Sendable (LumenEncodedCaptureSessionEvent) -> Void
     private let statisticsHandler: @Sendable (LumenEncodedCaptureSessionStatistics) -> Void
     private let terminationHandler: @Sendable (Error) -> Void
     private let queue = DispatchQueue(label: "dev.skyline23.lumen.sck.video", qos: .userInteractive)
-    private let audioQueue = DispatchQueue(label: "dev.skyline23.lumen.sck.shared-audio", qos: .userInteractive)
+    private let encoderQueue = DispatchQueue(
+        label: "dev.skyline23.lumen.sck.video.vt-admission",
+        qos: .userInteractive
+    )
     private var stream: SCStream?
-    private var sharedAudioOutput: LumenSystemAudioCaptureOutput?
+    // Lifecycle transitions are fenced on `queue` because `startCapture` and
+    // `stopCapture` suspend at the ScreenCaptureKit callback boundary.
+    private var lifecycleStartInFlight = false
+    private var lifecycleStopRequested = false
+    private var lifecycleSettlementWaiters: [CheckedContinuation<Void, Never>] = []
     private var compressionSession: VTCompressionSession?
+    private var compressionSessionAvailable = false
     private var encodingPlan: LumenVideoToolboxEncodingPlan?
     private var sourceContract: LumenExactCaptureSourceContract?
     private var outputContract: LumenExactEncodedOutputContract?
     private var sequenceNumber: UInt64 = 0
+    private var lastQueuedEncoderSequenceNumber: UInt64?
+    private var lastQueuedEncoderPresentationTime: CMTime?
     private var videoBootstrapAdmission = LumenVideoBootstrapAdmissionGate()
     private var pendingVideoBootstrapSource: LumenPendingVideoBootstrapSource?
     private var inflightFrameCount = 0
@@ -1381,23 +1758,41 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
     private var displayAdmissionMode = LumenScreenCaptureDisplayAdmissionMode.shareableContentEnumeration
     private var displayAdmissionDurationMilliseconds = 0.0
     private var streamStartDurationMilliseconds = 0.0
+    private lazy var outputLifecycle =
+        LumenVideoToolboxOutputLifecycle<LumenEncodedFrameContext>(
+            ownerQueue: queue
+        )
+    private lazy var encoderAdmission = LumenLatestFrameSerialEncoderAdmission<
+        LumenVideoEncoderSubmission,
+        LumenVideoEncoderSubmissionResult
+    >(
+        ownerQueue: queue,
+        submissionQueue: encoderQueue,
+        hasSubmissionCapacity: { [weak self] in
+            guard let self else { return false }
+            return self.inflightFrameCount < self.maximumPendingFrameCount
+        },
+        entryHandler: { [weak self] submission in
+            self?.willSubmitToVideoToolbox(submission)
+        },
+        submit: { [weak self] submission, entered in
+            guard let self else {
+                return .cancelled
+            }
+            return self.submitToVideoToolbox(submission, entered: entered)
+        },
+        completion: { [weak self] submission, result in
+            self?.didSubmitToVideoToolbox(submission, result: result)
+        }
+    )
 
     init(
         configuration: LumenMacCaptureConfiguration,
-        preconfiguredSystemAudio: LumenMacAudioCaptureConfiguration?,
-        preconfiguredSystemAudioCallbacks: LumenAudioCaptureCallbacks?,
         callbacks: LumenEncodedCaptureCallbacks,
         statisticsHandler: @escaping @Sendable (LumenEncodedCaptureSessionStatistics) -> Void,
         terminationHandler: @escaping @Sendable (Error) -> Void
     ) throws {
         self.configuration = configuration
-        self.systemAudioPreparation = try preconfiguredSystemAudio.map {
-            try LumenScreenCaptureSystemAudioPreparation(
-                configuration: $0,
-                videoDisplayID: configuration.displayID
-            )
-        }
-        self.preconfiguredSystemAudioCallbacks = preconfiguredSystemAudioCallbacks
         self.frameHandler = callbacks.frameHandler
         self.eventHandler = { callbacks.eventHandler?($0) }
         self.statisticsHandler = statisticsHandler
@@ -1406,6 +1801,19 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
     }
 
     func start() async throws {
+        guard beginLifecycleStart() else {
+            throw LumenScreenCaptureError.captureAlreadyRunning
+        }
+        do {
+            try await startCapture()
+        } catch {
+            await finishLifecycleStart()
+            throw error
+        }
+        await finishLifecycleStart()
+    }
+
+    private func startCapture() async throws {
         let displayID = configuration.displayID
         let admissionStart = DispatchTime.now().uptimeNanoseconds
         let admission: LumenScreenCaptureDisplayAdmissionResult<LumenScreenCaptureDisplayHandle>
@@ -1439,32 +1847,43 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
             )
             throw error
         }
-        displayAdmissionMode = admission.mode
-        displayAdmissionDurationMilliseconds = Self.elapsedMilliseconds(since: admissionStart)
+        let displayAdmissionDuration = Self.elapsedMilliseconds(since: admissionStart)
+        queue.sync {
+            displayAdmissionMode = admission.mode
+            displayAdmissionDurationMilliseconds = displayAdmissionDuration
+        }
         Self.startupLogger.notice(
-            "stage=display-admission-complete display-id=\(displayID, privacy: .public) mode=\(admission.mode.rawValue, privacy: .public) elapsed-ms=\(self.displayAdmissionDurationMilliseconds, privacy: .public)"
+            "stage=display-admission-complete display-id=\(displayID, privacy: .public) mode=\(admission.mode.rawValue, privacy: .public) elapsed-ms=\(displayAdmissionDuration, privacy: .public)"
         )
         let display = admission.value.value
 
         let width = configuration.requestedWidth ?? display.width
         let height = configuration.requestedHeight ?? display.height
-        outputWidth = configuration.effectivePreprocessStrategy == .downscale2x ? max(width / 2, 1) : width
-        outputHeight = configuration.effectivePreprocessStrategy == .downscale2x ? max(height / 2, 1) : height
+        let resolvedOutputWidth = configuration.effectivePreprocessStrategy == .downscale2x ? max(width / 2, 1) : width
+        let resolvedOutputHeight = configuration.effectivePreprocessStrategy == .downscale2x ? max(height / 2, 1) : height
+        queue.sync {
+            outputWidth = resolvedOutputWidth
+            outputHeight = resolvedOutputHeight
+        }
 
         let plan = try await resolveEncodingPlan()
-        encodingPlan = plan
-        sourceContract = try LumenExactCaptureSourceContract(
+        let resolvedSourceContract = try LumenExactCaptureSourceContract(
             configuration: configuration,
-            width: outputWidth,
-            height: outputHeight
+            width: resolvedOutputWidth,
+            height: resolvedOutputHeight
         )
-        outputContract = try LumenExactEncodedOutputContract(configuration: configuration)
+        let resolvedOutputContract = try LumenExactEncodedOutputContract(configuration: configuration)
+        queue.sync {
+            encodingPlan = plan
+            sourceContract = resolvedSourceContract
+            outputContract = resolvedOutputContract
+        }
 
         let streamConfiguration = LumenCaptureStreamConfigurationFactory.make(
             configuration: configuration
         )
-        streamConfiguration.width = outputWidth
-        streamConfiguration.height = outputHeight
+        streamConfiguration.width = resolvedOutputWidth
+        streamConfiguration.height = resolvedOutputHeight
         streamConfiguration.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(configuration.effectiveTargetFrameRate))
         streamConfiguration.queueDepth = configuration.negotiatedQueueProfile.queueDepthHint
         streamConfiguration.pixelFormat = plan.pixelFormat
@@ -1474,8 +1893,12 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
         }
         streamConfiguration.scalesToFit = false
         streamConfiguration.preservesAspectRatio = true
-        systemAudioPreparation?.apply(to: streamConfiguration)
-        try createCompressionSession(width: outputWidth, height: outputHeight)
+        try encoderQueue.sync {
+            try createCompressionSession(width: resolvedOutputWidth, height: resolvedOutputHeight)
+        }
+        queue.sync {
+            compressionSessionAvailable = true
+        }
 
         let filter = SCContentFilter(
             display: display,
@@ -1484,101 +1907,187 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
         )
         let stream = SCStream(filter: filter, configuration: streamConfiguration, delegate: self)
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
-        self.stream = stream
         let streamIdentity = Self.identity(of: stream)
         queue.sync {
+            self.stream = stream
             outputOwnership.registerScreenOutput(streamIdentity: streamIdentity)
         }
         do {
-            if systemAudioPreparation != nil,
-               let preconfiguredSystemAudioCallbacks {
-                let audioOutput = LumenSystemAudioCaptureOutput(
-                    callbacks: preconfiguredSystemAudioCallbacks
-                )
-                do {
-                    try stream.addStreamOutput(
-                        audioOutput,
-                        type: .audio,
-                        sampleHandlerQueue: audioQueue
-                    )
-                } catch {
-                    throw LumenBridgeCaptureStartupError(
-                        source: .audio,
-                        message: (error as NSError).localizedDescription
-                    )
-                }
-                sharedAudioOutput = audioOutput
-                queue.sync {
-                    try? outputOwnership.attachSharedAudioOutput(streamIdentity: streamIdentity)
-                }
-            }
             let streamStart = DispatchTime.now().uptimeNanoseconds
             try await stream.startCapture()
-            streamStartDurationMilliseconds = Self.elapsedMilliseconds(since: streamStart)
-            Self.startupLogger.notice(
-                "stage=stream-start-complete display-id=\(displayID, privacy: .public) stream=\(streamIdentity, privacy: .public) elapsed-ms=\(self.streamStartDurationMilliseconds, privacy: .public) source-queue-depth=\(streamConfiguration.queueDepth, privacy: .public) audio-pre-registered=\(self.sharedAudioOutput != nil, privacy: .public)"
-            )
-        } catch {
-            if let sharedAudioOutput {
-                try? stream.removeStreamOutput(sharedAudioOutput, type: .audio)
-                self.sharedAudioOutput = nil
+            let streamStartDuration = Self.elapsedMilliseconds(since: streamStart)
+            let stopRequested = queue.sync {
+                streamStartDurationMilliseconds = streamStartDuration
+                return lifecycleStopRequested
             }
+            Self.startupLogger.notice(
+                "stage=stream-start-complete display-id=\(displayID, privacy: .public) stream=\(streamIdentity, privacy: .public) elapsed-ms=\(streamStartDuration, privacy: .public) source-queue-depth=\(streamConfiguration.queueDepth, privacy: .public)"
+            )
+            if stopRequested {
+                try? await stream.stopCapture()
+                try? stream.removeStreamOutput(self, type: .screen)
+                queue.sync {
+                    if self.stream === stream {
+                        self.stream = nil
+                    }
+                    try? outputOwnership.stop(streamIdentity: streamIdentity)
+                }
+                return
+            }
+        } catch {
             try? stream.removeStreamOutput(self, type: .screen)
-            if self.stream === stream {
-                self.stream = nil
+            queue.sync {
+                if self.stream === stream {
+                    self.stream = nil
+                }
+                try? outputOwnership.stop(streamIdentity: streamIdentity)
             }
             throw error
         }
-        queue.sync {
+        let publishStart = queue.sync { () -> (Bool, String, Double, Double) in
             try? outputOwnership.markCaptureStarted(streamIdentity: streamIdentity)
+            let stopRequested = lifecycleStopRequested
+            let notes = makeStatisticsNotes(width: outputWidth, height: outputHeight)
+            let displayAdmissionMode = self.displayAdmissionMode.rawValue
+            let displayAdmissionMilliseconds = self.displayAdmissionDurationMilliseconds
+            let streamStartMilliseconds = self.streamStartDurationMilliseconds
+            if !stopRequested {
+                statistics.isRunning = true
+                statistics.notes = notes
+            }
+            return (
+                stopRequested,
+                displayAdmissionMode,
+                displayAdmissionMilliseconds,
+                streamStartMilliseconds
+            )
         }
-        statistics.isRunning = true
-        statistics.notes = makeStatisticsNotes(width: outputWidth, height: outputHeight)
-        statisticsHandler(statistics)
-        if let preconfiguredSystemAudioCallbacks {
-            preconfiguredSystemAudioCallbacks.eventHandler?(.init(
-                kind: .started,
-                message: "ScreenCaptureKit system audio started with pre-registered shared stream=\(streamIdentity)"
-            ))
-        }
-        eventHandler(.init(
-            kind: .started,
-            message: "ScreenCaptureKit capture started stream=\(streamIdentity) output-registration=\(outputOwnership.stage.rawValue) system-audio-preconfigured=\(systemAudioPreparation != nil) display-admission=\(displayAdmissionMode.rawValue) display-admission-ms=\(displayAdmissionDurationMilliseconds) stream-start-ms=\(streamStartDurationMilliseconds)"
-        ))
-    }
-
-    func stop() async {
-        await detachSystemAudio()
-        queue.sync {
-            stopping = true
-        }
-        guard let stream else {
+        if publishStart.0 {
+            try? await stream.stopCapture()
+            try? stream.removeStreamOutput(self, type: .screen)
             queue.sync {
-                invalidateCompressionSession()
+                if self.stream === stream {
+                    self.stream = nil
+                }
+                try? outputOwnership.stop(streamIdentity: streamIdentity)
             }
             return
         }
-        try? await stream.stopCapture()
-        try? stream.removeStreamOutput(self, type: .screen)
-        let streamIdentity = Self.identity(of: stream)
-        if self.stream === stream {
-            self.stream = nil
+        queue.sync {
+            statisticsHandler(statistics)
+            eventHandler(.init(
+                kind: .started,
+                message: "ScreenCaptureKit capture started stream=\(streamIdentity) output-registration=\(outputOwnership.stage.rawValue) display-admission=\(publishStart.1) display-admission-ms=\(publishStart.2) stream-start-ms=\(publishStart.3)"
+            ))
+        }
+    }
+
+    func stop() async {
+        let startWasInFlight = queue.sync {
+            lifecycleStopRequested = true
+            return lifecycleStartInFlight
+        }
+        if startWasInFlight {
+            await waitForLifecycleStart()
         }
         queue.sync {
-            try? outputOwnership.stop(streamIdentity: streamIdentity)
-            if let compressionSession {
-                VTCompressionSessionCompleteFrames(compressionSession, untilPresentationTimeStamp: .invalid)
-            }
-            invalidateCompressionSession()
+            stopping = true
+            compressionSessionAvailable = false
+            pendingVideoBootstrapSource = nil
+            encoderAdmission.beginStopping()
         }
-        statistics.isRunning = false
-        refreshStatisticsNotes()
-        statisticsHandler(statistics)
-        eventHandler(.init(
-            kind: .stopped,
-            message: "ScreenCaptureKit capture stopped output-registration=\(outputOwnership.stage.rawValue) source-samples=\(outputOwnership.screenSampleCount)",
-            stopStatus: 0
-        ))
+        encoderAdmission.waitUntilSubmissionReturns()
+        let stoppedStreamIdentity: UInt?
+        let streamToStop = queue.sync { () -> SCStream? in
+            let stream = self.stream
+            self.stream = nil
+            return stream
+        }
+        if let stream = streamToStop {
+            try? await stream.stopCapture()
+            try? stream.removeStreamOutput(self, type: .screen)
+            let streamIdentity = Self.identity(of: stream)
+            queue.sync {
+                try? outputOwnership.stop(streamIdentity: streamIdentity)
+            }
+            stoppedStreamIdentity = streamIdentity
+        } else {
+            stoppedStreamIdentity = nil
+        }
+
+        await outputLifecycle.completeAndInvalidate(
+            completeFrames: { [self] in
+                encoderQueue.sync {
+                    completeCompressionFrames()
+                }
+            },
+            invalidate: { [self] in
+                encoderQueue.sync {
+                    invalidateCompressionSession()
+                }
+            },
+            completionFailure: { [self] status, cancelledContexts in
+                queue.sync {
+                    reportCompressionFrameCompletionFailure(
+                        status: status,
+                        cancelledContexts: cancelledContexts
+                    )
+                }
+            }
+        )
+
+        guard stoppedStreamIdentity != nil else {
+            queue.sync {
+                lifecycleStopRequested = false
+            }
+            return
+        }
+        queue.sync {
+            statistics.isRunning = false
+            refreshStatisticsNotes()
+            statisticsHandler(statistics)
+            eventHandler(.init(
+                kind: .stopped,
+                message: "ScreenCaptureKit capture stopped output-registration=\(outputOwnership.stage.rawValue) source-samples=\(outputOwnership.screenSampleCount)",
+                stopStatus: 0
+            ))
+            lifecycleStopRequested = false
+        }
+    }
+
+    private func beginLifecycleStart() -> Bool {
+        queue.sync {
+            guard !lifecycleStartInFlight,
+                  !lifecycleStopRequested,
+                  stream == nil else {
+                return false
+            }
+            lifecycleStartInFlight = true
+            stopping = false
+            return true
+        }
+    }
+
+    private func finishLifecycleStart() async {
+        let waiters = queue.sync { () -> [CheckedContinuation<Void, Never>] in
+            lifecycleStartInFlight = false
+            let waiters = lifecycleSettlementWaiters
+            lifecycleSettlementWaiters.removeAll(keepingCapacity: false)
+            return waiters
+        }
+        waiters.forEach { $0.resume() }
+    }
+
+    private func waitForLifecycleStart() async {
+        await withCheckedContinuation { continuation in
+            queue.async {
+                if self.lifecycleStartInFlight {
+                    self.lifecycleSettlementWaiters.append(continuation)
+                } else {
+                    continuation.resume()
+                }
+            }
+        }
     }
 
     func requestImmediateKeyFrame() {
@@ -1594,6 +2103,7 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
         await withCheckedContinuation { continuation in
             queue.async { [weak self] in
                 guard let self,
+                      !self.stopping,
                       self.videoBootstrapAdmission.acknowledgeConfiguration() else {
                     continuation.resume(returning: false)
                     return
@@ -1612,69 +2122,12 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
         }
     }
 
-    func attachSystemAudio(
-        configuration: LumenMacAudioCaptureConfiguration,
-        callbacks: LumenAudioCaptureCallbacks
-    ) async throws {
-        guard case .systemOutput(let displayID, _) = configuration.source else {
-            throw LumenAudioCaptureError.invalidSource
-        }
-        guard displayID == self.configuration.displayID else {
-            throw LumenAudioCaptureError.activeVideoDisplayMismatch(
-                audioDisplayID: displayID,
-                videoDisplayID: self.configuration.displayID
-            )
-        }
-        guard sharedAudioOutput == nil,
-              let stream else {
-            if sharedAudioOutput != nil {
-                return
-            }
-            throw LumenScreenCaptureError.captureNotRunning
-        }
-        guard systemAudioPreparation?.accepts(configuration) == true else {
-            throw LumenScreenCaptureError.systemAudioWasNotPreconfigured
-        }
-
-        let output = LumenSystemAudioCaptureOutput(callbacks: callbacks)
-        let streamIdentity = Self.identity(of: stream)
-        try stream.addStreamOutput(output, type: .audio, sampleHandlerQueue: audioQueue)
-        sharedAudioOutput = output
-        queue.sync {
-            try? outputOwnership.attachSharedAudioOutput(streamIdentity: streamIdentity)
-            refreshStatisticsNotes()
-            statisticsHandler(statistics)
-        }
-        callbacks.eventHandler?(.init(
-            kind: .started,
-            message: "ScreenCaptureKit system audio joined preconfigured video stream=\(streamIdentity) output-registration=\(outputOwnership.stage.rawValue)"
-        ))
-    }
-
-    func detachSystemAudio() async {
-        guard let output = sharedAudioOutput,
-              let stream else {
-            sharedAudioOutput = nil
-            return
-        }
-        let streamIdentity = Self.identity(of: stream)
-        try? stream.removeStreamOutput(output, type: .audio)
-        if sharedAudioOutput === output {
-            sharedAudioOutput = nil
-        }
-        queue.sync {
-            try? outputOwnership.detachSharedAudioOutput(streamIdentity: streamIdentity)
-            refreshStatisticsNotes()
-            statisticsHandler(statistics)
-        }
-        output.emitStopped()
-    }
-
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
         guard type == .screen,
+              !stopping,
               CMSampleBufferIsValid(sampleBuffer),
               let imageBuffer = sampleBuffer.imageBuffer,
-              compressionSession != nil else {
+              compressionSessionAvailable else {
             return
         }
 
@@ -1758,7 +2211,8 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
             imageBuffer: imageBuffer,
             presentationTime: presentationTime,
             displayTime: displayTime,
-            duration: duration
+            duration: duration,
+            sequenceNumber: sequenceNumber
         )
         switch videoBootstrapAdmission.admitSourceFrame() {
         case .submitInitialKeyFrame:
@@ -1779,61 +2233,161 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
         _ source: LumenPendingVideoBootstrapSource,
         forceKeyFrame: Bool
     ) -> Bool {
-        guard let compressionSession else {
+        guard !stopping else {
+            return false
+        }
+        guard compressionSessionAvailable else {
             reportTerminalContractFailure(.invalidFormat("VideoToolbox compression session is unavailable"), sourceDisplayTime: source.displayTime)
             return false
         }
 
-        guard inflightFrameCount < maximumPendingFrameCount else {
-            statistics.droppedFrameCount &+= 1
-            statistics.pendingAdmissionDropCount &+= 1
-            refreshStatisticsNotesIfNeeded()
-            if statistics.pendingAdmissionDropCount == 1 || statistics.pendingAdmissionDropCount % 120 == 0 {
-                eventHandler(.init(
-                    kind: .coalescedFrame,
-                    message: "Dropped fresh ScreenCaptureKit frame before VT admission to cap pending latency",
-                    sourceDisplayTime: source.displayTime
-                ))
-            }
+        if let lastQueuedEncoderSequenceNumber,
+           source.sequenceNumber <= lastQueuedEncoderSequenceNumber {
+            reportTerminalContractFailure(
+                .invalidFormat(
+                    "VideoToolbox source sequence must increase previous=\(lastQueuedEncoderSequenceNumber) current=\(source.sequenceNumber)"
+                ),
+                sourceDisplayTime: source.displayTime
+            )
             return false
         }
+        if let lastQueuedEncoderPresentationTime,
+           CMTimeCompare(source.presentationTime, lastQueuedEncoderPresentationTime) <= 0 {
+            reportTerminalContractFailure(
+                .invalidFormat(
+                    "VideoToolbox presentation timestamp must increase previous=\(lastQueuedEncoderPresentationTime.value)/\(lastQueuedEncoderPresentationTime.timescale) current=\(source.presentationTime.value)/\(source.presentationTime.timescale)"
+                ),
+                sourceDisplayTime: source.displayTime
+            )
+            return false
+        }
+        lastQueuedEncoderSequenceNumber = source.sequenceNumber
+        lastQueuedEncoderPresentationTime = source.presentationTime
 
         sourceColorContractStatus = "verified"
-        let context = UnsafeMutablePointer<LumenEncodedFrameContext>.allocate(capacity: 1)
-        context.initialize(to: .init(
-            sequenceNumber: sequenceNumber,
-            displayTime: source.displayTime,
-            submissionMachTime: mach_absolute_time(),
-            requiresBootstrapAcknowledgement: forceKeyFrame
-        ))
+        let submission = LumenVideoEncoderSubmission(
+            source: source,
+            forceKeyFrame: forceKeyFrame
+        )
+        if let replacedSubmission = encoderAdmission.offer(submission) {
+            recordPendingAdmissionDrop(replacedSubmission.source)
+        }
+        return true
+    }
 
-        let properties = forceKeyFrame
+    private func willSubmitToVideoToolbox(_ submission: LumenVideoEncoderSubmission) {
+        let source = submission.source
+        outputLifecycle.registerSubmission(
+            id: source.sequenceNumber,
+            context: .init(
+                sequenceNumber: source.sequenceNumber,
+                displayTime: source.displayTime,
+                submissionMachTime: mach_absolute_time(),
+                requiresBootstrapAcknowledgement: submission.forceKeyFrame
+            )
+        )
+        inflightFrameCount += 1
+        statistics.maximumInflightFrameCount = max(
+            statistics.maximumInflightFrameCount,
+            inflightFrameCount
+        )
+    }
+
+    private func submitToVideoToolbox(
+        _ submission: LumenVideoEncoderSubmission,
+        entered: @Sendable () -> Bool
+    ) -> LumenEncoderSubmissionAttempt<LumenVideoEncoderSubmissionResult> {
+        dispatchPrecondition(condition: .onQueue(encoderQueue))
+        guard let compressionSession else {
+            guard entered() else {
+                return .cancelled
+            }
+            return .submitted(.init(
+                status: kVTInvalidSessionErr,
+                infoFlags: []
+            ))
+        }
+
+        let source = submission.source
+        let properties = submission.forceKeyFrame
             ? [kVTEncodeFrameOptionKey_ForceKeyFrame: true] as CFDictionary
             : nil
 
+        guard entered() else {
+            return .cancelled
+        }
+        var infoFlags: VTEncodeInfoFlags = []
         let status = VTCompressionSessionEncodeFrame(
             compressionSession,
             imageBuffer: source.imageBuffer,
             presentationTimeStamp: source.presentationTime,
             duration: source.duration,
             frameProperties: properties,
-            sourceFrameRefcon: context,
-            infoFlagsOut: nil
+            sourceFrameRefcon: UnsafeMutableRawPointer(
+                bitPattern: UInt(source.sequenceNumber)
+            ),
+            infoFlagsOut: &infoFlags
         )
-        if status != noErr {
-            context.deinitialize(count: 1)
-            context.deallocate()
+        return .submitted(.init(status: status, infoFlags: infoFlags))
+    }
+
+    private func didSubmitToVideoToolbox(
+        _ submission: LumenVideoEncoderSubmission,
+        result: LumenVideoEncoderSubmissionResult
+    ) {
+        if result.status != noErr {
+            if outputLifecycle.cancelSubmission(
+                id: submission.source.sequenceNumber
+            ) != nil {
+                inflightFrameCount = max(inflightFrameCount - 1, 0)
+            }
+            if submission.forceKeyFrame {
+                videoBootstrapAdmission.cancelBootstrapSubmission()
+                pendingVideoBootstrapSource = nil
+            }
             statistics.processingFailureCount &+= 1
-            statistics.lastErrorDescription = "VTCompressionSessionEncodeFrame failed with OSStatus \(status)"
+            statistics.lastErrorDescription = "VTCompressionSessionEncodeFrame failed with OSStatus \(result.status)"
             statisticsHandler(statistics)
-            eventHandler(.init(kind: .failed, message: statistics.lastErrorDescription, stopStatus: status))
-            return false
+            eventHandler(.init(
+                kind: .failed,
+                message: statistics.lastErrorDescription,
+                stopStatus: result.status,
+                sourceDisplayTime: submission.source.displayTime
+            ))
+        } else if result.infoFlags.contains(.frameDropped) {
+            if outputLifecycle.cancelSubmission(
+                id: submission.source.sequenceNumber
+            ) != nil {
+                inflightFrameCount = max(inflightFrameCount - 1, 0)
+            }
+            if submission.forceKeyFrame {
+                videoBootstrapAdmission.cancelBootstrapSubmission()
+                pendingVideoBootstrapSource = nil
+            }
+            statistics.droppedFrameCount &+= 1
+            statistics.lastErrorDescription = "VideoToolbox dropped frame during synchronous admission"
+            statisticsHandler(statistics)
+            eventHandler(.init(
+                kind: .droppedFrame,
+                message: statistics.lastErrorDescription,
+                sourceDisplayTime: submission.source.displayTime
+            ))
         } else {
-            inflightFrameCount += 1
             statistics.submittedFrameCount &+= 1
-            statistics.maximumInflightFrameCount = max(statistics.maximumInflightFrameCount, inflightFrameCount)
             refreshStatisticsNotesIfNeeded()
-            return true
+        }
+    }
+
+    private func recordPendingAdmissionDrop(_ source: LumenPendingVideoBootstrapSource) {
+        statistics.droppedFrameCount &+= 1
+        statistics.pendingAdmissionDropCount &+= 1
+        refreshStatisticsNotesIfNeeded()
+        if statistics.pendingAdmissionDropCount == 1 || statistics.pendingAdmissionDropCount % 120 == 0 {
+            eventHandler(.init(
+                kind: .coalescedFrame,
+                message: "Dropped fresh ScreenCaptureKit frame before VT admission to cap pending latency",
+                sourceDisplayTime: source.displayTime
+            ))
         }
     }
 
@@ -1884,6 +2438,7 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
     }
 
     private func createCompressionSession(width: Int, height: Int) throws {
+        dispatchPrecondition(condition: .onQueue(encoderQueue))
         guard let encodingPlan else {
             throw LumenExactCaptureError.invalidFormat("encoding plan was not resolved")
         }
@@ -2036,6 +2591,7 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
     }
 
     private func setProperty(_ key: CFString, value: CFTypeRef) throws {
+        dispatchPrecondition(condition: .onQueue(encoderQueue))
         guard let compressionSession else { return }
         let status = VTSessionSetProperty(compressionSession, key: key, value: value)
         guard status == noErr else {
@@ -2043,7 +2599,45 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
         }
     }
 
+    private func completeCompressionFrames() -> OSStatus {
+        dispatchPrecondition(condition: .onQueue(encoderQueue))
+        guard let compressionSession else { return noErr }
+        return VTCompressionSessionCompleteFrames(
+            compressionSession,
+            untilPresentationTimeStamp: .invalid
+        )
+    }
+
+    private func reportCompressionFrameCompletionFailure(
+        status: OSStatus,
+        cancelledContexts: [LumenEncodedFrameContext]
+    ) {
+        dispatchPrecondition(condition: .onQueue(queue))
+        let error = LumenScreenCaptureError
+            .compressionFrameCompletionFailed(status)
+        inflightFrameCount = max(
+            inflightFrameCount - cancelledContexts.count,
+            0
+        )
+        statistics.droppedFrameCount &+= UInt64(cancelledContexts.count)
+        statistics.processingFailureCount &+= 1
+        statistics.lastErrorDescription = error.localizedDescription
+        if cancelledContexts.contains(where: \.requiresBootstrapAcknowledgement) {
+            videoBootstrapAdmission.cancelBootstrapSubmission()
+            pendingVideoBootstrapSource = nil
+        }
+        refreshStatisticsNotes()
+        statisticsHandler(statistics)
+        eventHandler(.init(
+            kind: .failed,
+            message: error.localizedDescription,
+            stopStatus: status
+        ))
+        terminationHandler(error)
+    }
+
     private func invalidateCompressionSession() {
+        dispatchPrecondition(condition: .onQueue(encoderQueue))
         guard let compressionSession else { return }
         VTCompressionSessionInvalidate(compressionSession)
         self.compressionSession = nil
@@ -2061,7 +2655,6 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
         return [
             "captureBackend=screen-capture-kit",
             "screenCaptureOutputRegistrationStage=\(outputOwnership.stage.rawValue)",
-            "screenCaptureSystemAudioPreconfigured=\(systemAudioPreparation != nil)",
             "screenCaptureDisplayAdmissionMode=\(displayAdmissionMode.rawValue)",
             "screenCaptureDisplayAdmissionMilliseconds=\(displayAdmissionDurationMilliseconds)",
             "screenCaptureStreamStartMilliseconds=\(streamStartDurationMilliseconds)",
@@ -2073,6 +2666,8 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
             "videoToolboxSourcePixelFormat=\(capturePixelFormat)",
             "sourceColorContract=\(sourceColorContractStatus)",
             "videoToolboxStagingMode=direct-cvpixelbuffer",
+            "videoToolboxAdmissionMode=serial-offloaded-latest",
+            "videoToolboxPendingSourceBound=1",
             "videoToolboxConversionCount=0",
             "videoToolboxProfile=\(encodingPlan?.profile ?? "unresolved")",
             "videoToolboxHardwareRequired=true",
@@ -2120,30 +2715,25 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
         let sampleBufferAddress = sampleBuffer.map {
             UInt(bitPattern: Unmanaged.passRetained($0).toOpaque())
         }
-        let contextAddress = contextPointer.map(UInt.init(bitPattern:))
-        queue.async { [weak self] in
+        let contextID = contextPointer.map {
+            UInt64(UInt(bitPattern: $0))
+        }
+        outputLifecycle.enqueueOutput(id: contextID) { [weak self] context in
             let retainedSampleBuffer = sampleBufferAddress.flatMap { address -> CMSampleBuffer? in
                 guard let pointer = UnsafeRawPointer(bitPattern: address) else {
                     return nil
                 }
                 return Unmanaged<CMSampleBuffer>.fromOpaque(pointer).takeRetainedValue()
             }
-            let retainedContextPointer = contextAddress.flatMap(UnsafeMutableRawPointer.init(bitPattern:))
-            guard let self else {
-                if let retainedContextPointer {
-                    let typedContext = retainedContextPointer.assumingMemoryBound(
-                        to: LumenEncodedFrameContext.self
-                    )
-                    typedContext.deinitialize(count: 1)
-                    typedContext.deallocate()
-                }
+            guard let self,
+                  let context else {
                 return
             }
             self.didEncode(
                 status: status,
                 infoFlags: infoFlags,
                 sampleBuffer: retainedSampleBuffer,
-                contextPointer: retainedContextPointer
+                context: context
             )
         }
     }
@@ -2152,12 +2742,8 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
         status: OSStatus,
         infoFlags: VTEncodeInfoFlags,
         sampleBuffer: CMSampleBuffer?,
-        contextPointer: UnsafeMutableRawPointer?
+        context: LumenEncodedFrameContext
     ) {
-        guard let contextPointer else { return }
-        let typedContext = contextPointer.assumingMemoryBound(to: LumenEncodedFrameContext.self)
-        let context = typedContext.move()
-        typedContext.deallocate()
         inflightFrameCount = max(inflightFrameCount - 1, 0)
 
         guard status == noErr,
@@ -2166,6 +2752,7 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
               CMSampleBufferDataIsReady(sampleBuffer) else {
             if context.requiresBootstrapAcknowledgement {
                 videoBootstrapAdmission.cancelBootstrapSubmission()
+                pendingVideoBootstrapSource = nil
             }
             statistics.droppedFrameCount &+= 1
             statistics.lastErrorDescription = status == noErr ? "VideoToolbox dropped frame" : "VideoToolbox callback OSStatus \(status)"
@@ -2176,6 +2763,7 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
                 stopStatus: status,
                 sourceDisplayTime: context.displayTime
             ))
+            encoderAdmission.resumePendingIfPossible()
             return
         }
 
@@ -2217,12 +2805,14 @@ private final class LumenScreenCaptureVideoRuntime: NSObject, SCStreamOutput, SC
         let isKeyFrame = (attachments?.first?[kCMSampleAttachmentKey_NotSync] as? Bool) != true
         if context.requiresBootstrapAcknowledgement, !isKeyFrame {
             videoBootstrapAdmission.cancelBootstrapSubmission()
+            pendingVideoBootstrapSource = nil
             reportTerminalContractFailure(
                 .requiredKeyFrameNotProduced,
                 sourceDisplayTime: context.displayTime
             )
             return
         }
+        encoderAdmission.resumePendingIfPossible()
         let hdr = configuration.encodedColorConfiguration
         let formatExtensions = sampleBuffer.formatDescription.flatMap {
             CMFormatDescriptionGetExtensions($0) as? [String: Any]
@@ -2309,23 +2899,43 @@ private enum LumenMachTime {
 enum LumenScreenCaptureError: Error, LocalizedError {
     case displayUnavailable(UInt32)
     case displayOwnershipLost(UInt32)
+    case captureAlreadyRunning
     case captureNotRunning
     case outputOwnershipLost
-    case systemAudioWasNotPreconfigured
     case compressionSessionCreationFailed(OSStatus)
     case compressionSessionPreparationFailed(OSStatus)
+    case compressionFrameCompletionFailed(OSStatus)
     case compressionPropertyFailed(String, OSStatus)
 
     var errorDescription: String? {
         switch self {
         case .displayUnavailable(let displayID): return "ScreenCaptureKit display \(displayID) is unavailable."
         case .displayOwnershipLost(let displayID): return "Retained virtual display \(displayID) was released before ScreenCaptureKit became ready."
+        case .captureAlreadyRunning: return "ScreenCaptureKit video stream is already starting or running."
         case .captureNotRunning: return "ScreenCaptureKit video stream is not running."
         case .outputOwnershipLost: return "ScreenCaptureKit delivered a sample from a stream that no longer owns the registered video output."
-        case .systemAudioWasNotPreconfigured: return "System audio must be configured before the shared ScreenCaptureKit video stream starts."
         case .compressionSessionCreationFailed(let status): return "Unable to create VideoToolbox compression session (OSStatus \(status))."
         case .compressionSessionPreparationFailed(let status): return "Unable to prepare VideoToolbox compression session (OSStatus \(status))."
+        case .compressionFrameCompletionFailed(let status): return "Unable to complete pending VideoToolbox frames during teardown (OSStatus \(status))."
         case .compressionPropertyFailed(let key, let status): return "Unable to set VideoToolbox property \(key) (OSStatus \(status))."
+        }
+    }
+}
+
+enum LumenEncodedCaptureStartupError: Error, LocalizedError {
+    case runtimeTerminated(any Error)
+
+    var underlyingError: any Error {
+        switch self {
+        case .runtimeTerminated(let error):
+            return error
+        }
+    }
+
+    var errorDescription: String? {
+        switch self {
+        case .runtimeTerminated(let error):
+            return "ScreenCaptureKit runtime terminated during startup: \(error.localizedDescription)"
         }
     }
 }
@@ -2334,37 +2944,108 @@ actor LumenEncodedCaptureSession {
     let configuration: LumenMacCaptureConfiguration
     private let preconfiguredSystemAudio: LumenMacAudioCaptureConfiguration?
     private let preconfiguredSystemAudioCallbacks: LumenAudioCaptureCallbacks?
-    private var runtime: LumenScreenCaptureVideoRuntime?
+    private let systemAudioPlaybackSuppression:
+        LumenSystemAudioPlaybackSuppression?
+    private let runtimeFactory: any LumenEncodedCaptureRuntimeFactory
+    private var activeSystemAudio:
+        LumenMacAudioCaptureConfiguration?
+    private var activeSystemAudioCallbacks: LumenAudioCaptureCallbacks?
+    private var activeSystemAudioIsActivated = false
+    private var runtime: (any LumenEncodedCaptureRuntime)?
+    private var startFlight: LumenCaptureStartFlight?
+    private var callbackGate: LumenCaptureCallbackGate?
+    private var systemAudioAttachFlight: LumenCaptureStartFlight?
+    private var systemAudioAttachGate: LumenCaptureCallbackGate?
+    private struct RuntimeStopRecord {
+        let runtime: any LumenEncodedCaptureRuntime
+        let task: Task<Void, Never>
+    }
+    private var runtimeStopRecords: [ObjectIdentifier: RuntimeStopRecord] = [:]
     private var statistics = LumenEncodedCaptureSessionStatistics()
     private var callbacks: LumenEncodedCaptureCallbacks?
     private var runtimeGeneration: UInt64 = 0
+    private var recoveryInProgressGeneration: UInt64?
     private var isStopping = false
     private let maximumAutomaticRestartCount: UInt64 = 2
 
     init(
         configuration: LumenMacCaptureConfiguration,
         preconfiguredSystemAudio: LumenMacAudioCaptureConfiguration? = nil,
-        preconfiguredSystemAudioCallbacks: LumenAudioCaptureCallbacks? = nil
+        preconfiguredSystemAudioCallbacks: LumenAudioCaptureCallbacks? = nil,
+        systemAudioPlaybackSuppression:
+            LumenSystemAudioPlaybackSuppression? = nil,
+        runtimeFactory: any LumenEncodedCaptureRuntimeFactory
     ) {
         self.configuration = configuration
         self.preconfiguredSystemAudio = preconfiguredSystemAudio
         self.preconfiguredSystemAudioCallbacks = preconfiguredSystemAudioCallbacks
+        self.systemAudioPlaybackSuppression =
+            systemAudioPlaybackSuppression
+        self.runtimeFactory = runtimeFactory
+        activeSystemAudio = preconfiguredSystemAudio
+        activeSystemAudioCallbacks =
+            preconfiguredSystemAudioCallbacks
     }
 
     func start(callbacks: LumenEncodedCaptureCallbacks) async throws {
+        guard runtime == nil,
+              startFlight == nil,
+              systemAudioAttachFlight == nil else {
+            throw LumenScreenCaptureError.captureAlreadyRunning
+        }
+        callbackGate?.close()
         self.callbacks = callbacks
         isStopping = false
+        recoveryInProgressGeneration = nil
         runtimeGeneration &+= 1
-        try await startRuntime(callbacks: callbacks, generation: runtimeGeneration)
+        try await startRuntime(
+            callbacks: callbacks,
+            generation: runtimeGeneration,
+            recoveryOwnerGeneration: nil
+        )
     }
 
-    func stop() async {
+    @discardableResult
+    func stop() async
+        -> [LumenSystemAudioPlaybackSuppressionCleanupFailure] {
         isStopping = true
         runtimeGeneration &+= 1
+        recoveryInProgressGeneration = nil
         callbacks = nil
-        guard let runtime else { return }
+        callbackGate?.close()
+        let inFlight = self.startFlight
+        let audioAttachInFlight = self.systemAudioAttachFlight
+        systemAudioAttachGate?.close()
+        let runtimeToStop = runtime
         self.runtime = nil
-        await runtime.stop()
+        await inFlight?.requestStop()
+        await audioAttachInFlight?.requestStop()
+        let runtimeStopTask = runtimeToStop.map { runtime in
+            Task { await self.stopRuntimeOnce(runtime) }
+        }
+        await inFlight?.waitUntilSettled()
+        await audioAttachInFlight?.waitUntilSettled()
+        await runtimeStopTask?.value
+        var cleanupFailures: [LumenSystemAudioPlaybackSuppressionCleanupFailure] = []
+        if activeSystemAudioIsActivated,
+           let systemAudioPlaybackSuppression {
+            let audioCallbacks = activeSystemAudioCallbacks
+            activeSystemAudioIsActivated = false
+            let failures = await systemAudioPlaybackSuppression
+                .deactivate()
+            cleanupFailures = failures
+            reportSystemAudioPlaybackSuppressionCleanupFailures(
+                failures,
+                callbacks: audioCallbacks
+            )
+            if failures.isEmpty {
+                activeSystemAudio = nil
+                activeSystemAudioCallbacks = nil
+            } else {
+                activeSystemAudioIsActivated = true
+            }
+        }
+        return cleanupFailures
     }
 
     func requestImmediateKeyFrame() {
@@ -2380,17 +3061,131 @@ actor LumenEncodedCaptureSession {
         configuration: LumenMacAudioCaptureConfiguration,
         callbacks: LumenAudioCaptureCallbacks
     ) async throws {
-        guard let runtime else {
+        guard runtime != nil, !isStopping else {
             throw LumenScreenCaptureError.captureNotRunning
         }
-        try await runtime.attachSystemAudio(
-            configuration: configuration,
-            callbacks: callbacks
+        try validateSystemAudioConfiguration(configuration)
+        guard activeSystemAudio == nil else {
+            throw LumenSystemAudioPlaybackSuppressionError
+                .activationFailed(
+                    stage: .createProcessTap,
+                    status: nil,
+                    message: "This encoded session already owns system audio.",
+                    cleanupFailures: []
+                )
+        }
+        guard let systemAudioPlaybackSuppression else {
+            throw LumenAudioCaptureError
+                .systemAudioPlaybackSuppressionDependencyMissing
+        }
+        let attachGeneration = runtimeGeneration
+        let attachFlight = LumenCaptureStartFlight()
+        let attachGate = LumenCaptureCallbackGate()
+        systemAudioAttachFlight = attachFlight
+        systemAudioAttachGate = attachGate
+        let guardedCallbacks = LumenAudioCaptureCallbacks(
+            frameHandler: { frame in
+                guard attachGate.isOpen() else { return }
+                callbacks.frameHandler(frame)
+            },
+            eventHandler: { event in
+                guard attachGate.isOpen() else { return }
+                callbacks.eventHandler?(event)
+            }
         )
+        var audioWasActivated = false
+        do {
+            guard !isStopping,
+                  runtime != nil,
+                  runtimeGeneration == attachGeneration,
+                  !(await attachFlight.isStopRequested()) else {
+                throw LumenAudioCaptureError.captureStartCancelled
+            }
+            try await systemAudioPlaybackSuppression.activate(
+                configuration: configuration,
+                callbacks: guardedCallbacks
+            )
+            audioWasActivated = true
+            guard !isStopping,
+                  runtime != nil,
+                  runtimeGeneration == attachGeneration,
+                  !(await attachFlight.isStopRequested()) else {
+                throw LumenAudioCaptureError.captureStartCancelled
+            }
+            activeSystemAudio = configuration
+            activeSystemAudioCallbacks = callbacks
+            activeSystemAudioIsActivated = true
+            await finishSystemAudioAttach(attachFlight)
+        } catch let error
+            as LumenSystemAudioPlaybackSuppressionError {
+            if audioWasActivated {
+                attachGate.close()
+                let cleanupFailures = await systemAudioPlaybackSuppression
+                    .deactivate()
+                if !cleanupFailures.isEmpty {
+                    await finishSystemAudioAttach(attachFlight)
+                    throw LumenSystemAudioCaptureLifecycleError(
+                        underlyingError: error,
+                        cleanupFailures: cleanupFailures
+                    )
+                }
+            }
+            await finishSystemAudioAttach(attachFlight)
+            throw LumenAudioCaptureError
+                .systemAudioPlaybackSuppressionUnavailable(error)
+        } catch {
+            if audioWasActivated {
+                attachGate.close()
+                let cleanupFailures = await systemAudioPlaybackSuppression
+                    .deactivate()
+                if !cleanupFailures.isEmpty {
+                    await finishSystemAudioAttach(attachFlight)
+                    throw LumenSystemAudioCaptureLifecycleError(
+                        underlyingError: error,
+                        cleanupFailures: cleanupFailures
+                    )
+                }
+            }
+            await finishSystemAudioAttach(attachFlight)
+            throw error
+        }
     }
 
-    func detachSystemAudio() async {
-        await runtime?.detachSystemAudio()
+    @discardableResult
+    func detachSystemAudio() async
+        -> [LumenSystemAudioPlaybackSuppressionCleanupFailure] {
+        systemAudioAttachGate?.close()
+        let attachInFlight = systemAudioAttachFlight
+        await attachInFlight?.requestStop()
+        await attachInFlight?.waitUntilSettled()
+        guard activeSystemAudioIsActivated,
+              let systemAudioPlaybackSuppression else {
+            systemAudioAttachGate = nil
+            return []
+        }
+        let callbacks = activeSystemAudioCallbacks
+        activeSystemAudioIsActivated = false
+        systemAudioAttachGate = nil
+        let failures = await systemAudioPlaybackSuppression.deactivate()
+        reportSystemAudioPlaybackSuppressionCleanupFailures(
+            failures,
+            callbacks: callbacks
+        )
+        if failures.isEmpty {
+            activeSystemAudio = nil
+            activeSystemAudioCallbacks = nil
+        } else {
+            activeSystemAudioIsActivated = true
+        }
+        return failures
+    }
+
+    private func finishSystemAudioAttach(_ flight: LumenCaptureStartFlight) async {
+        if systemAudioAttachFlight === flight {
+            systemAudioAttachFlight = nil
+        }
+        _ = await flight.finishStart(terminationError: nil)
+        await flight.settle()
     }
 
     func statisticsSnapshot() -> LumenEncodedCaptureSessionStatistics {
@@ -2408,44 +3203,328 @@ actor LumenEncodedCaptureSession {
 
     private func startRuntime(
         callbacks: LumenEncodedCaptureCallbacks,
-        generation: UInt64
+        generation: UInt64,
+        recoveryOwnerGeneration: UInt64?
     ) async throws {
+        guard startRuntimeIsCurrent(
+            generation: generation,
+            runtime: nil,
+            recoveryOwnerGeneration: recoveryOwnerGeneration,
+            requireRuntimeIdentity: false
+        ) else {
+            return
+        }
         let owner = self
-        let runtime = try LumenScreenCaptureVideoRuntime(
-            configuration: configuration,
-            preconfiguredSystemAudio: preconfiguredSystemAudio,
-            preconfiguredSystemAudioCallbacks: preconfiguredSystemAudioCallbacks,
-            callbacks: callbacks,
-            statisticsHandler: { statistics in
-                Task { await owner.updateStatistics(statistics) }
+        let flight = LumenCaptureStartFlight()
+        let callbackGate = LumenCaptureCallbackGate()
+        let terminationLatch = LumenCaptureTerminationLatch()
+        self.startFlight = flight
+        self.callbackGate = callbackGate
+
+        let guardedCallbacks = LumenEncodedCaptureCallbacks(
+            frameHandler: { frame in
+                guard callbackGate.isOpen() else { return }
+                callbacks.frameHandler(frame)
             },
-            terminationHandler: { error in
-                Task { await owner.handleUnexpectedTermination(generation: generation, error: error) }
+            eventHandler: { event in
+                guard callbackGate.isOpen() else { return }
+                callbacks.eventHandler?(event)
             }
         )
-        self.runtime = runtime
+        let runtime: any LumenEncodedCaptureRuntime
         do {
-            try await runtime.start()
+            runtime = try runtimeFactory.makeRuntime(
+                context: .init(
+                    configuration: configuration,
+                    callbacks: guardedCallbacks,
+                    statisticsHandler: { statistics in
+                        guard callbackGate.isOpen() else { return }
+                        Task { await owner.updateStatistics(statistics) }
+                    },
+                    terminationHandler: { error in
+                        let wasDuringStart = terminationLatch.record(error)
+                        guard !wasDuringStart else {
+                            return
+                        }
+                        Task {
+                            await owner.handleUnexpectedTermination(
+                                generation: generation,
+                                error: error
+                            )
+                        }
+                    }
+                )
+            )
         } catch {
-            if self.runtime === runtime {
-                self.runtime = nil
-            }
+            await finishStartFlight(flight)
             throw error
+        }
+        self.runtime = runtime
+        var audioWasActivated = false
+        var activatedAudioCallbacks: LumenAudioCaptureCallbacks?
+        var runtimeStartWasAttempted = false
+        var failureHandled = false
+        var cleanupFailures: [LumenSystemAudioPlaybackSuppressionCleanupFailure] = []
+        do {
+            if let activeSystemAudio {
+                try validateSystemAudioConfiguration(
+                    activeSystemAudio
+                )
+                guard let activeSystemAudioCallbacks else {
+                    throw LumenAudioCaptureError
+                        .systemAudioPlaybackSuppressionDependencyMissing
+                }
+                guard let systemAudioPlaybackSuppression else {
+                    throw LumenAudioCaptureError
+                        .systemAudioPlaybackSuppressionDependencyMissing
+                }
+                let audioCallbacks = activeSystemAudioCallbacks
+                let guardedAudioCallbacks = LumenAudioCaptureCallbacks(
+                    frameHandler: { frame in
+                        guard callbackGate.isOpen() else { return }
+                        audioCallbacks.frameHandler(frame)
+                    },
+                    eventHandler: { event in
+                        guard callbackGate.isOpen() else { return }
+                        audioCallbacks.eventHandler?(event)
+                    }
+                )
+                try await systemAudioPlaybackSuppression.activate(
+                    configuration: activeSystemAudio,
+                    callbacks: guardedAudioCallbacks
+                )
+                audioWasActivated = true
+                activatedAudioCallbacks = activeSystemAudioCallbacks
+                activeSystemAudioIsActivated = true
+            }
+
+            let stopRequestedBeforeStart = await flight.isStopRequested()
+            guard !stopRequestedBeforeStart,
+                  startRuntimeIsCurrent(
+                      generation: generation,
+                      runtime: runtime,
+                      recoveryOwnerGeneration: recoveryOwnerGeneration,
+                      requireRuntimeIdentity: true
+                  ) else {
+                failureHandled = true
+                cleanupFailures = await stopRuntimeAfterStartFailure(
+                    runtime: runtime,
+                    flight: flight,
+                    callbackGate: callbackGate,
+                    audioWasActivated: audioWasActivated,
+                    activatedAudioCallbacks: activatedAudioCallbacks,
+                    stopRuntime: true
+                )
+                return
+            }
+            runtimeStartWasAttempted = true
+            try await runtime.start()
+            let completion = await flight.finishStart(
+                terminationError: terminationLatch.complete()
+            )
+            if let terminationError = completion.terminationError {
+                failureHandled = true
+                cleanupFailures = await stopRuntimeAfterStartFailure(
+                    runtime: runtime,
+                    flight: flight,
+                    callbackGate: callbackGate,
+                    audioWasActivated: audioWasActivated,
+                    activatedAudioCallbacks: activatedAudioCallbacks,
+                    stopRuntime: true
+                )
+                if recoveryOwnerGeneration == nil {
+                    throw LumenEncodedCaptureStartupError
+                        .runtimeTerminated(terminationError)
+                }
+                throw terminationError
+            }
+            let stopRequestedAfterStart = await flight.isStopRequested()
+            guard !stopRequestedAfterStart,
+                  startRuntimeIsCurrent(
+                      generation: generation,
+                      runtime: runtime,
+                      recoveryOwnerGeneration: recoveryOwnerGeneration,
+                      requireRuntimeIdentity: true
+                  ) else {
+                failureHandled = true
+                cleanupFailures = await stopRuntimeAfterStartFailure(
+                    runtime: runtime,
+                    flight: flight,
+                    callbackGate: callbackGate,
+                    audioWasActivated: audioWasActivated,
+                    activatedAudioCallbacks: activatedAudioCallbacks,
+                    stopRuntime: true
+                )
+                return
+            }
+            await finishStartFlight(flight)
+        } catch {
+            let completion = await flight.finishStart(
+                terminationError: terminationLatch.complete(),
+                error: error
+            )
+            if !failureHandled {
+                let stopRequestedAfterFailure = await flight.isStopRequested()
+                cleanupFailures = await stopRuntimeAfterStartFailure(
+                    runtime: runtime,
+                    flight: flight,
+                    callbackGate: callbackGate,
+                    audioWasActivated: audioWasActivated,
+                    activatedAudioCallbacks: activatedAudioCallbacks,
+                    stopRuntime: runtimeStartWasAttempted || stopRequestedAfterFailure
+                )
+            }
+            let failure = completion.terminationError
+                ?? completion.startError
+                ?? error
+            if recoveryOwnerGeneration == nil,
+               completion.terminationError != nil {
+                let startupFailure = LumenEncodedCaptureStartupError
+                    .runtimeTerminated(failure)
+                if !cleanupFailures.isEmpty {
+                    throw LumenSystemAudioCaptureLifecycleError(
+                        underlyingError: startupFailure,
+                        cleanupFailures: cleanupFailures
+                    )
+                }
+                throw startupFailure
+            }
+            if !cleanupFailures.isEmpty {
+                throw LumenSystemAudioCaptureLifecycleError(
+                    underlyingError: failure,
+                    cleanupFailures: cleanupFailures
+                )
+            }
+            let typedError = Self.typedSystemAudioError(failure)
+            throw typedError
         }
     }
 
-    private func handleUnexpectedTermination(generation: UInt64, error: Error) async {
+    private func finishStartFlight(_ flight: LumenCaptureStartFlight) async {
+        if self.startFlight === flight {
+            self.startFlight = nil
+        }
+        await flight.settle()
+    }
+
+    private func stopRuntimeOnce(
+        _ runtime: any LumenEncodedCaptureRuntime
+    ) async {
+        let identity = ObjectIdentifier(runtime)
+        if let existing = runtimeStopRecords[identity],
+           existing.runtime === runtime {
+            await existing.task.value
+            return
+        }
+        let task = Task { await runtime.stop() }
+        runtimeStopRecords[identity] = .init(runtime: runtime, task: task)
+        await task.value
+    }
+
+    private func stopRuntimeAfterStartFailure(
+        runtime: any LumenEncodedCaptureRuntime,
+        flight: LumenCaptureStartFlight,
+        callbackGate: LumenCaptureCallbackGate,
+        audioWasActivated: Bool,
+        activatedAudioCallbacks: LumenAudioCaptureCallbacks?,
+        stopRuntime: Bool
+    ) async -> [LumenSystemAudioPlaybackSuppressionCleanupFailure] {
+        callbackGate.close()
+        if stopRuntime {
+            await stopRuntimeOnce(runtime)
+        }
+        if audioWasActivated,
+           let systemAudioPlaybackSuppression {
+            activeSystemAudioIsActivated = false
+            let cleanupFailures = await systemAudioPlaybackSuppression
+                .deactivate()
+            reportSystemAudioPlaybackSuppressionCleanupFailures(
+                cleanupFailures,
+                callbacks: activatedAudioCallbacks
+            )
+            activeSystemAudioIsActivated = !cleanupFailures.isEmpty
+            if self.runtime === runtime {
+                self.runtime = nil
+            }
+            await finishStartFlight(flight)
+            return cleanupFailures
+        }
+        if self.runtime === runtime {
+            self.runtime = nil
+        }
+        await finishStartFlight(flight)
+        return []
+    }
+
+    private func handleUnexpectedTermination(
+        generation: UInt64,
+        error: Error
+    ) async {
         guard !isStopping,
               generation == runtimeGeneration,
+              recoveryInProgressGeneration == nil,
               let callbacks else {
             return
         }
+        recoveryInProgressGeneration = generation
+        runtimeGeneration &+= 1
+        let replacementGeneration = runtimeGeneration
+        callbackGate?.close()
 
         let failedRuntime = runtime
         runtime = nil
-        await failedRuntime?.stop()
+        if let failedRuntime {
+            await stopRuntimeOnce(failedRuntime)
+        }
+        guard recoveryIsCurrent(
+            failedGeneration: generation,
+            replacementGeneration: replacementGeneration
+        ) else {
+            clearRecoveryIfOwned(by: generation)
+            return
+        }
+        let cleanupFailures:
+            [LumenSystemAudioPlaybackSuppressionCleanupFailure]
+        if activeSystemAudioIsActivated,
+           let systemAudioPlaybackSuppression {
+            activeSystemAudioIsActivated = false
+            cleanupFailures = await systemAudioPlaybackSuppression
+                .deactivate()
+            activeSystemAudioIsActivated = !cleanupFailures.isEmpty
+        } else {
+            cleanupFailures = []
+        }
+        guard recoveryIsCurrent(
+            failedGeneration: generation,
+            replacementGeneration: replacementGeneration
+        ) else {
+            clearRecoveryIfOwned(by: generation)
+            return
+        }
+        if !cleanupFailures.isEmpty {
+            clearRecoveryIfOwned(by: generation)
+            reportSystemAudioPlaybackSuppressionCleanupFailures(
+                cleanupFailures,
+                callbacks: activeSystemAudioCallbacks
+            )
+            statistics.isRunning = false
+            statistics.lastErrorDescription =
+                LumenAudioCaptureError
+                .systemAudioPlaybackSuppressionCleanupFailed(
+                    cleanupFailures
+                )
+                .localizedDescription
+            callbacks.eventHandler?(.init(
+                kind: .failed,
+                message: statistics.lastErrorDescription,
+                automaticRestartCount:
+                    statistics.automaticRestartCount
+            ))
+            return
+        }
 
         if error is LumenExactCaptureError {
+            clearRecoveryIfOwned(by: generation)
             statistics.isRunning = false
             statistics.lastErrorDescription = error.localizedDescription
             callbacks.eventHandler?(.init(
@@ -2457,6 +3536,7 @@ actor LumenEncodedCaptureSession {
         }
 
         guard statistics.automaticRestartCount < maximumAutomaticRestartCount else {
+            clearRecoveryIfOwned(by: generation)
             statistics.isRunning = false
             statistics.lastErrorDescription = error.localizedDescription
             callbacks.eventHandler?(.init(
@@ -2476,11 +3556,113 @@ actor LumenEncodedCaptureSession {
         ))
 
         try? await Task.sleep(nanoseconds: 150_000_000)
-        guard !isStopping, generation == runtimeGeneration else { return }
-        do {
-            try await startRuntime(callbacks: callbacks, generation: generation)
-        } catch {
-            await handleUnexpectedTermination(generation: generation, error: error)
+        guard recoveryIsCurrent(
+            failedGeneration: generation,
+            replacementGeneration: replacementGeneration
+        ) else {
+            clearRecoveryIfOwned(by: generation)
+            return
         }
+        do {
+            try await startRuntime(
+                callbacks: callbacks,
+                generation: replacementGeneration,
+                recoveryOwnerGeneration: generation
+            )
+            clearRecoveryIfOwned(by: generation)
+        } catch {
+            guard !isStopping,
+                  replacementGeneration == runtimeGeneration else {
+                clearRecoveryIfOwned(by: generation)
+                return
+            }
+            clearRecoveryIfOwned(by: generation)
+            await handleUnexpectedTermination(
+                generation: replacementGeneration,
+                error: error
+            )
+        }
+    }
+
+    private func startRuntimeIsCurrent(
+        generation: UInt64,
+        runtime: (any LumenEncodedCaptureRuntime)?,
+        recoveryOwnerGeneration: UInt64?,
+        requireRuntimeIdentity: Bool
+    ) -> Bool {
+        guard !isStopping,
+              runtimeGeneration == generation else {
+            return false
+        }
+        if requireRuntimeIdentity,
+           let runtime,
+           self.runtime !== runtime {
+            return false
+        }
+        guard let recoveryOwnerGeneration else {
+            return recoveryInProgressGeneration == nil
+        }
+        return recoveryInProgressGeneration == recoveryOwnerGeneration
+    }
+
+    private func recoveryIsCurrent(
+        failedGeneration: UInt64,
+        replacementGeneration: UInt64
+    ) -> Bool {
+        !isStopping &&
+            recoveryInProgressGeneration == failedGeneration &&
+            runtimeGeneration == replacementGeneration
+    }
+
+    private func clearRecoveryIfOwned(by generation: UInt64) {
+        if recoveryInProgressGeneration == generation {
+            recoveryInProgressGeneration = nil
+        }
+    }
+
+    private func reportSystemAudioPlaybackSuppressionCleanupFailures(
+        _ failures: [LumenSystemAudioPlaybackSuppressionCleanupFailure],
+        callbacks: LumenAudioCaptureCallbacks?
+    ) {
+        guard !failures.isEmpty else {
+            return
+        }
+        callbacks?.eventHandler?(.init(
+            kind: .failed,
+            message: LumenAudioCaptureError
+                .systemAudioPlaybackSuppressionCleanupFailed(failures)
+                .localizedDescription
+        ))
+    }
+
+    private func validateSystemAudioConfiguration(
+        _ configuration: LumenMacAudioCaptureConfiguration
+    ) throws {
+        guard case .systemOutput(let displayID, _) =
+            configuration.source else {
+            throw LumenAudioCaptureError.invalidSource
+        }
+        guard displayID == self.configuration.displayID else {
+            throw LumenAudioCaptureError
+                .activeVideoDisplayMismatch(
+                    audioDisplayID: displayID,
+                    videoDisplayID: self.configuration.displayID
+                )
+        }
+    }
+
+    private nonisolated static func typedSystemAudioError(
+        _ error: any Error
+    ) -> any Error {
+        if let error =
+            error as? LumenSystemAudioPlaybackSuppressionError {
+            return LumenAudioCaptureError
+                .systemAudioPlaybackSuppressionUnavailable(error)
+        }
+        if error is CancellationError {
+            return LumenAudioCaptureError
+                .systemAudioPlaybackSuppressionCancelled
+        }
+        return error
     }
 }

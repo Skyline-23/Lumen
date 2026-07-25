@@ -1086,8 +1086,8 @@ public struct LumenMacAudioCaptureConfiguration: Codable, Equatable, Sendable {
         displayID: UInt32,
         sampleRate: Int = 48_000,
         channelCount: Int = 2,
-        frameSize: Int = 480,
-        excludesCurrentProcessAudio: Bool = false
+        frameSize: Int = 240,
+        excludesCurrentProcessAudio: Bool = true
     ) -> Self {
         Self(
             source: .systemOutput(
@@ -1135,8 +1135,27 @@ public struct LumenBridgeDrainedAudioEvent: Equatable, Sendable {
     public let sourceSequenceNumber: UInt64?
 }
 
+private enum LumenMacBridgeCompositionRoot {
+    static func makeRuntime() -> LumenBridgeRuntime {
+        LumenBridgeRuntime(
+            systemAudioPlaybackSuppression:
+                makeSystemAudioCaptureSource(),
+            encodedCaptureRuntimeFactory:
+                LumenProductionEncodedCaptureRuntimeFactory()
+        )
+    }
+
+    static func makeSystemAudioCaptureSource()
+        -> LumenSystemAudioPlaybackSuppression {
+        LumenSystemAudioPlaybackSuppression(
+            hal: LumenCoreAudioSystemAudioPlaybackSuppressionHAL()
+        )
+    }
+}
+
 public actor LumenBridgeRuntime {
-    public static let shared = LumenBridgeRuntime()
+    public static let shared =
+        LumenMacBridgeCompositionRoot.makeRuntime()
     public nonisolated static let statusDidChangeNotification = Notification.Name("LumenBridgeRuntimeStatusDidChange")
     private nonisolated static let statusNotificationCoalescingNanoseconds: UInt64 = 100_000_000
     private nonisolated static let encodedFrameDiagnosticsIntervalNanoseconds: UInt64 = 3_000_000_000
@@ -1188,6 +1207,10 @@ public actor LumenBridgeRuntime {
     private let logger = Logger(subsystem: "dev.skyline23.lumen", category: "MacBridgeRuntime")
     private let captureLifecycle = LumenBridgeCaptureLifecycle()
     private let encodedFrameReadiness = LumenFirstEncodedFrameGate()
+    private let systemAudioPlaybackSuppression:
+        LumenSystemAudioPlaybackSuppression
+    private let encodedCaptureRuntimeFactory:
+        any LumenEncodedCaptureRuntimeFactory
     private var encodedCaptureSession: LumenEncodedCaptureSession?
     private var encodedCaptureStartupTask: Task<Void, Error>?
     private var activeCaptureConfiguration: LumenMacCaptureConfiguration?
@@ -1198,6 +1221,7 @@ public actor LumenBridgeRuntime {
     private var audioCaptureStartupTask: Task<Void, Error>?
     private var activeAudioCaptureConfiguration: LumenMacAudioCaptureConfiguration?
     private var audioCaptureIsHostedByEncodedSession = false
+    private var audioCaptureGeneration: UInt64 = 0
     private var lastStatusNotificationUptimeNanoseconds: UInt64 = 0
     private var hasPendingStatusNotification = false
     private var lastEncodedFrameDiagnosticsUptimeNanoseconds: UInt64 = 0
@@ -1206,7 +1230,17 @@ public actor LumenBridgeRuntime {
     private var lastCaptureRestartRequestUptimeNanoseconds: UInt64 = 0
     private var activeCaptureGeneration: UInt64?
 
-    public init() {}
+    init(
+        systemAudioPlaybackSuppression:
+            LumenSystemAudioPlaybackSuppression,
+        encodedCaptureRuntimeFactory:
+            any LumenEncodedCaptureRuntimeFactory
+    ) {
+        self.systemAudioPlaybackSuppression =
+            systemAudioPlaybackSuppression
+        self.encodedCaptureRuntimeFactory =
+            encodedCaptureRuntimeFactory
+    }
 
     public func preferredCaptureConfiguration(
         displayID: UInt32
@@ -1241,9 +1275,31 @@ public actor LumenBridgeRuntime {
         waitForStartupCompletion: Bool
     ) async throws {
         if preconfiguredSystemAudio != nil {
-            await stopAudioCapture(resetRequestGeneration: false)
+            let cleanupFailures = await stopAudioCapture(
+                resetRequestGeneration: false
+            )
+            guard cleanupFailures.isEmpty else {
+                throw LumenSystemAudioCaptureLifecycleError(
+                    underlyingError: LumenAudioCaptureError
+                        .captureStartCancelled,
+                    cleanupFailures: cleanupFailures
+                )
+            }
         }
-        await stopCapture(resetRequestGeneration: false)
+        let captureCleanupFailures = await stopCapture(
+            resetRequestGeneration: false
+        )
+        guard captureCleanupFailures.isEmpty else {
+            throw LumenSystemAudioCaptureLifecycleError(
+                underlyingError: LumenAudioCaptureError
+                    .systemAudioPlaybackSuppressionCleanupFailed(
+                        captureCleanupFailures
+                    ),
+                cleanupFailures: captureCleanupFailures
+            )
+        }
+        audioCaptureGeneration &+= 1
+        let audioGeneration = audioCaptureGeneration
         let captureGeneration = await encodedFrameReadiness.beginCapture()
         activeCaptureGeneration = captureGeneration
 
@@ -1269,7 +1325,9 @@ public actor LumenBridgeRuntime {
             audioForwarder.setProducerActive(true)
             activeAudioCaptureConfiguration = preconfiguredSystemAudio
             audioCaptureIsHostedByEncodedSession = true
-            preconfiguredSystemAudioCallbacks = makeAudioCaptureCallbacks()
+            preconfiguredSystemAudioCallbacks = makeAudioCaptureCallbacks(
+                generation: audioGeneration
+            )
         } else {
             preconfiguredSystemAudioCallbacks = nil
         }
@@ -1277,7 +1335,10 @@ public actor LumenBridgeRuntime {
         let session = LumenEncodedCaptureSession(
             configuration: configuration,
             preconfiguredSystemAudio: preconfiguredSystemAudio,
-            preconfiguredSystemAudioCallbacks: preconfiguredSystemAudioCallbacks
+            preconfiguredSystemAudioCallbacks: preconfiguredSystemAudioCallbacks,
+            systemAudioPlaybackSuppression:
+                systemAudioPlaybackSuppression,
+            runtimeFactory: encodedCaptureRuntimeFactory
         )
         let runtime = self
         let videoForwarder = self.videoForwarder
@@ -1328,7 +1389,7 @@ public actor LumenBridgeRuntime {
     }
 
     public func stopCapture() async {
-        await stopCapture(resetRequestGeneration: true)
+        _ = await stopCapture(resetRequestGeneration: true)
     }
 
     public func waitForFirstEncodedFrame(timeoutNanoseconds: UInt64) async throws {
@@ -1420,7 +1481,12 @@ public actor LumenBridgeRuntime {
         logger.notice(
             "Restarting ScreenCaptureKit capture to recover stale external encoded frames reason=\(reason, privacy: .public)"
         )
-        await stopCapture(resetRequestGeneration: false)
+        let cleanupFailures = await stopCapture(
+            resetRequestGeneration: false
+        )
+        guard cleanupFailures.isEmpty else {
+            return
+        }
         try? await startCapture(
             configuration: configuration,
             preconfiguredSystemAudio: preconfiguredSystemAudio,
@@ -1428,7 +1494,9 @@ public actor LumenBridgeRuntime {
         )
     }
 
-    private func stopCapture(resetRequestGeneration: Bool) async {
+    private func stopCapture(
+        resetRequestGeneration: Bool
+    ) async -> [LumenSystemAudioPlaybackSuppressionCleanupFailure] {
         encodedCaptureStartupTask?.cancel()
         encodedCaptureStartupTask = nil
         if let activeCaptureGeneration {
@@ -1450,21 +1518,39 @@ public actor LumenBridgeRuntime {
             clearEncodedSessionHostedAudioState()
             if resetRequestGeneration {
             }
-            return
+            return []
         }
 
-        await session.stop()
-        encodedCaptureSession = nil
+        let audioCleanupFailures = await session.stop()
+        if audioCleanupFailures.isEmpty {
+            encodedCaptureSession = nil
+        }
         activeCaptureConfiguration = nil
         activePreconfiguredSystemAudio = nil
         lastEncodedFrameDiagnosticsUptimeNanoseconds = 0
         lastEncodedFrameSourceSequenceNumber = nil
         lastEncodedFrameSourceDisplayTime = nil
         await captureLifecycle.finishStop()
-        clearEncodedSessionHostedAudioState()
+        if audioCleanupFailures.isEmpty {
+            clearEncodedSessionHostedAudioState()
+        } else {
+            recordAudioCaptureEvent(
+                .init(
+                    kind: .failed,
+                    message: LumenAudioCaptureError
+                        .systemAudioPlaybackSuppressionCleanupFailed(
+                            audioCleanupFailures
+                        )
+                        .localizedDescription
+                ),
+                generation: audioCaptureGeneration
+            )
+            audioForwarder.setProducerActive(false)
+        }
         if resetRequestGeneration {
         }
         publishStatusDidChange(immediate: true)
+        return audioCleanupFailures
     }
 
     public func makeDefaultMicrophoneAudioConfiguration() -> LumenMacAudioCaptureConfiguration {
@@ -1499,7 +1585,18 @@ public actor LumenBridgeRuntime {
         configuration: LumenMacAudioCaptureConfiguration,
         waitForStartupCompletion: Bool
     ) async throws {
-        await stopAudioCapture(resetRequestGeneration: false)
+        let previousCleanupFailures = await stopAudioCapture(
+            resetRequestGeneration: false
+        )
+        guard previousCleanupFailures.isEmpty else {
+            throw LumenSystemAudioCaptureLifecycleError(
+                underlyingError: LumenAudioCaptureError
+                    .captureStartCancelled,
+                cleanupFailures: previousCleanupFailures
+            )
+        }
+        audioCaptureGeneration &+= 1
+        let audioGeneration = audioCaptureGeneration
 
         audioForwarder.reset()
         audioForwarder.setProducerActive(false)
@@ -1519,12 +1616,14 @@ public actor LumenBridgeRuntime {
         }
         let session = LumenAudioCaptureSession(
             configuration: configuration,
-            sharedVideoSession: sharedVideoSession
+            sharedVideoSession: sharedVideoSession,
+            systemAudioPlaybackSuppression:
+                systemAudioPlaybackSuppression
         )
         logger.notice(
-            "Starting ScreenCaptureKit audio capture source=\(configuration.source.kind.rawValue, privacy: .public) route=\(String(describing: audioRoute), privacy: .public) sample-rate=\(configuration.sampleRate, privacy: .public) channels=\(configuration.channelCount, privacy: .public) frame-size=\(configuration.frameSize, privacy: .public)"
+            "Starting audio capture source=\(configuration.source.kind.rawValue, privacy: .public) route=\(String(describing: audioRoute), privacy: .public) sample-rate=\(configuration.sampleRate, privacy: .public) channels=\(configuration.channelCount, privacy: .public) frame-size=\(configuration.frameSize, privacy: .public)"
         )
-        let callbacks = makeAudioCaptureCallbacks()
+        let callbacks = makeAudioCaptureCallbacks(generation: audioGeneration)
 
         activeAudioCaptureConfiguration = configuration
         audioCaptureSession = session
@@ -1554,34 +1653,60 @@ public actor LumenBridgeRuntime {
         }
     }
 
-    private func makeAudioCaptureCallbacks() -> LumenAudioCaptureCallbacks {
+    private func makeAudioCaptureCallbacks(
+        generation: UInt64
+    ) -> LumenAudioCaptureCallbacks {
         let runtime = self
         return LumenAudioCaptureCallbacks(
             frameHandler: { frame in
                 Task {
-                    await runtime.recordAudioFrame(frame)
+                    await runtime.recordAudioFrame(
+                        frame,
+                        generation: generation
+                    )
                 }
             },
             eventHandler: { event in
                 Task {
-                    await runtime.recordAudioCaptureEvent(event)
+                    await runtime.recordAudioCaptureEvent(
+                        event,
+                        generation: generation
+                    )
                 }
             }
         )
     }
 
     public func stopAudioCapture() async {
-        await stopAudioCapture(resetRequestGeneration: true)
+        _ = await stopAudioCapture(resetRequestGeneration: true)
     }
 
-    private func stopAudioCapture(resetRequestGeneration: Bool) async {
+    private func stopAudioCapture(resetRequestGeneration: Bool) async
+        -> [LumenSystemAudioPlaybackSuppressionCleanupFailure] {
+        audioCaptureGeneration &+= 1
         audioCaptureStartupTask?.cancel()
         audioCaptureStartupTask = nil
         if audioCaptureIsHostedByEncodedSession {
-            await encodedCaptureSession?.detachSystemAudio()
-            clearEncodedSessionHostedAudioState()
+            let cleanupFailures = await encodedCaptureSession?
+                .detachSystemAudio() ?? []
+            if !cleanupFailures.isEmpty {
+                recordAudioCaptureEvent(
+                    .init(
+                        kind: .failed,
+                        message: LumenAudioCaptureError
+                            .systemAudioPlaybackSuppressionCleanupFailed(
+                                cleanupFailures
+                            )
+                            .localizedDescription
+                    ),
+                    generation: audioCaptureGeneration
+                )
+                audioForwarder.setProducerActive(false)
+            } else {
+                clearEncodedSessionHostedAudioState()
+            }
             publishStatusDidChange(immediate: true)
-            return
+            return cleanupFailures
         }
         guard let session = audioCaptureSession else {
             audioCaptureSession = nil
@@ -1590,16 +1715,32 @@ public actor LumenBridgeRuntime {
             audioForwarder.setProducerActive(false)
             if resetRequestGeneration {
             }
-            return
+            return []
         }
 
-        await session.stop()
+        let cleanupFailures = await session.stop()
+        if !cleanupFailures.isEmpty {
+            recordAudioCaptureEvent(
+                .init(
+                    kind: .failed,
+                    message: LumenAudioCaptureError
+                        .systemAudioPlaybackSuppressionCleanupFailed(
+                            cleanupFailures
+                        )
+                        .localizedDescription
+                ),
+                generation: audioCaptureGeneration
+            )
+        }
         audioForwarder.setProducerActive(false)
-        audioCaptureSession = nil
-        activeAudioCaptureConfiguration = nil
+        if cleanupFailures.isEmpty {
+            audioCaptureSession = nil
+            activeAudioCaptureConfiguration = nil
+        }
         if resetRequestGeneration {
         }
         publishStatusDidChange(immediate: true)
+        return cleanupFailures
     }
 
     private func handleEncodedCaptureStartupFinished(for session: LumenEncodedCaptureSession) async {
@@ -1621,7 +1762,11 @@ public actor LumenBridgeRuntime {
             return
         }
         encodedCaptureStartupTask = nil
-        encodedCaptureSession = nil
+        let cleanupFailures = (error as? LumenSystemAudioCaptureLifecycleError)?
+            .cleanupFailures ?? []
+        if cleanupFailures.isEmpty {
+            encodedCaptureSession = nil
+        }
         activeCaptureConfiguration = nil
         activePreconfiguredSystemAudio = nil
         if let activeCaptureGeneration {
@@ -1630,7 +1775,22 @@ public actor LumenBridgeRuntime {
         }
         videoForwarder.setProducerActive(false)
         await captureLifecycle.failStartup()
-        clearEncodedSessionHostedAudioState()
+        if cleanupFailures.isEmpty {
+            clearEncodedSessionHostedAudioState()
+        } else {
+            recordAudioCaptureEvent(
+                .init(
+                    kind: .failed,
+                    message: LumenAudioCaptureError
+                        .systemAudioPlaybackSuppressionCleanupFailed(
+                            cleanupFailures
+                        )
+                        .localizedDescription
+                ),
+                generation: audioCaptureGeneration
+            )
+            audioForwarder.setProducerActive(false)
+        }
         latestFrame = nil
         recentEvents = []
         lastEncodedFrameDiagnosticsUptimeNanoseconds = 0
@@ -1660,14 +1820,21 @@ public actor LumenBridgeRuntime {
             return
         }
         audioCaptureStartupTask = nil
-        audioCaptureSession = nil
-        activeAudioCaptureConfiguration = nil
-        recordAudioCaptureEvent(.init(
+        let cleanupFailures = (error as? LumenSystemAudioCaptureLifecycleError)?
+            .cleanupFailures ?? []
+        recordAudioCaptureEvent(
+            .init(
             kind: .failed,
             message: error.localizedDescription
-        ))
+            ),
+            generation: audioCaptureGeneration
+        )
+        if cleanupFailures.isEmpty {
+            audioCaptureSession = nil
+            activeAudioCaptureConfiguration = nil
+        }
         audioForwarder.setProducerActive(false)
-        logger.error("ScreenCaptureKit audio startup failed: \(String(describing: error), privacy: .public)")
+        logger.error("Audio capture startup failed: \(String(describing: error), privacy: .public)")
         publishStatusDidChange(immediate: true)
     }
 
@@ -1973,12 +2140,26 @@ public actor LumenBridgeRuntime {
         return notes.joined(separator: ";")
     }
 
-    private func recordAudioFrame(_ frame: LumenAudioFrame) {
+    private func recordAudioFrame(
+        _ frame: LumenAudioFrame,
+        generation: UInt64
+    ) {
+        guard generation == audioCaptureGeneration,
+              audioCaptureSession != nil || audioCaptureIsHostedByEncodedSession else {
+            return
+        }
         audioForwarder.consume(frame: frame)
         publishStatusDidChange()
     }
 
-    private func recordAudioCaptureEvent(_ event: LumenAudioCaptureSessionEvent) {
+    private func recordAudioCaptureEvent(
+        _ event: LumenAudioCaptureSessionEvent,
+        generation: UInt64
+    ) {
+        guard generation == audioCaptureGeneration,
+              audioCaptureSession != nil || audioCaptureIsHostedByEncodedSession else {
+            return
+        }
         audioForwarder.consume(event: event)
         logger.notice(
             "Mac bridge audio capture event kind=\(event.kind.rawValue, privacy: .public) message=\(event.message ?? "n/a", privacy: .public) automatic-restarts=\(event.automaticRestartCount ?? 0, privacy: .public) source-sequence=\(event.sourceSequenceNumber ?? 0, privacy: .public)"

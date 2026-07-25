@@ -1,8 +1,21 @@
 @testable import LumenMacBridge
 import CoreGraphics
 import CoreMedia
+import Dispatch
 import ScreenCaptureKit
 import XCTest
+
+private func makeTestBridgeRuntime() -> LumenBridgeRuntime {
+    LumenBridgeRuntime(
+        systemAudioPlaybackSuppression:
+            LumenSystemAudioPlaybackSuppression(
+                hal:
+                    LumenCoreAudioSystemAudioPlaybackSuppressionHAL()
+            ),
+        encodedCaptureRuntimeFactory:
+            LumenProductionEncodedCaptureRuntimeFactory()
+    )
+}
 
 final class LumenTuistBootstrapTests: XCTestCase {
     func testBootstrapGateSubmitsOneKeyFrameThenCoalescesUntilDecoded() {
@@ -30,9 +43,380 @@ final class LumenTuistBootstrapTests: XCTestCase {
         XCTAssertEqual(gate.admitSourceFrame(), .submitInitialKeyFrame)
     }
 
+    func testSerialEncoderAdmissionPreservesInvocationOrderAndKeepsLatestPendingSource() {
+        let sourceQueue = DispatchQueue(
+            label: "dev.skyline23.lumen.tests.sck-source",
+            qos: .userInteractive
+        )
+        let submissionQueue = DispatchQueue(
+            label: "dev.skyline23.lumen.tests.vt-submission",
+            qos: .userInteractive,
+            attributes: .concurrent
+        )
+        let firstSubmissionPassedHandshake = DispatchSemaphore(value: 0)
+        let allowFirstActualInvocation = DispatchSemaphore(value: 0)
+        let secondActualInvocation = DispatchSemaphore(value: 0)
+        let sourceIntakeReturned = DispatchSemaphore(value: 0)
+        let submissionsCompleted = expectation(description: "serial submissions completed")
+        submissionsCompleted.expectedFulfillmentCount = 2
+        let recorder = LumenEncoderSubmissionRecorder()
+        let admission = LumenLatestFrameSerialEncoderAdmission<Int, Int>(
+            ownerQueue: sourceQueue,
+            submissionQueue: submissionQueue,
+            submit: { source, entered in
+                guard entered() else {
+                    return .cancelled
+                }
+                if source == 1 {
+                    firstSubmissionPassedHandshake.signal()
+                    allowFirstActualInvocation.wait()
+                } else {
+                    secondActualInvocation.signal()
+                }
+                recorder.append(source)
+                return .submitted(source)
+            },
+            completion: { _, _ in
+                submissionsCompleted.fulfill()
+            }
+        )
+
+        sourceQueue.async {
+            XCTAssertNil(admission.offer(1))
+        }
+        XCTAssertEqual(
+            firstSubmissionPassedHandshake.wait(timeout: .now() + 1),
+            .success
+        )
+
+        sourceQueue.async {
+            XCTAssertNil(admission.offer(2))
+            XCTAssertEqual(admission.offer(3), 2)
+            sourceIntakeReturned.signal()
+        }
+        XCTAssertEqual(sourceIntakeReturned.wait(timeout: .now() + 1), .success)
+        XCTAssertEqual(
+            secondActualInvocation.wait(timeout: .now() + 0.1),
+            .timedOut
+        )
+        allowFirstActualInvocation.signal()
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [submissionsCompleted], timeout: 1),
+            .completed
+        )
+        XCTAssertEqual(recorder.snapshot, [1, 3])
+    }
+
+    func testSerialEncoderAdmissionStopDrainsEnteredCallAndCancelsLatestPendingBeforeInvalidation() {
+        let sourceQueue = DispatchQueue(
+            label: "dev.skyline23.lumen.tests.sck-stop-source",
+            qos: .userInteractive
+        )
+        let submissionQueue = DispatchQueue(
+            label: "dev.skyline23.lumen.tests.vt-stop-submission",
+            qos: .userInteractive,
+            attributes: .concurrent
+        )
+        let activeSubmissionEntered = expectation(description: "active VT submission entered")
+        let unblockActiveSubmission = DispatchSemaphore(value: 0)
+        let drainFinished = DispatchSemaphore(value: 0)
+        let recorder = LumenEncoderSubmissionRecorder()
+        let admission = LumenLatestFrameSerialEncoderAdmission<Int, Int>(
+            ownerQueue: sourceQueue,
+            submissionQueue: submissionQueue,
+            entryHandler: { source in
+                recorder.append(source)
+            },
+            submit: { source, entered in
+                guard entered() else {
+                    return .cancelled
+                }
+                XCTAssertFalse(recorder.isInvalidated)
+                if source == 1 {
+                    activeSubmissionEntered.fulfill()
+                    unblockActiveSubmission.wait()
+                }
+                return .submitted(source)
+            },
+            completion: { _, _ in }
+        )
+
+        sourceQueue.async {
+            XCTAssertNil(admission.offer(1))
+        }
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [activeSubmissionEntered], timeout: 1),
+            .completed
+        )
+        sourceQueue.sync {
+            XCTAssertNil(admission.offer(2))
+            XCTAssertEqual(admission.beginStopping(), [2])
+        }
+
+        DispatchQueue.global(qos: .background).async {
+            admission.waitUntilSubmissionReturns()
+            sourceQueue.sync {}
+            recorder.markInvalidated()
+            drainFinished.signal()
+        }
+
+        XCTAssertEqual(drainFinished.wait(timeout: .now() + 0.1), .timedOut)
+        unblockActiveSubmission.signal()
+        XCTAssertEqual(drainFinished.wait(timeout: .now() + 1), .success)
+        XCTAssertEqual(recorder.snapshot, [1])
+        XCTAssertTrue(recorder.isInvalidated)
+    }
+
+    func testSerialEncoderAdmissionStopCancelsScheduledCallBeforeSubmissionEntry() {
+        let sourceQueue = DispatchQueue(
+            label: "dev.skyline23.lumen.tests.sck-pre-entry-stop-source",
+            qos: .userInteractive
+        )
+        let submissionQueue = DispatchQueue(
+            label: "dev.skyline23.lumen.tests.vt-pre-entry-stop-submission",
+            qos: .userInteractive
+        )
+        let submissionScheduled = DispatchSemaphore(value: 0)
+        let allowSubmissionEntry = DispatchSemaphore(value: 0)
+        let recorder = LumenEncoderSubmissionRecorder()
+        let admission = LumenLatestFrameSerialEncoderAdmission<Int, Int>(
+            ownerQueue: sourceQueue,
+            submissionQueue: submissionQueue,
+            entryHandler: { source in
+                recorder.append(source)
+            },
+            submit: { source, entered in
+                submissionScheduled.signal()
+                allowSubmissionEntry.wait()
+                guard entered() else {
+                    return .cancelled
+                }
+                return .submitted(source)
+            },
+            completion: { _, _ in }
+        )
+
+        sourceQueue.async {
+            XCTAssertNil(admission.offer(1))
+        }
+        XCTAssertEqual(submissionScheduled.wait(timeout: .now() + 1), .success)
+        sourceQueue.sync {
+            XCTAssertEqual(admission.beginStopping(), [1])
+        }
+        allowSubmissionEntry.signal()
+        admission.waitUntilSubmissionReturns()
+        sourceQueue.sync {}
+
+        XCTAssertEqual(recorder.snapshot, [])
+    }
+
+    func testVideoToolboxStopLifecycleDrainsOutputProcessingBeforeInvalidationAndStoppedEvent() async {
+        let outputQueue = DispatchQueue(
+            label: "dev.skyline23.lumen.tests.vt-output",
+            qos: .userInteractive
+        )
+        let lifecycle = LumenVideoToolboxOutputLifecycle<String>(
+            ownerQueue: outputQueue
+        )
+        let recorder = LumenStopLifecycleRecorder()
+        outputQueue.sync {
+            lifecycle.registerSubmission(id: 1, context: "frame-1")
+        }
+
+        await lifecycle.completeAndInvalidate(
+            completeFrames: {
+                recorder.append("complete-frames")
+                lifecycle.enqueueOutput(id: 1) { context in
+                    guard let context else {
+                        XCTFail("Registered output context was lost")
+                        return
+                    }
+                    recorder.append("output-processed-\(context)")
+                }
+                return noErr
+            },
+            invalidate: {
+                recorder.append("invalidated")
+            },
+            completionFailure: { _, _ in
+                XCTFail("Successful completion must not cancel output ownership")
+            }
+        )
+        recorder.append("stopped")
+
+        XCTAssertEqual(
+            recorder.snapshot,
+            [
+                "complete-frames",
+                "output-processed-frame-1",
+                "invalidated",
+                "stopped",
+            ]
+        )
+    }
+
+    func testVideoToolboxStopLifecycleCancelsOutstandingContextsWhenCompleteFramesFails() async {
+        let outputQueue = DispatchQueue(
+            label: "dev.skyline23.lumen.tests.vt-output-failure",
+            qos: .userInteractive
+        )
+        let lifecycle = LumenVideoToolboxOutputLifecycle<String>(
+            ownerQueue: outputQueue
+        )
+        let recorder = LumenStopLifecycleRecorder()
+        let completeFramesFailure = OSStatus(-12903)
+        outputQueue.sync {
+            lifecycle.registerSubmission(id: 1, context: "frame-1")
+            lifecycle.registerSubmission(id: 2, context: "frame-2")
+        }
+
+        await lifecycle.completeAndInvalidate(
+            completeFrames: {
+                recorder.append("complete-frames")
+                return completeFramesFailure
+            },
+            invalidate: {
+                recorder.append("invalidated")
+            },
+            completionFailure: { status, contexts in
+                recorder.append(
+                    "completion-failed-\(status)-\(contexts.sorted().joined(separator: ","))"
+                )
+            }
+        )
+        lifecycle.enqueueOutput(id: 1) { context in
+            guard let context else {
+                return
+            }
+            recorder.append("late-output-\(context)")
+        }
+        outputQueue.sync {}
+
+        XCTAssertEqual(
+            recorder.snapshot,
+            [
+                "complete-frames",
+                "invalidated",
+                "completion-failed--12903-frame-1,frame-2",
+            ]
+        )
+    }
+
+    func testSessionRecoveryFencesCompleteFramesTerminationReentryFromFailedRuntimeStop() async throws {
+        let restarted = expectation(description: "one restart decision")
+        restarted.assertForOverFulfill = true
+        let replacementStarted = expectation(
+            description: "one replacement runtime started"
+        )
+        replacementStarted.assertForOverFulfill = true
+        let eventRecorder = LumenEncodedCaptureEventRecorder()
+        let runtimeFactory = LumenReentrantTerminationRuntimeFactory(
+            replacementStarted: {
+                replacementStarted.fulfill()
+            }
+        )
+        let session = LumenEncodedCaptureSession(
+            configuration: .panelNative(displayID: 118),
+            runtimeFactory: runtimeFactory
+        )
+
+        try await session.start(
+            callbacks: .init(
+                frameHandler: { _ in },
+                eventHandler: { event in
+                    eventRecorder.append(event)
+                    if event.kind == .restarted {
+                        restarted.fulfill()
+                    }
+                }
+            )
+        )
+        runtimeFactory.terminateOriginalRuntime()
+
+        await fulfillment(
+            of: [
+                restarted,
+                replacementStarted,
+            ],
+            timeout: 2
+        )
+        await session.stop()
+
+        XCTAssertEqual(runtimeFactory.makeCount, 2)
+        XCTAssertEqual(runtimeFactory.startCount(for: 1), 1)
+        XCTAssertEqual(runtimeFactory.stopCount(for: 1), 1)
+        XCTAssertEqual(runtimeFactory.startCount(for: 2), 1)
+        XCTAssertEqual(runtimeFactory.stopCount(for: 2), 1)
+        XCTAssertEqual(
+            eventRecorder.snapshot.filter { $0.kind == .restarted }.count,
+            1
+        )
+        XCTAssertEqual(
+            eventRecorder.snapshot.filter {
+                $0.kind == .failed &&
+                    $0.stopStatus ==
+                    LumenReentrantTerminationRuntimeFactory
+                    .completeFramesFailureStatus
+            }.count,
+            0
+        )
+    }
+
+    func testSessionStopFencesLateReplacementStartAndStopsItAfterSuspension() async throws {
+        let replacementStartEntered = expectation(
+            description: "replacement start entered"
+        )
+        replacementStartEntered.assertForOverFulfill = true
+        let lateStartedRuntimeStopped = expectation(
+            description: "late-started replacement stopped"
+        )
+        lateStartedRuntimeStopped.assertForOverFulfill = true
+        let replacementStartGate = LumenCaptureRuntimeStartGate()
+        let runtimeFactory = LumenReentrantTerminationRuntimeFactory(
+            replacementStarted: {
+                replacementStartEntered.fulfill()
+            },
+            replacementStartGate: replacementStartGate,
+            lateStartedRuntimeStopped: {
+                lateStartedRuntimeStopped.fulfill()
+            }
+        )
+        let session = LumenEncodedCaptureSession(
+            configuration: .panelNative(displayID: 118),
+            runtimeFactory: runtimeFactory
+        )
+
+        try await session.start(
+            callbacks: .init(
+                frameHandler: { _ in },
+                eventHandler: nil
+            )
+        )
+        runtimeFactory.terminateOriginalRuntime()
+        await fulfillment(of: [replacementStartEntered], timeout: 2)
+
+        let stopTask = Task { await session.stop() }
+        await replacementStartGate.release()
+        await fulfillment(of: [lateStartedRuntimeStopped], timeout: 2)
+        _ = await stopTask.value
+
+        XCTAssertEqual(runtimeFactory.makeCount, 2)
+        XCTAssertEqual(runtimeFactory.startCount(for: 2), 1)
+        XCTAssertEqual(runtimeFactory.stopCount(for: 2), 1)
+        XCTAssertFalse(runtimeFactory.isRunning(runtimeID: 2))
+    }
+
     func testSystemAudioJoinsTheActiveVideoStreamForTheSameDisplay() throws {
         let configuration = LumenMacAudioCaptureConfiguration.systemOutput(displayID: 118)
 
+        XCTAssertEqual(configuration.frameSize, 240)
+        guard case .systemOutput(
+            _,
+            let excludesCurrentProcessAudio
+        ) = configuration.source else {
+            return XCTFail("Expected a system-output source")
+        }
+        XCTAssertTrue(excludesCurrentProcessAudio)
         let route = try LumenSystemAudioCaptureRoute.resolve(
             configuration: configuration,
             activeVideoDisplayID: 118
@@ -55,52 +439,6 @@ final class LumenTuistBootstrapTests: XCTestCase {
                 "System audio display 119 does not match active video display 118."
             )
         }
-    }
-
-    func testSharedAudioRegistrationPreservesVideoOutputOwnershipForLaterFrames() throws {
-        var ownership = LumenScreenCaptureOutputOwnership()
-
-        ownership.registerScreenOutput(streamIdentity: 0x118)
-        try ownership.attachSharedAudioOutput(streamIdentity: 0x118)
-        try ownership.markCaptureStarted(streamIdentity: 0x118)
-        try ownership.recordScreenSample(streamIdentity: 0x118)
-        try ownership.recordScreenSample(streamIdentity: 0x118)
-        try ownership.recordScreenSample(streamIdentity: 0x118)
-
-        XCTAssertEqual(ownership.stage, .sharedAudioRegistered)
-        XCTAssertEqual(ownership.screenSampleCount, 3)
-        XCTAssertThrowsError(
-            try ownership.attachSharedAudioOutput(streamIdentity: 0x119)
-        ) { error in
-            XCTAssertEqual(
-                error as? LumenScreenCaptureOutputOwnershipError,
-                .streamIdentityMismatch
-            )
-        }
-    }
-
-    func testSharedSystemAudioIsConfiguredBeforeScreenCaptureStarts() throws {
-        let audio = LumenMacAudioCaptureConfiguration.systemOutput(
-            displayID: 120,
-            sampleRate: 48_000,
-            channelCount: 2,
-            frameSize: 240,
-            excludesCurrentProcessAudio: true
-        )
-        let preparation = try LumenScreenCaptureSystemAudioPreparation(
-            configuration: audio,
-            videoDisplayID: 120
-        )
-        let streamConfiguration = SCStreamConfiguration()
-
-        preparation.apply(to: streamConfiguration)
-
-        XCTAssertTrue(streamConfiguration.capturesAudio)
-        XCTAssertEqual(streamConfiguration.sampleRate, 48_000)
-        XCTAssertEqual(streamConfiguration.channelCount, 2)
-        XCTAssertTrue(streamConfiguration.excludesCurrentProcessAudio)
-        XCTAssertTrue(preparation.accepts(audio))
-        XCTAssertFalse(preparation.accepts(.systemOutput(displayID: 120, channelCount: 6)))
     }
 
     func testLegacyVisualFirstCoordinatorStillPreservesTypedBoundaries() async throws {
@@ -721,7 +1059,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
     }
 
     func testBridgeForwardsSyntheticSampleBufferIntoSwiftIngress() async throws {
-        let runtime = LumenBridgeRuntime()
+        let runtime = makeTestBridgeRuntime()
         await runtime.debugResetVideoForwarding()
         let sampleBuffer = try Self.makeEncodedSampleBuffer(
             payload: Data([0xAA, 0xBB, 0xCC]),
@@ -759,7 +1097,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
     }
 
     func testBridgeForwardingRequiresFreshKeyFrameAfterCapacityOverflow() async throws {
-        let runtime = LumenBridgeRuntime()
+        let runtime = makeTestBridgeRuntime()
         await runtime.debugResetVideoForwarding()
         await runtime.configureVideoForwarding(frameCapacity: 1, eventCapacity: 1)
 
@@ -807,7 +1145,7 @@ final class LumenTuistBootstrapTests: XCTestCase {
     }
 
     func testBridgeForwardingDropsDependentsUntilRecoveryKeyFrame() async throws {
-        let runtime = LumenBridgeRuntime()
+        let runtime = makeTestBridgeRuntime()
         await runtime.debugResetVideoForwarding()
         await runtime.configureVideoForwarding(frameCapacity: 1, eventCapacity: 2)
 
@@ -860,6 +1198,293 @@ private enum LumenConcurrentCaptureStartupTestError: LocalizedError {
 
     var errorDescription: String? {
         "test failure"
+    }
+}
+
+private final class LumenEncoderSubmissionRecorder: @unchecked Sendable {
+    private let queue = DispatchQueue(label: "dev.skyline23.lumen.tests.encoder-recorder")
+    private var values: [Int] = []
+    private var invalidated = false
+
+    func append(_ value: Int) {
+        queue.sync {
+            values.append(value)
+        }
+    }
+
+    var snapshot: [Int] {
+        queue.sync {
+            values
+        }
+    }
+
+    func markInvalidated() {
+        queue.sync {
+            invalidated = true
+        }
+    }
+
+    var isInvalidated: Bool {
+        queue.sync {
+            invalidated
+        }
+    }
+}
+
+private final class LumenStopLifecycleRecorder: @unchecked Sendable {
+    private let queue = DispatchQueue(label: "dev.skyline23.lumen.tests.stop-recorder")
+    private var values: [String] = []
+
+    func append(_ value: String) {
+        queue.sync {
+            values.append(value)
+        }
+    }
+
+    var snapshot: [String] {
+        queue.sync {
+            values
+        }
+    }
+}
+
+private final class LumenEncodedCaptureEventRecorder: @unchecked Sendable {
+    private let queue = DispatchQueue(
+        label: "dev.skyline23.lumen.tests.capture-event-recorder"
+    )
+    private var events: [LumenEncodedCaptureSessionEvent] = []
+
+    func append(_ event: LumenEncodedCaptureSessionEvent) {
+        queue.sync {
+            events.append(event)
+        }
+    }
+
+    var snapshot: [LumenEncodedCaptureSessionEvent] {
+        queue.sync {
+            events
+        }
+    }
+}
+
+private final class LumenReentrantTerminationRuntimeFactory:
+    LumenEncodedCaptureRuntimeFactory,
+    @unchecked Sendable
+{
+    static let completeFramesFailureStatus = OSStatus(-12903)
+
+    private struct State {
+        var makeCount = 0
+        var startCounts: [Int: Int] = [:]
+        var stopCounts: [Int: Int] = [:]
+        var contexts: [Int: LumenEncodedCaptureRuntimeContext] = [:]
+        var didEmitTeardownFailure = false
+        var runningRuntimeIDs: Set<Int> = []
+    }
+
+    private let queue = DispatchQueue(
+        label: "dev.skyline23.lumen.tests.reentrant-runtime-factory"
+    )
+    private let replacementStarted: @Sendable () -> Void
+    private let replacementStartGate: LumenCaptureRuntimeStartGate?
+    private let lateStartedRuntimeStopped: @Sendable () -> Void
+    private let runtimeStartedLatch = LumenCaptureRuntimeStartedLatch()
+    private var state = State()
+
+    init(
+        replacementStarted: @escaping @Sendable () -> Void,
+        replacementStartGate: LumenCaptureRuntimeStartGate? = nil,
+        lateStartedRuntimeStopped: @escaping @Sendable () -> Void = {}
+    ) {
+        self.replacementStarted = replacementStarted
+        self.replacementStartGate = replacementStartGate
+        self.lateStartedRuntimeStopped = lateStartedRuntimeStopped
+    }
+
+    var makeCount: Int {
+        queue.sync {
+            state.makeCount
+        }
+    }
+
+    func startCount(for runtimeID: Int) -> Int {
+        queue.sync {
+            state.startCounts[runtimeID, default: 0]
+        }
+    }
+
+    func stopCount(for runtimeID: Int) -> Int {
+        queue.sync {
+            state.stopCounts[runtimeID, default: 0]
+        }
+    }
+
+    func isRunning(runtimeID: Int) -> Bool {
+        queue.sync {
+            state.runningRuntimeIDs.contains(runtimeID)
+        }
+    }
+
+    func makeRuntime(
+        context: LumenEncodedCaptureRuntimeContext
+    ) throws -> any LumenEncodedCaptureRuntime {
+        let runtimeID = queue.sync {
+            state.makeCount += 1
+            let runtimeID = state.makeCount
+            state.contexts[runtimeID] = context
+            return runtimeID
+        }
+        return LumenReentrantTerminationRuntime(
+            runtimeID: runtimeID,
+            factory: self
+        )
+    }
+
+    func terminateOriginalRuntime() {
+        let handler = queue.sync {
+            state.contexts[1]?.terminationHandler
+        }
+        handler?(LumenCaptureRecoveryTestError.originalTermination)
+    }
+
+    fileprivate func start(runtimeID: Int) async {
+        queue.sync {
+            state.startCounts[runtimeID, default: 0] += 1
+        }
+        if runtimeID > 1 {
+            replacementStarted()
+            if let replacementStartGate {
+                await replacementStartGate.wait()
+            }
+        }
+        _ = queue.sync {
+            state.runningRuntimeIDs.insert(runtimeID)
+        }
+        await runtimeStartedLatch.markStarted(runtimeID: runtimeID)
+    }
+
+    fileprivate func stop(runtimeID: Int) async {
+        let mustWaitForStartedRuntime = queue.sync {
+            state.startCounts[runtimeID, default: 0] > 0 &&
+                !state.runningRuntimeIDs.contains(runtimeID)
+        }
+        if mustWaitForStartedRuntime {
+            await runtimeStartedLatch.waitUntilStarted(
+                runtimeID: runtimeID
+            )
+        }
+        let (
+            failureContext,
+            stoppedRunningRuntime
+        ): (LumenEncodedCaptureRuntimeContext?, Bool) = queue.sync {
+            state.stopCounts[runtimeID, default: 0] += 1
+            let stoppedRunningRuntime =
+                state.runningRuntimeIDs.remove(runtimeID) != nil
+            guard runtimeID == 1,
+                  !state.didEmitTeardownFailure else {
+                return (nil, stoppedRunningRuntime)
+            }
+            state.didEmitTeardownFailure = true
+            return (state.contexts[runtimeID], stoppedRunningRuntime)
+        }
+        if runtimeID > 1, stoppedRunningRuntime {
+            lateStartedRuntimeStopped()
+        }
+        guard let failureContext else {
+            return
+        }
+
+        let error = LumenScreenCaptureError
+            .compressionFrameCompletionFailed(
+                Self.completeFramesFailureStatus
+            )
+        failureContext.callbacks.eventHandler?(.init(
+            kind: .failed,
+            message: error.localizedDescription,
+            stopStatus: Self.completeFramesFailureStatus
+        ))
+        failureContext.terminationHandler(error)
+        for _ in 0..<256 {
+            await Task.yield()
+        }
+    }
+}
+
+private final class LumenReentrantTerminationRuntime:
+    LumenEncodedCaptureRuntime,
+    @unchecked Sendable
+{
+    private let runtimeID: Int
+    private let factory: LumenReentrantTerminationRuntimeFactory
+
+    init(
+        runtimeID: Int,
+        factory: LumenReentrantTerminationRuntimeFactory
+    ) {
+        self.runtimeID = runtimeID
+        self.factory = factory
+    }
+
+    func start() async throws {
+        await factory.start(runtimeID: runtimeID)
+    }
+
+    func stop() async {
+        await factory.stop(runtimeID: runtimeID)
+    }
+
+    func requestImmediateKeyFrame() {}
+
+    func resumeVideoEncodingAfterCodecAck() async -> Bool {
+        true
+    }
+}
+
+private enum LumenCaptureRecoveryTestError: Error {
+    case originalTermination
+}
+
+private actor LumenCaptureRuntimeStartedLatch {
+    private var startedRuntimeIDs: Set<Int> = []
+    private var waiters: [Int: [CheckedContinuation<Void, Never>]] = [:]
+
+    func markStarted(runtimeID: Int) {
+        startedRuntimeIDs.insert(runtimeID)
+        let continuations = waiters.removeValue(forKey: runtimeID) ?? []
+        continuations.forEach { $0.resume() }
+    }
+
+    func waitUntilStarted(runtimeID: Int) async {
+        guard !startedRuntimeIDs.contains(runtimeID) else {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            if startedRuntimeIDs.contains(runtimeID) {
+                continuation.resume()
+            } else {
+                waiters[runtimeID, default: []].append(continuation)
+            }
+        }
+    }
+}
+
+private actor LumenCaptureRuntimeStartGate {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var isReleased = false
+
+    func wait() async {
+        guard !isReleased else {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func release() {
+        isReleased = true
+        continuation?.resume()
+        continuation = nil
     }
 }
 
