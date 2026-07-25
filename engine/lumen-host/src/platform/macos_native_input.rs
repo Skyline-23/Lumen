@@ -1,6 +1,9 @@
 use std::collections::{HashMap, HashSet};
+use std::ffi::{c_char, c_void};
+use std::mem::transmute;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use core_graphics::display::CGDisplay;
 use core_graphics::event::{
@@ -15,6 +18,22 @@ use crate::{PlatformNativeInputEvent, PlatformNativeMotionEvent};
 
 static POST_EVENT_ACCESS_REQUESTED: AtomicBool = AtomicBool::new(false);
 const MAX_NATIVE_INPUT_RESET_ATTEMPTS: usize = 2;
+#[cfg(test)]
+const DEFAULT_DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
+// The wire protocol carries button edges, not a click count. CoreGraphics therefore needs a
+// host-side click sequence. Keep the worker's location tolerance small and axis-aligned, matching
+// macOS screen-point semantics without constructing an AppKit UI object on the QUIC worker.
+const CLICK_LOCATION_TOLERANCE_POINTS: f64 = 5.0;
+
+#[link(name = "AppKit", kind = "framework")]
+unsafe extern "C" {}
+
+#[link(name = "objc")]
+unsafe extern "C" {
+    fn objc_getClass(name: *const c_char) -> *const c_void;
+    fn sel_registerName(name: *const c_char) -> *const c_void;
+    fn objc_msgSend();
+}
 
 #[link(name = "ApplicationServices", kind = "framework")]
 unsafe extern "C" {
@@ -26,9 +45,87 @@ unsafe extern "C" {
 struct MacInputState {
     pressed_keys: HashSet<u16>,
     pressed_buttons: HashSet<u8>,
+    click_tracker: MacClickTracker,
     compositions: HashMap<u64, MacComposition>,
     scroll_remainder_x: i32,
     scroll_remainder_y: i32,
+}
+
+#[derive(Debug, Default)]
+struct MacClickTracker {
+    last_down: HashMap<u8, MacClickSample>,
+    pending: HashMap<u8, MacPendingClick>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct MacClickSample {
+    at: Instant,
+    location: CGPoint,
+    click_state: u32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct MacPendingClick {
+    at: Instant,
+    location: CGPoint,
+    click_state: u32,
+}
+
+impl MacClickTracker {
+    fn begin(&mut self, button: u8, location: CGPoint, now: Instant, interval: Duration) -> u32 {
+        let click_state = self
+            .last_down
+            .get(&button)
+            .filter(|last| {
+                now.checked_duration_since(last.at)
+                    .is_some_and(|elapsed| elapsed <= interval)
+                    && click_locations_match(last.location, location)
+            })
+            .map_or(1, |last| last.click_state.saturating_add(1));
+        self.pending.insert(
+            button,
+            MacPendingClick {
+                at: now,
+                location,
+                click_state,
+            },
+        );
+        click_state
+    }
+
+    fn pending(&self, button: u8) -> Option<u32> {
+        self.pending.get(&button).map(|click| click.click_state)
+    }
+
+    fn finish(&mut self, button: u8, click_state: u32) {
+        let pending = self
+            .pending
+            .remove(&button)
+            .expect("button click state must be pending before finish");
+        debug_assert_eq!(pending.click_state, click_state);
+        self.last_down.insert(
+            button,
+            MacClickSample {
+                at: pending.at,
+                location: pending.location,
+                click_state: pending.click_state,
+            },
+        );
+    }
+
+    fn rollback_begin(&mut self, button: u8) {
+        self.pending.remove(&button);
+    }
+
+    fn finish_reset(&mut self, button: u8) {
+        self.pending.remove(&button);
+        self.last_down.remove(&button);
+    }
+}
+
+fn click_locations_match(first: CGPoint, second: CGPoint) -> bool {
+    (first.x - second.x).abs() <= CLICK_LOCATION_TOLERANCE_POINTS
+        && (first.y - second.y).abs() <= CLICK_LOCATION_TOLERANCE_POINTS
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -49,7 +146,14 @@ struct MacPointerMotionInput {
 
 trait MacInputEventPoster: Send + Sync {
     fn post_key(&self, hid_usage: u16, pressed: bool, modifiers: u8) -> Result<(), String>;
-    fn post_button(&self, button: u8, pressed: bool) -> Result<(), String>;
+    fn pointer_location(&self) -> Result<CGPoint, String>;
+    fn post_button(
+        &self,
+        button: u8,
+        pressed: bool,
+        click_state: u32,
+        location: CGPoint,
+    ) -> Result<(), String>;
 }
 
 #[derive(Default)]
@@ -60,19 +164,34 @@ impl MacInputEventPoster for CoreGraphicsMacInputEventPoster {
         post_key_event(hid_usage, pressed, modifiers)
     }
 
-    fn post_button(&self, button: u8, pressed: bool) -> Result<(), String> {
-        post_button_event(button, pressed)
+    fn pointer_location(&self) -> Result<CGPoint, String> {
+        current_pointer_location()
+    }
+
+    fn post_button(
+        &self,
+        button: u8,
+        pressed: bool,
+        click_state: u32,
+        location: CGPoint,
+    ) -> Result<(), String> {
+        post_button_event(button, pressed, click_state, location)
     }
 }
 
 pub(crate) struct MacNativeInput {
     state: Mutex<HashMap<u32, MacInputState>>,
     poster: Arc<dyn MacInputEventPoster>,
+    click_interval_override: Option<Duration>,
 }
 
 impl Default for MacNativeInput {
     fn default() -> Self {
-        Self::with_poster(Arc::new(CoreGraphicsMacInputEventPoster))
+        Self {
+            state: Mutex::default(),
+            poster: Arc::new(CoreGraphicsMacInputEventPoster),
+            click_interval_override: None,
+        }
     }
 }
 
@@ -94,11 +213,26 @@ impl MacInputDisplayBounds {
 }
 
 impl MacNativeInput {
+    #[cfg(test)]
     fn with_poster(poster: Arc<dyn MacInputEventPoster>) -> Self {
+        Self::with_poster_and_click_interval(poster, DEFAULT_DOUBLE_CLICK_INTERVAL)
+    }
+
+    #[cfg(test)]
+    fn with_poster_and_click_interval(
+        poster: Arc<dyn MacInputEventPoster>,
+        click_interval_override: Duration,
+    ) -> Self {
         Self {
             state: Mutex::default(),
             poster,
+            click_interval_override: Some(click_interval_override),
         }
+    }
+
+    fn double_click_interval(&self) -> Result<Duration, String> {
+        self.click_interval_override
+            .map_or_else(system_double_click_interval, Ok)
     }
 
     pub(crate) fn handle(
@@ -164,13 +298,30 @@ impl MacNativeInput {
                 let was_pressed = state.pressed_buttons.contains(&button);
                 if pressed == was_pressed {
                     Ok(())
-                } else {
-                    self.poster.post_button(button, pressed)?;
-                    if pressed {
-                        state.pressed_buttons.insert(button);
-                    } else {
-                        state.pressed_buttons.remove(&button);
+                } else if pressed {
+                    let location = self.poster.pointer_location()?;
+                    let click_state = state.click_tracker.begin(
+                        button,
+                        location,
+                        Instant::now(),
+                        self.double_click_interval()?,
+                    );
+                    if let Err(error) = self.poster.post_button(button, true, click_state, location)
+                    {
+                        state.click_tracker.rollback_begin(button);
+                        return Err(error);
                     }
+                    state.pressed_buttons.insert(button);
+                    Ok(())
+                } else {
+                    let location = self.poster.pointer_location()?;
+                    let click_state = state.click_tracker.pending(button).ok_or_else(|| {
+                        format!("macOS native input button {button} has no matching click state")
+                    })?;
+                    self.poster
+                        .post_button(button, false, click_state, location)?;
+                    state.pressed_buttons.remove(&button);
+                    state.click_tracker.finish(button, click_state);
                     Ok(())
                 }
             }
@@ -284,13 +435,26 @@ impl MacNativeInput {
                 buttons.sort_unstable();
                 let mut released_buttons = Vec::new();
                 for button in buttons {
-                    match self.poster.post_button(button, false) {
-                        Ok(()) => released_buttons.push(button),
-                        Err(error) => errors.push(error),
+                    let click_state = state.click_tracker.pending(button).ok_or_else(|| {
+                        format!("macOS native input button {button} has no matching click state")
+                    });
+                    let location = self.poster.pointer_location();
+                    match (click_state, location) {
+                        (Ok(click_state), Ok(location)) => {
+                            match self
+                                .poster
+                                .post_button(button, false, click_state, location)
+                            {
+                                Ok(()) => released_buttons.push((button, click_state)),
+                                Err(error) => errors.push(error),
+                            }
+                        }
+                        (Err(error), _) | (_, Err(error)) => errors.push(error),
                     }
                 }
-                for button in released_buttons {
+                for (button, _click_state) in released_buttons {
                     state.pressed_buttons.remove(&button);
+                    state.click_tracker.finish_reset(button);
                 }
             }
 
@@ -446,11 +610,21 @@ fn post_text(text: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn post_button_event(button: u8, pressed: bool) -> Result<(), String> {
+fn current_pointer_location() -> Result<CGPoint, String> {
     let source = event_source()?;
-    let location = CGEvent::new(source.clone())
+    let location = CGEvent::new(source)
         .map_err(|_| "could not inspect the macOS pointer location".to_owned())?
         .location();
+    Ok(location)
+}
+
+fn post_button_event(
+    button: u8,
+    pressed: bool,
+    click_state: u32,
+    location: CGPoint,
+) -> Result<(), String> {
+    let source = event_source()?;
     let (event_type, mouse_button, button_number) = match (button, pressed) {
         (1, true) => (CGEventType::LeftMouseDown, CGMouseButton::Left, 0),
         (1, false) => (CGEventType::LeftMouseUp, CGMouseButton::Left, 0),
@@ -472,8 +646,32 @@ fn post_button_event(button: u8, pressed: bool) -> Result<(), String> {
         EventField::MOUSE_EVENT_BUTTON_NUMBER,
         i64::from(button_number),
     );
+    event.set_integer_value_field(EventField::MOUSE_EVENT_CLICK_STATE, i64::from(click_state));
     event.post(CGEventTapLocation::HID);
     Ok(())
+}
+
+fn system_double_click_interval() -> Result<Duration, String> {
+    const NSEVENT_CLASS: &[u8] = b"NSEvent\0";
+    const DOUBLE_CLICK_INTERVAL_SELECTOR: &[u8] = b"doubleClickInterval\0";
+    type DoubleClickIntervalMessage = unsafe extern "C" fn(*const c_void, *const c_void) -> f64;
+
+    // SAFETY: Category 8 (FFI boundary). This invokes AppKit's documented class property
+    // `+[NSEvent doubleClickInterval]`, which returns the current system double-click interval.
+    let class = unsafe { objc_getClass(NSEVENT_CLASS.as_ptr().cast()) };
+    let selector = unsafe { sel_registerName(DOUBLE_CLICK_INTERVAL_SELECTOR.as_ptr().cast()) };
+    if class.is_null() || selector.is_null() {
+        return Err("could not resolve AppKit double-click interval".to_owned());
+    }
+    // SAFETY: Category 8 (FFI boundary). `objc_msgSend` is called with the NSEvent class and a
+    // zero-argument selector whose ABI returns NSTimeInterval (a C double).
+    let send: DoubleClickIntervalMessage = unsafe { transmute(objc_msgSend as *const ()) };
+    let seconds = unsafe { send(class, selector) };
+    if !seconds.is_finite() || seconds <= 0.0 {
+        return Err("AppKit returned an invalid double-click interval".to_owned());
+    }
+    Duration::try_from_secs_f64(seconds)
+        .map_err(|_| "AppKit returned an unrepresentable double-click interval".to_owned())
 }
 
 fn event_source() -> Result<CGEventSource, String> {
@@ -629,6 +827,7 @@ fn mac_key_code(hid_usage: u16) -> Option<u16> {
 mod tests {
     use std::collections::VecDeque;
     use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
 
     use super::*;
 
@@ -642,6 +841,7 @@ mod tests {
         Button {
             button: u8,
             pressed: bool,
+            click_state: u32,
         },
     }
 
@@ -677,9 +877,195 @@ mod tests {
             })
         }
 
-        fn post_button(&self, button: u8, pressed: bool) -> Result<(), String> {
-            self.record(PostedEvent::Button { button, pressed })
+        fn pointer_location(&self) -> Result<CGPoint, String> {
+            Ok(CGPoint::new(120.0, 80.0))
         }
+
+        fn post_button(
+            &self,
+            button: u8,
+            pressed: bool,
+            click_state: u32,
+            _location: CGPoint,
+        ) -> Result<(), String> {
+            self.record(PostedEvent::Button {
+                button,
+                pressed,
+                click_state,
+            })
+        }
+    }
+
+    #[test]
+    fn click_tracker_marks_two_matching_pairs_as_single_then_double_clicks() {
+        let mut tracker = MacClickTracker::default();
+        let start = Instant::now();
+        let location = CGPoint::new(120.0, 80.0);
+        let interval = Duration::from_millis(500);
+
+        let first = tracker.begin(1, location, start, interval);
+        tracker.finish(1, first);
+        let second = tracker.begin(1, location, start + Duration::from_millis(100), interval);
+        tracker.finish(1, second);
+
+        assert_eq!(first, 1);
+        assert_eq!(second, 2);
+    }
+
+    #[test]
+    fn click_tracker_resets_after_interval_or_pointer_movement() {
+        let mut tracker = MacClickTracker::default();
+        let start = Instant::now();
+        let location = CGPoint::new(120.0, 80.0);
+        let interval = Duration::from_millis(500);
+
+        let first = tracker.begin(1, location, start, interval);
+        tracker.finish(1, first);
+        let late = tracker.begin(1, location, start + Duration::from_millis(700), interval);
+        tracker.finish(1, late);
+        let moved = tracker.begin(
+            1,
+            CGPoint::new(128.0, 80.0),
+            start + Duration::from_millis(800),
+            interval,
+        );
+
+        assert_eq!(late, 1);
+        assert_eq!(moved, 1);
+    }
+
+    #[test]
+    fn click_location_policy_applies_tolerance_per_axis() {
+        let origin = CGPoint::new(120.0, 80.0);
+
+        assert!(click_locations_match(origin, CGPoint::new(125.0, 85.0)));
+        assert!(!click_locations_match(origin, CGPoint::new(125.01, 80.0)));
+        assert!(!click_locations_match(origin, CGPoint::new(120.0, 85.01)));
+    }
+
+    #[test]
+    fn click_tracker_keeps_button_sequences_independent() {
+        let mut tracker = MacClickTracker::default();
+        let start = Instant::now();
+        let location = CGPoint::new(120.0, 80.0);
+        let interval = Duration::from_millis(500);
+
+        let left = tracker.begin(1, location, start, interval);
+        tracker.finish(1, left);
+        let right = tracker.begin(3, location, start + Duration::from_millis(30), interval);
+        tracker.finish(3, right);
+        let left_again = tracker.begin(1, location, start + Duration::from_millis(100), interval);
+
+        assert_eq!(left, 1);
+        assert_eq!(right, 1);
+        assert_eq!(left_again, 2);
+    }
+
+    #[test]
+    fn rapid_left_pairs_emit_matching_click_state_on_down_and_up() {
+        let poster = Arc::new(RecordingPoster::new([Ok(()), Ok(()), Ok(()), Ok(())]));
+        let input = MacNativeInput::with_poster_and_click_interval(
+            poster.clone(),
+            Duration::from_millis(500),
+        );
+        let press = PlatformNativeInputEvent::PointerButton {
+            pointer_id: 0,
+            button: 1,
+            pressed: true,
+        };
+        let release = PlatformNativeInputEvent::PointerButton {
+            pointer_id: 0,
+            button: 1,
+            pressed: false,
+        };
+
+        input.handle(21, press.clone()).unwrap();
+        input.handle(21, release.clone()).unwrap();
+        input.handle(21, press).unwrap();
+        input.handle(21, release).unwrap();
+
+        assert_eq!(
+            poster.events(),
+            vec![
+                PostedEvent::Button {
+                    button: 1,
+                    pressed: true,
+                    click_state: 1,
+                },
+                PostedEvent::Button {
+                    button: 1,
+                    pressed: false,
+                    click_state: 1,
+                },
+                PostedEvent::Button {
+                    button: 1,
+                    pressed: true,
+                    click_state: 2,
+                },
+                PostedEvent::Button {
+                    button: 1,
+                    pressed: false,
+                    click_state: 2,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn system_double_click_interval_is_available_from_appkit() {
+        let interval = system_double_click_interval().expect("AppKit double-click interval");
+        assert!(!interval.is_zero());
+    }
+
+    #[test]
+    fn reset_discards_click_sequence_for_reused_session_epoch() {
+        let poster = Arc::new(RecordingPoster::new([
+            Ok(()),
+            Ok(()),
+            Ok(()),
+            Ok(()),
+            Ok(()),
+        ]));
+        let input = MacNativeInput::with_poster_and_click_interval(
+            poster.clone(),
+            Duration::from_millis(500),
+        );
+        let press = PlatformNativeInputEvent::PointerButton {
+            pointer_id: 0,
+            button: 1,
+            pressed: true,
+        };
+        let release = PlatformNativeInputEvent::PointerButton {
+            pointer_id: 0,
+            button: 1,
+            pressed: false,
+        };
+
+        input.handle(22, press.clone()).unwrap();
+        input.handle(22, release.clone()).unwrap();
+        input.reset(22).unwrap();
+        input.handle(22, press).unwrap();
+
+        assert_eq!(
+            poster.events(),
+            vec![
+                PostedEvent::Button {
+                    button: 1,
+                    pressed: true,
+                    click_state: 1,
+                },
+                PostedEvent::Button {
+                    button: 1,
+                    pressed: false,
+                    click_state: 1,
+                },
+                PostedEvent::Button {
+                    button: 1,
+                    pressed: true,
+                    click_state: 1,
+                },
+            ]
+        );
     }
 
     #[test]
@@ -713,18 +1099,22 @@ mod tests {
                 PostedEvent::Button {
                     button: 1,
                     pressed: true,
+                    click_state: 1,
                 },
                 PostedEvent::Button {
                     button: 1,
                     pressed: false,
+                    click_state: 1,
                 },
                 PostedEvent::Button {
                     button: 1,
                     pressed: false,
+                    click_state: 1,
                 },
                 PostedEvent::Button {
                     button: 1,
                     pressed: false,
+                    click_state: 1,
                 },
             ]
         );
@@ -802,6 +1192,7 @@ mod tests {
             vec![PostedEvent::Button {
                 button: 1,
                 pressed: true,
+                click_state: 1,
             }]
         );
     }
@@ -837,18 +1228,22 @@ mod tests {
                 PostedEvent::Button {
                     button: 1,
                     pressed: true,
+                    click_state: 1,
                 },
                 PostedEvent::Button {
                     button: 1,
                     pressed: false,
+                    click_state: 1,
                 },
                 PostedEvent::Button {
                     button: 1,
                     pressed: false,
+                    click_state: 1,
                 },
                 PostedEvent::Button {
                     button: 1,
                     pressed: false,
+                    click_state: 1,
                 },
             ]
         );
@@ -891,6 +1286,7 @@ mod tests {
                 PostedEvent::Button {
                     button: 1,
                     pressed: true,
+                    click_state: 1,
                 },
                 PostedEvent::Key {
                     hid_usage: 0x04,
@@ -900,10 +1296,12 @@ mod tests {
                 PostedEvent::Button {
                     button: 1,
                     pressed: false,
+                    click_state: 1,
                 },
                 PostedEvent::Button {
                     button: 1,
                     pressed: false,
+                    click_state: 1,
                 },
             ]
         );
