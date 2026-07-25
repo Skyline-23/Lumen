@@ -18,6 +18,44 @@ private func makeTestBridgeRuntime() -> LumenBridgeRuntime {
 }
 
 final class LumenTuistBootstrapTests: XCTestCase {
+    func testCaptureIngressTimingsExposeWindowServerCadenceAndCallbackDelay() throws {
+        var timings = LumenCaptureIngressTimings()
+        let firstDisplay = try XCTUnwrap(
+            LumenMachTime.ticks(for: CMTime(seconds: 1, preferredTimescale: 120_000))
+        )
+        let frameInterval = try XCTUnwrap(
+            LumenMachTime.ticks(for: CMTime(value: 1, timescale: 120))
+        )
+        let callbackDelay = try XCTUnwrap(
+            LumenMachTime.ticks(for: CMTime(value: 2, timescale: 1_000))
+        )
+
+        timings.observe(
+            displayedMachTime: firstDisplay,
+            callbackMachTime: firstDisplay + callbackDelay
+        )
+        timings.observe(
+            displayedMachTime: firstDisplay + frameInterval,
+            callbackMachTime: firstDisplay + frameInterval + callbackDelay
+        )
+        timings.observe(
+            displayedMachTime: firstDisplay,
+            callbackMachTime: firstDisplay + (2 * frameInterval) + callbackDelay
+        )
+
+        XCTAssertEqual(timings.displayInterval.sampleCount, 1)
+        XCTAssertEqual(timings.displayToCallback.sampleCount, 3)
+        XCTAssertTrue(
+            timings.diagnosticNotes.contains("sourceDisplayApproxFrameRate=120.00")
+        )
+        XCTAssertTrue(
+            timings.diagnosticNotes.contains("sourceDisplayIntervalSampleCount=1")
+        )
+        XCTAssertTrue(
+            timings.diagnosticNotes.contains("sourceDisplayToCallbackSampleCount=3")
+        )
+    }
+
     func testBootstrapGateSubmitsOneKeyFrameThenCoalescesUntilDecoded() {
         var gate = LumenVideoBootstrapAdmissionGate()
 

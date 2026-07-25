@@ -364,6 +364,104 @@ public struct LumenEncodedCaptureSessionStatistics: Equatable, Sendable {
     var exactCaptureAudit = LumenExactCaptureAuditSnapshot()
 }
 
+struct LumenCaptureStageTimingAccumulator: Equatable, Sendable {
+    private(set) var sampleCount: UInt64 = 0
+    private(set) var totalMilliseconds = 0.0
+    private(set) var minimumMilliseconds: Double?
+    private(set) var maximumMilliseconds: Double?
+
+    var averageMilliseconds: Double? {
+        guard sampleCount > 0 else { return nil }
+        return totalMilliseconds / Double(sampleCount)
+    }
+
+    mutating func observe(_ milliseconds: Double) {
+        guard milliseconds.isFinite, milliseconds >= 0 else { return }
+        sampleCount &+= 1
+        totalMilliseconds += milliseconds
+        minimumMilliseconds = min(minimumMilliseconds ?? milliseconds, milliseconds)
+        maximumMilliseconds = max(maximumMilliseconds ?? milliseconds, milliseconds)
+    }
+}
+
+struct LumenCaptureIngressTimings: Equatable, Sendable {
+    private var previousDisplayMachTime: UInt64?
+    private(set) var displayInterval = LumenCaptureStageTimingAccumulator()
+    private(set) var displayToCallback = LumenCaptureStageTimingAccumulator()
+
+    mutating func observe(
+        displayedMachTime: UInt64?,
+        callbackMachTime: UInt64
+    ) {
+        guard let displayedMachTime,
+              displayedMachTime <= callbackMachTime else {
+            return
+        }
+        displayToCallback.observe(
+            LumenMachTime.milliseconds(
+                from: displayedMachTime,
+                to: callbackMachTime
+            )
+        )
+        guard let previousDisplayMachTime else {
+            self.previousDisplayMachTime = displayedMachTime
+            return
+        }
+        guard displayedMachTime > previousDisplayMachTime else {
+            return
+        }
+        displayInterval.observe(
+            LumenMachTime.milliseconds(
+                from: previousDisplayMachTime,
+                to: displayedMachTime
+            )
+        )
+        self.previousDisplayMachTime = displayedMachTime
+    }
+
+    var diagnosticNotes: [String] {
+        var notes = lumenCaptureTimingNotes(
+            prefix: "sourceDisplayInterval",
+            timing: displayInterval
+        )
+        notes.append(
+            "sourceDisplayApproxFrameRate=\(lumenApproximateFrameRate(displayInterval))"
+        )
+        notes.append(contentsOf: lumenCaptureTimingNotes(
+            prefix: "sourceDisplayToCallback",
+            timing: displayToCallback
+        ))
+        return notes
+    }
+}
+
+func lumenCaptureTimingNotes(
+    prefix: String,
+    timing: LumenCaptureStageTimingAccumulator
+) -> [String] {
+    [
+        "\(prefix)SampleCount=\(timing.sampleCount)",
+        "\(prefix)AverageMilliseconds=\(lumenFormattedTiming(timing.averageMilliseconds))",
+        "\(prefix)MinimumMilliseconds=\(lumenFormattedTiming(timing.minimumMilliseconds))",
+        "\(prefix)MaximumMilliseconds=\(lumenFormattedTiming(timing.maximumMilliseconds))"
+    ]
+}
+
+private func lumenFormattedTiming(_ value: Double?) -> String {
+    guard let value else { return "n/a" }
+    return String(format: "%.3f", value)
+}
+
+private func lumenApproximateFrameRate(
+    _ timing: LumenCaptureStageTimingAccumulator
+) -> String {
+    guard let averageMilliseconds = timing.averageMilliseconds,
+          averageMilliseconds > 0 else {
+        return "n/a"
+    }
+    return String(format: "%.2f", 1_000 / averageMilliseconds)
+}
+
 struct LumenExactCaptureAuditSnapshot: Codable, Equatable, Sendable {
     var inputFourCC: String?
     var lumaPlaneWidth: Int?
@@ -706,11 +804,13 @@ final class LumenVideoToolboxOutputLifecycle<Context: Sendable>: @unchecked Send
 private struct LumenVideoEncoderSubmission: Sendable {
     let source: LumenPendingVideoBootstrapSource
     let forceKeyFrame: Bool
+    let offeredMachTime: UInt64
 }
 
 private struct LumenVideoEncoderSubmissionResult: Sendable {
     let status: OSStatus
     let infoFlags: VTEncodeInfoFlags
+    let invocationMilliseconds: Double
 }
 
 private func writeScreenCaptureStartupDiagnostic(_ message: String) {
@@ -1748,6 +1848,14 @@ private final class LumenScreenCaptureVideoRuntime:
     private var sourceIntervalSampleCount: UInt64 = 0
     private var outputIntervalTotalMilliseconds = 0.0
     private var outputIntervalSampleCount: UInt64 = 0
+    private var captureIngressTimings = LumenCaptureIngressTimings()
+    private var sourceCallbackServiceTiming = LumenCaptureStageTimingAccumulator()
+    private var encoderAdmissionWaitTiming = LumenCaptureStageTimingAccumulator()
+    private var encoderInvocationTiming = LumenCaptureStageTimingAccumulator()
+    private var videoToolboxCallbackTiming = LumenCaptureStageTimingAccumulator()
+    private var outputOwnerQueueWaitTiming = LumenCaptureStageTimingAccumulator()
+    private var outputServiceTiming = LumenCaptureStageTimingAccumulator()
+    private var frameHandlerTiming = LumenCaptureStageTimingAccumulator()
     private var outputWidth = 0
     private var outputHeight = 0
     private var sourceColorContractStatus = "not-required"
@@ -2131,6 +2239,11 @@ private final class LumenScreenCaptureVideoRuntime:
             return
         }
 
+        let callbackEntryMachTime = beginSourceCallback(sampleBuffer)
+        defer {
+            finishSourceCallback(startedAt: callbackEntryMachTime)
+        }
+
         do {
             try outputOwnership.recordScreenSample(streamIdentity: Self.identity(of: stream))
         } catch {
@@ -2151,7 +2264,7 @@ private final class LumenScreenCaptureVideoRuntime:
         }
 
         statistics.sourceFrameCount &+= 1
-        let sourceMachTime = mach_absolute_time()
+        let sourceMachTime = callbackEntryMachTime
         if firstSourceMachTime == nil {
             firstSourceMachTime = sourceMachTime
         }
@@ -2267,7 +2380,8 @@ private final class LumenScreenCaptureVideoRuntime:
         sourceColorContractStatus = "verified"
         let submission = LumenVideoEncoderSubmission(
             source: source,
-            forceKeyFrame: forceKeyFrame
+            forceKeyFrame: forceKeyFrame,
+            offeredMachTime: mach_absolute_time()
         )
         if let replacedSubmission = encoderAdmission.offer(submission) {
             recordPendingAdmissionDrop(replacedSubmission.source)
@@ -2277,12 +2391,19 @@ private final class LumenScreenCaptureVideoRuntime:
 
     private func willSubmitToVideoToolbox(_ submission: LumenVideoEncoderSubmission) {
         let source = submission.source
+        let submissionMachTime = mach_absolute_time()
+        encoderAdmissionWaitTiming.observe(
+            LumenMachTime.milliseconds(
+                from: submission.offeredMachTime,
+                to: submissionMachTime
+            )
+        )
         outputLifecycle.registerSubmission(
             id: source.sequenceNumber,
             context: .init(
                 sequenceNumber: source.sequenceNumber,
                 displayTime: source.displayTime,
-                submissionMachTime: mach_absolute_time(),
+                submissionMachTime: submissionMachTime,
                 requiresBootstrapAcknowledgement: submission.forceKeyFrame
             )
         )
@@ -2304,7 +2425,8 @@ private final class LumenScreenCaptureVideoRuntime:
             }
             return .submitted(.init(
                 status: kVTInvalidSessionErr,
-                infoFlags: []
+                infoFlags: [],
+                invocationMilliseconds: 0
             ))
         }
 
@@ -2317,6 +2439,7 @@ private final class LumenScreenCaptureVideoRuntime:
             return .cancelled
         }
         var infoFlags: VTEncodeInfoFlags = []
+        let invocationStartedMachTime = mach_absolute_time()
         let status = VTCompressionSessionEncodeFrame(
             compressionSession,
             imageBuffer: source.imageBuffer,
@@ -2328,13 +2451,21 @@ private final class LumenScreenCaptureVideoRuntime:
             ),
             infoFlagsOut: &infoFlags
         )
-        return .submitted(.init(status: status, infoFlags: infoFlags))
+        return .submitted(.init(
+            status: status,
+            infoFlags: infoFlags,
+            invocationMilliseconds: LumenMachTime.milliseconds(
+                from: invocationStartedMachTime,
+                to: mach_absolute_time()
+            )
+        ))
     }
 
     private func didSubmitToVideoToolbox(
         _ submission: LumenVideoEncoderSubmission,
         result: LumenVideoEncoderSubmissionResult
     ) {
+        encoderInvocationTiming.observe(result.invocationMilliseconds)
         if result.status != noErr {
             if outputLifecycle.cancelSubmission(
                 id: submission.source.sequenceNumber
@@ -2405,6 +2536,35 @@ private final class LumenScreenCaptureVideoRuntime:
 
     private var maximumPendingFrameCount: Int {
         max(configuration.negotiatedQueueProfile.queueDepthHint, 1)
+    }
+
+    private func beginSourceCallback(_ sampleBuffer: CMSampleBuffer) -> UInt64 {
+        let callbackEntryMachTime = mach_absolute_time()
+        captureIngressTimings.observe(
+            displayedMachTime: screenFrameDisplayTime(sampleBuffer),
+            callbackMachTime: callbackEntryMachTime
+        )
+        return callbackEntryMachTime
+    }
+
+    private func finishSourceCallback(startedAt callbackEntryMachTime: UInt64) {
+        sourceCallbackServiceTiming.observe(
+            LumenMachTime.milliseconds(
+                from: callbackEntryMachTime,
+                to: mach_absolute_time()
+            )
+        )
+    }
+
+    private func screenFrameDisplayTime(_ sampleBuffer: CMSampleBuffer) -> UInt64? {
+        guard let attachments = CMSampleBufferGetSampleAttachmentsArray(
+            sampleBuffer,
+            createIfNecessary: false
+        ) as? [[SCStreamFrameInfo: Any]],
+        let displayTime = attachments.first?[.displayTime] as? NSNumber else {
+            return nil
+        }
+        return displayTime.uint64Value
     }
 
     private func isCompleteScreenFrame(_ sampleBuffer: CMSampleBuffer) -> Bool {
@@ -2652,7 +2812,7 @@ private final class LumenScreenCaptureVideoRuntime:
             intervalTotalMilliseconds: outputIntervalTotalMilliseconds,
             sampleCount: outputIntervalSampleCount
         )
-        return [
+        var notes = [
             "captureBackend=screen-capture-kit",
             "screenCaptureOutputRegistrationStage=\(outputOwnership.stage.rawValue)",
             "screenCaptureDisplayAdmissionMode=\(displayAdmissionMode.rawValue)",
@@ -2661,6 +2821,7 @@ private final class LumenScreenCaptureVideoRuntime:
             "screenCaptureOwnedSampleCount=\(outputOwnership.screenSampleCount)",
             "sourceCaptureSampleCount=\(statistics.sourceFrameCount)",
             "sourceApproxFrameRate=\(sourceApproxFrameRate)",
+            "sourceCallbackApproxFrameRate=\(sourceApproxFrameRate)",
             "videoToolboxTargetFrameRateHint=\(configuration.effectiveTargetFrameRate)",
             "videoToolboxEncoderInputPixelFormat=\(capturePixelFormat)",
             "videoToolboxSourcePixelFormat=\(capturePixelFormat)",
@@ -2677,9 +2838,12 @@ private final class LumenScreenCaptureVideoRuntime:
             "videoToolboxPendingAdmissionDropCount=\(statistics.pendingAdmissionDropCount)",
             "videoToolboxBootstrapGateOpen=\(videoBootstrapAdmission.isOpen)",
             "videoToolboxBootstrapPendingSource=\(pendingVideoBootstrapSource != nil)",
+            "videoToolboxCurrentInflightStagingSlots=\(inflightFrameCount)",
             "videoToolboxMaxInflightStagingSlots=\(statistics.maximumInflightFrameCount)",
             "videoToolboxOutputApproxFrameRate=\(outputApproxFrameRate)"
         ]
+        notes.append(contentsOf: captureStageTimingNotes())
+        return notes
     }
 
     private static func identity(of stream: SCStream) -> UInt {
@@ -2688,6 +2852,38 @@ private final class LumenScreenCaptureVideoRuntime:
 
     private static func elapsedMilliseconds(since start: UInt64) -> Double {
         Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000
+    }
+
+    private func captureStageTimingNotes() -> [String] {
+        captureIngressTimings.diagnosticNotes
+            + lumenCaptureTimingNotes(
+                prefix: "sourceCallbackService",
+                timing: sourceCallbackServiceTiming
+            )
+            + lumenCaptureTimingNotes(
+                prefix: "videoToolboxAdmissionWait",
+                timing: encoderAdmissionWaitTiming
+            )
+            + lumenCaptureTimingNotes(
+                prefix: "videoToolboxEncodeInvocation",
+                timing: encoderInvocationTiming
+            )
+            + lumenCaptureTimingNotes(
+                prefix: "videoToolboxEncodeToCallback",
+                timing: videoToolboxCallbackTiming
+            )
+            + lumenCaptureTimingNotes(
+                prefix: "videoToolboxOutputOwnerQueueWait",
+                timing: outputOwnerQueueWaitTiming
+            )
+            + lumenCaptureTimingNotes(
+                prefix: "videoToolboxOutputService",
+                timing: outputServiceTiming
+            )
+            + lumenCaptureTimingNotes(
+                prefix: "videoToolboxFrameHandler",
+                timing: frameHandlerTiming
+            )
     }
 
     private func refreshStatisticsNotesIfNeeded() {
@@ -2710,7 +2906,8 @@ private final class LumenScreenCaptureVideoRuntime:
         status: OSStatus,
         infoFlags: VTEncodeInfoFlags,
         sampleBuffer: CMSampleBuffer?,
-        contextPointer: UnsafeMutableRawPointer?
+        contextPointer: UnsafeMutableRawPointer?,
+        rawCallbackMachTime: UInt64
     ) {
         let sampleBufferAddress = sampleBuffer.map {
             UInt(bitPattern: Unmanaged.passRetained($0).toOpaque())
@@ -2733,7 +2930,8 @@ private final class LumenScreenCaptureVideoRuntime:
                 status: status,
                 infoFlags: infoFlags,
                 sampleBuffer: retainedSampleBuffer,
-                context: context
+                context: context,
+                rawCallbackMachTime: rawCallbackMachTime
             )
         }
     }
@@ -2742,8 +2940,30 @@ private final class LumenScreenCaptureVideoRuntime:
         status: OSStatus,
         infoFlags: VTEncodeInfoFlags,
         sampleBuffer: CMSampleBuffer?,
-        context: LumenEncodedFrameContext
+        context: LumenEncodedFrameContext,
+        rawCallbackMachTime: UInt64
     ) {
+        let outputServiceStartedMachTime = mach_absolute_time()
+        videoToolboxCallbackTiming.observe(
+            LumenMachTime.milliseconds(
+                from: context.submissionMachTime,
+                to: rawCallbackMachTime
+            )
+        )
+        outputOwnerQueueWaitTiming.observe(
+            LumenMachTime.milliseconds(
+                from: rawCallbackMachTime,
+                to: outputServiceStartedMachTime
+            )
+        )
+        defer {
+            outputServiceTiming.observe(
+                LumenMachTime.milliseconds(
+                    from: outputServiceStartedMachTime,
+                    to: mach_absolute_time()
+                )
+            )
+        }
         inflightFrameCount = max(inflightFrameCount - 1, 0)
 
         guard status == noErr,
@@ -2817,6 +3037,7 @@ private final class LumenScreenCaptureVideoRuntime:
         let formatExtensions = sampleBuffer.formatDescription.flatMap {
             CMFormatDescriptionGetExtensions($0) as? [String: Any]
         }
+        let frameHandlerStartedMachTime = mach_absolute_time()
         frameHandler(
             LumenEncodedFrame(
                 sampleBuffer: sampleBuffer,
@@ -2837,6 +3058,12 @@ private final class LumenScreenCaptureVideoRuntime:
                 )
             )
         )
+        frameHandlerTiming.observe(
+            LumenMachTime.milliseconds(
+                from: frameHandlerStartedMachTime,
+                to: mach_absolute_time()
+            )
+        )
     }
 }
 
@@ -2847,6 +3074,7 @@ private func lumenScreenCaptureCompressionOutputCallback(
     infoFlags: VTEncodeInfoFlags,
     sampleBuffer: CMSampleBuffer?
 ) {
+    let rawCallbackMachTime = mach_absolute_time()
     guard let outputCallbackRefCon else { return }
     Unmanaged<LumenScreenCaptureVideoRuntime>
         .fromOpaque(outputCallbackRefCon)
@@ -2855,7 +3083,8 @@ private func lumenScreenCaptureCompressionOutputCallback(
             status: status,
             infoFlags: infoFlags,
             sampleBuffer: sampleBuffer,
-            contextPointer: sourceFrameRefCon
+            contextPointer: sourceFrameRefCon,
+            rawCallbackMachTime: rawCallbackMachTime
         )
 }
 
@@ -2878,18 +3107,20 @@ private func auditFourCC(_ value: OSType) -> String {
     ], encoding: .ascii) ?? String(value)
 }
 
-private enum LumenMachTime {
+enum LumenMachTime {
+    private static let timebase: mach_timebase_info_data_t = {
+        var value = mach_timebase_info_data_t()
+        mach_timebase_info(&value)
+        return value
+    }()
+
     static func milliseconds(from start: UInt64, to end: UInt64) -> Double {
-        var timebase = mach_timebase_info_data_t()
-        mach_timebase_info(&timebase)
         guard timebase.denom != 0, end >= start else { return 0 }
         return Double(end - start) * Double(timebase.numer) / Double(timebase.denom) / 1_000_000
     }
 
     static func ticks(for time: CMTime) -> UInt64? {
         guard time.isValid, time.seconds.isFinite, time.seconds >= 0 else { return nil }
-        var timebase = mach_timebase_info_data_t()
-        mach_timebase_info(&timebase)
         guard timebase.numer != 0 else { return nil }
         let nanoseconds = time.seconds * 1_000_000_000
         return UInt64(nanoseconds * Double(timebase.denom) / Double(timebase.numer))
