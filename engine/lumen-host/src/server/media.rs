@@ -34,7 +34,7 @@ enum DatagramBatchMode {
 impl DatagramBatchMode {
     fn as_str(self) -> &'static str {
         match self {
-            Self::FreshEnqueue => "empty-queue-enqueue",
+            Self::FreshEnqueue => "capacity-reserved-enqueue",
             Self::DeadlineWait => "deadline-wait",
         }
     }
@@ -176,8 +176,9 @@ where
     report
 }
 
-async fn wait_for_empty_datagram_queue<Space, Wait, WaitFuture>(
+async fn wait_for_datagram_queue_capacity<Space, Wait, WaitFuture>(
     capacity: usize,
+    required_capacity: usize,
     deadline: Instant,
     mut send_buffer_space: Space,
     mut wait: Wait,
@@ -187,24 +188,29 @@ where
     Wait: FnMut(Instant) -> WaitFuture,
     WaitFuture: Future<Output = Result<(), DatagramDeadlineElapsed>>,
 {
+    if required_capacity > capacity {
+        return Err(DatagramDeadlineElapsed);
+    }
     let started = Instant::now();
     loop {
         if Instant::now() >= deadline {
             return Err(DatagramDeadlineElapsed);
         }
-        if send_buffer_space() == capacity {
+        if send_buffer_space() >= required_capacity {
             return Ok(started.elapsed());
         }
         wait(deadline).await?;
     }
 }
 
-async fn wait_for_connection_datagram_queue_empty(
+async fn wait_for_connection_datagram_queue_capacity(
     connection: &quinn::Connection,
+    required_capacity: usize,
     deadline: Instant,
 ) -> Result<Duration, DatagramDeadlineElapsed> {
-    wait_for_empty_datagram_queue(
+    wait_for_datagram_queue_capacity(
         NATIVE_MEDIA_SEND_BUFFER_BYTES,
+        required_capacity,
         deadline,
         || connection.datagram_send_buffer_space(),
         |deadline| async move {
@@ -219,23 +225,31 @@ async fn wait_for_connection_datagram_queue_empty(
 async fn send_video_datagram_batch<Barrier, BarrierFuture, Send, SendFuture>(
     datagrams: Vec<Vec<u8>>,
     send_buffer_capacity: usize,
+    queue_was_empty_before_current_audio: bool,
     deadline: Instant,
-    mut wait_for_empty: Barrier,
+    mut wait_for_capacity: Barrier,
     send: Send,
 ) -> DatagramBatchReport
 where
-    Barrier: FnMut(Instant) -> BarrierFuture,
+    Barrier: FnMut(usize, Instant) -> BarrierFuture,
     BarrierFuture: Future<Output = Result<Duration, DatagramDeadlineElapsed>>,
     Send: FnMut(DatagramBatchMode, Vec<u8>, Option<Instant>) -> SendFuture,
     SendFuture: Future<Output = DatagramSendOutcome>,
 {
-    let mode = if datagrams.iter().map(Vec::len).sum::<usize>() <= send_buffer_capacity {
+    let total_bytes = datagrams.iter().map(Vec::len).sum::<usize>();
+    let mode = if total_bytes <= send_buffer_capacity {
         DatagramBatchMode::FreshEnqueue
     } else {
         DatagramBatchMode::DeadlineWait
     };
+    let required_capacity =
+        if mode == DatagramBatchMode::FreshEnqueue && queue_was_empty_before_current_audio {
+            total_bytes
+        } else {
+            send_buffer_capacity
+        };
     let barrier_started = Instant::now();
-    let queue_wait_duration = match wait_for_empty(deadline).await {
+    let queue_wait_duration = match wait_for_capacity(required_capacity, deadline).await {
         Ok(duration) => duration,
         Err(_) => {
             return DatagramBatchReport {
@@ -245,7 +259,7 @@ where
                 mode,
                 total_datagrams: datagrams.len(),
                 sent_datagrams: 0,
-                total_bytes: datagrams.iter().map(Vec::len).sum(),
+                total_bytes,
                 queue_wait_duration: barrier_started.elapsed(),
                 send_wait_duration: Duration::ZERO,
             };
@@ -404,6 +418,8 @@ pub(super) async fn run_native_media_loop(
                 );
             }
             _ = interval.tick() => {
+                let queue_was_empty_before_audio =
+                    connection.datagram_send_buffer_space() == NATIVE_MEDIA_SEND_BUFFER_BYTES;
                 let audio_attempt = poll_and_send_audio(
                     &connection,
                     &router,
@@ -416,6 +432,7 @@ pub(super) async fn run_native_media_loop(
                     &router,
                     platform.as_ref(),
                     &mut video,
+                    queue_was_empty_before_audio,
                 ).await;
                 failures.observe(MediaKind::Video, &video_attempt, platform.as_ref());
                 if let MediaAttempt::Terminal(failure) = video_attempt {
@@ -769,6 +786,7 @@ async fn poll_and_send_video(
     router: &SharedControlRouter,
     platform: &dyn PlatformSessionControl,
     sender: &mut VideoSenderState,
+    queue_was_empty_before_current_audio: bool,
 ) -> MediaAttempt {
     let Some(delivery) = router
         .lock()
@@ -986,8 +1004,11 @@ async fn poll_and_send_video(
     let report = send_video_datagram_batch(
         packetized.datagrams,
         NATIVE_MEDIA_SEND_BUFFER_BYTES,
+        queue_was_empty_before_current_audio,
         deadline,
-        |deadline| wait_for_connection_datagram_queue_empty(connection, deadline),
+        |required_capacity, deadline| {
+            wait_for_connection_datagram_queue_capacity(connection, required_capacity, deadline)
+        },
         |mode, datagram, deadline| send_connection_datagram(connection, mode, datagram, deadline),
     )
     .await;
@@ -1129,7 +1150,7 @@ fn object_deadline_exceeded(age: Duration, maximum_object_delay_us: u32) -> bool
 mod tests {
     use super::{
         classify_video_bootstrap, object_deadline_exceeded, send_datagram_batch,
-        send_video_datagram_batch, wait_for_datagram_deadline, wait_for_empty_datagram_queue,
+        send_video_datagram_batch, wait_for_datagram_deadline, wait_for_datagram_queue_capacity,
         DatagramBatchDropReason, DatagramBatchMode, DatagramBatchStatus, DatagramDeadlineElapsed,
         DatagramSendOutcome, VideoSenderState,
     };
@@ -1229,7 +1250,8 @@ mod tests {
         let wait_dropped = Arc::clone(&dropped);
         let deadline = Instant::now() + Duration::from_millis(2);
 
-        let result = wait_for_empty_datagram_queue(
+        let result = wait_for_datagram_queue_capacity(
+            12,
             12,
             deadline,
             || 8,
@@ -1250,6 +1272,88 @@ mod tests {
         assert_eq!(result, Err(DatagramDeadlineElapsed));
         assert!(polls.load(Ordering::SeqCst) > 0);
         assert!(dropped.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn available_capacity_admits_complete_video_object_without_draining_audio() {
+        let queued = Rc::new(RefCell::new((4_usize, VecDeque::from([vec![9_u8; 4]]))));
+        let requested = Rc::new(Cell::new(0));
+        let barrier_queue = Rc::clone(&queued);
+        let requested_capacity = Rc::clone(&requested);
+        let send_queue = Rc::clone(&queued);
+        let report = send_video_datagram_batch(
+            vec![vec![1; 4], vec![2; 4]],
+            12,
+            true,
+            Instant::now() + Duration::from_secs(1),
+            move |required_capacity, deadline| {
+                requested_capacity.set(required_capacity);
+                let queued = Rc::clone(&barrier_queue);
+                async move {
+                    wait_for_datagram_queue_capacity(
+                        12,
+                        required_capacity,
+                        deadline,
+                        || 12 - queued.borrow().0,
+                        |_| async {
+                            panic!("complete video object already fits beside queued audio")
+                        },
+                    )
+                    .await
+                }
+            },
+            move |_, datagram, _| {
+                let queued = Rc::clone(&send_queue);
+                async move {
+                    let mut queued = queued.borrow_mut();
+                    queued.0 += datagram.len();
+                    queued.1.push_back(datagram);
+                    DatagramSendOutcome::Sent
+                }
+            },
+        )
+        .await;
+
+        assert_eq!(requested.get(), 8);
+        assert_eq!(report.status, DatagramBatchStatus::Complete);
+        assert_eq!(report.mode, DatagramBatchMode::FreshEnqueue);
+        assert_eq!(report.sent_datagrams, 2);
+        assert_eq!(
+            queued
+                .borrow()
+                .1
+                .iter()
+                .map(|datagram| datagram[0])
+                .collect::<Vec<_>>(),
+            vec![9, 1, 2]
+        );
+    }
+
+    #[tokio::test]
+    async fn possible_prior_video_requires_full_queue_drain() {
+        let required = Rc::new(Cell::new(0));
+        let requested_capacity = Rc::clone(&required);
+        let report = send_video_datagram_batch(
+            vec![vec![1; 4], vec![2; 4]],
+            12,
+            false,
+            Instant::now() + Duration::from_secs(1),
+            move |required_capacity, _| {
+                requested_capacity.set(required_capacity);
+                async { Err(DatagramDeadlineElapsed) }
+            },
+            |_, _, _| async {
+                panic!("video must not enqueue behind a possible prior video object")
+            },
+        )
+        .await;
+
+        assert_eq!(required.get(), 12);
+        assert_eq!(
+            report.status,
+            DatagramBatchStatus::Dropped(DatagramBatchDropReason::QueueBarrierDeadlineExceeded)
+        );
+        assert_eq!(report.sent_datagrams, 0);
     }
 
     #[tokio::test]
@@ -1300,8 +1404,9 @@ mod tests {
         let blocked = send_video_datagram_batch(
             vec![vec![1; 4], vec![1; 4]],
             8,
+            false,
             Instant::now() + Duration::from_secs(1),
-            |_| async { Err(DatagramDeadlineElapsed) },
+            |_, _| async { Err(DatagramDeadlineElapsed) },
             move |_, datagram, _| {
                 let sent = Rc::clone(&send_log);
                 async move {
@@ -1323,8 +1428,9 @@ mod tests {
         let fresh = send_video_datagram_batch(
             vec![vec![2; 4], vec![2; 4]],
             8,
+            false,
             Instant::now() + Duration::from_secs(1),
-            |_| async { Ok(Duration::ZERO) },
+            |_, _| async { Ok(Duration::ZERO) },
             move |_, datagram, _| {
                 let sent = Rc::clone(&recovered_log);
                 async move {
