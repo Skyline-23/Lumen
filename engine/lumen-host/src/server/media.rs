@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::future::Future;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -22,6 +23,238 @@ use crate::{
 };
 
 const MEDIA_POLL_INTERVAL: Duration = Duration::from_millis(1);
+pub(super) const NATIVE_MEDIA_SEND_BUFFER_BYTES: usize = 4 * 1024 * 1024;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DatagramBatchMode {
+    FreshEnqueue,
+    DeadlineWait,
+}
+
+impl DatagramBatchMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::FreshEnqueue => "empty-queue-enqueue",
+            Self::DeadlineWait => "deadline-wait",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DatagramBatchDropReason {
+    QueueBarrierDeadlineExceeded,
+    SendDeadlineExceeded,
+}
+
+impl DatagramBatchDropReason {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::QueueBarrierDeadlineExceeded => "queue-barrier-deadline-exceeded",
+            Self::SendDeadlineExceeded => "send-deadline-exceeded",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum DatagramBatchStatus {
+    Complete,
+    Dropped(DatagramBatchDropReason),
+    Failed(String),
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct DatagramBatchReport {
+    status: DatagramBatchStatus,
+    mode: DatagramBatchMode,
+    total_datagrams: usize,
+    sent_datagrams: usize,
+    total_bytes: usize,
+    queue_wait_duration: Duration,
+    send_wait_duration: Duration,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DatagramDeadlineElapsed;
+
+enum DatagramSendOutcome {
+    Sent,
+    DeadlineExceeded,
+    Failed(String),
+}
+
+async fn wait_for_datagram_deadline<F>(
+    deadline: Instant,
+    future: F,
+) -> Result<F::Output, DatagramDeadlineElapsed>
+where
+    F: Future,
+{
+    if Instant::now() >= deadline {
+        return Err(DatagramDeadlineElapsed);
+    }
+    tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), future)
+        .await
+        .map_err(|_| DatagramDeadlineElapsed)
+}
+
+async fn send_connection_datagram(
+    connection: &quinn::Connection,
+    mode: DatagramBatchMode,
+    datagram: Vec<u8>,
+    deadline: Option<Instant>,
+) -> DatagramSendOutcome {
+    let result = match mode {
+        DatagramBatchMode::FreshEnqueue => connection.send_datagram(datagram.into()),
+        DatagramBatchMode::DeadlineWait => {
+            let Some(deadline) = deadline else {
+                return DatagramSendOutcome::DeadlineExceeded;
+            };
+            match wait_for_datagram_deadline(
+                deadline,
+                connection.send_datagram_wait(datagram.into()),
+            )
+            .await
+            {
+                Ok(result) => result,
+                Err(_) => return DatagramSendOutcome::DeadlineExceeded,
+            }
+        }
+    };
+    match result {
+        Ok(()) => DatagramSendOutcome::Sent,
+        Err(error) => DatagramSendOutcome::Failed(error.to_string()),
+    }
+}
+
+async fn send_datagram_batch<Send, SendFuture>(
+    datagrams: Vec<Vec<u8>>,
+    mode: DatagramBatchMode,
+    deadline: Option<Instant>,
+    mut send: Send,
+) -> DatagramBatchReport
+where
+    Send: FnMut(DatagramBatchMode, Vec<u8>, Option<Instant>) -> SendFuture,
+    SendFuture: Future<Output = DatagramSendOutcome>,
+{
+    let total_datagrams = datagrams.len();
+    let total_bytes = datagrams.iter().map(Vec::len).sum();
+    let mut report = DatagramBatchReport {
+        status: DatagramBatchStatus::Complete,
+        mode,
+        total_datagrams,
+        sent_datagrams: 0,
+        total_bytes,
+        queue_wait_duration: Duration::ZERO,
+        send_wait_duration: Duration::ZERO,
+    };
+    if mode == DatagramBatchMode::DeadlineWait && deadline.is_none() {
+        report.status = DatagramBatchStatus::Dropped(DatagramBatchDropReason::SendDeadlineExceeded);
+        return report;
+    }
+
+    for datagram in datagrams {
+        let send_started = Instant::now();
+        let outcome = send(mode, datagram, deadline).await;
+        if mode == DatagramBatchMode::DeadlineWait {
+            report.send_wait_duration += send_started.elapsed();
+        }
+        match outcome {
+            DatagramSendOutcome::Sent => {
+                report.sent_datagrams += 1;
+            }
+            DatagramSendOutcome::DeadlineExceeded => {
+                report.status =
+                    DatagramBatchStatus::Dropped(DatagramBatchDropReason::SendDeadlineExceeded);
+                break;
+            }
+            DatagramSendOutcome::Failed(error) => {
+                report.status = DatagramBatchStatus::Failed(error);
+                break;
+            }
+        }
+    }
+    report
+}
+
+async fn wait_for_empty_datagram_queue<Space, Wait, WaitFuture>(
+    capacity: usize,
+    deadline: Instant,
+    mut send_buffer_space: Space,
+    mut wait: Wait,
+) -> Result<Duration, DatagramDeadlineElapsed>
+where
+    Space: FnMut() -> usize,
+    Wait: FnMut(Instant) -> WaitFuture,
+    WaitFuture: Future<Output = Result<(), DatagramDeadlineElapsed>>,
+{
+    let started = Instant::now();
+    loop {
+        if Instant::now() >= deadline {
+            return Err(DatagramDeadlineElapsed);
+        }
+        if send_buffer_space() == capacity {
+            return Ok(started.elapsed());
+        }
+        wait(deadline).await?;
+    }
+}
+
+async fn wait_for_connection_datagram_queue_empty(
+    connection: &quinn::Connection,
+    deadline: Instant,
+) -> Result<Duration, DatagramDeadlineElapsed> {
+    wait_for_empty_datagram_queue(
+        NATIVE_MEDIA_SEND_BUFFER_BYTES,
+        deadline,
+        || connection.datagram_send_buffer_space(),
+        |deadline| async move {
+            wait_for_datagram_deadline(deadline, tokio::time::sleep(MEDIA_POLL_INTERVAL))
+                .await
+                .map(|_| ())
+        },
+    )
+    .await
+}
+
+async fn send_video_datagram_batch<Barrier, BarrierFuture, Send, SendFuture>(
+    datagrams: Vec<Vec<u8>>,
+    send_buffer_capacity: usize,
+    deadline: Instant,
+    mut wait_for_empty: Barrier,
+    send: Send,
+) -> DatagramBatchReport
+where
+    Barrier: FnMut(Instant) -> BarrierFuture,
+    BarrierFuture: Future<Output = Result<Duration, DatagramDeadlineElapsed>>,
+    Send: FnMut(DatagramBatchMode, Vec<u8>, Option<Instant>) -> SendFuture,
+    SendFuture: Future<Output = DatagramSendOutcome>,
+{
+    let mode = if datagrams.iter().map(Vec::len).sum::<usize>() <= send_buffer_capacity {
+        DatagramBatchMode::FreshEnqueue
+    } else {
+        DatagramBatchMode::DeadlineWait
+    };
+    let barrier_started = Instant::now();
+    let queue_wait_duration = match wait_for_empty(deadline).await {
+        Ok(duration) => duration,
+        Err(_) => {
+            return DatagramBatchReport {
+                status: DatagramBatchStatus::Dropped(
+                    DatagramBatchDropReason::QueueBarrierDeadlineExceeded,
+                ),
+                mode,
+                total_datagrams: datagrams.len(),
+                sent_datagrams: 0,
+                total_bytes: datagrams.iter().map(Vec::len).sum(),
+                queue_wait_duration: barrier_started.elapsed(),
+                send_wait_duration: Duration::ZERO,
+            };
+        }
+    };
+    let mut report = send_datagram_batch(datagrams, mode, Some(deadline), send).await;
+    report.queue_wait_duration = queue_wait_duration;
+    report
+}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 enum MediaKind {
@@ -335,6 +568,7 @@ async fn poll_and_send_audio(
             })
         }
     };
+    let pending_since = Instant::now();
     if let Err(message) = sender.prepare(&delivery) {
         return MediaAttempt::Failed(audio_failure("packetizer-failed", message));
     }
@@ -348,14 +582,21 @@ async fn poll_and_send_audio(
         Ok(packetized) => packetized,
         Err(message) => return MediaAttempt::Failed(audio_failure("packetizer-failed", message)),
     };
-    for datagram in packetized.datagrams {
-        if let Err(error) = connection.send_datagram_wait(datagram.into()).await {
-            return MediaAttempt::Failed(audio_failure(
-                "quic-datagram-send-failed",
-                error.to_string(),
-            ));
-        }
-    }
+    let packet_duration =
+        Duration::from_micros(u64::from(packet.duration_frames).saturating_mul(1_000_000) / 48_000);
+    let Some(deadline) = pending_since.checked_add(packet_duration) else {
+        return MediaAttempt::Failed(audio_failure(
+            "packetizer-failed",
+            "audio object deadline overflowed".to_owned(),
+        ));
+    };
+    let report = send_datagram_batch(
+        packetized.datagrams,
+        DatagramBatchMode::DeadlineWait,
+        Some(deadline),
+        |mode, datagram, deadline| send_connection_datagram(connection, mode, datagram, deadline),
+    )
+    .await;
     sender.unit_id = match unit_id.checked_add(1) {
         Some(next) => next,
         None => {
@@ -365,13 +606,25 @@ async fn poll_and_send_audio(
             ))
         }
     };
-    if unit_id <= 3 || unit_id % 200 == 0 {
-        eprintln!(
-            "Lumen native media sent kind=audio session-epoch={} unit-id={unit_id}",
-            delivery.session_epoch
+    if unit_id <= 3 || unit_id % 200 == 0 || report.status != DatagramBatchStatus::Complete {
+        log_datagram_batch(
+            "audio",
+            delivery.session_epoch,
+            0,
+            unit_id,
+            &report,
+            duration_to_microseconds(pending_since.elapsed()),
+            duration_to_microseconds(packet_duration),
         );
     }
-    MediaAttempt::Sent
+    match &report.status {
+        DatagramBatchStatus::Complete => MediaAttempt::Sent,
+        DatagramBatchStatus::Dropped(_) => MediaAttempt::Dropped,
+        DatagramBatchStatus::Failed(message) => MediaAttempt::Failed(audio_failure(
+            "quic-datagram-send-failed",
+            format!("{message}; unit-id={unit_id}"),
+        )),
+    }
 }
 
 fn audio_failure(stage: &'static str, message: String) -> MediaFailure {
@@ -488,6 +741,26 @@ impl VideoSenderState {
         self.repair_after_bootstrap = false;
         self.repair_required = true;
         true
+    }
+
+    fn finish_delta_delivery(
+        &mut self,
+        frame_id: u32,
+        repair_required: bool,
+        bootstrap_pending: bool,
+    ) -> Result<bool, String> {
+        self.frame_id = frame_id
+            .checked_add(1)
+            .ok_or_else(|| "video frame id exhausted".to_owned())?;
+        self.pending_frame = None;
+        self.pending_since = None;
+        if repair_required && bootstrap_pending {
+            self.repair_after_bootstrap = true;
+            return Ok(false);
+        }
+        let request_repair = repair_required && !self.repair_required;
+        self.repair_required |= repair_required;
+        Ok(request_repair)
     }
 }
 
@@ -701,36 +974,76 @@ async fn poll_and_send_video(
         Ok(packetized) => packetized,
         Err(message) => return MediaAttempt::Failed(video_failure("packetizer-failed", message)),
     };
-    let datagram_count = packetized.datagrams.len();
-    for datagram in packetized.datagrams {
-        if let Err(error) = connection.send_datagram_wait(datagram.into()).await {
-            return MediaAttempt::Failed(video_failure(
-                "quic-datagram-send-failed",
-                error.to_string(),
-            ));
-        }
-    }
-    sender.frame_id = match frame_id.checked_add(1) {
-        Some(next) => next,
-        None => {
-            return MediaAttempt::Failed(video_failure(
-                "packetizer-failed",
-                "video frame id exhausted".to_owned(),
-            ))
-        }
+    let pending_since = sender.pending_since.expect("staged video frame timestamp");
+    let Some(deadline) = pending_since.checked_add(Duration::from_micros(u64::from(
+        delivery.maximum_object_delay_us,
+    ))) else {
+        return MediaAttempt::Failed(video_failure(
+            "packetizer-failed",
+            "video object deadline overflowed".to_owned(),
+        ));
     };
-    sender.pending_frame = None;
-    sender.pending_since = None;
-    if let Ok(mut router) = router.lock() {
-        let _ = router.observe_native_video_frame_sent(delivery.session_epoch, frame_id);
-    }
-    if frame_id <= 3 || frame_id % 120 == 0 {
-        eprintln!(
-            "Lumen native media sent kind=video-delta session-epoch={} generation-id={generation_id} frame-id={frame_id} datagrams={datagram_count}",
-            delivery.session_epoch
+    let report = send_video_datagram_batch(
+        packetized.datagrams,
+        NATIVE_MEDIA_SEND_BUFFER_BYTES,
+        deadline,
+        |deadline| wait_for_connection_datagram_queue_empty(connection, deadline),
+        |mode, datagram, deadline| send_connection_datagram(connection, mode, datagram, deadline),
+    )
+    .await;
+    let delivery_complete = report.status == DatagramBatchStatus::Complete;
+    let request_repair = match sender.finish_delta_delivery(
+        frame_id,
+        !delivery_complete,
+        delivery.bootstrap_pending,
+    ) {
+        Ok(request_repair) => request_repair,
+        Err(message) => return MediaAttempt::Failed(video_failure("packetizer-failed", message)),
+    };
+    let object_age_us = duration_to_microseconds(pending_since.elapsed());
+    if frame_id <= 3
+        || frame_id % 120 == 0
+        || report.mode == DatagramBatchMode::DeadlineWait
+        || !delivery_complete
+    {
+        log_datagram_batch(
+            "video-delta",
+            delivery.session_epoch,
+            generation_id,
+            frame_id,
+            &report,
+            object_age_us,
+            u64::from(delivery.maximum_object_delay_us),
         );
     }
-    MediaAttempt::Sent
+    if request_repair {
+        if let Err(message) = platform.handle_control_event(
+            delivery.session_epoch,
+            crate::PlatformControlEvent::RequestIdrFrame,
+        ) {
+            return MediaAttempt::Terminal(video_capture_failure(
+                "transport-keyframe-request-failed",
+                message,
+            ));
+        }
+        eprintln!(
+            "Lumen object delivery stage=transport-repair-requested session-epoch={} generation-id={generation_id} frame-id={frame_id} cause=incomplete-object",
+            delivery.session_epoch,
+        );
+    }
+    match &report.status {
+        DatagramBatchStatus::Complete => {
+            if let Ok(mut router) = router.lock() {
+                let _ = router.observe_native_video_frame_sent(delivery.session_epoch, frame_id);
+            }
+            MediaAttempt::Sent
+        }
+        DatagramBatchStatus::Dropped(_) => MediaAttempt::Dropped,
+        DatagramBatchStatus::Failed(message) => MediaAttempt::Failed(video_failure(
+            "quic-datagram-send-failed",
+            format!("{message}; frame-id={frame_id}"),
+        )),
+    }
 }
 
 fn video_failure(stage: &'static str, message: String) -> MediaFailure {
@@ -776,15 +1089,80 @@ fn timestamp_to_microseconds(timestamp: u32, clock_rate: u64) -> u32 {
     ((u64::from(timestamp) * 1_000_000) / clock_rate) as u32
 }
 
+fn duration_to_microseconds(duration: Duration) -> u64 {
+    u64::try_from(duration.as_micros()).unwrap_or(u64::MAX)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn log_datagram_batch(
+    kind: &str,
+    session_epoch: u32,
+    generation_id: u32,
+    object_id: u32,
+    report: &DatagramBatchReport,
+    object_age_us: u64,
+    deadline_us: u64,
+) {
+    let (stage, outcome, error) = match &report.status {
+        DatagramBatchStatus::Complete => ("datagram-batch-sent", "complete", ""),
+        DatagramBatchStatus::Dropped(reason) => ("datagram-batch-dropped", reason.as_str(), ""),
+        DatagramBatchStatus::Failed(error) => {
+            ("datagram-batch-failed", "send-failed", error.as_str())
+        }
+    };
+    eprintln!(
+        "Lumen native media stage={stage} kind={kind} session-epoch={session_epoch} generation-id={generation_id} object-id={object_id} outcome={outcome} error={error} transport-mode={} datagrams-sent={} datagrams-total={} bytes={} queue-wait-us={} send-wait-us={} object-age-us={object_age_us} deadline-us={deadline_us}",
+        report.mode.as_str(),
+        report.sent_datagrams,
+        report.total_datagrams,
+        report.total_bytes,
+        duration_to_microseconds(report.queue_wait_duration),
+        duration_to_microseconds(report.send_wait_duration),
+    );
+}
+
 fn object_deadline_exceeded(age: Duration, maximum_object_delay_us: u32) -> bool {
     age > Duration::from_micros(u64::from(maximum_object_delay_us))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{classify_video_bootstrap, object_deadline_exceeded, VideoSenderState};
+    use super::{
+        classify_video_bootstrap, object_deadline_exceeded, send_datagram_batch,
+        send_video_datagram_batch, wait_for_datagram_deadline, wait_for_empty_datagram_queue,
+        DatagramBatchDropReason, DatagramBatchMode, DatagramBatchStatus, DatagramDeadlineElapsed,
+        DatagramSendOutcome, VideoSenderState,
+    };
     use lumen_engine::NativeVideoBootstrapReason;
-    use std::time::Duration;
+    use std::cell::{Cell, RefCell};
+    use std::collections::VecDeque;
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::rc::Rc;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::task::{Context, Poll};
+    use std::time::{Duration, Instant};
+
+    struct PendingSend {
+        polls: Arc<AtomicUsize>,
+        dropped: Arc<AtomicBool>,
+    }
+
+    impl Future for PendingSend {
+        type Output = Result<(), &'static str>;
+
+        fn poll(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
+            self.polls.fetch_add(1, Ordering::SeqCst);
+            Poll::Pending
+        }
+    }
+
+    impl Drop for PendingSend {
+        fn drop(&mut self) {
+            self.dropped.store(true, Ordering::SeqCst);
+        }
+    }
 
     #[test]
     fn video_delta_deadline_is_strict_and_microsecond_exact() {
@@ -841,5 +1219,186 @@ mod tests {
             16_668,
         ));
         assert!(!owned.take_post_bootstrap_repair_request(false));
+    }
+
+    #[tokio::test]
+    async fn occupied_queue_barrier_deadline_cancels_without_sending() {
+        let polls = Arc::new(AtomicUsize::new(0));
+        let dropped = Arc::new(AtomicBool::new(false));
+        let wait_polls = Arc::clone(&polls);
+        let wait_dropped = Arc::clone(&dropped);
+        let deadline = Instant::now() + Duration::from_millis(2);
+
+        let result = wait_for_empty_datagram_queue(
+            12,
+            deadline,
+            || 8,
+            move |deadline| {
+                let pending = PendingSend {
+                    polls: Arc::clone(&wait_polls),
+                    dropped: Arc::clone(&wait_dropped),
+                };
+                async move {
+                    wait_for_datagram_deadline(deadline, pending)
+                        .await
+                        .map(|_| ())
+                }
+            },
+        )
+        .await;
+
+        assert_eq!(result, Err(DatagramDeadlineElapsed));
+        assert!(polls.load(Ordering::SeqCst) > 0);
+        assert!(dropped.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn from_empty_fresh_batch_enqueues_one_complete_object() {
+        let queued = Rc::new(RefCell::new((0_usize, VecDeque::new())));
+        let send_queue = Rc::clone(&queued);
+        let report = send_datagram_batch(
+            vec![vec![1; 4], vec![2; 4], vec![3; 4]],
+            DatagramBatchMode::FreshEnqueue,
+            None,
+            move |mode, datagram, _| {
+                let queued = Rc::clone(&send_queue);
+                async move {
+                    assert_eq!(mode, DatagramBatchMode::FreshEnqueue);
+                    let mut queued = queued.borrow_mut();
+                    while queued.0 > 12 {
+                        let dropped: Vec<u8> = queued.1.pop_front().expect("queued datagram");
+                        queued.0 -= dropped.len();
+                    }
+                    queued.0 += datagram.len();
+                    queued.1.push_back(datagram);
+                    DatagramSendOutcome::Sent
+                }
+            },
+        )
+        .await;
+
+        assert_eq!(report.status, DatagramBatchStatus::Complete);
+        assert_eq!(report.mode, DatagramBatchMode::FreshEnqueue);
+        assert_eq!(report.total_datagrams, 3);
+        assert_eq!(report.sent_datagrams, 3);
+        assert_eq!(report.total_bytes, 12);
+        assert_eq!(
+            queued
+                .borrow()
+                .1
+                .iter()
+                .map(|datagram| datagram[0])
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+    }
+
+    #[tokio::test]
+    async fn barrier_timeout_drops_whole_frame_then_empty_queue_recovers_latest() {
+        let sent = Rc::new(RefCell::new(Vec::new()));
+        let send_log = Rc::clone(&sent);
+        let blocked = send_video_datagram_batch(
+            vec![vec![1; 4], vec![1; 4]],
+            8,
+            Instant::now() + Duration::from_secs(1),
+            |_| async { Err(DatagramDeadlineElapsed) },
+            move |_, datagram, _| {
+                let sent = Rc::clone(&send_log);
+                async move {
+                    sent.borrow_mut().push(datagram);
+                    DatagramSendOutcome::Sent
+                }
+            },
+        )
+        .await;
+
+        assert_eq!(
+            blocked.status,
+            DatagramBatchStatus::Dropped(DatagramBatchDropReason::QueueBarrierDeadlineExceeded)
+        );
+        assert_eq!(blocked.sent_datagrams, 0);
+        assert!(sent.borrow().is_empty());
+
+        let recovered_log = Rc::clone(&sent);
+        let fresh = send_video_datagram_batch(
+            vec![vec![2; 4], vec![2; 4]],
+            8,
+            Instant::now() + Duration::from_secs(1),
+            |_| async { Ok(Duration::ZERO) },
+            move |_, datagram, _| {
+                let sent = Rc::clone(&recovered_log);
+                async move {
+                    sent.borrow_mut().push(datagram);
+                    DatagramSendOutcome::Sent
+                }
+            },
+        )
+        .await;
+
+        assert_eq!(fresh.status, DatagramBatchStatus::Complete);
+        assert_eq!(fresh.mode, DatagramBatchMode::FreshEnqueue);
+        assert_eq!(fresh.sent_datagrams, 2);
+        assert_eq!(
+            sent.borrow()
+                .iter()
+                .map(|datagram| datagram[0])
+                .collect::<Vec<_>>(),
+            vec![2, 2]
+        );
+    }
+
+    #[tokio::test]
+    async fn audio_wait_is_bounded_and_never_uses_evicting_send() {
+        let sent = Rc::new(RefCell::new(Vec::new()));
+        let calls = Rc::new(Cell::new(0));
+        let send_log = Rc::clone(&sent);
+        let send_calls = Rc::clone(&calls);
+        let report = send_datagram_batch(
+            vec![vec![1; 800], vec![1; 800]],
+            DatagramBatchMode::DeadlineWait,
+            Some(Instant::now() + Duration::from_secs(1)),
+            move |mode, datagram, _| {
+                let sent = Rc::clone(&send_log);
+                let call = send_calls.get();
+                send_calls.set(call + 1);
+                async move {
+                    assert_eq!(mode, DatagramBatchMode::DeadlineWait);
+                    if call == 0 {
+                        sent.borrow_mut().push(datagram);
+                        DatagramSendOutcome::Sent
+                    } else {
+                        DatagramSendOutcome::DeadlineExceeded
+                    }
+                }
+            },
+        )
+        .await;
+
+        assert_eq!(
+            report.status,
+            DatagramBatchStatus::Dropped(DatagramBatchDropReason::SendDeadlineExceeded)
+        );
+        assert_eq!(report.mode, DatagramBatchMode::DeadlineWait);
+        assert_eq!(report.sent_datagrams, 1);
+        assert_eq!(sent.borrow().len(), 1);
+    }
+
+    #[test]
+    fn transport_drop_during_bootstrap_defers_one_repair_until_ack() {
+        let mut sender = VideoSenderState {
+            frame_id: 41,
+            ..VideoSenderState::default()
+        };
+
+        assert!(!sender.finish_delta_delivery(41, true, true).unwrap());
+
+        assert_eq!(sender.frame_id, 42);
+        assert!(!sender.repair_required);
+        assert!(sender.repair_after_bootstrap);
+        assert!(!sender.take_post_bootstrap_repair_request(true));
+        assert!(sender.take_post_bootstrap_repair_request(false));
+        assert!(!sender.take_post_bootstrap_repair_request(false));
+        assert!(sender.pending_frame.is_none());
+        assert!(sender.pending_since.is_none());
     }
 }

@@ -22,7 +22,7 @@ use quinn::{Endpoint, RecvStream, ServerConfig, TransportConfig, VarInt};
 use rustls::pki_types::PrivateKeyDer;
 use tokio::sync::Notify;
 
-use super::media::run_native_media_loop;
+use super::media::{run_native_media_loop, NATIVE_MEDIA_SEND_BUFFER_BYTES};
 use super::SharedControlRouter;
 use crate::control::{NativeConnectionContext, NativeMediaFeedbackDisposition};
 use crate::native_input::NativeInputSequence;
@@ -1310,7 +1310,7 @@ fn load_server_config(cert_path: &Path, key_path: &Path) -> Result<ServerConfig,
     // The client never opens unidirectional streams. Host uni concurrency is advertised by the peer.
     transport.max_concurrent_uni_streams(VarInt::from_u32(0));
     transport.datagram_receive_buffer_size(Some(4 * 1024 * 1024));
-    transport.datagram_send_buffer_size(4 * 1024 * 1024);
+    transport.datagram_send_buffer_size(NATIVE_MEDIA_SEND_BUFFER_BYTES);
     config.transport_config(Arc::new(transport));
     Ok(config)
 }
@@ -1411,7 +1411,7 @@ mod tests {
         let mut transport = TransportConfig::default();
         transport.max_concurrent_uni_streams(VarInt::from_u32(8));
         transport.datagram_receive_buffer_size(Some(4 * 1024 * 1024));
-        transport.datagram_send_buffer_size(4 * 1024 * 1024);
+        transport.datagram_send_buffer_size(NATIVE_MEDIA_SEND_BUFFER_BYTES);
         client_config.transport_config(Arc::new(transport));
         (server_config, client_config)
     }
