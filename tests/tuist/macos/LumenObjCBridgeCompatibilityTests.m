@@ -181,8 +181,11 @@ static BOOL LumenDisplayExistedBeforeModeCreation = NO;
     configuration.serialNumber
   );
   dispatch_queue_t callbackQueue = [descriptor valueForKey:@"queue"];
+  dispatch_queue_t dispatchQueue = [descriptor valueForKey:@"dispatchQueue"];
   XCTAssertNotNil(callbackQueue);
   XCTAssertEqual(callbackQueue, dispatch_get_main_queue());
+  XCTAssertEqual(dispatchQueue, dispatch_get_main_queue());
+  XCTAssertNotNil([descriptor valueForKey:@"terminationHandler"]);
 
   id publishedMode = [display valueForKey:@"mode"];
   XCTAssertTrue(

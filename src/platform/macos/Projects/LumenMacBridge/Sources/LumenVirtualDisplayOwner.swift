@@ -4,6 +4,7 @@ actor LumenMacVirtualDisplayOwner {
     private let ownershipRegistry: LumenMacOwnedVirtualDisplayRegistry
     private var display: LumenMacVirtualDisplay?
     private var displayKey: String?
+    private var capturePreparationTask: Task<Void, Error>?
 
     init(ownershipRegistry: LumenMacOwnedVirtualDisplayRegistry) {
         self.ownershipRegistry = ownershipRegistry
@@ -53,6 +54,34 @@ actor LumenMacVirtualDisplayOwner {
             logicalHeight: geometry.logicalHeight,
             refreshRate: refreshRate
         )
+    }
+
+    func beginCapturePreparation(displayID: UInt32) throws {
+        _ = try retainedOwner(for: displayID)
+        guard capturePreparationTask == nil else {
+            return
+        }
+        capturePreparationTask = Task {
+            try await LumenScreenCaptureDisplayPrefetch.prepare(
+                displayID: displayID
+            )
+        }
+    }
+
+    func awaitCapturePreparation(displayID: UInt32) async throws {
+        _ = try retainedOwner(for: displayID)
+        if capturePreparationTask == nil {
+            try beginCapturePreparation(displayID: displayID)
+        }
+        guard let capturePreparationTask else {
+            throw LumenMacWorkspaceSessionError.virtualDisplayOwnershipMismatch
+        }
+        try await withTaskCancellationHandler {
+            try await capturePreparationTask.value
+        } onCancel: {
+            capturePreparationTask.cancel()
+        }
+        try verify(displayID: displayID)
     }
 
     func settleMode(displayID: UInt32) async throws {
@@ -115,6 +144,8 @@ actor LumenMacVirtualDisplayOwner {
             try await ownershipRegistry.recoverDisplay(forKey: identity.id)
             return
         }
+        capturePreparationTask?.cancel()
+        capturePreparationTask = nil
         try await ownershipRegistry.destroy(
             LumenRetainedVirtualDisplayReference(display: display),
             forKey: identity.id

@@ -31,11 +31,18 @@ final class LumenWorkspaceDesktopMirrorTests: XCTestCase {
                 events.filter { $0 == .prepareCapture(89) }.count,
                 1
             )
+            XCTAssertEqual(
+                events.filter { $0 == .beginCapturePreparation(89) }.count,
+                1
+            )
             XCTAssertFalse(events.contains(.capturePrepared(89)))
             XCTAssertFalse(events.contains(.mirror(89, 3)))
             XCTAssertEqual(events.filter { $0 == .stabilize(89) }.count, 1)
             let stageIndex = try XCTUnwrap(
                 events.firstIndex(of: .prepareDesktopMirror(89, 3))
+            )
+            let beginIndex = try XCTUnwrap(
+                events.firstIndex(of: .beginCapturePreparation(89))
             )
             let stabilizationIndex = try XCTUnwrap(
                 events.firstIndex(of: .stabilize(89))
@@ -43,6 +50,7 @@ final class LumenWorkspaceDesktopMirrorTests: XCTestCase {
             let prefetchIndex = try XCTUnwrap(
                 events.firstIndex(of: .prepareCapture(89))
             )
+            XCTAssertLessThan(beginIndex, stageIndex)
             XCTAssertLessThan(stageIndex, stabilizationIndex)
             XCTAssertLessThan(stabilizationIndex, prefetchIndex)
         }
@@ -55,6 +63,7 @@ private extension LumenWorkspaceDesktopMirrorTests {
         _ events: [WorkspaceExecutionEvent]
     ) throws {
         XCTAssertEqual(events.filter { $0 == .prepareDesktopMirror(89, 3) }.count, 1)
+        XCTAssertEqual(events.filter { $0 == .beginCapturePreparation(89) }.count, 1)
         XCTAssertEqual(events.filter { $0 == .prepareCapture(89) }.count, 1)
         XCTAssertEqual(events.filter { $0 == .capturePrepared(89) }.count, 1)
         XCTAssertEqual(events.filter { $0 == .mirror(89, 3) }.count, 1)
@@ -65,6 +74,9 @@ private extension LumenWorkspaceDesktopMirrorTests {
                 if case .configure(89, _) = $0 { return true }
                 return false
             }
+        )
+        let beginIndex = try XCTUnwrap(
+            events.firstIndex(of: .beginCapturePreparation(89))
         )
         let settlementIndex = try XCTUnwrap(events.firstIndex(of: .settle(89)))
         let stageIndex = try XCTUnwrap(
@@ -83,6 +95,7 @@ private extension LumenWorkspaceDesktopMirrorTests {
         let captureReadyIndex = try XCTUnwrap(
             events.firstIndex(of: .capturePrepared(89))
         )
+        XCTAssertLessThan(beginIndex, configureIndex)
         XCTAssertLessThan(configureIndex, settlementIndex)
         XCTAssertLessThan(settlementIndex, stageIndex)
         XCTAssertLessThan(stageIndex, independentStabilizationIndex)

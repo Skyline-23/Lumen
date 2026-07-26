@@ -90,6 +90,9 @@ private func makeDesktopMirrorOperations(
         stabilizeVirtualDisplay: { displayID in
             await recorder.append(.stabilize(displayID))
         },
+        beginCaptureDisplayPreparation: { displayID in
+            await recorder.append(.beginCapturePreparation(displayID))
+        },
         prepareCaptureDisplay: { displayID in
             await recorder.append(.prepareCapture(displayID))
             try await performDesktopMirrorCaptureAdmission(

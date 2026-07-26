@@ -20,6 +20,7 @@ struct LumenWorkspaceNativeOperationsFactory: Sendable {
             verifyVirtualDisplay: verifyVirtualDisplay,
             settleVirtualDisplayMode: settleVirtualDisplayMode,
             stabilizeVirtualDisplay: stabilizeVirtualDisplay,
+            beginCaptureDisplayPreparation: beginCaptureDisplayPreparation,
             prepareCaptureDisplay: prepareCaptureDisplay,
             startCapture: startCapture,
             stopCapture: stopCapture,
@@ -65,7 +66,13 @@ struct LumenWorkspaceNativeOperationsFactory: Sendable {
     }
 
     private func prepareCaptureDisplay(displayID: UInt32) async throws {
-        try await LumenScreenCaptureDisplayPrefetch.prepare(displayID: displayID)
+        try await displayOwner.awaitCapturePreparation(displayID: displayID)
+    }
+
+    private func beginCaptureDisplayPreparation(
+        displayID: UInt32
+    ) async throws {
+        try await displayOwner.beginCapturePreparation(displayID: displayID)
     }
 
     private func startCapture(displayID: UInt32) async throws {

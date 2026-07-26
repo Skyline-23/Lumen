@@ -423,7 +423,16 @@ static void LumenConfigureHDRDisplayInfo(
     LumenColorPrimaries(configuration.gamut, &red, &green, &blue, &white);
     [_descriptor setValue:@(configuration.vendorID) forKey:@"vendorID"];
     [_descriptor setValue:@(configuration.productID) forKey:@"productID"];
-    [_descriptor setValue:@(configuration.serialNumber) forKey:@"serialNumber"];
+    SEL serialSelector = sel_registerName("setSerialNum:");
+    if ([_descriptor respondsToSelector:serialSelector]) {
+      ((void (*)(id, SEL, unsigned int))objc_msgSend)(
+        _descriptor,
+        serialSelector,
+        configuration.serialNumber
+      );
+    } else {
+      [_descriptor setValue:@(configuration.serialNumber) forKey:@"serialNumber"];
+    }
     [_descriptor setValue:configuration.name forKey:@"name"];
     [_descriptor setValue:[NSValue valueWithSize:LumenPhysicalDisplaySize(
       configuration.backingWidth,
@@ -435,7 +444,25 @@ static void LumenConfigureHDRDisplayInfo(
     [_descriptor setValue:[NSValue valueWithPoint:green] forKey:@"greenPrimary"];
     [_descriptor setValue:[NSValue valueWithPoint:blue] forKey:@"bluePrimary"];
     [_descriptor setValue:[NSValue valueWithPoint:white] forKey:@"whitePoint"];
-    [_descriptor setValue:_callbackQueue forKey:@"queue"];
+    SEL dispatchQueueSelector = sel_registerName("setDispatchQueue:");
+    if ([_descriptor respondsToSelector:dispatchQueueSelector]) {
+      ((void (*)(id, SEL, dispatch_queue_t))objc_msgSend)(
+        _descriptor,
+        dispatchQueueSelector,
+        _callbackQueue
+      );
+    } else {
+      [_descriptor setValue:_callbackQueue forKey:@"queue"];
+    }
+    SEL terminationSelector = sel_registerName("setTerminationHandler:");
+    if ([_descriptor respondsToSelector:terminationSelector]) {
+      void (^terminationHandler)(id, id) = ^(__unused id reason, __unused id display) {};
+      ((void (*)(id, SEL, id))objc_msgSend)(
+        _descriptor,
+        terminationSelector,
+        terminationHandler
+      );
+    }
     LumenConfigureHDRDisplayInfo(_descriptor, configuration);
 
     Class displayClass = NSClassFromString(@"CGVirtualDisplay");
