@@ -9,7 +9,10 @@ use lumen_engine::{
     VideoBootstrap, VideoBootstrapResult, VideoKeyframeRequest, NATIVE_VIDEO_STREAM_ID,
 };
 
-use super::{AudioDeliveryState, ControlRouter, InputMotionDeliveryState, VideoDeliveryState};
+use super::{
+    AdaptiveVideoDecision, AdaptiveVideoDeliveryController, AudioDeliveryState, ControlRouter,
+    FeedbackStream, InputMotionDeliveryState, MediaFeedbackSample, VideoDeliveryState,
+};
 use crate::{
     PlatformApplicationPlan, PlatformChromaSubsampling, PlatformColorRange, PlatformDynamicRange,
     PlatformRuntimeEvent, PlatformRuntimeEventCode, PlatformRuntimeEventDisposition,
@@ -34,8 +37,8 @@ pub(crate) struct NativeConnectionContext {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum NativeMediaFeedbackDisposition {
-    AppliedVideo,
-    AcceptedAudio,
+    Applied(AdaptiveVideoDecision),
+    Unchanged,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -86,10 +89,7 @@ struct PendingNativeSession {
     next_generation_id: u32,
     video_keyframe_request: Option<VideoKeyframeRequest>,
     last_sent_video_frame_id: u32,
-    feedback_loss_ewma: f32,
-    adaptive_fec_percentage: u16,
-    target_bitrate_kbps: u32,
-    admission_divisor: u8,
+    adaptive_video: AdaptiveVideoDeliveryController,
 }
 
 impl ControlRouter {
@@ -392,54 +392,29 @@ impl ControlRouter {
         if feedback.first_datagram_sequence > feedback.highest_datagram_sequence {
             return Err(NativeMediaFeedbackRejection::InvalidSequenceRange);
         }
-        if feedback.stream_id == pending.plan.audio_stream_id {
-            return Ok(NativeMediaFeedbackDisposition::AcceptedAudio);
-        }
-        let total = feedback
-            .received_datagrams
-            .saturating_add(feedback.unrecoverable_objects)
-            .saturating_add(feedback.late_objects);
-        let loss = if total == 0 {
-            0.0
+        let expected_datagrams = feedback
+            .highest_datagram_sequence
+            .saturating_sub(feedback.first_datagram_sequence)
+            .saturating_add(1);
+        let decision = pending.adaptive_video.observe(MediaFeedbackSample {
+            stream: if feedback.stream_id == pending.plan.audio_stream_id {
+                FeedbackStream::Audio
+            } else {
+                FeedbackStream::Video
+            },
+            expected_datagrams,
+            received_datagrams: feedback.received_datagrams,
+            unrecoverable_objects: feedback.unrecoverable_objects,
+            late_objects: feedback.late_objects,
+            estimated_jitter_us: feedback.estimated_jitter_us,
+            decoder_queue_depth: feedback.decoder_queue_depth,
+            presentation_drops: feedback.presentation_drops,
+        });
+        Ok(if decision.changed {
+            NativeMediaFeedbackDisposition::Applied(decision)
         } else {
-            (feedback
-                .unrecoverable_objects
-                .saturating_add(feedback.late_objects)) as f32
-                / total as f32
-        };
-        pending.feedback_loss_ewma = pending.feedback_loss_ewma * 0.8 + loss * 0.2;
-        let target = if pending.feedback_loss_ewma >= 0.10 {
-            pending.adaptive_fec_percentage.saturating_add(5)
-        } else if pending.feedback_loss_ewma <= 0.02 {
-            pending.adaptive_fec_percentage.saturating_sub(5)
-        } else {
-            pending.adaptive_fec_percentage
-        };
-        pending.adaptive_fec_percentage = target.clamp(5, 50);
-        let congested = pending.feedback_loss_ewma >= 0.10
-            || feedback.late_objects > 0
-            || feedback.decoder_queue_depth > pending.plan.maximum_presentable_frames
-            || feedback.presentation_drops > 0;
-        if congested {
-            let floor = pending.plan.bitrate_kbps.div_ceil(4);
-            pending.target_bitrate_kbps = pending
-                .target_bitrate_kbps
-                .saturating_mul(90)
-                .div_ceil(100)
-                .max(floor);
-            pending.admission_divisor = 2;
-        } else if pending.feedback_loss_ewma <= 0.02
-            && feedback.decoder_queue_depth <= 1
-            && feedback.presentation_drops == 0
-        {
-            let step = pending.plan.bitrate_kbps.div_ceil(20).max(1);
-            pending.target_bitrate_kbps = pending
-                .target_bitrate_kbps
-                .saturating_add(step)
-                .min(pending.plan.bitrate_kbps);
-            pending.admission_divisor = 1;
-        }
-        Ok(NativeMediaFeedbackDisposition::AppliedVideo)
+            NativeMediaFeedbackDisposition::Unchanged
+        })
     }
 
     fn dispatch_native_start(
@@ -777,17 +752,17 @@ impl ControlRouter {
             next_generation_id: 1,
             video_keyframe_request: None,
             last_sent_video_frame_id: 0,
-            feedback_loss_ewma: 0.0,
-            adaptive_fec_percentage: self
-                .authorities
-                .settings()
-                .snapshot()
-                .effective
-                .network
-                .fec_percentage
-                .clamp(5, 50),
-            target_bitrate_kbps: plan.bitrate_kbps,
-            admission_divisor: 1,
+            adaptive_video: AdaptiveVideoDeliveryController::new(
+                plan.bitrate_kbps,
+                plan.bitrate_kbps,
+                self.authorities
+                    .settings()
+                    .snapshot()
+                    .effective
+                    .network
+                    .fec_percentage,
+                plan.maximum_presentable_frames,
+            ),
         });
         vec![HostControlEnvelope {
             request_id,
@@ -1007,6 +982,7 @@ impl ControlRouter {
         if !pending.active {
             return None;
         }
+        let adaptive = pending.adaptive_video.snapshot();
         Some(VideoDeliveryState {
             video_format: platform_video_format(&pending.plan)?,
             acknowledged_configuration_id: pending.acknowledged_configuration_id,
@@ -1018,9 +994,9 @@ impl ControlRouter {
             maximum_datagram_payload: usize::try_from(pending.plan.maximum_datagram_payload)
                 .ok()?,
             maximum_object_delay_us: pending.plan.maximum_object_delay_us,
-            fec_percentage: pending.adaptive_fec_percentage,
-            target_bitrate_kbps: pending.target_bitrate_kbps,
-            admission_divisor: pending.admission_divisor,
+            fec_percentage: adaptive.fec_percentage,
+            target_bitrate_kbps: adaptive.encoder_bitrate_kbps,
+            admission_divisor: 1,
         })
     }
 

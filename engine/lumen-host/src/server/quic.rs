@@ -15,7 +15,7 @@ use lumen_engine::{
     host_control_envelope, host_input_envelope, HostControlEnvelope, HostInputEnvelope,
     HostSessionCapabilities, NativeInputAck, NativeInputFailure, NativeInputFailureCode,
     NativeNegotiationFailure, NativeProtocolError, LUMEN_STREAMING_PROTOCOL_ALPN,
-    NATIVE_CONTROL_MESSAGE_LIMIT, NATIVE_INPUT_MESSAGE_LIMIT,
+    NATIVE_AUDIO_STREAM_ID, NATIVE_CONTROL_MESSAGE_LIMIT, NATIVE_INPUT_MESSAGE_LIMIT,
 };
 use quinn::crypto::rustls::QuicServerConfig;
 use quinn::{Endpoint, RecvStream, ServerConfig, TransportConfig, VarInt};
@@ -1002,8 +1002,13 @@ async fn accept_native_telemetry_stream(
             .map_err(|_| "native control router lock is poisoned".to_owned())?
             .observe_native_media_feedback(&feedback, session_epoch);
         match disposition {
-            Ok(NativeMediaFeedbackDisposition::AppliedVideo) => {}
-            Ok(NativeMediaFeedbackDisposition::AcceptedAudio) => {
+            Ok(
+                NativeMediaFeedbackDisposition::Applied(_)
+                | NativeMediaFeedbackDisposition::Unchanged,
+            ) => {
+                if feedback.stream_id != u32::from(NATIVE_AUDIO_STREAM_ID) {
+                    continue;
+                }
                 if !logged_audio_feedback {
                     eprintln!(
                         "Lumen native QUIC stage=media-feedback-accepted-audio session-epoch={session_epoch} telemetry-sequence={} stream-id={} first-sequence={} highest-sequence={} received-datagrams={} recovered-shards={} unrecoverable-objects={} late-objects={} reordered-datagrams={} jitter-us={} decoder-queue-depth={} presentation-drops={} window-ms={}",

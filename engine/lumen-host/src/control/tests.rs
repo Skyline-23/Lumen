@@ -1091,7 +1091,7 @@ fn newer_bootstrap_replaces_an_obsolete_unacknowledged_generation() {
 }
 
 #[test]
-fn media_feedback_accepts_audio_neutrally_and_adapts_video_delivery() {
+fn media_feedback_uses_audio_pressure_to_adapt_video_delivery_without_reducing_cadence() {
     let platform = Arc::new(RecordingPlatformSessionControl::default());
     let (_root, mut router, context, plan) = started_native_router(platform);
     let initial = router.video_delivery_state().unwrap();
@@ -1108,11 +1108,17 @@ fn media_feedback_accepts_audio_neutrally_and_adapts_video_delivery() {
         first_datagram_sequence: 1,
         ..MediaFeedback::default()
     };
-    assert_eq!(
-        router.observe_native_media_feedback(&audio_feedback, context.session_epoch),
-        Ok(NativeMediaFeedbackDisposition::AcceptedAudio)
-    );
-    assert_eq!(router.video_delivery_state().unwrap(), initial);
+    let audio_decision = router
+        .observe_native_media_feedback(&audio_feedback, context.session_epoch)
+        .unwrap();
+    let NativeMediaFeedbackDisposition::Applied(audio_decision) = audio_decision else {
+        panic!("audio playback pressure must reduce the video budget");
+    };
+    assert!(audio_decision.changed);
+    assert_eq!(audio_decision.congestion_source, CongestionSource::Audio);
+    let audio_adapted = router.video_delivery_state().unwrap();
+    assert!(audio_adapted.target_bitrate_kbps < initial.target_bitrate_kbps);
+    assert_eq!(audio_adapted.admission_divisor, 1);
 
     let congested_feedback = MediaFeedback {
         stream_id: plan.video_stream_id,
@@ -1128,14 +1134,20 @@ fn media_feedback_accepts_audio_neutrally_and_adapts_video_delivery() {
         window_milliseconds: 250,
         first_datagram_sequence: 1,
     };
-    assert_eq!(
-        router.observe_native_media_feedback(&congested_feedback, context.session_epoch),
-        Ok(NativeMediaFeedbackDisposition::AppliedVideo)
-    );
+    let video_decision = router
+        .observe_native_media_feedback(&congested_feedback, context.session_epoch)
+        .unwrap();
+    assert!(matches!(
+        video_decision,
+        NativeMediaFeedbackDisposition::Applied(_)
+    ));
     let adapted = router.video_delivery_state().unwrap();
-    assert_eq!(adapted.fec_percentage, (initial.fec_percentage + 5).min(50));
-    assert!(adapted.target_bitrate_kbps < initial.target_bitrate_kbps);
-    assert_eq!(adapted.admission_divisor, 2);
+    assert_eq!(
+        adapted.fec_percentage,
+        (audio_adapted.fec_percentage + 5).min(30)
+    );
+    assert!(adapted.target_bitrate_kbps < audio_adapted.target_bitrate_kbps);
+    assert_eq!(adapted.admission_divisor, 1);
 
     let wrong_stream = MediaFeedback {
         stream_id: u32::MAX,

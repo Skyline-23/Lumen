@@ -4,12 +4,18 @@ use tokio::sync::Notify;
 
 use crate::{HostAuthorities, IdlePlatformSessionControl, PlatformSessionControl};
 
+mod adaptive_video;
 mod auth;
 mod discovery;
 mod native_session;
 mod settings;
 mod wake_on_lan;
 
+#[cfg(test)]
+pub(crate) use adaptive_video::CongestionSource;
+pub(crate) use adaptive_video::{
+    AdaptiveVideoDecision, AdaptiveVideoDeliveryController, FeedbackStream, MediaFeedbackSample,
+};
 pub(crate) use native_session::{NativeConnectionContext, NativeMediaFeedbackDisposition};
 
 pub use discovery::HostDiscoveryState;
