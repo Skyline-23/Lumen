@@ -355,6 +355,7 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
     private let mirrorController: any LumenMacDisplayMirrorControlling
     private let physicalDisplayController: any LumenPhysicalDisplayControlling
     private let disconnectCapabilityVerifier: any LumenDisplayDisconnectCapabilityVerifying
+    private let physicalDisplayWakeSignal: any LumenPhysicalDisplayWakeSignaling
     private let disconnectRecoveryStore: LumenDisconnectRecoveryFileStore
     private let disconnectRecoveryEnvironment:
         @Sendable () throws -> LumenDisconnectRecoveryEnvironment
@@ -373,6 +374,7 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             resolver: LumenSystemDisplayEnabledSymbolResolver()
         )
         disconnectCapabilityVerifier = LumenDisplayDisconnectCapabilityFileVerifier.production
+        physicalDisplayWakeSignal = LumenSystemPhysicalDisplayWakeSignal()
         disconnectRecoveryStore = .production
         disconnectRecoveryEnvironment = {
             try LumenDisconnectRecoveryEnvironment.current()
@@ -388,6 +390,8 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
                 resolver: LumenSystemDisplayEnabledSymbolResolver()
             ),
         disconnectCapabilityVerifier: any LumenDisplayDisconnectCapabilityVerifying,
+        physicalDisplayWakeSignal: any LumenPhysicalDisplayWakeSignaling =
+            LumenSystemPhysicalDisplayWakeSignal(),
         disconnectRecoveryStore: LumenDisconnectRecoveryFileStore,
         disconnectRecoveryEnvironment: @escaping @Sendable () throws ->
             LumenDisconnectRecoveryEnvironment
@@ -396,6 +400,7 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
         self.mirrorController = mirrorController
         self.physicalDisplayController = physicalDisplayController
         self.disconnectCapabilityVerifier = disconnectCapabilityVerifier
+        self.physicalDisplayWakeSignal = physicalDisplayWakeSignal
         self.disconnectRecoveryStore = disconnectRecoveryStore
         self.disconnectRecoveryEnvironment = disconnectRecoveryEnvironment
     }
@@ -1430,6 +1435,7 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
                 )
             }
         }
+        try physicalDisplayWakeSignal.signalUserActivity()
         if let pendingDisconnectRecoveryRecord {
             guard try pendingDisconnectRecoveryRecord.matches(
                 recoveryGeneration: pendingDisconnectRecoveryRecord.recoveryGeneration,

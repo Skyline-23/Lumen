@@ -1106,6 +1106,29 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         }
     }
 
+    func testVerifiedPhysicalRecoveryWakesTheLocalDisplay() async throws {
+        // Given: the exact physical topology has converged after terminal cleanup.
+        let topology = displayTopology()
+        let wakeSignal = RecordingPhysicalDisplayWakeSignal()
+        let controller = LumenCoreGraphicsDisplayTopologyController(
+            capture: { topology },
+            restore: { _ in },
+            visibleDisplayIDs: { [77] }
+        )
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: controller,
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            physicalDisplayWakeSignal: wakeSignal
+        )
+
+        // When: terminal recovery independently verifies the restored display.
+        try await workspace.verifyWorkspace(topology)
+
+        // Then: the panel is woken instead of remaining black while CoreGraphics
+        // already reports it as active.
+        XCTAssertEqual(wakeSignal.callCount, 1)
+    }
+
     func testMissingCapabilityReceiptRejectsIsolationBeforeDisplayMutation() async throws {
         let fixture = IsolationDisplayFixture(physicalTopology: isolationPhysicalTopology())
         let receiptURL = FileManager.default.temporaryDirectory
@@ -2452,13 +2475,16 @@ extension LumenMacDisplayWorkspace {
             LumenPhysicalDisplayControlAdapter(
                 resolver: LumenSystemDisplayEnabledSymbolResolver()
             ),
-        disconnectCapabilityVerifier: any LumenDisplayDisconnectCapabilityVerifying
+        disconnectCapabilityVerifier: any LumenDisplayDisconnectCapabilityVerifying,
+        physicalDisplayWakeSignal: any LumenPhysicalDisplayWakeSignaling =
+            LumenSystemPhysicalDisplayWakeSignal()
     ) {
         self.init(
             topologyController: topologyController,
             mirrorController: mirrorController,
             physicalDisplayController: physicalDisplayController,
             disconnectCapabilityVerifier: disconnectCapabilityVerifier,
+            physicalDisplayWakeSignal: physicalDisplayWakeSignal,
             disconnectRecoveryStore: LumenDisconnectRecoveryFileStore(
                 recordURL: FileManager.default.temporaryDirectory
                     .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -2471,6 +2497,21 @@ extension LumenMacDisplayWorkspace {
                 )
             }
         )
+    }
+}
+
+private final class RecordingPhysicalDisplayWakeSignal:
+    LumenPhysicalDisplayWakeSignaling,
+    @unchecked Sendable
+{
+    private let calls = Mutex(0)
+
+    var callCount: Int {
+        calls.withLock { $0 }
+    }
+
+    func signalUserActivity() throws {
+        calls.withLock { $0 += 1 }
     }
 }
 
