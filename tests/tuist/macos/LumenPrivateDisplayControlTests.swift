@@ -200,6 +200,27 @@ struct LumenPrivateDisplayControlTests {
         #expect(controller.calls.isEmpty)
     }
 
+    @Test("Restoration publication must remain ready continuously before acknowledgement")
+    func restorationPublicationRejectsTransientReadiness() {
+        var gate = LumenDisplayRestorationStabilityGate(
+            requiredReadyDuration: 2
+        )
+
+        let initialReady = gate.observe(isReady: true, at: 0)
+        let insufficientReady = gate.observe(isReady: true, at: 1)
+        let interrupted = gate.observe(isReady: false, at: 1.5)
+        let restarted = gate.observe(isReady: true, at: 2)
+        let stillInsufficient = gate.observe(isReady: true, at: 3.9)
+        let stable = gate.observe(isReady: true, at: 4)
+
+        #expect(!initialReady)
+        #expect(!insufficientReady)
+        #expect(!interrupted)
+        #expect(!restarted)
+        #expect(!stillInsufficient)
+        #expect(stable)
+    }
+
     @Test("Independent watchdogs serialize restore transactions")
     func restoreLockSerializesIndependentWatchdogs() throws {
         let lockURL = FileManager.default.temporaryDirectory

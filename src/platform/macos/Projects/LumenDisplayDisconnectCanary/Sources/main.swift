@@ -12,6 +12,8 @@ private let canarySafetySerialBase: UInt32 = 0x4C4D_0000
 private let canarySafetyWidth: UInt32 = 1_920
 private let canarySafetyHeight: UInt32 = 1_080
 private let displayMutationConvergenceTimeout: TimeInterval = 30
+private let displayRestorationReadyDuration: TimeInterval = 2
+private let peerRestorationProbeTimeout: TimeInterval = 3
 private let watchdogRestoreDeadline: TimeInterval = 60
 private let watchdogRestoreReceiptTimeout: TimeInterval =
     (2 * displayMutationConvergenceTimeout) + 5
@@ -579,11 +581,21 @@ private enum LumenDisplayDisconnectCanaryMain {
                         authorization: authorization,
                         marker: marker,
                         trigger: trigger,
-                        verifyRestored: {
-                            waitUntil(
-                                timeout: displayMutationConvergenceTimeout,
+                        verifyAlreadyRestored: {
+                            waitUntilStable(
+                                timeout: peerRestorationProbeTimeout,
+                                requiredReadyDuration: displayRestorationReadyDuration,
                                 condition: {
-                                    isDisplayConnectedInCoreGraphics(selectedDisplayID)
+                                    isDisplayConnectedInWindowServer(selectedDisplayID)
+                                }
+                            )
+                        },
+                        verifyRestoredAfterMutation: {
+                            waitUntilStable(
+                                timeout: displayMutationConvergenceTimeout,
+                                requiredReadyDuration: displayRestorationReadyDuration,
+                                condition: {
+                                    isDisplayConnectedInWindowServer(selectedDisplayID)
                                 }
                             )
                         }
@@ -726,8 +738,17 @@ private func isDisplayDisconnected(_ displayID: CGDirectDisplayID) -> Bool {
         && !visibleDisplayIDs.contains(displayID)
 }
 
-private func isDisplayConnectedInCoreGraphics(_ displayID: CGDirectDisplayID) -> Bool {
-    CGDisplayIsActive(displayID) != 0 && CGDisplayIsOnline(displayID) != 0
+private func isDisplayConnectedInWindowServer(_ displayID: CGDirectDisplayID) -> Bool {
+    guard CGDisplayIsActive(displayID) != 0,
+          CGDisplayIsOnline(displayID) != 0 else {
+        return false
+    }
+    return MainActor.assumeIsolated {
+        NSScreen.screens.contains { screen in
+            (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?
+                .uint32Value == displayID
+        }
+    }
 }
 
 private func optionalDisplayID(_ displayID: CGDirectDisplayID) -> UInt32? {
@@ -970,6 +991,22 @@ private func waitUntil(timeout: TimeInterval, condition: () -> Bool) -> Bool {
         Thread.sleep(forTimeInterval: 0.1)
     }
     return condition()
+}
+
+private func waitUntilStable(
+    timeout: TimeInterval,
+    requiredReadyDuration: TimeInterval,
+    condition: () -> Bool
+) -> Bool {
+    var gate = LumenDisplayRestorationStabilityGate(
+        requiredReadyDuration: requiredReadyDuration
+    )
+    return waitUntil(timeout: timeout) {
+        gate.observe(
+            isReady: condition(),
+            at: ProcessInfo.processInfo.systemUptime
+        )
+    }
 }
 
 private func waitUntilPumpingMainRunLoop(

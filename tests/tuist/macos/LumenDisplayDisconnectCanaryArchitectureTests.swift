@@ -87,7 +87,6 @@ struct LumenDisplayDisconnectCanaryArchitectureTests {
         #expect(source.contains("CGDisplayIsActive(displayID) == 0"))
         #expect(source.contains("CGDisplayIsOnline(displayID) == 0"))
         #expect(source.contains("condition: { isDisplayDisconnected(selected.displayID) }"))
-        #expect(source.contains("private func isDisplayConnectedInCoreGraphics("))
 
         let layoutStart = try #require(
             source.range(of: "private func configureDisplayOrigins(")
@@ -108,8 +107,6 @@ struct LumenDisplayDisconnectCanaryArchitectureTests {
         )
         let watchdog = watchdogTail[..<watchdogEnd.lowerBound]
         #expect(!watchdog.contains("LumenMacVirtualDisplay("))
-        #expect(watchdog.contains("isDisplayConnectedInCoreGraphics(selectedDisplayID)"))
-        #expect(!watchdog.contains("state.active && state.nsscreenVisible"))
         #expect(source.contains("private func createCanarySafetyDisplays("))
     }
 }

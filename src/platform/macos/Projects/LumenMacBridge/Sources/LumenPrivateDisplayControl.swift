@@ -119,6 +119,38 @@ public enum LumenDisplayDisconnectWatchdogTrigger: String, Codable, Equatable, S
     case deadlineExceeded
 }
 
+public struct LumenDisplayRestorationStabilityGate: Sendable {
+    public let requiredReadyDuration: TimeInterval
+    private var readySince: TimeInterval?
+
+    public init(requiredReadyDuration: TimeInterval) {
+        self.requiredReadyDuration = max(0, requiredReadyDuration)
+    }
+
+    public mutating func observe(
+        isReady: Bool,
+        at uptime: TimeInterval
+    ) -> Bool {
+        guard isReady else {
+            readySince = nil
+            return false
+        }
+        guard requiredReadyDuration > 0 else {
+            readySince = uptime
+            return true
+        }
+        guard let readySince else {
+            self.readySince = uptime
+            return false
+        }
+        guard uptime >= readySince else {
+            self.readySince = uptime
+            return false
+        }
+        return uptime - readySince >= requiredReadyDuration
+    }
+}
+
 public struct LumenDisplayDisconnectRestoreLock: Sendable {
     private let path: String
 
@@ -219,10 +251,26 @@ public struct LumenDisplayDisconnectWatchdogRestorer {
         trigger: LumenDisplayDisconnectWatchdogTrigger,
         verifyRestored: () -> Bool
     ) throws -> LumenDisplayDisconnectWatchdogRecoveryOutcome {
+        try recoverIfAuthorized(
+            authorization: authorization,
+            marker: marker,
+            trigger: trigger,
+            verifyAlreadyRestored: verifyRestored,
+            verifyRestoredAfterMutation: verifyRestored
+        )
+    }
+
+    public func recoverIfAuthorized(
+        authorization: LumenDisplayDisconnectAuthorization,
+        marker: LumenDisplayDisconnectMutationMarker?,
+        trigger: LumenDisplayDisconnectWatchdogTrigger,
+        verifyAlreadyRestored: () -> Bool,
+        verifyRestoredAfterMutation: () -> Bool
+    ) throws -> LumenDisplayDisconnectWatchdogRecoveryOutcome {
         guard let marker, marker.authorizes(authorization) else {
             return .skipped
         }
-        if verifyRestored() {
+        if verifyAlreadyRestored() {
             let probe = try controller.probe()
             return .restored(
                 LumenPhysicalDisplayControlReceipt(
@@ -234,7 +282,7 @@ public struct LumenDisplayDisconnectWatchdogRestorer {
             )
         }
         let receipt = try controller.setEnabled(true, for: authorization.displayID)
-        guard verifyRestored() else {
+        guard verifyRestoredAfterMutation() else {
             return .restoreFailed(
                 LumenDisplayDisconnectRestoreFailedReceipt(
                     displayID: authorization.displayID,
