@@ -183,6 +183,17 @@ public struct LumenDisplayDisconnectWatchdogRestorer {
         guard let marker, marker.authorizes(authorization) else {
             return .skipped
         }
+        if verifyRestored() {
+            let probe = try controller.probe()
+            return .restored(
+                LumenPhysicalDisplayControlReceipt(
+                    displayID: authorization.displayID,
+                    enabled: true,
+                    source: probe.source,
+                    symbolName: probe.symbolName
+                )
+            )
+        }
         let receipt = try controller.setEnabled(true, for: authorization.displayID)
         guard verifyRestored() else {
             return .restoreFailed(

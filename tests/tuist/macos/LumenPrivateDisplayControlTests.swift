@@ -149,12 +149,13 @@ struct LumenPrivateDisplayControlTests {
         let controller = FakePhysicalDisplayController()
         let restorer = LumenDisplayDisconnectWatchdogRestorer(controller: controller)
         let authorization = fixtureAuthorization()
+        var restoredStates = [false, true]
 
         let outcome = try restorer.recoverIfAuthorized(
             authorization: authorization,
             marker: fixtureMarker(phase: .disableAttempted),
             trigger: .parentExited,
-            verifyRestored: { true }
+            verifyRestored: { restoredStates.removeFirst() }
         )
 
         #expect(outcome.restoredReceipt?.enabled == true)
@@ -167,6 +168,24 @@ struct LumenPrivateDisplayControlTests {
         let controller = FakePhysicalDisplayController()
         let restorer = LumenDisplayDisconnectWatchdogRestorer(controller: controller)
         let authorization = fixtureAuthorization()
+        var restoredStates = [false, true]
+
+        let outcome = try restorer.recoverIfAuthorized(
+            authorization: authorization,
+            marker: fixtureMarker(phase: .disableSucceeded),
+            trigger: .restoreRequested,
+            verifyRestored: { restoredStates.removeFirst() }
+        )
+
+        #expect(outcome.restoredReceipt?.enabled == true)
+        #expect(controller.calls == [.init(displayID: authorization.displayID, enabled: true)])
+    }
+
+    @Test("A peer-restored display is acknowledged without a duplicate transaction")
+    func peerRestoreIsIdempotent() throws {
+        let controller = FakePhysicalDisplayController()
+        let restorer = LumenDisplayDisconnectWatchdogRestorer(controller: controller)
+        let authorization = fixtureAuthorization()
 
         let outcome = try restorer.recoverIfAuthorized(
             authorization: authorization,
@@ -176,7 +195,8 @@ struct LumenPrivateDisplayControlTests {
         )
 
         #expect(outcome.restoredReceipt?.enabled == true)
-        #expect(controller.calls == [.init(displayID: authorization.displayID, enabled: true)])
+        #expect(outcome.restoredReceipt?.displayID == authorization.displayID)
+        #expect(controller.calls.isEmpty)
     }
 
     @Test("Failed restore postcondition retains safety recovery without a restored receipt")
