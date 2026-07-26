@@ -44,6 +44,7 @@ impl NativeWindowsInput {
             .lock()
             .map_err(|_| "Windows input device lock is poisoned".to_owned())?;
         match action {
+            WindowsInputAction::MousePosition { x, y } => native_desktop_input::position(*x, *y),
             WindowsInputAction::MouseButton { button, pressed } => {
                 native_desktop_input::button(*button, *pressed)
             }

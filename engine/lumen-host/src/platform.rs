@@ -722,6 +722,25 @@ impl PlatformSessionControl for CallbackPlatformSessionControl {
         session_epoch: u32,
         event: PlatformNativeInputEvent,
     ) -> Result<(), String> {
+        if let PlatformNativeInputEvent::PointerButton {
+            pointer_id,
+            button,
+            pressed,
+            absolute_position: Some((normalized_x, normalized_y)),
+        } = &event
+        {
+            let display_id = core_graphics::display::CGDisplay::main().id;
+            return self.native_input.handle_positioned_button(
+                session_epoch,
+                display_id,
+                None,
+                *pointer_id,
+                *button,
+                *pressed,
+                *normalized_x,
+                *normalized_y,
+            );
+        }
         self.native_input.handle(session_epoch, event)
     }
 

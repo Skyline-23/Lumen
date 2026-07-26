@@ -29,6 +29,7 @@ pub enum PlatformNativeInputEvent {
         pointer_id: u32,
         button: u8,
         pressed: bool,
+        absolute_position: Option<(f32, f32)>,
     },
     GamepadConnection {
         gamepad_id: u8,
@@ -124,6 +125,7 @@ pub enum NativeInputError {
     InvalidModifierMask(u32),
     InvalidTextSelection,
     InvalidPointerButton(u32),
+    InvalidPointerGeometry,
     InvalidGamepad(u32),
     InvalidGamepadButton(i32),
     InvalidAnalogValue(u32),
@@ -173,6 +175,9 @@ impl fmt::Display for NativeInputError {
             }
             Self::InvalidPointerButton(button) => {
                 write!(formatter, "native pointer button {button} is invalid")
+            }
+            Self::InvalidPointerGeometry => {
+                formatter.write_str("native positioned pointer geometry is invalid")
             }
             Self::InvalidGamepad(gamepad) => {
                 write!(formatter, "native gamepad {gamepad} is invalid")
@@ -327,10 +332,16 @@ impl TryFrom<client_input_envelope::Payload> for PlatformNativeInputEvent {
                 if !(1..=5).contains(&button) {
                     return Err(NativeInputError::InvalidPointerButton(input.button));
                 }
+                let absolute_position = match (input.normalized_x, input.normalized_y) {
+                    (None, None) => None,
+                    (Some(x), Some(y)) if normalized_pair(x, y) => Some((x, y)),
+                    _ => return Err(NativeInputError::InvalidPointerGeometry),
+                };
                 Ok(Self::PointerButton {
                     pointer_id: input.pointer_id,
                     button,
                     pressed: input.pressed,
+                    absolute_position,
                 })
             }
             client_input_envelope::Payload::GamepadConnection(input) => {
@@ -552,8 +563,8 @@ fn normalized_pair(x: f32, y: f32) -> bool {
 #[cfg(test)]
 mod tests {
     use lumen_engine::{
-        client_input_envelope, client_motion_envelope, NativeScrollInput, NativeScrollPhase,
-        NativeTextInput,
+        client_input_envelope, client_motion_envelope, NativePointerButtonInput, NativeScrollInput,
+        NativeScrollPhase, NativeTextInput,
     };
 
     use super::*;
@@ -620,6 +631,45 @@ mod tests {
             }),
             Err(NativeInputError::InvalidTextSelection)
         );
+    }
+
+    #[test]
+    fn positioned_pointer_button_preserves_atomic_absolute_location() {
+        let event = PlatformNativeInputEvent::try_from(
+            client_input_envelope::Payload::PointerButton(NativePointerButtonInput {
+                pointer_id: 7,
+                button: 1,
+                pressed: true,
+                normalized_x: Some(0.25),
+                normalized_y: Some(0.75),
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(
+            event,
+            PlatformNativeInputEvent::PointerButton {
+                pointer_id: 7,
+                button: 1,
+                pressed: true,
+                absolute_position: Some((0.25, 0.75)),
+            }
+        );
+    }
+
+    #[test]
+    fn positioned_pointer_button_rejects_partial_absolute_location() {
+        let result = PlatformNativeInputEvent::try_from(
+            client_input_envelope::Payload::PointerButton(NativePointerButtonInput {
+                pointer_id: 7,
+                button: 1,
+                pressed: true,
+                normalized_x: Some(0.25),
+                normalized_y: None,
+            }),
+        );
+
+        assert_eq!(result, Err(NativeInputError::InvalidPointerGeometry));
     }
 
     #[test]

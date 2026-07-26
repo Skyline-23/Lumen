@@ -340,6 +340,8 @@ message PointerButtonInput {
   uint32 pointer_id = 1;
   uint32 button = 2;
   bool pressed = 3;
+  optional float normalized_x = 4;
+  optional float normalized_y = 5;
 }
 
 message GamepadConnectionInput {

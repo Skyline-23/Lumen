@@ -100,6 +100,10 @@ pub struct NativePointerButtonInput {
     pub button: u32,
     #[prost(bool, tag = "3")]
     pub pressed: bool,
+    #[prost(float, optional, tag = "4")]
+    pub normalized_x: Option<f32>,
+    #[prost(float, optional, tag = "5")]
+    pub normalized_y: Option<f32>,
 }
 
 #[derive(Clone, PartialEq, Message)]

@@ -1067,7 +1067,12 @@ fn native_input_event_summary(event: &PlatformNativeInputEvent) -> String {
         PlatformNativeInputEvent::Text { composition_id, commit, .. } => {
             format!("text(compositionId={composition_id},commit={commit})")
         }
-        PlatformNativeInputEvent::PointerButton { pointer_id, button, pressed } => {
+        PlatformNativeInputEvent::PointerButton {
+            pointer_id,
+            button,
+            pressed,
+            ..
+        } => {
             format!("pointerButton(pointerId={pointer_id},button={button},pressed={pressed})")
         }
         PlatformNativeInputEvent::GamepadConnection {

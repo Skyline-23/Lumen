@@ -294,37 +294,8 @@ impl MacNativeInput {
                 pointer_id: _,
                 button,
                 pressed,
-            } => {
-                let was_pressed = state.pressed_buttons.contains(&button);
-                if pressed == was_pressed {
-                    Ok(())
-                } else if pressed {
-                    let location = self.poster.pointer_location()?;
-                    let click_state = state.click_tracker.begin(
-                        button,
-                        location,
-                        Instant::now(),
-                        self.double_click_interval()?,
-                    );
-                    if let Err(error) = self.poster.post_button(button, true, click_state, location)
-                    {
-                        state.click_tracker.rollback_begin(button);
-                        return Err(error);
-                    }
-                    state.pressed_buttons.insert(button);
-                    Ok(())
-                } else {
-                    let location = self.poster.pointer_location()?;
-                    let click_state = state.click_tracker.pending(button).ok_or_else(|| {
-                        format!("macOS native input button {button} has no matching click state")
-                    })?;
-                    self.poster
-                        .post_button(button, false, click_state, location)?;
-                    state.pressed_buttons.remove(&button);
-                    state.click_tracker.finish(button, click_state);
-                    Ok(())
-                }
-            }
+                absolute_position: _,
+            } => self.handle_pointer_button(state, button, pressed, None),
             PlatformNativeInputEvent::RumbleAcknowledged { .. } => Ok(()),
             PlatformNativeInputEvent::GamepadConnection { .. }
             | PlatformNativeInputEvent::GamepadButton { .. } => {
@@ -368,7 +339,8 @@ impl MacNativeInput {
                     normalized_x,
                     normalized_y,
                 },
-            ),
+            )
+            .map(|_| ()),
             PlatformNativeMotionEvent::Scroll {
                 pointer_id: _,
                 delta_x_1024_points,
@@ -413,6 +385,75 @@ impl MacNativeInput {
             PlatformNativeMotionEvent::Gamepad { .. } => {
                 Err("macOS virtual gamepad motion injection is not implemented".to_owned())
             }
+        }
+    }
+
+    pub(crate) fn handle_positioned_button(
+        &self,
+        session_epoch: u32,
+        display_id: u32,
+        planned_bounds: Option<MacInputDisplayBounds>,
+        pointer_id: u32,
+        button: u8,
+        pressed: bool,
+        normalized_x: f32,
+        normalized_y: f32,
+    ) -> Result<(), String> {
+        let mut states = self
+            .state
+            .lock()
+            .map_err(|_| "macOS native input state is unavailable".to_owned())?;
+        let state = states.entry(session_epoch).or_default();
+        let location = post_pointer_motion(
+            display_id,
+            planned_bounds,
+            state,
+            MacPointerMotionInput {
+                mode: NativePointerMotionMode::Absolute,
+                delta_x: 0,
+                delta_y: 0,
+                normalized_x,
+                normalized_y,
+            },
+        )?;
+        let _ = pointer_id;
+        self.handle_pointer_button(state, button, pressed, Some(location))
+    }
+
+    fn handle_pointer_button(
+        &self,
+        state: &mut MacInputState,
+        button: u8,
+        pressed: bool,
+        exact_location: Option<CGPoint>,
+    ) -> Result<(), String> {
+        let was_pressed = state.pressed_buttons.contains(&button);
+        if pressed == was_pressed {
+            Ok(())
+        } else if pressed {
+            let location = exact_location.map_or_else(|| self.poster.pointer_location(), Ok)?;
+            let click_state = state.click_tracker.begin(
+                button,
+                location,
+                Instant::now(),
+                self.double_click_interval()?,
+            );
+            if let Err(error) = self.poster.post_button(button, true, click_state, location) {
+                state.click_tracker.rollback_begin(button);
+                return Err(error);
+            }
+            state.pressed_buttons.insert(button);
+            Ok(())
+        } else {
+            let location = exact_location.map_or_else(|| self.poster.pointer_location(), Ok)?;
+            let click_state = state.click_tracker.pending(button).ok_or_else(|| {
+                format!("macOS native input button {button} has no matching click state")
+            })?;
+            self.poster
+                .post_button(button, false, click_state, location)?;
+            state.pressed_buttons.remove(&button);
+            state.click_tracker.finish(button, click_state);
+            Ok(())
         }
     }
 
@@ -506,7 +547,7 @@ fn post_pointer_motion(
     planned_bounds: Option<MacInputDisplayBounds>,
     state: &MacInputState,
     input: MacPointerMotionInput,
-) -> Result<(), String> {
+) -> Result<CGPoint, String> {
     let source = event_source()?;
     let current = CGEvent::new(source.clone())
         .map_err(|_| "could not inspect the macOS pointer location".to_owned())?
@@ -531,7 +572,7 @@ fn post_pointer_motion(
     event.set_integer_value_field(EventField::MOUSE_EVENT_DELTA_X, i64::from(input.delta_x));
     event.set_integer_value_field(EventField::MOUSE_EVENT_DELTA_Y, i64::from(input.delta_y));
     event.post(CGEventTapLocation::HID);
-    Ok(())
+    Ok(target)
 }
 
 fn preferred_pointer_bounds(
@@ -869,6 +910,7 @@ mod tests {
     struct RecordingPoster {
         outcomes: Mutex<VecDeque<Result<(), String>>>,
         events: Mutex<Vec<PostedEvent>>,
+        button_locations: Mutex<Vec<(f64, f64)>>,
     }
 
     impl RecordingPoster {
@@ -876,11 +918,16 @@ mod tests {
             Self {
                 outcomes: Mutex::new(outcomes.into_iter().collect()),
                 events: Mutex::new(Vec::new()),
+                button_locations: Mutex::new(Vec::new()),
             }
         }
 
         fn events(&self) -> Vec<PostedEvent> {
             self.events.lock().unwrap().clone()
+        }
+
+        fn button_locations(&self) -> Vec<(f64, f64)> {
+            self.button_locations.lock().unwrap().clone()
         }
 
         fn record(&self, event: PostedEvent) -> Result<(), String> {
@@ -907,14 +954,31 @@ mod tests {
             button: u8,
             pressed: bool,
             click_state: u32,
-            _location: CGPoint,
+            location: CGPoint,
         ) -> Result<(), String> {
+            self.button_locations
+                .lock()
+                .unwrap()
+                .push((location.x, location.y));
             self.record(PostedEvent::Button {
                 button,
                 pressed,
                 click_state,
             })
         }
+    }
+
+    #[test]
+    fn positioned_button_uses_exact_motion_target_without_pointer_requery() {
+        let poster = Arc::new(RecordingPoster::new([]));
+        let input = MacNativeInput::with_poster(poster.clone());
+        let mut state = MacInputState::default();
+
+        input
+            .handle_pointer_button(&mut state, 1, true, Some(CGPoint::new(321.0, 654.0)))
+            .unwrap();
+
+        assert_eq!(poster.button_locations(), [(321.0, 654.0)]);
     }
 
     #[test]
@@ -1007,11 +1071,13 @@ mod tests {
             pointer_id: 0,
             button: 1,
             pressed: true,
+            absolute_position: None,
         };
         let release = PlatformNativeInputEvent::PointerButton {
             pointer_id: 0,
             button: 1,
             pressed: false,
+            absolute_position: None,
         };
 
         input.handle(21, press.clone()).unwrap();
@@ -1069,11 +1135,13 @@ mod tests {
             pointer_id: 0,
             button: 1,
             pressed: true,
+            absolute_position: None,
         };
         let release = PlatformNativeInputEvent::PointerButton {
             pointer_id: 0,
             button: 1,
             pressed: false,
+            absolute_position: None,
         };
 
         input.handle(22, press.clone()).unwrap();
@@ -1116,11 +1184,13 @@ mod tests {
             pointer_id: 0,
             button: 1,
             pressed: true,
+            absolute_position: None,
         };
         let release = PlatformNativeInputEvent::PointerButton {
             pointer_id: 0,
             button: 1,
             pressed: false,
+            absolute_position: None,
         };
 
         input.handle(7, press).unwrap();
@@ -1217,6 +1287,7 @@ mod tests {
             pointer_id: 0,
             button: 1,
             pressed: true,
+            absolute_position: None,
         };
 
         assert_eq!(input.handle(11, press), Err("left-down failed".to_owned()));
@@ -1245,11 +1316,13 @@ mod tests {
             pointer_id: 0,
             button: 1,
             pressed: true,
+            absolute_position: None,
         };
         let release = PlatformNativeInputEvent::PointerButton {
             pointer_id: 0,
             button: 1,
             pressed: false,
+            absolute_position: None,
         };
 
         input.handle(12, press).unwrap();
@@ -1304,6 +1377,7 @@ mod tests {
             pointer_id: 0,
             button: 1,
             pressed: true,
+            absolute_position: None,
         };
 
         input.handle(13, key_press).unwrap();
