@@ -1273,45 +1273,37 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
                 if !entriesToEnable.isEmpty,
                    let resolvedIDs = try? await topologyController.resolvedDisplayIDs(
                        for: topology
+                   ),
+                   await recoveryDisplaysAreVisible(
+                       entriesToEnable,
+                       topology: topology,
+                       resolvedIDs: resolvedIDs
                    )
                 {
-                    let visibleDisplayIDs = await topologyController.visibleDisplayIDs()
-                    let visiblePhysicalIdentities: Set<
-                        LumenDisplayDisconnectCapabilityDisplay.StableIdentity
-                    > = Set(
-                        topology.displays.compactMap { state
-                            -> LumenDisplayDisconnectCapabilityDisplay.StableIdentity? in
-                            guard let displayID = resolvedIDs[state.id],
-                                  visibleDisplayIDs.contains(displayID),
-                                  let vendorID = state.vendorID,
-                                  let productID = state.productID,
-                                  let serialNumber = state.serialNumber,
-                                  let builtin = state.builtin else {
-                                return nil
-                            }
-                            return LumenDisplayDisconnectCapabilityDisplay.StableIdentity(
-                                vendorID: vendorID,
-                                productID: productID,
-                                serialNumber: serialNumber,
-                                builtin: builtin
-                            )
-                        }
-                    )
-                    let allRecoveryDisplaysAreVisible = entriesToEnable.allSatisfy { entry in
-                        visiblePhysicalIdentities.contains(entry.display.stableIdentity)
-                    }
-                    if allRecoveryDisplaysAreVisible {
-                        entriesToEnable.removeAll(keepingCapacity: false)
-                    }
+                    entriesToEnable.removeAll(keepingCapacity: false)
                 }
                 if !entriesToEnable.isEmpty {
                     _ = try physicalDisplayController.probe()
                 }
-                for entry in entriesToEnable {
-                    _ = try physicalDisplayController.setEnabled(
-                        true,
-                        for: entry.display.displayID
-                    )
+                do {
+                    for entry in entriesToEnable {
+                        _ = try physicalDisplayController.setEnabled(
+                            true,
+                            for: entry.display.displayID
+                        )
+                    }
+                } catch {
+                    guard let resolvedIDs = try? await resolveDisplayIDsAfterDurableEnable(
+                        topology
+                    ),
+                    await recoveryDisplaysAreVisible(
+                        entriesToEnable,
+                        topology: topology,
+                        resolvedIDs: resolvedIDs
+                    ) else {
+                        throw error
+                    }
+                    entriesToEnable.removeAll(keepingCapacity: false)
                 }
                 requestedDurableEnableRecovery = !entriesToEnable.isEmpty
             }
@@ -1350,6 +1342,38 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
         for window in windows {
             setWindowSize(window.size, on: window.element)
             setWindowPosition(window.position, on: window.element)
+        }
+    }
+
+    private func recoveryDisplaysAreVisible(
+        _ entries: [LumenDisconnectRecoveryEntry],
+        topology: LumenMacPhysicalDisplayTopology,
+        resolvedIDs: [String: CGDirectDisplayID]
+    ) async -> Bool {
+        let visibleDisplayIDs = await topologyController.visibleDisplayIDs()
+        let visiblePhysicalIdentities: Set<
+            LumenDisplayDisconnectCapabilityDisplay.StableIdentity
+        > = Set(
+            topology.displays.compactMap { state
+                -> LumenDisplayDisconnectCapabilityDisplay.StableIdentity? in
+                guard let displayID = resolvedIDs[state.id],
+                      visibleDisplayIDs.contains(displayID),
+                      let vendorID = state.vendorID,
+                      let productID = state.productID,
+                      let serialNumber = state.serialNumber,
+                      let builtin = state.builtin else {
+                    return nil
+                }
+                return LumenDisplayDisconnectCapabilityDisplay.StableIdentity(
+                    vendorID: vendorID,
+                    productID: productID,
+                    serialNumber: serialNumber,
+                    builtin: builtin
+                )
+            }
+        )
+        return entries.allSatisfy { entry in
+            visiblePhysicalIdentities.contains(entry.display.stableIdentity)
         }
     }
 
