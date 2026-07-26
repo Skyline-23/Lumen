@@ -11,6 +11,13 @@ protocol LumenPhysicalDisplayWakeSignaling: Sendable {
         -> any LumenPhysicalDisplayWakeAssertion
 }
 
+extension LumenPhysicalDisplayWakeSignaling {
+    func pulseUserActivity() throws {
+        let assertion = try acquireUserActivityAssertion()
+        assertion.release()
+    }
+}
+
 struct LumenSystemPhysicalDisplayWakeSignal: LumenPhysicalDisplayWakeSignaling {
     func acquireUserActivityAssertion() throws
         -> any LumenPhysicalDisplayWakeAssertion {
@@ -31,8 +38,7 @@ struct LumenSystemPhysicalDisplayWakeSignal: LumenPhysicalDisplayWakeSignaling {
 
 private final class LumenSystemPhysicalDisplayWakeAssertion:
     LumenPhysicalDisplayWakeAssertion,
-    @unchecked Sendable
-{
+    @unchecked Sendable {
     private let assertionID: Mutex<IOPMAssertionID?>
 
     init(assertionID: IOPMAssertionID) {

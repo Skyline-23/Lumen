@@ -1415,6 +1415,7 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             .acquireUserActivityAssertion()
         defer { wakeAssertion.release() }
         try await topologyController.verify(topology)
+        try physicalDisplayWakeSignal.pulseUserActivity()
         for expected in try resolvePersistedWindows(topology.macWindows) {
             guard let actualPosition = windowPoint(
                 attribute: kAXPositionAttribute,

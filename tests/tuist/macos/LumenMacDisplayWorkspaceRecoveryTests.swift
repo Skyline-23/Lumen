@@ -1124,10 +1124,10 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         // When: terminal recovery independently verifies the restored display.
         try await workspace.verifyWorkspace(topology)
 
-        // Then: the panel is woken instead of remaining black while CoreGraphics
-        // already reports it as active.
-        XCTAssertEqual(wakeSignal.callCount, 1)
-        XCTAssertEqual(wakeSignal.releaseCount, 1)
+        // Then: recovery wakes before readback and pulses activity again after
+        // WindowServer has published the exact physical display.
+        XCTAssertEqual(wakeSignal.callCount, 2)
+        XCTAssertEqual(wakeSignal.releaseCount, 2)
     }
 
     func testPhysicalRecoveryKeepsWakeAssertionHeldThroughTopologyVerification() async throws {
@@ -1155,11 +1155,12 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         // When: terminal recovery verifies the physical display.
         try await workspace.verifyWorkspace(topology)
 
-        // Then: the assertion survives the readback boundary and is released only
-        // after verification finishes.
+        // Then: the first assertion survives the readback boundary, and the
+        // post-publication pulse is also fully released before returning.
         XCTAssertTrue(assertionWasHeldDuringCapture.withLock { $0 })
         XCTAssertFalse(wakeSignal.isAssertionHeld)
-        XCTAssertEqual(wakeSignal.releaseCount, 1)
+        XCTAssertEqual(wakeSignal.callCount, 2)
+        XCTAssertEqual(wakeSignal.releaseCount, 2)
     }
 
     func testPhysicalRecoveryWakesTheLocalDisplayBeforeTopologyVerificationFails() async throws {
@@ -1228,9 +1229,10 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
             try await workspace.verifyWorkspace(topology)
         }
 
-        // Then: the physical panel is still woken; window cleanup must not gate it.
-        XCTAssertEqual(wakeSignal.callCount, 1)
-        XCTAssertEqual(wakeSignal.releaseCount, 1)
+        // Then: the physical panel is pulsed again as soon as its topology is
+        // verified; stale window cleanup must not gate the visible recovery.
+        XCTAssertEqual(wakeSignal.callCount, 2)
+        XCTAssertEqual(wakeSignal.releaseCount, 2)
     }
 
     func testMissingCapabilityReceiptRejectsIsolationBeforeDisplayMutation() async throws {
