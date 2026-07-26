@@ -24,6 +24,7 @@ use crate::{
 
 const MEDIA_POLL_INTERVAL: Duration = Duration::from_millis(1);
 pub(super) const NATIVE_MEDIA_SEND_BUFFER_BYTES: usize = 4 * 1024 * 1024;
+const NATIVE_AUDIO_EGRESS_RESERVE_BYTES: usize = 2 * 1_200;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DatagramBatchMode {
@@ -225,6 +226,7 @@ async fn wait_for_connection_datagram_queue_capacity(
 async fn send_video_datagram_batch<Barrier, BarrierFuture, Send, SendFuture>(
     datagrams: Vec<Vec<u8>>,
     send_buffer_capacity: usize,
+    audio_reserve_bytes: usize,
     queue_was_empty_before_current_audio: bool,
     deadline: Instant,
     mut wait_for_capacity: Barrier,
@@ -237,16 +239,17 @@ where
     SendFuture: Future<Output = DatagramSendOutcome>,
 {
     let total_bytes = datagrams.iter().map(Vec::len).sum::<usize>();
-    let mode = if total_bytes <= send_buffer_capacity {
+    let video_capacity = send_buffer_capacity.saturating_sub(audio_reserve_bytes);
+    let mode = if total_bytes <= video_capacity {
         DatagramBatchMode::FreshEnqueue
     } else {
         DatagramBatchMode::DeadlineWait
     };
     let required_capacity =
         if mode == DatagramBatchMode::FreshEnqueue && queue_was_empty_before_current_audio {
-            total_bytes
+            total_bytes.saturating_add(audio_reserve_bytes)
         } else {
-            send_buffer_capacity
+            video_capacity
         };
     let barrier_started = Instant::now();
     let queue_wait_duration = match wait_for_capacity(required_capacity, deadline).await {
@@ -397,52 +400,103 @@ pub(super) async fn run_native_media_loop(
     router: SharedControlRouter,
     platform: Arc<dyn PlatformSessionControl>,
 ) -> Result<(), String> {
+    run_native_media_tasks(
+        run_native_audio_sender(connection.clone(), router.clone(), Arc::clone(&platform)),
+        run_native_video_sender(connection.clone(), router.clone(), Arc::clone(&platform)),
+        run_native_motion_receiver(connection, session_epoch, router, platform),
+    )
+    .await
+}
+
+async fn run_native_media_tasks<Audio, Video, Motion>(
+    audio: Audio,
+    video: Video,
+    motion: Motion,
+) -> Result<(), String>
+where
+    Audio: Future<Output = Result<(), String>>,
+    Video: Future<Output = Result<(), String>>,
+    Motion: Future<Output = Result<(), String>>,
+{
+    tokio::try_join!(audio, video, motion)?;
+    Ok(())
+}
+
+async fn run_native_audio_sender(
+    connection: quinn::Connection,
+    router: SharedControlRouter,
+    platform: Arc<dyn PlatformSessionControl>,
+) -> Result<(), String> {
+    let mut interval = tokio::time::interval(MEDIA_POLL_INTERVAL);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut audio = AudioSenderState::default();
+    let mut failures = MediaFailureReporter::default();
+    loop {
+        interval.tick().await;
+        let attempt =
+            poll_and_send_audio(&connection, &router, platform.as_ref(), &mut audio).await;
+        failures.observe(MediaKind::Audio, &attempt, platform.as_ref());
+        if let MediaAttempt::Terminal(failure) = attempt {
+            return Err(format!(
+                "native audio {} failed: {}",
+                failure.stage, failure.message
+            ));
+        }
+    }
+}
+
+async fn run_native_video_sender(
+    connection: quinn::Connection,
+    router: SharedControlRouter,
+    platform: Arc<dyn PlatformSessionControl>,
+) -> Result<(), String> {
     let mut interval = tokio::time::interval(MEDIA_POLL_INTERVAL);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut video = VideoSenderState::default();
-    let mut audio = AudioSenderState::default();
-    let mut motion = NativeMotionReceiver::default();
-    let mut motion_failure_active = false;
     let mut failures = MediaFailureReporter::default();
     loop {
-        tokio::select! {
-            datagram = connection.read_datagram() => {
-                let datagram = datagram.map_err(|error| format!("could not read QUIC media datagram: {error}"))?;
-                handle_motion_datagram(
-                    &router,
-                    platform.as_ref(),
-                    session_epoch,
-                    &datagram,
-                    &mut motion,
-                    &mut motion_failure_active,
-                );
-            }
-            _ = interval.tick() => {
-                let queue_was_empty_before_audio =
-                    connection.datagram_send_buffer_space() == NATIVE_MEDIA_SEND_BUFFER_BYTES;
-                let audio_attempt = poll_and_send_audio(
-                    &connection,
-                    &router,
-                    platform.as_ref(),
-                    &mut audio,
-                ).await;
-                failures.observe(MediaKind::Audio, &audio_attempt, platform.as_ref());
-                let video_attempt = poll_and_send_video(
-                    &connection,
-                    &router,
-                    platform.as_ref(),
-                    &mut video,
-                    queue_was_empty_before_audio,
-                ).await;
-                failures.observe(MediaKind::Video, &video_attempt, platform.as_ref());
-                if let MediaAttempt::Terminal(failure) = video_attempt {
-                    return Err(format!(
-                        "native video {} failed: {}",
-                        failure.stage, failure.message
-                    ));
-                }
-            }
+        interval.tick().await;
+        let queue_was_empty_before_video =
+            connection.datagram_send_buffer_space() == NATIVE_MEDIA_SEND_BUFFER_BYTES;
+        let attempt = poll_and_send_video(
+            &connection,
+            &router,
+            platform.as_ref(),
+            &mut video,
+            queue_was_empty_before_video,
+        )
+        .await;
+        failures.observe(MediaKind::Video, &attempt, platform.as_ref());
+        if let MediaAttempt::Terminal(failure) = attempt {
+            return Err(format!(
+                "native video {} failed: {}",
+                failure.stage, failure.message
+            ));
         }
+    }
+}
+
+async fn run_native_motion_receiver(
+    connection: quinn::Connection,
+    session_epoch: u32,
+    router: SharedControlRouter,
+    platform: Arc<dyn PlatformSessionControl>,
+) -> Result<(), String> {
+    let mut motion = NativeMotionReceiver::default();
+    let mut motion_failure_active = false;
+    loop {
+        let datagram = connection
+            .read_datagram()
+            .await
+            .map_err(|error| format!("could not read QUIC media datagram: {error}"))?;
+        handle_motion_datagram(
+            &router,
+            platform.as_ref(),
+            session_epoch,
+            &datagram,
+            &mut motion,
+            &mut motion_failure_active,
+        );
     }
 }
 
@@ -1034,6 +1088,7 @@ async fn poll_and_send_video(
     let report = send_video_datagram_batch(
         packetized.datagrams,
         NATIVE_MEDIA_SEND_BUFFER_BYTES,
+        NATIVE_AUDIO_EGRESS_RESERVE_BYTES,
         queue_was_empty_before_current_audio,
         deadline,
         |required_capacity, deadline| {
@@ -1179,10 +1234,11 @@ fn object_deadline_exceeded(age: Duration, maximum_object_delay_us: u32) -> bool
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_video_keyframe_delivery, object_deadline_exceeded, send_datagram_batch,
-        send_video_datagram_batch, wait_for_datagram_deadline, wait_for_datagram_queue_capacity,
-        DatagramBatchDropReason, DatagramBatchMode, DatagramBatchStatus, DatagramDeadlineElapsed,
-        DatagramSendOutcome, VideoBootstrapClassification, VideoKeyframeDelivery, VideoSenderState,
+        classify_video_keyframe_delivery, object_deadline_exceeded, run_native_media_tasks,
+        send_datagram_batch, send_video_datagram_batch, wait_for_datagram_deadline,
+        wait_for_datagram_queue_capacity, DatagramBatchDropReason, DatagramBatchMode,
+        DatagramBatchStatus, DatagramDeadlineElapsed, DatagramSendOutcome,
+        VideoBootstrapClassification, VideoKeyframeDelivery, VideoSenderState,
     };
     use lumen_engine::NativeVideoBootstrapReason;
     use std::cell::{Cell, RefCell};
@@ -1194,6 +1250,7 @@ mod tests {
     use std::sync::Arc;
     use std::task::{Context, Poll};
     use std::time::{Duration, Instant};
+    use tokio::sync::Notify;
 
     struct PendingSend {
         polls: Arc<AtomicUsize>,
@@ -1213,6 +1270,32 @@ mod tests {
         fn drop(&mut self) {
             self.dropped.store(true, Ordering::SeqCst);
         }
+    }
+
+    #[tokio::test]
+    async fn pending_video_future_does_not_block_audio_future() {
+        let audio_started = Arc::new(Notify::new());
+        let audio_started_signal = Arc::clone(&audio_started);
+        let never_finishes = || async {
+            std::future::pending::<()>().await;
+            Ok::<(), String>(())
+        };
+        let scheduler = tokio::spawn(run_native_media_tasks(
+            async move {
+                audio_started_signal.notify_one();
+                std::future::pending::<()>().await;
+                Ok::<(), String>(())
+            },
+            never_finishes(),
+            never_finishes(),
+        ));
+
+        tokio::time::timeout(Duration::from_millis(50), audio_started.notified())
+            .await
+            .expect("audio future must begin independently of pending video");
+
+        scheduler.abort();
+        let _ = scheduler.await;
     }
 
     #[test]
@@ -1333,6 +1416,7 @@ mod tests {
         let report = send_video_datagram_batch(
             vec![vec![1; 4], vec![2; 4]],
             12,
+            0,
             true,
             Instant::now() + Duration::from_secs(1),
             move |required_capacity, deadline| {
@@ -1379,12 +1463,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn video_capacity_preserves_headroom_for_the_next_audio_packets() {
+        let required = Rc::new(Cell::new(0));
+        let requested_capacity = Rc::clone(&required);
+        let report = send_video_datagram_batch(
+            vec![vec![1; 4], vec![2; 4]],
+            16,
+            4,
+            true,
+            Instant::now() + Duration::from_secs(1),
+            move |required_capacity, _| {
+                requested_capacity.set(required_capacity);
+                async { Ok(Duration::ZERO) }
+            },
+            |_, _, _| async { DatagramSendOutcome::Sent },
+        )
+        .await;
+
+        assert_eq!(required.get(), 12);
+        assert_eq!(report.status, DatagramBatchStatus::Complete);
+        assert_eq!(report.sent_datagrams, 2);
+    }
+
+    #[tokio::test]
     async fn possible_prior_video_requires_full_queue_drain() {
         let required = Rc::new(Cell::new(0));
         let requested_capacity = Rc::clone(&required);
         let report = send_video_datagram_batch(
             vec![vec![1; 4], vec![2; 4]],
             12,
+            0,
             false,
             Instant::now() + Duration::from_secs(1),
             move |required_capacity, _| {
@@ -1453,6 +1561,7 @@ mod tests {
         let blocked = send_video_datagram_batch(
             vec![vec![1; 4], vec![1; 4]],
             8,
+            0,
             false,
             Instant::now() + Duration::from_secs(1),
             |_, _| async { Err(DatagramDeadlineElapsed) },
@@ -1477,6 +1586,7 @@ mod tests {
         let fresh = send_video_datagram_batch(
             vec![vec![2; 4], vec![2; 4]],
             8,
+            0,
             false,
             Instant::now() + Duration::from_secs(1),
             |_, _| async { Ok(Duration::ZERO) },
