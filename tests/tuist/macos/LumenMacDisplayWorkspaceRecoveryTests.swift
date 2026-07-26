@@ -1644,7 +1644,9 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         try recoveryStore.persist(record)
         let wakeSignal = RecordingPhysicalDisplayWakeSignal()
         let topologyController = RenumberedOfflineTopologyController(
-            fixture: fixture
+            fixture: fixture,
+            verificationWakeSignal: wakeSignal,
+            minimumWakeCallCountForVerification: 2
         )
         let workspace = LumenMacDisplayWorkspace(
             topologyController: topologyController,
@@ -1662,6 +1664,9 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
             recoveryGeneration: 78
         )
         XCTAssertTrue(wakeSignal.isAssertionHeld)
+        // The assertion acquired before private display enable can become stale
+        // when WindowServer republishes the external panel. Verification must
+        // issue a fresh user-activity pulse before its first topology readback.
         try await workspace.verifyWorkspace(topology)
 
         XCTAssertEqual(
@@ -2619,14 +2624,21 @@ private final class RenumberedOfflineIsolationFixture: Sendable {
 private actor RenumberedOfflineTopologyController: LumenMacDisplayTopologyControlling {
     let fixture: RenumberedOfflineIsolationFixture
     let extraOnlineDisplayIDs: Set<CGDirectDisplayID>
+    let verificationWakeSignal: RecordingPhysicalDisplayWakeSignal?
+    let minimumWakeCallCountForVerification: Int
     private var restoreCalls = 0
 
     init(
         fixture: RenumberedOfflineIsolationFixture,
-        extraOnlineDisplayIDs: Set<CGDirectDisplayID> = []
+        extraOnlineDisplayIDs: Set<CGDirectDisplayID> = [],
+        verificationWakeSignal: RecordingPhysicalDisplayWakeSignal? = nil,
+        minimumWakeCallCountForVerification: Int = 0
     ) {
         self.fixture = fixture
         self.extraOnlineDisplayIDs = extraOnlineDisplayIDs
+        self.verificationWakeSignal = verificationWakeSignal
+        self.minimumWakeCallCountForVerification =
+            minimumWakeCallCountForVerification
     }
 
     func capture() -> LumenMacPhysicalDisplayTopology {
@@ -2645,7 +2657,11 @@ private actor RenumberedOfflineTopologyController: LumenMacDisplayTopologyContro
     }
 
     func verify(_: LumenMacPhysicalDisplayTopology) throws {
-        guard fixture.isOnline() else {
+        let wakeCallCount = verificationWakeSignal?.callCount
+            ?? minimumWakeCallCountForVerification
+        guard fixture.isOnline(),
+              wakeCallCount >= minimumWakeCallCountForVerification
+        else {
             throw DisplayTopologyProbeFailure.mismatch
         }
     }

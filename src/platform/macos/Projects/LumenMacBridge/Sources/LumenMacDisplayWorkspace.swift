@@ -1436,6 +1436,15 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
                 wakeAssertion.release()
             }
         }
+        if inheritedWakeAssertion {
+            // The assertion acquired before mirror release or private display
+            // enable can predate WindowServer's replacement display object.
+            // Pulse the republished panel and wait for it to wake before the
+            // first exact topology readback; otherwise an inactive sleeping
+            // output can fail verification before the post-wake recommit path.
+            try physicalDisplayWakeSignal.pulseUserActivity()
+            try await waitForPhysicalDisplaysToWake(topology)
+        }
         try await topologyController.verify(topology)
         try physicalDisplayWakeSignal.pulseUserActivity()
         try await waitForPhysicalDisplaysToWake(topology)
