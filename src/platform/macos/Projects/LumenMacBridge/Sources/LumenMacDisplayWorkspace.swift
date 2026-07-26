@@ -1276,22 +1276,9 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
                 )
             }
             let currentEnvironment = try disconnectRecoveryEnvironment()
-            if disconnectRecoveryRecord.environment == currentEnvironment &&
-                !physicalTopologyAlreadyRestored {
+            if disconnectRecoveryRecord.environment == currentEnvironment {
                 var entriesToEnable = disconnectRecoveryRecord.entries.filter {
                     $0.phase.requiresEnableRecovery
-                }
-                if !entriesToEnable.isEmpty,
-                   let resolvedIDs = try? await topologyController.resolvedDisplayIDs(
-                       for: topology
-                   ),
-                   await recoveryDisplaysAreVisible(
-                       entriesToEnable,
-                       topology: topology,
-                       resolvedIDs: resolvedIDs
-                   )
-                {
-                    entriesToEnable.removeAll(keepingCapacity: false)
                 }
                 if !entriesToEnable.isEmpty {
                     _ = try physicalDisplayController.probe()

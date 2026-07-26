@@ -1576,7 +1576,7 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: recordURL.path))
     }
 
-    func testDurableIsolationRecoverySkipsEnableWhenPhysicalTopologyIsAlreadyRestored() async throws {
+    func testDurableIsolationRecoveryReenablesDisplayWhenPhysicalTopologyLooksRestored() async throws {
         let topology = LumenMacPhysicalDisplayTopology(
             displays: [
                 physicalDisplayState(
@@ -1626,12 +1626,15 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         )
         try await workspace.verifyWorkspace(topology)
 
-        XCTAssertTrue(fixture.controlCalls().isEmpty)
+        XCTAssertEqual(
+            fixture.controlCalls(),
+            [.init(displayID: 3, enabled: true)]
+        )
         XCTAssertTrue(fixture.isOnline())
         XCTAssertFalse(FileManager.default.fileExists(atPath: recordURL.path))
     }
 
-    func testDurableIsolationRecoverySkipsRedundantEnableAfterDisplayRepublication() async throws {
+    func testDurableIsolationRecoveryReenablesDisplayAfterRepublication() async throws {
         let topology = LumenMacPhysicalDisplayTopology(
             displays: [
                 physicalDisplayState(
@@ -1699,7 +1702,10 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         )
         try await workspace.verifyWorkspace(topology)
 
-        XCTAssertTrue(physicalFixture.controlCalls().isEmpty)
+        XCTAssertEqual(
+            physicalFixture.controlCalls(),
+            [.init(displayID: 77, enabled: true)]
+        )
         XCTAssertFalse(FileManager.default.fileExists(atPath: recordURL.path))
     }
 
@@ -1782,7 +1788,10 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
                 .unmirror(target: 77),
             ]
         )
-        XCTAssertTrue(physicalFixture.controlCalls().isEmpty)
+        XCTAssertEqual(
+            physicalFixture.controlCalls(),
+            [.init(displayID: 77, enabled: true)]
+        )
         XCTAssertFalse(FileManager.default.fileExists(atPath: recordURL.path))
     }
 
