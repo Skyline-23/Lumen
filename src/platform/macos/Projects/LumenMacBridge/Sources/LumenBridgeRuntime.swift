@@ -140,6 +140,10 @@ public actor LumenBridgeRuntime {
         await resumeVideoEncodingAfterCodecAckImpl()
     }
 
+    public func setVideoBitRateKbps(_ bitrateKbps: Int) async -> Bool {
+        await setVideoBitRateKbpsImpl(bitrateKbps)
+    }
+
     public func makeDefaultMicrophoneAudioConfiguration()
         -> LumenMacAudioCaptureConfiguration {
         makeDefaultMicrophoneAudioConfigurationImpl()

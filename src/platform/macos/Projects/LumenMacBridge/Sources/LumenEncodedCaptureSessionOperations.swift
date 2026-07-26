@@ -80,6 +80,14 @@ extension LumenEncodedCaptureSession {
         return await runtime.resumeVideoEncodingAfterCodecAck()
     }
 
+    func setVideoBitRateKbps(_ bitrateKbps: Int) async -> Bool {
+        guard !isStopping,
+              let runtime else {
+            return false
+        }
+        return await runtime.setVideoBitRateKbps(bitrateKbps)
+    }
+
     func attachSystemAudio(
         configuration: LumenMacAudioCaptureConfiguration,
         callbacks: LumenAudioCaptureCallbacks

@@ -85,4 +85,28 @@ extension LumenBridgeRuntime {
         }
         return resumed
     }
+
+    func setVideoBitRateKbpsImpl(_ bitrateKbps: Int) async -> Bool {
+        guard bitrateKbps > 0,
+              await captureLifecycle.shouldRequestImmediateKeyFrame,
+              let encodedCaptureSession else {
+            logger.error(
+                "Rejecting adaptive bitrate because ScreenCaptureKit capture is not running"
+            )
+            return false
+        }
+        let applied = await encodedCaptureSession.setVideoBitRateKbps(
+            bitrateKbps
+        )
+        if applied {
+            logger.debug(
+                "Applied adaptive VideoToolbox bitrate \(bitrateKbps, privacy: .public) kbps"
+            )
+        } else {
+            logger.error(
+                "VideoToolbox rejected adaptive bitrate \(bitrateKbps, privacy: .public) kbps"
+            )
+        }
+        return applied
+    }
 }

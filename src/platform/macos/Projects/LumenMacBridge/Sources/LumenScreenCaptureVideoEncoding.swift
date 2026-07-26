@@ -9,6 +9,53 @@ import ScreenCaptureKit
 import Synchronization
 import VideoToolbox
 
+struct LumenVideoToolboxRateControl: Equatable, Sendable {
+    let averageBitrateBitsPerSecond: Int
+    let dataRateLimitBytesPerSecond: Int
+    let dataRateLimitSeconds: Int
+
+    init?(bitrateKbps: Int) {
+        guard bitrateKbps > 0,
+              bitrateKbps <= Int.max / 1_000 else {
+            return nil
+        }
+        let averageBitrateBitsPerSecond = bitrateKbps * 1_000
+        self.averageBitrateBitsPerSecond = averageBitrateBitsPerSecond
+        dataRateLimitBytesPerSecond = averageBitrateBitsPerSecond / 8
+        dataRateLimitSeconds = 1
+    }
+
+    func apply(to session: VTCompressionSession) throws {
+        try setProperty(
+            kVTCompressionPropertyKey_AverageBitRate,
+            value: averageBitrateBitsPerSecond as CFNumber,
+            on: session
+        )
+        try setProperty(
+            kVTCompressionPropertyKey_DataRateLimits,
+            value: [
+                dataRateLimitBytesPerSecond as NSNumber,
+                dataRateLimitSeconds as NSNumber,
+            ] as CFArray,
+            on: session
+        )
+    }
+
+    private func setProperty(
+        _ key: CFString,
+        value: CFTypeRef,
+        on session: VTCompressionSession
+    ) throws {
+        let status = VTSessionSetProperty(session, key: key, value: value)
+        guard status == noErr else {
+            throw LumenScreenCaptureError.compressionPropertyFailed(
+                String(describing: key),
+                status
+            )
+        }
+    }
+}
+
 extension LumenScreenCaptureVideoRuntime {
     func createCompressionSession(width: Int, height: Int) throws {
         dispatchPrecondition(condition: .onQueue(encoderQueue))
@@ -90,11 +137,10 @@ extension LumenScreenCaptureVideoRuntime {
             kVTCompressionPropertyKey_MaxKeyFrameInterval,
             value: targetFrameRate
         )
-        if configuration.targetVideoBitRateKbps > 0 {
-            try setProperty(
-                kVTCompressionPropertyKey_AverageBitRate,
-                value: (configuration.targetVideoBitRateKbps * 1_000) as CFNumber
-            )
+        if let rateControl = LumenVideoToolboxRateControl(
+            bitrateKbps: configuration.targetVideoBitRateKbps
+        ) {
+            try applyVideoRateControl(rateControl)
         }
         try setProperty(
             kVTCompressionPropertyKey_ProfileLevel,
@@ -138,6 +184,43 @@ extension LumenScreenCaptureVideoRuntime {
                 value: contentLightLevelInfo.encodedData as CFData
             )
         }
+    }
+
+    func setVideoBitRateKbps(_ bitrateKbps: Int) async -> Bool {
+        guard let rateControl = LumenVideoToolboxRateControl(
+            bitrateKbps: bitrateKbps
+        ) else {
+            return false
+        }
+        return await withCheckedContinuation { continuation in
+            encoderQueue.async { [weak self] in
+                guard let self,
+                      self.compressionSession != nil else {
+                    continuation.resume(returning: false)
+                    return
+                }
+                if self.appliedVideoBitRateKbps == bitrateKbps {
+                    continuation.resume(returning: true)
+                    return
+                }
+                do {
+                    try self.applyVideoRateControl(rateControl)
+                    continuation.resume(returning: true)
+                } catch {
+                    continuation.resume(returning: false)
+                }
+            }
+        }
+    }
+
+    func applyVideoRateControl(
+        _ rateControl: LumenVideoToolboxRateControl
+    ) throws {
+        dispatchPrecondition(condition: .onQueue(encoderQueue))
+        guard let compressionSession else { return }
+        try rateControl.apply(to: compressionSession)
+        appliedVideoBitRateKbps =
+            rateControl.averageBitrateBitsPerSecond / 1_000
     }
 
     func prepareCompressionSession(_ session: VTCompressionSession) throws {
@@ -281,6 +364,7 @@ extension LumenScreenCaptureVideoRuntime {
         guard let compressionSession else { return }
         VTCompressionSessionInvalidate(compressionSession)
         self.compressionSession = nil
+        appliedVideoBitRateKbps = nil
     }
 
 }

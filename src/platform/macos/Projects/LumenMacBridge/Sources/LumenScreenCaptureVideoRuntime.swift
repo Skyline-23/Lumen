@@ -37,6 +37,7 @@ final class LumenScreenCaptureVideoRuntime:
     var lifecycleSettlementWaiters: [CheckedContinuation<Void, Never>] = []
     var compressionSession: VTCompressionSession?
     var compressionSessionAvailable = false
+    var appliedVideoBitRateKbps: Int?
     var encodingPlan: LumenVideoToolboxEncodingPlan?
     var sourceContract: LumenExactCaptureSourceContract?
     var outputContract: LumenExactEncodedOutputContract?

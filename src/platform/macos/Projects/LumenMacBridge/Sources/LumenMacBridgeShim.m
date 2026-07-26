@@ -519,6 +519,10 @@ bool LumenMacBridgeResumeVideoEncodingAfterCodecAck(void) {
   return [LumenBridgeObjCFacade resumeVideoEncodingAfterCodecAckSharedSync];
 }
 
+bool LumenMacBridgeSetVideoBitrateKbps(uint32_t bitrate_kbps) {
+  return [LumenBridgeObjCFacade setVideoBitRateKbpsSharedSync:bitrate_kbps];
+}
+
 void LumenMacBridgeRestartCapture(const char *reason) {
   NSString *restartReason =
     reason != NULL ?

@@ -854,6 +854,7 @@ async fn accept_native_auxiliary_streams(
                             format!("could not prioritize telemetry stream: {error}")
                         })?;
                         let telemetry_router = Arc::clone(&router);
+                        let telemetry_platform = Arc::clone(&platform);
                         stream_tasks.spawn(async move {
                             (
                                 NativeAuxiliaryStreamKind::Telemetry,
@@ -862,6 +863,7 @@ async fn accept_native_auxiliary_streams(
                                     receive,
                                     session_epoch,
                                     telemetry_router,
+                                    telemetry_platform,
                                 )
                                 .await,
                             )
@@ -972,6 +974,7 @@ async fn accept_native_telemetry_stream(
     mut receive: quinn::RecvStream,
     session_epoch: u32,
     router: SharedControlRouter,
+    platform: Arc<dyn PlatformSessionControl>,
 ) -> Result<(), String> {
     eprintln!(
         "Lumen native QUIC stage=telemetry-stream-ready session-epoch={session_epoch} stream-id={:?}",
@@ -1002,10 +1005,8 @@ async fn accept_native_telemetry_stream(
             .map_err(|_| "native control router lock is poisoned".to_owned())?
             .observe_native_media_feedback(&feedback, session_epoch);
         match disposition {
-            Ok(
-                NativeMediaFeedbackDisposition::Applied(_)
-                | NativeMediaFeedbackDisposition::Unchanged,
-            ) => {
+            Ok(disposition) => {
+                apply_adaptive_video_decision(platform.as_ref(), session_epoch, disposition)?;
                 if feedback.stream_id != u32::from(NATIVE_AUDIO_STREAM_ID) {
                     continue;
                 }
@@ -1054,6 +1055,32 @@ async fn accept_native_telemetry_stream(
         "Lumen native QUIC stage=telemetry-peer-send-closed session-epoch={session_epoch} response-lane=held"
     );
     hold_native_auxiliary_response_until_session_end(send).await
+}
+
+fn apply_adaptive_video_decision(
+    platform: &dyn PlatformSessionControl,
+    session_epoch: u32,
+    disposition: NativeMediaFeedbackDisposition,
+) -> Result<(), String> {
+    let NativeMediaFeedbackDisposition::Applied(decision) = disposition else {
+        return Ok(());
+    };
+    platform
+        .handle_control_event(
+            session_epoch,
+            crate::PlatformControlEvent::SetVideoBitrateKbps {
+                bitrate_kbps: decision.encoder_bitrate_kbps,
+            },
+        )
+        .map_err(|error| format!("adaptive video bitrate update failed: {error}"))?;
+    eprintln!(
+        "Lumen native media stage=adaptive-video-applied session-epoch={session_epoch} wire-budget-kbps={} encoder-bitrate-kbps={} fec-percentage={} congestion-source={:?}",
+        decision.wire_budget_kbps,
+        decision.encoder_bitrate_kbps,
+        decision.fec_percentage,
+        decision.congestion_source,
+    );
+    Ok(())
 }
 
 async fn hold_native_auxiliary_response_until_session_end(
@@ -1410,7 +1437,8 @@ mod tests {
     use crate::control::tests::{
         native_hello, router_with_platform, RecordingPlatformSessionControl,
     };
-    use crate::PlatformSessionPlan;
+    use crate::control::{AdaptiveVideoDecision, CongestionSource};
+    use crate::{PlatformControlEvent, PlatformSessionPlan};
 
     use super::*;
 
@@ -1592,6 +1620,35 @@ mod tests {
         assert!(PRIORITY_CONTROL > PRIORITY_CODEC_CONFIGURATION);
         assert!(PRIORITY_INPUT > PRIORITY_VIDEO_BOOTSTRAP);
         assert!(PRIORITY_VIDEO_BOOTSTRAP > PRIORITY_TELEMETRY);
+    }
+
+    #[test]
+    fn adaptive_feedback_applies_the_encoder_bitrate_outside_router_state() {
+        let platform = Arc::new(RecordingPlatformSessionControl::default());
+        let decision = AdaptiveVideoDecision {
+            wire_budget_kbps: 51_000,
+            encoder_bitrate_kbps: 48_000,
+            fec_percentage: 6,
+            congestion_source: CongestionSource::Audio,
+            changed: true,
+        };
+
+        apply_adaptive_video_decision(
+            platform.as_ref(),
+            77,
+            NativeMediaFeedbackDisposition::Applied(decision),
+        )
+        .unwrap();
+
+        assert_eq!(
+            platform.control_events(),
+            vec![(
+                77,
+                PlatformControlEvent::SetVideoBitrateKbps {
+                    bitrate_kbps: 48_000,
+                },
+            )]
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]

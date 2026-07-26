@@ -208,6 +208,7 @@ type PopAudioEvent =
     unsafe extern "C" fn(*mut BridgeController, *mut c_char, usize) -> MacAudioCaptureEventRecord;
 type RequestKeyFrame = unsafe extern "C" fn();
 type ResumeVideoEncodingAfterCodecAck = unsafe extern "C" fn() -> bool;
+type SetVideoBitrateKbps = unsafe extern "C" fn(u32) -> bool;
 type PrepareWorkspace = unsafe extern "C" fn(MacWorkspaceSessionRequest, *mut c_char, usize) -> u32;
 type ActivateWorkspace =
     unsafe extern "C" fn(*const c_char, *mut c_char, usize) -> MacWorkspaceActivationResult;
@@ -256,6 +257,7 @@ struct MacBridgeApi {
     pop_audio_event: PopAudioEvent,
     request_key_frame: RequestKeyFrame,
     resume_video_encoding_after_codec_ack: ResumeVideoEncodingAfterCodecAck,
+    set_video_bitrate_kbps: SetVideoBitrateKbps,
     prepare_workspace: PrepareWorkspace,
     activate_workspace: ActivateWorkspace,
     stop_workspace: StopWorkspace,
@@ -335,6 +337,10 @@ impl MacBridgeApi {
                 resume_video_encoding_after_codec_ack: load_symbol(
                     handle,
                     b"LumenMacBridgeResumeVideoEncodingAfterCodecAck\0",
+                )?,
+                set_video_bitrate_kbps: load_symbol(
+                    handle,
+                    b"LumenMacBridgeSetVideoBitrateKbps\0",
                 )?,
                 prepare_workspace: load_symbol(handle, b"LumenMacWorkspacePrepareSession\0")?,
                 activate_workspace: load_symbol(handle, b"LumenMacWorkspaceActivateSession\0")?,
@@ -789,6 +795,13 @@ impl PlatformSessionControl for MacPlatformSessionControl {
                     .ok_or_else(|| {
                         "macOS video encoding could not resume after codec acknowledgement"
                             .to_owned()
+                    })
+            }
+            PlatformControlEvent::SetVideoBitrateKbps { bitrate_kbps } => {
+                unsafe { (self.api.set_video_bitrate_kbps)(bitrate_kbps) }
+                    .then_some(())
+                    .ok_or_else(|| {
+                        format!("macOS VideoToolbox rejected adaptive bitrate {bitrate_kbps} kbps")
                     })
             }
             PlatformControlEvent::ResetInput => Ok(()),

@@ -155,6 +155,7 @@ pub enum PlatformControlEvent {
     RequestIdrFrame,
     InvalidateReferenceFrames { first_frame: i64, last_frame: i64 },
     ResumeVideoEncodingAfterCodecAck,
+    SetVideoBitrateKbps { bitrate_kbps: u32 },
     ResetInput,
     ExecuteServerCommand { index: u8 },
 }
@@ -388,6 +389,7 @@ pub enum LumenHostPlatformControlEventKind {
     InvalidateReferenceFrames = 1,
     ResetInput = 2,
     ResumeVideoEncodingAfterCodecAck = 3,
+    SetVideoBitrateKbps = 4,
 }
 
 #[repr(C)]
@@ -397,6 +399,7 @@ pub struct LumenHostPlatformControlEvent {
     pub control_connect_data: u32,
     pub first_frame: i64,
     pub last_frame: i64,
+    pub video_bitrate_kbps: u32,
 }
 
 #[repr(C)]
@@ -680,6 +683,7 @@ impl PlatformSessionControl for CallbackPlatformSessionControl {
                 control_connect_data,
                 first_frame: 0,
                 last_frame: 0,
+                video_bitrate_kbps: 0,
             },
             PlatformControlEvent::InvalidateReferenceFrames {
                 first_frame,
@@ -689,6 +693,7 @@ impl PlatformSessionControl for CallbackPlatformSessionControl {
                 control_connect_data,
                 first_frame: *first_frame,
                 last_frame: *last_frame,
+                video_bitrate_kbps: 0,
             },
             PlatformControlEvent::ResumeVideoEncodingAfterCodecAck => {
                 LumenHostPlatformControlEvent {
@@ -696,6 +701,16 @@ impl PlatformSessionControl for CallbackPlatformSessionControl {
                     control_connect_data,
                     first_frame: 0,
                     last_frame: 0,
+                    video_bitrate_kbps: 0,
+                }
+            }
+            PlatformControlEvent::SetVideoBitrateKbps { bitrate_kbps } => {
+                LumenHostPlatformControlEvent {
+                    kind: LumenHostPlatformControlEventKind::SetVideoBitrateKbps,
+                    control_connect_data,
+                    first_frame: 0,
+                    last_frame: 0,
+                    video_bitrate_kbps: *bitrate_kbps,
                 }
             }
             PlatformControlEvent::ResetInput => LumenHostPlatformControlEvent {
@@ -703,6 +718,7 @@ impl PlatformSessionControl for CallbackPlatformSessionControl {
                 control_connect_data,
                 first_frame: 0,
                 last_frame: 0,
+                video_bitrate_kbps: 0,
             },
             PlatformControlEvent::ExecuteServerCommand { .. } => unreachable!(),
         };
@@ -1300,8 +1316,16 @@ mod tests {
         adapter
             .handle_control_event(66_051, PlatformControlEvent::ResetInput)
             .unwrap();
+        adapter
+            .handle_control_event(
+                66_051,
+                PlatformControlEvent::SetVideoBitrateKbps {
+                    bitrate_kbps: 48_000,
+                },
+            )
+            .unwrap();
         let events = CONTROL_EVENTS.lock().unwrap();
-        assert_eq!(events.len(), 3);
+        assert_eq!(events.len(), 4);
         assert!(events
             .iter()
             .all(|event| event.control_connect_data == 66_051));
@@ -1315,6 +1339,11 @@ mod tests {
             events[2].kind,
             LumenHostPlatformControlEventKind::ResetInput
         );
+        assert_eq!(
+            events[3].kind,
+            LumenHostPlatformControlEventKind::SetVideoBitrateKbps
+        );
+        assert_eq!(events[3].video_bitrate_kbps, 48_000);
         drop(events);
         FEEDBACK_READY.store(true, Ordering::Release);
         assert_eq!(

@@ -94,6 +94,7 @@ typedef enum LumenHostPlatformControlEventKind {
   LumenHostPlatformControlEventKindInvalidateReferenceFrames = 1,
   LumenHostPlatformControlEventKindResetInput = 2,
   LumenHostPlatformControlEventKindResumeVideoEncodingAfterCodecAck = 3,
+  LumenHostPlatformControlEventKindSetVideoBitrateKbps = 4,
 } LumenHostPlatformControlEventKind;
 
 typedef struct LumenHostPlatformControlEvent {
@@ -101,6 +102,7 @@ typedef struct LumenHostPlatformControlEvent {
   uint32_t control_connect_data;
   int64_t first_frame;
   int64_t last_frame;
+  uint32_t video_bitrate_kbps;
 } LumenHostPlatformControlEvent;
 
 typedef enum LumenHostPlatformRuntimeEventDisposition {

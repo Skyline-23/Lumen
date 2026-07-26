@@ -40,6 +40,12 @@ public final class LumenBridgeObjCFacade: NSObject {
         LumenBridgeObjCFacade().resumeVideoEncodingAfterCodecAckSync()
     }
 
+    public static func setVideoBitRateKbpsSharedSync(
+        _ bitrateKbps: UInt32
+    ) -> Bool {
+        LumenBridgeObjCFacade().setVideoBitRateKbpsSync(bitrateKbps)
+    }
+
     public static func restartCaptureSharedSync(_ reason: String) {
         let semaphore = DispatchSemaphore(value: 0)
         Task {
@@ -124,6 +130,13 @@ public final class LumenBridgeObjCFacade: NSObject {
         let runtime = runtime
         return (try? blockingRun {
             await runtime.resumeVideoEncodingAfterCodecAck()
+        }) ?? false
+    }
+
+    public func setVideoBitRateKbpsSync(_ bitrateKbps: UInt32) -> Bool {
+        let runtime = runtime
+        return (try? blockingRun {
+            await runtime.setVideoBitRateKbps(Int(bitrateKbps))
         }) ?? false
     }
 

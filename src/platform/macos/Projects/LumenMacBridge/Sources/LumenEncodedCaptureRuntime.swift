@@ -58,6 +58,13 @@ protocol LumenEncodedCaptureRuntime: AnyObject, Sendable {
     func stop() async
     func requestImmediateKeyFrame()
     func resumeVideoEncodingAfterCodecAck() async -> Bool
+    func setVideoBitRateKbps(_ bitrateKbps: Int) async -> Bool
+}
+
+extension LumenEncodedCaptureRuntime {
+    func setVideoBitRateKbps(_: Int) async -> Bool {
+        false
+    }
 }
 
 struct LumenEncodedCaptureRuntimeContext: Sendable {

@@ -91,6 +91,10 @@ impl RecordingPlatformSessionControl {
     pub(crate) fn application_stop_count(&self) -> usize {
         self.application_stops.load(Ordering::Relaxed)
     }
+
+    pub(crate) fn control_events(&self) -> Vec<(u32, PlatformControlEvent)> {
+        self.control_events.lock().unwrap().clone()
+    }
 }
 
 impl PlatformSessionControl for RecordingPlatformSessionControl {
