@@ -153,7 +153,7 @@ struct FailingPlatformSessionControl {
     stops: AtomicUsize,
 }
 
-struct RetryingCleanupPlatformSessionControl {
+pub(crate) struct RetryingCleanupPlatformSessionControl {
     start_result: Result<(), String>,
     stop_results: Mutex<VecDeque<Result<(), String>>>,
     application_stop_results: Mutex<VecDeque<Result<(), String>>>,
@@ -162,7 +162,7 @@ struct RetryingCleanupPlatformSessionControl {
 }
 
 impl RetryingCleanupPlatformSessionControl {
-    fn new(stop_results: impl IntoIterator<Item = Result<(), String>>) -> Self {
+    pub(crate) fn new(stop_results: impl IntoIterator<Item = Result<(), String>>) -> Self {
         Self {
             start_result: Ok(()),
             stop_results: Mutex::new(stop_results.into_iter().collect()),
@@ -196,6 +196,14 @@ impl RetryingCleanupPlatformSessionControl {
             stops: AtomicUsize::new(0),
             application_stops: AtomicUsize::new(0),
         }
+    }
+
+    pub(crate) fn stop_count(&self) -> usize {
+        self.stops.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn application_stop_count(&self) -> usize {
+        self.application_stops.load(Ordering::Relaxed)
     }
 }
 

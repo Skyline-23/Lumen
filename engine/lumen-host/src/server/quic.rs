@@ -39,6 +39,8 @@ const CONNECTION_STREAM_TIMEOUT: Duration = Duration::from_secs(2);
 const ERROR_RESPONSE_DELIVERY_GRACE: Duration = Duration::from_millis(500);
 const SERVER_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
 const SERVER_KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(5);
+const TERMINAL_NATIVE_CLEANUP_MAX_ATTEMPTS: usize = 3;
+const TERMINAL_NATIVE_CLEANUP_RETRY_DELAY: Duration = Duration::from_millis(250);
 const CODEC_CONFIGURATION_ACK_TIMEOUT: Duration = Duration::from_secs(15);
 const CODEC_CONFIGURATION_ACK_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const VIDEO_BOOTSTRAP_RESULT_TIMEOUT: Duration = Duration::from_secs(15);
@@ -445,16 +447,68 @@ async fn handle_connection(
     bootstrap_task.abort();
     auxiliary_task.abort();
     media_task.abort();
-    let cleanup_result = match lifecycle_router.lock() {
-        Ok(mut router) => router.terminate_native_connection(session_epoch),
-        Err(_) => Err("native control router lock is poisoned".to_owned()),
-    };
+    let cleanup_result =
+        terminate_native_connection_with_retry(&lifecycle_router, session_epoch).await;
     if cleanup_result.is_ok() {
         eprintln!(
             "Lumen native QUIC stage=connection-cleanup-complete session-epoch={session_epoch}"
         );
     }
-    result.and(cleanup_result)
+    combine_connection_and_cleanup_results(result, cleanup_result)
+}
+
+async fn terminate_native_connection_with_retry(
+    router: &SharedControlRouter,
+    session_epoch: u32,
+) -> Result<(), String> {
+    let mut last_error = None;
+    for attempt in 1..=TERMINAL_NATIVE_CLEANUP_MAX_ATTEMPTS {
+        let cleanup_result = match router.lock() {
+            Ok(mut router) => router.terminate_native_connection(session_epoch),
+            Err(_) => Err("native control router lock is poisoned".to_owned()),
+        };
+        match cleanup_result {
+            Ok(()) => {
+                if attempt > 1 {
+                    eprintln!(
+                        "Lumen native QUIC stage=connection-cleanup-recovered \
+                         session-epoch={session_epoch} attempt={attempt}"
+                    );
+                }
+                return Ok(());
+            }
+            Err(error) => {
+                eprintln!(
+                    "Lumen native QUIC stage=connection-cleanup-retry \
+                     session-epoch={session_epoch} attempt={attempt} \
+                     max-attempts={TERMINAL_NATIVE_CLEANUP_MAX_ATTEMPTS} error={error}"
+                );
+                last_error = Some(error);
+            }
+        }
+        if attempt < TERMINAL_NATIVE_CLEANUP_MAX_ATTEMPTS {
+            tokio::time::sleep(TERMINAL_NATIVE_CLEANUP_RETRY_DELAY).await;
+        }
+    }
+    Err(format!(
+        "native connection cleanup failed after \
+         {TERMINAL_NATIVE_CLEANUP_MAX_ATTEMPTS} attempts: {}",
+        last_error.unwrap_or_else(|| "unknown cleanup failure".to_owned())
+    ))
+}
+
+fn combine_connection_and_cleanup_results(
+    connection_result: Result<(), String>,
+    cleanup_result: Result<(), String>,
+) -> Result<(), String> {
+    match (connection_result, cleanup_result) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(connection), Ok(())) => Err(connection),
+        (Ok(()), Err(cleanup)) => Err(cleanup),
+        (Err(connection), Err(cleanup)) => Err(format!(
+            "{connection}; terminal cleanup also failed: {cleanup}"
+        )),
+    }
 }
 
 fn join_task(
@@ -1436,6 +1490,7 @@ mod tests {
 
     use crate::control::tests::{
         native_hello, router_with_platform, RecordingPlatformSessionControl,
+        RetryingCleanupPlatformSessionControl,
     };
     use crate::control::{AdaptiveVideoDecision, CongestionSource};
     use crate::{PlatformControlEvent, PlatformSessionPlan};
@@ -1449,6 +1504,25 @@ mod tests {
         u32,
     ) {
         let platform = Arc::new(RecordingPlatformSessionControl::default());
+        let (root, router) = router_with_platform(platform.clone());
+        router
+            .authorities()
+            .applications()
+            .upsert(r#"{"uuid":"native-desktop","name":"Desktop"}"#)
+            .unwrap();
+        let application_id = router.authorities().applications().applications().unwrap()[0].id;
+        (root, Arc::new(Mutex::new(router)), platform, application_id)
+    }
+
+    fn retrying_native_test_router(
+        stop_results: impl IntoIterator<Item = Result<(), String>>,
+    ) -> (
+        tempfile::TempDir,
+        SharedControlRouter,
+        Arc<RetryingCleanupPlatformSessionControl>,
+        u32,
+    ) {
+        let platform = Arc::new(RetryingCleanupPlatformSessionControl::new(stop_results));
         let (root, router) = router_with_platform(platform.clone());
         router
             .authorities()
@@ -1744,6 +1818,101 @@ mod tests {
         assert!(!router.native_input_is_active(plan.session_epoch));
         assert_eq!(router.video_delivery_state(), None);
         assert_eq!(platform.stop_count(), 1);
+        assert_eq!(platform.application_stop_count(), 1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn abrupt_control_eof_retries_transient_native_session_cleanup() {
+        let (root, router, platform, application_id) = retrying_native_test_router([
+            Err("display wake verification remains pending".to_owned()),
+            Ok(()),
+        ]);
+        let (server_config, client_config) = loopback_quic_configs(&root);
+        let server_endpoint = Endpoint::server(
+            server_config,
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+        )
+        .unwrap();
+        let server_address = server_endpoint.local_addr().unwrap();
+        let mut client_endpoint =
+            Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap();
+        client_endpoint.set_default_client_config(client_config);
+        let connecting = client_endpoint
+            .connect(server_address, "localhost")
+            .unwrap();
+        let incoming = server_endpoint.accept().await.unwrap();
+        let (client_connection, server_connection) = tokio::join!(connecting, incoming);
+        let client_connection = client_connection.unwrap();
+        let server_connection = server_connection.unwrap();
+
+        let configuration_notify = router.lock().unwrap().native_codec_configuration_notify();
+        let bootstrap_notify = router.lock().unwrap().native_video_bootstrap_notify();
+        let server_task = tokio::spawn(handle_connection(
+            server_connection,
+            Arc::clone(&router),
+            platform.clone(),
+            configuration_notify,
+            bootstrap_notify,
+        ));
+
+        let (mut control_send, mut control_receive) = client_connection.open_bi().await.unwrap();
+        let hello = ClientControlEnvelope {
+            request_id: 1,
+            payload: Some(client_control_envelope::Payload::Hello(native_hello(
+                application_id,
+            ))),
+        };
+        control_send
+            .write_all(&encode_client_control_message(&hello).unwrap())
+            .await
+            .unwrap();
+        let response = read_control_frame(&mut control_receive)
+            .await
+            .unwrap()
+            .unwrap();
+        let response = decode_host_control_message(&response).unwrap();
+        let plan = match response.payload {
+            Some(host_control_envelope::Payload::SessionPlan(plan)) => plan,
+            payload => panic!("expected session plan, received {payload:?}"),
+        };
+
+        let start = ClientControlEnvelope {
+            request_id: 2,
+            payload: Some(client_control_envelope::Payload::StartSession(
+                StartSessionAck {
+                    session_epoch: plan.session_epoch,
+                },
+            )),
+        };
+        control_send
+            .write_all(&encode_client_control_message(&start).unwrap())
+            .await
+            .unwrap();
+        let response = read_control_frame(&mut control_receive)
+            .await
+            .unwrap()
+            .unwrap();
+        let response = decode_host_control_message(&response).unwrap();
+        assert!(matches!(
+            response.payload,
+            Some(host_control_envelope::Payload::SessionStarted(_))
+        ));
+
+        control_send.finish().unwrap();
+        let server_result = tokio::time::timeout(Duration::from_secs(1), server_task)
+            .await
+            .expect("server connection task did not retry abrupt control EOF cleanup")
+            .unwrap();
+        assert!(
+            server_result
+                .as_ref()
+                .is_err_and(|error| error.contains("without an acknowledged StopSession")),
+            "{server_result:?}"
+        );
+        let router = router.lock().unwrap();
+        assert!(!router.native_input_is_active(plan.session_epoch));
+        assert_eq!(router.video_delivery_state(), None);
+        assert_eq!(platform.stop_count(), 2);
         assert_eq!(platform.application_stop_count(), 1);
     }
 
