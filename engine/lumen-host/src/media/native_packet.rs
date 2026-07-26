@@ -1,7 +1,7 @@
 use lumen_engine::{
     encode_native_media_header, encode_native_media_header_with_fec_block, NativeFecBlockExtension,
     NativeMediaHeader, NativeMediaKind, NATIVE_FEC_BLOCK_HEADER_BYTES, NATIVE_MEDIA_FLAG_FEC_BLOCK,
-    NATIVE_MEDIA_FLAG_PARITY_SHARD, NATIVE_MEDIA_HEADER_BYTES,
+    NATIVE_MEDIA_FLAG_KEYFRAME, NATIVE_MEDIA_FLAG_PARITY_SHARD, NATIVE_MEDIA_HEADER_BYTES,
 };
 use reed_solomon_erasure::galois_8::ReedSolomon;
 
@@ -31,6 +31,7 @@ struct NativeUnitMetadata {
     object_id: u32,
     capture_timestamp_us: u32,
     parity_percentage: u16,
+    keyframe: bool,
 }
 
 struct CachedFecCodec {
@@ -137,9 +138,6 @@ impl NativeMediaPacketizer {
         frame_id: u32,
         parity_percentage: u16,
     ) -> Result<NativePacketizedUnit, String> {
-        if frame.key_frame {
-            return Err("video keyframes must use the reliable bootstrap stream".to_owned());
-        }
         self.packetize_unit(
             &frame.payload,
             NativeUnitMetadata {
@@ -149,6 +147,7 @@ impl NativeMediaPacketizer {
                     90_000,
                 ),
                 parity_percentage,
+                keyframe: frame.key_frame,
             },
         )
     }
@@ -176,6 +175,7 @@ impl NativeMediaPacketizer {
                     48_000,
                 ),
                 parity_percentage: 0,
+                keyframe: false,
             },
         )
     }
@@ -250,8 +250,12 @@ impl NativeMediaPacketizer {
             .ok_or_else(|| "native media datagram sequence exhausted".to_owned())?;
 
         let mut datagrams = Vec::with_capacity(total_shards);
-        let base_flags = if uses_fec_blocks {
+        let base_flags = (if uses_fec_blocks {
             NATIVE_MEDIA_FLAG_FEC_BLOCK
+        } else {
+            0
+        }) | if metadata.keyframe {
+            NATIVE_MEDIA_FLAG_KEYFRAME
         } else {
             0
         };

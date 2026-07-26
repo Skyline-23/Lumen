@@ -339,9 +339,9 @@ fn run_media_foundation(
             .encode_next(ACTIVE_CAPTURE_POLL_MILLISECONDS);
         match encoded.and_then(|sample| {
             if let Some(sample) = sample {
-                let is_key_frame = sample.key_frame;
+                let pause_for_bootstrap = sample_requires_bootstrap_pause(&sample, false);
                 let request_key_frame = sink(sample)?;
-                if is_key_frame {
+                if pause_for_bootstrap {
                     runtime
                         .as_mut()
                         .expect("encoded frame came from an active runtime")
@@ -403,13 +403,20 @@ fn start_runtime(
                     .to_owned(),
             );
         }
+        let pause_for_bootstrap = sample_requires_bootstrap_pause(&encoded, true);
         let request_key_frame = sink(encoded)?;
-        runtime.pause_after_bootstrap()?;
+        if pause_for_bootstrap {
+            runtime.pause_after_bootstrap()?;
+        }
         if request_key_frame {
             runtime.request_repair_key_frame()?;
         }
         return Ok(runtime);
     }
+}
+
+fn sample_requires_bootstrap_pause(sample: &NativeEncodedVideoSample, initial: bool) -> bool {
+    sample.key_frame && (initial || sample.repair_keyframe)
 }
 
 fn stop_runtime(runtime: &mut Option<NativeVideoRuntime>) -> Result<(), String> {
@@ -1090,5 +1097,26 @@ mod tests {
             output_profile(ten_bit),
             u32::try_from(eAVEncH265VProfile_Main_444_10.0).unwrap()
         );
+    }
+
+    #[test]
+    fn only_initial_and_repair_keyframes_pause_for_bootstrap_acknowledgement() {
+        let sample = |key_frame, repair_keyframe| NativeEncodedVideoSample {
+            payload: vec![1],
+            presentation_time_90khz: 0,
+            key_frame,
+            repair_keyframe,
+        };
+
+        assert!(sample_requires_bootstrap_pause(&sample(true, false), true));
+        assert!(sample_requires_bootstrap_pause(&sample(true, true), false));
+        assert!(!sample_requires_bootstrap_pause(
+            &sample(true, false),
+            false
+        ));
+        assert!(!sample_requires_bootstrap_pause(
+            &sample(false, false),
+            false
+        ));
     }
 }

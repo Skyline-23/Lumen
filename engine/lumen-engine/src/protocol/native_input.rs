@@ -34,6 +34,19 @@ pub enum NativeContactPhase {
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Enumeration)]
 #[repr(i32)]
+pub enum NativeScrollPhase {
+    Unspecified = 0,
+    Began = 1,
+    Changed = 2,
+    Ended = 3,
+    Cancelled = 4,
+    MomentumBegan = 5,
+    MomentumChanged = 6,
+    MomentumEnded = 7,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Enumeration)]
+#[repr(i32)]
 pub enum NativeGamepadButton {
     Unspecified = 0,
     South = 1,
@@ -212,6 +225,14 @@ pub struct NativeScrollInput {
     pub delta_x_1024_points: i32,
     #[prost(sint32, tag = "3")]
     pub delta_y_1024_points: i32,
+    #[prost(enumeration = "NativeScrollPhase", tag = "4")]
+    pub phase: i32,
+    #[prost(sint32, tag = "5")]
+    pub velocity_x_1024_points_per_second: i32,
+    #[prost(sint32, tag = "6")]
+    pub velocity_y_1024_points_per_second: i32,
+    #[prost(bool, tag = "7")]
+    pub continuous_precision: bool,
 }
 
 #[derive(Clone, PartialEq, Message)]

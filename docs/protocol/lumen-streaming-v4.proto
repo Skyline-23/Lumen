@@ -73,6 +73,7 @@ enum NegotiationFailure {
   NEGOTIATION_FAILURE_UNSUPPORTED_AUDIO_LAYOUT = 12;
   NEGOTIATION_FAILURE_INVALID_AUDIO_QUALITY = 13;
   NEGOTIATION_FAILURE_INVALID_STREAMING_PROFILE_REVISION = 14;
+  NEGOTIATION_FAILURE_UNSUPPORTED_MEDIA_CAPABILITIES = 15;
 }
 
 enum PolicyMode {
@@ -184,6 +185,7 @@ message ClientSessionHello {
   AudioChannelMode requested_audio_channel_mode = 35;
   uint64 streaming_profile_revision = 36;
   VideoFormat requested_video_format = 37;
+  uint64 media_capabilities = 38;
 }
 
 message HostSessionPlan {
@@ -230,6 +232,7 @@ message HostSessionPlan {
   uint32 initial_parity_percentage = 43;
   VideoCapability selected_video_capability = 44;
   uint32 maximum_object_delay_us = 45;
+  uint64 media_capabilities = 46;
 }
 
 message CodecConfiguration {
@@ -399,10 +402,25 @@ message PointerMotionInput {
   float normalized_y = 6;
 }
 
+enum ScrollPhase {
+  SCROLL_PHASE_UNSPECIFIED = 0;
+  SCROLL_PHASE_BEGAN = 1;
+  SCROLL_PHASE_CHANGED = 2;
+  SCROLL_PHASE_ENDED = 3;
+  SCROLL_PHASE_CANCELLED = 4;
+  SCROLL_PHASE_MOMENTUM_BEGAN = 5;
+  SCROLL_PHASE_MOMENTUM_CHANGED = 6;
+  SCROLL_PHASE_MOMENTUM_ENDED = 7;
+}
+
 message ScrollInput {
   uint32 pointer_id = 1;
   sint32 delta_x_1024_points = 2;
   sint32 delta_y_1024_points = 3;
+  ScrollPhase phase = 4;
+  sint32 velocity_x_1024_points_per_second = 5;
+  sint32 velocity_y_1024_points_per_second = 6;
+  bool continuous_precision = 7;
 }
 
 message TouchMotionInput {

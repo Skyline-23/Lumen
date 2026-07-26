@@ -12,7 +12,7 @@ use core_graphics::event::{
 };
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use core_graphics::geometry::{CGPoint, CGRect, CGSize};
-use lumen_engine::NativePointerMotionMode;
+use lumen_engine::{NativePointerMotionMode, NativeScrollPhase};
 
 use crate::{PlatformNativeInputEvent, PlatformNativeMotionEvent};
 
@@ -24,6 +24,8 @@ const DEFAULT_DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
 // host-side click sequence. Keep the worker's location tolerance small and axis-aligned, matching
 // macOS screen-point semantics without constructing an AppKit UI object on the QUIC worker.
 const CLICK_LOCATION_TOLERANCE_POINTS: f64 = 5.0;
+const SCROLL_WHEEL_EVENT_SCROLL_PHASE: u32 = 99;
+const SCROLL_WHEEL_EVENT_MOMENTUM_PHASE: u32 = 123;
 
 #[link(name = "AppKit", kind = "framework")]
 unsafe extern "C" {}
@@ -47,8 +49,6 @@ struct MacInputState {
     pressed_buttons: HashSet<u8>,
     click_tracker: MacClickTracker,
     compositions: HashMap<u64, MacComposition>,
-    scroll_remainder_x: i32,
-    scroll_remainder_y: i32,
 }
 
 #[derive(Debug, Default)]
@@ -373,18 +373,13 @@ impl MacNativeInput {
                 pointer_id: _,
                 delta_x_1024_points,
                 delta_y_1024_points,
+                phase,
+                velocity_x_1024_points_per_second: _,
+                velocity_y_1024_points_per_second: _,
+                continuous_precision,
             } => {
-                state.scroll_remainder_x =
-                    state.scroll_remainder_x.saturating_add(delta_x_1024_points);
-                state.scroll_remainder_y =
-                    state.scroll_remainder_y.saturating_add(delta_y_1024_points);
-                let horizontal = state.scroll_remainder_x / 1024;
-                let vertical = state.scroll_remainder_y / 1024;
-                state.scroll_remainder_x %= 1024;
-                state.scroll_remainder_y %= 1024;
-                if horizontal == 0 && vertical == 0 {
-                    return Ok(());
-                }
+                let horizontal = delta_x_1024_points / 1024;
+                let vertical = delta_y_1024_points / 1024;
                 let event = CGEvent::new_scroll_event(
                     event_source()?,
                     ScrollEventUnit::PIXEL,
@@ -394,6 +389,21 @@ impl MacNativeInput {
                     0,
                 )
                 .map_err(|_| "could not create macOS scroll event".to_owned())?;
+                event.set_double_value_field(
+                    EventField::SCROLL_WHEEL_EVENT_FIXED_POINT_DELTA_AXIS_1,
+                    f64::from(delta_y_1024_points) / 1_024.0,
+                );
+                event.set_double_value_field(
+                    EventField::SCROLL_WHEEL_EVENT_FIXED_POINT_DELTA_AXIS_2,
+                    f64::from(delta_x_1024_points) / 1_024.0,
+                );
+                event.set_integer_value_field(
+                    EventField::SCROLL_WHEEL_EVENT_IS_CONTINUOUS,
+                    i64::from(continuous_precision),
+                );
+                let (scroll_phase, momentum_phase) = mac_scroll_phases(phase);
+                event.set_integer_value_field(SCROLL_WHEEL_EVENT_SCROLL_PHASE, scroll_phase);
+                event.set_integer_value_field(SCROLL_WHEEL_EVENT_MOMENTUM_PHASE, momentum_phase);
                 event.post(CGEventTapLocation::HID);
                 Ok(())
             }
@@ -465,8 +475,6 @@ impl MacNativeInput {
             if attempt + 1 == MAX_NATIVE_INPUT_RESET_ATTEMPTS {
                 if let Some(state) = states.get_mut(&session_epoch) {
                     state.compositions.clear();
-                    state.scroll_remainder_x = 0;
-                    state.scroll_remainder_y = 0;
                 }
                 // Failed entries were retained for the bounded second pass above. Once both
                 // passes fail, discard this epoch's ledger after returning the terminal error
@@ -477,6 +485,19 @@ impl MacNativeInput {
             }
         }
         unreachable!("native input reset attempts are bounded above");
+    }
+}
+
+fn mac_scroll_phases(phase: NativeScrollPhase) -> (i64, i64) {
+    match phase {
+        NativeScrollPhase::Began => (1, 0),
+        NativeScrollPhase::Changed => (2, 0),
+        NativeScrollPhase::Ended => (4, 0),
+        NativeScrollPhase::Cancelled => (8, 0),
+        NativeScrollPhase::MomentumBegan => (0, 1),
+        NativeScrollPhase::MomentumChanged => (0, 2),
+        NativeScrollPhase::MomentumEnded => (0, 3),
+        NativeScrollPhase::Unspecified => (0, 0),
     }
 }
 
@@ -959,6 +980,20 @@ mod tests {
         assert_eq!(left, 1);
         assert_eq!(right, 1);
         assert_eq!(left_again, 2);
+    }
+
+    #[test]
+    fn continuous_scroll_maps_gesture_and_momentum_phases_without_quantization_state() {
+        assert_eq!(mac_scroll_phases(NativeScrollPhase::Began), (1, 0));
+        assert_eq!(mac_scroll_phases(NativeScrollPhase::Changed), (2, 0));
+        assert_eq!(mac_scroll_phases(NativeScrollPhase::Ended), (4, 0));
+        assert_eq!(mac_scroll_phases(NativeScrollPhase::Cancelled), (8, 0));
+        assert_eq!(mac_scroll_phases(NativeScrollPhase::MomentumBegan), (0, 1));
+        assert_eq!(
+            mac_scroll_phases(NativeScrollPhase::MomentumChanged),
+            (0, 2)
+        );
+        assert_eq!(mac_scroll_phases(NativeScrollPhase::MomentumEnded), (0, 3));
     }
 
     #[test]

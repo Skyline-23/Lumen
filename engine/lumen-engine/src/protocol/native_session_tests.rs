@@ -11,7 +11,7 @@ use super::{
     NativeSessionError, NativeVideoBootstrapResultCode, NativeVideoCapability, NativeVideoCodec,
     NativeVideoFormat, NativeVideoKeyframeRequestReason, NativeVideoProfile, SessionStarted,
     VideoBootstrapResult, VideoKeyframeRequest, NATIVE_FEC_BLOCK_HEADER_BYTES,
-    NATIVE_PROTOCOL_VERSION, NATIVE_VIDEO_STREAM_ID,
+    NATIVE_PROTOCOL_VERSION, NATIVE_REQUIRED_MEDIA_CAPABILITIES, NATIVE_VIDEO_STREAM_ID,
 };
 
 const V2_HELLO_ENVELOPE_BYTES: &[u8] = &[
@@ -157,6 +157,21 @@ fn generation_four_rejects_missing_exact_format_presence_at_version_negotiation(
 }
 
 #[test]
+fn generation_four_requires_the_complete_realtime_media_capability_set() {
+    let mut client = hello();
+    client.media_capabilities = NATIVE_REQUIRED_MEDIA_CAPABILITIES & !1;
+
+    assert_eq!(
+        negotiate_native_session(&client, &host(), 1),
+        Err(NativeSessionError::UnsupportedMediaCapabilities)
+    );
+
+    client.media_capabilities = NATIVE_REQUIRED_MEDIA_CAPABILITIES;
+    let plan = negotiate_native_session(&client, &host(), 1).unwrap();
+    assert_eq!(plan.media_capabilities, NATIVE_REQUIRED_MEDIA_CAPABILITIES);
+}
+
+#[test]
 fn generation_four_rejects_exact_profile_chroma_or_range_mismatch_without_fallback() {
     // Given: a valid request whose only advertised client row differs on exact format axes.
     let requested = capability(NativeVideoCodec::H264, 8, false).format.unwrap();
@@ -276,6 +291,7 @@ fn hello() -> ClientSessionHello {
         requested_audio_channel_mode: NativeAudioChannelMode::Surround71 as i32,
         streaming_profile_revision: 42,
         requested_video_format: capability(NativeVideoCodec::Hevc, 10, true).format,
+        media_capabilities: NATIVE_REQUIRED_MEDIA_CAPABILITIES,
     }
 }
 

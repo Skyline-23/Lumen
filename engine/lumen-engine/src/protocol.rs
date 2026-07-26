@@ -29,8 +29,8 @@ pub use native_input::{
     NativeInputFailureCode, NativeInputReset, NativeInputWireError, NativeKeyboardInput,
     NativePenContactInput, NativePenMotionInput, NativePointerButtonInput,
     NativePointerMotionInput, NativePointerMotionMode, NativeRumbleAck, NativeRumbleCommand,
-    NativeScrollInput, NativeTextInput, NativeTouchContactInput, NativeTouchMotionInput,
-    NATIVE_INPUT_MESSAGE_LIMIT,
+    NativeScrollInput, NativeScrollPhase, NativeTextInput, NativeTouchContactInput,
+    NativeTouchMotionInput, NATIVE_INPUT_MESSAGE_LIMIT,
 };
 pub use native_session::{
     client_control_envelope, client_telemetry_envelope, decode_client_control_message,
@@ -47,7 +47,9 @@ pub use native_session::{
     NativeVideoCapability, NativeVideoCodec, NativeVideoFormat, NativeVideoKeyframeRequestReason,
     NativeVideoProfile, SessionStarted, SessionStopped, StartSessionAck, StopSession,
     VideoBootstrap, VideoBootstrapResult, VideoKeyframeRequest, NATIVE_CONTROL_MESSAGE_LIMIT,
-    NATIVE_PROTOCOL_VERSION, NATIVE_VIDEO_BOOTSTRAP_MESSAGE_LIMIT,
+    NATIVE_MEDIA_CAPABILITY_CONTINUOUS_SCROLL, NATIVE_MEDIA_CAPABILITY_FIXED_CADENCE_FEEDBACK,
+    NATIVE_MEDIA_CAPABILITY_SAME_GENERATION_KEYFRAMES, NATIVE_PROTOCOL_VERSION,
+    NATIVE_REQUIRED_MEDIA_CAPABILITIES, NATIVE_VIDEO_BOOTSTRAP_MESSAGE_LIMIT,
 };
 pub use native_transport::{
     decode_native_media_datagram, encode_native_media_header,
@@ -55,7 +57,8 @@ pub use native_transport::{
     NativeMediaHeader, NativeMediaKind, NativeTransportError, NATIVE_AUDIO_STREAM_ID,
     NATIVE_FEC_BLOCK_EXTENSION_BYTES, NATIVE_FEC_BLOCK_HEADER_BYTES,
     NATIVE_INITIAL_CONFIGURATION_ID, NATIVE_INPUT_MOTION_STREAM_ID, NATIVE_MEDIA_FLAG_FEC_BLOCK,
-    NATIVE_MEDIA_FLAG_PARITY_SHARD, NATIVE_MEDIA_HEADER_BYTES, NATIVE_VIDEO_STREAM_ID,
+    NATIVE_MEDIA_FLAG_KEYFRAME, NATIVE_MEDIA_FLAG_PARITY_SHARD, NATIVE_MEDIA_HEADER_BYTES,
+    NATIVE_VIDEO_STREAM_ID,
 };
 
 pub use session_offer::{parse_session_offer, LumenSessionOffer};

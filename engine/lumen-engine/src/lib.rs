@@ -86,7 +86,7 @@ pub use protocol::{
     NativeMediaHeader, NativeMediaKind, NativeNegotiationFailure, NativePenContactInput,
     NativePenMotionInput, NativePointerButtonInput, NativePointerMotionInput,
     NativePointerMotionMode, NativePolicyMode, NativeProtocolError, NativeRumbleAck,
-    NativeRumbleCommand, NativeScrollInput, NativeSessionError, NativeTextInput,
+    NativeRumbleCommand, NativeScrollInput, NativeScrollPhase, NativeSessionError, NativeTextInput,
     NativeTouchContactInput, NativeTouchMotionInput, NativeTransportError,
     NativeVideoBootstrapReason, NativeVideoBootstrapResultCode, NativeVideoCapability,
     NativeVideoCodec, NativeVideoFormat, NativeVideoKeyframeRequestReason, NativeVideoProfile,
@@ -95,9 +95,13 @@ pub use protocol::{
     LUMEN_STREAMING_PROTOCOL_ALPN, LUMEN_STREAMING_PROTOCOL_PACKAGE, LUMEN_STREAMING_SCHEMA_SHA256,
     NATIVE_AUDIO_STREAM_ID, NATIVE_CONTROL_MESSAGE_LIMIT, NATIVE_FEC_BLOCK_EXTENSION_BYTES,
     NATIVE_FEC_BLOCK_HEADER_BYTES, NATIVE_INITIAL_CONFIGURATION_ID, NATIVE_INPUT_MESSAGE_LIMIT,
-    NATIVE_INPUT_MOTION_STREAM_ID, NATIVE_MEDIA_FLAG_FEC_BLOCK, NATIVE_MEDIA_FLAG_PARITY_SHARD,
-    NATIVE_MEDIA_HEADER_BYTES, NATIVE_PROTOCOL_VERSION, NATIVE_VIDEO_BOOTSTRAP_MESSAGE_LIMIT,
-    NATIVE_VIDEO_STREAM_ID, TRANSPORT_FRAME_GATED_HDR, TRANSPORT_FULL_FRAME_HDR,
+    NATIVE_INPUT_MOTION_STREAM_ID, NATIVE_MEDIA_CAPABILITY_CONTINUOUS_SCROLL,
+    NATIVE_MEDIA_CAPABILITY_FIXED_CADENCE_FEEDBACK,
+    NATIVE_MEDIA_CAPABILITY_SAME_GENERATION_KEYFRAMES, NATIVE_MEDIA_FLAG_FEC_BLOCK,
+    NATIVE_MEDIA_FLAG_KEYFRAME, NATIVE_MEDIA_FLAG_PARITY_SHARD, NATIVE_MEDIA_HEADER_BYTES,
+    NATIVE_PROTOCOL_VERSION, NATIVE_REQUIRED_MEDIA_CAPABILITIES,
+    NATIVE_VIDEO_BOOTSTRAP_MESSAGE_LIMIT, NATIVE_VIDEO_STREAM_ID, TRANSPORT_FRAME_GATED_HDR,
+    TRANSPORT_FULL_FRAME_HDR,
 };
 pub use video_packetization::{plan_fec_blocks, plan_fec_shards};
 

@@ -4,13 +4,15 @@ pub const NATIVE_AUDIO_STREAM_ID: u16 = 2;
 pub const NATIVE_INPUT_MOTION_STREAM_ID: u16 = 3;
 pub const NATIVE_INITIAL_CONFIGURATION_ID: u32 = 1;
 
+pub const NATIVE_MEDIA_FLAG_KEYFRAME: u8 = 1;
 pub const NATIVE_MEDIA_FLAG_PARITY_SHARD: u8 = 1 << 4;
 pub const NATIVE_MEDIA_FLAG_FEC_BLOCK: u8 = 1 << 5;
 pub const NATIVE_FEC_BLOCK_EXTENSION_BYTES: usize = 8;
 pub const NATIVE_FEC_BLOCK_HEADER_BYTES: usize =
     NATIVE_MEDIA_HEADER_BYTES + NATIVE_FEC_BLOCK_EXTENSION_BYTES;
 
-const NATIVE_MEDIA_ALLOWED_FLAGS: u8 = NATIVE_MEDIA_FLAG_PARITY_SHARD | NATIVE_MEDIA_FLAG_FEC_BLOCK;
+const NATIVE_MEDIA_ALLOWED_FLAGS: u8 =
+    NATIVE_MEDIA_FLAG_KEYFRAME | NATIVE_MEDIA_FLAG_PARITY_SHARD | NATIVE_MEDIA_FLAG_FEC_BLOCK;
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -205,6 +207,10 @@ fn validate_header(header: NativeMediaHeader) -> Result<(), NativeTransportError
             || header.parity_shards != 0)
     {
         return Err(NativeTransportError::InvalidMotionContract);
+    }
+    if header.flags & NATIVE_MEDIA_FLAG_KEYFRAME != 0 && header.kind != NativeMediaKind::VideoDelta
+    {
+        return Err(NativeTransportError::ReservedFlags);
     }
     Ok(())
 }

@@ -6,6 +6,13 @@ use super::native_transport::{
 };
 
 pub const NATIVE_PROTOCOL_VERSION: u32 = 4;
+pub const NATIVE_MEDIA_CAPABILITY_SAME_GENERATION_KEYFRAMES: u64 = 1 << 0;
+pub const NATIVE_MEDIA_CAPABILITY_FIXED_CADENCE_FEEDBACK: u64 = 1 << 1;
+pub const NATIVE_MEDIA_CAPABILITY_CONTINUOUS_SCROLL: u64 = 1 << 2;
+pub const NATIVE_REQUIRED_MEDIA_CAPABILITIES: u64 =
+    NATIVE_MEDIA_CAPABILITY_SAME_GENERATION_KEYFRAMES
+        | NATIVE_MEDIA_CAPABILITY_FIXED_CADENCE_FEEDBACK
+        | NATIVE_MEDIA_CAPABILITY_CONTINUOUS_SCROLL;
 const MINIMUM_DATAGRAM_PAYLOAD: u32 = NATIVE_FEC_BLOCK_HEADER_BYTES as u32 + 1;
 const INITIAL_POLICY_REVISION: u32 = 1;
 const OPUS_PACKET_DURATION_MICROSECONDS: u32 = 5_000;
@@ -107,6 +114,7 @@ pub enum NativeNegotiationFailure {
     UnsupportedAudioLayout = 12,
     InvalidAudioQuality = 13,
     InvalidStreamingProfileRevision = 14,
+    UnsupportedMediaCapabilities = 15,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Enumeration)]
@@ -236,6 +244,8 @@ pub struct ClientSessionHello {
     pub streaming_profile_revision: u64,
     #[prost(message, optional, tag = "37")]
     pub requested_video_format: Option<NativeVideoFormat>,
+    #[prost(uint64, tag = "38")]
+    pub media_capabilities: u64,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -320,6 +330,8 @@ pub struct HostSessionPlan {
     pub selected_video_capability: Option<NativeVideoCapability>,
     #[prost(uint32, tag = "45")]
     pub maximum_object_delay_us: u32,
+    #[prost(uint64, tag = "46")]
+    pub media_capabilities: u64,
 }
 
 impl HostSessionPlan {
@@ -789,6 +801,7 @@ pub enum NativeSessionError {
     UnsupportedAudioLayout,
     InvalidAudioQuality,
     InvalidStreamingProfileRevision,
+    UnsupportedMediaCapabilities,
 }
 
 impl NativeSessionError {
@@ -810,6 +823,9 @@ impl NativeSessionError {
             Self::InvalidAudioQuality => "the requested audio quality is invalid",
             Self::InvalidStreamingProfileRevision => {
                 "the streaming profile revision must be nonzero"
+            }
+            Self::UnsupportedMediaCapabilities => {
+                "the complete realtime media capability set is required"
             }
         }
     }
@@ -833,6 +849,7 @@ impl From<NativeSessionError> for NativeNegotiationFailure {
             NativeSessionError::InvalidStreamingProfileRevision => {
                 Self::InvalidStreamingProfileRevision
             }
+            NativeSessionError::UnsupportedMediaCapabilities => Self::UnsupportedMediaCapabilities,
         }
     }
 }
@@ -902,6 +919,11 @@ pub fn negotiate_native_session(
     if client.streaming_profile_revision == 0 {
         return Err(NativeSessionError::InvalidStreamingProfileRevision);
     }
+    if client.media_capabilities & NATIVE_REQUIRED_MEDIA_CAPABILITIES
+        != NATIVE_REQUIRED_MEDIA_CAPABILITIES
+    {
+        return Err(NativeSessionError::UnsupportedMediaCapabilities);
+    }
 
     Ok(HostSessionPlan {
         protocol_version: NATIVE_PROTOCOL_VERSION,
@@ -958,6 +980,7 @@ pub fn negotiate_native_session(
             hardware_accelerated: Some(true),
         }),
         maximum_object_delay_us: maximum_object_delay_us(client.refresh_millihz, policy),
+        media_capabilities: NATIVE_REQUIRED_MEDIA_CAPABILITIES,
     })
 }
 

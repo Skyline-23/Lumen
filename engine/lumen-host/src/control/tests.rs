@@ -12,7 +12,7 @@ use lumen_engine::{
     NativeNegotiationFailure, NativePolicyMode, NativeVideoBootstrapReason,
     NativeVideoBootstrapResultCode, NativeVideoCapability, NativeVideoCodec, NativeVideoFormat,
     NativeVideoKeyframeRequestReason, NativeVideoProfile, StartSessionAck, VideoBootstrapResult,
-    VideoKeyframeRequest, NATIVE_PROTOCOL_VERSION,
+    VideoKeyframeRequest, NATIVE_PROTOCOL_VERSION, NATIVE_REQUIRED_MEDIA_CAPABILITIES,
 };
 use serde_json::{json, Value};
 use std::collections::VecDeque;
@@ -276,6 +276,7 @@ pub(crate) fn native_hello(application_id: u32) -> ClientSessionHello {
         requested_audio_channel_mode: NativeAudioChannelMode::Stereo as i32,
         streaming_profile_revision: 1,
         requested_video_format: Some(requested_video_format),
+        media_capabilities: NATIVE_REQUIRED_MEDIA_CAPABILITIES,
     }
 }
 

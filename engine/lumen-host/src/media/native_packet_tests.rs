@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use lumen_engine::{
     decode_native_media_datagram, NativeMediaKind, NATIVE_MEDIA_FLAG_FEC_BLOCK,
-    NATIVE_MEDIA_FLAG_PARITY_SHARD,
+    NATIVE_MEDIA_FLAG_KEYFRAME, NATIVE_MEDIA_FLAG_PARITY_SHARD,
 };
 use reed_solomon_erasure::galois_8::ReedSolomon;
 
@@ -98,7 +98,7 @@ fn reconstruct_fec_blocks(packetized: &NativePacketizedUnit) -> Vec<u8> {
 }
 
 #[test]
-fn packetizes_only_video_deltas_with_generation_bound_compact_headers() {
+fn packetizes_video_deltas_and_keyframes_in_one_generation_bound_lane() {
     let mut packetizer = NativeMediaPacketizer::new(video_config(80), 0x1011_1213).unwrap();
     let delta = PlatformEncodedVideoFrame {
         payload: (0..65).collect(),
@@ -136,10 +136,11 @@ fn packetizes_only_video_deltas_with_generation_bound_compact_headers() {
         key_frame: true,
         ..delta
     };
-    assert_eq!(
-        packetizer.packetize_video_delta(&keyframe, 10, 0),
-        Err("video keyframes must use the reliable bootstrap stream".to_owned())
-    );
+    let keyframe = packetizer.packetize_video_delta(&keyframe, 10, 0).unwrap();
+    assert!(keyframe.datagrams.iter().all(|datagram| {
+        decode_native_media_datagram(datagram).unwrap().header.flags & NATIVE_MEDIA_FLAG_KEYFRAME
+            != 0
+    }));
 }
 
 #[test]

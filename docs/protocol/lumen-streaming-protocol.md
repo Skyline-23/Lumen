@@ -57,7 +57,12 @@ The host either returns one exact `HostSessionPlan` or a typed
 selections keep their distinct typed failures.
 
 `HostSessionPlan.maximum_object_delay_us` is field 45. Field 44 remains the
-selected video capability.
+selected video capability. The client advertises `media_capabilities` on
+`ClientSessionHello` field 38 and the host echoes the required subset on
+`HostSessionPlan` field 46. Native v4 requires same-generation datagram
+keyframes (bit 0), fixed-cadence coalesced feedback (bit 1), and continuous
+scroll metadata (bit 2). Negotiation fails before capture if any required bit
+is absent.
 
 Codec configuration is reliable and must be acknowledged before the first
 bootstrap. A session's first video generation follows this gate:
@@ -76,20 +81,14 @@ unacknowledged bootstrap never opens delta delivery.
 
 A `VideoKeyframeRequest` carries the currently acknowledged generation id.
 Stale-generation repair requests are ignored. Initial, configuration-change,
-explicit repair, and encoder-originated periodic keyframes create a new
-generation. A decoded bootstrap issues a platform resume only when its encoded
-frame carries that platform's pause ownership. A natural macOS periodic
-keyframe therefore advances delivery without a resume; the Windows adapter,
-which pauses after every keyframe, resumes its owned periodic boundary. Initial
-and repair bootstraps still resume only the exact pending encoder admission
-boundary.
+and explicit-repair keyframes create a new reliable bootstrap generation. A
+decoded bootstrap issues a platform resume only when its encoded frame carries
+that platform's pause ownership.
 
-While a periodic bootstrap is pending, the host retains at most one dependent
-frame for one negotiated object deadline. If the result is slower, it drains
-and drops later dependent frames without requesting another generation. After
-the periodic generation is acknowledged, it requests exactly one owned repair
-only when a dependent frame was dropped; otherwise the held frame resumes
-delivery directly.
+Encoder-originated periodic keyframes retain the acknowledged generation and
+travel on the DATAGRAM plane with flag `0x01`. They refresh decoder reference
+state without recreating the decoder. An incomplete keyframe object follows the
+same deduplicated explicit-repair path as an incomplete delta.
 
 ## QUIC DATAGRAM object plane
 
@@ -102,7 +101,7 @@ The normal header is 28 bytes, all multi-byte values big-endian:
 | Offset | Size | Field |
 | ---: | ---: | --- |
 | 0 | 1 | flow kind: video delta 1, audio 2, input motion 3 |
-| 1 | 1 | flags: parity 0x10, FEC block 0x20 |
+| 1 | 1 | flags: keyframe 0x01, parity 0x10, FEC block 0x20 |
 | 2 | 2 | header bytes: 28 or 36 |
 | 4 | 4 | generation id; nonzero for video, zero otherwise |
 | 8 | 4 | datagram sequence |
@@ -127,9 +126,19 @@ A block contains at most 256 total shards. Data and parity counts are block
 local. Object kind, generation, object id, object bytes, timestamp, and block
 count are object global. Datagram sequence is monotonic for a flow.
 
-Video keyframes never use DATAGRAM. Audio is one raw 5 ms Opus multistream
-packet per object. Input motion carries one `ClientMotionEnvelope`, latest
-unsent sample wins, and it has no FEC.
+Periodic same-configuration video keyframes use DATAGRAM in the current
+generation. Startup, configuration, and explicit-repair keyframes remain
+reliable `VideoBootstrap` records. Audio is one raw 5 ms Opus multistream packet
+per object. Input motion carries one `ClientMotionEnvelope`, latest unsent
+sample wins, and it has no FEC.
+
+`ScrollInput` preserves point deltas in 1/1024-point units and adds phase on
+field 4, X/Y velocity in 1/1024 point-per-second units on fields 5 and 6, and a
+continuous-precision marker on field 7. Coalescing preserves total distance
+and the newest phase and velocity. End and cancel boundaries are never
+discarded behind changed samples. On macOS the host emits continuous pixel
+scroll events with fixed-point deltas and maps gesture and momentum phases to
+CoreGraphics without intermediate integer-point quantization.
 
 ## FEC and feedback
 

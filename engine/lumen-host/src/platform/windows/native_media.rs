@@ -55,8 +55,10 @@ impl PacketQueueContext {
                 decoder_configuration_record: None,
                 presentation_time_90khz: sample.presentation_time_90khz,
                 key_frame: sample.key_frame,
-                // The Windows Media Foundation worker pauses capture after every key frame.
-                requires_bootstrap_acknowledgement: sample.key_frame,
+                // Initial admission pauses explicitly. During steady state only an explicit
+                // repair key frame owns a pause; natural periodic key frames remain in the
+                // acknowledged DATAGRAM generation.
+                requires_bootstrap_acknowledgement: sample.key_frame && sample.repair_keyframe,
                 repair_keyframe: sample.repair_keyframe,
             });
         Ok(request_key_frame)
