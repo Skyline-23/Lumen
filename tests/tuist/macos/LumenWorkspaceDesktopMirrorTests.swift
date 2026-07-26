@@ -32,7 +32,18 @@ final class LumenWorkspaceDesktopMirrorTests: XCTestCase {
                 1
             )
             XCTAssertFalse(events.contains(.mirror(89, 3)))
-            XCTAssertFalse(events.contains(.stabilize(89)))
+            XCTAssertEqual(events.filter { $0 == .stabilize(89) }.count, 1)
+            let stageIndex = try XCTUnwrap(
+                events.firstIndex(of: .prepareDesktopMirror(89, 3))
+            )
+            let stabilizationIndex = try XCTUnwrap(
+                events.firstIndex(of: .stabilize(89))
+            )
+            let prefetchIndex = try XCTUnwrap(
+                events.firstIndex(of: .prepareCapture(89))
+            )
+            XCTAssertLessThan(stageIndex, stabilizationIndex)
+            XCTAssertLessThan(stabilizationIndex, prefetchIndex)
         }
     }
 
@@ -45,7 +56,7 @@ private extension LumenWorkspaceDesktopMirrorTests {
         XCTAssertEqual(events.filter { $0 == .prepareDesktopMirror(89, 3) }.count, 1)
         XCTAssertEqual(events.filter { $0 == .prepareCapture(89) }.count, 1)
         XCTAssertEqual(events.filter { $0 == .mirror(89, 3) }.count, 1)
-        XCTAssertEqual(events.filter { $0 == .stabilize(89) }.count, 1)
+        XCTAssertEqual(events.filter { $0 == .stabilize(89) }.count, 2)
         XCTAssertEqual(events.filter { $0 == .settle(89) }.count, 1)
         let configureIndex = try XCTUnwrap(
             events.firstIndex {
@@ -58,17 +69,21 @@ private extension LumenWorkspaceDesktopMirrorTests {
             events.firstIndex(of: .prepareDesktopMirror(89, 3))
         )
         let mirrorIndex = try XCTUnwrap(events.firstIndex(of: .mirror(89, 3)))
-        let stabilizationIndex = try XCTUnwrap(
+        let independentStabilizationIndex = try XCTUnwrap(
             events.firstIndex(of: .stabilize(89))
+        )
+        let mirroredStabilizationIndex = try XCTUnwrap(
+            events.lastIndex(of: .stabilize(89))
         )
         let prefetchIndex = try XCTUnwrap(
             events.firstIndex(of: .prepareCapture(89))
         )
         XCTAssertLessThan(configureIndex, settlementIndex)
         XCTAssertLessThan(settlementIndex, stageIndex)
-        XCTAssertLessThan(stageIndex, prefetchIndex)
+        XCTAssertLessThan(stageIndex, independentStabilizationIndex)
+        XCTAssertLessThan(independentStabilizationIndex, prefetchIndex)
         XCTAssertLessThan(prefetchIndex, mirrorIndex)
-        XCTAssertLessThan(mirrorIndex, stabilizationIndex)
+        XCTAssertLessThan(mirrorIndex, mirroredStabilizationIndex)
         XCTAssertFalse(events.contains {
             if case .promote = $0 { return true }
             return false
