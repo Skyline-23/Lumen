@@ -1129,6 +1129,35 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         XCTAssertEqual(wakeSignal.callCount, 1)
     }
 
+    func testPhysicalRecoveryWakesTheLocalDisplayBeforeTopologyVerificationFails() async throws {
+        // Given: WindowServer has not converged to the persisted topology yet.
+        let topology = displayTopology()
+        let mismatchedTopology = LumenMacPhysicalDisplayTopology(
+            displays: [],
+            windowsAdapterLUID: nil,
+            windowsTargetPaths: []
+        )
+        let wakeSignal = RecordingPhysicalDisplayWakeSignal()
+        let controller = LumenCoreGraphicsDisplayTopologyController(
+            capture: { mismatchedTopology },
+            restore: { _ in },
+            visibleDisplayIDs: { [] }
+        )
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: controller,
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            physicalDisplayWakeSignal: wakeSignal
+        )
+
+        // When: exact topology verification still fails.
+        await XCTAssertThrowsErrorAsync {
+            try await workspace.verifyWorkspace(topology)
+        }
+
+        // Then: local display wake is not gated by exact topology convergence.
+        XCTAssertEqual(wakeSignal.callCount, 1)
+    }
+
     func testPhysicalRecoveryWakesTheLocalDisplayBeforeWindowVerificationFails() async throws {
         // Given: the exact physical topology has converged, but a stale app window
         // can no longer be found during the independent window restoration check.

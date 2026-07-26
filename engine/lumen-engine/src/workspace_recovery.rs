@@ -246,7 +246,10 @@ impl<A: WorkspacePlatformAdapter> RecoverableWorkspaceEngine<A> {
             .active_phase()
             .ok_or(WorkspaceLifecycleError::SessionInactive)?;
         if phase.verification_required() {
-            self.adapter.verify_physical_displays(&topology).await?;
+            if let Err(error) = self.adapter.verify_physical_displays(&topology).await {
+                self.update_phase(RecoveryPhase::CaptureStopped)?;
+                return Err(error.into());
+            }
             self.update_phase(RecoveryPhase::RestorationVerified)?;
         }
 

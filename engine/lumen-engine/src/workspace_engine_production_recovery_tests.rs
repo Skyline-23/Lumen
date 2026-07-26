@@ -303,7 +303,26 @@ fn production_ffi_recovery_verifies_before_deleting_or_destroying() {
     let RecoveryJournalLoad::Verified(preserved) = store.load().unwrap() else {
         panic!("expected preserved journal after failed verification");
     };
-    assert_eq!(preserved.phase, RecoveryPhase::PhysicalRestored);
+    assert_eq!(preserved.phase, RecoveryPhase::CaptureStopped);
     // SAFETY: this engine was created above and has not been destroyed.
     unsafe { lumen_workspace_engine_destroy(engine) };
+
+    // When: a fresh durable recovery owner resumes after the failed readback.
+    let retry_engine = unsafe {
+        lumen_workspace_engine_create_recoverable(path_string.as_ptr(), WorkspacePlatform::Macos)
+    };
+    assert_eq!(
+        lumen_workspace_engine_begin_session(retry_engine, request()),
+        LumenEngineStatus::RecoveryRequired
+    );
+
+    // Then: it reapplies restoration instead of repeatedly verifying the
+    // partially restored topology.
+    let retry_restore = next(retry_engine);
+    assert_eq!(
+        retry_restore.kind,
+        LumenWorkspaceCommandKind::RestoreWorkspace
+    );
+    // SAFETY: this engine was created above and has not been destroyed.
+    unsafe { lumen_workspace_engine_destroy(retry_engine) };
 }

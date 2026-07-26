@@ -150,7 +150,7 @@ private extension LumenWorkspaceSessionRecoveryTests {
             JSONSerialization.jsonObject(with: journalData) as? [String: Any]
         )
         let journal = try XCTUnwrap(journalObject["journal"] as? [String: Any])
-        XCTAssertEqual(journal["phase"] as? String, "physical-restored")
+        XCTAssertEqual(journal["phase"] as? String, "capture-stopped")
     }
 
     func recoverFailedWorkspace(
