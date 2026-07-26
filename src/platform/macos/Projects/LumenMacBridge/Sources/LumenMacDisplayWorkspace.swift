@@ -372,6 +372,7 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
     private var pendingDisconnectRecoveryRecord: LumenDisconnectRecoveryRecord?
     private var pendingRecoveryWakeAssertion:
         (any LumenPhysicalDisplayWakeAssertion)?
+    private var requiresPostWakeTopologyRecommit = false
     private var mirroredDisplayIDs: (
         physicalTargetDisplayID: UInt32,
         sessionSourceDisplayID: UInt32
@@ -1258,6 +1259,7 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
                 .acquireUserActivityAssertion()
         }
         if let mirroredDisplayIDs {
+            requiresPostWakeTopologyRecommit = true
             do {
                 try await releaseDesktopMirror(
                     targetDisplayID: mirroredDisplayIDs.physicalTargetDisplayID,
@@ -1313,6 +1315,7 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
                 requestedDurableEnableRecovery = !entriesToEnable.isEmpty
             }
             pendingDisconnectRecoveryRecord = disconnectRecoveryRecord
+            requiresPostWakeTopologyRecommit = true
         }
         if !physicalTopologyAlreadyRestored || requestedDurableEnableRecovery {
             let resolvedIDs = if requestedDurableEnableRecovery {
@@ -1436,6 +1439,18 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
         try await topologyController.verify(topology)
         try physicalDisplayWakeSignal.pulseUserActivity()
         try await waitForPhysicalDisplaysToWake(topology)
+        if requiresPostWakeTopologyRecommit {
+            // A display can already report active, online, and awake while its
+            // external link is still converging after a private enable
+            // transaction. Recommit the exact physical topology only after the
+            // stable-awake fence, then verify and wake it again. This prevents
+            // a logically restored but physically black output from being
+            // accepted as terminal cleanup success.
+            try await topologyController.restore(topology)
+            try await topologyController.verify(topology)
+            try physicalDisplayWakeSignal.pulseUserActivity()
+            try await waitForPhysicalDisplaysToWake(topology)
+        }
         retainWakeAssertionAfterVerification = true
         for expected in try resolvePersistedWindows(topology.macWindows) {
             guard let actualPosition = windowPoint(
@@ -1472,6 +1487,7 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             try disconnectRecoveryStore.revoke()
             self.pendingDisconnectRecoveryRecord = nil
         }
+        requiresPostWakeTopologyRecommit = false
         self.snapshot = nil
         snapshotRecoveryGeneration = nil
     }
@@ -1529,6 +1545,7 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
         snapshotRecoveryGeneration = nil
         pendingRecoveryWakeAssertion?.release()
         pendingRecoveryWakeAssertion = nil
+        requiresPostWakeTopologyRecommit = false
     }
 
     private func restoreStageTopologyIfNeeded(

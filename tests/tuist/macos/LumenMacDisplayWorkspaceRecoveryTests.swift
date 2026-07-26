@@ -1669,7 +1669,11 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
             [.init(displayID: 3, enabled: true)]
         )
         let restoreCallCount = await topologyController.restoreCallCount()
-        XCTAssertEqual(restoreCallCount, 1)
+        // The first restore republishes the display after the private enable
+        // transaction. A second restore after the stable-awake fence recommits
+        // the physical signal only once WindowServer and the display driver
+        // have both had time to converge.
+        XCTAssertEqual(restoreCallCount, 2)
         XCTAssertFalse(wakeSignal.isAssertionHeld)
         XCTAssertTrue(fixture.isOnline())
         XCTAssertFalse(FileManager.default.fileExists(atPath: recordURL.path))

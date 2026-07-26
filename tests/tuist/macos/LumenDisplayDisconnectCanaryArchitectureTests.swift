@@ -19,28 +19,32 @@ struct LumenDisplayDisconnectCanaryArchitectureTests {
         #expect(connectionSource.contains(".permanently"))
         #expect(!connectionSource.contains(".forSession"))
 
-        for path in [
-            "src/platform/macos/Projects/LumenMacBridge/Sources/LumenMacDisplayWorkspace.swift",
-            "src/platform/macos/Projects/LumenMacBridge/Sources/LumenMacDisplayTopologyController.swift",
-        ] {
-            let source = try String(
-                contentsOf: repositoryRoot.appendingPathComponent(path),
-                encoding: .utf8
+        let workspaceSource = try String(
+            contentsOf: repositoryRoot.appendingPathComponent(
+                "src/platform/macos/Projects/LumenMacBridge/Sources/LumenMacDisplayWorkspace.swift"
+            ),
+            encoding: .utf8
+        )
+        #expect(workspaceSource.contains(".forAppOnly"))
+        #expect(workspaceSource.contains("desktopMirrorConfigurationScope"))
+        #expect(workspaceSource.contains("desktopMirrorStageConfigurationScope"))
+        #expect(workspaceSource.contains(".forSession"))
+        #expect(
+            workspaceSource.contains(
+                "scope: Self.desktopMirrorStageConfigurationScope"
             )
-            #expect(source.contains(".forAppOnly"))
-            if path.hasSuffix("LumenMacDisplayWorkspace.swift") {
-                #expect(source.contains("desktopMirrorConfigurationScope"))
-                #expect(source.contains("desktopMirrorStageConfigurationScope"))
-                #expect(source.contains(".forSession"))
-                #expect(
-                    source.contains(
-                        "scope: Self.desktopMirrorStageConfigurationScope"
-                    )
-                )
-            } else {
-                #expect(!source.contains(".forSession"))
-            }
-        }
+        )
+
+        let topologySource = try String(
+            contentsOf: repositoryRoot.appendingPathComponent(
+                "src/platform/macos/Projects/LumenMacBridge/Sources/LumenMacDisplayTopologyController.swift"
+            ),
+            encoding: .utf8
+        )
+        #expect(topologySource.contains("restoreConfigurationScope"))
+        #expect(topologySource.contains(".permanently"))
+        #expect(!topologySource.contains(".forAppOnly"))
+        #expect(!topologySource.contains(".forSession"))
     }
 
     @Test("A single UIElement app owns safety displays while watchdogs only restore")
@@ -60,13 +64,6 @@ struct LumenDisplayDisconnectCanaryArchitectureTests {
             ),
             encoding: .utf8
         )
-        let connectionSource = try String(
-            contentsOf: repositoryRoot.appendingPathComponent(
-                "src/platform/macos/Projects/LumenMacBridge/Sources/LumenPrivateDisplayControl.swift"
-            ),
-            encoding: .utf8
-        )
-
         let targetStart = try #require(
             manifest.range(of: "name: \"LumenDisplayDisconnectCanary\"")
         )
