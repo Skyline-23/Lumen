@@ -406,7 +406,7 @@ static void LumenConfigureHDRDisplayInfo(
   @try {
     Class descriptorClass = NSClassFromString(@"CGVirtualDisplayDescriptor");
     _descriptor = [[descriptorClass alloc] init];
-    _callbackQueue = dispatch_get_main_queue();
+    _callbackQueue = dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0);
     if (_descriptor == nil || _callbackQueue == nil) {
       LumenAssignVirtualDisplayError(
         error,
@@ -456,6 +456,16 @@ static void LumenConfigureHDRDisplayInfo(
     [_descriptor setValue:[NSValue valueWithPoint:green] forKey:@"greenPrimary"];
     [_descriptor setValue:[NSValue valueWithPoint:blue] forKey:@"bluePrimary"];
     [_descriptor setValue:[NSValue valueWithPoint:white] forKey:@"whitePoint"];
+    BOOL assignedQueue = NO;
+    SEL queueSelector = sel_registerName("setQueue:");
+    if ([_descriptor respondsToSelector:queueSelector]) {
+      ((void (*)(id, SEL, dispatch_queue_t))objc_msgSend)(
+        _descriptor,
+        queueSelector,
+        _callbackQueue
+      );
+      assignedQueue = YES;
+    }
     SEL dispatchQueueSelector = sel_registerName("setDispatchQueue:");
     if ([_descriptor respondsToSelector:dispatchQueueSelector]) {
       ((void (*)(id, SEL, dispatch_queue_t))objc_msgSend)(
@@ -463,7 +473,9 @@ static void LumenConfigureHDRDisplayInfo(
         dispatchQueueSelector,
         _callbackQueue
       );
-    } else {
+      assignedQueue = YES;
+    }
+    if (!assignedQueue) {
       [_descriptor setValue:_callbackQueue forKey:@"queue"];
     }
     SEL terminationSelector = sel_registerName("setTerminationHandler:");

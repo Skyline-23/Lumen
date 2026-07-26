@@ -39,8 +39,8 @@ struct LumenVirtualDisplayLifecycleContractTests {
         )
     }
 
-    @Test("Private virtual display lifecycle is confined to the main thread")
-    func privateLifecycleUsesMainThreadPublicationContext() throws {
+    @Test("Private virtual display lifecycle keeps callbacks off the worker main queue")
+    func privateLifecycleUsesResponsivePublicationContext() throws {
         let source = try source(
             "src/platform/macos/Projects/LumenMacBridge/Sources/LumenNativeVirtualDisplay.m"
         )
@@ -52,13 +52,15 @@ struct LumenVirtualDisplayLifecycleContractTests {
         )
         #expect(
             source.contains(
-                "_callbackQueue = dispatch_get_main_queue();"
+                "_callbackQueue = dispatch_get_global_queue(" +
+                    "QOS_CLASS_USER_INITIATED, 0);"
             )
         )
         #expect(
-            !source.contains(
-                "_callbackQueue = dispatch_get_global_queue"
-            )
+            source.contains("setQueue:")
+        )
+        #expect(
+            source.contains("setDispatchQueue:")
         )
     }
 
