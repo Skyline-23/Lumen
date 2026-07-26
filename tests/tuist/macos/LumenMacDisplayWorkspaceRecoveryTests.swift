@@ -1127,6 +1127,39 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         // Then: the panel is woken instead of remaining black while CoreGraphics
         // already reports it as active.
         XCTAssertEqual(wakeSignal.callCount, 1)
+        XCTAssertEqual(wakeSignal.releaseCount, 1)
+    }
+
+    func testPhysicalRecoveryKeepsWakeAssertionHeldThroughTopologyVerification() async throws {
+        // Given: the panel wake must remain asserted while WindowServer publishes
+        // the restored physical topology.
+        let topology = displayTopology()
+        let wakeSignal = RecordingPhysicalDisplayWakeSignal()
+        let assertionWasHeldDuringCapture = Mutex(false)
+        let controller = LumenCoreGraphicsDisplayTopologyController(
+            capture: {
+                assertionWasHeldDuringCapture.withLock {
+                    $0 = wakeSignal.isAssertionHeld
+                }
+                return topology
+            },
+            restore: { _ in },
+            visibleDisplayIDs: { [77] }
+        )
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: controller,
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            physicalDisplayWakeSignal: wakeSignal
+        )
+
+        // When: terminal recovery verifies the physical display.
+        try await workspace.verifyWorkspace(topology)
+
+        // Then: the assertion survives the readback boundary and is released only
+        // after verification finishes.
+        XCTAssertTrue(assertionWasHeldDuringCapture.withLock { $0 })
+        XCTAssertFalse(wakeSignal.isAssertionHeld)
+        XCTAssertEqual(wakeSignal.releaseCount, 1)
     }
 
     func testPhysicalRecoveryWakesTheLocalDisplayBeforeTopologyVerificationFails() async throws {
@@ -1156,6 +1189,7 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
 
         // Then: local display wake is not gated by exact topology convergence.
         XCTAssertEqual(wakeSignal.callCount, 1)
+        XCTAssertEqual(wakeSignal.releaseCount, 1)
     }
 
     func testPhysicalRecoveryWakesTheLocalDisplayBeforeWindowVerificationFails() async throws {
@@ -1196,6 +1230,7 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
 
         // Then: the physical panel is still woken; window cleanup must not gate it.
         XCTAssertEqual(wakeSignal.callCount, 1)
+        XCTAssertEqual(wakeSignal.releaseCount, 1)
     }
 
     func testMissingCapabilityReceiptRejectsIsolationBeforeDisplayMutation() async throws {
@@ -2573,14 +2608,70 @@ private final class RecordingPhysicalDisplayWakeSignal:
     LumenPhysicalDisplayWakeSignaling,
     @unchecked Sendable
 {
-    private let calls = Mutex(0)
+    private let state = RecordingPhysicalDisplayWakeState()
 
     var callCount: Int {
-        calls.withLock { $0 }
+        state.values.withLock { $0.calls }
     }
 
-    func signalUserActivity() throws {
-        calls.withLock { $0 += 1 }
+    var releaseCount: Int {
+        state.values.withLock { $0.releases }
+    }
+
+    var isAssertionHeld: Bool {
+        state.values.withLock { $0.activeAssertions > 0 }
+    }
+
+    func acquireUserActivityAssertion() throws
+        -> any LumenPhysicalDisplayWakeAssertion {
+        state.values.withLock { state in
+            state.calls += 1
+            state.activeAssertions += 1
+        }
+        return RecordingPhysicalDisplayWakeAssertion(
+            releaseHandler: { [state] in
+                state.values.withLock { state in
+                    state.activeAssertions -= 1
+                    state.releases += 1
+                }
+            }
+        )
+    }
+}
+
+private final class RecordingPhysicalDisplayWakeState: @unchecked Sendable {
+    struct Values {
+        var calls = 0
+        var activeAssertions = 0
+        var releases = 0
+    }
+
+    let values = Mutex(Values())
+}
+
+private final class RecordingPhysicalDisplayWakeAssertion:
+    LumenPhysicalDisplayWakeAssertion,
+    @unchecked Sendable
+{
+    private let releaseHandler: @Sendable () -> Void
+    private let wasReleased = Mutex(false)
+
+    init(releaseHandler: @escaping @Sendable () -> Void) {
+        self.releaseHandler = releaseHandler
+    }
+
+    func release() {
+        let shouldRelease = wasReleased.withLock { wasReleased in
+            guard !wasReleased else { return false }
+            wasReleased = true
+            return true
+        }
+        guard shouldRelease else { return }
+        releaseHandler()
+    }
+
+    deinit {
+        release()
     }
 }
 

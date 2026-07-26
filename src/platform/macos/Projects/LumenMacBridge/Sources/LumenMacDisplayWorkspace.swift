@@ -1411,7 +1411,9 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
     }
 
     public func verifyWorkspace(_ topology: LumenMacPhysicalDisplayTopology) async throws {
-        try physicalDisplayWakeSignal.signalUserActivity()
+        let wakeAssertion = try physicalDisplayWakeSignal
+            .acquireUserActivityAssertion()
+        defer { wakeAssertion.release() }
         try await topologyController.verify(topology)
         for expected in try resolvePersistedWindows(topology.macWindows) {
             guard let actualPosition = windowPoint(
