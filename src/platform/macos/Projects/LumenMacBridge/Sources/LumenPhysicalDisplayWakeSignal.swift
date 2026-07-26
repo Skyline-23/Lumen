@@ -11,6 +11,10 @@ protocol LumenPhysicalDisplayWakeSignaling: Sendable {
     func acquireUserActivityAssertion() throws
         -> any LumenPhysicalDisplayWakeAssertion
     func isDisplayAsleep(_ displayID: CGDirectDisplayID) -> Bool
+    func retainUserActivityAssertion(
+        _ assertion: any LumenPhysicalDisplayWakeAssertion,
+        for duration: Duration
+    )
 }
 
 extension LumenPhysicalDisplayWakeSignaling {
@@ -20,6 +24,13 @@ extension LumenPhysicalDisplayWakeSignaling {
 
     func pulseUserActivity() throws {
         let assertion = try acquireUserActivityAssertion()
+        assertion.release()
+    }
+
+    func retainUserActivityAssertion(
+        _ assertion: any LumenPhysicalDisplayWakeAssertion,
+        for _: Duration
+    ) {
         assertion.release()
     }
 }
@@ -40,29 +51,54 @@ struct LumenSystemPhysicalDisplayWakeSignal: LumenPhysicalDisplayWakeSignaling {
         guard result == kIOReturnSuccess else {
             throw LumenPhysicalDisplayWakeSignalError.failed(result)
         }
-        return LumenSystemPhysicalDisplayWakeAssertion(
-            assertionID: assertionID
+        var displaySleepAssertionID = IOPMAssertionID(0)
+        let displaySleepResult = IOPMAssertionCreateWithName(
+            kIOPMAssertionTypePreventUserIdleDisplaySleep as CFString,
+            IOPMAssertionLevel(kIOPMAssertionLevelOn),
+            "Lumen physical display recovery lease" as CFString,
+            &displaySleepAssertionID
         )
+        guard displaySleepResult == kIOReturnSuccess else {
+            IOPMAssertionRelease(assertionID)
+            throw LumenPhysicalDisplayWakeSignalError.failed(
+                displaySleepResult
+            )
+        }
+        return LumenSystemPhysicalDisplayWakeAssertion(
+            assertionIDs: [assertionID, displaySleepAssertionID]
+        )
+    }
+
+    func retainUserActivityAssertion(
+        _ assertion: any LumenPhysicalDisplayWakeAssertion,
+        for duration: Duration
+    ) {
+        Task.detached(priority: .utility) {
+            try? await Task.sleep(for: duration)
+            try? pulseUserActivity()
+            assertion.release()
+        }
     }
 }
 
 private final class LumenSystemPhysicalDisplayWakeAssertion:
     LumenPhysicalDisplayWakeAssertion,
     @unchecked Sendable {
-    private let assertionID: Mutex<IOPMAssertionID?>
+    private let assertionIDs: Mutex<[IOPMAssertionID]>
 
-    init(assertionID: IOPMAssertionID) {
-        self.assertionID = Mutex(assertionID)
+    init(assertionIDs: [IOPMAssertionID]) {
+        self.assertionIDs = Mutex(assertionIDs)
     }
 
     func release() {
-        let assertionID = assertionID.withLock { assertionID in
-            let current = assertionID
-            assertionID = nil
+        let assertionIDs = assertionIDs.withLock { assertionIDs in
+            let current = assertionIDs
+            assertionIDs.removeAll()
             return current
         }
-        guard let assertionID else { return }
-        IOPMAssertionRelease(assertionID)
+        for assertionID in assertionIDs {
+            IOPMAssertionRelease(assertionID)
+        }
     }
 
     deinit {

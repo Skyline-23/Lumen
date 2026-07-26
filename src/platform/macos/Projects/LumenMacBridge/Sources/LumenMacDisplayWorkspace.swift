@@ -327,6 +327,7 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
     private static let wakeStableObservationCount = 9
     private static let wakeMaximumObservationCount = 24
     private static let physicalDisplayWakePollInterval: Duration = .milliseconds(250)
+    private static let postRecoveryWakeLeaseDuration: Duration = .seconds(60)
 
     private struct WindowSnapshot {
         let processID: Int32
@@ -369,6 +370,8 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
     private var snapshot: Snapshot?
     private var snapshotRecoveryGeneration: UInt64?
     private var pendingDisconnectRecoveryRecord: LumenDisconnectRecoveryRecord?
+    private var pendingRecoveryWakeAssertion:
+        (any LumenPhysicalDisplayWakeAssertion)?
     private var mirroredDisplayIDs: (
         physicalTargetDisplayID: UInt32,
         sessionSourceDisplayID: UInt32
@@ -1250,6 +1253,10 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
         _ topology: LumenMacPhysicalDisplayTopology,
         recoveryGeneration: UInt64
     ) async throws {
+        if pendingRecoveryWakeAssertion == nil {
+            pendingRecoveryWakeAssertion = try physicalDisplayWakeSignal
+                .acquireUserActivityAssertion()
+        }
         if let mirroredDisplayIDs {
             do {
                 try await releaseDesktopMirror(
@@ -1307,7 +1314,7 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             }
             pendingDisconnectRecoveryRecord = disconnectRecoveryRecord
         }
-        if !physicalTopologyAlreadyRestored {
+        if !physicalTopologyAlreadyRestored || requestedDurableEnableRecovery {
             let resolvedIDs = if requestedDurableEnableRecovery {
                 try await resolveDisplayIDsAfterDurableEnable(topology)
             } else {
@@ -1404,12 +1411,32 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
     }
 
     public func verifyWorkspace(_ topology: LumenMacPhysicalDisplayTopology) async throws {
-        let wakeAssertion = try physicalDisplayWakeSignal
-            .acquireUserActivityAssertion()
-        defer { wakeAssertion.release() }
+        let inheritedWakeAssertion = pendingRecoveryWakeAssertion != nil
+        let wakeAssertion: any LumenPhysicalDisplayWakeAssertion
+        if let pendingRecoveryWakeAssertion {
+            wakeAssertion = pendingRecoveryWakeAssertion
+        } else {
+            wakeAssertion = try physicalDisplayWakeSignal
+                .acquireUserActivityAssertion()
+        }
+        pendingRecoveryWakeAssertion = nil
+        var retainWakeAssertionAfterVerification = false
+        defer {
+            if retainWakeAssertionAfterVerification {
+                physicalDisplayWakeSignal.retainUserActivityAssertion(
+                    wakeAssertion,
+                    for: Self.postRecoveryWakeLeaseDuration
+                )
+            } else if inheritedWakeAssertion {
+                pendingRecoveryWakeAssertion = wakeAssertion
+            } else {
+                wakeAssertion.release()
+            }
+        }
         try await topologyController.verify(topology)
         try physicalDisplayWakeSignal.pulseUserActivity()
         try await waitForPhysicalDisplaysToWake(topology)
+        retainWakeAssertionAfterVerification = true
         for expected in try resolvePersistedWindows(topology.macWindows) {
             guard let actualPosition = windowPoint(
                 attribute: kAXPositionAttribute,
@@ -1500,6 +1527,8 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
     public func discardSnapshot() {
         snapshot = nil
         snapshotRecoveryGeneration = nil
+        pendingRecoveryWakeAssertion?.release()
+        pendingRecoveryWakeAssertion = nil
     }
 
     private func restoreStageTopologyIfNeeded(

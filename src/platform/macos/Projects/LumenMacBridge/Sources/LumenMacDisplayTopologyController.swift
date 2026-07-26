@@ -32,6 +32,8 @@ extension LumenMacDisplayTopologyControlling {
 
 actor LumenCoreGraphicsDisplayTopologyController: LumenMacDisplayTopologyControlling {
     static let productionVerificationAttempts = 300
+    nonisolated static let restoreConfigurationScope: CGConfigureOption =
+        .permanently
     private static let productionVerificationDelayNanoseconds: UInt64 = 100_000_000
     private static let logger = Logger(
         subsystem: "dev.skyline23.lumen",
@@ -466,7 +468,10 @@ actor LumenCoreGraphicsDisplayTopologyController: LumenMacDisplayTopologyControl
         }
         do {
             try body(configuration)
-            let result = CGCompleteDisplayConfiguration(configuration, .forAppOnly)
+            let result = CGCompleteDisplayConfiguration(
+                configuration,
+                Self.restoreConfigurationScope
+            )
             guard result == .success else {
                 throw LumenMacDisplayWorkspaceError.displayConfigurationFailed(result.rawValue)
             }

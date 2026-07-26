@@ -255,6 +255,14 @@ private actor DisplayMirrorProbe: LumenMacDisplayMirrorControlling {
 }
 
 final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
+    func testProductionTopologyRestoreSurvivesRecoveryProcessExit() {
+        XCTAssertEqual(
+            LumenCoreGraphicsDisplayTopologyController
+                .restoreConfigurationScope.rawValue,
+            CGConfigureOption.permanently.rawValue
+        )
+    }
+
     func testTopologyCaptureSkipsAnUnusableTransientVirtualDisplay() throws {
         let physical = displayTopology().displays[0]
 
@@ -1128,6 +1136,10 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         // WindowServer has published the exact physical display.
         XCTAssertEqual(wakeSignal.callCount, 2)
         XCTAssertEqual(wakeSignal.releaseCount, 2)
+        XCTAssertEqual(
+            wakeSignal.retainedAssertionDurations,
+            [.seconds(60)]
+        )
     }
 
     func testPhysicalRecoveryKeepsWakeAssertionHeldThroughTopologyVerification() async throws {
@@ -1609,13 +1621,17 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         )
         record = record.updating(displayID: 3, phase: .disableSucceeded)
         try recoveryStore.persist(record)
+        let wakeSignal = RecordingPhysicalDisplayWakeSignal()
+        let topologyController = RenumberedOfflineTopologyController(
+            fixture: fixture
+        )
         let workspace = LumenMacDisplayWorkspace(
-            topologyController: RenumberedOfflineTopologyController(fixture: fixture),
+            topologyController: topologyController,
             physicalDisplayController: RenumberedOfflinePhysicalDisplayController(
                 fixture: fixture
             ),
             disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
-            physicalDisplayWakeSignal: RecordingPhysicalDisplayWakeSignal(),
+            physicalDisplayWakeSignal: wakeSignal,
             disconnectRecoveryStore: recoveryStore,
             disconnectRecoveryEnvironment: { environment }
         )
@@ -1624,12 +1640,16 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
             topology,
             recoveryGeneration: 78
         )
+        XCTAssertTrue(wakeSignal.isAssertionHeld)
         try await workspace.verifyWorkspace(topology)
 
         XCTAssertEqual(
             fixture.controlCalls(),
             [.init(displayID: 3, enabled: true)]
         )
+        let restoreCallCount = await topologyController.restoreCallCount()
+        XCTAssertEqual(restoreCallCount, 1)
+        XCTAssertFalse(wakeSignal.isAssertionHeld)
         XCTAssertTrue(fixture.isOnline())
         XCTAssertFalse(FileManager.default.fileExists(atPath: recordURL.path))
     }
@@ -2574,6 +2594,7 @@ private final class RenumberedOfflineIsolationFixture: Sendable {
 private actor RenumberedOfflineTopologyController: LumenMacDisplayTopologyControlling {
     let fixture: RenumberedOfflineIsolationFixture
     let extraOnlineDisplayIDs: Set<CGDirectDisplayID>
+    private var restoreCalls = 0
 
     init(
         fixture: RenumberedOfflineIsolationFixture,
@@ -2591,6 +2612,11 @@ private actor RenumberedOfflineTopologyController: LumenMacDisplayTopologyContro
         guard fixture.isOnline() else {
             throw DisplayTopologyProbeFailure.mismatch
         }
+        restoreCalls += 1
+    }
+
+    func restoreCallCount() -> Int {
+        restoreCalls
     }
 
     func verify(_: LumenMacPhysicalDisplayTopology) throws {
@@ -2738,6 +2764,10 @@ private final class RecordingPhysicalDisplayWakeSignal:
         state.values.withLock { $0.assertionWasHeldForEveryCheck }
     }
 
+    var retainedAssertionDurations: [Duration] {
+        state.values.withLock { $0.retainedAssertionDurations }
+    }
+
     func isDisplayAsleep(_ displayID: CGDirectDisplayID) -> Bool {
         state.values.withLock { state in
             state.checkedDisplayIDs.append(displayID)
@@ -2766,6 +2796,16 @@ private final class RecordingPhysicalDisplayWakeSignal:
             }
         )
     }
+
+    func retainUserActivityAssertion(
+        _ assertion: any LumenPhysicalDisplayWakeAssertion,
+        for duration: Duration
+    ) {
+        state.values.withLock {
+            $0.retainedAssertionDurations.append(duration)
+        }
+        assertion.release()
+    }
 }
 
 private final class RecordingPhysicalDisplayWakeState: @unchecked Sendable {
@@ -2776,6 +2816,7 @@ private final class RecordingPhysicalDisplayWakeState: @unchecked Sendable {
         var asleepResponses: [Bool]
         var checkedDisplayIDs: [CGDirectDisplayID] = []
         var assertionWasHeldForEveryCheck = true
+        var retainedAssertionDurations: [Duration] = []
     }
 
     let values: Mutex<Values>
