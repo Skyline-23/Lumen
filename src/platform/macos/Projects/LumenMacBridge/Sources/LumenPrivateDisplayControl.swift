@@ -2,6 +2,9 @@ import CoreGraphics
 import Darwin
 import Foundation
 
+@_silgen_name("flock")
+private func lumenFileLock(_ descriptor: Int32, _ operation: Int32) -> Int32
+
 public enum LumenDisplayEnabledSymbolSource: String, Codable, Equatable, Sendable {
     case skyLightSLS
     case coreGraphicsCGS
@@ -114,6 +117,42 @@ public enum LumenDisplayDisconnectWatchdogTrigger: String, Codable, Equatable, S
     case restoreRequested
     case parentExited
     case deadlineExceeded
+}
+
+public struct LumenDisplayDisconnectRestoreLock: Sendable {
+    private let path: String
+
+    public init(url: URL) {
+        path = url.path
+    }
+
+    public func withLock<Value>(
+        _ operation: () throws -> Value
+    ) throws -> Value {
+        let descriptor = Darwin.open(
+            path,
+            O_CREAT | O_RDWR,
+            S_IRUSR | S_IWUSR
+        )
+        guard descriptor >= 0 else {
+            throw POSIXError(.init(rawValue: errno) ?? .EIO)
+        }
+        defer {
+            Darwin.close(descriptor)
+        }
+        guard Darwin.fchmod(descriptor, S_IRUSR | S_IWUSR) == 0 else {
+            throw POSIXError(.init(rawValue: errno) ?? .EIO)
+        }
+        while lumenFileLock(descriptor, LOCK_EX) != 0 {
+            guard errno == EINTR else {
+                throw POSIXError(.init(rawValue: errno) ?? .EIO)
+            }
+        }
+        defer {
+            _ = lumenFileLock(descriptor, LOCK_UN)
+        }
+        return try operation()
+    }
 }
 
 public enum LumenDisplayDisconnectRestoreFailureCode: String, Codable, Equatable, Sendable {

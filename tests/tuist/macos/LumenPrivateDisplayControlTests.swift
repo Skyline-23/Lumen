@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 import Testing
 @testable import LumenMacBridge
 
@@ -197,6 +198,48 @@ struct LumenPrivateDisplayControlTests {
         #expect(outcome.restoredReceipt?.enabled == true)
         #expect(outcome.restoredReceipt?.displayID == authorization.displayID)
         #expect(controller.calls.isEmpty)
+    }
+
+    @Test("Independent watchdogs serialize restore transactions")
+    func restoreLockSerializesIndependentWatchdogs() throws {
+        let lockURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("restore.lock")
+        try FileManager.default.createDirectory(
+            at: lockURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        defer {
+            try? FileManager.default.removeItem(
+                at: lockURL.deletingLastPathComponent()
+            )
+        }
+        let firstLock = LumenDisplayDisconnectRestoreLock(url: lockURL)
+        let secondLock = LumenDisplayDisconnectRestoreLock(url: lockURL)
+        let firstEntered = DispatchSemaphore(value: 0)
+        let releaseFirst = DispatchSemaphore(value: 0)
+        let secondAttempted = DispatchSemaphore(value: 0)
+        let secondEntered = DispatchSemaphore(value: 0)
+
+        DispatchQueue(label: "lumen.restore-lock.first").async {
+            try! firstLock.withLock {
+                firstEntered.signal()
+                releaseFirst.wait()
+            }
+        }
+        #expect(firstEntered.wait(timeout: .now() + 1) == .success)
+
+        DispatchQueue(label: "lumen.restore-lock.second").async {
+            secondAttempted.signal()
+            try! secondLock.withLock {
+                secondEntered.signal()
+            }
+        }
+        #expect(secondAttempted.wait(timeout: .now() + 1) == .success)
+        #expect(secondEntered.wait(timeout: .now() + 0.1) == .timedOut)
+
+        releaseFirst.signal()
+        #expect(secondEntered.wait(timeout: .now() + 1) == .success)
     }
 
     @Test("Failed restore postcondition retains safety recovery without a restored receipt")

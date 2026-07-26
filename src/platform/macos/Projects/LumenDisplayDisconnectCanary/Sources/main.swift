@@ -13,6 +13,8 @@ private let canarySafetyWidth: UInt32 = 1_920
 private let canarySafetyHeight: UInt32 = 1_080
 private let displayMutationConvergenceTimeout: TimeInterval = 30
 private let watchdogRestoreDeadline: TimeInterval = 60
+private let watchdogRestoreReceiptTimeout: TimeInterval =
+    (2 * displayMutationConvergenceTimeout) + 5
 
 private enum CanaryFailure: Error, CustomStringConvertible {
     case blocked(String)
@@ -326,7 +328,7 @@ private enum LumenDisplayDisconnectCanaryMain {
 
         try writeDurableData(Data(), to: restoreRequest)
         guard waitUntilPumpingMainRunLoop(
-            timeout: displayMutationConvergenceTimeout,
+            timeout: watchdogRestoreReceiptTimeout,
             condition: {
                 (1...2).allSatisfy { index in
                     FileManager.default.fileExists(
@@ -562,6 +564,9 @@ private enum LumenDisplayDisconnectCanaryMain {
         let restoreFailedURL = runDirectory.appendingPathComponent(
             "watchdog-\(index)-restore-failed.json"
         )
+        let restoreLock = LumenDisplayDisconnectRestoreLock(
+            url: runDirectory.appendingPathComponent("restore.lock")
+        )
         var restoreAttemptCount = 0
         while true {
             let marker: LumenDisplayDisconnectMutationMarker? = try? readJSON(
@@ -569,19 +574,21 @@ private enum LumenDisplayDisconnectCanaryMain {
             )
             restoreAttemptCount += 1
             do {
-                let outcome = try restorer.recoverIfAuthorized(
-                    authorization: authorization,
-                    marker: marker,
-                    trigger: trigger,
-                    verifyRestored: {
-                        waitUntil(
-                            timeout: displayMutationConvergenceTimeout,
-                            condition: {
-                                isDisplayConnectedInCoreGraphics(selectedDisplayID)
-                            }
-                        )
-                    }
-                )
+                let outcome = try restoreLock.withLock {
+                    try restorer.recoverIfAuthorized(
+                        authorization: authorization,
+                        marker: marker,
+                        trigger: trigger,
+                        verifyRestored: {
+                            waitUntil(
+                                timeout: displayMutationConvergenceTimeout,
+                                condition: {
+                                    isDisplayConnectedInCoreGraphics(selectedDisplayID)
+                                }
+                            )
+                        }
+                    )
+                }
                 switch outcome {
                 case .skipped:
                     try? writeArtifact(
