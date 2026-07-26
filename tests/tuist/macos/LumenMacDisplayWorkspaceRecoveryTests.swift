@@ -1197,6 +1197,67 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: recordURL.path))
     }
 
+    func testDurableIsolationRecoveryWaitsForReenabledDisplayPublication() async throws {
+        let topology = LumenMacPhysicalDisplayTopology(
+            displays: [
+                physicalDisplayState(
+                    id: "1",
+                    originX: 0,
+                    vendorID: 4_268,
+                    productID: 41_607,
+                    serialNumber: 809_654_099,
+                    builtin: false
+                ),
+            ],
+            windowsAdapterLUID: nil,
+            windowsTargetPaths: []
+        )
+        let fixture = RenumberedOfflineIsolationFixture(
+            persistedTopology: topology,
+            currentDisplayID: 3,
+            enablePublicationDelayPolls: 2
+        )
+        let recordURL = temporaryDisconnectRecoveryURL()
+        let recoveryStore = LumenDisconnectRecoveryFileStore(recordURL: recordURL)
+        let environment = LumenDisconnectRecoveryEnvironment(
+            bootSessionUUID: "boot-a",
+            windowServerSessionUUID: "window-server-a"
+        )
+        let isolatingWorkspace = LumenMacDisplayWorkspace(
+            topologyController: RenumberedOfflineTopologyController(fixture: fixture),
+            physicalDisplayController: RenumberedOfflinePhysicalDisplayController(
+                fixture: fixture
+            ),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            disconnectRecoveryStore: recoveryStore,
+            disconnectRecoveryEnvironment: { environment }
+        )
+        _ = try await isolatingWorkspace.snapshotWorkspace(
+            targetProcessIdentifiers: [],
+            recoveryGeneration: 78
+        )
+        try await isolatingWorkspace.isolateVirtualDisplay(99)
+
+        let recoveringWorkspace = LumenMacDisplayWorkspace(
+            topologyController: RenumberedOfflineTopologyController(fixture: fixture),
+            physicalDisplayController: RenumberedOfflinePhysicalDisplayController(
+                fixture: fixture
+            ),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            disconnectRecoveryStore: recoveryStore,
+            disconnectRecoveryEnvironment: { environment }
+        )
+        try await recoveringWorkspace.restoreWorkspace(
+            topology,
+            recoveryGeneration: 78
+        )
+        try await recoveringWorkspace.verifyWorkspace(topology)
+
+        XCTAssertGreaterThanOrEqual(fixture.publicationPollCount(), 3)
+        XCTAssertTrue(fixture.isOnline())
+        XCTAssertFalse(FileManager.default.fileExists(atPath: recordURL.path))
+    }
+
     func testDurableIsolationRecoverySkipsEnableWhenPhysicalTopologyIsAlreadyRestored() async throws {
         let topology = LumenMacPhysicalDisplayTopology(
             displays: [
@@ -1985,7 +2046,10 @@ private final class RenumberedOfflineIsolationFixture: Sendable {
     private struct State: Sendable {
         let persistedTopology: LumenMacPhysicalDisplayTopology
         let currentDisplayID: CGDirectDisplayID
+        let enablePublicationDelayPolls: Int
         var online: Bool
+        var remainingEnablePublicationPolls = 0
+        var publicationPollCount = 0
         var captureCount = 0
         var calls: [PhysicalControlCall] = []
     }
@@ -1995,12 +2059,14 @@ private final class RenumberedOfflineIsolationFixture: Sendable {
     init(
         persistedTopology: LumenMacPhysicalDisplayTopology,
         currentDisplayID: CGDirectDisplayID,
-        initiallyOnline: Bool = true
+        initiallyOnline: Bool = true,
+        enablePublicationDelayPolls: Int = 0
     ) {
         storage = Mutex(
             State(
                 persistedTopology: persistedTopology,
                 currentDisplayID: currentDisplayID,
+                enablePublicationDelayPolls: max(0, enablePublicationDelayPolls),
                 online: initiallyOnline
             )
         )
@@ -2059,9 +2125,33 @@ private final class RenumberedOfflineIsolationFixture: Sendable {
         storage.withLock { state in
             state.calls.append(.init(displayID: displayID, enabled: enabled))
             if displayID == state.currentDisplayID {
-                state.online = enabled
+                if enabled, state.enablePublicationDelayPolls > 0 {
+                    state.online = false
+                    state.remainingEnablePublicationPolls =
+                        state.enablePublicationDelayPolls
+                } else {
+                    state.online = enabled
+                }
             }
         }
+    }
+
+    func pollPublishedDisplayID() -> CGDirectDisplayID? {
+        storage.withLock { state in
+            state.publicationPollCount += 1
+            if state.remainingEnablePublicationPolls > 0 {
+                state.remainingEnablePublicationPolls -= 1
+                if state.remainingEnablePublicationPolls == 0 {
+                    state.online = true
+                }
+                return nil
+            }
+            return state.online ? state.currentDisplayID : nil
+        }
+    }
+
+    func publicationPollCount() -> Int {
+        storage.withLock(\.publicationPollCount)
     }
 
     func currentDisplayID() -> CGDirectDisplayID {
@@ -2119,12 +2209,12 @@ private actor RenumberedOfflineTopologyController: LumenMacDisplayTopologyContro
     func resolvedDisplayIDs(
         for topology: LumenMacPhysicalDisplayTopology
     ) throws -> [String: CGDirectDisplayID] {
-        guard fixture.isOnline() else {
+        guard let displayID = fixture.pollPublishedDisplayID() else {
             throw DisplayTopologyProbeFailure.mismatch
         }
         return Dictionary(
             uniqueKeysWithValues: topology.displays.map {
-                ($0.id, fixture.currentDisplayID())
+                ($0.id, displayID)
             }
         )
     }

@@ -318,6 +318,8 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
     private static let promotionPollNanoseconds: UInt64 = 50_000_000
     private static let desktopMirrorConvergenceTimeout: TimeInterval = 5
     private static let desktopMirrorPollNanoseconds: UInt64 = 50_000_000
+    private static let restorePublicationConvergenceTimeout: Duration = .seconds(5)
+    private static let restorePublicationPollInterval: Duration = .milliseconds(50)
 
     private struct WindowSnapshot {
         let processID: Int32
@@ -1252,6 +1254,7 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
         let physicalTopologyAlreadyRestored =
             (try? await topologyController.verify(topology)) != nil
         let disconnectRecoveryRecord = try disconnectRecoveryStore.load()
+        var requestedDurableEnableRecovery = false
         if let disconnectRecoveryRecord {
             guard try disconnectRecoveryRecord.matches(
                 recoveryGeneration: recoveryGeneration,
@@ -1276,11 +1279,16 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
                         for: entry.display.displayID
                     )
                 }
+                requestedDurableEnableRecovery = !entriesToEnable.isEmpty
             }
             pendingDisconnectRecoveryRecord = disconnectRecoveryRecord
         }
         if !physicalTopologyAlreadyRestored {
-            let resolvedIDs = try await topologyController.resolvedDisplayIDs(for: topology)
+            let resolvedIDs = if requestedDurableEnableRecovery {
+                try await resolveDisplayIDsAfterDurableEnable(topology)
+            } else {
+                try await topologyController.resolvedDisplayIDs(for: topology)
+            }
             let expectedDisplays = try topology.displays.map { state -> (CGDirectDisplayID, LumenMacPhysicalDisplayState) in
                 guard let displayID = resolvedIDs[state.id] else {
                     throw LumenMacDisplayWorkspaceError.invalidPersistedDisplayID(state.id)
@@ -1309,6 +1317,27 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             setWindowSize(window.size, on: window.element)
             setWindowPosition(window.position, on: window.element)
         }
+    }
+
+    private func resolveDisplayIDsAfterDurableEnable(
+        _ topology: LumenMacPhysicalDisplayTopology
+    ) async throws -> [String: CGDirectDisplayID] {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(
+            by: Self.restorePublicationConvergenceTimeout
+        )
+        var lastError: (any Error)?
+        repeat {
+            do {
+                return try await topologyController.resolvedDisplayIDs(
+                    for: topology
+                )
+            } catch {
+                lastError = error
+            }
+            try await Task.sleep(for: Self.restorePublicationPollInterval)
+        } while clock.now < deadline
+        throw lastError ?? LumenMacDisplayWorkspaceError.physicalTopologyMismatch
     }
 
     public func restoreWorkspace(_ topology: LumenMacPhysicalDisplayTopology) async throws {
