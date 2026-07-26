@@ -1588,6 +1588,100 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn abrupt_control_eof_terminates_the_active_native_session() {
+        let (root, router, platform, application_id) = native_test_router();
+        let (server_config, client_config) = loopback_quic_configs(&root);
+        let server_endpoint = Endpoint::server(
+            server_config,
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+        )
+        .unwrap();
+        let server_address = server_endpoint.local_addr().unwrap();
+        let mut client_endpoint =
+            Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap();
+        client_endpoint.set_default_client_config(client_config);
+        let connecting = client_endpoint
+            .connect(server_address, "localhost")
+            .unwrap();
+        let incoming = server_endpoint.accept().await.unwrap();
+        let (client_connection, server_connection) = tokio::join!(connecting, incoming);
+        let client_connection = client_connection.unwrap();
+        let server_connection = server_connection.unwrap();
+
+        let configuration_notify = router.lock().unwrap().native_codec_configuration_notify();
+        let bootstrap_notify = router.lock().unwrap().native_video_bootstrap_notify();
+        let server_task = tokio::spawn(handle_connection(
+            server_connection,
+            Arc::clone(&router),
+            Arc::clone(&platform),
+            configuration_notify,
+            bootstrap_notify,
+        ));
+
+        let (mut control_send, mut control_receive) = client_connection.open_bi().await.unwrap();
+        let hello = ClientControlEnvelope {
+            request_id: 1,
+            payload: Some(client_control_envelope::Payload::Hello(native_hello(
+                application_id,
+            ))),
+        };
+        control_send
+            .write_all(&encode_client_control_message(&hello).unwrap())
+            .await
+            .unwrap();
+        let response = read_control_frame(&mut control_receive)
+            .await
+            .unwrap()
+            .unwrap();
+        let response = decode_host_control_message(&response).unwrap();
+        let plan = match response.payload {
+            Some(host_control_envelope::Payload::SessionPlan(plan)) => plan,
+            payload => panic!("expected session plan, received {payload:?}"),
+        };
+
+        let start = ClientControlEnvelope {
+            request_id: 2,
+            payload: Some(client_control_envelope::Payload::StartSession(
+                StartSessionAck {
+                    session_epoch: plan.session_epoch,
+                },
+            )),
+        };
+        control_send
+            .write_all(&encode_client_control_message(&start).unwrap())
+            .await
+            .unwrap();
+        let response = read_control_frame(&mut control_receive)
+            .await
+            .unwrap()
+            .unwrap();
+        let response = decode_host_control_message(&response).unwrap();
+        assert!(matches!(
+            response.payload,
+            Some(host_control_envelope::Payload::SessionStarted(_))
+        ));
+        assert!(router
+            .lock()
+            .unwrap()
+            .native_input_is_active(plan.session_epoch));
+
+        control_send.finish().unwrap();
+        let server_result = tokio::time::timeout(Duration::from_secs(1), server_task)
+            .await
+            .expect("server connection task did not clean up abrupt control EOF")
+            .unwrap();
+        assert!(
+            server_result
+                .as_ref()
+                .is_err_and(|error| error.contains("without an acknowledged StopSession")),
+            "{server_result:?}"
+        );
+        let router = router.lock().unwrap();
+        assert!(!router.native_input_is_active(plan.session_epoch));
+        assert_eq!(router.video_delivery_state(), None);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn session_plan_precedes_lazy_auxiliary_stream_admission() {
         let (root, router, platform, application_id) = native_test_router();
         let (server_config, client_config) = loopback_quic_configs(&root);
