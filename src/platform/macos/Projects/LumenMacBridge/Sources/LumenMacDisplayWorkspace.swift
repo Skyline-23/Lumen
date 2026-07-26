@@ -1249,6 +1249,8 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
                 )
             }
         }
+        let physicalTopologyAlreadyRestored =
+            (try? await topologyController.verify(topology)) != nil
         let disconnectRecoveryRecord = try disconnectRecoveryStore.load()
         if let disconnectRecoveryRecord {
             guard try disconnectRecoveryRecord.matches(
@@ -1260,7 +1262,8 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
                 )
             }
             let currentEnvironment = try disconnectRecoveryEnvironment()
-            if disconnectRecoveryRecord.environment == currentEnvironment {
+            if disconnectRecoveryRecord.environment == currentEnvironment &&
+                !physicalTopologyAlreadyRestored {
                 let entriesToEnable = disconnectRecoveryRecord.entries.filter {
                     $0.phase.requiresEnableRecovery
                 }
@@ -1276,7 +1279,7 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             }
             pendingDisconnectRecoveryRecord = disconnectRecoveryRecord
         }
-        if (try? await topologyController.verify(topology)) == nil {
+        if !physicalTopologyAlreadyRestored {
             let resolvedIDs = try await topologyController.resolvedDisplayIDs(for: topology)
             let expectedDisplays = try topology.displays.map { state -> (CGDirectDisplayID, LumenMacPhysicalDisplayState) in
                 guard let displayID = resolvedIDs[state.id] else {

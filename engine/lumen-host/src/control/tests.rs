@@ -15,6 +15,7 @@ use lumen_engine::{
     VideoKeyframeRequest, NATIVE_PROTOCOL_VERSION,
 };
 use serde_json::{json, Value};
+use std::collections::VecDeque;
 use std::fs;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -120,6 +121,80 @@ impl PlatformSessionControl for RecordingPlatformSessionControl {
 struct FailingPlatformSessionControl {
     runtime_events: Mutex<Vec<PlatformRuntimeEvent>>,
     stops: AtomicUsize,
+}
+
+struct RetryingCleanupPlatformSessionControl {
+    start_result: Result<(), String>,
+    stop_results: Mutex<VecDeque<Result<(), String>>>,
+    application_stop_results: Mutex<VecDeque<Result<(), String>>>,
+    stops: AtomicUsize,
+    application_stops: AtomicUsize,
+}
+
+impl RetryingCleanupPlatformSessionControl {
+    fn new(stop_results: impl IntoIterator<Item = Result<(), String>>) -> Self {
+        Self {
+            start_result: Ok(()),
+            stop_results: Mutex::new(stop_results.into_iter().collect()),
+            application_stop_results: Mutex::new(VecDeque::new()),
+            stops: AtomicUsize::new(0),
+            application_stops: AtomicUsize::new(0),
+        }
+    }
+
+    fn with_start_failure(
+        start_error: impl Into<String>,
+        stop_results: impl IntoIterator<Item = Result<(), String>>,
+    ) -> Self {
+        Self {
+            start_result: Err(start_error.into()),
+            stop_results: Mutex::new(stop_results.into_iter().collect()),
+            application_stop_results: Mutex::new(VecDeque::new()),
+            stops: AtomicUsize::new(0),
+            application_stops: AtomicUsize::new(0),
+        }
+    }
+
+    fn with_application_stop_results(
+        stop_results: impl IntoIterator<Item = Result<(), String>>,
+        application_stop_results: impl IntoIterator<Item = Result<(), String>>,
+    ) -> Self {
+        Self {
+            start_result: Ok(()),
+            stop_results: Mutex::new(stop_results.into_iter().collect()),
+            application_stop_results: Mutex::new(application_stop_results.into_iter().collect()),
+            stops: AtomicUsize::new(0),
+            application_stops: AtomicUsize::new(0),
+        }
+    }
+}
+
+impl PlatformSessionControl for RetryingCleanupPlatformSessionControl {
+    fn start_application(&self, _plan: PlatformApplicationPlan) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn stop_application(&self) -> Result<(), String> {
+        self.application_stops.fetch_add(1, Ordering::Relaxed);
+        self.application_stop_results
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(Ok(()))
+    }
+
+    fn start_session(&self, _plan: PlatformSessionPlan) -> Result<(), String> {
+        self.start_result.clone()
+    }
+
+    fn stop_session(&self) -> Result<(), String> {
+        self.stops.fetch_add(1, Ordering::Relaxed);
+        self.stop_results
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(Ok(()))
+    }
 }
 
 impl PlatformSessionControl for FailingPlatformSessionControl {
@@ -314,6 +389,287 @@ fn native_v4_hello_negotiates_without_a_direct_udp_path_exchange() {
     assert!(router.video_delivery_state().is_some());
     assert!(router.audio_delivery_state().is_some());
     assert_eq!(platform.starts.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn failed_stop_is_retained_for_disconnect_cleanup_retry() {
+    let platform = Arc::new(RetryingCleanupPlatformSessionControl::new([
+        Err("workspace recovery remains pending".to_owned()),
+        Ok(()),
+    ]));
+    let (_root, mut router, context, _plan) = started_native_router(platform.clone());
+
+    let responses = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 3,
+            payload: Some(client_control_envelope::Payload::StopSession(
+                lumen_engine::StopSession {
+                    session_epoch: context.session_epoch,
+                },
+            )),
+        },
+        &context,
+    );
+
+    let Some(host_control_envelope::Payload::Error(error)) = responses[0].payload.as_ref() else {
+        panic!("expected the first cleanup failure");
+    };
+    assert_eq!(error.message, "platform session cleanup failed");
+    assert!(router.video_delivery_state().is_none());
+
+    assert_eq!(
+        router.terminate_native_connection(context.session_epoch),
+        Ok(())
+    );
+    assert!(router.video_delivery_state().is_none());
+    assert_eq!(platform.stops.load(Ordering::Relaxed), 2);
+    assert_eq!(platform.application_stops.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn next_hello_retries_incomplete_disconnect_cleanup_before_negotiation() {
+    let platform = Arc::new(RetryingCleanupPlatformSessionControl::new([
+        Err("workspace recovery remains pending".to_owned()),
+        Ok(()),
+    ]));
+    let (_root, mut router, context, _plan) = started_native_router(platform.clone());
+    let application_id = router.authorities().applications().applications().unwrap()[0].id;
+
+    assert!(router
+        .terminate_native_connection(context.session_epoch)
+        .is_err());
+    let next_context = NativeConnectionContext {
+        session_epoch: context.session_epoch + 1,
+        host_capabilities: context.host_capabilities.clone(),
+    };
+    let responses = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 4,
+            payload: Some(client_control_envelope::Payload::Hello(native_hello(
+                application_id,
+            ))),
+        },
+        &next_context,
+    );
+
+    assert!(matches!(
+        responses[0].payload,
+        Some(host_control_envelope::Payload::SessionPlan(_))
+    ));
+    assert_eq!(platform.stops.load(Ordering::Relaxed), 2);
+    assert_eq!(platform.application_stops.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn unauthenticated_hello_cannot_retry_retained_cleanup() {
+    let platform = Arc::new(RetryingCleanupPlatformSessionControl::new([
+        Err("workspace recovery remains pending".to_owned()),
+        Ok(()),
+    ]));
+    let (_root, mut router, context, _plan) = started_native_router(platform.clone());
+    let application_id = router.authorities().applications().applications().unwrap()[0].id;
+    assert!(router
+        .terminate_native_connection(context.session_epoch)
+        .is_err());
+    let mut hello = native_hello(application_id);
+    hello.access_token = "invalid-access-token".to_owned();
+
+    let responses = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 4,
+            payload: Some(client_control_envelope::Payload::Hello(hello)),
+        },
+        &NativeConnectionContext {
+            session_epoch: context.session_epoch + 1,
+            host_capabilities: context.host_capabilities.clone(),
+        },
+    );
+
+    let Some(host_control_envelope::Payload::Error(error)) = responses[0].payload.as_ref() else {
+        panic!("expected authentication rejection");
+    };
+    assert_eq!(error.code, 2);
+    assert_eq!(platform.stops.load(Ordering::Relaxed), 1);
+    assert_eq!(platform.application_stops.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn different_application_hello_cannot_retry_retained_cleanup() {
+    let platform = Arc::new(RetryingCleanupPlatformSessionControl::new([
+        Err("workspace recovery remains pending".to_owned()),
+        Ok(()),
+    ]));
+    let (_root, mut router, context, _plan) = started_native_router(platform.clone());
+    router
+        .authorities()
+        .applications()
+        .upsert(r#"{"uuid":"other-native-desktop","name":"Other Desktop"}"#)
+        .unwrap();
+    let different_application_id = router
+        .authorities()
+        .applications()
+        .applications()
+        .unwrap()
+        .into_iter()
+        .find(|application| application.uuid == "other-native-desktop")
+        .unwrap()
+        .id;
+    assert!(router
+        .terminate_native_connection(context.session_epoch)
+        .is_err());
+
+    let responses = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 4,
+            payload: Some(client_control_envelope::Payload::Hello(native_hello(
+                different_application_id,
+            ))),
+        },
+        &NativeConnectionContext {
+            session_epoch: context.session_epoch + 1,
+            host_capabilities: context.host_capabilities.clone(),
+        },
+    );
+
+    let Some(host_control_envelope::Payload::Error(error)) = responses[0].payload.as_ref() else {
+        panic!("expected retained owner rejection");
+    };
+    assert_eq!(error.code, 5);
+    assert_eq!(platform.stops.load(Ordering::Relaxed), 1);
+    assert_eq!(platform.application_stops.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn force_stop_retries_cleanup_without_losing_native_ownership() {
+    let platform = Arc::new(RetryingCleanupPlatformSessionControl::new([
+        Err("workspace recovery remains pending".to_owned()),
+        Ok(()),
+    ]));
+    let (_root, mut router, _context, _plan) = started_native_router(platform.clone());
+
+    assert_eq!(
+        router.force_stop_stream(),
+        Err("workspace recovery remains pending".to_owned())
+    );
+    assert_eq!(router.force_stop_stream(), Ok(()));
+    assert_eq!(platform.stops.load(Ordering::Relaxed), 2);
+    assert_eq!(platform.application_stops.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn force_stop_does_not_duplicate_retained_application_cleanup() {
+    let platform = Arc::new(
+        RetryingCleanupPlatformSessionControl::with_application_stop_results(
+            [Ok(())],
+            [
+                Err("application teardown remains pending".to_owned()),
+                Ok(()),
+            ],
+        ),
+    );
+    let (_root, mut router, _context, _plan) = started_native_router(platform.clone());
+
+    assert_eq!(
+        router.force_stop_stream(),
+        Err("application teardown remains pending".to_owned())
+    );
+    assert_eq!(platform.stops.load(Ordering::Relaxed), 1);
+    assert_eq!(platform.application_stops.load(Ordering::Relaxed), 1);
+
+    assert_eq!(router.force_stop_stream(), Ok(()));
+    assert_eq!(router.force_stop_stream(), Ok(()));
+    assert_eq!(platform.stops.load(Ordering::Relaxed), 1);
+    assert_eq!(platform.application_stops.load(Ordering::Relaxed), 2);
+}
+
+#[test]
+fn failed_application_stop_retries_only_the_remaining_cleanup() {
+    let platform = Arc::new(
+        RetryingCleanupPlatformSessionControl::with_application_stop_results(
+            [Ok(())],
+            [
+                Err("application teardown remains pending".to_owned()),
+                Ok(()),
+            ],
+        ),
+    );
+    let (_root, mut router, context, _plan) = started_native_router(platform.clone());
+
+    let responses = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 3,
+            payload: Some(client_control_envelope::Payload::StopSession(
+                lumen_engine::StopSession {
+                    session_epoch: context.session_epoch,
+                },
+            )),
+        },
+        &context,
+    );
+
+    assert!(matches!(
+        responses[0].payload,
+        Some(host_control_envelope::Payload::Error(_))
+    ));
+    assert!(router.video_delivery_state().is_none());
+    assert_eq!(
+        router.terminate_native_connection(context.session_epoch),
+        Ok(())
+    );
+    assert_eq!(platform.stops.load(Ordering::Relaxed), 1);
+    assert_eq!(platform.application_stops.load(Ordering::Relaxed), 2);
+}
+
+#[test]
+fn failed_start_rollback_is_retained_for_disconnect_cleanup_retry() {
+    let platform = Arc::new(RetryingCleanupPlatformSessionControl::with_start_failure(
+        "capture publication failed",
+        [Err("workspace recovery remains pending".to_owned()), Ok(())],
+    ));
+    let (_root, mut router) = router_with_platform(platform.clone());
+    router
+        .authorities()
+        .applications()
+        .upsert(r#"{"uuid":"native-desktop","name":"Desktop"}"#)
+        .unwrap();
+    let application_id = router.authorities().applications().applications().unwrap()[0].id;
+    let context = native_context();
+    let hello = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 1,
+            payload: Some(client_control_envelope::Payload::Hello(native_hello(
+                application_id,
+            ))),
+        },
+        &context,
+    );
+    assert!(matches!(
+        hello[0].payload,
+        Some(host_control_envelope::Payload::SessionPlan(_))
+    ));
+
+    let start = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 2,
+            payload: Some(client_control_envelope::Payload::StartSession(
+                StartSessionAck {
+                    session_epoch: context.session_epoch,
+                },
+            )),
+        },
+        &context,
+    );
+    let Some(host_control_envelope::Payload::Error(error)) = start[0].payload.as_ref() else {
+        panic!("expected the platform start failure");
+    };
+    assert!(error.message.contains("platform session rollback failed"));
+
+    assert_eq!(
+        router.terminate_native_connection(context.session_epoch),
+        Ok(())
+    );
+    assert_eq!(platform.stops.load(Ordering::Relaxed), 2);
+    assert_eq!(platform.application_stops.load(Ordering::Relaxed), 1);
 }
 
 #[test]

@@ -430,14 +430,7 @@ impl MacPlatformSessionControl {
             (self.api.stop_audio_capture)(state.controller);
             (self.api.stop_video_capture)(state.controller);
         }
-        let mut failure = None;
-        if let Some(key) = state.workspace_key.take() {
-            let mut error = [0_i8; 1024];
-            if !unsafe { (self.api.stop_workspace)(key.as_ptr(), error.as_mut_ptr(), error.len()) }
-            {
-                failure = Some(format!("workspace stop failed: {}", error_text(&error)));
-            }
-        }
+        let workspace_result = stop_workspace(&mut state.workspace_key, self.api.stop_workspace);
         state.display_id = 0;
         state.input_display_id = 0;
         state.input_display_bounds = None;
@@ -446,8 +439,23 @@ impl MacPlatformSessionControl {
         state.pcm.clear();
         state.next_audio_deadline = None;
         state.audio_capture_failure = None;
-        failure.map_or(Ok(()), Err)
+        workspace_result
     }
+}
+
+fn stop_workspace(
+    workspace_key: &mut Option<CString>,
+    stop_workspace: StopWorkspace,
+) -> Result<(), String> {
+    let Some(key) = workspace_key.take() else {
+        return Ok(());
+    };
+    let mut error = [0_i8; 1024];
+    if unsafe { stop_workspace(key.as_ptr(), error.as_mut_ptr(), error.len()) } {
+        return Ok(());
+    }
+    *workspace_key = Some(key);
+    Err(format!("workspace stop failed: {}", error_text(&error)))
 }
 
 impl PlatformSessionControl for MacPlatformSessionControl {
@@ -1235,6 +1243,17 @@ unsafe extern "C" {
 mod tests {
     use super::*;
     use crate::PlatformRuntimeEventCode;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static STOP_WORKSPACE_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
+
+    unsafe extern "C" fn fail_workspace_stop_once(
+        _key: *const c_char,
+        _error: *mut c_char,
+        _error_length: usize,
+    ) -> bool {
+        STOP_WORKSPACE_ATTEMPTS.fetch_add(1, Ordering::Relaxed) > 0
+    }
 
     #[test]
     fn pending_isolation_keeps_session_start_nonfatal_and_clears_stale_warning() {
@@ -1372,5 +1391,20 @@ mod tests {
                 .unwrap(),
             "dev.skyline23.lumen.workspace.primary.v1"
         );
+    }
+
+    #[test]
+    fn failed_workspace_stop_retains_key_for_cleanup_retry() {
+        STOP_WORKSPACE_ATTEMPTS.store(0, Ordering::Relaxed);
+        let mut workspace_key = Some(CString::new(MACOS_WORKSPACE_DISPLAY_KEY).unwrap());
+
+        assert!(stop_workspace(&mut workspace_key, fail_workspace_stop_once).is_err());
+        assert!(workspace_key.is_some());
+        assert_eq!(
+            stop_workspace(&mut workspace_key, fail_workspace_stop_once),
+            Ok(())
+        );
+        assert!(workspace_key.is_none());
+        assert_eq!(STOP_WORKSPACE_ATTEMPTS.load(Ordering::Relaxed), 2);
     }
 }

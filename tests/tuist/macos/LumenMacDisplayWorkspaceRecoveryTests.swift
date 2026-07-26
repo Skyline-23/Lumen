@@ -1197,6 +1197,142 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: recordURL.path))
     }
 
+    func testDurableIsolationRecoverySkipsEnableWhenPhysicalTopologyIsAlreadyRestored() async throws {
+        let topology = LumenMacPhysicalDisplayTopology(
+            displays: [
+                physicalDisplayState(
+                    id: "1",
+                    originX: 0,
+                    vendorID: 4_268,
+                    productID: 41_607,
+                    serialNumber: 809_654_099,
+                    builtin: false
+                ),
+            ],
+            windowsAdapterLUID: nil,
+            windowsTargetPaths: []
+        )
+        let fixture = RenumberedOfflineIsolationFixture(
+            persistedTopology: topology,
+            currentDisplayID: 3
+        )
+        let recordURL = temporaryDisconnectRecoveryURL()
+        let recoveryStore = LumenDisconnectRecoveryFileStore(recordURL: recordURL)
+        let environment = LumenDisconnectRecoveryEnvironment(
+            bootSessionUUID: "boot-a",
+            windowServerSessionUUID: "window-server-a"
+        )
+        var record = try LumenDisconnectRecoveryRecord.staged(
+            environment: environment,
+            recoveryGeneration: 78,
+            topology: topology,
+            physicalDisplays: [fixture.capabilityDisplay()]
+        )
+        record = record.updating(displayID: 3, phase: .disableSucceeded)
+        try recoveryStore.persist(record)
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: RenumberedOfflineTopologyController(fixture: fixture),
+            physicalDisplayController: RenumberedOfflinePhysicalDisplayController(
+                fixture: fixture
+            ),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            disconnectRecoveryStore: recoveryStore,
+            disconnectRecoveryEnvironment: { environment }
+        )
+
+        try await workspace.restoreWorkspace(
+            topology,
+            recoveryGeneration: 78
+        )
+        try await workspace.verifyWorkspace(topology)
+
+        XCTAssertTrue(fixture.controlCalls().isEmpty)
+        XCTAssertTrue(fixture.isOnline())
+        XCTAssertFalse(FileManager.default.fileExists(atPath: recordURL.path))
+    }
+
+    func testMirrorReleaseRechecksRestoredTopologyBeforeDurableEnableRecovery() async throws {
+        let topology = LumenMacPhysicalDisplayTopology(
+            displays: [
+                physicalDisplayState(
+                    id: "77",
+                    originX: 0,
+                    vendorID: 4_268,
+                    productID: 41_607,
+                    serialNumber: 809_654_099,
+                    builtin: false
+                ),
+            ],
+            windowsAdapterLUID: nil,
+            windowsTargetPaths: []
+        )
+        let topologyProbe = DisplayTopologyProbe(topology: topology)
+        let mirrorProbe = DisplayMirrorProbe(
+            sourceDisplayID: 77,
+            targetDisplayID: 117,
+            reportedMirrorSourceAfterApply: 117,
+            initialTargetIsOnline: true,
+            initialTargetIsActive: true,
+            initialTargetBounds: CGRect(x: 2_560, y: 0, width: 960, height: 540),
+            configuredTargetSize: CGSize(width: 960, height: 540),
+            mirroredTargetIsActive: false
+        )
+        let physicalFixture = IsolationDisplayFixture(physicalTopology: topology)
+        let recordURL = temporaryDisconnectRecoveryURL()
+        let recoveryStore = LumenDisconnectRecoveryFileStore(recordURL: recordURL)
+        let environment = LumenDisconnectRecoveryEnvironment(
+            bootSessionUUID: "boot-a",
+            windowServerSessionUUID: "window-server-a"
+        )
+        var record = try LumenDisconnectRecoveryRecord.staged(
+            environment: environment,
+            recoveryGeneration: 79,
+            topology: topology,
+            physicalDisplays: [
+                LumenDisplayDisconnectCapabilityDisplay(
+                    displayID: 77,
+                    vendorID: 4_268,
+                    productID: 41_607,
+                    serialNumber: 809_654_099,
+                    builtin: false
+                ),
+            ]
+        )
+        record = record.updating(displayID: 77, phase: .disableSucceeded)
+        try recoveryStore.persist(record)
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: topologyProbe,
+            mirrorController: mirrorProbe,
+            physicalDisplayController: RecordingPhysicalDisplayController(
+                fixture: physicalFixture
+            ),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            disconnectRecoveryStore: recoveryStore,
+            disconnectRecoveryEnvironment: { environment }
+        )
+        _ = try await workspace.snapshotWorkspace(
+            targetProcessIdentifiers: [],
+            recoveryGeneration: 79
+        )
+        await topologyProbe.allowVerification()
+        try await workspace.mirrorOwnedVirtualDisplay(117, sourceDisplayID: 77)
+        await topologyProbe.failVerificationUntilRestore()
+
+        try await workspace.restoreWorkspace(topology, recoveryGeneration: 79)
+        try await workspace.verifyWorkspace(topology)
+
+        let mirrorEvents = await mirrorProbe.recordedEvents()
+        XCTAssertEqual(
+            mirrorEvents,
+            [
+                .mirror(target: 77, source: 117),
+                .unmirror(target: 77),
+            ]
+        )
+        XCTAssertTrue(physicalFixture.controlCalls().isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: recordURL.path))
+    }
+
     func testRecoveryRefusesOfflineMutationAfterWindowServerSessionChanges() async throws {
         let topology = LumenMacPhysicalDisplayTopology(
             displays: [

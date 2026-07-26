@@ -71,6 +71,7 @@ struct PendingNativeSession {
     hello: ClientSessionHello,
     plan: HostSessionPlan,
     active: bool,
+    session_cleanup_pending: bool,
     application_started: bool,
     codec_configuration: Option<CodecConfiguration>,
     codec_configuration_sent: bool,
@@ -530,13 +531,19 @@ impl ControlRouter {
                 self.publish_native_platform_error(message.clone());
                 return vec![native_error(request_id, ERROR_PLATFORM, message)];
             }
+            if let Some(pending) = self.native.pending.as_mut() {
+                pending.application_started = true;
+            }
+        }
+        if let Some(pending) = self.native.pending.as_mut() {
+            pending.session_cleanup_pending = true;
         }
         if let Err(error) = self.platform.start_session(session_plan) {
             let message = format!("platform stream session could not be started: {error}");
             return vec![native_error(
                 request_id,
                 ERROR_PLATFORM,
-                self.rollback_native_start(application_started, message),
+                self.rollback_native_start(message),
             )];
         }
         let _ = self.platform.publish_runtime_event(PlatformRuntimeEvent {
@@ -549,7 +556,6 @@ impl ControlRouter {
             .set_running_application(application.id, application.uuid);
         if let Some(pending) = self.native.pending.as_mut() {
             pending.active = true;
-            pending.application_started = application_started;
         }
         vec![HostControlEnvelope {
             request_id,
@@ -561,15 +567,18 @@ impl ControlRouter {
         }]
     }
 
-    fn rollback_native_start(&mut self, application_started: bool, message: String) -> String {
-        let session_error = self.platform.stop_session().err();
-        if application_started {
-            let _ = self.platform.stop_application();
-        }
-        self.native.pending = None;
-        let message = match session_error {
-            Some(error) => format!("{message}; platform session rollback failed: {error}"),
-            None => message,
+    fn rollback_native_start(&mut self, message: String) -> String {
+        let session_epoch = self
+            .native
+            .pending
+            .as_ref()
+            .map(|pending| pending.plan.session_epoch);
+        let message = match session_epoch
+            .map(|session_epoch| self.cleanup_native_session(session_epoch))
+            .transpose()
+        {
+            Ok(_) => message,
+            Err(error) => format!("{message}; platform session rollback failed: {error}"),
         };
         self.publish_native_platform_error(message.clone());
         message
@@ -582,26 +591,8 @@ impl ControlRouter {
         if pending.plan.session_epoch != session_epoch {
             return Ok(());
         }
-        let active = pending.active;
-        let application_started = pending.application_started;
-        let session_error = active
-            .then(|| self.platform.stop_session())
-            .and_then(Result::err);
-        let application_error = application_started
-            .then(|| self.platform.stop_application())
-            .and_then(Result::err);
-        if application_started {
-            self.discovery.clear_running_application();
-        }
-        self.native.pending = None;
-        match (session_error, application_error) {
-            (None, None) => Ok(()),
-            (session, application) => Err(format!(
-                "native connection cleanup failed: session={} application={}",
-                session.as_deref().unwrap_or("ok"),
-                application.as_deref().unwrap_or("ok")
-            )),
-        }
+        self.cleanup_native_session(session_epoch)
+            .map_err(|error| format!("native connection cleanup failed: {error}"))
     }
 
     fn publish_native_platform_error(&self, message: String) {
@@ -637,19 +628,7 @@ impl ControlRouter {
             )];
         }
         let session_epoch = pending.plan.session_epoch;
-        let active = pending.active;
-        let application_started = pending.application_started;
-        let session_error = active
-            .then(|| self.platform.stop_session())
-            .and_then(Result::err);
-        let application_error = application_started
-            .then(|| self.platform.stop_application())
-            .and_then(Result::err);
-        if application_started {
-            self.discovery.clear_running_application();
-        }
-        self.native.pending = None;
-        if session_error.is_some() || application_error.is_some() {
+        if self.cleanup_native_session(session_epoch).is_err() {
             return vec![native_error(
                 request_id,
                 ERROR_PLATFORM,
@@ -664,19 +643,59 @@ impl ControlRouter {
         }]
     }
 
+    fn cleanup_native_session(&mut self, session_epoch: u32) -> Result<(), String> {
+        let Some(pending) = self.native.pending.as_ref() else {
+            return Ok(());
+        };
+        if pending.plan.session_epoch != session_epoch {
+            return Ok(());
+        }
+        let session_cleanup_pending = pending.session_cleanup_pending;
+        let application_started = pending.application_started;
+        if let Some(pending) = self.native.pending.as_mut() {
+            pending.active = false;
+        }
+        let session_error = session_cleanup_pending
+            .then(|| self.platform.stop_session())
+            .and_then(Result::err);
+        if session_cleanup_pending && session_error.is_none() {
+            if let Some(pending) = self.native.pending.as_mut() {
+                pending.session_cleanup_pending = false;
+            }
+        }
+        let application_error = application_started
+            .then(|| self.platform.stop_application())
+            .and_then(Result::err);
+        if application_started && application_error.is_none() {
+            if let Some(pending) = self.native.pending.as_mut() {
+                pending.application_started = false;
+            }
+            self.discovery.clear_running_application();
+        }
+        let cleanup_complete =
+            self.native.pending.as_ref().is_none_or(|pending| {
+                !pending.session_cleanup_pending && !pending.application_started
+            });
+        if cleanup_complete {
+            self.native.pending = None;
+            return Ok(());
+        }
+        match (session_error, application_error) {
+            (Some(session), None) => Err(session),
+            (None, Some(application)) => Err(application),
+            (Some(session), Some(application)) => Err(format!(
+                "{session}; application stop also failed: {application}"
+            )),
+            (None, None) => unreachable!("incomplete cleanup must retain a failure"),
+        }
+    }
+
     fn dispatch_native_hello(
         &mut self,
         request_id: u64,
         hello: ClientSessionHello,
         context: &NativeConnectionContext,
     ) -> Vec<HostControlEnvelope> {
-        if self.native.pending.is_some() {
-            return vec![native_error(
-                request_id,
-                ERROR_SESSION_CONFLICT,
-                "a native session is already pending",
-            )];
-        }
         if self
             .authorities
             .authentication()
@@ -705,6 +724,32 @@ impl ControlRouter {
                 "application is unavailable",
             )];
         }
+        if let Some(pending) = self.native.pending.as_ref() {
+            if hello.device_id != pending.hello.device_id
+                || hello.application_id != pending.hello.application_id
+            {
+                return vec![native_error(
+                    request_id,
+                    ERROR_SESSION_CONFLICT,
+                    "native session cleanup belongs to another owner",
+                )];
+            }
+            let cleanup_epoch = (!pending.active
+                && (pending.session_cleanup_pending || pending.application_started))
+                .then_some(pending.plan.session_epoch);
+            let Some(cleanup_epoch) = cleanup_epoch else {
+                return vec![native_error(
+                    request_id,
+                    ERROR_SESSION_CONFLICT,
+                    "a native session is already pending",
+                )];
+            };
+            if let Err(error) = self.cleanup_native_session(cleanup_epoch) {
+                let message = format!("previous native session cleanup remains pending: {error}");
+                self.publish_native_platform_error(message.clone());
+                return vec![native_error(request_id, ERROR_PLATFORM, message)];
+            }
+        }
         let plan = match negotiate_native_session(
             &hello,
             &context.host_capabilities,
@@ -717,6 +762,7 @@ impl ControlRouter {
             hello,
             plan: plan.clone(),
             active: false,
+            session_cleanup_pending: false,
             application_started: false,
             codec_configuration: None,
             codec_configuration_sent: false,
@@ -991,12 +1037,16 @@ impl ControlRouter {
         })
     }
 
-    pub(super) fn take_native_cleanup_state(&mut self) -> (bool, bool) {
-        self.native
+    pub(super) fn cleanup_current_native_session(&mut self) -> Result<(), String> {
+        let Some(session_epoch) = self
+            .native
             .pending
-            .take()
-            .map(|pending| (pending.active, pending.application_started))
-            .unwrap_or_default()
+            .as_ref()
+            .map(|pending| pending.plan.session_epoch)
+        else {
+            return Ok(());
+        };
+        self.cleanup_native_session(session_epoch)
     }
 
     fn native_application_plan(

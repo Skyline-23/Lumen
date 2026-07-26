@@ -192,19 +192,17 @@ impl ControlRouter {
     }
 
     pub fn force_stop_stream(&mut self) -> Result<(), String> {
-        let (session_active, application_started) = self.take_native_cleanup_state();
-        let session_result = if session_active {
-            self.platform.stop_session()
-        } else {
-            Ok(())
-        };
+        let session_result = self.cleanup_current_native_session();
         let application_result =
-            if application_started || self.discovery.current_application_id() != 0 {
-                self.platform.stop_application()
+            if session_result.is_ok() && self.discovery.current_application_id() != 0 {
+                let result = self.platform.stop_application();
+                if result.is_ok() {
+                    self.discovery.clear_running_application();
+                }
+                result
             } else {
                 Ok(())
             };
-        self.discovery.clear_running_application();
         match (session_result, application_result) {
             (Ok(()), Ok(())) => Ok(()),
             (Err(session), Ok(())) => Err(session),
