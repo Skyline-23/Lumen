@@ -55,7 +55,7 @@ final class LumenSystemAudioPlaybackSuppressionTests: XCTestCase {
             hal.events,
             [
                 .createProcessTap(
-                    muteBehavior: .mutedWhenTapped,
+                    muteBehavior: .muted,
                     isPrivate: true,
                     excludedProcessObjectIDs: [44]
                 ),

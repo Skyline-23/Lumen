@@ -4,7 +4,7 @@ import Foundation
 import Synchronization
 
 enum LumenSystemAudioPlaybackSuppressionMuteBehavior: Equatable, Sendable {
-    case mutedWhenTapped
+    case muted
 }
 
 enum LumenSystemAudioPlaybackSuppressionStage:
@@ -548,7 +548,7 @@ actor LumenSystemAudioPlaybackSuppression {
                 excludedProcessObjectIDs = []
             }
             let tap = try hal.createProcessTap(
-                muteBehavior: .mutedWhenTapped,
+                muteBehavior: .muted,
                 isPrivate: true,
                 excludedProcessObjectIDs: excludedProcessObjectIDs
             )
@@ -601,7 +601,7 @@ actor LumenSystemAudioPlaybackSuppression {
             )
             callbacks.eventHandler?(.init(
                 kind: .started,
-                message: "Core Audio process tap system-audio capture started"
+                message: "Core Audio process tap system-audio capture started mute=muted"
             ))
         } catch is CancellationError {
             resources.ioProc?.invalidateDelivery()
@@ -970,9 +970,9 @@ final class LumenCoreAudioSystemAudioPlaybackSuppressionHAL:
         description.name = "Lumen session system audio"
         description.isPrivate = isPrivate
         switch muteBehavior {
-        case .mutedWhenTapped:
+        case .muted:
             description.muteBehavior =
-                CATapMuteBehavior.mutedWhenTapped
+                CATapMuteBehavior.muted
         }
 
         var tapID = AudioObjectID(kAudioObjectUnknown)
