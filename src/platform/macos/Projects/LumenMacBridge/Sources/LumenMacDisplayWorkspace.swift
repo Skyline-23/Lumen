@@ -1267,8 +1267,42 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             let currentEnvironment = try disconnectRecoveryEnvironment()
             if disconnectRecoveryRecord.environment == currentEnvironment &&
                 !physicalTopologyAlreadyRestored {
-                let entriesToEnable = disconnectRecoveryRecord.entries.filter {
+                var entriesToEnable = disconnectRecoveryRecord.entries.filter {
                     $0.phase.requiresEnableRecovery
+                }
+                if !entriesToEnable.isEmpty,
+                   let resolvedIDs = try? await topologyController.resolvedDisplayIDs(
+                       for: topology
+                   )
+                {
+                    let visibleDisplayIDs = await topologyController.visibleDisplayIDs()
+                    let visiblePhysicalIdentities: Set<
+                        LumenDisplayDisconnectCapabilityDisplay.StableIdentity
+                    > = Set(
+                        topology.displays.compactMap { state
+                            -> LumenDisplayDisconnectCapabilityDisplay.StableIdentity? in
+                            guard let displayID = resolvedIDs[state.id],
+                                  visibleDisplayIDs.contains(displayID),
+                                  let vendorID = state.vendorID,
+                                  let productID = state.productID,
+                                  let serialNumber = state.serialNumber,
+                                  let builtin = state.builtin else {
+                                return nil
+                            }
+                            return LumenDisplayDisconnectCapabilityDisplay.StableIdentity(
+                                vendorID: vendorID,
+                                productID: productID,
+                                serialNumber: serialNumber,
+                                builtin: builtin
+                            )
+                        }
+                    )
+                    let allRecoveryDisplaysAreVisible = entriesToEnable.allSatisfy { entry in
+                        visiblePhysicalIdentities.contains(entry.display.stableIdentity)
+                    }
+                    if allRecoveryDisplaysAreVisible {
+                        entriesToEnable.removeAll(keepingCapacity: false)
+                    }
                 }
                 if !entriesToEnable.isEmpty {
                     _ = try physicalDisplayController.probe()
