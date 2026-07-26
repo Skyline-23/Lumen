@@ -35,7 +35,8 @@ actor WorkspaceDisplayMock: LumenMacDisplayWorkspaceManaging {
     }
 
     func snapshotWorkspace(
-        targetProcessIdentifiers: [Int32]
+        targetProcessIdentifiers: [Int32],
+        recoveryGeneration _: UInt64
     ) async -> LumenMacPhysicalDisplayTopology {
         await recorder.append(.snapshot(targetProcessIdentifiers))
         return testTopology()
@@ -73,7 +74,10 @@ actor WorkspaceDisplayMock: LumenMacDisplayWorkspaceManaging {
             throw isolationFailure
         }
     }
-    func restoreWorkspace(_: LumenMacPhysicalDisplayTopology) async {
+    func restoreWorkspace(
+        _: LumenMacPhysicalDisplayTopology,
+        recoveryGeneration _: UInt64
+    ) async {
         await recorder.append(.restore)
     }
     func verifyWorkspace(_: LumenMacPhysicalDisplayTopology) async throws {

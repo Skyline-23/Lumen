@@ -279,7 +279,8 @@ struct LumenCoreGraphicsDisplayMirrorController:
 
 public protocol LumenMacDisplayWorkspaceManaging: Sendable {
     func snapshotWorkspace(
-        targetProcessIdentifiers: [Int32]
+        targetProcessIdentifiers: [Int32],
+        recoveryGeneration: UInt64
     ) async throws -> LumenMacPhysicalDisplayTopology
     @discardableResult
     func promoteVirtualDisplay(
@@ -297,7 +298,10 @@ public protocol LumenMacDisplayWorkspaceManaging: Sendable {
     ) async throws
     func moveTargetWindows(to displayID: UInt32) async throws
     func isolateVirtualDisplay(_ displayID: UInt32) async throws
-    func restoreWorkspace(_ topology: LumenMacPhysicalDisplayTopology) async throws
+    func restoreWorkspace(
+        _ topology: LumenMacPhysicalDisplayTopology,
+        recoveryGeneration: UInt64
+    ) async throws
     func verifyWorkspace(_ topology: LumenMacPhysicalDisplayTopology) async throws
     func discardSnapshot() async
 }
@@ -342,7 +346,12 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
     private let mirrorController: any LumenMacDisplayMirrorControlling
     private let physicalDisplayController: any LumenPhysicalDisplayControlling
     private let disconnectCapabilityVerifier: any LumenDisplayDisconnectCapabilityVerifying
+    private let disconnectRecoveryStore: LumenDisconnectRecoveryFileStore
+    private let disconnectRecoveryEnvironment:
+        @Sendable () throws -> LumenDisconnectRecoveryEnvironment
     private var snapshot: Snapshot?
+    private var snapshotRecoveryGeneration: UInt64?
+    private var pendingDisconnectRecoveryRecord: LumenDisconnectRecoveryRecord?
     private var mirroredDisplayIDs: (
         physicalTargetDisplayID: UInt32,
         sessionSourceDisplayID: UInt32
@@ -355,6 +364,10 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             resolver: LumenSystemDisplayEnabledSymbolResolver()
         )
         disconnectCapabilityVerifier = LumenDisplayDisconnectCapabilityFileVerifier.production
+        disconnectRecoveryStore = .production
+        disconnectRecoveryEnvironment = {
+            try LumenDisconnectRecoveryEnvironment.current()
+        }
     }
 
     init(
@@ -365,16 +378,22 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             LumenPhysicalDisplayControlAdapter(
                 resolver: LumenSystemDisplayEnabledSymbolResolver()
             ),
-        disconnectCapabilityVerifier: any LumenDisplayDisconnectCapabilityVerifying
+        disconnectCapabilityVerifier: any LumenDisplayDisconnectCapabilityVerifying,
+        disconnectRecoveryStore: LumenDisconnectRecoveryFileStore,
+        disconnectRecoveryEnvironment: @escaping @Sendable () throws ->
+            LumenDisconnectRecoveryEnvironment
     ) {
         self.topologyController = topologyController
         self.mirrorController = mirrorController
         self.physicalDisplayController = physicalDisplayController
         self.disconnectCapabilityVerifier = disconnectCapabilityVerifier
+        self.disconnectRecoveryStore = disconnectRecoveryStore
+        self.disconnectRecoveryEnvironment = disconnectRecoveryEnvironment
     }
 
     public func snapshotWorkspace(
-        targetProcessIdentifiers: [Int32]
+        targetProcessIdentifiers: [Int32],
+        recoveryGeneration: UInt64
     ) async throws -> LumenMacPhysicalDisplayTopology {
         guard snapshot == nil else {
             throw LumenMacDisplayWorkspaceError.snapshotAlreadyExists
@@ -391,7 +410,17 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             windowsTargetPaths: topology.windowsTargetPaths
         )
         snapshot = Snapshot(topology: durableTopology, windows: windows)
+        snapshotRecoveryGeneration = recoveryGeneration
         return durableTopology
+    }
+
+    public func snapshotWorkspace(
+        targetProcessIdentifiers: [Int32]
+    ) async throws -> LumenMacPhysicalDisplayTopology {
+        try await snapshotWorkspace(
+            targetProcessIdentifiers: targetProcessIdentifiers,
+            recoveryGeneration: 0
+        )
     }
 
     @discardableResult
@@ -1063,40 +1092,75 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
     }
 
     public func isolateVirtualDisplay(_ displayID: UInt32) async throws {
-        guard let snapshot else {
+        guard let snapshot,
+              let snapshotRecoveryGeneration else {
             throw LumenMacDisplayWorkspaceError.snapshotMissing
         }
+        var attemptedDisplayIDs: [CGDirectDisplayID] = []
         do {
-            let physicalDisplayIDs = try snapshot.topology.displays
-                .filter { $0.enabled || $0.active }
-                .map { state -> CGDirectDisplayID in
-                    guard let physicalDisplayID = UInt32(state.id), physicalDisplayID != displayID else {
-                        throw LumenMacDisplayWorkspaceError.invalidPersistedDisplayID(state.id)
-                    }
-                    return physicalDisplayID
-                }
+            let currentTopology = try await topologyController.capture()
+            let physicalDisplays = try lumenCurrentPhysicalDisplays(
+                snapshot: snapshot.topology,
+                current: currentTopology,
+                sessionDisplayID: displayID
+            )
+            try await verifyOnlineDisplayFence(
+                physicalDisplays: physicalDisplays,
+                sessionDisplayID: displayID
+            )
             let probe = try physicalDisplayController.probe()
             try disconnectCapabilityVerifier.authorize(
                 probe: probe,
-                physicalDisplayIDs: physicalDisplayIDs
+                physicalDisplays: physicalDisplays
             )
-
-            var disabled: [CGDirectDisplayID] = []
+            let confirmedDisplays = try lumenCurrentPhysicalDisplays(
+                snapshot: snapshot.topology,
+                current: try await topologyController.capture(),
+                sessionDisplayID: displayID
+            )
+            guard confirmedDisplays == physicalDisplays else {
+                throw LumenPhysicalDisplayControlFailure(
+                    code: .physicalDisplayDisconnectUnverified
+                )
+            }
+            try await verifyOnlineDisplayFence(
+                physicalDisplays: confirmedDisplays,
+                sessionDisplayID: displayID
+            )
+            let physicalDisplayIDs = physicalDisplays.map(\.displayID)
+            var recoveryRecord = try LumenDisconnectRecoveryRecord.staged(
+                environment: disconnectRecoveryEnvironment(),
+                recoveryGeneration: snapshotRecoveryGeneration,
+                topology: snapshot.topology,
+                physicalDisplays: physicalDisplays
+            )
+            try disconnectRecoveryStore.persist(recoveryRecord)
             do {
                 for physicalDisplayID in physicalDisplayIDs {
+                    recoveryRecord = recoveryRecord.updating(
+                        displayID: physicalDisplayID,
+                        phase: .disableAttempted
+                    )
+                    try disconnectRecoveryStore.persist(recoveryRecord)
+                    attemptedDisplayIDs.append(physicalDisplayID)
                     _ = try physicalDisplayController.setEnabled(false, for: physicalDisplayID)
-                    disabled.append(physicalDisplayID)
+                    recoveryRecord = recoveryRecord.updating(
+                        displayID: physicalDisplayID,
+                        phase: .disableSucceeded
+                    )
+                    try disconnectRecoveryStore.persist(recoveryRecord)
                 }
                 try await verifyIsolation(
                     physicalDisplayIDs: Set(physicalDisplayIDs)
                 )
             } catch {
                 do {
-                    for physicalDisplayID in disabled.reversed() {
+                    for physicalDisplayID in attemptedDisplayIDs.reversed() {
                         _ = try physicalDisplayController.setEnabled(true, for: physicalDisplayID)
                     }
                     try await topologyController.restore(snapshot.topology)
                     try await topologyController.verify(snapshot.topology)
+                    try disconnectRecoveryStore.revoke()
                 } catch {
                     throw LumenMacDisplayWorkspaceError.isolationRollbackFailed
                 }
@@ -1111,7 +1175,10 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
         }
     }
 
-    public func restoreWorkspace(_ topology: LumenMacPhysicalDisplayTopology) async throws {
+    public func restoreWorkspace(
+        _ topology: LumenMacPhysicalDisplayTopology,
+        recoveryGeneration: UInt64
+    ) async throws {
         if let mirroredDisplayIDs {
             do {
                 try await releaseDesktopMirror(
@@ -1123,6 +1190,33 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
                     mirroredDisplayIDs.sessionSourceDisplayID
                 )
             }
+        }
+        let disconnectRecoveryRecord = try disconnectRecoveryStore.load()
+        if let disconnectRecoveryRecord {
+            guard try disconnectRecoveryRecord.matches(
+                recoveryGeneration: recoveryGeneration,
+                topology: topology
+            ) else {
+                throw LumenMacDisplayWorkspaceError.isolationUnavailable(
+                    "physical display recovery ownership could not be verified"
+                )
+            }
+            let currentEnvironment = try disconnectRecoveryEnvironment()
+            if disconnectRecoveryRecord.environment == currentEnvironment {
+                let entriesToEnable = disconnectRecoveryRecord.entries.filter {
+                    $0.phase.requiresEnableRecovery
+                }
+                if !entriesToEnable.isEmpty {
+                    _ = try physicalDisplayController.probe()
+                }
+                for entry in entriesToEnable {
+                    _ = try physicalDisplayController.setEnabled(
+                        true,
+                        for: entry.display.displayID
+                    )
+                }
+            }
+            pendingDisconnectRecoveryRecord = disconnectRecoveryRecord
         }
         if (try? await topologyController.verify(topology)) == nil {
             let resolvedIDs = try await topologyController.resolvedDisplayIDs(for: topology)
@@ -1156,6 +1250,13 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
         }
     }
 
+    public func restoreWorkspace(_ topology: LumenMacPhysicalDisplayTopology) async throws {
+        try await restoreWorkspace(
+            topology,
+            recoveryGeneration: snapshotRecoveryGeneration ?? 0
+        )
+    }
+
     public func verifyWorkspace(_ topology: LumenMacPhysicalDisplayTopology) async throws {
         try await topologyController.verify(topology)
         for expected in try resolvePersistedWindows(topology.macWindows) {
@@ -1181,11 +1282,25 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
                 )
             }
         }
+        if let pendingDisconnectRecoveryRecord {
+            guard try pendingDisconnectRecoveryRecord.matches(
+                recoveryGeneration: pendingDisconnectRecoveryRecord.recoveryGeneration,
+                topology: topology
+            ) else {
+                throw LumenMacDisplayWorkspaceError.isolationUnavailable(
+                    "physical display recovery verification did not match its owner"
+                )
+            }
+            try disconnectRecoveryStore.revoke()
+            self.pendingDisconnectRecoveryRecord = nil
+        }
         self.snapshot = nil
+        snapshotRecoveryGeneration = nil
     }
 
     public func discardSnapshot() {
         snapshot = nil
+        snapshotRecoveryGeneration = nil
     }
 
     private func restoreStageTopologyIfNeeded(
@@ -1315,6 +1430,19 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
         guard physicalDisplayIDs.allSatisfy({ statesByID[$0]?.active != true }),
               physicalDisplayIDs.isDisjoint(with: visibleDisplayIDs) else {
             throw LumenMacDisplayWorkspaceError.isolationPostconditionFailed
+        }
+    }
+
+    private func verifyOnlineDisplayFence(
+        physicalDisplays: [LumenDisplayDisconnectCapabilityDisplay],
+        sessionDisplayID: CGDirectDisplayID
+    ) async throws {
+        var onlineDisplayIDs = try await topologyController.onlineDisplayIDs()
+        onlineDisplayIDs.remove(sessionDisplayID)
+        guard onlineDisplayIDs == Set(physicalDisplays.map(\.displayID)) else {
+            throw LumenPhysicalDisplayControlFailure(
+                code: .physicalDisplayDisconnectUnverified
+            )
         }
     }
 

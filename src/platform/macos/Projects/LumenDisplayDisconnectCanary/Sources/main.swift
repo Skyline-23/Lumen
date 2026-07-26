@@ -106,6 +106,7 @@ private enum LumenDisplayDisconnectCanaryMain {
         }
         let capabilityStore = LumenDisplayDisconnectCapabilityFileStore.production
         try capabilityStore.revoke()
+        try LumenDisplayDisconnectCapabilityFileStore.legacyProduction.revoke()
 
         let environment = ProcessInfo.processInfo.environment
         let artifactRoot = URL(
@@ -133,6 +134,13 @@ private enum LumenDisplayDisconnectCanaryMain {
         guard physicalCandidates.count == 1, let selected = physicalCandidates.first else {
             throw CanaryFailure.blocked(
                 "Exactly one active non-Lumen display is required for exact-set verification"
+            )
+        }
+        guard selected.vendorID != 0,
+              selected.productID != 0,
+              selected.serialNumber != 0 else {
+            throw CanaryFailure.blocked(
+                "The selected physical display has no stable hardware identity"
             )
         }
 
@@ -405,7 +413,15 @@ private enum LumenDisplayDisconnectCanaryMain {
         let capabilityReceipt = LumenDisplayDisconnectCapabilityReceipt.verified(
             environment: capabilityEnvironment,
             probe: probe,
-            physicalDisplayIDs: [selected.displayID],
+            physicalDisplays: [
+                LumenDisplayDisconnectCapabilityDisplay(
+                    displayID: selected.displayID,
+                    vendorID: selected.vendorID,
+                    productID: selected.productID,
+                    serialNumber: selected.serialNumber,
+                    builtin: selected.builtin
+                )
+            ],
             issuedAtUnixSeconds: issuedAtUnixSeconds,
             expiresAtUnixSeconds: issuedAtUnixSeconds + (7 * 24 * 60 * 60)
         )

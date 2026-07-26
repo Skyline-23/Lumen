@@ -40,7 +40,8 @@ private actor RecoveryPayloadDisplayWorkspace: LumenMacDisplayWorkspaceManaging 
     }
 
     func snapshotWorkspace(
-        targetProcessIdentifiers _: [Int32]
+        targetProcessIdentifiers _: [Int32],
+        recoveryGeneration _: UInt64
     ) async -> LumenMacPhysicalDisplayTopology {
         topology
     }
@@ -61,7 +62,10 @@ private actor RecoveryPayloadDisplayWorkspace: LumenMacDisplayWorkspaceManaging 
     func moveTargetWindows(to _: UInt32) async {}
     func isolateVirtualDisplay(_: UInt32) async {}
 
-    func restoreWorkspace(_ topology: LumenMacPhysicalDisplayTopology) async {
+    func restoreWorkspace(
+        _ topology: LumenMacPhysicalDisplayTopology,
+        recoveryGeneration _: UInt64
+    ) async {
         await recorder.append(.restore(topology))
     }
 

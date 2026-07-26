@@ -7,12 +7,17 @@ protocol LumenMacDisplayTopologyControlling: Sendable {
     func restore(_ topology: LumenMacPhysicalDisplayTopology) async throws
     func verify(_ topology: LumenMacPhysicalDisplayTopology) async throws
     func visibleDisplayIDs() async -> Set<CGDirectDisplayID>
+    func onlineDisplayIDs() async throws -> Set<CGDirectDisplayID>
     func resolvedDisplayIDs(
         for topology: LumenMacPhysicalDisplayTopology
     ) async throws -> [String: CGDirectDisplayID]
 }
 
 extension LumenMacDisplayTopologyControlling {
+    func onlineDisplayIDs() async throws -> Set<CGDirectDisplayID> {
+        await visibleDisplayIDs()
+    }
+
     func resolvedDisplayIDs(
         for topology: LumenMacPhysicalDisplayTopology
     ) async throws -> [String: CGDirectDisplayID] {
@@ -66,7 +71,7 @@ actor LumenCoreGraphicsDisplayTopologyController: LumenMacDisplayTopologyControl
         if let captureOverride {
             return try await captureOverride()
         }
-        let displays = Self.usableDisplayStates(from: try onlineDisplayIDs()) { displayID in
+        let displays = Self.usableDisplayStates(from: try systemOnlineDisplayIDs()) { displayID in
             let bounds = CGDisplayBounds(displayID)
             guard let mode = CGDisplayCopyDisplayMode(displayID) else {
                 Self.logger.warning(
@@ -213,7 +218,7 @@ actor LumenCoreGraphicsDisplayTopologyController: LumenMacDisplayTopologyControl
                 return (state.id, displayID)
             })
         }
-        let online = try onlineDisplayIDs()
+        let online = try systemOnlineDisplayIDs()
         let candidates = online.compactMap { displayID -> LumenMacPhysicalDisplayState? in
             guard let mode = CGDisplayCopyDisplayMode(displayID) else { return nil }
             let bounds = CGDisplayBounds(displayID)
@@ -246,7 +251,11 @@ actor LumenCoreGraphicsDisplayTopologyController: LumenMacDisplayTopologyControl
         return resolved
     }
 
-    private func onlineDisplayIDs() throws -> [CGDirectDisplayID] {
+    func onlineDisplayIDs() async throws -> Set<CGDirectDisplayID> {
+        Set(try systemOnlineDisplayIDs())
+    }
+
+    private func systemOnlineDisplayIDs() throws -> [CGDirectDisplayID] {
         var count: UInt32 = 0
         var result = CGGetOnlineDisplayList(0, nil, &count)
         guard result == .success else {

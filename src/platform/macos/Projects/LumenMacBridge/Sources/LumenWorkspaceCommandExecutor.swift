@@ -139,7 +139,8 @@ public actor LumenMacWorkspaceExecutor: LumenWorkspaceCommandExecuting {
         case .snapshotWorkspace:
             return .physicalTopology(
                 try await displayWorkspace.snapshotWorkspace(
-                    targetProcessIdentifiers: targetProcessIdentifiers
+                    targetProcessIdentifiers: targetProcessIdentifiers,
+                    recoveryGeneration: command.generation
                 )
             )
         case .createVirtualDisplay:
@@ -193,7 +194,8 @@ public actor LumenMacWorkspaceExecutor: LumenWorkspaceCommandExecuting {
             return .succeeded
         case .restoreWorkspace:
             try await displayWorkspace.restoreWorkspace(
-                try requirePhysicalTopology(command.payload)
+                try requirePhysicalTopology(command.payload),
+                recoveryGeneration: command.generation
             )
             return .succeeded
         case .verifyPhysicalDisplays:
