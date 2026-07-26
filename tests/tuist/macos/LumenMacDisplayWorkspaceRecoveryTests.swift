@@ -1163,6 +1163,86 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         XCTAssertEqual(wakeSignal.releaseCount, 2)
     }
 
+    func testPhysicalRecoveryKeepsPulsingUntilTheActiveDisplayIsStablyAwake() async throws {
+        // Given: WindowServer has restored the active display, but the physical
+        // panel remains asleep for the first post-publication observation.
+        let topology = displayTopology()
+        let wakeSignal = RecordingPhysicalDisplayWakeSignal(
+            asleepResponses: [true] + Array(repeating: false, count: 9)
+        )
+        let controller = LumenCoreGraphicsDisplayTopologyController(
+            capture: { topology },
+            restore: { _ in },
+            visibleDisplayIDs: { [77] }
+        )
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: controller,
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            physicalDisplayWakeSignal: wakeSignal
+        )
+
+        // When: terminal recovery verifies and wakes the physical display.
+        try await workspace.verifyWorkspace(topology)
+
+        // Then: the recovery lease survives every wake observation, and a
+        // sleeping panel receives another pulse before two seconds of stable
+        // awake observations let the recovery lease go.
+        XCTAssertEqual(
+            wakeSignal.checkedDisplayIDs,
+            Array(repeating: 77, count: 10)
+        )
+        XCTAssertTrue(wakeSignal.assertionWasHeldForEveryCheck)
+        XCTAssertEqual(wakeSignal.callCount, 3)
+        XCTAssertEqual(wakeSignal.releaseCount, 3)
+    }
+
+    func testPhysicalRecoveryRetainsItsSnapshotWhenTheDisplayNeverWakes() async throws {
+        // Given: the topology is restored, but the active panel never leaves its
+        // asleep state while the bounded recovery lease is held.
+        let topology = displayTopology()
+        let wakeSignal = RecordingPhysicalDisplayWakeSignal(
+            asleepResponses: Array(repeating: true, count: 24)
+        )
+        let controller = LumenCoreGraphicsDisplayTopologyController(
+            capture: { topology },
+            restore: { _ in },
+            visibleDisplayIDs: { [77] }
+        )
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: controller,
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            physicalDisplayWakeSignal: wakeSignal
+        )
+        _ = try await workspace.snapshotWorkspace(targetProcessIdentifiers: [])
+
+        // When: terminal verification exhausts the wake convergence window.
+        do {
+            try await workspace.verifyWorkspace(topology)
+            XCTFail("expected display wake timeout")
+        } catch {
+            XCTAssertEqual(
+                error as? LumenMacDisplayWorkspaceError,
+                .physicalDisplayWakeTimeout([77])
+            )
+        }
+
+        // Then: every sleeping observation is re-pulsed and recovery ownership
+        // remains retryable instead of being discarded as a successful stop.
+        XCTAssertEqual(wakeSignal.checkedDisplayIDs, Array(repeating: 77, count: 24))
+        XCTAssertTrue(wakeSignal.assertionWasHeldForEveryCheck)
+        XCTAssertEqual(wakeSignal.callCount, 26)
+        XCTAssertEqual(wakeSignal.releaseCount, 26)
+        do {
+            _ = try await workspace.snapshotWorkspace(targetProcessIdentifiers: [])
+            XCTFail("expected retained snapshot")
+        } catch {
+            XCTAssertEqual(
+                error as? LumenMacDisplayWorkspaceError,
+                .snapshotAlreadyExists
+            )
+        }
+    }
+
     func testPhysicalRecoveryWakesTheLocalDisplayBeforeTopologyVerificationFails() async throws {
         // Given: WindowServer has not converged to the persisted topology yet.
         let topology = displayTopology()
@@ -1324,6 +1404,7 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
                 fixture: fixture
             ),
             disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            physicalDisplayWakeSignal: RecordingPhysicalDisplayWakeSignal(),
             disconnectRecoveryStore: recoveryStore,
             disconnectRecoveryEnvironment: { environment }
         )
@@ -1345,6 +1426,7 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
                 fixture: fixture
             ),
             disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            physicalDisplayWakeSignal: RecordingPhysicalDisplayWakeSignal(),
             disconnectRecoveryStore: recoveryStore,
             disconnectRecoveryEnvironment: { environment }
         )
@@ -1397,6 +1479,7 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
                 fixture: fixture
             ),
             disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            physicalDisplayWakeSignal: RecordingPhysicalDisplayWakeSignal(),
             disconnectRecoveryStore: recoveryStore,
             disconnectRecoveryEnvironment: { environment }
         )
@@ -1412,6 +1495,7 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
                 fixture: fixture
             ),
             disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            physicalDisplayWakeSignal: RecordingPhysicalDisplayWakeSignal(),
             disconnectRecoveryStore: recoveryStore,
             disconnectRecoveryEnvironment: { environment }
         )
@@ -1457,6 +1541,7 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
                 fixture: fixture
             ),
             disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            physicalDisplayWakeSignal: RecordingPhysicalDisplayWakeSignal(),
             disconnectRecoveryStore: recoveryStore,
             disconnectRecoveryEnvironment: { environment }
         )
@@ -1472,6 +1557,7 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
                 fixture: fixture
             ),
             disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            physicalDisplayWakeSignal: RecordingPhysicalDisplayWakeSignal(),
             disconnectRecoveryStore: recoveryStore,
             disconnectRecoveryEnvironment: { environment }
         )
@@ -1529,6 +1615,7 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
                 fixture: fixture
             ),
             disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            physicalDisplayWakeSignal: RecordingPhysicalDisplayWakeSignal(),
             disconnectRecoveryStore: recoveryStore,
             disconnectRecoveryEnvironment: { environment }
         )
@@ -1599,6 +1686,7 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
                 fixture: physicalFixture
             ),
             disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            physicalDisplayWakeSignal: RecordingPhysicalDisplayWakeSignal(),
             disconnectRecoveryStore: recoveryStore,
             disconnectRecoveryEnvironment: { environment }
         )
@@ -1671,6 +1759,7 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
                 fixture: physicalFixture
             ),
             disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            physicalDisplayWakeSignal: RecordingPhysicalDisplayWakeSignal(),
             disconnectRecoveryStore: recoveryStore,
             disconnectRecoveryEnvironment: { environment }
         )
@@ -1737,6 +1826,7 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
                 fixture: fixture
             ),
             disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            physicalDisplayWakeSignal: RecordingPhysicalDisplayWakeSignal(),
             disconnectRecoveryStore: recoveryStore,
             disconnectRecoveryEnvironment: {
                 LumenDisconnectRecoveryEnvironment(
@@ -1797,6 +1887,7 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
                 fixture: fixture
             ),
             disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            physicalDisplayWakeSignal: RecordingPhysicalDisplayWakeSignal(),
             disconnectRecoveryStore: recoveryStore,
             disconnectRecoveryEnvironment: { environment }
         )
@@ -1840,6 +1931,7 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
                 fixture: fixture
             ),
             disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            physicalDisplayWakeSignal: RecordingPhysicalDisplayWakeSignal(),
             disconnectRecoveryStore: LumenDisconnectRecoveryFileStore(
                 recordURL: temporaryDisconnectRecoveryURL()
             ),
@@ -2583,7 +2675,7 @@ extension LumenMacDisplayWorkspace {
             ),
         disconnectCapabilityVerifier: any LumenDisplayDisconnectCapabilityVerifying,
         physicalDisplayWakeSignal: any LumenPhysicalDisplayWakeSignaling =
-            LumenSystemPhysicalDisplayWakeSignal()
+            RecordingPhysicalDisplayWakeSignal()
     ) {
         self.init(
             topologyController: topologyController,
@@ -2608,9 +2700,14 @@ extension LumenMacDisplayWorkspace {
 
 private final class RecordingPhysicalDisplayWakeSignal:
     LumenPhysicalDisplayWakeSignaling,
-    @unchecked Sendable
-{
-    private let state = RecordingPhysicalDisplayWakeState()
+    @unchecked Sendable {
+    private let state: RecordingPhysicalDisplayWakeState
+
+    init(asleepResponses: [Bool] = []) {
+        state = RecordingPhysicalDisplayWakeState(
+            asleepResponses: asleepResponses
+        )
+    }
 
     var callCount: Int {
         state.values.withLock { $0.calls }
@@ -2622,6 +2719,27 @@ private final class RecordingPhysicalDisplayWakeSignal:
 
     var isAssertionHeld: Bool {
         state.values.withLock { $0.activeAssertions > 0 }
+    }
+
+    var checkedDisplayIDs: [CGDirectDisplayID] {
+        state.values.withLock { $0.checkedDisplayIDs }
+    }
+
+    var assertionWasHeldForEveryCheck: Bool {
+        state.values.withLock { $0.assertionWasHeldForEveryCheck }
+    }
+
+    func isDisplayAsleep(_ displayID: CGDirectDisplayID) -> Bool {
+        state.values.withLock { state in
+            state.checkedDisplayIDs.append(displayID)
+            state.assertionWasHeldForEveryCheck =
+                state.assertionWasHeldForEveryCheck &&
+                state.activeAssertions > 0
+            guard !state.asleepResponses.isEmpty else {
+                return false
+            }
+            return state.asleepResponses.removeFirst()
+        }
     }
 
     func acquireUserActivityAssertion() throws
@@ -2646,15 +2764,21 @@ private final class RecordingPhysicalDisplayWakeState: @unchecked Sendable {
         var calls = 0
         var activeAssertions = 0
         var releases = 0
+        var asleepResponses: [Bool]
+        var checkedDisplayIDs: [CGDirectDisplayID] = []
+        var assertionWasHeldForEveryCheck = true
     }
 
-    let values = Mutex(Values())
+    let values: Mutex<Values>
+
+    init(asleepResponses: [Bool]) {
+        values = Mutex(Values(asleepResponses: asleepResponses))
+    }
 }
 
 private final class RecordingPhysicalDisplayWakeAssertion:
     LumenPhysicalDisplayWakeAssertion,
-    @unchecked Sendable
-{
+    @unchecked Sendable {
     private let releaseHandler: @Sendable () -> Void
     private let wasReleased = Mutex(false)
 

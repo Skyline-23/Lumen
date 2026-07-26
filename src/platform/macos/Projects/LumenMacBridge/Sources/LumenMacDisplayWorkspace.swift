@@ -15,6 +15,7 @@ public enum LumenMacDisplayWorkspaceError: LocalizedError, Equatable {
     case invalidPersistedDisplayID(String)
     case displayModeNotFound(UInt32)
     case physicalTopologyMismatch
+    case physicalDisplayWakeTimeout([UInt32])
     case isolationUnavailable(String)
     case isolationPostconditionFailed
     case isolationRollbackFailed
@@ -53,6 +54,9 @@ public enum LumenMacDisplayWorkspaceError: LocalizedError, Equatable {
             "the persisted mode for display \(displayID) is unavailable"
         case .physicalTopologyMismatch:
             "the restored physical display topology did not converge"
+        case .physicalDisplayWakeTimeout(let displayIDs):
+            "the restored physical displays did not wake: " +
+                displayIDs.map(String.init).joined(separator: ",")
         case .isolationUnavailable(let message):
             "physical display isolation is unavailable: \(message)"
         case .isolationPostconditionFailed:
@@ -320,6 +324,9 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
     private static let desktopMirrorPollNanoseconds: UInt64 = 50_000_000
     private static let restorePublicationConvergenceTimeout: Duration = .seconds(5)
     private static let restorePublicationPollInterval: Duration = .milliseconds(50)
+    private static let wakeStableObservationCount = 9
+    private static let wakeMaximumObservationCount = 24
+    private static let physicalDisplayWakePollInterval: Duration = .milliseconds(250)
 
     private struct WindowSnapshot {
         let processID: Int32
@@ -390,8 +397,7 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
                 resolver: LumenSystemDisplayEnabledSymbolResolver()
             ),
         disconnectCapabilityVerifier: any LumenDisplayDisconnectCapabilityVerifying,
-        physicalDisplayWakeSignal: any LumenPhysicalDisplayWakeSignaling =
-            LumenSystemPhysicalDisplayWakeSignal(),
+        physicalDisplayWakeSignal: any LumenPhysicalDisplayWakeSignaling,
         disconnectRecoveryStore: LumenDisconnectRecoveryFileStore,
         disconnectRecoveryEnvironment: @escaping @Sendable () throws ->
             LumenDisconnectRecoveryEnvironment
@@ -1416,6 +1422,7 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
         defer { wakeAssertion.release() }
         try await topologyController.verify(topology)
         try physicalDisplayWakeSignal.pulseUserActivity()
+        try await waitForPhysicalDisplaysToWake(topology)
         for expected in try resolvePersistedWindows(topology.macWindows) {
             guard let actualPosition = windowPoint(
                 attribute: kAXPositionAttribute,
@@ -1453,6 +1460,54 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
         }
         self.snapshot = nil
         snapshotRecoveryGeneration = nil
+    }
+
+    private func waitForPhysicalDisplaysToWake(
+        _ topology: LumenMacPhysicalDisplayTopology
+    ) async throws {
+        let resolvedDisplayIDs = try await topologyController.resolvedDisplayIDs(
+            for: topology
+        )
+        let activeDisplayIDs: [CGDirectDisplayID] =
+            try topology.displays.compactMap { state in
+            guard state.active, state.online else {
+                return nil
+            }
+            guard let displayID = resolvedDisplayIDs[state.id] else {
+                throw LumenMacDisplayWorkspaceError.invalidPersistedDisplayID(
+                    state.id
+                )
+            }
+            return displayID
+        }
+        guard !activeDisplayIDs.isEmpty else {
+            return
+        }
+
+        var consecutiveAwakeObservations = 0
+        for observation in 0 ..< Self.wakeMaximumObservationCount {
+            let hasSleepingDisplay = activeDisplayIDs.contains {
+                physicalDisplayWakeSignal.isDisplayAsleep($0)
+            }
+            if hasSleepingDisplay {
+                consecutiveAwakeObservations = 0
+                try physicalDisplayWakeSignal.pulseUserActivity()
+            } else {
+                consecutiveAwakeObservations += 1
+                if consecutiveAwakeObservations >=
+                    Self.wakeStableObservationCount {
+                    return
+                }
+            }
+            if observation + 1 < Self.wakeMaximumObservationCount {
+                try await Task.sleep(
+                    for: Self.physicalDisplayWakePollInterval
+                )
+            }
+        }
+        throw LumenMacDisplayWorkspaceError.physicalDisplayWakeTimeout(
+            activeDisplayIDs
+        )
     }
 
     public func discardSnapshot() {

@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import IOKit.pwr_mgt
 import Synchronization
@@ -9,9 +10,14 @@ protocol LumenPhysicalDisplayWakeAssertion: AnyObject, Sendable {
 protocol LumenPhysicalDisplayWakeSignaling: Sendable {
     func acquireUserActivityAssertion() throws
         -> any LumenPhysicalDisplayWakeAssertion
+    func isDisplayAsleep(_ displayID: CGDirectDisplayID) -> Bool
 }
 
 extension LumenPhysicalDisplayWakeSignaling {
+    func isDisplayAsleep(_ displayID: CGDirectDisplayID) -> Bool {
+        false
+    }
+
     func pulseUserActivity() throws {
         let assertion = try acquireUserActivityAssertion()
         assertion.release()
@@ -19,6 +25,10 @@ extension LumenPhysicalDisplayWakeSignaling {
 }
 
 struct LumenSystemPhysicalDisplayWakeSignal: LumenPhysicalDisplayWakeSignaling {
+    func isDisplayAsleep(_ displayID: CGDirectDisplayID) -> Bool {
+        CGDisplayIsAsleep(displayID) != 0
+    }
+
     func acquireUserActivityAssertion() throws
         -> any LumenPhysicalDisplayWakeAssertion {
         var assertionID = IOPMAssertionID(0)
