@@ -327,7 +327,7 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
     private static let wakeStableObservationCount = 9
     private static let wakeMaximumObservationCount = 24
     private static let physicalDisplayWakePollInterval: Duration = .milliseconds(250)
-    private static let postRecoveryWakeLeaseDuration: Duration = .seconds(60)
+    private static let postRecoveryWakeLeaseDuration: Duration = .seconds(600)
 
     private struct WindowSnapshot {
         let processID: Int32

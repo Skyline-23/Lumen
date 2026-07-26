@@ -36,6 +36,8 @@ extension LumenPhysicalDisplayWakeSignaling {
 }
 
 struct LumenSystemPhysicalDisplayWakeSignal: LumenPhysicalDisplayWakeSignaling {
+    private static let localInputPollInterval: Duration = .milliseconds(500)
+
     func isDisplayAsleep(_ displayID: CGDirectDisplayID) -> Bool {
         CGDisplayIsAsleep(displayID) != 0
     }
@@ -73,11 +75,54 @@ struct LumenSystemPhysicalDisplayWakeSignal: LumenPhysicalDisplayWakeSignaling {
         _ assertion: any LumenPhysicalDisplayWakeAssertion,
         for duration: Duration
     ) {
+        let initialIdleNanoseconds = Self.localInputIdleNanoseconds()
         Task.detached(priority: .utility) {
-            try? await Task.sleep(for: duration)
+            let deadline = ContinuousClock.now.advanced(by: duration)
+            var previousIdleNanoseconds = initialIdleNanoseconds
+            while ContinuousClock.now < deadline {
+                try? await Task.sleep(for: Self.localInputPollInterval)
+                guard let currentIdleNanoseconds =
+                    Self.localInputIdleNanoseconds()
+                else {
+                    continue
+                }
+                if Self.didObserveLocalInput(
+                    previousIdleNanoseconds: previousIdleNanoseconds,
+                    currentIdleNanoseconds: currentIdleNanoseconds
+                ) {
+                    break
+                }
+                previousIdleNanoseconds = currentIdleNanoseconds
+            }
             try? pulseUserActivity()
             assertion.release()
         }
+    }
+
+    static func didObserveLocalInput(
+        previousIdleNanoseconds: UInt64?,
+        currentIdleNanoseconds: UInt64
+    ) -> Bool {
+        guard let previousIdleNanoseconds else { return false }
+        return currentIdleNanoseconds < previousIdleNanoseconds
+    }
+
+    private static func localInputIdleNanoseconds() -> UInt64? {
+        let service = IOServiceGetMatchingService(
+            kIOMainPortDefault,
+            IOServiceMatching("IOHIDSystem")
+        )
+        guard service != IO_OBJECT_NULL else { return nil }
+        defer { IOObjectRelease(service) }
+        guard let value = IORegistryEntryCreateCFProperty(
+            service,
+            "HIDIdleTime" as CFString,
+            kCFAllocatorDefault,
+            0
+        )?.takeRetainedValue() as? NSNumber else {
+            return nil
+        }
+        return value.uint64Value
     }
 }
 

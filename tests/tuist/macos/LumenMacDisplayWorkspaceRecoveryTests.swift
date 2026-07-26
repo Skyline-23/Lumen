@@ -255,6 +255,27 @@ private actor DisplayMirrorProbe: LumenMacDisplayMirrorControlling {
 }
 
 final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
+    func testProductionWakeLeaseHandsOffAfterLocalInputResetsIdleTime() {
+        XCTAssertTrue(
+            LumenSystemPhysicalDisplayWakeSignal.didObserveLocalInput(
+                previousIdleNanoseconds: 5_000_000_000,
+                currentIdleNanoseconds: 1_000_000
+            )
+        )
+        XCTAssertFalse(
+            LumenSystemPhysicalDisplayWakeSignal.didObserveLocalInput(
+                previousIdleNanoseconds: 5_000_000_000,
+                currentIdleNanoseconds: 5_500_000_000
+            )
+        )
+        XCTAssertFalse(
+            LumenSystemPhysicalDisplayWakeSignal.didObserveLocalInput(
+                previousIdleNanoseconds: nil,
+                currentIdleNanoseconds: 1_000_000
+            )
+        )
+    }
+
     func testProductionTopologyRestoreSurvivesRecoveryProcessExit() {
         XCTAssertEqual(
             LumenCoreGraphicsDisplayTopologyController
@@ -1138,7 +1159,7 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         XCTAssertEqual(wakeSignal.releaseCount, 2)
         XCTAssertEqual(
             wakeSignal.retainedAssertionDurations,
-            [.seconds(60)]
+            [.seconds(600)]
         )
     }
 
