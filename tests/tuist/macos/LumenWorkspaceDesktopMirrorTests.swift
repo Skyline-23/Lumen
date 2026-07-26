@@ -19,6 +19,23 @@ final class LumenWorkspaceDesktopMirrorTests: XCTestCase {
         }
     }
 
+    func testDesktopMirrorWaitsForExactDisplayQueryCompletionBeforeTopologyCommit() async throws {
+        for policy in [LumenMacWorkspacePolicy.isolatedWorkspace, .coexist] {
+            let events = try await runDesktopMirrorPreparation(
+                managesCapture: true,
+                policy: policy,
+                captureAdmissionOutcome: .cancellation
+            )
+
+            XCTAssertEqual(
+                events.filter { $0 == .prepareCapture(89) }.count,
+                1
+            )
+            XCTAssertFalse(events.contains(.mirror(89, 3)))
+            XCTAssertFalse(events.contains(.stabilize(89)))
+        }
+    }
+
 }
 
 private extension LumenWorkspaceDesktopMirrorTests {
@@ -49,9 +66,9 @@ private extension LumenWorkspaceDesktopMirrorTests {
         )
         XCTAssertLessThan(configureIndex, settlementIndex)
         XCTAssertLessThan(settlementIndex, stageIndex)
-        XCTAssertLessThan(stageIndex, mirrorIndex)
+        XCTAssertLessThan(stageIndex, prefetchIndex)
+        XCTAssertLessThan(prefetchIndex, mirrorIndex)
         XCTAssertLessThan(mirrorIndex, stabilizationIndex)
-        XCTAssertLessThan(stabilizationIndex, prefetchIndex)
         XCTAssertFalse(events.contains {
             if case .promote = $0 { return true }
             return false
