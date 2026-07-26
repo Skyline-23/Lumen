@@ -1129,6 +1129,46 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         XCTAssertEqual(wakeSignal.callCount, 1)
     }
 
+    func testPhysicalRecoveryWakesTheLocalDisplayBeforeWindowVerificationFails() async throws {
+        // Given: the exact physical topology has converged, but a stale app window
+        // can no longer be found during the independent window restoration check.
+        let display = displayTopology().displays[0]
+        let topology = LumenMacPhysicalDisplayTopology(
+            displays: [display],
+            macWindows: [
+                LumenMacWorkspaceWindowState(
+                    processID: Int32.max,
+                    windowID: UInt32.max,
+                    originX: 0,
+                    originY: 0,
+                    width: 800,
+                    height: 600
+                ),
+            ],
+            windowsAdapterLUID: nil,
+            windowsTargetPaths: []
+        )
+        let wakeSignal = RecordingPhysicalDisplayWakeSignal()
+        let controller = LumenCoreGraphicsDisplayTopologyController(
+            capture: { topology },
+            restore: { _ in },
+            visibleDisplayIDs: { [77] }
+        )
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: controller,
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            physicalDisplayWakeSignal: wakeSignal
+        )
+
+        // When: window verification fails after the physical display is restored.
+        await XCTAssertThrowsErrorAsync {
+            try await workspace.verifyWorkspace(topology)
+        }
+
+        // Then: the physical panel is still woken; window cleanup must not gate it.
+        XCTAssertEqual(wakeSignal.callCount, 1)
+    }
+
     func testMissingCapabilityReceiptRejectsIsolationBeforeDisplayMutation() async throws {
         let fixture = IsolationDisplayFixture(physicalTopology: isolationPhysicalTopology())
         let receiptURL = FileManager.default.temporaryDirectory

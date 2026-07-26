@@ -1412,6 +1412,7 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
 
     public func verifyWorkspace(_ topology: LumenMacPhysicalDisplayTopology) async throws {
         try await topologyController.verify(topology)
+        try physicalDisplayWakeSignal.signalUserActivity()
         for expected in try resolvePersistedWindows(topology.macWindows) {
             guard let actualPosition = windowPoint(
                 attribute: kAXPositionAttribute,
@@ -1435,7 +1436,6 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
                 )
             }
         }
-        try physicalDisplayWakeSignal.signalUserActivity()
         if let pendingDisconnectRecoveryRecord {
             guard try pendingDisconnectRecoveryRecord.matches(
                 recoveryGeneration: pendingDisconnectRecoveryRecord.recoveryGeneration,
