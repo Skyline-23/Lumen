@@ -62,6 +62,31 @@ struct LumenVirtualDisplayLifecycleContractTests {
         )
     }
 
+    @Test("Virtual display descriptor assigns both observed serial selectors")
+    func descriptorAssignsReferenceSerialSelectors() throws {
+        let source = try source(
+            "src/platform/macos/Projects/LumenMacBridge/Sources/LumenNativeVirtualDisplay.m"
+        )
+
+        #expect(source.contains("setSerialNumber:"))
+        #expect(source.contains("setSerialNum:"))
+    }
+
+    @Test("ScreenCaptureKit enumeration uses the serialized completion API")
+    func screenCaptureEnumerationUsesCompletionBoundary() throws {
+        let source = try source(
+            "src/platform/macos/Projects/LumenMacBridge/Sources/" +
+                "LumenScreenCaptureDisplayAdmission.swift"
+        )
+
+        #expect(
+            source.contains(
+                "getShareableContentExcludingDesktopWindows"
+            )
+        )
+        #expect(!source.contains("SCShareableContent.current"))
+    }
+
     private func source(_ relativePath: String) throws -> String {
         let root = try repositoryRoot()
         return try String(

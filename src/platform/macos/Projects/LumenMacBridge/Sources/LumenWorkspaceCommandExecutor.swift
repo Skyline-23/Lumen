@@ -47,7 +47,6 @@ public struct LumenMacWorkspaceNativeOperations: Sendable {
     public var verifyVirtualDisplay: @Sendable (UInt32) async throws -> Void
     public var settleVirtualDisplayMode: @Sendable (UInt32) async throws -> Void
     public var stabilizeVirtualDisplay: @Sendable (UInt32) async throws -> Void
-    public var beginCaptureDisplayPreparation: @Sendable (UInt32) async throws -> Void
     public var prepareCaptureDisplay: @Sendable (UInt32) async throws -> Void
     public var startCapture: @Sendable (UInt32) async throws -> Void
     public var stopCapture: @Sendable () async throws -> Void
@@ -68,7 +67,6 @@ public struct LumenMacWorkspaceNativeOperations: Sendable {
         verifyVirtualDisplay: @escaping @Sendable (UInt32) async throws -> Void,
         settleVirtualDisplayMode: @escaping @Sendable (UInt32) async throws -> Void = { _ in },
         stabilizeVirtualDisplay: @escaping @Sendable (UInt32) async throws -> Void = { _ in },
-        beginCaptureDisplayPreparation: @escaping @Sendable (UInt32) async throws -> Void = { _ in },
         prepareCaptureDisplay: @escaping @Sendable (UInt32) async throws -> Void = { _ in },
         startCapture: @escaping @Sendable (UInt32) async throws -> Void,
         stopCapture: @escaping @Sendable () async throws -> Void,
@@ -87,7 +85,6 @@ public struct LumenMacWorkspaceNativeOperations: Sendable {
         self.verifyVirtualDisplay = verifyVirtualDisplay
         self.settleVirtualDisplayMode = settleVirtualDisplayMode
         self.stabilizeVirtualDisplay = stabilizeVirtualDisplay
-        self.beginCaptureDisplayPreparation = beginCaptureDisplayPreparation
         self.prepareCaptureDisplay = prepareCaptureDisplay
         self.startCapture = startCapture
         self.stopCapture = stopCapture
@@ -150,9 +147,6 @@ public actor LumenMacWorkspaceExecutor: LumenWorkspaceCommandExecuting {
             let identity = try requireVirtualIdentity(command.payload)
             virtualDisplayID = try await operations.createVirtualDisplay(identity, displayGeometry)
             virtualDisplayIdentity = identity
-            try await operations.beginCaptureDisplayPreparation(
-                try requireVirtualDisplay()
-            )
             return .virtualDisplayIdentity(identity)
         case .configureVirtualDisplay:
             try await operations.configureVirtualDisplay(

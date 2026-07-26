@@ -423,14 +423,26 @@ static void LumenConfigureHDRDisplayInfo(
     LumenColorPrimaries(configuration.gamut, &red, &green, &blue, &white);
     [_descriptor setValue:@(configuration.vendorID) forKey:@"vendorID"];
     [_descriptor setValue:@(configuration.productID) forKey:@"productID"];
-    SEL serialSelector = sel_registerName("setSerialNum:");
-    if ([_descriptor respondsToSelector:serialSelector]) {
+    BOOL assignedSerial = NO;
+    SEL serialNumberSelector = sel_registerName("setSerialNumber:");
+    if ([_descriptor respondsToSelector:serialNumberSelector]) {
       ((void (*)(id, SEL, unsigned int))objc_msgSend)(
         _descriptor,
-        serialSelector,
+        serialNumberSelector,
         configuration.serialNumber
       );
-    } else {
+      assignedSerial = YES;
+    }
+    SEL serialNumSelector = sel_registerName("setSerialNum:");
+    if ([_descriptor respondsToSelector:serialNumSelector]) {
+      ((void (*)(id, SEL, unsigned int))objc_msgSend)(
+        _descriptor,
+        serialNumSelector,
+        configuration.serialNumber
+      );
+      assignedSerial = YES;
+    }
+    if (!assignedSerial) {
       [_descriptor setValue:@(configuration.serialNumber) forKey:@"serialNumber"];
     }
     [_descriptor setValue:configuration.name forKey:@"name"];

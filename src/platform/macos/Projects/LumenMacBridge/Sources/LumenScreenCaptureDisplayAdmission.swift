@@ -16,6 +16,11 @@ private struct LumenDisplayQueryContext {
     let generation: UInt64
 }
 
+private struct LumenDisplayQueryResult: Sendable {
+    let target: LumenScreenCaptureDisplayHandle?
+    let observedDisplayIDs: String
+}
+
 private struct LumenDisplayReadinessContext {
     let displayID: UInt32
     let authorityLabel: String
@@ -284,19 +289,50 @@ private extension LumenScreenCaptureDisplayReadiness {
             generation: generation
         )
         logDisplayQueryBegin(context)
-        let content = try await SCShareableContent.current
-        let observedDisplayIDs = content.displays
-            .map { String(UInt32($0.displayID)) }
-            .joined(separator: ",")
-        let target = content.displays.first {
-            UInt32($0.displayID) == displayID
-        }
+        let result = try await getShareableContentExcludingDesktopWindows(
+            displayID: displayID
+        )
         logDisplayQueryComplete(
             context,
-            found: target != nil,
-            observedDisplayIDs: observedDisplayIDs
+            found: result.target != nil,
+            observedDisplayIDs: result.observedDisplayIDs
         )
-        return target.map(LumenScreenCaptureDisplayHandle.init(value:))
+        return result.target
+    }
+
+    private static func getShareableContentExcludingDesktopWindows(
+        displayID: UInt32
+    ) async throws -> LumenDisplayQueryResult
+    {
+        try await withCheckedThrowingContinuation { continuation in
+            SCShareableContent.getExcludingDesktopWindows(
+                false,
+                onScreenWindowsOnly: false
+            ) { content, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else if let content {
+                    let observedDisplayIDs = content.displays
+                        .map { String(UInt32($0.displayID)) }
+                        .joined(separator: ",")
+                    let target = content.displays.first {
+                        UInt32($0.displayID) == displayID
+                    }
+                    continuation.resume(
+                        returning: LumenDisplayQueryResult(
+                            target: target.map(
+                                LumenScreenCaptureDisplayHandle.init(value:)
+                            ),
+                            observedDisplayIDs: observedDisplayIDs
+                        )
+                    )
+                } else {
+                    continuation.resume(
+                        throwing: LumenScreenCaptureError.shareableContentUnavailable
+                    )
+                }
+            }
+        }
     }
 
     private static func logDisplayQueryBegin(

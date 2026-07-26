@@ -72,6 +72,7 @@ enum LumenMachTime {
 enum LumenScreenCaptureError: Error, LocalizedError {
     case displayUnavailable(UInt32)
     case displayOwnershipLost(UInt32)
+    case shareableContentUnavailable
     case captureAlreadyRunning
     case captureNotRunning
     case outputOwnershipLost
@@ -89,6 +90,8 @@ enum LumenScreenCaptureError: Error, LocalizedError {
                 "Retained virtual display \(displayID) was released",
                 "before ScreenCaptureKit became ready."
             ].joined(separator: " ")
+        case .shareableContentUnavailable:
+            return "ScreenCaptureKit returned neither shareable content nor an error."
         case .captureAlreadyRunning:
             return "ScreenCaptureKit video stream is already starting or running."
         case .captureNotRunning:
