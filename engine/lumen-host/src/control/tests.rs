@@ -75,12 +75,22 @@ fn router_with_discovery(
 }
 
 #[derive(Default)]
-struct RecordingPlatformSessionControl {
+pub(crate) struct RecordingPlatformSessionControl {
     starts: Mutex<Vec<PlatformSessionPlan>>,
     stops: AtomicUsize,
     application_starts: AtomicUsize,
     application_stops: AtomicUsize,
     control_events: Mutex<Vec<(u32, PlatformControlEvent)>>,
+}
+
+impl RecordingPlatformSessionControl {
+    pub(crate) fn stop_count(&self) -> usize {
+        self.stops.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn application_stop_count(&self) -> usize {
+        self.application_stops.load(Ordering::Relaxed)
+    }
 }
 
 impl PlatformSessionControl for RecordingPlatformSessionControl {
@@ -113,6 +123,22 @@ impl PlatformSessionControl for RecordingPlatformSessionControl {
             .lock()
             .unwrap()
             .push((session_epoch, event));
+        Ok(())
+    }
+
+    fn handle_native_input(
+        &self,
+        _session_epoch: u32,
+        _event: crate::PlatformNativeInputEvent,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn handle_native_motion(
+        &self,
+        _session_epoch: u32,
+        _event: crate::PlatformNativeMotionEvent,
+    ) -> Result<(), String> {
         Ok(())
     }
 }

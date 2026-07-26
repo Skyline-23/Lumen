@@ -1,5 +1,6 @@
 @testable import LumenMacBridge
 import ScreenCaptureKit
+import Synchronization
 import XCTest
 
 final class LumenCaptureSessionLifecycleTests: XCTestCase {
@@ -171,6 +172,67 @@ final class LumenCaptureSessionLifecycleTests: XCTestCase {
         XCTAssertTrue(result.stopFailureMessage?.contains("test failure") == true)
     }
 
+    func testWorkspaceStopRetriesOnlyDurableRecoveryAfterTransientFailure() async throws {
+        let stopCalls = Mutex(0)
+        let recoveryCalls = Mutex(0)
+
+        let result = try await LumenWorkspaceStopRecoveryCoordinator.stop(
+            stop: {
+                stopCalls.withLock { $0 += 1 }
+                throw LumenConcurrentCaptureStartupTestError.failed
+            },
+            recover: {
+                let attempt = recoveryCalls.withLock { count in
+                    count += 1
+                    return count
+                }
+                if attempt == 1 {
+                    throw LumenWorkspaceRecoveryTestError.physicalTopologyMismatch
+                }
+                return true
+            },
+            retryPolicy: .init(maximumAttempts: 2, delay: .zero),
+            sleep: { _ in }
+        )
+
+        XCTAssertTrue(result.usedDurableRecovery)
+        XCTAssertTrue(result.stopFailureMessage?.contains("test failure") == true)
+        XCTAssertEqual(stopCalls.withLock { $0 }, 1)
+        XCTAssertEqual(recoveryCalls.withLock { $0 }, 2)
+    }
+
+    func testWorkspaceStopBoundsDurableRecoveryAndPreservesFinalFailure() async {
+        let stopCalls = Mutex(0)
+        let recoveryCalls = Mutex(0)
+
+        do {
+            _ = try await LumenWorkspaceStopRecoveryCoordinator.stop(
+                stop: {
+                    stopCalls.withLock { $0 += 1 }
+                    throw LumenConcurrentCaptureStartupTestError.failed
+                },
+                recover: {
+                    let attempt = recoveryCalls.withLock { count in
+                        count += 1
+                        return count
+                    }
+                    throw LumenWorkspaceRecoveryTestError.recoveryAttempt(attempt)
+                },
+                retryPolicy: .init(maximumAttempts: 2, delay: .zero),
+                sleep: { _ in }
+            )
+            XCTFail("Expected durable recovery exhaustion")
+        } catch let error as LumenWorkspaceStopRecoveryError {
+            XCTAssertTrue(error.stopFailureMessage.contains("test failure"))
+            XCTAssertTrue(error.recoveryFailureMessage.contains("recovery attempt 2"))
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+
+        XCTAssertEqual(stopCalls.withLock { $0 }, 1)
+        XCTAssertEqual(recoveryCalls.withLock { $0 }, 2)
+    }
+
     func testBridgeExposesBootstrapStatus() async {
         let status = await LumenBridgeRuntime.shared.statusSnapshot()
 
@@ -245,6 +307,20 @@ final class LumenCaptureSessionLifecycleTests: XCTestCase {
         XCTAssertFalse(stoppingShouldRequestImmediateKeyFrame)
     }
 
+}
+
+private enum LumenWorkspaceRecoveryTestError: LocalizedError {
+    case physicalTopologyMismatch
+    case recoveryAttempt(Int)
+
+    var errorDescription: String? {
+        switch self {
+        case .physicalTopologyMismatch:
+            "physical topology mismatch"
+        case .recoveryAttempt(let attempt):
+            "recovery attempt \(attempt)"
+        }
+    }
 }
 
 private extension LumenCaptureSessionLifecycleTests {

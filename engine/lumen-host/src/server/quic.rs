@@ -1402,19 +1402,21 @@ mod tests {
     };
     use quinn::crypto::rustls::QuicClientConfig;
 
-    use crate::control::tests::{native_hello, router_with_platform};
-    use crate::{IdlePlatformSessionControl, PlatformSessionPlan};
+    use crate::control::tests::{
+        native_hello, router_with_platform, RecordingPlatformSessionControl,
+    };
+    use crate::PlatformSessionPlan;
 
     use super::*;
 
     fn native_test_router() -> (
         tempfile::TempDir,
         SharedControlRouter,
-        Arc<dyn PlatformSessionControl>,
+        Arc<RecordingPlatformSessionControl>,
         u32,
     ) {
-        let platform: Arc<dyn PlatformSessionControl> = Arc::new(IdlePlatformSessionControl);
-        let (root, router) = router_with_platform(Arc::clone(&platform));
+        let platform = Arc::new(RecordingPlatformSessionControl::default());
+        let (root, router) = router_with_platform(platform.clone());
         router
             .authorities()
             .applications()
@@ -1613,7 +1615,7 @@ mod tests {
         let server_task = tokio::spawn(handle_connection(
             server_connection,
             Arc::clone(&router),
-            Arc::clone(&platform),
+            platform.clone(),
             configuration_notify,
             bootstrap_notify,
         ));
@@ -1679,6 +1681,8 @@ mod tests {
         let router = router.lock().unwrap();
         assert!(!router.native_input_is_active(plan.session_epoch));
         assert_eq!(router.video_delivery_state(), None);
+        assert_eq!(platform.stop_count(), 1);
+        assert_eq!(platform.application_stop_count(), 1);
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -1707,7 +1711,7 @@ mod tests {
         let server_task = tokio::spawn(handle_connection(
             server_connection,
             Arc::clone(&router),
-            Arc::clone(&platform),
+            platform.clone(),
             configuration_notify,
             bootstrap_notify,
         ));

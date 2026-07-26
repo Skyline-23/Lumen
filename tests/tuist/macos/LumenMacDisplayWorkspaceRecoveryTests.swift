@@ -1052,6 +1052,45 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         XCTAssertEqual(captures.withLock { $0 }, 2)
     }
 
+    func testProductionTopologyVerificationBudgetSurvivesDelayedWindowServerConvergence() async throws {
+        let expected = displayTopology()
+        let mismatched = LumenMacPhysicalDisplayTopology(
+            displays: expected.displays.map { display in
+                LumenMacPhysicalDisplayState(
+                    id: display.id,
+                    mode: display.mode,
+                    originX: display.originX,
+                    originY: display.originY,
+                    mirrorMasterID: display.mirrorMasterID,
+                    enabled: display.enabled,
+                    active: false,
+                    online: display.online
+                )
+            },
+            windowsAdapterLUID: nil,
+            windowsTargetPaths: []
+        )
+        let captures = Mutex(0)
+        let controller = LumenCoreGraphicsDisplayTopologyController(
+            capture: {
+                captures.withLock { count in
+                    count += 1
+                    return count < 300 ? mismatched : expected
+                }
+            },
+            restore: { _ in },
+            visibleDisplayIDs: {
+                Set(expected.displays.compactMap { UInt32($0.id) })
+            },
+            verificationAttempts:
+                LumenCoreGraphicsDisplayTopologyController.productionVerificationAttempts,
+            verificationDelayNanoseconds: 0
+        )
+
+        try await controller.verify(expected)
+        XCTAssertEqual(captures.withLock { $0 }, 300)
+    }
+
     func testProductionTopologyVerificationRejectsCGDisplayMissingFromNSScreen() async throws {
         // Given: CoreGraphics reports the exact persisted topology but AppKit cannot see it.
         let topology = displayTopology()

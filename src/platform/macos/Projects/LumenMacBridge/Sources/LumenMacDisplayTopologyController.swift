@@ -31,7 +31,7 @@ extension LumenMacDisplayTopologyControlling {
 }
 
 actor LumenCoreGraphicsDisplayTopologyController: LumenMacDisplayTopologyControlling {
-    private static let productionVerificationAttempts = 20
+    static let productionVerificationAttempts = 300
     private static let productionVerificationDelayNanoseconds: UInt64 = 100_000_000
     private static let logger = Logger(
         subsystem: "dev.skyline23.lumen",

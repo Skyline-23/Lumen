@@ -97,7 +97,7 @@ final class LumenWorkspaceRegistryRecoveryTests: XCTestCase {
         }
     }
 
-    func testRegistryCleanupFailureRetainsActiveSessionForExactRecoveryRetry() async throws {
+    func testRegistryCleanupRetriesRetainedRecoveryWithoutRepeatingExactStop() async throws {
         let ownerToken: UInt = 0x16
         let effects = WorkspaceRegistryEffects(
             ownerToken: ownerToken,
@@ -108,22 +108,18 @@ final class LumenWorkspaceRegistryRecoveryTests: XCTestCase {
         _ = try await registry.prepare(
             workspaceRegistrySnapshot(displayKey: "retry-display")
         )
+        let recoveryCallsBeforeStop = await effects.snapshot().durableRecoveryCallCount
 
-        do {
-            _ = try await registry.recoverPendingWorkspace()
-            XCTFail("expected the first exact stop and durable recovery to fail")
-        } catch is LumenWorkspaceStopRecoveryError {
-        }
-        var effectsSnapshot = await effects.snapshot()
-        XCTAssertTrue(effectsSnapshot.releasedOwnerTokens.isEmpty)
-        XCTAssertEqual(effectsSnapshot.journalClearCount, 0)
-
-        let retriedRecovery = try await registry.recoverPendingWorkspace()
-        XCTAssertTrue(retriedRecovery)
-        effectsSnapshot = await effects.snapshot()
+        let recovered = try await registry.recoverPendingWorkspace()
+        XCTAssertTrue(recovered)
+        let effectsSnapshot = await effects.snapshot()
         XCTAssertEqual(effectsSnapshot.releasedOwnerTokens, [ownerToken])
         XCTAssertEqual(effectsSnapshot.journalClearCount, 1)
-        XCTAssertEqual(effectsSnapshot.stopCallCount, 2)
+        XCTAssertEqual(effectsSnapshot.stopCallCount, 1)
+        XCTAssertEqual(
+            effectsSnapshot.durableRecoveryCallCount - recoveryCallsBeforeStop,
+            2
+        )
         let stoppedRecoveredSession = try await registry.stop(
             displayKey: "retry-display"
         )
