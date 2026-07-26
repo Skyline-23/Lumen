@@ -2,6 +2,50 @@ import XCTest
 @testable import LumenMacBridge
 
 final class LumenScreenCaptureDisplayReadinessTests: XCTestCase {
+    func testProductionQueryOrderWaitsForCompletionBeforeNextGeneration() async throws {
+        let clock = DisplayReadinessVirtualClock()
+        let queries = DisplayReadinessQueryControl<UInt32>()
+        let timing = LumenScreenCaptureDisplayReadinessTiming(
+            overallDeadlineNanoseconds: 30,
+            queryTimeoutNanoseconds: 5,
+            retryDelayNanoseconds: 1,
+            maximumOutstandingQueries: 1
+        )
+        let queryBudget = LumenScreenCaptureQueryBudget(
+            maximumOutstandingQueries: timing.maximumOutstandingQueries
+        )
+        let task = Task.detached { @Sendable in
+            try await Self.resolve(
+                clock: clock,
+                queries: queries,
+                timing: timing,
+                queryBudget: queryBudget
+            )
+        }
+        defer { task.cancel() }
+
+        try await queries.waitForQuery(generation: 1)
+        await clock.advance(to: 6)
+        try await clock.waitForSleeper(at: 7)
+        await clock.advance(to: 7)
+        try await clock.waitForSleeper(at: 8)
+        let timedOutGenerations = await queries.startedGenerations()
+        XCTAssertEqual(timedOutGenerations, [1])
+
+        await queries.complete(generation: 1, value: nil)
+        try await waitForDisplayReadinessCondition("generation one completion") {
+            await queryBudget.outstandingCount() == 0
+        }
+        await clock.advance(to: 9)
+        try await queries.waitForQuery(generation: 2)
+        let completedGenerations = await queries.startedGenerations()
+        XCTAssertEqual(completedGenerations, [1, 2])
+
+        await queries.complete(generation: 2, value: 22)
+        let resolved = try await task.value
+        XCTAssertEqual(resolved, 22)
+    }
+
     func testFortyTwoSecondQueryCannotOutliveTheOverallDeadline() async throws {
         let clock = DisplayReadinessVirtualClock()
         let queries = DisplayReadinessQueryControl<UInt32>()
@@ -36,7 +80,7 @@ final class LumenScreenCaptureDisplayReadinessTests: XCTestCase {
         XCTAssertEqual(completedTime, 42)
     }
 
-    func testPerQueryTimeoutBoundsOrphansAndIgnoresLateSuccess() async throws {
+    func testPerQueryTimeoutBoundsOrphansAndAcceptsLateSuccessBeforeOverallDeadline() async throws {
         let timing = LumenScreenCaptureDisplayReadinessTiming(
             overallDeadlineNanoseconds: 30,
             queryTimeoutNanoseconds: 5,
@@ -44,7 +88,7 @@ final class LumenScreenCaptureDisplayReadinessTests: XCTestCase {
             maximumOutstandingQueries: 2
         )
 
-        try await assertLateSuccessDoesNotWin(timing: timing)
+        try await assertLateSuccessWinsWithinOverallDeadline(timing: timing)
         try await assertOutstandingQueryCancels(timing: timing)
     }
 
@@ -121,20 +165,22 @@ final class LumenScreenCaptureDisplayReadinessTests: XCTestCase {
 }
 
 private extension LumenScreenCaptureDisplayReadinessTests {
-    func assertLateSuccessDoesNotWin(
+    func assertLateSuccessWinsWithinOverallDeadline(
         timing: LumenScreenCaptureDisplayReadinessTiming
     ) async throws {
         let clock = DisplayReadinessVirtualClock()
         let queries = DisplayReadinessQueryControl<UInt32>()
-        let competingQueries = DisplayReadinessQueryControl<UInt32>()
         let sharedBudget = LumenScreenCaptureQueryBudget(maximumOutstandingQueries: 2)
+        let completions = DisplayReadinessCounter()
         let task = Task.detached { @Sendable in
-            try await Self.resolve(
+            let value = try await Self.resolve(
                 clock: clock,
                 queries: queries,
                 timing: timing,
                 queryBudget: sharedBudget
             )
+            await completions.increment()
+            return value
         }
         defer { task.cancel() }
 
@@ -147,52 +193,26 @@ private extension LumenScreenCaptureDisplayReadinessTests {
         try await clock.waitForSleeper(at: 14)
         let startedGenerations = await queries.startedGenerations()
         XCTAssertEqual(startedGenerations, [1, 2])
-        try await assertCompetingResolverWaitsForBudget(
-            clock: clock,
-            queries: competingQueries,
-            timing: timing,
-            queryBudget: sharedBudget
-        )
 
-        await queries.complete(generation: 1, value: 999)
+        await queries.complete(generation: 1, value: 22)
         try await waitForDisplayReadinessCondition("orphan query budget release") {
             await sharedBudget.outstandingCount() <= 1
         }
         await clock.advance(to: 14)
-        try await queries.waitForQuery(generation: 3)
-        await queries.complete(generation: 3, value: 22)
+        try await waitForDisplayReadinessCondition("late result or next query") {
+            if await completions.value() > 0 {
+                return true
+            }
+            return await queries.startedGenerations().contains(3)
+        }
+        let finalGenerations = await queries.startedGenerations()
+        XCTAssertEqual(finalGenerations, [1, 2])
+        if finalGenerations.contains(3) {
+            await queries.complete(generation: 3, value: 999)
+        }
         let resolved = try await task.value
         XCTAssertEqual(resolved, 22)
         await queries.complete(generation: 2, value: 999)
-        let finalGenerations = await queries.startedGenerations()
-        XCTAssertEqual(finalGenerations, [1, 2, 3])
-    }
-
-    func assertCompetingResolverWaitsForBudget(
-        clock: DisplayReadinessVirtualClock,
-        queries: DisplayReadinessQueryControl<UInt32>,
-        timing: LumenScreenCaptureDisplayReadinessTiming,
-        queryBudget: LumenScreenCaptureQueryBudget
-    ) async throws {
-        let task = Task.detached { @Sendable in
-            try await Self.resolve(
-                clock: clock,
-                queries: queries,
-                timing: timing,
-                queryBudget: queryBudget
-            )
-        }
-        try await clock.waitForSleeper(at: 14, count: 2)
-        let startedGenerations = await queries.startedGenerations()
-        XCTAssertTrue(startedGenerations.isEmpty)
-        task.cancel()
-        do {
-            _ = try await task.value
-            XCTFail("expected the competing resolver to cancel while globally budgeted")
-        } catch is CancellationError {
-        } catch {
-            XCTFail("unexpected competing resolver error: \(error)")
-        }
     }
 
     func assertOutstandingQueryCancels(

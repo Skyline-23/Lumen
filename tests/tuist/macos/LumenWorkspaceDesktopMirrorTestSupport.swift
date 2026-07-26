@@ -96,6 +96,7 @@ private func makeDesktopMirrorOperations(
                 outcome: outcome,
                 cancellationSuspension: cancellationSuspension
             )
+            await recorder.append(.capturePrepared(displayID))
         },
         startCapture: { _ in
             await recorder.append(.firstFrameBarrier)

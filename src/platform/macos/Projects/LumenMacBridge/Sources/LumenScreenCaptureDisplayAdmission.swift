@@ -284,10 +284,7 @@ private extension LumenScreenCaptureDisplayReadiness {
             generation: generation
         )
         logDisplayQueryBegin(context)
-        let content = try await SCShareableContent.excludingDesktopWindows(
-            false,
-            onScreenWindowsOnly: true
-        )
+        let content = try await SCShareableContent.current
         let observedDisplayIDs = content.displays
             .map { String(UInt32($0.displayID)) }
             .joined(separator: ",")

@@ -30,6 +30,7 @@ enum WorkspaceExecutionEvent: Equatable {
     case stabilize(UInt32)
     case prepareDesktopMirror(UInt32, UInt32)
     case prepareCapture(UInt32)
+    case capturePrepared(UInt32)
     case promote(UInt32, LumenMacDisplayPromotionConvergence)
     case mirror(UInt32, UInt32)
     case move(UInt32)

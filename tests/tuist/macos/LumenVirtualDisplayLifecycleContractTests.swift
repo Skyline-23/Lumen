@@ -39,6 +39,29 @@ struct LumenVirtualDisplayLifecycleContractTests {
         )
     }
 
+    @Test("Private virtual display lifecycle is confined to the main thread")
+    func privateLifecycleUsesMainThreadPublicationContext() throws {
+        let source = try source(
+            "src/platform/macos/Projects/LumenMacBridge/Sources/LumenNativeVirtualDisplay.m"
+        )
+
+        #expect(
+            source.components(
+                separatedBy: "if (![NSThread isMainThread])"
+            ).count - 1 == 3
+        )
+        #expect(
+            source.contains(
+                "_callbackQueue = dispatch_get_main_queue();"
+            )
+        )
+        #expect(
+            !source.contains(
+                "_callbackQueue = dispatch_get_global_queue"
+            )
+        )
+    }
+
     private func source(_ relativePath: String) throws -> String {
         let root = try repositoryRoot()
         return try String(

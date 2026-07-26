@@ -92,7 +92,7 @@ struct LumenScreenCaptureDisplayReadinessTiming: Equatable, Sendable {
         // failed enumerations have stalled for 16-41 seconds.
         queryTimeoutNanoseconds: 3_000_000_000,
         retryDelayNanoseconds: 100_000_000,
-        maximumOutstandingQueries: 2
+        maximumOutstandingQueries: 1
     )
 }
 

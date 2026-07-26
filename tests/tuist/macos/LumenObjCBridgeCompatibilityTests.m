@@ -182,10 +182,7 @@ static BOOL LumenDisplayExistedBeforeModeCreation = NO;
   );
   dispatch_queue_t callbackQueue = [descriptor valueForKey:@"queue"];
   XCTAssertNotNil(callbackQueue);
-  XCTAssertEqual(
-    dispatch_queue_get_qos_class(callbackQueue, NULL),
-    QOS_CLASS_USER_INITIATED
-  );
+  XCTAssertEqual(callbackQueue, dispatch_get_main_queue());
 
   id publishedMode = [display valueForKey:@"mode"];
   XCTAssertTrue(

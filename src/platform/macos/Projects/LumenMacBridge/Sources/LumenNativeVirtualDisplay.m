@@ -201,6 +201,8 @@ static void LumenConfigureHDRDisplayInfo(
                                  transfer:(LumenMacVirtualDisplayTransfer)transfer
                                hdrEnabled:(BOOL)hdrEnabled
                                     error:(NSError **)error;
+- (BOOL)configureWithConfiguration:(LumenMacVirtualDisplayConfiguration *)configuration
+                             error:(NSError **)error;
 - (BOOL)applyVirtualDisplaySettings:(id)settings;
 @end
 
@@ -363,6 +365,25 @@ static void LumenConfigureHDRDisplayInfo(
   if (self == nil) {
     return nil;
   }
+  __block NSError *mainThreadError = nil;
+  __block BOOL configured = NO;
+  if (![NSThread isMainThread]) {
+    dispatch_sync(dispatch_get_main_queue(), ^{
+      configured = [self configureWithConfiguration:configuration
+                                               error:&mainThreadError];
+    });
+  } else {
+    configured = [self configureWithConfiguration:configuration
+                                             error:&mainThreadError];
+  }
+  if (!configured && error != NULL) {
+    *error = mainThreadError;
+  }
+  return configured ? self : nil;
+}
+
+- (BOOL)configureWithConfiguration:(LumenMacVirtualDisplayConfiguration *)configuration
+                             error:(NSError **)error {
   if (configuration.backingWidth == 0 || configuration.backingHeight == 0 ||
       configuration.logicalWidth == 0 || configuration.logicalHeight == 0 ||
       configuration.refreshRate <= 0) {
@@ -371,7 +392,7 @@ static void LumenConfigureHDRDisplayInfo(
       LumenMacVirtualDisplayErrorInvalidConfiguration,
       @"Virtual display geometry and refresh rate must be positive."
     );
-    return nil;
+    return NO;
   }
   if (![self.class isSupported]) {
     LumenAssignVirtualDisplayError(
@@ -379,20 +400,20 @@ static void LumenConfigureHDRDisplayInfo(
       LumenMacVirtualDisplayErrorUnsupportedRuntime,
       @"The current macOS runtime does not expose the virtual display classes."
     );
-    return nil;
+    return NO;
   }
 
   @try {
     Class descriptorClass = NSClassFromString(@"CGVirtualDisplayDescriptor");
     _descriptor = [[descriptorClass alloc] init];
-    _callbackQueue = dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0);
+    _callbackQueue = dispatch_get_main_queue();
     if (_descriptor == nil || _callbackQueue == nil) {
       LumenAssignVirtualDisplayError(
         error,
         LumenMacVirtualDisplayErrorObjectCreationFailed,
         @"Failed to allocate the virtual display descriptor."
       );
-      return nil;
+      return NO;
     }
 
     NSPoint red;
@@ -429,7 +450,7 @@ static void LumenConfigureHDRDisplayInfo(
         LumenMacVirtualDisplayErrorObjectCreationFailed,
         @"Failed to create the virtual display instance."
       );
-      return nil;
+      return NO;
     }
 
     Class settingsClass = NSClassFromString(@"CGVirtualDisplaySettings");
@@ -441,7 +462,7 @@ static void LumenConfigureHDRDisplayInfo(
         @"Failed to allocate the virtual display settings."
       );
       [self destroy];
-      return nil;
+      return NO;
     }
 
     id initialMode = [self createModeWithLogicalWidth:configuration.logicalWidth
@@ -452,7 +473,7 @@ static void LumenConfigureHDRDisplayInfo(
                                                 error:error];
     if (initialMode == nil) {
       [self destroy];
-      return nil;
+      return NO;
     }
     [_settings setValue:@[initialMode] forKey:@"modes"];
     [_settings setValue:@(configuration.highDensity) forKey:@"hiDPI"];
@@ -474,7 +495,7 @@ static void LumenConfigureHDRDisplayInfo(
         @"macOS rejected the virtual display settings."
       );
       [self destroy];
-      return nil;
+      return NO;
     }
 
     NSNumber *displayID = [_display valueForKey:@"displayID"];
@@ -485,7 +506,7 @@ static void LumenConfigureHDRDisplayInfo(
         @"The virtual display did not publish a display identifier."
       );
       [self destroy];
-      return nil;
+      return NO;
     }
     _displayID = displayID.unsignedIntValue;
     _backingWidth = configuration.backingWidth;
@@ -503,9 +524,9 @@ static void LumenConfigureHDRDisplayInfo(
       exception.reason ?: @"Virtual display creation raised an Objective-C exception."
     );
     [self destroy];
-    return nil;
+    return NO;
   }
-  return self;
+  return YES;
 }
 
 - (nullable id)createModeWithLogicalWidth:(uint32_t)logicalWidth
@@ -565,6 +586,20 @@ static void LumenConfigureHDRDisplayInfo(
              logicalHeight:(uint32_t)logicalHeight
                refreshRate:(double)refreshRate
                       error:(NSError **)error {
+  if (![NSThread isMainThread]) {
+    __block BOOL updated = NO;
+    __block NSError *mainThreadError = nil;
+    dispatch_sync(dispatch_get_main_queue(), ^{
+      updated = [self updateLogicalWidth:logicalWidth
+                           logicalHeight:logicalHeight
+                             refreshRate:refreshRate
+                                    error:&mainThreadError];
+    });
+    if (!updated && error != NULL) {
+      *error = mainThreadError;
+    }
+    return updated;
+  }
   if (_display == nil || logicalWidth == 0 || logicalHeight == 0 || refreshRate <= 0) {
     LumenAssignVirtualDisplayError(
       error,
@@ -629,6 +664,13 @@ static void LumenConfigureHDRDisplayInfo(
 }
 
 - (void)destroy {
+  if (![NSThread isMainThread]) {
+    __unsafe_unretained LumenMacVirtualDisplay *unretainedSelf = self;
+    dispatch_sync(dispatch_get_main_queue(), ^{
+      [unretainedSelf destroy];
+    });
+    return;
+  }
   id display = _display;
   _display = nil;
   _displayID = 0;

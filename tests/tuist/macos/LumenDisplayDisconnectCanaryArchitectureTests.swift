@@ -3,7 +3,7 @@ import Testing
 
 @Suite("Display disconnect canary architecture")
 struct LumenDisplayDisconnectCanaryArchitectureTests {
-    @Test("Connection mutation is durable while layout remains app-scoped")
+    @Test("Capture staging is app-scoped while the committed mirror is session-scoped")
     func displayEnabledMutationUsesDurableScope() throws {
         let repositoryRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -28,7 +28,18 @@ struct LumenDisplayDisconnectCanaryArchitectureTests {
                 encoding: .utf8
             )
             #expect(source.contains(".forAppOnly"))
-            #expect(!source.contains(".forSession"))
+            if path.hasSuffix("LumenMacDisplayWorkspace.swift") {
+                #expect(source.contains("desktopMirrorConfigurationScope"))
+                #expect(source.contains("desktopMirrorStageConfigurationScope"))
+                #expect(source.contains(".forSession"))
+                #expect(
+                    source.contains(
+                        "scope: Self.desktopMirrorStageConfigurationScope"
+                    )
+                )
+            } else {
+                #expect(!source.contains(".forSession"))
+            }
         }
     }
 
