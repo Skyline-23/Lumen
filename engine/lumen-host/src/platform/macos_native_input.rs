@@ -145,7 +145,13 @@ struct MacPointerMotionInput {
 }
 
 trait MacInputEventPoster: Send + Sync {
-    fn post_key(&self, hid_usage: u16, pressed: bool, modifiers: u8) -> Result<(), String>;
+    fn post_key(
+        &self,
+        hid_usage: u16,
+        pressed: bool,
+        modifiers: u8,
+        repeat: bool,
+    ) -> Result<(), String>;
     fn pointer_location(&self) -> Result<CGPoint, String>;
     fn post_button(
         &self,
@@ -160,8 +166,14 @@ trait MacInputEventPoster: Send + Sync {
 struct CoreGraphicsMacInputEventPoster;
 
 impl MacInputEventPoster for CoreGraphicsMacInputEventPoster {
-    fn post_key(&self, hid_usage: u16, pressed: bool, modifiers: u8) -> Result<(), String> {
-        post_key_event(hid_usage, pressed, modifiers)
+    fn post_key(
+        &self,
+        hid_usage: u16,
+        pressed: bool,
+        modifiers: u8,
+        repeat: bool,
+    ) -> Result<(), String> {
+        post_key_event(hid_usage, pressed, modifiers, repeat)
     }
 
     fn pointer_location(&self) -> Result<CGPoint, String> {
@@ -256,7 +268,8 @@ impl MacNativeInput {
                 if (pressed && was_pressed && !repeat) || (!pressed && !was_pressed) {
                     return Ok(());
                 }
-                self.poster.post_key(hid_usage, pressed, modifiers)?;
+                self.poster
+                    .post_key(hid_usage, pressed, modifiers, repeat)?;
                 if pressed {
                     state.pressed_keys.insert(hid_usage);
                 } else {
@@ -473,7 +486,7 @@ impl MacNativeInput {
                 keys.sort_unstable();
                 let mut released_keys = Vec::new();
                 for hid_usage in keys {
-                    match self.poster.post_key(hid_usage, false, 0) {
+                    match self.poster.post_key(hid_usage, false, 0, false) {
                         Ok(()) => released_keys.push(hid_usage),
                         Err(error) => errors.push(error),
                     }
@@ -651,12 +664,18 @@ fn drag_event(state: &MacInputState) -> (CGEventType, CGMouseButton) {
     }
 }
 
-fn post_key_event(hid_usage: u16, pressed: bool, modifiers: u8) -> Result<(), String> {
+fn post_key_event(
+    hid_usage: u16,
+    pressed: bool,
+    modifiers: u8,
+    repeat: bool,
+) -> Result<(), String> {
     let key_code = mac_key_code(hid_usage)
         .ok_or_else(|| format!("unsupported macOS USB HID keyboard usage {hid_usage:#x}"))?;
     let event = CGEvent::new_keyboard_event(event_source()?, key_code, pressed)
         .map_err(|_| "could not create macOS keyboard event".to_owned())?;
     event.set_flags(mac_modifier_flags(modifiers));
+    event.set_integer_value_field(EventField::KEYBOARD_EVENT_AUTOREPEAT, i64::from(repeat));
     event.post(CGEventTapLocation::HID);
     Ok(())
 }
@@ -899,6 +918,7 @@ mod tests {
             hid_usage: u16,
             pressed: bool,
             modifiers: u8,
+            repeat: bool,
         },
         Button {
             button: u8,
@@ -937,11 +957,18 @@ mod tests {
     }
 
     impl MacInputEventPoster for RecordingPoster {
-        fn post_key(&self, hid_usage: u16, pressed: bool, modifiers: u8) -> Result<(), String> {
+        fn post_key(
+            &self,
+            hid_usage: u16,
+            pressed: bool,
+            modifiers: u8,
+            repeat: bool,
+        ) -> Result<(), String> {
             self.record(PostedEvent::Key {
                 hid_usage,
                 pressed,
                 modifiers,
+                repeat,
             })
         }
 
@@ -1226,6 +1253,70 @@ mod tests {
     }
 
     #[test]
+    fn repeated_key_down_preserves_the_native_autorepeat_marker() {
+        let poster = Arc::new(RecordingPoster::new([Ok(()), Ok(()), Ok(())]));
+        let input = MacNativeInput::with_poster(poster.clone());
+
+        input
+            .handle(
+                8,
+                PlatformNativeInputEvent::Keyboard {
+                    hid_usage: 0x04,
+                    pressed: true,
+                    modifiers: 0,
+                    repeat: false,
+                },
+            )
+            .unwrap();
+        input
+            .handle(
+                8,
+                PlatformNativeInputEvent::Keyboard {
+                    hid_usage: 0x04,
+                    pressed: true,
+                    modifiers: 0,
+                    repeat: true,
+                },
+            )
+            .unwrap();
+        input
+            .handle(
+                8,
+                PlatformNativeInputEvent::Keyboard {
+                    hid_usage: 0x04,
+                    pressed: false,
+                    modifiers: 0,
+                    repeat: false,
+                },
+            )
+            .unwrap();
+
+        assert_eq!(
+            poster.events(),
+            vec![
+                PostedEvent::Key {
+                    hid_usage: 0x04,
+                    pressed: true,
+                    modifiers: 0,
+                    repeat: false,
+                },
+                PostedEvent::Key {
+                    hid_usage: 0x04,
+                    pressed: true,
+                    modifiers: 0,
+                    repeat: true,
+                },
+                PostedEvent::Key {
+                    hid_usage: 0x04,
+                    pressed: false,
+                    modifiers: 0,
+                    repeat: false,
+                },
+            ]
+        );
+    }
+
+    #[test]
     fn failed_key_release_remains_pressed_for_reset_retry() {
         let poster = Arc::new(RecordingPoster::new([
             Ok(()),
@@ -1259,21 +1350,25 @@ mod tests {
                     hid_usage: 0x04,
                     pressed: true,
                     modifiers: 0x88,
+                    repeat: false,
                 },
                 PostedEvent::Key {
                     hid_usage: 0x04,
                     pressed: false,
                     modifiers: 0,
+                    repeat: false,
                 },
                 PostedEvent::Key {
                     hid_usage: 0x04,
                     pressed: false,
                     modifiers: 0,
+                    repeat: false,
                 },
                 PostedEvent::Key {
                     hid_usage: 0x04,
                     pressed: false,
                     modifiers: 0,
+                    repeat: false,
                 },
             ]
         );
@@ -1391,6 +1486,7 @@ mod tests {
                     hid_usage: 0x04,
                     pressed: true,
                     modifiers: 0,
+                    repeat: false,
                 },
                 PostedEvent::Button {
                     button: 1,
@@ -1401,6 +1497,7 @@ mod tests {
                     hid_usage: 0x04,
                     pressed: false,
                     modifiers: 0,
+                    repeat: false,
                 },
                 PostedEvent::Button {
                     button: 1,
