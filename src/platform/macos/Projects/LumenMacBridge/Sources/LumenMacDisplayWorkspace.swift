@@ -1048,7 +1048,6 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             state.sourceIsOnline &&
             !state.sourceIsOwnedVirtualDisplay &&
             state.targetIsOnline &&
-            state.targetIsActive &&
             state.targetOwnerToken != nil
     }
 

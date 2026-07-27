@@ -560,7 +560,7 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         XCTAssertTrue(restoredTopologies.isEmpty)
     }
 
-    func testDesktopMirrorStageRecoversRememberedOwnedVirtualMainBeforeCapture() async throws {
+    func testDesktopMirrorStageRecoversInactiveRememberedOwnedVirtualMainBeforeCapture() async throws {
         let topology = displayTopology()
         let sourceDisplayID = try XCTUnwrap(
             topology.displays.first.flatMap { UInt32($0.id) }
@@ -574,6 +574,7 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
             reportedMirrorSourceAfterApply: nil,
             initialMainDisplayID: targetDisplayID,
             initialSourceIsActive: false,
+            initialTargetIsActive: false,
             initialTargetBounds: physicalBounds,
             configuredTargetSize: physicalBounds.size,
             boundsByDisplayID: [
