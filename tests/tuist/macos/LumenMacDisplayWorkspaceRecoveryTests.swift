@@ -959,6 +959,44 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         XCTAssertEqual(resolved, ["2": 1])
     }
 
+    func testStableHardwareIdentityRemainsResolvableWhileCurrentModeIsUnavailable() throws {
+        let expectedState = physicalDisplayState(
+            id: "3",
+            originX: 0,
+            vendorID: 1_554,
+            productID: 4_096,
+            serialNumber: 77,
+            builtin: true
+        )
+        let expected = LumenMacPhysicalDisplayTopology(
+            displays: [expectedState],
+            windowsAdapterLUID: nil,
+            windowsTargetPaths: []
+        )
+        let snapshots = [
+            LumenCoreGraphicsDisplayTopologyController.DisplayResolutionCandidate(
+                id: "3",
+                vendorID: expectedState.vendorID,
+                productID: expectedState.productID,
+                serialNumber: expectedState.serialNumber,
+                builtin: expectedState.builtin,
+                mode: nil,
+                enabled: false,
+                active: false,
+                online: true
+            ),
+        ]
+
+        let candidates = LumenCoreGraphicsDisplayTopologyController
+            .displayResolutionCandidates(from: snapshots)
+        let resolved = try LumenCoreGraphicsDisplayTopologyController.resolveDisplayIDs(
+            for: expected,
+            candidates: candidates
+        )
+
+        XCTAssertEqual(resolved, ["3": 3])
+    }
+
     func testLegacySingleDisplayJournalRemapsOnlyOneMatchingNonLumenDisplay() throws {
         let expected = LumenMacPhysicalDisplayTopology(
             displays: [physicalDisplayState(id: "2", originX: 0)],
