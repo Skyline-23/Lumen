@@ -86,6 +86,11 @@ struct LumenMacVirtualDisplayPersistentIdentity: Equatable, Sendable {
 // The public factory name is retained for source compatibility with bridge clients.
 // swiftlint:disable:next type_name
 public enum LumenMacVirtualDisplayConfigurationFactory {
+    // The native host admits modes up to an 8K long edge in either orientation.
+    // CGVirtualDisplay descriptor capacity is immutable, so reserve both axes
+    // before publishing the retained display instead of recreating its identity.
+    private static let maximumStreamDimension: UInt32 = 7_680
+
     public static func make(
         geometry: LumenMacDisplayGeometry,
         request: LumenMacWorkspaceSessionRequest
@@ -102,11 +107,21 @@ public enum LumenMacVirtualDisplayConfigurationFactory {
         configuration.serialNumber = identity.serialNumber
         configuration.backingWidth = geometry.backingWidth
         configuration.backingHeight = geometry.backingHeight
+        configuration.highDensity = geometry.backingWidth != geometry.logicalWidth ||
+            geometry.backingHeight != geometry.logicalHeight
+        let maximumBackingDimension = maximumStreamDimension *
+            (configuration.highDensity ? 2 : 1)
+        configuration.maximumBackingWidth = max(
+            geometry.backingWidth,
+            maximumBackingDimension
+        )
+        configuration.maximumBackingHeight = max(
+            geometry.backingHeight,
+            maximumBackingDimension
+        )
         configuration.logicalWidth = geometry.logicalWidth
         configuration.logicalHeight = geometry.logicalHeight
         configuration.refreshRate = request.refreshRate
-        configuration.highDensity = geometry.backingWidth != geometry.logicalWidth ||
-            geometry.backingHeight != geometry.logicalHeight
         configuration.hdrEnabled = request.captureConfiguration.usesHDRTransport
         configuration.gamut = LumenMacVirtualDisplayGamut(
             rawValue: Int(colorProfile.gamutRawValue)

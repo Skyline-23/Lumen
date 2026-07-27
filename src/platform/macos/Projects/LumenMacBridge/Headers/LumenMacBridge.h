@@ -30,6 +30,8 @@ NS_SWIFT_NAME(LumenMacVirtualDisplayConfiguration)
 @property(nonatomic) uint32_t serialNumber;
 @property(nonatomic) uint32_t backingWidth;
 @property(nonatomic) uint32_t backingHeight;
+@property(nonatomic) uint32_t maximumBackingWidth;
+@property(nonatomic) uint32_t maximumBackingHeight;
 @property(nonatomic) uint32_t logicalWidth;
 @property(nonatomic) uint32_t logicalHeight;
 @property(nonatomic) double refreshRate;

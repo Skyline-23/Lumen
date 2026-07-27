@@ -184,9 +184,12 @@ static void LumenConfigureHDRDisplayInfo(
 @property(nonatomic) uint32_t displayID;
 @property(nonatomic) uint32_t backingWidth;
 @property(nonatomic) uint32_t backingHeight;
+@property(nonatomic) uint32_t maximumBackingWidth;
+@property(nonatomic) uint32_t maximumBackingHeight;
 @property(nonatomic) uint32_t logicalWidth;
 @property(nonatomic) uint32_t logicalHeight;
 @property(nonatomic) double refreshRate;
+@property(nonatomic) BOOL highDensity;
 @property(nonatomic, strong) id descriptor;
 @property(nonatomic, strong) id mode;
 @property(nonatomic, strong) id settings;
@@ -402,6 +405,14 @@ static void LumenConfigureHDRDisplayInfo(
     );
     return NO;
   }
+  uint32_t maximumBackingWidth = MAX(
+    configuration.maximumBackingWidth,
+    configuration.backingWidth
+  );
+  uint32_t maximumBackingHeight = MAX(
+    configuration.maximumBackingHeight,
+    configuration.backingHeight
+  );
 
   @try {
     Class descriptorClass = NSClassFromString(@"CGVirtualDisplayDescriptor");
@@ -450,8 +461,8 @@ static void LumenConfigureHDRDisplayInfo(
       configuration.backingWidth,
       configuration.backingHeight
     )] forKey:@"sizeInMillimeters"];
-    [_descriptor setValue:@(configuration.backingWidth) forKey:@"maxPixelsWide"];
-    [_descriptor setValue:@(configuration.backingHeight) forKey:@"maxPixelsHigh"];
+    [_descriptor setValue:@(maximumBackingWidth) forKey:@"maxPixelsWide"];
+    [_descriptor setValue:@(maximumBackingHeight) forKey:@"maxPixelsHigh"];
     [_descriptor setValue:[NSValue valueWithPoint:red] forKey:@"redPrimary"];
     [_descriptor setValue:[NSValue valueWithPoint:green] forKey:@"greenPrimary"];
     [_descriptor setValue:[NSValue valueWithPoint:blue] forKey:@"bluePrimary"];
@@ -562,9 +573,12 @@ static void LumenConfigureHDRDisplayInfo(
     _displayID = displayID.unsignedIntValue;
     _backingWidth = configuration.backingWidth;
     _backingHeight = configuration.backingHeight;
+    _maximumBackingWidth = maximumBackingWidth;
+    _maximumBackingHeight = maximumBackingHeight;
     _logicalWidth = configuration.logicalWidth;
     _logicalHeight = configuration.logicalHeight;
     _refreshRate = configuration.refreshRate;
+    _highDensity = configuration.highDensity;
     _mode = initialMode;
     _transfer = configuration.transfer;
     _hdrEnabled = configuration.hdrEnabled;
@@ -664,6 +678,24 @@ static void LumenConfigureHDRDisplayInfo(
       _refreshRate == refreshRate) {
     return YES;
   }
+  const uint64_t backingScale = _highDensity ? 2u : 1u;
+  const uint64_t requiredBackingWidth = (uint64_t)logicalWidth * backingScale;
+  const uint64_t requiredBackingHeight = (uint64_t)logicalHeight * backingScale;
+  if (requiredBackingWidth > _maximumBackingWidth ||
+      requiredBackingHeight > _maximumBackingHeight) {
+    LumenAssignVirtualDisplayError(
+      error,
+      LumenMacVirtualDisplayErrorInvalidConfiguration,
+      [NSString stringWithFormat:
+        @"Requested virtual display mode requires %llux%llu backing pixels, "
+         @"which exceeds the retained display capacity %ux%u.",
+        (unsigned long long)requiredBackingWidth,
+        (unsigned long long)requiredBackingHeight,
+        _maximumBackingWidth,
+        _maximumBackingHeight]
+    );
+    return NO;
+  }
   id previousMode = _mode;
   id previousModes = [_settings valueForKey:@"modes"];
   id restoreModes = previousModes;
@@ -694,6 +726,8 @@ static void LumenConfigureHDRDisplayInfo(
       return NO;
     }
     _mode = candidateMode;
+    _backingWidth = (uint32_t)requiredBackingWidth;
+    _backingHeight = (uint32_t)requiredBackingHeight;
     _logicalWidth = logicalWidth;
     _logicalHeight = logicalHeight;
     _refreshRate = refreshRate;
@@ -727,9 +761,12 @@ static void LumenConfigureHDRDisplayInfo(
   _displayID = 0;
   _backingWidth = 0;
   _backingHeight = 0;
+  _maximumBackingWidth = 0;
+  _maximumBackingHeight = 0;
   _logicalWidth = 0;
   _logicalHeight = 0;
   _refreshRate = 0;
+  _highDensity = NO;
   _hdrEnabled = NO;
   if (display != nil && [display respondsToSelector:sel_registerName("destroy")]) {
     ((void (*)(id, SEL))objc_msgSend)(display, sel_registerName("destroy"));

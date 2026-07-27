@@ -28,6 +28,8 @@ final class LumenNativeVirtualDisplayTests: XCTestCase {
         configuration.name = "Lumen SDR Mode Contract Test"
         configuration.backingWidth = 1_280
         configuration.backingHeight = 720
+        configuration.maximumBackingWidth = 15_360
+        configuration.maximumBackingHeight = 15_360
         configuration.logicalWidth = 640
         configuration.logicalHeight = 360
         configuration.refreshRate = 60
@@ -53,6 +55,46 @@ final class LumenNativeVirtualDisplayTests: XCTestCase {
             updatedMode.value(forKey: "transferFunction") as? NSNumber
         )
         XCTAssertEqual(updatedTransferFunction.uint32Value, 0)
+        XCTAssertEqual(display.backingWidth, 1_600)
+        XCTAssertEqual(display.backingHeight, 900)
+    }
+
+    func testRetainedVirtualDisplayRejectsModeBeyondDescriptorCapacity() throws {
+        guard LumenMacVirtualDisplay.isSupported() else {
+            throw XCTSkip("CGVirtualDisplay is unavailable on this runtime")
+        }
+        let configuration = LumenMacVirtualDisplayConfiguration()
+        configuration.name = "Lumen Retained Capacity Contract Test"
+        configuration.backingWidth = 1_280
+        configuration.backingHeight = 720
+        configuration.maximumBackingWidth = 3_840
+        configuration.maximumBackingHeight = 2_400
+        configuration.logicalWidth = 640
+        configuration.logicalHeight = 360
+        configuration.refreshRate = 60
+        configuration.highDensity = true
+
+        let display = try LumenMacVirtualDisplay(configuration: configuration)
+        defer { display.destroy() }
+
+        try display.updateLogicalWidth(1_800, logicalHeight: 1_130, refreshRate: 60)
+        XCTAssertEqual(display.logicalWidth, 1_800)
+        XCTAssertEqual(display.logicalHeight, 1_130)
+        XCTAssertEqual(display.backingWidth, 3_600)
+        XCTAssertEqual(display.backingHeight, 2_260)
+
+        XCTAssertThrowsError(
+            try display.updateLogicalWidth(2_000, logicalHeight: 1_300, refreshRate: 60)
+        ) { error in
+            let nsError = error as NSError
+            XCTAssertEqual(nsError.domain, "dev.skyline23.lumen.virtual-display")
+            XCTAssertEqual(nsError.code, 1)
+            XCTAssertTrue(nsError.localizedDescription.contains("exceeds"))
+        }
+        XCTAssertEqual(display.logicalWidth, 1_800)
+        XCTAssertEqual(display.logicalHeight, 1_130)
+        XCTAssertEqual(display.backingWidth, 3_600)
+        XCTAssertEqual(display.backingHeight, 2_260)
     }
 
     func testPublicationStabilizerRestartsContinuousReadyWindowAfterStateChange() async throws {

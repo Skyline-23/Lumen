@@ -6,6 +6,8 @@ final class LumenWorkspaceConfigurationTests: XCTestCase {
         let fixture = try makeHDRConfigurationFixture()
 
         XCTAssertEqual(fixture.configuration.backingWidth, 2388)
+        XCTAssertEqual(fixture.configuration.maximumBackingWidth, 15_360)
+        XCTAssertEqual(fixture.configuration.maximumBackingHeight, 15_360)
         XCTAssertEqual(fixture.configuration.logicalWidth, 1592)
         XCTAssertEqual(fixture.configuration.refreshRate, 120)
         XCTAssertTrue(fixture.configuration.highDensity)
@@ -67,6 +69,8 @@ final class LumenWorkspaceConfigurationTests: XCTestCase {
             request: request
         )
         XCTAssertEqual(configuration.backingWidth, 640)
+        XCTAssertEqual(configuration.maximumBackingWidth, 7_680)
+        XCTAssertEqual(configuration.maximumBackingHeight, 7_680)
         XCTAssertEqual(configuration.logicalWidth, 640)
         XCTAssertFalse(configuration.highDensity)
         XCTAssertEqual(
