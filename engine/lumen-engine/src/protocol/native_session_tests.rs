@@ -234,11 +234,14 @@ fn exact_selection_requires_one_matching_host_row_without_cross_products() {
 
 #[test]
 fn exact_selection_respects_both_client_and_host_geometry_limits() {
-    // Given: otherwise exact rows whose client or host width is below the requested mode.
+    // Given: otherwise exact rows whose client or host geometry is below the requested
+    // mode in both orientations.
     let mut client_limited = hello();
     client_limited.video_capabilities[1].max_width = client_limited.width - 1;
+    client_limited.video_capabilities[1].max_height = client_limited.height - 1;
     let mut host_limited = host();
     host_limited.video_capabilities[2].max_width = hello().width - 1;
+    host_limited.video_capabilities[2].max_height = hello().height - 1;
 
     // When: each row set is negotiated independently.
     let results = [
