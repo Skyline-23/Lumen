@@ -61,11 +61,14 @@ func lumenCurrentPhysicalDisplays(
     sessionDisplayID: CGDirectDisplayID
 ) throws -> [LumenDisplayDisconnectCapabilityDisplay] {
     let expected = try snapshot.displays
-        .filter { $0.enabled || $0.active || $0.online }
+        .filter { $0.enabled && $0.active && $0.online }
         .map(capabilityDisplay)
     let live = try current.displays
         .filter { state in
-            state.id != String(sessionDisplayID) && state.online
+            state.id != String(sessionDisplayID) &&
+                state.enabled &&
+                state.active &&
+                state.online
         }
         .map(capabilityDisplay)
     let expectedIdentities = expected.map(\.stableIdentity).sorted()

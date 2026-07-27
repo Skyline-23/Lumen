@@ -370,6 +370,7 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
     private var snapshot: Snapshot?
     private var snapshotRecoveryGeneration: UInt64?
     private var pendingDisconnectRecoveryRecord: LumenDisconnectRecoveryRecord?
+    private var pendingRecoveryTopology: LumenMacPhysicalDisplayTopology?
     private var pendingRecoveryWakeAssertion:
         (any LumenPhysicalDisplayWakeAssertion)?
     private var requiresPostWakeTopologyRecommit = false
@@ -1271,9 +1272,11 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
                 )
             }
         }
-        let physicalTopologyAlreadyRestored =
-            (try? await topologyController.verify(topology)) != nil
         let disconnectRecoveryRecord = try disconnectRecoveryStore.load()
+        let recoveryTopology = try await safeRecoveryTopology(for: topology)
+        pendingRecoveryTopology = recoveryTopology
+        let physicalTopologyAlreadyRestored =
+            (try? await topologyController.verify(recoveryTopology)) != nil
         var requestedDurableEnableRecovery = false
         if let disconnectRecoveryRecord {
             guard try disconnectRecoveryRecord.matches(
@@ -1301,11 +1304,11 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
                     }
                 } catch {
                     guard let resolvedIDs = try? await resolveDisplayIDsAfterDurableEnable(
-                        topology
+                        recoveryTopology
                     ),
                     await recoveryDisplaysAreVisible(
                         entriesToEnable,
-                        topology: topology,
+                        topology: recoveryTopology,
                         resolvedIDs: resolvedIDs
                     ) else {
                         throw error
@@ -1319,11 +1322,11 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
         }
         if !physicalTopologyAlreadyRestored || requestedDurableEnableRecovery {
             let resolvedIDs = if requestedDurableEnableRecovery {
-                try await resolveDisplayIDsAfterDurableEnable(topology)
+                try await resolveDisplayIDsAfterDurableEnable(recoveryTopology)
             } else {
-                try await topologyController.resolvedDisplayIDs(for: topology)
+                try await topologyController.resolvedDisplayIDs(for: recoveryTopology)
             }
-            let expectedDisplays = try topology.displays.map { state -> (CGDirectDisplayID, LumenMacPhysicalDisplayState) in
+            let expectedDisplays = try recoveryTopology.displays.map { state -> (CGDirectDisplayID, LumenMacPhysicalDisplayState) in
                 guard let displayID = resolvedIDs[state.id] else {
                     throw LumenMacDisplayWorkspaceError.invalidPersistedDisplayID(state.id)
                 }
@@ -1339,7 +1342,7 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             for (displayID, _) in displaysToEnable {
                 _ = try physicalDisplayController.setEnabled(true, for: displayID)
             }
-            try await topologyController.restore(topology)
+            try await topologyController.restore(recoveryTopology)
         }
         let windows: [WindowSnapshot]
         if let snapshot {
@@ -1414,6 +1417,12 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
     }
 
     public func verifyWorkspace(_ topology: LumenMacPhysicalDisplayTopology) async throws {
+        let verificationTopology: LumenMacPhysicalDisplayTopology
+        if let pendingRecoveryTopology {
+            verificationTopology = pendingRecoveryTopology
+        } else {
+            verificationTopology = try await safeRecoveryTopology(for: topology)
+        }
         let inheritedWakeAssertion = pendingRecoveryWakeAssertion != nil
         let wakeAssertion: any LumenPhysicalDisplayWakeAssertion
         if let pendingRecoveryWakeAssertion {
@@ -1443,11 +1452,11 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             // first exact topology readback; otherwise an inactive sleeping
             // output can fail verification before the post-wake recommit path.
             try physicalDisplayWakeSignal.pulseUserActivity()
-            try await waitForPhysicalDisplaysToWake(topology)
+            try await waitForPhysicalDisplaysToWake(verificationTopology)
         }
-        try await topologyController.verify(topology)
+        try await topologyController.verify(verificationTopology)
         try physicalDisplayWakeSignal.pulseUserActivity()
-        try await waitForPhysicalDisplaysToWake(topology)
+        try await waitForPhysicalDisplaysToWake(verificationTopology)
         if requiresPostWakeTopologyRecommit {
             // A display can already report active, online, and awake while its
             // external link is still converging after a private enable
@@ -1455,10 +1464,10 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             // stable-awake fence, then verify and wake it again. This prevents
             // a logically restored but physically black output from being
             // accepted as terminal cleanup success.
-            try await topologyController.restore(topology)
-            try await topologyController.verify(topology)
+            try await topologyController.restore(verificationTopology)
+            try await topologyController.verify(verificationTopology)
             try physicalDisplayWakeSignal.pulseUserActivity()
-            try await waitForPhysicalDisplaysToWake(topology)
+            try await waitForPhysicalDisplaysToWake(verificationTopology)
         }
         retainWakeAssertionAfterVerification = true
         for expected in try resolvePersistedWindows(topology.macWindows) {
@@ -1499,6 +1508,49 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
         requiresPostWakeTopologyRecommit = false
         self.snapshot = nil
         snapshotRecoveryGeneration = nil
+        pendingRecoveryTopology = nil
+    }
+
+    private func safeRecoveryTopology(
+        for persisted: LumenMacPhysicalDisplayTopology
+    ) async throws -> LumenMacPhysicalDisplayTopology {
+        guard !persisted.displays.isEmpty,
+              persisted.displays.allSatisfy({ !$0.enabled && !$0.active }) else {
+            return persisted
+        }
+
+        let current = try await topologyController.capture()
+        let resolvedIDs = try LumenCoreGraphicsDisplayTopologyController.resolveDisplayIDs(
+            for: persisted,
+            candidates: current.displays
+        )
+        let statesByID = Dictionary(
+            uniqueKeysWithValues: current.displays.map { ($0.id, $0) }
+        )
+        let activeStates = try persisted.displays.map { expected in
+            guard let resolvedID = resolvedIDs[expected.id],
+                  let actual = statesByID[String(resolvedID)],
+                  expected.vendorID != nil,
+                  expected.vendorID == actual.vendorID,
+                  expected.productID != nil,
+                  expected.productID == actual.productID,
+                  expected.serialNumber != nil,
+                  expected.serialNumber == actual.serialNumber,
+                  expected.builtin != nil,
+                  expected.builtin == actual.builtin,
+                  actual.enabled,
+                  actual.active,
+                  actual.online else {
+                throw LumenMacDisplayWorkspaceError.physicalTopologyMismatch
+            }
+            return actual
+        }
+        return LumenMacPhysicalDisplayTopology(
+            displays: activeStates,
+            macWindows: persisted.macWindows,
+            windowsAdapterLUID: persisted.windowsAdapterLUID,
+            windowsTargetPaths: persisted.windowsTargetPaths
+        )
     }
 
     private func waitForPhysicalDisplaysToWake(
@@ -1552,6 +1604,7 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
     public func discardSnapshot() {
         snapshot = nil
         snapshotRecoveryGeneration = nil
+        pendingRecoveryTopology = nil
         pendingRecoveryWakeAssertion?.release()
         pendingRecoveryWakeAssertion = nil
         requiresPostWakeTopologyRecommit = false

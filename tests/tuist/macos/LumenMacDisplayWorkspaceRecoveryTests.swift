@@ -1419,6 +1419,92 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         XCTAssertEqual(fixture.physicalTopology(), isolationPhysicalTopology())
     }
 
+    func testIsolationRejectsAnInactivePhysicalBaselineBeforeDisplayMutation() async throws {
+        let inactiveTopology = LumenMacPhysicalDisplayTopology(
+            displays: [
+                physicalDisplayState(
+                    id: "41",
+                    originX: 0,
+                    vendorID: 1_552,
+                    productID: 41_049,
+                    serialNumber: 4_251_086_178,
+                    builtin: true,
+                    enabled: false,
+                    active: false
+                ),
+            ],
+            windowsAdapterLUID: nil,
+            windowsTargetPaths: []
+        )
+        let fixture = IsolationDisplayFixture(physicalTopology: inactiveTopology)
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: IsolationTopologyController(fixture: fixture),
+            physicalDisplayController: RecordingPhysicalDisplayController(fixture: fixture),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier()
+        )
+        _ = try await workspace.snapshotWorkspace(targetProcessIdentifiers: [])
+        fixture.publishVirtualDisplay(99)
+
+        await XCTAssertThrowsErrorAsync {
+            try await workspace.isolateVirtualDisplay(99)
+        }
+
+        XCTAssertTrue(fixture.controlCalls().isEmpty)
+    }
+
+    func testRecoveryAdoptsMatchingActiveTopologyForAnInactiveLegacyBaseline() async throws {
+        let activeTopology = LumenMacPhysicalDisplayTopology(
+            displays: [
+                physicalDisplayState(
+                    id: "3",
+                    originX: 0,
+                    vendorID: 4_268,
+                    productID: 41_607,
+                    serialNumber: 809_654_099,
+                    builtin: false
+                ),
+            ],
+            windowsAdapterLUID: nil,
+            windowsTargetPaths: []
+        )
+        let inactiveTopology = LumenMacPhysicalDisplayTopology(
+            displays: activeTopology.displays.map { state in
+                LumenMacPhysicalDisplayState(
+                    id: state.id,
+                    vendorID: state.vendorID,
+                    productID: state.productID,
+                    serialNumber: state.serialNumber,
+                    builtin: state.builtin,
+                    mode: state.mode,
+                    originX: state.originX,
+                    originY: state.originY,
+                    mirrorMasterID: state.mirrorMasterID,
+                    enabled: false,
+                    active: false,
+                    online: true
+                )
+            },
+            windowsAdapterLUID: nil,
+            windowsTargetPaths: []
+        )
+        let topologyController = DisplayTopologyProbe(topology: activeTopology)
+        await topologyController.allowVerification()
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: topologyController,
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            physicalDisplayWakeSignal: RecordingPhysicalDisplayWakeSignal()
+        )
+
+        try await workspace.restoreWorkspace(
+            inactiveTopology,
+            recoveryGeneration: 91
+        )
+        try await workspace.verifyWorkspace(inactiveTopology)
+
+        let restoredTopologies = await topologyController.restoredTopologies()
+        XCTAssertTrue(restoredTopologies.isEmpty)
+    }
+
     func testCaptureProvenUnpublishedVirtualDisplayCanIsolatePhysicalDisplays() async throws {
         let topology = isolationPhysicalTopology()
         let fixture = IsolationDisplayFixture(physicalTopology: topology)
