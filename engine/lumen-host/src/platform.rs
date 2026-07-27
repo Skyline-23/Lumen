@@ -211,6 +211,10 @@ pub trait PlatformSessionControl: Send + Sync {
     fn start_session(&self, plan: PlatformSessionPlan) -> Result<(), String>;
     fn stop_session(&self) -> Result<(), String>;
 
+    fn reconfigure_session(&self, _plan: PlatformSessionPlan) -> Result<(), String> {
+        Err("dynamic display reconfiguration is unavailable on this platform adapter".to_owned())
+    }
+
     fn poll_encoded_video(&self) -> Result<Option<PlatformEncodedVideoFrame>, String> {
         Ok(None)
     }
@@ -265,6 +269,10 @@ impl PlatformSessionControl for IdlePlatformSessionControl {
     }
 
     fn stop_session(&self) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn reconfigure_session(&self, _plan: PlatformSessionPlan) -> Result<(), String> {
         Ok(())
     }
 

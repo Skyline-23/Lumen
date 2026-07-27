@@ -6,9 +6,10 @@ use crate::{
 };
 use lumen_engine::{
     client_control_envelope, host_control_envelope, ClientControlEnvelope, ClientSessionHello,
-    CodecConfiguration, CodecConfigurationAck, HostSessionCapabilities, HostSessionPlan,
-    MediaFeedback, NativeAudioChannelMode, NativeAudioQuality, NativeChromaSubsampling,
-    NativeColorRange, NativeDisplayGamut, NativeDisplayTransfer, NativeDynamicRange,
+    CodecConfiguration, CodecConfigurationAck, DisplayReconfigurationRequest,
+    HostSessionCapabilities, HostSessionPlan, MediaFeedback, NativeAudioChannelMode,
+    NativeAudioQuality, NativeChromaSubsampling, NativeColorRange, NativeDisplayGamut,
+    NativeDisplayReconfigurationResultCode, NativeDisplayTransfer, NativeDynamicRange,
     NativeNegotiationFailure, NativePolicyMode, NativeVideoBootstrapReason,
     NativeVideoBootstrapResultCode, NativeVideoCapability, NativeVideoCodec, NativeVideoFormat,
     NativeVideoKeyframeRequestReason, NativeVideoProfile, StartSessionAck, VideoBootstrapResult,
@@ -77,6 +78,7 @@ fn router_with_discovery(
 #[derive(Default)]
 pub(crate) struct RecordingPlatformSessionControl {
     starts: Mutex<Vec<PlatformSessionPlan>>,
+    reconfigurations: Mutex<Vec<PlatformSessionPlan>>,
     stops: AtomicUsize,
     application_starts: AtomicUsize,
     application_stops: AtomicUsize,
@@ -115,6 +117,11 @@ impl PlatformSessionControl for RecordingPlatformSessionControl {
 
     fn stop_session(&self) -> Result<(), String> {
         self.stops.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+
+    fn reconfigure_session(&self, plan: PlatformSessionPlan) -> Result<(), String> {
+        self.reconfigurations.lock().unwrap().push(plan);
         Ok(())
     }
 
@@ -428,6 +435,49 @@ fn native_v4_hello_negotiates_without_a_direct_udp_path_exchange() {
     assert!(router.video_delivery_state().is_some());
     assert!(router.audio_delivery_state().is_some());
     assert_eq!(platform.starts.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn native_v4_reconfigures_display_without_stopping_the_active_session() {
+    let platform = Arc::new(RecordingPlatformSessionControl::default());
+    let (_root, mut router, context, initial) = started_native_router(platform.clone());
+
+    let responses = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 3,
+            payload: Some(client_control_envelope::Payload::DisplayReconfiguration(
+                DisplayReconfigurationRequest {
+                    session_epoch: context.session_epoch,
+                    revision: 7,
+                    width: 2_560,
+                    height: 1_600,
+                    refresh_millihz: 120_000,
+                    sink_hidpi: true,
+                    sink_scale_explicit: true,
+                    sink_mode_is_logical: true,
+                    sink_scale_percent: 200,
+                },
+            )),
+        },
+        &context,
+    );
+
+    let Some(host_control_envelope::Payload::DisplayReconfiguration(result)) =
+        responses[0].payload.as_ref()
+    else {
+        panic!("expected display reconfiguration result");
+    };
+    assert_eq!(
+        NativeDisplayReconfigurationResultCode::try_from(result.result).unwrap(),
+        NativeDisplayReconfigurationResultCode::Applied
+    );
+    assert_eq!(result.revision, 7);
+    assert_eq!(result.plan.as_ref().unwrap().encoded_width, 2_560);
+    assert_eq!(result.plan.as_ref().unwrap().encoded_height, 1_600);
+    assert!(result.plan.as_ref().unwrap().video_configuration_id > initial.video_configuration_id);
+    assert_eq!(platform.reconfigurations.lock().unwrap().len(), 1);
+    assert_eq!(platform.stop_count(), 0);
+    assert!(router.video_delivery_state().is_some());
 }
 
 #[test]

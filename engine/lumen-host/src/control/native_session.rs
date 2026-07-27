@@ -1,12 +1,14 @@
 use lumen_engine::{
     client_control_envelope, host_control_envelope, negotiate_native_session,
     ClientControlEnvelope, ClientSessionHello, CodecConfiguration, CodecConfigurationAck,
-    HostControlEnvelope, HostSessionCapabilities, HostSessionPlan, LumenSessionOffer,
-    MediaFeedback, NativeChromaSubsampling, NativeColorRange, NativeDynamicRange,
-    NativeNegotiationFailure, NativeProtocolError, NativeSessionError, NativeVideoBootstrapReason,
-    NativeVideoBootstrapResultCode, NativeVideoCodec, NativeVideoKeyframeRequestReason,
-    NativeVideoProfile, SessionStarted, SessionStopped, StartSessionAck, StopSession,
-    VideoBootstrap, VideoBootstrapResult, VideoKeyframeRequest, NATIVE_VIDEO_STREAM_ID,
+    DisplayReconfigurationRequest, DisplayReconfigurationResult, HostControlEnvelope,
+    HostSessionCapabilities, HostSessionPlan, LumenSessionOffer, MediaFeedback,
+    NativeChromaSubsampling, NativeColorRange, NativeDisplayReconfigurationResultCode,
+    NativeDynamicRange, NativeNegotiationFailure, NativeProtocolError, NativeSessionError,
+    NativeVideoBootstrapReason, NativeVideoBootstrapResultCode, NativeVideoCodec,
+    NativeVideoKeyframeRequestReason, NativeVideoProfile, SessionStarted, SessionStopped,
+    StartSessionAck, StopSession, VideoBootstrap, VideoBootstrapResult, VideoKeyframeRequest,
+    NATIVE_VIDEO_STREAM_ID,
 };
 
 use super::{
@@ -89,6 +91,7 @@ struct PendingNativeSession {
     next_generation_id: u32,
     video_keyframe_request: Option<VideoKeyframeRequest>,
     last_sent_video_frame_id: u32,
+    last_display_revision: u64,
     adaptive_video: AdaptiveVideoDeliveryController,
 }
 
@@ -118,12 +121,134 @@ impl ControlRouter {
             Some(client_control_envelope::Payload::VideoBootstrapResult(result)) => {
                 self.dispatch_native_video_bootstrap_result(request_id, result, context)
             }
+            Some(client_control_envelope::Payload::DisplayReconfiguration(request)) => {
+                self.dispatch_native_display_reconfiguration(request_id, request, context)
+            }
             None => vec![native_error(
                 request_id,
                 ERROR_INVALID_OPERATION,
                 "native session operation is not valid in the current state",
             )],
         }
+    }
+
+    fn dispatch_native_display_reconfiguration(
+        &mut self,
+        request_id: u64,
+        request: DisplayReconfigurationRequest,
+        context: &NativeConnectionContext,
+    ) -> Vec<HostControlEnvelope> {
+        let Some(pending) = self.native.pending.as_ref() else {
+            return vec![native_error(
+                request_id,
+                ERROR_SESSION_STATE,
+                "native session has not been negotiated",
+            )];
+        };
+        if !pending.active
+            || request.session_epoch != pending.plan.session_epoch
+            || context.session_epoch != pending.plan.session_epoch
+            || request.revision == 0
+        {
+            return vec![native_error(
+                request_id,
+                ERROR_SESSION_STATE,
+                "display reconfiguration does not belong to the active session",
+            )];
+        }
+        if request.revision <= pending.last_display_revision {
+            return vec![display_reconfiguration_result(
+                request_id,
+                request.session_epoch,
+                request.revision,
+                NativeDisplayReconfigurationResultCode::Superseded,
+                pending.plan.clone(),
+                "a newer display reconfiguration revision is already active".to_owned(),
+            )];
+        }
+
+        let mut hello = pending.hello.clone();
+        hello.width = request.width;
+        hello.height = request.height;
+        hello.refresh_millihz = request.refresh_millihz;
+        hello.sink_hidpi = request.sink_hidpi;
+        hello.sink_scale_explicit = request.sink_scale_explicit;
+        hello.sink_mode_is_logical = request.sink_mode_is_logical;
+        hello.sink_scale_percent = request.sink_scale_percent;
+        let mut plan = match negotiate_native_session(
+            &hello,
+            &context.host_capabilities,
+            pending.plan.session_epoch,
+        ) {
+            Ok(plan) => plan,
+            Err(error) => {
+                return vec![display_reconfiguration_result(
+                    request_id,
+                    request.session_epoch,
+                    request.revision,
+                    NativeDisplayReconfigurationResultCode::Rejected,
+                    pending.plan.clone(),
+                    error.message().to_owned(),
+                )]
+            }
+        };
+        plan.policy_revision = pending.plan.policy_revision.saturating_add(1);
+        plan.video_configuration_id = pending
+            .codec_configuration
+            .as_ref()
+            .map_or(pending.plan.video_configuration_id, |configuration| {
+                configuration.configuration_id
+            })
+            .saturating_add(1);
+        let platform_plan = match native_platform_session_plan(&hello, &plan) {
+            Ok(plan) => plan,
+            Err(error) => {
+                return vec![display_reconfiguration_result(
+                    request_id,
+                    request.session_epoch,
+                    request.revision,
+                    NativeDisplayReconfigurationResultCode::Rejected,
+                    pending.plan.clone(),
+                    format!("dynamic platform session plan is invalid: {error}"),
+                )]
+            }
+        };
+        if let Err(error) = self.platform.reconfigure_session(platform_plan) {
+            return vec![display_reconfiguration_result(
+                request_id,
+                request.session_epoch,
+                request.revision,
+                NativeDisplayReconfigurationResultCode::Rejected,
+                pending.plan.clone(),
+                error,
+            )];
+        }
+
+        let pending = self
+            .native
+            .pending
+            .as_mut()
+            .expect("validated pending native session");
+        pending.hello = hello;
+        pending.plan = plan.clone();
+        pending.codec_configuration = None;
+        pending.codec_configuration_sent = false;
+        pending.acknowledged_configuration_id = None;
+        pending.video_bootstrap = None;
+        pending.video_bootstrap_sent = false;
+        pending.video_bootstrap_requires_encoder_resume = false;
+        pending.video_bootstrap_consumes_keyframe_request = false;
+        pending.acknowledged_generation_id = None;
+        pending.video_keyframe_request = None;
+        pending.last_display_revision = request.revision;
+        vec![display_reconfiguration_result(
+            request_id,
+            request.session_epoch,
+            request.revision,
+            NativeDisplayReconfigurationResultCode::Applied,
+            plan,
+            String::new(),
+        )]
     }
 
     fn dispatch_native_video_keyframe_request(
@@ -752,6 +877,7 @@ impl ControlRouter {
             next_generation_id: 1,
             video_keyframe_request: None,
             last_sent_video_frame_id: 0,
+            last_display_revision: 0,
             adaptive_video: AdaptiveVideoDeliveryController::new(
                 plan.bitrate_kbps,
                 plan.bitrate_kbps,
@@ -1175,6 +1301,28 @@ fn native_error(request_id: u64, code: u32, message: impl Into<String>) -> HostC
             message: message.into(),
             negotiation_failure: NativeNegotiationFailure::Unspecified as i32,
         })),
+    }
+}
+
+fn display_reconfiguration_result(
+    request_id: u64,
+    session_epoch: u32,
+    revision: u64,
+    result: NativeDisplayReconfigurationResultCode,
+    plan: HostSessionPlan,
+    message: String,
+) -> HostControlEnvelope {
+    HostControlEnvelope {
+        request_id,
+        payload: Some(host_control_envelope::Payload::DisplayReconfiguration(
+            DisplayReconfigurationResult {
+                session_epoch,
+                revision,
+                result: result as i32,
+                plan: Some(plan),
+                message,
+            },
+        )),
     }
 }
 

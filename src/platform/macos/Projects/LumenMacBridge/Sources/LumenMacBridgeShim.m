@@ -847,6 +847,33 @@ uint32_t LumenMacWorkspacePrepareSession(
   return displayID;
 }
 
+uint32_t LumenMacWorkspaceReconfigureSession(
+  LumenMacWorkspaceSessionRequest request,
+  char *error_destination,
+  size_t error_capacity
+) {
+  LumenMacWorkspaceSessionRequestBox *box = [[LumenMacWorkspaceSessionRequestBox alloc] init];
+  box.displayKey = request.display_key ? [NSString stringWithUTF8String:request.display_key] : @"";
+  box.displayName = request.display_name ? [NSString stringWithUTF8String:request.display_name] : @"Lumen Display";
+  box.width = request.width;
+  box.height = request.height;
+  box.scalePercent = request.scale_percent;
+  box.dimensionsAreLogical = request.dimensions_are_logical;
+  box.refreshRate = request.refresh_rate;
+  box.hdrEnabled = request.hdr_enabled;
+  box.clientSinkGamutRawValue = request.sink_gamut;
+  box.clientSinkTransferRawValue = request.sink_transfer;
+  box.currentEDRHeadroom = request.current_edr_headroom;
+  box.potentialEDRHeadroom = request.potential_edr_headroom;
+  box.currentPeakLuminanceNits = request.current_peak_luminance_nits;
+  box.potentialPeakLuminanceNits = request.potential_peak_luminance_nits;
+  box.desktopMirrorSourceDisplayID = request.desktop_mirror_source_display_id;
+  NSError *error = nil;
+  uint32_t displayID = [LumenMacWorkspaceSessionFacade.shared reconfigureSessionSync:box error:&error];
+  copy_string_to_buffer(error.localizedDescription, error_destination, error_capacity);
+  return displayID;
+}
+
 LumenMacWorkspaceActivationResult LumenMacWorkspaceActivateSession(
   const char *display_key,
   char *status_destination,

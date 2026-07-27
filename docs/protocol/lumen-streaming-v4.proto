@@ -530,6 +530,33 @@ message SessionStarted {
   uint32 session_epoch = 1;
 }
 
+enum DisplayReconfigurationResultCode {
+  DISPLAY_RECONFIGURATION_RESULT_CODE_UNSPECIFIED = 0;
+  DISPLAY_RECONFIGURATION_RESULT_CODE_APPLIED = 1;
+  DISPLAY_RECONFIGURATION_RESULT_CODE_REJECTED = 2;
+  DISPLAY_RECONFIGURATION_RESULT_CODE_SUPERSEDED = 3;
+}
+
+message DisplayReconfigurationRequest {
+  uint32 session_epoch = 1;
+  uint64 revision = 2;
+  uint32 width = 3;
+  uint32 height = 4;
+  uint32 refresh_millihz = 5;
+  bool sink_hidpi = 6;
+  bool sink_scale_explicit = 7;
+  bool sink_mode_is_logical = 8;
+  uint32 sink_scale_percent = 9;
+}
+
+message DisplayReconfigurationResult {
+  uint32 session_epoch = 1;
+  uint64 revision = 2;
+  DisplayReconfigurationResultCode result = 3;
+  HostSessionPlan plan = 4;
+  string message = 5;
+}
+
 message ClientControlEnvelope {
   uint64 request_id = 1;
   reserved 12;
@@ -540,6 +567,7 @@ message ClientControlEnvelope {
     CodecConfigurationAck codec_configuration_ack = 14;
     VideoKeyframeRequest video_keyframe_request = 15;
     VideoBootstrapResult video_bootstrap_result = 16;
+    DisplayReconfigurationRequest display_reconfiguration = 17;
   }
 }
 
@@ -551,5 +579,6 @@ message HostControlEnvelope {
     SessionStopped session_stopped = 12;
     ProtocolError error = 13;
     SessionStarted session_started = 15;
+    DisplayReconfigurationResult display_reconfiguration = 16;
   }
 }

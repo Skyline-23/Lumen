@@ -210,6 +210,8 @@ type RequestKeyFrame = unsafe extern "C" fn();
 type ResumeVideoEncodingAfterCodecAck = unsafe extern "C" fn() -> bool;
 type SetVideoBitrateKbps = unsafe extern "C" fn(u32) -> bool;
 type PrepareWorkspace = unsafe extern "C" fn(MacWorkspaceSessionRequest, *mut c_char, usize) -> u32;
+type ReconfigureWorkspace =
+    unsafe extern "C" fn(MacWorkspaceSessionRequest, *mut c_char, usize) -> u32;
 type ActivateWorkspace =
     unsafe extern "C" fn(*const c_char, *mut c_char, usize) -> MacWorkspaceActivationResult;
 type StopWorkspace = unsafe extern "C" fn(*const c_char, *mut c_char, usize) -> bool;
@@ -259,6 +261,7 @@ struct MacBridgeApi {
     resume_video_encoding_after_codec_ack: ResumeVideoEncodingAfterCodecAck,
     set_video_bitrate_kbps: SetVideoBitrateKbps,
     prepare_workspace: PrepareWorkspace,
+    reconfigure_workspace: ReconfigureWorkspace,
     activate_workspace: ActivateWorkspace,
     stop_workspace: StopWorkspace,
     publish_runtime_event: PublishRuntimeEvent,
@@ -343,6 +346,10 @@ impl MacBridgeApi {
                     b"LumenMacBridgeSetVideoBitrateKbps\0",
                 )?,
                 prepare_workspace: load_symbol(handle, b"LumenMacWorkspacePrepareSession\0")?,
+                reconfigure_workspace: load_symbol(
+                    handle,
+                    b"LumenMacWorkspaceReconfigureSession\0",
+                )?,
                 activate_workspace: load_symbol(handle, b"LumenMacWorkspaceActivateSession\0")?,
                 stop_workspace: load_symbol(handle, b"LumenMacWorkspaceStopSession\0")?,
                 publish_runtime_event: load_symbol(handle, b"LumenMacBridgePublishRuntimeEvent\0")?,
@@ -368,6 +375,7 @@ struct MacSessionState {
     next_audio_timestamp: u32,
     next_audio_deadline: Option<Instant>,
     audio_capture_failure: Option<String>,
+    plan: Option<PlatformSessionPlan>,
 }
 
 unsafe impl Send for MacSessionState {}
@@ -407,6 +415,7 @@ impl MacPlatformSessionControl {
                 next_audio_timestamp: 0,
                 next_audio_deadline: None,
                 audio_capture_failure: None,
+                plan: None,
             }),
             native_input: MacNativeInput::default(),
             application: PortableApplication::default(),
@@ -431,6 +440,123 @@ impl MacPlatformSessionControl {
         unsafe { (self.api.stop_application_main_thread)() };
     }
 
+    fn reconfigure_workspace_locked(
+        &self,
+        state: &MacSessionState,
+        plan: PlatformSessionPlan,
+    ) -> Result<u32, String> {
+        let key = state
+            .workspace_key
+            .as_ref()
+            .ok_or_else(|| "macOS dynamic display has no retained workspace".to_owned())?;
+        let display_name = CString::new("Lumen Display").expect("static display name");
+        let mut error = [0_i8; 1024];
+        let request = MacWorkspaceSessionRequest {
+            display_key: key.as_ptr(),
+            display_name: display_name.as_ptr(),
+            width: plan.width,
+            height: plan.height,
+            scale_percent: u32::try_from(plan.sink_scale_percent.max(1)).unwrap_or(100),
+            dimensions_are_logical: plan.sink_mode_is_logical,
+            refresh_rate: f64::from(plan.frames_per_second),
+            hdr_enabled: matches!(
+                plan.video_format.dynamic_range,
+                crate::PlatformDynamicRange::Hdr10
+            ),
+            sink_gamut: plan.sink_gamut,
+            sink_transfer: plan.sink_transfer,
+            current_edr_headroom: plan.sink_current_edr_headroom,
+            potential_edr_headroom: plan.sink_potential_edr_headroom,
+            current_peak_luminance_nits: plan.sink_current_peak_luminance_nits,
+            potential_peak_luminance_nits: plan.sink_potential_peak_luminance_nits,
+            desktop_mirror_source_display_id: state.desktop_mirror_source_display_id,
+        };
+        let display_id =
+            unsafe { (self.api.reconfigure_workspace)(request, error.as_mut_ptr(), error.len()) };
+        if display_id == 0 {
+            return Err(format!(
+                "platform display could not be reconfigured: {}",
+                error_text(&error)
+            ));
+        }
+        if display_id != state.display_id {
+            return Err(format!(
+                "dynamic display identity changed from {} to {display_id}",
+                state.display_id
+            ));
+        }
+        Ok(display_id)
+    }
+
+    fn restart_capture_pair_locked(
+        &self,
+        state: &mut MacSessionState,
+        plan: PlatformSessionPlan,
+        display_id: u32,
+    ) -> Result<(), String> {
+        unsafe {
+            (self.api.stop_audio_capture)(state.controller);
+            (self.api.stop_video_capture)(state.controller);
+            (self.api.configure_video_forwarding)(state.controller, 3, 16);
+            (self.api.configure_audio_forwarding)(state.controller, 8, 16);
+        }
+        let mut video = unsafe { (self.api.make_video_configuration)(display_id) };
+        video.codec = match plan.video_format.codec {
+            crate::PlatformVideoCodec::H264 => 0,
+            crate::PlatformVideoCodec::Hevc => 1,
+            crate::PlatformVideoCodec::Av1 => return Err("AV1 is unavailable on macOS".to_owned()),
+        };
+        video.video_profile = plan.video_format.profile as i32;
+        video.chroma_subsampling = plan.video_format.chroma_subsampling as i32;
+        video.bit_depth = plan.video_format.bit_depth;
+        video.dynamic_range = plan.video_format.dynamic_range as i32;
+        video.color_range = plan.video_format.color_range as i32;
+        video.target_frame_rate = i32::try_from(plan.frames_per_second).unwrap_or(i32::MAX);
+        video.target_video_bitrate_kbps = i32::try_from(plan.bitrate_kbps).unwrap_or(i32::MAX);
+        video.requested_width = i32::try_from(plan.width).unwrap_or(i32::MAX);
+        video.requested_height = i32::try_from(plan.height).unwrap_or(i32::MAX);
+        video.sink_request.mode = MacSinkMode {
+            hidpi: plan.sink_hidpi,
+            scale_explicit: plan.sink_scale_explicit,
+            mode_is_logical: plan.sink_mode_is_logical,
+            scale_percent: plan.sink_scale_percent,
+        };
+        video.sink_request.capability = MacSinkCapability {
+            gamut: plan.sink_gamut,
+            transfer: plan.sink_transfer,
+            current_edr_headroom: plan.sink_current_edr_headroom,
+            potential_edr_headroom: plan.sink_potential_edr_headroom,
+            current_peak_luminance_nits: plan.sink_current_peak_luminance_nits,
+            potential_peak_luminance_nits: plan.sink_potential_peak_luminance_nits,
+            supports_frame_gated_hdr: plan.sink_supports_frame_gated_hdr,
+            supports_hdr_tile_overlay: plan.sink_supports_hdr_tile_overlay,
+            supports_per_frame_hdr_metadata: plan.sink_supports_per_frame_hdr_metadata,
+        };
+        video.sink_request.dynamic_range_transport =
+            i32::try_from(plan.negotiated_dynamic_range_transport).unwrap_or_default();
+        video.effective_display_state.gamut = plan.sink_gamut;
+        video.effective_display_state.transfer = plan.sink_transfer;
+        let mut audio = unsafe { (self.api.make_audio_configuration)(display_id) };
+        audio.sample_rate = 48_000;
+        audio.channel_count = i32::from(plan.audio_channels);
+        audio.frame_size = AUDIO_FRAME_COUNT as i32;
+        let mut error = [0_i8; 1024];
+        let status = unsafe {
+            (self.api.start_capture_pair)(
+                state.controller,
+                video,
+                audio,
+                error.as_mut_ptr(),
+                error.len(),
+            )
+        };
+        state.audio_capture_failure = capture_pair_audio_failure(status, error_text(&error))?;
+        state.pcm.clear();
+        state.next_audio_timestamp = audio_timestamp(monotonic_nanoseconds());
+        state.next_audio_deadline = Some(Instant::now());
+        Ok(())
+    }
+
     fn stop_locked(&self, state: &mut MacSessionState) -> Result<(), String> {
         unsafe {
             (self.api.stop_audio_capture)(state.controller);
@@ -445,6 +571,7 @@ impl MacPlatformSessionControl {
         state.pcm.clear();
         state.next_audio_deadline = None;
         state.audio_capture_failure = None;
+        state.plan = None;
         workspace_result
     }
 }
@@ -647,6 +774,7 @@ impl PlatformSessionControl for MacPlatformSessionControl {
             }
             state.next_audio_timestamp = audio_timestamp(monotonic_nanoseconds());
             state.next_audio_deadline = Some(Instant::now());
+            state.plan = Some(plan);
             Ok(())
         })();
         if let Err(startup_error) = startup {
@@ -666,6 +794,65 @@ impl PlatformSessionControl for MacPlatformSessionControl {
             .lock()
             .map_err(|_| "macOS platform session state is unavailable".to_owned())?;
         self.stop_locked(&mut state)
+    }
+
+    fn reconfigure_session(&self, plan: PlatformSessionPlan) -> Result<(), String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "macOS platform session state is unavailable".to_owned())?;
+        let previous = state
+            .plan
+            .ok_or_else(|| "macOS dynamic display has no active session plan".to_owned())?;
+        if !plan.virtual_display || !previous.virtual_display {
+            return Err(
+                "dynamic display reconfiguration requires a retained virtual display".to_owned(),
+            );
+        }
+        if plan.video_format != previous.video_format
+            || plan.audio_channels != previous.audio_channels
+            || plan.enhanced_audio_quality != previous.enhanced_audio_quality
+            || plan.play_audio_on_host != previous.play_audio_on_host
+        {
+            return Err(
+                "dynamic display reconfiguration cannot change media format or audio layout"
+                    .to_owned(),
+            );
+        }
+
+        let display_id = self.reconfigure_workspace_locked(&state, plan)?;
+        if let Err(error) = self.restart_capture_pair_locked(&mut state, plan, display_id) {
+            let previous_display_id = state.display_id;
+            let rollback_display = self.reconfigure_workspace_locked(&state, previous);
+            let rollback_capture =
+                self.restart_capture_pair_locked(&mut state, previous, previous_display_id);
+            return Err(match (rollback_display, rollback_capture) {
+                (Ok(_), Ok(())) => {
+                    format!("dynamic capture reconfiguration failed and was rolled back: {error}")
+                }
+                (display, capture) => format!(
+                    "dynamic capture reconfiguration failed: {error}; rollback display={display:?} capture={capture:?}"
+                ),
+            });
+        }
+        state.input_display_bounds = Some(
+            resolve_display_geometry(LumenDisplayModeRequest {
+                width: plan.width,
+                height: plan.height,
+                scale_percent: u32::try_from(plan.sink_scale_percent)
+                    .map_err(|_| "macOS native input display scale is invalid".to_owned())?,
+                dimensions_are_logical: plan.sink_mode_is_logical,
+            })
+            .map(|geometry| MacInputDisplayBounds {
+                width: f64::from(geometry.logical_width),
+                height: f64::from(geometry.logical_height),
+            })
+            .map_err(|status| {
+                format!("macOS native input display geometry is invalid: {status:?}")
+            })?,
+        );
+        state.plan = Some(plan);
+        Ok(())
     }
 
     fn poll_encoded_video(&self) -> Result<Option<PlatformEncodedVideoFrame>, String> {
@@ -1376,6 +1563,7 @@ mod tests {
                 next_audio_timestamp: 42,
                 next_audio_deadline: Some(deadline),
                 audio_capture_failure: None,
+                plan: None,
             };
 
             assert_eq!(

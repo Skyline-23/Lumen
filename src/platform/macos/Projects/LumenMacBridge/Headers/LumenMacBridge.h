@@ -512,6 +512,12 @@ uint32_t LumenMacWorkspacePrepareSession(
   size_t error_capacity
 );
 
+uint32_t LumenMacWorkspaceReconfigureSession(
+  LumenMacWorkspaceSessionRequest request,
+  char *error_destination,
+  size_t error_capacity
+);
+
 LumenMacWorkspaceActivationResult LumenMacWorkspaceActivateSession(
   const char *display_key,
   char *status_destination,

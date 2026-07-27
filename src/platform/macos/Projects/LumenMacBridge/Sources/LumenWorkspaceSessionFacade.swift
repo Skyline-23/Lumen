@@ -230,8 +230,15 @@ public final class LumenMacWorkspaceActivationOutcomeBox: NSObject {
 protocol LumenMacWorkspaceSessionLifecycle: Sendable {
     func prepare() async throws
     func activate() async throws -> LumenMacWorkspaceActivationOutcome
+    func reconfigure(_ request: LumenMacWorkspaceSessionRequest) async throws
     func stop() async throws
     func displayID() async throws -> UInt32
+}
+
+extension LumenMacWorkspaceSessionLifecycle {
+    func reconfigure(_: LumenMacWorkspaceSessionRequest) async throws {
+        throw LumenMacWorkspaceSessionError.sessionNotStarted
+    }
 }
 
 extension LumenMacWorkspaceSession: LumenMacWorkspaceSessionLifecycle {}
@@ -264,6 +271,7 @@ struct LumenMacWorkspaceLifecycleAdmission {
     enum Operation: Equatable, Sendable {
         case prepare
         case activate
+        case reconfigure
         case stop
         case stopAll
         case recover
@@ -498,6 +506,22 @@ actor LumenMacWorkspaceSessionRegistry {
             }
             throw activationError
         }
+    }
+
+    func reconfigure(
+        _ snapshot: LumenMacWorkspaceSessionRequestSnapshot
+    ) async throws -> UInt32 {
+        guard let session = sessions[snapshot.displayKey] else {
+            throw LumenMacWorkspaceSessionError.sessionNotStarted
+        }
+        try lifecycleAdmission.begin(
+            .reconfigure,
+            activeSessionCount: sessions.count
+        )
+        defer { endLifecycleOperation(.reconfigure) }
+        let request = snapshot.swiftValue(policy: try await resolvePolicy())
+        try await session.reconfigure(request)
+        return try await session.displayID()
     }
 
     func stop(displayKey: String) async throws -> Bool {
@@ -807,6 +831,21 @@ public final class LumenMacWorkspaceSessionFacade: NSObject, Sendable {
         } catch {
             errorPointer?.pointee = error as NSError
             return nil
+        }
+    }
+
+    public func reconfigureSessionSync(
+        _ request: LumenMacWorkspaceSessionRequestBox,
+        error errorPointer: NSErrorPointer
+    ) -> UInt32 {
+        let snapshot = request.snapshot()
+        do {
+            return try blockingRun {
+                try await self.registry.reconfigure(snapshot)
+            }
+        } catch {
+            errorPointer?.pointee = error as NSError
+            return 0
         }
     }
 

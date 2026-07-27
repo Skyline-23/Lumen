@@ -531,21 +531,66 @@ pub struct SessionStarted {
     pub session_epoch: u32,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Enumeration)]
+#[repr(i32)]
+pub enum NativeDisplayReconfigurationResultCode {
+    Unspecified = 0,
+    Applied = 1,
+    Rejected = 2,
+    Superseded = 3,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct DisplayReconfigurationRequest {
+    #[prost(uint32, tag = "1")]
+    pub session_epoch: u32,
+    #[prost(uint64, tag = "2")]
+    pub revision: u64,
+    #[prost(uint32, tag = "3")]
+    pub width: u32,
+    #[prost(uint32, tag = "4")]
+    pub height: u32,
+    #[prost(uint32, tag = "5")]
+    pub refresh_millihz: u32,
+    #[prost(bool, tag = "6")]
+    pub sink_hidpi: bool,
+    #[prost(bool, tag = "7")]
+    pub sink_scale_explicit: bool,
+    #[prost(bool, tag = "8")]
+    pub sink_mode_is_logical: bool,
+    #[prost(uint32, tag = "9")]
+    pub sink_scale_percent: u32,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct DisplayReconfigurationResult {
+    #[prost(uint32, tag = "1")]
+    pub session_epoch: u32,
+    #[prost(uint64, tag = "2")]
+    pub revision: u64,
+    #[prost(enumeration = "NativeDisplayReconfigurationResultCode", tag = "3")]
+    pub result: i32,
+    #[prost(message, optional, tag = "4")]
+    pub plan: Option<HostSessionPlan>,
+    #[prost(string, tag = "5")]
+    pub message: String,
+}
+
 #[derive(Clone, PartialEq, Message)]
 pub struct ClientControlEnvelope {
     #[prost(uint64, tag = "1")]
     pub request_id: u64,
     #[prost(
         oneof = "client_control_envelope::Payload",
-        tags = "10, 11, 13, 14, 15, 16"
+        tags = "10, 11, 13, 14, 15, 16, 17"
     )]
     pub payload: Option<client_control_envelope::Payload>,
 }
 
 pub mod client_control_envelope {
     use super::{
-        ClientSessionHello, CodecConfigurationAck, StartSessionAck, StopSession,
-        VideoBootstrapResult, VideoKeyframeRequest,
+        ClientSessionHello, CodecConfigurationAck, DisplayReconfigurationRequest, StartSessionAck,
+        StopSession, VideoBootstrapResult, VideoKeyframeRequest,
     };
     use prost::Oneof;
 
@@ -563,6 +608,8 @@ pub mod client_control_envelope {
         VideoKeyframeRequest(VideoKeyframeRequest),
         #[prost(message, tag = "16")]
         VideoBootstrapResult(VideoBootstrapResult),
+        #[prost(message, tag = "17")]
+        DisplayReconfiguration(DisplayReconfigurationRequest),
     }
 }
 
@@ -570,12 +617,15 @@ pub mod client_control_envelope {
 pub struct HostControlEnvelope {
     #[prost(uint64, tag = "1")]
     pub request_id: u64,
-    #[prost(oneof = "host_control_envelope::Payload", tags = "10, 12, 13, 15")]
+    #[prost(oneof = "host_control_envelope::Payload", tags = "10, 12, 13, 15, 16")]
     pub payload: Option<host_control_envelope::Payload>,
 }
 
 pub mod host_control_envelope {
-    use super::{HostSessionPlan, NativeProtocolError, SessionStarted, SessionStopped};
+    use super::{
+        DisplayReconfigurationResult, HostSessionPlan, NativeProtocolError, SessionStarted,
+        SessionStopped,
+    };
     use prost::Oneof;
 
     #[derive(Clone, PartialEq, Oneof)]
@@ -588,6 +638,8 @@ pub mod host_control_envelope {
         Error(NativeProtocolError),
         #[prost(message, tag = "15")]
         SessionStarted(SessionStarted),
+        #[prost(message, tag = "16")]
+        DisplayReconfiguration(DisplayReconfigurationResult),
     }
 }
 
