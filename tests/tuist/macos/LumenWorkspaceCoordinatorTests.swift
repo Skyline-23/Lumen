@@ -38,10 +38,13 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         XCTAssertEqual(effectsSnapshot.journalClearCount, 1)
         XCTAssertEqual(effectsSnapshot.prepareCommitCount, 0)
         XCTAssertEqual(effectsSnapshot.stopCallCount, 1)
-        let stoppedCancelledSession = try await registry.stop(
+        let acceptedCancelledSessionStop = try await registry.stop(
             displayKey: "caller-cancelled-display"
         )
-        XCTAssertFalse(stoppedCancelledSession)
+        XCTAssertTrue(
+            acceptedCancelledSessionStop,
+            "a repeated stop must accept an already-rolled-back provisional session"
+        )
     }
 
     func testRegistryCallerCancellationAfterChildSuccessStillRejectsPublication() async throws {
@@ -82,10 +85,13 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         XCTAssertEqual(effectsSnapshot.releasedOwnerTokens, [ownerToken])
         XCTAssertEqual(effectsSnapshot.journalClearCount, 1)
         XCTAssertEqual(effectsSnapshot.stopCallCount, 1)
-        let stoppedPublishedSession = try await registry.stop(
+        let acceptedPublishedSessionStop = try await registry.stop(
             displayKey: "publication-cancelled-display"
         )
-        XCTAssertFalse(stoppedPublishedSession)
+        XCTAssertTrue(
+            acceptedPublishedSessionStop,
+            "a repeated stop must accept an already-rolled-back publication"
+        )
     }
 
     func testRegistryStopAllAndRecoveryShareProvisionalCancellationAndRejectLateSuccess() async throws {
@@ -134,10 +140,13 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         XCTAssertEqual(effectsSnapshot.journalClearCount, 1)
         XCTAssertEqual(effectsSnapshot.prepareCommitCount, 0)
         XCTAssertEqual(effectsSnapshot.stopCallCount, 1)
-        let stoppedPublishedProvisional = try await registry.stop(
+        let acceptedPublishedProvisionalStop = try await registry.stop(
             displayKey: "provisional-display"
         )
-        XCTAssertFalse(stoppedPublishedProvisional)
+        XCTAssertTrue(
+            acceptedPublishedProvisionalStop,
+            "a repeated stop must accept an already-rolled-back provisional session"
+        )
         try await assertProvisionalSessionWasNotPublished(registry)
     }
 
@@ -199,7 +208,10 @@ final class LumenWorkspaceCoordinatorTests: XCTestCase {
         let repeatedRecovery = try await registry.recoverPendingWorkspace()
         let repeatedStop = try await registry.stop(displayKey: "active-display")
         XCTAssertFalse(repeatedRecovery)
-        XCTAssertFalse(repeatedStop)
+        XCTAssertTrue(
+            repeatedStop,
+            "a repeated stop must accept a workspace already recovered by the watchdog"
+        )
     }
 
 }

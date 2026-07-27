@@ -501,21 +501,29 @@ actor LumenMacWorkspaceSessionRegistry {
     }
 
     func stop(displayKey: String) async throws -> Bool {
+        guard !displayKey.isEmpty else {
+            throw LumenMacWorkspaceSessionFacadeError.emptyDisplayKey
+        }
+        let recoversDurableWorkspaceWhenEmpty: Bool
         if let teardownFlight {
             guard teardownFlight.displayKeys.contains(displayKey) else {
                 return false
             }
+            recoversDurableWorkspaceWhenEmpty = false
         } else {
-            guard provisionalSession?.displayKey == displayKey ||
-                sessions[displayKey] != nil else {
+            let hasMatchingSession = provisionalSession?.displayKey == displayKey ||
+                sessions[displayKey] != nil
+            guard hasMatchingSession ||
+                (provisionalSession == nil && sessions.isEmpty) else {
                 return false
             }
+            recoversDurableWorkspaceWhenEmpty = !hasMatchingSession
         }
         _ = try await runTeardown(
             operation: .stop,
             requestedDisplayKey: displayKey,
             includesAllSessions: false,
-            recoversDurableWorkspaceWhenEmpty: false
+            recoversDurableWorkspaceWhenEmpty: recoversDurableWorkspaceWhenEmpty
         )
         return true
     }

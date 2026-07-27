@@ -3,6 +3,20 @@ import Synchronization
 @testable import LumenMacBridge
 
 final class LumenWorkspaceRegistryRecoveryTests: XCTestCase {
+    func testRegistryStopRejectsEmptyDisplayKey() async throws {
+        let effects = WorkspaceRegistryEffects(ownerToken: 0x16)
+        let registry = makeWorkspaceSessionRegistry(effects: effects)
+
+        do {
+            _ = try await registry.stop(displayKey: "")
+            XCTFail("an empty display key must never be treated as an idempotent stop")
+        } catch LumenMacWorkspaceSessionFacadeError.emptyDisplayKey {
+        }
+
+        let effectsSnapshot = await effects.snapshot()
+        XCTAssertEqual(effectsSnapshot.durableRecoveryCallCount, 0)
+    }
+
     func testRegistryStopRejectsMismatchedKeyWithoutJoiningTeardown() async throws {
         let effects = WorkspaceRegistryEffects(ownerToken: 0x16)
         let stopSuspension = WorkspaceRegistrySuspension(
@@ -120,10 +134,41 @@ final class LumenWorkspaceRegistryRecoveryTests: XCTestCase {
             effectsSnapshot.durableRecoveryCallCount - recoveryCallsBeforeStop,
             2
         )
+        let recoveryCallsBeforeIdempotentStop = effectsSnapshot.durableRecoveryCallCount
         let stoppedRecoveredSession = try await registry.stop(
             displayKey: "retry-display"
         )
-        XCTAssertFalse(stoppedRecoveredSession)
+        let effectsAfterIdempotentStop = await effects.snapshot()
+        XCTAssertTrue(stoppedRecoveredSession)
+        XCTAssertEqual(
+            effectsAfterIdempotentStop.durableRecoveryCallCount -
+                recoveryCallsBeforeIdempotentStop,
+            1,
+            "an idempotent stop must verify that no durable cleanup remains"
+        )
+    }
+
+    func testRegistryStopRejectsUnknownKeyWhileAnotherSessionIsActive() async throws {
+        let effects = WorkspaceRegistryEffects(ownerToken: 0x16)
+        let registry = makeWorkspaceSessionRegistry(effects: effects)
+        _ = try await registry.prepare(
+            workspaceRegistrySnapshot(displayKey: "active-display")
+        )
+
+        let stoppedUnknownSession = try await registry.stop(
+            displayKey: "unknown-display"
+        )
+
+        XCTAssertFalse(stoppedUnknownSession)
+        let effectsSnapshot = await effects.snapshot()
+        XCTAssertEqual(effectsSnapshot.stopCallCount, 0)
+        XCTAssertEqual(effectsSnapshot.journalClearCount, 0)
+        XCTAssertEqual(effectsSnapshot.durableRecoveryCallCount, 1)
+
+        let stoppedActiveSession = try await registry.stop(
+            displayKey: "active-display"
+        )
+        XCTAssertTrue(stoppedActiveSession)
     }
 
     func testDurableRecoveryClearsCaptureStateAndNeverRemovesAReplacementOwner() async throws {
