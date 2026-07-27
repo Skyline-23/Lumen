@@ -349,6 +349,7 @@ actor LumenMacWorkspaceSessionRegistry {
     private struct TeardownFlight: Sendable {
         let id: UUID
         let operation: LumenMacWorkspaceLifecycleAdmission.Operation
+        let provisionalToken: LumenMacWorkspacePreparationLease.Token?
         let displayKeys: Set<String>
         let task: Task<TeardownOutcome, Error>
     }
@@ -364,6 +365,7 @@ actor LumenMacWorkspaceSessionRegistry {
     private var sessions: [String: any LumenMacWorkspaceSessionLifecycle] = [:]
     private var provisionalSession: ProvisionalSession?
     private var teardownFlight: TeardownFlight?
+    private var pendingCleanup: TeardownOutcome?
     private var lifecycleAdmission = LumenMacWorkspaceLifecycleAdmission()
     private var lifecycleWaiters: [CheckedContinuation<Void, Never>] = []
 
@@ -408,7 +410,13 @@ actor LumenMacWorkspaceSessionRegistry {
         guard !snapshot.displayKey.isEmpty else {
             throw LumenMacWorkspaceSessionFacadeError.emptyDisplayKey
         }
-        guard provisionalSession == nil, teardownFlight == nil else {
+        guard teardownFlight == nil else {
+            throw LumenMacWorkspaceSessionError.sessionAlreadyStarted
+        }
+        if pendingCleanup != nil {
+            _ = try await retryPendingCleanup()
+        }
+        guard provisionalSession == nil, teardownFlight == nil, pendingCleanup == nil else {
             throw LumenMacWorkspaceSessionError.sessionAlreadyStarted
         }
         try lifecycleAdmission.begin(.prepare, activeSessionCount: sessions.count)
@@ -671,6 +679,7 @@ actor LumenMacWorkspaceSessionRegistry {
         let flight = TeardownFlight(
             id: flightID,
             operation: operation,
+            provisionalToken: provisional?.token,
             displayKeys: Set(selectedSessions.keys).union(
                 provisional.map { [$0.displayKey] } ?? []
             ),
@@ -692,17 +701,60 @@ actor LumenMacWorkspaceSessionRegistry {
                 for displayKey in outcome.displayKeys {
                     sessions.removeValue(forKey: displayKey)
                 }
+                if pendingCleanup?.provisionalToken == outcome.provisionalToken,
+                   pendingCleanup?.displayKeys == outcome.displayKeys {
+                    pendingCleanup = nil
+                }
                 teardownFlight = nil
                 endLifecycleOperation(flight.operation)
             }
             return outcome
         } catch {
             if teardownFlight?.id == flight.id {
+                pendingCleanup = TeardownOutcome(
+                    provisionalToken: flight.provisionalToken,
+                    displayKeys: flight.displayKeys,
+                    recoveredWorkspace: false
+                )
                 teardownFlight = nil
                 endLifecycleOperation(flight.operation)
             }
             throw error
         }
+    }
+
+    private func retryPendingCleanup() async throws -> TeardownOutcome? {
+        if let teardownFlight {
+            return try await joinTeardown(teardownFlight)
+        }
+        guard let pendingCleanup else {
+            return nil
+        }
+        while lifecycleAdmission.operation != nil {
+            await waitForLifecycleIdle()
+            if let teardownFlight {
+                return try await joinTeardown(teardownFlight)
+            }
+        }
+
+        try lifecycleAdmission.begin(.recover, activeSessionCount: sessions.count)
+        let recoverDurableWorkspace = self.recoverDurableWorkspace
+        let flight = TeardownFlight(
+            id: UUID(),
+            operation: .recover,
+            provisionalToken: pendingCleanup.provisionalToken,
+            displayKeys: pendingCleanup.displayKeys,
+            task: Task<TeardownOutcome, Error> {
+                let recoveredWorkspace = try await recoverDurableWorkspace()
+                return TeardownOutcome(
+                    provisionalToken: pendingCleanup.provisionalToken,
+                    displayKeys: pendingCleanup.displayKeys,
+                    recoveredWorkspace: recoveredWorkspace
+                )
+            }
+        )
+        teardownFlight = flight
+        return try await joinTeardown(flight)
     }
 
     private func waitForLifecycleIdle() async {

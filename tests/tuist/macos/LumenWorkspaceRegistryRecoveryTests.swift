@@ -148,6 +148,40 @@ final class LumenWorkspaceRegistryRecoveryTests: XCTestCase {
         )
     }
 
+    func testRegistryPrepareRecoversRetainedCleanupBeforeStartingReplacementSession() async throws {
+        let ownerToken: UInt = 0x16
+        let effects = WorkspaceRegistryEffects(
+            ownerToken: ownerToken,
+            stopFailures: 1,
+            recoveryFailures: 2
+        )
+        let registry = makeWorkspaceSessionRegistry(effects: effects)
+        _ = try await registry.prepare(
+            workspaceRegistrySnapshot(displayKey: "failed-cleanup-display")
+        )
+
+        do {
+            _ = try await registry.recoverPendingWorkspace()
+            XCTFail("the first cleanup must retain ownership after recovery is exhausted")
+        } catch is LumenWorkspaceStopRecoveryError {
+        }
+
+        let replacementDisplayID = try await registry.prepare(
+            workspaceRegistrySnapshot(displayKey: "replacement-display")
+        )
+
+        XCTAssertEqual(replacementDisplayID, 22)
+        let effectsSnapshot = await effects.snapshot()
+        XCTAssertEqual(
+            effectsSnapshot.stopCallCount,
+            1,
+            "replacement preparation must recover the journal without repeating exact stop"
+        )
+        XCTAssertEqual(effectsSnapshot.releasedOwnerTokens, [ownerToken])
+        XCTAssertEqual(effectsSnapshot.journalClearCount, 1)
+        XCTAssertEqual(effectsSnapshot.prepareCommitCount, 2)
+    }
+
     func testRegistryStopRejectsUnknownKeyWhileAnotherSessionIsActive() async throws {
         let effects = WorkspaceRegistryEffects(ownerToken: 0x16)
         let registry = makeWorkspaceSessionRegistry(effects: effects)
