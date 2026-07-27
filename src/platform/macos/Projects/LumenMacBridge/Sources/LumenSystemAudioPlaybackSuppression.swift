@@ -15,6 +15,7 @@ enum LumenSystemAudioPlaybackSuppressionStage:
 {
     case createProcessTap = "create-process-tap"
     case readTapStreamFormat = "read-tap-stream-format"
+    case configurePCMConversion = "configure-pcm-conversion"
     case createAggregateDevice = "create-aggregate-device"
     case createIOProc = "create-io-proc"
     case startIO = "start-io"
@@ -259,17 +260,20 @@ private final class LumenSystemAudioFrameEmitter: @unchecked Sendable {
         configuration: LumenMacAudioCaptureConfiguration,
         callbacks: LumenAudioCaptureCallbacks
     ) throws {
-        guard let sourceFormat = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32,
-            sampleRate: Double(streamFormat.sampleRate),
-            channels: AVAudioChannelCount(streamFormat.channelCount),
-            interleaved: true
+        guard configuration.channelCount <= 2 ||
+            streamFormat.channelCount >= configuration.channelCount else {
+            throw LumenAudioCaptureError.unsupportedChannelConversion(
+                source: streamFormat.channelCount,
+                requested: configuration.channelCount
+            )
+        }
+        guard let sourceFormat = Self.makeAudioFormat(
+            sampleRate: streamFormat.sampleRate,
+            channelCount: streamFormat.channelCount
         ),
-        let outputFormat = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32,
-            sampleRate: Double(configuration.sampleRate),
-            channels: AVAudioChannelCount(configuration.channelCount),
-            interleaved: true
+        let outputFormat = Self.makeAudioFormat(
+            sampleRate: configuration.sampleRate,
+            channelCount: configuration.channelCount
         ) else {
             throw LumenAudioCaptureError.audioConversionUnavailable
         }
@@ -292,6 +296,41 @@ private final class LumenSystemAudioFrameEmitter: @unchecked Sendable {
                 AVSampleRateConverterAlgorithm_Normal
             self.converter = converter
         }
+    }
+
+    private static func makeAudioFormat(
+        sampleRate: Int,
+        channelCount: Int
+    ) -> AVAudioFormat? {
+        let layoutTag: AudioChannelLayoutTag
+        switch channelCount {
+        case 1:
+            layoutTag = kAudioChannelLayoutTag_Mono
+        case 2:
+            layoutTag = kAudioChannelLayoutTag_Stereo
+        case 6:
+            layoutTag = kAudioChannelLayoutTag_WAVE_5_1_A
+        case 8:
+            layoutTag = kAudioChannelLayoutTag_WAVE_7_1
+        default:
+            return nil
+        }
+        guard let channelLayout = AVAudioChannelLayout(
+            layoutTag: layoutTag
+        ) else {
+            return nil
+        }
+        let format = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: Double(sampleRate),
+            interleaved: true,
+            channelLayout: channelLayout
+        )
+        guard format.channelCount == channelCount,
+              format.isInterleaved else {
+            return nil
+        }
+        return format
     }
 
     func consume(
@@ -559,6 +598,7 @@ actor LumenSystemAudioPlaybackSuppression {
             let streamFormat = try hal.readTapStreamFormat(
                 tapID: tap.id
             )
+            stage = .configurePCMConversion
             let emitter = try LumenSystemAudioFrameEmitter(
                 streamFormat: streamFormat,
                 configuration: configuration,

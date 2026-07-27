@@ -416,6 +416,7 @@ enum LumenAudioCaptureError: Error, LocalizedError {
     case activeVideoDisplayMismatch(audioDisplayID: UInt32, videoDisplayID: UInt32)
     case microphoneUnavailable
     case audioConversionUnavailable
+    case unsupportedChannelConversion(source: Int, requested: Int)
     case invalidSampleBuffer
     case unsupportedPCM
     case systemAudioPlaybackSuppressionDependencyMissing
@@ -438,7 +439,10 @@ enum LumenAudioCaptureError: Error, LocalizedError {
         case .activeVideoDisplayMismatch(let audioDisplayID, let videoDisplayID):
             return "System audio display \(audioDisplayID) does not match active video display \(videoDisplayID)."
         case .microphoneUnavailable: return "The default microphone is unavailable."
-        case .audioConversionUnavailable: return "The requested microphone PCM conversion is unavailable."
+        case .audioConversionUnavailable:
+            return "The requested audio PCM conversion is unavailable."
+        case let .unsupportedChannelConversion(source, requested):
+            return "The system-audio source exposes \(source) channels, but the selected mode requires \(requested); automatic upmix is not permitted."
         case .invalidSampleBuffer: return "The audio sample buffer is invalid."
         case .unsupportedPCM: return "The audio sample buffer uses an unsupported PCM layout."
         case .systemAudioPlaybackSuppressionDependencyMissing:

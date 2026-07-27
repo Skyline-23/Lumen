@@ -120,6 +120,91 @@ final class LumenSystemAudioPlaybackSuppressionTests: XCTestCase {
         )
     }
 
+    func testEightChannelTapPreservesExactPCMWithoutSyntheticUpmix() async throws {
+        let hal = RecordingSystemAudioSuppressionHAL(
+            streamFormat: .init(
+                sampleRate: 48_000,
+                channelCount: 8,
+                isInterleaved: true
+            )
+        )
+        let source = LumenSystemAudioPlaybackSuppression(hal: hal)
+        let frames = AudioFrameRecorder()
+        let input = (0..<16).map { Float($0) / 16 }
+
+        try await source.activate(
+            configuration: .systemOutput(
+                displayID: 118,
+                sampleRate: 48_000,
+                channelCount: 8,
+                frameSize: 2
+            ),
+            callbacks: recordingCallbacks(frames: frames)
+        )
+        hal.emitPCM(
+            .init(
+                hostTimeNanoseconds: 1_000_000,
+                sampleRate: 48_000,
+                channelCount: 8,
+                frameCount: 2,
+                pcmFloat32LE: pcmData(input)
+            )
+        )
+        _ = await source.deactivate()
+
+        let frame = try XCTUnwrap(frames.frames.first)
+        XCTAssertEqual(frame.channelCount, 8)
+        XCTAssertEqual(frame.frameCount, 2)
+        XCTAssertEqual(pcmFloats(frame.pcmFloat32LE), input)
+    }
+
+    func testStereoTapRejectsSelectedSevenPointOneWithoutUpmix() async {
+        let hal = RecordingSystemAudioSuppressionHAL(
+            streamFormat: .init(
+                sampleRate: 48_000,
+                channelCount: 2,
+                isInterleaved: true
+            )
+        )
+        let source = LumenSystemAudioPlaybackSuppression(hal: hal)
+
+        do {
+            try await source.activate(
+                configuration: .systemOutput(
+                    displayID: 118,
+                    sampleRate: 48_000,
+                    channelCount: 8,
+                    frameSize: 240
+                ),
+                callbacks: noOpCallbacks
+            )
+            XCTFail("Stereo system audio must not be silently upmixed to 7.1")
+        } catch let error as LumenSystemAudioPlaybackSuppressionError {
+            guard case .activationFailed(
+                let stage,
+                let status,
+                let message,
+                let cleanupFailures
+            ) = error else {
+                return XCTFail("Unexpected typed source error: \(error)")
+            }
+            XCTAssertEqual(stage, .configurePCMConversion)
+            XCTAssertNil(status)
+            XCTAssertEqual(
+                message,
+                "The system-audio source exposes 2 channels, but the selected mode requires 8; automatic upmix is not permitted."
+            )
+            XCTAssertTrue(cleanupFailures.isEmpty)
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+
+        XCTAssertEqual(
+            hal.events.map(\.shortName),
+            ["tap-create", "tap-format", "tap-destroy"]
+        )
+    }
+
     func testCurrentProcessIsExcludedOnlyWhenConfigurationRequestsIt() async throws {
         let hal = RecordingSystemAudioSuppressionHAL(currentProcessObjectID: 44)
         let source = LumenSystemAudioPlaybackSuppression(hal: hal)
