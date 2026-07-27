@@ -175,6 +175,17 @@ impl ControlRouter {
         hello.sink_scale_explicit = request.sink_scale_explicit;
         hello.sink_mode_is_logical = request.sink_mode_is_logical;
         hello.sink_scale_percent = request.sink_scale_percent;
+        if let Some(requested_format) = hello.requested_video_format.clone() {
+            for capability in &mut hello.video_capabilities {
+                if capability.format.as_ref() == Some(&requested_format)
+                    && capability.hardware_accelerated == Some(true)
+                {
+                    capability.max_width = request.width;
+                    capability.max_height = request.height;
+                    capability.max_refresh_millihz = request.refresh_millihz;
+                }
+            }
+        }
         let mut plan = match negotiate_native_session(
             &hello,
             &context.host_capabilities,

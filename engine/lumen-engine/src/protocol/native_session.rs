@@ -1241,18 +1241,29 @@ fn validate_display_capabilities(
     client_capability: &NativeVideoCapability,
     host_capability: &NativeVideoCapability,
 ) -> Result<(), NativeSessionError> {
+    let client_mode_supported =
+        display_mode_fits_capability(client.width, client.height, client_capability);
+    let host_mode_supported =
+        display_mode_fits_capability(client.width, client.height, host_capability);
     if client.width == 0
         || client.height == 0
         || client.refresh_millihz == 0
-        || client.width > client_capability.max_width
-        || client.height > client_capability.max_height
+        || !client_mode_supported
         || client.refresh_millihz > client_capability.max_refresh_millihz
-        || client.width > host_capability.max_width
-        || client.height > host_capability.max_height
+        || !host_mode_supported
         || client.refresh_millihz > host_capability.max_refresh_millihz
     {
         Err(NativeSessionError::InvalidDisplayMode)
     } else {
         Ok(())
     }
+}
+
+fn display_mode_fits_capability(
+    width: u32,
+    height: u32,
+    capability: &NativeVideoCapability,
+) -> bool {
+    (width <= capability.max_width && height <= capability.max_height)
+        || (width <= capability.max_height && height <= capability.max_width)
 }

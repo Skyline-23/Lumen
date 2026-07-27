@@ -449,8 +449,8 @@ fn native_v4_reconfigures_display_without_stopping_the_active_session() {
                 DisplayReconfigurationRequest {
                     session_epoch: context.session_epoch,
                     revision: 7,
-                    width: 2_560,
-                    height: 1_600,
+                    width: 2_160,
+                    height: 3_840,
                     refresh_millihz: 120_000,
                     sink_hidpi: true,
                     sink_scale_explicit: true,
@@ -472,8 +472,8 @@ fn native_v4_reconfigures_display_without_stopping_the_active_session() {
         NativeDisplayReconfigurationResultCode::Applied
     );
     assert_eq!(result.revision, 7);
-    assert_eq!(result.plan.as_ref().unwrap().encoded_width, 2_560);
-    assert_eq!(result.plan.as_ref().unwrap().encoded_height, 1_600);
+    assert_eq!(result.plan.as_ref().unwrap().encoded_width, 2_160);
+    assert_eq!(result.plan.as_ref().unwrap().encoded_height, 3_840);
     assert!(result.plan.as_ref().unwrap().video_configuration_id > initial.video_configuration_id);
     assert_eq!(platform.reconfigurations.lock().unwrap().len(), 1);
     assert_eq!(platform.stop_count(), 0);
