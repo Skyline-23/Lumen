@@ -56,8 +56,7 @@ Configure repository-level Actions secrets in `Skyline-23/Lumen`.
 | `APPLE_NOTARY_KEY_BASE64` | Base64 of the App Store Connect API `.p8` key | App Store Connect |
 | `APPLE_NOTARY_KEY_ID` | API key ID paired with the `.p8` file | App Store Connect |
 | `APPLE_NOTARY_ISSUER_ID` | Team API issuer ID | App Store Connect |
-| `WINDOWS_CERTIFICATE_PFX_BASE64` | Base64 of the Authenticode certificate and private key in PFX format | Windows code-signing certificate provider |
-| `WINDOWS_CERTIFICATE_PASSWORD` | PFX export password | Release operator |
+| `SIGNPATH_API_TOKEN` | Restricted token allowed to submit signing requests for the Lumen project | SignPath organization |
 | `HOMEBREW_TAP_SSH_KEY` | Private half of the write-enabled deploy key for the tap | Tap deploy-key setup |
 
 The matching Homebrew public deploy key must be installed on
@@ -70,7 +69,16 @@ List configured secret names without revealing their values:
 gh secret list --repo Skyline-23/Lumen
 ```
 
-The list must contain all eight names before merging a release to `main`.
+The list must contain all seven names before merging a release to `main`.
+
+Configure these repository-level Actions variables separately:
+
+| Variable | Required value |
+| --- | --- |
+| `SIGNPATH_ORGANIZATION_ID` | SignPath organization ID that owns the Lumen project |
+| `SIGNPATH_PROJECT_SLUG` | Lumen SignPath project slug |
+| `SIGNPATH_SIGNING_POLICY_SLUG` | Release signing policy slug |
+| `SIGNPATH_ARTIFACT_CONFIGURATION_SLUG` | Artifact configuration that signs the NSIS installer executable |
 
 ## Preparing Apple credentials
 
@@ -136,25 +144,30 @@ it does not depend on the local `lumen-release` profile.
 
 ## Preparing Windows credentials
 
-Export the Authenticode identity and private key as a password-protected PFX.
-The certificate must permit code signing and must be accepted by Windows for
-public distribution. The workflow timestamps signatures through DigiCert, so a
-successfully timestamped release remains verifiable after certificate expiry.
+Create the Lumen project and Windows installer artifact configuration in
+SignPath. Because `actions/upload-artifact` stores the upload as a ZIP, the
+artifact configuration root must be a `zip-file` that selects exactly the
+`Lumen-*-Windows-x86_64.exe` entry produced by the NSIS build. Assign a release
+signing policy backed by the intended Authenticode certificate, then create a
+restricted API token that can only submit requests for that project.
 
-From a shell that has the PFX file:
+Store the token and non-secret identifiers with GitHub CLI:
 
 ```bash
-base64 < Lumen-Authenticode.pfx | tr -d '\n' \
-  | gh secret set WINDOWS_CERTIFICATE_PFX_BASE64 --repo Skyline-23/Lumen
+printf '%s' '<restricted-signpath-api-token>' \
+  | gh secret set SIGNPATH_API_TOKEN --repo Skyline-23/Lumen
 
-read -s 'PFX_PASSWORD?PFX password: '
-printf '%s' "$PFX_PASSWORD" \
-  | gh secret set WINDOWS_CERTIFICATE_PASSWORD --repo Skyline-23/Lumen
-unset PFX_PASSWORD
+gh variable set SIGNPATH_ORGANIZATION_ID --body '<organization-id>' --repo Skyline-23/Lumen
+gh variable set SIGNPATH_PROJECT_SLUG --body '<project-slug>' --repo Skyline-23/Lumen
+gh variable set SIGNPATH_SIGNING_POLICY_SLUG --body '<signing-policy-slug>' --repo Skyline-23/Lumen
+gh variable set SIGNPATH_ARTIFACT_CONFIGURATION_SLUG \
+  --body '<artifact-configuration-slug>' --repo Skyline-23/Lumen
 ```
 
-Delete the exported PFX after uploading it. Retain the original identity in the
-certificate provider's protected storage.
+The GitHub runner never receives a PFX or private key. It uploads the unsigned
+installer as a one-day Actions artifact, the official SignPath Marketplace
+action returns the signed installer, and the workflow verifies Authenticode
+before publishing it.
 
 ## Pre-release checklist
 
@@ -164,7 +177,7 @@ Do not merge the release commit to `main` until every item below is true.
 - `develop` has been reviewed and is ready to merge into `main`.
 - Local `develop` is clean and matches `origin/develop`.
 - Both Rust product crates declare the same new stable semantic version.
-- All eight GitHub secret names are present.
+- All seven GitHub secret names and all four SignPath variable names are present.
 - The target version has no existing tag or GitHub Release.
 - The release notes or generated commit range have been reviewed.
 - The Homebrew tap deploy key is verified and has write access.
