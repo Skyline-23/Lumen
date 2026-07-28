@@ -74,16 +74,32 @@ Assert-InstallationCondition ($firewallApplications -contains $applicationPath) 
 
 $controlPort = $BasePort + 1
 $sessionPort = $BasePort + 21
-$tcpListener = @(
+$lumenProcesses = @(
+    Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+        Where-Object { $_.ExecutablePath -eq $applicationPath }
+)
+$lumenProcessIDs = @($lumenProcesses | ForEach-Object { [uint32]$_.ProcessId })
+Assert-InstallationCondition ($lumenProcessIDs.Count -gt 0) `
+    "The installed Lumen.exe host process is not running."
+
+$tcpListeners = @(
     Get-NetTCPConnection -State Listen -LocalPort $controlPort `
         -ErrorAction SilentlyContinue
 )
-$udpListener = @(
+$udpListeners = @(
     Get-NetUDPEndpoint -LocalPort $sessionPort -ErrorAction SilentlyContinue
 )
-Assert-InstallationCondition ($tcpListener.Count -gt 0) `
+$lumenTCPListeners = @(
+    $tcpListeners |
+        Where-Object { $lumenProcessIDs -contains [uint32]$_.OwningProcess }
+)
+$lumenUDPListeners = @(
+    $udpListeners |
+        Where-Object { $lumenProcessIDs -contains [uint32]$_.OwningProcess }
+)
+Assert-InstallationCondition ($lumenTCPListeners.Count -gt 0) `
     "Lumen is not listening on the HTTPS control port $controlPort."
-Assert-InstallationCondition ($udpListener.Count -gt 0) `
+Assert-InstallationCondition ($lumenUDPListeners.Count -gt 0) `
     "Lumen is not listening on the QUIC session port $sessionPort."
 
 $virtualDisplays = @(
@@ -108,11 +124,12 @@ $result = [ordered]@{
             path = $service.PathName
         }
     }
+    hostProcessIDs = $lumenProcessIDs
     listeners = [ordered]@{
         controlHTTPS = $controlPort
-        controlReady = $tcpListener.Count -gt 0
+        controlReady = $lumenTCPListeners.Count -gt 0
         sessionQUIC = $sessionPort
-        sessionReady = $udpListener.Count -gt 0
+        sessionReady = $lumenUDPListeners.Count -gt 0
     }
     virtualDisplays = @($virtualDisplays | ForEach-Object { $_.FriendlyName })
     failures = @($failures)
