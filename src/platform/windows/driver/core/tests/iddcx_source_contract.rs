@@ -77,7 +77,26 @@ fn pnp_start_completes_before_render_adapter_initialization() {
         .find("NTSTATUS LumenEvtDeviceD0Entry(")
         .expect("D0 entry callback must exist");
     let device_add_body = &driver[device_add..d0_entry];
-    assert!(device_add_body.contains("IddCxDeviceInitialize(device)"));
+    let create_interface = device_add_body
+        .find("WdfDeviceCreateDeviceInterface(device")
+        .expect("the control interface must be created during DeviceAdd");
+    let create_frame_queue = device_add_body
+        .find("create_manual_queue(device, &context->frame_queue)")
+        .expect("the frame queue must be created during DeviceAdd");
+    let create_event_queue = device_add_body
+        .find("create_manual_queue(device, &context->event_queue)")
+        .expect("the event queue must be created during DeviceAdd");
+    let initialize_iddcx = device_add_body
+        .find("IddCxDeviceInitialize(device)")
+        .expect("IddCx must be initialized during DeviceAdd");
+    assert!(create_interface < create_frame_queue);
+    assert!(create_frame_queue < create_event_queue);
+    assert!(create_event_queue < initialize_iddcx);
+    assert!(
+        device_add_body[initialize_iddcx..]
+            .trim_end()
+            .ends_with("return NT_SUCCESS(status) ? status : LumenReportInitializationFailure(L\"IddCxDeviceInitialize\", status);\n}")
+    );
     assert!(!device_add_body.contains("LumenInitializeAdapter("));
     assert!(driver[d0_entry..].contains("LumenInitializeAdapter(device, context)"));
 }

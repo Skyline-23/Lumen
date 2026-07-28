@@ -156,10 +156,6 @@ NTSTATUS LumenEvtDeviceAdd(WDFDRIVER, PWDFDEVICE_INIT device_init) {
   }
   LumenGetFrameWorkItemContext(context->frame_work_item)->device = device;
 
-  status = IddCxDeviceInitialize(device);
-  if (!NT_SUCCESS(status)) {
-    return LumenReportInitializationFailure(L"IddCxDeviceInitialize", status);
-  }
   status = WdfDeviceCreateDeviceInterface(device, &kLumenDeviceInterface, nullptr);
   if (!NT_SUCCESS(status)) {
     return LumenReportInitializationFailure(L"WdfDeviceCreateDeviceInterface", status);
@@ -170,7 +166,12 @@ NTSTATUS LumenEvtDeviceAdd(WDFDRIVER, PWDFDEVICE_INIT device_init) {
     return LumenReportInitializationFailure(L"WdfIoQueueCreate.Frame", status);
   }
   status = create_manual_queue(device, &context->event_queue);
-  return NT_SUCCESS(status) ? status : LumenReportInitializationFailure(L"WdfIoQueueCreate.Event", status);
+  if (!NT_SUCCESS(status)) {
+    return LumenReportInitializationFailure(L"WdfIoQueueCreate.Event", status);
+  }
+
+  status = IddCxDeviceInitialize(device);
+  return NT_SUCCESS(status) ? status : LumenReportInitializationFailure(L"IddCxDeviceInitialize", status);
 }
 
 NTSTATUS LumenEvtDeviceD0Entry(
