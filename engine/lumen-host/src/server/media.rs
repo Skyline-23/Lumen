@@ -290,6 +290,7 @@ struct MediaFailure {
 #[derive(Debug)]
 enum MediaAttempt {
     Inactive,
+    Superseded { active_session_epoch: u32 },
     Idle,
     Waiting,
     Sent,
@@ -313,9 +314,10 @@ impl MediaFailureReporter {
         match attempt {
             MediaAttempt::Failed(failure) => self.raise(failure, platform),
             MediaAttempt::Terminal(failure) => self.raise_terminal(failure, platform),
-            MediaAttempt::Inactive | MediaAttempt::Sent | MediaAttempt::Dropped => {
-                self.clear_kind(kind, platform)
-            }
+            MediaAttempt::Inactive
+            | MediaAttempt::Superseded { .. }
+            | MediaAttempt::Sent
+            | MediaAttempt::Dropped => self.clear_kind(kind, platform),
             MediaAttempt::Idle | MediaAttempt::Waiting => (),
         }
     }
@@ -401,8 +403,18 @@ pub(super) async fn run_native_media_loop(
     platform: Arc<dyn PlatformSessionControl>,
 ) -> Result<(), String> {
     run_native_media_tasks(
-        run_native_audio_sender(connection.clone(), router.clone(), Arc::clone(&platform)),
-        run_native_video_sender(connection.clone(), router.clone(), Arc::clone(&platform)),
+        run_native_audio_sender(
+            connection.clone(),
+            session_epoch,
+            router.clone(),
+            Arc::clone(&platform),
+        ),
+        run_native_video_sender(
+            connection.clone(),
+            session_epoch,
+            router.clone(),
+            Arc::clone(&platform),
+        ),
         run_native_motion_receiver(connection, session_epoch, router, platform),
     )
     .await
@@ -418,12 +430,17 @@ where
     Video: Future<Output = Result<(), String>>,
     Motion: Future<Output = Result<(), String>>,
 {
-    tokio::try_join!(audio, video, motion)?;
-    Ok(())
+    tokio::pin!(audio, video, motion);
+    tokio::select! {
+        result = &mut audio => result,
+        result = &mut video => result,
+        result = &mut motion => result,
+    }
 }
 
 async fn run_native_audio_sender(
     connection: quinn::Connection,
+    session_epoch: u32,
     router: SharedControlRouter,
     platform: Arc<dyn PlatformSessionControl>,
 ) -> Result<(), String> {
@@ -433,20 +450,38 @@ async fn run_native_audio_sender(
     let mut failures = MediaFailureReporter::default();
     loop {
         interval.tick().await;
-        let attempt =
-            poll_and_send_audio(&connection, &router, platform.as_ref(), &mut audio).await;
+        let attempt = poll_and_send_audio(
+            &connection,
+            session_epoch,
+            &router,
+            platform.as_ref(),
+            &mut audio,
+        )
+        .await;
         failures.observe(MediaKind::Audio, &attempt, platform.as_ref());
-        if let MediaAttempt::Terminal(failure) = attempt {
-            return Err(format!(
-                "native audio {} failed: {}",
-                failure.stage, failure.message
-            ));
+        match attempt {
+            MediaAttempt::Superseded {
+                active_session_epoch,
+            } => {
+                eprintln!(
+                    "Lumen native media stage=session-superseded kind=audio session-epoch={session_epoch} active-session-epoch={active_session_epoch}"
+                );
+                return Ok(());
+            }
+            MediaAttempt::Terminal(failure) => {
+                return Err(format!(
+                    "native audio {} failed: {}",
+                    failure.stage, failure.message
+                ));
+            }
+            _ => {}
         }
     }
 }
 
 async fn run_native_video_sender(
     connection: quinn::Connection,
+    session_epoch: u32,
     router: SharedControlRouter,
     platform: Arc<dyn PlatformSessionControl>,
 ) -> Result<(), String> {
@@ -460,6 +495,7 @@ async fn run_native_video_sender(
             connection.datagram_send_buffer_space() == NATIVE_MEDIA_SEND_BUFFER_BYTES;
         let attempt = poll_and_send_video(
             &connection,
+            session_epoch,
             &router,
             platform.as_ref(),
             &mut video,
@@ -467,11 +503,22 @@ async fn run_native_video_sender(
         )
         .await;
         failures.observe(MediaKind::Video, &attempt, platform.as_ref());
-        if let MediaAttempt::Terminal(failure) = attempt {
-            return Err(format!(
-                "native video {} failed: {}",
-                failure.stage, failure.message
-            ));
+        match attempt {
+            MediaAttempt::Superseded {
+                active_session_epoch,
+            } => {
+                eprintln!(
+                    "Lumen native media stage=session-superseded kind=video session-epoch={session_epoch} active-session-epoch={active_session_epoch}"
+                );
+                return Ok(());
+            }
+            MediaAttempt::Terminal(failure) => {
+                return Err(format!(
+                    "native video {} failed: {}",
+                    failure.stage, failure.message
+                ));
+            }
+            _ => {}
         }
     }
 }
@@ -588,6 +635,30 @@ struct AudioSenderState {
     unit_id: u32,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum SessionDelivery<T> {
+    Inactive,
+    Owned(T),
+    Superseded { active_session_epoch: u32 },
+}
+
+fn delivery_for_session<T>(
+    delivery: Option<T>,
+    expected_session_epoch: u32,
+    session_epoch: impl FnOnce(&T) -> u32,
+) -> SessionDelivery<T> {
+    let Some(delivery) = delivery else {
+        return SessionDelivery::Inactive;
+    };
+    let active_session_epoch = session_epoch(&delivery);
+    if active_session_epoch != expected_session_epoch {
+        return SessionDelivery::Superseded {
+            active_session_epoch,
+        };
+    }
+    SessionDelivery::Owned(delivery)
+}
+
 impl AudioSenderState {
     fn prepare(&mut self, delivery: &AudioDeliveryState) -> Result<(), String> {
         let identity = AudioSessionIdentity {
@@ -616,17 +687,27 @@ impl AudioSenderState {
 
 async fn poll_and_send_audio(
     connection: &quinn::Connection,
+    session_epoch: u32,
     router: &SharedControlRouter,
     platform: &dyn PlatformSessionControl,
     sender: &mut AudioSenderState,
 ) -> MediaAttempt {
-    let Some(delivery) = router
+    let delivery = router
         .lock()
         .ok()
-        .and_then(|router| router.audio_delivery_state())
-    else {
-        return MediaAttempt::Inactive;
-    };
+        .and_then(|router| router.audio_delivery_state());
+    let delivery =
+        match delivery_for_session(delivery, session_epoch, |delivery| delivery.session_epoch) {
+            SessionDelivery::Inactive => return MediaAttempt::Inactive,
+            SessionDelivery::Owned(delivery) => delivery,
+            SessionDelivery::Superseded {
+                active_session_epoch,
+            } => {
+                return MediaAttempt::Superseded {
+                    active_session_epoch,
+                }
+            }
+        };
     let packet = match platform.poll_encoded_audio() {
         Ok(Some(packet)) => packet,
         Ok(None) => return MediaAttempt::Idle,
@@ -862,18 +943,28 @@ impl VideoSenderState {
 
 async fn poll_and_send_video(
     connection: &quinn::Connection,
+    session_epoch: u32,
     router: &SharedControlRouter,
     platform: &dyn PlatformSessionControl,
     sender: &mut VideoSenderState,
     queue_was_empty_before_current_audio: bool,
 ) -> MediaAttempt {
-    let Some(delivery) = router
+    let delivery = router
         .lock()
         .ok()
-        .and_then(|router| router.video_delivery_state())
-    else {
-        return MediaAttempt::Inactive;
-    };
+        .and_then(|router| router.video_delivery_state());
+    let delivery =
+        match delivery_for_session(delivery, session_epoch, |delivery| delivery.session_epoch) {
+            SessionDelivery::Inactive => return MediaAttempt::Inactive,
+            SessionDelivery::Owned(delivery) => delivery,
+            SessionDelivery::Superseded {
+                active_session_epoch,
+            } => {
+                return MediaAttempt::Superseded {
+                    active_session_epoch,
+                }
+            }
+        };
     if let Err(message) = sender.prepare(&delivery) {
         return MediaAttempt::Failed(video_failure("packetizer-failed", message));
     }
@@ -1234,11 +1325,11 @@ fn object_deadline_exceeded(age: Duration, maximum_object_delay_us: u32) -> bool
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_video_keyframe_delivery, object_deadline_exceeded, run_native_media_tasks,
-        send_datagram_batch, send_video_datagram_batch, wait_for_datagram_deadline,
-        wait_for_datagram_queue_capacity, DatagramBatchDropReason, DatagramBatchMode,
-        DatagramBatchStatus, DatagramDeadlineElapsed, DatagramSendOutcome,
-        VideoBootstrapClassification, VideoKeyframeDelivery, VideoSenderState,
+        classify_video_keyframe_delivery, delivery_for_session, object_deadline_exceeded,
+        run_native_media_tasks, send_datagram_batch, send_video_datagram_batch,
+        wait_for_datagram_deadline, wait_for_datagram_queue_capacity, DatagramBatchDropReason,
+        DatagramBatchMode, DatagramBatchStatus, DatagramDeadlineElapsed, DatagramSendOutcome,
+        SessionDelivery, VideoBootstrapClassification, VideoKeyframeDelivery, VideoSenderState,
     };
     use lumen_engine::NativeVideoBootstrapReason;
     use std::cell::{Cell, RefCell};
@@ -1272,6 +1363,14 @@ mod tests {
         }
     }
 
+    struct DropSignal(Arc<AtomicBool>);
+
+    impl Drop for DropSignal {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
     #[tokio::test]
     async fn pending_video_future_does_not_block_audio_future() {
         let audio_started = Arc::new(Notify::new());
@@ -1296,6 +1395,49 @@ mod tests {
 
         scheduler.abort();
         let _ = scheduler.await;
+    }
+
+    #[tokio::test]
+    async fn superseded_sender_completion_cancels_the_remaining_media_lanes() {
+        let video_dropped = Arc::new(AtomicBool::new(false));
+        let motion_dropped = Arc::new(AtomicBool::new(false));
+        let video_drop_signal = DropSignal(Arc::clone(&video_dropped));
+        let motion_drop_signal = DropSignal(Arc::clone(&motion_dropped));
+        let video = async move {
+            let _drop_signal = video_drop_signal;
+            std::future::pending::<Result<(), String>>().await
+        };
+        let motion = async move {
+            let _drop_signal = motion_drop_signal;
+            std::future::pending::<Result<(), String>>().await
+        };
+
+        run_native_media_tasks(async { Ok(()) }, video, motion)
+            .await
+            .expect("a superseded lane should end its connection without a transport error");
+
+        assert!(video_dropped.load(Ordering::SeqCst));
+        assert!(motion_dropped.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn session_delivery_rejects_new_session_media_for_a_stale_connection() {
+        let active = (42_u32, "new-session-media");
+
+        assert_eq!(
+            delivery_for_session(Some(active), 41, |delivery| delivery.0),
+            SessionDelivery::Superseded {
+                active_session_epoch: 42,
+            }
+        );
+        assert_eq!(
+            delivery_for_session(Some(active), 42, |delivery| delivery.0),
+            SessionDelivery::Owned(active)
+        );
+        assert_eq!(
+            delivery_for_session::<(u32, &str)>(None, 42, |delivery| delivery.0),
+            SessionDelivery::Inactive
+        );
     }
 
     #[test]
