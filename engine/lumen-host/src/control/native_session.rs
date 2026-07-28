@@ -545,6 +545,10 @@ impl ControlRouter {
             estimated_jitter_us: feedback.estimated_jitter_us,
             decoder_queue_depth: feedback.decoder_queue_depth,
             presentation_drops: feedback.presentation_drops,
+            decoder_submissions: feedback.decoder_submissions,
+            decoded_frames: feedback.decoded_frames,
+            presented_frames: feedback.presented_frames,
+            decoder_drops: feedback.decoder_drops,
         });
         Ok(if decision.changed {
             NativeMediaFeedbackDisposition::Applied(decision)

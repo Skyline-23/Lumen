@@ -1195,6 +1195,7 @@ fn media_feedback_uses_audio_pressure_to_adapt_video_delivery_without_reducing_c
         presentation_drops: 1,
         window_milliseconds: 250,
         first_datagram_sequence: 1,
+        ..MediaFeedback::default()
     };
     let video_decision = router
         .observe_native_media_feedback(&congested_feedback, context.session_epoch)

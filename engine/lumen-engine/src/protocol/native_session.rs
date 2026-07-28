@@ -476,6 +476,14 @@ pub struct MediaFeedback {
     pub window_milliseconds: u32,
     #[prost(uint32, tag = "12")]
     pub first_datagram_sequence: u32,
+    #[prost(uint32, tag = "13")]
+    pub decoder_submissions: u32,
+    #[prost(uint32, tag = "14")]
+    pub decoded_frames: u32,
+    #[prost(uint32, tag = "15")]
+    pub presented_frames: u32,
+    #[prost(uint32, tag = "16")]
+    pub decoder_drops: u32,
 }
 
 #[derive(Clone, PartialEq, Message)]
