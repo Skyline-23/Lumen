@@ -5,6 +5,11 @@
 extern "C" DRIVER_INITIALIZE DriverEntry;
 
 namespace {
+  constexpr LONG kControlPlaneUninitialized = 0;
+  constexpr LONG kControlPlaneInitializing = 1;
+  constexpr LONG kControlPlaneReady = 2;
+  constexpr LONG kControlPlaneFailed = 3;
+
   const GUID kLumenDeviceInterface = LUMEN_DEVICE_INTERFACE_GUID_INIT;
   const GUID kLumenInitializationTraceProvider = {
     0x9e0fd0ea,
@@ -19,6 +24,82 @@ namespace {
     config.PowerManaged = WdfFalse;
     config.EvtIoCanceledOnQueue = LumenEvtIoCancelledOnQueue;
     return WdfIoQueueCreate(device, &config, WDF_NO_OBJECT_ATTRIBUTES, queue);
+  }
+
+  NTSTATUS initialize_control_plane(
+    WDFDEVICE device,
+    LumenDeviceContext *context
+  ) {
+    const LONG prior_state = InterlockedCompareExchange(
+      &context->control_plane_state,
+      kControlPlaneInitializing,
+      kControlPlaneUninitialized
+    );
+    if (prior_state == kControlPlaneReady) {
+      return STATUS_SUCCESS;
+    }
+    if (prior_state == kControlPlaneFailed) {
+      return context->control_plane_status;
+    }
+    if (prior_state != kControlPlaneUninitialized) {
+      return STATUS_DEVICE_BUSY;
+    }
+
+    const auto fail = [context](const wchar_t *stage, NTSTATUS status) {
+      const NTSTATUS reported = LumenReportInitializationFailure(stage, status);
+      context->control_plane_status = reported;
+      InterlockedExchange(
+        &context->control_plane_state,
+        kControlPlaneFailed
+      );
+      return reported;
+    };
+
+    NTSTATUS status =
+      WdfDeviceCreateDeviceInterface(device, &kLumenDeviceInterface, nullptr);
+    if (!NT_SUCCESS(status)) {
+      return fail(L"WdfDeviceCreateDeviceInterface", status);
+    }
+
+    context->frame_request_event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (context->frame_request_event == nullptr) {
+      return fail(L"CreateEvent.FrameRequest", STATUS_INSUFFICIENT_RESOURCES);
+    }
+
+    WDF_WORKITEM_CONFIG frame_work_item_config;
+    WDF_WORKITEM_CONFIG_INIT(
+      &frame_work_item_config,
+      LumenEvtFrameWorkItem
+    );
+    frame_work_item_config.AutomaticSerialization = FALSE;
+    WDF_OBJECT_ATTRIBUTES frame_work_item_attributes;
+    WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(
+      &frame_work_item_attributes,
+      LumenFrameWorkItemContext
+    );
+    frame_work_item_attributes.ParentObject = device;
+    status = WdfWorkItemCreate(
+      &frame_work_item_config,
+      &frame_work_item_attributes,
+      &context->frame_work_item
+    );
+    if (!NT_SUCCESS(status)) {
+      return fail(L"WdfWorkItemCreate.Frame", status);
+    }
+    LumenGetFrameWorkItemContext(context->frame_work_item)->device = device;
+
+    status = create_manual_queue(device, &context->frame_queue);
+    if (!NT_SUCCESS(status)) {
+      return fail(L"WdfIoQueueCreate.Frame", status);
+    }
+    status = create_manual_queue(device, &context->event_queue);
+    if (!NT_SUCCESS(status)) {
+      return fail(L"WdfIoQueueCreate.Event", status);
+    }
+
+    context->control_plane_status = STATUS_SUCCESS;
+    InterlockedExchange(&context->control_plane_state, kControlPlaneReady);
+    return STATUS_SUCCESS;
   }
 }  // namespace
 
@@ -111,6 +192,11 @@ NTSTATUS LumenEvtDeviceAdd(WDFDRIVER, PWDFDEVICE_INIT device_init) {
     return LumenReportInitializationFailure(L"WdfDeviceCreate", status);
   }
 
+  status = IddCxDeviceInitialize(device);
+  if (!NT_SUCCESS(status)) {
+    return LumenReportInitializationFailure(L"IddCxDeviceInitialize", status);
+  }
+
   auto *context = LumenGetDeviceContext(device);
   context->core_state = lumen_driver_core_initial_state();
   context->frame_queue = nullptr;
@@ -132,46 +218,10 @@ NTSTATUS LumenEvtDeviceAdd(WDFDRIVER, PWDFDEVICE_INIT device_init) {
   context->pending_frame_ready = 0;
   context->encoder_active = 0;
   context->adapter_monitoring = 0;
+  context->control_plane_state = kControlPlaneUninitialized;
+  context->control_plane_status = STATUS_SUCCESS;
 
-  context->frame_request_event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-  if (context->frame_request_event == nullptr) {
-    return STATUS_INSUFFICIENT_RESOURCES;
-  }
-  WDF_WORKITEM_CONFIG frame_work_item_config;
-  WDF_WORKITEM_CONFIG_INIT(&frame_work_item_config, LumenEvtFrameWorkItem);
-  frame_work_item_config.AutomaticSerialization = FALSE;
-  WDF_OBJECT_ATTRIBUTES frame_work_item_attributes;
-  WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(
-    &frame_work_item_attributes,
-    LumenFrameWorkItemContext
-  );
-  frame_work_item_attributes.ParentObject = device;
-  status = WdfWorkItemCreate(
-    &frame_work_item_config,
-    &frame_work_item_attributes,
-    &context->frame_work_item
-  );
-  if (!NT_SUCCESS(status)) {
-    return LumenReportInitializationFailure(L"WdfWorkItemCreate.Frame", status);
-  }
-  LumenGetFrameWorkItemContext(context->frame_work_item)->device = device;
-
-  status = WdfDeviceCreateDeviceInterface(device, &kLumenDeviceInterface, nullptr);
-  if (!NT_SUCCESS(status)) {
-    return LumenReportInitializationFailure(L"WdfDeviceCreateDeviceInterface", status);
-  }
-
-  status = create_manual_queue(device, &context->frame_queue);
-  if (!NT_SUCCESS(status)) {
-    return LumenReportInitializationFailure(L"WdfIoQueueCreate.Frame", status);
-  }
-  status = create_manual_queue(device, &context->event_queue);
-  if (!NT_SUCCESS(status)) {
-    return LumenReportInitializationFailure(L"WdfIoQueueCreate.Event", status);
-  }
-
-  status = IddCxDeviceInitialize(device);
-  return NT_SUCCESS(status) ? status : LumenReportInitializationFailure(L"IddCxDeviceInitialize", status);
+  return STATUS_SUCCESS;
 }
 
 NTSTATUS LumenEvtDeviceD0Entry(
@@ -179,7 +229,11 @@ NTSTATUS LumenEvtDeviceD0Entry(
   WDF_POWER_DEVICE_STATE
 ) {
   auto *context = LumenGetDeviceContext(device);
-  const NTSTATUS status = LumenInitializeAdapter(device, context);
+  NTSTATUS status = initialize_control_plane(device, context);
+  if (!NT_SUCCESS(status)) {
+    return status;
+  }
+  status = LumenInitializeAdapter(device, context);
   return NT_SUCCESS(status) ? status : LumenReportInitializationFailure(L"LumenInitializeAdapter", status);
 }
 
