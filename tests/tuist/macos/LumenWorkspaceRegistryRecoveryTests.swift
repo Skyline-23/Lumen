@@ -352,7 +352,11 @@ private extension LumenWorkspaceRegistryRecoveryTests {
             expectedOwners: expectedOwners,
             preparedDisplays: preparedDisplays,
             registry: registry,
-            retryOwner: LumenMacVirtualDisplayOwner(ownershipRegistry: registry)
+            retryOwner: LumenMacVirtualDisplayOwner(
+                ownershipRegistry: registry,
+                reconfigurationObserver:
+                    LumenImmediateDisplayReconfigurationObserver()
+            )
         )
     }
 

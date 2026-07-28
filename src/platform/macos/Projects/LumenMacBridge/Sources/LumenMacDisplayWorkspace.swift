@@ -320,8 +320,8 @@ public protocol LumenMacDisplayWorkspaceManaging: Sendable {
 public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
     private static let promotionConvergenceTimeout: TimeInterval = 5
     private static let promotionPollNanoseconds: UInt64 = 50_000_000
-    private static let desktopMirrorConvergenceTimeout: TimeInterval = 5
-    private static let desktopMirrorPollNanoseconds: UInt64 = 50_000_000
+    private static let displayReconfigurationTimeoutNanoseconds: UInt64 =
+        5_000_000_000
     private static let restorePublicationConvergenceTimeout: Duration = .seconds(5)
     private static let restorePublicationPollInterval: Duration = .milliseconds(50)
     private static let wakeStableObservationCount = 9
@@ -361,6 +361,8 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
 
     private let topologyController: any LumenMacDisplayTopologyControlling
     private let mirrorController: any LumenMacDisplayMirrorControlling
+    private let displayReconfigurationObserver:
+        any LumenDisplayReconfigurationObserving
     private let physicalDisplayController: any LumenPhysicalDisplayControlling
     private let disconnectCapabilityVerifier: any LumenDisplayDisconnectCapabilityVerifying
     private let physicalDisplayWakeSignal: any LumenPhysicalDisplayWakeSignaling
@@ -379,9 +381,13 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
         sessionSourceDisplayID: UInt32
     )?
 
-    public init() {
+    init(
+        displayReconfigurationObserver:
+            any LumenDisplayReconfigurationObserving
+    ) {
         topologyController = LumenCoreGraphicsDisplayTopologyController()
         mirrorController = LumenCoreGraphicsDisplayMirrorController()
+        self.displayReconfigurationObserver = displayReconfigurationObserver
         physicalDisplayController = LumenPhysicalDisplayControlAdapter(
             resolver: LumenSystemDisplayEnabledSymbolResolver()
         )
@@ -397,6 +403,9 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
         topologyController: any LumenMacDisplayTopologyControlling,
         mirrorController: any LumenMacDisplayMirrorControlling =
             LumenCoreGraphicsDisplayMirrorController(),
+        displayReconfigurationObserver:
+            any LumenDisplayReconfigurationObserving =
+                LumenImmediateDisplayReconfigurationObserver(),
         physicalDisplayController: any LumenPhysicalDisplayControlling =
             LumenPhysicalDisplayControlAdapter(
                 resolver: LumenSystemDisplayEnabledSymbolResolver()
@@ -409,6 +418,7 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
     ) {
         self.topologyController = topologyController
         self.mirrorController = mirrorController
+        self.displayReconfigurationObserver = displayReconfigurationObserver
         self.physicalDisplayController = physicalDisplayController
         self.disconnectCapabilityVerifier = disconnectCapabilityVerifier
         self.physicalDisplayWakeSignal = physicalDisplayWakeSignal
@@ -722,6 +732,8 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             )
         }
 
+        let reconfigurationGeneration = await displayReconfigurationObserver
+            .generation(for: displayID)
         try await mirrorController.mirror(
             targetDisplayID: sourceDisplayID,
             sourceDisplayID: displayID
@@ -731,12 +743,25 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             sessionSourceDisplayID: displayID
         )
         do {
-            let after = try await waitForDesktopMirrorConvergence(
+            try await displayReconfigurationObserver.waitForPostChange(
                 displayID: displayID,
-                sourceDisplayID: sourceDisplayID,
+                after: reconfigurationGeneration,
+                timeoutNanoseconds: Self
+                    .displayReconfigurationTimeoutNanoseconds
+            )
+            let after = await mirrorController.state(
+                targetDisplayID: sourceDisplayID,
+                sourceDisplayID: displayID
+            )
+            guard Self.isValidDesktopMirrorPostcondition(
+                after,
+                displayID: displayID,
                 expectedOwnerToken: expectedSourceOwnerToken,
                 expectedSourceSize: expectedSourceSize
-            )
+            ) else {
+                throw LumenMacDisplayWorkspaceError
+                    .virtualDisplayMirrorUnavailable(displayID, sourceDisplayID)
+            }
             logDesktopMirrorState(
                 phase: "after",
                 state: after,
@@ -799,46 +824,6 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             state.sourceOwnerToken == expectedOwnerToken &&
             state.targetIsOnline &&
             state.targetOwnerToken == nil
-    }
-
-    private func waitForDesktopMirrorConvergence(
-        displayID: UInt32,
-        sourceDisplayID: UInt32,
-        expectedOwnerToken: UInt,
-        expectedSourceSize: CGSize
-    ) async throws -> LumenMacDisplayMirrorState {
-        let deadline = ProcessInfo.processInfo.systemUptime
-            + Self.desktopMirrorConvergenceTimeout
-        while true {
-            try Task.checkCancellation()
-            let state = await mirrorController.state(
-                targetDisplayID: sourceDisplayID,
-                sourceDisplayID: displayID
-            )
-            if Self.isValidDesktopMirrorPostcondition(
-                state,
-                displayID: displayID,
-                expectedOwnerToken: expectedOwnerToken,
-                expectedSourceSize: expectedSourceSize
-            ) {
-                return state
-            }
-            guard ProcessInfo.processInfo.systemUptime < deadline else {
-                logDesktopMirrorState(
-                    phase: "convergence-timeout",
-                    state: state,
-                    displayID: displayID,
-                    sourceDisplayID: sourceDisplayID
-                )
-                throw LumenMacDisplayWorkspaceError.virtualDisplayMirrorUnavailable(
-                    displayID,
-                    sourceDisplayID
-                )
-            }
-            try await Task.sleep(
-                nanoseconds: Self.desktopMirrorPollNanoseconds
-            )
-        }
     }
 
     public func stageVirtualDisplayUnmirrored(
@@ -938,23 +923,19 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
                 return
             }
             targetTransactionAttempted = true
+            let reconfigurationGeneration = await displayReconfigurationObserver
+                .generation(for: displayID)
             try await mirrorController.stageUnmirrored(
                 targetDisplayID: displayID,
                 origin: geometry.targetOrigin,
                 expectedOwnerToken: expectedOwnerToken
             )
-            guard try await waitForDesktopMirrorConvergence(
-                targetDisplayID: displayID,
-                sourceDisplayID: sourceDisplayID,
-                physicalDisplayIDs: geometry.physicalDisplayIDs,
-                physicalBounds: geometry.physicalBounds,
-                expectedOwnerToken: expectedOwnerToken
-            ) else {
-                throw LumenMacDisplayWorkspaceError.virtualDisplayMirrorUnavailable(
-                    displayID,
-                    sourceDisplayID
-                )
-            }
+            try await displayReconfigurationObserver.waitForPostChange(
+                displayID: displayID,
+                after: reconfigurationGeneration,
+                timeoutNanoseconds: Self
+                    .displayReconfigurationTimeoutNanoseconds
+            )
             try await topologyController.verify(snapshot.topology)
             let finalState = await mirrorController.state(
                 targetDisplayID: displayID,
@@ -1691,48 +1672,6 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
         }
         try await topologyController.verify(topology)
         mirroredDisplayIDs = nil
-    }
-
-    private func waitForDesktopMirrorConvergence(
-        targetDisplayID: UInt32,
-        sourceDisplayID: UInt32,
-        physicalDisplayIDs: [CGDirectDisplayID],
-        physicalBounds: [CGRect],
-        expectedOwnerToken: UInt
-    ) async throws -> Bool {
-        let deadline = ProcessInfo.processInfo.systemUptime
-            + Self.desktopMirrorConvergenceTimeout
-        while true {
-            try Task.checkCancellation()
-            let state = await mirrorController.state(
-                targetDisplayID: targetDisplayID,
-                sourceDisplayID: sourceDisplayID
-            )
-            let currentPhysicalBounds = try await currentDesktopMirrorPhysicalBounds(
-                displayIDs: physicalDisplayIDs,
-                fallback: physicalBounds
-            )
-            if Self.isValidDesktopMirrorStageState(
-                state,
-                targetDisplayID: targetDisplayID,
-                sourceDisplayID: sourceDisplayID,
-                physicalBounds: currentPhysicalBounds,
-                targetOrigin: nil,
-                expectedOwnerToken: expectedOwnerToken
-            ) {
-                return true
-            }
-            if ProcessInfo.processInfo.systemUptime >= deadline {
-                logDesktopMirrorState(
-                    phase: "stage-convergence-timeout",
-                    state: state,
-                    displayID: targetDisplayID,
-                    sourceDisplayID: sourceDisplayID
-                )
-                return false
-            }
-            try await Task.sleep(nanoseconds: Self.desktopMirrorPollNanoseconds)
-        }
     }
 
     private func currentDesktopMirrorPhysicalBounds(

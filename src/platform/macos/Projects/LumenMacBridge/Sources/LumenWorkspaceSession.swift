@@ -12,44 +12,15 @@ public actor LumenMacWorkspaceSession {
     var request: LumenMacWorkspaceSessionRequest
     let coordinator: LumenWorkspaceCoordinator
     let executor: LumenMacWorkspaceExecutor
-    let displayOwner: LumenMacVirtualDisplayOwner
     let preparationFence: @Sendable () async throws -> Void
     let isolationStatusHandler: @Sendable (LumenMacWorkspaceIsolationStatus) async -> Void
     var phase = Phase.idle
     var activationCommand: LumenMacWorkspaceCommand?
     var isolationTask: Task<Void, Never>?
 
-    public init(
-        request: LumenMacWorkspaceSessionRequest,
-        runtime: LumenBridgeRuntime,
-        displayWorkspace: any LumenMacDisplayWorkspaceManaging,
-        preparationFence: @escaping @Sendable () async throws -> Void = {
-            try Task.checkCancellation()
-        }
-    ) throws {
-        let displayOwner = LumenMacVirtualDisplayOwner(ownershipRegistry: .shared)
-        let operations = LumenWorkspaceNativeOperationsFactory(
-            request: request,
-            runtime: runtime,
-            displayOwner: displayOwner
-        ).make()
-        try self.init(
-            request: request,
-            runtime: runtime,
-            displayOwner: displayOwner,
-            operations: operations,
-            displayWorkspace: displayWorkspace,
-            preparationFence: preparationFence,
-            isolationStatusHandler: { status in
-                LumenWorkspaceEventPublisher.publish(status)
-            }
-        )
-    }
-
     init(
         request: LumenMacWorkspaceSessionRequest,
         runtime: LumenBridgeRuntime = .shared,
-        displayOwner: LumenMacVirtualDisplayOwner = .init(ownershipRegistry: .shared),
         operations: LumenMacWorkspaceNativeOperations,
         displayWorkspace: any LumenMacDisplayWorkspaceManaging,
         coordinator: LumenWorkspaceCoordinator? = nil,
@@ -61,7 +32,6 @@ public actor LumenMacWorkspaceSession {
         ) async -> Void = { _ in }
     ) throws {
         self.request = request
-        self.displayOwner = displayOwner
         self.coordinator = try coordinator ?? LumenWorkspaceCoordinator()
         self.preparationFence = preparationFence
         self.isolationStatusHandler = isolationStatusHandler
@@ -140,13 +110,24 @@ public actor LumenMacWorkspaceSession {
         geometry: LumenMacDisplayGeometry,
         displayID: UInt32
     ) async throws {
-        try await displayOwner.configure(
-            displayID: displayID,
+        if isDesktopMirror {
+            // A mode transaction can invalidate the active mirror topology and
+            // leave the retained source online but inactive. Restore the
+            // independent source first, then follow the same exact-display
+            // admission order used during initial workspace preparation.
+            try await executor.stageOwnedVirtualDisplayUnmirrored()
+        }
+        try await executor.reconfigureOwnedVirtualDisplay(
             geometry: geometry,
             refreshRate: request.refreshRate
         )
-        try await displayOwner.settleMode(displayID: displayID)
-        try await displayOwner.stabilize(displayID: displayID)
-        try await displayOwner.awaitCapturePreparation(displayID: displayID)
+        if isDesktopMirror {
+            try await executor.prepareOwnedVirtualDisplayForReconfiguration()
+            try await executor.mirrorOwnedVirtualDisplay()
+            return
+        }
+        try await executor.settleOwnedVirtualDisplayMode()
+        try await executor.stabilizeOwnedVirtualDisplay()
+        try await executor.prepareOwnedVirtualDisplayForCapture()
     }
 }

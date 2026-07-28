@@ -113,18 +113,13 @@ extension LumenMacWorkspaceSession {
     }
 
     private func prepareDesktopMirrorCapture() async throws {
-        try await executor.stageOwnedVirtualDisplayUnmirrored()
-        try await preparationFence()
-        // The independent topology must remain continuously published before
-        // ScreenCaptureKit starts its exact-ID query. Starting enumeration in
-        // the same WindowServer transition that staged the display can stall
-        // the query beyond the readiness deadline.
-        try await executor.stabilizeOwnedVirtualDisplay()
-        try await preparationFence()
         // Retain the exact ScreenCaptureKit display while it is still an
-        // independent output. Mirroring can collapse fresh enumeration to the
-        // physical sink even though the retained virtual display stays active.
+        // independent output and before any CoreGraphics topology transaction.
+        // Mirroring or staging can delay fresh enumeration even though the
+        // retained virtual display remains available to an existing handle.
         try await executor.prepareOwnedVirtualDisplayForCapture()
+        try await preparationFence()
+        try await executor.stageOwnedVirtualDisplayUnmirrored()
         try await preparationFence()
         try await materializeCaptureContent()
         // Isolated desktop mirrors already journal the preceding
@@ -132,8 +127,6 @@ extension LumenMacWorkspaceSession {
         if effectivePolicy == .coexist {
             try await coordinator.recordDesktopMirrorApplied()
         }
-        try await preparationFence()
-        try await executor.stabilizeOwnedVirtualDisplay()
         try await preparationFence()
     }
 
@@ -145,11 +138,10 @@ extension LumenMacWorkspaceSession {
         guard command.action == .configureVirtualDisplay else {
             return result
         }
-        if isDesktopMirror {
-            try await executor.settleOwnedVirtualDisplayMode()
-        } else {
-            try await executor.stabilizeOwnedVirtualDisplay()
+        guard !isDesktopMirror else {
+            return result
         }
+        try await executor.stabilizeOwnedVirtualDisplay()
         try await preparationFence()
         return result
     }

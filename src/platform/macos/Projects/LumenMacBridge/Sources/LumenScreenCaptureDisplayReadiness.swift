@@ -94,6 +94,15 @@ struct LumenScreenCaptureDisplayReadinessTiming: Equatable, Sendable {
         retryDelayNanoseconds: 100_000_000,
         maximumOutstandingQueries: 1
     )
+
+    static let reconfiguration = Self(
+        // An active session must reject and roll back promptly instead of
+        // freezing video behind the cold-start publication allowance.
+        overallDeadlineNanoseconds: 3_000_000_000,
+        queryTimeoutNanoseconds: 3_000_000_000,
+        retryDelayNanoseconds: 50_000_000,
+        maximumOutstandingQueries: 1
+    )
 }
 
 enum LumenScreenCaptureDisplayAuthority: Equatable, Sendable {

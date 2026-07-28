@@ -57,7 +57,8 @@ enum LumenScreenCaptureDisplayReadiness {
 
     static func resolveOwned(
         displayID: UInt32,
-        expectedOwner: LumenRetainedVirtualDisplayReference? = nil
+        expectedOwner: LumenRetainedVirtualDisplayReference? = nil,
+        timing: LumenScreenCaptureDisplayReadinessTiming = .production
     ) async throws -> LumenScreenCaptureDisplayHandle {
         let owner: LumenRetainedVirtualDisplayReference
         if let expectedOwner {
@@ -75,6 +76,7 @@ enum LumenScreenCaptureDisplayReadiness {
         return try await resolve(
             displayID: displayID,
             authority: .retained(ownerToken: owner.ownerToken),
+            timing: timing,
             readiness: { snapshot(displayID: displayID, owner: owner) }
         )
     }
@@ -85,6 +87,7 @@ enum LumenScreenCaptureDisplayReadiness {
         try await resolve(
             displayID: displayID,
             authority: .exactExternal,
+            timing: .production,
             readiness: { snapshot(displayID: displayID) }
         )
     }
@@ -122,6 +125,7 @@ enum LumenScreenCaptureDisplayReadiness {
     private static func resolve(
         displayID: UInt32,
         authority: LumenScreenCaptureDisplayAuthority,
+        timing: LumenScreenCaptureDisplayReadinessTiming,
         readiness: @escaping @Sendable () async -> LumenCaptureDisplayReadinessSnapshot
     ) async throws -> LumenScreenCaptureDisplayHandle {
         let context = makeReadinessContext(
@@ -138,6 +142,7 @@ enum LumenScreenCaptureDisplayReadiness {
             let handle = try await resolveHandle(
                 context: context,
                 authority: authority,
+                timing: timing,
                 readiness: readiness
             )
             logReadinessComplete(context)
@@ -179,12 +184,13 @@ enum LumenScreenCaptureDisplayReadiness {
     private static func resolveHandle(
         context: LumenDisplayReadinessContext,
         authority: LumenScreenCaptureDisplayAuthority,
+        timing: LumenScreenCaptureDisplayReadinessTiming,
         readiness: @escaping @Sendable () async -> LumenCaptureDisplayReadinessSnapshot
     ) async throws -> LumenScreenCaptureDisplayHandle {
         try await LumenScreenCaptureDisplayResolver.resolve(
             displayID: context.displayID,
             authority: authority,
-            timing: .production,
+            timing: timing,
             queryBudget: productionQueryBudget,
             environment: .init(
                 now: {

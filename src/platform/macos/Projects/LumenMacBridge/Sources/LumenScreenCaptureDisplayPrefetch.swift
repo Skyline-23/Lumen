@@ -31,12 +31,16 @@ enum LumenScreenCaptureDisplayPrefetch {
         category: "ScreenCaptureStartup"
     )
 
-    static func prepare(displayID: UInt32) async throws {
+    static func prepare(
+        displayID: UInt32,
+        timing: LumenScreenCaptureDisplayReadinessTiming = .production
+    ) async throws {
         let context = try await beginPrefetch(displayID: displayID)
         do {
             let handle = try await LumenScreenCaptureDisplayReadiness.resolveOwned(
                 displayID: displayID,
-                expectedOwner: context.owner
+                expectedOwner: context.owner,
+                timing: timing
             )
             try Task.checkCancellation()
             let completedAt = DispatchTime.now().uptimeNanoseconds
@@ -49,7 +53,10 @@ enum LumenScreenCaptureDisplayPrefetch {
                     handle: handle,
                     owner: context.owner
                 ),
-                expiresAt: prefetchExpiration(after: completedAt)
+                expiresAt: prefetchExpiration(
+                    after: completedAt,
+                    timing: timing
+                )
             )
             logPrefetch(
                 stage: "display-prefetch-ready",
@@ -151,22 +158,6 @@ enum LumenScreenCaptureDisplayPrefetch {
             )
             return nil
         }
-        let authority = LumenScreenCaptureDisplayAuthority.retained(
-            ownerToken: ownerToken
-        )
-        let after = LumenScreenCaptureDisplayReadiness.snapshot(
-            displayID: displayID,
-            owner: prepared.owner
-        )
-        guard after.ownerToken == ownerToken,
-              after.isPreparedHandleReady(for: authority) else {
-            logPrefetchRejection(
-                displayID: displayID,
-                ownerToken: ownerToken,
-                reason: "post-take-validation-failed"
-            )
-            return nil
-        }
         return LumenResolvedDisplayPrefetch(
             prepared: prepared,
             ownerToken: ownerToken,
@@ -177,37 +168,25 @@ enum LumenScreenCaptureDisplayPrefetch {
     private static func validatedOwnerToken(
         displayID: UInt32
     ) async -> UInt? {
-        let snapshot = LumenScreenCaptureDisplayReadiness.snapshot(
-            displayID: displayID
-        )
-        guard let ownerToken = snapshot.ownerToken else {
+        guard let owner = await expectedOwners.owner(displayID: displayID),
+              owner.isCurrent(displayID: displayID) else {
             await preparedDisplays.discard(displayID: displayID)
             logPrefetchRejection(
                 displayID: displayID,
-                reason: "owner-or-mode-not-ready"
+                reason: "owner-not-current"
             )
             return nil
         }
-        let authority = LumenScreenCaptureDisplayAuthority.retained(
-            ownerToken: ownerToken
-        )
-        guard snapshot.isPreparedHandleReady(for: authority) else {
-            await preparedDisplays.discard(displayID: displayID)
-            logPrefetchRejection(
-                displayID: displayID,
-                reason: "owner-or-mode-not-ready"
-            )
-            return nil
-        }
-        return ownerToken
+        return owner.ownerToken
     }
 
-    private static func prefetchExpiration(after completedAt: UInt64) -> UInt64 {
+    private static func prefetchExpiration(
+        after completedAt: UInt64,
+        timing: LumenScreenCaptureDisplayReadinessTiming
+    ) -> UInt64 {
         LumenScreenCaptureDisplayResolver.addingClamped(
             completedAt,
-            LumenScreenCaptureDisplayReadinessTiming
-                .production
-                .overallDeadlineNanoseconds
+            timing.overallDeadlineNanoseconds
         )
     }
 

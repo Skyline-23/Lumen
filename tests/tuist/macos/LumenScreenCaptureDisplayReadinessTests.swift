@@ -2,6 +2,20 @@ import XCTest
 @testable import LumenMacBridge
 
 final class LumenScreenCaptureDisplayReadinessTests: XCTestCase {
+    func testActiveReconfigurationUsesPromptAdmissionDeadline() {
+        XCTAssertEqual(
+            LumenScreenCaptureDisplayReadinessTiming.reconfiguration
+                .overallDeadlineNanoseconds,
+            3_000_000_000
+        )
+        XCTAssertLessThan(
+            LumenScreenCaptureDisplayReadinessTiming.reconfiguration
+                .overallDeadlineNanoseconds,
+            LumenScreenCaptureDisplayReadinessTiming.production
+                .overallDeadlineNanoseconds
+        )
+    }
+
     func testProductionQueryOrderWaitsForCompletionBeforeNextGeneration() async throws {
         let clock = DisplayReadinessVirtualClock()
         let queries = DisplayReadinessQueryControl<UInt32>()

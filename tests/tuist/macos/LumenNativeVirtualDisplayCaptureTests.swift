@@ -120,7 +120,10 @@ private extension LumenNativeVirtualDisplayCaptureTests {
         let key = "direct-screen-capture-admission-v2"
         let configuration = makeAdmissionConfiguration(key: key)
         let physicalMainDisplayID = CGMainDisplayID()
-        let workspace = LumenMacDisplayWorkspace()
+        let workspace = LumenMacDisplayWorkspace(
+            displayReconfigurationObserver:
+                LumenCoreGraphicsDisplayReconfigurationObserver()
+        )
         let physicalTopology = try await workspace.snapshotWorkspace(
             targetProcessIdentifiers: []
         )
