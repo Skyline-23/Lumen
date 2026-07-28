@@ -536,10 +536,9 @@ impl ControlRouter {
             return Err(NativeMediaFeedbackRejection::SessionInactive);
         }
         if feedback.window_milliseconds < NATIVE_MEDIA_FEEDBACK_WINDOW_MILLISECONDS
-            || feedback
+            || !feedback
                 .window_milliseconds
-                .checked_rem(NATIVE_MEDIA_FEEDBACK_WINDOW_MILLISECONDS)
-                != Some(0)
+                .is_multiple_of(NATIVE_MEDIA_FEEDBACK_WINDOW_MILLISECONDS)
         {
             return Err(NativeMediaFeedbackRejection::WindowDurationMismatch);
         }
