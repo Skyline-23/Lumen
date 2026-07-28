@@ -2,20 +2,20 @@
 
 This runbook covers signed macOS and Windows releases, GitHub Release
 publication, and Homebrew cask updates. The `develop` branch only runs tests;
-public distribution starts only from a push to `main`.
+public distribution starts only from an immutable release tag.
 
 ## Release topology
 
 | Trigger | Output | Signing | Publication |
 | --- | --- | --- | --- |
 | Push or pull request to `develop` | Rust tests and lint, macOS Tuist tests, Windows compile check | None | None |
-| Push to `main` with a new stable product version | macOS DMG and Windows NSIS installer | Developer ID + notarization, Authenticode + timestamp | Version tag, GitHub Release, then `Skyline-23/homebrew-lumen` |
+| Push `v<version>-beta.N` | macOS DMG and Windows NSIS installer | Developer ID + notarization, Authenticode + timestamp | GitHub Pre-release; no Homebrew update |
+| Push `v<version>` | macOS DMG and Windows NSIS installer | Developer ID + notarization, Authenticode + timestamp | GitHub Release, then `Skyline-23/homebrew-lumen` |
 
 Both `engine/lumen-engine/Cargo.toml` and `engine/lumen-host/Cargo.toml` are the
-release version authority. Their `[package].version` values must match each
-other and use stable semantic versioning. A push to `main` derives tag
-`v<version>`, rejects an already released version, and creates the tag at the
-triggering `main` commit only after both signed packages succeed.
+product version authority. Their `[package].version` values must match each
+other and use stable semantic versioning. Tags must use `v<version>` or
+`v<version>-beta.N`; the numeric prefix must match the product version.
 
 The release order is:
 
@@ -39,6 +39,7 @@ succeed.
 | macOS release architecture | `arm64` |
 | Windows release architecture | `x86_64` |
 | Stable tag format | `v<major>.<minor>.<patch>` |
+| Beta tag format | `v<major>.<minor>.<patch>-beta.<number>` |
 | Release version source | Matching Rust product crate package versions |
 
 Do not put passwords, private keys, certificate payloads, or API-key contents
@@ -184,9 +185,21 @@ git rev-parse "v${VERSION}"
 The final two commands should report that the proposed version does not exist.
 If `HEAD` differs from `origin/develop`, stop and reconcile the branch first.
 
-## Publish a release
+## Publish a beta
 
-Merge the reviewed `develop` commit into `main` and push it:
+Merge the reviewed feature commit into `develop`, verify CI, and tag that exact
+commit. Beta tags never update Homebrew.
+
+```bash
+git switch develop
+git pull --ff-only origin develop
+git tag -a "v${VERSION}-beta.1" -m "Lumen v${VERSION}-beta.1"
+git push origin "v${VERSION}-beta.1"
+```
+
+## Publish a stable release
+
+Merge the reviewed `develop` commit into `main`, then create the intended tag:
 
 ```bash
 git switch main
@@ -194,12 +207,13 @@ git pull --ff-only origin main
 git merge --no-ff develop
 git status --short
 git push origin main
+git tag -a "v${VERSION}" -m "Lumen v${VERSION}"
+git push origin "v${VERSION}"
 ```
 
-The `main` push starts the release workflow. The workflow rejects mismatched,
-non-stable, or already tagged Rust crate versions. After macOS and Windows
-packages succeed, it creates `v${VERSION}` at the triggering `main` commit,
-publishes the GitHub Release, and updates Homebrew.
+The tag push starts the release workflow. Beta tags publish a GitHub
+Pre-release and skip Homebrew; stable tags publish a normal GitHub Release and
+update Homebrew after both signed packages succeed.
 
 Monitor the release:
 

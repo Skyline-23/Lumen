@@ -2,7 +2,8 @@ name: Release
 
 on:
   push:
-    branches: [main]
+    tags:
+      - "v*"
 
 permissions:
   contents: read
@@ -17,7 +18,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.version.outputs.tag }}
-      version: ${{ steps.version.outputs.version }}
+      product_version: ${{ steps.version.outputs.product_version }}
+      release_version: ${{ steps.version.outputs.release_version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -26,23 +29,31 @@ jobs:
         id: version
         shell: bash
         run: |
+          tag="${GITHUB_REF_NAME}"
+          [[ "${tag}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)(-beta\.([1-9][0-9]*))?$ ]] || {
+            echo "Release tag must use v1.2.3 or v1.2.3-beta.N: ${tag}" >&2
+            exit 1
+          }
+          product_version="${BASH_REMATCH[1]}"
+          release_version="${tag#v}"
+          prerelease=false
+          [[ -z "${BASH_REMATCH[2]}" ]] || prerelease=true
           engine_version="$(python3 -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["package"]["version"])' engine/lumen-engine/Cargo.toml)"
           host_version="$(python3 -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["package"]["version"])' engine/lumen-host/Cargo.toml)"
           [[ "${engine_version}" == "${host_version}" ]] || {
             echo "Lumen crate versions must match: engine=${engine_version}, host=${host_version}" >&2
             exit 1
           }
-          [[ "${host_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
-            echo "Lumen version must use stable semantic versioning: ${host_version}" >&2
+          [[ "${host_version}" == "${product_version}" ]] || {
+            echo "Release tag ${tag} does not match product version ${host_version}" >&2
             exit 1
           }
-          tag="v${host_version}"
-          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
-            echo "Release tag ${tag} already exists. Bump both Rust product crate versions before merging to main." >&2
-            exit 1
-          fi
-          echo "version=${host_version}" >> "${GITHUB_OUTPUT}"
-          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "tag=${tag}"
+            echo "product_version=${product_version}"
+            echo "release_version=${release_version}"
+            echo "prerelease=${prerelease}"
+          } >> "${GITHUB_OUTPUT}"
 
   macos:
     name: Signed macOS package
@@ -137,14 +148,15 @@ jobs:
         env:
           LUMEN_BUILD_NUMBER: ${{ github.run_number }}
           LUMEN_OUTPUT_DIR: ${{ github.workspace }}/build/release-artifacts
-          LUMEN_VERSION: ${{ needs.prepare.outputs.version }}
+          LUMEN_PRODUCT_VERSION: ${{ needs.prepare.outputs.product_version }}
+          LUMEN_RELEASE_VERSION: ${{ needs.prepare.outputs.release_version }}
         run: |
           BUILD_ROOT="${GITHUB_WORKSPACE}/build/macos-release"
           DERIVED_DATA="${BUILD_ROOT}/DerivedData"
           STAGING_ROOT="${BUILD_ROOT}/dmg-root"
           SOURCE_APP="${DERIVED_DATA}/Build/Products/Release/Lumen.app"
           STAGED_APP="${STAGING_ROOT}/Lumen.app"
-          DMG_PATH="${LUMEN_OUTPUT_DIR}/Lumen-${LUMEN_VERSION}-macOS.dmg"
+          DMG_PATH="${LUMEN_OUTPUT_DIR}/Lumen-${LUMEN_RELEASE_VERSION}-macOS.dmg"
 
           mkdir -p "${BUILD_ROOT}" "${LUMEN_OUTPUT_DIR}" "${STAGING_ROOT}"
           CONFIGURATION=Release \
@@ -162,7 +174,7 @@ jobs:
             -derivedDataPath "${DERIVED_DATA}" \
             ARCHS=arm64 \
             ONLY_ACTIVE_ARCH=YES \
-            "MARKETING_VERSION=${LUMEN_VERSION}" \
+            "MARKETING_VERSION=${LUMEN_PRODUCT_VERSION}" \
             "CURRENT_PROJECT_VERSION=${LUMEN_BUILD_NUMBER}" \
             CODE_SIGNING_ALLOWED=YES \
             CODE_SIGN_STYLE=Manual \
@@ -244,7 +256,8 @@ jobs:
       - name: Build NSIS installer
         shell: msys2 {0}
         env:
-          LUMEN_VERSION: ${{ needs.prepare.outputs.version }}
+          LUMEN_VERSION: ${{ needs.prepare.outputs.product_version }}
+          LUMEN_ARTIFACT_VERSION: ${{ needs.prepare.outputs.release_version }}
         run: scripts/ci/build_windows_package.sh
       - name: Sign Windows installer
         shell: pwsh
@@ -286,16 +299,21 @@ jobs:
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh release create "${{ needs.prepare.outputs.tag }}" artifacts/*
-          --repo "${{ github.repository }}"
-          --target "${{ github.sha }}"
-          --generate-notes
-          --title "Lumen ${{ needs.prepare.outputs.tag }}"
+          LUMEN_PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+        run: |
+          release_flags=()
+          [[ "${LUMEN_PRERELEASE}" != "true" ]] || release_flags+=(--prerelease)
+          gh release create "${{ needs.prepare.outputs.tag }}" artifacts/* \
+            --repo "${{ github.repository }}" \
+            --target "${{ github.sha }}" \
+            --generate-notes \
+            --title "Lumen ${{ needs.prepare.outputs.tag }}" \
+            "${release_flags[@]}"
 
   homebrew:
     name: Update Homebrew tap
     needs: [prepare, publish]
+    if: needs.prepare.outputs.prerelease == 'false'
     runs-on: macos-15
     defaults:
       run:
@@ -321,8 +339,8 @@ jobs:
       - name: Render and publish cask
         run: |
           source/scripts/release/render_homebrew_cask.sh \
-            "${{ needs.prepare.outputs.version }}" \
-            artifacts/Lumen-${{ needs.prepare.outputs.version }}-macOS.dmg \
+            "${{ needs.prepare.outputs.product_version }}" \
+            artifacts/Lumen-${{ needs.prepare.outputs.release_version }}-macOS.dmg \
             homebrew-tap/Casks/lumen.rb
           cd homebrew-tap
           brew style --cask Casks/lumen.rb
@@ -333,5 +351,5 @@ jobs:
             print "Homebrew cask is already current."
             exit 0
           fi
-          git commit -m "chore: Update Lumen to ${{ needs.prepare.outputs.version }}"
+          git commit -m "chore: Update Lumen to ${{ needs.prepare.outputs.product_version }}"
           git push

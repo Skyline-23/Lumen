@@ -6,9 +6,15 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 BUILD_DIR="${LUMEN_WINDOWS_BUILD_DIR:-${REPO_ROOT}/cmake-build-release}"
 VERSION="${LUMEN_VERSION:-0.0.0}"
 VERSION="${VERSION#v}"
+ARTIFACT_VERSION="${LUMEN_ARTIFACT_VERSION:-${VERSION}}"
+ARTIFACT_VERSION="${ARTIFACT_VERSION#v}"
 
 if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "LUMEN_VERSION must use the form 1.2.3 (a leading v is allowed)." >&2
+  exit 2
+fi
+if [[ ! "${ARTIFACT_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[1-9][0-9]*)?$ ]]; then
+  echo "LUMEN_ARTIFACT_VERSION must use 1.2.3 or 1.2.3-beta.N." >&2
   exit 2
 fi
 
@@ -28,7 +34,7 @@ cpack --config "${BUILD_DIR}/CPackConfig.cmake" -G NSIS
 
 PACKAGE_DIR="${BUILD_DIR}/cpack_artifacts"
 SOURCE_PACKAGE="${PACKAGE_DIR}/Lumen.exe"
-OUTPUT_PACKAGE="${PACKAGE_DIR}/Lumen-${VERSION}-Windows-x86_64.exe"
+OUTPUT_PACKAGE="${PACKAGE_DIR}/Lumen-${ARTIFACT_VERSION}-Windows-x86_64.exe"
 [[ -f "${SOURCE_PACKAGE}" ]] || {
   echo "Windows installer was not produced at ${SOURCE_PACKAGE}" >&2
   exit 1
