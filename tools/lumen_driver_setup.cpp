@@ -1,4 +1,7 @@
 #define WIN32_LEAN_AND_MEAN
+// MinGW's SetupAPI headers require the Win32 base types to be declared first.
+// clang-format off
+#include <windows.h>
 #include <cfgmgr32.h>
 #include <cwchar>
 #include <iostream>
@@ -7,7 +10,7 @@
 #include <setupapi.h>
 #include <string>
 #include <vector>
-#include <windows.h>
+// clang-format on
 
 namespace {
   constexpr wchar_t kHardwareId[] = L"Root\\LumenIddCx";

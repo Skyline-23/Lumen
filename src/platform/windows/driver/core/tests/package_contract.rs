@@ -69,6 +69,8 @@ fn production_driver_setup_uses_only_windows_device_install_apis() {
         .expect("tools CMake project must exist");
     let packaging = fs::read_to_string(repo_root.join("cmake/packaging/windows.cmake"))
         .expect("Windows packaging project must exist");
+    let windows_header = source.find("#include <windows.h>").unwrap();
+    let setupapi_header = source.find("#include <setupapi.h>").unwrap();
 
     // Then: root-device creation, update, health, and uninstall do not depend
     // on a redistributable copy of the WDK's devcon utility.
@@ -82,6 +84,7 @@ fn production_driver_setup_uses_only_windows_device_install_apis() {
     assert!(source.contains("DiUninstallDriverW"));
     assert!(source.contains("CM_PROB_NEED_RESTART"));
     assert!(source.contains("ERROR_SUCCESS_REBOOT_REQUIRED"));
+    assert!(windows_header < setupapi_header);
     assert!(source.contains("std::wcscmp(result, L\"error\") == 0"));
     assert!(source.contains("(!reboot_required && remaining.count != 0)"));
     assert!(!source.contains("devcon"));
