@@ -130,7 +130,6 @@ fn windows_scripts_cleanup_every_failed_install_attempt() {
     assert!(test_script.contains("authorized-probes.jsonl"));
     assert!(test_script.contains("unauthorized-probes.jsonl"));
     assert!(test_script.contains("$qaSucceeded = $false"));
-    assert!(test_script.contains("if (-not $qaSucceeded -or -not $KeepInstalled)"));
     assert!(test_script.contains("Get-PfxCertificate -FilePath $certificate"));
     assert!(test_script.contains("ConvertFrom-Json"));
     assert!(test_script.contains("pnputil device query failed"));
@@ -152,7 +151,12 @@ fn windows_scripts_cleanup_every_failed_install_attempt() {
     assert!(build_try < build_certificate && build_certificate < build_finally);
     assert!(build_script.contains("Cert:\\CurrentUser\\My\\$($certificate.Thumbprint)"));
     assert!(install_script.contains("$installSucceeded = $false"));
+    assert!(install_script.contains("$installMutated = $false"));
     assert!(install_script.contains("HardwareID -Contains \"ROOT\\LumenIddCx\""));
+    assert!(install_script.contains("if ($devices.Count -eq 0)"));
+    assert!(install_script.contains("$installMutated = $true"));
+    assert!(install_script.contains("& pnputil.exe /add-driver $inf /install | Out-Host"));
+    assert!(install_script.contains("& $devcon install $inf \"Root\\LumenIddCx\" | Out-Host"));
     assert!(install_script.contains("$devconExitCode -notin @(0, 1)"));
     assert!(install_script.contains("DEVPKEY_Device_ProblemCode"));
     assert!(install_script.contains("[int]$problem.Data -eq 14"));
@@ -161,8 +165,10 @@ fn windows_scripts_cleanup_every_failed_install_attempt() {
     assert!(install_script.contains("$devices[0].Status -ne \"OK\""));
     assert!(test_script.contains("$installResult.RestartRequired"));
     assert!(test_script.contains("$installCompleted = $true"));
-    assert!(test_script.contains("$KeepInstalled -and $installCompleted"));
+    assert!(test_script.contains("$restartRequired = [bool]$installResult.RestartRequired"));
+    assert!(test_script.contains("$KeepInstalled -and $installCompleted -and $restartRequired"));
     assert!(install_script.contains("finally {"));
+    assert!(install_script.contains("if (-not $installSucceeded -and $installMutated)"));
     assert!(install_script.contains("uninstall_windows_driver.ps1"));
     assert!(uninstall.contains("HardwareID -Contains \"ROOT\\LumenIddCx\""));
 }
