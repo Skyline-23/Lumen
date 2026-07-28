@@ -40,6 +40,8 @@ fn project_lets_the_wdk_own_the_umdf_loader_entrypoint() {
         project.matches("<UMDF_VERSION_MINOR_REQUIRED>25").count(),
         2
     );
+    assert_eq!(project.matches("<UMDF_VERSION_MINOR>25").count(), 2);
+    assert!(!project.contains("<UMDF_VERSION_MINOR>33"));
     assert!(!project.contains("<EntryPointSymbol>"));
 
     let driver = fs::read_to_string(driver_root().join("shim/driver.cpp"))
