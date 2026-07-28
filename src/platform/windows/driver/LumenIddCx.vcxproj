@@ -21,7 +21,8 @@
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <DriverType>UMDF</DriverType>
     <DriverTargetPlatform>Universal</DriverTargetPlatform>
-    <PlatformToolset>v143</PlatformToolset>
+    <PlatformToolset>WindowsUserModeDriver10.0</PlatformToolset>
+    <IndirectDisplayDriver>true</IndirectDisplayDriver>
     <TargetVersion>Windows10</TargetVersion>
     <_NT_TARGET_VERSION>0x0A000005</_NT_TARGET_VERSION>
     <UMDF_VERSION_MAJOR>2</UMDF_VERSION_MAJOR>
@@ -36,7 +37,8 @@
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <DriverType>UMDF</DriverType>
     <DriverTargetPlatform>Universal</DriverTargetPlatform>
-    <PlatformToolset>v143</PlatformToolset>
+    <PlatformToolset>WindowsUserModeDriver10.0</PlatformToolset>
+    <IndirectDisplayDriver>true</IndirectDisplayDriver>
     <TargetVersion>Windows10</TargetVersion>
     <_NT_TARGET_VERSION>0x0A000005</_NT_TARGET_VERSION>
     <UMDF_VERSION_MAJOR>2</UMDF_VERSION_MAJOR>

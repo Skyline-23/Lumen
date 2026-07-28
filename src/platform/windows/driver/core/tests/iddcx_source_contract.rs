@@ -19,6 +19,19 @@ fn project_lets_the_wdk_own_the_umdf_loader_entrypoint() {
     // WUDFHost to invoke it with DllMain arguments before DriverEntry can run.
     assert!(project.contains("WdfDriverStubUm.lib"));
     assert_eq!(
+        project
+            .matches("<PlatformToolset>WindowsUserModeDriver10.0</PlatformToolset>")
+            .count(),
+        2
+    );
+    assert_eq!(
+        project
+            .matches("<IndirectDisplayDriver>true</IndirectDisplayDriver>")
+            .count(),
+        2
+    );
+    assert!(!project.contains("<PlatformToolset>v143</PlatformToolset>"));
+    assert_eq!(
         project.matches("<UMDF_VERSION_MINOR_REQUIRED>25").count(),
         2
     );
