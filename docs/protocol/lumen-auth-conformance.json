@@ -35,11 +35,16 @@
     "cookies": "forbidden",
     "basicAuthentication": "forbidden"
   },
-  "protectedRoutes": {
+  "conditionalRoutes": {
     "controlDiscoveryHost": {
       "method": "GET",
-      "path": "/api/discovery/host"
-    },
+      "path": "/api/discovery/host",
+      "withoutAuthentication": "public-host-identity",
+      "withValidDeviceAuthentication": "authenticated-host-descriptor",
+      "withInvalidDeviceAuthentication": "authentication-error"
+    }
+  },
+  "protectedRoutes": {
     "controlDiscoveryApps": {
       "method": "GET",
       "path": "/api/discovery/apps"
