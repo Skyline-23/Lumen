@@ -1,12 +1,4 @@
-import AVFoundation
-import CoreGraphics
-import CoreMedia
-import CoreVideo
-import Darwin
 import Foundation
-import ScreenCaptureKit
-import Synchronization
-import VideoToolbox
 
 private actor LumenScreenCaptureCompletedQueryStore<Value: Sendable> {
     struct Entry: @unchecked Sendable {
@@ -125,11 +117,11 @@ enum LumenScreenCaptureDisplayResolver {
             throw LumenScreenCaptureError.displayUnavailable(context.displayID)
         }
         guard let generation = try await beginQueryIfReady(context) else {
-            try await waitForRetry(
+            return try await waitForRetryOrTakeBoundary(
                 context,
+                acceptanceContext: acceptanceContext,
                 currentTime: currentTime
             )
-            return nil
         }
         let outcome = await performNextQuery(
             context,
@@ -143,11 +135,11 @@ enum LumenScreenCaptureDisplayResolver {
         ) {
             return value
         }
-        try await waitForRetry(
+        return try await waitForRetryOrTakeBoundary(
             context,
+            acceptanceContext: acceptanceContext,
             currentTime: await context.environment.now()
         )
-        return nil
     }
 
     static func addingClamped(_ lhs: UInt64, _ rhs: UInt64) -> UInt64 {
@@ -245,11 +237,18 @@ extension LumenScreenCaptureDisplayResolver {
         return snapshot.isModeReady(for: authority)
     }
 
-    private static func waitForRetry<Value: Sendable>(
+    private static func waitForRetryOrTakeBoundary<Value: Sendable>(
         _ context: ResolutionContext<Value>,
+        acceptanceContext: AcceptanceContext<Value>,
         currentTime: UInt64
-    ) async throws {
+    ) async throws -> Value? {
         guard currentTime < context.overallDeadline else {
+            if let value = try await takeBoundaryValue(
+                context,
+                acceptanceContext: acceptanceContext
+            ) {
+                return value
+            }
             throw LumenScreenCaptureError.displayUnavailable(
                 context.displayID
             )
@@ -263,6 +262,7 @@ extension LumenScreenCaptureDisplayResolver {
                 context.overallDeadline
             )
         )
+        return nil
     }
 
     private static func acceptedValue<Value: Sendable>(

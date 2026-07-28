@@ -2,6 +2,59 @@ import XCTest
 @testable import LumenMacBridge
 
 final class LumenScreenCaptureCallbackBoundaryTests: XCTestCase {
+    func testFinalQueryHandoffIsDrainedBeforeRetryDeadlineRejection() async throws {
+        let clock = DisplayReadinessRetryBoundaryNowControl()
+        let queries = DisplayReadinessQueryControl<UInt32>()
+        let budget = LumenScreenCaptureQueryBudget(maximumOutstandingQueries: 1)
+        let task = Task.detached { @Sendable in
+            try await LumenScreenCaptureDisplayResolver.resolve(
+                displayID: 22,
+                authority: .retained(ownerToken: 7),
+                timing: .init(
+                    overallDeadlineNanoseconds: 10,
+                    queryTimeoutNanoseconds: 5,
+                    retryDelayNanoseconds: 1,
+                    maximumOutstandingQueries: 1
+                ),
+                queryBudget: budget,
+                environment: .init(
+                    now: { await clock.now() },
+                    sleepUntil: { _ in },
+                    readiness: {
+                        .init(
+                            ownerToken: 7,
+                            isOnline: true,
+                            isActive: true,
+                            hasCurrentMode: true
+                        )
+                    },
+                    stampedLookup: { generation in
+                        let value = await queries.lookup(generation: generation)
+                        return LumenScreenCaptureQueryCompletion(
+                            value: value,
+                            completedAtNanoseconds: 5
+                        )
+                    }
+                )
+            )
+        }
+        defer { task.cancel() }
+
+        try await queries.waitForQuery(generation: 1)
+        try await clock.waitUntilRetryBoundaryCheckIsBlocked()
+        await queries.complete(generation: 1, value: 22)
+        try await waitForDisplayReadinessCondition("final query handoff") {
+            await budget.outstandingCount() == 0
+        }
+
+        // The resolver has already observed the overall deadline for its
+        // retry decision. It must drain the on-time callback handoff before
+        // rejecting the display at that boundary.
+        await clock.releaseRetryBoundaryCheck()
+        let resolved = try await task.value
+        XCTAssertEqual(resolved, 22)
+    }
+
     func testQueryDeadlineCallbackSurvivesTimeoutWinningRace() async throws {
         let clock = DisplayReadinessBoundaryNowControl()
         let queries = DisplayReadinessQueryControl<UInt32>()
@@ -106,6 +159,34 @@ final class LumenScreenCaptureCallbackBoundaryTests: XCTestCase {
         await clock.releaseBoundaryCheck()
         let resolved = try await task.value
         XCTAssertEqual(resolved, 22)
+    }
+}
+
+private actor DisplayReadinessRetryBoundaryNowControl {
+    private var calls = 0
+    private var retryBoundaryCheckIsBlocked = false
+    private var retryBoundaryContinuation: CheckedContinuation<Void, Never>?
+
+    func now() async -> UInt64 {
+        calls += 1
+        if calls == 3 {
+            retryBoundaryCheckIsBlocked = true
+            await withCheckedContinuation { continuation in
+                retryBoundaryContinuation = continuation
+            }
+        }
+        return calls < 3 ? 0 : 10
+    }
+
+    func waitUntilRetryBoundaryCheckIsBlocked() async throws {
+        try await waitForDisplayReadinessCondition("retry deadline boundary check") {
+            await self.retryBoundaryCheckIsBlocked
+        }
+    }
+
+    func releaseRetryBoundaryCheck() {
+        retryBoundaryContinuation?.resume()
+        retryBoundaryContinuation = nil
     }
 }
 
