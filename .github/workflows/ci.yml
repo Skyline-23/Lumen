@@ -134,3 +134,10 @@ jobs:
         run: |
           scripts/ci/build_windows_package.sh
           test -s cmake-build-release/cpack_artifacts/Lumen-0.0.0-Windows-x86_64.exe
+      - name: Upload unsigned NSIS installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: lumen-windows-unsigned-${{ github.sha }}
+          path: cmake-build-release/cpack_artifacts/Lumen-0.0.0-Windows-x86_64.exe
+          if-no-files-found: error
+          retention-days: 3
