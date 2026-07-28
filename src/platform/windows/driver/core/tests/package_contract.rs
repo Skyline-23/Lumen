@@ -52,6 +52,39 @@ fn inf_is_system_only_and_process_isolated() {
 }
 
 #[test]
+fn production_driver_setup_uses_only_windows_device_install_apis() {
+    // Given: the production helper shipped inside the Windows installer.
+    let driver = driver_root();
+    let repo_root = driver
+        .ancestors()
+        .nth(4)
+        .expect("driver must live under src/platform/windows")
+        .to_path_buf();
+    let source = fs::read_to_string(repo_root.join("tools/lumen_driver_setup.cpp"))
+        .expect("first-party driver setup source must exist");
+    let cmake = fs::read_to_string(repo_root.join("tools/CMakeLists.txt"))
+        .expect("tools CMake project must exist");
+    let packaging = fs::read_to_string(repo_root.join("cmake/packaging/windows.cmake"))
+        .expect("Windows packaging project must exist");
+
+    // Then: root-device creation, update, health, and uninstall do not depend
+    // on a redistributable copy of the WDK's devcon utility.
+    assert!(cmake.contains("add_executable(lumen-driver-setup"));
+    assert!(cmake.contains("NewDev"));
+    assert!(cmake.contains("SetupAPI"));
+    assert!(packaging.contains("install(TARGETS lumen-driver-setup"));
+    assert!(source.contains("SetupDiCreateDeviceInfoW"));
+    assert!(source.contains("SetupDiCallClassInstaller"));
+    assert!(source.contains("UpdateDriverForPlugAndPlayDevicesW"));
+    assert!(source.contains("DiUninstallDriverW"));
+    assert!(source.contains("CM_PROB_NEED_RESTART"));
+    assert!(source.contains("ERROR_SUCCESS_REBOOT_REQUIRED"));
+    assert!(source.contains("std::wcscmp(result, L\"error\") == 0"));
+    assert!(source.contains("(!reboot_required && remaining.count != 0)"));
+    assert!(!source.contains("devcon"));
+}
+
+#[test]
 fn media_io_is_direct_and_all_queues_are_fixed() {
     // Given: the shared boundary for access units, events, and overlapped reads.
     let header_path = driver_root().join("include/lumen_driver_abi.h");
