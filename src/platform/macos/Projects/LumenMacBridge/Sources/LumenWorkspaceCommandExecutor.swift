@@ -44,10 +44,16 @@ public struct LumenMacWorkspaceNativeOperations: Sendable {
         LumenMacDisplayGeometry
     ) async throws -> UInt32
     public var configureVirtualDisplay: @Sendable (UInt32, LumenMacDisplayGeometry) async throws -> Void
+    public var reconfigureVirtualDisplay: @Sendable (
+        UInt32,
+        LumenMacDisplayGeometry,
+        Double
+    ) async throws -> Void
     public var verifyVirtualDisplay: @Sendable (UInt32) async throws -> Void
     public var settleVirtualDisplayMode: @Sendable (UInt32) async throws -> Void
     public var stabilizeVirtualDisplay: @Sendable (UInt32) async throws -> Void
     public var prepareCaptureDisplay: @Sendable (UInt32) async throws -> Void
+    public var prepareReconfiguredCaptureDisplay: @Sendable (UInt32) async throws -> Void
     public var startCapture: @Sendable (UInt32) async throws -> Void
     public var stopCapture: @Sendable () async throws -> Void
     public var destroyVirtualDisplay: @Sendable (LumenMacVirtualDisplayIdentity) async throws -> Void
@@ -64,10 +70,16 @@ public struct LumenMacWorkspaceNativeOperations: Sendable {
             LumenMacDisplayGeometry
         ) async throws -> UInt32,
         configureVirtualDisplay: @escaping @Sendable (UInt32, LumenMacDisplayGeometry) async throws -> Void,
+        reconfigureVirtualDisplay: (@Sendable (
+            UInt32,
+            LumenMacDisplayGeometry,
+            Double
+        ) async throws -> Void)? = nil,
         verifyVirtualDisplay: @escaping @Sendable (UInt32) async throws -> Void,
         settleVirtualDisplayMode: @escaping @Sendable (UInt32) async throws -> Void = { _ in },
         stabilizeVirtualDisplay: @escaping @Sendable (UInt32) async throws -> Void = { _ in },
         prepareCaptureDisplay: @escaping @Sendable (UInt32) async throws -> Void = { _ in },
+        prepareReconfiguredCaptureDisplay: (@Sendable (UInt32) async throws -> Void)? = nil,
         startCapture: @escaping @Sendable (UInt32) async throws -> Void,
         stopCapture: @escaping @Sendable () async throws -> Void,
         destroyVirtualDisplay: @escaping @Sendable (
@@ -82,10 +94,18 @@ public struct LumenMacWorkspaceNativeOperations: Sendable {
     ) {
         self.createVirtualDisplay = createVirtualDisplay
         self.configureVirtualDisplay = configureVirtualDisplay
+        self.reconfigureVirtualDisplay = reconfigureVirtualDisplay ?? {
+            displayID,
+            geometry,
+            _ in
+            try await configureVirtualDisplay(displayID, geometry)
+        }
         self.verifyVirtualDisplay = verifyVirtualDisplay
         self.settleVirtualDisplayMode = settleVirtualDisplayMode
         self.stabilizeVirtualDisplay = stabilizeVirtualDisplay
         self.prepareCaptureDisplay = prepareCaptureDisplay
+        self.prepareReconfiguredCaptureDisplay =
+            prepareReconfiguredCaptureDisplay ?? prepareCaptureDisplay
         self.startCapture = startCapture
         self.stopCapture = stopCapture
         self.destroyVirtualDisplay = destroyVirtualDisplay
@@ -225,12 +245,29 @@ public actor LumenMacWorkspaceExecutor: LumenWorkspaceCommandExecuting {
         try await operations.prepareCaptureDisplay(try requireVirtualDisplay())
     }
 
+    public func prepareOwnedVirtualDisplayForReconfiguration() async throws {
+        try await operations.prepareReconfiguredCaptureDisplay(
+            try requireVirtualDisplay()
+        )
+    }
+
     public func stabilizeOwnedVirtualDisplay() async throws {
         try await operations.stabilizeVirtualDisplay(try requireVirtualDisplay())
     }
 
     public func settleOwnedVirtualDisplayMode() async throws {
         try await operations.settleVirtualDisplayMode(try requireVirtualDisplay())
+    }
+
+    public func reconfigureOwnedVirtualDisplay(
+        geometry: LumenMacDisplayGeometry,
+        refreshRate: Double
+    ) async throws {
+        try await operations.reconfigureVirtualDisplay(
+            try requireVirtualDisplay(),
+            geometry,
+            refreshRate
+        )
     }
 
     public func stageOwnedVirtualDisplayUnmirrored() async throws {

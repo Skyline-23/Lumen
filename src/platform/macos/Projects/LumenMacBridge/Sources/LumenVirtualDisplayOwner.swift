@@ -2,11 +2,17 @@ import Foundation
 
 actor LumenMacVirtualDisplayOwner {
     private let ownershipRegistry: LumenMacOwnedVirtualDisplayRegistry
+    private let reconfigurationObserver: any LumenDisplayReconfigurationObserving
     private var display: LumenMacVirtualDisplay?
     private var displayKey: String?
 
-    init(ownershipRegistry: LumenMacOwnedVirtualDisplayRegistry) {
+    init(
+        ownershipRegistry: LumenMacOwnedVirtualDisplayRegistry,
+        reconfigurationObserver: any LumenDisplayReconfigurationObserving =
+            LumenCoreGraphicsDisplayReconfigurationObserver()
+    ) {
         self.ownershipRegistry = ownershipRegistry
+        self.reconfigurationObserver = reconfigurationObserver
     }
 
     func create(
@@ -55,10 +61,67 @@ actor LumenMacVirtualDisplayOwner {
         )
     }
 
+    func reconfigure(
+        displayID: UInt32,
+        geometry: LumenMacDisplayGeometry,
+        refreshRate: Double
+    ) async throws {
+        var generation = await reconfigurationObserver.generation(
+            for: displayID
+        )
+        try await configure(
+            displayID: displayID,
+            geometry: geometry,
+            refreshRate: refreshRate
+        )
+        let owner = try retainedOwner(for: displayID)
+        let deadline = DispatchTime.now().uptimeNanoseconds + 2_000_000_000
+        while true {
+            let now = DispatchTime.now().uptimeNanoseconds
+            guard now < deadline else {
+                throw LumenMacWorkspaceSessionError
+                    .virtualDisplayModeSettlementUnavailable(displayID)
+            }
+            do {
+                try await reconfigurationObserver.waitForPostChange(
+                    displayID: displayID,
+                    after: generation,
+                    timeoutNanoseconds: deadline - now
+                )
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                throw LumenMacWorkspaceSessionError
+                    .virtualDisplayModeSettlementUnavailable(displayID)
+            }
+            generation = await reconfigurationObserver.generation(
+                for: displayID
+            )
+            let snapshot = LumenScreenCaptureDisplayReadiness.snapshot(
+                displayID: displayID,
+                owner: owner
+            )
+            if snapshot.isModeReady(
+                for: .retained(ownerToken: owner.ownerToken)
+            ) {
+                return
+            }
+        }
+    }
+
     func awaitCapturePreparation(displayID: UInt32) async throws {
         _ = try retainedOwner(for: displayID)
         try await LumenScreenCaptureDisplayPrefetch.prepare(
             displayID: displayID
+        )
+        try verify(displayID: displayID)
+    }
+
+    func awaitReconfiguredCapturePreparation(displayID: UInt32) async throws {
+        _ = try retainedOwner(for: displayID)
+        try await LumenScreenCaptureDisplayPrefetch.prepare(
+            displayID: displayID,
+            timing: .reconfiguration
         )
         try verify(displayID: displayID)
     }

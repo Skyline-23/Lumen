@@ -37,6 +37,33 @@ func runDesktopMirrorPreparation(
     return await context.recorder.recordedEvents()
 }
 
+func runDesktopMirrorReconfiguration() async throws -> [WorkspaceExecutionEvent] {
+    let context = try makeDesktopMirrorPreparationContext(
+        managesCapture: true,
+        policy: .isolatedWorkspace,
+        captureAdmissionOutcome: .success
+    )
+    try await context.session.prepare()
+    let replacement = LumenMacWorkspaceSessionRequest(
+        displayKey: context.request.displayKey,
+        policy: context.request.policy,
+        contentSource: context.request.contentSource,
+        displayMode: LumenMacDisplayModeRequest(
+            width: 800,
+            height: 450,
+            scalePercent: 100,
+            dimensionsAreLogical: false
+        ),
+        refreshRate: context.request.refreshRate,
+        managesCapture: context.request.managesCapture,
+        captureConfiguration: context.request.captureConfiguration
+    )
+    try await context.session.reconfigure(replacement)
+    let events = await context.recorder.recordedEvents()
+    try await context.session.stop()
+    return events
+}
+
 private func makeDesktopMirrorPreparationContext(
     managesCapture: Bool,
     policy: LumenMacWorkspacePolicy,
@@ -91,6 +118,14 @@ private func makeDesktopMirrorOperations(
             await recorder.append(.stabilize(displayID))
         },
         prepareCaptureDisplay: { displayID in
+            await recorder.append(.prepareCapture(displayID))
+            try await performDesktopMirrorCaptureAdmission(
+                outcome: outcome,
+                cancellationSuspension: cancellationSuspension
+            )
+            await recorder.append(.capturePrepared(displayID))
+        },
+        prepareReconfiguredCaptureDisplay: { displayID in
             await recorder.append(.prepareCapture(displayID))
             try await performDesktopMirrorCaptureAdmission(
                 outcome: outcome,

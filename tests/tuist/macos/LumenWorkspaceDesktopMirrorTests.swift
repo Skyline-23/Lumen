@@ -38,6 +38,43 @@ final class LumenWorkspaceDesktopMirrorTests: XCTestCase {
         }
     }
 
+    func testDesktopMirrorReconfigurationStagesExactSourceBeforeModeCommitAndRemirror() async throws {
+        let events = try await runDesktopMirrorReconfiguration()
+        let stageIndices = events.indices.filter {
+            events[$0] == .prepareDesktopMirror(89, 3)
+        }
+        let configureIndices = events.indices.filter {
+            if case .configure(89, _) = events[$0] { return true }
+            return false
+        }
+        let prefetchIndices = events.indices.filter {
+            events[$0] == .prepareCapture(89)
+        }
+        let captureReadyIndices = events.indices.filter {
+            events[$0] == .capturePrepared(89)
+        }
+        let mirrorIndices = events.indices.filter {
+            events[$0] == .mirror(89, 3)
+        }
+
+        XCTAssertEqual(stageIndices.count, 2)
+        XCTAssertEqual(configureIndices.count, 2)
+        XCTAssertEqual(prefetchIndices.count, 2)
+        XCTAssertEqual(captureReadyIndices.count, 2)
+        XCTAssertEqual(mirrorIndices.count, 2)
+        let reconfigurationStage = try XCTUnwrap(stageIndices.last)
+        let reconfigurationConfigure = try XCTUnwrap(configureIndices.last)
+        let reconfigurationPrefetch = try XCTUnwrap(prefetchIndices.last)
+        let reconfigurationCaptureReady = try XCTUnwrap(captureReadyIndices.last)
+        let reconfigurationMirror = try XCTUnwrap(mirrorIndices.last)
+        XCTAssertLessThan(reconfigurationStage, reconfigurationConfigure)
+        XCTAssertLessThan(reconfigurationConfigure, reconfigurationPrefetch)
+        XCTAssertLessThan(reconfigurationPrefetch, reconfigurationCaptureReady)
+        XCTAssertLessThan(reconfigurationCaptureReady, reconfigurationMirror)
+        XCTAssertFalse(events.contains(.settle(89)))
+        XCTAssertFalse(events.contains(.stabilize(89)))
+    }
+
 }
 
 private extension LumenWorkspaceDesktopMirrorTests {

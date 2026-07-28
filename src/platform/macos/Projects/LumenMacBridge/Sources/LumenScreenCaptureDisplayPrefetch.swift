@@ -31,12 +31,16 @@ enum LumenScreenCaptureDisplayPrefetch {
         category: "ScreenCaptureStartup"
     )
 
-    static func prepare(displayID: UInt32) async throws {
+    static func prepare(
+        displayID: UInt32,
+        timing: LumenScreenCaptureDisplayReadinessTiming = .production
+    ) async throws {
         let context = try await beginPrefetch(displayID: displayID)
         do {
             let handle = try await LumenScreenCaptureDisplayReadiness.resolveOwned(
                 displayID: displayID,
-                expectedOwner: context.owner
+                expectedOwner: context.owner,
+                timing: timing
             )
             try Task.checkCancellation()
             let completedAt = DispatchTime.now().uptimeNanoseconds
@@ -49,7 +53,10 @@ enum LumenScreenCaptureDisplayPrefetch {
                     handle: handle,
                     owner: context.owner
                 ),
-                expiresAt: prefetchExpiration(after: completedAt)
+                expiresAt: prefetchExpiration(
+                    after: completedAt,
+                    timing: timing
+                )
             )
             logPrefetch(
                 stage: "display-prefetch-ready",
@@ -173,12 +180,13 @@ enum LumenScreenCaptureDisplayPrefetch {
         return owner.ownerToken
     }
 
-    private static func prefetchExpiration(after completedAt: UInt64) -> UInt64 {
+    private static func prefetchExpiration(
+        after completedAt: UInt64,
+        timing: LumenScreenCaptureDisplayReadinessTiming
+    ) -> UInt64 {
         LumenScreenCaptureDisplayResolver.addingClamped(
             completedAt,
-            LumenScreenCaptureDisplayReadinessTiming
-                .production
-                .overallDeadlineNanoseconds
+            timing.overallDeadlineNanoseconds
         )
     }
 

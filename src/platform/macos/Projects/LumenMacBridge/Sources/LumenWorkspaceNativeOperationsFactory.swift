@@ -17,10 +17,12 @@ struct LumenWorkspaceNativeOperationsFactory: Sendable {
         LumenMacWorkspaceNativeOperations(
             createVirtualDisplay: createVirtualDisplay,
             configureVirtualDisplay: configureVirtualDisplay,
+            reconfigureVirtualDisplay: reconfigureVirtualDisplay,
             verifyVirtualDisplay: verifyVirtualDisplay,
             settleVirtualDisplayMode: settleVirtualDisplayMode,
             stabilizeVirtualDisplay: stabilizeVirtualDisplay,
             prepareCaptureDisplay: prepareCaptureDisplay,
+            prepareReconfiguredCaptureDisplay: prepareReconfiguredCaptureDisplay,
             startCapture: startCapture,
             stopCapture: stopCapture,
             destroyVirtualDisplay: destroyVirtualDisplay,
@@ -52,6 +54,18 @@ struct LumenWorkspaceNativeOperationsFactory: Sendable {
         )
     }
 
+    private func reconfigureVirtualDisplay(
+        displayID: UInt32,
+        geometry: LumenMacDisplayGeometry,
+        refreshRate: Double
+    ) async throws {
+        try await displayOwner.reconfigure(
+            displayID: displayID,
+            geometry: geometry,
+            refreshRate: refreshRate
+        )
+    }
+
     private func verifyVirtualDisplay(displayID: UInt32) async throws {
         try await displayOwner.verify(displayID: displayID)
     }
@@ -66,6 +80,14 @@ struct LumenWorkspaceNativeOperationsFactory: Sendable {
 
     private func prepareCaptureDisplay(displayID: UInt32) async throws {
         try await displayOwner.awaitCapturePreparation(displayID: displayID)
+    }
+
+    private func prepareReconfiguredCaptureDisplay(
+        displayID: UInt32
+    ) async throws {
+        try await displayOwner.awaitReconfiguredCapturePreparation(
+            displayID: displayID
+        )
     }
 
     private func startCapture(displayID: UInt32) async throws {
