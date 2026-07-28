@@ -27,10 +27,6 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-            build/rust-target
-            ~/.cache/tuist
-            ~/Library/Caches/org.swift.swiftpm
-            ~/Library/Developer/Xcode/DerivedData/SourcePackages
           key: lumen-rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             lumen-rust-${{ runner.os }}-${{ runner.arch }}-
@@ -47,6 +43,9 @@ jobs:
   macos:
     name: macOS tests
     runs-on: macos-26
+    env:
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
     steps:
       - uses: actions/checkout@v7
         with:
@@ -56,14 +55,13 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            build/rust-target
-            ~/.cache/tuist
-            ~/Library/Caches/org.swift.swiftpm
-            ~/Library/Developer/Xcode/DerivedData/Lumen-*
-            ~/Library/Developer/Xcode/DerivedData/SourcePackages
-          key: lumen-macos-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'src/platform/macos/Project.swift') }}
+            build/rust-target/arm64/debug
+            build/rust-target/arm64/aarch64-apple-darwin/debug
+            ~/Library/Developer/Xcode/DerivedData/Lumen-*/Build
+            ~/Library/Developer/Xcode/DerivedData/Lumen-*/SourcePackages
+          key: lumen-macos-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'src/platform/macos/Project.swift') }}
           restore-keys: |
-            lumen-macos-${{ runner.os }}-${{ runner.arch }}-
+            lumen-macos-v1-${{ runner.os }}-${{ runner.arch }}-
       - name: Install build tools
         run: |
           rustup toolchain install stable --profile minimal
