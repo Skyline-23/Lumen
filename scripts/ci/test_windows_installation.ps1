@@ -2,7 +2,7 @@
 param(
     [string]$InstallDirectory = "${env:ProgramFiles}\Lumen",
     [ValidateRange(1029, 65515)]
-    [int]$BasePort = 47989
+    [int]$BasePort = 48989
 )
 
 $ErrorActionPreference = "Stop"
