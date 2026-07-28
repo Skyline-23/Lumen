@@ -54,9 +54,11 @@ extension LumenScreenCaptureVideoRuntime {
 
         guard isCompleteScreenFrame(sampleBuffer) else {
             statistics.droppedFrameCount &+= 1
+            statistics.incompleteSourceFrameCount &+= 1
             refreshStatisticsNotesIfNeeded()
             return
         }
+        statistics.completeSourceFrameCount &+= 1
 
         let source = makePendingSource(
             imageBuffer: imageBuffer,
