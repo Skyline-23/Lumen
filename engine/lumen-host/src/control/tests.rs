@@ -1327,6 +1327,54 @@ fn media_feedback_requires_one_sample_per_stream_in_each_exact_window() {
 }
 
 #[test]
+fn media_feedback_accepts_a_coalesced_wall_clock_window() {
+    let platform = Arc::new(RecordingPlatformSessionControl::default());
+    let (_root, mut router, context, plan) = started_native_router(platform);
+    let video = MediaFeedback {
+        stream_id: plan.video_stream_id,
+        received_datagrams: 6,
+        first_datagram_sequence: 1,
+        highest_datagram_sequence: 6,
+        window_milliseconds: 750,
+        feedback_window_id: 1,
+        ..MediaFeedback::default()
+    };
+    let audio = MediaFeedback {
+        stream_id: plan.audio_stream_id,
+        received_datagrams: 3,
+        first_datagram_sequence: 1,
+        highest_datagram_sequence: 3,
+        window_milliseconds: 750,
+        feedback_window_id: 1,
+        ..MediaFeedback::default()
+    };
+
+    assert_eq!(
+        router
+            .observe_native_media_feedback(&video, context.session_epoch)
+            .unwrap(),
+        NativeMediaFeedbackDisposition::Unchanged
+    );
+    assert_eq!(
+        router
+            .observe_native_media_feedback(&audio, context.session_epoch)
+            .unwrap(),
+        NativeMediaFeedbackDisposition::Unchanged
+    );
+
+    let fractional_window = MediaFeedback {
+        stream_id: plan.video_stream_id,
+        window_milliseconds: 251,
+        feedback_window_id: 2,
+        ..MediaFeedback::default()
+    };
+    assert_eq!(
+        router.observe_native_media_feedback(&fractional_window, context.session_epoch),
+        Err(NativeMediaFeedbackRejection::WindowDurationMismatch)
+    );
+}
+
+#[test]
 fn processing_only_media_feedback_has_no_phantom_datagram_loss() {
     let processing_only = MediaFeedback {
         stream_id: 1,
