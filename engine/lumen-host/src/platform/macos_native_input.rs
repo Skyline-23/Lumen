@@ -213,6 +213,12 @@ pub(crate) struct MacInputDisplayBounds {
     pub(crate) height: f64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct MacInputCaptureViewport {
+    pub(crate) width: f64,
+    pub(crate) height: f64,
+}
+
 impl MacInputDisplayBounds {
     fn rect(self) -> Option<CGRect> {
         (self.width > 0.0 && self.height > 0.0).then(|| {
@@ -326,6 +332,7 @@ impl MacNativeInput {
         session_epoch: u32,
         display_id: u32,
         planned_bounds: Option<MacInputDisplayBounds>,
+        capture_viewport: Option<MacInputCaptureViewport>,
         event: PlatformNativeMotionEvent,
     ) -> Result<(), String> {
         let mut states = self
@@ -344,6 +351,7 @@ impl MacNativeInput {
             } => post_pointer_motion(
                 display_id,
                 planned_bounds,
+                capture_viewport,
                 state,
                 MacPointerMotionInput {
                     mode,
@@ -406,6 +414,7 @@ impl MacNativeInput {
         session_epoch: u32,
         display_id: u32,
         planned_bounds: Option<MacInputDisplayBounds>,
+        capture_viewport: Option<MacInputCaptureViewport>,
         pointer_id: u32,
         button: u8,
         pressed: bool,
@@ -420,6 +429,7 @@ impl MacNativeInput {
         let location = post_pointer_motion(
             display_id,
             planned_bounds,
+            capture_viewport,
             state,
             MacPointerMotionInput {
                 mode: NativePointerMotionMode::Absolute,
@@ -558,6 +568,7 @@ fn mac_scroll_phases(phase: NativeScrollPhase) -> (i64, i64) {
 fn post_pointer_motion(
     display_id: u32,
     planned_bounds: Option<MacInputDisplayBounds>,
+    capture_viewport: Option<MacInputCaptureViewport>,
     state: &MacInputState,
     input: MacPointerMotionInput,
 ) -> Result<CGPoint, String> {
@@ -570,6 +581,27 @@ fn post_pointer_motion(
         CGDisplay::new(display_id).bounds(),
         planned_bounds,
     )?;
+    let input = if input.mode == NativePointerMotionMode::Absolute {
+        capture_viewport
+            .and_then(|viewport| {
+                let display = CGDisplay::new(display_id);
+                remap_preserved_capture_position(
+                    input.normalized_x,
+                    input.normalized_y,
+                    CGSize::new(display.pixels_wide() as f64, display.pixels_high() as f64),
+                    CGSize::new(viewport.width, viewport.height),
+                )
+            })
+            .map_or(input, |(normalized_x, normalized_y)| {
+                MacPointerMotionInput {
+                    normalized_x,
+                    normalized_y,
+                    ..input
+                }
+            })
+    } else {
+        input
+    };
     let target = pointer_target(
         current,
         bounds,
@@ -586,6 +618,36 @@ fn post_pointer_motion(
     event.set_integer_value_field(EventField::MOUSE_EVENT_DELTA_Y, i64::from(input.delta_y));
     event.post(CGEventTapLocation::HID);
     Ok(target)
+}
+
+fn remap_preserved_capture_position(
+    normalized_x: f32,
+    normalized_y: f32,
+    source_size: CGSize,
+    output_size: CGSize,
+) -> Option<(f32, f32)> {
+    if source_size.width <= 0.0
+        || source_size.height <= 0.0
+        || output_size.width <= 1.0
+        || output_size.height <= 1.0
+    {
+        return None;
+    }
+
+    // Lumen configures ScreenCaptureKit with preservesAspectRatio=true and
+    // scalesToFit=false. The source can scale down, but it is never enlarged.
+    let scale = 1.0_f64
+        .min(output_size.width / source_size.width)
+        .min(output_size.height / source_size.height);
+    let content_width = source_size.width * scale;
+    let content_height = source_size.height * scale;
+    let origin_x = (output_size.width - content_width) * 0.5;
+    let origin_y = (output_size.height - content_height) * 0.5;
+    let output_x = f64::from(normalized_x) * (output_size.width - 1.0);
+    let output_y = f64::from(normalized_y) * (output_size.height - 1.0);
+    let mapped_x = ((output_x - origin_x) / (content_width - 1.0)).clamp(0.0, 1.0);
+    let mapped_y = ((output_y - origin_y) / (content_height - 1.0)).clamp(0.0, 1.0);
+    Some((mapped_x as f32, mapped_y as f32))
 }
 
 fn preferred_pointer_bounds(
@@ -1553,6 +1615,45 @@ mod tests {
         .expect("absolute target");
         assert_eq!(absolute.x, 2339.0);
         assert_eq!(absolute.y, 1611.0);
+    }
+
+    #[test]
+    fn preserved_physical_capture_viewport_remaps_absolute_pointer_position() {
+        let source = CGSize::new(2560.0, 1440.0);
+        let output = CGSize::new(3600.0, 2260.0);
+        let left = 520.0 / 3599.0;
+        let top = 410.0 / 2259.0;
+        let right = 3079.0 / 3599.0;
+        let bottom = 1849.0 / 2259.0;
+
+        let top_left = remap_preserved_capture_position(left as f32, top as f32, source, output)
+            .expect("top-left mapping");
+        let bottom_right =
+            remap_preserved_capture_position(right as f32, bottom as f32, source, output)
+                .expect("bottom-right mapping");
+
+        assert!(top_left.0.abs() < 0.000_01);
+        assert!(top_left.1.abs() < 0.000_01);
+        assert!((bottom_right.0 - 1.0).abs() < 0.000_01);
+        assert!((bottom_right.1 - 1.0).abs() < 0.000_01);
+    }
+
+    #[test]
+    fn preserved_physical_capture_viewport_accounts_for_downscale_letterbox() {
+        let source = CGSize::new(2560.0, 1440.0);
+        let output = CGSize::new(1280.0, 800.0);
+        let top = 40.0 / 799.0;
+        let bottom = 759.0 / 799.0;
+
+        let top_center = remap_preserved_capture_position(0.5, top as f32, source, output)
+            .expect("top-center mapping");
+        let bottom_center = remap_preserved_capture_position(0.5, bottom as f32, source, output)
+            .expect("bottom-center mapping");
+
+        assert!((top_center.0 - 0.5).abs() < 0.001);
+        assert!(top_center.1.abs() < 0.000_01);
+        assert!((bottom_center.0 - 0.5).abs() < 0.001);
+        assert!((bottom_center.1 - 1.0).abs() < 0.000_01);
     }
 
     #[test]

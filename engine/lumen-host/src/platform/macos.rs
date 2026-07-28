@@ -16,7 +16,7 @@ use crate::{
     PlatformSessionPlan,
 };
 
-use super::macos_native_input::{MacInputDisplayBounds, MacNativeInput};
+use super::macos_native_input::{MacInputCaptureViewport, MacInputDisplayBounds, MacNativeInput};
 use super::portable_process::PortableApplication;
 
 const MAXIMUM_VIDEO_BYTES: usize = 32 * 1024 * 1024;
@@ -367,6 +367,7 @@ struct MacSessionState {
     display_id: u32,
     input_display_id: u32,
     input_display_bounds: Option<MacInputDisplayBounds>,
+    input_capture_viewport: Option<MacInputCaptureViewport>,
     desktop_mirror_source_display_id: u32,
     opus: Option<NativeOpusEncoder>,
     audio_channels: usize,
@@ -407,6 +408,7 @@ impl MacPlatformSessionControl {
                 display_id: 0,
                 input_display_id: 0,
                 input_display_bounds: None,
+                input_capture_viewport: None,
                 desktop_mirror_source_display_id: 0,
                 opus: None,
                 audio_channels: 0,
@@ -566,6 +568,7 @@ impl MacPlatformSessionControl {
         state.display_id = 0;
         state.input_display_id = 0;
         state.input_display_bounds = None;
+        state.input_capture_viewport = None;
         state.opus = None;
         state.audio_channels = 0;
         state.pcm.clear();
@@ -687,6 +690,11 @@ impl PlatformSessionControl for MacPlatformSessionControl {
             } else {
                 None
             };
+            state.input_capture_viewport =
+                (!plan.virtual_display).then_some(MacInputCaptureViewport {
+                    width: f64::from(plan.width),
+                    height: f64::from(plan.height),
+                });
             let stream = resolve_audio_stream(LumenAudioStreamRequest {
                 channels: i32::from(plan.audio_channels),
                 packet_duration_milliseconds: 5,
@@ -804,11 +812,8 @@ impl PlatformSessionControl for MacPlatformSessionControl {
         let previous = state
             .plan
             .ok_or_else(|| "macOS dynamic display has no active session plan".to_owned())?;
-        if !plan.virtual_display || !previous.virtual_display {
-            return Err(
-                "dynamic display reconfiguration requires a retained virtual display".to_owned(),
-            );
-        }
+        let reconfiguration =
+            dynamic_display_reconfiguration_mode(previous.virtual_display, plan.virtual_display)?;
         if plan.video_format != previous.video_format
             || plan.audio_channels != previous.audio_channels
             || plan.enhanced_audio_quality != previous.enhanced_audio_quality
@@ -820,37 +825,75 @@ impl PlatformSessionControl for MacPlatformSessionControl {
             );
         }
 
-        let display_id = self.reconfigure_workspace_locked(&state, plan)?;
-        if let Err(error) = self.restart_capture_pair_locked(&mut state, plan, display_id) {
-            let previous_display_id = state.display_id;
-            let rollback_display = self.reconfigure_workspace_locked(&state, previous);
-            let rollback_capture =
-                self.restart_capture_pair_locked(&mut state, previous, previous_display_id);
-            return Err(match (rollback_display, rollback_capture) {
-                (Ok(_), Ok(())) => {
-                    format!("dynamic capture reconfiguration failed and was rolled back: {error}")
+        let display_id = match reconfiguration {
+            MacDynamicDisplayReconfigurationMode::RetainedWorkspace => {
+                self.reconfigure_workspace_locked(&state, plan)?
+            }
+            MacDynamicDisplayReconfigurationMode::PhysicalCapture => {
+                if state.display_id == 0 {
+                    return Err(
+                        "macOS physical capture reconfiguration has no retained display".to_owned(),
+                    );
                 }
-                (display, capture) => format!(
-                    "dynamic capture reconfiguration failed: {error}; rollback display={display:?} capture={capture:?}"
-                ),
+                state.display_id
+            }
+        };
+        if let Err(error) = self.restart_capture_pair_locked(&mut state, plan, display_id) {
+            return Err(match reconfiguration {
+                MacDynamicDisplayReconfigurationMode::RetainedWorkspace => {
+                    let previous_display_id = state.display_id;
+                    let rollback_display = self.reconfigure_workspace_locked(&state, previous);
+                    let rollback_capture =
+                        self.restart_capture_pair_locked(&mut state, previous, previous_display_id);
+                    match (rollback_display, rollback_capture) {
+                        (Ok(_), Ok(())) => format!(
+                            "dynamic capture reconfiguration failed and was rolled back: {error}"
+                        ),
+                        (display, capture) => format!(
+                            "dynamic capture reconfiguration failed: {error}; rollback display={display:?} capture={capture:?}"
+                        ),
+                    }
+                }
+                MacDynamicDisplayReconfigurationMode::PhysicalCapture => {
+                    match self.restart_capture_pair_locked(&mut state, previous, display_id) {
+                        Ok(()) => format!(
+                            "physical capture reconfiguration failed and was rolled back: {error}"
+                        ),
+                        Err(rollback) => format!(
+                            "physical capture reconfiguration failed: {error}; rollback capture={rollback}"
+                        ),
+                    }
+                }
             });
         }
-        state.input_display_bounds = Some(
-            resolve_display_geometry(LumenDisplayModeRequest {
-                width: plan.width,
-                height: plan.height,
-                scale_percent: u32::try_from(plan.sink_scale_percent)
-                    .map_err(|_| "macOS native input display scale is invalid".to_owned())?,
-                dimensions_are_logical: plan.sink_mode_is_logical,
-            })
-            .map(|geometry| MacInputDisplayBounds {
-                width: f64::from(geometry.logical_width),
-                height: f64::from(geometry.logical_height),
-            })
-            .map_err(|status| {
-                format!("macOS native input display geometry is invalid: {status:?}")
-            })?,
-        );
+        state.input_display_bounds = match reconfiguration {
+            MacDynamicDisplayReconfigurationMode::RetainedWorkspace => Some(
+                resolve_display_geometry(LumenDisplayModeRequest {
+                    width: plan.width,
+                    height: plan.height,
+                    scale_percent: u32::try_from(plan.sink_scale_percent)
+                        .map_err(|_| "macOS native input display scale is invalid".to_owned())?,
+                    dimensions_are_logical: plan.sink_mode_is_logical,
+                })
+                .map(|geometry| MacInputDisplayBounds {
+                    width: f64::from(geometry.logical_width),
+                    height: f64::from(geometry.logical_height),
+                })
+                .map_err(|status| {
+                    format!("macOS native input display geometry is invalid: {status:?}")
+                })?,
+            ),
+            MacDynamicDisplayReconfigurationMode::PhysicalCapture => None,
+        };
+        state.input_capture_viewport = match reconfiguration {
+            MacDynamicDisplayReconfigurationMode::RetainedWorkspace => None,
+            MacDynamicDisplayReconfigurationMode::PhysicalCapture => {
+                Some(MacInputCaptureViewport {
+                    width: f64::from(plan.width),
+                    height: f64::from(plan.height),
+                })
+            }
+        };
         state.plan = Some(plan);
         Ok(())
     }
@@ -1010,12 +1053,16 @@ impl PlatformSessionControl for MacPlatformSessionControl {
             absolute_position: Some((normalized_x, normalized_y)),
         } = &event
         {
-            let (display_id, input_display_bounds) = {
+            let (display_id, input_display_bounds, input_capture_viewport) = {
                 let state = self
                     .state
                     .lock()
                     .map_err(|_| "macOS platform session state is unavailable".to_owned())?;
-                (state.input_display_id, state.input_display_bounds)
+                (
+                    state.input_display_id,
+                    state.input_display_bounds,
+                    state.input_capture_viewport,
+                )
             };
             if display_id == 0 {
                 return Err("macOS positioned pointer input has no active display".to_owned());
@@ -1024,6 +1071,7 @@ impl PlatformSessionControl for MacPlatformSessionControl {
                 session_epoch,
                 display_id,
                 input_display_bounds,
+                input_capture_viewport,
                 *pointer_id,
                 *button,
                 *pressed,
@@ -1039,18 +1087,27 @@ impl PlatformSessionControl for MacPlatformSessionControl {
         session_epoch: u32,
         event: crate::PlatformNativeMotionEvent,
     ) -> Result<(), String> {
-        let (display_id, input_display_bounds) = {
+        let (display_id, input_display_bounds, input_capture_viewport) = {
             let state = self
                 .state
                 .lock()
                 .map_err(|_| "macOS platform session state is unavailable".to_owned())?;
-            (state.input_display_id, state.input_display_bounds)
+            (
+                state.input_display_id,
+                state.input_display_bounds,
+                state.input_capture_viewport,
+            )
         };
         if display_id == 0 {
             return Err("macOS native motion has no active display".to_owned());
         }
-        self.native_input
-            .handle_motion(session_epoch, display_id, input_display_bounds, event)
+        self.native_input.handle_motion(
+            session_epoch,
+            display_id,
+            input_display_bounds,
+            input_capture_viewport,
+            event,
+        )
     }
 
     fn reset_native_input(&self, session_epoch: u32) -> Result<(), String> {
@@ -1320,6 +1377,23 @@ fn desktop_mirror_source_candidate_display_id(
         .ok_or_else(|| "macOS desktop capture has no current source display".to_owned())
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MacDynamicDisplayReconfigurationMode {
+    RetainedWorkspace,
+    PhysicalCapture,
+}
+
+fn dynamic_display_reconfiguration_mode(
+    previous_virtual_display: bool,
+    next_virtual_display: bool,
+) -> Result<MacDynamicDisplayReconfigurationMode, String> {
+    match (previous_virtual_display, next_virtual_display) {
+        (true, true) => Ok(MacDynamicDisplayReconfigurationMode::RetainedWorkspace),
+        (false, false) => Ok(MacDynamicDisplayReconfigurationMode::PhysicalCapture),
+        _ => Err("dynamic display reconfiguration cannot change the capture topology".to_owned()),
+    }
+}
+
 fn input_display_id_after_workspace_prepare(
     capture_display_id: u32,
     workspace_prepared: bool,
@@ -1555,6 +1629,7 @@ mod tests {
                 display_id: 0,
                 input_display_id: 0,
                 input_display_bounds: None,
+                input_capture_viewport: None,
                 desktop_mirror_source_display_id: 0,
                 opus: None,
                 audio_channels: 2,
@@ -1594,6 +1669,24 @@ mod tests {
             desktop_mirror_source_candidate_display_id(true, true, 0).unwrap_err(),
             "macOS desktop capture has no current source display"
         );
+    }
+
+    #[test]
+    fn dynamic_display_reconfiguration_preserves_capture_topology() {
+        assert_eq!(
+            dynamic_display_reconfiguration_mode(true, true).unwrap(),
+            MacDynamicDisplayReconfigurationMode::RetainedWorkspace
+        );
+        assert_eq!(
+            dynamic_display_reconfiguration_mode(false, false).unwrap(),
+            MacDynamicDisplayReconfigurationMode::PhysicalCapture
+        );
+        for topology in [(true, false), (false, true)] {
+            assert_eq!(
+                dynamic_display_reconfiguration_mode(topology.0, topology.1).unwrap_err(),
+                "dynamic display reconfiguration cannot change the capture topology"
+            );
+        }
     }
 
     #[test]

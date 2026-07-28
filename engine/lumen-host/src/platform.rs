@@ -758,6 +758,7 @@ impl PlatformSessionControl for CallbackPlatformSessionControl {
                 session_epoch,
                 display_id,
                 None,
+                None,
                 *pointer_id,
                 *button,
                 *pressed,
