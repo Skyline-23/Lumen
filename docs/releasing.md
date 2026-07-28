@@ -278,10 +278,10 @@ gh run view <run-id> --log-failed --repo Skyline-23/Lumen
 gh run rerun <run-id> --failed --repo Skyline-23/Lumen
 ```
 
-Do not replace a published tag. If the publish job left a tag without a Release,
-delete it only after confirming that no Release exists, then rerun the publish
-job. If the released commit itself is wrong, bump the patch version and merge a
-corrected commit to `main`.
+Do not replace or delete the tag that triggered the workflow. If publication
+failed after the signed builds completed, rerun only the failed publication job
+against that immutable tag. If the tagged commit itself is wrong, publish a new
+beta number or bump the stable patch version from a corrected commit.
 
 ### GitHub Release succeeded but Homebrew failed
 
