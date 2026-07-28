@@ -25,26 +25,31 @@ try {
     if (-not $devcon) { throw "WDK devcon.exe x64 was not found." }
 
     $devices = @(Get-PnpDevice -PresentOnly | Where-Object HardwareID -Contains "ROOT\LumenIddCx")
+    if ($devices.Count -gt 1) {
+        throw "Expected at most one existing Lumen IDD device; found $($devices.Count)."
+    }
+
+    $installMutated = $true
+    if (Test-Path $certificate) {
+        $certificateThumbprint = (Get-PfxCertificate -FilePath $certificate).Thumbprint
+        Import-Certificate -FilePath $certificate -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
+        Import-Certificate -FilePath $certificate -CertStoreLocation Cert:\LocalMachine\TrustedPublisher | Out-Null
+    }
+
+    & pnputil.exe /add-driver $inf /install | Out-Host
+    $pnputilExitCode = $LASTEXITCODE
+    if ($pnputilExitCode -notin @(0, 3010)) {
+        throw "pnputil failed to stage and apply the driver package with code $pnputilExitCode."
+    }
+
     if ($devices.Count -eq 0) {
-        $installMutated = $true
-        if (Test-Path $certificate) {
-            $certificateThumbprint = (Get-PfxCertificate -FilePath $certificate).Thumbprint
-            Import-Certificate -FilePath $certificate -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
-            Import-Certificate -FilePath $certificate -CertStoreLocation Cert:\LocalMachine\TrustedPublisher | Out-Null
-        }
-
-        & pnputil.exe /add-driver $inf /install | Out-Host
-        if ($LASTEXITCODE -ne 0) { throw "pnputil failed to stage the driver package." }
-
         & $devcon install $inf "Root\LumenIddCx" | Out-Host
         $devconExitCode = $LASTEXITCODE
         if ($devconExitCode -notin @(0, 1)) {
             throw "devcon failed to create the root-enumerated adapter with code $devconExitCode."
         }
     }
-    elseif ($devices.Count -ne 1) {
-        throw "Expected at most one existing Lumen IDD device; found $($devices.Count)."
-    }
+
     $devices = @()
     $problem = $null
     for ($attempt = 0; $attempt -lt 60; $attempt++) {

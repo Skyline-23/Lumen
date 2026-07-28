@@ -164,9 +164,18 @@ fn windows_scripts_cleanup_every_failed_install_attempt() {
     assert!(install_script.contains("$installSucceeded = $false"));
     assert!(install_script.contains("$installMutated = $false"));
     assert!(install_script.contains("HardwareID -Contains \"ROOT\\LumenIddCx\""));
-    assert!(install_script.contains("if ($devices.Count -eq 0)"));
     assert!(install_script.contains("$installMutated = $true"));
     assert!(install_script.contains("& pnputil.exe /add-driver $inf /install | Out-Host"));
+    let stage_driver = install_script
+        .find("& pnputil.exe /add-driver $inf /install | Out-Host")
+        .expect("the current package must always be staged and applied");
+    let create_missing_device = install_script
+        .find("if ($devices.Count -eq 0)")
+        .expect("a missing root device must be created");
+    assert!(
+        stage_driver < create_missing_device,
+        "an existing broken device must be upgraded before its health is polled"
+    );
     assert!(install_script.contains("& $devcon install $inf \"Root\\LumenIddCx\" | Out-Host"));
     assert!(install_script.contains("$devconExitCode -notin @(0, 1)"));
     assert!(install_script.contains("DEVPKEY_Device_ProblemCode"));
