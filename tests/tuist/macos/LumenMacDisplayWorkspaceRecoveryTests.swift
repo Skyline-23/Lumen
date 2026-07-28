@@ -1842,7 +1842,8 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         let topologyController = RenumberedOfflineTopologyController(
             fixture: fixture,
             verificationWakeSignal: wakeSignal,
-            minimumWakeCallCountForVerification: 2
+            minimumWakeCallCountForVerification: 2,
+            minimumRestoreCallCountForVerification: 2
         )
         let workspace = LumenMacDisplayWorkspace(
             topologyController: topologyController,
@@ -2822,19 +2823,23 @@ private actor RenumberedOfflineTopologyController: LumenMacDisplayTopologyContro
     let extraOnlineDisplayIDs: Set<CGDirectDisplayID>
     let verificationWakeSignal: RecordingPhysicalDisplayWakeSignal?
     let minimumWakeCallCountForVerification: Int
+    let minimumRestoreCallCountForVerification: Int
     private var restoreCalls = 0
 
     init(
         fixture: RenumberedOfflineIsolationFixture,
         extraOnlineDisplayIDs: Set<CGDirectDisplayID> = [],
         verificationWakeSignal: RecordingPhysicalDisplayWakeSignal? = nil,
-        minimumWakeCallCountForVerification: Int = 0
+        minimumWakeCallCountForVerification: Int = 0,
+        minimumRestoreCallCountForVerification: Int = 0
     ) {
         self.fixture = fixture
         self.extraOnlineDisplayIDs = extraOnlineDisplayIDs
         self.verificationWakeSignal = verificationWakeSignal
         self.minimumWakeCallCountForVerification =
             minimumWakeCallCountForVerification
+        self.minimumRestoreCallCountForVerification =
+            minimumRestoreCallCountForVerification
     }
 
     func capture() -> LumenMacPhysicalDisplayTopology {
@@ -2856,7 +2861,8 @@ private actor RenumberedOfflineTopologyController: LumenMacDisplayTopologyContro
         let wakeCallCount = verificationWakeSignal?.callCount
             ?? minimumWakeCallCountForVerification
         guard fixture.isOnline(),
-              wakeCallCount >= minimumWakeCallCountForVerification
+              wakeCallCount >= minimumWakeCallCountForVerification,
+              restoreCalls >= minimumRestoreCallCountForVerification
         else {
             throw DisplayTopologyProbeFailure.mismatch
         }

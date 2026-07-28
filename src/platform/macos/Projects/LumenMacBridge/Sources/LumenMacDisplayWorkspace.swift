@@ -1430,27 +1430,22 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
         if inheritedWakeAssertion {
             // The assertion acquired before mirror release or private display
             // enable can predate WindowServer's replacement display object.
-            // Pulse the republished panel and wait for it to wake before the
-            // first exact topology readback; otherwise an inactive sleeping
-            // output can fail verification before the post-wake recommit path.
+            // Pulse the republished panel and wait for it to wake before
+            // recommitting or reading back the exact topology.
             try physicalDisplayWakeSignal.pulseUserActivity()
             try await waitForPhysicalDisplaysToWake(verificationTopology)
+        }
+        if requiresPostWakeTopologyRecommit {
+            // A display can already report active, online, and awake while its
+            // external link is still converging after a private enable
+            // transaction. Recommit the exact physical topology before its
+            // terminal readback. Verifying first can fail on the stale
+            // pre-wake WindowServer state and skip this recovery step entirely.
+            try await topologyController.restore(verificationTopology)
         }
         try await topologyController.verify(verificationTopology)
         try physicalDisplayWakeSignal.pulseUserActivity()
         try await waitForPhysicalDisplaysToWake(verificationTopology)
-        if requiresPostWakeTopologyRecommit {
-            // A display can already report active, online, and awake while its
-            // external link is still converging after a private enable
-            // transaction. Recommit the exact physical topology only after the
-            // stable-awake fence, then verify and wake it again. This prevents
-            // a logically restored but physically black output from being
-            // accepted as terminal cleanup success.
-            try await topologyController.restore(verificationTopology)
-            try await topologyController.verify(verificationTopology)
-            try physicalDisplayWakeSignal.pulseUserActivity()
-            try await waitForPhysicalDisplaysToWake(verificationTopology)
-        }
         retainWakeAssertionAfterVerification = true
         for expected in try resolvePersistedWindows(topology.macWindows) {
             guard let actualPosition = windowPoint(
