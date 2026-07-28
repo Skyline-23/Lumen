@@ -18,32 +18,6 @@ public actor LumenMacWorkspaceSession {
     var activationCommand: LumenMacWorkspaceCommand?
     var isolationTask: Task<Void, Never>?
 
-    public init(
-        request: LumenMacWorkspaceSessionRequest,
-        runtime: LumenBridgeRuntime,
-        displayWorkspace: any LumenMacDisplayWorkspaceManaging,
-        preparationFence: @escaping @Sendable () async throws -> Void = {
-            try Task.checkCancellation()
-        }
-    ) throws {
-        let displayOwner = LumenMacVirtualDisplayOwner(ownershipRegistry: .shared)
-        let operations = LumenWorkspaceNativeOperationsFactory(
-            request: request,
-            runtime: runtime,
-            displayOwner: displayOwner
-        ).make()
-        try self.init(
-            request: request,
-            runtime: runtime,
-            operations: operations,
-            displayWorkspace: displayWorkspace,
-            preparationFence: preparationFence,
-            isolationStatusHandler: { status in
-                LumenWorkspaceEventPublisher.publish(status)
-            }
-        )
-    }
-
     init(
         request: LumenMacWorkspaceSessionRequest,
         runtime: LumenBridgeRuntime = .shared,

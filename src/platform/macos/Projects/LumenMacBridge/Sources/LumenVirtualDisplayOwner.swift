@@ -8,8 +8,7 @@ actor LumenMacVirtualDisplayOwner {
 
     init(
         ownershipRegistry: LumenMacOwnedVirtualDisplayRegistry,
-        reconfigurationObserver: any LumenDisplayReconfigurationObserving =
-            LumenCoreGraphicsDisplayReconfigurationObserver()
+        reconfigurationObserver: any LumenDisplayReconfigurationObserving
     ) {
         self.ownershipRegistry = ownershipRegistry
         self.reconfigurationObserver = reconfigurationObserver

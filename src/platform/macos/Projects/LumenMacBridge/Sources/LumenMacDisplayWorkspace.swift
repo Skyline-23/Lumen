@@ -381,11 +381,13 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
         sessionSourceDisplayID: UInt32
     )?
 
-    public init() {
+    init(
+        displayReconfigurationObserver:
+            any LumenDisplayReconfigurationObserving
+    ) {
         topologyController = LumenCoreGraphicsDisplayTopologyController()
         mirrorController = LumenCoreGraphicsDisplayMirrorController()
-        displayReconfigurationObserver =
-            LumenCoreGraphicsDisplayReconfigurationObserver()
+        self.displayReconfigurationObserver = displayReconfigurationObserver
         physicalDisplayController = LumenPhysicalDisplayControlAdapter(
             resolver: LumenSystemDisplayEnabledSymbolResolver()
         )

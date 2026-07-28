@@ -2,6 +2,31 @@ import Foundation
 import OSLog
 import Synchronization
 
+private struct LumenMacWorkspaceCompositionRoot: Sendable {
+    let displayReconfigurationObserver:
+        any LumenDisplayReconfigurationObserving
+
+    static func live() -> Self {
+        Self(
+            displayReconfigurationObserver:
+                LumenCoreGraphicsDisplayReconfigurationObserver()
+        )
+    }
+
+    func makeDisplayWorkspace() -> LumenMacDisplayWorkspace {
+        LumenMacDisplayWorkspace(
+            displayReconfigurationObserver: displayReconfigurationObserver
+        )
+    }
+
+    func makeDisplayOwner() -> LumenMacVirtualDisplayOwner {
+        LumenMacVirtualDisplayOwner(
+            ownershipRegistry: .shared,
+            reconfigurationObserver: displayReconfigurationObserver
+        )
+    }
+}
+
 @objcMembers
 public final class LumenMacWorkspaceSessionRequestBox: NSObject {
     public var displayKey = ""
@@ -372,17 +397,28 @@ actor LumenMacWorkspaceSessionRegistry {
     init(
         settingsStore: LumenHostSettingsStore,
         runtime: LumenBridgeRuntime,
-        makeDisplayWorkspace: @escaping @Sendable () -> any LumenMacDisplayWorkspaceManaging
+        makeDisplayWorkspace: @escaping @Sendable () -> any LumenMacDisplayWorkspaceManaging,
+        makeDisplayOwner: @escaping @Sendable () -> LumenMacVirtualDisplayOwner
     ) {
         resolvePolicy = {
             try await settingsStore.workspacePolicy()
         }
         makeSession = { request, preparationFence in
-            try LumenMacWorkspaceSession(
+            let displayOwner = makeDisplayOwner()
+            let operations = LumenWorkspaceNativeOperationsFactory(
                 request: request,
                 runtime: runtime,
+                displayOwner: displayOwner
+            ).make()
+            return try LumenMacWorkspaceSession(
+                request: request,
+                runtime: runtime,
+                operations: operations,
                 displayWorkspace: makeDisplayWorkspace(),
-                preparationFence: preparationFence
+                preparationFence: preparationFence,
+                isolationStatusHandler: { status in
+                    LumenWorkspaceEventPublisher.publish(status)
+                }
             )
         }
         recoverDurableWorkspace = {
@@ -848,10 +884,16 @@ public final class LumenMacWorkspaceSessionFacade: NSObject, Sendable {
         guard let settingsStore = try? LumenHostSettingsStore() else {
             fatalError("Unable to construct the Lumen host settings store")
         }
+        let composition = LumenMacWorkspaceCompositionRoot.live()
         registry = LumenMacWorkspaceSessionRegistry(
             settingsStore: settingsStore,
             runtime: .shared,
-            makeDisplayWorkspace: { LumenMacDisplayWorkspace() }
+            makeDisplayWorkspace: {
+                composition.makeDisplayWorkspace()
+            },
+            makeDisplayOwner: {
+                composition.makeDisplayOwner()
+            }
         )
         super.init()
     }
