@@ -920,6 +920,7 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
                     physicalDisplayIDs: geometry.physicalDisplayIDs,
                     placement: "preserved"
                 )
+                mirroredDisplayIDs = nil
                 return
             }
             targetTransactionAttempted = true
@@ -965,6 +966,7 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
                 physicalDisplayIDs: geometry.physicalDisplayIDs,
                 placement: "configured"
             )
+            mirroredDisplayIDs = nil
         } catch {
             let originalError = error
             guard targetTransactionAttempted else {

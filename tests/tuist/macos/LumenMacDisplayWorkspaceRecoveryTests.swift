@@ -92,7 +92,7 @@ private actor DisplayMirrorProbe: LumenMacDisplayMirrorControlling {
     private let targetDisplayID: UInt32
     private let boundsByDisplayID: [UInt32: CGRect]
     private let ownerToken: UInt?
-    private let initialMainDisplayID: UInt32
+    private var currentMainDisplayID: UInt32
     private let initialSourceIsOnline: Bool
     private let initialSourceIsActive: Bool
     private let initialTargetIsOnline: Bool
@@ -126,7 +126,7 @@ private actor DisplayMirrorProbe: LumenMacDisplayMirrorControlling {
     ) {
         self.sourceDisplayID = sourceDisplayID
         self.targetDisplayID = targetDisplayID
-        self.initialMainDisplayID = initialMainDisplayID ?? sourceDisplayID
+        currentMainDisplayID = initialMainDisplayID ?? sourceDisplayID
         self.initialSourceIsOnline = initialSourceIsOnline
         self.initialSourceIsActive = initialSourceIsActive
         self.initialTargetIsOnline = initialTargetIsOnline
@@ -181,9 +181,7 @@ private actor DisplayMirrorProbe: LumenMacDisplayMirrorControlling {
             : boundsByDisplayID[targetDisplayID]
                 ?? CGRect(x: 0, y: 0, width: 2_560, height: 1_440)
         return LumenMacDisplayMirrorState(
-            mainDisplayID: staged || applied
-                ? sourceDisplayID
-                : initialMainDisplayID,
+            mainDisplayID: currentMainDisplayID,
             mirrorSourceDisplayID: applied
                 ? reportedMirrorSourceAfterApply
                 : nil,
@@ -224,6 +222,7 @@ private actor DisplayMirrorProbe: LumenMacDisplayMirrorControlling {
             source: sourceDisplayID
         ))
         applied = true
+        currentMainDisplayID = sourceDisplayID
     }
 
     func stageUnmirrored(
@@ -242,11 +241,13 @@ private actor DisplayMirrorProbe: LumenMacDisplayMirrorControlling {
             size: CGSize(width: 320, height: 180)
         )
         applied = false
+        currentMainDisplayID = sourceDisplayID
     }
 
     func unmirror(targetDisplayID: UInt32) {
         events.append(.unmirror(target: targetDisplayID))
         applied = false
+        currentMainDisplayID = sourceDisplayID
     }
 
     func recordedEvents() -> [DisplayMirrorEvent] {
@@ -453,6 +454,76 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         ])
         let restoredTopologies = await topologyProbe.restoredTopologies()
         XCTAssertTrue(restoredTopologies.isEmpty)
+    }
+
+    func testSuccessfulUnmirrorStageAllowsTheOwnedDisplayToBeRemirrored() async throws {
+        let topology = displayTopology()
+        let physicalDisplayID = try XCTUnwrap(
+            topology.displays.first.flatMap { UInt32($0.id) }
+        )
+        let virtualDisplayID: UInt32 = 117
+        let topologyProbe = DisplayTopologyProbe(topology: topology)
+        let mirrorProbe = DisplayMirrorProbe(
+            sourceDisplayID: physicalDisplayID,
+            targetDisplayID: virtualDisplayID,
+            reportedMirrorSourceAfterApply: virtualDisplayID,
+            initialTargetIsOnline: true,
+            initialTargetIsActive: true,
+            initialTargetBounds: CGRect(x: 2_560, y: 0, width: 320, height: 180),
+            configuredTargetSize: CGSize(width: 320, height: 180),
+            boundsByDisplayID: [
+                physicalDisplayID: CGRect(x: 0, y: 0, width: 2_560, height: 1_440),
+            ]
+        )
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: topologyProbe,
+            mirrorController: mirrorProbe,
+            physicalDisplayController: RecordingPhysicalDisplayController(),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier()
+        )
+        _ = try await workspace.snapshotWorkspace(targetProcessIdentifiers: [])
+        await topologyProbe.allowVerification()
+
+        do {
+            try await workspace.mirrorOwnedVirtualDisplay(
+                virtualDisplayID,
+                sourceDisplayID: physicalDisplayID
+            )
+        } catch {
+            return XCTFail("initial mirror failed: \(error)")
+        }
+        do {
+            try await workspace.stageVirtualDisplayUnmirrored(
+                virtualDisplayID,
+                sourceDisplayID: physicalDisplayID
+            )
+        } catch {
+            return XCTFail("unmirror stage failed: \(error)")
+        }
+        do {
+            try await workspace.mirrorOwnedVirtualDisplay(
+                virtualDisplayID,
+                sourceDisplayID: physicalDisplayID
+            )
+        } catch {
+            let events = await mirrorProbe.recordedEvents()
+            let state = await mirrorProbe.state(
+                targetDisplayID: physicalDisplayID,
+                sourceDisplayID: virtualDisplayID
+            )
+            return XCTFail(
+                "remirror failed after \(events), state=\(state): \(error)"
+            )
+        }
+
+        let events = await mirrorProbe.recordedEvents()
+        let mirrorEventCount = events.filter { event in
+            if case .mirror = event {
+                return true
+            }
+            return false
+        }.count
+        XCTAssertEqual(mirrorEventCount, 2)
     }
 
     func testDesktopMirrorRejectsPhysicalTopologyDriftBeforeMutation() async throws {
