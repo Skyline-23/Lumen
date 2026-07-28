@@ -123,7 +123,7 @@ fn length_prefixed_access_unit(
     let mut output = Vec::new();
     for unit in units.iter().copied().filter(|unit| !skip(unit)) {
         let length = u32::try_from(unit.len())
-            .map_err(|_| "native video NAL unit exceeds the v3 length field".to_owned())?;
+            .map_err(|_| "native video NAL unit exceeds the length field".to_owned())?;
         output.extend_from_slice(&length.to_be_bytes());
         output.extend_from_slice(unit);
     }

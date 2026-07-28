@@ -33,7 +33,7 @@ fn host_capture_cursor_is_an_unconfigurable_cross_platform_invariant() {
     ));
     let native_protocol = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../docs/protocol/lumen-streaming-v3.proto"
+        "/../../docs/protocol/lumen-streaming-v4.proto"
     ));
 
     assert!(!macos_configuration.contains("showCursor"));

@@ -8,6 +8,7 @@ pub(crate) struct FakeWorkspaceAdapter {
     pub(crate) events: Vec<&'static str>,
     pub(crate) hang_before_first_frame: bool,
     pub(crate) first_frame_started: Option<tokio::sync::oneshot::Sender<()>>,
+    pub(crate) verification_failures_remaining: usize,
 }
 
 impl WorkspacePlatformAdapter for FakeWorkspaceAdapter {
@@ -80,7 +81,19 @@ impl WorkspacePlatformAdapter for FakeWorkspaceAdapter {
         _topology: &PhysicalDisplayTopology,
     ) -> impl Future<Output = Result<(), WorkspaceAdapterError>> + Send {
         self.events.push("verify-physical");
-        async { Ok(()) }
+        let should_fail = self.verification_failures_remaining > 0;
+        self.verification_failures_remaining =
+            self.verification_failures_remaining.saturating_sub(1);
+        async move {
+            if should_fail {
+                Err(WorkspaceAdapterError {
+                    operation: WorkspaceAdapterOperation::VerifyPhysicalDisplays,
+                    detail: "topology did not converge".to_owned(),
+                })
+            } else {
+                Ok(())
+            }
+        }
     }
 
     fn destroy_virtual_display(
@@ -158,6 +171,38 @@ fn physical_isolation_follows_capture_binding_and_first_encoded_frame() {
         ]
     );
     assert_eq!(engine.active_phase(), Some(RecoveryPhase::Isolated));
+}
+
+#[test]
+fn failed_verification_requires_the_next_owner_to_reapply_restoration() {
+    // Given: a session whose first independent physical readback will fail.
+    let directory = tempfile::tempdir().unwrap();
+    let journal_path = directory.path().join("display-recovery.json");
+    let store = RecoveryJournalStore::new(journal_path.clone());
+    let adapter = FakeWorkspaceAdapter {
+        verification_failures_remaining: 1,
+        ..FakeWorkspaceAdapter::default()
+    };
+    let mut engine = RecoverableWorkspaceEngine::new(adapter, store, Duration::from_secs(1));
+    runtime().block_on(engine.start_session(session())).unwrap();
+
+    // When: terminal cleanup restores once but cannot verify convergence.
+    let error = runtime().block_on(engine.stop_session()).unwrap_err();
+    assert!(matches!(
+        error,
+        WorkspaceLifecycleError::Adapter(WorkspaceAdapterError {
+            operation: WorkspaceAdapterOperation::VerifyPhysicalDisplays,
+            ..
+        })
+    ));
+
+    // Then: the durable phase requires restoration itself to run again.
+    let RecoveryJournalLoad::Verified(journal) =
+        RecoveryJournalStore::new(journal_path).load().unwrap()
+    else {
+        panic!("expected retained recovery journal");
+    };
+    assert_eq!(journal.phase, RecoveryPhase::CaptureStopped);
 }
 
 #[test]

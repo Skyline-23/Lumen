@@ -2,6 +2,53 @@
 
 #import <LumenMacBridge/LumenMacBridge.h>
 
+static BOOL LumenDisplayExistedBeforeModeCreation = NO;
+
+@interface LumenMacVirtualDisplay (LumenModeUpdateTesting)
+- (BOOL)applyVirtualDisplaySettings:(id)settings;
+@end
+
+@interface LumenVirtualDisplayConstructionOrderProbe : LumenMacVirtualDisplay
+@end
+
+@implementation LumenVirtualDisplayConstructionOrderProbe
+
+- (nullable id)createModeWithLogicalWidth:(uint32_t)logicalWidth
+                            logicalHeight:(uint32_t)logicalHeight
+                              refreshRate:(double)refreshRate
+                                 transfer:(LumenMacVirtualDisplayTransfer)transfer
+                               hdrEnabled:(BOOL)hdrEnabled
+                                    error:(NSError **)error {
+  (void)logicalWidth;
+  (void)logicalHeight;
+  (void)refreshRate;
+  (void)transfer;
+  (void)hdrEnabled;
+  (void)error;
+  LumenDisplayExistedBeforeModeCreation = [self valueForKey:@"display"] != nil;
+  return nil;
+}
+
+@end
+
+@interface LumenVirtualDisplayRejectedUpdateProbe : LumenMacVirtualDisplay
+@property(nonatomic) NSUInteger settingsApplicationCount;
+@property(nonatomic) BOOL rejectNextSettings;
+@end
+
+@implementation LumenVirtualDisplayRejectedUpdateProbe
+
+- (BOOL)applyVirtualDisplaySettings:(id)settings {
+  self.settingsApplicationCount += 1;
+  if (self.rejectNextSettings) {
+    self.rejectNextSettings = NO;
+    return NO;
+  }
+  return [super applyVirtualDisplaySettings:settings];
+}
+
+@end
+
 @interface LumenObjCBridgeCompatibilityTests : XCTestCase
 @end
 
@@ -11,6 +58,146 @@
   XCTAssertEqual(sizeof(LumenMacWorkspaceActivationResult), 8UL);
   XCTAssertEqual(offsetof(LumenMacWorkspaceActivationResult, activated), 0UL);
   XCTAssertEqual(offsetof(LumenMacWorkspaceActivationResult, isolation_status), 4UL);
+}
+
+- (void)testWorkspaceSessionRequestHasStableRustCompatibleLayout {
+  XCTAssertEqual(sizeof(LumenMacWorkspaceSessionRequest), 72UL);
+  XCTAssertEqual(offsetof(LumenMacWorkspaceSessionRequest, display_key), 0UL);
+  XCTAssertEqual(offsetof(LumenMacWorkspaceSessionRequest, refresh_rate), 32UL);
+  XCTAssertEqual(offsetof(LumenMacWorkspaceSessionRequest, sink_gamut), 44UL);
+  XCTAssertEqual(
+    offsetof(LumenMacWorkspaceSessionRequest, desktop_mirror_source_display_id),
+    68UL
+  );
+}
+
+- (void)testVirtualDisplayExistsBeforeModeCreation {
+  if (![LumenMacVirtualDisplay isSupported]) {
+    XCTSkip(@"CGVirtualDisplay is unavailable on this runtime");
+  }
+
+  LumenMacVirtualDisplayConfiguration *configuration =
+    [[LumenMacVirtualDisplayConfiguration alloc] init];
+  configuration.name = @"Lumen Construction Order Probe";
+  configuration.backingWidth = 1280;
+  configuration.backingHeight = 720;
+  configuration.logicalWidth = 640;
+  configuration.logicalHeight = 360;
+  configuration.refreshRate = 60;
+
+  LumenDisplayExistedBeforeModeCreation = NO;
+  NSError *error = nil;
+  LumenVirtualDisplayConstructionOrderProbe *display =
+    [[LumenVirtualDisplayConstructionOrderProbe alloc]
+      initWithConfiguration:configuration
+                      error:&error];
+
+  XCTAssertNil(display);
+  XCTAssertTrue(LumenDisplayExistedBeforeModeCreation);
+}
+
+- (void)testRejectedVirtualDisplayModeUpdatePreservesCommittedState {
+  if (![LumenMacVirtualDisplay isSupported]) {
+    XCTSkip(@"CGVirtualDisplay is unavailable on this runtime");
+  }
+
+  LumenMacVirtualDisplayConfiguration *configuration =
+    [[LumenMacVirtualDisplayConfiguration alloc] init];
+  configuration.name = @"Lumen Rejected Mode Update Probe";
+  configuration.backingWidth = 1280;
+  configuration.backingHeight = 720;
+  configuration.logicalWidth = 640;
+  configuration.logicalHeight = 360;
+  configuration.refreshRate = 60;
+
+  NSError *error = nil;
+  LumenVirtualDisplayRejectedUpdateProbe *display =
+    [[LumenVirtualDisplayRejectedUpdateProbe alloc]
+      initWithConfiguration:configuration
+                      error:&error];
+  XCTAssertNotNil(display);
+  XCTAssertNil(error);
+
+  id initialMode = [display valueForKey:@"mode"];
+  id settings = [display valueForKey:@"settings"];
+  display.rejectNextSettings = YES;
+  XCTAssertFalse(
+    [display updateLogicalWidth:800
+                  logicalHeight:450
+                    refreshRate:75
+                           error:&error]
+  );
+  XCTAssertNotNil(error);
+  XCTAssertEqual([display valueForKey:@"mode"], initialMode);
+  XCTAssertEqualObjects([[settings valueForKey:@"modes"] firstObject], initialMode);
+  XCTAssertEqual([[display valueForKey:@"logicalWidth"] unsignedIntValue], 640u);
+  XCTAssertEqual([[display valueForKey:@"logicalHeight"] unsignedIntValue], 360u);
+
+  NSNumber *retainedRefreshRate = nil;
+  @try {
+    retainedRefreshRate = [display valueForKey:@"refreshRate"];
+  } @catch (NSException *exception) {
+    XCTFail(@"Missing committed refresh-rate state: %@", exception.reason);
+  }
+  XCTAssertEqualWithAccuracy(retainedRefreshRate.doubleValue, 60.0, 0.0001);
+  [display destroy];
+}
+
+- (void)testIdenticalVirtualDisplayModeUpdateKeepsThePublishedSettings {
+  if (![LumenMacVirtualDisplay isSupported]) {
+    XCTSkip(@"CGVirtualDisplay is unavailable on this runtime");
+  }
+
+  LumenMacVirtualDisplayConfiguration *configuration =
+    [[LumenMacVirtualDisplayConfiguration alloc] init];
+  configuration.name = @"Lumen Identical Mode Update Probe";
+  configuration.backingWidth = 640;
+  configuration.backingHeight = 360;
+  configuration.logicalWidth = 320;
+  configuration.logicalHeight = 180;
+  configuration.refreshRate = 120;
+  configuration.highDensity = YES;
+  configuration.serialNumber = 0x12345678u;
+
+  NSError *error = nil;
+  LumenVirtualDisplayRejectedUpdateProbe *display =
+    [[LumenVirtualDisplayRejectedUpdateProbe alloc]
+      initWithConfiguration:configuration
+                      error:&error];
+  XCTAssertNotNil(display);
+  XCTAssertNil(error);
+  XCTAssertEqual(display.settingsApplicationCount, 1u);
+  XCTAssertEqual(
+    [[[display valueForKey:@"settings"] valueForKey:@"hiDPI"] unsignedIntValue],
+    1u
+  );
+  id descriptor = [display valueForKey:@"descriptor"];
+  XCTAssertEqual(
+    [[descriptor valueForKey:@"serialNum"] unsignedIntValue],
+    configuration.serialNumber
+  );
+  XCTAssertEqual(
+    [[descriptor valueForKey:@"serialNumber"] unsignedIntValue],
+    configuration.serialNumber
+  );
+  dispatch_queue_t callbackQueue = [descriptor valueForKey:@"queue"];
+  dispatch_queue_t dispatchQueue = [descriptor valueForKey:@"dispatchQueue"];
+  XCTAssertNotNil(callbackQueue);
+  XCTAssertNotEqual(callbackQueue, dispatch_get_main_queue());
+  XCTAssertNotEqual(dispatchQueue, dispatch_get_main_queue());
+  XCTAssertNotNil([descriptor valueForKey:@"terminationHandler"]);
+
+  id publishedMode = [display valueForKey:@"mode"];
+  XCTAssertTrue(
+    [display updateLogicalWidth:configuration.logicalWidth
+                  logicalHeight:configuration.logicalHeight
+                    refreshRate:configuration.refreshRate
+                           error:&error]
+  );
+  XCTAssertNil(error);
+  XCTAssertEqual(display.settingsApplicationCount, 1u);
+  XCTAssertEqual([display valueForKey:@"mode"], publishedMode);
+  [display destroy];
 }
 
 - (void)testLumenMacBridgeCABIStatusAndConfigurationSmoke {

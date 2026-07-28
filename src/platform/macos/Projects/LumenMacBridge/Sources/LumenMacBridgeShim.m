@@ -1,6 +1,7 @@
 #import "LumenMacBridge.h"
 
 #import <LumenMacBridge/LumenMacBridge-Swift.h>
+#import <AppKit/AppKit.h>
 #import <CoreFoundation/CoreFoundation.h>
 #include <opus_multistream.h>
 #include <limits.h>
@@ -21,6 +22,63 @@ int32_t LumenMacDirectCGSConfigureDisplayEnabled(
   bool enabled
 ) {
   return (int32_t)CGSConfigureDisplayEnabled(configuration, displayID, enabled);
+}
+
+bool LumenMacApplicationPrepareMainThread(void) {
+  if (![NSThread isMainThread]) {
+    return false;
+  }
+  NSApplication *application = [NSApplication sharedApplication];
+  [application setActivationPolicy:NSApplicationActivationPolicyAccessory];
+  [application finishLaunching];
+  return true;
+}
+
+bool LumenMacApplicationRunMainThread(
+  LumenMacApplicationReadinessCallback readinessCallback,
+  void *readinessContext
+) {
+  if (!readinessCallback) {
+    return false;
+  }
+  if (![NSThread isMainThread]) {
+    readinessCallback(readinessContext, false);
+    return false;
+  }
+  __block bool readinessDelivered = false;
+  CFRunLoopPerformBlock(CFRunLoopGetMain(), kCFRunLoopCommonModes, ^{
+    if (readinessDelivered) {
+      return;
+    }
+    readinessDelivered = true;
+    readinessCallback(readinessContext, true);
+  });
+  [[NSApplication sharedApplication] run];
+  if (!readinessDelivered) {
+    readinessDelivered = true;
+    readinessCallback(readinessContext, false);
+  }
+  return true;
+}
+
+void LumenMacApplicationStopMainThread(void) {
+  CFRunLoopRef runLoop = CFRunLoopGetMain();
+  CFRunLoopPerformBlock(runLoop, kCFRunLoopCommonModes, ^{
+    NSApplication *application = [NSApplication sharedApplication];
+    [application stop:nil];
+    NSEvent *wakeEvent = [NSEvent
+      otherEventWithType:NSEventTypeApplicationDefined
+      location:NSZeroPoint
+      modifierFlags:0
+      timestamp:[NSProcessInfo processInfo].systemUptime
+      windowNumber:0
+      context:nil
+      subtype:0
+      data1:0
+      data2:0];
+    [application postEvent:wakeEvent atStart:NO];
+  });
+  CFRunLoopWakeUp(runLoop);
 }
 
 struct LumenMacBridgeController {
@@ -45,6 +103,8 @@ static LumenBridgeObjCFacade *LumenMacBridgeFacade(LumenMacBridgeController *con
     record.has_output_callback_latency_milliseconds = box.hasOutputCallbackLatencyMilliseconds;
     record.output_callback_latency_milliseconds = box.outputCallbackLatencyMilliseconds;
     record.is_key_frame = box.isKeyFrame;
+    record.requires_bootstrap_acknowledgement = box.requiresBootstrapAcknowledgement;
+    record.repair_key_frame = box.isRepairKeyFrame;
     record.is_hdr_signaled = box.isHDRSignaled;
     record.is_replay = box.isReplay;
     return record;
@@ -459,6 +519,10 @@ bool LumenMacBridgeResumeVideoEncodingAfterCodecAck(void) {
   return [LumenBridgeObjCFacade resumeVideoEncodingAfterCodecAckSharedSync];
 }
 
+bool LumenMacBridgeSetVideoBitrateKbps(uint32_t bitrate_kbps) {
+  return [LumenBridgeObjCFacade setVideoBitRateKbpsSharedSync:bitrate_kbps];
+}
+
 void LumenMacBridgeRestartCapture(const char *reason) {
   NSString *restartReason =
     reason != NULL ?
@@ -664,6 +728,8 @@ LumenMacEncodedCaptureFrameRecord LumenMacBridgeControllerPopNextForwardedFrame(
   record.has_output_callback_latency_milliseconds = box.hasOutputCallbackLatencyMilliseconds;
   record.output_callback_latency_milliseconds = box.outputCallbackLatencyMilliseconds;
   record.is_key_frame = box.isKeyFrame;
+  record.requires_bootstrap_acknowledgement = box.requiresBootstrapAcknowledgement;
+  record.repair_key_frame = box.isRepairKeyFrame;
   record.is_hdr_signaled = box.isHDRSignaled;
   record.is_replay = box.isReplay;
 
@@ -774,8 +840,36 @@ uint32_t LumenMacWorkspacePrepareSession(
   box.potentialEDRHeadroom = request.potential_edr_headroom;
   box.currentPeakLuminanceNits = request.current_peak_luminance_nits;
   box.potentialPeakLuminanceNits = request.potential_peak_luminance_nits;
+  box.desktopMirrorSourceDisplayID = request.desktop_mirror_source_display_id;
   NSError *error = nil;
   uint32_t displayID = [LumenMacWorkspaceSessionFacade.shared prepareSessionSync:box error:&error];
+  copy_string_to_buffer(error.localizedDescription, error_destination, error_capacity);
+  return displayID;
+}
+
+uint32_t LumenMacWorkspaceReconfigureSession(
+  LumenMacWorkspaceSessionRequest request,
+  char *error_destination,
+  size_t error_capacity
+) {
+  LumenMacWorkspaceSessionRequestBox *box = [[LumenMacWorkspaceSessionRequestBox alloc] init];
+  box.displayKey = request.display_key ? [NSString stringWithUTF8String:request.display_key] : @"";
+  box.displayName = request.display_name ? [NSString stringWithUTF8String:request.display_name] : @"Lumen Display";
+  box.width = request.width;
+  box.height = request.height;
+  box.scalePercent = request.scale_percent;
+  box.dimensionsAreLogical = request.dimensions_are_logical;
+  box.refreshRate = request.refresh_rate;
+  box.hdrEnabled = request.hdr_enabled;
+  box.clientSinkGamutRawValue = request.sink_gamut;
+  box.clientSinkTransferRawValue = request.sink_transfer;
+  box.currentEDRHeadroom = request.current_edr_headroom;
+  box.potentialEDRHeadroom = request.potential_edr_headroom;
+  box.currentPeakLuminanceNits = request.current_peak_luminance_nits;
+  box.potentialPeakLuminanceNits = request.potential_peak_luminance_nits;
+  box.desktopMirrorSourceDisplayID = request.desktop_mirror_source_display_id;
+  NSError *error = nil;
+  uint32_t displayID = [LumenMacWorkspaceSessionFacade.shared reconfigureSessionSync:box error:&error];
   copy_string_to_buffer(error.localizedDescription, error_destination, error_capacity);
   return displayID;
 }

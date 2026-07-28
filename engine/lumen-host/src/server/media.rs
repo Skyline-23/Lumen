@@ -1,10 +1,12 @@
 use std::collections::HashSet;
-use std::io;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::future::Future;
 use std::sync::Arc;
-use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+use lumen_engine::{
+    decode_native_media_datagram, CodecConfiguration, NativeMediaKind, NativeVideoBootstrapReason,
+    NativeVideoCodec, NATIVE_VIDEO_STREAM_ID,
+};
 
 use super::SharedControlRouter;
 use crate::control::{AudioDeliveryState, InputMotionDeliveryState, VideoDeliveryState};
@@ -12,25 +14,264 @@ use crate::media::native_motion::{
     NativeMotionDatagramError, NativeMotionIdentity, NativeMotionReceiver,
 };
 use crate::media::native_packet::{NativeMediaPacketizer, NativeMediaPacketizerConfig};
-use crate::media::native_path::{
-    decode_native_path_probe, encode_native_path_probe, native_path_probe_identity,
-    NativePathProbe, NativePathProbeKind,
-};
 use crate::media::native_video::{
     NativeVideoBitstreamNormalizer, NativeVideoConfiguration, NormalizedNativeVideoFrame,
 };
-use crate::network_ports::VIDEO_UDP_OFFSET;
 use crate::{
-    HostArguments, PlatformRuntimeEvent, PlatformRuntimeEventCode, PlatformRuntimeEventDisposition,
+    PlatformRuntimeEvent, PlatformRuntimeEventCode, PlatformRuntimeEventDisposition,
     PlatformRuntimeEventSeverity, PlatformSessionControl,
 };
-use lumen_engine::{
-    decode_native_media_datagram, CodecConfiguration, NativeMediaKind, NativeVideoCodec,
-    NATIVE_AUDIO_STREAM_ID, NATIVE_INITIAL_CONFIGURATION_ID, NATIVE_VIDEO_STREAM_ID,
-};
 
-const MEDIA_SEND_POLL_INTERVAL: Duration = Duration::from_millis(1);
-const MAXIMUM_CLIENT_DATAGRAM_BYTES: usize = 2_048;
+const MEDIA_POLL_INTERVAL: Duration = Duration::from_millis(1);
+pub(super) const NATIVE_MEDIA_SEND_BUFFER_BYTES: usize = 4 * 1024 * 1024;
+const NATIVE_AUDIO_EGRESS_RESERVE_BYTES: usize = 2 * 1_200;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DatagramBatchMode {
+    FreshEnqueue,
+    DeadlineWait,
+}
+
+impl DatagramBatchMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::FreshEnqueue => "capacity-reserved-enqueue",
+            Self::DeadlineWait => "deadline-wait",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DatagramBatchDropReason {
+    QueueBarrierDeadlineExceeded,
+    SendDeadlineExceeded,
+}
+
+impl DatagramBatchDropReason {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::QueueBarrierDeadlineExceeded => "queue-barrier-deadline-exceeded",
+            Self::SendDeadlineExceeded => "send-deadline-exceeded",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum DatagramBatchStatus {
+    Complete,
+    Dropped(DatagramBatchDropReason),
+    Failed(String),
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct DatagramBatchReport {
+    status: DatagramBatchStatus,
+    mode: DatagramBatchMode,
+    total_datagrams: usize,
+    sent_datagrams: usize,
+    total_bytes: usize,
+    queue_wait_duration: Duration,
+    send_wait_duration: Duration,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DatagramDeadlineElapsed;
+
+enum DatagramSendOutcome {
+    Sent,
+    DeadlineExceeded,
+    Failed(String),
+}
+
+async fn wait_for_datagram_deadline<F>(
+    deadline: Instant,
+    future: F,
+) -> Result<F::Output, DatagramDeadlineElapsed>
+where
+    F: Future,
+{
+    if Instant::now() >= deadline {
+        return Err(DatagramDeadlineElapsed);
+    }
+    tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), future)
+        .await
+        .map_err(|_| DatagramDeadlineElapsed)
+}
+
+async fn send_connection_datagram(
+    connection: &quinn::Connection,
+    mode: DatagramBatchMode,
+    datagram: Vec<u8>,
+    deadline: Option<Instant>,
+) -> DatagramSendOutcome {
+    let result = match mode {
+        DatagramBatchMode::FreshEnqueue => connection.send_datagram(datagram.into()),
+        DatagramBatchMode::DeadlineWait => {
+            let Some(deadline) = deadline else {
+                return DatagramSendOutcome::DeadlineExceeded;
+            };
+            match wait_for_datagram_deadline(
+                deadline,
+                connection.send_datagram_wait(datagram.into()),
+            )
+            .await
+            {
+                Ok(result) => result,
+                Err(_) => return DatagramSendOutcome::DeadlineExceeded,
+            }
+        }
+    };
+    match result {
+        Ok(()) => DatagramSendOutcome::Sent,
+        Err(error) => DatagramSendOutcome::Failed(error.to_string()),
+    }
+}
+
+async fn send_datagram_batch<Send, SendFuture>(
+    datagrams: Vec<Vec<u8>>,
+    mode: DatagramBatchMode,
+    deadline: Option<Instant>,
+    mut send: Send,
+) -> DatagramBatchReport
+where
+    Send: FnMut(DatagramBatchMode, Vec<u8>, Option<Instant>) -> SendFuture,
+    SendFuture: Future<Output = DatagramSendOutcome>,
+{
+    let total_datagrams = datagrams.len();
+    let total_bytes = datagrams.iter().map(Vec::len).sum();
+    let mut report = DatagramBatchReport {
+        status: DatagramBatchStatus::Complete,
+        mode,
+        total_datagrams,
+        sent_datagrams: 0,
+        total_bytes,
+        queue_wait_duration: Duration::ZERO,
+        send_wait_duration: Duration::ZERO,
+    };
+    if mode == DatagramBatchMode::DeadlineWait && deadline.is_none() {
+        report.status = DatagramBatchStatus::Dropped(DatagramBatchDropReason::SendDeadlineExceeded);
+        return report;
+    }
+
+    for datagram in datagrams {
+        let send_started = Instant::now();
+        let outcome = send(mode, datagram, deadline).await;
+        if mode == DatagramBatchMode::DeadlineWait {
+            report.send_wait_duration += send_started.elapsed();
+        }
+        match outcome {
+            DatagramSendOutcome::Sent => {
+                report.sent_datagrams += 1;
+            }
+            DatagramSendOutcome::DeadlineExceeded => {
+                report.status =
+                    DatagramBatchStatus::Dropped(DatagramBatchDropReason::SendDeadlineExceeded);
+                break;
+            }
+            DatagramSendOutcome::Failed(error) => {
+                report.status = DatagramBatchStatus::Failed(error);
+                break;
+            }
+        }
+    }
+    report
+}
+
+async fn wait_for_datagram_queue_capacity<Space, Wait, WaitFuture>(
+    capacity: usize,
+    required_capacity: usize,
+    deadline: Instant,
+    mut send_buffer_space: Space,
+    mut wait: Wait,
+) -> Result<Duration, DatagramDeadlineElapsed>
+where
+    Space: FnMut() -> usize,
+    Wait: FnMut(Instant) -> WaitFuture,
+    WaitFuture: Future<Output = Result<(), DatagramDeadlineElapsed>>,
+{
+    if required_capacity > capacity {
+        return Err(DatagramDeadlineElapsed);
+    }
+    let started = Instant::now();
+    loop {
+        if Instant::now() >= deadline {
+            return Err(DatagramDeadlineElapsed);
+        }
+        if send_buffer_space() >= required_capacity {
+            return Ok(started.elapsed());
+        }
+        wait(deadline).await?;
+    }
+}
+
+async fn wait_for_connection_datagram_queue_capacity(
+    connection: &quinn::Connection,
+    required_capacity: usize,
+    deadline: Instant,
+) -> Result<Duration, DatagramDeadlineElapsed> {
+    wait_for_datagram_queue_capacity(
+        NATIVE_MEDIA_SEND_BUFFER_BYTES,
+        required_capacity,
+        deadline,
+        || connection.datagram_send_buffer_space(),
+        |deadline| async move {
+            wait_for_datagram_deadline(deadline, tokio::time::sleep(MEDIA_POLL_INTERVAL))
+                .await
+                .map(|_| ())
+        },
+    )
+    .await
+}
+
+async fn send_video_datagram_batch<Barrier, BarrierFuture, Send, SendFuture>(
+    datagrams: Vec<Vec<u8>>,
+    send_buffer_capacity: usize,
+    audio_reserve_bytes: usize,
+    queue_was_empty_before_current_audio: bool,
+    deadline: Instant,
+    mut wait_for_capacity: Barrier,
+    send: Send,
+) -> DatagramBatchReport
+where
+    Barrier: FnMut(usize, Instant) -> BarrierFuture,
+    BarrierFuture: Future<Output = Result<Duration, DatagramDeadlineElapsed>>,
+    Send: FnMut(DatagramBatchMode, Vec<u8>, Option<Instant>) -> SendFuture,
+    SendFuture: Future<Output = DatagramSendOutcome>,
+{
+    let total_bytes = datagrams.iter().map(Vec::len).sum::<usize>();
+    let video_capacity = send_buffer_capacity.saturating_sub(audio_reserve_bytes);
+    let mode = if total_bytes <= video_capacity {
+        DatagramBatchMode::FreshEnqueue
+    } else {
+        DatagramBatchMode::DeadlineWait
+    };
+    let required_capacity =
+        if mode == DatagramBatchMode::FreshEnqueue && queue_was_empty_before_current_audio {
+            total_bytes.saturating_add(audio_reserve_bytes)
+        } else {
+            video_capacity
+        };
+    let barrier_started = Instant::now();
+    let queue_wait_duration = match wait_for_capacity(required_capacity, deadline).await {
+        Ok(duration) => duration,
+        Err(_) => {
+            return DatagramBatchReport {
+                status: DatagramBatchStatus::Dropped(
+                    DatagramBatchDropReason::QueueBarrierDeadlineExceeded,
+                ),
+                mode,
+                total_datagrams: datagrams.len(),
+                sent_datagrams: 0,
+                total_bytes,
+                queue_wait_duration: barrier_started.elapsed(),
+                send_wait_duration: Duration::ZERO,
+            };
+        }
+    };
+    let mut report = send_datagram_batch(datagrams, mode, Some(deadline), send).await;
+    report.queue_wait_duration = queue_wait_duration;
+    report
+}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 enum MediaKind {
@@ -52,50 +293,14 @@ enum MediaAttempt {
     Idle,
     Waiting,
     Sent,
+    Dropped,
     Failed(MediaFailure),
-}
-
-impl MediaAttempt {
-    fn did_work(&self) -> bool {
-        matches!(self, Self::Sent)
-    }
+    Terminal(MediaFailure),
 }
 
 #[derive(Default)]
 struct MediaFailureReporter {
     active: HashSet<PlatformRuntimeEventCode>,
-}
-
-#[derive(Default)]
-struct InputMotionFailureReporter {
-    active: bool,
-}
-
-impl InputMotionFailureReporter {
-    fn applied(&mut self, platform: &dyn PlatformSessionControl) {
-        if self.active {
-            self.active = false;
-            let _ = platform.publish_runtime_event(PlatformRuntimeEvent {
-                disposition: PlatformRuntimeEventDisposition::Cleared,
-                severity: PlatformRuntimeEventSeverity::Warning,
-                code: PlatformRuntimeEventCode::NativeInputMotion,
-                message: None,
-            });
-        }
-    }
-
-    fn rejected(&mut self, message: String, platform: &dyn PlatformSessionControl) {
-        if self.active {
-            return;
-        }
-        self.active = true;
-        let _ = platform.publish_runtime_event(PlatformRuntimeEvent {
-            disposition: PlatformRuntimeEventDisposition::Raised,
-            severity: PlatformRuntimeEventSeverity::Warning,
-            code: PlatformRuntimeEventCode::NativeInputMotion,
-            message: Some(format!("native-input-motion-apply-failed: {message}")),
-        });
-    }
 }
 
 impl MediaFailureReporter {
@@ -107,7 +312,10 @@ impl MediaFailureReporter {
     ) {
         match attempt {
             MediaAttempt::Failed(failure) => self.raise(failure, platform),
-            MediaAttempt::Inactive | MediaAttempt::Sent => self.clear_kind(kind, platform),
+            MediaAttempt::Terminal(failure) => self.raise_terminal(failure, platform),
+            MediaAttempt::Inactive | MediaAttempt::Sent | MediaAttempt::Dropped => {
+                self.clear_kind(kind, platform)
+            }
             MediaAttempt::Idle | MediaAttempt::Waiting => (),
         }
     }
@@ -126,15 +334,18 @@ impl MediaFailureReporter {
     }
 
     fn raise(&mut self, failure: &MediaFailure, platform: &dyn PlatformSessionControl) {
-        let message = format!(
-            "native-media-{}-{}: {}",
-            media_kind_name(failure.kind),
-            failure.stage,
-            failure.message
-        );
         if !self.active.insert(failure.code) {
             return;
         }
+        let message = format!(
+            "native-media-{}-{}: {}",
+            match failure.kind {
+                MediaKind::Video => "video",
+                MediaKind::Audio => "audio",
+            },
+            failure.stage,
+            failure.message
+        );
         eprintln!("Lumen native media warning code={message}");
         let _ = platform.publish_runtime_event(PlatformRuntimeEvent {
             disposition: PlatformRuntimeEventDisposition::Raised,
@@ -143,6 +354,29 @@ impl MediaFailureReporter {
             message: Some(message),
         });
     }
+
+    fn raise_terminal(&mut self, failure: &MediaFailure, platform: &dyn PlatformSessionControl) {
+        let message = media_failure_message(failure);
+        eprintln!("Lumen native media error code={message}");
+        let _ = platform.publish_runtime_event(PlatformRuntimeEvent {
+            disposition: PlatformRuntimeEventDisposition::Raised,
+            severity: PlatformRuntimeEventSeverity::Error,
+            code: failure.code,
+            message: Some(message),
+        });
+    }
+}
+
+fn media_failure_message(failure: &MediaFailure) -> String {
+    format!(
+        "native-media-{}-{}: {}",
+        match failure.kind {
+            MediaKind::Video => "video",
+            MediaKind::Audio => "audio",
+        },
+        failure.stage,
+        failure.message
+    )
 }
 
 fn failure_codes(kind: MediaKind) -> [PlatformRuntimeEventCode; 3] {
@@ -160,307 +394,191 @@ fn failure_codes(kind: MediaKind) -> [PlatformRuntimeEventCode; 3] {
     }
 }
 
-fn media_kind_name(kind: MediaKind) -> &'static str {
-    match kind {
-        MediaKind::Video => "video",
-        MediaKind::Audio => "audio",
-    }
-}
-
-#[derive(Default)]
-pub(super) struct NativeUdpMediaTransport {
-    server: Option<MediaServerHandle>,
-}
-
-impl NativeUdpMediaTransport {
-    pub(super) fn start(
-        &mut self,
-        arguments: &HostArguments,
-        router: SharedControlRouter,
-        platform: Arc<dyn PlatformSessionControl>,
-    ) -> Result<(), String> {
-        if self.server.is_some() {
-            return Err("native UDP media transport is already running".to_owned());
-        }
-        self.server = Some(start_native_media_server(arguments, router, platform)?);
-        Ok(())
-    }
-
-    pub(super) fn stop(&mut self) -> Result<(), String> {
-        stop_media_server(self.server.take())
-    }
-}
-
-impl Drop for NativeUdpMediaTransport {
-    fn drop(&mut self) {
-        let _ = self.stop();
-    }
-}
-
-struct MediaServerHandle {
-    stop: Arc<AtomicBool>,
-    threads: Vec<JoinHandle<()>>,
-}
-
-fn start_native_media_server(
-    arguments: &HostArguments,
+pub(super) async fn run_native_media_loop(
+    connection: quinn::Connection,
+    session_epoch: u32,
     router: SharedControlRouter,
     platform: Arc<dyn PlatformSessionControl>,
-) -> Result<MediaServerHandle, String> {
-    let address = native_media_address(arguments)?;
-    let socket = UdpSocket::bind(address)
-        .map_err(|error| format!("could not bind native UDP media socket at {address}: {error}"))?;
-    socket
-        .set_nonblocking(true)
-        .map_err(|error| format!("could not make native UDP media socket nonblocking: {error}"))?;
-    let stop = Arc::new(AtomicBool::new(false));
-    let thread_stop = Arc::clone(&stop);
-    let thread = thread::Builder::new()
-        .name("lumen-native-udp-media".to_owned())
-        .spawn(move || native_receive_loop(socket, router, platform, thread_stop))
-        .map_err(|error| format!("could not start native UDP media worker: {error}"))?;
-    Ok(MediaServerHandle {
-        stop,
-        threads: vec![thread],
-    })
+) -> Result<(), String> {
+    run_native_media_tasks(
+        run_native_audio_sender(connection.clone(), router.clone(), Arc::clone(&platform)),
+        run_native_video_sender(connection.clone(), router.clone(), Arc::clone(&platform)),
+        run_native_motion_receiver(connection, session_epoch, router, platform),
+    )
+    .await
 }
 
-fn stop_media_server(server: Option<MediaServerHandle>) -> Result<(), String> {
-    let Some(server) = server else {
-        return Ok(());
-    };
-    server.stop.store(true, Ordering::Release);
-    if server
-        .threads
-        .into_iter()
-        .any(|thread| thread.join().is_err())
-    {
-        Err("native UDP media worker panicked".to_owned())
-    } else {
-        Ok(())
-    }
+async fn run_native_media_tasks<Audio, Video, Motion>(
+    audio: Audio,
+    video: Video,
+    motion: Motion,
+) -> Result<(), String>
+where
+    Audio: Future<Output = Result<(), String>>,
+    Video: Future<Output = Result<(), String>>,
+    Motion: Future<Output = Result<(), String>>,
+{
+    tokio::try_join!(audio, video, motion)?;
+    Ok(())
 }
 
-fn native_receive_loop(
-    socket: UdpSocket,
+async fn run_native_audio_sender(
+    connection: quinn::Connection,
     router: SharedControlRouter,
     platform: Arc<dyn PlatformSessionControl>,
-    stop: Arc<AtomicBool>,
-) {
-    let mut datagram = [0_u8; MAXIMUM_CLIENT_DATAGRAM_BYTES];
-    let mut video_sender = VideoSenderState::default();
-    let mut audio_sender = AudioSenderState::default();
-    let mut failure_reporter = MediaFailureReporter::default();
-    let mut motion_receiver = NativeMotionReceiver::default();
-    let mut motion_failure_reporter = InputMotionFailureReporter::default();
-    while !stop.load(Ordering::Acquire) {
-        let received = match socket.recv_from(&mut datagram) {
-            Ok((length, peer)) => {
-                if !handle_native_path_probe(&socket, &router, peer, &datagram[..length]) {
-                    let _ = handle_native_motion_datagram(
-                        &router,
-                        platform.as_ref(),
-                        peer,
-                        &datagram[..length],
-                        &mut motion_receiver,
-                        &mut motion_failure_reporter,
-                    );
-                }
-                true
-            }
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => false,
-            Err(_) => false,
-        };
-        let video_attempt =
-            send_pending_video(&socket, &router, platform.as_ref(), &mut video_sender);
-        failure_reporter.observe(MediaKind::Video, &video_attempt, platform.as_ref());
-        let audio_attempt =
-            send_pending_audio(&socket, &router, platform.as_ref(), &mut audio_sender);
-        failure_reporter.observe(MediaKind::Audio, &audio_attempt, platform.as_ref());
-        if !received && !video_attempt.did_work() && !audio_attempt.did_work() {
-            thread::sleep(MEDIA_SEND_POLL_INTERVAL);
+) -> Result<(), String> {
+    let mut interval = tokio::time::interval(MEDIA_POLL_INTERVAL);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut audio = AudioSenderState::default();
+    let mut failures = MediaFailureReporter::default();
+    loop {
+        interval.tick().await;
+        let attempt =
+            poll_and_send_audio(&connection, &router, platform.as_ref(), &mut audio).await;
+        failures.observe(MediaKind::Audio, &attempt, platform.as_ref());
+        if let MediaAttempt::Terminal(failure) = attempt {
+            return Err(format!(
+                "native audio {} failed: {}",
+                failure.stage, failure.message
+            ));
         }
     }
 }
 
-fn handle_native_motion_datagram(
+async fn run_native_video_sender(
+    connection: quinn::Connection,
+    router: SharedControlRouter,
+    platform: Arc<dyn PlatformSessionControl>,
+) -> Result<(), String> {
+    let mut interval = tokio::time::interval(MEDIA_POLL_INTERVAL);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut video = VideoSenderState::default();
+    let mut failures = MediaFailureReporter::default();
+    loop {
+        interval.tick().await;
+        let queue_was_empty_before_video =
+            connection.datagram_send_buffer_space() == NATIVE_MEDIA_SEND_BUFFER_BYTES;
+        let attempt = poll_and_send_video(
+            &connection,
+            &router,
+            platform.as_ref(),
+            &mut video,
+            queue_was_empty_before_video,
+        )
+        .await;
+        failures.observe(MediaKind::Video, &attempt, platform.as_ref());
+        if let MediaAttempt::Terminal(failure) = attempt {
+            return Err(format!(
+                "native video {} failed: {}",
+                failure.stage, failure.message
+            ));
+        }
+    }
+}
+
+async fn run_native_motion_receiver(
+    connection: quinn::Connection,
+    session_epoch: u32,
+    router: SharedControlRouter,
+    platform: Arc<dyn PlatformSessionControl>,
+) -> Result<(), String> {
+    let mut motion = NativeMotionReceiver::default();
+    let mut motion_failure_active = false;
+    loop {
+        let datagram = connection
+            .read_datagram()
+            .await
+            .map_err(|error| format!("could not read QUIC media datagram: {error}"))?;
+        handle_motion_datagram(
+            &router,
+            platform.as_ref(),
+            session_epoch,
+            &datagram,
+            &mut motion,
+            &mut motion_failure_active,
+        );
+    }
+}
+
+fn handle_motion_datagram(
     router: &SharedControlRouter,
     platform: &dyn PlatformSessionControl,
-    peer: SocketAddr,
+    session_epoch: u32,
     datagram: &[u8],
     receiver: &mut NativeMotionReceiver,
-    failure_reporter: &mut InputMotionFailureReporter,
-) -> bool {
+    failure_active: &mut bool,
+) {
     let Ok(decoded) = decode_native_media_datagram(datagram) else {
-        return false;
+        return;
     };
     if decoded.header.kind != NativeMediaKind::InputMotion {
-        return false;
+        return;
     }
-    let Some(delivery) = router
+    let Some(InputMotionDeliveryState {
+        session_epoch: active,
+        ..
+    }) = router
         .lock()
         .ok()
         .and_then(|router| router.input_motion_delivery_state())
     else {
-        log_motion_rejection("inactive-session", peer, decoded.header.session_epoch, None);
-        return true;
+        return;
     };
-    apply_native_motion_datagram(
-        platform,
-        peer,
-        datagram,
-        &delivery,
-        receiver,
-        failure_reporter,
-    );
-    true
-}
-
-fn apply_native_motion_datagram(
-    platform: &dyn PlatformSessionControl,
-    peer: SocketAddr,
-    datagram: &[u8],
-    delivery: &InputMotionDeliveryState,
-    receiver: &mut NativeMotionReceiver,
-    failure_reporter: &mut InputMotionFailureReporter,
-) {
-    if peer != delivery.endpoint {
-        log_motion_rejection(
-            "endpoint-mismatch",
-            peer,
-            delivery.session_epoch,
-            Some(delivery.endpoint),
-        );
+    if active != session_epoch {
         return;
     }
-    let identity = NativeMotionIdentity {
-        session_epoch: delivery.session_epoch,
-        path_id: delivery.path_id,
-        policy_revision: delivery.policy_revision,
-    };
-    let accepted = match receiver.accept(datagram, identity, &delivery.encryption_key) {
-        Ok(accepted) => accepted,
-        Err(error) => {
-            log_motion_decode_rejection(peer, identity, error);
-            return;
-        }
-    };
-    let payload = motion_payload_name(&accepted.event);
-    if should_log_motion(accepted.motion_sequence) {
-        for stage in ["authenticated", "decoded", "sequence-accepted"] {
-            eprintln!(
-                "Lumen native motion stage={stage} session-epoch={} path-id={} policy-revision={} packet-sequence={} motion-sequence={} capture-timestamp-us={} payload={} peer={peer}",
-                accepted.identity.session_epoch,
-                accepted.identity.path_id,
-                accepted.identity.policy_revision,
-                accepted.packet_sequence,
-                accepted.motion_sequence,
-                accepted.capture_timestamp_us,
-                payload,
-            );
-        }
-    }
-    match platform.handle_native_motion(accepted.identity.session_epoch, accepted.event) {
-        Ok(()) => {
-            failure_reporter.applied(platform);
-            if should_log_motion(accepted.motion_sequence) {
-                eprintln!(
-                    "Lumen native motion stage=applied session-epoch={} motion-sequence={} payload={} peer={peer}",
-                    accepted.identity.session_epoch, accepted.motion_sequence, payload
-                );
+    let identity = NativeMotionIdentity { session_epoch };
+    match receiver.accept(datagram, identity) {
+        Ok(accepted) => match platform.handle_native_motion(session_epoch, accepted.event) {
+            Ok(()) => {
+                if *failure_active {
+                    let _ = platform.publish_runtime_event(PlatformRuntimeEvent {
+                        disposition: PlatformRuntimeEventDisposition::Cleared,
+                        severity: PlatformRuntimeEventSeverity::Warning,
+                        code: PlatformRuntimeEventCode::NativeInputMotion,
+                        message: None,
+                    });
+                    *failure_active = false;
+                }
+                if accepted.motion_sequence <= 3 || accepted.motion_sequence % 120 == 0 {
+                    eprintln!(
+                            "Lumen native motion stage=applied session-epoch={session_epoch} datagram-sequence={} motion-sequence={} capture-timestamp-us={}",
+                            accepted.datagram_sequence,
+                            accepted.motion_sequence,
+                            accepted.capture_timestamp_us
+                        );
+                }
             }
-        }
-        Err(error) => {
-            eprintln!(
-                "Lumen native motion stage=apply-rejected session-epoch={} motion-sequence={} payload={} peer={peer} error={error}",
-                accepted.identity.session_epoch, accepted.motion_sequence, payload
-            );
-            failure_reporter.rejected(error, platform);
-        }
-    }
-}
-
-fn motion_payload_name(event: &crate::PlatformNativeMotionEvent) -> &'static str {
-    match event {
-        crate::PlatformNativeMotionEvent::Pointer { .. } => "pointer",
-        crate::PlatformNativeMotionEvent::Scroll { .. } => "scroll",
-        crate::PlatformNativeMotionEvent::Touch { .. } => "touch",
-        crate::PlatformNativeMotionEvent::Pen { .. } => "pen",
-        crate::PlatformNativeMotionEvent::Gamepad { .. } => "gamepad",
-    }
-}
-
-fn should_log_motion(sequence: u32) -> bool {
-    sequence <= 3 || sequence % 120 == 0
-}
-
-fn log_motion_rejection(
-    reason: &'static str,
-    peer: SocketAddr,
-    session_epoch: u32,
-    expected_peer: Option<SocketAddr>,
-) {
-    eprintln!(
-        "Lumen native motion stage=rejected reason={reason} session-epoch={session_epoch} peer={peer} expected-peer={}",
-        expected_peer.map_or_else(|| "none".to_owned(), |value| value.to_string())
-    );
-}
-
-fn log_motion_decode_rejection(
-    peer: SocketAddr,
-    identity: NativeMotionIdentity,
-    error: NativeMotionDatagramError,
-) {
-    eprintln!(
-        "Lumen native motion stage=rejected reason={error:?} session-epoch={} path-id={} policy-revision={} peer={peer}",
-        identity.session_epoch, identity.path_id, identity.policy_revision
-    );
-}
-
-fn handle_native_path_probe(
-    socket: &UdpSocket,
-    router: &SharedControlRouter,
-    peer: SocketAddr,
-    datagram: &[u8],
-) -> bool {
-    let Some((session_epoch, path_id)) = native_path_probe_identity(datagram) else {
-        return false;
-    };
-    let Some(key) = router
-        .lock()
-        .ok()
-        .and_then(|router| router.pending_native_media_key(session_epoch))
-    else {
-        return false;
-    };
-    let Ok(probe) = decode_native_path_probe(datagram, &key) else {
-        return false;
-    };
-    if probe.kind != NativePathProbeKind::Request || probe.path_id != path_id {
-        return false;
-    }
-    let Ok(response) = encode_native_path_probe(
-        NativePathProbe {
-            kind: NativePathProbeKind::Response,
-            ..probe
+            Err(error) => {
+                eprintln!(
+                        "Lumen native motion stage=platform-rejected session-epoch={session_epoch} datagram-sequence={} motion-sequence={} error={error}",
+                        accepted.datagram_sequence,
+                        accepted.motion_sequence
+                    );
+                if !*failure_active {
+                    let _ = platform.publish_runtime_event(PlatformRuntimeEvent {
+                        disposition: PlatformRuntimeEventDisposition::Raised,
+                        severity: PlatformRuntimeEventSeverity::Warning,
+                        code: PlatformRuntimeEventCode::NativeInputMotion,
+                        message: Some(format!(
+                            "Native motion event {} was rejected: {error}",
+                            accepted.motion_sequence
+                        )),
+                    });
+                    *failure_active = true;
+                }
+            }
         },
-        &key,
-    ) else {
-        return false;
-    };
-    if socket.send_to(&response, peer).ok() != Some(response.len()) {
-        return false;
+        Err(NativeMotionDatagramError::NotMotion) => (),
+        Err(error) => eprintln!(
+            "Lumen native motion stage=rejected session-epoch={session_epoch} reason={error:?}"
+        ),
     }
-    router.lock().is_ok_and(|mut router| {
-        router.observe_native_media_path(peer, session_epoch, path_id, &probe.challenge)
-    })
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct AudioSessionIdentity {
     session_epoch: u32,
-    path_id: u16,
-    key: [u8; 16],
 }
 
 #[derive(Default)]
@@ -474,25 +592,19 @@ impl AudioSenderState {
     fn prepare(&mut self, delivery: &AudioDeliveryState) -> Result<(), String> {
         let identity = AudioSessionIdentity {
             session_epoch: delivery.session_epoch,
-            path_id: delivery.path_id,
-            key: delivery.encryption_key,
         };
         if self.identity.as_ref() == Some(&identity) {
             return self
                 .packetizer
                 .as_mut()
                 .ok_or_else(|| "audio packetizer is unavailable".to_owned())?
-                .reconfigure(delivery.policy_revision, delivery.maximum_datagram_payload);
+                .reconfigure(delivery.maximum_datagram_payload);
         }
         self.packetizer = Some(NativeMediaPacketizer::new(
             NativeMediaPacketizerConfig {
-                session_epoch: delivery.session_epoch,
-                path_id: delivery.path_id,
-                policy_revision: delivery.policy_revision,
-                stream_id: NATIVE_AUDIO_STREAM_ID,
-                configuration_id: NATIVE_INITIAL_CONFIGURATION_ID,
+                kind: NativeMediaKind::Audio,
                 maximum_datagram_payload: delivery.maximum_datagram_payload,
-                direct_udp_key: delivery.encryption_key,
+                generation_id: 0,
             },
             0,
         )?);
@@ -502,29 +614,19 @@ impl AudioSenderState {
     }
 }
 
-fn send_pending_audio(
-    socket: &UdpSocket,
+async fn poll_and_send_audio(
+    connection: &quinn::Connection,
     router: &SharedControlRouter,
     platform: &dyn PlatformSessionControl,
     sender: &mut AudioSenderState,
 ) -> MediaAttempt {
-    let delivery = match router
+    let Some(delivery) = router
         .lock()
         .ok()
         .and_then(|router| router.audio_delivery_state())
-    {
-        Some(delivery) => delivery,
-        None => return MediaAttempt::Inactive,
+    else {
+        return MediaAttempt::Inactive;
     };
-    poll_and_send_audio(socket, &delivery, platform, sender)
-}
-
-fn poll_and_send_audio(
-    socket: &UdpSocket,
-    delivery: &AudioDeliveryState,
-    platform: &dyn PlatformSessionControl,
-    sender: &mut AudioSenderState,
-) -> MediaAttempt {
     let packet = match platform.poll_encoded_audio() {
         Ok(Some(packet)) => packet,
         Ok(None) => return MediaAttempt::Idle,
@@ -537,72 +639,75 @@ fn poll_and_send_audio(
             })
         }
     };
-    match send_audio_packet(socket, delivery, sender, packet) {
-        Ok(()) => MediaAttempt::Sent,
-        Err(failure) => MediaAttempt::Failed(failure),
+    let pending_since = Instant::now();
+    if let Err(message) = sender.prepare(&delivery) {
+        return MediaAttempt::Failed(audio_failure("packetizer-failed", message));
     }
-}
-
-fn send_audio_packet(
-    socket: &UdpSocket,
-    delivery: &AudioDeliveryState,
-    sender: &mut AudioSenderState,
-    packet: crate::PlatformEncodedAudioPacket,
-) -> Result<(), MediaFailure> {
-    sender.prepare(delivery).map_err(audio_packetizer_failure)?;
     let unit_id = sender.unit_id;
-    let packetized = sender
+    let packetized = match sender
         .packetizer
         .as_mut()
-        .ok_or_else(|| audio_packetizer_failure("audio packetizer is unavailable".to_owned()))?
+        .expect("prepared audio packetizer")
         .packetize_audio(&packet, unit_id)
-        .map_err(audio_packetizer_failure)?;
-    sender.unit_id = sender
-        .unit_id
-        .checked_add(1)
-        .ok_or_else(|| audio_packetizer_failure("audio unit id exhausted".to_owned()))?;
-    let datagram_count = packetized.datagrams.len();
-    for datagram in packetized.datagrams {
-        send_datagram(socket, delivery.endpoint, &datagram, "audio").map_err(|message| {
-            MediaFailure {
-                code: PlatformRuntimeEventCode::NativeAudioUdpSend,
-                kind: MediaKind::Audio,
-                stage: "udp-send-failed",
-                message,
-            }
-        })?;
-    }
-    if unit_id <= 3 || unit_id % 200 == 0 {
-        eprintln!(
-            "Lumen native media sent kind=audio session-epoch={} unit-id={unit_id} datagrams={datagram_count} endpoint={}",
-            delivery.session_epoch, delivery.endpoint
+    {
+        Ok(packetized) => packetized,
+        Err(message) => return MediaAttempt::Failed(audio_failure("packetizer-failed", message)),
+    };
+    let packet_duration =
+        Duration::from_micros(u64::from(packet.duration_frames).saturating_mul(1_000_000) / 48_000);
+    let Some(deadline) = pending_since.checked_add(packet_duration) else {
+        return MediaAttempt::Failed(audio_failure(
+            "packetizer-failed",
+            "audio object deadline overflowed".to_owned(),
+        ));
+    };
+    let report = send_datagram_batch(
+        packetized.datagrams,
+        DatagramBatchMode::DeadlineWait,
+        Some(deadline),
+        |mode, datagram, deadline| send_connection_datagram(connection, mode, datagram, deadline),
+    )
+    .await;
+    sender.unit_id = match unit_id.checked_add(1) {
+        Some(next) => next,
+        None => {
+            return MediaAttempt::Failed(audio_failure(
+                "packetizer-failed",
+                "audio unit id exhausted".to_owned(),
+            ))
+        }
+    };
+    if unit_id <= 3 || unit_id % 200 == 0 || report.status != DatagramBatchStatus::Complete {
+        log_datagram_batch(
+            "audio",
+            delivery.session_epoch,
+            0,
+            unit_id,
+            &report,
+            duration_to_microseconds(pending_since.elapsed()),
+            duration_to_microseconds(packet_duration),
         );
     }
-    Ok(())
-}
-
-fn audio_packetizer_failure(message: String) -> MediaFailure {
-    MediaFailure {
-        code: PlatformRuntimeEventCode::NativeAudioPacketizer,
-        kind: MediaKind::Audio,
-        stage: "packetizer-failed",
-        message,
+    match &report.status {
+        DatagramBatchStatus::Complete => MediaAttempt::Sent,
+        DatagramBatchStatus::Dropped(_) => MediaAttempt::Dropped,
+        DatagramBatchStatus::Failed(message) => MediaAttempt::Failed(audio_failure(
+            "quic-datagram-send-failed",
+            format!("{message}; unit-id={unit_id}"),
+        )),
     }
 }
 
-fn send_datagram(
-    socket: &UdpSocket,
-    endpoint: SocketAddr,
-    datagram: &[u8],
-    kind: &str,
-) -> Result<(), String> {
-    let sent = socket
-        .send_to(datagram, endpoint)
-        .map_err(|error| format!("{kind} datagram send failed: {error}"))?;
-    if sent == datagram.len() {
-        Ok(())
-    } else {
-        Err(format!("{kind} datagram send was incomplete"))
+fn audio_failure(stage: &'static str, message: String) -> MediaFailure {
+    MediaFailure {
+        code: if stage == "packetizer-failed" {
+            PlatformRuntimeEventCode::NativeAudioPacketizer
+        } else {
+            PlatformRuntimeEventCode::NativeAudioUdpSend
+        },
+        kind: MediaKind::Audio,
+        stage,
+        message,
     }
 }
 
@@ -610,8 +715,6 @@ fn send_datagram(
 struct VideoSessionIdentity {
     video_format: crate::PlatformVideoFormat,
     session_epoch: u32,
-    path_id: u16,
-    key: [u8; 16],
 }
 
 #[derive(Default)]
@@ -620,15 +723,70 @@ struct VideoSenderState {
     packetizer: Option<NativeMediaPacketizer>,
     normalizer: Option<NativeVideoBitstreamNormalizer>,
     pending_frame: Option<NormalizedNativeVideoFrame>,
-    pending_configuration_boundary: Option<u32>,
-    frame_index: u32,
-    last_sent_frame: Option<SentVideoFrame>,
+    pending_since: Option<Instant>,
+    repair_required: bool,
+    repair_after_bootstrap: bool,
+    frame_id: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct SentVideoFrame {
-    frame_id: u32,
-    key_frame: bool,
+struct VideoBootstrapClassification {
+    reason: NativeVideoBootstrapReason,
+    requires_encoder_resume: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum VideoKeyframeDelivery {
+    SameGenerationDatagram,
+    ReliableBootstrap(VideoBootstrapClassification),
+}
+
+fn classify_video_bootstrap(
+    has_new_configuration: bool,
+    has_acknowledged_generation: bool,
+    repair_keyframe: bool,
+    platform_requires_acknowledgement: bool,
+) -> VideoBootstrapClassification {
+    if !has_acknowledged_generation {
+        VideoBootstrapClassification {
+            reason: NativeVideoBootstrapReason::Initial,
+            requires_encoder_resume: true,
+        }
+    } else if repair_keyframe {
+        VideoBootstrapClassification {
+            reason: NativeVideoBootstrapReason::Repair,
+            requires_encoder_resume: true,
+        }
+    } else if has_new_configuration {
+        VideoBootstrapClassification {
+            reason: NativeVideoBootstrapReason::ConfigurationChange,
+            requires_encoder_resume: platform_requires_acknowledgement,
+        }
+    } else {
+        VideoBootstrapClassification {
+            reason: NativeVideoBootstrapReason::Periodic,
+            requires_encoder_resume: platform_requires_acknowledgement,
+        }
+    }
+}
+
+fn classify_video_keyframe_delivery(
+    has_new_configuration: bool,
+    has_acknowledged_generation: bool,
+    repair_keyframe: bool,
+    platform_requires_acknowledgement: bool,
+) -> VideoKeyframeDelivery {
+    let bootstrap = classify_video_bootstrap(
+        has_new_configuration,
+        has_acknowledged_generation,
+        repair_keyframe,
+        platform_requires_acknowledgement,
+    );
+    if bootstrap.reason == NativeVideoBootstrapReason::Periodic {
+        VideoKeyframeDelivery::SameGenerationDatagram
+    } else {
+        VideoKeyframeDelivery::ReliableBootstrap(bootstrap)
+    }
 }
 
 impl VideoSenderState {
@@ -636,82 +794,103 @@ impl VideoSenderState {
         let identity = VideoSessionIdentity {
             video_format: delivery.video_format,
             session_epoch: delivery.session_epoch,
-            path_id: delivery.path_id,
-            key: delivery.encryption_key,
         };
         if self.identity.as_ref() == Some(&identity) {
-            return self
-                .packetizer
-                .as_mut()
-                .ok_or_else(|| "video packetizer is unavailable".to_owned())?
-                .reconfigure(delivery.policy_revision, delivery.maximum_datagram_payload);
+            if let Some(packetizer) = self.packetizer.as_mut() {
+                packetizer.reconfigure(delivery.maximum_datagram_payload)?;
+                if let Some(generation_id) = delivery.acknowledged_generation_id {
+                    packetizer.update_video_generation(generation_id)?;
+                }
+            }
+            return Ok(());
         }
-        self.packetizer = Some(NativeMediaPacketizer::new(
-            NativeMediaPacketizerConfig {
-                session_epoch: delivery.session_epoch,
-                path_id: delivery.path_id,
-                policy_revision: delivery.policy_revision,
-                stream_id: NATIVE_VIDEO_STREAM_ID,
-                configuration_id: NATIVE_INITIAL_CONFIGURATION_ID,
-                maximum_datagram_payload: delivery.maximum_datagram_payload,
-                direct_udp_key: delivery.encryption_key,
-            },
-            0,
-        )?);
+        self.packetizer = None;
         self.normalizer = Some(NativeVideoBitstreamNormalizer::new(delivery.video_format));
         self.pending_frame = None;
-        self.pending_configuration_boundary = None;
-        self.frame_index = 1;
-        self.last_sent_frame = None;
+        self.pending_since = None;
+        self.repair_required = false;
+        self.repair_after_bootstrap = false;
+        self.frame_id = 1;
         self.identity = Some(identity);
         Ok(())
     }
 
-    fn take_last_sent_frame(&mut self) -> Option<SentVideoFrame> {
-        self.last_sent_frame.take()
+    fn pending_bootstrap_frame_should_drop(
+        &mut self,
+        repair_keyframe: bool,
+        age: Option<Duration>,
+        maximum_object_delay_us: u32,
+    ) -> bool {
+        if repair_keyframe {
+            return false;
+        }
+        let should_drop = self.repair_after_bootstrap
+            || age.is_some_and(|age| object_deadline_exceeded(age, maximum_object_delay_us));
+        self.repair_after_bootstrap |= should_drop;
+        should_drop
+    }
+
+    fn take_post_bootstrap_repair_request(&mut self, bootstrap_pending: bool) -> bool {
+        if bootstrap_pending || !self.repair_after_bootstrap {
+            return false;
+        }
+        self.repair_after_bootstrap = false;
+        self.repair_required = true;
+        true
+    }
+
+    fn finish_delta_delivery(
+        &mut self,
+        frame_id: u32,
+        repair_required: bool,
+        bootstrap_pending: bool,
+    ) -> Result<bool, String> {
+        self.frame_id = frame_id
+            .checked_add(1)
+            .ok_or_else(|| "video frame id exhausted".to_owned())?;
+        self.pending_frame = None;
+        self.pending_since = None;
+        if repair_required && bootstrap_pending {
+            self.repair_after_bootstrap = true;
+            return Ok(false);
+        }
+        let request_repair = repair_required && !self.repair_required;
+        self.repair_required |= repair_required;
+        Ok(request_repair)
     }
 }
 
-fn send_pending_video(
-    socket: &UdpSocket,
+async fn poll_and_send_video(
+    connection: &quinn::Connection,
     router: &SharedControlRouter,
     platform: &dyn PlatformSessionControl,
     sender: &mut VideoSenderState,
+    queue_was_empty_before_current_audio: bool,
 ) -> MediaAttempt {
-    let delivery = match router
+    let Some(delivery) = router
         .lock()
         .ok()
         .and_then(|router| router.video_delivery_state())
-    {
-        Some(delivery) => delivery,
-        None => return MediaAttempt::Inactive,
+    else {
+        return MediaAttempt::Inactive;
     };
-    let attempt = poll_and_send_video(socket, &delivery, platform, sender, |configuration| {
-        router
-            .lock()
-            .is_ok_and(|mut router| router.publish_native_codec_configuration(configuration))
-    });
-    if let Some(sent) = sender.take_last_sent_frame() {
-        let _ = router.lock().map(|mut router| {
-            router.observe_native_video_frame_sent(
-                delivery.session_epoch,
-                sent.frame_id,
-                sent.key_frame,
-            )
-        });
+    if let Err(message) = sender.prepare(&delivery) {
+        return MediaAttempt::Failed(video_failure("packetizer-failed", message));
     }
-    attempt
-}
-
-fn poll_and_send_video(
-    socket: &UdpSocket,
-    delivery: &VideoDeliveryState,
-    platform: &dyn PlatformSessionControl,
-    sender: &mut VideoSenderState,
-    publish_configuration: impl FnOnce(CodecConfiguration) -> bool,
-) -> MediaAttempt {
-    if let Err(message) = sender.prepare(delivery) {
-        return MediaAttempt::Failed(video_packetizer_failure(message));
+    if sender.take_post_bootstrap_repair_request(delivery.bootstrap_pending) {
+        if let Err(message) = platform.handle_control_event(
+            delivery.session_epoch,
+            crate::PlatformControlEvent::RequestIdrFrame,
+        ) {
+            return MediaAttempt::Terminal(video_capture_failure(
+                "post-bootstrap-keyframe-request-failed",
+                message,
+            ));
+        }
+        eprintln!(
+            "Lumen object delivery stage=post-bootstrap-repair-requested session-epoch={}",
+            delivery.session_epoch
+        );
     }
     if sender.pending_frame.is_none() {
         let frame = match platform.poll_encoded_video() {
@@ -726,183 +905,272 @@ fn poll_and_send_video(
                 })
             }
         };
-        let configuration = match sender.stage(frame) {
-            Ok(configuration) => configuration,
-            Err(message) => return MediaAttempt::Failed(video_packetizer_failure(message)),
+        let normalized = match sender
+            .normalizer
+            .as_mut()
+            .expect("prepared video normalizer")
+            .normalize(frame)
+        {
+            Ok(normalized) => normalized,
+            Err(message) => {
+                return MediaAttempt::Failed(video_failure("normalization-failed", message))
+            }
         };
-        if let Some(configuration) = configuration {
-            let wire = codec_configuration(delivery, configuration);
-            if !publish_configuration(wire) {
-                return MediaAttempt::Failed(video_packetizer_failure(
+        if let Some(configuration) = normalized.new_configuration.clone() {
+            let published = router.lock().is_ok_and(|mut router| {
+                router.publish_native_codec_configuration(codec_configuration(
+                    &delivery,
+                    configuration,
+                ))
+            });
+            if !published {
+                return MediaAttempt::Failed(video_failure(
+                    "configuration-publish-failed",
                     "video codec configuration could not be published".to_owned(),
                 ));
             }
         }
+        sender.pending_frame = Some(normalized);
+        sender.pending_since = Some(Instant::now());
     }
-    if let Some(configuration_id) = sender.acknowledged_configuration_boundary(delivery) {
+
+    let normalized = sender.pending_frame.as_ref().expect("staged video frame");
+    if delivery.acknowledged_configuration_id != Some(normalized.configuration_id) {
+        return MediaAttempt::Waiting;
+    }
+    if !normalized.frame.key_frame && (sender.repair_required || delivery.repair_keyframe_requested)
+    {
+        sender.pending_frame = None;
+        sender.pending_since = None;
+        return MediaAttempt::Dropped;
+    }
+    if delivery.bootstrap_pending {
+        // Retain at most one fresh dependent frame for one negotiated object deadline. If the
+        // bootstrap ACK is slower, drain later encoded frames without requesting another IDR;
+        // one owned repair is requested only after the pending generation is acknowledged.
+        let repair_keyframe = normalized.frame.repair_keyframe;
+        if normalized.frame.key_frame && repair_keyframe {
+            sender.pending_since = None;
+            return MediaAttempt::Waiting;
+        }
+        let pending_age = sender
+            .pending_since
+            .map(|pending_since| pending_since.elapsed());
+        if sender.pending_bootstrap_frame_should_drop(
+            repair_keyframe,
+            pending_age,
+            delivery.maximum_object_delay_us,
+        ) {
+            sender.pending_frame = None;
+            sender.pending_since = None;
+            sender.repair_after_bootstrap = true;
+            return MediaAttempt::Dropped;
+        }
+        return MediaAttempt::Waiting;
+    }
+    if !normalized.frame.key_frame
+        && sender.pending_since.is_some_and(|pending_since| {
+            object_deadline_exceeded(pending_since.elapsed(), delivery.maximum_object_delay_us)
+        })
+    {
+        let stale_frame_id = sender.frame_id;
+        sender.pending_frame = None;
+        sender.pending_since = None;
+        sender.repair_required = true;
         if let Err(message) = platform.handle_control_event(
             delivery.session_epoch,
-            crate::PlatformControlEvent::ResumeVideoEncodingAfterCodecAck,
+            crate::PlatformControlEvent::RequestIdrFrame,
         ) {
-            return MediaAttempt::Failed(video_packetizer_failure(format!(
-                "could not resume video encoding after codec acknowledgement: {message}"
-            )));
+            return MediaAttempt::Terminal(video_capture_failure(
+                "stale-frame-keyframe-request-failed",
+                message,
+            ));
         }
-        sender.release_configuration_boundary(configuration_id);
         eprintln!(
-            "Lumen native media stage=codec-ack-encoding-resumed session-epoch={} configuration-id={configuration_id}",
-            delivery.session_epoch
+            "Lumen object delivery stage=stale-video-delta-dropped session-epoch={} generation-id={} frame-id={} deadline-us={} target-bitrate-kbps={} admission-divisor={}",
+            delivery.session_epoch,
+            delivery.acknowledged_generation_id.unwrap_or_default(),
+            stale_frame_id,
+            delivery.maximum_object_delay_us,
+            delivery.target_bitrate_kbps,
+            delivery.admission_divisor
+        );
+        return MediaAttempt::Dropped;
+    }
+    let frame_id = sender.frame_id;
+    if normalized.frame.key_frame {
+        let delivery_kind = classify_video_keyframe_delivery(
+            normalized.new_configuration.is_some(),
+            delivery.acknowledged_generation_id.is_some(),
+            normalized.frame.repair_keyframe,
+            normalized.frame.requires_bootstrap_acknowledgement,
+        );
+        match delivery_kind {
+            VideoKeyframeDelivery::SameGenerationDatagram => {
+                eprintln!(
+                    "Lumen object delivery stage=periodic-keyframe-datagram session-epoch={} generation-id={} frame-id={frame_id}",
+                    delivery.session_epoch,
+                    delivery.acknowledged_generation_id.unwrap_or_default()
+                );
+            }
+            VideoKeyframeDelivery::ReliableBootstrap(classification) => {
+                let published = router.lock().ok().and_then(|mut router| {
+                    router.publish_native_video_bootstrap(
+                        normalized.configuration_id,
+                        frame_id,
+                        timestamp_to_microseconds(normalized.frame.presentation_time_90khz, 90_000),
+                        classification.reason,
+                        classification.requires_encoder_resume,
+                        normalized.frame.payload.clone(),
+                    )
+                });
+                if published.is_none() {
+                    return MediaAttempt::Waiting;
+                }
+                sender.frame_id = match frame_id.checked_add(1) {
+                    Some(next) => next,
+                    None => {
+                        return MediaAttempt::Failed(video_failure(
+                            "packetizer-failed",
+                            "video frame id exhausted".to_owned(),
+                        ))
+                    }
+                };
+                sender.pending_frame = None;
+                sender.pending_since = None;
+                if classification.reason == NativeVideoBootstrapReason::Repair {
+                    sender.repair_required = false;
+                }
+                return MediaAttempt::Waiting;
+            }
+        }
+    }
+
+    let Some(generation_id) = delivery.acknowledged_generation_id else {
+        return MediaAttempt::Waiting;
+    };
+    if sender.packetizer.is_none() {
+        sender.packetizer = match NativeMediaPacketizer::new(
+            NativeMediaPacketizerConfig {
+                kind: NativeMediaKind::VideoDelta,
+                maximum_datagram_payload: delivery.maximum_datagram_payload,
+                generation_id,
+            },
+            0,
+        ) {
+            Ok(packetizer) => Some(packetizer),
+            Err(message) => {
+                return MediaAttempt::Failed(video_failure("packetizer-failed", message))
+            }
+        };
+    }
+    let packetizer = sender.packetizer.as_mut().expect("video packetizer");
+    if let Err(message) = packetizer.update_video_generation(generation_id) {
+        return MediaAttempt::Failed(video_failure("packetizer-failed", message));
+    }
+    let packetized = match packetizer.packetize_video_delta(
+        &normalized.frame,
+        frame_id,
+        delivery.fec_percentage,
+    ) {
+        Ok(packetized) => packetized,
+        Err(message) => return MediaAttempt::Failed(video_failure("packetizer-failed", message)),
+    };
+    let pending_since = sender.pending_since.expect("staged video frame timestamp");
+    let Some(deadline) = pending_since.checked_add(Duration::from_micros(u64::from(
+        delivery.maximum_object_delay_us,
+    ))) else {
+        return MediaAttempt::Failed(video_failure(
+            "packetizer-failed",
+            "video object deadline overflowed".to_owned(),
+        ));
+    };
+    let report = send_video_datagram_batch(
+        packetized.datagrams,
+        NATIVE_MEDIA_SEND_BUFFER_BYTES,
+        NATIVE_AUDIO_EGRESS_RESERVE_BYTES,
+        queue_was_empty_before_current_audio,
+        deadline,
+        |required_capacity, deadline| {
+            wait_for_connection_datagram_queue_capacity(connection, required_capacity, deadline)
+        },
+        |mode, datagram, deadline| send_connection_datagram(connection, mode, datagram, deadline),
+    )
+    .await;
+    let delivery_complete = report.status == DatagramBatchStatus::Complete;
+    let request_repair = match sender.finish_delta_delivery(
+        frame_id,
+        !delivery_complete,
+        delivery.bootstrap_pending,
+    ) {
+        Ok(request_repair) => request_repair,
+        Err(message) => return MediaAttempt::Failed(video_failure("packetizer-failed", message)),
+    };
+    let object_age_us = duration_to_microseconds(pending_since.elapsed());
+    if frame_id <= 3
+        || frame_id % 120 == 0
+        || report.mode == DatagramBatchMode::DeadlineWait
+        || !delivery_complete
+    {
+        log_datagram_batch(
+            "video-delta",
+            delivery.session_epoch,
+            generation_id,
+            frame_id,
+            &report,
+            object_age_us,
+            u64::from(delivery.maximum_object_delay_us),
         );
     }
-    match sender.send_staged(socket, delivery) {
-        Ok(()) => MediaAttempt::Sent,
-        Err(VideoSendError::WaitingForConfiguration) => MediaAttempt::Waiting,
-        Err(VideoSendError::Failure(failure)) => MediaAttempt::Failed(failure),
+    if request_repair {
+        if let Err(message) = platform.handle_control_event(
+            delivery.session_epoch,
+            crate::PlatformControlEvent::RequestIdrFrame,
+        ) {
+            return MediaAttempt::Terminal(video_capture_failure(
+                "transport-keyframe-request-failed",
+                message,
+            ));
+        }
+        eprintln!(
+            "Lumen object delivery stage=transport-repair-requested session-epoch={} generation-id={generation_id} frame-id={frame_id} cause=incomplete-object",
+            delivery.session_epoch,
+        );
+    }
+    match &report.status {
+        DatagramBatchStatus::Complete => {
+            if let Ok(mut router) = router.lock() {
+                let _ = router.observe_native_video_frame_sent(delivery.session_epoch, frame_id);
+            }
+            MediaAttempt::Sent
+        }
+        DatagramBatchStatus::Dropped(_) => MediaAttempt::Dropped,
+        DatagramBatchStatus::Failed(message) => MediaAttempt::Failed(video_failure(
+            "quic-datagram-send-failed",
+            format!("{message}; frame-id={frame_id}"),
+        )),
     }
 }
 
-#[cfg(test)]
-#[path = "media/configuration_header_tests.rs"]
-mod configuration_header_tests;
-
-#[cfg(test)]
-fn send_video_frame(
-    socket: &UdpSocket,
-    delivery: &VideoDeliveryState,
-    sender: &mut VideoSenderState,
-    frame: crate::PlatformEncodedVideoFrame,
-) -> Result<(), String> {
-    sender.prepare(delivery)?;
-    sender.stage(frame)?;
-    sender
-        .send_staged(socket, delivery)
-        .map_err(|error| match error {
-            VideoSendError::WaitingForConfiguration => {
-                "native video configuration is not acknowledged".to_owned()
-            }
-            VideoSendError::Failure(failure) => failure.message,
-        })
-}
-
-#[derive(Debug)]
-enum VideoSendError {
-    WaitingForConfiguration,
-    Failure(MediaFailure),
-}
-
-fn video_packetizer_failure(message: String) -> MediaFailure {
+fn video_failure(stage: &'static str, message: String) -> MediaFailure {
     MediaFailure {
-        code: PlatformRuntimeEventCode::NativeVideoPacketizer,
+        code: if stage == "quic-datagram-send-failed" {
+            PlatformRuntimeEventCode::NativeVideoUdpSend
+        } else {
+            PlatformRuntimeEventCode::NativeVideoPacketizer
+        },
         kind: MediaKind::Video,
-        stage: "packetizer-failed",
+        stage,
         message,
     }
 }
 
-impl VideoSenderState {
-    fn stage(
-        &mut self,
-        frame: crate::PlatformEncodedVideoFrame,
-    ) -> Result<Option<NativeVideoConfiguration>, String> {
-        if self.pending_frame.is_some() {
-            return Err("native video sender already has a pending frame".to_owned());
-        }
-        let normalized = self
-            .normalizer
-            .as_mut()
-            .ok_or_else(|| "video bitstream normalizer is unavailable".to_owned())?
-            .normalize(frame)?;
-        let configuration = normalized.new_configuration.clone();
-        if let Some(configuration) = &configuration {
-            self.pending_configuration_boundary = Some(configuration.configuration_id);
-        }
-        self.pending_frame = Some(normalized);
-        Ok(configuration)
-    }
-
-    fn acknowledged_configuration_boundary(&self, delivery: &VideoDeliveryState) -> Option<u32> {
-        let configuration_id = self.pending_configuration_boundary?;
-        (delivery.acknowledged_configuration_id == Some(configuration_id))
-            .then_some(configuration_id)
-    }
-
-    fn release_configuration_boundary(&mut self, configuration_id: u32) {
-        if self.pending_configuration_boundary == Some(configuration_id) {
-            self.pending_configuration_boundary = None;
-        }
-    }
-
-    fn send_staged(
-        &mut self,
-        socket: &UdpSocket,
-        delivery: &VideoDeliveryState,
-    ) -> Result<(), VideoSendError> {
-        let normalized = self.pending_frame.as_ref().ok_or_else(|| {
-            VideoSendError::Failure(video_packetizer_failure(
-                "native video sender has no pending frame".to_owned(),
-            ))
-        })?;
-        if delivery.acknowledged_configuration_id != Some(normalized.configuration_id) {
-            return Err(VideoSendError::WaitingForConfiguration);
-        }
-        self.packetizer
-            .as_mut()
-            .ok_or_else(|| {
-                VideoSendError::Failure(video_packetizer_failure(
-                    "video packetizer is unavailable".to_owned(),
-                ))
-            })?
-            .update_video_configuration(normalized.configuration_id)
-            .map_err(|message| VideoSendError::Failure(video_packetizer_failure(message)))?;
-        let frame_index = self.frame_index;
-        let packetized = self
-            .packetizer
-            .as_mut()
-            .ok_or_else(|| {
-                VideoSendError::Failure(video_packetizer_failure(
-                    "video packetizer is unavailable".to_owned(),
-                ))
-            })?
-            .packetize_video(&normalized.frame, frame_index, delivery.fec_percentage)
-            .map_err(|message| VideoSendError::Failure(video_packetizer_failure(message)))?;
-        self.frame_index = self.frame_index.checked_add(1).ok_or_else(|| {
-            VideoSendError::Failure(video_packetizer_failure(
-                "video frame id exhausted".to_owned(),
-            ))
-        })?;
-        let datagram_count = packetized.datagrams.len();
-        for datagram in packetized.datagrams {
-            let sent = socket
-                .send_to(&datagram, delivery.endpoint)
-                .map_err(|error| {
-                    VideoSendError::Failure(MediaFailure {
-                        code: PlatformRuntimeEventCode::NativeVideoUdpSend,
-                        kind: MediaKind::Video,
-                        stage: "udp-send-failed",
-                        message: format!("video datagram send failed: {error}"),
-                    })
-                })?;
-            if sent != datagram.len() {
-                return Err(VideoSendError::Failure(MediaFailure {
-                    code: PlatformRuntimeEventCode::NativeVideoUdpSend,
-                    kind: MediaKind::Video,
-                    stage: "udp-send-failed",
-                    message: "video datagram send was incomplete".to_owned(),
-                }));
-            }
-        }
-        if frame_index <= 3 || frame_index % 120 == 0 {
-            eprintln!(
-                "Lumen native media sent kind=video session-epoch={} frame-id={frame_index} datagrams={datagram_count} endpoint={}",
-                delivery.session_epoch, delivery.endpoint
-            );
-        }
-        self.last_sent_frame = Some(SentVideoFrame {
-            frame_id: frame_index,
-            key_frame: normalized.frame.key_frame,
-        });
-        self.pending_frame = None;
-        Ok(())
+fn video_capture_failure(stage: &'static str, message: String) -> MediaFailure {
+    MediaFailure {
+        code: PlatformRuntimeEventCode::NativeVideoCapturePoll,
+        kind: MediaKind::Video,
+        stage,
+        message,
     }
 }
 
@@ -923,787 +1191,479 @@ fn codec_configuration(
     }
 }
 
-fn native_media_address(arguments: &HostArguments) -> Result<SocketAddr, String> {
-    let base_port = arguments
-        .get("port")
-        .and_then(|value| value.parse::<u16>().ok())
-        .ok_or_else(|| "native UDP media base port is invalid".to_owned())?;
-    let ip = match arguments.get("address_family") {
-        Some("ipv4") => IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-        Some("both") => IpAddr::V6(Ipv6Addr::UNSPECIFIED),
-        _ => return Err("native UDP media address family is invalid".to_owned()),
+fn timestamp_to_microseconds(timestamp: u32, clock_rate: u64) -> u32 {
+    ((u64::from(timestamp) * 1_000_000) / clock_rate) as u32
+}
+
+fn duration_to_microseconds(duration: Duration) -> u64 {
+    u64::try_from(duration.as_micros()).unwrap_or(u64::MAX)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn log_datagram_batch(
+    kind: &str,
+    session_epoch: u32,
+    generation_id: u32,
+    object_id: u32,
+    report: &DatagramBatchReport,
+    object_age_us: u64,
+    deadline_us: u64,
+) {
+    let (stage, outcome, error) = match &report.status {
+        DatagramBatchStatus::Complete => ("datagram-batch-sent", "complete", ""),
+        DatagramBatchStatus::Dropped(reason) => ("datagram-batch-dropped", reason.as_str(), ""),
+        DatagramBatchStatus::Failed(error) => {
+            ("datagram-batch-failed", "send-failed", error.as_str())
+        }
     };
-    base_port
-        .checked_add(VIDEO_UDP_OFFSET)
-        .map(|port| SocketAddr::new(ip, port))
-        .ok_or_else(|| "native UDP media port overflowed".to_owned())
+    eprintln!(
+        "Lumen native media stage={stage} kind={kind} session-epoch={session_epoch} generation-id={generation_id} object-id={object_id} outcome={outcome} error={error} transport-mode={} datagrams-sent={} datagrams-total={} bytes={} queue-wait-us={} send-wait-us={} object-age-us={object_age_us} deadline-us={deadline_us}",
+        report.mode.as_str(),
+        report.sent_datagrams,
+        report.total_datagrams,
+        report.total_bytes,
+        duration_to_microseconds(report.queue_wait_duration),
+        duration_to_microseconds(report.send_wait_duration),
+    );
+}
+
+fn object_deadline_exceeded(age: Duration, maximum_object_delay_us: u32) -> bool {
+    age > Duration::from_micros(u64::from(maximum_object_delay_us))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{
+        classify_video_keyframe_delivery, object_deadline_exceeded, run_native_media_tasks,
+        send_datagram_batch, send_video_datagram_batch, wait_for_datagram_deadline,
+        wait_for_datagram_queue_capacity, DatagramBatchDropReason, DatagramBatchMode,
+        DatagramBatchStatus, DatagramDeadlineElapsed, DatagramSendOutcome,
+        VideoBootstrapClassification, VideoKeyframeDelivery, VideoSenderState,
+    };
+    use lumen_engine::NativeVideoBootstrapReason;
+    use std::cell::{Cell, RefCell};
     use std::collections::VecDeque;
-    use std::sync::atomic::{AtomicU16, Ordering};
-    use std::sync::Mutex;
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::rc::Rc;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::task::{Context, Poll};
+    use std::time::{Duration, Instant};
+    use tokio::sync::Notify;
 
-    struct ScriptedMediaPlatform {
-        audio: Mutex<VecDeque<Result<Option<crate::PlatformEncodedAudioPacket>, String>>>,
-        video: Mutex<VecDeque<Result<Option<crate::PlatformEncodedVideoFrame>, String>>>,
-        controls: Mutex<Vec<(u32, crate::PlatformControlEvent)>>,
-        motions: Mutex<Vec<(u32, crate::PlatformNativeMotionEvent)>>,
-        events: Mutex<Vec<PlatformRuntimeEvent>>,
+    struct PendingSend {
+        polls: Arc<AtomicUsize>,
+        dropped: Arc<AtomicBool>,
     }
 
-    impl PlatformSessionControl for ScriptedMediaPlatform {
-        fn start_session(&self, _plan: crate::PlatformSessionPlan) -> Result<(), String> {
-            Ok(())
-        }
+    impl Future for PendingSend {
+        type Output = Result<(), &'static str>;
 
-        fn stop_session(&self) -> Result<(), String> {
-            Ok(())
-        }
-
-        fn poll_encoded_audio(&self) -> Result<Option<crate::PlatformEncodedAudioPacket>, String> {
-            self.audio.lock().unwrap().pop_front().unwrap_or(Ok(None))
-        }
-
-        fn poll_encoded_video(&self) -> Result<Option<crate::PlatformEncodedVideoFrame>, String> {
-            self.video.lock().unwrap().pop_front().unwrap_or(Ok(None))
-        }
-
-        fn handle_control_event(
-            &self,
-            session_epoch: u32,
-            event: crate::PlatformControlEvent,
-        ) -> Result<(), String> {
-            self.controls.lock().unwrap().push((session_epoch, event));
-            Ok(())
-        }
-
-        fn handle_native_motion(
-            &self,
-            session_epoch: u32,
-            event: crate::PlatformNativeMotionEvent,
-        ) -> Result<(), String> {
-            self.motions.lock().unwrap().push((session_epoch, event));
-            Ok(())
-        }
-
-        fn publish_runtime_event(&self, event: PlatformRuntimeEvent) -> Result<(), String> {
-            self.events.lock().unwrap().push(event);
-            Ok(())
+        fn poll(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
+            self.polls.fetch_add(1, Ordering::SeqCst);
+            Poll::Pending
         }
     }
 
-    #[test]
-    fn derives_the_single_native_media_port() {
-        let ipv4 = arguments_with("address_family", "ipv4");
-        assert_eq!(
-            native_media_address(&ipv4).unwrap(),
-            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 47_998)
-        );
-
-        let both = arguments_with("address_family", "both");
-        assert_eq!(
-            native_media_address(&both).unwrap(),
-            SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 47_998)
-        );
+    impl Drop for PendingSend {
+        fn drop(&mut self) {
+            self.dropped.store(true, Ordering::SeqCst);
+        }
     }
 
-    #[test]
-    fn owns_the_native_media_port_for_one_transport_lifetime() {
-        let base_port = available_base_port();
-        let arguments = arguments_with("port", &base_port.to_string());
-        let address = native_media_address(&arguments).unwrap();
-        let mut transport = NativeUdpMediaTransport::default();
-        let router = test_router();
-        let platform = Arc::new(crate::IdlePlatformSessionControl);
-        transport
-            .start(&arguments, Arc::clone(&router), platform.clone())
-            .unwrap();
-        assert_eq!(
-            transport.start(&arguments, router, platform),
-            Err("native UDP media transport is already running".to_owned())
-        );
-        assert!(UdpSocket::bind(address).is_err());
-        transport.stop().unwrap();
-        UdpSocket::bind(address).unwrap();
-    }
-
-    #[test]
-    fn authenticates_sequences_and_applies_native_motion_to_the_platform() {
-        let peer = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 49_998);
-        let identity = NativeMotionIdentity {
-            session_epoch: 77,
-            path_id: 5,
-            policy_revision: 2,
+    #[tokio::test]
+    async fn pending_video_future_does_not_block_audio_future() {
+        let audio_started = Arc::new(Notify::new());
+        let audio_started_signal = Arc::clone(&audio_started);
+        let never_finishes = || async {
+            std::future::pending::<()>().await;
+            Ok::<(), String>(())
         };
-        let key = [0x73; 16];
-        let delivery = InputMotionDeliveryState {
-            session_epoch: identity.session_epoch,
-            path_id: identity.path_id,
-            policy_revision: identity.policy_revision,
-            endpoint: peer,
-            encryption_key: key,
-        };
-        let platform = ScriptedMediaPlatform {
-            audio: Mutex::new(VecDeque::new()),
-            video: Mutex::new(VecDeque::new()),
-            controls: Mutex::new(Vec::new()),
-            motions: Mutex::new(Vec::new()),
-            events: Mutex::new(Vec::new()),
-        };
-        let mut receiver = NativeMotionReceiver::default();
-        let mut reporter = InputMotionFailureReporter::default();
-        let datagram =
-            crate::media::native_motion::test_pointer_motion_datagram(identity, &key, 9, 11);
-
-        apply_native_motion_datagram(
-            &platform,
-            peer,
-            &datagram,
-            &delivery,
-            &mut receiver,
-            &mut reporter,
-        );
-        apply_native_motion_datagram(
-            &platform,
-            peer,
-            &datagram,
-            &delivery,
-            &mut receiver,
-            &mut reporter,
-        );
-
-        let motions = platform.motions.lock().unwrap();
-        assert_eq!(motions.len(), 1, "a replay must not reach the platform");
-        assert_eq!(motions[0].0, 77);
-        assert!(matches!(
-            motions[0].1,
-            crate::PlatformNativeMotionEvent::Pointer {
-                delta_x: 4,
-                delta_y: -2,
-                ..
-            }
-        ));
-        assert!(platform.events.lock().unwrap().is_empty());
-    }
-
-    #[test]
-    fn sends_packetized_video_to_the_admitted_endpoint_and_resets_per_session() {
-        let receiver = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-        receiver
-            .set_read_timeout(Some(Duration::from_secs(1)))
-            .unwrap();
-        let sender_socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-        let mut sender = VideoSenderState::default();
-        let delivery = VideoDeliveryState {
-            video_format: crate::PlatformVideoFormat {
-                codec: crate::PlatformVideoCodec::H264,
-                profile: crate::PlatformVideoProfile::H264High,
-                chroma_subsampling: crate::PlatformChromaSubsampling::Yuv420,
-                bit_depth: 8,
-                dynamic_range: crate::PlatformDynamicRange::Sdr,
-                color_range: crate::PlatformColorRange::Limited,
+        let scheduler = tokio::spawn(run_native_media_tasks(
+            async move {
+                audio_started_signal.notify_one();
+                std::future::pending::<()>().await;
+                Ok::<(), String>(())
             },
-            acknowledged_configuration_id: None,
-            session_epoch: 7,
-            path_id: 1,
-            policy_revision: 1,
-            maximum_datagram_payload: 1_200,
-            endpoint: receiver.local_addr().unwrap(),
-            encryption_key: [0x22; 16],
-            fec_percentage: 0,
-        };
-        assert_eq!(
-            send_video_frame(
-                &sender_socket,
-                &delivery,
-                &mut sender,
-                crate::media::native_video::test_fixtures::encoded_frame(delivery.video_format),
-            ),
-            Err("native video configuration is not acknowledged".to_owned())
-        );
-        let delivery = VideoDeliveryState {
-            acknowledged_configuration_id: Some(1),
-            ..delivery
-        };
-        assert_eq!(
-            sender.acknowledged_configuration_boundary(&delivery),
-            Some(1)
-        );
-        sender.release_configuration_boundary(1);
-        sender.send_staged(&sender_socket, &delivery).unwrap();
-        let mut packet = [0_u8; 2_048];
-        let (length, _) = receiver.recv_from(&mut packet).unwrap();
-        assert_eq!(length, 1_200);
-        let first = lumen_engine::decode_native_media_datagram(&packet[..length]).unwrap();
-        assert_eq!(first.header.kind, lumen_engine::NativeMediaKind::Video);
-        assert_eq!(first.header.session_epoch, 7);
-        assert_eq!(first.header.frame_id, 1);
-        assert_ne!(
-            first.header.flags & lumen_engine::NATIVE_MEDIA_FLAG_KEYFRAME,
-            0
-        );
+            never_finishes(),
+            never_finishes(),
+        ));
 
-        let next_unacknowledged_delivery = VideoDeliveryState {
-            acknowledged_configuration_id: None,
-            session_epoch: 8,
-            ..delivery
-        };
-        assert_eq!(
-            send_video_frame(
-                &sender_socket,
-                &next_unacknowledged_delivery,
-                &mut sender,
-                crate::media::native_video::test_fixtures::encoded_frame(
-                    next_unacknowledged_delivery.video_format
-                ),
-            ),
-            Err("native video configuration is not acknowledged".to_owned())
-        );
-        let next_delivery = VideoDeliveryState {
-            acknowledged_configuration_id: Some(1),
-            ..next_unacknowledged_delivery
-        };
-        assert_eq!(
-            sender.acknowledged_configuration_boundary(&next_delivery),
-            Some(1)
-        );
-        sender.release_configuration_boundary(1);
-        sender.send_staged(&sender_socket, &next_delivery).unwrap();
-        let (length, _) = receiver.recv_from(&mut packet).unwrap();
-        assert_eq!(length, 1_200);
-        let second = lumen_engine::decode_native_media_datagram(&packet[..length]).unwrap();
-        assert_eq!(second.header.session_epoch, 8);
-        assert_eq!(second.header.frame_id, 1);
-        assert_ne!(
-            second.header.flags & lumen_engine::NATIVE_MEDIA_FLAG_KEYFRAME,
-            0
-        );
+        tokio::time::timeout(Duration::from_millis(50), audio_started.notified())
+            .await
+            .expect("audio future must begin independently of pending video");
+
+        scheduler.abort();
+        let _ = scheduler.await;
     }
 
     #[test]
-    fn codec_ack_releases_the_retained_key_frame_before_the_first_dependent_frame() {
-        let receiver = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-        receiver
-            .set_read_timeout(Some(Duration::from_secs(1)))
-            .unwrap();
-        let sender_socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-        let video_format = crate::media::native_video::test_fixtures::H264_420;
-        let inter_frame = |timestamp| crate::PlatformEncodedVideoFrame {
-            payload: vec![0, 0, 0, 1, 0x41, 0x9a, 0x22],
-            decoder_configuration_record: None,
-            presentation_time_90khz: timestamp,
-            key_frame: false,
-        };
-        let platform = ScriptedMediaPlatform {
-            audio: Mutex::new(VecDeque::new()),
-            video: Mutex::new(VecDeque::from([
-                Ok(Some(
-                    crate::media::native_video::test_fixtures::encoded_frame(video_format),
-                )),
-                Ok(Some(inter_frame(90_001))),
-            ])),
-            controls: Mutex::new(Vec::new()),
-            motions: Mutex::new(Vec::new()),
-            events: Mutex::new(Vec::new()),
-        };
-        let unacknowledged = VideoDeliveryState {
-            video_format,
-            acknowledged_configuration_id: None,
-            session_epoch: 77,
-            path_id: 1,
-            policy_revision: 1,
-            maximum_datagram_payload: 1_200,
-            endpoint: receiver.local_addr().unwrap(),
-            encryption_key: [0x52; 16],
-            fec_percentage: 0,
-        };
+    fn video_delta_deadline_is_strict_and_microsecond_exact() {
+        assert!(!object_deadline_exceeded(
+            Duration::from_micros(25_000),
+            25_000
+        ));
+        assert!(object_deadline_exceeded(
+            Duration::from_micros(25_001),
+            25_000
+        ));
+    }
+
+    #[test]
+    fn periodic_keyframes_stay_in_generation_while_lifecycle_keyframes_remain_bootstraps() {
+        assert_eq!(
+            classify_video_keyframe_delivery(false, true, false, false),
+            VideoKeyframeDelivery::SameGenerationDatagram
+        );
+
+        for (actual, expected_reason, expected_resume) in [
+            (
+                classify_video_keyframe_delivery(true, false, true, true),
+                NativeVideoBootstrapReason::Initial,
+                true,
+            ),
+            (
+                classify_video_keyframe_delivery(true, true, false, true),
+                NativeVideoBootstrapReason::ConfigurationChange,
+                true,
+            ),
+            (
+                classify_video_keyframe_delivery(false, true, true, true),
+                NativeVideoBootstrapReason::Repair,
+                true,
+            ),
+        ] {
+            assert_eq!(
+                actual,
+                VideoKeyframeDelivery::ReliableBootstrap(VideoBootstrapClassification {
+                    reason: expected_reason,
+                    requires_encoder_resume: expected_resume,
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn pending_reliable_bootstrap_drains_then_requests_one_post_ack_repair() {
         let mut sender = VideoSenderState::default();
+        assert!(!sender.pending_bootstrap_frame_should_drop(
+            false,
+            Some(Duration::from_micros(16_668)),
+            16_668,
+        ));
+        assert!(!sender.take_post_bootstrap_repair_request(false));
 
-        assert!(matches!(
-            poll_and_send_video(
-                &sender_socket,
-                &unacknowledged,
-                &platform,
-                &mut sender,
-                |_| true,
-            ),
-            MediaAttempt::Waiting
+        assert!(sender.pending_bootstrap_frame_should_drop(
+            false,
+            Some(Duration::from_micros(16_669)),
+            16_668,
         ));
-        let acknowledged = VideoDeliveryState {
-            acknowledged_configuration_id: Some(1),
-            ..unacknowledged
-        };
-        assert!(matches!(
-            poll_and_send_video(
-                &sender_socket,
-                &acknowledged,
-                &platform,
-                &mut sender,
-                |_| true,
-            ),
-            MediaAttempt::Sent
-        ));
-        assert!(matches!(
-            platform.controls.lock().unwrap().as_slice(),
-            [(
-                77,
-                crate::PlatformControlEvent::ResumeVideoEncodingAfterCodecAck
-            )]
-        ));
+        assert!(sender.pending_bootstrap_frame_should_drop(false, Some(Duration::ZERO), 16_668,));
+        assert!(!sender.take_post_bootstrap_repair_request(true));
+        assert!(sender.take_post_bootstrap_repair_request(false));
+        assert!(!sender.take_post_bootstrap_repair_request(false));
+        assert!(sender.repair_required);
 
-        assert!(matches!(
-            poll_and_send_video(
-                &sender_socket,
-                &acknowledged,
-                &platform,
-                &mut sender,
-                |_| true,
-            ),
-            MediaAttempt::Sent
+        let mut owned = VideoSenderState::default();
+        assert!(!owned.pending_bootstrap_frame_should_drop(
+            true,
+            Some(Duration::from_secs(1)),
+            16_668,
         ));
-
-        let mut packet = [0_u8; 2_048];
-        let first = loop {
-            let (length, _) = receiver.recv_from(&mut packet).unwrap();
-            let decoded = lumen_engine::decode_native_media_datagram(&packet[..length]).unwrap();
-            if decoded.header.frame_id == 1 {
-                break decoded;
-            }
-        };
-        assert_ne!(
-            first.header.flags & lumen_engine::NATIVE_MEDIA_FLAG_KEYFRAME,
-            0
-        );
-        let second = loop {
-            let (length, _) = receiver.recv_from(&mut packet).unwrap();
-            let decoded = lumen_engine::decode_native_media_datagram(&packet[..length]).unwrap();
-            if decoded.header.frame_id == 2 {
-                break decoded;
-            }
-        };
-        assert_eq!(
-            second.header.flags & lumen_engine::NATIVE_MEDIA_FLAG_KEYFRAME,
-            0
-        );
+        assert!(!owned.take_post_bootstrap_repair_request(false));
     }
 
-    #[test]
-    fn successful_video_send_exposes_the_exact_keyframe_for_repair_completion() {
-        let receiver = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-        let sender_socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-        let video_format = crate::media::native_video::test_fixtures::H264_420;
-        let platform = ScriptedMediaPlatform {
-            audio: Mutex::new(VecDeque::new()),
-            video: Mutex::new(VecDeque::from([Ok(Some(
-                crate::media::native_video::test_fixtures::encoded_frame(video_format),
-            ))])),
-            controls: Mutex::new(Vec::new()),
-            motions: Mutex::new(Vec::new()),
-            events: Mutex::new(Vec::new()),
-        };
-        let delivery = VideoDeliveryState {
-            video_format,
-            acknowledged_configuration_id: Some(1),
-            session_epoch: 78,
-            path_id: 1,
-            policy_revision: 1,
-            maximum_datagram_payload: 1_200,
-            endpoint: receiver.local_addr().unwrap(),
-            encryption_key: [0x53; 16],
-            fec_percentage: 0,
-        };
-        let mut sender = VideoSenderState::default();
+    #[tokio::test]
+    async fn occupied_queue_barrier_deadline_cancels_without_sending() {
+        let polls = Arc::new(AtomicUsize::new(0));
+        let dropped = Arc::new(AtomicBool::new(false));
+        let wait_polls = Arc::clone(&polls);
+        let wait_dropped = Arc::clone(&dropped);
+        let deadline = Instant::now() + Duration::from_millis(2);
 
-        assert!(matches!(
-            poll_and_send_video(&sender_socket, &delivery, &platform, &mut sender, |_| true,),
-            MediaAttempt::Sent
-        ));
-        assert_eq!(
-            sender.take_last_sent_frame(),
-            Some(SentVideoFrame {
-                frame_id: 1,
-                key_frame: true,
-            })
-        );
-        assert_eq!(sender.take_last_sent_frame(), None);
-    }
-
-    #[test]
-    fn rejects_mismatched_sps_before_network_media() {
-        // Given: a 4:4:4 delivery plan and an encoder frame carrying a 4:2:0 SPS.
-        let receiver = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-        receiver
-            .set_read_timeout(Some(Duration::from_millis(25)))
-            .unwrap();
-        let sender_socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-        let selected = crate::media::native_video::test_fixtures::H264_444;
-        let emitted = crate::media::native_video::test_fixtures::H264_420;
-        let delivery = VideoDeliveryState {
-            video_format: selected,
-            acknowledged_configuration_id: None,
-            session_epoch: 7,
-            path_id: 1,
-            policy_revision: 1,
-            maximum_datagram_payload: 1_200,
-            endpoint: receiver.local_addr().unwrap(),
-            encryption_key: [0x22; 16],
-            fec_percentage: 0,
-        };
-
-        // When: the frame reaches the sender's normalization boundary.
-        let result = send_video_frame(
-            &sender_socket,
-            &delivery,
-            &mut VideoSenderState::default(),
-            crate::media::native_video::test_fixtures::encoded_frame(emitted),
-        );
-
-        // Then: conformance fails and no media datagram reaches the network peer.
-        assert_eq!(
-            result,
-            Err("H.264 SPS does not match the selected video format".to_owned())
-        );
-        let mut datagram = [0_u8; 2_048];
-        assert!(matches!(
-            receiver.recv_from(&mut datagram).unwrap_err().kind(),
-            io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
-        ));
-    }
-
-    #[test]
-    fn sends_opus_units_with_the_native_media_contract() {
-        let receiver = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-        receiver
-            .set_read_timeout(Some(Duration::from_secs(1)))
-            .unwrap();
-        let sender_socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-        let delivery = AudioDeliveryState {
-            session_epoch: 0x0102_0304,
-            path_id: 1,
-            policy_revision: 1,
-            maximum_datagram_payload: 1_200,
-            endpoint: receiver.local_addr().unwrap(),
-            encryption_key: std::array::from_fn(|index| index as u8),
-        };
-        let mut sender = AudioSenderState::default();
-        for index in 0..4_u32 {
-            send_audio_packet(
-                &sender_socket,
-                &delivery,
-                &mut sender,
-                crate::PlatformEncodedAudioPacket {
-                    payload: vec![1, 2, 3],
-                    presentation_time_48khz: index * 240,
-                    duration_frames: 240,
-                },
-            )
-            .unwrap();
-        }
-        let mut packet = [0_u8; 2_048];
-        let mut received = Vec::new();
-        for _ in 0..4 {
-            let (length, _) = receiver.recv_from(&mut packet).unwrap();
-            received.push(packet[..length].to_vec());
-        }
-        assert!(received.iter().all(|datagram| datagram.len() == 1_200));
-        for (index, datagram) in received.iter().enumerate() {
-            let decoded = lumen_engine::decode_native_media_datagram(datagram).unwrap();
-            assert_eq!(decoded.header.kind, lumen_engine::NativeMediaKind::Audio);
-            assert_eq!(decoded.header.session_epoch, 0x0102_0304);
-            assert_eq!(decoded.header.frame_id, index as u32 + 1);
-        }
-
-        let next_session = AudioDeliveryState {
-            session_epoch: 0x0102_0305,
-            ..delivery
-        };
-        send_audio_packet(
-            &sender_socket,
-            &next_session,
-            &mut sender,
-            crate::PlatformEncodedAudioPacket {
-                payload: vec![0, 1, 2],
-                presentation_time_48khz: 0,
-                duration_frames: 240,
+        let result = wait_for_datagram_queue_capacity(
+            12,
+            12,
+            deadline,
+            || 8,
+            move |deadline| {
+                let pending = PendingSend {
+                    polls: Arc::clone(&wait_polls),
+                    dropped: Arc::clone(&wait_dropped),
+                };
+                async move {
+                    wait_for_datagram_deadline(deadline, pending)
+                        .await
+                        .map(|_| ())
+                }
             },
         )
-        .unwrap();
-        let (length, _) = receiver.recv_from(&mut packet).unwrap();
-        assert_eq!(length, 1_200);
-        let decoded = lumen_engine::decode_native_media_datagram(&packet[..length]).unwrap();
-        assert_eq!(decoded.header.session_epoch, 0x0102_0305);
-        assert_eq!(decoded.header.frame_id, 1);
+        .await;
+
+        assert_eq!(result, Err(DatagramDeadlineElapsed));
+        assert!(polls.load(Ordering::SeqCst) > 0);
+        assert!(dropped.load(Ordering::SeqCst));
     }
 
-    #[test]
-    fn resumes_audio_and_video_after_empty_capture_polls() {
-        let receiver = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-        receiver
-            .set_read_timeout(Some(Duration::from_millis(50)))
-            .unwrap();
-        let sender_socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-        let video_format = crate::media::native_video::test_fixtures::H264_420;
-        let platform = ScriptedMediaPlatform {
-            audio: Mutex::new(VecDeque::from([
-                Ok(None),
-                Ok(Some(crate::PlatformEncodedAudioPacket {
-                    payload: vec![1, 2, 3],
-                    presentation_time_48khz: 0,
-                    duration_frames: 240,
-                })),
-                Ok(None),
-                Ok(Some(crate::PlatformEncodedAudioPacket {
-                    payload: vec![4, 5, 6],
-                    presentation_time_48khz: 240,
-                    duration_frames: 240,
-                })),
-            ])),
-            video: Mutex::new(VecDeque::from([
-                Ok(None),
-                Ok(Some(
-                    crate::media::native_video::test_fixtures::encoded_frame(video_format),
-                )),
-                Ok(None),
-                Ok(Some(
-                    crate::media::native_video::test_fixtures::encoded_frame(video_format),
-                )),
-                Ok(Some(
-                    crate::media::native_video::test_fixtures::encoded_frame(video_format),
-                )),
-            ])),
-            controls: Mutex::new(Vec::new()),
-            motions: Mutex::new(Vec::new()),
-            events: Mutex::new(Vec::new()),
-        };
-        let audio_delivery = AudioDeliveryState {
-            session_epoch: 77,
-            path_id: 1,
-            policy_revision: 1,
-            maximum_datagram_payload: 1_200,
-            endpoint: receiver.local_addr().unwrap(),
-            encryption_key: [0x41; 16],
-        };
-        let video_delivery = VideoDeliveryState {
-            video_format,
-            acknowledged_configuration_id: Some(1),
-            session_epoch: 77,
-            path_id: 1,
-            policy_revision: 1,
-            maximum_datagram_payload: 1_200,
-            endpoint: receiver.local_addr().unwrap(),
-            encryption_key: [0x41; 16],
-            fec_percentage: 0,
-        };
-        let mut audio_sender = AudioSenderState::default();
-        let mut video_sender = VideoSenderState::default();
-
-        assert!(matches!(
-            poll_and_send_audio(
-                &sender_socket,
-                &audio_delivery,
-                &platform,
-                &mut audio_sender
-            ),
-            MediaAttempt::Idle
-        ));
-        assert!(matches!(
-            poll_and_send_audio(
-                &sender_socket,
-                &audio_delivery,
-                &platform,
-                &mut audio_sender
-            ),
-            MediaAttempt::Sent
-        ));
-        assert!(matches!(
-            poll_and_send_audio(
-                &sender_socket,
-                &audio_delivery,
-                &platform,
-                &mut audio_sender
-            ),
-            MediaAttempt::Idle
-        ));
-        assert!(matches!(
-            poll_and_send_audio(
-                &sender_socket,
-                &audio_delivery,
-                &platform,
-                &mut audio_sender
-            ),
-            MediaAttempt::Sent
-        ));
-
-        assert!(matches!(
-            poll_and_send_video(
-                &sender_socket,
-                &video_delivery,
-                &platform,
-                &mut video_sender,
-                |_| true,
-            ),
-            MediaAttempt::Idle
-        ));
-        assert!(matches!(
-            poll_and_send_video(
-                &sender_socket,
-                &video_delivery,
-                &platform,
-                &mut video_sender,
-                |_| true,
-            ),
-            MediaAttempt::Sent
-        ));
-        assert!(matches!(
-            poll_and_send_video(
-                &sender_socket,
-                &video_delivery,
-                &platform,
-                &mut video_sender,
-                |_| true,
-            ),
-            MediaAttempt::Idle
-        ));
-        assert!(matches!(
-            poll_and_send_video(
-                &sender_socket,
-                &video_delivery,
-                &platform,
-                &mut video_sender,
-                |_| true,
-            ),
-            MediaAttempt::Sent
-        ));
-        assert!(matches!(
-            platform.controls.lock().unwrap().as_slice(),
-            [(
-                77,
-                crate::PlatformControlEvent::ResumeVideoEncodingAfterCodecAck
-            )]
-        ));
-
-        let mut datagram = [0_u8; 2_048];
-        let mut audio_units = HashSet::new();
-        let mut video_frames = HashSet::new();
-        while let Ok((length, _)) = receiver.recv_from(&mut datagram) {
-            let decoded = lumen_engine::decode_native_media_datagram(&datagram[..length]).unwrap();
-            match decoded.header.kind {
-                lumen_engine::NativeMediaKind::Audio => {
-                    audio_units.insert(decoded.header.frame_id);
+    #[tokio::test]
+    async fn available_capacity_admits_complete_video_object_without_draining_audio() {
+        let queued = Rc::new(RefCell::new((4_usize, VecDeque::from([vec![9_u8; 4]]))));
+        let requested = Rc::new(Cell::new(0));
+        let barrier_queue = Rc::clone(&queued);
+        let requested_capacity = Rc::clone(&requested);
+        let send_queue = Rc::clone(&queued);
+        let report = send_video_datagram_batch(
+            vec![vec![1; 4], vec![2; 4]],
+            12,
+            0,
+            true,
+            Instant::now() + Duration::from_secs(1),
+            move |required_capacity, deadline| {
+                requested_capacity.set(required_capacity);
+                let queued = Rc::clone(&barrier_queue);
+                async move {
+                    wait_for_datagram_queue_capacity(
+                        12,
+                        required_capacity,
+                        deadline,
+                        || 12 - queued.borrow().0,
+                        |_| async {
+                            panic!("complete video object already fits beside queued audio")
+                        },
+                    )
+                    .await
                 }
-                lumen_engine::NativeMediaKind::Video => {
-                    video_frames.insert(decoded.header.frame_id);
+            },
+            move |_, datagram, _| {
+                let queued = Rc::clone(&send_queue);
+                async move {
+                    let mut queued = queued.borrow_mut();
+                    queued.0 += datagram.len();
+                    queued.1.push_back(datagram);
+                    DatagramSendOutcome::Sent
                 }
-                lumen_engine::NativeMediaKind::InputMotion => {}
-            }
-        }
-        assert_eq!(audio_units, HashSet::from([1, 2]));
-        assert_eq!(video_frames, HashSet::from([1, 2]));
-    }
+            },
+        )
+        .await;
 
-    #[test]
-    fn publishes_typed_capture_failure_and_clears_it_after_media_recovers() {
-        let receiver = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-        let sender_socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-        let platform = ScriptedMediaPlatform {
-            audio: Mutex::new(VecDeque::from([
-                Err("audio source unavailable".to_owned()),
-                Ok(Some(crate::PlatformEncodedAudioPacket {
-                    payload: vec![1, 2, 3],
-                    presentation_time_48khz: 0,
-                    duration_frames: 240,
-                })),
-            ])),
-            video: Mutex::new(VecDeque::new()),
-            controls: Mutex::new(Vec::new()),
-            motions: Mutex::new(Vec::new()),
-            events: Mutex::new(Vec::new()),
-        };
-        let delivery = AudioDeliveryState {
-            session_epoch: 91,
-            path_id: 1,
-            policy_revision: 1,
-            maximum_datagram_payload: 1_200,
-            endpoint: receiver.local_addr().unwrap(),
-            encryption_key: [0x51; 16],
-        };
-        let mut sender = AudioSenderState::default();
-        let mut reporter = MediaFailureReporter::default();
-
-        let failed = poll_and_send_audio(&sender_socket, &delivery, &platform, &mut sender);
-        reporter.observe(MediaKind::Audio, &failed, &platform);
-        let recovered = poll_and_send_audio(&sender_socket, &delivery, &platform, &mut sender);
-        reporter.observe(MediaKind::Audio, &recovered, &platform);
-
-        assert!(matches!(failed, MediaAttempt::Failed(_)));
-        assert!(matches!(recovered, MediaAttempt::Sent));
-        let events = platform.events.lock().unwrap();
-        assert_eq!(events.len(), 2);
+        assert_eq!(requested.get(), 8);
+        assert_eq!(report.status, DatagramBatchStatus::Complete);
+        assert_eq!(report.mode, DatagramBatchMode::FreshEnqueue);
+        assert_eq!(report.sent_datagrams, 2);
         assert_eq!(
-            events[0],
-            PlatformRuntimeEvent {
-                disposition: PlatformRuntimeEventDisposition::Raised,
-                severity: PlatformRuntimeEventSeverity::Warning,
-                code: PlatformRuntimeEventCode::NativeAudioCapturePoll,
-                message: Some(
-                    "native-media-audio-capture-poll-failed: audio source unavailable".to_owned()
-                ),
-            }
-        );
-        assert_eq!(
-            events[1],
-            PlatformRuntimeEvent {
-                disposition: PlatformRuntimeEventDisposition::Cleared,
-                severity: PlatformRuntimeEventSeverity::Warning,
-                code: PlatformRuntimeEventCode::NativeAudioCapturePoll,
-                message: None,
-            }
+            queued
+                .borrow()
+                .1
+                .iter()
+                .map(|datagram| datagram[0])
+                .collect::<Vec<_>>(),
+            vec![9, 1, 2]
         );
     }
 
-    fn available_base_port() -> u16 {
-        static NEXT_BASE_PORT: AtomicU16 = AtomicU16::new(58_000);
-        for _ in 0..100 {
-            let base_port = NEXT_BASE_PORT.fetch_add(16, Ordering::Relaxed);
-            let addresses = [base_port + VIDEO_UDP_OFFSET];
-            let sockets = addresses
-                .into_iter()
-                .map(|port| UdpSocket::bind((Ipv4Addr::LOCALHOST, port)))
-                .collect::<Result<Vec<_>, _>>();
-            if sockets.is_ok() {
-                return base_port;
-            }
-        }
-        panic!("no UDP media test port range is available");
+    #[tokio::test]
+    async fn video_capacity_preserves_headroom_for_the_next_audio_packets() {
+        let required = Rc::new(Cell::new(0));
+        let requested_capacity = Rc::clone(&required);
+        let report = send_video_datagram_batch(
+            vec![vec![1; 4], vec![2; 4]],
+            16,
+            4,
+            true,
+            Instant::now() + Duration::from_secs(1),
+            move |required_capacity, _| {
+                requested_capacity.set(required_capacity);
+                async { Ok(Duration::ZERO) }
+            },
+            |_, _, _| async { DatagramSendOutcome::Sent },
+        )
+        .await;
+
+        assert_eq!(required.get(), 12);
+        assert_eq!(report.status, DatagramBatchStatus::Complete);
+        assert_eq!(report.sent_datagrams, 2);
     }
 
-    fn arguments_with(key: &str, value: &str) -> HostArguments {
-        let mut values = crate::config::tests::valid_arguments();
-        let prefix = format!("{key}=");
-        let argument = values
-            .iter_mut()
-            .find(|argument| argument.starts_with(&prefix))
-            .unwrap();
-        *argument = format!("{key}={value}");
-        HostArguments::parse(values).unwrap()
+    #[tokio::test]
+    async fn possible_prior_video_requires_full_queue_drain() {
+        let required = Rc::new(Cell::new(0));
+        let requested_capacity = Rc::clone(&required);
+        let report = send_video_datagram_batch(
+            vec![vec![1; 4], vec![2; 4]],
+            12,
+            0,
+            false,
+            Instant::now() + Duration::from_secs(1),
+            move |required_capacity, _| {
+                requested_capacity.set(required_capacity);
+                async { Err(DatagramDeadlineElapsed) }
+            },
+            |_, _, _| async {
+                panic!("video must not enqueue behind a possible prior video object")
+            },
+        )
+        .await;
+
+        assert_eq!(required.get(), 12);
+        assert_eq!(
+            report.status,
+            DatagramBatchStatus::Dropped(DatagramBatchDropReason::QueueBarrierDeadlineExceeded)
+        );
+        assert_eq!(report.sent_datagrams, 0);
     }
 
-    fn test_router() -> SharedControlRouter {
-        let root = tempfile::tempdir().unwrap().keep();
-        let paths = crate::HostAuthorityPaths {
-            settings: root.join("settings.json"),
-            owner_account: root.join("owner-account.json"),
-            devices: root.join("devices.json"),
-            applications: root.join("apps.json"),
-            host_identity: root.join("lumen-state.json"),
+    #[tokio::test]
+    async fn from_empty_fresh_batch_enqueues_one_complete_object() {
+        let queued = Rc::new(RefCell::new((0_usize, VecDeque::new())));
+        let send_queue = Rc::clone(&queued);
+        let report = send_datagram_batch(
+            vec![vec![1; 4], vec![2; 4], vec![3; 4]],
+            DatagramBatchMode::FreshEnqueue,
+            None,
+            move |mode, datagram, _| {
+                let queued = Rc::clone(&send_queue);
+                async move {
+                    assert_eq!(mode, DatagramBatchMode::FreshEnqueue);
+                    let mut queued = queued.borrow_mut();
+                    while queued.0 > 12 {
+                        let dropped: Vec<u8> = queued.1.pop_front().expect("queued datagram");
+                        queued.0 -= dropped.len();
+                    }
+                    queued.0 += datagram.len();
+                    queued.1.push_back(datagram);
+                    DatagramSendOutcome::Sent
+                }
+            },
+        )
+        .await;
+
+        assert_eq!(report.status, DatagramBatchStatus::Complete);
+        assert_eq!(report.mode, DatagramBatchMode::FreshEnqueue);
+        assert_eq!(report.total_datagrams, 3);
+        assert_eq!(report.sent_datagrams, 3);
+        assert_eq!(report.total_bytes, 12);
+        assert_eq!(
+            queued
+                .borrow()
+                .1
+                .iter()
+                .map(|datagram| datagram[0])
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+    }
+
+    #[tokio::test]
+    async fn barrier_timeout_drops_whole_frame_then_empty_queue_recovers_latest() {
+        let sent = Rc::new(RefCell::new(Vec::new()));
+        let send_log = Rc::clone(&sent);
+        let blocked = send_video_datagram_batch(
+            vec![vec![1; 4], vec![1; 4]],
+            8,
+            0,
+            false,
+            Instant::now() + Duration::from_secs(1),
+            |_, _| async { Err(DatagramDeadlineElapsed) },
+            move |_, datagram, _| {
+                let sent = Rc::clone(&send_log);
+                async move {
+                    sent.borrow_mut().push(datagram);
+                    DatagramSendOutcome::Sent
+                }
+            },
+        )
+        .await;
+
+        assert_eq!(
+            blocked.status,
+            DatagramBatchStatus::Dropped(DatagramBatchDropReason::QueueBarrierDeadlineExceeded)
+        );
+        assert_eq!(blocked.sent_datagrams, 0);
+        assert!(sent.borrow().is_empty());
+
+        let recovered_log = Rc::clone(&sent);
+        let fresh = send_video_datagram_batch(
+            vec![vec![2; 4], vec![2; 4]],
+            8,
+            0,
+            false,
+            Instant::now() + Duration::from_secs(1),
+            |_, _| async { Ok(Duration::ZERO) },
+            move |_, datagram, _| {
+                let sent = Rc::clone(&recovered_log);
+                async move {
+                    sent.borrow_mut().push(datagram);
+                    DatagramSendOutcome::Sent
+                }
+            },
+        )
+        .await;
+
+        assert_eq!(fresh.status, DatagramBatchStatus::Complete);
+        assert_eq!(fresh.mode, DatagramBatchMode::FreshEnqueue);
+        assert_eq!(fresh.sent_datagrams, 2);
+        assert_eq!(
+            sent.borrow()
+                .iter()
+                .map(|datagram| datagram[0])
+                .collect::<Vec<_>>(),
+            vec![2, 2]
+        );
+    }
+
+    #[tokio::test]
+    async fn audio_wait_is_bounded_and_never_uses_evicting_send() {
+        let sent = Rc::new(RefCell::new(Vec::new()));
+        let calls = Rc::new(Cell::new(0));
+        let send_log = Rc::clone(&sent);
+        let send_calls = Rc::clone(&calls);
+        let report = send_datagram_batch(
+            vec![vec![1; 800], vec![1; 800]],
+            DatagramBatchMode::DeadlineWait,
+            Some(Instant::now() + Duration::from_secs(1)),
+            move |mode, datagram, _| {
+                let sent = Rc::clone(&send_log);
+                let call = send_calls.get();
+                send_calls.set(call + 1);
+                async move {
+                    assert_eq!(mode, DatagramBatchMode::DeadlineWait);
+                    if call == 0 {
+                        sent.borrow_mut().push(datagram);
+                        DatagramSendOutcome::Sent
+                    } else {
+                        DatagramSendOutcome::DeadlineExceeded
+                    }
+                }
+            },
+        )
+        .await;
+
+        assert_eq!(
+            report.status,
+            DatagramBatchStatus::Dropped(DatagramBatchDropReason::SendDeadlineExceeded)
+        );
+        assert_eq!(report.mode, DatagramBatchMode::DeadlineWait);
+        assert_eq!(report.sent_datagrams, 1);
+        assert_eq!(sent.borrow().len(), 1);
+    }
+
+    #[test]
+    fn transport_drop_during_bootstrap_defers_one_repair_until_ack() {
+        let mut sender = VideoSenderState {
+            frame_id: 41,
+            ..VideoSenderState::default()
         };
-        let authorities = crate::HostAuthorities::open_native(paths).unwrap();
-        Arc::new(std::sync::Mutex::new(crate::ControlRouter::new(
-            authorities,
-            crate::HostDiscoveryState::test_default(),
-        )))
+
+        assert!(!sender.finish_delta_delivery(41, true, true).unwrap());
+
+        assert_eq!(sender.frame_id, 42);
+        assert!(!sender.repair_required);
+        assert!(sender.repair_after_bootstrap);
+        assert!(!sender.take_post_bootstrap_repair_request(true));
+        assert!(sender.take_post_bootstrap_repair_request(false));
+        assert!(!sender.take_post_bootstrap_repair_request(false));
+        assert!(sender.pending_frame.is_none());
+        assert!(sender.pending_since.is_none());
     }
 }

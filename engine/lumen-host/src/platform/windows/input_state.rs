@@ -64,6 +64,10 @@ struct ControllerRoute {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum WindowsInputAction {
+    MousePosition {
+        x: f32,
+        y: f32,
+    },
     MouseButton {
         button: u8,
         pressed: bool,
@@ -228,6 +232,7 @@ impl WindowsInputState {
                 pointer_id: _,
                 button,
                 pressed,
+                absolute_position,
             } => {
                 let session = self.sessions.entry(session_epoch).or_default();
                 let changed = if pressed {
@@ -235,10 +240,14 @@ impl WindowsInputState {
                 } else {
                     session.pressed_mouse_buttons.remove(&button)
                 };
-                Ok(changed
-                    .then_some(WindowsInputAction::MouseButton { button, pressed })
-                    .into_iter()
-                    .collect())
+                let mut actions = Vec::with_capacity(2);
+                if let Some((x, y)) = absolute_position {
+                    actions.push(WindowsInputAction::MousePosition { x, y });
+                }
+                if changed {
+                    actions.push(WindowsInputAction::MouseButton { button, pressed });
+                }
+                Ok(actions)
             }
             PlatformNativeInputEvent::GamepadConnection {
                 gamepad_id,

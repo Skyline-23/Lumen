@@ -12,7 +12,6 @@ use lumen_engine::{
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HostDiscoveryState {
     session_quic_port: u16,
-    direct_media_udp_port: u16,
     control_https_port: u16,
     current_application_id: u32,
     current_application_uuid: String,
@@ -24,7 +23,6 @@ impl HostDiscoveryState {
         let ports = HostPorts::from_arguments(arguments)?;
         Ok(Self {
             session_quic_port: ports.native_session_quic,
-            direct_media_udp_port: ports.native_media_udp,
             control_https_port: ports.control_https,
             current_application_id: 0,
             current_application_uuid: String::new(),
@@ -36,7 +34,6 @@ impl HostDiscoveryState {
     pub(crate) fn test_default() -> Self {
         Self {
             session_quic_port: 48_010,
-            direct_media_udp_port: 47_998,
             control_https_port: 47_990,
             current_application_id: 0,
             current_application_uuid: String::new(),
@@ -113,7 +110,6 @@ impl ControlRouter {
                         "LUMEN_SERVER_FREE"
                     },
                     session_quic_port: self.discovery.session_quic_port,
-                    direct_media_udp_port: self.discovery.direct_media_udp_port,
                     control_https_port: self.discovery.control_https_port,
                     server_unique_id: identity.unique_id(),
                     authority_host: identity.authority_host(),
@@ -162,7 +158,6 @@ struct HostDescriptor<'a> {
     current_game_id: u32,
     server_state: &'static str,
     session_quic_port: u16,
-    direct_media_udp_port: u16,
     control_https_port: u16,
     server_unique_id: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]

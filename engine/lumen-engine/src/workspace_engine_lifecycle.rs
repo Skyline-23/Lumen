@@ -71,7 +71,11 @@ impl WorkspaceEngine {
         if !completion.succeeded {
             self.last_failure = LumenEngineStatus::CommandFailed;
             if self.state == LumenWorkspaceState::Stopping {
-                self.record_cleanup_failure(command.kind);
+                let cleanup_status = self.record_cleanup_failure(command.kind);
+                if cleanup_status != LumenEngineStatus::Ok {
+                    self.last_failure = cleanup_status;
+                    return cleanup_status;
+                }
             } else {
                 let _ = self.schedule_recovery();
             }

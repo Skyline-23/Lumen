@@ -1,21 +1,23 @@
+use super::native_session::NativeMediaFeedbackRejection;
 use super::*;
 use crate::{
     HostAuthorities, HostAuthorityPaths, PlatformApplicationPlan, PlatformControlEvent,
-    PlatformRuntimeEvent, PlatformRuntimeEventCode, PlatformRuntimeEventDisposition,
-    PlatformRuntimeEventSeverity, PlatformSessionPlan,
+    PlatformRuntimeEvent, PlatformSessionPlan,
 };
 use lumen_engine::{
     client_control_envelope, host_control_envelope, ClientControlEnvelope, ClientSessionHello,
-    CodecConfiguration, CodecConfigurationAck, HostSessionCapabilities, HostSessionPlan,
-    MediaPathResponse, NativeAudioChannelMode, NativeAudioQuality, NativeChromaSubsampling,
-    NativeColorRange, NativeDisplayGamut, NativeDisplayTransfer, NativeDynamicRange,
-    NativeNegotiationFailure, NativePolicyMode, NativeVideoCapability, NativeVideoCodec,
-    NativeVideoFormat, NativeVideoKeyframeRequestReason, NativeVideoProfile, StartSessionAck,
-    StopSession, VideoKeyframeRequest,
+    CodecConfiguration, CodecConfigurationAck, DisplayReconfigurationRequest,
+    HostSessionCapabilities, HostSessionPlan, MediaFeedback, NativeAudioChannelMode,
+    NativeAudioQuality, NativeChromaSubsampling, NativeColorRange, NativeDisplayGamut,
+    NativeDisplayReconfigurationResultCode, NativeDisplayTransfer, NativeDynamicRange,
+    NativeNegotiationFailure, NativePolicyMode, NativeVideoBootstrapReason,
+    NativeVideoBootstrapResultCode, NativeVideoCapability, NativeVideoCodec, NativeVideoFormat,
+    NativeVideoKeyframeRequestReason, NativeVideoProfile, StartSessionAck, VideoBootstrapResult,
+    VideoKeyframeRequest, NATIVE_PROTOCOL_VERSION, NATIVE_REQUIRED_MEDIA_CAPABILITIES,
 };
 use serde_json::{json, Value};
+use std::collections::VecDeque;
 use std::fs;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -24,7 +26,7 @@ fn router() -> (tempfile::TempDir, ControlRouter) {
     router_with_platform(Arc::new(IdlePlatformSessionControl))
 }
 
-fn router_with_platform(
+pub(crate) fn router_with_platform(
     platform: Arc<dyn PlatformSessionControl>,
 ) -> (tempfile::TempDir, ControlRouter) {
     router_with_discovery(platform, HostDiscoveryState::test_default())
@@ -74,12 +76,27 @@ fn router_with_discovery(
 }
 
 #[derive(Default)]
-struct RecordingPlatformSessionControl {
+pub(crate) struct RecordingPlatformSessionControl {
     starts: Mutex<Vec<PlatformSessionPlan>>,
+    reconfigurations: Mutex<Vec<PlatformSessionPlan>>,
     stops: AtomicUsize,
     application_starts: AtomicUsize,
     application_stops: AtomicUsize,
     control_events: Mutex<Vec<(u32, PlatformControlEvent)>>,
+}
+
+impl RecordingPlatformSessionControl {
+    pub(crate) fn stop_count(&self) -> usize {
+        self.stops.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn application_stop_count(&self) -> usize {
+        self.application_stops.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn control_events(&self) -> Vec<(u32, PlatformControlEvent)> {
+        self.control_events.lock().unwrap().clone()
+    }
 }
 
 impl PlatformSessionControl for RecordingPlatformSessionControl {
@@ -103,6 +120,11 @@ impl PlatformSessionControl for RecordingPlatformSessionControl {
         Ok(())
     }
 
+    fn reconfigure_session(&self, plan: PlatformSessionPlan) -> Result<(), String> {
+        self.reconfigurations.lock().unwrap().push(plan);
+        Ok(())
+    }
+
     fn handle_control_event(
         &self,
         session_epoch: u32,
@@ -114,12 +136,110 @@ impl PlatformSessionControl for RecordingPlatformSessionControl {
             .push((session_epoch, event));
         Ok(())
     }
+
+    fn handle_native_input(
+        &self,
+        _session_epoch: u32,
+        _event: crate::PlatformNativeInputEvent,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn handle_native_motion(
+        &self,
+        _session_epoch: u32,
+        _event: crate::PlatformNativeMotionEvent,
+    ) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 #[derive(Default)]
 struct FailingPlatformSessionControl {
     runtime_events: Mutex<Vec<PlatformRuntimeEvent>>,
     stops: AtomicUsize,
+}
+
+pub(crate) struct RetryingCleanupPlatformSessionControl {
+    start_result: Result<(), String>,
+    stop_results: Mutex<VecDeque<Result<(), String>>>,
+    application_stop_results: Mutex<VecDeque<Result<(), String>>>,
+    stops: AtomicUsize,
+    application_stops: AtomicUsize,
+}
+
+impl RetryingCleanupPlatformSessionControl {
+    pub(crate) fn new(stop_results: impl IntoIterator<Item = Result<(), String>>) -> Self {
+        Self {
+            start_result: Ok(()),
+            stop_results: Mutex::new(stop_results.into_iter().collect()),
+            application_stop_results: Mutex::new(VecDeque::new()),
+            stops: AtomicUsize::new(0),
+            application_stops: AtomicUsize::new(0),
+        }
+    }
+
+    fn with_start_failure(
+        start_error: impl Into<String>,
+        stop_results: impl IntoIterator<Item = Result<(), String>>,
+    ) -> Self {
+        Self {
+            start_result: Err(start_error.into()),
+            stop_results: Mutex::new(stop_results.into_iter().collect()),
+            application_stop_results: Mutex::new(VecDeque::new()),
+            stops: AtomicUsize::new(0),
+            application_stops: AtomicUsize::new(0),
+        }
+    }
+
+    fn with_application_stop_results(
+        stop_results: impl IntoIterator<Item = Result<(), String>>,
+        application_stop_results: impl IntoIterator<Item = Result<(), String>>,
+    ) -> Self {
+        Self {
+            start_result: Ok(()),
+            stop_results: Mutex::new(stop_results.into_iter().collect()),
+            application_stop_results: Mutex::new(application_stop_results.into_iter().collect()),
+            stops: AtomicUsize::new(0),
+            application_stops: AtomicUsize::new(0),
+        }
+    }
+
+    pub(crate) fn stop_count(&self) -> usize {
+        self.stops.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn application_stop_count(&self) -> usize {
+        self.application_stops.load(Ordering::Relaxed)
+    }
+}
+
+impl PlatformSessionControl for RetryingCleanupPlatformSessionControl {
+    fn start_application(&self, _plan: PlatformApplicationPlan) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn stop_application(&self) -> Result<(), String> {
+        self.application_stops.fetch_add(1, Ordering::Relaxed);
+        self.application_stop_results
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(Ok(()))
+    }
+
+    fn start_session(&self, _plan: PlatformSessionPlan) -> Result<(), String> {
+        self.start_result.clone()
+    }
+
+    fn stop_session(&self) -> Result<(), String> {
+        self.stops.fetch_add(1, Ordering::Relaxed);
+        self.stop_results
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(Ok(()))
+    }
 }
 
 impl PlatformSessionControl for FailingPlatformSessionControl {
@@ -151,11 +271,7 @@ fn body(response: &ControlResponse) -> Value {
     serde_json::from_slice(&response.body).unwrap()
 }
 
-fn local_peer() -> IpAddr {
-    IpAddr::V4(Ipv4Addr::LOCALHOST)
-}
-
-fn native_hello(application_id: u32) -> ClientSessionHello {
+pub(crate) fn native_hello(application_id: u32) -> ClientSessionHello {
     let requested_video_format = NativeVideoFormat {
         codec: NativeVideoCodec::Hevc as i32,
         profile: NativeVideoProfile::HevcMain as i32,
@@ -165,8 +281,8 @@ fn native_hello(application_id: u32) -> ClientSessionHello {
         color_range: NativeColorRange::Limited as i32,
     };
     ClientSessionHello {
-        minimum_protocol_version: 2,
-        maximum_protocol_version: 2,
+        minimum_protocol_version: NATIVE_PROTOCOL_VERSION,
+        maximum_protocol_version: NATIVE_PROTOCOL_VERSION,
         width: 3_840,
         height: 2_160,
         refresh_millihz: 120_000,
@@ -205,16 +321,13 @@ fn native_hello(application_id: u32) -> ClientSessionHello {
         requested_audio_channel_mode: NativeAudioChannelMode::Stereo as i32,
         streaming_profile_revision: 1,
         requested_video_format: Some(requested_video_format),
+        media_capabilities: NATIVE_REQUIRED_MEDIA_CAPABILITIES,
     }
 }
 
 fn native_context() -> NativeConnectionContext {
     NativeConnectionContext {
-        peer_address: local_peer(),
         session_epoch: 0x0102_0304,
-        media_port: 47_998,
-        media_challenge: [0x55; 32],
-        media_key: [0x66; 16],
         host_capabilities: HostSessionCapabilities {
             maximum_datagram_payload: 1_200,
             maximum_receive_memory_bytes: 128 * 1024 * 1024,
@@ -224,7 +337,7 @@ fn native_context() -> NativeConnectionContext {
     }
 }
 
-fn active_acknowledged_native_router(
+fn started_native_router(
     platform: Arc<dyn PlatformSessionControl>,
 ) -> (
     tempfile::TempDir,
@@ -233,6 +346,376 @@ fn active_acknowledged_native_router(
     HostSessionPlan,
 ) {
     let (root, mut router) = router_with_platform(platform);
+    router
+        .authorities()
+        .applications()
+        .upsert(r#"{"uuid":"native-desktop","name":"Desktop"}"#)
+        .unwrap();
+    let application_id = router.authorities().applications().applications().unwrap()[0].id;
+    let context = native_context();
+    let responses = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 1,
+            payload: Some(client_control_envelope::Payload::Hello(native_hello(
+                application_id,
+            ))),
+        },
+        &context,
+    );
+    let host_control_envelope::Payload::SessionPlan(plan) = responses[0].payload.clone().unwrap()
+    else {
+        panic!("expected native session plan");
+    };
+    let responses = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 2,
+            payload: Some(client_control_envelope::Payload::StartSession(
+                StartSessionAck {
+                    session_epoch: context.session_epoch,
+                },
+            )),
+        },
+        &context,
+    );
+    assert!(matches!(
+        responses[0].payload,
+        Some(host_control_envelope::Payload::SessionStarted(_))
+    ));
+    (root, router, context, plan)
+}
+
+fn configured_native_router(
+    platform: Arc<dyn PlatformSessionControl>,
+) -> (
+    tempfile::TempDir,
+    ControlRouter,
+    NativeConnectionContext,
+    HostSessionPlan,
+) {
+    let (root, mut router, context, plan) = started_native_router(platform);
+    let configuration = CodecConfiguration {
+        session_epoch: context.session_epoch,
+        stream_id: plan.video_stream_id,
+        configuration_id: plan.video_configuration_id,
+        codec: plan.selected_video_format().unwrap().codec,
+        decoder_configuration_record: vec![1, 2, 3, 4],
+    };
+    assert!(router.publish_native_codec_configuration(configuration.clone()));
+    assert_eq!(
+        router.take_native_codec_configuration(context.session_epoch),
+        Some(configuration)
+    );
+    assert!(router
+        .dispatch_native_control(
+            ClientControlEnvelope {
+                request_id: 3,
+                payload: Some(client_control_envelope::Payload::CodecConfigurationAck(
+                    CodecConfigurationAck {
+                        session_epoch: context.session_epoch,
+                        stream_id: plan.video_stream_id,
+                        configuration_id: plan.video_configuration_id,
+                    },
+                )),
+            },
+            &context,
+        )
+        .is_empty());
+    (root, router, context, plan)
+}
+
+#[test]
+fn native_v4_hello_negotiates_without_a_direct_udp_path_exchange() {
+    let platform = Arc::new(RecordingPlatformSessionControl::default());
+    let (_root, router, context, plan) = started_native_router(platform.clone());
+
+    assert_eq!(plan.protocol_version, NATIVE_PROTOCOL_VERSION);
+    assert_eq!(plan.session_epoch, context.session_epoch);
+    assert_eq!(plan.maximum_datagram_payload, 1_200);
+    assert!(plan.maximum_object_delay_us > 0);
+    assert!(router.video_delivery_state().is_some());
+    assert!(router.audio_delivery_state().is_some());
+    assert_eq!(platform.starts.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn native_v4_reconfigures_display_without_stopping_the_active_session() {
+    let platform = Arc::new(RecordingPlatformSessionControl::default());
+    let (_root, mut router, context, initial) = started_native_router(platform.clone());
+
+    let responses = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 3,
+            payload: Some(client_control_envelope::Payload::DisplayReconfiguration(
+                DisplayReconfigurationRequest {
+                    session_epoch: context.session_epoch,
+                    revision: 7,
+                    width: 2_160,
+                    height: 3_840,
+                    refresh_millihz: 120_000,
+                    sink_hidpi: true,
+                    sink_scale_explicit: true,
+                    sink_mode_is_logical: true,
+                    sink_scale_percent: 200,
+                },
+            )),
+        },
+        &context,
+    );
+
+    let Some(host_control_envelope::Payload::DisplayReconfiguration(result)) =
+        responses[0].payload.as_ref()
+    else {
+        panic!("expected display reconfiguration result");
+    };
+    assert_eq!(
+        NativeDisplayReconfigurationResultCode::try_from(result.result).unwrap(),
+        NativeDisplayReconfigurationResultCode::Applied
+    );
+    assert_eq!(result.revision, 7);
+    assert_eq!(result.plan.as_ref().unwrap().encoded_width, 2_160);
+    assert_eq!(result.plan.as_ref().unwrap().encoded_height, 3_840);
+    assert!(result.plan.as_ref().unwrap().video_configuration_id > initial.video_configuration_id);
+    assert_eq!(platform.reconfigurations.lock().unwrap().len(), 1);
+    assert_eq!(platform.stop_count(), 0);
+    assert!(router.video_delivery_state().is_some());
+}
+
+#[test]
+fn failed_stop_is_retained_for_disconnect_cleanup_retry() {
+    let platform = Arc::new(RetryingCleanupPlatformSessionControl::new([
+        Err("workspace recovery remains pending".to_owned()),
+        Ok(()),
+    ]));
+    let (_root, mut router, context, _plan) = started_native_router(platform.clone());
+
+    let responses = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 3,
+            payload: Some(client_control_envelope::Payload::StopSession(
+                lumen_engine::StopSession {
+                    session_epoch: context.session_epoch,
+                },
+            )),
+        },
+        &context,
+    );
+
+    let Some(host_control_envelope::Payload::Error(error)) = responses[0].payload.as_ref() else {
+        panic!("expected the first cleanup failure");
+    };
+    assert_eq!(error.message, "platform session cleanup failed");
+    assert!(router.video_delivery_state().is_none());
+
+    assert_eq!(
+        router.terminate_native_connection(context.session_epoch),
+        Ok(())
+    );
+    assert!(router.video_delivery_state().is_none());
+    assert_eq!(platform.stops.load(Ordering::Relaxed), 2);
+    assert_eq!(platform.application_stops.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn next_hello_retries_incomplete_disconnect_cleanup_before_negotiation() {
+    let platform = Arc::new(RetryingCleanupPlatformSessionControl::new([
+        Err("workspace recovery remains pending".to_owned()),
+        Ok(()),
+    ]));
+    let (_root, mut router, context, _plan) = started_native_router(platform.clone());
+    let application_id = router.authorities().applications().applications().unwrap()[0].id;
+
+    assert!(router
+        .terminate_native_connection(context.session_epoch)
+        .is_err());
+    let next_context = NativeConnectionContext {
+        session_epoch: context.session_epoch + 1,
+        host_capabilities: context.host_capabilities.clone(),
+    };
+    let responses = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 4,
+            payload: Some(client_control_envelope::Payload::Hello(native_hello(
+                application_id,
+            ))),
+        },
+        &next_context,
+    );
+
+    assert!(matches!(
+        responses[0].payload,
+        Some(host_control_envelope::Payload::SessionPlan(_))
+    ));
+    assert_eq!(platform.stops.load(Ordering::Relaxed), 2);
+    assert_eq!(platform.application_stops.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn unauthenticated_hello_cannot_retry_retained_cleanup() {
+    let platform = Arc::new(RetryingCleanupPlatformSessionControl::new([
+        Err("workspace recovery remains pending".to_owned()),
+        Ok(()),
+    ]));
+    let (_root, mut router, context, _plan) = started_native_router(platform.clone());
+    let application_id = router.authorities().applications().applications().unwrap()[0].id;
+    assert!(router
+        .terminate_native_connection(context.session_epoch)
+        .is_err());
+    let mut hello = native_hello(application_id);
+    hello.access_token = "invalid-access-token".to_owned();
+
+    let responses = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 4,
+            payload: Some(client_control_envelope::Payload::Hello(hello)),
+        },
+        &NativeConnectionContext {
+            session_epoch: context.session_epoch + 1,
+            host_capabilities: context.host_capabilities.clone(),
+        },
+    );
+
+    let Some(host_control_envelope::Payload::Error(error)) = responses[0].payload.as_ref() else {
+        panic!("expected authentication rejection");
+    };
+    assert_eq!(error.code, 2);
+    assert_eq!(platform.stops.load(Ordering::Relaxed), 1);
+    assert_eq!(platform.application_stops.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn different_application_hello_cannot_retry_retained_cleanup() {
+    let platform = Arc::new(RetryingCleanupPlatformSessionControl::new([
+        Err("workspace recovery remains pending".to_owned()),
+        Ok(()),
+    ]));
+    let (_root, mut router, context, _plan) = started_native_router(platform.clone());
+    router
+        .authorities()
+        .applications()
+        .upsert(r#"{"uuid":"other-native-desktop","name":"Other Desktop"}"#)
+        .unwrap();
+    let different_application_id = router
+        .authorities()
+        .applications()
+        .applications()
+        .unwrap()
+        .into_iter()
+        .find(|application| application.uuid == "other-native-desktop")
+        .unwrap()
+        .id;
+    assert!(router
+        .terminate_native_connection(context.session_epoch)
+        .is_err());
+
+    let responses = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 4,
+            payload: Some(client_control_envelope::Payload::Hello(native_hello(
+                different_application_id,
+            ))),
+        },
+        &NativeConnectionContext {
+            session_epoch: context.session_epoch + 1,
+            host_capabilities: context.host_capabilities.clone(),
+        },
+    );
+
+    let Some(host_control_envelope::Payload::Error(error)) = responses[0].payload.as_ref() else {
+        panic!("expected retained owner rejection");
+    };
+    assert_eq!(error.code, 5);
+    assert_eq!(platform.stops.load(Ordering::Relaxed), 1);
+    assert_eq!(platform.application_stops.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn force_stop_retries_cleanup_without_losing_native_ownership() {
+    let platform = Arc::new(RetryingCleanupPlatformSessionControl::new([
+        Err("workspace recovery remains pending".to_owned()),
+        Ok(()),
+    ]));
+    let (_root, mut router, _context, _plan) = started_native_router(platform.clone());
+
+    assert_eq!(
+        router.force_stop_stream(),
+        Err("workspace recovery remains pending".to_owned())
+    );
+    assert_eq!(router.force_stop_stream(), Ok(()));
+    assert_eq!(platform.stops.load(Ordering::Relaxed), 2);
+    assert_eq!(platform.application_stops.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn force_stop_does_not_duplicate_retained_application_cleanup() {
+    let platform = Arc::new(
+        RetryingCleanupPlatformSessionControl::with_application_stop_results(
+            [Ok(())],
+            [
+                Err("application teardown remains pending".to_owned()),
+                Ok(()),
+            ],
+        ),
+    );
+    let (_root, mut router, _context, _plan) = started_native_router(platform.clone());
+
+    assert_eq!(
+        router.force_stop_stream(),
+        Err("application teardown remains pending".to_owned())
+    );
+    assert_eq!(platform.stops.load(Ordering::Relaxed), 1);
+    assert_eq!(platform.application_stops.load(Ordering::Relaxed), 1);
+
+    assert_eq!(router.force_stop_stream(), Ok(()));
+    assert_eq!(router.force_stop_stream(), Ok(()));
+    assert_eq!(platform.stops.load(Ordering::Relaxed), 1);
+    assert_eq!(platform.application_stops.load(Ordering::Relaxed), 2);
+}
+
+#[test]
+fn failed_application_stop_retries_only_the_remaining_cleanup() {
+    let platform = Arc::new(
+        RetryingCleanupPlatformSessionControl::with_application_stop_results(
+            [Ok(())],
+            [
+                Err("application teardown remains pending".to_owned()),
+                Ok(()),
+            ],
+        ),
+    );
+    let (_root, mut router, context, _plan) = started_native_router(platform.clone());
+
+    let responses = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 3,
+            payload: Some(client_control_envelope::Payload::StopSession(
+                lumen_engine::StopSession {
+                    session_epoch: context.session_epoch,
+                },
+            )),
+        },
+        &context,
+    );
+
+    assert!(matches!(
+        responses[0].payload,
+        Some(host_control_envelope::Payload::Error(_))
+    ));
+    assert!(router.video_delivery_state().is_none());
+    assert_eq!(
+        router.terminate_native_connection(context.session_epoch),
+        Ok(())
+    );
+    assert_eq!(platform.stops.load(Ordering::Relaxed), 1);
+    assert_eq!(platform.application_stops.load(Ordering::Relaxed), 2);
+}
+
+#[test]
+fn failed_start_rollback_is_retained_for_disconnect_cleanup_retry() {
+    let platform = Arc::new(RetryingCleanupPlatformSessionControl::with_start_failure(
+        "capture publication failed",
+        [Err("workspace recovery remains pending".to_owned()), Ok(())],
+    ));
+    let (_root, mut router) = router_with_platform(platform.clone());
     router
         .authorities()
         .applications()
@@ -249,37 +732,14 @@ fn active_acknowledged_native_router(
         },
         &context,
     );
-    let host_control_envelope::Payload::SessionPlan(plan) = hello[0].payload.clone().unwrap()
-    else {
-        panic!("expected native session plan");
-    };
-    let endpoint = SocketAddr::new(context.peer_address, 52_000);
-    assert!(router.observe_native_media_path(
-        endpoint,
-        context.session_epoch,
-        plan.path_id as u16,
-        &context.media_challenge,
-    ));
-    let path = router.dispatch_native_control(
-        ClientControlEnvelope {
-            request_id: 2,
-            payload: Some(client_control_envelope::Payload::MediaPath(
-                MediaPathResponse {
-                    session_epoch: context.session_epoch,
-                    path_id: plan.path_id,
-                    token: context.media_challenge.to_vec(),
-                },
-            )),
-        },
-        &context,
-    );
     assert!(matches!(
-        path[0].payload,
-        Some(host_control_envelope::Payload::MediaPathValidated(_))
+        hello[0].payload,
+        Some(host_control_envelope::Payload::SessionPlan(_))
     ));
+
     let start = router.dispatch_native_control(
         ClientControlEnvelope {
-            request_id: 3,
+            request_id: 2,
             payload: Some(client_control_envelope::Payload::StartSession(
                 StartSessionAck {
                     session_epoch: context.session_epoch,
@@ -288,373 +748,500 @@ fn active_acknowledged_native_router(
         },
         &context,
     );
-    assert!(matches!(
-        start[0].payload,
-        Some(host_control_envelope::Payload::SessionStarted(_))
-    ));
-    let configuration = CodecConfiguration {
-        session_epoch: context.session_epoch,
-        stream_id: plan.video_stream_id,
-        configuration_id: plan.video_configuration_id,
-        codec: plan.selected_video_format().unwrap().codec,
-        decoder_configuration_record: vec![1, 2, 3, 4],
+    let Some(host_control_envelope::Payload::Error(error)) = start[0].payload.as_ref() else {
+        panic!("expected the platform start failure");
     };
-    assert!(router.publish_native_codec_configuration(configuration.clone()));
+    assert!(error.message.contains("platform session rollback failed"));
+
     assert_eq!(
-        router.take_native_codec_configuration(context.session_epoch),
-        Some(configuration)
+        router.terminate_native_connection(context.session_epoch),
+        Ok(())
     );
+    assert_eq!(platform.stops.load(Ordering::Relaxed), 2);
+    assert_eq!(platform.application_stops.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn decoded_bootstraps_resume_only_the_generation_that_owns_encoder_admission() {
+    let platform = Arc::new(RecordingPlatformSessionControl::default());
+    let (_root, mut router, context, plan) = configured_native_router(platform.clone());
+
+    assert_eq!(
+        router
+            .video_delivery_state()
+            .unwrap()
+            .acknowledged_generation_id,
+        None
+    );
+    let generation_id = router
+        .publish_native_video_bootstrap(
+            plan.video_configuration_id,
+            1,
+            900,
+            NativeVideoBootstrapReason::Initial,
+            true,
+            vec![9, 8, 7],
+        )
+        .unwrap();
+    let bootstrap = router
+        .take_native_video_bootstrap(context.session_epoch)
+        .unwrap();
+    assert_eq!(bootstrap.generation_id, generation_id);
+    assert_eq!(bootstrap.frame_id, 1);
+    assert_eq!(
+        router
+            .video_delivery_state()
+            .unwrap()
+            .acknowledged_generation_id,
+        None
+    );
+
     assert!(router
         .dispatch_native_control(
             ClientControlEnvelope {
                 request_id: 4,
-                payload: Some(client_control_envelope::Payload::CodecConfigurationAck(
-                    CodecConfigurationAck {
+                payload: Some(client_control_envelope::Payload::VideoBootstrapResult(
+                    VideoBootstrapResult {
                         session_epoch: context.session_epoch,
                         stream_id: plan.video_stream_id,
                         configuration_id: plan.video_configuration_id,
+                        generation_id,
+                        frame_id: 1,
+                        result: NativeVideoBootstrapResultCode::Decoded as i32,
+                        message: String::new(),
                     },
-                )),
+                ),),
             },
             &context,
         )
         .is_empty());
-    (root, router, context, plan)
-}
-
-#[test]
-fn native_video_keyframe_repair_validates_coalesces_and_reopens_after_fresh_idr() {
-    let platform = Arc::new(RecordingPlatformSessionControl::default());
-    let (_root, mut router, context, plan) = active_acknowledged_native_router(platform.clone());
-    assert!(!router.observe_native_video_frame_sent(context.session_epoch, 1, true));
-    assert!(!router.observe_native_video_frame_sent(context.session_epoch, 2, false));
-
-    let valid_shape = VideoKeyframeRequest {
-        session_epoch: context.session_epoch,
-        stream_id: plan.video_stream_id,
-        after_frame_id: 1,
-        reason: NativeVideoKeyframeRequestReason::IncompleteUnit as i32,
-    };
-    for (request_id, invalid_request) in [
-        (
-            17,
-            VideoKeyframeRequest {
-                session_epoch: context.session_epoch.wrapping_add(1),
-                ..valid_shape.clone()
-            },
-        ),
-        (
-            18,
-            VideoKeyframeRequest {
-                stream_id: plan.audio_stream_id,
-                ..valid_shape.clone()
-            },
-        ),
-        (
-            19,
-            VideoKeyframeRequest {
-                reason: NativeVideoKeyframeRequestReason::Unspecified as i32,
-                ..valid_shape.clone()
-            },
-        ),
-        (
-            20,
-            VideoKeyframeRequest {
-                after_frame_id: 3,
-                ..valid_shape.clone()
-            },
-        ),
-    ] {
-        let invalid = router.dispatch_native_control(
-            ClientControlEnvelope {
-                request_id,
-                payload: Some(client_control_envelope::Payload::VideoKeyframeRequest(
-                    invalid_request,
-                )),
-            },
-            &context,
-        );
-        assert!(matches!(
-            invalid[0].payload,
-            Some(host_control_envelope::Payload::Error(_))
-        ));
-    }
-    assert!(platform.control_events.lock().unwrap().is_empty());
-    assert!(!router.native_video_keyframe_request_is_outstanding());
-
-    let request = valid_shape;
-    assert!(router
-        .dispatch_native_control(
-            ClientControlEnvelope {
-                request_id: 21,
-                payload: Some(client_control_envelope::Payload::VideoKeyframeRequest(
-                    request.clone(),
-                )),
-            },
-            &context,
-        )
-        .is_empty());
-    assert!(router.native_video_keyframe_request_is_outstanding());
-    assert_eq!(
-        platform.control_events.lock().unwrap().as_slice(),
-        [(context.session_epoch, PlatformControlEvent::RequestIdrFrame)]
-    );
-
-    let duplicate = VideoKeyframeRequest {
-        after_frame_id: 2,
-        reason: NativeVideoKeyframeRequestReason::DecoderRecovery as i32,
-        ..request
-    };
-    assert!(router
-        .dispatch_native_control(
-            ClientControlEnvelope {
-                request_id: 22,
-                payload: Some(client_control_envelope::Payload::VideoKeyframeRequest(
-                    duplicate,
-                )),
-            },
-            &context,
-        )
-        .is_empty());
-    assert_eq!(platform.control_events.lock().unwrap().len(), 1);
-    assert!(!router.observe_native_video_frame_sent(context.session_epoch, 3, false));
-    assert!(router.native_video_keyframe_request_is_outstanding());
-    assert!(router.observe_native_video_frame_sent(context.session_epoch, 4, true));
-    assert!(!router.native_video_keyframe_request_is_outstanding());
     assert_eq!(
         router
             .video_delivery_state()
             .unwrap()
-            .acknowledged_configuration_id,
-        Some(plan.video_configuration_id)
+            .acknowledged_generation_id,
+        Some(generation_id)
     );
-
+    assert_eq!(
+        platform
+            .control_events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, event)| {
+                *event == PlatformControlEvent::ResumeVideoEncodingAfterCodecAck
+            })
+            .count(),
+        1
+    );
+    assert!(router.observe_native_video_frame_sent(context.session_epoch, 120));
     assert!(router
         .dispatch_native_control(
             ClientControlEnvelope {
-                request_id: 23,
+                request_id: 5,
                 payload: Some(client_control_envelope::Payload::VideoKeyframeRequest(
                     VideoKeyframeRequest {
                         session_epoch: context.session_epoch,
                         stream_id: plan.video_stream_id,
-                        after_frame_id: 4,
+                        after_frame_id: 120,
                         reason: NativeVideoKeyframeRequestReason::DecoderRecovery as i32,
+                        generation_id,
                     },
                 )),
             },
             &context,
         )
         .is_empty());
-    assert_eq!(platform.control_events.lock().unwrap().len(), 2);
-}
+    assert!(router.native_video_keyframe_request_is_outstanding());
 
-#[test]
-fn native_hello_authenticates_negotiates_and_requires_the_exact_udp_path() {
-    let platform = Arc::new(RecordingPlatformSessionControl::default());
-    let (_root, mut router) = router_with_platform(platform.clone());
-    router
-        .authorities()
-        .applications()
-        .upsert(r#"{"uuid":"native-desktop","name":"Desktop"}"#)
+    let periodic_generation = router
+        .publish_native_video_bootstrap(
+            plan.video_configuration_id,
+            121,
+            90_900,
+            NativeVideoBootstrapReason::Periodic,
+            false,
+            vec![6, 5, 4],
+        )
         .unwrap();
-    let application_id = router.authorities().applications().applications().unwrap()[0].id;
-    let context = native_context();
-    let responses = router.dispatch_native_control(
-        ClientControlEnvelope {
-            request_id: 7,
-            payload: Some(client_control_envelope::Payload::Hello(native_hello(
-                application_id,
-            ))),
-        },
-        &context,
-    );
-
-    assert_eq!(responses.len(), 2);
-    let plan = match responses[0].payload.as_ref().unwrap() {
-        host_control_envelope::Payload::SessionPlan(plan) => plan,
-        _ => panic!("expected native session plan"),
-    };
-    assert_eq!(plan.session_epoch, context.session_epoch);
-    assert_eq!(plan.selected_video_codec(), Some(NativeVideoCodec::Hevc));
-    let challenge = match responses[1].payload.as_ref().unwrap() {
-        host_control_envelope::Payload::MediaPath(challenge) => challenge,
-        _ => panic!("expected native media challenge"),
-    };
-    assert_eq!(challenge.media_port, u32::from(context.media_port));
-    assert_eq!(challenge.token, context.media_challenge);
-
-    let endpoint = SocketAddr::new(context.peer_address, 52_000);
-    assert!(!router.observe_native_media_path(endpoint, context.session_epoch, 1, &[0x44; 32],));
-    assert!(!router.observe_native_media_path(
-        SocketAddr::new("192.168.0.99".parse().unwrap(), 52_000),
-        context.session_epoch,
-        1,
-        &context.media_challenge,
-    ));
-    assert!(router.observe_native_media_path(
-        endpoint,
-        context.session_epoch,
-        1,
-        &context.media_challenge,
-    ));
-    assert_eq!(router.pending_native_media_endpoint(), Some(endpoint));
+    let periodic = router
+        .take_native_video_bootstrap(context.session_epoch)
+        .unwrap();
     assert_eq!(
-        router.pending_native_media_key(context.session_epoch),
-        Some(context.media_key)
+        NativeVideoBootstrapReason::try_from(periodic.reason),
+        Ok(NativeVideoBootstrapReason::Periodic)
     );
-    assert!(!router.pending_native_media_is_validated());
-
-    let validation = router.dispatch_native_control(
-        ClientControlEnvelope {
-            request_id: 8,
-            payload: Some(client_control_envelope::Payload::MediaPath(
-                MediaPathResponse {
-                    session_epoch: context.session_epoch,
-                    path_id: 1,
-                    token: context.media_challenge.to_vec(),
-                },
-            )),
-        },
-        &context,
-    );
-    assert!(matches!(
-        validation[0].payload,
-        Some(host_control_envelope::Payload::MediaPathValidated(_))
-    ));
-    assert!(router.pending_native_media_is_validated());
-
-    let started = router.dispatch_native_control(
-        ClientControlEnvelope {
-            request_id: 9,
-            payload: Some(client_control_envelope::Payload::StartSession(
-                StartSessionAck {
-                    session_epoch: context.session_epoch,
-                },
-            )),
-        },
-        &context,
-    );
-    assert!(matches!(
-        started[0].payload,
-        Some(host_control_envelope::Payload::SessionStarted(_))
-    ));
-    assert_eq!(platform.application_starts.load(Ordering::Relaxed), 1);
-    assert_eq!(platform.starts.lock().unwrap().len(), 1);
-    let platform_plan = platform.starts.lock().unwrap()[0];
-    assert_eq!(platform_plan.width, 3_840);
-    assert_eq!(platform_plan.height, 2_160);
-    assert_eq!(platform_plan.frames_per_second, 120);
-    assert_eq!(platform_plan.bitrate_kbps, 80_000);
-    assert_eq!(platform_plan.sink_scale_percent, 200);
-    let video_delivery = router.video_delivery_state().unwrap();
-    assert_eq!(video_delivery.session_epoch, context.session_epoch);
-    assert_eq!(video_delivery.endpoint, endpoint);
-    assert_eq!(video_delivery.encryption_key, context.media_key);
-    assert_eq!(video_delivery.acknowledged_configuration_id, None);
-    let unconfigured_repair = router.dispatch_native_control(
-        ClientControlEnvelope {
-            request_id: 10,
-            payload: Some(client_control_envelope::Payload::VideoKeyframeRequest(
-                VideoKeyframeRequest {
-                    session_epoch: context.session_epoch,
-                    stream_id: plan.video_stream_id,
-                    after_frame_id: 0,
-                    reason: NativeVideoKeyframeRequestReason::DecoderRecovery as i32,
-                },
-            )),
-        },
-        &context,
-    );
-    assert!(matches!(
-        unconfigured_repair[0].payload,
-        Some(host_control_envelope::Payload::Error(_))
-    ));
-    assert!(platform.control_events.lock().unwrap().is_empty());
-    let configuration = CodecConfiguration {
-        session_epoch: context.session_epoch,
-        stream_id: plan.video_stream_id,
-        configuration_id: plan.video_configuration_id,
-        codec: plan.selected_video_format().unwrap().codec,
-        decoder_configuration_record: vec![1, 2, 3, 4],
-    };
-    assert!(router.publish_native_codec_configuration(configuration.clone()));
-    let premature_ack = router.dispatch_native_control(
-        ClientControlEnvelope {
-            request_id: 11,
-            payload: Some(client_control_envelope::Payload::CodecConfigurationAck(
-                CodecConfigurationAck {
-                    session_epoch: context.session_epoch,
-                    stream_id: plan.video_stream_id,
-                    configuration_id: plan.video_configuration_id,
-                },
-            )),
-        },
-        &context,
-    );
-    assert!(matches!(
-        premature_ack[0].payload,
-        Some(host_control_envelope::Payload::Error(_))
-    ));
-    assert_eq!(
-        router.take_native_codec_configuration(context.session_epoch),
-        Some(configuration)
-    );
-    let accepted_ack = router.dispatch_native_control(
-        ClientControlEnvelope {
-            request_id: 12,
-            payload: Some(client_control_envelope::Payload::CodecConfigurationAck(
-                CodecConfigurationAck {
-                    session_epoch: context.session_epoch,
-                    stream_id: plan.video_stream_id,
-                    configuration_id: plan.video_configuration_id,
-                },
-            )),
-        },
-        &context,
-    );
-    assert!(accepted_ack.is_empty());
+    assert!(router
+        .dispatch_native_control(
+            ClientControlEnvelope {
+                request_id: 6,
+                payload: Some(client_control_envelope::Payload::VideoBootstrapResult(
+                    VideoBootstrapResult {
+                        session_epoch: context.session_epoch,
+                        stream_id: plan.video_stream_id,
+                        configuration_id: plan.video_configuration_id,
+                        generation_id: periodic_generation,
+                        frame_id: 121,
+                        result: NativeVideoBootstrapResultCode::Decoded as i32,
+                        message: String::new(),
+                    },
+                )),
+            },
+            &context,
+        )
+        .is_empty());
     assert_eq!(
         router
             .video_delivery_state()
             .unwrap()
-            .acknowledged_configuration_id,
-        Some(plan.video_configuration_id)
+            .acknowledged_generation_id,
+        Some(periodic_generation)
     );
-    let audio_delivery = router.audio_delivery_state().unwrap();
-    assert_eq!(audio_delivery.endpoint, endpoint);
-    assert_eq!(audio_delivery.encryption_key, context.media_key);
+    assert_eq!(
+        platform
+            .control_events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, event)| {
+                *event == PlatformControlEvent::ResumeVideoEncodingAfterCodecAck
+            })
+            .count(),
+        1
+    );
+    assert!(router.native_video_keyframe_request_is_outstanding());
 
-    let conflict = router.dispatch_native_control(
+    let repair_generation = router
+        .publish_native_video_bootstrap(
+            plan.video_configuration_id,
+            122,
+            91_800,
+            NativeVideoBootstrapReason::Repair,
+            true,
+            vec![3, 2, 1],
+        )
+        .unwrap();
+    let repair = router
+        .take_native_video_bootstrap(context.session_epoch)
+        .unwrap();
+    assert_eq!(
+        NativeVideoBootstrapReason::try_from(repair.reason),
+        Ok(NativeVideoBootstrapReason::Repair)
+    );
+    assert!(router
+        .dispatch_native_control(
+            ClientControlEnvelope {
+                request_id: 7,
+                payload: Some(client_control_envelope::Payload::VideoBootstrapResult(
+                    VideoBootstrapResult {
+                        session_epoch: context.session_epoch,
+                        stream_id: plan.video_stream_id,
+                        configuration_id: plan.video_configuration_id,
+                        generation_id: repair_generation,
+                        frame_id: 122,
+                        result: NativeVideoBootstrapResultCode::Decoded as i32,
+                        message: String::new(),
+                    },
+                )),
+            },
+            &context,
+        )
+        .is_empty());
+    assert!(!router.native_video_keyframe_request_is_outstanding());
+    assert_eq!(
+        platform
+            .control_events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, event)| {
+                *event == PlatformControlEvent::ResumeVideoEncodingAfterCodecAck
+            })
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn decoder_rejected_bootstrap_returns_a_typed_platform_error_and_keeps_deltas_closed() {
+    let platform = Arc::new(RecordingPlatformSessionControl::default());
+    let (_root, mut router, context, plan) = configured_native_router(platform);
+    let generation_id = router
+        .publish_native_video_bootstrap(
+            plan.video_configuration_id,
+            1,
+            900,
+            NativeVideoBootstrapReason::Initial,
+            true,
+            vec![9, 8, 7],
+        )
+        .unwrap();
+    assert!(router
+        .take_native_video_bootstrap(context.session_epoch)
+        .is_some());
+
+    let responses = router.dispatch_native_control(
         ClientControlEnvelope {
-            request_id: 13,
-            payload: Some(client_control_envelope::Payload::Hello(native_hello(
-                application_id,
-            ))),
+            request_id: 4,
+            payload: Some(client_control_envelope::Payload::VideoBootstrapResult(
+                VideoBootstrapResult {
+                    session_epoch: context.session_epoch,
+                    stream_id: plan.video_stream_id,
+                    configuration_id: plan.video_configuration_id,
+                    generation_id,
+                    frame_id: 1,
+                    result: NativeVideoBootstrapResultCode::DecoderRejected as i32,
+                    message: "hardware decoder rejected bootstrap".to_owned(),
+                },
+            )),
         },
         &context,
     );
-    assert!(matches!(
-        conflict[0].payload,
-        Some(host_control_envelope::Payload::Error(_))
-    ));
 
-    let stopped = router.dispatch_native_control(
+    let Some(host_control_envelope::Payload::Error(error)) = responses[0].payload.as_ref() else {
+        panic!("expected typed bootstrap rejection");
+    };
+    assert_eq!(error.code, 7);
+    assert_eq!(error.message, "hardware decoder rejected bootstrap");
+    assert_eq!(
+        router
+            .video_delivery_state()
+            .unwrap()
+            .acknowledged_generation_id,
+        None
+    );
+}
+
+#[test]
+fn stale_generation_keyframe_request_is_ignored_without_reopening_the_encoder() {
+    let platform = Arc::new(RecordingPlatformSessionControl::default());
+    let (_root, mut router, context, plan) = configured_native_router(platform.clone());
+    let generation_id = router
+        .publish_native_video_bootstrap(
+            plan.video_configuration_id,
+            1,
+            900,
+            NativeVideoBootstrapReason::Initial,
+            true,
+            vec![9, 8, 7],
+        )
+        .unwrap();
+    assert!(router
+        .take_native_video_bootstrap(context.session_epoch)
+        .is_some());
+    assert!(router
+        .dispatch_native_control(
+            ClientControlEnvelope {
+                request_id: 4,
+                payload: Some(client_control_envelope::Payload::VideoBootstrapResult(
+                    VideoBootstrapResult {
+                        session_epoch: context.session_epoch,
+                        stream_id: plan.video_stream_id,
+                        configuration_id: plan.video_configuration_id,
+                        generation_id,
+                        frame_id: 1,
+                        result: NativeVideoBootstrapResultCode::Decoded as i32,
+                        message: String::new(),
+                    },
+                ),),
+            },
+            &context,
+        )
+        .is_empty());
+    assert!(router.observe_native_video_frame_sent(context.session_epoch, 2));
+
+    let responses = router.dispatch_native_control(
         ClientControlEnvelope {
-            request_id: 14,
-            payload: Some(client_control_envelope::Payload::StopSession(StopSession {
+            request_id: 5,
+            payload: Some(client_control_envelope::Payload::VideoKeyframeRequest(
+                VideoKeyframeRequest {
+                    session_epoch: context.session_epoch,
+                    stream_id: plan.video_stream_id,
+                    after_frame_id: 2,
+                    reason: NativeVideoKeyframeRequestReason::DecoderRecovery as i32,
+                    generation_id: generation_id + 1,
+                },
+            )),
+        },
+        &context,
+    );
+
+    assert!(responses.is_empty());
+    assert!(!router.native_video_keyframe_request_is_outstanding());
+}
+
+#[test]
+fn newer_bootstrap_replaces_an_obsolete_unacknowledged_generation() {
+    let platform = Arc::new(RecordingPlatformSessionControl::default());
+    let (_root, mut router, context, plan) = configured_native_router(platform.clone());
+    let first_generation = router
+        .publish_native_video_bootstrap(
+            plan.video_configuration_id,
+            1,
+            900,
+            NativeVideoBootstrapReason::Initial,
+            true,
+            vec![1, 2, 3],
+        )
+        .unwrap();
+    assert!(router
+        .take_native_video_bootstrap(context.session_epoch)
+        .is_some());
+    let second_generation = router
+        .publish_native_video_bootstrap(
+            plan.video_configuration_id,
+            2,
+            1_800,
+            NativeVideoBootstrapReason::Repair,
+            true,
+            vec![4, 5, 6],
+        )
+        .unwrap();
+    assert!(second_generation > first_generation);
+    assert_eq!(
+        router.native_video_bootstrap_generation(context.session_epoch),
+        Some(second_generation)
+    );
+    let replacement = router
+        .take_native_video_bootstrap(context.session_epoch)
+        .unwrap();
+    assert_eq!(replacement.generation_id, second_generation);
+
+    let stale = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 5,
+            payload: Some(client_control_envelope::Payload::VideoBootstrapResult(
+                VideoBootstrapResult {
+                    session_epoch: context.session_epoch,
+                    stream_id: plan.video_stream_id,
+                    configuration_id: plan.video_configuration_id,
+                    generation_id: first_generation,
+                    frame_id: 1,
+                    result: NativeVideoBootstrapResultCode::Decoded as i32,
+                    message: String::new(),
+                },
+            )),
+        },
+        &context,
+    );
+    assert!(stale.is_empty());
+    assert!(!router.native_video_bootstrap_is_acknowledged(context.session_epoch, first_generation));
+    assert!(platform.control_events.lock().unwrap().is_empty());
+
+    let current = ClientControlEnvelope {
+        request_id: 6,
+        payload: Some(client_control_envelope::Payload::VideoBootstrapResult(
+            VideoBootstrapResult {
                 session_epoch: context.session_epoch,
-            })),
-        },
-        &context,
-    );
+                stream_id: plan.video_stream_id,
+                configuration_id: plan.video_configuration_id,
+                generation_id: second_generation,
+                frame_id: 2,
+                result: NativeVideoBootstrapResultCode::Decoded as i32,
+                message: String::new(),
+            },
+        )),
+    };
+    assert!(router
+        .dispatch_native_control(current.clone(), &context)
+        .is_empty());
+    assert_eq!(platform.control_events.lock().unwrap().len(), 1);
+
+    let duplicate = router.dispatch_native_control(current, &context);
+    assert!(duplicate.is_empty());
+    assert_eq!(platform.control_events.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn media_feedback_uses_audio_pressure_to_adapt_video_delivery_without_reducing_cadence() {
+    let platform = Arc::new(RecordingPlatformSessionControl::default());
+    let (_root, mut router, context, plan) = started_native_router(platform);
+    let initial = router.video_delivery_state().unwrap();
+
+    let audio_feedback = MediaFeedback {
+        stream_id: plan.audio_stream_id,
+        highest_datagram_sequence: 3,
+        received_datagrams: 3,
+        unrecoverable_objects: 2,
+        late_objects: 1,
+        decoder_queue_depth: 8,
+        presentation_drops: 2,
+        window_milliseconds: 250,
+        first_datagram_sequence: 1,
+        ..MediaFeedback::default()
+    };
+    let audio_decision = router
+        .observe_native_media_feedback(&audio_feedback, context.session_epoch)
+        .unwrap();
+    let NativeMediaFeedbackDisposition::Applied(audio_decision) = audio_decision else {
+        panic!("audio playback pressure must reduce the video budget");
+    };
+    assert!(audio_decision.changed);
+    assert_eq!(audio_decision.congestion_source, CongestionSource::Audio);
+    let audio_adapted = router.video_delivery_state().unwrap();
+    assert!(audio_adapted.target_bitrate_kbps < initial.target_bitrate_kbps);
+    assert_eq!(audio_adapted.admission_divisor, 1);
+
+    let congested_feedback = MediaFeedback {
+        stream_id: plan.video_stream_id,
+        highest_datagram_sequence: 200,
+        received_datagrams: 100,
+        recovered_shards: 0,
+        unrecoverable_objects: 100,
+        late_objects: 0,
+        reordered_datagrams: 0,
+        estimated_jitter_us: 4_000,
+        decoder_queue_depth: 3,
+        presentation_drops: 1,
+        window_milliseconds: 250,
+        first_datagram_sequence: 1,
+    };
+    let video_decision = router
+        .observe_native_media_feedback(&congested_feedback, context.session_epoch)
+        .unwrap();
     assert!(matches!(
-        stopped[0].payload,
-        Some(host_control_envelope::Payload::SessionStopped(_))
+        video_decision,
+        NativeMediaFeedbackDisposition::Applied(_)
     ));
-    assert_eq!(platform.stops.load(Ordering::Relaxed), 1);
-    assert_eq!(platform.application_stops.load(Ordering::Relaxed), 1);
-    assert!(router.video_delivery_state().is_none());
-    assert!(router.audio_delivery_state().is_none());
+    let adapted = router.video_delivery_state().unwrap();
+    assert_eq!(
+        adapted.fec_percentage,
+        (audio_adapted.fec_percentage + 5).min(30)
+    );
+    assert!(adapted.target_bitrate_kbps < audio_adapted.target_bitrate_kbps);
+    assert_eq!(adapted.admission_divisor, 1);
+
+    let wrong_stream = MediaFeedback {
+        stream_id: u32::MAX,
+        window_milliseconds: 250,
+        ..MediaFeedback::default()
+    };
+    assert_eq!(
+        router.observe_native_media_feedback(&wrong_stream, context.session_epoch),
+        Err(NativeMediaFeedbackRejection::StreamMismatch)
+    );
+
+    let nonempty_zero_duration = MediaFeedback {
+        stream_id: plan.audio_stream_id,
+        received_datagrams: 1,
+        ..MediaFeedback::default()
+    };
+    assert_eq!(
+        router.observe_native_media_feedback(&nonempty_zero_duration, context.session_epoch),
+        Err(NativeMediaFeedbackRejection::WindowDurationMismatch)
+    );
+
+    let reversed_range = MediaFeedback {
+        stream_id: plan.audio_stream_id,
+        highest_datagram_sequence: 3,
+        first_datagram_sequence: 4,
+        window_milliseconds: 250,
+        ..MediaFeedback::default()
+    };
+    assert_eq!(
+        router.observe_native_media_feedback(&reversed_range, context.session_epoch),
+        Err(NativeMediaFeedbackRejection::InvalidSequenceRange)
+    );
 }
 
 #[test]
@@ -677,38 +1264,14 @@ fn native_start_returns_the_platform_failure_and_publishes_a_typed_runtime_error
         },
         &context,
     );
-    let host_control_envelope::Payload::SessionPlan(plan) = hello[0].payload.as_ref().unwrap()
-    else {
-        panic!("expected native session plan");
-    };
-    let endpoint = SocketAddr::new(context.peer_address, 52_000);
-    assert!(router.observe_native_media_path(
-        endpoint,
-        context.session_epoch,
-        plan.path_id as u16,
-        &context.media_challenge,
-    ));
-    let path = router.dispatch_native_control(
-        ClientControlEnvelope {
-            request_id: 8,
-            payload: Some(client_control_envelope::Payload::MediaPath(
-                MediaPathResponse {
-                    session_epoch: context.session_epoch,
-                    path_id: plan.path_id,
-                    token: context.media_challenge.to_vec(),
-                },
-            )),
-        },
-        &context,
-    );
     assert!(matches!(
-        path[0].payload,
-        Some(host_control_envelope::Payload::MediaPathValidated(_))
+        hello[0].payload,
+        Some(host_control_envelope::Payload::SessionPlan(_))
     ));
 
     let responses = router.dispatch_native_control(
         ClientControlEnvelope {
-            request_id: 9,
+            request_id: 8,
             payload: Some(client_control_envelope::Payload::StartSession(
                 StartSessionAck {
                     session_epoch: context.session_epoch,
@@ -727,26 +1290,12 @@ fn native_start_returns_the_platform_failure_and_publishes_a_typed_runtime_error
         error.message,
         "platform stream session could not be started: screen recording permission denied"
     );
-    assert_eq!(
-        *platform.runtime_events.lock().unwrap(),
-        vec![PlatformRuntimeEvent {
-            disposition: PlatformRuntimeEventDisposition::Raised,
-            severity: PlatformRuntimeEventSeverity::Error,
-            code: PlatformRuntimeEventCode::NativeSessionPlatform,
-            message: Some(
-                "platform stream session could not be started: screen recording permission denied"
-                    .to_owned(),
-            ),
-        }]
-    );
     assert_eq!(platform.stops.load(Ordering::Relaxed), 1);
-    assert!(router
-        .pending_native_media_key(context.session_epoch)
-        .is_none());
+    assert!(router.video_delivery_state().is_none());
 }
 
 #[test]
-fn legacy_hello_without_exact_format_is_rejected_before_pending_session_mutation() {
+fn generation_three_hello_is_rejected_before_pending_session_mutation() {
     let platform = Arc::new(RecordingPlatformSessionControl::default());
     let (_root, mut router) = router_with_platform(platform.clone());
     router
@@ -757,9 +1306,8 @@ fn legacy_hello_without_exact_format_is_rejected_before_pending_session_mutation
     let application_id = router.authorities().applications().applications().unwrap()[0].id;
     let context = native_context();
     let mut hello = native_hello(application_id);
-    hello.minimum_protocol_version = 2;
-    hello.maximum_protocol_version = 2;
-    hello.requested_video_format = None;
+    hello.minimum_protocol_version = 3;
+    hello.maximum_protocol_version = 3;
 
     let responses = router.dispatch_native_control(
         ClientControlEnvelope {
@@ -772,15 +1320,50 @@ fn legacy_hello_without_exact_format_is_rejected_before_pending_session_mutation
     let Some(host_control_envelope::Payload::Error(error)) = responses[0].payload.as_ref() else {
         panic!("stale hello did not return a typed protocol error");
     };
-    assert_eq!(responses.len(), 1);
     assert_eq!(
         error.negotiation_failure,
         NativeNegotiationFailure::UnsupportedProtocolVersion as i32
     );
-    assert!(router
-        .pending_native_media_key(context.session_epoch)
-        .is_none());
+    assert_eq!(
+        error.message,
+        "protocol version 4 is not in the client offer"
+    );
+    assert!(router.video_delivery_state().is_none());
     assert_eq!(platform.starts.lock().unwrap().len(), 0);
+}
+
+#[test]
+fn malformed_exact_video_row_is_not_misreported_as_a_protocol_version_error() {
+    let (_root, mut router) = router();
+    router
+        .authorities()
+        .applications()
+        .upsert(r#"{"uuid":"native-desktop","name":"Desktop"}"#)
+        .unwrap();
+    let application_id = router.authorities().applications().applications().unwrap()[0].id;
+    let mut hello = native_hello(application_id);
+    hello.requested_video_format.as_mut().unwrap().profile = 999;
+    hello.video_capabilities[0].format = hello.requested_video_format.clone();
+
+    let responses = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 78,
+            payload: Some(client_control_envelope::Payload::Hello(hello)),
+        },
+        &native_context(),
+    );
+
+    let Some(host_control_envelope::Payload::Error(error)) = responses[0].payload.as_ref() else {
+        panic!("malformed exact row did not return a typed negotiation error");
+    };
+    assert_eq!(
+        error.negotiation_failure,
+        NativeNegotiationFailure::UnsupportedVideoSelection as i32
+    );
+    assert_eq!(
+        error.message,
+        "the exact hardware video selection is malformed or unsupported"
+    );
 }
 
 #[test]
@@ -807,7 +1390,7 @@ fn native_hello_rejects_bad_device_credentials_before_negotiation() {
         host_control_envelope::Payload::Error(error) => assert_eq!(error.code, 2),
         _ => panic!("expected authentication error"),
     }
-    assert_eq!(router.pending_native_media_endpoint(), None);
+    assert!(router.video_delivery_state().is_none());
 }
 
 #[test]
@@ -979,7 +1562,7 @@ fn serves_the_authenticated_lumen_host_descriptor_from_rust_state() {
     assert_eq!(payload["host"]["currentGameID"], 0);
     assert_eq!(payload["host"]["serverState"], "LUMEN_SERVER_FREE");
     assert_eq!(payload["host"]["sessionQuicPort"], 48_010);
-    assert_eq!(payload["host"]["directMediaUdpPort"], 47_998);
+    assert!(payload["host"].get("directMediaUdpPort").is_none());
     assert_eq!(payload["host"]["controlHttpsPort"], 47_990);
     assert!(!payload["host"]["serverUniqueId"]
         .as_str()

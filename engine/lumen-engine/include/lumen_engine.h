@@ -9,7 +9,7 @@
 extern "C" {
 #endif
 
-#define LUMEN_ENGINE_ABI_VERSION 64u
+#define LUMEN_ENGINE_ABI_VERSION 65u
 #define LUMEN_ENCRYPTED_CONTROL_HEADER_SIZE 8u
 #define LUMEN_CONTROL_FEEDBACK_MAX_SIZE 29u
 #define LUMEN_CONTROL_TERMINATION_SIZE 8u
@@ -1151,6 +1151,10 @@ LumenEngineStatus lumen_workspace_engine_complete_command_with_payload(
   LumenWorkspaceEngine *engine,
   LumenWorkspaceCommand command,
   LumenWorkspaceCommandCompletion completion
+);
+
+LumenEngineStatus lumen_workspace_engine_record_desktop_mirror_applied(
+  LumenWorkspaceEngine *engine
 );
 
 size_t lumen_workspace_engine_command_payload_json_size(

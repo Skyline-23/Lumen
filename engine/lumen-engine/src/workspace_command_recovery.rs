@@ -5,6 +5,25 @@ use crate::{
 };
 
 impl WorkspaceEngine {
+    pub fn record_desktop_mirror_applied(&mut self) -> LumenEngineStatus {
+        let awaiting_capture_admission = self.awaiting.is_some_and(|command| {
+            matches!(
+                command.kind,
+                LumenWorkspaceCommandKind::StartCapture
+                    | LumenWorkspaceCommandKind::AwaitExternalFirstEncodedFrame
+            )
+        });
+        if self.state != LumenWorkspaceState::Starting
+            || !awaiting_capture_admission
+            || !self.resources.snapshot
+            || !self.resources.display
+            || self.resources.physical_mutation_applied
+        {
+            return LumenEngineStatus::InvalidState;
+        }
+        self.record_physical_mutation(RecoveryPhase::VirtualPromoted)
+    }
+
     pub(crate) fn prepare_command(&mut self, kind: LumenWorkspaceCommandKind) -> LumenEngineStatus {
         match kind {
             LumenWorkspaceCommandKind::StartCapture => {
@@ -113,24 +132,29 @@ impl WorkspaceEngine {
         self.enqueue_next_cleanup()
     }
 
-    pub(crate) fn record_cleanup_failure(&mut self, kind: LumenWorkspaceCommandKind) {
+    pub(crate) fn record_cleanup_failure(
+        &mut self,
+        kind: LumenWorkspaceCommandKind,
+    ) -> LumenEngineStatus {
         match kind {
             LumenWorkspaceCommandKind::StopCapture => {
                 self.resources.capture = false;
-                let _ = self.enqueue_next_cleanup();
+                self.enqueue_next_cleanup()
             }
             LumenWorkspaceCommandKind::RestoreWorkspace => {
                 self.cleanup_verification_failed = true;
-                let _ = self.enqueue_next_cleanup();
+                self.enqueue_next_cleanup()
             }
             LumenWorkspaceCommandKind::VerifyPhysicalDisplays => {
+                self.resources.physical_restored = false;
+                let status = self.persist_recovery_phase(RecoveryPhase::CaptureStopped);
+                if status != LumenEngineStatus::Ok {
+                    return status;
+                }
                 self.cleanup_verification_failed = true;
-                let _ = self.enqueue_next_cleanup();
+                self.enqueue_next_cleanup()
             }
-            LumenWorkspaceCommandKind::DestroyVirtualDisplay => {
-                self.resources.display = false;
-                self.finish_transition_if_ready();
-            }
+            LumenWorkspaceCommandKind::DestroyVirtualDisplay => LumenEngineStatus::Ok,
             LumenWorkspaceCommandKind::SnapshotWorkspace
             | LumenWorkspaceCommandKind::CreateVirtualDisplay
             | LumenWorkspaceCommandKind::ConfigureVirtualDisplay
@@ -138,7 +162,7 @@ impl WorkspaceEngine {
             | LumenWorkspaceCommandKind::MoveTargetWindows
             | LumenWorkspaceCommandKind::ApplyIsolation
             | LumenWorkspaceCommandKind::StartCapture
-            | LumenWorkspaceCommandKind::AwaitExternalFirstEncodedFrame => {}
+            | LumenWorkspaceCommandKind::AwaitExternalFirstEncodedFrame => LumenEngineStatus::Ok,
         }
     }
 
@@ -246,6 +270,10 @@ impl WorkspaceEngine {
             self.enqueue(LumenWorkspaceCommandKind::VerifyPhysicalDisplays);
             return LumenEngineStatus::Ok;
         }
+        if self.resources.display {
+            self.enqueue(LumenWorkspaceCommandKind::DestroyVirtualDisplay);
+            return LumenEngineStatus::Ok;
+        }
         if self.resources.snapshot {
             self.resources.snapshot = false;
         }
@@ -257,10 +285,6 @@ impl WorkspaceEngine {
                 return journal_error_status(error);
             }
             self.recovery_journal = None;
-        }
-        if self.resources.display {
-            self.enqueue(LumenWorkspaceCommandKind::DestroyVirtualDisplay);
-            return LumenEngineStatus::Ok;
         }
         self.finish_transition_if_ready();
         LumenEngineStatus::Ok

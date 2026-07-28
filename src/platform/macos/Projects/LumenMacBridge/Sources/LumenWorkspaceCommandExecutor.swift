@@ -1,3 +1,5 @@
+import CoreGraphics
+
 public protocol LumenWorkspaceCommandExecuting: Sendable {
     func execute(_ command: LumenMacWorkspaceCommand) async throws -> LumenMacWorkspaceCommandResult
 }
@@ -43,6 +45,9 @@ public struct LumenMacWorkspaceNativeOperations: Sendable {
     ) async throws -> UInt32
     public var configureVirtualDisplay: @Sendable (UInt32, LumenMacDisplayGeometry) async throws -> Void
     public var verifyVirtualDisplay: @Sendable (UInt32) async throws -> Void
+    public var settleVirtualDisplayMode: @Sendable (UInt32) async throws -> Void
+    public var stabilizeVirtualDisplay: @Sendable (UInt32) async throws -> Void
+    public var prepareCaptureDisplay: @Sendable (UInt32) async throws -> Void
     public var startCapture: @Sendable (UInt32) async throws -> Void
     public var stopCapture: @Sendable () async throws -> Void
     public var destroyVirtualDisplay: @Sendable (LumenMacVirtualDisplayIdentity) async throws -> Void
@@ -60,6 +65,9 @@ public struct LumenMacWorkspaceNativeOperations: Sendable {
         ) async throws -> UInt32,
         configureVirtualDisplay: @escaping @Sendable (UInt32, LumenMacDisplayGeometry) async throws -> Void,
         verifyVirtualDisplay: @escaping @Sendable (UInt32) async throws -> Void,
+        settleVirtualDisplayMode: @escaping @Sendable (UInt32) async throws -> Void = { _ in },
+        stabilizeVirtualDisplay: @escaping @Sendable (UInt32) async throws -> Void = { _ in },
+        prepareCaptureDisplay: @escaping @Sendable (UInt32) async throws -> Void = { _ in },
         startCapture: @escaping @Sendable (UInt32) async throws -> Void,
         stopCapture: @escaping @Sendable () async throws -> Void,
         destroyVirtualDisplay: @escaping @Sendable (
@@ -75,6 +83,9 @@ public struct LumenMacWorkspaceNativeOperations: Sendable {
         self.createVirtualDisplay = createVirtualDisplay
         self.configureVirtualDisplay = configureVirtualDisplay
         self.verifyVirtualDisplay = verifyVirtualDisplay
+        self.settleVirtualDisplayMode = settleVirtualDisplayMode
+        self.stabilizeVirtualDisplay = stabilizeVirtualDisplay
+        self.prepareCaptureDisplay = prepareCaptureDisplay
         self.startCapture = startCapture
         self.stopCapture = stopCapture
         self.destroyVirtualDisplay = destroyVirtualDisplay
@@ -99,6 +110,7 @@ public enum LumenMacWorkspaceIsolationStatus: Equatable, Sendable {
 
 public actor LumenMacWorkspaceExecutor: LumenWorkspaceCommandExecuting {
     private let displayWorkspace: any LumenMacDisplayWorkspaceManaging
+    private let contentSource: LumenMacWorkspaceContentSource
     private let targetProcessIdentifiers: [Int32]
     private let operations: LumenMacWorkspaceNativeOperations
     private let displayGeometry: LumenMacDisplayGeometry
@@ -108,11 +120,13 @@ public actor LumenMacWorkspaceExecutor: LumenWorkspaceCommandExecuting {
 
     public init(
         targetProcessIdentifiers: [Int32],
+        contentSource: LumenMacWorkspaceContentSource = .targetWindows,
         displayMode: LumenMacDisplayModeRequest,
         operations: LumenMacWorkspaceNativeOperations,
         displayWorkspace: any LumenMacDisplayWorkspaceManaging
     ) throws {
         self.targetProcessIdentifiers = targetProcessIdentifiers
+        self.contentSource = contentSource
         self.operations = operations
         self.displayWorkspace = displayWorkspace
         displayGeometry = try LumenMacDisplayGeometryResolver.resolve(displayMode)
@@ -125,7 +139,8 @@ public actor LumenMacWorkspaceExecutor: LumenWorkspaceCommandExecuting {
         case .snapshotWorkspace:
             return .physicalTopology(
                 try await displayWorkspace.snapshotWorkspace(
-                    targetProcessIdentifiers: targetProcessIdentifiers
+                    targetProcessIdentifiers: targetProcessIdentifiers,
+                    recoveryGeneration: command.generation
                 )
             )
         case .createVirtualDisplay:
@@ -140,7 +155,21 @@ public actor LumenMacWorkspaceExecutor: LumenWorkspaceCommandExecuting {
             )
             return .succeeded
         case .promoteVirtualMain:
-            try await displayWorkspace.promoteVirtualDisplay(try requireVirtualDisplay())
+            let displayID = try requireVirtualDisplay()
+            try await operations.verifyVirtualDisplay(displayID)
+            if case .desktopMirror = contentSource {
+                return .succeeded
+            }
+            guard try await displayWorkspace.promoteVirtualDisplay(
+                displayID,
+                logicalSize: CGSize(
+                    width: CGFloat(displayGeometry.logicalWidth),
+                    height: CGFloat(displayGeometry.logicalHeight)
+                ),
+                convergence: .deferredUntilCaptureReady
+            ) else {
+                throw LumenMacDisplayWorkspaceError.virtualDisplayPromotionUnavailable(displayID)
+            }
             return .succeeded
         case .moveTargetWindows:
             try await displayWorkspace.moveTargetWindows(to: try requireVirtualDisplay())
@@ -165,7 +194,8 @@ public actor LumenMacWorkspaceExecutor: LumenWorkspaceCommandExecuting {
             return .succeeded
         case .restoreWorkspace:
             try await displayWorkspace.restoreWorkspace(
-                try requirePhysicalTopology(command.payload)
+                try requirePhysicalTopology(command.payload),
+                recoveryGeneration: command.generation
             )
             return .succeeded
         case .verifyPhysicalDisplays:
@@ -191,15 +221,67 @@ public actor LumenMacWorkspaceExecutor: LumenWorkspaceCommandExecuting {
         try await operations.verifyVirtualDisplay(try requireVirtualDisplay())
     }
 
+    public func prepareOwnedVirtualDisplayForCapture() async throws {
+        try await operations.prepareCaptureDisplay(try requireVirtualDisplay())
+    }
+
+    public func stabilizeOwnedVirtualDisplay() async throws {
+        try await operations.stabilizeVirtualDisplay(try requireVirtualDisplay())
+    }
+
+    public func settleOwnedVirtualDisplayMode() async throws {
+        try await operations.settleVirtualDisplayMode(try requireVirtualDisplay())
+    }
+
+    public func stageOwnedVirtualDisplayUnmirrored() async throws {
+        guard case .desktopMirror(let sourceDisplayID) = contentSource else {
+            return
+        }
+        let displayID = try requireVirtualDisplay()
+        try await operations.verifyVirtualDisplay(displayID)
+        try await displayWorkspace.stageVirtualDisplayUnmirrored(
+            displayID,
+            sourceDisplayID: sourceDisplayID
+        )
+        try await operations.verifyVirtualDisplay(displayID)
+    }
+
     public func verifyOwnedCaptureContinuity() async throws {
         try await operations.verifyCaptureContinuity()
     }
 
-    public func positionPointerOnVirtualDisplay() async {
+    public func positionPointerOnSessionDisplay() async {
         guard let virtualDisplayID else {
             return
         }
         await operations.positionPointer(virtualDisplayID, displayGeometry)
+    }
+
+    @discardableResult
+    public func promoteOwnedVirtualDisplay() async throws -> Bool {
+        let displayID = try requireVirtualDisplay()
+        try await operations.verifyVirtualDisplay(displayID)
+        return try await displayWorkspace.promoteVirtualDisplay(
+            displayID,
+            logicalSize: CGSize(
+                width: CGFloat(displayGeometry.logicalWidth),
+                height: CGFloat(displayGeometry.logicalHeight)
+            ),
+            convergence: .required
+        )
+    }
+
+    public func mirrorOwnedVirtualDisplay() async throws {
+        guard case .desktopMirror(let sourceDisplayID) = contentSource else {
+            return
+        }
+        let displayID = try requireVirtualDisplay()
+        try await operations.verifyVirtualDisplay(displayID)
+        try await displayWorkspace.mirrorOwnedVirtualDisplay(
+            displayID,
+            sourceDisplayID: sourceDisplayID
+        )
+        try await operations.verifyVirtualDisplay(displayID)
     }
 
     public func destroyOwnedVirtualDisplay() async throws {

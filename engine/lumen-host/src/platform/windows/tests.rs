@@ -220,6 +220,32 @@ fn native_hid_and_multilingual_composition_preserve_exact_desktop_semantics() {
 }
 
 #[test]
+fn positioned_pointer_button_moves_before_the_button_edge() {
+    let mut state = WindowsInputState::default();
+
+    assert_eq!(
+        state
+            .apply_native(
+                SESSION_A,
+                PlatformNativeInputEvent::PointerButton {
+                    pointer_id: 0,
+                    button: 1,
+                    pressed: true,
+                    absolute_position: Some((0.25, 0.75)),
+                },
+            )
+            .unwrap(),
+        vec![
+            WindowsInputAction::MousePosition { x: 0.25, y: 0.75 },
+            WindowsInputAction::MouseButton {
+                button: 1,
+                pressed: true,
+            },
+        ]
+    );
+}
+
+#[test]
 fn reset_releases_native_pressed_state_and_detaches_every_session_controller() {
     let mut state = WindowsInputState::default();
     state
@@ -229,6 +255,7 @@ fn reset_releases_native_pressed_state_and_detaches_every_session_controller() {
                 pointer_id: 0,
                 button: 2,
                 pressed: true,
+                absolute_position: None,
             },
         )
         .unwrap();

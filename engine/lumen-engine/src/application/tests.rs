@@ -120,6 +120,30 @@ fn builds_one_strict_typed_application_launch_plan() {
     assert!(plan.per_client_app_identity);
     assert!(plan.terminate_on_pause);
     assert_eq!(plan.gamepad, "ds4");
+    assert!(!plan.captures_desktop());
+}
+
+#[test]
+fn commandless_application_plan_is_the_explicit_desktop_capture_intent() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("apps.json");
+    fs::write(
+        &path,
+        br#"{
+          "apps":[
+            {"uuid":"desktop","name":"Desktop"},
+            {"uuid":"helper","name":"Helper","detached":["helper --start"]}
+          ]
+        }"#,
+    )
+    .unwrap();
+    let catalog = ApplicationCatalog::open(path).unwrap();
+    let applications = catalog.applications().unwrap();
+    let desktop = catalog.launch_plan(applications[0].id).unwrap();
+    let helper = catalog.launch_plan(applications[1].id).unwrap();
+
+    assert!(desktop.captures_desktop());
+    assert!(!helper.captures_desktop());
 }
 
 #[test]

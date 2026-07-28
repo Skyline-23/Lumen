@@ -22,7 +22,106 @@ struct LumenDisplayDisconnectCapabilityTests {
         try LumenDisplayDisconnectCapabilityFileStore(receiptURL: receiptURL).persist(receipt)
         let verifier = fileVerifier(receiptURL: receiptURL)
 
-        try verifier.authorize(probe: probe, physicalDisplayIDs: [42, 41])
+        try verifier.authorize(
+            probe: probe,
+            physicalDisplays: Array(verifiedDisplays.reversed())
+        )
+    }
+
+    @Test("A verified physical identity survives a CoreGraphics display ID change")
+    func stableIdentityAuthorizesRenumberedDisplay() throws {
+        let receiptURL = temporaryReceiptURL()
+        let verifiedDisplay = LumenDisplayDisconnectCapabilityDisplay(
+            displayID: 41,
+            vendorID: 1_552,
+            productID: 41_049,
+            serialNumber: 4_251_086_178,
+            builtin: true
+        )
+        let currentDisplay = LumenDisplayDisconnectCapabilityDisplay(
+            displayID: 73,
+            vendorID: verifiedDisplay.vendorID,
+            productID: verifiedDisplay.productID,
+            serialNumber: verifiedDisplay.serialNumber,
+            builtin: verifiedDisplay.builtin
+        )
+        let receipt = LumenDisplayDisconnectCapabilityReceipt.verified(
+            environment: environment,
+            probe: probe,
+            physicalDisplays: [verifiedDisplay],
+            issuedAtUnixSeconds: now - 60,
+            expiresAtUnixSeconds: now + 60
+        )
+        try LumenDisplayDisconnectCapabilityFileStore(receiptURL: receiptURL)
+            .persist(receipt)
+
+        try fileVerifier(receiptURL: receiptURL).authorize(
+            probe: probe,
+            physicalDisplays: [currentDisplay]
+        )
+    }
+
+    @Test("A mirrored inactive physical display remains eligible for disconnect")
+    func mirroredInactivePhysicalDisplayRemainsEligible() throws {
+        let physical = physicalState(
+            id: "41",
+            enabled: true,
+            active: true,
+            online: true
+        )
+        let snapshot = topology([physical])
+        let current = topology([
+            physicalState(
+                id: physical.id,
+                enabled: false,
+                active: false,
+                online: true
+            ),
+            physicalState(
+                id: "99",
+                vendorID: 9_999,
+                productID: 9_999,
+                serialNumber: 9_999,
+                enabled: true,
+                active: true,
+                online: true
+            ),
+        ])
+
+        let displays = try lumenCurrentPhysicalDisplays(
+            snapshot: snapshot,
+            current: current,
+            sessionDisplayID: 99
+        )
+
+        #expect(displays.map(\.displayID) == [41])
+    }
+
+    @Test("An offline physical display is never admitted for disconnect")
+    func offlinePhysicalDisplayIsRejected() {
+        let physical = physicalState(
+            id: "41",
+            enabled: true,
+            active: true,
+            online: true
+        )
+        let snapshot = topology([physical])
+        let current = topology([
+            physicalState(
+                id: physical.id,
+                enabled: false,
+                active: false,
+                online: false
+            ),
+        ])
+
+        #expect(throws: LumenPhysicalDisplayControlFailure.self) {
+            try lumenCurrentPhysicalDisplays(
+                snapshot: snapshot,
+                current: current,
+                sessionDisplayID: 99
+            )
+        }
     }
 
     @Test("Missing, expired, or environment-stale receipts are rejected")
@@ -31,7 +130,7 @@ struct LumenDisplayDisconnectCapabilityTests {
         #expect(throws: LumenPhysicalDisplayControlFailure.self) {
             try fileVerifier(receiptURL: missingURL).authorize(
                 probe: probe,
-                physicalDisplayIDs: [41, 42]
+                physicalDisplays: verifiedDisplays
             )
         }
 
@@ -39,7 +138,7 @@ struct LumenDisplayDisconnectCapabilityTests {
         let expired = LumenDisplayDisconnectCapabilityReceipt.verified(
             environment: environment,
             probe: probe,
-            physicalDisplayIDs: [41, 42],
+            physicalDisplays: verifiedDisplays,
             issuedAtUnixSeconds: now - 120,
             expiresAtUnixSeconds: now - 1
         )
@@ -47,7 +146,7 @@ struct LumenDisplayDisconnectCapabilityTests {
         #expect(throws: LumenPhysicalDisplayControlFailure.self) {
             try fileVerifier(receiptURL: expiredURL).authorize(
                 probe: probe,
-                physicalDisplayIDs: [41, 42]
+                physicalDisplays: verifiedDisplays
             )
         }
 
@@ -62,7 +161,7 @@ struct LumenDisplayDisconnectCapabilityTests {
         #expect(throws: LumenPhysicalDisplayControlFailure.self) {
             try staleEnvironmentVerifier.authorize(
                 probe: probe,
-                physicalDisplayIDs: [41, 42]
+                physicalDisplays: verifiedDisplays
             )
         }
     }
@@ -77,7 +176,7 @@ struct LumenDisplayDisconnectCapabilityTests {
             hardwareIdentity: valid.hardwareIdentity,
             symbolSource: valid.symbolSource,
             symbolName: valid.symbolName,
-            physicalDisplayIDs: valid.physicalDisplayIDs,
+            physicalDisplays: valid.physicalDisplays,
             issuedAtUnixSeconds: valid.issuedAtUnixSeconds,
             expiresAtUnixSeconds: valid.expiresAtUnixSeconds,
             checksum: "forged"
@@ -87,17 +186,23 @@ struct LumenDisplayDisconnectCapabilityTests {
         let verifier = fileVerifier(receiptURL: receiptURL)
 
         #expect(throws: LumenPhysicalDisplayControlFailure.self) {
-            try verifier.authorize(probe: probe, physicalDisplayIDs: [41, 42])
+            try verifier.authorize(
+                probe: probe,
+                physicalDisplays: verifiedDisplays
+            )
         }
         try store.persist(valid)
         #expect(throws: LumenPhysicalDisplayControlFailure.self) {
             try verifier.authorize(
                 probe: .init(source: .skyLightSLS, symbolName: "SLSConfigureDisplayEnabled"),
-                physicalDisplayIDs: [41, 42]
+                physicalDisplays: verifiedDisplays
             )
         }
         #expect(throws: LumenPhysicalDisplayControlFailure.self) {
-            try verifier.authorize(probe: probe, physicalDisplayIDs: [41])
+            try verifier.authorize(
+                probe: probe,
+                physicalDisplays: Array(verifiedDisplays.prefix(1))
+            )
         }
     }
 
@@ -117,10 +222,29 @@ struct LumenDisplayDisconnectCapabilityTests {
         .verified(
             environment: environment,
             probe: probe,
-            physicalDisplayIDs: [41, 42],
+            physicalDisplays: verifiedDisplays,
             issuedAtUnixSeconds: now - 60,
             expiresAtUnixSeconds: now + 60
         )
+    }
+
+    private var verifiedDisplays: [LumenDisplayDisconnectCapabilityDisplay] {
+        [
+            .init(
+                displayID: 41,
+                vendorID: 1_552,
+                productID: 41_049,
+                serialNumber: 4_251_086_178,
+                builtin: true
+            ),
+            .init(
+                displayID: 42,
+                vendorID: 4_268,
+                productID: 41_607,
+                serialNumber: 809_654_099,
+                builtin: false
+            )
+        ]
     }
 
     private func fileVerifier(
@@ -136,7 +260,47 @@ struct LumenDisplayDisconnectCapabilityTests {
     private func temporaryReceiptURL() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
-            .appendingPathComponent("display-disconnect-capability-v1.json")
+            .appendingPathComponent("display-disconnect-capability-v2.json")
+    }
+
+    private func topology(
+        _ displays: [LumenMacPhysicalDisplayState]
+    ) -> LumenMacPhysicalDisplayTopology {
+        LumenMacPhysicalDisplayTopology(
+            displays: displays,
+            windowsAdapterLUID: nil,
+            windowsTargetPaths: []
+        )
+    }
+
+    private func physicalState(
+        id: String,
+        vendorID: UInt32 = 1_552,
+        productID: UInt32 = 41_049,
+        serialNumber: UInt32 = 4_251_086_178,
+        enabled: Bool,
+        active: Bool,
+        online: Bool
+    ) -> LumenMacPhysicalDisplayState {
+        LumenMacPhysicalDisplayState(
+            id: id,
+            vendorID: vendorID,
+            productID: productID,
+            serialNumber: serialNumber,
+            builtin: false,
+            mode: LumenMacPhysicalDisplayMode(
+                width: 2_560,
+                height: 1_440,
+                refreshMillihertz: 240_000,
+                bitDepth: 10
+            ),
+            originX: 0,
+            originY: 0,
+            mirrorMasterID: nil,
+            enabled: enabled,
+            active: active,
+            online: online
+        )
     }
 }
 
@@ -145,6 +309,6 @@ struct AllowingDisplayDisconnectCapabilityVerifier:
 {
     func authorize(
         probe _: LumenDisplayEnabledSymbolProbe,
-        physicalDisplayIDs _: [CGDirectDisplayID]
+        physicalDisplays _: [LumenDisplayDisconnectCapabilityDisplay]
     ) {}
 }

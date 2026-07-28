@@ -6,14 +6,17 @@ import LumenMacBridge
 import Security
 
 private let lumenVendorID: UInt32 = 6_973
-private let lumenProductID: UInt32 = 0xA901
 // Give each safety output a stable namespaced serial and a normal desktop-sized
 // mode so WindowServer publishes it as an independent desktop.
 private let canarySafetySerialBase: UInt32 = 0x4C4D_0000
 private let canarySafetyWidth: UInt32 = 1_920
 private let canarySafetyHeight: UInt32 = 1_080
 private let displayMutationConvergenceTimeout: TimeInterval = 30
+private let displayRestorationReadyDuration: TimeInterval = 2
+private let peerRestorationProbeTimeout: TimeInterval = 3
 private let watchdogRestoreDeadline: TimeInterval = 60
+private let watchdogRestoreReceiptTimeout: TimeInterval =
+    (2 * displayMutationConvergenceTimeout) + 5
 
 private enum CanaryFailure: Error, CustomStringConvertible {
     case blocked(String)
@@ -107,6 +110,7 @@ private enum LumenDisplayDisconnectCanaryMain {
         }
         let capabilityStore = LumenDisplayDisconnectCapabilityFileStore.production
         try capabilityStore.revoke()
+        try LumenDisplayDisconnectCapabilityFileStore.legacyProduction.revoke()
 
         let environment = ProcessInfo.processInfo.environment
         let artifactRoot = URL(
@@ -134,6 +138,13 @@ private enum LumenDisplayDisconnectCanaryMain {
         guard physicalCandidates.count == 1, let selected = physicalCandidates.first else {
             throw CanaryFailure.blocked(
                 "Exactly one active non-Lumen display is required for exact-set verification"
+            )
+        }
+        guard selected.vendorID != 0,
+              selected.productID != 0,
+              selected.serialNumber != 0 else {
+            throw CanaryFailure.blocked(
+                "The selected physical display has no stable hardware identity"
             )
         }
 
@@ -319,7 +330,7 @@ private enum LumenDisplayDisconnectCanaryMain {
 
         try writeDurableData(Data(), to: restoreRequest)
         guard waitUntilPumpingMainRunLoop(
-            timeout: displayMutationConvergenceTimeout,
+            timeout: watchdogRestoreReceiptTimeout,
             condition: {
                 (1...2).allSatisfy { index in
                     FileManager.default.fileExists(
@@ -406,7 +417,15 @@ private enum LumenDisplayDisconnectCanaryMain {
         let capabilityReceipt = LumenDisplayDisconnectCapabilityReceipt.verified(
             environment: capabilityEnvironment,
             probe: probe,
-            physicalDisplayIDs: [selected.displayID],
+            physicalDisplays: [
+                LumenDisplayDisconnectCapabilityDisplay(
+                    displayID: selected.displayID,
+                    vendorID: selected.vendorID,
+                    productID: selected.productID,
+                    serialNumber: selected.serialNumber,
+                    builtin: selected.builtin
+                )
+            ],
             issuedAtUnixSeconds: issuedAtUnixSeconds,
             expiresAtUnixSeconds: issuedAtUnixSeconds + (7 * 24 * 60 * 60)
         )
@@ -547,6 +566,9 @@ private enum LumenDisplayDisconnectCanaryMain {
         let restoreFailedURL = runDirectory.appendingPathComponent(
             "watchdog-\(index)-restore-failed.json"
         )
+        let restoreLock = LumenDisplayDisconnectRestoreLock(
+            url: runDirectory.appendingPathComponent("restore.lock")
+        )
         var restoreAttemptCount = 0
         while true {
             let marker: LumenDisplayDisconnectMutationMarker? = try? readJSON(
@@ -554,19 +576,31 @@ private enum LumenDisplayDisconnectCanaryMain {
             )
             restoreAttemptCount += 1
             do {
-                let outcome = try restorer.recoverIfAuthorized(
-                    authorization: authorization,
-                    marker: marker,
-                    trigger: trigger,
-                    verifyRestored: {
-                        waitUntil(
-                            timeout: displayMutationConvergenceTimeout,
-                            condition: {
-                                isDisplayConnectedInCoreGraphics(selectedDisplayID)
-                            }
-                        )
-                    }
-                )
+                let outcome = try restoreLock.withLock {
+                    try restorer.recoverIfAuthorized(
+                        authorization: authorization,
+                        marker: marker,
+                        trigger: trigger,
+                        verifyAlreadyRestored: {
+                            waitUntilStable(
+                                timeout: peerRestorationProbeTimeout,
+                                requiredReadyDuration: displayRestorationReadyDuration,
+                                condition: {
+                                    isDisplayConnectedInWindowServer(selectedDisplayID)
+                                }
+                            )
+                        },
+                        verifyRestoredAfterMutation: {
+                            waitUntilStable(
+                                timeout: displayMutationConvergenceTimeout,
+                                requiredReadyDuration: displayRestorationReadyDuration,
+                                condition: {
+                                    isDisplayConnectedInWindowServer(selectedDisplayID)
+                                }
+                            )
+                        }
+                    )
+                }
                 switch outcome {
                 case .skipped:
                     try? writeArtifact(
@@ -683,12 +717,11 @@ private func isLumenVirtual(_ state: DisplayState) -> Bool {
 }
 
 private func isProductionLumenVirtual(_ state: DisplayState) -> Bool {
-    state.vendorID == lumenVendorID && state.productID == lumenProductID
+    state.vendorID == lumenVendorID
 }
 
 private func isCanarySafetyDisplay(_ state: DisplayState) -> Bool {
     state.vendorID == lumenVendorID
-        && state.productID == lumenProductID
         && (state.serialNumber == canarySafetySerialBase + 1
             || state.serialNumber == canarySafetySerialBase + 2)
 }
@@ -705,8 +738,17 @@ private func isDisplayDisconnected(_ displayID: CGDirectDisplayID) -> Bool {
         && !visibleDisplayIDs.contains(displayID)
 }
 
-private func isDisplayConnectedInCoreGraphics(_ displayID: CGDirectDisplayID) -> Bool {
-    CGDisplayIsActive(displayID) != 0 && CGDisplayIsOnline(displayID) != 0
+private func isDisplayConnectedInWindowServer(_ displayID: CGDirectDisplayID) -> Bool {
+    guard CGDisplayIsActive(displayID) != 0,
+          CGDisplayIsOnline(displayID) != 0 else {
+        return false
+    }
+    return MainActor.assumeIsolated {
+        NSScreen.screens.contains { screen in
+            (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?
+                .uint32Value == displayID
+        }
+    }
 }
 
 private func optionalDisplayID(_ displayID: CGDirectDisplayID) -> UInt32? {
@@ -949,6 +991,22 @@ private func waitUntil(timeout: TimeInterval, condition: () -> Bool) -> Bool {
         Thread.sleep(forTimeInterval: 0.1)
     }
     return condition()
+}
+
+private func waitUntilStable(
+    timeout: TimeInterval,
+    requiredReadyDuration: TimeInterval,
+    condition: () -> Bool
+) -> Bool {
+    var gate = LumenDisplayRestorationStabilityGate(
+        requiredReadyDuration: requiredReadyDuration
+    )
+    return waitUntil(timeout: timeout) {
+        gate.observe(
+            isReady: condition(),
+            at: ProcessInfo.processInfo.systemUptime
+        )
+    }
 }
 
 private func waitUntilPumpingMainRunLoop(

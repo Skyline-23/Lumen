@@ -15,7 +15,7 @@ private struct LumenAudioIngressState: Sendable {
     var producerActive = false
 }
 
-/// ScreenCaptureKit audio callbacks require a synchronous, bounded handoff. The
+/// Core Audio and microphone callbacks require a synchronous, bounded handoff. The
 /// mutex owns only value-semantic PCM packets and queue counters at that boundary.
 final class LumenAudioCaptureForwarder: Sendable {
     private let state = Mutex(LumenAudioIngressState())
@@ -86,6 +86,7 @@ final class LumenAudioCaptureForwarder: Sendable {
             pcmFloat32LE: frame.pcmFloat32LE
         )
         state.withLock { value in
+            guard value.producerActive else { return }
             value.frameCount &+= 1
             value.lastFrame = frame
             if value.frames.count >= value.frameCapacity {
@@ -105,6 +106,7 @@ final class LumenAudioCaptureForwarder: Sendable {
             sourceSequenceNumber: event.sourceSequenceNumber
         )
         state.withLock { value in
+            guard value.producerActive else { return }
             value.eventCount &+= 1
             value.lastEvent = event
             if value.events.count >= value.eventCapacity {

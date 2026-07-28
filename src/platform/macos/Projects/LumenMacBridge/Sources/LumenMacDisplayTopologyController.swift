@@ -7,12 +7,17 @@ protocol LumenMacDisplayTopologyControlling: Sendable {
     func restore(_ topology: LumenMacPhysicalDisplayTopology) async throws
     func verify(_ topology: LumenMacPhysicalDisplayTopology) async throws
     func visibleDisplayIDs() async -> Set<CGDirectDisplayID>
+    func onlineDisplayIDs() async throws -> Set<CGDirectDisplayID>
     func resolvedDisplayIDs(
         for topology: LumenMacPhysicalDisplayTopology
     ) async throws -> [String: CGDirectDisplayID]
 }
 
 extension LumenMacDisplayTopologyControlling {
+    func onlineDisplayIDs() async throws -> Set<CGDirectDisplayID> {
+        await visibleDisplayIDs()
+    }
+
     func resolvedDisplayIDs(
         for topology: LumenMacPhysicalDisplayTopology
     ) async throws -> [String: CGDirectDisplayID] {
@@ -26,7 +31,55 @@ extension LumenMacDisplayTopologyControlling {
 }
 
 actor LumenCoreGraphicsDisplayTopologyController: LumenMacDisplayTopologyControlling {
-    private static let productionVerificationAttempts = 20
+    struct DisplayResolutionCandidate: Sendable, Equatable {
+        let id: String
+        let vendorID: UInt32?
+        let productID: UInt32?
+        let serialNumber: UInt32?
+        let builtin: Bool?
+        let mode: LumenMacPhysicalDisplayMode?
+        let enabled: Bool
+        let active: Bool
+        let online: Bool
+
+        init(state: LumenMacPhysicalDisplayState) {
+            id = state.id
+            vendorID = state.vendorID
+            productID = state.productID
+            serialNumber = state.serialNumber
+            builtin = state.builtin
+            mode = state.mode
+            enabled = state.enabled
+            active = state.active
+            online = state.online
+        }
+
+        init(
+            id: String,
+            vendorID: UInt32?,
+            productID: UInt32?,
+            serialNumber: UInt32?,
+            builtin: Bool?,
+            mode: LumenMacPhysicalDisplayMode?,
+            enabled: Bool,
+            active: Bool,
+            online: Bool
+        ) {
+            self.id = id
+            self.vendorID = vendorID
+            self.productID = productID
+            self.serialNumber = serialNumber
+            self.builtin = builtin
+            self.mode = mode
+            self.enabled = enabled
+            self.active = active
+            self.online = online
+        }
+    }
+
+    static let productionVerificationAttempts = 300
+    nonisolated static let restoreConfigurationScope: CGConfigureOption =
+        .permanently
     private static let productionVerificationDelayNanoseconds: UInt64 = 100_000_000
     private static let logger = Logger(
         subsystem: "dev.skyline23.lumen",
@@ -66,7 +119,7 @@ actor LumenCoreGraphicsDisplayTopologyController: LumenMacDisplayTopologyControl
         if let captureOverride {
             return try await captureOverride()
         }
-        let displays = Self.usableDisplayStates(from: try onlineDisplayIDs()) { displayID in
+        let displays = Self.usableDisplayStates(from: try systemOnlineDisplayIDs()) { displayID in
             let bounds = CGDisplayBounds(displayID)
             guard let mode = CGDisplayCopyDisplayMode(displayID) else {
                 Self.logger.warning(
@@ -213,25 +266,21 @@ actor LumenCoreGraphicsDisplayTopologyController: LumenMacDisplayTopologyControl
                 return (state.id, displayID)
             })
         }
-        let online = try onlineDisplayIDs()
-        let candidates = online.compactMap { displayID -> LumenMacPhysicalDisplayState? in
-            guard let mode = CGDisplayCopyDisplayMode(displayID) else { return nil }
-            let bounds = CGDisplayBounds(displayID)
-            return LumenMacPhysicalDisplayState(
+        let online = try systemOnlineDisplayIDs()
+        let snapshots = online.map { displayID in
+            DisplayResolutionCandidate(
                 id: String(displayID),
                 vendorID: CGDisplayVendorNumber(displayID),
                 productID: CGDisplayModelNumber(displayID),
                 serialNumber: CGDisplaySerialNumber(displayID),
                 builtin: CGDisplayIsBuiltin(displayID) != 0,
-                mode: displayMode(mode),
-                originX: clampedInt32(bounds.origin.x),
-                originY: clampedInt32(bounds.origin.y),
-                mirrorMasterID: optionalDisplayID(CGDisplayMirrorsDisplay(displayID)),
+                mode: CGDisplayCopyDisplayMode(displayID).map(displayMode),
                 enabled: CGDisplayIsActive(displayID) != 0,
                 active: CGDisplayIsActive(displayID) != 0,
                 online: CGDisplayIsOnline(displayID) != 0
             )
         }
+        let candidates = Self.displayResolutionCandidates(from: snapshots)
         let resolved = try Self.resolveDisplayIDs(for: topology, candidates: candidates)
         for state in topology.displays {
             guard !Self.hasStableIdentity(state),
@@ -246,7 +295,11 @@ actor LumenCoreGraphicsDisplayTopologyController: LumenMacDisplayTopologyControl
         return resolved
     }
 
-    private func onlineDisplayIDs() throws -> [CGDirectDisplayID] {
+    func onlineDisplayIDs() async throws -> Set<CGDirectDisplayID> {
+        Set(try systemOnlineDisplayIDs())
+    }
+
+    private func systemOnlineDisplayIDs() throws -> [CGDirectDisplayID] {
         var count: UInt32 = 0
         var result = CGGetOnlineDisplayList(0, nil, &count)
         guard result == .success else {
@@ -269,6 +322,22 @@ actor LumenCoreGraphicsDisplayTopologyController: LumenMacDisplayTopologyControl
     nonisolated static func resolveDisplayIDs(
         for topology: LumenMacPhysicalDisplayTopology,
         candidates: [LumenMacPhysicalDisplayState]
+    ) throws -> [String: CGDirectDisplayID] {
+        try resolveDisplayIDs(
+            for: topology,
+            candidates: candidates.map(DisplayResolutionCandidate.init(state:))
+        )
+    }
+
+    nonisolated static func displayResolutionCandidates(
+        from snapshots: [DisplayResolutionCandidate]
+    ) -> [DisplayResolutionCandidate] {
+        snapshots
+    }
+
+    nonisolated static func resolveDisplayIDs(
+        for topology: LumenMacPhysicalDisplayTopology,
+        candidates: [DisplayResolutionCandidate]
     ) throws -> [String: CGDirectDisplayID] {
         var resolved: [String: CGDirectDisplayID] = [:]
         var claimed: Set<CGDirectDisplayID> = []
@@ -336,7 +405,7 @@ actor LumenCoreGraphicsDisplayTopologyController: LumenMacDisplayTopologyControl
     }
 
     nonisolated private static func identityMatches(
-        actual: LumenMacPhysicalDisplayState,
+        actual: DisplayResolutionCandidate,
         expected: LumenMacPhysicalDisplayState
     ) -> Bool {
         (expected.vendorID == nil || expected.vendorID == actual.vendorID)
@@ -346,9 +415,9 @@ actor LumenCoreGraphicsDisplayTopologyController: LumenMacDisplayTopologyControl
     }
 
     nonisolated private static func isLumenVirtualDisplay(
-        _ state: LumenMacPhysicalDisplayState
+        _ state: DisplayResolutionCandidate
     ) -> Bool {
-        state.vendorID == 6_973 && state.productID == 0xA901
+        state.vendorID == 6_973
     }
 
     nonisolated static func matches(
@@ -457,7 +526,10 @@ actor LumenCoreGraphicsDisplayTopologyController: LumenMacDisplayTopologyControl
         }
         do {
             try body(configuration)
-            let result = CGCompleteDisplayConfiguration(configuration, .forAppOnly)
+            let result = CGCompleteDisplayConfiguration(
+                configuration,
+                Self.restoreConfigurationScope
+            )
             guard result == .success else {
                 throw LumenMacDisplayWorkspaceError.displayConfigurationFailed(result.rawValue)
             }

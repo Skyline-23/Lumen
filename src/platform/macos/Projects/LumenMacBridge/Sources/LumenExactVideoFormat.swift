@@ -32,6 +32,7 @@ enum LumenExactCaptureError: Error, Equatable, LocalizedError {
     case invalidFormat(String)
     case requiredHardwareProfileUnavailable(LumenVideoToolboxProbeTarget)
     case requiredHardwareEncoderUnavailable
+    case requiredKeyFrameNotProduced
     case sourceContractMismatch(String)
     case encodedOutputContractMismatch(String)
 
@@ -43,6 +44,8 @@ enum LumenExactCaptureError: Error, Equatable, LocalizedError {
             return "The required hardware VideoToolbox profile is unavailable: \(target.rawValue)."
         case .requiredHardwareEncoderUnavailable:
             return "VideoToolbox did not select the required hardware encoder."
+        case .requiredKeyFrameNotProduced:
+            return "VideoToolbox did not produce the required repair key frame."
         case .sourceContractMismatch(let mismatch):
             return "ScreenCaptureKit source contract mismatch: \(mismatch)."
         case .encodedOutputContractMismatch(let mismatch):

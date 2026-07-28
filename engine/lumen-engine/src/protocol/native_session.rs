@@ -1,19 +1,26 @@
 use prost::{Enumeration, Message};
 
 use super::native_transport::{
-    NATIVE_AUDIO_STREAM_ID, NATIVE_INITIAL_CONFIGURATION_ID, NATIVE_INPUT_MOTION_STREAM_ID,
-    NATIVE_VIDEO_STREAM_ID,
+    NATIVE_AUDIO_STREAM_ID, NATIVE_FEC_BLOCK_HEADER_BYTES, NATIVE_INITIAL_CONFIGURATION_ID,
+    NATIVE_INPUT_MOTION_STREAM_ID, NATIVE_VIDEO_STREAM_ID,
 };
 
-pub const NATIVE_PROTOCOL_VERSION: u32 = 2;
-const MINIMUM_DATAGRAM_PAYLOAD: u32 = 1_200;
-const INITIAL_PATH_ID: u32 = 1;
+pub const NATIVE_PROTOCOL_VERSION: u32 = 4;
+pub const NATIVE_MEDIA_CAPABILITY_SAME_GENERATION_KEYFRAMES: u64 = 1 << 0;
+pub const NATIVE_MEDIA_CAPABILITY_FIXED_CADENCE_FEEDBACK: u64 = 1 << 1;
+pub const NATIVE_MEDIA_CAPABILITY_CONTINUOUS_SCROLL: u64 = 1 << 2;
+pub const NATIVE_REQUIRED_MEDIA_CAPABILITIES: u64 =
+    NATIVE_MEDIA_CAPABILITY_SAME_GENERATION_KEYFRAMES
+        | NATIVE_MEDIA_CAPABILITY_FIXED_CADENCE_FEEDBACK
+        | NATIVE_MEDIA_CAPABILITY_CONTINUOUS_SCROLL;
+const MINIMUM_DATAGRAM_PAYLOAD: u32 = NATIVE_FEC_BLOCK_HEADER_BYTES as u32 + 1;
 const INITIAL_POLICY_REVISION: u32 = 1;
 const OPUS_PACKET_DURATION_MICROSECONDS: u32 = 5_000;
 const MAXIMUM_DATA_SHARDS: u32 = 255;
 const MAXIMUM_PARITY_SHARDS: u32 = 255;
 const INITIAL_PARITY_PERCENTAGE: u32 = 20;
 pub const NATIVE_CONTROL_MESSAGE_LIMIT: usize = 32 * 1024;
+pub const NATIVE_VIDEO_BOOTSTRAP_MESSAGE_LIMIT: usize = 16 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Enumeration)]
 #[repr(i32)]
@@ -107,6 +114,7 @@ pub enum NativeNegotiationFailure {
     UnsupportedAudioLayout = 12,
     InvalidAudioQuality = 13,
     InvalidStreamingProfileRevision = 14,
+    UnsupportedMediaCapabilities = 15,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Enumeration)]
@@ -236,6 +244,8 @@ pub struct ClientSessionHello {
     pub streaming_profile_revision: u64,
     #[prost(message, optional, tag = "37")]
     pub requested_video_format: Option<NativeVideoFormat>,
+    #[prost(uint64, tag = "38")]
+    pub media_capabilities: u64,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -256,8 +266,6 @@ pub struct HostSessionPlan {
     pub maximum_datagram_payload: u32,
     #[prost(uint32, tag = "12")]
     pub maximum_presentable_frames: u32,
-    #[prost(uint32, tag = "13")]
-    pub path_id: u32,
     #[prost(uint32, tag = "14")]
     pub policy_revision: u32,
     #[prost(uint32, tag = "15")]
@@ -320,6 +328,10 @@ pub struct HostSessionPlan {
     pub initial_parity_percentage: u32,
     #[prost(message, optional, tag = "44")]
     pub selected_video_capability: Option<NativeVideoCapability>,
+    #[prost(uint32, tag = "45")]
+    pub maximum_object_delay_us: u32,
+    #[prost(uint64, tag = "46")]
+    pub media_capabilities: u64,
 }
 
 impl HostSessionPlan {
@@ -377,6 +389,112 @@ pub struct VideoKeyframeRequest {
     pub after_frame_id: u32,
     #[prost(enumeration = "NativeVideoKeyframeRequestReason", tag = "4")]
     pub reason: i32,
+    #[prost(uint32, tag = "5")]
+    pub generation_id: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Enumeration)]
+#[repr(i32)]
+pub enum NativeVideoBootstrapReason {
+    Unspecified = 0,
+    Initial = 1,
+    Periodic = 2,
+    Repair = 3,
+    ConfigurationChange = 4,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct VideoBootstrap {
+    #[prost(uint32, tag = "1")]
+    pub session_epoch: u32,
+    #[prost(uint32, tag = "2")]
+    pub stream_id: u32,
+    #[prost(uint32, tag = "3")]
+    pub configuration_id: u32,
+    #[prost(uint32, tag = "4")]
+    pub generation_id: u32,
+    #[prost(uint32, tag = "5")]
+    pub frame_id: u32,
+    #[prost(uint32, tag = "6")]
+    pub capture_timestamp_us: u32,
+    #[prost(enumeration = "NativeVideoBootstrapReason", tag = "7")]
+    pub reason: i32,
+    #[prost(bytes = "vec", tag = "8")]
+    pub access_unit: Vec<u8>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Enumeration)]
+#[repr(i32)]
+pub enum NativeVideoBootstrapResultCode {
+    Unspecified = 0,
+    Decoded = 1,
+    DecoderRejected = 2,
+    Stale = 3,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct VideoBootstrapResult {
+    #[prost(uint32, tag = "1")]
+    pub session_epoch: u32,
+    #[prost(uint32, tag = "2")]
+    pub stream_id: u32,
+    #[prost(uint32, tag = "3")]
+    pub configuration_id: u32,
+    #[prost(uint32, tag = "4")]
+    pub generation_id: u32,
+    #[prost(uint32, tag = "5")]
+    pub frame_id: u32,
+    #[prost(enumeration = "NativeVideoBootstrapResultCode", tag = "6")]
+    pub result: i32,
+    #[prost(string, tag = "7")]
+    pub message: String,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct MediaFeedback {
+    #[prost(uint32, tag = "1")]
+    pub stream_id: u32,
+    #[prost(uint32, tag = "2")]
+    pub highest_datagram_sequence: u32,
+    #[prost(uint32, tag = "3")]
+    pub received_datagrams: u32,
+    #[prost(uint32, tag = "4")]
+    pub recovered_shards: u32,
+    #[prost(uint32, tag = "5")]
+    pub unrecoverable_objects: u32,
+    #[prost(uint32, tag = "6")]
+    pub late_objects: u32,
+    #[prost(uint32, tag = "7")]
+    pub reordered_datagrams: u32,
+    #[prost(uint32, tag = "8")]
+    pub estimated_jitter_us: u32,
+    #[prost(uint32, tag = "9")]
+    pub decoder_queue_depth: u32,
+    #[prost(uint32, tag = "10")]
+    pub presentation_drops: u32,
+    #[prost(uint32, tag = "11")]
+    pub window_milliseconds: u32,
+    #[prost(uint32, tag = "12")]
+    pub first_datagram_sequence: u32,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct ClientTelemetryEnvelope {
+    #[prost(uint64, tag = "1")]
+    pub sequence: u64,
+    #[prost(oneof = "client_telemetry_envelope::Payload", tags = "10")]
+    pub payload: Option<client_telemetry_envelope::Payload>,
+}
+
+pub mod client_telemetry_envelope {
+    use super::MediaFeedback;
+    use prost::Oneof;
+
+    #[derive(Clone, PartialEq, Oneof)]
+    pub enum Payload {
+        #[prost(message, tag = "10")]
+        MediaFeedback(MediaFeedback),
+    }
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -402,36 +520,6 @@ pub struct StopSession {
 }
 
 #[derive(Clone, PartialEq, Message)]
-pub struct MediaPathChallenge {
-    #[prost(uint32, tag = "1")]
-    pub session_epoch: u32,
-    #[prost(uint32, tag = "2")]
-    pub path_id: u32,
-    #[prost(uint32, tag = "3")]
-    pub media_port: u32,
-    #[prost(bytes = "vec", tag = "4")]
-    pub token: Vec<u8>,
-}
-
-#[derive(Clone, PartialEq, Message)]
-pub struct MediaPathResponse {
-    #[prost(uint32, tag = "1")]
-    pub session_epoch: u32,
-    #[prost(uint32, tag = "2")]
-    pub path_id: u32,
-    #[prost(bytes = "vec", tag = "3")]
-    pub token: Vec<u8>,
-}
-
-#[derive(Clone, PartialEq, Message)]
-pub struct MediaPathValidated {
-    #[prost(uint32, tag = "1")]
-    pub session_epoch: u32,
-    #[prost(uint32, tag = "2")]
-    pub path_id: u32,
-}
-
-#[derive(Clone, PartialEq, Message)]
 pub struct SessionStopped {
     #[prost(uint32, tag = "1")]
     pub session_epoch: u32,
@@ -443,21 +531,66 @@ pub struct SessionStarted {
     pub session_epoch: u32,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Enumeration)]
+#[repr(i32)]
+pub enum NativeDisplayReconfigurationResultCode {
+    Unspecified = 0,
+    Applied = 1,
+    Rejected = 2,
+    Superseded = 3,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct DisplayReconfigurationRequest {
+    #[prost(uint32, tag = "1")]
+    pub session_epoch: u32,
+    #[prost(uint64, tag = "2")]
+    pub revision: u64,
+    #[prost(uint32, tag = "3")]
+    pub width: u32,
+    #[prost(uint32, tag = "4")]
+    pub height: u32,
+    #[prost(uint32, tag = "5")]
+    pub refresh_millihz: u32,
+    #[prost(bool, tag = "6")]
+    pub sink_hidpi: bool,
+    #[prost(bool, tag = "7")]
+    pub sink_scale_explicit: bool,
+    #[prost(bool, tag = "8")]
+    pub sink_mode_is_logical: bool,
+    #[prost(uint32, tag = "9")]
+    pub sink_scale_percent: u32,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct DisplayReconfigurationResult {
+    #[prost(uint32, tag = "1")]
+    pub session_epoch: u32,
+    #[prost(uint64, tag = "2")]
+    pub revision: u64,
+    #[prost(enumeration = "NativeDisplayReconfigurationResultCode", tag = "3")]
+    pub result: i32,
+    #[prost(message, optional, tag = "4")]
+    pub plan: Option<HostSessionPlan>,
+    #[prost(string, tag = "5")]
+    pub message: String,
+}
+
 #[derive(Clone, PartialEq, Message)]
 pub struct ClientControlEnvelope {
     #[prost(uint64, tag = "1")]
     pub request_id: u64,
     #[prost(
         oneof = "client_control_envelope::Payload",
-        tags = "10, 11, 12, 13, 14, 15"
+        tags = "10, 11, 13, 14, 15, 16, 17"
     )]
     pub payload: Option<client_control_envelope::Payload>,
 }
 
 pub mod client_control_envelope {
     use super::{
-        ClientSessionHello, CodecConfigurationAck, MediaPathResponse, StartSessionAck, StopSession,
-        VideoKeyframeRequest,
+        ClientSessionHello, CodecConfigurationAck, DisplayReconfigurationRequest, StartSessionAck,
+        StopSession, VideoBootstrapResult, VideoKeyframeRequest,
     };
     use prost::Oneof;
 
@@ -467,14 +600,16 @@ pub mod client_control_envelope {
         Hello(ClientSessionHello),
         #[prost(message, tag = "11")]
         StartSession(StartSessionAck),
-        #[prost(message, tag = "12")]
-        MediaPath(MediaPathResponse),
         #[prost(message, tag = "13")]
         StopSession(StopSession),
         #[prost(message, tag = "14")]
         CodecConfigurationAck(CodecConfigurationAck),
         #[prost(message, tag = "15")]
         VideoKeyframeRequest(VideoKeyframeRequest),
+        #[prost(message, tag = "16")]
+        VideoBootstrapResult(VideoBootstrapResult),
+        #[prost(message, tag = "17")]
+        DisplayReconfiguration(DisplayReconfigurationRequest),
     }
 }
 
@@ -482,17 +617,14 @@ pub mod client_control_envelope {
 pub struct HostControlEnvelope {
     #[prost(uint64, tag = "1")]
     pub request_id: u64,
-    #[prost(
-        oneof = "host_control_envelope::Payload",
-        tags = "10, 11, 12, 13, 14, 15"
-    )]
+    #[prost(oneof = "host_control_envelope::Payload", tags = "10, 12, 13, 15, 16")]
     pub payload: Option<host_control_envelope::Payload>,
 }
 
 pub mod host_control_envelope {
     use super::{
-        HostSessionPlan, MediaPathChallenge, MediaPathValidated, NativeProtocolError,
-        SessionStarted, SessionStopped,
+        DisplayReconfigurationResult, HostSessionPlan, NativeProtocolError, SessionStarted,
+        SessionStopped,
     };
     use prost::Oneof;
 
@@ -500,16 +632,14 @@ pub mod host_control_envelope {
     pub enum Payload {
         #[prost(message, tag = "10")]
         SessionPlan(HostSessionPlan),
-        #[prost(message, tag = "11")]
-        MediaPath(MediaPathChallenge),
         #[prost(message, tag = "12")]
         SessionStopped(SessionStopped),
         #[prost(message, tag = "13")]
         Error(NativeProtocolError),
-        #[prost(message, tag = "14")]
-        MediaPathValidated(MediaPathValidated),
         #[prost(message, tag = "15")]
         SessionStarted(SessionStarted),
+        #[prost(message, tag = "16")]
+        DisplayReconfiguration(DisplayReconfigurationResult),
     }
 }
 
@@ -554,6 +684,21 @@ pub fn decode_host_control_message(
     Ok(envelope)
 }
 
+pub fn encode_client_telemetry_message(
+    envelope: &ClientTelemetryEnvelope,
+) -> Result<Vec<u8>, NativeControlWireError> {
+    encode_control_message(envelope, envelope.sequence, envelope.payload.is_some())
+}
+
+pub fn decode_client_telemetry_message(
+    bytes: &[u8],
+) -> Result<ClientTelemetryEnvelope, NativeControlWireError> {
+    let envelope = ClientTelemetryEnvelope::decode(control_body(bytes)?)
+        .map_err(|_| NativeControlWireError::InvalidMessage)?;
+    validate_envelope(envelope.sequence, envelope.payload.is_some())?;
+    Ok(envelope)
+}
+
 pub fn encode_codec_configuration_message(
     configuration: &CodecConfiguration,
 ) -> Result<Vec<u8>, NativeControlWireError> {
@@ -573,6 +718,48 @@ pub fn encode_codec_configuration_message(
         .encode_length_delimited(&mut encoded)
         .map_err(|_| NativeControlWireError::InvalidMessage)?;
     Ok(encoded)
+}
+
+pub fn encode_video_bootstrap_message(
+    bootstrap: &VideoBootstrap,
+) -> Result<Vec<u8>, NativeControlWireError> {
+    validate_video_bootstrap(bootstrap)?;
+    if bootstrap.encoded_len() > NATIVE_VIDEO_BOOTSTRAP_MESSAGE_LIMIT {
+        return Err(NativeControlWireError::MessageTooLarge);
+    }
+    let mut encoded = Vec::with_capacity(bootstrap.encoded_len() + 4);
+    bootstrap
+        .encode_length_delimited(&mut encoded)
+        .map_err(|_| NativeControlWireError::InvalidMessage)?;
+    Ok(encoded)
+}
+
+pub fn decode_video_bootstrap_message(
+    bytes: &[u8],
+) -> Result<VideoBootstrap, NativeControlWireError> {
+    let body = delimited_body(bytes, NATIVE_VIDEO_BOOTSTRAP_MESSAGE_LIMIT)?;
+    let bootstrap =
+        VideoBootstrap::decode(body).map_err(|_| NativeControlWireError::InvalidMessage)?;
+    validate_video_bootstrap(&bootstrap)?;
+    Ok(bootstrap)
+}
+
+fn validate_video_bootstrap(bootstrap: &VideoBootstrap) -> Result<(), NativeControlWireError> {
+    if bootstrap.session_epoch == 0
+        || bootstrap.stream_id != u32::from(NATIVE_VIDEO_STREAM_ID)
+        || bootstrap.configuration_id == 0
+        || bootstrap.generation_id == 0
+        || bootstrap.frame_id == 0
+        || NativeVideoBootstrapReason::try_from(bootstrap.reason)
+            .ok()
+            .filter(|reason| *reason != NativeVideoBootstrapReason::Unspecified)
+            .is_none()
+        || bootstrap.access_unit.is_empty()
+    {
+        Err(NativeControlWireError::InvalidEnvelope)
+    } else {
+        Ok(())
+    }
 }
 
 fn encode_control_message<M: Message>(
@@ -600,6 +787,10 @@ fn validate_envelope(request_id: u64, has_payload: bool) -> Result<(), NativeCon
 }
 
 fn control_body(bytes: &[u8]) -> Result<&[u8], NativeControlWireError> {
+    delimited_body(bytes, NATIVE_CONTROL_MESSAGE_LIMIT)
+}
+
+fn delimited_body(bytes: &[u8], message_limit: usize) -> Result<&[u8], NativeControlWireError> {
     if bytes.is_empty() {
         return Err(NativeControlWireError::TruncatedLength);
     }
@@ -613,7 +804,7 @@ fn control_body(bytes: &[u8]) -> Result<&[u8], NativeControlWireError> {
             .checked_add(value)
             .ok_or(NativeControlWireError::LengthOverflow)?;
         if byte & 0x80 == 0 {
-            if length > NATIVE_CONTROL_MESSAGE_LIMIT {
+            if length > message_limit {
                 return Err(NativeControlWireError::MessageTooLarge);
             }
             let body_start = index + 1;
@@ -662,6 +853,34 @@ pub enum NativeSessionError {
     UnsupportedAudioLayout,
     InvalidAudioQuality,
     InvalidStreamingProfileRevision,
+    UnsupportedMediaCapabilities,
+}
+
+impl NativeSessionError {
+    pub const fn message(self) -> &'static str {
+        match self {
+            Self::UnsupportedProtocolVersion => "protocol version 4 is not in the client offer",
+            Self::InvalidSessionEpoch => "session epoch is invalid",
+            Self::InvalidDisplayMode => "the selected display mode exceeds an exact capability row",
+            Self::InvalidPresentationContract => "the presentation contract is invalid",
+            Self::InvalidVideoCodec => "the requested video codec is missing or invalid",
+            Self::UnsupportedVideoSelection => {
+                "the exact hardware video selection is malformed or unsupported"
+            }
+            Self::InvalidDynamicRange => "the requested dynamic range is missing or invalid",
+            Self::InvalidPolicyMode => "the requested policy mode is invalid",
+            Self::DatagramPayloadTooSmall => "the negotiated QUIC DATAGRAM payload is too small",
+            Self::InvalidReceiveMemory => "the client receive-memory budget is invalid",
+            Self::UnsupportedAudioLayout => "the requested audio layout is unsupported",
+            Self::InvalidAudioQuality => "the requested audio quality is invalid",
+            Self::InvalidStreamingProfileRevision => {
+                "the streaming profile revision must be nonzero"
+            }
+            Self::UnsupportedMediaCapabilities => {
+                "the complete realtime media capability set is required"
+            }
+        }
+    }
 }
 
 impl From<NativeSessionError> for NativeNegotiationFailure {
@@ -682,6 +901,7 @@ impl From<NativeSessionError> for NativeNegotiationFailure {
             NativeSessionError::InvalidStreamingProfileRevision => {
                 Self::InvalidStreamingProfileRevision
             }
+            NativeSessionError::UnsupportedMediaCapabilities => Self::UnsupportedMediaCapabilities,
         }
     }
 }
@@ -699,9 +919,8 @@ pub fn negotiate_native_session(
     let requested_format = client
         .requested_video_format
         .as_ref()
-        .ok_or(NativeSessionError::UnsupportedProtocolVersion)?;
-    let requested_exact_format = exact_video_format(requested_format)
-        .ok_or(NativeSessionError::UnsupportedProtocolVersion)?;
+        .ok_or(NativeSessionError::InvalidVideoCodec)?;
+    let requested_exact_format = validate_exact_video_format(requested_format)?;
     let sink_gamut = NativeDisplayGamut::try_from(client.sink_gamut)
         .ok()
         .filter(|gamut| *gamut != NativeDisplayGamut::Unspecified)
@@ -752,6 +971,11 @@ pub fn negotiate_native_session(
     if client.streaming_profile_revision == 0 {
         return Err(NativeSessionError::InvalidStreamingProfileRevision);
     }
+    if client.media_capabilities & NATIVE_REQUIRED_MEDIA_CAPABILITIES
+        != NATIVE_REQUIRED_MEDIA_CAPABILITIES
+    {
+        return Err(NativeSessionError::UnsupportedMediaCapabilities);
+    }
 
     Ok(HostSessionPlan {
         protocol_version: NATIVE_PROTOCOL_VERSION,
@@ -767,7 +991,6 @@ pub fn negotiate_native_session(
             NativePolicyMode::Quality => 3,
             NativePolicyMode::Unspecified => unreachable!(),
         },
-        path_id: INITIAL_PATH_ID,
         policy_revision: INITIAL_POLICY_REVISION,
         opus_channel_count,
         opus_packet_duration_microseconds: OPUS_PACKET_DURATION_MICROSECONDS,
@@ -808,7 +1031,20 @@ pub fn negotiate_native_session(
             max_refresh_millihz: client.refresh_millihz,
             hardware_accelerated: Some(true),
         }),
+        maximum_object_delay_us: maximum_object_delay_us(client.refresh_millihz, policy),
+        media_capabilities: NATIVE_REQUIRED_MEDIA_CAPABILITIES,
     })
+}
+
+fn maximum_object_delay_us(refresh_millihz: u32, policy: NativePolicyMode) -> u32 {
+    let frame_us = 1_000_000_000_u64.div_ceil(u64::from(refresh_millihz));
+    let frames = match policy {
+        NativePolicyMode::UltraLatency => 2,
+        NativePolicyMode::Balanced => 3,
+        NativePolicyMode::Quality => 4,
+        NativePolicyMode::Unspecified => 2,
+    };
+    u32::try_from(frame_us.saturating_mul(frames)).unwrap_or(u32::MAX)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -893,18 +1129,19 @@ fn validate_protocol(
     {
         return Err(NativeSessionError::UnsupportedProtocolVersion);
     }
-    if client.video_capabilities.is_empty()
-        || client.requested_video_format.is_none()
-        || client.video_capabilities.iter().any(|capability| {
-            capability.hardware_accelerated.is_none()
-                || capability
-                    .format
-                    .as_ref()
-                    .and_then(exact_video_format)
-                    .is_none()
-        })
-    {
-        return Err(NativeSessionError::UnsupportedProtocolVersion);
+    if client.video_capabilities.is_empty() {
+        return Err(NativeSessionError::UnsupportedVideoSelection);
+    }
+    for capability in &client.video_capabilities {
+        if capability.hardware_accelerated.is_none() {
+            return Err(NativeSessionError::UnsupportedVideoSelection);
+        }
+        validate_exact_video_format(
+            capability
+                .format
+                .as_ref()
+                .ok_or(NativeSessionError::UnsupportedVideoSelection)?,
+        )?;
     }
     if session_epoch == 0 {
         return Err(NativeSessionError::InvalidSessionEpoch);
@@ -917,11 +1154,27 @@ fn validate_protocol(
     let dynamic_range = client
         .requested_video_format
         .as_ref()
-        .and_then(exact_video_format)
-        .map(|format| format.dynamic_range)
-        .ok_or(NativeSessionError::UnsupportedProtocolVersion)?;
+        .ok_or(NativeSessionError::InvalidVideoCodec)
+        .and_then(validate_exact_video_format)?
+        .dynamic_range;
     validate_presentation_contract(client, dynamic_range)?;
     Ok(())
+}
+
+fn validate_exact_video_format(
+    format: &NativeVideoFormat,
+) -> Result<ExactVideoFormat, NativeSessionError> {
+    let codec = NativeVideoCodec::try_from(format.codec)
+        .ok()
+        .filter(|codec| *codec != NativeVideoCodec::Unspecified)
+        .ok_or(NativeSessionError::InvalidVideoCodec)?;
+    NativeDynamicRange::try_from(format.dynamic_range)
+        .ok()
+        .filter(|range| *range != NativeDynamicRange::Unspecified)
+        .ok_or(NativeSessionError::InvalidDynamicRange)?;
+    let exact = exact_video_format(format).ok_or(NativeSessionError::UnsupportedVideoSelection)?;
+    debug_assert_eq!(exact.codec, codec);
+    Ok(exact)
 }
 
 fn validate_presentation_contract(
@@ -988,18 +1241,29 @@ fn validate_display_capabilities(
     client_capability: &NativeVideoCapability,
     host_capability: &NativeVideoCapability,
 ) -> Result<(), NativeSessionError> {
+    let client_mode_supported =
+        display_mode_fits_capability(client.width, client.height, client_capability);
+    let host_mode_supported =
+        display_mode_fits_capability(client.width, client.height, host_capability);
     if client.width == 0
         || client.height == 0
         || client.refresh_millihz == 0
-        || client.width > client_capability.max_width
-        || client.height > client_capability.max_height
+        || !client_mode_supported
         || client.refresh_millihz > client_capability.max_refresh_millihz
-        || client.width > host_capability.max_width
-        || client.height > host_capability.max_height
+        || !host_mode_supported
         || client.refresh_millihz > host_capability.max_refresh_millihz
     {
         Err(NativeSessionError::InvalidDisplayMode)
     } else {
         Ok(())
     }
+}
+
+fn display_mode_fits_capability(
+    width: u32,
+    height: u32,
+    capability: &NativeVideoCapability,
+) -> bool {
+    (width <= capability.max_width && height <= capability.max_height)
+        || (width <= capability.max_height && height <= capability.max_width)
 }

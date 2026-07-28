@@ -9,6 +9,7 @@ private enum DisplayTopologyProbeFailure: Error {
 private actor DisplayTopologyProbe: LumenMacDisplayTopologyControlling {
     private let topology: LumenMacPhysicalDisplayTopology
     private var verificationFails = true
+    private var verificationFailsUntilRestore = false
     private var restored: [LumenMacPhysicalDisplayTopology] = []
 
     init(topology: LumenMacPhysicalDisplayTopology) {
@@ -21,9 +22,13 @@ private actor DisplayTopologyProbe: LumenMacDisplayTopologyControlling {
 
     func restore(_ topology: LumenMacPhysicalDisplayTopology) {
         restored.append(topology)
+        verificationFailsUntilRestore = false
     }
 
     func verify(_ topology: LumenMacPhysicalDisplayTopology) throws {
+        if verificationFailsUntilRestore {
+            throw DisplayTopologyProbeFailure.mismatch
+        }
         guard !verificationFails, topology == self.topology else {
             throw DisplayTopologyProbeFailure.mismatch
         }
@@ -38,6 +43,10 @@ private actor DisplayTopologyProbe: LumenMacDisplayTopologyControlling {
 
     func allowVerification() {
         verificationFails = false
+    }
+
+    func failVerificationUntilRestore() {
+        verificationFailsUntilRestore = true
     }
 
     func restoredTopologies() -> [LumenMacPhysicalDisplayTopology] {
@@ -72,7 +81,209 @@ private actor TransientVirtualDisplayTopologyController: LumenMacDisplayTopology
     }
 }
 
+private enum DisplayMirrorEvent: Equatable {
+    case mirror(target: UInt32, source: UInt32)
+    case stageUnmirrored(target: UInt32, origin: CGPoint, ownerToken: UInt)
+    case unmirror(target: UInt32)
+}
+
+private actor DisplayMirrorProbe: LumenMacDisplayMirrorControlling {
+    private let sourceDisplayID: UInt32
+    private let targetDisplayID: UInt32
+    private let boundsByDisplayID: [UInt32: CGRect]
+    private let ownerToken: UInt?
+    private let initialMainDisplayID: UInt32
+    private let initialSourceIsOnline: Bool
+    private let initialSourceIsActive: Bool
+    private let initialTargetIsOnline: Bool
+    private let initialTargetIsActive: Bool
+    private let configuredTargetSize: CGSize
+    private var postMirrorReadinessSequence: [(online: Bool, active: Bool)]
+    private let reportedMirrorSourceAfterApply: UInt32?
+    private let mirroredSourceBounds: CGRect?
+    private let mirroredTargetIsActive: Bool
+    private var applied = false
+    private var staged = false
+    private var targetBounds: CGRect = .zero
+    private var events: [DisplayMirrorEvent] = []
+
+    init(
+        sourceDisplayID: UInt32,
+        targetDisplayID: UInt32,
+        reportedMirrorSourceAfterApply: UInt32?,
+        initialMainDisplayID: UInt32? = nil,
+        initialSourceIsOnline: Bool = true,
+        initialSourceIsActive: Bool = true,
+        initialTargetIsOnline: Bool = true,
+        initialTargetIsActive: Bool = true,
+        initialTargetBounds: CGRect = .zero,
+        configuredTargetSize: CGSize? = nil,
+        postMirrorReadinessSequence: [(online: Bool, active: Bool)] = [],
+        boundsByDisplayID: [UInt32: CGRect] = [:],
+        ownerToken: UInt? = 0xCAFE,
+        mirroredSourceBounds: CGRect? = nil,
+        mirroredTargetIsActive: Bool = true
+    ) {
+        self.sourceDisplayID = sourceDisplayID
+        self.targetDisplayID = targetDisplayID
+        self.initialMainDisplayID = initialMainDisplayID ?? sourceDisplayID
+        self.initialSourceIsOnline = initialSourceIsOnline
+        self.initialSourceIsActive = initialSourceIsActive
+        self.initialTargetIsOnline = initialTargetIsOnline
+        self.initialTargetIsActive = initialTargetIsActive
+        self.configuredTargetSize = configuredTargetSize
+            ?? initialTargetBounds.size
+        self.postMirrorReadinessSequence = postMirrorReadinessSequence
+        self.reportedMirrorSourceAfterApply = reportedMirrorSourceAfterApply
+        self.mirroredSourceBounds = mirroredSourceBounds
+        self.mirroredTargetIsActive = mirroredTargetIsActive
+        self.boundsByDisplayID = boundsByDisplayID
+        self.ownerToken = ownerToken
+        targetBounds = initialTargetBounds
+    }
+
+    func displayBounds(for displayIDs: [UInt32]) async throws -> [UInt32: CGRect] {
+        Dictionary(uniqueKeysWithValues: displayIDs.compactMap { displayID in
+            boundsByDisplayID[displayID].map { (displayID, $0) }
+        })
+    }
+
+    func state(
+        targetDisplayID: UInt32,
+        sourceDisplayID: UInt32
+    ) -> LumenMacDisplayMirrorState {
+        let targetIsOwnedVirtualDisplay = targetDisplayID == self.targetDisplayID
+        let sourceIsOwnedVirtualDisplay = sourceDisplayID == self.targetDisplayID
+        let ownedDisplayReadiness: (online: Bool, active: Bool)
+        if staged {
+            ownedDisplayReadiness = (online: true, active: true)
+        } else if applied {
+            ownedDisplayReadiness = postMirrorReadinessSequence.isEmpty
+                ? (online: true, active: true)
+                : postMirrorReadinessSequence.removeFirst()
+        } else {
+            ownedDisplayReadiness = (
+                online: initialTargetIsOnline,
+                active: initialTargetIsActive
+            )
+        }
+        let sourceBounds = sourceIsOwnedVirtualDisplay
+            ? applied
+                ? mirroredSourceBounds ?? CGRect(
+                    origin: .zero,
+                    size: configuredTargetSize
+                )
+                : targetBounds
+            : boundsByDisplayID[sourceDisplayID]
+                ?? CGRect(x: 0, y: 0, width: 2_560, height: 1_440)
+        let resolvedTargetBounds = targetIsOwnedVirtualDisplay
+            ? targetBounds
+            : boundsByDisplayID[targetDisplayID]
+                ?? CGRect(x: 0, y: 0, width: 2_560, height: 1_440)
+        return LumenMacDisplayMirrorState(
+            mainDisplayID: staged || applied
+                ? sourceDisplayID
+                : initialMainDisplayID,
+            mirrorSourceDisplayID: applied
+                ? reportedMirrorSourceAfterApply
+                : nil,
+            sourceIsOnline:
+                (sourceDisplayID == self.sourceDisplayID &&
+                    (staged || initialSourceIsOnline)) ||
+                (sourceIsOwnedVirtualDisplay && ownedDisplayReadiness.online),
+            sourceIsActive:
+                (sourceDisplayID == self.sourceDisplayID &&
+                    (staged || initialSourceIsActive)) ||
+                (sourceIsOwnedVirtualDisplay && ownedDisplayReadiness.active),
+            sourceIsOwnedVirtualDisplay: sourceIsOwnedVirtualDisplay,
+            sourceBounds: sourceBounds,
+            sourceConfiguredSize: sourceIsOwnedVirtualDisplay
+                ? configuredTargetSize
+                : nil,
+            sourceOwnerToken: sourceIsOwnedVirtualDisplay ? ownerToken : nil,
+            targetIsOnline:
+                targetDisplayID == self.sourceDisplayID ||
+                (targetIsOwnedVirtualDisplay && ownedDisplayReadiness.online),
+            targetIsActive: applied
+                ? mirroredTargetIsActive
+                : targetDisplayID == self.sourceDisplayID ||
+                    (targetIsOwnedVirtualDisplay && ownedDisplayReadiness.active),
+            targetBounds: resolvedTargetBounds,
+            targetOwnerToken: targetIsOwnedVirtualDisplay
+                ? ownerToken
+                : nil
+        )
+    }
+
+    func mirror(
+        targetDisplayID: UInt32,
+        sourceDisplayID: UInt32
+    ) {
+        events.append(.mirror(
+            target: targetDisplayID,
+            source: sourceDisplayID
+        ))
+        applied = true
+    }
+
+    func stageUnmirrored(
+        targetDisplayID: UInt32,
+        origin: CGPoint,
+        expectedOwnerToken: UInt
+    ) {
+        events.append(.stageUnmirrored(
+            target: targetDisplayID,
+            origin: origin,
+            ownerToken: expectedOwnerToken
+        ))
+        staged = true
+        targetBounds = CGRect(
+            origin: origin,
+            size: CGSize(width: 320, height: 180)
+        )
+        applied = false
+    }
+
+    func unmirror(targetDisplayID: UInt32) {
+        events.append(.unmirror(target: targetDisplayID))
+        applied = false
+    }
+
+    func recordedEvents() -> [DisplayMirrorEvent] {
+        events
+    }
+}
+
 final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
+    func testProductionWakeLeaseHandsOffAfterLocalInputResetsIdleTime() {
+        XCTAssertTrue(
+            LumenSystemPhysicalDisplayWakeSignal.didObserveLocalInput(
+                previousIdleNanoseconds: 5_000_000_000,
+                currentIdleNanoseconds: 1_000_000
+            )
+        )
+        XCTAssertFalse(
+            LumenSystemPhysicalDisplayWakeSignal.didObserveLocalInput(
+                previousIdleNanoseconds: 5_000_000_000,
+                currentIdleNanoseconds: 5_500_000_000
+            )
+        )
+        XCTAssertFalse(
+            LumenSystemPhysicalDisplayWakeSignal.didObserveLocalInput(
+                previousIdleNanoseconds: nil,
+                currentIdleNanoseconds: 1_000_000
+            )
+        )
+    }
+
+    func testProductionTopologyRestoreSurvivesRecoveryProcessExit() {
+        XCTAssertEqual(
+            LumenCoreGraphicsDisplayTopologyController
+                .restoreConfigurationScope.rawValue,
+            CGConfigureOption.permanently.rawValue
+        )
+    }
+
     func testTopologyCaptureSkipsAnUnusableTransientVirtualDisplay() throws {
         let physical = displayTopology().displays[0]
 
@@ -85,22 +296,602 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         XCTAssertEqual(states, [physical])
     }
 
-    func testUnpublishedRetainedVirtualDisplayDefersPromotionToCaptureReadiness() async throws {
+    func testExactActiveVirtualDisplayMissingFromEnumerationRemainsPromotable() {
+        XCTAssertEqual(
+            LumenMacDisplayWorkspace.promotionDisplayIDs(
+                displayID: 117,
+                visibleDisplayIDs: [2],
+                activeDisplayIDs: [2],
+                exactDisplayIsOnline: true,
+                exactDisplayIsActive: true
+            ),
+            [2, 117]
+        )
+        XCTAssertNil(
+            LumenMacDisplayWorkspace.promotionDisplayIDs(
+                displayID: 117,
+                visibleDisplayIDs: [2, 117],
+                activeDisplayIDs: [2],
+                exactDisplayIsOnline: true,
+                exactDisplayIsActive: false
+            )
+        )
+    }
+
+    func testPromotionSeparatesAnOverlappingPhysicalDisplayAndRequiresTheOwnedDisplayAsMain() throws {
+        let overlappingBounds: [CGDirectDisplayID: CGRect] = [
+            2: CGRect(x: 0, y: 0, width: 2_560, height: 1_440),
+            117: CGRect(x: 0, y: 0, width: 320, height: 180),
+        ]
+
+        let placements = try XCTUnwrap(
+            LumenMacDisplayWorkspace.promotionPlacements(
+                displayID: 117,
+                displayIDs: [2, 117],
+                boundsByDisplayID: overlappingBounds,
+                builtInDisplayIDs: [2],
+                targetSize: CGSize(width: 320, height: 180)
+            )
+        )
+
+        XCTAssertEqual(placements.map { $0.displayID }, [117, 2])
+        XCTAssertEqual(placements.map { $0.origin }, [
+            .zero,
+            CGPoint(x: 320, y: 0),
+        ])
+        var modeLessBounds = overlappingBounds
+        modeLessBounds[117] = .zero
+        let modeLessPlacements = try XCTUnwrap(
+            LumenMacDisplayWorkspace.promotionPlacements(
+                displayID: 117,
+                displayIDs: [2, 117],
+                boundsByDisplayID: modeLessBounds,
+                builtInDisplayIDs: [2],
+                targetSize: CGSize(width: 320, height: 180)
+            )
+        )
+        XCTAssertEqual(modeLessPlacements.map { $0.origin }, [
+            .zero,
+            CGPoint(x: 320, y: 0),
+        ])
+        XCTAssertFalse(
+            LumenMacDisplayWorkspace.promotionIsComplete(
+                displayID: 117,
+                mainDisplayID: 2,
+                activeDisplayIDs: [2, 117],
+                requiredActiveDisplayIDs: [2],
+                exactDisplayIsOnline: true,
+                exactDisplayIsActive: true,
+                boundsByDisplayID: overlappingBounds
+            )
+        )
+        XCTAssertFalse(
+            LumenMacDisplayWorkspace.promotionIsComplete(
+                displayID: 117,
+                mainDisplayID: 117,
+                activeDisplayIDs: [2, 117],
+                requiredActiveDisplayIDs: [2],
+                exactDisplayIsOnline: true,
+                exactDisplayIsActive: true,
+                boundsByDisplayID: overlappingBounds
+            )
+        )
+        XCTAssertFalse(
+            LumenMacDisplayWorkspace.promotionIsComplete(
+                displayID: 117,
+                mainDisplayID: 117,
+                activeDisplayIDs: [],
+                requiredActiveDisplayIDs: [2],
+                exactDisplayIsOnline: true,
+                exactDisplayIsActive: true,
+                boundsByDisplayID: overlappingBounds
+            )
+        )
+        XCTAssertFalse(
+            LumenMacDisplayWorkspace.promotionIsComplete(
+                displayID: 117,
+                mainDisplayID: 117,
+                activeDisplayIDs: [2, 117],
+                requiredActiveDisplayIDs: [2],
+                exactDisplayIsOnline: true,
+                exactDisplayIsActive: true,
+                boundsByDisplayID: modeLessBounds
+            )
+        )
+
+        var separatedBounds = overlappingBounds
+        separatedBounds[2]?.origin = CGPoint(x: 320, y: 0)
+        XCTAssertTrue(
+            LumenMacDisplayWorkspace.promotionIsComplete(
+                displayID: 117,
+                mainDisplayID: 117,
+                activeDisplayIDs: [2, 117],
+                requiredActiveDisplayIDs: [2],
+                exactDisplayIsOnline: true,
+                exactDisplayIsActive: true,
+                boundsByDisplayID: separatedBounds
+            )
+        )
+    }
+
+    func testReadyOwnedVirtualDesktopSourceMirrorsPhysicalTargetAndRestoresTopology() async throws {
         let topology = displayTopology()
-        let visibleDisplayIDs = Set(topology.displays.compactMap { UInt32($0.id) })
-        let controller = LumenCoreGraphicsDisplayTopologyController(
-            capture: { topology },
-            restore: { _ in },
-            visibleDisplayIDs: { visibleDisplayIDs }
+        let sourceDisplayID = try XCTUnwrap(
+            topology.displays.first.flatMap { UInt32($0.id) }
+        )
+        let targetDisplayID: UInt32 = 117
+        let topologyProbe = DisplayTopologyProbe(topology: topology)
+        let mirrorProbe = DisplayMirrorProbe(
+            sourceDisplayID: sourceDisplayID,
+            targetDisplayID: targetDisplayID,
+            reportedMirrorSourceAfterApply: targetDisplayID,
+            initialTargetIsOnline: true,
+            initialTargetIsActive: true,
+            initialTargetBounds: CGRect(x: 2_560, y: 0, width: 960, height: 540),
+            configuredTargetSize: CGSize(width: 960, height: 540),
+            mirroredTargetIsActive: false
         )
         let workspace = LumenMacDisplayWorkspace(
-            topologyController: controller,
+            topologyController: topologyProbe,
+            mirrorController: mirrorProbe,
+            physicalDisplayController: RecordingPhysicalDisplayController(),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier()
+        )
+        _ = try await workspace.snapshotWorkspace(targetProcessIdentifiers: [])
+        await topologyProbe.allowVerification()
+
+        try await workspace.mirrorOwnedVirtualDisplay(
+            targetDisplayID,
+            sourceDisplayID: sourceDisplayID
+        )
+        try await workspace.restoreWorkspace(topology)
+
+        let events = await mirrorProbe.recordedEvents()
+        XCTAssertEqual(events, [
+            .mirror(target: sourceDisplayID, source: targetDisplayID),
+            .unmirror(target: sourceDisplayID),
+        ])
+        let restoredTopologies = await topologyProbe.restoredTopologies()
+        XCTAssertTrue(restoredTopologies.isEmpty)
+    }
+
+    func testDesktopMirrorRejectsPhysicalTopologyDriftBeforeMutation() async throws {
+        let topology = displayTopology()
+        let sourceDisplayID = try XCTUnwrap(
+            topology.displays.first.flatMap { UInt32($0.id) }
+        )
+        let targetDisplayID: UInt32 = 120
+        let topologyProbe = DisplayTopologyProbe(topology: topology)
+        let mirrorProbe = DisplayMirrorProbe(
+            sourceDisplayID: sourceDisplayID,
+            targetDisplayID: targetDisplayID,
+            reportedMirrorSourceAfterApply: targetDisplayID,
+            initialTargetIsOnline: true,
+            initialTargetIsActive: true,
+            initialTargetBounds: CGRect(x: 2_560, y: 0, width: 960, height: 540),
+            configuredTargetSize: CGSize(width: 960, height: 540)
+        )
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: topologyProbe,
+            mirrorController: mirrorProbe,
+            physicalDisplayController: RecordingPhysicalDisplayController(),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier()
+        )
+        _ = try await workspace.snapshotWorkspace(targetProcessIdentifiers: [])
+        await topologyProbe.allowVerification()
+        await topologyProbe.failVerificationUntilRestore()
+
+        do {
+            try await workspace.mirrorOwnedVirtualDisplay(
+                targetDisplayID,
+                sourceDisplayID: sourceDisplayID
+            )
+            XCTFail("physical topology drift must fail before mirror mutation")
+        } catch is DisplayTopologyProbeFailure {
+        }
+
+        let events = await mirrorProbe.recordedEvents()
+        XCTAssertTrue(events.isEmpty)
+    }
+
+    func testDesktopMirrorStageReassertsExactInactiveTargetAndPreservesPhysicalTopology() async throws {
+        let topology = displayTopology()
+        let sourceDisplayID = try XCTUnwrap(
+            topology.displays.first.flatMap { UInt32($0.id) }
+        )
+        let targetDisplayID: UInt32 = 119
+        let topologyProbe = DisplayTopologyProbe(topology: topology)
+        let mirrorProbe = DisplayMirrorProbe(
+            sourceDisplayID: sourceDisplayID,
+            targetDisplayID: targetDisplayID,
+            reportedMirrorSourceAfterApply: nil,
+            initialTargetIsOnline: false,
+            initialTargetIsActive: false,
+            boundsByDisplayID: [
+                sourceDisplayID: CGRect(x: 0, y: 0, width: 2560, height: 1440),
+            ]
+        )
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: topologyProbe,
+            mirrorController: mirrorProbe,
+            physicalDisplayController: RecordingPhysicalDisplayController(),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier()
+        )
+        _ = try await workspace.snapshotWorkspace(targetProcessIdentifiers: [])
+        await topologyProbe.allowVerification()
+
+        let physicalBounds = [CGRect(x: 0, y: 0, width: 2560, height: 1440)]
+        let physicalUnion = try XCTUnwrap(physicalBounds.first)
+        let expectedOrigin = CGPoint(
+            x: physicalUnion.maxX.rounded(.up),
+            y: physicalUnion.minY.rounded(.down)
+        )
+
+        try await workspace.stageVirtualDisplayUnmirrored(
+            targetDisplayID,
+            sourceDisplayID: sourceDisplayID
+        )
+
+        let events = await mirrorProbe.recordedEvents()
+        XCTAssertEqual(events.count, 1)
+        guard case let .stageUnmirrored(target, origin, ownerToken) = try XCTUnwrap(events.first) else {
+            return XCTFail("expected one target-only unmirror stage event")
+        }
+        XCTAssertEqual(target, targetDisplayID)
+        XCTAssertEqual(ownerToken, 0xCAFE)
+        XCTAssertEqual(origin.x.rounded(.up), expectedOrigin.x.rounded(.up))
+        XCTAssertEqual(origin.y.rounded(.down), expectedOrigin.y.rounded(.down))
+        let state = await mirrorProbe.state(
+            targetDisplayID: targetDisplayID,
+            sourceDisplayID: sourceDisplayID
+        )
+        XCTAssertEqual(state.mainDisplayID, sourceDisplayID)
+        XCTAssertTrue(state.sourceIsOnline)
+        XCTAssertTrue(state.sourceIsActive)
+        XCTAssertFalse(state.sourceIsOwnedVirtualDisplay)
+        XCTAssertTrue(state.targetIsOnline)
+        XCTAssertTrue(state.targetIsActive)
+        XCTAssertNil(state.mirrorSourceDisplayID)
+        XCTAssertEqual(state.targetOwnerToken, 0xCAFE)
+        XCTAssertEqual(state.targetBounds.origin.x.rounded(.up), expectedOrigin.x.rounded(.up))
+        XCTAssertEqual(state.targetBounds.origin.y.rounded(.down), expectedOrigin.y.rounded(.down))
+        XCTAssertTrue(physicalBounds.allSatisfy { !$0.intersects(state.targetBounds) })
+        let restoredTopologies = await topologyProbe.restoredTopologies()
+        XCTAssertTrue(restoredTopologies.isEmpty)
+    }
+
+    func testDesktopMirrorStageRecoversInactiveRememberedOwnedVirtualMainBeforeCapture() async throws {
+        let topology = displayTopology()
+        let sourceDisplayID = try XCTUnwrap(
+            topology.displays.first.flatMap { UInt32($0.id) }
+        )
+        let targetDisplayID: UInt32 = 121
+        let physicalBounds = CGRect(x: 0, y: 0, width: 2560, height: 1440)
+        let topologyProbe = DisplayTopologyProbe(topology: topology)
+        let mirrorProbe = DisplayMirrorProbe(
+            sourceDisplayID: sourceDisplayID,
+            targetDisplayID: targetDisplayID,
+            reportedMirrorSourceAfterApply: nil,
+            initialMainDisplayID: targetDisplayID,
+            initialSourceIsActive: false,
+            initialTargetIsActive: false,
+            initialTargetBounds: physicalBounds,
+            configuredTargetSize: physicalBounds.size,
+            boundsByDisplayID: [
+                sourceDisplayID: CGRect(
+                    x: 0,
+                    y: 0,
+                    width: 2544,
+                    height: 1248
+                ),
+            ]
+        )
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: topologyProbe,
+            mirrorController: mirrorProbe,
+            physicalDisplayController: RecordingPhysicalDisplayController(),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier()
+        )
+        _ = try await workspace.snapshotWorkspace(targetProcessIdentifiers: [])
+        await topologyProbe.allowVerification()
+
+        try await workspace.stageVirtualDisplayUnmirrored(
+            targetDisplayID,
+            sourceDisplayID: sourceDisplayID
+        )
+
+        let events = await mirrorProbe.recordedEvents()
+        XCTAssertEqual(events.count, 1)
+        guard case let .stageUnmirrored(target, _, ownerToken) = try XCTUnwrap(events.first) else {
+            return XCTFail("expected one target-only recovery transaction")
+        }
+        XCTAssertEqual(target, targetDisplayID)
+        XCTAssertEqual(ownerToken, 0xCAFE)
+        let state = await mirrorProbe.state(
+            targetDisplayID: targetDisplayID,
+            sourceDisplayID: sourceDisplayID
+        )
+        XCTAssertEqual(state.mainDisplayID, sourceDisplayID)
+        XCTAssertTrue(state.sourceIsOnline)
+        XCTAssertTrue(state.sourceIsActive)
+        XCTAssertFalse(state.sourceIsOwnedVirtualDisplay)
+        XCTAssertTrue(state.targetIsOnline)
+        XCTAssertTrue(state.targetIsActive)
+        XCTAssertNil(state.mirrorSourceDisplayID)
+        XCTAssertEqual(state.targetOwnerToken, 0xCAFE)
+        XCTAssertEqual(state.targetBounds.origin.x, -physicalBounds.width)
+        XCTAssertTrue(physicalBounds.intersection(state.targetBounds).isEmpty)
+        let restoredTopologies = await topologyProbe.restoredTopologies()
+        XCTAssertTrue(restoredTopologies.isEmpty)
+    }
+
+    func testDesktopMirrorStageNormalizesSafeOwnedPlacementToLeftOutboard() async throws {
+        let topology = displayTopology()
+        let sourceDisplayID = try XCTUnwrap(
+            topology.displays.first.flatMap { UInt32($0.id) }
+        )
+        let targetDisplayID: UInt32 = 120
+        let physicalBounds = CGRect(x: 0, y: 0, width: 2560, height: 1440)
+        let initialTargetBounds = CGRect(x: 2560, y: 0, width: 640, height: 360)
+        let topologyProbe = DisplayTopologyProbe(topology: topology)
+        let mirrorProbe = DisplayMirrorProbe(
+            sourceDisplayID: sourceDisplayID,
+            targetDisplayID: targetDisplayID,
+            reportedMirrorSourceAfterApply: nil,
+            initialTargetBounds: initialTargetBounds,
+            boundsByDisplayID: [
+                sourceDisplayID: physicalBounds,
+            ]
+        )
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: topologyProbe,
+            mirrorController: mirrorProbe,
+            physicalDisplayController: RecordingPhysicalDisplayController(),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier()
+        )
+        _ = try await workspace.snapshotWorkspace(targetProcessIdentifiers: [])
+        await topologyProbe.allowVerification()
+
+        try await workspace.stageVirtualDisplayUnmirrored(
+            targetDisplayID,
+            sourceDisplayID: sourceDisplayID
+        )
+
+        let events = await mirrorProbe.recordedEvents()
+        guard case let .stageUnmirrored(target, origin, ownerToken) = try XCTUnwrap(
+            events.first
+        ) else {
+            return XCTFail("expected one target placement normalization transaction")
+        }
+        XCTAssertEqual(events.count, 1)
+        XCTAssertEqual(target, targetDisplayID)
+        XCTAssertEqual(origin, CGPoint(x: -initialTargetBounds.width, y: 0))
+        XCTAssertEqual(ownerToken, 0xCAFE)
+        let state = await mirrorProbe.state(
+            targetDisplayID: targetDisplayID,
+            sourceDisplayID: sourceDisplayID
+        )
+        XCTAssertEqual(
+            state.targetBounds.origin,
+            CGPoint(x: -initialTargetBounds.width, y: 0)
+        )
+        XCTAssertTrue(physicalBounds.intersection(state.targetBounds).isEmpty)
+        let restoredTopologies = await topologyProbe.restoredTopologies()
+        XCTAssertTrue(restoredTopologies.isEmpty)
+    }
+
+    func testDesktopMirrorStageRejectsPhysicalTargetBeforeAnyMutation() async throws {
+        let sourceDisplayID: UInt32 = 77
+        let targetDisplayID: UInt32 = 88
+        let topology = LumenMacPhysicalDisplayTopology(
+            displays: [
+                physicalDisplayState(id: String(sourceDisplayID), originX: 0),
+                physicalDisplayState(id: String(targetDisplayID), originX: 2560),
+            ],
+            windowsAdapterLUID: nil,
+            windowsTargetPaths: []
+        )
+        let topologyProbe = DisplayTopologyProbe(topology: topology)
+        let mirrorProbe = DisplayMirrorProbe(
+            sourceDisplayID: sourceDisplayID,
+            targetDisplayID: targetDisplayID,
+            reportedMirrorSourceAfterApply: nil,
+            boundsByDisplayID: [
+                sourceDisplayID: CGRect(x: 0, y: 0, width: 2560, height: 1440),
+                targetDisplayID: CGRect(x: 2560, y: 0, width: 2560, height: 1440),
+            ]
+        )
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: topologyProbe,
+            mirrorController: mirrorProbe,
             physicalDisplayController: RecordingPhysicalDisplayController(),
             disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier()
         )
         _ = try await workspace.snapshotWorkspace(targetProcessIdentifiers: [])
 
-        try await workspace.promoteVirtualDisplay(117)
+        do {
+            try await workspace.stageVirtualDisplayUnmirrored(
+                targetDisplayID,
+                sourceDisplayID: sourceDisplayID
+            )
+            XCTFail("expected physical target rejection")
+        } catch let error as LumenMacDisplayWorkspaceError {
+            XCTAssertEqual(
+                error,
+                .virtualDisplayMirrorUnavailable(targetDisplayID, sourceDisplayID)
+            )
+        }
+        let events = await mirrorProbe.recordedEvents()
+        XCTAssertTrue(events.isEmpty)
+    }
+
+    func testDesktopMirrorStageUsesUnionRightEdgeForNegativeVerticalPhysicalBounds() async throws {
+        let sourceDisplayID: UInt32 = 77
+        let targetDisplayID: UInt32 = 119
+        let topology = LumenMacPhysicalDisplayTopology(
+            displays: [
+                physicalDisplayState(id: String(sourceDisplayID), originX: -1920),
+                physicalDisplayState(id: "88", originX: 0),
+            ],
+            windowsAdapterLUID: nil,
+            windowsTargetPaths: []
+        )
+        let physicalBounds = [
+            CGRect(x: -1920, y: 200, width: 1920, height: 1080),
+            CGRect(x: 0, y: -900, width: 2560, height: 900),
+        ]
+        let topologyProbe = DisplayTopologyProbe(topology: topology)
+        let mirrorProbe = DisplayMirrorProbe(
+            sourceDisplayID: sourceDisplayID,
+            targetDisplayID: targetDisplayID,
+            reportedMirrorSourceAfterApply: nil,
+            boundsByDisplayID: [
+                sourceDisplayID: physicalBounds[0],
+                88: physicalBounds[1],
+            ]
+        )
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: topologyProbe,
+            mirrorController: mirrorProbe,
+            physicalDisplayController: RecordingPhysicalDisplayController(),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier()
+        )
+        _ = try await workspace.snapshotWorkspace(targetProcessIdentifiers: [])
+        await topologyProbe.allowVerification()
+
+        try await workspace.stageVirtualDisplayUnmirrored(
+            targetDisplayID,
+            sourceDisplayID: sourceDisplayID
+        )
+
+        let events = await mirrorProbe.recordedEvents()
+        guard case let .stageUnmirrored(_, origin, _) = try XCTUnwrap(events.first) else {
+            return XCTFail("expected a target-only stage event")
+        }
+        XCTAssertEqual(origin.x, 2560)
+        XCTAssertEqual(origin.y, -900)
+        XCTAssertTrue(physicalBounds.allSatisfy {
+            !$0.intersects(CGRect(origin: origin, size: CGSize(width: 320, height: 180)))
+        })
+    }
+
+    func testDesktopMirrorStageRestoresOnceWhenPhysicalVerificationFailsAfterMutation() async throws {
+        let topology = displayTopology()
+        let sourceDisplayID: UInt32 = 77
+        let targetDisplayID: UInt32 = 119
+        let topologyProbe = DisplayTopologyProbe(topology: topology)
+        let mirrorProbe = DisplayMirrorProbe(
+            sourceDisplayID: sourceDisplayID,
+            targetDisplayID: targetDisplayID,
+            reportedMirrorSourceAfterApply: nil,
+            boundsByDisplayID: [
+                sourceDisplayID: CGRect(x: 0, y: 0, width: 2560, height: 1440),
+            ]
+        )
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: topologyProbe,
+            mirrorController: mirrorProbe,
+            physicalDisplayController: RecordingPhysicalDisplayController(),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier()
+        )
+        _ = try await workspace.snapshotWorkspace(targetProcessIdentifiers: [])
+        await topologyProbe.allowVerification()
+        await topologyProbe.failVerificationUntilRestore()
+
+        do {
+            try await workspace.stageVirtualDisplayUnmirrored(
+                targetDisplayID,
+                sourceDisplayID: sourceDisplayID
+            )
+            XCTFail("expected physical verification failure")
+        } catch is DisplayTopologyProbeFailure {
+            // The original post-stage verification error is preserved.
+        }
+        let restoredTopologies = await topologyProbe.restoredTopologies()
+        let events = await mirrorProbe.recordedEvents()
+        XCTAssertEqual(restoredTopologies.count, 1)
+        XCTAssertEqual(events.count, 1)
+    }
+
+    func testDesktopMirrorStageRejectsMissingTargetOwnerBeforeMutation() async throws {
+        let topology = displayTopology()
+        let sourceDisplayID: UInt32 = 77
+        let targetDisplayID: UInt32 = 119
+        let topologyProbe = DisplayTopologyProbe(topology: topology)
+        let mirrorProbe = DisplayMirrorProbe(
+            sourceDisplayID: sourceDisplayID,
+            targetDisplayID: targetDisplayID,
+            reportedMirrorSourceAfterApply: nil,
+            boundsByDisplayID: [
+                sourceDisplayID: CGRect(x: 0, y: 0, width: 2560, height: 1440),
+            ],
+            ownerToken: nil
+        )
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: topologyProbe,
+            mirrorController: mirrorProbe,
+            physicalDisplayController: RecordingPhysicalDisplayController(),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier()
+        )
+        _ = try await workspace.snapshotWorkspace(targetProcessIdentifiers: [])
+
+        do {
+            try await workspace.stageVirtualDisplayUnmirrored(
+                targetDisplayID,
+                sourceDisplayID: sourceDisplayID
+            )
+            XCTFail("expected missing owner rejection")
+        } catch let error as LumenMacDisplayWorkspaceError {
+            guard case .virtualDisplayOwnershipLost(targetDisplayID, 0, nil) = error else {
+                return XCTFail("unexpected error: \(error)")
+            }
+        }
+        let events = await mirrorProbe.recordedEvents()
+        XCTAssertTrue(events.isEmpty)
+    }
+
+    func testCollapsedVirtualDesktopSourceUnmirrorsPhysicalTargetAndRestoresTopology() async throws {
+        let topology = displayTopology()
+        let sourceDisplayID = try XCTUnwrap(
+            topology.displays.first.flatMap { UInt32($0.id) }
+        )
+        let targetDisplayID: UInt32 = 118
+        let topologyProbe = DisplayTopologyProbe(topology: topology)
+        let mirrorProbe = DisplayMirrorProbe(
+            sourceDisplayID: sourceDisplayID,
+            targetDisplayID: targetDisplayID,
+            reportedMirrorSourceAfterApply: targetDisplayID,
+            initialTargetBounds: CGRect(x: -640, y: 0, width: 640, height: 360),
+            mirroredSourceBounds: CGRect(x: 0, y: 0, width: 1, height: 1)
+        )
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: topologyProbe,
+            mirrorController: mirrorProbe,
+            physicalDisplayController: RecordingPhysicalDisplayController(),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier()
+        )
+        _ = try await workspace.snapshotWorkspace(targetProcessIdentifiers: [])
+        await topologyProbe.allowVerification()
+
+        do {
+            try await workspace.mirrorOwnedVirtualDisplay(
+                targetDisplayID,
+                sourceDisplayID: sourceDisplayID
+            )
+            XCTFail("mirror postcondition mismatch must fail closed")
+        } catch LumenMacDisplayWorkspaceError.virtualDisplayMirrorUnavailable(
+            targetDisplayID,
+            sourceDisplayID
+        ) {
+        }
+
+        let events = await mirrorProbe.recordedEvents()
+        XCTAssertEqual(events, [
+            .mirror(target: sourceDisplayID, source: targetDisplayID),
+            .unmirror(target: sourceDisplayID),
+        ])
+        let restoredTopologies = await topologyProbe.restoredTopologies()
+        XCTAssertTrue(restoredTopologies.isEmpty)
     }
 
     func testRestoreSkipsCoreGraphicsMutationWhenPhysicalTopologyAlreadyConverged() async throws {
@@ -169,6 +960,44 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         XCTAssertEqual(resolved, ["2": 1])
     }
 
+    func testStableHardwareIdentityRemainsResolvableWhileCurrentModeIsUnavailable() throws {
+        let expectedState = physicalDisplayState(
+            id: "3",
+            originX: 0,
+            vendorID: 1_554,
+            productID: 4_096,
+            serialNumber: 77,
+            builtin: true
+        )
+        let expected = LumenMacPhysicalDisplayTopology(
+            displays: [expectedState],
+            windowsAdapterLUID: nil,
+            windowsTargetPaths: []
+        )
+        let snapshots = [
+            LumenCoreGraphicsDisplayTopologyController.DisplayResolutionCandidate(
+                id: "3",
+                vendorID: expectedState.vendorID,
+                productID: expectedState.productID,
+                serialNumber: expectedState.serialNumber,
+                builtin: expectedState.builtin,
+                mode: nil,
+                enabled: false,
+                active: false,
+                online: true
+            ),
+        ]
+
+        let candidates = LumenCoreGraphicsDisplayTopologyController
+            .displayResolutionCandidates(from: snapshots)
+        let resolved = try LumenCoreGraphicsDisplayTopologyController.resolveDisplayIDs(
+            for: expected,
+            candidates: candidates
+        )
+
+        XCTAssertEqual(resolved, ["3": 3])
+    }
+
     func testLegacySingleDisplayJournalRemapsOnlyOneMatchingNonLumenDisplay() throws {
         let expected = LumenMacPhysicalDisplayTopology(
             displays: [physicalDisplayState(id: "2", originX: 0)],
@@ -180,7 +1009,7 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
             id: "26",
             originX: 0,
             vendorID: 6_973,
-            productID: 0xA901,
+            productID: 0x6C21,
             serialNumber: 1,
             builtin: false
         )
@@ -291,6 +1120,45 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         XCTAssertEqual(captures.withLock { $0 }, 2)
     }
 
+    func testProductionTopologyVerificationBudgetSurvivesDelayedWindowServerConvergence() async throws {
+        let expected = displayTopology()
+        let mismatched = LumenMacPhysicalDisplayTopology(
+            displays: expected.displays.map { display in
+                LumenMacPhysicalDisplayState(
+                    id: display.id,
+                    mode: display.mode,
+                    originX: display.originX,
+                    originY: display.originY,
+                    mirrorMasterID: display.mirrorMasterID,
+                    enabled: display.enabled,
+                    active: false,
+                    online: display.online
+                )
+            },
+            windowsAdapterLUID: nil,
+            windowsTargetPaths: []
+        )
+        let captures = Mutex(0)
+        let controller = LumenCoreGraphicsDisplayTopologyController(
+            capture: {
+                captures.withLock { count in
+                    count += 1
+                    return count < 300 ? mismatched : expected
+                }
+            },
+            restore: { _ in },
+            visibleDisplayIDs: {
+                Set(expected.displays.compactMap { UInt32($0.id) })
+            },
+            verificationAttempts:
+                LumenCoreGraphicsDisplayTopologyController.productionVerificationAttempts,
+            verificationDelayNanoseconds: 0
+        )
+
+        try await controller.verify(expected)
+        XCTAssertEqual(captures.withLock { $0 }, 300)
+    }
+
     func testProductionTopologyVerificationRejectsCGDisplayMissingFromNSScreen() async throws {
         // Given: CoreGraphics reports the exact persisted topology but AppKit cannot see it.
         let topology = displayTopology()
@@ -306,11 +1174,224 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         }
     }
 
+    func testVerifiedPhysicalRecoveryWakesTheLocalDisplay() async throws {
+        // Given: the exact physical topology has converged after terminal cleanup.
+        let topology = displayTopology()
+        let wakeSignal = RecordingPhysicalDisplayWakeSignal()
+        let controller = LumenCoreGraphicsDisplayTopologyController(
+            capture: { topology },
+            restore: { _ in },
+            visibleDisplayIDs: { [77] }
+        )
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: controller,
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            physicalDisplayWakeSignal: wakeSignal
+        )
+
+        // When: terminal recovery independently verifies the restored display.
+        try await workspace.verifyWorkspace(topology)
+
+        // Then: recovery wakes before readback and pulses activity again after
+        // WindowServer has published the exact physical display.
+        XCTAssertEqual(wakeSignal.callCount, 2)
+        XCTAssertEqual(wakeSignal.releaseCount, 2)
+        XCTAssertEqual(
+            wakeSignal.retainedAssertionDurations,
+            [.seconds(600)]
+        )
+    }
+
+    func testPhysicalRecoveryKeepsWakeAssertionHeldThroughTopologyVerification() async throws {
+        // Given: the panel wake must remain asserted while WindowServer publishes
+        // the restored physical topology.
+        let topology = displayTopology()
+        let wakeSignal = RecordingPhysicalDisplayWakeSignal()
+        let assertionWasHeldDuringCapture = Mutex(false)
+        let controller = LumenCoreGraphicsDisplayTopologyController(
+            capture: {
+                assertionWasHeldDuringCapture.withLock {
+                    $0 = wakeSignal.isAssertionHeld
+                }
+                return topology
+            },
+            restore: { _ in },
+            visibleDisplayIDs: { [77] }
+        )
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: controller,
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            physicalDisplayWakeSignal: wakeSignal
+        )
+
+        // When: terminal recovery verifies the physical display.
+        try await workspace.verifyWorkspace(topology)
+
+        // Then: the first assertion survives the readback boundary, and the
+        // post-publication pulse is also fully released before returning.
+        XCTAssertTrue(assertionWasHeldDuringCapture.withLock { $0 })
+        XCTAssertFalse(wakeSignal.isAssertionHeld)
+        XCTAssertEqual(wakeSignal.callCount, 2)
+        XCTAssertEqual(wakeSignal.releaseCount, 2)
+    }
+
+    func testPhysicalRecoveryKeepsPulsingUntilTheActiveDisplayIsStablyAwake() async throws {
+        // Given: WindowServer has restored the active display, but the physical
+        // panel remains asleep for the first post-publication observation.
+        let topology = displayTopology()
+        let wakeSignal = RecordingPhysicalDisplayWakeSignal(
+            asleepResponses: [true] + Array(repeating: false, count: 9)
+        )
+        let controller = LumenCoreGraphicsDisplayTopologyController(
+            capture: { topology },
+            restore: { _ in },
+            visibleDisplayIDs: { [77] }
+        )
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: controller,
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            physicalDisplayWakeSignal: wakeSignal
+        )
+
+        // When: terminal recovery verifies and wakes the physical display.
+        try await workspace.verifyWorkspace(topology)
+
+        // Then: the recovery lease survives every wake observation, and a
+        // sleeping panel receives another pulse before two seconds of stable
+        // awake observations let the recovery lease go.
+        XCTAssertEqual(
+            wakeSignal.checkedDisplayIDs,
+            Array(repeating: 77, count: 10)
+        )
+        XCTAssertTrue(wakeSignal.assertionWasHeldForEveryCheck)
+        XCTAssertEqual(wakeSignal.callCount, 3)
+        XCTAssertEqual(wakeSignal.releaseCount, 3)
+    }
+
+    func testPhysicalRecoveryRetainsItsSnapshotWhenTheDisplayNeverWakes() async throws {
+        // Given: the topology is restored, but the active panel never leaves its
+        // asleep state while the bounded recovery lease is held.
+        let topology = displayTopology()
+        let wakeSignal = RecordingPhysicalDisplayWakeSignal(
+            asleepResponses: Array(repeating: true, count: 24)
+        )
+        let controller = LumenCoreGraphicsDisplayTopologyController(
+            capture: { topology },
+            restore: { _ in },
+            visibleDisplayIDs: { [77] }
+        )
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: controller,
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            physicalDisplayWakeSignal: wakeSignal
+        )
+        _ = try await workspace.snapshotWorkspace(targetProcessIdentifiers: [])
+
+        // When: terminal verification exhausts the wake convergence window.
+        do {
+            try await workspace.verifyWorkspace(topology)
+            XCTFail("expected display wake timeout")
+        } catch {
+            XCTAssertEqual(
+                error as? LumenMacDisplayWorkspaceError,
+                .physicalDisplayWakeTimeout([77])
+            )
+        }
+
+        // Then: every sleeping observation is re-pulsed and recovery ownership
+        // remains retryable instead of being discarded as a successful stop.
+        XCTAssertEqual(wakeSignal.checkedDisplayIDs, Array(repeating: 77, count: 24))
+        XCTAssertTrue(wakeSignal.assertionWasHeldForEveryCheck)
+        XCTAssertEqual(wakeSignal.callCount, 26)
+        XCTAssertEqual(wakeSignal.releaseCount, 26)
+        do {
+            _ = try await workspace.snapshotWorkspace(targetProcessIdentifiers: [])
+            XCTFail("expected retained snapshot")
+        } catch {
+            XCTAssertEqual(
+                error as? LumenMacDisplayWorkspaceError,
+                .snapshotAlreadyExists
+            )
+        }
+    }
+
+    func testPhysicalRecoveryWakesTheLocalDisplayBeforeTopologyVerificationFails() async throws {
+        // Given: WindowServer has not converged to the persisted topology yet.
+        let topology = displayTopology()
+        let mismatchedTopology = LumenMacPhysicalDisplayTopology(
+            displays: [],
+            windowsAdapterLUID: nil,
+            windowsTargetPaths: []
+        )
+        let wakeSignal = RecordingPhysicalDisplayWakeSignal()
+        let controller = LumenCoreGraphicsDisplayTopologyController(
+            capture: { mismatchedTopology },
+            restore: { _ in },
+            visibleDisplayIDs: { [] }
+        )
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: controller,
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            physicalDisplayWakeSignal: wakeSignal
+        )
+
+        // When: exact topology verification still fails.
+        await XCTAssertThrowsErrorAsync {
+            try await workspace.verifyWorkspace(topology)
+        }
+
+        // Then: local display wake is not gated by exact topology convergence.
+        XCTAssertEqual(wakeSignal.callCount, 1)
+        XCTAssertEqual(wakeSignal.releaseCount, 1)
+    }
+
+    func testPhysicalRecoveryWakesTheLocalDisplayBeforeWindowVerificationFails() async throws {
+        // Given: the exact physical topology has converged, but a stale app window
+        // can no longer be found during the independent window restoration check.
+        let display = displayTopology().displays[0]
+        let topology = LumenMacPhysicalDisplayTopology(
+            displays: [display],
+            macWindows: [
+                LumenMacWorkspaceWindowState(
+                    processID: Int32.max,
+                    windowID: UInt32.max,
+                    originX: 0,
+                    originY: 0,
+                    width: 800,
+                    height: 600
+                ),
+            ],
+            windowsAdapterLUID: nil,
+            windowsTargetPaths: []
+        )
+        let wakeSignal = RecordingPhysicalDisplayWakeSignal()
+        let controller = LumenCoreGraphicsDisplayTopologyController(
+            capture: { topology },
+            restore: { _ in },
+            visibleDisplayIDs: { [77] }
+        )
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: controller,
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            physicalDisplayWakeSignal: wakeSignal
+        )
+
+        // When: window verification fails after the physical display is restored.
+        await XCTAssertThrowsErrorAsync {
+            try await workspace.verifyWorkspace(topology)
+        }
+
+        // Then: the physical panel is pulsed again as soon as its topology is
+        // verified; stale window cleanup must not gate the visible recovery.
+        XCTAssertEqual(wakeSignal.callCount, 2)
+        XCTAssertEqual(wakeSignal.releaseCount, 2)
+    }
+
     func testMissingCapabilityReceiptRejectsIsolationBeforeDisplayMutation() async throws {
         let fixture = IsolationDisplayFixture(physicalTopology: isolationPhysicalTopology())
         let receiptURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
-            .appendingPathComponent("display-disconnect-capability-v1.json")
+            .appendingPathComponent("display-disconnect-capability-v2.json")
         let workspace = LumenMacDisplayWorkspace(
             topologyController: IsolationTopologyController(fixture: fixture),
             physicalDisplayController: RecordingPhysicalDisplayController(fixture: fixture),
@@ -339,6 +1420,92 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         XCTAssertEqual(fixture.physicalTopology(), isolationPhysicalTopology())
     }
 
+    func testIsolationRejectsAnInactivePhysicalBaselineBeforeDisplayMutation() async throws {
+        let inactiveTopology = LumenMacPhysicalDisplayTopology(
+            displays: [
+                physicalDisplayState(
+                    id: "41",
+                    originX: 0,
+                    vendorID: 1_552,
+                    productID: 41_049,
+                    serialNumber: 4_251_086_178,
+                    builtin: true,
+                    enabled: false,
+                    active: false
+                ),
+            ],
+            windowsAdapterLUID: nil,
+            windowsTargetPaths: []
+        )
+        let fixture = IsolationDisplayFixture(physicalTopology: inactiveTopology)
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: IsolationTopologyController(fixture: fixture),
+            physicalDisplayController: RecordingPhysicalDisplayController(fixture: fixture),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier()
+        )
+        _ = try await workspace.snapshotWorkspace(targetProcessIdentifiers: [])
+        fixture.publishVirtualDisplay(99)
+
+        await XCTAssertThrowsErrorAsync {
+            try await workspace.isolateVirtualDisplay(99)
+        }
+
+        XCTAssertTrue(fixture.controlCalls().isEmpty)
+    }
+
+    func testRecoveryAdoptsMatchingActiveTopologyForAnInactiveLegacyBaseline() async throws {
+        let activeTopology = LumenMacPhysicalDisplayTopology(
+            displays: [
+                physicalDisplayState(
+                    id: "3",
+                    originX: 0,
+                    vendorID: 4_268,
+                    productID: 41_607,
+                    serialNumber: 809_654_099,
+                    builtin: false
+                ),
+            ],
+            windowsAdapterLUID: nil,
+            windowsTargetPaths: []
+        )
+        let inactiveTopology = LumenMacPhysicalDisplayTopology(
+            displays: activeTopology.displays.map { state in
+                LumenMacPhysicalDisplayState(
+                    id: state.id,
+                    vendorID: state.vendorID,
+                    productID: state.productID,
+                    serialNumber: state.serialNumber,
+                    builtin: state.builtin,
+                    mode: state.mode,
+                    originX: state.originX,
+                    originY: state.originY,
+                    mirrorMasterID: state.mirrorMasterID,
+                    enabled: false,
+                    active: false,
+                    online: true
+                )
+            },
+            windowsAdapterLUID: nil,
+            windowsTargetPaths: []
+        )
+        let topologyController = DisplayTopologyProbe(topology: activeTopology)
+        await topologyController.allowVerification()
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: topologyController,
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            physicalDisplayWakeSignal: RecordingPhysicalDisplayWakeSignal()
+        )
+
+        try await workspace.restoreWorkspace(
+            inactiveTopology,
+            recoveryGeneration: 91
+        )
+        try await workspace.verifyWorkspace(inactiveTopology)
+
+        let restoredTopologies = await topologyController.restoredTopologies()
+        XCTAssertTrue(restoredTopologies.isEmpty)
+    }
+
     func testCaptureProvenUnpublishedVirtualDisplayCanIsolatePhysicalDisplays() async throws {
         let topology = isolationPhysicalTopology()
         let fixture = IsolationDisplayFixture(physicalTopology: topology)
@@ -360,6 +1527,616 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         XCTAssertTrue(
             fixture.physicalTopology().displays.allSatisfy { !$0.active && !$0.enabled }
         )
+    }
+
+    func testDurableIsolationRecoveryReenablesRenumberedOfflineDisplay() async throws {
+        let topology = LumenMacPhysicalDisplayTopology(
+            displays: [
+                physicalDisplayState(
+                    id: "1",
+                    originX: 0,
+                    vendorID: 4_268,
+                    productID: 41_607,
+                    serialNumber: 809_654_099,
+                    builtin: false
+                ),
+            ],
+            windowsAdapterLUID: nil,
+            windowsTargetPaths: []
+        )
+        let fixture = RenumberedOfflineIsolationFixture(
+            persistedTopology: topology,
+            currentDisplayID: 3
+        )
+        let recordURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            .appendingPathComponent("display-disconnect-recovery-v1.json")
+        let recoveryStore = LumenDisconnectRecoveryFileStore(recordURL: recordURL)
+        let environment = LumenDisconnectRecoveryEnvironment(
+            bootSessionUUID: "boot-a",
+            windowServerSessionUUID: "window-server-a"
+        )
+        let isolatingWorkspace = LumenMacDisplayWorkspace(
+            topologyController: RenumberedOfflineTopologyController(fixture: fixture),
+            physicalDisplayController: RenumberedOfflinePhysicalDisplayController(
+                fixture: fixture
+            ),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            physicalDisplayWakeSignal: RecordingPhysicalDisplayWakeSignal(),
+            disconnectRecoveryStore: recoveryStore,
+            disconnectRecoveryEnvironment: { environment }
+        )
+        _ = try await isolatingWorkspace.snapshotWorkspace(
+            targetProcessIdentifiers: [],
+            recoveryGeneration: 77
+        )
+
+        try await isolatingWorkspace.isolateVirtualDisplay(99)
+        XCTAssertEqual(
+            fixture.controlCalls(),
+            [.init(displayID: 3, enabled: false)]
+        )
+        XCTAssertFalse(fixture.isOnline())
+
+        let recoveringWorkspace = LumenMacDisplayWorkspace(
+            topologyController: RenumberedOfflineTopologyController(fixture: fixture),
+            physicalDisplayController: RenumberedOfflinePhysicalDisplayController(
+                fixture: fixture
+            ),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            physicalDisplayWakeSignal: RecordingPhysicalDisplayWakeSignal(),
+            disconnectRecoveryStore: recoveryStore,
+            disconnectRecoveryEnvironment: { environment }
+        )
+        try await recoveringWorkspace.restoreWorkspace(
+            topology,
+            recoveryGeneration: 77
+        )
+        try await recoveringWorkspace.verifyWorkspace(topology)
+
+        XCTAssertEqual(
+            fixture.controlCalls(),
+            [
+                .init(displayID: 3, enabled: false),
+                .init(displayID: 3, enabled: true),
+            ]
+        )
+        XCTAssertTrue(fixture.isOnline())
+        XCTAssertFalse(FileManager.default.fileExists(atPath: recordURL.path))
+    }
+
+    func testDurableIsolationRecoveryWaitsForReenabledDisplayPublication() async throws {
+        let topology = LumenMacPhysicalDisplayTopology(
+            displays: [
+                physicalDisplayState(
+                    id: "1",
+                    originX: 0,
+                    vendorID: 4_268,
+                    productID: 41_607,
+                    serialNumber: 809_654_099,
+                    builtin: false
+                ),
+            ],
+            windowsAdapterLUID: nil,
+            windowsTargetPaths: []
+        )
+        let fixture = RenumberedOfflineIsolationFixture(
+            persistedTopology: topology,
+            currentDisplayID: 3,
+            enablePublicationDelayPolls: 2
+        )
+        let recordURL = temporaryDisconnectRecoveryURL()
+        let recoveryStore = LumenDisconnectRecoveryFileStore(recordURL: recordURL)
+        let environment = LumenDisconnectRecoveryEnvironment(
+            bootSessionUUID: "boot-a",
+            windowServerSessionUUID: "window-server-a"
+        )
+        let isolatingWorkspace = LumenMacDisplayWorkspace(
+            topologyController: RenumberedOfflineTopologyController(fixture: fixture),
+            physicalDisplayController: RenumberedOfflinePhysicalDisplayController(
+                fixture: fixture
+            ),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            physicalDisplayWakeSignal: RecordingPhysicalDisplayWakeSignal(),
+            disconnectRecoveryStore: recoveryStore,
+            disconnectRecoveryEnvironment: { environment }
+        )
+        _ = try await isolatingWorkspace.snapshotWorkspace(
+            targetProcessIdentifiers: [],
+            recoveryGeneration: 78
+        )
+        try await isolatingWorkspace.isolateVirtualDisplay(99)
+
+        let recoveringWorkspace = LumenMacDisplayWorkspace(
+            topologyController: RenumberedOfflineTopologyController(fixture: fixture),
+            physicalDisplayController: RenumberedOfflinePhysicalDisplayController(
+                fixture: fixture
+            ),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            physicalDisplayWakeSignal: RecordingPhysicalDisplayWakeSignal(),
+            disconnectRecoveryStore: recoveryStore,
+            disconnectRecoveryEnvironment: { environment }
+        )
+        try await recoveringWorkspace.restoreWorkspace(
+            topology,
+            recoveryGeneration: 78
+        )
+        try await recoveringWorkspace.verifyWorkspace(topology)
+
+        XCTAssertGreaterThanOrEqual(fixture.publicationPollCount(), 3)
+        XCTAssertTrue(fixture.isOnline())
+        XCTAssertFalse(FileManager.default.fileExists(atPath: recordURL.path))
+    }
+
+    func testDurableIsolationRecoveryAcceptsExactRepublicationAfterEnableRace() async throws {
+        let topology = LumenMacPhysicalDisplayTopology(
+            displays: [
+                physicalDisplayState(
+                    id: "1",
+                    originX: 0,
+                    vendorID: 4_268,
+                    productID: 41_607,
+                    serialNumber: 809_654_099,
+                    builtin: false
+                ),
+            ],
+            windowsAdapterLUID: nil,
+            windowsTargetPaths: []
+        )
+        let fixture = RenumberedOfflineIsolationFixture(
+            persistedTopology: topology,
+            currentDisplayID: 3
+        )
+        let recordURL = temporaryDisconnectRecoveryURL()
+        let recoveryStore = LumenDisconnectRecoveryFileStore(recordURL: recordURL)
+        let environment = LumenDisconnectRecoveryEnvironment(
+            bootSessionUUID: "boot-a",
+            windowServerSessionUUID: "window-server-a"
+        )
+        let isolatingWorkspace = LumenMacDisplayWorkspace(
+            topologyController: RenumberedOfflineTopologyController(fixture: fixture),
+            physicalDisplayController: RenumberedOfflinePhysicalDisplayController(
+                fixture: fixture
+            ),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            physicalDisplayWakeSignal: RecordingPhysicalDisplayWakeSignal(),
+            disconnectRecoveryStore: recoveryStore,
+            disconnectRecoveryEnvironment: { environment }
+        )
+        _ = try await isolatingWorkspace.snapshotWorkspace(
+            targetProcessIdentifiers: [],
+            recoveryGeneration: 81
+        )
+        try await isolatingWorkspace.isolateVirtualDisplay(99)
+
+        let recoveringWorkspace = LumenMacDisplayWorkspace(
+            topologyController: RenumberedOfflineTopologyController(fixture: fixture),
+            physicalDisplayController: RepublishingFailingPhysicalDisplayController(
+                fixture: fixture
+            ),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            physicalDisplayWakeSignal: RecordingPhysicalDisplayWakeSignal(),
+            disconnectRecoveryStore: recoveryStore,
+            disconnectRecoveryEnvironment: { environment }
+        )
+
+        try await recoveringWorkspace.restoreWorkspace(
+            topology,
+            recoveryGeneration: 81
+        )
+        try await recoveringWorkspace.verifyWorkspace(topology)
+
+        XCTAssertEqual(
+            fixture.controlCalls().suffix(1),
+            [.init(displayID: 3, enabled: true)]
+        )
+        XCTAssertTrue(fixture.isOnline())
+        XCTAssertFalse(FileManager.default.fileExists(atPath: recordURL.path))
+    }
+
+    func testDurableIsolationRecoveryReenablesDisplayWhenPhysicalTopologyLooksRestored() async throws {
+        let topology = LumenMacPhysicalDisplayTopology(
+            displays: [
+                physicalDisplayState(
+                    id: "1",
+                    originX: 0,
+                    vendorID: 4_268,
+                    productID: 41_607,
+                    serialNumber: 809_654_099,
+                    builtin: false
+                ),
+            ],
+            windowsAdapterLUID: nil,
+            windowsTargetPaths: []
+        )
+        let fixture = RenumberedOfflineIsolationFixture(
+            persistedTopology: topology,
+            currentDisplayID: 3
+        )
+        let recordURL = temporaryDisconnectRecoveryURL()
+        let recoveryStore = LumenDisconnectRecoveryFileStore(recordURL: recordURL)
+        let environment = LumenDisconnectRecoveryEnvironment(
+            bootSessionUUID: "boot-a",
+            windowServerSessionUUID: "window-server-a"
+        )
+        var record = try LumenDisconnectRecoveryRecord.staged(
+            environment: environment,
+            recoveryGeneration: 78,
+            topology: topology,
+            physicalDisplays: [fixture.capabilityDisplay()]
+        )
+        record = record.updating(displayID: 3, phase: .disableSucceeded)
+        try recoveryStore.persist(record)
+        let wakeSignal = RecordingPhysicalDisplayWakeSignal()
+        let topologyController = RenumberedOfflineTopologyController(
+            fixture: fixture,
+            verificationWakeSignal: wakeSignal,
+            minimumWakeCallCountForVerification: 2
+        )
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: topologyController,
+            physicalDisplayController: RenumberedOfflinePhysicalDisplayController(
+                fixture: fixture
+            ),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            physicalDisplayWakeSignal: wakeSignal,
+            disconnectRecoveryStore: recoveryStore,
+            disconnectRecoveryEnvironment: { environment }
+        )
+
+        try await workspace.restoreWorkspace(
+            topology,
+            recoveryGeneration: 78
+        )
+        XCTAssertTrue(wakeSignal.isAssertionHeld)
+        // The assertion acquired before private display enable can become stale
+        // when WindowServer republishes the external panel. Verification must
+        // issue a fresh user-activity pulse before its first topology readback.
+        try await workspace.verifyWorkspace(topology)
+
+        XCTAssertEqual(
+            fixture.controlCalls(),
+            [.init(displayID: 3, enabled: true)]
+        )
+        let restoreCallCount = await topologyController.restoreCallCount()
+        // The first restore republishes the display after the private enable
+        // transaction. A second restore after the stable-awake fence recommits
+        // the physical signal only once WindowServer and the display driver
+        // have both had time to converge.
+        XCTAssertEqual(restoreCallCount, 2)
+        XCTAssertFalse(wakeSignal.isAssertionHeld)
+        XCTAssertTrue(fixture.isOnline())
+        XCTAssertFalse(FileManager.default.fileExists(atPath: recordURL.path))
+    }
+
+    func testDurableIsolationRecoveryReenablesDisplayAfterRepublication() async throws {
+        let topology = LumenMacPhysicalDisplayTopology(
+            displays: [
+                physicalDisplayState(
+                    id: "77",
+                    originX: 0,
+                    vendorID: 4_268,
+                    productID: 41_607,
+                    serialNumber: 809_654_099,
+                    builtin: false
+                ),
+                physicalDisplayState(
+                    id: "88",
+                    originX: 2_560,
+                    vendorID: 1_552,
+                    productID: 16_801,
+                    serialNumber: 1_234_567,
+                    builtin: false,
+                    enabled: false,
+                    active: false
+                ),
+            ],
+            windowsAdapterLUID: nil,
+            windowsTargetPaths: []
+        )
+        let topologyProbe = DisplayTopologyProbe(topology: topology)
+        let physicalFixture = IsolationDisplayFixture(physicalTopology: topology)
+        let recordURL = temporaryDisconnectRecoveryURL()
+        let recoveryStore = LumenDisconnectRecoveryFileStore(recordURL: recordURL)
+        let environment = LumenDisconnectRecoveryEnvironment(
+            bootSessionUUID: "boot-a",
+            windowServerSessionUUID: "window-server-a"
+        )
+        var record = try LumenDisconnectRecoveryRecord.staged(
+            environment: environment,
+            recoveryGeneration: 80,
+            topology: topology,
+            physicalDisplays: [
+                LumenDisplayDisconnectCapabilityDisplay(
+                    displayID: 77,
+                    vendorID: 4_268,
+                    productID: 41_607,
+                    serialNumber: 809_654_099,
+                    builtin: false
+                ),
+            ]
+        )
+        record = record.updating(displayID: 77, phase: .disableSucceeded)
+        try recoveryStore.persist(record)
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: topologyProbe,
+            physicalDisplayController: RecordingPhysicalDisplayController(
+                fixture: physicalFixture
+            ),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            physicalDisplayWakeSignal: RecordingPhysicalDisplayWakeSignal(),
+            disconnectRecoveryStore: recoveryStore,
+            disconnectRecoveryEnvironment: { environment }
+        )
+        await topologyProbe.allowVerification()
+        await topologyProbe.failVerificationUntilRestore()
+
+        try await workspace.restoreWorkspace(
+            topology,
+            recoveryGeneration: 80
+        )
+        try await workspace.verifyWorkspace(topology)
+
+        XCTAssertEqual(
+            physicalFixture.controlCalls(),
+            [.init(displayID: 77, enabled: true)]
+        )
+        XCTAssertFalse(FileManager.default.fileExists(atPath: recordURL.path))
+    }
+
+    func testMirrorReleaseRechecksRestoredTopologyBeforeDurableEnableRecovery() async throws {
+        let topology = LumenMacPhysicalDisplayTopology(
+            displays: [
+                physicalDisplayState(
+                    id: "77",
+                    originX: 0,
+                    vendorID: 4_268,
+                    productID: 41_607,
+                    serialNumber: 809_654_099,
+                    builtin: false
+                ),
+            ],
+            windowsAdapterLUID: nil,
+            windowsTargetPaths: []
+        )
+        let topologyProbe = DisplayTopologyProbe(topology: topology)
+        let mirrorProbe = DisplayMirrorProbe(
+            sourceDisplayID: 77,
+            targetDisplayID: 117,
+            reportedMirrorSourceAfterApply: 117,
+            initialTargetIsOnline: true,
+            initialTargetIsActive: true,
+            initialTargetBounds: CGRect(x: 2_560, y: 0, width: 960, height: 540),
+            configuredTargetSize: CGSize(width: 960, height: 540),
+            mirroredTargetIsActive: false
+        )
+        let physicalFixture = IsolationDisplayFixture(physicalTopology: topology)
+        let recordURL = temporaryDisconnectRecoveryURL()
+        let recoveryStore = LumenDisconnectRecoveryFileStore(recordURL: recordURL)
+        let environment = LumenDisconnectRecoveryEnvironment(
+            bootSessionUUID: "boot-a",
+            windowServerSessionUUID: "window-server-a"
+        )
+        var record = try LumenDisconnectRecoveryRecord.staged(
+            environment: environment,
+            recoveryGeneration: 79,
+            topology: topology,
+            physicalDisplays: [
+                LumenDisplayDisconnectCapabilityDisplay(
+                    displayID: 77,
+                    vendorID: 4_268,
+                    productID: 41_607,
+                    serialNumber: 809_654_099,
+                    builtin: false
+                ),
+            ]
+        )
+        record = record.updating(displayID: 77, phase: .disableSucceeded)
+        try recoveryStore.persist(record)
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: topologyProbe,
+            mirrorController: mirrorProbe,
+            physicalDisplayController: RecordingPhysicalDisplayController(
+                fixture: physicalFixture
+            ),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            physicalDisplayWakeSignal: RecordingPhysicalDisplayWakeSignal(),
+            disconnectRecoveryStore: recoveryStore,
+            disconnectRecoveryEnvironment: { environment }
+        )
+        _ = try await workspace.snapshotWorkspace(
+            targetProcessIdentifiers: [],
+            recoveryGeneration: 79
+        )
+        await topologyProbe.allowVerification()
+        try await workspace.mirrorOwnedVirtualDisplay(117, sourceDisplayID: 77)
+        await topologyProbe.failVerificationUntilRestore()
+
+        try await workspace.restoreWorkspace(topology, recoveryGeneration: 79)
+        try await workspace.verifyWorkspace(topology)
+
+        let mirrorEvents = await mirrorProbe.recordedEvents()
+        XCTAssertEqual(
+            mirrorEvents,
+            [
+                .mirror(target: 77, source: 117),
+                .unmirror(target: 77),
+            ]
+        )
+        XCTAssertEqual(
+            physicalFixture.controlCalls(),
+            [.init(displayID: 77, enabled: true)]
+        )
+        XCTAssertFalse(FileManager.default.fileExists(atPath: recordURL.path))
+    }
+
+    func testRecoveryRefusesOfflineMutationAfterWindowServerSessionChanges() async throws {
+        let topology = LumenMacPhysicalDisplayTopology(
+            displays: [
+                physicalDisplayState(
+                    id: "1",
+                    originX: 0,
+                    vendorID: 4_268,
+                    productID: 41_607,
+                    serialNumber: 809_654_099,
+                    builtin: false
+                ),
+            ],
+            windowsAdapterLUID: nil,
+            windowsTargetPaths: []
+        )
+        let fixture = RenumberedOfflineIsolationFixture(
+            persistedTopology: topology,
+            currentDisplayID: 3,
+            initiallyOnline: false
+        )
+        let recordURL = temporaryDisconnectRecoveryURL()
+        let recoveryStore = LumenDisconnectRecoveryFileStore(recordURL: recordURL)
+        let recordedEnvironment = LumenDisconnectRecoveryEnvironment(
+            bootSessionUUID: "boot-a",
+            windowServerSessionUUID: "window-server-a"
+        )
+        var record = try LumenDisconnectRecoveryRecord.staged(
+            environment: recordedEnvironment,
+            recoveryGeneration: 88,
+            topology: topology,
+            physicalDisplays: [fixture.capabilityDisplay()]
+        )
+        record = record.updating(displayID: 3, phase: .disableSucceeded)
+        try recoveryStore.persist(record)
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: RenumberedOfflineTopologyController(fixture: fixture),
+            physicalDisplayController: RenumberedOfflinePhysicalDisplayController(
+                fixture: fixture
+            ),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            physicalDisplayWakeSignal: RecordingPhysicalDisplayWakeSignal(),
+            disconnectRecoveryStore: recoveryStore,
+            disconnectRecoveryEnvironment: {
+                LumenDisconnectRecoveryEnvironment(
+                    bootSessionUUID: "boot-a",
+                    windowServerSessionUUID: "window-server-b"
+                )
+            }
+        )
+
+        await XCTAssertThrowsErrorAsync {
+            try await workspace.restoreWorkspace(
+                topology,
+                recoveryGeneration: 88
+            )
+        }
+
+        XCTAssertTrue(fixture.controlCalls().isEmpty)
+        XCTAssertFalse(fixture.isOnline())
+        XCTAssertTrue(FileManager.default.fileExists(atPath: recordURL.path))
+    }
+
+    func testPlannedRecoveryRecordDoesNotEnableAnUnmutatedDisplay() async throws {
+        let topology = LumenMacPhysicalDisplayTopology(
+            displays: [
+                physicalDisplayState(
+                    id: "1",
+                    originX: 0,
+                    vendorID: 4_268,
+                    productID: 41_607,
+                    serialNumber: 809_654_099,
+                    builtin: false
+                ),
+            ],
+            windowsAdapterLUID: nil,
+            windowsTargetPaths: []
+        )
+        let fixture = RenumberedOfflineIsolationFixture(
+            persistedTopology: topology,
+            currentDisplayID: 3
+        )
+        let recordURL = temporaryDisconnectRecoveryURL()
+        let recoveryStore = LumenDisconnectRecoveryFileStore(recordURL: recordURL)
+        let environment = LumenDisconnectRecoveryEnvironment(
+            bootSessionUUID: "boot-a",
+            windowServerSessionUUID: "window-server-a"
+        )
+        try recoveryStore.persist(
+            try LumenDisconnectRecoveryRecord.staged(
+                environment: environment,
+                recoveryGeneration: 89,
+                topology: topology,
+                physicalDisplays: [fixture.capabilityDisplay()]
+            )
+        )
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: RenumberedOfflineTopologyController(fixture: fixture),
+            physicalDisplayController: RenumberedOfflinePhysicalDisplayController(
+                fixture: fixture
+            ),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            physicalDisplayWakeSignal: RecordingPhysicalDisplayWakeSignal(),
+            disconnectRecoveryStore: recoveryStore,
+            disconnectRecoveryEnvironment: { environment }
+        )
+
+        try await workspace.restoreWorkspace(
+            topology,
+            recoveryGeneration: 89
+        )
+        try await workspace.verifyWorkspace(topology)
+
+        XCTAssertTrue(fixture.controlCalls().isEmpty)
+        XCTAssertTrue(fixture.isOnline())
+        XCTAssertFalse(FileManager.default.fileExists(atPath: recordURL.path))
+    }
+
+    func testIsolationRejectsModeLessPhysicalDisplayAddedAfterSnapshot() async throws {
+        let topology = LumenMacPhysicalDisplayTopology(
+            displays: [
+                physicalDisplayState(
+                    id: "1",
+                    originX: 0,
+                    vendorID: 4_268,
+                    productID: 41_607,
+                    serialNumber: 809_654_099,
+                    builtin: false
+                ),
+            ],
+            windowsAdapterLUID: nil,
+            windowsTargetPaths: []
+        )
+        let fixture = RenumberedOfflineIsolationFixture(
+            persistedTopology: topology,
+            currentDisplayID: 3
+        )
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: RenumberedOfflineTopologyController(
+                fixture: fixture,
+                extraOnlineDisplayIDs: [4]
+            ),
+            physicalDisplayController: RenumberedOfflinePhysicalDisplayController(
+                fixture: fixture
+            ),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier(),
+            physicalDisplayWakeSignal: RecordingPhysicalDisplayWakeSignal(),
+            disconnectRecoveryStore: LumenDisconnectRecoveryFileStore(
+                recordURL: temporaryDisconnectRecoveryURL()
+            ),
+            disconnectRecoveryEnvironment: {
+                LumenDisconnectRecoveryEnvironment(
+                    bootSessionUUID: "boot-a",
+                    windowServerSessionUUID: "window-server-a"
+                )
+            }
+        )
+        _ = try await workspace.snapshotWorkspace(
+            targetProcessIdentifiers: [],
+            recoveryGeneration: 90
+        )
+
+        await XCTAssertThrowsErrorAsync {
+            try await workspace.isolateVirtualDisplay(99)
+        }
+
+        XCTAssertTrue(fixture.controlCalls().isEmpty)
+        XCTAssertTrue(fixture.isOnline())
     }
 
     func testRetainedModeLessVirtualDisplayCanIsolateAfterActiveReadback() async throws {
@@ -466,6 +2243,7 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
             [
                 .init(displayID: 41, enabled: false),
                 .init(displayID: 42, enabled: false),
+                .init(displayID: 42, enabled: true),
                 .init(displayID: 41, enabled: true),
             ]
         )
@@ -610,12 +2388,32 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
     private func isolationPhysicalTopology() -> LumenMacPhysicalDisplayTopology {
         LumenMacPhysicalDisplayTopology(
             displays: [
-                physicalDisplayState(id: "41", originX: 0),
-                physicalDisplayState(id: "42", originX: 2560),
+                physicalDisplayState(
+                    id: "41",
+                    originX: 0,
+                    vendorID: 1_552,
+                    productID: 41_049,
+                    serialNumber: 4_251_086_178,
+                    builtin: true
+                ),
+                physicalDisplayState(
+                    id: "42",
+                    originX: 2560,
+                    vendorID: 4_268,
+                    productID: 41_607,
+                    serialNumber: 809_654_099,
+                    builtin: false
+                ),
             ],
             windowsAdapterLUID: nil,
             windowsTargetPaths: []
         )
+    }
+
+    private func temporaryDisconnectRecoveryURL() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            .appendingPathComponent("display-disconnect-recovery-v1.json")
     }
 
     private func physicalDisplayState(
@@ -820,6 +2618,402 @@ private actor IsolationTopologyController: LumenMacDisplayTopologyControlling {
 
     func visibleDisplayIDs() -> Set<CGDirectDisplayID> {
         fixture.visibleDisplayIDs()
+    }
+}
+
+private final class RenumberedOfflineIsolationFixture: Sendable {
+    private struct State: Sendable {
+        let persistedTopology: LumenMacPhysicalDisplayTopology
+        let currentDisplayID: CGDirectDisplayID
+        let enablePublicationDelayPolls: Int
+        var online: Bool
+        var remainingEnablePublicationPolls = 0
+        var publicationPollCount = 0
+        var captureCount = 0
+        var calls: [PhysicalControlCall] = []
+    }
+
+    private let storage: Mutex<State>
+
+    init(
+        persistedTopology: LumenMacPhysicalDisplayTopology,
+        currentDisplayID: CGDirectDisplayID,
+        initiallyOnline: Bool = true,
+        enablePublicationDelayPolls: Int = 0
+    ) {
+        storage = Mutex(
+            State(
+                persistedTopology: persistedTopology,
+                currentDisplayID: currentDisplayID,
+                enablePublicationDelayPolls: max(0, enablePublicationDelayPolls),
+                online: initiallyOnline
+            )
+        )
+    }
+
+    func capture() -> LumenMacPhysicalDisplayTopology {
+        storage.withLock { state in
+            state.captureCount += 1
+            if state.captureCount == 1 {
+                return state.persistedTopology
+            }
+            guard state.online,
+                  let persisted = state.persistedTopology.displays.first else {
+                return LumenMacPhysicalDisplayTopology(
+                    displays: [],
+                    windowsAdapterLUID: nil,
+                    windowsTargetPaths: []
+                )
+            }
+            let currentDisplay = LumenMacPhysicalDisplayState(
+                id: String(state.currentDisplayID),
+                vendorID: persisted.vendorID,
+                productID: persisted.productID,
+                serialNumber: persisted.serialNumber,
+                builtin: persisted.builtin,
+                mode: persisted.mode,
+                originX: persisted.originX,
+                originY: persisted.originY,
+                mirrorMasterID: persisted.mirrorMasterID,
+                enabled: true,
+                active: true,
+                online: true
+            )
+            return LumenMacPhysicalDisplayTopology(
+                displays: [currentDisplay],
+                windowsAdapterLUID: nil,
+                windowsTargetPaths: []
+            )
+        }
+    }
+
+    func capabilityDisplay() -> LumenDisplayDisconnectCapabilityDisplay {
+        storage.withLock { state in
+            let persisted = state.persistedTopology.displays[0]
+            return LumenDisplayDisconnectCapabilityDisplay(
+                displayID: state.currentDisplayID,
+                vendorID: persisted.vendorID ?? 0,
+                productID: persisted.productID ?? 0,
+                serialNumber: persisted.serialNumber ?? 0,
+                builtin: persisted.builtin ?? false
+            )
+        }
+    }
+
+    func setEnabled(_ enabled: Bool, displayID: CGDirectDisplayID) {
+        storage.withLock { state in
+            state.calls.append(.init(displayID: displayID, enabled: enabled))
+            if displayID == state.currentDisplayID {
+                if enabled, state.enablePublicationDelayPolls > 0 {
+                    state.online = false
+                    state.remainingEnablePublicationPolls =
+                        state.enablePublicationDelayPolls
+                } else {
+                    state.online = enabled
+                }
+            }
+        }
+    }
+
+    func pollPublishedDisplayID() -> CGDirectDisplayID? {
+        storage.withLock { state in
+            state.publicationPollCount += 1
+            if state.remainingEnablePublicationPolls > 0 {
+                state.remainingEnablePublicationPolls -= 1
+                if state.remainingEnablePublicationPolls == 0 {
+                    state.online = true
+                }
+                return nil
+            }
+            return state.online ? state.currentDisplayID : nil
+        }
+    }
+
+    func publicationPollCount() -> Int {
+        storage.withLock(\.publicationPollCount)
+    }
+
+    func currentDisplayID() -> CGDirectDisplayID {
+        storage.withLock(\.currentDisplayID)
+    }
+
+    func isOnline() -> Bool {
+        storage.withLock(\.online)
+    }
+
+    func controlCalls() -> [PhysicalControlCall] {
+        storage.withLock(\.calls)
+    }
+}
+
+private actor RenumberedOfflineTopologyController: LumenMacDisplayTopologyControlling {
+    let fixture: RenumberedOfflineIsolationFixture
+    let extraOnlineDisplayIDs: Set<CGDirectDisplayID>
+    let verificationWakeSignal: RecordingPhysicalDisplayWakeSignal?
+    let minimumWakeCallCountForVerification: Int
+    private var restoreCalls = 0
+
+    init(
+        fixture: RenumberedOfflineIsolationFixture,
+        extraOnlineDisplayIDs: Set<CGDirectDisplayID> = [],
+        verificationWakeSignal: RecordingPhysicalDisplayWakeSignal? = nil,
+        minimumWakeCallCountForVerification: Int = 0
+    ) {
+        self.fixture = fixture
+        self.extraOnlineDisplayIDs = extraOnlineDisplayIDs
+        self.verificationWakeSignal = verificationWakeSignal
+        self.minimumWakeCallCountForVerification =
+            minimumWakeCallCountForVerification
+    }
+
+    func capture() -> LumenMacPhysicalDisplayTopology {
+        fixture.capture()
+    }
+
+    func restore(_: LumenMacPhysicalDisplayTopology) throws {
+        guard fixture.isOnline() else {
+            throw DisplayTopologyProbeFailure.mismatch
+        }
+        restoreCalls += 1
+    }
+
+    func restoreCallCount() -> Int {
+        restoreCalls
+    }
+
+    func verify(_: LumenMacPhysicalDisplayTopology) throws {
+        let wakeCallCount = verificationWakeSignal?.callCount
+            ?? minimumWakeCallCountForVerification
+        guard fixture.isOnline(),
+              wakeCallCount >= minimumWakeCallCountForVerification
+        else {
+            throw DisplayTopologyProbeFailure.mismatch
+        }
+    }
+
+    func visibleDisplayIDs() -> Set<CGDirectDisplayID> {
+        fixture.isOnline() ? [fixture.currentDisplayID()] : []
+    }
+
+    func onlineDisplayIDs() -> Set<CGDirectDisplayID> {
+        Set<CGDirectDisplayID>(
+            fixture.isOnline() ? [fixture.currentDisplayID()] : []
+        )
+            .union(extraOnlineDisplayIDs)
+    }
+
+    func resolvedDisplayIDs(
+        for topology: LumenMacPhysicalDisplayTopology
+    ) throws -> [String: CGDirectDisplayID] {
+        guard let displayID = fixture.pollPublishedDisplayID() else {
+            throw DisplayTopologyProbeFailure.mismatch
+        }
+        return Dictionary(
+            uniqueKeysWithValues: topology.displays.map {
+                ($0.id, displayID)
+            }
+        )
+    }
+}
+
+private struct RenumberedOfflinePhysicalDisplayController: LumenPhysicalDisplayControlling {
+    let fixture: RenumberedOfflineIsolationFixture
+
+    func probe() -> LumenDisplayEnabledSymbolProbe {
+        LumenDisplayEnabledSymbolProbe(
+            source: .skyLightSLS,
+            symbolName: "SLSConfigureDisplayEnabled"
+        )
+    }
+
+    func setEnabled(
+        _ enabled: Bool,
+        for displayID: CGDirectDisplayID
+    ) -> LumenPhysicalDisplayControlReceipt {
+        fixture.setEnabled(enabled, displayID: displayID)
+        return LumenPhysicalDisplayControlReceipt(
+            displayID: displayID,
+            enabled: enabled,
+            source: .skyLightSLS,
+            symbolName: "SLSConfigureDisplayEnabled"
+        )
+    }
+}
+
+private struct RepublishingFailingPhysicalDisplayController:
+    LumenPhysicalDisplayControlling
+{
+    let fixture: RenumberedOfflineIsolationFixture
+
+    func probe() -> LumenDisplayEnabledSymbolProbe {
+        LumenDisplayEnabledSymbolProbe(
+            source: .skyLightSLS,
+            symbolName: "SLSConfigureDisplayEnabled"
+        )
+    }
+
+    func setEnabled(
+        _ enabled: Bool,
+        for displayID: CGDirectDisplayID
+    ) throws -> LumenPhysicalDisplayControlReceipt {
+        fixture.setEnabled(enabled, displayID: displayID)
+        throw LumenPhysicalDisplayControlFailure(
+            code: .transactionRejected,
+            status: CGError.failure.rawValue,
+            source: .skyLightSLS
+        )
+    }
+}
+
+extension LumenMacDisplayWorkspace {
+    init(
+        topologyController: any LumenMacDisplayTopologyControlling,
+        mirrorController: any LumenMacDisplayMirrorControlling =
+            LumenCoreGraphicsDisplayMirrorController(),
+        physicalDisplayController: any LumenPhysicalDisplayControlling =
+            LumenPhysicalDisplayControlAdapter(
+                resolver: LumenSystemDisplayEnabledSymbolResolver()
+            ),
+        disconnectCapabilityVerifier: any LumenDisplayDisconnectCapabilityVerifying,
+        physicalDisplayWakeSignal: any LumenPhysicalDisplayWakeSignaling =
+            RecordingPhysicalDisplayWakeSignal()
+    ) {
+        self.init(
+            topologyController: topologyController,
+            mirrorController: mirrorController,
+            physicalDisplayController: physicalDisplayController,
+            disconnectCapabilityVerifier: disconnectCapabilityVerifier,
+            physicalDisplayWakeSignal: physicalDisplayWakeSignal,
+            disconnectRecoveryStore: LumenDisconnectRecoveryFileStore(
+                recordURL: FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString, isDirectory: true)
+                    .appendingPathComponent("display-disconnect-recovery-v1.json")
+            ),
+            disconnectRecoveryEnvironment: {
+                LumenDisconnectRecoveryEnvironment(
+                    bootSessionUUID: "test-boot",
+                    windowServerSessionUUID: "test-window-server"
+                )
+            }
+        )
+    }
+}
+
+private final class RecordingPhysicalDisplayWakeSignal:
+    LumenPhysicalDisplayWakeSignaling,
+    @unchecked Sendable {
+    private let state: RecordingPhysicalDisplayWakeState
+
+    init(asleepResponses: [Bool] = []) {
+        state = RecordingPhysicalDisplayWakeState(
+            asleepResponses: asleepResponses
+        )
+    }
+
+    var callCount: Int {
+        state.values.withLock { $0.calls }
+    }
+
+    var releaseCount: Int {
+        state.values.withLock { $0.releases }
+    }
+
+    var isAssertionHeld: Bool {
+        state.values.withLock { $0.activeAssertions > 0 }
+    }
+
+    var checkedDisplayIDs: [CGDirectDisplayID] {
+        state.values.withLock { $0.checkedDisplayIDs }
+    }
+
+    var assertionWasHeldForEveryCheck: Bool {
+        state.values.withLock { $0.assertionWasHeldForEveryCheck }
+    }
+
+    var retainedAssertionDurations: [Duration] {
+        state.values.withLock { $0.retainedAssertionDurations }
+    }
+
+    func isDisplayAsleep(_ displayID: CGDirectDisplayID) -> Bool {
+        state.values.withLock { state in
+            state.checkedDisplayIDs.append(displayID)
+            state.assertionWasHeldForEveryCheck =
+                state.assertionWasHeldForEveryCheck &&
+                state.activeAssertions > 0
+            guard !state.asleepResponses.isEmpty else {
+                return false
+            }
+            return state.asleepResponses.removeFirst()
+        }
+    }
+
+    func acquireUserActivityAssertion() throws
+        -> any LumenPhysicalDisplayWakeAssertion {
+        state.values.withLock { state in
+            state.calls += 1
+            state.activeAssertions += 1
+        }
+        return RecordingPhysicalDisplayWakeAssertion(
+            releaseHandler: { [state] in
+                state.values.withLock { state in
+                    state.activeAssertions -= 1
+                    state.releases += 1
+                }
+            }
+        )
+    }
+
+    func retainUserActivityAssertion(
+        _ assertion: any LumenPhysicalDisplayWakeAssertion,
+        for duration: Duration
+    ) {
+        state.values.withLock {
+            $0.retainedAssertionDurations.append(duration)
+        }
+        assertion.release()
+    }
+}
+
+private final class RecordingPhysicalDisplayWakeState: @unchecked Sendable {
+    struct Values {
+        var calls = 0
+        var activeAssertions = 0
+        var releases = 0
+        var asleepResponses: [Bool]
+        var checkedDisplayIDs: [CGDirectDisplayID] = []
+        var assertionWasHeldForEveryCheck = true
+        var retainedAssertionDurations: [Duration] = []
+    }
+
+    let values: Mutex<Values>
+
+    init(asleepResponses: [Bool]) {
+        values = Mutex(Values(asleepResponses: asleepResponses))
+    }
+}
+
+private final class RecordingPhysicalDisplayWakeAssertion:
+    LumenPhysicalDisplayWakeAssertion,
+    @unchecked Sendable {
+    private let releaseHandler: @Sendable () -> Void
+    private let wasReleased = Mutex(false)
+
+    init(releaseHandler: @escaping @Sendable () -> Void) {
+        self.releaseHandler = releaseHandler
+    }
+
+    func release() {
+        let shouldRelease = wasReleased.withLock { wasReleased in
+            guard !wasReleased else { return false }
+            wasReleased = true
+            return true
+        }
+        guard shouldRelease else { return }
+        releaseHandler()
+    }
+
+    deinit {
+        release()
     }
 }
 

@@ -8,7 +8,7 @@ use crate::{
 
 #[test]
 fn normalizes_every_matching_exact_avc_and_hevc_configuration() {
-    // Given: every exact AVC/HEVC 4:2:0 and 4:4:4 format supported by protocol v3.
+    // Given: every exact AVC/HEVC 4:2:0 and 4:4:4 format supported by protocol v4.
     let formats = matching_formats();
 
     // When: each matching key frame reaches a fresh normalizer.
@@ -121,6 +121,8 @@ fn requires_explicit_av1_configuration_and_keeps_sized_obus() {
         decoder_configuration_record: Some(configuration.clone()),
         presentation_time_90khz: 90_000,
         key_frame: true,
+        requires_bootstrap_acknowledgement: false,
+        repair_keyframe: false,
     }) else {
         panic!("valid AV1 configuration was rejected");
     };

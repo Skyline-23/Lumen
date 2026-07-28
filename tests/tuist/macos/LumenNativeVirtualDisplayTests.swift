@@ -1,22 +1,16 @@
 import XCTest
 import CoreGraphics
-import ScreenCaptureKit
 @testable import LumenMacBridge
 
-private final class LumenDirectScreenCaptureOutputProbe: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
-    let firstSample: XCTestExpectation
+private actor LumenVirtualDisplayPublicationClock {
+    private var uptimeNanoseconds: UInt64 = 0
 
-    init(firstSample: XCTestExpectation) {
-        self.firstSample = firstSample
+    func now() -> UInt64 {
+        uptimeNanoseconds
     }
 
-    func stream(
-        _ stream: SCStream,
-        didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
-        of type: SCStreamOutputType
-    ) {
-        guard type == .screen, CMSampleBufferIsValid(sampleBuffer) else { return }
-        firstSample.fulfill()
+    func sleep(until deadline: UInt64) {
+        uptimeNanoseconds = max(uptimeNanoseconds, deadline)
     }
 }
 
@@ -24,6 +18,177 @@ final class LumenNativeVirtualDisplayTests: XCTestCase {
     func testNativeVirtualDisplayRejectsEmptyGeometry() {
         let configuration = LumenMacVirtualDisplayConfiguration()
         XCTAssertThrowsError(try LumenMacVirtualDisplay(configuration: configuration))
+    }
+
+    func testSDRVirtualDisplayUsesLegacyModeWithoutTransferFunction() throws {
+        guard LumenMacVirtualDisplay.isSupported() else {
+            throw XCTSkip("CGVirtualDisplay is unavailable on this runtime")
+        }
+        let configuration = LumenMacVirtualDisplayConfiguration()
+        configuration.name = "Lumen SDR Mode Contract Test"
+        configuration.backingWidth = 1_280
+        configuration.backingHeight = 720
+        configuration.maximumBackingWidth = 15_360
+        configuration.maximumBackingHeight = 15_360
+        configuration.logicalWidth = 640
+        configuration.logicalHeight = 360
+        configuration.refreshRate = 60
+        configuration.hdrEnabled = false
+        configuration.transfer = .PQ
+
+        let display = try LumenMacVirtualDisplay(configuration: configuration)
+        defer { display.destroy() }
+        let initialMode = try XCTUnwrap(display.value(forKey: "mode") as? NSObject)
+        let initialTransferFunction = try XCTUnwrap(
+            initialMode.value(forKey: "transferFunction") as? NSNumber
+        )
+        XCTAssertEqual(initialTransferFunction.uint32Value, 0)
+
+        try display.updateLogicalWidth(640, logicalHeight: 360, refreshRate: 60)
+        let duplicateMode = try XCTUnwrap(display.value(forKey: "mode") as? NSObject)
+        XCTAssertIdentical(duplicateMode, initialMode)
+
+        try display.updateLogicalWidth(800, logicalHeight: 450, refreshRate: 60)
+        let updatedMode = try XCTUnwrap(display.value(forKey: "mode") as? NSObject)
+        XCTAssertNotIdentical(updatedMode, initialMode)
+        let updatedTransferFunction = try XCTUnwrap(
+            updatedMode.value(forKey: "transferFunction") as? NSNumber
+        )
+        XCTAssertEqual(updatedTransferFunction.uint32Value, 0)
+        XCTAssertEqual(display.backingWidth, 1_600)
+        XCTAssertEqual(display.backingHeight, 900)
+    }
+
+    func testRetainedVirtualDisplayRejectsModeBeyondDescriptorCapacity() throws {
+        guard LumenMacVirtualDisplay.isSupported() else {
+            throw XCTSkip("CGVirtualDisplay is unavailable on this runtime")
+        }
+        let configuration = LumenMacVirtualDisplayConfiguration()
+        configuration.name = "Lumen Retained Capacity Contract Test"
+        configuration.backingWidth = 1_280
+        configuration.backingHeight = 720
+        configuration.maximumBackingWidth = 3_840
+        configuration.maximumBackingHeight = 2_400
+        configuration.logicalWidth = 640
+        configuration.logicalHeight = 360
+        configuration.refreshRate = 60
+        configuration.highDensity = true
+
+        let display = try LumenMacVirtualDisplay(configuration: configuration)
+        defer { display.destroy() }
+
+        try display.updateLogicalWidth(1_800, logicalHeight: 1_130, refreshRate: 60)
+        XCTAssertEqual(display.logicalWidth, 1_800)
+        XCTAssertEqual(display.logicalHeight, 1_130)
+        XCTAssertEqual(display.backingWidth, 3_600)
+        XCTAssertEqual(display.backingHeight, 2_260)
+
+        XCTAssertThrowsError(
+            try display.updateLogicalWidth(2_000, logicalHeight: 1_300, refreshRate: 60)
+        ) { error in
+            let nsError = error as NSError
+            XCTAssertEqual(nsError.domain, "dev.skyline23.lumen.virtual-display")
+            XCTAssertEqual(nsError.code, 1)
+            XCTAssertTrue(nsError.localizedDescription.contains("exceeds"))
+        }
+        XCTAssertEqual(display.logicalWidth, 1_800)
+        XCTAssertEqual(display.logicalHeight, 1_130)
+        XCTAssertEqual(display.backingWidth, 3_600)
+        XCTAssertEqual(display.backingHeight, 2_260)
+    }
+
+    func testPublicationStabilizerRestartsContinuousReadyWindowAfterStateChange() async throws {
+        let clock = LumenVirtualDisplayPublicationClock()
+        let ownerToken: UInt = 41
+        let timing = LumenMacVirtualDisplayPublicationTiming(
+            overallDeadlineNanoseconds: 6_000_000_000,
+            stableWindowNanoseconds: 2_000_000_000,
+            pollNanoseconds: 500_000_000
+        )
+
+        try await LumenMacVirtualDisplayPublicationStabilizer.wait(
+            displayID: 77,
+            expectedOwnerToken: ownerToken,
+            timing: timing,
+            now: {
+                await clock.now()
+            },
+            sleepUntil: { deadline in
+                await clock.sleep(until: deadline)
+            },
+            snapshot: {
+                let now = await clock.now()
+                let pixelWidth = now < 1_000_000_000 ? 640 : 1_280
+                let pixelHeight = now < 1_000_000_000 ? 360 : 720
+                return LumenCaptureDisplayReadinessSnapshot(
+                    ownerToken: ownerToken,
+                    isOnline: true,
+                    isActive: true,
+                    hasCurrentMode: now < 1_000_000_000,
+                    pixelWidth: pixelWidth,
+                    pixelHeight: pixelHeight,
+                    configuredPixelWidth: pixelWidth,
+                    configuredPixelHeight: pixelHeight
+                )
+            }
+        )
+
+        let completedAt = await clock.now()
+        XCTAssertEqual(completedAt, 3_000_000_000)
+    }
+
+    func testModeSettlementAcceptsAStableRetainedModeBeforeActivation() async throws {
+        let clock = LumenVirtualDisplayPublicationClock()
+        let ownerToken: UInt = 42
+        let timing = LumenMacVirtualDisplayPublicationTiming(
+            overallDeadlineNanoseconds: 3_000_000_000,
+            stableWindowNanoseconds: 1_000_000_000,
+            pollNanoseconds: 500_000_000
+        )
+
+        try await LumenMacVirtualDisplayPublicationStabilizer.waitForModeSettlement(
+            displayID: 78,
+            expectedOwnerToken: ownerToken,
+            timing: timing,
+            now: {
+                await clock.now()
+            },
+            sleepUntil: { deadline in
+                await clock.sleep(until: deadline)
+            },
+            snapshot: {
+                return LumenCaptureDisplayReadinessSnapshot(
+                    ownerToken: ownerToken,
+                    isOnline: false,
+                    isActive: false,
+                    hasCurrentMode: false,
+                    pixelWidth: 640,
+                    pixelHeight: 360,
+                    configuredPixelWidth: 640,
+                    configuredPixelHeight: 360
+                )
+            }
+        )
+
+        let completedAt = await clock.now()
+        XCTAssertEqual(completedAt, 1_000_000_000)
+    }
+
+    func testPublicationFailureDescribesTheOwnedDisplayBoundary() {
+        XCTAssertEqual(
+            LumenMacWorkspaceSessionError
+                .virtualDisplayModeSettlementUnavailable(76)
+                .errorDescription,
+            "owned virtual display 76 did not finish its mode publication " +
+                "before the settlement deadline"
+        )
+        XCTAssertEqual(
+            LumenMacWorkspaceSessionError
+                .virtualDisplayPublicationUnavailable(77)
+                .errorDescription,
+            "owned virtual display 77 did not reach stable capture readiness " +
+                "before the publication deadline"
+        )
     }
 
     func testVirtualDisplayRegistryHandlesUnknownKeysWithoutSideEffects() {
@@ -34,112 +199,56 @@ final class LumenNativeVirtualDisplayTests: XCTestCase {
         XCTAssertFalse(LumenMacVirtualDisplay.removeRegisteredDisplay(forKey: "missing"))
     }
 
-    func testRetainedVirtualDisplayPublishesAuthoritativeScreenCaptureDisplay() async throws {
+    func testRegistryRejectsDuplicateKeysAndConditionallyRemovesOnlyTheExactOwner() throws {
         guard LumenMacVirtualDisplay.isSupported() else {
             throw XCTSkip("CGVirtualDisplay is unavailable on this runtime")
         }
-        let key = "direct-screen-capture-admission-test"
+        let originalKey = "conditional-owner-\(UUID().uuidString)"
         let configuration = LumenMacVirtualDisplayConfiguration()
-        configuration.name = "Lumen Admission Test"
+        configuration.name = "Lumen Registry Ownership Test"
         configuration.backingWidth = 1_280
         configuration.backingHeight = 720
         configuration.logicalWidth = 1_280
         configuration.logicalHeight = 720
         configuration.refreshRate = 60
 
-        let retained = try LumenMacVirtualDisplay.createRegisteredDisplay(
-            forKey: key,
+        let original = try LumenMacVirtualDisplay.createRegisteredDisplay(
+            forKey: originalKey,
             configuration: configuration
+        )
+        let mismatchedOwner = try XCTUnwrap(
+            (LumenMacVirtualDisplay.self as AnyObject)
+                .perform(NSSelectorFromString("alloc"))?
+                .takeUnretainedValue() as? LumenMacVirtualDisplay
         )
         defer {
-            _ = LumenMacVirtualDisplay.removeRegisteredDisplay(forKey: key)
-        }
-
-        let content: SCShareableContent
-        do {
-            content = try await SCShareableContent.excludingDesktopWindows(
-                false,
-                onScreenWindowsOnly: true
+            _ = LumenMacVirtualDisplay.removeRegisteredDisplay(
+                forKey: originalKey,
+                ifMatchingDisplay: original
             )
-        } catch {
-            let error = error as NSError
-            if error.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain",
-               error.code == -3_801 {
-                throw XCTSkip("The XCTest runner does not hold ScreenCaptureKit TCC permission")
-            }
-            throw error
         }
-        let admitted = try XCTUnwrap(
-            content.displays.first(where: { UInt32($0.displayID) == retained.displayID })
+
+        XCTAssertThrowsError(
+            try LumenMacVirtualDisplay.createRegisteredDisplay(
+                forKey: originalKey,
+                configuration: configuration
+            )
         )
-        XCTAssertEqual(UInt32(admitted.displayID), retained.displayID)
-        _ = SCContentFilter(
-            display: admitted,
-            excludingApplications: [],
-            exceptingWindows: []
+        XCTAssertTrue(LumenMacVirtualDisplay.registeredDisplay(forKey: originalKey) === original)
+        XCTAssertFalse(
+            LumenMacVirtualDisplay.removeRegisteredDisplay(
+                forKey: originalKey,
+                ifMatchingDisplay: mismatchedOwner
+            )
         )
+        XCTAssertTrue(LumenMacVirtualDisplay.registeredDisplay(forKey: originalKey) === original)
+        XCTAssertTrue(
+            LumenMacVirtualDisplay.removeRegisteredDisplay(
+                forKey: originalKey,
+                ifMatchingDisplay: original
+            )
+        )
+        XCTAssertNil(LumenMacVirtualDisplay.registeredDisplay(forKey: originalKey))
     }
 
-    func testAuthoritativeShareableDisplayStartsScreenCapture() async throws {
-        guard LumenMacVirtualDisplay.isSupported() else {
-            throw XCTSkip("CGVirtualDisplay is unavailable on this runtime")
-        }
-        guard CGPreflightScreenCaptureAccess() else {
-            throw XCTSkip("The XCTest runner does not hold ScreenCaptureKit TCC permission")
-        }
-        let key = "direct-screen-capture-stream-test"
-        let configuration = LumenMacVirtualDisplayConfiguration()
-        configuration.name = "Lumen Direct Capture Test"
-        configuration.backingWidth = 1_280
-        configuration.backingHeight = 720
-        configuration.logicalWidth = 1_280
-        configuration.logicalHeight = 720
-        configuration.refreshRate = 60
-
-        let retained = try LumenMacVirtualDisplay.createRegisteredDisplay(
-            forKey: key,
-            configuration: configuration
-        )
-        let content = try await SCShareableContent.excludingDesktopWindows(
-            false,
-            onScreenWindowsOnly: true
-        )
-        let admitted = try XCTUnwrap(
-            content.displays.first(where: { UInt32($0.displayID) == retained.displayID })
-        )
-        let filter = SCContentFilter(
-            display: admitted,
-            excludingApplications: [],
-            exceptingWindows: []
-        )
-        let streamConfiguration = SCStreamConfiguration()
-        streamConfiguration.width = 1_280
-        streamConfiguration.height = 720
-        streamConfiguration.minimumFrameInterval = CMTime(value: 1, timescale: 60)
-        streamConfiguration.queueDepth = 2
-        let firstSample = expectation(description: "direct retained display sample")
-        let output = LumenDirectScreenCaptureOutputProbe(firstSample: firstSample)
-        let queue = DispatchQueue(label: "dev.skyline23.lumen.test.direct-sck")
-        let stream = SCStream(filter: filter, configuration: streamConfiguration, delegate: output)
-
-        do {
-            try stream.addStreamOutput(output, type: .screen, sampleHandlerQueue: queue)
-            try await stream.startCapture()
-            await fulfillment(of: [firstSample], timeout: 5)
-            try await stream.stopCapture()
-            try stream.removeStreamOutput(output, type: .screen)
-            XCTAssertTrue(LumenMacVirtualDisplay.removeRegisteredDisplay(forKey: key))
-        } catch {
-            try? await stream.stopCapture()
-            try? stream.removeStreamOutput(output, type: .screen)
-            _ = LumenMacVirtualDisplay.removeRegisteredDisplay(forKey: key)
-            let error = error as NSError
-            if error.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain",
-               error.code == -3_801 {
-                firstSample.fulfill()
-                throw XCTSkip("The XCTest runner does not hold ScreenCaptureKit TCC permission")
-            }
-            throw error
-        }
-    }
 }

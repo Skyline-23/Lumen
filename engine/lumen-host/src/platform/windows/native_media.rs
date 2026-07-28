@@ -55,6 +55,11 @@ impl PacketQueueContext {
                 decoder_configuration_record: None,
                 presentation_time_90khz: sample.presentation_time_90khz,
                 key_frame: sample.key_frame,
+                // Initial admission pauses explicitly. During steady state only an explicit
+                // repair key frame owns a pause; natural periodic key frames remain in the
+                // acknowledged DATAGRAM generation.
+                requires_bootstrap_acknowledgement: sample.key_frame && sample.repair_keyframe,
+                repair_keyframe: sample.repair_keyframe,
             });
         Ok(request_key_frame)
     }
@@ -140,6 +145,13 @@ impl NativeWindowsMedia {
     pub(super) fn request_key_frame(&self) -> Result<(), String> {
         let lifecycle = self.running_session()?;
         let result = self.media_foundation.request_key_frame();
+        drop(lifecycle);
+        result
+    }
+
+    pub(super) fn resume_after_bootstrap(&self) -> Result<(), String> {
+        let lifecycle = self.running_session()?;
+        let result = self.media_foundation.resume_after_bootstrap();
         drop(lifecycle);
         result
     }

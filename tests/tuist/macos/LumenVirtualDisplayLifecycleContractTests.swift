@@ -9,7 +9,7 @@ struct LumenVirtualDisplayLifecycleContractTests {
             "src/platform/macos/Projects/LumenMacBridge/Sources/LumenMacDisplayWorkspace.swift"
         )
         let start = try #require(
-            source.range(of: "    public func promoteVirtualDisplay(_ displayID: UInt32)")
+            source.range(of: "    public func promoteVirtualDisplay(")
         )
         let tail = source[start.lowerBound...]
         let end = try #require(
@@ -37,6 +37,56 @@ struct LumenVirtualDisplayLifecycleContractTests {
                 "[_settings setValue:@(configuration.hdrEnabled) forKey:@\"isReference\"]"
             )
         )
+    }
+
+    @Test("Private virtual display lifecycle keeps callbacks off the worker main queue")
+    func privateLifecycleUsesResponsivePublicationContext() throws {
+        let source = try source(
+            "src/platform/macos/Projects/LumenMacBridge/Sources/LumenNativeVirtualDisplay.m"
+        )
+
+        #expect(
+            source.components(
+                separatedBy: "if (![NSThread isMainThread])"
+            ).count - 1 == 3
+        )
+        #expect(
+            source.contains(
+                "_callbackQueue = dispatch_get_global_queue(" +
+                    "QOS_CLASS_USER_INITIATED, 0);"
+            )
+        )
+        #expect(
+            source.contains("setQueue:")
+        )
+        #expect(
+            source.contains("setDispatchQueue:")
+        )
+    }
+
+    @Test("Virtual display descriptor assigns both observed serial selectors")
+    func descriptorAssignsReferenceSerialSelectors() throws {
+        let source = try source(
+            "src/platform/macos/Projects/LumenMacBridge/Sources/LumenNativeVirtualDisplay.m"
+        )
+
+        #expect(source.contains("setSerialNumber:"))
+        #expect(source.contains("setSerialNum:"))
+    }
+
+    @Test("ScreenCaptureKit enumeration uses the serialized completion API")
+    func screenCaptureEnumerationUsesCompletionBoundary() throws {
+        let source = try source(
+            "src/platform/macos/Projects/LumenMacBridge/Sources/" +
+                "LumenScreenCaptureDisplayAdmission.swift"
+        )
+
+        #expect(
+            source.contains(
+                "getShareableContentExcludingDesktopWindows"
+            )
+        )
+        #expect(!source.contains("SCShareableContent.current"))
     }
 
     private func source(_ relativePath: String) throws -> String {

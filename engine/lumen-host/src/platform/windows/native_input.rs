@@ -44,6 +44,7 @@ impl NativeWindowsInput {
             .lock()
             .map_err(|_| "Windows input device lock is poisoned".to_owned())?;
         match action {
+            WindowsInputAction::MousePosition { x, y } => native_desktop_input::position(*x, *y),
             WindowsInputAction::MouseButton { button, pressed } => {
                 native_desktop_input::button(*button, *pressed)
             }
@@ -281,13 +282,16 @@ impl PlatformSessionControl for WindowsPlatformSessionControl {
                 Ok(())
             }
             PlatformControlEvent::RequestIdrFrame => self.media.request_key_frame(),
-            PlatformControlEvent::ResumeVideoEncodingAfterCodecAck => Ok(()),
+            PlatformControlEvent::ResumeVideoEncodingAfterCodecAck => {
+                self.media.resume_after_bootstrap()
+            }
             PlatformControlEvent::InvalidateReferenceFrames {
                 first_frame,
                 last_frame,
             } => self
                 .media
                 .invalidate_reference_frames(first_frame, last_frame),
+            PlatformControlEvent::SetVideoBitrateKbps { .. } => Ok(()),
             PlatformControlEvent::ExecuteServerCommand { index } => {
                 self.application.execute_server_command(index)
             }

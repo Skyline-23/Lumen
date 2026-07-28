@@ -3,7 +3,7 @@ import Testing
 
 @Suite("Display disconnect canary architecture")
 struct LumenDisplayDisconnectCanaryArchitectureTests {
-    @Test("Connection mutation is durable while layout remains app-scoped")
+    @Test("Capture staging is app-scoped while the committed mirror is session-scoped")
     func displayEnabledMutationUsesDurableScope() throws {
         let repositoryRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -19,17 +19,32 @@ struct LumenDisplayDisconnectCanaryArchitectureTests {
         #expect(connectionSource.contains(".permanently"))
         #expect(!connectionSource.contains(".forSession"))
 
-        for path in [
-            "src/platform/macos/Projects/LumenMacBridge/Sources/LumenMacDisplayWorkspace.swift",
-            "src/platform/macos/Projects/LumenMacBridge/Sources/LumenMacDisplayTopologyController.swift",
-        ] {
-            let source = try String(
-                contentsOf: repositoryRoot.appendingPathComponent(path),
-                encoding: .utf8
+        let workspaceSource = try String(
+            contentsOf: repositoryRoot.appendingPathComponent(
+                "src/platform/macos/Projects/LumenMacBridge/Sources/LumenMacDisplayWorkspace.swift"
+            ),
+            encoding: .utf8
+        )
+        #expect(workspaceSource.contains(".forAppOnly"))
+        #expect(workspaceSource.contains("desktopMirrorConfigurationScope"))
+        #expect(workspaceSource.contains("desktopMirrorStageConfigurationScope"))
+        #expect(workspaceSource.contains(".forSession"))
+        #expect(
+            workspaceSource.contains(
+                "scope: Self.desktopMirrorStageConfigurationScope"
             )
-            #expect(source.contains(".forAppOnly"))
-            #expect(!source.contains(".forSession"))
-        }
+        )
+
+        let topologySource = try String(
+            contentsOf: repositoryRoot.appendingPathComponent(
+                "src/platform/macos/Projects/LumenMacBridge/Sources/LumenMacDisplayTopologyController.swift"
+            ),
+            encoding: .utf8
+        )
+        #expect(topologySource.contains("restoreConfigurationScope"))
+        #expect(topologySource.contains(".permanently"))
+        #expect(!topologySource.contains(".forAppOnly"))
+        #expect(!topologySource.contains(".forSession"))
     }
 
     @Test("A single UIElement app owns safety displays while watchdogs only restore")
@@ -49,13 +64,6 @@ struct LumenDisplayDisconnectCanaryArchitectureTests {
             ),
             encoding: .utf8
         )
-        let connectionSource = try String(
-            contentsOf: repositoryRoot.appendingPathComponent(
-                "src/platform/macos/Projects/LumenMacBridge/Sources/LumenPrivateDisplayControl.swift"
-            ),
-            encoding: .utf8
-        )
-
         let targetStart = try #require(
             manifest.range(of: "name: \"LumenDisplayDisconnectCanary\"")
         )
@@ -76,7 +84,6 @@ struct LumenDisplayDisconnectCanaryArchitectureTests {
         #expect(source.contains("CGDisplayIsActive(displayID) == 0"))
         #expect(source.contains("CGDisplayIsOnline(displayID) == 0"))
         #expect(source.contains("condition: { isDisplayDisconnected(selected.displayID) }"))
-        #expect(source.contains("private func isDisplayConnectedInCoreGraphics("))
 
         let layoutStart = try #require(
             source.range(of: "private func configureDisplayOrigins(")
@@ -97,8 +104,6 @@ struct LumenDisplayDisconnectCanaryArchitectureTests {
         )
         let watchdog = watchdogTail[..<watchdogEnd.lowerBound]
         #expect(!watchdog.contains("LumenMacVirtualDisplay("))
-        #expect(watchdog.contains("isDisplayConnectedInCoreGraphics(selectedDisplayID)"))
-        #expect(!watchdog.contains("state.active && state.nsscreenVisible"))
         #expect(source.contains("private func createCanarySafetyDisplays("))
     }
 }

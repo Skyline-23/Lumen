@@ -37,17 +37,21 @@ public struct LumenDisplayDisconnectCapabilityEnvironment: Codable, Equatable, S
 }
 
 public struct LumenDisplayDisconnectCapabilityReceipt: Codable, Equatable, Sendable {
-    public static let currentSchemaVersion = 1
+    public static let currentSchemaVersion = 2
 
     public let schemaVersion: Int
     public let osBuild: String
     public let hardwareIdentity: String
     public let symbolSource: LumenDisplayEnabledSymbolSource
     public let symbolName: String
-    public let physicalDisplayIDs: [CGDirectDisplayID]
+    public let physicalDisplays: [LumenDisplayDisconnectCapabilityDisplay]
     public let issuedAtUnixSeconds: Int64
     public let expiresAtUnixSeconds: Int64
     public let checksum: String
+
+    public var physicalDisplayIDs: [CGDirectDisplayID] {
+        physicalDisplays.map(\.displayID)
+    }
 
     public init(
         schemaVersion: Int,
@@ -55,7 +59,7 @@ public struct LumenDisplayDisconnectCapabilityReceipt: Codable, Equatable, Senda
         hardwareIdentity: String,
         symbolSource: LumenDisplayEnabledSymbolSource,
         symbolName: String,
-        physicalDisplayIDs: [CGDirectDisplayID],
+        physicalDisplays: [LumenDisplayDisconnectCapabilityDisplay],
         issuedAtUnixSeconds: Int64,
         expiresAtUnixSeconds: Int64,
         checksum: String
@@ -65,7 +69,7 @@ public struct LumenDisplayDisconnectCapabilityReceipt: Codable, Equatable, Senda
         self.hardwareIdentity = hardwareIdentity
         self.symbolSource = symbolSource
         self.symbolName = symbolName
-        self.physicalDisplayIDs = physicalDisplayIDs
+        self.physicalDisplays = physicalDisplays
         self.issuedAtUnixSeconds = issuedAtUnixSeconds
         self.expiresAtUnixSeconds = expiresAtUnixSeconds
         self.checksum = checksum
@@ -74,18 +78,18 @@ public struct LumenDisplayDisconnectCapabilityReceipt: Codable, Equatable, Senda
     public static func verified(
         environment: LumenDisplayDisconnectCapabilityEnvironment,
         probe: LumenDisplayEnabledSymbolProbe,
-        physicalDisplayIDs: [CGDirectDisplayID],
+        physicalDisplays: [LumenDisplayDisconnectCapabilityDisplay],
         issuedAtUnixSeconds: Int64,
         expiresAtUnixSeconds: Int64
     ) -> Self {
-        let sortedDisplayIDs = Array(Set(physicalDisplayIDs)).sorted()
+        let sortedDisplays = sorted(physicalDisplays)
         let checksum = checksum(
             schemaVersion: currentSchemaVersion,
             osBuild: environment.osBuild,
             hardwareIdentity: environment.hardwareIdentity,
             symbolSource: probe.source,
             symbolName: probe.symbolName,
-            physicalDisplayIDs: sortedDisplayIDs,
+            physicalDisplays: sortedDisplays,
             issuedAtUnixSeconds: issuedAtUnixSeconds,
             expiresAtUnixSeconds: expiresAtUnixSeconds
         )
@@ -95,7 +99,7 @@ public struct LumenDisplayDisconnectCapabilityReceipt: Codable, Equatable, Senda
             hardwareIdentity: environment.hardwareIdentity,
             symbolSource: probe.source,
             symbolName: probe.symbolName,
-            physicalDisplayIDs: sortedDisplayIDs,
+            physicalDisplays: sortedDisplays,
             issuedAtUnixSeconds: issuedAtUnixSeconds,
             expiresAtUnixSeconds: expiresAtUnixSeconds,
             checksum: checksum
@@ -105,14 +109,20 @@ public struct LumenDisplayDisconnectCapabilityReceipt: Codable, Equatable, Senda
     fileprivate func authorizes(
         environment: LumenDisplayDisconnectCapabilityEnvironment,
         probe: LumenDisplayEnabledSymbolProbe,
-        physicalDisplayIDs: [CGDirectDisplayID],
+        physicalDisplays: [LumenDisplayDisconnectCapabilityDisplay],
         currentTimeUnixSeconds: Int64
     ) -> Bool {
-        let sortedDisplayIDs = Array(Set(physicalDisplayIDs)).sorted()
+        let sortedDisplays = Self.sorted(physicalDisplays)
+        let verifiedIdentities = self.physicalDisplays.map(\.stableIdentity).sorted()
+        let currentIdentities = sortedDisplays.map(\.stableIdentity).sorted()
         guard environment.isResolved,
               schemaVersion == Self.currentSchemaVersion,
-              !sortedDisplayIDs.isEmpty,
-              self.physicalDisplayIDs == sortedDisplayIDs,
+              !sortedDisplays.isEmpty,
+              sortedDisplays.allSatisfy(\.hasStableIdentity),
+              self.physicalDisplays.allSatisfy(\.hasStableIdentity),
+              Set(verifiedIdentities).count == verifiedIdentities.count,
+              Set(currentIdentities).count == currentIdentities.count,
+              verifiedIdentities == currentIdentities,
               osBuild == environment.osBuild,
               hardwareIdentity == environment.hardwareIdentity,
               symbolSource == probe.source,
@@ -127,7 +137,7 @@ public struct LumenDisplayDisconnectCapabilityReceipt: Codable, Equatable, Senda
             hardwareIdentity: hardwareIdentity,
             symbolSource: symbolSource,
             symbolName: symbolName,
-            physicalDisplayIDs: self.physicalDisplayIDs,
+            physicalDisplays: self.physicalDisplays,
             issuedAtUnixSeconds: issuedAtUnixSeconds,
             expiresAtUnixSeconds: expiresAtUnixSeconds
         )
@@ -139,7 +149,7 @@ public struct LumenDisplayDisconnectCapabilityReceipt: Codable, Equatable, Senda
         hardwareIdentity: String,
         symbolSource: LumenDisplayEnabledSymbolSource,
         symbolName: String,
-        physicalDisplayIDs: [CGDirectDisplayID],
+        physicalDisplays: [LumenDisplayDisconnectCapabilityDisplay],
         issuedAtUnixSeconds: Int64,
         expiresAtUnixSeconds: Int64
     ) -> String {
@@ -149,7 +159,15 @@ public struct LumenDisplayDisconnectCapabilityReceipt: Codable, Equatable, Senda
             hardwareIdentity,
             symbolSource.rawValue,
             symbolName,
-            physicalDisplayIDs.map(String.init).joined(separator: ","),
+            physicalDisplays.map {
+                [
+                    String($0.displayID),
+                    String($0.vendorID),
+                    String($0.productID),
+                    String($0.serialNumber),
+                    $0.builtin ? "1" : "0"
+                ].joined(separator: ":")
+            }.joined(separator: ","),
             String(issuedAtUnixSeconds),
             String(expiresAtUnixSeconds),
         ].joined(separator: "\n")
@@ -157,12 +175,23 @@ public struct LumenDisplayDisconnectCapabilityReceipt: Codable, Equatable, Senda
             .map { String(format: "%02x", $0) }
             .joined()
     }
+
+    private static func sorted(
+        _ displays: [LumenDisplayDisconnectCapabilityDisplay]
+    ) -> [LumenDisplayDisconnectCapabilityDisplay] {
+        displays.sorted {
+            if $0.stableIdentity != $1.stableIdentity {
+                return $0.stableIdentity < $1.stableIdentity
+            }
+            return $0.displayID < $1.displayID
+        }
+    }
 }
 
 public protocol LumenDisplayDisconnectCapabilityVerifying: Sendable {
     func authorize(
         probe: LumenDisplayEnabledSymbolProbe,
-        physicalDisplayIDs: [CGDirectDisplayID]
+        physicalDisplays: [LumenDisplayDisconnectCapabilityDisplay]
     ) throws
 }
 
@@ -193,7 +222,7 @@ public struct LumenDisplayDisconnectCapabilityFileVerifier:
 
     public func authorize(
         probe: LumenDisplayEnabledSymbolProbe,
-        physicalDisplayIDs: [CGDirectDisplayID]
+        physicalDisplays: [LumenDisplayDisconnectCapabilityDisplay]
     ) throws {
         let receipt: LumenDisplayDisconnectCapabilityReceipt
         do {
@@ -209,7 +238,7 @@ public struct LumenDisplayDisconnectCapabilityFileVerifier:
         guard receipt.authorizes(
             environment: environment,
             probe: probe,
-            physicalDisplayIDs: physicalDisplayIDs,
+            physicalDisplays: physicalDisplays,
             currentTimeUnixSeconds: currentTime
         ) else {
             throw unverifiedFailure()
@@ -222,12 +251,19 @@ public struct LumenDisplayDisconnectCapabilityFileVerifier:
 }
 
 public struct LumenDisplayDisconnectCapabilityFileStore: Sendable {
-    public static let productionReceiptURL = FileManager.default.homeDirectoryForCurrentUser
+    public static let legacyProductionReceiptURL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Application Support/Lumen", isDirectory: true)
         .appendingPathComponent("display-disconnect-capability-v1.json")
+    public static let productionReceiptURL = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Application Support/Lumen", isDirectory: true)
+        .appendingPathComponent("display-disconnect-capability-v2.json")
 
     public static var production: Self {
         Self(receiptURL: productionReceiptURL)
+    }
+
+    public static var legacyProduction: Self {
+        Self(receiptURL: legacyProductionReceiptURL)
     }
 
     public let receiptURL: URL

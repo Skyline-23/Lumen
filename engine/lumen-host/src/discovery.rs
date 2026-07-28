@@ -45,12 +45,11 @@ impl MdnsService {
             return Err("no multicast LAN interface has a routable address".to_owned());
         }
         let mut properties = HashMap::from([
-            ("protocol-major".to_owned(), "2".to_owned()),
+            ("protocol-major".to_owned(), "4".to_owned()),
             (
                 "quic-port".to_owned(),
                 ports.native_session_quic.to_string(),
             ),
-            ("media-port".to_owned(), ports.native_media_udp.to_string()),
             ("control-port".to_owned(), ports.control_https.to_string()),
             (
                 "host-identity".to_owned(),

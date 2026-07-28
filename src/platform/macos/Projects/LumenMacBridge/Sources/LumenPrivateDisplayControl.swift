@@ -2,6 +2,9 @@ import CoreGraphics
 import Darwin
 import Foundation
 
+@_silgen_name("flock")
+private func lumenFileLock(_ descriptor: Int32, _ operation: Int32) -> Int32
+
 public enum LumenDisplayEnabledSymbolSource: String, Codable, Equatable, Sendable {
     case skyLightSLS
     case coreGraphicsCGS
@@ -116,6 +119,74 @@ public enum LumenDisplayDisconnectWatchdogTrigger: String, Codable, Equatable, S
     case deadlineExceeded
 }
 
+public struct LumenDisplayRestorationStabilityGate: Sendable {
+    public let requiredReadyDuration: TimeInterval
+    private var readySince: TimeInterval?
+
+    public init(requiredReadyDuration: TimeInterval) {
+        self.requiredReadyDuration = max(0, requiredReadyDuration)
+    }
+
+    public mutating func observe(
+        isReady: Bool,
+        at uptime: TimeInterval
+    ) -> Bool {
+        guard isReady else {
+            readySince = nil
+            return false
+        }
+        guard requiredReadyDuration > 0 else {
+            readySince = uptime
+            return true
+        }
+        guard let readySince else {
+            self.readySince = uptime
+            return false
+        }
+        guard uptime >= readySince else {
+            self.readySince = uptime
+            return false
+        }
+        return uptime - readySince >= requiredReadyDuration
+    }
+}
+
+public struct LumenDisplayDisconnectRestoreLock: Sendable {
+    private let path: String
+
+    public init(url: URL) {
+        path = url.path
+    }
+
+    public func withLock<Value>(
+        _ operation: () throws -> Value
+    ) throws -> Value {
+        let descriptor = Darwin.open(
+            path,
+            O_CREAT | O_RDWR,
+            S_IRUSR | S_IWUSR
+        )
+        guard descriptor >= 0 else {
+            throw POSIXError(.init(rawValue: errno) ?? .EIO)
+        }
+        defer {
+            Darwin.close(descriptor)
+        }
+        guard Darwin.fchmod(descriptor, S_IRUSR | S_IWUSR) == 0 else {
+            throw POSIXError(.init(rawValue: errno) ?? .EIO)
+        }
+        while lumenFileLock(descriptor, LOCK_EX) != 0 {
+            guard errno == EINTR else {
+                throw POSIXError(.init(rawValue: errno) ?? .EIO)
+            }
+        }
+        defer {
+            _ = lumenFileLock(descriptor, LOCK_UN)
+        }
+        return try operation()
+    }
+}
+
 public enum LumenDisplayDisconnectRestoreFailureCode: String, Codable, Equatable, Sendable {
     case postconditionTimedOut
     case transactionFailed
@@ -180,11 +251,38 @@ public struct LumenDisplayDisconnectWatchdogRestorer {
         trigger: LumenDisplayDisconnectWatchdogTrigger,
         verifyRestored: () -> Bool
     ) throws -> LumenDisplayDisconnectWatchdogRecoveryOutcome {
+        try recoverIfAuthorized(
+            authorization: authorization,
+            marker: marker,
+            trigger: trigger,
+            verifyAlreadyRestored: verifyRestored,
+            verifyRestoredAfterMutation: verifyRestored
+        )
+    }
+
+    public func recoverIfAuthorized(
+        authorization: LumenDisplayDisconnectAuthorization,
+        marker: LumenDisplayDisconnectMutationMarker?,
+        trigger: LumenDisplayDisconnectWatchdogTrigger,
+        verifyAlreadyRestored: () -> Bool,
+        verifyRestoredAfterMutation: () -> Bool
+    ) throws -> LumenDisplayDisconnectWatchdogRecoveryOutcome {
         guard let marker, marker.authorizes(authorization) else {
             return .skipped
         }
+        if verifyAlreadyRestored() {
+            let probe = try controller.probe()
+            return .restored(
+                LumenPhysicalDisplayControlReceipt(
+                    displayID: authorization.displayID,
+                    enabled: true,
+                    source: probe.source,
+                    symbolName: probe.symbolName
+                )
+            )
+        }
         let receipt = try controller.setEnabled(true, for: authorization.displayID)
-        guard verifyRestored() else {
+        guard verifyRestoredAfterMutation() else {
             return .restoreFailed(
                 LumenDisplayDisconnectRestoreFailedReceipt(
                     displayID: authorization.displayID,

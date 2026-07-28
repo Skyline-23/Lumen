@@ -30,6 +30,8 @@ NS_SWIFT_NAME(LumenMacVirtualDisplayConfiguration)
 @property(nonatomic) uint32_t serialNumber;
 @property(nonatomic) uint32_t backingWidth;
 @property(nonatomic) uint32_t backingHeight;
+@property(nonatomic) uint32_t maximumBackingWidth;
+@property(nonatomic) uint32_t maximumBackingHeight;
 @property(nonatomic) uint32_t logicalWidth;
 @property(nonatomic) uint32_t logicalHeight;
 @property(nonatomic) double refreshRate;
@@ -58,6 +60,9 @@ NS_SWIFT_NAME(LumenMacVirtualDisplay)
 + (instancetype)registeredDisplayForKey:(NSString *)key;
 + (instancetype)registeredDisplayForDisplayID:(uint32_t)displayID;
 + (BOOL)removeRegisteredDisplayForKey:(NSString *)key;
++ (BOOL)removeRegisteredDisplayForKey:(NSString *)key
+                  ifMatchingDisplay:(LumenMacVirtualDisplay *)expectedDisplay
+    NS_SWIFT_NAME(removeRegisteredDisplay(forKey:ifMatchingDisplay:));
 + (void)destroyAllRegisteredDisplays;
 - (instancetype)initWithConfiguration:(LumenMacVirtualDisplayConfiguration *)configuration
                                  error:(NSError **)error NS_DESIGNATED_INITIALIZER;
@@ -80,6 +85,14 @@ int32_t LumenMacDirectCGSConfigureDisplayEnabled(
   CGDirectDisplayID display_id,
   bool enabled
 );
+
+bool LumenMacApplicationPrepareMainThread(void);
+typedef void (*LumenMacApplicationReadinessCallback)(void *context, bool ready);
+bool LumenMacApplicationRunMainThread(
+  LumenMacApplicationReadinessCallback readiness_callback,
+  void *readiness_context
+);
+void LumenMacApplicationStopMainThread(void);
 
 // Stable C shapes used only at the Swift/Objective-C platform boundary. Shared
 // policy and the packaged host runtime are Rust-owned; these records carry
@@ -215,6 +228,8 @@ typedef struct LumenMacEncodedCaptureFrameRecord {
   bool has_output_callback_latency_milliseconds;
   double output_callback_latency_milliseconds;
   bool is_key_frame;
+  bool requires_bootstrap_acknowledgement;
+  bool repair_key_frame;
   bool is_hdr_signaled;
   bool is_replay;
 } LumenMacEncodedCaptureFrameRecord;
@@ -298,6 +313,7 @@ typedef struct LumenMacWorkspaceSessionRequest {
   float potential_edr_headroom;
   int32_t current_peak_luminance_nits;
   int32_t potential_peak_luminance_nits;
+  uint32_t desktop_mirror_source_display_id;
 } LumenMacWorkspaceSessionRequest;
 
 typedef struct LumenMacWorkspaceActivationResult {
@@ -417,6 +433,7 @@ void LumenMacBridgeControllerStopCapture(
 
 void LumenMacBridgeRequestImmediateCaptureKeyFrame(void);
 bool LumenMacBridgeResumeVideoEncodingAfterCodecAck(void);
+bool LumenMacBridgeSetVideoBitrateKbps(uint32_t bitrate_kbps);
 void LumenMacBridgeRestartCapture(const char *reason);
 
 bool LumenMacBridgeControllerStartAudioCapture(
@@ -492,6 +509,12 @@ LumenMacBridgeAudioCaptureEventRecord LumenMacBridgeControllerPopNextForwardedAu
 );
 
 uint32_t LumenMacWorkspacePrepareSession(
+  LumenMacWorkspaceSessionRequest request,
+  char *error_destination,
+  size_t error_capacity
+);
+
+uint32_t LumenMacWorkspaceReconfigureSession(
   LumenMacWorkspaceSessionRequest request,
   char *error_destination,
   size_t error_capacity

@@ -2,9 +2,10 @@ use std::mem::size_of;
 
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY,
-    KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE, KEYEVENTF_UNICODE, MOUSEEVENTF_LEFTDOWN,
-    MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_RIGHTDOWN,
-    MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_XDOWN, MOUSEEVENTF_XUP, MOUSEINPUT,
+    KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE, KEYEVENTF_UNICODE, MOUSEEVENTF_ABSOLUTE,
+    MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP,
+    MOUSEEVENTF_MOVE, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_VIRTUALDESK,
+    MOUSEEVENTF_XDOWN, MOUSEEVENTF_XUP, MOUSEINPUT,
 };
 
 use super::input_state::{hid_scan_code, unicode_code_units};
@@ -79,6 +80,17 @@ pub(super) fn button(button: u8, pressed: bool) -> Result<(), String> {
         _ => return Err(format!("unsupported Windows mouse button {button}")),
     };
     inject(&[mouse(0, 0, data, flags)])
+}
+
+pub(super) fn position(normalized_x: f32, normalized_y: f32) -> Result<(), String> {
+    let x = (normalized_x.clamp(0.0, 1.0) * 65_535.0).round() as i32;
+    let y = (normalized_y.clamp(0.0, 1.0) * 65_535.0).round() as i32;
+    inject(&[mouse(
+        x,
+        y,
+        0,
+        MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
+    )])
 }
 
 pub(super) fn hid_keyboard(hid_usage: u16, pressed: bool) -> Result<(), String> {

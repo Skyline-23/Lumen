@@ -275,6 +275,14 @@ impl NativeIddCxCapture {
         &self.device
     }
 
+    pub(super) fn pause_frame_delivery(&self) -> Result<(), String> {
+        self.driver.stop_frame_delivery()
+    }
+
+    pub(super) fn resume_frame_delivery(&self) -> Result<(), String> {
+        self.driver.start_frame_delivery()
+    }
+
     pub(super) fn convert_frame(
         &self,
         frame: &NativeCapturedFrame,

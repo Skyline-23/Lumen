@@ -1,8 +1,6 @@
 import AVFoundation
 import AudioToolbox
-import CoreMedia
 import Foundation
-import ScreenCaptureKit
 import Synchronization
 
 struct LumenAudioFrame: Equatable, Sendable {
@@ -49,9 +47,41 @@ struct LumenAudioCaptureCallbacks: Sendable {
     let eventHandler: (@Sendable (LumenAudioCaptureSessionEvent) -> Void)?
 }
 
-private protocol LumenAudioCaptureRuntime: Sendable {
+protocol LumenAudioCaptureRuntime: AnyObject, Sendable {
     func start() async throws
-    func stop() async
+    func stop() async -> [LumenSystemAudioPlaybackSuppressionCleanupFailure]
+}
+
+private actor LumenSystemAudioTapCaptureRuntime: LumenAudioCaptureRuntime {
+    private let configuration: LumenMacAudioCaptureConfiguration
+    private let source: LumenSystemAudioPlaybackSuppression
+    private let callbacks: LumenAudioCaptureCallbacks
+
+    init(
+        configuration: LumenMacAudioCaptureConfiguration,
+        source: LumenSystemAudioPlaybackSuppression,
+        callbacks: LumenAudioCaptureCallbacks
+    ) {
+        self.configuration = configuration
+        self.source = source
+        self.callbacks = callbacks
+    }
+
+    func start() async throws {
+        do {
+            try await source.activate(
+                configuration: configuration,
+                callbacks: callbacks
+            )
+        } catch let error as LumenSystemAudioPlaybackSuppressionError {
+            throw LumenAudioCaptureError
+                .systemAudioPlaybackSuppressionUnavailable(error)
+        }
+    }
+
+    func stop() async -> [LumenSystemAudioPlaybackSuppressionCleanupFailure] {
+        return await source.deactivate()
+    }
 }
 
 enum LumenSystemAudioCaptureRoute: Equatable, Sendable {
@@ -100,103 +130,8 @@ private actor LumenSharedSystemAudioCaptureRuntime: LumenAudioCaptureRuntime {
         )
     }
 
-    func stop() async {
-        await videoSession.detachSystemAudio()
-    }
-}
-
-private actor LumenSystemAudioCaptureRuntime: LumenAudioCaptureRuntime {
-    private let configuration: LumenMacAudioCaptureConfiguration
-    private let callbacks: LumenAudioCaptureCallbacks
-    private let queue = DispatchQueue(label: "dev.skyline23.lumen.sck.audio", qos: .userInteractive)
-    private let output: LumenSystemAudioCaptureOutput
-    private var stream: SCStream?
-
-    init(configuration: LumenMacAudioCaptureConfiguration, callbacks: LumenAudioCaptureCallbacks) {
-        self.configuration = configuration
-        self.callbacks = callbacks
-        output = LumenSystemAudioCaptureOutput(callbacks: callbacks)
-    }
-
-    func start() async throws {
-        guard case .systemOutput(let displayID, let excludesCurrentProcessAudio) = configuration.source else {
-            throw LumenAudioCaptureError.invalidSource
-        }
-        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-        guard let display = content.displays.first(where: { UInt32($0.displayID) == displayID }) else {
-            throw LumenAudioCaptureError.displayUnavailable(displayID)
-        }
-
-        let streamConfiguration = SCStreamConfiguration()
-        streamConfiguration.width = 2
-        streamConfiguration.height = 2
-        streamConfiguration.minimumFrameInterval = .zero
-        streamConfiguration.queueDepth = 2
-        streamConfiguration.capturesAudio = true
-        streamConfiguration.sampleRate = configuration.sampleRate
-        streamConfiguration.channelCount = configuration.channelCount
-        streamConfiguration.excludesCurrentProcessAudio = excludesCurrentProcessAudio
-
-        let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
-        let stream = SCStream(filter: filter, configuration: streamConfiguration, delegate: output)
-        try stream.addStreamOutput(output, type: .audio, sampleHandlerQueue: queue)
-        self.stream = stream
-        do {
-            try await stream.startCapture()
-        } catch {
-            try? stream.removeStreamOutput(output, type: .audio)
-            if self.stream === stream {
-                self.stream = nil
-            }
-            throw error
-        }
-        callbacks.eventHandler?(.init(kind: .started, message: "ScreenCaptureKit system audio capture started"))
-    }
-
-    func stop() async {
-        guard let stream else { return }
-        try? await stream.stopCapture()
-        try? stream.removeStreamOutput(output, type: .audio)
-        if self.stream === stream {
-            self.stream = nil
-        }
-        callbacks.eventHandler?(.init(kind: .stopped, message: "ScreenCaptureKit system audio capture stopped", stopStatus: 0))
-    }
-
-}
-
-final class LumenSystemAudioCaptureOutput: NSObject, SCStreamOutput, SCStreamDelegate {
-    private let callbacks: LumenAudioCaptureCallbacks
-    private var sequenceNumber: UInt64 = 0
-
-    init(callbacks: LumenAudioCaptureCallbacks) {
-        self.callbacks = callbacks
-    }
-
-    func stream(
-        _ stream: SCStream,
-        didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
-        of type: SCStreamOutputType
-    ) {
-        guard type == .audio else { return }
-        do {
-            sequenceNumber &+= 1
-            callbacks.frameHandler(try makeAudioFrame(sequenceNumber: sequenceNumber, sampleBuffer: sampleBuffer))
-        } catch {
-            callbacks.eventHandler?(.init(kind: .droppedFrame, message: error.localizedDescription))
-        }
-    }
-
-    func stream(_ stream: SCStream, didStopWithError error: any Error) {
-        callbacks.eventHandler?(.init(kind: .failed, message: error.localizedDescription))
-    }
-
-    func emitStopped() {
-        callbacks.eventHandler?(.init(
-            kind: .stopped,
-            message: "ScreenCaptureKit shared system audio capture stopped",
-            stopStatus: 0
-        ))
+    func stop() async -> [LumenSystemAudioPlaybackSuppressionCleanupFailure] {
+        return await videoSession.detachSystemAudio()
     }
 }
 
@@ -271,146 +206,258 @@ private actor LumenMicrophoneCaptureRuntime: LumenAudioCaptureRuntime {
         callbacks.eventHandler?(.init(kind: .started, message: "AVAudioEngine microphone capture started"))
     }
 
-    func stop() async {
+    func stop() async -> [LumenSystemAudioPlaybackSuppressionCleanupFailure] {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         callbacks.eventHandler?(.init(kind: .stopped, message: "AVAudioEngine microphone capture stopped", stopStatus: 0))
+        return []
     }
 }
 
 actor LumenAudioCaptureSession {
     let configuration: LumenMacAudioCaptureConfiguration
     private let sharedVideoSession: LumenEncodedCaptureSession?
+    private let systemAudioPlaybackSuppression:
+        LumenSystemAudioPlaybackSuppression
     private var runtime: (any LumenAudioCaptureRuntime)?
+    private var startFlight: LumenCaptureStartFlight?
+    private var callbackGate: LumenCaptureCallbackGate?
+    private var generation: UInt64 = 0
+    private var isStopping = false
+    private struct RuntimeStopRecord {
+        let runtime: any LumenAudioCaptureRuntime
+        let task: Task<[LumenSystemAudioPlaybackSuppressionCleanupFailure], Never>
+    }
+    private var runtimeStopRecords: [ObjectIdentifier: RuntimeStopRecord] = [:]
 
     init(
         configuration: LumenMacAudioCaptureConfiguration,
-        sharedVideoSession: LumenEncodedCaptureSession? = nil
+        sharedVideoSession: LumenEncodedCaptureSession?,
+        systemAudioPlaybackSuppression:
+            LumenSystemAudioPlaybackSuppression
     ) {
         self.configuration = configuration
         self.sharedVideoSession = sharedVideoSession
+        self.systemAudioPlaybackSuppression = systemAudioPlaybackSuppression
     }
 
     func start(callbacks: LumenAudioCaptureCallbacks) async throws {
+        guard runtime == nil else {
+            throw LumenAudioCaptureError.captureAlreadyRunning
+        }
+        callbackGate?.close()
+        let gate = LumenCaptureCallbackGate()
+        let flight = LumenCaptureStartFlight()
+        callbackGate = gate
+        startFlight = flight
+        isStopping = false
+        generation &+= 1
+        let startGeneration = generation
+        let guardedCallbacks = LumenAudioCaptureCallbacks(
+            frameHandler: { frame in
+                guard gate.isOpen() else { return }
+                callbacks.frameHandler(frame)
+            },
+            eventHandler: { event in
+                guard gate.isOpen() else { return }
+                callbacks.eventHandler?(event)
+            }
+        )
         let runtime: any LumenAudioCaptureRuntime
         switch configuration.source {
         case .microphone:
-            runtime = LumenMicrophoneCaptureRuntime(configuration: configuration, callbacks: callbacks)
+            runtime = LumenMicrophoneCaptureRuntime(
+                configuration: configuration,
+                callbacks: guardedCallbacks
+            )
         case .systemOutput:
             if let sharedVideoSession {
                 runtime = LumenSharedSystemAudioCaptureRuntime(
                     videoSession: sharedVideoSession,
                     configuration: configuration,
-                    callbacks: callbacks
+                    callbacks: guardedCallbacks
                 )
             } else {
-                runtime = LumenSystemAudioCaptureRuntime(configuration: configuration, callbacks: callbacks)
+                runtime = LumenSystemAudioTapCaptureRuntime(
+                    configuration: configuration,
+                    source: systemAudioPlaybackSuppression,
+                    callbacks: guardedCallbacks
+                )
             }
         }
         self.runtime = runtime
+        var runtimeStartWasAttempted = false
+        var failureHandled = false
         do {
+            guard !isStopping,
+                  generation == startGeneration,
+                  !(await flight.isStopRequested()) else {
+                failureHandled = true
+                _ = await stopRuntimeAfterStartFailure(
+                    runtime: runtime,
+                    flight: flight,
+                    gate: gate,
+                    stopRuntime: true
+                )
+                throw LumenAudioCaptureError.captureStartCancelled
+            }
+            runtimeStartWasAttempted = true
             try await runtime.start()
+            let completion = await flight.finishStart(terminationError: nil)
+            guard !isStopping,
+                  generation == startGeneration,
+                  !(await flight.isStopRequested()) else {
+                failureHandled = true
+                _ = await stopRuntimeAfterStartFailure(
+                    runtime: runtime,
+                    flight: flight,
+                    gate: gate,
+                    stopRuntime: true
+                )
+                throw LumenAudioCaptureError.captureStartCancelled
+            }
+            _ = completion
+            await finishStartFlight(flight)
         } catch {
-            self.runtime = nil
-            throw error
+            let completion = await flight.finishStart(
+                terminationError: nil,
+                error: error
+            )
+            if !failureHandled {
+                let stopRequested = await flight.isStopRequested()
+                let cleanupFailures = await stopRuntimeAfterStartFailure(
+                    runtime: runtime,
+                    flight: flight,
+                    gate: gate,
+                    stopRuntime: runtimeStartWasAttempted || stopRequested
+                )
+                if !cleanupFailures.isEmpty {
+                    throw LumenSystemAudioCaptureLifecycleError(
+                        underlyingError: completion.startError ?? error,
+                        cleanupFailures: cleanupFailures
+                    )
+                }
+            }
+            throw completion.startError ?? error
         }
     }
 
-    func stop() async {
-        guard let runtime else { return }
-        self.runtime = nil
-        await runtime.stop()
+    func stop() async -> [LumenSystemAudioPlaybackSuppressionCleanupFailure] {
+        isStopping = true
+        generation &+= 1
+        let inFlight = startFlight
+        let runtime = self.runtime
+        await inFlight?.requestStop()
+        let runtimeStopTask = runtime.map { runtime in
+            Task { await self.stopRuntimeOnce(runtime) }
+        }
+        await inFlight?.waitUntilSettled()
+        let cleanupFailures = await runtimeStopTask?.value ?? []
+        if cleanupFailures.isEmpty {
+            self.runtime = nil
+        }
+        callbackGate?.close()
+        return cleanupFailures
+    }
+
+    private func finishStartFlight(_ flight: LumenCaptureStartFlight) async {
+        if startFlight === flight {
+            startFlight = nil
+        }
+        await flight.settle()
+    }
+
+    private func stopRuntimeAfterStartFailure(
+        runtime: any LumenAudioCaptureRuntime,
+        flight: LumenCaptureStartFlight,
+        gate: LumenCaptureCallbackGate,
+        stopRuntime: Bool
+    ) async -> [LumenSystemAudioPlaybackSuppressionCleanupFailure] {
+        var cleanupFailures: [LumenSystemAudioPlaybackSuppressionCleanupFailure] = []
+        if stopRuntime {
+            cleanupFailures = await stopRuntimeOnce(runtime)
+        }
+        gate.close()
+        if cleanupFailures.isEmpty {
+            self.runtime = nil
+        }
+        await finishStartFlight(flight)
+        return cleanupFailures
+    }
+
+    private func stopRuntimeOnce(
+        _ runtime: any LumenAudioCaptureRuntime
+    ) async -> [LumenSystemAudioPlaybackSuppressionCleanupFailure] {
+        let identity = ObjectIdentifier(runtime)
+        if let existing = runtimeStopRecords[identity],
+           existing.runtime === runtime {
+            let failures = await existing.task.value
+            if !failures.isEmpty {
+                runtimeStopRecords.removeValue(forKey: identity)
+            }
+            return failures
+        }
+        let task = Task { await runtime.stop() }
+        runtimeStopRecords[identity] = .init(runtime: runtime, task: task)
+        let failures = await task.value
+        if !failures.isEmpty {
+            runtimeStopRecords.removeValue(forKey: identity)
+        }
+        return failures
     }
 }
 
 enum LumenAudioCaptureError: Error, LocalizedError {
     case invalidSource
+    case captureAlreadyRunning
+    case captureStartCancelled
     case displayUnavailable(UInt32)
+    case displayOwnershipLost(UInt32)
     case activeVideoDisplayMismatch(audioDisplayID: UInt32, videoDisplayID: UInt32)
     case microphoneUnavailable
     case audioConversionUnavailable
+    case unsupportedChannelConversion(source: Int, requested: Int)
     case invalidSampleBuffer
     case unsupportedPCM
+    case systemAudioPlaybackSuppressionDependencyMissing
+    case systemAudioPlaybackSuppressionUnavailable(
+        LumenSystemAudioPlaybackSuppressionError
+    )
+    case systemAudioPlaybackSuppressionCancelled
+    case systemAudioPlaybackSuppressionCleanupFailed(
+        [LumenSystemAudioPlaybackSuppressionCleanupFailure]
+    )
 
     var errorDescription: String? {
         switch self {
         case .invalidSource: return "Invalid audio capture source."
+        case .captureAlreadyRunning: return "Audio capture is already starting or running."
+        case .captureStartCancelled: return "Audio capture startup was cancelled by a newer lifecycle transition."
         case .displayUnavailable(let displayID): return "ScreenCaptureKit display \(displayID) is unavailable for audio capture."
+        case .displayOwnershipLost(let displayID):
+            return "Retained virtual display \(displayID) was released before audio capture could start."
         case .activeVideoDisplayMismatch(let audioDisplayID, let videoDisplayID):
             return "System audio display \(audioDisplayID) does not match active video display \(videoDisplayID)."
         case .microphoneUnavailable: return "The default microphone is unavailable."
-        case .audioConversionUnavailable: return "The requested microphone PCM conversion is unavailable."
+        case .audioConversionUnavailable:
+            return "The requested audio PCM conversion is unavailable."
+        case let .unsupportedChannelConversion(source, requested):
+            return "The system-audio source exposes \(source) channels, but the selected mode requires \(requested); automatic upmix is not permitted."
         case .invalidSampleBuffer: return "The audio sample buffer is invalid."
         case .unsupportedPCM: return "The audio sample buffer uses an unsupported PCM layout."
+        case .systemAudioPlaybackSuppressionDependencyMissing:
+            return "System-audio capture is missing its session playback-suppression dependency."
+        case .systemAudioPlaybackSuppressionUnavailable(let error):
+            return error.localizedDescription
+        case .systemAudioPlaybackSuppressionCancelled:
+            return "System-audio playback suppression was cancelled before the exclusive capture boundary became active."
+        case .systemAudioPlaybackSuppressionCleanupFailed(let failures):
+            let details = failures
+                .map { "\($0.stage.rawValue)=\($0.status)" }
+                .joined(separator: ",")
+            return "System-audio playback suppression cleanup failed: \(details)."
         }
     }
-}
-
-private func makeAudioFrame(sequenceNumber: UInt64, sampleBuffer: CMSampleBuffer) throws -> LumenAudioFrame {
-    guard let formatDescription = sampleBuffer.formatDescription,
-          let streamDescription = CMAudioFormatDescriptionGetStreamBasicDescription(formatDescription)?.pointee else {
-        throw LumenAudioCaptureError.invalidSampleBuffer
-    }
-    let frameCount = sampleBuffer.numSamples
-    let channelCount = max(Int(streamDescription.mChannelsPerFrame), 1)
-    var retainedBlockBuffer: CMBlockBuffer?
-    var bufferListSize = 0
-    var status = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
-        sampleBuffer,
-        bufferListSizeNeededOut: &bufferListSize,
-        bufferListOut: nil,
-        bufferListSize: 0,
-        blockBufferAllocator: nil,
-        blockBufferMemoryAllocator: nil,
-        flags: 0,
-        blockBufferOut: &retainedBlockBuffer
-    )
-    guard status == kCMSampleBufferError_ArrayTooSmall || status == noErr else {
-        throw LumenAudioCaptureError.invalidSampleBuffer
-    }
-    let storage = UnsafeMutableRawPointer.allocate(byteCount: bufferListSize, alignment: MemoryLayout<AudioBufferList>.alignment)
-    defer { storage.deallocate() }
-    let audioBufferList = storage.bindMemory(to: AudioBufferList.self, capacity: 1)
-    status = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
-        sampleBuffer,
-        bufferListSizeNeededOut: nil,
-        bufferListOut: audioBufferList,
-        bufferListSize: bufferListSize,
-        blockBufferAllocator: kCFAllocatorDefault,
-        blockBufferMemoryAllocator: kCFAllocatorDefault,
-        flags: UInt32(kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment),
-        blockBufferOut: &retainedBlockBuffer
-    )
-    guard status == noErr else { throw LumenAudioCaptureError.invalidSampleBuffer }
-
-    let buffers = UnsafeMutableAudioBufferListPointer(audioBufferList)
-    let isFloat32 = streamDescription.mBitsPerChannel == 32 && (streamDescription.mFormatFlags & kAudioFormatFlagIsFloat) != 0
-    guard isFloat32 else { throw LumenAudioCaptureError.unsupportedPCM }
-    let isNonInterleaved = (streamDescription.mFormatFlags & kAudioFormatFlagIsNonInterleaved) != 0
-    var data = Data(count: frameCount * channelCount * MemoryLayout<Float>.size)
-    data.withUnsafeMutableBytes { output in
-        let samples = output.bindMemory(to: Float.self)
-        if !isNonInterleaved, let buffer = buffers.first, let source = buffer.mData {
-            memcpy(output.baseAddress, source, min(output.count, Int(buffer.mDataByteSize)))
-            return
-        }
-        for frame in 0..<frameCount {
-            for channel in 0..<channelCount where channel < buffers.count {
-                let source = buffers[channel].mData!.assumingMemoryBound(to: Float.self)
-                samples[(frame * channelCount) + channel] = source[frame]
-            }
-        }
-    }
-    let pts = sampleBuffer.presentationTimeStamp
-    let hostTime = pts.isValid && pts.seconds.isFinite ? max(pts.seconds, 0).nanoseconds : systemUptimeNanoseconds()
-    return LumenAudioFrame(
-        sequenceNumber: sequenceNumber,
-        hostTimeNanoseconds: hostTime,
-        sampleRate: Int(streamDescription.mSampleRate.rounded()),
-        channelCount: channelCount,
-        frameCount: frameCount,
-        pcmFloat32LE: data
-    )
 }
 
 private func systemUptimeNanoseconds() -> UInt64 {

@@ -2,7 +2,7 @@ use std::fmt;
 
 use lumen_engine::{
     client_input_envelope, client_motion_envelope, ClientInputEnvelope, NativeContactPhase,
-    NativeGamepadButton, NativePointerMotionMode,
+    NativeGamepadButton, NativePointerMotionMode, NativeScrollPhase,
 };
 
 const MAXIMUM_GAMEPADS: u32 = 16;
@@ -29,6 +29,7 @@ pub enum PlatformNativeInputEvent {
         pointer_id: u32,
         button: u8,
         pressed: bool,
+        absolute_position: Option<(f32, f32)>,
     },
     GamepadConnection {
         gamepad_id: u8,
@@ -77,6 +78,10 @@ pub enum PlatformNativeMotionEvent {
         pointer_id: u32,
         delta_x_1024_points: i32,
         delta_y_1024_points: i32,
+        phase: NativeScrollPhase,
+        velocity_x_1024_points_per_second: i32,
+        velocity_y_1024_points_per_second: i32,
+        continuous_precision: bool,
     },
     Touch {
         contact_id: u32,
@@ -120,6 +125,7 @@ pub enum NativeInputError {
     InvalidModifierMask(u32),
     InvalidTextSelection,
     InvalidPointerButton(u32),
+    InvalidPointerGeometry,
     InvalidGamepad(u32),
     InvalidGamepadButton(i32),
     InvalidAnalogValue(u32),
@@ -139,6 +145,7 @@ pub enum NativeMotionError {
     InvalidGamepadAxis(i32),
     InvalidAnalogValue(u32),
     InvalidMotionVector,
+    InvalidScrollPhase(i32),
 }
 
 impl fmt::Display for NativeInputError {
@@ -168,6 +175,9 @@ impl fmt::Display for NativeInputError {
             }
             Self::InvalidPointerButton(button) => {
                 write!(formatter, "native pointer button {button} is invalid")
+            }
+            Self::InvalidPointerGeometry => {
+                formatter.write_str("native positioned pointer geometry is invalid")
             }
             Self::InvalidGamepad(gamepad) => {
                 write!(formatter, "native gamepad {gamepad} is invalid")
@@ -218,6 +228,9 @@ impl fmt::Display for NativeMotionError {
             }
             Self::InvalidMotionVector => {
                 formatter.write_str("native motion vector contains a non-finite value")
+            }
+            Self::InvalidScrollPhase(phase) => {
+                write!(formatter, "native scroll phase {phase} is invalid")
             }
         }
     }
@@ -319,10 +332,16 @@ impl TryFrom<client_input_envelope::Payload> for PlatformNativeInputEvent {
                 if !(1..=5).contains(&button) {
                     return Err(NativeInputError::InvalidPointerButton(input.button));
                 }
+                let absolute_position = match (input.normalized_x, input.normalized_y) {
+                    (None, None) => None,
+                    (Some(x), Some(y)) if normalized_pair(x, y) => Some((x, y)),
+                    _ => return Err(NativeInputError::InvalidPointerGeometry),
+                };
                 Ok(Self::PointerButton {
                     pointer_id: input.pointer_id,
                     button,
                     pressed: input.pressed,
+                    absolute_position,
                 })
             }
             client_input_envelope::Payload::GamepadConnection(input) => {
@@ -411,11 +430,21 @@ impl TryFrom<client_motion_envelope::Payload> for PlatformNativeMotionEvent {
                     normalized_y: input.normalized_y,
                 })
             }
-            client_motion_envelope::Payload::Scroll(input) => Ok(Self::Scroll {
-                pointer_id: input.pointer_id,
-                delta_x_1024_points: input.delta_x_1024_points,
-                delta_y_1024_points: input.delta_y_1024_points,
-            }),
+            client_motion_envelope::Payload::Scroll(input) => {
+                let phase = NativeScrollPhase::try_from(input.phase)
+                    .ok()
+                    .filter(|phase| *phase != NativeScrollPhase::Unspecified)
+                    .ok_or(NativeMotionError::InvalidScrollPhase(input.phase))?;
+                Ok(Self::Scroll {
+                    pointer_id: input.pointer_id,
+                    delta_x_1024_points: input.delta_x_1024_points,
+                    delta_y_1024_points: input.delta_y_1024_points,
+                    phase,
+                    velocity_x_1024_points_per_second: input.velocity_x_1024_points_per_second,
+                    velocity_y_1024_points_per_second: input.velocity_y_1024_points_per_second,
+                    continuous_precision: input.continuous_precision,
+                })
+            }
             client_motion_envelope::Payload::TouchMotion(input) => {
                 validate_contact(input.normalized_x, input.normalized_y, input.pressure)
                     .map_err(|_| NativeMotionError::InvalidContactGeometry)?;
@@ -533,7 +562,10 @@ fn normalized_pair(x: f32, y: f32) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use lumen_engine::{client_input_envelope, NativeTextInput};
+    use lumen_engine::{
+        client_input_envelope, client_motion_envelope, NativePointerButtonInput, NativeScrollInput,
+        NativeScrollPhase, NativeTextInput,
+    };
 
     use super::*;
 
@@ -598,6 +630,96 @@ mod tests {
                 })),
             }),
             Err(NativeInputError::InvalidTextSelection)
+        );
+    }
+
+    #[test]
+    fn positioned_pointer_button_preserves_atomic_absolute_location() {
+        let event = PlatformNativeInputEvent::try_from(
+            client_input_envelope::Payload::PointerButton(NativePointerButtonInput {
+                pointer_id: 7,
+                button: 1,
+                pressed: true,
+                normalized_x: Some(0.25),
+                normalized_y: Some(0.75),
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(
+            event,
+            PlatformNativeInputEvent::PointerButton {
+                pointer_id: 7,
+                button: 1,
+                pressed: true,
+                absolute_position: Some((0.25, 0.75)),
+            }
+        );
+    }
+
+    #[test]
+    fn positioned_pointer_button_rejects_partial_absolute_location() {
+        let result = PlatformNativeInputEvent::try_from(
+            client_input_envelope::Payload::PointerButton(NativePointerButtonInput {
+                pointer_id: 7,
+                button: 1,
+                pressed: true,
+                normalized_x: Some(0.25),
+                normalized_y: None,
+            }),
+        );
+
+        assert_eq!(result, Err(NativeInputError::InvalidPointerGeometry));
+    }
+
+    #[test]
+    fn continuous_scroll_preserves_phase_velocity_and_precision() {
+        let event = PlatformNativeMotionEvent::try_from(client_motion_envelope::Payload::Scroll(
+            NativeScrollInput {
+                pointer_id: 3,
+                delta_x_1024_points: 1_537,
+                delta_y_1024_points: -2_049,
+                phase: NativeScrollPhase::MomentumChanged as i32,
+                velocity_x_1024_points_per_second: 8_192,
+                velocity_y_1024_points_per_second: -16_384,
+                continuous_precision: true,
+            },
+        ))
+        .unwrap();
+
+        assert_eq!(
+            event,
+            PlatformNativeMotionEvent::Scroll {
+                pointer_id: 3,
+                delta_x_1024_points: 1_537,
+                delta_y_1024_points: -2_049,
+                phase: NativeScrollPhase::MomentumChanged,
+                velocity_x_1024_points_per_second: 8_192,
+                velocity_y_1024_points_per_second: -16_384,
+                continuous_precision: true,
+            }
+        );
+    }
+
+    #[test]
+    fn continuous_scroll_rejects_an_unspecified_phase() {
+        let result = PlatformNativeMotionEvent::try_from(client_motion_envelope::Payload::Scroll(
+            NativeScrollInput {
+                pointer_id: 0,
+                delta_x_1024_points: 0,
+                delta_y_1024_points: 0,
+                phase: NativeScrollPhase::Unspecified as i32,
+                velocity_x_1024_points_per_second: 0,
+                velocity_y_1024_points_per_second: 0,
+                continuous_precision: true,
+            },
+        ));
+
+        assert_eq!(
+            result,
+            Err(NativeMotionError::InvalidScrollPhase(
+                NativeScrollPhase::Unspecified as i32
+            ))
         );
     }
 }

@@ -1,17 +1,22 @@
 use serde::Serialize;
-use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::Notify;
 
 use crate::{HostAuthorities, IdlePlatformSessionControl, PlatformSessionControl};
 
+mod adaptive_video;
 mod auth;
 mod discovery;
 mod native_session;
 mod settings;
 mod wake_on_lan;
 
-pub(crate) use native_session::NativeConnectionContext;
+#[cfg(test)]
+pub(crate) use adaptive_video::CongestionSource;
+pub(crate) use adaptive_video::{
+    AdaptiveVideoDecision, AdaptiveVideoDeliveryController, FeedbackStream, MediaFeedbackSample,
+};
+pub(crate) use native_session::{NativeConnectionContext, NativeMediaFeedbackDisposition};
 
 pub use discovery::HostDiscoveryState;
 
@@ -21,32 +26,29 @@ const MAXIMUM_JSON_REQUEST_BYTES: usize = 32 * 1024;
 pub(crate) struct VideoDeliveryState {
     pub(crate) video_format: crate::PlatformVideoFormat,
     pub(crate) acknowledged_configuration_id: Option<u32>,
+    pub(crate) acknowledged_generation_id: Option<u32>,
+    pub(crate) bootstrap_pending: bool,
+    pub(crate) repair_keyframe_requested: bool,
     pub(crate) session_epoch: u32,
-    pub(crate) path_id: u16,
     pub(crate) policy_revision: u16,
     pub(crate) maximum_datagram_payload: usize,
-    pub(crate) endpoint: SocketAddr,
-    pub(crate) encryption_key: [u8; 16],
+    pub(crate) maximum_object_delay_us: u32,
     pub(crate) fec_percentage: u16,
+    pub(crate) target_bitrate_kbps: u32,
+    pub(crate) admission_divisor: u8,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct AudioDeliveryState {
     pub(crate) session_epoch: u32,
-    pub(crate) path_id: u16,
     pub(crate) policy_revision: u16,
     pub(crate) maximum_datagram_payload: usize,
-    pub(crate) endpoint: SocketAddr,
-    pub(crate) encryption_key: [u8; 16],
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct InputMotionDeliveryState {
     pub(crate) session_epoch: u32,
-    pub(crate) path_id: u16,
     pub(crate) policy_revision: u16,
-    pub(crate) endpoint: SocketAddr,
-    pub(crate) encryption_key: [u8; 16],
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -117,6 +119,7 @@ pub struct ControlRouter {
     platform: Arc<dyn PlatformSessionControl>,
     native: native_session::NativeSessionState,
     codec_configuration_notify: Arc<Notify>,
+    video_bootstrap_notify: Arc<Notify>,
 }
 
 impl ControlRouter {
@@ -135,11 +138,16 @@ impl ControlRouter {
             platform,
             native: native_session::NativeSessionState::default(),
             codec_configuration_notify: Arc::new(Notify::new()),
+            video_bootstrap_notify: Arc::new(Notify::new()),
         }
     }
 
     pub(crate) fn native_codec_configuration_notify(&self) -> Arc<Notify> {
         Arc::clone(&self.codec_configuration_notify)
+    }
+
+    pub(crate) fn native_video_bootstrap_notify(&self) -> Arc<Notify> {
+        Arc::clone(&self.video_bootstrap_notify)
     }
 
     pub fn authorities(&self) -> &HostAuthorities {
@@ -190,19 +198,17 @@ impl ControlRouter {
     }
 
     pub fn force_stop_stream(&mut self) -> Result<(), String> {
-        let (session_active, application_started) = self.take_native_cleanup_state();
-        let session_result = if session_active {
-            self.platform.stop_session()
-        } else {
-            Ok(())
-        };
+        let session_result = self.cleanup_current_native_session();
         let application_result =
-            if application_started || self.discovery.current_application_id() != 0 {
-                self.platform.stop_application()
+            if session_result.is_ok() && self.discovery.current_application_id() != 0 {
+                let result = self.platform.stop_application();
+                if result.is_ok() {
+                    self.discovery.clear_running_application();
+                }
+                result
             } else {
                 Ok(())
             };
-        self.discovery.clear_running_application();
         match (session_result, application_result) {
             (Ok(()), Ok(())) => Ok(()),
             (Err(session), Ok(())) => Err(session),

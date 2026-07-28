@@ -203,6 +203,8 @@ final class LumenVideoToolboxCapabilityProbeTests: XCTestCase {
                 sourceSequenceNumber: UInt64(index + 1),
                 sourceDisplayTime: UInt64(index + 1),
                 isKeyFrame: isKeyFrame(samples[index]),
+                requiresBootstrapAcknowledgement: index == 3,
+                isRepairKeyFrame: index == 3,
                 isHDRSignaled: true
             )
         }
