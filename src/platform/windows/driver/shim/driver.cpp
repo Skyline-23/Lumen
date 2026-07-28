@@ -178,8 +178,8 @@ NTSTATUS LumenEvtDeviceAdd(WDFDRIVER, PWDFDEVICE_INIT device_init) {
 
   WDF_IO_TYPE_CONFIG io_config;
   WDF_IO_TYPE_CONFIG_INIT(&io_config);
-  io_config.ReadWriteIoType = WdfDeviceIoDirect;
-  io_config.DeviceControlIoType = WdfDeviceIoDirect;
+  io_config.ReadWriteIoType = WdfDeviceIoBufferedOrDirect;
+  io_config.DeviceControlIoType = WdfDeviceIoBufferedOrDirect;
   WdfDeviceInitSetIoTypeEx(device_init, &io_config);
 
   WDF_OBJECT_ATTRIBUTES attributes;

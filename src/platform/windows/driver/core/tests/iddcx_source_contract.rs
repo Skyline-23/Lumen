@@ -143,6 +143,21 @@ fn iddcx_device_uses_framework_default_synchronization() {
 }
 
 #[test]
+fn iddcx_device_allows_stack_wide_io_negotiation() {
+    // Given: Lumen shares the UMDF device stack with the IddCx class extension,
+    // while its control plane contains both buffered and direct-transfer IOCTLs.
+    let driver = fs::read_to_string(driver_root().join("shim/driver.cpp"))
+        .expect("driver initialization source must exist");
+
+    // Then: Lumen must not force every driver in the stack into direct I/O.
+    // BufferedOrDirect lets UMDF select one compatible stack-wide access mode.
+    assert!(driver.contains("io_config.ReadWriteIoType = WdfDeviceIoBufferedOrDirect;"));
+    assert!(driver.contains("io_config.DeviceControlIoType = WdfDeviceIoBufferedOrDirect;"));
+    assert!(!driver.contains("io_config.ReadWriteIoType = WdfDeviceIoDirect;"));
+    assert!(!driver.contains("io_config.DeviceControlIoType = WdfDeviceIoDirect;"));
+}
+
+#[test]
 fn feature_probe_and_luid_pin_precede_adapter_and_monitor_creation() {
     // Given: the platform adapter boundary.
     let adapter = fs::read_to_string(driver_root().join("shim/adapter.cpp"))
