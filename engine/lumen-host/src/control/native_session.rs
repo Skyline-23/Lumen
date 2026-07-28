@@ -570,7 +570,7 @@ impl ControlRouter {
         let feedback_window =
             pending
                 .pending_feedback_window
-                .get_or_insert_with(|| PendingMediaFeedbackWindow {
+                .get_or_insert(PendingMediaFeedbackWindow {
                     id: feedback.feedback_window_id,
                     video: None,
                     audio: None,

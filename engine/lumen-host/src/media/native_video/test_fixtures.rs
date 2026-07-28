@@ -240,7 +240,7 @@ struct BitWriter {
 impl BitWriter {
     fn write(&mut self, count: usize, value: u64) {
         for offset in (0..count).rev() {
-            if self.bit % 8 == 0 {
+            if self.bit.checked_rem(8) == Some(0) {
                 self.bytes.push(0);
             }
             if value & (1 << offset) != 0 {
@@ -260,7 +260,7 @@ impl BitWriter {
 
     fn finish(mut self) -> Vec<u8> {
         self.write(1, 1);
-        while self.bit % 8 != 0 {
+        while self.bit.checked_rem(8) != Some(0) {
             self.write(1, 0);
         }
         self.bytes

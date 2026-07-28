@@ -758,7 +758,10 @@ async fn poll_and_send_audio(
             ))
         }
     };
-    if unit_id <= 3 || unit_id % 200 == 0 || report.status != DatagramBatchStatus::Complete {
+    if unit_id <= 3
+        || unit_id.checked_rem(200) == Some(0)
+        || report.status != DatagramBatchStatus::Complete
+    {
         log_datagram_batch(
             "audio",
             delivery.session_epoch,
@@ -1199,7 +1202,7 @@ async fn poll_and_send_video(
     };
     let object_age_us = duration_to_microseconds(pending_since.elapsed());
     if frame_id <= 3
-        || frame_id % 120 == 0
+        || frame_id.checked_rem(120) == Some(0)
         || report.mode == DatagramBatchMode::DeadlineWait
         || !delivery_complete
     {
