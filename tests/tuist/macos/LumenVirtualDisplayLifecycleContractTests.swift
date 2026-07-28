@@ -112,6 +112,53 @@ struct LumenVirtualDisplayLifecycleContractTests {
         #expect(workerStart.lowerBound < runtimeStart.lowerBound)
     }
 
+    @Test("Prepared exact display is consumed without post-mirror publication revalidation")
+    func preparedDisplaySurvivesMirrorTopologyCommit() throws {
+        let source = try source(
+            "src/platform/macos/Projects/LumenMacBridge/Sources/" +
+                "LumenScreenCaptureDisplayPrefetch.swift"
+        )
+        let start = try #require(
+            source.range(of: "    private static func takeValidatedPrefetch(")
+        )
+        let tail = source[start.lowerBound...]
+        let end = try #require(
+            tail.range(of: "\n    private static func prefetchExpiration")
+        )
+        let admission = tail[..<end.lowerBound]
+
+        #expect(admission.contains("expectedOwners.owner"))
+        #expect(admission.contains("isCurrent(displayID: displayID)"))
+        #expect(!admission.contains("DisplayReadiness.snapshot"))
+        #expect(!admission.contains("isPreparedHandleReady"))
+    }
+
+    @Test("Desktop mirror topology uses Core Graphics completion callbacks")
+    func desktopMirrorUsesReconfigurationCallbacks() throws {
+        let observer = try source(
+            "src/platform/macos/Projects/LumenMacBridge/Sources/" +
+                "LumenDisplayReconfigurationObserver.swift"
+        )
+        let preparation = try source(
+            "src/platform/macos/Projects/LumenMacBridge/Sources/" +
+                "LumenWorkspaceSession+Preparation.swift"
+        )
+        let start = try #require(
+            preparation.range(of: "    private func prepareDesktopMirrorCapture()")
+        )
+        let tail = preparation[start.lowerBound...]
+        let end = try #require(
+            tail.range(of: "\n    private func executePreparationCommand")
+        )
+        let desktopMirrorPreparation = tail[..<end.lowerBound]
+
+        #expect(observer.contains("CGDisplayRegisterReconfigurationCallback"))
+        #expect(observer.contains("CGDisplayRemoveReconfigurationCallback"))
+        #expect(observer.contains("beginConfigurationFlag"))
+        #expect(!desktopMirrorPreparation.contains("settleOwnedVirtualDisplayMode"))
+        #expect(!desktopMirrorPreparation.contains("stabilizeOwnedVirtualDisplay"))
+    }
+
     private func source(_ relativePath: String) throws -> String {
         let root = try repositoryRoot()
         return try String(
