@@ -52,6 +52,29 @@ struct LumenMacArchitectureContractTests {
         #expect(release.contains("= 'arm64'"))
     }
 
+    @Test("Release tags stay on their reviewed GitFlow branch")
+    func releaseTagsRequireReviewedBranchAncestry() throws {
+        let release = try String(
+            contentsOf: repositoryRoot().appendingPathComponent(
+                ".github/workflows/release.yml"
+            ),
+            encoding: .utf8
+        )
+
+        #expect(release.contains("git fetch --no-tags origin develop"))
+        #expect(
+            release.contains(
+                #"git merge-base --is-ancestor "${GITHUB_SHA}" origin/develop"#
+            )
+        )
+        #expect(release.contains("git fetch --no-tags origin main"))
+        #expect(
+            release.contains(
+                #"git merge-base --is-ancestor "${GITHUB_SHA}" origin/main"#
+            )
+        )
+    }
+
     private func repositoryRoot() throws -> URL {
         var candidate = URL(fileURLWithPath: #filePath)
         while candidate.path != "/" {

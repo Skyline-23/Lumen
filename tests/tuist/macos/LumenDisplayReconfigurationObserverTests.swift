@@ -3,6 +3,29 @@ import XCTest
 @testable import LumenMacBridge
 
 final class LumenDisplayReconfigurationObserverTests: XCTestCase {
+    func testIdenticalVirtualDisplayModeDoesNotRequireReconfiguration() {
+        XCTAssertFalse(
+            LumenMacVirtualDisplayOwner.requiresReconfiguration(
+                currentLogicalWidth: 1_800,
+                currentLogicalHeight: 1_130,
+                currentRefreshRate: 120,
+                requestedLogicalWidth: 1_800,
+                requestedLogicalHeight: 1_130,
+                requestedRefreshRate: 120
+            )
+        )
+        XCTAssertTrue(
+            LumenMacVirtualDisplayOwner.requiresReconfiguration(
+                currentLogicalWidth: 1_800,
+                currentLogicalHeight: 1_130,
+                currentRefreshRate: 120,
+                requestedLogicalWidth: 1_800,
+                requestedLogicalHeight: 1_130,
+                requestedRefreshRate: 60
+            )
+        )
+    }
+
     func testOnlyPostConfigurationCallbackAdvancesDisplayGeneration() async throws {
         let hub = LumenDisplayReconfigurationEventHub()
 
