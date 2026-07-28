@@ -113,12 +113,13 @@ extension LumenMacWorkspaceSession {
     }
 
     private func prepareDesktopMirrorCapture() async throws {
-        try await executor.stageOwnedVirtualDisplayUnmirrored()
-        try await preparationFence()
         // Retain the exact ScreenCaptureKit display while it is still an
-        // independent output. Mirroring can collapse fresh enumeration to the
-        // physical sink even though the retained virtual display stays active.
+        // independent output and before any CoreGraphics topology transaction.
+        // Mirroring or staging can delay fresh enumeration even though the
+        // retained virtual display remains available to an existing handle.
         try await executor.prepareOwnedVirtualDisplayForCapture()
+        try await preparationFence()
+        try await executor.stageOwnedVirtualDisplayUnmirrored()
         try await preparationFence()
         try await materializeCaptureContent()
         // Isolated desktop mirrors already journal the preceding

@@ -30,12 +30,9 @@ final class LumenWorkspaceDesktopMirrorFailureTests: XCTestCase {
                     return false
                 })
                 XCTAssertFalse(events.contains(.mirror(89, 3)))
+                XCTAssertFalse(events.contains(.prepareDesktopMirror(89, 3)))
                 XCTAssertFalse(events.contains(.settle(89)))
                 XCTAssertFalse(events.contains(.stabilize(89)))
-                let stageIndex = try XCTUnwrap(
-                    events.firstIndex(of: .prepareDesktopMirror(89, 3))
-                )
-                XCTAssertLessThan(stageIndex, prefetchIndex)
                 XCTAssertLessThan(prefetchIndex, restoreIndex)
                 XCTAssertLessThan(restoreIndex, verifyIndex)
                 XCTAssertLessThan(verifyIndex, destroyIndex)

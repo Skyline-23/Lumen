@@ -32,15 +32,9 @@ final class LumenWorkspaceDesktopMirrorTests: XCTestCase {
                 1
             )
             XCTAssertFalse(events.contains(.capturePrepared(89)))
+            XCTAssertFalse(events.contains(.prepareDesktopMirror(89, 3)))
             XCTAssertFalse(events.contains(.mirror(89, 3)))
             XCTAssertFalse(events.contains(.stabilize(89)))
-            let stageIndex = try XCTUnwrap(
-                events.firstIndex(of: .prepareDesktopMirror(89, 3))
-            )
-            let prefetchIndex = try XCTUnwrap(
-                events.firstIndex(of: .prepareCapture(89))
-            )
-            XCTAssertLessThan(stageIndex, prefetchIndex)
         }
     }
 
@@ -70,10 +64,10 @@ private extension LumenWorkspaceDesktopMirrorTests {
         let captureReadyIndex = try XCTUnwrap(
             events.firstIndex(of: .capturePrepared(89))
         )
-        XCTAssertLessThan(configureIndex, stageIndex)
-        XCTAssertLessThan(stageIndex, prefetchIndex)
-        XCTAssertLessThan(prefetchIndex, mirrorIndex)
-        XCTAssertLessThan(captureReadyIndex, mirrorIndex)
+        XCTAssertLessThan(configureIndex, prefetchIndex)
+        XCTAssertLessThan(prefetchIndex, captureReadyIndex)
+        XCTAssertLessThan(captureReadyIndex, stageIndex)
+        XCTAssertLessThan(stageIndex, mirrorIndex)
         XCTAssertFalse(events.contains(.settle(89)))
         XCTAssertFalse(events.contains(.stabilize(89)))
         XCTAssertFalse(events.contains {
