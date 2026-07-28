@@ -21,6 +21,13 @@ pub(super) fn operation(method: ControlMethod, path: &str) -> Option<AuthHttpOpe
     }
 }
 
+pub(super) fn presents_device_authentication(request: &ControlRequest) -> bool {
+    !header_values(&request.headers, "authorization").is_empty()
+        || !header_values(&request.headers, "lumen-device-id").is_empty()
+        || !header_values(&request.headers, "cookie").is_empty()
+        || contains_authentication_query(&request.query)
+}
+
 impl ControlRouter {
     pub(super) fn dispatch_auth(
         &mut self,

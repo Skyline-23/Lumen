@@ -1610,6 +1610,15 @@ fn serves_the_authenticated_lumen_host_descriptor_from_rust_state() {
     assert!(payload["host"].get("sessionQuicPort").is_none());
     assert!(payload["host"].get("wakeOnLan").is_none());
     assert!(payload["host"].get("audioCapabilities").is_none());
+
+    let mut invalid_credentials = ControlRequest::new(ControlMethod::Get, "/api/discovery/host");
+    invalid_credentials.headers = vec![
+        ("authorization".into(), "Bearer invalid-token".into()),
+        ("lumen-device-id".into(), "invalid-device".into()),
+    ];
+    let invalid_response = router.dispatch(&invalid_credentials);
+    assert_eq!(invalid_response.status_code, 401);
+    assert!(body(&invalid_response).get("host").is_none());
 }
 
 #[test]
