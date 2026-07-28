@@ -31,6 +31,11 @@ fn project_lets_the_wdk_own_the_umdf_loader_entrypoint() {
         2
     );
     assert!(!project.contains("<PlatformToolset>v143</PlatformToolset>"));
+    assert!(project.contains(
+        "<PackageReference Include=\"Microsoft.Windows.WDK.x64\" Version=\"10.0.28000.1839\""
+    ));
+    assert!(project.contains("<Inf Include=\"package\\LumenIddCx.inf\""));
+    assert!(project.contains("<FilesToPackage Include=\"$(TargetPath)\""));
     assert_eq!(
         project.matches("<UMDF_VERSION_MINOR_REQUIRED>25").count(),
         2

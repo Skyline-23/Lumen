@@ -10,6 +10,9 @@
       <Platform>x64</Platform>
     </ProjectConfiguration>
   </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Windows.WDK.x64" Version="10.0.28000.1839" />
+  </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{E4506FD9-5EAC-4B95-B386-C87E0C32D829}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
@@ -82,7 +85,8 @@
     <ClCompile Include="shim\io.cpp" />
     <ClInclude Include="shim\driver.h" />
     <ClInclude Include="include\lumen_driver_abi.h" />
-    <None Include="package\LumenIddCx.inf" />
+    <Inf Include="package\LumenIddCx.inf" />
+    <FilesToPackage Include="$(TargetPath)" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>
