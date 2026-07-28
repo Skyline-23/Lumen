@@ -265,8 +265,6 @@ jobs:
           path-type: inherit
           update: true
           install: >-
-            git
-            make
             mingw-w64-ucrt-x86_64-MinHook
             mingw-w64-ucrt-x86_64-cmake
             mingw-w64-ucrt-x86_64-cppwinrt

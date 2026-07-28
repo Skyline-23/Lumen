@@ -21,20 +21,15 @@ jobs:
       - uses: actions/checkout@v7
         with:
           submodules: recursive
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: lumen-rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            lumen-rust-${{ runner.os }}-${{ runner.arch }}-
       - name: Install Rust
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
           rustup target add aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: "false"
+          cache-on-failure: "false"
       - name: Test workspace
         run: cargo test --locked --workspace
       - name: Lint workspace
@@ -91,23 +86,46 @@ jobs:
             CODE_SIGNING_ALLOWED=NO
 
   windows:
-    name: Windows compile check
+    name: Windows package check
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/cache@v4
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: lumen-rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            lumen-rust-${{ runner.os }}-${{ runner.arch }}-
+          submodules: recursive
       - name: Install Rust
         shell: pwsh
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
+          rustup target add x86_64-pc-windows-gnu
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: "false"
+          cache-on-failure: "false"
       - name: Check workspace
         run: cargo check --locked --workspace --all-targets --all-features
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          path-type: inherit
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-MinHook
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-cppwinrt
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-libvpl
+            mingw-w64-ucrt-x86_64-nasm
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-nsis
+            mingw-w64-ucrt-x86_64-opus
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-zlib
+      - name: Build unsigned NSIS installer
+        shell: msys2 {0}
+        env:
+          LUMEN_VERSION: 0.0.0
+          LUMEN_ARTIFACT_VERSION: 0.0.0
+        run: |
+          scripts/ci/build_windows_package.sh
+          test -s cmake-build-release/cpack_artifacts/Lumen-0.0.0-Windows-x86_64.exe
