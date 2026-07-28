@@ -82,6 +82,8 @@ fn production_driver_setup_uses_only_windows_device_install_apis() {
     assert!(source.contains("SetupDiCallClassInstaller"));
     assert!(source.contains("UpdateDriverForPlugAndPlayDevicesW"));
     assert!(source.contains("DiUninstallDriverW"));
+    assert!(source.contains("LoadLibraryW(L\"newdev.dll\")"));
+    assert!(source.contains("GetProcAddress(newdev, \"DiUninstallDriverW\")"));
     assert!(source.contains("CM_PROB_NEED_RESTART"));
     assert!(source.contains("ERROR_SUCCESS_REBOOT_REQUIRED"));
     assert!(windows_header < setupapi_header);

@@ -14,6 +14,7 @@
 
 namespace {
   constexpr wchar_t kHardwareId[] = L"Root\\LumenIddCx";
+  using DiUninstallDriverWFunction = BOOL(WINAPI *)(HWND, LPCWSTR, DWORD, PBOOL);
 
   struct DeviceState {
     DWORD count = 0;
@@ -21,6 +22,34 @@ namespace {
     ULONG problem = 0;
     DWORD error = ERROR_SUCCESS;
   };
+
+  BOOL uninstall_driver_package(
+    const std::wstring &inf_path,
+    BOOL *reboot_required
+  ) {
+    HMODULE newdev = LoadLibraryW(L"newdev.dll");
+    if (newdev == nullptr) {
+      return FALSE;
+    }
+    auto uninstall = reinterpret_cast<DiUninstallDriverWFunction>(
+      GetProcAddress(newdev, "DiUninstallDriverW")
+    );
+    if (uninstall == nullptr) {
+      FreeLibrary(newdev);
+      SetLastError(ERROR_PROC_NOT_FOUND);
+      return FALSE;
+    }
+    const BOOL result = uninstall(
+      nullptr,
+      inf_path.c_str(),
+      0,
+      reboot_required
+    );
+    const DWORD error = result ? ERROR_SUCCESS : GetLastError();
+    FreeLibrary(newdev);
+    SetLastError(error);
+    return result;
+  }
 
   std::wstring full_path(const wchar_t *path) {
     const DWORD required = GetFullPathNameW(path, 0, nullptr, nullptr);
@@ -213,7 +242,7 @@ namespace {
     remove_created_device(devices, device);
     SetupDiDestroyDeviceInfoList(devices);
     BOOL reboot_required = FALSE;
-    DiUninstallDriverW(nullptr, inf_path.c_str(), 0, &reboot_required);
+    uninstall_driver_package(inf_path, &reboot_required);
   }
 
   int emit_result(
@@ -297,7 +326,7 @@ namespace {
 
   int uninstall_driver(const std::wstring &inf_path) {
     BOOL reboot_required = FALSE;
-    if (!DiUninstallDriverW(nullptr, inf_path.c_str(), 0, &reboot_required)) {
+    if (!uninstall_driver_package(inf_path, &reboot_required)) {
       const DWORD error = GetLastError();
       if (error != ERROR_FILE_NOT_FOUND) {
         return emit_result(L"uninstall", L"error", error, 0);
