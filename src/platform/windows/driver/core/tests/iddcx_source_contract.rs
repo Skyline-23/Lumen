@@ -124,6 +124,11 @@ fn iddcx_device_uses_framework_default_synchronization() {
     assert!(driver.contains("file_attributes.SynchronizationScope = WdfSynchronizationScopeNone;"));
     assert!(driver.contains("file_attributes.ExecutionLevel = WdfExecutionLevelPassive;"));
     assert!(driver.contains("frame_work_item_config.AutomaticSerialization = FALSE;"));
+    let adapter = fs::read_to_string(driver_root().join("shim/adapter.cpp"))
+        .expect("adapter initialization source must exist");
+    assert!(adapter.contains("work_item_config.AutomaticSerialization = FALSE;"));
+    assert!(adapter.contains("LumenReportInitializationFailure("));
+    assert!(adapter.contains("L\"start_adapter_monitoring\""));
     assert!(driver.contains(
         "WdfDeviceInitSetFileObjectConfig(device_init, &file_config, &file_attributes);"
     ));

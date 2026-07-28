@@ -139,7 +139,7 @@ namespace {
   NTSTATUS start_adapter_monitoring(WDFDEVICE device, LumenDeviceContext *context) {
     WDF_WORKITEM_CONFIG work_item_config;
     WDF_WORKITEM_CONFIG_INIT(&work_item_config, LumenEvtAdapterChangeWorkItem);
-    work_item_config.AutomaticSerialization = TRUE;
+    work_item_config.AutomaticSerialization = FALSE;
     WDF_OBJECT_ATTRIBUTES attributes;
     WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(
       &attributes,
@@ -386,7 +386,10 @@ NTSTATUS LumenEvtIddCxAdapterInitFinished(
       0
     );
     context->core_state = failed.state;
-    return monitoring_status;
+    return LumenReportInitializationFailure(
+      L"start_adapter_monitoring",
+      monitoring_status
+    );
   }
   const auto initialized = dispatch_internal(
     context,
