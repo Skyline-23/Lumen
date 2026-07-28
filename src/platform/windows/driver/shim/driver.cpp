@@ -23,7 +23,7 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT driver_object, PUNICODE_STRING registry_path
 NTSTATUS LumenReportInitializationFailure(PCWSTR stage, NTSTATUS status) {
   HANDLE source = RegisterEventSourceW(nullptr, L"LumenIddCx");
   if (source != nullptr) {
-    const LPCWSTR strings[] = {stage};
+    LPCWSTR strings[] = {stage};
     ReportEventW(
       source,
       EVENTLOG_ERROR_TYPE,
@@ -148,9 +148,7 @@ NTSTATUS LumenEvtDeviceAdd(WDFDRIVER, PWDFDEVICE_INIT device_init) {
     return LumenReportInitializationFailure(L"WdfIoQueueCreate.Frame", status);
   }
   status = create_manual_queue(device, &context->event_queue);
-  return NT_SUCCESS(status)
-    ? status
-    : LumenReportInitializationFailure(L"WdfIoQueueCreate.Event", status);
+  return NT_SUCCESS(status) ? status : LumenReportInitializationFailure(L"WdfIoQueueCreate.Event", status);
 }
 
 NTSTATUS LumenEvtDeviceD0Entry(
@@ -159,9 +157,7 @@ NTSTATUS LumenEvtDeviceD0Entry(
 ) {
   auto *context = LumenGetDeviceContext(device);
   const NTSTATUS status = LumenInitializeAdapter(device, context);
-  return NT_SUCCESS(status)
-    ? status
-    : LumenReportInitializationFailure(L"LumenInitializeAdapter", status);
+  return NT_SUCCESS(status) ? status : LumenReportInitializationFailure(L"LumenInitializeAdapter", status);
 }
 
 void LumenEvtDeviceContextCleanup(WDFOBJECT object) {
