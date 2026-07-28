@@ -125,6 +125,21 @@ fn auth_fixture_defines_versioned_source_neutral_envelopes() {
         "forbidden"
     );
     assert_eq!(
+        fixture["conditionalRoutes"]["controlDiscoveryHost"]["withoutAuthentication"],
+        "public-host-identity"
+    );
+    assert_eq!(
+        fixture["conditionalRoutes"]["controlDiscoveryHost"]["withValidDeviceAuthentication"],
+        "authenticated-host-descriptor"
+    );
+    assert_eq!(
+        fixture["conditionalRoutes"]["controlDiscoveryHost"]["withInvalidDeviceAuthentication"],
+        "authentication-error"
+    );
+    assert!(fixture["protectedRoutes"]
+        .get("controlDiscoveryHost")
+        .is_none());
+    assert_eq!(
         fixture["accessRequestAuthentication"]["cookies"],
         "forbidden"
     );
