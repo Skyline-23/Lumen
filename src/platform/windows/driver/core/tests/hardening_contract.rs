@@ -17,18 +17,25 @@ fn inf_section<'a>(inf: &'a str, name: &str) -> &'a str {
 }
 
 #[test]
-fn device_security_is_installed_from_hardware_section() {
-    // Given: the UMDF package INF and its device security registration.
+fn device_security_and_isolation_are_installed_from_hardware_section() {
+    // Given: the UMDF package INF and its device-specific registrations.
     let inf = fs::read_to_string(driver_root().join("package/LumenIddCx.inf"))
         .expect("driver INF must exist");
 
     // When: the DDInstall and DDInstall.HW sections are resolved independently.
     let install = inf_section(&inf, "DriverInstall.NT");
     let hardware = inf_section(&inf, "DriverInstall.NT.HW");
+    let isolation = inf_section(&inf, "DriverIsolation");
 
-    // Then: DEVPKEY_Device_Security is owned only by the hardware section.
+    // Then: security, the non-pooled host group, and IndirectKmd are all written
+    // to the devnode hardware key rather than the package software key.
     assert!(hardware.contains("AddReg = DriverSecurity"));
+    assert!(hardware.contains("DriverIsolation"));
     assert!(!install.contains("DriverSecurity"));
+    assert!(!install.contains("DriverIsolation"));
+    assert!(isolation.contains("\"WUDF\",\"DeviceGroupId\""));
+    assert!(isolation.contains("\"UpperFilters\""));
+    assert!(isolation.contains("\"IndirectKmd\""));
 }
 
 #[test]
@@ -65,8 +72,9 @@ fn stop_encoder_synchronously_drains_wdf_access_unit_reads() {
     assert!(stop_gate < drain && drain < state_commit);
     let driver = fs::read_to_string(driver_root().join("shim/driver.cpp"))
         .expect("driver initialization source must exist");
-    assert!(driver.contains("WdfSynchronizationScopeDevice"));
-    assert!(driver.contains("WdfIoQueueDispatchSequential"));
+    assert!(driver.contains("iddcx_config.EvtIddCxDeviceIoControl"));
+    assert!(!driver.contains("WdfSynchronizationScopeDevice"));
+    assert!(!driver.contains("WDF_IO_QUEUE_CONFIG_INIT_DEFAULT_QUEUE"));
 }
 
 #[test]
@@ -123,7 +131,6 @@ fn windows_scripts_cleanup_every_failed_install_attempt() {
     assert!(test_script.contains("authorized-probes.jsonl"));
     assert!(test_script.contains("unauthorized-probes.jsonl"));
     assert!(test_script.contains("$qaSucceeded = $false"));
-    assert!(test_script.contains("if (-not $qaSucceeded -or -not $KeepInstalled)"));
     assert!(test_script.contains("Get-PfxCertificate -FilePath $certificate"));
     assert!(test_script.contains("ConvertFrom-Json"));
     assert!(test_script.contains("pnputil device query failed"));
@@ -144,9 +151,45 @@ fn windows_scripts_cleanup_every_failed_install_attempt() {
         .expect("test certificate lifetime must always clean up");
     assert!(build_try < build_certificate && build_certificate < build_finally);
     assert!(build_script.contains("Cert:\\CurrentUser\\My\\$($certificate.Thumbprint)"));
+    assert!(build_script.contains("Component.Microsoft.Windows.DriverKit.BuildTools"));
+    assert!(build_script.contains("Visual Studio Build Tools with Desktop C++ and WDK"));
+    assert!(build_script.contains("$msbuild $project /t:Restore"));
+    assert!(build_script.contains("Bin\\amd64\\MSBuild.exe"));
+    assert!(build_script.contains("$wdkNuGetTools"));
+    assert!(build_script.contains("stampinf.exe"));
+    assert!(build_script.contains("/p:InfToolArchitecture=Native64Bit"));
+    assert!(build_script.contains("$msbuild $project /m /t:Build"));
+    assert!(build_script.contains("\"/uselocaltime\""));
+    assert!(build_script
+        .contains("MSBuild with the Windows Driver Kit Build Tools component was not found."));
     assert!(install_script.contains("$installSucceeded = $false"));
+    assert!(install_script.contains("$installMutated = $false"));
     assert!(install_script.contains("HardwareID -Contains \"ROOT\\LumenIddCx\""));
+    assert!(install_script.contains("$installMutated = $true"));
+    assert!(install_script.contains("& pnputil.exe /add-driver $inf /install | Out-Host"));
+    let stage_driver = install_script
+        .find("& pnputil.exe /add-driver $inf /install | Out-Host")
+        .expect("the current package must always be staged and applied");
+    let create_missing_device = install_script
+        .find("if ($devices.Count -eq 0)")
+        .expect("a missing root device must be created");
+    assert!(
+        stage_driver < create_missing_device,
+        "an existing broken device must be upgraded before its health is polled"
+    );
+    assert!(install_script.contains("& $devcon install $inf \"Root\\LumenIddCx\" | Out-Host"));
+    assert!(install_script.contains("$devconExitCode -notin @(0, 1)"));
+    assert!(install_script.contains("DEVPKEY_Device_ProblemCode"));
+    assert!(install_script.contains("[int]$problem.Data -eq 14"));
+    assert!(install_script.contains("RestartRequired = $true"));
+    assert!(install_script.contains("RestartRequired = $false"));
+    assert!(install_script.contains("$devices[0].Status -ne \"OK\""));
+    assert!(test_script.contains("$installResult.RestartRequired"));
+    assert!(test_script.contains("$installCompleted = $true"));
+    assert!(test_script.contains("$restartRequired = [bool]$installResult.RestartRequired"));
+    assert!(test_script.contains("$KeepInstalled -and $installCompleted -and $restartRequired"));
     assert!(install_script.contains("finally {"));
+    assert!(install_script.contains("if (-not $installSucceeded -and $installMutated)"));
     assert!(install_script.contains("uninstall_windows_driver.ps1"));
     assert!(uninstall.contains("HardwareID -Contains \"ROOT\\LumenIddCx\""));
 }

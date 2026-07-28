@@ -17,6 +17,7 @@ install(FILES ${VIGEMBUS_INSTALLER}
 
 # Mandatory tools
 install(TARGETS lumen-service RUNTIME DESTINATION "tools" COMPONENT application)
+install(TARGETS lumen-driver-setup RUNTIME DESTINATION "tools" COMPONENT application)
 
 # Mandatory scripts
 install(DIRECTORY "${LUMEN_SOURCE_ASSETS_DIR}/windows/misc/service/"

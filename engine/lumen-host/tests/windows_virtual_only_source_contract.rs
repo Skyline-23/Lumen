@@ -151,7 +151,7 @@ fn cleanup_never_removes_an_unverified_orphan_monitor() {
         .split("void LumenEvtFileCleanup")
         .nth(1)
         .expect("driver file cleanup")
-        .split("void LumenEvtIoDeviceControl")
+        .split("void LumenEvtIddCxDeviceIoControl")
         .next()
         .expect("bounded driver file cleanup");
 

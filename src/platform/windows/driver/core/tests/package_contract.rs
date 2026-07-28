@@ -33,10 +33,63 @@ fn inf_is_system_only_and_process_isolated() {
 
     // Then: only LocalSystem can open the device and the UMDF host is not pooled.
     assert!(inf.contains("Security,,\"D:P(A;;GA;;;SY)\""));
+    assert!(inf.contains("UmdfLibraryVersion = 2.25.0"));
+    assert!(inf.contains("UmdfExtensions = IddCx0102"));
     assert!(inf.contains("UmdfHostProcessSharing = ProcessSharingDisabled"));
+    assert!(inf.contains("UmdfKernelModeClientPolicy = AllowKernelModeClients"));
+    assert!(!inf.contains("RejectKernelModeClients"));
+    assert!(!inf.contains("UmdfFileObjectPolicy"));
+    assert!(inf.contains("DriverCopy = 13"));
+    assert!(inf.contains("%ProviderName% = Models,NTamd64.10.0...17763"));
+    assert!(inf.contains("[Models.NTamd64.10.0...17763]"));
+    assert!(!inf.contains("[Models.NTamd64]\n"));
+    assert!(inf.contains("Include = WUDFRD.inf"));
+    assert!(inf.contains("Needs = WUDFRD.NT"));
+    assert!(inf.contains("Needs = WUDFRD.NT.HW"));
+    assert!(inf.contains("Needs = WUDFRD.NT.Services"));
+    assert!(inf.contains("ServiceBinary = %13%\\LumenIddCx.dll"));
+    assert!(!inf.contains("[WUDFRdService]"));
     assert!(!inf.contains(";;;WD)"));
     assert!(!inf.contains(";;;BU)"));
     assert!(!inf.contains(";;;BA)"));
+}
+
+#[test]
+fn production_driver_setup_uses_only_windows_device_install_apis() {
+    // Given: the production helper shipped inside the Windows installer.
+    let driver = driver_root();
+    let repo_root = driver
+        .ancestors()
+        .nth(4)
+        .expect("driver must live under src/platform/windows")
+        .to_path_buf();
+    let source = fs::read_to_string(repo_root.join("tools/lumen_driver_setup.cpp"))
+        .expect("first-party driver setup source must exist");
+    let cmake = fs::read_to_string(repo_root.join("tools/CMakeLists.txt"))
+        .expect("tools CMake project must exist");
+    let packaging = fs::read_to_string(repo_root.join("cmake/packaging/windows.cmake"))
+        .expect("Windows packaging project must exist");
+    let windows_header = source.find("#include <windows.h>").unwrap();
+    let setupapi_header = source.find("#include <setupapi.h>").unwrap();
+
+    // Then: root-device creation, update, health, and uninstall do not depend
+    // on a redistributable copy of the WDK's devcon utility.
+    assert!(cmake.contains("add_executable(lumen-driver-setup"));
+    assert!(cmake.contains("NewDev"));
+    assert!(cmake.contains("SetupAPI"));
+    assert!(packaging.contains("install(TARGETS lumen-driver-setup"));
+    assert!(source.contains("SetupDiCreateDeviceInfoW"));
+    assert!(source.contains("SetupDiCallClassInstaller"));
+    assert!(source.contains("UpdateDriverForPlugAndPlayDevicesW"));
+    assert!(source.contains("DiUninstallDriverW"));
+    assert!(source.contains("LoadLibraryW(L\"newdev.dll\")"));
+    assert!(source.contains("GetProcAddress(newdev, \"DiUninstallDriverW\")"));
+    assert!(source.contains("CM_PROB_NEED_RESTART"));
+    assert!(source.contains("ERROR_SUCCESS_REBOOT_REQUIRED"));
+    assert!(windows_header < setupapi_header);
+    assert!(source.contains("std::wcscmp(result, L\"error\") == 0"));
+    assert!(source.contains("(!reboot_required && remaining.count != 0)"));
+    assert!(!source.contains("devcon"));
 }
 
 #[test]
@@ -63,6 +116,7 @@ fn iddcx_client_config_registers_complete_callback_boundary() {
 
     // When: the client callback configuration is inspected.
     let required_callbacks = [
+        "EvtIddCxDeviceIoControl",
         "EvtIddCxParseMonitorDescription",
         "EvtIddCxAdapterInitFinished",
         "EvtIddCxAdapterCommitModes",
@@ -76,6 +130,8 @@ fn iddcx_client_config_registers_complete_callback_boundary() {
     for callback in required_callbacks {
         assert!(driver.contains(&format!("iddcx_config.{callback}")));
     }
+    assert!(!driver.contains("WDF_IO_QUEUE_CONFIG_INIT_DEFAULT_QUEUE"));
+    assert!(!driver.contains("WdfIoQueueCreate.Default"));
 }
 
 #[test]

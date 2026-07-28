@@ -16,16 +16,8 @@ if (-not (Test-Path $inf)) { throw "Missing $inf." }
 
 $certificateThumbprint = $null
 $installSucceeded = $false
+$installMutated = $false
 try {
-    if (Test-Path $certificate) {
-        $certificateThumbprint = (Get-PfxCertificate -FilePath $certificate).Thumbprint
-        Import-Certificate -FilePath $certificate -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
-        Import-Certificate -FilePath $certificate -CertStoreLocation Cert:\LocalMachine\TrustedPublisher | Out-Null
-    }
-
-    & pnputil.exe /add-driver $inf /install
-    if ($LASTEXITCODE -ne 0) { throw "pnputil failed to stage the driver package." }
-
     $devcon = Get-ChildItem (Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\Tools") -Filter devcon.exe -Recurse |
         Where-Object { $_.FullName -match '\\x64\\' } |
         Sort-Object FullName -Descending |
@@ -33,22 +25,72 @@ try {
     if (-not $devcon) { throw "WDK devcon.exe x64 was not found." }
 
     $devices = @(Get-PnpDevice -PresentOnly | Where-Object HardwareID -Contains "ROOT\LumenIddCx")
-    if ($devices.Count -eq 0) {
-        & $devcon install $inf "Root\LumenIddCx"
-        if ($LASTEXITCODE -ne 0) { throw "devcon failed to create the root-enumerated adapter." }
+    if ($devices.Count -gt 1) {
+        throw "Expected at most one existing Lumen IDD device; found $($devices.Count)."
     }
+
+    $installMutated = $true
+    if (Test-Path $certificate) {
+        $certificateThumbprint = (Get-PfxCertificate -FilePath $certificate).Thumbprint
+        Import-Certificate -FilePath $certificate -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
+        Import-Certificate -FilePath $certificate -CertStoreLocation Cert:\LocalMachine\TrustedPublisher | Out-Null
+    }
+
+    & pnputil.exe /add-driver $inf /install | Out-Host
+    $pnputilExitCode = $LASTEXITCODE
+    if ($pnputilExitCode -notin @(0, 3010)) {
+        throw "pnputil failed to stage and apply the driver package with code $pnputilExitCode."
+    }
+
+    if ($devices.Count -eq 0) {
+        & $devcon install $inf "Root\LumenIddCx" | Out-Host
+        $devconExitCode = $LASTEXITCODE
+        if ($devconExitCode -notin @(0, 1)) {
+            throw "devcon failed to create the root-enumerated adapter with code $devconExitCode."
+        }
+    }
+
     $devices = @()
+    $problem = $null
     for ($attempt = 0; $attempt -lt 60; $attempt++) {
         $devices = @(Get-PnpDevice -PresentOnly | Where-Object HardwareID -Contains "ROOT\LumenIddCx")
-        if ($devices.Count -eq 1) { break }
+        if ($devices.Count -eq 1) {
+            $problem = Get-PnpDeviceProperty `
+                -InstanceId $devices[0].InstanceId `
+                -KeyName "DEVPKEY_Device_ProblemCode"
+            if ($devices[0].Status -eq "OK" -and [int]$problem.Data -eq 0) {
+                break
+            }
+            if ([int]$problem.Data -eq 14) {
+                break
+            }
+        }
         Start-Sleep -Milliseconds 500
     }
     if ($devices.Count -ne 1) { throw "Expected exactly one Lumen IDD device after 30 seconds; found $($devices.Count)." }
+    if ($null -ne $problem -and [int]$problem.Data -eq 14) {
+        $installSucceeded = $true
+        [pscustomobject]@{
+            InstanceId = $devices[0].InstanceId
+            Status = $devices[0].Status
+            ProblemCode = [int]$problem.Data
+            RestartRequired = $true
+        }
+        return
+    }
+    if ($null -eq $problem -or $devices[0].Status -ne "OK" -or [int]$problem.Data -ne 0) {
+        throw "Lumen IDD did not start: status=$($devices[0].Status) problem=$($problem.Data)."
+    }
     $installSucceeded = $true
 }
 finally {
-    if (-not $installSucceeded) {
+    if (-not $installSucceeded -and $installMutated) {
         & (Join-Path $PSScriptRoot "uninstall_windows_driver.ps1") -CertificateThumbprint $certificateThumbprint
     }
 }
-$devices
+[pscustomobject]@{
+    InstanceId = $devices[0].InstanceId
+    Status = $devices[0].Status
+    ProblemCode = 0
+    RestartRequired = $false
+}

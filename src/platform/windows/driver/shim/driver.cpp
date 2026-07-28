@@ -1,9 +1,17 @@
 #include "driver.h"
 
+#include <evntprov.h>
+
 extern "C" DRIVER_INITIALIZE DriverEntry;
 
 namespace {
   const GUID kLumenDeviceInterface = LUMEN_DEVICE_INTERFACE_GUID_INIT;
+  const GUID kLumenInitializationTraceProvider = {
+    0x9e0fd0ea,
+    0xd1f4,
+    0x4aa5,
+    {0x8c, 0xf2, 0x72, 0x64, 0x21, 0xd1, 0x04, 0x9b}
+  };
 
   NTSTATUS create_manual_queue(WDFDEVICE device, WDFQUEUE *queue) {
     WDF_IO_QUEUE_CONFIG config;
@@ -17,12 +25,56 @@ namespace {
 NTSTATUS DriverEntry(PDRIVER_OBJECT driver_object, PUNICODE_STRING registry_path) {
   WDF_DRIVER_CONFIG config;
   WDF_DRIVER_CONFIG_INIT(&config, LumenEvtDeviceAdd);
-  return WdfDriverCreate(driver_object, registry_path, WDF_NO_OBJECT_ATTRIBUTES, &config, WDF_NO_HANDLE);
+  const NTSTATUS status = WdfDriverCreate(
+    driver_object,
+    registry_path,
+    WDF_NO_OBJECT_ATTRIBUTES,
+    &config,
+    WDF_NO_HANDLE
+  );
+  return NT_SUCCESS(status) ? status : LumenReportInitializationFailure(L"WdfDriverCreate", status);
+}
+
+NTSTATUS LumenReportInitializationFailure(PCWSTR stage, NTSTATUS status) {
+  REGHANDLE trace_handle = 0;
+  if (EventRegister(
+        &kLumenInitializationTraceProvider,
+        nullptr,
+        nullptr,
+        &trace_handle
+      ) == ERROR_SUCCESS) {
+    EventWriteString(trace_handle, 0, 0, stage);
+    EventUnregister(trace_handle);
+  }
+
+  HANDLE source = RegisterEventSourceW(nullptr, L"LumenIddCx");
+  if (source != nullptr) {
+    LPCWSTR strings[] = {stage};
+    ReportEventW(
+      source,
+      EVENTLOG_ERROR_TYPE,
+      0,
+      0x1000,
+      nullptr,
+      ARRAYSIZE(strings),
+      sizeof(status),
+      strings,
+      &status
+    );
+    DeregisterEventSource(source);
+  }
+  return status;
 }
 
 NTSTATUS LumenEvtDeviceAdd(WDFDRIVER, PWDFDEVICE_INIT device_init) {
+  WDF_PNPPOWER_EVENT_CALLBACKS power_callbacks;
+  WDF_PNPPOWER_EVENT_CALLBACKS_INIT(&power_callbacks);
+  power_callbacks.EvtDeviceD0Entry = LumenEvtDeviceD0Entry;
+  WdfDeviceInitSetPnpPowerEventCallbacks(device_init, &power_callbacks);
+
   IDD_CX_CLIENT_CONFIG iddcx_config;
   IDD_CX_CLIENT_CONFIG_INIT(&iddcx_config);
+  iddcx_config.EvtIddCxDeviceIoControl = LumenEvtIddCxDeviceIoControl;
   iddcx_config.EvtIddCxParseMonitorDescription = LumenEvtIddCxParseMonitorDescription;
   iddcx_config.EvtIddCxAdapterInitFinished = LumenEvtIddCxAdapterInitFinished;
   iddcx_config.EvtIddCxAdapterCommitModes = LumenEvtIddCxAdapterCommitModes;
@@ -32,12 +84,16 @@ NTSTATUS LumenEvtDeviceAdd(WDFDRIVER, PWDFDEVICE_INIT device_init) {
   iddcx_config.EvtIddCxMonitorUnassignSwapChain = LumenEvtIddCxMonitorUnassignSwapChain;
   NTSTATUS status = IddCxDeviceInitConfig(device_init, &iddcx_config);
   if (!NT_SUCCESS(status)) {
-    return status;
+    return LumenReportInitializationFailure(L"IddCxDeviceInitConfig", status);
   }
 
   WDF_FILEOBJECT_CONFIG file_config;
   WDF_FILEOBJECT_CONFIG_INIT(&file_config, LumenEvtDeviceFileCreate, WDF_NO_EVENT_CALLBACK, LumenEvtFileCleanup);
-  WdfDeviceInitSetFileObjectConfig(device_init, &file_config, WDF_NO_OBJECT_ATTRIBUTES);
+  WDF_OBJECT_ATTRIBUTES file_attributes;
+  WDF_OBJECT_ATTRIBUTES_INIT(&file_attributes);
+  file_attributes.SynchronizationScope = WdfSynchronizationScopeNone;
+  file_attributes.ExecutionLevel = WdfExecutionLevelPassive;
+  WdfDeviceInitSetFileObjectConfig(device_init, &file_config, &file_attributes);
 
   WDF_IO_TYPE_CONFIG io_config;
   WDF_IO_TYPE_CONFIG_INIT(&io_config);
@@ -47,14 +103,12 @@ NTSTATUS LumenEvtDeviceAdd(WDFDRIVER, PWDFDEVICE_INIT device_init) {
 
   WDF_OBJECT_ATTRIBUTES attributes;
   WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&attributes, LumenDeviceContext);
-  attributes.ExecutionLevel = WdfExecutionLevelPassive;
-  attributes.SynchronizationScope = WdfSynchronizationScopeDevice;
   attributes.EvtCleanupCallback = LumenEvtDeviceContextCleanup;
 
   WDFDEVICE device = nullptr;
   status = WdfDeviceCreate(&device_init, &attributes, &device);
   if (!NT_SUCCESS(status)) {
-    return status;
+    return LumenReportInitializationFailure(L"WdfDeviceCreate", status);
   }
 
   auto *context = LumenGetDeviceContext(device);
@@ -85,7 +139,7 @@ NTSTATUS LumenEvtDeviceAdd(WDFDRIVER, PWDFDEVICE_INIT device_init) {
   }
   WDF_WORKITEM_CONFIG frame_work_item_config;
   WDF_WORKITEM_CONFIG_INIT(&frame_work_item_config, LumenEvtFrameWorkItem);
-  frame_work_item_config.AutomaticSerialization = TRUE;
+  frame_work_item_config.AutomaticSerialization = FALSE;
   WDF_OBJECT_ATTRIBUTES frame_work_item_attributes;
   WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(
     &frame_work_item_attributes,
@@ -98,31 +152,35 @@ NTSTATUS LumenEvtDeviceAdd(WDFDRIVER, PWDFDEVICE_INIT device_init) {
     &context->frame_work_item
   );
   if (!NT_SUCCESS(status)) {
-    return status;
+    return LumenReportInitializationFailure(L"WdfWorkItemCreate.Frame", status);
   }
   LumenGetFrameWorkItemContext(context->frame_work_item)->device = device;
 
-  status = LumenInitializeAdapter(device, context);
-  if (!NT_SUCCESS(status)) {
-    return status;
-  }
   status = WdfDeviceCreateDeviceInterface(device, &kLumenDeviceInterface, nullptr);
   if (!NT_SUCCESS(status)) {
-    return status;
+    return LumenReportInitializationFailure(L"WdfDeviceCreateDeviceInterface", status);
   }
 
-  WDF_IO_QUEUE_CONFIG queue_config;
-  WDF_IO_QUEUE_CONFIG_INIT_DEFAULT_QUEUE(&queue_config, WdfIoQueueDispatchSequential);
-  queue_config.EvtIoDeviceControl = LumenEvtIoDeviceControl;
-  status = WdfIoQueueCreate(device, &queue_config, WDF_NO_OBJECT_ATTRIBUTES, WDF_NO_HANDLE);
-  if (!NT_SUCCESS(status)) {
-    return status;
-  }
   status = create_manual_queue(device, &context->frame_queue);
   if (!NT_SUCCESS(status)) {
-    return status;
+    return LumenReportInitializationFailure(L"WdfIoQueueCreate.Frame", status);
   }
-  return create_manual_queue(device, &context->event_queue);
+  status = create_manual_queue(device, &context->event_queue);
+  if (!NT_SUCCESS(status)) {
+    return LumenReportInitializationFailure(L"WdfIoQueueCreate.Event", status);
+  }
+
+  status = IddCxDeviceInitialize(device);
+  return NT_SUCCESS(status) ? status : LumenReportInitializationFailure(L"IddCxDeviceInitialize", status);
+}
+
+NTSTATUS LumenEvtDeviceD0Entry(
+  WDFDEVICE device,
+  WDF_POWER_DEVICE_STATE
+) {
+  auto *context = LumenGetDeviceContext(device);
+  const NTSTATUS status = LumenInitializeAdapter(device, context);
+  return NT_SUCCESS(status) ? status : LumenReportInitializationFailure(L"LumenInitializeAdapter", status);
 }
 
 void LumenEvtDeviceContextCleanup(WDFOBJECT object) {

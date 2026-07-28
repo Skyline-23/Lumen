@@ -22,8 +22,15 @@ if (Test-Path $certificate) {
     $certificateThumbprint = (Get-PfxCertificate -FilePath $certificate).Thumbprint
 }
 $qaSucceeded = $false
+$installCompleted = $false
+$restartRequired = $false
 try {
-    & (Join-Path $PSScriptRoot "install_windows_driver.ps1") -PackageDirectory $PackageDirectory
+    $installResult = & (Join-Path $PSScriptRoot "install_windows_driver.ps1") -PackageDirectory $PackageDirectory
+    $installCompleted = $true
+    $restartRequired = [bool]$installResult.RestartRequired
+    if ($restartRequired) {
+        throw "Lumen IDD installation requires a Windows restart before device QA."
+    }
 
     $unauthorizedReceipt = Join-Path $EvidenceDirectory "unauthorized-probes.jsonl"
     Remove-Item $unauthorizedReceipt -Force -ErrorAction SilentlyContinue
@@ -86,7 +93,8 @@ try {
     $qaSucceeded = $true
 }
 finally {
-    if (-not $qaSucceeded -or -not $KeepInstalled) {
+    $preservePendingRestart = $KeepInstalled -and $installCompleted -and $restartRequired
+    if ((-not $qaSucceeded -and -not $preservePendingRestart) -or ($qaSucceeded -and -not $KeepInstalled)) {
         & (Join-Path $PSScriptRoot "uninstall_windows_driver.ps1") -CertificateThumbprint $certificateThumbprint
     }
 }

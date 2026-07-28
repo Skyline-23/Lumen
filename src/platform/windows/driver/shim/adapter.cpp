@@ -306,11 +306,7 @@ LUID LumenUnpackLuid(uint64_t packed) {
 }
 
 NTSTATUS LumenInitializeAdapter(WDFDEVICE device, LumenDeviceContext *context) {
-  NTSTATUS status = IddCxDeviceInitialize(device);
-  if (!NT_SUCCESS(status)) {
-    return status;
-  }
-  status = record_os_features(context);
+  NTSTATUS status = record_os_features(context);
   if (!NT_SUCCESS(status)) {
     return status;
   }

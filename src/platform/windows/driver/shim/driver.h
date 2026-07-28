@@ -72,10 +72,11 @@ WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(
 );
 
 EVT_WDF_DRIVER_DEVICE_ADD LumenEvtDeviceAdd;
+EVT_WDF_DEVICE_D0_ENTRY LumenEvtDeviceD0Entry;
 EVT_WDF_OBJECT_CONTEXT_CLEANUP LumenEvtDeviceContextCleanup;
 EVT_WDF_DEVICE_FILE_CREATE LumenEvtDeviceFileCreate;
 EVT_WDF_FILE_CLEANUP LumenEvtFileCleanup;
-EVT_WDF_IO_QUEUE_IO_DEVICE_CONTROL LumenEvtIoDeviceControl;
+EVT_IDD_CX_DEVICE_IO_CONTROL LumenEvtIddCxDeviceIoControl;
 EVT_WDF_IO_QUEUE_IO_CANCELED_ON_QUEUE LumenEvtIoCancelledOnQueue;
 EVT_IDD_CX_PARSE_MONITOR_DESCRIPTION LumenEvtIddCxParseMonitorDescription;
 EVT_IDD_CX_ADAPTER_INIT_FINISHED LumenEvtIddCxAdapterInitFinished;
@@ -90,6 +91,7 @@ EVT_WDF_WORKITEM LumenEvtFrameWorkItem;
 uint64_t LumenOwnerId(WDFFILEOBJECT file_object);
 LumenDriverCoreRequest LumenRequest(uint32_t operation, uint64_t owner_id, uint64_t generation);
 NTSTATUS LumenStatusToNtStatus(uint32_t status);
+NTSTATUS LumenReportInitializationFailure(PCWSTR stage, NTSTATUS status);
 NTSTATUS LumenInitializeAdapter(WDFDEVICE device, LumenDeviceContext *context);
 void LumenStopAdapterMonitoring(LumenDeviceContext *context);
 NTSTATUS LumenCompletePendingEvent(LumenDeviceContext *context);

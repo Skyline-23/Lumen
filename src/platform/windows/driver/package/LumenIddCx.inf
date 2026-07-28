@@ -4,7 +4,7 @@ Class = Display
 ClassGuid = {4d36e968-e325-11ce-bfc1-08002be10318}
 Provider = %ProviderName%
 CatalogFile = LumenIddCx.cat
-DriverVer = 07/15/2026,0.1.0.0
+DriverVer = 07/29/2026,0.1.0.6
 PnpLockdown = 1
 
 [DestinationDirs]
@@ -17,17 +17,20 @@ DriverCopy = 13
 LumenIddCx.dll = 1
 
 [Manufacturer]
-%ProviderName% = Models,NTamd64
+%ProviderName% = Models,NTamd64.10.0...17763
 
-[Models.NTamd64]
+[Models.NTamd64.10.0...17763]
 %DeviceDescription% = DriverInstall,Root\LumenIddCx
 
 [DriverInstall.NT]
+Include = WUDFRD.inf
+Needs = WUDFRD.NT
 CopyFiles = DriverCopy
-AddReg = DriverIsolation
 
 [DriverInstall.NT.HW]
-AddReg = DriverSecurity
+Include = WUDFRD.inf
+Needs = WUDFRD.NT.HW
+AddReg = DriverSecurity,DriverIsolation
 
 [DriverCopy]
 LumenIddCx.dll
@@ -36,29 +39,23 @@ LumenIddCx.dll
 HKR,,Security,,"D:P(A;;GA;;;SY)"
 
 [DriverIsolation]
+HKR,,"UpperFilters",0x00010000,"IndirectKmd"
 HKR,"WUDF","DeviceGroupId",0x00000000,"LumenIddCx"
 
 [DriverInstall.NT.Services]
-AddService = WUDFRd,0x000001fa,WUDFRdService
-
-[WUDFRdService]
-DisplayName = %WUDFRdDisplayName%
-ServiceType = 1
-StartType = 3
-ErrorControl = 1
-ServiceBinary = %12%\WUDFRd.sys
+Include = WUDFRD.inf
+Needs = WUDFRD.NT.Services
 
 [DriverInstall.NT.Wdf]
 UmdfService = LumenIddCx,LumenIddCxService
 UmdfServiceOrder = LumenIddCx
 UmdfHostProcessSharing = ProcessSharingDisabled
-UmdfFileObjectPolicy = RejectNullAndUnknownFileObjects
-UmdfKernelModeClientPolicy = RejectKernelModeClients
+UmdfKernelModeClientPolicy = AllowKernelModeClients
 
 [LumenIddCxService]
-UmdfLibraryVersion = 2.33.0
+UmdfLibraryVersion = 2.25.0
 ServiceBinary = %13%\LumenIddCx.dll
-UmdfExtensions = IddCx0100
+UmdfExtensions = IddCx0102
 
 [Strings]
 ProviderName = "Lumen"
