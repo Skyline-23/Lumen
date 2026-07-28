@@ -150,6 +150,10 @@ fn windows_scripts_cleanup_every_failed_install_attempt() {
         .expect("test certificate lifetime must always clean up");
     assert!(build_try < build_certificate && build_certificate < build_finally);
     assert!(build_script.contains("Cert:\\CurrentUser\\My\\$($certificate.Thumbprint)"));
+    assert!(build_script.contains("Component.Microsoft.Windows.DriverKit.BuildTools"));
+    assert!(build_script.contains(
+        "MSBuild with the Windows Driver Kit Build Tools component was not found."
+    ));
     assert!(install_script.contains("$installSucceeded = $false"));
     assert!(install_script.contains("$installMutated = $false"));
     assert!(install_script.contains("HardwareID -Contains \"ROOT\\LumenIddCx\""));

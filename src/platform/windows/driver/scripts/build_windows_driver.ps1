@@ -28,9 +28,11 @@ $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer
 if (-not (Test-Path $vswhere)) {
     throw "vswhere.exe was not found; install Visual Studio 2022 with Desktop C++ and WDK."
 }
-$msbuild = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find MSBuild\**\Bin\MSBuild.exe | Select-Object -First 1
+$msbuild = & $vswhere -latest -products * `
+    -requires Microsoft.Component.MSBuild Component.Microsoft.Windows.DriverKit.BuildTools `
+    -find MSBuild\**\Bin\MSBuild.exe | Select-Object -First 1
 if (-not $msbuild) {
-    throw "MSBuild was not found in the latest Visual Studio installation."
+    throw "MSBuild with the Windows Driver Kit Build Tools component was not found."
 }
 
 $kitsBin = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\bin"
