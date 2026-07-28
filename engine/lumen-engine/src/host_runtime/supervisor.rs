@@ -138,6 +138,73 @@ fn wait_for_restart(shared: &SharedSupervisor, delay: Duration) -> bool {
     !state.stop_requested
 }
 
+enum RestartWorkerResult {
+    StopRequested,
+    Started {
+        child: Child,
+        worker_pid: u32,
+        log_path: PathBuf,
+    },
+    Retry,
+}
+
+fn restart_worker(shared: &SharedSupervisor) -> RestartWorkerResult {
+    // Keep restart admission, process creation, and PID publication under the
+    // same lock. Otherwise stop() can observe worker_pid == None after the
+    // restart delay, request shutdown, and then have the watcher publish a new
+    // worker that nobody terminates.
+    let mut state = lock(&shared.state);
+    if state.stop_requested {
+        return RestartWorkerResult::StopRequested;
+    }
+
+    let command = match request_command(
+        &mut state.engine,
+        HostRuntimeEngine::request_start,
+        LumenHostRuntimeCommandKind::Start,
+    ) {
+        Ok(command) => command,
+        Err(status) => {
+            state.last_error = format!(
+                "Rust runtime restart request failed with status {}.",
+                status as u32
+            );
+            return RestartWorkerResult::Retry;
+        }
+    };
+    let worker_path = state.worker_path.clone();
+    let arguments = state.arguments.clone();
+    let log_path = state.log_path.clone();
+
+    match spawn_worker(&worker_path, &arguments, &log_path) {
+        Ok(replacement) => {
+            let worker_pid = replacement.id();
+            let completion = state.engine.complete_command(command, true);
+            if completion != LumenEngineStatus::Ok {
+                state.last_error = format!(
+                    "Rust runtime restart completion failed with status {}.",
+                    completion as u32
+                );
+                let _ = signal_process(worker_pid, WorkerSignal::Terminate);
+                return RestartWorkerResult::Retry;
+            }
+            state.worker_pid = Some(worker_pid);
+            state.last_error.clear();
+            RestartWorkerResult::Started {
+                child: replacement,
+                worker_pid,
+                log_path,
+            }
+        }
+        Err(error) => {
+            let _ = state.engine.complete_command(command, false);
+            state.last_error = error.clone();
+            append_log(&log_path, &error);
+            RestartWorkerResult::Retry
+        }
+    }
+}
+
 fn watch_worker(shared: Arc<SharedSupervisor>, mut child: Child) {
     let mut restart_attempt = 0_u32;
     let mut started_at = Instant::now();
@@ -190,62 +257,19 @@ fn watch_worker(shared: Arc<SharedSupervisor>, mut child: Child) {
                 return;
             }
 
-            let (command, worker_path, arguments, current_log_path) = {
-                let mut state = lock(&shared.state);
-                let command = match request_command(
-                    &mut state.engine,
-                    HostRuntimeEngine::request_start,
-                    LumenHostRuntimeCommandKind::Start,
-                ) {
-                    Ok(command) => command,
-                    Err(status) => {
-                        state.last_error = format!(
-                            "Rust runtime restart request failed with status {}.",
-                            status as u32
-                        );
-                        restart_attempt = restart_attempt.saturating_add(1);
-                        continue;
-                    }
-                };
-                (
-                    command,
-                    state.worker_path.clone(),
-                    state.arguments.clone(),
-                    state.log_path.clone(),
-                )
-            };
-
-            match spawn_worker(&worker_path, &arguments, &current_log_path) {
-                Ok(replacement) => {
-                    let replacement_pid = replacement.id();
-                    {
-                        let mut state = lock(&shared.state);
-                        let completion = state.engine.complete_command(command, true);
-                        if completion != LumenEngineStatus::Ok {
-                            state.last_error = format!(
-                                "Rust runtime restart completion failed with status {}.",
-                                completion as u32
-                            );
-                            let _ = signal_process(replacement_pid, WorkerSignal::Terminate);
-                            restart_attempt = restart_attempt.saturating_add(1);
-                            continue;
-                        }
-                        state.worker_pid = Some(replacement_pid);
-                        state.last_error.clear();
-                    }
-                    append_log(
-                        &current_log_path,
-                        &format!("worker restarted pid={replacement_pid}"),
-                    );
+            match restart_worker(&shared) {
+                RestartWorkerResult::StopRequested => return,
+                RestartWorkerResult::Started {
+                    child: replacement,
+                    worker_pid,
+                    log_path,
+                } => {
+                    append_log(&log_path, &format!("worker restarted pid={worker_pid}"));
                     child = replacement;
                     started_at = Instant::now();
                     break;
                 }
-                Err(error) => {
-                    let mut state = lock(&shared.state);
-                    let _ = state.engine.complete_command(command, false);
-                    state.last_error = error.clone();
-                    append_log(&current_log_path, &error);
+                RestartWorkerResult::Retry => {
                     restart_attempt = restart_attempt.saturating_add(1);
                 }
             }
@@ -537,5 +561,39 @@ mod tests {
         assert_eq!(status, LumenEngineStatus::CommandFailed);
         assert_eq!(supervisor.state(), LumenHostRuntimeState::Failed);
         assert!(supervisor.last_error().contains("spawn failed"));
+    }
+
+    #[test]
+    fn restart_admission_refuses_to_spawn_after_stop_is_requested() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let marker = directory.path().join("replacement-started");
+        let shared = SharedSupervisor::default();
+        {
+            let mut state = lock(&shared.state);
+            let start = request_command(
+                &mut state.engine,
+                HostRuntimeEngine::request_start,
+                LumenHostRuntimeCommandKind::Start,
+            )
+            .expect("initial start command");
+            assert_eq!(
+                state.engine.complete_command(start, true),
+                LumenEngineStatus::Ok
+            );
+            assert_eq!(state.engine.report_exit(0), LumenEngineStatus::Ok);
+            state.worker_path = PathBuf::from("/bin/sh");
+            state.arguments = vec![
+                "-c".to_owned(),
+                format!("touch '{}'; while :; do sleep 1; done", marker.display()),
+            ];
+            state.log_path = directory.path().join("worker.log");
+            state.stop_requested = true;
+        }
+
+        assert!(matches!(
+            restart_worker(&shared),
+            RestartWorkerResult::StopRequested
+        ));
+        assert!(!marker.exists());
     }
 }
