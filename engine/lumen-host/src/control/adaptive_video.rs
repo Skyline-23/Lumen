@@ -108,6 +108,13 @@ impl AdaptiveVideoDeliveryController {
         } else {
             (audio_severity, FeedbackStream::Audio)
         };
+        let severity = if severity == CongestionSeverity::Clean
+            && video_severity != CongestionSeverity::Clean
+        {
+            CongestionSeverity::Neutral
+        } else {
+            severity
+        };
         let source = match severity {
             CongestionSeverity::Neutral | CongestionSeverity::Clean => CongestionSource::None,
             CongestionSeverity::Transport | CongestionSeverity::Severe => match stream {
@@ -319,6 +326,29 @@ mod tests {
 
         for _ in 0..AdaptiveVideoDeliveryController::CLEAN_WINDOWS_BEFORE_INCREASE {
             let decision = controller.observe_window(processing_only_video, processing_only_audio);
+            assert!(!decision.changed);
+            assert_eq!(decision.wire_budget_kbps, congested.wire_budget_kbps);
+            assert_eq!(decision.fec_percentage, congested.fec_percentage);
+            assert_eq!(decision.congestion_source, CongestionSource::None);
+        }
+    }
+
+    #[test]
+    fn clean_audio_cannot_probe_up_without_clean_video_transport() {
+        let mut controller = AdaptiveVideoDeliveryController::new(100_000, 80_000, 10, 3);
+        let congested = controller.observe(MediaFeedbackSample {
+            expected_datagrams: 100,
+            received_datagrams: 90,
+            ..clean(FeedbackStream::Video)
+        });
+        let neutral_video = MediaFeedbackSample {
+            expected_datagrams: 0,
+            received_datagrams: 0,
+            ..clean(FeedbackStream::Video)
+        };
+
+        for _ in 0..AdaptiveVideoDeliveryController::CLEAN_WINDOWS_BEFORE_INCREASE {
+            let decision = controller.observe_window(neutral_video, clean(FeedbackStream::Audio));
             assert!(!decision.changed);
             assert_eq!(decision.wire_budget_kbps, congested.wire_budget_kbps);
             assert_eq!(decision.fec_percentage, congested.fec_percentage);
