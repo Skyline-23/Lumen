@@ -484,6 +484,8 @@ pub struct MediaFeedback {
     pub presented_frames: u32,
     #[prost(uint32, tag = "16")]
     pub decoder_drops: u32,
+    #[prost(uint64, tag = "17")]
+    pub feedback_window_id: u64,
 }
 
 #[derive(Clone, PartialEq, Message)]

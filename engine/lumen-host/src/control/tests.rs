@@ -1170,10 +1170,26 @@ fn media_feedback_uses_audio_pressure_to_adapt_video_delivery_without_reducing_c
         presentation_drops: 2,
         window_milliseconds: 250,
         first_datagram_sequence: 1,
+        feedback_window_id: 1,
+        ..MediaFeedback::default()
+    };
+    assert_eq!(
+        router
+            .observe_native_media_feedback(&audio_feedback, context.session_epoch)
+            .unwrap(),
+        NativeMediaFeedbackDisposition::Unchanged
+    );
+    let clean_video_feedback = MediaFeedback {
+        stream_id: plan.video_stream_id,
+        highest_datagram_sequence: 3,
+        received_datagrams: 3,
+        window_milliseconds: 250,
+        first_datagram_sequence: 1,
+        feedback_window_id: 1,
         ..MediaFeedback::default()
     };
     let audio_decision = router
-        .observe_native_media_feedback(&audio_feedback, context.session_epoch)
+        .observe_native_media_feedback(&clean_video_feedback, context.session_epoch)
         .unwrap();
     let NativeMediaFeedbackDisposition::Applied(audio_decision) = audio_decision else {
         panic!("audio playback pressure must reduce the video budget");
@@ -1197,10 +1213,26 @@ fn media_feedback_uses_audio_pressure_to_adapt_video_delivery_without_reducing_c
         presentation_drops: 1,
         window_milliseconds: 250,
         first_datagram_sequence: 1,
+        feedback_window_id: 2,
+        ..MediaFeedback::default()
+    };
+    assert_eq!(
+        router
+            .observe_native_media_feedback(&congested_feedback, context.session_epoch)
+            .unwrap(),
+        NativeMediaFeedbackDisposition::Unchanged
+    );
+    let clean_audio_feedback = MediaFeedback {
+        stream_id: plan.audio_stream_id,
+        highest_datagram_sequence: 3,
+        received_datagrams: 3,
+        window_milliseconds: 250,
+        first_datagram_sequence: 1,
+        feedback_window_id: 2,
         ..MediaFeedback::default()
     };
     let video_decision = router
-        .observe_native_media_feedback(&congested_feedback, context.session_epoch)
+        .observe_native_media_feedback(&clean_audio_feedback, context.session_epoch)
         .unwrap();
     assert!(matches!(
         video_decision,
@@ -1244,6 +1276,53 @@ fn media_feedback_uses_audio_pressure_to_adapt_video_delivery_without_reducing_c
     assert_eq!(
         router.observe_native_media_feedback(&reversed_range, context.session_epoch),
         Err(NativeMediaFeedbackRejection::InvalidSequenceRange)
+    );
+}
+
+#[test]
+fn media_feedback_requires_one_sample_per_stream_in_each_exact_window() {
+    let platform = Arc::new(RecordingPlatformSessionControl::default());
+    let (_root, mut router, context, plan) = started_native_router(platform);
+    let video = MediaFeedback {
+        stream_id: plan.video_stream_id,
+        window_milliseconds: 250,
+        feedback_window_id: 1,
+        ..MediaFeedback::default()
+    };
+
+    assert_eq!(
+        router
+            .observe_native_media_feedback(&video, context.session_epoch)
+            .unwrap(),
+        NativeMediaFeedbackDisposition::Unchanged
+    );
+    assert_eq!(
+        router.observe_native_media_feedback(&video, context.session_epoch),
+        Err(NativeMediaFeedbackRejection::DuplicateFeedbackStream)
+    );
+    let future_audio = MediaFeedback {
+        stream_id: plan.audio_stream_id,
+        window_milliseconds: 250,
+        feedback_window_id: 2,
+        ..MediaFeedback::default()
+    };
+    assert_eq!(
+        router.observe_native_media_feedback(&future_audio, context.session_epoch),
+        Err(NativeMediaFeedbackRejection::FeedbackWindowMismatch)
+    );
+    let audio = MediaFeedback {
+        feedback_window_id: 1,
+        ..future_audio
+    };
+    assert_eq!(
+        router
+            .observe_native_media_feedback(&audio, context.session_epoch)
+            .unwrap(),
+        NativeMediaFeedbackDisposition::Unchanged
+    );
+    assert_eq!(
+        router.observe_native_media_feedback(&video, context.session_epoch),
+        Err(NativeMediaFeedbackRejection::FeedbackWindowMismatch)
     );
 }
 

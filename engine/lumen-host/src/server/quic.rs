@@ -1066,8 +1066,9 @@ async fn accept_native_telemetry_stream(
                 }
                 if !logged_audio_feedback {
                     eprintln!(
-                        "Lumen native QUIC stage=media-feedback-accepted-audio session-epoch={session_epoch} telemetry-sequence={} stream-id={} first-sequence={} highest-sequence={} received-datagrams={} recovered-shards={} unrecoverable-objects={} late-objects={} reordered-datagrams={} jitter-us={} decoder-queue-depth={} presentation-drops={} window-ms={}",
+                        "Lumen native QUIC stage=media-feedback-accepted-audio session-epoch={session_epoch} telemetry-sequence={} feedback-window-id={} stream-id={} first-sequence={} highest-sequence={} received-datagrams={} recovered-shards={} unrecoverable-objects={} late-objects={} reordered-datagrams={} jitter-us={} decoder-queue-depth={} presentation-drops={} window-ms={}",
                         envelope.sequence,
+                        feedback.feedback_window_id,
                         feedback.stream_id,
                         feedback.first_datagram_sequence,
                         feedback.highest_datagram_sequence,
@@ -1086,9 +1087,10 @@ async fn accept_native_telemetry_stream(
             }
             Err(reason) => {
                 return Err(format!(
-                    "QUIC media feedback was rejected reason={} telemetry-sequence={} stream-id={} first-sequence={} highest-sequence={} received-datagrams={} recovered-shards={} unrecoverable-objects={} late-objects={} reordered-datagrams={} jitter-us={} decoder-queue-depth={} presentation-drops={} window-ms={}",
+                    "QUIC media feedback was rejected reason={} telemetry-sequence={} feedback-window-id={} stream-id={} first-sequence={} highest-sequence={} received-datagrams={} recovered-shards={} unrecoverable-objects={} late-objects={} reordered-datagrams={} jitter-us={} decoder-queue-depth={} presentation-drops={} window-ms={}",
                     reason.code(),
                     envelope.sequence,
+                    feedback.feedback_window_id,
                     feedback.stream_id,
                     feedback.first_datagram_sequence,
                     feedback.highest_datagram_sequence,
@@ -2061,6 +2063,7 @@ mod tests {
                     received_datagrams: 3,
                     window_milliseconds: 250,
                     first_datagram_sequence: 1,
+                    feedback_window_id: 1,
                     ..MediaFeedback::default()
                 },
             )),
@@ -2079,6 +2082,7 @@ mod tests {
                     unrecoverable_objects: 100,
                     window_milliseconds: 250,
                     first_datagram_sequence: 1,
+                    feedback_window_id: 1,
                     ..MediaFeedback::default()
                 },
             )),

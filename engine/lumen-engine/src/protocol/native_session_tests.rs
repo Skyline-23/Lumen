@@ -364,6 +364,7 @@ fn bounded_client_telemetry_round_trips_media_feedback_on_its_own_lane() {
                 decoded_frames: 29,
                 presented_frames: 28,
                 decoder_drops: 1,
+                feedback_window_id: 7,
             },
         )),
     };
