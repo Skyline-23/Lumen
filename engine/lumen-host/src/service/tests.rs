@@ -102,8 +102,25 @@ fn arguments(root: &std::path::Path, enrollment_enabled: bool) -> HostArguments 
                 "credentials_file={}",
                 root.join("lumen_state.json").display()
             ))
+        } else if value.starts_with("file_state=") {
+            Some(format!(
+                "file_state={}",
+                root.join("lumen_state.json").display()
+            ))
         } else if value.starts_with("file_apps=") {
             Some(format!("file_apps={}", root.join("apps.json").display()))
+        } else if value.starts_with("log_path=") {
+            Some(format!("log_path={}", root.join("lumen.log").display()))
+        } else if value.starts_with("pkey=") {
+            Some(format!(
+                "pkey={}",
+                root.join("credentials/cakey.pem").display()
+            ))
+        } else if value.starts_with("cert=") {
+            Some(format!(
+                "cert={}",
+                root.join("credentials/cacert.pem").display()
+            ))
         } else if value.starts_with("device_enrollment_enabled=") {
             Some(format!("device_enrollment_enabled={enrollment_enabled}"))
         } else if value.starts_with("enable_discovery=") {
