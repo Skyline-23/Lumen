@@ -528,10 +528,7 @@ impl ControlRouter {
         if feedback.first_datagram_sequence > feedback.highest_datagram_sequence {
             return Err(NativeMediaFeedbackRejection::InvalidSequenceRange);
         }
-        let expected_datagrams = feedback
-            .highest_datagram_sequence
-            .saturating_sub(feedback.first_datagram_sequence)
-            .saturating_add(1);
+        let expected_datagrams = native_media_feedback_expected_datagrams(feedback);
         let decision = pending.adaptive_video.observe(MediaFeedbackSample {
             stream: if feedback.stream_id == pending.plan.audio_stream_id {
                 FeedbackStream::Audio
@@ -1195,6 +1192,19 @@ impl ControlRouter {
             session_offer: native_session_offer(plan)?,
         })
     }
+}
+
+pub(super) fn native_media_feedback_expected_datagrams(feedback: &MediaFeedback) -> u32 {
+    if feedback.received_datagrams == 0
+        && feedback.first_datagram_sequence == 0
+        && feedback.highest_datagram_sequence == 0
+    {
+        return 0;
+    }
+    feedback
+        .highest_datagram_sequence
+        .saturating_sub(feedback.first_datagram_sequence)
+        .saturating_add(1)
 }
 
 fn native_platform_session_plan(

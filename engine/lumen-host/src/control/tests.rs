@@ -1,4 +1,6 @@
-use super::native_session::NativeMediaFeedbackRejection;
+use super::native_session::{
+    native_media_feedback_expected_datagrams, NativeMediaFeedbackRejection,
+};
 use super::*;
 use crate::{
     HostAuthorities, HostAuthorityPaths, PlatformApplicationPlan, PlatformControlEvent,
@@ -1242,6 +1244,32 @@ fn media_feedback_uses_audio_pressure_to_adapt_video_delivery_without_reducing_c
     assert_eq!(
         router.observe_native_media_feedback(&reversed_range, context.session_epoch),
         Err(NativeMediaFeedbackRejection::InvalidSequenceRange)
+    );
+}
+
+#[test]
+fn processing_only_media_feedback_has_no_phantom_datagram_loss() {
+    let processing_only = MediaFeedback {
+        stream_id: 1,
+        window_milliseconds: 250,
+        decoder_submissions: 3,
+        decoded_frames: 3,
+        presented_frames: 2,
+        ..MediaFeedback::default()
+    };
+
+    assert_eq!(
+        native_media_feedback_expected_datagrams(&processing_only),
+        0
+    );
+    assert_eq!(
+        native_media_feedback_expected_datagrams(&MediaFeedback {
+            first_datagram_sequence: 10,
+            highest_datagram_sequence: 19,
+            received_datagrams: 8,
+            ..MediaFeedback::default()
+        }),
+        10
     );
 }
 
