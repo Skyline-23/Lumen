@@ -54,6 +54,7 @@ pub(crate) struct AdaptiveVideoDeliveryController {
 }
 
 impl AdaptiveVideoDeliveryController {
+    const MINIMUM_WIRE_BUDGET_KBPS: u32 = 2_000;
     const MINIMUM_FEC_PERCENTAGE: u16 = 5;
     const MAXIMUM_FEC_PERCENTAGE: u16 = 30;
     const CLEAN_WINDOWS_BEFORE_INCREASE: u8 = 8;
@@ -67,7 +68,7 @@ impl AdaptiveVideoDeliveryController {
         maximum_decoder_queue_depth: u32,
     ) -> Self {
         let ceiling_wire_kbps = ceiling_wire_kbps.max(1);
-        let floor_wire_kbps = ceiling_wire_kbps.div_ceil(4);
+        let floor_wire_kbps = ceiling_wire_kbps.min(Self::MINIMUM_WIRE_BUDGET_KBPS);
         Self {
             ceiling_wire_kbps,
             floor_wire_kbps,
@@ -99,7 +100,7 @@ impl AdaptiveVideoDeliveryController {
                     .saturating_mul(80)
                     .div_ceil(100)
                     .max(self.floor_wire_kbps);
-                self.increase_fec_for_loss(sample);
+                self.increase_fec_for_video_loss(sample);
             }
             CongestionSeverity::Transport => {
                 self.clean_video_windows = 0;
@@ -108,13 +109,13 @@ impl AdaptiveVideoDeliveryController {
                     .saturating_mul(90)
                     .div_ceil(100)
                     .max(self.floor_wire_kbps);
-                self.increase_fec_for_loss(sample);
+                self.increase_fec_for_video_loss(sample);
             }
             CongestionSeverity::Clean if sample.stream == FeedbackStream::Video => {
                 self.clean_video_windows = self.clean_video_windows.saturating_add(1);
                 if self.clean_video_windows >= Self::CLEAN_WINDOWS_BEFORE_INCREASE {
                     self.clean_video_windows = 0;
-                    let increase = self.ceiling_wire_kbps.div_ceil(20).max(1);
+                    let increase = self.wire_budget_kbps.div_ceil(5).max(250);
                     self.wire_budget_kbps = self
                         .wire_budget_kbps
                         .saturating_add(increase)
@@ -155,8 +156,10 @@ impl AdaptiveVideoDeliveryController {
         CongestionSeverity::Clean
     }
 
-    fn increase_fec_for_loss(&mut self, sample: MediaFeedbackSample) {
-        if Self::loss_parts_per_million(sample) >= Self::TRANSPORT_LOSS_PARTS_PER_MILLION {
+    fn increase_fec_for_video_loss(&mut self, sample: MediaFeedbackSample) {
+        if sample.stream == FeedbackStream::Video
+            && Self::loss_parts_per_million(sample) >= Self::TRANSPORT_LOSS_PARTS_PER_MILLION
+        {
             self.fec_percentage = self
                 .fec_percentage
                 .saturating_add(5)
@@ -259,7 +262,7 @@ mod tests {
     }
 
     #[test]
-    fn eight_clean_video_windows_add_five_percent_of_the_ceiling() {
+    fn eight_clean_video_windows_probe_up_from_the_current_budget() {
         let mut controller = AdaptiveVideoDeliveryController::new(100_000, 80_000, 5, 3);
         let mut decision = controller.snapshot();
 
@@ -267,11 +270,30 @@ mod tests {
             decision = controller.observe(clean(FeedbackStream::Video));
         }
 
-        assert_eq!(decision.wire_budget_kbps, 85_000);
-        assert_eq!(decision.encoder_bitrate_kbps, 80_952);
+        assert_eq!(decision.wire_budget_kbps, 96_000);
+        assert_eq!(decision.encoder_bitrate_kbps, 91_428);
         assert_eq!(decision.fec_percentage, 5);
         assert_eq!(decision.congestion_source, CongestionSource::None);
         assert!(decision.changed);
+    }
+
+    #[test]
+    fn sustained_audio_loss_can_protect_audio_below_the_initial_quarter_floor() {
+        let mut controller = AdaptiveVideoDeliveryController::new(48_000, 48_000, 20, 3);
+        let mut decision = controller.snapshot();
+
+        for _ in 0..32 {
+            decision = controller.observe(MediaFeedbackSample {
+                expected_datagrams: 320,
+                received_datagrams: 168,
+                estimated_jitter_us: 12_000,
+                ..clean(FeedbackStream::Audio)
+            });
+        }
+
+        assert_eq!(decision.wire_budget_kbps, 2_000);
+        assert_eq!(decision.fec_percentage, 20);
+        assert_eq!(decision.congestion_source, CongestionSource::Audio);
     }
 
     #[test]
@@ -287,7 +309,7 @@ mod tests {
             });
         }
         let floor = controller.snapshot();
-        assert_eq!(floor.wire_budget_kbps, 20_000);
+        assert_eq!(floor.wire_budget_kbps, 2_000);
         assert_eq!(floor.fec_percentage, 30);
 
         for _ in 0..200 {
