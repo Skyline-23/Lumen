@@ -131,16 +131,18 @@ actor LumenScreenCaptureTimedQueryRace<Value: Sendable> {
         self.generation = generation
     }
 
+    @discardableResult
     func finish(
         generation: UInt64,
         outcome: LumenScreenCaptureTimedQueryOutcome<Value>
-    ) {
+    ) -> Bool {
         guard generation == self.generation, self.outcome == nil else {
-            return
+            return false
         }
         self.outcome = outcome
         continuation?.resume(returning: outcome)
         continuation = nil
+        return true
     }
 
     func wait() async -> LumenScreenCaptureTimedQueryOutcome<Value> {

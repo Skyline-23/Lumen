@@ -2,6 +2,59 @@ import XCTest
 @testable import LumenMacBridge
 
 final class LumenScreenCaptureCallbackBoundaryTests: XCTestCase {
+    func testQueryDeadlineCallbackSurvivesTimeoutWinningRace() async throws {
+        let clock = DisplayReadinessBoundaryNowControl()
+        let queries = DisplayReadinessQueryControl<UInt32>()
+        let budget = LumenScreenCaptureQueryBudget(maximumOutstandingQueries: 1)
+        let task = Task.detached { @Sendable in
+            try await LumenScreenCaptureDisplayResolver.resolve(
+                displayID: 22,
+                authority: .retained(ownerToken: 7),
+                timing: .init(
+                    overallDeadlineNanoseconds: 10,
+                    queryTimeoutNanoseconds: 5,
+                    retryDelayNanoseconds: 1,
+                    maximumOutstandingQueries: 1
+                ),
+                queryBudget: budget,
+                environment: .init(
+                    now: { await clock.now() },
+                    sleepUntil: { _ in },
+                    readiness: {
+                        .init(
+                            ownerToken: 7,
+                            isOnline: true,
+                            isActive: true,
+                            hasCurrentMode: true
+                        )
+                    },
+                    stampedLookup: { generation in
+                        let value = await queries.lookup(generation: generation)
+                        return LumenScreenCaptureQueryCompletion(
+                            value: value,
+                            completedAtNanoseconds: 5
+                        )
+                    }
+                )
+            )
+        }
+        defer { task.cancel() }
+
+        try await queries.waitForQuery(generation: 1)
+        try await clock.waitUntilBoundaryCheckIsBlocked()
+        await queries.complete(generation: 1, value: 22)
+        try await waitForDisplayReadinessCondition("stamped callback handoff") {
+            await budget.outstandingCount() == 0
+        }
+
+        // The timeout actor already won, but the SCK callback itself met the
+        // query deadline. Its stamped result must remain available to the
+        // resolver when the actor resumes at the overall deadline.
+        await clock.releaseBoundaryCheck()
+        let resolved = try await task.value
+        XCTAssertEqual(resolved, 22)
+    }
+
     func testCallbackCompletedAtDeadlineIsAcceptedAfterResolverWakeup() async throws {
         let clock = DisplayReadinessBoundaryNowControl()
         let queries = DisplayReadinessQueryControl<UInt32>()

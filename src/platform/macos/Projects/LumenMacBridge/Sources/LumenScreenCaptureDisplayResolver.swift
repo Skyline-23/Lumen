@@ -371,22 +371,27 @@ extension LumenScreenCaptureDisplayResolver {
         race: LumenScreenCaptureTimedQueryRace<Value>
     ) async {
         let completedAt = outcome.completedAtNanoseconds ?? UInt64.max
-        if completedAt <= context.deadline {
-            await race.finish(generation: context.generation, outcome: outcome)
-        } else if completedAt <= context.overallDeadline {
-            await context.completedQueries.append(
-                generation: context.generation,
-                outcome: outcome
-            )
-            logLateQueryResultAvailable(
-                displayID: context.displayID,
-                generation: context.generation
-            )
-        } else {
+        guard completedAt <= context.overallDeadline else {
             logLateQueryResultDiscarded(
                 displayID: context.displayID,
                 generation: context.generation
             )
+            return
         }
+        if completedAt <= context.deadline {
+            let wonRace = await race.finish(
+                generation: context.generation,
+                outcome: outcome
+            )
+            guard !wonRace else { return }
+        }
+        await context.completedQueries.append(
+            generation: context.generation,
+            outcome: outcome
+        )
+        logLateQueryResultAvailable(
+            displayID: context.displayID,
+            generation: context.generation
+        )
     }
 }
