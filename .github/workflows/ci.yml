@@ -59,6 +59,7 @@ jobs:
             build/rust-target
             ~/.cache/tuist
             ~/Library/Caches/org.swift.swiftpm
+            ~/Library/Developer/Xcode/DerivedData/Lumen-*
             ~/Library/Developer/Xcode/DerivedData/SourcePackages
           key: lumen-macos-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'src/platform/macos/Project.swift') }}
           restore-keys: |
@@ -96,6 +97,15 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: lumen-rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            lumen-rust-${{ runner.os }}-${{ runner.arch }}-
       - name: Install Rust
         shell: pwsh
         run: |
