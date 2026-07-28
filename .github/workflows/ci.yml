@@ -88,6 +88,8 @@ jobs:
   windows:
     name: Windows package check
     runs-on: windows-latest
+    env:
+      CARGO_TARGET_DIR: cmake-build-release/rust-target
     steps:
       - uses: actions/checkout@v7
         with:
@@ -100,6 +102,9 @@ jobs:
           rustup target add x86_64-pc-windows-gnu
       - uses: Swatinem/rust-cache@v2
         with:
+          workspaces: ". -> cmake-build-release/rust-target"
+          shared-key: windows-gnu-package
+          add-job-id-key: "false"
           cache-bin: "false"
           cache-on-failure: "false"
       - name: Check workspace
