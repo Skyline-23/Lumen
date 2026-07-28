@@ -312,6 +312,10 @@ message MediaFeedback {
   uint32 presentation_drops = 10;
   uint32 window_milliseconds = 11;
   uint32 first_datagram_sequence = 12;
+  uint32 decoder_submissions = 13;
+  uint32 decoded_frames = 14;
+  uint32 presented_frames = 15;
+  uint32 decoder_drops = 16;
 }
 
 message ClientTelemetryEnvelope {

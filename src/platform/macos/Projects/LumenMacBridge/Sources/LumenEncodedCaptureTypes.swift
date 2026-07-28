@@ -104,6 +104,8 @@ public struct LumenEncodedCaptureSessionStatistics: Equatable, Sendable {
     var processingFailureCount: UInt64 = 0
     var automaticRestartCount: UInt64 = 0
     var sourceFrameCount: UInt64 = 0
+    var completeSourceFrameCount: UInt64 = 0
+    var incompleteSourceFrameCount: UInt64 = 0
     var submittedFrameCount: UInt64 = 0
     var pendingAdmissionDropCount: UInt64 = 0
     var maximumInflightFrameCount: Int = 0
@@ -113,6 +115,30 @@ public struct LumenEncodedCaptureSessionStatistics: Equatable, Sendable {
     var maxOutputCallbackLatencyMilliseconds: Double?
     var notes: [String] = []
     var exactCaptureAudit = LumenExactCaptureAuditSnapshot()
+}
+
+struct LumenCapturePipelineUtilization: Equatable, Sendable {
+    let videoToolboxAdmissionPercent: Double?
+    let videoToolboxOutputPercent: Double?
+
+    init(statistics: LumenEncodedCaptureSessionStatistics) {
+        videoToolboxAdmissionPercent = Self.percent(
+            numerator: statistics.submittedFrameCount,
+            denominator: statistics.completeSourceFrameCount
+        )
+        videoToolboxOutputPercent = Self.percent(
+            numerator: statistics.emittedFrameCount,
+            denominator: statistics.submittedFrameCount
+        )
+    }
+
+    private static func percent(
+        numerator: UInt64,
+        denominator: UInt64
+    ) -> Double? {
+        guard denominator > 0 else { return nil }
+        return Double(numerator) * 100 / Double(denominator)
+    }
 }
 
 struct LumenCaptureStageTimingAccumulator: Equatable, Sendable {

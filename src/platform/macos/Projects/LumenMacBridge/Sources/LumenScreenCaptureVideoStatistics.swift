@@ -11,6 +11,9 @@ import VideoToolbox
 
 extension LumenScreenCaptureVideoRuntime {
     func makeStatisticsNotes(width: Int, height: Int) -> [String] {
+        let utilization = LumenCapturePipelineUtilization(
+            statistics: statistics
+        )
         let sourceApproxFrameRate = averageFrameRate(
             intervalTotalMilliseconds: sourceIntervalTotalMilliseconds,
             sampleCount: sourceIntervalSampleCount
@@ -27,6 +30,8 @@ extension LumenScreenCaptureVideoRuntime {
             "screenCaptureStreamStartMilliseconds=\(streamStartDurationMilliseconds)",
             "screenCaptureOwnedSampleCount=\(outputOwnership.screenSampleCount)",
             "sourceCaptureSampleCount=\(statistics.sourceFrameCount)",
+            "screenCaptureCompleteFrameCount=\(statistics.completeSourceFrameCount)",
+            "screenCaptureIncompleteFrameCount=\(statistics.incompleteSourceFrameCount)",
             "sourceApproxFrameRate=\(sourceApproxFrameRate)",
             "sourceCallbackApproxFrameRate=\(sourceApproxFrameRate)",
             "videoToolboxTargetFrameRateHint=\(configuration.effectiveTargetFrameRate)",
@@ -42,6 +47,8 @@ extension LumenScreenCaptureVideoRuntime {
             "videoToolboxAllowOpenGOP=\(statistics.exactCaptureAudit.allowOpenGOP.map { String($0) } ?? "n/a")",
             "videoToolboxConfiguredSourceFrameCount=\(width)x\(height)",
             "videoToolboxSubmittedFrameCount=\(statistics.submittedFrameCount)",
+            "videoToolboxAdmissionUtilizationPercent=\(formattedPercent(utilization.videoToolboxAdmissionPercent))",
+            "videoToolboxOutputUtilizationPercent=\(formattedPercent(utilization.videoToolboxOutputPercent))",
             "videoToolboxPendingAdmissionDropCount=\(statistics.pendingAdmissionDropCount)",
             "videoToolboxBootstrapGateOpen=\(videoBootstrapAdmission.isOpen)",
             "videoToolboxBootstrapPendingSource=\(pendingVideoBootstrapSource != nil)",
@@ -119,6 +126,11 @@ extension LumenScreenCaptureVideoRuntime {
             format: "%.2f",
             Double(sampleCount) * 1_000 / intervalTotalMilliseconds
         )
+    }
+
+    func formattedPercent(_ value: Double?) -> String {
+        guard let value else { return "n/a" }
+        return String(format: "%.2f", value)
     }
 
     func enqueueCompressionOutput(

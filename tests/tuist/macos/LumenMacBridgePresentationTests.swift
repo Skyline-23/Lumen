@@ -5,6 +5,29 @@ import ScreenCaptureKit
 import XCTest
 
 final class LumenMacBridgePresentationTests: XCTestCase {
+    func testCapturePipelineUtilizationSeparatesSCKAdmissionAndEncoderOutput() {
+        var statistics = LumenEncodedCaptureSessionStatistics()
+        statistics.sourceFrameCount = 125
+        statistics.completeSourceFrameCount = 120
+        statistics.incompleteSourceFrameCount = 5
+        statistics.submittedFrameCount = 90
+        statistics.emittedFrameCount = 81
+
+        let utilization = LumenCapturePipelineUtilization(statistics: statistics)
+
+        XCTAssertEqual(utilization.videoToolboxAdmissionPercent, 75)
+        XCTAssertEqual(utilization.videoToolboxOutputPercent, 90)
+    }
+
+    func testCapturePipelineUtilizationIsUnavailableBeforeAStageReceivesFrames() {
+        let utilization = LumenCapturePipelineUtilization(
+            statistics: .init()
+        )
+
+        XCTAssertNil(utilization.videoToolboxAdmissionPercent)
+        XCTAssertNil(utilization.videoToolboxOutputPercent)
+    }
+
     func testRecommendedVideoForwardingFrameCapacityStaysLowLatency() {
         let cases = [
             LumenForwardingCapacityTestCase(.q2, 120, 2),

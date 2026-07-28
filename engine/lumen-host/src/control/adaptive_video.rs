@@ -21,6 +21,10 @@ pub(crate) struct MediaFeedbackSample {
     pub(crate) estimated_jitter_us: u32,
     pub(crate) decoder_queue_depth: u32,
     pub(crate) presentation_drops: u32,
+    pub(crate) decoder_submissions: u32,
+    pub(crate) decoded_frames: u32,
+    pub(crate) presented_frames: u32,
+    pub(crate) decoder_drops: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -138,6 +142,7 @@ impl AdaptiveVideoDeliveryController {
         if sample.unrecoverable_objects > 0
             || sample.late_objects > 0
             || sample.presentation_drops > 0
+            || sample.decoder_drops > 0
             || sample.decoder_queue_depth > self.maximum_decoder_queue_depth
         {
             return CongestionSeverity::Severe;
@@ -199,6 +204,10 @@ mod tests {
             estimated_jitter_us: 500,
             decoder_queue_depth: 0,
             presentation_drops: 0,
+            decoder_submissions: 100,
+            decoded_frames: 100,
+            presented_frames: 100,
+            decoder_drops: 0,
         }
     }
 
@@ -214,6 +223,23 @@ mod tests {
         assert_eq!(decision.encoder_bitrate_kbps, 60_952);
         assert_eq!(decision.fec_percentage, 5);
         assert_eq!(decision.congestion_source, CongestionSource::Audio);
+        assert!(decision.changed);
+    }
+
+    #[test]
+    fn decoder_drop_reduces_budget_without_misclassifying_it_as_transport_loss() {
+        let mut controller = AdaptiveVideoDeliveryController::new(100_000, 80_000, 5, 3);
+        let decision = controller.observe(MediaFeedbackSample {
+            decoder_submissions: 100,
+            decoded_frames: 99,
+            presented_frames: 99,
+            decoder_drops: 1,
+            ..clean(FeedbackStream::Video)
+        });
+
+        assert_eq!(decision.wire_budget_kbps, 64_000);
+        assert_eq!(decision.fec_percentage, 5);
+        assert_eq!(decision.congestion_source, CongestionSource::Video);
         assert!(decision.changed);
     }
 
