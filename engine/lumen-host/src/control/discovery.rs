@@ -65,6 +65,24 @@ impl HostDiscoveryState {
 }
 
 impl ControlRouter {
+    pub(super) fn dispatch_public_discovery_host_identity(&self) -> ControlResponse {
+        let identity = self.authorities().host_identity();
+        let settings = self.authorities().settings().snapshot();
+        ControlResponse::json(
+            200,
+            &PublicHostIdentityResponse {
+                status: true,
+                host: PublicHostIdentityDescriptor {
+                    name: &settings.settings.general.name,
+                    device_authentication: "sign in",
+                    control_https_port: self.discovery.control_https_port,
+                    server_unique_id: identity.unique_id(),
+                    authority_host: identity.authority_host(),
+                },
+            },
+        )
+    }
+
     pub(super) fn dispatch_discovery_apps(&self) -> ControlResponse {
         let settings = self.authorities().settings().snapshot();
         match self.authorities().applications().applications() {
@@ -147,6 +165,23 @@ struct ApplicationCatalogResponse<'a> {
 struct HostDiscoveryResponse<'a> {
     status: bool,
     host: HostDescriptor<'a>,
+}
+
+#[derive(Serialize)]
+struct PublicHostIdentityResponse<'a> {
+    status: bool,
+    host: PublicHostIdentityDescriptor<'a>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PublicHostIdentityDescriptor<'a> {
+    name: &'a str,
+    device_authentication: &'static str,
+    control_https_port: u16,
+    server_unique_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    authority_host: Option<&'a str>,
 }
 
 #[derive(Serialize)]

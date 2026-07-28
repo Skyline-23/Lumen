@@ -176,8 +176,8 @@ impl ControlRouter {
                 self.dispatch_discovery_apps()
             }
             (ControlMethod::Get, "/api/discovery/host") => {
-                if let Some(error) = self.authorize(request) {
-                    return error;
+                if self.authorize(request).is_some() {
+                    return self.dispatch_public_discovery_host_identity();
                 }
                 self.dispatch_discovery_host()
             }
