@@ -1,14 +1,15 @@
 # Releasing Lumen
 
 This runbook covers signed macOS and Windows releases, GitHub Release
-publication, and Homebrew cask updates. The `develop` branch only runs tests;
-public distribution starts only from an immutable release tag.
+publication, and Homebrew cask updates. The `develop` branch runs tests and
+unsigned package validation; public distribution starts only from an immutable
+release tag.
 
 ## Release topology
 
 | Trigger | Output | Signing | Publication |
 | --- | --- | --- | --- |
-| Push or pull request to `develop` | Rust tests and lint, macOS Tuist tests, Windows compile check | None | None |
+| Push or pull request to `develop` | Rust tests and lint, macOS Tuist tests, unsigned Windows NSIS package check | None | None |
 | Push `v<version>-beta.N` | macOS DMG and Windows NSIS installer | Developer ID + notarization, Authenticode + timestamp | GitHub Pre-release; no Homebrew update |
 | Push `v<version>` | macOS DMG and Windows NSIS installer | Developer ID + notarization, Authenticode + timestamp | GitHub Release, then `Skyline-23/homebrew-lumen` |
 
@@ -16,6 +17,11 @@ Both `engine/lumen-engine/Cargo.toml` and `engine/lumen-host/Cargo.toml` are the
 product version authority. Their `[package].version` values must match each
 other and use stable semantic versioning. Tags must use `v<version>` or
 `v<version>-beta.N`; the numeric prefix must match the product version.
+
+The `develop` workflow builds the same unsigned Windows installer shape as the
+release workflow and discards it after validation. This keeps SignPath and
+release publication tag-only while detecting CMake, Rust GNU-target, and NSIS
+failures before versioning a release.
 
 The release order is:
 
