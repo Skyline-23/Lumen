@@ -17,7 +17,8 @@ fn project_lets_the_wdk_own_the_umdf_loader_entrypoint() {
     // Then: the WDF stub remains linked as an export while the linker supplies
     // the normal DLL entrypoint. Making FxDriverEntryUm the PE entrypoint causes
     // WUDFHost to invoke it with DllMain arguments before DriverEntry can run.
-    assert!(project.contains("WdfDriverStubUm.lib"));
+    assert!(!project.contains("<AdditionalDependencies>IddCxStub.lib;WdfDriverStubUm.lib;"));
+    assert!(!project.contains("<AdditionalLibraryDirectories>$(WindowsSdkDir)Lib"));
     assert_eq!(
         project
             .matches("<PlatformToolset>WindowsUserModeDriver10.0</PlatformToolset>")
@@ -30,9 +31,14 @@ fn project_lets_the_wdk_own_the_umdf_loader_entrypoint() {
             .count(),
         2
     );
+    assert_eq!(project.matches("<SignMode>Off</SignMode>").count(), 2);
+    assert!(project.contains("<Inf2CatUseLocalTime>true</Inf2CatUseLocalTime>"));
     assert!(!project.contains("<PlatformToolset>v143</PlatformToolset>"));
     assert!(project.contains(
         "<PackageReference Include=\"Microsoft.Windows.WDK.x64\" Version=\"10.0.28000.1839\""
+    ));
+    assert!(project.contains(
+        "<PackageReference Include=\"Microsoft.Windows.SDK.CPP.x64\" Version=\"10.0.28000.1721\""
     ));
     assert!(project.contains("<Inf Include=\"package\\LumenIddCx.inf\""));
     assert!(project.contains("<FilesToPackage Include=\"$(TargetPath)\""));

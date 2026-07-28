@@ -150,11 +150,15 @@ jobs:
       DRIVER_PROJECT: src\platform\windows\driver\LumenIddCx.vcxproj
       DRIVER_CORE: target\x86_64-pc-windows-msvc\release\lumen_windows_driver_core.lib
       DRIVER_OUTPUT: src\platform\windows\driver\build\bin\x64\Release
+      WDK_PACKAGE_VERSION: 10.0.28000.1839
+      WDK_PLATFORM_VERSION: 10.0.28000.0
     steps:
       - uses: actions/checkout@v7
         with:
           submodules: recursive
       - uses: microsoft/setup-msbuild@v3
+        with:
+          msbuild-architecture: x64
       - name: Install Rust MSVC target
         shell: pwsh
         run: |
@@ -186,7 +190,13 @@ jobs:
         shell: pwsh
         run: |
           $driverCore = (Resolve-Path $env:DRIVER_CORE).Path
-          msbuild $env:DRIVER_PROJECT /restore /m /t:Build /p:Configuration=Release /p:Platform=x64 "/p:LumenDriverCoreLibrary=$driverCore"
+          msbuild $env:DRIVER_PROJECT /t:Restore
+          if ($LASTEXITCODE -ne 0) { throw "WDK NuGet restore failed." }
+          $wdkTools = Join-Path $env:USERPROFILE ".nuget\packages\microsoft.windows.wdk.x64\$env:WDK_PACKAGE_VERSION\c\bin\$env:WDK_PLATFORM_VERSION\x64"
+          if (-not (Test-Path (Join-Path $wdkTools "stampinf.exe"))) { throw "Missing WDK x64 tools: $wdkTools" }
+          $env:PATH = "$wdkTools;$env:PATH"
+          $infToolPath = "$wdkTools\"
+          msbuild $env:DRIVER_PROJECT /m /t:Build /p:Configuration=Release /p:Platform=x64 "/p:LumenDriverCoreLibrary=$driverCore" "/p:InfToolPath=$infToolPath" /p:InfToolArchitecture=Native64Bit
           if ($LASTEXITCODE -ne 0) { throw "WDK UMDF2 driver build failed." }
           $driverBinary = Join-Path $env:DRIVER_OUTPUT "LumenIddCx.dll"
           if (-not (Test-Path $driverBinary)) { throw "Missing driver output: $driverBinary" }

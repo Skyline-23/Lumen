@@ -40,6 +40,9 @@ fn inf_is_system_only_and_process_isolated() {
     assert!(!inf.contains("RejectKernelModeClients"));
     assert!(!inf.contains("UmdfFileObjectPolicy"));
     assert!(inf.contains("DriverCopy = 13"));
+    assert!(inf.contains("%ProviderName% = Models,NTamd64.10.0...17763"));
+    assert!(inf.contains("[Models.NTamd64.10.0...17763]"));
+    assert!(!inf.contains("[Models.NTamd64]\n"));
     assert!(inf.contains("Include = WUDFRD.inf"));
     assert!(inf.contains("Needs = WUDFRD.NT"));
     assert!(inf.contains("Needs = WUDFRD.NT.HW"));

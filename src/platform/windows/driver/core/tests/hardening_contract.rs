@@ -151,9 +151,15 @@ fn windows_scripts_cleanup_every_failed_install_attempt() {
     assert!(build_try < build_certificate && build_certificate < build_finally);
     assert!(build_script.contains("Cert:\\CurrentUser\\My\\$($certificate.Thumbprint)"));
     assert!(build_script.contains("Component.Microsoft.Windows.DriverKit.BuildTools"));
-    assert!(build_script.contains(
-        "MSBuild with the Windows Driver Kit Build Tools component was not found."
-    ));
+    assert!(build_script.contains("Visual Studio Build Tools with Desktop C++ and WDK"));
+    assert!(build_script.contains("$msbuild $project /t:Restore"));
+    assert!(build_script.contains("Bin\\amd64\\MSBuild.exe"));
+    assert!(build_script.contains("$wdkNuGetTools"));
+    assert!(build_script.contains("stampinf.exe"));
+    assert!(build_script.contains("/p:InfToolArchitecture=Native64Bit"));
+    assert!(build_script.contains("$msbuild $project /m /t:Build"));
+    assert!(build_script
+        .contains("MSBuild with the Windows Driver Kit Build Tools component was not found."));
     assert!(install_script.contains("$installSucceeded = $false"));
     assert!(install_script.contains("$installMutated = $false"));
     assert!(install_script.contains("HardwareID -Contains \"ROOT\\LumenIddCx\""));

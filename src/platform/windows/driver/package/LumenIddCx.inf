@@ -17,9 +17,9 @@ DriverCopy = 13
 LumenIddCx.dll = 1
 
 [Manufacturer]
-%ProviderName% = Models,NTamd64
+%ProviderName% = Models,NTamd64.10.0...17763
 
-[Models.NTamd64]
+[Models.NTamd64.10.0...17763]
 %DeviceDescription% = DriverInstall,Root\LumenIddCx
 
 [DriverInstall.NT]

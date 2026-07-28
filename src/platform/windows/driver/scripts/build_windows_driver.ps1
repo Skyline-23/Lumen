@@ -26,11 +26,11 @@ $driverBinary = Join-Path $driverRoot "build\bin\x64\$Configuration\LumenIddCx.d
 
 $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
 if (-not (Test-Path $vswhere)) {
-    throw "vswhere.exe was not found; install Visual Studio 2022 with Desktop C++ and WDK."
+    throw "vswhere.exe was not found; install Visual Studio Build Tools with Desktop C++ and WDK."
 }
 $msbuild = & $vswhere -latest -products * `
     -requires Microsoft.Component.MSBuild Component.Microsoft.Windows.DriverKit.BuildTools `
-    -find MSBuild\**\Bin\MSBuild.exe | Select-Object -First 1
+    -find MSBuild\**\Bin\amd64\MSBuild.exe | Select-Object -First 1
 if (-not $msbuild) {
     throw "MSBuild with the Windows Driver Kit Build Tools component was not found."
 }
@@ -70,7 +70,15 @@ if ($LASTEXITCODE -ne 0) { throw "C++ boundary-test build failed." }
 ctest --test-dir $boundaryBuild -C $Configuration --output-on-failure
 if ($LASTEXITCODE -ne 0) { throw "C++ boundary tests failed." }
 
-& $msbuild $project /m /t:Build "/p:Configuration=$Configuration" /p:Platform=x64 "/p:LumenDriverCoreLibrary=$coreLibrary"
+& $msbuild $project /t:Restore
+if ($LASTEXITCODE -ne 0) { throw "WDK NuGet restore failed." }
+$wdkNuGetTools = Join-Path $env:USERPROFILE ".nuget\packages\microsoft.windows.wdk.x64\10.0.28000.1839\c\bin\10.0.28000.0\x64"
+if (-not (Test-Path (Join-Path $wdkNuGetTools "stampinf.exe"))) {
+    throw "The restored WDK NuGet package is missing required build tools under $wdkNuGetTools."
+}
+$env:PATH = "$wdkNuGetTools;$(Split-Path $signtool);$env:PATH"
+$infToolPath = "$wdkNuGetTools\"
+& $msbuild $project /m /t:Build "/p:Configuration=$Configuration" /p:Platform=x64 "/p:LumenDriverCoreLibrary=$coreLibrary" "/p:InfToolPath=$infToolPath" /p:InfToolArchitecture=Native64Bit
 if ($LASTEXITCODE -ne 0) { throw "WDK UMDF2 driver build failed." }
 if (-not (Test-Path $driverBinary)) {
     throw "MSBuild succeeded without producing $driverBinary."
