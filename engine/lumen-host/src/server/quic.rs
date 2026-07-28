@@ -1691,9 +1691,11 @@ mod tests {
 
     #[test]
     fn reliable_object_stream_priorities_precede_telemetry_and_datagrams() {
-        assert!(PRIORITY_CONTROL > PRIORITY_CODEC_CONFIGURATION);
-        assert!(PRIORITY_INPUT > PRIORITY_VIDEO_BOOTSTRAP);
-        assert!(PRIORITY_VIDEO_BOOTSTRAP > PRIORITY_TELEMETRY);
+        const {
+            assert!(PRIORITY_CONTROL > PRIORITY_CODEC_CONFIGURATION);
+            assert!(PRIORITY_INPUT > PRIORITY_VIDEO_BOOTSTRAP);
+            assert!(PRIORITY_VIDEO_BOOTSTRAP > PRIORITY_TELEMETRY);
+        }
     }
 
     #[test]

@@ -1,6 +1,7 @@
 mod display_isolation;
 mod display_topology;
 #[cfg(any(test, windows))]
+#[cfg_attr(not(windows), allow(dead_code))]
 mod driver_abi;
 #[cfg(windows)]
 mod input_policy;

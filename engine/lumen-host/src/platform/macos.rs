@@ -16,7 +16,9 @@ use crate::{
     PlatformSessionPlan,
 };
 
-use super::macos_native_input::{MacInputCaptureViewport, MacInputDisplayBounds, MacNativeInput};
+use super::macos_native_input::{
+    MacInputCaptureViewport, MacInputDisplayBounds, MacNativeInput, MacPositionedButtonInput,
+};
 use super::portable_process::PortableApplication;
 
 const MAXIMUM_VIDEO_BYTES: usize = 32 * 1024 * 1024;
@@ -1072,11 +1074,13 @@ impl PlatformSessionControl for MacPlatformSessionControl {
                 display_id,
                 input_display_bounds,
                 input_capture_viewport,
-                *pointer_id,
-                *button,
-                *pressed,
-                *normalized_x,
-                *normalized_y,
+                MacPositionedButtonInput {
+                    pointer_id: *pointer_id,
+                    button: *button,
+                    pressed: *pressed,
+                    normalized_x: *normalized_x,
+                    normalized_y: *normalized_y,
+                },
             );
         }
         self.native_input.handle(session_epoch, event)

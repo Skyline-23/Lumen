@@ -92,7 +92,9 @@ fn desktop_mirror_admission_failure_restores_the_recorded_physical_mutation() {
         LumenWorkspaceCommandKind::CreateVirtualDisplay,
         LumenWorkspaceCommandKind::ConfigureVirtualDisplay,
     ] {
-        let command = engine.next_command().expect("workspace preparation command");
+        let command = engine
+            .next_command()
+            .expect("workspace preparation command");
         assert_eq!(command.kind, expected);
         assert_eq!(
             engine.complete_command(command, true),
@@ -111,7 +113,9 @@ fn desktop_mirror_admission_failure_restores_the_recorded_physical_mutation() {
         LumenEngineStatus::CommandFailed
     );
 
-    let restore = engine.next_command().expect("desktop mirror restore command");
+    let restore = engine
+        .next_command()
+        .expect("desktop mirror restore command");
     assert_eq!(restore.kind, LumenWorkspaceCommandKind::RestoreWorkspace);
 }
 

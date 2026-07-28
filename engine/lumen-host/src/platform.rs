@@ -759,11 +759,13 @@ impl PlatformSessionControl for CallbackPlatformSessionControl {
                 display_id,
                 None,
                 None,
-                *pointer_id,
-                *button,
-                *pressed,
-                *normalized_x,
-                *normalized_y,
+                macos_native_input::MacPositionedButtonInput {
+                    pointer_id: *pointer_id,
+                    button: *button,
+                    pressed: *pressed,
+                    normalized_x: *normalized_x,
+                    normalized_y: *normalized_y,
+                },
             );
         }
         self.native_input.handle(session_epoch, event)

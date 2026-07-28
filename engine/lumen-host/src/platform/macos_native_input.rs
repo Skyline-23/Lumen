@@ -219,6 +219,15 @@ pub(crate) struct MacInputCaptureViewport {
     pub(crate) height: f64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct MacPositionedButtonInput {
+    pub(crate) pointer_id: u32,
+    pub(crate) button: u8,
+    pub(crate) pressed: bool,
+    pub(crate) normalized_x: f32,
+    pub(crate) normalized_y: f32,
+}
+
 impl MacInputDisplayBounds {
     fn rect(self) -> Option<CGRect> {
         (self.width > 0.0 && self.height > 0.0).then(|| {
@@ -415,11 +424,7 @@ impl MacNativeInput {
         display_id: u32,
         planned_bounds: Option<MacInputDisplayBounds>,
         capture_viewport: Option<MacInputCaptureViewport>,
-        pointer_id: u32,
-        button: u8,
-        pressed: bool,
-        normalized_x: f32,
-        normalized_y: f32,
+        input: MacPositionedButtonInput,
     ) -> Result<(), String> {
         let mut states = self
             .state
@@ -435,12 +440,12 @@ impl MacNativeInput {
                 mode: NativePointerMotionMode::Absolute,
                 delta_x: 0,
                 delta_y: 0,
-                normalized_x,
-                normalized_y,
+                normalized_x: input.normalized_x,
+                normalized_y: input.normalized_y,
             },
         )?;
-        let _ = pointer_id;
-        self.handle_pointer_button(state, button, pressed, Some(location))
+        let _ = input.pointer_id;
+        self.handle_pointer_button(state, input.button, input.pressed, Some(location))
     }
 
     fn handle_pointer_button(
