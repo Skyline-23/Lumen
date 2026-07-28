@@ -1,9 +1,17 @@
 #include "driver.h"
 
+#include <evntprov.h>
+
 extern "C" DRIVER_INITIALIZE DriverEntry;
 
 namespace {
   const GUID kLumenDeviceInterface = LUMEN_DEVICE_INTERFACE_GUID_INIT;
+  const GUID kLumenInitializationTraceProvider = {
+    0x9e0fd0ea,
+    0xd1f4,
+    0x4aa5,
+    {0x8c, 0xf2, 0x72, 0x64, 0x21, 0xd1, 0x04, 0x9b}
+  };
 
   NTSTATUS create_manual_queue(WDFDEVICE device, WDFQUEUE *queue) {
     WDF_IO_QUEUE_CONFIG config;
@@ -17,10 +25,28 @@ namespace {
 NTSTATUS DriverEntry(PDRIVER_OBJECT driver_object, PUNICODE_STRING registry_path) {
   WDF_DRIVER_CONFIG config;
   WDF_DRIVER_CONFIG_INIT(&config, LumenEvtDeviceAdd);
-  return WdfDriverCreate(driver_object, registry_path, WDF_NO_OBJECT_ATTRIBUTES, &config, WDF_NO_HANDLE);
+  const NTSTATUS status = WdfDriverCreate(
+    driver_object,
+    registry_path,
+    WDF_NO_OBJECT_ATTRIBUTES,
+    &config,
+    WDF_NO_HANDLE
+  );
+  return NT_SUCCESS(status) ? status : LumenReportInitializationFailure(L"WdfDriverCreate", status);
 }
 
 NTSTATUS LumenReportInitializationFailure(PCWSTR stage, NTSTATUS status) {
+  REGHANDLE trace_handle = 0;
+  if (EventRegister(
+        &kLumenInitializationTraceProvider,
+        nullptr,
+        nullptr,
+        &trace_handle
+      ) == ERROR_SUCCESS) {
+    EventWriteString(trace_handle, 0, 0, stage);
+    EventUnregister(trace_handle);
+  }
+
   HANDLE source = RegisterEventSourceW(nullptr, L"LumenIddCx");
   if (source != nullptr) {
     LPCWSTR strings[] = {stage};
