@@ -37,8 +37,8 @@ const SERVER_START_TIMEOUT: Duration = Duration::from_secs(2);
 const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const CONNECTION_STREAM_TIMEOUT: Duration = Duration::from_secs(2);
 const ERROR_RESPONSE_DELIVERY_GRACE: Duration = Duration::from_millis(500);
-const SERVER_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
-const SERVER_KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(5);
+const SERVER_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(10);
+const SERVER_KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(2);
 const TERMINAL_NATIVE_CLEANUP_MAX_ATTEMPTS: usize = 3;
 const TERMINAL_NATIVE_CLEANUP_RETRY_DELAY: Duration = Duration::from_millis(250);
 const CODEC_CONFIGURATION_ACK_TIMEOUT: Duration = Duration::from_secs(15);
@@ -1617,6 +1617,13 @@ mod tests {
             )),
         }]);
         assert_eq!(lifecycle.validate_eof(), Ok(()));
+    }
+
+    #[test]
+    fn native_quic_liveness_policy_bounds_unresponsive_session_cleanup() {
+        assert_eq!(SERVER_MAX_IDLE_TIMEOUT, Duration::from_secs(10));
+        assert_eq!(SERVER_KEEP_ALIVE_INTERVAL, Duration::from_secs(2));
+        assert!(SERVER_KEEP_ALIVE_INTERVAL * 3 < SERVER_MAX_IDLE_TIMEOUT);
     }
 
     #[test]
