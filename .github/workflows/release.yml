@@ -225,19 +225,34 @@ jobs:
     name: Signed Windows package
     needs: prepare
     runs-on: windows-latest
+    permissions:
+      actions: read
+      contents: read
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           submodules: recursive
-      - name: Validate Windows release secrets
+      - name: Validate SignPath release configuration
         shell: pwsh
         env:
-          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-          WINDOWS_CERTIFICATE_PFX_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_PFX_BASE64 }}
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          SIGNPATH_ORGANIZATION_ID: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          SIGNPATH_SIGNING_POLICY_SLUG: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          SIGNPATH_ARTIFACT_CONFIGURATION_SLUG: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
         run: |
-          if (-not $env:WINDOWS_CERTIFICATE_PFX_BASE64) { throw "Missing WINDOWS_CERTIFICATE_PFX_BASE64" }
-          if (-not $env:WINDOWS_CERTIFICATE_PASSWORD) { throw "Missing WINDOWS_CERTIFICATE_PASSWORD" }
+          @(
+            "SIGNPATH_API_TOKEN",
+            "SIGNPATH_ORGANIZATION_ID",
+            "SIGNPATH_PROJECT_SLUG",
+            "SIGNPATH_SIGNING_POLICY_SLUG",
+            "SIGNPATH_ARTIFACT_CONFIGURATION_SLUG"
+          ) | ForEach-Object {
+            if (-not (Get-Item "env:$_" -ErrorAction SilentlyContinue).Value) {
+              throw "Missing required SignPath release setting: $_"
+            }
+          }
       - uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
@@ -266,29 +281,44 @@ jobs:
           LUMEN_VERSION: ${{ needs.prepare.outputs.product_version }}
           LUMEN_ARTIFACT_VERSION: ${{ needs.prepare.outputs.release_version }}
         run: scripts/ci/build_windows_package.sh
-      - name: Sign Windows installer
+      - name: Upload unsigned Windows installer for SignPath
+        id: upload_unsigned_windows
+        uses: actions/upload-artifact@v7
+        with:
+          name: lumen-windows-unsigned-${{ github.run_id }}-${{ github.run_attempt }}
+          path: cmake-build-release/cpack_artifacts/Lumen-*-Windows-x86_64.exe
+          if-no-files-found: error
+          retention-days: 1
+      - name: Submit Windows installer to SignPath
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+          github-artifact-id: ${{ steps.upload_unsigned_windows.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: build/signpath-signed
+      - name: Verify signed Windows installer
         shell: pwsh
-        env:
-          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-          WINDOWS_CERTIFICATE_PFX_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_PFX_BASE64 }}
         run: |
-          $certificate = Join-Path $env:RUNNER_TEMP "lumen-release.pfx"
-          [IO.File]::WriteAllBytes($certificate, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_PFX_BASE64))
           $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" |
             Sort-Object FullName -Descending |
             Select-Object -First 1
           if (-not $signtool) { throw "signtool.exe was not found" }
-          $installer = Get-ChildItem "cmake-build-release\cpack_artifacts\Lumen-*-Windows-x86_64.exe" |
+          $installer = Get-ChildItem "build\signpath-signed\Lumen-*-Windows-x86_64.exe" -Recurse |
             Select-Object -First 1
-          & $signtool.FullName sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com `
-            /f $certificate /p $env:WINDOWS_CERTIFICATE_PASSWORD $installer.FullName
+          if (-not $installer) { throw "SignPath did not return the signed Lumen installer" }
           & $signtool.FullName verify /pa /v $installer.FullName
-          Remove-Item -Force $certificate
+          if ($LASTEXITCODE -ne 0) { throw "Authenticode verification failed" }
+          New-Item -ItemType Directory -Force "build\release-artifacts" | Out-Null
+          Copy-Item $installer.FullName "build\release-artifacts\$($installer.Name)"
       - name: Upload Windows release artifact
         uses: actions/upload-artifact@v7
         with:
           name: lumen-windows-release
-          path: cmake-build-release/cpack_artifacts/Lumen-*-Windows-x86_64.exe
+          path: build/release-artifacts/Lumen-*-Windows-x86_64.exe
           if-no-files-found: error
 
   publish:
