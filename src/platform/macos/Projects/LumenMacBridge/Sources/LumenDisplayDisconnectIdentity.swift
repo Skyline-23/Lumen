@@ -66,8 +66,6 @@ func lumenCurrentPhysicalDisplays(
     let live = try current.displays
         .filter { state in
             state.id != String(sessionDisplayID) &&
-                state.enabled &&
-                state.active &&
                 state.online
         }
         .map(capabilityDisplay)
