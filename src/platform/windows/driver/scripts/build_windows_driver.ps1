@@ -99,7 +99,7 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "Test signing the driver DLL failed." }
     }
 
-    & $inf2cat "/driver:$OutputDirectory" "/os:10_X64,Server10_X64"
+    & $inf2cat "/driver:$OutputDirectory" "/os:10_X64,Server10_X64" "/uselocaltime"
     if ($LASTEXITCODE -ne 0) { throw "Inf2Cat validation failed." }
     if ($TestSign) {
         & $signtool sign /fd SHA256 /s My /sha1 $certificate.Thumbprint (Join-Path $OutputDirectory "LumenIddCx.cat")
