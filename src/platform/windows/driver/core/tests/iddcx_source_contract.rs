@@ -83,6 +83,28 @@ fn pnp_start_completes_before_render_adapter_initialization() {
 }
 
 #[test]
+fn file_objects_do_not_inherit_device_wide_synchronization() {
+    // Given: the device uses device-wide automatic serialization while file
+    // objects own independent create and cleanup callbacks.
+    let driver = fs::read_to_string(driver_root().join("shim/driver.cpp"))
+        .expect("driver initialization source must exist");
+
+    // Then: WDF file objects explicitly opt out of the parent synchronization
+    // scope. WDF rejects WdfDeviceCreate with STATUS_INVALID_PARAMETER when
+    // file-object attributes inherit WdfSynchronizationScopeDevice.
+    assert!(driver.contains("WDF_OBJECT_ATTRIBUTES file_attributes;"));
+    assert!(driver.contains("WDF_OBJECT_ATTRIBUTES_INIT(&file_attributes);"));
+    assert!(driver.contains("file_attributes.SynchronizationScope = WdfSynchronizationScopeNone;"));
+    assert!(driver.contains("file_attributes.ExecutionLevel = WdfExecutionLevelPassive;"));
+    assert!(driver.contains(
+        "WdfDeviceInitSetFileObjectConfig(device_init, &file_config, &file_attributes);"
+    ));
+    assert!(!driver.contains(
+        "WdfDeviceInitSetFileObjectConfig(device_init, &file_config, WDF_NO_OBJECT_ATTRIBUTES);"
+    ));
+}
+
+#[test]
 fn feature_probe_and_luid_pin_precede_adapter_and_monitor_creation() {
     // Given: the platform adapter boundary.
     let adapter = fs::read_to_string(driver_root().join("shim/adapter.cpp"))
@@ -197,7 +219,7 @@ fn secure_ioctl_commits_monitor_state_only_after_iddcx_succeeds() {
     let io = fs::read_to_string(driver_root().join("shim/io.cpp"))
         .expect("device-control boundary must exist");
     let boundary = io
-        .find("void LumenEvtIoDeviceControl")
+        .find("void LumenEvtIddCxDeviceIoControl")
         .expect("device-control callback must exist");
     let device_control = &io[boundary..];
 

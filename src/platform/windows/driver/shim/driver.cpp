@@ -74,6 +74,7 @@ NTSTATUS LumenEvtDeviceAdd(WDFDRIVER, PWDFDEVICE_INIT device_init) {
 
   IDD_CX_CLIENT_CONFIG iddcx_config;
   IDD_CX_CLIENT_CONFIG_INIT(&iddcx_config);
+  iddcx_config.EvtIddCxDeviceIoControl = LumenEvtIddCxDeviceIoControl;
   iddcx_config.EvtIddCxParseMonitorDescription = LumenEvtIddCxParseMonitorDescription;
   iddcx_config.EvtIddCxAdapterInitFinished = LumenEvtIddCxAdapterInitFinished;
   iddcx_config.EvtIddCxAdapterCommitModes = LumenEvtIddCxAdapterCommitModes;
@@ -88,7 +89,11 @@ NTSTATUS LumenEvtDeviceAdd(WDFDRIVER, PWDFDEVICE_INIT device_init) {
 
   WDF_FILEOBJECT_CONFIG file_config;
   WDF_FILEOBJECT_CONFIG_INIT(&file_config, LumenEvtDeviceFileCreate, WDF_NO_EVENT_CALLBACK, LumenEvtFileCleanup);
-  WdfDeviceInitSetFileObjectConfig(device_init, &file_config, WDF_NO_OBJECT_ATTRIBUTES);
+  WDF_OBJECT_ATTRIBUTES file_attributes;
+  WDF_OBJECT_ATTRIBUTES_INIT(&file_attributes);
+  file_attributes.SynchronizationScope = WdfSynchronizationScopeNone;
+  file_attributes.ExecutionLevel = WdfExecutionLevelPassive;
+  WdfDeviceInitSetFileObjectConfig(device_init, &file_config, &file_attributes);
 
   WDF_IO_TYPE_CONFIG io_config;
   WDF_IO_TYPE_CONFIG_INIT(&io_config);
@@ -162,13 +167,6 @@ NTSTATUS LumenEvtDeviceAdd(WDFDRIVER, PWDFDEVICE_INIT device_init) {
     return LumenReportInitializationFailure(L"WdfDeviceCreateDeviceInterface", status);
   }
 
-  WDF_IO_QUEUE_CONFIG queue_config;
-  WDF_IO_QUEUE_CONFIG_INIT_DEFAULT_QUEUE(&queue_config, WdfIoQueueDispatchSequential);
-  queue_config.EvtIoDeviceControl = LumenEvtIoDeviceControl;
-  status = WdfIoQueueCreate(device, &queue_config, WDF_NO_OBJECT_ATTRIBUTES, WDF_NO_HANDLE);
-  if (!NT_SUCCESS(status)) {
-    return LumenReportInitializationFailure(L"WdfIoQueueCreate.Default", status);
-  }
   status = create_manual_queue(device, &context->frame_queue);
   if (!NT_SUCCESS(status)) {
     return LumenReportInitializationFailure(L"WdfIoQueueCreate.Frame", status);

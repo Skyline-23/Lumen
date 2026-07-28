@@ -111,6 +111,7 @@ fn iddcx_client_config_registers_complete_callback_boundary() {
 
     // When: the client callback configuration is inspected.
     let required_callbacks = [
+        "EvtIddCxDeviceIoControl",
         "EvtIddCxParseMonitorDescription",
         "EvtIddCxAdapterInitFinished",
         "EvtIddCxAdapterCommitModes",
@@ -124,6 +125,8 @@ fn iddcx_client_config_registers_complete_callback_boundary() {
     for callback in required_callbacks {
         assert!(driver.contains(&format!("iddcx_config.{callback}")));
     }
+    assert!(!driver.contains("WDF_IO_QUEUE_CONFIG_INIT_DEFAULT_QUEUE"));
+    assert!(!driver.contains("WdfIoQueueCreate.Default"));
 }
 
 #[test]

@@ -332,7 +332,13 @@ void LumenEvtFileCleanup(WDFFILEOBJECT file_object) {
     lumen_driver_core_dispatch(context->core_state, release).state;
 }
 
-void LumenEvtIoDeviceControl(WDFQUEUE queue, WDFREQUEST request, size_t output_length, size_t input_length, ULONG code) {
+void LumenEvtIddCxDeviceIoControl(
+  WDFDEVICE device,
+  WDFREQUEST request,
+  size_t output_length,
+  size_t input_length,
+  ULONG code
+) {
   const uint32_t operation = operation_for_ioctl(code);
   if (operation == 0 || input_length != sizeof(LumenDriverCoreRequest)) {
     WdfRequestComplete(request, STATUS_INVALID_PARAMETER);
@@ -362,7 +368,7 @@ void LumenEvtIoDeviceControl(WDFQUEUE queue, WDFREQUEST request, size_t output_l
     return;
   }
 
-  auto *context = LumenGetDeviceContext(WdfIoQueueGetDevice(queue));
+  auto *context = LumenGetDeviceContext(device);
   const auto transition =
     lumen_driver_core_dispatch(context->core_state, core_request);
   if (transition.response.status == LumenDriverStatusOk &&
