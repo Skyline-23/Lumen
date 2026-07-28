@@ -72,8 +72,8 @@ fn stop_encoder_synchronously_drains_wdf_access_unit_reads() {
     assert!(stop_gate < drain && drain < state_commit);
     let driver = fs::read_to_string(driver_root().join("shim/driver.cpp"))
         .expect("driver initialization source must exist");
-    assert!(driver.contains("WdfSynchronizationScopeDevice"));
     assert!(driver.contains("iddcx_config.EvtIddCxDeviceIoControl"));
+    assert!(!driver.contains("WdfSynchronizationScopeDevice"));
     assert!(!driver.contains("WDF_IO_QUEUE_CONFIG_INIT_DEFAULT_QUEUE"));
 }
 

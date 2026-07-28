@@ -103,8 +103,6 @@ NTSTATUS LumenEvtDeviceAdd(WDFDRIVER, PWDFDEVICE_INIT device_init) {
 
   WDF_OBJECT_ATTRIBUTES attributes;
   WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&attributes, LumenDeviceContext);
-  attributes.ExecutionLevel = WdfExecutionLevelPassive;
-  attributes.SynchronizationScope = WdfSynchronizationScopeDevice;
   attributes.EvtCleanupCallback = LumenEvtDeviceContextCleanup;
 
   WDFDEVICE device = nullptr;
@@ -141,7 +139,7 @@ NTSTATUS LumenEvtDeviceAdd(WDFDRIVER, PWDFDEVICE_INIT device_init) {
   }
   WDF_WORKITEM_CONFIG frame_work_item_config;
   WDF_WORKITEM_CONFIG_INIT(&frame_work_item_config, LumenEvtFrameWorkItem);
-  frame_work_item_config.AutomaticSerialization = TRUE;
+  frame_work_item_config.AutomaticSerialization = FALSE;
   WDF_OBJECT_ATTRIBUTES frame_work_item_attributes;
   WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(
     &frame_work_item_attributes,

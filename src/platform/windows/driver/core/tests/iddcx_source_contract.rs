@@ -83,19 +83,28 @@ fn pnp_start_completes_before_render_adapter_initialization() {
 }
 
 #[test]
-fn file_objects_do_not_inherit_device_wide_synchronization() {
-    // Given: the device uses device-wide automatic serialization while file
-    // objects own independent create and cleanup callbacks.
+fn iddcx_device_uses_framework_default_synchronization() {
+    // Given: IddCx owns an internal device-control queue while Lumen also owns
+    // file create/cleanup callbacks and asynchronous frame work.
     let driver = fs::read_to_string(driver_root().join("shim/driver.cpp"))
         .expect("driver initialization source must exist");
 
-    // Then: WDF file objects explicitly opt out of the parent synchronization
-    // scope. WDF rejects WdfDeviceCreate with STATUS_INVALID_PARAMETER when
-    // file-object attributes inherit WdfSynchronizationScopeDevice.
+    // Then: the WDF device follows the Microsoft IDD lifecycle and does not
+    // force a device-wide lock over IddCx's class-extension objects. File
+    // callbacks remain passive and independent, and the work item does not
+    // request automatic serialization without a compatible queue scope.
+    let device_attributes = driver
+        .split("WDF_OBJECT_ATTRIBUTES attributes;")
+        .nth(1)
+        .and_then(|body| body.split("WDFDEVICE device").next())
+        .expect("device object attributes must precede device creation");
+    assert!(!device_attributes.contains("SynchronizationScope"));
+    assert!(!device_attributes.contains("ExecutionLevel"));
     assert!(driver.contains("WDF_OBJECT_ATTRIBUTES file_attributes;"));
     assert!(driver.contains("WDF_OBJECT_ATTRIBUTES_INIT(&file_attributes);"));
     assert!(driver.contains("file_attributes.SynchronizationScope = WdfSynchronizationScopeNone;"));
     assert!(driver.contains("file_attributes.ExecutionLevel = WdfExecutionLevelPassive;"));
+    assert!(driver.contains("frame_work_item_config.AutomaticSerialization = FALSE;"));
     assert!(driver.contains(
         "WdfDeviceInitSetFileObjectConfig(device_init, &file_config, &file_attributes);"
     ));
