@@ -30,6 +30,33 @@ fn project_lets_the_wdk_own_the_umdf_loader_entrypoint() {
 }
 
 #[test]
+fn pnp_start_completes_before_render_adapter_initialization() {
+    // Given: IddCx owns the display stack's PnP start transaction.
+    let driver = fs::read_to_string(driver_root().join("shim/driver.cpp"))
+        .expect("driver initialization source must exist");
+    let header = fs::read_to_string(driver_root().join("shim/driver.h"))
+        .expect("driver declarations must exist");
+
+    // Then: DeviceAdd only creates and initializes the IddCx device. DXGI/D3D
+    // probing and asynchronous adapter initialization begin after D0 entry, as
+    // required by the Microsoft indirect-display lifecycle.
+    assert!(header.contains("EVT_WDF_DEVICE_D0_ENTRY LumenEvtDeviceD0Entry"));
+    assert!(driver.contains("EvtDeviceD0Entry = LumenEvtDeviceD0Entry"));
+    assert!(driver.contains("NTSTATUS LumenEvtDeviceD0Entry("));
+
+    let device_add = driver
+        .find("NTSTATUS LumenEvtDeviceAdd(")
+        .expect("DeviceAdd callback must exist");
+    let d0_entry = driver
+        .find("NTSTATUS LumenEvtDeviceD0Entry(")
+        .expect("D0 entry callback must exist");
+    let device_add_body = &driver[device_add..d0_entry];
+    assert!(device_add_body.contains("IddCxDeviceInitialize(device)"));
+    assert!(!device_add_body.contains("LumenInitializeAdapter("));
+    assert!(driver[d0_entry..].contains("LumenInitializeAdapter(device, context)"));
+}
+
+#[test]
 fn feature_probe_and_luid_pin_precede_adapter_and_monitor_creation() {
     // Given: the platform adapter boundary.
     let adapter = fs::read_to_string(driver_root().join("shim/adapter.cpp"))
