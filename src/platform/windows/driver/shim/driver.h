@@ -33,6 +33,8 @@ struct LumenDeviceContext {
   volatile LONG pending_frame_ready;
   volatile LONG encoder_active;
   volatile LONG adapter_monitoring;
+  volatile LONG control_plane_state;
+  NTSTATUS control_plane_status;
 };
 
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(LumenDeviceContext, LumenGetDeviceContext);

@@ -77,28 +77,33 @@ fn pnp_start_completes_before_render_adapter_initialization() {
         .find("NTSTATUS LumenEvtDeviceD0Entry(")
         .expect("D0 entry callback must exist");
     let device_add_body = &driver[device_add..d0_entry];
-    let create_interface = device_add_body
-        .find("WdfDeviceCreateDeviceInterface(device")
-        .expect("the control interface must be created during DeviceAdd");
-    let create_frame_queue = device_add_body
-        .find("create_manual_queue(device, &context->frame_queue)")
-        .expect("the frame queue must be created during DeviceAdd");
-    let create_event_queue = device_add_body
-        .find("create_manual_queue(device, &context->event_queue)")
-        .expect("the event queue must be created during DeviceAdd");
     let initialize_iddcx = device_add_body
         .find("IddCxDeviceInitialize(device)")
         .expect("IddCx must be initialized during DeviceAdd");
-    assert!(create_interface < create_frame_queue);
-    assert!(create_frame_queue < create_event_queue);
-    assert!(create_event_queue < initialize_iddcx);
-    assert!(
-        device_add_body[initialize_iddcx..]
-            .trim_end()
-            .ends_with("return NT_SUCCESS(status) ? status : LumenReportInitializationFailure(L\"IddCxDeviceInitialize\", status);\n}")
-    );
+    let initialize_context = device_add_body
+        .find("context->core_state = lumen_driver_core_initial_state()")
+        .expect("the device context must be initialized after IddCx owns the device");
+    assert!(!device_add_body.contains("WdfDeviceCreateDeviceInterface(device"));
+    assert!(!device_add_body.contains("create_manual_queue(device"));
+    assert!(!device_add_body.contains("WdfWorkItemCreate("));
+    assert!(initialize_iddcx < initialize_context);
+    assert!(device_add_body[initialize_context..]
+        .trim_end()
+        .ends_with("return STATUS_SUCCESS;\n}"));
     assert!(!device_add_body.contains("LumenInitializeAdapter("));
-    assert!(driver[d0_entry..].contains("LumenInitializeAdapter(device, context)"));
+    let d0_entry_body = &driver[d0_entry..];
+    let initialize_control = d0_entry_body
+        .find("initialize_control_plane(device, context)")
+        .expect("D0 entry must initialize the user control plane");
+    let initialize_adapter = d0_entry_body
+        .find("LumenInitializeAdapter(device, context)")
+        .expect("D0 entry must initialize the IddCx adapter");
+    assert!(initialize_control < initialize_adapter);
+    assert!(driver.contains("kControlPlaneInitializing"));
+    assert!(driver.contains("kControlPlaneReady"));
+    assert!(driver.contains("kControlPlaneFailed"));
+    assert!(driver.contains("return context->control_plane_status;"));
+    assert!(driver.contains("context->control_plane_status = reported;"));
 }
 
 #[test]
