@@ -337,6 +337,20 @@ NTSTATUS LumenInitializeAdapter(WDFDEVICE device, LumenDeviceContext *context) {
   IDDCX_ADAPTER_CAPS caps {};
   caps.Size = sizeof(caps);
   caps.MaxMonitorsSupported = 1;
+  caps.EndPointDiagnostics.Size = sizeof(caps.EndPointDiagnostics);
+  caps.EndPointDiagnostics.GammaSupport =
+    IDDCX_FEATURE_IMPLEMENTATION_NONE;
+  caps.EndPointDiagnostics.TransmissionType =
+    IDDCX_TRANSMISSION_TYPE_WIRED_OTHER;
+  caps.EndPointDiagnostics.pEndPointFriendlyName =
+    L"Lumen Virtual Display";
+  caps.EndPointDiagnostics.pEndPointManufacturerName = L"Lumen";
+  caps.EndPointDiagnostics.pEndPointModelName = L"Lumen IDD";
+  IDDCX_ENDPOINT_VERSION endpoint_version {};
+  endpoint_version.Size = sizeof(endpoint_version);
+  endpoint_version.MajorVer = 1;
+  caps.EndPointDiagnostics.pFirmwareVersion = &endpoint_version;
+  caps.EndPointDiagnostics.pHardwareVersion = &endpoint_version;
   WDF_OBJECT_ATTRIBUTES attributes;
   WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&attributes, LumenAdapterContext);
   IDARG_IN_ADAPTER_INIT input {};
