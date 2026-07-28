@@ -60,9 +60,11 @@ selections keep their distinct typed failures.
 selected video capability. The client advertises `media_capabilities` on
 `ClientSessionHello` field 38 and the host echoes the required subset on
 `HostSessionPlan` field 46. Native v4 requires same-generation datagram
-keyframes (bit 0), fixed-cadence coalesced feedback (bit 1), and continuous
-scroll metadata (bit 2). Negotiation fails before capture if any required bit
-is absent.
+keyframes (bit 0), fixed-cadence coalesced feedback (bit 1), continuous scroll
+metadata (bit 2), and paired video/audio feedback windows with explicit IDs
+(bit 3). Negotiation fails before capture if any required bit is absent, so a
+client using the older single-report contract cannot enter a paired-window
+session.
 
 Codec configuration is reliable and must be acknowledged before the first
 bootstrap. A session's first video generation follows this gate:
@@ -152,13 +154,18 @@ starts at 1 and is contiguous. `MediaFeedback` is tag 10 and reports the exact
 datagram sequence window, receive/recovery/loss/reorder counts, jitter, decoder
 queue depth, presentation drops, and window duration.
 
-Feedback may identify the negotiated video or audio stream. Video feedback
-drives the adaptive delivery state. Structurally valid audio feedback is
-consumed without changing video loss EWMA, FEC, bitrate, or admission state.
-Every report still requires an active session, an exact 250 ms window, and an
-ordered inclusive sequence range; datagram sequence windows are independent
+Each negotiated feedback window consists of exactly one video report followed
+by exactly one audio report carrying the same nonzero `feedback_window_id`.
+The base window is 250 ms; when reliable telemetry is delayed, the client may
+coalesce consecutive samples into one positive 250 ms multiple. Both reports
+must cover the same duration. After the first report, the second must arrive
+within that reported duration; timeout or telemetry EOF with an incomplete pair
+is a protocol failure. Video transport
+evidence controls clean recovery, while severe audio pressure may still reduce
+the shared video delivery budget. Each report requires an active session and an
+ordered inclusive sequence range; datagram sequence windows remain independent
 per logical media stream while the telemetry-envelope sequence remains global.
-Unknown stream IDs are rejected.
+Missing, duplicate, unknown-stream, or mismatched-window reports are rejected.
 
 The host adapts parity in five-point steps inside 5...50 using loss EWMA. It
 must also reduce admission or bitrate under sustained high loss without

@@ -40,6 +40,7 @@ pub(crate) struct NativeConnectionContext {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum NativeMediaFeedbackDisposition {
     Applied(AdaptiveVideoDecision),
+    AwaitingPair { window_milliseconds: u32 },
     Unchanged,
 }
 
@@ -51,6 +52,9 @@ pub(crate) enum NativeMediaFeedbackRejection {
     StreamMismatch,
     WindowDurationMismatch,
     InvalidSequenceRange,
+    FeedbackWindowMismatch,
+    DuplicateFeedbackStream,
+    IncompleteFeedbackWindow,
 }
 
 impl NativeMediaFeedbackRejection {
@@ -62,6 +66,9 @@ impl NativeMediaFeedbackRejection {
             Self::StreamMismatch => "stream-mismatch",
             Self::WindowDurationMismatch => "window-duration-mismatch",
             Self::InvalidSequenceRange => "invalid-sequence-range",
+            Self::FeedbackWindowMismatch => "feedback-window-mismatch",
+            Self::DuplicateFeedbackStream => "duplicate-feedback-stream",
+            Self::IncompleteFeedbackWindow => "incomplete-feedback-window",
         }
     }
 }
@@ -93,6 +100,16 @@ struct PendingNativeSession {
     last_sent_video_frame_id: u32,
     last_display_revision: u64,
     adaptive_video: AdaptiveVideoDeliveryController,
+    next_feedback_window_id: u64,
+    pending_feedback_window: Option<PendingMediaFeedbackWindow>,
+}
+
+#[derive(Debug)]
+struct PendingMediaFeedbackWindow {
+    id: u64,
+    window_milliseconds: u32,
+    video: Option<MediaFeedbackSample>,
+    audio: Option<MediaFeedbackSample>,
 }
 
 impl ControlRouter {
@@ -522,17 +539,21 @@ impl ControlRouter {
         if !pending.active {
             return Err(NativeMediaFeedbackRejection::SessionInactive);
         }
-        if feedback.window_milliseconds != NATIVE_MEDIA_FEEDBACK_WINDOW_MILLISECONDS {
+        if feedback.window_milliseconds < NATIVE_MEDIA_FEEDBACK_WINDOW_MILLISECONDS
+            || !feedback
+                .window_milliseconds
+                .is_multiple_of(NATIVE_MEDIA_FEEDBACK_WINDOW_MILLISECONDS)
+        {
             return Err(NativeMediaFeedbackRejection::WindowDurationMismatch);
         }
         if feedback.first_datagram_sequence > feedback.highest_datagram_sequence {
             return Err(NativeMediaFeedbackRejection::InvalidSequenceRange);
         }
-        let expected_datagrams = feedback
-            .highest_datagram_sequence
-            .saturating_sub(feedback.first_datagram_sequence)
-            .saturating_add(1);
-        let decision = pending.adaptive_video.observe(MediaFeedbackSample {
+        if feedback.feedback_window_id != pending.next_feedback_window_id {
+            return Err(NativeMediaFeedbackRejection::FeedbackWindowMismatch);
+        }
+        let expected_datagrams = native_media_feedback_expected_datagrams(feedback);
+        let sample = MediaFeedbackSample {
             stream: if feedback.stream_id == pending.plan.audio_stream_id {
                 FeedbackStream::Audio
             } else {
@@ -549,12 +570,62 @@ impl ControlRouter {
             decoded_frames: feedback.decoded_frames,
             presented_frames: feedback.presented_frames,
             decoder_drops: feedback.decoder_drops,
-        });
+        };
+        let feedback_window =
+            pending
+                .pending_feedback_window
+                .get_or_insert(PendingMediaFeedbackWindow {
+                    id: feedback.feedback_window_id,
+                    window_milliseconds: feedback.window_milliseconds,
+                    video: None,
+                    audio: None,
+                });
+        if feedback_window.id != feedback.feedback_window_id {
+            return Err(NativeMediaFeedbackRejection::FeedbackWindowMismatch);
+        }
+        if feedback_window.window_milliseconds != feedback.window_milliseconds {
+            return Err(NativeMediaFeedbackRejection::WindowDurationMismatch);
+        }
+        let slot = match sample.stream {
+            FeedbackStream::Video => &mut feedback_window.video,
+            FeedbackStream::Audio => &mut feedback_window.audio,
+        };
+        if slot.is_some() {
+            return Err(NativeMediaFeedbackRejection::DuplicateFeedbackStream);
+        }
+        *slot = Some(sample);
+        let (Some(video), Some(audio)) = (feedback_window.video, feedback_window.audio) else {
+            return Ok(NativeMediaFeedbackDisposition::AwaitingPair {
+                window_milliseconds: feedback.window_milliseconds,
+            });
+        };
+        pending.pending_feedback_window = None;
+        pending.next_feedback_window_id = pending
+            .next_feedback_window_id
+            .checked_add(1)
+            .ok_or(NativeMediaFeedbackRejection::FeedbackWindowMismatch)?;
+        let decision = pending.adaptive_video.observe_window(video, audio);
         Ok(if decision.changed {
             NativeMediaFeedbackDisposition::Applied(decision)
         } else {
             NativeMediaFeedbackDisposition::Unchanged
         })
+    }
+
+    pub(crate) fn finish_native_media_feedback(
+        &self,
+        session_epoch: u32,
+    ) -> Result<(), NativeMediaFeedbackRejection> {
+        let Some(pending) = self.native.pending.as_ref() else {
+            return Err(NativeMediaFeedbackRejection::SessionUnavailable);
+        };
+        if session_epoch != pending.plan.session_epoch {
+            return Err(NativeMediaFeedbackRejection::SessionEpochMismatch);
+        }
+        if pending.pending_feedback_window.is_some() {
+            return Err(NativeMediaFeedbackRejection::IncompleteFeedbackWindow);
+        }
+        Ok(())
     }
 
     fn dispatch_native_start(
@@ -904,6 +975,8 @@ impl ControlRouter {
                     .fec_percentage,
                 plan.maximum_presentable_frames,
             ),
+            next_feedback_window_id: 1,
+            pending_feedback_window: None,
         });
         vec![HostControlEnvelope {
             request_id,
@@ -1195,6 +1268,19 @@ impl ControlRouter {
             session_offer: native_session_offer(plan)?,
         })
     }
+}
+
+pub(super) fn native_media_feedback_expected_datagrams(feedback: &MediaFeedback) -> u32 {
+    if feedback.received_datagrams == 0
+        && feedback.first_datagram_sequence == 0
+        && feedback.highest_datagram_sequence == 0
+    {
+        return 0;
+    }
+    feedback
+        .highest_datagram_sequence
+        .saturating_sub(feedback.first_datagram_sequence)
+        .saturating_add(1)
 }
 
 fn native_platform_session_plan(

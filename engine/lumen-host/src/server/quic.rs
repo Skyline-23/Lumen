@@ -37,8 +37,8 @@ const SERVER_START_TIMEOUT: Duration = Duration::from_secs(2);
 const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const CONNECTION_STREAM_TIMEOUT: Duration = Duration::from_secs(2);
 const ERROR_RESPONSE_DELIVERY_GRACE: Duration = Duration::from_millis(500);
-const SERVER_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
-const SERVER_KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(5);
+const SERVER_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(10);
+const SERVER_KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(2);
 const TERMINAL_NATIVE_CLEANUP_MAX_ATTEMPTS: usize = 3;
 const TERMINAL_NATIVE_CLEANUP_RETRY_DELAY: Duration = Duration::from_millis(250);
 const CODEC_CONFIGURATION_ACK_TIMEOUT: Duration = Duration::from_secs(15);
@@ -1036,9 +1036,36 @@ async fn accept_native_telemetry_stream(
     );
     let mut expected_sequence = 1_u64;
     let mut logged_audio_feedback = false;
-    while let Some(frame) =
-        read_length_delimited_frame(&mut receive, NATIVE_CONTROL_MESSAGE_LIMIT, "telemetry").await?
-    {
+    let mut incomplete_window_timeout = None;
+    loop {
+        let frame = if let Some(timeout) = incomplete_window_timeout {
+            tokio::time::timeout(
+                timeout,
+                read_length_delimited_frame(
+                    &mut receive,
+                    NATIVE_CONTROL_MESSAGE_LIMIT,
+                    "telemetry",
+                ),
+            )
+            .await
+            .map_err(|_| "QUIC telemetry feedback pair timed out".to_owned())??
+        } else {
+            read_length_delimited_frame(&mut receive, NATIVE_CONTROL_MESSAGE_LIMIT, "telemetry")
+                .await?
+        };
+        let Some(frame) = frame else {
+            router
+                .lock()
+                .map_err(|_| "native control router lock is poisoned".to_owned())?
+                .finish_native_media_feedback(session_epoch)
+                .map_err(|reason| {
+                    format!(
+                        "QUIC telemetry stream ended with rejected feedback reason={}",
+                        reason.code()
+                    )
+                })?;
+            break;
+        };
         let envelope = decode_client_telemetry_message(&frame)
             .map_err(|error| format!("invalid QUIC telemetry frame: {error:?}"))?;
         if envelope.sequence != expected_sequence {
@@ -1060,14 +1087,22 @@ async fn accept_native_telemetry_stream(
             .observe_native_media_feedback(&feedback, session_epoch);
         match disposition {
             Ok(disposition) => {
+                incomplete_window_timeout = match disposition {
+                    NativeMediaFeedbackDisposition::AwaitingPair {
+                        window_milliseconds,
+                    } => Some(Duration::from_millis(u64::from(window_milliseconds))),
+                    NativeMediaFeedbackDisposition::Applied(_)
+                    | NativeMediaFeedbackDisposition::Unchanged => None,
+                };
                 apply_adaptive_video_decision(platform.as_ref(), session_epoch, disposition)?;
                 if feedback.stream_id != u32::from(NATIVE_AUDIO_STREAM_ID) {
                     continue;
                 }
                 if !logged_audio_feedback {
                     eprintln!(
-                        "Lumen native QUIC stage=media-feedback-accepted-audio session-epoch={session_epoch} telemetry-sequence={} stream-id={} first-sequence={} highest-sequence={} received-datagrams={} recovered-shards={} unrecoverable-objects={} late-objects={} reordered-datagrams={} jitter-us={} decoder-queue-depth={} presentation-drops={} window-ms={}",
+                        "Lumen native QUIC stage=media-feedback-accepted-audio session-epoch={session_epoch} telemetry-sequence={} feedback-window-id={} stream-id={} first-sequence={} highest-sequence={} received-datagrams={} recovered-shards={} unrecoverable-objects={} late-objects={} reordered-datagrams={} jitter-us={} decoder-queue-depth={} presentation-drops={} window-ms={}",
                         envelope.sequence,
+                        feedback.feedback_window_id,
                         feedback.stream_id,
                         feedback.first_datagram_sequence,
                         feedback.highest_datagram_sequence,
@@ -1086,9 +1121,10 @@ async fn accept_native_telemetry_stream(
             }
             Err(reason) => {
                 return Err(format!(
-                    "QUIC media feedback was rejected reason={} telemetry-sequence={} stream-id={} first-sequence={} highest-sequence={} received-datagrams={} recovered-shards={} unrecoverable-objects={} late-objects={} reordered-datagrams={} jitter-us={} decoder-queue-depth={} presentation-drops={} window-ms={}",
+                    "QUIC media feedback was rejected reason={} telemetry-sequence={} feedback-window-id={} stream-id={} first-sequence={} highest-sequence={} received-datagrams={} recovered-shards={} unrecoverable-objects={} late-objects={} reordered-datagrams={} jitter-us={} decoder-queue-depth={} presentation-drops={} window-ms={}",
                     reason.code(),
                     envelope.sequence,
+                    feedback.feedback_window_id,
                     feedback.stream_id,
                     feedback.first_datagram_sequence,
                     feedback.highest_datagram_sequence,
@@ -1620,6 +1656,13 @@ mod tests {
     }
 
     #[test]
+    fn native_quic_liveness_policy_bounds_unresponsive_session_cleanup() {
+        assert_eq!(SERVER_MAX_IDLE_TIMEOUT, Duration::from_secs(10));
+        assert_eq!(SERVER_KEEP_ALIVE_INTERVAL, Duration::from_secs(2));
+        assert!(SERVER_KEEP_ALIVE_INTERVAL * 3 < SERVER_MAX_IDLE_TIMEOUT);
+    }
+
+    #[test]
     fn explicit_input_reset_calls_platform_once_on_success() {
         let platform = Arc::new(ResetRecordingPlatform::new([Ok(())]));
         let guard = NativeInputResetGuard::new(42, platform.clone());
@@ -2054,6 +2097,7 @@ mod tests {
                     received_datagrams: 3,
                     window_milliseconds: 250,
                     first_datagram_sequence: 1,
+                    feedback_window_id: 1,
                     ..MediaFeedback::default()
                 },
             )),
@@ -2072,6 +2116,7 @@ mod tests {
                     unrecoverable_objects: 100,
                     window_milliseconds: 250,
                     first_datagram_sequence: 1,
+                    feedback_window_id: 1,
                     ..MediaFeedback::default()
                 },
             )),

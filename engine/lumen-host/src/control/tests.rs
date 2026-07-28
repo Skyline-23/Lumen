@@ -1,4 +1,6 @@
-use super::native_session::NativeMediaFeedbackRejection;
+use super::native_session::{
+    native_media_feedback_expected_datagrams, NativeMediaFeedbackRejection,
+};
 use super::*;
 use crate::{
     HostAuthorities, HostAuthorityPaths, PlatformApplicationPlan, PlatformControlEvent,
@@ -1168,10 +1170,28 @@ fn media_feedback_uses_audio_pressure_to_adapt_video_delivery_without_reducing_c
         presentation_drops: 2,
         window_milliseconds: 250,
         first_datagram_sequence: 1,
+        feedback_window_id: 1,
+        ..MediaFeedback::default()
+    };
+    assert_eq!(
+        router
+            .observe_native_media_feedback(&audio_feedback, context.session_epoch)
+            .unwrap(),
+        NativeMediaFeedbackDisposition::AwaitingPair {
+            window_milliseconds: 250
+        }
+    );
+    let clean_video_feedback = MediaFeedback {
+        stream_id: plan.video_stream_id,
+        highest_datagram_sequence: 3,
+        received_datagrams: 3,
+        window_milliseconds: 250,
+        first_datagram_sequence: 1,
+        feedback_window_id: 1,
         ..MediaFeedback::default()
     };
     let audio_decision = router
-        .observe_native_media_feedback(&audio_feedback, context.session_epoch)
+        .observe_native_media_feedback(&clean_video_feedback, context.session_epoch)
         .unwrap();
     let NativeMediaFeedbackDisposition::Applied(audio_decision) = audio_decision else {
         panic!("audio playback pressure must reduce the video budget");
@@ -1195,10 +1215,28 @@ fn media_feedback_uses_audio_pressure_to_adapt_video_delivery_without_reducing_c
         presentation_drops: 1,
         window_milliseconds: 250,
         first_datagram_sequence: 1,
+        feedback_window_id: 2,
+        ..MediaFeedback::default()
+    };
+    assert_eq!(
+        router
+            .observe_native_media_feedback(&congested_feedback, context.session_epoch)
+            .unwrap(),
+        NativeMediaFeedbackDisposition::AwaitingPair {
+            window_milliseconds: 250
+        }
+    );
+    let clean_audio_feedback = MediaFeedback {
+        stream_id: plan.audio_stream_id,
+        highest_datagram_sequence: 3,
+        received_datagrams: 3,
+        window_milliseconds: 250,
+        first_datagram_sequence: 1,
+        feedback_window_id: 2,
         ..MediaFeedback::default()
     };
     let video_decision = router
-        .observe_native_media_feedback(&congested_feedback, context.session_epoch)
+        .observe_native_media_feedback(&clean_audio_feedback, context.session_epoch)
         .unwrap();
     assert!(matches!(
         video_decision,
@@ -1242,6 +1280,185 @@ fn media_feedback_uses_audio_pressure_to_adapt_video_delivery_without_reducing_c
     assert_eq!(
         router.observe_native_media_feedback(&reversed_range, context.session_epoch),
         Err(NativeMediaFeedbackRejection::InvalidSequenceRange)
+    );
+}
+
+#[test]
+fn media_feedback_requires_one_sample_per_stream_in_each_exact_window() {
+    let platform = Arc::new(RecordingPlatformSessionControl::default());
+    let (_root, mut router, context, plan) = started_native_router(platform);
+    let video = MediaFeedback {
+        stream_id: plan.video_stream_id,
+        window_milliseconds: 250,
+        feedback_window_id: 1,
+        ..MediaFeedback::default()
+    };
+
+    assert_eq!(
+        router
+            .observe_native_media_feedback(&video, context.session_epoch)
+            .unwrap(),
+        NativeMediaFeedbackDisposition::AwaitingPair {
+            window_milliseconds: 250
+        }
+    );
+    assert_eq!(
+        router.observe_native_media_feedback(&video, context.session_epoch),
+        Err(NativeMediaFeedbackRejection::DuplicateFeedbackStream)
+    );
+    let future_audio = MediaFeedback {
+        stream_id: plan.audio_stream_id,
+        window_milliseconds: 250,
+        feedback_window_id: 2,
+        ..MediaFeedback::default()
+    };
+    assert_eq!(
+        router.observe_native_media_feedback(&future_audio, context.session_epoch),
+        Err(NativeMediaFeedbackRejection::FeedbackWindowMismatch)
+    );
+    let audio = MediaFeedback {
+        feedback_window_id: 1,
+        ..future_audio
+    };
+    assert_eq!(
+        router
+            .observe_native_media_feedback(&audio, context.session_epoch)
+            .unwrap(),
+        NativeMediaFeedbackDisposition::Unchanged
+    );
+    assert_eq!(
+        router.observe_native_media_feedback(&video, context.session_epoch),
+        Err(NativeMediaFeedbackRejection::FeedbackWindowMismatch)
+    );
+}
+
+#[test]
+fn media_feedback_accepts_a_coalesced_wall_clock_window() {
+    let platform = Arc::new(RecordingPlatformSessionControl::default());
+    let (_root, mut router, context, plan) = started_native_router(platform);
+    let video = MediaFeedback {
+        stream_id: plan.video_stream_id,
+        received_datagrams: 6,
+        first_datagram_sequence: 1,
+        highest_datagram_sequence: 6,
+        window_milliseconds: 750,
+        feedback_window_id: 1,
+        ..MediaFeedback::default()
+    };
+    let audio = MediaFeedback {
+        stream_id: plan.audio_stream_id,
+        received_datagrams: 3,
+        first_datagram_sequence: 1,
+        highest_datagram_sequence: 3,
+        window_milliseconds: 750,
+        feedback_window_id: 1,
+        ..MediaFeedback::default()
+    };
+
+    assert_eq!(
+        router
+            .observe_native_media_feedback(&video, context.session_epoch)
+            .unwrap(),
+        NativeMediaFeedbackDisposition::AwaitingPair {
+            window_milliseconds: 750
+        }
+    );
+    assert_eq!(
+        router
+            .observe_native_media_feedback(&audio, context.session_epoch)
+            .unwrap(),
+        NativeMediaFeedbackDisposition::Unchanged
+    );
+
+    let fractional_window = MediaFeedback {
+        stream_id: plan.video_stream_id,
+        window_milliseconds: 251,
+        feedback_window_id: 2,
+        ..MediaFeedback::default()
+    };
+    assert_eq!(
+        router.observe_native_media_feedback(&fractional_window, context.session_epoch),
+        Err(NativeMediaFeedbackRejection::WindowDurationMismatch)
+    );
+}
+
+#[test]
+fn media_feedback_rejects_mismatched_pair_duration() {
+    let platform = Arc::new(RecordingPlatformSessionControl::default());
+    let (_root, mut router, context, plan) = started_native_router(platform);
+    let video = MediaFeedback {
+        stream_id: plan.video_stream_id,
+        window_milliseconds: 750,
+        feedback_window_id: 1,
+        ..MediaFeedback::default()
+    };
+    let audio = MediaFeedback {
+        stream_id: plan.audio_stream_id,
+        window_milliseconds: 250,
+        feedback_window_id: 1,
+        ..MediaFeedback::default()
+    };
+
+    assert_eq!(
+        router
+            .observe_native_media_feedback(&video, context.session_epoch)
+            .unwrap(),
+        NativeMediaFeedbackDisposition::AwaitingPair {
+            window_milliseconds: 750
+        }
+    );
+    assert_eq!(
+        router.observe_native_media_feedback(&audio, context.session_epoch),
+        Err(NativeMediaFeedbackRejection::WindowDurationMismatch)
+    );
+}
+
+#[test]
+fn media_feedback_rejects_an_incomplete_pair_at_stream_end() {
+    let platform = Arc::new(RecordingPlatformSessionControl::default());
+    let (_root, mut router, context, plan) = started_native_router(platform);
+    let video = MediaFeedback {
+        stream_id: plan.video_stream_id,
+        window_milliseconds: 250,
+        feedback_window_id: 1,
+        ..MediaFeedback::default()
+    };
+
+    assert!(matches!(
+        router.observe_native_media_feedback(&video, context.session_epoch),
+        Ok(NativeMediaFeedbackDisposition::AwaitingPair {
+            window_milliseconds: 250
+        })
+    ));
+    assert_eq!(
+        router.finish_native_media_feedback(context.session_epoch),
+        Err(NativeMediaFeedbackRejection::IncompleteFeedbackWindow)
+    );
+}
+
+#[test]
+fn processing_only_media_feedback_has_no_phantom_datagram_loss() {
+    let processing_only = MediaFeedback {
+        stream_id: 1,
+        window_milliseconds: 250,
+        decoder_submissions: 3,
+        decoded_frames: 3,
+        presented_frames: 2,
+        ..MediaFeedback::default()
+    };
+
+    assert_eq!(
+        native_media_feedback_expected_datagrams(&processing_only),
+        0
+    );
+    assert_eq!(
+        native_media_feedback_expected_datagrams(&MediaFeedback {
+            first_datagram_sequence: 10,
+            highest_datagram_sequence: 19,
+            received_datagrams: 8,
+            ..MediaFeedback::default()
+        }),
+        10
     );
 }
 

@@ -36,8 +36,9 @@ pub(crate) struct AdaptiveVideoDecision {
     pub(crate) changed: bool,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum CongestionSeverity {
+    Neutral,
     Clean,
     Transport,
     Severe,
@@ -80,19 +81,61 @@ impl AdaptiveVideoDeliveryController {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn observe(&mut self, sample: MediaFeedbackSample) -> AdaptiveVideoDecision {
-        let previous_wire_budget = self.wire_budget_kbps;
-        let previous_fec = self.fec_percentage;
         let severity = self.classify(sample);
         let source = match severity {
-            CongestionSeverity::Clean => CongestionSource::None,
+            CongestionSeverity::Neutral | CongestionSeverity::Clean => CongestionSource::None,
             CongestionSeverity::Transport | CongestionSeverity::Severe => match sample.stream {
                 FeedbackStream::Audio => CongestionSource::Audio,
                 FeedbackStream::Video => CongestionSource::Video,
             },
         };
+        self.apply_observation(severity, source, Some(sample))
+    }
+
+    pub(crate) fn observe_window(
+        &mut self,
+        video: MediaFeedbackSample,
+        audio: MediaFeedbackSample,
+    ) -> AdaptiveVideoDecision {
+        debug_assert_eq!(video.stream, FeedbackStream::Video);
+        debug_assert_eq!(audio.stream, FeedbackStream::Audio);
+        let video_severity = self.classify(video);
+        let audio_severity = self.classify(audio);
+        let (severity, stream) = if video_severity >= audio_severity {
+            (video_severity, FeedbackStream::Video)
+        } else {
+            (audio_severity, FeedbackStream::Audio)
+        };
+        let severity = if severity == CongestionSeverity::Clean
+            && video_severity != CongestionSeverity::Clean
+        {
+            CongestionSeverity::Neutral
+        } else {
+            severity
+        };
+        let source = match severity {
+            CongestionSeverity::Neutral | CongestionSeverity::Clean => CongestionSource::None,
+            CongestionSeverity::Transport | CongestionSeverity::Severe => match stream {
+                FeedbackStream::Audio => CongestionSource::Audio,
+                FeedbackStream::Video => CongestionSource::Video,
+            },
+        };
+        self.apply_observation(severity, source, Some(video))
+    }
+
+    fn apply_observation(
+        &mut self,
+        severity: CongestionSeverity,
+        source: CongestionSource,
+        video_sample: Option<MediaFeedbackSample>,
+    ) -> AdaptiveVideoDecision {
+        let previous_wire_budget = self.wire_budget_kbps;
+        let previous_fec = self.fec_percentage;
 
         match severity {
+            CongestionSeverity::Neutral => {}
             CongestionSeverity::Severe => {
                 self.clean_video_windows = 0;
                 self.wire_budget_kbps = self
@@ -100,7 +143,9 @@ impl AdaptiveVideoDeliveryController {
                     .saturating_mul(80)
                     .div_ceil(100)
                     .max(self.floor_wire_kbps);
-                self.increase_fec_for_video_loss(sample);
+                if let Some(video_sample) = video_sample {
+                    self.increase_fec_for_video_loss(video_sample);
+                }
             }
             CongestionSeverity::Transport => {
                 self.clean_video_windows = 0;
@@ -109,9 +154,11 @@ impl AdaptiveVideoDeliveryController {
                     .saturating_mul(90)
                     .div_ceil(100)
                     .max(self.floor_wire_kbps);
-                self.increase_fec_for_video_loss(sample);
+                if let Some(video_sample) = video_sample {
+                    self.increase_fec_for_video_loss(video_sample);
+                }
             }
-            CongestionSeverity::Clean if sample.stream == FeedbackStream::Video => {
+            CongestionSeverity::Clean => {
                 self.clean_video_windows = self.clean_video_windows.saturating_add(1);
                 if self.clean_video_windows >= Self::CLEAN_WINDOWS_BEFORE_INCREASE {
                     self.clean_video_windows = 0;
@@ -126,7 +173,6 @@ impl AdaptiveVideoDeliveryController {
                         .max(Self::MINIMUM_FEC_PERCENTAGE);
                 }
             }
-            CongestionSeverity::Clean => {}
         }
 
         self.decision(
@@ -152,6 +198,9 @@ impl AdaptiveVideoDeliveryController {
             || sample.estimated_jitter_us >= Self::HIGH_JITTER_MICROSECONDS
         {
             return CongestionSeverity::Transport;
+        }
+        if sample.expected_datagrams == 0 && sample.received_datagrams == 0 {
+            return CongestionSeverity::Neutral;
         }
         CongestionSeverity::Clean
     }
@@ -227,6 +276,106 @@ mod tests {
         assert_eq!(decision.fec_percentage, 5);
         assert_eq!(decision.congestion_source, CongestionSource::Audio);
         assert!(decision.changed);
+    }
+
+    #[test]
+    fn one_feedback_window_applies_only_one_reduction_for_two_severe_streams() {
+        let mut controller = AdaptiveVideoDeliveryController::new(100_000, 80_000, 5, 3);
+        let decision = controller.observe_window(
+            MediaFeedbackSample {
+                presentation_drops: 1,
+                ..clean(FeedbackStream::Video)
+            },
+            MediaFeedbackSample {
+                presentation_drops: 1,
+                ..clean(FeedbackStream::Audio)
+            },
+        );
+
+        assert_eq!(decision.wire_budget_kbps, 64_000);
+        assert_eq!(decision.encoder_bitrate_kbps, 60_952);
+        assert_eq!(decision.congestion_source, CongestionSource::Video);
+        assert!(decision.changed);
+    }
+
+    #[test]
+    fn transport_empty_processing_windows_do_not_count_as_clean_recovery() {
+        let mut controller = AdaptiveVideoDeliveryController::new(100_000, 80_000, 10, 3);
+        let congested = controller.observe(MediaFeedbackSample {
+            expected_datagrams: 100,
+            received_datagrams: 90,
+            ..clean(FeedbackStream::Video)
+        });
+        assert!(congested.changed);
+
+        let processing_only_video = MediaFeedbackSample {
+            stream: FeedbackStream::Video,
+            expected_datagrams: 0,
+            received_datagrams: 0,
+            decoder_submissions: 3,
+            decoded_frames: 3,
+            presented_frames: 3,
+            ..clean(FeedbackStream::Video)
+        };
+        let processing_only_audio = MediaFeedbackSample {
+            stream: FeedbackStream::Audio,
+            expected_datagrams: 0,
+            received_datagrams: 0,
+            ..clean(FeedbackStream::Audio)
+        };
+
+        for _ in 0..AdaptiveVideoDeliveryController::CLEAN_WINDOWS_BEFORE_INCREASE {
+            let decision = controller.observe_window(processing_only_video, processing_only_audio);
+            assert!(!decision.changed);
+            assert_eq!(decision.wire_budget_kbps, congested.wire_budget_kbps);
+            assert_eq!(decision.fec_percentage, congested.fec_percentage);
+            assert_eq!(decision.congestion_source, CongestionSource::None);
+        }
+    }
+
+    #[test]
+    fn clean_audio_cannot_probe_up_without_clean_video_transport() {
+        let mut controller = AdaptiveVideoDeliveryController::new(100_000, 80_000, 10, 3);
+        let congested = controller.observe(MediaFeedbackSample {
+            expected_datagrams: 100,
+            received_datagrams: 90,
+            ..clean(FeedbackStream::Video)
+        });
+        let neutral_video = MediaFeedbackSample {
+            expected_datagrams: 0,
+            received_datagrams: 0,
+            ..clean(FeedbackStream::Video)
+        };
+
+        for _ in 0..AdaptiveVideoDeliveryController::CLEAN_WINDOWS_BEFORE_INCREASE {
+            let decision = controller.observe_window(neutral_video, clean(FeedbackStream::Audio));
+            assert!(!decision.changed);
+            assert_eq!(decision.wire_budget_kbps, congested.wire_budget_kbps);
+            assert_eq!(decision.fec_percentage, congested.fec_percentage);
+            assert_eq!(decision.congestion_source, CongestionSource::None);
+        }
+    }
+
+    #[test]
+    fn processing_only_decoder_failure_still_reduces_delivery_budget() {
+        let mut controller = AdaptiveVideoDeliveryController::new(100_000, 80_000, 5, 3);
+        let decision = controller.observe_window(
+            MediaFeedbackSample {
+                expected_datagrams: 0,
+                received_datagrams: 0,
+                decoder_drops: 1,
+                ..clean(FeedbackStream::Video)
+            },
+            MediaFeedbackSample {
+                expected_datagrams: 0,
+                received_datagrams: 0,
+                ..clean(FeedbackStream::Audio)
+            },
+        );
+
+        assert!(decision.changed);
+        assert_eq!(decision.wire_budget_kbps, 64_000);
+        assert_eq!(decision.congestion_source, CongestionSource::Video);
     }
 
     #[test]

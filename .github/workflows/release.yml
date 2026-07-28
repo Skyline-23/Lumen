@@ -231,6 +231,8 @@ jobs:
     name: Signed Windows package
     needs: prepare
     runs-on: windows-latest
+    env:
+      CARGO_TARGET_DIR: cmake-build-release/rust-target
     permissions:
       actions: read
       contents: read
@@ -276,9 +278,19 @@ jobs:
             mingw-w64-ucrt-x86_64-opus
             mingw-w64-ucrt-x86_64-pkgconf
             mingw-w64-ucrt-x86_64-zlib
-      - name: Add the GNU Rust target
+      - name: Install the GNU Rust target
         shell: pwsh
-        run: rustup target add x86_64-pc-windows-gnu
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add x86_64-pc-windows-gnu
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> cmake-build-release/rust-target"
+          shared-key: windows-gnu-package
+          add-job-id-key: "false"
+          cache-bin: "false"
+          cache-on-failure: "false"
       - name: Build NSIS installer
         shell: msys2 {0}
         env:

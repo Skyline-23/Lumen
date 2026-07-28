@@ -88,6 +88,8 @@ jobs:
   windows:
     name: Windows package check
     runs-on: windows-latest
+    env:
+      CARGO_TARGET_DIR: cmake-build-release/rust-target
     steps:
       - uses: actions/checkout@v7
         with:
@@ -100,6 +102,9 @@ jobs:
           rustup target add x86_64-pc-windows-gnu
       - uses: Swatinem/rust-cache@v2
         with:
+          workspaces: ". -> cmake-build-release/rust-target"
+          shared-key: windows-gnu-package
+          add-job-id-key: "false"
           cache-bin: "false"
           cache-on-failure: "false"
       - name: Check workspace
@@ -129,3 +134,10 @@ jobs:
         run: |
           scripts/ci/build_windows_package.sh
           test -s cmake-build-release/cpack_artifacts/Lumen-0.0.0-Windows-x86_64.exe
+      - name: Upload unsigned NSIS installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: lumen-windows-unsigned-${{ github.sha }}
+          path: cmake-build-release/cpack_artifacts/Lumen-0.0.0-Windows-x86_64.exe
+          if-no-files-found: error
+          retention-days: 3

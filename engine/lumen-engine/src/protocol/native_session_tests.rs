@@ -11,7 +11,10 @@ use super::{
     NativeSessionError, NativeVideoBootstrapResultCode, NativeVideoCapability, NativeVideoCodec,
     NativeVideoFormat, NativeVideoKeyframeRequestReason, NativeVideoProfile, SessionStarted,
     VideoBootstrapResult, VideoKeyframeRequest, NATIVE_FEC_BLOCK_HEADER_BYTES,
-    NATIVE_PROTOCOL_VERSION, NATIVE_REQUIRED_MEDIA_CAPABILITIES, NATIVE_VIDEO_STREAM_ID,
+    NATIVE_MEDIA_CAPABILITY_CONTINUOUS_SCROLL, NATIVE_MEDIA_CAPABILITY_FIXED_CADENCE_FEEDBACK,
+    NATIVE_MEDIA_CAPABILITY_PAIRED_FEEDBACK_WINDOWS,
+    NATIVE_MEDIA_CAPABILITY_SAME_GENERATION_KEYFRAMES, NATIVE_PROTOCOL_VERSION,
+    NATIVE_REQUIRED_MEDIA_CAPABILITIES, NATIVE_VIDEO_STREAM_ID,
 };
 
 const V2_HELLO_ENVELOPE_BYTES: &[u8] = &[
@@ -159,12 +162,18 @@ fn generation_four_rejects_missing_exact_format_presence_at_version_negotiation(
 #[test]
 fn generation_four_requires_the_complete_realtime_media_capability_set() {
     let mut client = hello();
-    client.media_capabilities = NATIVE_REQUIRED_MEDIA_CAPABILITIES & !1;
-
-    assert_eq!(
-        negotiate_native_session(&client, &host(), 1),
-        Err(NativeSessionError::UnsupportedMediaCapabilities)
-    );
+    for missing_capability in [
+        NATIVE_MEDIA_CAPABILITY_SAME_GENERATION_KEYFRAMES,
+        NATIVE_MEDIA_CAPABILITY_FIXED_CADENCE_FEEDBACK,
+        NATIVE_MEDIA_CAPABILITY_CONTINUOUS_SCROLL,
+        NATIVE_MEDIA_CAPABILITY_PAIRED_FEEDBACK_WINDOWS,
+    ] {
+        client.media_capabilities = NATIVE_REQUIRED_MEDIA_CAPABILITIES & !missing_capability;
+        assert_eq!(
+            negotiate_native_session(&client, &host(), 1),
+            Err(NativeSessionError::UnsupportedMediaCapabilities)
+        );
+    }
 
     client.media_capabilities = NATIVE_REQUIRED_MEDIA_CAPABILITIES;
     let plan = negotiate_native_session(&client, &host(), 1).unwrap();
@@ -364,6 +373,7 @@ fn bounded_client_telemetry_round_trips_media_feedback_on_its_own_lane() {
                 decoded_frames: 29,
                 presented_frames: 28,
                 decoder_drops: 1,
+                feedback_window_id: 7,
             },
         )),
     };
