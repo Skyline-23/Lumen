@@ -52,6 +52,7 @@ NS_SWIFT_NAME(LumenMacVirtualDisplay)
 @property(nonatomic, readonly) uint32_t backingHeight;
 @property(nonatomic, readonly) uint32_t logicalWidth;
 @property(nonatomic, readonly) uint32_t logicalHeight;
+@property(nonatomic, readonly) double refreshRate;
 
 + (BOOL)isSupported;
 + (instancetype)createRegisteredDisplayForKey:(NSString *)key

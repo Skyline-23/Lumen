@@ -65,6 +65,19 @@ actor LumenMacVirtualDisplayOwner {
         geometry: LumenMacDisplayGeometry,
         refreshRate: Double
     ) async throws {
+        guard let display, display.displayID == displayID else {
+            throw LumenMacWorkspaceSessionError.virtualDisplayOwnershipMismatch
+        }
+        guard Self.requiresReconfiguration(
+            currentLogicalWidth: display.logicalWidth,
+            currentLogicalHeight: display.logicalHeight,
+            currentRefreshRate: display.refreshRate,
+            requestedLogicalWidth: geometry.logicalWidth,
+            requestedLogicalHeight: geometry.logicalHeight,
+            requestedRefreshRate: refreshRate
+        ) else {
+            return
+        }
         var generation = await reconfigurationObserver.generation(
             for: displayID
         )
@@ -106,6 +119,19 @@ actor LumenMacVirtualDisplayOwner {
                 return
             }
         }
+    }
+
+    nonisolated static func requiresReconfiguration(
+        currentLogicalWidth: UInt32,
+        currentLogicalHeight: UInt32,
+        currentRefreshRate: Double,
+        requestedLogicalWidth: UInt32,
+        requestedLogicalHeight: UInt32,
+        requestedRefreshRate: Double
+    ) -> Bool {
+        currentLogicalWidth != requestedLogicalWidth ||
+            currentLogicalHeight != requestedLogicalHeight ||
+            abs(currentRefreshRate - requestedRefreshRate) > 0.000_1
     }
 
     func awaitCapturePreparation(displayID: UInt32) async throws {
