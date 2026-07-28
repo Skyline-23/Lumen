@@ -89,6 +89,29 @@ struct LumenVirtualDisplayLifecycleContractTests {
         #expect(!source.contains("SCShareableContent.current"))
     }
 
+    @Test("Worker warms ScreenCaptureKit after AppKit readiness without delaying QUIC startup")
+    func workerWarmsScreenCaptureInventoryAsynchronously() throws {
+        let warmup = try source(
+            "src/platform/macos/Projects/LumenMacBridge/Sources/" +
+                "LumenScreenCaptureInventoryWarmup.swift"
+        )
+        let entry = try source("engine/lumen-host/src/entry.rs")
+        let workerStart = try #require(
+            entry.range(of: "worker_platform.warm_screen_capture_inventory();")
+        )
+        let runtimeStart = try #require(
+            entry.range(
+                of: "HostRuntime::new(NativeHostService::production_with_platform"
+            )
+        )
+
+        #expect(warmup.contains("Task(priority: .utility)"))
+        #expect(
+            warmup.contains("try await SCShareableContent.excludingDesktopWindows")
+        )
+        #expect(workerStart.lowerBound < runtimeStart.lowerBound)
+    }
+
     private func source(_ relativePath: String) throws -> String {
         let root = try repositoryRoot()
         return try String(

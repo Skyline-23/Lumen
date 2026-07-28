@@ -81,6 +81,10 @@ void LumenMacApplicationStopMainThread(void) {
   CFRunLoopWakeUp(runLoop);
 }
 
+void LumenMacScreenCaptureWarmInventory(void) {
+  [LumenScreenCaptureInventoryWarmup start];
+}
+
 struct LumenMacBridgeController {
   void *facade;
 };

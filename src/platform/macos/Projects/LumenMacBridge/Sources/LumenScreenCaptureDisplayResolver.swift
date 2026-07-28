@@ -4,7 +4,6 @@ import CoreMedia
 import CoreVideo
 import Darwin
 import Foundation
-import OSLog
 import ScreenCaptureKit
 import Synchronization
 import VideoToolbox
@@ -30,6 +29,16 @@ private actor LumenScreenCaptureCompletedQueryStore<Value: Sendable> {
     }
 }
 
+private struct LumenScreenCaptureTimedQueryContext<Value: Sendable> {
+    let displayID: UInt32
+    let generation: UInt64
+    let deadline: UInt64
+    let overallDeadline: UInt64
+    let queryBudget: LumenScreenCaptureQueryBudget
+    let environment: LumenScreenCaptureDisplayResolver.Environment<Value>
+    let completedQueries: LumenScreenCaptureCompletedQueryStore<Value>
+}
+
 enum LumenScreenCaptureDisplayResolver {
     typealias MonotonicNow = @Sendable () async -> UInt64
     typealias MonotonicSleep = @Sendable (UInt64) async -> Void
@@ -40,7 +49,8 @@ enum LumenScreenCaptureDisplayResolver {
         let readiness:
             @Sendable () async -> LumenCaptureDisplayReadinessSnapshot
         let lookup:
-            @Sendable (_ generation: UInt64) async throws -> Value?
+            @Sendable (_ generation: UInt64) async throws ->
+                LumenScreenCaptureQueryCompletion<Value>
     }
 
     private struct AcceptanceContext<Value: Sendable> {
@@ -59,11 +69,6 @@ enum LumenScreenCaptureDisplayResolver {
         let environment: Environment<Value>
         let completedQueries: LumenScreenCaptureCompletedQueryStore<Value>
     }
-
-    private static let logger = Logger(
-        subsystem: "dev.skyline23.lumen",
-        category: "ScreenCaptureStartup"
-    )
 
     static func resolve<Value: Sendable>(
         displayID: UInt32,
@@ -97,57 +102,39 @@ enum LumenScreenCaptureDisplayResolver {
         _ context: ResolutionContext<Value>
     ) async throws -> Value? {
         try Task.checkCancellation()
-        let currentTime = try await timeWithinDeadline(
-            displayID: context.displayID,
-            deadline: context.overallDeadline,
-            environment: context.environment
-        )
         let acceptanceContext = AcceptanceContext(
             displayID: context.displayID,
             authority: context.authority,
             overallDeadline: context.overallDeadline,
             environment: context.environment
         )
-        while let completed = await context.completedQueries.takeFirst() {
-            logCompletedQueryAdopted(
-                displayID: context.displayID,
-                generation: completed.generation
-            )
-            if let value = try await acceptedValue(
-                completed.outcome,
-                generation: completed.generation,
-                context: acceptanceContext
-            ) {
-                return value
-            }
+        if let completedValue = try await takeCompletedValue(
+            context,
+            acceptanceContext: acceptanceContext
+        ) {
+            return completedValue
         }
-        guard try await modeIsReady(
-            displayID: context.displayID,
-            authority: context.authority,
-            environment: context.environment
-        ), let generation = await context.queryBudget.begin() else {
+        let currentTime = await context.environment.now()
+        if currentTime > context.overallDeadline {
+            if let boundaryValue = try await takeBoundaryValue(
+                context,
+                acceptanceContext: acceptanceContext
+            ) {
+                return boundaryValue
+            }
+            throw LumenScreenCaptureError.displayUnavailable(context.displayID)
+        }
+        guard let generation = try await beginQueryIfReady(context) else {
             try await waitForRetry(
                 context,
                 currentTime: currentTime
             )
             return nil
         }
-        let queryDeadline = min(
-            addingClamped(
-                currentTime,
-                context.timing.queryTimeoutNanoseconds
-            ),
-            context.overallDeadline
-        )
-        logQueryStart(displayID: context.displayID, generation: generation)
-        let outcome = await performTimedQuery(
-            displayID: context.displayID,
+        let outcome = await performNextQuery(
+            context,
             generation: generation,
-            deadline: queryDeadline,
-            overallDeadline: context.overallDeadline,
-            queryBudget: context.queryBudget,
-            environment: context.environment,
-            completedQueries: context.completedQueries
+            currentTime: currentTime
         )
         if let value = try await acceptedValue(
             outcome,
@@ -170,16 +157,78 @@ enum LumenScreenCaptureDisplayResolver {
 }
 
 extension LumenScreenCaptureDisplayResolver {
-    private static func timeWithinDeadline<Value: Sendable>(
-        displayID: UInt32,
-        deadline: UInt64,
-        environment: Environment<Value>
-    ) async throws -> UInt64 {
-        let currentTime = await environment.now()
-        guard currentTime <= deadline else {
-            throw LumenScreenCaptureError.displayUnavailable(displayID)
+    private static func beginQueryIfReady<Value: Sendable>(
+        _ context: ResolutionContext<Value>
+    ) async throws -> UInt64? {
+        guard try await modeIsReady(
+            displayID: context.displayID,
+            authority: context.authority,
+            environment: context.environment
+        ) else {
+            return nil
         }
-        return currentTime
+        return await context.queryBudget.begin()
+    }
+
+    private static func takeBoundaryValue<Value: Sendable>(
+        _ context: ResolutionContext<Value>,
+        acceptanceContext: AcceptanceContext<Value>
+    ) async throws -> Value? {
+        // Do not extend the publication deadline. Yield only so an SCK callback
+        // that already fired can finish publishing its stamped result.
+        for _ in 0 ..< 3 {
+            await Task.yield()
+            if let value = try await takeCompletedValue(
+                context,
+                acceptanceContext: acceptanceContext
+            ) {
+                return value
+            }
+        }
+        return nil
+    }
+
+    private static func performNextQuery<Value: Sendable>(
+        _ context: ResolutionContext<Value>,
+        generation: UInt64,
+        currentTime: UInt64
+    ) async -> LumenScreenCaptureTimedQueryOutcome<Value> {
+        let queryDeadline = min(
+            addingClamped(currentTime, context.timing.queryTimeoutNanoseconds),
+            context.overallDeadline
+        )
+        logQueryStart(displayID: context.displayID, generation: generation)
+        return await performTimedQuery(
+            .init(
+                displayID: context.displayID,
+                generation: generation,
+                deadline: queryDeadline,
+                overallDeadline: context.overallDeadline,
+                queryBudget: context.queryBudget,
+                environment: context.environment,
+                completedQueries: context.completedQueries
+            )
+        )
+    }
+
+    private static func takeCompletedValue<Value: Sendable>(
+        _ context: ResolutionContext<Value>,
+        acceptanceContext: AcceptanceContext<Value>
+    ) async throws -> Value? {
+        while let completed = await context.completedQueries.takeFirst() {
+            logCompletedQueryAdopted(
+                displayID: context.displayID,
+                generation: completed.generation
+            )
+            if let value = try await acceptedValue(
+                completed.outcome,
+                generation: completed.generation,
+                context: acceptanceContext
+            ) {
+                return value
+            }
+        }
+        return nil
     }
 
     private static func modeIsReady<Value: Sendable>(
@@ -222,13 +271,11 @@ extension LumenScreenCaptureDisplayResolver {
         context: AcceptanceContext<Value>
     ) async throws -> Value? {
         switch outcome {
-        case .value(let value):
+        case .value(let value, let completedAtNanoseconds):
             try Task.checkCancellation()
-            _ = try await timeWithinDeadline(
-                displayID: context.displayID,
-                deadline: context.overallDeadline,
-                environment: context.environment
-            )
+            guard completedAtNanoseconds <= context.overallDeadline else {
+                return nil
+            }
             try Task.checkCancellation()
             guard try await modeIsReady(
                 displayID: context.displayID,
@@ -239,7 +286,14 @@ extension LumenScreenCaptureDisplayResolver {
             }
             try Task.checkCancellation()
             return value
-        case .failure(let error):
+        case .failure(let error, let completedAtNanoseconds):
+            try Task.checkCancellation()
+            if error is CancellationError {
+                throw error
+            }
+            guard completedAtNanoseconds <= context.overallDeadline else {
+                return nil
+            }
             _ = try await modeIsReady(
                 displayID: context.displayID,
                 authority: context.authority,
@@ -255,98 +309,20 @@ extension LumenScreenCaptureDisplayResolver {
         }
     }
 
-    private static func validateOwnership(
-        _ snapshot: LumenCaptureDisplayReadinessSnapshot,
-        displayID: UInt32,
-        authority: LumenScreenCaptureDisplayAuthority
-    ) throws {
-        switch authority {
-        case .retained(let ownerToken):
-            guard snapshot.ownerToken == ownerToken else {
-                throw LumenScreenCaptureError.displayOwnershipLost(displayID)
-            }
-        case .exactExternal:
-            guard snapshot.ownerToken == nil else {
-                throw LumenScreenCaptureError.displayUnavailable(displayID)
-            }
-        }
-    }
-
-    private static func logQueryStart(
-        displayID: UInt32,
-        generation: UInt64
-    ) {
-        let message = [
-            "stage=display-query-generation-start",
-            "display-id=\(displayID)",
-            "generation=\(generation)"
-        ].joined(separator: " ")
-        logger.notice("\(message, privacy: .public)")
-        writeScreenCaptureStartupDiagnostic(message)
-    }
-
-    private static func logQueryTimeout(
-        displayID: UInt32,
-        generation: UInt64
-    ) {
-        let message = [
-            "stage=display-query-timeout",
-            "display-id=\(displayID)",
-            "generation=\(generation)"
-        ].joined(separator: " ")
-        logger.warning("\(message, privacy: .public)")
-        writeScreenCaptureStartupDiagnostic(message)
-    }
-
     private static func performTimedQuery<Value: Sendable>(
-        displayID: UInt32,
-        generation: UInt64,
-        deadline: UInt64,
-        overallDeadline: UInt64,
-        queryBudget: LumenScreenCaptureQueryBudget,
-        environment: Environment<Value>,
-        completedQueries: LumenScreenCaptureCompletedQueryStore<Value>
+        _ context: LumenScreenCaptureTimedQueryContext<Value>
     ) async -> LumenScreenCaptureTimedQueryOutcome<Value> {
         let race = LumenScreenCaptureTimedQueryRace<Value>(
-            generation: generation
+            generation: context.generation
         )
         let queryTask = Task {
-            let outcome: LumenScreenCaptureTimedQueryOutcome<Value>
-            do {
-                outcome = .value(
-                    try await environment.lookup(generation)
-                )
-            } catch {
-                outcome = .failure(error)
-            }
-            let completedAt = await environment.now()
-            if completedAt <= deadline {
-                await race.finish(
-                    generation: generation,
-                    outcome: outcome
-                )
-            } else if completedAt <= overallDeadline {
-                await completedQueries.append(
-                    generation: generation,
-                    outcome: outcome
-                )
-                logLateQueryResultAvailable(
-                    displayID: displayID,
-                    generation: generation
-                )
-            } else {
-                logLateQueryResultDiscarded(
-                    displayID: displayID,
-                    generation: generation
-                )
-            }
-            await queryBudget.finish(generation: generation)
+            await performLookup(context, race: race)
         }
         let timeoutTask = Task {
             // Reserve the exact boundary for a query that completed on time.
-            await environment.sleepUntil(addingClamped(deadline, 1))
+            await context.environment.sleepUntil(addingClamped(context.deadline, 1))
             await race.finish(
-                generation: generation,
+                generation: context.generation,
                 outcome: .timedOut
             )
         }
@@ -355,8 +331,11 @@ extension LumenScreenCaptureDisplayResolver {
         } onCancel: {
             Task {
                 await race.finish(
-                    generation: generation,
-                    outcome: .failure(CancellationError())
+                    generation: context.generation,
+                    outcome: .failure(
+                        CancellationError(),
+                        completedAtNanoseconds: UInt64.max
+                    )
                 )
             }
         }
@@ -365,42 +344,49 @@ extension LumenScreenCaptureDisplayResolver {
         return outcome
     }
 
-    private static func logLateQueryResultAvailable(
-        displayID: UInt32,
-        generation: UInt64
-    ) {
-        let message = [
-            "stage=display-query-late-result-available",
-            "display-id=\(displayID)",
-            "generation=\(generation)"
-        ].joined(separator: " ")
-        logger.notice("\(message, privacy: .public)")
-        writeScreenCaptureStartupDiagnostic(message)
+    private static func performLookup<Value: Sendable>(
+        _ context: LumenScreenCaptureTimedQueryContext<Value>,
+        race: LumenScreenCaptureTimedQueryRace<Value>
+    ) async {
+        let outcome: LumenScreenCaptureTimedQueryOutcome<Value>
+        do {
+            let completion = try await context.environment.lookup(context.generation)
+            outcome = .value(
+                completion.value,
+                completedAtNanoseconds: completion.completedAtNanoseconds
+            )
+        } catch {
+            outcome = .failure(
+                error,
+                completedAtNanoseconds: await context.environment.now()
+            )
+        }
+        await publishLookupOutcome(outcome, context: context, race: race)
+        await context.queryBudget.finish(generation: context.generation)
     }
 
-    private static func logCompletedQueryAdopted(
-        displayID: UInt32,
-        generation: UInt64
-    ) {
-        let message = [
-            "stage=display-query-completed-result-adopted",
-            "display-id=\(displayID)",
-            "generation=\(generation)"
-        ].joined(separator: " ")
-        logger.notice("\(message, privacy: .public)")
-        writeScreenCaptureStartupDiagnostic(message)
-    }
-
-    private static func logLateQueryResultDiscarded(
-        displayID: UInt32,
-        generation: UInt64
-    ) {
-        let message = [
-            "stage=display-query-late-result-discarded",
-            "display-id=\(displayID)",
-            "generation=\(generation)"
-        ].joined(separator: " ")
-        logger.warning("\(message, privacy: .public)")
-        writeScreenCaptureStartupDiagnostic(message)
+    private static func publishLookupOutcome<Value: Sendable>(
+        _ outcome: LumenScreenCaptureTimedQueryOutcome<Value>,
+        context: LumenScreenCaptureTimedQueryContext<Value>,
+        race: LumenScreenCaptureTimedQueryRace<Value>
+    ) async {
+        let completedAt = outcome.completedAtNanoseconds ?? UInt64.max
+        if completedAt <= context.deadline {
+            await race.finish(generation: context.generation, outcome: outcome)
+        } else if completedAt <= context.overallDeadline {
+            await context.completedQueries.append(
+                generation: context.generation,
+                outcome: outcome
+            )
+            logLateQueryResultAvailable(
+                displayID: context.displayID,
+                generation: context.generation
+            )
+        } else {
+            logLateQueryResultDiscarded(
+                displayID: context.displayID,
+                generation: context.generation
+            )
+        }
     }
 }
