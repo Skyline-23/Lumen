@@ -1036,9 +1036,36 @@ async fn accept_native_telemetry_stream(
     );
     let mut expected_sequence = 1_u64;
     let mut logged_audio_feedback = false;
-    while let Some(frame) =
-        read_length_delimited_frame(&mut receive, NATIVE_CONTROL_MESSAGE_LIMIT, "telemetry").await?
-    {
+    let mut incomplete_window_timeout = None;
+    loop {
+        let frame = if let Some(timeout) = incomplete_window_timeout {
+            tokio::time::timeout(
+                timeout,
+                read_length_delimited_frame(
+                    &mut receive,
+                    NATIVE_CONTROL_MESSAGE_LIMIT,
+                    "telemetry",
+                ),
+            )
+            .await
+            .map_err(|_| "QUIC telemetry feedback pair timed out".to_owned())??
+        } else {
+            read_length_delimited_frame(&mut receive, NATIVE_CONTROL_MESSAGE_LIMIT, "telemetry")
+                .await?
+        };
+        let Some(frame) = frame else {
+            router
+                .lock()
+                .map_err(|_| "native control router lock is poisoned".to_owned())?
+                .finish_native_media_feedback(session_epoch)
+                .map_err(|reason| {
+                    format!(
+                        "QUIC telemetry stream ended with rejected feedback reason={}",
+                        reason.code()
+                    )
+                })?;
+            break;
+        };
         let envelope = decode_client_telemetry_message(&frame)
             .map_err(|error| format!("invalid QUIC telemetry frame: {error:?}"))?;
         if envelope.sequence != expected_sequence {
@@ -1060,6 +1087,13 @@ async fn accept_native_telemetry_stream(
             .observe_native_media_feedback(&feedback, session_epoch);
         match disposition {
             Ok(disposition) => {
+                incomplete_window_timeout = match disposition {
+                    NativeMediaFeedbackDisposition::AwaitingPair {
+                        window_milliseconds,
+                    } => Some(Duration::from_millis(u64::from(window_milliseconds))),
+                    NativeMediaFeedbackDisposition::Applied(_)
+                    | NativeMediaFeedbackDisposition::Unchanged => None,
+                };
                 apply_adaptive_video_decision(platform.as_ref(), session_epoch, disposition)?;
                 if feedback.stream_id != u32::from(NATIVE_AUDIO_STREAM_ID) {
                     continue;

@@ -157,7 +157,10 @@ queue depth, presentation drops, and window duration.
 Each negotiated feedback window consists of exactly one video report followed
 by exactly one audio report carrying the same nonzero `feedback_window_id`.
 The base window is 250 ms; when reliable telemetry is delayed, the client may
-coalesce consecutive samples into one positive 250 ms multiple. Video transport
+coalesce consecutive samples into one positive 250 ms multiple. Both reports
+must cover the same duration. After the first report, the second must arrive
+within that reported duration; timeout or telemetry EOF with an incomplete pair
+is a protocol failure. Video transport
 evidence controls clean recovery, while severe audio pressure may still reduce
 the shared video delivery budget. Each report requires an active session and an
 ordered inclusive sequence range; datagram sequence windows remain independent
