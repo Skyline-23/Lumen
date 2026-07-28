@@ -187,6 +187,7 @@ type PrepareApplicationMainThread = unsafe extern "C" fn() -> bool;
 type RunApplicationMainThread =
     unsafe extern "C" fn(ApplicationReadinessCallback, *mut c_void) -> bool;
 type StopApplicationMainThread = unsafe extern "C" fn();
+type WarmScreenCaptureInventory = unsafe extern "C" fn();
 type MakeVideoConfiguration = unsafe extern "C" fn(u32) -> MacCaptureConfiguration;
 type MakeAudioConfiguration = unsafe extern "C" fn(u32) -> MacAudioCaptureConfiguration;
 type ConfigureForwarding = unsafe extern "C" fn(*mut BridgeController, usize, usize);
@@ -247,6 +248,7 @@ struct MacBridgeApi {
     prepare_application_main_thread: PrepareApplicationMainThread,
     run_application_main_thread: RunApplicationMainThread,
     stop_application_main_thread: StopApplicationMainThread,
+    warm_screen_capture_inventory: WarmScreenCaptureInventory,
     create_controller: CreateController,
     destroy_controller: DestroyController,
     make_video_configuration: MakeVideoConfiguration,
@@ -298,6 +300,10 @@ impl MacBridgeApi {
                 stop_application_main_thread: load_symbol(
                     handle,
                     b"LumenMacApplicationStopMainThread\0",
+                )?,
+                warm_screen_capture_inventory: load_symbol(
+                    handle,
+                    b"LumenMacScreenCaptureWarmInventory\0",
                 )?,
                 create_controller: load_symbol(handle, b"LumenMacBridgeControllerCreate\0")?,
                 destroy_controller: load_symbol(handle, b"LumenMacBridgeControllerDestroy\0")?,
@@ -442,6 +448,10 @@ impl MacPlatformSessionControl {
 
     pub(crate) fn stop_application_event_loop(&self) {
         unsafe { (self.api.stop_application_main_thread)() };
+    }
+
+    pub(crate) fn warm_screen_capture_inventory(&self) {
+        unsafe { (self.api.warm_screen_capture_inventory)() };
     }
 
     fn reconfigure_workspace_locked(

@@ -249,7 +249,7 @@ private extension LumenScreenCaptureDisplayReadinessTests {
 
 private extension LumenScreenCaptureDisplayReadinessTests {
     func assertResolvedQueryWinnerIsCancelled() async throws {
-        let nowControl = DisplayReadinessNowControl(blockingCall: 4)
+        let nowControl = DisplayReadinessNowControl(blockingCall: 3)
         let task = Task.detached { @Sendable in
             try await LumenScreenCaptureDisplayResolver.resolve(
                 displayID: 22,

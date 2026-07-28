@@ -102,9 +102,24 @@ enum LumenScreenCaptureDisplayAuthority: Equatable, Sendable {
 }
 
 enum LumenScreenCaptureTimedQueryOutcome<Value: Sendable>: @unchecked Sendable {
-    case value(Value?)
-    case failure(any Error)
+    case value(Value?, completedAtNanoseconds: UInt64)
+    case failure(any Error, completedAtNanoseconds: UInt64)
     case timedOut
+
+    var completedAtNanoseconds: UInt64? {
+        switch self {
+        case .value(_, let completedAtNanoseconds),
+             .failure(_, let completedAtNanoseconds):
+            completedAtNanoseconds
+        case .timedOut:
+            nil
+        }
+    }
+}
+
+struct LumenScreenCaptureQueryCompletion<Value: Sendable>: Sendable {
+    let value: Value?
+    let completedAtNanoseconds: UInt64
 }
 
 actor LumenScreenCaptureTimedQueryRace<Value: Sendable> {

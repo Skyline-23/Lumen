@@ -93,6 +93,7 @@ bool LumenMacApplicationRunMainThread(
   void *readiness_context
 );
 void LumenMacApplicationStopMainThread(void);
+void LumenMacScreenCaptureWarmInventory(void);
 
 // Stable C shapes used only at the Swift/Objective-C platform boundary. Shared
 // policy and the packaged host runtime are Rust-owned; these records carry

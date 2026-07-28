@@ -109,6 +109,7 @@ fn run_macos_native_host(arguments: HostArguments) -> Result<(), NativeHostRunEr
     let stop_loop_platform = Arc::clone(&platform);
     run_macos_worker_lifecycle(
         move || {
+            worker_platform.warm_screen_capture_inventory();
             let mut runtime =
                 HostRuntime::new(NativeHostService::production_with_platform(worker_platform));
             run_worker(&arguments, &mut runtime, &mut source).map_err(NativeHostRunError::Runtime)

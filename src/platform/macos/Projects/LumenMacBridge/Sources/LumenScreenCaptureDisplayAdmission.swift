@@ -19,6 +19,7 @@ private struct LumenDisplayQueryContext {
 private struct LumenDisplayQueryResult: Sendable {
     let target: LumenScreenCaptureDisplayHandle?
     let observedDisplayIDs: String
+    let completedAtNanoseconds: UInt64
 }
 
 private struct LumenDisplayReadinessContext {
@@ -195,12 +196,16 @@ enum LumenScreenCaptureDisplayReadiness {
                     try? await Task.sleep(nanoseconds: deadline - current)
                 },
                 readiness: readiness,
-                lookup: { generation in
-                    try await queryDisplay(
+                stampedLookup: { generation in
+                    let result = try await queryDisplay(
                         displayID: context.displayID,
                         authorityLabel: context.authorityLabel,
                         ownerToken: context.ownerToken,
                         generation: generation
+                    )
+                    return LumenScreenCaptureQueryCompletion(
+                        value: result.target,
+                        completedAtNanoseconds: result.completedAtNanoseconds
                     )
                 }
             )
@@ -281,7 +286,7 @@ private extension LumenScreenCaptureDisplayReadiness {
         authorityLabel: String,
         ownerToken: UInt,
         generation: UInt64
-    ) async throws -> LumenScreenCaptureDisplayHandle? {
+    ) async throws -> LumenDisplayQueryResult {
         let context = LumenDisplayQueryContext(
             displayID: displayID,
             authorityLabel: authorityLabel,
@@ -297,18 +302,18 @@ private extension LumenScreenCaptureDisplayReadiness {
             found: result.target != nil,
             observedDisplayIDs: result.observedDisplayIDs
         )
-        return result.target
+        return result
     }
 
     private static func getShareableContentExcludingDesktopWindows(
         displayID: UInt32
-    ) async throws -> LumenDisplayQueryResult
-    {
+    ) async throws -> LumenDisplayQueryResult {
         try await withCheckedThrowingContinuation { continuation in
             SCShareableContent.getExcludingDesktopWindows(
                 false,
                 onScreenWindowsOnly: false
             ) { content, error in
+                let completedAtNanoseconds = DispatchTime.now().uptimeNanoseconds
                 if let error {
                     continuation.resume(throwing: error)
                 } else if let content {
@@ -323,7 +328,8 @@ private extension LumenScreenCaptureDisplayReadiness {
                             target: target.map(
                                 LumenScreenCaptureDisplayHandle.init(value:)
                             ),
-                            observedDisplayIDs: observedDisplayIDs
+                            observedDisplayIDs: observedDisplayIDs,
+                            completedAtNanoseconds: completedAtNanoseconds
                         )
                     )
                 } else {
