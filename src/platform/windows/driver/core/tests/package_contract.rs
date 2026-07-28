@@ -33,7 +33,19 @@ fn inf_is_system_only_and_process_isolated() {
 
     // Then: only LocalSystem can open the device and the UMDF host is not pooled.
     assert!(inf.contains("Security,,\"D:P(A;;GA;;;SY)\""));
+    assert!(inf.contains("UmdfLibraryVersion = 2.25.0"));
+    assert!(inf.contains("UmdfExtensions = IddCx0102"));
     assert!(inf.contains("UmdfHostProcessSharing = ProcessSharingDisabled"));
+    assert!(inf.contains("UmdfKernelModeClientPolicy = AllowKernelModeClients"));
+    assert!(!inf.contains("RejectKernelModeClients"));
+    assert!(!inf.contains("UmdfFileObjectPolicy"));
+    assert!(inf.contains("DriverCopy = 13"));
+    assert!(inf.contains("Include = WUDFRD.inf"));
+    assert!(inf.contains("Needs = WUDFRD.NT"));
+    assert!(inf.contains("Needs = WUDFRD.NT.HW"));
+    assert!(inf.contains("Needs = WUDFRD.NT.Services"));
+    assert!(inf.contains("ServiceBinary = %13%\\LumenIddCx.dll"));
+    assert!(!inf.contains("[WUDFRdService]"));
     assert!(!inf.contains(";;;WD)"));
     assert!(!inf.contains(";;;BU)"));
     assert!(!inf.contains(";;;BA)"));

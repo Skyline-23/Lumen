@@ -69,7 +69,6 @@
     <Link>
       <AdditionalLibraryDirectories>$(WindowsSdkDir)Lib\$(WindowsTargetPlatformVersion)\um\x64\iddcx\1.11;$(WindowsSdkDir)Lib\wdf\umdf\x64\2.33;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>IddCxStub.lib;WdfDriverStubUm.lib;$(LumenDriverCoreLibrary);d3d11.lib;d3d12.lib;dxgi.lib;advapi32.lib;bcrypt.lib;ntdll.lib;userenv.lib;ws2_32.lib;kernel32.lib;onecoreuap.lib;libcmt.lib;libvcruntime.lib;libucrt.lib;msvcprt.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <EntryPointSymbol>FxDriverEntryUm</EntryPointSymbol>
       <SubSystem>Windows</SubSystem>
     </Link>
   </ItemDefinitionGroup>

@@ -17,18 +17,25 @@ fn inf_section<'a>(inf: &'a str, name: &str) -> &'a str {
 }
 
 #[test]
-fn device_security_is_installed_from_hardware_section() {
-    // Given: the UMDF package INF and its device security registration.
+fn device_security_and_isolation_are_installed_from_hardware_section() {
+    // Given: the UMDF package INF and its device-specific registrations.
     let inf = fs::read_to_string(driver_root().join("package/LumenIddCx.inf"))
         .expect("driver INF must exist");
 
     // When: the DDInstall and DDInstall.HW sections are resolved independently.
     let install = inf_section(&inf, "DriverInstall.NT");
     let hardware = inf_section(&inf, "DriverInstall.NT.HW");
+    let isolation = inf_section(&inf, "DriverIsolation");
 
-    // Then: DEVPKEY_Device_Security is owned only by the hardware section.
+    // Then: security, the non-pooled host group, and IndirectKmd are all written
+    // to the devnode hardware key rather than the package software key.
     assert!(hardware.contains("AddReg = DriverSecurity"));
+    assert!(hardware.contains("DriverIsolation"));
     assert!(!install.contains("DriverSecurity"));
+    assert!(!install.contains("DriverIsolation"));
+    assert!(isolation.contains("\"WUDF\",\"DeviceGroupId\""));
+    assert!(isolation.contains("\"UpperFilters\""));
+    assert!(isolation.contains("\"IndirectKmd\""));
 }
 
 #[test]
@@ -146,6 +153,15 @@ fn windows_scripts_cleanup_every_failed_install_attempt() {
     assert!(build_script.contains("Cert:\\CurrentUser\\My\\$($certificate.Thumbprint)"));
     assert!(install_script.contains("$installSucceeded = $false"));
     assert!(install_script.contains("HardwareID -Contains \"ROOT\\LumenIddCx\""));
+    assert!(install_script.contains("$devconExitCode -notin @(0, 1)"));
+    assert!(install_script.contains("DEVPKEY_Device_ProblemCode"));
+    assert!(install_script.contains("[int]$problem.Data -eq 14"));
+    assert!(install_script.contains("RestartRequired = $true"));
+    assert!(install_script.contains("RestartRequired = $false"));
+    assert!(install_script.contains("$devices[0].Status -ne \"OK\""));
+    assert!(test_script.contains("$installResult.RestartRequired"));
+    assert!(test_script.contains("$installCompleted = $true"));
+    assert!(test_script.contains("$KeepInstalled -and $installCompleted"));
     assert!(install_script.contains("finally {"));
     assert!(install_script.contains("uninstall_windows_driver.ps1"));
     assert!(uninstall.contains("HardwareID -Contains \"ROOT\\LumenIddCx\""));

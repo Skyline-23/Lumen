@@ -9,6 +9,27 @@ fn driver_root() -> PathBuf {
 }
 
 #[test]
+fn project_lets_the_wdk_own_the_umdf_loader_entrypoint() {
+    // Given: the project that links the user-mode indirect-display driver.
+    let project = fs::read_to_string(driver_root().join("LumenIddCx.vcxproj"))
+        .expect("driver project must exist");
+
+    // Then: the WDF stub remains linked as an export while the linker supplies
+    // the normal DLL entrypoint. Making FxDriverEntryUm the PE entrypoint causes
+    // WUDFHost to invoke it with DllMain arguments before DriverEntry can run.
+    assert!(project.contains("WdfDriverStubUm.lib"));
+    assert_eq!(
+        project.matches("<UMDF_VERSION_MINOR_REQUIRED>25").count(),
+        2
+    );
+    assert!(!project.contains("<EntryPointSymbol>"));
+
+    let driver = fs::read_to_string(driver_root().join("shim/driver.cpp"))
+        .expect("driver initialization source must exist");
+    assert!(!driver.contains("diagnostic_stage_failure"));
+}
+
+#[test]
 fn feature_probe_and_luid_pin_precede_adapter_and_monitor_creation() {
     // Given: the platform adapter boundary.
     let adapter = fs::read_to_string(driver_root().join("shim/adapter.cpp"))

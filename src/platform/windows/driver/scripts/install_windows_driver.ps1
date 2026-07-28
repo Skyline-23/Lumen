@@ -35,15 +35,29 @@ try {
     $devices = @(Get-PnpDevice -PresentOnly | Where-Object HardwareID -Contains "ROOT\LumenIddCx")
     if ($devices.Count -eq 0) {
         & $devcon install $inf "Root\LumenIddCx"
-        if ($LASTEXITCODE -ne 0) { throw "devcon failed to create the root-enumerated adapter." }
+        $devconExitCode = $LASTEXITCODE
+        if ($devconExitCode -notin @(0, 1)) {
+            throw "devcon failed to create the root-enumerated adapter with code $devconExitCode."
+        }
     }
     $devices = @()
+    $problem = $null
     for ($attempt = 0; $attempt -lt 60; $attempt++) {
         $devices = @(Get-PnpDevice -PresentOnly | Where-Object HardwareID -Contains "ROOT\LumenIddCx")
-        if ($devices.Count -eq 1) { break }
+        if ($devices.Count -eq 1) {
+            $problem = Get-PnpDeviceProperty `
+                -InstanceId $devices[0].InstanceId `
+                -KeyName "DEVPKEY_Device_ProblemCode"
+            if ($devices[0].Status -eq "OK" -and [int]$problem.Data -eq 0) {
+                break
+            }
+        }
         Start-Sleep -Milliseconds 500
     }
     if ($devices.Count -ne 1) { throw "Expected exactly one Lumen IDD device after 30 seconds; found $($devices.Count)." }
+    if ($null -eq $problem -or $devices[0].Status -ne "OK" -or [int]$problem.Data -ne 0) {
+        throw "Lumen IDD did not start: status=$($devices[0].Status) problem=$($problem.Data)."
+    }
     $installSucceeded = $true
 }
 finally {
