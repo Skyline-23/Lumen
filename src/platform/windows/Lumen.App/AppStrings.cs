@@ -5,13 +5,25 @@ namespace Lumen.App;
 
 internal static class AppStrings
 {
-    // The unpackaged WinUI application publishes a view-independent
-    // `Resources` map into Lumen.pri. The parameterless Windows App SDK
-    // loader resolves against a packaged app identity and fails at runtime
-    // with 0x80073B17 (NamedResource Not Found).
-    private static readonly ResourceLoader Loader = ResourceLoader.GetForViewIndependentUse();
+    // Load the unpackaged app's PRI explicitly. ResourceLoader's parameterless
+    // constructor resolves against package identity, while this app ships as
+    // an unpackaged self-contained executable.
+    private static readonly ResourceManager Manager = new(
+        Path.Combine(AppContext.BaseDirectory, "Lumen.pri"));
+    private static readonly ResourceMap Resources = Manager.MainResourceMap.GetSubtree("Resources");
+    private static readonly ResourceContext Context = Manager.CreateResourceContext();
 
-    internal static string Get(string key) => Loader.GetString(key);
+    internal static string Get(string key)
+    {
+        // MRT stores dotted RESW names as URI-path segments (for example,
+        // `Authentication.HeroTitle` becomes `Authentication/HeroTitle`).
+        // ResourceLoader performed that conversion for packaged apps, so do it
+        // explicitly when resolving this unpackaged PRI map.
+        var candidate = Resources.TryGetValue(key, Context) ??
+                        Resources.TryGetValue(key.Replace('.', '/'), Context);
+        return candidate?.ValueAsString ?? throw new InvalidOperationException(
+            $"The localized resource '{key}' is missing from Lumen.pri.");
+    }
 
     internal static string Format(string key, params object[] values) =>
         string.Format(CultureInfo.CurrentCulture, Get(key), values);

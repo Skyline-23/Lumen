@@ -547,8 +547,13 @@ fn windows_winui_resources_and_generated_outputs_are_localized_and_hygienic() {
     // the fallback, and Korean/Japanese UI terms continue the prior UI copy.
     assert!(project.contains("<PRIResource Include=\"Strings\\**\\*.resw\" />"));
     assert!(project.contains("<EnableDefaultPriItems>false</EnableDefaultPriItems>"));
-    assert!(strings.contains("ResourceLoader Loader = ResourceLoader.GetForViewIndependentUse()"));
-    assert!(!strings.contains("ResourceLoader Loader = new()"));
+    assert!(strings.contains("Path.Combine(AppContext.BaseDirectory, \"Lumen.pri\")"));
+    assert!(strings.contains("Manager.MainResourceMap.GetSubtree(\"Resources\")"));
+    assert!(strings.contains("Manager.CreateResourceContext()"));
+    assert!(strings.contains("Resources.TryGetValue(key, Context)"));
+    assert!(strings.contains("key.Replace('.', '/')"));
+    assert!(strings.contains("throw new InvalidOperationException"));
+    assert!(!strings.contains("GetForViewIndependentUse"));
     assert!(!strings.contains("CurrentUICulture"));
     for resource in [&english, &korean, &japanese] {
         assert!(resource.contains("name=\"Navigation.Overview\""));

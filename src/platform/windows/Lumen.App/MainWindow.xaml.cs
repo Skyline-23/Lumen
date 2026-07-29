@@ -19,6 +19,7 @@ public sealed class MainWindow : Window
     private ManagementSnapshot? _snapshot;
     private string _page = "overview";
     private bool _updating;
+    private bool _defaultViewportSized;
 
     public MainWindow()
     {
@@ -26,12 +27,15 @@ public sealed class MainWindow : Window
         ConfigureWindow();
         BuildShell();
         ConfigureNavigationItems();
-        Activated += async (_, _) => await RefreshAsync();
+        Activated += async (_, _) =>
+        {
+            SizeDefaultViewportForCurrentDisplay();
+            await RefreshAsync();
+        };
     }
 
     private void ConfigureWindow()
     {
-        AppWindow.Resize(new Windows.Graphics.SizeInt32(960, 620));
         if (!Microsoft.UI.Windowing.AppWindowTitleBar.IsCustomizationSupported())
         {
             return;
@@ -40,10 +44,30 @@ public sealed class MainWindow : Window
         AppWindow.TitleBar.ForegroundColor = Colors.White;
         AppWindow.TitleBar.InactiveBackgroundColor = ColorHelper.FromArgb(255, 19, 18, 15);
         AppWindow.TitleBar.InactiveForegroundColor = ColorHelper.FromArgb(160, 255, 255, 255);
-        AppWindow.TitleBar.ButtonBackgroundColor = Colors.Transparent;
-        AppWindow.TitleBar.ButtonInactiveBackgroundColor = Colors.Transparent;
+        // Transparent caption buttons fall back to the light system surface
+        // for this unpackaged WinUI window. Keep their resting surface aligned
+        // with the authentication form instead.
+        AppWindow.TitleBar.ButtonBackgroundColor = ColorHelper.FromArgb(255, 14, 15, 18);
+        AppWindow.TitleBar.ButtonInactiveBackgroundColor = ColorHelper.FromArgb(255, 19, 18, 15);
         AppWindow.TitleBar.ButtonForegroundColor = Colors.White;
         AppWindow.TitleBar.ButtonHoverBackgroundColor = ColorHelper.FromArgb(32, 255, 255, 255);
+    }
+
+    private void SizeDefaultViewportForCurrentDisplay()
+    {
+        if (_defaultViewportSized || Content.XamlRoot is not { } xamlRoot)
+        {
+            return;
+        }
+
+        // AppWindow.Resize is measured in physical pixels. The target auth
+        // viewport is 960 × 620 logical pixels, so a high-DPI Windows display
+        // needs the current XAML scale applied before the first layout.
+        var scale = xamlRoot.RasterizationScale;
+        AppWindow.Resize(new Windows.Graphics.SizeInt32(
+            (int)Math.Round(960 * scale),
+            (int)Math.Round(620 * scale)));
+        _defaultViewportSized = true;
     }
 
     private void BuildShell()
