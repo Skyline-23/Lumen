@@ -184,6 +184,11 @@ jobs:
             mingw-w64-ucrt-x86_64-opus
             mingw-w64-ucrt-x86_64-pkgconf
             mingw-w64-ucrt-x86_64-zlib
+      - uses: hendrikmuhs/ccache-action@v1.2.23
+        with:
+          variant: sccache
+          key: windows-gnu-package
+          max-size: 250M
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 8.0.x
@@ -208,6 +213,7 @@ jobs:
         env:
           LUMEN_VERSION: 0.0.0
           LUMEN_ARTIFACT_VERSION: 0.0.0
+          LUMEN_CMAKE_COMPILER_LAUNCHER: sccache
           LUMEN_WINDOWS_DRIVER_PACKAGE_DIR: build/windows-driver-package
         run: |
           scripts/ci/build_windows_package.sh

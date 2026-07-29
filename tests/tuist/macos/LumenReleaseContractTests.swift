@@ -67,6 +67,33 @@ struct LumenReleaseContractTests {
         #expect(!installingGuide.contains("installed independently"))
     }
 
+    @Test("Windows package workflows cache only native compiler outputs")
+    func windowsPackageUsesBoundedCompilerCache() throws {
+        let root = try repositoryRoot()
+        let ci = try source(".github/workflows/ci.yml", from: root)
+        let release = try source(".github/workflows/release.yml", from: root)
+        let packageBuild = try source("scripts/ci/build_windows_package.sh", from: root)
+
+        for workflow in [ci, release] {
+            #expect(workflow.contains("hendrikmuhs/ccache-action@v1.2.23"))
+            #expect(workflow.contains("variant: sccache"))
+            #expect(workflow.contains("key: windows-gnu-package"))
+            #expect(workflow.contains("max-size: 250M"))
+            #expect(workflow.contains("LUMEN_CMAKE_COMPILER_LAUNCHER: sccache"))
+        }
+        #expect(
+            packageBuild.contains(
+                #"-DCMAKE_C_COMPILER_LAUNCHER=${COMPILER_LAUNCHER}"#
+            )
+        )
+        #expect(
+            packageBuild.contains(
+                #"-DCMAKE_CXX_COMPILER_LAUNCHER=${COMPILER_LAUNCHER}"#
+            )
+        )
+        #expect(packageBuild.contains("command -v"))
+    }
+
     private func source(_ path: String, from root: URL) throws -> String {
         try String(
             contentsOf: root.appendingPathComponent(path),

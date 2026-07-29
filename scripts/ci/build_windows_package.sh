@@ -11,6 +11,8 @@ VERSION="${VERSION#v}"
 ARTIFACT_VERSION="${LUMEN_ARTIFACT_VERSION:-${VERSION}}"
 ARTIFACT_VERSION="${ARTIFACT_VERSION#v}"
 DRIVER_PACKAGE_DIR="${LUMEN_WINDOWS_DRIVER_PACKAGE_DIR:-}"
+COMPILER_LAUNCHER="${LUMEN_CMAKE_COMPILER_LAUNCHER:-}"
+CMAKE_LAUNCHER_ARGUMENTS=()
 
 if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "LUMEN_VERSION must use the form 1.2.3 (a leading v is allowed)." >&2
@@ -30,6 +32,16 @@ for driver_file in LumenIddCx.dll LumenIddCx.inf lumeniddcx.cat; do
     exit 2
   fi
 done
+if [[ -n "${COMPILER_LAUNCHER}" ]]; then
+  if ! command -v "${COMPILER_LAUNCHER}" >/dev/null 2>&1; then
+    echo "Requested CMake compiler launcher is unavailable: ${COMPILER_LAUNCHER}" >&2
+    exit 2
+  fi
+  CMAKE_LAUNCHER_ARGUMENTS+=(
+    "-DCMAKE_C_COMPILER_LAUNCHER=${COMPILER_LAUNCHER}"
+    "-DCMAKE_CXX_COMPILER_LAUNCHER=${COMPILER_LAUNCHER}"
+  )
+fi
 
 export BRANCH="${GITHUB_REF_NAME:-${BRANCH:-local}}"
 export BUILD_VERSION="${VERSION}"
@@ -42,7 +54,8 @@ cmake \
   -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_SYSTEM_PROCESSOR=AMD64 \
-  -DBUILD_WERROR=ON
+  -DBUILD_WERROR=ON \
+  "${CMAKE_LAUNCHER_ARGUMENTS[@]}"
 
 cmake --build "${BUILD_DIR}" --parallel
 rm -rf "${STAGE_DIR}"
