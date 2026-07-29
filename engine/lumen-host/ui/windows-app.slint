@@ -185,23 +185,38 @@ component SettingToggleRow inherits Rectangle {
     HorizontalLayout {
         padding-left: 18px;
         padding-right: 18px;
-        alignment: center;
         spacing: 16px;
         VerticalLayout {
+            horizontal-stretch: 1;
             spacing: 2px;
             alignment: center;
-            Text { text: root.title; color: #24231f; font-size: 13px; font-weight: 500; }
+            Text {
+                text: root.title;
+                color: #24231f;
+                font-size: 13px;
+                font-weight: 500;
+                horizontal-stretch: 1;
+                horizontal-alignment: left;
+            }
             if root.detail != "": Text {
                 text: root.detail;
                 color: #7a7770;
                 font-size: 11px;
                 wrap: word-wrap;
+                horizontal-stretch: 1;
+                horizontal-alignment: left;
             }
         }
-        LumenSwitch {
-            checked: root.checked;
-            enabled: root.enabled;
-            toggled(value) => { root.toggled(value); }
+        Rectangle {
+            width: 42px;
+            horizontal-stretch: 0;
+            background: transparent;
+            LumenSwitch {
+                y: (parent.height - self.height) / 2;
+                checked: root.checked;
+                enabled: root.enabled;
+                toggled(value) => { root.toggled(value); }
+            }
         }
     }
 }
@@ -224,17 +239,26 @@ component SettingValueRow inherits Rectangle {
     HorizontalLayout {
         padding-left: 18px;
         padding-right: 18px;
-        alignment: center;
         spacing: 16px;
         VerticalLayout {
+            horizontal-stretch: 1;
             spacing: 2px;
             alignment: center;
-            Text { text: root.title; color: #24231f; font-size: 13px; font-weight: 500; }
+            Text {
+                text: root.title;
+                color: #24231f;
+                font-size: 13px;
+                font-weight: 500;
+                horizontal-stretch: 1;
+                horizontal-alignment: left;
+            }
             if root.detail != "": Text {
                 text: root.detail;
                 color: #7a7770;
                 font-size: 11px;
                 wrap: word-wrap;
+                horizontal-stretch: 1;
+                horizontal-alignment: left;
             }
         }
         Text {
@@ -242,6 +266,7 @@ component SettingValueRow inherits Rectangle {
             color: #6f6b63;
             font-size: 12px;
             font-weight: 500;
+            vertical-stretch: 1;
             horizontal-alignment: right;
             vertical-alignment: center;
         }
@@ -266,32 +291,46 @@ component SettingCommandRow inherits Rectangle {
     HorizontalLayout {
         padding-left: 18px;
         padding-right: 18px;
-        alignment: center;
         spacing: 16px;
         VerticalLayout {
+            horizontal-stretch: 1;
             spacing: 2px;
             alignment: center;
-            Text { text: root.title; color: #24231f; font-size: 13px; font-weight: 500; }
+            Text {
+                text: root.title;
+                color: #24231f;
+                font-size: 13px;
+                font-weight: 500;
+                horizontal-stretch: 1;
+                horizontal-alignment: left;
+            }
             Text {
                 text: root.detail;
                 color: #7a7770;
                 font-size: 11px;
                 wrap: word-wrap;
+                horizontal-stretch: 1;
+                horizontal-alignment: left;
             }
         }
         Rectangle {
             width: 88px;
-            height: 26px;
             horizontal-stretch: 0;
-            border-radius: 13px;
-            background: root.count > 0 ? #fff0e8 : #f2f1ec;
-            Text {
-                text: root.count == 1 ? @tr("1 configured") : "\{root.count} " + @tr("configured");
-                color: root.count > 0 ? #b84420 : #77746d;
-                font-size: 10px;
-                font-weight: 600;
-                horizontal-alignment: center;
-                vertical-alignment: center;
+            background: transparent;
+            Rectangle {
+                y: (parent.height - self.height) / 2;
+                width: 88px;
+                height: 26px;
+                border-radius: 13px;
+                background: root.count > 0 ? #fff0e8 : #f2f1ec;
+                Text {
+                    text: root.count == 1 ? @tr("1 configured") : "\{root.count} " + @tr("configured");
+                    color: root.count > 0 ? #b84420 : #77746d;
+                    font-size: 10px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
             }
         }
     }
