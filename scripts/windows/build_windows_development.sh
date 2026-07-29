@@ -15,6 +15,13 @@ if [[ -n "${USERPROFILE:-}" ]] && command -v cygpath >/dev/null 2>&1; then
     export PATH="${WINDOWS_USER_CARGO_BIN}:${PATH}"
   fi
 fi
+if command -v cygpath >/dev/null 2>&1; then
+  WINDOWS_PROGRAM_FILES="${ProgramFiles:-C:\Program Files}"
+  WINDOWS_DOTNET_BIN="$(cygpath -u "${WINDOWS_PROGRAM_FILES}\dotnet")"
+  if [[ -d "${WINDOWS_DOTNET_BIN}" ]]; then
+    export PATH="${WINDOWS_DOTNET_BIN}:${PATH}"
+  fi
+fi
 
 usage() {
   cat <<'USAGE'
