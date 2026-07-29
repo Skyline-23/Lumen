@@ -2,7 +2,7 @@ use std::ffi::c_void;
 use std::mem::ManuallyDrop;
 use std::ptr;
 use std::slice;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -56,7 +56,7 @@ pub(super) struct NativeMediaFoundation {
     adaptive_event_publisher: Arc<dyn WindowsServiceEventPublisher>,
     sessions: AbandonableSessionSlot<NativeMediaFoundationSession>,
     retired_workers: RetiredWorkerRegistry,
-    next_encoder_epoch: AtomicU32,
+    next_encoder_epoch: AtomicU64,
 }
 
 struct NativeMediaFoundationSession {
@@ -143,7 +143,7 @@ enum NativeMediaFoundationCommand {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct NativeVideoEncoderPlan {
     session_epoch: u32,
-    encoder_epoch: u32,
+    encoder_epoch: u64,
     codec: PlatformVideoCodec,
     width: u32,
     height: u32,
@@ -163,7 +163,7 @@ impl NativeMediaFoundation {
             adaptive_event_publisher,
             sessions: AbandonableSessionSlot::default(),
             retired_workers: RetiredWorkerRegistry::new(MAXIMUM_RETIRED_MEDIA_FOUNDATION_WORKERS),
-            next_encoder_epoch: AtomicU32::new(1),
+            next_encoder_epoch: AtomicU64::new(1),
         }
     }
 

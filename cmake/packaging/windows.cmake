@@ -22,10 +22,6 @@ install(FILES ${VIGEMBUS_INSTALLER}
 install(TARGETS lumen-service RUNTIME DESTINATION "tools" COMPONENT application)
 install(TARGETS lumen-driver-setup RUNTIME DESTINATION "tools" COMPONENT application)
 
-# Mandatory scripts
-install(DIRECTORY "${LUMEN_SOURCE_ASSETS_DIR}/windows/misc/service/"
-        DESTINATION "scripts"
-        COMPONENT assets)
 install(DIRECTORY "${LUMEN_SOURCE_ASSETS_DIR}/windows/misc/path/"
         DESTINATION "scripts"
         COMPONENT assets)
@@ -87,6 +83,3 @@ set(CPACK_COMPONENT_FIREWALL_GROUP "Scripts")
 set(CPACK_COMPONENT_GAMEPAD_DISPLAY_NAME "Virtual Gamepad")
 set(CPACK_COMPONENT_GAMEPAD_DESCRIPTION "Scripts to install and uninstall Virtual Gamepad.")
 set(CPACK_COMPONENT_GAMEPAD_GROUP "Scripts")
-
-# include specific packaging
-include(${CMAKE_MODULE_PATH}/packaging/windows_nsis.cmake)

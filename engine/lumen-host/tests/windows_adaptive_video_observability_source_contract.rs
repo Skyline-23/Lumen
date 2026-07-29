@@ -6,10 +6,8 @@ const SESSION_SLOT: &str = include_str!("../src/platform/session_slot.rs");
 const MEDIA: &str = include_str!("../src/platform/windows/native_media.rs");
 const VIDEO: &str = include_str!("../src/platform/windows/native_video.rs");
 const WINDOWS_PACKAGE: &str = include_str!("../../../packaging/windows/Package.wxs");
-const INSTALL_SERVICE: &str =
-    include_str!("../../../src_assets/windows/misc/service/install-service.bat");
-const PROVISION_SERVICE_DATA: &str =
-    include_str!("../../../src_assets/windows/misc/service/provision-service-data.ps1");
+const WINDOWS_CMAKE: &str = include_str!("../../../cmake/packaging/windows.cmake");
+const COMMON_CMAKE: &str = include_str!("../../../cmake/packaging/common.cmake");
 
 #[test]
 fn windows_adaptive_apply_uses_the_persistent_service_event_log() {
@@ -24,7 +22,9 @@ fn windows_adaptive_apply_uses_the_persistent_service_event_log() {
     assert!(SERVICE_LOG.contains("OpenOptions::new()"));
     assert!(SERVICE_LOG.contains(".append(true)"));
     assert!(SERVICE_LOG.contains("file.sync_data()"));
-    assert!(SERVICE_LOG.contains("share_mode(FILE_SHARE_READ)"));
+    assert!(SERVICE_LOG.contains("CreateFileW"));
+    assert!(SERVICE_LOG.contains("FILE_SHARE_READ"));
+    assert!(SERVICE_LOG.contains("SERVICE_EVENT_FILE_SDDL"));
     assert!(SERVICE_LOG.contains("sync_channel(SERVICE_EVENT_LANE_CAPACITY)"));
     assert!(SERVICE_LOG.contains("ArrayQueue::new(SERVICE_EVENT_LANE_CAPACITY)"));
     assert!(SERVICE_LOG.contains("force_push"));
@@ -32,6 +32,8 @@ fn windows_adaptive_apply_uses_the_persistent_service_event_log() {
     assert!(SERVICE_LOG.contains("lumen-windows-service-event-log"));
     assert!(SERVICE_LOG.contains("recv_timeout(LOG_WORKER_SHUTDOWN_TIMEOUT)"));
     assert!(SERVICE_LOG.contains("abandoned_workers"));
+    assert!(SERVICE_LOG.contains("record_windows_log_worker_abandonment();"));
+    assert!(SERVICE_LOG.contains("EVENTLOG_WARNING_TYPE"));
     let shutdown = SERVICE_LOG
         .split("pub(crate) fn shutdown")
         .nth(1)
@@ -43,6 +45,10 @@ fn windows_adaptive_apply_uses_the_persistent_service_event_log() {
     assert!(!shutdown.contains("thread::yield_now()"));
     assert!(SERVICE_LOG.contains("last_event_order"));
     assert!(SERVICE_LOG.contains("ordering_key"));
+    assert!(SERVICE_LOG.contains("self.encoder_epoch"));
+    assert!(!SERVICE_LOG.contains("u64::from(self.session_epoch) <<"));
+    assert!(VIDEO.contains("next_encoder_epoch: AtomicU64"));
+    assert!(VIDEO.contains("epoch.checked_add(1)"));
     assert!(SERVICE_LOG.contains("MAXIMUM_SERVICE_EVENT_LOG_BYTES"));
     assert!(SERVICE_LOG.contains("rotate"));
     assert!(SERVICE_LOG.contains("requested_bitrate_bps"));
@@ -126,10 +132,8 @@ fn windows_service_prepares_program_data_without_weakening_permissions() {
     assert!(WINDOWS_PACKAGE.contains("<ComponentRef Id=\"LumenProgramData\" />"));
     assert!(WINDOWS_PACKAGE.contains("<PermissionEx Id=\"LumenProgramDataPermissions\""));
     assert!(WINDOWS_PACKAGE.contains("Sddl=\"O:SYG:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)\""));
-    assert!(INSTALL_SERVICE.contains("provision-service-data.ps1"));
-    assert!(PROVISION_SERVICE_DATA.contains("O:SYG:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"));
-    assert!(PROVISION_SERVICE_DATA.contains("FileAttributes]::ReparsePoint"));
-    assert!(PROVISION_SERVICE_DATA.contains("$rules.Count -ne 2"));
+    assert!(!WINDOWS_CMAKE.contains("windows_nsis"));
+    assert!(COMMON_CMAKE.contains("if(NOT WIN32)"));
     assert!(SERVICE.contains("ReportEventW"));
     assert!(!SERVICE.contains("fn service_error_path"));
     assert!(!SERVICE.contains("clear_service_error()"));

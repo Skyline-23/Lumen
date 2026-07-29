@@ -161,7 +161,7 @@ fn windows_management_is_local_and_bound_to_the_active_session() {
 }
 
 #[test]
-fn windows_installers_share_the_protected_service_data_policy() {
+fn windows_msi_is_the_only_supported_service_installer() {
     let driver = driver_root();
     let repo_root = driver
         .ancestors()
@@ -170,22 +170,21 @@ fn windows_installers_share_the_protected_service_data_policy() {
         .to_path_buf();
     let package = fs::read_to_string(repo_root.join("packaging/windows/Package.wxs"))
         .expect("Windows package definition must exist");
-    let install_service =
-        fs::read_to_string(repo_root.join("src_assets/windows/misc/service/install-service.bat"))
-            .expect("supported NSIS service installer must exist");
-    let provision = fs::read_to_string(
-        repo_root.join("src_assets/windows/misc/service/provision-service-data.ps1"),
-    )
-    .expect("NSIS service data provisioning must exist");
+    let windows_cmake = fs::read_to_string(repo_root.join("cmake/packaging/windows.cmake"))
+        .expect("Windows packaging configuration must exist");
+    let common_cmake = fs::read_to_string(repo_root.join("cmake/packaging/common.cmake"))
+        .expect("common packaging configuration must exist");
     let sddl = "O:SYG:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)";
 
     assert!(package.contains(sddl));
-    assert!(provision.contains(sddl));
-    assert!(provision.contains("FileAttributes]::ReparsePoint"));
-    assert!(provision.contains("$rules.Count -ne 2"));
-    let provision_call = install_service.find("provision-service-data.ps1").unwrap();
-    let service_start = install_service.find("net start %SERVICE_NAME%").unwrap();
-    assert!(provision_call < service_start);
+    assert!(!windows_cmake.contains("windows_nsis"));
+    assert!(common_cmake.contains("if(NOT WIN32)"));
+    assert!(!repo_root
+        .join("cmake/packaging/windows_nsis.cmake")
+        .exists());
+    assert!(!repo_root
+        .join("src_assets/windows/misc/service/install-service.bat")
+        .exists());
 }
 
 #[test]

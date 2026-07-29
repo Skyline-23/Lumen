@@ -1,4 +1,6 @@
-use std::fs::{File, OpenOptions};
+use std::fs::File;
+#[cfg(not(windows))]
+use std::fs::OpenOptions;
 use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -24,12 +26,14 @@ const LOG_WORKER_SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(100);
 const MAXIMUM_SERVICE_EVENT_LOG_BYTES: u64 = 256 * 1024;
 #[cfg(windows)]
 const SERVICE_EVENT_DIRECTORY_SDDL: &str = "O:SYG:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)";
+#[cfg(windows)]
+const SERVICE_EVENT_FILE_SDDL: &str = "O:SYG:SYD:P(A;;FA;;;SY)(A;;FA;;;BA)";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 pub(crate) struct WindowsAdaptiveVideoApplyEvent {
     event: &'static str,
     pub(crate) session_epoch: u32,
-    pub(crate) encoder_epoch: u32,
+    pub(crate) encoder_epoch: u64,
     pub(crate) requested_bitrate_bps: u32,
     pub(crate) applied_bitrate_bps: u32,
 }
@@ -37,7 +41,7 @@ pub(crate) struct WindowsAdaptiveVideoApplyEvent {
 impl WindowsAdaptiveVideoApplyEvent {
     pub(crate) fn new(
         session_epoch: u32,
-        encoder_epoch: u32,
+        encoder_epoch: u64,
         requested_bitrate_bps: u32,
         applied_bitrate_bps: u32,
     ) -> Self {
@@ -51,7 +55,7 @@ impl WindowsAdaptiveVideoApplyEvent {
     }
 
     fn ordering_key(self) -> u64 {
-        (u64::from(self.session_epoch) << u32::BITS) | u64::from(self.encoder_epoch)
+        self.encoder_epoch
     }
 }
 
@@ -119,28 +123,6 @@ impl ServiceEventLaneShared {
             }
         }
     }
-
-    fn admit_event_order(&self, event: WindowsAdaptiveVideoApplyEvent) -> bool {
-        let order = event.ordering_key();
-        let mut latest = self.last_event_order.load(Ordering::Acquire);
-        loop {
-            if order < latest {
-                return false;
-            }
-            if order == latest {
-                return true;
-            }
-            match self.last_event_order.compare_exchange_weak(
-                latest,
-                order,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            ) {
-                Ok(_) => return true,
-                Err(current) => latest = current,
-            }
-        }
-    }
 }
 
 struct PublishPermit {
@@ -192,31 +174,35 @@ fn publish_adaptive_video_apply(
         return WindowsServiceEventPublishStatus::Dropped;
     };
     admitted();
-    if shared.is_stopping() || !shared.admit_event_order(event) {
+    if shared.is_stopping() {
         return WindowsServiceEventPublishStatus::Dropped;
     }
     ordered();
     let Ok(_pending_update) = shared.pending_update.try_lock() else {
         return WindowsServiceEventPublishStatus::Dropped;
     };
-    if event.ordering_key() < shared.last_event_order.load(Ordering::Acquire) {
+    let order = event.ordering_key();
+    let latest = shared.last_event_order.load(Ordering::Acquire);
+    if order < latest {
         return WindowsServiceEventPublishStatus::Dropped;
     }
-    let coalesced = shared.pending.force_push(event).is_some();
-    let status = match shared.wake.try_send(()) {
-        Ok(()) | Err(mpsc::TrySendError::Full(())) => {
-            if event.ordering_key() < shared.last_event_order.load(Ordering::Acquire) {
-                WindowsServiceEventPublishStatus::Dropped
-            } else if coalesced {
-                shared.coalesced_events.fetch_add(1, Ordering::Relaxed);
-                WindowsServiceEventPublishStatus::Coalesced
-            } else {
-                WindowsServiceEventPublishStatus::Queued
-            }
+    match shared.wake.try_send(()) {
+        Ok(()) | Err(mpsc::TrySendError::Full(())) => {}
+        Err(mpsc::TrySendError::Disconnected(())) => {
+            return WindowsServiceEventPublishStatus::Dropped;
         }
-        Err(mpsc::TrySendError::Disconnected(())) => WindowsServiceEventPublishStatus::Dropped,
+    }
+    let coalesced = shared.pending.force_push(event).is_some();
+    if order > latest {
+        shared.last_event_order.store(order, Ordering::Release);
+    }
+    let status = if coalesced {
+        shared.coalesced_events.fetch_add(1, Ordering::Relaxed);
+        WindowsServiceEventPublishStatus::Coalesced
+    } else {
+        WindowsServiceEventPublishStatus::Queued
     };
-    permit.finish(status != WindowsServiceEventPublishStatus::Dropped);
+    permit.finish(true);
     status
 }
 
@@ -307,6 +293,7 @@ impl WindowsServiceEventLane {
                 self.shared
                     .abandoned_workers
                     .fetch_add(1, Ordering::Relaxed);
+                record_windows_log_worker_abandonment();
                 drop(worker);
             }
         }
@@ -327,6 +314,42 @@ impl WindowsServiceEventLane {
         self.shared.pending.len()
     }
 }
+
+#[cfg(windows)]
+fn record_windows_log_worker_abandonment() {
+    use std::ptr::{null, null_mut};
+    use windows_sys::Win32::System::EventLog::{
+        DeregisterEventSource, RegisterEventSourceW, ReportEventW, EVENTLOG_WARNING_TYPE,
+    };
+
+    let source = "LumenService".encode_utf16().chain([0]).collect::<Vec<_>>();
+    let message = "Lumen service event log worker exceeded its shutdown deadline and was detached"
+        .encode_utf16()
+        .chain([0])
+        .collect::<Vec<_>>();
+    let event_source = unsafe { RegisterEventSourceW(null(), source.as_ptr()) };
+    if event_source.is_null() {
+        return;
+    }
+    let strings = [message.as_ptr()];
+    unsafe {
+        ReportEventW(
+            event_source,
+            EVENTLOG_WARNING_TYPE,
+            0,
+            1,
+            null_mut(),
+            1,
+            0,
+            strings.as_ptr(),
+            null_mut(),
+        );
+        DeregisterEventSource(event_source);
+    }
+}
+
+#[cfg(not(windows))]
+fn record_windows_log_worker_abandonment() {}
 
 impl Drop for WindowsServiceEventLane {
     fn drop(&mut self) {
@@ -350,11 +373,20 @@ fn run_service_event_lane(
 ) {
     while receiver.recv().is_ok() {
         loop {
-            let event = shared.pending.pop();
+            let (event, latest_order) = {
+                let _pending_update = shared
+                    .pending_update
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                (
+                    shared.pending.pop(),
+                    shared.last_event_order.load(Ordering::Acquire),
+                )
+            };
             let Some(event) = event else {
                 break;
             };
-            if event.ordering_key() < shared.last_event_order.load(Ordering::Acquire) {
+            if event.ordering_key() < latest_order {
                 shared.dropped_events.fetch_add(1, Ordering::Relaxed);
             } else if writer.write_event(event).is_err() {
                 shared.write_failures.fetch_add(1, Ordering::Relaxed);
@@ -402,16 +434,13 @@ impl BoundedJsonlServiceEventWriter {
             remove_untrusted_service_event_file(&self.path)?;
             remove_untrusted_service_event_file(&self.rotated_path)?;
         }
-        let mut options = OpenOptions::new();
-        options.create(true).append(true);
         #[cfg(windows)]
-        {
-            use std::os::windows::fs::OpenOptionsExt;
-            use windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ;
-
-            options.share_mode(FILE_SHARE_READ);
-        }
-        let file = options
+        let file = open_secure_service_event_file(&self.path)
+            .map_err(|error| format!("open Windows service event log: {error}"))?;
+        #[cfg(not(windows))]
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
             .open(&self.path)
             .map_err(|error| format!("open Windows service event log: {error}"))?;
         #[cfg(windows)]
@@ -536,6 +565,76 @@ fn remove_untrusted_service_event_file(path: &Path) -> Result<(), String> {
 }
 
 #[cfg(windows)]
+fn open_secure_service_event_file(path: &Path) -> std::io::Result<File> {
+    use std::ffi::c_void;
+    use std::os::windows::ffi::OsStrExt;
+    use std::os::windows::io::FromRawHandle;
+    use std::ptr::null_mut;
+    use windows_sys::Win32::Foundation::{LocalFree, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Security::Authorization::{
+        ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+    };
+    use windows_sys::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
+    use windows_sys::Win32::Storage::FileSystem::{
+        CreateFileW, FILE_APPEND_DATA, FILE_ATTRIBUTE_NORMAL, FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ, OPEN_ALWAYS,
+    };
+
+    struct OwnedLocal(*mut c_void);
+
+    impl Drop for OwnedLocal {
+        fn drop(&mut self) {
+            unsafe {
+                LocalFree(self.0);
+            }
+        }
+    }
+
+    let descriptor_sddl = SERVICE_EVENT_FILE_SDDL
+        .encode_utf16()
+        .chain([0])
+        .collect::<Vec<_>>();
+    let mut descriptor: PSECURITY_DESCRIPTOR = null_mut();
+    if unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            descriptor_sddl.as_ptr(),
+            SDDL_REVISION_1,
+            &mut descriptor,
+            null_mut(),
+        )
+    } == 0
+    {
+        return Err(std::io::Error::last_os_error());
+    }
+    let _descriptor = OwnedLocal(descriptor);
+    let security = SECURITY_ATTRIBUTES {
+        nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+        lpSecurityDescriptor: descriptor,
+        bInheritHandle: 0,
+    };
+    let path = path
+        .as_os_str()
+        .encode_wide()
+        .chain([0])
+        .collect::<Vec<_>>();
+    let handle = unsafe {
+        CreateFileW(
+            path.as_ptr(),
+            FILE_APPEND_DATA | FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ,
+            &security,
+            OPEN_ALWAYS,
+            FILE_ATTRIBUTE_NORMAL,
+            null_mut(),
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(unsafe { File::from_raw_handle(handle) })
+}
+
+#[cfg(windows)]
 pub(crate) fn prepare_program_data_lumen_directory() -> std::io::Result<()> {
     let path = program_data_lumen_path(SERVICE_EVENT_LOG_FILE).ok_or_else(|| {
         std::io::Error::new(
@@ -634,7 +733,7 @@ fn validate_service_event_path_security(
     use windows_sys::Win32::Security::{
         EqualSid, GetAce, GetLengthSid, GetSecurityDescriptorControl, GetSecurityDescriptorDacl,
         GetSecurityDescriptorOwner, ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, CONTAINER_INHERIT_ACE,
-        DACL_SECURITY_INFORMATION, INHERITED_ACE, OBJECT_INHERIT_ACE, OWNER_SECURITY_INFORMATION,
+        DACL_SECURITY_INFORMATION, OBJECT_INHERIT_ACE, OWNER_SECURITY_INFORMATION,
         PSECURITY_DESCRIPTOR, PSID, SE_DACL_PROTECTED,
     };
     use windows_sys::Win32::System::SystemServices::ACCESS_ALLOWED_ACE_TYPE;
@@ -791,7 +890,7 @@ fn validate_service_event_path_security(
             u8::try_from(OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE)
                 .expect("directory ACE inheritance flags fit in one byte"),
         ),
-        WindowsSecurityTarget::File => (false, INHERITED_ACE as u8),
+        WindowsSecurityTarget::File => (true, 0),
     };
     for rule in &mut expected_rules {
         rule.ace_flags = expected_flags;
@@ -825,9 +924,12 @@ pub(crate) fn program_data_lumen_path(file_name: &str) -> Option<PathBuf> {
 mod tests {
     use super::{
         publish_adaptive_video_apply, BoundedJsonlServiceEventWriter, NormalizedAccessRule,
-        ServiceEventWriter, WindowsAdaptiveVideoApplyEvent, WindowsServiceEventLane,
-        WindowsServiceEventPublishStatus,
+        ServiceEventLaneShared, ServiceEventWriter, WindowsAdaptiveVideoApplyEvent,
+        WindowsServiceEventLane, WindowsServiceEventPublishStatus, PUBLISH_COUNT_MASK,
+        SERVICE_EVENT_LANE_CAPACITY,
     };
+    use crossbeam_queue::ArrayQueue;
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
     use std::sync::{mpsc, Arc, Mutex};
     use std::time::Duration;
 
@@ -861,7 +963,15 @@ mod tests {
     }
 
     fn event(epoch: u32, bitrate_bps: u32) -> WindowsAdaptiveVideoApplyEvent {
-        WindowsAdaptiveVideoApplyEvent::new(epoch, epoch, bitrate_bps, bitrate_bps)
+        WindowsAdaptiveVideoApplyEvent::new(epoch, u64::from(epoch), bitrate_bps, bitrate_bps)
+    }
+
+    fn ordered_event(
+        session_epoch: u32,
+        encoder_epoch: u64,
+        bitrate_bps: u32,
+    ) -> WindowsAdaptiveVideoApplyEvent {
+        WindowsAdaptiveVideoApplyEvent::new(session_epoch, encoder_epoch, bitrate_bps, bitrate_bps)
     }
 
     fn access_rule(sid: u8, ace_flags: u8) -> NormalizedAccessRule {
@@ -982,7 +1092,7 @@ mod tests {
         let old = std::thread::spawn(move || {
             publish_adaptive_video_apply(
                 &publisher_shared,
-                event(8, 50_000_000),
+                ordered_event(4_000_000_000, 8, 50_000_000),
                 || {},
                 || {
                     entered_send.send(()).unwrap();
@@ -994,7 +1104,7 @@ mod tests {
         entered_receive.recv().unwrap();
         assert_ne!(
             lane.publisher()
-                .publish_adaptive_video_apply(event(9, 70_000_000)),
+                .publish_adaptive_video_apply(ordered_event(1, 9, 70_000_000)),
             WindowsServiceEventPublishStatus::Dropped
         );
         release_send.send(()).unwrap();
@@ -1004,7 +1114,102 @@ mod tests {
         );
         lane.shutdown();
 
-        assert_eq!(events.lock().unwrap().as_slice(), [event(9, 70_000_000)]);
+        assert_eq!(
+            events.lock().unwrap().as_slice(),
+            [ordered_event(1, 9, 70_000_000)]
+        );
+    }
+
+    #[test]
+    fn smaller_session_epoch_with_newer_encoder_epoch_wins_total_order() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut lane = WindowsServiceEventLane::start(Box::new(RecordingWriter {
+            events: Arc::clone(&events),
+            entered: None,
+            release: None,
+            fail: false,
+            flushes: Arc::new(Mutex::new(0)),
+        }))
+        .unwrap();
+        let publisher = lane.publisher();
+
+        assert_ne!(
+            publisher.publish_adaptive_video_apply(ordered_event(
+                u32::MAX,
+                u64::MAX - 1,
+                50_000_000,
+            )),
+            WindowsServiceEventPublishStatus::Dropped
+        );
+        assert_ne!(
+            publisher.publish_adaptive_video_apply(ordered_event(1, u64::MAX, 70_000_000)),
+            WindowsServiceEventPublishStatus::Dropped
+        );
+        assert_eq!(
+            publisher.publish_adaptive_video_apply(ordered_event(
+                u32::MAX,
+                u64::MAX - 1,
+                60_000_000,
+            )),
+            WindowsServiceEventPublishStatus::Dropped
+        );
+        lane.shutdown();
+
+        assert_eq!(
+            events.lock().unwrap().last(),
+            Some(&ordered_event(1, u64::MAX, 70_000_000))
+        );
+    }
+
+    #[test]
+    fn lock_contended_drop_does_not_advance_order_watermark() {
+        let mut lane = WindowsServiceEventLane::start(Box::new(RecordingWriter {
+            events: Arc::new(Mutex::new(Vec::new())),
+            entered: None,
+            release: None,
+            fail: false,
+            flushes: Arc::new(Mutex::new(0)),
+        }))
+        .unwrap();
+        let publisher = lane.publisher();
+        let pending_update = lane.shared.pending_update.lock().unwrap();
+
+        assert_eq!(
+            publisher.publish_adaptive_video_apply(ordered_event(1, 99, 70_000_000)),
+            WindowsServiceEventPublishStatus::Dropped
+        );
+        assert_eq!(lane.shared.last_event_order.load(Ordering::Acquire), 0);
+
+        drop(pending_update);
+        lane.shutdown();
+    }
+
+    #[test]
+    fn disconnected_wake_drop_does_not_advance_or_replace_pending_event() {
+        let (wake, receiver) = mpsc::sync_channel(SERVICE_EVENT_LANE_CAPACITY);
+        drop(receiver);
+        let shared = Arc::new(ServiceEventLaneShared {
+            pending: ArrayQueue::new(SERVICE_EVENT_LANE_CAPACITY),
+            pending_update: Mutex::new(()),
+            wake,
+            publish_state: AtomicUsize::new(0),
+            last_event_order: AtomicU64::new(7),
+            coalesced_events: AtomicU64::new(0),
+            dropped_events: AtomicU64::new(0),
+            write_failures: AtomicU64::new(0),
+            abandoned_workers: AtomicU64::new(0),
+        });
+
+        assert_eq!(
+            publish_adaptive_video_apply(&shared, ordered_event(1, 8, 70_000_000), || {}, || {},),
+            WindowsServiceEventPublishStatus::Dropped
+        );
+        assert_eq!(shared.last_event_order.load(Ordering::Acquire), 7);
+        assert!(shared.pending.is_empty());
+        assert_eq!(
+            shared.publish_state.load(Ordering::Acquire) & PUBLISH_COUNT_MASK,
+            0
+        );
     }
 
     #[test]
