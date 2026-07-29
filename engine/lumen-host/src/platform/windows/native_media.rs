@@ -68,6 +68,7 @@ impl PacketQueueContext {
 #[derive(Default)]
 struct MediaLifecycle {
     running: bool,
+    session_epoch: Option<u32>,
     stop_requested: Option<Arc<AtomicBool>>,
     audio_worker: Option<thread::JoinHandle<i32>>,
 }
@@ -94,6 +95,7 @@ impl NativeWindowsMedia {
         plan: PlatformSessionPlan,
         driver: DriverHandle,
     ) -> Result<(), String> {
+        let session_epoch = plan.session_epoch;
         let mut lifecycle = self
             .lifecycle
             .write()
@@ -119,6 +121,7 @@ impl NativeWindowsMedia {
         };
 
         lifecycle.running = true;
+        lifecycle.session_epoch = Some(session_epoch);
         lifecycle.stop_requested = Some(stop_requested);
         lifecycle.audio_worker = audio_worker;
         Ok(())
@@ -133,6 +136,7 @@ impl NativeWindowsMedia {
             return Ok(());
         }
         lifecycle.running = false;
+        lifecycle.session_epoch = None;
         if let Some(stop_requested) = lifecycle.stop_requested.take() {
             stop_requested.store(true, Ordering::Release);
         }
@@ -162,14 +166,12 @@ impl NativeWindowsMedia {
         bitrate_kbps: u32,
         admission_divisor: u8,
     ) -> Result<(), String> {
-        let lifecycle = self.running_session()?;
-        let result = self.media_foundation.set_video_delivery_policy(
+        self.require_running_session_epoch(session_epoch)?;
+        self.media_foundation.set_video_delivery_policy(
             session_epoch,
             bitrate_kbps,
             admission_divisor,
-        );
-        drop(lifecycle);
-        result
+        )
     }
 
     pub(super) fn invalidate_reference_frames(
@@ -280,6 +282,24 @@ impl NativeWindowsMedia {
             .then_some(lifecycle)
             .ok_or_else(|| "Windows native media session is not running".to_owned())
     }
+
+    fn require_running_session_epoch(&self, session_epoch: u32) -> Result<(), String> {
+        require_running_session_epoch(&self.lifecycle, session_epoch)
+    }
+}
+
+fn require_running_session_epoch(
+    lifecycle: &RwLock<MediaLifecycle>,
+    session_epoch: u32,
+) -> Result<(), String> {
+    let lifecycle = lifecycle
+        .read()
+        .map_err(|_| "Windows media lifecycle lock is poisoned".to_owned())?;
+    (lifecycle.running && lifecycle.session_epoch == Some(session_epoch))
+        .then_some(())
+        .ok_or_else(|| {
+            "Windows adaptive video policy does not belong to the running session".to_owned()
+        })
 }
 
 impl Drop for NativeWindowsMedia {
@@ -307,5 +327,39 @@ fn combine_errors<const N: usize>(errors: [Option<String>; N]) -> Result<(), Str
         Ok(())
     } else {
         Err(errors.join("; "))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{require_running_session_epoch, MediaLifecycle};
+    use std::sync::{mpsc, Arc, RwLock};
+
+    #[test]
+    fn adaptive_policy_snapshot_releases_lifecycle_lock_before_worker_wait() {
+        let lifecycle = Arc::new(RwLock::new(MediaLifecycle {
+            running: true,
+            session_epoch: Some(7),
+            ..MediaLifecycle::default()
+        }));
+        let (entered_send, entered_receive) = mpsc::sync_channel(1);
+        let (release_send, release_receive) = mpsc::sync_channel(1);
+        let policy_lifecycle = Arc::clone(&lifecycle);
+        let policy = std::thread::spawn(move || {
+            require_running_session_epoch(&policy_lifecycle, 7).unwrap();
+            entered_send.send(()).unwrap();
+            release_receive.recv().unwrap();
+        });
+
+        entered_receive.recv().unwrap();
+        let mut stopping = lifecycle
+            .try_write()
+            .expect("stalled policy worker must not retain the lifecycle read lock");
+        stopping.running = false;
+        stopping.session_epoch = None;
+        drop(stopping);
+        assert!(require_running_session_epoch(&lifecycle, 7).is_err());
+        release_send.send(()).unwrap();
+        policy.join().unwrap();
     }
 }

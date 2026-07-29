@@ -659,6 +659,9 @@ async fn publish_video_bootstraps(
             notify.notified().await;
             continue;
         };
+        let lifecycle_deadline = Instant::now()
+            .checked_add(VIDEO_BOOTSTRAP_RESULT_TIMEOUT)
+            .ok_or_else(|| "video bootstrap lifecycle deadline overflowed".to_owned())?;
         let mut send = tokio::time::timeout(CONNECTION_STREAM_TIMEOUT, connection.open_uni())
             .await
             .map_err(|_| "QUIC client did not admit a video-bootstrap stream".to_owned())?
@@ -676,18 +679,12 @@ async fn publish_video_bootstraps(
             .ok_or_else(|| "video bootstrap stream index exhausted".to_owned())?;
         let encoded = encode_video_bootstrap_message(&bootstrap)
             .map_err(|error| format!("could not encode video bootstrap: {error:?}"))?;
-        let delivery = router
-            .lock()
-            .map_err(|_| "native control router lock is poisoned".to_owned())?
-            .video_delivery_state()
-            .filter(|delivery| delivery.session_epoch == session_epoch)
-            .ok_or_else(|| "video bootstrap has no active wire budget".to_owned())?;
         write_paced_video_bootstrap(
             &mut send,
             &encoded,
-            delivery.session_epoch,
-            delivery.wire_budget_kbps,
-            delivery.maximum_datagram_payload,
+            &router,
+            session_epoch,
+            lifecycle_deadline,
             &wire_pacer,
         )
         .await?;
@@ -707,7 +704,7 @@ async fn publish_video_bootstraps(
             &router,
             bootstrap.session_epoch,
             bootstrap.generation_id,
-            VIDEO_BOOTSTRAP_RESULT_TIMEOUT,
+            lifecycle_deadline,
             &stop,
         )
         .await?
@@ -726,6 +723,7 @@ async fn publish_video_bootstraps(
     Ok(())
 }
 
+#[cfg(test)]
 fn video_bootstrap_chunk_lengths(encoded_bytes: usize, maximum_chunk_bytes: usize) -> Vec<usize> {
     if encoded_bytes == 0 || maximum_chunk_bytes == 0 {
         return Vec::new();
@@ -739,55 +737,68 @@ fn video_bootstrap_chunk_lengths(encoded_bytes: usize, maximum_chunk_bytes: usiz
     chunks
 }
 
-async fn write_paced_video_bootstrap(
-    send: &mut quinn::SendStream,
-    encoded: &[u8],
+fn reserve_video_bootstrap_chunk(
+    pacer: &mut VideoWireRatePacer,
+    remaining_bytes: usize,
     session_epoch: u32,
     wire_budget_kbps: u32,
     maximum_chunk_bytes: usize,
+    now: Instant,
+    lifecycle_deadline: Instant,
+) -> Result<(usize, Instant), String> {
+    let chunk_bytes = remaining_bytes.min(maximum_chunk_bytes);
+    if chunk_bytes == 0 {
+        return Err("video bootstrap chunk is empty".to_owned());
+    }
+    pacer.prepare(session_epoch, wire_budget_kbps)?;
+    let send_at = pacer
+        .reserve(&[chunk_bytes], maximum_chunk_bytes, now, lifecycle_deadline)
+        .and_then(|times| times.into_iter().next())
+        .ok_or_else(|| "video bootstrap exceeded the lifecycle pacing deadline".to_owned())?;
+    Ok((chunk_bytes, send_at))
+}
+
+async fn write_paced_video_bootstrap(
+    send: &mut quinn::SendStream,
+    encoded: &[u8],
+    router: &SharedControlRouter,
+    session_epoch: u32,
+    lifecycle_deadline: Instant,
     wire_pacer: &Arc<tokio::sync::Mutex<VideoWireRatePacer>>,
 ) -> Result<(), String> {
-    let chunk_lengths = video_bootstrap_chunk_lengths(encoded.len(), maximum_chunk_bytes);
-    if chunk_lengths.is_empty() {
+    if encoded.is_empty() {
         return Err("video bootstrap is empty".to_owned());
     }
-    let deadline = Instant::now()
-        .checked_add(VIDEO_BOOTSTRAP_RESULT_TIMEOUT)
-        .ok_or_else(|| "video bootstrap pacing deadline overflowed".to_owned())?;
-    let preflight = {
-        let mut pacer = wire_pacer.lock().await;
-        pacer.prepare(session_epoch, wire_budget_kbps)?;
-        pacer.clone().reserve(
-            &chunk_lengths,
-            maximum_chunk_bytes,
-            Instant::now(),
-            deadline,
-        )
-    };
-    if preflight.is_none() {
-        return Err("video bootstrap exceeds the lifecycle pacing deadline".to_owned());
-    }
-    for chunk in encoded.chunks(maximum_chunk_bytes) {
-        let send_at = {
+    let mut offset = 0_usize;
+    while offset < encoded.len() {
+        let delivery = router
+            .lock()
+            .map_err(|_| "native control router lock is poisoned".to_owned())?
+            .video_delivery_state()
+            .filter(|delivery| delivery.session_epoch == session_epoch)
+            .ok_or_else(|| "video bootstrap has no active wire budget".to_owned())?;
+        let (chunk_bytes, send_at) = {
             let mut pacer = wire_pacer.lock().await;
-            pacer.prepare(session_epoch, wire_budget_kbps)?;
-            pacer
-                .reserve(
-                    &[chunk.len()],
-                    maximum_chunk_bytes,
-                    Instant::now(),
-                    deadline,
-                )
-                .and_then(|times| times.into_iter().next())
-                .ok_or_else(|| {
-                    "video bootstrap exceeded the lifecycle pacing deadline".to_owned()
-                })?
+            reserve_video_bootstrap_chunk(
+                &mut pacer,
+                encoded.len() - offset,
+                session_epoch,
+                delivery.wire_budget_kbps,
+                delivery.maximum_datagram_payload,
+                Instant::now(),
+                lifecycle_deadline,
+            )?
         };
+        let chunk_end = offset
+            .checked_add(chunk_bytes)
+            .ok_or_else(|| "video bootstrap chunk offset overflowed".to_owned())?;
+        let chunk = &encoded[offset..chunk_end];
         tokio::time::sleep_until(send_at.into()).await;
-        tokio::time::timeout_at(deadline.into(), send.write_all(chunk))
+        tokio::time::timeout_at(lifecycle_deadline.into(), send.write_all(chunk))
             .await
             .map_err(|_| "video bootstrap write exceeded the lifecycle deadline".to_owned())?
             .map_err(|error| format!("could not write video bootstrap: {error}"))?;
+        offset = chunk_end;
     }
     Ok(())
 }
@@ -803,10 +814,10 @@ async fn wait_for_video_bootstrap_result(
     router: &SharedControlRouter,
     session_epoch: u32,
     generation_id: u32,
-    timeout: Duration,
+    lifecycle_deadline: Instant,
     stop: &AtomicBool,
 ) -> Result<VideoBootstrapWaitOutcome, String> {
-    tokio::time::timeout(timeout, async {
+    tokio::time::timeout_at(lifecycle_deadline.into(), async {
         loop {
             if stop.load(Ordering::Acquire) {
                 return Ok(VideoBootstrapWaitOutcome::Stopped);
@@ -839,7 +850,7 @@ async fn wait_for_video_bootstrap_result(
     .map_err(|_| {
         format!(
             "video bootstrap decode result timed out session-epoch={session_epoch} generation-id={generation_id} timeout-ms={}",
-            timeout.as_millis()
+            VIDEO_BOOTSTRAP_RESULT_TIMEOUT.as_millis()
         )
     })?
 }
@@ -2057,6 +2068,43 @@ mod tests {
         assert!(schedule[2] > origin);
         assert!(schedule.last().copied().unwrap() < deadline);
         assert!(schedule.last().copied().unwrap() - origin > Duration::from_secs(2));
+    }
+
+    #[test]
+    fn bootstrap_chunk_reservation_applies_the_latest_committed_wire_budget() {
+        let origin = Instant::now();
+        let deadline = origin + Duration::from_secs(1);
+        let mut pacer = VideoWireRatePacer::default();
+
+        let (_, first) =
+            reserve_video_bootstrap_chunk(&mut pacer, 3_600, 77, 48_000, 1_200, origin, deadline)
+                .unwrap();
+        let (_, second) =
+            reserve_video_bootstrap_chunk(&mut pacer, 2_400, 77, 1_200, 1_200, origin, deadline)
+                .unwrap();
+        let (_, third) =
+            reserve_video_bootstrap_chunk(&mut pacer, 1_200, 77, 1_200, 1_200, origin, deadline)
+                .unwrap();
+
+        assert_eq!(first, origin);
+        assert!(second >= origin + Duration::from_millis(7));
+        assert!(third >= second + Duration::from_millis(8));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn bootstrap_decode_wait_consumes_only_the_remaining_absolute_lifecycle_deadline() {
+        let (_root, router, _platform, _application_id) = native_test_router();
+        let stop = AtomicBool::new(false);
+        let lifecycle_deadline = Instant::now() + Duration::from_millis(100);
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        let wait_started = Instant::now();
+
+        let error = wait_for_video_bootstrap_result(&router, 77, 1, lifecycle_deadline, &stop)
+            .await
+            .unwrap_err();
+
+        assert!(error.contains("video bootstrap decode result timed out"));
+        assert!(wait_started.elapsed() < Duration::from_millis(80));
     }
 
     #[tokio::test(flavor = "current_thread")]

@@ -207,9 +207,11 @@ then schedules every delta, same-generation keyframe, and reliable lifecycle
 bootstrap byte at the active wire budget. A datagram batch that cannot fit its
 object deadline is dropped before partial transmission and enters the single-
 flight repair path. Reliable initial, configuration, and repair bootstraps use
-the same token state and must fit the 15-second bootstrap lifecycle deadline.
-This runtime byte gate remains authoritative when real keyframe and delta sizes
-differ from the negotiated one-second floor model.
+the same token state, read the current committed wire budget before reserving
+each chunk, and share one absolute 15-second lifecycle deadline across paced
+transfer and the decoded result wait. This runtime byte gate remains
+authoritative when real keyframe and delta sizes differ from the negotiated
+one-second floor model.
 
 Adaptive platform policy application runs on a dedicated revision-fenced lane,
 outside the global control-router mutex. Stop and teardown therefore remain

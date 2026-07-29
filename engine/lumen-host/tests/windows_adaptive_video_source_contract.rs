@@ -12,6 +12,19 @@ fn windows_adaptive_delivery_policy_reaches_the_active_media_foundation_encoder(
     assert!(!dispatch.contains("PlatformControlEvent::SetVideoDeliveryPolicy { .. } => Ok(())"));
     assert!(dispatch.contains("set_video_delivery_policy"));
     assert!(MEDIA.contains("pub(super) fn set_video_delivery_policy"));
+    let policy = MEDIA
+        .split("pub(super) fn set_video_delivery_policy")
+        .nth(1)
+        .unwrap();
+    let policy = policy.split("pub(super) fn").next().unwrap();
+    assert!(policy.contains("require_running_session_epoch(session_epoch)?"));
+    assert!(!policy.contains("let lifecycle = self.running_session()?"));
+    assert!(
+        policy.find("require_running_session_epoch").unwrap()
+            < policy
+                .find("media_foundation.set_video_delivery_policy")
+                .unwrap()
+    );
     assert!(VIDEO.contains("NativeMediaFoundationCommand::SetBitrate"));
     assert!(VIDEO.contains("CODECAPI_AVEncCommonMeanBitRate"));
     assert!(VIDEO.contains("VariantClear(value)"));
