@@ -604,7 +604,11 @@ impl ControlRouter {
             .next_feedback_window_id
             .checked_add(1)
             .ok_or(NativeMediaFeedbackRejection::FeedbackWindowMismatch)?;
-        let decision = pending.adaptive_video.observe_window(video, audio);
+        let clean_window_units =
+            feedback.window_milliseconds / NATIVE_MEDIA_FEEDBACK_WINDOW_MILLISECONDS;
+        let decision = pending
+            .adaptive_video
+            .observe_window(video, audio, clean_window_units);
         Ok(if decision.changed {
             NativeMediaFeedbackDisposition::Applied(decision)
         } else {

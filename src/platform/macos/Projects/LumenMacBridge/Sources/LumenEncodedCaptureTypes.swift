@@ -100,6 +100,7 @@ struct LumenEncodedCaptureCallbacks: Sendable {
 
 public struct LumenEncodedCaptureSessionStatistics: Equatable, Sendable {
     var emittedFrameCount: UInt64 = 0
+    var encodedByteCount: UInt64 = 0
     var droppedFrameCount: UInt64 = 0
     var processingFailureCount: UInt64 = 0
     var automaticRestartCount: UInt64 = 0
@@ -113,8 +114,53 @@ public struct LumenEncodedCaptureSessionStatistics: Equatable, Sendable {
     var isRunning = false
     var minOutputCallbackLatencyMilliseconds: Double?
     var maxOutputCallbackLatencyMilliseconds: Double?
+    var appliedVideoBitRateKbps: Int?
+    var estimatedOutputBitrateKbps: Double?
     var notes: [String] = []
     var exactCaptureAudit = LumenExactCaptureAuditSnapshot()
+}
+
+struct LumenEncodedBitrateTelemetry: Equatable, Sendable {
+    private static let reportingIntervalNanoseconds: UInt64 = 1_000_000_000
+
+    private(set) var totalEncodedBytes: UInt64 = 0
+    private(set) var latestWindowBitrateKbps: Double?
+    private var windowStartUptimeNanoseconds: UInt64?
+    private var windowEncodedBytes: UInt64 = 0
+
+    mutating func observe(
+        encodedByteCount: Int,
+        atUptimeNanoseconds uptimeNanoseconds: UInt64
+    ) {
+        guard encodedByteCount > 0,
+              let bytes = UInt64(exactly: encodedByteCount) else {
+            return
+        }
+        totalEncodedBytes = saturatingAdd(totalEncodedBytes, bytes)
+        windowEncodedBytes = saturatingAdd(windowEncodedBytes, bytes)
+        guard let windowStartUptimeNanoseconds else {
+            self.windowStartUptimeNanoseconds = uptimeNanoseconds
+            return
+        }
+        guard uptimeNanoseconds > windowStartUptimeNanoseconds else {
+            return
+        }
+        let elapsedNanoseconds =
+            uptimeNanoseconds - windowStartUptimeNanoseconds
+        guard elapsedNanoseconds >= Self.reportingIntervalNanoseconds else {
+            return
+        }
+        latestWindowBitrateKbps =
+            Double(windowEncodedBytes) * 8_000_000
+                / Double(elapsedNanoseconds)
+        self.windowStartUptimeNanoseconds = uptimeNanoseconds
+        windowEncodedBytes = 0
+    }
+
+    private func saturatingAdd(_ left: UInt64, _ right: UInt64) -> UInt64 {
+        let result = left.addingReportingOverflow(right)
+        return result.overflow ? .max : result.partialValue
+    }
 }
 
 struct LumenCapturePipelineUtilization: Equatable, Sendable {

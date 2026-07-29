@@ -44,7 +44,10 @@ extension LumenScreenCaptureVideoRuntime {
         recordCodecConfigurationAudit(configurationData)
         statisticsHandler(statistics)
 
-        let latency = recordSuccessfulOutput(context: context)
+        let latency = recordSuccessfulOutput(
+            context: context,
+            sampleBuffer: sampleBuffer
+        )
         let isKeyFrame = isKeyFrame(sampleBuffer)
         guard acceptRequiredKeyFrame(isKeyFrame, context: context) else {
             return
@@ -161,7 +164,8 @@ extension LumenScreenCaptureVideoRuntime {
     }
 
     func recordSuccessfulOutput(
-        context: LumenEncodedFrameContext
+        context: LumenEncodedFrameContext,
+        sampleBuffer: CMSampleBuffer
     ) -> Double {
         let latency = LumenMachTime.milliseconds(
             from: context.submissionMachTime,
@@ -177,6 +181,14 @@ extension LumenScreenCaptureVideoRuntime {
         }
         lastOutputMachTime = outputMachTime
         statistics.emittedFrameCount &+= 1
+        encodedBitrateTelemetry.observe(
+            encodedByteCount: CMSampleBufferGetTotalSampleSize(sampleBuffer),
+            atUptimeNanoseconds: DispatchTime.now().uptimeNanoseconds
+        )
+        statistics.encodedByteCount =
+            encodedBitrateTelemetry.totalEncodedBytes
+        statistics.estimatedOutputBitrateKbps =
+            encodedBitrateTelemetry.latestWindowBitrateKbps
         statistics.minOutputCallbackLatencyMilliseconds = min(
             statistics.minOutputCallbackLatencyMilliseconds ?? latency,
             latency

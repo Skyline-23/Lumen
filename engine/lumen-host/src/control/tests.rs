@@ -1197,7 +1197,10 @@ fn media_feedback_uses_audio_pressure_to_adapt_video_delivery_without_reducing_c
         panic!("audio playback pressure must reduce the video budget");
     };
     assert!(audio_decision.changed);
-    assert_eq!(audio_decision.congestion_source, CongestionSource::Audio);
+    assert_eq!(
+        audio_decision.congestion_source,
+        CongestionSource::AudioNetwork
+    );
     let audio_adapted = router.video_delivery_state().unwrap();
     assert!(audio_adapted.target_bitrate_kbps < initial.target_bitrate_kbps);
     assert_eq!(audio_adapted.admission_divisor, 1);
@@ -1380,6 +1383,127 @@ fn media_feedback_accepts_a_coalesced_wall_clock_window() {
         router.observe_native_media_feedback(&fractional_window, context.session_epoch),
         Err(NativeMediaFeedbackRejection::WindowDurationMismatch)
     );
+}
+
+#[test]
+fn coalesced_clean_feedback_recovers_by_elapsed_base_windows() {
+    let platform = Arc::new(RecordingPlatformSessionControl::default());
+    let (_root, mut router, context, plan) = started_native_router(platform);
+    let congested_video = MediaFeedback {
+        stream_id: plan.video_stream_id,
+        received_datagrams: 1,
+        first_datagram_sequence: 1,
+        highest_datagram_sequence: 1,
+        decoder_drops: 1,
+        window_milliseconds: 250,
+        feedback_window_id: 1,
+        ..MediaFeedback::default()
+    };
+    let clean_audio = MediaFeedback {
+        stream_id: plan.audio_stream_id,
+        received_datagrams: 1,
+        first_datagram_sequence: 1,
+        highest_datagram_sequence: 1,
+        window_milliseconds: 250,
+        feedback_window_id: 1,
+        ..MediaFeedback::default()
+    };
+    assert!(matches!(
+        router
+            .observe_native_media_feedback(&congested_video, context.session_epoch)
+            .unwrap(),
+        NativeMediaFeedbackDisposition::AwaitingPair { .. }
+    ));
+    assert!(matches!(
+        router
+            .observe_native_media_feedback(&clean_audio, context.session_epoch)
+            .unwrap(),
+        NativeMediaFeedbackDisposition::Applied(_)
+    ));
+    let degraded = router.video_delivery_state().unwrap();
+
+    let clean_video = MediaFeedback {
+        decoder_drops: 0,
+        window_milliseconds: 2_000,
+        feedback_window_id: 2,
+        ..congested_video
+    };
+    let coalesced_audio = MediaFeedback {
+        window_milliseconds: 2_000,
+        feedback_window_id: 2,
+        ..clean_audio
+    };
+    assert!(matches!(
+        router
+            .observe_native_media_feedback(&clean_video, context.session_epoch)
+            .unwrap(),
+        NativeMediaFeedbackDisposition::AwaitingPair {
+            window_milliseconds: 2_000
+        }
+    ));
+    assert!(matches!(
+        router
+            .observe_native_media_feedback(&coalesced_audio, context.session_epoch)
+            .unwrap(),
+        NativeMediaFeedbackDisposition::Applied(_)
+    ));
+    let recovered = router.video_delivery_state().unwrap();
+
+    assert!(
+        recovered.target_bitrate_kbps > degraded.target_bitrate_kbps,
+        "coalesced clean evidence must recover bitrate by elapsed 250 ms units"
+    );
+}
+
+#[test]
+fn repeated_presentation_only_feedback_never_mutates_delivery_budgets() {
+    let platform = Arc::new(RecordingPlatformSessionControl::default());
+    let (_root, mut router, context, plan) = started_native_router(platform);
+    let initial = router.video_delivery_state().unwrap();
+    let mut previous = initial.clone();
+
+    for feedback_window_id in 1..=16 {
+        let video = MediaFeedback {
+            stream_id: plan.video_stream_id,
+            received_datagrams: 1,
+            first_datagram_sequence: 1,
+            highest_datagram_sequence: 1,
+            presentation_drops: 1,
+            window_milliseconds: 250,
+            feedback_window_id,
+            ..MediaFeedback::default()
+        };
+        let audio = MediaFeedback {
+            stream_id: plan.audio_stream_id,
+            received_datagrams: 1,
+            first_datagram_sequence: 1,
+            highest_datagram_sequence: 1,
+            window_milliseconds: 250,
+            feedback_window_id,
+            ..MediaFeedback::default()
+        };
+
+        assert!(matches!(
+            router
+                .observe_native_media_feedback(&video, context.session_epoch)
+                .unwrap(),
+            NativeMediaFeedbackDisposition::AwaitingPair { .. }
+        ));
+        let disposition = router
+            .observe_native_media_feedback(&audio, context.session_epoch)
+            .unwrap();
+        if let NativeMediaFeedbackDisposition::Applied(decision) = disposition {
+            assert_eq!(decision.congestion_source, CongestionSource::None);
+        }
+        let current = router.video_delivery_state().unwrap();
+        assert!(current.target_bitrate_kbps >= previous.target_bitrate_kbps);
+        assert!(current.fec_percentage <= previous.fec_percentage);
+        previous = current;
+    }
+
+    let final_state = router.video_delivery_state().unwrap();
+    assert!(final_state.target_bitrate_kbps >= initial.target_bitrate_kbps);
+    assert!(final_state.fec_percentage <= initial.fec_percentage);
 }
 
 #[test]

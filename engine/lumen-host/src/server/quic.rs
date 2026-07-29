@@ -1094,7 +1094,8 @@ async fn accept_native_telemetry_stream(
                     NativeMediaFeedbackDisposition::Applied(_)
                     | NativeMediaFeedbackDisposition::Unchanged => None,
                 };
-                apply_adaptive_video_decision(platform.as_ref(), session_epoch, disposition)?;
+                apply_adaptive_video_decision(Arc::clone(&platform), session_epoch, disposition)
+                    .await?;
                 if feedback.stream_id != u32::from(NATIVE_AUDIO_STREAM_ID) {
                     continue;
                 }
@@ -1147,22 +1148,25 @@ async fn accept_native_telemetry_stream(
     hold_native_auxiliary_response_until_session_end(send).await
 }
 
-fn apply_adaptive_video_decision(
-    platform: &dyn PlatformSessionControl,
+async fn apply_adaptive_video_decision(
+    platform: Arc<dyn PlatformSessionControl>,
     session_epoch: u32,
     disposition: NativeMediaFeedbackDisposition,
 ) -> Result<(), String> {
     let NativeMediaFeedbackDisposition::Applied(decision) = disposition else {
         return Ok(());
     };
-    platform
-        .handle_control_event(
+    tokio::task::spawn_blocking(move || {
+        platform.handle_control_event(
             session_epoch,
             crate::PlatformControlEvent::SetVideoBitrateKbps {
                 bitrate_kbps: decision.encoder_bitrate_kbps,
             },
         )
-        .map_err(|error| format!("adaptive video bitrate update failed: {error}"))?;
+    })
+    .await
+    .map_err(|error| format!("adaptive video bitrate worker failed: {error}"))?
+    .map_err(|error| format!("adaptive video bitrate update failed: {error}"))?;
     eprintln!(
         "Lumen native media stage=adaptive-video-applied session-epoch={session_epoch} wire-budget-kbps={} encoder-bitrate-kbps={} fec-percentage={} congestion-source={:?}",
         decision.wire_budget_kbps,
@@ -1513,6 +1517,7 @@ mod tests {
     use std::collections::VecDeque;
     use std::fs;
     use std::sync::Mutex;
+    use std::thread;
 
     use lumen_engine::{
         client_control_envelope, client_input_envelope, client_telemetry_envelope,
@@ -1609,6 +1614,27 @@ mod tests {
 
         fn publish_runtime_event(&self, event: PlatformRuntimeEvent) -> Result<(), String> {
             self.runtime_events.lock().unwrap().push(event);
+            Ok(())
+        }
+    }
+
+    struct BlockingBitratePlatform;
+
+    impl PlatformSessionControl for BlockingBitratePlatform {
+        fn start_session(&self, _plan: PlatformSessionPlan) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn stop_session(&self) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn handle_control_event(
+            &self,
+            _session_epoch: u32,
+            _event: PlatformControlEvent,
+        ) -> Result<(), String> {
+            thread::sleep(Duration::from_millis(150));
             Ok(())
         }
     }
@@ -1741,22 +1767,23 @@ mod tests {
         }
     }
 
-    #[test]
-    fn adaptive_feedback_applies_the_encoder_bitrate_outside_router_state() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn adaptive_feedback_applies_the_encoder_bitrate_outside_router_state() {
         let platform = Arc::new(RecordingPlatformSessionControl::default());
         let decision = AdaptiveVideoDecision {
             wire_budget_kbps: 51_000,
             encoder_bitrate_kbps: 48_000,
             fec_percentage: 6,
-            congestion_source: CongestionSource::Audio,
+            congestion_source: CongestionSource::AudioNetwork,
             changed: true,
         };
 
         apply_adaptive_video_decision(
-            platform.as_ref(),
+            platform.clone(),
             77,
             NativeMediaFeedbackDisposition::Applied(decision),
         )
+        .await
         .unwrap();
 
         assert_eq!(
@@ -1768,6 +1795,36 @@ mod tests {
                 },
             )]
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn adaptive_bitrate_bridge_does_not_block_the_single_thread_quic_executor() {
+        let platform: Arc<dyn PlatformSessionControl> = Arc::new(BlockingBitratePlatform);
+        let decision = AdaptiveVideoDecision {
+            wire_budget_kbps: 51_000,
+            encoder_bitrate_kbps: 48_000,
+            fec_percentage: 6,
+            congestion_source: CongestionSource::AudioNetwork,
+            changed: true,
+        };
+        let started = std::time::Instant::now();
+        let update = tokio::spawn(async move {
+            apply_adaptive_video_decision(
+                platform,
+                77,
+                NativeMediaFeedbackDisposition::Applied(decision),
+            )
+            .await
+        });
+
+        tokio::task::yield_now().await;
+
+        assert!(
+            started.elapsed() < Duration::from_millis(50),
+            "blocking platform control stalled the current-thread QUIC executor for {:?}",
+            started.elapsed()
+        );
+        update.await.unwrap().unwrap();
     }
 
     #[tokio::test(flavor = "current_thread")]
