@@ -140,14 +140,22 @@ impl NativeWindowsMedia {
             .lifecycle
             .write()
             .map_err(|_| "Windows media lifecycle lock is poisoned".to_owned())?;
-        if lifecycle.running {
-            return Err("Windows native media session is already running".to_owned());
+        if lifecycle.running || lifecycle.session_epoch.is_some() {
+            return Err(
+                "Windows native media session is running or awaiting cleanup retry".to_owned(),
+            );
         }
         self.reset_packets()?;
         self.packets.activate_video_session(session_epoch)?;
+        lifecycle.session_epoch = Some(session_epoch);
         if let Err(error) = self.media_foundation.start_encoder(plan, driver) {
-            let _ = self.packets.retire_video_session(session_epoch);
-            return Err(error);
+            let video = self.media_foundation.stop_encoder().err();
+            let queue = self.packets.retire_video_session(session_epoch).err();
+            let reset = self.reset_packets().err();
+            if video.is_none() && queue.is_none() && reset.is_none() {
+                lifecycle.session_epoch = None;
+            }
+            return combine_errors([Some(error), video, queue, reset]);
         }
 
         let stop_requested = Arc::new(AtomicBool::new(false));
@@ -158,7 +166,11 @@ impl NativeWindowsMedia {
                     stop_requested.store(true, Ordering::Release);
                     let video = self.media_foundation.stop_encoder().err();
                     let queue = self.packets.retire_video_session(session_epoch).err();
-                    return combine_errors([Some(error), video, queue]);
+                    let reset = self.reset_packets().err();
+                    if video.is_none() && queue.is_none() && reset.is_none() {
+                        lifecycle.session_epoch = None;
+                    }
+                    return combine_errors([Some(error), video, queue, reset]);
                 }
             }
         } else {
@@ -166,7 +178,6 @@ impl NativeWindowsMedia {
         };
 
         lifecycle.running = true;
-        lifecycle.session_epoch = Some(session_epoch);
         lifecycle.stop_requested = Some(stop_requested);
         lifecycle.audio_worker = audio_worker;
         Ok(())
@@ -177,19 +188,25 @@ impl NativeWindowsMedia {
             .lifecycle
             .write()
             .map_err(|_| "Windows media lifecycle lock is poisoned".to_owned())?;
-        if !lifecycle.running {
+        if !lifecycle.running && lifecycle.session_epoch.is_none() {
             return Ok(());
         }
         lifecycle.running = false;
-        let session_epoch = lifecycle.session_epoch.take();
-        if let Some(stop_requested) = lifecycle.stop_requested.take() {
+        let session_epoch = lifecycle.session_epoch;
+        if let Some(stop_requested) = lifecycle.stop_requested.as_ref() {
             stop_requested.store(true, Ordering::Release);
         }
         let queue = session_epoch
             .and_then(|session_epoch| self.packets.retire_video_session(session_epoch).err());
         let video = self.media_foundation.stop_encoder().err();
         let audio = join_worker(lifecycle.audio_worker.take(), "audio").err();
+        if lifecycle.audio_worker.is_none() {
+            lifecycle.stop_requested = None;
+        }
         let reset = self.reset_packets().err();
+        if queue.is_none() && video.is_none() && reset.is_none() {
+            lifecycle.session_epoch = None;
+        }
         combine_errors([queue, video, audio, reset])
     }
 

@@ -35,7 +35,7 @@ use windows_api::Win32::System::Variant::{VariantClear, VARIANT, VT_UI4};
 
 use super::native_capture::{NativeEncoderSurface, NativeIddCxCapture};
 use super::native_display_driver::DriverHandle;
-use crate::platform::session_slot::AbandonableSessionSlot;
+use crate::platform::session_slot::{AbandonableSessionSlot, RetiredWorkerRegistry};
 use crate::{
     PlatformChromaSubsampling, PlatformDynamicRange, PlatformSessionPlan, PlatformVideoCodec,
 };
@@ -43,6 +43,7 @@ use crate::{
 const TRANSFORM_EVENT_TIMEOUT: Duration = Duration::from_secs(5);
 const INITIAL_FRAME_TIMEOUT: Duration = Duration::from_secs(5);
 const ACTIVE_CAPTURE_POLL_MILLISECONDS: u32 = 8;
+const MAXIMUM_RETIRED_MEDIA_FOUNDATION_WORKERS: usize = 2;
 
 type NativeVideoSink =
     Arc<dyn Fn(u32, NativeEncodedVideoSample) -> Result<bool, String> + Send + Sync>;
@@ -50,12 +51,14 @@ type NativeVideoSink =
 pub(super) struct NativeMediaFoundation {
     sink: NativeVideoSink,
     sessions: AbandonableSessionSlot<NativeMediaFoundationSession>,
+    retired_workers: RetiredWorkerRegistry,
 }
 
 struct NativeMediaFoundationSession {
     commands: mpsc::SyncSender<NativeMediaFoundationCommand>,
     state: Arc<Mutex<NativeVideoWorkerState>>,
     capture_control: Mutex<Option<DriverHandle>>,
+    worker: Mutex<Option<thread::JoinHandle<()>>>,
 }
 
 #[derive(Default)]
@@ -134,6 +137,7 @@ impl NativeMediaFoundation {
         Self {
             sink,
             sessions: AbandonableSessionSlot::default(),
+            retired_workers: RetiredWorkerRegistry::new(MAXIMUM_RETIRED_MEDIA_FOUNDATION_WORKERS),
         }
     }
 
@@ -146,6 +150,9 @@ impl NativeMediaFoundation {
         if self.sessions.current().map_err(str::to_owned)?.is_some() {
             return Err("Windows native video session is already running".to_owned());
         }
+        self.retired_workers.ensure_capacity().map_err(|error| {
+            format!("Windows Media Foundation session start is fail-closed: {error}")
+        })?;
         let capture_control = driver.duplicate()?;
         let (commands, command_receiver) = mpsc::sync_channel(4);
         let (ready_sender, ready_receiver) = mpsc::sync_channel(1);
@@ -158,6 +165,7 @@ impl NativeMediaFoundation {
                     commands,
                     state: Arc::clone(&state),
                     capture_control: Mutex::new(Some(capture_control)),
+                    worker: Mutex::new(None),
                 },
             )
             .map_err(str::to_owned)?;
@@ -177,39 +185,63 @@ impl NativeMediaFoundation {
                     retired,
                 )
             });
-        if let Err(error) = spawn {
-            let _ = self.sessions.retire();
-            return Err(format!(
-                "Windows Media Foundation session worker failed to start: {error}"
-            ));
-        }
+        let worker = match spawn {
+            Ok(worker) => worker,
+            Err(error) => {
+                let cleanup = self.stop_encoder().err();
+                let error =
+                    format!("Windows Media Foundation session worker failed to start: {error}");
+                return Err(cleanup.map_or(error.clone(), |cleanup| format!("{error}; {cleanup}")));
+            }
+        };
+        *session
+            .value()
+            .worker
+            .lock()
+            .map_err(|_| "Windows Media Foundation worker ownership is poisoned".to_owned())? =
+            Some(worker);
         match ready_receiver.recv() {
             Ok(Ok(())) => Ok(()),
             Ok(Err(error)) => {
-                let _ = self.sessions.retire();
-                Err(error)
+                let cleanup = self.stop_encoder().err();
+                Err(cleanup.map_or(error.clone(), |cleanup| format!("{error}; {cleanup}")))
             }
             Err(_) => {
-                let _ = self.sessions.retire();
-                Err("Windows Media Foundation session worker exited during startup".to_owned())
+                let error =
+                    "Windows Media Foundation session worker exited during startup".to_owned();
+                let cleanup = self.stop_encoder().err();
+                Err(cleanup.map_or(error.clone(), |cleanup| format!("{error}; {cleanup}")))
             }
         }
     }
 
     pub(super) fn stop_encoder(&self) -> Result<(), String> {
-        let Some(session) = self.sessions.retire().map_err(str::to_owned)? else {
-            return Ok(());
-        };
-        let control = session
-            .value()
-            .capture_control
-            .lock()
-            .map_err(|_| "Windows native capture control is poisoned".to_owned())?
-            .take();
-        let driver = control
-            .as_ref()
-            .and_then(|driver| driver.stop_frame_delivery().err());
-        driver.map_or(Ok(()), Err)
+        self.sessions.try_retire(|session| {
+            let mut control = session
+                .value()
+                .capture_control
+                .lock()
+                .map_err(|_| "Windows native capture control is poisoned".to_owned())?;
+            if let Some(driver) = control.as_ref() {
+                driver.stop_frame_delivery()?;
+                control.take();
+            }
+            drop(control);
+
+            let mut worker =
+                session.value().worker.lock().map_err(|_| {
+                    "Windows Media Foundation worker ownership is poisoned".to_owned()
+                })?;
+            if let Some(retired_worker) = worker.take() {
+                if let Err((error, retired_worker)) = self.retired_workers.insert(retired_worker) {
+                    *worker = Some(retired_worker);
+                    return Err(format!(
+                        "Windows Media Foundation cleanup is fail-closed: {error}"
+                    ));
+                }
+            }
+            Ok(())
+        })
     }
 
     pub(super) fn request_key_frame(&self) -> Result<(), String> {

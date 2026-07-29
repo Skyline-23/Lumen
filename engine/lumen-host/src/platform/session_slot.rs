@@ -1,5 +1,6 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 
 pub(super) struct AbandonableSession<T> {
     epoch: u32,
@@ -78,22 +79,124 @@ impl<T> AbandonableSessionSlot<T> {
             .map_err(|_| "abandonable session slot is poisoned")
     }
 
+    #[cfg(test)]
     pub(super) fn retire(&self) -> Result<Option<Arc<AbandonableSession<T>>>, &'static str> {
+        let session = self.begin_retire()?;
+        if let Some(session) = &session {
+            self.finish_retire(session.epoch())?;
+        }
+        Ok(session)
+    }
+
+    pub(super) fn begin_retire(&self) -> Result<Option<Arc<AbandonableSession<T>>>, &'static str> {
         let session = self
             .current
             .lock()
             .map_err(|_| "abandonable session slot is poisoned")?
-            .take();
+            .clone();
         if let Some(session) = &session {
             session.retired.store(true, Ordering::Release);
         }
         Ok(session)
     }
+
+    pub(super) fn try_retire(
+        &self,
+        cleanup: impl FnOnce(&AbandonableSession<T>) -> Result<(), String>,
+    ) -> Result<(), String> {
+        let Some(session) = self.begin_retire().map_err(str::to_owned)? else {
+            return Ok(());
+        };
+        cleanup(&session)?;
+        self.finish_retire(session.epoch()).map_err(str::to_owned)
+    }
+
+    pub(super) fn finish_retire(&self, epoch: u32) -> Result<(), &'static str> {
+        let mut current = self
+            .current
+            .lock()
+            .map_err(|_| "abandonable session slot is poisoned")?;
+        match current.as_ref() {
+            Some(session) if session.epoch() == epoch && session.is_retired() => {
+                current.take();
+                Ok(())
+            }
+            Some(_) => Err("abandonable session retirement does not match the current epoch"),
+            None => Ok(()),
+        }
+    }
+}
+
+pub(super) struct RetiredWorkerRegistry {
+    capacity: usize,
+    workers: Mutex<Vec<JoinHandle<()>>>,
+}
+
+impl RetiredWorkerRegistry {
+    pub(super) fn new(capacity: usize) -> Self {
+        assert!(capacity > 0, "retired worker capacity must be positive");
+        Self {
+            capacity,
+            workers: Mutex::new(Vec::with_capacity(capacity)),
+        }
+    }
+
+    pub(super) fn ensure_capacity(&self) -> Result<(), String> {
+        let mut workers = self
+            .workers
+            .lock()
+            .map_err(|_| "retired worker registry is poisoned".to_owned())?;
+        reap_finished_workers(&mut workers);
+        if workers.len() >= self.capacity {
+            return Err(format!(
+                "retired worker registry reached fail-closed capacity {}",
+                self.capacity
+            ));
+        }
+        Ok(())
+    }
+
+    pub(super) fn insert(&self, worker: JoinHandle<()>) -> Result<(), (String, JoinHandle<()>)> {
+        let mut workers = match self.workers.lock() {
+            Ok(workers) => workers,
+            Err(_) => {
+                return Err(("retired worker registry is poisoned".to_owned(), worker));
+            }
+        };
+        reap_finished_workers(&mut workers);
+        if worker.is_finished() {
+            let _ = worker.join();
+            return Ok(());
+        }
+        if workers.len() >= self.capacity {
+            return Err((
+                format!(
+                    "retired worker registry reached fail-closed capacity {}",
+                    self.capacity
+                ),
+                worker,
+            ));
+        }
+        workers.push(worker);
+        Ok(())
+    }
+}
+
+fn reap_finished_workers(workers: &mut Vec<JoinHandle<()>>) {
+    let mut pending = Vec::with_capacity(workers.len());
+    for worker in workers.drain(..) {
+        if worker.is_finished() {
+            let _ = worker.join();
+        } else {
+            pending.push(worker);
+        }
+    }
+    *workers = pending;
 }
 
 #[cfg(test)]
 mod tests {
-    use super::AbandonableSessionSlot;
+    use super::{AbandonableSessionSlot, RetiredWorkerRegistry};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{mpsc, Arc};
     use std::time::{Duration, Instant};
@@ -127,5 +230,65 @@ mod tests {
         stalled_policy.join().unwrap();
         assert_eq!(old.value().load(Ordering::Acquire), 1);
         assert_eq!(replacement.value().load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn failed_cleanup_retains_retired_session_for_successful_retry() {
+        let slot = AbandonableSessionSlot::default();
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let installed = slot.install(9, Arc::clone(&attempts)).unwrap();
+
+        let first_result = slot.try_retire(|session| {
+            if session.value().fetch_add(1, Ordering::AcqRel) == 0 {
+                Err("injected capture stop failure".to_owned())
+            } else {
+                Ok(())
+            }
+        });
+        assert_eq!(
+            first_result,
+            Err("injected capture stop failure".to_owned())
+        );
+        let retained = slot.current().unwrap().unwrap();
+        assert!(Arc::ptr_eq(&installed, &retained));
+        assert!(retained.is_retired());
+
+        let retry_result = slot.try_retire(|session| {
+            if session.value().fetch_add(1, Ordering::AcqRel) == 0 {
+                Err("injected capture stop failure".to_owned())
+            } else {
+                Ok(())
+            }
+        });
+        assert_eq!(retry_result, Ok(()));
+        assert!(slot.current().unwrap().is_none());
+        assert_eq!(attempts.load(Ordering::Acquire), 2);
+    }
+
+    #[test]
+    fn repeated_stalled_workers_hit_visible_fail_closed_capacity() {
+        let registry = RetiredWorkerRegistry::new(2);
+        let mut releases = Vec::new();
+        for _ in 0..2 {
+            let (release_send, release_receive) = mpsc::sync_channel(1);
+            releases.push(release_send);
+            registry
+                .insert(std::thread::spawn(move || {
+                    release_receive.recv().unwrap();
+                }))
+                .unwrap();
+        }
+
+        let error = registry.ensure_capacity().unwrap_err();
+        assert!(error.contains("fail-closed capacity 2"));
+
+        for release in releases {
+            release.send(()).unwrap();
+        }
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while registry.ensure_capacity().is_err() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        registry.ensure_capacity().unwrap();
     }
 }

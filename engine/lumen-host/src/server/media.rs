@@ -186,6 +186,7 @@ enum DatagramBatchStatus {
     Complete,
     Dropped(DatagramBatchDropReason),
     Failed(String),
+    Terminal(String),
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -550,14 +551,18 @@ where
                 report.status = if index == 0 {
                     DatagramBatchStatus::Dropped(DatagramBatchDropReason::Send)
                 } else {
-                    DatagramBatchStatus::Failed(
+                    DatagramBatchStatus::Terminal(
                         "committed video object drain reported a local deadline".to_owned(),
                     )
                 };
                 break;
             }
             DatagramSendOutcome::Failed(error) => {
-                report.status = DatagramBatchStatus::Failed(error);
+                report.status = if index == 0 {
+                    DatagramBatchStatus::Failed(error)
+                } else {
+                    DatagramBatchStatus::Terminal(error)
+                };
                 break;
             }
         }
@@ -1091,6 +1096,10 @@ async fn poll_and_send_audio(
             "quic-datagram-send-failed",
             format!("{message}; unit-id={unit_id}"),
         )),
+        DatagramBatchStatus::Terminal(message) => MediaAttempt::Terminal(audio_failure(
+            "quic-datagram-connection-failed",
+            format!("{message}; unit-id={unit_id}"),
+        )),
     }
 }
 
@@ -1314,6 +1323,29 @@ impl VideoSenderState {
         self.repair_required |= repair_required;
         Ok(request_repair)
     }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum VideoDatagramCompletion {
+    Continue { request_repair: bool },
+    TerminalTransport(String),
+}
+
+fn finish_video_datagram_delivery(
+    sender: &mut VideoSenderState,
+    frame_id: u32,
+    status: &DatagramBatchStatus,
+    bootstrap_pending: bool,
+) -> Result<VideoDatagramCompletion, String> {
+    if let DatagramBatchStatus::Terminal(message) = status {
+        return Ok(VideoDatagramCompletion::TerminalTransport(message.clone()));
+    }
+    let request_repair = sender.finish_delta_delivery(
+        frame_id,
+        *status != DatagramBatchStatus::Complete,
+        bootstrap_pending,
+    )?;
+    Ok(VideoDatagramCompletion::Continue { request_repair })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1589,14 +1621,6 @@ async fn poll_and_send_video(
     )
     .await;
     let delivery_complete = report.status == DatagramBatchStatus::Complete;
-    let request_repair = match sender.finish_delta_delivery(
-        frame_id,
-        !delivery_complete,
-        delivery.bootstrap_pending,
-    ) {
-        Ok(request_repair) => request_repair,
-        Err(message) => return MediaAttempt::Failed(video_failure("packetizer-failed", message)),
-    };
     let object_age_us = duration_to_microseconds(pending_since.elapsed());
     if frame_id <= 3
         || frame_id.checked_rem(120) == Some(0)
@@ -1613,6 +1637,21 @@ async fn poll_and_send_video(
             u64::from(delivery.maximum_object_delay_us),
         );
     }
+    let request_repair = match finish_video_datagram_delivery(
+        sender,
+        frame_id,
+        &report.status,
+        delivery.bootstrap_pending,
+    ) {
+        Ok(VideoDatagramCompletion::Continue { request_repair }) => request_repair,
+        Ok(VideoDatagramCompletion::TerminalTransport(message)) => {
+            return MediaAttempt::Terminal(video_failure(
+                "quic-datagram-connection-failed",
+                format!("{message}; frame-id={frame_id}"),
+            ));
+        }
+        Err(message) => return MediaAttempt::Failed(video_failure("packetizer-failed", message)),
+    };
     if request_repair {
         let repair = router
             .lock()
@@ -1646,12 +1685,19 @@ async fn poll_and_send_video(
             "quic-datagram-send-failed",
             format!("{message}; frame-id={frame_id}"),
         )),
+        DatagramBatchStatus::Terminal(message) => MediaAttempt::Terminal(video_failure(
+            "quic-datagram-connection-failed",
+            format!("{message}; frame-id={frame_id}"),
+        )),
     }
 }
 
 fn video_failure(stage: &'static str, message: String) -> MediaFailure {
     MediaFailure {
-        code: if stage == "quic-datagram-send-failed" {
+        code: if matches!(
+            stage,
+            "quic-datagram-send-failed" | "quic-datagram-connection-failed"
+        ) {
             PlatformRuntimeEventCode::NativeVideoUdpSend
         } else {
             PlatformRuntimeEventCode::NativeVideoPacketizer
@@ -1712,6 +1758,11 @@ fn log_datagram_batch(
         DatagramBatchStatus::Failed(error) => {
             ("datagram-batch-failed", "send-failed", error.as_str())
         }
+        DatagramBatchStatus::Terminal(error) => (
+            "datagram-batch-terminal",
+            "connection-failed",
+            error.as_str(),
+        ),
     };
     eprintln!(
         "Lumen native media stage={stage} kind={kind} session-epoch={session_epoch} generation-id={generation_id} object-id={object_id} outcome={outcome} error={error} transport-mode={} datagrams-sent={} datagrams-total={} bytes={} queue-wait-us={} send-wait-us={} object-age-us={object_age_us} deadline-us={deadline_us}",
@@ -1734,14 +1785,14 @@ mod tests {
         PacketArrivalFeedbackError, PacketArrivalHistory, PacketIdentity,
     };
     use super::{
-        classify_video_keyframe_delivery, delivery_for_session, object_deadline_exceeded,
-        record_successful_datagram, run_native_media_tasks, send_datagram_batch,
-        send_video_datagram_batch, send_wire_paced_video_datagram_batch,
+        classify_video_keyframe_delivery, delivery_for_session, finish_video_datagram_delivery,
+        object_deadline_exceeded, record_successful_datagram, run_native_media_tasks,
+        send_datagram_batch, send_video_datagram_batch, send_wire_paced_video_datagram_batch,
         wait_for_datagram_deadline, wait_for_datagram_queue_capacity, DatagramBatchDropReason,
         DatagramBatchMode, DatagramBatchStatus, DatagramDeadlineElapsed, DatagramSendOutcome,
         PacketArrivalHistoryWarningReporter, PacketArrivalSendObservation, SessionDelivery,
-        VideoBootstrapClassification, VideoKeyframeDelivery, VideoSenderState, VideoWireRatePacer,
-        MAXIMUM_VIDEO_WIRE_BURST_DATAGRAMS,
+        VideoBootstrapClassification, VideoDatagramCompletion, VideoKeyframeDelivery,
+        VideoSenderState, VideoWireRatePacer, MAXIMUM_VIDEO_WIRE_BURST_DATAGRAMS,
     };
     use lumen_engine::{
         native_video_packetization_plan, MediaFeedback, NativeVideoBootstrapReason,
@@ -2016,6 +2067,59 @@ mod tests {
         assert_eq!(report.sent_datagrams, 3);
         assert_eq!(sent.get(), 3);
         assert!(Instant::now() > deadline);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn fatal_committed_drain_bypasses_repair_and_is_terminal() {
+        let pacer = Arc::new(tokio::sync::Mutex::new(VideoWireRatePacer::default()));
+        let send_attempts = Rc::new(Cell::new(0_usize));
+        let transport_attempts = Rc::clone(&send_attempts);
+        let deadline = Instant::now() + Duration::from_millis(100);
+
+        let report = send_wire_paced_video_datagram_batch(
+            vec![vec![0; 1_200]; 3],
+            16 * 1_200,
+            0,
+            true,
+            deadline,
+            &pacer,
+            7,
+            48_000,
+            1_200,
+            |_, _| async { Ok(Duration::ZERO) },
+            move |mode, _, _| {
+                let index = transport_attempts.get();
+                transport_attempts.set(index + 1);
+                async move {
+                    if index == 0 {
+                        assert_eq!(mode, DatagramBatchMode::FreshEnqueue);
+                        DatagramSendOutcome::Sent
+                    } else {
+                        assert_eq!(mode, DatagramBatchMode::CommittedDrain);
+                        DatagramSendOutcome::Failed("connection lost".to_owned())
+                    }
+                }
+            },
+        )
+        .await;
+
+        assert_eq!(
+            report.status,
+            DatagramBatchStatus::Terminal("connection lost".to_owned())
+        );
+        assert_eq!(report.sent_datagrams, 1);
+        assert_eq!(send_attempts.get(), 2);
+
+        let mut sender = VideoSenderState::default();
+        let initial_frame_id = sender.frame_id;
+        let completion = finish_video_datagram_delivery(&mut sender, 41, &report.status, false)
+            .expect("terminal transport classification");
+        assert_eq!(
+            completion,
+            VideoDatagramCompletion::TerminalTransport("connection lost".to_owned())
+        );
+        assert!(!sender.repair_required);
+        assert_eq!(sender.frame_id, initial_frame_id);
     }
 
     #[test]

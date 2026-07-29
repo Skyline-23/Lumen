@@ -209,8 +209,10 @@ object deadline is dropped before its first local enqueue and enters the
 single-flight repair path. Once the first datagram is locally committed, the
 host drains the entire reserved object schedule without another local deadline
 or capacity abort; only a connection-fatal transport failure can cut that
-local enqueue sequence, while ordinary network loss remains recoverable through
-the repair path. Reliable initial, configuration, and repair bootstraps use
+local enqueue sequence. Such a failure terminates the native media task without
+requesting an IDR; ordinary post-enqueue network loss remains feedback-driven
+and recoverable through the repair path. Reliable initial, configuration, and
+repair bootstraps use
 the same token state, read the current committed wire budget before reserving
 each chunk, and share one absolute 15-second lifecycle deadline across paced
 transfer and the decoded result wait. This runtime byte gate remains
@@ -223,6 +225,11 @@ available while a platform call is stalled. There is no timeout that can report
 rejection while a late platform mutation is still possible; completion either
 commits the matching revision, records a typed rejection, or is discarded after
 session teardown.
+
+Windows retires each Media Foundation worker by epoch. Capture-stop ownership
+is retained until cleanup succeeds, so a failed stop remains retryable. Finished
+workers are reaped, while a fixed retired-worker bound rejects new sessions
+fail-closed instead of accumulating stalled MFT, thread, and D3D resources.
 
 A decoder-recovery keyframe is generation-fenced and single-flight across
 client requests and host-detected stale, incomplete, or post-bootstrap repair

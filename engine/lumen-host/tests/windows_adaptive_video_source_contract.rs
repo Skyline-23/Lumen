@@ -58,8 +58,17 @@ fn windows_bitrate_updates_are_fenced_by_the_active_session_epoch() {
         .split("pub(super) fn")
         .next()
         .unwrap();
-    assert!(stop.contains("self.sessions.retire()"));
+    assert!(stop.contains("self.sessions.try_retire(|session|"));
     assert!(!stop.contains("self.request("));
+    assert!(stop.contains("driver.stop_frame_delivery()?"));
+    assert!(stop.contains("control.take()"));
+    assert!(
+        stop.find("driver.stop_frame_delivery()?").unwrap() < stop.find("control.take()").unwrap()
+    );
+    assert!(VIDEO.contains("RetiredWorkerRegistry"));
+    assert!(VIDEO.contains("MAXIMUM_RETIRED_MEDIA_FOUNDATION_WORKERS"));
+    assert!(VIDEO.contains("self.retired_workers.ensure_capacity()"));
     assert!(MEDIA.contains("video_session_epoch"));
     assert!(MEDIA.contains("state.video_session_epoch != Some(session_epoch)"));
+    assert!(!MEDIA.contains("let session_epoch = lifecycle.session_epoch.take()"));
 }
