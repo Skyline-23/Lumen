@@ -9,6 +9,10 @@ set "SERVICE_BIN=%ROOT_DIR%\tools\LumenService.exe"
 set "SERVICE_CONFIG_DIR=%LOCALAPPDATA%\SudoMaker\Lumen"
 set "SERVICE_CONFIG_FILE=%SERVICE_CONFIG_DIR%\service_start_type.txt"
 
+rem Provision and verify the same protected service-data ACL used by the MSI.
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%ROOT_DIR%\scripts\provision-service-data.ps1"
+if errorlevel 1 exit /b %ERRORLEVEL%
+
 rem Set service to demand start. It will be changed to auto later if the user selected that option.
 set SERVICE_START_TYPE=demand
 

@@ -161,6 +161,34 @@ fn windows_management_is_local_and_bound_to_the_active_session() {
 }
 
 #[test]
+fn windows_installers_share_the_protected_service_data_policy() {
+    let driver = driver_root();
+    let repo_root = driver
+        .ancestors()
+        .nth(4)
+        .expect("driver must live under src/platform/windows")
+        .to_path_buf();
+    let package = fs::read_to_string(repo_root.join("packaging/windows/Package.wxs"))
+        .expect("Windows package definition must exist");
+    let install_service =
+        fs::read_to_string(repo_root.join("src_assets/windows/misc/service/install-service.bat"))
+            .expect("supported NSIS service installer must exist");
+    let provision = fs::read_to_string(
+        repo_root.join("src_assets/windows/misc/service/provision-service-data.ps1"),
+    )
+    .expect("NSIS service data provisioning must exist");
+    let sddl = "O:SYG:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)";
+
+    assert!(package.contains(sddl));
+    assert!(provision.contains(sddl));
+    assert!(provision.contains("FileAttributes]::ReparsePoint"));
+    assert!(provision.contains("$rules.Count -ne 2"));
+    let provision_call = install_service.find("provision-service-data.ps1").unwrap();
+    let service_start = install_service.find("net start %SERVICE_NAME%").unwrap();
+    assert!(provision_call < service_start);
+}
+
+#[test]
 fn windows_service_preserves_launch_errors_and_reaps_suspended_children() {
     // Given: SCM must report the Win32 boundary that actually failed, and a
     // partially launched host must never survive outside the service job.
@@ -178,8 +206,11 @@ fn windows_service_preserves_launch_errors_and_reaps_suspended_children() {
     assert!(service.contains("struct ServiceError"));
     assert!(service.contains("error.code"));
     assert!(!service.contains("let error = if result.is_ok()"));
-    assert!(service.contains("service-error.log"));
-    assert!(service.contains("clear_service_error();"));
+    assert!(service.contains("RegisterEventSourceW"));
+    assert!(service.contains("ReportEventW"));
+    assert!(service.contains("DeregisterEventSource"));
+    assert!(!service.contains("service-error.log"));
+    assert!(!service.contains("clear_service_error();"));
     assert!(service.contains("terminate_suspended_session_agent"));
     assert!(service.contains("TerminateProcess(process.process.get(), ERROR_PROCESS_ABORTED)"));
 

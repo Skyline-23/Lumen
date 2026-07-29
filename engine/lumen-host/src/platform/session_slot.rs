@@ -1,26 +1,44 @@
 use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 
 const SESSION_ACTIVE: u8 = 0;
 const SESSION_COMMITTING: u8 = 1;
 const SESSION_RETIRED: u8 = 2;
+const SESSION_RETIRING: u8 = 3;
 
 pub(super) struct SessionRetirementGate {
     state: AtomicU8,
+    retirement_wait: Mutex<()>,
+    retirement_changed: Condvar,
+}
+
+struct SessionCommit<'a> {
+    gate: &'a SessionRetirementGate,
+}
+
+impl Drop for SessionCommit<'_> {
+    fn drop(&mut self) {
+        self.gate.finish_commit();
+    }
 }
 
 impl Default for SessionRetirementGate {
     fn default() -> Self {
         Self {
             state: AtomicU8::new(SESSION_ACTIVE),
+            retirement_wait: Mutex::new(()),
+            retirement_changed: Condvar::new(),
         }
     }
 }
 
 impl SessionRetirementGate {
     pub(super) fn is_retired(&self) -> bool {
-        self.state.load(Ordering::Acquire) == SESSION_RETIRED
+        matches!(
+            self.state.load(Ordering::Acquire),
+            SESSION_RETIRING | SESSION_RETIRED
+        )
     }
 
     pub(super) fn commit_if_active(&self, commit: impl FnOnce()) -> bool {
@@ -36,18 +54,78 @@ impl SessionRetirementGate {
         {
             return false;
         }
+        let _commit = SessionCommit { gate: self };
         commit();
-        let _ = self.state.compare_exchange(
+        true
+    }
+
+    fn finish_commit(&self) {
+        match self.state.compare_exchange(
             SESSION_COMMITTING,
             SESSION_ACTIVE,
             Ordering::AcqRel,
             Ordering::Acquire,
-        );
-        true
+        ) {
+            Ok(_) => {}
+            Err(SESSION_RETIRING) => {
+                self.state.store(SESSION_RETIRED, Ordering::Release);
+                self.retirement_changed.notify_all();
+            }
+            Err(_) => {}
+        }
     }
 
     pub(super) fn retire(&self) {
-        self.state.store(SESSION_RETIRED, Ordering::Release);
+        let mut state = self.state.load(Ordering::Acquire);
+        loop {
+            match state {
+                SESSION_ACTIVE => match self.state.compare_exchange_weak(
+                    SESSION_ACTIVE,
+                    SESSION_RETIRED,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                ) {
+                    Ok(_) => return,
+                    Err(current) => state = current,
+                },
+                SESSION_COMMITTING => match self.state.compare_exchange_weak(
+                    SESSION_COMMITTING,
+                    SESSION_RETIRING,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                ) {
+                    Ok(_) => {
+                        let mut wait = self
+                            .retirement_wait
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                        while self.state.load(Ordering::Acquire) == SESSION_RETIRING {
+                            wait = self
+                                .retirement_changed
+                                .wait(wait)
+                                .unwrap_or_else(|poisoned| poisoned.into_inner());
+                        }
+                        return;
+                    }
+                    Err(current) => state = current,
+                },
+                SESSION_RETIRING => {
+                    let mut wait = self
+                        .retirement_wait
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    while self.state.load(Ordering::Acquire) == SESSION_RETIRING {
+                        wait = self
+                            .retirement_changed
+                            .wait(wait)
+                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    }
+                    return;
+                }
+                SESSION_RETIRED => return,
+                _ => unreachable!("unknown session retirement state"),
+            }
+        }
     }
 }
 
@@ -362,6 +440,42 @@ mod tests {
         }));
         assert_eq!(persisted.load(Ordering::Acquire), 1);
         assert!(!gate.is_retired());
+    }
+
+    #[test]
+    fn retirement_fences_a_paused_commit_before_replacement_publication() {
+        let gate = Arc::new(SessionRetirementGate::default());
+        let publications = Arc::new(Mutex::new(Vec::new()));
+        let (entered_send, entered_receive) = mpsc::sync_channel(1);
+        let (release_send, release_receive) = mpsc::sync_channel(1);
+        let old_gate = Arc::clone(&gate);
+        let old_publications = Arc::clone(&publications);
+        let old = std::thread::spawn(move || {
+            assert!(old_gate.commit_if_active(|| {
+                entered_send.send(()).unwrap();
+                release_receive.recv().unwrap();
+                old_publications.lock().unwrap().push("old");
+            }));
+        });
+
+        entered_receive.recv().unwrap();
+        let retiring_gate = Arc::clone(&gate);
+        let replacement_publications = Arc::clone(&publications);
+        let (retired_send, retired_receive) = mpsc::sync_channel(1);
+        let replacement = std::thread::spawn(move || {
+            retiring_gate.retire();
+            retired_send.send(()).unwrap();
+            replacement_publications.lock().unwrap().push("new");
+        });
+        assert_eq!(retired_receive.try_recv(), Err(mpsc::TryRecvError::Empty));
+
+        release_send.send(()).unwrap();
+        retired_receive.recv().unwrap();
+        old.join().unwrap();
+        replacement.join().unwrap();
+
+        assert!(gate.is_retired());
+        assert_eq!(publications.lock().unwrap().as_slice(), ["old", "new"]);
     }
 
     #[test]

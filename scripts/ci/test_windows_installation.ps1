@@ -159,7 +159,6 @@ Assert-InstallationCondition ((-not $ExpectDesktopShortcut) -or $desktopShortcut
     "The requested Lumen desktop shortcut is missing or duplicated."
 
 $errorLogs = @(
-    "$env:ProgramData\Lumen\service-error.log",
     "$env:ProgramData\Lumen\host-startup-error.log"
 ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
 Assert-InstallationCondition ($errorLogs.Count -eq 0) `
@@ -184,17 +183,26 @@ if (Test-Path -LiteralPath $programDataDirectory -PathType Container) {
     Assert-InstallationCondition $programDataAcl.AreAccessRulesProtected `
         "The Lumen ProgramData directory DACL must be protected from inheritance."
     $trustedWriterSids = @("S-1-5-18", "S-1-5-32-544")
-    $writeRules = @($programDataAcl.Access | Where-Object {
-        $_.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Allow -and
-        ($_.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::Write) -ne 0
+    $rules = @($programDataAcl.Access)
+    Assert-InstallationCondition ($rules.Count -eq 2) `
+        "The Lumen ProgramData directory DACL contains an unexpected ACE count."
+    $ruleSids = @($rules | ForEach-Object {
+        $sid = $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value
+        $valid = $sid -in $trustedWriterSids -and
+            $_.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Allow -and
+            $_.FileSystemRights -eq [System.Security.AccessControl.FileSystemRights]::FullControl -and
+            $_.InheritanceFlags -eq (
+                [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
+                [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
+            ) -and
+            $_.PropagationFlags -eq [System.Security.AccessControl.PropagationFlags]::None -and
+            -not $_.IsInherited
+        Assert-InstallationCondition $valid `
+            "The Lumen ProgramData directory DACL contains an untrusted or malformed ACE."
+        $sid
     })
-    $writeRuleSids = @($writeRules | ForEach-Object {
-        $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value
-    })
-    Assert-InstallationCondition (@($writeRuleSids | Where-Object { $_ -notin $trustedWriterSids }).Count -eq 0) `
-        "The Lumen ProgramData directory grants write access outside LocalSystem and Administrators."
     foreach ($trustedWriterSid in $trustedWriterSids) {
-        Assert-InstallationCondition ($writeRuleSids -contains $trustedWriterSid) `
+        Assert-InstallationCondition ($ruleSids -contains $trustedWriterSid) `
             "The Lumen ProgramData directory is missing a trusted writer ACL for $trustedWriterSid."
     }
 }

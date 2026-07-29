@@ -6,12 +6,16 @@ const SESSION_SLOT: &str = include_str!("../src/platform/session_slot.rs");
 const MEDIA: &str = include_str!("../src/platform/windows/native_media.rs");
 const VIDEO: &str = include_str!("../src/platform/windows/native_video.rs");
 const WINDOWS_PACKAGE: &str = include_str!("../../../packaging/windows/Package.wxs");
+const INSTALL_SERVICE: &str =
+    include_str!("../../../src_assets/windows/misc/service/install-service.bat");
+const PROVISION_SERVICE_DATA: &str =
+    include_str!("../../../src_assets/windows/misc/service/provision-service-data.ps1");
 
 #[test]
 fn windows_adaptive_apply_uses_the_persistent_service_event_log() {
     assert!(LIB.contains("mod windows_service_log;"));
     assert!(ENTRY.contains("windows_service_log::program_data_lumen_path"));
-    assert!(SERVICE.contains("windows_service_log::program_data_lumen_path"));
+    assert!(SERVICE.contains("prepare_program_data_lumen_directory"));
     assert!(MEDIA.contains("WindowsServiceEventLane::from_program_data()?"));
     assert!(MEDIA.contains("adaptive_event_lane.publisher()"));
     assert!(MEDIA.contains("adaptive_event_lane.shutdown()"));
@@ -26,6 +30,19 @@ fn windows_adaptive_apply_uses_the_persistent_service_event_log() {
     assert!(SERVICE_LOG.contains("force_push"));
     assert!(SERVICE_LOG.contains("try_send"));
     assert!(SERVICE_LOG.contains("lumen-windows-service-event-log"));
+    assert!(SERVICE_LOG.contains("recv_timeout(LOG_WORKER_SHUTDOWN_TIMEOUT)"));
+    assert!(SERVICE_LOG.contains("abandoned_workers"));
+    let shutdown = SERVICE_LOG
+        .split("pub(crate) fn shutdown")
+        .nth(1)
+        .expect("owned service event shutdown")
+        .split("#[cfg(test)]")
+        .next()
+        .unwrap();
+    assert!(!shutdown.contains("while self.shared.publishing.load"));
+    assert!(!shutdown.contains("thread::yield_now()"));
+    assert!(SERVICE_LOG.contains("last_event_order"));
+    assert!(SERVICE_LOG.contains("ordering_key"));
     assert!(SERVICE_LOG.contains("MAXIMUM_SERVICE_EVENT_LOG_BYTES"));
     assert!(SERVICE_LOG.contains("rotate"));
     assert!(SERVICE_LOG.contains("requested_bitrate_bps"));
@@ -79,6 +96,8 @@ fn windows_adaptive_apply_is_committed_after_readback_and_before_retirement() {
     assert!(SESSION_SLOT.contains("struct SessionRetirementGate"));
     assert!(SESSION_SLOT.contains("fn commit_if_active"));
     assert!(SESSION_SLOT.contains("fn retire"));
+    assert!(SESSION_SLOT.contains("SESSION_RETIRING"));
+    assert!(SESSION_SLOT.contains("Condvar"));
 }
 
 #[test]
@@ -95,11 +114,23 @@ fn windows_service_prepares_program_data_without_weakening_permissions() {
     assert!(SERVICE_LOG.contains("FILE_ATTRIBUTE_REPARSE_POINT"));
     assert!(SERVICE_LOG.contains("GetNamedSecurityInfoW"));
     assert!(SERVICE_LOG.contains("EqualSid"));
+    assert!(SERVICE_LOG.contains("GetAce"));
+    assert!(SERVICE_LOG.contains("GetLengthSid"));
     assert!(SERVICE_LOG.contains("SE_DACL_PROTECTED"));
+    assert!(SERVICE_LOG.contains("validate_service_event_file_security"));
+    assert!(!SERVICE_LOG.contains("AclSize"));
+    assert!(SERVICE_LOG.contains("semantic_access_policy_matches"));
     assert!(!SERVICE_LOG.contains("SetNamedSecurityInfo"));
     assert!(!SERVICE_LOG.contains("std::fs::create_dir_all(directory)"));
     assert!(WINDOWS_PACKAGE.contains("Id=\"LUMENPROGRAMDATAFOLDER\" Name=\"Lumen\""));
     assert!(WINDOWS_PACKAGE.contains("<ComponentRef Id=\"LumenProgramData\" />"));
     assert!(WINDOWS_PACKAGE.contains("<PermissionEx Id=\"LumenProgramDataPermissions\""));
     assert!(WINDOWS_PACKAGE.contains("Sddl=\"O:SYG:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)\""));
+    assert!(INSTALL_SERVICE.contains("provision-service-data.ps1"));
+    assert!(PROVISION_SERVICE_DATA.contains("O:SYG:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"));
+    assert!(PROVISION_SERVICE_DATA.contains("FileAttributes]::ReparsePoint"));
+    assert!(PROVISION_SERVICE_DATA.contains("$rules.Count -ne 2"));
+    assert!(SERVICE.contains("ReportEventW"));
+    assert!(!SERVICE.contains("fn service_error_path"));
+    assert!(!SERVICE.contains("clear_service_error()"));
 }

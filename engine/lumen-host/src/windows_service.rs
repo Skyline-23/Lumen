@@ -15,6 +15,9 @@ use windows_sys::Win32::Security::{
 use windows_sys::Win32::System::Console::{
     AttachConsole, GenerateConsoleCtrlEvent, SetConsoleCtrlHandler, CTRL_C_EVENT,
 };
+use windows_sys::Win32::System::EventLog::{
+    DeregisterEventSource, RegisterEventSourceW, ReportEventW, EVENTLOG_ERROR_TYPE,
+};
 use windows_sys::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
     SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_BREAKAWAY_OK,
@@ -288,7 +291,6 @@ unsafe extern "system" fn service_main(_argc: u32, _argv: *mut *mut u16) {
     }
     state.status.store(status.cast(), Ordering::Release);
     state.report(SERVICE_START_PENDING, 0, 0, 0);
-    clear_service_error();
     let result = run_service(state);
     let error = result.as_ref().err().map(|error| error.code).unwrap_or(0);
     if let Err(error) = &result {
@@ -680,28 +682,27 @@ fn wide(value: &str) -> Vec<u16> {
     value.encode_utf16().chain([0]).collect()
 }
 
-fn service_error_path() -> Option<std::path::PathBuf> {
-    crate::windows_service_log::program_data_lumen_path("service-error.log")
-}
-
-fn clear_service_error() {
-    if let Some(path) = service_error_path() {
-        let _ = std::fs::remove_file(path);
-    }
-}
-
 fn record_service_error(error: &ServiceError) {
-    let Some(path) = service_error_path() else {
-        return;
-    };
-    let Some(directory) = path.parent() else {
-        return;
-    };
-    if std::fs::create_dir_all(directory).is_err() {
+    let source = unsafe { RegisterEventSourceW(null(), SERVICE_NAME.as_ptr()) };
+    if source.is_null() {
         return;
     }
-    let body = format!("{} (Windows error {})\n", error.message, error.code);
-    let _ = std::fs::write(path, body);
+    let message = wide(&format!("{} (Windows error {})", error.message, error.code));
+    let strings = [message.as_ptr()];
+    unsafe {
+        ReportEventW(
+            source,
+            EVENTLOG_ERROR_TYPE,
+            0,
+            error.code,
+            null_mut(),
+            1,
+            0,
+            strings.as_ptr(),
+            null(),
+        );
+        DeregisterEventSource(source);
+    }
 }
 
 fn last_error(operation: &str) -> ServiceError {
