@@ -1,19 +1,21 @@
 use std::ffi::c_void;
+use std::os::windows::io::AsRawHandle;
 use std::ptr::{null, null_mut};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use windows_sys::Win32::Foundation::{
-    CloseHandle, GetLastError, LocalFree, ERROR_PIPE_CONNECTED, HANDLE, INVALID_HANDLE_VALUE,
+    CloseHandle, GetLastError, LocalFree, ERROR_IO_PENDING, ERROR_PIPE_CONNECTED, HANDLE,
+    INVALID_HANDLE_VALUE, WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
 use windows_sys::Win32::Security::Authorization::{
     ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
 };
 use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
 use windows_sys::Win32::Storage::FileSystem::{
-    CreateFileW, FlushFileBuffers, ReadFile, WriteFile, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
+    CreateFileW, ReadFile, WriteFile, FILE_FLAG_OVERLAPPED, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
     OPEN_EXISTING, PIPE_ACCESS_DUPLEX,
 };
 use windows_sys::Win32::System::Pipes::{
@@ -21,7 +23,12 @@ use windows_sys::Win32::System::Pipes::{
     PIPE_READMODE_MESSAGE, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_MESSAGE, PIPE_WAIT,
 };
 use windows_sys::Win32::System::RemoteDesktop::ProcessIdToSessionId;
-use windows_sys::Win32::System::Threading::GetCurrentProcessId;
+use windows_sys::Win32::System::Threading::{
+    CreateEventW, GetCurrentProcessId, WaitForSingleObject,
+};
+use windows_sys::Win32::System::IO::{
+    CancelIoEx, CancelSynchronousIo, GetOverlappedResult, OVERLAPPED,
+};
 
 use crate::native_command::{
     lumen_host_send_command, LumenHostCommandSendStatus, LUMEN_HOST_COMMAND_FORCE_STOP_STREAM,
@@ -39,6 +46,11 @@ const PIPE_NAME: &[u16] = &[
 ];
 const PIPE_BUFFER_SIZE: u32 = 64 * 1024;
 const PIPE_DACL: &str = "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;AU)";
+const RESPONSE_ACK: u8 = 0x06;
+const CLIENT_IO_TIMEOUT: Duration = Duration::from_secs(3);
+const IO_WAIT_SLICE: Duration = Duration::from_millis(25);
+const THREAD_STOP_TIMEOUT: Duration = Duration::from_secs(1);
+const THREAD_STOP_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
 pub(crate) struct NativeWindowsManagement {
     stop: Arc<AtomicBool>,
@@ -68,12 +80,34 @@ impl NativeWindowsManagement {
 impl Drop for NativeWindowsManagement {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
-        wake_server();
         if let Some(thread) = self.thread.take() {
-            if thread.join().is_err() {
-                eprintln!("Lumen Windows management thread did not stop cleanly");
-            }
+            stop_server_thread(thread);
         }
+    }
+}
+
+fn stop_server_thread(thread: thread::JoinHandle<()>) {
+    let deadline = Instant::now() + THREAD_STOP_TIMEOUT;
+    while !thread.is_finished() && Instant::now() < deadline {
+        // Overlapped waits observe the stop flag directly. This remains a
+        // bounded safety net for any unexpected synchronous Win32 stall.
+        unsafe {
+            CancelSynchronousIo(thread.as_raw_handle() as HANDLE);
+        }
+        wake_server();
+        if !thread.is_finished() {
+            thread::sleep(THREAD_STOP_POLL_INTERVAL);
+        }
+    }
+    if thread.is_finished() {
+        if thread.join().is_err() {
+            eprintln!("Lumen Windows management thread did not stop cleanly");
+        }
+    } else {
+        // Dropping JoinHandle detaches it. The shared stop flag remains set,
+        // and Drop itself stays bounded even if a Windows driver fails to
+        // honor synchronous I/O cancellation.
+        eprintln!("Lumen Windows management thread cancellation timed out; detaching");
     }
 }
 
@@ -111,6 +145,9 @@ fn run_server(
 ) {
     let mut ready = Some(ready);
     loop {
+        if stop.load(Ordering::Acquire) {
+            break;
+        }
         let pipe = match create_pipe() {
             Ok(pipe) => pipe,
             Err(error) => {
@@ -123,13 +160,13 @@ fn run_server(
         if let Some(ready) = ready.take() {
             let _ = ready.send(Ok(()));
         }
-        let connected = unsafe { ConnectNamedPipe(pipe.get(), null_mut()) } != 0
-            || unsafe { GetLastError() } == ERROR_PIPE_CONNECTED;
-        if !connected {
-            continue;
-        }
-        if stop.load(Ordering::Acquire) {
-            break;
+        match connect_client(pipe.get(), &stop) {
+            Ok(()) => {}
+            Err(PipeIoError::Stopped) => break,
+            Err(error) => {
+                eprintln!("Windows management client connection ended: {error}");
+                continue;
+            }
         }
         if !client_is_in_agent_session(pipe.get()).unwrap_or(false) {
             unsafe {
@@ -137,12 +174,22 @@ fn run_server(
             }
             continue;
         }
-        if let Ok(request) = read_request(pipe.get()) {
-            let response = handle_windows_management_request(&mut model, &NativeCommands, &request);
-            let _ = write_response(pipe.get(), &response);
+        match read_request(pipe.get(), &stop) {
+            Ok(request) => {
+                let response =
+                    handle_windows_management_request(&mut model, &NativeCommands, &request);
+                if write_response(pipe.get(), &response, &stop).is_ok() {
+                    if let Err(error) = read_response_ack(pipe.get(), &stop) {
+                        eprintln!("Windows management response acknowledgement ended: {error}");
+                    }
+                }
+            }
+            Err(PipeIoError::Stopped) => break,
+            Err(error) => {
+                eprintln!("Windows management request ended: {error}");
+            }
         }
         unsafe {
-            FlushFileBuffers(pipe.get());
             DisconnectNamedPipe(pipe.get());
         }
     }
@@ -181,7 +228,7 @@ fn create_pipe() -> Result<OwnedHandle, String> {
         ));
     }
     let descriptor = OwnedLocal::new(descriptor);
-    let mut security = SECURITY_ATTRIBUTES {
+    let security = SECURITY_ATTRIBUTES {
         nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
         lpSecurityDescriptor: descriptor.get(),
         bInheritHandle: 0,
@@ -189,47 +236,198 @@ fn create_pipe() -> Result<OwnedHandle, String> {
     let handle = unsafe {
         CreateNamedPipeW(
             PIPE_NAME.as_ptr(),
-            PIPE_ACCESS_DUPLEX,
+            PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
             PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
             1,
             PIPE_BUFFER_SIZE,
             PIPE_BUFFER_SIZE,
             0,
-            &mut security,
+            &security,
         )
     };
     OwnedHandle::new(handle, "create Windows management pipe")
 }
 
-fn read_request(pipe: HANDLE) -> Result<Vec<u8>, String> {
+fn connect_client(pipe: HANDLE, stop: &AtomicBool) -> Result<(), PipeIoError> {
+    let event = create_event()?;
+    let mut overlapped = new_overlapped(event.get());
+    if unsafe { ConnectNamedPipe(pipe, &mut overlapped) } != 0 {
+        return Ok(());
+    }
+    match unsafe { GetLastError() } {
+        ERROR_PIPE_CONNECTED => Ok(()),
+        ERROR_IO_PENDING => wait_for_overlapped(pipe, &mut overlapped, None, stop).map(|_| ()),
+        _ => Err(PipeIoError::Failed(last_error(
+            "connect Windows management client",
+        ))),
+    }
+}
+
+fn read_request(pipe: HANDLE, stop: &AtomicBool) -> Result<Vec<u8>, PipeIoError> {
     let mut buffer = vec![0_u8; PIPE_BUFFER_SIZE as usize];
-    let mut read = 0_u32;
+    let event = create_event()?;
+    let mut overlapped = new_overlapped(event.get());
     if unsafe {
         ReadFile(
             pipe,
             buffer.as_mut_ptr(),
             PIPE_BUFFER_SIZE,
-            &mut read,
             null_mut(),
+            &mut overlapped,
         )
     } == 0
+        && unsafe { GetLastError() } != ERROR_IO_PENDING
     {
-        return Err(last_error("read Windows management request"));
+        return Err(PipeIoError::Failed(last_error(
+            "read Windows management request",
+        )));
     }
+    let read = wait_for_overlapped(
+        pipe,
+        &mut overlapped,
+        Some(("read Windows management request", CLIENT_IO_TIMEOUT)),
+        stop,
+    )?;
     buffer.truncate(read as usize);
     Ok(buffer)
 }
 
-fn write_response(pipe: HANDLE, response: &[u8]) -> Result<(), String> {
+fn write_response(pipe: HANDLE, response: &[u8], stop: &AtomicBool) -> Result<(), PipeIoError> {
     let length = u32::try_from(response.len())
-        .map_err(|_| "Windows management response is too large".to_owned())?;
-    let mut written = 0_u32;
-    if unsafe { WriteFile(pipe, response.as_ptr(), length, &mut written, null_mut()) } == 0
-        || written != length
+        .map_err(|_| PipeIoError::Failed("Windows management response is too large".to_owned()))?;
+    let event = create_event()?;
+    let mut overlapped = new_overlapped(event.get());
+    if unsafe { WriteFile(pipe, response.as_ptr(), length, null_mut(), &mut overlapped) } == 0
+        && unsafe { GetLastError() } != ERROR_IO_PENDING
     {
-        return Err(last_error("write Windows management response"));
+        return Err(PipeIoError::Failed(last_error(
+            "write Windows management response",
+        )));
+    }
+    let written = wait_for_overlapped(
+        pipe,
+        &mut overlapped,
+        Some(("write Windows management response", CLIENT_IO_TIMEOUT)),
+        stop,
+    )?;
+    if written != length {
+        return Err(PipeIoError::Failed(format!(
+            "write Windows management response was incomplete: {written}/{length} bytes"
+        )));
     }
     Ok(())
+}
+
+fn read_response_ack(pipe: HANDLE, stop: &AtomicBool) -> Result<(), PipeIoError> {
+    let mut ack = 0_u8;
+    let event = create_event()?;
+    let mut overlapped = new_overlapped(event.get());
+    if unsafe { ReadFile(pipe, &mut ack, 1, null_mut(), &mut overlapped) } == 0
+        && unsafe { GetLastError() } != ERROR_IO_PENDING
+    {
+        return Err(PipeIoError::Failed(last_error(
+            "read Windows management response acknowledgement",
+        )));
+    }
+    let read = wait_for_overlapped(
+        pipe,
+        &mut overlapped,
+        Some((
+            "read Windows management response acknowledgement",
+            CLIENT_IO_TIMEOUT,
+        )),
+        stop,
+    )?;
+    if read != 1 || ack != RESPONSE_ACK {
+        return Err(PipeIoError::Failed(
+            "invalid Windows management response acknowledgement".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn wait_for_overlapped(
+    pipe: HANDLE,
+    overlapped: &mut OVERLAPPED,
+    timeout: Option<(&'static str, Duration)>,
+    stop: &AtomicBool,
+) -> Result<u32, PipeIoError> {
+    let deadline = timeout.map(|(_, duration)| Instant::now() + duration);
+    loop {
+        if stop.load(Ordering::Acquire) {
+            cancel_overlapped(pipe, overlapped);
+            return Err(PipeIoError::Stopped);
+        }
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+            cancel_overlapped(pipe, overlapped);
+            return Err(PipeIoError::TimedOut(
+                timeout.expect("deadline has timeout metadata").0,
+            ));
+        }
+        let status = unsafe {
+            WaitForSingleObject(
+                overlapped.hEvent,
+                u32::try_from(IO_WAIT_SLICE.as_millis()).unwrap_or(25),
+            )
+        };
+        match status {
+            WAIT_OBJECT_0 => {
+                let mut transferred = 0_u32;
+                if unsafe { GetOverlappedResult(pipe, overlapped, &mut transferred, 0) } == 0 {
+                    return Err(PipeIoError::Failed(last_error(
+                        "complete Windows management pipe I/O",
+                    )));
+                }
+                return Ok(transferred);
+            }
+            WAIT_TIMEOUT => {}
+            _ => {
+                cancel_overlapped(pipe, overlapped);
+                return Err(PipeIoError::Failed(last_error(
+                    "wait for Windows management pipe I/O",
+                )));
+            }
+        }
+    }
+}
+
+fn cancel_overlapped(pipe: HANDLE, overlapped: &mut OVERLAPPED) {
+    unsafe {
+        CancelIoEx(pipe, overlapped);
+        let mut ignored = 0_u32;
+        GetOverlappedResult(pipe, overlapped, &mut ignored, 1);
+    }
+}
+
+fn create_event() -> Result<OwnedHandle, PipeIoError> {
+    OwnedHandle::new(
+        unsafe { CreateEventW(null(), 1, 0, null()) },
+        "create Windows management I/O event",
+    )
+    .map_err(PipeIoError::Failed)
+}
+
+fn new_overlapped(event: HANDLE) -> OVERLAPPED {
+    let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
+    overlapped.hEvent = event;
+    overlapped
+}
+
+#[derive(Debug)]
+enum PipeIoError {
+    Stopped,
+    TimedOut(&'static str),
+    Failed(String),
+}
+
+impl std::fmt::Display for PipeIoError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Stopped => formatter.write_str("server stopped"),
+            Self::TimedOut(action) => write!(formatter, "{action} timed out"),
+            Self::Failed(message) => formatter.write_str(message),
+        }
+    }
 }
 
 fn wake_server() {

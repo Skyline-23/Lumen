@@ -7,6 +7,7 @@ namespace Lumen.App;
 internal sealed class LumenControlClient
 {
     private const string PipeName = "Lumen.Management.v1";
+    private static readonly byte[] ResponseAck = [0x06];
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public async Task<ManagementSnapshot> SendAsync(object command, CancellationToken cancellationToken = default)
@@ -30,20 +31,22 @@ internal sealed class LumenControlClient
             var read = await pipe.ReadAsync(buffer, cancellationToken);
             if (read == 0)
             {
-                throw new IOException("The Lumen host closed the management connection.");
+                throw new IOException(AppStrings.Get("Error.ManagementConnectionClosed"));
             }
             response.Write(buffer, 0, read);
         } while (!pipe.IsMessageComplete);
+        await pipe.WriteAsync(ResponseAck, cancellationToken);
+        await pipe.FlushAsync(cancellationToken);
 
         var envelope = JsonSerializer.Deserialize<ManagementEnvelope>(response.ToArray(), JsonOptions)
-            ?? throw new IOException("The Lumen host returned an empty management response.");
+            ?? throw new IOException(AppStrings.Get("Error.ManagementEmptyResponse"));
         if (!envelope.Ok || envelope.Payload is null)
         {
-            throw new InvalidOperationException(envelope.Error?.Message ?? "The Lumen host rejected the request.");
+            throw new InvalidOperationException(envelope.Error?.Message ?? AppStrings.Get("Error.ManagementRejected"));
         }
         if (envelope.Payload.ProtocolVersion != 1)
         {
-            throw new InvalidOperationException("The Lumen management protocol is incompatible with this app.");
+            throw new InvalidOperationException(AppStrings.Get("Error.ManagementIncompatible"));
         }
         return envelope.Payload;
     }

@@ -147,6 +147,10 @@ impl WindowsAppModel {
         })
     }
 
+    pub(crate) fn owner_access_state(&self) -> &WindowsOwnerAccessState {
+        &self.owner_access
+    }
+
     pub(crate) fn create_owner(
         &mut self,
         username: &str,

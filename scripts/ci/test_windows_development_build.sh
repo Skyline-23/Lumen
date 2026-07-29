@@ -43,3 +43,22 @@ for required_release_step in \
     exit 1
   }
 done
+
+for generated_tree in \
+  'src/platform/windows/Lumen.App/bin/Debug/net8.0-windows10.0.19041.0/win-x64/Lumen.exe' \
+  'src/platform/windows/Lumen.App/obj/project.assets.json'; do
+  git -C "${REPO_ROOT}" check-ignore --quiet --no-index "${generated_tree}" || {
+    echo "Generated WinUI development output must stay ignored: ${generated_tree}" >&2
+    exit 1
+  }
+done
+
+for source_file in \
+  'src/platform/windows/Lumen.App/Lumen.App.csproj' \
+  'src/platform/windows/Lumen.App/MainWindow.xaml.cs' \
+  'src/platform/windows/Lumen.App/Strings/en-US/Resources.resw'; do
+  if git -C "${REPO_ROOT}" check-ignore --quiet --no-index "${source_file}"; then
+    echo "WinUI source must remain tracked: ${source_file}" >&2
+    exit 1
+  fi
+done

@@ -95,7 +95,7 @@
                       Start="install"
                       Stop="both"
                       Remove="uninstall"
-                      Wait="no" />
+                      Wait="yes" />
     </Component>
 
     <Component Id="DriverSetup"

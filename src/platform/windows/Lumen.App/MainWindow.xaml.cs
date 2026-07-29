@@ -20,7 +20,7 @@ public sealed class MainWindow : Window
 
     public MainWindow()
     {
-        Title = "Lumen";
+        Title = T("App.Title");
         BuildShell();
         ConfigureNavigationItems();
         Activated += async (_, _) => await RefreshAsync();
@@ -37,7 +37,7 @@ public sealed class MainWindow : Window
         };
         _navigation.SelectionChanged += Navigation_SelectionChanged;
 
-        _connectionBadgeText = new TextBlock { Text = "Connecting", FontSize = 11 };
+        _connectionBadgeText = new TextBlock { Text = T("Status.Connecting"), FontSize = 11 };
         _connectionBadge = new Border
         {
             CornerRadius = new CornerRadius(10),
@@ -57,7 +57,7 @@ public sealed class MainWindow : Window
         });
         header.Children.Add(new TextBlock
         {
-            Text = "Lumen",
+            Text = T("App.Title"),
             FontSize = 15,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             VerticalAlignment = VerticalAlignment.Center
@@ -85,7 +85,7 @@ public sealed class MainWindow : Window
             Spacing = 12
         };
         busyContent.Children.Add(new ProgressRing { IsActive = true, Width = 36, Height = 36 });
-        busyContent.Children.Add(new TextBlock { Text = "Connecting to the Lumen host…" });
+        busyContent.Children.Add(new TextBlock { Text = T("Busy.Connecting") });
         _busyOverlay = new Grid
         {
             Background = ResourceBrush(
@@ -115,21 +115,25 @@ public sealed class MainWindow : Window
         "LumenAccentBrush",
         new SolidColorBrush(ColorHelper.FromArgb(255, 255, 107, 51)));
 
+    private static string T(string key) => AppStrings.Get(key);
+
+    private static string F(string key, params object[] values) => AppStrings.Format(key, values);
+
     private void ConfigureNavigationItems()
     {
-        _navigation.MenuItems.Add(NavigationItem("Overview", "overview", Symbol.Home));
-        _navigation.MenuItems.Add(NavigationItem("Applications", "applications", Symbol.AllApps));
-        _navigation.MenuItems.Add(new NavigationViewItemHeader { Content = "Settings" });
-        _navigation.MenuItems.Add(NavigationItem("Security", "security", Symbol.Permissions));
-        _navigation.MenuItems.Add(NavigationItem("General", "general", Symbol.Setting));
-        _navigation.MenuItems.Add(NavigationItem("Streaming", "streaming", Symbol.Video));
-        _navigation.MenuItems.Add(NavigationItem("Audio", "audio", Symbol.Volume));
-        _navigation.MenuItems.Add(NavigationItem("Input", "input", Symbol.Keyboard));
-        _navigation.MenuItems.Add(NavigationItem("Network", "network", Symbol.World));
-        _navigation.MenuItems.Add(NavigationItem("Advanced", "advanced", Symbol.Repair));
+        _navigation.MenuItems.Add(NavigationItem(T("Navigation.Overview"), "overview", Symbol.Home));
+        _navigation.MenuItems.Add(NavigationItem(T("Navigation.Applications"), "applications", Symbol.AllApps));
+        _navigation.MenuItems.Add(new NavigationViewItemHeader { Content = T("Navigation.Settings") });
+        _navigation.MenuItems.Add(NavigationItem(T("Navigation.Security"), "security", Symbol.Permissions));
+        _navigation.MenuItems.Add(NavigationItem(T("Navigation.General"), "general", Symbol.Setting));
+        _navigation.MenuItems.Add(NavigationItem(T("Navigation.Streaming"), "streaming", Symbol.Video));
+        _navigation.MenuItems.Add(NavigationItem(T("Navigation.Audio"), "audio", Symbol.Volume));
+        _navigation.MenuItems.Add(NavigationItem(T("Navigation.Input"), "input", Symbol.Keyboard));
+        _navigation.MenuItems.Add(NavigationItem(T("Navigation.Network"), "network", Symbol.World));
+        _navigation.MenuItems.Add(NavigationItem(T("Navigation.Advanced"), "advanced", Symbol.Repair));
         _navigation.FooterMenuItems.Add(
-            NavigationItem("Diagnostics", "diagnostics", Symbol.ReportHacked));
-        _navigation.FooterMenuItems.Add(NavigationItem("About", "about", Symbol.Help));
+            NavigationItem(T("Navigation.Diagnostics"), "diagnostics", Symbol.ReportHacked));
+        _navigation.FooterMenuItems.Add(NavigationItem(T("Navigation.About"), "about", Symbol.Help));
     }
 
     private static NavigationViewItem NavigationItem(string label, string tag, Symbol symbol) =>
@@ -143,7 +147,7 @@ public sealed class MainWindow : Window
     public void ShowFatalError(string message)
     {
         _busyOverlay.Visibility = Visibility.Collapsed;
-        RenderError("Lumen could not continue", message);
+        RenderError(T("Error.CouldNotContinue"), message);
     }
 
     private async Task RefreshAsync()
@@ -157,18 +161,18 @@ public sealed class MainWindow : Window
         try
         {
             _snapshot = await _client.SendAsync(new { command = "snapshot" });
-            _connectionBadgeText.Text = "Host online";
+            _connectionBadgeText.Text = T("Status.HostOnline");
             _connectionBadge.Background = new SolidColorBrush(ColorHelper.FromArgb(42, 0, 191, 175));
             Render();
         }
         catch (Exception error)
         {
             _snapshot = null;
-            _connectionBadgeText.Text = "Host unavailable";
+            _connectionBadgeText.Text = T("Status.HostUnavailable");
             _connectionBadge.Background = new SolidColorBrush(ColorHelper.FromArgb(42, 224, 62, 62));
             RenderError(
-                "Lumen host unavailable",
-                $"The background host is not ready. {error.Message}",
+                T("Error.HostUnavailable"),
+                F("Error.HostUnavailableDetail", error.Message),
                 retry: true);
         }
         finally
@@ -218,19 +222,19 @@ public sealed class MainWindow : Window
     private void RenderAuthentication(ManagementSnapshot snapshot)
     {
         AddPageHeader(
-            snapshot.OwnerState == "setupRequired" ? "Create owner account" : "Sign in to Lumen",
-            "Host settings and enrolled devices are protected by the local owner account.");
+            snapshot.OwnerState == "setupRequired" ? T("Authentication.CreateOwnerAccount") : T("Authentication.SignInToLumen"),
+            T("Authentication.ProtectedDescription"));
         var panel = new StackPanel { Spacing = 12, MaxWidth = 520, HorizontalAlignment = HorizontalAlignment.Left };
-        var username = TextInput("Owner username", snapshot.OwnerName ?? string.Empty);
-        var password = PasswordInput("Owner password");
-        var confirmation = PasswordInput("Confirm password");
+        var username = TextInput(T("Authentication.OwnerUsername"), snapshot.OwnerName ?? string.Empty);
+        var password = PasswordInput(T("Authentication.OwnerPassword"));
+        var confirmation = PasswordInput(T("Authentication.ConfirmPassword"));
         panel.Children.Add(username.Container);
         panel.Children.Add(password.Container);
         if (snapshot.OwnerState == "setupRequired")
         {
             panel.Children.Add(confirmation.Container);
         }
-        var submit = PrimaryButton(snapshot.OwnerState == "setupRequired" ? "Create account" : "Sign in");
+        var submit = PrimaryButton(snapshot.OwnerState == "setupRequired" ? T("Authentication.CreateAccount") : T("Authentication.SignIn"));
         async Task SubmitAuthenticationAsync()
         {
             try
@@ -248,7 +252,7 @@ public sealed class MainWindow : Window
             }
             catch (Exception error)
             {
-                await ShowDialogAsync("Authentication failed", error.Message);
+                await ShowDialogAsync(T("Authentication.Failed"), error.Message);
             }
         }
         submit.Click += async (_, _) => await SubmitAuthenticationAsync();
@@ -266,27 +270,27 @@ public sealed class MainWindow : Window
 
     private void RenderOverview(ManagementSnapshot snapshot)
     {
-        AddPageHeader("Overview", "Host health and the actions that affect the running service.");
+        AddPageHeader(T("Navigation.Overview"), T("Overview.Description"));
         var identity = new StackPanel { Spacing = 4 };
         identity.Children.Add(new TextBlock { Text = snapshot.HostName, FontSize = 24, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
-        identity.Children.Add(Muted($"Control endpoint · HTTPS {snapshot.ControlPort}"));
-        identity.Children.Add(StatusLine("Host runtime", "Online", true));
-        identity.Children.Add(StatusLine("Applications", snapshot.Applications.Count.ToString(), true));
+        identity.Children.Add(Muted(F("Overview.ControlEndpoint", snapshot.ControlPort)));
+        identity.Children.Add(StatusLine(T("Overview.HostRuntime"), T("Status.Online"), true));
+        identity.Children.Add(StatusLine(T("Navigation.Applications"), snapshot.Applications.Count.ToString(), true));
         _contentPanel.Children.Add(Card(identity));
 
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
-        actions.Children.Add(ActionButton("Reload applications", "reloadApplications"));
-        actions.Children.Add(ActionButton("Force stop stream", "forceStopStream"));
-        actions.Children.Add(ActionButton("Restart host", "restartHost"));
+        actions.Children.Add(ActionButton(T("Overview.ReloadApplications"), "reloadApplications"));
+        actions.Children.Add(ActionButton(T("Overview.ForceStopStream"), "forceStopStream"));
+        actions.Children.Add(ActionButton(T("Overview.RestartHost"), "restartHost"));
         _contentPanel.Children.Add(Card(actions));
     }
 
     private void RenderApplications(ManagementSnapshot snapshot)
     {
-        AddPageHeader("Applications", "Desktop and application entries available to connected clients.");
+        AddPageHeader(T("Navigation.Applications"), T("Applications.Description"));
         if (snapshot.Applications.Count == 0)
         {
-            _contentPanel.Children.Add(Card(Muted("No applications are configured.")));
+            _contentPanel.Children.Add(Card(Muted(T("Applications.NoneConfigured"))));
             return;
         }
         var list = new StackPanel { Spacing = 0 };
@@ -300,7 +304,7 @@ public sealed class MainWindow : Window
             Grid.SetColumn(icon, 0);
             var labels = new StackPanel { Spacing = 2 };
             labels.Children.Add(new TextBlock { Text = app.Title, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
-            labels.Children.Add(Muted($"App ID {app.Id} · HDR {(app.HdrSupported ? "Yes" : "No")}"));
+            labels.Children.Add(Muted(F("Applications.Metadata", app.Id, T(app.HdrSupported ? "Common.Yes" : "Common.No"))));
             Grid.SetColumn(labels, 1);
             row.Children.Add(icon);
             row.Children.Add(labels);
@@ -312,10 +316,10 @@ public sealed class MainWindow : Window
 
     private void RenderSecurity(ManagementSnapshot snapshot)
     {
-        AddPageHeader("Security", "Owner authentication protects host configuration and device enrollment.");
+        AddPageHeader(T("Navigation.Security"), T("Security.Description"));
         var panel = new StackPanel { Spacing = 14 };
-        panel.Children.Add(StatusLine("Owner", snapshot.OwnerName ?? "Unavailable", true));
-        var logout = SecondaryButton("Log out");
+        panel.Children.Add(StatusLine(T("Security.Owner"), snapshot.OwnerName ?? T("Common.Unavailable"), true));
+        var logout = SecondaryButton(T("Security.LogOut"));
         logout.Click += async (_, _) => await ExecuteAsync(new { command = "logout" });
         panel.Children.Add(logout);
         _contentPanel.Children.Add(Card(panel));
@@ -323,79 +327,79 @@ public sealed class MainWindow : Window
 
     private void RenderGeneral(ManagementSnapshot snapshot)
     {
-        AddPageHeader("General", "Discovery and update behavior for this host.");
+        AddPageHeader(T("Navigation.General"), T("General.Description"));
         _contentPanel.Children.Add(SettingsCard(
-            ToggleRow("Network discovery", "Advertise this host to supported clients.", snapshot.Settings.General.Discovery, 0),
-            ToggleRow("Pre-release notifications", "Notify this host about beta releases.", snapshot.Settings.General.NotifyPreReleases, 1)));
+            ToggleRow(T("General.NetworkDiscovery"), T("General.NetworkDiscoveryDetail"), snapshot.Settings.General.Discovery, 0),
+            ToggleRow(T("General.PreReleaseNotifications"), T("General.PreReleaseNotificationsDetail"), snapshot.Settings.General.NotifyPreReleases, 1)));
     }
 
     private void RenderStreaming(ManagementSnapshot snapshot)
     {
-        AddPageHeader("Streaming", "Display adapter and fallback mode selected by the host runtime.");
+        AddPageHeader(T("Navigation.Streaming"), T("Streaming.Description"));
         _contentPanel.Children.Add(SettingsCard(
-            ValueRow("Graphics adapter", snapshot.Settings.Streaming.AdapterSelector),
-            ValueRow("Output", snapshot.Settings.Streaming.OutputSelector),
-            ValueRow("Fallback display mode", snapshot.Settings.Streaming.FallbackDisplayMode),
-            ValueRow("Workspace policy", snapshot.Settings.Workspace.Policy)));
+            ValueRow(T("Streaming.GraphicsAdapter"), snapshot.Settings.Streaming.AdapterSelector),
+            ValueRow(T("Streaming.Output"), snapshot.Settings.Streaming.OutputSelector),
+            ValueRow(T("Streaming.FallbackDisplayMode"), snapshot.Settings.Streaming.FallbackDisplayMode),
+            ValueRow(T("Streaming.WorkspacePolicy"), snapshot.Settings.Workspace.Policy)));
     }
 
     private void RenderAudio(ManagementSnapshot snapshot)
     {
-        AddPageHeader("Audio", "System audio capture and negotiated client playback.");
+        AddPageHeader(T("Navigation.Audio"), T("Audio.Description"));
         _contentPanel.Children.Add(SettingsCard(
-            ToggleRow("Stream system audio", "Capture audio for connected clients.", snapshot.Settings.Audio.StreamAudio, 2),
-            ValueRow("Audio sink", snapshot.Settings.Audio.Sink)));
+            ToggleRow(T("Audio.StreamSystemAudio"), T("Audio.StreamSystemAudioDetail"), snapshot.Settings.Audio.StreamAudio, 2),
+            ValueRow(T("Audio.Sink"), snapshot.Settings.Audio.Sink)));
     }
 
     private void RenderInput(ManagementSnapshot snapshot)
     {
-        AddPageHeader("Input", "Remote keyboard, pointer, gamepad, pen, and scrolling behavior.");
+        AddPageHeader(T("Navigation.Input"), T("Input.Description"));
         _contentPanel.Children.Add(SettingsCard(
-            ToggleRow("Keyboard", "Accept remote keyboard input.", snapshot.Settings.Input.Keyboard, 3),
-            ToggleRow("Mouse", "Accept remote pointer input.", snapshot.Settings.Input.Mouse, 4),
-            ToggleRow("Controller", "Accept remote gamepad input.", snapshot.Settings.Input.Controller, 5),
-            ToggleRow("Map Right Alt to Windows", "Use Right Alt as the Windows key.", snapshot.Settings.Input.MapRightAltToWindowsKey, 6),
-            ToggleRow("High-resolution scrolling", "Preserve precision trackpad and wheel deltas.", snapshot.Settings.Input.HighResolutionScrolling, 7),
-            ToggleRow("Native pen and touch", "Forward native pen and touch contacts.", snapshot.Settings.Input.NativePenTouch, 8),
-            ToggleRow("Rumble forwarding", "Forward gamepad rumble to the client.", snapshot.Settings.Input.RumbleForwarding, 9)));
+            ToggleRow(T("Input.Keyboard"), T("Input.KeyboardDetail"), snapshot.Settings.Input.Keyboard, 3),
+            ToggleRow(T("Input.Mouse"), T("Input.MouseDetail"), snapshot.Settings.Input.Mouse, 4),
+            ToggleRow(T("Input.Controller"), T("Input.ControllerDetail"), snapshot.Settings.Input.Controller, 5),
+            ToggleRow(T("Input.MapRightAlt"), T("Input.MapRightAltDetail"), snapshot.Settings.Input.MapRightAltToWindowsKey, 6),
+            ToggleRow(T("Input.HighResolutionScrolling"), T("Input.HighResolutionScrollingDetail"), snapshot.Settings.Input.HighResolutionScrolling, 7),
+            ToggleRow(T("Input.NativePenTouch"), T("Input.NativePenTouchDetail"), snapshot.Settings.Input.NativePenTouch, 8),
+            ToggleRow(T("Input.RumbleForwarding"), T("Input.RumbleForwardingDetail"), snapshot.Settings.Input.RumbleForwarding, 9)));
     }
 
     private void RenderNetwork(ManagementSnapshot snapshot)
     {
-        AddPageHeader("Network", "Listener, encryption, discovery, and remote access policy.");
+        AddPageHeader(T("Navigation.Network"), T("Network.Description"));
         _contentPanel.Children.Add(SettingsCard(
-            ValueRow("Address family", snapshot.Settings.Network.AddressFamily),
-            ValueRow("Base port", snapshot.Settings.Network.Port.ToString()),
-            ValueRow("Remote access", snapshot.Settings.Network.RemoteAccessScope),
-            ValueRow("LAN encryption", snapshot.Settings.Network.LanEncryption),
-            ValueRow("WAN encryption", snapshot.Settings.Network.WanEncryption),
-            ToggleRow("UPnP", "Request router mappings for configured listeners.", snapshot.Settings.Network.Upnp, 10)));
+            ValueRow(T("Network.AddressFamily"), snapshot.Settings.Network.AddressFamily),
+            ValueRow(T("Network.BasePort"), snapshot.Settings.Network.Port.ToString()),
+            ValueRow(T("Network.RemoteAccess"), snapshot.Settings.Network.RemoteAccessScope),
+            ValueRow(T("Network.LanEncryption"), snapshot.Settings.Network.LanEncryption),
+            ValueRow(T("Network.WanEncryption"), snapshot.Settings.Network.WanEncryption),
+            ToggleRow(T("Network.Upnp"), T("Network.UpnpDetail"), snapshot.Settings.Network.Upnp, 10)));
     }
 
     private void RenderAdvanced(ManagementSnapshot snapshot)
     {
-        AddPageHeader("Advanced", "Session-independent runtime controls.");
+        AddPageHeader(T("Navigation.Advanced"), T("Advanced.Description"));
         _contentPanel.Children.Add(SettingsCard(
-            ValueRow("Ping timeout", $"{snapshot.Settings.Network.PingTimeoutMs} ms"),
-            ValueRow("Forward error correction", $"{snapshot.Settings.Network.FecPercentage}%"),
-            ValueRow("Back button timeout", snapshot.Settings.Input.BackButtonTimeoutMs < 0 ? "Disabled" : $"{snapshot.Settings.Input.BackButtonTimeoutMs} ms")));
+            ValueRow(T("Advanced.PingTimeout"), F("Advanced.Milliseconds", snapshot.Settings.Network.PingTimeoutMs)),
+            ValueRow(T("Advanced.ForwardErrorCorrection"), F("Advanced.Percentage", snapshot.Settings.Network.FecPercentage)),
+            ValueRow(T("Advanced.BackButtonTimeout"), snapshot.Settings.Input.BackButtonTimeoutMs < 0 ? T("Common.Disabled") : F("Advanced.Milliseconds", snapshot.Settings.Input.BackButtonTimeoutMs))));
     }
 
     private void RenderDiagnostics(ManagementSnapshot snapshot)
     {
-        AddPageHeader("Diagnostics", "Current runtime diagnostics configuration.");
+        AddPageHeader(T("Navigation.Diagnostics"), T("Diagnostics.Description"));
         _contentPanel.Children.Add(SettingsCard(
-            StatusLine("Management protocol", $"v{snapshot.ProtocolVersion}", true),
-            StatusLine("Host connection", "Online", true),
-            ValueRow("Log level", snapshot.Settings.Diagnostics.LogLevel)));
+            StatusLine(T("Diagnostics.ManagementProtocol"), F("Diagnostics.ProtocolVersion", snapshot.ProtocolVersion), true),
+            StatusLine(T("Diagnostics.HostConnection"), T("Status.Online"), true),
+            ValueRow(T("Diagnostics.LogLevel"), snapshot.Settings.Diagnostics.LogLevel)));
     }
 
     private void RenderAbout()
     {
-        AddPageHeader("About", "Lumen remote desktop host for Windows.");
+        AddPageHeader(T("Navigation.About"), T("About.Description"));
         _contentPanel.Children.Add(Card(new TextBlock
         {
-            Text = "Lumen\nOpen-source · Self-hosted · Native Windows host",
+            Text = T("About.Product"),
             FontSize = 18,
             TextWrapping = TextWrapping.Wrap
         }));
@@ -407,7 +411,7 @@ public sealed class MainWindow : Window
         AddPageHeader(title, message);
         if (retry)
         {
-            var button = PrimaryButton("Retry");
+            var button = PrimaryButton(T("Error.Retry"));
             button.Click += async (_, _) => await RefreshAsync();
             _contentPanel.Children.Add(button);
         }
@@ -422,7 +426,7 @@ public sealed class MainWindow : Window
         }
         catch (Exception error)
         {
-            await ShowDialogAsync("Lumen command failed", error.Message);
+            await ShowDialogAsync(T("Error.CommandFailed"), error.Message);
         }
     }
 
@@ -554,7 +558,7 @@ public sealed class MainWindow : Window
             XamlRoot = _contentPanel.XamlRoot,
             Title = title,
             Content = message,
-            CloseButtonText = "OK"
+            CloseButtonText = T("Common.Ok")
         };
         await dialog.ShowAsync();
     }

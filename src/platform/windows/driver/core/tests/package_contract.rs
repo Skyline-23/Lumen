@@ -308,6 +308,14 @@ fn windows_msi_owns_service_firewall_upgrade_and_removal() {
     assert!(package.contains("<MajorUpgrade"));
     assert!(package.contains("<ServiceInstall"));
     assert!(package.contains("<ServiceControl"));
+    let service_control = package
+        .split("<ServiceControl")
+        .nth(1)
+        .and_then(|source| source.split("/>").next())
+        .expect("Lumen service control must be declared");
+    assert!(service_control.contains("Stop=\"both\""));
+    assert!(service_control.contains("Wait=\"yes\""));
+    assert!(!service_control.contains("Wait=\"no\""));
     assert!(package.contains("Name=\"Lumen TCP\""));
     assert!(package.contains("Name=\"Lumen UDP\""));
     assert!(package.contains("Id=\"LumenDriverPackage\""));
@@ -339,6 +347,10 @@ fn windows_msi_owns_service_firewall_upgrade_and_removal() {
     assert!(project.contains("WixUILicenseRtf"));
     assert!(project.contains("<SuppressIces>ICE61</SuppressIces>"));
     assert!(package.contains("Version=\"$(var.ProductVersion)\""));
+    let windows_service =
+        fs::read_to_string(repo_root.join("engine/lumen-host/src/windows_service.rs"))
+            .expect("Windows service source must exist");
+    assert!(windows_service.contains("WaitForSingleObject(process.process.get(), 20_000)"));
     assert!(build.contains("LUMEN_WINDOWS_DRIVER_PACKAGE_DIR"));
     assert!(build.contains("LumenIddCx.dll"));
     assert!(build.contains("LumenIddCx.inf"));
@@ -489,6 +501,80 @@ fn windows_development_build_reuses_incremental_outputs_without_packaging() {
     assert!(release.contains("Lumen.wixproj"));
     assert!(release.contains("msi-stage"));
     assert!(release.contains("-DLUMEN_WINDOWS_DEVELOPER_BUILD=OFF"));
+}
+
+#[test]
+fn windows_winui_resources_and_generated_outputs_are_localized_and_hygienic() {
+    // Given: the WinUI resource loader, locale resources, and the documented
+    // incremental development build contract.
+    let driver = driver_root();
+    let repo_root = driver
+        .ancestors()
+        .nth(4)
+        .expect("driver must live under src/platform/windows")
+        .to_path_buf();
+    let project =
+        fs::read_to_string(repo_root.join("src/platform/windows/Lumen.App/Lumen.App.csproj"))
+            .expect("WinUI project must exist");
+    let strings =
+        fs::read_to_string(repo_root.join("src/platform/windows/Lumen.App/AppStrings.cs"))
+            .expect("WinUI resource loader must exist");
+    let window =
+        fs::read_to_string(repo_root.join("src/platform/windows/Lumen.App/MainWindow.xaml.cs"))
+            .expect("WinUI window source must exist");
+    let client =
+        fs::read_to_string(repo_root.join("src/platform/windows/Lumen.App/LumenControlClient.cs"))
+            .expect("WinUI control client source must exist");
+    let english = fs::read_to_string(
+        repo_root.join("src/platform/windows/Lumen.App/Strings/en-US/Resources.resw"),
+    )
+    .expect("English WinUI resources must exist");
+    let korean = fs::read_to_string(
+        repo_root.join("src/platform/windows/Lumen.App/Strings/ko-KR/Resources.resw"),
+    )
+    .expect("Korean WinUI resources must exist");
+    let japanese = fs::read_to_string(
+        repo_root.join("src/platform/windows/Lumen.App/Strings/ja-JP/Resources.resw"),
+    )
+    .expect("Japanese WinUI resources must exist");
+    let gitignore = fs::read_to_string(repo_root.join(".gitignore"))
+        .expect("repository ignore rules must exist");
+    let development_test =
+        fs::read_to_string(repo_root.join("scripts/ci/test_windows_development_build.sh"))
+            .expect("Windows development build contract test must exist");
+
+    // Then: Windows resolves strings through its resource system, English is
+    // the fallback, and Korean/Japanese UI terms continue the prior UI copy.
+    assert!(project.contains("<PRIResource Include=\"Strings\\**\\*.resw\" />"));
+    assert!(strings.contains("ResourceLoader.GetForViewIndependentUse()"));
+    assert!(!strings.contains("CurrentUICulture"));
+    for resource in [&english, &korean, &japanese] {
+        assert!(resource.contains("name=\"Navigation.Overview\""));
+        assert!(resource.contains("name=\"Navigation.Applications\""));
+        assert!(resource.contains("name=\"Navigation.Settings\""));
+        assert!(resource.contains("name=\"Overview.ReloadApplications\""));
+        assert!(resource.contains("name=\"Input.HighResolutionScrolling\""));
+        assert!(resource.contains("name=\"Error.ManagementConnectionClosed\""));
+    }
+    assert!(english.contains("<value>Overview</value>"));
+    assert!(korean.contains("<value>개요</value>"));
+    assert!(korean.contains("<value>고해상도 스크롤</value>"));
+    assert!(japanese.contains("<value>概要</value>"));
+    assert!(japanese.contains("<value>高解像度スクロール</value>"));
+    assert!(window.contains("T(\"Navigation.Overview\")"));
+    assert!(window.contains("F(\"Overview.ControlEndpoint\", snapshot.ControlPort)"));
+    assert!(!window.contains("Text = \"Connecting"));
+    assert!(!window.contains("AddPageHeader(\"Overview\""));
+    assert!(client.contains("AppStrings.Get(\"Error.ManagementConnectionClosed\")"));
+
+    // Generated development outputs stay ignored without re-ignoring the
+    // tracked project, source, or locale resources.
+    assert!(gitignore.contains("!src/platform/windows/Lumen.App/**"));
+    assert!(gitignore.contains("src/platform/windows/Lumen.App/bin/"));
+    assert!(gitignore.contains("src/platform/windows/Lumen.App/obj/"));
+    assert!(development_test.contains("git -C \"${REPO_ROOT}\" check-ignore"));
+    assert!(development_test.contains("Lumen.App/bin/Debug"));
+    assert!(development_test.contains("Strings/en-US/Resources.resw"));
 }
 
 #[test]
