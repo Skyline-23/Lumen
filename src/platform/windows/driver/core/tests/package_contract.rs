@@ -255,6 +255,10 @@ fn windows_msi_owns_service_firewall_upgrade_and_removal() {
     assert!(release.contains("windows-driver:"));
     assert!(release.contains("runs-on: windows-2025-vs2026"));
     assert!(release.contains("lumen-windows-idd-unsigned-${{ github.sha }}"));
+    assert!(release.contains(
+        r"DRIVER_PACKAGE_OUTPUT: src\platform\windows\driver\build\bin\x64\Release\LumenIddCx"
+    ));
+    assert!(release.contains("Join-Path $env:DRIVER_PACKAGE_OUTPUT"));
     assert!(release.contains("needs: [prepare, windows-driver]"));
     assert!(release.contains("LUMEN_WINDOWS_DRIVER_PACKAGE_DIR: build/windows-driver-package"));
     assert!(release.contains("signpath/github-action-submit-signing-request@v2"));

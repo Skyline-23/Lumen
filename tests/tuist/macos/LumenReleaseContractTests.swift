@@ -23,6 +23,12 @@ struct LumenReleaseContractTests {
         #expect(release.contains("LumenDriverSetup.exe"))
         #expect(release.contains("LumenIddCx.dll"))
         #expect(release.contains("lumeniddcx.cat"))
+        #expect(
+            release.contains(
+                #"DRIVER_PACKAGE_OUTPUT: src\platform\windows\driver\build\bin\x64\Release\LumenIddCx"#
+            )
+        )
+        #expect(release.contains("Join-Path $env:DRIVER_PACKAGE_OUTPUT"))
 
         #expect(releasingGuide.contains("Lumen-*-Windows-x86_64.msi"))
         #expect(releasingGuide.contains("MSI deep signing"))
