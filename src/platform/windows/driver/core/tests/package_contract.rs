@@ -446,10 +446,12 @@ fn windows_development_build_reuses_incremental_outputs_without_packaging() {
         .nth(4)
         .expect("driver must live under src/platform/windows")
         .to_path_buf();
-    let development = fs::read_to_string(repo_root.join("scripts/windows/build_windows_development.sh"))
-        .expect("Windows development build entrypoint must exist");
-    let development_test = fs::read_to_string(repo_root.join("scripts/ci/test_windows_development_build.sh"))
-        .expect("Windows development build contract test must exist");
+    let development =
+        fs::read_to_string(repo_root.join("scripts/windows/build_windows_development.sh"))
+            .expect("Windows development build entrypoint must exist");
+    let development_test =
+        fs::read_to_string(repo_root.join("scripts/ci/test_windows_development_build.sh"))
+            .expect("Windows development build contract test must exist");
     let windows_targets = fs::read_to_string(repo_root.join("cmake/targets/windows.cmake"))
         .expect("Windows target definitions must exist");
     let common_packaging = fs::read_to_string(repo_root.join("cmake/packaging/common.cmake"))
