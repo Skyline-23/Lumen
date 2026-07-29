@@ -20,6 +20,9 @@
         <Directory Id="DRIVERFOLDER" Name="driver" />
       </Directory>
     </StandardDirectory>
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="LUMENPROGRAMDATAFOLDER" Name="Lumen" />
+    </StandardDirectory>
     <StandardDirectory Id="DesktopFolder" />
 
     <Feature Id="Complete"
@@ -31,6 +34,7 @@
       <ComponentRef Id="MainExecutable" />
       <ComponentRef Id="SessionAgent" />
       <ComponentRef Id="HostService" />
+      <ComponentRef Id="LumenProgramData" />
       <ComponentRef Id="DriverSetup" />
       <ComponentRef Id="LumenDriverPackage" />
       <ComponentGroupRef Id="PayloadFiles" />
@@ -96,6 +100,21 @@
                       Stop="both"
                       Remove="uninstall"
                       Wait="yes" />
+    </Component>
+
+    <Component Id="LumenProgramData"
+               Directory="LUMENPROGRAMDATAFOLDER"
+               Guid="*">
+      <CreateFolder>
+        <PermissionEx Id="LumenProgramDataPermissions"
+                      Sddl="O:SYG:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)" />
+      </CreateFolder>
+      <RegistryValue Root="HKLM"
+                     Key="Software\SudoMaker\Lumen"
+                     Name="ProgramDataProvisioned"
+                     Type="integer"
+                     Value="1"
+                     KeyPath="yes" />
     </Component>
 
     <Component Id="DriverSetup"

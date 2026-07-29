@@ -1,6 +1,133 @@
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
+
+const SESSION_ACTIVE: u8 = 0;
+const SESSION_COMMITTING: u8 = 1;
+const SESSION_RETIRED: u8 = 2;
+const SESSION_RETIRING: u8 = 3;
+
+pub(super) struct SessionRetirementGate {
+    state: AtomicU8,
+    retirement_wait: Mutex<()>,
+    retirement_changed: Condvar,
+}
+
+struct SessionCommit<'a> {
+    gate: &'a SessionRetirementGate,
+}
+
+impl Drop for SessionCommit<'_> {
+    fn drop(&mut self) {
+        self.gate.finish_commit();
+    }
+}
+
+impl Default for SessionRetirementGate {
+    fn default() -> Self {
+        Self {
+            state: AtomicU8::new(SESSION_ACTIVE),
+            retirement_wait: Mutex::new(()),
+            retirement_changed: Condvar::new(),
+        }
+    }
+}
+
+impl SessionRetirementGate {
+    pub(super) fn is_retired(&self) -> bool {
+        matches!(
+            self.state.load(Ordering::Acquire),
+            SESSION_RETIRING | SESSION_RETIRED
+        )
+    }
+
+    pub(super) fn commit_if_active(&self, commit: impl FnOnce()) -> bool {
+        if self
+            .state
+            .compare_exchange(
+                SESSION_ACTIVE,
+                SESSION_COMMITTING,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_err()
+        {
+            return false;
+        }
+        let _commit = SessionCommit { gate: self };
+        commit();
+        true
+    }
+
+    fn finish_commit(&self) {
+        match self.state.compare_exchange(
+            SESSION_COMMITTING,
+            SESSION_ACTIVE,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => {}
+            Err(SESSION_RETIRING) => {
+                self.state.store(SESSION_RETIRED, Ordering::Release);
+                self.retirement_changed.notify_all();
+            }
+            Err(_) => {}
+        }
+    }
+
+    pub(super) fn retire(&self) {
+        let mut state = self.state.load(Ordering::Acquire);
+        loop {
+            match state {
+                SESSION_ACTIVE => match self.state.compare_exchange_weak(
+                    SESSION_ACTIVE,
+                    SESSION_RETIRED,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                ) {
+                    Ok(_) => return,
+                    Err(current) => state = current,
+                },
+                SESSION_COMMITTING => match self.state.compare_exchange_weak(
+                    SESSION_COMMITTING,
+                    SESSION_RETIRING,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                ) {
+                    Ok(_) => {
+                        let mut wait = self
+                            .retirement_wait
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                        while self.state.load(Ordering::Acquire) == SESSION_RETIRING {
+                            wait = self
+                                .retirement_changed
+                                .wait(wait)
+                                .unwrap_or_else(|poisoned| poisoned.into_inner());
+                        }
+                        return;
+                    }
+                    Err(current) => state = current,
+                },
+                SESSION_RETIRING => {
+                    let mut wait = self
+                        .retirement_wait
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    while self.state.load(Ordering::Acquire) == SESSION_RETIRING {
+                        wait = self
+                            .retirement_changed
+                            .wait(wait)
+                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    }
+                    return;
+                }
+                SESSION_RETIRED => return,
+                _ => unreachable!("unknown session retirement state"),
+            }
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum FrameDeliveryState {
@@ -80,7 +207,7 @@ impl FrameDeliveryOwnership {
 
 pub(super) struct AbandonableSession<T> {
     epoch: u32,
-    retired: Arc<AtomicBool>,
+    retirement_gate: Arc<SessionRetirementGate>,
     value: T,
 }
 
@@ -90,11 +217,11 @@ impl<T> AbandonableSession<T> {
     }
 
     pub(super) fn is_retired(&self) -> bool {
-        self.retired.load(Ordering::Acquire)
+        self.retirement_gate.is_retired()
     }
 
-    pub(super) fn retirement_flag(&self) -> Arc<AtomicBool> {
-        Arc::clone(&self.retired)
+    pub(super) fn retirement_gate(&self) -> Arc<SessionRetirementGate> {
+        Arc::clone(&self.retirement_gate)
     }
 
     pub(super) fn value(&self) -> &T {
@@ -129,7 +256,7 @@ impl<T> AbandonableSessionSlot<T> {
         }
         let session = Arc::new(AbandonableSession {
             epoch,
-            retired: Arc::new(AtomicBool::new(false)),
+            retirement_gate: Arc::new(SessionRetirementGate::default()),
             value,
         });
         *current = Some(Arc::clone(&session));
@@ -171,7 +298,7 @@ impl<T> AbandonableSessionSlot<T> {
             .map_err(|_| "abandonable session slot is poisoned")?
             .clone();
         if let Some(session) = &session {
-            session.retired.store(true, Ordering::Release);
+            session.retirement_gate.retire();
         }
         Ok(session)
     }
@@ -272,10 +399,84 @@ fn reap_finished_workers(workers: &mut Vec<JoinHandle<()>>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{AbandonableSessionSlot, FrameDeliveryOwnership, RetiredWorkerRegistry};
+    use super::{
+        AbandonableSessionSlot, FrameDeliveryOwnership, RetiredWorkerRegistry,
+        SessionRetirementGate,
+    };
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{mpsc, Arc, Mutex};
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn retired_epoch_cannot_commit_a_late_success() {
+        let gate = Arc::new(SessionRetirementGate::default());
+        let persisted = Arc::new(AtomicUsize::new(0));
+        let (applied_send, applied_receive) = mpsc::sync_channel(1);
+        let (release_send, release_receive) = mpsc::sync_channel(1);
+        let worker_gate = Arc::clone(&gate);
+        let worker_persisted = Arc::clone(&persisted);
+        let worker = std::thread::spawn(move || {
+            applied_send.send(()).unwrap();
+            release_receive.recv().unwrap();
+            worker_gate.commit_if_active(|| {
+                worker_persisted.fetch_add(1, Ordering::AcqRel);
+            })
+        });
+
+        applied_receive.recv().unwrap();
+        gate.retire();
+        release_send.send(()).unwrap();
+
+        assert!(!worker.join().unwrap());
+        assert_eq!(persisted.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn active_epoch_commits_one_success() {
+        let gate = SessionRetirementGate::default();
+        let persisted = AtomicUsize::new(0);
+        assert!(gate.commit_if_active(|| {
+            persisted.fetch_add(1, Ordering::AcqRel);
+        }));
+        assert_eq!(persisted.load(Ordering::Acquire), 1);
+        assert!(!gate.is_retired());
+    }
+
+    #[test]
+    fn retirement_fences_a_paused_commit_before_replacement_publication() {
+        let gate = Arc::new(SessionRetirementGate::default());
+        let publications = Arc::new(Mutex::new(Vec::new()));
+        let (entered_send, entered_receive) = mpsc::sync_channel(1);
+        let (release_send, release_receive) = mpsc::sync_channel(1);
+        let old_gate = Arc::clone(&gate);
+        let old_publications = Arc::clone(&publications);
+        let old = std::thread::spawn(move || {
+            assert!(old_gate.commit_if_active(|| {
+                entered_send.send(()).unwrap();
+                release_receive.recv().unwrap();
+                old_publications.lock().unwrap().push("old");
+            }));
+        });
+
+        entered_receive.recv().unwrap();
+        let retiring_gate = Arc::clone(&gate);
+        let replacement_publications = Arc::clone(&publications);
+        let (retired_send, retired_receive) = mpsc::sync_channel(1);
+        let replacement = std::thread::spawn(move || {
+            retiring_gate.retire();
+            retired_send.send(()).unwrap();
+            replacement_publications.lock().unwrap().push("new");
+        });
+        assert_eq!(retired_receive.try_recv(), Err(mpsc::TryRecvError::Empty));
+
+        release_send.send(()).unwrap();
+        retired_receive.recv().unwrap();
+        old.join().unwrap();
+        replacement.join().unwrap();
+
+        assert!(gate.is_retired());
+        assert_eq!(publications.lock().unwrap().as_slice(), ["old", "new"]);
+    }
 
     #[test]
     fn stalled_policy_allows_bounded_stop_and_isolated_replacement_epoch() {

@@ -159,11 +159,53 @@ Assert-InstallationCondition ((-not $ExpectDesktopShortcut) -or $desktopShortcut
     "The requested Lumen desktop shortcut is missing or duplicated."
 
 $errorLogs = @(
-    "$env:ProgramData\Lumen\service-error.log",
     "$env:ProgramData\Lumen\host-startup-error.log"
 ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
 Assert-InstallationCondition ($errorLogs.Count -eq 0) `
     "The installed runtime left a current startup error receipt: $($errorLogs -join ', ')."
+
+$programDataDirectory = Join-Path $env:ProgramData "Lumen"
+Assert-InstallationCondition (Test-Path -LiteralPath $programDataDirectory -PathType Container) `
+    "The protected Lumen ProgramData directory is missing."
+if (Test-Path -LiteralPath $programDataDirectory -PathType Container) {
+    $programDataItem = Get-Item -LiteralPath $programDataDirectory -Force
+    Assert-InstallationCondition (($programDataItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0) `
+        "The Lumen ProgramData directory must not be a reparse point."
+    $programDataAcl = Get-Acl -LiteralPath $programDataDirectory
+    $ownerSid = $programDataAcl.Owner
+    try {
+        $ownerSid = ([System.Security.Principal.NTAccount]$programDataAcl.Owner).Translate(
+            [System.Security.Principal.SecurityIdentifier]
+        ).Value
+    } catch {}
+    Assert-InstallationCondition ($ownerSid -eq "S-1-5-18") `
+        "The Lumen ProgramData directory owner is not LocalSystem."
+    Assert-InstallationCondition $programDataAcl.AreAccessRulesProtected `
+        "The Lumen ProgramData directory DACL must be protected from inheritance."
+    $trustedWriterSids = @("S-1-5-18", "S-1-5-32-544")
+    $rules = @($programDataAcl.Access)
+    Assert-InstallationCondition ($rules.Count -eq 2) `
+        "The Lumen ProgramData directory DACL contains an unexpected ACE count."
+    $ruleSids = @($rules | ForEach-Object {
+        $sid = $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value
+        $valid = $sid -in $trustedWriterSids -and
+            $_.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Allow -and
+            $_.FileSystemRights -eq [System.Security.AccessControl.FileSystemRights]::FullControl -and
+            $_.InheritanceFlags -eq (
+                [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
+                [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
+            ) -and
+            $_.PropagationFlags -eq [System.Security.AccessControl.PropagationFlags]::None -and
+            -not $_.IsInherited
+        Assert-InstallationCondition $valid `
+            "The Lumen ProgramData directory DACL contains an untrusted or malformed ACE."
+        $sid
+    })
+    foreach ($trustedWriterSid in $trustedWriterSids) {
+        Assert-InstallationCondition ($ruleSids -contains $trustedWriterSid) `
+            "The Lumen ProgramData directory is missing a trusted writer ACL for $trustedWriterSid."
+    }
+}
 
 $result = [ordered]@{
     passed = $failures.Count -eq 0

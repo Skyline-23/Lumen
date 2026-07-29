@@ -55,6 +55,6 @@ if(WIN32 AND NOT LUMEN_WINDOWS_DEVELOPER_BUILD)
     include(${CMAKE_MODULE_PATH}/packaging/windows.cmake)
 endif()
 
-if(NOT (WIN32 AND LUMEN_WINDOWS_DEVELOPER_BUILD))
+if(NOT WIN32)
     include(CPack)
 endif()

@@ -161,6 +161,33 @@ fn windows_management_is_local_and_bound_to_the_active_session() {
 }
 
 #[test]
+fn windows_msi_is_the_only_supported_service_installer() {
+    let driver = driver_root();
+    let repo_root = driver
+        .ancestors()
+        .nth(4)
+        .expect("driver must live under src/platform/windows")
+        .to_path_buf();
+    let package = fs::read_to_string(repo_root.join("packaging/windows/Package.wxs"))
+        .expect("Windows package definition must exist");
+    let windows_cmake = fs::read_to_string(repo_root.join("cmake/packaging/windows.cmake"))
+        .expect("Windows packaging configuration must exist");
+    let common_cmake = fs::read_to_string(repo_root.join("cmake/packaging/common.cmake"))
+        .expect("common packaging configuration must exist");
+    let sddl = "O:SYG:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)";
+
+    assert!(package.contains(sddl));
+    assert!(!windows_cmake.contains("windows_nsis"));
+    assert!(common_cmake.contains("if(NOT WIN32)"));
+    assert!(!repo_root
+        .join("cmake/packaging/windows_nsis.cmake")
+        .exists());
+    assert!(!repo_root
+        .join("src_assets/windows/misc/service/install-service.bat")
+        .exists());
+}
+
+#[test]
 fn windows_service_preserves_launch_errors_and_reaps_suspended_children() {
     // Given: SCM must report the Win32 boundary that actually failed, and a
     // partially launched host must never survive outside the service job.
@@ -178,8 +205,11 @@ fn windows_service_preserves_launch_errors_and_reaps_suspended_children() {
     assert!(service.contains("struct ServiceError"));
     assert!(service.contains("error.code"));
     assert!(!service.contains("let error = if result.is_ok()"));
-    assert!(service.contains("service-error.log"));
-    assert!(service.contains("clear_service_error();"));
+    assert!(service.contains("RegisterEventSourceW"));
+    assert!(service.contains("ReportEventW"));
+    assert!(service.contains("DeregisterEventSource"));
+    assert!(!service.contains("service-error.log"));
+    assert!(!service.contains("clear_service_error();"));
     assert!(service.contains("terminate_suspended_session_agent"));
     assert!(service.contains("TerminateProcess(process.process.get(), ERROR_PROCESS_ABORTED)"));
 
