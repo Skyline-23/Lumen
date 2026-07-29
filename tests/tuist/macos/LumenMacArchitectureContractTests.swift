@@ -54,25 +54,28 @@ struct LumenMacArchitectureContractTests {
 
     @Test("Release tags stay on their reviewed GitFlow branch")
     func releaseTagsRequireReviewedBranchAncestry() throws {
+        let repositoryRoot = try repositoryRoot()
         let release = try String(
-            contentsOf: repositoryRoot().appendingPathComponent(
+            contentsOf: repositoryRoot.appendingPathComponent(
                 ".github/workflows/release.yml"
             ),
             encoding: .utf8
         )
+        let validator = try String(
+            contentsOf: repositoryRoot.appendingPathComponent(
+                "scripts/release/validate_gitflow_release.sh"
+            ),
+            encoding: .utf8
+        )
 
-        #expect(release.contains("git fetch --no-tags origin develop"))
-        #expect(
-            release.contains(
-                #"git merge-base --is-ancestor "${GITHUB_SHA}" origin/develop"#
-            )
-        )
-        #expect(release.contains("git fetch --no-tags origin main"))
-        #expect(
-            release.contains(
-                #"git merge-base --is-ancestor "${GITHUB_SHA}" origin/main"#
-            )
-        )
+        #expect(release.contains("scripts/release/validate_gitflow_release.sh"))
+        #expect(validator.contains(#"RELEASE_BRANCH="release/${PRODUCT_VERSION}""#))
+        #expect(validator.contains("must point at the current ${REMOTE}/${RELEASE_BRANCH} head"))
+        #expect(validator.contains("must point at the current ${REMOTE}/main head"))
+        #expect(validator.contains("must point at a no-ff merge"))
+        #expect(validator.contains("must be merged back into ${REMOTE}/develop"))
+        #expect(validator.contains("must be annotated"))
+        #expect(validator.contains("is out of sequence"))
     }
 
     private func repositoryRoot() throws -> URL {

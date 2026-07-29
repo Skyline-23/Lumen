@@ -9,18 +9,23 @@ release tag.
 
 | Trigger | Output | Signing | Publication |
 | --- | --- | --- | --- |
-| Push or pull request to `develop` | Rust tests and lint, macOS Tuist tests, unsigned Windows NSIS package check | None | None |
-| Push `v<version>-beta.N` | macOS DMG and Windows NSIS installer | Developer ID + notarization, Authenticode + timestamp | GitHub Pre-release; no Homebrew update |
-| Push `v<version>` | macOS DMG and Windows NSIS installer | Developer ID + notarization, Authenticode + timestamp | GitHub Release, then `Skyline-23/homebrew-lumen` |
+| Push or pull request to `develop` | Rust tests and lint, macOS Tuist tests, unsigned Windows MSI package check | None | None |
+| Push `v<version>-beta.N` | macOS DMG and Windows MSI installer | Developer ID + notarization, Authenticode + timestamp | GitHub Pre-release; no Homebrew update |
+| Push `v<version>` | macOS DMG and Windows MSI installer | Developer ID + notarization, Authenticode + timestamp | GitHub Release, then `Skyline-23/homebrew-lumen` |
 
 Both `engine/lumen-engine/Cargo.toml` and `engine/lumen-host/Cargo.toml` are the
 product version authority. Their `[package].version` values must match each
-other and use stable semantic versioning. Tags must use `v<version>` or
-`v<version>-beta.N`; the numeric prefix must match the product version.
+other and use stable semantic versioning. Every release uses a
+`release/<version>` branch cut from reviewed `develop`. Beta tags must be
+annotated, use consecutive `v<version>-beta.N` numbers, and point at the exact
+release-branch head. A stable annotated `v<version>` tag is accepted only when
+it points at the current `main` head, that commit is a no-ff merge of the same
+release branch, the release branch has also been merged back into `develop`,
+and at least one beta from that branch exists.
 
 The `develop` workflow builds the same unsigned Windows installer shape as the
 release workflow and discards it after validation. This keeps SignPath and
-release publication tag-only while detecting CMake, Rust GNU-target, and NSIS
+release publication tag-only while detecting CMake, Rust GNU-target, and MSI
 failures before versioning a release.
 
 The release order is:
@@ -84,7 +89,7 @@ Configure these repository-level Actions variables separately:
 | `SIGNPATH_ORGANIZATION_ID` | SignPath organization ID that owns the Lumen project |
 | `SIGNPATH_PROJECT_SLUG` | Lumen SignPath project slug |
 | `SIGNPATH_SIGNING_POLICY_SLUG` | Release signing policy slug |
-| `SIGNPATH_ARTIFACT_CONFIGURATION_SLUG` | Artifact configuration that signs the NSIS installer executable |
+| `SIGNPATH_ARTIFACT_CONFIGURATION_SLUG` | Artifact configuration that deep-signs the MSI and its first-party PE and IDD catalog payloads |
 
 ## Preparing Apple credentials
 
@@ -153,9 +158,16 @@ it does not depend on the local `lumen-release` profile.
 Create the Lumen project and Windows installer artifact configuration in
 SignPath. Because `actions/upload-artifact` stores the upload as a ZIP, the
 artifact configuration root must be a `zip-file` that selects exactly the
-`Lumen-*-Windows-x86_64.exe` entry produced by the NSIS build. Assign a release
-signing policy backed by the intended Authenticode certificate, then create a
-restricted API token that can only submit requests for that project.
+`Lumen-*-Windows-x86_64.msi` entry produced by the WiX build. Inside that
+entry, configure MSI deep signing for `Lumen.exe`, `LumenService.exe`,
+`LumenDriverSetup.exe`, and `lumeniddcx.cat`, followed by signing the MSI
+itself. Do not independently sign `LumenIddCx.dll` after its catalog has been
+generated; the release workflow verifies that the unchanged DLL is covered by
+the signed catalog. Import
+`packaging/windows/signpath-artifact-configuration.xml` instead of recreating
+this payload shape in the SignPath UI. Assign a release signing policy backed
+by the intended Authenticode certificate, then create a restricted API token
+that can only submit requests for that project.
 
 Store the token and non-secret identifiers with GitHub CLI:
 
@@ -204,35 +216,70 @@ git rev-parse "v${VERSION}"
 The final two commands should report that the proposed version does not exist.
 If `HEAD` differs from `origin/develop`, stop and reconcile the branch first.
 
-## Publish a beta
+## Start a Git Flow release
 
-Merge the reviewed feature commit into `develop`, verify CI, and tag that exact
-commit. Beta tags never update Homebrew.
+Merge reviewed features into `develop`, update both Rust product crate versions,
+verify CI, then cut and publish the versioned release branch:
 
 ```bash
 git switch develop
 git pull --ff-only origin develop
+git switch -c "release/${VERSION}"
+git push -u origin "release/${VERSION}"
+```
+
+Only release stabilization fixes and release documentation belong on this
+branch. Merge every such fix back into `develop` when finishing the release.
+
+## Publish a beta
+
+Tag the exact remote release-branch head. Beta numbers are contiguous and
+immutable; rerun a failed workflow for the same tag instead of moving it.
+Betas never update Homebrew.
+
+```bash
+git switch "release/${VERSION}"
+git pull --ff-only origin "release/${VERSION}"
 git tag -a "v${VERSION}-beta.1" -m "Lumen v${VERSION}-beta.1"
 git push origin "v${VERSION}-beta.1"
 ```
 
 ## Publish a stable release
 
-Merge the reviewed `develop` commit into `main`, then create the intended tag:
+After at least one beta is published and accepted, merge the release branch
+with no-ff commits into both long-lived branches. Push both branches before
+creating the stable tag:
 
 ```bash
 git switch main
 git pull --ff-only origin main
-git merge --no-ff develop
+git merge --no-ff "release/${VERSION}"
 git status --short
 git push origin main
+
+git switch develop
+git pull --ff-only origin develop
+git merge --no-ff "release/${VERSION}"
+git status --short
+git push origin develop
+
+git switch main
+git pull --ff-only origin main
 git tag -a "v${VERSION}" -m "Lumen v${VERSION}"
 git push origin "v${VERSION}"
 ```
 
-The tag push starts the release workflow. Beta tags publish a GitHub
+The tag push starts the release workflow and
+`scripts/release/validate_gitflow_release.sh` rechecks this topology against
+remote refs before any signing job starts. Beta tags publish a GitHub
 Pre-release and skip Homebrew; stable tags publish a normal GitHub Release and
-update Homebrew after both signed packages succeed.
+update Homebrew after both signed packages succeed. Keep the remote release
+branch until the stable workflow succeeds, then remove it:
+
+```bash
+git push origin --delete "release/${VERSION}"
+git branch -d "release/${VERSION}"
+```
 
 Monitor the release:
 
@@ -267,7 +314,7 @@ hdiutil detach /Volumes/Lumen
 On Windows, verify the downloaded installer from PowerShell:
 
 ```powershell
-$signature = Get-AuthenticodeSignature .\Lumen-<version>-Windows-x86_64.exe
+$signature = Get-AuthenticodeSignature .\Lumen-<version>-Windows-x86_64.msi
 $signature | Format-List Status, StatusMessage, SignerCertificate, TimeStamperCertificate
 if ($signature.Status -ne 'Valid') { throw 'Invalid Lumen installer signature' }
 ```

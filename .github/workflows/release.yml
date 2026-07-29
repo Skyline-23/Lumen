@@ -28,45 +28,10 @@ jobs:
       - name: Resolve product version
         id: version
         shell: bash
-        run: |
-          tag="${GITHUB_REF_NAME}"
-          [[ "${tag}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)(-beta\.([1-9][0-9]*))?$ ]] || {
-            echo "Release tag must use v1.2.3 or v1.2.3-beta.N: ${tag}" >&2
-            exit 1
-          }
-          product_version="${BASH_REMATCH[1]}"
-          release_version="${tag#v}"
-          prerelease=false
-          [[ -z "${BASH_REMATCH[2]}" ]] || prerelease=true
-          if [[ "${prerelease}" == "true" ]]; then
-            git fetch --no-tags origin develop
-            git merge-base --is-ancestor "${GITHUB_SHA}" origin/develop || {
-              echo "Beta release tag ${tag} must point at a commit contained in develop" >&2
-              exit 1
-            }
-          else
-            git fetch --no-tags origin main
-            git merge-base --is-ancestor "${GITHUB_SHA}" origin/main || {
-              echo "Stable release tag ${tag} must point at a commit contained in main" >&2
-              exit 1
-            }
-          fi
-          engine_version="$(python3 -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["package"]["version"])' engine/lumen-engine/Cargo.toml)"
-          host_version="$(python3 -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["package"]["version"])' engine/lumen-host/Cargo.toml)"
-          [[ "${engine_version}" == "${host_version}" ]] || {
-            echo "Lumen crate versions must match: engine=${engine_version}, host=${host_version}" >&2
-            exit 1
-          }
-          [[ "${host_version}" == "${product_version}" ]] || {
-            echo "Release tag ${tag} does not match product version ${host_version}" >&2
-            exit 1
-          }
-          {
-            echo "tag=${tag}"
-            echo "product_version=${product_version}"
-            echo "release_version=${release_version}"
-            echo "prerelease=${prerelease}"
-          } >> "${GITHUB_OUTPUT}"
+        env:
+          LUMEN_RELEASE_SHA: ${{ github.sha }}
+          LUMEN_RELEASE_TAG: ${{ github.ref_name }}
+        run: scripts/release/validate_gitflow_release.sh
 
   macos:
     name: Signed macOS package
@@ -355,6 +320,11 @@ jobs:
             mingw-w64-ucrt-x86_64-opus
             mingw-w64-ucrt-x86_64-pkgconf
             mingw-w64-ucrt-x86_64-zlib
+      - uses: hendrikmuhs/ccache-action@v1.2.23
+        with:
+          variant: sccache
+          key: windows-gnu-package
+          max-size: 250M
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 8.0.x
@@ -392,6 +362,7 @@ jobs:
         env:
           LUMEN_VERSION: ${{ needs.prepare.outputs.product_version }}
           LUMEN_ARTIFACT_VERSION: ${{ needs.prepare.outputs.release_version }}
+          LUMEN_CMAKE_COMPILER_LAUNCHER: sccache
           LUMEN_WINDOWS_DRIVER_PACKAGE_DIR: build/windows-driver-package
         run: scripts/ci/build_windows_package.sh
       - name: Upload unsigned Windows installer for SignPath

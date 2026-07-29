@@ -40,7 +40,7 @@ brew install --cask Skyline-23/lumen/lumen
 
 The qualified name is required because Homebrew's default cask repository also
 contains an unrelated cask named `lumen`. The project cask requires macOS 15 or
-newer. Windows releases are distributed as an x86-64 NSIS installer from the
+newer. Windows releases are distributed as an x86-64 MSI installer from the
 GitHub Releases page.
 
 See [Installing Lumen](docs/installing.md) for upgrades, uninstalling, macOS

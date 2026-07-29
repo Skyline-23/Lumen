@@ -10,7 +10,8 @@
            Compressed="yes">
     <SummaryInformation Description="Lumen remote desktop host"
                         Manufacturer="SudoMaker" />
-    <MajorUpgrade DowngradeErrorMessage="A newer version of Lumen is already installed."
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="A newer version of Lumen is already installed."
                   Schedule="afterInstallInitialize" />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 
