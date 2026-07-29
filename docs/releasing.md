@@ -9,9 +9,9 @@ release tag.
 
 | Trigger | Output | Signing | Publication |
 | --- | --- | --- | --- |
-| Push or pull request to `develop` | Rust tests and lint, macOS Tuist tests, unsigned Windows NSIS package check | None | None |
-| Push `v<version>-beta.N` | macOS DMG and Windows NSIS installer | Developer ID + notarization, Authenticode + timestamp | GitHub Pre-release; no Homebrew update |
-| Push `v<version>` | macOS DMG and Windows NSIS installer | Developer ID + notarization, Authenticode + timestamp | GitHub Release, then `Skyline-23/homebrew-lumen` |
+| Push or pull request to `develop` | Rust tests and lint, macOS Tuist tests, unsigned Windows MSI package check | None | None |
+| Push `v<version>-beta.N` | macOS DMG and Windows MSI installer | Developer ID + notarization, Authenticode + timestamp | GitHub Pre-release; no Homebrew update |
+| Push `v<version>` | macOS DMG and Windows MSI installer | Developer ID + notarization, Authenticode + timestamp | GitHub Release, then `Skyline-23/homebrew-lumen` |
 
 Both `engine/lumen-engine/Cargo.toml` and `engine/lumen-host/Cargo.toml` are the
 product version authority. Their `[package].version` values must match each
@@ -20,7 +20,7 @@ other and use stable semantic versioning. Tags must use `v<version>` or
 
 The `develop` workflow builds the same unsigned Windows installer shape as the
 release workflow and discards it after validation. This keeps SignPath and
-release publication tag-only while detecting CMake, Rust GNU-target, and NSIS
+release publication tag-only while detecting CMake, Rust GNU-target, and MSI
 failures before versioning a release.
 
 The release order is:
@@ -84,7 +84,7 @@ Configure these repository-level Actions variables separately:
 | `SIGNPATH_ORGANIZATION_ID` | SignPath organization ID that owns the Lumen project |
 | `SIGNPATH_PROJECT_SLUG` | Lumen SignPath project slug |
 | `SIGNPATH_SIGNING_POLICY_SLUG` | Release signing policy slug |
-| `SIGNPATH_ARTIFACT_CONFIGURATION_SLUG` | Artifact configuration that signs the NSIS installer executable |
+| `SIGNPATH_ARTIFACT_CONFIGURATION_SLUG` | Artifact configuration that deep-signs the MSI and its first-party PE and IDD catalog payloads |
 
 ## Preparing Apple credentials
 
@@ -153,9 +153,12 @@ it does not depend on the local `lumen-release` profile.
 Create the Lumen project and Windows installer artifact configuration in
 SignPath. Because `actions/upload-artifact` stores the upload as a ZIP, the
 artifact configuration root must be a `zip-file` that selects exactly the
-`Lumen-*-Windows-x86_64.exe` entry produced by the NSIS build. Assign a release
-signing policy backed by the intended Authenticode certificate, then create a
-restricted API token that can only submit requests for that project.
+`Lumen-*-Windows-x86_64.msi` entry produced by the WiX build. Inside that
+entry, configure MSI deep signing for `Lumen.exe`, `LumenService.exe`,
+`LumenDriverSetup.exe`, `LumenIddCx.dll`, and `lumeniddcx.cat`, followed by
+signing the MSI itself. Assign a release signing policy backed by the intended
+Authenticode certificate, then create a restricted API token that can only
+submit requests for that project.
 
 Store the token and non-secret identifiers with GitHub CLI:
 
@@ -267,7 +270,7 @@ hdiutil detach /Volumes/Lumen
 On Windows, verify the downloaded installer from PowerShell:
 
 ```powershell
-$signature = Get-AuthenticodeSignature .\Lumen-<version>-Windows-x86_64.exe
+$signature = Get-AuthenticodeSignature .\Lumen-<version>-Windows-x86_64.msi
 $signature | Format-List Status, StatusMessage, SignerCertificate, TimeStamperCertificate
 if ($signature.Status -ne 'Valid') { throw 'Invalid Lumen installer signature' }
 ```

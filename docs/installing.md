@@ -116,22 +116,20 @@ to remove a duplicate build.
 
 ## Windows
 
-Download `Lumen-<version>-Windows-x86_64.exe` from the project GitHub Release
-and run it as an administrator. The installer installs the application and
-service, creates the required firewall rule, and offers the virtual-gamepad
-component. Lumen does not bundle a virtual-display driver. A compatible driver
-must be installed independently before a Windows session can request a virtual
-display.
+Download `Lumen-<version>-Windows-x86_64.msi` from the project GitHub Release
+and run it as an administrator. The installer installs the application,
+service, first-party Lumen virtual-display driver, and required firewall rule.
+It can also create a desktop shortcut.
 
 Running a newer installer upgrades the existing installation; the installer
-removes the previous version before installing the replacement. The uninstaller
-stops and removes the service and firewall rule, and asks separately whether to
-remove the virtual gamepad and Lumen data directory.
+removes the previous version before installing the replacement. Uninstalling
+stops and removes the service, firewall rules, and first-party virtual-display
+driver.
 
 Verify the Authenticode signature from PowerShell before installation:
 
 ```powershell
-$signature = Get-AuthenticodeSignature .\Lumen-<version>-Windows-x86_64.exe
+$signature = Get-AuthenticodeSignature .\Lumen-<version>-Windows-x86_64.msi
 $signature | Format-List Status, StatusMessage, SignerCertificate
 if ($signature.Status -ne 'Valid') { throw 'Invalid Lumen installer signature' }
 ```
