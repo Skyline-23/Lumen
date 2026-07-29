@@ -9,6 +9,13 @@ UI_PROJECT="${REPO_ROOT}/src/platform/windows/Lumen.App/Lumen.App.csproj"
 COMPONENT="all"
 DRY_RUN=0
 
+if [[ -n "${USERPROFILE:-}" ]] && command -v cygpath >/dev/null 2>&1; then
+  WINDOWS_USER_CARGO_BIN="$(cygpath -u "${USERPROFILE}")/.cargo/bin"
+  if [[ -d "${WINDOWS_USER_CARGO_BIN}" ]]; then
+    export PATH="${WINDOWS_USER_CARGO_BIN}:${PATH}"
+  fi
+fi
+
 usage() {
   cat <<'USAGE'
 Usage: scripts/windows/build_windows_development.sh [--component NAME] [--dry-run]
@@ -72,6 +79,15 @@ case "${COMPONENT}" in
     exit 2
     ;;
 esac
+
+if (( ! DRY_RUN )); then
+  for required_tool in cmake cargo dotnet ninja; do
+    command -v "${required_tool}" >/dev/null 2>&1 || {
+      echo "Windows development build requires ${required_tool} on PATH." >&2
+      exit 2
+    }
+  done
+fi
 
 run cmake \
   -S "${REPO_ROOT}" \
