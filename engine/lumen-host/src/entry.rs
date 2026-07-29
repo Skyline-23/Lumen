@@ -323,11 +323,7 @@ fn run_c_entry(operation: impl FnOnce() -> Result<(), NativeHostRunError>) -> i3
 
 #[cfg(windows)]
 fn windows_startup_error_path() -> Option<std::path::PathBuf> {
-    std::env::var_os("ProgramData").map(|program_data| {
-        std::path::PathBuf::from(program_data)
-            .join("Lumen")
-            .join("host-startup-error.log")
-    })
+    crate::windows_service_log::program_data_lumen_path("host-startup-error.log")
 }
 
 #[cfg(windows)]
@@ -345,7 +341,7 @@ fn record_windows_startup_error(error: &NativeHostRunError) {
     let Some(directory) = path.parent() else {
         return;
     };
-    if std::fs::create_dir_all(&directory).is_err() {
+    if std::fs::create_dir_all(directory).is_err() {
         return;
     }
     let _ = std::fs::write(path, format!("{error}\n"));

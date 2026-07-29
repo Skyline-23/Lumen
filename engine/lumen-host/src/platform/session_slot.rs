@@ -1,6 +1,57 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
+
+const SESSION_ACTIVE: u8 = 0;
+const SESSION_COMMITTING: u8 = 1;
+const SESSION_RETIRED: u8 = 2;
+
+pub(super) struct SessionRetirementGate {
+    state: AtomicU8,
+}
+
+impl Default for SessionRetirementGate {
+    fn default() -> Self {
+        Self {
+            state: AtomicU8::new(SESSION_ACTIVE),
+        }
+    }
+}
+
+impl SessionRetirementGate {
+    pub(super) fn is_retired(&self) -> bool {
+        self.state.load(Ordering::Acquire) == SESSION_RETIRED
+    }
+
+    pub(super) fn commit_if_active<T>(
+        &self,
+        commit: impl FnOnce() -> Result<T, String>,
+    ) -> Result<T, String> {
+        self.state
+            .compare_exchange(
+                SESSION_ACTIVE,
+                SESSION_COMMITTING,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .map_err(|state| match state {
+                SESSION_RETIRED => "session epoch was retired before commit".to_owned(),
+                _ => "session epoch already has an in-flight commit".to_owned(),
+            })?;
+        let result = commit();
+        let _ = self.state.compare_exchange(
+            SESSION_COMMITTING,
+            SESSION_ACTIVE,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        );
+        result
+    }
+
+    pub(super) fn retire(&self) {
+        self.state.store(SESSION_RETIRED, Ordering::Release);
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum FrameDeliveryState {
@@ -80,7 +131,7 @@ impl FrameDeliveryOwnership {
 
 pub(super) struct AbandonableSession<T> {
     epoch: u32,
-    retired: Arc<AtomicBool>,
+    retirement_gate: Arc<SessionRetirementGate>,
     value: T,
 }
 
@@ -90,11 +141,11 @@ impl<T> AbandonableSession<T> {
     }
 
     pub(super) fn is_retired(&self) -> bool {
-        self.retired.load(Ordering::Acquire)
+        self.retirement_gate.is_retired()
     }
 
-    pub(super) fn retirement_flag(&self) -> Arc<AtomicBool> {
-        Arc::clone(&self.retired)
+    pub(super) fn retirement_gate(&self) -> Arc<SessionRetirementGate> {
+        Arc::clone(&self.retirement_gate)
     }
 
     pub(super) fn value(&self) -> &T {
@@ -129,7 +180,7 @@ impl<T> AbandonableSessionSlot<T> {
         }
         let session = Arc::new(AbandonableSession {
             epoch,
-            retired: Arc::new(AtomicBool::new(false)),
+            retirement_gate: Arc::new(SessionRetirementGate::default()),
             value,
         });
         *current = Some(Arc::clone(&session));
@@ -171,7 +222,7 @@ impl<T> AbandonableSessionSlot<T> {
             .map_err(|_| "abandonable session slot is poisoned")?
             .clone();
         if let Some(session) = &session {
-            session.retired.store(true, Ordering::Release);
+            session.retirement_gate.retire();
         }
         Ok(session)
     }
@@ -272,10 +323,51 @@ fn reap_finished_workers(workers: &mut Vec<JoinHandle<()>>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{AbandonableSessionSlot, FrameDeliveryOwnership, RetiredWorkerRegistry};
+    use super::{
+        AbandonableSessionSlot, FrameDeliveryOwnership, RetiredWorkerRegistry,
+        SessionRetirementGate,
+    };
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{mpsc, Arc, Mutex};
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn retired_epoch_cannot_commit_a_late_success() {
+        let gate = Arc::new(SessionRetirementGate::default());
+        let persisted = Arc::new(AtomicUsize::new(0));
+        let (applied_send, applied_receive) = mpsc::sync_channel(1);
+        let (release_send, release_receive) = mpsc::sync_channel(1);
+        let worker_gate = Arc::clone(&gate);
+        let worker_persisted = Arc::clone(&persisted);
+        let worker = std::thread::spawn(move || {
+            applied_send.send(()).unwrap();
+            release_receive.recv().unwrap();
+            worker_gate.commit_if_active(|| {
+                worker_persisted.fetch_add(1, Ordering::AcqRel);
+                Ok(())
+            })
+        });
+
+        applied_receive.recv().unwrap();
+        gate.retire();
+        release_send.send(()).unwrap();
+
+        assert!(worker.join().unwrap().is_err());
+        assert_eq!(persisted.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn active_epoch_commits_one_success() {
+        let gate = SessionRetirementGate::default();
+        let persisted = AtomicUsize::new(0);
+        gate.commit_if_active(|| {
+            persisted.fetch_add(1, Ordering::AcqRel);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(persisted.load(Ordering::Acquire), 1);
+        assert!(!gate.is_retired());
+    }
 
     #[test]
     fn stalled_policy_allows_bounded_stop_and_isolated_replacement_epoch() {

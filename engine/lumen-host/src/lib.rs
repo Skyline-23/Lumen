@@ -22,6 +22,8 @@ mod windows_app;
 mod windows_management;
 #[cfg(windows)]
 mod windows_service;
+#[cfg(any(test, windows))]
+mod windows_service_log;
 mod worker;
 
 pub use authority::{HostAuthorities, HostAuthorityError, HostAuthorityPaths};

@@ -678,11 +678,7 @@ fn wide(value: &str) -> Vec<u16> {
 }
 
 fn service_error_path() -> Option<std::path::PathBuf> {
-    std::env::var_os("ProgramData").map(|program_data| {
-        std::path::PathBuf::from(program_data)
-            .join("Lumen")
-            .join("service-error.log")
-    })
+    crate::windows_service_log::program_data_lumen_path("service-error.log")
 }
 
 fn clear_service_error() {
@@ -698,7 +694,7 @@ fn record_service_error(error: &ServiceError) {
     let Some(directory) = path.parent() else {
         return;
     };
-    if std::fs::create_dir_all(&directory).is_err() {
+    if std::fs::create_dir_all(directory).is_err() {
         return;
     }
     let body = format!("{} (Windows error {})\n", error.message, error.code);

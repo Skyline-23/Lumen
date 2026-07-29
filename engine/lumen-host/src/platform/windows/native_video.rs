@@ -2,7 +2,7 @@ use std::ffi::c_void;
 use std::mem::ManuallyDrop;
 use std::ptr;
 use std::slice;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -36,8 +36,9 @@ use windows_api::Win32::System::Variant::{VariantClear, VARIANT, VT_UI4};
 use super::native_capture::{NativeEncoderSurface, NativeIddCxCapture};
 use super::native_display_driver::DriverHandle;
 use crate::platform::session_slot::{
-    AbandonableSessionSlot, FrameDeliveryOwnership, RetiredWorkerRegistry,
+    AbandonableSessionSlot, FrameDeliveryOwnership, RetiredWorkerRegistry, SessionRetirementGate,
 };
+use crate::windows_service_log::{WindowsAdaptiveVideoApplyEvent, WindowsServiceEventSink};
 use crate::{
     PlatformChromaSubsampling, PlatformDynamicRange, PlatformSessionPlan, PlatformVideoCodec,
 };
@@ -52,8 +53,10 @@ type NativeVideoSink =
 
 pub(super) struct NativeMediaFoundation {
     sink: NativeVideoSink,
+    adaptive_event_log: Arc<dyn WindowsServiceEventSink>,
     sessions: AbandonableSessionSlot<NativeMediaFoundationSession>,
     retired_workers: RetiredWorkerRegistry,
+    next_encoder_epoch: AtomicU64,
 }
 
 struct NativeMediaFoundationSession {
@@ -62,6 +65,18 @@ struct NativeMediaFoundationSession {
     capture_control: Mutex<Option<DriverHandle>>,
     worker: Mutex<Option<thread::JoinHandle<()>>>,
     frame_delivery: Arc<FrameDeliveryOwnership>,
+}
+
+struct NativeMediaFoundationWorker {
+    plan: NativeVideoEncoderPlan,
+    driver: DriverHandle,
+    commands: mpsc::Receiver<NativeMediaFoundationCommand>,
+    ready: mpsc::SyncSender<Result<(), String>>,
+    sink: NativeVideoSink,
+    state: Arc<Mutex<NativeVideoWorkerState>>,
+    retirement_gate: Arc<SessionRetirementGate>,
+    frame_delivery: Arc<FrameDeliveryOwnership>,
+    adaptive_event_log: Arc<dyn WindowsServiceEventSink>,
 }
 
 #[derive(Default)]
@@ -106,6 +121,8 @@ struct NativeVideoRuntime {
     repair_keyframe_pending: bool,
     admission_divisor: u8,
     admissions_until_next: u8,
+    retirement_gate: Arc<SessionRetirementGate>,
+    adaptive_event_log: Arc<dyn WindowsServiceEventSink>,
 }
 
 enum NativeMediaFoundationCommand {
@@ -126,6 +143,7 @@ enum NativeMediaFoundationCommand {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct NativeVideoEncoderPlan {
     session_epoch: u32,
+    encoder_epoch: u64,
     codec: PlatformVideoCodec,
     width: u32,
     height: u32,
@@ -136,11 +154,16 @@ struct NativeVideoEncoderPlan {
 }
 
 impl NativeMediaFoundation {
-    pub(super) fn start(sink: NativeVideoSink) -> Self {
+    pub(super) fn start(
+        sink: NativeVideoSink,
+        adaptive_event_log: Arc<dyn WindowsServiceEventSink>,
+    ) -> Self {
         Self {
             sink,
+            adaptive_event_log,
             sessions: AbandonableSessionSlot::default(),
             retired_workers: RetiredWorkerRegistry::new(MAXIMUM_RETIRED_MEDIA_FOUNDATION_WORKERS),
+            next_encoder_epoch: AtomicU64::new(1),
         }
     }
 
@@ -149,13 +172,19 @@ impl NativeMediaFoundation {
         plan: PlatformSessionPlan,
         driver: DriverHandle,
     ) -> Result<(), String> {
-        let plan = NativeVideoEncoderPlan::try_from(plan)?;
+        let mut plan = NativeVideoEncoderPlan::try_from(plan)?;
         if self.sessions.current().map_err(str::to_owned)?.is_some() {
             return Err("Windows native video session is already running".to_owned());
         }
         self.retired_workers.ensure_capacity().map_err(|error| {
             format!("Windows Media Foundation session start is fail-closed: {error}")
         })?;
+        plan.encoder_epoch = self
+            .next_encoder_epoch
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |epoch| {
+                epoch.checked_add(1)
+            })
+            .map_err(|_| "Windows Media Foundation encoder epoch overflowed".to_owned())?;
         let capture_control = driver.duplicate()?;
         let (commands, command_receiver) = mpsc::sync_channel(4);
         let (ready_sender, ready_receiver) = mpsc::sync_channel(1);
@@ -174,23 +203,24 @@ impl NativeMediaFoundation {
                 },
             )
             .map_err(str::to_owned)?;
-        let retired = session.retirement_flag();
+        let retirement_gate = session.retirement_gate();
         let sink = Arc::clone(&self.sink);
+        let adaptive_event_log = Arc::clone(&self.adaptive_event_log);
         let session_epoch = plan.session_epoch;
+        let worker_context = NativeMediaFoundationWorker {
+            plan,
+            driver,
+            commands: command_receiver,
+            ready: ready_sender,
+            sink,
+            state,
+            retirement_gate,
+            frame_delivery,
+            adaptive_event_log,
+        };
         let spawn = thread::Builder::new()
             .name(format!("lumen-windows-media-foundation-{session_epoch}"))
-            .spawn(move || {
-                run_media_foundation_session(
-                    plan,
-                    driver,
-                    command_receiver,
-                    ready_sender,
-                    sink,
-                    state,
-                    retired,
-                    frame_delivery,
-                )
-            });
+            .spawn(move || run_media_foundation_session(worker_context));
         let worker = match spawn {
             Ok(worker) => worker,
             Err(error) => {
@@ -328,16 +358,18 @@ impl Drop for NativeMediaFoundation {
     }
 }
 
-fn run_media_foundation_session(
-    plan: NativeVideoEncoderPlan,
-    driver: DriverHandle,
-    commands: mpsc::Receiver<NativeMediaFoundationCommand>,
-    ready: mpsc::SyncSender<Result<(), String>>,
-    sink: NativeVideoSink,
-    state: Arc<Mutex<NativeVideoWorkerState>>,
-    retired: Arc<AtomicBool>,
-    frame_delivery: Arc<FrameDeliveryOwnership>,
-) {
+fn run_media_foundation_session(worker: NativeMediaFoundationWorker) {
+    let NativeMediaFoundationWorker {
+        plan,
+        driver,
+        commands,
+        ready,
+        sink,
+        state,
+        retirement_gate,
+        frame_delivery,
+        adaptive_event_log,
+    } = worker;
     let session_epoch = plan.session_epoch;
     if let Err(error) = unsafe { MFStartup(MF_VERSION, MFSTARTUP_FULL) } {
         let _ = ready.send(Err(format!(
@@ -353,7 +385,15 @@ fn run_media_foundation_session(
             return;
         }
     };
-    let mut runtime = match start_runtime(&catalog, plan, driver, &sink, frame_delivery) {
+    let mut runtime = match start_runtime(
+        &catalog,
+        plan,
+        driver,
+        &sink,
+        frame_delivery,
+        Arc::clone(&retirement_gate),
+        adaptive_event_log,
+    ) {
         Ok(runtime) => Some(runtime),
         Err(error) => {
             set_worker_state(&state, false, Some(error.clone()));
@@ -370,7 +410,7 @@ fn run_media_foundation_session(
         let _ = unsafe { MFShutdown() };
         return;
     }
-    while !retired.load(Ordering::Acquire) {
+    while !retirement_gate.is_retired() {
         let command = match commands.try_recv() {
             Ok(command) => Some(command),
             Err(mpsc::TryRecvError::Empty) => None,
@@ -434,7 +474,7 @@ fn run_media_foundation_session(
         match encoded.and_then(|sample| {
             if let Some(sample) = sample {
                 let pause_for_bootstrap = sample_requires_bootstrap_pause(&sample, false);
-                if retired.load(Ordering::Acquire) {
+                if retirement_gate.is_retired() {
                     return Ok(());
                 }
                 let request_key_frame = sink(session_epoch, sample)?;
@@ -490,6 +530,8 @@ fn start_runtime(
     driver: DriverHandle,
     sink: &NativeVideoSink,
     frame_delivery: Arc<FrameDeliveryOwnership>,
+    retirement_gate: Arc<SessionRetirementGate>,
+    adaptive_event_log: Arc<dyn WindowsServiceEventSink>,
 ) -> Result<NativeVideoRuntime, String> {
     let capture = NativeIddCxCapture::open(driver, plan.ten_bit, frame_delivery)?;
     let encoder = catalog.activate(plan, capture.device())?;
@@ -502,6 +544,8 @@ fn start_runtime(
         repair_keyframe_pending: false,
         admission_divisor: 1,
         admissions_until_next: 0,
+        retirement_gate,
+        adaptive_event_log,
     };
     runtime.encoder.force_key_frame()?;
     let deadline = Instant::now() + INITIAL_FRAME_TIMEOUT;
@@ -668,7 +712,16 @@ impl NativeVideoRuntime {
         if !(1..=4).contains(&admission_divisor) {
             return Err("Windows video admission divisor is outside 1...4".to_owned());
         }
-        self.encoder.set_bitrate(bitrate_bps)?;
+        let applied_bitrate_bps = self.encoder.set_bitrate(bitrate_bps)?;
+        self.retirement_gate.commit_if_active(|| {
+            let event = WindowsAdaptiveVideoApplyEvent::now(
+                self.plan.session_epoch,
+                self.plan.encoder_epoch,
+                bitrate_bps,
+                applied_bitrate_bps,
+            )?;
+            self.adaptive_event_log.record_adaptive_video_apply(&event)
+        })?;
         self.admission_divisor = admission_divisor;
         self.admissions_until_next = 0;
         Ok(())
@@ -761,7 +814,7 @@ fn take_video_timestamp(next: &mut i64, frame_duration_hns: i64) -> Result<i64, 
 }
 
 impl NativeVideoEncoderSession {
-    fn set_bitrate(&self, bitrate_bps: u32) -> Result<(), String> {
+    fn set_bitrate(&self, bitrate_bps: u32) -> Result<u32, String> {
         if bitrate_bps == 0 {
             return Err("Windows adaptive video bitrate must be nonzero".to_owned());
         }
@@ -803,7 +856,7 @@ impl NativeVideoEncoderSession {
                 "Windows encoder mean bitrate readback mismatch requested={bitrate_bps} applied={applied}"
             ));
         }
-        Ok(())
+        Ok(applied)
     }
 
     fn validate_bitrate_parameter(&self, bitrate_bps: u32) -> Result<(), String> {
@@ -1187,6 +1240,7 @@ impl TryFrom<PlatformSessionPlan> for NativeVideoEncoderPlan {
             .ok_or_else(|| "Windows Media Foundation encoder bitrate is invalid".to_owned())?;
         Ok(Self {
             session_epoch: plan.session_epoch,
+            encoder_epoch: 0,
             codec: plan.video_format.codec,
             width: plan.width,
             height: plan.height,
@@ -1389,6 +1443,7 @@ mod tests {
     fn plan(ten_bit: bool) -> NativeVideoEncoderPlan {
         NativeVideoEncoderPlan {
             session_epoch: 1,
+            encoder_epoch: 1,
             codec: PlatformVideoCodec::Hevc,
             width: 3_840,
             height: 2_160,

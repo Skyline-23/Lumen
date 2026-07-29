@@ -10,6 +10,7 @@ use super::media_queue::WindowsMediaPacketQueues;
 use super::native_audio::{self, NativeAudioConfiguration};
 use super::native_display_driver::DriverHandle;
 use super::native_video::{NativeEncodedVideoSample, NativeMediaFoundation};
+use crate::windows_service_log::WindowsServiceEventLog;
 
 const MAXIMUM_VIDEO_BUFFER_BYTES: usize = 32 * 1024 * 1024;
 
@@ -117,11 +118,13 @@ impl NativeWindowsMedia {
         let audio_configuration = NativeAudioConfiguration::from_arguments(arguments)?;
         let packets = Arc::new(PacketQueueContext::default());
         let video_packets = Arc::clone(&packets);
-        let media_foundation = NativeMediaFoundation::start(Arc::new(
-            move |session_epoch, sample: NativeEncodedVideoSample| {
+        let adaptive_event_log = Arc::new(WindowsServiceEventLog::from_program_data()?);
+        let media_foundation = NativeMediaFoundation::start(
+            Arc::new(move |session_epoch, sample: NativeEncodedVideoSample| {
                 video_packets.push_video(session_epoch, sample)
-            },
-        ));
+            }),
+            adaptive_event_log,
+        );
         Ok(Self {
             packets,
             audio_configuration,
