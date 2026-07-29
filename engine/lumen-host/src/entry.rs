@@ -298,19 +298,55 @@ pub unsafe extern "C" fn lumen_host_run_with_platform(
 }
 
 fn run_c_entry(operation: impl FnOnce() -> Result<(), NativeHostRunError>) -> i32 {
+    #[cfg(windows)]
+    clear_windows_startup_error();
     let result = catch_unwind(AssertUnwindSafe(operation));
     match result {
         Ok(Ok(())) => 0,
         Ok(Err(error)) => {
             eprintln!("Lumen Rust host {error}");
+            #[cfg(windows)]
+            record_windows_startup_error(&error);
             error.exit_code()
         }
         Err(_) => {
             let error = NativeHostRunError::Panic;
             eprintln!("Lumen Rust host {error}");
+            #[cfg(windows)]
+            record_windows_startup_error(&error);
             error.exit_code()
         }
     }
+}
+
+#[cfg(windows)]
+fn windows_startup_error_path() -> Option<std::path::PathBuf> {
+    std::env::var_os("ProgramData").map(|program_data| {
+        std::path::PathBuf::from(program_data)
+            .join("Lumen")
+            .join("host-startup-error.log")
+    })
+}
+
+#[cfg(windows)]
+fn clear_windows_startup_error() {
+    if let Some(path) = windows_startup_error_path() {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+#[cfg(windows)]
+fn record_windows_startup_error(error: &NativeHostRunError) {
+    let Some(path) = windows_startup_error_path() else {
+        return;
+    };
+    let Some(directory) = path.parent() else {
+        return;
+    };
+    if std::fs::create_dir_all(&directory).is_err() {
+        return;
+    }
+    let _ = std::fs::write(path, format!("{error}\n"));
 }
 
 #[cfg(unix)]
