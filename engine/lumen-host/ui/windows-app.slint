@@ -75,17 +75,23 @@ component NavigationRow inherits Rectangle {
     HorizontalLayout {
         padding-left: 11px;
         padding-right: 10px;
-        alignment: center;
         spacing: 10px;
-        NavigationIconSlot {
-            icon: root.icon;
-            tint: root.selected ? #e95728 : #56534c;
+        Rectangle {
+            width: 22px;
+            horizontal-stretch: 0;
+            background: transparent;
+            NavigationIconSlot {
+                y: (parent.height - self.height) / 2;
+                icon: root.icon;
+                tint: root.selected ? #e95728 : #56534c;
+            }
         }
         Text {
             text: root.title;
             color: root.selected ? #8f3218 : #282724;
             font-size: 13px;
             font-weight: root.selected ? 600 : 400;
+            horizontal-stretch: 1;
             vertical-alignment: center;
         }
     }
