@@ -7,8 +7,10 @@ struct LumenReleaseContractTests {
     func windowsReleaseUsesOneMSIContract() throws {
         let root = try repositoryRoot()
         let release = try source(".github/workflows/release.yml", from: root)
+        let readme = try source("README.md", from: root)
         let releasingGuide = try source("docs/releasing.md", from: root)
         let installingGuide = try source("docs/installing.md", from: root)
+        let wixPackage = try source("packaging/windows/Package.wxs", from: root)
         let signPathConfiguration = try source(
             "packaging/windows/signpath-artifact-configuration.xml",
             from: root
@@ -48,8 +50,17 @@ struct LumenReleaseContractTests {
                 #"<catalog-file path="driver/lumeniddcx.cat">"#
             )
         )
+        #expect(
+            signPathConfiguration.contains(
+                #"<pe-file path="scripts/vigembus_installer.exe">"#
+            )
+        )
+        #expect(signPathConfiguration.contains(#"<authenticode-verify />"#))
         #expect(!signPathConfiguration.contains(#"<pe-file path="driver/LumenIddCx.dll">"#))
+        #expect(wixPackage.contains(#"AllowSameVersionUpgrades="yes""#))
 
+        #expect(readme.contains("x86-64 MSI installer"))
+        #expect(!readme.contains("NSIS"))
         #expect(!releasingGuide.contains("Windows-x86_64.exe"))
         #expect(!releasingGuide.contains("NSIS"))
         #expect(!installingGuide.contains("Windows-x86_64.exe"))

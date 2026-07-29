@@ -14,6 +14,9 @@
       <catalog-file path="driver/lumeniddcx.cat">
         <authenticode-sign />
       </catalog-file>
+      <pe-file path="scripts/vigembus_installer.exe">
+        <authenticode-verify />
+      </pe-file>
       <authenticode-sign />
     </msi-file>
   </zip-file>
