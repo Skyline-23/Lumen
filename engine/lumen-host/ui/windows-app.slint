@@ -1,4 +1,4 @@
-import { AboutSlint, ComboBox, LineEdit, ScrollView, Switch } from "std-widgets.slint";
+import { AboutSlint, ComboBox, LineEdit, ScrollView } from "std-widgets.slint";
 
 component ActionButton inherits Rectangle {
     in property <string> text;
@@ -34,22 +34,56 @@ component FeatureRow inherits HorizontalLayout {
     Text { text: root.title; color: #5d5b56; font-size: 13px; vertical-alignment: center; }
 }
 
+component NavigationIconSlot inherits Rectangle {
+    in property <image> icon;
+    in property <color> color;
+    width: 22px;
+    height: 22px;
+    horizontal-stretch: 0;
+    vertical-stretch: 0;
+    background: transparent;
+
+    Image {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        source: root.icon;
+        width: 18px;
+        height: 18px;
+        image-fit: contain;
+        colorize: root.color;
+    }
+}
+
 component NavigationRow inherits Rectangle {
     in property <image> icon;
     in property <string> title;
     in property <bool> selected;
     callback clicked();
-    height: 34px;
-    border-radius: 7px;
-    background: root.selected ? #dfdfda : touch.has-hover ? #e9e9e5 : transparent;
+    height: 38px;
+    border-radius: 9px;
+    background: root.selected ? #fff1e9 : touch.has-hover ? #e9e9e5 : transparent;
+
+    if root.selected: Rectangle {
+        x: 0px;
+        y: 9px;
+        width: 3px;
+        height: 20px;
+        border-radius: 2px;
+        background: #f05724;
+    }
+
     HorizontalLayout {
-        padding-left: 10px;
-        padding-right: 8px;
-        spacing: 9px;
-        Image { source: root.icon; width: 17px; height: 17px; image-fit: contain; }
+        padding-left: 11px;
+        padding-right: 10px;
+        alignment: center;
+        spacing: 10px;
+        NavigationIconSlot {
+            icon: root.icon;
+            color: root.selected ? #e95728 : #56534c;
+        }
         Text {
             text: root.title;
-            color: #282724;
+            color: root.selected ? #8f3218 : #282724;
             font-size: 13px;
             font-weight: root.selected ? 600 : 400;
             vertical-alignment: center;
@@ -99,22 +133,167 @@ component SectionPanel inherits Rectangle {
     background: #ffffff;
 }
 
-component SettingRow inherits Rectangle {
+component LumenSwitch inherits Rectangle {
+    in property <bool> checked;
+    in property <bool> enabled: true;
+    callback toggled(bool);
+    width: 42px;
+    height: 24px;
+    horizontal-stretch: 0;
+    vertical-stretch: 0;
+    border-radius: 12px;
+    border-width: root.checked ? 0px : 1px;
+    border-color: #aaa79f;
+    background: !root.enabled ? #e0dfda : root.checked ? #f05724 : touch.has-hover ? #e7e5df : #efeee9;
+
+    Rectangle {
+        x: root.checked ? parent.width - self.width - 3px : 3px;
+        y: 3px;
+        width: 18px;
+        height: 18px;
+        border-radius: 9px;
+        background: root.enabled ? #ffffff : #f5f4f0;
+        drop-shadow-blur: 3px;
+        drop-shadow-offset-y: 1px;
+        drop-shadow-color: #0000002b;
+        animate x { duration: 120ms; easing: ease-out; }
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.toggled(!root.checked); }
+    }
+}
+
+component SettingToggleRow inherits Rectangle {
     in property <string> title;
     in property <string> detail;
-    in property <bool> checked: false;
-    height: root.detail == "" ? 44px : 60px;
+    in property <bool> checked;
+    in property <bool> enabled: true;
+    callback toggled(bool);
+    height: root.detail == "" ? 52px : 66px;
+    background: transparent;
+
+    Rectangle {
+        x: 16px;
+        y: parent.height - 1px;
+        width: parent.width - 32px;
+        height: 1px;
+        background: #ebe9e3;
+    }
+
     HorizontalLayout {
-        padding-left: 14px;
-        padding-right: 14px;
-        spacing: 12px;
+        padding-left: 18px;
+        padding-right: 18px;
+        alignment: center;
+        spacing: 16px;
         VerticalLayout {
             spacing: 2px;
             alignment: center;
-            Text { text: root.title; color: #24231f; font-size: 13px; }
-            if root.detail != "": Text { text: root.detail; color: #7a7770; font-size: 11px; wrap: word-wrap; }
+            Text { text: root.title; color: #24231f; font-size: 13px; font-weight: 500; }
+            if root.detail != "": Text {
+                text: root.detail;
+                color: #7a7770;
+                font-size: 11px;
+                wrap: word-wrap;
+            }
         }
-        Switch { checked: root.checked; }
+        LumenSwitch {
+            checked: root.checked;
+            enabled: root.enabled;
+            toggled(value) => { root.toggled(value); }
+        }
+    }
+}
+
+component SettingValueRow inherits Rectangle {
+    in property <string> title;
+    in property <string> detail;
+    in property <string> value;
+    height: root.detail == "" ? 52px : 66px;
+    background: transparent;
+
+    Rectangle {
+        x: 16px;
+        y: parent.height - 1px;
+        width: parent.width - 32px;
+        height: 1px;
+        background: #ebe9e3;
+    }
+
+    HorizontalLayout {
+        padding-left: 18px;
+        padding-right: 18px;
+        alignment: center;
+        spacing: 16px;
+        VerticalLayout {
+            spacing: 2px;
+            alignment: center;
+            Text { text: root.title; color: #24231f; font-size: 13px; font-weight: 500; }
+            if root.detail != "": Text {
+                text: root.detail;
+                color: #7a7770;
+                font-size: 11px;
+                wrap: word-wrap;
+            }
+        }
+        Text {
+            text: root.value;
+            color: #6f6b63;
+            font-size: 12px;
+            font-weight: 500;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+        }
+    }
+}
+
+component SettingCommandRow inherits Rectangle {
+    in property <string> title;
+    in property <string> detail;
+    in property <int> count;
+    height: 66px;
+    background: transparent;
+
+    Rectangle {
+        x: 16px;
+        y: parent.height - 1px;
+        width: parent.width - 32px;
+        height: 1px;
+        background: #ebe9e3;
+    }
+
+    HorizontalLayout {
+        padding-left: 18px;
+        padding-right: 18px;
+        alignment: center;
+        spacing: 16px;
+        VerticalLayout {
+            spacing: 2px;
+            alignment: center;
+            Text { text: root.title; color: #24231f; font-size: 13px; font-weight: 500; }
+            Text {
+                text: root.detail;
+                color: #7a7770;
+                font-size: 11px;
+                wrap: word-wrap;
+            }
+        }
+        Rectangle {
+            width: 88px;
+            height: 26px;
+            horizontal-stretch: 0;
+            border-radius: 13px;
+            background: root.count > 0 ? #fff0e8 : #f2f1ec;
+            Text {
+                text: root.count == 1 ? @tr("1 configured") : "\{root.count} " + @tr("configured");
+                color: root.count > 0 ? #b84420 : #77746d;
+                font-size: 10px;
+                font-weight: 600;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
     }
 }
 
@@ -141,6 +320,27 @@ export component LumenWindowsApp inherits Window {
     in property <[string]> application-names: [];
     in property <bool> system-authentication-enabled: false;
     in property <string> system-authentication-label: @tr("Unlock with Windows Hello");
+    in property <bool> discovery-enabled: true;
+    in property <bool> pre-release-notifications-enabled: false;
+    in property <string> streaming-adapter: @tr("Automatic");
+    in property <string> fallback-display-mode: "1920x1080x60";
+    in property <bool> stream-audio-enabled: true;
+    in property <string> audio-sink: @tr("System default");
+    in property <bool> keyboard-enabled: true;
+    in property <bool> mouse-enabled: true;
+    in property <bool> controller-enabled: true;
+    in property <bool> right-alt-mapping-enabled: false;
+    in property <bool> high-resolution-scrolling-enabled: true;
+    in property <bool> native-pen-touch-enabled: true;
+    in property <bool> rumble-forwarding-enabled: true;
+    in property <bool> upnp-enabled: false;
+    in property <string> address-family: "IPv4";
+    in property <string> lan-encryption: @tr("Disabled");
+    in property <string> wan-encryption: @tr("Opportunistic");
+    in property <int> fec-percentage: 20;
+    in property <int> preparation-command-count: 0;
+    in property <int> state-command-count: 0;
+    in property <int> server-command-count: 0;
 
     callback create-owner(string, string, string);
     callback login(string);
@@ -150,6 +350,7 @@ export component LumenWindowsApp inherits Window {
     callback force-stop-stream();
     callback restart-host();
     callback quit-host();
+    callback update-boolean-setting(int, bool);
 
     title: "Lumen";
     icon: @image-url("../../../icon.svg");
@@ -369,20 +570,39 @@ export component LumenWindowsApp inherits Window {
     if root.auth-mode == 2: HorizontalLayout {
         spacing: 0px;
         Rectangle {
-            width: 210px;
+            width: 224px;
             horizontal-stretch: 0;
-            background: #f1f1ee;
+            background: #f4f3ef;
             border-width: 0px;
             VerticalLayout {
-                padding-left: 12px;
-                padding-right: 12px;
-                padding-top: 14px;
-                padding-bottom: 12px;
+                padding-left: 14px;
+                padding-right: 14px;
+                padding-top: 16px;
+                padding-bottom: 14px;
                 spacing: 4px;
+                HorizontalLayout {
+                    height: 42px;
+                    vertical-stretch: 0;
+                    spacing: 10px;
+                    Image {
+                        source: @image-url("../../../icon.svg");
+                        width: 26px;
+                        height: 26px;
+                        image-fit: contain;
+                    }
+                    Text {
+                        text: "Lumen";
+                        color: #24231f;
+                        font-size: 15px;
+                        font-weight: 650;
+                        vertical-alignment: center;
+                    }
+                }
+                Rectangle { height: 4px; background: transparent; }
                 NavigationRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/overview.svg"); title: @tr("Overview"); selected: root.navigation == 0; clicked => { root.navigate(0); } }
                 NavigationRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/applications.svg"); title: @tr("Applications"); selected: root.navigation == 1; clicked => { root.navigate(1); } }
-                Rectangle { height: 13px; background: transparent; }
-                Text { text: @tr("SETTINGS"); color: #96938b; font-size: 10px; font-weight: 600; }
+                Rectangle { height: 11px; background: transparent; }
+                Text { text: @tr("SETTINGS"); color: #96938b; font-size: 9px; font-weight: 650; }
                 NavigationRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/unlock.svg"); title: @tr("Security"); selected: root.navigation == 2; clicked => { root.navigate(2); } }
                 NavigationRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/settings.svg"); title: @tr("General"); selected: root.navigation == 3; clicked => { root.navigate(3); } }
                 NavigationRow { icon: @image-url("../../../src_assets/common/assets/icons/ui/current-stream.svg"); title: @tr("Streaming"); selected: root.navigation == 4; clicked => { root.navigate(4); } }
@@ -512,20 +732,158 @@ export component LumenWindowsApp inherits Window {
                         border-width: 1px;
                         border-color: #deddd8;
                         background: #ffffff;
-                        min-height: 250px;
+                        vertical-stretch: 0;
+                        height: root.navigation == 2 ? 118px
+                            : root.navigation == 3 ? 170px
+                            : root.navigation == 4 ? 132px
+                            : root.navigation == 5 ? 118px
+                            : root.navigation == 6 ? 364px
+                            : root.navigation == 7 ? 326px
+                            : 198px;
                         VerticalLayout {
-                            if root.navigation == 2: SettingRow { title: @tr("Unlock with Windows Hello"); detail: @tr("System authentication is not enabled."); checked: false; }
-                            if root.navigation == 2: ActionButton { width: 110px; text: @tr("Lock now"); clicked => { root.lock(); } }
-                            if root.navigation == 3: SettingRow { title: @tr("Computer name"); detail: root.host-name; }
-                            if root.navigation == 3: SettingRow { title: @tr("Discoverable on the local network"); detail: ""; checked: true; }
-                            if root.navigation == 5: SettingRow { title: @tr("Stream computer audio"); detail: ""; checked: true; }
-                            if root.navigation == 6: SettingRow { title: @tr("Keyboard input"); detail: ""; checked: true; }
-                            if root.navigation == 6: SettingRow { title: @tr("Mouse input"); detail: ""; checked: true; }
-                            if root.navigation == 6: SettingRow { title: @tr("Game controller input"); detail: ""; checked: true; }
-                            if root.navigation == 7: SettingRow { title: @tr("Port"); detail: "\{root.control-port}"; }
-                            if root.navigation == 7: SettingRow { title: @tr("UPnP port mapping"); detail: ""; checked: false; }
-                            if root.navigation == 8: SettingRow { title: @tr("Preparation commands"); detail: @tr("Configure commands that run before a streamed application starts."); }
-                            if root.navigation == 8: SettingRow { title: @tr("Server commands"); detail: @tr("Commands available to connected clients."); }
+                            if root.navigation == 2: SettingToggleRow {
+                                title: @tr("Unlock with Windows Hello");
+                                detail: root.system-authentication-enabled
+                                    ? @tr("Use Windows Hello to unlock management settings.")
+                                    : @tr("System authentication is not enabled.");
+                                checked: root.system-authentication-enabled;
+                                enabled: false;
+                            }
+                            if root.navigation == 2: HorizontalLayout {
+                                height: 50px;
+                                vertical-stretch: 0;
+                                padding-left: 18px;
+                                padding-right: 18px;
+                                alignment: center;
+                                ActionButton { width: 104px; text: @tr("Lock now"); clicked => { root.lock(); } }
+                                Rectangle { horizontal-stretch: 1; background: transparent; }
+                            }
+                            if root.navigation == 3: SettingValueRow {
+                                title: @tr("Computer name");
+                                detail: @tr("The name shown to connected clients.");
+                                value: root.host-name;
+                            }
+                            if root.navigation == 3: SettingToggleRow {
+                                title: @tr("Discoverable on the local network");
+                                detail: "";
+                                checked: root.discovery-enabled;
+                                toggled(value) => { root.update-boolean-setting(0, value); }
+                            }
+                            if root.navigation == 3: SettingToggleRow {
+                                title: @tr("Notify about pre-release updates");
+                                detail: "";
+                                checked: root.pre-release-notifications-enabled;
+                                toggled(value) => { root.update-boolean-setting(1, value); }
+                            }
+                            if root.navigation == 4: SettingValueRow {
+                                title: @tr("Graphics adapter");
+                                detail: @tr("Selected by the host runtime.");
+                                value: root.streaming-adapter;
+                            }
+                            if root.navigation == 4: SettingValueRow {
+                                title: @tr("Fallback display mode");
+                                detail: @tr("Used when a client does not request a display mode.");
+                                value: root.fallback-display-mode;
+                            }
+                            if root.navigation == 5: SettingToggleRow {
+                                title: @tr("Stream computer audio");
+                                detail: @tr("Capture the active Windows audio mix for connected clients.");
+                                checked: root.stream-audio-enabled;
+                                toggled(value) => { root.update-boolean-setting(2, value); }
+                            }
+                            if root.navigation == 5: SettingValueRow {
+                                title: @tr("Audio device");
+                                detail: "";
+                                value: root.audio-sink;
+                            }
+                            if root.navigation == 6: SettingToggleRow {
+                                title: @tr("Keyboard input");
+                                detail: "";
+                                checked: root.keyboard-enabled;
+                                toggled(value) => { root.update-boolean-setting(3, value); }
+                            }
+                            if root.navigation == 6: SettingToggleRow {
+                                title: @tr("Mouse input");
+                                detail: "";
+                                checked: root.mouse-enabled;
+                                toggled(value) => { root.update-boolean-setting(4, value); }
+                            }
+                            if root.navigation == 6: SettingToggleRow {
+                                title: @tr("Game controller input");
+                                detail: "";
+                                checked: root.controller-enabled;
+                                toggled(value) => { root.update-boolean-setting(5, value); }
+                            }
+                            if root.navigation == 6: SettingToggleRow {
+                                title: @tr("Map Right Alt to the Windows key");
+                                detail: "";
+                                checked: root.right-alt-mapping-enabled;
+                                toggled(value) => { root.update-boolean-setting(6, value); }
+                            }
+                            if root.navigation == 6: SettingToggleRow {
+                                title: @tr("High-resolution scrolling");
+                                detail: "";
+                                checked: root.high-resolution-scrolling-enabled;
+                                toggled(value) => { root.update-boolean-setting(7, value); }
+                            }
+                            if root.navigation == 6: SettingToggleRow {
+                                title: @tr("Native pen and touch");
+                                detail: "";
+                                checked: root.native-pen-touch-enabled;
+                                toggled(value) => { root.update-boolean-setting(8, value); }
+                            }
+                            if root.navigation == 6: SettingToggleRow {
+                                title: @tr("Forward controller rumble");
+                                detail: "";
+                                checked: root.rumble-forwarding-enabled;
+                                toggled(value) => { root.update-boolean-setting(9, value); }
+                            }
+                            if root.navigation == 7: SettingValueRow {
+                                title: @tr("Control port");
+                                detail: @tr("HTTPS management endpoint.");
+                                value: "\{root.control-port}";
+                            }
+                            if root.navigation == 7: SettingValueRow {
+                                title: @tr("Address family");
+                                detail: "";
+                                value: root.address-family;
+                            }
+                            if root.navigation == 7: SettingToggleRow {
+                                title: @tr("UPnP port mapping");
+                                detail: "";
+                                checked: root.upnp-enabled;
+                                toggled(value) => { root.update-boolean-setting(10, value); }
+                            }
+                            if root.navigation == 7: SettingValueRow {
+                                title: @tr("LAN encryption");
+                                detail: "";
+                                value: root.lan-encryption;
+                            }
+                            if root.navigation == 7: SettingValueRow {
+                                title: @tr("WAN encryption");
+                                detail: "";
+                                value: root.wan-encryption;
+                            }
+                            if root.navigation == 7: SettingValueRow {
+                                title: @tr("Forward error correction");
+                                detail: "";
+                                value: "\{root.fec-percentage}%";
+                            }
+                            if root.navigation == 8: SettingCommandRow {
+                                title: @tr("Preparation commands");
+                                detail: @tr("Run before a streamed application starts.");
+                                count: root.preparation-command-count;
+                            }
+                            if root.navigation == 8: SettingCommandRow {
+                                title: @tr("State commands");
+                                detail: @tr("Keep host state synchronized during a session.");
+                                count: root.state-command-count;
+                            }
+                            if root.navigation == 8: SettingCommandRow {
+                                title: @tr("Server commands");
+                                detail: @tr("Expose explicit commands to connected clients.");
+                                count: root.server-command-count;
+                            }
                             Rectangle { vertical-stretch: 1; background: transparent; }
                         }
                     }
@@ -545,8 +903,8 @@ export component LumenWindowsApp inherits Window {
                             padding: 15px;
                             spacing: 12px;
                             Text { text: @tr("Runtime"); color: #282720; font-size: 13px; font-weight: 600; }
-                            SettingRow { title: @tr("Host"); detail: root.host-name; }
-                            SettingRow { title: @tr("Control port"); detail: "\{root.control-port}"; }
+                            SettingValueRow { title: @tr("Host"); detail: ""; value: root.host-name; }
+                            SettingValueRow { title: @tr("Control port"); detail: ""; value: "\{root.control-port}"; }
                         }
                     }
                     HorizontalLayout {

@@ -26,6 +26,40 @@ pub(crate) enum WindowsNavigation {
     About,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum WindowsBooleanSetting {
+    Discovery,
+    PreReleaseNotifications,
+    StreamAudio,
+    Keyboard,
+    Mouse,
+    Controller,
+    RightAltMapping,
+    HighResolutionScrolling,
+    NativePenTouch,
+    RumbleForwarding,
+    Upnp,
+}
+
+impl WindowsBooleanSetting {
+    pub(crate) fn from_index(index: i32) -> Option<Self> {
+        match index {
+            0 => Some(Self::Discovery),
+            1 => Some(Self::PreReleaseNotifications),
+            2 => Some(Self::StreamAudio),
+            3 => Some(Self::Keyboard),
+            4 => Some(Self::Mouse),
+            5 => Some(Self::Controller),
+            6 => Some(Self::RightAltMapping),
+            7 => Some(Self::HighResolutionScrolling),
+            8 => Some(Self::NativePenTouch),
+            9 => Some(Self::RumbleForwarding),
+            10 => Some(Self::Upnp),
+            _ => None,
+        }
+    }
+}
+
 impl WindowsNavigation {
     pub(crate) fn from_index(index: i32) -> Self {
         match index {
@@ -162,6 +196,44 @@ impl WindowsAppModel {
         self.owner_access = Self::owner_access(&self.owner_store, false);
     }
 
+    pub(crate) fn update_boolean_setting(
+        &mut self,
+        setting: WindowsBooleanSetting,
+        enabled: bool,
+    ) -> Result<(), String> {
+        let mut authority = SettingsAuthority::open(
+            self.settings_path.clone(),
+            SettingsCapabilities::for_platform(SettingsHostPlatform::Windows),
+        )
+        .map_err(|error| format!("settings store failed: {error:?}"))?;
+        let mut settings = authority.snapshot().settings;
+        match setting {
+            WindowsBooleanSetting::Discovery => settings.general.discovery = enabled,
+            WindowsBooleanSetting::PreReleaseNotifications => {
+                settings.general.notify_pre_releases = enabled;
+            }
+            WindowsBooleanSetting::StreamAudio => settings.audio.stream_audio = enabled,
+            WindowsBooleanSetting::Keyboard => settings.input.keyboard = enabled,
+            WindowsBooleanSetting::Mouse => settings.input.mouse = enabled,
+            WindowsBooleanSetting::Controller => settings.input.controller = enabled,
+            WindowsBooleanSetting::RightAltMapping => {
+                settings.input.map_right_alt_to_windows_key = enabled;
+            }
+            WindowsBooleanSetting::HighResolutionScrolling => {
+                settings.input.high_resolution_scrolling = enabled;
+            }
+            WindowsBooleanSetting::NativePenTouch => settings.input.native_pen_touch = enabled,
+            WindowsBooleanSetting::RumbleForwarding => {
+                settings.input.rumble_forwarding = enabled;
+            }
+            WindowsBooleanSetting::Upnp => settings.network.upnp = enabled,
+        }
+        authority
+            .apply_local_update(settings)
+            .map(|_| ())
+            .map_err(|error| format!("settings update failed: {error:?}"))
+    }
+
     fn owner_access(store: &OwnerAccountStore, authenticated: bool) -> WindowsOwnerAccessState {
         match store.state() {
             LumenOwnerState::Uninitialized => WindowsOwnerAccessState::SetupRequired,
@@ -256,6 +328,61 @@ mod tests {
             assert_eq!(WindowsNavigation::from_index(index as i32), navigation);
             assert_eq!(navigation.index(), index as i32);
         }
+    }
+
+    #[test]
+    fn boolean_setting_indices_cover_the_exact_windows_ui_order() {
+        let expected = [
+            WindowsBooleanSetting::Discovery,
+            WindowsBooleanSetting::PreReleaseNotifications,
+            WindowsBooleanSetting::StreamAudio,
+            WindowsBooleanSetting::Keyboard,
+            WindowsBooleanSetting::Mouse,
+            WindowsBooleanSetting::Controller,
+            WindowsBooleanSetting::RightAltMapping,
+            WindowsBooleanSetting::HighResolutionScrolling,
+            WindowsBooleanSetting::NativePenTouch,
+            WindowsBooleanSetting::RumbleForwarding,
+            WindowsBooleanSetting::Upnp,
+        ];
+        for (index, setting) in expected.into_iter().enumerate() {
+            assert_eq!(
+                WindowsBooleanSetting::from_index(index as i32),
+                Some(setting)
+            );
+        }
+        assert_eq!(WindowsBooleanSetting::from_index(-1), None);
+        assert_eq!(WindowsBooleanSetting::from_index(11), None);
+    }
+
+    #[test]
+    fn boolean_settings_are_persisted_and_reflected_by_the_next_snapshot() {
+        let root = tempfile::tempdir().unwrap();
+        let mut model = model(root.path());
+        let initial = model.snapshot().unwrap().settings;
+        assert!(initial.general.discovery);
+        assert!(initial.audio.stream_audio);
+        assert!(initial.input.keyboard);
+        assert!(initial.input.mouse);
+        assert!(initial.input.controller);
+        assert!(initial.input.high_resolution_scrolling);
+        assert!(initial.input.native_pen_touch);
+        assert!(initial.input.rumble_forwarding);
+
+        model
+            .update_boolean_setting(WindowsBooleanSetting::Discovery, false)
+            .unwrap();
+        model
+            .update_boolean_setting(WindowsBooleanSetting::StreamAudio, false)
+            .unwrap();
+        model
+            .update_boolean_setting(WindowsBooleanSetting::Upnp, true)
+            .unwrap();
+
+        let updated = model.snapshot().unwrap().settings;
+        assert!(!updated.general.discovery);
+        assert!(!updated.audio.stream_audio);
+        assert!(updated.network.upnp);
     }
 
     #[test]
