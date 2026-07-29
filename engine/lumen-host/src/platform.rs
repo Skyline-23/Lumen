@@ -19,6 +19,9 @@ mod macos_native_input;
 #[cfg(not(windows))]
 mod portable_process;
 #[cfg(any(test, windows))]
+#[cfg_attr(not(windows), allow(dead_code))]
+mod session_slot;
+#[cfg(any(test, windows))]
 mod windows;
 
 #[cfg(target_os = "macos")]

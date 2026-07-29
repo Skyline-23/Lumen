@@ -151,6 +151,7 @@ struct PacketArrivalSendObservation {
 enum DatagramBatchMode {
     FreshEnqueue,
     DeadlineWait,
+    CommittedDrain,
 }
 
 impl DatagramBatchMode {
@@ -158,6 +159,7 @@ impl DatagramBatchMode {
         match self {
             Self::FreshEnqueue => "capacity-reserved-enqueue",
             Self::DeadlineWait => "deadline-wait",
+            Self::CommittedDrain => "committed-object-drain",
         }
     }
 }
@@ -243,6 +245,7 @@ async fn send_connection_datagram(
                 Err(_) => return DatagramSendOutcome::DeadlineExceeded,
             }
         }
+        DatagramBatchMode::CommittedDrain => connection.send_datagram_wait(datagram.into()).await,
     };
     match result {
         Ok(()) => DatagramSendOutcome::Sent,
@@ -525,21 +528,32 @@ where
         queue_wait_duration,
         send_wait_duration: Duration::ZERO,
     };
-    for (datagram, send_at) in datagrams.into_iter().zip(schedule) {
+    for (index, (datagram, send_at)) in datagrams.into_iter().zip(schedule).enumerate() {
         let send_started = Instant::now();
         tokio::time::sleep_until(send_at.into()).await;
-        if Instant::now() > deadline {
+        if index == 0 && Instant::now() > deadline {
             report.status = DatagramBatchStatus::Dropped(DatagramBatchDropReason::Send);
             break;
         }
-        let outcome = send(mode, datagram, Some(deadline)).await;
-        if mode == DatagramBatchMode::DeadlineWait {
+        let (send_mode, send_deadline) = if index == 0 {
+            (mode, Some(deadline))
+        } else {
+            (DatagramBatchMode::CommittedDrain, None)
+        };
+        let outcome = send(send_mode, datagram, send_deadline).await;
+        if mode == DatagramBatchMode::DeadlineWait || index != 0 {
             report.send_wait_duration += send_started.elapsed();
         }
         match outcome {
             DatagramSendOutcome::Sent => report.sent_datagrams += 1,
             DatagramSendOutcome::DeadlineExceeded => {
-                report.status = DatagramBatchStatus::Dropped(DatagramBatchDropReason::Send);
+                report.status = if index == 0 {
+                    DatagramBatchStatus::Dropped(DatagramBatchDropReason::Send)
+                } else {
+                    DatagramBatchStatus::Failed(
+                        "committed video object drain reported a local deadline".to_owned(),
+                    )
+                };
                 break;
             }
             DatagramSendOutcome::Failed(error) => {
@@ -1958,6 +1972,50 @@ mod tests {
         );
         assert_eq!(report.sent_datagrams, 0);
         assert_eq!(sent.get(), 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn committed_wire_object_drains_after_post_first_capacity_delay() {
+        let pacer = Arc::new(tokio::sync::Mutex::new(VideoWireRatePacer::default()));
+        let sent = Rc::new(Cell::new(0_usize));
+        let sent_by_transport = Rc::clone(&sent);
+        let deadline = Instant::now() + Duration::from_millis(30);
+
+        let report = send_wire_paced_video_datagram_batch(
+            vec![vec![0; 1_200]; 3],
+            16 * 1_200,
+            0,
+            true,
+            deadline,
+            &pacer,
+            7,
+            48_000,
+            1_200,
+            |_, _| async { Ok(Duration::ZERO) },
+            move |mode, _, send_deadline| {
+                let index = sent_by_transport.get();
+                sent_by_transport.set(index + 1);
+                async move {
+                    if index == 0 {
+                        assert_eq!(mode, DatagramBatchMode::FreshEnqueue);
+                        assert_eq!(send_deadline, Some(deadline));
+                    } else {
+                        assert_eq!(mode, DatagramBatchMode::CommittedDrain);
+                        assert_eq!(send_deadline, None);
+                    }
+                    if index == 1 {
+                        tokio::time::sleep(Duration::from_millis(45)).await;
+                    }
+                    DatagramSendOutcome::Sent
+                }
+            },
+        )
+        .await;
+
+        assert_eq!(report.status, DatagramBatchStatus::Complete);
+        assert_eq!(report.sent_datagrams, 3);
+        assert_eq!(sent.get(), 3);
+        assert!(Instant::now() > deadline);
     }
 
     #[test]

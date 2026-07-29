@@ -47,4 +47,19 @@ fn windows_bitrate_updates_are_fenced_by_the_active_session_epoch() {
     assert!(VIDEO.contains("session_epoch"));
     assert!(VIDEO.contains("received session epoch"));
     assert!(VIDEO.contains("active session epoch"));
+    assert!(VIDEO.contains("AbandonableSessionSlot<NativeMediaFoundationSession>"));
+    assert!(VIDEO.contains("run_media_foundation_session"));
+    assert!(!VIDEO.contains("NativeMediaFoundationCommand::StopSession"));
+
+    let stop = VIDEO
+        .split("pub(super) fn stop_encoder")
+        .nth(1)
+        .unwrap()
+        .split("pub(super) fn")
+        .next()
+        .unwrap();
+    assert!(stop.contains("self.sessions.retire()"));
+    assert!(!stop.contains("self.request("));
+    assert!(MEDIA.contains("video_session_epoch"));
+    assert!(MEDIA.contains("state.video_session_epoch != Some(session_epoch)"));
 }

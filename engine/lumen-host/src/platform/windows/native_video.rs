@@ -2,8 +2,9 @@ use std::ffi::c_void;
 use std::mem::ManuallyDrop;
 use std::ptr;
 use std::slice;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
-use std::thread::{self, JoinHandle};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use windows_api::core::Interface;
@@ -34,6 +35,7 @@ use windows_api::Win32::System::Variant::{VariantClear, VARIANT, VT_UI4};
 
 use super::native_capture::{NativeEncoderSurface, NativeIddCxCapture};
 use super::native_display_driver::DriverHandle;
+use crate::platform::session_slot::AbandonableSessionSlot;
 use crate::{
     PlatformChromaSubsampling, PlatformDynamicRange, PlatformSessionPlan, PlatformVideoCodec,
 };
@@ -42,13 +44,18 @@ const TRANSFORM_EVENT_TIMEOUT: Duration = Duration::from_secs(5);
 const INITIAL_FRAME_TIMEOUT: Duration = Duration::from_secs(5);
 const ACTIVE_CAPTURE_POLL_MILLISECONDS: u32 = 8;
 
-type NativeVideoSink = Arc<dyn Fn(NativeEncodedVideoSample) -> Result<bool, String> + Send + Sync>;
+type NativeVideoSink =
+    Arc<dyn Fn(u32, NativeEncodedVideoSample) -> Result<bool, String> + Send + Sync>;
 
 pub(super) struct NativeMediaFoundation {
+    sink: NativeVideoSink,
+    sessions: AbandonableSessionSlot<NativeMediaFoundationSession>,
+}
+
+struct NativeMediaFoundationSession {
     commands: mpsc::SyncSender<NativeMediaFoundationCommand>,
     state: Arc<Mutex<NativeVideoWorkerState>>,
     capture_control: Mutex<Option<DriverHandle>>,
-    worker: Mutex<Option<JoinHandle<()>>>,
 }
 
 #[derive(Default)]
@@ -96,14 +103,6 @@ struct NativeVideoRuntime {
 }
 
 enum NativeMediaFoundationCommand {
-    Start {
-        plan: NativeVideoEncoderPlan,
-        driver: DriverHandle,
-        response: mpsc::SyncSender<Result<(), String>>,
-    },
-    StopSession {
-        response: mpsc::SyncSender<Result<(), String>>,
-    },
     RequestKeyFrame {
         response: mpsc::SyncSender<Result<(), String>>,
     },
@@ -116,7 +115,6 @@ enum NativeMediaFoundationCommand {
         admission_divisor: u8,
         response: mpsc::SyncSender<Result<(), String>>,
     },
-    Shutdown,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -132,30 +130,10 @@ struct NativeVideoEncoderPlan {
 }
 
 impl NativeMediaFoundation {
-    pub(super) fn start(sink: NativeVideoSink) -> Result<Self, String> {
-        let (command_sender, command_receiver) = mpsc::sync_channel(4);
-        let (ready_sender, ready_receiver) = mpsc::sync_channel(1);
-        let state = Arc::new(Mutex::new(NativeVideoWorkerState::default()));
-        let worker_state = Arc::clone(&state);
-        let worker = thread::Builder::new()
-            .name("lumen-windows-media-foundation".to_owned())
-            .spawn(move || run_media_foundation(command_receiver, ready_sender, sink, worker_state))
-            .map_err(|error| format!("Windows Media Foundation worker failed to start: {error}"))?;
-        match ready_receiver.recv() {
-            Ok(Ok(())) => Ok(Self {
-                commands: command_sender,
-                state,
-                capture_control: Mutex::new(None),
-                worker: Mutex::new(Some(worker)),
-            }),
-            Ok(Err(error)) => {
-                let _ = worker.join();
-                Err(error)
-            }
-            Err(_) => {
-                let _ = worker.join();
-                Err("Windows Media Foundation worker exited during startup".to_owned())
-            }
+    pub(super) fn start(sink: NativeVideoSink) -> Self {
+        Self {
+            sink,
+            sessions: AbandonableSessionSlot::default(),
         }
     }
 
@@ -165,28 +143,65 @@ impl NativeMediaFoundation {
         driver: DriverHandle,
     ) -> Result<(), String> {
         let plan = NativeVideoEncoderPlan::try_from(plan)?;
+        if self.sessions.current().map_err(str::to_owned)?.is_some() {
+            return Err("Windows native video session is already running".to_owned());
+        }
         let capture_control = driver.duplicate()?;
-        let (response, result) = mpsc::sync_channel(1);
-        self.commands
-            .send(NativeMediaFoundationCommand::Start {
-                plan,
-                driver,
-                response,
-            })
-            .map_err(|_| "Windows Media Foundation worker is unavailable".to_owned())?;
-        result
-            .recv()
-            .map_err(|_| "Windows Media Foundation start response was lost".to_owned())??;
-        *self
-            .capture_control
-            .lock()
-            .map_err(|_| "Windows native capture control is poisoned".to_owned())? =
-            Some(capture_control);
-        Ok(())
+        let (commands, command_receiver) = mpsc::sync_channel(4);
+        let (ready_sender, ready_receiver) = mpsc::sync_channel(1);
+        let state = Arc::new(Mutex::new(NativeVideoWorkerState::default()));
+        let session = self
+            .sessions
+            .install(
+                plan.session_epoch,
+                NativeMediaFoundationSession {
+                    commands,
+                    state: Arc::clone(&state),
+                    capture_control: Mutex::new(Some(capture_control)),
+                },
+            )
+            .map_err(str::to_owned)?;
+        let retired = session.retirement_flag();
+        let sink = Arc::clone(&self.sink);
+        let session_epoch = plan.session_epoch;
+        let spawn = thread::Builder::new()
+            .name(format!("lumen-windows-media-foundation-{session_epoch}"))
+            .spawn(move || {
+                run_media_foundation_session(
+                    plan,
+                    driver,
+                    command_receiver,
+                    ready_sender,
+                    sink,
+                    state,
+                    retired,
+                )
+            });
+        if let Err(error) = spawn {
+            let _ = self.sessions.retire();
+            return Err(format!(
+                "Windows Media Foundation session worker failed to start: {error}"
+            ));
+        }
+        match ready_receiver.recv() {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(error)) => {
+                let _ = self.sessions.retire();
+                Err(error)
+            }
+            Err(_) => {
+                let _ = self.sessions.retire();
+                Err("Windows Media Foundation session worker exited during startup".to_owned())
+            }
+        }
     }
 
     pub(super) fn stop_encoder(&self) -> Result<(), String> {
-        let control = self
+        let Some(session) = self.sessions.retire().map_err(str::to_owned)? else {
+            return Ok(());
+        };
+        let control = session
+            .value()
             .capture_control
             .lock()
             .map_err(|_| "Windows native capture control is poisoned".to_owned())?
@@ -194,18 +209,19 @@ impl NativeMediaFoundation {
         let driver = control
             .as_ref()
             .and_then(|driver| driver.stop_frame_delivery().err());
-        let worker = self
-            .request(|response| NativeMediaFoundationCommand::StopSession { response })
-            .err();
-        combine_results([driver.map_or(Ok(()), Err), worker.map_or(Ok(()), Err)])
+        driver.map_or(Ok(()), Err)
     }
 
     pub(super) fn request_key_frame(&self) -> Result<(), String> {
-        self.request(|response| NativeMediaFoundationCommand::RequestKeyFrame { response })
+        self.request(None, |response| {
+            NativeMediaFoundationCommand::RequestKeyFrame { response }
+        })
     }
 
     pub(super) fn resume_after_bootstrap(&self) -> Result<(), String> {
-        self.request(|response| NativeMediaFoundationCommand::ResumeAfterBootstrap { response })
+        self.request(None, |response| {
+            NativeMediaFoundationCommand::ResumeAfterBootstrap { response }
+        })
     }
 
     pub(super) fn set_video_delivery_policy(
@@ -217,16 +233,22 @@ impl NativeMediaFoundation {
         let bitrate_bps = bitrate_kbps.checked_mul(1_000).ok_or_else(|| {
             "Windows adaptive video bitrate exceeds Media Foundation range".to_owned()
         })?;
-        self.request(|response| NativeMediaFoundationCommand::SetBitrate {
-            session_epoch,
-            bitrate_bps,
-            admission_divisor,
-            response,
+        self.request(Some(session_epoch), |response| {
+            NativeMediaFoundationCommand::SetBitrate {
+                session_epoch,
+                bitrate_bps,
+                admission_divisor,
+                response,
+            }
         })
     }
 
     pub(super) fn take_error(&self) -> Result<Option<String>, String> {
-        let mut state = self
+        let Some(session) = self.sessions.current().map_err(str::to_owned)? else {
+            return Ok(None);
+        };
+        let mut state = session
+            .value()
             .state
             .lock()
             .map_err(|_| "Windows native video state is poisoned".to_owned())?;
@@ -235,35 +257,46 @@ impl NativeMediaFoundation {
 
     fn request(
         &self,
+        expected_epoch: Option<u32>,
         command: impl FnOnce(mpsc::SyncSender<Result<(), String>>) -> NativeMediaFoundationCommand,
     ) -> Result<(), String> {
+        let session = match expected_epoch {
+            Some(epoch) => self.sessions.snapshot(epoch).map_err(str::to_owned)?,
+            None => self
+                .sessions
+                .current()
+                .map_err(str::to_owned)?
+                .filter(|session| !session.is_retired())
+                .ok_or_else(|| "Windows native video session is not running".to_owned())?,
+        };
         let (response, result) = mpsc::sync_channel(1);
-        self.commands
+        session
+            .value()
+            .commands
             .send(command(response))
-            .map_err(|_| "Windows Media Foundation worker is unavailable".to_owned())?;
+            .map_err(|_| "Windows Media Foundation session worker is unavailable".to_owned())?;
         result
             .recv()
-            .map_err(|_| "Windows Media Foundation command response was lost".to_owned())?
+            .map_err(|_| "Windows Media Foundation session command response was lost".to_owned())?
     }
 }
 
 impl Drop for NativeMediaFoundation {
     fn drop(&mut self) {
-        let _ = self.commands.send(NativeMediaFoundationCommand::Shutdown);
-        if let Ok(worker) = self.worker.get_mut() {
-            if let Some(worker) = worker.take() {
-                let _ = worker.join();
-            }
-        }
+        let _ = self.stop_encoder();
     }
 }
 
-fn run_media_foundation(
+fn run_media_foundation_session(
+    plan: NativeVideoEncoderPlan,
+    driver: DriverHandle,
     commands: mpsc::Receiver<NativeMediaFoundationCommand>,
     ready: mpsc::SyncSender<Result<(), String>>,
     sink: NativeVideoSink,
     state: Arc<Mutex<NativeVideoWorkerState>>,
+    retired: Arc<AtomicBool>,
 ) {
+    let session_epoch = plan.session_epoch;
     if let Err(error) = unsafe { MFStartup(MF_VERSION, MFSTARTUP_FULL) } {
         let _ = ready.send(Err(format!(
             "Windows Media Foundation startup failed: {error}"
@@ -278,56 +311,31 @@ fn run_media_foundation(
             return;
         }
     };
+    let mut runtime = match start_runtime(&catalog, plan, driver, &sink) {
+        Ok(runtime) => Some(runtime),
+        Err(error) => {
+            set_worker_state(&state, false, Some(error.clone()));
+            let _ = ready.send(Err(error));
+            drop(catalog);
+            let _ = unsafe { MFShutdown() };
+            return;
+        }
+    };
+    set_worker_state(&state, true, None);
     if ready.send(Ok(())).is_err() {
+        let _ = stop_runtime(&mut runtime);
         drop(catalog);
         let _ = unsafe { MFShutdown() };
         return;
     }
-    let mut runtime = None;
-    'worker: loop {
-        let command = if runtime.is_some() {
-            match commands.try_recv() {
-                Ok(command) => Some(command),
-                Err(mpsc::TryRecvError::Empty) => None,
-                Err(mpsc::TryRecvError::Disconnected) => break,
-            }
-        } else {
-            match commands.recv() {
-                Ok(command) => Some(command),
-                Err(_) => break,
-            }
+    while !retired.load(Ordering::Acquire) {
+        let command = match commands.try_recv() {
+            Ok(command) => Some(command),
+            Err(mpsc::TryRecvError::Empty) => None,
+            Err(mpsc::TryRecvError::Disconnected) => break,
         };
         if let Some(command) = command {
             match command {
-                NativeMediaFoundationCommand::Start {
-                    plan,
-                    driver,
-                    response,
-                } => {
-                    if runtime.is_some() {
-                        let _ = response.send(Err(
-                            "Windows native video session is already running".to_owned(),
-                        ));
-                        continue;
-                    }
-                    let result = start_runtime(&catalog, plan, driver, &sink);
-                    match result {
-                        Ok(started) => {
-                            runtime = Some(started);
-                            set_worker_state(&state, true, None);
-                            let _ = response.send(Ok(()));
-                        }
-                        Err(error) => {
-                            set_worker_state(&state, false, Some(error.clone()));
-                            let _ = response.send(Err(error));
-                        }
-                    }
-                }
-                NativeMediaFoundationCommand::StopSession { response } => {
-                    let result = stop_runtime(&mut runtime);
-                    set_worker_state(&state, false, None);
-                    let _ = response.send(result);
-                }
                 NativeMediaFoundationCommand::RequestKeyFrame { response } => {
                     let result = runtime
                         .as_mut()
@@ -366,7 +374,6 @@ fn run_media_foundation(
                         });
                     let _ = response.send(result);
                 }
-                NativeMediaFoundationCommand::Shutdown => break 'worker,
             }
             continue;
         }
@@ -385,7 +392,10 @@ fn run_media_foundation(
         match encoded.and_then(|sample| {
             if let Some(sample) = sample {
                 let pause_for_bootstrap = sample_requires_bootstrap_pause(&sample, false);
-                let request_key_frame = sink(sample)?;
+                if retired.load(Ordering::Acquire) {
+                    return Ok(());
+                }
+                let request_key_frame = sink(session_epoch, sample)?;
                 if pause_for_bootstrap {
                     runtime
                         .as_mut()
@@ -408,13 +418,28 @@ fn run_media_foundation(
                     .map(|shutdown| format!("{error}; {shutdown}"))
                     .unwrap_or(error);
                 set_worker_state(&state, false, Some(error));
+                break;
             }
         }
     }
+    while let Ok(command) = commands.try_recv() {
+        reject_retired_command(command);
+    }
     let _ = stop_runtime(&mut runtime);
-    set_worker_state(&state, false, None);
+    set_worker_running(&state, false);
     drop(catalog);
     let _ = unsafe { MFShutdown() };
+}
+
+fn reject_retired_command(command: NativeMediaFoundationCommand) {
+    let response = match command {
+        NativeMediaFoundationCommand::RequestKeyFrame { response }
+        | NativeMediaFoundationCommand::ResumeAfterBootstrap { response }
+        | NativeMediaFoundationCommand::SetBitrate { response, .. } => response,
+    };
+    let _ = response.send(Err(
+        "Windows Media Foundation session was retired before command execution".to_owned(),
+    ));
 }
 
 fn start_runtime(
@@ -451,7 +476,7 @@ fn start_runtime(
             );
         }
         let pause_for_bootstrap = sample_requires_bootstrap_pause(&encoded, true);
-        let request_key_frame = sink(encoded)?;
+        let request_key_frame = sink(plan.session_epoch, encoded)?;
         if pause_for_bootstrap {
             runtime.pause_after_bootstrap()?;
         }
@@ -477,6 +502,12 @@ fn set_worker_state(state: &Mutex<NativeVideoWorkerState>, running: bool, error:
     if let Ok(mut state) = state.lock() {
         state.running = running;
         state.error = error;
+    }
+}
+
+fn set_worker_running(state: &Mutex<NativeVideoWorkerState>, running: bool) {
+    if let Ok(mut state) = state.lock() {
+        state.running = running;
     }
 }
 

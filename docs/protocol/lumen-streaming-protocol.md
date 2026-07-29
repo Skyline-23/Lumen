@@ -205,8 +205,12 @@ The sender additionally meters the actual encoded datagram byte lengths. A
 token envelope permits at most two negotiated-datagram-sized chunks of burst,
 then schedules every delta, same-generation keyframe, and reliable lifecycle
 bootstrap byte at the active wire budget. A datagram batch that cannot fit its
-object deadline is dropped before partial transmission and enters the single-
-flight repair path. Reliable initial, configuration, and repair bootstraps use
+object deadline is dropped before its first local enqueue and enters the
+single-flight repair path. Once the first datagram is locally committed, the
+host drains the entire reserved object schedule without another local deadline
+or capacity abort; only a connection-fatal transport failure can cut that
+local enqueue sequence, while ordinary network loss remains recoverable through
+the repair path. Reliable initial, configuration, and repair bootstraps use
 the same token state, read the current committed wire budget before reserving
 each chunk, and share one absolute 15-second lifecycle deadline across paced
 transfer and the decoded result wait. This runtime byte gate remains
