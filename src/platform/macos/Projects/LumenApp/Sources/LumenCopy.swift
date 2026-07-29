@@ -233,6 +233,13 @@ enum LumenCopy {
                 return fallback.isEmpty ? summary : "\(summary) \(fallback)"
             }
 
+            if code == 15 {
+                let summary = localized(
+                    "Packet-arrival observation is unavailable for this session."
+                )
+                return fallback.isEmpty ? summary : "\(summary) \(fallback)"
+            }
+
             return switch code {
             case 0:
                 localized("UPnP could not find a compatible gateway.")

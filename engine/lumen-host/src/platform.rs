@@ -189,6 +189,7 @@ pub enum PlatformRuntimeEventCode {
     NativeAudioUdpSend,
     PhysicalDisplayIsolation,
     NativeInputMotion,
+    NativePacketArrivalFeedback,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -442,6 +443,7 @@ pub enum LumenHostPlatformRuntimeEventCode {
     NativeAudioUdpSend = 12,
     PhysicalDisplayIsolation = 13,
     NativeInputMotion = 14,
+    NativePacketArrivalFeedback = 15,
 }
 
 #[repr(C)]
@@ -865,6 +867,9 @@ impl PlatformSessionControl for CallbackPlatformSessionControl {
                 }
                 PlatformRuntimeEventCode::NativeInputMotion => {
                     LumenHostPlatformRuntimeEventCode::NativeInputMotion
+                }
+                PlatformRuntimeEventCode::NativePacketArrivalFeedback => {
+                    LumenHostPlatformRuntimeEventCode::NativePacketArrivalFeedback
                 }
             },
             message: message
@@ -1424,6 +1429,14 @@ mod tests {
                 ..callbacks()
             })
             .is_err()
+        );
+    }
+
+    #[test]
+    fn packet_arrival_feedback_warning_code_is_stable() {
+        assert_eq!(
+            LumenHostPlatformRuntimeEventCode::NativePacketArrivalFeedback as u32,
+            15
         );
     }
 

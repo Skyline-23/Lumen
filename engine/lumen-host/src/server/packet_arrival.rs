@@ -31,6 +31,7 @@ pub(super) enum PacketArrivalFeedbackError {
     ArrivalDeltaOverflow,
     CountMismatch,
     PayloadTooLarge,
+    SequenceRangeMismatch,
     UntrackedDatagram,
     ActorUnavailable,
 }
@@ -44,6 +45,7 @@ impl PacketArrivalFeedbackError {
             Self::ArrivalDeltaOverflow => "packet-arrival-delta-overflow",
             Self::CountMismatch => "packet-arrival-count-mismatch",
             Self::PayloadTooLarge => "packet-arrival-payload-too-large",
+            Self::SequenceRangeMismatch => "packet-arrival-sequence-range-mismatch",
             Self::UntrackedDatagram => "packet-arrival-untracked-datagram",
             Self::ActorUnavailable => "packet-arrival-history-unavailable",
         }
@@ -92,6 +94,16 @@ impl PacketArrivalHistory {
 
     pub(super) fn set_enabled(&self, enabled: bool) {
         self.enabled.store(enabled, Ordering::Release);
+    }
+
+    #[cfg(test)]
+    pub(super) fn unavailable() -> Self {
+        let (commands, receiver) = mpsc::channel(1);
+        drop(receiver);
+        Self {
+            commands,
+            enabled: Arc::new(AtomicBool::new(true)),
+        }
     }
 
     pub(super) async fn record_sent(
@@ -239,6 +251,11 @@ fn decode_runs(feedback: &MediaFeedback) -> Result<Vec<DecodedRun>, PacketArriva
         let last_sequence = first_sequence
             .checked_add(u32::from(highest_offset))
             .ok_or(PacketArrivalFeedbackError::MalformedRun)?;
+        if first_sequence < feedback.first_datagram_sequence
+            || last_sequence > feedback.highest_datagram_sequence
+        {
+            return Err(PacketArrivalFeedbackError::SequenceRangeMismatch);
+        }
         if previous_last.is_some_and(|previous| first_sequence <= previous) {
             return Err(PacketArrivalFeedbackError::MalformedRun);
         }
@@ -288,6 +305,8 @@ mod tests {
     fn feedback(runs: Vec<u8>, received_datagrams: u32) -> MediaFeedback {
         MediaFeedback {
             stream_id: 1,
+            first_datagram_sequence: 0,
+            highest_datagram_sequence: u32::MAX,
             received_datagrams,
             window_milliseconds: 250,
             packet_arrival_reference_time_us: 1_000_000,
@@ -385,6 +404,57 @@ mod tests {
         assert_eq!(
             decode_runs(&feedback(runs, 4_096)),
             Err(PacketArrivalFeedbackError::PayloadTooLarge)
+        );
+    }
+
+    #[tokio::test]
+    async fn run_range_mismatch_rejects_without_consuming_sent_history() {
+        let history = PacketArrivalHistory::spawn();
+        history.set_enabled(true);
+        for sequence in [10, 11, 12] {
+            history
+                .record_sent(PacketIdentity {
+                    stream_id: 1,
+                    datagram_sequence: sequence,
+                })
+                .await
+                .unwrap();
+        }
+
+        let mut below = Vec::from(10_u32.to_be_bytes());
+        below.extend_from_slice(&0b11_u64.to_be_bytes());
+        below.extend_from_slice(&[0, 1]);
+        let mut below_feedback = feedback(below, 2);
+        below_feedback.first_datagram_sequence = 11;
+        below_feedback.highest_datagram_sequence = 12;
+        assert_eq!(
+            history.observe(&below_feedback).await,
+            Err(PacketArrivalFeedbackError::SequenceRangeMismatch)
+        );
+
+        let mut above = Vec::from(11_u32.to_be_bytes());
+        above.extend_from_slice(&0b11_u64.to_be_bytes());
+        above.extend_from_slice(&[0, 1]);
+        let mut above_feedback = feedback(above, 2);
+        above_feedback.first_datagram_sequence = 10;
+        above_feedback.highest_datagram_sequence = 11;
+        assert_eq!(
+            history.observe(&above_feedback).await,
+            Err(PacketArrivalFeedbackError::SequenceRangeMismatch)
+        );
+
+        let mut boundary = Vec::from(10_u32.to_be_bytes());
+        boundary.extend_from_slice(&0b111_u64.to_be_bytes());
+        boundary.extend_from_slice(&[0, 1, 2]);
+        let mut boundary_feedback = feedback(boundary, 3);
+        boundary_feedback.first_datagram_sequence = 10;
+        boundary_feedback.highest_datagram_sequence = 12;
+        assert_eq!(
+            history.observe(&boundary_feedback).await,
+            Ok(PacketArrivalObservation {
+                received_datagrams: 3,
+                covered_sequences: 3,
+            })
         );
     }
 }
