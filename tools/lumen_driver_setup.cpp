@@ -23,6 +23,12 @@ namespace {
     DWORD error = ERROR_SUCCESS;
   };
 
+  struct DeviceRemovalState {
+    DWORD count = 0;
+    bool reboot_required = false;
+    DWORD error = ERROR_SUCCESS;
+  };
+
   BOOL uninstall_driver_package(
     const std::wstring &inf_path,
     BOOL *reboot_required
@@ -177,6 +183,45 @@ namespace {
     return (parameters.Flags & (DI_NEEDREBOOT | DI_NEEDRESTART)) != 0;
   }
 
+  DeviceRemovalState remove_root_devices() {
+    DeviceRemovalState result;
+    HDEVINFO devices = SetupDiGetClassDevsW(
+      nullptr,
+      nullptr,
+      nullptr,
+      DIGCF_ALLCLASSES
+    );
+    if (devices == INVALID_HANDLE_VALUE) {
+      result.error = GetLastError();
+      return result;
+    }
+
+    for (DWORD index = 0;; ++index) {
+      SP_DEVINFO_DATA device {};
+      device.cbSize = sizeof(device);
+      if (!SetupDiEnumDeviceInfo(devices, index, &device)) {
+        const DWORD error = GetLastError();
+        if (error != ERROR_NO_MORE_ITEMS) {
+          result.error = error;
+        }
+        break;
+      }
+      if (!contains_hardware_id(devices, &device, kHardwareId)) {
+        continue;
+      }
+      if (!remove_created_device(devices, &device)) {
+        result.error = GetLastError();
+        break;
+      }
+      ++result.count;
+      result.reboot_required =
+        result.reboot_required ||
+        device_install_requires_restart(devices, &device);
+    }
+    SetupDiDestroyDeviceInfoList(devices);
+    return result;
+  }
+
   bool create_root_device(
     const std::wstring &inf_path,
     HDEVINFO *devices_out,
@@ -325,13 +370,33 @@ namespace {
   }
 
   int uninstall_driver(const std::wstring &inf_path) {
-    BOOL reboot_required = FALSE;
-    if (!uninstall_driver_package(inf_path, &reboot_required)) {
+    const DeviceRemovalState removed = remove_root_devices();
+    if (removed.error != ERROR_SUCCESS) {
+      return emit_result(L"uninstall", L"error", removed.error, 0);
+    }
+
+    const DeviceState after_device_removal = query_device_state();
+    if (after_device_removal.error != ERROR_SUCCESS ||
+        (!removed.reboot_required && after_device_removal.count != 0)) {
+      return emit_result(
+        L"uninstall",
+        L"error",
+        after_device_removal.error == ERROR_SUCCESS
+          ? ERROR_GEN_FAILURE
+          : after_device_removal.error,
+        after_device_removal.problem
+      );
+    }
+
+    BOOL package_reboot_required = FALSE;
+    if (!uninstall_driver_package(inf_path, &package_reboot_required)) {
       const DWORD error = GetLastError();
       if (error != ERROR_FILE_NOT_FOUND) {
         return emit_result(L"uninstall", L"error", error, 0);
       }
     }
+    const bool reboot_required =
+      removed.reboot_required || package_reboot_required;
     const DeviceState remaining = query_device_state();
     if (remaining.error != ERROR_SUCCESS ||
         (!reboot_required && remaining.count != 0)) {

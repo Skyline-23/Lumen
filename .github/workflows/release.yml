@@ -227,12 +227,90 @@ jobs:
           [[ -z "${LUMEN_RELEASE_CERTIFICATE:-}" ]] || rm -f "${LUMEN_RELEASE_CERTIFICATE}"
           [[ -z "${LUMEN_RELEASE_NOTARY_KEY:-}" ]] || rm -f "${LUMEN_RELEASE_NOTARY_KEY}"
 
+  windows-driver:
+    name: Windows IDD release build
+    needs: prepare
+    runs-on: windows-2025-vs2026
+    env:
+      CARGO_TARGET_DIR: target
+      RUSTFLAGS: -D warnings
+      DRIVER_PROJECT: src\platform\windows\driver\LumenIddCx.vcxproj
+      DRIVER_CORE: target\x86_64-pc-windows-msvc\release\lumen_windows_driver_core.lib
+      DRIVER_OUTPUT: src\platform\windows\driver\build\bin\x64\Release
+      WDK_PACKAGE_VERSION: 10.0.28000.1839
+      WDK_PLATFORM_VERSION: 10.0.28000.0
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      - uses: microsoft/setup-msbuild@v3
+        with:
+          msbuild-architecture: x64
+      - name: Install the MSVC Rust target
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          shared-key: windows-msvc-driver
+          add-job-id-key: "false"
+          cache-bin: "false"
+          cache-on-failure: "false"
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.nuget/packages/microsoft.windows.wdk.x64
+            ~/.nuget/packages/microsoft.windows.sdk.cpp
+            ~/.nuget/packages/microsoft.windows.sdk.cpp.x64
+          key: lumen-wdk-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src/platform/windows/driver/LumenIddCx.vcxproj') }}
+          restore-keys: |
+            lumen-wdk-v1-${{ runner.os }}-${{ runner.arch }}-
+      - name: Build the Rust driver core
+        shell: pwsh
+        run: |
+          cargo build --locked -p lumen-windows-driver-core --release --target x86_64-pc-windows-msvc
+          if (-not (Test-Path $env:DRIVER_CORE)) {
+            throw "Missing Rust driver core: $env:DRIVER_CORE"
+          }
+      - name: Restore WDK and compile IDD
+        shell: pwsh
+        run: |
+          $driverCore = (Resolve-Path $env:DRIVER_CORE).Path
+          msbuild $env:DRIVER_PROJECT /t:Restore
+          if ($LASTEXITCODE -ne 0) { throw "WDK NuGet restore failed." }
+          $wdkTools = Join-Path $env:USERPROFILE ".nuget\packages\microsoft.windows.wdk.x64\$env:WDK_PACKAGE_VERSION\c\bin\$env:WDK_PLATFORM_VERSION\x64"
+          if (-not (Test-Path (Join-Path $wdkTools "stampinf.exe"))) {
+            throw "Missing WDK x64 tools: $wdkTools"
+          }
+          $env:PATH = "$wdkTools;$env:PATH"
+          $infToolPath = "$wdkTools\"
+          msbuild $env:DRIVER_PROJECT /m /t:Build /p:Configuration=Release /p:Platform=x64 "/p:LumenDriverCoreLibrary=$driverCore" "/p:InfToolPath=$infToolPath" /p:InfToolArchitecture=Native64Bit
+          if ($LASTEXITCODE -ne 0) { throw "WDK UMDF2 driver build failed." }
+          @("LumenIddCx.dll", "LumenIddCx.inf", "lumeniddcx.cat") | ForEach-Object {
+            $path = Join-Path $env:DRIVER_OUTPUT $_
+            if (-not (Test-Path $path -PathType Leaf)) {
+              throw "Missing IDD release input: $path"
+            }
+          }
+      - name: Upload unsigned IDD package
+        uses: actions/upload-artifact@v7
+        with:
+          name: lumen-windows-idd-unsigned-${{ github.sha }}
+          path: src/platform/windows/driver/build/bin/x64/Release/LumenIddCx/*
+          if-no-files-found: error
+          retention-days: 1
+
   windows:
     name: Signed Windows package
-    needs: prepare
+    needs: [prepare, windows-driver]
     runs-on: windows-latest
     env:
       CARGO_TARGET_DIR: cmake-build-release/rust-target
+      RUSTFLAGS: -D warnings
     permissions:
       actions: read
       contents: read
@@ -274,10 +352,14 @@ jobs:
             mingw-w64-ucrt-x86_64-libvpl
             mingw-w64-ucrt-x86_64-nasm
             mingw-w64-ucrt-x86_64-ninja
-            mingw-w64-ucrt-x86_64-nsis
             mingw-w64-ucrt-x86_64-opus
             mingw-w64-ucrt-x86_64-pkgconf
             mingw-w64-ucrt-x86_64-zlib
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+          cache: true
+          cache-dependency-path: packaging/windows/Lumen.wixproj
       - name: Install the GNU Rust target
         shell: pwsh
         run: |
@@ -291,18 +373,33 @@ jobs:
           add-job-id-key: "false"
           cache-bin: "false"
           cache-on-failure: "false"
-      - name: Build NSIS installer
+      - name: Download unsigned IDD package
+        uses: actions/download-artifact@v8
+        with:
+          name: lumen-windows-idd-unsigned-${{ github.sha }}
+          path: build/windows-driver-package
+      - name: Verify IDD package inputs
+        shell: pwsh
+        run: |
+          @("LumenIddCx.dll", "LumenIddCx.inf", "lumeniddcx.cat") | ForEach-Object {
+            $path = Join-Path "build\windows-driver-package" $_
+            if (-not (Test-Path $path -PathType Leaf)) {
+              throw "Missing Windows IDD package input: $path"
+            }
+          }
+      - name: Build MSI installer
         shell: msys2 {0}
         env:
           LUMEN_VERSION: ${{ needs.prepare.outputs.product_version }}
           LUMEN_ARTIFACT_VERSION: ${{ needs.prepare.outputs.release_version }}
+          LUMEN_WINDOWS_DRIVER_PACKAGE_DIR: build/windows-driver-package
         run: scripts/ci/build_windows_package.sh
       - name: Upload unsigned Windows installer for SignPath
         id: upload_unsigned_windows
         uses: actions/upload-artifact@v7
         with:
           name: lumen-windows-unsigned-${{ github.run_id }}-${{ github.run_attempt }}
-          path: cmake-build-release/cpack_artifacts/Lumen-*-Windows-x86_64.exe
+          path: cmake-build-release/cpack_artifacts/Lumen-*-Windows-x86_64.msi
           if-no-files-found: error
           retention-days: 1
       - name: Submit Windows installer to SignPath
@@ -323,18 +420,66 @@ jobs:
             Sort-Object FullName -Descending |
             Select-Object -First 1
           if (-not $signtool) { throw "signtool.exe was not found" }
-          $installer = Get-ChildItem "build\signpath-signed\Lumen-*-Windows-x86_64.exe" -Recurse |
+          $installer = Get-ChildItem "build\signpath-signed\Lumen-*-Windows-x86_64.msi" -Recurse |
             Select-Object -First 1
           if (-not $installer) { throw "SignPath did not return the signed Lumen installer" }
           & $signtool.FullName verify /pa /v $installer.FullName
-          if ($LASTEXITCODE -ne 0) { throw "Authenticode verification failed" }
+          if ($LASTEXITCODE -ne 0) { throw "MSI Authenticode verification failed" }
+
+          $adminImage = Join-Path $env:RUNNER_TEMP "lumen-signed-msi"
+          New-Item -ItemType Directory -Force $adminImage | Out-Null
+          $msiArguments = @(
+            "/a",
+            "`"$($installer.FullName)`"",
+            "/qn",
+            "TARGETDIR=`"$adminImage`""
+          )
+          $administrativeInstall = Start-Process msiexec.exe `
+            -ArgumentList $msiArguments `
+            -Wait `
+            -PassThru
+          if ($administrativeInstall.ExitCode -ne 0) {
+            throw "Could not expand signed MSI; msiexec exited with $($administrativeInstall.ExitCode)"
+          }
+
+          function Get-SingleSignedPayload([string]$LeafName) {
+            $matches = @(Get-ChildItem $adminImage -Recurse -File -Filter $LeafName)
+            if ($matches.Count -ne 1) {
+              throw "Expected one signed $LeafName payload, found $($matches.Count)"
+            }
+            return $matches[0]
+          }
+
+          @(
+            "Lumen.exe",
+            "LumenService.exe",
+            "LumenDriverSetup.exe"
+          ) | ForEach-Object {
+            $payload = Get-SingleSignedPayload $_
+            & $signtool.FullName verify /pa /v $payload.FullName
+            if ($LASTEXITCODE -ne 0) {
+              throw "Nested Authenticode verification failed for $($_)"
+            }
+          }
+
+          $catalog = Get-SingleSignedPayload "lumeniddcx.cat"
+          $driver = Get-SingleSignedPayload "LumenIddCx.dll"
+          & $signtool.FullName verify /pa /v $catalog.FullName
+          if ($LASTEXITCODE -ne 0) {
+            throw "IDD catalog Authenticode verification failed"
+          }
+          & $signtool.FullName verify /pa /v /c $catalog.FullName $driver.FullName
+          if ($LASTEXITCODE -ne 0) {
+            throw "IDD binary does not match the signed catalog"
+          }
+
           New-Item -ItemType Directory -Force "build\release-artifacts" | Out-Null
           Copy-Item $installer.FullName "build\release-artifacts\$($installer.Name)"
       - name: Upload Windows release artifact
         uses: actions/upload-artifact@v7
         with:
           name: lumen-windows-release
-          path: build/release-artifacts/Lumen-*-Windows-x86_64.exe
+          path: build/release-artifacts/Lumen-*-Windows-x86_64.msi
           if-no-files-found: error
 
   publish:

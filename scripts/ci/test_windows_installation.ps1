@@ -2,7 +2,10 @@
 param(
     [string]$InstallDirectory = "${env:ProgramFiles}\Lumen",
     [ValidateRange(1029, 65515)]
-    [int]$BasePort = 48989
+    [int]$BasePort = 47989,
+    [ValidateRange(1, 120)]
+    [int]$ReadinessTimeoutSeconds = 30,
+    [bool]$ExpectDesktopShortcut = $true
 )
 
 $ErrorActionPreference = "Stop"
@@ -29,13 +32,71 @@ Assert-InstallationCondition $isAdministrator "The smoke test must run as an adm
 
 $applicationPath = Join-Path $InstallDirectory "Lumen.exe"
 $servicePath = Join-Path $InstallDirectory "tools\LumenService.exe"
+$driverSetupPath = Join-Path $InstallDirectory "tools\LumenDriverSetup.exe"
+$driverInfPath = Join-Path $InstallDirectory "driver\LumenIddCx.inf"
 Assert-InstallationCondition (Test-Path -LiteralPath $applicationPath -PathType Leaf) `
     "Lumen.exe is missing from the installation directory."
 Assert-InstallationCondition (Test-Path -LiteralPath $servicePath -PathType Leaf) `
     "LumenService.exe is missing from the installation directory."
+Assert-InstallationCondition (Test-Path -LiteralPath $driverSetupPath -PathType Leaf) `
+    "LumenDriverSetup.exe is missing from the installation directory."
+Assert-InstallationCondition (Test-Path -LiteralPath $driverInfPath -PathType Leaf) `
+    "The packaged Lumen IDD INF is missing from the installation directory."
 
-$service = Get-CimInstance Win32_Service -Filter "Name='LumenService'" `
-    -ErrorAction SilentlyContinue
+$uninstallRoots = @(
+    "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*",
+    "HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+)
+$products = @(
+    Get-ItemProperty $uninstallRoots -ErrorAction SilentlyContinue |
+        Where-Object { $_.DisplayName -eq "Lumen" }
+)
+Assert-InstallationCondition ($products.Count -eq 1) `
+    "Expected exactly one registered Lumen MSI product, found $($products.Count)."
+
+$controlPort = $BasePort + 1
+$sessionPort = $BasePort + 21
+$readinessDeadline = (Get-Date).AddSeconds($ReadinessTimeoutSeconds)
+do {
+    $service = Get-CimInstance Win32_Service -Filter "Name='LumenService'" `
+        -ErrorAction SilentlyContinue
+    $lumenProcesses = @(
+        Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+            Where-Object { $_.ExecutablePath -eq $applicationPath }
+    )
+    $lumenProcessIDs = @($lumenProcesses | ForEach-Object { [uint32]$_.ProcessId })
+    $tcpListeners = @(
+        Get-NetTCPConnection -State Listen -LocalPort $controlPort `
+            -ErrorAction SilentlyContinue
+    )
+    $udpListeners = @(
+        Get-NetUDPEndpoint -LocalPort $sessionPort -ErrorAction SilentlyContinue
+    )
+    $lumenTCPListeners = @(
+        $tcpListeners |
+            Where-Object { $lumenProcessIDs -contains [uint32]$_.OwningProcess }
+    )
+    $lumenUDPListeners = @(
+        $udpListeners |
+            Where-Object { $lumenProcessIDs -contains [uint32]$_.OwningProcess }
+    )
+    $virtualDisplays = @(
+        Get-CimInstance Win32_PnPEntity -ErrorAction SilentlyContinue |
+            Where-Object { $_.HardwareID -contains "Root\LumenIddCx" }
+    )
+    $runtimeReady =
+        $null -ne $service -and
+        $service.State -eq "Running" -and
+        $lumenProcessIDs.Count -eq 1 -and
+        $lumenTCPListeners.Count -eq 1 -and
+        $lumenUDPListeners.Count -eq 1 -and
+        $virtualDisplays.Count -eq 1 -and
+        $virtualDisplays[0].ConfigManagerErrorCode -eq 0
+    if (-not $runtimeReady -and (Get-Date) -lt $readinessDeadline) {
+        Start-Sleep -Milliseconds 250
+    }
+} while (-not $runtimeReady -and (Get-Date) -lt $readinessDeadline)
+
 Assert-InstallationCondition ($null -ne $service) "LumenService is not installed."
 if ($null -ne $service) {
     $normalizedServicePath = $service.PathName.Trim('"')
@@ -48,7 +109,7 @@ if ($null -ne $service) {
 }
 
 $firewallRules = @(
-    Get-NetFirewallRule -DisplayName "Lumen" -ErrorAction SilentlyContinue |
+    Get-NetFirewallRule -DisplayName "Lumen *" -ErrorAction SilentlyContinue |
         Where-Object {
             $_.Direction -eq "Inbound" -and
             $_.Action -eq "Allow" -and
@@ -72,44 +133,34 @@ Assert-InstallationCondition ($firewallProtocols -contains "UDP") `
 Assert-InstallationCondition ($firewallApplications -contains $applicationPath) `
     "The firewall rule does not target the installed Lumen.exe."
 
-$controlPort = $BasePort + 1
-$sessionPort = $BasePort + 21
-$lumenProcesses = @(
-    Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-        Where-Object { $_.ExecutablePath -eq $applicationPath }
-)
-$lumenProcessIDs = @($lumenProcesses | ForEach-Object { [uint32]$_.ProcessId })
-Assert-InstallationCondition ($lumenProcessIDs.Count -gt 0) `
-    "The installed Lumen.exe host process is not running."
-
-$tcpListeners = @(
-    Get-NetTCPConnection -State Listen -LocalPort $controlPort `
-        -ErrorAction SilentlyContinue
-)
-$udpListeners = @(
-    Get-NetUDPEndpoint -LocalPort $sessionPort -ErrorAction SilentlyContinue
-)
-$lumenTCPListeners = @(
-    $tcpListeners |
-        Where-Object { $lumenProcessIDs -contains [uint32]$_.OwningProcess }
-)
-$lumenUDPListeners = @(
-    $udpListeners |
-        Where-Object { $lumenProcessIDs -contains [uint32]$_.OwningProcess }
-)
-Assert-InstallationCondition ($lumenTCPListeners.Count -gt 0) `
+Assert-InstallationCondition ($lumenProcessIDs.Count -eq 1) `
+    "Expected exactly one installed Lumen.exe host process, found $($lumenProcessIDs.Count)."
+Assert-InstallationCondition ($lumenTCPListeners.Count -eq 1) `
     "Lumen is not listening on the HTTPS control port $controlPort."
-Assert-InstallationCondition ($lumenUDPListeners.Count -gt 0) `
+Assert-InstallationCondition ($lumenUDPListeners.Count -eq 1) `
     "Lumen is not listening on the QUIC session port $sessionPort."
 
-$virtualDisplays = @(
-    Get-PnpDevice -Class Display -PresentOnly -ErrorAction SilentlyContinue |
-        Where-Object {
-            $_.FriendlyName -match "Lumen|SudoMaker Virtual Display"
-        }
-)
-Assert-InstallationCondition ($virtualDisplays.Count -gt 0) `
-    "No supported virtual display adapter is present."
+Assert-InstallationCondition ($virtualDisplays.Count -eq 1) `
+    "Expected exactly one Lumen virtual display adapter, found $($virtualDisplays.Count)."
+Assert-InstallationCondition (@(
+    $virtualDisplays |
+        Where-Object { $_.ConfigManagerErrorCode -ne 0 }
+).Count -eq 0) `
+    "The Lumen virtual display adapter is present but not healthy."
+
+$desktopShortcuts = @(
+    "$env:USERPROFILE\Desktop\Lumen.lnk",
+    "$env:PUBLIC\Desktop\Lumen.lnk"
+) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
+Assert-InstallationCondition ((-not $ExpectDesktopShortcut) -or $desktopShortcuts.Count -eq 1) `
+    "The requested Lumen desktop shortcut is missing or duplicated."
+
+$errorLogs = @(
+    "$env:ProgramData\Lumen\service-error.log",
+    "$env:ProgramData\Lumen\host-startup-error.log"
+) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
+Assert-InstallationCondition ($errorLogs.Count -eq 0) `
+    "The installed runtime left a current startup error receipt: $($errorLogs -join ', ')."
 
 $result = [ordered]@{
     passed = $failures.Count -eq 0
@@ -117,6 +168,7 @@ $result = [ordered]@{
     architecture = $env:PROCESSOR_ARCHITECTURE
     administrator = $isAdministrator
     installDirectory = $InstallDirectory
+    productVersions = @($products | ForEach-Object { $_.DisplayVersion })
     service = if ($null -eq $service) { $null } else {
         [ordered]@{
             state = $service.State
@@ -131,7 +183,15 @@ $result = [ordered]@{
         sessionQUIC = $sessionPort
         sessionReady = $lumenUDPListeners.Count -gt 0
     }
-    virtualDisplays = @($virtualDisplays | ForEach-Object { $_.FriendlyName })
+    virtualDisplays = @($virtualDisplays | ForEach-Object {
+        [ordered]@{
+            name = $_.Name
+            instanceID = $_.PNPDeviceID
+            problemCode = $_.ConfigManagerErrorCode
+        }
+    })
+    desktopShortcuts = @($desktopShortcuts)
+    errorLogs = @($errorLogs)
     failures = @($failures)
 }
 

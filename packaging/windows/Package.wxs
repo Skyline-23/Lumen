@@ -1,0 +1,169 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:firewall="http://wixtoolset.org/schemas/v4/wxs/firewall"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+  <Package Name="Lumen"
+           Manufacturer="SudoMaker"
+           Version="$(var.ProductVersion)"
+           UpgradeCode="{DE70661B-3B5F-4E0B-90A3-72721CC3BE20}"
+           Scope="perMachine"
+           InstallerVersion="500"
+           Compressed="yes">
+    <SummaryInformation Description="Lumen remote desktop host"
+                        Manufacturer="SudoMaker" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Lumen is already installed."
+                  Schedule="afterInstallInitialize" />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Lumen">
+        <Directory Id="DRIVERFOLDER" Name="driver" />
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="DesktopFolder" />
+
+    <Feature Id="Complete"
+             Title="Lumen"
+             Description="Lumen remote desktop host and required services."
+             Display="expand"
+             AllowAbsent="no"
+             Level="1">
+      <ComponentRef Id="MainExecutable" />
+      <ComponentRef Id="HostService" />
+      <ComponentRef Id="DriverSetup" />
+      <ComponentRef Id="LumenDriverPackage" />
+      <ComponentGroupRef Id="PayloadFiles" />
+      <Feature Id="DesktopShortcutFeature"
+               Title="Desktop shortcut"
+               Description="Create a Lumen shortcut on the desktop."
+               AllowAbsent="yes"
+               Level="1">
+        <ComponentRef Id="DesktopShortcut" />
+      </Feature>
+    </Feature>
+
+    <ui:WixUI Id="WixUI_FeatureTree"
+              InstallDirectory="INSTALLFOLDER" />
+
+    <Component Id="MainExecutable" Directory="INSTALLFOLDER" Guid="*">
+      <File Id="LumenExecutable"
+            Source="$(var.StageDir)\Lumen.exe"
+            KeyPath="yes">
+        <Shortcut Id="StartMenuShortcut"
+                  Directory="ProgramMenuFolder"
+                  Name="Lumen"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Advertise="yes" />
+        <firewall:FirewallException Id="LumenTcpFirewall"
+                                    Name="Lumen TCP"
+                                    Protocol="tcp"
+                                    Scope="any"
+                                    Profile="all" />
+        <firewall:FirewallException Id="LumenUdpFirewall"
+                                    Name="Lumen UDP"
+                                    Protocol="udp"
+                                    Scope="any"
+                                    Profile="all" />
+      </File>
+    </Component>
+
+    <Component Id="HostService"
+               Directory="INSTALLFOLDER"
+               Subdirectory="tools"
+               Guid="*">
+      <File Id="LumenServiceExecutable"
+            Source="$(var.StageDir)\tools\LumenService.exe"
+            KeyPath="yes" />
+      <ServiceInstall Id="LumenServiceInstall"
+                      Name="LumenService"
+                      DisplayName="Lumen Service"
+                      Description="Lumen remote desktop host service."
+                      Type="ownProcess"
+                      Start="auto"
+                      ErrorControl="normal"
+                      Account="LocalSystem" />
+      <ServiceControl Id="LumenServiceControl"
+                      Name="LumenService"
+                      Start="install"
+                      Stop="both"
+                      Remove="uninstall"
+                      Wait="yes" />
+    </Component>
+
+    <Component Id="DriverSetup"
+               Directory="INSTALLFOLDER"
+               Subdirectory="tools"
+               Guid="*">
+      <File Id="LumenDriverSetupExecutable"
+            Source="$(var.StageDir)\tools\LumenDriverSetup.exe"
+            KeyPath="yes" />
+    </Component>
+
+    <Component Id="LumenDriverPackage"
+               Directory="DRIVERFOLDER"
+               Guid="{F616D583-FD18-4D3F-A116-F712C8155B00}">
+      <File Id="LumenDriverInf"
+            Source="$(var.StageDir)\driver\LumenIddCx.inf"
+            KeyPath="yes" />
+      <File Id="LumenDriverBinary"
+            Source="$(var.StageDir)\driver\LumenIddCx.dll" />
+      <File Id="LumenDriverCatalog"
+            Source="$(var.StageDir)\driver\lumeniddcx.cat" />
+    </Component>
+
+    <Component Id="DesktopShortcut"
+               Directory="DesktopFolder"
+               Guid="*">
+      <Shortcut Id="LumenDesktopShortcut"
+                Name="Lumen"
+                Description="Open Lumen"
+                Target="[INSTALLFOLDER]Lumen.exe"
+                WorkingDirectory="INSTALLFOLDER" />
+      <RegistryValue Root="HKCU"
+                     Key="Software\SudoMaker\Lumen"
+                     Name="DesktopShortcut"
+                     Type="integer"
+                     Value="1"
+                     KeyPath="yes" />
+    </Component>
+
+    <ComponentGroup Id="PayloadFiles">
+      <Files Directory="INSTALLFOLDER" Include="$(var.StageDir)\**">
+        <Exclude Files="$(var.StageDir)\Lumen.exe" />
+        <Exclude Files="$(var.StageDir)\tools\LumenService.exe" />
+        <Exclude Files="$(var.StageDir)\tools\LumenDriverSetup.exe" />
+        <Exclude Files="$(var.StageDir)\driver\**" />
+      </Files>
+    </ComponentGroup>
+
+    <CustomAction Id="RollbackLumenDriver"
+                  FileRef="LumenDriverSetupExecutable"
+                  ExeCommand="uninstall &quot;[#LumenDriverInf]&quot;"
+                  Execute="rollback"
+                  Impersonate="no"
+                  Return="check" />
+    <CustomAction Id="InstallLumenDriver"
+                  FileRef="LumenDriverSetupExecutable"
+                  ExeCommand="install &quot;[#LumenDriverInf]&quot;"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="check" />
+    <CustomAction Id="UninstallLumenDriver"
+                  FileRef="LumenDriverSetupExecutable"
+                  ExeCommand="uninstall &quot;[#LumenDriverInf]&quot;"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="check" />
+
+    <InstallExecuteSequence>
+      <Custom Action="RollbackLumenDriver"
+              After="InstallFiles"
+              Condition="NOT REMOVE~=&quot;ALL&quot; AND NOT WIX_UPGRADE_DETECTED AND NOT Installed" />
+      <Custom Action="InstallLumenDriver"
+              After="RollbackLumenDriver"
+              Condition="NOT REMOVE~=&quot;ALL&quot;" />
+      <Custom Action="UninstallLumenDriver"
+              Before="RemoveFiles"
+              Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+    </InstallExecuteSequence>
+  </Package>
+</Wix>
