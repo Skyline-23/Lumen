@@ -425,6 +425,19 @@ fn configured_native_router(
     (root, router, context, plan)
 }
 
+fn commit_adaptive_proposal(
+    router: &mut ControlRouter,
+    session_epoch: u32,
+    disposition: NativeMediaFeedbackDisposition,
+) -> AdaptiveVideoDecision {
+    let NativeMediaFeedbackDisposition::Applied(proposal) = disposition else {
+        panic!("expected an adaptive video proposal");
+    };
+    let decision = proposal.decision;
+    assert!(router.commit_native_adaptive_video(session_epoch, proposal));
+    decision
+}
+
 #[test]
 fn native_v4_hello_negotiates_without_a_direct_udp_path_exchange() {
     let platform = Arc::new(RecordingPlatformSessionControl::default());
@@ -837,6 +850,13 @@ fn decoded_bootstraps_resume_only_the_generation_that_owns_encoder_admission() {
         1
     );
     assert!(router.observe_native_video_frame_sent(context.session_epoch, 120));
+    assert_eq!(
+        router.request_native_video_repair(
+            context.session_epoch,
+            NativeVideoRepairSource::StaleDelta,
+        ),
+        Ok(true)
+    );
     assert!(router
         .dispatch_native_control(
             ClientControlEnvelope {
@@ -930,10 +950,58 @@ fn decoded_bootstraps_resume_only_the_generation_that_owns_encoder_admission() {
         NativeVideoBootstrapReason::try_from(repair.reason),
         Ok(NativeVideoBootstrapReason::Repair)
     );
+    assert_eq!(
+        router.publish_native_video_bootstrap(
+            plan.video_configuration_id,
+            123,
+            92_700,
+            NativeVideoBootstrapReason::Repair,
+            true,
+            vec![8, 8, 8],
+        ),
+        None,
+        "a repair bootstrap must remain single-flight until decoded completion"
+    );
     assert!(router
         .dispatch_native_control(
             ClientControlEnvelope {
                 request_id: 7,
+                payload: Some(client_control_envelope::Payload::VideoKeyframeRequest(
+                    VideoKeyframeRequest {
+                        session_epoch: context.session_epoch,
+                        stream_id: plan.video_stream_id,
+                        after_frame_id: 120,
+                        reason: NativeVideoKeyframeRequestReason::DecoderRecovery as i32,
+                        generation_id: periodic_generation,
+                    },
+                )),
+            },
+            &context,
+        )
+        .is_empty());
+    let events_before_decode = platform.control_events.lock().unwrap();
+    assert_eq!(
+        events_before_decode
+            .iter()
+            .filter(|(_, event)| *event == PlatformControlEvent::RequestIdrFrame)
+            .count(),
+        1
+    );
+    assert_eq!(
+        events_before_decode
+            .iter()
+            .filter(|(_, event)| {
+                *event == PlatformControlEvent::ResumeVideoEncodingAfterCodecAck
+            })
+            .count(),
+        1,
+        "repair admission must remain paused before decoded completion"
+    );
+    drop(events_before_decode);
+    assert!(router
+        .dispatch_native_control(
+            ClientControlEnvelope {
+                request_id: 8,
                 payload: Some(client_control_envelope::Payload::VideoBootstrapResult(
                     VideoBootstrapResult {
                         session_epoch: context.session_epoch,
@@ -1155,7 +1223,7 @@ fn newer_bootstrap_replaces_an_obsolete_unacknowledged_generation() {
 }
 
 #[test]
-fn media_feedback_uses_audio_pressure_to_adapt_video_delivery_without_reducing_cadence() {
+fn media_feedback_separates_wire_budget_from_pipeline_admission() {
     let platform = Arc::new(RecordingPlatformSessionControl::default());
     let (_root, mut router, context, plan) = started_native_router(platform);
     let initial = router.video_delivery_state().unwrap();
@@ -1193,9 +1261,42 @@ fn media_feedback_uses_audio_pressure_to_adapt_video_delivery_without_reducing_c
     let audio_decision = router
         .observe_native_media_feedback(&clean_video_feedback, context.session_epoch)
         .unwrap();
-    let NativeMediaFeedbackDisposition::Applied(audio_decision) = audio_decision else {
-        panic!("audio playback pressure must reduce the video budget");
+    assert_eq!(
+        router.video_delivery_state().unwrap(),
+        initial,
+        "unapplied platform policy must not advance adaptive router state"
+    );
+    let NativeMediaFeedbackDisposition::Applied(audio_proposal) = audio_decision else {
+        panic!("audio feedback must propose adaptive delivery");
     };
+    let stale_proposal = audio_proposal.clone();
+    let audio_decision = audio_proposal.decision;
+    let mut platform_apply_called = false;
+    assert_eq!(
+        router.apply_native_adaptive_video_transaction(
+            context.session_epoch,
+            audio_proposal,
+            |_| {
+                platform_apply_called = true;
+                Ok(())
+            },
+        ),
+        Ok(true)
+    );
+    assert!(platform_apply_called);
+    let mut stale_platform_apply_called = false;
+    assert_eq!(
+        router.apply_native_adaptive_video_transaction(
+            context.session_epoch,
+            stale_proposal,
+            |_| {
+                stale_platform_apply_called = true;
+                Ok(())
+            },
+        ),
+        Ok(false)
+    );
+    assert!(!stale_platform_apply_called);
     assert!(audio_decision.changed);
     assert_eq!(
         audio_decision.congestion_source,
@@ -1203,7 +1304,7 @@ fn media_feedback_uses_audio_pressure_to_adapt_video_delivery_without_reducing_c
     );
     let audio_adapted = router.video_delivery_state().unwrap();
     assert!(audio_adapted.target_bitrate_kbps < initial.target_bitrate_kbps);
-    assert_eq!(audio_adapted.admission_divisor, 1);
+    assert_eq!(audio_adapted.admission_divisor, 2);
 
     let congested_feedback = MediaFeedback {
         stream_id: plan.video_stream_id,
@@ -1241,17 +1342,14 @@ fn media_feedback_uses_audio_pressure_to_adapt_video_delivery_without_reducing_c
     let video_decision = router
         .observe_native_media_feedback(&clean_audio_feedback, context.session_epoch)
         .unwrap();
-    assert!(matches!(
-        video_decision,
-        NativeMediaFeedbackDisposition::Applied(_)
-    ));
+    _ = commit_adaptive_proposal(&mut router, context.session_epoch, video_decision);
     let adapted = router.video_delivery_state().unwrap();
     assert_eq!(
         adapted.fec_percentage,
         (audio_adapted.fec_percentage + 5).min(30)
     );
     assert!(adapted.target_bitrate_kbps < audio_adapted.target_bitrate_kbps);
-    assert_eq!(adapted.admission_divisor, 1);
+    assert_eq!(adapted.admission_divisor, 2);
 
     let wrong_stream = MediaFeedback {
         stream_id: u32::MAX,
@@ -1414,12 +1512,10 @@ fn coalesced_clean_feedback_recovers_by_elapsed_base_windows() {
             .unwrap(),
         NativeMediaFeedbackDisposition::AwaitingPair { .. }
     ));
-    assert!(matches!(
-        router
-            .observe_native_media_feedback(&clean_audio, context.session_epoch)
-            .unwrap(),
-        NativeMediaFeedbackDisposition::Applied(_)
-    ));
+    let degraded_proposal = router
+        .observe_native_media_feedback(&clean_audio, context.session_epoch)
+        .unwrap();
+    _ = commit_adaptive_proposal(&mut router, context.session_epoch, degraded_proposal);
     let degraded = router.video_delivery_state().unwrap();
 
     let clean_video = MediaFeedback {
@@ -1441,12 +1537,10 @@ fn coalesced_clean_feedback_recovers_by_elapsed_base_windows() {
             window_milliseconds: 2_000
         }
     ));
-    assert!(matches!(
-        router
-            .observe_native_media_feedback(&coalesced_audio, context.session_epoch)
-            .unwrap(),
-        NativeMediaFeedbackDisposition::Applied(_)
-    ));
+    let recovered_proposal = router
+        .observe_native_media_feedback(&coalesced_audio, context.session_epoch)
+        .unwrap();
+    _ = commit_adaptive_proposal(&mut router, context.session_epoch, recovered_proposal);
     let recovered = router.video_delivery_state().unwrap();
 
     assert!(
@@ -1493,7 +1587,8 @@ fn repeated_presentation_only_feedback_never_mutates_delivery_budgets() {
             .observe_native_media_feedback(&audio, context.session_epoch)
             .unwrap();
         if let NativeMediaFeedbackDisposition::Applied(decision) = disposition {
-            assert_eq!(decision.congestion_source, CongestionSource::None);
+            assert_eq!(decision.decision.congestion_source, CongestionSource::None);
+            assert!(router.commit_native_adaptive_video(context.session_epoch, decision));
         }
         let current = router.video_delivery_state().unwrap();
         assert!(current.target_bitrate_kbps >= previous.target_bitrate_kbps);

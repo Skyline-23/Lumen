@@ -236,6 +236,29 @@ extension LumenScreenCaptureVideoRuntime {
         }
     }
 
+    func setVideoDeliveryPolicy(
+        bitrateKbps: Int,
+        admissionDivisor: Int
+    ) async -> Bool {
+        guard (1 ... 4).contains(admissionDivisor),
+              await setVideoBitRateKbps(bitrateKbps) else {
+            return false
+        }
+        return await withCheckedContinuation { continuation in
+            queue.async { [weak self] in
+                guard let self, !self.stopping else {
+                    continuation.resume(returning: false)
+                    return
+                }
+                continuation.resume(
+                    returning: self.adaptiveAdmissionCadence.configure(
+                        divisor: admissionDivisor
+                    )
+                )
+            }
+        }
+    }
+
     func publishBitrateUpdateTelemetry(
         appliedBitrateKbps: Int?,
         queueWaitMilliseconds: Double,

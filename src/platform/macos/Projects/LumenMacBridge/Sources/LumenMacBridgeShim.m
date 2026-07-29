@@ -527,6 +527,15 @@ bool LumenMacBridgeSetVideoBitrateKbps(uint32_t bitrate_kbps) {
   return [LumenBridgeObjCFacade setVideoBitRateKbpsSharedSync:bitrate_kbps];
 }
 
+bool LumenMacBridgeSetVideoDeliveryPolicy(
+  uint32_t bitrate_kbps,
+  uint8_t admission_divisor
+) {
+  return [LumenBridgeObjCFacade
+    setVideoDeliveryPolicySharedSync:bitrate_kbps
+    admissionDivisor:admission_divisor];
+}
+
 void LumenMacBridgeRestartCapture(const char *reason) {
   NSString *restartReason =
     reason != NULL ?

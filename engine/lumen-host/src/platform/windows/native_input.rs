@@ -291,7 +291,14 @@ impl PlatformSessionControl for WindowsPlatformSessionControl {
             } => self
                 .media
                 .invalidate_reference_frames(first_frame, last_frame),
-            PlatformControlEvent::SetVideoBitrateKbps { .. } => Ok(()),
+            PlatformControlEvent::SetVideoDeliveryPolicy {
+                bitrate_kbps,
+                admission_divisor,
+            } => self.media.set_video_delivery_policy(
+                control_connect_data,
+                bitrate_kbps,
+                admission_divisor,
+            ),
             PlatformControlEvent::ExecuteServerCommand { index } => {
                 self.application.execute_server_command(index)
             }

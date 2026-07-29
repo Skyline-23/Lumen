@@ -1,14 +1,14 @@
 use lumen_engine::{
-    client_control_envelope, host_control_envelope, negotiate_native_session,
-    ClientControlEnvelope, ClientSessionHello, CodecConfiguration, CodecConfigurationAck,
-    DisplayReconfigurationRequest, DisplayReconfigurationResult, HostControlEnvelope,
-    HostSessionCapabilities, HostSessionPlan, LumenSessionOffer, MediaFeedback,
-    NativeChromaSubsampling, NativeColorRange, NativeDisplayReconfigurationResultCode,
-    NativeDynamicRange, NativeNegotiationFailure, NativeProtocolError, NativeSessionError,
-    NativeVideoBootstrapReason, NativeVideoBootstrapResultCode, NativeVideoCodec,
-    NativeVideoKeyframeRequestReason, NativeVideoProfile, SessionStarted, SessionStopped,
-    StartSessionAck, StopSession, VideoBootstrap, VideoBootstrapResult, VideoKeyframeRequest,
-    NATIVE_VIDEO_STREAM_ID,
+    client_control_envelope, host_control_envelope, minimum_video_encoder_bitrate_kbps,
+    negotiate_native_session, ClientControlEnvelope, ClientSessionHello, CodecConfiguration,
+    CodecConfigurationAck, DisplayReconfigurationRequest, DisplayReconfigurationResult,
+    HostControlEnvelope, HostSessionCapabilities, HostSessionPlan, LumenSessionOffer,
+    MediaFeedback, NativeChromaSubsampling, NativeColorRange,
+    NativeDisplayReconfigurationResultCode, NativeDynamicRange, NativeNegotiationFailure,
+    NativeProtocolError, NativeSessionError, NativeVideoBootstrapReason,
+    NativeVideoBootstrapResultCode, NativeVideoCodec, NativeVideoKeyframeRequestReason,
+    NativeVideoProfile, SessionStarted, SessionStopped, StartSessionAck, StopSession,
+    VideoBootstrap, VideoBootstrapResult, VideoKeyframeRequest, NATIVE_VIDEO_STREAM_ID,
 };
 
 use super::{
@@ -37,11 +37,25 @@ pub(crate) struct NativeConnectionContext {
     pub(crate) host_capabilities: HostSessionCapabilities,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum NativeMediaFeedbackDisposition {
-    Applied(AdaptiveVideoDecision),
+    Applied(AdaptiveVideoProposal),
     AwaitingPair { window_milliseconds: u32 },
     Unchanged,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct AdaptiveVideoProposal {
+    pub(crate) base: AdaptiveVideoDecision,
+    pub(crate) decision: AdaptiveVideoDecision,
+    controller: AdaptiveVideoDeliveryController,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeVideoRepairSource {
+    PostBootstrapDrain,
+    StaleDelta,
+    IncompleteTransport,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -91,17 +105,51 @@ struct PendingNativeSession {
     video_bootstrap: Option<VideoBootstrap>,
     video_bootstrap_sent: bool,
     video_bootstrap_requires_encoder_resume: bool,
-    video_bootstrap_consumes_keyframe_request: bool,
     acknowledged_generation_id: Option<u32>,
     video_bootstrap_failure: Option<String>,
     last_video_bootstrap_acknowledgement: Option<VideoBootstrapResult>,
     next_generation_id: u32,
-    video_keyframe_request: Option<VideoKeyframeRequest>,
+    repair_keyframe: RepairKeyframeState,
     last_sent_video_frame_id: u32,
     last_display_revision: u64,
     adaptive_video: AdaptiveVideoDeliveryController,
     next_feedback_window_id: u64,
     pending_feedback_window: Option<PendingMediaFeedbackWindow>,
+}
+
+#[derive(Debug, Default)]
+enum RepairKeyframeState {
+    #[default]
+    Idle,
+    Requested {
+        request: Option<VideoKeyframeRequest>,
+    },
+    AwaitingDecodedBootstrap {
+        request: Option<VideoKeyframeRequest>,
+        generation_id: u32,
+        frame_id: u32,
+    },
+}
+
+impl RepairKeyframeState {
+    fn request(&self) -> Option<&VideoKeyframeRequest> {
+        match self {
+            Self::Idle => None,
+            Self::Requested {
+                request: Some(request),
+            }
+            | Self::AwaitingDecodedBootstrap {
+                request: Some(request),
+                ..
+            } => Some(request),
+            Self::Requested { request: None }
+            | Self::AwaitingDecodedBootstrap { request: None, .. } => None,
+        }
+    }
+
+    fn is_active(&self) -> bool {
+        !matches!(self, Self::Idle)
+    }
 }
 
 #[derive(Debug)]
@@ -228,7 +276,20 @@ impl ControlRouter {
                 configuration.configuration_id
             })
             .saturating_add(1);
-        let platform_plan = match native_platform_session_plan(&hello, &plan) {
+        let fec_percentage = self
+            .authorities
+            .settings()
+            .snapshot()
+            .effective
+            .network
+            .fec_percentage;
+        let adaptive_video = adaptive_video_controller(&plan, fec_percentage)
+            .expect("negotiated display reconfiguration has a valid video quality floor");
+        let platform_plan = match native_platform_session_plan(
+            &hello,
+            &plan,
+            adaptive_video.snapshot().encoder_bitrate_kbps,
+        ) {
             Ok(plan) => plan,
             Err(error) => {
                 return vec![display_reconfiguration_result(
@@ -251,7 +312,6 @@ impl ControlRouter {
                 error,
             )];
         }
-
         let pending = self
             .native
             .pending
@@ -265,9 +325,9 @@ impl ControlRouter {
         pending.video_bootstrap = None;
         pending.video_bootstrap_sent = false;
         pending.video_bootstrap_requires_encoder_resume = false;
-        pending.video_bootstrap_consumes_keyframe_request = false;
         pending.acknowledged_generation_id = None;
-        pending.video_keyframe_request = None;
+        pending.repair_keyframe = RepairKeyframeState::Idle;
+        pending.adaptive_video = adaptive_video;
         pending.last_display_revision = request.revision;
         vec![display_reconfiguration_result(
             request_id,
@@ -331,14 +391,15 @@ impl ControlRouter {
             );
             return Vec::new();
         }
-        if let Some(outstanding) = pending.video_keyframe_request.as_ref() {
+        if pending.repair_keyframe.is_active() {
+            let outstanding = pending.repair_keyframe.request();
             eprintln!(
                 "Lumen native media stage=video-keyframe-request-coalesced session-epoch={} request-id={request_id} after-frame-id={} outstanding-after-frame-id={} reason={} outstanding-reason={}",
                 request.session_epoch,
                 request.after_frame_id,
-                outstanding.after_frame_id,
+                outstanding.map_or(0, |request| request.after_frame_id),
                 request.reason,
-                outstanding.reason,
+                outstanding.map_or(0, |request| request.reason),
             );
             return Vec::new();
         }
@@ -357,7 +418,9 @@ impl ControlRouter {
             .pending
             .as_mut()
             .expect("validated pending native session")
-            .video_keyframe_request = Some(request.clone());
+            .repair_keyframe = RepairKeyframeState::Requested {
+            request: Some(request.clone()),
+        };
         eprintln!(
             "Lumen native media stage=video-keyframe-request-accepted session-epoch={} request-id={request_id} after-frame-id={} reason={} configuration-id={}",
             request.session_epoch,
@@ -505,10 +568,16 @@ impl ControlRouter {
         pending.video_bootstrap = None;
         pending.video_bootstrap_sent = false;
         pending.video_bootstrap_requires_encoder_resume = false;
-        if pending.video_bootstrap_consumes_keyframe_request {
-            pending.video_keyframe_request = None;
+        if matches!(
+            pending.repair_keyframe,
+            RepairKeyframeState::AwaitingDecodedBootstrap {
+                generation_id,
+                frame_id,
+                ..
+            } if generation_id == result.generation_id && frame_id == result.frame_id
+        ) {
+            pending.repair_keyframe = RepairKeyframeState::Idle;
         }
-        pending.video_bootstrap_consumes_keyframe_request = false;
         eprintln!(
             "Lumen native media stage=video-bootstrap-acknowledged session-epoch={} configuration-id={} generation-id={} frame-id={} requires-encoder-resume={} request-id={request_id}",
             result.session_epoch,
@@ -606,14 +675,92 @@ impl ControlRouter {
             .ok_or(NativeMediaFeedbackRejection::FeedbackWindowMismatch)?;
         let clean_window_units =
             feedback.window_milliseconds / NATIVE_MEDIA_FEEDBACK_WINDOW_MILLISECONDS;
-        let decision = pending
-            .adaptive_video
-            .observe_window(video, audio, clean_window_units);
+        let base = pending.adaptive_video.snapshot();
+        let mut controller = pending.adaptive_video.clone();
+        let decision = controller.observe_window(video, audio, clean_window_units);
         Ok(if decision.changed {
-            NativeMediaFeedbackDisposition::Applied(decision)
+            NativeMediaFeedbackDisposition::Applied(AdaptiveVideoProposal {
+                base,
+                decision,
+                controller,
+            })
         } else {
             NativeMediaFeedbackDisposition::Unchanged
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn commit_native_adaptive_video(
+        &mut self,
+        session_epoch: u32,
+        proposal: AdaptiveVideoProposal,
+    ) -> bool {
+        let Some(pending) = self.native.pending.as_mut() else {
+            return false;
+        };
+        if !pending.active
+            || pending.plan.session_epoch != session_epoch
+            || pending.adaptive_video.snapshot() != proposal.base
+        {
+            return false;
+        }
+        pending.adaptive_video = proposal.controller;
+        true
+    }
+
+    pub(crate) fn apply_native_adaptive_video_transaction(
+        &mut self,
+        session_epoch: u32,
+        proposal: AdaptiveVideoProposal,
+        apply: impl FnOnce(AdaptiveVideoDecision) -> Result<(), String>,
+    ) -> Result<bool, String> {
+        let Some(pending) = self.native.pending.as_mut() else {
+            return Ok(false);
+        };
+        if !pending.active
+            || pending.plan.session_epoch != session_epoch
+            || pending.adaptive_video.snapshot() != proposal.base
+        {
+            return Ok(false);
+        }
+        apply(proposal.decision)?;
+        debug_assert_eq!(
+            pending.adaptive_video.snapshot(),
+            proposal.base,
+            "adaptive platform apply and controller commit must share one router critical section"
+        );
+        pending.adaptive_video = proposal.controller;
+        Ok(true)
+    }
+
+    pub(crate) fn request_native_video_repair(
+        &mut self,
+        session_epoch: u32,
+        source: NativeVideoRepairSource,
+    ) -> Result<bool, String> {
+        let Some(pending) = self.native.pending.as_mut() else {
+            return Err("native session has not been negotiated".to_owned());
+        };
+        if !pending.active
+            || pending.plan.session_epoch != session_epoch
+            || pending.acknowledged_configuration_id.is_none()
+        {
+            return Err("native video repair does not belong to the active session".to_owned());
+        }
+        if pending.repair_keyframe.is_active() || pending.video_bootstrap.is_some() {
+            return Ok(false);
+        }
+        self.platform
+            .handle_control_event(session_epoch, crate::PlatformControlEvent::RequestIdrFrame)?;
+        self.native
+            .pending
+            .as_mut()
+            .expect("validated pending native session")
+            .repair_keyframe = RepairKeyframeState::Requested { request: None };
+        eprintln!(
+            "Lumen native media stage=video-repair-requested session-epoch={session_epoch} source={source:?}"
+        );
+        Ok(true)
     }
 
     pub(crate) fn finish_native_media_feedback(
@@ -665,6 +812,7 @@ impl ControlRouter {
         }
         let hello = pending.hello.clone();
         let plan = pending.plan.clone();
+        let encoder_bitrate_kbps = pending.adaptive_video.snapshot().encoder_bitrate_kbps;
         let current_application_id = self.discovery.current_application_id();
         if (hello.resume && current_application_id != hello.application_id)
             || (!hello.resume && current_application_id != 0)
@@ -712,7 +860,7 @@ impl ControlRouter {
                     )]
                 }
             };
-        let session_plan = match native_platform_session_plan(&hello, &plan) {
+        let session_plan = match native_platform_session_plan(&hello, &plan, encoder_bitrate_kbps) {
             Ok(plan) => plan,
             Err(_) => {
                 return vec![native_error(
@@ -968,25 +1116,23 @@ impl ControlRouter {
             video_bootstrap: None,
             video_bootstrap_sent: false,
             video_bootstrap_requires_encoder_resume: false,
-            video_bootstrap_consumes_keyframe_request: false,
             acknowledged_generation_id: None,
             video_bootstrap_failure: None,
             last_video_bootstrap_acknowledgement: None,
             next_generation_id: 1,
-            video_keyframe_request: None,
+            repair_keyframe: RepairKeyframeState::Idle,
             last_sent_video_frame_id: 0,
             last_display_revision: 0,
-            adaptive_video: AdaptiveVideoDeliveryController::new(
-                plan.bitrate_kbps,
-                plan.bitrate_kbps,
+            adaptive_video: adaptive_video_controller(
+                &plan,
                 self.authorities
                     .settings()
                     .snapshot()
                     .effective
                     .network
                     .fec_percentage,
-                plan.maximum_presentable_frames,
-            ),
+            )
+            .expect("negotiated native session has a valid video quality floor"),
             next_feedback_window_id: 1,
             pending_feedback_window: None,
         });
@@ -1079,15 +1225,34 @@ impl ControlRouter {
         {
             return None;
         }
+        if reason == NativeVideoBootstrapReason::Repair
+            && (!requires_encoder_resume
+                || matches!(
+                    pending.repair_keyframe,
+                    RepairKeyframeState::AwaitingDecodedBootstrap { .. }
+                ))
+        {
+            return None;
+        }
         let generation_id = pending.next_generation_id;
         pending.next_generation_id = generation_id.checked_add(1)?;
         pending.acknowledged_generation_id = None;
         pending.video_bootstrap_failure = None;
-        let consumes_keyframe_request = pending.video_keyframe_request.is_some()
-            && reason == NativeVideoBootstrapReason::Repair
-            && requires_encoder_resume;
         pending.video_bootstrap_requires_encoder_resume = requires_encoder_resume;
-        pending.video_bootstrap_consumes_keyframe_request = consumes_keyframe_request;
+        if reason == NativeVideoBootstrapReason::Repair {
+            let request = match std::mem::take(&mut pending.repair_keyframe) {
+                RepairKeyframeState::Idle => None,
+                RepairKeyframeState::Requested { request } => request,
+                RepairKeyframeState::AwaitingDecodedBootstrap { .. } => unreachable!(
+                    "repair bootstrap single-flight was validated before generation allocation"
+                ),
+            };
+            pending.repair_keyframe = RepairKeyframeState::AwaitingDecodedBootstrap {
+                request,
+                generation_id,
+                frame_id,
+            };
+        }
         pending.video_bootstrap = Some(VideoBootstrap {
             session_epoch: pending.plan.session_epoch,
             stream_id: u32::from(NATIVE_VIDEO_STREAM_ID),
@@ -1181,7 +1346,7 @@ impl ControlRouter {
         self.native
             .pending
             .as_ref()
-            .is_some_and(|pending| pending.video_keyframe_request.is_some())
+            .is_some_and(|pending| pending.repair_keyframe.is_active())
     }
 
     pub(crate) fn video_delivery_state(&self) -> Option<VideoDeliveryState> {
@@ -1214,7 +1379,7 @@ impl ControlRouter {
             acknowledged_configuration_id: pending.acknowledged_configuration_id,
             acknowledged_generation_id: pending.acknowledged_generation_id,
             bootstrap_pending: pending.video_bootstrap.is_some(),
-            repair_keyframe_requested: pending.video_keyframe_request.is_some(),
+            repair_keyframe_requested: pending.repair_keyframe.is_active(),
             session_epoch: pending.plan.session_epoch,
             policy_revision: u16::try_from(pending.plan.policy_revision).ok()?,
             maximum_datagram_payload: usize::try_from(pending.plan.maximum_datagram_payload)
@@ -1222,7 +1387,7 @@ impl ControlRouter {
             maximum_object_delay_us: pending.plan.maximum_object_delay_us,
             fec_percentage: adaptive.fec_percentage,
             target_bitrate_kbps: adaptive.encoder_bitrate_kbps,
-            admission_divisor: 1,
+            admission_divisor: adaptive.admission_divisor,
         })
     }
 
@@ -1298,14 +1463,16 @@ pub(super) fn native_media_feedback_expected_datagrams(feedback: &MediaFeedback)
 fn native_platform_session_plan(
     hello: &ClientSessionHello,
     plan: &HostSessionPlan,
+    encoder_bitrate_kbps: u32,
 ) -> Result<PlatformSessionPlan, String> {
     let video_format =
         platform_video_format(plan).ok_or_else(|| "native video format is invalid".to_owned())?;
     Ok(PlatformSessionPlan {
+        session_epoch: plan.session_epoch,
         width: plan.encoded_width,
         height: plan.encoded_height,
         frames_per_second: refresh_millihz_to_frames_per_second(plan.refresh_millihz)?,
-        bitrate_kbps: plan.bitrate_kbps,
+        bitrate_kbps: encoder_bitrate_kbps,
         video_format,
         audio_channels: u8::try_from(plan.opus_channel_count)
             .map_err(|_| "native audio channel count is invalid".to_owned())?,
@@ -1404,6 +1571,32 @@ fn refresh_millihz_to_frames_per_second(refresh_millihz: u32) -> Result<u32, Str
     (frames_per_second > 0)
         .then_some(frames_per_second)
         .ok_or_else(|| "native refresh rate is invalid".to_owned())
+}
+
+fn adaptive_video_controller(
+    plan: &HostSessionPlan,
+    initial_fec_percentage: u16,
+) -> Option<AdaptiveVideoDeliveryController> {
+    let dynamic_range = plan
+        .selected_video_format()
+        .and_then(|format| NativeDynamicRange::try_from(format.dynamic_range).ok())?;
+    let selected_format = plan.selected_video_format()?;
+    let quality_floor_encoder_kbps = minimum_video_encoder_bitrate_kbps(
+        plan.encoded_width,
+        plan.encoded_height,
+        plan.refresh_millihz,
+        NativeVideoCodec::try_from(selected_format.codec).ok()?,
+        NativeChromaSubsampling::try_from(selected_format.chroma_subsampling).ok()?,
+        selected_format.bit_depth,
+        dynamic_range,
+    )?;
+    Some(AdaptiveVideoDeliveryController::new_with_quality_floor(
+        plan.bitrate_kbps,
+        plan.bitrate_kbps,
+        initial_fec_percentage,
+        plan.maximum_presentable_frames,
+        quality_floor_encoder_kbps,
+    ))
 }
 
 fn native_error(request_id: u64, code: u32, message: impl Into<String>) -> HostControlEnvelope {

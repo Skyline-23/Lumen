@@ -11,7 +11,9 @@ use lumen_engine::{
 
 use super::packet_arrival::{PacketArrivalHistory, PacketIdentity};
 use super::SharedControlRouter;
-use crate::control::{AudioDeliveryState, InputMotionDeliveryState, VideoDeliveryState};
+use crate::control::{
+    AudioDeliveryState, InputMotionDeliveryState, NativeVideoRepairSource, VideoDeliveryState,
+};
 use crate::media::native_motion::{
     NativeMotionDatagramError, NativeMotionIdentity, NativeMotionReceiver,
 };
@@ -1155,10 +1157,20 @@ async fn poll_and_send_video(
         return MediaAttempt::Failed(video_failure("packetizer-failed", message));
     }
     if sender.take_post_bootstrap_repair_request(delivery.bootstrap_pending) {
-        if let Err(message) = platform.handle_control_event(
-            delivery.session_epoch,
-            crate::PlatformControlEvent::RequestIdrFrame,
-        ) {
+        let repair = router.lock().map_err(|_| {
+            video_capture_failure(
+                "post-bootstrap-keyframe-request-failed",
+                "native control router lock is poisoned".to_owned(),
+            )
+        });
+        let repair = match repair {
+            Ok(mut router) => router.request_native_video_repair(
+                delivery.session_epoch,
+                NativeVideoRepairSource::PostBootstrapDrain,
+            ),
+            Err(failure) => return MediaAttempt::Terminal(failure),
+        };
+        if let Err(message) = repair {
             return MediaAttempt::Terminal(video_capture_failure(
                 "post-bootstrap-keyframe-request-failed",
                 message,
@@ -1254,10 +1266,16 @@ async fn poll_and_send_video(
         sender.pending_frame = None;
         sender.pending_since = None;
         sender.repair_required = true;
-        if let Err(message) = platform.handle_control_event(
-            delivery.session_epoch,
-            crate::PlatformControlEvent::RequestIdrFrame,
-        ) {
+        let repair = router
+            .lock()
+            .map_err(|_| "native control router lock is poisoned".to_owned())
+            .and_then(|mut router| {
+                router.request_native_video_repair(
+                    delivery.session_epoch,
+                    NativeVideoRepairSource::StaleDelta,
+                )
+            });
+        if let Err(message) = repair {
             return MediaAttempt::Terminal(video_capture_failure(
                 "stale-frame-keyframe-request-failed",
                 message,
@@ -1402,10 +1420,16 @@ async fn poll_and_send_video(
         );
     }
     if request_repair {
-        if let Err(message) = platform.handle_control_event(
-            delivery.session_epoch,
-            crate::PlatformControlEvent::RequestIdrFrame,
-        ) {
+        let repair = router
+            .lock()
+            .map_err(|_| "native control router lock is poisoned".to_owned())
+            .and_then(|mut router| {
+                router.request_native_video_repair(
+                    delivery.session_epoch,
+                    NativeVideoRepairSource::IncompleteTransport,
+                )
+            });
+        if let Err(message) = repair {
             return MediaAttempt::Terminal(video_capture_failure(
                 "transport-keyframe-request-failed",
                 message,

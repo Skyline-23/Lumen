@@ -46,6 +46,16 @@ public final class LumenBridgeObjCFacade: NSObject {
         LumenBridgeObjCFacade().setVideoBitRateKbpsSync(bitrateKbps)
     }
 
+    public static func setVideoDeliveryPolicySharedSync(
+        _ bitrateKbps: UInt32,
+        admissionDivisor: UInt8
+    ) -> Bool {
+        LumenBridgeObjCFacade().setVideoDeliveryPolicySync(
+            bitrateKbps,
+            admissionDivisor: admissionDivisor
+        )
+    }
+
     public static func restartCaptureSharedSync(_ reason: String) {
         let semaphore = DispatchSemaphore(value: 0)
         Task {
@@ -137,6 +147,19 @@ public final class LumenBridgeObjCFacade: NSObject {
         let runtime = runtime
         return (try? blockingRun {
             await runtime.setVideoBitRateKbps(Int(bitrateKbps))
+        }) ?? false
+    }
+
+    public func setVideoDeliveryPolicySync(
+        _ bitrateKbps: UInt32,
+        admissionDivisor: UInt8
+    ) -> Bool {
+        let runtime = runtime
+        return (try? blockingRun {
+            await runtime.setVideoDeliveryPolicy(
+                bitrateKbps: Int(bitrateKbps),
+                admissionDivisor: Int(admissionDivisor)
+            )
         }) ?? false
     }
 

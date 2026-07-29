@@ -178,10 +178,31 @@ ordered inclusive sequence range; datagram sequence windows remain independent
 per logical media stream while the telemetry-envelope sequence remains global.
 Missing, duplicate, unknown-stream, or mismatched-window reports are rejected.
 
-The host adapts parity in five-point steps inside 5...50 using loss EWMA. It
-must also reduce admission or bitrate under sustained high loss without
-changing the negotiated codec, resolution, refresh, dynamic range, or hardware
-decode policy. At most one unsent video delta may be retained.
+The negotiated video bitrate is the hard video wire ceiling. The host raises a
+request that cannot contain the exact format quality floor plus the maximum 30%
+parity allowance. The payload floor starts at 35 millibits per pixel for SDR or
+60 millibits per pixel for HDR, multiplied by the exact encoded dimensions and
+refresh rate. H.264, HEVC, and AV1 scale that floor by 125%, 100%, and 90%; 4:4:4
+scales it by 200% relative to 4:2:0, and bit depth scales relative to 8-bit SDR
+or 10-bit HDR. Network evidence owns the wire budget and parity state. Encoder
+payload is derived separately as `wireBudget * 100 / (100 + parity)`; payload
+and FEC overhead are not interchangeable counters.
+
+The host adapts parity in five-point steps inside 5...30. Sustained packet loss
+may reduce the wire budget only as far as the format payload floor plus current
+parity, and never above the negotiated ceiling. Decoder or playback pipeline
+pressure instead changes a host-side latest-frame encoder-admission divisor;
+it does not reduce the wire budget, encoder payload target, or FEC. A clean
+pipeline window sequence restores full admission. Repair and bootstrap frames
+bypass this cadence. None of these controls changes the negotiated codec,
+resolution, refresh, dynamic range, or hardware decode policy. At most one
+unsent video delta may be retained.
+
+A decoder-recovery keyframe is generation-fenced and single-flight across
+client requests and host-detected stale, incomplete, or post-bootstrap repair
+sources. Repeated requests coalesce from the first accepted request through the
+matching decoded `VideoBootstrapResult`; only that result resumes paused
+encoder admission and reopens a subsequent repair request.
 
 ## Security and compatibility
 

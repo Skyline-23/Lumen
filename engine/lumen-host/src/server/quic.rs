@@ -1141,8 +1141,13 @@ async fn accept_native_telemetry_stream(
                     NativeMediaFeedbackDisposition::Applied(_)
                     | NativeMediaFeedbackDisposition::Unchanged => None,
                 };
-                apply_adaptive_video_decision(Arc::clone(&platform), session_epoch, disposition)
-                    .await?;
+                apply_adaptive_video_decision(
+                    &router,
+                    Arc::clone(&platform),
+                    session_epoch,
+                    disposition,
+                )
+                .await?;
                 if feedback.stream_id != u32::from(NATIVE_AUDIO_STREAM_ID) {
                     continue;
                 }
@@ -1196,30 +1201,120 @@ async fn accept_native_telemetry_stream(
 }
 
 async fn apply_adaptive_video_decision(
+    router: &SharedControlRouter,
     platform: Arc<dyn PlatformSessionControl>,
     session_epoch: u32,
     disposition: NativeMediaFeedbackDisposition,
 ) -> Result<(), String> {
-    let NativeMediaFeedbackDisposition::Applied(decision) = disposition else {
+    let NativeMediaFeedbackDisposition::Applied(proposal) = disposition else {
         return Ok(());
     };
-    tokio::task::spawn_blocking(move || {
-        platform.handle_control_event(
+    let decision = proposal.decision;
+    let transaction_router = Arc::clone(router);
+    let transaction_platform = Arc::clone(&platform);
+    // The platform may block, so run it off the QUIC executor. Holding the
+    // router lock across apply and commit is the platform-state ordering
+    // boundary: a stale proposal is rejected before platform mutation, and no
+    // newer controller state can interleave after a successful apply.
+    let transaction = tokio::task::spawn_blocking(move || {
+        transaction_router
+            .lock()
+            .map_err(|_| "native control router lock is poisoned".to_owned())?
+            .apply_native_adaptive_video_transaction(session_epoch, proposal, |decision| {
+                transaction_platform.handle_control_event(
+                    session_epoch,
+                    crate::PlatformControlEvent::SetVideoDeliveryPolicy {
+                        bitrate_kbps: decision.encoder_bitrate_kbps,
+                        admission_divisor: decision.admission_divisor,
+                    },
+                )
+            })
+    })
+    .await
+    .map_err(|error| format!("adaptive video transaction worker failed: {error}"))?;
+    match transaction {
+        Ok(true) => {}
+        Ok(false) => {
+            return Err("adaptive video proposal became stale before platform apply".to_owned())
+        }
+        Err(error) => {
+            publish_adaptive_video_rejection(&platform, session_epoch, decision, error)?;
+            return Ok(());
+        }
+    }
+    platform
+        .publish_runtime_event(PlatformRuntimeEvent {
+            disposition: PlatformRuntimeEventDisposition::Cleared,
+            severity: PlatformRuntimeEventSeverity::Warning,
+            code: PlatformRuntimeEventCode::NativeVideoAdaptiveControl,
+            message: None,
+        })
+        .map_err(|error| format!("adaptive video warning clear failed: {error}"))?;
+    eprintln!(
+        "Lumen native media stage=adaptive-video-applied session-epoch={session_epoch} wire-budget-kbps={} encoder-bitrate-kbps={} fec-percentage={} admission-divisor={} congestion-source={:?}",
+        decision.wire_budget_kbps,
+        decision.encoder_bitrate_kbps,
+        decision.fec_percentage,
+        decision.admission_divisor,
+        decision.congestion_source,
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+async fn apply_adaptive_video_policy(
+    platform: Arc<dyn PlatformSessionControl>,
+    session_epoch: u32,
+    decision: crate::control::AdaptiveVideoDecision,
+) -> Result<bool, String> {
+    let update_platform = Arc::clone(&platform);
+    let update = tokio::task::spawn_blocking(move || {
+        update_platform.handle_control_event(
             session_epoch,
-            crate::PlatformControlEvent::SetVideoBitrateKbps {
+            crate::PlatformControlEvent::SetVideoDeliveryPolicy {
                 bitrate_kbps: decision.encoder_bitrate_kbps,
+                admission_divisor: decision.admission_divisor,
             },
         )
     })
     .await
-    .map_err(|error| format!("adaptive video bitrate worker failed: {error}"))?
-    .map_err(|error| format!("adaptive video bitrate update failed: {error}"))?;
+    .map_err(|error| format!("adaptive video bitrate worker failed: {error}"))?;
+    if let Err(error) = update {
+        publish_adaptive_video_rejection(&platform, session_epoch, decision, error)?;
+        return Ok(false);
+    }
+    platform
+        .publish_runtime_event(PlatformRuntimeEvent {
+            disposition: PlatformRuntimeEventDisposition::Cleared,
+            severity: PlatformRuntimeEventSeverity::Warning,
+            code: PlatformRuntimeEventCode::NativeVideoAdaptiveControl,
+            message: None,
+        })
+        .map_err(|error| format!("adaptive video warning clear failed: {error}"))?;
+    Ok(true)
+}
+
+fn publish_adaptive_video_rejection(
+    platform: &Arc<dyn PlatformSessionControl>,
+    session_epoch: u32,
+    decision: crate::control::AdaptiveVideoDecision,
+    error: String,
+) -> Result<(), String> {
+    let message = format!("adaptive video delivery policy rejected: {error}");
+    platform
+        .publish_runtime_event(PlatformRuntimeEvent {
+            disposition: PlatformRuntimeEventDisposition::Raised,
+            severity: PlatformRuntimeEventSeverity::Warning,
+            code: PlatformRuntimeEventCode::NativeVideoAdaptiveControl,
+            message: Some(message.clone()),
+        })
+        .map_err(|publish_error| {
+            format!("{message}; runtime warning publication failed: {publish_error}")
+        })?;
     eprintln!(
-        "Lumen native media stage=adaptive-video-applied session-epoch={session_epoch} wire-budget-kbps={} encoder-bitrate-kbps={} fec-percentage={} congestion-source={:?}",
-        decision.wire_budget_kbps,
+        "Lumen native media stage=adaptive-video-rejected session-epoch={session_epoch} encoder-bitrate-kbps={} admission-divisor={} error={error}",
         decision.encoder_bitrate_kbps,
-        decision.fec_percentage,
-        decision.congestion_source,
+        decision.admission_divisor,
     );
     Ok(())
 }
@@ -1667,6 +1762,34 @@ mod tests {
 
     struct BlockingBitratePlatform;
 
+    #[derive(Default)]
+    struct RejectingBitratePlatform {
+        runtime_events: Mutex<Vec<PlatformRuntimeEvent>>,
+    }
+
+    impl PlatformSessionControl for RejectingBitratePlatform {
+        fn start_session(&self, _plan: PlatformSessionPlan) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn stop_session(&self) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn handle_control_event(
+            &self,
+            _session_epoch: u32,
+            _event: PlatformControlEvent,
+        ) -> Result<(), String> {
+            Err("runtime mean bitrate is unsupported".to_owned())
+        }
+
+        fn publish_runtime_event(&self, event: PlatformRuntimeEvent) -> Result<(), String> {
+            self.runtime_events.lock().unwrap().push(event);
+            Ok(())
+        }
+    }
+
     impl PlatformSessionControl for BlockingBitratePlatform {
         fn start_session(&self, _plan: PlatformSessionPlan) -> Result<(), String> {
             Ok(())
@@ -1821,27 +1944,58 @@ mod tests {
             wire_budget_kbps: 51_000,
             encoder_bitrate_kbps: 48_000,
             fec_percentage: 6,
+            admission_divisor: 1,
             congestion_source: CongestionSource::AudioNetwork,
             changed: true,
         };
 
-        apply_adaptive_video_decision(
-            platform.clone(),
-            77,
-            NativeMediaFeedbackDisposition::Applied(decision),
-        )
-        .await
-        .unwrap();
+        assert!(apply_adaptive_video_policy(platform.clone(), 77, decision)
+            .await
+            .unwrap());
 
         assert_eq!(
             platform.control_events(),
             vec![(
                 77,
-                PlatformControlEvent::SetVideoBitrateKbps {
+                PlatformControlEvent::SetVideoDeliveryPolicy {
                     bitrate_kbps: 48_000,
+                    admission_divisor: 1,
                 },
             )]
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn rejected_adaptive_bitrate_raises_a_typed_warning_without_ending_telemetry() {
+        let platform = Arc::new(RejectingBitratePlatform::default());
+        let decision = AdaptiveVideoDecision {
+            wire_budget_kbps: 51_000,
+            encoder_bitrate_kbps: 48_000,
+            fec_percentage: 6,
+            admission_divisor: 2,
+            congestion_source: CongestionSource::VideoPipeline,
+            changed: true,
+        };
+
+        assert!(!apply_adaptive_video_policy(platform.clone(), 77, decision)
+            .await
+            .unwrap());
+
+        let events = platform.runtime_events.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0].disposition,
+            PlatformRuntimeEventDisposition::Raised
+        );
+        assert_eq!(events[0].severity, PlatformRuntimeEventSeverity::Warning);
+        assert_eq!(
+            events[0].code,
+            PlatformRuntimeEventCode::NativeVideoAdaptiveControl
+        );
+        assert!(events[0]
+            .message
+            .as_deref()
+            .is_some_and(|message| message.contains("runtime mean bitrate is unsupported")));
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -1851,18 +2005,13 @@ mod tests {
             wire_budget_kbps: 51_000,
             encoder_bitrate_kbps: 48_000,
             fec_percentage: 6,
+            admission_divisor: 1,
             congestion_source: CongestionSource::AudioNetwork,
             changed: true,
         };
         let started = std::time::Instant::now();
-        let update = tokio::spawn(async move {
-            apply_adaptive_video_decision(
-                platform,
-                77,
-                NativeMediaFeedbackDisposition::Applied(decision),
-            )
-            .await
-        });
+        let update =
+            tokio::spawn(async move { apply_adaptive_video_policy(platform, 77, decision).await });
 
         tokio::task::yield_now().await;
 

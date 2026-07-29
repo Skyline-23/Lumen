@@ -156,6 +156,22 @@ impl NativeWindowsMedia {
         result
     }
 
+    pub(super) fn set_video_delivery_policy(
+        &self,
+        session_epoch: u32,
+        bitrate_kbps: u32,
+        admission_divisor: u8,
+    ) -> Result<(), String> {
+        let lifecycle = self.running_session()?;
+        let result = self.media_foundation.set_video_delivery_policy(
+            session_epoch,
+            bitrate_kbps,
+            admission_divisor,
+        );
+        drop(lifecycle);
+        result
+    }
+
     pub(super) fn invalidate_reference_frames(
         &self,
         first_frame: i64,

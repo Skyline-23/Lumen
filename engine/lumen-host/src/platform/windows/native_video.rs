@@ -11,15 +11,16 @@ use windows_api::Win32::Graphics::Direct3D11::{ID3D11Device, ID3D11Texture2D};
 use windows_api::Win32::Media::MediaFoundation::{
     eAVEncAV1VProfile_Main_420_10, eAVEncAV1VProfile_Main_420_8, eAVEncH264VProfile_High,
     eAVEncH265VProfile_Main_420_10, eAVEncH265VProfile_Main_420_8, eAVEncH265VProfile_Main_444_10,
-    eAVEncH265VProfile_Main_444_8, CODECAPI_AVEncVideoForceKeyFrame, ICodecAPI, IMFActivate,
-    IMFDXGIDeviceManager, IMFMediaEventGenerator, IMFMediaType, IMFSample, IMFTransform,
-    METransformHaveOutput, METransformNeedInput, MFCreateAlignedMemoryBuffer,
-    MFCreateDXGIDeviceManager, MFCreateDXGISurfaceBuffer, MFCreateMediaType, MFCreateSample,
-    MFMediaType_Video, MFSampleExtension_CleanPoint, MFShutdown, MFStartup, MFTEnumEx,
-    MFVideoFormat_AV1, MFVideoFormat_AYUV, MFVideoFormat_H264, MFVideoFormat_HEVC,
-    MFVideoFormat_NV12, MFVideoFormat_P010, MFVideoFormat_Y410, MFVideoInterlace_Progressive,
-    MFSTARTUP_FULL, MFT_CATEGORY_VIDEO_ENCODER, MFT_ENUM_FLAG_HARDWARE,
-    MFT_ENUM_FLAG_SORTANDFILTER, MFT_MESSAGE_COMMAND_FLUSH, MFT_MESSAGE_NOTIFY_BEGIN_STREAMING,
+    eAVEncH265VProfile_Main_444_8, CODECAPI_AVEncCommonMeanBitRate,
+    CODECAPI_AVEncVideoForceKeyFrame, ICodecAPI, IMFActivate, IMFDXGIDeviceManager,
+    IMFMediaEventGenerator, IMFMediaType, IMFSample, IMFTransform, METransformHaveOutput,
+    METransformNeedInput, MFCreateAlignedMemoryBuffer, MFCreateDXGIDeviceManager,
+    MFCreateDXGISurfaceBuffer, MFCreateMediaType, MFCreateSample, MFMediaType_Video,
+    MFSampleExtension_CleanPoint, MFShutdown, MFStartup, MFTEnumEx, MFVideoFormat_AV1,
+    MFVideoFormat_AYUV, MFVideoFormat_H264, MFVideoFormat_HEVC, MFVideoFormat_NV12,
+    MFVideoFormat_P010, MFVideoFormat_Y410, MFVideoInterlace_Progressive, MFSTARTUP_FULL,
+    MFT_CATEGORY_VIDEO_ENCODER, MFT_ENUM_FLAG_HARDWARE, MFT_ENUM_FLAG_SORTANDFILTER,
+    MFT_MESSAGE_COMMAND_FLUSH, MFT_MESSAGE_NOTIFY_BEGIN_STREAMING,
     MFT_MESSAGE_NOTIFY_END_OF_STREAM, MFT_MESSAGE_NOTIFY_END_STREAMING,
     MFT_MESSAGE_NOTIFY_START_OF_STREAM, MFT_MESSAGE_SET_D3D_MANAGER, MFT_OUTPUT_DATA_BUFFER,
     MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES, MFT_OUTPUT_STREAM_INFO,
@@ -29,7 +30,7 @@ use windows_api::Win32::Media::MediaFoundation::{
     MF_MT_PIXEL_ASPECT_RATIO, MF_MT_SUBTYPE, MF_TRANSFORM_ASYNC_UNLOCK, MF_VERSION,
 };
 use windows_api::Win32::System::Com::CoTaskMemFree;
-use windows_api::Win32::System::Variant::VARIANT;
+use windows_api::Win32::System::Variant::{VARIANT, VT_UI4};
 
 use super::native_capture::{NativeEncoderSurface, NativeIddCxCapture};
 use super::native_display_driver::DriverHandle;
@@ -90,6 +91,8 @@ struct NativeVideoRuntime {
     next_timestamp_hns: i64,
     awaiting_bootstrap_result: bool,
     repair_keyframe_pending: bool,
+    admission_divisor: u8,
+    admissions_until_next: u8,
 }
 
 enum NativeMediaFoundationCommand {
@@ -107,11 +110,18 @@ enum NativeMediaFoundationCommand {
     ResumeAfterBootstrap {
         response: mpsc::SyncSender<Result<(), String>>,
     },
+    SetBitrate {
+        session_epoch: u32,
+        bitrate_bps: u32,
+        admission_divisor: u8,
+        response: mpsc::SyncSender<Result<(), String>>,
+    },
     Shutdown,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct NativeVideoEncoderPlan {
+    session_epoch: u32,
     codec: PlatformVideoCodec,
     width: u32,
     height: u32,
@@ -196,6 +206,23 @@ impl NativeMediaFoundation {
 
     pub(super) fn resume_after_bootstrap(&self) -> Result<(), String> {
         self.request(|response| NativeMediaFoundationCommand::ResumeAfterBootstrap { response })
+    }
+
+    pub(super) fn set_video_delivery_policy(
+        &self,
+        session_epoch: u32,
+        bitrate_kbps: u32,
+        admission_divisor: u8,
+    ) -> Result<(), String> {
+        let bitrate_bps = bitrate_kbps.checked_mul(1_000).ok_or_else(|| {
+            "Windows adaptive video bitrate exceeds Media Foundation range".to_owned()
+        })?;
+        self.request(|response| NativeMediaFoundationCommand::SetBitrate {
+            session_epoch,
+            bitrate_bps,
+            admission_divisor,
+            response,
+        })
     }
 
     pub(super) fn take_error(&self) -> Result<Option<String>, String> {
@@ -321,6 +348,24 @@ fn run_media_foundation(
                         .and_then(NativeVideoRuntime::resume_after_bootstrap);
                     let _ = response.send(result);
                 }
+                NativeMediaFoundationCommand::SetBitrate {
+                    session_epoch,
+                    bitrate_bps,
+                    admission_divisor,
+                    response,
+                } => {
+                    let result = runtime
+                        .as_mut()
+                        .ok_or_else(|| "Windows native video session is not running".to_owned())
+                        .and_then(|runtime| {
+                            runtime.set_video_delivery_policy(
+                                session_epoch,
+                                bitrate_bps,
+                                admission_divisor,
+                            )
+                        });
+                    let _ = response.send(result);
+                }
                 NativeMediaFoundationCommand::Shutdown => break 'worker,
             }
             continue;
@@ -387,6 +432,8 @@ fn start_runtime(
         next_timestamp_hns: 0,
         awaiting_bootstrap_result: false,
         repair_keyframe_pending: false,
+        admission_divisor: 1,
+        admissions_until_next: 0,
     };
     runtime.encoder.force_key_frame()?;
     let deadline = Instant::now() + INITIAL_FRAME_TIMEOUT;
@@ -532,6 +579,27 @@ impl NativeVideoEncoderCatalog {
 }
 
 impl NativeVideoRuntime {
+    fn set_video_delivery_policy(
+        &mut self,
+        session_epoch: u32,
+        bitrate_bps: u32,
+        admission_divisor: u8,
+    ) -> Result<(), String> {
+        if session_epoch != self.plan.session_epoch {
+            return Err(format!(
+                "Windows adaptive bitrate received session epoch {session_epoch}, active session epoch is {}",
+                self.plan.session_epoch
+            ));
+        }
+        if !(1..=4).contains(&admission_divisor) {
+            return Err("Windows video admission divisor is outside 1...4".to_owned());
+        }
+        self.encoder.set_bitrate(bitrate_bps)?;
+        self.admission_divisor = admission_divisor;
+        self.admissions_until_next = 0;
+        Ok(())
+    }
+
     fn request_repair_key_frame(&mut self) -> Result<(), String> {
         if self.repair_keyframe_pending {
             return Ok(());
@@ -567,6 +635,16 @@ impl NativeVideoRuntime {
             return Ok(None);
         };
         frame.validate()?;
+        let Some(timestamp) = take_admitted_video_timestamp(
+            &mut self.next_timestamp_hns,
+            self.encoder.frame_duration_hns,
+            &mut self.admissions_until_next,
+            self.admission_divisor,
+            self.repair_keyframe_pending,
+        )?
+        else {
+            return Ok(None);
+        };
         let surface = self.capture.convert_frame(
             &frame,
             self.plan.width,
@@ -575,21 +653,131 @@ impl NativeVideoRuntime {
             self.plan.ten_bit,
             self.plan.chroma_subsampling,
         )?;
-        let timestamp = self.next_timestamp_hns;
         let mut encoded = self.encoder.encode(&surface, timestamp)?;
         if encoded.key_frame {
             encoded.repair_keyframe = self.repair_keyframe_pending;
             self.repair_keyframe_pending = false;
         }
-        self.next_timestamp_hns = self
-            .next_timestamp_hns
-            .checked_add(self.encoder.frame_duration_hns)
-            .ok_or_else(|| "Windows video timestamp overflowed".to_owned())?;
         Ok(Some(encoded))
     }
 }
 
+fn take_admitted_video_timestamp(
+    next: &mut i64,
+    frame_duration_hns: i64,
+    admissions_until_next: &mut u8,
+    admission_divisor: u8,
+    repair_keyframe_pending: bool,
+) -> Result<Option<i64>, String> {
+    let timestamp = take_video_timestamp(next, frame_duration_hns)?;
+    if !repair_keyframe_pending && *admissions_until_next > 0 {
+        *admissions_until_next -= 1;
+        return Ok(None);
+    }
+    *admissions_until_next = admission_divisor.saturating_sub(1);
+    Ok(Some(timestamp))
+}
+
+fn take_video_timestamp(next: &mut i64, frame_duration_hns: i64) -> Result<i64, String> {
+    let timestamp = *next;
+    *next = next
+        .checked_add(frame_duration_hns)
+        .ok_or_else(|| "Windows video timestamp overflowed".to_owned())?;
+    Ok(timestamp)
+}
+
 impl NativeVideoEncoderSession {
+    fn set_bitrate(&self, bitrate_bps: u32) -> Result<(), String> {
+        if bitrate_bps == 0 {
+            return Err("Windows adaptive video bitrate must be nonzero".to_owned());
+        }
+        let api = &CODECAPI_AVEncCommonMeanBitRate;
+        let raw = Interface::as_raw(&self.codec_api);
+        let vtable = Interface::vtable(&self.codec_api);
+        let supported = unsafe { (vtable.IsSupported)(raw, api) };
+        if supported.0 != 0 {
+            return Err(format!(
+                "Windows encoder does not support runtime mean bitrate control: {supported:?}"
+            ));
+        }
+        let modifiable = unsafe { (vtable.IsModifiable)(raw, api) };
+        if modifiable.0 != 0 {
+            return Err(format!(
+                "Windows encoder mean bitrate is not runtime-modifiable: {modifiable:?}"
+            ));
+        }
+        self.validate_bitrate_parameter(bitrate_bps)?;
+
+        let requested = variant_from_ui4(bitrate_bps);
+        let set = unsafe { (vtable.SetValue)(raw, api, &requested) };
+        if set.0 != 0 {
+            return Err(format!(
+                "Windows encoder rejected runtime mean bitrate {bitrate_bps} bps: {set:?}"
+            ));
+        }
+        let mut applied = VARIANT::default();
+        let read = unsafe { (vtable.GetValue)(raw, api, &mut applied) };
+        if read.0 != 0 {
+            return Err(format!(
+                "Windows encoder did not expose runtime mean bitrate readback: {read:?}"
+            ));
+        }
+        let applied = variant_ui4(&applied)
+            .ok_or_else(|| "Windows encoder mean bitrate readback was not VT_UI4".to_owned())?;
+        if applied != bitrate_bps {
+            return Err(format!(
+                "Windows encoder mean bitrate readback mismatch requested={bitrate_bps} applied={applied}"
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_bitrate_parameter(&self, bitrate_bps: u32) -> Result<(), String> {
+        let api = &CODECAPI_AVEncCommonMeanBitRate;
+        let raw = Interface::as_raw(&self.codec_api);
+        let vtable = Interface::vtable(&self.codec_api);
+        let mut values = ptr::null_mut::<VARIANT>();
+        let mut values_count = 0_u32;
+        let discrete =
+            unsafe { (vtable.GetParameterValues)(raw, api, &mut values, &mut values_count) };
+        if discrete.0 == 0 {
+            let admitted = !values.is_null()
+                && values_count > 0
+                && unsafe { slice::from_raw_parts(values, values_count as usize) }
+                    .iter()
+                    .filter_map(variant_ui4)
+                    .any(|value| value == bitrate_bps);
+            if !values.is_null() {
+                unsafe { CoTaskMemFree(Some(values.cast())) };
+            }
+            return admitted.then_some(()).ok_or_else(|| {
+                format!("Windows encoder does not admit mean bitrate {bitrate_bps} bps")
+            });
+        }
+
+        let mut minimum = VARIANT::default();
+        let mut maximum = VARIANT::default();
+        let mut step = VARIANT::default();
+        let range =
+            unsafe { (vtable.GetParameterRange)(raw, api, &mut minimum, &mut maximum, &mut step) };
+        if range.0 != 0 {
+            return Ok(());
+        }
+        let minimum = variant_ui4(&minimum)
+            .ok_or_else(|| "Windows encoder mean bitrate minimum was not VT_UI4".to_owned())?;
+        let maximum = variant_ui4(&maximum)
+            .ok_or_else(|| "Windows encoder mean bitrate maximum was not VT_UI4".to_owned())?;
+        let step = variant_ui4(&step)
+            .ok_or_else(|| "Windows encoder mean bitrate step was not VT_UI4".to_owned())?;
+        let in_range = (minimum..=maximum).contains(&bitrate_bps);
+        let on_step = step == 0 || bitrate_bps.saturating_sub(minimum).is_multiple_of(step);
+        (in_range && on_step).then_some(()).ok_or_else(|| {
+            format!(
+                "Windows encoder mean bitrate {bitrate_bps} bps is outside range {minimum}...{maximum} step={step}"
+            )
+        })
+    }
+
     fn force_key_frame(&self) -> Result<(), String> {
         let enabled = VARIANT::from(true);
         unsafe {
@@ -741,6 +929,16 @@ impl NativeVideoEncoderSession {
     }
 }
 
+fn variant_from_ui4(value: u32) -> VARIANT {
+    VARIANT::from(value)
+}
+
+fn variant_ui4(value: &VARIANT) -> Option<u32> {
+    (value.vt() == VT_UI4)
+        .then(|| u32::try_from(value).ok())
+        .flatten()
+}
+
 impl Drop for NativeVideoEncoderSession {
     fn drop(&mut self) {
         let _ = self.shutdown();
@@ -871,6 +1069,7 @@ impl TryFrom<PlatformSessionPlan> for NativeVideoEncoderPlan {
             .filter(|bitrate| *bitrate != 0)
             .ok_or_else(|| "Windows Media Foundation encoder bitrate is invalid".to_owned())?;
         Ok(Self {
+            session_epoch: plan.session_epoch,
             codec: plan.video_format.codec,
             width: plan.width,
             height: plan.height,
@@ -1072,6 +1271,7 @@ mod tests {
 
     fn plan(ten_bit: bool) -> NativeVideoEncoderPlan {
         NativeVideoEncoderPlan {
+            session_epoch: 1,
             codec: PlatformVideoCodec::Hevc,
             width: 3_840,
             height: 2_160,
@@ -1118,5 +1318,30 @@ mod tests {
             &sample(false, false),
             false
         ));
+    }
+
+    #[test]
+    fn divisor_two_admission_preserves_capture_timeline_gaps() {
+        let mut next = 0;
+        let mut admissions_until_next = 0;
+        let duration = 166_666;
+        let admitted_timestamps = (0..4)
+            .map(|_| {
+                take_admitted_video_timestamp(
+                    &mut next,
+                    duration,
+                    &mut admissions_until_next,
+                    2,
+                    false,
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            admitted_timestamps,
+            vec![Some(0), None, Some(333_332), None]
+        );
+        assert_eq!(next, 666_664);
     }
 }

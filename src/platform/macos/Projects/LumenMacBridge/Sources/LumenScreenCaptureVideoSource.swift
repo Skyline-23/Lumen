@@ -9,6 +9,28 @@ import ScreenCaptureKit
 import Synchronization
 import VideoToolbox
 
+struct LumenAdaptiveVideoAdmissionCadence: Equatable, Sendable {
+    private(set) var divisor = 1
+    private var admissionsUntilNext = 0
+
+    mutating func configure(divisor: Int) -> Bool {
+        guard (1 ... 4).contains(divisor) else { return false }
+        self.divisor = divisor
+        admissionsUntilNext = 0
+        return true
+    }
+
+    mutating func shouldAdmit() -> Bool {
+        guard divisor > 1 else { return true }
+        guard admissionsUntilNext > 0 else {
+            admissionsUntilNext = divisor - 1
+            return true
+        }
+        admissionsUntilNext -= 1
+        return false
+    }
+}
+
 extension LumenScreenCaptureVideoRuntime {
     func stream(
         _ stream: SCStream,
@@ -143,8 +165,17 @@ extension LumenScreenCaptureVideoRuntime {
             statistics.pendingAdmissionDropCount &+= 1
             refreshStatisticsNotesIfNeeded()
         case .submit:
-            submitSource(source, forceKeyFrame: false)
+            if shouldAdmitAdaptiveSource() {
+                submitSource(source, forceKeyFrame: false)
+            } else {
+                recordPendingAdmissionDrop(source)
+            }
         }
+    }
+
+    func shouldAdmitAdaptiveSource() -> Bool {
+        dispatchPrecondition(condition: .onQueue(queue))
+        return adaptiveAdmissionCadence.shouldAdmit()
     }
 
     func recordSourceAudit(

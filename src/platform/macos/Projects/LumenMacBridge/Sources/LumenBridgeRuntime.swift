@@ -144,6 +144,16 @@ public actor LumenBridgeRuntime {
         await setVideoBitRateKbpsImpl(bitrateKbps)
     }
 
+    public func setVideoDeliveryPolicy(
+        bitrateKbps: Int,
+        admissionDivisor: Int
+    ) async -> Bool {
+        await setVideoDeliveryPolicyImpl(
+            bitrateKbps: bitrateKbps,
+            admissionDivisor: admissionDivisor
+        )
+    }
+
     public func makeDefaultMicrophoneAudioConfiguration()
         -> LumenMacAudioCaptureConfiguration {
         makeDefaultMicrophoneAudioConfigurationImpl()

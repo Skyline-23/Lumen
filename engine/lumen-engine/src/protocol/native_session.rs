@@ -24,8 +24,66 @@ const OPUS_PACKET_DURATION_MICROSECONDS: u32 = 5_000;
 const MAXIMUM_DATA_SHARDS: u32 = 255;
 const MAXIMUM_PARITY_SHARDS: u32 = 255;
 const INITIAL_PARITY_PERCENTAGE: u32 = 20;
+const SDR_MINIMUM_MILLIBITS_PER_PIXEL: u64 = 35;
+const HDR_MINIMUM_MILLIBITS_PER_PIXEL: u64 = 60;
 pub const NATIVE_CONTROL_MESSAGE_LIMIT: usize = 32 * 1024;
 pub const NATIVE_VIDEO_BOOTSTRAP_MESSAGE_LIMIT: usize = 16 * 1024 * 1024;
+
+pub fn minimum_video_encoder_bitrate_kbps(
+    width: u32,
+    height: u32,
+    refresh_millihz: u32,
+    codec: NativeVideoCodec,
+    chroma_subsampling: NativeChromaSubsampling,
+    bit_depth: u32,
+    dynamic_range: NativeDynamicRange,
+) -> Option<u32> {
+    if width == 0
+        || height == 0
+        || refresh_millihz == 0
+        || codec == NativeVideoCodec::Unspecified
+        || chroma_subsampling == NativeChromaSubsampling::Unspecified
+        || bit_depth == 0
+        || dynamic_range == NativeDynamicRange::Unspecified
+    {
+        return None;
+    }
+    let millibits_per_pixel = match dynamic_range {
+        NativeDynamicRange::Sdr => SDR_MINIMUM_MILLIBITS_PER_PIXEL,
+        NativeDynamicRange::Hdr10 => HDR_MINIMUM_MILLIBITS_PER_PIXEL,
+        NativeDynamicRange::Unspecified => return None,
+    };
+    let codec_percentage = match codec {
+        NativeVideoCodec::H264 => 125_u64,
+        NativeVideoCodec::Hevc => 100,
+        NativeVideoCodec::Av1 => 90,
+        NativeVideoCodec::Unspecified => return None,
+    };
+    let chroma_percentage = match chroma_subsampling {
+        NativeChromaSubsampling::Yuv420 => 100_u64,
+        NativeChromaSubsampling::Yuv444 => 200,
+        NativeChromaSubsampling::Unspecified => return None,
+    };
+    let reference_bit_depth = if dynamic_range == NativeDynamicRange::Hdr10 {
+        10_u64
+    } else {
+        8
+    };
+    let kilobits_per_second = u64::from(width)
+        .checked_mul(u64::from(height))?
+        .checked_mul(u64::from(refresh_millihz))?
+        .checked_mul(millibits_per_pixel)?
+        .checked_mul(codec_percentage)?
+        .checked_mul(chroma_percentage)?
+        .checked_mul(u64::from(bit_depth))?
+        .div_ceil(
+            1_000_000_000_u64
+                .checked_mul(100)?
+                .checked_mul(100)?
+                .checked_mul(reference_bit_depth)?,
+        );
+    u32::try_from(kilobits_per_second.max(1)).ok()
+}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Enumeration)]
 #[repr(i32)]
@@ -1013,7 +1071,19 @@ pub fn negotiate_native_session(
         policy_revision: INITIAL_POLICY_REVISION,
         opus_channel_count,
         opus_packet_duration_microseconds: OPUS_PACKET_DURATION_MICROSECONDS,
-        bitrate_kbps: client.bitrate_kbps,
+        bitrate_kbps: client.bitrate_kbps.max(
+            minimum_video_encoder_bitrate_kbps(
+                client.width,
+                client.height,
+                client.refresh_millihz,
+                requested_exact_format.codec,
+                requested_exact_format.chroma_subsampling,
+                requested_exact_format.bit_depth,
+                requested_exact_format.dynamic_range,
+            )
+            .and_then(|payload| payload.checked_mul(130).map(|wire| wire.div_ceil(100)))
+            .ok_or(NativeSessionError::InvalidDisplayMode)?,
+        ),
         sink_scale_percent: client.sink_scale_percent,
         sink_gamut: sink_gamut as i32,
         sink_transfer: sink_transfer as i32,

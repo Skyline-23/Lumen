@@ -100,6 +100,35 @@ final class LumenAdaptiveVideoBitrateTests: XCTestCase {
 
         await session.stop()
     }
+
+    func testPipelinePolicyReducesAdmissionWithoutLoweringBitrate() async throws {
+        let runtime = RecordingAdaptiveBitrateRuntime()
+        let session = LumenEncodedCaptureSession(
+            configuration: .panelNative(displayID: 118),
+            runtimeFactory: RecordingAdaptiveBitrateRuntimeFactory(runtime: runtime)
+        )
+        try await session.start(
+            callbacks: .init(
+                frameHandler: { _ in },
+                eventHandler: nil
+            )
+        )
+
+        let didApplyPolicy = await session.setVideoDeliveryPolicy(
+            bitrateKbps: 18_491,
+            admissionDivisor: 2
+        )
+        XCTAssertTrue(didApplyPolicy)
+        XCTAssertEqual(runtime.deliveryPolicies, [.init(bitrate: 18_491, divisor: 2)])
+
+        var cadence = LumenAdaptiveVideoAdmissionCadence()
+        XCTAssertTrue(cadence.configure(divisor: 2))
+        XCTAssertEqual(
+            (0 ..< 6).map { _ in cadence.shouldAdmit() },
+            [true, false, true, false, true, false]
+        )
+        await session.stop()
+    }
 }
 
 private extension LumenAdaptiveVideoBitrateTests {
@@ -155,14 +184,24 @@ private final class RecordingAdaptiveBitrateRuntime:
     @unchecked Sendable {
     private struct State {
         var bitrateUpdates: [Int] = []
+        var deliveryPolicies: [DeliveryPolicy] = []
         var startCount = 0
         var stopCount = 0
+    }
+
+    struct DeliveryPolicy: Equatable {
+        let bitrate: Int
+        let divisor: Int
     }
 
     private let state = Mutex(State())
 
     var bitrateUpdates: [Int] {
         state.withLock { $0.bitrateUpdates }
+    }
+
+    var deliveryPolicies: [DeliveryPolicy] {
+        state.withLock { $0.deliveryPolicies }
     }
 
     var startCount: Int {
@@ -189,6 +228,19 @@ private final class RecordingAdaptiveBitrateRuntime:
 
     func setVideoBitRateKbps(_ bitrateKbps: Int) async -> Bool {
         state.withLock { $0.bitrateUpdates.append(bitrateKbps) }
+        return true
+    }
+
+
+    func setVideoDeliveryPolicy(
+        bitrateKbps: Int,
+        admissionDivisor: Int
+    ) async -> Bool {
+        state.withLock {
+            $0.deliveryPolicies.append(
+                .init(bitrate: bitrateKbps, divisor: admissionDivisor)
+            )
+        }
         return true
     }
 }
