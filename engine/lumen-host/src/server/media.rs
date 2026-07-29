@@ -30,6 +30,7 @@ use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 
 const MEDIA_POLL_INTERVAL: Duration = Duration::from_millis(1);
+const MAXIMUM_VIDEO_WIRE_BURST_DATAGRAMS: usize = 2;
 pub(super) const NATIVE_MEDIA_SEND_BUFFER_BYTES: usize = 4 * 1024 * 1024;
 const NATIVE_AUDIO_EGRESS_RESERVE_BYTES: usize = 2 * 1_200;
 const PACKET_ARRIVAL_WARNING_COMMAND_CAPACITY: usize = 8;
@@ -163,15 +164,17 @@ impl DatagramBatchMode {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DatagramBatchDropReason {
-    QueueBarrierDeadlineExceeded,
-    SendDeadlineExceeded,
+    QueueBarrier,
+    Send,
+    WireRate,
 }
 
 impl DatagramBatchDropReason {
     fn as_str(self) -> &'static str {
         match self {
-            Self::QueueBarrierDeadlineExceeded => "queue-barrier-deadline-exceeded",
-            Self::SendDeadlineExceeded => "send-deadline-exceeded",
+            Self::QueueBarrier => "queue-barrier-deadline-exceeded",
+            Self::Send => "send-deadline-exceeded",
+            Self::WireRate => "wire-rate-deadline-exceeded",
         }
     }
 }
@@ -317,7 +320,7 @@ where
         send_wait_duration: Duration::ZERO,
     };
     if mode == DatagramBatchMode::DeadlineWait && deadline.is_none() {
-        report.status = DatagramBatchStatus::Dropped(DatagramBatchDropReason::SendDeadlineExceeded);
+        report.status = DatagramBatchStatus::Dropped(DatagramBatchDropReason::Send);
         return report;
     }
 
@@ -332,8 +335,7 @@ where
                 report.sent_datagrams += 1;
             }
             DatagramSendOutcome::DeadlineExceeded => {
-                report.status =
-                    DatagramBatchStatus::Dropped(DatagramBatchDropReason::SendDeadlineExceeded);
+                report.status = DatagramBatchStatus::Dropped(DatagramBatchDropReason::Send);
                 break;
             }
             DatagramSendOutcome::Failed(error) => {
@@ -424,9 +426,7 @@ where
         Ok(duration) => duration,
         Err(_) => {
             return DatagramBatchReport {
-                status: DatagramBatchStatus::Dropped(
-                    DatagramBatchDropReason::QueueBarrierDeadlineExceeded,
-                ),
+                status: DatagramBatchStatus::Dropped(DatagramBatchDropReason::QueueBarrier),
                 mode,
                 total_datagrams: datagrams.len(),
                 sent_datagrams: 0,
@@ -570,6 +570,7 @@ pub(super) async fn run_native_media_loop(
     router: SharedControlRouter,
     platform: Arc<dyn PlatformSessionControl>,
     packet_arrival_history: PacketArrivalHistory,
+    video_wire_pacer: Arc<tokio::sync::Mutex<VideoWireRatePacer>>,
 ) -> Result<(), String> {
     let packet_arrival_warning_reporter =
         PacketArrivalHistoryWarningReporter::spawn(Arc::clone(&platform));
@@ -591,6 +592,7 @@ pub(super) async fn run_native_media_loop(
             router.clone(),
             Arc::clone(&platform),
             packet_arrival,
+            video_wire_pacer,
         ),
         run_native_motion_receiver(connection, session_epoch, router, platform),
     )
@@ -664,6 +666,7 @@ async fn run_native_video_sender(
     router: SharedControlRouter,
     platform: Arc<dyn PlatformSessionControl>,
     packet_arrival: PacketArrivalSendObservation,
+    wire_pacer: Arc<tokio::sync::Mutex<VideoWireRatePacer>>,
 ) -> Result<(), String> {
     let mut interval = tokio::time::interval(MEDIA_POLL_INTERVAL);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -681,6 +684,7 @@ async fn run_native_video_sender(
             &mut video,
             queue_was_empty_before_video,
             &packet_arrival,
+            &wire_pacer,
         )
         .await;
         failures.observe(MediaKind::Video, &attempt, platform.as_ref());
@@ -997,6 +1001,66 @@ struct VideoSenderState {
     frame_id: u32,
 }
 
+#[derive(Clone, Default)]
+pub(super) struct VideoWireRatePacer {
+    session_epoch: Option<u32>,
+    wire_budget_kbps: u32,
+    next_send_at: Option<Instant>,
+}
+
+impl VideoWireRatePacer {
+    pub(super) fn prepare(
+        &mut self,
+        session_epoch: u32,
+        wire_budget_kbps: u32,
+    ) -> Result<(), String> {
+        if wire_budget_kbps == 0 {
+            return Err("native video wire budget is zero".to_owned());
+        }
+        if self.session_epoch != Some(session_epoch) {
+            self.session_epoch = Some(session_epoch);
+            self.next_send_at = None;
+        }
+        self.wire_budget_kbps = wire_budget_kbps;
+        Ok(())
+    }
+
+    pub(super) fn reserve(
+        &mut self,
+        datagram_bytes: &[usize],
+        maximum_datagram_payload: usize,
+        now: Instant,
+        deadline: Instant,
+    ) -> Option<Vec<Instant>> {
+        let burst_bits = u64::try_from(maximum_datagram_payload)
+            .ok()?
+            .checked_mul(u64::try_from(MAXIMUM_VIDEO_WIRE_BURST_DATAGRAMS).ok()?)?
+            .checked_mul(8)?;
+        let burst_nanoseconds = burst_bits
+            .checked_mul(1_000_000)?
+            .div_ceil(u64::from(self.wire_budget_kbps));
+        let burst_floor = now.checked_sub(Duration::from_nanos(burst_nanoseconds))?;
+        let mut cursor = self
+            .next_send_at
+            .map_or(burst_floor, |reserved| reserved.max(burst_floor));
+        let mut send_times = Vec::with_capacity(datagram_bytes.len());
+        for bytes in datagram_bytes {
+            let wire_bits = u64::try_from(*bytes).ok()?.checked_mul(8)?;
+            let pacing_nanoseconds = wire_bits
+                .checked_mul(1_000_000)?
+                .div_ceil(u64::from(self.wire_budget_kbps));
+            cursor = cursor.checked_add(Duration::from_nanos(pacing_nanoseconds))?;
+            let send_at = cursor.max(now);
+            if send_at > deadline {
+                return None;
+            }
+            send_times.push(send_at);
+        }
+        self.next_send_at = Some(cursor);
+        Some(send_times)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct VideoBootstrapClassification {
     reason: NativeVideoBootstrapReason,
@@ -1128,6 +1192,7 @@ impl VideoSenderState {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn poll_and_send_video(
     connection: &quinn::Connection,
     session_epoch: u32,
@@ -1136,6 +1201,7 @@ async fn poll_and_send_video(
     sender: &mut VideoSenderState,
     queue_was_empty_before_current_audio: bool,
     packet_arrival: &PacketArrivalSendObservation,
+    wire_pacer: &Arc<tokio::sync::Mutex<VideoWireRatePacer>>,
 ) -> MediaAttempt {
     let delivery = router
         .lock()
@@ -1380,20 +1446,83 @@ async fn poll_and_send_video(
             "video object deadline overflowed".to_owned(),
         ));
     };
-    let report = send_video_datagram_batch(
-        packetized.datagrams,
-        NATIVE_MEDIA_SEND_BUFFER_BYTES,
-        NATIVE_AUDIO_EGRESS_RESERVE_BYTES,
-        queue_was_empty_before_current_audio,
-        deadline,
-        |required_capacity, deadline| {
-            wait_for_connection_datagram_queue_capacity(connection, required_capacity, deadline)
-        },
-        |mode, datagram, deadline| {
-            send_tracked_connection_datagram(connection, packet_arrival, mode, datagram, deadline)
-        },
-    )
-    .await;
+    let datagram_bytes = packetized
+        .datagrams
+        .iter()
+        .map(Vec::len)
+        .collect::<Vec<_>>();
+    let total_wire_bytes = datagram_bytes.iter().sum::<usize>();
+    let preflight = {
+        let mut pacer = wire_pacer.lock().await;
+        if let Err(message) = pacer.prepare(delivery.session_epoch, delivery.wire_budget_kbps) {
+            return MediaAttempt::Failed(video_failure("wire-pacer-failed", message));
+        }
+        pacer.clone().reserve(
+            &datagram_bytes,
+            delivery.maximum_datagram_payload,
+            Instant::now(),
+            deadline,
+        )
+    };
+    let report = if preflight.is_some() {
+        send_video_datagram_batch(
+            packetized.datagrams,
+            NATIVE_MEDIA_SEND_BUFFER_BYTES,
+            NATIVE_AUDIO_EGRESS_RESERVE_BYTES,
+            queue_was_empty_before_current_audio,
+            deadline,
+            |required_capacity, deadline| {
+                wait_for_connection_datagram_queue_capacity(connection, required_capacity, deadline)
+            },
+            |mode, datagram, deadline| {
+                let wire_pacer = Arc::clone(wire_pacer);
+                let maximum_datagram_payload = delivery.maximum_datagram_payload;
+                let wire_budget_kbps = delivery.wire_budget_kbps;
+                let session_epoch = delivery.session_epoch;
+                async move {
+                    let send_at = {
+                        let mut pacer = wire_pacer.lock().await;
+                        if pacer.prepare(session_epoch, wire_budget_kbps).is_err() {
+                            return DatagramSendOutcome::Failed(
+                                "native video wire budget is invalid".to_owned(),
+                            );
+                        }
+                        pacer
+                            .reserve(
+                                &[datagram.len()],
+                                maximum_datagram_payload,
+                                Instant::now(),
+                                deadline.expect("video datagram pacing has an object deadline"),
+                            )
+                            .and_then(|times| times.into_iter().next())
+                    };
+                    let Some(send_at) = send_at else {
+                        return DatagramSendOutcome::DeadlineExceeded;
+                    };
+                    tokio::time::sleep_until(send_at.into()).await;
+                    send_tracked_connection_datagram(
+                        connection,
+                        packet_arrival,
+                        mode,
+                        datagram,
+                        deadline,
+                    )
+                    .await
+                }
+            },
+        )
+        .await
+    } else {
+        DatagramBatchReport {
+            status: DatagramBatchStatus::Dropped(DatagramBatchDropReason::WireRate),
+            mode: DatagramBatchMode::DeadlineWait,
+            total_datagrams: packetized.datagrams.len(),
+            sent_datagrams: 0,
+            total_bytes: total_wire_bytes,
+            queue_wait_duration: Duration::ZERO,
+            send_wait_duration: Duration::ZERO,
+        }
+    };
     let delivery_complete = report.status == DatagramBatchStatus::Complete;
     let request_repair = match sender.finish_delta_delivery(
         frame_id,
@@ -1546,9 +1675,11 @@ mod tests {
         DatagramBatchDropReason, DatagramBatchMode, DatagramBatchStatus, DatagramDeadlineElapsed,
         DatagramSendOutcome, PacketArrivalHistoryWarningReporter, PacketArrivalSendObservation,
         SessionDelivery, VideoBootstrapClassification, VideoKeyframeDelivery, VideoSenderState,
+        VideoWireRatePacer, MAXIMUM_VIDEO_WIRE_BURST_DATAGRAMS,
     };
-    use lumen_engine::MediaFeedback;
-    use lumen_engine::NativeVideoBootstrapReason;
+    use lumen_engine::{
+        native_video_packetization_plan, MediaFeedback, NativeVideoBootstrapReason,
+    };
     use std::cell::{Cell, RefCell};
     use std::collections::VecDeque;
     use std::future::Future;
@@ -1688,6 +1819,57 @@ mod tests {
             Duration::from_micros(25_001),
             25_000
         ));
+    }
+
+    #[test]
+    fn emitted_wire_pacer_accounts_exact_packetized_bytes_without_nominal_fec_math() {
+        let origin = Instant::now();
+        let deadline = origin + Duration::from_secs(1);
+        let mut pacer = VideoWireRatePacer::default();
+        pacer.prepare(7, 1_200).unwrap();
+
+        assert_eq!(
+            pacer.reserve(&[1_200, 1_200], 1_200, origin, deadline),
+            Some(vec![origin, origin])
+        );
+        assert_eq!(
+            pacer.reserve(&[1_200, 1_200, 1_200], 1_200, origin, deadline),
+            Some(vec![
+                origin + Duration::from_millis(8),
+                origin + Duration::from_millis(16),
+                origin + Duration::from_millis(24),
+            ])
+        );
+        assert_eq!(pacer.next_send_at, Some(origin + Duration::from_millis(24)));
+    }
+
+    #[test]
+    fn variable_frame_sizes_never_exceed_the_actual_byte_token_envelope() {
+        const MTU: usize = 1_200;
+        const WIRE_KBPS: u32 = 25_536;
+        let origin = Instant::now();
+        let deadline = origin + Duration::from_secs(5);
+        let mut pacer = VideoWireRatePacer::default();
+        pacer.prepare(9, WIRE_KBPS).unwrap();
+        let mut cumulative_bytes = 0_u64;
+
+        for payload_bytes in [1, 37_504, 37_505, 200_070, 7_777, 291_330] {
+            let plan = native_video_packetization_plan(payload_bytes, MTU, 30).unwrap();
+            let datagrams = vec![MTU; plan.total_shards];
+            let send_times = pacer
+                .reserve(&datagrams, MTU, origin, deadline)
+                .expect("five-second envelope admits the adversarial sequence");
+            for send_at in send_times {
+                cumulative_bytes += MTU as u64;
+                let elapsed_nanoseconds = send_at.duration_since(origin).as_nanos();
+                let envelope_bits = u128::try_from(MTU * MAXIMUM_VIDEO_WIRE_BURST_DATAGRAMS * 8)
+                    .unwrap()
+                    .saturating_add(
+                        u128::from(WIRE_KBPS).saturating_mul(elapsed_nanoseconds) / 1_000_000,
+                    );
+                assert!(u128::from(cumulative_bytes) * 8 <= envelope_bits);
+            }
+        }
     }
 
     #[test]
@@ -1888,7 +2070,7 @@ mod tests {
         assert_eq!(required.get(), 12);
         assert_eq!(
             report.status,
-            DatagramBatchStatus::Dropped(DatagramBatchDropReason::QueueBarrierDeadlineExceeded)
+            DatagramBatchStatus::Dropped(DatagramBatchDropReason::QueueBarrier)
         );
         assert_eq!(report.sent_datagrams, 0);
     }
@@ -1957,7 +2139,7 @@ mod tests {
 
         assert_eq!(
             blocked.status,
-            DatagramBatchStatus::Dropped(DatagramBatchDropReason::QueueBarrierDeadlineExceeded)
+            DatagramBatchStatus::Dropped(DatagramBatchDropReason::QueueBarrier)
         );
         assert_eq!(blocked.sent_datagrams, 0);
         assert!(sent.borrow().is_empty());
@@ -2021,7 +2203,7 @@ mod tests {
 
         assert_eq!(
             report.status,
-            DatagramBatchStatus::Dropped(DatagramBatchDropReason::SendDeadlineExceeded)
+            DatagramBatchStatus::Dropped(DatagramBatchDropReason::Send)
         );
         assert_eq!(report.mode, DatagramBatchMode::DeadlineWait);
         assert_eq!(report.sent_datagrams, 1);

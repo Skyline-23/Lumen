@@ -31,6 +31,52 @@ struct LumenAdaptiveVideoAdmissionCadence: Equatable, Sendable {
     }
 }
 
+struct LumenAdaptiveVideoDeliveryPolicyState: Equatable, Sendable {
+    private(set) var appliedBitrateKbps: Int?
+    private(set) var admissionCadence = LumenAdaptiveVideoAdmissionCadence()
+    private(set) var acceptsUpdates = false
+
+    var admissionDivisor: Int { admissionCadence.divisor }
+
+    mutating func beginRunning(bitrateKbps: Int) {
+        appliedBitrateKbps = bitrateKbps
+        admissionCadence = LumenAdaptiveVideoAdmissionCadence()
+        acceptsUpdates = true
+    }
+
+    mutating func beginStopping() {
+        acceptsUpdates = false
+    }
+
+    mutating func apply(
+        bitrateKbps: Int,
+        admissionDivisor: Int,
+        applyBitrate: () throws -> Void
+    ) -> Bool {
+        guard acceptsUpdates,
+              bitrateKbps > 0,
+              (1 ... 4).contains(admissionDivisor) else {
+            return false
+        }
+        do {
+            if appliedBitrateKbps != bitrateKbps {
+                try applyBitrate()
+            }
+            guard admissionCadence.configure(divisor: admissionDivisor) else {
+                return false
+            }
+            appliedBitrateKbps = bitrateKbps
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    mutating func shouldAdmit(forceKeyFrame: Bool) -> Bool {
+        forceKeyFrame || (acceptsUpdates && admissionCadence.shouldAdmit())
+    }
+}
+
 extension LumenScreenCaptureVideoRuntime {
     func stream(
         _ stream: SCStream,
@@ -165,17 +211,8 @@ extension LumenScreenCaptureVideoRuntime {
             statistics.pendingAdmissionDropCount &+= 1
             refreshStatisticsNotesIfNeeded()
         case .submit:
-            if shouldAdmitAdaptiveSource() {
-                submitSource(source, forceKeyFrame: false)
-            } else {
-                recordPendingAdmissionDrop(source)
-            }
+            submitSource(source, forceKeyFrame: false)
         }
-    }
-
-    func shouldAdmitAdaptiveSource() -> Bool {
-        dispatchPrecondition(condition: .onQueue(queue))
-        return adaptiveAdmissionCadence.shouldAdmit()
     }
 
     func recordSourceAudit(

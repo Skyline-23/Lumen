@@ -621,7 +621,7 @@ fn negotiates_the_exact_account_selected_hevc_hdr_profile() {
     assert_eq!(plan.maximum_parity_shards, 255);
     assert_eq!(plan.initial_parity_percentage, 20);
     assert_eq!(plan.maximum_object_delay_us, 25_002);
-    assert_eq!(plan.bitrate_kbps, 80_000);
+    assert_eq!(plan.bitrate_kbps, 81_179);
     assert_eq!(plan.sink_scale_percent, 200);
     assert_eq!(plan.sink_gamut, NativeDisplayGamut::DisplayP3 as i32);
     assert_eq!(plan.sink_transfer, NativeDisplayTransfer::Pq as i32);
@@ -657,7 +657,7 @@ fn hdr_retina_sixty_fps_negotiation_enforces_the_encoder_quality_floor() {
     assert_eq!(plan.encoded_width, 2_816);
     assert_eq!(plan.encoded_height, 1_824);
     assert_eq!(plan.refresh_millihz, 60_000);
-    assert_eq!(plan.bitrate_kbps, 24_039);
+    assert_eq!(plan.bitrate_kbps, 25_536);
 }
 
 #[test]
@@ -768,10 +768,8 @@ fn rejects_invalid_version_feature_datagram_and_memory_contracts() {
     );
     client.maximum_datagram_payload = NATIVE_FEC_BLOCK_HEADER_BYTES as u32 + 1;
     assert_eq!(
-        negotiate_native_session(&client, &host(), 1)
-            .unwrap()
-            .maximum_datagram_payload,
-        NATIVE_FEC_BLOCK_HEADER_BYTES as u32 + 1
+        negotiate_native_session(&client, &host(), 1),
+        Err(NativeSessionError::DatagramPayloadTooSmall)
     );
 
     client = hello();

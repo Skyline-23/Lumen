@@ -129,6 +129,37 @@ final class LumenAdaptiveVideoBitrateTests: XCTestCase {
         )
         await session.stop()
     }
+
+    func testStoppingQueuedBeforePolicyRejectsWithoutPartialBitrateMutation() {
+        let queue = DispatchQueue(label: "dev.skyline23.lumen.tests.adaptive-policy")
+        let blocker = DispatchSemaphore(value: 0)
+        let finished = DispatchSemaphore(value: 0)
+        let box = AdaptivePolicyStateBox()
+        box.state.beginRunning(bitrateKbps: 18_491)
+
+        queue.async {
+            blocker.wait()
+        }
+        queue.async {
+            box.state.beginStopping()
+        }
+        queue.async {
+            box.didApply = box.state.apply(
+                bitrateKbps: 24_000,
+                admissionDivisor: 2
+            ) {
+                box.bitrateApplyCount += 1
+            }
+            finished.signal()
+        }
+
+        blocker.signal()
+        XCTAssertEqual(finished.wait(timeout: .now() + 1), .success)
+        XCTAssertFalse(box.didApply)
+        XCTAssertEqual(box.bitrateApplyCount, 0)
+        XCTAssertEqual(box.state.appliedBitrateKbps, 18_491)
+        XCTAssertEqual(box.state.admissionDivisor, 1)
+    }
 }
 
 private extension LumenAdaptiveVideoBitrateTests {
@@ -177,6 +208,12 @@ private struct RecordingAdaptiveBitrateRuntimeFactory:
     ) throws -> any LumenEncodedCaptureRuntime {
         runtime
     }
+}
+
+private final class AdaptivePolicyStateBox: @unchecked Sendable {
+    var state = LumenAdaptiveVideoDeliveryPolicyState()
+    var bitrateApplyCount = 0
+    var didApply = false
 }
 
 private final class RecordingAdaptiveBitrateRuntime:

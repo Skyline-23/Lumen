@@ -30,7 +30,7 @@ use windows_api::Win32::Media::MediaFoundation::{
     MF_MT_PIXEL_ASPECT_RATIO, MF_MT_SUBTYPE, MF_TRANSFORM_ASYNC_UNLOCK, MF_VERSION,
 };
 use windows_api::Win32::System::Com::CoTaskMemFree;
-use windows_api::Win32::System::Variant::{VARIANT, VT_UI4};
+use windows_api::Win32::System::Variant::{VariantClear, VARIANT, VT_UI4};
 
 use super::native_capture::{NativeEncoderSurface, NativeIddCxCapture};
 use super::native_display_driver::DriverHandle;
@@ -741,15 +741,12 @@ impl NativeVideoEncoderSession {
         let discrete =
             unsafe { (vtable.GetParameterValues)(raw, api, &mut values, &mut values_count) };
         if discrete.0 == 0 {
-            let admitted = !values.is_null()
-                && values_count > 0
-                && unsafe { slice::from_raw_parts(values, values_count as usize) }
-                    .iter()
-                    .filter_map(variant_ui4)
-                    .any(|value| value == bitrate_bps);
-            if !values.is_null() {
-                unsafe { CoTaskMemFree(Some(values.cast())) };
-            }
+            let values = CoTaskVariantArray::new(values, values_count);
+            let admitted = values
+                .as_slice()
+                .iter()
+                .filter_map(variant_ui4)
+                .any(|value| value == bitrate_bps);
             return admitted.then_some(()).ok_or_else(|| {
                 format!("Windows encoder does not admit mean bitrate {bitrate_bps} bps")
             });
@@ -937,6 +934,52 @@ fn variant_ui4(value: &VARIANT) -> Option<u32> {
     (value.vt() == VT_UI4)
         .then(|| u32::try_from(value).ok())
         .flatten()
+}
+
+struct CoTaskVariantArray {
+    values: *mut VARIANT,
+    count: usize,
+}
+
+impl CoTaskVariantArray {
+    fn new(values: *mut VARIANT, count: u32) -> Self {
+        Self {
+            values,
+            count: count as usize,
+        }
+    }
+
+    fn as_slice(&self) -> &[VARIANT] {
+        if self.values.is_null() || self.count == 0 {
+            &[]
+        } else {
+            unsafe { slice::from_raw_parts(self.values, self.count) }
+        }
+    }
+}
+
+impl Drop for CoTaskVariantArray {
+    fn drop(&mut self) {
+        if self.values.is_null() {
+            return;
+        }
+        unsafe {
+            visit_variant_elements(self.values, self.count, |value| {
+                let _ = VariantClear(value);
+            });
+            CoTaskMemFree(Some(self.values.cast()));
+        }
+    }
+}
+
+unsafe fn visit_variant_elements(
+    values: *mut VARIANT,
+    count: usize,
+    mut visit: impl FnMut(*mut VARIANT),
+) {
+    for index in 0..count {
+        visit(unsafe { values.add(index) });
+    }
 }
 
 impl Drop for NativeVideoEncoderSession {
@@ -1343,5 +1386,24 @@ mod tests {
             vec![Some(0), None, Some(333_332), None]
         );
         assert_eq!(next, 666_664);
+    }
+
+    #[test]
+    fn variant_array_cleanup_visits_every_value_including_unexpected_types() {
+        let mut values = [
+            VARIANT::from(1_u32),
+            VARIANT::from(true),
+            VARIANT::default(),
+        ];
+        let base = values.as_mut_ptr();
+        let mut visited = Vec::new();
+
+        unsafe {
+            visit_variant_elements(base, values.len(), |value| {
+                visited.push(value.offset_from(base));
+            });
+        }
+
+        assert_eq!(visited, vec![0, 1, 2]);
     }
 }

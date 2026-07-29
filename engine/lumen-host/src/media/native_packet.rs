@@ -1,7 +1,8 @@
 use lumen_engine::{
-    encode_native_media_header, encode_native_media_header_with_fec_block, NativeFecBlockExtension,
-    NativeMediaHeader, NativeMediaKind, NATIVE_FEC_BLOCK_HEADER_BYTES, NATIVE_MEDIA_FLAG_FEC_BLOCK,
-    NATIVE_MEDIA_FLAG_KEYFRAME, NATIVE_MEDIA_FLAG_PARITY_SHARD, NATIVE_MEDIA_HEADER_BYTES,
+    encode_native_media_header, encode_native_media_header_with_fec_block,
+    native_video_packetization_plan, NativeFecBlockExtension, NativeMediaHeader, NativeMediaKind,
+    NATIVE_FEC_BLOCK_HEADER_BYTES, NATIVE_MEDIA_FLAG_FEC_BLOCK, NATIVE_MEDIA_FLAG_KEYFRAME,
+    NATIVE_MEDIA_FLAG_PARITY_SHARD,
 };
 use reed_solomon_erasure::galois_8::ReedSolomon;
 
@@ -9,9 +10,6 @@ use crate::{PlatformEncodedAudioPacket, PlatformEncodedVideoFrame};
 
 const REQUIRED_AUDIO_DURATION_FRAMES: u32 = 240;
 const MAXIMUM_AUDIO_PAYLOAD_BYTES: usize = 1_400;
-const MAXIMUM_REED_SOLOMON_SHARDS: usize = 256;
-const TARGET_FEC_DATA_SHARDS_PER_BLOCK: usize = 32;
-const MAXIMUM_FEC_BLOCKS: usize = u8::MAX as usize;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NativeMediaPacketizerConfig {
@@ -193,64 +191,24 @@ impl NativeMediaPacketizer {
         if metadata.parity_percentage > 255 {
             return Err("native media parity percentage is invalid".to_owned());
         }
-        let maximum_data_shards = maximum_data_shards(metadata.parity_percentage);
-        let base_shard_bytes = self.config.maximum_datagram_payload - NATIVE_MEDIA_HEADER_BYTES;
-        let base_data_shards = payload.len().div_ceil(base_shard_bytes);
-        let exceeds_reed_solomon_limit = base_data_shards
-            .checked_add(parity_shards(base_data_shards, metadata.parity_percentage))
-            .is_none_or(|total| total > MAXIMUM_REED_SOLOMON_SHARDS);
-        let uses_fec_blocks = exceeds_reed_solomon_limit
-            || (metadata.parity_percentage != 0
-                && base_data_shards > TARGET_FEC_DATA_SHARDS_PER_BLOCK);
-        let header_bytes = if uses_fec_blocks {
-            NATIVE_FEC_BLOCK_HEADER_BYTES
-        } else {
-            NATIVE_MEDIA_HEADER_BYTES
-        };
-        let shard_bytes = self.config.maximum_datagram_payload - header_bytes;
-        let minimum_data_shards_per_block = if uses_fec_blocks {
-            let payload_bytes_per_shard_across_all_blocks = MAXIMUM_FEC_BLOCKS
-                .checked_mul(shard_bytes)
-                .ok_or_else(|| "native media FEC block size overflowed".to_owned())?;
-            payload
-                .len()
-                .div_ceil(payload_bytes_per_shard_across_all_blocks)
-        } else {
-            1
-        };
-        let preferred_data_shards_per_block = if metadata.parity_percentage == 0 {
-            maximum_data_shards
-        } else {
-            TARGET_FEC_DATA_SHARDS_PER_BLOCK
-        };
-        let data_shards_per_block = preferred_data_shards_per_block
-            .max(minimum_data_shards_per_block)
-            .min(maximum_data_shards);
-        let block_payload_bytes = data_shards_per_block
-            .checked_mul(shard_bytes)
-            .ok_or_else(|| "native media FEC block size overflowed".to_owned())?;
-        let block_count = payload.len().div_ceil(block_payload_bytes);
-        let block_count_u8 = u8::try_from(block_count)
+        let plan = native_video_packetization_plan(
+            payload.len(),
+            self.config.maximum_datagram_payload,
+            metadata.parity_percentage,
+        )
+        .ok_or_else(|| "native media packetization plan is invalid".to_owned())?;
+        let block_count_u8 = u8::try_from(plan.block_count)
             .map_err(|_| "native media FEC block count overflowed".to_owned())?;
-        let total_shards = payload
-            .chunks(block_payload_bytes)
-            .try_fold(0_usize, |total, block| {
-                let data_shards = block.len().div_ceil(shard_bytes);
-                total.checked_add(
-                    data_shards + parity_shards(data_shards, metadata.parity_percentage),
-                )
-            })
-            .ok_or_else(|| "native media packet count overflowed".to_owned())?;
         let next_sequence = self
             .next_sequence
             .checked_add(
-                u32::try_from(total_shards)
+                u32::try_from(plan.total_shards)
                     .map_err(|_| "native media packet count overflowed".to_owned())?,
             )
             .ok_or_else(|| "native media datagram sequence exhausted".to_owned())?;
 
-        let mut datagrams = Vec::with_capacity(total_shards);
-        let base_flags = (if uses_fec_blocks {
+        let mut datagrams = Vec::with_capacity(plan.total_shards);
+        let base_flags = (if plan.uses_fec_blocks {
             NATIVE_MEDIA_FLAG_FEC_BLOCK
         } else {
             0
@@ -259,31 +217,31 @@ impl NativeMediaPacketizer {
         } else {
             0
         };
-        for (block_index, block) in payload.chunks(block_payload_bytes).enumerate() {
-            let data_shards = block.len().div_ceil(shard_bytes);
+        for (block_index, block) in payload.chunks(plan.block_payload_bytes).enumerate() {
+            let data_shards = block.len().div_ceil(plan.shard_bytes);
             let parity_shards = parity_shards(data_shards, metadata.parity_percentage);
             let data_shards_u8 = u8::try_from(data_shards)
                 .map_err(|_| "native media data shard count overflowed".to_owned())?;
             let parity_shards_u8 = u8::try_from(parity_shards)
                 .map_err(|_| "native media parity shard count overflowed".to_owned())?;
             let mut shards = block
-                .chunks(shard_bytes)
+                .chunks(plan.shard_bytes)
                 .map(|chunk| {
-                    let mut shard = vec![0_u8; shard_bytes];
+                    let mut shard = vec![0_u8; plan.shard_bytes];
                     shard[..chunk.len()].copy_from_slice(chunk);
                     shard
                 })
                 .collect::<Vec<_>>();
-            shards.extend((0..parity_shards).map(|_| vec![0_u8; shard_bytes]));
+            shards.extend((0..parity_shards).map(|_| vec![0_u8; plan.shard_bytes]));
             if parity_shards != 0 {
                 self.encode_fec_shards(
                     data_shards,
                     parity_shards,
-                    uses_fec_blocks && block.len() == block_payload_bytes,
+                    plan.uses_fec_blocks && block.len() == plan.block_payload_bytes,
                     &mut shards,
                 )?;
             }
-            let object_payload_offset = u32::try_from(block_index * block_payload_bytes)
+            let object_payload_offset = u32::try_from(block_index * plan.block_payload_bytes)
                 .map_err(|_| "native media FEC block offset overflowed".to_owned())?;
             for (index, shard) in shards.into_iter().enumerate() {
                 let header = NativeMediaHeader {
@@ -304,7 +262,7 @@ impl NativeMediaPacketizer {
                     data_shards: data_shards_u8,
                     parity_shards: parity_shards_u8,
                 };
-                let encoded_header = if uses_fec_blocks {
+                let encoded_header = if plan.uses_fec_blocks {
                     encode_native_media_header_with_fec_block(
                         header,
                         NativeFecBlockExtension {
@@ -328,6 +286,10 @@ impl NativeMediaPacketizer {
                 datagrams.push(datagram);
             }
         }
+        debug_assert_eq!(
+            datagrams.iter().map(Vec::len).sum::<usize>(),
+            plan.total_wire_bytes
+        );
         self.next_sequence = next_sequence;
         Ok(NativePacketizedUnit {
             datagrams,
@@ -350,14 +312,4 @@ fn parity_shards(data_shards: usize, parity_percentage: u16) -> usize {
     } else {
         (data_shards * usize::from(parity_percentage)).div_ceil(100)
     }
-}
-
-fn maximum_data_shards(parity_percentage: u16) -> usize {
-    (1..=255)
-        .rev()
-        .find(|data_shards| {
-            data_shards + parity_shards(*data_shards, parity_percentage)
-                <= MAXIMUM_REED_SOLOMON_SHARDS
-        })
-        .expect("one data shard always fits the configured parity range")
 }

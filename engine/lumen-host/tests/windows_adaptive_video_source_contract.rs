@@ -14,6 +14,16 @@ fn windows_adaptive_delivery_policy_reaches_the_active_media_foundation_encoder(
     assert!(MEDIA.contains("pub(super) fn set_video_delivery_policy"));
     assert!(VIDEO.contains("NativeMediaFoundationCommand::SetBitrate"));
     assert!(VIDEO.contains("CODECAPI_AVEncCommonMeanBitRate"));
+    assert!(VIDEO.contains("VariantClear(value)"));
+    assert!(VIDEO.contains("CoTaskVariantArray"));
+    let clear = VIDEO.find("VariantClear(value)").unwrap();
+    let free = VIDEO
+        .find("CoTaskMemFree(Some(self.values.cast()))")
+        .unwrap();
+    assert!(
+        clear < free,
+        "every COM VARIANT must be cleared before array storage is freed"
+    );
     assert!(VIDEO.contains("admission_divisor"));
     assert!(VIDEO.contains("admissions_until_next"));
     assert!(VIDEO.contains("take_video_timestamp"));

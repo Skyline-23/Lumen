@@ -21,7 +21,7 @@ use serde_json::{json, Value};
 use std::collections::VecDeque;
 use std::fs;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn router() -> (tempfile::TempDir, ControlRouter) {
@@ -160,6 +160,54 @@ impl PlatformSessionControl for RecordingPlatformSessionControl {
 struct FailingPlatformSessionControl {
     runtime_events: Mutex<Vec<PlatformRuntimeEvent>>,
     stops: AtomicUsize,
+}
+
+#[derive(Default)]
+struct StalledAdaptivePlatformSessionControl {
+    gate: (Mutex<(bool, bool)>, Condvar),
+    stops: AtomicUsize,
+}
+
+impl StalledAdaptivePlatformSessionControl {
+    fn wait_until_policy_apply_stalls(&self) {
+        let (state, ready) = &self.gate;
+        let mut state = state.lock().unwrap();
+        while !state.0 {
+            state = ready.wait(state).unwrap();
+        }
+    }
+
+    fn release_policy_apply(&self) {
+        let (state, ready) = &self.gate;
+        let mut state = state.lock().unwrap();
+        state.1 = true;
+        ready.notify_all();
+    }
+}
+
+impl PlatformSessionControl for StalledAdaptivePlatformSessionControl {
+    fn start_session(&self, _: PlatformSessionPlan) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn stop_session(&self) -> Result<(), String> {
+        self.stops.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+
+    fn handle_control_event(&self, _: u32, event: PlatformControlEvent) -> Result<(), String> {
+        if !matches!(event, PlatformControlEvent::SetVideoDeliveryPolicy { .. }) {
+            return Ok(());
+        }
+        let (state, ready) = &self.gate;
+        let mut state = state.lock().unwrap();
+        state.0 = true;
+        ready.notify_all();
+        while !state.1 {
+            state = ready.wait(state).unwrap();
+        }
+        Ok(())
+    }
 }
 
 pub(crate) struct RetryingCleanupPlatformSessionControl {
@@ -1271,32 +1319,17 @@ fn media_feedback_separates_wire_budget_from_pipeline_admission() {
     };
     let stale_proposal = audio_proposal.clone();
     let audio_decision = audio_proposal.decision;
-    let mut platform_apply_called = false;
-    assert_eq!(
-        router.apply_native_adaptive_video_transaction(
-            context.session_epoch,
-            audio_proposal,
-            |_| {
-                platform_apply_called = true;
-                Ok(())
-            },
-        ),
-        Ok(true)
+    assert!(
+        router.begin_native_adaptive_video_policy_apply(context.session_epoch, &audio_proposal,)
     );
-    assert!(platform_apply_called);
-    let mut stale_platform_apply_called = false;
-    assert_eq!(
-        router.apply_native_adaptive_video_transaction(
-            context.session_epoch,
-            stale_proposal,
-            |_| {
-                stale_platform_apply_called = true;
-                Ok(())
-            },
-        ),
-        Ok(false)
+    assert!(router.finish_native_adaptive_video_policy_apply(
+        context.session_epoch,
+        audio_proposal,
+        true,
+    ));
+    assert!(
+        !router.begin_native_adaptive_video_policy_apply(context.session_epoch, &stale_proposal,)
     );
-    assert!(!stale_platform_apply_called);
     assert!(audio_decision.changed);
     assert_eq!(
         audio_decision.congestion_source,
@@ -1382,6 +1415,75 @@ fn media_feedback_separates_wire_budget_from_pipeline_admission() {
         router.observe_native_media_feedback(&reversed_range, context.session_epoch),
         Err(NativeMediaFeedbackRejection::InvalidSequenceRange)
     );
+}
+
+#[test]
+fn stalled_platform_policy_apply_does_not_block_native_session_teardown() {
+    let platform = Arc::new(StalledAdaptivePlatformSessionControl::default());
+    let (_root, mut router, context, plan) = started_native_router(platform.clone());
+    let video = MediaFeedback {
+        stream_id: plan.video_stream_id,
+        highest_datagram_sequence: 100,
+        first_datagram_sequence: 1,
+        received_datagrams: 50,
+        window_milliseconds: 250,
+        feedback_window_id: 1,
+        ..MediaFeedback::default()
+    };
+    let audio = MediaFeedback {
+        stream_id: plan.audio_stream_id,
+        highest_datagram_sequence: 3,
+        first_datagram_sequence: 1,
+        received_datagrams: 3,
+        window_milliseconds: 250,
+        feedback_window_id: 1,
+        ..MediaFeedback::default()
+    };
+    assert!(matches!(
+        router
+            .observe_native_media_feedback(&video, context.session_epoch)
+            .unwrap(),
+        NativeMediaFeedbackDisposition::AwaitingPair { .. }
+    ));
+    let NativeMediaFeedbackDisposition::Applied(proposal) = router
+        .observe_native_media_feedback(&audio, context.session_epoch)
+        .unwrap()
+    else {
+        panic!("loss feedback must produce an adaptive proposal");
+    };
+    assert!(router.begin_native_adaptive_video_policy_apply(context.session_epoch, &proposal));
+    let decision = proposal.decision;
+    let router = Arc::new(Mutex::new(router));
+    let worker_router = Arc::clone(&router);
+    let worker_platform = Arc::clone(&platform);
+    let session_epoch = context.session_epoch;
+    let worker = std::thread::spawn(move || {
+        let applied = worker_platform
+            .handle_control_event(
+                session_epoch,
+                PlatformControlEvent::SetVideoDeliveryPolicy {
+                    bitrate_kbps: decision.encoder_bitrate_kbps,
+                    admission_divisor: decision.admission_divisor,
+                },
+            )
+            .is_ok();
+        worker_router
+            .lock()
+            .unwrap()
+            .finish_native_adaptive_video_policy_apply(session_epoch, proposal, applied)
+    });
+
+    platform.wait_until_policy_apply_stalls();
+    assert_eq!(
+        router
+            .lock()
+            .unwrap()
+            .terminate_native_connection(session_epoch),
+        Ok(())
+    );
+    assert_eq!(platform.stops.load(Ordering::Relaxed), 1);
+    platform.release_policy_apply();
+    assert!(!worker.join().unwrap());
 }
 
 #[test]

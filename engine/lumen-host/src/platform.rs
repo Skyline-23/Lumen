@@ -1471,6 +1471,8 @@ mod tests {
             LumenHostPlatformRuntimeEventCode::NativeVideoAdaptiveControl as u32,
             16
         );
+        assert!(include_str!("../include/lumen_host.h")
+            .contains("LumenHostPlatformRuntimeEventCodeNativeVideoAdaptiveControl = 16"));
     }
 
     #[test]
