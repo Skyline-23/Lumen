@@ -13,7 +13,8 @@ use crate::native_command::{
     LUMEN_HOST_COMMAND_SHUTDOWN,
 };
 use crate::windows_app::{
-    WindowsAppModel, WindowsAppSnapshot, WindowsNavigation, WindowsOwnerAccessState,
+    WindowsAppModel, WindowsAppSnapshot, WindowsBooleanSetting, WindowsNavigation,
+    WindowsOwnerAccessState,
 };
 use crate::HostArguments;
 
@@ -26,6 +27,7 @@ static QUIT_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 enum WindowsUiError {
     Owner(lumen_engine::OwnerAccountError),
+    Settings(String),
 }
 
 impl WindowsUiError {
@@ -37,11 +39,15 @@ impl WindowsUiError {
             Self::Owner(OwnerAccountError::AuthenticationFailed) => 2,
             Self::Owner(OwnerAccountError::Storage) => 3,
             Self::Owner(OwnerAccountError::Corrupt) => 4,
+            Self::Settings(_) => -1,
         }
     }
 
     fn detail(&self) -> &str {
-        ""
+        match self {
+            Self::Owner(_) => "",
+            Self::Settings(message) => message,
+        }
     }
 }
 
@@ -196,6 +202,19 @@ fn wire_callbacks(ui: &LumenWindowsApp, model: Rc<RefCell<WindowsAppModel>>) {
     ui.on_quit_host(move || {
         let _ = lumen_host_send_command(LUMEN_HOST_COMMAND_SHUTDOWN);
     });
+
+    let weak = ui.as_weak();
+    let settings_model = Rc::clone(&model);
+    ui.on_update_boolean_setting(move |index, enabled| {
+        let Some(setting) = WindowsBooleanSetting::from_index(index) else {
+            return;
+        };
+        let result = settings_model
+            .borrow_mut()
+            .update_boolean_setting(setting, enabled)
+            .map_err(WindowsUiError::Settings);
+        refresh(&weak, &settings_model, result.err());
+    });
 }
 
 fn refresh(
@@ -248,4 +267,50 @@ fn apply_snapshot(
             .collect::<Vec<_>>(),
     )));
     ui.set_control_port(i32::from(snapshot.control_port));
+    ui.set_discovery_enabled(snapshot.settings.general.discovery);
+    ui.set_pre_release_notifications_enabled(snapshot.settings.general.notify_pre_releases);
+    ui.set_streaming_adapter(snapshot.settings.streaming.adapter_selector.as_str().into());
+    ui.set_fallback_display_mode(
+        snapshot
+            .settings
+            .streaming
+            .fallback_display_mode
+            .as_str()
+            .into(),
+    );
+    ui.set_stream_audio_enabled(snapshot.settings.audio.stream_audio);
+    ui.set_audio_sink(snapshot.settings.audio.sink.as_str().into());
+    ui.set_keyboard_enabled(snapshot.settings.input.keyboard);
+    ui.set_mouse_enabled(snapshot.settings.input.mouse);
+    ui.set_controller_enabled(snapshot.settings.input.controller);
+    ui.set_right_alt_mapping_enabled(snapshot.settings.input.map_right_alt_to_windows_key);
+    ui.set_high_resolution_scrolling_enabled(snapshot.settings.input.high_resolution_scrolling);
+    ui.set_native_pen_touch_enabled(snapshot.settings.input.native_pen_touch);
+    ui.set_rumble_forwarding_enabled(snapshot.settings.input.rumble_forwarding);
+    ui.set_upnp_enabled(snapshot.settings.network.upnp);
+    ui.set_address_family(
+        match snapshot.settings.network.address_family {
+            lumen_engine::settings::AddressFamily::Ipv4 => "IPv4",
+            lumen_engine::settings::AddressFamily::Both => "IPv4 + IPv6",
+        }
+        .into(),
+    );
+    ui.set_lan_encryption(encryption_title(snapshot.settings.network.lan_encryption).into());
+    ui.set_wan_encryption(encryption_title(snapshot.settings.network.wan_encryption).into());
+    ui.set_fec_percentage(i32::from(snapshot.settings.network.fec_percentage));
+    ui.set_preparation_command_count(saturating_i32(snapshot.settings.commands.prep.len()));
+    ui.set_state_command_count(saturating_i32(snapshot.settings.commands.state.len()));
+    ui.set_server_command_count(saturating_i32(snapshot.settings.commands.server.len()));
+}
+
+fn encryption_title(mode: lumen_engine::settings::EncryptionMode) -> &'static str {
+    match mode {
+        lumen_engine::settings::EncryptionMode::Disabled => "Disabled",
+        lumen_engine::settings::EncryptionMode::Opportunistic => "Opportunistic",
+        lumen_engine::settings::EncryptionMode::Required => "Required",
+    }
+}
+
+fn saturating_i32(value: usize) -> i32 {
+    i32::try_from(value).unwrap_or(i32::MAX)
 }

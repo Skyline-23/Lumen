@@ -293,6 +293,29 @@ fn secure_ioctl_commits_monitor_state_only_after_iddcx_succeeds() {
 }
 
 #[test]
+fn adapter_caps_include_required_endpoint_diagnostics() {
+    // Given: IddCx validates static adapter capabilities before it accepts the
+    // asynchronous adapter initialization request.
+    let adapter = fs::read_to_string(driver_root().join("shim/adapter.cpp"))
+        .expect("adapter initialization source must exist");
+
+    // Then: required endpoint diagnostics and version records are populated.
+    assert!(adapter.contains("caps.EndPointDiagnostics.Size = sizeof(caps.EndPointDiagnostics);"));
+    assert!(adapter.contains("caps.EndPointDiagnostics.GammaSupport ="));
+    assert!(adapter.contains("IDDCX_FEATURE_IMPLEMENTATION_NONE;"));
+    assert!(adapter.contains("caps.EndPointDiagnostics.TransmissionType ="));
+    assert!(adapter.contains("IDDCX_TRANSMISSION_TYPE_WIRED_OTHER;"));
+    assert!(adapter.contains("caps.EndPointDiagnostics.pEndPointFriendlyName"));
+    assert!(adapter.contains("caps.EndPointDiagnostics.pEndPointManufacturerName"));
+    assert!(adapter.contains("caps.EndPointDiagnostics.pEndPointModelName"));
+    assert!(adapter.contains("static IDDCX_ENDPOINT_VERSION endpoint_version = []"));
+    assert!(adapter.contains("version.Size = sizeof(version);"));
+    assert!(adapter.contains("caps.EndPointDiagnostics.pFirmwareVersion = &endpoint_version;"));
+    assert!(adapter.contains("caps.EndPointDiagnostics.pHardwareVersion = &endpoint_version;"));
+    assert!(!adapter.contains("IDDCX_ENDPOINT_VERSION endpoint_version {};"));
+}
+
+#[test]
 fn d3d12_swapchain_frames_cross_one_same_adapter_shared_surface() {
     let processor = fs::read_to_string(driver_root().join("shim/frame_processor.cpp"))
         .expect("frame processor must exist");

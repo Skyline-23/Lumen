@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::OnceLock;
 
 use windows_sys::Win32::Foundation::{
-    CloseHandle, GetLastError, HANDLE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0, WAIT_TIMEOUT,
+    CloseHandle, GetLastError, HANDLE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0,
 };
 use windows_sys::Win32::Security::{
     DuplicateTokenEx, SecurityImpersonation, SetTokenInformation, TokenPrimary, TOKEN_ALL_ACCESS,
@@ -21,6 +21,10 @@ use windows_sys::Win32::System::JobObjects::{
     JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
 };
 use windows_sys::Win32::System::RemoteDesktop::WTSGetActiveConsoleSessionId;
+use windows_sys::Win32::System::RemoteDesktop::{
+    WTSActive, WTSConnected, WTSDisconnected, WTSEnumerateSessionsW, WTSFreeMemory,
+    WTSQuerySessionInformationW, WTSUserName, WTS_CURRENT_SERVER_HANDLE, WTS_SESSION_INFOW,
+};
 use windows_sys::Win32::System::Services::{
     RegisterServiceCtrlHandlerExW, SetServiceStatus, StartServiceCtrlDispatcherW,
     SERVICE_ACCEPT_PRESHUTDOWN, SERVICE_ACCEPT_SESSIONCHANGE, SERVICE_ACCEPT_STOP,
@@ -35,13 +39,51 @@ use windows_sys::Win32::System::Threading::{
     WaitForSingleObject, CREATE_NO_WINDOW, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT,
     DETACHED_PROCESS, INFINITE, PROCESS_INFORMATION, STARTUPINFOW,
 };
-use windows_sys::Win32::UI::WindowsAndMessaging::WTS_CONSOLE_CONNECT;
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    WTS_CONSOLE_CONNECT, WTS_REMOTE_CONNECT, WTS_SESSION_LOGON, WTS_SESSION_UNLOCK,
+};
 
 const SERVICE_NAME: [u16; 13] = [76, 117, 109, 101, 110, 83, 101, 114, 118, 105, 99, 101, 0];
 const NO_CONSOLE_SESSION: u32 = u32::MAX;
 const ERROR_PROCESS_ABORTED: u32 = 1067;
 const ERROR_SHUTDOWN_IN_PROGRESS: u32 = 1115;
+const ERROR_GEN_FAILURE: u32 = 31;
 const ERROR_INVALID_PARAMETER: c_int = 87;
+
+#[derive(Debug)]
+struct ServiceError {
+    message: String,
+    code: u32,
+}
+
+type ServiceResult<T> = Result<T, ServiceError>;
+
+impl ServiceError {
+    fn windows(operation: &str) -> Self {
+        Self {
+            message: format!("{operation} failed"),
+            code: unsafe { GetLastError() }.max(1),
+        }
+    }
+
+    fn io(operation: &str, error: std::io::Error) -> Self {
+        Self {
+            message: format!("{operation}: {error}"),
+            code: error
+                .raw_os_error()
+                .and_then(|code| u32::try_from(code).ok())
+                .unwrap_or(ERROR_GEN_FAILURE)
+                .max(1),
+        }
+    }
+
+    fn status(message: String, code: u32) -> Self {
+        Self {
+            message,
+            code: code.max(1),
+        }
+    }
+}
 
 struct ServiceControl {
     status: AtomicPtr<c_void>,
@@ -83,7 +125,7 @@ impl ServiceControl {
 struct OwnedHandle(HANDLE);
 
 impl OwnedHandle {
-    fn new(handle: HANDLE, operation: &str) -> Result<Self, String> {
+    fn new(handle: HANDLE, operation: &str) -> ServiceResult<Self> {
         if handle.is_null() || handle == INVALID_HANDLE_VALUE {
             Err(last_error(operation))
         } else {
@@ -104,9 +146,26 @@ impl Drop for OwnedHandle {
     }
 }
 
+struct OwnedWtsMemory(*mut c_void);
+
+impl Drop for OwnedWtsMemory {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            unsafe {
+                WTSFreeMemory(self.0);
+            }
+        }
+    }
+}
+
 struct ProcessHandles {
     process: OwnedHandle,
     thread: OwnedHandle,
+}
+
+enum HostSupervision {
+    SessionChanged,
+    Stop,
 }
 
 enum ServiceInvocation {
@@ -128,10 +187,10 @@ pub unsafe extern "C" fn lumen_windows_service_run(
     match service_arguments(argc, argv) {
         Ok(ServiceInvocation::Terminate(process_id)) => graceful_termination(process_id)
             .map(|()| 0)
-            .unwrap_or_else(|_| unsafe { GetLastError() as c_int }),
+            .unwrap_or_else(|error| error.code as c_int),
         Ok(ServiceInvocation::Dispatch) => dispatch_service()
             .map(|()| 0)
-            .unwrap_or_else(|_| unsafe { GetLastError() as c_int }),
+            .unwrap_or_else(|error| error.code as c_int),
         Err(()) => ERROR_INVALID_PARAMETER,
     }
 }
@@ -163,15 +222,20 @@ unsafe fn service_arguments(
         .ok_or(())
 }
 
-fn dispatch_service() -> Result<(), String> {
+fn dispatch_service() -> ServiceResult<()> {
     let executable = std::env::current_exe()
-        .map_err(|error| format!("resolve Lumen service executable: {error}"))?;
+        .map_err(|error| ServiceError::io("resolve Lumen service executable", error))?;
     let host_directory = executable
         .parent()
         .and_then(|tools| tools.parent())
-        .ok_or_else(|| "Lumen service executable has no host directory".to_owned())?;
+        .ok_or_else(|| {
+            ServiceError::status(
+                "Lumen service executable has no host directory".to_owned(),
+                ERROR_GEN_FAILURE,
+            )
+        })?;
     std::env::set_current_dir(host_directory)
-        .map_err(|error| format!("set Lumen service host directory: {error}"))?;
+        .map_err(|error| ServiceError::io("set Lumen service host directory", error))?;
 
     let table = [
         SERVICE_TABLE_ENTRYW {
@@ -196,7 +260,12 @@ unsafe extern "system" fn service_control_handler(
     let state = ServiceControl::shared();
     match control {
         SERVICE_CONTROL_INTERROGATE => 0,
-        SERVICE_CONTROL_SESSIONCHANGE if event_type == WTS_CONSOLE_CONNECT => {
+        SERVICE_CONTROL_SESSIONCHANGE
+            if matches!(
+                event_type,
+                WTS_CONSOLE_CONNECT | WTS_REMOTE_CONNECT | WTS_SESSION_LOGON | WTS_SESSION_UNLOCK
+            ) =>
+        {
             signal(state.session_event.load(Ordering::Acquire) as HANDLE);
             0
         }
@@ -219,19 +288,19 @@ unsafe extern "system" fn service_main(_argc: u32, _argv: *mut *mut u16) {
     }
     state.status.store(status.cast(), Ordering::Release);
     state.report(SERVICE_START_PENDING, 0, 0, 0);
+    clear_service_error();
     let result = run_service(state);
-    let error = if result.is_ok() {
-        0
-    } else {
-        unsafe { GetLastError() }.max(1)
-    };
+    let error = result.as_ref().err().map(|error| error.code).unwrap_or(0);
+    if let Err(error) = &result {
+        record_service_error(error);
+    }
     state.report(SERVICE_STOPPED, 0, error, 0);
     state.stop_event.store(null_mut(), Ordering::Release);
     state.session_event.store(null_mut(), Ordering::Release);
     state.status.store(null_mut(), Ordering::Release);
 }
 
-fn run_service(state: &ServiceControl) -> Result<(), String> {
+fn run_service(state: &ServiceControl) -> ServiceResult<()> {
     let stop_event = OwnedHandle::new(
         unsafe { CreateEventW(null(), 1, 0, null()) },
         "create Lumen service stop event",
@@ -254,39 +323,106 @@ fn run_service(state: &ServiceControl) -> Result<(), String> {
     );
 
     loop {
-        match unsafe { WaitForSingleObject(stop_event.get(), 3_000) } {
-            WAIT_OBJECT_0 => break,
-            WAIT_TIMEOUT => {}
-            _ => return Err(last_error("wait for Lumen service control event")),
-        }
-        let session_id = unsafe { WTSGetActiveConsoleSessionId() };
-        if session_id == NO_CONSOLE_SESSION {
+        let Some(session_id) = active_interactive_session_id()? else {
+            if !wait_for_session_or_stop(stop_event.get(), session_event.get())? {
+                break;
+            }
             continue;
-        }
-        let token = match duplicate_service_token(session_id) {
-            Ok(token) => token,
-            Err(_) => continue,
         };
-        let job = match create_host_job() {
-            Ok(job) => job,
-            Err(_) => continue,
-        };
-        let process = match launch_host(&token, &job) {
-            Ok(process) => process,
-            Err(_) => continue,
-        };
-        supervise_host(
+        let token = duplicate_service_token(session_id)?;
+        let job = create_host_job()?;
+        let process = launch_host(&token, &job)?;
+        match supervise_host(
             &token,
             session_id,
             &process,
             stop_event.get(),
             session_event.get(),
-        );
+        )? {
+            HostSupervision::SessionChanged => continue,
+            HostSupervision::Stop => break,
+        }
     }
     Ok(())
 }
 
-fn duplicate_service_token(session_id: u32) -> Result<OwnedHandle, String> {
+fn active_interactive_session_id() -> ServiceResult<Option<u32>> {
+    let mut sessions: *mut WTS_SESSION_INFOW = null_mut();
+    let mut count = 0;
+    if unsafe { WTSEnumerateSessionsW(WTS_CURRENT_SERVER_HANDLE, 0, 1, &mut sessions, &mut count) }
+        == 0
+    {
+        return Err(last_error("enumerate active Windows sessions"));
+    }
+    if sessions.is_null() || count == 0 {
+        let _memory = OwnedWtsMemory(sessions.cast());
+        return Ok(None);
+    }
+
+    let _memory = OwnedWtsMemory(sessions.cast());
+    let console_session = unsafe { WTSGetActiveConsoleSessionId() };
+    let inventory = unsafe { slice::from_raw_parts(sessions, count as usize) };
+    let mut selected = inventory
+        .iter()
+        .filter(|session| session.State == WTSActive)
+        .map(|session| session.SessionId)
+        .find(|session_id| *session_id == console_session)
+        .or_else(|| {
+            inventory
+                .iter()
+                .find(|session| session.State == WTSActive)
+                .map(|session| session.SessionId)
+        });
+    if selected.is_none() {
+        for state in [WTSConnected, WTSDisconnected] {
+            for session in inventory.iter().filter(|session| session.State == state) {
+                if session_has_user(session.SessionId)? {
+                    selected = Some(session.SessionId);
+                    break;
+                }
+            }
+            if selected.is_some() {
+                break;
+            }
+        }
+    }
+    Ok(selected.filter(|session_id| *session_id != NO_CONSOLE_SESSION))
+}
+
+fn session_has_user(session_id: u32) -> ServiceResult<bool> {
+    let mut username = null_mut();
+    let mut bytes = 0;
+    if unsafe {
+        WTSQuerySessionInformationW(
+            WTS_CURRENT_SERVER_HANDLE,
+            session_id,
+            WTSUserName,
+            &mut username,
+            &mut bytes,
+        )
+    } == 0
+    {
+        return Err(last_error("query Windows session user"));
+    }
+    let _memory = OwnedWtsMemory(username.cast());
+    if username.is_null() || bytes < size_of::<u16>() as u32 {
+        return Ok(false);
+    }
+    let units = usize::try_from(bytes).unwrap_or(0) / size_of::<u16>();
+    let value = unsafe { slice::from_raw_parts(username, units) };
+    Ok(value.iter().any(|unit| *unit != 0))
+}
+
+fn wait_for_session_or_stop(stop_event: HANDLE, session_event: HANDLE) -> ServiceResult<bool> {
+    let handles = [stop_event, session_event];
+    match unsafe { WaitForMultipleObjects(handles.len() as u32, handles.as_ptr(), 0, INFINITE) } {
+        WAIT_OBJECT_0 => Ok(false),
+        value if value == WAIT_OBJECT_0 + 1 => Ok(true),
+        _ => Err(last_error("wait for an active Windows session")),
+    }
+}
+
+fn duplicate_service_token(session_id: u32) -> ServiceResult<OwnedHandle> {
     let mut current = null_mut();
     if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_DUPLICATE, &mut current) } == 0 {
         return Err(last_error("open Lumen service process token"));
@@ -321,7 +457,7 @@ fn duplicate_service_token(session_id: u32) -> Result<OwnedHandle, String> {
     Ok(token)
 }
 
-fn create_host_job() -> Result<OwnedHandle, String> {
+fn create_host_job() -> ServiceResult<OwnedHandle> {
     let job = OwnedHandle::new(
         unsafe { CreateJobObjectW(null(), null()) },
         "create Lumen service host job",
@@ -343,8 +479,31 @@ fn create_host_job() -> Result<OwnedHandle, String> {
     Ok(job)
 }
 
-fn launch_host(token: &OwnedHandle, job: &OwnedHandle) -> Result<ProcessHandles, String> {
-    let application = wide("Lumen.exe");
+fn launch_host(token: &OwnedHandle, job: &OwnedHandle) -> ServiceResult<ProcessHandles> {
+    use std::os::windows::ffi::OsStrExt;
+
+    let service = std::env::current_exe()
+        .map_err(|error| ServiceError::io("resolve Lumen service executable", error))?;
+    let host_directory = service
+        .parent()
+        .and_then(|tools| tools.parent())
+        .ok_or_else(|| {
+            ServiceError::status(
+                "Lumen service executable has no host directory".to_owned(),
+                ERROR_GEN_FAILURE,
+            )
+        })?;
+    let host = host_directory.join("Lumen.exe");
+    let application = host
+        .as_os_str()
+        .encode_wide()
+        .chain([0])
+        .collect::<Vec<_>>();
+    let current_directory = host_directory
+        .as_os_str()
+        .encode_wide()
+        .chain([0])
+        .collect::<Vec<_>>();
     let desktop = wide("winsta0\\default");
     let mut startup: STARTUPINFOW = unsafe { zeroed() };
     startup.cb = size_of::<STARTUPINFOW>() as u32;
@@ -360,7 +519,7 @@ fn launch_host(token: &OwnedHandle, job: &OwnedHandle) -> Result<ProcessHandles,
             0,
             CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW | CREATE_SUSPENDED,
             null(),
-            null(),
+            current_directory.as_ptr(),
             &startup,
             &mut process,
         )
@@ -373,12 +532,23 @@ fn launch_host(token: &OwnedHandle, job: &OwnedHandle) -> Result<ProcessHandles,
         thread: OwnedHandle::new(process.hThread, "open Lumen host thread")?,
     };
     if unsafe { AssignProcessToJobObject(job.get(), handles.process.get()) } == 0 {
-        return Err(last_error("assign Lumen host to service job"));
+        let error = last_error("assign Lumen host to service job");
+        terminate_suspended_host(&handles);
+        return Err(error);
     }
     if unsafe { ResumeThread(handles.thread.get()) } == u32::MAX {
-        return Err(last_error("resume Lumen service host"));
+        let error = last_error("resume Lumen service host");
+        terminate_suspended_host(&handles);
+        return Err(error);
     }
     Ok(handles)
+}
+
+fn terminate_suspended_host(process: &ProcessHandles) {
+    unsafe {
+        TerminateProcess(process.process.get(), ERROR_PROCESS_ABORTED);
+        WaitForSingleObject(process.process.get(), 5_000);
+    }
 }
 
 fn supervise_host(
@@ -387,23 +557,30 @@ fn supervise_host(
     process: &ProcessHandles,
     stop_event: HANDLE,
     session_event: HANDLE,
-) {
+) -> ServiceResult<HostSupervision> {
     loop {
         let handles = [stop_event, process.process.get(), session_event];
         let signaled =
             unsafe { WaitForMultipleObjects(handles.len() as u32, handles.as_ptr(), 0, INFINITE) };
-        if signaled == WAIT_OBJECT_0 + 2 && unsafe { WTSGetActiveConsoleSessionId() } == session_id
-        {
-            continue;
-        }
         if signaled == WAIT_OBJECT_0 + 1 {
             let mut exit_code = 0;
-            if unsafe { GetExitCodeProcess(process.process.get(), &mut exit_code) } != 0
-                && exit_code == ERROR_SHUTDOWN_IN_PROGRESS
-            {
-                signal(ServiceControl::shared().stop_event.load(Ordering::Acquire) as HANDLE);
+            if unsafe { GetExitCodeProcess(process.process.get(), &mut exit_code) } == 0 {
+                return Err(last_error("read Lumen host exit code"));
             }
-            return;
+            if exit_code == ERROR_SHUTDOWN_IN_PROGRESS {
+                signal(ServiceControl::shared().stop_event.load(Ordering::Acquire) as HANDLE);
+                return Ok(HostSupervision::Stop);
+            }
+            return Err(ServiceError::status(
+                format!("Lumen host exited with status {exit_code}"),
+                exit_code,
+            ));
+        }
+        if signaled == WAIT_OBJECT_0 + 2 && active_interactive_session_id()? == Some(session_id) {
+            continue;
+        }
+        if signaled != WAIT_OBJECT_0 && signaled != WAIT_OBJECT_0 + 2 {
+            return Err(last_error("wait for Lumen host supervision event"));
         }
         if run_termination_helper(token, process.process.get()).is_err()
             || unsafe { WaitForSingleObject(process.process.get(), 20_000) } != WAIT_OBJECT_0
@@ -412,15 +589,19 @@ fn supervise_host(
                 TerminateProcess(process.process.get(), ERROR_PROCESS_ABORTED);
             }
         }
-        return;
+        return Ok(if signaled == WAIT_OBJECT_0 {
+            HostSupervision::Stop
+        } else {
+            HostSupervision::SessionChanged
+        });
     }
 }
 
-fn run_termination_helper(token: &OwnedHandle, process: HANDLE) -> Result<(), String> {
+fn run_termination_helper(token: &OwnedHandle, process: HANDLE) -> ServiceResult<()> {
     use std::os::windows::ffi::OsStrExt;
 
     let executable = std::env::current_exe()
-        .map_err(|error| format!("resolve Lumen service helper: {error}"))?;
+        .map_err(|error| ServiceError::io("resolve Lumen service helper", error))?;
     let executable_wide: Vec<u16> = executable.as_os_str().encode_wide().chain([0]).collect();
     let process_id = unsafe { GetProcessId(process) };
     if process_id == 0 {
@@ -463,14 +644,15 @@ fn run_termination_helper(token: &OwnedHandle, process: HANDLE) -> Result<(), St
     }
     let mut exit_code = 0;
     if unsafe { GetExitCodeProcess(helper.process.get(), &mut exit_code) } == 0 || exit_code != 0 {
-        return Err(format!(
-            "Lumen termination helper failed with status {exit_code}"
+        return Err(ServiceError::status(
+            format!("Lumen termination helper failed with status {exit_code}"),
+            exit_code,
         ));
     }
     Ok(())
 }
 
-fn graceful_termination(process_id: u32) -> Result<(), String> {
+fn graceful_termination(process_id: u32) -> ServiceResult<()> {
     if unsafe { AttachConsole(process_id) } == 0 {
         return Err(last_error("attach to Lumen host console"));
     }
@@ -495,8 +677,34 @@ fn wide(value: &str) -> Vec<u16> {
     value.encode_utf16().chain([0]).collect()
 }
 
-fn last_error(operation: &str) -> String {
-    format!("{operation} failed with Windows error {}", unsafe {
-        GetLastError()
+fn service_error_path() -> Option<std::path::PathBuf> {
+    std::env::var_os("ProgramData").map(|program_data| {
+        std::path::PathBuf::from(program_data)
+            .join("Lumen")
+            .join("service-error.log")
     })
+}
+
+fn clear_service_error() {
+    if let Some(path) = service_error_path() {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+fn record_service_error(error: &ServiceError) {
+    let Some(path) = service_error_path() else {
+        return;
+    };
+    let Some(directory) = path.parent() else {
+        return;
+    };
+    if std::fs::create_dir_all(&directory).is_err() {
+        return;
+    }
+    let body = format!("{} (Windows error {})\n", error.message, error.code);
+    let _ = std::fs::write(path, body);
+}
+
+fn last_error(operation: &str) -> ServiceError {
+    ServiceError::windows(operation)
 }

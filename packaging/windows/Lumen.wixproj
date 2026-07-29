@@ -1,0 +1,16 @@
+<Project Sdk="WixToolset.Sdk/6.0.2">
+  <PropertyGroup>
+    <OutputType>Package</OutputType>
+    <Platform>x64</Platform>
+    <OutputName>Lumen</OutputName>
+    <DefineConstants>
+      StageDir=$(StageDir);
+      ProductVersion=$(ProductVersion)
+    </DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="WixToolset.Firewall.wixext" Version="6.0.2" />
+    <PackageReference Include="WixToolset.UI.wixext" Version="6.0.2" />
+    <BindVariable Include="WixUILicenseRtf=$(MSBuildThisFileDirectory)License.rtf" />
+  </ItemGroup>
+</Project>

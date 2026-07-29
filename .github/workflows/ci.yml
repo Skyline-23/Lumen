@@ -8,14 +8,70 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Select affected checks
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      macos: ${{ steps.filter.outputs.macos }}
+      windows: ${{ steps.filter.outputs.windows }}
+      windows_driver: ${{ steps.filter.outputs.windows_driver }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+          submodules: false
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          base: ${{ github.event_name == 'push' && github.ref || github.event.pull_request.base.ref }}
+          filters: |
+            rust:
+              - '.github/workflows/ci.yml'
+              - 'Cargo.lock'
+              - 'Cargo.toml'
+              - 'engine/**'
+              - 'scripts/rust/**'
+              - 'src/platform/windows/driver/core/**'
+              - 'src/platform/windows/driver/include/**'
+            macos:
+              - '.github/workflows/ci.yml'
+              - 'Cargo.lock'
+              - 'Cargo.toml'
+              - 'engine/**'
+              - 'scripts/rust/**'
+              - 'src/platform/macos/**'
+            windows:
+              - '.github/workflows/ci.yml'
+              - 'Cargo.lock'
+              - 'Cargo.toml'
+              - 'CMakeLists.txt'
+              - 'assets/windows/**'
+              - 'cmake/**'
+              - 'engine/**'
+              - 'packaging/windows/**'
+              - 'scripts/ci/build_windows_package.sh'
+              - 'scripts/ci/test_windows_installation.ps1'
+              - 'src/platform/windows/**'
+              - 'third-party/**'
+              - 'tools/**'
+            windows_driver:
+              - '.github/workflows/ci.yml'
+              - 'Cargo.lock'
+              - 'Cargo.toml'
+              - 'src/platform/windows/driver/**'
+
   rust:
     name: Rust tests and lint
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
@@ -37,6 +93,8 @@ jobs:
 
   macos:
     name: macOS tests
+    needs: changes
+    if: needs.changes.outputs.macos == 'true'
     runs-on: macos-26
     env:
       CARGO_INCREMENTAL: 0
@@ -87,9 +145,12 @@ jobs:
 
   windows:
     name: Windows package check
+    needs: [changes, windows-driver]
+    if: needs.changes.outputs.windows == 'true'
     runs-on: windows-latest
     env:
       CARGO_TARGET_DIR: cmake-build-release/rust-target
+      RUSTFLAGS: -D warnings
     steps:
       - uses: actions/checkout@v7
         with:
@@ -107,13 +168,11 @@ jobs:
           add-job-id-key: "false"
           cache-bin: "false"
           cache-on-failure: "false"
-      - name: Check workspace
-        run: cargo check --locked --workspace --all-targets --all-features
       - uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
           path-type: inherit
-          update: true
+          update: false
           install: >-
             mingw-w64-ucrt-x86_64-MinHook
             mingw-w64-ucrt-x86_64-cmake
@@ -122,31 +181,53 @@ jobs:
             mingw-w64-ucrt-x86_64-libvpl
             mingw-w64-ucrt-x86_64-nasm
             mingw-w64-ucrt-x86_64-ninja
-            mingw-w64-ucrt-x86_64-nsis
             mingw-w64-ucrt-x86_64-opus
             mingw-w64-ucrt-x86_64-pkgconf
             mingw-w64-ucrt-x86_64-zlib
-      - name: Build unsigned NSIS installer
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+          cache: true
+          cache-dependency-path: packaging/windows/Lumen.wixproj
+      - name: Download unsigned IDD package
+        uses: actions/download-artifact@v8
+        with:
+          name: lumen-windows-idd-unsigned-${{ github.sha }}
+          path: build/windows-driver-package
+      - name: Verify IDD package inputs
+        shell: pwsh
+        run: |
+          @("LumenIddCx.dll", "LumenIddCx.inf", "lumeniddcx.cat") | ForEach-Object {
+            $path = Join-Path "build\windows-driver-package" $_
+            if (-not (Test-Path $path -PathType Leaf)) {
+              throw "Missing Windows IDD package input: $path"
+            }
+          }
+      - name: Build unsigned MSI installer
         shell: msys2 {0}
         env:
           LUMEN_VERSION: 0.0.0
           LUMEN_ARTIFACT_VERSION: 0.0.0
+          LUMEN_WINDOWS_DRIVER_PACKAGE_DIR: build/windows-driver-package
         run: |
           scripts/ci/build_windows_package.sh
-          test -s cmake-build-release/cpack_artifacts/Lumen-0.0.0-Windows-x86_64.exe
-      - name: Upload unsigned NSIS installer
+          test -s cmake-build-release/cpack_artifacts/Lumen-0.0.0-Windows-x86_64.msi
+      - name: Upload unsigned MSI installer
         uses: actions/upload-artifact@v7
         with:
           name: lumen-windows-unsigned-${{ github.sha }}
-          path: cmake-build-release/cpack_artifacts/Lumen-0.0.0-Windows-x86_64.exe
+          path: cmake-build-release/cpack_artifacts/Lumen-0.0.0-Windows-x86_64.msi
           if-no-files-found: error
           retention-days: 3
 
   windows-driver:
     name: Windows IDD compile
+    needs: changes
+    if: needs.changes.outputs.windows_driver == 'true' || needs.changes.outputs.windows == 'true'
     runs-on: windows-2025-vs2026
     env:
       CARGO_TARGET_DIR: target
+      RUSTFLAGS: -D warnings
       DRIVER_PROJECT: src\platform\windows\driver\LumenIddCx.vcxproj
       DRIVER_CORE: target\x86_64-pc-windows-msvc\release\lumen_windows_driver_core.lib
       DRIVER_OUTPUT: src\platform\windows\driver\build\bin\x64\Release
@@ -204,8 +285,6 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: lumen-windows-idd-unsigned-${{ github.sha }}
-          path: |
-            src/platform/windows/driver/build/bin/x64/Release/LumenIddCx.dll
-            src/platform/windows/driver/package/LumenIddCx.inf
+          path: src/platform/windows/driver/build/bin/x64/Release/LumenIddCx/*
           if-no-files-found: error
           retention-days: 3
