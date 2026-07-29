@@ -27,7 +27,7 @@ pub(crate) use macos::MacPlatformSessionControl;
 use portable_process::PortableApplication;
 #[cfg(windows)]
 pub(crate) use windows::{
-    NativeWindowsLifecycle, NativeWindowsShell, WindowsPlatformSessionControl,
+    NativeWindowsLifecycle, NativeWindowsManagement, WindowsPlatformSessionControl,
 };
 
 const INITIAL_VIDEO_BUFFER_BYTES: usize = 1024 * 1024;

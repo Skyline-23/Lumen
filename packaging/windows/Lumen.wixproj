@@ -7,6 +7,8 @@
       StageDir=$(StageDir);
       ProductVersion=$(ProductVersion)
     </DefineConstants>
+    <!-- Same-version upgrades are intentional for rebuilt beta installers. -->
+    <SuppressIces>ICE61</SuppressIces>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="WixToolset.Firewall.wixext" Version="6.0.2" />

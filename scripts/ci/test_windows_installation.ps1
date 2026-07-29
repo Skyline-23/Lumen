@@ -31,11 +31,14 @@ $isAdministrator = $principal.IsInRole(
 Assert-InstallationCondition $isAdministrator "The smoke test must run as an administrator."
 
 $applicationPath = Join-Path $InstallDirectory "Lumen.exe"
+$sessionAgentPath = Join-Path $InstallDirectory "LumenSessionAgent.exe"
 $servicePath = Join-Path $InstallDirectory "tools\LumenService.exe"
 $driverSetupPath = Join-Path $InstallDirectory "tools\LumenDriverSetup.exe"
 $driverInfPath = Join-Path $InstallDirectory "driver\LumenIddCx.inf"
 Assert-InstallationCondition (Test-Path -LiteralPath $applicationPath -PathType Leaf) `
     "Lumen.exe is missing from the installation directory."
+Assert-InstallationCondition (Test-Path -LiteralPath $sessionAgentPath -PathType Leaf) `
+    "LumenSessionAgent.exe is missing from the installation directory."
 Assert-InstallationCondition (Test-Path -LiteralPath $servicePath -PathType Leaf) `
     "LumenService.exe is missing from the installation directory."
 Assert-InstallationCondition (Test-Path -LiteralPath $driverSetupPath -PathType Leaf) `
@@ -62,7 +65,7 @@ do {
         -ErrorAction SilentlyContinue
     $lumenProcesses = @(
         Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-            Where-Object { $_.ExecutablePath -eq $applicationPath }
+            Where-Object { $_.ExecutablePath -eq $sessionAgentPath }
     )
     $lumenProcessIDs = @($lumenProcesses | ForEach-Object { [uint32]$_.ProcessId })
     $tcpListeners = @(
@@ -130,11 +133,11 @@ Assert-InstallationCondition ($firewallProtocols -contains "TCP") `
     "The inbound TCP firewall rule is missing."
 Assert-InstallationCondition ($firewallProtocols -contains "UDP") `
     "The inbound UDP firewall rule is missing."
-Assert-InstallationCondition ($firewallApplications -contains $applicationPath) `
-    "The firewall rule does not target the installed Lumen.exe."
+Assert-InstallationCondition ($firewallApplications -contains $sessionAgentPath) `
+    "The firewall rule does not target the installed LumenSessionAgent.exe."
 
 Assert-InstallationCondition ($lumenProcessIDs.Count -eq 1) `
-    "Expected exactly one installed Lumen.exe host process, found $($lumenProcessIDs.Count)."
+    "Expected exactly one installed Lumen session agent, found $($lumenProcessIDs.Count)."
 Assert-InstallationCondition ($lumenTCPListeners.Count -eq 1) `
     "Lumen is not listening on the HTTPS control port $controlPort."
 Assert-InstallationCondition ($lumenUDPListeners.Count -eq 1) `

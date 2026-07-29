@@ -13,9 +13,14 @@ endif()
 
 target_link_libraries(lumen ${LUMEN_EXTERNAL_LIBRARIES} ${EXTRA_LIBS})
 target_compile_definitions(lumen PUBLIC ${LUMEN_DEFINITIONS})
+if(WIN32)
+    set(LUMEN_EXECUTABLE_NAME "LumenSessionAgent")
+else()
+    set(LUMEN_EXECUTABLE_NAME "${CMAKE_PROJECT_NAME}")
+endif()
 set_target_properties(lumen PROPERTIES
         CXX_STANDARD 23
-        OUTPUT_NAME "${CMAKE_PROJECT_NAME}")
+        OUTPUT_NAME "${LUMEN_EXECUTABLE_NAME}")
 
 set_target_properties(lumen PROPERTIES
         VERSION ${PROJECT_VERSION}

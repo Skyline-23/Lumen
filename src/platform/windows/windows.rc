@@ -21,10 +21,10 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      TOSTRING(PROJECT_VENDOR)
             VALUE "FileDescription",  TOSTRING(PROJECT_NAME)
-            VALUE "FileVersion",      TOSTRING(PROJECT_VERSION)
+            VALUE "FileVersion",      TOSTRING(PROJECT_VERSION_MAJOR) "." TOSTRING(PROJECT_VERSION_MINOR) "." TOSTRING(PROJECT_VERSION_PATCH) ".0"
             VALUE "InternalName",     TOSTRING(PROJECT_NAME)
             VALUE "ProductName",      TOSTRING(PROJECT_NAME)
-            VALUE "ProductVersion",   TOSTRING(PROJECT_VERSION)
+            VALUE "ProductVersion",   TOSTRING(PROJECT_VERSION_MAJOR) "." TOSTRING(PROJECT_VERSION_MINOR) "." TOSTRING(PROJECT_VERSION_PATCH) ".0"
             VALUE "LegalCopyright",   "https://raw.githubusercontent.com/Skyline-23/Lumen/main/LICENSE"
         END
     END

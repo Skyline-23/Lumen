@@ -29,6 +29,7 @@
              AllowAbsent="no"
              Level="1">
       <ComponentRef Id="MainExecutable" />
+      <ComponentRef Id="SessionAgent" />
       <ComponentRef Id="HostService" />
       <ComponentRef Id="DriverSetup" />
       <ComponentRef Id="LumenDriverPackage" />
@@ -54,6 +55,13 @@
                   Name="Lumen"
                   WorkingDirectory="INSTALLFOLDER"
                   Advertise="yes" />
+      </File>
+    </Component>
+
+    <Component Id="SessionAgent" Directory="INSTALLFOLDER" Guid="*">
+      <File Id="LumenSessionAgentExecutable"
+            Source="$(var.StageDir)\LumenSessionAgent.exe"
+            KeyPath="yes">
         <firewall:FirewallException Id="LumenTcpFirewall"
                                     Name="Lumen TCP"
                                     Protocol="tcp"
@@ -87,7 +95,7 @@
                       Start="install"
                       Stop="both"
                       Remove="uninstall"
-                      Wait="yes" />
+                      Wait="no" />
     </Component>
 
     <Component Id="DriverSetup"
@@ -130,6 +138,7 @@
     <ComponentGroup Id="PayloadFiles">
       <Files Directory="INSTALLFOLDER" Include="$(var.StageDir)\**">
         <Exclude Files="$(var.StageDir)\Lumen.exe" />
+        <Exclude Files="$(var.StageDir)\LumenSessionAgent.exe" />
         <Exclude Files="$(var.StageDir)\tools\LumenService.exe" />
         <Exclude Files="$(var.StageDir)\tools\LumenDriverSetup.exe" />
         <Exclude Files="$(var.StageDir)\driver\**" />

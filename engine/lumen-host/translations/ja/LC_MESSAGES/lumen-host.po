@@ -226,9 +226,6 @@ msgstr "このホストを管理するにはサインインしてください。
 msgid "Signed in as"
 msgstr "サインイン中"
 
-msgid "Slint"
-msgstr "Slint"
-
 msgid "Stream computer audio"
 msgstr "コンピュータの音声をストリーミング"
 

@@ -30,6 +30,8 @@
 *.exe
 *.out
 *.app
+!src/platform/windows/Lumen.App/
+!src/platform/windows/Lumen.App/**
 
 # JetBrains IDE
 .idea/

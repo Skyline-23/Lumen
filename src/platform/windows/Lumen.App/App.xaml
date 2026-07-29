@@ -1,0 +1,16 @@
+<Application
+    x:Class="Lumen.App.App"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Application.Resources>
+    <ResourceDictionary>
+      <ResourceDictionary.MergedDictionaries>
+        <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
+      </ResourceDictionary.MergedDictionaries>
+      <Color x:Key="SystemAccentColor">#FF6B33</Color>
+      <Color x:Key="LumenAccentColor">#FF6B33</Color>
+      <SolidColorBrush x:Key="LumenAccentBrush" Color="{StaticResource LumenAccentColor}" />
+      <x:Double x:Key="LumenCardCornerRadius">12</x:Double>
+    </ResourceDictionary>
+  </Application.Resources>
+</Application>

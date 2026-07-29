@@ -31,7 +31,6 @@ install(FILES
 install(FILES
         "${CMAKE_SOURCE_DIR}/third-party/licenses/Opus-BSD-3-Clause.txt"
         "${CMAKE_SOURCE_DIR}/third-party/licenses/Rust-Crates.html"
-        "${CMAKE_SOURCE_DIR}/third-party/licenses/Slint-Royalty-Free-2.0.txt"
         DESTINATION "licenses"
         COMPONENT application)
 install(FILES

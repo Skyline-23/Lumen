@@ -226,9 +226,6 @@ msgstr "이 호스트를 관리하려면 로그인하세요. 스트리밍 서비
 msgid "Signed in as"
 msgstr "로그인 계정"
 
-msgid "Slint"
-msgstr "Slint"
-
 msgid "Stream computer audio"
 msgstr "컴퓨터 오디오 스트리밍"
 

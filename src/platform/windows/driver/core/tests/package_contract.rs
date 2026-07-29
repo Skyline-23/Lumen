@@ -130,10 +130,34 @@ fn windows_service_launches_into_the_active_interactive_session_without_polling(
     assert!(service.contains("WTS_SESSION_UNLOCK"));
     assert!(service.contains("WTS_REMOTE_CONNECT"));
     assert!(service.contains("wait_for_session_or_stop"));
-    assert!(service.contains("join(\"Lumen.exe\")"));
+    assert!(service.contains("join(\"LumenSessionAgent.exe\")"));
     assert!(service.contains("CreateProcessAsUserW"));
     assert!(!service.contains("let application = wide(\"Lumen.exe\")"));
     assert!(!service.contains("WaitForSingleObject(stop_event.get(), 3_000)"));
+}
+
+#[test]
+fn windows_management_is_local_and_bound_to_the_active_session() {
+    let driver = driver_root();
+    let repo_root = driver
+        .ancestors()
+        .nth(4)
+        .expect("driver must live under src/platform/windows")
+        .to_path_buf();
+    let pipe = fs::read_to_string(
+        repo_root.join("engine/lumen-host/src/platform/windows/native_management_pipe.rs"),
+    )
+    .expect("Windows management pipe implementation must exist");
+    let package = fs::read_to_string(repo_root.join("packaging/windows/Package.wxs"))
+        .expect("Windows package definition must exist");
+
+    assert!(pipe.contains("PIPE_REJECT_REMOTE_CLIENTS"));
+    assert!(pipe.contains("GetNamedPipeClientProcessId"));
+    assert!(pipe.contains("ProcessIdToSessionId"));
+    assert!(pipe.contains("client_session_id == agent_session_id"));
+    assert!(package.contains("LumenSessionAgent.exe"));
+    assert!(package.contains("Target=\"[INSTALLFOLDER]Lumen.exe\""));
+    assert!(package.contains("<File Id=\"LumenSessionAgentExecutable\""));
 }
 
 #[test]
@@ -156,7 +180,7 @@ fn windows_service_preserves_launch_errors_and_reaps_suspended_children() {
     assert!(!service.contains("let error = if result.is_ok()"));
     assert!(service.contains("service-error.log"));
     assert!(service.contains("clear_service_error();"));
-    assert!(service.contains("terminate_suspended_host"));
+    assert!(service.contains("terminate_suspended_session_agent"));
     assert!(service.contains("TerminateProcess(process.process.get(), ERROR_PROCESS_ABORTED)"));
 
     let entry = fs::read_to_string(repo_root.join("engine/lumen-host/src/entry.rs"))
@@ -219,6 +243,7 @@ fn windows_msi_owns_service_firewall_upgrade_and_removal() {
     assert!(project.contains("WixToolset.Firewall.wixext"));
     assert!(project.contains("WixToolset.UI.wixext"));
     assert!(project.contains("WixUILicenseRtf"));
+    assert!(project.contains("<SuppressIces>ICE61</SuppressIces>"));
     assert!(build.contains("LUMEN_WINDOWS_DRIVER_PACKAGE_DIR"));
     assert!(build.contains("LumenIddCx.dll"));
     assert!(build.contains("LumenIddCx.inf"));
@@ -229,6 +254,20 @@ fn windows_msi_owns_service_firewall_upgrade_and_removal() {
     assert!(build.contains("--no-incremental"));
     assert!(build.contains("BaseIntermediateOutputPath"));
     assert!(common_targets.contains("\"${CMAKE_SOURCE_DIR}/tools\""));
+    let windows_targets = fs::read_to_string(repo_root.join("cmake/targets/windows.cmake"))
+        .expect("Windows target definitions must exist");
+    let locale_pruning =
+        fs::read_to_string(repo_root.join("cmake/scripts/prune_windows_ui_locales.cmake"))
+            .expect("Windows UI locale pruning must exist");
+    assert!(windows_targets.contains("prune_windows_ui_locales.cmake"));
+    assert!(windows_targets.contains(
+        "--property:Version=${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}"
+    ));
+    assert!(windows_targets.contains(
+        "--property:FileVersion=${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}.0"
+    ));
+    assert!(locale_pruning.contains("en-us;ja-JP;ko-KR"));
+    assert!(locale_pruning.contains("Microsoft.ui.xaml.dll.mui"));
     assert!(!build.contains("cpack --config"));
     assert!(!build.contains("-G NSIS"));
 
