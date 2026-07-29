@@ -26,6 +26,12 @@
   <data name="Authentication.CreateOwnerAccount" xml:space="preserve"><value>所有者アカウントを作成</value></data>
   <data name="Authentication.SignInToLumen" xml:space="preserve"><value>Lumen にサインイン</value></data>
   <data name="Authentication.ProtectedDescription" xml:space="preserve"><value>ホストの設定と登録済みデバイスは、ローカル所有者アカウントで保護されます。</value></data>
+  <data name="Authentication.HeroTitle" xml:space="preserve"><value>自分の画面を、自分らしく。</value></data>
+  <data name="Authentication.HeroDescription" xml:space="preserve"><value>自分の Windows PC で動作する、プライベートなネイティブ リモートデスクトップ ホストです。</value></data>
+  <data name="Authentication.FeatureLocal" xml:space="preserve"><value>資格情報はこのホスト内に保存</value></data>
+  <data name="Authentication.FeatureControls" xml:space="preserve"><value>ネイティブのホストとストリーミング制御</value></data>
+  <data name="Authentication.FeatureRemote" xml:space="preserve"><value>登録済みデバイスから安全にアクセス</value></data>
+  <data name="Authentication.CredentialsNotice" xml:space="preserve"><value>所有者パスワードがクラウドサービスへ送信されることはありません。</value></data>
   <data name="Authentication.OwnerUsername" xml:space="preserve"><value>所有者のユーザー名</value></data>
   <data name="Authentication.OwnerPassword" xml:space="preserve"><value>所有者のパスワード</value></data>
   <data name="Authentication.ConfirmPassword" xml:space="preserve"><value>パスワードを確認</value></data>

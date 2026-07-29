@@ -546,7 +546,8 @@ fn windows_winui_resources_and_generated_outputs_are_localized_and_hygienic() {
     // Then: Windows resolves strings through its resource system, English is
     // the fallback, and Korean/Japanese UI terms continue the prior UI copy.
     assert!(project.contains("<PRIResource Include=\"Strings\\**\\*.resw\" />"));
-    assert!(strings.contains("ResourceLoader.GetForViewIndependentUse()"));
+    assert!(project.contains("<EnableDefaultPriItems>false</EnableDefaultPriItems>"));
+    assert!(strings.contains("ResourceLoader Loader = new()"));
     assert!(!strings.contains("CurrentUICulture"));
     for resource in [&english, &korean, &japanese] {
         assert!(resource.contains("name=\"Navigation.Overview\""));
@@ -575,6 +576,118 @@ fn windows_winui_resources_and_generated_outputs_are_localized_and_hygienic() {
     assert!(development_test.contains("git -C \"${REPO_ROOT}\" check-ignore"));
     assert!(development_test.contains("Lumen.App/bin/Debug"));
     assert!(development_test.contains("Strings/en-US/Resources.resw"));
+}
+
+#[test]
+fn windows_winui_matches_the_native_lumen_visual_contract() {
+    // Given: the WinUI theme, reusable component factory, window shell, and
+    // every supported locale shipped by the native management app.
+    let driver = driver_root();
+    let repo_root = driver
+        .ancestors()
+        .nth(4)
+        .expect("driver must live under src/platform/windows")
+        .to_path_buf();
+    let app_xaml = fs::read_to_string(repo_root.join("src/platform/windows/Lumen.App/App.xaml"))
+        .expect("WinUI app resources must exist");
+    let theme = fs::read_to_string(repo_root.join("src/platform/windows/Lumen.App/LumenTheme.cs"))
+        .expect("WinUI component theme helper must exist");
+    let asset_icons =
+        fs::read_to_string(repo_root.join("src/platform/windows/Lumen.App/LumenAssetIcon.cs"))
+            .expect("WinUI shared asset icon adapter must exist");
+    let project =
+        fs::read_to_string(repo_root.join("src/platform/windows/Lumen.App/Lumen.App.csproj"))
+            .expect("WinUI project must exist");
+    let window =
+        fs::read_to_string(repo_root.join("src/platform/windows/Lumen.App/MainWindow.xaml.cs"))
+            .expect("WinUI window source must exist");
+    let locales = ["en-US", "ko-KR", "ja-JP"].map(|locale| {
+        fs::read_to_string(repo_root.join(format!(
+            "src/platform/windows/Lumen.App/Strings/{locale}/Resources.resw"
+        )))
+        .expect("WinUI locale resources must exist")
+    });
+
+    // Then: Windows uses the same dark Lumen hierarchy as macOS rather than
+    // falling back to the default light NavigationView/control appearance.
+    for required_token in [
+        "RequestedTheme=\"Dark\"",
+        "LumenWindowGradientBrush",
+        "LumenAuthenticationHeroBrush",
+        "LumenAmberGlowBrush",
+        "LumenCoralGlowBrush",
+        "LumenMintGlowBrush",
+        "LumenCardBrush",
+        "LumenCardBorderBrush",
+        "LumenPrimaryButtonStyle",
+        "LumenTextBoxStyle",
+        "LumenPasswordBoxStyle",
+        "#FFFF6B33",
+        "#FF13120F",
+        "#FF0E0F12",
+        "#F0FFFFFF",
+        "#A8FFFFFF",
+        "#6EFFFFFF",
+    ] {
+        assert!(
+            app_xaml.contains(required_token),
+            "missing {required_token}"
+        );
+    }
+    assert!(theme.contains("internal static Border Card"));
+    assert!(theme.contains("internal static Button PrimaryButton"));
+    assert!(theme.contains("NavigationIconSlotWidth = 22"));
+    assert!(asset_icons.contains("internal static class LumenAssetIconView"));
+    assert!(asset_icons.contains("private static SvgImageSource Svg"));
+    assert!(asset_icons.contains("ms-appx:///Assets/icons/ui/"));
+    assert!(asset_icons.contains("ms-appx:///Assets/brand/icon.svg"));
+    assert!(project.contains("Link=\"Assets\\brand\\icon.svg\""));
+    assert!(project.contains("Link=\"Assets\\icons\\ui\\%(Filename)%(Extension)\""));
+    assert!(window.contains("BuildAuthenticationSurface()"));
+    assert!(window.contains("ShowAuthenticationSurface(true)"));
+    assert!(window.contains("AuthenticationGlowCanvas()"));
+    assert!(window.contains("LumenAssetIcon.LocalCredentials"));
+    assert!(window.contains("LumenAssetIcon.CreateOwner"));
+    assert!(window.contains("AppWindow.Resize(new Windows.Graphics.SizeInt32(960, 620))"));
+    assert!(window.contains("PasswordRevealMode = PasswordRevealMode.Peek"));
+    assert!(!window.contains("ApplicationPageBackgroundThemeBrush"));
+    assert!(!window.contains("Colors.Gray"));
+    assert!(!window.contains("FontIcon"));
+    assert!(!window.contains("SymbolIcon"));
+
+    for asset in [
+        "icon.svg",
+        "src_assets/common/assets/icons/ui/local-credentials.svg",
+        "src_assets/common/assets/icons/ui/host-controls.svg",
+        "src_assets/common/assets/icons/ui/remote-access.svg",
+        "src_assets/common/assets/icons/ui/create-owner.svg",
+        "src_assets/common/assets/icons/ui/unlock.svg",
+        "src_assets/common/assets/icons/ui/overview.svg",
+        "src_assets/common/assets/icons/ui/applications.svg",
+        "src_assets/common/assets/icons/ui/settings.svg",
+        "src_assets/common/assets/icons/ui/diagnostics.svg",
+    ] {
+        assert!(
+            repo_root.join(asset).is_file(),
+            "missing shared Lumen asset {asset}"
+        );
+    }
+
+    for locale in locales {
+        for localized_key in [
+            "Authentication.HeroTitle",
+            "Authentication.HeroDescription",
+            "Authentication.FeatureLocal",
+            "Authentication.FeatureControls",
+            "Authentication.FeatureRemote",
+            "Authentication.CredentialsNotice",
+        ] {
+            assert!(
+                locale.contains(&format!("name=\"{localized_key}\"")),
+                "missing localized WinUI hero key {localized_key}"
+            );
+        }
+    }
 }
 
 #[test]

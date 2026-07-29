@@ -11,6 +11,7 @@
     <WindowsPackageType>None</WindowsPackageType>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <EnableMsixTooling>true</EnableMsixTooling>
+    <EnableDefaultPriItems>false</EnableDefaultPriItems>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
     <PublishSingleFile>false</PublishSingleFile>
@@ -30,5 +31,15 @@
   </ItemGroup>
   <ItemGroup>
     <PRIResource Include="Strings\**\*.resw" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="..\..\..\..\icon.svg" Link="Assets\brand\icon.svg">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\..\..\src_assets\common\assets\icons\ui\*.svg" Link="Assets\icons\ui\%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
   </ItemGroup>
 </Project>

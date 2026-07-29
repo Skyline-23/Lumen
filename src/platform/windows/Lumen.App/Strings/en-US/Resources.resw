@@ -26,6 +26,12 @@
   <data name="Authentication.CreateOwnerAccount" xml:space="preserve"><value>Create owner account</value></data>
   <data name="Authentication.SignInToLumen" xml:space="preserve"><value>Sign in to Lumen</value></data>
   <data name="Authentication.ProtectedDescription" xml:space="preserve"><value>Host settings and enrolled devices are protected by the local owner account.</value></data>
+  <data name="Authentication.HeroTitle" xml:space="preserve"><value>Your screen. Your rules.</value></data>
+  <data name="Authentication.HeroDescription" xml:space="preserve"><value>A private, native remote desktop host built around your own Windows PC.</value></data>
+  <data name="Authentication.FeatureLocal" xml:space="preserve"><value>Credentials stay on this host</value></data>
+  <data name="Authentication.FeatureControls" xml:space="preserve"><value>Native host and streaming controls</value></data>
+  <data name="Authentication.FeatureRemote" xml:space="preserve"><value>Secure access for enrolled devices</value></data>
+  <data name="Authentication.CredentialsNotice" xml:space="preserve"><value>Your owner password is never sent to a cloud service.</value></data>
   <data name="Authentication.OwnerUsername" xml:space="preserve"><value>Owner username</value></data>
   <data name="Authentication.OwnerPassword" xml:space="preserve"><value>Owner password</value></data>
   <data name="Authentication.ConfirmPassword" xml:space="preserve"><value>Confirm password</value></data>

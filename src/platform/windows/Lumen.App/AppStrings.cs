@@ -5,7 +5,7 @@ namespace Lumen.App;
 
 internal static class AppStrings
 {
-    private static readonly ResourceLoader Loader = ResourceLoader.GetForViewIndependentUse();
+    private static readonly ResourceLoader Loader = new();
 
     internal static string Get(string key) => Loader.GetString(key);
 

@@ -26,6 +26,12 @@
   <data name="Authentication.CreateOwnerAccount" xml:space="preserve"><value>소유자 계정 생성</value></data>
   <data name="Authentication.SignInToLumen" xml:space="preserve"><value>Lumen에 로그인</value></data>
   <data name="Authentication.ProtectedDescription" xml:space="preserve"><value>호스트 설정과 등록된 기기는 로컬 소유자 계정으로 보호됩니다.</value></data>
+  <data name="Authentication.HeroTitle" xml:space="preserve"><value>내 화면을, 내 방식대로.</value></data>
+  <data name="Authentication.HeroDescription" xml:space="preserve"><value>내 Windows PC에서 직접 실행되는 비공개 네이티브 원격 데스크톱 호스트입니다.</value></data>
+  <data name="Authentication.FeatureLocal" xml:space="preserve"><value>자격 증명은 이 호스트에만 보관</value></data>
+  <data name="Authentication.FeatureControls" xml:space="preserve"><value>네이티브 호스트 및 스트리밍 제어</value></data>
+  <data name="Authentication.FeatureRemote" xml:space="preserve"><value>등록된 기기의 안전한 원격 접속</value></data>
+  <data name="Authentication.CredentialsNotice" xml:space="preserve"><value>소유자 암호는 클라우드 서비스로 전송되지 않습니다.</value></data>
   <data name="Authentication.OwnerUsername" xml:space="preserve"><value>소유자 사용자 이름</value></data>
   <data name="Authentication.OwnerPassword" xml:space="preserve"><value>소유자 암호</value></data>
   <data name="Authentication.ConfirmPassword" xml:space="preserve"><value>암호 확인</value></data>
