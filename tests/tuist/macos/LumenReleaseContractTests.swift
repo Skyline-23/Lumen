@@ -94,6 +94,31 @@ struct LumenReleaseContractTests {
         #expect(packageBuild.contains("command -v"))
     }
 
+    @Test("Release workflow enforces Git Flow beta and stable provenance")
+    func releaseWorkflowUsesGitFlowTagValidator() throws {
+        let root = try repositoryRoot()
+        let release = try source(".github/workflows/release.yml", from: root)
+        let releasingGuide = try source("docs/releasing.md", from: root)
+        let validator = try source(
+            "scripts/release/validate_gitflow_release.sh",
+            from: root
+        )
+
+        #expect(release.contains("scripts/release/validate_gitflow_release.sh"))
+        #expect(release.contains("LUMEN_RELEASE_SHA: ${{ github.sha }}"))
+        #expect(release.contains("LUMEN_RELEASE_TAG: ${{ github.ref_name }}"))
+        #expect(validator.contains(#"RELEASE_BRANCH="release/${PRODUCT_VERSION}""#))
+        #expect(validator.contains("EXPECTED_BETA=$((BETA_HISTORY_COUNT + 1))"))
+        #expect(validator.contains("Beta history for ${PRODUCT_VERSION} is not contiguous"))
+        #expect(validator.contains("must point at the current ${REMOTE}/main head"))
+        #expect(validator.contains("must point at a no-ff merge"))
+        #expect(validator.contains("must be merged back into ${REMOTE}/develop"))
+        #expect(validator.contains("must be annotated"))
+        #expect(releasingGuide.contains("release/<version>"))
+        #expect(releasingGuide.contains("git merge --no-ff \"release/${VERSION}\""))
+        #expect(releasingGuide.contains("git push origin --delete \"release/${VERSION}\""))
+    }
+
     private func source(_ path: String, from root: URL) throws -> String {
         try String(
             contentsOf: root.appendingPathComponent(path),

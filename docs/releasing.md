@@ -15,8 +15,13 @@ release tag.
 
 Both `engine/lumen-engine/Cargo.toml` and `engine/lumen-host/Cargo.toml` are the
 product version authority. Their `[package].version` values must match each
-other and use stable semantic versioning. Tags must use `v<version>` or
-`v<version>-beta.N`; the numeric prefix must match the product version.
+other and use stable semantic versioning. Every release uses a
+`release/<version>` branch cut from reviewed `develop`. Beta tags must be
+annotated, use consecutive `v<version>-beta.N` numbers, and point at the exact
+release-branch head. A stable annotated `v<version>` tag is accepted only when
+it points at the current `main` head, that commit is a no-ff merge of the same
+release branch, the release branch has also been merged back into `develop`,
+and at least one beta from that branch exists.
 
 The `develop` workflow builds the same unsigned Windows installer shape as the
 release workflow and discards it after validation. This keeps SignPath and
@@ -211,35 +216,70 @@ git rev-parse "v${VERSION}"
 The final two commands should report that the proposed version does not exist.
 If `HEAD` differs from `origin/develop`, stop and reconcile the branch first.
 
-## Publish a beta
+## Start a Git Flow release
 
-Merge the reviewed feature commit into `develop`, verify CI, and tag that exact
-commit. Beta tags never update Homebrew.
+Merge reviewed features into `develop`, update both Rust product crate versions,
+verify CI, then cut and publish the versioned release branch:
 
 ```bash
 git switch develop
 git pull --ff-only origin develop
+git switch -c "release/${VERSION}"
+git push -u origin "release/${VERSION}"
+```
+
+Only release stabilization fixes and release documentation belong on this
+branch. Merge every such fix back into `develop` when finishing the release.
+
+## Publish a beta
+
+Tag the exact remote release-branch head. Beta numbers are contiguous and
+immutable; rerun a failed workflow for the same tag instead of moving it.
+Betas never update Homebrew.
+
+```bash
+git switch "release/${VERSION}"
+git pull --ff-only origin "release/${VERSION}"
 git tag -a "v${VERSION}-beta.1" -m "Lumen v${VERSION}-beta.1"
 git push origin "v${VERSION}-beta.1"
 ```
 
 ## Publish a stable release
 
-Merge the reviewed `develop` commit into `main`, then create the intended tag:
+After at least one beta is published and accepted, merge the release branch
+with no-ff commits into both long-lived branches. Push both branches before
+creating the stable tag:
 
 ```bash
 git switch main
 git pull --ff-only origin main
-git merge --no-ff develop
+git merge --no-ff "release/${VERSION}"
 git status --short
 git push origin main
+
+git switch develop
+git pull --ff-only origin develop
+git merge --no-ff "release/${VERSION}"
+git status --short
+git push origin develop
+
+git switch main
+git pull --ff-only origin main
 git tag -a "v${VERSION}" -m "Lumen v${VERSION}"
 git push origin "v${VERSION}"
 ```
 
-The tag push starts the release workflow. Beta tags publish a GitHub
+The tag push starts the release workflow and
+`scripts/release/validate_gitflow_release.sh` rechecks this topology against
+remote refs before any signing job starts. Beta tags publish a GitHub
 Pre-release and skip Homebrew; stable tags publish a normal GitHub Release and
-update Homebrew after both signed packages succeed.
+update Homebrew after both signed packages succeed. Keep the remote release
+branch until the stable workflow succeeds, then remove it:
+
+```bash
+git push origin --delete "release/${VERSION}"
+git branch -d "release/${VERSION}"
+```
 
 Monitor the release:
 
