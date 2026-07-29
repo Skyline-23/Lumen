@@ -54,19 +54,13 @@ fn host_capture_cursor_is_an_unconfigurable_cross_platform_invariant() {
     ] {
         assert!(!source_root.join(retired_capture_source).exists());
     }
-    assert!(windows_capture.contains("GetFramePointerShape"));
-    assert!(windows_capture.contains("IDXGIOutput6"));
-    assert!(windows_capture.contains("DuplicateOutput1"));
-    assert!(windows_capture.contains("HDR_CAPTURE_FORMATS"));
-    assert!(windows_capture.contains("Advanced Color on the selected display"));
-    assert!(!windows_capture.contains(".DuplicateOutput(&device)"));
-    assert!(windows_capture.contains("VideoProcessorSetStreamAlpha"));
-    assert!(windows_capture.contains("DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MONOCHROME"));
-    assert!(windows_capture.contains("DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MASKED_COLOR"));
-    assert!(windows_capture.contains("D3DCompile"));
-    assert!(windows_capture.contains("MaxInputStreams < 2"));
-    assert!(!windows_capture.contains("MapDesktopSurface"));
-    assert!(!windows_capture.contains("requires XOR compositing"));
+    assert!(windows_capture.contains("NativeIddCxCapture"));
+    assert!(windows_capture.contains("OpenSharedResourceByName"));
+    assert!(windows_capture.contains("AcquireSync(1"));
+    assert!(windows_capture.contains("ReleaseSync(0"));
+    assert!(!windows_capture.contains("NativeDesktopDuplication"));
+    assert!(!windows_capture.contains("DuplicateOutput"));
+    assert!(!windows_capture.contains("GetFramePointerShape"));
     assert!(!native_protocol.contains("cursor"));
 }
 use std::sync::atomic::{AtomicU64, Ordering};

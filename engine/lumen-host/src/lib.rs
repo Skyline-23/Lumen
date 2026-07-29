@@ -2,8 +2,6 @@ mod authority;
 mod config;
 mod control;
 mod credentials;
-#[cfg(any(test, windows))]
-mod cursor_mask;
 mod discovery;
 mod entry;
 mod local_settings;
