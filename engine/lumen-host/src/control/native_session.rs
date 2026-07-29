@@ -632,6 +632,14 @@ impl ControlRouter {
         Ok(())
     }
 
+    pub(crate) fn native_media_capabilities(&self, session_epoch: u32) -> Option<u64> {
+        self.native
+            .pending
+            .as_ref()
+            .filter(|pending| pending.plan.session_epoch == session_epoch)
+            .map(|pending| pending.plan.media_capabilities)
+    }
+
     fn dispatch_native_start(
         &mut self,
         request_id: u64,
