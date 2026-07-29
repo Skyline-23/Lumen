@@ -120,6 +120,10 @@ if(PROJECT_VERSION MATCHES "([0-9]+)\\.([0-9]+)\\.([0-9]+)")
     set(CMAKE_PROJECT_VERSION_PATCH "${CMAKE_MATCH_3}")
 endif()
 
+if(WIN32)
+    include("${CMAKE_CURRENT_LIST_DIR}/windows_file_version.cmake")
+endif()
+
 message("PROJECT_NAME: ${PROJECT_NAME}")
 message("PROJECT_VERSION: ${PROJECT_VERSION}")
 message("PROJECT_VERSION_MAJOR: ${PROJECT_VERSION_MAJOR}")

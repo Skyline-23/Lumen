@@ -21,8 +21,10 @@ add_custom_target(lumen-windows-ui ALL
                 --output "${LUMEN_WINDOWS_UI_PUBLISH_DIR}"
                 --property:ContinuousIntegrationBuild=true
                 --property:Version=${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}
+                --property:InformationalVersion=${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}
+                --property:IncludeSourceRevisionInInformationalVersion=false
                 --property:AssemblyVersion=${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}.0
-                --property:FileVersion=${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}.0
+                --property:FileVersion=${LUMEN_WINDOWS_FILE_VERSION}
         COMMAND "${CMAKE_COMMAND}"
                 -DLUMEN_WINDOWS_UI_PUBLISH_DIR=${LUMEN_WINDOWS_UI_PUBLISH_DIR}
                 -P "${CMAKE_SOURCE_DIR}/cmake/scripts/prune_windows_ui_locales.cmake"

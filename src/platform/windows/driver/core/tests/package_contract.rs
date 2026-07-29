@@ -190,6 +190,90 @@ fn windows_service_preserves_launch_errors_and_reaps_suspended_children() {
     assert!(entry.contains("record_windows_startup_error(&error)"));
 }
 
+fn resolve_windows_file_version(
+    repo_root: &std::path::Path,
+    product_version: (u32, u32, u32),
+    build_number: Option<&str>,
+    github_run_number: Option<&str>,
+) -> std::process::Output {
+    let mut command = std::process::Command::new("cmake");
+    command
+        .current_dir(repo_root)
+        .arg(format!("-DPROJECT_VERSION_MAJOR={}", product_version.0))
+        .arg(format!("-DPROJECT_VERSION_MINOR={}", product_version.1))
+        .arg(format!("-DPROJECT_VERSION_PATCH={}", product_version.2))
+        .env_remove("GITHUB_RUN_NUMBER");
+    if let Some(build_number) = build_number {
+        command.arg(format!("-DLUMEN_WINDOWS_BUILD_NUMBER={build_number}"));
+    }
+    if let Some(github_run_number) = github_run_number {
+        command.env("GITHUB_RUN_NUMBER", github_run_number);
+    }
+    command
+        .arg("-P")
+        .arg(repo_root.join("cmake/prep/windows_file_version.cmake"))
+        .output()
+        .expect("CMake must execute the Windows FileVersion resolver")
+}
+
+fn cmake_output(output: &std::process::Output) -> String {
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+}
+
+#[test]
+fn windows_file_version_is_monotonic_and_keeps_product_version_semantic() {
+    let driver = driver_root();
+    let repo_root = driver
+        .ancestors()
+        .nth(4)
+        .expect("driver must live under src/platform/windows");
+
+    let explicit = resolve_windows_file_version(repo_root, (0, 0, 45), Some("346"), None);
+    assert!(explicit.status.success(), "{}", cmake_output(&explicit));
+    let explicit_log = cmake_output(&explicit);
+    assert!(explicit_log.contains("Windows FileVersion: 2.0.45.346"));
+    assert!(explicit_log.contains("ProductVersion: 0.0.45"));
+
+    let next_commit = resolve_windows_file_version(repo_root, (0, 0, 45), Some("347"), None);
+    assert!(
+        next_commit.status.success(),
+        "{}",
+        cmake_output(&next_commit)
+    );
+    assert!(cmake_output(&next_commit).contains("Windows FileVersion: 2.0.45.347"));
+
+    let shallow_ci = resolve_windows_file_version(repo_root, (0, 0, 45), None, Some("348"));
+    assert!(shallow_ci.status.success(), "{}", cmake_output(&shallow_ci));
+    let shallow_ci_log = cmake_output(&shallow_ci);
+    assert!(shallow_ci_log.contains("Windows FileVersion: 2.0.45.348"));
+    assert!(shallow_ci_log.contains("(GITHUB_RUN_NUMBER)"));
+}
+
+#[test]
+fn windows_file_version_rejects_parts_outside_the_pe_16_bit_range() {
+    let driver = driver_root();
+    let repo_root = driver
+        .ancestors()
+        .nth(4)
+        .expect("driver must live under src/platform/windows");
+
+    for (product_version, build_number) in [
+        ((65_534, 0, 0), "1"),
+        ((0, 65_536, 0), "1"),
+        ((0, 0, 65_536), "1"),
+        ((0, 0, 45), "65536"),
+    ] {
+        let output =
+            resolve_windows_file_version(repo_root, product_version, Some(build_number), None);
+        assert!(!output.status.success(), "{}", cmake_output(&output));
+        assert!(cmake_output(&output).contains("0..65535"));
+    }
+}
+
 #[test]
 fn windows_msi_owns_service_firewall_upgrade_and_removal() {
     // Given: the public Windows package definition and CI build entrypoint.
@@ -207,6 +291,16 @@ fn windows_msi_owns_service_firewall_upgrade_and_removal() {
         .expect("Windows package build script must exist");
     let common_targets = fs::read_to_string(repo_root.join("cmake/targets/common.cmake"))
         .expect("common target definitions must exist");
+    let version_resolver =
+        fs::read_to_string(repo_root.join("cmake/prep/windows_file_version.cmake"))
+            .expect("Windows FileVersion resolver must exist");
+    let version_resource = fs::read_to_string(repo_root.join("src/platform/windows/windows.rc"))
+        .expect("Windows version resource must exist");
+    let windows_definitions =
+        fs::read_to_string(repo_root.join("cmake/compile_definitions/windows.cmake"))
+            .expect("Windows resource compile definitions must exist");
+    let tools = fs::read_to_string(repo_root.join("tools/CMakeLists.txt"))
+        .expect("Windows service target definitions must exist");
 
     // Then: MSI owns the machine-wide service and distinct transactional
     // firewall rules, and NSIS is no longer the release artifact.
@@ -244,6 +338,7 @@ fn windows_msi_owns_service_firewall_upgrade_and_removal() {
     assert!(project.contains("WixToolset.UI.wixext"));
     assert!(project.contains("WixUILicenseRtf"));
     assert!(project.contains("<SuppressIces>ICE61</SuppressIces>"));
+    assert!(package.contains("Version=\"$(var.ProductVersion)\""));
     assert!(build.contains("LUMEN_WINDOWS_DRIVER_PACKAGE_DIR"));
     assert!(build.contains("LumenIddCx.dll"));
     assert!(build.contains("LumenIddCx.inf"));
@@ -253,6 +348,7 @@ fn windows_msi_owns_service_firewall_upgrade_and_removal() {
     assert!(build.contains("-D warnings"));
     assert!(build.contains("--no-incremental"));
     assert!(build.contains("BaseIntermediateOutputPath"));
+    assert!(build.contains("--property:ProductVersion=\"${VERSION}\""));
     assert!(common_targets.contains("\"${CMAKE_SOURCE_DIR}/tools\""));
     let windows_targets = fs::read_to_string(repo_root.join("cmake/targets/windows.cmake"))
         .expect("Windows target definitions must exist");
@@ -264,8 +360,34 @@ fn windows_msi_owns_service_firewall_upgrade_and_removal() {
         "--property:Version=${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}"
     ));
     assert!(windows_targets.contains(
-        "--property:FileVersion=${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}.0"
+        "--property:InformationalVersion=${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}"
     ));
+    assert!(
+        windows_targets.contains("--property:IncludeSourceRevisionInInformationalVersion=false")
+    );
+    assert!(windows_targets.contains("--property:FileVersion=${LUMEN_WINDOWS_FILE_VERSION}"));
+    assert!(version_resolver.contains("set(LUMEN_WINDOWS_FILE_VERSION_EPOCH 2)"));
+    assert!(version_resolver.contains("$ENV{GITHUB_RUN_NUMBER}"));
+    assert!(version_resolver.contains("rev-parse --is-shallow-repository"));
+    assert!(version_resolver.contains("rev-list --count HEAD"));
+    assert!(version_resolver.contains("0..65535"));
+    assert!(version_resource.contains(
+        "FILEVERSION     LUMEN_WINDOWS_FILE_VERSION_MAJOR,LUMEN_WINDOWS_FILE_VERSION_MINOR,LUMEN_WINDOWS_FILE_VERSION_PATCH,LUMEN_WINDOWS_FILE_VERSION_BUILD"
+    ));
+    assert!(version_resource.contains(
+        "PRODUCTVERSION  PROJECT_VERSION_MAJOR,PROJECT_VERSION_MINOR,PROJECT_VERSION_PATCH,0"
+    ));
+    for version_part in [
+        "LUMEN_WINDOWS_FILE_VERSION_MAJOR",
+        "LUMEN_WINDOWS_FILE_VERSION_MINOR",
+        "LUMEN_WINDOWS_FILE_VERSION_PATCH",
+        "LUMEN_WINDOWS_FILE_VERSION_BUILD",
+    ] {
+        assert!(windows_definitions.contains(version_part));
+    }
+    assert!(common_targets.contains("target_link_libraries(lumen ${LUMEN_EXTERNAL_LIBRARIES}"));
+    assert!(tools.contains("target_link_libraries(lumen-service"));
+    assert!(tools.contains("${LUMEN_EXTERNAL_LIBRARIES}"));
     assert!(locale_pruning.contains("en-us;ja-JP;ko-KR"));
     assert!(locale_pruning.contains("Microsoft.ui.xaml.dll.mui"));
     assert!(!build.contains("cpack --config"));
