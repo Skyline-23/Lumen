@@ -36,7 +36,7 @@ component FeatureRow inherits HorizontalLayout {
 
 component NavigationIconSlot inherits Rectangle {
     in property <image> icon;
-    in property <color> color;
+    in property <color> tint;
     width: 22px;
     height: 22px;
     horizontal-stretch: 0;
@@ -50,7 +50,7 @@ component NavigationIconSlot inherits Rectangle {
         width: 18px;
         height: 18px;
         image-fit: contain;
-        colorize: root.color;
+        colorize: root.tint;
     }
 }
 
@@ -79,7 +79,7 @@ component NavigationRow inherits Rectangle {
         spacing: 10px;
         NavigationIconSlot {
             icon: root.icon;
-            color: root.selected ? #e95728 : #56534c;
+            tint: root.selected ? #e95728 : #56534c;
         }
         Text {
             text: root.title;
