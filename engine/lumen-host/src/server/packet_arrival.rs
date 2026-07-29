@@ -106,7 +106,7 @@ impl PacketArrivalHistory {
         }
     }
 
-    pub(super) async fn record_sent(
+    pub(super) fn record_sent(
         &self,
         identity: PacketIdentity,
     ) -> Result<(), PacketArrivalFeedbackError> {
@@ -114,8 +114,7 @@ impl PacketArrivalHistory {
             return Ok(());
         }
         self.commands
-            .send(Command::Record(identity))
-            .await
+            .try_send(Command::Record(identity))
             .map_err(|_| PacketArrivalFeedbackError::ActorUnavailable)
     }
 
@@ -324,14 +323,12 @@ mod tests {
                 stream_id: 1,
                 datagram_sequence: 10,
             })
-            .await
             .unwrap();
         history
             .record_sent(PacketIdentity {
                 stream_id: 1,
                 datagram_sequence: 12,
             })
-            .await
             .unwrap();
         let mut runs = Vec::from(10_u32.to_be_bytes());
         runs.extend_from_slice(&0b101_u64.to_be_bytes());
@@ -365,11 +362,34 @@ mod tests {
                 stream_id: 1,
                 datagram_sequence: 1,
             })
-            .await
             .unwrap();
         assert_eq!(
             history.observe(&feedback(Vec::new(), 0)).await,
             Err(PacketArrivalFeedbackError::Unsupported)
+        );
+    }
+
+    #[test]
+    fn recording_never_waits_for_a_saturated_history_actor() {
+        let (commands, _receiver) = mpsc::channel(1);
+        let history = PacketArrivalHistory {
+            commands,
+            enabled: Arc::new(AtomicBool::new(true)),
+        };
+
+        assert_eq!(
+            history.record_sent(PacketIdentity {
+                stream_id: 1,
+                datagram_sequence: 1,
+            }),
+            Ok(())
+        );
+        assert_eq!(
+            history.record_sent(PacketIdentity {
+                stream_id: 1,
+                datagram_sequence: 2,
+            }),
+            Err(PacketArrivalFeedbackError::ActorUnavailable)
         );
     }
 
@@ -417,7 +437,6 @@ mod tests {
                     stream_id: 1,
                     datagram_sequence: sequence,
                 })
-                .await
                 .unwrap();
         }
 

@@ -97,7 +97,7 @@ impl PacketArrivalHistoryWarningReporter {
         }
     }
 
-    async fn unavailable(&self) {
+    fn unavailable(&self) {
         if self
             .warning_present
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -107,22 +107,20 @@ impl PacketArrivalHistoryWarningReporter {
         }
         if self
             .commands
-            .send(PacketArrivalHistoryWarningCommand::Unavailable)
-            .await
+            .try_send(PacketArrivalHistoryWarningCommand::Unavailable)
             .is_err()
         {
             self.warning_present.store(false, Ordering::Release);
         }
     }
 
-    async fn available(&self) {
+    fn available(&self) {
         if !self.warning_present.swap(false, Ordering::AcqRel) {
             return;
         }
         if self
             .commands
-            .send(PacketArrivalHistoryWarningCommand::Available)
-            .await
+            .try_send(PacketArrivalHistoryWarningCommand::Available)
             .is_err()
         {
             self.warning_present.store(true, Ordering::Release);
@@ -268,19 +266,19 @@ async fn send_tracked_connection_datagram(
             })
         });
     let outcome = send_connection_datagram(connection, mode, datagram, deadline).await;
-    record_successful_datagram(packet_arrival, identity, &outcome).await;
+    record_successful_datagram(packet_arrival, identity, &outcome);
     outcome
 }
 
-async fn record_successful_datagram(
+fn record_successful_datagram(
     packet_arrival: &PacketArrivalSendObservation,
     identity: Option<PacketIdentity>,
     outcome: &DatagramSendOutcome,
 ) {
     if matches!(outcome, DatagramSendOutcome::Sent) {
         if let Some(identity) = identity {
-            match packet_arrival.history.record_sent(identity).await {
-                Ok(()) => packet_arrival.warning_reporter.available().await,
+            match packet_arrival.history.record_sent(identity) {
+                Ok(()) => packet_arrival.warning_reporter.available(),
                 Err(error) => {
                     eprintln!(
                         "Lumen native media stage=packet-arrival-history-unavailable stream-id={} datagram-sequence={} reason={}",
@@ -288,7 +286,7 @@ async fn record_successful_datagram(
                         identity.datagram_sequence,
                         error.code(),
                     );
-                    packet_arrival.warning_reporter.unavailable().await;
+                    packet_arrival.warning_reporter.unavailable();
                 }
             }
         }
@@ -2047,9 +2045,8 @@ mod tests {
             &packet_arrival,
             Some(dropped),
             &DatagramSendOutcome::DeadlineExceeded,
-        )
-        .await;
-        record_successful_datagram(&packet_arrival, Some(sent), &DatagramSendOutcome::Sent).await;
+        );
+        record_successful_datagram(&packet_arrival, Some(sent), &DatagramSendOutcome::Sent);
 
         let mut sent_run = Vec::from(31_u32.to_be_bytes());
         sent_run.extend_from_slice(&1_u64.to_be_bytes());
@@ -2102,10 +2099,8 @@ mod tests {
             datagram_sequence: 31,
         };
 
-        record_successful_datagram(&packet_arrival, Some(identity), &DatagramSendOutcome::Sent)
-            .await;
-        record_successful_datagram(&packet_arrival, Some(identity), &DatagramSendOutcome::Sent)
-            .await;
+        record_successful_datagram(&packet_arrival, Some(identity), &DatagramSendOutcome::Sent);
+        record_successful_datagram(&packet_arrival, Some(identity), &DatagramSendOutcome::Sent);
         warning_reporter.flush().await;
 
         assert_eq!(
@@ -2118,7 +2113,7 @@ mod tests {
             }]
         );
 
-        warning_reporter.available().await;
+        warning_reporter.available();
         warning_reporter.flush().await;
         assert_eq!(
             platform.events.lock().unwrap().last(),
