@@ -258,7 +258,7 @@ impl HostArguments {
             "native_pen_touch=true".to_owned(),
             "forward_rumble=true".to_owned(),
             "address_family=ipv4".to_owned(),
-            "port=48989".to_owned(),
+            "port=47989".to_owned(),
             "upnp=false".to_owned(),
             "origin_admin_allowed=lan".to_owned(),
             "lan_encryption_mode=0".to_owned(),
@@ -338,7 +338,7 @@ pub(crate) mod tests {
     fn windows_defaults_use_the_lumen_port_range() {
         let parsed = HostArguments::parse_process(Vec::<OsString>::new()).unwrap();
 
-        assert_eq!(parsed.get("port"), Some("48989"));
+        assert_eq!(parsed.get("port"), Some("47989"));
     }
 
     #[test]
