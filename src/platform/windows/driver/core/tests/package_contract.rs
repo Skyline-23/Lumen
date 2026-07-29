@@ -654,7 +654,10 @@ fn windows_winui_matches_the_native_lumen_visual_contract() {
     assert!(window.contains("AuthenticationGlowCanvas()"));
     assert!(window.contains("LumenAssetIcon.LocalCredentials"));
     assert!(window.contains("LumenAssetIcon.CreateOwner"));
-    assert!(window.contains("AppWindow.Resize(new Windows.Graphics.SizeInt32(960, 620))"));
+    assert!(window.contains("SizeDefaultViewportForCurrentDisplay()"));
+    assert!(window.contains("var scale = xamlRoot.RasterizationScale"));
+    assert!(window.contains("(int)Math.Round(960 * scale)"));
+    assert!(window.contains("(int)Math.Round(620 * scale)"));
     assert!(window.contains("PasswordRevealMode = PasswordRevealMode.Peek"));
     assert!(!window.contains("ApplicationPageBackgroundThemeBrush"));
     assert!(!window.contains("Colors.Gray"));
