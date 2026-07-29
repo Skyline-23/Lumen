@@ -10,7 +10,7 @@ use super::media_queue::WindowsMediaPacketQueues;
 use super::native_audio::{self, NativeAudioConfiguration};
 use super::native_display_driver::DriverHandle;
 use super::native_video::{NativeEncodedVideoSample, NativeMediaFoundation};
-use crate::windows_service_log::WindowsServiceEventLog;
+use crate::windows_service_log::WindowsServiceEventLane;
 
 const MAXIMUM_VIDEO_BUFFER_BYTES: usize = 32 * 1024 * 1024;
 
@@ -18,6 +18,7 @@ pub(super) struct NativeWindowsMedia {
     packets: Arc<PacketQueueContext>,
     audio_configuration: NativeAudioConfiguration,
     media_foundation: NativeMediaFoundation,
+    adaptive_event_lane: WindowsServiceEventLane,
     lifecycle: RwLock<MediaLifecycle>,
 }
 
@@ -118,17 +119,18 @@ impl NativeWindowsMedia {
         let audio_configuration = NativeAudioConfiguration::from_arguments(arguments)?;
         let packets = Arc::new(PacketQueueContext::default());
         let video_packets = Arc::clone(&packets);
-        let adaptive_event_log = Arc::new(WindowsServiceEventLog::from_program_data()?);
+        let adaptive_event_lane = WindowsServiceEventLane::from_program_data()?;
         let media_foundation = NativeMediaFoundation::start(
             Arc::new(move |session_epoch, sample: NativeEncodedVideoSample| {
                 video_packets.push_video(session_epoch, sample)
             }),
-            adaptive_event_log,
+            adaptive_event_lane.publisher(),
         );
         Ok(Self {
             packets,
             audio_configuration,
             media_foundation,
+            adaptive_event_lane,
             lifecycle: RwLock::new(MediaLifecycle::default()),
         })
     }
@@ -373,6 +375,7 @@ fn require_running_session_epoch(
 impl Drop for NativeWindowsMedia {
     fn drop(&mut self) {
         let _ = self.stop();
+        self.adaptive_event_lane.shutdown();
     }
 }
 

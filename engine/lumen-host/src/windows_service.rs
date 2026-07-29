@@ -301,6 +301,9 @@ unsafe extern "system" fn service_main(_argc: u32, _argv: *mut *mut u16) {
 }
 
 fn run_service(state: &ServiceControl) -> ServiceResult<()> {
+    crate::windows_service_log::prepare_program_data_lumen_directory().map_err(|error| {
+        ServiceError::io("prepare Lumen ProgramData service log directory", error)
+    })?;
     let stop_event = OwnedHandle::new(
         unsafe { CreateEventW(null(), 1, 0, null()) },
         "create Lumen service stop event",

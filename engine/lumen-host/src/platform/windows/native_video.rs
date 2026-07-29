@@ -38,7 +38,7 @@ use super::native_display_driver::DriverHandle;
 use crate::platform::session_slot::{
     AbandonableSessionSlot, FrameDeliveryOwnership, RetiredWorkerRegistry, SessionRetirementGate,
 };
-use crate::windows_service_log::{WindowsAdaptiveVideoApplyEvent, WindowsServiceEventSink};
+use crate::windows_service_log::{WindowsAdaptiveVideoApplyEvent, WindowsServiceEventPublisher};
 use crate::{
     PlatformChromaSubsampling, PlatformDynamicRange, PlatformSessionPlan, PlatformVideoCodec,
 };
@@ -53,7 +53,7 @@ type NativeVideoSink =
 
 pub(super) struct NativeMediaFoundation {
     sink: NativeVideoSink,
-    adaptive_event_log: Arc<dyn WindowsServiceEventSink>,
+    adaptive_event_publisher: Arc<dyn WindowsServiceEventPublisher>,
     sessions: AbandonableSessionSlot<NativeMediaFoundationSession>,
     retired_workers: RetiredWorkerRegistry,
     next_encoder_epoch: AtomicU64,
@@ -76,7 +76,7 @@ struct NativeMediaFoundationWorker {
     state: Arc<Mutex<NativeVideoWorkerState>>,
     retirement_gate: Arc<SessionRetirementGate>,
     frame_delivery: Arc<FrameDeliveryOwnership>,
-    adaptive_event_log: Arc<dyn WindowsServiceEventSink>,
+    adaptive_event_publisher: Arc<dyn WindowsServiceEventPublisher>,
 }
 
 #[derive(Default)]
@@ -122,7 +122,7 @@ struct NativeVideoRuntime {
     admission_divisor: u8,
     admissions_until_next: u8,
     retirement_gate: Arc<SessionRetirementGate>,
-    adaptive_event_log: Arc<dyn WindowsServiceEventSink>,
+    adaptive_event_publisher: Arc<dyn WindowsServiceEventPublisher>,
 }
 
 enum NativeMediaFoundationCommand {
@@ -156,11 +156,11 @@ struct NativeVideoEncoderPlan {
 impl NativeMediaFoundation {
     pub(super) fn start(
         sink: NativeVideoSink,
-        adaptive_event_log: Arc<dyn WindowsServiceEventSink>,
+        adaptive_event_publisher: Arc<dyn WindowsServiceEventPublisher>,
     ) -> Self {
         Self {
             sink,
-            adaptive_event_log,
+            adaptive_event_publisher,
             sessions: AbandonableSessionSlot::default(),
             retired_workers: RetiredWorkerRegistry::new(MAXIMUM_RETIRED_MEDIA_FOUNDATION_WORKERS),
             next_encoder_epoch: AtomicU64::new(1),
@@ -205,7 +205,7 @@ impl NativeMediaFoundation {
             .map_err(str::to_owned)?;
         let retirement_gate = session.retirement_gate();
         let sink = Arc::clone(&self.sink);
-        let adaptive_event_log = Arc::clone(&self.adaptive_event_log);
+        let adaptive_event_publisher = Arc::clone(&self.adaptive_event_publisher);
         let session_epoch = plan.session_epoch;
         let worker_context = NativeMediaFoundationWorker {
             plan,
@@ -216,7 +216,7 @@ impl NativeMediaFoundation {
             state,
             retirement_gate,
             frame_delivery,
-            adaptive_event_log,
+            adaptive_event_publisher,
         };
         let spawn = thread::Builder::new()
             .name(format!("lumen-windows-media-foundation-{session_epoch}"))
@@ -368,7 +368,7 @@ fn run_media_foundation_session(worker: NativeMediaFoundationWorker) {
         state,
         retirement_gate,
         frame_delivery,
-        adaptive_event_log,
+        adaptive_event_publisher,
     } = worker;
     let session_epoch = plan.session_epoch;
     if let Err(error) = unsafe { MFStartup(MF_VERSION, MFSTARTUP_FULL) } {
@@ -392,7 +392,7 @@ fn run_media_foundation_session(worker: NativeMediaFoundationWorker) {
         &sink,
         frame_delivery,
         Arc::clone(&retirement_gate),
-        adaptive_event_log,
+        adaptive_event_publisher,
     ) {
         Ok(runtime) => Some(runtime),
         Err(error) => {
@@ -531,7 +531,7 @@ fn start_runtime(
     sink: &NativeVideoSink,
     frame_delivery: Arc<FrameDeliveryOwnership>,
     retirement_gate: Arc<SessionRetirementGate>,
-    adaptive_event_log: Arc<dyn WindowsServiceEventSink>,
+    adaptive_event_publisher: Arc<dyn WindowsServiceEventPublisher>,
 ) -> Result<NativeVideoRuntime, String> {
     let capture = NativeIddCxCapture::open(driver, plan.ten_bit, frame_delivery)?;
     let encoder = catalog.activate(plan, capture.device())?;
@@ -545,7 +545,7 @@ fn start_runtime(
         admission_divisor: 1,
         admissions_until_next: 0,
         retirement_gate,
-        adaptive_event_log,
+        adaptive_event_publisher,
     };
     runtime.encoder.force_key_frame()?;
     let deadline = Instant::now() + INITIAL_FRAME_TIMEOUT;
@@ -713,15 +713,17 @@ impl NativeVideoRuntime {
             return Err("Windows video admission divisor is outside 1...4".to_owned());
         }
         let applied_bitrate_bps = self.encoder.set_bitrate(bitrate_bps)?;
-        self.retirement_gate.commit_if_active(|| {
-            let event = WindowsAdaptiveVideoApplyEvent::now(
+        let _ = self.retirement_gate.commit_if_active(|| {
+            let event = WindowsAdaptiveVideoApplyEvent::new(
                 self.plan.session_epoch,
                 self.plan.encoder_epoch,
                 bitrate_bps,
                 applied_bitrate_bps,
-            )?;
-            self.adaptive_event_log.record_adaptive_video_apply(&event)
-        })?;
+            );
+            let _ = self
+                .adaptive_event_publisher
+                .publish_adaptive_video_apply(event);
+        });
         self.admission_divisor = admission_divisor;
         self.admissions_until_next = 0;
         Ok(())

@@ -165,6 +165,40 @@ $errorLogs = @(
 Assert-InstallationCondition ($errorLogs.Count -eq 0) `
     "The installed runtime left a current startup error receipt: $($errorLogs -join ', ')."
 
+$programDataDirectory = Join-Path $env:ProgramData "Lumen"
+Assert-InstallationCondition (Test-Path -LiteralPath $programDataDirectory -PathType Container) `
+    "The protected Lumen ProgramData directory is missing."
+if (Test-Path -LiteralPath $programDataDirectory -PathType Container) {
+    $programDataItem = Get-Item -LiteralPath $programDataDirectory -Force
+    Assert-InstallationCondition (($programDataItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0) `
+        "The Lumen ProgramData directory must not be a reparse point."
+    $programDataAcl = Get-Acl -LiteralPath $programDataDirectory
+    $ownerSid = $programDataAcl.Owner
+    try {
+        $ownerSid = ([System.Security.Principal.NTAccount]$programDataAcl.Owner).Translate(
+            [System.Security.Principal.SecurityIdentifier]
+        ).Value
+    } catch {}
+    Assert-InstallationCondition ($ownerSid -eq "S-1-5-18") `
+        "The Lumen ProgramData directory owner is not LocalSystem."
+    Assert-InstallationCondition $programDataAcl.AreAccessRulesProtected `
+        "The Lumen ProgramData directory DACL must be protected from inheritance."
+    $trustedWriterSids = @("S-1-5-18", "S-1-5-32-544")
+    $writeRules = @($programDataAcl.Access | Where-Object {
+        $_.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Allow -and
+        ($_.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::Write) -ne 0
+    })
+    $writeRuleSids = @($writeRules | ForEach-Object {
+        $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value
+    })
+    Assert-InstallationCondition (@($writeRuleSids | Where-Object { $_ -notin $trustedWriterSids }).Count -eq 0) `
+        "The Lumen ProgramData directory grants write access outside LocalSystem and Administrators."
+    foreach ($trustedWriterSid in $trustedWriterSids) {
+        Assert-InstallationCondition ($writeRuleSids -contains $trustedWriterSid) `
+            "The Lumen ProgramData directory is missing a trusted writer ACL for $trustedWriterSid."
+    }
+}
+
 $result = [ordered]@{
     passed = $failures.Count -eq 0
     computer = $env:COMPUTERNAME

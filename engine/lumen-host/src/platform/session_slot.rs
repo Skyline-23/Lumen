@@ -23,29 +23,27 @@ impl SessionRetirementGate {
         self.state.load(Ordering::Acquire) == SESSION_RETIRED
     }
 
-    pub(super) fn commit_if_active<T>(
-        &self,
-        commit: impl FnOnce() -> Result<T, String>,
-    ) -> Result<T, String> {
-        self.state
+    pub(super) fn commit_if_active(&self, commit: impl FnOnce()) -> bool {
+        if self
+            .state
             .compare_exchange(
                 SESSION_ACTIVE,
                 SESSION_COMMITTING,
                 Ordering::AcqRel,
                 Ordering::Acquire,
             )
-            .map_err(|state| match state {
-                SESSION_RETIRED => "session epoch was retired before commit".to_owned(),
-                _ => "session epoch already has an in-flight commit".to_owned(),
-            })?;
-        let result = commit();
+            .is_err()
+        {
+            return false;
+        }
+        commit();
         let _ = self.state.compare_exchange(
             SESSION_COMMITTING,
             SESSION_ACTIVE,
             Ordering::AcqRel,
             Ordering::Acquire,
         );
-        result
+        true
     }
 
     pub(super) fn retire(&self) {
@@ -344,7 +342,6 @@ mod tests {
             release_receive.recv().unwrap();
             worker_gate.commit_if_active(|| {
                 worker_persisted.fetch_add(1, Ordering::AcqRel);
-                Ok(())
             })
         });
 
@@ -352,7 +349,7 @@ mod tests {
         gate.retire();
         release_send.send(()).unwrap();
 
-        assert!(worker.join().unwrap().is_err());
+        assert!(!worker.join().unwrap());
         assert_eq!(persisted.load(Ordering::Acquire), 0);
     }
 
@@ -360,11 +357,9 @@ mod tests {
     fn active_epoch_commits_one_success() {
         let gate = SessionRetirementGate::default();
         let persisted = AtomicUsize::new(0);
-        gate.commit_if_active(|| {
+        assert!(gate.commit_if_active(|| {
             persisted.fetch_add(1, Ordering::AcqRel);
-            Ok(())
-        })
-        .unwrap();
+        }));
         assert_eq!(persisted.load(Ordering::Acquire), 1);
         assert!(!gate.is_retired());
     }
