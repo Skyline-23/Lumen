@@ -18,26 +18,28 @@ set(CPACK_STRIP_FILES YES)
 
 set(LUMEN_PACKAGE_ASSETS_DIR "${LUMEN_ASSETS_DIR}")
 
-# install common assets
-install(DIRECTORY "${LUMEN_SOURCE_ASSETS_DIR}/common/assets/"
-        DESTINATION "${LUMEN_PACKAGE_ASSETS_DIR}")
-install(FILES "${CMAKE_SOURCE_DIR}/icon.svg"
-        DESTINATION "${LUMEN_PACKAGE_ASSETS_DIR}/icons")
-install(FILES
-        "${CMAKE_SOURCE_DIR}/LICENSE"
-        "${CMAKE_SOURCE_DIR}/NOTICE"
-        DESTINATION "."
-        COMPONENT application)
-install(FILES
-        "${CMAKE_SOURCE_DIR}/third-party/licenses/Opus-BSD-3-Clause.txt"
-        "${CMAKE_SOURCE_DIR}/third-party/licenses/Rust-Crates.html"
-        DESTINATION "licenses"
-        COMPONENT application)
-install(FILES
-        "${CMAKE_SOURCE_DIR}/third-party/ViGEmClient/LICENSE"
-        DESTINATION "licenses"
-        RENAME "ViGEmClient-MIT.txt"
-        COMPONENT application)
+if(NOT (WIN32 AND LUMEN_WINDOWS_DEVELOPER_BUILD))
+    # install common assets
+    install(DIRECTORY "${LUMEN_SOURCE_ASSETS_DIR}/common/assets/"
+            DESTINATION "${LUMEN_PACKAGE_ASSETS_DIR}")
+    install(FILES "${CMAKE_SOURCE_DIR}/icon.svg"
+            DESTINATION "${LUMEN_PACKAGE_ASSETS_DIR}/icons")
+    install(FILES
+            "${CMAKE_SOURCE_DIR}/LICENSE"
+            "${CMAKE_SOURCE_DIR}/NOTICE"
+            DESTINATION "."
+            COMPONENT application)
+    install(FILES
+            "${CMAKE_SOURCE_DIR}/third-party/licenses/Opus-BSD-3-Clause.txt"
+            "${CMAKE_SOURCE_DIR}/third-party/licenses/Rust-Crates.html"
+            DESTINATION "licenses"
+            COMPONENT application)
+    install(FILES
+            "${CMAKE_SOURCE_DIR}/third-party/ViGEmClient/LICENSE"
+            DESTINATION "licenses"
+            RENAME "ViGEmClient-MIT.txt"
+            COMPONENT application)
+endif()
 # copy assets to build directory, for running without install
 file(GLOB_RECURSE ALL_ASSETS
         RELATIVE "${LUMEN_SOURCE_ASSETS_DIR}/common/assets/" "${LUMEN_SOURCE_ASSETS_DIR}/common/assets/*")
@@ -49,8 +51,10 @@ file(COPY "${CMAKE_SOURCE_DIR}/icon.svg"
         DESTINATION "${CMAKE_CURRENT_BINARY_DIR}/assets/icons")
 
 # platform specific packaging
-if(WIN32)
+if(WIN32 AND NOT LUMEN_WINDOWS_DEVELOPER_BUILD)
     include(${CMAKE_MODULE_PATH}/packaging/windows.cmake)
 endif()
 
-include(CPack)
+if(NOT (WIN32 AND LUMEN_WINDOWS_DEVELOPER_BUILD))
+    include(CPack)
+endif()

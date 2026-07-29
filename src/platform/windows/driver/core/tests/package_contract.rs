@@ -438,6 +438,58 @@ fn windows_msi_owns_service_firewall_upgrade_and_removal() {
 }
 
 #[test]
+fn windows_development_build_reuses_incremental_outputs_without_packaging() {
+    // Given: the development entrypoint and the release-only package entrypoint.
+    let driver = driver_root();
+    let repo_root = driver
+        .ancestors()
+        .nth(4)
+        .expect("driver must live under src/platform/windows")
+        .to_path_buf();
+    let development = fs::read_to_string(repo_root.join("scripts/windows/build_windows_development.sh"))
+        .expect("Windows development build entrypoint must exist");
+    let development_test = fs::read_to_string(repo_root.join("scripts/ci/test_windows_development_build.sh"))
+        .expect("Windows development build contract test must exist");
+    let windows_targets = fs::read_to_string(repo_root.join("cmake/targets/windows.cmake"))
+        .expect("Windows target definitions must exist");
+    let common_packaging = fs::read_to_string(repo_root.join("cmake/packaging/common.cmake"))
+        .expect("common packaging definitions must exist");
+    let release = fs::read_to_string(repo_root.join("scripts/ci/build_windows_package.sh"))
+        .expect("Windows package build script must exist");
+
+    // Then: development selects only incremental native/UI targets and never
+    // enters the installer path, while the release path retains that contract.
+    assert!(development.contains("-DLUMEN_WINDOWS_DEVELOPER_BUILD=ON"));
+    assert!(development.contains("lumen_host_rust_build"));
+    assert!(development.contains("lumen-service"));
+    assert!(development.contains("lumen-windows-ui"));
+    assert!(development.contains("dotnet restore"));
+    assert!(development.contains("--component"));
+    assert!(!development.contains("cmake --install"));
+    assert!(!development.contains("Lumen.wixproj"));
+    assert!(!development.contains("msi-stage"));
+    assert!(windows_targets.contains("if(LUMEN_WINDOWS_DEVELOPER_BUILD)"));
+    assert!(windows_targets.contains("LUMEN_WINDOWS_UI_CONFIGURATION \"Debug\""));
+    assert!(windows_targets.contains("LUMEN_WINDOWS_UI_CONFIGURATION \"Release\""));
+    assert!(windows_targets.contains("--configuration \"${LUMEN_WINDOWS_UI_CONFIGURATION}\""));
+    assert!(windows_targets.contains("--property:SelfContained=false"));
+    assert!(windows_targets.contains("--property:WindowsAppSDKSelfContained=false"));
+    let development_targets = windows_targets
+        .split("if(LUMEN_WINDOWS_DEVELOPER_BUILD)")
+        .nth(1)
+        .and_then(|source| source.split("else()").next())
+        .expect("development target branch must exist");
+    assert!(!development_targets.contains("\"${LUMEN_DOTNET_EXECUTABLE}\" publish"));
+    assert!(common_packaging.contains("if(NOT (WIN32 AND LUMEN_WINDOWS_DEVELOPER_BUILD))"));
+    assert!(development_test.contains("--dry-run"));
+    assert!(development_test.contains("cmake --install"));
+    assert!(release.contains("cmake --install"));
+    assert!(release.contains("Lumen.wixproj"));
+    assert!(release.contains("msi-stage"));
+    assert!(release.contains("-DLUMEN_WINDOWS_DEVELOPER_BUILD=OFF"));
+}
+
+#[test]
 fn media_io_is_direct_and_all_queues_are_fixed() {
     // Given: the shared boundary for access units, events, and overlapped reads.
     let header_path = driver_root().join("include/lumen_driver_abi.h");
