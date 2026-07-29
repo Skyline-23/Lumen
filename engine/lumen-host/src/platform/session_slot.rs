@@ -2,6 +2,82 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FrameDeliveryState {
+    Paused,
+    Running,
+    Retired,
+}
+
+pub(super) struct FrameDeliveryOwnership {
+    state: Mutex<FrameDeliveryState>,
+}
+
+impl Default for FrameDeliveryOwnership {
+    fn default() -> Self {
+        Self {
+            state: Mutex::new(FrameDeliveryState::Paused),
+        }
+    }
+}
+
+impl FrameDeliveryOwnership {
+    pub(super) fn start_with(
+        &self,
+        start: impl FnOnce() -> Result<(), String>,
+    ) -> Result<(), String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "frame delivery ownership is poisoned".to_owned())?;
+        match *state {
+            FrameDeliveryState::Paused => {
+                start()?;
+                *state = FrameDeliveryState::Running;
+                Ok(())
+            }
+            FrameDeliveryState::Running => Ok(()),
+            FrameDeliveryState::Retired => {
+                Err("retired frame delivery cannot be restarted".to_owned())
+            }
+        }
+    }
+
+    pub(super) fn pause_with(
+        &self,
+        stop: impl FnOnce() -> Result<(), String>,
+    ) -> Result<(), String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "frame delivery ownership is poisoned".to_owned())?;
+        if *state == FrameDeliveryState::Running {
+            stop()?;
+            *state = FrameDeliveryState::Paused;
+        }
+        Ok(())
+    }
+
+    pub(super) fn retire_with(
+        &self,
+        stop: impl FnOnce() -> Result<(), String>,
+    ) -> Result<(), String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "frame delivery ownership is poisoned".to_owned())?;
+        match *state {
+            FrameDeliveryState::Running => {
+                stop()?;
+                *state = FrameDeliveryState::Retired;
+            }
+            FrameDeliveryState::Paused => *state = FrameDeliveryState::Retired,
+            FrameDeliveryState::Retired => (),
+        }
+        Ok(())
+    }
+}
+
 pub(super) struct AbandonableSession<T> {
     epoch: u32,
     retired: Arc<AtomicBool>,
@@ -196,9 +272,9 @@ fn reap_finished_workers(workers: &mut Vec<JoinHandle<()>>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{AbandonableSessionSlot, RetiredWorkerRegistry};
+    use super::{AbandonableSessionSlot, FrameDeliveryOwnership, RetiredWorkerRegistry};
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{mpsc, Arc};
+    use std::sync::{mpsc, Arc, Mutex};
     use std::time::{Duration, Instant};
 
     #[test]
@@ -290,5 +366,82 @@ mod tests {
             std::thread::sleep(Duration::from_millis(1));
         }
         registry.ensure_capacity().unwrap();
+    }
+
+    #[test]
+    fn retired_old_worker_cannot_stop_replacement_frame_delivery() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let old = Arc::new(FrameDeliveryOwnership::default());
+        old.start_with({
+            let events = Arc::clone(&events);
+            move || {
+                events.lock().unwrap().push("start-old");
+                Ok(())
+            }
+        })
+        .unwrap();
+        let (entered_send, entered_receive) = mpsc::sync_channel(1);
+        let (release_send, release_receive) = mpsc::sync_channel(1);
+        let stalled_old = Arc::clone(&old);
+        let old_worker = std::thread::spawn(move || {
+            entered_send.send(()).unwrap();
+            release_receive.recv().unwrap();
+            stalled_old
+                .pause_with(|| panic!("retired old worker issued a late STOP_ENCODER"))
+                .unwrap();
+        });
+
+        entered_receive.recv().unwrap();
+        old.retire_with({
+            let events = Arc::clone(&events);
+            move || {
+                events.lock().unwrap().push("stop-old");
+                Ok(())
+            }
+        })
+        .unwrap();
+        let replacement = FrameDeliveryOwnership::default();
+        replacement
+            .start_with({
+                let events = Arc::clone(&events);
+                move || {
+                    events.lock().unwrap().push("start-new");
+                    Ok(())
+                }
+            })
+            .unwrap();
+
+        release_send.send(()).unwrap();
+        old_worker.join().unwrap();
+        assert_eq!(
+            events.lock().unwrap().as_slice(),
+            ["start-old", "stop-old", "start-new"]
+        );
+        assert!(old.start_with(|| Ok(())).is_err());
+    }
+
+    #[test]
+    fn failed_frame_delivery_retire_remains_retryable() {
+        let ownership = FrameDeliveryOwnership::default();
+        ownership.start_with(|| Ok(())).unwrap();
+        let attempts = AtomicUsize::new(0);
+
+        assert_eq!(
+            ownership.retire_with(|| {
+                attempts.fetch_add(1, Ordering::AcqRel);
+                Err("injected STOP_ENCODER failure".to_owned())
+            }),
+            Err("injected STOP_ENCODER failure".to_owned())
+        );
+        ownership
+            .retire_with(|| {
+                attempts.fetch_add(1, Ordering::AcqRel);
+                Ok(())
+            })
+            .unwrap();
+        ownership
+            .pause_with(|| panic!("retired capture issued another STOP_ENCODER"))
+            .unwrap();
+        assert_eq!(attempts.load(Ordering::Acquire), 2);
     }
 }

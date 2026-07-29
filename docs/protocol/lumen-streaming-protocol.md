@@ -229,7 +229,10 @@ session teardown.
 Windows retires each Media Foundation worker by epoch. Capture-stop ownership
 is retained until cleanup succeeds, so a failed stop remains retryable. Finished
 workers are reaped, while a fixed retired-worker bound rejects new sessions
-fail-closed instead of accumulating stalled MFT, thread, and D3D resources.
+fail-closed instead of accumulating stalled MFT, thread, and D3D resources. A
+verified stop permanently retires that epoch's shared frame-delivery ownership;
+late capture pause, resume, or drop work therefore cannot send driver START or
+STOP operations after a replacement epoch begins.
 
 A decoder-recovery keyframe is generation-fenced and single-flight across
 client requests and host-detected stale, incomplete, or post-bootstrap repair

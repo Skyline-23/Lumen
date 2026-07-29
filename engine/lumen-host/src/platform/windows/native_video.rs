@@ -35,7 +35,9 @@ use windows_api::Win32::System::Variant::{VariantClear, VARIANT, VT_UI4};
 
 use super::native_capture::{NativeEncoderSurface, NativeIddCxCapture};
 use super::native_display_driver::DriverHandle;
-use crate::platform::session_slot::{AbandonableSessionSlot, RetiredWorkerRegistry};
+use crate::platform::session_slot::{
+    AbandonableSessionSlot, FrameDeliveryOwnership, RetiredWorkerRegistry,
+};
 use crate::{
     PlatformChromaSubsampling, PlatformDynamicRange, PlatformSessionPlan, PlatformVideoCodec,
 };
@@ -59,6 +61,7 @@ struct NativeMediaFoundationSession {
     state: Arc<Mutex<NativeVideoWorkerState>>,
     capture_control: Mutex<Option<DriverHandle>>,
     worker: Mutex<Option<thread::JoinHandle<()>>>,
+    frame_delivery: Arc<FrameDeliveryOwnership>,
 }
 
 #[derive(Default)]
@@ -157,6 +160,7 @@ impl NativeMediaFoundation {
         let (commands, command_receiver) = mpsc::sync_channel(4);
         let (ready_sender, ready_receiver) = mpsc::sync_channel(1);
         let state = Arc::new(Mutex::new(NativeVideoWorkerState::default()));
+        let frame_delivery = Arc::new(FrameDeliveryOwnership::default());
         let session = self
             .sessions
             .install(
@@ -166,6 +170,7 @@ impl NativeMediaFoundation {
                     state: Arc::clone(&state),
                     capture_control: Mutex::new(Some(capture_control)),
                     worker: Mutex::new(None),
+                    frame_delivery: Arc::clone(&frame_delivery),
                 },
             )
             .map_err(str::to_owned)?;
@@ -183,6 +188,7 @@ impl NativeMediaFoundation {
                     sink,
                     state,
                     retired,
+                    frame_delivery,
                 )
             });
         let worker = match spawn {
@@ -223,7 +229,10 @@ impl NativeMediaFoundation {
                 .lock()
                 .map_err(|_| "Windows native capture control is poisoned".to_owned())?;
             if let Some(driver) = control.as_ref() {
-                driver.stop_frame_delivery()?;
+                session
+                    .value()
+                    .frame_delivery
+                    .retire_with(|| driver.stop_frame_delivery())?;
                 control.take();
             }
             drop(control);
@@ -327,6 +336,7 @@ fn run_media_foundation_session(
     sink: NativeVideoSink,
     state: Arc<Mutex<NativeVideoWorkerState>>,
     retired: Arc<AtomicBool>,
+    frame_delivery: Arc<FrameDeliveryOwnership>,
 ) {
     let session_epoch = plan.session_epoch;
     if let Err(error) = unsafe { MFStartup(MF_VERSION, MFSTARTUP_FULL) } {
@@ -343,7 +353,7 @@ fn run_media_foundation_session(
             return;
         }
     };
-    let mut runtime = match start_runtime(&catalog, plan, driver, &sink) {
+    let mut runtime = match start_runtime(&catalog, plan, driver, &sink, frame_delivery) {
         Ok(runtime) => Some(runtime),
         Err(error) => {
             set_worker_state(&state, false, Some(error.clone()));
@@ -479,8 +489,9 @@ fn start_runtime(
     plan: NativeVideoEncoderPlan,
     driver: DriverHandle,
     sink: &NativeVideoSink,
+    frame_delivery: Arc<FrameDeliveryOwnership>,
 ) -> Result<NativeVideoRuntime, String> {
-    let capture = NativeIddCxCapture::open(driver, plan.ten_bit)?;
+    let capture = NativeIddCxCapture::open(driver, plan.ten_bit, frame_delivery)?;
     let encoder = catalog.activate(plan, capture.device())?;
     let mut runtime = NativeVideoRuntime {
         capture,

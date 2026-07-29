@@ -1,6 +1,7 @@
 const INPUT: &str = include_str!("../src/platform/windows/native_input.rs");
 const MEDIA: &str = include_str!("../src/platform/windows/native_media.rs");
 const VIDEO: &str = include_str!("../src/platform/windows/native_video.rs");
+const CAPTURE: &str = include_str!("../src/platform/windows/native_capture.rs");
 
 #[test]
 fn windows_adaptive_delivery_policy_reaches_the_active_media_foundation_encoder() {
@@ -60,14 +61,26 @@ fn windows_bitrate_updates_are_fenced_by_the_active_session_epoch() {
         .unwrap();
     assert!(stop.contains("self.sessions.try_retire(|session|"));
     assert!(!stop.contains("self.request("));
-    assert!(stop.contains("driver.stop_frame_delivery()?"));
+    let verified_stop = ".retire_with(|| driver.stop_frame_delivery())?";
+    assert!(stop.contains(verified_stop));
     assert!(stop.contains("control.take()"));
-    assert!(
-        stop.find("driver.stop_frame_delivery()?").unwrap() < stop.find("control.take()").unwrap()
-    );
+    assert!(stop.find(verified_stop).unwrap() < stop.find("control.take()").unwrap());
     assert!(VIDEO.contains("RetiredWorkerRegistry"));
     assert!(VIDEO.contains("MAXIMUM_RETIRED_MEDIA_FOUNDATION_WORKERS"));
     assert!(VIDEO.contains("self.retired_workers.ensure_capacity()"));
+    assert!(VIDEO.contains("FrameDeliveryOwnership"));
+    assert!(CAPTURE.contains(".start_with(|| driver.start_frame_delivery())?"));
+    assert!(CAPTURE.contains(".pause_with(|| self.driver.stop_frame_delivery())"));
+    assert!(!CAPTURE.contains("let _ = self.driver.stop_frame_delivery()"));
+    let capture_drop = CAPTURE
+        .split("impl Drop for NativeIddCxCapture")
+        .nth(1)
+        .unwrap()
+        .split("impl NativeEncoderSurface")
+        .next()
+        .unwrap();
+    assert!(capture_drop.contains(".frame_delivery"));
+    assert!(capture_drop.contains(".pause_with(|| self.driver.stop_frame_delivery())"));
     assert!(MEDIA.contains("video_session_epoch"));
     assert!(MEDIA.contains("state.video_session_epoch != Some(session_epoch)"));
     assert!(!MEDIA.contains("let session_epoch = lifecycle.session_epoch.take()"));
