@@ -4,14 +4,15 @@ use super::{
     client_control_envelope, client_telemetry_envelope, decode_client_control_message,
     decode_client_telemetry_message, decode_host_control_message, encode_client_control_message,
     encode_client_telemetry_message, encode_host_control_message, host_control_envelope,
-    negotiate_native_session, ClientControlEnvelope, ClientSessionHello, ClientTelemetryEnvelope,
-    HostControlEnvelope, HostSessionCapabilities, MediaFeedback, NativeAudioChannelMode,
-    NativeAudioQuality, NativeChromaSubsampling, NativeColorRange, NativeControlWireError,
-    NativeDisplayGamut, NativeDisplayTransfer, NativeDynamicRange, NativePolicyMode,
-    NativeSessionError, NativeVideoBootstrapResultCode, NativeVideoCapability, NativeVideoCodec,
-    NativeVideoFormat, NativeVideoKeyframeRequestReason, NativeVideoProfile, SessionStarted,
-    VideoBootstrapResult, VideoKeyframeRequest, NATIVE_FEC_BLOCK_HEADER_BYTES,
-    NATIVE_MEDIA_CAPABILITY_CONTINUOUS_SCROLL, NATIVE_MEDIA_CAPABILITY_FIXED_CADENCE_FEEDBACK,
+    minimum_video_encoder_bitrate_kbps, negotiate_native_session, ClientControlEnvelope,
+    ClientSessionHello, ClientTelemetryEnvelope, HostControlEnvelope, HostSessionCapabilities,
+    MediaFeedback, NativeAudioChannelMode, NativeAudioQuality, NativeChromaSubsampling,
+    NativeColorRange, NativeControlWireError, NativeDisplayGamut, NativeDisplayTransfer,
+    NativeDynamicRange, NativePolicyMode, NativeSessionError, NativeVideoBootstrapResultCode,
+    NativeVideoCapability, NativeVideoCodec, NativeVideoFormat, NativeVideoKeyframeRequestReason,
+    NativeVideoProfile, SessionStarted, VideoBootstrapResult, VideoKeyframeRequest,
+    NATIVE_FEC_BLOCK_HEADER_BYTES, NATIVE_MEDIA_CAPABILITY_CONTINUOUS_SCROLL,
+    NATIVE_MEDIA_CAPABILITY_FIXED_CADENCE_FEEDBACK,
     NATIVE_MEDIA_CAPABILITY_PACKET_ARRIVAL_FEEDBACK,
     NATIVE_MEDIA_CAPABILITY_PAIRED_FEEDBACK_WINDOWS,
     NATIVE_MEDIA_CAPABILITY_SAME_GENERATION_KEYFRAMES, NATIVE_PROTOCOL_VERSION,
@@ -620,7 +621,7 @@ fn negotiates_the_exact_account_selected_hevc_hdr_profile() {
     assert_eq!(plan.maximum_parity_shards, 255);
     assert_eq!(plan.initial_parity_percentage, 20);
     assert_eq!(plan.maximum_object_delay_us, 25_002);
-    assert_eq!(plan.bitrate_kbps, 80_000);
+    assert_eq!(plan.bitrate_kbps, 81_179);
     assert_eq!(plan.sink_scale_percent, 200);
     assert_eq!(plan.sink_gamut, NativeDisplayGamut::DisplayP3 as i32);
     assert_eq!(plan.sink_transfer, NativeDisplayTransfer::Pq as i32);
@@ -630,6 +631,81 @@ fn negotiates_the_exact_account_selected_hevc_hdr_profile() {
     );
     assert!(plan.enhanced_audio_quality);
     assert_eq!(plan.streaming_profile_revision, 42);
+}
+
+#[test]
+fn hdr_retina_sixty_fps_negotiation_enforces_the_encoder_quality_floor() {
+    let mut client = hello();
+    client.width = 2_816;
+    client.height = 1_824;
+    client.refresh_millihz = 60_000;
+    client.bitrate_kbps = 3_000;
+    for capability in &mut client.video_capabilities {
+        capability.max_width = 2_816;
+        capability.max_height = 1_824;
+        capability.max_refresh_millihz = 60_000;
+    }
+    let mut host = host();
+    for capability in &mut host.video_capabilities {
+        capability.max_width = capability.max_width.max(2_816);
+        capability.max_height = capability.max_height.max(1_824);
+        capability.max_refresh_millihz = capability.max_refresh_millihz.max(60_000);
+    }
+
+    let plan = negotiate_native_session(&client, &host, 0x0102_0304).unwrap();
+
+    assert_eq!(plan.encoded_width, 2_816);
+    assert_eq!(plan.encoded_height, 1_824);
+    assert_eq!(plan.refresh_millihz, 60_000);
+    assert_eq!(plan.bitrate_kbps, 25_536);
+}
+
+#[test]
+fn encoder_quality_floor_scales_exact_codec_chroma_and_bit_depth() {
+    let floor = |codec, chroma_subsampling, bit_depth, dynamic_range| {
+        minimum_video_encoder_bitrate_kbps(
+            1_920,
+            1_080,
+            60_000,
+            codec,
+            chroma_subsampling,
+            bit_depth,
+            dynamic_range,
+        )
+        .unwrap()
+    };
+    let hevc_420_8 = floor(
+        NativeVideoCodec::Hevc,
+        NativeChromaSubsampling::Yuv420,
+        8,
+        NativeDynamicRange::Sdr,
+    );
+
+    assert!(
+        floor(
+            NativeVideoCodec::H264,
+            NativeChromaSubsampling::Yuv420,
+            8,
+            NativeDynamicRange::Sdr,
+        ) > hevc_420_8
+    );
+    assert_eq!(
+        floor(
+            NativeVideoCodec::Hevc,
+            NativeChromaSubsampling::Yuv444,
+            8,
+            NativeDynamicRange::Sdr,
+        ),
+        hevc_420_8 * 2
+    );
+    assert!(
+        floor(
+            NativeVideoCodec::Hevc,
+            NativeChromaSubsampling::Yuv420,
+            10,
+            NativeDynamicRange::Sdr,
+        ) > hevc_420_8
+    );
 }
 
 #[test]
@@ -692,10 +768,8 @@ fn rejects_invalid_version_feature_datagram_and_memory_contracts() {
     );
     client.maximum_datagram_payload = NATIVE_FEC_BLOCK_HEADER_BYTES as u32 + 1;
     assert_eq!(
-        negotiate_native_session(&client, &host(), 1)
-            .unwrap()
-            .maximum_datagram_payload,
-        NATIVE_FEC_BLOCK_HEADER_BYTES as u32 + 1
+        negotiate_native_session(&client, &host(), 1),
+        Err(NativeSessionError::DatagramPayloadTooSmall)
     );
 
     client = hello();

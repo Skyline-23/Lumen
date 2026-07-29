@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use lumen_engine::{
-    decode_native_media_datagram, NativeMediaKind, NATIVE_MEDIA_FLAG_FEC_BLOCK,
-    NATIVE_MEDIA_FLAG_KEYFRAME, NATIVE_MEDIA_FLAG_PARITY_SHARD,
+    decode_native_media_datagram, native_video_packetization_plan, NativeMediaKind,
+    NATIVE_MEDIA_FLAG_FEC_BLOCK, NATIVE_MEDIA_FLAG_KEYFRAME, NATIVE_MEDIA_FLAG_PARITY_SHARD,
 };
 use reed_solomon_erasure::galois_8::ReedSolomon;
 
@@ -38,6 +38,38 @@ fn video_frame(payload_bytes: usize) -> PlatformEncodedVideoFrame {
         key_frame: false,
         requires_bootstrap_acknowledgement: false,
         repair_keyframe: false,
+    }
+}
+
+#[test]
+fn exact_wire_plan_matches_adversarial_padding_header_and_fec_boundaries() {
+    const MTU: usize = 1_200;
+    const PARITY: u16 = 30;
+    let base_shard_bytes = MTU - 28;
+    let cases = [
+        (1, 2_400),
+        (base_shard_bytes, 2_400),
+        (base_shard_bytes + 1, 3_600),
+        (32 * base_shard_bytes, 50_400),
+        (32 * base_shard_bytes + 1, 52_800),
+        (200_070, 271_200),
+    ];
+
+    let mut packetizer = NativeMediaPacketizer::new(video_config(MTU), 0).unwrap();
+    for (index, (payload_bytes, expected_wire_bytes)) in cases.into_iter().enumerate() {
+        let plan = native_video_packetization_plan(payload_bytes, MTU, PARITY).unwrap();
+        let packetized = packetizer
+            .packetize_video_delta(&video_frame(payload_bytes), index as u32 + 1, PARITY)
+            .unwrap();
+        let emitted_wire_bytes = packetized.datagrams.iter().map(Vec::len).sum::<usize>();
+
+        assert_eq!(plan.total_wire_bytes, expected_wire_bytes);
+        assert_eq!(emitted_wire_bytes, plan.total_wire_bytes);
+        assert_eq!(packetized.datagrams.len(), plan.total_shards);
+        assert!(packetized
+            .datagrams
+            .iter()
+            .all(|datagram| datagram.len() == MTU));
     }
 }
 
@@ -330,7 +362,7 @@ fn dynamic_block_width_preserves_the_protocol_object_capacity() {
 
     assert_eq!(
         packetizer.packetize_video_delta(&video_frame(maximum_payload + 1), 3, 20),
-        Err("native media FEC block count overflowed".to_owned())
+        Err("native media packetization plan is invalid".to_owned())
     );
 }
 

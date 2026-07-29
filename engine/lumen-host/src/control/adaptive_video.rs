@@ -1,3 +1,7 @@
+use lumen_engine::{
+    maximum_video_encoder_bitrate_kbps_for_wire_budget, native_video_wire_bitrate_kbps,
+};
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum FeedbackStream {
     Audio,
@@ -35,6 +39,7 @@ pub(crate) struct AdaptiveVideoDecision {
     pub(crate) wire_budget_kbps: u32,
     pub(crate) encoder_bitrate_kbps: u32,
     pub(crate) fec_percentage: u16,
+    pub(crate) admission_divisor: u8,
     pub(crate) congestion_source: CongestionSource,
     pub(crate) changed: bool,
 }
@@ -55,16 +60,16 @@ enum PipelinePressureSeverity {
     Congested,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct AdaptiveVideoDeliveryController {
-    // Packet-path evidence owns the wire budget and FEC state.
+    // Packet-path evidence owns the hard wire budget and FEC state.
     ceiling_wire_kbps: u32,
-    floor_wire_kbps: u32,
     wire_budget_kbps: u32,
-    // Decode/playback pressure may cap encoder work, but never rewrites B_net.
-    ceiling_encoder_kbps: u32,
-    floor_encoder_kbps: u32,
-    pipeline_encoder_budget_kbps: u32,
+    quality_floor_encoder_kbps: u32,
+    refresh_millihz: u32,
+    maximum_datagram_payload: u32,
+    // Decode/playback pressure controls admission work, never B_net, FEC, or quality.
+    admission_divisor: u8,
     fec_percentage: u16,
     maximum_decoder_queue_depth: u32,
     clean_network_windows: u32,
@@ -79,6 +84,7 @@ impl AdaptiveVideoDeliveryController {
     const TRANSPORT_LOSS_PARTS_PER_MILLION: u64 = 20_000;
     const HIGH_JITTER_MICROSECONDS: u32 = 10_000;
 
+    #[cfg(test)]
     pub(crate) fn new(
         ceiling_wire_kbps: u32,
         initial_wire_kbps: u32,
@@ -86,22 +92,54 @@ impl AdaptiveVideoDeliveryController {
         maximum_decoder_queue_depth: u32,
     ) -> Self {
         let ceiling_wire_kbps = ceiling_wire_kbps.max(1);
-        let floor_wire_kbps = ceiling_wire_kbps.div_ceil(4);
+        Self::new_with_quality_floor(
+            ceiling_wire_kbps,
+            initial_wire_kbps,
+            initial_fec_percentage,
+            maximum_decoder_queue_depth,
+            (ceiling_wire_kbps.saturating_mul(100)
+                / u32::from(100 + initial_fec_percentage.max(Self::MINIMUM_FEC_PERCENTAGE)))
+            .div_ceil(4),
+            60_000,
+            1_200,
+        )
+    }
+
+    pub(crate) fn new_with_quality_floor(
+        ceiling_wire_kbps: u32,
+        initial_wire_kbps: u32,
+        initial_fec_percentage: u16,
+        maximum_decoder_queue_depth: u32,
+        quality_floor_encoder_kbps: u32,
+        refresh_millihz: u32,
+        maximum_datagram_payload: u32,
+    ) -> Self {
+        let ceiling_wire_kbps = ceiling_wire_kbps.max(1);
+        let maximum_floor_encoder_kbps = maximum_video_encoder_bitrate_kbps_for_wire_budget(
+            ceiling_wire_kbps,
+            refresh_millihz,
+            maximum_datagram_payload,
+            Self::MAXIMUM_FEC_PERCENTAGE,
+        )
+        .unwrap_or(1);
+        let quality_floor_encoder_kbps =
+            quality_floor_encoder_kbps.clamp(1, maximum_floor_encoder_kbps.max(1));
         let initial_fec_percentage = initial_fec_percentage
             .clamp(Self::MINIMUM_FEC_PERCENTAGE, Self::MAXIMUM_FEC_PERCENTAGE);
-        let wire_budget_kbps = initial_wire_kbps.clamp(floor_wire_kbps, ceiling_wire_kbps);
-        let ceiling_encoder_kbps =
-            ceiling_wire_kbps.saturating_mul(100) / u32::from(100 + Self::MINIMUM_FEC_PERCENTAGE);
-        let floor_encoder_kbps = ceiling_encoder_kbps.div_ceil(4).max(1);
-        let pipeline_encoder_budget_kbps =
-            wire_budget_kbps.saturating_mul(100) / u32::from(100 + initial_fec_percentage);
+        let minimum_wire_kbps = native_video_wire_bitrate_kbps(
+            quality_floor_encoder_kbps,
+            refresh_millihz,
+            maximum_datagram_payload,
+            initial_fec_percentage,
+        )
+        .unwrap_or(ceiling_wire_kbps);
         Self {
             ceiling_wire_kbps,
-            floor_wire_kbps,
-            wire_budget_kbps,
-            ceiling_encoder_kbps,
-            floor_encoder_kbps,
-            pipeline_encoder_budget_kbps,
+            wire_budget_kbps: initial_wire_kbps.clamp(minimum_wire_kbps, ceiling_wire_kbps),
+            quality_floor_encoder_kbps,
+            refresh_millihz,
+            maximum_datagram_payload,
+            admission_divisor: 1,
             fec_percentage: initial_fec_percentage,
             maximum_decoder_queue_depth: maximum_decoder_queue_depth.max(1),
             clean_network_windows: 0,
@@ -224,31 +262,33 @@ impl AdaptiveVideoDeliveryController {
         clean_window_units: u32,
     ) -> AdaptiveVideoDecision {
         let previous = self.snapshot();
-        let previous_pipeline_budget = self.pipeline_encoder_budget_kbps;
+        let previous_admission_divisor = self.admission_divisor;
 
         match network_severity {
             NetworkCongestionSeverity::Neutral => {}
             NetworkCongestionSeverity::Severe => {
                 self.clean_network_windows = 0;
+                if let Some(video_sample) = video_sample {
+                    self.increase_fec_for_video_loss(video_sample);
+                }
                 self.wire_budget_kbps = self
                     .wire_budget_kbps
                     .saturating_mul(80)
                     .div_ceil(100)
-                    .max(self.floor_wire_kbps);
-                if let Some(video_sample) = video_sample {
-                    self.increase_fec_for_video_loss(video_sample);
-                }
+                    .max(self.minimum_wire_budget_kbps())
+                    .min(self.ceiling_wire_kbps);
             }
             NetworkCongestionSeverity::Transport => {
                 self.clean_network_windows = 0;
+                if let Some(video_sample) = video_sample {
+                    self.increase_fec_for_video_loss(video_sample);
+                }
                 self.wire_budget_kbps = self
                     .wire_budget_kbps
                     .saturating_mul(90)
                     .div_ceil(100)
-                    .max(self.floor_wire_kbps);
-                if let Some(video_sample) = video_sample {
-                    self.increase_fec_for_video_loss(video_sample);
-                }
+                    .max(self.minimum_wire_budget_kbps())
+                    .min(self.ceiling_wire_kbps);
             }
             NetworkCongestionSeverity::Clean => {
                 let accumulated = self
@@ -283,11 +323,7 @@ impl AdaptiveVideoDeliveryController {
                 self.clean_pipeline_windows = 0;
                 if self.pipeline_pressure_armed {
                     self.pipeline_pressure_armed = false;
-                    self.pipeline_encoder_budget_kbps = self
-                        .pipeline_encoder_budget_kbps
-                        .saturating_mul(80)
-                        .div_ceil(100)
-                        .max(self.floor_encoder_kbps);
+                    self.admission_divisor = 2;
                 }
             }
             PipelinePressureSeverity::Clean => {
@@ -295,19 +331,10 @@ impl AdaptiveVideoDeliveryController {
                     .clean_pipeline_windows
                     .saturating_add(clean_window_units);
                 self.clean_pipeline_windows = accumulated % Self::CLEAN_WINDOWS_BEFORE_INCREASE;
-                let mut recovery_probes = accumulated / Self::CLEAN_WINDOWS_BEFORE_INCREASE;
+                let recovery_probes = accumulated / Self::CLEAN_WINDOWS_BEFORE_INCREASE;
                 if recovery_probes > 0 {
                     self.pipeline_pressure_armed = true;
-                }
-                while recovery_probes > 0
-                    && self.pipeline_encoder_budget_kbps < self.ceiling_encoder_kbps
-                {
-                    let increase = self.pipeline_encoder_budget_kbps.div_ceil(5).max(250);
-                    self.pipeline_encoder_budget_kbps = self
-                        .pipeline_encoder_budget_kbps
-                        .saturating_add(increase)
-                        .min(self.ceiling_encoder_kbps);
-                    recovery_probes -= 1;
+                    self.admission_divisor = 1;
                 }
             }
         }
@@ -315,10 +342,11 @@ impl AdaptiveVideoDeliveryController {
         let current = self.decision(CongestionSource::None, false);
         let network_changed = current.wire_budget_kbps != previous.wire_budget_kbps
             || current.fec_percentage != previous.fec_percentage;
-        let pipeline_changed = self.pipeline_encoder_budget_kbps != previous_pipeline_budget;
+        let pipeline_changed = self.admission_divisor != previous_admission_divisor;
         let changed = current.wire_budget_kbps != previous.wire_budget_kbps
             || current.encoder_bitrate_kbps != previous.encoder_bitrate_kbps
-            || current.fec_percentage != previous.fec_percentage;
+            || current.fec_percentage != previous.fec_percentage
+            || current.admission_divisor != previous.admission_divisor;
         let source = if network_changed && network_source != CongestionSource::None {
             network_source
         } else if pipeline_changed && pipeline_source != CongestionSource::None {
@@ -384,6 +412,16 @@ impl AdaptiveVideoDeliveryController {
         }
     }
 
+    fn minimum_wire_budget_kbps(&self) -> u32 {
+        native_video_wire_bitrate_kbps(
+            self.quality_floor_encoder_kbps,
+            self.refresh_millihz,
+            self.maximum_datagram_payload,
+            self.fec_percentage,
+        )
+        .unwrap_or(self.ceiling_wire_kbps)
+    }
+
     fn loss_parts_per_million(sample: MediaFeedbackSample) -> u64 {
         if sample.expected_datagrams == 0 {
             return 0;
@@ -401,10 +439,16 @@ impl AdaptiveVideoDeliveryController {
     ) -> AdaptiveVideoDecision {
         AdaptiveVideoDecision {
             wire_budget_kbps: self.wire_budget_kbps,
-            encoder_bitrate_kbps: (self.wire_budget_kbps.saturating_mul(100)
-                / u32::from(100 + self.fec_percentage))
-            .min(self.pipeline_encoder_budget_kbps),
+            encoder_bitrate_kbps: maximum_video_encoder_bitrate_kbps_for_wire_budget(
+                self.wire_budget_kbps,
+                self.refresh_millihz,
+                self.maximum_datagram_payload,
+                self.fec_percentage,
+            )
+            .unwrap_or(self.quality_floor_encoder_kbps)
+            .max(self.quality_floor_encoder_kbps),
             fec_percentage: self.fec_percentage,
+            admission_divisor: self.admission_divisor,
             congestion_source,
             changed,
         }
@@ -433,7 +477,7 @@ mod tests {
     }
 
     #[test]
-    fn audio_playback_pressure_reduces_only_the_encoder_pipeline_cap() {
+    fn audio_playback_pressure_reduces_only_encoder_admission() {
         let mut controller = AdaptiveVideoDeliveryController::new(100_000, 80_000, 5, 3);
         let decision = controller.observe(MediaFeedbackSample {
             presentation_drops: 1,
@@ -441,8 +485,9 @@ mod tests {
         });
 
         assert_eq!(decision.wire_budget_kbps, 80_000);
-        assert_eq!(decision.encoder_bitrate_kbps, 60_952);
+        assert_eq!(decision.encoder_bitrate_kbps, 72_075);
         assert_eq!(decision.fec_percentage, 5);
+        assert_eq!(decision.admission_divisor, 2);
         assert_eq!(decision.congestion_source, CongestionSource::AudioPipeline);
         assert!(decision.changed);
     }
@@ -463,7 +508,8 @@ mod tests {
         );
 
         assert_eq!(decision.wire_budget_kbps, 80_000);
-        assert_eq!(decision.encoder_bitrate_kbps, 60_952);
+        assert_eq!(decision.encoder_bitrate_kbps, 72_075);
+        assert_eq!(decision.admission_divisor, 2);
         assert_eq!(decision.congestion_source, CongestionSource::VideoPipeline);
         assert!(decision.changed);
     }
@@ -484,7 +530,8 @@ mod tests {
         );
 
         assert_eq!(decision.wire_budget_kbps, 64_000);
-        assert_eq!(decision.encoder_bitrate_kbps, 60_952);
+        assert_eq!(decision.encoder_bitrate_kbps, 58_106);
+        assert_eq!(decision.admission_divisor, 1);
         assert_eq!(decision.congestion_source, CongestionSource::VideoNetwork);
         assert!(decision.changed);
     }
@@ -550,7 +597,7 @@ mod tests {
     }
 
     #[test]
-    fn processing_only_decoder_failure_still_reduces_delivery_budget() {
+    fn processing_only_decoder_failure_reduces_admission_without_changing_delivery_budget() {
         let mut controller = AdaptiveVideoDeliveryController::new(100_000, 80_000, 5, 3);
         let decision = controller.observe_window(
             MediaFeedbackSample {
@@ -569,12 +616,13 @@ mod tests {
 
         assert!(decision.changed);
         assert_eq!(decision.wire_budget_kbps, 80_000);
-        assert_eq!(decision.encoder_bitrate_kbps, 60_952);
+        assert_eq!(decision.encoder_bitrate_kbps, 72_075);
+        assert_eq!(decision.admission_divisor, 2);
         assert_eq!(decision.congestion_source, CongestionSource::VideoPipeline);
     }
 
     #[test]
-    fn decoder_drop_reduces_pipeline_cap_without_mutating_network_state() {
+    fn decoder_drop_reduces_admission_without_mutating_network_state() {
         let mut controller = AdaptiveVideoDeliveryController::new(100_000, 80_000, 5, 3);
         let decision = controller.observe(MediaFeedbackSample {
             decoder_submissions: 100,
@@ -585,14 +633,15 @@ mod tests {
         });
 
         assert_eq!(decision.wire_budget_kbps, 80_000);
-        assert_eq!(decision.encoder_bitrate_kbps, 60_952);
+        assert_eq!(decision.encoder_bitrate_kbps, 72_075);
         assert_eq!(decision.fec_percentage, 5);
+        assert_eq!(decision.admission_divisor, 2);
         assert_eq!(decision.congestion_source, CongestionSource::VideoPipeline);
         assert!(decision.changed);
     }
 
     #[test]
-    fn repeated_decoder_pressure_reduces_pipeline_cap_once_per_clean_epoch() {
+    fn repeated_decoder_pressure_changes_admission_once_per_clean_epoch() {
         let mut controller = AdaptiveVideoDeliveryController::new(48_000, 48_000, 5, 3);
         let decoder_pressure = MediaFeedbackSample {
             decoder_drops: 1,
@@ -601,24 +650,28 @@ mod tests {
 
         let first = controller.observe(decoder_pressure);
         assert_eq!(first.wire_budget_kbps, 48_000);
-        assert_eq!(first.encoder_bitrate_kbps, 36_572);
+        assert_eq!(first.encoder_bitrate_kbps, 43_580);
+        assert_eq!(first.admission_divisor, 2);
         assert!(first.changed);
 
         for _ in 0..16 {
             let repeated = controller.observe(decoder_pressure);
             assert_eq!(repeated.wire_budget_kbps, 48_000);
-            assert_eq!(repeated.encoder_bitrate_kbps, 36_572);
+            assert_eq!(repeated.encoder_bitrate_kbps, 43_580);
+            assert_eq!(repeated.admission_divisor, 2);
             assert!(!repeated.changed);
         }
 
         for _ in 0..AdaptiveVideoDeliveryController::CLEAN_WINDOWS_BEFORE_INCREASE {
             _ = controller.observe(clean(FeedbackStream::Video));
         }
-        assert_eq!(controller.snapshot().encoder_bitrate_kbps, 43_887);
+        assert_eq!(controller.snapshot().encoder_bitrate_kbps, 43_580);
+        assert_eq!(controller.snapshot().admission_divisor, 1);
 
         let new_epoch = controller.observe(decoder_pressure);
         assert_eq!(new_epoch.wire_budget_kbps, 48_000);
-        assert_eq!(new_epoch.encoder_bitrate_kbps, 35_110);
+        assert_eq!(new_epoch.encoder_bitrate_kbps, 43_580);
+        assert_eq!(new_epoch.admission_divisor, 2);
         assert!(new_epoch.changed);
     }
 
@@ -631,7 +684,7 @@ mod tests {
         });
 
         assert_eq!(decision.wire_budget_kbps, 72_000);
-        assert_eq!(decision.encoder_bitrate_kbps, 65_454);
+        assert_eq!(decision.encoder_bitrate_kbps, 62_017);
         assert_eq!(decision.fec_percentage, 10);
         assert_eq!(decision.congestion_source, CongestionSource::VideoNetwork);
         assert!(decision.changed);
@@ -647,7 +700,7 @@ mod tests {
         }
 
         assert_eq!(decision.wire_budget_kbps, 96_000);
-        assert_eq!(decision.encoder_bitrate_kbps, 91_428);
+        assert_eq!(decision.encoder_bitrate_kbps, 87_160);
         assert_eq!(decision.fec_percentage, 5);
         assert_eq!(decision.congestion_source, CongestionSource::None);
         assert!(decision.changed);
@@ -661,7 +714,8 @@ mod tests {
             ..clean(FeedbackStream::Video)
         });
         assert_eq!(congested.wire_budget_kbps, 80_000);
-        assert_eq!(congested.encoder_bitrate_kbps, 60_952);
+        assert_eq!(congested.encoder_bitrate_kbps, 72_075);
+        assert_eq!(congested.admission_divisor, 2);
 
         let recovered = controller.observe_window(
             clean(FeedbackStream::Video),
@@ -670,7 +724,8 @@ mod tests {
         );
 
         assert_eq!(recovered.wire_budget_kbps, 80_000);
-        assert_eq!(recovered.encoder_bitrate_kbps, 73_143);
+        assert_eq!(recovered.encoder_bitrate_kbps, 72_075);
+        assert_eq!(recovered.admission_divisor, 1);
         assert!(recovered.changed);
     }
 
@@ -684,14 +739,14 @@ mod tests {
 
         let first = controller.observe(presentation_only);
         assert_eq!(first.wire_budget_kbps, 48_000);
-        assert_eq!(first.encoder_bitrate_kbps, 45_714);
+        assert_eq!(first.encoder_bitrate_kbps, 43_580);
         assert_eq!(first.congestion_source, CongestionSource::VideoPresentation);
         assert!(!first.changed);
 
         for _ in 0..16 {
             let repeated = controller.observe(presentation_only);
             assert_eq!(repeated.wire_budget_kbps, 48_000);
-            assert_eq!(repeated.encoder_bitrate_kbps, 45_714);
+            assert_eq!(repeated.encoder_bitrate_kbps, 43_580);
             assert!(!repeated.changed);
         }
 
@@ -702,7 +757,7 @@ mod tests {
 
         let new_episode = controller.observe(presentation_only);
         assert_eq!(new_episode.wire_budget_kbps, 48_000);
-        assert_eq!(new_episode.encoder_bitrate_kbps, 45_714);
+        assert_eq!(new_episode.encoder_bitrate_kbps, 43_580);
         assert!(!new_episode.changed);
     }
 
@@ -743,8 +798,28 @@ mod tests {
         }
 
         assert!(observed_audio_backoff);
-        assert_eq!(decision.wire_budget_kbps, 12_000);
+        assert_eq!(decision.wire_budget_kbps, 12_672);
         assert_eq!(decision.fec_percentage, 20);
+    }
+
+    #[test]
+    fn hdr_retina_quality_floor_survives_network_and_pipeline_pressure() {
+        let mut controller = AdaptiveVideoDeliveryController::new_with_quality_floor(
+            48_000, 48_000, 5, 3, 18_491, 60_000, 1_200,
+        );
+
+        for _ in 0..32 {
+            _ = controller.observe(MediaFeedbackSample {
+                received_datagrams: 0,
+                decoder_drops: 1,
+                ..clean(FeedbackStream::Video)
+            });
+        }
+
+        let decision = controller.snapshot();
+        assert!(decision.encoder_bitrate_kbps >= 18_491);
+        assert_eq!(decision.fec_percentage, 30);
+        assert_eq!(decision.wire_budget_kbps, 25_920);
     }
 
     #[test]
@@ -756,7 +831,7 @@ mod tests {
                 ..clean(FeedbackStream::Audio)
             });
         }
-        assert_eq!(controller.snapshot().wire_budget_kbps, 12_000);
+        assert_eq!(controller.snapshot().wire_budget_kbps, 12_672);
 
         for _ in 0..64 {
             _ = controller.observe(clean(FeedbackStream::Video));
@@ -780,7 +855,7 @@ mod tests {
             });
         }
         let floor = controller.snapshot();
-        assert_eq!(floor.wire_budget_kbps, 20_000);
+        assert_eq!(floor.wire_budget_kbps, 21_312);
         assert_eq!(floor.fec_percentage, 30);
 
         for _ in 0..200 {

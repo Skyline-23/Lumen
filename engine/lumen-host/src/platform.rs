@@ -19,6 +19,9 @@ mod macos_native_input;
 #[cfg(not(windows))]
 mod portable_process;
 #[cfg(any(test, windows))]
+#[cfg_attr(not(windows), allow(dead_code))]
+mod session_slot;
+#[cfg(any(test, windows))]
 mod windows;
 
 #[cfg(target_os = "macos")]
@@ -102,6 +105,7 @@ pub struct PlatformApplicationPlan {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PlatformSessionPlan {
+    pub session_epoch: u32,
     pub width: u32,
     pub height: u32,
     pub frames_per_second: u32,
@@ -153,11 +157,19 @@ pub struct PlatformEncodedAudioPacket {
 #[derive(Clone, Debug, PartialEq)]
 pub enum PlatformControlEvent {
     RequestIdrFrame,
-    InvalidateReferenceFrames { first_frame: i64, last_frame: i64 },
+    InvalidateReferenceFrames {
+        first_frame: i64,
+        last_frame: i64,
+    },
     ResumeVideoEncodingAfterCodecAck,
-    SetVideoBitrateKbps { bitrate_kbps: u32 },
+    SetVideoDeliveryPolicy {
+        bitrate_kbps: u32,
+        admission_divisor: u8,
+    },
     ResetInput,
-    ExecuteServerCommand { index: u8 },
+    ExecuteServerCommand {
+        index: u8,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -190,6 +202,7 @@ pub enum PlatformRuntimeEventCode {
     PhysicalDisplayIsolation,
     NativeInputMotion,
     NativePacketArrivalFeedback,
+    NativeVideoAdaptiveControl,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -444,6 +457,7 @@ pub enum LumenHostPlatformRuntimeEventCode {
     PhysicalDisplayIsolation = 13,
     NativeInputMotion = 14,
     NativePacketArrivalFeedback = 15,
+    NativeVideoAdaptiveControl = 16,
 }
 
 #[repr(C)]
@@ -714,7 +728,15 @@ impl PlatformSessionControl for CallbackPlatformSessionControl {
                     video_bitrate_kbps: 0,
                 }
             }
-            PlatformControlEvent::SetVideoBitrateKbps { bitrate_kbps } => {
+            PlatformControlEvent::SetVideoDeliveryPolicy {
+                bitrate_kbps,
+                admission_divisor,
+            } => {
+                if *admission_divisor != 1 {
+                    return Err(
+                        "callback platform does not implement video admission pacing".to_owned(),
+                    );
+                }
                 LumenHostPlatformControlEvent {
                     kind: LumenHostPlatformControlEventKind::SetVideoBitrateKbps,
                     control_connect_data,
@@ -870,6 +892,9 @@ impl PlatformSessionControl for CallbackPlatformSessionControl {
                 }
                 PlatformRuntimeEventCode::NativePacketArrivalFeedback => {
                     LumenHostPlatformRuntimeEventCode::NativePacketArrivalFeedback
+                }
+                PlatformRuntimeEventCode::NativeVideoAdaptiveControl => {
+                    LumenHostPlatformRuntimeEventCode::NativeVideoAdaptiveControl
                 }
             },
             message: message
@@ -1205,6 +1230,7 @@ mod tests {
         let adapter = CallbackPlatformSessionControl::new(callbacks()).unwrap();
         adapter
             .start_session(PlatformSessionPlan {
+                session_epoch: 1,
                 width: 3_512,
                 height: 2_290,
                 frames_per_second: 120,
@@ -1272,6 +1298,7 @@ mod tests {
 
         let error = adapter
             .start_session(PlatformSessionPlan {
+                session_epoch: 1,
                 width: 1_920,
                 height: 1_080,
                 frames_per_second: 60,
@@ -1335,8 +1362,9 @@ mod tests {
         adapter
             .handle_control_event(
                 66_051,
-                PlatformControlEvent::SetVideoBitrateKbps {
+                PlatformControlEvent::SetVideoDeliveryPolicy {
                     bitrate_kbps: 48_000,
+                    admission_divisor: 1,
                 },
             )
             .unwrap();
@@ -1438,6 +1466,16 @@ mod tests {
             LumenHostPlatformRuntimeEventCode::NativePacketArrivalFeedback as u32,
             15
         );
+    }
+
+    #[test]
+    fn adaptive_video_warning_code_is_stable() {
+        assert_eq!(
+            LumenHostPlatformRuntimeEventCode::NativeVideoAdaptiveControl as u32,
+            16
+        );
+        assert!(include_str!("../include/lumen_host.h")
+            .contains("LumenHostPlatformRuntimeEventCodeNativeVideoAdaptiveControl = 16"));
     }
 
     #[test]

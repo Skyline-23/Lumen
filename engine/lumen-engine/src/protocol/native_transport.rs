@@ -10,9 +10,105 @@ pub const NATIVE_MEDIA_FLAG_FEC_BLOCK: u8 = 1 << 5;
 pub const NATIVE_FEC_BLOCK_EXTENSION_BYTES: usize = 8;
 pub const NATIVE_FEC_BLOCK_HEADER_BYTES: usize =
     NATIVE_MEDIA_HEADER_BYTES + NATIVE_FEC_BLOCK_EXTENSION_BYTES;
+const NATIVE_MAXIMUM_REED_SOLOMON_SHARDS: usize = 256;
+const NATIVE_TARGET_FEC_DATA_SHARDS_PER_BLOCK: usize = 32;
+const NATIVE_MAXIMUM_FEC_BLOCKS: usize = u8::MAX as usize;
 
 const NATIVE_MEDIA_ALLOWED_FLAGS: u8 =
     NATIVE_MEDIA_FLAG_KEYFRAME | NATIVE_MEDIA_FLAG_PARITY_SHARD | NATIVE_MEDIA_FLAG_FEC_BLOCK;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeVideoPacketizationPlan {
+    pub uses_fec_blocks: bool,
+    pub header_bytes: usize,
+    pub shard_bytes: usize,
+    pub data_shards_per_block: usize,
+    pub block_payload_bytes: usize,
+    pub block_count: usize,
+    pub total_shards: usize,
+    pub total_wire_bytes: usize,
+}
+
+pub fn native_video_packetization_plan(
+    payload_bytes: usize,
+    maximum_datagram_payload: usize,
+    parity_percentage: u16,
+) -> Option<NativeVideoPacketizationPlan> {
+    if payload_bytes == 0
+        || maximum_datagram_payload <= NATIVE_FEC_BLOCK_HEADER_BYTES
+        || parity_percentage > 255
+    {
+        return None;
+    }
+    let maximum_data_shards = native_maximum_data_shards(parity_percentage)?;
+    let base_shard_bytes = maximum_datagram_payload.checked_sub(NATIVE_MEDIA_HEADER_BYTES)?;
+    let base_data_shards = payload_bytes.div_ceil(base_shard_bytes);
+    let uses_fec_blocks = base_data_shards
+        .checked_add(native_parity_shards(base_data_shards, parity_percentage))
+        .is_none_or(|total| total > NATIVE_MAXIMUM_REED_SOLOMON_SHARDS)
+        || (parity_percentage != 0 && base_data_shards > NATIVE_TARGET_FEC_DATA_SHARDS_PER_BLOCK);
+    let header_bytes = if uses_fec_blocks {
+        NATIVE_FEC_BLOCK_HEADER_BYTES
+    } else {
+        NATIVE_MEDIA_HEADER_BYTES
+    };
+    let shard_bytes = maximum_datagram_payload.checked_sub(header_bytes)?;
+    let minimum_data_shards_per_block = if uses_fec_blocks {
+        payload_bytes.div_ceil(NATIVE_MAXIMUM_FEC_BLOCKS.checked_mul(shard_bytes)?)
+    } else {
+        1
+    };
+    let preferred_data_shards_per_block = if parity_percentage == 0 {
+        maximum_data_shards
+    } else {
+        NATIVE_TARGET_FEC_DATA_SHARDS_PER_BLOCK
+    };
+    let data_shards_per_block = preferred_data_shards_per_block
+        .max(minimum_data_shards_per_block)
+        .min(maximum_data_shards);
+    let block_payload_bytes = data_shards_per_block.checked_mul(shard_bytes)?;
+    let block_count = payload_bytes.div_ceil(block_payload_bytes);
+    u8::try_from(block_count).ok()?;
+    let total_shards = (0..block_count).try_fold(0_usize, |total, block_index| {
+        let block_offset = block_index.checked_mul(block_payload_bytes)?;
+        let block_bytes = payload_bytes
+            .saturating_sub(block_offset)
+            .min(block_payload_bytes);
+        let data_shards = block_bytes.div_ceil(shard_bytes);
+        total.checked_add(
+            data_shards.checked_add(native_parity_shards(data_shards, parity_percentage))?,
+        )
+    })?;
+    let total_wire_bytes = total_shards.checked_mul(maximum_datagram_payload)?;
+    Some(NativeVideoPacketizationPlan {
+        uses_fec_blocks,
+        header_bytes,
+        shard_bytes,
+        data_shards_per_block,
+        block_payload_bytes,
+        block_count,
+        total_shards,
+        total_wire_bytes,
+    })
+}
+
+fn native_parity_shards(data_shards: usize, parity_percentage: u16) -> usize {
+    if parity_percentage == 0 {
+        0
+    } else {
+        data_shards
+            .saturating_mul(usize::from(parity_percentage))
+            .div_ceil(100)
+    }
+}
+
+fn native_maximum_data_shards(parity_percentage: u16) -> Option<usize> {
+    (1_usize..=255).rev().find(|data_shards| {
+        (*data_shards)
+            .checked_add(native_parity_shards(*data_shards, parity_percentage))
+            .is_some_and(|total| total <= NATIVE_MAXIMUM_REED_SOLOMON_SHARDS)
+    })
+}
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

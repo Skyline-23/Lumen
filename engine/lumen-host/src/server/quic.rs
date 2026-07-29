@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use lumen_engine::{
     client_telemetry_envelope, decode_client_control_message, decode_client_input_message,
@@ -23,7 +23,7 @@ use quinn::{Endpoint, RecvStream, ServerConfig, TransportConfig, VarInt};
 use rustls::pki_types::PrivateKeyDer;
 use tokio::sync::Notify;
 
-use super::media::{run_native_media_loop, NATIVE_MEDIA_SEND_BUFFER_BYTES};
+use super::media::{run_native_media_loop, VideoWireRatePacer, NATIVE_MEDIA_SEND_BUFFER_BYTES};
 use super::packet_arrival::PacketArrivalHistory;
 use super::SharedControlRouter;
 use crate::control::{NativeConnectionContext, NativeMediaFeedbackDisposition};
@@ -354,6 +354,7 @@ async fn handle_connection(
     });
     let task_stop = Arc::new(AtomicBool::new(false));
     let packet_arrival_history = PacketArrivalHistory::spawn();
+    let video_wire_pacer = Arc::new(tokio::sync::Mutex::new(VideoWireRatePacer::default()));
     // Client streams 4 and 8 are not peer-visible until a STREAM frame is transmitted. Do not
     // make either idle stream a prerequisite for returning the session plan on control stream 0.
     let first_control_response_notify = Arc::new(Notify::new());
@@ -374,6 +375,7 @@ async fn handle_connection(
     let bootstrap_router = Arc::clone(&router);
     let bootstrap_stop = Arc::clone(&task_stop);
     let bootstrap_task_notify = Arc::clone(&bootstrap_notify);
+    let bootstrap_wire_pacer = Arc::clone(&video_wire_pacer);
     let mut bootstrap_task = tokio::spawn(async move {
         publish_video_bootstraps(
             bootstrap_connection,
@@ -381,6 +383,7 @@ async fn handle_connection(
             bootstrap_router,
             bootstrap_stop,
             bootstrap_task_notify,
+            bootstrap_wire_pacer,
         )
         .await
     });
@@ -405,6 +408,7 @@ async fn handle_connection(
     let media_platform = Arc::clone(&platform);
     let control_packet_arrival_history = packet_arrival_history.clone();
     let media_packet_arrival_history = packet_arrival_history;
+    let media_video_wire_pacer = video_wire_pacer;
     let mut media_task = tokio::spawn(async move {
         run_native_media_loop(
             media_connection,
@@ -412,6 +416,7 @@ async fn handle_connection(
             media_router,
             media_platform,
             media_packet_arrival_history,
+            media_video_wire_pacer,
         )
         .await
     });
@@ -642,6 +647,7 @@ async fn publish_video_bootstraps(
     router: SharedControlRouter,
     stop: Arc<AtomicBool>,
     notify: Arc<Notify>,
+    wire_pacer: Arc<tokio::sync::Mutex<VideoWireRatePacer>>,
 ) -> Result<(), String> {
     let mut expected_stream_index = 1_u64;
     while !stop.load(Ordering::Acquire) {
@@ -653,6 +659,9 @@ async fn publish_video_bootstraps(
             notify.notified().await;
             continue;
         };
+        let lifecycle_deadline = Instant::now()
+            .checked_add(VIDEO_BOOTSTRAP_RESULT_TIMEOUT)
+            .ok_or_else(|| "video bootstrap lifecycle deadline overflowed".to_owned())?;
         let mut send = tokio::time::timeout(CONNECTION_STREAM_TIMEOUT, connection.open_uni())
             .await
             .map_err(|_| "QUIC client did not admit a video-bootstrap stream".to_owned())?
@@ -670,9 +679,15 @@ async fn publish_video_bootstraps(
             .ok_or_else(|| "video bootstrap stream index exhausted".to_owned())?;
         let encoded = encode_video_bootstrap_message(&bootstrap)
             .map_err(|error| format!("could not encode video bootstrap: {error:?}"))?;
-        send.write_all(&encoded)
-            .await
-            .map_err(|error| format!("could not write video bootstrap: {error}"))?;
+        write_paced_video_bootstrap(
+            &mut send,
+            &encoded,
+            &router,
+            session_epoch,
+            lifecycle_deadline,
+            &wire_pacer,
+        )
+        .await?;
         send.finish()
             .map_err(|error| format!("could not finish video bootstrap stream: {error}"))?;
         eprintln!(
@@ -689,7 +704,7 @@ async fn publish_video_bootstraps(
             &router,
             bootstrap.session_epoch,
             bootstrap.generation_id,
-            VIDEO_BOOTSTRAP_RESULT_TIMEOUT,
+            lifecycle_deadline,
             &stop,
         )
         .await?
@@ -708,6 +723,86 @@ async fn publish_video_bootstraps(
     Ok(())
 }
 
+#[cfg(test)]
+fn video_bootstrap_chunk_lengths(encoded_bytes: usize, maximum_chunk_bytes: usize) -> Vec<usize> {
+    if encoded_bytes == 0 || maximum_chunk_bytes == 0 {
+        return Vec::new();
+    }
+    let full_chunks = encoded_bytes / maximum_chunk_bytes;
+    let tail = encoded_bytes % maximum_chunk_bytes;
+    let mut chunks = vec![maximum_chunk_bytes; full_chunks];
+    if tail != 0 {
+        chunks.push(tail);
+    }
+    chunks
+}
+
+fn reserve_video_bootstrap_chunk(
+    pacer: &mut VideoWireRatePacer,
+    remaining_bytes: usize,
+    session_epoch: u32,
+    wire_budget_kbps: u32,
+    maximum_chunk_bytes: usize,
+    now: Instant,
+    lifecycle_deadline: Instant,
+) -> Result<(usize, Instant), String> {
+    let chunk_bytes = remaining_bytes.min(maximum_chunk_bytes);
+    if chunk_bytes == 0 {
+        return Err("video bootstrap chunk is empty".to_owned());
+    }
+    pacer.prepare(session_epoch, wire_budget_kbps)?;
+    let send_at = pacer
+        .reserve(&[chunk_bytes], maximum_chunk_bytes, now, lifecycle_deadline)
+        .and_then(|times| times.into_iter().next())
+        .ok_or_else(|| "video bootstrap exceeded the lifecycle pacing deadline".to_owned())?;
+    Ok((chunk_bytes, send_at))
+}
+
+async fn write_paced_video_bootstrap(
+    send: &mut quinn::SendStream,
+    encoded: &[u8],
+    router: &SharedControlRouter,
+    session_epoch: u32,
+    lifecycle_deadline: Instant,
+    wire_pacer: &Arc<tokio::sync::Mutex<VideoWireRatePacer>>,
+) -> Result<(), String> {
+    if encoded.is_empty() {
+        return Err("video bootstrap is empty".to_owned());
+    }
+    let mut offset = 0_usize;
+    while offset < encoded.len() {
+        let delivery = router
+            .lock()
+            .map_err(|_| "native control router lock is poisoned".to_owned())?
+            .video_delivery_state()
+            .filter(|delivery| delivery.session_epoch == session_epoch)
+            .ok_or_else(|| "video bootstrap has no active wire budget".to_owned())?;
+        let (chunk_bytes, send_at) = {
+            let mut pacer = wire_pacer.lock().await;
+            reserve_video_bootstrap_chunk(
+                &mut pacer,
+                encoded.len() - offset,
+                session_epoch,
+                delivery.wire_budget_kbps,
+                delivery.maximum_datagram_payload,
+                Instant::now(),
+                lifecycle_deadline,
+            )?
+        };
+        let chunk_end = offset
+            .checked_add(chunk_bytes)
+            .ok_or_else(|| "video bootstrap chunk offset overflowed".to_owned())?;
+        let chunk = &encoded[offset..chunk_end];
+        tokio::time::sleep_until(send_at.into()).await;
+        tokio::time::timeout_at(lifecycle_deadline.into(), send.write_all(chunk))
+            .await
+            .map_err(|_| "video bootstrap write exceeded the lifecycle deadline".to_owned())?
+            .map_err(|error| format!("could not write video bootstrap: {error}"))?;
+        offset = chunk_end;
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum VideoBootstrapWaitOutcome {
     Acknowledged,
@@ -719,10 +814,10 @@ async fn wait_for_video_bootstrap_result(
     router: &SharedControlRouter,
     session_epoch: u32,
     generation_id: u32,
-    timeout: Duration,
+    lifecycle_deadline: Instant,
     stop: &AtomicBool,
 ) -> Result<VideoBootstrapWaitOutcome, String> {
-    tokio::time::timeout(timeout, async {
+    tokio::time::timeout_at(lifecycle_deadline.into(), async {
         loop {
             if stop.load(Ordering::Acquire) {
                 return Ok(VideoBootstrapWaitOutcome::Stopped);
@@ -755,7 +850,7 @@ async fn wait_for_video_bootstrap_result(
     .map_err(|_| {
         format!(
             "video bootstrap decode result timed out session-epoch={session_epoch} generation-id={generation_id} timeout-ms={}",
-            timeout.as_millis()
+            VIDEO_BOOTSTRAP_RESULT_TIMEOUT.as_millis()
         )
     })?
 }
@@ -1141,8 +1236,13 @@ async fn accept_native_telemetry_stream(
                     NativeMediaFeedbackDisposition::Applied(_)
                     | NativeMediaFeedbackDisposition::Unchanged => None,
                 };
-                apply_adaptive_video_decision(Arc::clone(&platform), session_epoch, disposition)
-                    .await?;
+                apply_adaptive_video_decision(
+                    &router,
+                    Arc::clone(&platform),
+                    session_epoch,
+                    disposition,
+                )
+                .await?;
                 if feedback.stream_id != u32::from(NATIVE_AUDIO_STREAM_ID) {
                     continue;
                 }
@@ -1196,30 +1296,134 @@ async fn accept_native_telemetry_stream(
 }
 
 async fn apply_adaptive_video_decision(
+    router: &SharedControlRouter,
     platform: Arc<dyn PlatformSessionControl>,
     session_epoch: u32,
     disposition: NativeMediaFeedbackDisposition,
 ) -> Result<(), String> {
-    let NativeMediaFeedbackDisposition::Applied(decision) = disposition else {
+    let NativeMediaFeedbackDisposition::Applied(proposal) = disposition else {
         return Ok(());
     };
-    tokio::task::spawn_blocking(move || {
-        platform.handle_control_event(
+    let decision = proposal.decision;
+    let began = router
+        .lock()
+        .map_err(|_| "native control router lock is poisoned".to_owned())?
+        .begin_native_adaptive_video_policy_apply(session_epoch, &proposal);
+    if !began {
+        return Err("adaptive video proposal became stale before platform apply".to_owned());
+    }
+    let transaction_platform = Arc::clone(&platform);
+    // Platform application may block indefinitely, so it runs off the QUIC
+    // executor and outside the global router mutex. The router owns only a
+    // revision-fenced policy-lane token while the call is in flight, leaving
+    // StopSession and teardown available without a late timeout race.
+    let platform_worker = tokio::task::spawn_blocking(move || {
+        transaction_platform.handle_control_event(
             session_epoch,
-            crate::PlatformControlEvent::SetVideoBitrateKbps {
+            crate::PlatformControlEvent::SetVideoDeliveryPolicy {
                 bitrate_kbps: decision.encoder_bitrate_kbps,
+                admission_divisor: decision.admission_divisor,
+            },
+        )
+    })
+    .await;
+    let platform_result = match platform_worker {
+        Ok(result) => result,
+        Err(error) => {
+            let _ = router
+                .lock()
+                .map_err(|_| "native control router lock is poisoned".to_owned())?
+                .finish_native_adaptive_video_policy_apply(session_epoch, proposal, false);
+            return Err(format!("adaptive video transaction worker failed: {error}"));
+        }
+    };
+    let applied = platform_result.is_ok();
+    let committed = router
+        .lock()
+        .map_err(|_| "native control router lock is poisoned".to_owned())?
+        .finish_native_adaptive_video_policy_apply(session_epoch, proposal, applied);
+    if let Err(error) = platform_result {
+        if committed {
+            publish_adaptive_video_rejection(&platform, session_epoch, decision, error)?;
+        }
+        return Ok(());
+    }
+    if !committed {
+        return Ok(());
+    }
+    platform
+        .publish_runtime_event(PlatformRuntimeEvent {
+            disposition: PlatformRuntimeEventDisposition::Cleared,
+            severity: PlatformRuntimeEventSeverity::Warning,
+            code: PlatformRuntimeEventCode::NativeVideoAdaptiveControl,
+            message: None,
+        })
+        .map_err(|error| format!("adaptive video warning clear failed: {error}"))?;
+    eprintln!(
+        "Lumen native media stage=adaptive-video-applied session-epoch={session_epoch} wire-budget-kbps={} encoder-bitrate-kbps={} fec-percentage={} admission-divisor={} congestion-source={:?}",
+        decision.wire_budget_kbps,
+        decision.encoder_bitrate_kbps,
+        decision.fec_percentage,
+        decision.admission_divisor,
+        decision.congestion_source,
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+async fn apply_adaptive_video_policy(
+    platform: Arc<dyn PlatformSessionControl>,
+    session_epoch: u32,
+    decision: crate::control::AdaptiveVideoDecision,
+) -> Result<bool, String> {
+    let update_platform = Arc::clone(&platform);
+    let update = tokio::task::spawn_blocking(move || {
+        update_platform.handle_control_event(
+            session_epoch,
+            crate::PlatformControlEvent::SetVideoDeliveryPolicy {
+                bitrate_kbps: decision.encoder_bitrate_kbps,
+                admission_divisor: decision.admission_divisor,
             },
         )
     })
     .await
-    .map_err(|error| format!("adaptive video bitrate worker failed: {error}"))?
-    .map_err(|error| format!("adaptive video bitrate update failed: {error}"))?;
+    .map_err(|error| format!("adaptive video bitrate worker failed: {error}"))?;
+    if let Err(error) = update {
+        publish_adaptive_video_rejection(&platform, session_epoch, decision, error)?;
+        return Ok(false);
+    }
+    platform
+        .publish_runtime_event(PlatformRuntimeEvent {
+            disposition: PlatformRuntimeEventDisposition::Cleared,
+            severity: PlatformRuntimeEventSeverity::Warning,
+            code: PlatformRuntimeEventCode::NativeVideoAdaptiveControl,
+            message: None,
+        })
+        .map_err(|error| format!("adaptive video warning clear failed: {error}"))?;
+    Ok(true)
+}
+
+fn publish_adaptive_video_rejection(
+    platform: &Arc<dyn PlatformSessionControl>,
+    session_epoch: u32,
+    decision: crate::control::AdaptiveVideoDecision,
+    error: String,
+) -> Result<(), String> {
+    let message = format!("adaptive video delivery policy rejected: {error}");
+    platform
+        .publish_runtime_event(PlatformRuntimeEvent {
+            disposition: PlatformRuntimeEventDisposition::Raised,
+            severity: PlatformRuntimeEventSeverity::Warning,
+            code: PlatformRuntimeEventCode::NativeVideoAdaptiveControl,
+            message: Some(message.clone()),
+        })
+        .map_err(|publish_error| {
+            format!("{message}; runtime warning publication failed: {publish_error}")
+        })?;
     eprintln!(
-        "Lumen native media stage=adaptive-video-applied session-epoch={session_epoch} wire-budget-kbps={} encoder-bitrate-kbps={} fec-percentage={} congestion-source={:?}",
-        decision.wire_budget_kbps,
+        "Lumen native media stage=adaptive-video-rejected session-epoch={session_epoch} encoder-bitrate-kbps={} admission-divisor={} error={error}",
         decision.encoder_bitrate_kbps,
-        decision.fec_percentage,
-        decision.congestion_source,
+        decision.admission_divisor,
     );
     Ok(())
 }
@@ -1667,6 +1871,34 @@ mod tests {
 
     struct BlockingBitratePlatform;
 
+    #[derive(Default)]
+    struct RejectingBitratePlatform {
+        runtime_events: Mutex<Vec<PlatformRuntimeEvent>>,
+    }
+
+    impl PlatformSessionControl for RejectingBitratePlatform {
+        fn start_session(&self, _plan: PlatformSessionPlan) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn stop_session(&self) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn handle_control_event(
+            &self,
+            _session_epoch: u32,
+            _event: PlatformControlEvent,
+        ) -> Result<(), String> {
+            Err("runtime mean bitrate is unsupported".to_owned())
+        }
+
+        fn publish_runtime_event(&self, event: PlatformRuntimeEvent) -> Result<(), String> {
+            self.runtime_events.lock().unwrap().push(event);
+            Ok(())
+        }
+    }
+
     impl PlatformSessionControl for BlockingBitratePlatform {
         fn start_session(&self, _plan: PlatformSessionPlan) -> Result<(), String> {
             Ok(())
@@ -1814,6 +2046,67 @@ mod tests {
         }
     }
 
+    #[test]
+    fn large_reliable_bootstrap_shares_the_bounded_video_wire_envelope() {
+        const BOOTSTRAP_BYTES: usize = 8 * 1024 * 1024;
+        const CHUNK_BYTES: usize = 1_200;
+        const WIRE_KBPS: u32 = 25_536;
+        let chunks = video_bootstrap_chunk_lengths(BOOTSTRAP_BYTES, CHUNK_BYTES);
+        assert_eq!(chunks.iter().sum::<usize>(), BOOTSTRAP_BYTES);
+        assert!(chunks.len() > 6_000);
+
+        let origin = Instant::now();
+        let deadline = origin + VIDEO_BOOTSTRAP_RESULT_TIMEOUT;
+        let mut pacer = VideoWireRatePacer::default();
+        pacer.prepare(77, WIRE_KBPS).unwrap();
+        let schedule = pacer
+            .reserve(&chunks, CHUNK_BYTES, origin, deadline)
+            .expect("large bootstrap must fit the lifecycle deadline");
+
+        assert_eq!(schedule[0], origin);
+        assert_eq!(schedule[1], origin);
+        assert!(schedule[2] > origin);
+        assert!(schedule.last().copied().unwrap() < deadline);
+        assert!(schedule.last().copied().unwrap() - origin > Duration::from_secs(2));
+    }
+
+    #[test]
+    fn bootstrap_chunk_reservation_applies_the_latest_committed_wire_budget() {
+        let origin = Instant::now();
+        let deadline = origin + Duration::from_secs(1);
+        let mut pacer = VideoWireRatePacer::default();
+
+        let (_, first) =
+            reserve_video_bootstrap_chunk(&mut pacer, 3_600, 77, 48_000, 1_200, origin, deadline)
+                .unwrap();
+        let (_, second) =
+            reserve_video_bootstrap_chunk(&mut pacer, 2_400, 77, 1_200, 1_200, origin, deadline)
+                .unwrap();
+        let (_, third) =
+            reserve_video_bootstrap_chunk(&mut pacer, 1_200, 77, 1_200, 1_200, origin, deadline)
+                .unwrap();
+
+        assert_eq!(first, origin);
+        assert!(second >= origin + Duration::from_millis(7));
+        assert!(third >= second + Duration::from_millis(8));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn bootstrap_decode_wait_consumes_only_the_remaining_absolute_lifecycle_deadline() {
+        let (_root, router, _platform, _application_id) = native_test_router();
+        let stop = AtomicBool::new(false);
+        let lifecycle_deadline = Instant::now() + Duration::from_millis(100);
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        let wait_started = Instant::now();
+
+        let error = wait_for_video_bootstrap_result(&router, 77, 1, lifecycle_deadline, &stop)
+            .await
+            .unwrap_err();
+
+        assert!(error.contains("video bootstrap decode result timed out"));
+        assert!(wait_started.elapsed() < Duration::from_millis(80));
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn adaptive_feedback_applies_the_encoder_bitrate_outside_router_state() {
         let platform = Arc::new(RecordingPlatformSessionControl::default());
@@ -1821,27 +2114,58 @@ mod tests {
             wire_budget_kbps: 51_000,
             encoder_bitrate_kbps: 48_000,
             fec_percentage: 6,
+            admission_divisor: 1,
             congestion_source: CongestionSource::AudioNetwork,
             changed: true,
         };
 
-        apply_adaptive_video_decision(
-            platform.clone(),
-            77,
-            NativeMediaFeedbackDisposition::Applied(decision),
-        )
-        .await
-        .unwrap();
+        assert!(apply_adaptive_video_policy(platform.clone(), 77, decision)
+            .await
+            .unwrap());
 
         assert_eq!(
             platform.control_events(),
             vec![(
                 77,
-                PlatformControlEvent::SetVideoBitrateKbps {
+                PlatformControlEvent::SetVideoDeliveryPolicy {
                     bitrate_kbps: 48_000,
+                    admission_divisor: 1,
                 },
             )]
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn rejected_adaptive_bitrate_raises_a_typed_warning_without_ending_telemetry() {
+        let platform = Arc::new(RejectingBitratePlatform::default());
+        let decision = AdaptiveVideoDecision {
+            wire_budget_kbps: 51_000,
+            encoder_bitrate_kbps: 48_000,
+            fec_percentage: 6,
+            admission_divisor: 2,
+            congestion_source: CongestionSource::VideoPipeline,
+            changed: true,
+        };
+
+        assert!(!apply_adaptive_video_policy(platform.clone(), 77, decision)
+            .await
+            .unwrap());
+
+        let events = platform.runtime_events.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0].disposition,
+            PlatformRuntimeEventDisposition::Raised
+        );
+        assert_eq!(events[0].severity, PlatformRuntimeEventSeverity::Warning);
+        assert_eq!(
+            events[0].code,
+            PlatformRuntimeEventCode::NativeVideoAdaptiveControl
+        );
+        assert!(events[0]
+            .message
+            .as_deref()
+            .is_some_and(|message| message.contains("runtime mean bitrate is unsupported")));
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -1851,18 +2175,13 @@ mod tests {
             wire_budget_kbps: 51_000,
             encoder_bitrate_kbps: 48_000,
             fec_percentage: 6,
+            admission_divisor: 1,
             congestion_source: CongestionSource::AudioNetwork,
             changed: true,
         };
         let started = std::time::Instant::now();
-        let update = tokio::spawn(async move {
-            apply_adaptive_video_decision(
-                platform,
-                77,
-                NativeMediaFeedbackDisposition::Applied(decision),
-            )
-            .await
-        });
+        let update =
+            tokio::spawn(async move { apply_adaptive_video_policy(platform, 77, decision).await });
 
         tokio::task::yield_now().await;
 

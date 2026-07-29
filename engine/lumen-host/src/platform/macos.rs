@@ -211,7 +211,7 @@ type PopAudioEvent =
     unsafe extern "C" fn(*mut BridgeController, *mut c_char, usize) -> MacAudioCaptureEventRecord;
 type RequestKeyFrame = unsafe extern "C" fn();
 type ResumeVideoEncodingAfterCodecAck = unsafe extern "C" fn() -> bool;
-type SetVideoBitrateKbps = unsafe extern "C" fn(u32) -> bool;
+type SetVideoDeliveryPolicy = unsafe extern "C" fn(u32, u8) -> bool;
 type PrepareWorkspace = unsafe extern "C" fn(MacWorkspaceSessionRequest, *mut c_char, usize) -> u32;
 type ReconfigureWorkspace =
     unsafe extern "C" fn(MacWorkspaceSessionRequest, *mut c_char, usize) -> u32;
@@ -263,7 +263,7 @@ struct MacBridgeApi {
     pop_audio_event: PopAudioEvent,
     request_key_frame: RequestKeyFrame,
     resume_video_encoding_after_codec_ack: ResumeVideoEncodingAfterCodecAck,
-    set_video_bitrate_kbps: SetVideoBitrateKbps,
+    set_video_delivery_policy: SetVideoDeliveryPolicy,
     prepare_workspace: PrepareWorkspace,
     reconfigure_workspace: ReconfigureWorkspace,
     activate_workspace: ActivateWorkspace,
@@ -349,9 +349,9 @@ impl MacBridgeApi {
                     handle,
                     b"LumenMacBridgeResumeVideoEncodingAfterCodecAck\0",
                 )?,
-                set_video_bitrate_kbps: load_symbol(
+                set_video_delivery_policy: load_symbol(
                     handle,
-                    b"LumenMacBridgeSetVideoBitrateKbps\0",
+                    b"LumenMacBridgeSetVideoDeliveryPolicy\0",
                 )?,
                 prepare_workspace: load_symbol(handle, b"LumenMacWorkspacePrepareSession\0")?,
                 reconfigure_workspace: load_symbol(
@@ -1051,11 +1051,18 @@ impl PlatformSessionControl for MacPlatformSessionControl {
                             .to_owned()
                     })
             }
-            PlatformControlEvent::SetVideoBitrateKbps { bitrate_kbps } => {
-                unsafe { (self.api.set_video_bitrate_kbps)(bitrate_kbps) }
+            PlatformControlEvent::SetVideoDeliveryPolicy {
+                bitrate_kbps,
+                admission_divisor,
+            } => {
+                unsafe {
+                    (self.api.set_video_delivery_policy)(bitrate_kbps, admission_divisor)
+                }
                     .then_some(())
                     .ok_or_else(|| {
-                        format!("macOS VideoToolbox rejected adaptive bitrate {bitrate_kbps} kbps")
+                        format!(
+                            "macOS VideoToolbox rejected adaptive delivery bitrate={bitrate_kbps} kbps admission-divisor={admission_divisor}"
+                        )
                     })
             }
             PlatformControlEvent::ResetInput => Ok(()),

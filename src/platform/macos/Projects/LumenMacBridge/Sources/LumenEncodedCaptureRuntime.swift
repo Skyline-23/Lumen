@@ -59,10 +59,21 @@ protocol LumenEncodedCaptureRuntime: AnyObject, Sendable {
     func requestImmediateKeyFrame()
     func resumeVideoEncodingAfterCodecAck() async -> Bool
     func setVideoBitRateKbps(_ bitrateKbps: Int) async -> Bool
+    func setVideoDeliveryPolicy(
+        bitrateKbps: Int,
+        admissionDivisor: Int
+    ) async -> Bool
 }
 
 extension LumenEncodedCaptureRuntime {
     func setVideoBitRateKbps(_: Int) async -> Bool {
+        false
+    }
+
+    func setVideoDeliveryPolicy(
+        bitrateKbps _: Int,
+        admissionDivisor _: Int
+    ) async -> Bool {
         false
     }
 }

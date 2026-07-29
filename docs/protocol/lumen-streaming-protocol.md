@@ -178,10 +178,67 @@ ordered inclusive sequence range; datagram sequence windows remain independent
 per logical media stream while the telemetry-envelope sequence remains global.
 Missing, duplicate, unknown-stream, or mismatched-window reports are rejected.
 
-The host adapts parity in five-point steps inside 5...50 using loss EWMA. It
-must also reduce admission or bitrate under sustained high loss without
-changing the negotiated codec, resolution, refresh, dynamic range, or hardware
-decode policy. At most one unsent video delta may be retained.
+The negotiated video bitrate is the hard video wire ceiling. The host raises a
+request that cannot contain the exact format quality floor at the maximum 30%
+parity allowance. The wire floor uses the negotiated datagram size and the
+actual packetizer plan: per-datagram headers, padded final shards, rounded Reed-
+Solomon parity shards, and FEC block boundaries are all counted. The payload
+floor starts at 35 millibits per pixel for SDR or
+60 millibits per pixel for HDR, multiplied by the exact encoded dimensions and
+refresh rate. H.264, HEVC, and AV1 scale that floor by 125%, 100%, and 90%; 4:4:4
+scales it by 200% relative to 4:2:0, and bit depth scales relative to 8-bit SDR
+or 10-bit HDR. Network evidence owns the wire budget and parity state. The
+maximum encoder payload is solved against that same packetization model;
+payload and FEC overhead are not interchangeable counters.
+
+The host adapts parity in five-point steps inside 5...30. Sustained packet loss
+may reduce the wire budget only as far as the format payload floor plus current
+parity, and never above the negotiated ceiling. Decoder or playback pipeline
+pressure instead changes a host-side latest-frame encoder-admission divisor;
+it does not reduce the wire budget, encoder payload target, or FEC. A clean
+pipeline window sequence restores full admission. Repair and bootstrap frames
+bypass this cadence. None of these controls changes the negotiated codec,
+resolution, refresh, dynamic range, or hardware decode policy. At most one
+unsent video delta may be retained.
+
+The sender additionally meters the actual encoded datagram byte lengths. A
+token envelope permits at most two negotiated-datagram-sized chunks of burst,
+then schedules every delta, same-generation keyframe, and reliable lifecycle
+bootstrap byte at the active wire budget. A datagram batch that cannot fit its
+object deadline is dropped before its first local enqueue and enters the
+single-flight repair path. Once the first datagram is locally committed, the
+host drains the entire reserved object schedule without another local deadline
+or capacity abort; only a connection-fatal transport failure can cut that
+local enqueue sequence. Such a failure terminates the native media task without
+requesting an IDR; ordinary post-enqueue network loss remains feedback-driven
+and recoverable through the repair path. Reliable initial, configuration, and
+repair bootstraps use
+the same token state, read the current committed wire budget before reserving
+each chunk, and share one absolute 15-second lifecycle deadline across paced
+transfer and the decoded result wait. This runtime byte gate remains
+authoritative when real keyframe and delta sizes differ from the negotiated
+one-second floor model.
+
+Adaptive platform policy application runs on a dedicated revision-fenced lane,
+outside the global control-router mutex. Stop and teardown therefore remain
+available while a platform call is stalled. There is no timeout that can report
+rejection while a late platform mutation is still possible; completion either
+commits the matching revision, records a typed rejection, or is discarded after
+session teardown.
+
+Windows retires each Media Foundation worker by epoch. Capture-stop ownership
+is retained until cleanup succeeds, so a failed stop remains retryable. Finished
+workers are reaped, while a fixed retired-worker bound rejects new sessions
+fail-closed instead of accumulating stalled MFT, thread, and D3D resources. A
+verified stop permanently retires that epoch's shared frame-delivery ownership;
+late capture pause, resume, or drop work therefore cannot send driver START or
+STOP operations after a replacement epoch begins.
+
+A decoder-recovery keyframe is generation-fenced and single-flight across
+client requests and host-detected stale, incomplete, or post-bootstrap repair
+sources. Repeated requests coalesce from the first accepted request through the
+matching decoded `VideoBootstrapResult`; only that result resumes paused
+encoder admission and reopens a subsequent repair request.
 
 ## Security and compatibility
 

@@ -42,6 +42,7 @@ final class LumenScreenCaptureVideoRuntime:
     var sourceContract: LumenExactCaptureSourceContract?
     var outputContract: LumenExactEncodedOutputContract?
     var sequenceNumber: UInt64 = 0
+    var adaptiveVideoDeliveryPolicy = LumenAdaptiveVideoDeliveryPolicyState()
     var lastQueuedEncoderSequenceNumber: UInt64?
     var lastQueuedEncoderPresentationTime: CMTime?
     var videoBootstrapAdmission = LumenVideoBootstrapAdmissionGate()

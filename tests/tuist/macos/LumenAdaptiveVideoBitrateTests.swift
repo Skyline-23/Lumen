@@ -100,6 +100,66 @@ final class LumenAdaptiveVideoBitrateTests: XCTestCase {
 
         await session.stop()
     }
+
+    func testPipelinePolicyReducesAdmissionWithoutLoweringBitrate() async throws {
+        let runtime = RecordingAdaptiveBitrateRuntime()
+        let session = LumenEncodedCaptureSession(
+            configuration: .panelNative(displayID: 118),
+            runtimeFactory: RecordingAdaptiveBitrateRuntimeFactory(runtime: runtime)
+        )
+        try await session.start(
+            callbacks: .init(
+                frameHandler: { _ in },
+                eventHandler: nil
+            )
+        )
+
+        let didApplyPolicy = await session.setVideoDeliveryPolicy(
+            bitrateKbps: 18_491,
+            admissionDivisor: 2
+        )
+        XCTAssertTrue(didApplyPolicy)
+        XCTAssertEqual(runtime.deliveryPolicies, [.init(bitrate: 18_491, divisor: 2)])
+
+        var cadence = LumenAdaptiveVideoAdmissionCadence()
+        XCTAssertTrue(cadence.configure(divisor: 2))
+        XCTAssertEqual(
+            (0 ..< 6).map { _ in cadence.shouldAdmit() },
+            [true, false, true, false, true, false]
+        )
+        await session.stop()
+    }
+
+    func testStoppingQueuedBeforePolicyRejectsWithoutPartialBitrateMutation() {
+        let queue = DispatchQueue(label: "dev.skyline23.lumen.tests.adaptive-policy")
+        let blocker = DispatchSemaphore(value: 0)
+        let finished = DispatchSemaphore(value: 0)
+        let box = AdaptivePolicyStateBox()
+        box.state.beginRunning(bitrateKbps: 18_491)
+
+        queue.async {
+            blocker.wait()
+        }
+        queue.async {
+            box.state.beginStopping()
+        }
+        queue.async {
+            box.didApply = box.state.apply(
+                bitrateKbps: 24_000,
+                admissionDivisor: 2
+            ) {
+                box.bitrateApplyCount += 1
+            }
+            finished.signal()
+        }
+
+        blocker.signal()
+        XCTAssertEqual(finished.wait(timeout: .now() + 1), .success)
+        XCTAssertFalse(box.didApply)
+        XCTAssertEqual(box.bitrateApplyCount, 0)
+        XCTAssertEqual(box.state.appliedBitrateKbps, 18_491)
+        XCTAssertEqual(box.state.admissionDivisor, 1)
+    }
 }
 
 private extension LumenAdaptiveVideoBitrateTests {
@@ -150,19 +210,35 @@ private struct RecordingAdaptiveBitrateRuntimeFactory:
     }
 }
 
+private final class AdaptivePolicyStateBox: @unchecked Sendable {
+    var state = LumenAdaptiveVideoDeliveryPolicyState()
+    var bitrateApplyCount = 0
+    var didApply = false
+}
+
 private final class RecordingAdaptiveBitrateRuntime:
     LumenEncodedCaptureRuntime,
     @unchecked Sendable {
     private struct State {
         var bitrateUpdates: [Int] = []
+        var deliveryPolicies: [DeliveryPolicy] = []
         var startCount = 0
         var stopCount = 0
+    }
+
+    struct DeliveryPolicy: Equatable {
+        let bitrate: Int
+        let divisor: Int
     }
 
     private let state = Mutex(State())
 
     var bitrateUpdates: [Int] {
         state.withLock { $0.bitrateUpdates }
+    }
+
+    var deliveryPolicies: [DeliveryPolicy] {
+        state.withLock { $0.deliveryPolicies }
     }
 
     var startCount: Int {
@@ -189,6 +265,19 @@ private final class RecordingAdaptiveBitrateRuntime:
 
     func setVideoBitRateKbps(_ bitrateKbps: Int) async -> Bool {
         state.withLock { $0.bitrateUpdates.append(bitrateKbps) }
+        return true
+    }
+
+
+    func setVideoDeliveryPolicy(
+        bitrateKbps: Int,
+        admissionDivisor: Int
+    ) async -> Bool {
+        state.withLock {
+            $0.deliveryPolicies.append(
+                .init(bitrate: bitrateKbps, divisor: admissionDivisor)
+            )
+        }
         return true
     }
 }

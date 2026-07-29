@@ -22,45 +22,84 @@ pub(super) struct NativeWindowsMedia {
 
 #[derive(Default)]
 pub(super) struct PacketQueueContext {
-    queues: Mutex<WindowsMediaPacketQueues>,
+    state: Mutex<PacketQueueState>,
+}
+
+#[derive(Default)]
+struct PacketQueueState {
+    queues: WindowsMediaPacketQueues,
+    video_session_epoch: Option<u32>,
 }
 
 impl PacketQueueContext {
     pub(super) fn configure_audio_capacity(&self, capacity: usize) -> Result<(), String> {
-        self.queues
+        self.state
             .lock()
             .map_err(|_| "Windows media packet queue is poisoned".to_owned())?
+            .queues
             .configure_audio_capacity(capacity);
         Ok(())
     }
 
     pub(super) fn push_audio(&self, payload: Vec<u8>) -> Result<(), String> {
-        self.queues
+        self.state
             .lock()
             .map_err(|_| "Windows media packet queue is poisoned".to_owned())?
+            .queues
             .push_audio(payload);
         Ok(())
     }
 
-    fn push_video(&self, sample: NativeEncodedVideoSample) -> Result<bool, String> {
+    fn activate_video_session(&self, session_epoch: u32) -> Result<(), String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "Windows media packet queue is poisoned".to_owned())?;
+        if state.video_session_epoch.is_some() {
+            return Err("Windows video packet queue already has an active session".to_owned());
+        }
+        state.video_session_epoch = Some(session_epoch);
+        Ok(())
+    }
+
+    fn retire_video_session(&self, session_epoch: u32) -> Result<(), String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "Windows media packet queue is poisoned".to_owned())?;
+        if state.video_session_epoch == Some(session_epoch) {
+            state.video_session_epoch = None;
+            state.queues = WindowsMediaPacketQueues::default();
+        }
+        Ok(())
+    }
+
+    fn push_video(
+        &self,
+        session_epoch: u32,
+        sample: NativeEncodedVideoSample,
+    ) -> Result<bool, String> {
         if sample.payload.is_empty() || sample.payload.len() > MAXIMUM_VIDEO_BUFFER_BYTES {
             return Err("Windows native encoder produced an invalid video payload".to_owned());
         }
-        let request_key_frame = self
-            .queues
+        let mut state = self
+            .state
             .lock()
-            .map_err(|_| "Windows media packet queue is poisoned".to_owned())?
-            .push_video(PlatformEncodedVideoFrame {
-                payload: sample.payload,
-                decoder_configuration_record: None,
-                presentation_time_90khz: sample.presentation_time_90khz,
-                key_frame: sample.key_frame,
-                // Initial admission pauses explicitly. During steady state only an explicit
-                // repair key frame owns a pause; natural periodic key frames remain in the
-                // acknowledged DATAGRAM generation.
-                requires_bootstrap_acknowledgement: sample.key_frame && sample.repair_keyframe,
-                repair_keyframe: sample.repair_keyframe,
-            });
+            .map_err(|_| "Windows media packet queue is poisoned".to_owned())?;
+        if state.video_session_epoch != Some(session_epoch) {
+            return Ok(false);
+        }
+        let request_key_frame = state.queues.push_video(PlatformEncodedVideoFrame {
+            payload: sample.payload,
+            decoder_configuration_record: None,
+            presentation_time_90khz: sample.presentation_time_90khz,
+            key_frame: sample.key_frame,
+            // Initial admission pauses explicitly. During steady state only an explicit
+            // repair key frame owns a pause; natural periodic key frames remain in the
+            // acknowledged DATAGRAM generation.
+            requires_bootstrap_acknowledgement: sample.key_frame && sample.repair_keyframe,
+            repair_keyframe: sample.repair_keyframe,
+        });
         Ok(request_key_frame)
     }
 }
@@ -68,6 +107,7 @@ impl PacketQueueContext {
 #[derive(Default)]
 struct MediaLifecycle {
     running: bool,
+    session_epoch: Option<u32>,
     stop_requested: Option<Arc<AtomicBool>>,
     audio_worker: Option<thread::JoinHandle<i32>>,
 }
@@ -77,10 +117,11 @@ impl NativeWindowsMedia {
         let audio_configuration = NativeAudioConfiguration::from_arguments(arguments)?;
         let packets = Arc::new(PacketQueueContext::default());
         let video_packets = Arc::clone(&packets);
-        let media_foundation =
-            NativeMediaFoundation::start(Arc::new(move |sample: NativeEncodedVideoSample| {
-                video_packets.push_video(sample)
-            }))?;
+        let media_foundation = NativeMediaFoundation::start(Arc::new(
+            move |session_epoch, sample: NativeEncodedVideoSample| {
+                video_packets.push_video(session_epoch, sample)
+            },
+        ));
         Ok(Self {
             packets,
             audio_configuration,
@@ -94,15 +135,28 @@ impl NativeWindowsMedia {
         plan: PlatformSessionPlan,
         driver: DriverHandle,
     ) -> Result<(), String> {
+        let session_epoch = plan.session_epoch;
         let mut lifecycle = self
             .lifecycle
             .write()
             .map_err(|_| "Windows media lifecycle lock is poisoned".to_owned())?;
-        if lifecycle.running {
-            return Err("Windows native media session is already running".to_owned());
+        if lifecycle.running || lifecycle.session_epoch.is_some() {
+            return Err(
+                "Windows native media session is running or awaiting cleanup retry".to_owned(),
+            );
         }
         self.reset_packets()?;
-        self.media_foundation.start_encoder(plan, driver)?;
+        self.packets.activate_video_session(session_epoch)?;
+        lifecycle.session_epoch = Some(session_epoch);
+        if let Err(error) = self.media_foundation.start_encoder(plan, driver) {
+            let video = self.media_foundation.stop_encoder().err();
+            let queue = self.packets.retire_video_session(session_epoch).err();
+            let reset = self.reset_packets().err();
+            if video.is_none() && queue.is_none() && reset.is_none() {
+                lifecycle.session_epoch = None;
+            }
+            return combine_errors([Some(error), video, queue, reset]);
+        }
 
         let stop_requested = Arc::new(AtomicBool::new(false));
         let audio_worker = if self.audio_configuration.enabled() {
@@ -111,7 +165,12 @@ impl NativeWindowsMedia {
                 Err(error) => {
                     stop_requested.store(true, Ordering::Release);
                     let video = self.media_foundation.stop_encoder().err();
-                    return Err(video.map_or(error.clone(), |video| format!("{error}; {video}")));
+                    let queue = self.packets.retire_video_session(session_epoch).err();
+                    let reset = self.reset_packets().err();
+                    if video.is_none() && queue.is_none() && reset.is_none() {
+                        lifecycle.session_epoch = None;
+                    }
+                    return combine_errors([Some(error), video, queue, reset]);
                 }
             }
         } else {
@@ -129,17 +188,26 @@ impl NativeWindowsMedia {
             .lifecycle
             .write()
             .map_err(|_| "Windows media lifecycle lock is poisoned".to_owned())?;
-        if !lifecycle.running {
+        if !lifecycle.running && lifecycle.session_epoch.is_none() {
             return Ok(());
         }
         lifecycle.running = false;
-        if let Some(stop_requested) = lifecycle.stop_requested.take() {
+        let session_epoch = lifecycle.session_epoch;
+        if let Some(stop_requested) = lifecycle.stop_requested.as_ref() {
             stop_requested.store(true, Ordering::Release);
         }
+        let queue = session_epoch
+            .and_then(|session_epoch| self.packets.retire_video_session(session_epoch).err());
         let video = self.media_foundation.stop_encoder().err();
         let audio = join_worker(lifecycle.audio_worker.take(), "audio").err();
+        if lifecycle.audio_worker.is_none() {
+            lifecycle.stop_requested = None;
+        }
         let reset = self.reset_packets().err();
-        combine_errors([video, audio, reset])
+        if queue.is_none() && video.is_none() && reset.is_none() {
+            lifecycle.session_epoch = None;
+        }
+        combine_errors([queue, video, audio, reset])
     }
 
     pub(super) fn request_key_frame(&self) -> Result<(), String> {
@@ -154,6 +222,20 @@ impl NativeWindowsMedia {
         let result = self.media_foundation.resume_after_bootstrap();
         drop(lifecycle);
         result
+    }
+
+    pub(super) fn set_video_delivery_policy(
+        &self,
+        session_epoch: u32,
+        bitrate_kbps: u32,
+        admission_divisor: u8,
+    ) -> Result<(), String> {
+        self.require_running_session_epoch(session_epoch)?;
+        self.media_foundation.set_video_delivery_policy(
+            session_epoch,
+            bitrate_kbps,
+            admission_divisor,
+        )
     }
 
     pub(super) fn invalidate_reference_frames(
@@ -183,9 +265,10 @@ impl NativeWindowsMedia {
         }
         let frame = self
             .packets
-            .queues
+            .state
             .lock()
             .map_err(|_| "Windows media packet queue is poisoned".to_owned())?
+            .queues
             .pop_video();
         drop(lifecycle);
         Ok(frame)
@@ -201,9 +284,10 @@ impl NativeWindowsMedia {
         }
         let packet = self
             .packets
-            .queues
+            .state
             .lock()
             .map_err(|_| "Windows media packet queue is poisoned".to_owned())?
+            .queues
             .pop_audio();
         drop(lifecycle);
         Ok(packet)
@@ -245,12 +329,11 @@ impl NativeWindowsMedia {
     }
 
     fn reset_packets(&self) -> Result<(), String> {
-        *self
-            .packets
-            .queues
+        self.packets
+            .state
             .lock()
-            .map_err(|_| "Windows media packet queue is poisoned".to_owned())? =
-            WindowsMediaPacketQueues::default();
+            .map_err(|_| "Windows media packet queue is poisoned".to_owned())?
+            .queues = WindowsMediaPacketQueues::default();
         Ok(())
     }
 
@@ -264,6 +347,24 @@ impl NativeWindowsMedia {
             .then_some(lifecycle)
             .ok_or_else(|| "Windows native media session is not running".to_owned())
     }
+
+    fn require_running_session_epoch(&self, session_epoch: u32) -> Result<(), String> {
+        require_running_session_epoch(&self.lifecycle, session_epoch)
+    }
+}
+
+fn require_running_session_epoch(
+    lifecycle: &RwLock<MediaLifecycle>,
+    session_epoch: u32,
+) -> Result<(), String> {
+    let lifecycle = lifecycle
+        .read()
+        .map_err(|_| "Windows media lifecycle lock is poisoned".to_owned())?;
+    (lifecycle.running && lifecycle.session_epoch == Some(session_epoch))
+        .then_some(())
+        .ok_or_else(|| {
+            "Windows adaptive video policy does not belong to the running session".to_owned()
+        })
 }
 
 impl Drop for NativeWindowsMedia {
@@ -291,5 +392,39 @@ fn combine_errors<const N: usize>(errors: [Option<String>; N]) -> Result<(), Str
         Ok(())
     } else {
         Err(errors.join("; "))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{require_running_session_epoch, MediaLifecycle};
+    use std::sync::{mpsc, Arc, RwLock};
+
+    #[test]
+    fn adaptive_policy_snapshot_releases_lifecycle_lock_before_worker_wait() {
+        let lifecycle = Arc::new(RwLock::new(MediaLifecycle {
+            running: true,
+            session_epoch: Some(7),
+            ..MediaLifecycle::default()
+        }));
+        let (entered_send, entered_receive) = mpsc::sync_channel(1);
+        let (release_send, release_receive) = mpsc::sync_channel(1);
+        let policy_lifecycle = Arc::clone(&lifecycle);
+        let policy = std::thread::spawn(move || {
+            require_running_session_epoch(&policy_lifecycle, 7).unwrap();
+            entered_send.send(()).unwrap();
+            release_receive.recv().unwrap();
+        });
+
+        entered_receive.recv().unwrap();
+        let mut stopping = lifecycle
+            .try_write()
+            .expect("stalled policy worker must not retain the lifecycle read lock");
+        stopping.running = false;
+        stopping.session_epoch = None;
+        drop(stopping);
+        assert!(require_running_session_epoch(&lifecycle, 7).is_err());
+        release_send.send(()).unwrap();
+        policy.join().unwrap();
     }
 }

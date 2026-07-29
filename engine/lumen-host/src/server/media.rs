@@ -11,7 +11,9 @@ use lumen_engine::{
 
 use super::packet_arrival::{PacketArrivalHistory, PacketIdentity};
 use super::SharedControlRouter;
-use crate::control::{AudioDeliveryState, InputMotionDeliveryState, VideoDeliveryState};
+use crate::control::{
+    AudioDeliveryState, InputMotionDeliveryState, NativeVideoRepairSource, VideoDeliveryState,
+};
 use crate::media::native_motion::{
     NativeMotionDatagramError, NativeMotionIdentity, NativeMotionReceiver,
 };
@@ -28,6 +30,7 @@ use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 
 const MEDIA_POLL_INTERVAL: Duration = Duration::from_millis(1);
+const MAXIMUM_VIDEO_WIRE_BURST_DATAGRAMS: usize = 2;
 pub(super) const NATIVE_MEDIA_SEND_BUFFER_BYTES: usize = 4 * 1024 * 1024;
 const NATIVE_AUDIO_EGRESS_RESERVE_BYTES: usize = 2 * 1_200;
 const PACKET_ARRIVAL_WARNING_COMMAND_CAPACITY: usize = 8;
@@ -148,6 +151,7 @@ struct PacketArrivalSendObservation {
 enum DatagramBatchMode {
     FreshEnqueue,
     DeadlineWait,
+    CommittedDrain,
 }
 
 impl DatagramBatchMode {
@@ -155,21 +159,24 @@ impl DatagramBatchMode {
         match self {
             Self::FreshEnqueue => "capacity-reserved-enqueue",
             Self::DeadlineWait => "deadline-wait",
+            Self::CommittedDrain => "committed-object-drain",
         }
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DatagramBatchDropReason {
-    QueueBarrierDeadlineExceeded,
-    SendDeadlineExceeded,
+    QueueBarrier,
+    Send,
+    WireRate,
 }
 
 impl DatagramBatchDropReason {
     fn as_str(self) -> &'static str {
         match self {
-            Self::QueueBarrierDeadlineExceeded => "queue-barrier-deadline-exceeded",
-            Self::SendDeadlineExceeded => "send-deadline-exceeded",
+            Self::QueueBarrier => "queue-barrier-deadline-exceeded",
+            Self::Send => "send-deadline-exceeded",
+            Self::WireRate => "wire-rate-deadline-exceeded",
         }
     }
 }
@@ -179,6 +186,7 @@ enum DatagramBatchStatus {
     Complete,
     Dropped(DatagramBatchDropReason),
     Failed(String),
+    Terminal(String),
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -238,6 +246,7 @@ async fn send_connection_datagram(
                 Err(_) => return DatagramSendOutcome::DeadlineExceeded,
             }
         }
+        DatagramBatchMode::CommittedDrain => connection.send_datagram_wait(datagram.into()).await,
     };
     match result {
         Ok(()) => DatagramSendOutcome::Sent,
@@ -315,7 +324,7 @@ where
         send_wait_duration: Duration::ZERO,
     };
     if mode == DatagramBatchMode::DeadlineWait && deadline.is_none() {
-        report.status = DatagramBatchStatus::Dropped(DatagramBatchDropReason::SendDeadlineExceeded);
+        report.status = DatagramBatchStatus::Dropped(DatagramBatchDropReason::Send);
         return report;
     }
 
@@ -330,8 +339,7 @@ where
                 report.sent_datagrams += 1;
             }
             DatagramSendOutcome::DeadlineExceeded => {
-                report.status =
-                    DatagramBatchStatus::Dropped(DatagramBatchDropReason::SendDeadlineExceeded);
+                report.status = DatagramBatchStatus::Dropped(DatagramBatchDropReason::Send);
                 break;
             }
             DatagramSendOutcome::Failed(error) => {
@@ -389,6 +397,7 @@ async fn wait_for_connection_datagram_queue_capacity(
     .await
 }
 
+#[cfg(test)]
 async fn send_video_datagram_batch<Barrier, BarrierFuture, Send, SendFuture>(
     datagrams: Vec<Vec<u8>>,
     send_buffer_capacity: usize,
@@ -422,9 +431,7 @@ where
         Ok(duration) => duration,
         Err(_) => {
             return DatagramBatchReport {
-                status: DatagramBatchStatus::Dropped(
-                    DatagramBatchDropReason::QueueBarrierDeadlineExceeded,
-                ),
+                status: DatagramBatchStatus::Dropped(DatagramBatchDropReason::QueueBarrier),
                 mode,
                 total_datagrams: datagrams.len(),
                 sent_datagrams: 0,
@@ -436,6 +443,130 @@ where
     };
     let mut report = send_datagram_batch(datagrams, mode, Some(deadline), send).await;
     report.queue_wait_duration = queue_wait_duration;
+    report
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn send_wire_paced_video_datagram_batch<Barrier, BarrierFuture, Send, SendFuture>(
+    datagrams: Vec<Vec<u8>>,
+    send_buffer_capacity: usize,
+    audio_reserve_bytes: usize,
+    queue_was_empty_before_current_audio: bool,
+    deadline: Instant,
+    wire_pacer: &Arc<tokio::sync::Mutex<VideoWireRatePacer>>,
+    session_epoch: u32,
+    wire_budget_kbps: u32,
+    maximum_datagram_payload: usize,
+    mut wait_for_capacity: Barrier,
+    mut send: Send,
+) -> DatagramBatchReport
+where
+    Barrier: FnMut(usize, Instant) -> BarrierFuture,
+    BarrierFuture: Future<Output = Result<Duration, DatagramDeadlineElapsed>>,
+    Send: FnMut(DatagramBatchMode, Vec<u8>, Option<Instant>) -> SendFuture,
+    SendFuture: Future<Output = DatagramSendOutcome>,
+{
+    let total_datagrams = datagrams.len();
+    let total_bytes = datagrams.iter().map(Vec::len).sum::<usize>();
+    let video_capacity = send_buffer_capacity.saturating_sub(audio_reserve_bytes);
+    let mode = if total_bytes <= video_capacity {
+        DatagramBatchMode::FreshEnqueue
+    } else {
+        DatagramBatchMode::DeadlineWait
+    };
+    let required_capacity =
+        if mode == DatagramBatchMode::FreshEnqueue && queue_was_empty_before_current_audio {
+            total_bytes.saturating_add(audio_reserve_bytes)
+        } else {
+            video_capacity
+        };
+    let barrier_started = Instant::now();
+    let queue_wait_duration = match wait_for_capacity(required_capacity, deadline).await {
+        Ok(duration) => duration,
+        Err(_) => {
+            return DatagramBatchReport {
+                status: DatagramBatchStatus::Dropped(DatagramBatchDropReason::QueueBarrier),
+                mode,
+                total_datagrams,
+                sent_datagrams: 0,
+                total_bytes,
+                queue_wait_duration: barrier_started.elapsed(),
+                send_wait_duration: Duration::ZERO,
+            };
+        }
+    };
+    let datagram_bytes = datagrams.iter().map(Vec::len).collect::<Vec<_>>();
+    let schedule = {
+        let mut pacer = wire_pacer.lock().await;
+        if pacer.prepare(session_epoch, wire_budget_kbps).is_err() {
+            None
+        } else {
+            pacer.reserve(
+                &datagram_bytes,
+                maximum_datagram_payload,
+                Instant::now(),
+                deadline,
+            )
+        }
+    };
+    let Some(schedule) = schedule else {
+        return DatagramBatchReport {
+            status: DatagramBatchStatus::Dropped(DatagramBatchDropReason::WireRate),
+            mode,
+            total_datagrams,
+            sent_datagrams: 0,
+            total_bytes,
+            queue_wait_duration,
+            send_wait_duration: Duration::ZERO,
+        };
+    };
+    let mut report = DatagramBatchReport {
+        status: DatagramBatchStatus::Complete,
+        mode,
+        total_datagrams,
+        sent_datagrams: 0,
+        total_bytes,
+        queue_wait_duration,
+        send_wait_duration: Duration::ZERO,
+    };
+    for (index, (datagram, send_at)) in datagrams.into_iter().zip(schedule).enumerate() {
+        let send_started = Instant::now();
+        tokio::time::sleep_until(send_at.into()).await;
+        if index == 0 && Instant::now() > deadline {
+            report.status = DatagramBatchStatus::Dropped(DatagramBatchDropReason::Send);
+            break;
+        }
+        let (send_mode, send_deadline) = if index == 0 {
+            (mode, Some(deadline))
+        } else {
+            (DatagramBatchMode::CommittedDrain, None)
+        };
+        let outcome = send(send_mode, datagram, send_deadline).await;
+        if mode == DatagramBatchMode::DeadlineWait || index != 0 {
+            report.send_wait_duration += send_started.elapsed();
+        }
+        match outcome {
+            DatagramSendOutcome::Sent => report.sent_datagrams += 1,
+            DatagramSendOutcome::DeadlineExceeded => {
+                report.status = if index == 0 {
+                    DatagramBatchStatus::Dropped(DatagramBatchDropReason::Send)
+                } else {
+                    DatagramBatchStatus::Terminal(
+                        "committed video object drain reported a local deadline".to_owned(),
+                    )
+                };
+                break;
+            }
+            DatagramSendOutcome::Failed(error) => {
+                report.status = if index == 0 {
+                    DatagramBatchStatus::Failed(error)
+                } else {
+                    DatagramBatchStatus::Terminal(error)
+                };
+                break;
+            }
+        }
+    }
     report
 }
 
@@ -568,6 +699,7 @@ pub(super) async fn run_native_media_loop(
     router: SharedControlRouter,
     platform: Arc<dyn PlatformSessionControl>,
     packet_arrival_history: PacketArrivalHistory,
+    video_wire_pacer: Arc<tokio::sync::Mutex<VideoWireRatePacer>>,
 ) -> Result<(), String> {
     let packet_arrival_warning_reporter =
         PacketArrivalHistoryWarningReporter::spawn(Arc::clone(&platform));
@@ -589,6 +721,7 @@ pub(super) async fn run_native_media_loop(
             router.clone(),
             Arc::clone(&platform),
             packet_arrival,
+            video_wire_pacer,
         ),
         run_native_motion_receiver(connection, session_epoch, router, platform),
     )
@@ -662,6 +795,7 @@ async fn run_native_video_sender(
     router: SharedControlRouter,
     platform: Arc<dyn PlatformSessionControl>,
     packet_arrival: PacketArrivalSendObservation,
+    wire_pacer: Arc<tokio::sync::Mutex<VideoWireRatePacer>>,
 ) -> Result<(), String> {
     let mut interval = tokio::time::interval(MEDIA_POLL_INTERVAL);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -679,6 +813,7 @@ async fn run_native_video_sender(
             &mut video,
             queue_was_empty_before_video,
             &packet_arrival,
+            &wire_pacer,
         )
         .await;
         failures.observe(MediaKind::Video, &attempt, platform.as_ref());
@@ -961,6 +1096,10 @@ async fn poll_and_send_audio(
             "quic-datagram-send-failed",
             format!("{message}; unit-id={unit_id}"),
         )),
+        DatagramBatchStatus::Terminal(message) => MediaAttempt::Terminal(audio_failure(
+            "quic-datagram-connection-failed",
+            format!("{message}; unit-id={unit_id}"),
+        )),
     }
 }
 
@@ -993,6 +1132,66 @@ struct VideoSenderState {
     repair_required: bool,
     repair_after_bootstrap: bool,
     frame_id: u32,
+}
+
+#[derive(Clone, Default)]
+pub(super) struct VideoWireRatePacer {
+    session_epoch: Option<u32>,
+    wire_budget_kbps: u32,
+    next_send_at: Option<Instant>,
+}
+
+impl VideoWireRatePacer {
+    pub(super) fn prepare(
+        &mut self,
+        session_epoch: u32,
+        wire_budget_kbps: u32,
+    ) -> Result<(), String> {
+        if wire_budget_kbps == 0 {
+            return Err("native video wire budget is zero".to_owned());
+        }
+        if self.session_epoch != Some(session_epoch) {
+            self.session_epoch = Some(session_epoch);
+            self.next_send_at = None;
+        }
+        self.wire_budget_kbps = wire_budget_kbps;
+        Ok(())
+    }
+
+    pub(super) fn reserve(
+        &mut self,
+        datagram_bytes: &[usize],
+        maximum_datagram_payload: usize,
+        now: Instant,
+        deadline: Instant,
+    ) -> Option<Vec<Instant>> {
+        let burst_bits = u64::try_from(maximum_datagram_payload)
+            .ok()?
+            .checked_mul(u64::try_from(MAXIMUM_VIDEO_WIRE_BURST_DATAGRAMS).ok()?)?
+            .checked_mul(8)?;
+        let burst_nanoseconds = burst_bits
+            .checked_mul(1_000_000)?
+            .div_ceil(u64::from(self.wire_budget_kbps));
+        let burst_floor = now.checked_sub(Duration::from_nanos(burst_nanoseconds))?;
+        let mut cursor = self
+            .next_send_at
+            .map_or(burst_floor, |reserved| reserved.max(burst_floor));
+        let mut send_times = Vec::with_capacity(datagram_bytes.len());
+        for bytes in datagram_bytes {
+            let wire_bits = u64::try_from(*bytes).ok()?.checked_mul(8)?;
+            let pacing_nanoseconds = wire_bits
+                .checked_mul(1_000_000)?
+                .div_ceil(u64::from(self.wire_budget_kbps));
+            cursor = cursor.checked_add(Duration::from_nanos(pacing_nanoseconds))?;
+            let send_at = cursor.max(now);
+            if send_at > deadline {
+                return None;
+            }
+            send_times.push(send_at);
+        }
+        self.next_send_at = Some(cursor);
+        Some(send_times)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1126,6 +1325,30 @@ impl VideoSenderState {
     }
 }
 
+#[derive(Debug, Eq, PartialEq)]
+enum VideoDatagramCompletion {
+    Continue { request_repair: bool },
+    TerminalTransport(String),
+}
+
+fn finish_video_datagram_delivery(
+    sender: &mut VideoSenderState,
+    frame_id: u32,
+    status: &DatagramBatchStatus,
+    bootstrap_pending: bool,
+) -> Result<VideoDatagramCompletion, String> {
+    if let DatagramBatchStatus::Terminal(message) = status {
+        return Ok(VideoDatagramCompletion::TerminalTransport(message.clone()));
+    }
+    let request_repair = sender.finish_delta_delivery(
+        frame_id,
+        *status != DatagramBatchStatus::Complete,
+        bootstrap_pending,
+    )?;
+    Ok(VideoDatagramCompletion::Continue { request_repair })
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn poll_and_send_video(
     connection: &quinn::Connection,
     session_epoch: u32,
@@ -1134,6 +1357,7 @@ async fn poll_and_send_video(
     sender: &mut VideoSenderState,
     queue_was_empty_before_current_audio: bool,
     packet_arrival: &PacketArrivalSendObservation,
+    wire_pacer: &Arc<tokio::sync::Mutex<VideoWireRatePacer>>,
 ) -> MediaAttempt {
     let delivery = router
         .lock()
@@ -1155,10 +1379,20 @@ async fn poll_and_send_video(
         return MediaAttempt::Failed(video_failure("packetizer-failed", message));
     }
     if sender.take_post_bootstrap_repair_request(delivery.bootstrap_pending) {
-        if let Err(message) = platform.handle_control_event(
-            delivery.session_epoch,
-            crate::PlatformControlEvent::RequestIdrFrame,
-        ) {
+        let repair = router.lock().map_err(|_| {
+            video_capture_failure(
+                "post-bootstrap-keyframe-request-failed",
+                "native control router lock is poisoned".to_owned(),
+            )
+        });
+        let repair = match repair {
+            Ok(mut router) => router.request_native_video_repair(
+                delivery.session_epoch,
+                NativeVideoRepairSource::PostBootstrapDrain,
+            ),
+            Err(failure) => return MediaAttempt::Terminal(failure),
+        };
+        if let Err(message) = repair {
             return MediaAttempt::Terminal(video_capture_failure(
                 "post-bootstrap-keyframe-request-failed",
                 message,
@@ -1254,10 +1488,16 @@ async fn poll_and_send_video(
         sender.pending_frame = None;
         sender.pending_since = None;
         sender.repair_required = true;
-        if let Err(message) = platform.handle_control_event(
-            delivery.session_epoch,
-            crate::PlatformControlEvent::RequestIdrFrame,
-        ) {
+        let repair = router
+            .lock()
+            .map_err(|_| "native control router lock is poisoned".to_owned())
+            .and_then(|mut router| {
+                router.request_native_video_repair(
+                    delivery.session_epoch,
+                    NativeVideoRepairSource::StaleDelta,
+                )
+            });
+        if let Err(message) = repair {
             return MediaAttempt::Terminal(video_capture_failure(
                 "stale-frame-keyframe-request-failed",
                 message,
@@ -1362,12 +1602,16 @@ async fn poll_and_send_video(
             "video object deadline overflowed".to_owned(),
         ));
     };
-    let report = send_video_datagram_batch(
+    let report = send_wire_paced_video_datagram_batch(
         packetized.datagrams,
         NATIVE_MEDIA_SEND_BUFFER_BYTES,
         NATIVE_AUDIO_EGRESS_RESERVE_BYTES,
         queue_was_empty_before_current_audio,
         deadline,
+        wire_pacer,
+        delivery.session_epoch,
+        delivery.wire_budget_kbps,
+        delivery.maximum_datagram_payload,
         |required_capacity, deadline| {
             wait_for_connection_datagram_queue_capacity(connection, required_capacity, deadline)
         },
@@ -1377,14 +1621,6 @@ async fn poll_and_send_video(
     )
     .await;
     let delivery_complete = report.status == DatagramBatchStatus::Complete;
-    let request_repair = match sender.finish_delta_delivery(
-        frame_id,
-        !delivery_complete,
-        delivery.bootstrap_pending,
-    ) {
-        Ok(request_repair) => request_repair,
-        Err(message) => return MediaAttempt::Failed(video_failure("packetizer-failed", message)),
-    };
     let object_age_us = duration_to_microseconds(pending_since.elapsed());
     if frame_id <= 3
         || frame_id.checked_rem(120) == Some(0)
@@ -1401,11 +1637,32 @@ async fn poll_and_send_video(
             u64::from(delivery.maximum_object_delay_us),
         );
     }
+    let request_repair = match finish_video_datagram_delivery(
+        sender,
+        frame_id,
+        &report.status,
+        delivery.bootstrap_pending,
+    ) {
+        Ok(VideoDatagramCompletion::Continue { request_repair }) => request_repair,
+        Ok(VideoDatagramCompletion::TerminalTransport(message)) => {
+            return MediaAttempt::Terminal(video_failure(
+                "quic-datagram-connection-failed",
+                format!("{message}; frame-id={frame_id}"),
+            ));
+        }
+        Err(message) => return MediaAttempt::Failed(video_failure("packetizer-failed", message)),
+    };
     if request_repair {
-        if let Err(message) = platform.handle_control_event(
-            delivery.session_epoch,
-            crate::PlatformControlEvent::RequestIdrFrame,
-        ) {
+        let repair = router
+            .lock()
+            .map_err(|_| "native control router lock is poisoned".to_owned())
+            .and_then(|mut router| {
+                router.request_native_video_repair(
+                    delivery.session_epoch,
+                    NativeVideoRepairSource::IncompleteTransport,
+                )
+            });
+        if let Err(message) = repair {
             return MediaAttempt::Terminal(video_capture_failure(
                 "transport-keyframe-request-failed",
                 message,
@@ -1428,12 +1685,19 @@ async fn poll_and_send_video(
             "quic-datagram-send-failed",
             format!("{message}; frame-id={frame_id}"),
         )),
+        DatagramBatchStatus::Terminal(message) => MediaAttempt::Terminal(video_failure(
+            "quic-datagram-connection-failed",
+            format!("{message}; frame-id={frame_id}"),
+        )),
     }
 }
 
 fn video_failure(stage: &'static str, message: String) -> MediaFailure {
     MediaFailure {
-        code: if stage == "quic-datagram-send-failed" {
+        code: if matches!(
+            stage,
+            "quic-datagram-send-failed" | "quic-datagram-connection-failed"
+        ) {
             PlatformRuntimeEventCode::NativeVideoUdpSend
         } else {
             PlatformRuntimeEventCode::NativeVideoPacketizer
@@ -1494,6 +1758,11 @@ fn log_datagram_batch(
         DatagramBatchStatus::Failed(error) => {
             ("datagram-batch-failed", "send-failed", error.as_str())
         }
+        DatagramBatchStatus::Terminal(error) => (
+            "datagram-batch-terminal",
+            "connection-failed",
+            error.as_str(),
+        ),
     };
     eprintln!(
         "Lumen native media stage={stage} kind={kind} session-epoch={session_epoch} generation-id={generation_id} object-id={object_id} outcome={outcome} error={error} transport-mode={} datagrams-sent={} datagrams-total={} bytes={} queue-wait-us={} send-wait-us={} object-age-us={object_age_us} deadline-us={deadline_us}",
@@ -1516,15 +1785,18 @@ mod tests {
         PacketArrivalFeedbackError, PacketArrivalHistory, PacketIdentity,
     };
     use super::{
-        classify_video_keyframe_delivery, delivery_for_session, object_deadline_exceeded,
-        record_successful_datagram, run_native_media_tasks, send_datagram_batch,
-        send_video_datagram_batch, wait_for_datagram_deadline, wait_for_datagram_queue_capacity,
-        DatagramBatchDropReason, DatagramBatchMode, DatagramBatchStatus, DatagramDeadlineElapsed,
-        DatagramSendOutcome, PacketArrivalHistoryWarningReporter, PacketArrivalSendObservation,
-        SessionDelivery, VideoBootstrapClassification, VideoKeyframeDelivery, VideoSenderState,
+        classify_video_keyframe_delivery, delivery_for_session, finish_video_datagram_delivery,
+        object_deadline_exceeded, record_successful_datagram, run_native_media_tasks,
+        send_datagram_batch, send_video_datagram_batch, send_wire_paced_video_datagram_batch,
+        wait_for_datagram_deadline, wait_for_datagram_queue_capacity, DatagramBatchDropReason,
+        DatagramBatchMode, DatagramBatchStatus, DatagramDeadlineElapsed, DatagramSendOutcome,
+        PacketArrivalHistoryWarningReporter, PacketArrivalSendObservation, SessionDelivery,
+        VideoBootstrapClassification, VideoDatagramCompletion, VideoKeyframeDelivery,
+        VideoSenderState, VideoWireRatePacer, MAXIMUM_VIDEO_WIRE_BURST_DATAGRAMS,
     };
-    use lumen_engine::MediaFeedback;
-    use lumen_engine::NativeVideoBootstrapReason;
+    use lumen_engine::{
+        native_video_packetization_plan, MediaFeedback, NativeVideoBootstrapReason,
+    };
     use std::cell::{Cell, RefCell};
     use std::collections::VecDeque;
     use std::future::Future;
@@ -1664,6 +1936,190 @@ mod tests {
             Duration::from_micros(25_001),
             25_000
         ));
+    }
+
+    #[test]
+    fn emitted_wire_pacer_accounts_exact_packetized_bytes_without_nominal_fec_math() {
+        let origin = Instant::now();
+        let deadline = origin + Duration::from_secs(1);
+        let mut pacer = VideoWireRatePacer::default();
+        pacer.prepare(7, 1_200).unwrap();
+
+        assert_eq!(
+            pacer.reserve(&[1_200, 1_200], 1_200, origin, deadline),
+            Some(vec![origin, origin])
+        );
+        assert_eq!(
+            pacer.reserve(&[1_200, 1_200, 1_200], 1_200, origin, deadline),
+            Some(vec![
+                origin + Duration::from_millis(8),
+                origin + Duration::from_millis(16),
+                origin + Duration::from_millis(24),
+            ])
+        );
+        assert_eq!(pacer.next_send_at, Some(origin + Duration::from_millis(24)));
+    }
+
+    #[test]
+    fn variable_frame_sizes_never_exceed_the_actual_byte_token_envelope() {
+        const MTU: usize = 1_200;
+        const WIRE_KBPS: u32 = 25_536;
+        let origin = Instant::now();
+        let deadline = origin + Duration::from_secs(5);
+        let mut pacer = VideoWireRatePacer::default();
+        pacer.prepare(9, WIRE_KBPS).unwrap();
+        let mut cumulative_bytes = 0_u64;
+
+        for payload_bytes in [1, 37_504, 37_505, 200_070, 7_777, 291_330] {
+            let plan = native_video_packetization_plan(payload_bytes, MTU, 30).unwrap();
+            let datagrams = vec![MTU; plan.total_shards];
+            let send_times = pacer
+                .reserve(&datagrams, MTU, origin, deadline)
+                .expect("five-second envelope admits the adversarial sequence");
+            for send_at in send_times {
+                cumulative_bytes += MTU as u64;
+                let elapsed_nanoseconds = send_at.duration_since(origin).as_nanos();
+                let envelope_bits = u128::try_from(MTU * MAXIMUM_VIDEO_WIRE_BURST_DATAGRAMS * 8)
+                    .unwrap()
+                    .saturating_add(
+                        u128::from(WIRE_KBPS).saturating_mul(elapsed_nanoseconds) / 1_000_000,
+                    );
+                assert!(u128::from(cumulative_bytes) * 8 <= envelope_bits);
+            }
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn post_barrier_wire_reservation_drops_the_whole_object_before_first_send() {
+        let pacer = Arc::new(tokio::sync::Mutex::new(VideoWireRatePacer::default()));
+        let sent = Rc::new(Cell::new(0_usize));
+        let sent_by_transport = Rc::clone(&sent);
+        let deadline = Instant::now() + Duration::from_millis(40);
+
+        let report = send_wire_paced_video_datagram_batch(
+            vec![vec![0; 1_200]; 6],
+            16 * 1_200,
+            0,
+            true,
+            deadline,
+            &pacer,
+            7,
+            1_200,
+            1_200,
+            |_, _| async {
+                tokio::time::sleep(Duration::from_millis(25)).await;
+                Ok(Duration::from_millis(25))
+            },
+            move |_, _, _| {
+                sent_by_transport.set(sent_by_transport.get() + 1);
+                async { DatagramSendOutcome::Sent }
+            },
+        )
+        .await;
+
+        assert_eq!(
+            report.status,
+            DatagramBatchStatus::Dropped(DatagramBatchDropReason::WireRate)
+        );
+        assert_eq!(report.sent_datagrams, 0);
+        assert_eq!(sent.get(), 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn committed_wire_object_drains_after_post_first_capacity_delay() {
+        let pacer = Arc::new(tokio::sync::Mutex::new(VideoWireRatePacer::default()));
+        let sent = Rc::new(Cell::new(0_usize));
+        let sent_by_transport = Rc::clone(&sent);
+        let deadline = Instant::now() + Duration::from_millis(30);
+
+        let report = send_wire_paced_video_datagram_batch(
+            vec![vec![0; 1_200]; 3],
+            16 * 1_200,
+            0,
+            true,
+            deadline,
+            &pacer,
+            7,
+            48_000,
+            1_200,
+            |_, _| async { Ok(Duration::ZERO) },
+            move |mode, _, send_deadline| {
+                let index = sent_by_transport.get();
+                sent_by_transport.set(index + 1);
+                async move {
+                    if index == 0 {
+                        assert_eq!(mode, DatagramBatchMode::FreshEnqueue);
+                        assert_eq!(send_deadline, Some(deadline));
+                    } else {
+                        assert_eq!(mode, DatagramBatchMode::CommittedDrain);
+                        assert_eq!(send_deadline, None);
+                    }
+                    if index == 1 {
+                        tokio::time::sleep(Duration::from_millis(45)).await;
+                    }
+                    DatagramSendOutcome::Sent
+                }
+            },
+        )
+        .await;
+
+        assert_eq!(report.status, DatagramBatchStatus::Complete);
+        assert_eq!(report.sent_datagrams, 3);
+        assert_eq!(sent.get(), 3);
+        assert!(Instant::now() > deadline);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn fatal_committed_drain_bypasses_repair_and_is_terminal() {
+        let pacer = Arc::new(tokio::sync::Mutex::new(VideoWireRatePacer::default()));
+        let send_attempts = Rc::new(Cell::new(0_usize));
+        let transport_attempts = Rc::clone(&send_attempts);
+        let deadline = Instant::now() + Duration::from_millis(100);
+
+        let report = send_wire_paced_video_datagram_batch(
+            vec![vec![0; 1_200]; 3],
+            16 * 1_200,
+            0,
+            true,
+            deadline,
+            &pacer,
+            7,
+            48_000,
+            1_200,
+            |_, _| async { Ok(Duration::ZERO) },
+            move |mode, _, _| {
+                let index = transport_attempts.get();
+                transport_attempts.set(index + 1);
+                async move {
+                    if index == 0 {
+                        assert_eq!(mode, DatagramBatchMode::FreshEnqueue);
+                        DatagramSendOutcome::Sent
+                    } else {
+                        assert_eq!(mode, DatagramBatchMode::CommittedDrain);
+                        DatagramSendOutcome::Failed("connection lost".to_owned())
+                    }
+                }
+            },
+        )
+        .await;
+
+        assert_eq!(
+            report.status,
+            DatagramBatchStatus::Terminal("connection lost".to_owned())
+        );
+        assert_eq!(report.sent_datagrams, 1);
+        assert_eq!(send_attempts.get(), 2);
+
+        let mut sender = VideoSenderState::default();
+        let initial_frame_id = sender.frame_id;
+        let completion = finish_video_datagram_delivery(&mut sender, 41, &report.status, false)
+            .expect("terminal transport classification");
+        assert_eq!(
+            completion,
+            VideoDatagramCompletion::TerminalTransport("connection lost".to_owned())
+        );
+        assert!(!sender.repair_required);
+        assert_eq!(sender.frame_id, initial_frame_id);
     }
 
     #[test]
@@ -1864,7 +2320,7 @@ mod tests {
         assert_eq!(required.get(), 12);
         assert_eq!(
             report.status,
-            DatagramBatchStatus::Dropped(DatagramBatchDropReason::QueueBarrierDeadlineExceeded)
+            DatagramBatchStatus::Dropped(DatagramBatchDropReason::QueueBarrier)
         );
         assert_eq!(report.sent_datagrams, 0);
     }
@@ -1933,7 +2389,7 @@ mod tests {
 
         assert_eq!(
             blocked.status,
-            DatagramBatchStatus::Dropped(DatagramBatchDropReason::QueueBarrierDeadlineExceeded)
+            DatagramBatchStatus::Dropped(DatagramBatchDropReason::QueueBarrier)
         );
         assert_eq!(blocked.sent_datagrams, 0);
         assert!(sent.borrow().is_empty());
@@ -1997,7 +2453,7 @@ mod tests {
 
         assert_eq!(
             report.status,
-            DatagramBatchStatus::Dropped(DatagramBatchDropReason::SendDeadlineExceeded)
+            DatagramBatchStatus::Dropped(DatagramBatchDropReason::Send)
         );
         assert_eq!(report.mode, DatagramBatchMode::DeadlineWait);
         assert_eq!(report.sent_datagrams, 1);

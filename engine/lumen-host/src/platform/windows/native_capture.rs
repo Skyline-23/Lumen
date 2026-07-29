@@ -1,4 +1,5 @@
 use std::mem::ManuallyDrop;
+use std::sync::Arc;
 
 use windows_api::core::{Interface, PCWSTR};
 use windows_api::Win32::Foundation::HMODULE;
@@ -27,6 +28,7 @@ use windows_api::Win32::Graphics::Dxgi::{
     DXGI_SHARED_RESOURCE_READ, DXGI_SHARED_RESOURCE_WRITE,
 };
 
+use crate::platform::session_slot::FrameDeliveryOwnership;
 use crate::PlatformChromaSubsampling;
 
 use super::native_display_driver::{shared_frame_name, DriverHandle};
@@ -38,6 +40,7 @@ pub(super) struct NativeIddCxCapture {
     device1: ID3D11Device1,
     surface: Option<NativeSharedSurface>,
     require_hdr: bool,
+    frame_delivery: Arc<FrameDeliveryOwnership>,
 }
 
 pub(super) struct NativeCapturedFrame {
@@ -56,7 +59,11 @@ pub(super) struct NativeEncoderSurface {
 }
 
 impl NativeIddCxCapture {
-    pub(super) fn open(driver: DriverHandle, require_hdr: bool) -> Result<Self, String> {
+    pub(super) fn open(
+        driver: DriverHandle,
+        require_hdr: bool,
+        frame_delivery: Arc<FrameDeliveryOwnership>,
+    ) -> Result<Self, String> {
         let factory = unsafe { CreateDXGIFactory1::<IDXGIFactory1>() }
             .map_err(|error| format!("Windows DXGI factory creation failed: {error}"))?;
         let adapter_luid = driver.render_adapter_luid()?;
@@ -65,7 +72,7 @@ impl NativeIddCxCapture {
         let device1 = device.cast::<ID3D11Device1>().map_err(|error| {
             format!("Windows D3D11.1 shared-resource device is unavailable: {error}")
         })?;
-        driver.start_frame_delivery()?;
+        frame_delivery.start_with(|| driver.start_frame_delivery())?;
         Ok(Self {
             driver,
             device,
@@ -73,6 +80,7 @@ impl NativeIddCxCapture {
             device1,
             surface: None,
             require_hdr,
+            frame_delivery,
         })
     }
 
@@ -143,11 +151,13 @@ impl NativeIddCxCapture {
     }
 
     pub(super) fn pause_frame_delivery(&self) -> Result<(), String> {
-        self.driver.stop_frame_delivery()
+        self.frame_delivery
+            .pause_with(|| self.driver.stop_frame_delivery())
     }
 
     pub(super) fn resume_frame_delivery(&self) -> Result<(), String> {
-        self.driver.start_frame_delivery()
+        self.frame_delivery
+            .start_with(|| self.driver.start_frame_delivery())
     }
 
     pub(super) fn convert_frame(
@@ -174,7 +184,9 @@ impl NativeIddCxCapture {
 
 impl Drop for NativeIddCxCapture {
     fn drop(&mut self) {
-        let _ = self.driver.stop_frame_delivery();
+        let _ = self
+            .frame_delivery
+            .pause_with(|| self.driver.stop_frame_delivery());
     }
 }
 

@@ -109,4 +109,23 @@ extension LumenBridgeRuntime {
         }
         return applied
     }
+
+    func setVideoDeliveryPolicyImpl(
+        bitrateKbps: Int,
+        admissionDivisor: Int
+    ) async -> Bool {
+        guard bitrateKbps > 0,
+              (1 ... 4).contains(admissionDivisor),
+              await captureLifecycle.shouldRequestImmediateKeyFrame,
+              let encodedCaptureSession else {
+            logger.error(
+                "Rejecting adaptive delivery policy because ScreenCaptureKit capture is not running"
+            )
+            return false
+        }
+        return await encodedCaptureSession.setVideoDeliveryPolicy(
+            bitrateKbps: bitrateKbps,
+            admissionDivisor: admissionDivisor
+        )
+    }
 }

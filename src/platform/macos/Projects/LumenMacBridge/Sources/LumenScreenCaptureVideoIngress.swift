@@ -113,6 +113,14 @@ extension LumenScreenCaptureVideoRuntime {
         entered: @Sendable () -> Bool
     ) -> LumenEncoderSubmissionAttempt<LumenVideoEncoderSubmissionResult> {
         dispatchPrecondition(condition: .onQueue(encoderQueue))
+        guard adaptiveVideoDeliveryPolicy.shouldAdmit(
+            forceKeyFrame: submission.forceKeyFrame
+        ) else {
+            queue.async { [weak self] in
+                self?.recordPendingAdmissionDrop(submission.source)
+            }
+            return .cancelled
+        }
         guard let compressionSession else {
             guard entered() else {
                 return .cancelled

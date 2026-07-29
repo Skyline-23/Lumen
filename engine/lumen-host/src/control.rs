@@ -16,7 +16,9 @@ pub(crate) use adaptive_video::CongestionSource;
 pub(crate) use adaptive_video::{
     AdaptiveVideoDecision, AdaptiveVideoDeliveryController, FeedbackStream, MediaFeedbackSample,
 };
-pub(crate) use native_session::{NativeConnectionContext, NativeMediaFeedbackDisposition};
+pub(crate) use native_session::{
+    NativeConnectionContext, NativeMediaFeedbackDisposition, NativeVideoRepairSource,
+};
 
 pub use discovery::HostDiscoveryState;
 
@@ -34,6 +36,7 @@ pub(crate) struct VideoDeliveryState {
     pub(crate) maximum_datagram_payload: usize,
     pub(crate) maximum_object_delay_us: u32,
     pub(crate) fec_percentage: u16,
+    pub(crate) wire_budget_kbps: u32,
     pub(crate) target_bitrate_kbps: u32,
     pub(crate) admission_divisor: u8,
 }

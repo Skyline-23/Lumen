@@ -31,6 +31,9 @@ extension LumenScreenCaptureVideoRuntime {
             pendingVideoBootstrapSource = nil
             encoderAdmission.beginStopping()
         }
+        encoderQueue.sync {
+            adaptiveVideoDeliveryPolicy.beginStopping()
+        }
         encoderAdmission.waitUntilSubmissionReturns()
     }
 

@@ -9,6 +9,74 @@ import ScreenCaptureKit
 import Synchronization
 import VideoToolbox
 
+struct LumenAdaptiveVideoAdmissionCadence: Equatable, Sendable {
+    private(set) var divisor = 1
+    private var admissionsUntilNext = 0
+
+    mutating func configure(divisor: Int) -> Bool {
+        guard (1 ... 4).contains(divisor) else { return false }
+        self.divisor = divisor
+        admissionsUntilNext = 0
+        return true
+    }
+
+    mutating func shouldAdmit() -> Bool {
+        guard divisor > 1 else { return true }
+        guard admissionsUntilNext > 0 else {
+            admissionsUntilNext = divisor - 1
+            return true
+        }
+        admissionsUntilNext -= 1
+        return false
+    }
+}
+
+struct LumenAdaptiveVideoDeliveryPolicyState: Equatable, Sendable {
+    private(set) var appliedBitrateKbps: Int?
+    private(set) var admissionCadence = LumenAdaptiveVideoAdmissionCadence()
+    private(set) var acceptsUpdates = false
+
+    var admissionDivisor: Int { admissionCadence.divisor }
+
+    mutating func beginRunning(bitrateKbps: Int) {
+        appliedBitrateKbps = bitrateKbps
+        admissionCadence = LumenAdaptiveVideoAdmissionCadence()
+        acceptsUpdates = true
+    }
+
+    mutating func beginStopping() {
+        acceptsUpdates = false
+    }
+
+    mutating func apply(
+        bitrateKbps: Int,
+        admissionDivisor: Int,
+        applyBitrate: () throws -> Void
+    ) -> Bool {
+        guard acceptsUpdates,
+              bitrateKbps > 0,
+              (1 ... 4).contains(admissionDivisor) else {
+            return false
+        }
+        do {
+            if appliedBitrateKbps != bitrateKbps {
+                try applyBitrate()
+            }
+            guard admissionCadence.configure(divisor: admissionDivisor) else {
+                return false
+            }
+            appliedBitrateKbps = bitrateKbps
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    mutating func shouldAdmit(forceKeyFrame: Bool) -> Bool {
+        forceKeyFrame || (acceptsUpdates && admissionCadence.shouldAdmit())
+    }
+}
+
 extension LumenScreenCaptureVideoRuntime {
     func stream(
         _ stream: SCStream,

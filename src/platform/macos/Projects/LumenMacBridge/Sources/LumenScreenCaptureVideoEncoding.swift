@@ -68,6 +68,9 @@ extension LumenScreenCaptureVideoRuntime {
         try prepareCompressionSession(session)
         try validateClosedGOP(session)
         try validateHardwareEncoder(session)
+        adaptiveVideoDeliveryPolicy.beginRunning(
+            bitrateKbps: configuration.targetVideoBitRateKbps
+        )
         statistics.exactCaptureAudit.profile = encodingPlan.profile
         statistics.exactCaptureAudit.hardwareUsed = true
     }
@@ -187,6 +190,26 @@ extension LumenScreenCaptureVideoRuntime {
     }
 
     func setVideoBitRateKbps(_ bitrateKbps: Int) async -> Bool {
+        await enqueueVideoDeliveryPolicy(
+            bitrateKbps: bitrateKbps,
+            admissionDivisor: nil
+        )
+    }
+
+    func setVideoDeliveryPolicy(
+        bitrateKbps: Int,
+        admissionDivisor: Int
+    ) async -> Bool {
+        await enqueueVideoDeliveryPolicy(
+            bitrateKbps: bitrateKbps,
+            admissionDivisor: admissionDivisor
+        )
+    }
+
+    func enqueueVideoDeliveryPolicy(
+        bitrateKbps: Int,
+        admissionDivisor: Int?
+    ) async -> Bool {
         guard let rateControl = LumenVideoToolboxRateControl(
             bitrateKbps: bitrateKbps
         ) else {
@@ -202,36 +225,23 @@ extension LumenScreenCaptureVideoRuntime {
                 }
                 let queueWaitMilliseconds =
                     Self.elapsedMilliseconds(since: requestedAt)
-                if self.appliedVideoBitRateKbps == bitrateKbps {
-                    self.publishBitrateUpdateTelemetry(
-                        appliedBitrateKbps: bitrateKbps,
-                        queueWaitMilliseconds: queueWaitMilliseconds,
-                        applyMilliseconds: nil
-                    )
-                    continuation.resume(returning: true)
-                    return
-                }
                 let applyStartedAt = DispatchTime.now().uptimeNanoseconds
-                do {
+                let divisor = admissionDivisor
+                    ?? self.adaptiveVideoDeliveryPolicy.admissionDivisor
+                let applied = self.adaptiveVideoDeliveryPolicy.apply(
+                    bitrateKbps: bitrateKbps,
+                    admissionDivisor: divisor
+                ) {
                     try self.applyVideoRateControl(rateControl)
-                    self.publishBitrateUpdateTelemetry(
-                        appliedBitrateKbps: bitrateKbps,
-                        queueWaitMilliseconds: queueWaitMilliseconds,
-                        applyMilliseconds: Self.elapsedMilliseconds(
-                            since: applyStartedAt
-                        )
-                    )
-                    continuation.resume(returning: true)
-                } catch {
-                    self.publishBitrateUpdateTelemetry(
-                        appliedBitrateKbps: nil,
-                        queueWaitMilliseconds: queueWaitMilliseconds,
-                        applyMilliseconds: Self.elapsedMilliseconds(
-                            since: applyStartedAt
-                        )
-                    )
-                    continuation.resume(returning: false)
                 }
+                self.publishBitrateUpdateTelemetry(
+                    appliedBitrateKbps: applied ? bitrateKbps : nil,
+                    queueWaitMilliseconds: queueWaitMilliseconds,
+                    applyMilliseconds: Self.elapsedMilliseconds(
+                        since: applyStartedAt
+                    )
+                )
+                continuation.resume(returning: applied)
             }
         }
     }
@@ -408,6 +418,7 @@ extension LumenScreenCaptureVideoRuntime {
     func invalidateCompressionSession() {
         dispatchPrecondition(condition: .onQueue(encoderQueue))
         guard let compressionSession else { return }
+        adaptiveVideoDeliveryPolicy.beginStopping()
         VTCompressionSessionInvalidate(compressionSession)
         self.compressionSession = nil
         appliedVideoBitRateKbps = nil
