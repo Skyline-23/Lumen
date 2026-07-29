@@ -64,7 +64,18 @@ keyframes (bit 0), fixed-cadence coalesced feedback (bit 1), continuous scroll
 metadata (bit 2), and paired video/audio feedback windows with explicit IDs
 (bit 3). Negotiation fails before capture if any required bit is absent, so a
 client using the older single-report contract cannot enter a paired-window
-session.
+session. Packet-arrival feedback (bit 4) is optional. When negotiated, the
+client may attach observation-only receive timing to `MediaFeedback`; it does
+not participate in bitrate, FEC, pacing, resolution, or lifecycle decisions.
+
+`MediaFeedback.packet_arrival_reference_time_us` is field 18 and
+`packet_arrival_runs` is field 19. Each run is `first_sequence` as a big-endian
+`uint32`, followed by a big-endian 64-bit received bitmap (bit zero names the
+first sequence), then one unsigned protobuf varint arrival delta in ascending
+sequence order for every set bit. Deltas are microseconds relative to field 18.
+Payloads are limited to 16 KiB and 4,096 covered sequences. A partial,
+malformed, unsupported, oversized, or untracked report closes the telemetry
+path; peers that do not negotiate bit 4 omit both fields.
 
 Codec configuration is reliable and must be acknowledged before the first
 bootstrap. A session's first video generation follows this gate:

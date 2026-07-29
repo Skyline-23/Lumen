@@ -3,6 +3,24 @@ import Testing
 
 @Suite("Release distribution contract")
 struct LumenReleaseContractTests {
+    @Test("Release verifies the packaged IDD output directory")
+    func releaseVerifiesPackagedIDDOutputDirectory() throws {
+        let root = try repositoryRoot()
+        let release = try source(".github/workflows/release.yml", from: root)
+
+        #expect(
+            release.contains(
+                #"$driverPackageOutput = Join-Path $env:DRIVER_OUTPUT "LumenIddCx""#
+            )
+        )
+        #expect(release.contains(#"$path = Join-Path $driverPackageOutput $_"#))
+        #expect(
+            release.contains(
+                "path: src/platform/windows/driver/build/bin/x64/Release/LumenIddCx/*"
+            )
+        )
+    }
+
     @Test("Windows release, signing, and installation use one MSI contract")
     func windowsReleaseUsesOneMSIContract() throws {
         let root = try repositoryRoot()

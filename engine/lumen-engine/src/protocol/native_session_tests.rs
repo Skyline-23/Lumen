@@ -12,6 +12,7 @@ use super::{
     NativeVideoFormat, NativeVideoKeyframeRequestReason, NativeVideoProfile, SessionStarted,
     VideoBootstrapResult, VideoKeyframeRequest, NATIVE_FEC_BLOCK_HEADER_BYTES,
     NATIVE_MEDIA_CAPABILITY_CONTINUOUS_SCROLL, NATIVE_MEDIA_CAPABILITY_FIXED_CADENCE_FEEDBACK,
+    NATIVE_MEDIA_CAPABILITY_PACKET_ARRIVAL_FEEDBACK,
     NATIVE_MEDIA_CAPABILITY_PAIRED_FEEDBACK_WINDOWS,
     NATIVE_MEDIA_CAPABILITY_SAME_GENERATION_KEYFRAMES, NATIVE_PROTOCOL_VERSION,
     NATIVE_REQUIRED_MEDIA_CAPABILITIES, NATIVE_VIDEO_STREAM_ID,
@@ -178,6 +179,26 @@ fn generation_four_requires_the_complete_realtime_media_capability_set() {
     client.media_capabilities = NATIVE_REQUIRED_MEDIA_CAPABILITIES;
     let plan = negotiate_native_session(&client, &host(), 1).unwrap();
     assert_eq!(plan.media_capabilities, NATIVE_REQUIRED_MEDIA_CAPABILITIES);
+
+    client.media_capabilities |= NATIVE_MEDIA_CAPABILITY_PACKET_ARRIVAL_FEEDBACK;
+    let plan = negotiate_native_session(&client, &host(), 1).unwrap();
+    assert_eq!(
+        plan.media_capabilities,
+        NATIVE_REQUIRED_MEDIA_CAPABILITIES | NATIVE_MEDIA_CAPABILITY_PACKET_ARRIVAL_FEEDBACK
+    );
+}
+
+#[test]
+fn packet_arrival_capability_changes_no_delivery_policy() {
+    let baseline = hello();
+    let mut observing = baseline.clone();
+    observing.media_capabilities |= NATIVE_MEDIA_CAPABILITY_PACKET_ARRIVAL_FEEDBACK;
+
+    let baseline_plan = negotiate_native_session(&baseline, &host(), 1).unwrap();
+    let mut observing_plan = negotiate_native_session(&observing, &host(), 1).unwrap();
+    observing_plan.media_capabilities &= !NATIVE_MEDIA_CAPABILITY_PACKET_ARRIVAL_FEEDBACK;
+
+    assert_eq!(observing_plan, baseline_plan);
 }
 
 #[test]
@@ -374,6 +395,8 @@ fn bounded_client_telemetry_round_trips_media_feedback_on_its_own_lane() {
                 presented_frames: 28,
                 decoder_drops: 1,
                 feedback_window_id: 7,
+                packet_arrival_reference_time_us: 1_000_000,
+                packet_arrival_runs: vec![0, 1, 2, 3],
             },
         )),
     };

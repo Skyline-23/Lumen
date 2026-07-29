@@ -4,6 +4,7 @@ use crate::{ControlRouter, HostArguments};
 
 mod http;
 mod media;
+mod packet_arrival;
 mod quic;
 mod tls;
 

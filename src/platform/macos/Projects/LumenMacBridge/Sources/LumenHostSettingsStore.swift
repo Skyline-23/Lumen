@@ -153,7 +153,7 @@ public struct LumenNativeHostSettings: Equatable, Sendable {
             rumbleForwarding: true,
             addressFamily: .ipv4,
             port: LumenNetworkPortPlan.defaultConnectionPort,
-            upnpEnabled: false,
+            upnpEnabled: true,
             remoteAccessScope: .localNetwork,
             externalIPMode: .automatic,
             lanEncryption: .disabled,

@@ -604,7 +604,11 @@ impl ControlRouter {
             .next_feedback_window_id
             .checked_add(1)
             .ok_or(NativeMediaFeedbackRejection::FeedbackWindowMismatch)?;
-        let decision = pending.adaptive_video.observe_window(video, audio);
+        let clean_window_units =
+            feedback.window_milliseconds / NATIVE_MEDIA_FEEDBACK_WINDOW_MILLISECONDS;
+        let decision = pending
+            .adaptive_video
+            .observe_window(video, audio, clean_window_units);
         Ok(if decision.changed {
             NativeMediaFeedbackDisposition::Applied(decision)
         } else {
@@ -626,6 +630,14 @@ impl ControlRouter {
             return Err(NativeMediaFeedbackRejection::IncompleteFeedbackWindow);
         }
         Ok(())
+    }
+
+    pub(crate) fn native_media_capabilities(&self, session_epoch: u32) -> Option<u64> {
+        self.native
+            .pending
+            .as_ref()
+            .filter(|pending| pending.plan.session_epoch == session_epoch)
+            .map(|pending| pending.plan.media_capabilities)
     }
 
     fn dispatch_native_start(

@@ -9,5 +9,10 @@ set(LUMEN_PUBLISHER_ISSUE_URL "https://github.com/Skyline-23/Lumen/issues"
 
 option(BUILD_WERROR "Enable -Werror flag." OFF)
 
+if(WIN32)
+    option(LUMEN_WINDOWS_DEVELOPER_BUILD
+            "Build incrementally runnable Windows targets without installer packaging." OFF)
+endif()
+
 # if this option is set, the build will exit after configuring special package configuration files
 option(LUMEN_CONFIGURE_ONLY "Configure special files only, then exit." OFF)

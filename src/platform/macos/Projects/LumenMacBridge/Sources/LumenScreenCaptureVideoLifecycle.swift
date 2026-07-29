@@ -198,6 +198,8 @@ extension LumenScreenCaptureVideoRuntime {
         }
         queue.sync {
             compressionSessionAvailable = true
+            statistics.appliedVideoBitRateKbps =
+                configuration.targetVideoBitRateKbps
         }
         return streamConfiguration
     }

@@ -2,7 +2,12 @@
   <msi-file path="Lumen-*-Windows-x86_64.msi">
     <pe-file path="Lumen.exe">
       <authenticode-sign
-        description="Lumen remote desktop host"
+        description="Lumen management app"
+        description-url="https://github.com/Skyline-23/Lumen" />
+    </pe-file>
+    <pe-file path="LumenSessionAgent.exe">
+      <authenticode-sign
+        description="Lumen active-session agent"
         description-url="https://github.com/Skyline-23/Lumen" />
     </pe-file>
     <pe-file path="tools/LumenService.exe">

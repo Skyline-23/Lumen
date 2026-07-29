@@ -317,6 +317,8 @@ message MediaFeedback {
   uint32 presented_frames = 15;
   uint32 decoder_drops = 16;
   uint64 feedback_window_id = 17;
+  uint64 packet_arrival_reference_time_us = 18;
+  bytes packet_arrival_runs = 19;
 }
 
 message ClientTelemetryEnvelope {

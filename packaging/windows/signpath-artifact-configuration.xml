@@ -5,6 +5,9 @@
       <pe-file path="Lumen.exe">
         <authenticode-sign />
       </pe-file>
+      <pe-file path="LumenSessionAgent.exe">
+        <authenticode-sign />
+      </pe-file>
       <pe-file path="tools/LumenService.exe">
         <authenticode-sign />
       </pe-file>

@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <data name="App.Title" xml:space="preserve"><value>Lumen</value></data>
+  <data name="Status.Connecting" xml:space="preserve"><value>연결 중</value></data>
+  <data name="Status.HostOnline" xml:space="preserve"><value>호스트 온라인</value></data>
+  <data name="Status.HostUnavailable" xml:space="preserve"><value>호스트를 사용할 수 없음</value></data>
+  <data name="Status.Online" xml:space="preserve"><value>온라인</value></data>
+  <data name="Common.Yes" xml:space="preserve"><value>예</value></data>
+  <data name="Common.No" xml:space="preserve"><value>아니요</value></data>
+  <data name="Common.Unavailable" xml:space="preserve"><value>사용할 수 없음</value></data>
+  <data name="Common.Disabled" xml:space="preserve"><value>사용 안 함</value></data>
+  <data name="Common.Ok" xml:space="preserve"><value>확인</value></data>
+  <data name="Navigation.Overview" xml:space="preserve"><value>개요</value></data>
+  <data name="Navigation.Applications" xml:space="preserve"><value>애플리케이션</value></data>
+  <data name="Navigation.Settings" xml:space="preserve"><value>설정</value></data>
+  <data name="Navigation.Security" xml:space="preserve"><value>보안</value></data>
+  <data name="Navigation.General" xml:space="preserve"><value>일반</value></data>
+  <data name="Navigation.Streaming" xml:space="preserve"><value>스트리밍</value></data>
+  <data name="Navigation.Audio" xml:space="preserve"><value>오디오</value></data>
+  <data name="Navigation.Input" xml:space="preserve"><value>입력</value></data>
+  <data name="Navigation.Network" xml:space="preserve"><value>네트워크</value></data>
+  <data name="Navigation.Advanced" xml:space="preserve"><value>고급</value></data>
+  <data name="Navigation.Diagnostics" xml:space="preserve"><value>진단</value></data>
+  <data name="Navigation.About" xml:space="preserve"><value>정보</value></data>
+  <data name="Busy.Connecting" xml:space="preserve"><value>Lumen 호스트에 연결하는 중…</value></data>
+  <data name="Authentication.CreateOwnerAccount" xml:space="preserve"><value>소유자 계정 생성</value></data>
+  <data name="Authentication.SignInToLumen" xml:space="preserve"><value>Lumen에 로그인</value></data>
+  <data name="Authentication.ProtectedDescription" xml:space="preserve"><value>호스트 설정과 등록된 기기는 로컬 소유자 계정으로 보호됩니다.</value></data>
+  <data name="Authentication.HeroTitle" xml:space="preserve"><value>내 화면을, 내 방식대로.</value></data>
+  <data name="Authentication.HeroDescription" xml:space="preserve"><value>내 Windows PC에서 직접 실행되는 비공개 네이티브 원격 데스크톱 호스트입니다.</value></data>
+  <data name="Authentication.FeatureLocal" xml:space="preserve"><value>자격 증명은 이 호스트에만 보관</value></data>
+  <data name="Authentication.FeatureControls" xml:space="preserve"><value>네이티브 호스트 및 스트리밍 제어</value></data>
+  <data name="Authentication.FeatureRemote" xml:space="preserve"><value>등록된 기기의 안전한 원격 접속</value></data>
+  <data name="Authentication.CredentialsNotice" xml:space="preserve"><value>소유자 암호는 클라우드 서비스로 전송되지 않습니다.</value></data>
+  <data name="Authentication.OwnerUsername" xml:space="preserve"><value>소유자 사용자 이름</value></data>
+  <data name="Authentication.OwnerPassword" xml:space="preserve"><value>소유자 암호</value></data>
+  <data name="Authentication.ConfirmPassword" xml:space="preserve"><value>암호 확인</value></data>
+  <data name="Authentication.CreateAccount" xml:space="preserve"><value>계정 생성</value></data>
+  <data name="Authentication.SignIn" xml:space="preserve"><value>로그인</value></data>
+  <data name="Authentication.Failed" xml:space="preserve"><value>인증 실패</value></data>
+  <data name="Overview.Description" xml:space="preserve"><value>호스트 상태와 실행 중인 서비스에 영향을 주는 작업입니다.</value></data>
+  <data name="Overview.ControlEndpoint" xml:space="preserve"><value>제어 엔드포인트 · HTTPS {0}</value></data>
+  <data name="Overview.HostRuntime" xml:space="preserve"><value>호스트 런타임</value></data>
+  <data name="Overview.ReloadApplications" xml:space="preserve"><value>앱 다시 불러오기</value></data>
+  <data name="Overview.ForceStopStream" xml:space="preserve"><value>스트림 강제 종료</value></data>
+  <data name="Overview.RestartHost" xml:space="preserve"><value>호스트 재시작</value></data>
+  <data name="Applications.Description" xml:space="preserve"><value>연결된 클라이언트에서 사용할 데스크톱과 애플리케이션 항목입니다.</value></data>
+  <data name="Applications.NoneConfigured" xml:space="preserve"><value>설정된 애플리케이션이 없습니다.</value></data>
+  <data name="Applications.Metadata" xml:space="preserve"><value>앱 ID {0} · HDR {1}</value></data>
+  <data name="Security.Description" xml:space="preserve"><value>소유자 인증으로 호스트 구성과 기기 등록을 보호합니다.</value></data>
+  <data name="Security.Owner" xml:space="preserve"><value>소유자</value></data>
+  <data name="Security.LogOut" xml:space="preserve"><value>로그아웃</value></data>
+  <data name="General.Description" xml:space="preserve"><value>이 호스트의 검색 및 업데이트 동작입니다.</value></data>
+  <data name="General.NetworkDiscovery" xml:space="preserve"><value>네트워크 검색</value></data>
+  <data name="General.NetworkDiscoveryDetail" xml:space="preserve"><value>지원되는 클라이언트에 이 호스트를 알립니다.</value></data>
+  <data name="General.PreReleaseNotifications" xml:space="preserve"><value>시험판 알림</value></data>
+  <data name="General.PreReleaseNotificationsDetail" xml:space="preserve"><value>이 호스트에 베타 릴리스 알림을 보냅니다.</value></data>
+  <data name="Streaming.Description" xml:space="preserve"><value>호스트 런타임에서 선택한 디스플레이 어댑터와 대체 모드입니다.</value></data>
+  <data name="Streaming.GraphicsAdapter" xml:space="preserve"><value>그래픽 어댑터</value></data>
+  <data name="Streaming.Output" xml:space="preserve"><value>출력</value></data>
+  <data name="Streaming.FallbackDisplayMode" xml:space="preserve"><value>대체 디스플레이 모드</value></data>
+  <data name="Streaming.WorkspacePolicy" xml:space="preserve"><value>작업 공간 정책</value></data>
+  <data name="Audio.Description" xml:space="preserve"><value>시스템 오디오 캡처와 클라이언트 재생입니다.</value></data>
+  <data name="Audio.StreamSystemAudio" xml:space="preserve"><value>컴퓨터 오디오 스트리밍</value></data>
+  <data name="Audio.StreamSystemAudioDetail" xml:space="preserve"><value>연결된 클라이언트의 오디오를 캡처합니다.</value></data>
+  <data name="Audio.Sink" xml:space="preserve"><value>오디오 싱크</value></data>
+  <data name="Input.Description" xml:space="preserve"><value>원격 키보드, 포인터, 게임패드, 펜 및 스크롤 동작입니다.</value></data>
+  <data name="Input.Keyboard" xml:space="preserve"><value>키보드</value></data>
+  <data name="Input.KeyboardDetail" xml:space="preserve"><value>원격 키보드 입력을 받습니다.</value></data>
+  <data name="Input.Mouse" xml:space="preserve"><value>마우스</value></data>
+  <data name="Input.MouseDetail" xml:space="preserve"><value>원격 포인터 입력을 받습니다.</value></data>
+  <data name="Input.Controller" xml:space="preserve"><value>컨트롤러</value></data>
+  <data name="Input.ControllerDetail" xml:space="preserve"><value>원격 게임패드 입력을 받습니다.</value></data>
+  <data name="Input.MapRightAlt" xml:space="preserve"><value>오른쪽 Alt를 Windows 키로 매핑</value></data>
+  <data name="Input.MapRightAltDetail" xml:space="preserve"><value>오른쪽 Alt를 Windows 키로 사용합니다.</value></data>
+  <data name="Input.HighResolutionScrolling" xml:space="preserve"><value>고해상도 스크롤</value></data>
+  <data name="Input.HighResolutionScrollingDetail" xml:space="preserve"><value>정밀 트랙패드와 휠 델타를 유지합니다.</value></data>
+  <data name="Input.NativePenTouch" xml:space="preserve"><value>네이티브 펜 및 터치</value></data>
+  <data name="Input.NativePenTouchDetail" xml:space="preserve"><value>네이티브 펜과 터치 접점을 전달합니다.</value></data>
+  <data name="Input.RumbleForwarding" xml:space="preserve"><value>진동 전달</value></data>
+  <data name="Input.RumbleForwardingDetail" xml:space="preserve"><value>게임패드 진동을 클라이언트에 전달합니다.</value></data>
+  <data name="Network.Description" xml:space="preserve"><value>리스너, 암호화, 검색 및 원격 접근 정책입니다.</value></data>
+  <data name="Network.AddressFamily" xml:space="preserve"><value>주소 체계</value></data>
+  <data name="Network.BasePort" xml:space="preserve"><value>기본 포트</value></data>
+  <data name="Network.RemoteAccess" xml:space="preserve"><value>원격 접근</value></data>
+  <data name="Network.LanEncryption" xml:space="preserve"><value>LAN 암호화</value></data>
+  <data name="Network.WanEncryption" xml:space="preserve"><value>WAN 암호화</value></data>
+  <data name="Network.Upnp" xml:space="preserve"><value>UPnP</value></data>
+  <data name="Network.UpnpDetail" xml:space="preserve"><value>구성된 리스너의 라우터 매핑을 요청합니다.</value></data>
+  <data name="Advanced.Description" xml:space="preserve"><value>세션과 독립적인 런타임 제어입니다.</value></data>
+  <data name="Advanced.PingTimeout" xml:space="preserve"><value>핑 제한 시간</value></data>
+  <data name="Advanced.ForwardErrorCorrection" xml:space="preserve"><value>순방향 오류 정정</value></data>
+  <data name="Advanced.BackButtonTimeout" xml:space="preserve"><value>뒤로 버튼 대기 시간</value></data>
+  <data name="Advanced.Milliseconds" xml:space="preserve"><value>{0}ms</value></data>
+  <data name="Advanced.Percentage" xml:space="preserve"><value>{0}%</value></data>
+  <data name="Diagnostics.Description" xml:space="preserve"><value>현재 런타임 진단 구성입니다.</value></data>
+  <data name="Diagnostics.ManagementProtocol" xml:space="preserve"><value>관리 프로토콜</value></data>
+  <data name="Diagnostics.HostConnection" xml:space="preserve"><value>호스트 연결</value></data>
+  <data name="Diagnostics.LogLevel" xml:space="preserve"><value>로그 수준</value></data>
+  <data name="Diagnostics.ProtocolVersion" xml:space="preserve"><value>v{0}</value></data>
+  <data name="About.Description" xml:space="preserve"><value>Windows용 Lumen 원격 데스크톱 호스트입니다.</value></data>
+  <data name="About.Product" xml:space="preserve"><value>Lumen&#x0a;오픈 소스 · 자체 호스팅 · 네이티브 Windows 호스트</value></data>
+  <data name="Error.CouldNotContinue" xml:space="preserve"><value>Lumen을 계속할 수 없습니다</value></data>
+  <data name="Error.HostUnavailable" xml:space="preserve"><value>Lumen 호스트를 사용할 수 없음</value></data>
+  <data name="Error.HostUnavailableDetail" xml:space="preserve"><value>백그라운드 호스트가 준비되지 않았습니다. {0}</value></data>
+  <data name="Error.Retry" xml:space="preserve"><value>다시 시도</value></data>
+  <data name="Error.CommandFailed" xml:space="preserve"><value>Lumen 명령 실패</value></data>
+  <data name="Error.ManagementConnectionClosed" xml:space="preserve"><value>Lumen 호스트가 관리 연결을 닫았습니다.</value></data>
+  <data name="Error.ManagementEmptyResponse" xml:space="preserve"><value>Lumen 호스트가 빈 관리 응답을 반환했습니다.</value></data>
+  <data name="Error.ManagementRejected" xml:space="preserve"><value>Lumen 호스트가 요청을 거부했습니다.</value></data>
+  <data name="Error.ManagementIncompatible" xml:space="preserve"><value>Lumen 관리 프로토콜이 이 앱과 호환되지 않습니다.</value></data>
+</root>

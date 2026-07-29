@@ -255,8 +255,9 @@ jobs:
           $infToolPath = "$wdkTools\"
           msbuild $env:DRIVER_PROJECT /m /t:Build /p:Configuration=Release /p:Platform=x64 "/p:LumenDriverCoreLibrary=$driverCore" "/p:InfToolPath=$infToolPath" /p:InfToolArchitecture=Native64Bit
           if ($LASTEXITCODE -ne 0) { throw "WDK UMDF2 driver build failed." }
+          $driverPackageOutput = Join-Path $env:DRIVER_OUTPUT "LumenIddCx"
           @("LumenIddCx.dll", "LumenIddCx.inf", "lumeniddcx.cat") | ForEach-Object {
-            $path = Join-Path $env:DRIVER_OUTPUT $_
+            $path = Join-Path $driverPackageOutput $_
             if (-not (Test-Path $path -PathType Leaf)) {
               throw "Missing IDD release input: $path"
             }

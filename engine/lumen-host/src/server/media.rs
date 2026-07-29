@@ -1,13 +1,15 @@
 use std::collections::HashSet;
 use std::future::Future;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use lumen_engine::{
     decode_native_media_datagram, CodecConfiguration, NativeMediaKind, NativeVideoBootstrapReason,
-    NativeVideoCodec, NATIVE_VIDEO_STREAM_ID,
+    NativeVideoCodec, NATIVE_AUDIO_STREAM_ID, NATIVE_VIDEO_STREAM_ID,
 };
 
+use super::packet_arrival::{PacketArrivalHistory, PacketIdentity};
 use super::SharedControlRouter;
 use crate::control::{AudioDeliveryState, InputMotionDeliveryState, VideoDeliveryState};
 use crate::media::native_motion::{
@@ -21,10 +23,126 @@ use crate::{
     PlatformRuntimeEvent, PlatformRuntimeEventCode, PlatformRuntimeEventDisposition,
     PlatformRuntimeEventSeverity, PlatformSessionControl,
 };
+use tokio::sync::mpsc;
+#[cfg(test)]
+use tokio::sync::oneshot;
 
 const MEDIA_POLL_INTERVAL: Duration = Duration::from_millis(1);
 pub(super) const NATIVE_MEDIA_SEND_BUFFER_BYTES: usize = 4 * 1024 * 1024;
 const NATIVE_AUDIO_EGRESS_RESERVE_BYTES: usize = 2 * 1_200;
+const PACKET_ARRIVAL_WARNING_COMMAND_CAPACITY: usize = 8;
+const PACKET_ARRIVAL_WARNING_MESSAGE: &str = "packet-arrival-history-unavailable";
+
+#[derive(Clone)]
+struct PacketArrivalHistoryWarningReporter {
+    commands: mpsc::Sender<PacketArrivalHistoryWarningCommand>,
+    warning_present: Arc<AtomicBool>,
+}
+
+enum PacketArrivalHistoryWarningCommand {
+    Unavailable,
+    Available,
+    #[cfg(test)]
+    Flush(oneshot::Sender<()>),
+}
+
+impl PacketArrivalHistoryWarningReporter {
+    fn spawn(platform: Arc<dyn PlatformSessionControl>) -> Self {
+        let (commands, mut receiver) = mpsc::channel(PACKET_ARRIVAL_WARNING_COMMAND_CAPACITY);
+        let warning_present = Arc::new(AtomicBool::new(false));
+        tokio::spawn(async move {
+            let mut warning_active = false;
+            while let Some(command) = receiver.recv().await {
+                match command {
+                    PacketArrivalHistoryWarningCommand::Unavailable if !warning_active => {
+                        let event = PlatformRuntimeEvent {
+                            disposition: PlatformRuntimeEventDisposition::Raised,
+                            severity: PlatformRuntimeEventSeverity::Warning,
+                            code: PlatformRuntimeEventCode::NativePacketArrivalFeedback,
+                            message: Some(PACKET_ARRIVAL_WARNING_MESSAGE.to_owned()),
+                        };
+                        if let Err(error) = platform.publish_runtime_event(event) {
+                            eprintln!(
+                                "Lumen native media stage=packet-arrival-warning-publish-failed error={error}"
+                            );
+                        }
+                        warning_active = true;
+                    }
+                    PacketArrivalHistoryWarningCommand::Available if warning_active => {
+                        let event = PlatformRuntimeEvent {
+                            disposition: PlatformRuntimeEventDisposition::Cleared,
+                            severity: PlatformRuntimeEventSeverity::Warning,
+                            code: PlatformRuntimeEventCode::NativePacketArrivalFeedback,
+                            message: None,
+                        };
+                        if let Err(error) = platform.publish_runtime_event(event) {
+                            eprintln!(
+                                "Lumen native media stage=packet-arrival-warning-clear-failed error={error}"
+                            );
+                        }
+                        warning_active = false;
+                    }
+                    #[cfg(test)]
+                    PacketArrivalHistoryWarningCommand::Flush(response) => {
+                        let _ = response.send(());
+                    }
+                    PacketArrivalHistoryWarningCommand::Unavailable
+                    | PacketArrivalHistoryWarningCommand::Available => (),
+                }
+            }
+        });
+        Self {
+            commands,
+            warning_present,
+        }
+    }
+
+    fn unavailable(&self) {
+        if self
+            .warning_present
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return;
+        }
+        if self
+            .commands
+            .try_send(PacketArrivalHistoryWarningCommand::Unavailable)
+            .is_err()
+        {
+            self.warning_present.store(false, Ordering::Release);
+        }
+    }
+
+    fn available(&self) {
+        if !self.warning_present.swap(false, Ordering::AcqRel) {
+            return;
+        }
+        if self
+            .commands
+            .try_send(PacketArrivalHistoryWarningCommand::Available)
+            .is_err()
+        {
+            self.warning_present.store(true, Ordering::Release);
+        }
+    }
+
+    #[cfg(test)]
+    async fn flush(&self) {
+        let (response, receive) = oneshot::channel();
+        self.commands
+            .send(PacketArrivalHistoryWarningCommand::Flush(response))
+            .await
+            .unwrap();
+        receive.await.unwrap();
+    }
+}
+
+#[derive(Clone)]
+struct PacketArrivalSendObservation {
+    history: PacketArrivalHistory,
+    warning_reporter: PacketArrivalHistoryWarningReporter,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DatagramBatchMode {
@@ -124,6 +242,54 @@ async fn send_connection_datagram(
     match result {
         Ok(()) => DatagramSendOutcome::Sent,
         Err(error) => DatagramSendOutcome::Failed(error.to_string()),
+    }
+}
+
+async fn send_tracked_connection_datagram(
+    connection: &quinn::Connection,
+    packet_arrival: &PacketArrivalSendObservation,
+    mode: DatagramBatchMode,
+    datagram: Vec<u8>,
+    deadline: Option<Instant>,
+) -> DatagramSendOutcome {
+    let identity = decode_native_media_datagram(&datagram)
+        .ok()
+        .and_then(|decoded| {
+            let stream_id = match decoded.header.kind {
+                NativeMediaKind::VideoDelta => NATIVE_VIDEO_STREAM_ID,
+                NativeMediaKind::Audio => NATIVE_AUDIO_STREAM_ID,
+                NativeMediaKind::InputMotion => return None,
+            };
+            Some(PacketIdentity {
+                stream_id,
+                datagram_sequence: decoded.header.datagram_sequence,
+            })
+        });
+    let outcome = send_connection_datagram(connection, mode, datagram, deadline).await;
+    record_successful_datagram(packet_arrival, identity, &outcome);
+    outcome
+}
+
+fn record_successful_datagram(
+    packet_arrival: &PacketArrivalSendObservation,
+    identity: Option<PacketIdentity>,
+    outcome: &DatagramSendOutcome,
+) {
+    if matches!(outcome, DatagramSendOutcome::Sent) {
+        if let Some(identity) = identity {
+            match packet_arrival.history.record_sent(identity) {
+                Ok(()) => packet_arrival.warning_reporter.available(),
+                Err(error) => {
+                    eprintln!(
+                        "Lumen native media stage=packet-arrival-history-unavailable stream-id={} datagram-sequence={} reason={}",
+                        identity.stream_id,
+                        identity.datagram_sequence,
+                        error.code(),
+                    );
+                    packet_arrival.warning_reporter.unavailable();
+                }
+            }
+        }
     }
 }
 
@@ -401,19 +567,28 @@ pub(super) async fn run_native_media_loop(
     session_epoch: u32,
     router: SharedControlRouter,
     platform: Arc<dyn PlatformSessionControl>,
+    packet_arrival_history: PacketArrivalHistory,
 ) -> Result<(), String> {
+    let packet_arrival_warning_reporter =
+        PacketArrivalHistoryWarningReporter::spawn(Arc::clone(&platform));
+    let packet_arrival = PacketArrivalSendObservation {
+        history: packet_arrival_history,
+        warning_reporter: packet_arrival_warning_reporter,
+    };
     run_native_media_tasks(
         run_native_audio_sender(
             connection.clone(),
             session_epoch,
             router.clone(),
             Arc::clone(&platform),
+            packet_arrival.clone(),
         ),
         run_native_video_sender(
             connection.clone(),
             session_epoch,
             router.clone(),
             Arc::clone(&platform),
+            packet_arrival,
         ),
         run_native_motion_receiver(connection, session_epoch, router, platform),
     )
@@ -443,6 +618,7 @@ async fn run_native_audio_sender(
     session_epoch: u32,
     router: SharedControlRouter,
     platform: Arc<dyn PlatformSessionControl>,
+    packet_arrival: PacketArrivalSendObservation,
 ) -> Result<(), String> {
     let mut interval = tokio::time::interval(MEDIA_POLL_INTERVAL);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -456,6 +632,7 @@ async fn run_native_audio_sender(
             &router,
             platform.as_ref(),
             &mut audio,
+            &packet_arrival,
         )
         .await;
         failures.observe(MediaKind::Audio, &attempt, platform.as_ref());
@@ -484,6 +661,7 @@ async fn run_native_video_sender(
     session_epoch: u32,
     router: SharedControlRouter,
     platform: Arc<dyn PlatformSessionControl>,
+    packet_arrival: PacketArrivalSendObservation,
 ) -> Result<(), String> {
     let mut interval = tokio::time::interval(MEDIA_POLL_INTERVAL);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -500,6 +678,7 @@ async fn run_native_video_sender(
             platform.as_ref(),
             &mut video,
             queue_was_empty_before_video,
+            &packet_arrival,
         )
         .await;
         failures.observe(MediaKind::Video, &attempt, platform.as_ref());
@@ -691,6 +870,7 @@ async fn poll_and_send_audio(
     router: &SharedControlRouter,
     platform: &dyn PlatformSessionControl,
     sender: &mut AudioSenderState,
+    packet_arrival: &PacketArrivalSendObservation,
 ) -> MediaAttempt {
     let delivery = router
         .lock()
@@ -746,7 +926,9 @@ async fn poll_and_send_audio(
         packetized.datagrams,
         DatagramBatchMode::DeadlineWait,
         Some(deadline),
-        |mode, datagram, deadline| send_connection_datagram(connection, mode, datagram, deadline),
+        |mode, datagram, deadline| {
+            send_tracked_connection_datagram(connection, packet_arrival, mode, datagram, deadline)
+        },
     )
     .await;
     sender.unit_id = match unit_id.checked_add(1) {
@@ -951,6 +1133,7 @@ async fn poll_and_send_video(
     platform: &dyn PlatformSessionControl,
     sender: &mut VideoSenderState,
     queue_was_empty_before_current_audio: bool,
+    packet_arrival: &PacketArrivalSendObservation,
 ) -> MediaAttempt {
     let delivery = router
         .lock()
@@ -1188,7 +1371,9 @@ async fn poll_and_send_video(
         |required_capacity, deadline| {
             wait_for_connection_datagram_queue_capacity(connection, required_capacity, deadline)
         },
-        |mode, datagram, deadline| send_connection_datagram(connection, mode, datagram, deadline),
+        |mode, datagram, deadline| {
+            send_tracked_connection_datagram(connection, packet_arrival, mode, datagram, deadline)
+        },
     )
     .await;
     let delivery_complete = report.status == DatagramBatchStatus::Complete;
@@ -1327,13 +1512,18 @@ fn object_deadline_exceeded(age: Duration, maximum_object_delay_us: u32) -> bool
 
 #[cfg(test)]
 mod tests {
+    use super::super::packet_arrival::{
+        PacketArrivalFeedbackError, PacketArrivalHistory, PacketIdentity,
+    };
     use super::{
         classify_video_keyframe_delivery, delivery_for_session, object_deadline_exceeded,
-        run_native_media_tasks, send_datagram_batch, send_video_datagram_batch,
-        wait_for_datagram_deadline, wait_for_datagram_queue_capacity, DatagramBatchDropReason,
-        DatagramBatchMode, DatagramBatchStatus, DatagramDeadlineElapsed, DatagramSendOutcome,
+        record_successful_datagram, run_native_media_tasks, send_datagram_batch,
+        send_video_datagram_batch, wait_for_datagram_deadline, wait_for_datagram_queue_capacity,
+        DatagramBatchDropReason, DatagramBatchMode, DatagramBatchStatus, DatagramDeadlineElapsed,
+        DatagramSendOutcome, PacketArrivalHistoryWarningReporter, PacketArrivalSendObservation,
         SessionDelivery, VideoBootstrapClassification, VideoKeyframeDelivery, VideoSenderState,
     };
+    use lumen_engine::MediaFeedback;
     use lumen_engine::NativeVideoBootstrapReason;
     use std::cell::{Cell, RefCell};
     use std::collections::VecDeque;
@@ -1342,9 +1532,30 @@ mod tests {
     use std::rc::Rc;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::Mutex;
     use std::task::{Context, Poll};
     use std::time::{Duration, Instant};
     use tokio::sync::Notify;
+
+    #[derive(Default)]
+    struct RuntimeEventPlatform {
+        events: Mutex<Vec<crate::PlatformRuntimeEvent>>,
+    }
+
+    impl crate::PlatformSessionControl for RuntimeEventPlatform {
+        fn start_session(&self, _: crate::PlatformSessionPlan) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn stop_session(&self) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn publish_runtime_event(&self, event: crate::PlatformRuntimeEvent) -> Result<(), String> {
+            self.events.lock().unwrap().push(event);
+            Ok(())
+        }
+    }
 
     struct PendingSend {
         polls: Arc<AtomicUsize>,
@@ -1810,5 +2021,109 @@ mod tests {
         assert!(!sender.take_post_bootstrap_repair_request(false));
         assert!(sender.pending_frame.is_none());
         assert!(sender.pending_since.is_none());
+    }
+
+    #[tokio::test]
+    async fn sender_history_records_only_successful_datagram_admission() {
+        let history = PacketArrivalHistory::spawn();
+        history.set_enabled(true);
+        let warning_reporter =
+            PacketArrivalHistoryWarningReporter::spawn(Arc::new(RuntimeEventPlatform::default()));
+        let packet_arrival = PacketArrivalSendObservation {
+            history: history.clone(),
+            warning_reporter,
+        };
+        let dropped = PacketIdentity {
+            stream_id: 1,
+            datagram_sequence: 30,
+        };
+        let sent = PacketIdentity {
+            stream_id: 1,
+            datagram_sequence: 31,
+        };
+        record_successful_datagram(
+            &packet_arrival,
+            Some(dropped),
+            &DatagramSendOutcome::DeadlineExceeded,
+        );
+        record_successful_datagram(&packet_arrival, Some(sent), &DatagramSendOutcome::Sent);
+
+        let mut sent_run = Vec::from(31_u32.to_be_bytes());
+        sent_run.extend_from_slice(&1_u64.to_be_bytes());
+        sent_run.push(0);
+        let accepted = history
+            .observe(&MediaFeedback {
+                stream_id: 1,
+                first_datagram_sequence: 31,
+                highest_datagram_sequence: 31,
+                received_datagrams: 1,
+                window_milliseconds: 250,
+                packet_arrival_reference_time_us: 1_000,
+                packet_arrival_runs: sent_run,
+                ..MediaFeedback::default()
+            })
+            .await;
+        assert!(accepted.is_ok());
+
+        let mut dropped_run = Vec::from(30_u32.to_be_bytes());
+        dropped_run.extend_from_slice(&1_u64.to_be_bytes());
+        dropped_run.push(0);
+        assert_eq!(
+            history
+                .observe(&MediaFeedback {
+                    stream_id: 1,
+                    first_datagram_sequence: 30,
+                    highest_datagram_sequence: 30,
+                    received_datagrams: 1,
+                    window_milliseconds: 250,
+                    packet_arrival_reference_time_us: 1_000,
+                    packet_arrival_runs: dropped_run,
+                    ..MediaFeedback::default()
+                })
+                .await,
+            Err(PacketArrivalFeedbackError::UntrackedDatagram)
+        );
+    }
+
+    #[tokio::test]
+    async fn unavailable_packet_arrival_history_publishes_one_bounded_typed_warning() {
+        let history = PacketArrivalHistory::unavailable();
+        let platform = Arc::new(RuntimeEventPlatform::default());
+        let warning_reporter = PacketArrivalHistoryWarningReporter::spawn(platform.clone());
+        let packet_arrival = PacketArrivalSendObservation {
+            history,
+            warning_reporter: warning_reporter.clone(),
+        };
+        let identity = PacketIdentity {
+            stream_id: 1,
+            datagram_sequence: 31,
+        };
+
+        record_successful_datagram(&packet_arrival, Some(identity), &DatagramSendOutcome::Sent);
+        record_successful_datagram(&packet_arrival, Some(identity), &DatagramSendOutcome::Sent);
+        warning_reporter.flush().await;
+
+        assert_eq!(
+            *platform.events.lock().unwrap(),
+            vec![crate::PlatformRuntimeEvent {
+                disposition: crate::PlatformRuntimeEventDisposition::Raised,
+                severity: crate::PlatformRuntimeEventSeverity::Warning,
+                code: crate::PlatformRuntimeEventCode::NativePacketArrivalFeedback,
+                message: Some("packet-arrival-history-unavailable".to_owned()),
+            }]
+        );
+
+        warning_reporter.available();
+        warning_reporter.flush().await;
+        assert_eq!(
+            platform.events.lock().unwrap().last(),
+            Some(&crate::PlatformRuntimeEvent {
+                disposition: crate::PlatformRuntimeEventDisposition::Cleared,
+                severity: crate::PlatformRuntimeEventSeverity::Warning,
+                code: crate::PlatformRuntimeEventCode::NativePacketArrivalFeedback,
+                message: None,
+            })
+        );
+        assert_eq!(platform.events.lock().unwrap().len(), 2);
     }
 }

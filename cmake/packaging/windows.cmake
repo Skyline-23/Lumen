@@ -1,5 +1,8 @@
 # windows specific packaging
 install(TARGETS lumen RUNTIME DESTINATION "." COMPONENT application)
+install(DIRECTORY "${LUMEN_WINDOWS_UI_PUBLISH_DIR}/"
+        DESTINATION "."
+        COMPONENT application)
 
 # ViGEmBus installer
 set(VIGEMBUS_INSTALLER "${CMAKE_BINARY_DIR}/vigembus_installer.exe")

@@ -20,8 +20,7 @@ set(LUMEN_RUST_HOST_ARCHIVE
         "${LUMEN_RUST_TARGET_DIR}/${LUMEN_RUST_TARGET}/${LUMEN_RUST_PROFILE}/liblumen_host.a")
 file(GLOB_RECURSE LUMEN_RUST_HOST_SOURCES CONFIGURE_DEPENDS
         "${CMAKE_SOURCE_DIR}/engine/lumen-engine/src/*.rs"
-        "${CMAKE_SOURCE_DIR}/engine/lumen-host/src/*.rs"
-        "${CMAKE_SOURCE_DIR}/engine/lumen-host/ui/*.slint")
+        "${CMAKE_SOURCE_DIR}/engine/lumen-host/src/*.rs")
 list(APPEND LUMEN_RUST_HOST_SOURCES
         "${CMAKE_SOURCE_DIR}/engine/lumen-host/build.rs")
 

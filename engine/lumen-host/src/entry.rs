@@ -19,7 +19,9 @@ use crate::platform::CallbackPlatformSessionControl;
 #[cfg(target_os = "macos")]
 use crate::platform::MacPlatformSessionControl;
 #[cfg(windows)]
-use crate::platform::{NativeWindowsLifecycle, NativeWindowsShell, WindowsPlatformSessionControl};
+use crate::platform::{
+    NativeWindowsLifecycle, NativeWindowsManagement, WindowsPlatformSessionControl,
+};
 #[cfg(all(unix, not(target_os = "macos")))]
 use crate::IdlePlatformSessionControl;
 #[cfg(windows)]
@@ -230,11 +232,11 @@ fn run_parsed_native_host(
             NativeCommandSource::install().map_err(NativeHostRunError::CommandSource)?;
         let lifecycle =
             NativeWindowsLifecycle::start().map_err(NativeHostRunError::CommandSource)?;
-        let shell =
-            NativeWindowsShell::start(&arguments).map_err(NativeHostRunError::CommandSource)?;
+        let management = NativeWindowsManagement::start(&arguments)
+            .map_err(NativeHostRunError::CommandSource)?;
         let result =
             run_worker(&arguments, &mut runtime, &mut source).map_err(NativeHostRunError::Runtime);
-        drop(shell);
+        drop(management);
         drop(lifecycle);
         result
     }

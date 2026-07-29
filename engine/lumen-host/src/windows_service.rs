@@ -163,7 +163,7 @@ struct ProcessHandles {
     thread: OwnedHandle,
 }
 
-enum HostSupervision {
+enum SessionAgentSupervision {
     SessionChanged,
     Stop,
 }
@@ -330,17 +330,17 @@ fn run_service(state: &ServiceControl) -> ServiceResult<()> {
             continue;
         };
         let token = duplicate_service_token(session_id)?;
-        let job = create_host_job()?;
-        let process = launch_host(&token, &job)?;
-        match supervise_host(
+        let job = create_session_agent_job()?;
+        let process = launch_session_agent(&token, &job)?;
+        match supervise_session_agent(
             &token,
             session_id,
             &process,
             stop_event.get(),
             session_event.get(),
         )? {
-            HostSupervision::SessionChanged => continue,
-            HostSupervision::Stop => break,
+            SessionAgentSupervision::SessionChanged => continue,
+            SessionAgentSupervision::Stop => break,
         }
     }
     Ok(())
@@ -457,10 +457,10 @@ fn duplicate_service_token(session_id: u32) -> ServiceResult<OwnedHandle> {
     Ok(token)
 }
 
-fn create_host_job() -> ServiceResult<OwnedHandle> {
+fn create_session_agent_job() -> ServiceResult<OwnedHandle> {
     let job = OwnedHandle::new(
         unsafe { CreateJobObjectW(null(), null()) },
-        "create Lumen service host job",
+        "create Lumen session agent job",
     )?;
     let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
     limits.BasicLimitInformation.LimitFlags =
@@ -474,12 +474,12 @@ fn create_host_job() -> ServiceResult<OwnedHandle> {
         )
     } == 0
     {
-        return Err(last_error("configure Lumen service host job"));
+        return Err(last_error("configure Lumen session agent job"));
     }
     Ok(job)
 }
 
-fn launch_host(token: &OwnedHandle, job: &OwnedHandle) -> ServiceResult<ProcessHandles> {
+fn launch_session_agent(token: &OwnedHandle, job: &OwnedHandle) -> ServiceResult<ProcessHandles> {
     use std::os::windows::ffi::OsStrExt;
 
     let service = std::env::current_exe()
@@ -493,7 +493,7 @@ fn launch_host(token: &OwnedHandle, job: &OwnedHandle) -> ServiceResult<ProcessH
                 ERROR_GEN_FAILURE,
             )
         })?;
-    let host = host_directory.join("Lumen.exe");
+    let host = host_directory.join("LumenSessionAgent.exe");
     let application = host
         .as_os_str()
         .encode_wide()
@@ -525,39 +525,39 @@ fn launch_host(token: &OwnedHandle, job: &OwnedHandle) -> ServiceResult<ProcessH
         )
     } == 0
     {
-        return Err(last_error("launch Lumen host from service"));
+        return Err(last_error("launch Lumen session agent from service"));
     }
     let handles = ProcessHandles {
-        process: OwnedHandle::new(process.hProcess, "open Lumen host process")?,
-        thread: OwnedHandle::new(process.hThread, "open Lumen host thread")?,
+        process: OwnedHandle::new(process.hProcess, "open Lumen session agent process")?,
+        thread: OwnedHandle::new(process.hThread, "open Lumen session agent thread")?,
     };
     if unsafe { AssignProcessToJobObject(job.get(), handles.process.get()) } == 0 {
-        let error = last_error("assign Lumen host to service job");
-        terminate_suspended_host(&handles);
+        let error = last_error("assign Lumen session agent to service job");
+        terminate_suspended_session_agent(&handles);
         return Err(error);
     }
     if unsafe { ResumeThread(handles.thread.get()) } == u32::MAX {
         let error = last_error("resume Lumen service host");
-        terminate_suspended_host(&handles);
+        terminate_suspended_session_agent(&handles);
         return Err(error);
     }
     Ok(handles)
 }
 
-fn terminate_suspended_host(process: &ProcessHandles) {
+fn terminate_suspended_session_agent(process: &ProcessHandles) {
     unsafe {
         TerminateProcess(process.process.get(), ERROR_PROCESS_ABORTED);
         WaitForSingleObject(process.process.get(), 5_000);
     }
 }
 
-fn supervise_host(
+fn supervise_session_agent(
     token: &OwnedHandle,
     session_id: u32,
     process: &ProcessHandles,
     stop_event: HANDLE,
     session_event: HANDLE,
-) -> ServiceResult<HostSupervision> {
+) -> ServiceResult<SessionAgentSupervision> {
     loop {
         let handles = [stop_event, process.process.get(), session_event];
         let signaled =
@@ -565,14 +565,14 @@ fn supervise_host(
         if signaled == WAIT_OBJECT_0 + 1 {
             let mut exit_code = 0;
             if unsafe { GetExitCodeProcess(process.process.get(), &mut exit_code) } == 0 {
-                return Err(last_error("read Lumen host exit code"));
+                return Err(last_error("read Lumen session agent exit code"));
             }
             if exit_code == ERROR_SHUTDOWN_IN_PROGRESS {
                 signal(ServiceControl::shared().stop_event.load(Ordering::Acquire) as HANDLE);
-                return Ok(HostSupervision::Stop);
+                return Ok(SessionAgentSupervision::Stop);
             }
             return Err(ServiceError::status(
-                format!("Lumen host exited with status {exit_code}"),
+                format!("Lumen session agent exited with status {exit_code}"),
                 exit_code,
             ));
         }
@@ -580,9 +580,9 @@ fn supervise_host(
             continue;
         }
         if signaled != WAIT_OBJECT_0 && signaled != WAIT_OBJECT_0 + 2 {
-            return Err(last_error("wait for Lumen host supervision event"));
+            return Err(last_error("wait for Lumen session agent supervision event"));
         }
-        if run_termination_helper(token, process.process.get()).is_err()
+        if run_session_agent_termination_helper(token, process.process.get()).is_err()
             || unsafe { WaitForSingleObject(process.process.get(), 20_000) } != WAIT_OBJECT_0
         {
             unsafe {
@@ -590,14 +590,14 @@ fn supervise_host(
             }
         }
         return Ok(if signaled == WAIT_OBJECT_0 {
-            HostSupervision::Stop
+            SessionAgentSupervision::Stop
         } else {
-            HostSupervision::SessionChanged
+            SessionAgentSupervision::SessionChanged
         });
     }
 }
 
-fn run_termination_helper(token: &OwnedHandle, process: HANDLE) -> ServiceResult<()> {
+fn run_session_agent_termination_helper(token: &OwnedHandle, process: HANDLE) -> ServiceResult<()> {
     use std::os::windows::ffi::OsStrExt;
 
     let executable = std::env::current_exe()
@@ -605,7 +605,7 @@ fn run_termination_helper(token: &OwnedHandle, process: HANDLE) -> ServiceResult
     let executable_wide: Vec<u16> = executable.as_os_str().encode_wide().chain([0]).collect();
     let process_id = unsafe { GetProcessId(process) };
     if process_id == 0 {
-        return Err(last_error("resolve Lumen host process id"));
+        return Err(last_error("resolve Lumen session agent process id"));
     }
     let mut command = Vec::with_capacity(executable_wide.len() + 32);
     command.push('"' as u16);
@@ -654,13 +654,13 @@ fn run_termination_helper(token: &OwnedHandle, process: HANDLE) -> ServiceResult
 
 fn graceful_termination(process_id: u32) -> ServiceResult<()> {
     if unsafe { AttachConsole(process_id) } == 0 {
-        return Err(last_error("attach to Lumen host console"));
+        return Err(last_error("attach to Lumen session agent console"));
     }
     if unsafe { SetConsoleCtrlHandler(None, 1) } == 0 {
         return Err(last_error("disable Lumen helper console handler"));
     }
     if unsafe { GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0) } == 0 {
-        return Err(last_error("send Lumen host control event"));
+        return Err(last_error("send Lumen session agent control event"));
     }
     Ok(())
 }

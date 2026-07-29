@@ -7,8 +7,11 @@ pub(crate) enum FeedbackStream {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CongestionSource {
     None,
-    Audio,
-    Video,
+    AudioNetwork,
+    VideoNetwork,
+    AudioPipeline,
+    VideoPipeline,
+    VideoPresentation,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -37,28 +40,42 @@ pub(crate) struct AdaptiveVideoDecision {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-enum CongestionSeverity {
+enum NetworkCongestionSeverity {
     Neutral,
     Clean,
     Transport,
     Severe,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum PipelinePressureSeverity {
+    Neutral,
+    Clean,
+    Presentation,
+    Congested,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct AdaptiveVideoDeliveryController {
+    // Packet-path evidence owns the wire budget and FEC state.
     ceiling_wire_kbps: u32,
     floor_wire_kbps: u32,
     wire_budget_kbps: u32,
+    // Decode/playback pressure may cap encoder work, but never rewrites B_net.
+    ceiling_encoder_kbps: u32,
+    floor_encoder_kbps: u32,
+    pipeline_encoder_budget_kbps: u32,
     fec_percentage: u16,
     maximum_decoder_queue_depth: u32,
-    clean_video_windows: u8,
+    clean_network_windows: u32,
+    clean_pipeline_windows: u32,
+    pipeline_pressure_armed: bool,
 }
 
 impl AdaptiveVideoDeliveryController {
-    const MINIMUM_WIRE_BUDGET_KBPS: u32 = 2_000;
     const MINIMUM_FEC_PERCENTAGE: u16 = 5;
     const MAXIMUM_FEC_PERCENTAGE: u16 = 30;
-    const CLEAN_WINDOWS_BEFORE_INCREASE: u8 = 8;
+    const CLEAN_WINDOWS_BEFORE_INCREASE: u32 = 8;
     const TRANSPORT_LOSS_PARTS_PER_MILLION: u64 = 20_000;
     const HIGH_JITTER_MICROSECONDS: u32 = 10_000;
 
@@ -69,75 +86,150 @@ impl AdaptiveVideoDeliveryController {
         maximum_decoder_queue_depth: u32,
     ) -> Self {
         let ceiling_wire_kbps = ceiling_wire_kbps.max(1);
-        let floor_wire_kbps = ceiling_wire_kbps.min(Self::MINIMUM_WIRE_BUDGET_KBPS);
+        let floor_wire_kbps = ceiling_wire_kbps.div_ceil(4);
+        let initial_fec_percentage = initial_fec_percentage
+            .clamp(Self::MINIMUM_FEC_PERCENTAGE, Self::MAXIMUM_FEC_PERCENTAGE);
+        let wire_budget_kbps = initial_wire_kbps.clamp(floor_wire_kbps, ceiling_wire_kbps);
+        let ceiling_encoder_kbps =
+            ceiling_wire_kbps.saturating_mul(100) / u32::from(100 + Self::MINIMUM_FEC_PERCENTAGE);
+        let floor_encoder_kbps = ceiling_encoder_kbps.div_ceil(4).max(1);
+        let pipeline_encoder_budget_kbps =
+            wire_budget_kbps.saturating_mul(100) / u32::from(100 + initial_fec_percentage);
         Self {
             ceiling_wire_kbps,
             floor_wire_kbps,
-            wire_budget_kbps: initial_wire_kbps.clamp(floor_wire_kbps, ceiling_wire_kbps),
-            fec_percentage: initial_fec_percentage
-                .clamp(Self::MINIMUM_FEC_PERCENTAGE, Self::MAXIMUM_FEC_PERCENTAGE),
+            wire_budget_kbps,
+            ceiling_encoder_kbps,
+            floor_encoder_kbps,
+            pipeline_encoder_budget_kbps,
+            fec_percentage: initial_fec_percentage,
             maximum_decoder_queue_depth: maximum_decoder_queue_depth.max(1),
-            clean_video_windows: 0,
+            clean_network_windows: 0,
+            clean_pipeline_windows: 0,
+            pipeline_pressure_armed: true,
         }
     }
 
     #[cfg(test)]
     pub(crate) fn observe(&mut self, sample: MediaFeedbackSample) -> AdaptiveVideoDecision {
-        let severity = self.classify(sample);
-        let source = match severity {
-            CongestionSeverity::Neutral | CongestionSeverity::Clean => CongestionSource::None,
-            CongestionSeverity::Transport | CongestionSeverity::Severe => match sample.stream {
-                FeedbackStream::Audio => CongestionSource::Audio,
-                FeedbackStream::Video => CongestionSource::Video,
+        let network_severity = self.classify_network(sample);
+        let network_source = match network_severity {
+            NetworkCongestionSeverity::Neutral | NetworkCongestionSeverity::Clean => {
+                CongestionSource::None
+            }
+            NetworkCongestionSeverity::Transport | NetworkCongestionSeverity::Severe => {
+                match sample.stream {
+                    FeedbackStream::Audio => CongestionSource::AudioNetwork,
+                    FeedbackStream::Video => CongestionSource::VideoNetwork,
+                }
+            }
+        };
+        let pipeline_severity = self.classify_pipeline(sample);
+        let pipeline_source = match pipeline_severity {
+            PipelinePressureSeverity::Neutral | PipelinePressureSeverity::Clean => {
+                CongestionSource::None
+            }
+            PipelinePressureSeverity::Presentation => CongestionSource::VideoPresentation,
+            PipelinePressureSeverity::Congested => match sample.stream {
+                FeedbackStream::Audio => CongestionSource::AudioPipeline,
+                FeedbackStream::Video => CongestionSource::VideoPipeline,
             },
         };
-        self.apply_observation(severity, source, Some(sample))
+        self.apply_observation(
+            network_severity,
+            network_source,
+            pipeline_severity,
+            pipeline_source,
+            Some(sample),
+            1,
+        )
     }
 
     pub(crate) fn observe_window(
         &mut self,
         video: MediaFeedbackSample,
         audio: MediaFeedbackSample,
+        clean_window_units: u32,
     ) -> AdaptiveVideoDecision {
         debug_assert_eq!(video.stream, FeedbackStream::Video);
         debug_assert_eq!(audio.stream, FeedbackStream::Audio);
-        let video_severity = self.classify(video);
-        let audio_severity = self.classify(audio);
-        let (severity, stream) = if video_severity >= audio_severity {
-            (video_severity, FeedbackStream::Video)
+
+        let video_network = self.classify_network(video);
+        let audio_network = self.classify_network(audio);
+        let (network_severity, network_stream) = if video_network >= audio_network {
+            (video_network, FeedbackStream::Video)
         } else {
-            (audio_severity, FeedbackStream::Audio)
+            (audio_network, FeedbackStream::Audio)
         };
-        let severity = if severity == CongestionSeverity::Clean
-            && video_severity != CongestionSeverity::Clean
+        let network_severity = if network_severity == NetworkCongestionSeverity::Clean
+            && video_network != NetworkCongestionSeverity::Clean
         {
-            CongestionSeverity::Neutral
+            NetworkCongestionSeverity::Neutral
         } else {
-            severity
+            network_severity
         };
-        let source = match severity {
-            CongestionSeverity::Neutral | CongestionSeverity::Clean => CongestionSource::None,
-            CongestionSeverity::Transport | CongestionSeverity::Severe => match stream {
-                FeedbackStream::Audio => CongestionSource::Audio,
-                FeedbackStream::Video => CongestionSource::Video,
+        let network_source = match network_severity {
+            NetworkCongestionSeverity::Neutral | NetworkCongestionSeverity::Clean => {
+                CongestionSource::None
+            }
+            NetworkCongestionSeverity::Transport | NetworkCongestionSeverity::Severe => {
+                match network_stream {
+                    FeedbackStream::Audio => CongestionSource::AudioNetwork,
+                    FeedbackStream::Video => CongestionSource::VideoNetwork,
+                }
+            }
+        };
+
+        let video_pipeline = self.classify_pipeline(video);
+        let audio_pipeline = self.classify_pipeline(audio);
+        let (pipeline_severity, pipeline_stream) = if video_pipeline >= audio_pipeline {
+            (video_pipeline, FeedbackStream::Video)
+        } else {
+            (audio_pipeline, FeedbackStream::Audio)
+        };
+        let pipeline_severity = if pipeline_severity == PipelinePressureSeverity::Clean
+            && video_pipeline != PipelinePressureSeverity::Clean
+        {
+            PipelinePressureSeverity::Neutral
+        } else {
+            pipeline_severity
+        };
+        let pipeline_source = match pipeline_severity {
+            PipelinePressureSeverity::Neutral | PipelinePressureSeverity::Clean => {
+                CongestionSource::None
+            }
+            PipelinePressureSeverity::Presentation => CongestionSource::VideoPresentation,
+            PipelinePressureSeverity::Congested => match pipeline_stream {
+                FeedbackStream::Audio => CongestionSource::AudioPipeline,
+                FeedbackStream::Video => CongestionSource::VideoPipeline,
             },
         };
-        self.apply_observation(severity, source, Some(video))
+        self.apply_observation(
+            network_severity,
+            network_source,
+            pipeline_severity,
+            pipeline_source,
+            Some(video),
+            clean_window_units.max(1),
+        )
     }
 
     fn apply_observation(
         &mut self,
-        severity: CongestionSeverity,
-        source: CongestionSource,
+        network_severity: NetworkCongestionSeverity,
+        network_source: CongestionSource,
+        pipeline_severity: PipelinePressureSeverity,
+        pipeline_source: CongestionSource,
         video_sample: Option<MediaFeedbackSample>,
+        clean_window_units: u32,
     ) -> AdaptiveVideoDecision {
-        let previous_wire_budget = self.wire_budget_kbps;
-        let previous_fec = self.fec_percentage;
+        let previous = self.snapshot();
+        let previous_pipeline_budget = self.pipeline_encoder_budget_kbps;
 
-        match severity {
-            CongestionSeverity::Neutral => {}
-            CongestionSeverity::Severe => {
-                self.clean_video_windows = 0;
+        match network_severity {
+            NetworkCongestionSeverity::Neutral => {}
+            NetworkCongestionSeverity::Severe => {
+                self.clean_network_windows = 0;
                 self.wire_budget_kbps = self
                     .wire_budget_kbps
                     .saturating_mul(80)
@@ -147,8 +239,8 @@ impl AdaptiveVideoDeliveryController {
                     self.increase_fec_for_video_loss(video_sample);
                 }
             }
-            CongestionSeverity::Transport => {
-                self.clean_video_windows = 0;
+            NetworkCongestionSeverity::Transport => {
+                self.clean_network_windows = 0;
                 self.wire_budget_kbps = self
                     .wire_budget_kbps
                     .saturating_mul(90)
@@ -158,10 +250,16 @@ impl AdaptiveVideoDeliveryController {
                     self.increase_fec_for_video_loss(video_sample);
                 }
             }
-            CongestionSeverity::Clean => {
-                self.clean_video_windows = self.clean_video_windows.saturating_add(1);
-                if self.clean_video_windows >= Self::CLEAN_WINDOWS_BEFORE_INCREASE {
-                    self.clean_video_windows = 0;
+            NetworkCongestionSeverity::Clean => {
+                let accumulated = self
+                    .clean_network_windows
+                    .saturating_add(clean_window_units);
+                self.clean_network_windows = accumulated % Self::CLEAN_WINDOWS_BEFORE_INCREASE;
+                let mut recovery_probes = accumulated / Self::CLEAN_WINDOWS_BEFORE_INCREASE;
+                while recovery_probes > 0
+                    && (self.wire_budget_kbps < self.ceiling_wire_kbps
+                        || self.fec_percentage > Self::MINIMUM_FEC_PERCENTAGE)
+                {
                     let increase = self.wire_budget_kbps.div_ceil(5).max(250);
                     self.wire_budget_kbps = self
                         .wire_budget_kbps
@@ -171,38 +269,108 @@ impl AdaptiveVideoDeliveryController {
                         .fec_percentage
                         .saturating_sub(5)
                         .max(Self::MINIMUM_FEC_PERCENTAGE);
+                    recovery_probes -= 1;
                 }
             }
         }
 
-        self.decision(
-            source,
-            self.wire_budget_kbps != previous_wire_budget || self.fec_percentage != previous_fec,
-        )
+        match pipeline_severity {
+            PipelinePressureSeverity::Neutral => {}
+            PipelinePressureSeverity::Presentation => {
+                self.clean_pipeline_windows = 0;
+            }
+            PipelinePressureSeverity::Congested => {
+                self.clean_pipeline_windows = 0;
+                if self.pipeline_pressure_armed {
+                    self.pipeline_pressure_armed = false;
+                    self.pipeline_encoder_budget_kbps = self
+                        .pipeline_encoder_budget_kbps
+                        .saturating_mul(80)
+                        .div_ceil(100)
+                        .max(self.floor_encoder_kbps);
+                }
+            }
+            PipelinePressureSeverity::Clean => {
+                let accumulated = self
+                    .clean_pipeline_windows
+                    .saturating_add(clean_window_units);
+                self.clean_pipeline_windows = accumulated % Self::CLEAN_WINDOWS_BEFORE_INCREASE;
+                let mut recovery_probes = accumulated / Self::CLEAN_WINDOWS_BEFORE_INCREASE;
+                if recovery_probes > 0 {
+                    self.pipeline_pressure_armed = true;
+                }
+                while recovery_probes > 0
+                    && self.pipeline_encoder_budget_kbps < self.ceiling_encoder_kbps
+                {
+                    let increase = self.pipeline_encoder_budget_kbps.div_ceil(5).max(250);
+                    self.pipeline_encoder_budget_kbps = self
+                        .pipeline_encoder_budget_kbps
+                        .saturating_add(increase)
+                        .min(self.ceiling_encoder_kbps);
+                    recovery_probes -= 1;
+                }
+            }
+        }
+
+        let current = self.decision(CongestionSource::None, false);
+        let network_changed = current.wire_budget_kbps != previous.wire_budget_kbps
+            || current.fec_percentage != previous.fec_percentage;
+        let pipeline_changed = self.pipeline_encoder_budget_kbps != previous_pipeline_budget;
+        let changed = current.wire_budget_kbps != previous.wire_budget_kbps
+            || current.encoder_bitrate_kbps != previous.encoder_bitrate_kbps
+            || current.fec_percentage != previous.fec_percentage;
+        let source = if network_changed && network_source != CongestionSource::None {
+            network_source
+        } else if pipeline_changed && pipeline_source != CongestionSource::None {
+            pipeline_source
+        } else if !changed && pipeline_severity == PipelinePressureSeverity::Presentation {
+            CongestionSource::VideoPresentation
+        } else {
+            CongestionSource::None
+        };
+        self.decision(source, changed)
     }
 
     pub(crate) fn snapshot(&self) -> AdaptiveVideoDecision {
         self.decision(CongestionSource::None, false)
     }
 
-    fn classify(&self, sample: MediaFeedbackSample) -> CongestionSeverity {
-        if sample.unrecoverable_objects > 0
-            || sample.late_objects > 0
-            || sample.presentation_drops > 0
-            || sample.decoder_drops > 0
-            || sample.decoder_queue_depth > self.maximum_decoder_queue_depth
-        {
-            return CongestionSeverity::Severe;
+    fn classify_network(&self, sample: MediaFeedbackSample) -> NetworkCongestionSeverity {
+        if sample.unrecoverable_objects > 0 || sample.late_objects > 0 {
+            return NetworkCongestionSeverity::Severe;
         }
         if Self::loss_parts_per_million(sample) >= Self::TRANSPORT_LOSS_PARTS_PER_MILLION
             || sample.estimated_jitter_us >= Self::HIGH_JITTER_MICROSECONDS
         {
-            return CongestionSeverity::Transport;
+            return NetworkCongestionSeverity::Transport;
         }
         if sample.expected_datagrams == 0 && sample.received_datagrams == 0 {
-            return CongestionSeverity::Neutral;
+            return NetworkCongestionSeverity::Neutral;
         }
-        CongestionSeverity::Clean
+        NetworkCongestionSeverity::Clean
+    }
+
+    fn classify_pipeline(&self, sample: MediaFeedbackSample) -> PipelinePressureSeverity {
+        if sample.decoder_drops > 0 || sample.decoder_queue_depth > self.maximum_decoder_queue_depth
+        {
+            return PipelinePressureSeverity::Congested;
+        }
+        if sample.presentation_drops > 0 {
+            return if sample.stream == FeedbackStream::Video {
+                PipelinePressureSeverity::Presentation
+            } else {
+                PipelinePressureSeverity::Congested
+            };
+        }
+        if sample.expected_datagrams == 0
+            && sample.received_datagrams == 0
+            && sample.decoder_submissions == 0
+            && sample.decoded_frames == 0
+            && sample.presented_frames == 0
+        {
+            return PipelinePressureSeverity::Neutral;
+        }
+        PipelinePressureSeverity::Clean
     }
 
     fn increase_fec_for_video_loss(&mut self, sample: MediaFeedbackSample) {
@@ -233,8 +401,9 @@ impl AdaptiveVideoDeliveryController {
     ) -> AdaptiveVideoDecision {
         AdaptiveVideoDecision {
             wire_budget_kbps: self.wire_budget_kbps,
-            encoder_bitrate_kbps: self.wire_budget_kbps.saturating_mul(100)
-                / u32::from(100 + self.fec_percentage),
+            encoder_bitrate_kbps: (self.wire_budget_kbps.saturating_mul(100)
+                / u32::from(100 + self.fec_percentage))
+            .min(self.pipeline_encoder_budget_kbps),
             fec_percentage: self.fec_percentage,
             congestion_source,
             changed,
@@ -264,37 +433,59 @@ mod tests {
     }
 
     #[test]
-    fn severe_audio_pressure_reduces_the_global_video_wire_budget_by_twenty_percent() {
+    fn audio_playback_pressure_reduces_only_the_encoder_pipeline_cap() {
         let mut controller = AdaptiveVideoDeliveryController::new(100_000, 80_000, 5, 3);
         let decision = controller.observe(MediaFeedbackSample {
             presentation_drops: 1,
             ..clean(FeedbackStream::Audio)
         });
 
-        assert_eq!(decision.wire_budget_kbps, 64_000);
+        assert_eq!(decision.wire_budget_kbps, 80_000);
         assert_eq!(decision.encoder_bitrate_kbps, 60_952);
         assert_eq!(decision.fec_percentage, 5);
-        assert_eq!(decision.congestion_source, CongestionSource::Audio);
+        assert_eq!(decision.congestion_source, CongestionSource::AudioPipeline);
         assert!(decision.changed);
     }
 
     #[test]
-    fn one_feedback_window_applies_only_one_reduction_for_two_severe_streams() {
+    fn one_feedback_window_applies_only_one_pipeline_reduction_for_two_lanes() {
         let mut controller = AdaptiveVideoDeliveryController::new(100_000, 80_000, 5, 3);
         let decision = controller.observe_window(
             MediaFeedbackSample {
-                presentation_drops: 1,
+                decoder_drops: 1,
                 ..clean(FeedbackStream::Video)
             },
             MediaFeedbackSample {
-                presentation_drops: 1,
+                decoder_drops: 1,
                 ..clean(FeedbackStream::Audio)
             },
+            1,
+        );
+
+        assert_eq!(decision.wire_budget_kbps, 80_000);
+        assert_eq!(decision.encoder_bitrate_kbps, 60_952);
+        assert_eq!(decision.congestion_source, CongestionSource::VideoPipeline);
+        assert!(decision.changed);
+    }
+
+    #[test]
+    fn one_feedback_window_applies_only_one_network_backoff_for_two_streams() {
+        let mut controller = AdaptiveVideoDeliveryController::new(100_000, 80_000, 5, 3);
+        let decision = controller.observe_window(
+            MediaFeedbackSample {
+                unrecoverable_objects: 1,
+                ..clean(FeedbackStream::Video)
+            },
+            MediaFeedbackSample {
+                unrecoverable_objects: 1,
+                ..clean(FeedbackStream::Audio)
+            },
+            1,
         );
 
         assert_eq!(decision.wire_budget_kbps, 64_000);
         assert_eq!(decision.encoder_bitrate_kbps, 60_952);
-        assert_eq!(decision.congestion_source, CongestionSource::Video);
+        assert_eq!(decision.congestion_source, CongestionSource::VideoNetwork);
         assert!(decision.changed);
     }
 
@@ -325,7 +516,8 @@ mod tests {
         };
 
         for _ in 0..AdaptiveVideoDeliveryController::CLEAN_WINDOWS_BEFORE_INCREASE {
-            let decision = controller.observe_window(processing_only_video, processing_only_audio);
+            let decision =
+                controller.observe_window(processing_only_video, processing_only_audio, 1);
             assert!(!decision.changed);
             assert_eq!(decision.wire_budget_kbps, congested.wire_budget_kbps);
             assert_eq!(decision.fec_percentage, congested.fec_percentage);
@@ -348,7 +540,8 @@ mod tests {
         };
 
         for _ in 0..AdaptiveVideoDeliveryController::CLEAN_WINDOWS_BEFORE_INCREASE {
-            let decision = controller.observe_window(neutral_video, clean(FeedbackStream::Audio));
+            let decision =
+                controller.observe_window(neutral_video, clean(FeedbackStream::Audio), 1);
             assert!(!decision.changed);
             assert_eq!(decision.wire_budget_kbps, congested.wire_budget_kbps);
             assert_eq!(decision.fec_percentage, congested.fec_percentage);
@@ -371,15 +564,17 @@ mod tests {
                 received_datagrams: 0,
                 ..clean(FeedbackStream::Audio)
             },
+            1,
         );
 
         assert!(decision.changed);
-        assert_eq!(decision.wire_budget_kbps, 64_000);
-        assert_eq!(decision.congestion_source, CongestionSource::Video);
+        assert_eq!(decision.wire_budget_kbps, 80_000);
+        assert_eq!(decision.encoder_bitrate_kbps, 60_952);
+        assert_eq!(decision.congestion_source, CongestionSource::VideoPipeline);
     }
 
     #[test]
-    fn decoder_drop_reduces_budget_without_misclassifying_it_as_transport_loss() {
+    fn decoder_drop_reduces_pipeline_cap_without_mutating_network_state() {
         let mut controller = AdaptiveVideoDeliveryController::new(100_000, 80_000, 5, 3);
         let decision = controller.observe(MediaFeedbackSample {
             decoder_submissions: 100,
@@ -389,10 +584,42 @@ mod tests {
             ..clean(FeedbackStream::Video)
         });
 
-        assert_eq!(decision.wire_budget_kbps, 64_000);
+        assert_eq!(decision.wire_budget_kbps, 80_000);
+        assert_eq!(decision.encoder_bitrate_kbps, 60_952);
         assert_eq!(decision.fec_percentage, 5);
-        assert_eq!(decision.congestion_source, CongestionSource::Video);
+        assert_eq!(decision.congestion_source, CongestionSource::VideoPipeline);
         assert!(decision.changed);
+    }
+
+    #[test]
+    fn repeated_decoder_pressure_reduces_pipeline_cap_once_per_clean_epoch() {
+        let mut controller = AdaptiveVideoDeliveryController::new(48_000, 48_000, 5, 3);
+        let decoder_pressure = MediaFeedbackSample {
+            decoder_drops: 1,
+            ..clean(FeedbackStream::Video)
+        };
+
+        let first = controller.observe(decoder_pressure);
+        assert_eq!(first.wire_budget_kbps, 48_000);
+        assert_eq!(first.encoder_bitrate_kbps, 36_572);
+        assert!(first.changed);
+
+        for _ in 0..16 {
+            let repeated = controller.observe(decoder_pressure);
+            assert_eq!(repeated.wire_budget_kbps, 48_000);
+            assert_eq!(repeated.encoder_bitrate_kbps, 36_572);
+            assert!(!repeated.changed);
+        }
+
+        for _ in 0..AdaptiveVideoDeliveryController::CLEAN_WINDOWS_BEFORE_INCREASE {
+            _ = controller.observe(clean(FeedbackStream::Video));
+        }
+        assert_eq!(controller.snapshot().encoder_bitrate_kbps, 43_887);
+
+        let new_epoch = controller.observe(decoder_pressure);
+        assert_eq!(new_epoch.wire_budget_kbps, 48_000);
+        assert_eq!(new_epoch.encoder_bitrate_kbps, 35_110);
+        assert!(new_epoch.changed);
     }
 
     #[test]
@@ -406,7 +633,7 @@ mod tests {
         assert_eq!(decision.wire_budget_kbps, 72_000);
         assert_eq!(decision.encoder_bitrate_kbps, 65_454);
         assert_eq!(decision.fec_percentage, 10);
-        assert_eq!(decision.congestion_source, CongestionSource::Video);
+        assert_eq!(decision.congestion_source, CongestionSource::VideoNetwork);
         assert!(decision.changed);
     }
 
@@ -427,9 +654,80 @@ mod tests {
     }
 
     #[test]
-    fn sustained_audio_loss_can_protect_audio_below_the_initial_quarter_floor() {
+    fn one_coalesced_clean_window_recovers_by_its_base_window_duration() {
+        let mut controller = AdaptiveVideoDeliveryController::new(80_000, 80_000, 5, 3);
+        let congested = controller.observe(MediaFeedbackSample {
+            decoder_drops: 1,
+            ..clean(FeedbackStream::Video)
+        });
+        assert_eq!(congested.wire_budget_kbps, 80_000);
+        assert_eq!(congested.encoder_bitrate_kbps, 60_952);
+
+        let recovered = controller.observe_window(
+            clean(FeedbackStream::Video),
+            clean(FeedbackStream::Audio),
+            AdaptiveVideoDeliveryController::CLEAN_WINDOWS_BEFORE_INCREASE,
+        );
+
+        assert_eq!(recovered.wire_budget_kbps, 80_000);
+        assert_eq!(recovered.encoder_bitrate_kbps, 73_143);
+        assert!(recovered.changed);
+    }
+
+    #[test]
+    fn presentation_only_pressure_never_mutates_network_or_pipeline_budgets() {
+        let mut controller = AdaptiveVideoDeliveryController::new(48_000, 48_000, 5, 3);
+        let presentation_only = MediaFeedbackSample {
+            presentation_drops: 1,
+            ..clean(FeedbackStream::Video)
+        };
+
+        let first = controller.observe(presentation_only);
+        assert_eq!(first.wire_budget_kbps, 48_000);
+        assert_eq!(first.encoder_bitrate_kbps, 45_714);
+        assert_eq!(first.congestion_source, CongestionSource::VideoPresentation);
+        assert!(!first.changed);
+
+        for _ in 0..16 {
+            let repeated = controller.observe(presentation_only);
+            assert_eq!(repeated.wire_budget_kbps, 48_000);
+            assert_eq!(repeated.encoder_bitrate_kbps, 45_714);
+            assert!(!repeated.changed);
+        }
+
+        for _ in 0..AdaptiveVideoDeliveryController::CLEAN_WINDOWS_BEFORE_INCREASE {
+            _ = controller.observe(clean(FeedbackStream::Video));
+        }
+        assert_eq!(controller.snapshot().wire_budget_kbps, 48_000);
+
+        let new_episode = controller.observe(presentation_only);
+        assert_eq!(new_episode.wire_budget_kbps, 48_000);
+        assert_eq!(new_episode.encoder_bitrate_kbps, 45_714);
+        assert!(!new_episode.changed);
+    }
+
+    #[test]
+    fn sustained_transport_pressure_remains_actionable_each_window() {
+        let mut controller = AdaptiveVideoDeliveryController::new(48_000, 48_000, 5, 3);
+        let transport_pressure = MediaFeedbackSample {
+            received_datagrams: 95,
+            ..clean(FeedbackStream::Video)
+        };
+
+        let first = controller.observe(transport_pressure);
+        let second = controller.observe(transport_pressure);
+
+        assert_eq!(first.wire_budget_kbps, 43_200);
+        assert_eq!(second.wire_budget_kbps, 38_880);
+        assert!(first.changed);
+        assert!(second.changed);
+    }
+
+    #[test]
+    fn sustained_audio_loss_preserves_the_negotiated_quarter_quality_floor() {
         let mut controller = AdaptiveVideoDeliveryController::new(48_000, 48_000, 20, 3);
         let mut decision = controller.snapshot();
+        let mut observed_audio_backoff = false;
 
         for _ in 0..32 {
             decision = controller.observe(MediaFeedbackSample {
@@ -438,11 +736,35 @@ mod tests {
                 estimated_jitter_us: 12_000,
                 ..clean(FeedbackStream::Audio)
             });
+            if decision.changed {
+                assert_eq!(decision.congestion_source, CongestionSource::AudioNetwork);
+                observed_audio_backoff = true;
+            }
         }
 
-        assert_eq!(decision.wire_budget_kbps, 2_000);
+        assert!(observed_audio_backoff);
+        assert_eq!(decision.wire_budget_kbps, 12_000);
         assert_eq!(decision.fec_percentage, 20);
-        assert_eq!(decision.congestion_source, CongestionSource::Audio);
+    }
+
+    #[test]
+    fn quarter_floor_recovers_to_the_negotiated_ceiling_within_sixteen_seconds() {
+        let mut controller = AdaptiveVideoDeliveryController::new(48_000, 48_000, 20, 3);
+        for _ in 0..32 {
+            _ = controller.observe(MediaFeedbackSample {
+                unrecoverable_objects: 1,
+                ..clean(FeedbackStream::Audio)
+            });
+        }
+        assert_eq!(controller.snapshot().wire_budget_kbps, 12_000);
+
+        for _ in 0..64 {
+            _ = controller.observe(clean(FeedbackStream::Video));
+        }
+
+        let recovered = controller.snapshot();
+        assert_eq!(recovered.wire_budget_kbps, 48_000);
+        assert_eq!(recovered.fec_percentage, 5);
     }
 
     #[test]
@@ -458,7 +780,7 @@ mod tests {
             });
         }
         let floor = controller.snapshot();
-        assert_eq!(floor.wire_budget_kbps, 2_000);
+        assert_eq!(floor.wire_budget_kbps, 20_000);
         assert_eq!(floor.fec_percentage, 30);
 
         for _ in 0..200 {

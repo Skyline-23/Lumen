@@ -1,0 +1,109 @@
+<Application
+    x:Class="Lumen.App.App"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    RequestedTheme="Dark">
+  <Application.Resources>
+    <ResourceDictionary>
+      <ResourceDictionary.MergedDictionaries>
+        <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
+      </ResourceDictionary.MergedDictionaries>
+
+      <!-- Canonical Lumen palette, mapped from LumenAuthenticationPalette on macOS. -->
+      <Color x:Key="SystemAccentColor">#FFFF6B33</Color>
+      <Color x:Key="LumenAccentColor">#FFFF6B33</Color>
+      <Color x:Key="LumenAccentHoverColor">#FFFF7D4A</Color>
+      <Color x:Key="LumenAccentPressedColor">#FFE95B27</Color>
+      <Color x:Key="LumenWindowColor">#FF07141D</Color>
+      <Color x:Key="LumenSidebarColor">#EB091821</Color>
+      <Color x:Key="LumenAuthenticationHeroColor">#FF13120F</Color>
+      <Color x:Key="LumenFormColor">#FF0E0F12</Color>
+      <Color x:Key="LumenCardColor">#9917242D</Color>
+      <Color x:Key="LumenCardBorderColor">#2FFFFFFF</Color>
+      <Color x:Key="LumenInputColor">#FF17181C</Color>
+      <Color x:Key="LumenPrimaryTextColor">#F0FFFFFF</Color>
+      <Color x:Key="LumenSecondaryTextColor">#A8FFFFFF</Color>
+      <Color x:Key="LumenTertiaryTextColor">#6EFFFFFF</Color>
+      <Color x:Key="LumenAmberGlowColor">#57FFA81A</Color>
+      <Color x:Key="LumenCoralGlowColor">#38FF5438</Color>
+      <Color x:Key="LumenMintGlowColor">#2933C7AD</Color>
+      <Color x:Key="LumenTealColor">#FF35C7AE</Color>
+      <Color x:Key="LumenDangerColor">#FFFF6868</Color>
+
+      <SolidColorBrush x:Key="LumenAccentBrush" Color="{StaticResource LumenAccentColor}" />
+      <SolidColorBrush x:Key="LumenAccentHoverBrush" Color="{StaticResource LumenAccentHoverColor}" />
+      <SolidColorBrush x:Key="LumenAccentPressedBrush" Color="{StaticResource LumenAccentPressedColor}" />
+      <SolidColorBrush x:Key="LumenWindowBrush" Color="{StaticResource LumenWindowColor}" />
+      <SolidColorBrush x:Key="LumenSidebarBrush" Color="{StaticResource LumenSidebarColor}" />
+      <SolidColorBrush x:Key="LumenAuthenticationHeroBrush" Color="{StaticResource LumenAuthenticationHeroColor}" />
+      <SolidColorBrush x:Key="LumenFormBrush" Color="{StaticResource LumenFormColor}" />
+      <SolidColorBrush x:Key="LumenCardBrush" Color="{StaticResource LumenCardColor}" />
+      <SolidColorBrush x:Key="LumenCardBorderBrush" Color="{StaticResource LumenCardBorderColor}" />
+      <SolidColorBrush x:Key="LumenInputBrush" Color="{StaticResource LumenInputColor}" />
+      <SolidColorBrush x:Key="LumenPrimaryTextBrush" Color="{StaticResource LumenPrimaryTextColor}" />
+      <SolidColorBrush x:Key="LumenSecondaryTextBrush" Color="{StaticResource LumenSecondaryTextColor}" />
+      <SolidColorBrush x:Key="LumenTertiaryTextBrush" Color="{StaticResource LumenTertiaryTextColor}" />
+      <SolidColorBrush x:Key="LumenTealBrush" Color="{StaticResource LumenTealColor}" />
+      <SolidColorBrush x:Key="LumenDangerBrush" Color="{StaticResource LumenDangerColor}" />
+
+      <LinearGradientBrush x:Key="LumenWindowGradientBrush" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#FF07141D" Offset="0" />
+        <GradientStop Color="#FF0B2229" Offset="0.54" />
+        <GradientStop Color="#FF111720" Offset="1" />
+      </LinearGradientBrush>
+      <RadialGradientBrush x:Key="LumenAmberGlowBrush" Center="0.5,0.5" GradientOrigin="0.5,0.5" RadiusX="0.5" RadiusY="0.5">
+        <GradientStop Color="{StaticResource LumenAmberGlowColor}" Offset="0" />
+        <GradientStop Color="#00FFA81A" Offset="1" />
+      </RadialGradientBrush>
+      <RadialGradientBrush x:Key="LumenCoralGlowBrush" Center="0.5,0.5" GradientOrigin="0.5,0.5" RadiusX="0.5" RadiusY="0.5">
+        <GradientStop Color="{StaticResource LumenCoralGlowColor}" Offset="0" />
+        <GradientStop Color="#00FF5438" Offset="1" />
+      </RadialGradientBrush>
+      <RadialGradientBrush x:Key="LumenMintGlowBrush" Center="0.5,0.5" GradientOrigin="0.5,0.5" RadiusX="0.5" RadiusY="0.5">
+        <GradientStop Color="{StaticResource LumenMintGlowColor}" Offset="0" />
+        <GradientStop Color="#0033C7AD" Offset="1" />
+      </RadialGradientBrush>
+
+      <CornerRadius x:Key="LumenCardCornerRadius">16</CornerRadius>
+      <CornerRadius x:Key="LumenControlCornerRadius">12</CornerRadius>
+      <CornerRadius x:Key="LumenPillCornerRadius">22</CornerRadius>
+      <Thickness x:Key="LumenCardPadding">22</Thickness>
+
+      <Style x:Key="LumenPrimaryButtonStyle" TargetType="Button">
+        <Setter Property="MinHeight" Value="44" />
+        <Setter Property="Padding" Value="22,10" />
+        <Setter Property="HorizontalAlignment" Value="Stretch" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="CornerRadius" Value="{StaticResource LumenPillCornerRadius}" />
+        <Setter Property="Background" Value="{StaticResource LumenAccentBrush}" />
+        <Setter Property="Foreground" Value="White" />
+      </Style>
+      <Style x:Key="LumenSecondaryButtonStyle" TargetType="Button">
+        <Setter Property="MinHeight" Value="40" />
+        <Setter Property="Padding" Value="18,8" />
+        <Setter Property="CornerRadius" Value="{StaticResource LumenPillCornerRadius}" />
+        <Setter Property="Background" Value="{StaticResource LumenCardBrush}" />
+        <Setter Property="BorderBrush" Value="{StaticResource LumenCardBorderBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="Foreground" Value="{StaticResource LumenPrimaryTextBrush}" />
+      </Style>
+      <Style x:Key="LumenTextBoxStyle" TargetType="TextBox">
+        <Setter Property="MinHeight" Value="44" />
+        <Setter Property="CornerRadius" Value="{StaticResource LumenControlCornerRadius}" />
+        <Setter Property="Background" Value="{StaticResource LumenInputBrush}" />
+        <Setter Property="BorderBrush" Value="{StaticResource LumenCardBorderBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="Foreground" Value="{StaticResource LumenPrimaryTextBrush}" />
+      </Style>
+      <Style x:Key="LumenPasswordBoxStyle" TargetType="PasswordBox">
+        <Setter Property="MinHeight" Value="44" />
+        <Setter Property="CornerRadius" Value="{StaticResource LumenControlCornerRadius}" />
+        <Setter Property="Background" Value="{StaticResource LumenInputBrush}" />
+        <Setter Property="BorderBrush" Value="{StaticResource LumenCardBorderBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="Foreground" Value="{StaticResource LumenPrimaryTextBrush}" />
+      </Style>
+    </ResourceDictionary>
+  </Application.Resources>
+</Application>

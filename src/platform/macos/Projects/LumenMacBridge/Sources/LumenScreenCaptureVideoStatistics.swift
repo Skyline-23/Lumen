@@ -22,6 +22,15 @@ extension LumenScreenCaptureVideoRuntime {
             intervalTotalMilliseconds: outputIntervalTotalMilliseconds,
             sampleCount: outputIntervalSampleCount
         )
+        let appliedBitrateKbps = statistics.appliedVideoBitRateKbps
+        let appliedBitrateDescription =
+            appliedBitrateKbps.map(String.init) ?? "n/a"
+        let outputBitrateKbps = statistics.estimatedOutputBitrateKbps
+        let outputToTargetPercent = outputBitrateKbps.flatMap { output in
+            appliedBitrateKbps.flatMap { target in
+                target > 0 ? output * 100 / Double(target) : nil
+            }
+        }
         var notes = [
             "captureBackend=screen-capture-kit",
             "screenCaptureOutputRegistrationStage=\(outputOwnership.stage.rawValue)",
@@ -50,6 +59,10 @@ extension LumenScreenCaptureVideoRuntime {
             "videoToolboxAdmissionUtilizationPercent=\(formattedPercent(utilization.videoToolboxAdmissionPercent))",
             "videoToolboxOutputUtilizationPercent=\(formattedPercent(utilization.videoToolboxOutputPercent))",
             "videoToolboxPendingAdmissionDropCount=\(statistics.pendingAdmissionDropCount)",
+            "videoToolboxAppliedBitrateKbps=\(appliedBitrateDescription)",
+            "videoToolboxEncodedByteCount=\(statistics.encodedByteCount)",
+            "videoToolboxEstimatedOutputBitrateKbps=\(formattedPercent(outputBitrateKbps))",
+            "videoToolboxOutputToAppliedBitratePercent=\(formattedPercent(outputToTargetPercent))",
             "videoToolboxBootstrapGateOpen=\(videoBootstrapAdmission.isOpen)",
             "videoToolboxBootstrapPendingSource=\(pendingVideoBootstrapSource != nil)",
             "videoToolboxCurrentInflightStagingSlots=\(inflightFrameCount)",
@@ -97,6 +110,14 @@ extension LumenScreenCaptureVideoRuntime {
             + lumenCaptureTimingNotes(
                 prefix: "videoToolboxFrameHandler",
                 timing: frameHandlerTiming
+            )
+            + lumenCaptureTimingNotes(
+                prefix: "videoToolboxBitrateUpdateQueueWait",
+                timing: bitrateUpdateQueueWaitTiming
+            )
+            + lumenCaptureTimingNotes(
+                prefix: "videoToolboxBitrateUpdateApply",
+                timing: bitrateUpdateApplyTiming
             )
     }
 

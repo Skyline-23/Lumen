@@ -131,6 +131,7 @@ typedef enum LumenHostPlatformRuntimeEventCode {
   LumenHostPlatformRuntimeEventCodeNativeAudioUdpSend = 12,
   LumenHostPlatformRuntimeEventCodePhysicalDisplayIsolation = 13,
   LumenHostPlatformRuntimeEventCodeNativeInputMotion = 14,
+  LumenHostPlatformRuntimeEventCodeNativePacketArrivalFeedback = 15,
 } LumenHostPlatformRuntimeEventCode;
 
 typedef struct LumenHostPlatformRuntimeEvent {

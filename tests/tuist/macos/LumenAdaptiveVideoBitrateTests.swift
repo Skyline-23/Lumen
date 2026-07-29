@@ -40,6 +40,43 @@ final class LumenAdaptiveVideoBitrateTests: XCTestCase {
         XCTAssertEqual(limits.map(\.intValue), [6_000_000, 1])
     }
 
+    func testEncodedBitrateTelemetryMeasuresActualOneSecondOutputRate() {
+        var telemetry = LumenEncodedBitrateTelemetry()
+
+        telemetry.observe(
+            encodedByteCount: 500_000,
+            atUptimeNanoseconds: 10
+        )
+        XCTAssertNil(telemetry.latestWindowBitrateKbps)
+
+        telemetry.observe(
+            encodedByteCount: 500_000,
+            atUptimeNanoseconds: 1_000_000_010
+        )
+
+        XCTAssertEqual(telemetry.totalEncodedBytes, 1_000_000)
+        XCTAssertEqual(
+            try XCTUnwrap(telemetry.latestWindowBitrateKbps),
+            8_000,
+            accuracy: 0.001
+        )
+    }
+
+    func testBitrateTelemetryIsIncludedInPublishedCaptureDiagnostics() {
+        let expectedPrefixes = [
+            "videoToolboxAppliedBitrateKbps=",
+            "videoToolboxEncodedByteCount=",
+            "videoToolboxEstimatedOutputBitrateKbps=",
+            "videoToolboxOutputToAppliedBitratePercent=",
+            "videoToolboxBitrateUpdateQueueWait",
+            "videoToolboxBitrateUpdateApply"
+        ]
+
+        for prefix in expectedPrefixes {
+            XCTAssertTrue(lumenCaptureDiagnosticPrefixes.contains(prefix))
+        }
+    }
+
     func testActiveEncodedSessionForwardsAdaptiveBitrateWithoutRestarting() async throws {
         let runtime = RecordingAdaptiveBitrateRuntime()
         let session = LumenEncodedCaptureSession(

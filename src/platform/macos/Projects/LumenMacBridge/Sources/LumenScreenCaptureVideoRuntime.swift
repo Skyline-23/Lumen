@@ -63,6 +63,9 @@ final class LumenScreenCaptureVideoRuntime:
     var outputOwnerQueueWaitTiming = LumenCaptureStageTimingAccumulator()
     var outputServiceTiming = LumenCaptureStageTimingAccumulator()
     var frameHandlerTiming = LumenCaptureStageTimingAccumulator()
+    var bitrateUpdateQueueWaitTiming = LumenCaptureStageTimingAccumulator()
+    var bitrateUpdateApplyTiming = LumenCaptureStageTimingAccumulator()
+    var encodedBitrateTelemetry = LumenEncodedBitrateTelemetry()
     var outputWidth = 0
     var outputHeight = 0
     var sourceColorContractStatus = "not-required"

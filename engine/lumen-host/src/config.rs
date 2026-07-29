@@ -259,7 +259,7 @@ impl HostArguments {
             "forward_rumble=true".to_owned(),
             "address_family=ipv4".to_owned(),
             "port=47989".to_owned(),
-            "upnp=false".to_owned(),
+            "upnp=true".to_owned(),
             "origin_admin_allowed=lan".to_owned(),
             "lan_encryption_mode=0".to_owned(),
             "wan_encryption_mode=1".to_owned(),

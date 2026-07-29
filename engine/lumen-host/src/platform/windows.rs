@@ -28,15 +28,13 @@ mod native_input;
 #[cfg(windows)]
 mod native_lifecycle;
 #[cfg(windows)]
+mod native_management_pipe;
+#[cfg(windows)]
 mod native_media;
 #[cfg(windows)]
 mod native_pointer_input;
 #[cfg(windows)]
 mod native_process;
-#[cfg(windows)]
-mod native_shell;
-#[cfg(windows)]
-mod native_tray;
 #[cfg(windows)]
 mod native_video;
 #[cfg(windows)]
@@ -49,7 +47,7 @@ pub(crate) use native_input::WindowsPlatformSessionControl;
 #[cfg(windows)]
 pub(crate) use native_lifecycle::NativeWindowsLifecycle;
 #[cfg(windows)]
-pub(crate) use native_shell::NativeWindowsShell;
+pub(crate) use native_management_pipe::NativeWindowsManagement;
 
 #[cfg(test)]
 mod tests;

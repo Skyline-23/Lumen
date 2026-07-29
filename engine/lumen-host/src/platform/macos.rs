@@ -813,7 +813,19 @@ impl PlatformSessionControl for MacPlatformSessionControl {
             .state
             .lock()
             .map_err(|_| "macOS platform session state is unavailable".to_owned())?;
-        self.stop_locked(&mut state)
+        // Keep platform lifecycle ownership while draining input. An event that
+        // already passed the control-router admission check must complete before
+        // this reset; later events observe the cleared platform plan below.
+        let input_result = self.native_input.reset_all();
+        let session_result = self.stop_locked(&mut state);
+        match (input_result, session_result) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(input), Ok(())) => Err(format!("native input reset failed: {input}")),
+            (Ok(()), Err(session)) => Err(session),
+            (Err(input), Err(session)) => Err(format!(
+                "native input reset failed: {input}; platform session stop also failed: {session}"
+            )),
+        }
     }
 
     fn reconfigure_session(&self, plan: PlatformSessionPlan) -> Result<(), String> {
@@ -1058,6 +1070,13 @@ impl PlatformSessionControl for MacPlatformSessionControl {
         session_epoch: u32,
         event: PlatformNativeInputEvent,
     ) -> Result<(), String> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| "macOS platform session state is unavailable".to_owned())?;
+        if state.plan.is_none() {
+            return Err("macOS native input has no active platform session".to_owned());
+        }
         if let PlatformNativeInputEvent::PointerButton {
             pointer_id,
             button,
@@ -1065,25 +1084,15 @@ impl PlatformSessionControl for MacPlatformSessionControl {
             absolute_position: Some((normalized_x, normalized_y)),
         } = &event
         {
-            let (display_id, input_display_bounds, input_capture_viewport) = {
-                let state = self
-                    .state
-                    .lock()
-                    .map_err(|_| "macOS platform session state is unavailable".to_owned())?;
-                (
-                    state.input_display_id,
-                    state.input_display_bounds,
-                    state.input_capture_viewport,
-                )
-            };
+            let display_id = state.input_display_id;
             if display_id == 0 {
                 return Err("macOS positioned pointer input has no active display".to_owned());
             }
             return self.native_input.handle_positioned_button(
                 session_epoch,
                 display_id,
-                input_display_bounds,
-                input_capture_viewport,
+                state.input_display_bounds,
+                state.input_capture_viewport,
                 MacPositionedButtonInput {
                     pointer_id: *pointer_id,
                     button: *button,
@@ -1101,25 +1110,22 @@ impl PlatformSessionControl for MacPlatformSessionControl {
         session_epoch: u32,
         event: crate::PlatformNativeMotionEvent,
     ) -> Result<(), String> {
-        let (display_id, input_display_bounds, input_capture_viewport) = {
-            let state = self
-                .state
-                .lock()
-                .map_err(|_| "macOS platform session state is unavailable".to_owned())?;
-            (
-                state.input_display_id,
-                state.input_display_bounds,
-                state.input_capture_viewport,
-            )
-        };
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| "macOS platform session state is unavailable".to_owned())?;
+        if state.plan.is_none() {
+            return Err("macOS native motion has no active platform session".to_owned());
+        }
+        let display_id = state.input_display_id;
         if display_id == 0 {
             return Err("macOS native motion has no active display".to_owned());
         }
         self.native_input.handle_motion(
             session_epoch,
             display_id,
-            input_display_bounds,
-            input_capture_viewport,
+            state.input_display_bounds,
+            state.input_capture_viewport,
             event,
         )
     }

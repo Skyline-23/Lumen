@@ -10,21 +10,7 @@ use lumen_engine::{
 
 use crate::network_ports::HostPorts;
 use crate::{HostArguments, HostAuthorityPaths};
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum WindowsNavigation {
-    Overview,
-    Applications,
-    Security,
-    General,
-    Streaming,
-    Audio,
-    Input,
-    Network,
-    Advanced,
-    Diagnostics,
-    About,
-}
+use serde::Serialize;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum WindowsBooleanSetting {
@@ -60,40 +46,6 @@ impl WindowsBooleanSetting {
     }
 }
 
-impl WindowsNavigation {
-    pub(crate) fn from_index(index: i32) -> Self {
-        match index {
-            1 => Self::Applications,
-            2 => Self::Security,
-            3 => Self::General,
-            4 => Self::Streaming,
-            5 => Self::Audio,
-            6 => Self::Input,
-            7 => Self::Network,
-            8 => Self::Advanced,
-            9 => Self::Diagnostics,
-            10 => Self::About,
-            _ => Self::Overview,
-        }
-    }
-
-    pub(crate) fn index(self) -> i32 {
-        match self {
-            Self::Overview => 0,
-            Self::Applications => 1,
-            Self::Security => 2,
-            Self::General => 3,
-            Self::Streaming => 4,
-            Self::Audio => 5,
-            Self::Input => 6,
-            Self::Network => 7,
-            Self::Advanced => 8,
-            Self::Diagnostics => 9,
-            Self::About => 10,
-        }
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum WindowsOwnerAccessState {
     SetupRequired,
@@ -103,10 +55,21 @@ pub(crate) enum WindowsOwnerAccessState {
     Unavailable,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct WindowsManagementSnapshot {
+    protocol_version: u32,
+    owner_state: &'static str,
+    owner_name: Option<String>,
+    host_name: String,
+    control_port: u16,
+    applications: Vec<ApplicationDescriptor>,
+    settings: HostSettings,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct WindowsAppSnapshot {
     pub(crate) owner_access: WindowsOwnerAccessState,
-    pub(crate) navigation: WindowsNavigation,
     pub(crate) host_name: String,
     pub(crate) control_port: u16,
     pub(crate) applications: Vec<ApplicationDescriptor>,
@@ -118,7 +81,6 @@ pub(crate) struct WindowsAppModel {
     settings_path: PathBuf,
     applications_path: PathBuf,
     owner_access: WindowsOwnerAccessState,
-    navigation: WindowsNavigation,
     host_name: String,
     control_port: u16,
 }
@@ -141,7 +103,6 @@ impl WindowsAppModel {
             settings_path: paths.settings,
             applications_path: paths.applications,
             owner_access,
-            navigation: WindowsNavigation::Overview,
             host_name,
             control_port,
         })
@@ -159,7 +120,6 @@ impl WindowsAppModel {
             .map_err(|error| format!("application catalog failed: {error:?}"))?;
         Ok(WindowsAppSnapshot {
             owner_access: self.owner_access.clone(),
-            navigation: self.navigation,
             host_name: self.host_name.clone(),
             control_port: self.control_port,
             applications,
@@ -167,8 +127,28 @@ impl WindowsAppModel {
         })
     }
 
-    pub(crate) fn select(&mut self, navigation: WindowsNavigation) {
-        self.navigation = navigation;
+    pub(crate) fn management_snapshot(&self) -> Result<WindowsManagementSnapshot, String> {
+        let snapshot = self.snapshot()?;
+        let (owner_state, owner_name) = match snapshot.owner_access {
+            WindowsOwnerAccessState::SetupRequired => ("setupRequired", None),
+            WindowsOwnerAccessState::LoginRequired(username) => ("loginRequired", Some(username)),
+            WindowsOwnerAccessState::Authenticated(username) => ("authenticated", Some(username)),
+            WindowsOwnerAccessState::Corrupt => ("corrupt", None),
+            WindowsOwnerAccessState::Unavailable => ("unavailable", None),
+        };
+        Ok(WindowsManagementSnapshot {
+            protocol_version: 1,
+            owner_state,
+            owner_name,
+            host_name: snapshot.host_name,
+            control_port: snapshot.control_port,
+            applications: snapshot.applications,
+            settings: snapshot.settings,
+        })
+    }
+
+    pub(crate) fn owner_access_state(&self) -> &WindowsOwnerAccessState {
+        &self.owner_access
     }
 
     pub(crate) fn create_owner(
@@ -246,6 +226,18 @@ impl WindowsAppModel {
             LumenOwnerState::Unavailable => WindowsOwnerAccessState::Unavailable,
         }
     }
+
+    #[cfg(test)]
+    pub(crate) fn for_test(root: &std::path::Path) -> Self {
+        Self {
+            owner_store: OwnerAccountStore::open(root.join("owner-account.json")).unwrap(),
+            settings_path: root.join("settings.json"),
+            applications_path: root.join("apps.json"),
+            owner_access: WindowsOwnerAccessState::SetupRequired,
+            host_name: "Studio".to_owned(),
+            control_port: 47_990,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -253,15 +245,7 @@ mod tests {
     use super::*;
 
     fn model(root: &std::path::Path) -> WindowsAppModel {
-        WindowsAppModel {
-            owner_store: OwnerAccountStore::open(root.join("owner-account.json")).unwrap(),
-            settings_path: root.join("settings.json"),
-            applications_path: root.join("apps.json"),
-            owner_access: WindowsOwnerAccessState::SetupRequired,
-            navigation: WindowsNavigation::Overview,
-            host_name: "Studio".to_owned(),
-            control_port: 47_990,
-        }
+        WindowsAppModel::for_test(root)
     }
 
     #[test]
@@ -298,36 +282,13 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_uses_windows_capabilities_and_tracks_navigation() {
+    fn snapshot_uses_windows_capabilities() {
         let root = tempfile::tempdir().unwrap();
-        let mut model = model(root.path());
-        model.select(WindowsNavigation::Applications);
+        let model = model(root.path());
         let snapshot = model.snapshot().unwrap();
         assert_eq!(snapshot.host_name, "Studio");
-        assert_eq!(snapshot.navigation, WindowsNavigation::Applications);
         assert_eq!(snapshot.settings.general.name, "Lumen");
         assert!(snapshot.applications.is_empty());
-    }
-
-    #[test]
-    fn navigation_indices_cover_the_exact_management_sidebar_order() {
-        let expected = [
-            WindowsNavigation::Overview,
-            WindowsNavigation::Applications,
-            WindowsNavigation::Security,
-            WindowsNavigation::General,
-            WindowsNavigation::Streaming,
-            WindowsNavigation::Audio,
-            WindowsNavigation::Input,
-            WindowsNavigation::Network,
-            WindowsNavigation::Advanced,
-            WindowsNavigation::Diagnostics,
-            WindowsNavigation::About,
-        ];
-        for (index, navigation) in expected.into_iter().enumerate() {
-            assert_eq!(WindowsNavigation::from_index(index as i32), navigation);
-            assert_eq!(navigation.index(), index as i32);
-        }
     }
 
     #[test]

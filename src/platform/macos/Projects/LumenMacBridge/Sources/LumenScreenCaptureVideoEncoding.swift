@@ -192,6 +192,7 @@ extension LumenScreenCaptureVideoRuntime {
         ) else {
             return false
         }
+        let requestedAt = DispatchTime.now().uptimeNanoseconds
         return await withCheckedContinuation { continuation in
             encoderQueue.async { [weak self] in
                 guard let self,
@@ -199,17 +200,62 @@ extension LumenScreenCaptureVideoRuntime {
                     continuation.resume(returning: false)
                     return
                 }
+                let queueWaitMilliseconds =
+                    Self.elapsedMilliseconds(since: requestedAt)
                 if self.appliedVideoBitRateKbps == bitrateKbps {
+                    self.publishBitrateUpdateTelemetry(
+                        appliedBitrateKbps: bitrateKbps,
+                        queueWaitMilliseconds: queueWaitMilliseconds,
+                        applyMilliseconds: nil
+                    )
                     continuation.resume(returning: true)
                     return
                 }
+                let applyStartedAt = DispatchTime.now().uptimeNanoseconds
                 do {
                     try self.applyVideoRateControl(rateControl)
+                    self.publishBitrateUpdateTelemetry(
+                        appliedBitrateKbps: bitrateKbps,
+                        queueWaitMilliseconds: queueWaitMilliseconds,
+                        applyMilliseconds: Self.elapsedMilliseconds(
+                            since: applyStartedAt
+                        )
+                    )
                     continuation.resume(returning: true)
                 } catch {
+                    self.publishBitrateUpdateTelemetry(
+                        appliedBitrateKbps: nil,
+                        queueWaitMilliseconds: queueWaitMilliseconds,
+                        applyMilliseconds: Self.elapsedMilliseconds(
+                            since: applyStartedAt
+                        )
+                    )
                     continuation.resume(returning: false)
                 }
             }
+        }
+    }
+
+    func publishBitrateUpdateTelemetry(
+        appliedBitrateKbps: Int?,
+        queueWaitMilliseconds: Double,
+        applyMilliseconds: Double?
+    ) {
+        dispatchPrecondition(condition: .onQueue(encoderQueue))
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.bitrateUpdateQueueWaitTiming.observe(
+                queueWaitMilliseconds
+            )
+            if let applyMilliseconds {
+                self.bitrateUpdateApplyTiming.observe(applyMilliseconds)
+            }
+            if let appliedBitrateKbps {
+                self.statistics.appliedVideoBitRateKbps =
+                    appliedBitrateKbps
+            }
+            self.refreshStatisticsNotes()
+            self.statisticsHandler(self.statistics)
         }
     }
 

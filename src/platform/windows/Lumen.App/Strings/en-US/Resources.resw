@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <data name="App.Title" xml:space="preserve"><value>Lumen</value></data>
+  <data name="Status.Connecting" xml:space="preserve"><value>Connecting</value></data>
+  <data name="Status.HostOnline" xml:space="preserve"><value>Host online</value></data>
+  <data name="Status.HostUnavailable" xml:space="preserve"><value>Host unavailable</value></data>
+  <data name="Status.Online" xml:space="preserve"><value>Online</value></data>
+  <data name="Common.Yes" xml:space="preserve"><value>Yes</value></data>
+  <data name="Common.No" xml:space="preserve"><value>No</value></data>
+  <data name="Common.Unavailable" xml:space="preserve"><value>Unavailable</value></data>
+  <data name="Common.Disabled" xml:space="preserve"><value>Disabled</value></data>
+  <data name="Common.Ok" xml:space="preserve"><value>OK</value></data>
+  <data name="Navigation.Overview" xml:space="preserve"><value>Overview</value></data>
+  <data name="Navigation.Applications" xml:space="preserve"><value>Applications</value></data>
+  <data name="Navigation.Settings" xml:space="preserve"><value>Settings</value></data>
+  <data name="Navigation.Security" xml:space="preserve"><value>Security</value></data>
+  <data name="Navigation.General" xml:space="preserve"><value>General</value></data>
+  <data name="Navigation.Streaming" xml:space="preserve"><value>Streaming</value></data>
+  <data name="Navigation.Audio" xml:space="preserve"><value>Audio</value></data>
+  <data name="Navigation.Input" xml:space="preserve"><value>Input</value></data>
+  <data name="Navigation.Network" xml:space="preserve"><value>Network</value></data>
+  <data name="Navigation.Advanced" xml:space="preserve"><value>Advanced</value></data>
+  <data name="Navigation.Diagnostics" xml:space="preserve"><value>Diagnostics</value></data>
+  <data name="Navigation.About" xml:space="preserve"><value>About</value></data>
+  <data name="Busy.Connecting" xml:space="preserve"><value>Connecting to the Lumen host…</value></data>
+  <data name="Authentication.CreateOwnerAccount" xml:space="preserve"><value>Create owner account</value></data>
+  <data name="Authentication.SignInToLumen" xml:space="preserve"><value>Sign in to Lumen</value></data>
+  <data name="Authentication.ProtectedDescription" xml:space="preserve"><value>Host settings and enrolled devices are protected by the local owner account.</value></data>
+  <data name="Authentication.HeroTitle" xml:space="preserve"><value>Your screen. Your rules.</value></data>
+  <data name="Authentication.HeroDescription" xml:space="preserve"><value>A private, native remote desktop host built around your own Windows PC.</value></data>
+  <data name="Authentication.FeatureLocal" xml:space="preserve"><value>Credentials stay on this host</value></data>
+  <data name="Authentication.FeatureControls" xml:space="preserve"><value>Native host and streaming controls</value></data>
+  <data name="Authentication.FeatureRemote" xml:space="preserve"><value>Secure access for enrolled devices</value></data>
+  <data name="Authentication.CredentialsNotice" xml:space="preserve"><value>Your owner password is never sent to a cloud service.</value></data>
+  <data name="Authentication.OwnerUsername" xml:space="preserve"><value>Owner username</value></data>
+  <data name="Authentication.OwnerPassword" xml:space="preserve"><value>Owner password</value></data>
+  <data name="Authentication.ConfirmPassword" xml:space="preserve"><value>Confirm password</value></data>
+  <data name="Authentication.CreateAccount" xml:space="preserve"><value>Create account</value></data>
+  <data name="Authentication.SignIn" xml:space="preserve"><value>Sign in</value></data>
+  <data name="Authentication.Failed" xml:space="preserve"><value>Authentication failed</value></data>
+  <data name="Overview.Description" xml:space="preserve"><value>Host health and the actions that affect the running service.</value></data>
+  <data name="Overview.ControlEndpoint" xml:space="preserve"><value>Control endpoint · HTTPS {0}</value></data>
+  <data name="Overview.HostRuntime" xml:space="preserve"><value>Host runtime</value></data>
+  <data name="Overview.ReloadApplications" xml:space="preserve"><value>Reload applications</value></data>
+  <data name="Overview.ForceStopStream" xml:space="preserve"><value>Force stop stream</value></data>
+  <data name="Overview.RestartHost" xml:space="preserve"><value>Restart host</value></data>
+  <data name="Applications.Description" xml:space="preserve"><value>Desktop and application entries available to connected clients.</value></data>
+  <data name="Applications.NoneConfigured" xml:space="preserve"><value>No applications are configured.</value></data>
+  <data name="Applications.Metadata" xml:space="preserve"><value>App ID {0} · HDR {1}</value></data>
+  <data name="Security.Description" xml:space="preserve"><value>Owner authentication protects host configuration and device enrollment.</value></data>
+  <data name="Security.Owner" xml:space="preserve"><value>Owner</value></data>
+  <data name="Security.LogOut" xml:space="preserve"><value>Log out</value></data>
+  <data name="General.Description" xml:space="preserve"><value>Discovery and update behavior for this host.</value></data>
+  <data name="General.NetworkDiscovery" xml:space="preserve"><value>Network discovery</value></data>
+  <data name="General.NetworkDiscoveryDetail" xml:space="preserve"><value>Advertise this host to supported clients.</value></data>
+  <data name="General.PreReleaseNotifications" xml:space="preserve"><value>Pre-release notifications</value></data>
+  <data name="General.PreReleaseNotificationsDetail" xml:space="preserve"><value>Notify this host about beta releases.</value></data>
+  <data name="Streaming.Description" xml:space="preserve"><value>Display adapter and fallback mode selected by the host runtime.</value></data>
+  <data name="Streaming.GraphicsAdapter" xml:space="preserve"><value>Graphics adapter</value></data>
+  <data name="Streaming.Output" xml:space="preserve"><value>Output</value></data>
+  <data name="Streaming.FallbackDisplayMode" xml:space="preserve"><value>Fallback display mode</value></data>
+  <data name="Streaming.WorkspacePolicy" xml:space="preserve"><value>Workspace policy</value></data>
+  <data name="Audio.Description" xml:space="preserve"><value>System audio capture and negotiated client playback.</value></data>
+  <data name="Audio.StreamSystemAudio" xml:space="preserve"><value>Stream system audio</value></data>
+  <data name="Audio.StreamSystemAudioDetail" xml:space="preserve"><value>Capture audio for connected clients.</value></data>
+  <data name="Audio.Sink" xml:space="preserve"><value>Audio sink</value></data>
+  <data name="Input.Description" xml:space="preserve"><value>Remote keyboard, pointer, gamepad, pen, and scrolling behavior.</value></data>
+  <data name="Input.Keyboard" xml:space="preserve"><value>Keyboard</value></data>
+  <data name="Input.KeyboardDetail" xml:space="preserve"><value>Accept remote keyboard input.</value></data>
+  <data name="Input.Mouse" xml:space="preserve"><value>Mouse</value></data>
+  <data name="Input.MouseDetail" xml:space="preserve"><value>Accept remote pointer input.</value></data>
+  <data name="Input.Controller" xml:space="preserve"><value>Controller</value></data>
+  <data name="Input.ControllerDetail" xml:space="preserve"><value>Accept remote gamepad input.</value></data>
+  <data name="Input.MapRightAlt" xml:space="preserve"><value>Map Right Alt to Windows</value></data>
+  <data name="Input.MapRightAltDetail" xml:space="preserve"><value>Use Right Alt as the Windows key.</value></data>
+  <data name="Input.HighResolutionScrolling" xml:space="preserve"><value>High-resolution scrolling</value></data>
+  <data name="Input.HighResolutionScrollingDetail" xml:space="preserve"><value>Preserve precision trackpad and wheel deltas.</value></data>
+  <data name="Input.NativePenTouch" xml:space="preserve"><value>Native pen and touch</value></data>
+  <data name="Input.NativePenTouchDetail" xml:space="preserve"><value>Forward native pen and touch contacts.</value></data>
+  <data name="Input.RumbleForwarding" xml:space="preserve"><value>Rumble forwarding</value></data>
+  <data name="Input.RumbleForwardingDetail" xml:space="preserve"><value>Forward gamepad rumble to the client.</value></data>
+  <data name="Network.Description" xml:space="preserve"><value>Listener, encryption, discovery, and remote access policy.</value></data>
+  <data name="Network.AddressFamily" xml:space="preserve"><value>Address family</value></data>
+  <data name="Network.BasePort" xml:space="preserve"><value>Base port</value></data>
+  <data name="Network.RemoteAccess" xml:space="preserve"><value>Remote access</value></data>
+  <data name="Network.LanEncryption" xml:space="preserve"><value>LAN encryption</value></data>
+  <data name="Network.WanEncryption" xml:space="preserve"><value>WAN encryption</value></data>
+  <data name="Network.Upnp" xml:space="preserve"><value>UPnP</value></data>
+  <data name="Network.UpnpDetail" xml:space="preserve"><value>Request router mappings for configured listeners.</value></data>
+  <data name="Advanced.Description" xml:space="preserve"><value>Session-independent runtime controls.</value></data>
+  <data name="Advanced.PingTimeout" xml:space="preserve"><value>Ping timeout</value></data>
+  <data name="Advanced.ForwardErrorCorrection" xml:space="preserve"><value>Forward error correction</value></data>
+  <data name="Advanced.BackButtonTimeout" xml:space="preserve"><value>Back button timeout</value></data>
+  <data name="Advanced.Milliseconds" xml:space="preserve"><value>{0} ms</value></data>
+  <data name="Advanced.Percentage" xml:space="preserve"><value>{0}%</value></data>
+  <data name="Diagnostics.Description" xml:space="preserve"><value>Current runtime diagnostics configuration.</value></data>
+  <data name="Diagnostics.ManagementProtocol" xml:space="preserve"><value>Management protocol</value></data>
+  <data name="Diagnostics.HostConnection" xml:space="preserve"><value>Host connection</value></data>
+  <data name="Diagnostics.LogLevel" xml:space="preserve"><value>Log level</value></data>
+  <data name="Diagnostics.ProtocolVersion" xml:space="preserve"><value>v{0}</value></data>
+  <data name="About.Description" xml:space="preserve"><value>Lumen remote desktop host for Windows.</value></data>
+  <data name="About.Product" xml:space="preserve"><value>Lumen&#x0a;Open-source · Self-hosted · Native Windows host</value></data>
+  <data name="Error.CouldNotContinue" xml:space="preserve"><value>Lumen could not continue</value></data>
+  <data name="Error.HostUnavailable" xml:space="preserve"><value>Lumen host unavailable</value></data>
+  <data name="Error.HostUnavailableDetail" xml:space="preserve"><value>The background host is not ready. {0}</value></data>
+  <data name="Error.Retry" xml:space="preserve"><value>Retry</value></data>
+  <data name="Error.CommandFailed" xml:space="preserve"><value>Lumen command failed</value></data>
+  <data name="Error.ManagementConnectionClosed" xml:space="preserve"><value>The Lumen host closed the management connection.</value></data>
+  <data name="Error.ManagementEmptyResponse" xml:space="preserve"><value>The Lumen host returned an empty management response.</value></data>
+  <data name="Error.ManagementRejected" xml:space="preserve"><value>The Lumen host rejected the request.</value></data>
+  <data name="Error.ManagementIncompatible" xml:space="preserve"><value>The Lumen management protocol is incompatible with this app.</value></data>
+</root>
