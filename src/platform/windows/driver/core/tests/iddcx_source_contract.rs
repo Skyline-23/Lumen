@@ -308,9 +308,11 @@ fn adapter_caps_include_required_endpoint_diagnostics() {
     assert!(adapter.contains("caps.EndPointDiagnostics.pEndPointFriendlyName"));
     assert!(adapter.contains("caps.EndPointDiagnostics.pEndPointManufacturerName"));
     assert!(adapter.contains("caps.EndPointDiagnostics.pEndPointModelName"));
-    assert!(adapter.contains("endpoint_version.Size = sizeof(endpoint_version);"));
+    assert!(adapter.contains("static IDDCX_ENDPOINT_VERSION endpoint_version = []"));
+    assert!(adapter.contains("version.Size = sizeof(version);"));
     assert!(adapter.contains("caps.EndPointDiagnostics.pFirmwareVersion = &endpoint_version;"));
     assert!(adapter.contains("caps.EndPointDiagnostics.pHardwareVersion = &endpoint_version;"));
+    assert!(!adapter.contains("IDDCX_ENDPOINT_VERSION endpoint_version {};"));
 }
 
 #[test]
