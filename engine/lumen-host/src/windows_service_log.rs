@@ -211,10 +211,42 @@ trait ServiceEventWriter: Send {
     fn flush(&mut self) -> Result<(), String>;
 }
 
+struct WorkerAbandonmentDiagnostic {
+    report: mpsc::SyncSender<()>,
+    worker: thread::JoinHandle<()>,
+}
+
+impl WorkerAbandonmentDiagnostic {
+    fn start(reporter: impl FnOnce() + Send + 'static) -> Result<Self, String> {
+        let (report, receiver) = mpsc::sync_channel(1);
+        let worker = thread::Builder::new()
+            .name("lumen-windows-service-event-diagnostic".to_owned())
+            .spawn(move || {
+                if receiver.recv().is_ok() {
+                    reporter();
+                }
+            })
+            .map_err(|error| format!("start Windows service event diagnostic worker: {error}"))?;
+        Ok(Self { report, worker })
+    }
+
+    fn close(self) {
+        drop(self.report);
+        let _ = self.worker.join();
+    }
+
+    fn report_and_detach(self) {
+        let _ = self.report.try_send(());
+        drop(self.report);
+        drop(self.worker);
+    }
+}
+
 pub(crate) struct WindowsServiceEventLane {
     shared: Arc<ServiceEventLaneShared>,
     worker: Option<thread::JoinHandle<()>>,
     worker_completed: Mutex<mpsc::Receiver<()>>,
+    abandonment_diagnostic: Option<WorkerAbandonmentDiagnostic>,
 }
 
 impl WindowsServiceEventLane {
@@ -234,8 +266,16 @@ impl WindowsServiceEventLane {
     }
 
     fn start(writer: Box<dyn ServiceEventWriter>) -> Result<Self, String> {
+        Self::start_with_abandonment_reporter(writer, record_windows_log_worker_abandonment)
+    }
+
+    fn start_with_abandonment_reporter(
+        writer: Box<dyn ServiceEventWriter>,
+        abandonment_reporter: impl FnOnce() + Send + 'static,
+    ) -> Result<Self, String> {
         let (wake, receiver) = mpsc::sync_channel(SERVICE_EVENT_LANE_CAPACITY);
         let (completion, worker_completed) = mpsc::sync_channel(1);
+        let abandonment_diagnostic = WorkerAbandonmentDiagnostic::start(abandonment_reporter)?;
         let shared = Arc::new(ServiceEventLaneShared {
             pending: ArrayQueue::new(SERVICE_EVENT_LANE_CAPACITY),
             pending_update: Mutex::new(()),
@@ -248,17 +288,23 @@ impl WindowsServiceEventLane {
             abandoned_workers: AtomicU64::new(0),
         });
         let worker_shared = Arc::clone(&shared);
-        let worker = thread::Builder::new()
+        let worker = match thread::Builder::new()
             .name("lumen-windows-service-event-log".to_owned())
             .spawn(move || {
                 run_service_event_lane(receiver, worker_shared, writer);
                 let _ = completion.send(());
-            })
-            .map_err(|error| format!("start Windows service event log worker: {error}"))?;
+            }) {
+            Ok(worker) => worker,
+            Err(error) => {
+                abandonment_diagnostic.close();
+                return Err(format!("start Windows service event log worker: {error}"));
+            }
+        };
         Ok(Self {
             shared,
             worker: Some(worker),
             worker_completed: Mutex::new(worker_completed),
+            abandonment_diagnostic: Some(abandonment_diagnostic),
         })
     }
 
@@ -273,7 +319,7 @@ impl WindowsServiceEventLane {
             return;
         };
         self.shared.stop_admission();
-        match self
+        let abandoned = match self
             .worker_completed
             .get_mut()
             .expect("exclusive service event lane owns completion state")
@@ -283,18 +329,27 @@ impl WindowsServiceEventLane {
                 if worker.join().is_err() {
                     self.shared.write_failures.fetch_add(1, Ordering::Relaxed);
                 }
+                false
             }
             Ok(()) => {
                 if worker.join().is_err() {
                     self.shared.write_failures.fetch_add(1, Ordering::Relaxed);
                 }
+                false
             }
             Err(_) => {
                 self.shared
                     .abandoned_workers
                     .fetch_add(1, Ordering::Relaxed);
-                record_windows_log_worker_abandonment();
                 drop(worker);
+                true
+            }
+        };
+        if let Some(diagnostic) = self.abandonment_diagnostic.take() {
+            if abandoned {
+                diagnostic.report_and_detach();
+            } else {
+                diagnostic.close();
             }
         }
     }
@@ -576,9 +631,15 @@ fn open_secure_service_event_file(path: &Path) -> std::io::Result<File> {
     };
     use windows_sys::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
     use windows_sys::Win32::Storage::FileSystem::{
-        CreateFileW, FILE_APPEND_DATA, FILE_ATTRIBUTE_NORMAL, FILE_READ_ATTRIBUTES,
-        FILE_SHARE_READ, OPEN_ALWAYS,
+        CreateFileW, FILE_APPEND_DATA, FILE_ATTRIBUTE_NORMAL, FILE_GENERIC_WRITE,
+        FILE_READ_ATTRIBUTES, FILE_SHARE_READ, FILE_WRITE_DATA, OPEN_ALWAYS,
     };
+
+    // Match std::fs append access: retain generic write synchronization rights while removing
+    // positional write access, so sync_data can flush a handle that can only append file data.
+    const APPEND_ACCESS: u32 = (FILE_GENERIC_WRITE & !FILE_WRITE_DATA) | FILE_READ_ATTRIBUTES;
+    const _: () = assert!(APPEND_ACCESS & FILE_WRITE_DATA == 0);
+    const _: () = assert!(APPEND_ACCESS & FILE_APPEND_DATA == FILE_APPEND_DATA);
 
     struct OwnedLocal(*mut c_void);
 
@@ -620,7 +681,7 @@ fn open_secure_service_event_file(path: &Path) -> std::io::Result<File> {
     let handle = unsafe {
         CreateFileW(
             path.as_ptr(),
-            FILE_APPEND_DATA | FILE_READ_ATTRIBUTES,
+            APPEND_ACCESS,
             FILE_SHARE_READ,
             &security,
             OPEN_ALWAYS,
@@ -1218,13 +1279,21 @@ mod tests {
         let flushes = Arc::new(Mutex::new(0));
         let (entered_send, entered_receive) = mpsc::sync_channel(1);
         let (release_send, release_receive) = mpsc::sync_channel(1);
-        let mut lane = WindowsServiceEventLane::start(Box::new(RecordingWriter {
-            events,
-            entered: Some(entered_send),
-            release: Some(release_receive),
-            fail: false,
-            flushes: Arc::clone(&flushes),
-        }))
+        let (diagnostic_entered_send, diagnostic_entered_receive) = mpsc::sync_channel(1);
+        let (diagnostic_release_send, diagnostic_release_receive) = mpsc::sync_channel(1);
+        let mut lane = WindowsServiceEventLane::start_with_abandonment_reporter(
+            Box::new(RecordingWriter {
+                events,
+                entered: Some(entered_send),
+                release: Some(release_receive),
+                fail: false,
+                flushes: Arc::clone(&flushes),
+            }),
+            move || {
+                diagnostic_entered_send.send(()).unwrap();
+                diagnostic_release_receive.recv().unwrap();
+            },
+        )
         .unwrap();
         lane.publisher()
             .publish_adaptive_video_apply(event(10, 80_000_000));
@@ -1234,7 +1303,11 @@ mod tests {
         lane.shutdown();
         assert!(started.elapsed() < Duration::from_secs(1));
         assert_eq!(lane.diagnostics().abandoned_workers, 1);
+        diagnostic_entered_receive
+            .recv_timeout(Duration::from_secs(1))
+            .expect("detached diagnostic reporter must receive the timeout event");
 
+        diagnostic_release_send.send(()).unwrap();
         release_send.send(()).unwrap();
         let deadline = std::time::Instant::now() + Duration::from_secs(1);
         while *flushes.lock().unwrap() == 0 && std::time::Instant::now() < deadline {

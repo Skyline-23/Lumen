@@ -32,8 +32,10 @@ fn windows_adaptive_apply_uses_the_persistent_service_event_log() {
     assert!(SERVICE_LOG.contains("lumen-windows-service-event-log"));
     assert!(SERVICE_LOG.contains("recv_timeout(LOG_WORKER_SHUTDOWN_TIMEOUT)"));
     assert!(SERVICE_LOG.contains("abandoned_workers"));
-    assert!(SERVICE_LOG.contains("record_windows_log_worker_abandonment();"));
+    assert!(SERVICE_LOG.contains("record_windows_log_worker_abandonment)"));
     assert!(SERVICE_LOG.contains("EVENTLOG_WARNING_TYPE"));
+    assert!(SERVICE_LOG.contains("lumen-windows-service-event-diagnostic"));
+    assert!(SERVICE_LOG.contains("self.report.try_send(())"));
     let shutdown = SERVICE_LOG
         .split("pub(crate) fn shutdown")
         .nth(1)
@@ -43,6 +45,14 @@ fn windows_adaptive_apply_uses_the_persistent_service_event_log() {
         .unwrap();
     assert!(!shutdown.contains("while self.shared.publishing.load"));
     assert!(!shutdown.contains("thread::yield_now()"));
+    assert!(!shutdown.contains("record_windows_log_worker_abandonment()"));
+    let detach = shutdown
+        .find("drop(worker);")
+        .expect("stalled filesystem worker detaches at the deadline");
+    let diagnose = shutdown
+        .find("diagnostic.report_and_detach();")
+        .expect("diagnostic reporting has a separate detached owner");
+    assert!(detach < diagnose);
     assert!(SERVICE_LOG.contains("last_event_order"));
     assert!(SERVICE_LOG.contains("ordering_key"));
     assert!(SERVICE_LOG.contains("self.encoder_epoch"));
@@ -55,6 +65,25 @@ fn windows_adaptive_apply_uses_the_persistent_service_event_log() {
     assert!(SERVICE_LOG.contains("applied_bitrate_bps"));
     assert!(SERVICE_LOG.contains("encoder_epoch"));
     assert!(!SERVICE_LOG.contains("client_address"));
+}
+
+#[test]
+fn windows_service_event_file_uses_flush_compatible_append_only_access() {
+    let secure_open = SERVICE_LOG
+        .split("fn open_secure_service_event_file")
+        .nth(1)
+        .expect("secure Windows event file open")
+        .split("pub(crate) fn prepare_program_data_lumen_directory")
+        .next()
+        .unwrap();
+
+    assert!(secure_open.contains("(FILE_GENERIC_WRITE & !FILE_WRITE_DATA) | FILE_READ_ATTRIBUTES;"));
+    assert!(secure_open.contains("APPEND_ACCESS & FILE_WRITE_DATA == 0"));
+    assert!(secure_open.contains("APPEND_ACCESS & FILE_APPEND_DATA == FILE_APPEND_DATA"));
+    assert!(secure_open.contains("APPEND_ACCESS,"));
+    assert!(secure_open.contains("OPEN_ALWAYS"));
+    assert!(!secure_open.contains("FILE_APPEND_DATA | FILE_READ_ATTRIBUTES"));
+    assert!(SERVICE_LOG.contains("file.sync_data()"));
 }
 
 #[test]
