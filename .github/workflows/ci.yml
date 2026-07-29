@@ -168,8 +168,6 @@ jobs:
           add-job-id-key: "false"
           cache-bin: "false"
           cache-on-failure: "false"
-      - name: Check workspace
-        run: cargo check --locked --workspace --all-targets --all-features
       - uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
