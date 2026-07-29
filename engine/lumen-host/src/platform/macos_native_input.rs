@@ -555,6 +555,35 @@ impl MacNativeInput {
         }
         unreachable!("native input reset attempts are bounded above");
     }
+
+    /// Releases input owned by every live native session.
+    ///
+    /// Platform workspace teardown is not coupled to the lifetime of an
+    /// individual QUIC input stream, so it must drain every epoch before the
+    /// desktop disappears. Per-epoch reset remains idempotent for the stream
+    /// guard that may run afterward.
+    pub(crate) fn reset_all(&self) -> Result<(), String> {
+        let mut session_epochs: Vec<_> = self
+            .state
+            .lock()
+            .map_err(|_| "macOS native input state is unavailable".to_owned())?
+            .keys()
+            .copied()
+            .collect();
+        session_epochs.sort_unstable();
+
+        let mut errors = Vec::new();
+        for session_epoch in session_epochs {
+            if let Err(error) = self.reset(session_epoch) {
+                errors.push(format!("session epoch {session_epoch}: {error}"));
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors.join("; "))
+        }
+    }
 }
 
 fn mac_scroll_phases(phase: NativeScrollPhase) -> (i64, i64) {
@@ -1575,6 +1604,144 @@ mod tests {
                     button: 1,
                     pressed: false,
                     click_state: 1,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn reset_all_releases_command_and_buttons_across_abrupt_session_stop() {
+        let poster = Arc::new(RecordingPoster::new([
+            Ok(()),
+            Ok(()),
+            Ok(()),
+            Ok(()),
+            Ok(()),
+            Ok(()),
+        ]));
+        let input = MacNativeInput::with_poster(poster.clone());
+
+        input
+            .handle(
+                31,
+                PlatformNativeInputEvent::Keyboard {
+                    hid_usage: 0xE3,
+                    pressed: true,
+                    modifiers: 0x08,
+                    repeat: false,
+                },
+            )
+            .unwrap();
+        input
+            .handle(
+                31,
+                PlatformNativeInputEvent::PointerButton {
+                    pointer_id: 0,
+                    button: 1,
+                    pressed: true,
+                    absolute_position: None,
+                },
+            )
+            .unwrap();
+
+        input.reset_all().unwrap();
+        input.reset(31).unwrap();
+
+        assert_eq!(
+            poster.events(),
+            vec![
+                PostedEvent::Key {
+                    hid_usage: 0xE3,
+                    pressed: true,
+                    modifiers: 0x08,
+                    repeat: false,
+                },
+                PostedEvent::Button {
+                    button: 1,
+                    pressed: true,
+                    click_state: 1,
+                },
+                PostedEvent::Key {
+                    hid_usage: 0xE3,
+                    pressed: false,
+                    modifiers: 0,
+                    repeat: false,
+                },
+                PostedEvent::Button {
+                    button: 1,
+                    pressed: false,
+                    click_state: 1,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn stale_release_from_reset_epoch_cannot_change_new_generation_state() {
+        let poster = Arc::new(RecordingPoster::new([
+            Ok(()),
+            Ok(()),
+            Ok(()),
+            Ok(()),
+            Ok(()),
+        ]));
+        let input = MacNativeInput::with_poster(poster.clone());
+        let command_down = |session_epoch| {
+            input
+                .handle(
+                    session_epoch,
+                    PlatformNativeInputEvent::Keyboard {
+                        hid_usage: 0xE3,
+                        pressed: true,
+                        modifiers: 0x08,
+                        repeat: false,
+                    },
+                )
+                .unwrap();
+        };
+
+        command_down(41);
+        input.reset(41).unwrap();
+        command_down(42);
+        input
+            .handle(
+                41,
+                PlatformNativeInputEvent::Keyboard {
+                    hid_usage: 0xE3,
+                    pressed: false,
+                    modifiers: 0,
+                    repeat: false,
+                },
+            )
+            .unwrap();
+        input.reset(42).unwrap();
+
+        assert_eq!(
+            poster.events(),
+            vec![
+                PostedEvent::Key {
+                    hid_usage: 0xE3,
+                    pressed: true,
+                    modifiers: 0x08,
+                    repeat: false,
+                },
+                PostedEvent::Key {
+                    hid_usage: 0xE3,
+                    pressed: false,
+                    modifiers: 0,
+                    repeat: false,
+                },
+                PostedEvent::Key {
+                    hid_usage: 0xE3,
+                    pressed: true,
+                    modifiers: 0x08,
+                    repeat: false,
+                },
+                PostedEvent::Key {
+                    hid_usage: 0xE3,
+                    pressed: false,
+                    modifiers: 0,
+                    repeat: false,
                 },
             ]
         );
