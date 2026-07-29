@@ -26,7 +26,7 @@ final class LumenHostSettingsStoreTests: XCTestCase {
         XCTAssertEqual(settings.networkPortPlan.nativeSessionQUICPort, 48_010)
         XCTAssertTrue(settings.runtimeArguments.contains("port=47989"))
         XCTAssertTrue(settings.runtimeArguments.contains("workspace_policy=isolated-workspace"))
-        XCTAssertFalse(settings.upnpEnabled)
+        XCTAssertTrue(settings.upnpEnabled)
         XCTAssertEqual(settings.lanEncryption, .disabled)
         XCTAssertEqual(settings.wanEncryption, .opportunistic)
         XCTAssertEqual(settings.pingTimeoutMilliseconds, 10_000)
