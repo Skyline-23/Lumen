@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <zip-file>
+    <msi-file path="Lumen-*-Windows-x86_64.msi">
+      <pe-file path="Lumen.exe">
+        <authenticode-sign />
+      </pe-file>
+      <pe-file path="tools/LumenService.exe">
+        <authenticode-sign />
+      </pe-file>
+      <pe-file path="tools/LumenDriverSetup.exe">
+        <authenticode-sign />
+      </pe-file>
+      <catalog-file path="driver/lumeniddcx.cat">
+        <authenticode-sign />
+      </catalog-file>
+      <authenticode-sign />
+    </msi-file>
+  </zip-file>
+</artifact-configuration>

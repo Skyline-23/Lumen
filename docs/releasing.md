@@ -155,10 +155,14 @@ SignPath. Because `actions/upload-artifact` stores the upload as a ZIP, the
 artifact configuration root must be a `zip-file` that selects exactly the
 `Lumen-*-Windows-x86_64.msi` entry produced by the WiX build. Inside that
 entry, configure MSI deep signing for `Lumen.exe`, `LumenService.exe`,
-`LumenDriverSetup.exe`, `LumenIddCx.dll`, and `lumeniddcx.cat`, followed by
-signing the MSI itself. Assign a release signing policy backed by the intended
-Authenticode certificate, then create a restricted API token that can only
-submit requests for that project.
+`LumenDriverSetup.exe`, and `lumeniddcx.cat`, followed by signing the MSI
+itself. Do not independently sign `LumenIddCx.dll` after its catalog has been
+generated; the release workflow verifies that the unchanged DLL is covered by
+the signed catalog. Import
+`packaging/windows/signpath-artifact-configuration.xml` instead of recreating
+this payload shape in the SignPath UI. Assign a release signing policy backed
+by the intended Authenticode certificate, then create a restricted API token
+that can only submit requests for that project.
 
 Store the token and non-secret identifiers with GitHub CLI:
 

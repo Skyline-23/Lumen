@@ -9,6 +9,10 @@ struct LumenReleaseContractTests {
         let release = try source(".github/workflows/release.yml", from: root)
         let releasingGuide = try source("docs/releasing.md", from: root)
         let installingGuide = try source("docs/installing.md", from: root)
+        let signPathConfiguration = try source(
+            "packaging/windows/signpath-artifact-configuration.xml",
+            from: root
+        )
 
         #expect(release.contains("signpath/github-action-submit-signing-request@v2"))
         #expect(release.contains("Lumen-*-Windows-x86_64.msi"))
@@ -22,6 +26,29 @@ struct LumenReleaseContractTests {
         #expect(releasingGuide.contains("MSI deep signing"))
         #expect(installingGuide.contains("Lumen-<version>-Windows-x86_64.msi"))
         #expect(installingGuide.contains("first-party Lumen virtual-display driver"))
+        #expect(signPathConfiguration.contains(#"<zip-file>"#))
+        #expect(
+            signPathConfiguration.contains(
+                #"<msi-file path="Lumen-*-Windows-x86_64.msi">"#
+            )
+        )
+        #expect(signPathConfiguration.contains(#"<pe-file path="Lumen.exe">"#))
+        #expect(
+            signPathConfiguration.contains(
+                #"<pe-file path="tools/LumenService.exe">"#
+            )
+        )
+        #expect(
+            signPathConfiguration.contains(
+                #"<pe-file path="tools/LumenDriverSetup.exe">"#
+            )
+        )
+        #expect(
+            signPathConfiguration.contains(
+                #"<catalog-file path="driver/lumeniddcx.cat">"#
+            )
+        )
+        #expect(!signPathConfiguration.contains(#"<pe-file path="driver/LumenIddCx.dll">"#))
 
         #expect(!releasingGuide.contains("Windows-x86_64.exe"))
         #expect(!releasingGuide.contains("NSIS"))
