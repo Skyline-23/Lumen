@@ -31,6 +31,8 @@ use tokio::sync::oneshot;
 
 const MEDIA_POLL_INTERVAL: Duration = Duration::from_millis(1);
 const MAXIMUM_VIDEO_WIRE_BURST_DATAGRAMS: usize = 2;
+const PERIODIC_KEYFRAME_SCHEDULING_MARGIN_US: u64 = 5_000;
+const PERIODIC_KEYFRAME_DEADLINE_MULTIPLIER: u64 = 4;
 pub(super) const NATIVE_MEDIA_SEND_BUFFER_BYTES: usize = 4 * 1024 * 1024;
 const NATIVE_AUDIO_EGRESS_RESERVE_BYTES: usize = 2 * 1_200;
 const PACKET_ARRIVAL_WARNING_COMMAND_CAPACITY: usize = 8;
@@ -1206,6 +1208,71 @@ enum VideoKeyframeDelivery {
     ReliableBootstrap(VideoBootstrapClassification),
 }
 
+#[derive(Debug, Eq, PartialEq)]
+enum VideoDatagramDeadlineError {
+    InvalidWireBudget,
+    ArithmeticOverflow,
+    TerminalPeriodicKeyframeWireCapExceeded { required_us: u64, cap_us: u64 },
+}
+
+fn video_datagram_deadline_us<DatagramBytes>(
+    same_generation_periodic_keyframe: bool,
+    datagram_bytes: DatagramBytes,
+    maximum_datagram_payload: usize,
+    wire_budget_kbps: u32,
+    maximum_object_delay_us: u32,
+) -> Result<u64, VideoDatagramDeadlineError>
+where
+    DatagramBytes: IntoIterator<Item = usize>,
+{
+    let delta_deadline_us = u64::from(maximum_object_delay_us);
+    if !same_generation_periodic_keyframe {
+        return Ok(delta_deadline_us);
+    }
+    if wire_budget_kbps == 0 {
+        return Err(VideoDatagramDeadlineError::InvalidWireBudget);
+    }
+
+    let total_bytes = datagram_bytes.into_iter().try_fold(0_u64, |total, bytes| {
+        total
+            .checked_add(
+                u64::try_from(bytes).map_err(|_| VideoDatagramDeadlineError::ArithmeticOverflow)?,
+            )
+            .ok_or(VideoDatagramDeadlineError::ArithmeticOverflow)
+    })?;
+    let burst_bytes = u64::try_from(maximum_datagram_payload)
+        .map_err(|_| VideoDatagramDeadlineError::ArithmeticOverflow)?
+        .checked_mul(
+            u64::try_from(MAXIMUM_VIDEO_WIRE_BURST_DATAGRAMS)
+                .map_err(|_| VideoDatagramDeadlineError::ArithmeticOverflow)?,
+        )
+        .ok_or(VideoDatagramDeadlineError::ArithmeticOverflow)?;
+    let paced_bits = total_bytes
+        .saturating_sub(burst_bytes)
+        .checked_mul(8)
+        .ok_or(VideoDatagramDeadlineError::ArithmeticOverflow)?;
+    let paced_microseconds = paced_bits
+        .checked_mul(1_000)
+        .ok_or(VideoDatagramDeadlineError::ArithmeticOverflow)?
+        .div_ceil(u64::from(wire_budget_kbps));
+    let required_us = paced_microseconds
+        .checked_add(PERIODIC_KEYFRAME_SCHEDULING_MARGIN_US)
+        .ok_or(VideoDatagramDeadlineError::ArithmeticOverflow)?
+        .max(delta_deadline_us);
+    let cap_us = delta_deadline_us
+        .checked_mul(PERIODIC_KEYFRAME_DEADLINE_MULTIPLIER)
+        .ok_or(VideoDatagramDeadlineError::ArithmeticOverflow)?;
+    if required_us > cap_us {
+        return Err(
+            VideoDatagramDeadlineError::TerminalPeriodicKeyframeWireCapExceeded {
+                required_us,
+                cap_us,
+            },
+        );
+    }
+    Ok(required_us)
+}
+
 fn classify_video_bootstrap(
     has_new_configuration: bool,
     has_acknowledged_generation: bool,
@@ -1515,6 +1582,7 @@ async fn poll_and_send_video(
         return MediaAttempt::Dropped;
     }
     let frame_id = sender.frame_id;
+    let mut same_generation_periodic_keyframe = false;
     if normalized.frame.key_frame {
         let delivery_kind = classify_video_keyframe_delivery(
             normalized.new_configuration.is_some(),
@@ -1524,6 +1592,7 @@ async fn poll_and_send_video(
         );
         match delivery_kind {
             VideoKeyframeDelivery::SameGenerationDatagram => {
+                same_generation_periodic_keyframe = true;
                 eprintln!(
                     "Lumen object delivery stage=periodic-keyframe-datagram session-epoch={} generation-id={} frame-id={frame_id}",
                     delivery.session_epoch,
@@ -1593,10 +1662,40 @@ async fn poll_and_send_video(
         Ok(packetized) => packetized,
         Err(message) => return MediaAttempt::Failed(video_failure("packetizer-failed", message)),
     };
-    let pending_since = sender.pending_since.expect("staged video frame timestamp");
-    let Some(deadline) = pending_since.checked_add(Duration::from_micros(u64::from(
+    let deadline_us = match video_datagram_deadline_us(
+        same_generation_periodic_keyframe,
+        packetized.datagrams.iter().map(Vec::len),
+        delivery.maximum_datagram_payload,
+        delivery.wire_budget_kbps,
         delivery.maximum_object_delay_us,
-    ))) else {
+    ) {
+        Ok(deadline_us) => deadline_us,
+        Err(VideoDatagramDeadlineError::TerminalPeriodicKeyframeWireCapExceeded {
+            required_us,
+            cap_us,
+        }) => {
+            return MediaAttempt::Terminal(video_failure(
+                "periodic-keyframe-wire-cap-exceeded",
+                format!(
+                    "same-generation periodic keyframe requires {required_us} us but the bounded deadline cap is {cap_us} us; frame-id={frame_id}"
+                ),
+            ))
+        }
+        Err(VideoDatagramDeadlineError::InvalidWireBudget) => {
+            return MediaAttempt::Failed(video_failure(
+                "packetizer-failed",
+                "video wire budget is zero".to_owned(),
+            ))
+        }
+        Err(VideoDatagramDeadlineError::ArithmeticOverflow) => {
+            return MediaAttempt::Failed(video_failure(
+                "packetizer-failed",
+                "video object deadline arithmetic overflowed".to_owned(),
+            ))
+        }
+    };
+    let pending_since = sender.pending_since.expect("staged video frame timestamp");
+    let Some(deadline) = pending_since.checked_add(Duration::from_micros(deadline_us)) else {
         return MediaAttempt::Failed(video_failure(
             "packetizer-failed",
             "video object deadline overflowed".to_owned(),
@@ -1634,7 +1733,7 @@ async fn poll_and_send_video(
             frame_id,
             &report,
             object_age_us,
-            u64::from(delivery.maximum_object_delay_us),
+            deadline_us,
         );
     }
     let request_repair = match finish_video_datagram_delivery(
@@ -1788,11 +1887,12 @@ mod tests {
         classify_video_keyframe_delivery, delivery_for_session, finish_video_datagram_delivery,
         object_deadline_exceeded, record_successful_datagram, run_native_media_tasks,
         send_datagram_batch, send_video_datagram_batch, send_wire_paced_video_datagram_batch,
-        wait_for_datagram_deadline, wait_for_datagram_queue_capacity, DatagramBatchDropReason,
-        DatagramBatchMode, DatagramBatchStatus, DatagramDeadlineElapsed, DatagramSendOutcome,
-        PacketArrivalHistoryWarningReporter, PacketArrivalSendObservation, SessionDelivery,
-        VideoBootstrapClassification, VideoDatagramCompletion, VideoKeyframeDelivery,
-        VideoSenderState, VideoWireRatePacer, MAXIMUM_VIDEO_WIRE_BURST_DATAGRAMS,
+        video_datagram_deadline_us, wait_for_datagram_deadline, wait_for_datagram_queue_capacity,
+        DatagramBatchDropReason, DatagramBatchMode, DatagramBatchStatus, DatagramDeadlineElapsed,
+        DatagramSendOutcome, PacketArrivalHistoryWarningReporter, PacketArrivalSendObservation,
+        SessionDelivery, VideoBootstrapClassification, VideoDatagramCompletion,
+        VideoDatagramDeadlineError, VideoKeyframeDelivery, VideoSenderState, VideoWireRatePacer,
+        MAXIMUM_VIDEO_WIRE_BURST_DATAGRAMS,
     };
     use lumen_engine::{
         native_video_packetization_plan, MediaFeedback, NativeVideoBootstrapReason,
@@ -1936,6 +2036,70 @@ mod tests {
             Duration::from_micros(25_001),
             25_000
         ));
+    }
+
+    #[test]
+    fn periodic_keyframe_deadline_uses_actual_wire_bytes_and_configured_burst() {
+        let datagram_bytes = vec![1_170; 235];
+
+        assert_eq!(
+            video_datagram_deadline_us(true, datagram_bytes.iter().copied(), 1_170, 66_269, 16_668,),
+            Ok(37_910)
+        );
+        let visited_delta_bytes = Cell::new(0);
+        assert_eq!(
+            video_datagram_deadline_us(
+                false,
+                datagram_bytes.iter().map(|bytes| {
+                    visited_delta_bytes.set(visited_delta_bytes.get() + 1);
+                    *bytes
+                }),
+                1_170,
+                66_269,
+                16_668,
+            ),
+            Ok(16_668)
+        );
+        assert_eq!(visited_delta_bytes.get(), 0);
+    }
+
+    #[test]
+    fn periodic_keyframe_deadline_admits_observed_frame_without_changing_generation() {
+        let origin = Instant::now();
+        let datagram_bytes = vec![1_170; 235];
+        let deadline_us =
+            video_datagram_deadline_us(true, datagram_bytes.iter().copied(), 1_170, 66_269, 16_668)
+                .expect("observed periodic keyframe fits its bounded wire deadline");
+        let mut pacer = VideoWireRatePacer::default();
+        pacer.prepare(42, 66_269).unwrap();
+
+        let schedule = pacer
+            .reserve(
+                &datagram_bytes,
+                1_170,
+                origin,
+                origin + Duration::from_micros(deadline_us),
+            )
+            .expect("extended periodic deadline admits the complete object");
+
+        assert_eq!(schedule.len(), datagram_bytes.len());
+        assert!(schedule.last().copied().unwrap() <= origin + Duration::from_micros(37_910));
+        assert_eq!(pacer.session_epoch, Some(42));
+    }
+
+    #[test]
+    fn periodic_keyframe_cap_overflow_is_terminal_before_delivery_completion() {
+        let datagram_bytes = vec![1_170; 500];
+
+        assert_eq!(
+            video_datagram_deadline_us(true, datagram_bytes.iter().copied(), 1_170, 66_269, 16_668,),
+            Err(
+                VideoDatagramDeadlineError::TerminalPeriodicKeyframeWireCapExceeded {
+                    required_us: 75_339,
+                    cap_us: 66_672,
+                }
+            )
+        );
     }
 
     #[test]
