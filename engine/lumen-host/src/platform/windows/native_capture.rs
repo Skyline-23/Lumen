@@ -6,10 +6,11 @@ use windows_api::Win32::Foundation::HMODULE;
 use windows_api::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_UNKNOWN;
 use windows_api::Win32::Graphics::Direct3D11::{
     D3D11CreateDevice, ID3D11Device, ID3D11Device1, ID3D11DeviceContext, ID3D11Texture2D,
-    ID3D11VideoContext, ID3D11VideoContext1, ID3D11VideoDevice, D3D11_BIND_RENDER_TARGET,
-    D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_CREATE_DEVICE_VIDEO_SUPPORT, D3D11_SDK_VERSION,
-    D3D11_TEX2D_VPIV, D3D11_TEX2D_VPOV, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT,
-    D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE, D3D11_VIDEO_PROCESSOR_CONTENT_DESC,
+    ID3D11VideoContext, ID3D11VideoContext1, ID3D11VideoDevice, ID3D11VideoProcessor,
+    ID3D11VideoProcessorEnumerator, ID3D11VideoProcessorInputView, ID3D11VideoProcessorOutputView,
+    D3D11_BIND_RENDER_TARGET, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_CREATE_DEVICE_VIDEO_SUPPORT,
+    D3D11_SDK_VERSION, D3D11_TEX2D_VPIV, D3D11_TEX2D_VPOV, D3D11_TEXTURE2D_DESC,
+    D3D11_USAGE_DEFAULT, D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE, D3D11_VIDEO_PROCESSOR_CONTENT_DESC,
     D3D11_VIDEO_PROCESSOR_FORMAT_SUPPORT_INPUT, D3D11_VIDEO_PROCESSOR_FORMAT_SUPPORT_OUTPUT,
     D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC, D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC_0,
     D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC, D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC_0,
@@ -38,7 +39,11 @@ pub(super) struct NativeIddCxCapture {
     device: ID3D11Device,
     context: ID3D11DeviceContext,
     device1: ID3D11Device1,
+    video_device: ID3D11VideoDevice,
+    video_context: ID3D11VideoContext,
+    video_context1: ID3D11VideoContext1,
     surface: Option<NativeSharedSurface>,
+    conversion_pipeline: Option<NativeVideoConversionPipeline>,
     require_hdr: bool,
     frame_delivery: Arc<FrameDeliveryOwnership>,
 }
@@ -58,6 +63,27 @@ pub(super) struct NativeEncoderSurface {
     texture: ID3D11Texture2D,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct NativeVideoConversionKey {
+    surface_revision: u32,
+    input_width: u32,
+    input_height: u32,
+    input_format: i32,
+    output_width: u32,
+    output_height: u32,
+    frames_per_second: u32,
+    output_format: i32,
+}
+
+struct NativeVideoConversionPipeline {
+    key: NativeVideoConversionKey,
+    _enumerator: ID3D11VideoProcessorEnumerator,
+    processor: ID3D11VideoProcessor,
+    input_view: ID3D11VideoProcessorInputView,
+    output_texture: ID3D11Texture2D,
+    output_view: ID3D11VideoProcessorOutputView,
+}
+
 impl NativeIddCxCapture {
     pub(super) fn open(
         driver: DriverHandle,
@@ -72,13 +98,26 @@ impl NativeIddCxCapture {
         let device1 = device.cast::<ID3D11Device1>().map_err(|error| {
             format!("Windows D3D11.1 shared-resource device is unavailable: {error}")
         })?;
+        let video_device = device
+            .cast::<ID3D11VideoDevice>()
+            .map_err(|error| format!("Windows D3D11 video device is unavailable: {error}"))?;
+        let video_context = context
+            .cast::<ID3D11VideoContext>()
+            .map_err(|error| format!("Windows D3D11 video context is unavailable: {error}"))?;
+        let video_context1 = context.cast::<ID3D11VideoContext1>().map_err(|error| {
+            format!("Windows D3D11.1 color-managed video context is unavailable: {error}")
+        })?;
         frame_delivery.start_with(|| driver.start_frame_delivery())?;
         Ok(Self {
             driver,
             device,
             context,
             device1,
+            video_device,
+            video_context,
+            video_context1,
             surface: None,
+            conversion_pipeline: None,
             require_hdr,
             frame_delivery,
         })
@@ -128,6 +167,7 @@ impl NativeIddCxCapture {
                 texture,
                 keyed_mutex,
             });
+            self.conversion_pipeline = None;
         }
         let surface = self
             .surface
@@ -161,7 +201,7 @@ impl NativeIddCxCapture {
     }
 
     pub(super) fn convert_frame(
-        &self,
+        &mut self,
         frame: &NativeCapturedFrame,
         output_width: u32,
         output_height: u32,
@@ -169,16 +209,68 @@ impl NativeIddCxCapture {
         ten_bit: bool,
         chroma_subsampling: PlatformChromaSubsampling,
     ) -> Result<NativeEncoderSurface, String> {
-        convert_iddcx_frame(
-            &self.device,
-            &self.context,
-            frame,
+        let surface_revision = self
+            .surface
+            .as_ref()
+            .map(|surface| surface.revision)
+            .ok_or_else(|| "Windows IDD shared frame is unavailable".to_owned())?;
+        let mut input_description = D3D11_TEXTURE2D_DESC::default();
+        unsafe { frame.texture.GetDesc(&mut input_description) };
+        let output_format = encoder_surface_format(chroma_subsampling, ten_bit);
+        let key = NativeVideoConversionKey {
+            surface_revision,
+            input_width: input_description.Width,
+            input_height: input_description.Height,
+            input_format: input_description.Format.0,
             output_width,
             output_height,
             frames_per_second,
-            ten_bit,
-            chroma_subsampling,
-        )
+            output_format: output_format.0,
+        };
+        if self
+            .conversion_pipeline
+            .as_ref()
+            .is_none_or(|pipeline| pipeline.key != key)
+        {
+            self.conversion_pipeline = Some(create_video_conversion_pipeline(
+                &self.device,
+                &self.video_device,
+                &self.video_context,
+                &self.video_context1,
+                frame,
+                input_description,
+                output_width,
+                output_height,
+                frames_per_second,
+                output_format,
+                ten_bit,
+                key,
+            )?);
+        }
+        let pipeline = self
+            .conversion_pipeline
+            .as_ref()
+            .expect("conversion pipeline was created for the current frame");
+        let mut stream = D3D11_VIDEO_PROCESSOR_STREAM {
+            Enable: true.into(),
+            pInputSurface: ManuallyDrop::new(Some(pipeline.input_view.clone())),
+            ..Default::default()
+        };
+        let converted = unsafe {
+            self.video_context.VideoProcessorBlt(
+                &pipeline.processor,
+                &pipeline.output_view,
+                0,
+                std::slice::from_ref(&stream),
+            )
+        }
+        .map_err(|error| format!("Windows IDD GPU video conversion failed: {error}"));
+        unsafe { ManuallyDrop::drop(&mut stream.pInputSurface) };
+        converted?;
+        unsafe { self.context.Flush() };
+        Ok(NativeEncoderSurface {
+            texture: pipeline.output_texture.clone(),
+        })
     }
 }
 
@@ -196,28 +288,21 @@ impl NativeEncoderSurface {
     }
 }
 
-fn convert_iddcx_frame(
+#[allow(clippy::too_many_arguments)]
+fn create_video_conversion_pipeline(
     device: &ID3D11Device,
-    context: &ID3D11DeviceContext,
+    video_device: &ID3D11VideoDevice,
+    video_context: &ID3D11VideoContext,
+    video_context1: &ID3D11VideoContext1,
     frame: &NativeCapturedFrame,
+    input_description: D3D11_TEXTURE2D_DESC,
     output_width: u32,
     output_height: u32,
     frames_per_second: u32,
+    output_format: DXGI_FORMAT,
     ten_bit: bool,
-    chroma_subsampling: PlatformChromaSubsampling,
-) -> Result<NativeEncoderSurface, String> {
-    let mut input_description = D3D11_TEXTURE2D_DESC::default();
-    unsafe { frame.texture.GetDesc(&mut input_description) };
-    let output_format = encoder_surface_format(chroma_subsampling, ten_bit);
-    let video_device = device
-        .cast::<ID3D11VideoDevice>()
-        .map_err(|error| format!("Windows D3D11 video device is unavailable: {error}"))?;
-    let video_context = context
-        .cast::<ID3D11VideoContext>()
-        .map_err(|error| format!("Windows D3D11 video context is unavailable: {error}"))?;
-    let video_context1 = context.cast::<ID3D11VideoContext1>().map_err(|error| {
-        format!("Windows D3D11.1 color-managed video context is unavailable: {error}")
-    })?;
+    key: NativeVideoConversionKey,
+) -> Result<NativeVideoConversionPipeline, String> {
     let (input_color_space, output_color_space) =
         encoder_color_spaces(input_description.Format, ten_bit)?;
     let content = D3D11_VIDEO_PROCESSOR_CONTENT_DESC {
@@ -244,8 +329,8 @@ fn convert_iddcx_frame(
         .map_err(|error| format!("Windows video processor creation failed: {error}"))?;
     let output_texture =
         create_encoder_texture(device, output_width, output_height, output_format)?;
-    let input_view = create_input_view(&video_device, &enumerator, &frame.texture)?;
-    let output_view = create_output_view(&video_device, &enumerator, &output_texture)?;
+    let input_view = create_input_view(video_device, &enumerator, &frame.texture)?;
+    let output_view = create_output_view(video_device, &enumerator, &output_texture)?;
     unsafe {
         video_context.VideoProcessorSetStreamFrameFormat(
             &processor,
@@ -255,20 +340,13 @@ fn convert_iddcx_frame(
         video_context1.VideoProcessorSetStreamColorSpace1(&processor, 0, input_color_space);
         video_context1.VideoProcessorSetOutputColorSpace1(&processor, output_color_space);
     }
-    let mut stream = D3D11_VIDEO_PROCESSOR_STREAM {
-        Enable: true.into(),
-        pInputSurface: ManuallyDrop::new(Some(input_view)),
-        ..Default::default()
-    };
-    let converted = unsafe {
-        video_context.VideoProcessorBlt(&processor, &output_view, 0, std::slice::from_ref(&stream))
-    }
-    .map_err(|error| format!("Windows IDD GPU video conversion failed: {error}"));
-    unsafe { ManuallyDrop::drop(&mut stream.pInputSurface) };
-    converted?;
-    unsafe { context.Flush() };
-    Ok(NativeEncoderSurface {
-        texture: output_texture,
+    Ok(NativeVideoConversionPipeline {
+        key,
+        _enumerator: enumerator,
+        processor,
+        input_view,
+        output_texture,
+        output_view,
     })
 }
 

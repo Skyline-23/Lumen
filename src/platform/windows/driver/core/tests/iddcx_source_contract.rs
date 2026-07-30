@@ -359,6 +359,9 @@ fn native_host_uses_iddcx_frames_and_hevc_444_media_foundation_profiles() {
     assert!(capture.contains("OpenSharedResourceByName"));
     assert!(capture.contains("AcquireSync(1"));
     assert!(capture.contains("ReleaseSync(0"));
+    assert!(capture.contains("conversion_pipeline: Option<NativeVideoConversionPipeline>"));
+    assert!(capture.contains("pipeline.key != key"));
+    assert!(capture.contains("texture: pipeline.output_texture.clone()"));
 
     assert!(video.contains("NativeIddCxCapture"));
     assert!(!video.contains("NativeDesktopDuplication"));
