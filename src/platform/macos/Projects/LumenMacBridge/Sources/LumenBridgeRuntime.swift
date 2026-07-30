@@ -187,7 +187,7 @@ public actor LumenBridgeRuntime {
         await captureSnapshotImpl()
     }
 
-    public func videoForwardingSnapshot() -> LumenBridgeVideoForwardingSnapshot {
+    public nonisolated func videoForwardingSnapshot() -> LumenBridgeVideoForwardingSnapshot {
         videoForwardingSnapshotImpl()
     }
 
@@ -195,7 +195,7 @@ public actor LumenBridgeRuntime {
         await captureDiagnosticsStringImpl()
     }
 
-    public func configureVideoForwarding(
+    public nonisolated func configureVideoForwarding(
         frameCapacity: Int,
         eventCapacity: Int
     ) {
@@ -205,7 +205,7 @@ public actor LumenBridgeRuntime {
         )
     }
 
-    public func configureAudioForwarding(
+    public nonisolated func configureAudioForwarding(
         frameCapacity: Int,
         eventCapacity: Int
     ) {
@@ -215,24 +215,24 @@ public actor LumenBridgeRuntime {
         )
     }
 
-    public func drainNextVideoForwardedFrame() -> LumenBridgeDrainedVideoFrame? {
+    public nonisolated func drainNextVideoForwardedFrame() -> LumenBridgeDrainedVideoFrame? {
         drainNextVideoForwardedFrameImpl()
     }
 
-    public func drainNextVideoForwardedEvent() -> LumenBridgeDrainedVideoEvent? {
+    public nonisolated func drainNextVideoForwardedEvent() -> LumenBridgeDrainedVideoEvent? {
         drainNextVideoForwardedEventImpl()
     }
 
-    public func audioForwardingSnapshot() -> LumenBridgeAudioForwardingSnapshot {
+    public nonisolated func audioForwardingSnapshot() -> LumenBridgeAudioForwardingSnapshot {
         audioForwardingSnapshotImpl()
     }
 
-    public func drainNextVideoForwardedAudioFrame()
+    public nonisolated func drainNextVideoForwardedAudioFrame()
         -> LumenBridgeDrainedAudioFrame? {
         drainNextVideoForwardedAudioFrameImpl()
     }
 
-    public func drainNextVideoForwardedAudioEvent()
+    public nonisolated func drainNextVideoForwardedAudioEvent()
         -> LumenBridgeDrainedAudioEvent? {
         drainNextVideoForwardedAudioEventImpl()
     }
@@ -241,8 +241,8 @@ public actor LumenBridgeRuntime {
         statusSnapshotImpl()
     }
 
-    let videoForwarder = LumenVideoCaptureForwarder()
-    let audioForwarder = LumenAudioCaptureForwarder()
+    nonisolated let videoForwarder = LumenVideoCaptureForwarder()
+    nonisolated let audioForwarder = LumenAudioCaptureForwarder()
     let logger = Logger(subsystem: "dev.skyline23.lumen", category: "MacBridgeRuntime")
     let captureLifecycle = LumenBridgeCaptureLifecycle()
     let encodedFrameReadiness = LumenFirstEncodedFrameGate()

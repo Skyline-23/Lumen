@@ -19,7 +19,7 @@ extension LumenBridgeRuntime {
         )
     }
 
-    func videoForwardingSnapshotImpl() -> LumenBridgeVideoForwardingSnapshot {
+    nonisolated func videoForwardingSnapshotImpl() -> LumenBridgeVideoForwardingSnapshot {
         videoForwarder.snapshot()
     }
 
@@ -34,7 +34,7 @@ extension LumenBridgeRuntime {
         )
     }
 
-    func configureVideoForwardingImpl(
+    nonisolated func configureVideoForwardingImpl(
         frameCapacity: Int,
         eventCapacity: Int
     ) {
@@ -42,7 +42,7 @@ extension LumenBridgeRuntime {
         videoForwarder.setEventCapacity(eventCapacity)
     }
 
-    func configureAudioForwardingImpl(
+    nonisolated func configureAudioForwardingImpl(
         frameCapacity: Int,
         eventCapacity: Int
     ) {
@@ -50,23 +50,23 @@ extension LumenBridgeRuntime {
         audioForwarder.setEventCapacity(eventCapacity)
     }
 
-    func drainNextVideoForwardedFrameImpl() -> LumenBridgeDrainedVideoFrame? {
+    nonisolated func drainNextVideoForwardedFrameImpl() -> LumenBridgeDrainedVideoFrame? {
         videoForwarder.popNextFrame()
     }
 
-    func drainNextVideoForwardedEventImpl() -> LumenBridgeDrainedVideoEvent? {
+    nonisolated func drainNextVideoForwardedEventImpl() -> LumenBridgeDrainedVideoEvent? {
         videoForwarder.popNextEvent()
     }
 
-    func audioForwardingSnapshotImpl() -> LumenBridgeAudioForwardingSnapshot {
+    nonisolated func audioForwardingSnapshotImpl() -> LumenBridgeAudioForwardingSnapshot {
         audioForwarder.snapshot()
     }
 
-    func drainNextVideoForwardedAudioFrameImpl() -> LumenBridgeDrainedAudioFrame? {
+    nonisolated func drainNextVideoForwardedAudioFrameImpl() -> LumenBridgeDrainedAudioFrame? {
         audioForwarder.popNextFrame()
     }
 
-    func drainNextVideoForwardedAudioEventImpl() -> LumenBridgeDrainedAudioEvent? {
+    nonisolated func drainNextVideoForwardedAudioEventImpl() -> LumenBridgeDrainedAudioEvent? {
         audioForwarder.popNextEvent()
     }
 

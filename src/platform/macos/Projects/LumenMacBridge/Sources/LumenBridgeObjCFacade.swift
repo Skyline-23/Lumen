@@ -251,22 +251,16 @@ extension LumenBridgeObjCFacade {
     }
 
     public func configureVideoForwardingSync(frameCapacity: Int, eventCapacity: Int) {
-        let runtime = runtime
-        try? blockingRun {
-            await runtime.configureVideoForwarding(
-                frameCapacity: frameCapacity,
-                eventCapacity: eventCapacity
-            )
-        }
+        runtime.configureVideoForwarding(
+            frameCapacity: frameCapacity,
+            eventCapacity: eventCapacity
+        )
     }
 
     public func copyVideoForwardingSnapshotSync() -> LumenBridgeVideoForwardingSnapshotBox {
-        let runtime = runtime
-        let snapshot = try? blockingRun {
-            await runtime.videoForwardingSnapshot()
-        }
-        return snapshot.map(LumenBridgeVideoForwardingSnapshotBox.init(snapshot:))
-            ?? makeEmptyVideoForwardingSnapshotBox()
+        LumenBridgeVideoForwardingSnapshotBox(
+            snapshot: runtime.videoForwardingSnapshot()
+        )
     }
 
     public func copyCaptureDiagnosticsSync() -> NSString {
@@ -277,46 +271,36 @@ extension LumenBridgeObjCFacade {
     }
 
     public func configureAudioForwardingSync(frameCapacity: Int, eventCapacity: Int) {
-        let runtime = runtime
-        try? blockingRun {
-            await runtime.configureAudioForwarding(
-                frameCapacity: frameCapacity,
-                eventCapacity: eventCapacity
-            )
-        }
+        runtime.configureAudioForwarding(
+            frameCapacity: frameCapacity,
+            eventCapacity: eventCapacity
+        )
     }
 
     public func copyAudioForwardingSnapshotSync() -> LumenBridgeAudioForwardingSnapshotBox {
-        let runtime = runtime
-        let snapshot = try? blockingRun {
-            await runtime.audioForwardingSnapshot()
-        }
-        return snapshot.map(LumenBridgeAudioForwardingSnapshotBox.init(snapshot:))
-            ?? makeEmptyAudioForwardingSnapshotBox()
+        LumenBridgeAudioForwardingSnapshotBox(
+            snapshot: runtime.audioForwardingSnapshot()
+        )
     }
 
     public func popNextVideoForwardedFrameSync() -> LumenBridgeDrainedFrameBox? {
-        let runtime = runtime
-        let frame = try? blockingRun { await runtime.drainNextVideoForwardedFrame() }
-        return frame.flatMap { $0 }.map(LumenBridgeDrainedFrameBox.init(frame:))
+        runtime.drainNextVideoForwardedFrame()
+            .map(LumenBridgeDrainedFrameBox.init(frame:))
     }
 
     public func popNextVideoForwardedEventSync() -> LumenBridgeDrainedEventBox? {
-        let runtime = runtime
-        let event = try? blockingRun { await runtime.drainNextVideoForwardedEvent() }
-        return event.flatMap { $0 }.map(LumenBridgeDrainedEventBox.init(event:))
+        runtime.drainNextVideoForwardedEvent()
+            .map(LumenBridgeDrainedEventBox.init(event:))
     }
 
     public func popNextVideoForwardedAudioFrameSync() -> LumenBridgeDrainedAudioFrameBox? {
-        let runtime = runtime
-        let frame = try? blockingRun { await runtime.drainNextVideoForwardedAudioFrame() }
-        return frame.flatMap { $0 }.map(LumenBridgeDrainedAudioFrameBox.init(frame:))
+        runtime.drainNextVideoForwardedAudioFrame()
+            .map(LumenBridgeDrainedAudioFrameBox.init(frame:))
     }
 
     public func popNextVideoForwardedAudioEventSync() -> LumenBridgeDrainedAudioEventBox? {
-        let runtime = runtime
-        let event = try? blockingRun { await runtime.drainNextVideoForwardedAudioEvent() }
-        return event.flatMap { $0 }.map(LumenBridgeDrainedAudioEventBox.init(event:))
+        runtime.drainNextVideoForwardedAudioEvent()
+            .map(LumenBridgeDrainedAudioEventBox.init(event:))
     }
 
     private func makeUnavailableStatusBox() -> LumenBridgeStatusBox {
@@ -332,44 +316,4 @@ extension LumenBridgeObjCFacade {
         )
     }
 
-    private func makeEmptyVideoForwardingSnapshotBox() -> LumenBridgeVideoForwardingSnapshotBox {
-        LumenBridgeVideoForwardingSnapshotBox(
-            snapshot: LumenBridgeVideoForwardingSnapshot(
-                frameCount: 0,
-                eventCount: 0,
-                queuedFrameCount: 0,
-                queuedEventCount: 0,
-                droppedFrameCount: 0,
-                droppedEventCount: 0,
-                hasLastSampleBuffer: false,
-                lastFrameCodec: nil,
-                lastFramePayloadSize: 0,
-                lastFrameSourceSequenceNumber: nil,
-                lastFrameSourceDisplayTime: nil,
-                lastFrameIsKeyFrame: false,
-                lastFrameIsHDRSignaled: false,
-                lastEventKind: nil
-            )
-        )
-    }
-
-    private func makeEmptyAudioForwardingSnapshotBox() -> LumenBridgeAudioForwardingSnapshotBox {
-        LumenBridgeAudioForwardingSnapshotBox(
-            snapshot: LumenBridgeAudioForwardingSnapshot(
-                frameCount: 0,
-                eventCount: 0,
-                queuedFrameCount: 0,
-                queuedEventCount: 0,
-                droppedFrameCount: 0,
-                droppedEventCount: 0,
-                lastFrameSequenceNumber: nil,
-                lastFrameHostTimeNanoseconds: nil,
-                lastFrameSampleRate: nil,
-                lastFrameChannelCount: nil,
-                lastFrameFrameCount: nil,
-                lastFramePCMByteCount: 0,
-                lastEventKind: nil
-            )
-        )
-    }
 }
