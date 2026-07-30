@@ -686,8 +686,8 @@ mod tests {
     }
 
     #[test]
-    fn sustained_processing_only_decoder_failure_reduces_admission_without_changing_delivery_budget()
-    {
+    fn sustained_processing_only_decoder_failure_reduces_admission_without_changing_delivery_budget(
+    ) {
         let mut controller = AdaptiveVideoDeliveryController::new(100_000, 80_000, 5, 3);
         let decision = controller.observe_window(
             MediaFeedbackSample {
