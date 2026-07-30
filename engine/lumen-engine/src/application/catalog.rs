@@ -29,6 +29,43 @@ impl ApplicationCatalog {
         Ok(catalog)
     }
 
+    pub fn open_seeded(file_path: PathBuf, seed_path: PathBuf) -> Result<Self, CatalogError> {
+        if file_path.as_os_str().is_empty()
+            || file_path.file_name().is_none()
+            || seed_path.as_os_str().is_empty()
+            || seed_path.file_name().is_none()
+        {
+            return Err(CatalogError::InvalidArgument);
+        }
+
+        let seed_data = fs::read(seed_path).map_err(|_| CatalogError::Storage)?;
+        let mut seed_document: Value =
+            serde_json::from_slice(&seed_data).map_err(|_| CatalogError::Corrupt)?;
+        normalize_document(&mut seed_document)?;
+        let seed_applications = applications_mut(&mut seed_document)?.clone();
+        if seed_applications.is_empty() {
+            return Err(CatalogError::Corrupt);
+        }
+
+        let should_initialize = !file_path.exists();
+        let catalog = Self { file_path };
+        let mut document = if should_initialize {
+            super::document::default_document()
+        } else {
+            catalog.read_document()?
+        };
+        let mut changed = normalize_document(&mut document)?;
+        let applications = applications_mut(&mut document)?;
+        if applications.is_empty() {
+            *applications = seed_applications;
+            changed = true;
+        }
+        if should_initialize || changed {
+            catalog.write_document(&document)?;
+        }
+        Ok(catalog)
+    }
+
     pub fn json(&self) -> Result<Vec<u8>, CatalogError> {
         let document = self.read_document()?;
         serde_json::to_vec_pretty(&document).map_err(|_| CatalogError::Corrupt)

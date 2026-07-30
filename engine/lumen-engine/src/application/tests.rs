@@ -42,6 +42,83 @@ fn catalog_initializes_a_missing_document() {
 }
 
 #[test]
+fn seeded_catalog_promotes_a_legacy_empty_runtime_and_preserves_environment() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime_path = root.path().join("config").join("apps.json");
+    let seed_path = root.path().join("assets").join("apps.json");
+    fs::create_dir_all(runtime_path.parent().unwrap()).unwrap();
+    fs::create_dir_all(seed_path.parent().unwrap()).unwrap();
+    fs::write(&runtime_path, r#"{"env":{"CUSTOM":"preserved"},"apps":[]}"#).unwrap();
+    fs::write(&seed_path, r#"{"env":{},"apps":[{"name":"Desktop"}]}"#).unwrap();
+
+    let catalog = ApplicationCatalog::open_seeded(runtime_path.clone(), seed_path).unwrap();
+
+    assert_eq!(
+        catalog
+            .applications()
+            .unwrap()
+            .into_iter()
+            .map(|application| application.name)
+            .collect::<Vec<_>>(),
+        ["Desktop"]
+    );
+    let document: Value = serde_json::from_slice(&fs::read(runtime_path).unwrap()).unwrap();
+    assert_eq!(document["env"]["CUSTOM"], "preserved");
+}
+
+#[test]
+fn seeded_catalog_preserves_non_empty_user_catalog() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime_path = root.path().join("config").join("apps.json");
+    let seed_path = root.path().join("assets").join("apps.json");
+    fs::create_dir_all(runtime_path.parent().unwrap()).unwrap();
+    fs::create_dir_all(seed_path.parent().unwrap()).unwrap();
+    fs::write(
+        &runtime_path,
+        r#"{"env":{},"apps":[{"name":"Editor","uuid":"editor"}]}"#,
+    )
+    .unwrap();
+    fs::write(&seed_path, r#"{"env":{},"apps":[{"name":"Desktop"}]}"#).unwrap();
+
+    let catalog = ApplicationCatalog::open_seeded(runtime_path, seed_path).unwrap();
+
+    assert_eq!(
+        catalog
+            .applications()
+            .unwrap()
+            .into_iter()
+            .map(|application| application.name)
+            .collect::<Vec<_>>(),
+        ["Editor"]
+    );
+}
+
+#[test]
+fn seeded_catalog_fails_closed_without_a_seed_or_with_a_corrupt_runtime() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime_path = root.path().join("config").join("apps.json");
+    let missing_seed = root.path().join("assets").join("missing.json");
+
+    assert!(matches!(
+        ApplicationCatalog::open_seeded(runtime_path.clone(), missing_seed),
+        Err(CatalogError::Storage)
+    ));
+    assert!(!runtime_path.exists());
+
+    let seed_path = root.path().join("assets").join("apps.json");
+    fs::create_dir_all(runtime_path.parent().unwrap()).unwrap();
+    fs::create_dir_all(seed_path.parent().unwrap()).unwrap();
+    fs::write(&runtime_path, b"not-json").unwrap();
+    fs::write(&seed_path, r#"{"env":{},"apps":[{"name":"Desktop"}]}"#).unwrap();
+
+    assert!(matches!(
+        ApplicationCatalog::open_seeded(runtime_path.clone(), seed_path),
+        Err(CatalogError::Corrupt)
+    ));
+    assert_eq!(fs::read(runtime_path).unwrap(), b"not-json");
+}
+
+#[test]
 fn catalog_reorders_and_deletes_by_stable_id() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("apps.json");
