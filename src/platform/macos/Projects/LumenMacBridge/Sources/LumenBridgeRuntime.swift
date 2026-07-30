@@ -145,10 +145,14 @@ public actor LumenBridgeRuntime {
     }
 
     public func setVideoDeliveryPolicy(
+        sessionEpoch: UInt32,
+        policyRevision: UInt32,
         bitrateKbps: Int,
         admissionDivisor: Int
     ) async -> Bool {
         await setVideoDeliveryPolicyImpl(
+            sessionEpoch: sessionEpoch,
+            policyRevision: policyRevision,
             bitrateKbps: bitrateKbps,
             admissionDivisor: admissionDivisor
         )

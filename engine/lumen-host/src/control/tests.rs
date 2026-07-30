@@ -387,7 +387,7 @@ fn native_context() -> NativeConnectionContext {
     }
 }
 
-fn started_native_router(
+pub(crate) fn started_native_router(
     platform: Arc<dyn PlatformSessionControl>,
 ) -> (
     tempfile::TempDir,
@@ -561,6 +561,114 @@ fn native_v4_reconfigures_display_without_stopping_the_active_session() {
             .as_ref()
             .unwrap()
             .max_refresh_millihz
+    );
+}
+
+#[test]
+fn display_reconfiguration_discards_reserved_policy_and_deferred_keyframe_floor() {
+    let platform = Arc::new(RecordingPlatformSessionControl::default());
+    let (_root, mut router, context, initial) = started_native_router(platform);
+    let video = MediaFeedback {
+        stream_id: initial.video_stream_id,
+        received_datagrams: 50,
+        first_datagram_sequence: 1,
+        highest_datagram_sequence: 100,
+        window_milliseconds: 250,
+        feedback_window_id: 1,
+        ..MediaFeedback::default()
+    };
+    let audio = MediaFeedback {
+        stream_id: initial.audio_stream_id,
+        received_datagrams: 1,
+        first_datagram_sequence: 1,
+        highest_datagram_sequence: 1,
+        window_milliseconds: 250,
+        feedback_window_id: 1,
+        ..MediaFeedback::default()
+    };
+    assert!(matches!(
+        router
+            .observe_native_media_feedback(&video, context.session_epoch)
+            .unwrap(),
+        NativeMediaFeedbackDisposition::AwaitingPair { .. }
+    ));
+    let NativeMediaFeedbackDisposition::Applied(old_proposal) = router
+        .observe_native_media_feedback(&audio, context.session_epoch)
+        .unwrap()
+    else {
+        panic!("loss feedback must reserve the old policy");
+    };
+    assert_eq!(
+        router
+            .require_native_video_keyframe_wire_rate(context.session_epoch, u32::MAX)
+            .unwrap(),
+        NativeAdaptiveVideoPolicyRequest::Deferred
+    );
+
+    let responses = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 3,
+            payload: Some(client_control_envelope::Payload::DisplayReconfiguration(
+                DisplayReconfigurationRequest {
+                    session_epoch: context.session_epoch,
+                    revision: 7,
+                    width: 2_160,
+                    height: 3_840,
+                    refresh_millihz: 120_000,
+                    sink_hidpi: true,
+                    sink_scale_explicit: true,
+                    sink_mode_is_logical: true,
+                    sink_scale_percent: 200,
+                },
+            )),
+        },
+        &context,
+    );
+    let Some(host_control_envelope::Payload::DisplayReconfiguration(result)) =
+        responses[0].payload.as_ref()
+    else {
+        panic!("expected display reconfiguration result");
+    };
+    assert_eq!(
+        NativeDisplayReconfigurationResultCode::try_from(result.result).unwrap(),
+        NativeDisplayReconfigurationResultCode::Applied
+    );
+    let reconfigured = result.plan.as_ref().unwrap();
+    let initial_wire_kbps = router.video_delivery_state().unwrap().wire_budget_kbps;
+
+    let old_completion =
+        router.finish_native_adaptive_video_policy_apply(context.session_epoch, old_proposal, true);
+    assert!(!old_completion.active);
+    assert!(!old_completion.committed);
+    assert!(old_completion.follow_up.is_none());
+
+    let new_video = MediaFeedback {
+        stream_id: reconfigured.video_stream_id,
+        feedback_window_id: 2,
+        ..video
+    };
+    let new_audio = MediaFeedback {
+        stream_id: reconfigured.audio_stream_id,
+        feedback_window_id: 2,
+        ..audio
+    };
+    assert!(matches!(
+        router
+            .observe_native_media_feedback(&new_video, context.session_epoch)
+            .unwrap(),
+        NativeMediaFeedbackDisposition::AwaitingPair { .. }
+    ));
+    let NativeMediaFeedbackDisposition::Applied(new_proposal) = router
+        .observe_native_media_feedback(&new_audio, context.session_epoch)
+        .unwrap()
+    else {
+        panic!("new-resolution loss feedback must reserve a fresh policy");
+    };
+    assert!(new_proposal.decision.wire_budget_kbps < initial_wire_kbps);
+    assert!(
+        router
+            .finish_native_adaptive_video_policy_apply(context.session_epoch, new_proposal, false,)
+            .active
     );
 }
 
@@ -1340,16 +1448,18 @@ fn media_feedback_separates_wire_budget_from_pipeline_admission() {
     };
     let stale_proposal = audio_proposal.clone();
     let audio_decision = audio_proposal.decision;
-    assert!(
-        router.begin_native_adaptive_video_policy_apply(context.session_epoch, &audio_proposal,)
-    );
-    assert!(router.finish_native_adaptive_video_policy_apply(
+    let completion = router.finish_native_adaptive_video_policy_apply(
         context.session_epoch,
         audio_proposal,
         true,
-    ));
+    );
+    assert!(completion.active);
+    assert!(completion.committed);
+    assert!(completion.follow_up.is_none());
     assert!(
-        !router.begin_native_adaptive_video_policy_apply(context.session_epoch, &stale_proposal,)
+        !router
+            .finish_native_adaptive_video_policy_apply(context.session_epoch, stale_proposal, true)
+            .active
     );
     assert!(audio_decision.changed);
     assert_eq!(
@@ -1358,7 +1468,7 @@ fn media_feedback_separates_wire_budget_from_pipeline_admission() {
     );
     let audio_adapted = router.video_delivery_state().unwrap();
     assert!(audio_adapted.target_bitrate_kbps < initial.target_bitrate_kbps);
-    assert_eq!(audio_adapted.admission_divisor, 2);
+    assert_eq!(audio_adapted.admission_divisor, 1);
 
     let congested_feedback = MediaFeedback {
         stream_id: plan.video_stream_id,
@@ -1370,6 +1480,8 @@ fn media_feedback_separates_wire_budget_from_pipeline_admission() {
         reordered_datagrams: 0,
         estimated_jitter_us: 4_000,
         decoder_queue_depth: 3,
+        decoder_submissions: 100,
+        decoder_drops: 5,
         presentation_drops: 1,
         window_milliseconds: 250,
         first_datagram_sequence: 1,
@@ -1472,7 +1584,6 @@ fn stalled_platform_policy_apply_does_not_block_native_session_teardown() {
     else {
         panic!("loss feedback must produce an adaptive proposal");
     };
-    assert!(router.begin_native_adaptive_video_policy_apply(context.session_epoch, &proposal));
     let decision = proposal.decision;
     let router = Arc::new(Mutex::new(router));
     let worker_router = Arc::clone(&router);
@@ -1483,6 +1594,7 @@ fn stalled_platform_policy_apply_does_not_block_native_session_teardown() {
             .handle_control_event(
                 session_epoch,
                 PlatformControlEvent::SetVideoDeliveryPolicy {
+                    policy_revision: proposal.platform_policy_revision,
                     bitrate_kbps: decision.encoder_bitrate_kbps,
                     admission_divisor: decision.admission_divisor,
                 },
@@ -1504,7 +1616,7 @@ fn stalled_platform_policy_apply_does_not_block_native_session_teardown() {
     );
     assert_eq!(platform.stops.load(Ordering::Relaxed), 1);
     platform.release_policy_apply();
-    assert!(!worker.join().unwrap());
+    assert!(!worker.join().unwrap().active);
 }
 
 #[test]
@@ -1669,6 +1781,223 @@ fn coalesced_clean_feedback_recovers_by_elapsed_base_windows() {
     assert!(
         recovered.target_bitrate_kbps > degraded.target_bitrate_kbps,
         "coalesced clean evidence must recover bitrate by elapsed 250 ms units"
+    );
+}
+
+#[test]
+fn separate_clean_feedback_windows_restore_video_admission() {
+    let platform = Arc::new(RecordingPlatformSessionControl::default());
+    let (_root, mut router, context, plan) = started_native_router(platform);
+    let pressured_video = MediaFeedback {
+        stream_id: plan.video_stream_id,
+        received_datagrams: 1,
+        first_datagram_sequence: 1,
+        highest_datagram_sequence: 1,
+        decoder_submissions: 100,
+        decoder_drops: 5,
+        window_milliseconds: 250,
+        feedback_window_id: 1,
+        ..MediaFeedback::default()
+    };
+    let clean_audio = MediaFeedback {
+        stream_id: plan.audio_stream_id,
+        received_datagrams: 1,
+        first_datagram_sequence: 1,
+        highest_datagram_sequence: 1,
+        window_milliseconds: 250,
+        feedback_window_id: 1,
+        ..MediaFeedback::default()
+    };
+    assert!(matches!(
+        router
+            .observe_native_media_feedback(&pressured_video, context.session_epoch)
+            .unwrap(),
+        NativeMediaFeedbackDisposition::AwaitingPair { .. }
+    ));
+    let degraded = router
+        .observe_native_media_feedback(&clean_audio, context.session_epoch)
+        .unwrap();
+    _ = commit_adaptive_proposal(&mut router, context.session_epoch, degraded);
+    assert_eq!(router.video_delivery_state().unwrap().admission_divisor, 2);
+
+    for feedback_window_id in 2..=9 {
+        let clean_video = MediaFeedback {
+            received_datagrams: 0,
+            first_datagram_sequence: 0,
+            highest_datagram_sequence: 0,
+            decoder_submissions: 100,
+            decoded_frames: 100,
+            presented_frames: 100,
+            decoder_drops: 0,
+            feedback_window_id,
+            ..pressured_video.clone()
+        };
+        let audio = MediaFeedback {
+            received_datagrams: 0,
+            first_datagram_sequence: 0,
+            highest_datagram_sequence: 0,
+            feedback_window_id,
+            ..clean_audio.clone()
+        };
+        assert!(matches!(
+            router
+                .observe_native_media_feedback(&clean_video, context.session_epoch)
+                .unwrap(),
+            NativeMediaFeedbackDisposition::AwaitingPair { .. }
+        ));
+        let disposition = router
+            .observe_native_media_feedback(&audio, context.session_epoch)
+            .unwrap();
+        if feedback_window_id < 9 {
+            assert_eq!(disposition, NativeMediaFeedbackDisposition::Unchanged);
+        } else {
+            _ = commit_adaptive_proposal(&mut router, context.session_epoch, disposition);
+        }
+    }
+
+    assert_eq!(router.video_delivery_state().unwrap().admission_divisor, 1);
+}
+
+#[test]
+fn reserved_feedback_proposal_defers_and_coalesces_keyframe_wire_rate() {
+    let platform = Arc::new(RecordingPlatformSessionControl::default());
+    let (_root, mut router, context, plan) = started_native_router(platform);
+    let lossy_video = MediaFeedback {
+        stream_id: plan.video_stream_id,
+        received_datagrams: 50,
+        first_datagram_sequence: 1,
+        highest_datagram_sequence: 100,
+        window_milliseconds: 250,
+        feedback_window_id: 1,
+        ..MediaFeedback::default()
+    };
+    let clean_audio = MediaFeedback {
+        stream_id: plan.audio_stream_id,
+        received_datagrams: 1,
+        first_datagram_sequence: 1,
+        highest_datagram_sequence: 1,
+        window_milliseconds: 250,
+        feedback_window_id: 1,
+        ..MediaFeedback::default()
+    };
+    assert!(matches!(
+        router
+            .observe_native_media_feedback(&lossy_video, context.session_epoch)
+            .unwrap(),
+        NativeMediaFeedbackDisposition::AwaitingPair { .. }
+    ));
+    let NativeMediaFeedbackDisposition::Applied(proposal) = router
+        .observe_native_media_feedback(&clean_audio, context.session_epoch)
+        .unwrap()
+    else {
+        panic!("loss feedback must produce an adaptive proposal");
+    };
+
+    let ceiling_wire_kbps = router.video_delivery_state().unwrap().wire_budget_kbps;
+    assert_eq!(
+        router
+            .require_native_video_keyframe_wire_rate(context.session_epoch, 1)
+            .unwrap(),
+        NativeAdaptiveVideoPolicyRequest::Deferred
+    );
+    assert_eq!(
+        router
+            .require_native_video_keyframe_wire_rate(context.session_epoch, u32::MAX)
+            .unwrap(),
+        NativeAdaptiveVideoPolicyRequest::Deferred
+    );
+
+    let completion =
+        router.finish_native_adaptive_video_policy_apply(context.session_epoch, proposal, true);
+    assert!(completion.committed);
+    let follow_up = completion
+        .follow_up
+        .expect("the maximum deferred keyframe floor must reserve one follow-up");
+    assert_eq!(follow_up.decision.wire_budget_kbps, ceiling_wire_kbps);
+    let completion =
+        router.finish_native_adaptive_video_policy_apply(context.session_epoch, follow_up, true);
+    assert!(completion.committed);
+    assert!(completion.follow_up.is_none());
+    assert_eq!(
+        router.video_delivery_state().unwrap().wire_budget_kbps,
+        ceiling_wire_kbps
+    );
+}
+
+#[test]
+fn failed_feedback_apply_releases_lane_and_preserves_deferred_keyframe_floor() {
+    let platform = Arc::new(RecordingPlatformSessionControl::default());
+    let (_root, mut router, context, plan) = started_native_router(platform);
+    let ceiling_wire_kbps = router.video_delivery_state().unwrap().wire_budget_kbps;
+    let video = MediaFeedback {
+        stream_id: plan.video_stream_id,
+        received_datagrams: 50,
+        first_datagram_sequence: 1,
+        highest_datagram_sequence: 100,
+        window_milliseconds: 250,
+        feedback_window_id: 1,
+        ..MediaFeedback::default()
+    };
+    let audio = MediaFeedback {
+        stream_id: plan.audio_stream_id,
+        received_datagrams: 1,
+        first_datagram_sequence: 1,
+        highest_datagram_sequence: 1,
+        window_milliseconds: 250,
+        feedback_window_id: 1,
+        ..MediaFeedback::default()
+    };
+    assert!(matches!(
+        router
+            .observe_native_media_feedback(&video, context.session_epoch)
+            .unwrap(),
+        NativeMediaFeedbackDisposition::AwaitingPair { .. }
+    ));
+    let NativeMediaFeedbackDisposition::Applied(proposal) = router
+        .observe_native_media_feedback(&audio, context.session_epoch)
+        .unwrap()
+    else {
+        panic!("loss feedback must reserve an adaptive proposal");
+    };
+    assert_eq!(
+        router
+            .require_native_video_keyframe_wire_rate(context.session_epoch, u32::MAX)
+            .unwrap(),
+        NativeAdaptiveVideoPolicyRequest::Deferred
+    );
+
+    let completion =
+        router.finish_native_adaptive_video_policy_apply(context.session_epoch, proposal, false);
+    assert!(completion.active);
+    assert!(!completion.committed);
+    assert!(completion.follow_up.is_none());
+
+    let next_video = MediaFeedback {
+        received_datagrams: 100,
+        feedback_window_id: 2,
+        ..video
+    };
+    let next_audio = MediaFeedback {
+        feedback_window_id: 2,
+        ..audio
+    };
+    assert!(matches!(
+        router
+            .observe_native_media_feedback(&next_video, context.session_epoch)
+            .unwrap(),
+        NativeMediaFeedbackDisposition::AwaitingPair { .. }
+    ));
+    let NativeMediaFeedbackDisposition::Applied(next_proposal) = router
+        .observe_native_media_feedback(&next_audio, context.session_epoch)
+        .unwrap()
+    else {
+        panic!("clean feedback must reassert the deferred keyframe floor");
+    };
+    assert_eq!(next_proposal.decision.wire_budget_kbps, ceiling_wire_kbps);
+    assert!(
+        router
+            .finish_native_adaptive_video_policy_apply(context.session_epoch, next_proposal, false,)
+            .active
     );
 }
 

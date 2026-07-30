@@ -13,7 +13,6 @@ pub(crate) enum CongestionSource {
     None,
     AudioNetwork,
     VideoNetwork,
-    AudioPipeline,
     VideoPipeline,
     VideoPresentation,
 }
@@ -68,7 +67,7 @@ pub(crate) struct AdaptiveVideoDeliveryController {
     quality_floor_encoder_kbps: u32,
     refresh_millihz: u32,
     maximum_datagram_payload: u32,
-    // Decode/playback pressure controls admission work, never B_net, FEC, or quality.
+    // Video decoder pressure controls admission work, never B_net, FEC, or quality.
     admission_divisor: u8,
     fec_percentage: u16,
     maximum_decoder_queue_depth: u32,
@@ -177,10 +176,7 @@ impl AdaptiveVideoDeliveryController {
                 CongestionSource::None
             }
             PipelinePressureSeverity::Presentation => CongestionSource::VideoPresentation,
-            PipelinePressureSeverity::Congested => match sample.stream {
-                FeedbackStream::Audio => CongestionSource::AudioPipeline,
-                FeedbackStream::Video => CongestionSource::VideoPipeline,
-            },
+            PipelinePressureSeverity::Congested => CongestionSource::VideoPipeline,
         };
         self.apply_observation(
             network_severity,
@@ -227,29 +223,13 @@ impl AdaptiveVideoDeliveryController {
             }
         };
 
-        let video_pipeline = self.classify_pipeline(video);
-        let audio_pipeline = self.classify_pipeline(audio);
-        let (pipeline_severity, pipeline_stream) = if video_pipeline >= audio_pipeline {
-            (video_pipeline, FeedbackStream::Video)
-        } else {
-            (audio_pipeline, FeedbackStream::Audio)
-        };
-        let pipeline_severity = if pipeline_severity == PipelinePressureSeverity::Clean
-            && video_pipeline != PipelinePressureSeverity::Clean
-        {
-            PipelinePressureSeverity::Neutral
-        } else {
-            pipeline_severity
-        };
+        let pipeline_severity = self.classify_pipeline(video);
         let pipeline_source = match pipeline_severity {
             PipelinePressureSeverity::Neutral | PipelinePressureSeverity::Clean => {
                 CongestionSource::None
             }
             PipelinePressureSeverity::Presentation => CongestionSource::VideoPresentation,
-            PipelinePressureSeverity::Congested => match pipeline_stream {
-                FeedbackStream::Audio => CongestionSource::AudioPipeline,
-                FeedbackStream::Video => CongestionSource::VideoPipeline,
-            },
+            PipelinePressureSeverity::Congested => CongestionSource::VideoPipeline,
         };
         self.apply_observation(
             network_severity,
@@ -401,6 +381,9 @@ impl AdaptiveVideoDeliveryController {
     }
 
     fn classify_pipeline(&self, sample: MediaFeedbackSample) -> PipelinePressureSeverity {
+        if sample.stream == FeedbackStream::Audio {
+            return PipelinePressureSeverity::Neutral;
+        }
         // Sustained pressure must be proven by a backed-up queue or by drops that are
         // a meaningful share of the window, not by isolated jitter.
         let submissions = sample.decoder_submissions.max(1);
@@ -412,11 +395,7 @@ impl AdaptiveVideoDeliveryController {
             return PipelinePressureSeverity::Congested;
         }
         if sample.presentation_drops > 0 {
-            return if sample.stream == FeedbackStream::Video {
-                PipelinePressureSeverity::Presentation
-            } else {
-                PipelinePressureSeverity::Congested
-            };
+            return PipelinePressureSeverity::Presentation;
         }
         if sample.expected_datagrams == 0
             && sample.received_datagrams == 0
@@ -564,19 +543,24 @@ mod tests {
     }
 
     #[test]
-    fn audio_playback_pressure_reduces_only_encoder_admission() {
+    fn audio_playback_pressure_does_not_control_video_admission() {
         let mut controller = AdaptiveVideoDeliveryController::new(100_000, 80_000, 5, 3);
-        let decision = controller.observe(MediaFeedbackSample {
-            presentation_drops: 1,
-            ..clean(FeedbackStream::Audio)
-        });
+        let decision = controller.observe_window(
+            clean(FeedbackStream::Video),
+            MediaFeedbackSample {
+                decoder_queue_depth: 16,
+                presentation_drops: 60,
+                ..clean(FeedbackStream::Audio)
+            },
+            1,
+        );
 
         assert_eq!(decision.wire_budget_kbps, 80_000);
         assert_eq!(decision.encoder_bitrate_kbps, 72_075);
         assert_eq!(decision.fec_percentage, 5);
-        assert_eq!(decision.admission_divisor, 2);
-        assert_eq!(decision.congestion_source, CongestionSource::AudioPipeline);
-        assert!(decision.changed);
+        assert_eq!(decision.admission_divisor, 1);
+        assert_eq!(decision.congestion_source, CongestionSource::None);
+        assert!(!decision.changed);
     }
 
     #[test]
@@ -905,6 +889,28 @@ mod tests {
         assert_eq!(new_episode.wire_budget_kbps, 48_000);
         assert_eq!(new_episode.encoder_bitrate_kbps, 43_580);
         assert!(!new_episode.changed);
+    }
+
+    #[test]
+    fn audio_playback_pressure_does_not_block_clean_video_recovery() {
+        let mut controller = AdaptiveVideoDeliveryController::new(48_000, 48_000, 5, 3);
+        let decoder_pressure = MediaFeedbackSample {
+            decoder_submissions: 100,
+            decoder_drops: 5,
+            ..clean(FeedbackStream::Video)
+        };
+        assert_eq!(controller.observe(decoder_pressure).admission_divisor, 2);
+
+        let audio_playback_pressure = MediaFeedbackSample {
+            decoder_queue_depth: 16,
+            presentation_drops: 60,
+            ..clean(FeedbackStream::Audio)
+        };
+        for _ in 0..AdaptiveVideoDeliveryController::CLEAN_WINDOWS_BEFORE_INCREASE {
+            _ = controller.observe_window(clean(FeedbackStream::Video), audio_playback_pressure, 1);
+        }
+
+        assert_eq!(controller.snapshot().admission_divisor, 1);
     }
 
     #[test]

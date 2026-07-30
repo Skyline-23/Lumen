@@ -83,6 +83,8 @@ struct MacEffectiveDisplayState {
 #[derive(Clone, Copy, Default)]
 struct MacCaptureConfiguration {
     display_id: u32,
+    session_epoch: u32,
+    policy_revision: u32,
     codec: i32,
     video_profile: i32,
     chroma_subsampling: i32,
@@ -211,7 +213,7 @@ type PopAudioEvent =
     unsafe extern "C" fn(*mut BridgeController, *mut c_char, usize) -> MacAudioCaptureEventRecord;
 type RequestKeyFrame = unsafe extern "C" fn();
 type ResumeVideoEncodingAfterCodecAck = unsafe extern "C" fn() -> bool;
-type SetVideoDeliveryPolicy = unsafe extern "C" fn(u32, u8) -> bool;
+type SetVideoDeliveryPolicy = unsafe extern "C" fn(u32, u32, u32, u8) -> bool;
 type PrepareWorkspace = unsafe extern "C" fn(MacWorkspaceSessionRequest, *mut c_char, usize) -> u32;
 type ReconfigureWorkspace =
     unsafe extern "C" fn(MacWorkspaceSessionRequest, *mut c_char, usize) -> u32;
@@ -515,6 +517,8 @@ impl MacPlatformSessionControl {
             (self.api.configure_audio_forwarding)(state.controller, 8, 16);
         }
         let mut video = unsafe { (self.api.make_video_configuration)(display_id) };
+        video.session_epoch = plan.session_epoch;
+        video.policy_revision = plan.policy_revision;
         video.codec = match plan.video_format.codec {
             crate::PlatformVideoCodec::H264 => 0,
             crate::PlatformVideoCodec::Hevc => 1,
@@ -724,6 +728,8 @@ impl PlatformSessionControl for MacPlatformSessionControl {
                 (self.api.configure_audio_forwarding)(state.controller, 8, 16);
             }
             let mut video = unsafe { (self.api.make_video_configuration)(display_id) };
+            video.session_epoch = plan.session_epoch;
+            video.policy_revision = plan.policy_revision;
             video.codec = match plan.video_format.codec {
                 crate::PlatformVideoCodec::H264 => 0,
                 crate::PlatformVideoCodec::Hevc => 1,
@@ -1036,7 +1042,11 @@ impl PlatformSessionControl for MacPlatformSessionControl {
         }))
     }
 
-    fn handle_control_event(&self, _: u32, event: PlatformControlEvent) -> Result<(), String> {
+    fn handle_control_event(
+        &self,
+        session_epoch: u32,
+        event: PlatformControlEvent,
+    ) -> Result<(), String> {
         match event {
             PlatformControlEvent::RequestIdrFrame
             | PlatformControlEvent::InvalidateReferenceFrames { .. } => {
@@ -1052,11 +1062,17 @@ impl PlatformSessionControl for MacPlatformSessionControl {
                     })
             }
             PlatformControlEvent::SetVideoDeliveryPolicy {
+                policy_revision,
                 bitrate_kbps,
                 admission_divisor,
             } => {
                 unsafe {
-                    (self.api.set_video_delivery_policy)(bitrate_kbps, admission_divisor)
+                    (self.api.set_video_delivery_policy)(
+                        session_epoch,
+                        policy_revision,
+                        bitrate_kbps,
+                        admission_divisor,
+                    )
                 }
                     .then_some(())
                     .ok_or_else(|| {

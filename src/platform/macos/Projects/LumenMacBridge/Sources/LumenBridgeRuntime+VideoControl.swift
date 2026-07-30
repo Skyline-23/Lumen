@@ -111,19 +111,29 @@ extension LumenBridgeRuntime {
     }
 
     func setVideoDeliveryPolicyImpl(
+        sessionEpoch: UInt32,
+        policyRevision: UInt32,
         bitrateKbps: Int,
         admissionDivisor: Int
     ) async -> Bool {
         guard bitrateKbps > 0,
               (1 ... 4).contains(admissionDivisor),
-              await captureLifecycle.shouldRequestImmediateKeyFrame,
-              let encodedCaptureSession else {
+              await captureLifecycle.shouldRequestImmediateKeyFrame else {
             logger.error(
                 "Rejecting adaptive delivery policy because ScreenCaptureKit capture is not running"
             )
             return false
         }
-        return await encodedCaptureSession.setVideoDeliveryPolicy(
+        guard let configuration = activeCaptureConfiguration,
+              configuration.sessionEpoch == sessionEpoch,
+              configuration.policyRevision == policyRevision,
+              let session = encodedCaptureSession else {
+            logger.notice(
+                "Rejecting stale adaptive delivery policy session-epoch=\(sessionEpoch, privacy: .public) policy-revision=\(policyRevision, privacy: .public)"
+            )
+            return false
+        }
+        return await session.setVideoDeliveryPolicy(
             bitrateKbps: bitrateKbps,
             admissionDivisor: admissionDivisor
         )

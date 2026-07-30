@@ -15,6 +15,8 @@ final class LumenMacBridgeConfigurationTests: XCTestCase {
             configuration: configuration
         ).swiftValue
         XCTAssertEqual(roundTrip.displayID, 11)
+        XCTAssertEqual(roundTrip.sessionEpoch, 42)
+        XCTAssertEqual(roundTrip.policyRevision, 7)
         XCTAssertEqual(roundTrip.codec, .hevc)
         XCTAssertEqual(roundTrip.targetFrameRate, 120)
         XCTAssertEqual(roundTrip.targetVideoBitRateKbps, 41_000)
@@ -268,6 +270,8 @@ private extension LumenMacBridgeConfigurationTests {
     ) -> LumenMacCaptureConfiguration {
         LumenMacCaptureConfiguration(
             displayID: 11,
+            sessionEpoch: 42,
+            policyRevision: 7,
             codec: .hevc,
             preprocessStrategy: .none,
             queueProfile: .auto,

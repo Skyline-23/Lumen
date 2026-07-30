@@ -9,10 +9,12 @@ use lumen_engine::{
     NativeVideoCodec, NATIVE_AUDIO_STREAM_ID, NATIVE_VIDEO_STREAM_ID,
 };
 
+use super::adaptive_video::apply_adaptive_video_policy_request;
 use super::packet_arrival::{PacketArrivalHistory, PacketIdentity};
 use super::SharedControlRouter;
 use crate::control::{
-    AudioDeliveryState, InputMotionDeliveryState, NativeVideoRepairSource, VideoDeliveryState,
+    AudioDeliveryState, InputMotionDeliveryState, NativeAdaptiveVideoPolicyRequest,
+    NativeVideoRepairSource, VideoDeliveryState,
 };
 use crate::media::native_motion::{
     NativeMotionDatagramError, NativeMotionIdentity, NativeMotionReceiver,
@@ -896,7 +898,7 @@ async fn run_native_video_sender(
             &connection,
             session_epoch,
             &router,
-            platform.as_ref(),
+            &platform,
             &mut video,
             &packet_arrival,
             &wire_pacer,
@@ -1627,7 +1629,7 @@ async fn poll_and_send_video(
     connection: &quinn::Connection,
     session_epoch: u32,
     router: &SharedControlRouter,
-    platform: &dyn PlatformSessionControl,
+    platform: &Arc<dyn PlatformSessionControl>,
     sender: &mut VideoSenderState,
     packet_arrival: &PacketArrivalSendObservation,
     wire_pacer: &Arc<tokio::sync::Mutex<VideoWireRatePacer>>,
@@ -1952,21 +1954,44 @@ async fn poll_and_send_video(
         sender.escalate_keyframe_wire_rate_requirement(delivery.wire_budget_kbps);
     }
     if let Some(required_wire_kbps) = sender.take_keyframe_wire_rate_requirement() {
-        // A poisoned router or stale session must not fail delivery.
-        if let Ok(mut router) = router.lock() {
+        let request = router.lock().ok().and_then(|mut router| {
             match router.require_native_video_keyframe_wire_rate(
                 delivery.session_epoch,
                 required_wire_kbps,
             ) {
-                Ok(true) => eprintln!(
-                    "Lumen native media stage=keyframe-wire-rate-raised session-epoch={} required-kbps={required_wire_kbps} frame-id={frame_id}",
+                Ok(request) => Some(request),
+                Err(message) => {
+                    eprintln!(
+                        "Lumen native media stage=keyframe-wire-rate-rejected session-epoch={} required-kbps={required_wire_kbps} error={message}",
+                        delivery.session_epoch
+                    );
+                    None
+                }
+            }
+        });
+        if let Some(request) = request {
+            if matches!(&request, NativeAdaptiveVideoPolicyRequest::Applied(_)) {
+                eprintln!(
+                    "Lumen native media stage=keyframe-wire-rate-reserved session-epoch={} required-kbps={required_wire_kbps} frame-id={frame_id}",
                     delivery.session_epoch
-                ),
-                Ok(false) => {}
-                Err(message) => eprintln!(
-                    "Lumen native media stage=keyframe-wire-rate-rejected session-epoch={} required-kbps={required_wire_kbps} error={message}",
-                    delivery.session_epoch
-                ),
+                );
+                let policy_router = Arc::clone(router);
+                let policy_platform = Arc::clone(platform);
+                let policy_session_epoch = delivery.session_epoch;
+                tokio::spawn(async move {
+                    if let Err(error) = apply_adaptive_video_policy_request(
+                        &policy_router,
+                        policy_platform,
+                        policy_session_epoch,
+                        request,
+                    )
+                    .await
+                    {
+                        eprintln!(
+                            "Lumen native media stage=keyframe-wire-rate-apply-failed session-epoch={policy_session_epoch} error={error}"
+                        );
+                    }
+                });
             }
         }
     }

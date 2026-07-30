@@ -11,6 +11,7 @@ fn exact_platform_format_crosses_the_c_abi_without_boolean_inference() {
     // Given: one exact HEVC Main 4:2:0 SDR selection.
     let plan = PlatformSessionPlan {
         session_epoch: 1,
+        policy_revision: 1,
         width: 3_840,
         height: 2_160,
         frames_per_second: 120,

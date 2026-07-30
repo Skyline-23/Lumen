@@ -193,13 +193,15 @@ payload and FEC overhead are not interchangeable counters.
 
 The host adapts parity in five-point steps inside 5...30. Sustained packet loss
 may reduce the wire budget only as far as the format payload floor plus current
-parity, and never above the negotiated ceiling. Decoder or playback pipeline
-pressure instead changes a host-side latest-frame encoder-admission divisor;
-it does not reduce the wire budget, encoder payload target, or FEC. A clean
-pipeline window sequence restores full admission. Repair and bootstrap frames
-bypass this cadence. None of these controls changes the negotiated codec,
-resolution, refresh, dynamic range, or hardware decode policy. At most one
-unsent video delta may be retained.
+parity, and never above the negotiated ceiling. Video decoder pressure instead
+changes a host-side latest-frame encoder-admission divisor; it does not reduce
+the wire budget, encoder payload target, or FEC. Video presentation pressure
+blocks clean recovery but does not directly reduce admission. Audio playback
+pressure does not control video admission. A clean video-pipeline window
+sequence restores full admission. Repair and bootstrap frames bypass this
+cadence. None of these controls changes the negotiated codec, resolution,
+refresh, dynamic range, or hardware decode policy. At most one unsent video
+delta may be retained.
 
 The sender additionally meters the actual encoded datagram byte lengths. A
 token envelope permits at most two negotiated-datagram-sized chunks of burst,

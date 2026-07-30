@@ -48,8 +48,23 @@ pub(crate) enum NativeMediaFeedbackDisposition {
 pub(crate) struct AdaptiveVideoProposal {
     pub(crate) base: AdaptiveVideoDecision,
     pub(crate) decision: AdaptiveVideoDecision,
-    policy_revision: u64,
+    pub(crate) platform_policy_revision: u32,
+    lane_revision: u64,
     controller: AdaptiveVideoDeliveryController,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum NativeAdaptiveVideoPolicyRequest {
+    Applied(AdaptiveVideoProposal),
+    Deferred,
+    Unchanged,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct AdaptiveVideoPolicyCompletion {
+    pub(crate) active: bool,
+    pub(crate) committed: bool,
+    pub(crate) follow_up: Option<AdaptiveVideoProposal>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -123,6 +138,7 @@ struct PendingNativeSession {
 struct AdaptiveVideoPolicyLane {
     revision: u64,
     applying_revision: Option<u64>,
+    pending_keyframe_wire_rate_kbps: Option<u32>,
 }
 
 #[derive(Debug, Default)]
@@ -336,8 +352,10 @@ impl ControlRouter {
         pending.acknowledged_generation_id = None;
         pending.repair_keyframe = RepairKeyframeState::Idle;
         pending.adaptive_video = adaptive_video;
-        pending.adaptive_policy_lane.revision =
-            pending.adaptive_policy_lane.revision.wrapping_add(1);
+        pending.adaptive_policy_lane = AdaptiveVideoPolicyLane {
+            revision: pending.adaptive_policy_lane.revision.wrapping_add(1),
+            ..AdaptiveVideoPolicyLane::default()
+        };
         pending.last_display_revision = request.revision;
         vec![display_reconfiguration_result(
             request_id,
@@ -685,19 +703,46 @@ impl ControlRouter {
             .ok_or(NativeMediaFeedbackRejection::FeedbackWindowMismatch)?;
         let clean_window_units =
             feedback.window_milliseconds / NATIVE_MEDIA_FEEDBACK_WINDOW_MILLISECONDS;
+        let retrying_deferred_floor = pending
+            .adaptive_policy_lane
+            .pending_keyframe_wire_rate_kbps
+            .is_some();
         let base = pending.adaptive_video.snapshot();
         let mut controller = pending.adaptive_video.clone();
-        let decision = controller.observe_window(video, audio, clean_window_units);
-        Ok(if decision.changed {
-            NativeMediaFeedbackDisposition::Applied(AdaptiveVideoProposal {
-                base,
-                decision,
-                policy_revision: pending.adaptive_policy_lane.revision,
-                controller,
-            })
-        } else {
-            NativeMediaFeedbackDisposition::Unchanged
-        })
+        if let Some(required_wire_kbps) =
+            pending.adaptive_policy_lane.pending_keyframe_wire_rate_kbps
+        {
+            controller.require_keyframe_wire_rate_kbps(required_wire_kbps);
+        }
+        let mut decision = controller.observe_window(video, audio, clean_window_units);
+        Ok(
+            if (decision.changed || retrying_deferred_floor)
+                && pending.adaptive_policy_lane.applying_revision.is_none()
+            {
+                decision.changed = true;
+                let proposal = AdaptiveVideoProposal {
+                    base,
+                    decision,
+                    platform_policy_revision: pending.plan.policy_revision,
+                    lane_revision: pending.adaptive_policy_lane.revision,
+                    controller,
+                };
+                pending.adaptive_policy_lane.applying_revision = Some(proposal.lane_revision);
+                NativeMediaFeedbackDisposition::Applied(proposal)
+            } else {
+                if controller != pending.adaptive_video
+                    && pending.adaptive_policy_lane.applying_revision.is_none()
+                {
+                    pending.adaptive_video = controller;
+                    pending.adaptive_policy_lane.pending_keyframe_wire_rate_kbps = None;
+                    pending.adaptive_policy_lane.revision =
+                        pending.adaptive_policy_lane.revision.wrapping_add(1);
+                } else if pending.adaptive_policy_lane.applying_revision.is_none() {
+                    pending.adaptive_policy_lane.pending_keyframe_wire_rate_kbps = None;
+                }
+                NativeMediaFeedbackDisposition::Unchanged
+            },
+        )
     }
 
     #[cfg(test)]
@@ -706,41 +751,9 @@ impl ControlRouter {
         session_epoch: u32,
         proposal: AdaptiveVideoProposal,
     ) -> bool {
-        let Some(pending) = self.native.pending.as_mut() else {
-            return false;
-        };
-        if !pending.active
-            || pending.plan.session_epoch != session_epoch
-            || pending.adaptive_policy_lane.applying_revision.is_some()
-            || pending.adaptive_policy_lane.revision != proposal.policy_revision
-            || pending.adaptive_video.snapshot() != proposal.base
-        {
-            return false;
-        }
-        pending.adaptive_video = proposal.controller;
-        pending.adaptive_policy_lane.revision =
-            pending.adaptive_policy_lane.revision.wrapping_add(1);
-        true
-    }
-
-    pub(crate) fn begin_native_adaptive_video_policy_apply(
-        &mut self,
-        session_epoch: u32,
-        proposal: &AdaptiveVideoProposal,
-    ) -> bool {
-        let Some(pending) = self.native.pending.as_mut() else {
-            return false;
-        };
-        if !pending.active
-            || pending.plan.session_epoch != session_epoch
-            || pending.adaptive_policy_lane.applying_revision.is_some()
-            || pending.adaptive_policy_lane.revision != proposal.policy_revision
-            || pending.adaptive_video.snapshot() != proposal.base
-        {
-            return false;
-        }
-        pending.adaptive_policy_lane.applying_revision = Some(proposal.policy_revision);
-        true
+        let completion =
+            self.finish_native_adaptive_video_policy_apply(session_epoch, proposal, true);
+        completion.committed && completion.follow_up.is_none()
     }
 
     pub(crate) fn finish_native_adaptive_video_policy_apply(
@@ -748,28 +761,66 @@ impl ControlRouter {
         session_epoch: u32,
         proposal: AdaptiveVideoProposal,
         applied: bool,
-    ) -> bool {
+    ) -> AdaptiveVideoPolicyCompletion {
         let Some(pending) = self.native.pending.as_mut() else {
-            return false;
+            return AdaptiveVideoPolicyCompletion::default();
         };
         if !pending.active
             || pending.plan.session_epoch != session_epoch
-            || pending.adaptive_policy_lane.applying_revision != Some(proposal.policy_revision)
+            || pending.adaptive_policy_lane.applying_revision != Some(proposal.lane_revision)
         {
-            return false;
+            return AdaptiveVideoPolicyCompletion::default();
         }
         pending.adaptive_policy_lane.applying_revision = None;
-        if pending.adaptive_policy_lane.revision != proposal.policy_revision
-            || pending.adaptive_video.snapshot() != proposal.base
+        let proposal_is_current = pending.adaptive_policy_lane.revision == proposal.lane_revision
+            && pending.adaptive_video.snapshot() == proposal.base;
+        let committed = applied && proposal_is_current;
+        if !committed {
+            return AdaptiveVideoPolicyCompletion {
+                active: true,
+                committed: false,
+                follow_up: None,
+            };
+        }
+        pending.adaptive_video = proposal.controller;
+        pending.adaptive_policy_lane.revision =
+            pending.adaptive_policy_lane.revision.wrapping_add(1);
+
+        let mut controller = pending.adaptive_video.clone();
+        if let Some(required_wire_kbps) = pending
+            .adaptive_policy_lane
+            .pending_keyframe_wire_rate_kbps
+            .take()
         {
-            return false;
+            controller.require_keyframe_wire_rate_kbps(required_wire_kbps);
         }
-        if applied {
-            pending.adaptive_video = proposal.controller;
-            pending.adaptive_policy_lane.revision =
-                pending.adaptive_policy_lane.revision.wrapping_add(1);
+        let base = pending.adaptive_video.snapshot();
+        let desired = controller.snapshot();
+        let follow_up = if desired != base {
+            let mut decision = desired;
+            decision.changed = true;
+            let proposal = AdaptiveVideoProposal {
+                base,
+                decision,
+                platform_policy_revision: pending.plan.policy_revision,
+                lane_revision: pending.adaptive_policy_lane.revision,
+                controller,
+            };
+            pending.adaptive_policy_lane.applying_revision = Some(proposal.lane_revision);
+            Some(proposal)
+        } else {
+            if controller != pending.adaptive_video {
+                pending.adaptive_video = controller;
+                pending.adaptive_policy_lane.revision =
+                    pending.adaptive_policy_lane.revision.wrapping_add(1);
+            }
+            None
+        };
+        AdaptiveVideoPolicyCompletion {
+            active: true,
+            committed,
+            follow_up,
         }
-        true
     }
 
     /// Raises the adaptive floor for the active session. Stale epochs are ignored.
@@ -777,19 +828,61 @@ impl ControlRouter {
         &mut self,
         session_epoch: u32,
         required_wire_kbps: u32,
-    ) -> Result<bool, String> {
+    ) -> Result<NativeAdaptiveVideoPolicyRequest, String> {
         let Some(pending) = self.native.pending.as_mut() else {
             return Err("native session has not been negotiated".to_owned());
         };
         if !pending.active || pending.plan.session_epoch != session_epoch {
-            return Ok(false);
+            return Ok(NativeAdaptiveVideoPolicyRequest::Unchanged);
         }
-        let before = pending.adaptive_video.snapshot();
-        pending
-            .adaptive_video
-            .require_keyframe_wire_rate_kbps(required_wire_kbps);
-        let after = pending.adaptive_video.snapshot();
-        Ok(before.wire_budget_kbps != after.wire_budget_kbps)
+        if pending.adaptive_policy_lane.applying_revision.is_some() {
+            pending.adaptive_policy_lane.pending_keyframe_wire_rate_kbps = Some(
+                pending
+                    .adaptive_policy_lane
+                    .pending_keyframe_wire_rate_kbps
+                    .map_or(required_wire_kbps, |current| {
+                        current.max(required_wire_kbps)
+                    }),
+            );
+            return Ok(NativeAdaptiveVideoPolicyRequest::Deferred);
+        }
+        let retrying_deferred_floor = pending
+            .adaptive_policy_lane
+            .pending_keyframe_wire_rate_kbps
+            .is_some();
+        let required_wire_kbps = pending
+            .adaptive_policy_lane
+            .pending_keyframe_wire_rate_kbps
+            .map_or(required_wire_kbps, |current| {
+                current.max(required_wire_kbps)
+            });
+        pending.adaptive_policy_lane.pending_keyframe_wire_rate_kbps = Some(required_wire_kbps);
+        let before = pending.adaptive_video.clone();
+        let mut controller = before.clone();
+        controller.require_keyframe_wire_rate_kbps(required_wire_kbps);
+        if controller == before && !retrying_deferred_floor {
+            pending.adaptive_policy_lane.pending_keyframe_wire_rate_kbps = None;
+            return Ok(NativeAdaptiveVideoPolicyRequest::Unchanged);
+        }
+        let base = before.snapshot();
+        let mut decision = controller.snapshot();
+        if decision == base && !retrying_deferred_floor {
+            pending.adaptive_video = controller;
+            pending.adaptive_policy_lane.pending_keyframe_wire_rate_kbps = None;
+            pending.adaptive_policy_lane.revision =
+                pending.adaptive_policy_lane.revision.wrapping_add(1);
+            return Ok(NativeAdaptiveVideoPolicyRequest::Unchanged);
+        }
+        decision.changed = true;
+        let proposal = AdaptiveVideoProposal {
+            base,
+            decision,
+            platform_policy_revision: pending.plan.policy_revision,
+            lane_revision: pending.adaptive_policy_lane.revision,
+            controller,
+        };
+        pending.adaptive_policy_lane.applying_revision = Some(proposal.lane_revision);
+        Ok(NativeAdaptiveVideoPolicyRequest::Applied(proposal))
     }
 
     pub(crate) fn request_native_video_repair(
@@ -1059,6 +1152,10 @@ impl ControlRouter {
         let application_started = pending.application_started;
         if let Some(pending) = self.native.pending.as_mut() {
             pending.active = false;
+            pending.adaptive_policy_lane = AdaptiveVideoPolicyLane {
+                revision: pending.adaptive_policy_lane.revision.wrapping_add(1),
+                ..AdaptiveVideoPolicyLane::default()
+            };
         }
         let session_error = session_cleanup_pending
             .then(|| self.platform.stop_session())
@@ -1535,6 +1632,7 @@ fn native_platform_session_plan(
         platform_video_format(plan).ok_or_else(|| "native video format is invalid".to_owned())?;
     Ok(PlatformSessionPlan {
         session_epoch: plan.session_epoch,
+        policy_revision: plan.policy_revision,
         width: plan.encoded_width,
         height: plan.encoded_height,
         frames_per_second: refresh_millihz_to_frames_per_second(plan.refresh_millihz)?,

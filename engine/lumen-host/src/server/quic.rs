@@ -23,6 +23,7 @@ use quinn::{Endpoint, RecvStream, ServerConfig, TransportConfig, VarInt};
 use rustls::pki_types::PrivateKeyDer;
 use tokio::sync::Notify;
 
+use super::adaptive_video::apply_reserved_adaptive_video_policy;
 use super::media::{run_native_media_loop, VideoWireRatePacer, NATIVE_MEDIA_SEND_BUFFER_BYTES};
 use super::packet_arrival::PacketArrivalHistory;
 use super::SharedControlRouter;
@@ -1284,70 +1285,7 @@ async fn apply_adaptive_video_decision(
     let NativeMediaFeedbackDisposition::Applied(proposal) = disposition else {
         return Ok(());
     };
-    let decision = proposal.decision;
-    let began = router
-        .lock()
-        .map_err(|_| "native control router lock is poisoned".to_owned())?
-        .begin_native_adaptive_video_policy_apply(session_epoch, &proposal);
-    if !began {
-        return Err("adaptive video proposal became stale before platform apply".to_owned());
-    }
-    let transaction_platform = Arc::clone(&platform);
-    // Platform application may block indefinitely, so it runs off the QUIC
-    // executor and outside the global router mutex. The router owns only a
-    // revision-fenced policy-lane token while the call is in flight, leaving
-    // StopSession and teardown available without a late timeout race.
-    let platform_worker = tokio::task::spawn_blocking(move || {
-        transaction_platform.handle_control_event(
-            session_epoch,
-            crate::PlatformControlEvent::SetVideoDeliveryPolicy {
-                bitrate_kbps: decision.encoder_bitrate_kbps,
-                admission_divisor: decision.admission_divisor,
-            },
-        )
-    })
-    .await;
-    let platform_result = match platform_worker {
-        Ok(result) => result,
-        Err(error) => {
-            let _ = router
-                .lock()
-                .map_err(|_| "native control router lock is poisoned".to_owned())?
-                .finish_native_adaptive_video_policy_apply(session_epoch, proposal, false);
-            return Err(format!("adaptive video transaction worker failed: {error}"));
-        }
-    };
-    let applied = platform_result.is_ok();
-    let committed = router
-        .lock()
-        .map_err(|_| "native control router lock is poisoned".to_owned())?
-        .finish_native_adaptive_video_policy_apply(session_epoch, proposal, applied);
-    if let Err(error) = platform_result {
-        if committed {
-            publish_adaptive_video_rejection(&platform, session_epoch, decision, error)?;
-        }
-        return Ok(());
-    }
-    if !committed {
-        return Ok(());
-    }
-    platform
-        .publish_runtime_event(PlatformRuntimeEvent {
-            disposition: PlatformRuntimeEventDisposition::Cleared,
-            severity: PlatformRuntimeEventSeverity::Warning,
-            code: PlatformRuntimeEventCode::NativeVideoAdaptiveControl,
-            message: None,
-        })
-        .map_err(|error| format!("adaptive video warning clear failed: {error}"))?;
-    eprintln!(
-        "Lumen native media stage=adaptive-video-applied session-epoch={session_epoch} wire-budget-kbps={} encoder-bitrate-kbps={} fec-percentage={} admission-divisor={} congestion-source={:?}",
-        decision.wire_budget_kbps,
-        decision.encoder_bitrate_kbps,
-        decision.fec_percentage,
-        decision.admission_divisor,
-        decision.congestion_source,
-    );
-    Ok(())
+    apply_reserved_adaptive_video_policy(router, platform, session_epoch, proposal).await
 }
 
 #[cfg(test)]
@@ -1361,6 +1299,7 @@ async fn apply_adaptive_video_policy(
         update_platform.handle_control_event(
             session_epoch,
             crate::PlatformControlEvent::SetVideoDeliveryPolicy {
+                policy_revision: 1,
                 bitrate_kbps: decision.encoder_bitrate_kbps,
                 admission_divisor: decision.admission_divisor,
             },
@@ -1383,6 +1322,7 @@ async fn apply_adaptive_video_policy(
     Ok(true)
 }
 
+#[cfg(test)]
 fn publish_adaptive_video_rejection(
     platform: &Arc<dyn PlatformSessionControl>,
     session_epoch: u32,
@@ -2108,6 +2048,7 @@ mod tests {
             vec![(
                 77,
                 PlatformControlEvent::SetVideoDeliveryPolicy {
+                    policy_revision: 1,
                     bitrate_kbps: 48_000,
                     admission_divisor: 1,
                 },

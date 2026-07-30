@@ -47,11 +47,15 @@ public final class LumenBridgeObjCFacade: NSObject {
     }
 
     public static func setVideoDeliveryPolicySharedSync(
-        _ bitrateKbps: UInt32,
+        _ sessionEpoch: UInt32,
+        policyRevision: UInt32,
+        bitrateKbps: UInt32,
         admissionDivisor: UInt8
     ) -> Bool {
         LumenBridgeObjCFacade().setVideoDeliveryPolicySync(
-            bitrateKbps,
+            sessionEpoch,
+            policyRevision: policyRevision,
+            bitrateKbps: bitrateKbps,
             admissionDivisor: admissionDivisor
         )
     }
@@ -151,12 +155,16 @@ public final class LumenBridgeObjCFacade: NSObject {
     }
 
     public func setVideoDeliveryPolicySync(
-        _ bitrateKbps: UInt32,
+        _ sessionEpoch: UInt32,
+        policyRevision: UInt32,
+        bitrateKbps: UInt32,
         admissionDivisor: UInt8
     ) -> Bool {
         let runtime = runtime
         return (try? blockingRun {
             await runtime.setVideoDeliveryPolicy(
+                sessionEpoch: sessionEpoch,
+                policyRevision: policyRevision,
                 bitrateKbps: Int(bitrateKbps),
                 admissionDivisor: Int(admissionDivisor)
             )

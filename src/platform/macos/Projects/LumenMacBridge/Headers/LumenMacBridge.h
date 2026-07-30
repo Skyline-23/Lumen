@@ -269,6 +269,8 @@ typedef enum LumenMacBridgeCapturePairStartStatus {
 
 typedef struct LumenMacBridgeCaptureConfiguration {
   uint32_t display_id;
+  uint32_t session_epoch;
+  uint32_t policy_revision;
   LumenMacCaptureCodec codec;
   LumenMacCaptureVideoProfile video_profile;
   LumenMacCaptureChromaSubsampling chroma_subsampling;
@@ -437,6 +439,8 @@ void LumenMacBridgeRequestImmediateCaptureKeyFrame(void);
 bool LumenMacBridgeResumeVideoEncodingAfterCodecAck(void);
 bool LumenMacBridgeSetVideoBitrateKbps(uint32_t bitrate_kbps);
 bool LumenMacBridgeSetVideoDeliveryPolicy(
+  uint32_t session_epoch,
+  uint32_t policy_revision,
   uint32_t bitrate_kbps,
   uint8_t admission_divisor
 );
