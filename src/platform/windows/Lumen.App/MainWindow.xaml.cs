@@ -21,7 +21,7 @@ public sealed class MainWindow : Window
     private string _page = "overview";
     private bool _updating;
     private bool _defaultViewportSized;
-    private readonly Dictionary<NavigationViewItem, ImageIcon> _navigationIcons = [];
+    private readonly Dictionary<NavigationViewItem, BitmapIcon> _navigationIcons = [];
 
     public MainWindow()
     {

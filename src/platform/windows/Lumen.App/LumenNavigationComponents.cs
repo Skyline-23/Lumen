@@ -6,7 +6,7 @@ namespace Lumen.App;
 
 internal readonly record struct LumenNavigationEntry(
     NavigationViewItem Item,
-    ImageIcon Icon);
+    BitmapIcon Icon);
 
 internal static class LumenNavigationComponents
 {

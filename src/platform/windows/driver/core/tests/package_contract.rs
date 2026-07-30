@@ -717,12 +717,11 @@ fn windows_winui_matches_the_native_lumen_visual_contract() {
     assert!(theme.contains("PagePadding = new(30, 24, 30, 36)"));
     assert!(theme.contains("internal static StackPanel PageHeader"));
     assert!(asset_icons.contains("internal static class LumenAssetIconView"));
-    assert!(asset_icons.contains("internal static ImageIcon Navigation"));
-    assert!(asset_icons.contains("private static SvgImageSource Svg"));
-    assert!(asset_icons.contains("ms-appx:///Assets/icons/ui/"));
+    assert!(asset_icons.contains("internal static BitmapIcon Navigation"));
+    assert!(asset_icons.contains("ms-appx:///Assets/icons/template/"));
     assert!(asset_icons.contains("ms-appx:///Assets/brand/icon.svg"));
     assert!(project.contains("Link=\"Assets\\brand\\icon.svg\""));
-    assert!(project.contains("Link=\"Assets\\icons\\ui\\%(Filename)%(Extension)\""));
+    assert!(project.contains("Assets\\icons\\template\\*.png"));
     assert!(navigation.contains("internal static class LumenNavigationComponents"));
     assert!(navigation.contains("MinHeight = 42"));
     assert!(settings.contains("internal static class LumenSettingsComponents"));
@@ -759,6 +758,7 @@ fn windows_winui_matches_the_native_lumen_visual_contract() {
     assert!(!window.contains("Colors.Gray"));
     assert!(!window.contains("FontIcon"));
     assert!(!window.contains("SymbolIcon"));
+    assert!(!asset_icons.contains("ImageIcon"));
 
     for asset in [
         "icon.svg",
@@ -775,6 +775,31 @@ fn windows_winui_matches_the_native_lumen_visual_contract() {
         assert!(
             repo_root.join(asset).is_file(),
             "missing shared Lumen asset {asset}"
+        );
+    }
+
+    for asset in [
+        "overview.png",
+        "applications.png",
+        "application.png",
+        "settings.png",
+        "diagnostics.png",
+        "local-credentials.png",
+        "host-controls.png",
+        "remote-access.png",
+        "create-owner.png",
+        "unlock.png",
+        "current-stream.png",
+        "workspace.png",
+        "restart.png",
+        "complete.png",
+    ] {
+        assert!(
+            repo_root
+                .join("src/platform/windows/Lumen.App/Assets/icons/template")
+                .join(asset)
+                .is_file(),
+            "missing tintable WinUI icon {asset}"
         );
     }
 

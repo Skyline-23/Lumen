@@ -25,17 +25,17 @@ internal enum LumenAssetIcon
 
 internal static class LumenAssetIconView
 {
-    private const string IconRoot = "ms-appx:///Assets/icons/ui/";
+    private const string IconRoot = "ms-appx:///Assets/icons/template/";
     private const string BrandUri = "ms-appx:///Assets/brand/icon.svg";
 
-    internal static ImageIcon Create(
+    internal static BitmapIcon Create(
         LumenAssetIcon icon,
         double size,
         Brush? foreground = null)
     {
-        var image = new ImageIcon
+        var image = new BitmapIcon
         {
-            Source = Svg($"{IconRoot}{Filename(icon)}.svg"),
+            UriSource = new Uri($"{IconRoot}{Filename(icon)}.png"),
             Width = size,
             Height = size,
             HorizontalAlignment = HorizontalAlignment.Center,
@@ -48,9 +48,9 @@ internal static class LumenAssetIconView
         return image;
     }
 
-    internal static ImageIcon Navigation(LumenAssetIcon icon, Brush? foreground = null) => new()
+    internal static BitmapIcon Navigation(LumenAssetIcon icon, Brush? foreground = null) => new()
     {
-        Source = Svg($"{IconRoot}{Filename(icon)}.svg"),
+        UriSource = new Uri($"{IconRoot}{Filename(icon)}.png"),
         Width = LumenTheme.NavigationIconSize,
         Height = LumenTheme.NavigationIconSize,
         Margin = new Thickness(
@@ -70,11 +70,6 @@ internal static class LumenAssetIconView
         Height = height,
         Opacity = opacity,
         Stretch = Stretch.Uniform
-    };
-
-    private static SvgImageSource Svg(string uri) => new()
-    {
-        UriSource = new Uri(uri)
     };
 
     private static string Filename(LumenAssetIcon icon) => icon switch
