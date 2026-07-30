@@ -495,7 +495,18 @@ fn native_v4_hello_negotiates_without_a_direct_udp_path_exchange() {
     assert_eq!(plan.session_epoch, context.session_epoch);
     assert_eq!(plan.maximum_datagram_payload, 1_200);
     assert!(plan.maximum_object_delay_us > 0);
-    assert!(router.video_delivery_state().is_some());
+    let video_delivery = router.video_delivery_state().unwrap();
+    assert_eq!(
+        video_delivery.maximum_object_delay_us,
+        plan.maximum_object_delay_us
+    );
+    assert_eq!(
+        video_delivery.refresh_millihz,
+        plan.selected_video_capability
+            .as_ref()
+            .unwrap()
+            .max_refresh_millihz
+    );
     assert!(router.audio_delivery_state().is_some());
     assert_eq!(platform.starts.lock().unwrap().len(), 1);
 }
@@ -540,7 +551,17 @@ fn native_v4_reconfigures_display_without_stopping_the_active_session() {
     assert!(result.plan.as_ref().unwrap().video_configuration_id > initial.video_configuration_id);
     assert_eq!(platform.reconfigurations.lock().unwrap().len(), 1);
     assert_eq!(platform.stop_count(), 0);
-    assert!(router.video_delivery_state().is_some());
+    assert_eq!(
+        router.video_delivery_state().unwrap().refresh_millihz,
+        result
+            .plan
+            .as_ref()
+            .unwrap()
+            .selected_video_capability
+            .as_ref()
+            .unwrap()
+            .max_refresh_millihz
+    );
 }
 
 #[test]
