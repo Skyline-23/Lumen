@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use lumen_upnp::{discover_gateway, DiscoveryOptions, Gateway, MappingError};
+use lumen_upnp::{discover_gateway, DiscoveryOptions, Gateway, MappingError, PortMappingEntry};
 
 use super::ipv6;
 use super::mapping::{mappings, PortMapping};
@@ -299,24 +299,72 @@ fn add_mapping(
     local_address: SocketAddr,
 ) -> Result<(), String> {
     match add_mapping_with_lease_fallback(gateway, mapping, local_address) {
-        Ok(()) => Ok(()),
+        Ok(()) => verify_mapping(gateway, mapping, local_address),
         Err(AddMappingAttemptError::PortInUse) => {
-            gateway
-                .remove_port(mapping.protocol, mapping.port)
+            let current = gateway
+                .port_mapping(mapping.protocol, mapping.port)
                 .map_err(|error| {
-                    format!(
-                        "conflicting mapping could not be removed before reconciliation: {error}"
-                    )
+                    format!("conflicting mapping ownership could not be inspected: {error}")
                 })?;
-            add_mapping_with_lease_fallback(gateway, mapping, local_address).map_err(|error| {
-                format!(
-                    "mapping remained unavailable after stale ownership removal: {}",
-                    error.message()
-                )
-            })
+            match current {
+                Some(entry) if mapping_is_active_for(&entry, local_address) => Ok(()),
+                Some(entry) if entry.description == mapping.description => {
+                    gateway
+                        .remove_port(mapping.protocol, mapping.port)
+                        .map_err(|error| {
+                            format!(
+                                "stale Lumen mapping could not be removed before reconciliation: {error}"
+                            )
+                        })?;
+                    add_mapping_with_lease_fallback(gateway, mapping, local_address).map_err(
+                        |error| {
+                            format!(
+                                "mapping remained unavailable after stale ownership removal: {}",
+                                error.message()
+                            )
+                        },
+                    )?;
+                    verify_mapping(gateway, mapping, local_address)
+                }
+                Some(entry) => Err(format!(
+                    "port is owned by another mapping internal-address={} enabled={} description={}",
+                    entry.internal_address, entry.enabled, entry.description
+                )),
+                None => {
+                    add_mapping_with_lease_fallback(gateway, mapping, local_address).map_err(
+                        |error| {
+                            format!(
+                                "mapping remained unavailable after the reported conflict disappeared: {}",
+                                error.message()
+                            )
+                        },
+                    )?;
+                    verify_mapping(gateway, mapping, local_address)
+                }
+            }
         }
         Err(AddMappingAttemptError::Other(error)) => Err(error),
     }
+}
+
+fn verify_mapping(
+    gateway: &Gateway,
+    mapping: PortMapping,
+    local_address: SocketAddr,
+) -> Result<(), String> {
+    match gateway.port_mapping(mapping.protocol, mapping.port) {
+        Ok(Some(entry)) if mapping_is_active_for(&entry, local_address) => Ok(()),
+        Ok(Some(entry)) => Err(format!(
+            "gateway verification returned internal-address={} enabled={} description={} instead of {}",
+            entry.internal_address, entry.enabled, entry.description, local_address
+        )),
+        Ok(None) => Err("gateway reported success but the mapping is absent".to_owned()),
+        Err(error) => Err(format!("gateway mapping verification failed: {error}")),
+    }
+}
+
+fn mapping_is_active_for(entry: &PortMappingEntry, local_address: SocketAddr) -> bool {
+    entry.enabled && entry.internal_address == local_address
 }
 
 fn add_mapping_with_lease_fallback(
@@ -461,5 +509,28 @@ mod tests {
                 Duration::from_secs(60),
             ]
         );
+    }
+
+    #[test]
+    fn mapping_verification_requires_enabled_exact_internal_endpoint() {
+        let expected = "192.168.0.52:47990".parse().unwrap();
+        let matching = PortMappingEntry {
+            internal_address: expected,
+            enabled: true,
+            description: "Lumen - HTTPS Control".to_owned(),
+            lease_duration_seconds: 3_596,
+        };
+        let wrong_host = PortMappingEntry {
+            internal_address: "192.168.0.51:47990".parse().unwrap(),
+            ..matching.clone()
+        };
+        let disabled = PortMappingEntry {
+            enabled: false,
+            ..matching.clone()
+        };
+
+        assert!(mapping_is_active_for(&matching, expected));
+        assert!(!mapping_is_active_for(&wrong_host, expected));
+        assert!(!mapping_is_active_for(&disabled, expected));
     }
 }
