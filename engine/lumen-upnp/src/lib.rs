@@ -656,16 +656,18 @@ mod tests {
                         )
                         .unwrap();
                 } else if index == 2 {
-                    let mapping = r#"<?xml version="1.0"?>
+                    let mapping = format!(
+                        r#"<?xml version="1.0"?>
                         <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body>
                           <u:GetSpecificPortMappingEntryResponse xmlns:u="urn:schemas-upnp-org:service:WANIPConnection:1">
                             <NewInternalPort>48990</NewInternalPort>
-                            <NewInternalClient>127.0.0.1</NewInternalClient>
+                            <NewInternalClient>{selected_local_ip}</NewInternalClient>
                             <NewEnabled>1</NewEnabled>
                             <NewPortMappingDescription>Lumen &amp; HTTPS</NewPortMappingDescription>
                             <NewLeaseDuration>600</NewLeaseDuration>
                           </u:GetSpecificPortMappingEntryResponse>
-                        </s:Body></s:Envelope>"#;
+                        </s:Body></s:Envelope>"#
+                    );
                     stream
                         .write_all(
                             format!(
@@ -726,7 +728,9 @@ mod tests {
             requests[0]
         );
         assert!(requests[1].contains("AddPortMapping"));
-        assert!(requests[1].contains("<NewInternalClient>127.0.0.1</NewInternalClient>"));
+        assert!(requests[1].contains(&format!(
+            "<NewInternalClient>{selected_local_ip}</NewInternalClient>"
+        )));
         assert!(requests[1].contains("Lumen &amp; HTTPS"));
         assert!(requests[2].contains("GetSpecificPortMappingEntry"));
         assert!(requests[3].contains("DeletePortMapping"));
