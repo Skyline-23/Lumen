@@ -4,6 +4,7 @@ import SwiftUI
 struct LumenApplicationsView: View {
     @ObservedObject var controller: LumenCaptureController
     @State private var editedApplication: LumenApplication?
+    @State private var isTargetedForApplicationDrop = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -53,11 +54,36 @@ struct LumenApplicationsView: View {
         .task {
             controller.refreshApplications()
         }
+        .dropDestination(for: URL.self) { urls, _ in
+            registerDroppedApplications(urls)
+        } isTargeted: { isTargeted in
+            isTargetedForApplicationDrop = isTargeted
+        }
+        .overlay {
+            if isTargetedForApplicationDrop {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Color.accentColor, lineWidth: 2)
+                    .padding(8)
+                    .allowsHitTesting(false)
+            }
+        }
         .sheet(item: $editedApplication) { application in
             LumenApplicationEditor(application: application) { updated in
                 controller.saveApplication(updated)
             }
         }
+    }
+
+    @discardableResult
+    private func registerDroppedApplications(_ urls: [URL]) -> Bool {
+        let registered = urls.compactMap(
+            LumenApplicationDropRegistration.makeApplication(fromBundleAt:)
+        )
+        guard !registered.isEmpty else { return false }
+        for application in registered {
+            controller.saveApplication(application)
+        }
+        return true
     }
 
     private func applicationRow(_ application: LumenApplication) -> some View {

@@ -86,6 +86,8 @@ impl AdaptiveVideoDeliveryController {
     /// Drops below this share of a window are jitter, not sustained pressure.
     const DECODER_DROP_PRESSURE_PARTS_PER_MILLION: u64 = 50_000;
     const HIGH_JITTER_MICROSECONDS: u32 = 10_000;
+    /// Late objects below this share of a window are pacing, not congestion.
+    const LATE_OBJECT_PRESSURE_PARTS_PER_MILLION: u64 = 50_000;
 
     #[cfg(test)]
     pub(crate) fn new(
@@ -368,7 +370,16 @@ impl AdaptiveVideoDeliveryController {
     }
 
     fn classify_network(&self, sample: MediaFeedbackSample) -> NetworkCongestionSeverity {
-        if sample.unrecoverable_objects > 0 || sample.late_objects > 0 {
+        // An unrecoverable object is real data loss and is always severe. A late
+        // object is not: at high resolution a keyframe legitimately paces across
+        // several refresh periods, so isolated lateness must not drive FEC to its
+        // ceiling and spend the wire budget on parity instead of picture.
+        if sample.unrecoverable_objects > 0 {
+            return NetworkCongestionSeverity::Severe;
+        }
+        if Self::late_object_parts_per_million(sample)
+            >= Self::LATE_OBJECT_PRESSURE_PARTS_PER_MILLION
+        {
             return NetworkCongestionSeverity::Severe;
         }
         if Self::loss_parts_per_million(sample) >= Self::TRANSPORT_LOSS_PARTS_PER_MILLION
@@ -451,6 +462,12 @@ impl AdaptiveVideoDeliveryController {
             self.wire_budget_kbps = raised;
             self.clean_network_windows = 0;
         }
+    }
+
+    /// Late objects as a share of the window's decoder submissions.
+    fn late_object_parts_per_million(sample: MediaFeedbackSample) -> u64 {
+        let submissions = sample.decoder_submissions.max(1);
+        u64::from(sample.late_objects).saturating_mul(1_000_000) / u64::from(submissions)
     }
 
     fn loss_parts_per_million(sample: MediaFeedbackSample) -> u64 {
