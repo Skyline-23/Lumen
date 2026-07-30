@@ -2067,8 +2067,8 @@ fn codec_configuration(
     }
 }
 
-fn timestamp_to_microseconds(timestamp: u32, clock_rate: u64) -> u32 {
-    ((u64::from(timestamp) * 1_000_000) / clock_rate) as u32
+fn timestamp_to_microseconds(timestamp: u64, clock_rate: u64) -> u32 {
+    ((u128::from(timestamp) * 1_000_000) / u128::from(clock_rate)) as u32
 }
 
 fn duration_to_microseconds(duration: Duration) -> u64 {

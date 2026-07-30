@@ -169,7 +169,7 @@ impl NativeMediaPacketizer {
             NativeUnitMetadata {
                 object_id: unit_id,
                 capture_timestamp_us: timestamp_to_microseconds(
-                    packet.presentation_time_48khz,
+                    u64::from(packet.presentation_time_48khz),
                     48_000,
                 ),
                 parity_percentage: 0,
@@ -298,8 +298,8 @@ impl NativeMediaPacketizer {
     }
 }
 
-fn timestamp_to_microseconds(timestamp: u32, clock_rate: u64) -> u32 {
-    ((u64::from(timestamp) * 1_000_000) / clock_rate) as u32
+fn timestamp_to_microseconds(timestamp: u64, clock_rate: u64) -> u32 {
+    ((u128::from(timestamp) * 1_000_000) / u128::from(clock_rate)) as u32
 }
 
 fn valid_datagram_payload(maximum_datagram_payload: usize) -> bool {

@@ -130,12 +130,12 @@ fn reconstruct_fec_blocks(packetized: &NativePacketizedUnit) -> Vec<u8> {
 }
 
 #[test]
-fn packetizes_video_deltas_and_keyframes_in_one_generation_bound_lane() {
+fn packetizes_video_deltas_and_keyframes_across_the_90khz_wrap_seam() {
     let mut packetizer = NativeMediaPacketizer::new(video_config(80), 0x1011_1213).unwrap();
     let delta = PlatformEncodedVideoFrame {
         payload: (0..65).collect(),
         decoder_configuration_record: None,
-        presentation_time_90khz: 90_000,
+        presentation_time_90khz: u64::from(u32::MAX),
         key_frame: false,
         requires_bootstrap_acknowledgement: false,
         repair_keyframe: false,
@@ -155,7 +155,7 @@ fn packetizes_video_deltas_and_keyframes_in_one_generation_bound_lane() {
     assert_eq!(first.header.datagram_sequence, 0x1011_1213);
     assert_eq!(first.header.object_id, 9);
     assert_eq!(first.header.object_bytes, delta.payload.len() as u32);
-    assert_eq!(first.header.capture_timestamp_us, 1_000_000);
+    assert_eq!(first.header.capture_timestamp_us, 477_218_577);
     let reconstructed = packetized
         .datagrams
         .iter()
@@ -165,10 +165,20 @@ fn packetizes_video_deltas_and_keyframes_in_one_generation_bound_lane() {
     assert_eq!(reconstructed, delta.payload);
 
     let keyframe = PlatformEncodedVideoFrame {
+        presentation_time_90khz: u64::from(u32::MAX) + 1,
         key_frame: true,
         ..delta
     };
     let keyframe = packetizer.packetize_video_delta(&keyframe, 10, 0).unwrap();
+    let first_keyframe = decode_native_media_datagram(&keyframe.datagrams[0]).unwrap();
+    assert_eq!(first_keyframe.header.capture_timestamp_us, 477_218_588);
+    assert_eq!(
+        first_keyframe
+            .header
+            .capture_timestamp_us
+            .wrapping_sub(first.header.capture_timestamp_us),
+        11
+    );
     assert!(keyframe.datagrams.iter().all(|datagram| {
         decode_native_media_datagram(datagram).unwrap().header.flags & NATIVE_MEDIA_FLAG_KEYFRAME
             != 0

@@ -138,7 +138,7 @@ pub struct PlatformEncodedVideoFrame {
     pub payload: Vec<u8>,
     /// Required for AV1 and optional when a native H.264/HEVC adapter exposes its config record.
     pub decoder_configuration_record: Option<Vec<u8>>,
-    pub presentation_time_90khz: u32,
+    pub presentation_time_90khz: u64,
     pub key_frame: bool,
     /// True only when the platform paused encoder admission for this key frame.
     pub requires_bootstrap_acknowledgement: bool,
@@ -656,7 +656,7 @@ impl PlatformSessionControl for CallbackPlatformSessionControl {
         Ok(payload.map(|payload| PlatformEncodedVideoFrame {
             payload,
             decoder_configuration_record: None,
-            presentation_time_90khz: metadata.presentation_time_90khz,
+            presentation_time_90khz: u64::from(metadata.presentation_time_90khz),
             key_frame: metadata.key_frame,
             requires_bootstrap_acknowledgement: metadata.requires_bootstrap_acknowledgement,
             repair_keyframe: metadata.repair_key_frame,

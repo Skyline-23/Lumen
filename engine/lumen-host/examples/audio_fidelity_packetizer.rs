@@ -111,7 +111,7 @@ fn main() -> Result<(), String> {
                 &PlatformEncodedVideoFrame {
                     payload,
                     decoder_configuration_record: None,
-                    presentation_time_90khz,
+                    presentation_time_90khz: u64::from(presentation_time_90khz),
                     key_frame: false,
                     requires_bootstrap_acknowledgement: false,
                     repair_keyframe: false,

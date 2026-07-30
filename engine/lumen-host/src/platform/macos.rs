@@ -1247,7 +1247,7 @@ fn copy_annex_b_sample(
     sample: SampleBuffer,
     codec: i32,
     key_frame: bool,
-) -> Result<(Vec<u8>, u32), String> {
+) -> Result<(Vec<u8>, u64), String> {
     let format = unsafe { CMSampleBufferGetFormatDescription(sample) };
     let block = unsafe { CMSampleBufferGetDataBuffer(sample) };
     if format.is_null() || block.is_null() {
@@ -1322,7 +1322,7 @@ fn copy_annex_b_sample(
     }
     let time = unsafe { CMSampleBufferGetPresentationTimeStamp(sample) };
     let timestamp = if time.timescale > 0 {
-        ((i128::from(time.value) * 90_000) / i128::from(time.timescale)) as u32
+        ((i128::from(time.value) * 90_000) / i128::from(time.timescale)) as u64
     } else {
         0
     };
