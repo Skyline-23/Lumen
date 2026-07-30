@@ -161,6 +161,30 @@ fn windows_management_is_local_and_bound_to_the_active_session() {
 }
 
 #[test]
+fn windows_msi_ships_the_required_desktop_application_seed() {
+    let driver = driver_root();
+    let repo_root = driver
+        .ancestors()
+        .nth(4)
+        .expect("driver must live under src/platform/windows")
+        .to_path_buf();
+    let package = fs::read_to_string(repo_root.join("packaging/windows/Package.wxs"))
+        .expect("Windows package definition must exist");
+    let windows_cmake = fs::read_to_string(repo_root.join("cmake/packaging/windows.cmake"))
+        .expect("Windows packaging configuration must exist");
+    let seed = fs::read_to_string(repo_root.join("src_assets/windows/assets/apps.json"))
+        .expect("Windows application seed must exist");
+
+    assert!(windows_cmake.contains("${LUMEN_SOURCE_ASSETS_DIR}/windows/assets/"));
+    assert!(windows_cmake.contains("DESTINATION \"${LUMEN_ASSETS_DIR}\""));
+    assert!(windows_cmake.contains("COMPONENT assets"));
+    assert!(package.contains("<Files Directory=\"INSTALLFOLDER\" Include=\"$(var.StageDir)\\**\">"));
+    assert!(!package.contains("<Exclude Files=\"$(var.StageDir)\\assets\\**\""));
+    assert!(seed.contains("\"apps\""));
+    assert!(seed.contains("\"name\": \"Desktop\""));
+}
+
+#[test]
 fn windows_msi_is_the_only_supported_service_installer() {
     let driver = driver_root();
     let repo_root = driver

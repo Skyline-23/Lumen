@@ -125,6 +125,8 @@ impl<Stream: NativeStreamControl, Control: NativeControlTransport> HostService
         if self.router.is_some() {
             return Err(ServiceError::AlreadyRunning.to_string());
         }
+        #[cfg(windows)]
+        crate::windows_application_catalog::prepare(arguments)?;
         crate::credentials::ensure_server_identity(arguments)
             .map_err(|error| ServiceError::Authority(error).to_string())?;
         let paths = HostAuthorityPaths::from_arguments(arguments)

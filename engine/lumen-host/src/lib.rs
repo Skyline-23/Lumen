@@ -19,6 +19,8 @@ mod upnp;
 #[cfg(any(test, windows))]
 mod windows_app;
 #[cfg(any(test, windows))]
+mod windows_application_catalog;
+#[cfg(any(test, windows))]
 mod windows_management;
 #[cfg(windows)]
 mod windows_service;
