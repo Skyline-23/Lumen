@@ -1227,22 +1227,23 @@ fn four_refresh_frame_deadline_us(refresh_millihz: u32) -> Result<u64, VideoData
         return Err(VideoDatagramDeadlineError::InvalidRefreshCadence);
     }
     1_000_000_000_u64
-        .div_ceil(u64::from(refresh_millihz))
         .checked_mul(PERIODIC_KEYFRAME_DEADLINE_FRAMES)
         .ok_or(VideoDatagramDeadlineError::ArithmeticOverflow)
+        .map(|four_frame_numerator| four_frame_numerator.div_ceil(u64::from(refresh_millihz)))
 }
 
-fn video_datagram_deadline_us<DatagramBytes>(
+fn video_datagram_deadline_us<DatagramBytes, ObjectAge>(
     same_generation_periodic_keyframe: bool,
     datagram_bytes: DatagramBytes,
     maximum_datagram_payload: usize,
     wire_budget_kbps: u32,
     maximum_object_delay_us: u32,
     refresh_millihz: u32,
-    object_age_us: u64,
+    object_age_us: ObjectAge,
 ) -> Result<u64, VideoDatagramDeadlineError>
 where
     DatagramBytes: IntoIterator<Item = usize>,
+    ObjectAge: FnOnce() -> u64,
 {
     let delta_deadline_us = u64::from(maximum_object_delay_us);
     if !same_generation_periodic_keyframe {
@@ -1278,7 +1279,7 @@ where
     let required_us = paced_microseconds
         .checked_add(PERIODIC_KEYFRAME_SCHEDULING_MARGIN_US)
         .ok_or(VideoDatagramDeadlineError::ArithmeticOverflow)?
-        .checked_add(object_age_us)
+        .checked_add(object_age_us())
         .ok_or(VideoDatagramDeadlineError::ArithmeticOverflow)?
         .max(delta_deadline_us);
     if required_us > cap_us {
@@ -1297,7 +1298,14 @@ fn video_datagram_post_send_disposition(
     status: &DatagramBatchStatus,
 ) -> VideoDatagramPostSendDisposition {
     if same_generation_periodic_keyframe
-        && *status == DatagramBatchStatus::Dropped(DatagramBatchDropReason::WireRate)
+        && matches!(
+            status,
+            DatagramBatchStatus::Dropped(
+                DatagramBatchDropReason::QueueBarrier
+                    | DatagramBatchDropReason::Send
+                    | DatagramBatchDropReason::WireRate
+            )
+        )
     {
         VideoDatagramPostSendDisposition::TerminalPeriodicKeyframeWireCapExceeded
     } else {
@@ -1697,7 +1705,6 @@ async fn poll_and_send_video(
         Err(message) => return MediaAttempt::Failed(video_failure("packetizer-failed", message)),
     };
     let pending_since = sender.pending_since.expect("staged video frame timestamp");
-    let object_age_before_send_us = duration_to_microseconds(pending_since.elapsed());
     let deadline_us = match video_datagram_deadline_us(
         same_generation_periodic_keyframe,
         packetized.datagrams.iter().map(Vec::len),
@@ -1705,7 +1712,7 @@ async fn poll_and_send_video(
         delivery.wire_budget_kbps,
         delivery.maximum_object_delay_us,
         delivery.refresh_millihz,
-        object_age_before_send_us,
+        || duration_to_microseconds(pending_since.elapsed()),
     ) {
         Ok(deadline_us) => deadline_us,
         Err(VideoDatagramDeadlineError::TerminalPeriodicKeyframeWireCapExceeded {
@@ -2105,11 +2112,12 @@ mod tests {
                 66_269,
                 16_668,
                 60_000,
-                0,
+                || 0,
             ),
             Ok(37_910)
         );
         let visited_delta_bytes = Cell::new(0);
+        let read_delta_age = Cell::new(false);
         assert_eq!(
             video_datagram_deadline_us(
                 false,
@@ -2121,11 +2129,15 @@ mod tests {
                 66_269,
                 16_668,
                 0,
-                u64::MAX,
+                || {
+                    read_delta_age.set(true);
+                    u64::MAX
+                },
             ),
             Ok(16_668)
         );
         assert_eq!(visited_delta_bytes.get(), 0);
+        assert!(!read_delta_age.get());
     }
 
     #[test]
@@ -2139,7 +2151,7 @@ mod tests {
             66_269,
             16_668,
             60_000,
-            0,
+            || 0,
         )
         .expect("observed periodic keyframe fits a sixty-hertz four-frame deadline");
         let mut pacer = VideoWireRatePacer::default();
@@ -2171,12 +2183,12 @@ mod tests {
                 66_269,
                 16_668,
                 120_000,
-                0,
+                || 0,
             ),
             Err(
                 VideoDatagramDeadlineError::TerminalPeriodicKeyframeWireCapExceeded {
                     required_us: 37_910,
-                    cap_us: 33_336,
+                    cap_us: 33_334,
                 }
             )
         );
@@ -2184,8 +2196,8 @@ mod tests {
 
     #[test]
     fn periodic_keyframe_cap_is_exactly_four_negotiated_refresh_frames() {
-        assert_eq!(four_refresh_frame_deadline_us(60_000), Ok(66_668));
-        assert_eq!(four_refresh_frame_deadline_us(120_000), Ok(33_336));
+        assert_eq!(four_refresh_frame_deadline_us(60_000), Ok(66_667));
+        assert_eq!(four_refresh_frame_deadline_us(120_000), Ok(33_334));
         assert_eq!(
             four_refresh_frame_deadline_us(0),
             Err(VideoDatagramDeadlineError::InvalidRefreshCadence)
@@ -2202,9 +2214,9 @@ mod tests {
                 66_269,
                 16_668,
                 120_000,
-                28_336,
+                || 28_334,
             ),
-            Ok(33_336)
+            Ok(33_334)
         );
         assert_eq!(
             video_datagram_deadline_us(
@@ -2214,12 +2226,12 @@ mod tests {
                 66_269,
                 16_668,
                 120_000,
-                28_337,
+                || 28_335,
             ),
             Err(
                 VideoDatagramDeadlineError::TerminalPeriodicKeyframeWireCapExceeded {
-                    required_us: 33_337,
-                    cap_us: 33_336,
+                    required_us: 33_335,
+                    cap_us: 33_334,
                 }
             )
         );
@@ -2235,7 +2247,7 @@ mod tests {
                 66_269,
                 1_000,
                 60_000,
-                100,
+                || 100,
             ),
             Ok(5_171)
         );
@@ -2261,7 +2273,7 @@ mod tests {
             66_269,
             16_668,
             120_000,
-            0,
+            || 0,
         )
         .expect("periodic object fits an otherwise empty pacer");
         let periodic_schedule = pacer.reserve(
@@ -2280,6 +2292,36 @@ mod tests {
         let sender = VideoSenderState::default();
         assert!(!sender.repair_required);
         assert_eq!(sender.frame_id, 0);
+    }
+
+    #[test]
+    fn periodic_deadline_drops_are_terminal_before_delivery_completion() {
+        for reason in [
+            DatagramBatchDropReason::QueueBarrier,
+            DatagramBatchDropReason::Send,
+            DatagramBatchDropReason::WireRate,
+        ] {
+            let status = DatagramBatchStatus::Dropped(reason);
+            assert_eq!(
+                video_datagram_post_send_disposition(true, &status),
+                VideoDatagramPostSendDisposition::TerminalPeriodicKeyframeWireCapExceeded
+            );
+            assert_eq!(
+                video_datagram_post_send_disposition(false, &status),
+                VideoDatagramPostSendDisposition::FinishDelivery
+            );
+        }
+
+        for status in [
+            DatagramBatchStatus::Complete,
+            DatagramBatchStatus::Failed("send failed".to_owned()),
+            DatagramBatchStatus::Terminal("connection failed".to_owned()),
+        ] {
+            assert_eq!(
+                video_datagram_post_send_disposition(true, &status),
+                VideoDatagramPostSendDisposition::FinishDelivery
+            );
+        }
     }
 
     #[test]
