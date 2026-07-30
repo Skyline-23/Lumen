@@ -70,10 +70,12 @@ public struct LumenBridgeDrainedVideoEvent: Equatable, Sendable {
 }
 
 private struct LumenVideoIngressState: Sendable {
-    var frames: [LumenBridgeDrainedVideoFrame] = []
-    var events: [LumenBridgeDrainedVideoEvent] = []
-    var frameCapacity = 3
-    var eventCapacity = 64
+    var frames = LumenFixedCapacityRingBuffer<LumenBridgeDrainedVideoFrame>(
+        capacity: 3
+    )
+    var events = LumenFixedCapacityRingBuffer<LumenBridgeDrainedVideoEvent>(
+        capacity: 64
+    )
     var frameCount: UInt64 = 0
     var eventCount: UInt64 = 0
     var droppedFrameCount: UInt64 = 0
@@ -99,29 +101,25 @@ final class LumenVideoCaptureForwarder: Sendable {
 
     func reset() {
         state.withLock { value in
-            let frameCapacity = value.frameCapacity
-            let eventCapacity = value.eventCapacity
+            let frameCapacity = value.frames.capacity
+            let eventCapacity = value.events.capacity
             value = LumenVideoIngressState()
-            value.frameCapacity = frameCapacity
-            value.eventCapacity = eventCapacity
+            value.frames.resize(to: frameCapacity)
+            value.events.resize(to: eventCapacity)
         }
     }
 
     func setFrameCapacity(_ capacity: Int) {
         state.withLock { value in
-            value.frameCapacity = max(capacity, 1)
-            trimOldest(&value.frames, capacity: value.frameCapacity) {
-                value.droppedFrameCount &+= UInt64($0)
-            }
+            let droppedCount = value.frames.resize(to: capacity)
+            value.droppedFrameCount &+= UInt64(droppedCount)
         }
     }
 
     func setEventCapacity(_ capacity: Int) {
         state.withLock { value in
-            value.eventCapacity = max(capacity, 1)
-            trimOldest(&value.events, capacity: value.eventCapacity) {
-                value.droppedEventCount &+= UInt64($0)
-            }
+            let droppedCount = value.events.resize(to: capacity)
+            value.droppedEventCount &+= UInt64(droppedCount)
         }
     }
 
@@ -202,15 +200,15 @@ final class LumenVideoCaptureForwarder: Sendable {
                     return .waitingForRecoveryKeyFrame
                 }
                 value.awaitingRecoveryKeyFrame = false
-                value.frames.removeAll(keepingCapacity: true)
-                value.frames.append(frame)
+                value.frames.removeAll()
+                value.frames.appendDroppingOldest(frame)
                 return .recoveredAtKeyFrame
             }
-            if value.frames.count >= value.frameCapacity {
+            if value.frames.isFull {
                 let droppedSourceDisplayTime = value.frames.first?.sourceDisplayTime
                 let queuedDropCount = value.frames.count
                 value.droppedFrameCount &+= UInt64(queuedDropCount)
-                value.frames.removeAll(keepingCapacity: true)
+                value.frames.removeAll()
                 let overflowEvent = LumenBridgeDrainedVideoEvent(
                     kind: .droppedFrame,
                     message: "core-forwarder-overflow",
@@ -220,20 +218,18 @@ final class LumenVideoCaptureForwarder: Sendable {
                 )
                 value.eventCount &+= 1
                 value.lastEvent = overflowEvent
-                if value.events.count >= value.eventCapacity {
-                    value.events.removeFirst()
+                if value.events.appendDroppingOldest(overflowEvent) != nil {
                     value.droppedEventCount &+= 1
                 }
-                value.events.append(overflowEvent)
                 if !isKeyFrame {
                     value.droppedFrameCount &+= 1
                     value.awaitingRecoveryKeyFrame = true
                     return .recoveryKeyFrameRequired
                 }
-                value.frames.append(frame)
+                value.frames.appendDroppingOldest(frame)
                 return .recoveredAtKeyFrame
             }
-            value.frames.append(frame)
+            value.frames.appendDroppingOldest(frame)
             return .queued
         }
     }
@@ -249,38 +245,23 @@ final class LumenVideoCaptureForwarder: Sendable {
         state.withLock { value in
             value.eventCount &+= 1
             value.lastEvent = event
-            if value.events.count >= value.eventCapacity {
-                value.events.removeFirst()
+            if value.events.appendDroppingOldest(event) != nil {
                 value.droppedEventCount &+= 1
             }
-            value.events.append(event)
         }
     }
 
     func popNextFrame() -> LumenBridgeDrainedVideoFrame? {
         state.withLock { value in
-            guard !value.frames.isEmpty else { return nil }
-            return value.frames.removeFirst()
+            value.frames.popFirst()
         }
     }
 
     func popNextEvent() -> LumenBridgeDrainedVideoEvent? {
         state.withLock { value in
-            guard !value.events.isEmpty else { return nil }
-            return value.events.removeFirst()
+            value.events.popFirst()
         }
     }
-}
-
-private func trimOldest<Element>(
-    _ values: inout [Element],
-    capacity: Int,
-    didDrop: (Int) -> Void
-) {
-    let overflow = max(values.count - capacity, 0)
-    guard overflow > 0 else { return }
-    values.removeFirst(overflow)
-    didDrop(overflow)
 }
 
 private extension LumenEncodedCaptureSessionEventKind {

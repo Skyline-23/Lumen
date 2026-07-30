@@ -2,10 +2,12 @@ import Foundation
 import Synchronization
 
 private struct LumenAudioIngressState: Sendable {
-    var frames: [LumenBridgeDrainedAudioFrame] = []
-    var events: [LumenBridgeDrainedAudioEvent] = []
-    var frameCapacity = 8
-    var eventCapacity = 64
+    var frames = LumenFixedCapacityRingBuffer<LumenBridgeDrainedAudioFrame>(
+        capacity: 8
+    )
+    var events = LumenFixedCapacityRingBuffer<LumenBridgeDrainedAudioEvent>(
+        capacity: 64
+    )
     var frameCount: UInt64 = 0
     var eventCount: UInt64 = 0
     var droppedFrameCount: UInt64 = 0
@@ -22,33 +24,25 @@ final class LumenAudioCaptureForwarder: Sendable {
 
     func reset() {
         state.withLock { value in
-            let frameCapacity = value.frameCapacity
-            let eventCapacity = value.eventCapacity
+            let frameCapacity = value.frames.capacity
+            let eventCapacity = value.events.capacity
             value = LumenAudioIngressState()
-            value.frameCapacity = frameCapacity
-            value.eventCapacity = eventCapacity
+            value.frames.resize(to: frameCapacity)
+            value.events.resize(to: eventCapacity)
         }
     }
 
     func setFrameCapacity(_ capacity: Int) {
         state.withLock { value in
-            value.frameCapacity = max(capacity, 1)
-            let overflow = max(value.frames.count - value.frameCapacity, 0)
-            if overflow > 0 {
-                value.frames.removeFirst(overflow)
-                value.droppedFrameCount &+= UInt64(overflow)
-            }
+            let droppedCount = value.frames.resize(to: capacity)
+            value.droppedFrameCount &+= UInt64(droppedCount)
         }
     }
 
     func setEventCapacity(_ capacity: Int) {
         state.withLock { value in
-            value.eventCapacity = max(capacity, 1)
-            let overflow = max(value.events.count - value.eventCapacity, 0)
-            if overflow > 0 {
-                value.events.removeFirst(overflow)
-                value.droppedEventCount &+= UInt64(overflow)
-            }
+            let droppedCount = value.events.resize(to: capacity)
+            value.droppedEventCount &+= UInt64(droppedCount)
         }
     }
 
@@ -89,11 +83,9 @@ final class LumenAudioCaptureForwarder: Sendable {
             guard value.producerActive else { return }
             value.frameCount &+= 1
             value.lastFrame = frame
-            if value.frames.count >= value.frameCapacity {
-                value.frames.removeFirst()
+            if value.frames.appendDroppingOldest(frame) != nil {
                 value.droppedFrameCount &+= 1
             }
-            value.frames.append(frame)
         }
     }
 
@@ -109,25 +101,21 @@ final class LumenAudioCaptureForwarder: Sendable {
             guard value.producerActive else { return }
             value.eventCount &+= 1
             value.lastEvent = event
-            if value.events.count >= value.eventCapacity {
-                value.events.removeFirst()
+            if value.events.appendDroppingOldest(event) != nil {
                 value.droppedEventCount &+= 1
             }
-            value.events.append(event)
         }
     }
 
     func popNextFrame() -> LumenBridgeDrainedAudioFrame? {
         state.withLock { value in
-            guard !value.frames.isEmpty else { return nil }
-            return value.frames.removeFirst()
+            value.frames.popFirst()
         }
     }
 
     func popNextEvent() -> LumenBridgeDrainedAudioEvent? {
         state.withLock { value in
-            guard !value.events.isEmpty else { return nil }
-            return value.events.removeFirst()
+            value.events.popFirst()
         }
     }
 }
