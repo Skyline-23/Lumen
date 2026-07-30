@@ -78,6 +78,7 @@ smoke-test commands.
 ## Protocol maintenance
 
 - [Streaming protocol](docs/protocol/lumen-streaming-protocol.md)
+- [Generated API reference](docs/protocol/lumen-api-reference.md)
 - [Public protocol artifacts](docs/protocol/README.md)
 - [Settings protocol](docs/protocol/lumen-settings-protocol.md)
 - [MIT migration contract](docs/mit-migration.md)
@@ -87,11 +88,11 @@ After editing the native protocol contract, regenerate its public artifacts and
 then run the fast quality gate:
 
 ```bash
-python3 tools/protocol/validate_lumen_contract_v4.py
+swift run --quiet lumen-contract-tool validate
 PROTOC_GEN_SWIFT="$(tools/protocol/build_protoc_gen_swift.sh)" \
-  python3 tools/protocol/generate_lumen_contract_v4.py write
+  swift run --quiet lumen-contract-tool generate
 PROTOC_GEN_SWIFT="$(tools/protocol/build_protoc_gen_swift.sh)" \
-  python3 tools/protocol/generate_lumen_contract_v4.py --check
+  swift run --quiet lumen-contract-tool check
 swift test
 python3 tools/quality/run_lumen_quality_gate.py --fast
 ```

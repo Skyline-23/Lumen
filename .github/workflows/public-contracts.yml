@@ -7,10 +7,14 @@ on:
       - ".github/workflows/public-contracts.yml"
       - "Package.swift"
       - "Sources/LumenClientContracts/**"
+      - "Sources/LumenContractTool/**"
+      - "Sources/LumenContractToolCore/**"
       - "tests/LumenClientContractsTests/**"
+      - "tests/LumenContractToolTests/**"
       - "docs/protocol/lumen-contract-v4.json"
       - "docs/protocol/lumen-contract-v4.schema.json"
       - "docs/protocol/lumen-contract-v4.manifest.json"
+      - "docs/protocol/lumen-api-reference.md"
       - "docs/protocol/lumen-streaming-v4.descriptor.pb"
       - "docs/protocol/lumen-streaming-v4.manifest.json"
       - "docs/protocol/lumen-streaming-v4.proto"
@@ -28,7 +32,10 @@ on:
       - ".github/workflows/public-contracts.yml"
       - "Package.swift"
       - "Sources/LumenClientContracts/**"
+      - "Sources/LumenContractTool/**"
+      - "Sources/LumenContractToolCore/**"
       - "tests/LumenClientContractsTests/**"
+      - "tests/LumenContractToolTests/**"
       - "docs/protocol/**"
       - "engine/lumen-engine/src/protocol/lumen_streaming_v4_provenance.rs"
       - "tools/protocol/**"
@@ -61,10 +68,13 @@ jobs:
         run: |
           generator=$(tools/protocol/build_protoc_gen_swift.sh)
           echo "PROTOC_GEN_SWIFT=${generator}" >> "${GITHUB_ENV}"
+      - name: Build contract tool
+        run: |
+          swift build --product lumen-contract-tool
+          echo "LUMEN_CONTRACT_TOOL=$(swift build --show-bin-path)/lumen-contract-tool" >> "${GITHUB_ENV}"
       - name: Validate custom Lumen IDL
-        run: python3 tools/protocol/validate_lumen_contract_v4.py
-      - name: Test v4 compatibility gate
-        run: python3 tools/protocol/test_check_lumen_contract_v4_compatibility.py
+        run: |
+          "${LUMEN_CONTRACT_TOOL}" validate
       - name: Reject breaking v4 changes
         if: github.event_name == 'pull_request'
         env:
@@ -77,7 +87,11 @@ jobs:
 
           if git cat-file -e "${BASE_SHA}:docs/protocol/lumen-contract-v4.json" 2>/dev/null; then
             git show "${BASE_SHA}:docs/protocol/lumen-contract-v4.json" > "${baseline_dir}/contract.json"
-            baseline_args=(--baseline "${baseline_dir}/contract.json")
+            git show "${BASE_SHA}:docs/protocol/lumen-contract-v4.schema.json" > "${baseline_dir}/contract.schema.json"
+            baseline_args=(
+              --baseline "${baseline_dir}/contract.json"
+              --baseline-schema "${baseline_dir}/contract.schema.json"
+            )
           else
             git show "${BASE_SHA}:docs/protocol/lumen-streaming-v4.proto" > "${baseline_dir}/streaming.proto"
             git show "${BASE_SHA}:docs/protocol/lumen-native-transport-conformance.json" > "${baseline_dir}/native.json"
@@ -91,12 +105,13 @@ jobs:
             )
           fi
 
-          python3 tools/protocol/check_lumen_contract_v4_compatibility.py \
+          "${LUMEN_CONTRACT_TOOL}" compatibility \
             "${baseline_args[@]}" \
             --baseline-streaming-doc "${baseline_dir}/streaming.md" \
             --baseline-settings-doc "${baseline_dir}/settings.md"
       - name: Regenerate public contract package
-        run: python3 tools/protocol/generate_lumen_contract_v4.py write
+        run: |
+          "${LUMEN_CONTRACT_TOOL}" generate
       - name: Reject generated artifact drift
         run: |
           git diff --exit-code -- \
@@ -105,6 +120,7 @@ jobs:
             docs/protocol \
             engine/lumen-engine/src/protocol/lumen_streaming_v4_provenance.rs
       - name: Verify generated artifacts
-        run: python3 tools/protocol/generate_lumen_contract_v4.py --check
+        run: |
+          "${LUMEN_CONTRACT_TOOL}" check
       - name: Compile public Swift dependency
         run: swift test

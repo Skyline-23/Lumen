@@ -13,6 +13,8 @@ directory.
 - `lumen-streaming-v4.proto` is generated from the custom IDL and defines
   protobuf messages, field numbers, and enum values.
 - `lumen-streaming-v4.descriptor.pb` is the generated protobuf descriptor set.
+- `lumen-api-reference.md` is the generated implementation reference for the
+  protobuf, native QUIC, authentication, settings, and lifecycle authorities.
 - `lumen-streaming-v4.manifest.json` records protocol identity and SHA-256
   digests for the schema and descriptor.
 - `lumen-streaming-v4.sha256` is the schema digest in `sha256sum` format.
@@ -63,11 +65,11 @@ Edit only `lumen-contract-v4.json`, then regenerate and verify the public
 package and artifacts:
 
 ```bash
-python3 tools/protocol/validate_lumen_contract_v4.py
+swift run --quiet lumen-contract-tool validate
 PROTOC_GEN_SWIFT="$(tools/protocol/build_protoc_gen_swift.sh)" \
-  python3 tools/protocol/generate_lumen_contract_v4.py write
+  swift run --quiet lumen-contract-tool generate
 PROTOC_GEN_SWIFT="$(tools/protocol/build_protoc_gen_swift.sh)" \
-  python3 tools/protocol/generate_lumen_contract_v4.py --check
+  swift run --quiet lumen-contract-tool check
 swift test
 ```
 

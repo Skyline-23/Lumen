@@ -17,6 +17,7 @@
     "docs/protocol/lumen-native-transport-conformance.json",
     "docs/protocol/lumen-auth-conformance.json",
     "docs/protocol/lumen-settings-conformance.json",
+    "docs/protocol/lumen-api-reference.md",
     "Sources/LumenClientContracts/LumenStreamingV4.pb.swift"
   ],
   "handwrittenRuntimeBoundary": {
