@@ -1222,7 +1222,9 @@ enum VideoDatagramPostSendDisposition {
     TerminalPeriodicKeyframeWireCapExceeded,
 }
 
-fn four_refresh_frame_deadline_us(refresh_millihz: u32) -> Result<u64, VideoDatagramDeadlineError> {
+fn four_refresh_frame_wire_window_us(
+    refresh_millihz: u32,
+) -> Result<u64, VideoDatagramDeadlineError> {
     if refresh_millihz == 0 {
         return Err(VideoDatagramDeadlineError::InvalidRefreshCadence);
     }
@@ -1230,6 +1232,16 @@ fn four_refresh_frame_deadline_us(refresh_millihz: u32) -> Result<u64, VideoData
         .checked_mul(PERIODIC_KEYFRAME_DEADLINE_FRAMES)
         .ok_or(VideoDatagramDeadlineError::ArithmeticOverflow)
         .map(|four_frame_numerator| four_frame_numerator.div_ceil(u64::from(refresh_millihz)))
+}
+
+fn periodic_keyframe_deadline_cap_us(
+    refresh_millihz: u32,
+) -> Result<u64, VideoDatagramDeadlineError> {
+    // Four refresh periods bound wire serialization. Scheduler wakeup tolerance is a separate
+    // allowance so the same serialized object does not become invalid only at higher refresh.
+    four_refresh_frame_wire_window_us(refresh_millihz)?
+        .checked_add(PERIODIC_KEYFRAME_SCHEDULING_MARGIN_US)
+        .ok_or(VideoDatagramDeadlineError::ArithmeticOverflow)
 }
 
 fn video_datagram_deadline_us<DatagramBytes, ObjectAge>(
@@ -1252,7 +1264,7 @@ where
     if wire_budget_kbps == 0 {
         return Err(VideoDatagramDeadlineError::InvalidWireBudget);
     }
-    let cap_us = four_refresh_frame_deadline_us(refresh_millihz)?;
+    let cap_us = periodic_keyframe_deadline_cap_us(refresh_millihz)?;
 
     let total_bytes = datagram_bytes.into_iter().try_fold(0_u64, |total, bytes| {
         total
@@ -1792,7 +1804,7 @@ async fn poll_and_send_video(
         return MediaAttempt::Terminal(video_failure(
             "periodic-keyframe-wire-cap-exceeded",
             format!(
-                "same-generation periodic keyframe could not finish inside its four-refresh-frame wire deadline; frame-id={frame_id}"
+                "same-generation periodic keyframe could not finish inside its four-refresh-frame wire window plus scheduler margin; frame-id={frame_id}"
             ),
         ));
     }
@@ -1945,12 +1957,12 @@ mod tests {
     };
     use super::{
         classify_video_keyframe_delivery, delivery_for_session, finish_video_datagram_delivery,
-        four_refresh_frame_deadline_us, object_deadline_exceeded, record_successful_datagram,
-        run_native_media_tasks, send_datagram_batch, send_video_datagram_batch,
-        send_wire_paced_video_datagram_batch, video_datagram_deadline_us,
-        video_datagram_post_send_disposition, wait_for_datagram_deadline,
-        wait_for_datagram_queue_capacity, DatagramBatchDropReason, DatagramBatchMode,
-        DatagramBatchStatus, DatagramDeadlineElapsed, DatagramSendOutcome,
+        four_refresh_frame_wire_window_us, object_deadline_exceeded,
+        periodic_keyframe_deadline_cap_us, record_successful_datagram, run_native_media_tasks,
+        send_datagram_batch, send_video_datagram_batch, send_wire_paced_video_datagram_batch,
+        video_datagram_deadline_us, video_datagram_post_send_disposition,
+        wait_for_datagram_deadline, wait_for_datagram_queue_capacity, DatagramBatchDropReason,
+        DatagramBatchMode, DatagramBatchStatus, DatagramDeadlineElapsed, DatagramSendOutcome,
         PacketArrivalHistoryWarningReporter, PacketArrivalSendObservation, SessionDelivery,
         VideoBootstrapClassification, VideoDatagramCompletion, VideoDatagramDeadlineError,
         VideoDatagramPostSendDisposition, VideoKeyframeDelivery, VideoSenderState,
@@ -2172,7 +2184,7 @@ mod tests {
     }
 
     #[test]
-    fn one_hundred_twenty_hertz_periodic_keyframe_exceeds_four_frame_cap() {
+    fn one_hundred_twenty_hertz_periodic_keyframe_uses_external_scheduler_margin() {
         let datagram_bytes = vec![1_170; 235];
 
         assert_eq!(
@@ -2185,21 +2197,18 @@ mod tests {
                 120_000,
                 || 0,
             ),
-            Err(
-                VideoDatagramDeadlineError::TerminalPeriodicKeyframeWireCapExceeded {
-                    required_us: 37_910,
-                    cap_us: 33_334,
-                }
-            )
+            Ok(37_910)
         );
     }
 
     #[test]
-    fn periodic_keyframe_cap_is_exactly_four_negotiated_refresh_frames() {
-        assert_eq!(four_refresh_frame_deadline_us(60_000), Ok(66_667));
-        assert_eq!(four_refresh_frame_deadline_us(120_000), Ok(33_334));
+    fn periodic_keyframe_cap_places_scheduler_margin_outside_four_frame_wire_window() {
+        assert_eq!(four_refresh_frame_wire_window_us(60_000), Ok(66_667));
+        assert_eq!(four_refresh_frame_wire_window_us(120_000), Ok(33_334));
+        assert_eq!(periodic_keyframe_deadline_cap_us(60_000), Ok(71_667));
+        assert_eq!(periodic_keyframe_deadline_cap_us(120_000), Ok(38_334));
         assert_eq!(
-            four_refresh_frame_deadline_us(0),
+            periodic_keyframe_deadline_cap_us(0),
             Err(VideoDatagramDeadlineError::InvalidRefreshCadence)
         );
     }
@@ -2214,9 +2223,9 @@ mod tests {
                 66_269,
                 16_668,
                 120_000,
-                || 28_334,
+                || 33_334,
             ),
-            Ok(33_334)
+            Ok(38_334)
         );
         assert_eq!(
             video_datagram_deadline_us(
@@ -2226,12 +2235,12 @@ mod tests {
                 66_269,
                 16_668,
                 120_000,
-                || 28_335,
+                || 33_335,
             ),
             Err(
                 VideoDatagramDeadlineError::TerminalPeriodicKeyframeWireCapExceeded {
-                    required_us: 33_335,
-                    cap_us: 33_334,
+                    required_us: 38_335,
+                    cap_us: 38_334,
                 }
             )
         );
