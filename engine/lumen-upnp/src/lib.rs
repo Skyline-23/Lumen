@@ -295,6 +295,7 @@ fn gateway_from_description(
     })
 }
 
+#[derive(Debug)]
 struct HttpResponse {
     status: u16,
     body: Vec<u8>,
@@ -411,6 +412,7 @@ fn http_response_is_complete(bytes: &[u8]) -> Result<bool, String> {
     };
     let headers = str::from_utf8(&bytes[..header_end])
         .map_err(|error| format!("gateway returned invalid HTTP headers: {error}"))?;
+    reject_unsupported_transfer_encoding(headers)?;
     let Some(content_length) = header_value(headers, "content-length") else {
         return Ok(false);
     };
@@ -428,6 +430,7 @@ fn parse_http_response(bytes: Vec<u8>) -> Result<HttpResponse, String> {
         .ok_or_else(|| "gateway returned an incomplete HTTP response".to_owned())?;
     let headers = str::from_utf8(&bytes[..header_end])
         .map_err(|error| format!("gateway returned invalid HTTP headers: {error}"))?;
+    reject_unsupported_transfer_encoding(headers)?;
     let status = headers
         .lines()
         .next()
@@ -449,6 +452,17 @@ fn parse_http_response(bytes: Vec<u8>) -> Result<HttpResponse, String> {
         });
     }
     Ok(HttpResponse { status, body })
+}
+
+fn reject_unsupported_transfer_encoding(headers: &str) -> Result<(), String> {
+    if let Some(encoding) = header_value(headers, "transfer-encoding") {
+        if !encoding.eq_ignore_ascii_case("identity") {
+            return Err(format!(
+                "gateway returned unsupported HTTP transfer encoding: {encoding}"
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn search_request(discovery_address: SocketAddr) -> String {
@@ -588,7 +602,10 @@ mod tests {
 
     #[test]
     fn discovers_and_maps_through_an_explicit_unicast_gateway_route() {
+        #[cfg(target_os = "macos")]
         let selected_local_ip = Ipv4Addr::LOCALHOST;
+        #[cfg(not(target_os = "macos"))]
+        let selected_local_ip = Ipv4Addr::new(127, 0, 0, 2);
         let http_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
         let http_address = http_listener.local_addr().unwrap();
         let discovery_socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
@@ -805,6 +822,17 @@ mod tests {
         assert_eq!(
             escape_xml("A&B <control> \"quoted\""),
             "A&amp;B &lt;control&gt; &quot;quoted&quot;"
+        );
+    }
+
+    #[test]
+    fn rejects_unsupported_chunked_gateway_responses() {
+        let response =
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n4\r\ntest\r\n0\r\n\r\n";
+
+        assert_eq!(
+            parse_http_response(response.to_vec()).unwrap_err(),
+            "gateway returned unsupported HTTP transfer encoding: chunked"
         );
     }
 }
