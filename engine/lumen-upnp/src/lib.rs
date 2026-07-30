@@ -3,15 +3,17 @@
 #![forbid(unsafe_code)]
 
 use std::fmt;
-use std::net::{IpAddr, SocketAddr, UdpSocket};
+use std::io::{Read, Write};
+use std::net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs, UdpSocket};
 use std::str;
 use std::time::{Duration, Instant};
 
-use attohttpc::{Method, RequestBuilder};
 use roxmltree::Document;
+use socket2::{Domain, Protocol, Socket, Type};
 use url::Url;
 
 const SEARCH_TARGET: &str = "urn:schemas-upnp-org:device:InternetGatewayDevice:1";
+const MAX_HTTP_RESPONSE_BYTES: u64 = 2 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PortMappingProtocol {
@@ -45,6 +47,7 @@ pub struct DiscoveryOptions {
 
 #[derive(Clone, Debug)]
 pub struct Gateway {
+    bind_address: SocketAddr,
     discovery_address: SocketAddr,
     control_url: Url,
     service_type: String,
@@ -52,6 +55,10 @@ pub struct Gateway {
 }
 
 impl Gateway {
+    pub fn bind_address(&self) -> SocketAddr {
+        self.bind_address
+    }
+
     pub fn discovery_address(&self) -> SocketAddr {
         self.discovery_address
     }
@@ -130,23 +137,23 @@ impl Gateway {
             "<?xml version=\"1.0\"?><s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\"><s:Body><u:{action} xmlns:u=\"{}\">{body}</u:{action}></s:Body></s:Envelope>",
             self.service_type,
         );
-        let response = RequestBuilder::try_new(Method::POST, self.control_url.clone())
-            .map_err(|error| MappingError::Transport(error.to_string()))?
-            .timeout(self.timeout)
-            .header("Content-Type", "text/xml; charset=\"utf-8\"")
-            .header("SOAPAction", format!("\"{}#{action}\"", self.service_type))
-            .text(envelope)
-            .send()
-            .map_err(|error| MappingError::Transport(error.to_string()))?;
-        let success = response.is_success();
-        let status = response.status().as_u16();
-        let bytes = response
-            .bytes()
-            .map_err(|error| MappingError::Transport(error.to_string()))?;
-        if success {
-            return Ok(bytes);
+        let soap_action = format!("\"{}#{action}\"", self.service_type);
+        let response = http_request(
+            &self.control_url,
+            "POST",
+            &[
+                ("Content-Type", "text/xml; charset=\"utf-8\""),
+                ("SOAPAction", soap_action.as_str()),
+            ],
+            envelope.as_bytes(),
+            self.bind_address.ip(),
+            self.timeout,
+        )
+        .map_err(MappingError::Transport)?;
+        if (200..300).contains(&response.status) {
+            return Ok(response.body);
         }
-        Err(parse_mapping_fault(status, &bytes))
+        Err(parse_mapping_fault(response.status, &response.body))
     }
 }
 
@@ -251,36 +258,197 @@ pub fn discover_gateway(options: DiscoveryOptions) -> Result<Gateway, DiscoveryE
         };
         let location = Url::parse(location)
             .map_err(|error| DiscoveryError::InvalidResponse(error.to_string()))?;
-        return gateway_from_description(options.discovery_address, location, options.timeout);
+        return gateway_from_description(
+            options.bind_address,
+            options.discovery_address,
+            location,
+            options.timeout,
+        );
     }
     Err(DiscoveryError::Timeout)
 }
 
 fn gateway_from_description(
+    bind_address: SocketAddr,
     discovery_address: SocketAddr,
     location: Url,
     timeout: Duration,
 ) -> Result<Gateway, DiscoveryError> {
-    let response = RequestBuilder::try_new(Method::GET, location.clone())
-        .map_err(|error| DiscoveryError::Http(error.to_string()))?
-        .timeout(timeout)
-        .send()
-        .map_err(|error| DiscoveryError::Http(error.to_string()))?
-        .error_for_status()
-        .map_err(|error| DiscoveryError::Http(error.to_string()))?;
-    let bytes = response
-        .bytes()
-        .map_err(|error| DiscoveryError::Http(error.to_string()))?;
-    let (service_type, control_path) = parse_igd_service(&bytes)?;
+    let response = http_request(&location, "GET", &[], &[], bind_address.ip(), timeout)
+        .map_err(DiscoveryError::Http)?;
+    if !(200..300).contains(&response.status) {
+        return Err(DiscoveryError::Http(format!(
+            "gateway returned HTTP status {}",
+            response.status
+        )));
+    }
+    let (service_type, control_path) = parse_igd_service(&response.body)?;
     let control_url = location
         .join(&control_path)
         .map_err(|error| DiscoveryError::InvalidResponse(error.to_string()))?;
     Ok(Gateway {
+        bind_address,
         discovery_address,
         control_url,
         service_type,
         timeout,
     })
+}
+
+struct HttpResponse {
+    status: u16,
+    body: Vec<u8>,
+}
+
+fn http_request(
+    url: &Url,
+    method: &str,
+    headers: &[(&str, &str)],
+    body: &[u8],
+    bind_ip: IpAddr,
+    timeout: Duration,
+) -> Result<HttpResponse, String> {
+    if url.scheme() != "http" {
+        return Err(format!("unsupported gateway URL scheme: {}", url.scheme()));
+    }
+    let host = url
+        .host_str()
+        .ok_or_else(|| "gateway URL has no host".to_owned())?;
+    let port = url
+        .port_or_known_default()
+        .ok_or_else(|| "gateway URL has no port".to_owned())?;
+    let remote_address = (host, port)
+        .to_socket_addrs()
+        .map_err(|error| error.to_string())?
+        .find(|address| address.is_ipv4() == bind_ip.is_ipv4())
+        .ok_or_else(|| "gateway host has no address matching the selected LAN route".to_owned())?;
+
+    let socket = Socket::new(
+        Domain::for_address(remote_address),
+        Type::STREAM,
+        Some(Protocol::TCP),
+    )
+    .map_err(|error| error.to_string())?;
+    socket
+        .bind(&SocketAddr::new(bind_ip, 0).into())
+        .map_err(|error| format!("could not bind gateway request to {bind_ip}: {error}"))?;
+    socket
+        .connect_timeout(&remote_address.into(), timeout)
+        .map_err(|error| error.to_string())?;
+    let mut stream = TcpStream::from(socket);
+    stream
+        .set_read_timeout(Some(timeout))
+        .map_err(|error| error.to_string())?;
+    stream
+        .set_write_timeout(Some(timeout))
+        .map_err(|error| error.to_string())?;
+
+    let mut target = if url.path().is_empty() {
+        "/".to_owned()
+    } else {
+        url.path().to_owned()
+    };
+    if let Some(query) = url.query() {
+        target.push('?');
+        target.push_str(query);
+    }
+    let host_header = match url.host() {
+        Some(url::Host::Ipv6(address)) => format!("[{address}]"),
+        Some(host) => host.to_string(),
+        None => return Err("gateway URL has no host".to_owned()),
+    };
+    let host_header = if url.port().is_some() {
+        format!("{host_header}:{port}")
+    } else {
+        host_header
+    };
+    write!(
+        stream,
+        "{method} {target} HTTP/1.1\r\nHost: {host_header}\r\nConnection: close\r\nContent-Length: {}\r\n",
+        body.len()
+    )
+    .map_err(|error| error.to_string())?;
+    for (name, value) in headers {
+        write!(stream, "{name}: {value}\r\n").map_err(|error| error.to_string())?;
+    }
+    stream
+        .write_all(b"\r\n")
+        .and_then(|()| stream.write_all(body))
+        .map_err(|error| error.to_string())?;
+
+    let mut bytes = Vec::new();
+    let mut buffer = [0_u8; 8_192];
+    loop {
+        match stream.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(read) => {
+                bytes.extend_from_slice(&buffer[..read]);
+                if bytes.len() as u64 > MAX_HTTP_RESPONSE_BYTES {
+                    return Err("gateway HTTP response exceeded 2 MiB".to_owned());
+                }
+                if http_response_is_complete(&bytes)? {
+                    break;
+                }
+            }
+            Err(error)
+                if error.kind() == std::io::ErrorKind::ConnectionReset && !bytes.is_empty() =>
+            {
+                break;
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    parse_http_response(bytes)
+}
+
+fn http_response_is_complete(bytes: &[u8]) -> Result<bool, String> {
+    let Some(header_end) = bytes
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map(|position| position + 4)
+    else {
+        return Ok(false);
+    };
+    let headers = str::from_utf8(&bytes[..header_end])
+        .map_err(|error| format!("gateway returned invalid HTTP headers: {error}"))?;
+    let Some(content_length) = header_value(headers, "content-length") else {
+        return Ok(false);
+    };
+    let content_length = content_length
+        .parse::<usize>()
+        .map_err(|error| format!("gateway returned an invalid content length: {error}"))?;
+    Ok(bytes.len().saturating_sub(header_end) >= content_length)
+}
+
+fn parse_http_response(bytes: Vec<u8>) -> Result<HttpResponse, String> {
+    let header_end = bytes
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map(|position| position + 4)
+        .ok_or_else(|| "gateway returned an incomplete HTTP response".to_owned())?;
+    let headers = str::from_utf8(&bytes[..header_end])
+        .map_err(|error| format!("gateway returned invalid HTTP headers: {error}"))?;
+    let status = headers
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .and_then(|value| value.parse::<u16>().ok())
+        .ok_or_else(|| "gateway returned an invalid HTTP status line".to_owned())?;
+    let body = bytes[header_end..].to_vec();
+    let content_length = header_value(headers, "content-length")
+        .map(|value| value.parse::<usize>())
+        .transpose()
+        .map_err(|error| format!("gateway returned an invalid content length: {error}"))?;
+    if let Some(content_length) = content_length {
+        if body.len() < content_length {
+            return Err("gateway returned a truncated HTTP body".to_owned());
+        }
+        return Ok(HttpResponse {
+            status,
+            body: body[..content_length].to_vec(),
+        });
+    }
+    Ok(HttpResponse { status, body })
 }
 
 fn search_request(discovery_address: SocketAddr) -> String {
@@ -420,6 +588,7 @@ mod tests {
 
     #[test]
     fn discovers_and_maps_through_an_explicit_unicast_gateway_route() {
+        let selected_local_ip = Ipv4Addr::LOCALHOST;
         let http_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
         let http_address = http_listener.local_addr().unwrap();
         let discovery_socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
@@ -444,13 +613,21 @@ mod tests {
         let http_thread = thread::spawn(move || {
             let mut requests = Vec::new();
             for index in 0..4 {
-                let (mut stream, _) = http_listener.accept().unwrap();
+                let (mut stream, peer) = http_listener.accept().unwrap();
+                assert_eq!(peer.ip(), IpAddr::V4(selected_local_ip));
                 stream
                     .set_read_timeout(Some(Duration::from_secs(2)))
                     .unwrap();
-                let mut request = [0_u8; 8_192];
-                let read = stream.read(&mut request).unwrap();
-                requests.push(String::from_utf8_lossy(&request[..read]).into_owned());
+                let mut request = Vec::new();
+                let mut buffer = [0_u8; 8_192];
+                loop {
+                    let read = stream.read(&mut buffer).unwrap();
+                    request.extend_from_slice(&buffer[..read]);
+                    if http_response_is_complete(&request).unwrap() {
+                        break;
+                    }
+                }
+                requests.push(String::from_utf8_lossy(&request).into_owned());
                 if index == 0 {
                     stream
                         .write_all(
@@ -492,13 +669,14 @@ mod tests {
             requests
         });
 
-        let local_ip = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let local_ip = IpAddr::V4(selected_local_ip);
         let gateway = discover_gateway(DiscoveryOptions {
             bind_address: SocketAddr::new(local_ip, 0),
             discovery_address,
             timeout: Duration::from_secs(2),
         })
         .unwrap();
+        assert_eq!(gateway.bind_address(), SocketAddr::new(local_ip, 0));
         gateway
             .add_port(
                 PortMappingProtocol::Tcp,
@@ -525,7 +703,11 @@ mod tests {
 
         discovery_thread.join().unwrap();
         let requests = http_thread.join().unwrap();
-        assert!(requests[0].starts_with("GET /root.xml HTTP/1.1"));
+        assert!(
+            requests[0].starts_with("GET /root.xml HTTP/1.1"),
+            "unexpected request: {}",
+            requests[0]
+        );
         assert!(requests[1].contains("AddPortMapping"));
         assert!(requests[1].contains("<NewInternalClient>127.0.0.1</NewInternalClient>"));
         assert!(requests[1].contains("Lumen &amp; HTTPS"));
@@ -580,11 +762,16 @@ mod tests {
         let address = listener.local_addr().unwrap();
         let server = thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
-            let mut request = [0_u8; 8_192];
-            let read = stream.read(&mut request).unwrap();
-            assert!(
-                String::from_utf8_lossy(&request[..read]).contains("GetSpecificPortMappingEntry")
-            );
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 8_192];
+            loop {
+                let read = stream.read(&mut buffer).unwrap();
+                request.extend_from_slice(&buffer[..read]);
+                if http_response_is_complete(&request).unwrap() {
+                    break;
+                }
+            }
+            assert!(String::from_utf8_lossy(&request).contains("GetSpecificPortMappingEntry"));
             let fault = r#"<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><s:Fault><detail><UPnPError><errorCode>714</errorCode><errorDescription>NoSuchEntryInArray</errorDescription></UPnPError></detail></s:Fault></s:Body></s:Envelope>"#;
             stream
                 .write_all(
@@ -597,6 +784,7 @@ mod tests {
                 .unwrap();
         });
         let gateway = Gateway {
+            bind_address: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
             discovery_address: address,
             control_url: Url::parse(&format!("http://{address}/control")).unwrap(),
             service_type: "urn:schemas-upnp-org:service:WANIPConnection:1".to_owned(),

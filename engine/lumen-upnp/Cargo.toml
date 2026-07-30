@@ -11,6 +11,6 @@ keywords = ["upnp", "igd", "ssdp", "nat", "port-mapping"]
 categories = ["network-programming"]
 
 [dependencies]
-attohttpc = { version = "0.30.1", default-features = false }
 roxmltree = "0.20"
+socket2 = "0.6"
 url = "2.5"
