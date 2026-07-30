@@ -21,6 +21,7 @@ Start with the document that matches the work being performed.
 
 ## Protocol contracts
 
+- [Public protocol artifacts and generation](protocol/README.md)
 - [Streaming protocol](protocol/lumen-streaming-protocol.md)
 - [Settings protocol](protocol/lumen-settings-protocol.md)
 - `protocol/*.json`: machine-readable conformance fixtures used by tests and

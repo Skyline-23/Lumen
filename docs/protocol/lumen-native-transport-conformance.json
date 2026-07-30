@@ -28,7 +28,8 @@
   },
   "hostSessionPlan": {
     "selectedVideoCapabilityField": 44,
-    "maximumObjectDelayUsField": 45
+    "maximumObjectDelayUsField": 45,
+    "mediaCapabilitiesField": 46
   },
   "videoBootstrap": {
     "resultControlTag": 16,
@@ -48,18 +49,66 @@
     "bytes": 28,
     "fecBlockBytes": 36,
     "fields": [
-      { "name": "kind", "offset": 0, "bytes": 1 },
-      { "name": "flags", "offset": 1, "bytes": 1 },
-      { "name": "headerBytes", "offset": 2, "bytes": 2 },
-      { "name": "generationId", "offset": 4, "bytes": 4 },
-      { "name": "datagramSequence", "offset": 8, "bytes": 4 },
-      { "name": "objectId", "offset": 12, "bytes": 4 },
-      { "name": "objectBytes", "offset": 16, "bytes": 4 },
-      { "name": "captureTimestampUs", "offset": 20, "bytes": 4 },
-      { "name": "shardIndex", "offset": 24, "bytes": 1 },
-      { "name": "dataShards", "offset": 25, "bytes": 1 },
-      { "name": "parityShards", "offset": 26, "bytes": 1 },
-      { "name": "reserved", "offset": 27, "bytes": 1 }
+      {
+        "name": "kind",
+        "offset": 0,
+        "bytes": 1
+      },
+      {
+        "name": "flags",
+        "offset": 1,
+        "bytes": 1
+      },
+      {
+        "name": "headerBytes",
+        "offset": 2,
+        "bytes": 2
+      },
+      {
+        "name": "generationId",
+        "offset": 4,
+        "bytes": 4
+      },
+      {
+        "name": "datagramSequence",
+        "offset": 8,
+        "bytes": 4
+      },
+      {
+        "name": "objectId",
+        "offset": 12,
+        "bytes": 4
+      },
+      {
+        "name": "objectBytes",
+        "offset": 16,
+        "bytes": 4
+      },
+      {
+        "name": "captureTimestampUs",
+        "offset": 20,
+        "bytes": 4
+      },
+      {
+        "name": "shardIndex",
+        "offset": 24,
+        "bytes": 1
+      },
+      {
+        "name": "dataShards",
+        "offset": 25,
+        "bytes": 1
+      },
+      {
+        "name": "parityShards",
+        "offset": 26,
+        "bytes": 1
+      },
+      {
+        "name": "reserved",
+        "offset": 27,
+        "bytes": 1
+      }
     ]
   },
   "mediaKinds": {
@@ -69,15 +118,32 @@
   },
   "flags": {
     "parityShard": 16,
-    "fecBlock": 32
+    "fecBlock": 32,
+    "keyframe": 1
   },
   "fecBlockExtension": {
     "bytes": 8,
     "fields": [
-      { "name": "blockIndex", "offset": 28, "bytes": 1 },
-      { "name": "blockCount", "offset": 29, "bytes": 1 },
-      { "name": "reserved", "offset": 30, "bytes": 2 },
-      { "name": "objectPayloadOffset", "offset": 32, "bytes": 4 }
+      {
+        "name": "blockIndex",
+        "offset": 28,
+        "bytes": 1
+      },
+      {
+        "name": "blockCount",
+        "offset": 29,
+        "bytes": 1
+      },
+      {
+        "name": "reserved",
+        "offset": 30,
+        "bytes": 2
+      },
+      {
+        "name": "objectPayloadOffset",
+        "offset": 32,
+        "bytes": 4
+      }
     ]
   },
   "fec": {
@@ -94,7 +160,10 @@
     "mediaFeedbackTag": 10,
     "sequence": "nonzero-contiguous",
     "parityStepPercentage": 5,
-    "parityRangePercentage": [5, 50]
+    "parityRangePercentage": [
+      5,
+      50
+    ]
   },
   "forbiddenCompatibilityProtocols": [
     "lumen-stream/3",
@@ -107,5 +176,54 @@
     "sdp",
     "rtp",
     "enet"
+  ],
+  "mediaCapabilities": {
+    "sameGenerationKeyframes": 1,
+    "fixedCadenceFeedback": 2,
+    "continuousScroll": 4,
+    "pairedFeedbackWindows": 8,
+    "packetArrivalFeedback": 16,
+    "requiredMask": 15,
+    "supportedMask": 31
+  },
+  "dynamicRangeTransport": {
+    "unknown": 0,
+    "sdr": 1,
+    "fullFrameHdr": 2,
+    "frameGatedHdr": 3,
+    "sdrBaseHdrOverlay": 4
+  },
+  "validation": {
+    "unknownMediaKind": "reject",
+    "reservedFlags": "reject",
+    "reservedFields": "reject",
+    "staleGeneration": "reject",
+    "unknownControlPayload": "reject",
+    "missingRequiredCapability": "reject-before-capture"
+  },
+  "transportErrors": [
+    "header-too-short",
+    "invalid-header-length",
+    "invalid-media-kind",
+    "reserved-flags",
+    "reserved-field",
+    "invalid-generation",
+    "invalid-object-length",
+    "invalid-shard-plan",
+    "invalid-parity-flag",
+    "missing-fec-block-extension",
+    "invalid-fec-block-extension",
+    "invalid-motion-contract"
+  ],
+  "packetArrivalFeedbackErrors": [
+    "packet-arrival-unsupported",
+    "packet-arrival-missing-field",
+    "packet-arrival-malformed-run",
+    "packet-arrival-delta-overflow",
+    "packet-arrival-count-mismatch",
+    "packet-arrival-payload-too-large",
+    "packet-arrival-sequence-range-mismatch",
+    "packet-arrival-untracked-datagram",
+    "packet-arrival-history-unavailable"
   ]
 }

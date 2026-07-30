@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+root=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/lumen-protocol-v4-transaction.XXXXXX")
 trap 'rm -rf "$scratch"' EXIT HUP INT TERM
 
@@ -16,16 +16,17 @@ cp "$scratch/docs/protocol/lumen-streaming-v4.proto" "$scratch/original.proto"
 generator="$scratch/tools/protocol/generate_lumen_streaming_v4.sh"
 descriptor="$scratch/docs/protocol/lumen-streaming-v4.descriptor.pb"
 schema_digest="$scratch/docs/protocol/lumen-streaming-v4.sha256"
+contract_manifest="$scratch/docs/protocol/lumen-streaming-v4.manifest.json"
 generated_rust="$scratch/engine/lumen-engine/src/protocol/lumen_streaming_v4_provenance.rs"
 
 artifact_hashes() {
-    shasum -a 256 "$descriptor" "$schema_digest" "$generated_rust"
+    shasum -a 256 "$descriptor" "$schema_digest" "$contract_manifest" "$generated_rust"
 }
 
 "$generator" write
 baseline=$(artifact_hashes)
 
-for fault in descriptor schema_digest rust_provenance; do
+for fault in descriptor schema_digest contract_manifest rust_provenance; do
     printf '\n' >> "$scratch/docs/protocol/lumen-streaming-v4.proto"
     if LUMEN_PROTOCOL_CODEGEN_FAIL_AFTER="$fault" "$generator" write; then
         printf 'fault injection point did not fail: %s\n' "$fault" >&2

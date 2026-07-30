@@ -1,10 +1,11 @@
 #!/bin/sh
 set -eu
 
-root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+root=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)
 schema="$root/docs/protocol/lumen-streaming-v4.proto"
 descriptor="$root/docs/protocol/lumen-streaming-v4.descriptor.pb"
 schema_digest="$root/docs/protocol/lumen-streaming-v4.sha256"
+contract_manifest="$root/docs/protocol/lumen-streaming-v4.manifest.json"
 generated_rust="$root/engine/lumen-engine/src/protocol/lumen_streaming_v4_provenance.rs"
 mode=${1:-write}
 
@@ -16,12 +17,15 @@ fi
 temporary=$(mktemp -d "${TMPDIR:-/tmp}/lumen-protocol-v4.XXXXXX")
 descriptor_stage="${descriptor}.new.$$"
 schema_digest_stage="${schema_digest}.new.$$"
+contract_manifest_stage="${contract_manifest}.new.$$"
 generated_rust_stage="${generated_rust}.new.$$"
 descriptor_backup="${descriptor}.backup.$$"
 schema_digest_backup="${schema_digest}.backup.$$"
+contract_manifest_backup="${contract_manifest}.backup.$$"
 generated_rust_backup="${generated_rust}.backup.$$"
 descriptor_existed=0
 schema_digest_existed=0
+contract_manifest_existed=0
 generated_rust_existed=0
 transaction_active=0
 
@@ -43,11 +47,12 @@ cleanup() {
     if [ "$transaction_active" -eq 1 ]; then
         restore_artifact "$descriptor" "$descriptor_backup" "$descriptor_existed"
         restore_artifact "$schema_digest" "$schema_digest_backup" "$schema_digest_existed"
+        restore_artifact "$contract_manifest" "$contract_manifest_backup" "$contract_manifest_existed"
         restore_artifact "$generated_rust" "$generated_rust_backup" "$generated_rust_existed"
     fi
     rm -f \
-        "$descriptor_stage" "$schema_digest_stage" "$generated_rust_stage" \
-        "$descriptor_backup" "$schema_digest_backup" "$generated_rust_backup"
+        "$descriptor_stage" "$schema_digest_stage" "$contract_manifest_stage" "$generated_rust_stage" \
+        "$descriptor_backup" "$schema_digest_backup" "$contract_manifest_backup" "$generated_rust_backup"
     rm -rf "$temporary"
     exit "$status"
 }
@@ -77,6 +82,23 @@ protoc \
 schema_sha=$(shasum -a 256 "$schema" | awk '{print $1}')
 descriptor_sha=$(shasum -a 256 "$temporary/lumen-streaming-v4.descriptor.pb" | awk '{print $1}')
 printf '%s  lumen-streaming-v4.proto\n' "$schema_sha" > "$temporary/lumen-streaming-v4.sha256"
+cat > "$temporary/lumen-streaming-v4.manifest.json" <<EOF
+{
+  "schemaVersion": 1,
+  "protocol": "lumen-stream",
+  "protocolVersion": 4,
+  "package": "lumen.streaming.v4",
+  "alpn": "lumen-stream/4",
+  "schema": {
+    "path": "docs/protocol/lumen-streaming-v4.proto",
+    "sha256": "$schema_sha"
+  },
+  "descriptor": {
+    "path": "docs/protocol/lumen-streaming-v4.descriptor.pb",
+    "sha256": "$descriptor_sha"
+  }
+}
+EOF
 printf '%s\n' \
     "pub const LUMEN_STREAMING_PROTOCOL_PACKAGE: &str = \"lumen.streaming.v4\";" \
     "pub const LUMEN_STREAMING_PROTOCOL_ALPN: &[u8] = b\"lumen-stream/4\";" \
@@ -88,10 +110,12 @@ rustfmt --edition 2021 "$temporary/lumen_streaming_v4_provenance.rs"
 if [ "$mode" = --check ]; then
     cmp "$temporary/lumen-streaming-v4.descriptor.pb" "$descriptor"
     cmp "$temporary/lumen-streaming-v4.sha256" "$schema_digest"
+    cmp "$temporary/lumen-streaming-v4.manifest.json" "$contract_manifest"
     cmp "$temporary/lumen_streaming_v4_provenance.rs" "$generated_rust"
 else
     install -m 0644 "$temporary/lumen-streaming-v4.descriptor.pb" "$descriptor_stage"
     install -m 0644 "$temporary/lumen-streaming-v4.sha256" "$schema_digest_stage"
+    install -m 0644 "$temporary/lumen-streaming-v4.manifest.json" "$contract_manifest_stage"
     install -m 0644 "$temporary/lumen_streaming_v4_provenance.rs" "$generated_rust_stage"
     if [ -e "$descriptor" ]; then
         cp -p "$descriptor" "$descriptor_backup"
@@ -101,6 +125,10 @@ else
         cp -p "$schema_digest" "$schema_digest_backup"
         schema_digest_existed=1
     fi
+    if [ -e "$contract_manifest" ]; then
+        cp -p "$contract_manifest" "$contract_manifest_backup"
+        contract_manifest_existed=1
+    fi
     if [ -e "$generated_rust" ]; then
         cp -p "$generated_rust" "$generated_rust_backup"
         generated_rust_existed=1
@@ -108,6 +136,7 @@ else
     transaction_active=1
     publish_artifact "$descriptor_stage" "$descriptor" descriptor
     publish_artifact "$schema_digest_stage" "$schema_digest" schema_digest
+    publish_artifact "$contract_manifest_stage" "$contract_manifest" contract_manifest
     publish_artifact "$generated_rust_stage" "$generated_rust" rust_provenance
     transaction_active=0
 fi

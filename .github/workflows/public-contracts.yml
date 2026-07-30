@@ -1,0 +1,110 @@
+name: Public contracts
+
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - ".github/workflows/public-contracts.yml"
+      - "Package.swift"
+      - "Sources/LumenClientContracts/**"
+      - "tests/LumenClientContractsTests/**"
+      - "docs/protocol/lumen-contract-v4.json"
+      - "docs/protocol/lumen-contract-v4.schema.json"
+      - "docs/protocol/lumen-contract-v4.manifest.json"
+      - "docs/protocol/lumen-streaming-v4.descriptor.pb"
+      - "docs/protocol/lumen-streaming-v4.manifest.json"
+      - "docs/protocol/lumen-streaming-v4.proto"
+      - "docs/protocol/lumen-streaming-v4.sha256"
+      - "docs/protocol/lumen-native-transport-conformance.json"
+      - "docs/protocol/lumen-auth-conformance.json"
+      - "docs/protocol/lumen-settings-conformance.json"
+      - "docs/protocol/lumen-streaming-protocol.md"
+      - "docs/protocol/lumen-settings-protocol.md"
+      - "engine/lumen-engine/src/protocol/lumen_streaming_v4_provenance.rs"
+      - "tools/protocol/**"
+  push:
+    branches: [develop]
+    paths:
+      - ".github/workflows/public-contracts.yml"
+      - "Package.swift"
+      - "Sources/LumenClientContracts/**"
+      - "tests/LumenClientContractsTests/**"
+      - "docs/protocol/**"
+      - "engine/lumen-engine/src/protocol/lumen_streaming_v4_provenance.rs"
+      - "tools/protocol/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: Generate and compile public contracts
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: arduino/setup-protoc@v3
+        with:
+          version: "35.1"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/cache@v6
+        with:
+          path: build/protocol-tools
+          key: lumen-protoc-gen-swift-1.38.1-${{ runner.os }}-${{ runner.arch }}
+      - name: Build pinned Swift protobuf generator
+        run: |
+          generator=$(tools/protocol/build_protoc_gen_swift.sh)
+          echo "PROTOC_GEN_SWIFT=${generator}" >> "${GITHUB_ENV}"
+      - name: Validate custom Lumen IDL
+        run: python3 tools/protocol/validate_lumen_contract_v4.py
+      - name: Test v4 compatibility gate
+        run: python3 tools/protocol/test_check_lumen_contract_v4_compatibility.py
+      - name: Reject breaking v4 changes
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          baseline_dir="${RUNNER_TEMP}/lumen-contract-v4-base"
+          mkdir -p "${baseline_dir}"
+          git show "${BASE_SHA}:docs/protocol/lumen-streaming-protocol.md" > "${baseline_dir}/streaming.md"
+          git show "${BASE_SHA}:docs/protocol/lumen-settings-protocol.md" > "${baseline_dir}/settings.md"
+
+          if git cat-file -e "${BASE_SHA}:docs/protocol/lumen-contract-v4.json" 2>/dev/null; then
+            git show "${BASE_SHA}:docs/protocol/lumen-contract-v4.json" > "${baseline_dir}/contract.json"
+            baseline_args=(--baseline "${baseline_dir}/contract.json")
+          else
+            git show "${BASE_SHA}:docs/protocol/lumen-streaming-v4.proto" > "${baseline_dir}/streaming.proto"
+            git show "${BASE_SHA}:docs/protocol/lumen-native-transport-conformance.json" > "${baseline_dir}/native.json"
+            git show "${BASE_SHA}:docs/protocol/lumen-auth-conformance.json" > "${baseline_dir}/auth.json"
+            git show "${BASE_SHA}:docs/protocol/lumen-settings-conformance.json" > "${baseline_dir}/settings.json"
+            baseline_args=(
+              --baseline-proto "${baseline_dir}/streaming.proto"
+              --baseline-native "${baseline_dir}/native.json"
+              --baseline-auth "${baseline_dir}/auth.json"
+              --baseline-settings "${baseline_dir}/settings.json"
+            )
+          fi
+
+          python3 tools/protocol/check_lumen_contract_v4_compatibility.py \
+            "${baseline_args[@]}" \
+            --baseline-streaming-doc "${baseline_dir}/streaming.md" \
+            --baseline-settings-doc "${baseline_dir}/settings.md"
+      - name: Regenerate public contract package
+        run: python3 tools/protocol/generate_lumen_contract_v4.py write
+      - name: Reject generated artifact drift
+        run: |
+          git diff --exit-code -- \
+            Package.swift \
+            Sources/LumenClientContracts \
+            docs/protocol \
+            engine/lumen-engine/src/protocol/lumen_streaming_v4_provenance.rs
+      - name: Verify generated artifacts
+        run: python3 tools/protocol/generate_lumen_contract_v4.py --check
+      - name: Compile public Swift dependency
+        run: swift test

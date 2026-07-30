@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "protocol": "lumen-stream",
+  "protocolVersion": 4,
+  "package": "lumen.streaming.v4",
+  "alpn": "lumen-stream/4",
+  "schema": {
+    "path": "docs/protocol/lumen-streaming-v4.proto",
+    "sha256": "9c9996d96e11dab339229deca4cabb69686ada79ed02117285687db0e764c3b9"
+  },
+  "descriptor": {
+    "path": "docs/protocol/lumen-streaming-v4.descriptor.pb",
+    "sha256": "b78258918897b7967ef518f627f3cc4045376b2e15f8a4fa9b760fcb9a3011c8"
+  }
+}
