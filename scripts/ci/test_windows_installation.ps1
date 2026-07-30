@@ -143,6 +143,51 @@ Assert-InstallationCondition ($lumenTCPListeners.Count -eq 1) `
 Assert-InstallationCondition ($lumenUDPListeners.Count -eq 1) `
     "Lumen is not listening on the QUIC session port $sessionPort."
 
+if ($lumenProcessIDs.Count -eq 1) {
+    $initialSessionAgentProcessID = $lumenProcessIDs[0]
+    Stop-Process -Id $initialSessionAgentProcessID -Force -ErrorAction Stop
+    $recoveryDeadline = (Get-Date).AddSeconds($ReadinessTimeoutSeconds)
+    do {
+        $service = Get-CimInstance Win32_Service -Filter "Name='LumenService'" `
+            -ErrorAction SilentlyContinue
+        $lumenProcesses = @(
+            Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+                Where-Object { $_.ExecutablePath -eq $sessionAgentPath }
+        )
+        $lumenProcessIDs = @($lumenProcesses | ForEach-Object { [uint32]$_.ProcessId })
+        $tcpListeners = @(
+            Get-NetTCPConnection -State Listen -LocalPort $controlPort `
+                -ErrorAction SilentlyContinue
+        )
+        $udpListeners = @(
+            Get-NetUDPEndpoint -LocalPort $sessionPort -ErrorAction SilentlyContinue
+        )
+        $lumenTCPListeners = @(
+            $tcpListeners |
+                Where-Object { $lumenProcessIDs -contains [uint32]$_.OwningProcess }
+        )
+        $lumenUDPListeners = @(
+            $udpListeners |
+                Where-Object { $lumenProcessIDs -contains [uint32]$_.OwningProcess }
+        )
+        $sessionAgentRecovered =
+            $null -ne $service -and
+            $service.State -eq "Running" -and
+            $lumenProcessIDs.Count -eq 1 -and
+            $lumenProcessIDs[0] -ne $initialSessionAgentProcessID -and
+            $lumenTCPListeners.Count -eq 1 -and
+            $lumenUDPListeners.Count -eq 1
+        if (-not $sessionAgentRecovered -and (Get-Date) -lt $recoveryDeadline) {
+            Start-Sleep -Milliseconds 250
+        }
+    } while (-not $sessionAgentRecovered -and (Get-Date) -lt $recoveryDeadline)
+
+    Assert-InstallationCondition ($null -ne $service -and $service.State -eq "Running") `
+        "LumenService stopped after its session agent exited."
+    Assert-InstallationCondition $sessionAgentRecovered `
+        "LumenService did not restore the session agent and both listeners after process exit."
+}
+
 Assert-InstallationCondition ($virtualDisplays.Count -eq 1) `
     "Expected exactly one Lumen virtual display adapter, found $($virtualDisplays.Count)."
 Assert-InstallationCondition (@(

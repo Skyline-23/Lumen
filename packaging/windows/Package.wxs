@@ -1,5 +1,6 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
      xmlns:firewall="http://wixtoolset.org/schemas/v4/wxs/firewall"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util"
      xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
   <Package Name="Lumen"
            Manufacturer="SudoMaker"
@@ -93,7 +94,13 @@
                       Type="ownProcess"
                       Start="auto"
                       ErrorControl="normal"
-                      Account="LocalSystem" />
+                      Account="LocalSystem">
+        <util:ServiceConfig FirstFailureActionType="restart"
+                            SecondFailureActionType="restart"
+                            ThirdFailureActionType="restart"
+                            ResetPeriodInDays="1"
+                            RestartServiceDelayInSeconds="1" />
+      </ServiceInstall>
       <ServiceControl Id="LumenServiceControl"
                       Name="LumenService"
                       Start="install"

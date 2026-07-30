@@ -130,6 +130,9 @@ fn windows_service_launches_into_the_active_interactive_session_without_polling(
     assert!(service.contains("WTS_SESSION_UNLOCK"));
     assert!(service.contains("WTS_REMOTE_CONNECT"));
     assert!(service.contains("wait_for_session_or_stop"));
+    assert!(service.contains("wait_for_restart_or_control"));
+    assert!(service.contains("SESSION_AGENT_RESTART_DELAYS_MS"));
+    assert!(service.contains("SessionAgentSupervision::Exited"));
     assert!(service.contains("join(\"LumenSessionAgent.exe\")"));
     assert!(service.contains("CreateProcessAsUserW"));
     assert!(!service.contains("let application = wide(\"Lumen.exe\")"));
@@ -194,6 +197,11 @@ fn windows_msi_is_the_only_supported_service_installer() {
         .to_path_buf();
     let package = fs::read_to_string(repo_root.join("packaging/windows/Package.wxs"))
         .expect("Windows package definition must exist");
+    let wix_project = fs::read_to_string(repo_root.join("packaging/windows/Lumen.wixproj"))
+        .expect("Windows WiX project must exist");
+    let installation_test =
+        fs::read_to_string(repo_root.join("scripts/ci/test_windows_installation.ps1"))
+            .expect("Windows installation test must exist");
     let windows_cmake = fs::read_to_string(repo_root.join("cmake/packaging/windows.cmake"))
         .expect("Windows packaging configuration must exist");
     let common_cmake = fs::read_to_string(repo_root.join("cmake/packaging/common.cmake"))
@@ -201,6 +209,12 @@ fn windows_msi_is_the_only_supported_service_installer() {
     let sddl = "O:SYG:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)";
 
     assert!(package.contains(sddl));
+    assert!(package.contains("<util:ServiceConfig"));
+    assert!(package.contains("FirstFailureActionType=\"restart\""));
+    assert!(package.contains("ThirdFailureActionType=\"restart\""));
+    assert!(wix_project.contains("WixToolset.Util.wixext"));
+    assert!(installation_test.contains("Stop-Process -Id $initialSessionAgentProcessID -Force"));
+    assert!(installation_test.contains("$sessionAgentRecovered"));
     assert!(!windows_cmake.contains("windows_nsis"));
     assert!(common_cmake.contains("if(NOT WIN32)"));
     assert!(!repo_root

@@ -4,9 +4,10 @@ use std::ptr::{null, null_mut};
 use std::slice;
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
 use windows_sys::Win32::Foundation::{
-    CloseHandle, GetLastError, HANDLE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0,
+    CloseHandle, GetLastError, HANDLE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
 use windows_sys::Win32::Security::{
     DuplicateTokenEx, SecurityImpersonation, SetTokenInformation, TokenPrimary, TOKEN_ALL_ACCESS,
@@ -49,9 +50,10 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 const SERVICE_NAME: [u16; 13] = [76, 117, 109, 101, 110, 83, 101, 114, 118, 105, 99, 101, 0];
 const NO_CONSOLE_SESSION: u32 = u32::MAX;
 const ERROR_PROCESS_ABORTED: u32 = 1067;
-const ERROR_SHUTDOWN_IN_PROGRESS: u32 = 1115;
 const ERROR_GEN_FAILURE: u32 = 31;
 const ERROR_INVALID_PARAMETER: c_int = 87;
+const SESSION_AGENT_STABLE_RUNTIME: Duration = Duration::from_secs(30);
+const SESSION_AGENT_RESTART_DELAYS_MS: [u32; 6] = [1_000, 2_000, 5_000, 10_000, 30_000, 60_000];
 
 #[derive(Debug)]
 struct ServiceError {
@@ -167,8 +169,37 @@ struct ProcessHandles {
 }
 
 enum SessionAgentSupervision {
+    Exited { exit_code: u32 },
     SessionChanged,
     Stop,
+}
+
+enum RestartWait {
+    Retry,
+    SessionChanged,
+    Stop,
+}
+
+#[derive(Default)]
+struct SessionAgentRestartBackoff {
+    failure_count: usize,
+}
+
+impl SessionAgentRestartBackoff {
+    fn reset(&mut self) {
+        self.failure_count = 0;
+    }
+
+    fn next_delay_ms(&mut self, runtime: Duration) -> u32 {
+        if runtime >= SESSION_AGENT_STABLE_RUNTIME {
+            self.reset();
+        }
+        let index = self
+            .failure_count
+            .min(SESSION_AGENT_RESTART_DELAYS_MS.len() - 1);
+        self.failure_count = self.failure_count.saturating_add(1);
+        SESSION_AGENT_RESTART_DELAYS_MS[index]
+    }
 }
 
 enum ServiceInvocation {
@@ -327,25 +358,82 @@ fn run_service(state: &ServiceControl) -> ServiceResult<()> {
         0,
     );
 
+    let mut restart_backoff = SessionAgentRestartBackoff::default();
     loop {
-        let Some(session_id) = active_interactive_session_id()? else {
-            if !wait_for_session_or_stop(stop_event.get(), session_event.get())? {
-                break;
+        let session_id = match active_interactive_session_id() {
+            Ok(Some(session_id)) => session_id,
+            Ok(None) => {
+                restart_backoff.reset();
+                if !wait_for_session_or_stop(stop_event.get(), session_event.get())? {
+                    break;
+                }
+                continue;
             }
-            continue;
+            Err(error) => {
+                record_service_error(&error);
+                match wait_for_restart_or_control(
+                    stop_event.get(),
+                    session_event.get(),
+                    restart_backoff.next_delay_ms(Duration::ZERO),
+                )? {
+                    RestartWait::Stop => break,
+                    RestartWait::Retry | RestartWait::SessionChanged => continue,
+                }
+            }
         };
-        let token = duplicate_service_token(session_id)?;
-        let job = create_session_agent_job()?;
-        let process = launch_session_agent(&token, &job)?;
-        match supervise_session_agent(
+
+        let launch = (|| {
+            let token = duplicate_service_token(session_id)?;
+            let job = create_session_agent_job()?;
+            let process = launch_session_agent(&token, &job)?;
+            Ok((token, job, process))
+        })();
+        let (token, job, process) = match launch {
+            Ok(launched) => launched,
+            Err(error) => {
+                record_service_error(&error);
+                match wait_for_restart_or_control(
+                    stop_event.get(),
+                    session_event.get(),
+                    restart_backoff.next_delay_ms(Duration::ZERO),
+                )? {
+                    RestartWait::Stop => break,
+                    RestartWait::Retry | RestartWait::SessionChanged => continue,
+                }
+            }
+        };
+        let started_at = Instant::now();
+        let supervision = supervise_session_agent(
             &token,
             session_id,
             &process,
             stop_event.get(),
             session_event.get(),
+        );
+        drop(job);
+        match supervision {
+            Ok(SessionAgentSupervision::Stop) => break,
+            Ok(SessionAgentSupervision::SessionChanged) => {
+                restart_backoff.reset();
+                continue;
+            }
+            Ok(SessionAgentSupervision::Exited { exit_code }) => {
+                if exit_code != 0 {
+                    record_service_error(&ServiceError::status(
+                        format!("Lumen session agent exited with status {exit_code}"),
+                        exit_code,
+                    ));
+                }
+            }
+            Err(error) => record_service_error(&error),
+        }
+        match wait_for_restart_or_control(
+            stop_event.get(),
+            session_event.get(),
+            restart_backoff.next_delay_ms(started_at.elapsed()),
         )? {
-            SessionAgentSupervision::SessionChanged => continue,
-            SessionAgentSupervision::Stop => break,
+            RestartWait::Stop => break,
+            RestartWait::Retry | RestartWait::SessionChanged => continue,
         }
     }
     Ok(())
@@ -424,6 +512,20 @@ fn wait_for_session_or_stop(stop_event: HANDLE, session_event: HANDLE) -> Servic
         WAIT_OBJECT_0 => Ok(false),
         value if value == WAIT_OBJECT_0 + 1 => Ok(true),
         _ => Err(last_error("wait for an active Windows session")),
+    }
+}
+
+fn wait_for_restart_or_control(
+    stop_event: HANDLE,
+    session_event: HANDLE,
+    delay_ms: u32,
+) -> ServiceResult<RestartWait> {
+    let handles = [stop_event, session_event];
+    match unsafe { WaitForMultipleObjects(handles.len() as u32, handles.as_ptr(), 0, delay_ms) } {
+        WAIT_OBJECT_0 => Ok(RestartWait::Stop),
+        value if value == WAIT_OBJECT_0 + 1 => Ok(RestartWait::SessionChanged),
+        WAIT_TIMEOUT => Ok(RestartWait::Retry),
+        _ => Err(last_error("wait to restart Lumen session agent")),
     }
 }
 
@@ -572,14 +674,7 @@ fn supervise_session_agent(
             if unsafe { GetExitCodeProcess(process.process.get(), &mut exit_code) } == 0 {
                 return Err(last_error("read Lumen session agent exit code"));
             }
-            if exit_code == ERROR_SHUTDOWN_IN_PROGRESS {
-                signal(ServiceControl::shared().stop_event.load(Ordering::Acquire) as HANDLE);
-                return Ok(SessionAgentSupervision::Stop);
-            }
-            return Err(ServiceError::status(
-                format!("Lumen session agent exited with status {exit_code}"),
-                exit_code,
-            ));
+            return Ok(SessionAgentSupervision::Exited { exit_code });
         }
         if signaled == WAIT_OBJECT_0 + 2 && active_interactive_session_id()? == Some(session_id) {
             continue;
