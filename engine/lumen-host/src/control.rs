@@ -35,6 +35,7 @@ pub(crate) struct VideoDeliveryState {
     pub(crate) policy_revision: u16,
     pub(crate) maximum_datagram_payload: usize,
     pub(crate) maximum_object_delay_us: u32,
+    pub(crate) refresh_millihz: u32,
     pub(crate) fec_percentage: u16,
     pub(crate) wire_budget_kbps: u32,
     pub(crate) target_bitrate_kbps: u32,

@@ -1425,6 +1425,11 @@ impl ControlRouter {
             maximum_datagram_payload: usize::try_from(pending.plan.maximum_datagram_payload)
                 .ok()?,
             maximum_object_delay_us: pending.plan.maximum_object_delay_us,
+            refresh_millihz: pending
+                .plan
+                .selected_video_capability
+                .as_ref()?
+                .max_refresh_millihz,
             fec_percentage: adaptive.fec_percentage,
             wire_budget_kbps: adaptive.wire_budget_kbps,
             target_bitrate_kbps: adaptive.encoder_bitrate_kbps,
