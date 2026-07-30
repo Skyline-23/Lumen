@@ -15,6 +15,10 @@ use serde::Serialize;
 const SERVICE_EVENT_LOG_FILE: &str = "service-events.jsonl";
 #[cfg(windows)]
 const ROTATED_SERVICE_EVENT_LOG_FILE: &str = "service-events.1.jsonl";
+#[cfg(windows)]
+const RUNTIME_EVENT_LOG_FILE: &str = "runtime-events.jsonl";
+#[cfg(windows)]
+const ROTATED_RUNTIME_EVENT_LOG_FILE: &str = "runtime-events.1.jsonl";
 const SERVICE_EVENT_LANE_CAPACITY: usize = 1;
 const PUBLISH_STOPPING: usize = 1 << (usize::BITS - 1);
 const PUBLISH_COUNT_MASK: usize = PUBLISH_STOPPING - 1;
@@ -56,6 +60,33 @@ impl WindowsAdaptiveVideoApplyEvent {
 
     fn ordering_key(self) -> u64 {
         self.encoder_epoch
+    }
+}
+
+#[derive(Debug, Eq, PartialEq, Serialize)]
+struct WindowsRuntimeEventRecord<'a> {
+    event: &'static str,
+    disposition: &'static str,
+    severity: &'static str,
+    code: String,
+    message: &'a Option<String>,
+}
+
+impl<'a> WindowsRuntimeEventRecord<'a> {
+    fn new(event: &'a crate::PlatformRuntimeEvent) -> Self {
+        Self {
+            event: "windows_platform_runtime_event",
+            disposition: match event.disposition {
+                crate::PlatformRuntimeEventDisposition::Raised => "raised",
+                crate::PlatformRuntimeEventDisposition::Cleared => "cleared",
+            },
+            severity: match event.severity {
+                crate::PlatformRuntimeEventSeverity::Warning => "warning",
+                crate::PlatformRuntimeEventSeverity::Error => "error",
+            },
+            code: format!("{:?}", event.code),
+            message: &event.message,
+        }
     }
 }
 
@@ -537,12 +568,14 @@ impl BoundedJsonlServiceEventWriter {
         self.current_bytes = 0;
         self.open()
     }
-}
 
-impl ServiceEventWriter for BoundedJsonlServiceEventWriter {
-    fn write_event(&mut self, event: WindowsAdaptiveVideoApplyEvent) -> Result<(), String> {
-        let mut line = serde_json::to_vec(&event)
-            .map_err(|error| format!("serialize Windows adaptive video event: {error}"))?;
+    fn write_serialized<T: Serialize>(
+        &mut self,
+        event: &T,
+        description: &str,
+    ) -> Result<(), String> {
+        let mut line = serde_json::to_vec(event)
+            .map_err(|error| format!("serialize {description}: {error}"))?;
         line.push(b'\n');
         let line_bytes = u64::try_from(line.len())
             .map_err(|_| "Windows service event exceeds the platform size range".to_owned())?;
@@ -568,6 +601,12 @@ impl ServiceEventWriter for BoundedJsonlServiceEventWriter {
             .map_err(|error| format!("persist Windows service event log: {error}"))?;
         Ok(())
     }
+}
+
+impl ServiceEventWriter for BoundedJsonlServiceEventWriter {
+    fn write_event(&mut self, event: WindowsAdaptiveVideoApplyEvent) -> Result<(), String> {
+        self.write_serialized(&event, "Windows adaptive video event")
+    }
 
     fn flush(&mut self) -> Result<(), String> {
         let Some(file) = self.file.as_mut() else {
@@ -577,6 +616,27 @@ impl ServiceEventWriter for BoundedJsonlServiceEventWriter {
             .and_then(|()| file.sync_data())
             .map_err(|error| format!("flush Windows service event log: {error}"))
     }
+}
+
+#[cfg(windows)]
+pub(crate) fn record_platform_runtime_event(
+    event: &crate::PlatformRuntimeEvent,
+) -> Result<(), String> {
+    static WRITE_LOCK: Mutex<()> = Mutex::new(());
+    let _guard = WRITE_LOCK
+        .lock()
+        .map_err(|_| "Windows runtime event log lock is poisoned".to_owned())?;
+    let path = program_data_lumen_path(RUNTIME_EVENT_LOG_FILE)
+        .ok_or_else(|| "Windows ProgramData is unavailable for runtime events".to_owned())?;
+    let rotated_path =
+        program_data_lumen_path(ROTATED_RUNTIME_EVENT_LOG_FILE).ok_or_else(|| {
+            "Windows ProgramData is unavailable for rotated runtime events".to_owned()
+        })?;
+    BoundedJsonlServiceEventWriter::new(path, rotated_path, MAXIMUM_SERVICE_EVENT_LOG_BYTES)
+        .write_serialized(
+            &WindowsRuntimeEventRecord::new(event),
+            "Windows platform runtime event",
+        )
 }
 
 fn remove_if_oversized(path: &Path, maximum_bytes: u64) -> Result<(), String> {
@@ -986,8 +1046,8 @@ mod tests {
     use super::{
         publish_adaptive_video_apply, BoundedJsonlServiceEventWriter, NormalizedAccessRule,
         ServiceEventLaneShared, ServiceEventWriter, WindowsAdaptiveVideoApplyEvent,
-        WindowsServiceEventLane, WindowsServiceEventPublishStatus, PUBLISH_COUNT_MASK,
-        SERVICE_EVENT_LANE_CAPACITY,
+        WindowsRuntimeEventRecord, WindowsServiceEventLane, WindowsServiceEventPublishStatus,
+        PUBLISH_COUNT_MASK, SERVICE_EVENT_LANE_CAPACITY,
     };
     use crossbeam_queue::ArrayQueue;
     use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -1025,6 +1085,29 @@ mod tests {
 
     fn event(epoch: u32, bitrate_bps: u32) -> WindowsAdaptiveVideoApplyEvent {
         WindowsAdaptiveVideoApplyEvent::new(epoch, u64::from(epoch), bitrate_bps, bitrate_bps)
+    }
+
+    #[test]
+    fn runtime_event_record_preserves_upnp_gate_and_message() {
+        let event = crate::PlatformRuntimeEvent {
+            disposition: crate::PlatformRuntimeEventDisposition::Raised,
+            severity: crate::PlatformRuntimeEventSeverity::Warning,
+            code: crate::PlatformRuntimeEventCode::UpnpPortMapping,
+            message: Some(
+                "Lumen UPnP could not map TCP 47990: gateway verification missing".to_owned(),
+            ),
+        };
+
+        assert_eq!(
+            serde_json::to_value(WindowsRuntimeEventRecord::new(&event)).unwrap(),
+            serde_json::json!({
+                "event": "windows_platform_runtime_event",
+                "disposition": "raised",
+                "severity": "warning",
+                "code": "UpnpPortMapping",
+                "message": "Lumen UPnP could not map TCP 47990: gateway verification missing"
+            })
+        );
     }
 
     fn ordered_event(

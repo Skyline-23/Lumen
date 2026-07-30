@@ -3,7 +3,7 @@ use std::sync::Mutex;
 use crate::{
     LumenHostPlatformControlFeedback, PlatformApplicationPlan, PlatformControlEvent,
     PlatformControlFeedback, PlatformEncodedAudioPacket, PlatformEncodedVideoFrame,
-    PlatformNativeInputEvent, PlatformSessionControl, PlatformSessionPlan,
+    PlatformNativeInputEvent, PlatformRuntimeEvent, PlatformSessionControl, PlatformSessionPlan,
 };
 
 use super::input_policy::WindowsInputPolicy;
@@ -328,6 +328,10 @@ impl PlatformSessionControl for WindowsPlatformSessionControl {
 
     fn reset_native_input(&self, session_epoch: u32) -> Result<(), String> {
         self.handle_control_event(session_epoch, PlatformControlEvent::ResetInput)
+    }
+
+    fn publish_runtime_event(&self, event: PlatformRuntimeEvent) -> Result<(), String> {
+        crate::windows_service_log::record_platform_runtime_event(&event)
     }
 
     fn poll_control_feedback(&self) -> Result<Option<PlatformControlFeedback>, String> {

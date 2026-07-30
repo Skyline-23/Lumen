@@ -3,7 +3,7 @@
 #![forbid(unsafe_code)]
 
 use std::fmt;
-use std::net::{SocketAddr, UdpSocket};
+use std::net::{IpAddr, SocketAddr, UdpSocket};
 use std::str;
 use std::time::{Duration, Instant};
 
@@ -17,6 +17,14 @@ const SEARCH_TARGET: &str = "urn:schemas-upnp-org:device:InternetGatewayDevice:1
 pub enum PortMappingProtocol {
     Tcp,
     Udp,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PortMappingEntry {
+    pub internal_address: SocketAddr,
+    pub enabled: bool,
+    pub description: String,
+    pub lease_duration_seconds: u32,
 }
 
 impl fmt::Display for PortMappingProtocol {
@@ -95,7 +103,29 @@ impl Gateway {
         }
     }
 
+    pub fn port_mapping(
+        &self,
+        protocol: PortMappingProtocol,
+        external_port: u16,
+    ) -> Result<Option<PortMappingEntry>, MappingError> {
+        if external_port == 0 {
+            return Err(MappingError::InvalidPort);
+        }
+        let body = format!(
+            "<NewRemoteHost></NewRemoteHost><NewExternalPort>{external_port}</NewExternalPort><NewProtocol>{protocol}</NewProtocol>"
+        );
+        match self.soap_action_response("GetSpecificPortMappingEntry", &body) {
+            Ok(bytes) => parse_port_mapping_entry(&bytes).map(Some),
+            Err(MappingError::Upnp { code: 714, .. }) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
     fn soap_action(&self, action: &str, body: &str) -> Result<(), MappingError> {
+        self.soap_action_response(action, body).map(|_| ())
+    }
+
+    fn soap_action_response(&self, action: &str, body: &str) -> Result<Vec<u8>, MappingError> {
         let envelope = format!(
             "<?xml version=\"1.0\"?><s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\"><s:Body><u:{action} xmlns:u=\"{}\">{body}</u:{action}></s:Body></s:Envelope>",
             self.service_type,
@@ -114,7 +144,7 @@ impl Gateway {
             .bytes()
             .map_err(|error| MappingError::Transport(error.to_string()))?;
         if success {
-            return Ok(());
+            return Ok(bytes);
         }
         Err(parse_mapping_fault(status, &bytes))
     }
@@ -153,6 +183,7 @@ pub enum MappingError {
     PortInUse,
     Upnp { code: u32, description: String },
     HttpStatus(u16),
+    InvalidResponse(String),
     Transport(String),
 }
 
@@ -165,6 +196,12 @@ impl fmt::Display for MappingError {
                 write!(formatter, "UPnP error {code}: {description}")
             }
             Self::HttpStatus(status) => write!(formatter, "gateway returned HTTP status {status}"),
+            Self::InvalidResponse(message) => {
+                write!(
+                    formatter,
+                    "gateway returned an invalid mapping response: {message}"
+                )
+            }
             Self::Transport(message) => write!(formatter, "gateway transport failed: {message}"),
         }
     }
@@ -179,7 +216,10 @@ pub fn discover_gateway(options: DiscoveryOptions) -> Result<Gateway, DiscoveryE
         .set_read_timeout(Some(options.timeout))
         .map_err(|error| DiscoveryError::Io(error.to_string()))?;
     socket
-        .send_to(search_request().as_bytes(), options.discovery_address)
+        .send_to(
+            search_request(options.discovery_address).as_bytes(),
+            options.discovery_address,
+        )
         .map_err(|error| DiscoveryError::Io(error.to_string()))?;
 
     let started = Instant::now();
@@ -243,9 +283,9 @@ fn gateway_from_description(
     })
 }
 
-fn search_request() -> String {
+fn search_request(discovery_address: SocketAddr) -> String {
     format!(
-        "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST: {SEARCH_TARGET}\r\n\r\n"
+        "M-SEARCH * HTTP/1.1\r\nHOST: {discovery_address}\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST: {SEARCH_TARGET}\r\n\r\n"
     )
 }
 
@@ -311,6 +351,48 @@ fn parse_mapping_fault(status: u16, bytes: &[u8]) -> MappingError {
     }
 }
 
+fn parse_port_mapping_entry(bytes: &[u8]) -> Result<PortMappingEntry, MappingError> {
+    let text =
+        str::from_utf8(bytes).map_err(|error| MappingError::InvalidResponse(error.to_string()))?;
+    let document =
+        Document::parse(text).map_err(|error| MappingError::InvalidResponse(error.to_string()))?;
+    let value = |name: &str| {
+        document
+            .descendants()
+            .find(|node| node.is_element() && node.tag_name().name() == name)
+            .and_then(|node| node.text())
+            .map(str::trim)
+    };
+    let internal_port = value("NewInternalPort")
+        .and_then(|value| value.parse::<u16>().ok())
+        .filter(|port| *port != 0)
+        .ok_or_else(|| MappingError::InvalidResponse("missing internal port".to_owned()))?;
+    let internal_ip = value("NewInternalClient")
+        .and_then(|value| value.parse::<IpAddr>().ok())
+        .ok_or_else(|| MappingError::InvalidResponse("missing internal client".to_owned()))?;
+    let enabled = match value("NewEnabled") {
+        Some("1" | "true" | "yes") => true,
+        Some("0" | "false" | "no") => false,
+        _ => {
+            return Err(MappingError::InvalidResponse(
+                "missing enabled state".to_owned(),
+            ))
+        }
+    };
+    let description = value("NewPortMappingDescription")
+        .unwrap_or_default()
+        .to_owned();
+    let lease_duration_seconds = value("NewLeaseDuration")
+        .and_then(|value| value.parse::<u32>().ok())
+        .ok_or_else(|| MappingError::InvalidResponse("missing lease duration".to_owned()))?;
+    Ok(PortMappingEntry {
+        internal_address: SocketAddr::new(internal_ip, internal_port),
+        enabled,
+        description,
+        lease_duration_seconds,
+    })
+}
+
 fn escape_xml(value: &str) -> String {
     value
         .replace('&', "&amp;")
@@ -348,6 +430,7 @@ mod tests {
             let (read, peer) = discovery_socket.recv_from(&mut request).unwrap();
             let request = str::from_utf8(&request[..read]).unwrap();
             assert!(request.starts_with("M-SEARCH * HTTP/1.1"));
+            assert!(request.contains(&format!("HOST: {discovery_address}")));
             discovery_socket
                 .send_to(
                     format!(
@@ -360,7 +443,7 @@ mod tests {
         });
         let http_thread = thread::spawn(move || {
             let mut requests = Vec::new();
-            for index in 0..3 {
+            for index in 0..4 {
                 let (mut stream, _) = http_listener.accept().unwrap();
                 stream
                     .set_read_timeout(Some(Duration::from_secs(2)))
@@ -374,6 +457,26 @@ mod tests {
                             format!(
                                 "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{ROOT_DESCRIPTION}",
                                 ROOT_DESCRIPTION.len()
+                            )
+                            .as_bytes(),
+                        )
+                        .unwrap();
+                } else if index == 2 {
+                    let mapping = r#"<?xml version="1.0"?>
+                        <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body>
+                          <u:GetSpecificPortMappingEntryResponse xmlns:u="urn:schemas-upnp-org:service:WANIPConnection:1">
+                            <NewInternalPort>48990</NewInternalPort>
+                            <NewInternalClient>127.0.0.1</NewInternalClient>
+                            <NewEnabled>1</NewEnabled>
+                            <NewPortMappingDescription>Lumen &amp; HTTPS</NewPortMappingDescription>
+                            <NewLeaseDuration>600</NewLeaseDuration>
+                          </u:GetSpecificPortMappingEntryResponse>
+                        </s:Body></s:Envelope>"#;
+                    stream
+                        .write_all(
+                            format!(
+                                "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{mapping}",
+                                mapping.len()
                             )
                             .as_bytes(),
                         )
@@ -405,6 +508,17 @@ mod tests {
                 "Lumen & HTTPS",
             )
             .unwrap();
+        assert_eq!(
+            gateway
+                .port_mapping(PortMappingProtocol::Tcp, 48_990)
+                .unwrap(),
+            Some(PortMappingEntry {
+                internal_address: SocketAddr::new(local_ip, 48_990),
+                enabled: true,
+                description: "Lumen & HTTPS".to_owned(),
+                lease_duration_seconds: 600,
+            })
+        );
         gateway
             .remove_port(PortMappingProtocol::Tcp, 48_990)
             .unwrap();
@@ -415,7 +529,8 @@ mod tests {
         assert!(requests[1].contains("AddPortMapping"));
         assert!(requests[1].contains("<NewInternalClient>127.0.0.1</NewInternalClient>"));
         assert!(requests[1].contains("Lumen &amp; HTTPS"));
-        assert!(requests[2].contains("DeletePortMapping"));
+        assert!(requests[2].contains("GetSpecificPortMappingEntry"));
+        assert!(requests[3].contains("DeletePortMapping"));
     }
 
     #[test]
@@ -442,6 +557,59 @@ mod tests {
     fn maps_conflict_fault_to_typed_port_in_use() {
         let fault = br#"<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><s:Fault><detail><UPnPError><errorCode>718</errorCode><errorDescription>ConflictInMappingEntry</errorDescription></UPnPError></detail></s:Fault></s:Body></s:Envelope>"#;
         assert_eq!(parse_mapping_fault(500, fault), MappingError::PortInUse);
+    }
+
+    #[test]
+    fn parses_specific_mapping_entry_for_reconciliation_verification() {
+        let response = br#"<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><u:GetSpecificPortMappingEntryResponse xmlns:u="urn:schemas-upnp-org:service:WANIPConnection:1"><NewInternalPort>48010</NewInternalPort><NewInternalClient>192.168.0.52</NewInternalClient><NewEnabled>1</NewEnabled><NewPortMappingDescription>Lumen - Native Session QUIC</NewPortMappingDescription><NewLeaseDuration>3596</NewLeaseDuration></u:GetSpecificPortMappingEntryResponse></s:Body></s:Envelope>"#;
+
+        assert_eq!(
+            parse_port_mapping_entry(response).unwrap(),
+            PortMappingEntry {
+                internal_address: "192.168.0.52:48010".parse().unwrap(),
+                enabled: true,
+                description: "Lumen - Native Session QUIC".to_owned(),
+                lease_duration_seconds: 3_596,
+            }
+        );
+    }
+
+    #[test]
+    fn missing_specific_mapping_is_a_normal_absent_result() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 8_192];
+            let read = stream.read(&mut request).unwrap();
+            assert!(
+                String::from_utf8_lossy(&request[..read]).contains("GetSpecificPortMappingEntry")
+            );
+            let fault = r#"<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><s:Fault><detail><UPnPError><errorCode>714</errorCode><errorDescription>NoSuchEntryInArray</errorDescription></UPnPError></detail></s:Fault></s:Body></s:Envelope>"#;
+            stream
+                .write_all(
+                    format!(
+                        "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{fault}",
+                        fault.len()
+                    )
+                    .as_bytes(),
+                )
+                .unwrap();
+        });
+        let gateway = Gateway {
+            discovery_address: address,
+            control_url: Url::parse(&format!("http://{address}/control")).unwrap(),
+            service_type: "urn:schemas-upnp-org:service:WANIPConnection:1".to_owned(),
+            timeout: Duration::from_secs(2),
+        };
+
+        assert_eq!(
+            gateway
+                .port_mapping(PortMappingProtocol::Tcp, 47_990)
+                .unwrap(),
+            None
+        );
+        server.join().unwrap();
     }
 
     #[test]
