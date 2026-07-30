@@ -81,6 +81,9 @@ pub(crate) struct AdaptiveVideoDeliveryController {
 impl AdaptiveVideoDeliveryController {
     const MINIMUM_FEC_PERCENTAGE: u16 = 5;
     const MAXIMUM_FEC_PERCENTAGE: u16 = 30;
+    /// Parity is reclaimed in larger steps than it is added, so a transient loss
+    /// burst does not hold picture bitrate down for many seconds afterwards.
+    const FEC_RECOVERY_STEP_PERCENTAGE: u16 = 10;
     const CLEAN_WINDOWS_BEFORE_INCREASE: u32 = 8;
     const TRANSPORT_LOSS_PARTS_PER_MILLION: u64 = 20_000;
     /// Drops below this share of a window are jitter, not sustained pressure.
@@ -311,9 +314,13 @@ impl AdaptiveVideoDeliveryController {
                         .wire_budget_kbps
                         .saturating_add(increase)
                         .min(self.ceiling_wire_kbps);
+                    // Parity spends budget that could carry picture, so it is
+                    // reclaimed faster than the wire budget is probed upward. At the
+                    // previous single step, returning from the ceiling took ten
+                    // seconds of uninterrupted clean windows.
                     self.fec_percentage = self
                         .fec_percentage
-                        .saturating_sub(5)
+                        .saturating_sub(Self::FEC_RECOVERY_STEP_PERCENTAGE)
                         .max(Self::MINIMUM_FEC_PERCENTAGE);
                     recovery_probes -= 1;
                 }
