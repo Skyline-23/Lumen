@@ -75,6 +75,7 @@ pub(crate) struct AdaptiveVideoDeliveryController {
     clean_network_windows: u32,
     clean_pipeline_windows: u32,
     pipeline_pressure_armed: bool,
+    keyframe_wire_rate_requirement_kbps: Option<u32>,
 }
 
 impl AdaptiveVideoDeliveryController {
@@ -145,6 +146,7 @@ impl AdaptiveVideoDeliveryController {
             clean_network_windows: 0,
             clean_pipeline_windows: 0,
             pipeline_pressure_armed: true,
+            keyframe_wire_rate_requirement_kbps: None,
         }
     }
 
@@ -413,13 +415,34 @@ impl AdaptiveVideoDeliveryController {
     }
 
     fn minimum_wire_budget_kbps(&self) -> u32 {
-        native_video_wire_bitrate_kbps(
+        let quality_floor_wire_kbps = native_video_wire_bitrate_kbps(
             self.quality_floor_encoder_kbps,
             self.refresh_millihz,
             self.maximum_datagram_payload,
             self.fec_percentage,
         )
-        .unwrap_or(self.ceiling_wire_kbps)
+        .unwrap_or(self.ceiling_wire_kbps);
+        self.keyframe_wire_rate_requirement_kbps
+            .map_or(quality_floor_wire_kbps, |required| {
+                quality_floor_wire_kbps.max(required)
+            })
+            .min(self.ceiling_wire_kbps)
+    }
+
+    /// Raises the floor immediately, bounded by the negotiated ceiling.
+    pub(crate) fn require_keyframe_wire_rate_kbps(&mut self, required_wire_kbps: u32) {
+        if required_wire_kbps == 0 {
+            return;
+        }
+        let clamped = required_wire_kbps.min(self.ceiling_wire_kbps);
+        let raised = self
+            .keyframe_wire_rate_requirement_kbps
+            .map_or(clamped, |current| current.max(clamped));
+        self.keyframe_wire_rate_requirement_kbps = Some(raised);
+        if self.wire_budget_kbps < raised {
+            self.wire_budget_kbps = raised;
+            self.clean_network_windows = 0;
+        }
     }
 
     fn loss_parts_per_million(sample: MediaFeedbackSample) -> u64 {
@@ -474,6 +497,38 @@ mod tests {
             presented_frames: 100,
             decoder_drops: 0,
         }
+    }
+
+    #[test]
+    fn keyframe_wire_rate_requirement_raises_the_budget_floor() {
+        let mut controller = AdaptiveVideoDeliveryController::new(100_000, 60_000, 5, 3);
+        assert_eq!(controller.snapshot().wire_budget_kbps, 60_000);
+
+        controller.require_keyframe_wire_rate_kbps(75_000);
+        assert_eq!(
+            controller.snapshot().wire_budget_kbps,
+            75_000,
+            "the measured requirement applies without waiting for a feedback window"
+        );
+
+        let lossy = MediaFeedbackSample {
+            received_datagrams: 90,
+            ..clean(FeedbackStream::Video)
+        };
+        controller.observe_window(lossy, clean(FeedbackStream::Audio), 1);
+        assert!(
+            controller.snapshot().wire_budget_kbps >= 75_000,
+            "network pressure must not starve a keyframe below its measured requirement"
+        );
+    }
+
+    #[test]
+    fn keyframe_wire_rate_requirement_never_exceeds_the_negotiated_ceiling() {
+        let mut controller = AdaptiveVideoDeliveryController::new(80_000, 60_000, 5, 3);
+
+        controller.require_keyframe_wire_rate_kbps(500_000);
+
+        assert_eq!(controller.snapshot().wire_budget_kbps, 80_000);
     }
 
     #[test]

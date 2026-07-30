@@ -1134,6 +1134,8 @@ struct VideoSenderState {
     repair_required: bool,
     repair_after_bootstrap: bool,
     frame_id: u32,
+    /// Published to the adaptive controller as a wire-budget floor.
+    keyframe_wire_rate_requirement_kbps: Option<u32>,
 }
 
 #[derive(Clone, Default)]
@@ -1213,13 +1215,14 @@ enum VideoDatagramDeadlineError {
     InvalidWireBudget,
     InvalidRefreshCadence,
     ArithmeticOverflow,
-    TerminalPeriodicKeyframeWireCapExceeded { required_us: u64, cap_us: u64 },
 }
 
+/// The bounded window is a latency target, not a transport limit. Exceeding it
+/// reports the rate that would satisfy it instead of failing the session.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum VideoDatagramPostSendDisposition {
-    FinishDelivery,
-    TerminalPeriodicKeyframeWireCapExceeded,
+struct VideoDatagramPacing {
+    deadline_us: u64,
+    required_wire_kbps: Option<u32>,
 }
 
 fn four_refresh_frame_wire_window_us(
@@ -1252,14 +1255,17 @@ fn video_datagram_deadline_us<DatagramBytes, ObjectAge>(
     maximum_object_delay_us: u32,
     refresh_millihz: u32,
     object_age_us: ObjectAge,
-) -> Result<u64, VideoDatagramDeadlineError>
+) -> Result<VideoDatagramPacing, VideoDatagramDeadlineError>
 where
     DatagramBytes: IntoIterator<Item = usize>,
     ObjectAge: FnOnce() -> u64,
 {
     let delta_deadline_us = u64::from(maximum_object_delay_us);
     if !same_generation_periodic_keyframe {
-        return Ok(delta_deadline_us);
+        return Ok(VideoDatagramPacing {
+            deadline_us: delta_deadline_us,
+            required_wire_kbps: None,
+        });
     }
     if wire_budget_kbps == 0 {
         return Err(VideoDatagramDeadlineError::InvalidWireBudget);
@@ -1294,22 +1300,49 @@ where
         .checked_add(object_age_us())
         .ok_or(VideoDatagramDeadlineError::ArithmeticOverflow)?
         .max(delta_deadline_us);
-    if required_us > cap_us {
-        return Err(
-            VideoDatagramDeadlineError::TerminalPeriodicKeyframeWireCapExceeded {
-                required_us,
-                cap_us,
-            },
-        );
+    if required_us <= cap_us {
+        return Ok(VideoDatagramPacing {
+            deadline_us: required_us,
+            required_wire_kbps: None,
+        });
     }
-    Ok(required_us)
+
+    let required_wire_kbps = required_wire_kbps_for_paced_window(
+        paced_bits,
+        cap_us,
+        object_age_us_already_charged(required_us, paced_microseconds),
+    )?;
+    Ok(VideoDatagramPacing {
+        deadline_us: required_us,
+        required_wire_kbps: Some(required_wire_kbps),
+    })
 }
 
-fn video_datagram_post_send_disposition(
+/// Window microseconds consumed by everything other than wire serialization.
+fn object_age_us_already_charged(required_us: u64, paced_microseconds: u64) -> u64 {
+    required_us.saturating_sub(paced_microseconds)
+}
+
+/// Smallest wire budget that serializes `paced_bits` in the remaining window.
+fn required_wire_kbps_for_paced_window(
+    paced_bits: u64,
+    cap_us: u64,
+    fixed_overhead_us: u64,
+) -> Result<u32, VideoDatagramDeadlineError> {
+    let serialization_budget_us = cap_us.saturating_sub(fixed_overhead_us).max(1);
+    let required_kbps = paced_bits
+        .checked_mul(1_000)
+        .ok_or(VideoDatagramDeadlineError::ArithmeticOverflow)?
+        .div_ceil(serialization_budget_us)
+        .max(1);
+    Ok(u32::try_from(required_kbps).unwrap_or(u32::MAX))
+}
+
+fn periodic_keyframe_drop_requires_wire_pressure(
     same_generation_periodic_keyframe: bool,
     status: &DatagramBatchStatus,
-) -> VideoDatagramPostSendDisposition {
-    if same_generation_periodic_keyframe
+) -> bool {
+    same_generation_periodic_keyframe
         && matches!(
             status,
             DatagramBatchStatus::Dropped(
@@ -1318,11 +1351,6 @@ fn video_datagram_post_send_disposition(
                     | DatagramBatchDropReason::WireRate
             )
         )
-    {
-        VideoDatagramPostSendDisposition::TerminalPeriodicKeyframeWireCapExceeded
-    } else {
-        VideoDatagramPostSendDisposition::FinishDelivery
-    }
 }
 
 fn classify_video_bootstrap(
@@ -1376,6 +1404,29 @@ fn classify_video_keyframe_delivery(
 }
 
 impl VideoSenderState {
+    /// Keeps the highest requirement so a small keyframe cannot lower the floor.
+    fn record_keyframe_wire_rate_requirement(&mut self, required_wire_kbps: u32) {
+        self.keyframe_wire_rate_requirement_kbps = Some(
+            self.keyframe_wire_rate_requirement_kbps
+                .map_or(required_wire_kbps, |current| {
+                    current.max(required_wire_kbps)
+                }),
+        );
+    }
+
+    /// A drop proves the requirement exceeds the current budget.
+    fn escalate_keyframe_wire_rate_requirement(&mut self, current_wire_budget_kbps: u32) {
+        let escalated = current_wire_budget_kbps
+            .saturating_mul(125)
+            .div_ceil(100)
+            .max(current_wire_budget_kbps.saturating_add(1));
+        self.record_keyframe_wire_rate_requirement(escalated);
+    }
+
+    fn take_keyframe_wire_rate_requirement(&mut self) -> Option<u32> {
+        self.keyframe_wire_rate_requirement_kbps.take()
+    }
+
     fn prepare(&mut self, delivery: &VideoDeliveryState) -> Result<(), String> {
         let identity = VideoSessionIdentity {
             video_format: delivery.video_format,
@@ -1717,7 +1768,7 @@ async fn poll_and_send_video(
         Err(message) => return MediaAttempt::Failed(video_failure("packetizer-failed", message)),
     };
     let pending_since = sender.pending_since.expect("staged video frame timestamp");
-    let deadline_us = match video_datagram_deadline_us(
+    let pacing = match video_datagram_deadline_us(
         same_generation_periodic_keyframe,
         packetized.datagrams.iter().map(Vec::len),
         delivery.maximum_datagram_payload,
@@ -1726,18 +1777,7 @@ async fn poll_and_send_video(
         delivery.refresh_millihz,
         || duration_to_microseconds(pending_since.elapsed()),
     ) {
-        Ok(deadline_us) => deadline_us,
-        Err(VideoDatagramDeadlineError::TerminalPeriodicKeyframeWireCapExceeded {
-            required_us,
-            cap_us,
-        }) => {
-            return MediaAttempt::Terminal(video_failure(
-                "periodic-keyframe-wire-cap-exceeded",
-                format!(
-                    "same-generation periodic keyframe requires {required_us} us but the bounded deadline cap is {cap_us} us; frame-id={frame_id}"
-                ),
-            ))
-        }
+        Ok(pacing) => pacing,
         Err(VideoDatagramDeadlineError::InvalidWireBudget) => {
             return MediaAttempt::Failed(video_failure(
                 "packetizer-failed",
@@ -1757,6 +1797,10 @@ async fn poll_and_send_video(
             ))
         }
     };
+    let deadline_us = pacing.deadline_us;
+    if let Some(required_wire_kbps) = pacing.required_wire_kbps {
+        sender.record_keyframe_wire_rate_requirement(required_wire_kbps);
+    }
     let Some(deadline) = pending_since.checked_add(Duration::from_micros(deadline_us)) else {
         return MediaAttempt::Failed(video_failure(
             "packetizer-failed",
@@ -1798,15 +1842,30 @@ async fn poll_and_send_video(
             deadline_us,
         );
     }
-    if video_datagram_post_send_disposition(same_generation_periodic_keyframe, &report.status)
-        == VideoDatagramPostSendDisposition::TerminalPeriodicKeyframeWireCapExceeded
-    {
-        return MediaAttempt::Terminal(video_failure(
-            "periodic-keyframe-wire-cap-exceeded",
-            format!(
-                "same-generation periodic keyframe could not finish inside its four-refresh-frame wire window plus scheduler margin; frame-id={frame_id}"
-            ),
-        ));
+    if periodic_keyframe_drop_requires_wire_pressure(
+        same_generation_periodic_keyframe,
+        &report.status,
+    ) {
+        sender.escalate_keyframe_wire_rate_requirement(delivery.wire_budget_kbps);
+    }
+    if let Some(required_wire_kbps) = sender.take_keyframe_wire_rate_requirement() {
+        // A poisoned router or stale session must not fail delivery.
+        if let Ok(mut router) = router.lock() {
+            match router.require_native_video_keyframe_wire_rate(
+                delivery.session_epoch,
+                required_wire_kbps,
+            ) {
+                Ok(true) => eprintln!(
+                    "Lumen native media stage=keyframe-wire-rate-raised session-epoch={} required-kbps={required_wire_kbps} frame-id={frame_id}",
+                    delivery.session_epoch
+                ),
+                Ok(false) => {}
+                Err(message) => eprintln!(
+                    "Lumen native media stage=keyframe-wire-rate-rejected session-epoch={} required-kbps={required_wire_kbps} error={message}",
+                    delivery.session_epoch
+                ),
+            }
+        }
     }
     let request_repair = match finish_video_datagram_delivery(
         sender,
@@ -1960,12 +2019,13 @@ mod tests {
         four_refresh_frame_wire_window_us, object_deadline_exceeded,
         periodic_keyframe_deadline_cap_us, record_successful_datagram, run_native_media_tasks,
         send_datagram_batch, send_video_datagram_batch, send_wire_paced_video_datagram_batch,
-        video_datagram_deadline_us, video_datagram_post_send_disposition,
+        periodic_keyframe_drop_requires_wire_pressure, video_datagram_deadline_us,
         wait_for_datagram_deadline, wait_for_datagram_queue_capacity, DatagramBatchDropReason,
         DatagramBatchMode, DatagramBatchStatus, DatagramDeadlineElapsed, DatagramSendOutcome,
         PacketArrivalHistoryWarningReporter, PacketArrivalSendObservation, SessionDelivery,
         VideoBootstrapClassification, VideoDatagramCompletion, VideoDatagramDeadlineError,
-        VideoDatagramPostSendDisposition, VideoKeyframeDelivery, VideoSenderState,
+        VideoDatagramPacing,
+        VideoKeyframeDelivery, VideoSenderState,
         VideoWireRatePacer, MAXIMUM_VIDEO_WIRE_BURST_DATAGRAMS,
     };
     use lumen_engine::{
@@ -2126,7 +2186,10 @@ mod tests {
                 60_000,
                 || 0,
             ),
-            Ok(37_910)
+            Ok(VideoDatagramPacing {
+                deadline_us: 37_910,
+                required_wire_kbps: None,
+            })
         );
         let visited_delta_bytes = Cell::new(0);
         let read_delta_age = Cell::new(false);
@@ -2146,7 +2209,10 @@ mod tests {
                     u64::MAX
                 },
             ),
-            Ok(16_668)
+            Ok(VideoDatagramPacing {
+                deadline_us: 16_668,
+                required_wire_kbps: None,
+            })
         );
         assert_eq!(visited_delta_bytes.get(), 0);
         assert!(!read_delta_age.get());
@@ -2165,7 +2231,8 @@ mod tests {
             60_000,
             || 0,
         )
-        .expect("observed periodic keyframe fits a sixty-hertz four-frame deadline");
+        .expect("observed periodic keyframe fits a sixty-hertz four-frame deadline")
+        .deadline_us;
         let mut pacer = VideoWireRatePacer::default();
         pacer.prepare(42, 66_269).unwrap();
 
@@ -2197,7 +2264,10 @@ mod tests {
                 120_000,
                 || 0,
             ),
-            Ok(37_910)
+            Ok(VideoDatagramPacing {
+                deadline_us: 37_910,
+                required_wire_kbps: None,
+            })
         );
     }
 
@@ -2214,7 +2284,7 @@ mod tests {
     }
 
     #[test]
-    fn periodic_keyframe_deadline_admits_cap_equality_and_rejects_one_microsecond_more() {
+    fn periodic_keyframe_deadline_admits_cap_equality_and_requires_rate_beyond_it() {
         assert_eq!(
             video_datagram_deadline_us(
                 true,
@@ -2225,25 +2295,24 @@ mod tests {
                 120_000,
                 || 33_334,
             ),
-            Ok(38_334)
+            Ok(VideoDatagramPacing {
+                deadline_us: 38_334,
+                required_wire_kbps: None,
+            })
         );
-        assert_eq!(
-            video_datagram_deadline_us(
-                true,
-                std::iter::empty(),
-                1_170,
-                66_269,
-                16_668,
-                120_000,
-                || 33_335,
-            ),
-            Err(
-                VideoDatagramDeadlineError::TerminalPeriodicKeyframeWireCapExceeded {
-                    required_us: 38_335,
-                    cap_us: 38_334,
-                }
-            )
-        );
+        let beyond_cap = video_datagram_deadline_us(
+            true,
+            std::iter::empty(),
+            1_170,
+            66_269,
+            16_668,
+            120_000,
+            || 33_335,
+        )
+        .expect("exceeding the latency window is never a transport failure");
+        assert_eq!(beyond_cap.deadline_us, 38_335);
+        // Pure fixed overhead: no finite rate shrinks it, so the floor stays at 1.
+        assert_eq!(beyond_cap.required_wire_kbps, Some(1));
     }
 
     #[test]
@@ -2258,12 +2327,15 @@ mod tests {
                 60_000,
                 || 100,
             ),
-            Ok(5_171)
+            Ok(VideoDatagramPacing {
+                deadline_us: 5_171,
+                required_wire_kbps: None,
+            })
         );
     }
 
     #[test]
-    fn non_empty_pacer_wire_rejection_is_terminal_before_sender_completion() {
+    fn non_empty_pacer_wire_rejection_raises_rate_instead_of_failing() {
         let origin = Instant::now();
         let mut pacer = VideoWireRatePacer::default();
         pacer.prepare(42, 66_269).unwrap();
@@ -2284,7 +2356,8 @@ mod tests {
             120_000,
             || 0,
         )
-        .expect("periodic object fits an otherwise empty pacer");
+        .expect("periodic object fits an otherwise empty pacer")
+        .deadline_us;
         let periodic_schedule = pacer.reserve(
             &vec![1_170; 50],
             1_170,
@@ -2294,31 +2367,29 @@ mod tests {
         assert!(periodic_schedule.is_none());
 
         let status = DatagramBatchStatus::Dropped(DatagramBatchDropReason::WireRate);
+        assert!(periodic_keyframe_drop_requires_wire_pressure(true, &status));
+        let mut sender = VideoSenderState::default();
+        sender.escalate_keyframe_wire_rate_requirement(66_269);
         assert_eq!(
-            video_datagram_post_send_disposition(true, &status),
-            VideoDatagramPostSendDisposition::TerminalPeriodicKeyframeWireCapExceeded
+            sender.take_keyframe_wire_rate_requirement(),
+            Some(82_837),
+            "a dropped keyframe escalates strictly above the budget that failed"
         );
-        let sender = VideoSenderState::default();
+        assert_eq!(sender.take_keyframe_wire_rate_requirement(), None);
         assert!(!sender.repair_required);
         assert_eq!(sender.frame_id, 0);
     }
 
     #[test]
-    fn periodic_deadline_drops_are_terminal_before_delivery_completion() {
+    fn periodic_deadline_drops_request_wire_pressure_without_failing() {
         for reason in [
             DatagramBatchDropReason::QueueBarrier,
             DatagramBatchDropReason::Send,
             DatagramBatchDropReason::WireRate,
         ] {
             let status = DatagramBatchStatus::Dropped(reason);
-            assert_eq!(
-                video_datagram_post_send_disposition(true, &status),
-                VideoDatagramPostSendDisposition::TerminalPeriodicKeyframeWireCapExceeded
-            );
-            assert_eq!(
-                video_datagram_post_send_disposition(false, &status),
-                VideoDatagramPostSendDisposition::FinishDelivery
-            );
+            assert!(periodic_keyframe_drop_requires_wire_pressure(true, &status));
+            assert!(!periodic_keyframe_drop_requires_wire_pressure(false, &status));
         }
 
         for status in [
@@ -2326,11 +2397,60 @@ mod tests {
             DatagramBatchStatus::Failed("send failed".to_owned()),
             DatagramBatchStatus::Terminal("connection failed".to_owned()),
         ] {
-            assert_eq!(
-                video_datagram_post_send_disposition(true, &status),
-                VideoDatagramPostSendDisposition::FinishDelivery
-            );
+            assert!(!periodic_keyframe_drop_requires_wire_pressure(true, &status));
         }
+    }
+
+    /// Regression: a 39296 us keyframe against a 38334 us window terminated the
+    /// live session at 3600-class resolution.
+    #[test]
+    fn oversized_periodic_keyframe_requests_more_wire_rate_instead_of_failing() {
+        let starving_budget_kbps = 66_269_u32;
+        let datagram_bytes = vec![1_170_usize; 340];
+
+        let pacing = video_datagram_deadline_us(
+            true,
+            datagram_bytes.iter().copied(),
+            1_170,
+            starving_budget_kbps,
+            16_668,
+            120_000,
+            || 0,
+        )
+        .expect("an oversized periodic keyframe is never a transport failure");
+
+        let cap_us = periodic_keyframe_deadline_cap_us(120_000)
+            .expect("120 Hz cadence yields a bounded window");
+        assert!(
+            pacing.deadline_us > cap_us,
+            "this fixture must actually exceed the latency window"
+        );
+        let required_wire_kbps = pacing
+            .required_wire_kbps
+            .expect("exceeding the window must publish a required wire rate");
+        assert!(
+            required_wire_kbps > starving_budget_kbps,
+            "the requirement must exceed the budget that could not serialize the keyframe"
+        );
+
+        let repaced = video_datagram_deadline_us(
+            true,
+            datagram_bytes.iter().copied(),
+            1_170,
+            required_wire_kbps,
+            16_668,
+            120_000,
+            || 0,
+        )
+        .expect("re-pacing at the required rate stays admissible");
+        assert!(
+            repaced.deadline_us <= cap_us,
+            "the required rate must bring the keyframe inside the window"
+        );
+        assert_eq!(
+            repaced.required_wire_kbps, None,
+            "a keyframe that fits must not keep escalating the budget"
+        );
     }
 
     #[test]

@@ -772,6 +772,26 @@ impl ControlRouter {
         true
     }
 
+    /// Raises the adaptive floor for the active session. Stale epochs are ignored.
+    pub(crate) fn require_native_video_keyframe_wire_rate(
+        &mut self,
+        session_epoch: u32,
+        required_wire_kbps: u32,
+    ) -> Result<bool, String> {
+        let Some(pending) = self.native.pending.as_mut() else {
+            return Err("native session has not been negotiated".to_owned());
+        };
+        if !pending.active || pending.plan.session_epoch != session_epoch {
+            return Ok(false);
+        }
+        let before = pending.adaptive_video.snapshot();
+        pending
+            .adaptive_video
+            .require_keyframe_wire_rate_kbps(required_wire_kbps);
+        let after = pending.adaptive_video.snapshot();
+        Ok(before.wire_budget_kbps != after.wire_budget_kbps)
+    }
+
     pub(crate) fn request_native_video_repair(
         &mut self,
         session_epoch: u32,
