@@ -705,6 +705,29 @@ mod tests {
         assert_eq!(decision.congestion_source, CongestionSource::VideoPipeline);
     }
 
+    /// Regression: isolated late objects reset the clean-window counter every window,
+    /// so FEC could never step back down and permanently spent wire budget on parity.
+    #[test]
+    fn isolated_late_objects_allow_fec_recovery() {
+        let mut controller = AdaptiveVideoDeliveryController::new(100_000, 80_000, 30, 3);
+        assert_eq!(controller.snapshot().fec_percentage, 30);
+
+        // One late object per window is normal keyframe pacing at high resolution.
+        let paced = MediaFeedbackSample {
+            decoder_submissions: 100,
+            late_objects: 1,
+            ..clean(FeedbackStream::Video)
+        };
+        for _ in 0..AdaptiveVideoDeliveryController::CLEAN_WINDOWS_BEFORE_INCREASE {
+            controller.observe_window(paced, clean(FeedbackStream::Audio), 1);
+        }
+
+        assert!(
+            controller.snapshot().fec_percentage < 30,
+            "pacing must not block FEC recovery"
+        );
+    }
+
     /// Regression: halving admission on one drop starved presented frame rate.
     #[test]
     fn isolated_decoder_drop_preserves_full_frame_admission() {
