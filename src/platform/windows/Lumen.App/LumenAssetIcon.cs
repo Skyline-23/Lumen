@@ -48,6 +48,21 @@ internal static class LumenAssetIconView
         return image;
     }
 
+    internal static ImageIcon Navigation(LumenAssetIcon icon, Brush? foreground = null) => new()
+    {
+        Source = Svg($"{IconRoot}{Filename(icon)}.svg"),
+        Width = LumenTheme.NavigationIconSize,
+        Height = LumenTheme.NavigationIconSize,
+        Margin = new Thickness(
+            (LumenTheme.NavigationIconSlotWidth - LumenTheme.NavigationIconSize) / 2,
+            0,
+            (LumenTheme.NavigationIconSlotWidth - LumenTheme.NavigationIconSize) / 2,
+            0),
+        HorizontalAlignment = HorizontalAlignment.Center,
+        VerticalAlignment = VerticalAlignment.Center,
+        Foreground = foreground
+    };
+
     internal static Image BrandMark(double width, double height, double opacity = 1) => new()
     {
         Source = Svg(BrandUri),

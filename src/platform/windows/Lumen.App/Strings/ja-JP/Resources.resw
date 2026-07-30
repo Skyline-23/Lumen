@@ -10,6 +10,7 @@
   <data name="Common.Unavailable" xml:space="preserve"><value>利用できません</value></data>
   <data name="Common.Disabled" xml:space="preserve"><value>無効</value></data>
   <data name="Common.Ok" xml:space="preserve"><value>OK</value></data>
+  <data name="Account.SignedInAs" xml:space="preserve"><value>サインイン中</value></data>
   <data name="Navigation.Overview" xml:space="preserve"><value>概要</value></data>
   <data name="Navigation.Applications" xml:space="preserve"><value>アプリケーション</value></data>
   <data name="Navigation.Settings" xml:space="preserve"><value>設定</value></data>
@@ -38,11 +39,11 @@
   <data name="Authentication.CreateAccount" xml:space="preserve"><value>アカウントを作成</value></data>
   <data name="Authentication.SignIn" xml:space="preserve"><value>サインイン</value></data>
   <data name="Authentication.Failed" xml:space="preserve"><value>認証に失敗しました</value></data>
-  <data name="Overview.Description" xml:space="preserve"><value>ホストの状態と実行中のサービスに影響する操作です。</value></data>
+  <data name="Overview.Description" xml:space="preserve"><value>ホストの状態と現在のリモートセッションの操作です。</value></data>
   <data name="Overview.ControlEndpoint" xml:space="preserve"><value>制御エンドポイント · HTTPS {0}</value></data>
   <data name="Overview.HostRuntime" xml:space="preserve"><value>ホストランタイム</value></data>
   <data name="Overview.ReloadApplications" xml:space="preserve"><value>アプリを再読み込み</value></data>
-  <data name="Overview.ForceStopStream" xml:space="preserve"><value>ストリームを強制停止</value></data>
+  <data name="Overview.ForceStopStream" xml:space="preserve"><value>現在のセッションを終了</value></data>
   <data name="Overview.RestartHost" xml:space="preserve"><value>ホストを再起動</value></data>
   <data name="Applications.Description" xml:space="preserve"><value>接続済みクライアントが利用できるデスクトップとアプリの項目です。</value></data>
   <data name="Applications.NoneConfigured" xml:space="preserve"><value>構成済みのアプリケーションはありません。</value></data>
@@ -87,7 +88,7 @@
   <data name="Network.WanEncryption" xml:space="preserve"><value>WAN 暗号化</value></data>
   <data name="Network.Upnp" xml:space="preserve"><value>UPnP</value></data>
   <data name="Network.UpnpDetail" xml:space="preserve"><value>構成済みリスナーのルーターマッピングを要求します。</value></data>
-  <data name="Advanced.Description" xml:space="preserve"><value>セッションに依存しないランタイム制御です。</value></data>
+  <data name="Advanced.Description" xml:space="preserve"><value>ホストがリモートセッションに適用するランタイム制御です。</value></data>
   <data name="Advanced.PingTimeout" xml:space="preserve"><value>Ping タイムアウト</value></data>
   <data name="Advanced.ForwardErrorCorrection" xml:space="preserve"><value>前方誤り訂正</value></data>
   <data name="Advanced.BackButtonTimeout" xml:space="preserve"><value>戻るボタンのタイムアウト</value></data>

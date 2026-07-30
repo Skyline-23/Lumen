@@ -10,6 +10,7 @@
   <data name="Common.Unavailable" xml:space="preserve"><value>Unavailable</value></data>
   <data name="Common.Disabled" xml:space="preserve"><value>Disabled</value></data>
   <data name="Common.Ok" xml:space="preserve"><value>OK</value></data>
+  <data name="Account.SignedInAs" xml:space="preserve"><value>Signed in as</value></data>
   <data name="Navigation.Overview" xml:space="preserve"><value>Overview</value></data>
   <data name="Navigation.Applications" xml:space="preserve"><value>Applications</value></data>
   <data name="Navigation.Settings" xml:space="preserve"><value>Settings</value></data>
@@ -38,11 +39,11 @@
   <data name="Authentication.CreateAccount" xml:space="preserve"><value>Create account</value></data>
   <data name="Authentication.SignIn" xml:space="preserve"><value>Sign in</value></data>
   <data name="Authentication.Failed" xml:space="preserve"><value>Authentication failed</value></data>
-  <data name="Overview.Description" xml:space="preserve"><value>Host health and the actions that affect the running service.</value></data>
+  <data name="Overview.Description" xml:space="preserve"><value>Host health and controls for the current remote session.</value></data>
   <data name="Overview.ControlEndpoint" xml:space="preserve"><value>Control endpoint · HTTPS {0}</value></data>
   <data name="Overview.HostRuntime" xml:space="preserve"><value>Host runtime</value></data>
   <data name="Overview.ReloadApplications" xml:space="preserve"><value>Reload applications</value></data>
-  <data name="Overview.ForceStopStream" xml:space="preserve"><value>Force stop stream</value></data>
+  <data name="Overview.ForceStopStream" xml:space="preserve"><value>End current session</value></data>
   <data name="Overview.RestartHost" xml:space="preserve"><value>Restart host</value></data>
   <data name="Applications.Description" xml:space="preserve"><value>Desktop and application entries available to connected clients.</value></data>
   <data name="Applications.NoneConfigured" xml:space="preserve"><value>No applications are configured.</value></data>
@@ -87,7 +88,7 @@
   <data name="Network.WanEncryption" xml:space="preserve"><value>WAN encryption</value></data>
   <data name="Network.Upnp" xml:space="preserve"><value>UPnP</value></data>
   <data name="Network.UpnpDetail" xml:space="preserve"><value>Request router mappings for configured listeners.</value></data>
-  <data name="Advanced.Description" xml:space="preserve"><value>Session-independent runtime controls.</value></data>
+  <data name="Advanced.Description" xml:space="preserve"><value>Runtime controls applied by the host to remote sessions.</value></data>
   <data name="Advanced.PingTimeout" xml:space="preserve"><value>Ping timeout</value></data>
   <data name="Advanced.ForwardErrorCorrection" xml:space="preserve"><value>Forward error correction</value></data>
   <data name="Advanced.BackButtonTimeout" xml:space="preserve"><value>Back button timeout</value></data>

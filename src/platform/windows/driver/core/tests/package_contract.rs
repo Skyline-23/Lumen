@@ -655,9 +655,20 @@ fn windows_winui_matches_the_native_lumen_visual_contract() {
     let asset_icons =
         fs::read_to_string(repo_root.join("src/platform/windows/Lumen.App/LumenAssetIcon.cs"))
             .expect("WinUI shared asset icon adapter must exist");
+    let navigation = fs::read_to_string(
+        repo_root.join("src/platform/windows/Lumen.App/LumenNavigationComponents.cs"),
+    )
+    .expect("WinUI navigation components must exist");
+    let settings = fs::read_to_string(
+        repo_root.join("src/platform/windows/Lumen.App/LumenSettingsComponents.cs"),
+    )
+    .expect("WinUI settings components must exist");
     let project =
         fs::read_to_string(repo_root.join("src/platform/windows/Lumen.App/Lumen.App.csproj"))
             .expect("WinUI project must exist");
+    let application =
+        fs::read_to_string(repo_root.join("src/platform/windows/Lumen.App/App.xaml.cs"))
+            .expect("WinUI application source must exist");
     let window =
         fs::read_to_string(repo_root.join("src/platform/windows/Lumen.App/MainWindow.xaml.cs"))
             .expect("WinUI window source must exist");
@@ -672,13 +683,17 @@ fn windows_winui_matches_the_native_lumen_visual_contract() {
     // falling back to the default light NavigationView/control appearance.
     for required_token in [
         "RequestedTheme=\"Dark\"",
-        "LumenWindowGradientBrush",
         "LumenAuthenticationHeroBrush",
         "LumenAmberGlowBrush",
         "LumenCoralGlowBrush",
         "LumenMintGlowBrush",
         "LumenCardBrush",
         "LumenCardBorderBrush",
+        "LumenRowBrush",
+        "LumenRowBorderBrush",
+        "NavigationViewExpandedPaneBackground",
+        "NavigationViewDefaultPaneBackground",
+        "NavigationViewContentBackground",
         "LumenPrimaryButtonStyle",
         "LumenTextBoxStyle",
         "LumenPasswordBoxStyle",
@@ -697,15 +712,42 @@ fn windows_winui_matches_the_native_lumen_visual_contract() {
     assert!(theme.contains("internal static Border Card"));
     assert!(theme.contains("internal static Button PrimaryButton"));
     assert!(theme.contains("NavigationIconSlotWidth = 22"));
+    assert!(theme.contains("NavigationPaneWidth = 210"));
+    assert!(theme.contains("ContentMaxWidth = 820"));
+    assert!(theme.contains("PagePadding = new(30, 24, 30, 36)"));
+    assert!(theme.contains("internal static StackPanel PageHeader"));
     assert!(asset_icons.contains("internal static class LumenAssetIconView"));
+    assert!(asset_icons.contains("internal static ImageIcon Navigation"));
     assert!(asset_icons.contains("private static SvgImageSource Svg"));
     assert!(asset_icons.contains("ms-appx:///Assets/icons/ui/"));
     assert!(asset_icons.contains("ms-appx:///Assets/brand/icon.svg"));
     assert!(project.contains("Link=\"Assets\\brand\\icon.svg\""));
     assert!(project.contains("Link=\"Assets\\icons\\ui\\%(Filename)%(Extension)\""));
+    assert!(navigation.contains("internal static class LumenNavigationComponents"));
+    assert!(navigation.contains("MinHeight = 42"));
+    assert!(settings.contains("internal static class LumenSettingsComponents"));
+    assert!(settings.contains("internal static FrameworkElement ToggleRow"));
+    assert!(settings.contains("AutomationProperties.SetName(toggle, title)"));
+    assert!(settings.contains("var persistedValue = initialValue"));
+    assert!(settings.contains("persistedValue = toggle.IsOn"));
+    assert!(settings.contains("toggle.IsEnabled = false"));
+    assert!(settings.contains("var accepted = await update(toggle.IsOn)"));
+    assert!(settings.contains("CornerRadius = new CornerRadius(LumenTheme.RowCornerRadius)"));
+    let pre_window_guard = application
+        .find("if (_window is null)")
+        .expect("startup exceptions must keep their native failure status");
+    let handled = application
+        .find("eventArgs.Handled = true")
+        .expect("post-window exceptions must be presented in the app");
+    assert!(pre_window_guard < handled);
     assert!(window.contains("BuildAuthenticationSurface()"));
     assert!(window.contains("ShowAuthenticationSurface(true)"));
     assert!(window.contains("AuthenticationGlowCanvas()"));
+    assert!(window.contains("_navigation.PaneHeader = header"));
+    assert!(window.contains("_navigation.PaneFooter = signedInFooter"));
+    assert!(window.contains("T(\"Account.SignedInAs\")"));
+    assert!(window.contains("UpdateNavigationIconColors"));
+    assert!(window.contains("_navigation.SelectedItem = overview"));
     assert!(window.contains("LumenAssetIcon.LocalCredentials"));
     assert!(window.contains("LumenAssetIcon.CreateOwner"));
     assert!(window.contains("SizeDefaultViewportForCurrentDisplay()"));
@@ -744,6 +786,7 @@ fn windows_winui_matches_the_native_lumen_visual_contract() {
             "Authentication.FeatureControls",
             "Authentication.FeatureRemote",
             "Authentication.CredentialsNotice",
+            "Account.SignedInAs",
         ] {
             assert!(
                 locale.contains(&format!("name=\"{localized_key}\"")),

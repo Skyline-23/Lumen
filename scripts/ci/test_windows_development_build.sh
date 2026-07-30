@@ -55,6 +55,8 @@ done
 
 for source_file in \
   'src/platform/windows/Lumen.App/Lumen.App.csproj' \
+  'src/platform/windows/Lumen.App/LumenNavigationComponents.cs' \
+  'src/platform/windows/Lumen.App/LumenSettingsComponents.cs' \
   'src/platform/windows/Lumen.App/MainWindow.xaml.cs' \
   'src/platform/windows/Lumen.App/Strings/en-US/Resources.resw'; do
   if git -C "${REPO_ROOT}" check-ignore --quiet --no-index "${source_file}"; then
