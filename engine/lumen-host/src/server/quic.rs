@@ -1150,23 +1150,10 @@ async fn accept_native_telemetry_stream(
     );
     let mut expected_sequence = 1_u64;
     let mut logged_audio_feedback = false;
-    let mut incomplete_window_timeout = None;
     loop {
-        let frame = if let Some(timeout) = incomplete_window_timeout {
-            tokio::time::timeout(
-                timeout,
-                read_length_delimited_frame(
-                    &mut receive,
-                    NATIVE_CONTROL_MESSAGE_LIMIT,
-                    "telemetry",
-                ),
-            )
-            .await
-            .map_err(|_| "QUIC telemetry feedback pair timed out".to_owned())??
-        } else {
+        let frame =
             read_length_delimited_frame(&mut receive, NATIVE_CONTROL_MESSAGE_LIMIT, "telemetry")
-                .await?
-        };
+                .await?;
         let Some(frame) = frame else {
             router
                 .lock()
@@ -1229,13 +1216,6 @@ async fn accept_native_telemetry_stream(
             .observe_native_media_feedback(&feedback, session_epoch);
         match disposition {
             Ok(disposition) => {
-                incomplete_window_timeout = match disposition {
-                    NativeMediaFeedbackDisposition::AwaitingPair {
-                        window_milliseconds,
-                    } => Some(Duration::from_millis(u64::from(window_milliseconds))),
-                    NativeMediaFeedbackDisposition::Applied(_)
-                    | NativeMediaFeedbackDisposition::Unchanged => None,
-                };
                 apply_adaptive_video_decision(
                     &router,
                     Arc::clone(&platform),
@@ -2529,6 +2509,7 @@ mod tests {
             .write_all(&encode_client_telemetry_message(&audio_telemetry).unwrap())
             .await
             .unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
         let video_telemetry = ClientTelemetryEnvelope {
             sequence: 2,
             payload: Some(client_telemetry_envelope::Payload::MediaFeedback(
