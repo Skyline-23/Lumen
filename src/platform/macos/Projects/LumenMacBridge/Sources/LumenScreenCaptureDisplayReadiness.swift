@@ -42,22 +42,24 @@ struct LumenCaptureDisplayReadinessSnapshot: Equatable, Sendable {
     func isModeReady(
         for authority: LumenScreenCaptureDisplayAuthority
     ) -> Bool {
-        guard isOnline, isActive else {
+        guard isOnline else {
             return false
-        }
-        if hasCurrentMode {
-            return true
         }
         switch authority {
         case .retained:
-            // An app-only virtual-display topology can publish active CoreGraphics
-            // state while its public mode and pixel geometry remain unavailable.
-            // The retained object's nonzero configured geometry is safe to use
-            // here because ownership is validated around the exact-ID query.
+            if hasCurrentMode, pixelWidth > 0, pixelHeight > 0 {
+                return true
+            }
+            guard isActive else {
+                return false
+            }
+            if hasCurrentMode {
+                return true
+            }
             return (pixelWidth > 0 && pixelHeight > 0) ||
                 (configuredPixelWidth > 0 && configuredPixelHeight > 0)
         case .exactExternal:
-            return false
+            return isActive && hasCurrentMode
         }
     }
 
