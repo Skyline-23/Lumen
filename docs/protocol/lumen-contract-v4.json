@@ -166,6 +166,7 @@
       "generator": 2,
       "maximumTotalShardsPerBlock": 256,
       "padding": "zero-pad-data-before-parity",
+      "compactSingleShardAudio": "exact-object-bytes-without-padding",
       "scope": "plaintext-quic-datagram-payload"
     },
     "telemetry": {

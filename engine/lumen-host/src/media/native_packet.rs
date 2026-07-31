@@ -208,6 +208,10 @@ impl NativeMediaPacketizer {
             .ok_or_else(|| "native media datagram sequence exhausted".to_owned())?;
 
         let mut datagrams = Vec::with_capacity(plan.total_shards);
+        let uses_compact_audio_shard = self.config.kind == NativeMediaKind::Audio
+            && plan.total_shards == 1
+            && metadata.parity_percentage == 0
+            && !plan.uses_fec_blocks;
         let base_flags = (if plan.uses_fec_blocks {
             NATIVE_MEDIA_FLAG_FEC_BLOCK
         } else {
@@ -227,6 +231,9 @@ impl NativeMediaPacketizer {
             let mut shards = block
                 .chunks(plan.shard_bytes)
                 .map(|chunk| {
+                    if uses_compact_audio_shard {
+                        return chunk.to_vec();
+                    }
                     let mut shard = vec![0_u8; plan.shard_bytes];
                     shard[..chunk.len()].copy_from_slice(chunk);
                     shard
@@ -286,9 +293,14 @@ impl NativeMediaPacketizer {
                 datagrams.push(datagram);
             }
         }
+        let expected_wire_bytes = if uses_compact_audio_shard {
+            plan.header_bytes + payload.len()
+        } else {
+            plan.total_wire_bytes
+        };
         debug_assert_eq!(
             datagrams.iter().map(Vec::len).sum::<usize>(),
-            plan.total_wire_bytes
+            expected_wire_bytes
         );
         self.next_sequence = next_sequence;
         Ok(NativePacketizedUnit {
