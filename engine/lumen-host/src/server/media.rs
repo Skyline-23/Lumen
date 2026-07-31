@@ -33,6 +33,8 @@ use tokio::sync::oneshot;
 
 const MEDIA_POLL_INTERVAL: Duration = Duration::from_millis(1);
 const MAXIMUM_VIDEO_WIRE_BURST_DATAGRAMS: usize = 2;
+const MAXIMUM_VIDEO_WIRE_CREDIT_BYTES: usize = 256 * 1024;
+const MAXIMUM_VIDEO_WIRE_CREDIT_DURATION: Duration = Duration::from_millis(60);
 const PERIODIC_KEYFRAME_SCHEDULING_MARGIN_US: u64 = 5_000;
 const PERIODIC_KEYFRAME_DEADLINE_FRAMES: u64 = 4;
 pub(super) const NATIVE_MEDIA_SEND_BUFFER_BYTES: usize = 4 * 1024 * 1024;
@@ -1238,6 +1240,7 @@ pub(super) struct VideoWireRatePacer {
     session_epoch: Option<u32>,
     wire_budget_kbps: u32,
     next_send_at: Option<Instant>,
+    wire_credit_bits: u64,
 }
 
 impl VideoWireRatePacer {
@@ -1252,6 +1255,9 @@ impl VideoWireRatePacer {
         if self.session_epoch != Some(session_epoch) {
             self.session_epoch = Some(session_epoch);
             self.next_send_at = None;
+            self.wire_credit_bits = 0;
+        } else if self.wire_budget_kbps != wire_budget_kbps {
+            self.wire_credit_bits = 0;
         }
         self.wire_budget_kbps = wire_budget_kbps;
         Ok(())
@@ -1264,31 +1270,56 @@ impl VideoWireRatePacer {
         now: Instant,
         deadline: Instant,
     ) -> Option<Vec<Instant>> {
-        let burst_bits = u64::try_from(maximum_datagram_payload)
+        let initial_burst_bits = u64::try_from(maximum_datagram_payload)
             .ok()?
             .checked_mul(u64::try_from(MAXIMUM_VIDEO_WIRE_BURST_DATAGRAMS).ok()?)?
             .checked_mul(8)?;
-        let burst_nanoseconds = burst_bits
-            .checked_mul(1_000_000)?
-            .div_ceil(u64::from(self.wire_budget_kbps));
-        let burst_floor = now.checked_sub(Duration::from_nanos(burst_nanoseconds))?;
-        let mut cursor = self
-            .next_send_at
-            .map_or(burst_floor, |reserved| reserved.max(burst_floor));
+        let duration_credit_bits = u64::from(self.wire_budget_kbps)
+            .checked_mul(u64::try_from(MAXIMUM_VIDEO_WIRE_CREDIT_DURATION.as_micros()).ok()?)?
+            .checked_div(1_000)?;
+        let maximum_credit_bits = duration_credit_bits
+            .min(
+                u64::try_from(MAXIMUM_VIDEO_WIRE_CREDIT_BYTES)
+                    .ok()?
+                    .checked_mul(8)?,
+            )
+            .max(initial_burst_bits);
+        let mut credit_bits = if let Some(accounted_at) = self.next_send_at {
+            if now > accounted_at {
+                let elapsed_microseconds =
+                    u64::try_from(now.duration_since(accounted_at).as_micros()).unwrap_or(u64::MAX);
+                let accrued_bits =
+                    u64::from(self.wire_budget_kbps).saturating_mul(elapsed_microseconds) / 1_000;
+                self.wire_credit_bits
+                    .saturating_add(accrued_bits)
+                    .min(maximum_credit_bits)
+            } else {
+                self.wire_credit_bits
+            }
+        } else {
+            initial_burst_bits
+        };
+        let mut cursor = self.next_send_at.map_or(now, |reserved| reserved.max(now));
         let mut send_times = Vec::with_capacity(datagram_bytes.len());
         for bytes in datagram_bytes {
             let wire_bits = u64::try_from(*bytes).ok()?.checked_mul(8)?;
-            let pacing_nanoseconds = wire_bits
-                .checked_mul(1_000_000)?
-                .div_ceil(u64::from(self.wire_budget_kbps));
-            cursor = cursor.checked_add(Duration::from_nanos(pacing_nanoseconds))?;
-            let send_at = cursor.max(now);
-            if send_at > deadline {
+            if credit_bits >= wire_bits {
+                credit_bits -= wire_bits;
+            } else {
+                let paced_bits = wire_bits - credit_bits;
+                credit_bits = 0;
+                let pacing_nanoseconds = paced_bits
+                    .checked_mul(1_000_000)?
+                    .div_ceil(u64::from(self.wire_budget_kbps));
+                cursor = cursor.checked_add(Duration::from_nanos(pacing_nanoseconds))?;
+            }
+            if cursor > deadline {
                 return None;
             }
-            send_times.push(send_at);
+            send_times.push(cursor);
         }
         self.next_send_at = Some(cursor);
+        self.wire_credit_bits = credit_bits;
         Some(send_times)
     }
 
@@ -1296,6 +1327,7 @@ impl VideoWireRatePacer {
         if self.session_epoch == reserved.session_epoch
             && self.wire_budget_kbps == reserved.wire_budget_kbps
             && self.next_send_at == reserved.next_send_at
+            && self.wire_credit_bits == reserved.wire_credit_bits
         {
             *self = before;
         }
@@ -2153,7 +2185,7 @@ mod tests {
         DatagramSendOutcome, PacketArrivalHistoryWarningReporter, PacketArrivalSendObservation,
         SessionDelivery, VideoBootstrapClassification, VideoDatagramCompletion,
         VideoDatagramDeadlineError, VideoDatagramPacing, VideoKeyframeDelivery, VideoSenderState,
-        VideoWireRatePacer, MAXIMUM_VIDEO_WIRE_BURST_DATAGRAMS,
+        VideoWireRatePacer, MAXIMUM_VIDEO_WIRE_BURST_DATAGRAMS, MAXIMUM_VIDEO_WIRE_CREDIT_DURATION,
     };
     use lumen_engine::{
         native_video_packetization_plan, MediaFeedback, NativeVideoBootstrapReason,
@@ -2633,6 +2665,69 @@ mod tests {
                 assert!(u128::from(cumulative_bytes) * 8 <= envelope_bits);
             }
         }
+    }
+
+    #[test]
+    fn under_budget_deltas_accumulate_bounded_credit_for_one_large_frame() {
+        const MTU: usize = 1_200;
+        const WIRE_KBPS: u32 = 32_000;
+        let origin = Instant::now();
+        let mut pacer = VideoWireRatePacer::default();
+        pacer.prepare(9, WIRE_KBPS).unwrap();
+
+        for frame in 0..4_u64 {
+            let now = origin + Duration::from_millis(frame * 16);
+            pacer
+                .reserve(&[MTU], MTU, now, now + Duration::from_millis(2))
+                .expect("small deltas remain below the wire budget");
+        }
+
+        let large_frame_at = origin + Duration::from_millis(64);
+        let large_frame = vec![MTU; 200];
+        let schedule = pacer
+            .reserve(
+                &large_frame,
+                MTU,
+                large_frame_at,
+                large_frame_at + Duration::from_millis(17),
+            )
+            .expect("accumulated credit admits one large frame");
+
+        assert_eq!(schedule.len(), large_frame.len());
+        assert!(schedule.last().copied().unwrap() <= large_frame_at);
+    }
+
+    #[test]
+    fn consumed_credit_does_not_admit_a_second_immediate_large_frame() {
+        const MTU: usize = 1_200;
+        const WIRE_KBPS: u32 = 32_000;
+        let origin = Instant::now();
+        let mut pacer = VideoWireRatePacer::default();
+        pacer.prepare(11, WIRE_KBPS).unwrap();
+        pacer
+            .reserve(&[MTU], MTU, origin, origin + Duration::from_millis(2))
+            .unwrap();
+
+        let large_frame_at = origin + MAXIMUM_VIDEO_WIRE_CREDIT_DURATION;
+        let large_frame = vec![MTU; 200];
+        pacer
+            .reserve(
+                &large_frame,
+                MTU,
+                large_frame_at,
+                large_frame_at + Duration::from_millis(17),
+            )
+            .expect("the first large frame consumes accumulated credit");
+
+        assert_eq!(
+            pacer.reserve(
+                &large_frame,
+                MTU,
+                large_frame_at,
+                large_frame_at + Duration::from_millis(17),
+            ),
+            None
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
