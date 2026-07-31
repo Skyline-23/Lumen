@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "contract": {
+    "path": "docs/protocol/lumen-contract-v4.json",
+    "sha256": "db39bdfca60d6a5186c57ca9e373e5ec1a8ee2c06a29b4c715eb435b38ca5b0f"
+  },
+  "identity": {
+    "name": "lumen-stream",
+    "version": 4,
+    "package": "lumen.streaming.v4",
+    "alpn": "lumen-stream/4"
+  },
+  "generatedArtifacts": [
+    "docs/protocol/lumen-streaming-v4.proto",
+    "docs/protocol/lumen-streaming-v4.descriptor.pb",
+    "docs/protocol/lumen-streaming-v4.sha256",
+    "docs/protocol/lumen-native-transport-conformance.json",
+    "docs/protocol/lumen-auth-conformance.json",
+    "docs/protocol/lumen-settings-conformance.json",
+    "docs/protocol/lumen-api-reference.md",
+    "Sources/LumenClientContracts/LumenStreamingV4.pb.swift"
+  ],
+  "handwrittenRuntimeBoundary": {
+    "status": "drift-gated",
+    "path": "engine/lumen-engine/src/protocol",
+    "note": "Runtime policy and validators remain handwritten and must pass descriptor and source contract gates."
+  },
+  "handwrittenDocumentationBoundary": {
+    "status": "drift-gated",
+    "paths": [
+      "docs/protocol/lumen-streaming-protocol.md",
+      "docs/protocol/lumen-settings-protocol.md"
+    ],
+    "note": "Complete lifecycle and policy prose remains handwritten until every semantic rule is represented structurally in the IDL."
+  }
+}

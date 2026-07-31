@@ -5,19 +5,20 @@ final class LumenWorkspacePlanningTests: XCTestCase {
     func testRetinaDesktopScalePreservesNativeStreamPixels() throws {
         let geometry = try LumenMacDisplayGeometryResolver.resolve(
             LumenMacDisplayModeRequest(
-                width: 2388,
-                height: 1668,
-                scalePercent: 150,
-                dimensionsAreLogical: false
+                width: 3024,
+                height: 1964,
+                scalePercent: 168,
+                dimensionsAreLogical: false,
+                highDensity: true
             )
         )
 
-        XCTAssertEqual(geometry.streamWidth, 2388)
-        XCTAssertEqual(geometry.streamHeight, 1668)
-        XCTAssertEqual(geometry.logicalWidth, 1592)
-        XCTAssertEqual(geometry.logicalHeight, 1112)
-        XCTAssertEqual(geometry.backingWidth, 2388)
-        XCTAssertEqual(geometry.backingHeight, 1668)
+        XCTAssertEqual(geometry.streamWidth, 3024)
+        XCTAssertEqual(geometry.streamHeight, 1964)
+        XCTAssertEqual(geometry.logicalWidth, 1800)
+        XCTAssertEqual(geometry.logicalHeight, 1169)
+        XCTAssertEqual(geometry.backingWidth, 3600)
+        XCTAssertEqual(geometry.backingHeight, 2338)
     }
 
     func testCoexistWorkspaceDoesNotPromoteOrMoveWindows() async throws {
@@ -84,7 +85,8 @@ final class LumenWorkspacePlanningTests: XCTestCase {
             width: 2388,
             height: 1668,
             scalePercent: 150,
-            dimensionsAreLogical: false
+            dimensionsAreLogical: false,
+            highDensity: true
         )
         let operations = LumenMacWorkspaceNativeOperations(
             createVirtualDisplay: { _, geometry in
@@ -145,7 +147,8 @@ final class LumenWorkspacePlanningTests: XCTestCase {
                 width: 1920,
                 height: 1080,
                 scalePercent: 100,
-                dimensionsAreLogical: false
+                dimensionsAreLogical: false,
+                highDensity: false
             ),
             operations: operations,
             displayWorkspace: WorkspaceDisplayMock(recorder: recorder)

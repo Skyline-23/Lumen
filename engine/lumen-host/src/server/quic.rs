@@ -21,12 +21,16 @@ use lumen_engine::{
 use quinn::crypto::rustls::QuicServerConfig;
 use quinn::{Endpoint, RecvStream, ServerConfig, TransportConfig, VarInt};
 use rustls::pki_types::PrivateKeyDer;
-use tokio::sync::Notify;
+use tokio::sync::{oneshot, Notify};
 
+use super::adaptive_video::apply_reserved_adaptive_video_policy;
 use super::media::{run_native_media_loop, VideoWireRatePacer, NATIVE_MEDIA_SEND_BUFFER_BYTES};
 use super::packet_arrival::PacketArrivalHistory;
 use super::SharedControlRouter;
-use crate::control::{NativeConnectionContext, NativeMediaFeedbackDisposition};
+use crate::control::{
+    NativeConnectionContext, NativeMediaFeedbackDisposition, NativeStartCompletion,
+    NativeStartFinalization, NativeStartReservation,
+};
 use crate::native_input::NativeInputSequence;
 use crate::network_ports::NATIVE_QUIC_OFFSET;
 use crate::{
@@ -421,6 +425,7 @@ async fn handle_connection(
         .await
     });
     let lifecycle_router = Arc::clone(&router);
+    let control_platform = Arc::clone(&platform);
     let mut control_task = tokio::spawn(async move {
         let result: Result<(), String> = async {
             let (first_responses, media_capabilities) = {
@@ -438,7 +443,8 @@ async fn handle_connection(
             );
             write_control_responses(&mut send, first_responses).await?;
             first_control_response_notify.notify_one();
-            handle_control_stream(&mut send, &mut receive, &router, &context).await
+            handle_control_stream(&mut send, &mut receive, &router, control_platform, &context)
+                .await
         }
         .await;
         result
@@ -859,16 +865,15 @@ async fn handle_control_stream(
     send: &mut quinn::SendStream,
     receive: &mut RecvStream,
     router: &SharedControlRouter,
+    platform: Arc<dyn PlatformSessionControl>,
     context: &NativeConnectionContext,
 ) -> Result<(), String> {
     let mut lifecycle = ControlStreamLifecycle::default();
     while let Some(frame) = read_control_frame(receive).await? {
         let request = decode_client_control_message(&frame)
             .map_err(|error| format!("invalid QUIC control frame: {error:?}"))?;
-        let responses = router
-            .lock()
-            .map_err(|_| "native control router lock is poisoned".to_owned())?
-            .dispatch_native_control(request, context);
+        let responses =
+            dispatch_native_control_async(router, Arc::clone(&platform), request, context).await?;
         lifecycle.observe_responses(&responses);
         write_control_responses(send, responses).await?;
     }
@@ -879,6 +884,106 @@ async fn handle_control_stream(
         .await
         .map_err(|error| format!("QUIC session-control response was not acknowledged: {error}"))?;
     Ok(())
+}
+
+async fn dispatch_native_control_async(
+    router: &SharedControlRouter,
+    platform: Arc<dyn PlatformSessionControl>,
+    request: lumen_engine::ClientControlEnvelope,
+    context: &NativeConnectionContext,
+) -> Result<Vec<HostControlEnvelope>, String> {
+    let request_id = request.request_id;
+    let Some(lumen_engine::client_control_envelope::Payload::StartSession(start)) = request.payload
+    else {
+        return router
+            .lock()
+            .map_err(|_| "native control router lock is poisoned".to_owned())
+            .map(|mut router| router.dispatch_native_control(request, context));
+    };
+    let reservation = match router
+        .lock()
+        .map_err(|_| "native control router lock is poisoned".to_owned())?
+        .reserve_native_start(request_id, start, context)
+    {
+        Ok(reservation) => reservation,
+        Err(responses) => return Ok(responses),
+    };
+    let transaction_router = Arc::clone(router);
+    let (completion_sender, completion_receiver) = oneshot::channel();
+    tokio::spawn(async move {
+        let result = run_native_start_transaction(transaction_router, platform, reservation).await;
+        let _ = completion_sender.send(result);
+    });
+    completion_receiver
+        .await
+        .map_err(|_| "native session start transaction ended without a result".to_owned())?
+}
+
+async fn run_native_start_transaction(
+    router: SharedControlRouter,
+    platform: Arc<dyn PlatformSessionControl>,
+    reservation: NativeStartReservation,
+) -> Result<Vec<HostControlEnvelope>, String> {
+    let start_reservation = reservation.clone();
+    let start_platform = Arc::clone(&platform);
+    let execution = match tokio::task::spawn_blocking(move || {
+        start_reservation.execute(start_platform.as_ref())
+    })
+    .await
+    {
+        Ok(execution) => execution,
+        Err(error) => reservation.worker_failed(error),
+    };
+    let completion = router
+        .lock()
+        .map_err(|_| "native control router lock is poisoned".to_owned())?
+        .complete_native_start(&reservation, execution);
+    let finalization = match completion {
+        NativeStartCompletion::Finalized(finalization) => finalization,
+        NativeStartCompletion::Rollback(rollback) => {
+            let rollback_worker = rollback.clone();
+            let rollback_platform = Arc::clone(&platform);
+            let rollback_result = match tokio::task::spawn_blocking(move || {
+                rollback_worker.execute(rollback_platform.as_ref())
+            })
+            .await
+            {
+                Ok(result) => result,
+                Err(error) => rollback.worker_failed(error),
+            };
+            router
+                .lock()
+                .map_err(|_| "native control router lock is poisoned".to_owned())?
+                .finish_native_start_rollback(rollback, rollback_result)
+        }
+    };
+    publish_native_start_finalization(Arc::clone(&platform), &finalization).await;
+    Ok(finalization.responses)
+}
+
+async fn publish_native_start_finalization(
+    platform: Arc<dyn PlatformSessionControl>,
+    finalization: &NativeStartFinalization,
+) {
+    let started = finalization.started;
+    let platform_error = finalization.platform_error.clone();
+    let _ = tokio::task::spawn_blocking(move || {
+        let (disposition, message) = if started {
+            (PlatformRuntimeEventDisposition::Cleared, None)
+        } else if let Some(message) = platform_error {
+            eprintln!("Lumen native session platform error: {message}");
+            (PlatformRuntimeEventDisposition::Raised, Some(message))
+        } else {
+            return;
+        };
+        let _ = platform.publish_runtime_event(PlatformRuntimeEvent {
+            disposition,
+            severity: PlatformRuntimeEventSeverity::Error,
+            code: PlatformRuntimeEventCode::NativeSessionPlatform,
+            message,
+        });
+    })
+    .await;
 }
 
 async fn write_control_responses(
@@ -1150,23 +1255,10 @@ async fn accept_native_telemetry_stream(
     );
     let mut expected_sequence = 1_u64;
     let mut logged_audio_feedback = false;
-    let mut incomplete_window_timeout = None;
     loop {
-        let frame = if let Some(timeout) = incomplete_window_timeout {
-            tokio::time::timeout(
-                timeout,
-                read_length_delimited_frame(
-                    &mut receive,
-                    NATIVE_CONTROL_MESSAGE_LIMIT,
-                    "telemetry",
-                ),
-            )
-            .await
-            .map_err(|_| "QUIC telemetry feedback pair timed out".to_owned())??
-        } else {
+        let frame =
             read_length_delimited_frame(&mut receive, NATIVE_CONTROL_MESSAGE_LIMIT, "telemetry")
-                .await?
-        };
+                .await?;
         let Some(frame) = frame else {
             router
                 .lock()
@@ -1229,13 +1321,6 @@ async fn accept_native_telemetry_stream(
             .observe_native_media_feedback(&feedback, session_epoch);
         match disposition {
             Ok(disposition) => {
-                incomplete_window_timeout = match disposition {
-                    NativeMediaFeedbackDisposition::AwaitingPair {
-                        window_milliseconds,
-                    } => Some(Duration::from_millis(u64::from(window_milliseconds))),
-                    NativeMediaFeedbackDisposition::Applied(_)
-                    | NativeMediaFeedbackDisposition::Unchanged => None,
-                };
                 apply_adaptive_video_decision(
                     &router,
                     Arc::clone(&platform),
@@ -1304,70 +1389,7 @@ async fn apply_adaptive_video_decision(
     let NativeMediaFeedbackDisposition::Applied(proposal) = disposition else {
         return Ok(());
     };
-    let decision = proposal.decision;
-    let began = router
-        .lock()
-        .map_err(|_| "native control router lock is poisoned".to_owned())?
-        .begin_native_adaptive_video_policy_apply(session_epoch, &proposal);
-    if !began {
-        return Err("adaptive video proposal became stale before platform apply".to_owned());
-    }
-    let transaction_platform = Arc::clone(&platform);
-    // Platform application may block indefinitely, so it runs off the QUIC
-    // executor and outside the global router mutex. The router owns only a
-    // revision-fenced policy-lane token while the call is in flight, leaving
-    // StopSession and teardown available without a late timeout race.
-    let platform_worker = tokio::task::spawn_blocking(move || {
-        transaction_platform.handle_control_event(
-            session_epoch,
-            crate::PlatformControlEvent::SetVideoDeliveryPolicy {
-                bitrate_kbps: decision.encoder_bitrate_kbps,
-                admission_divisor: decision.admission_divisor,
-            },
-        )
-    })
-    .await;
-    let platform_result = match platform_worker {
-        Ok(result) => result,
-        Err(error) => {
-            let _ = router
-                .lock()
-                .map_err(|_| "native control router lock is poisoned".to_owned())?
-                .finish_native_adaptive_video_policy_apply(session_epoch, proposal, false);
-            return Err(format!("adaptive video transaction worker failed: {error}"));
-        }
-    };
-    let applied = platform_result.is_ok();
-    let committed = router
-        .lock()
-        .map_err(|_| "native control router lock is poisoned".to_owned())?
-        .finish_native_adaptive_video_policy_apply(session_epoch, proposal, applied);
-    if let Err(error) = platform_result {
-        if committed {
-            publish_adaptive_video_rejection(&platform, session_epoch, decision, error)?;
-        }
-        return Ok(());
-    }
-    if !committed {
-        return Ok(());
-    }
-    platform
-        .publish_runtime_event(PlatformRuntimeEvent {
-            disposition: PlatformRuntimeEventDisposition::Cleared,
-            severity: PlatformRuntimeEventSeverity::Warning,
-            code: PlatformRuntimeEventCode::NativeVideoAdaptiveControl,
-            message: None,
-        })
-        .map_err(|error| format!("adaptive video warning clear failed: {error}"))?;
-    eprintln!(
-        "Lumen native media stage=adaptive-video-applied session-epoch={session_epoch} wire-budget-kbps={} encoder-bitrate-kbps={} fec-percentage={} admission-divisor={} congestion-source={:?}",
-        decision.wire_budget_kbps,
-        decision.encoder_bitrate_kbps,
-        decision.fec_percentage,
-        decision.admission_divisor,
-        decision.congestion_source,
-    );
-    Ok(())
+    apply_reserved_adaptive_video_policy(router, platform, session_epoch, proposal).await
 }
 
 #[cfg(test)]
@@ -1381,6 +1403,7 @@ async fn apply_adaptive_video_policy(
         update_platform.handle_control_event(
             session_epoch,
             crate::PlatformControlEvent::SetVideoDeliveryPolicy {
+                policy_revision: 1,
                 bitrate_kbps: decision.encoder_bitrate_kbps,
                 admission_divisor: decision.admission_divisor,
             },
@@ -1403,6 +1426,7 @@ async fn apply_adaptive_video_policy(
     Ok(true)
 }
 
+#[cfg(test)]
 fn publish_adaptive_video_rejection(
     platform: &Arc<dyn PlatformSessionControl>,
     session_epoch: u32,
@@ -1767,7 +1791,8 @@ fn bind_ip(arguments: &HostArguments) -> Result<IpAddr, String> {
 mod tests {
     use std::collections::VecDeque;
     use std::fs;
-    use std::sync::Mutex;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::{Condvar, Mutex};
     use std::thread;
 
     use lumen_engine::{
@@ -1870,6 +1895,58 @@ mod tests {
     }
 
     struct BlockingBitratePlatform;
+
+    #[derive(Default)]
+    struct BlockingStartPlatform {
+        entered: AtomicBool,
+        release: (Mutex<bool>, Condvar),
+        stops: AtomicUsize,
+        application_stops: AtomicUsize,
+    }
+
+    impl BlockingStartPlatform {
+        async fn wait_until_entered(&self) {
+            tokio::time::timeout(Duration::from_secs(1), async {
+                while !self.entered.load(Ordering::Acquire) {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("platform start did not enter the blocking boundary");
+        }
+
+        fn release(&self) {
+            let (released, ready) = &self.release;
+            *released.lock().unwrap() = true;
+            ready.notify_all();
+        }
+    }
+
+    impl PlatformSessionControl for BlockingStartPlatform {
+        fn start_application(&self, _plan: crate::PlatformApplicationPlan) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn stop_application(&self) -> Result<(), String> {
+            self.application_stops.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+
+        fn start_session(&self, _plan: PlatformSessionPlan) -> Result<(), String> {
+            self.entered.store(true, Ordering::Release);
+            let (released, ready) = &self.release;
+            let mut released = released.lock().unwrap();
+            while !*released {
+                released = ready.wait(released).unwrap();
+            }
+            Ok(())
+        }
+
+        fn stop_session(&self) -> Result<(), String> {
+            self.stops.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+    }
 
     #[derive(Default)]
     struct RejectingBitratePlatform {
@@ -2128,6 +2205,7 @@ mod tests {
             vec![(
                 77,
                 PlatformControlEvent::SetVideoDeliveryPolicy {
+                    policy_revision: 1,
                     bitrate_kbps: 48_000,
                     admission_divisor: 1,
                 },
@@ -2191,6 +2269,79 @@ mod tests {
             started.elapsed()
         );
         update.await.unwrap().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn native_start_keeps_quic_live_and_rolls_back_after_disconnect() {
+        let platform = Arc::new(BlockingStartPlatform::default());
+        let (root, router) = router_with_platform(platform.clone());
+        router
+            .authorities()
+            .applications()
+            .upsert(r#"{"uuid":"native-desktop","name":"Desktop"}"#)
+            .unwrap();
+        let application_id = router.authorities().applications().applications().unwrap()[0].id;
+        let router = Arc::new(Mutex::new(router));
+        let context = NativeConnectionContext {
+            session_epoch: 42,
+            host_capabilities: default_host_capabilities(),
+        };
+        let hello = router.lock().unwrap().dispatch_native_control(
+            ClientControlEnvelope {
+                request_id: 1,
+                payload: Some(client_control_envelope::Payload::Hello(native_hello(
+                    application_id,
+                ))),
+            },
+            &context,
+        );
+        let plan = match hello[0].payload.as_ref() {
+            Some(host_control_envelope::Payload::SessionPlan(plan)) => plan.clone(),
+            payload => panic!("expected session plan, received {payload:?}"),
+        };
+        let start_router = Arc::clone(&router);
+        let start_platform = platform.clone();
+        let start_context = context.clone();
+        let start = tokio::spawn(async move {
+            dispatch_native_control_async(
+                &start_router,
+                start_platform,
+                ClientControlEnvelope {
+                    request_id: 2,
+                    payload: Some(client_control_envelope::Payload::StartSession(
+                        StartSessionAck {
+                            session_epoch: plan.session_epoch,
+                        },
+                    )),
+                },
+                &start_context,
+            )
+            .await
+        });
+
+        platform.wait_until_entered().await;
+        tokio::time::timeout(
+            Duration::from_millis(50),
+            tokio::time::sleep(Duration::from_millis(1)),
+        )
+        .await
+        .expect("blocking platform start stalled the current-thread QUIC executor");
+        router
+            .lock()
+            .unwrap()
+            .terminate_native_connection(context.session_epoch)
+            .unwrap();
+        platform.release();
+
+        let responses = start.await.unwrap().unwrap();
+        assert!(matches!(
+            responses[0].payload,
+            Some(host_control_envelope::Payload::Error(_))
+        ));
+        assert_eq!(platform.stops.load(Ordering::Relaxed), 1);
+        assert_eq!(platform.application_stops.load(Ordering::Relaxed), 1);
+        assert!(router.lock().unwrap().video_delivery_state().is_none());
+        drop(root);
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -2529,6 +2680,7 @@ mod tests {
             .write_all(&encode_client_telemetry_message(&audio_telemetry).unwrap())
             .await
             .unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
         let video_telemetry = ClientTelemetryEnvelope {
             sequence: 2,
             payload: Some(client_telemetry_envelope::Payload::MediaFeedback(

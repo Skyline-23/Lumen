@@ -1,3 +1,6 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
 use lumen_engine::{
     client_control_envelope, host_control_envelope, minimum_video_encoder_bitrate_kbps,
     negotiate_native_session, ClientControlEnvelope, ClientSessionHello, CodecConfiguration,
@@ -48,8 +51,23 @@ pub(crate) enum NativeMediaFeedbackDisposition {
 pub(crate) struct AdaptiveVideoProposal {
     pub(crate) base: AdaptiveVideoDecision,
     pub(crate) decision: AdaptiveVideoDecision,
-    policy_revision: u64,
+    pub(crate) platform_policy_revision: u32,
+    lane_revision: u64,
     controller: AdaptiveVideoDeliveryController,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum NativeAdaptiveVideoPolicyRequest {
+    Applied(AdaptiveVideoProposal),
+    Deferred,
+    Unchanged,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct AdaptiveVideoPolicyCompletion {
+    pub(crate) active: bool,
+    pub(crate) committed: bool,
+    pub(crate) follow_up: Option<AdaptiveVideoProposal>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -91,6 +109,7 @@ impl NativeMediaFeedbackRejection {
 #[derive(Debug, Default)]
 pub(super) struct NativeSessionState {
     pending: Option<PendingNativeSession>,
+    next_start_token: u64,
 }
 
 #[derive(Debug)]
@@ -98,6 +117,7 @@ struct PendingNativeSession {
     hello: ClientSessionHello,
     plan: HostSessionPlan,
     active: bool,
+    start_reservation: Option<NativeStartReservationState>,
     session_cleanup_pending: bool,
     application_started: bool,
     codec_configuration: Option<CodecConfiguration>,
@@ -119,10 +139,172 @@ struct PendingNativeSession {
     pending_feedback_window: Option<PendingMediaFeedbackWindow>,
 }
 
+#[derive(Debug)]
+struct NativeStartReservationState {
+    token: u64,
+    cancelled: Arc<AtomicBool>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct NativeStartReservation {
+    request_id: u64,
+    session_epoch: u32,
+    token: u64,
+    application_id: u32,
+    application_uuid: String,
+    application_plan: PlatformApplicationPlan,
+    session_plan: PlatformSessionPlan,
+    starts_application: bool,
+    cancelled: Arc<AtomicBool>,
+}
+
+#[derive(Debug)]
+pub(crate) struct NativeStartExecution {
+    started: bool,
+    session_cleanup_pending: bool,
+    application_started: bool,
+    error: Option<String>,
+}
+
+#[derive(Debug)]
+pub(crate) enum NativeStartCompletion {
+    Finalized(NativeStartFinalization),
+    Rollback(NativeStartRollback),
+}
+
+#[derive(Debug)]
+pub(crate) struct NativeStartFinalization {
+    pub(crate) responses: Vec<HostControlEnvelope>,
+    pub(crate) platform_error: Option<String>,
+    pub(crate) started: bool,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct NativeStartRollback {
+    request_id: u64,
+    session_epoch: u32,
+    token: u64,
+    session_cleanup_pending: bool,
+    application_started: bool,
+    error_code: u32,
+    message: String,
+    publish_platform_error: bool,
+}
+
+#[derive(Debug)]
+pub(crate) struct NativeStartRollbackResult {
+    session_cleanup_pending: bool,
+    application_started: bool,
+    error: Option<String>,
+}
+
+impl NativeStartReservation {
+    pub(crate) fn execute(
+        &self,
+        platform: &dyn crate::PlatformSessionControl,
+    ) -> NativeStartExecution {
+        if self.cancelled.load(Ordering::Acquire) {
+            return NativeStartExecution {
+                started: false,
+                session_cleanup_pending: false,
+                application_started: false,
+                error: None,
+            };
+        }
+        let mut application_started = false;
+        if self.starts_application {
+            if let Err(error) = platform.start_application(self.application_plan.clone()) {
+                return NativeStartExecution {
+                    started: false,
+                    session_cleanup_pending: false,
+                    application_started: false,
+                    error: Some(format!(
+                        "platform application could not be started: {error}"
+                    )),
+                };
+            }
+            application_started = true;
+        }
+        if self.cancelled.load(Ordering::Acquire) {
+            return NativeStartExecution {
+                started: false,
+                session_cleanup_pending: false,
+                application_started,
+                error: None,
+            };
+        }
+        match platform.start_session(self.session_plan) {
+            Ok(()) => NativeStartExecution {
+                started: true,
+                session_cleanup_pending: true,
+                application_started,
+                error: None,
+            },
+            Err(error) => NativeStartExecution {
+                started: false,
+                session_cleanup_pending: true,
+                application_started,
+                error: Some(format!(
+                    "platform stream session could not be started: {error}"
+                )),
+            },
+        }
+    }
+
+    pub(crate) fn worker_failed(&self, error: impl std::fmt::Display) -> NativeStartExecution {
+        NativeStartExecution {
+            started: false,
+            session_cleanup_pending: true,
+            application_started: self.starts_application,
+            error: Some(format!("platform session start worker failed: {error}")),
+        }
+    }
+}
+
+impl NativeStartRollback {
+    pub(crate) fn execute(
+        &self,
+        platform: &dyn crate::PlatformSessionControl,
+    ) -> NativeStartRollbackResult {
+        let session_error = self
+            .session_cleanup_pending
+            .then(|| platform.stop_session())
+            .and_then(Result::err);
+        let application_error = self
+            .application_started
+            .then(|| platform.stop_application())
+            .and_then(Result::err);
+        let session_cleanup_pending = self.session_cleanup_pending && session_error.is_some();
+        let application_started = self.application_started && application_error.is_some();
+        let error = match (session_error, application_error) {
+            (None, None) => None,
+            (Some(session), None) => Some(session),
+            (None, Some(application)) => Some(application),
+            (Some(session), Some(application)) => Some(format!(
+                "{session}; application stop also failed: {application}"
+            )),
+        };
+        NativeStartRollbackResult {
+            session_cleanup_pending,
+            application_started,
+            error,
+        }
+    }
+
+    pub(crate) fn worker_failed(&self, error: impl std::fmt::Display) -> NativeStartRollbackResult {
+        NativeStartRollbackResult {
+            session_cleanup_pending: self.session_cleanup_pending,
+            application_started: self.application_started,
+            error: Some(format!("platform session rollback worker failed: {error}")),
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 struct AdaptiveVideoPolicyLane {
     revision: u64,
     applying_revision: Option<u64>,
+    pending_keyframe_wire_rate_kbps: Option<u32>,
 }
 
 #[derive(Debug, Default)]
@@ -336,8 +518,10 @@ impl ControlRouter {
         pending.acknowledged_generation_id = None;
         pending.repair_keyframe = RepairKeyframeState::Idle;
         pending.adaptive_video = adaptive_video;
-        pending.adaptive_policy_lane.revision =
-            pending.adaptive_policy_lane.revision.wrapping_add(1);
+        pending.adaptive_policy_lane = AdaptiveVideoPolicyLane {
+            revision: pending.adaptive_policy_lane.revision.wrapping_add(1),
+            ..AdaptiveVideoPolicyLane::default()
+        };
         pending.last_display_revision = request.revision;
         vec![display_reconfiguration_result(
             request_id,
@@ -685,19 +869,46 @@ impl ControlRouter {
             .ok_or(NativeMediaFeedbackRejection::FeedbackWindowMismatch)?;
         let clean_window_units =
             feedback.window_milliseconds / NATIVE_MEDIA_FEEDBACK_WINDOW_MILLISECONDS;
+        let retrying_deferred_floor = pending
+            .adaptive_policy_lane
+            .pending_keyframe_wire_rate_kbps
+            .is_some();
         let base = pending.adaptive_video.snapshot();
         let mut controller = pending.adaptive_video.clone();
-        let decision = controller.observe_window(video, audio, clean_window_units);
-        Ok(if decision.changed {
-            NativeMediaFeedbackDisposition::Applied(AdaptiveVideoProposal {
-                base,
-                decision,
-                policy_revision: pending.adaptive_policy_lane.revision,
-                controller,
-            })
-        } else {
-            NativeMediaFeedbackDisposition::Unchanged
-        })
+        if let Some(required_wire_kbps) =
+            pending.adaptive_policy_lane.pending_keyframe_wire_rate_kbps
+        {
+            controller.require_keyframe_wire_rate_kbps(required_wire_kbps);
+        }
+        let mut decision = controller.observe_window(video, audio, clean_window_units);
+        Ok(
+            if (decision.changed || retrying_deferred_floor)
+                && pending.adaptive_policy_lane.applying_revision.is_none()
+            {
+                decision.changed = true;
+                let proposal = AdaptiveVideoProposal {
+                    base,
+                    decision,
+                    platform_policy_revision: pending.plan.policy_revision,
+                    lane_revision: pending.adaptive_policy_lane.revision,
+                    controller,
+                };
+                pending.adaptive_policy_lane.applying_revision = Some(proposal.lane_revision);
+                NativeMediaFeedbackDisposition::Applied(proposal)
+            } else {
+                if controller != pending.adaptive_video
+                    && pending.adaptive_policy_lane.applying_revision.is_none()
+                {
+                    pending.adaptive_video = controller;
+                    pending.adaptive_policy_lane.pending_keyframe_wire_rate_kbps = None;
+                    pending.adaptive_policy_lane.revision =
+                        pending.adaptive_policy_lane.revision.wrapping_add(1);
+                } else if pending.adaptive_policy_lane.applying_revision.is_none() {
+                    pending.adaptive_policy_lane.pending_keyframe_wire_rate_kbps = None;
+                }
+                NativeMediaFeedbackDisposition::Unchanged
+            },
+        )
     }
 
     #[cfg(test)]
@@ -706,41 +917,9 @@ impl ControlRouter {
         session_epoch: u32,
         proposal: AdaptiveVideoProposal,
     ) -> bool {
-        let Some(pending) = self.native.pending.as_mut() else {
-            return false;
-        };
-        if !pending.active
-            || pending.plan.session_epoch != session_epoch
-            || pending.adaptive_policy_lane.applying_revision.is_some()
-            || pending.adaptive_policy_lane.revision != proposal.policy_revision
-            || pending.adaptive_video.snapshot() != proposal.base
-        {
-            return false;
-        }
-        pending.adaptive_video = proposal.controller;
-        pending.adaptive_policy_lane.revision =
-            pending.adaptive_policy_lane.revision.wrapping_add(1);
-        true
-    }
-
-    pub(crate) fn begin_native_adaptive_video_policy_apply(
-        &mut self,
-        session_epoch: u32,
-        proposal: &AdaptiveVideoProposal,
-    ) -> bool {
-        let Some(pending) = self.native.pending.as_mut() else {
-            return false;
-        };
-        if !pending.active
-            || pending.plan.session_epoch != session_epoch
-            || pending.adaptive_policy_lane.applying_revision.is_some()
-            || pending.adaptive_policy_lane.revision != proposal.policy_revision
-            || pending.adaptive_video.snapshot() != proposal.base
-        {
-            return false;
-        }
-        pending.adaptive_policy_lane.applying_revision = Some(proposal.policy_revision);
-        true
+        let completion =
+            self.finish_native_adaptive_video_policy_apply(session_epoch, proposal, true);
+        completion.committed && completion.follow_up.is_none()
     }
 
     pub(crate) fn finish_native_adaptive_video_policy_apply(
@@ -748,28 +927,128 @@ impl ControlRouter {
         session_epoch: u32,
         proposal: AdaptiveVideoProposal,
         applied: bool,
-    ) -> bool {
+    ) -> AdaptiveVideoPolicyCompletion {
         let Some(pending) = self.native.pending.as_mut() else {
-            return false;
+            return AdaptiveVideoPolicyCompletion::default();
         };
         if !pending.active
             || pending.plan.session_epoch != session_epoch
-            || pending.adaptive_policy_lane.applying_revision != Some(proposal.policy_revision)
+            || pending.adaptive_policy_lane.applying_revision != Some(proposal.lane_revision)
         {
-            return false;
+            return AdaptiveVideoPolicyCompletion::default();
         }
         pending.adaptive_policy_lane.applying_revision = None;
-        if pending.adaptive_policy_lane.revision != proposal.policy_revision
-            || pending.adaptive_video.snapshot() != proposal.base
-        {
-            return false;
+        let proposal_is_current = pending.adaptive_policy_lane.revision == proposal.lane_revision
+            && pending.adaptive_video.snapshot() == proposal.base;
+        let committed = applied && proposal_is_current;
+        if !committed {
+            return AdaptiveVideoPolicyCompletion {
+                active: true,
+                committed: false,
+                follow_up: None,
+            };
         }
-        if applied {
-            pending.adaptive_video = proposal.controller;
+        pending.adaptive_video = proposal.controller;
+        pending.adaptive_policy_lane.revision =
+            pending.adaptive_policy_lane.revision.wrapping_add(1);
+
+        let mut controller = pending.adaptive_video.clone();
+        if let Some(required_wire_kbps) = pending
+            .adaptive_policy_lane
+            .pending_keyframe_wire_rate_kbps
+            .take()
+        {
+            controller.require_keyframe_wire_rate_kbps(required_wire_kbps);
+        }
+        let base = pending.adaptive_video.snapshot();
+        let desired = controller.snapshot();
+        let follow_up = if desired != base {
+            let mut decision = desired;
+            decision.changed = true;
+            let proposal = AdaptiveVideoProposal {
+                base,
+                decision,
+                platform_policy_revision: pending.plan.policy_revision,
+                lane_revision: pending.adaptive_policy_lane.revision,
+                controller,
+            };
+            pending.adaptive_policy_lane.applying_revision = Some(proposal.lane_revision);
+            Some(proposal)
+        } else {
+            if controller != pending.adaptive_video {
+                pending.adaptive_video = controller;
+                pending.adaptive_policy_lane.revision =
+                    pending.adaptive_policy_lane.revision.wrapping_add(1);
+            }
+            None
+        };
+        AdaptiveVideoPolicyCompletion {
+            active: true,
+            committed,
+            follow_up,
+        }
+    }
+
+    /// Raises the adaptive floor for the active session. Stale epochs are ignored.
+    pub(crate) fn require_native_video_keyframe_wire_rate(
+        &mut self,
+        session_epoch: u32,
+        required_wire_kbps: u32,
+    ) -> Result<NativeAdaptiveVideoPolicyRequest, String> {
+        let Some(pending) = self.native.pending.as_mut() else {
+            return Err("native session has not been negotiated".to_owned());
+        };
+        if !pending.active || pending.plan.session_epoch != session_epoch {
+            return Ok(NativeAdaptiveVideoPolicyRequest::Unchanged);
+        }
+        if pending.adaptive_policy_lane.applying_revision.is_some() {
+            pending.adaptive_policy_lane.pending_keyframe_wire_rate_kbps = Some(
+                pending
+                    .adaptive_policy_lane
+                    .pending_keyframe_wire_rate_kbps
+                    .map_or(required_wire_kbps, |current| {
+                        current.max(required_wire_kbps)
+                    }),
+            );
+            return Ok(NativeAdaptiveVideoPolicyRequest::Deferred);
+        }
+        let retrying_deferred_floor = pending
+            .adaptive_policy_lane
+            .pending_keyframe_wire_rate_kbps
+            .is_some();
+        let required_wire_kbps = pending
+            .adaptive_policy_lane
+            .pending_keyframe_wire_rate_kbps
+            .map_or(required_wire_kbps, |current| {
+                current.max(required_wire_kbps)
+            });
+        pending.adaptive_policy_lane.pending_keyframe_wire_rate_kbps = Some(required_wire_kbps);
+        let before = pending.adaptive_video.clone();
+        let mut controller = before.clone();
+        controller.require_keyframe_wire_rate_kbps(required_wire_kbps);
+        if controller == before && !retrying_deferred_floor {
+            pending.adaptive_policy_lane.pending_keyframe_wire_rate_kbps = None;
+            return Ok(NativeAdaptiveVideoPolicyRequest::Unchanged);
+        }
+        let base = before.snapshot();
+        let mut decision = controller.snapshot();
+        if decision == base && !retrying_deferred_floor {
+            pending.adaptive_video = controller;
+            pending.adaptive_policy_lane.pending_keyframe_wire_rate_kbps = None;
             pending.adaptive_policy_lane.revision =
                 pending.adaptive_policy_lane.revision.wrapping_add(1);
+            return Ok(NativeAdaptiveVideoPolicyRequest::Unchanged);
         }
-        true
+        decision.changed = true;
+        let proposal = AdaptiveVideoProposal {
+            base,
+            decision,
+            platform_policy_revision: pending.plan.policy_revision,
+            lane_revision: pending.adaptive_policy_lane.revision,
+            controller,
+        };
+        pending.adaptive_policy_lane.applying_revision = Some(proposal.lane_revision);
+        Ok(NativeAdaptiveVideoPolicyRequest::Applied(proposal))
     }
 
     pub(crate) fn request_native_video_repair(
@@ -826,28 +1105,29 @@ impl ControlRouter {
             .map(|pending| pending.plan.media_capabilities)
     }
 
-    fn dispatch_native_start(
+    pub(crate) fn reserve_native_start(
         &mut self,
         request_id: u64,
         start: StartSessionAck,
         context: &NativeConnectionContext,
-    ) -> Vec<HostControlEnvelope> {
+    ) -> Result<NativeStartReservation, Vec<HostControlEnvelope>> {
         let Some(pending) = self.native.pending.as_ref() else {
-            return vec![native_error(
+            return Err(vec![native_error(
                 request_id,
                 ERROR_SESSION_STATE,
                 "native session has not been negotiated",
-            )];
+            )]);
         };
         if start.session_epoch != pending.plan.session_epoch
             || context.session_epoch != pending.plan.session_epoch
             || pending.active
+            || pending.start_reservation.is_some()
         {
-            return vec![native_error(
+            return Err(vec![native_error(
                 request_id,
                 ERROR_SESSION_STATE,
                 "native session cannot start in the current state",
-            )];
+            )]);
         }
         let hello = pending.hello.clone();
         let plan = pending.plan.clone();
@@ -856,11 +1136,11 @@ impl ControlRouter {
         if (hello.resume && current_application_id != hello.application_id)
             || (!hello.resume && current_application_id != 0)
         {
-            return vec![native_error(
+            return Err(vec![native_error(
                 request_id,
                 ERROR_SESSION_CONFLICT,
                 "application state conflicts with the native session request",
-            )];
+            )]);
         }
         let application = match self
             .authorities
@@ -869,11 +1149,11 @@ impl ControlRouter {
         {
             Ok(application) => application,
             Err(_) => {
-                return vec![native_error(
+                return Err(vec![native_error(
                     request_id,
                     ERROR_APPLICATION,
                     "application launch plan is unavailable",
-                )]
+                )])
             }
         };
         if self
@@ -882,91 +1162,195 @@ impl ControlRouter {
             .mark_next_session_started()
             .is_err()
         {
-            return vec![native_error(
+            return Err(vec![native_error(
                 request_id,
                 ERROR_APPLICATION,
                 "next-session settings could not be applied",
-            )];
+            )]);
         }
         let application_plan =
             match self.native_application_plan(&hello, &plan, application.clone()) {
                 Ok(plan) => plan,
                 Err(_) => {
-                    return vec![native_error(
+                    return Err(vec![native_error(
                         request_id,
                         ERROR_NEGOTIATION,
                         "native application plan is invalid",
-                    )]
+                    )])
                 }
             };
         let session_plan = match native_platform_session_plan(&hello, &plan, encoder_bitrate_kbps) {
             Ok(plan) => plan,
             Err(_) => {
-                return vec![native_error(
+                return Err(vec![native_error(
                     request_id,
                     ERROR_NEGOTIATION,
                     "native platform session plan is invalid",
-                )]
+                )])
             }
         };
-        let application_started = !hello.resume;
-        if application_started {
-            if let Err(error) = self.platform.start_application(application_plan) {
-                let message = format!("platform application could not be started: {error}");
-                self.publish_native_platform_error(message.clone());
-                return vec![native_error(request_id, ERROR_PLATFORM, message)];
-            }
-            if let Some(pending) = self.native.pending.as_mut() {
-                pending.application_started = true;
-            }
-        }
-        if let Some(pending) = self.native.pending.as_mut() {
-            pending.session_cleanup_pending = true;
-        }
-        if let Err(error) = self.platform.start_session(session_plan) {
-            let message = format!("platform stream session could not be started: {error}");
-            return vec![native_error(
-                request_id,
-                ERROR_PLATFORM,
-                self.rollback_native_start(message),
-            )];
-        }
-        let _ = self.platform.publish_runtime_event(PlatformRuntimeEvent {
-            disposition: PlatformRuntimeEventDisposition::Cleared,
-            severity: PlatformRuntimeEventSeverity::Error,
-            code: PlatformRuntimeEventCode::NativeSessionPlatform,
-            message: None,
+        self.native.next_start_token = self.native.next_start_token.wrapping_add(1).max(1);
+        let token = self.native.next_start_token;
+        let cancelled = Arc::new(AtomicBool::new(false));
+        self.native
+            .pending
+            .as_mut()
+            .expect("validated pending native session")
+            .start_reservation = Some(NativeStartReservationState {
+            token,
+            cancelled: Arc::clone(&cancelled),
         });
-        self.discovery
-            .set_running_application(application.id, application.uuid);
-        if let Some(pending) = self.native.pending.as_mut() {
-            pending.active = true;
-        }
-        vec![HostControlEnvelope {
+        Ok(NativeStartReservation {
             request_id,
-            payload: Some(host_control_envelope::Payload::SessionStarted(
-                SessionStarted {
-                    session_epoch: plan.session_epoch,
-                },
-            )),
-        }]
+            session_epoch: plan.session_epoch,
+            token,
+            application_id: application.id,
+            application_uuid: application.uuid.clone(),
+            application_plan,
+            session_plan,
+            starts_application: !hello.resume,
+            cancelled,
+        })
     }
 
-    fn rollback_native_start(&mut self, message: String) -> String {
-        let session_epoch = self
-            .native
-            .pending
-            .as_ref()
-            .map(|pending| pending.plan.session_epoch);
-        let message = match session_epoch
-            .map(|session_epoch| self.cleanup_native_session(session_epoch))
-            .transpose()
-        {
-            Ok(_) => message,
-            Err(error) => format!("{message}; platform session rollback failed: {error}"),
+    pub(crate) fn complete_native_start(
+        &mut self,
+        reservation: &NativeStartReservation,
+        execution: NativeStartExecution,
+    ) -> NativeStartCompletion {
+        let owns_reservation = self.native.pending.as_ref().is_some_and(|pending| {
+            pending.plan.session_epoch == reservation.session_epoch
+                && pending
+                    .start_reservation
+                    .as_ref()
+                    .is_some_and(|state| state.token == reservation.token)
+        });
+        let cancelled = reservation.cancelled.load(Ordering::Acquire);
+        if owns_reservation && execution.started && !cancelled && execution.error.is_none() {
+            let pending = self
+                .native
+                .pending
+                .as_mut()
+                .expect("validated pending native session");
+            pending.active = true;
+            pending.session_cleanup_pending = execution.session_cleanup_pending;
+            pending.application_started = execution.application_started;
+            pending.start_reservation = None;
+            self.discovery.set_running_application(
+                reservation.application_id,
+                reservation.application_uuid.clone(),
+            );
+            return NativeStartCompletion::Finalized(NativeStartFinalization {
+                responses: vec![HostControlEnvelope {
+                    request_id: reservation.request_id,
+                    payload: Some(host_control_envelope::Payload::SessionStarted(
+                        SessionStarted {
+                            session_epoch: reservation.session_epoch,
+                        },
+                    )),
+                }],
+                platform_error: None,
+                started: true,
+            });
+        }
+        let publish_platform_error = execution.error.is_some();
+        let message = execution.error.unwrap_or_else(|| {
+            if cancelled {
+                "native session start was cancelled".to_owned()
+            } else {
+                "native session start no longer owns the pending session".to_owned()
+            }
+        });
+        NativeStartCompletion::Rollback(NativeStartRollback {
+            request_id: reservation.request_id,
+            session_epoch: reservation.session_epoch,
+            token: reservation.token,
+            session_cleanup_pending: execution.session_cleanup_pending,
+            application_started: execution.application_started,
+            error_code: if publish_platform_error {
+                ERROR_PLATFORM
+            } else {
+                ERROR_SESSION_STATE
+            },
+            message,
+            publish_platform_error,
+        })
+    }
+
+    pub(crate) fn finish_native_start_rollback(
+        &mut self,
+        rollback: NativeStartRollback,
+        result: NativeStartRollbackResult,
+    ) -> NativeStartFinalization {
+        let message = match result.error {
+            Some(error) => format!(
+                "{}; platform session rollback failed: {error}",
+                rollback.message
+            ),
+            None => rollback.message,
         };
-        self.publish_native_platform_error(message.clone());
-        message
+        let owns_reservation = self.native.pending.as_ref().is_some_and(|pending| {
+            pending.plan.session_epoch == rollback.session_epoch
+                && pending
+                    .start_reservation
+                    .as_ref()
+                    .is_some_and(|state| state.token == rollback.token)
+        });
+        if owns_reservation {
+            let pending = self
+                .native
+                .pending
+                .as_mut()
+                .expect("validated pending native session");
+            pending.start_reservation = None;
+            pending.session_cleanup_pending = result.session_cleanup_pending;
+            pending.application_started = result.application_started;
+            if !pending.session_cleanup_pending && !pending.application_started {
+                self.native.pending = None;
+            }
+        }
+        NativeStartFinalization {
+            responses: vec![native_error(
+                rollback.request_id,
+                rollback.error_code,
+                &message,
+            )],
+            platform_error: rollback.publish_platform_error.then_some(message),
+            started: false,
+        }
+    }
+
+    fn dispatch_native_start(
+        &mut self,
+        request_id: u64,
+        start: StartSessionAck,
+        context: &NativeConnectionContext,
+    ) -> Vec<HostControlEnvelope> {
+        let reservation = match self.reserve_native_start(request_id, start, context) {
+            Ok(reservation) => reservation,
+            Err(responses) => return responses,
+        };
+        let platform = Arc::clone(&self.platform);
+        let execution = reservation.execute(platform.as_ref());
+        let finalization = match self.complete_native_start(&reservation, execution) {
+            NativeStartCompletion::Finalized(finalization) => finalization,
+            NativeStartCompletion::Rollback(rollback) => {
+                let result = rollback.execute(platform.as_ref());
+                self.finish_native_start_rollback(rollback, result)
+            }
+        };
+        if finalization.started {
+            let _ = platform.publish_runtime_event(PlatformRuntimeEvent {
+                disposition: PlatformRuntimeEventDisposition::Cleared,
+                severity: PlatformRuntimeEventSeverity::Error,
+                code: PlatformRuntimeEventCode::NativeSessionPlatform,
+                message: None,
+            });
+        }
+        if let Some(message) = finalization.platform_error {
+            self.publish_native_platform_error(message);
+        }
+        finalization.responses
     }
 
     pub(crate) fn terminate_native_connection(&mut self, session_epoch: u32) -> Result<(), String> {
@@ -1035,10 +1419,18 @@ impl ControlRouter {
         if pending.plan.session_epoch != session_epoch {
             return Ok(());
         }
+        if let Some(start) = pending.start_reservation.as_ref() {
+            start.cancelled.store(true, Ordering::Release);
+            return Ok(());
+        }
         let session_cleanup_pending = pending.session_cleanup_pending;
         let application_started = pending.application_started;
         if let Some(pending) = self.native.pending.as_mut() {
             pending.active = false;
+            pending.adaptive_policy_lane = AdaptiveVideoPolicyLane {
+                revision: pending.adaptive_policy_lane.revision.wrapping_add(1),
+                ..AdaptiveVideoPolicyLane::default()
+            };
         }
         let session_error = session_cleanup_pending
             .then(|| self.platform.stop_session())
@@ -1147,6 +1539,7 @@ impl ControlRouter {
             hello,
             plan: plan.clone(),
             active: false,
+            start_reservation: None,
             session_cleanup_pending: false,
             application_started: false,
             codec_configuration: None,
@@ -1515,6 +1908,7 @@ fn native_platform_session_plan(
         platform_video_format(plan).ok_or_else(|| "native video format is invalid".to_owned())?;
     Ok(PlatformSessionPlan {
         session_epoch: plan.session_epoch,
+        policy_revision: plan.policy_revision,
         width: plan.encoded_width,
         height: plan.encoded_height,
         frames_per_second: refresh_millihz_to_frames_per_second(plan.refresh_millihz)?,

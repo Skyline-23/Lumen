@@ -292,6 +292,7 @@ impl PlatformSessionControl for WindowsPlatformSessionControl {
                 .media
                 .invalidate_reference_frames(first_frame, last_frame),
             PlatformControlEvent::SetVideoDeliveryPolicy {
+                policy_revision: _,
                 bitrate_kbps,
                 admission_divisor,
             } => self.media.set_video_delivery_policy(

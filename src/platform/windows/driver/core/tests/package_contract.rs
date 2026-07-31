@@ -130,6 +130,9 @@ fn windows_service_launches_into_the_active_interactive_session_without_polling(
     assert!(service.contains("WTS_SESSION_UNLOCK"));
     assert!(service.contains("WTS_REMOTE_CONNECT"));
     assert!(service.contains("wait_for_session_or_stop"));
+    assert!(service.contains("wait_for_restart_or_control"));
+    assert!(service.contains("SESSION_AGENT_RESTART_DELAYS_MS"));
+    assert!(service.contains("SessionAgentSupervision::Exited"));
     assert!(service.contains("join(\"LumenSessionAgent.exe\")"));
     assert!(service.contains("CreateProcessAsUserW"));
     assert!(!service.contains("let application = wide(\"Lumen.exe\")"));
@@ -194,6 +197,11 @@ fn windows_msi_is_the_only_supported_service_installer() {
         .to_path_buf();
     let package = fs::read_to_string(repo_root.join("packaging/windows/Package.wxs"))
         .expect("Windows package definition must exist");
+    let wix_project = fs::read_to_string(repo_root.join("packaging/windows/Lumen.wixproj"))
+        .expect("Windows WiX project must exist");
+    let installation_test =
+        fs::read_to_string(repo_root.join("scripts/ci/test_windows_installation.ps1"))
+            .expect("Windows installation test must exist");
     let windows_cmake = fs::read_to_string(repo_root.join("cmake/packaging/windows.cmake"))
         .expect("Windows packaging configuration must exist");
     let common_cmake = fs::read_to_string(repo_root.join("cmake/packaging/common.cmake"))
@@ -201,6 +209,12 @@ fn windows_msi_is_the_only_supported_service_installer() {
     let sddl = "O:SYG:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)";
 
     assert!(package.contains(sddl));
+    assert!(package.contains("<util:ServiceConfig"));
+    assert!(package.contains("FirstFailureActionType=\"restart\""));
+    assert!(package.contains("ThirdFailureActionType=\"restart\""));
+    assert!(wix_project.contains("WixToolset.Util.wixext"));
+    assert!(installation_test.contains("Stop-Process -Id $initialSessionAgentProcessID -Force"));
+    assert!(installation_test.contains("$sessionAgentRecovered"));
     assert!(!windows_cmake.contains("windows_nsis"));
     assert!(common_cmake.contains("if(NOT WIN32)"));
     assert!(!repo_root
@@ -655,9 +669,20 @@ fn windows_winui_matches_the_native_lumen_visual_contract() {
     let asset_icons =
         fs::read_to_string(repo_root.join("src/platform/windows/Lumen.App/LumenAssetIcon.cs"))
             .expect("WinUI shared asset icon adapter must exist");
+    let navigation = fs::read_to_string(
+        repo_root.join("src/platform/windows/Lumen.App/LumenNavigationComponents.cs"),
+    )
+    .expect("WinUI navigation components must exist");
+    let settings = fs::read_to_string(
+        repo_root.join("src/platform/windows/Lumen.App/LumenSettingsComponents.cs"),
+    )
+    .expect("WinUI settings components must exist");
     let project =
         fs::read_to_string(repo_root.join("src/platform/windows/Lumen.App/Lumen.App.csproj"))
             .expect("WinUI project must exist");
+    let application =
+        fs::read_to_string(repo_root.join("src/platform/windows/Lumen.App/App.xaml.cs"))
+            .expect("WinUI application source must exist");
     let window =
         fs::read_to_string(repo_root.join("src/platform/windows/Lumen.App/MainWindow.xaml.cs"))
             .expect("WinUI window source must exist");
@@ -672,13 +697,17 @@ fn windows_winui_matches_the_native_lumen_visual_contract() {
     // falling back to the default light NavigationView/control appearance.
     for required_token in [
         "RequestedTheme=\"Dark\"",
-        "LumenWindowGradientBrush",
         "LumenAuthenticationHeroBrush",
         "LumenAmberGlowBrush",
         "LumenCoralGlowBrush",
         "LumenMintGlowBrush",
         "LumenCardBrush",
         "LumenCardBorderBrush",
+        "LumenRowBrush",
+        "LumenRowBorderBrush",
+        "NavigationViewExpandedPaneBackground",
+        "NavigationViewDefaultPaneBackground",
+        "NavigationViewContentBackground",
         "LumenPrimaryButtonStyle",
         "LumenTextBoxStyle",
         "LumenPasswordBoxStyle",
@@ -697,15 +726,41 @@ fn windows_winui_matches_the_native_lumen_visual_contract() {
     assert!(theme.contains("internal static Border Card"));
     assert!(theme.contains("internal static Button PrimaryButton"));
     assert!(theme.contains("NavigationIconSlotWidth = 22"));
+    assert!(theme.contains("NavigationPaneWidth = 210"));
+    assert!(theme.contains("ContentMaxWidth = 820"));
+    assert!(theme.contains("PagePadding = new(30, 24, 30, 36)"));
+    assert!(theme.contains("internal static StackPanel PageHeader"));
     assert!(asset_icons.contains("internal static class LumenAssetIconView"));
-    assert!(asset_icons.contains("private static SvgImageSource Svg"));
-    assert!(asset_icons.contains("ms-appx:///Assets/icons/ui/"));
+    assert!(asset_icons.contains("internal static BitmapIcon Navigation"));
+    assert!(asset_icons.contains("ms-appx:///Assets/icons/template/"));
     assert!(asset_icons.contains("ms-appx:///Assets/brand/icon.svg"));
     assert!(project.contains("Link=\"Assets\\brand\\icon.svg\""));
-    assert!(project.contains("Link=\"Assets\\icons\\ui\\%(Filename)%(Extension)\""));
+    assert!(project.contains("Assets\\icons\\template\\*.png"));
+    assert!(navigation.contains("internal static class LumenNavigationComponents"));
+    assert!(navigation.contains("MinHeight = 42"));
+    assert!(settings.contains("internal static class LumenSettingsComponents"));
+    assert!(settings.contains("internal static FrameworkElement ToggleRow"));
+    assert!(settings.contains("AutomationProperties.SetName(toggle, title)"));
+    assert!(settings.contains("var persistedValue = initialValue"));
+    assert!(settings.contains("persistedValue = toggle.IsOn"));
+    assert!(settings.contains("toggle.IsEnabled = false"));
+    assert!(settings.contains("var accepted = await update(toggle.IsOn)"));
+    assert!(settings.contains("CornerRadius = new CornerRadius(LumenTheme.RowCornerRadius)"));
+    let pre_window_guard = application
+        .find("if (_window is null)")
+        .expect("startup exceptions must keep their native failure status");
+    let handled = application
+        .find("eventArgs.Handled = true")
+        .expect("post-window exceptions must be presented in the app");
+    assert!(pre_window_guard < handled);
     assert!(window.contains("BuildAuthenticationSurface()"));
     assert!(window.contains("ShowAuthenticationSurface(true)"));
     assert!(window.contains("AuthenticationGlowCanvas()"));
+    assert!(window.contains("_navigation.PaneHeader = header"));
+    assert!(window.contains("_navigation.PaneFooter = signedInFooter"));
+    assert!(window.contains("T(\"Account.SignedInAs\")"));
+    assert!(window.contains("UpdateNavigationIconColors"));
+    assert!(window.contains("_navigation.SelectedItem = overview"));
     assert!(window.contains("LumenAssetIcon.LocalCredentials"));
     assert!(window.contains("LumenAssetIcon.CreateOwner"));
     assert!(window.contains("SizeDefaultViewportForCurrentDisplay()"));
@@ -717,6 +772,7 @@ fn windows_winui_matches_the_native_lumen_visual_contract() {
     assert!(!window.contains("Colors.Gray"));
     assert!(!window.contains("FontIcon"));
     assert!(!window.contains("SymbolIcon"));
+    assert!(!asset_icons.contains("ImageIcon"));
 
     for asset in [
         "icon.svg",
@@ -736,6 +792,31 @@ fn windows_winui_matches_the_native_lumen_visual_contract() {
         );
     }
 
+    for asset in [
+        "overview.png",
+        "applications.png",
+        "application.png",
+        "settings.png",
+        "diagnostics.png",
+        "local-credentials.png",
+        "host-controls.png",
+        "remote-access.png",
+        "create-owner.png",
+        "unlock.png",
+        "current-stream.png",
+        "workspace.png",
+        "restart.png",
+        "complete.png",
+    ] {
+        assert!(
+            repo_root
+                .join("src/platform/windows/Lumen.App/Assets/icons/template")
+                .join(asset)
+                .is_file(),
+            "missing tintable WinUI icon {asset}"
+        );
+    }
+
     for locale in locales {
         for localized_key in [
             "Authentication.HeroTitle",
@@ -744,6 +825,7 @@ fn windows_winui_matches_the_native_lumen_visual_contract() {
             "Authentication.FeatureControls",
             "Authentication.FeatureRemote",
             "Authentication.CredentialsNotice",
+            "Account.SignedInAs",
         ] {
             assert!(
                 locale.contains(&format!("name=\"{localized_key}\"")),

@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lumen.skyline23.com/schemas/contract-v1.json",
+  "title": "Lumen public contract v4",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "schemaVersion",
+    "identity",
+    "protobuf",
+    "nativeTransport",
+    "https",
+    "lifecycle",
+    "rendering"
+  ],
+  "properties": {
+    "$schema": { "const": "https://lumen.skyline23.com/schemas/contract-v1.json" },
+    "schemaVersion": { "const": 1 },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "package", "alpn"],
+      "properties": {
+        "name": { "const": "lumen-stream" },
+        "version": { "const": 4 },
+        "package": { "const": "lumen.streaming.v4" },
+        "alpn": { "const": "lumen-stream/4" }
+      }
+    },
+    "protobuf": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["syntax", "package", "source"],
+      "properties": {
+        "syntax": { "const": "proto3" },
+        "package": { "const": "lumen.streaming.v4" },
+        "source": { "type": "string", "minLength": 1 }
+      }
+    },
+    "nativeTransport": { "type": "object" },
+    "https": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["authentication", "settings"],
+      "properties": {
+        "authentication": { "type": "object" },
+        "settings": { "type": "object" }
+      }
+    },
+    "lifecycle": { "type": "object" },
+    "rendering": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["settingsConformance"],
+      "properties": {
+        "settingsConformance": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

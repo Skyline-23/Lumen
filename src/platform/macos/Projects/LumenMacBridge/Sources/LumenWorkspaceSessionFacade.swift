@@ -35,6 +35,7 @@ public final class LumenMacWorkspaceSessionRequestBox: NSObject {
     public var height: UInt32 = 1080
     public var scalePercent: UInt32 = 100
     public var dimensionsAreLogical = false
+    public var highDensity = false
     public var refreshRate = 120.0
     public var hdrEnabled = false
     public var clientSinkGamutRawValue = 0
@@ -53,6 +54,7 @@ public final class LumenMacWorkspaceSessionRequestBox: NSObject {
             height: height,
             scalePercent: scalePercent,
             dimensionsAreLogical: dimensionsAreLogical,
+            highDensity: highDensity,
             refreshRate: refreshRate,
             hdrEnabled: hdrEnabled,
             clientSinkGamutRawValue: clientSinkGamutRawValue,
@@ -67,8 +69,8 @@ public final class LumenMacWorkspaceSessionRequestBox: NSObject {
 
     @nonobjc public func makeRequest(
         policy: LumenMacWorkspacePolicy
-    ) -> LumenMacWorkspaceSessionRequest {
-        snapshot().swiftValue(policy: policy)
+    ) throws -> LumenMacWorkspaceSessionRequest {
+        try snapshot().swiftValue(policy: policy)
     }
 }
 
@@ -79,6 +81,7 @@ struct LumenMacWorkspaceSessionRequestSnapshot: Sendable {
     let height: UInt32
     let scalePercent: UInt32
     let dimensionsAreLogical: Bool
+    let highDensity: Bool
     let refreshRate: Double
     let hdrEnabled: Bool
     let clientSinkGamutRawValue: Int
@@ -91,7 +94,12 @@ struct LumenMacWorkspaceSessionRequestSnapshot: Sendable {
 
     func swiftValue(
         policy: LumenMacWorkspacePolicy
-    ) -> LumenMacWorkspaceSessionRequest {
+    ) throws -> LumenMacWorkspaceSessionRequest {
+        guard (1...800).contains(scalePercent) else {
+            throw LumenMacWorkspaceSessionFacadeError.invalidDisplayScale(
+                scalePercent
+            )
+        }
         let gamut = LumenBridgeObjCFacade.clientSinkGamut(
             fromRawValue: clientSinkGamutRawValue
         )
@@ -103,7 +111,7 @@ struct LumenMacWorkspaceSessionRequestSnapshot: Sendable {
             : LumenMacDynamicRangeTransportSDR
         let sinkRequest = LumenBridgeSinkRequest(
             mode: LumenBridgeSinkMode(
-                hidpi: scalePercent != 100,
+                hidpi: highDensity,
                 scaleExplicit: scalePercent != 100,
                 modeIsLogical: dimensionsAreLogical,
                 scalePercent: Int(scalePercent)
@@ -122,8 +130,9 @@ struct LumenMacWorkspaceSessionRequestSnapshot: Sendable {
             ? LumenMacDisplayModeRequest(
                 width: width,
                 height: height,
-                scalePercent: 100,
-                dimensionsAreLogical: false
+                scalePercent: scalePercent,
+                dimensionsAreLogical: dimensionsAreLogical,
+                highDensity: highDensity
             )
             : LumenMacDesktopMirrorDisplayModeResolver.resolve(
                 captureWidth: width,
@@ -159,20 +168,20 @@ private enum LumenMacDesktopMirrorDisplayModeResolver {
     private static let minimumLogicalWidth: UInt64 = 800
     private static let minimumHiDPILogicalHeight: UInt64 = 540
     private static let minimumOneXLogicalHeight: UInt64 = 576
-    private static let maximumEvenDimension = UInt64(UInt32.max - 1)
+    private static let maximumDimension = UInt64(UInt32.max)
 
     static func resolve(
         captureWidth: UInt32,
         captureHeight: UInt32,
         sinkMode: LumenBridgeSinkMode
     ) -> LumenMacDisplayModeRequest {
-        let scalePercent = UInt64(max(sinkMode.scalePercent, 100))
+        let scalePercent = UInt64(sinkMode.scalePercent)
         let requestedLogicalWidth = sinkMode.modeIsLogical
             ? UInt64(captureWidth)
-            : UInt64(captureWidth) * 100 / scalePercent
+            : dividingRounded(UInt64(captureWidth) * 100, by: scalePercent)
         let requestedLogicalHeight = sinkMode.modeIsLogical
             ? UInt64(captureHeight)
-            : UInt64(captureHeight) * 100 / scalePercent
+            : dividingRounded(UInt64(captureHeight) * 100, by: scalePercent)
         let minimumHeight = sinkMode.hidpi
             ? minimumHiDPILogicalHeight
             : minimumOneXLogicalHeight
@@ -182,12 +191,12 @@ private enum LumenMacDesktopMirrorDisplayModeResolver {
             minimumWidth: minimumLogicalWidth,
             minimumHeight: minimumHeight
         )
-        let backingScale: UInt64 = sinkMode.hidpi ? 2 : 1
         return LumenMacDisplayModeRequest(
-            width: boundedEven(logicalSize.width * backingScale),
-            height: boundedEven(logicalSize.height * backingScale),
-            scalePercent: UInt32(backingScale * 100),
-            dimensionsAreLogical: false
+            width: bounded(logicalSize.width),
+            height: bounded(logicalSize.height),
+            scalePercent: UInt32(scalePercent),
+            dimensionsAreLogical: true,
+            highDensity: sinkMode.hidpi
         )
     }
 
@@ -198,30 +207,33 @@ private enum LumenMacDesktopMirrorDisplayModeResolver {
         minimumHeight: UInt64
     ) -> (width: UInt64, height: UInt64) {
         guard width < minimumWidth || height < minimumHeight else {
-            return (even(width), even(height))
+            return (width, height)
         }
         if minimumWidth * height >= minimumHeight * width {
             return (
-                even(minimumWidth),
-                even(dividingRoundUp(height * minimumWidth, by: width))
+                minimumWidth,
+                dividingRoundUp(height * minimumWidth, by: width)
             )
         }
         return (
-            even(dividingRoundUp(width * minimumHeight, by: height)),
-            even(minimumHeight)
+            dividingRoundUp(width * minimumHeight, by: height),
+            minimumHeight
         )
+    }
+
+    private static func dividingRounded(
+        _ numerator: UInt64,
+        by denominator: UInt64
+    ) -> UInt64 {
+        (numerator + denominator / 2) / denominator
     }
 
     private static func dividingRoundUp(_ numerator: UInt64, by denominator: UInt64) -> UInt64 {
         numerator / denominator + (numerator % denominator == 0 ? 0 : 1)
     }
 
-    private static func even(_ value: UInt64) -> UInt64 {
-        min((value + 1) & ~1, maximumEvenDimension)
-    }
-
-    private static func boundedEven(_ value: UInt64) -> UInt32 {
-        UInt32(even(value))
+    private static func bounded(_ value: UInt64) -> UInt32 {
+        UInt32(min(value, maximumDimension))
     }
 }
 
@@ -466,7 +478,9 @@ actor LumenMacWorkspaceSessionRegistry {
                 try await lease.validate(token)
             }
             try await fence()
-            let request = snapshot.swiftValue(policy: try await resolvePolicy())
+            let request = try snapshot.swiftValue(
+                policy: try await resolvePolicy()
+            )
             try await fence()
             _ = try await recoverDurableWorkspace()
             try await fence()
@@ -563,7 +577,7 @@ actor LumenMacWorkspaceSessionRegistry {
             activeSessionCount: sessions.count
         )
         defer { endLifecycleOperation(.reconfigure) }
-        let request = snapshot.swiftValue(policy: try await resolvePolicy())
+        let request = try snapshot.swiftValue(policy: try await resolvePolicy())
         try await session.reconfigure(request)
         return try await session.displayID()
     }
@@ -849,7 +863,8 @@ private enum LumenMacWorkspaceDurableRecovery {
                 width: 1920,
                 height: 1080,
                 scalePercent: 100,
-                dimensionsAreLogical: false
+                dimensionsAreLogical: false,
+                highDensity: false
             ),
             operations: operations,
             displayWorkspace: makeDisplayWorkspace()
@@ -872,6 +887,7 @@ private enum LumenMacWorkspaceDurableRecovery {
 
 public enum LumenMacWorkspaceSessionFacadeError: Error, Equatable {
     case emptyDisplayKey
+    case invalidDisplayScale(UInt32)
 }
 
 @objcMembers

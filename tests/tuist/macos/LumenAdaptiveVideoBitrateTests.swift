@@ -130,6 +130,51 @@ final class LumenAdaptiveVideoBitrateTests: XCTestCase {
         await session.stop()
     }
 
+    func testRuntimeRejectsPolicyFromReplacedCaptureIdentity() async throws {
+        let runtime = RecordingAdaptiveBitrateRuntime()
+        let bridge = LumenBridgeRuntime(
+            systemAudioPlaybackSuppression: LumenSystemAudioPlaybackSuppression(
+                hal: LumenCoreAudioSystemAudioPlaybackSuppressionHAL()
+            ),
+            encodedCaptureRuntimeFactory: RecordingAdaptiveBitrateRuntimeFactory(
+                runtime: runtime
+            )
+        )
+        let original = LumenMacCaptureConfiguration(
+            displayID: 118,
+            sessionEpoch: 7,
+            policyRevision: 1
+        )
+        try await bridge.startCapture(configuration: original)
+        let replacement = LumenMacCaptureConfiguration(
+            displayID: 118,
+            sessionEpoch: 7,
+            policyRevision: 2
+        )
+        try await bridge.startCapture(configuration: replacement)
+
+        let stalePolicyApplied = await bridge.setVideoDeliveryPolicy(
+            sessionEpoch: 7,
+            policyRevision: 1,
+            bitrateKbps: 18_491,
+            admissionDivisor: 2
+        )
+        let currentPolicyApplied = await bridge.setVideoDeliveryPolicy(
+            sessionEpoch: 7,
+            policyRevision: 2,
+            bitrateKbps: 18_491,
+            admissionDivisor: 2
+        )
+        XCTAssertFalse(stalePolicyApplied)
+        XCTAssertTrue(currentPolicyApplied)
+        XCTAssertEqual(
+            runtime.deliveryPolicies,
+            [.init(bitrate: 18_491, divisor: 2)]
+        )
+
+        await bridge.stopCapture()
+    }
+
     func testStoppingQueuedBeforePolicyRejectsWithoutPartialBitrateMutation() {
         let queue = DispatchQueue(label: "dev.skyline23.lumen.tests.adaptive-policy")
         let blocker = DispatchSemaphore(value: 0)

@@ -83,6 +83,8 @@ struct MacEffectiveDisplayState {
 #[derive(Clone, Copy, Default)]
 struct MacCaptureConfiguration {
     display_id: u32,
+    session_epoch: u32,
+    policy_revision: u32,
     codec: i32,
     video_profile: i32,
     chroma_subsampling: i32,
@@ -120,6 +122,7 @@ struct MacWorkspaceSessionRequest {
     height: u32,
     scale_percent: u32,
     dimensions_are_logical: bool,
+    high_density: bool,
     refresh_rate: f64,
     hdr_enabled: bool,
     sink_gamut: i32,
@@ -211,7 +214,7 @@ type PopAudioEvent =
     unsafe extern "C" fn(*mut BridgeController, *mut c_char, usize) -> MacAudioCaptureEventRecord;
 type RequestKeyFrame = unsafe extern "C" fn();
 type ResumeVideoEncodingAfterCodecAck = unsafe extern "C" fn() -> bool;
-type SetVideoDeliveryPolicy = unsafe extern "C" fn(u32, u8) -> bool;
+type SetVideoDeliveryPolicy = unsafe extern "C" fn(u32, u32, u32, u8) -> bool;
 type PrepareWorkspace = unsafe extern "C" fn(MacWorkspaceSessionRequest, *mut c_char, usize) -> u32;
 type ReconfigureWorkspace =
     unsafe extern "C" fn(MacWorkspaceSessionRequest, *mut c_char, usize) -> u32;
@@ -470,8 +473,10 @@ impl MacPlatformSessionControl {
             display_name: display_name.as_ptr(),
             width: plan.width,
             height: plan.height,
-            scale_percent: u32::try_from(plan.sink_scale_percent.max(1)).unwrap_or(100),
+            scale_percent: u32::try_from(plan.sink_scale_percent)
+                .map_err(|_| "macOS workspace display scale is invalid".to_owned())?,
             dimensions_are_logical: plan.sink_mode_is_logical,
+            high_density: plan.sink_hidpi,
             refresh_rate: f64::from(plan.frames_per_second),
             hdr_enabled: matches!(
                 plan.video_format.dynamic_range,
@@ -515,6 +520,8 @@ impl MacPlatformSessionControl {
             (self.api.configure_audio_forwarding)(state.controller, 8, 16);
         }
         let mut video = unsafe { (self.api.make_video_configuration)(display_id) };
+        video.session_epoch = plan.session_epoch;
+        video.policy_revision = plan.policy_revision;
         video.codec = match plan.video_format.codec {
             crate::PlatformVideoCodec::H264 => 0,
             crate::PlatformVideoCodec::Hevc => 1,
@@ -649,8 +656,10 @@ impl PlatformSessionControl for MacPlatformSessionControl {
                     display_name: display_name.as_ptr(),
                     width: plan.width,
                     height: plan.height,
-                    scale_percent: u32::try_from(plan.sink_scale_percent.max(1)).unwrap_or(100),
+                    scale_percent: u32::try_from(plan.sink_scale_percent)
+                        .map_err(|_| "macOS workspace display scale is invalid".to_owned())?,
                     dimensions_are_logical: plan.sink_mode_is_logical,
+                    high_density: plan.sink_hidpi,
                     refresh_rate: f64::from(plan.frames_per_second),
                     hdr_enabled: matches!(
                         plan.video_format.dynamic_range,
@@ -691,6 +700,7 @@ impl PlatformSessionControl for MacPlatformSessionControl {
                     scale_percent: u32::try_from(plan.sink_scale_percent)
                         .map_err(|_| "macOS native input display scale is invalid".to_owned())?,
                     dimensions_are_logical: plan.sink_mode_is_logical,
+                    high_density: plan.sink_hidpi,
                 })
                 .map_err(|status| {
                     format!("macOS native input display geometry is invalid: {status:?}")
@@ -724,6 +734,8 @@ impl PlatformSessionControl for MacPlatformSessionControl {
                 (self.api.configure_audio_forwarding)(state.controller, 8, 16);
             }
             let mut video = unsafe { (self.api.make_video_configuration)(display_id) };
+            video.session_epoch = plan.session_epoch;
+            video.policy_revision = plan.policy_revision;
             video.codec = match plan.video_format.codec {
                 crate::PlatformVideoCodec::H264 => 0,
                 crate::PlatformVideoCodec::Hevc => 1,
@@ -898,6 +910,7 @@ impl PlatformSessionControl for MacPlatformSessionControl {
                     scale_percent: u32::try_from(plan.sink_scale_percent)
                         .map_err(|_| "macOS native input display scale is invalid".to_owned())?,
                     dimensions_are_logical: plan.sink_mode_is_logical,
+                    high_density: plan.sink_hidpi,
                 })
                 .map(|geometry| MacInputDisplayBounds {
                     width: f64::from(geometry.logical_width),
@@ -1036,7 +1049,11 @@ impl PlatformSessionControl for MacPlatformSessionControl {
         }))
     }
 
-    fn handle_control_event(&self, _: u32, event: PlatformControlEvent) -> Result<(), String> {
+    fn handle_control_event(
+        &self,
+        session_epoch: u32,
+        event: PlatformControlEvent,
+    ) -> Result<(), String> {
         match event {
             PlatformControlEvent::RequestIdrFrame
             | PlatformControlEvent::InvalidateReferenceFrames { .. } => {
@@ -1052,11 +1069,17 @@ impl PlatformSessionControl for MacPlatformSessionControl {
                     })
             }
             PlatformControlEvent::SetVideoDeliveryPolicy {
+                policy_revision,
                 bitrate_kbps,
                 admission_divisor,
             } => {
                 unsafe {
-                    (self.api.set_video_delivery_policy)(bitrate_kbps, admission_divisor)
+                    (self.api.set_video_delivery_policy)(
+                        session_epoch,
+                        policy_revision,
+                        bitrate_kbps,
+                        admission_divisor,
+                    )
                 }
                     .then_some(())
                     .ok_or_else(|| {
@@ -1247,7 +1270,7 @@ fn copy_annex_b_sample(
     sample: SampleBuffer,
     codec: i32,
     key_frame: bool,
-) -> Result<(Vec<u8>, u32), String> {
+) -> Result<(Vec<u8>, u64), String> {
     let format = unsafe { CMSampleBufferGetFormatDescription(sample) };
     let block = unsafe { CMSampleBufferGetDataBuffer(sample) };
     if format.is_null() || block.is_null() {
@@ -1322,7 +1345,7 @@ fn copy_annex_b_sample(
     }
     let time = unsafe { CMSampleBufferGetPresentationTimeStamp(sample) };
     let timestamp = if time.timescale > 0 {
-        ((i128::from(time.value) * 90_000) / i128::from(time.timescale)) as u32
+        ((i128::from(time.value) * 90_000) / i128::from(time.timescale)) as u64
     } else {
         0
     };

@@ -12,6 +12,7 @@ public sealed class MainWindow : Window
     private NavigationView _navigation = null!;
     private Border _connectionBadge = null!;
     private TextBlock _connectionBadgeText = null!;
+    private TextBlock _signedInOwnerText = null!;
     private StackPanel _contentPanel = null!;
     private StackPanel _authenticationContentPanel = null!;
     private Grid _authenticationSurface = null!;
@@ -20,6 +21,7 @@ public sealed class MainWindow : Window
     private string _page = "overview";
     private bool _updating;
     private bool _defaultViewportSized;
+    private readonly Dictionary<NavigationViewItem, BitmapIcon> _navigationIcons = [];
 
     public MainWindow()
     {
@@ -76,11 +78,13 @@ public sealed class MainWindow : Window
         {
             PaneDisplayMode = NavigationViewPaneDisplayMode.Left,
             CompactPaneLength = 52,
-            OpenPaneLength = 228,
+            OpenPaneLength = LumenTheme.NavigationPaneWidth,
             IsBackButtonVisible = NavigationViewBackButtonVisible.Collapsed,
             IsSettingsVisible = false,
             IsPaneToggleButtonVisible = true,
-            Background = new SolidColorBrush(Colors.Transparent),
+            IsPaneOpen = true,
+            AlwaysShowHeader = false,
+            Background = LumenTheme.ManagementSurfaceBrush(),
             Foreground = LumenTheme.PrimaryTextBrush()
         };
         _navigation.SelectionChanged += Navigation_SelectionChanged;
@@ -95,7 +99,7 @@ public sealed class MainWindow : Window
         {
             CornerRadius = new CornerRadius(10),
             Padding = new Thickness(8, 3, 8, 3),
-            Margin = new Thickness(8, 0, 0, 0),
+            Margin = new Thickness(0, 0, 0, 8),
             Background = LumenTheme.CardBrush(),
             BorderBrush = LumenTheme.CardBorderBrush(),
             BorderThickness = new Thickness(1),
@@ -111,20 +115,38 @@ public sealed class MainWindow : Window
             Foreground = LumenTheme.PrimaryTextBrush(),
             VerticalAlignment = VerticalAlignment.Center
         });
-        header.Children.Add(_connectionBadge);
-        _navigation.Header = header;
+        _navigation.PaneHeader = header;
+
+        var signedInFooter = new StackPanel
+        {
+            Spacing = 3,
+            Padding = new Thickness(12, 10, 12, 12)
+        };
+        signedInFooter.Children.Add(_connectionBadge);
+        signedInFooter.Children.Add(new TextBlock
+        {
+            Text = T("Account.SignedInAs"),
+            FontSize = 11,
+            Foreground = LumenTheme.Brush("LumenTertiaryTextBrush", 0x6EFFFFFF)
+        });
+        _signedInOwnerText = new TextBlock
+        {
+            FontSize = 12,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Foreground = LumenTheme.PrimaryTextBrush(),
+            TextTrimming = TextTrimming.CharacterEllipsis
+        };
+        signedInFooter.Children.Add(_signedInOwnerText);
+        _navigation.PaneFooter = signedInFooter;
 
         _contentPanel = new StackPanel
         {
-            Padding = new Thickness(34, 30, 34, 52),
+            Padding = LumenTheme.PagePadding,
             Spacing = 18,
             MaxWidth = LumenTheme.ContentMaxWidth,
             HorizontalAlignment = HorizontalAlignment.Stretch
         };
-        var managementContent = new Grid
-        {
-            Background = new SolidColorBrush(ColorHelper.FromArgb(92, 6, 17, 25))
-        };
+        var managementContent = new Grid { Background = LumenTheme.ManagementSurfaceBrush() };
         managementContent.Children.Add(new ScrollViewer
         {
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
@@ -160,7 +182,7 @@ public sealed class MainWindow : Window
 
         var root = new Grid
         {
-            Background = LumenTheme.Brush("LumenWindowGradientBrush", 0xFF07141D)
+            Background = LumenTheme.ManagementSurfaceBrush()
         };
         root.Children.Add(_navigation);
         root.Children.Add(_authenticationSurface);
@@ -314,13 +336,10 @@ public sealed class MainWindow : Window
 
     private void ConfigureNavigationItems()
     {
-        _navigation.MenuItems.Add(NavigationItem(T("Navigation.Overview"), "overview", LumenAssetIcon.Overview));
+        var overview = NavigationItem(T("Navigation.Overview"), "overview", LumenAssetIcon.Overview);
+        _navigation.MenuItems.Add(overview);
         _navigation.MenuItems.Add(NavigationItem(T("Navigation.Applications"), "applications", LumenAssetIcon.Applications));
-        _navigation.MenuItems.Add(new NavigationViewItemHeader
-        {
-            Content = T("Navigation.Settings"),
-            Foreground = LumenTheme.Brush("LumenTertiaryTextBrush", 0x6EFFFFFF)
-        });
+        _navigation.MenuItems.Add(LumenNavigationComponents.Header(T("Navigation.Settings")));
         _navigation.MenuItems.Add(NavigationItem(T("Navigation.Security"), "security", LumenAssetIcon.Unlock));
         _navigation.MenuItems.Add(NavigationItem(T("Navigation.General"), "general", LumenAssetIcon.Settings));
         _navigation.MenuItems.Add(NavigationItem(T("Navigation.Streaming"), "streaming", LumenAssetIcon.CurrentStream));
@@ -331,24 +350,15 @@ public sealed class MainWindow : Window
         _navigation.FooterMenuItems.Add(
             NavigationItem(T("Navigation.Diagnostics"), "diagnostics", LumenAssetIcon.Diagnostics));
         _navigation.FooterMenuItems.Add(NavigationItem(T("Navigation.About"), "about", LumenAssetIcon.Application));
+        _navigation.SelectedItem = overview;
+        UpdateNavigationIconColors(overview);
     }
 
-    private static NavigationViewItem NavigationItem(string label, string tag, LumenAssetIcon asset)
+    private NavigationViewItem NavigationItem(string label, string tag, LumenAssetIcon asset)
     {
-        var iconSlot = LumenAssetIconView.Create(
-            asset,
-            17,
-            LumenTheme.SecondaryTextBrush());
-        iconSlot.Width = LumenTheme.NavigationIconSlotWidth;
-        return new NavigationViewItem
-        {
-            Content = label,
-            Tag = tag,
-            Icon = iconSlot,
-            Foreground = LumenTheme.PrimaryTextBrush(),
-            CornerRadius = new CornerRadius(10),
-            Margin = new Thickness(6, 2, 6, 2)
-        };
+        var entry = LumenNavigationComponents.Item(label, tag, asset);
+        _navigationIcons.Add(entry.Item, entry.Icon);
+        return entry.Item;
     }
 
     public void ShowFatalError(string message)
@@ -394,7 +404,18 @@ public sealed class MainWindow : Window
         if (args.SelectedItemContainer?.Tag is string tag)
         {
             _page = tag;
+            UpdateNavigationIconColors(args.SelectedItemContainer);
             Render();
+        }
+    }
+
+    private void UpdateNavigationIconColors(NavigationViewItem? selectedItem)
+    {
+        foreach (var (item, icon) in _navigationIcons)
+        {
+            icon.Foreground = ReferenceEquals(item, selectedItem)
+                ? LumenTheme.AccentBrush()
+                : LumenTheme.SecondaryTextBrush();
         }
     }
 
@@ -412,6 +433,7 @@ public sealed class MainWindow : Window
             RenderAuthentication(_snapshot);
             return;
         }
+        _signedInOwnerText.Text = _snapshot.OwnerName ?? T("Common.Unavailable");
         ShowAuthenticationSurface(false);
         switch (_page)
         {
@@ -565,14 +587,28 @@ public sealed class MainWindow : Window
             Foreground = LumenTheme.PrimaryTextBrush()
         });
         identity.Children.Add(Muted(F("Overview.ControlEndpoint", snapshot.ControlPort)));
-        identity.Children.Add(StatusLine(T("Overview.HostRuntime"), T("Status.Online"), true));
-        identity.Children.Add(StatusLine(T("Navigation.Applications"), snapshot.Applications.Count.ToString(), true));
+        identity.Children.Add(LumenSettingsComponents.StatusRow(
+            T("Overview.HostRuntime"),
+            T("Status.Online"),
+            true));
+        identity.Children.Add(LumenSettingsComponents.StatusRow(
+            T("Navigation.Applications"),
+            snapshot.Applications.Count.ToString(),
+            true));
         _contentPanel.Children.Add(Card(identity));
 
-        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
-        actions.Children.Add(ActionButton(T("Overview.ReloadApplications"), "reloadApplications"));
-        actions.Children.Add(ActionButton(T("Overview.ForceStopStream"), "forceStopStream"));
-        actions.Children.Add(ActionButton(T("Overview.RestartHost"), "restartHost"));
+        var actions = new Grid { ColumnSpacing = 10 };
+        actions.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        actions.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        actions.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var reload = ActionButton(T("Overview.ReloadApplications"), "reloadApplications");
+        var endSession = ActionButton(T("Overview.ForceStopStream"), "forceStopStream");
+        var restart = ActionButton(T("Overview.RestartHost"), "restartHost");
+        Grid.SetColumn(endSession, 1);
+        Grid.SetColumn(restart, 2);
+        actions.Children.Add(reload);
+        actions.Children.Add(endSession);
+        actions.Children.Add(restart);
         _contentPanel.Children.Add(Card(actions));
     }
 
@@ -584,18 +620,24 @@ public sealed class MainWindow : Window
             _contentPanel.Children.Add(Card(Muted(T("Applications.NoneConfigured"))));
             return;
         }
-        var list = new StackPanel { Spacing = 0 };
+        var list = new StackPanel { Spacing = LumenTheme.SectionContentSpacing };
         foreach (var app in snapshot.Applications)
         {
-            var row = new Grid { Padding = new Thickness(4, 14, 4, 14), ColumnSpacing = 12 };
+            var row = new Grid
+            {
+                MinHeight = 52,
+                Padding = new Thickness(
+                    LumenTheme.RowHorizontalPadding,
+                    LumenTheme.RowVerticalPadding,
+                    LumenTheme.RowHorizontalPadding,
+                    LumenTheme.RowVerticalPadding),
+                ColumnSpacing = 12
+            };
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            var icon = LumenAssetIconView.Create(
+            var icon = LumenAssetIconView.Navigation(
                 LumenAssetIcon.Application,
-                18,
                 LumenTheme.AccentBrush());
-            icon.Width = LumenTheme.NavigationIconSlotWidth;
             Grid.SetColumn(icon, 0);
             var labels = new StackPanel { Spacing = 2 };
             labels.Children.Add(new TextBlock
@@ -608,8 +650,7 @@ public sealed class MainWindow : Window
             Grid.SetColumn(labels, 1);
             row.Children.Add(icon);
             row.Children.Add(labels);
-            list.Children.Add(row);
-            list.Children.Add(Divider());
+            list.Children.Add(LumenSettingsComponents.ContentRow(row));
         }
         _contentPanel.Children.Add(Card(list));
     }
@@ -618,9 +659,12 @@ public sealed class MainWindow : Window
     {
         AddPageHeader(T("Navigation.Security"), T("Security.Description"));
         var panel = new StackPanel { Spacing = 14 };
-        panel.Children.Add(StatusLine(T("Security.Owner"), snapshot.OwnerName ?? T("Common.Unavailable"), true));
+        panel.Children.Add(LumenSettingsComponents.StatusRow(
+            T("Security.Owner"),
+            snapshot.OwnerName ?? T("Common.Unavailable"),
+            true));
         var logout = SecondaryButton(T("Security.LogOut"));
-        logout.Click += async (_, _) => await ExecuteAsync(new { command = "logout" });
+        logout.Click += async (_, _) => { await ExecuteAsync(new { command = "logout" }); };
         panel.Children.Add(logout);
         _contentPanel.Children.Add(Card(panel));
     }
@@ -628,7 +672,7 @@ public sealed class MainWindow : Window
     private void RenderGeneral(ManagementSnapshot snapshot)
     {
         AddPageHeader(T("Navigation.General"), T("General.Description"));
-        _contentPanel.Children.Add(SettingsCard(
+        _contentPanel.Children.Add(LumenSettingsComponents.Card(
             ToggleRow(T("General.NetworkDiscovery"), T("General.NetworkDiscoveryDetail"), snapshot.Settings.General.Discovery, 0),
             ToggleRow(T("General.PreReleaseNotifications"), T("General.PreReleaseNotificationsDetail"), snapshot.Settings.General.NotifyPreReleases, 1)));
     }
@@ -636,25 +680,25 @@ public sealed class MainWindow : Window
     private void RenderStreaming(ManagementSnapshot snapshot)
     {
         AddPageHeader(T("Navigation.Streaming"), T("Streaming.Description"));
-        _contentPanel.Children.Add(SettingsCard(
-            ValueRow(T("Streaming.GraphicsAdapter"), snapshot.Settings.Streaming.AdapterSelector),
-            ValueRow(T("Streaming.Output"), snapshot.Settings.Streaming.OutputSelector),
-            ValueRow(T("Streaming.FallbackDisplayMode"), snapshot.Settings.Streaming.FallbackDisplayMode),
-            ValueRow(T("Streaming.WorkspacePolicy"), snapshot.Settings.Workspace.Policy)));
+        _contentPanel.Children.Add(LumenSettingsComponents.Card(
+            LumenSettingsComponents.ValueRow(T("Streaming.GraphicsAdapter"), snapshot.Settings.Streaming.AdapterSelector),
+            LumenSettingsComponents.ValueRow(T("Streaming.Output"), snapshot.Settings.Streaming.OutputSelector),
+            LumenSettingsComponents.ValueRow(T("Streaming.FallbackDisplayMode"), snapshot.Settings.Streaming.FallbackDisplayMode),
+            LumenSettingsComponents.ValueRow(T("Streaming.WorkspacePolicy"), snapshot.Settings.Workspace.Policy)));
     }
 
     private void RenderAudio(ManagementSnapshot snapshot)
     {
         AddPageHeader(T("Navigation.Audio"), T("Audio.Description"));
-        _contentPanel.Children.Add(SettingsCard(
+        _contentPanel.Children.Add(LumenSettingsComponents.Card(
             ToggleRow(T("Audio.StreamSystemAudio"), T("Audio.StreamSystemAudioDetail"), snapshot.Settings.Audio.StreamAudio, 2),
-            ValueRow(T("Audio.Sink"), snapshot.Settings.Audio.Sink)));
+            LumenSettingsComponents.ValueRow(T("Audio.Sink"), snapshot.Settings.Audio.Sink)));
     }
 
     private void RenderInput(ManagementSnapshot snapshot)
     {
         AddPageHeader(T("Navigation.Input"), T("Input.Description"));
-        _contentPanel.Children.Add(SettingsCard(
+        _contentPanel.Children.Add(LumenSettingsComponents.Card(
             ToggleRow(T("Input.Keyboard"), T("Input.KeyboardDetail"), snapshot.Settings.Input.Keyboard, 3),
             ToggleRow(T("Input.Mouse"), T("Input.MouseDetail"), snapshot.Settings.Input.Mouse, 4),
             ToggleRow(T("Input.Controller"), T("Input.ControllerDetail"), snapshot.Settings.Input.Controller, 5),
@@ -667,31 +711,31 @@ public sealed class MainWindow : Window
     private void RenderNetwork(ManagementSnapshot snapshot)
     {
         AddPageHeader(T("Navigation.Network"), T("Network.Description"));
-        _contentPanel.Children.Add(SettingsCard(
-            ValueRow(T("Network.AddressFamily"), snapshot.Settings.Network.AddressFamily),
-            ValueRow(T("Network.BasePort"), snapshot.Settings.Network.Port.ToString()),
-            ValueRow(T("Network.RemoteAccess"), snapshot.Settings.Network.RemoteAccessScope),
-            ValueRow(T("Network.LanEncryption"), snapshot.Settings.Network.LanEncryption),
-            ValueRow(T("Network.WanEncryption"), snapshot.Settings.Network.WanEncryption),
+        _contentPanel.Children.Add(LumenSettingsComponents.Card(
+            LumenSettingsComponents.ValueRow(T("Network.AddressFamily"), snapshot.Settings.Network.AddressFamily),
+            LumenSettingsComponents.ValueRow(T("Network.BasePort"), snapshot.Settings.Network.Port.ToString()),
+            LumenSettingsComponents.ValueRow(T("Network.RemoteAccess"), snapshot.Settings.Network.RemoteAccessScope),
+            LumenSettingsComponents.ValueRow(T("Network.LanEncryption"), snapshot.Settings.Network.LanEncryption),
+            LumenSettingsComponents.ValueRow(T("Network.WanEncryption"), snapshot.Settings.Network.WanEncryption),
             ToggleRow(T("Network.Upnp"), T("Network.UpnpDetail"), snapshot.Settings.Network.Upnp, 10)));
     }
 
     private void RenderAdvanced(ManagementSnapshot snapshot)
     {
         AddPageHeader(T("Navigation.Advanced"), T("Advanced.Description"));
-        _contentPanel.Children.Add(SettingsCard(
-            ValueRow(T("Advanced.PingTimeout"), F("Advanced.Milliseconds", snapshot.Settings.Network.PingTimeoutMs)),
-            ValueRow(T("Advanced.ForwardErrorCorrection"), F("Advanced.Percentage", snapshot.Settings.Network.FecPercentage)),
-            ValueRow(T("Advanced.BackButtonTimeout"), snapshot.Settings.Input.BackButtonTimeoutMs < 0 ? T("Common.Disabled") : F("Advanced.Milliseconds", snapshot.Settings.Input.BackButtonTimeoutMs))));
+        _contentPanel.Children.Add(LumenSettingsComponents.Card(
+            LumenSettingsComponents.ValueRow(T("Advanced.PingTimeout"), F("Advanced.Milliseconds", snapshot.Settings.Network.PingTimeoutMs)),
+            LumenSettingsComponents.ValueRow(T("Advanced.ForwardErrorCorrection"), F("Advanced.Percentage", snapshot.Settings.Network.FecPercentage)),
+            LumenSettingsComponents.ValueRow(T("Advanced.BackButtonTimeout"), snapshot.Settings.Input.BackButtonTimeoutMs < 0 ? T("Common.Disabled") : F("Advanced.Milliseconds", snapshot.Settings.Input.BackButtonTimeoutMs))));
     }
 
     private void RenderDiagnostics(ManagementSnapshot snapshot)
     {
         AddPageHeader(T("Navigation.Diagnostics"), T("Diagnostics.Description"));
-        _contentPanel.Children.Add(SettingsCard(
-            StatusLine(T("Diagnostics.ManagementProtocol"), F("Diagnostics.ProtocolVersion", snapshot.ProtocolVersion), true),
-            StatusLine(T("Diagnostics.HostConnection"), T("Status.Online"), true),
-            ValueRow(T("Diagnostics.LogLevel"), snapshot.Settings.Diagnostics.LogLevel)));
+        _contentPanel.Children.Add(LumenSettingsComponents.Card(
+            LumenSettingsComponents.StatusRow(T("Diagnostics.ManagementProtocol"), F("Diagnostics.ProtocolVersion", snapshot.ProtocolVersion), true),
+            LumenSettingsComponents.StatusRow(T("Diagnostics.HostConnection"), T("Status.Online"), true),
+            LumenSettingsComponents.ValueRow(T("Diagnostics.LogLevel"), snapshot.Settings.Diagnostics.LogLevel)));
     }
 
     private void RenderAbout()
@@ -719,139 +763,42 @@ public sealed class MainWindow : Window
         }
     }
 
-    private async Task ExecuteAsync(object command)
+    private async Task<bool> ExecuteAsync(object command)
     {
         try
         {
             _snapshot = await _client.SendAsync(command);
             Render();
+            return true;
         }
         catch (Exception error)
         {
             await ShowDialogAsync(T("Error.CommandFailed"), error.Message);
+            return false;
         }
     }
 
     private Button ActionButton(string label, string command)
     {
         var button = SecondaryButton(label);
-        button.Click += async (_, _) => await ExecuteAsync(new { command });
+        button.Click += async (_, _) => { await ExecuteAsync(new { command }); };
         return button;
     }
 
     private FrameworkElement ToggleRow(string title, string detail, bool enabled, int setting)
     {
-        var toggle = new ToggleSwitch
-        {
-            IsOn = enabled,
-            VerticalAlignment = VerticalAlignment.Center,
-            OnContent = string.Empty,
-            OffContent = string.Empty
-        };
-        toggle.Toggled += async (_, _) =>
-        {
-            if (_updating || toggle.IsOn == enabled)
-            {
-                return;
-            }
-            await ExecuteAsync(new { command = "updateBoolean", setting, enabled = toggle.IsOn });
-        };
-        return LabeledRow(title, detail, toggle);
-    }
-
-    private static FrameworkElement ValueRow(string title, string value) =>
-        LabeledRow(title, null, new TextBlock
-        {
-            Text = value,
-            Foreground = LumenTheme.SecondaryTextBrush(),
-            VerticalAlignment = VerticalAlignment.Center,
-            TextWrapping = TextWrapping.Wrap,
-            MaxWidth = 360
-        });
-
-    private static FrameworkElement StatusLine(string title, string value, bool healthy)
-    {
-        var badge = new Border
-        {
-            CornerRadius = new CornerRadius(10),
-            Padding = new Thickness(9, 4, 9, 4),
-            Background = new SolidColorBrush(healthy ? ColorHelper.FromArgb(48, 53, 199, 174) : ColorHelper.FromArgb(48, 255, 104, 104)),
-            BorderBrush = new SolidColorBrush(healthy ? ColorHelper.FromArgb(80, 53, 199, 174) : ColorHelper.FromArgb(80, 255, 104, 104)),
-            BorderThickness = new Thickness(1),
-            Child = new TextBlock
-            {
-                Text = value,
-                FontSize = 12,
-                Foreground = LumenTheme.PrimaryTextBrush()
-            }
-        };
-        return LabeledRow(title, null, badge);
-    }
-
-    private static FrameworkElement LabeledRow(string title, string? detail, FrameworkElement trailing)
-    {
-        var row = new Grid { Padding = new Thickness(4, 13, 4, 13), ColumnSpacing = 16 };
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var labels = new StackPanel { Spacing = 2 };
-        labels.Children.Add(new TextBlock
-        {
-            Text = title,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            Foreground = LumenTheme.PrimaryTextBrush()
-        });
-        if (!string.IsNullOrWhiteSpace(detail))
-        {
-            labels.Children.Add(Muted(detail));
-        }
-        Grid.SetColumn(labels, 0);
-        Grid.SetColumn(trailing, 1);
-        row.Children.Add(labels);
-        row.Children.Add(trailing);
-        return row;
-    }
-
-    private static Border SettingsCard(params FrameworkElement[] rows)
-    {
-        var panel = new StackPanel { Spacing = 0 };
-        for (var index = 0; index < rows.Length; index++)
-        {
-            panel.Children.Add(rows[index]);
-            if (index + 1 < rows.Length)
-            {
-                panel.Children.Add(Divider());
-            }
-        }
-        return Card(panel);
+        return LumenSettingsComponents.ToggleRow(
+            title,
+            detail,
+            enabled,
+            value => ExecuteAsync(new { command = "updateBoolean", setting, enabled = value }));
     }
 
     private static Border Card(UIElement content) => LumenTheme.Card(content);
 
-    private static Rectangle Divider() => new()
-    {
-        Height = 1,
-        Fill = LumenTheme.CardBorderBrush()
-    };
-
     private void AddPageHeader(string title, string subtitle)
     {
-        _contentPanel.Children.Add(new TextBlock
-        {
-            Text = title,
-            FontSize = 34,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            CharacterSpacing = -16,
-            Foreground = LumenTheme.PrimaryTextBrush()
-        });
-        _contentPanel.Children.Add(new TextBlock
-        {
-            Text = subtitle,
-            FontSize = 14,
-            LineHeight = 20,
-            TextWrapping = TextWrapping.Wrap,
-            Foreground = LumenTheme.SecondaryTextBrush(),
-            Margin = new Thickness(0, -10, 0, 8)
-        });
+        _contentPanel.Children.Add(LumenTheme.PageHeader(title, subtitle));
     }
 
     private static TextBlock Muted(string text) => LumenTheme.MutedText(text);

@@ -17,7 +17,9 @@ pub(crate) use adaptive_video::{
     AdaptiveVideoDecision, AdaptiveVideoDeliveryController, FeedbackStream, MediaFeedbackSample,
 };
 pub(crate) use native_session::{
-    NativeConnectionContext, NativeMediaFeedbackDisposition, NativeVideoRepairSource,
+    AdaptiveVideoProposal, NativeAdaptiveVideoPolicyRequest, NativeConnectionContext,
+    NativeMediaFeedbackDisposition, NativeStartCompletion, NativeStartFinalization,
+    NativeStartReservation, NativeVideoRepairSource,
 };
 
 pub use discovery::HostDiscoveryState;

@@ -142,17 +142,20 @@ public struct LumenMacDisplayModeRequest: Equatable, Sendable {
     public let height: UInt32
     public let scalePercent: UInt32
     public let dimensionsAreLogical: Bool
+    public let highDensity: Bool
 
     public init(
         width: UInt32,
         height: UInt32,
         scalePercent: UInt32,
-        dimensionsAreLogical: Bool
+        dimensionsAreLogical: Bool,
+        highDensity: Bool
     ) {
         self.width = width
         self.height = height
         self.scalePercent = scalePercent
         self.dimensionsAreLogical = dimensionsAreLogical
+        self.highDensity = highDensity
     }
 }
 
@@ -191,7 +194,8 @@ public enum LumenMacDisplayGeometryResolver {
                 width: request.width,
                 height: request.height,
                 scale_percent: request.scalePercent,
-                dimensions_are_logical: request.dimensionsAreLogical
+                dimensions_are_logical: request.dimensionsAreLogical,
+                high_density: request.highDensity
             ),
             &geometry
         )

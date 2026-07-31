@@ -206,41 +206,51 @@ fn host_factory_reset_removes_settings_but_preserves_diagnostics() {
 }
 
 #[test]
-fn display_geometry_preserves_backing_pixels_and_applies_desktop_scale() {
+fn display_geometry_preserves_native_stream_pixels_and_independent_hidpi_backing() {
     let geometry = resolve_display_geometry(LumenDisplayModeRequest {
-        width: 2388,
-        height: 1668,
-        scale_percent: 150,
+        width: 3024,
+        height: 1964,
+        scale_percent: 168,
         dimensions_are_logical: false,
+        high_density: true,
     })
     .unwrap();
 
     assert_eq!(
         geometry,
         LumenDisplayGeometry {
-            stream_width: 2388,
-            stream_height: 1668,
-            logical_width: 1592,
-            logical_height: 1112,
-            backing_width: 2388,
-            backing_height: 1668,
+            stream_width: 3024,
+            stream_height: 1964,
+            logical_width: 1800,
+            logical_height: 1169,
+            backing_width: 3600,
+            backing_height: 2338,
         }
     );
 }
 
 #[test]
-fn display_geometry_preserves_explicit_logical_dimensions() {
+fn display_geometry_preserves_explicit_logical_dimensions_and_derives_native_stream() {
     let geometry = resolve_display_geometry(LumenDisplayModeRequest {
-        width: 1194,
-        height: 834,
-        scale_percent: 200,
+        width: 1800,
+        height: 1169,
+        scale_percent: 168,
         dimensions_are_logical: true,
+        high_density: true,
     })
     .unwrap();
 
-    assert_eq!(geometry.stream_width, 1194);
-    assert_eq!(geometry.logical_width, 1194);
-    assert_eq!(geometry.backing_width, 1194);
+    assert_eq!(
+        geometry,
+        LumenDisplayGeometry {
+            stream_width: 3024,
+            stream_height: 1964,
+            logical_width: 1800,
+            logical_height: 1169,
+            backing_width: 3600,
+            backing_height: 2338,
+        }
+    );
 }
 
 #[test]

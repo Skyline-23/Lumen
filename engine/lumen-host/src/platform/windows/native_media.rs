@@ -94,7 +94,7 @@ impl PacketQueueContext {
         let request_key_frame = state.queues.push_video(PlatformEncodedVideoFrame {
             payload: sample.payload,
             decoder_configuration_record: None,
-            presentation_time_90khz: sample.presentation_time_90khz,
+            presentation_time_90khz: u64::from(sample.presentation_time_90khz),
             key_frame: sample.key_frame,
             // Initial admission pauses explicitly. During steady state only an explicit
             // repair key frame owns a pause; natural periodic key frames remain in the

@@ -20,8 +20,12 @@ public partial class App : Application
         UnhandledException += (_, eventArgs) =>
         {
             RecordUnhandledException(eventArgs.Exception);
+            if (_window is null)
+            {
+                return;
+            }
             eventArgs.Handled = true;
-            _window?.ShowFatalError(eventArgs.Exception.Message);
+            _window.ShowFatalError(eventArgs.Exception.Message);
         };
     }
 

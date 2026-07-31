@@ -42,6 +42,7 @@ src/platform/windows/Lumen.App/obj/
 .vscode/
 
 # build directories
+.build/
 build/
 cmake-*/
 docs/doxyconfig*
@@ -50,6 +51,9 @@ Derived/
 *.xcworkspace/
 Tuist/.build/
 /target/
+
+# Public library dependency resolution is owned by each consuming application.
+Package.resolved
 
 # npm
 node_modules/

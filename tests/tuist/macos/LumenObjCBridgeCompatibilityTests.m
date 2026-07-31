@@ -63,6 +63,7 @@ static BOOL LumenDisplayExistedBeforeModeCreation = NO;
 - (void)testWorkspaceSessionRequestHasStableRustCompatibleLayout {
   XCTAssertEqual(sizeof(LumenMacWorkspaceSessionRequest), 72UL);
   XCTAssertEqual(offsetof(LumenMacWorkspaceSessionRequest, display_key), 0UL);
+  XCTAssertEqual(offsetof(LumenMacWorkspaceSessionRequest, high_density), 29UL);
   XCTAssertEqual(offsetof(LumenMacWorkspaceSessionRequest, refresh_rate), 32UL);
   XCTAssertEqual(offsetof(LumenMacWorkspaceSessionRequest, sink_gamut), 44UL);
   XCTAssertEqual(

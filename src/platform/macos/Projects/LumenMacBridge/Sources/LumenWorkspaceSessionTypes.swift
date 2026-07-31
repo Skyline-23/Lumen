@@ -107,8 +107,7 @@ public enum LumenMacVirtualDisplayConfigurationFactory {
         configuration.serialNumber = identity.serialNumber
         configuration.backingWidth = geometry.backingWidth
         configuration.backingHeight = geometry.backingHeight
-        configuration.highDensity = geometry.backingWidth != geometry.logicalWidth ||
-            geometry.backingHeight != geometry.logicalHeight
+        configuration.highDensity = request.displayMode.highDensity
         let maximumBackingDimension = maximumStreamDimension *
             (configuration.highDensity ? 2 : 1)
         configuration.maximumBackingWidth = max(

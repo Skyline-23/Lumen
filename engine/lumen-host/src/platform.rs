@@ -106,6 +106,7 @@ pub struct PlatformApplicationPlan {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PlatformSessionPlan {
     pub session_epoch: u32,
+    pub policy_revision: u32,
     pub width: u32,
     pub height: u32,
     pub frames_per_second: u32,
@@ -138,7 +139,7 @@ pub struct PlatformEncodedVideoFrame {
     pub payload: Vec<u8>,
     /// Required for AV1 and optional when a native H.264/HEVC adapter exposes its config record.
     pub decoder_configuration_record: Option<Vec<u8>>,
-    pub presentation_time_90khz: u32,
+    pub presentation_time_90khz: u64,
     pub key_frame: bool,
     /// True only when the platform paused encoder admission for this key frame.
     pub requires_bootstrap_acknowledgement: bool,
@@ -163,6 +164,7 @@ pub enum PlatformControlEvent {
     },
     ResumeVideoEncodingAfterCodecAck,
     SetVideoDeliveryPolicy {
+        policy_revision: u32,
         bitrate_kbps: u32,
         admission_divisor: u8,
     },
@@ -656,7 +658,7 @@ impl PlatformSessionControl for CallbackPlatformSessionControl {
         Ok(payload.map(|payload| PlatformEncodedVideoFrame {
             payload,
             decoder_configuration_record: None,
-            presentation_time_90khz: metadata.presentation_time_90khz,
+            presentation_time_90khz: u64::from(metadata.presentation_time_90khz),
             key_frame: metadata.key_frame,
             requires_bootstrap_acknowledgement: metadata.requires_bootstrap_acknowledgement,
             repair_keyframe: metadata.repair_key_frame,
@@ -729,6 +731,7 @@ impl PlatformSessionControl for CallbackPlatformSessionControl {
                 }
             }
             PlatformControlEvent::SetVideoDeliveryPolicy {
+                policy_revision: _,
                 bitrate_kbps,
                 admission_divisor,
             } => {
@@ -1231,6 +1234,7 @@ mod tests {
         adapter
             .start_session(PlatformSessionPlan {
                 session_epoch: 1,
+                policy_revision: 1,
                 width: 3_512,
                 height: 2_290,
                 frames_per_second: 120,
@@ -1299,6 +1303,7 @@ mod tests {
         let error = adapter
             .start_session(PlatformSessionPlan {
                 session_epoch: 1,
+                policy_revision: 1,
                 width: 1_920,
                 height: 1_080,
                 frames_per_second: 60,
@@ -1363,6 +1368,7 @@ mod tests {
             .handle_control_event(
                 66_051,
                 PlatformControlEvent::SetVideoDeliveryPolicy {
+                    policy_revision: 1,
                     bitrate_kbps: 48_000,
                     admission_divisor: 1,
                 },

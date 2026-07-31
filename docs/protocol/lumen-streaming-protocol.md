@@ -3,8 +3,8 @@
 ## Authority
 
 Protocol v4 defines the independent Lumen Object Transport (LOT) over
-standards-compliant QUIC and is the only native Lumen/Shadow streaming
-contract. It deliberately
+standards-compliant QUIC and is the only native Lumen streaming contract for
+hosts and third-party clients. It deliberately
 has no compatibility path for GameStream, RTSP, SDP, RTP, ENet, direct media
 UDP, application-level media AEAD, legacy media headers, or protocol v3.
 
@@ -193,13 +193,15 @@ payload and FEC overhead are not interchangeable counters.
 
 The host adapts parity in five-point steps inside 5...30. Sustained packet loss
 may reduce the wire budget only as far as the format payload floor plus current
-parity, and never above the negotiated ceiling. Decoder or playback pipeline
-pressure instead changes a host-side latest-frame encoder-admission divisor;
-it does not reduce the wire budget, encoder payload target, or FEC. A clean
-pipeline window sequence restores full admission. Repair and bootstrap frames
-bypass this cadence. None of these controls changes the negotiated codec,
-resolution, refresh, dynamic range, or hardware decode policy. At most one
-unsent video delta may be retained.
+parity, and never above the negotiated ceiling. Video decoder pressure instead
+changes a host-side latest-frame encoder-admission divisor; it does not reduce
+the wire budget, encoder payload target, or FEC. Video presentation pressure
+blocks clean recovery but does not directly reduce admission. Audio playback
+pressure does not control video admission. A clean video-pipeline window
+sequence restores full admission. Repair and bootstrap frames bypass this
+cadence. None of these controls changes the negotiated codec, resolution,
+refresh, dynamic range, or hardware decode policy. At most one unsent video
+delta may be retained.
 
 The sender additionally meters the actual encoded datagram byte lengths. A
 token envelope permits at most two negotiated-datagram-sized chunks of burst,
@@ -242,8 +244,8 @@ encoder admission and reopens a subsequent repair request.
 
 ## Security and compatibility
 
-TLS 1.3 protects all streams and QUIC DATAGRAM. The enrolled host identity is
-pinned by Shadow. Removed v3 exporter/AES-GCM protection must not be
+TLS 1.3 protects all streams and QUIC DATAGRAM. A client pins the enrolled
+Lumen host identity. Removed v3 exporter/AES-GCM protection must not be
 reintroduced as a second cryptographic state machine.
 
 Forbidden production contracts include protocol v3, direct media UDP,

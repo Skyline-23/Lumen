@@ -52,7 +52,8 @@ func runDesktopMirrorReconfiguration() async throws -> [WorkspaceExecutionEvent]
             width: 800,
             height: 450,
             scalePercent: 100,
-            dimensionsAreLogical: false
+            dimensionsAreLogical: false,
+            highDensity: false
         ),
         refreshRate: context.request.refreshRate,
         managesCapture: context.request.managesCapture,
@@ -175,7 +176,8 @@ private func makeDesktopMirrorRequest(
             width: 640,
             height: 360,
             scalePercent: 100,
-            dimensionsAreLogical: false
+            dimensionsAreLogical: false,
+            highDensity: false
         ),
         managesCapture: managesCapture,
         captureConfiguration: LumenMacCaptureConfiguration(displayID: 0)

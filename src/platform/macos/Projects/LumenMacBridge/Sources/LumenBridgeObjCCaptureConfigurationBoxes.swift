@@ -139,6 +139,8 @@ public final class LumenBridgeEffectiveDisplayStateBox: NSObject {
 @objcMembers
 public final class LumenBridgeConfigurationBox: NSObject {
     public let displayID: UInt32
+    public let sessionEpoch: UInt32
+    public let policyRevision: UInt32
     public let codecRawValue: Int
     public let videoProfileRawValue: Int
     public let chromaSubsamplingRawValue: Int
@@ -156,6 +158,8 @@ public final class LumenBridgeConfigurationBox: NSObject {
 
     public init(
         displayID: UInt32,
+        sessionEpoch: UInt32,
+        policyRevision: UInt32,
         codecRawValue: Int,
         videoProfileRawValue: Int,
         chromaSubsamplingRawValue: Int,
@@ -172,6 +176,8 @@ public final class LumenBridgeConfigurationBox: NSObject {
         effectiveDisplayState: LumenBridgeEffectiveDisplayStateBox
     ) {
         self.displayID = displayID
+        self.sessionEpoch = sessionEpoch
+        self.policyRevision = policyRevision
         self.codecRawValue = codecRawValue
         self.videoProfileRawValue = videoProfileRawValue
         self.chromaSubsamplingRawValue = chromaSubsamplingRawValue
@@ -194,6 +200,8 @@ public final class LumenBridgeConfigurationBox: NSObject {
         )
         self.init(
             displayID: configuration.displayID,
+            sessionEpoch: configuration.sessionEpoch,
+            policyRevision: configuration.policyRevision,
             codecRawValue: LumenBridgeObjCFacade.rawValue(for: configuration.codec),
             videoProfileRawValue: configuration.videoProfile.rawValue,
             chromaSubsamplingRawValue: configuration.chromaSubsampling.rawValue,
@@ -214,6 +222,8 @@ public final class LumenBridgeConfigurationBox: NSObject {
     var swiftValue: LumenMacCaptureConfiguration {
         LumenMacCaptureConfiguration(
             displayID: displayID,
+            sessionEpoch: sessionEpoch,
+            policyRevision: policyRevision,
             codec: LumenBridgeObjCFacade.codec(fromRawValue: codecRawValue),
             videoProfile: LumenCaptureVideoProfile(rawValue: videoProfileRawValue),
             chromaSubsampling: LumenCaptureChromaSubsampling(rawValue: chromaSubsamplingRawValue),

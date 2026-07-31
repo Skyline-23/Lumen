@@ -6,6 +6,8 @@ public struct LumenMacCaptureConfiguration: Equatable, Sendable {
     static let veryHighResolutionPixelCountThreshold = 7_000_000
 
     public let displayID: UInt32
+    public let sessionEpoch: UInt32
+    public let policyRevision: UInt32
     public let codec: LumenCaptureCodec
     public let videoProfile: LumenCaptureVideoProfile
     public let chromaSubsampling: LumenCaptureChromaSubsampling
@@ -24,6 +26,8 @@ public struct LumenMacCaptureConfiguration: Equatable, Sendable {
 
     public init(
         displayID: UInt32,
+        sessionEpoch: UInt32 = 0,
+        policyRevision: UInt32 = 0,
         codec: LumenCaptureCodec = .hevc,
         videoProfile: LumenCaptureVideoProfile? = nil,
         chromaSubsampling: LumenCaptureChromaSubsampling? = nil,
@@ -46,6 +50,8 @@ public struct LumenMacCaptureConfiguration: Equatable, Sendable {
                 sinkRequest.dynamicRangeTransport
             )
         self.displayID = displayID
+        self.sessionEpoch = sessionEpoch
+        self.policyRevision = policyRevision
         self.codec = codec
         self.videoProfile = videoProfile ?? (
             codec == .h264
@@ -70,6 +76,8 @@ public struct LumenMacCaptureConfiguration: Equatable, Sendable {
     public func replacingDisplayID(_ displayID: UInt32) -> Self {
         Self(
             displayID: displayID,
+            sessionEpoch: sessionEpoch,
+            policyRevision: policyRevision,
             codec: codec,
             videoProfile: videoProfile,
             chromaSubsampling: chromaSubsampling,

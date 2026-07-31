@@ -176,6 +176,8 @@ static LumenBridgeObjCFacade *LumenMacBridgeFacade(LumenMacBridgeController *con
   ) {
     LumenMacBridgeCaptureConfiguration result = {0};
     result.display_id = configuration.displayID;
+    result.session_epoch = configuration.sessionEpoch;
+    result.policy_revision = configuration.policyRevision;
     result.codec = (LumenMacCaptureCodec) (configuration.codecRawValue);
     result.video_profile = (LumenMacCaptureVideoProfile) (configuration.videoProfileRawValue);
     result.chroma_subsampling =
@@ -271,6 +273,8 @@ static LumenBridgeObjCFacade *LumenMacBridgeFacade(LumenMacBridgeController *con
       hdrStaticMetadata:hdrStaticMetadata];
     return [[LumenBridgeConfigurationBox alloc]
       initWithDisplayID:configuration.display_id
+           sessionEpoch:configuration.session_epoch
+         policyRevision:configuration.policy_revision
            codecRawValue:(NSInteger) (configuration.codec)
     videoProfileRawValue:(NSInteger) (configuration.video_profile)
 chromaSubsamplingRawValue:(NSInteger) (configuration.chroma_subsampling)
@@ -528,11 +532,15 @@ bool LumenMacBridgeSetVideoBitrateKbps(uint32_t bitrate_kbps) {
 }
 
 bool LumenMacBridgeSetVideoDeliveryPolicy(
+  uint32_t session_epoch,
+  uint32_t policy_revision,
   uint32_t bitrate_kbps,
   uint8_t admission_divisor
 ) {
   return [LumenBridgeObjCFacade
-    setVideoDeliveryPolicySharedSync:bitrate_kbps
+    setVideoDeliveryPolicySharedSync:session_epoch
+    policyRevision:policy_revision
+    bitrateKbps:bitrate_kbps
     admissionDivisor:admission_divisor];
 }
 
@@ -845,6 +853,7 @@ uint32_t LumenMacWorkspacePrepareSession(
   box.height = request.height;
   box.scalePercent = request.scale_percent;
   box.dimensionsAreLogical = request.dimensions_are_logical;
+  box.highDensity = request.high_density;
   box.refreshRate = request.refresh_rate;
   box.hdrEnabled = request.hdr_enabled;
   box.clientSinkGamutRawValue = request.sink_gamut;
@@ -872,6 +881,7 @@ uint32_t LumenMacWorkspaceReconfigureSession(
   box.height = request.height;
   box.scalePercent = request.scale_percent;
   box.dimensionsAreLogical = request.dimensions_are_logical;
+  box.highDensity = request.high_density;
   box.refreshRate = request.refresh_rate;
   box.hdrEnabled = request.hdr_enabled;
   box.clientSinkGamutRawValue = request.sink_gamut;

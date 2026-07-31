@@ -2,6 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::{ControlRouter, HostArguments};
 
+mod adaptive_video;
 mod http;
 mod media;
 mod packet_arrival;
