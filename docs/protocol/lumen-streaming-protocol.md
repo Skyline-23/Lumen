@@ -142,7 +142,9 @@ count are object global. Datagram sequence is monotonic for a flow.
 Periodic same-configuration video keyframes use DATAGRAM in the current
 generation. Startup, configuration, and explicit-repair keyframes remain
 reliable `VideoBootstrap` records. Audio is one raw 5 ms Opus multistream packet
-per object. Input motion carries one `ClientMotionEnvelope`, latest unsent
+per object. A single-data-shard audio object with no parity or FEC block uses
+the exact Opus payload length and is not padded to the negotiated datagram
+payload size. Input motion carries one `ClientMotionEnvelope`, latest unsent
 sample wins, and it has no FEC.
 
 `ScrollInput` preserves point deltas in 1/1024-point units and adds phase on
@@ -156,9 +158,10 @@ CoreGraphics without intermediate integer-point quantization.
 ## FEC and feedback
 
 FEC is systematic Reed-Solomon over GF(2^8), primitive polynomial `0x11d`,
-generator `0x02`, and the systematic Vandermonde matrix. Data shards are
-zero-padded before parity. Reconstruction is block-local and the final object is
-trimmed to `objectBytes`.
+generator `0x02`, and the systematic Vandermonde matrix. FEC data shards are
+zero-padded before parity. Non-FEC video and multi-shard objects retain the
+negotiated full shard size. Reconstruction is block-local and the final object
+is trimmed to `objectBytes`.
 
 Telemetry uses client bidi raw stream 8. `ClientTelemetryEnvelope.sequence`
 starts at 1 and is contiguous. `MediaFeedback` is tag 10 and reports the exact

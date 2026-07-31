@@ -460,7 +460,7 @@ fn splits_large_delta_objects_into_block_local_fec_metadata() {
 }
 
 #[test]
-fn audio_uses_generation_zero_and_raw_zero_padded_quic_datagram_payload() {
+fn single_shard_audio_uses_generation_zero_and_exact_opus_payload_length() {
     let mut packetizer = NativeMediaPacketizer::new(
         NativeMediaPacketizerConfig {
             kind: NativeMediaKind::Audio,
@@ -479,7 +479,7 @@ fn audio_uses_generation_zero_and_raw_zero_padded_quic_datagram_payload() {
     let packetized = packetizer.packetize_audio(&packet, 6).unwrap();
 
     assert_eq!(packetized.datagrams.len(), 1);
-    assert_eq!(packetized.datagrams[0].len(), 80);
+    assert_eq!(packetized.datagrams[0].len(), 28 + packet.payload.len());
     let decoded = decode_native_media_datagram(&packetized.datagrams[0]).unwrap();
     assert_eq!(decoded.header.kind, NativeMediaKind::Audio);
     assert_eq!(decoded.header.generation_id, 0);
@@ -487,8 +487,7 @@ fn audio_uses_generation_zero_and_raw_zero_padded_quic_datagram_payload() {
     assert_eq!(decoded.header.object_bytes, 5);
     assert_eq!(decoded.header.capture_timestamp_us, 500_000);
     let shard = payload(&packetized.datagrams[0]);
-    assert_eq!(&shard[..5], packet.payload);
-    assert!(shard[5..].iter().all(|byte| *byte == 0));
+    assert_eq!(shard, packet.payload);
 }
 
 #[test]

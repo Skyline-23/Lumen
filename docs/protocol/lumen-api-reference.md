@@ -2,7 +2,7 @@
 
 > Generated file. Do not edit it directly. Change `docs/protocol/lumen-contract-v4.json` and run `lumen-contract-tool generate`.
 
-- Contract SHA-256: `db39bdfca60d6a5186c57ca9e373e5ec1a8ee2c06a29b4c715eb435b38ca5b0f`
+- Contract SHA-256: `0174a07ef5e32d4915842f8093095d7a51de3643167677d739564abb0698a00d`
 - Contract schema version: `1`
 - Protobuf source: `docs/protocol/lumen-streaming-v4.proto`
 - Descriptor source name: `lumen-streaming-v4.proto`
@@ -897,6 +897,7 @@ Extension bytes: <code>8</code>.
 ```json
 {
   "algorithm" : "systematic-reed-solomon-vandermonde-gf256",
+  "compactSingleShardAudio" : "exact-object-bytes-without-padding",
   "fieldPolynomial" : 285,
   "generator" : 2,
   "maximumTotalShardsPerBlock" : 256,
@@ -1035,6 +1036,7 @@ Extension bytes: <code>8</code>.
   },
   "fec" : {
     "algorithm" : "systematic-reed-solomon-vandermonde-gf256",
+    "compactSingleShardAudio" : "exact-object-bytes-without-padding",
     "fieldPolynomial" : 285,
     "generator" : 2,
     "maximumTotalShardsPerBlock" : 256,
