@@ -18,7 +18,8 @@ pub(crate) use adaptive_video::{
 };
 pub(crate) use native_session::{
     AdaptiveVideoProposal, NativeAdaptiveVideoPolicyRequest, NativeConnectionContext,
-    NativeMediaFeedbackDisposition, NativeVideoRepairSource,
+    NativeMediaFeedbackDisposition, NativeStartCompletion, NativeStartFinalization,
+    NativeStartReservation, NativeVideoRepairSource,
 };
 
 pub use discovery::HostDiscoveryState;
