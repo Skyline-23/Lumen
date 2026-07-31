@@ -80,7 +80,10 @@ fn startup_and_normal_cleanup_verify_restore_before_monitor_removal() {
     let constructor = DISPLAY
         .split("pub(super) fn new")
         .nth(1)
-        .expect("display constructor");
+        .expect("display constructor")
+        .split("pub(super) fn start")
+        .next()
+        .expect("bounded display constructor");
     let stop = DISPLAY
         .split("pub(super) fn stop")
         .nth(1)
@@ -92,8 +95,25 @@ fn startup_and_normal_cleanup_verify_restore_before_monitor_removal() {
         .expect("physical restore");
     let remove = stop.find("display.remove()?").expect("IDD removal");
 
-    // Then: startup recovers first, while normal teardown restores before removal.
-    assert!(constructor.contains("recover_persisted_topology"));
+    let startup_recovery = DISPLAY
+        .split("fn recover_startup_topology")
+        .nth(1)
+        .expect("startup recovery gate")
+        .split("fn recover_persisted_topology")
+        .next()
+        .expect("bounded startup recovery gate");
+    let missing = startup_recovery
+        .find("RecoveryJournalLoad::Missing => Ok(())")
+        .expect("clean startup without driver admission");
+    let driver = startup_recovery
+        .find("let driver = DriverHandle::open()?")
+        .expect("recovery driver admission");
+
+    // Then: a clean host can publish its network listeners without the IDD,
+    // while durable recovery still completes before normal teardown removes it.
+    assert!(constructor.contains("recover_startup_topology"));
+    assert!(!constructor.contains("DriverHandle::open"));
+    assert!(missing < driver);
     assert!(restore < remove);
 }
 
@@ -210,7 +230,16 @@ fn create_and_configuration_failures_cross_the_recovery_barrier() {
         .expect("cleanup restore");
     let remove = cleanup.find("display.remove()").expect("cleanup removal");
 
-    // Then: creation recovery and configuration cleanup restore before any removal.
+    let driver = start
+        .find("let driver = DriverHandle::open()?")
+        .expect("session-time driver admission");
+    let journal = start
+        .find(".create(&journal)")
+        .expect("durable recovery snapshot");
+
+    // Then: driver admission precedes journal creation, while all later
+    // creation and configuration failures restore before any removal.
+    assert!(driver < journal);
     assert!(start.contains("recover_persisted_topology"));
     assert!(start.contains("cleanup_display"));
     assert!(!start.contains("remove_monitor"));
