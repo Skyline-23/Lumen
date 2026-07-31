@@ -267,6 +267,7 @@ func workspaceRegistrySnapshot(
         height: 1080,
         scalePercent: 100,
         dimensionsAreLogical: false,
+        highDensity: false,
         refreshRate: 120,
         hdrEnabled: false,
         clientSinkGamutRawValue: 0,

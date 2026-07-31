@@ -8,7 +8,8 @@ final class LumenWorkspaceSessionRecoveryTests: XCTestCase {
                 width: 3512,
                 height: 2420,
                 scalePercent: 150,
-                dimensionsAreLogical: false
+                dimensionsAreLogical: false,
+                highDensity: true
             )
         )
 
@@ -164,7 +165,8 @@ private extension LumenWorkspaceSessionRecoveryTests {
                 width: 1_920,
                 height: 1_080,
                 scalePercent: 100,
-                dimensionsAreLogical: false
+                dimensionsAreLogical: false,
+                highDensity: false
             ),
             operations: LumenMacWorkspaceNativeOperations(
                 createVirtualDisplay: { _, _ in 0 },

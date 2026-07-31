@@ -141,7 +141,8 @@ private extension LumenWorkspaceSessionFailureTests {
                 width: 2388,
                 height: 1668,
                 scalePercent: 150,
-                dimensionsAreLogical: false
+                dimensionsAreLogical: false,
+                highDensity: true
             ),
             captureConfiguration: LumenMacCaptureConfiguration(displayID: 0)
         )

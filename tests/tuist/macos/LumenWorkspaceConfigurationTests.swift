@@ -5,10 +5,10 @@ final class LumenWorkspaceConfigurationTests: XCTestCase {
     func testVirtualDisplayConfigurationPreservesHDRSinkContract() throws {
         let fixture = try makeHDRConfigurationFixture()
 
-        XCTAssertEqual(fixture.configuration.backingWidth, 2388)
+        XCTAssertEqual(fixture.configuration.backingWidth, 3600)
         XCTAssertEqual(fixture.configuration.maximumBackingWidth, 15_360)
         XCTAssertEqual(fixture.configuration.maximumBackingHeight, 15_360)
-        XCTAssertEqual(fixture.configuration.logicalWidth, 1592)
+        XCTAssertEqual(fixture.configuration.logicalWidth, 1800)
         XCTAssertEqual(fixture.configuration.refreshRate, 120)
         XCTAssertTrue(fixture.configuration.highDensity)
         XCTAssertTrue(fixture.configuration.hdrEnabled)
@@ -38,12 +38,13 @@ final class LumenWorkspaceConfigurationTests: XCTestCase {
         )
     }
 
-    func testWorkspaceRequestBoxSeparatesClientSinkScaleFromHostDisplayMode() throws {
+    func testWorkspaceRequestBoxPreservesNativeStreamAndLogicalDesktopGeometry() throws {
         let box = LumenMacWorkspaceSessionRequestBox()
         box.displayKey = "client-key"
-        box.width = 640
-        box.height = 360
-        box.scalePercent = 200
+        box.width = 3024
+        box.height = 1964
+        box.scalePercent = 168
+        box.highDensity = true
         box.refreshRate = 120
         box.hdrEnabled = true
         box.clientSinkGamutRawValue = 3
@@ -51,16 +52,17 @@ final class LumenWorkspaceConfigurationTests: XCTestCase {
         box.potentialEDRHeadroom = 16
         box.potentialPeakLuminanceNits = 1600
 
-        let request = box.makeRequest(policy: .isolatedWorkspace)
+        let request = try box.makeRequest(policy: .isolatedWorkspace)
 
         XCTAssertEqual(request.displayKey, "client-key")
         XCTAssertEqual(request.policy, .isolatedWorkspace)
         XCTAssertFalse(request.managesCapture)
-        XCTAssertEqual(request.displayMode.width, 640)
-        XCTAssertEqual(request.displayMode.height, 360)
-        XCTAssertEqual(request.displayMode.scalePercent, 100)
+        XCTAssertEqual(request.displayMode.width, 3024)
+        XCTAssertEqual(request.displayMode.height, 1964)
+        XCTAssertEqual(request.displayMode.scalePercent, 168)
         XCTAssertFalse(request.displayMode.dimensionsAreLogical)
-        XCTAssertEqual(request.captureConfiguration.sinkRequest.mode.scalePercent, 200)
+        XCTAssertTrue(request.displayMode.highDensity)
+        XCTAssertEqual(request.captureConfiguration.sinkRequest.mode.scalePercent, 168)
         XCTAssertTrue(request.captureConfiguration.sinkRequest.mode.hidpi)
         XCTAssertTrue(request.captureConfiguration.usesHDRTransport)
         let geometry = try LumenMacDisplayGeometryResolver.resolve(request.displayMode)
@@ -68,11 +70,13 @@ final class LumenWorkspaceConfigurationTests: XCTestCase {
             geometry: geometry,
             request: request
         )
-        XCTAssertEqual(configuration.backingWidth, 640)
-        XCTAssertEqual(configuration.maximumBackingWidth, 7_680)
-        XCTAssertEqual(configuration.maximumBackingHeight, 7_680)
-        XCTAssertEqual(configuration.logicalWidth, 640)
-        XCTAssertFalse(configuration.highDensity)
+        XCTAssertEqual(configuration.backingWidth, 3600)
+        XCTAssertEqual(configuration.backingHeight, 2338)
+        XCTAssertEqual(configuration.maximumBackingWidth, 15_360)
+        XCTAssertEqual(configuration.maximumBackingHeight, 15_360)
+        XCTAssertEqual(configuration.logicalWidth, 1800)
+        XCTAssertEqual(configuration.logicalHeight, 1169)
+        XCTAssertTrue(configuration.highDensity)
         XCTAssertEqual(
             request.captureConfiguration.sinkRequest.capability.potentialPeakLuminanceNits,
             1600
@@ -84,9 +88,10 @@ final class LumenWorkspaceConfigurationTests: XCTestCase {
         box.width = 640
         box.height = 360
         box.scalePercent = 200
+        box.highDensity = true
         box.desktopMirrorSourceDisplayID = 3
 
-        let request = box.makeRequest(policy: .isolatedWorkspace)
+        let request = try box.makeRequest(policy: .isolatedWorkspace)
 
         XCTAssertEqual(
             request.contentSource,
@@ -94,10 +99,11 @@ final class LumenWorkspaceConfigurationTests: XCTestCase {
         )
         XCTAssertEqual(request.captureConfiguration.requestedWidth, 640)
         XCTAssertEqual(request.captureConfiguration.requestedHeight, 360)
-        XCTAssertEqual(request.displayMode.width, 1_920)
-        XCTAssertEqual(request.displayMode.height, 1_080)
+        XCTAssertEqual(request.displayMode.width, 960)
+        XCTAssertEqual(request.displayMode.height, 540)
         XCTAssertEqual(request.displayMode.scalePercent, 200)
-        XCTAssertFalse(request.displayMode.dimensionsAreLogical)
+        XCTAssertTrue(request.displayMode.dimensionsAreLogical)
+        XCTAssertTrue(request.displayMode.highDensity)
 
         let geometry = try LumenMacDisplayGeometryResolver.resolve(request.displayMode)
         let configuration = try LumenMacVirtualDisplayConfigurationFactory.make(
@@ -109,6 +115,20 @@ final class LumenWorkspaceConfigurationTests: XCTestCase {
         XCTAssertEqual(configuration.logicalWidth, 960)
         XCTAssertEqual(configuration.logicalHeight, 540)
         XCTAssertTrue(configuration.highDensity)
+    }
+
+    func testWorkspaceRequestBoxRejectsInvalidDisplayScale() {
+        let box = LumenMacWorkspaceSessionRequestBox()
+        box.scalePercent = 0
+
+        XCTAssertThrowsError(
+            try box.makeRequest(policy: .isolatedWorkspace)
+        ) { error in
+            XCTAssertEqual(
+                error as? LumenMacWorkspaceSessionFacadeError,
+                .invalidDisplayScale(0)
+            )
+        }
     }
 }
 
@@ -175,10 +195,11 @@ private extension LumenWorkspaceConfigurationTests {
         LumenMacWorkspaceSessionRequest(
             displayKey: displayKey,
             displayMode: LumenMacDisplayModeRequest(
-                width: 2388,
-                height: 1668,
-                scalePercent: 150,
-                dimensionsAreLogical: false
+                width: 3024,
+                height: 1964,
+                scalePercent: 168,
+                dimensionsAreLogical: false,
+                highDensity: true
             ),
             refreshRate: 120,
             captureConfiguration: capture

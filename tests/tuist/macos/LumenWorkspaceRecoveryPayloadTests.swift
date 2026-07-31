@@ -178,7 +178,8 @@ final class LumenWorkspaceRecoveryPayloadTests: XCTestCase {
                 width: 3024,
                 height: 1964,
                 scalePercent: 100,
-                dimensionsAreLogical: false
+                dimensionsAreLogical: false,
+                highDensity: false
             ),
             operations: operations,
             displayWorkspace: displayWorkspace
@@ -235,7 +236,8 @@ final class LumenWorkspaceRecoveryPayloadTests: XCTestCase {
                 width: 3024,
                 height: 1964,
                 scalePercent: 100,
-                dimensionsAreLogical: false
+                dimensionsAreLogical: false,
+                highDensity: false
             ),
             operations: operations,
             displayWorkspace: RecoveryPayloadDisplayWorkspace(

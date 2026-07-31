@@ -108,7 +108,8 @@ func externalIsolatedRequest() -> LumenMacWorkspaceSessionRequest {
             width: 1920,
             height: 1080,
             scalePercent: 100,
-            dimensionsAreLogical: false
+            dimensionsAreLogical: false,
+            highDensity: false
         ),
         managesCapture: false,
         captureConfiguration: LumenMacCaptureConfiguration(displayID: 0)

@@ -7,6 +7,7 @@ pub struct LumenDisplayModeRequest {
     pub height: u32,
     pub scale_percent: u32,
     pub dimensions_are_logical: bool,
+    pub high_density: bool,
 }
 
 #[repr(C)]
@@ -90,38 +91,57 @@ const fn even_dimension(value: u32) -> u32 {
     bounded & !1
 }
 
+fn rounded_ratio(value: u32, numerator: u32, denominator: u32) -> Result<u32, LumenEngineStatus> {
+    let denominator = u64::from(denominator);
+    let scaled = u64::from(value)
+        .checked_mul(u64::from(numerator))
+        .and_then(|value| value.checked_add(denominator / 2))
+        .ok_or(LumenEngineStatus::InvalidArgument)?;
+    u32::try_from(scaled / denominator).map_err(|_| LumenEngineStatus::InvalidArgument)
+}
+
+fn backing_dimension(logical_dimension: u32, high_density: bool) -> Result<u32, LumenEngineStatus> {
+    logical_dimension
+        .checked_mul(if high_density { 2 } else { 1 })
+        .ok_or(LumenEngineStatus::InvalidArgument)
+}
+
 pub fn resolve_display_geometry(
     request: LumenDisplayModeRequest,
 ) -> Result<LumenDisplayGeometry, LumenEngineStatus> {
-    if request.width == 0 || request.height == 0 || request.scale_percent == 0 {
+    if request.width == 0 || request.height == 0 || !(1..=800).contains(&request.scale_percent) {
         return Err(LumenEngineStatus::InvalidArgument);
     }
 
-    let width = even_dimension(request.width);
-    let height = even_dimension(request.height);
     if request.dimensions_are_logical {
+        let stream_width =
+            even_dimension(rounded_ratio(request.width, request.scale_percent, 100)?);
+        let stream_height =
+            even_dimension(rounded_ratio(request.height, request.scale_percent, 100)?);
         return Ok(LumenDisplayGeometry {
-            stream_width: width,
-            stream_height: height,
-            logical_width: width,
-            logical_height: height,
-            backing_width: width,
-            backing_height: height,
+            stream_width,
+            stream_height,
+            logical_width: request.width,
+            logical_height: request.height,
+            backing_width: backing_dimension(request.width, request.high_density)?,
+            backing_height: backing_dimension(request.height, request.high_density)?,
         });
     }
 
-    let scale = u64::from(request.scale_percent.max(100));
-    let logical_width = u32::try_from((u64::from(width) * 100) / scale)
-        .map_err(|_| LumenEngineStatus::InvalidArgument)?;
-    let logical_height = u32::try_from((u64::from(height) * 100) / scale)
-        .map_err(|_| LumenEngineStatus::InvalidArgument)?;
+    let stream_width = even_dimension(request.width);
+    let stream_height = even_dimension(request.height);
+    let logical_width = rounded_ratio(stream_width, 100, request.scale_percent)?;
+    let logical_height = rounded_ratio(stream_height, 100, request.scale_percent)?;
+    if logical_width == 0 || logical_height == 0 {
+        return Err(LumenEngineStatus::InvalidArgument);
+    }
     Ok(LumenDisplayGeometry {
-        stream_width: width,
-        stream_height: height,
-        logical_width: even_dimension(logical_width),
-        logical_height: even_dimension(logical_height),
-        backing_width: width,
-        backing_height: height,
+        stream_width,
+        stream_height,
+        logical_width,
+        logical_height,
+        backing_width: backing_dimension(logical_width, request.high_density)?,
+        backing_height: backing_dimension(logical_height, request.high_density)?,
     })
 }
 

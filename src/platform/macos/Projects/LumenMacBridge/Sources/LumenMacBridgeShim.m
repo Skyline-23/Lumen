@@ -853,6 +853,7 @@ uint32_t LumenMacWorkspacePrepareSession(
   box.height = request.height;
   box.scalePercent = request.scale_percent;
   box.dimensionsAreLogical = request.dimensions_are_logical;
+  box.highDensity = request.high_density;
   box.refreshRate = request.refresh_rate;
   box.hdrEnabled = request.hdr_enabled;
   box.clientSinkGamutRawValue = request.sink_gamut;
@@ -880,6 +881,7 @@ uint32_t LumenMacWorkspaceReconfigureSession(
   box.height = request.height;
   box.scalePercent = request.scale_percent;
   box.dimensionsAreLogical = request.dimensions_are_logical;
+  box.highDensity = request.high_density;
   box.refreshRate = request.refresh_rate;
   box.hdrEnabled = request.hdr_enabled;
   box.clientSinkGamutRawValue = request.sink_gamut;

@@ -309,6 +309,7 @@ typedef struct LumenMacWorkspaceSessionRequest {
   uint32_t height;
   uint32_t scale_percent;
   bool dimensions_are_logical;
+  bool high_density;
   double refresh_rate;
   bool hdr_enabled;
   int32_t sink_gamut;

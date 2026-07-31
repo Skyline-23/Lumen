@@ -146,7 +146,8 @@ private extension LumenWorkspaceSessionManagedCaptureTests {
                 width: 1920,
                 height: 1080,
                 scalePercent: 100,
-                dimensionsAreLogical: false
+                dimensionsAreLogical: false,
+                highDensity: false
             ),
             captureConfiguration: LumenMacCaptureConfiguration(displayID: 0)
         )

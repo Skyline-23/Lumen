@@ -122,6 +122,7 @@ struct MacWorkspaceSessionRequest {
     height: u32,
     scale_percent: u32,
     dimensions_are_logical: bool,
+    high_density: bool,
     refresh_rate: f64,
     hdr_enabled: bool,
     sink_gamut: i32,
@@ -472,8 +473,10 @@ impl MacPlatformSessionControl {
             display_name: display_name.as_ptr(),
             width: plan.width,
             height: plan.height,
-            scale_percent: u32::try_from(plan.sink_scale_percent.max(1)).unwrap_or(100),
+            scale_percent: u32::try_from(plan.sink_scale_percent)
+                .map_err(|_| "macOS workspace display scale is invalid".to_owned())?,
             dimensions_are_logical: plan.sink_mode_is_logical,
+            high_density: plan.sink_hidpi,
             refresh_rate: f64::from(plan.frames_per_second),
             hdr_enabled: matches!(
                 plan.video_format.dynamic_range,
@@ -653,8 +656,10 @@ impl PlatformSessionControl for MacPlatformSessionControl {
                     display_name: display_name.as_ptr(),
                     width: plan.width,
                     height: plan.height,
-                    scale_percent: u32::try_from(plan.sink_scale_percent.max(1)).unwrap_or(100),
+                    scale_percent: u32::try_from(plan.sink_scale_percent)
+                        .map_err(|_| "macOS workspace display scale is invalid".to_owned())?,
                     dimensions_are_logical: plan.sink_mode_is_logical,
+                    high_density: plan.sink_hidpi,
                     refresh_rate: f64::from(plan.frames_per_second),
                     hdr_enabled: matches!(
                         plan.video_format.dynamic_range,
@@ -695,6 +700,7 @@ impl PlatformSessionControl for MacPlatformSessionControl {
                     scale_percent: u32::try_from(plan.sink_scale_percent)
                         .map_err(|_| "macOS native input display scale is invalid".to_owned())?,
                     dimensions_are_logical: plan.sink_mode_is_logical,
+                    high_density: plan.sink_hidpi,
                 })
                 .map_err(|status| {
                     format!("macOS native input display geometry is invalid: {status:?}")
@@ -904,6 +910,7 @@ impl PlatformSessionControl for MacPlatformSessionControl {
                     scale_percent: u32::try_from(plan.sink_scale_percent)
                         .map_err(|_| "macOS native input display scale is invalid".to_owned())?,
                     dimensions_are_logical: plan.sink_mode_is_logical,
+                    high_density: plan.sink_hidpi,
                 })
                 .map(|geometry| MacInputDisplayBounds {
                     width: f64::from(geometry.logical_width),

@@ -138,6 +138,7 @@ typedef struct LumenDisplayModeRequest {
   uint32_t height;
   uint32_t scale_percent;
   bool dimensions_are_logical;
+  bool high_density;
 } LumenDisplayModeRequest;
 
 typedef struct LumenDisplayGeometry {
