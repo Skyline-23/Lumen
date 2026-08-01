@@ -22,19 +22,33 @@ void fill_signal_info(
 }
 
 IDDCX_MONITOR_MODE make_monitor_mode(
-  const LumenMonitorContext *monitor_context
+  uint32_t width,
+  uint32_t height,
+  uint32_t refresh_millihertz,
+  IDDCX_MONITOR_MODE_ORIGIN origin
 ) {
   IDDCX_MONITOR_MODE mode {};
   mode.Size = sizeof(mode);
-  mode.Origin = IDDCX_MONITOR_MODE_ORIGIN_DRIVER;
+  mode.Origin = origin;
   const auto signal = lumen_driver_core_build_video_signal_mode(
-    monitor_context->width,
-    monitor_context->height,
-    monitor_context->refresh_millihertz,
+    width,
+    height,
+    refresh_millihertz,
     0
   );
   fill_signal_info(&mode.MonitorVideoSignalInfo, signal);
   return mode;
+}
+
+IDDCX_MONITOR_MODE make_monitor_mode(
+  const LumenMonitorContext *monitor_context
+) {
+  return make_monitor_mode(
+    monitor_context->width,
+    monitor_context->height,
+    monitor_context->refresh_millihertz,
+    IDDCX_MONITOR_MODE_ORIGIN_DRIVER
+  );
 }
 
 IDDCX_TARGET_MODE make_target_mode(
@@ -60,14 +74,42 @@ NTSTATUS LumenEvtIddCxParseMonitorDescription(
   if (input == nullptr || output == nullptr) {
     return STATUS_INVALID_PARAMETER;
   }
-  // Lumen reports no EDID data, so this callback is only a defensive boundary
-  // for a later OS-provided descriptor. The active mode is supplied through
-  // the per-monitor default-mode callback below.
-  output->MonitorModeBufferOutputCount = 0;
-  output->PreferredMonitorModeIdx = NO_PREFERRED_MODE;
-  return input->MonitorDescription.DataSize == 0
-    ? STATUS_SUCCESS
-    : STATUS_NOT_SUPPORTED;
+  // The Rust core owns EDID validation/parsing and the signal arithmetic;
+  // this boundary only maps the parsed mode into the IddCx structure.
+  constexpr UINT kEdidModeCount = 1;
+  output->MonitorModeBufferOutputCount = kEdidModeCount;
+  output->PreferredMonitorModeIdx = 0;
+  if (input->MonitorDescription.DataSize == 0) {
+    output->MonitorModeBufferOutputCount = 0;
+    output->PreferredMonitorModeIdx = NO_PREFERRED_MODE;
+    return STATUS_SUCCESS;
+  }
+  if (input->MonitorDescription.DataSize != LUMEN_MONITOR_EDID_BYTES ||
+      input->MonitorDescription.pData == nullptr) {
+    return STATUS_INVALID_PARAMETER;
+  }
+  LumenDriverMonitorEdidMode parsed_mode {};
+  if (lumen_driver_core_parse_monitor_edid(
+        static_cast<const uint8_t *>(input->MonitorDescription.pData),
+        input->MonitorDescription.DataSize,
+        &parsed_mode
+      ) != LUMEN_EDID_STATUS_OK) {
+    return STATUS_INVALID_PARAMETER;
+  }
+  if (input->MonitorModeBufferInputCount == 0) {
+    return STATUS_SUCCESS;
+  }
+  if (input->MonitorModeBufferInputCount < kEdidModeCount ||
+      input->pMonitorModes == nullptr) {
+    return STATUS_BUFFER_TOO_SMALL;
+  }
+  input->pMonitorModes[0] = make_monitor_mode(
+    parsed_mode.width,
+    parsed_mode.height,
+    parsed_mode.refresh_millihertz,
+    IDDCX_MONITOR_MODE_ORIGIN_MONITORDESCRIPTOR
+  );
+  return STATUS_SUCCESS;
 }
 
 NTSTATUS LumenEvtIddCxAdapterCommitModes(

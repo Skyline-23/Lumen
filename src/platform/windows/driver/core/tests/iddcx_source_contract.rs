@@ -199,7 +199,7 @@ fn feature_probe_and_luid_pin_precede_adapter_and_monitor_creation() {
 
 #[test]
 fn monitor_creation_supplies_default_and_target_modes() {
-    // Given: an IDD monitor with no EDID blob and a session-specific container identity.
+    // Given: an IDD monitor with a Rust-owned EDID and a session-specific container identity.
     let adapter = fs::read_to_string(driver_root().join("shim/adapter.cpp"))
         .expect("adapter boundary must exist");
     let callbacks = fs::read_to_string(driver_root().join("shim/iddcx_callbacks.cpp"))
@@ -214,9 +214,12 @@ fn monitor_creation_supplies_default_and_target_modes() {
     assert!(!adapter.contains("kLumenMonitorContainer"));
     assert!(adapter.contains("LumenReportInitializationFailure(L\"IddCxMonitorCreate\""));
     assert!(adapter.contains("LumenReportInitializationFailure(L\"IddCxMonitorArrival\""));
+    assert!(adapter.contains("lumen_driver_core_build_monitor_edid"));
+    assert!(!adapter.contains("kFallbackMonitorEdid"));
     assert!(callbacks.contains("IDDCX_MONITOR_MODE"));
     assert!(callbacks.contains("IDDCX_TARGET_MODE"));
     assert!(callbacks.contains("lumen_driver_core_build_video_signal_mode"));
+    assert!(callbacks.contains("lumen_driver_core_parse_monitor_edid"));
     assert!(!callbacks.contains("refresh_millihertz * height"));
     assert!(!callbacks.contains("refresh_millihertz) * width"));
     assert!(callbacks.contains("DefaultMonitorModeBufferOutputCount = kLumenModeCount"));

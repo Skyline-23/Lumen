@@ -435,15 +435,29 @@ NTSTATUS LumenCreateMonitor(
   if (context->adapter == nullptr || context->monitor != nullptr) {
     return STATUS_INVALID_DEVICE_STATE;
   }
+  const uint32_t width = static_cast<uint32_t>(request.arguments[1] >> 32u);
+  const uint32_t height = static_cast<uint32_t>(request.arguments[1]);
+  const uint32_t refresh_millihertz = static_cast<uint32_t>(request.arguments[2]);
+  if (lumen_driver_core_build_monitor_edid(
+        width,
+        height,
+        refresh_millihertz,
+        context->monitor_edid,
+        LUMEN_MONITOR_EDID_BYTES
+      ) != LUMEN_EDID_STATUS_OK) {
+    return STATUS_INVALID_PARAMETER;
+  }
   IDDCX_MONITOR_INFO monitor_info {};
   monitor_info.Size = sizeof(monitor_info);
   // Keep the monitor description compatible with the established IDD sample
   // drivers. The connector is virtual, but HDMI is the monitor technology
-  // Windows accepts consistently when no EDID blob is supplied.
+  // Windows accepts consistently when an EDID blob is supplied.
   monitor_info.MonitorType = DISPLAYCONFIG_OUTPUT_TECHNOLOGY_HDMI;
   monitor_info.ConnectorIndex = 0;
   monitor_info.MonitorDescription.Size = sizeof(monitor_info.MonitorDescription);
   monitor_info.MonitorDescription.Type = IDDCX_MONITOR_DESCRIPTION_TYPE_EDID;
+  monitor_info.MonitorDescription.DataSize = LUMEN_MONITOR_EDID_BYTES;
+  monitor_info.MonitorDescription.pData = context->monitor_edid;
   monitor_info.MonitorContainerId = unpack_monitor_container_id(
     request.arguments[3],
     request.arguments[4]
@@ -461,9 +475,9 @@ NTSTATUS LumenCreateMonitor(
   auto *monitor_context = LumenGetMonitorContext(output.MonitorObject);
   monitor_context->device = LumenGetAdapterContext(context->adapter)->device;
   monitor_context->monitor_id = request.arguments[0];
-  monitor_context->width = static_cast<uint32_t>(request.arguments[1] >> 32u);
-  monitor_context->height = static_cast<uint32_t>(request.arguments[1]);
-  monitor_context->refresh_millihertz = static_cast<uint32_t>(request.arguments[2]);
+  monitor_context->width = width;
+  monitor_context->height = height;
+  monitor_context->refresh_millihertz = refresh_millihertz;
   IDARG_OUT_MONITORARRIVAL arrival {};
   status = IddCxMonitorArrival(output.MonitorObject, &arrival);
   if (!NT_SUCCESS(status)) {

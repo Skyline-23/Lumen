@@ -252,6 +252,9 @@ impl VideoSignalMode {
         refresh_millihertz: u32,
         vertical_sync_divider: u32,
     ) -> Self {
+        let rational_divisor = gcd(refresh_millihertz, 1_000);
+        let sync_numerator = refresh_millihertz / rational_divisor;
+        let sync_denominator = 1_000 / rational_divisor;
         Self {
             pixel_rate: (refresh_millihertz as u64)
                 .saturating_mul(width as u64)
@@ -259,15 +262,28 @@ impl VideoSignalMode {
                 / 1_000,
             width,
             height,
-            horizontal_sync_numerator: refresh_millihertz.saturating_mul(height),
-            horizontal_sync_denominator: 1_000,
-            vertical_sync_numerator: refresh_millihertz,
-            vertical_sync_denominator: 1_000,
+            horizontal_sync_numerator: sync_numerator.saturating_mul(height),
+            horizontal_sync_denominator: sync_denominator,
+            vertical_sync_numerator: sync_numerator,
+            vertical_sync_denominator: sync_denominator,
             vertical_sync_divider,
             video_standard: 255,
             // DISPLAYCONFIG_SCANLINE_ORDERING_PROGRESSIVE.
             scan_line_ordering: 1,
         }
+    }
+}
+
+const fn gcd(mut left: u32, mut right: u32) -> u32 {
+    while right != 0 {
+        let remainder = left % right;
+        left = right;
+        right = remainder;
+    }
+    if left == 0 {
+        1
+    } else {
+        left
     }
 }
 
@@ -347,10 +363,10 @@ mod tests {
                 pixel_rate: 124_416_000,
                 width: 1920,
                 height: 1080,
-                horizontal_sync_numerator: 64_800_000,
-                horizontal_sync_denominator: 1_000,
-                vertical_sync_numerator: 60_000,
-                vertical_sync_denominator: 1_000,
+                horizontal_sync_numerator: 64_800,
+                horizontal_sync_denominator: 1,
+                vertical_sync_numerator: 60,
+                vertical_sync_denominator: 1,
                 vertical_sync_divider: 0,
                 video_standard: 255,
                 scan_line_ordering: 1,

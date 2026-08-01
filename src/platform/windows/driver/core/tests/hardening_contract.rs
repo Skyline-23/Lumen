@@ -95,6 +95,8 @@ fn windows_qa_preserves_stop_restart_probe_receipts() {
 
     // Then: each security and stop/restart outcome has an independent receipt.
     assert!(qa.contains("write_probe"));
+    assert!(qa.contains("set_test_monitor_container"));
+    assert!(qa.contains("kTestMonitorContainerHigh"));
     for probe in required_probes {
         assert!(qa.contains(probe), "missing receipt for {probe}");
     }

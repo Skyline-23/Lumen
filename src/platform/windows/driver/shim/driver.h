@@ -18,6 +18,7 @@ struct LumenDeviceContext {
   WDFQUEUE event_queue;
   IDDCX_ADAPTER adapter;
   IDDCX_MONITOR monitor;
+  BYTE monitor_edid[LUMEN_MONITOR_EDID_BYTES];
   IDXGIFactory7 *adapter_factory;
   ID3D11Device *d3d11_probe_device;
   ID3D12Device *d3d12_probe_device;
