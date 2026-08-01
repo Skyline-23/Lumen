@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-use std::ptr::null;
 use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -10,8 +9,6 @@ use lumen_engine::{
 };
 
 use windows_sys::core::GUID;
-use windows_sys::Win32::Devices::Display::{SetDisplayConfig, SDC_APPLY, SDC_TOPOLOGY_EXTEND};
-use windows_sys::Win32::Foundation::ERROR_SUCCESS;
 use windows_sys::Win32::System::Com::CoCreateGuid;
 
 use crate::{HostArguments, HostAuthorityPaths, PlatformApplicationPlan};
@@ -129,13 +126,6 @@ impl NativeWindowsDisplay {
             }
             return Err(combine_error(error, cleanup));
         }
-        if let Err(error) = activate_virtual_display() {
-            let cleanup = cleanup_display(&mut display, &self.recovery_store);
-            if cleanup.is_some() {
-                *active = Some(display);
-            }
-            return Err(combine_error(error, cleanup));
-        }
         let identity = match wait_for_swapchain(&display.driver, monitor_id, arrival) {
             Ok(identity) => identity,
             Err(error) => {
@@ -216,6 +206,7 @@ impl NativeWindowsDisplay {
             RecoveryPhase::FirstFrameReady,
             RecoveryPhase::IsolationStarted,
         )?;
+        display.record_physical_mutation(&self.recovery_store)?;
         let identity = display
             .identity
             .ok_or_else(|| "Windows IDD path identity is unavailable".to_owned())?;
@@ -371,6 +362,18 @@ impl ActiveDisplay {
         store
             .update(&updated)
             .map_err(|error| format!("Windows hotplug snapshot refresh failed: {error}"))?;
+        self.journal = updated;
+        Ok(())
+    }
+
+    fn record_physical_mutation(&mut self, store: &RecoveryJournalStore) -> Result<(), String> {
+        if self.journal.physical_mutation_applied == Some(true) {
+            return Ok(());
+        }
+        let updated = self.journal.clone().with_physical_mutation_applied(true);
+        store
+            .update(&updated)
+            .map_err(|error| format!("Windows physical mutation journal failed: {error}"))?;
         self.journal = updated;
         Ok(())
     }
@@ -658,15 +661,4 @@ fn wait_for_swapchain(
         "Windows could not activate the IDD target {:08x}:{:08x}/{}",
         identity.adapter.high_part, identity.adapter.low_part, identity.target_id
     ))
-}
-
-fn activate_virtual_display() -> Result<(), String> {
-    // IddCxMonitorArrival exposes a connected target but intentionally does not
-    // add it to the active desktop topology. The companion host must request
-    // the standard extend topology from the interactive session before QDC can
-    // report the path and before DWM can create the swapchain.
-    let status = unsafe { SetDisplayConfig(0, null(), 0, null(), SDC_APPLY | SDC_TOPOLOGY_EXTEND) };
-    (status == ERROR_SUCCESS as i32)
-        .then_some(())
-        .ok_or_else(|| format!("Windows could not activate the IDD display topology: {status}"))
 }

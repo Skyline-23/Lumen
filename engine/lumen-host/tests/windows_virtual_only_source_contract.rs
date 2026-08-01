@@ -75,7 +75,7 @@ fn exact_supplied_topology_is_applied_without_physical_fallback_flags() {
 }
 
 #[test]
-fn startup_activates_the_connected_idd_target_before_waiting_for_the_driver_swapchain() {
+fn startup_waits_for_os_owned_idd_swapchain_without_mutating_session_topology() {
     // Given: IddCx monitor arrival and a QDC-independent driver readiness signal.
     let start = DISPLAY
         .split("pub(super) fn start")
@@ -89,16 +89,17 @@ fn startup_activates_the_connected_idd_target_before_waiting_for_the_driver_swap
         .nth(1)
         .expect("display wait");
 
-    // Then: startup requests activation and waits for the IDD swapchain,
-    // rather than requiring QueryDisplayConfig in a disconnected session.
-    let activation = start
-        .find("activate_virtual_display()")
-        .expect("IDD topology activation");
+    // Then: Windows owns topology activation after monitor arrival and startup
+    // waits for the resulting driver swapchain even in a disconnected session.
+    let creation = start
+        .find("driver.create_monitor(")
+        .expect("IDD monitor creation");
     let wait_call = start
         .find("wait_for_swapchain(&display.driver, monitor_id, arrival)")
         .expect("arrival-aware display wait");
-    assert!(activation < wait_call);
-    assert!(DISPLAY.contains("SDC_TOPOLOGY_EXTEND"));
+    assert!(creation < wait_call);
+    assert!(!DISPLAY.contains("activate_virtual_display"));
+    assert!(!DISPLAY.contains("SDC_TOPOLOGY_EXTEND"));
     assert!(DISPLAY.contains("arrival.adapter_luid"));
     assert!(DISPLAY.contains("arrival.target_id"));
     assert!(wait.contains("driver.swapchain_assigned(monitor_id)"));
@@ -134,6 +135,29 @@ fn qdc_access_denied_does_not_close_a_driver_owned_virtual_session() {
     assert!(first_frame.contains("let Some(active_topology)"));
     assert!(first_frame.contains("query_active_topology_if_available"));
     assert!(restore.contains("physical_mutation_applied != Some(false)"));
+}
+
+#[test]
+fn first_frame_journals_physical_mutation_before_isolating_the_idd_path() {
+    // Given: the first-frame isolation path and its durable recovery journal.
+    let first_frame = DISPLAY
+        .split("pub(super) fn first_frame_ready")
+        .nth(1)
+        .expect("first-frame path")
+        .split("pub(super) fn check_first_frame_timeout")
+        .next()
+        .expect("bounded first-frame path");
+
+    // Then: a crash during SetDisplayConfig still leaves recovery authorized
+    // to restore the physical topology before the monitor can be removed.
+    let journal = first_frame
+        .find("record_physical_mutation")
+        .expect("physical mutation journal");
+    let isolation = first_frame
+        .find("apply_topology(&isolated)")
+        .expect("IDD isolation apply");
+    assert!(journal < isolation);
+    assert!(DISPLAY.contains("with_physical_mutation_applied(true)"));
 }
 
 #[test]
