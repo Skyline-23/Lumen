@@ -151,12 +151,14 @@ fn windows_scripts_cleanup_every_failed_install_attempt() {
         .expect("test certificate lifetime must always clean up");
     assert!(build_try < build_certificate && build_certificate < build_finally);
     assert!(build_script.contains("Cert:\\CurrentUser\\My\\$($certificate.Thumbprint)"));
+    assert!(build_script.contains("Microsoft Enhanced RSA and AES Cryptographic Provider"));
     assert!(build_script.contains("Component.Microsoft.Windows.DriverKit.BuildTools"));
     assert!(build_script.contains("Visual Studio Build Tools with Desktop C++ and WDK"));
     assert!(build_script.contains("$msbuild $project /t:Restore"));
     assert!(build_script.contains("Bin\\amd64\\MSBuild.exe"));
     assert!(build_script.contains("$wdkNuGetTools"));
     assert!(build_script.contains("stampinf.exe"));
+    assert!(build_script.contains("build\\bin\\x64\\$Configuration\\LumenIddCx.inf"));
     assert!(build_script.contains("/p:InfToolArchitecture=Native64Bit"));
     assert!(build_script.contains("$msbuild $project /m /t:Build"));
     assert!(build_script.contains("\"/uselocaltime\""));
@@ -168,6 +170,7 @@ fn windows_scripts_cleanup_every_failed_install_attempt() {
     assert!(install_script.contains("$installMutated = $true"));
     assert!(install_script.contains("& pnputil.exe /add-driver $inf | Out-Host"));
     assert!(install_script.contains("& pnputil.exe /add-driver $inf /install | Out-Host"));
+    assert!(install_script.contains("$pnputilExitCode -notin @(0, 259, 3010)"));
     let stage_missing_device = install_script
         .find("& pnputil.exe /add-driver $inf | Out-Host")
         .expect("a missing device must have its package staged");

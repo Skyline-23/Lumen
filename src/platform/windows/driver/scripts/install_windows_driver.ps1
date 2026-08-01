@@ -46,7 +46,10 @@ try {
         & pnputil.exe /add-driver $inf /install | Out-Host
     }
     $pnputilExitCode = $LASTEXITCODE
-    if ($pnputilExitCode -notin @(0, 3010)) {
+    # PnPUtil returns ERROR_NO_MORE_ITEMS (259) when the selected package is
+    # already the best-ranked package on an existing device. That is a
+    # successful no-op, not an installation failure.
+    if ($pnputilExitCode -notin @(0, 259, 3010)) {
         throw "pnputil failed to stage and apply the driver package with code $pnputilExitCode."
     }
 
