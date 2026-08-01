@@ -73,10 +73,15 @@ impl DriverHandle {
     pub(super) fn create_monitor(
         &self,
         monitor_id: u64,
+        monitor_container_id: GUID,
         width: u32,
         height: u32,
         refresh_millihertz: u32,
     ) -> Result<(), String> {
+        let container_id_high = (u64::from(monitor_container_id.data1) << 32)
+            | (u64::from(monitor_container_id.data2) << 16)
+            | u64::from(monitor_container_id.data3);
+        let container_id_low = u64::from_be_bytes(monitor_container_id.data4);
         let response = self.request(
             IOCTL_CREATE_MONITOR,
             OPERATION_CREATE_MONITOR,
@@ -84,8 +89,8 @@ impl DriverHandle {
                 monitor_id,
                 (u64::from(width) << 32) | u64::from(height),
                 u64::from(refresh_millihertz),
-                0,
-                0,
+                container_id_high,
+                container_id_low,
             ],
         )?;
         require_ok(response, "create monitor")

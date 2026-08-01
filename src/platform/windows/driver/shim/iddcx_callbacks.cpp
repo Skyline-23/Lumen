@@ -5,24 +5,20 @@ constexpr UINT kLumenModeCount = 1;
 
 void fill_signal_info(
   DISPLAYCONFIG_VIDEO_SIGNAL_INFO *signal,
-  const LumenMonitorContext *monitor_context,
-  bool monitor_mode
+  const LumenDriverVideoSignalMode &mode
 ) {
-  const UINT refresh_millihertz = monitor_context->refresh_millihertz;
-  const UINT height = monitor_context->height;
-  const UINT width = monitor_context->width;
-  signal->activeSize.cx = width;
-  signal->activeSize.cy = height;
+  signal->activeSize.cx = static_cast<LONG>(mode.width);
+  signal->activeSize.cy = static_cast<LONG>(mode.height);
   signal->totalSize = signal->activeSize;
-  signal->vSyncFreq.Numerator = refresh_millihertz;
-  signal->vSyncFreq.Denominator = 1000;
-  signal->hSyncFreq.Numerator = refresh_millihertz * height;
-  signal->hSyncFreq.Denominator = 1000;
-  signal->pixelRate =
-    (static_cast<UINT64>(refresh_millihertz) * width * height) / 1000;
-  signal->AdditionalSignalInfo.vSyncFreqDivider = monitor_mode ? 0 : 1;
-  signal->AdditionalSignalInfo.videoStandard = 255;
-  signal->scanLineOrdering = DISPLAYCONFIG_SCANLINE_ORDERING_PROGRESSIVE;
+  signal->vSyncFreq.Numerator = mode.vertical_sync_numerator;
+  signal->vSyncFreq.Denominator = mode.vertical_sync_denominator;
+  signal->hSyncFreq.Numerator = mode.horizontal_sync_numerator;
+  signal->hSyncFreq.Denominator = mode.horizontal_sync_denominator;
+  signal->pixelRate = mode.pixel_rate;
+  signal->AdditionalSignalInfo.vSyncFreqDivider = mode.vertical_sync_divider;
+  signal->AdditionalSignalInfo.videoStandard = mode.video_standard;
+  signal->scanLineOrdering =
+    static_cast<DISPLAYCONFIG_SCANLINE_ORDERING>(mode.scan_line_ordering);
 }
 
 IDDCX_MONITOR_MODE make_monitor_mode(
@@ -31,7 +27,13 @@ IDDCX_MONITOR_MODE make_monitor_mode(
   IDDCX_MONITOR_MODE mode {};
   mode.Size = sizeof(mode);
   mode.Origin = IDDCX_MONITOR_MODE_ORIGIN_DRIVER;
-  fill_signal_info(&mode.MonitorVideoSignalInfo, monitor_context, true);
+  const auto signal = lumen_driver_core_build_video_signal_mode(
+    monitor_context->width,
+    monitor_context->height,
+    monitor_context->refresh_millihertz,
+    0
+  );
+  fill_signal_info(&mode.MonitorVideoSignalInfo, signal);
   return mode;
 }
 
@@ -40,11 +42,13 @@ IDDCX_TARGET_MODE make_target_mode(
 ) {
   IDDCX_TARGET_MODE mode {};
   mode.Size = sizeof(mode);
-  fill_signal_info(
-    &mode.TargetVideoSignalInfo.targetVideoSignalInfo,
-    monitor_context,
-    false
+  const auto signal = lumen_driver_core_build_video_signal_mode(
+    monitor_context->width,
+    monitor_context->height,
+    monitor_context->refresh_millihertz,
+    1
   );
+  fill_signal_info(&mode.TargetVideoSignalInfo.targetVideoSignalInfo, signal);
   return mode;
 }
 }

@@ -231,6 +231,47 @@ pub struct CoreResponse {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct VideoSignalMode {
+    pub pixel_rate: u64,
+    pub width: u32,
+    pub height: u32,
+    pub horizontal_sync_numerator: u32,
+    pub horizontal_sync_denominator: u32,
+    pub vertical_sync_numerator: u32,
+    pub vertical_sync_denominator: u32,
+    pub vertical_sync_divider: u32,
+    pub video_standard: u32,
+    pub scan_line_ordering: i32,
+}
+
+impl VideoSignalMode {
+    pub(crate) const fn new(
+        width: u32,
+        height: u32,
+        refresh_millihertz: u32,
+        vertical_sync_divider: u32,
+    ) -> Self {
+        Self {
+            pixel_rate: (refresh_millihertz as u64)
+                .saturating_mul(width as u64)
+                .saturating_mul(height as u64)
+                / 1_000,
+            width,
+            height,
+            horizontal_sync_numerator: refresh_millihertz.saturating_mul(height),
+            horizontal_sync_denominator: 1_000,
+            vertical_sync_numerator: refresh_millihertz,
+            vertical_sync_denominator: 1_000,
+            vertical_sync_divider,
+            video_standard: 255,
+            // DISPLAYCONFIG_SCANLINE_ORDERING_PROGRESSIVE.
+            scan_line_ordering: 1,
+        }
+    }
+}
+
+#[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CoreState {
     pub owner_id: u64,
@@ -290,5 +331,30 @@ pub struct CoreTransition {
 const _: () = assert!(size_of::<AbiHeader>() == 16);
 const _: () = assert!(size_of::<CoreRequest>() == 80);
 const _: () = assert!(size_of::<CoreResponse>() == 48);
+const _: () = assert!(size_of::<VideoSignalMode>() == 48);
 const _: () = assert!(size_of::<CoreState>() == 152);
 const _: () = assert!(size_of::<CoreTransition>() == 200);
+
+#[cfg(test)]
+mod tests {
+    use super::VideoSignalMode;
+
+    #[test]
+    fn video_signal_mode_uses_rust_owned_signal_math() {
+        assert_eq!(
+            VideoSignalMode::new(1920, 1080, 60_000, 0),
+            VideoSignalMode {
+                pixel_rate: 124_416_000,
+                width: 1920,
+                height: 1080,
+                horizontal_sync_numerator: 64_800_000,
+                horizontal_sync_denominator: 1_000,
+                vertical_sync_numerator: 60_000,
+                vertical_sync_denominator: 1_000,
+                vertical_sync_divider: 0,
+                video_standard: 255,
+                scan_line_ordering: 1,
+            }
+        );
+    }
+}

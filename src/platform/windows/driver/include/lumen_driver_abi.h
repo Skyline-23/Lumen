@@ -131,6 +131,19 @@ typedef struct LumenDriverCoreResponse {
   uint64_t values[2];
 } LumenDriverCoreResponse;
 
+typedef struct LumenDriverVideoSignalMode {
+  uint64_t pixel_rate;
+  uint32_t width;
+  uint32_t height;
+  uint32_t horizontal_sync_numerator;
+  uint32_t horizontal_sync_denominator;
+  uint32_t vertical_sync_numerator;
+  uint32_t vertical_sync_denominator;
+  uint32_t vertical_sync_divider;
+  uint32_t video_standard;
+  int32_t scan_line_ordering;
+} LumenDriverVideoSignalMode;
+
 typedef struct LumenDriverFrameRecord {
   LumenDriverAbiHeader header;
   uint64_t generation;
@@ -178,6 +191,12 @@ extern "C" {
 #endif
 
   LumenDriverCoreState lumen_driver_core_initial_state(void);
+  LumenDriverVideoSignalMode lumen_driver_core_build_video_signal_mode(
+    uint32_t width,
+    uint32_t height,
+    uint32_t refresh_millihertz,
+    uint32_t vertical_sync_divider
+  );
   LumenDriverCoreTransition
     lumen_driver_core_dispatch(LumenDriverCoreState state, LumenDriverCoreRequest request);
 
@@ -187,6 +206,7 @@ extern "C" {
 static_assert(sizeof(LumenDriverAbiHeader) == 16, "LumenDriverAbiHeader layout changed");
 static_assert(sizeof(LumenDriverCoreRequest) == 80, "LumenDriverCoreRequest layout changed");
 static_assert(sizeof(LumenDriverCoreResponse) == 48, "LumenDriverCoreResponse layout changed");
+static_assert(sizeof(LumenDriverVideoSignalMode) == 48, "LumenDriverVideoSignalMode layout changed");
 static_assert(sizeof(LumenDriverFrameRecord) == 80, "LumenDriverFrameRecord layout changed");
 static_assert(sizeof(LumenDriverCoreState) == 152, "LumenDriverCoreState layout changed");
 static_assert(sizeof(LumenDriverCoreTransition) == 200, "LumenDriverCoreTransition layout changed");

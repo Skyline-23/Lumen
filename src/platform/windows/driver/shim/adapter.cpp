@@ -8,8 +8,16 @@
 namespace {
   using Microsoft::WRL::ComPtr;
 
-  const GUID kLumenMonitorContainer =
-    {0x89f7cc80, 0x27a5, 0x4a18, {0x95, 0x30, 0x47, 0x5e, 0xd8, 0x31, 0xa8, 0x41}};
+  GUID unpack_monitor_container_id(uint64_t high, uint64_t low) {
+    GUID value {};
+    value.Data1 = static_cast<uint32_t>(high >> 32u);
+    value.Data2 = static_cast<uint16_t>((high >> 16u) & 0xffffu);
+    value.Data3 = static_cast<uint16_t>(high & 0xffffu);
+    for (size_t index = 0; index < ARRAYSIZE(value.Data4); ++index) {
+      value.Data4[index] = static_cast<BYTE>(low >> (8u * (7u - index)));
+    }
+    return value;
+  }
 
   LumenDriverCoreTransition dispatch_internal(
     LumenDeviceContext *context,
@@ -436,7 +444,10 @@ NTSTATUS LumenCreateMonitor(
   monitor_info.ConnectorIndex = 0;
   monitor_info.MonitorDescription.Size = sizeof(monitor_info.MonitorDescription);
   monitor_info.MonitorDescription.Type = IDDCX_MONITOR_DESCRIPTION_TYPE_EDID;
-  monitor_info.MonitorContainerId = kLumenMonitorContainer;
+  monitor_info.MonitorContainerId = unpack_monitor_container_id(
+    request.arguments[3],
+    request.arguments[4]
+  );
   WDF_OBJECT_ATTRIBUTES attributes;
   WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&attributes, LumenMonitorContext);
   IDARG_IN_MONITORCREATE input {};

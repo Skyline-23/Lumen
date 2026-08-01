@@ -100,9 +100,13 @@ impl NativeWindowsDisplay {
                 "Windows driver already owns a monitor without startup recovery".to_owned(),
             );
         }
-        if let Err(error) =
-            driver.create_monitor(monitor_id, plan.width, plan.height, refresh_millihertz)
-        {
+        if let Err(error) = driver.create_monitor(
+            monitor_id,
+            guid,
+            plan.width,
+            plan.height,
+            refresh_millihertz,
+        ) {
             let recovery = recover_persisted_topology(&self.recovery_store, &driver).err();
             return Err(combine_error(error, recovery));
         }
