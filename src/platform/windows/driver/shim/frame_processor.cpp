@@ -46,6 +46,11 @@ void release_shared_surface(LumenFrameProcessorState *processor) {
   processor->shared_color_space = 0;
 }
 
+bool is_device_removed(LumenFrameProcessorState *processor) {
+  return processor->d3d11_device == nullptr ||
+    processor->d3d11_device->GetDeviceRemovedReason() != S_OK;
+}
+
 uint32_t presentation_time_90khz(
   LumenFrameProcessorState *processor,
   uint64_t qpc_time
@@ -228,6 +233,9 @@ NTSTATUS copy_frame(
 }
 
 NTSTATUS acquire_d3d12_frame(LumenFrameProcessorState *processor) {
+  if (is_device_removed(processor)) {
+    return STATUS_DEVICE_REMOVED;
+  }
   IDARG_IN_RELEASEANDACQUIREBUFFER2 input {};
   input.Size = sizeof(input);
   input.pD3D12CommandQueue = processor->d3d12_queue.Get();
@@ -257,7 +265,10 @@ NTSTATUS acquire_d3d12_frame(LumenFrameProcessorState *processor) {
     IID_PPV_ARGS(wrapped.GetAddressOf())
   );
   if (FAILED(wrap_result)) {
-    return STATUS_NOT_SUPPORTED;
+    return wrap_result == DXGI_ERROR_DEVICE_REMOVED ||
+           wrap_result == DXGI_ERROR_DEVICE_RESET
+      ? STATUS_DEVICE_REMOVED
+      : STATUS_NOT_SUPPORTED;
   }
   ID3D11Resource *resources[] = {wrapped.Get()};
   processor->d3d11_on_12->AcquireWrappedResources(resources, ARRAYSIZE(resources));
@@ -273,6 +284,9 @@ NTSTATUS acquire_d3d12_frame(LumenFrameProcessorState *processor) {
 }
 
 NTSTATUS acquire_d3d11_frame(LumenFrameProcessorState *processor) {
+  if (is_device_removed(processor)) {
+    return STATUS_DEVICE_REMOVED;
+  }
   IDARG_OUT_RELEASEANDACQUIREBUFFER output {};
   output.MetaData.Size = sizeof(output.MetaData);
   const HRESULT result = IddCxSwapChainReleaseAndAcquireBuffer(
@@ -349,11 +363,21 @@ DWORD WINAPI run_frame_processor(void *value) {
     if (surface_wait != WAIT_OBJECT_0 + 1) {
       return 2;
     }
+    if (WaitForSingleObject(processor->stop_event, 0) == WAIT_OBJECT_0) {
+      return 0;
+    }
     const NTSTATUS status = processor->uses_d3d12
       ? acquire_d3d12_frame(processor)
       : acquire_d3d11_frame(processor);
     if (status == STATUS_RETRY) {
       continue;
+    }
+    if (status == STATUS_DEVICE_REMOVED) {
+      LumenDriverFrameRecord record {};
+      record.generation = processor->generation;
+      record.monitor_id = processor->monitor_id;
+      publish_frame(processor, record, status);
+      return 3;
     }
     if (!NT_SUCCESS(status)) {
       LumenDriverFrameRecord record {};
@@ -490,8 +514,12 @@ NTSTATUS LumenAssignSwapChain(
 }
 
 void LumenStopFrameProcessor(LumenDeviceContext *context) {
-  auto *processor = context->frame_processor;
-  context->frame_processor = nullptr;
+  auto *processor = static_cast<LumenFrameProcessor *>(
+    InterlockedExchangePointer(
+      reinterpret_cast<PVOID volatile *>(&context->frame_processor),
+      nullptr
+    )
+  );
   if (processor == nullptr) {
     return;
   }

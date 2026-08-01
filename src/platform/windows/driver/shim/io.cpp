@@ -182,6 +182,8 @@ void LumenEvtFrameWorkItem(WDFWORKITEM work_item) {
     &pending_request
   );
   if (!NT_SUCCESS(status)) {
+    InterlockedExchange(&context->pending_frame_ready, 0);
+    LumenSignalFrameRequest(context);
     return;
   }
   void *input_buffer = nullptr;
