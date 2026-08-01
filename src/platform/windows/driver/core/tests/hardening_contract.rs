@@ -166,18 +166,19 @@ fn windows_scripts_cleanup_every_failed_install_attempt() {
     assert!(install_script.contains("$installMutated = $false"));
     assert!(install_script.contains("HardwareID -Contains \"ROOT\\LumenIddCx\""));
     assert!(install_script.contains("$installMutated = $true"));
+    assert!(install_script.contains("& pnputil.exe /add-driver $inf | Out-Host"));
     assert!(install_script.contains("& pnputil.exe /add-driver $inf /install | Out-Host"));
-    let stage_driver = install_script
+    let stage_missing_device = install_script
+        .find("& pnputil.exe /add-driver $inf | Out-Host")
+        .expect("a missing device must have its package staged");
+    let stage_existing_device = install_script
         .find("& pnputil.exe /add-driver $inf /install | Out-Host")
-        .expect("the current package must always be staged and applied");
-    let create_missing_device = install_script
-        .find("if ($devices.Count -eq 0)")
-        .expect("a missing root device must be created");
-    assert!(
-        stage_driver < create_missing_device,
-        "an existing broken device must be upgraded before its health is polled"
-    );
-    assert!(install_script.contains("& $devcon install $inf \"Root\\LumenIddCx\" | Out-Host"));
+        .expect("an existing device must have its package applied");
+    let devcon_install = install_script
+        .find("& $devcon install $inf \"Root\\LumenIddCx\" | Out-Host")
+        .expect("a missing root device must be created with devcon");
+    assert!(stage_missing_device < devcon_install);
+    assert!(stage_existing_device < devcon_install);
     assert!(install_script.contains("$devconExitCode -notin @(0, 1)"));
     assert!(install_script.contains("DEVPKEY_Device_ProblemCode"));
     assert!(install_script.contains("[int]$problem.Data -eq 14"));

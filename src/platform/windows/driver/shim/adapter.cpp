@@ -429,7 +429,10 @@ NTSTATUS LumenCreateMonitor(
   }
   IDDCX_MONITOR_INFO monitor_info {};
   monitor_info.Size = sizeof(monitor_info);
-  monitor_info.MonitorType = DISPLAYCONFIG_OUTPUT_TECHNOLOGY_INDIRECT_WIRED;
+  // Keep the monitor description compatible with the established IDD sample
+  // drivers. The connector is virtual, but HDMI is the monitor technology
+  // Windows accepts consistently when no EDID blob is supplied.
+  monitor_info.MonitorType = DISPLAYCONFIG_OUTPUT_TECHNOLOGY_HDMI;
   monitor_info.ConnectorIndex = 0;
   monitor_info.MonitorDescription.Size = sizeof(monitor_info.MonitorDescription);
   monitor_info.MonitorDescription.Type = IDDCX_MONITOR_DESCRIPTION_TYPE_EDID;
@@ -442,7 +445,7 @@ NTSTATUS LumenCreateMonitor(
   IDARG_OUT_MONITORCREATE output {};
   NTSTATUS status = IddCxMonitorCreate(context->adapter, &input, &output);
   if (!NT_SUCCESS(status)) {
-    return status;
+    return LumenReportInitializationFailure(L"IddCxMonitorCreate", status);
   }
   auto *monitor_context = LumenGetMonitorContext(output.MonitorObject);
   monitor_context->device = LumenGetAdapterContext(context->adapter)->device;
@@ -454,7 +457,7 @@ NTSTATUS LumenCreateMonitor(
   status = IddCxMonitorArrival(output.MonitorObject, &arrival);
   if (!NT_SUCCESS(status)) {
     WdfObjectDelete(output.MonitorObject);
-    return status;
+    return LumenReportInitializationFailure(L"IddCxMonitorArrival", status);
   }
   context->monitor = output.MonitorObject;
   return STATUS_SUCCESS;

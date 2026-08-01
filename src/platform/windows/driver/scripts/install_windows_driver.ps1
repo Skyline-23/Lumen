@@ -36,7 +36,15 @@ try {
         Import-Certificate -FilePath $certificate -CertStoreLocation Cert:\LocalMachine\TrustedPublisher | Out-Null
     }
 
-    & pnputil.exe /add-driver $inf /install | Out-Host
+    if ($devices.Count -eq 0) {
+        # There is no matching device yet. Stage the package first; devcon
+        # creates the ROOT\LumenIddCx node and binds the staged package below.
+        & pnputil.exe /add-driver $inf | Out-Host
+    }
+    else {
+        # An existing node can be upgraded in place.
+        & pnputil.exe /add-driver $inf /install | Out-Host
+    }
     $pnputilExitCode = $LASTEXITCODE
     if ($pnputilExitCode -notin @(0, 3010)) {
         throw "pnputil failed to stage and apply the driver package with code $pnputilExitCode."

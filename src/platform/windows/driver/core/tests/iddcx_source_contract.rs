@@ -198,6 +198,27 @@ fn feature_probe_and_luid_pin_precede_adapter_and_monitor_creation() {
 }
 
 #[test]
+fn monitor_creation_supplies_default_and_target_modes() {
+    // Given: an IDD monitor with no EDID blob.
+    let adapter = fs::read_to_string(driver_root().join("shim/adapter.cpp"))
+        .expect("adapter boundary must exist");
+    let callbacks = fs::read_to_string(driver_root().join("shim/iddcx_callbacks.cpp"))
+        .expect("monitor callback boundary must exist");
+
+    // Then: monitor creation follows the working IDD sample shape and both
+    // mode callbacks return one concrete mode instead of STATUS_NOT_SUPPORTED.
+    assert!(adapter.contains("DISPLAYCONFIG_OUTPUT_TECHNOLOGY_HDMI"));
+    assert!(adapter.contains("LumenReportInitializationFailure(L\"IddCxMonitorCreate\""));
+    assert!(adapter.contains("LumenReportInitializationFailure(L\"IddCxMonitorArrival\""));
+    assert!(callbacks.contains("IDDCX_MONITOR_MODE"));
+    assert!(callbacks.contains("IDDCX_TARGET_MODE"));
+    assert!(callbacks.contains("DefaultMonitorModeBufferOutputCount = kLumenModeCount"));
+    assert!(callbacks.contains("TargetModeBufferOutputCount = kLumenModeCount"));
+    assert!(callbacks.contains("input->pDefaultMonitorModes[0] = make_monitor_mode"));
+    assert!(callbacks.contains("input->pTargetModes[0] = make_target_mode"));
+}
+
+#[test]
 fn swapchain_callback_owns_d3d12_frames_and_rolls_back_failed_assignment() {
     // Given: the IddCx swap-chain callback boundary.
     let callbacks = fs::read_to_string(driver_root().join("shim/iddcx_callbacks.cpp"))
