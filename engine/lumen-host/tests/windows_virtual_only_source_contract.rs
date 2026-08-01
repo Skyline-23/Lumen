@@ -75,6 +75,68 @@ fn exact_supplied_topology_is_applied_without_physical_fallback_flags() {
 }
 
 #[test]
+fn startup_activates_the_connected_idd_target_before_waiting_for_the_driver_swapchain() {
+    // Given: IddCx monitor arrival and a QDC-independent driver readiness signal.
+    let start = DISPLAY
+        .split("pub(super) fn start")
+        .nth(1)
+        .expect("display start")
+        .split("pub(super) fn capture_driver")
+        .next()
+        .expect("bounded display start");
+    let wait = DISPLAY
+        .split("fn wait_for_swapchain")
+        .nth(1)
+        .expect("display wait");
+
+    // Then: startup requests activation and waits for the IDD swapchain,
+    // rather than requiring QueryDisplayConfig in a disconnected session.
+    let activation = start
+        .find("activate_virtual_display()")
+        .expect("IDD topology activation");
+    let wait_call = start
+        .find("wait_for_swapchain(&display.driver, monitor_id, arrival)")
+        .expect("arrival-aware display wait");
+    assert!(activation < wait_call);
+    assert!(DISPLAY.contains("SDC_TOPOLOGY_EXTEND"));
+    assert!(DISPLAY.contains("arrival.adapter_luid"));
+    assert!(DISPLAY.contains("arrival.target_id"));
+    assert!(wait.contains("driver.swapchain_assigned(monitor_id)"));
+    assert!(!wait.contains("query_active_topology"));
+    assert!(!DISPLAY.contains("apply_display_mode"));
+}
+
+#[test]
+fn qdc_access_denied_does_not_close_a_driver_owned_virtual_session() {
+    // Given: startup, first-frame, and cleanup paths for disconnected sessions.
+    let start = DISPLAY
+        .split("pub(super) fn start")
+        .nth(1)
+        .expect("display start")
+        .split("pub(super) fn capture_driver")
+        .next()
+        .expect("bounded display start");
+    let first_frame = DISPLAY
+        .split("pub(super) fn first_frame_ready")
+        .nth(1)
+        .expect("first-frame path")
+        .split("pub(super) fn check_first_frame_timeout")
+        .next()
+        .expect("bounded first-frame path");
+    let restore = DISPLAY
+        .split("fn restore_and_verify")
+        .nth(1)
+        .expect("restore path");
+
+    // Then: QDC is optional around IDD capture, and a session that never
+    // mutated physical topology can remove its monitor without a QDC restore.
+    assert!(start.contains("query_active_topology_if_available"));
+    assert!(first_frame.contains("let Some(active_topology)"));
+    assert!(first_frame.contains("query_active_topology_if_available"));
+    assert!(restore.contains("physical_mutation_applied != Some(false)"));
+}
+
+#[test]
 fn startup_and_normal_cleanup_verify_restore_before_monitor_removal() {
     // Given: durable startup recovery and normal stop implementations.
     let constructor = DISPLAY
@@ -200,7 +262,7 @@ fn create_and_configuration_failures_cross_the_recovery_barrier() {
         .split("fn cleanup_display")
         .nth(1)
         .expect("cleanup barrier")
-        .split("fn wait_for_new_display")
+        .split("fn wait_for_swapchain")
         .next()
         .expect("bounded cleanup barrier");
 

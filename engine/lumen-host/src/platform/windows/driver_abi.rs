@@ -55,6 +55,7 @@ pub(super) const STATUS_OK: u32 = 0;
 pub(super) const STATUS_NOT_READY: u32 = 10;
 pub(super) const STATE_MONITOR_ACTIVE: u32 = 1 << 0;
 pub(super) const STATE_MONITOR_ORPHANED: u32 = 1 << 3;
+pub(super) const STATE_SWAPCHAIN_ASSIGNED: u32 = 1 << 4;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

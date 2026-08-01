@@ -156,13 +156,20 @@ NTSTATUS LumenEvtDeviceAdd(WDFDRIVER, PWDFDEVICE_INIT device_init) {
   IDD_CX_CLIENT_CONFIG iddcx_config;
   IDD_CX_CLIENT_CONFIG_INIT(&iddcx_config);
   iddcx_config.EvtIddCxDeviceIoControl = LumenEvtIddCxDeviceIoControl;
-  iddcx_config.EvtIddCxParseMonitorDescription = LumenEvtIddCxParseMonitorDescription;
   iddcx_config.EvtIddCxAdapterInitFinished = LumenEvtIddCxAdapterInitFinished;
-  iddcx_config.EvtIddCxAdapterCommitModes = LumenEvtIddCxAdapterCommitModes;
   iddcx_config.EvtIddCxMonitorGetDefaultDescriptionModes = LumenEvtIddCxMonitorGetDefaultDescriptionModes;
-  iddcx_config.EvtIddCxMonitorQueryTargetModes = LumenEvtIddCxMonitorQueryTargetModes;
   iddcx_config.EvtIddCxMonitorAssignSwapChain = LumenEvtIddCxMonitorAssignSwapChain;
   iddcx_config.EvtIddCxMonitorUnassignSwapChain = LumenEvtIddCxMonitorUnassignSwapChain;
+  if (IDD_IS_FIELD_AVAILABLE(IDD_CX_CLIENT_CONFIG, EvtIddCxAdapterQueryTargetInfo)) {
+    iddcx_config.EvtIddCxAdapterQueryTargetInfo = LumenEvtIddCxAdapterQueryTargetInfo;
+    iddcx_config.EvtIddCxParseMonitorDescription2 = LumenEvtIddCxParseMonitorDescription2;
+    iddcx_config.EvtIddCxMonitorQueryTargetModes2 = LumenEvtIddCxMonitorQueryTargetModes2;
+    iddcx_config.EvtIddCxAdapterCommitModes2 = LumenEvtIddCxAdapterCommitModes2;
+  } else {
+    iddcx_config.EvtIddCxParseMonitorDescription = LumenEvtIddCxParseMonitorDescription;
+    iddcx_config.EvtIddCxAdapterCommitModes = LumenEvtIddCxAdapterCommitModes;
+    iddcx_config.EvtIddCxMonitorQueryTargetModes = LumenEvtIddCxMonitorQueryTargetModes;
+  }
   NTSTATUS status = IddCxDeviceInitConfig(device_init, &iddcx_config);
   if (!NT_SUCCESS(status)) {
     return LumenReportInitializationFailure(L"IddCxDeviceInitConfig", status);

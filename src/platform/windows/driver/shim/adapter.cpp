@@ -435,6 +435,8 @@ NTSTATUS LumenCreateMonitor(
   if (context->adapter == nullptr || context->monitor != nullptr) {
     return STATUS_INVALID_DEVICE_STATE;
   }
+  context->monitor_os_adapter_luid = {};
+  context->monitor_os_target_id = 0;
   const uint32_t width = static_cast<uint32_t>(request.arguments[1] >> 32u);
   const uint32_t height = static_cast<uint32_t>(request.arguments[1]);
   const uint32_t refresh_millihertz = static_cast<uint32_t>(request.arguments[2]);
@@ -484,6 +486,8 @@ NTSTATUS LumenCreateMonitor(
     WdfObjectDelete(output.MonitorObject);
     return LumenReportInitializationFailure(L"IddCxMonitorArrival", status);
   }
+  context->monitor_os_adapter_luid = arrival.OsAdapterLuid;
+  context->monitor_os_target_id = arrival.OsTargetId;
   context->monitor = output.MonitorObject;
   return STATUS_SUCCESS;
 }
@@ -495,6 +499,8 @@ NTSTATUS LumenRemoveMonitor(LumenDeviceContext *context) {
   const NTSTATUS status = IddCxMonitorDeparture(context->monitor);
   if (NT_SUCCESS(status)) {
     context->monitor = nullptr;
+    context->monitor_os_adapter_luid = {};
+    context->monitor_os_target_id = 0;
   }
   return status;
 }

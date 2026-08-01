@@ -131,6 +131,10 @@ typedef struct LumenDriverCoreResponse {
   uint64_t values[2];
 } LumenDriverCoreResponse;
 
+// For LumenDriverOperationCreateMonitor, values[0] contains the packed
+// IDARG_OUT_MONITORARRIVAL::OsAdapterLuid and values[1] contains
+// IDARG_OUT_MONITORARRIVAL::OsTargetId after IddCx accepts the monitor.
+
 typedef struct LumenDriverVideoSignalMode {
   uint64_t pixel_rate;
   uint32_t width;

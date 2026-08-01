@@ -59,7 +59,8 @@ fn project_lets_the_wdk_own_the_umdf_loader_entrypoint() {
 fn pnp_start_completes_before_render_adapter_initialization() {
     // Given: IddCx owns the display stack's PnP start transaction.
     let driver = fs::read_to_string(driver_root().join("shim/driver.cpp"))
-        .expect("driver initialization source must exist");
+        .expect("driver initialization source must exist")
+        .replace("\r\n", "\n");
     let header = fs::read_to_string(driver_root().join("shim/driver.h"))
         .expect("driver declarations must exist");
 
@@ -226,6 +227,26 @@ fn monitor_creation_supplies_default_and_target_modes() {
     assert!(callbacks.contains("TargetModeBufferOutputCount = kLumenModeCount"));
     assert!(callbacks.contains("input->pDefaultMonitorModes[0] = make_monitor_mode"));
     assert!(callbacks.contains("input->pTargetModes[0] = make_target_mode"));
+}
+
+#[test]
+fn monitor_arrival_identity_crosses_the_create_monitor_response() {
+    // Given: IddCx assigns the OS adapter and target identity at monitor arrival.
+    let adapter = fs::read_to_string(driver_root().join("shim/adapter.cpp"))
+        .expect("adapter boundary must exist");
+    let io = fs::read_to_string(driver_root().join("shim/io.cpp"))
+        .expect("device-control boundary must exist");
+    let header = fs::read_to_string(driver_root().join("include/lumen_driver_abi.h"))
+        .expect("driver ABI header must exist");
+
+    // Then: the identity returned by IddCx is preserved for the interactive
+    // companion host instead of being replaced with ConnectorIndex.
+    assert!(adapter.contains("context->monitor_os_adapter_luid = arrival.OsAdapterLuid"));
+    assert!(adapter.contains("context->monitor_os_target_id = arrival.OsTargetId"));
+    assert!(io.contains("LumenPackLuid(context->monitor_os_adapter_luid)"));
+    assert!(io.contains("context->monitor_os_target_id"));
+    assert!(header.contains("IDARG_OUT_MONITORARRIVAL::OsAdapterLuid"));
+    assert!(header.contains("IDARG_OUT_MONITORARRIVAL::OsTargetId"));
 }
 
 #[test]

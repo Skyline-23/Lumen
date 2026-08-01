@@ -371,7 +371,7 @@ void LumenEvtIddCxDeviceIoControl(
   }
 
   auto *context = LumenGetDeviceContext(device);
-  const auto transition =
+  auto transition =
     lumen_driver_core_dispatch(context->core_state, core_request);
   if (transition.response.status == LumenDriverStatusOk &&
       operation == LumenDriverOperationCreateMonitor) {
@@ -380,6 +380,8 @@ void LumenEvtIddCxDeviceIoControl(
       WdfRequestComplete(request, status);
       return;
     }
+    transition.response.values[0] = LumenPackLuid(context->monitor_os_adapter_luid);
+    transition.response.values[1] = context->monitor_os_target_id;
   }
   if (transition.response.status == LumenDriverStatusOk &&
       operation == LumenDriverOperationRemoveMonitor) {

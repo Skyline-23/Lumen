@@ -8,7 +8,7 @@ use windows_sys::Win32::Devices::Display::{
     QDC_ONLY_ACTIVE_PATHS, SDC_APPLY, SDC_NO_OPTIMIZATION, SDC_SAVE_TO_DATABASE,
     SDC_USE_SUPPLIED_DISPLAY_CONFIG,
 };
-use windows_sys::Win32::Foundation::{ERROR_SUCCESS, LUID};
+use windows_sys::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_SUCCESS, LUID};
 use windows_sys::Win32::Graphics::Gdi::DISPLAYCONFIG_PATH_MODE_IDX_INVALID;
 
 use super::display_topology::{
@@ -18,6 +18,39 @@ use super::display_topology::{
 use super::native_display_topology_apply::native_arrays;
 
 pub(super) fn query_active_topology() -> Result<WindowsDisplayConfigSnapshot, String> {
+    query_active_topology_raw().map_err(ActiveTopologyQueryError::message)
+}
+
+pub(super) fn query_active_topology_if_available(
+) -> Result<Option<WindowsDisplayConfigSnapshot>, String> {
+    match query_active_topology_raw() {
+        Ok(snapshot) => Ok(Some(snapshot)),
+        Err(ActiveTopologyQueryError::AccessDenied) => Ok(None),
+        Err(error) => Err(error.message()),
+    }
+}
+
+enum ActiveTopologyQueryError {
+    AccessDenied,
+    Buffer(u32),
+    Active(u32),
+    Invalid(String),
+}
+
+impl ActiveTopologyQueryError {
+    fn message(self) -> String {
+        match self {
+            Self::AccessDenied => {
+                format!("Windows active display query failed: {ERROR_ACCESS_DENIED}")
+            }
+            Self::Buffer(status) => format!("Windows display buffer query failed: {status}"),
+            Self::Active(status) => format!("Windows active display query failed: {status}"),
+            Self::Invalid(message) => message,
+        }
+    }
+}
+
+fn query_active_topology_raw() -> Result<WindowsDisplayConfigSnapshot, ActiveTopologyQueryError> {
     let mut path_count = 0;
     let mut mode_count = 0;
     // SAFETY: Category 8 (FFI boundary). Both count pointers reference live writable u32 values.
@@ -25,7 +58,11 @@ pub(super) fn query_active_topology() -> Result<WindowsDisplayConfigSnapshot, St
         GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &mut path_count, &mut mode_count)
     };
     if status != ERROR_SUCCESS {
-        return Err(format!("Windows display buffer query failed: {status}"));
+        return Err(if status == ERROR_ACCESS_DENIED {
+            ActiveTopologyQueryError::AccessDenied
+        } else {
+            ActiveTopologyQueryError::Buffer(status)
+        });
     }
     let mut paths = vec![DISPLAYCONFIG_PATH_INFO::default(); path_count as usize];
     let mut modes = vec![DISPLAYCONFIG_MODE_INFO::default(); mode_count as usize];
@@ -42,14 +79,19 @@ pub(super) fn query_active_topology() -> Result<WindowsDisplayConfigSnapshot, St
         )
     };
     if status != ERROR_SUCCESS {
-        return Err(format!("Windows active display query failed: {status}"));
+        return Err(if status == ERROR_ACCESS_DENIED {
+            ActiveTopologyQueryError::AccessDenied
+        } else {
+            ActiveTopologyQueryError::Active(status)
+        });
     }
     paths.truncate(path_count as usize);
     modes.truncate(mode_count as usize);
     let records = paths
         .iter()
         .map(|path| path_record(path, &modes))
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(ActiveTopologyQueryError::Invalid)?;
     Ok(WindowsDisplayConfigSnapshot { paths: records })
 }
 
