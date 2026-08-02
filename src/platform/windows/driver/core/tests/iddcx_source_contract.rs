@@ -204,7 +204,8 @@ fn monitor_creation_supplies_default_and_target_modes() {
     let adapter = fs::read_to_string(driver_root().join("shim/adapter.cpp"))
         .expect("adapter boundary must exist");
     let callbacks = fs::read_to_string(driver_root().join("shim/iddcx_callbacks.cpp"))
-        .expect("monitor callback boundary must exist");
+        .expect("monitor callback boundary must exist")
+        .replace("\r\n", "\n");
 
     // Then: monitor creation follows the working IDD sample shape and both
     // mode callbacks return one concrete mode instead of STATUS_NOT_SUPPORTED.
