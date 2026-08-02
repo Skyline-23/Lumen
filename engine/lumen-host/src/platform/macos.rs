@@ -644,6 +644,11 @@ impl PlatformSessionControl for MacPlatformSessionControl {
             .state
             .lock()
             .map_err(|_| "macOS platform session state is unavailable".to_owned())?;
+        let mut plan = plan;
+        plan.virtual_display = mac_uses_virtual_workspace(
+            plan.virtual_display,
+            state.desktop_mirror_source_display_id,
+        );
         self.stop_locked(&mut state)?;
         let startup = (|| -> Result<(), String> {
             let workspace_key = CString::new(MACOS_WORKSPACE_DISPLAY_KEY)
@@ -671,7 +676,10 @@ impl PlatformSessionControl for MacPlatformSessionControl {
                     potential_edr_headroom: plan.sink_potential_edr_headroom,
                     current_peak_luminance_nits: plan.sink_current_peak_luminance_nits,
                     potential_peak_luminance_nits: plan.sink_potential_peak_luminance_nits,
-                    desktop_mirror_source_display_id: state.desktop_mirror_source_display_id,
+                    // Desktop capture is normalized to direct physical capture
+                    // before this branch. A virtual workspace is therefore
+                    // always independent of the host's physical display mode.
+                    desktop_mirror_source_display_id: 0,
                 };
                 let display_id = unsafe {
                     (self.api.prepare_workspace)(request, error.as_mut_ptr(), error.len())
@@ -685,7 +693,9 @@ impl PlatformSessionControl for MacPlatformSessionControl {
                 state.workspace_key = Some(workspace_key);
                 display_id
             } else {
-                unsafe { CGMainDisplayID() }
+                physical_capture_display_id(state.desktop_mirror_source_display_id, unsafe {
+                    CGMainDisplayID()
+                })?
             };
             state.display_id = display_id;
             // The owned capture display is only safe for input after the Swift workspace
@@ -845,6 +855,11 @@ impl PlatformSessionControl for MacPlatformSessionControl {
             .state
             .lock()
             .map_err(|_| "macOS platform session state is unavailable".to_owned())?;
+        let mut plan = plan;
+        plan.virtual_display = mac_uses_virtual_workspace(
+            plan.virtual_display,
+            state.desktop_mirror_source_display_id,
+        );
         let previous = state
             .plan
             .ok_or_else(|| "macOS dynamic display has no active session plan".to_owned())?;
@@ -1427,6 +1442,27 @@ fn desktop_mirror_source_candidate_display_id(
         .ok_or_else(|| "macOS desktop capture has no current source display".to_owned())
 }
 
+fn mac_uses_virtual_workspace(
+    requested_virtual_display: bool,
+    desktop_capture_source_display_id: u32,
+) -> bool {
+    requested_virtual_display && desktop_capture_source_display_id == 0
+}
+
+fn physical_capture_display_id(
+    desktop_capture_source_display_id: u32,
+    current_main_display_id: u32,
+) -> Result<u32, String> {
+    let display_id = if desktop_capture_source_display_id != 0 {
+        desktop_capture_source_display_id
+    } else {
+        current_main_display_id
+    };
+    (display_id != 0)
+        .then_some(display_id)
+        .ok_or_else(|| "macOS physical capture has no current source display".to_owned())
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum MacDynamicDisplayReconfigurationMode {
     RetainedWorkspace,
@@ -1718,6 +1754,23 @@ mod tests {
         assert_eq!(
             desktop_mirror_source_candidate_display_id(true, true, 0).unwrap_err(),
             "macOS desktop capture has no current source display"
+        );
+    }
+
+    #[test]
+    fn desktop_capture_bypasses_the_virtual_workspace() {
+        assert!(!mac_uses_virtual_workspace(true, 3));
+        assert!(mac_uses_virtual_workspace(true, 0));
+        assert!(!mac_uses_virtual_workspace(false, 0));
+    }
+
+    #[test]
+    fn desktop_capture_retains_the_selected_physical_display() {
+        assert_eq!(physical_capture_display_id(3, 7).unwrap(), 3);
+        assert_eq!(physical_capture_display_id(0, 7).unwrap(), 7);
+        assert_eq!(
+            physical_capture_display_id(0, 0).unwrap_err(),
+            "macOS physical capture has no current source display"
         );
     }
 
