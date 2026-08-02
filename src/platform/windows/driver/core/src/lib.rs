@@ -29,7 +29,13 @@ pub extern "C" fn lumen_driver_core_build_video_signal_mode(
     reason = "the C++ shim supplies a fixed EDID output buffer"
 )]
 #[no_mangle]
-pub extern "C" fn lumen_driver_core_build_monitor_edid(
+/// Builds one EDID block into the caller-owned output buffer.
+///
+/// # Safety
+///
+/// When non-null, `output` must be valid for writes of `output_len` bytes for
+/// the duration of this call. The buffer must not overlap Rust-owned memory.
+pub unsafe extern "C" fn lumen_driver_core_build_monitor_edid(
     width: u32,
     height: u32,
     refresh_millihertz: u32,
@@ -57,7 +63,14 @@ pub extern "C" fn lumen_driver_core_build_monitor_edid(
     reason = "the C++ shim supplies fixed EDID input and output buffers"
 )]
 #[no_mangle]
-pub extern "C" fn lumen_driver_core_parse_monitor_edid(
+/// Parses one caller-owned EDID block into a caller-owned mode structure.
+///
+/// # Safety
+///
+/// When non-null, `input` must be valid for reads of `input_len` bytes and
+/// `output` must be valid and aligned for one `MonitorEdidMode` write for the
+/// duration of this call. The input and output regions must not overlap.
+pub unsafe extern "C" fn lumen_driver_core_parse_monitor_edid(
     input: *const u8,
     input_len: u32,
     output: *mut MonitorEdidMode,
