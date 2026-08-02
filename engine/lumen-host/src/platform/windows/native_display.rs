@@ -30,8 +30,7 @@ pub(super) struct NativeWindowsDisplay {
 impl NativeWindowsDisplay {
     pub(super) fn new(arguments: &HostArguments) -> Result<Self, String> {
         let recovery_store = RecoveryJournalStore::new(recovery_path(arguments)?);
-        let driver = DriverHandle::open()?;
-        recover_persisted_topology(&recovery_store, &driver)?;
+        recover_startup_topology(&recovery_store)?;
         Ok(Self {
             recovery_store,
             active: Mutex::new(None),
@@ -53,6 +52,10 @@ impl NativeWindowsDisplay {
             .frames_per_second
             .checked_mul(1_000)
             .ok_or_else(|| "Windows virtual display refresh rate overflowed".to_owned())?;
+        let driver = DriverHandle::open()?;
+        if driver.query_monitor()? != MonitorState::Missing {
+            return Err("Windows driver retained a monitor without startup recovery".to_owned());
+        }
         let physical = query_active_topology_if_available()?;
         let topology = physical
             .as_ref()
@@ -79,18 +82,6 @@ impl NativeWindowsDisplay {
         self.recovery_store
             .create(&journal)
             .map_err(|error| format!("Windows display recovery snapshot failed: {error}"))?;
-        let driver = match DriverHandle::open() {
-            Ok(driver) => driver,
-            Err(error) => {
-                let recovery = recover_uncreated_topology(&self.recovery_store).err();
-                return Err(combine_error(error, recovery));
-            }
-        };
-        if driver.query_monitor()? != MonitorState::Missing {
-            return Err(
-                "Windows driver already owns a monitor without startup recovery".to_owned(),
-            );
-        }
         let arrival = match driver.create_monitor(
             monitor_id,
             guid,
@@ -426,6 +417,24 @@ fn recovery_path(arguments: &HostArguments) -> Result<PathBuf, String> {
     Ok(parent.join("display-recovery.json"))
 }
 
+fn recover_startup_topology(store: &RecoveryJournalStore) -> Result<(), String> {
+    match store
+        .load()
+        .map_err(|error| format!("Windows display recovery load failed: {error}"))?
+    {
+        RecoveryJournalLoad::Missing => Ok(()),
+        RecoveryJournalLoad::Verified(_) => {
+            let driver = DriverHandle::open()?;
+            recover_persisted_topology(store, &driver)
+        }
+        RecoveryJournalLoad::Quarantined(warning) => Err(format!(
+            "Windows display recovery journal was quarantined ({:?}): {}",
+            warning.code,
+            warning.quarantined_path.display()
+        )),
+    }
+}
+
 fn recover_persisted_topology(
     store: &RecoveryJournalStore,
     driver: &DriverHandle,
@@ -508,51 +517,6 @@ fn recover_persisted_topology(
             }
         }
     }
-    store
-        .delete()
-        .map_err(|error| format!("Windows display recovery cleanup failed: {error}"))
-}
-
-fn recover_uncreated_topology(store: &RecoveryJournalStore) -> Result<(), String> {
-    let journal = match store
-        .load()
-        .map_err(|error| format!("Windows display recovery load failed: {error}"))?
-    {
-        RecoveryJournalLoad::Missing => return Ok(()),
-        RecoveryJournalLoad::Verified(journal) => journal,
-        RecoveryJournalLoad::Quarantined(warning) => {
-            return Err(format!(
-                "Windows display recovery journal was quarantined ({:?}): {}",
-                warning.code,
-                warning.quarantined_path.display()
-            ));
-        }
-    };
-    if journal.platform != WorkspacePlatform::Windows {
-        return Err("Windows display recovery journal belongs to another platform".to_owned());
-    }
-    let physical_mutation_applied = journal.physical_mutation_applied != Some(false);
-    let physical = physical_mutation_applied
-        .then(|| {
-            super::display_topology::WindowsDisplayConfigSnapshot::from_physical_topology(
-                &journal.physical_topology,
-            )
-        })
-        .transpose()?;
-    if let Some(physical) = &physical {
-        apply_topology(physical)?;
-    }
-    let restored = journal.clone().with_phase(RecoveryPhase::PhysicalRestored);
-    store
-        .update(&restored)
-        .map_err(|error| format!("Windows display restore phase failed: {error}"))?;
-    if let Some(physical) = &physical {
-        verify_topology(physical)?;
-    }
-    let verified = restored.with_phase(RecoveryPhase::RestorationVerified);
-    store
-        .update(&verified)
-        .map_err(|error| format!("Windows display verification phase failed: {error}"))?;
     store
         .delete()
         .map_err(|error| format!("Windows display recovery cleanup failed: {error}"))
