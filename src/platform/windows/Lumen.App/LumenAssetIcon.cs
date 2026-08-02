@@ -72,6 +72,11 @@ internal static class LumenAssetIconView
         Stretch = Stretch.Uniform
     };
 
+    private static SvgImageSource Svg(string uri) => new()
+    {
+        UriSource = new Uri(uri)
+    };
+
     private static string Filename(LumenAssetIcon icon) => icon switch
     {
         LumenAssetIcon.Overview => "overview",

@@ -59,7 +59,8 @@ fn project_lets_the_wdk_own_the_umdf_loader_entrypoint() {
 fn pnp_start_completes_before_render_adapter_initialization() {
     // Given: IddCx owns the display stack's PnP start transaction.
     let driver = fs::read_to_string(driver_root().join("shim/driver.cpp"))
-        .expect("driver initialization source must exist");
+        .expect("driver initialization source must exist")
+        .replace("\r\n", "\n");
     let header = fs::read_to_string(driver_root().join("shim/driver.h"))
         .expect("driver declarations must exist");
 
@@ -195,6 +196,86 @@ fn feature_probe_and_luid_pin_precede_adapter_and_monitor_creation() {
     assert!(version < feature && feature < prepare && prepare < initialize);
     assert!(initialize < pin && pin < monitoring && monitoring < complete);
     assert!(complete < arrival);
+}
+
+#[test]
+fn monitor_creation_supplies_default_and_target_modes() {
+    // Given: an IDD monitor with a Rust-owned EDID and a session-specific container identity.
+    let adapter = fs::read_to_string(driver_root().join("shim/adapter.cpp"))
+        .expect("adapter boundary must exist");
+    let callbacks = fs::read_to_string(driver_root().join("shim/iddcx_callbacks.cpp"))
+        .expect("monitor callback boundary must exist")
+        .replace("\r\n", "\n");
+
+    // Then: monitor creation follows the working IDD sample shape and both
+    // mode callbacks return one concrete mode instead of STATUS_NOT_SUPPORTED.
+    assert!(adapter.contains("DISPLAYCONFIG_OUTPUT_TECHNOLOGY_HDMI"));
+    assert!(adapter.contains("unpack_monitor_container_id"));
+    assert!(adapter.contains("request.arguments[3]"));
+    assert!(adapter.contains("request.arguments[4]"));
+    assert!(!adapter.contains("kLumenMonitorContainer"));
+    assert!(adapter.contains("LumenReportInitializationFailure(L\"IddCxMonitorCreate\""));
+    assert!(adapter.contains("LumenReportInitializationFailure(L\"IddCxMonitorArrival\""));
+    assert!(adapter.contains("lumen_driver_core_build_monitor_edid"));
+    assert!(!adapter.contains("kFallbackMonitorEdid"));
+    assert!(callbacks.contains("IDDCX_MONITOR_MODE"));
+    assert!(callbacks.contains("IDDCX_TARGET_MODE"));
+    assert!(callbacks.contains("lumen_driver_core_build_video_signal_mode"));
+    assert_eq!(
+        callbacks
+            .matches("lumen_driver_core_build_video_signal_mode")
+            .count(),
+        1
+    );
+    assert!(callbacks.contains("LumenDriverVideoSignalMode make_signal_mode("));
+    assert_eq!(
+        callbacks
+            .matches("const auto signal = make_signal_mode(")
+            .count(),
+        4
+    );
+    assert_eq!(
+        callbacks
+            .matches("refresh_millihertz,\n    0\n  );")
+            .count(),
+        2
+    );
+    assert_eq!(
+        callbacks
+            .matches("monitor_context->refresh_millihertz,\n    1\n  );")
+            .count(),
+        2
+    );
+    assert!(adapter.contains("edid_status != LUMEN_EDID_STATUS_UNREPRESENTABLE"));
+    assert!(adapter.contains("monitor_info.MonitorDescription.DataSize = 0"));
+    assert!(adapter.contains("monitor_info.MonitorDescription.pData = nullptr"));
+    assert!(callbacks.contains("lumen_driver_core_parse_monitor_edid"));
+    assert!(!callbacks.contains("refresh_millihertz * height"));
+    assert!(!callbacks.contains("refresh_millihertz) * width"));
+    assert!(callbacks.contains("DefaultMonitorModeBufferOutputCount = kLumenModeCount"));
+    assert!(callbacks.contains("TargetModeBufferOutputCount = kLumenModeCount"));
+    assert!(callbacks.contains("input->pDefaultMonitorModes[0] = make_monitor_mode"));
+    assert!(callbacks.contains("input->pTargetModes[0] = make_target_mode"));
+}
+
+#[test]
+fn monitor_arrival_identity_crosses_the_create_monitor_response() {
+    // Given: IddCx assigns the OS adapter and target identity at monitor arrival.
+    let adapter = fs::read_to_string(driver_root().join("shim/adapter.cpp"))
+        .expect("adapter boundary must exist");
+    let io = fs::read_to_string(driver_root().join("shim/io.cpp"))
+        .expect("device-control boundary must exist");
+    let header = fs::read_to_string(driver_root().join("include/lumen_driver_abi.h"))
+        .expect("driver ABI header must exist");
+
+    // Then: the identity returned by IddCx is preserved for the interactive
+    // companion host instead of being replaced with ConnectorIndex.
+    assert!(adapter.contains("context->monitor_os_adapter_luid = arrival.OsAdapterLuid"));
+    assert!(adapter.contains("context->monitor_os_target_id = arrival.OsTargetId"));
+    assert!(io.contains("LumenPackLuid(context->monitor_os_adapter_luid)"));
+    assert!(io.contains("context->monitor_os_target_id"));
+    assert!(header.contains("IDARG_OUT_MONITORARRIVAL::OsAdapterLuid"));
+    assert!(header.contains("IDARG_OUT_MONITORARRIVAL::OsTargetId"));
 }
 
 #[test]

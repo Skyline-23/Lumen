@@ -8,8 +8,16 @@
 namespace {
   using Microsoft::WRL::ComPtr;
 
-  const GUID kLumenMonitorContainer =
-    {0x89f7cc80, 0x27a5, 0x4a18, {0x95, 0x30, 0x47, 0x5e, 0xd8, 0x31, 0xa8, 0x41}};
+  GUID unpack_monitor_container_id(uint64_t high, uint64_t low) {
+    GUID value {};
+    value.Data1 = static_cast<uint32_t>(high >> 32u);
+    value.Data2 = static_cast<uint16_t>((high >> 16u) & 0xffffu);
+    value.Data3 = static_cast<uint16_t>(high & 0xffffu);
+    for (size_t index = 0; index < ARRAYSIZE(value.Data4); ++index) {
+      value.Data4[index] = static_cast<BYTE>(low >> (8u * (7u - index)));
+    }
+    return value;
+  }
 
   LumenDriverCoreTransition dispatch_internal(
     LumenDeviceContext *context,
@@ -427,13 +435,44 @@ NTSTATUS LumenCreateMonitor(
   if (context->adapter == nullptr || context->monitor != nullptr) {
     return STATUS_INVALID_DEVICE_STATE;
   }
+  context->monitor_os_adapter_luid = {};
+  context->monitor_os_target_id = 0;
+  const uint32_t width = static_cast<uint32_t>(request.arguments[1] >> 32u);
+  const uint32_t height = static_cast<uint32_t>(request.arguments[1]);
+  const uint32_t refresh_millihertz = static_cast<uint32_t>(request.arguments[2]);
+  const uint32_t edid_status = lumen_driver_core_build_monitor_edid(
+    width,
+    height,
+    refresh_millihertz,
+    context->monitor_edid,
+    LUMEN_MONITOR_EDID_BYTES
+  );
+  if (edid_status != LUMEN_EDID_STATUS_OK &&
+      edid_status != LUMEN_EDID_STATUS_UNREPRESENTABLE) {
+    return STATUS_INVALID_PARAMETER;
+  }
   IDDCX_MONITOR_INFO monitor_info {};
   monitor_info.Size = sizeof(monitor_info);
-  monitor_info.MonitorType = DISPLAYCONFIG_OUTPUT_TECHNOLOGY_INDIRECT_WIRED;
+  // Keep the monitor description compatible with the established IDD sample
+  // drivers. The connector is virtual, but HDMI is the monitor technology
+  // Windows accepts consistently when an EDID blob is supplied.
+  monitor_info.MonitorType = DISPLAYCONFIG_OUTPUT_TECHNOLOGY_HDMI;
   monitor_info.ConnectorIndex = 0;
   monitor_info.MonitorDescription.Size = sizeof(monitor_info.MonitorDescription);
   monitor_info.MonitorDescription.Type = IDDCX_MONITOR_DESCRIPTION_TYPE_EDID;
-  monitor_info.MonitorContainerId = kLumenMonitorContainer;
+  if (edid_status == LUMEN_EDID_STATUS_OK) {
+    monitor_info.MonitorDescription.DataSize = LUMEN_MONITOR_EDID_BYTES;
+    monitor_info.MonitorDescription.pData = context->monitor_edid;
+  } else {
+    // IDDCX_MONITOR_DESCRIPTION explicitly permits no monitor description.
+    // The default-description callback below supplies the negotiated Rust mode.
+    monitor_info.MonitorDescription.DataSize = 0;
+    monitor_info.MonitorDescription.pData = nullptr;
+  }
+  monitor_info.MonitorContainerId = unpack_monitor_container_id(
+    request.arguments[3],
+    request.arguments[4]
+  );
   WDF_OBJECT_ATTRIBUTES attributes;
   WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&attributes, LumenMonitorContext);
   IDARG_IN_MONITORCREATE input {};
@@ -442,20 +481,22 @@ NTSTATUS LumenCreateMonitor(
   IDARG_OUT_MONITORCREATE output {};
   NTSTATUS status = IddCxMonitorCreate(context->adapter, &input, &output);
   if (!NT_SUCCESS(status)) {
-    return status;
+    return LumenReportInitializationFailure(L"IddCxMonitorCreate", status);
   }
   auto *monitor_context = LumenGetMonitorContext(output.MonitorObject);
   monitor_context->device = LumenGetAdapterContext(context->adapter)->device;
   monitor_context->monitor_id = request.arguments[0];
-  monitor_context->width = static_cast<uint32_t>(request.arguments[1] >> 32u);
-  monitor_context->height = static_cast<uint32_t>(request.arguments[1]);
-  monitor_context->refresh_millihertz = static_cast<uint32_t>(request.arguments[2]);
+  monitor_context->width = width;
+  monitor_context->height = height;
+  monitor_context->refresh_millihertz = refresh_millihertz;
   IDARG_OUT_MONITORARRIVAL arrival {};
   status = IddCxMonitorArrival(output.MonitorObject, &arrival);
   if (!NT_SUCCESS(status)) {
     WdfObjectDelete(output.MonitorObject);
-    return status;
+    return LumenReportInitializationFailure(L"IddCxMonitorArrival", status);
   }
+  context->monitor_os_adapter_luid = arrival.OsAdapterLuid;
+  context->monitor_os_target_id = arrival.OsTargetId;
   context->monitor = output.MonitorObject;
   return STATUS_SUCCESS;
 }
@@ -467,6 +508,8 @@ NTSTATUS LumenRemoveMonitor(LumenDeviceContext *context) {
   const NTSTATUS status = IddCxMonitorDeparture(context->monitor);
   if (NT_SUCCESS(status)) {
     context->monitor = nullptr;
+    context->monitor_os_adapter_luid = {};
+    context->monitor_os_target_id = 0;
   }
   return status;
 }

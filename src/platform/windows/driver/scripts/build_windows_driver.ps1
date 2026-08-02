@@ -23,6 +23,7 @@ $rustTarget = "x86_64-pc-windows-msvc"
 $coreLibrary = Join-Path $repoRoot "target\$rustTarget\release\lumen_windows_driver_core.lib"
 $project = Join-Path $driverRoot "LumenIddCx.vcxproj"
 $driverBinary = Join-Path $driverRoot "build\bin\x64\$Configuration\LumenIddCx.dll"
+$driverInf = Join-Path $driverRoot "build\bin\x64\$Configuration\LumenIddCx.inf"
 
 $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
 if (-not (Test-Path $vswhere)) {
@@ -87,13 +88,21 @@ if (-not (Test-Path $driverBinary)) {
 Remove-Item $OutputDirectory -Recurse -Force -ErrorAction SilentlyContinue
 New-Item $OutputDirectory -ItemType Directory -Force | Out-Null
 Copy-Item $driverBinary (Join-Path $OutputDirectory "LumenIddCx.dll")
-Copy-Item (Join-Path $driverRoot "package\LumenIddCx.inf") $OutputDirectory
+Copy-Item $driverInf $OutputDirectory
 Copy-Item (Join-Path $boundaryBuild "$Configuration\lumen_driver_device_qa.exe") $OutputDirectory
 
 $certificate = $null
 try {
     if ($TestSign) {
-        $certificate = New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=Lumen IddCx Test" -CertStoreLocation "Cert:\CurrentUser\My" -HashAlgorithm SHA256
+        $certificate = New-SelfSignedCertificate `
+            -Type CodeSigningCert `
+            -Subject "CN=Lumen IddCx Test" `
+            -CertStoreLocation "Cert:\CurrentUser\My" `
+            -KeyAlgorithm RSA `
+            -KeyLength 2048 `
+            -HashAlgorithm SHA256 `
+            -KeyExportPolicy Exportable `
+            -Provider "Microsoft Enhanced RSA and AES Cryptographic Provider"
         Export-Certificate -Cert $certificate -FilePath (Join-Path $OutputDirectory "LumenIddCxTest.cer") | Out-Null
         & $signtool sign /fd SHA256 /s My /sha1 $certificate.Thumbprint (Join-Path $OutputDirectory "LumenIddCx.dll")
         if ($LASTEXITCODE -ne 0) { throw "Test signing the driver DLL failed." }

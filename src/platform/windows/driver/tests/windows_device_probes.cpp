@@ -10,6 +10,14 @@
 
 namespace lumen_driver_qa {
   namespace {
+    constexpr uint64_t kTestMonitorContainerHigh = 0x6c756d656e000001ull;
+    constexpr uint64_t kTestMonitorContainerLow = 0x6d6f6e69746f7201ull;
+
+    void set_test_monitor_container(LumenDriverCoreRequest *request) {
+      request->arguments[3] = kTestMonitorContainerHigh;
+      request->arguments[4] = kTestMonitorContainerLow;
+    }
+
     void write_probe(std::ostream *receipt, const char *probe, int result) {
       if (receipt == nullptr) {
         return;
@@ -134,6 +142,54 @@ namespace lumen_driver_qa {
       return result;
     }
 
+    auto monitor_before_create = request(LumenDriverOperationQueryMonitor, generation);
+    if (send_ioctl(
+          handle,
+          LUMEN_IOCTL_QUERY_MONITOR,
+          &monitor_before_create,
+          &response,
+          sizeof(response)
+        ) == ERROR_SUCCESS) {
+      if (receipt != nullptr) {
+        *receipt << "{\"probe\":\"monitor_before_create\",\"monitor_id\":"
+                 << response.values[0]
+                 << ",\"flags\":" << response.values[1] << "}\n";
+        receipt->flush();
+      }
+    } else {
+        write_probe(receipt, "monitor_before_create", 60);
+    }
+
+    if ((response.values[1] & (LUMEN_STATE_MONITOR_ACTIVE | LUMEN_STATE_MONITOR_ORPHANED)) ==
+        (LUMEN_STATE_MONITOR_ACTIVE | LUMEN_STATE_MONITOR_ORPHANED)) {
+      auto adopt = request(LumenDriverOperationAdoptMonitor, response.generation);
+      adopt.arguments[0] = response.values[0];
+      if (send_ioctl(
+            handle,
+            LUMEN_IOCTL_ADOPT_MONITOR,
+            &adopt,
+            &response,
+            sizeof(response)
+          ) != ERROR_SUCCESS) {
+        write_probe(receipt, "orphan_cleanup_adopt", 61);
+        CloseHandle(handle);
+        return 61;
+      }
+      auto remove = request(LumenDriverOperationRemoveMonitor, response.generation);
+      remove.arguments[0] = response.values[0];
+      if (send_ioctl(
+            handle,
+            LUMEN_IOCTL_REMOVE_MONITOR,
+            &remove,
+            &response,
+            sizeof(response)
+          ) != ERROR_SUCCESS) {
+        write_probe(receipt, "orphan_cleanup_remove", 62);
+        CloseHandle(handle);
+        return 62;
+      }
+    }
+
     auto malformed = request(LumenDriverOperationQueryCapabilities, generation);
     ++malformed.header.major;
     result = send_ioctl(handle, LUMEN_IOCTL_QUERY_CAPABILITIES, &malformed, &response, sizeof(response)) == ERROR_SUCCESS ? 33 : 0;
@@ -156,6 +212,7 @@ namespace lumen_driver_qa {
     stale.arguments[0] = 7;
     stale.arguments[1] = (uint64_t {1920} << 32u) | 1080u;
     stale.arguments[2] = 120000;
+    set_test_monitor_container(&stale);
     result = send_ioctl(handle, LUMEN_IOCTL_CREATE_MONITOR, &stale, &response, sizeof(response)) == ERROR_SUCCESS ? 35 : 0;
     write_probe(receipt, "stale_generation", result);
     if (result != 0) {
@@ -167,6 +224,7 @@ namespace lumen_driver_qa {
     create.arguments[0] = 7;
     create.arguments[1] = (uint64_t {1920} << 32u) | 1080u;
     create.arguments[2] = 120000;
+    set_test_monitor_container(&create);
     result = send_ioctl(handle, LUMEN_IOCTL_CREATE_MONITOR, &create, &response, sizeof(response)) == ERROR_SUCCESS ? 0 : 36;
     write_probe(receipt, "create_monitor", result);
     if (result != 0) {

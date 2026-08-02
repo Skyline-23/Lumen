@@ -1,3 +1,5 @@
+cmake_minimum_required(VERSION 3.20)
+
 if(NOT DEFINED LUMEN_WINDOWS_UI_PUBLISH_DIR)
     message(FATAL_ERROR "LUMEN_WINDOWS_UI_PUBLISH_DIR is required")
 endif()

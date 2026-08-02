@@ -236,25 +236,6 @@ impl WindowsDisplayConfigSnapshot {
         Ok(Self { paths })
     }
 
-    #[cfg(windows)]
-    pub(super) fn new_path_since(&self, before: &Self) -> Result<WindowsPathIdentity, String> {
-        let previous = before
-            .paths
-            .iter()
-            .map(path_identity)
-            .collect::<BTreeSet<_>>();
-        let added = self
-            .paths
-            .iter()
-            .map(path_identity)
-            .filter(|identity| !previous.contains(identity))
-            .collect::<Vec<_>>();
-        match added.as_slice() {
-            [identity] => Ok(*identity),
-            _ => Err("Windows could not identify exactly one newly arrived IDD path".to_owned()),
-        }
-    }
-
     pub(super) fn matches_exact_isolation(
         &self,
         identity: WindowsPathIdentity,

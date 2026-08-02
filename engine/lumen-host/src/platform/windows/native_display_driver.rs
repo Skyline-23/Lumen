@@ -28,7 +28,7 @@ use super::driver_abi::{
     OPERATION_DEQUEUE_FRAME, OPERATION_QUERY_BACKEND_CAPABILITY, OPERATION_QUERY_CAPABILITIES,
     OPERATION_QUERY_HEALTH, OPERATION_QUERY_MONITOR, OPERATION_REMOVE_MONITOR,
     OPERATION_START_ENCODER, OPERATION_STOP_ENCODER, STATE_MONITOR_ACTIVE, STATE_MONITOR_ORPHANED,
-    STATUS_NOT_READY, STATUS_OK,
+    STATE_SWAPCHAIN_ASSIGNED, STATUS_NOT_READY, STATUS_OK,
 };
 
 const DRIVER_INTERFACE_GUID: GUID = GUID::from_u128(DEVICE_INTERFACE_GUID);
@@ -38,6 +38,12 @@ pub(super) enum MonitorState {
     Missing,
     Owned(u64),
     Orphaned(u64),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct MonitorArrivalIdentity {
+    pub(super) adapter_luid: u64,
+    pub(super) target_id: u32,
 }
 
 pub(super) struct DriverHandle {
@@ -73,10 +79,15 @@ impl DriverHandle {
     pub(super) fn create_monitor(
         &self,
         monitor_id: u64,
+        monitor_container_id: GUID,
         width: u32,
         height: u32,
         refresh_millihertz: u32,
-    ) -> Result<(), String> {
+    ) -> Result<MonitorArrivalIdentity, String> {
+        let container_id_high = (u64::from(monitor_container_id.data1) << 32)
+            | (u64::from(monitor_container_id.data2) << 16)
+            | u64::from(monitor_container_id.data3);
+        let container_id_low = u64::from_be_bytes(monitor_container_id.data4);
         let response = self.request(
             IOCTL_CREATE_MONITOR,
             OPERATION_CREATE_MONITOR,
@@ -84,19 +95,26 @@ impl DriverHandle {
                 monitor_id,
                 (u64::from(width) << 32) | u64::from(height),
                 u64::from(refresh_millihertz),
-                0,
-                0,
+                container_id_high,
+                container_id_low,
             ],
         )?;
-        require_ok(response, "create monitor")
+        require_ok(response, "create monitor")?;
+        let adapter_luid = response.values[0];
+        if adapter_luid == 0 {
+            return Err("Windows driver returned an empty monitor arrival adapter LUID".to_owned());
+        }
+        let target_id = u32::try_from(response.values[1]).map_err(|_| {
+            "Windows driver returned an invalid monitor arrival target ID".to_owned()
+        })?;
+        Ok(MonitorArrivalIdentity {
+            adapter_luid,
+            target_id,
+        })
     }
 
     pub(super) fn query_monitor(&self) -> Result<MonitorState, String> {
-        let response = self.request(IOCTL_QUERY_MONITOR, OPERATION_QUERY_MONITOR, [0; 5])?;
-        require_ok(response, "query monitor")?;
-        let monitor_id = response.values[0];
-        let flags = u32::try_from(response.values[1])
-            .map_err(|_| "Windows driver monitor flags overflowed".to_owned())?;
+        let (monitor_id, flags) = self.query_monitor_status()?;
         if flags & STATE_MONITOR_ACTIVE == 0 {
             return Ok(MonitorState::Missing);
         }
@@ -108,6 +126,28 @@ impl DriverHandle {
         } else {
             Ok(MonitorState::Owned(monitor_id))
         }
+    }
+
+    pub(super) fn swapchain_assigned(&self, expected_monitor_id: u64) -> Result<bool, String> {
+        let (monitor_id, flags) = self.query_monitor_status()?;
+        if flags & STATE_MONITOR_ACTIVE == 0 {
+            return Ok(false);
+        }
+        if monitor_id != expected_monitor_id {
+            return Err(format!(
+                "Windows driver monitor identity changed from {expected_monitor_id:016x} to {monitor_id:016x}"
+            ));
+        }
+        Ok(flags & STATE_MONITOR_ORPHANED == 0 && flags & STATE_SWAPCHAIN_ASSIGNED != 0)
+    }
+
+    fn query_monitor_status(&self) -> Result<(u64, u32), String> {
+        let response = self.request(IOCTL_QUERY_MONITOR, OPERATION_QUERY_MONITOR, [0; 5])?;
+        require_ok(response, "query monitor")?;
+        let monitor_id = response.values[0];
+        let flags = u32::try_from(response.values[1])
+            .map_err(|_| "Windows driver monitor flags overflowed".to_owned())?;
+        Ok((monitor_id, flags))
     }
 
     pub(super) fn adopt_monitor(&self, monitor_id: u64) -> Result<(), String> {

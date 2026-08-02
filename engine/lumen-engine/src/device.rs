@@ -45,6 +45,8 @@ struct DeviceRecord {
     public_key: String,
     refresh_token_hash: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    previous_refresh_token_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     access_token_hash: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     access_token_expires_at_unix_seconds: Option<u64>,
@@ -136,6 +138,7 @@ impl DeviceStore {
             platform,
             public_key: public_key.to_owned(),
             refresh_token_hash: token_hash(&refresh_token),
+            previous_refresh_token_hash: None,
             access_token_hash: None,
             access_token_expires_at_unix_seconds: None,
             created_at_unix_seconds: SystemTime::now()
@@ -165,11 +168,7 @@ impl DeviceStore {
         else {
             return Err(DeviceStoreError::AuthenticationFailed);
         };
-        if candidate_hash
-            .as_bytes()
-            .ct_eq(device.refresh_token_hash.as_bytes())
-            .into()
-        {
+        if refresh_token_hash_matches(device, &candidate_hash) {
             Ok(())
         } else {
             Err(DeviceStoreError::AuthenticationFailed)
@@ -200,17 +199,16 @@ impl DeviceStore {
         if device.revoked {
             return Err(DeviceStoreError::Revoked);
         }
-        if !bool::from(
-            candidate_hash
-                .as_bytes()
-                .ct_eq(device.refresh_token_hash.as_bytes()),
-        ) {
+        if !refresh_token_hash_matches(device, &candidate_hash) {
             return Err(DeviceStoreError::AuthenticationFailed);
         }
 
         let new_refresh_token = random_token(REFRESH_TOKEN_BYTE_COUNT);
         let access_token = random_token(REFRESH_TOKEN_BYTE_COUNT);
-        device.refresh_token_hash = token_hash(&new_refresh_token);
+        device.previous_refresh_token_hash = Some(std::mem::replace(
+            &mut device.refresh_token_hash,
+            token_hash(&new_refresh_token),
+        ));
         device.access_token_hash = Some(token_hash(&access_token));
         device.access_token_expires_at_unix_seconds = Some(access_token_expires_at_unix_seconds);
         self.write_registry(&registry)?;
@@ -338,6 +336,10 @@ impl DeviceStore {
                     || device.platform.is_empty()
                     || device.public_key.is_empty()
                     || device.refresh_token_hash.is_empty()
+                    || device
+                        .previous_refresh_token_hash
+                        .as_ref()
+                        .is_some_and(String::is_empty)
                     || device.access_token_hash.is_some()
                         != device.access_token_expires_at_unix_seconds.is_some()
                     || device.access_token_expires_at_unix_seconds == Some(0)
@@ -371,6 +373,18 @@ impl DeviceStore {
             .map_err(|_| DeviceStoreError::Storage)?;
         Ok(())
     }
+}
+
+fn refresh_token_hash_matches(device: &DeviceRecord, candidate_hash: &str) -> bool {
+    let current_matches = candidate_hash
+        .as_bytes()
+        .ct_eq(device.refresh_token_hash.as_bytes());
+    let previous_matches = device
+        .previous_refresh_token_hash
+        .as_ref()
+        .map(|previous| candidate_hash.as_bytes().ct_eq(previous.as_bytes()))
+        .unwrap_or_else(|| 0_u8.into());
+    bool::from(current_matches | previous_matches)
 }
 
 fn normalized_label(value: &str, maximum_length: usize) -> Result<String, DeviceStoreError> {

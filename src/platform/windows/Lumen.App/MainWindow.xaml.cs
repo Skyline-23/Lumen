@@ -404,7 +404,7 @@ public sealed class MainWindow : Window
         if (args.SelectedItemContainer?.Tag is string tag)
         {
             _page = tag;
-            UpdateNavigationIconColors(args.SelectedItemContainer);
+            UpdateNavigationIconColors(args.SelectedItemContainer as NavigationViewItem);
             Render();
         }
     }
