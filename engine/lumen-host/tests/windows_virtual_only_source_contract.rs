@@ -103,6 +103,9 @@ fn startup_waits_for_os_owned_idd_swapchain_without_mutating_session_topology() 
     assert!(DISPLAY.contains("arrival.adapter_luid"));
     assert!(DISPLAY.contains("arrival.target_id"));
     assert!(wait.contains("driver.swapchain_assigned(monitor_id)"));
+    assert!(wait.contains("let deadline = Instant::now() + FIRST_FRAME_TIMEOUT"));
+    assert!(wait.contains("Duration::from_millis(50)"));
+    assert!(!wait.contains("for delay in ["));
     assert!(!wait.contains("query_active_topology"));
     assert!(!DISPLAY.contains("apply_display_mode"));
 }

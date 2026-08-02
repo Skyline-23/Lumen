@@ -220,6 +220,21 @@ fn monitor_creation_supplies_default_and_target_modes() {
     assert!(callbacks.contains("IDDCX_MONITOR_MODE"));
     assert!(callbacks.contains("IDDCX_TARGET_MODE"));
     assert!(callbacks.contains("lumen_driver_core_build_video_signal_mode"));
+    assert_eq!(
+        callbacks
+            .matches("lumen_driver_core_build_video_signal_mode")
+            .count(),
+        1
+    );
+    assert!(callbacks.contains("LumenDriverVideoSignalMode make_signal_mode("));
+    assert_eq!(
+        callbacks
+            .matches("const auto signal = make_signal_mode(")
+            .count(),
+        4
+    );
+    assert!(callbacks.contains("refresh_millihertz,\n    1\n  );"));
+    assert!(!callbacks.contains("refresh_millihertz,\n    0\n  );"));
     assert!(callbacks.contains("lumen_driver_core_parse_monitor_edid"));
     assert!(!callbacks.contains("refresh_millihertz * height"));
     assert!(!callbacks.contains("refresh_millihertz) * width"));

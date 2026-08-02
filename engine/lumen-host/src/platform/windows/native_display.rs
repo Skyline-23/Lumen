@@ -649,16 +649,26 @@ fn wait_for_swapchain(
         },
         target_id: arrival.target_id,
     };
-    for delay in [0, 20, 40, 80, 160, 320, 640, 1_000, 1_000, 1_000] {
-        if delay != 0 {
-            thread::sleep(Duration::from_millis(delay));
-        }
+    let deadline = Instant::now() + FIRST_FRAME_TIMEOUT;
+    loop {
         if driver.swapchain_assigned(monitor_id)? {
             return Ok(identity);
         }
+        let now = Instant::now();
+        if now >= deadline {
+            break;
+        }
+        thread::sleep(
+            deadline
+                .saturating_duration_since(now)
+                .min(Duration::from_millis(50)),
+        );
     }
     Err(format!(
-        "Windows could not activate the IDD target {:08x}:{:08x}/{}",
-        identity.adapter.high_part, identity.adapter.low_part, identity.target_id
+        "Windows could not activate the IDD target {:08x}:{:08x}/{} within {} ms",
+        identity.adapter.high_part,
+        identity.adapter.low_part,
+        identity.target_id,
+        FIRST_FRAME_TIMEOUT.as_millis()
     ))
 }

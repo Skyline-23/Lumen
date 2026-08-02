@@ -21,6 +21,21 @@ void fill_signal_info(
     static_cast<DISPLAYCONFIG_SCANLINE_ORDERING>(mode.scan_line_ordering);
 }
 
+LumenDriverVideoSignalMode make_signal_mode(
+  uint32_t width,
+  uint32_t height,
+  uint32_t refresh_millihertz
+) {
+  // IddCx intersects the monitor and target signal descriptions. Keep every
+  // field, including the v-sync divider, identical on both sides.
+  return lumen_driver_core_build_video_signal_mode(
+    width,
+    height,
+    refresh_millihertz,
+    1
+  );
+}
+
 IDDCX_MONITOR_MODE make_monitor_mode(
   uint32_t width,
   uint32_t height,
@@ -30,11 +45,10 @@ IDDCX_MONITOR_MODE make_monitor_mode(
   IDDCX_MONITOR_MODE mode {};
   mode.Size = sizeof(mode);
   mode.Origin = origin;
-  const auto signal = lumen_driver_core_build_video_signal_mode(
+  const auto signal = make_signal_mode(
     width,
     height,
-    refresh_millihertz,
-    0
+    refresh_millihertz
   );
   fill_signal_info(&mode.MonitorVideoSignalInfo, signal);
   return mode;
@@ -56,11 +70,10 @@ IDDCX_TARGET_MODE make_target_mode(
 ) {
   IDDCX_TARGET_MODE mode {};
   mode.Size = sizeof(mode);
-  const auto signal = lumen_driver_core_build_video_signal_mode(
+  const auto signal = make_signal_mode(
     monitor_context->width,
     monitor_context->height,
-    monitor_context->refresh_millihertz,
-    1
+    monitor_context->refresh_millihertz
   );
   fill_signal_info(&mode.TargetVideoSignalInfo.targetVideoSignalInfo, signal);
   return mode;
@@ -75,11 +88,10 @@ IDDCX_MONITOR_MODE2 make_monitor_mode2(
   IDDCX_MONITOR_MODE2 mode {};
   mode.Size = sizeof(mode);
   mode.Origin = origin;
-  const auto signal = lumen_driver_core_build_video_signal_mode(
+  const auto signal = make_signal_mode(
     width,
     height,
-    refresh_millihertz,
-    0
+    refresh_millihertz
   );
   fill_signal_info(&mode.MonitorVideoSignalInfo, signal);
   mode.BitsPerComponent.Rgb = IDDCX_BITS_PER_COMPONENT_8;
@@ -91,11 +103,10 @@ IDDCX_TARGET_MODE2 make_target_mode2(
 ) {
   IDDCX_TARGET_MODE2 mode {};
   mode.Size = sizeof(mode);
-  const auto signal = lumen_driver_core_build_video_signal_mode(
+  const auto signal = make_signal_mode(
     monitor_context->width,
     monitor_context->height,
-    monitor_context->refresh_millihertz,
-    1
+    monitor_context->refresh_millihertz
   );
   fill_signal_info(&mode.TargetVideoSignalInfo.targetVideoSignalInfo, signal);
   mode.BitsPerComponent.Rgb = IDDCX_BITS_PER_COMPONENT_8;
