@@ -45,18 +45,17 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
-      - uses: actions/cache@v6
+      - name: Set up Rust and cache
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            build/rust-target
-            ~/.cache/tuist
-            ~/Library/Caches/org.swift.swiftpm
-            ~/Library/Developer/Xcode/DerivedData/SourcePackages
-          key: lumen-release-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'src/platform/macos/Project.swift') }}
-          restore-keys: |
-            lumen-release-${{ runner.os }}-${{ runner.arch }}-
+          target: aarch64-apple-darwin
+          cache-workspaces: ". -> build/rust-target"
+          cache-shared-key: macos-release
+          cache-bin: "false"
+          cache-on-failure: "false"
+          rustflags: ""
+      - name: Set up Tuist
+        uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4
       - name: Validate Apple release secrets
         env:
           APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
@@ -76,51 +75,27 @@ jobs:
               exit 1
             fi
           done
-      - name: Install build tools
-        run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
-          rustup target add aarch64-apple-darwin
-          brew install --cask tuist
-      - name: Configure signing and notarization
+      - name: Import Developer ID certificate
+        uses: Apple-Actions/import-codesign-certs@5142e029c445c10ffc7149d172e540235a065466 # v7.0.0
+        with:
+          p12-file-base64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          p12-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      - name: Configure notarization
         env:
-          APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
           APPLE_NOTARY_KEY_BASE64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
           APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
         run: |
-          KEYCHAIN_PATH="${RUNNER_TEMP}/lumen-release.keychain-db"
-          KEYCHAIN_PASSWORD="$(uuidgen)"
-          CERTIFICATE_PATH="${RUNNER_TEMP}/lumen-release.p12"
           NOTARY_KEY_PATH="${RUNNER_TEMP}/AuthKey_${APPLE_NOTARY_KEY_ID}.p8"
-          print -rn -- "${APPLE_CERTIFICATE_P12_BASE64}" | /usr/bin/base64 -D > "${CERTIFICATE_PATH}"
           print -rn -- "${APPLE_NOTARY_KEY_BASE64}" | /usr/bin/base64 -D > "${NOTARY_KEY_PATH}"
-          security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
-          security set-keychain-settings -lut 21600 "${KEYCHAIN_PATH}"
-          security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
-          security import "${CERTIFICATE_PATH}" \
-            -k "${KEYCHAIN_PATH}" \
-            -P "${APPLE_CERTIFICATE_PASSWORD}" \
-            -T /usr/bin/codesign \
-            -T /usr/bin/security
-          security set-key-partition-list \
-            -S apple-tool:,apple: \
-            -s \
-            -k "${KEYCHAIN_PASSWORD}" \
-            "${KEYCHAIN_PATH}"
-          security list-keychains -d user -s "${KEYCHAIN_PATH}" login.keychain-db
-          security default-keychain -d user -s "${KEYCHAIN_PATH}"
-          SIGNING_IDENTITY="$(security find-identity -v -p codesigning "${KEYCHAIN_PATH}" | sed -n 's/.*"\(.*\)"/\1/p' | head -1)"
-          [[ -n "${SIGNING_IDENTITY}" ]] || { print -u2 "No code-signing identity was imported"; exit 1; }
+          SIGNING_IDENTITY="$(security find-identity -v -p codesigning | sed -n 's/.*"\(Developer ID Application:.*\)"/\1/p' | head -1)"
+          [[ -n "${SIGNING_IDENTITY}" ]] || { print -u2 "No Developer ID Application identity was imported"; exit 1; }
           xcrun notarytool store-credentials lumen-release \
             --key "${NOTARY_KEY_PATH}" \
             --key-id "${APPLE_NOTARY_KEY_ID}" \
             --issuer "${APPLE_NOTARY_ISSUER_ID}"
           print "LUMEN_SIGNING_IDENTITY=${SIGNING_IDENTITY}" >> "${GITHUB_ENV}"
           print "LUMEN_NOTARY_PROFILE=lumen-release" >> "${GITHUB_ENV}"
-          print "LUMEN_RELEASE_KEYCHAIN=${KEYCHAIN_PATH}" >> "${GITHUB_ENV}"
-          print "LUMEN_RELEASE_CERTIFICATE=${CERTIFICATE_PATH}" >> "${GITHUB_ENV}"
           print "LUMEN_RELEASE_NOTARY_KEY=${NOTARY_KEY_PATH}" >> "${GITHUB_ENV}"
       - name: Build, sign, and notarize DMG
         env:
@@ -129,14 +104,11 @@ jobs:
           LUMEN_PRODUCT_VERSION: ${{ needs.prepare.outputs.product_version }}
           LUMEN_RELEASE_VERSION: ${{ needs.prepare.outputs.release_version }}
         run: |
-          BUILD_ROOT="${GITHUB_WORKSPACE}/build/macos-release"
-          DERIVED_DATA="${BUILD_ROOT}/DerivedData"
-          STAGING_ROOT="${BUILD_ROOT}/dmg-root"
-          SOURCE_APP="${DERIVED_DATA}/Build/Products/Release/Lumen.app"
+          STAGING_ROOT="${GITHUB_WORKSPACE}/build/macos-release/dmg-root"
           STAGED_APP="${STAGING_ROOT}/Lumen.app"
           DMG_PATH="${LUMEN_OUTPUT_DIR}/Lumen-${LUMEN_RELEASE_VERSION}-macOS.dmg"
 
-          mkdir -p "${BUILD_ROOT}" "${LUMEN_OUTPUT_DIR}" "${STAGING_ROOT}"
+          mkdir -p "${LUMEN_OUTPUT_DIR}" "${STAGING_ROOT}"
           CONFIGURATION=Release \
           ARCHS=arm64 \
           CURRENT_ARCH=arm64 \
@@ -149,17 +121,19 @@ jobs:
             -scheme LumenApp \
             -configuration Release \
             -destination 'generic/platform=macOS' \
-            -derivedDataPath "${DERIVED_DATA}" \
             ARCHS=arm64 \
             ONLY_ACTIVE_ARCH=YES \
             "MARKETING_VERSION=${LUMEN_PRODUCT_VERSION}" \
             "CURRENT_PROJECT_VERSION=${LUMEN_BUILD_NUMBER}" \
             CODE_SIGNING_ALLOWED=YES \
+            CODE_SIGNING_REQUIRED=YES \
             CODE_SIGN_STYLE=Manual \
             "CODE_SIGN_IDENTITY=${LUMEN_SIGNING_IDENTITY}" \
             DEVELOPMENT_TEAM=Q23JLSJCCV
           cd "${GITHUB_WORKSPACE}"
 
+          SOURCE_APP="$(find "${HOME}/Library/Developer/Xcode/DerivedData" -path '*/Build/Products/Release/Lumen.app' -print -quit)"
+          test -n "${SOURCE_APP}"
           test -d "${SOURCE_APP}"
           ditto "${SOURCE_APP}" "${STAGED_APP}"
           codesign --verify --deep --strict --verbose=2 "${STAGED_APP}"
@@ -188,8 +162,6 @@ jobs:
       - name: Remove signing material
         if: always()
         run: |
-          [[ -z "${LUMEN_RELEASE_KEYCHAIN:-}" ]] || security delete-keychain "${LUMEN_RELEASE_KEYCHAIN}" || true
-          [[ -z "${LUMEN_RELEASE_CERTIFICATE:-}" ]] || rm -f "${LUMEN_RELEASE_CERTIFICATE}"
           [[ -z "${LUMEN_RELEASE_NOTARY_KEY:-}" ]] || rm -f "${LUMEN_RELEASE_NOTARY_KEY}"
 
   windows-driver:
@@ -212,17 +184,12 @@ jobs:
       - uses: microsoft/setup-msbuild@v3
         with:
           msbuild-architecture: x64
-      - name: Install the MSVC Rust target
-        shell: pwsh
-        run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
-          rustup target add x86_64-pc-windows-msvc
-      - uses: Swatinem/rust-cache@v2
+      - name: Set up Rust and cache
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
         with:
-          workspaces: ". -> target"
-          shared-key: windows-msvc-driver
-          add-job-id-key: "false"
+          target: x86_64-pc-windows-msvc
+          cache-workspaces: ". -> target"
+          cache-shared-key: windows-msvc-driver
           cache-bin: "false"
           cache-on-failure: "false"
       - uses: actions/cache@v6
@@ -321,27 +288,15 @@ jobs:
             mingw-w64-ucrt-x86_64-opus
             mingw-w64-ucrt-x86_64-pkgconf
             mingw-w64-ucrt-x86_64-zlib
-      - uses: hendrikmuhs/ccache-action@v1.2.23
-        with:
-          variant: sccache
-          key: windows-gnu-package
-          max-size: 250M
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 8.0.x
-          cache: true
-          cache-dependency-path: packaging/windows/Lumen.wixproj
-      - name: Install the GNU Rust target
-        shell: pwsh
-        run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
-          rustup target add x86_64-pc-windows-gnu
-      - uses: Swatinem/rust-cache@v2
+      - name: Set up Rust and cache
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
         with:
-          workspaces: ". -> cmake-build-release/rust-target"
-          shared-key: windows-gnu-package
-          add-job-id-key: "false"
+          target: x86_64-pc-windows-gnu
+          cache-workspaces: ". -> cmake-build-release/rust-target"
+          cache-shared-key: windows-gnu-package
           cache-bin: "false"
           cache-on-failure: "false"
       - name: Download unsigned IDD package
@@ -363,7 +318,6 @@ jobs:
         env:
           LUMEN_VERSION: ${{ needs.prepare.outputs.product_version }}
           LUMEN_ARTIFACT_VERSION: ${{ needs.prepare.outputs.release_version }}
-          LUMEN_CMAKE_COMPILER_LAUNCHER: sccache
           LUMEN_WINDOWS_DRIVER_PACKAGE_DIR: build/windows-driver-package
         run: scripts/ci/build_windows_package.sh
       - name: Upload unsigned Windows installer for SignPath
