@@ -428,6 +428,7 @@ fn refresh_exchange_rotates_refresh_and_issues_expiring_access_token() {
     assert!(!persisted.contains(&exchange.refresh_token));
     assert!(!persisted.contains(&exchange.access_token));
     assert!(persisted.contains("refresh_token_hash"));
+    assert!(persisted.contains("previous_refresh_token_hash"));
     assert!(persisted.contains("access_token_hash"));
     assert!(test
         .authority
@@ -439,11 +440,6 @@ fn refresh_exchange_rotates_refresh_and_issues_expiring_access_token() {
     assert_eq!(authorized.status_code, 200);
     assert_eq!(authorized.body["requestId"], "");
     assert_eq!(authorized.body["result"]["authorized"], true);
-    assert!(matches!(
-        test.exchange(enrollment.device_id.clone(), enrollment.refresh_token),
-        Err(AuthErrorCode::InvalidDeviceCredential)
-    ));
-
     let replacement = test
         .exchange(enrollment.device_id.clone(), exchange.refresh_token.clone())
         .unwrap();
@@ -468,6 +464,61 @@ fn refresh_exchange_rotates_refresh_and_issues_expiring_access_token() {
         .verify_access_token_http(&enrollment.device_id, &replacement.access_token);
     assert_eq!(expired.status_code, 401);
     assert_eq!(expired.body["error"]["code"], "access-token-expired");
+}
+
+#[test]
+fn refresh_exchange_recovers_from_one_lost_rotation_response() {
+    let mut test = TestAuthority::new(12_000);
+    let enrollment = test.enroll();
+    let first_response = test
+        .exchange(
+            enrollment.device_id.clone(),
+            enrollment.refresh_token.clone(),
+        )
+        .unwrap();
+
+    let retry_response = test
+        .exchange(
+            enrollment.device_id.clone(),
+            enrollment.refresh_token.clone(),
+        )
+        .unwrap();
+    assert!(matches!(
+        test.exchange(
+            enrollment.device_id.clone(),
+            enrollment.refresh_token.clone()
+        ),
+        Err(AuthErrorCode::InvalidDeviceCredential)
+    ));
+
+    let recovered_from_first_response = test
+        .exchange(
+            enrollment.device_id.clone(),
+            first_response.refresh_token.clone(),
+        )
+        .unwrap();
+    assert!(test
+        .authority
+        .verify_access_token(
+            &enrollment.device_id,
+            &recovered_from_first_response.access_token
+        )
+        .is_ok());
+
+    let recovered_from_retry_response = test
+        .exchange(enrollment.device_id.clone(), retry_response.refresh_token)
+        .unwrap();
+    assert!(test
+        .authority
+        .verify_access_token(
+            &enrollment.device_id,
+            &recovered_from_retry_response.access_token
+        )
+        .is_ok());
+    assert!(matches!(
+        test.exchange(enrollment.device_id, first_response.refresh_token),
+        Err(AuthErrorCode::InvalidDeviceCredential)
+    ));
 }
 
 #[test]
