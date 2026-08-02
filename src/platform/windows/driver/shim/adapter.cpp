@@ -440,13 +440,15 @@ NTSTATUS LumenCreateMonitor(
   const uint32_t width = static_cast<uint32_t>(request.arguments[1] >> 32u);
   const uint32_t height = static_cast<uint32_t>(request.arguments[1]);
   const uint32_t refresh_millihertz = static_cast<uint32_t>(request.arguments[2]);
-  if (lumen_driver_core_build_monitor_edid(
-        width,
-        height,
-        refresh_millihertz,
-        context->monitor_edid,
-        LUMEN_MONITOR_EDID_BYTES
-      ) != LUMEN_EDID_STATUS_OK) {
+  const uint32_t edid_status = lumen_driver_core_build_monitor_edid(
+    width,
+    height,
+    refresh_millihertz,
+    context->monitor_edid,
+    LUMEN_MONITOR_EDID_BYTES
+  );
+  if (edid_status != LUMEN_EDID_STATUS_OK &&
+      edid_status != LUMEN_EDID_STATUS_UNREPRESENTABLE) {
     return STATUS_INVALID_PARAMETER;
   }
   IDDCX_MONITOR_INFO monitor_info {};
@@ -458,8 +460,15 @@ NTSTATUS LumenCreateMonitor(
   monitor_info.ConnectorIndex = 0;
   monitor_info.MonitorDescription.Size = sizeof(monitor_info.MonitorDescription);
   monitor_info.MonitorDescription.Type = IDDCX_MONITOR_DESCRIPTION_TYPE_EDID;
-  monitor_info.MonitorDescription.DataSize = LUMEN_MONITOR_EDID_BYTES;
-  monitor_info.MonitorDescription.pData = context->monitor_edid;
+  if (edid_status == LUMEN_EDID_STATUS_OK) {
+    monitor_info.MonitorDescription.DataSize = LUMEN_MONITOR_EDID_BYTES;
+    monitor_info.MonitorDescription.pData = context->monitor_edid;
+  } else {
+    // IDDCX_MONITOR_DESCRIPTION explicitly permits no monitor description.
+    // The default-description callback below supplies the negotiated Rust mode.
+    monitor_info.MonitorDescription.DataSize = 0;
+    monitor_info.MonitorDescription.pData = nullptr;
+  }
   monitor_info.MonitorContainerId = unpack_monitor_container_id(
     request.arguments[3],
     request.arguments[4]

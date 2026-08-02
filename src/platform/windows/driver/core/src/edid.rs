@@ -4,6 +4,19 @@ pub const MONITOR_EDID_BYTES: usize = 128;
 pub const EDID_STATUS_OK: u32 = 0;
 pub const EDID_STATUS_INVALID: u32 = 1;
 pub const EDID_STATUS_BUFFER_TOO_SMALL: u32 = 2;
+pub const EDID_STATUS_UNREPRESENTABLE: u32 = 3;
+
+const MONITOR_MODE_MIN_LONG_EDGE: u32 = 320;
+const MONITOR_MODE_MIN_SHORT_EDGE: u32 = 200;
+const MONITOR_MODE_MAX_LONG_EDGE: u32 = 7_680;
+const MONITOR_MODE_MAX_SHORT_EDGE: u32 = 4_320;
+const MONITOR_MODE_MAX_REFRESH_MILLIHERTZ: u32 = 240_000;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MonitorEdidBuildError {
+    InvalidMode,
+    Unrepresentable,
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -13,16 +26,28 @@ pub struct MonitorEdidMode {
     pub refresh_millihertz: u32,
 }
 
+pub fn monitor_mode_is_supported(width: u32, height: u32, refresh_millihertz: u32) -> bool {
+    let long_edge = max(width, height);
+    let short_edge = min(width, height);
+    (MONITOR_MODE_MIN_LONG_EDGE..=MONITOR_MODE_MAX_LONG_EDGE).contains(&long_edge)
+        && (MONITOR_MODE_MIN_SHORT_EDGE..=MONITOR_MODE_MAX_SHORT_EDGE).contains(&short_edge)
+        && (1_000..=MONITOR_MODE_MAX_REFRESH_MILLIHERTZ).contains(&refresh_millihertz)
+}
+
 pub fn build_monitor_edid(
     width: u32,
     height: u32,
     refresh_millihertz: u32,
-) -> Option<[u8; MONITOR_EDID_BYTES]> {
-    if !(320..=4095).contains(&width)
-        || !(200..=4095).contains(&height)
-        || !(1_000..=240_000).contains(&refresh_millihertz)
-    {
-        return None;
+) -> Result<[u8; MONITOR_EDID_BYTES], MonitorEdidBuildError> {
+    if !monitor_mode_is_supported(width, height, refresh_millihertz) {
+        return Err(MonitorEdidBuildError::InvalidMode);
+    }
+    // A base EDID detailed timing descriptor has 12-bit active dimensions and
+    // a 16-bit pixel clock in 10 kHz units. IddCx also supports monitors with
+    // no description, so a valid negotiated mode must not be rejected merely
+    // because this legacy descriptor cannot encode it.
+    if width > 4095 || height > 4095 {
+        return Err(MonitorEdidBuildError::Unrepresentable);
     }
 
     let horizontal_blanking = max(160, width / 8);
@@ -38,7 +63,7 @@ pub fn build_monitor_edid(
             + 5_000_000)
             / 10_000_000;
     if pixel_clock_10khz == 0 || pixel_clock_10khz > u64::from(u16::MAX) {
-        return None;
+        return Err(MonitorEdidBuildError::Unrepresentable);
     }
 
     let mut edid = [0u8; MONITOR_EDID_BYTES];
@@ -95,7 +120,7 @@ pub fn build_monitor_edid(
             .iter()
             .fold(0u8, |sum, byte| sum.wrapping_add(*byte)),
     );
-    Some(edid)
+    Ok(edid)
 }
 
 pub fn parse_monitor_edid(edid: &[u8]) -> Option<MonitorEdidMode> {
@@ -159,5 +184,35 @@ mod tests {
         let mut edid = build_monitor_edid(1920, 1080, 60_000).unwrap();
         edid[127] = edid[127].wrapping_add(1);
         assert_eq!(parse_monitor_edid(&edid), None);
+    }
+
+    #[test]
+    fn native_ipad_120hz_mode_uses_descriptionless_monitor_fallback() {
+        assert!(monitor_mode_is_supported(2752, 2064, 120_000));
+        assert_eq!(
+            build_monitor_edid(2752, 2064, 120_000),
+            Err(MonitorEdidBuildError::Unrepresentable)
+        );
+        assert!(monitor_mode_is_supported(2064, 2752, 120_000));
+        assert_eq!(
+            build_monitor_edid(2064, 2752, 120_000),
+            Err(MonitorEdidBuildError::Unrepresentable)
+        );
+    }
+
+    #[test]
+    fn modes_outside_the_negotiated_host_capability_remain_invalid() {
+        assert_eq!(
+            build_monitor_edid(7681, 4320, 60_000),
+            Err(MonitorEdidBuildError::InvalidMode)
+        );
+        assert_eq!(
+            build_monitor_edid(5000, 5000, 60_000),
+            Err(MonitorEdidBuildError::InvalidMode)
+        );
+        assert_eq!(
+            build_monitor_edid(1920, 1080, 0),
+            Err(MonitorEdidBuildError::InvalidMode)
+        );
     }
 }

@@ -152,6 +152,7 @@ typedef struct LumenDriverVideoSignalMode {
 #define LUMEN_EDID_STATUS_OK 0u
 #define LUMEN_EDID_STATUS_INVALID 1u
 #define LUMEN_EDID_STATUS_BUFFER_TOO_SMALL 2u
+#define LUMEN_EDID_STATUS_UNREPRESENTABLE 3u
 
 typedef struct LumenDriverMonitorEdidMode {
   uint32_t width;

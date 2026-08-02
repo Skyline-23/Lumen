@@ -234,8 +234,21 @@ fn monitor_creation_supplies_default_and_target_modes() {
             .count(),
         4
     );
-    assert!(callbacks.contains("refresh_millihertz,\n    1\n  );"));
-    assert!(!callbacks.contains("refresh_millihertz,\n    0\n  );"));
+    assert_eq!(
+        callbacks
+            .matches("refresh_millihertz,\n    0\n  );")
+            .count(),
+        2
+    );
+    assert_eq!(
+        callbacks
+            .matches("monitor_context->refresh_millihertz,\n    1\n  );")
+            .count(),
+        2
+    );
+    assert!(adapter.contains("edid_status != LUMEN_EDID_STATUS_UNREPRESENTABLE"));
+    assert!(adapter.contains("monitor_info.MonitorDescription.DataSize = 0"));
+    assert!(adapter.contains("monitor_info.MonitorDescription.pData = nullptr"));
     assert!(callbacks.contains("lumen_driver_core_parse_monitor_edid"));
     assert!(!callbacks.contains("refresh_millihertz * height"));
     assert!(!callbacks.contains("refresh_millihertz) * width"));

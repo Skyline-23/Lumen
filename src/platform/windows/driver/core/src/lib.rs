@@ -39,8 +39,12 @@ pub extern "C" fn lumen_driver_core_build_monitor_edid(
     if output.is_null() || output_len < MONITOR_EDID_BYTES as u32 {
         return EDID_STATUS_BUFFER_TOO_SMALL;
     }
-    let Some(edid) = build_monitor_edid(width, height, refresh_millihertz) else {
-        return EDID_STATUS_INVALID;
+    let edid = match build_monitor_edid(width, height, refresh_millihertz) {
+        Ok(edid) => edid,
+        Err(MonitorEdidBuildError::InvalidMode) => return EDID_STATUS_INVALID,
+        Err(MonitorEdidBuildError::Unrepresentable) => {
+            return EDID_STATUS_UNREPRESENTABLE;
+        }
     };
     unsafe {
         core::ptr::copy_nonoverlapping(edid.as_ptr(), output, MONITOR_EDID_BYTES);

@@ -24,15 +24,16 @@ void fill_signal_info(
 LumenDriverVideoSignalMode make_signal_mode(
   uint32_t width,
   uint32_t height,
-  uint32_t refresh_millihertz
+  uint32_t refresh_millihertz,
+  uint32_t vertical_sync_divider
 ) {
-  // IddCx intersects the monitor and target signal descriptions. Keep every
-  // field, including the v-sync divider, identical on both sides.
+  // Rust owns the shared signal arithmetic. IddCx requires a zero divider for
+  // monitor modes and a nonzero divider for target activation modes.
   return lumen_driver_core_build_video_signal_mode(
     width,
     height,
     refresh_millihertz,
-    1
+    vertical_sync_divider
   );
 }
 
@@ -48,7 +49,8 @@ IDDCX_MONITOR_MODE make_monitor_mode(
   const auto signal = make_signal_mode(
     width,
     height,
-    refresh_millihertz
+    refresh_millihertz,
+    0
   );
   fill_signal_info(&mode.MonitorVideoSignalInfo, signal);
   return mode;
@@ -73,7 +75,8 @@ IDDCX_TARGET_MODE make_target_mode(
   const auto signal = make_signal_mode(
     monitor_context->width,
     monitor_context->height,
-    monitor_context->refresh_millihertz
+    monitor_context->refresh_millihertz,
+    1
   );
   fill_signal_info(&mode.TargetVideoSignalInfo.targetVideoSignalInfo, signal);
   return mode;
@@ -91,7 +94,8 @@ IDDCX_MONITOR_MODE2 make_monitor_mode2(
   const auto signal = make_signal_mode(
     width,
     height,
-    refresh_millihertz
+    refresh_millihertz,
+    0
   );
   fill_signal_info(&mode.MonitorVideoSignalInfo, signal);
   mode.BitsPerComponent.Rgb = IDDCX_BITS_PER_COMPONENT_8;
@@ -106,7 +110,8 @@ IDDCX_TARGET_MODE2 make_target_mode2(
   const auto signal = make_signal_mode(
     monitor_context->width,
     monitor_context->height,
-    monitor_context->refresh_millihertz
+    monitor_context->refresh_millihertz,
+    1
   );
   fill_signal_info(&mode.TargetVideoSignalInfo.targetVideoSignalInfo, signal);
   mode.BitsPerComponent.Rgb = IDDCX_BITS_PER_COMPONENT_8;
