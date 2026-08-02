@@ -468,6 +468,7 @@ fn windows_msi_owns_service_firewall_upgrade_and_removal() {
     assert!(common_targets.contains("target_link_libraries(lumen ${LUMEN_EXTERNAL_LIBRARIES}"));
     assert!(tools.contains("target_link_libraries(lumen-service"));
     assert!(tools.contains("${LUMEN_EXTERNAL_LIBRARIES}"));
+    assert!(locale_pruning.contains("cmake_minimum_required(VERSION 3.20)"));
     assert!(locale_pruning.contains("en-us;ja-JP;ko-KR"));
     assert!(locale_pruning.contains("Microsoft.ui.xaml.dll.mui"));
     assert!(!build.contains("cpack --config"));
@@ -734,6 +735,7 @@ fn windows_winui_matches_the_native_lumen_visual_contract() {
     assert!(asset_icons.contains("internal static BitmapIcon Navigation"));
     assert!(asset_icons.contains("ms-appx:///Assets/icons/template/"));
     assert!(asset_icons.contains("ms-appx:///Assets/brand/icon.svg"));
+    assert!(asset_icons.contains("private static SvgImageSource Svg"));
     assert!(project.contains("Link=\"Assets\\brand\\icon.svg\""));
     assert!(project.contains("Assets\\icons\\template\\*.png"));
     assert!(navigation.contains("internal static class LumenNavigationComponents"));
@@ -760,6 +762,8 @@ fn windows_winui_matches_the_native_lumen_visual_contract() {
     assert!(window.contains("_navigation.PaneFooter = signedInFooter"));
     assert!(window.contains("T(\"Account.SignedInAs\")"));
     assert!(window.contains("UpdateNavigationIconColors"));
+    assert!(window
+        .contains("UpdateNavigationIconColors(args.SelectedItemContainer as NavigationViewItem)"));
     assert!(window.contains("_navigation.SelectedItem = overview"));
     assert!(window.contains("LumenAssetIcon.LocalCredentials"));
     assert!(window.contains("LumenAssetIcon.CreateOwner"));
