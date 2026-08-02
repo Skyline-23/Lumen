@@ -85,19 +85,26 @@ struct LumenReleaseContractTests {
         #expect(!installingGuide.contains("installed independently"))
     }
 
-    @Test("Windows package workflows cache only native compiler outputs")
-    func windowsPackageUsesBoundedCompilerCache() throws {
+    @Test("Windows package workflows cache only Rust dependencies")
+    func windowsPackageUsesBoundedRustCache() throws {
         let root = try repositoryRoot()
         let ci = try source(".github/workflows/ci.yml", from: root)
         let release = try source(".github/workflows/release.yml", from: root)
         let packageBuild = try source("scripts/ci/build_windows_package.sh", from: root)
 
         for workflow in [ci, release] {
-            #expect(workflow.contains("hendrikmuhs/ccache-action@v1.2.23"))
-            #expect(workflow.contains("variant: sccache"))
-            #expect(workflow.contains("key: windows-gnu-package"))
-            #expect(workflow.contains("max-size: 250M"))
-            #expect(workflow.contains("LUMEN_CMAKE_COMPILER_LAUNCHER: sccache"))
+            #expect(workflow.contains("actions-rust-lang/setup-rust-toolchain@"))
+            #expect(
+                workflow.contains(
+                    #"cache-workspaces: ". -> cmake-build-release/rust-target""#
+                )
+            )
+            #expect(workflow.contains("cache-shared-key: windows-gnu-package"))
+            #expect(workflow.contains(#"cache-bin: "false""#))
+            #expect(workflow.contains(#"cache-on-failure: "false""#))
+            #expect(!workflow.contains("hendrikmuhs/ccache-action"))
+            #expect(!workflow.contains("LUMEN_CMAKE_COMPILER_LAUNCHER"))
+            #expect(!workflow.contains("cache-dependency-path: packaging/windows/Lumen.wixproj"))
         }
         #expect(
             packageBuild.contains(

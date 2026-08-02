@@ -45,9 +45,11 @@ struct LumenMacArchitectureContractTests {
         #expect(!rustBuild.contains("x86_64-apple-darwin"))
         #expect(rustBuild.contains("supports Apple Silicon only"))
 
-        #expect(release.contains("rustup target add aarch64-apple-darwin"))
-        #expect(!release.contains("rustup target add x86_64-apple-darwin"))
+        #expect(release.contains("target: aarch64-apple-darwin"))
+        #expect(!release.contains("target: x86_64-apple-darwin"))
         #expect(release.contains("ARCHS=arm64"))
+        #expect(!release.contains("-derivedDataPath"))
+        #expect(release.contains(#"${HOME}/Library/Developer/Xcode/DerivedData"#))
         #expect(release.contains(#"lipo -archs "${STAGED_APP}/Contents/MacOS/LumenHostWorker")"#))
         #expect(release.contains("= 'arm64'"))
     }
