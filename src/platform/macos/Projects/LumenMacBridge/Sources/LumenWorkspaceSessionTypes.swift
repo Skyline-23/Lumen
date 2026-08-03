@@ -88,12 +88,13 @@ struct LumenMacVirtualDisplayPersistentIdentity: Equatable, Sendable {
 public enum LumenMacVirtualDisplayConfigurationFactory {
     // The native host admits modes up to an 8K long edge in either orientation.
     // CGVirtualDisplay descriptor capacity is immutable, so reserve both axes
-    // before publishing the retained display instead of recreating its identity.
+    // for the initial publication and every replacement display generation.
     private static let maximumStreamDimension: UInt32 = 7_680
 
     public static func make(
         geometry: LumenMacDisplayGeometry,
-        request: LumenMacWorkspaceSessionRequest
+        request: LumenMacWorkspaceSessionRequest,
+        refreshRate: Double? = nil
     ) throws -> LumenMacVirtualDisplayConfiguration {
         let colorProfile = try LumenMacDisplayColorResolver.resolve(
             hdrEnabled: request.captureConfiguration.usesHDRTransport,
@@ -120,7 +121,7 @@ public enum LumenMacVirtualDisplayConfigurationFactory {
         )
         configuration.logicalWidth = geometry.logicalWidth
         configuration.logicalHeight = geometry.logicalHeight
-        configuration.refreshRate = request.refreshRate
+        configuration.refreshRate = max(refreshRate ?? request.refreshRate, 1)
         configuration.hdrEnabled = request.captureConfiguration.usesHDRTransport
         configuration.gamut = LumenMacVirtualDisplayGamut(
             rawValue: Int(colorProfile.gamutRawValue)

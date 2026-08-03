@@ -498,12 +498,21 @@ impl MacPlatformSessionControl {
                 error_text(&error)
             ));
         }
-        if display_id != state.display_id {
-            return Err(format!(
-                "dynamic display identity changed from {} to {display_id}",
-                state.display_id
-            ));
-        }
+        Ok(display_id)
+    }
+
+    fn restore_retained_workspace_capture_locked(
+        &self,
+        state: &mut MacSessionState,
+        plan: PlatformSessionPlan,
+    ) -> Result<u32, String> {
+        let display_id = self.reconfigure_workspace_locked(state, plan)?;
+        // The workspace mutation has already replaced the CoreGraphics object.
+        // Keep cleanup and native input bound to that physical identity even if
+        // the following capture start also fails.
+        state.display_id = display_id;
+        state.input_display_id = display_id;
+        self.start_capture_pair_locked(state, plan, display_id)?;
         Ok(display_id)
     }
 
@@ -899,19 +908,23 @@ impl PlatformSessionControl for MacPlatformSessionControl {
                 }
                 MacCaptureReconfigurationStep::ReconfigureWorkspace => {
                     display_id = match self.reconfigure_workspace_locked(&state, plan) {
-                        Ok(display_id) => display_id,
+                        Ok(display_id) => {
+                            // Swift has committed a replacement display before
+                            // returning its ID. Publish it immediately so any
+                            // subsequent rollback or teardown sees real state.
+                            state.display_id = display_id;
+                            state.input_display_id = display_id;
+                            display_id
+                        }
                         Err(error) => {
-                            let capture = self.start_capture_pair_locked(
-                                &mut state,
-                                previous,
-                                previous_display_id,
-                            );
-                            return Err(match capture {
-                                Ok(()) => format!(
-                                    "dynamic display reconfiguration failed and previous capture resumed: {error}"
+                            let rollback = self
+                                .restore_retained_workspace_capture_locked(&mut state, previous);
+                            return Err(match rollback {
+                                Ok(rollback_display_id) => format!(
+                                    "dynamic display reconfiguration failed and previous capture resumed on display {rollback_display_id}: {error}"
                                 ),
-                                Err(capture) => format!(
-                                    "dynamic display reconfiguration failed: {error}; previous capture restart={capture}"
+                                Err(rollback) => format!(
+                                    "dynamic display reconfiguration failed: {error}; rollback={rollback}"
                                 ),
                             });
                         }
@@ -922,19 +935,15 @@ impl PlatformSessionControl for MacPlatformSessionControl {
                     {
                         return Err(match reconfiguration {
                             MacDynamicDisplayReconfigurationMode::RetainedWorkspace => {
-                                let rollback_display =
-                                    self.reconfigure_workspace_locked(&state, previous);
-                                let rollback_capture = self.start_capture_pair_locked(
+                                match self.restore_retained_workspace_capture_locked(
                                     &mut state,
                                     previous,
-                                    previous_display_id,
-                                );
-                                match (rollback_display, rollback_capture) {
-                                    (Ok(_), Ok(())) => format!(
-                                        "dynamic capture reconfiguration failed and was rolled back: {error}"
+                                ) {
+                                    Ok(rollback_display_id) => format!(
+                                        "dynamic capture reconfiguration failed and was rolled back to display {rollback_display_id}: {error}"
                                     ),
-                                    (display, capture) => format!(
-                                        "dynamic capture reconfiguration failed: {error}; rollback display={display:?} capture={capture:?}"
+                                    Err(rollback) => format!(
+                                        "dynamic capture reconfiguration failed: {error}; rollback={rollback}"
                                     ),
                                 }
                             }
@@ -957,6 +966,10 @@ impl PlatformSessionControl for MacPlatformSessionControl {
                 }
             }
         }
+        let (active_display_id, input_display_id) =
+            mac_reconfigured_display_ids(reconfiguration, previous_display_id, display_id);
+        state.display_id = active_display_id;
+        state.input_display_id = input_display_id;
         state.input_display_bounds = match reconfiguration {
             MacDynamicDisplayReconfigurationMode::RetainedWorkspace => Some(
                 resolve_display_geometry(LumenDisplayModeRequest {
@@ -1538,6 +1551,21 @@ fn mac_capture_reconfiguration_steps(
     }
 }
 
+fn mac_reconfigured_display_ids(
+    mode: MacDynamicDisplayReconfigurationMode,
+    previous_display_id: u32,
+    reconfigured_display_id: u32,
+) -> (u32, u32) {
+    match mode {
+        MacDynamicDisplayReconfigurationMode::RetainedWorkspace => {
+            (reconfigured_display_id, reconfigured_display_id)
+        }
+        MacDynamicDisplayReconfigurationMode::PhysicalCapture => {
+            (previous_display_id, previous_display_id)
+        }
+    }
+}
+
 fn dynamic_display_reconfiguration_mode(
     previous_virtual_display: bool,
     next_virtual_display: bool,
@@ -1897,6 +1925,26 @@ mod tests {
                 MacCaptureReconfigurationStep::StopCapturePair,
                 MacCaptureReconfigurationStep::StartCapturePair,
             ]
+        );
+    }
+
+    #[test]
+    fn retained_workspace_reconfiguration_commits_the_replacement_display_identity() {
+        assert_eq!(
+            mac_reconfigured_display_ids(
+                MacDynamicDisplayReconfigurationMode::RetainedWorkspace,
+                55,
+                90,
+            ),
+            (90, 90)
+        );
+        assert_eq!(
+            mac_reconfigured_display_ids(
+                MacDynamicDisplayReconfigurationMode::PhysicalCapture,
+                55,
+                90,
+            ),
+            (55, 55)
         );
     }
 

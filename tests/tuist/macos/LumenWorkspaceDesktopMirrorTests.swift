@@ -38,41 +38,73 @@ final class LumenWorkspaceDesktopMirrorTests: XCTestCase {
         }
     }
 
-    func testDesktopMirrorReconfigurationStagesExactSourceBeforeModeCommitAndRemirror() async throws {
+    func testDesktopMirrorReconfigurationReplacesDisplayBeforeFreshCaptureAndRemirror() async throws {
         let events = try await runDesktopMirrorReconfiguration()
         let stageIndices = events.indices.filter {
             events[$0] == .prepareDesktopMirror(89, 3)
         }
-        let configureIndices = events.indices.filter {
-            if case .configure(89, _) = events[$0] { return true }
+        let createIndices = events.indices.filter {
+            if case .create = events[$0] { return true }
+            return false
+        }
+        let destroyIndices = events.indices.filter {
+            events[$0] == .destroy
+        }
+        let replacementConfigureIndices = events.indices.filter {
+            if case .configure(90, _) = events[$0] { return true }
             return false
         }
         let prefetchIndices = events.indices.filter {
-            events[$0] == .prepareCapture(89)
+            events[$0] == .prepareCapture(90)
         }
         let captureReadyIndices = events.indices.filter {
-            events[$0] == .capturePrepared(89)
+            events[$0] == .capturePrepared(90)
         }
         let mirrorIndices = events.indices.filter {
-            events[$0] == .mirror(89, 3)
+            events[$0] == .mirror(90, 3)
         }
 
         XCTAssertEqual(stageIndices.count, 2)
-        XCTAssertEqual(configureIndices.count, 2)
-        XCTAssertEqual(prefetchIndices.count, 2)
-        XCTAssertEqual(captureReadyIndices.count, 2)
-        XCTAssertEqual(mirrorIndices.count, 2)
+        XCTAssertEqual(createIndices.count, 2)
+        XCTAssertEqual(destroyIndices.count, 1)
+        XCTAssertEqual(replacementConfigureIndices.count, 1)
+        XCTAssertEqual(prefetchIndices.count, 1)
+        XCTAssertEqual(captureReadyIndices.count, 1)
+        XCTAssertEqual(mirrorIndices.count, 1)
         let reconfigurationStage = try XCTUnwrap(stageIndices.last)
-        let reconfigurationConfigure = try XCTUnwrap(configureIndices.last)
+        let reconfigurationDestroy = try XCTUnwrap(destroyIndices.first)
+        let replacementCreate = try XCTUnwrap(createIndices.last)
+        let replacementConfigure = try XCTUnwrap(
+            replacementConfigureIndices.first
+        )
         let reconfigurationPrefetch = try XCTUnwrap(prefetchIndices.last)
         let reconfigurationCaptureReady = try XCTUnwrap(captureReadyIndices.last)
         let reconfigurationMirror = try XCTUnwrap(mirrorIndices.last)
-        XCTAssertLessThan(reconfigurationStage, reconfigurationConfigure)
-        XCTAssertLessThan(reconfigurationConfigure, reconfigurationPrefetch)
+        XCTAssertLessThan(reconfigurationStage, reconfigurationDestroy)
+        XCTAssertLessThan(reconfigurationDestroy, replacementCreate)
+        XCTAssertLessThan(replacementCreate, replacementConfigure)
+        XCTAssertLessThan(replacementConfigure, reconfigurationPrefetch)
         XCTAssertLessThan(reconfigurationPrefetch, reconfigurationCaptureReady)
         XCTAssertLessThan(reconfigurationCaptureReady, reconfigurationMirror)
         XCTAssertFalse(events.contains(.settle(89)))
         XCTAssertFalse(events.contains(.stabilize(89)))
+    }
+
+    func testDesktopMirrorFailedReplacementCanRecreateThePreviousDisplayGeneration() async throws {
+        let result = try await runDesktopMirrorFailedReconfigurationRollback()
+        let events = result.events
+
+        XCTAssertEqual(result.displayID, 91)
+        XCTAssertEqual(events.filter {
+            if case .create = $0 { return true }
+            return false
+        }.count, 3)
+        XCTAssertEqual(events.filter { $0 == .destroy }.count, 2)
+        XCTAssertTrue(events.contains(.prepareCapture(90)))
+        XCTAssertFalse(events.contains(.capturePrepared(90)))
+        XCTAssertFalse(events.contains(.mirror(90, 3)))
+        XCTAssertTrue(events.contains(.capturePrepared(91)))
+        XCTAssertTrue(events.contains(.mirror(91, 3)))
     }
 
 }

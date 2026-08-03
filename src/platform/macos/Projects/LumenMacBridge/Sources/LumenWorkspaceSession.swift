@@ -70,31 +70,14 @@ public actor LumenMacWorkspaceSession {
         else {
             throw LumenMacWorkspaceSessionError.sessionNotStarted
         }
-        let previous = request
-        let displayID = try await executor.activeVirtualDisplayID()
         let replacementGeometry = try LumenMacDisplayGeometryResolver.resolve(
             replacement.displayMode
         )
-        do {
-            try await applyDisplayMode(
-                replacement,
-                geometry: replacementGeometry,
-                displayID: displayID
-            )
-            request = replacement
-        } catch {
-            let reconfigurationError = error
-            if let previousGeometry = try? LumenMacDisplayGeometryResolver.resolve(
-                previous.displayMode
-            ) {
-                try? await applyDisplayMode(
-                    previous,
-                    geometry: previousGeometry,
-                    displayID: displayID
-                )
-            }
-            throw reconfigurationError
-        }
+        _ = try await applyDisplayMode(
+            replacement,
+            geometry: replacementGeometry
+        )
+        request = replacement
     }
 
     public func state() async throws -> LumenMacWorkspaceState {
@@ -107,27 +90,31 @@ public actor LumenMacWorkspaceSession {
 
     private func applyDisplayMode(
         _ request: LumenMacWorkspaceSessionRequest,
-        geometry: LumenMacDisplayGeometry,
-        displayID: UInt32
-    ) async throws {
+        geometry: LumenMacDisplayGeometry
+    ) async throws -> UInt32 {
         if isDesktopMirror {
-            // A mode transaction can invalidate the active mirror topology and
-            // leave the retained source online but inactive. Restore the
-            // independent source first, then follow the same exact-display
-            // admission order used during initial workspace preparation.
+            // CGVirtualDisplay mode mutation can remove an otherwise retained
+            // display from ScreenCaptureKit. Restore the physical source, then
+            // replace the owned display and admit that fresh identity before
+            // committing the mirror topology.
             try await executor.stageOwnedVirtualDisplayUnmirrored()
+            let replacementDisplayID = try await executor
+                .replaceOwnedVirtualDisplay(
+                    geometry: geometry,
+                    refreshRate: request.refreshRate
+                )
+            try await executor.prepareOwnedVirtualDisplayForReconfiguration()
+            try await executor.mirrorOwnedVirtualDisplay()
+            return replacementDisplayID
         }
+        let displayID = try await executor.activeVirtualDisplayID()
         try await executor.reconfigureOwnedVirtualDisplay(
             geometry: geometry,
             refreshRate: request.refreshRate
         )
-        if isDesktopMirror {
-            try await executor.prepareOwnedVirtualDisplayForReconfiguration()
-            try await executor.mirrorOwnedVirtualDisplay()
-            return
-        }
         try await executor.settleOwnedVirtualDisplayMode()
         try await executor.stabilizeOwnedVirtualDisplay()
         try await executor.prepareOwnedVirtualDisplayForCapture()
+        return displayID
     }
 }

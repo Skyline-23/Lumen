@@ -17,14 +17,16 @@ actor LumenMacVirtualDisplayOwner {
     func create(
         identity: LumenMacVirtualDisplayIdentity,
         geometry: LumenMacDisplayGeometry,
-        request: LumenMacWorkspaceSessionRequest
+        request: LumenMacWorkspaceSessionRequest,
+        refreshRate: Double? = nil
     ) async throws -> UInt32 {
         guard display == nil else {
             throw LumenMacWorkspaceSessionError.sessionAlreadyStarted
         }
         let configuration = try LumenMacVirtualDisplayConfigurationFactory.make(
             geometry: geometry,
-            request: request
+            request: request,
+            refreshRate: refreshRate
         )
         let display = try LumenMacVirtualDisplay.createRegisteredDisplay(
             forKey: identity.id,

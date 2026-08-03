@@ -49,6 +49,11 @@ public struct LumenMacWorkspaceNativeOperations: Sendable {
         LumenMacDisplayGeometry,
         Double
     ) async throws -> Void
+    public var replaceVirtualDisplay: @Sendable (
+        LumenMacVirtualDisplayIdentity,
+        LumenMacDisplayGeometry,
+        Double
+    ) async throws -> UInt32
     public var verifyVirtualDisplay: @Sendable (UInt32) async throws -> Void
     public var settleVirtualDisplayMode: @Sendable (UInt32) async throws -> Void
     public var stabilizeVirtualDisplay: @Sendable (UInt32) async throws -> Void
@@ -75,6 +80,11 @@ public struct LumenMacWorkspaceNativeOperations: Sendable {
             LumenMacDisplayGeometry,
             Double
         ) async throws -> Void)? = nil,
+        replaceVirtualDisplay: (@Sendable (
+            LumenMacVirtualDisplayIdentity,
+            LumenMacDisplayGeometry,
+            Double
+        ) async throws -> UInt32)? = nil,
         verifyVirtualDisplay: @escaping @Sendable (UInt32) async throws -> Void,
         settleVirtualDisplayMode: @escaping @Sendable (UInt32) async throws -> Void = { _ in },
         stabilizeVirtualDisplay: @escaping @Sendable (UInt32) async throws -> Void = { _ in },
@@ -99,6 +109,20 @@ public struct LumenMacWorkspaceNativeOperations: Sendable {
             geometry,
             _ in
             try await configureVirtualDisplay(displayID, geometry)
+        }
+        self.replaceVirtualDisplay = replaceVirtualDisplay ?? {
+            identity,
+            geometry,
+            _ in
+            try await destroyVirtualDisplay(identity)
+            let displayID = try await createVirtualDisplay(identity, geometry)
+            do {
+                try await configureVirtualDisplay(displayID, geometry)
+                return displayID
+            } catch {
+                try? await destroyVirtualDisplay(identity)
+                throw error
+            }
         }
         self.verifyVirtualDisplay = verifyVirtualDisplay
         self.settleVirtualDisplayMode = settleVirtualDisplayMode
@@ -133,7 +157,7 @@ public actor LumenMacWorkspaceExecutor: LumenWorkspaceCommandExecuting {
     private let contentSource: LumenMacWorkspaceContentSource
     private let targetProcessIdentifiers: [Int32]
     private let operations: LumenMacWorkspaceNativeOperations
-    private let displayGeometry: LumenMacDisplayGeometry
+    private var displayGeometry: LumenMacDisplayGeometry
     private var virtualDisplayID: UInt32?
     private var virtualDisplayIdentity: LumenMacVirtualDisplayIdentity?
     private var isolationStatus = LumenMacWorkspaceIsolationStatus.notRequested
@@ -270,11 +294,35 @@ public actor LumenMacWorkspaceExecutor: LumenWorkspaceCommandExecuting {
         )
     }
 
+    public func replaceOwnedVirtualDisplay(
+        geometry: LumenMacDisplayGeometry,
+        refreshRate: Double
+    ) async throws -> UInt32 {
+        guard let virtualDisplayIdentity else {
+            throw LumenMacWorkspaceExecutorError.virtualDisplayMissing
+        }
+        do {
+            let replacementDisplayID = try await operations.replaceVirtualDisplay(
+                virtualDisplayIdentity,
+                geometry,
+                refreshRate
+            )
+            virtualDisplayID = replacementDisplayID
+            displayGeometry = geometry
+            return replacementDisplayID
+        } catch {
+            virtualDisplayID = nil
+            throw error
+        }
+    }
+
     public func stageOwnedVirtualDisplayUnmirrored() async throws {
         guard case .desktopMirror(let sourceDisplayID) = contentSource else {
             return
         }
-        let displayID = try requireVirtualDisplay()
+        guard let displayID = virtualDisplayID else {
+            return
+        }
         try await operations.verifyVirtualDisplay(displayID)
         try await displayWorkspace.stageVirtualDisplayUnmirrored(
             displayID,
