@@ -66,20 +66,25 @@ final class LumenCapturePipelineTests: XCTestCase {
         XCTAssertEqual(gate.admitSourceFrame(), .submitInitialKeyFrame)
     }
 
-    func testRealtimeEncoderAdmissionKeepsOnlyOneInflightFrame() {
+    func testRealtimeEncoderAdmissionKeepsTwoFramePipelineBound() {
         XCTAssertEqual(LumenCaptureQueueProfile.q3.queueDepthHint, 3)
         XCTAssertEqual(
             LumenRealtimeVideoEncoderAdmissionPolicy.maximumInflightFrameCount,
-            1
+            2
         )
         XCTAssertTrue(
             LumenRealtimeVideoEncoderAdmissionPolicy.hasCapacity(
                 inflightFrameCount: 0
             )
         )
-        XCTAssertFalse(
+        XCTAssertTrue(
             LumenRealtimeVideoEncoderAdmissionPolicy.hasCapacity(
                 inflightFrameCount: 1
+            )
+        )
+        XCTAssertFalse(
+            LumenRealtimeVideoEncoderAdmissionPolicy.hasCapacity(
+                inflightFrameCount: 2
             )
         )
         XCTAssertFalse(
