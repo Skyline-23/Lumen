@@ -243,8 +243,8 @@ let project = Project(
             settings: .settings(
                 base: [
                     "AD_HOC_CODE_SIGNING_ALLOWED": "NO",
-                    "CODE_SIGN_STYLE": "Manual",
-                    "CODE_SIGN_IDENTITY": "Developer ID Application: Buseong Kim (Q23JLSJCCV)",
+                    "CODE_SIGN_STYLE": "Automatic",
+                    "CODE_SIGN_IDENTITY": "Apple Development",
                     "CODE_SIGN_INJECT_BASE_ENTITLEMENTS": "NO",
                     "DEVELOPMENT_TEAM": "Q23JLSJCCV",
                     "ENABLE_HARDENED_RUNTIME": "YES",
@@ -308,8 +308,8 @@ let project = Project(
                     "AD_HOC_CODE_SIGNING_ALLOWED": "NO",
                     "DEVELOPMENT_TEAM": "Q23JLSJCCV",
                     "ASSETCATALOG_COMPILER_APPICON_NAME": "lumen",
-                    "CODE_SIGN_STYLE": "Manual",
-                    "CODE_SIGN_IDENTITY": "Developer ID Application: Buseong Kim (Q23JLSJCCV)",
+                    "CODE_SIGN_STYLE": "Automatic",
+                    "CODE_SIGN_IDENTITY": "Apple Development",
                     "CODE_SIGN_INJECT_BASE_ENTITLEMENTS": "NO",
                     "ENABLE_HARDENED_RUNTIME": "YES",
                     "OTHER_CODE_SIGN_FLAGS": "--timestamp"

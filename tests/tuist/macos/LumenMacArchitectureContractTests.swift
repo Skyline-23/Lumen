@@ -54,6 +54,27 @@ struct LumenMacArchitectureContractTests {
         #expect(release.contains("= 'arm64'"))
     }
 
+    @Test("Local apps preserve the Apple Development identity used by privacy grants")
+    func localAppsUseDevelopmentSigningWhileReleaseInjectsDistributionSigning() throws {
+        let repositoryRoot = try repositoryRoot()
+        let project = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("src/platform/macos/Project.swift"),
+            encoding: .utf8
+        )
+        let release = try String(
+            contentsOf: repositoryRoot.appendingPathComponent(".github/workflows/release.yml"),
+            encoding: .utf8
+        )
+
+        #expect(project.contains(#""CODE_SIGN_STYLE": "Automatic""#))
+        #expect(project.contains(#""CODE_SIGN_IDENTITY": "Apple Development""#))
+        #expect(!project.contains("Developer ID Application:"))
+        #expect(release.contains("CODE_SIGN_STYLE=Manual"))
+        #expect(
+            release.contains(#""CODE_SIGN_IDENTITY=${LUMEN_SIGNING_IDENTITY}""#)
+        )
+    }
+
     @Test("Release tags stay on their reviewed GitFlow branch")
     func releaseTagsRequireReviewedBranchAncestry() throws {
         let repositoryRoot = try repositoryRoot()
