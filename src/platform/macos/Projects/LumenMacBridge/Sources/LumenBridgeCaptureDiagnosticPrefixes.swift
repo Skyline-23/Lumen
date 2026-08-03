@@ -114,6 +114,7 @@ let lumenCaptureDiagnosticPrefixes = [
     "videoToolboxOutputToAppliedBitratePercent=",
     "videoToolboxImmediateReplaySubmissionCount=",
     "videoToolboxSuppressedImmediateReplayCount=",
+    "videoToolboxInflightSourceBound=",
     "videoToolboxCurrentInflightStagingSlots=",
     "videoToolboxMaxInflightStagingSlots=",
     "videoToolboxPixelBufferCacheSize=",

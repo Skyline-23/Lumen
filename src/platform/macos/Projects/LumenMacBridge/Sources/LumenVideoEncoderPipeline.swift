@@ -70,6 +70,17 @@ enum LumenEncoderSubmissionAttempt<Result: Sendable>: Sendable {
     case submitted(Result)
 }
 
+/// Keeps VideoToolbox from turning hardware backpressure into a stale-frame
+/// queue. ScreenCaptureKit retains its independently negotiated source queue;
+/// the encoder owns one frame while admission coalesces one latest source.
+enum LumenRealtimeVideoEncoderAdmissionPolicy {
+    static let maximumInflightFrameCount = 1
+
+    static func hasCapacity(inflightFrameCount: Int) -> Bool {
+        inflightFrameCount < maximumInflightFrameCount
+    }
+}
+
 /// Keeps the synchronous VideoToolbox admission call off the ScreenCaptureKit
 /// callback queue without invoking one non-Sendable compression session from
 /// multiple threads. One source may be submitting and one latest source may

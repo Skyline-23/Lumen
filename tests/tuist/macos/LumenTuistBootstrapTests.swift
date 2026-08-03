@@ -66,6 +66,29 @@ final class LumenCapturePipelineTests: XCTestCase {
         XCTAssertEqual(gate.admitSourceFrame(), .submitInitialKeyFrame)
     }
 
+    func testRealtimeEncoderAdmissionKeepsOnlyOneInflightFrame() {
+        XCTAssertEqual(LumenCaptureQueueProfile.q3.queueDepthHint, 3)
+        XCTAssertEqual(
+            LumenRealtimeVideoEncoderAdmissionPolicy.maximumInflightFrameCount,
+            1
+        )
+        XCTAssertTrue(
+            LumenRealtimeVideoEncoderAdmissionPolicy.hasCapacity(
+                inflightFrameCount: 0
+            )
+        )
+        XCTAssertFalse(
+            LumenRealtimeVideoEncoderAdmissionPolicy.hasCapacity(
+                inflightFrameCount: 1
+            )
+        )
+        XCTAssertFalse(
+            LumenRealtimeVideoEncoderAdmissionPolicy.hasCapacity(
+                inflightFrameCount: 3
+            )
+        )
+    }
+
     func testSerialEncoderAdmissionPreservesInvocationOrderAndKeepsLatestPendingSource() {
         let sourceQueue = DispatchQueue(
             label: "dev.skyline23.lumen.tests.sck-source",
@@ -117,6 +140,70 @@ final class LumenCapturePipelineTests: XCTestCase {
         XCTAssertEqual(
             XCTWaiter.wait(for: [submissionsCompleted], timeout: 1),
             .completed
+        )
+        XCTAssertEqual(recorder.snapshot, [1, 3])
+    }
+
+    func testSerialEncoderAdmissionKeepsLatestSourceWhileOutputIsInflight() {
+        let sourceQueue = DispatchQueue(
+            label: "dev.skyline23.lumen.tests.sck-output-capacity",
+            qos: .userInteractive
+        )
+        let submissionQueue = DispatchQueue(
+            label: "dev.skyline23.lumen.tests.vt-output-capacity",
+            qos: .userInteractive
+        )
+        let firstSubmissionCompleted = DispatchSemaphore(value: 0)
+        let latestSubmissionCompleted = DispatchSemaphore(value: 0)
+        let capacity = LumenEncoderCapacityGate(available: true)
+        let recorder = LumenEncoderSubmissionRecorder()
+        let admission = LumenLatestFrameSerialEncoderAdmission<Int, Int>(
+            ownerQueue: sourceQueue,
+            submissionQueue: submissionQueue,
+            hasSubmissionCapacity: {
+                capacity.isAvailable
+            },
+            entryHandler: { source in
+                if source == 1 {
+                    capacity.setAvailable(false)
+                }
+            },
+            submit: { source, entered in
+                guard entered() else {
+                    return .cancelled
+                }
+                recorder.append(source)
+                return .submitted(source)
+            },
+            completion: { source, _ in
+                if source == 1 {
+                    firstSubmissionCompleted.signal()
+                } else {
+                    latestSubmissionCompleted.signal()
+                }
+            }
+        )
+
+        sourceQueue.sync {
+            XCTAssertNil(admission.offer(1))
+        }
+        XCTAssertEqual(
+            firstSubmissionCompleted.wait(timeout: .now() + 1),
+            .success
+        )
+        sourceQueue.sync {
+            XCTAssertNil(admission.offer(2))
+            XCTAssertEqual(admission.offer(3), 2)
+        }
+        XCTAssertEqual(recorder.snapshot, [1])
+
+        capacity.setAvailable(true)
+        sourceQueue.sync {
+            admission.resumePendingIfPossible()
+        }
+        XCTAssertEqual(
+            latestSubmissionCompleted.wait(timeout: .now() + 1),
+            .success
         )
         XCTAssertEqual(recorder.snapshot, [1, 3])
     }

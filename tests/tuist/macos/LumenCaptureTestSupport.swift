@@ -41,6 +41,29 @@ final class LumenEncoderSubmissionRecorder: @unchecked Sendable {
     }
 }
 
+final class LumenEncoderCapacityGate: @unchecked Sendable {
+    private let queue = DispatchQueue(
+        label: "dev.skyline23.lumen.tests.encoder-capacity"
+    )
+    private var available: Bool
+
+    init(available: Bool) {
+        self.available = available
+    }
+
+    func setAvailable(_ available: Bool) {
+        queue.sync {
+            self.available = available
+        }
+    }
+
+    var isAvailable: Bool {
+        queue.sync {
+            available
+        }
+    }
+}
+
 final class LumenStopLifecycleRecorder: @unchecked Sendable {
     private let queue = DispatchQueue(label: "dev.skyline23.lumen.tests.stop-recorder")
     private var values: [String] = []

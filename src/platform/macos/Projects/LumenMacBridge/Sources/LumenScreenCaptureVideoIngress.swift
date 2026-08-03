@@ -236,10 +236,6 @@ extension LumenScreenCaptureVideoRuntime {
         }
     }
 
-    var maximumPendingFrameCount: Int {
-        max(configuration.negotiatedQueueProfile.queueDepthHint, 1)
-    }
-
     func beginSourceCallback(_ sampleBuffer: CMSampleBuffer) -> UInt64 {
         let callbackEntryMachTime = mach_absolute_time()
         captureIngressTimings.observe(
