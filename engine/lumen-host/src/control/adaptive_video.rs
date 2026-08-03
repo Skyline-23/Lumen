@@ -570,7 +570,7 @@ mod tests {
         );
 
         assert_eq!(decision.wire_budget_kbps, 80_000);
-        assert_eq!(decision.encoder_bitrate_kbps, 72_075);
+        assert_eq!(decision.encoder_bitrate_kbps, 71_516);
         assert_eq!(decision.fec_percentage, 5);
         assert_eq!(decision.admission_divisor, 1);
         assert_eq!(decision.congestion_source, CongestionSource::None);
@@ -595,7 +595,7 @@ mod tests {
         );
 
         assert_eq!(decision.wire_budget_kbps, 80_000);
-        assert_eq!(decision.encoder_bitrate_kbps, 72_075);
+        assert_eq!(decision.encoder_bitrate_kbps, 71_516);
         assert_eq!(decision.admission_divisor, 2);
         assert_eq!(decision.congestion_source, CongestionSource::VideoPipeline);
         assert!(decision.changed);
@@ -706,7 +706,7 @@ mod tests {
 
         assert!(decision.changed);
         assert_eq!(decision.wire_budget_kbps, 80_000);
-        assert_eq!(decision.encoder_bitrate_kbps, 72_075);
+        assert_eq!(decision.encoder_bitrate_kbps, 71_516);
         assert_eq!(decision.admission_divisor, 2);
         assert_eq!(decision.congestion_source, CongestionSource::VideoPipeline);
     }
@@ -776,7 +776,7 @@ mod tests {
         });
 
         assert_eq!(decision.wire_budget_kbps, 80_000);
-        assert_eq!(decision.encoder_bitrate_kbps, 72_075);
+        assert_eq!(decision.encoder_bitrate_kbps, 71_516);
         assert_eq!(decision.fec_percentage, 5);
         assert_eq!(decision.admission_divisor, 2);
         assert_eq!(decision.congestion_source, CongestionSource::VideoPipeline);
@@ -794,14 +794,14 @@ mod tests {
 
         let first = controller.observe(decoder_pressure);
         assert_eq!(first.wire_budget_kbps, 48_000);
-        assert_eq!(first.encoder_bitrate_kbps, 43_580);
+        assert_eq!(first.encoder_bitrate_kbps, 43_021);
         assert_eq!(first.admission_divisor, 2);
         assert!(first.changed);
 
         for _ in 0..16 {
             let repeated = controller.observe(decoder_pressure);
             assert_eq!(repeated.wire_budget_kbps, 48_000);
-            assert_eq!(repeated.encoder_bitrate_kbps, 43_580);
+            assert_eq!(repeated.encoder_bitrate_kbps, 43_021);
             assert_eq!(repeated.admission_divisor, 2);
             assert!(!repeated.changed);
         }
@@ -809,12 +809,12 @@ mod tests {
         for _ in 0..AdaptiveVideoDeliveryController::CLEAN_WINDOWS_BEFORE_INCREASE {
             _ = controller.observe(clean(FeedbackStream::Video));
         }
-        assert_eq!(controller.snapshot().encoder_bitrate_kbps, 43_580);
+        assert_eq!(controller.snapshot().encoder_bitrate_kbps, 43_021);
         assert_eq!(controller.snapshot().admission_divisor, 1);
 
         let new_epoch = controller.observe(decoder_pressure);
         assert_eq!(new_epoch.wire_budget_kbps, 48_000);
-        assert_eq!(new_epoch.encoder_bitrate_kbps, 43_580);
+        assert_eq!(new_epoch.encoder_bitrate_kbps, 43_021);
         assert_eq!(new_epoch.admission_divisor, 2);
         assert!(new_epoch.changed);
     }
@@ -886,7 +886,7 @@ mod tests {
             ..clean(FeedbackStream::Video)
         });
         assert_eq!(congested.wire_budget_kbps, 80_000);
-        assert_eq!(congested.encoder_bitrate_kbps, 72_075);
+        assert_eq!(congested.encoder_bitrate_kbps, 71_516);
         assert_eq!(congested.admission_divisor, 2);
 
         let recovered = controller.observe_window(
@@ -896,7 +896,7 @@ mod tests {
         );
 
         assert_eq!(recovered.wire_budget_kbps, 80_000);
-        assert_eq!(recovered.encoder_bitrate_kbps, 72_075);
+        assert_eq!(recovered.encoder_bitrate_kbps, 71_516);
         assert_eq!(recovered.admission_divisor, 1);
         assert!(recovered.changed);
     }
@@ -911,14 +911,14 @@ mod tests {
 
         let first = controller.observe(presentation_only);
         assert_eq!(first.wire_budget_kbps, 48_000);
-        assert_eq!(first.encoder_bitrate_kbps, 43_580);
+        assert_eq!(first.encoder_bitrate_kbps, 43_021);
         assert_eq!(first.congestion_source, CongestionSource::VideoPresentation);
         assert!(!first.changed);
 
         for _ in 0..16 {
             let repeated = controller.observe(presentation_only);
             assert_eq!(repeated.wire_budget_kbps, 48_000);
-            assert_eq!(repeated.encoder_bitrate_kbps, 43_580);
+            assert_eq!(repeated.encoder_bitrate_kbps, 43_021);
             assert!(!repeated.changed);
         }
 
@@ -929,7 +929,7 @@ mod tests {
 
         let new_episode = controller.observe(presentation_only);
         assert_eq!(new_episode.wire_budget_kbps, 48_000);
-        assert_eq!(new_episode.encoder_bitrate_kbps, 43_580);
+        assert_eq!(new_episode.encoder_bitrate_kbps, 43_021);
         assert!(!new_episode.changed);
     }
 
@@ -1013,7 +1013,7 @@ mod tests {
         let decision = controller.snapshot();
         assert!(decision.encoder_bitrate_kbps >= 18_491);
         assert_eq!(decision.fec_percentage, 30);
-        assert_eq!(decision.wire_budget_kbps, 25_920);
+        assert_eq!(decision.wire_budget_kbps, 26_496);
     }
 
     #[test]

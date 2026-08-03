@@ -1,8 +1,8 @@
 use lumen_engine::{
     encode_native_media_header, encode_native_media_header_with_fec_block,
-    native_video_packetization_plan, NativeFecBlockExtension, NativeMediaHeader, NativeMediaKind,
-    NATIVE_FEC_BLOCK_HEADER_BYTES, NATIVE_MEDIA_FLAG_FEC_BLOCK, NATIVE_MEDIA_FLAG_KEYFRAME,
-    NATIVE_MEDIA_FLAG_PARITY_SHARD,
+    native_video_packetization_plan, native_video_parity_shards, NativeFecBlockExtension,
+    NativeMediaHeader, NativeMediaKind, NATIVE_FEC_BLOCK_HEADER_BYTES, NATIVE_MEDIA_FLAG_FEC_BLOCK,
+    NATIVE_MEDIA_FLAG_KEYFRAME, NATIVE_MEDIA_FLAG_PARITY_SHARD,
 };
 use reed_solomon_erasure::galois_8::ReedSolomon;
 
@@ -223,7 +223,8 @@ impl NativeMediaPacketizer {
         };
         for (block_index, block) in payload.chunks(plan.block_payload_bytes).enumerate() {
             let data_shards = block.len().div_ceil(plan.shard_bytes);
-            let parity_shards = parity_shards(data_shards, metadata.parity_percentage);
+            let parity_shards = native_video_parity_shards(data_shards, metadata.parity_percentage)
+                .ok_or_else(|| "native media parity shard count is invalid".to_owned())?;
             let data_shards_u8 = u8::try_from(data_shards)
                 .map_err(|_| "native media data shard count overflowed".to_owned())?;
             let parity_shards_u8 = u8::try_from(parity_shards)
@@ -316,12 +317,4 @@ fn timestamp_to_microseconds(timestamp: u64, clock_rate: u64) -> u32 {
 
 fn valid_datagram_payload(maximum_datagram_payload: usize) -> bool {
     maximum_datagram_payload > NATIVE_FEC_BLOCK_HEADER_BYTES
-}
-
-fn parity_shards(data_shards: usize, parity_percentage: u16) -> usize {
-    if parity_percentage == 0 {
-        0
-    } else {
-        (data_shards * usize::from(parity_percentage)).div_ceil(100)
-    }
 }

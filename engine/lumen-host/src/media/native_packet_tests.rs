@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 
 use lumen_engine::{
-    decode_native_media_datagram, native_video_packetization_plan, NativeMediaKind,
-    NATIVE_MEDIA_FLAG_FEC_BLOCK, NATIVE_MEDIA_FLAG_KEYFRAME, NATIVE_MEDIA_FLAG_PARITY_SHARD,
+    decode_native_media_datagram, native_video_packetization_plan, native_video_parity_shards,
+    NativeMediaKind, NATIVE_MEDIA_FLAG_FEC_BLOCK, NATIVE_MEDIA_FLAG_KEYFRAME,
+    NATIVE_MEDIA_FLAG_PARITY_SHARD,
 };
 use reed_solomon_erasure::galois_8::ReedSolomon;
 
@@ -47,11 +48,11 @@ fn exact_wire_plan_matches_adversarial_padding_header_and_fec_boundaries() {
     const PARITY: u16 = 30;
     let base_shard_bytes = MTU - 28;
     let cases = [
-        (1, 2_400),
-        (base_shard_bytes, 2_400),
-        (base_shard_bytes + 1, 3_600),
+        (1, 3_600),
+        (base_shard_bytes, 3_600),
+        (base_shard_bytes + 1, 4_800),
         (32 * base_shard_bytes, 50_400),
-        (32 * base_shard_bytes + 1, 52_800),
+        (32 * base_shard_bytes + 1, 54_000),
         (200_070, 271_200),
     ];
 
@@ -230,6 +231,38 @@ fn reed_solomon_parity_recovers_missing_plaintext_delta_shards() {
 }
 
 #[test]
+fn small_video_delta_survives_a_two_datagram_loss_burst() {
+    let mut packetizer = NativeMediaPacketizer::new(video_config(1_200), 0).unwrap();
+    let frame = video_frame(512);
+
+    let packetized = packetizer.packetize_video_delta(&frame, 5, 30).unwrap();
+    let first = decode_native_media_datagram(&packetized.datagrams[0]).unwrap();
+    let data_shards = usize::from(first.header.data_shards);
+    let parity_shards = usize::from(first.header.parity_shards);
+
+    assert_eq!(data_shards, 1);
+    assert_eq!(parity_shards, 2);
+    assert_eq!(packetized.datagrams.len(), 3);
+
+    let mut shards = packetized
+        .datagrams
+        .iter()
+        .map(|datagram| Some(payload(datagram)))
+        .collect::<Vec<_>>();
+    shards[0] = None;
+    shards[1] = None;
+    ReedSolomon::new(data_shards, parity_shards)
+        .unwrap()
+        .reconstruct(&mut shards)
+        .unwrap();
+
+    assert_eq!(
+        shards[0].as_ref().unwrap()[..frame.payload.len()],
+        frame.payload
+    );
+}
+
+#[test]
 fn fec_packet_bytes_match_stable_wire_vector() {
     let mut packetizer = NativeMediaPacketizer::new(video_config(40), 0x0102_0304).unwrap();
     let frame = PlatformEncodedVideoFrame {
@@ -248,15 +281,19 @@ fn fec_packet_bytes_match_stable_wire_vector() {
         vec![
             vec![
                 1, 0, 0, 28, 0, 0, 0, 7, 1, 2, 3, 4, 0, 0, 0, 9, 0, 0, 0, 13, 0, 15, 66, 64, 0, 2,
-                1, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
+                2, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
             ],
             vec![
                 1, 0, 0, 28, 0, 0, 0, 7, 1, 2, 3, 5, 0, 0, 0, 9, 0, 0, 0, 13, 0, 15, 66, 64, 1, 2,
-                1, 0, 12, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                2, 0, 12, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             ],
             vec![
                 1, 16, 0, 28, 0, 0, 0, 7, 1, 2, 3, 6, 0, 0, 0, 9, 0, 0, 0, 13, 0, 15, 66, 64, 2, 2,
-                1, 0, 24, 3, 6, 5, 12, 15, 10, 9, 24, 27, 30, 29,
+                2, 0, 24, 3, 6, 5, 12, 15, 10, 9, 24, 27, 30, 29,
+            ],
+            vec![
+                1, 16, 0, 28, 0, 0, 0, 7, 1, 2, 3, 7, 0, 0, 0, 9, 0, 0, 0, 13, 0, 15, 66, 64, 3, 2,
+                2, 0, 20, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22,
             ],
         ]
     );
@@ -414,7 +451,7 @@ fn varying_large_fec_frames_use_bounded_blocks_and_reconstruct_after_loss() {
             .values()
             .all(|(data_shards, _)| *data_shards <= 32));
         assert!(block_shapes.values().all(|(data_shards, parity_shards)| {
-            *parity_shards == (*data_shards * 20).div_ceil(100)
+            Some(*parity_shards) == native_video_parity_shards(*data_shards, 20)
         }));
         for shape in block_shapes.values().take(block_shapes.len() - 1) {
             assert_eq!(*shape, (32, 7));
