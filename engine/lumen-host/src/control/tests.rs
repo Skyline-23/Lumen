@@ -1510,10 +1510,7 @@ fn media_feedback_separates_wire_budget_from_pipeline_admission() {
         .unwrap();
     _ = commit_adaptive_proposal(&mut router, context.session_epoch, video_decision);
     let adapted = router.video_delivery_state().unwrap();
-    assert_eq!(
-        adapted.fec_percentage,
-        (audio_adapted.fec_percentage + 5).min(30)
-    );
+    assert_eq!(adapted.fec_percentage, 30);
     assert!(adapted.target_bitrate_kbps < audio_adapted.target_bitrate_kbps);
     assert_eq!(adapted.admission_divisor, 2);
 
@@ -1719,7 +1716,7 @@ fn media_feedback_accepts_a_coalesced_wall_clock_window() {
 }
 
 #[test]
-fn coalesced_clean_feedback_recovers_by_elapsed_base_windows() {
+fn coalesced_clean_feedback_recovers_pipeline_by_elapsed_base_windows() {
     let platform = Arc::new(RecordingPlatformSessionControl::default());
     let (_root, mut router, context, plan) = started_native_router(platform);
     let congested_video = MediaFeedback {
@@ -1752,6 +1749,7 @@ fn coalesced_clean_feedback_recovers_by_elapsed_base_windows() {
         .unwrap();
     _ = commit_adaptive_proposal(&mut router, context.session_epoch, degraded_proposal);
     let degraded = router.video_delivery_state().unwrap();
+    assert_eq!(degraded.admission_divisor, 2);
 
     let clean_video = MediaFeedback {
         decoder_drops: 0,
@@ -1778,9 +1776,13 @@ fn coalesced_clean_feedback_recovers_by_elapsed_base_windows() {
     _ = commit_adaptive_proposal(&mut router, context.session_epoch, recovered_proposal);
     let recovered = router.video_delivery_state().unwrap();
 
-    assert!(
-        recovered.target_bitrate_kbps > degraded.target_bitrate_kbps,
-        "coalesced clean evidence must recover bitrate by elapsed 250 ms units"
+    assert_eq!(
+        recovered.admission_divisor, 1,
+        "coalesced clean evidence must recover pipeline admission by elapsed 250 ms units"
+    );
+    assert_eq!(
+        recovered.target_bitrate_kbps, degraded.target_bitrate_kbps,
+        "pipeline-only recovery must not reclaim parity before its clean hold expires"
     );
 }
 

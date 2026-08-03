@@ -644,58 +644,56 @@ impl PlatformSessionControl for MacPlatformSessionControl {
             .state
             .lock()
             .map_err(|_| "macOS platform session state is unavailable".to_owned())?;
-        let mut plan = plan;
-        plan.virtual_display = mac_uses_virtual_workspace(
-            plan.virtual_display,
-            state.desktop_mirror_source_display_id,
-        );
         self.stop_locked(&mut state)?;
         let startup = (|| -> Result<(), String> {
             let workspace_key = CString::new(MACOS_WORKSPACE_DISPLAY_KEY)
                 .map_err(|_| "workspace key is invalid".to_owned())?;
             let display_name = CString::new("Lumen Display").expect("static display name");
-            let display_id = if plan.virtual_display {
-                let mut error = [0_i8; 1024];
-                let request = MacWorkspaceSessionRequest {
-                    display_key: workspace_key.as_ptr(),
-                    display_name: display_name.as_ptr(),
-                    width: plan.width,
-                    height: plan.height,
-                    scale_percent: u32::try_from(plan.sink_scale_percent)
-                        .map_err(|_| "macOS workspace display scale is invalid".to_owned())?,
-                    dimensions_are_logical: plan.sink_mode_is_logical,
-                    high_density: plan.sink_hidpi,
-                    refresh_rate: f64::from(plan.frames_per_second),
-                    hdr_enabled: matches!(
-                        plan.video_format.dynamic_range,
-                        crate::PlatformDynamicRange::Hdr10
-                    ),
-                    sink_gamut: plan.sink_gamut,
-                    sink_transfer: plan.sink_transfer,
-                    current_edr_headroom: plan.sink_current_edr_headroom,
-                    potential_edr_headroom: plan.sink_potential_edr_headroom,
-                    current_peak_luminance_nits: plan.sink_current_peak_luminance_nits,
-                    potential_peak_luminance_nits: plan.sink_potential_peak_luminance_nits,
-                    // Desktop capture is normalized to direct physical capture
-                    // before this branch. A virtual workspace is therefore
-                    // always independent of the host's physical display mode.
-                    desktop_mirror_source_display_id: 0,
-                };
-                let display_id = unsafe {
-                    (self.api.prepare_workspace)(request, error.as_mut_ptr(), error.len())
-                };
-                if display_id == 0 {
-                    return Err(format!(
-                        "platform display could not be created: {}",
-                        error_text(&error)
-                    ));
+            let capture_topology = mac_capture_topology(
+                plan.virtual_display,
+                state.desktop_mirror_source_display_id,
+                unsafe { CGMainDisplayID() },
+            )?;
+            let display_id = match capture_topology {
+                MacCaptureTopology::VirtualWorkspace {
+                    desktop_mirror_source_display_id,
+                } => {
+                    let mut error = [0_i8; 1024];
+                    let request = MacWorkspaceSessionRequest {
+                        display_key: workspace_key.as_ptr(),
+                        display_name: display_name.as_ptr(),
+                        width: plan.width,
+                        height: plan.height,
+                        scale_percent: u32::try_from(plan.sink_scale_percent)
+                            .map_err(|_| "macOS workspace display scale is invalid".to_owned())?,
+                        dimensions_are_logical: plan.sink_mode_is_logical,
+                        high_density: plan.sink_hidpi,
+                        refresh_rate: f64::from(plan.frames_per_second),
+                        hdr_enabled: matches!(
+                            plan.video_format.dynamic_range,
+                            crate::PlatformDynamicRange::Hdr10
+                        ),
+                        sink_gamut: plan.sink_gamut,
+                        sink_transfer: plan.sink_transfer,
+                        current_edr_headroom: plan.sink_current_edr_headroom,
+                        potential_edr_headroom: plan.sink_potential_edr_headroom,
+                        current_peak_luminance_nits: plan.sink_current_peak_luminance_nits,
+                        potential_peak_luminance_nits: plan.sink_potential_peak_luminance_nits,
+                        desktop_mirror_source_display_id,
+                    };
+                    let display_id = unsafe {
+                        (self.api.prepare_workspace)(request, error.as_mut_ptr(), error.len())
+                    };
+                    if display_id == 0 {
+                        return Err(format!(
+                            "platform display could not be created: {}",
+                            error_text(&error)
+                        ));
+                    }
+                    state.workspace_key = Some(workspace_key);
+                    display_id
                 }
-                state.workspace_key = Some(workspace_key);
-                display_id
-            } else {
-                physical_capture_display_id(state.desktop_mirror_source_display_id, unsafe {
-                    CGMainDisplayID()
-                })?
+                MacCaptureTopology::PhysicalDisplay(display_id) => display_id,
             };
             state.display_id = display_id;
             // The owned capture display is only safe for input after the Swift workspace
@@ -855,11 +853,6 @@ impl PlatformSessionControl for MacPlatformSessionControl {
             .state
             .lock()
             .map_err(|_| "macOS platform session state is unavailable".to_owned())?;
-        let mut plan = plan;
-        plan.virtual_display = mac_uses_virtual_workspace(
-            plan.virtual_display,
-            state.desktop_mirror_source_display_id,
-        );
         let previous = state
             .plan
             .ok_or_else(|| "macOS dynamic display has no active session plan".to_owned())?;
@@ -1442,25 +1435,31 @@ fn desktop_mirror_source_candidate_display_id(
         .ok_or_else(|| "macOS desktop capture has no current source display".to_owned())
 }
 
-fn mac_uses_virtual_workspace(
-    requested_virtual_display: bool,
-    desktop_capture_source_display_id: u32,
-) -> bool {
-    requested_virtual_display && desktop_capture_source_display_id == 0
+fn physical_capture_display_id(current_main_display_id: u32) -> Result<u32, String> {
+    (current_main_display_id != 0)
+        .then_some(current_main_display_id)
+        .ok_or_else(|| "macOS physical capture has no current source display".to_owned())
 }
 
-fn physical_capture_display_id(
-    desktop_capture_source_display_id: u32,
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MacCaptureTopology {
+    VirtualWorkspace {
+        desktop_mirror_source_display_id: u32,
+    },
+    PhysicalDisplay(u32),
+}
+
+fn mac_capture_topology(
+    requested_virtual_display: bool,
+    desktop_mirror_source_display_id: u32,
     current_main_display_id: u32,
-) -> Result<u32, String> {
-    let display_id = if desktop_capture_source_display_id != 0 {
-        desktop_capture_source_display_id
-    } else {
-        current_main_display_id
-    };
-    (display_id != 0)
-        .then_some(display_id)
-        .ok_or_else(|| "macOS physical capture has no current source display".to_owned())
+) -> Result<MacCaptureTopology, String> {
+    if requested_virtual_display {
+        return Ok(MacCaptureTopology::VirtualWorkspace {
+            desktop_mirror_source_display_id,
+        });
+    }
+    physical_capture_display_id(current_main_display_id).map(MacCaptureTopology::PhysicalDisplay)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1758,19 +1757,31 @@ mod tests {
     }
 
     #[test]
-    fn desktop_capture_bypasses_the_virtual_workspace() {
-        assert!(!mac_uses_virtual_workspace(true, 3));
-        assert!(mac_uses_virtual_workspace(true, 0));
-        assert!(!mac_uses_virtual_workspace(false, 0));
+    fn explicit_physical_capture_requires_the_current_main_display() {
+        assert_eq!(physical_capture_display_id(7).unwrap(), 7);
+        assert_eq!(
+            physical_capture_display_id(0).unwrap_err(),
+            "macOS physical capture has no current source display"
+        );
     }
 
     #[test]
-    fn desktop_capture_retains_the_selected_physical_display() {
-        assert_eq!(physical_capture_display_id(3, 7).unwrap(), 3);
-        assert_eq!(physical_capture_display_id(0, 7).unwrap(), 7);
+    fn desktop_capture_preserves_the_requested_virtual_topology() {
         assert_eq!(
-            physical_capture_display_id(0, 0).unwrap_err(),
-            "macOS physical capture has no current source display"
+            mac_capture_topology(true, 3, 7).unwrap(),
+            MacCaptureTopology::VirtualWorkspace {
+                desktop_mirror_source_display_id: 3,
+            }
+        );
+        assert_eq!(
+            mac_capture_topology(true, 0, 7).unwrap(),
+            MacCaptureTopology::VirtualWorkspace {
+                desktop_mirror_source_display_id: 0,
+            }
+        );
+        assert_eq!(
+            mac_capture_topology(false, 3, 7).unwrap(),
+            MacCaptureTopology::PhysicalDisplay(7)
         );
     }
 

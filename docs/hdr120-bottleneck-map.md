@@ -22,10 +22,17 @@ production dispatch handoff. Queue depth and dispatch serialization are not the
 dominant limit for this exact format on this host.
 
 The low-latency runtime therefore keeps the ScreenCaptureKit source queue at its
-negotiated depth for callback slack, but permits only one frame inside
-VideoToolbox. While that frame is encoding, admission retains only the newest
-pending source. This does not raise the hardware throughput ceiling; it prevents
-that ceiling from becoming a queue of stale desktop frames.
+negotiated depth for callback slack, but permits only two pipelined frames inside
+VideoToolbox. While both slots are occupied, admission retains only the newest
+pending source. This does not raise the hardware throughput ceiling; it gives the
+asynchronous hardware encoder one slot of pipeline overlap while preventing that
+ceiling from becoming a queue of stale desktop frames.
+
+A later 3600 x 2260 live run showed why the earlier depth-3-versus-depth-8 probe
+does not justify a one-frame gate: VideoToolbox callbacks took roughly 18 to 64
+milliseconds, so waiting for every callback before admitting the next source
+reduced admission to about 17 percent. Two slots retain the freshness bound
+without serializing source admission to callback cadence.
 
 ## Closed changes
 
