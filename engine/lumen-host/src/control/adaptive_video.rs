@@ -72,6 +72,7 @@ pub(crate) struct AdaptiveVideoDeliveryController {
     fec_percentage: u16,
     maximum_decoder_queue_depth: u32,
     clean_network_windows: u32,
+    clean_fec_windows: u32,
     clean_pipeline_windows: u32,
     pipeline_pressure_armed: bool,
     keyframe_wire_rate_requirement_kbps: Option<u32>,
@@ -80,10 +81,12 @@ pub(crate) struct AdaptiveVideoDeliveryController {
 impl AdaptiveVideoDeliveryController {
     const MINIMUM_FEC_PERCENTAGE: u16 = 5;
     const MAXIMUM_FEC_PERCENTAGE: u16 = 30;
-    /// Parity is reclaimed in larger steps than it is added, so a transient loss
-    /// burst does not hold picture bitrate down for many seconds afterwards.
-    const FEC_RECOVERY_STEP_PERCENTAGE: u16 = 10;
+    const FEC_RECOVERY_STEP_PERCENTAGE: u16 = 5;
     const CLEAN_WINDOWS_BEFORE_INCREASE: u32 = 8;
+    /// A burst that defeats FEC must remain protected across several seconds of
+    /// apparently clean aggregate windows. Otherwise sparse burst loss oscillates
+    /// parity below the level required to protect the next video object.
+    const CLEAN_WINDOWS_BEFORE_FEC_RECOVERY: u32 = 32;
     const TRANSPORT_LOSS_PARTS_PER_MILLION: u64 = 20_000;
     /// Drops below this share of a window are jitter, not sustained pressure.
     const DECODER_DROP_PRESSURE_PARTS_PER_MILLION: u64 = 50_000;
@@ -150,6 +153,7 @@ impl AdaptiveVideoDeliveryController {
             fec_percentage: initial_fec_percentage,
             maximum_decoder_queue_depth: maximum_decoder_queue_depth.max(1),
             clean_network_windows: 0,
+            clean_fec_windows: 0,
             clean_pipeline_windows: 0,
             pipeline_pressure_armed: true,
             keyframe_wire_rate_requirement_kbps: None,
@@ -257,6 +261,7 @@ impl AdaptiveVideoDeliveryController {
             NetworkCongestionSeverity::Neutral => {}
             NetworkCongestionSeverity::Severe => {
                 self.clean_network_windows = 0;
+                self.clean_fec_windows = 0;
                 if let Some(video_sample) = video_sample {
                     self.increase_fec_for_video_loss(video_sample);
                 }
@@ -269,6 +274,7 @@ impl AdaptiveVideoDeliveryController {
             }
             NetworkCongestionSeverity::Transport => {
                 self.clean_network_windows = 0;
+                self.clean_fec_windows = 0;
                 if let Some(video_sample) = video_sample {
                     self.increase_fec_for_video_loss(video_sample);
                 }
@@ -285,24 +291,26 @@ impl AdaptiveVideoDeliveryController {
                     .saturating_add(clean_window_units);
                 self.clean_network_windows = accumulated % Self::CLEAN_WINDOWS_BEFORE_INCREASE;
                 let mut recovery_probes = accumulated / Self::CLEAN_WINDOWS_BEFORE_INCREASE;
-                while recovery_probes > 0
-                    && (self.wire_budget_kbps < self.ceiling_wire_kbps
-                        || self.fec_percentage > Self::MINIMUM_FEC_PERCENTAGE)
-                {
+                while recovery_probes > 0 && self.wire_budget_kbps < self.ceiling_wire_kbps {
                     let increase = self.wire_budget_kbps.div_ceil(5).max(250);
                     self.wire_budget_kbps = self
                         .wire_budget_kbps
                         .saturating_add(increase)
                         .min(self.ceiling_wire_kbps);
-                    // Parity spends budget that could carry picture, so it is
-                    // reclaimed faster than the wire budget is probed upward. At the
-                    // previous single step, returning from the ceiling took ten
-                    // seconds of uninterrupted clean windows.
+                    recovery_probes -= 1;
+                }
+
+                let accumulated_fec = self.clean_fec_windows.saturating_add(clean_window_units);
+                self.clean_fec_windows = accumulated_fec % Self::CLEAN_WINDOWS_BEFORE_FEC_RECOVERY;
+                let mut fec_recovery_probes =
+                    accumulated_fec / Self::CLEAN_WINDOWS_BEFORE_FEC_RECOVERY;
+                while fec_recovery_probes > 0 && self.fec_percentage > Self::MINIMUM_FEC_PERCENTAGE
+                {
                     self.fec_percentage = self
                         .fec_percentage
                         .saturating_sub(Self::FEC_RECOVERY_STEP_PERCENTAGE)
                         .max(Self::MINIMUM_FEC_PERCENTAGE);
-                    recovery_probes -= 1;
+                    fec_recovery_probes -= 1;
                 }
             }
         }
@@ -409,9 +417,15 @@ impl AdaptiveVideoDeliveryController {
     }
 
     fn increase_fec_for_video_loss(&mut self, sample: MediaFeedbackSample) {
-        if sample.stream == FeedbackStream::Video
-            && Self::loss_parts_per_million(sample) >= Self::TRANSPORT_LOSS_PARTS_PER_MILLION
-        {
+        if sample.stream != FeedbackStream::Video {
+            return;
+        }
+        if sample.unrecoverable_objects > 0 {
+            // Aggregate loss can remain below two percent while a short burst
+            // removes more shards than one FEC block can rebuild. The failed
+            // object is direct evidence that the current parity is insufficient.
+            self.fec_percentage = Self::MAXIMUM_FEC_PERCENTAGE;
+        } else if Self::loss_parts_per_million(sample) >= Self::TRANSPORT_LOSS_PARTS_PER_MILLION {
             self.fec_percentage = self
                 .fec_percentage
                 .saturating_add(5)
@@ -603,7 +617,8 @@ mod tests {
         );
 
         assert_eq!(decision.wire_budget_kbps, 64_000);
-        assert_eq!(decision.encoder_bitrate_kbps, 58_106);
+        assert_eq!(decision.encoder_bitrate_kbps, 46_932);
+        assert_eq!(decision.fec_percentage, 30);
         assert_eq!(decision.admission_divisor, 1);
         assert_eq!(decision.congestion_source, CongestionSource::VideoNetwork);
         assert!(decision.changed);
@@ -709,7 +724,7 @@ mod tests {
             late_objects: 1,
             ..clean(FeedbackStream::Video)
         };
-        for _ in 0..AdaptiveVideoDeliveryController::CLEAN_WINDOWS_BEFORE_INCREASE {
+        for _ in 0..AdaptiveVideoDeliveryController::CLEAN_WINDOWS_BEFORE_FEC_RECOVERY {
             controller.observe_window(paced, clean(FeedbackStream::Audio), 1);
         }
 
@@ -817,6 +832,33 @@ mod tests {
         assert_eq!(decision.fec_percentage, 10);
         assert_eq!(decision.congestion_source, CongestionSource::VideoNetwork);
         assert!(decision.changed);
+    }
+
+    #[test]
+    fn unrecoverable_video_object_raises_fec_below_average_loss_threshold() {
+        let mut controller = AdaptiveVideoDeliveryController::new(100_000, 80_000, 20, 3);
+        let decision = controller.observe(MediaFeedbackSample {
+            received_datagrams: 99,
+            unrecoverable_objects: 1,
+            ..clean(FeedbackStream::Video)
+        });
+
+        assert_eq!(decision.fec_percentage, 30);
+        assert_eq!(decision.congestion_source, CongestionSource::VideoNetwork);
+        assert!(decision.changed);
+    }
+
+    #[test]
+    fn fec_recovery_requires_sustained_clean_transport() {
+        let mut controller = AdaptiveVideoDeliveryController::new(100_000, 80_000, 30, 3);
+
+        for _ in 1..AdaptiveVideoDeliveryController::CLEAN_WINDOWS_BEFORE_FEC_RECOVERY {
+            _ = controller.observe(clean(FeedbackStream::Video));
+        }
+        assert_eq!(controller.snapshot().fec_percentage, 30);
+
+        _ = controller.observe(clean(FeedbackStream::Video));
+        assert_eq!(controller.snapshot().fec_percentage, 25);
     }
 
     #[test]
@@ -975,7 +1017,7 @@ mod tests {
     }
 
     #[test]
-    fn quarter_floor_recovers_to_the_negotiated_ceiling_within_sixteen_seconds() {
+    fn quarter_floor_and_fec_recover_within_twenty_four_seconds() {
         let mut controller = AdaptiveVideoDeliveryController::new(48_000, 48_000, 20, 3);
         for _ in 0..32 {
             _ = controller.observe(MediaFeedbackSample {
@@ -985,7 +1027,7 @@ mod tests {
         }
         assert_eq!(controller.snapshot().wire_budget_kbps, 12_672);
 
-        for _ in 0..64 {
+        for _ in 0..96 {
             _ = controller.observe(clean(FeedbackStream::Video));
         }
 
