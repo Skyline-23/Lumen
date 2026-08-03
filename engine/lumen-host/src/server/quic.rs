@@ -50,6 +50,7 @@ const TERMINAL_NATIVE_CLEANUP_RETRY_DELAY: Duration = Duration::from_millis(250)
 const CODEC_CONFIGURATION_ACK_TIMEOUT: Duration = Duration::from_secs(15);
 const CODEC_CONFIGURATION_ACK_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const VIDEO_BOOTSTRAP_RESULT_TIMEOUT: Duration = Duration::from_secs(15);
+const VIDEO_BOOTSTRAP_WRITE_CHUNK_BYTES: usize = 64 * 1024;
 const ERROR_TRANSPORT: u32 = 9;
 const PRIORITY_CONTROL: i32 = 100;
 const PRIORITY_INPUT: i32 = 90;
@@ -685,6 +686,7 @@ async fn publish_video_bootstraps(
             .ok_or_else(|| "video bootstrap stream index exhausted".to_owned())?;
         let encoded = encode_video_bootstrap_message(&bootstrap)
             .map_err(|error| format!("could not encode video bootstrap: {error:?}"))?;
+        let write_started = Instant::now();
         write_paced_video_bootstrap(
             &mut send,
             &encoded,
@@ -697,14 +699,15 @@ async fn publish_video_bootstraps(
         send.finish()
             .map_err(|error| format!("could not finish video bootstrap stream: {error}"))?;
         eprintln!(
-            "Lumen native QUIC stage=video-bootstrap-sent session-epoch={} stream-id={} configuration-id={} generation-id={} frame-id={} reason={} access-unit-bytes={}",
+            "Lumen native QUIC stage=video-bootstrap-sent session-epoch={} stream-id={} configuration-id={} generation-id={} frame-id={} reason={} access-unit-bytes={} write-duration-us={}",
             bootstrap.session_epoch,
             bootstrap.stream_id,
             bootstrap.configuration_id,
             bootstrap.generation_id,
             bootstrap.frame_id,
             bootstrap.reason,
-            bootstrap.access_unit.len()
+            bootstrap.access_unit.len(),
+            write_started.elapsed().as_micros()
         );
         match wait_for_video_bootstrap_result(
             &router,
@@ -748,17 +751,22 @@ fn reserve_video_bootstrap_chunk(
     remaining_bytes: usize,
     session_epoch: u32,
     wire_budget_kbps: u32,
-    maximum_chunk_bytes: usize,
+    maximum_datagram_payload: usize,
     now: Instant,
     lifecycle_deadline: Instant,
 ) -> Result<(usize, Instant), String> {
-    let chunk_bytes = remaining_bytes.min(maximum_chunk_bytes);
-    if chunk_bytes == 0 {
+    let chunk_bytes = remaining_bytes.min(VIDEO_BOOTSTRAP_WRITE_CHUNK_BYTES);
+    if chunk_bytes == 0 || maximum_datagram_payload == 0 {
         return Err("video bootstrap chunk is empty".to_owned());
     }
     pacer.prepare(session_epoch, wire_budget_kbps)?;
     let send_at = pacer
-        .reserve(&[chunk_bytes], maximum_chunk_bytes, now, lifecycle_deadline)
+        .reserve(
+            &[chunk_bytes],
+            maximum_datagram_payload,
+            now,
+            lifecycle_deadline,
+        )
         .and_then(|times| times.into_iter().next())
         .ok_or_else(|| "video bootstrap exceeded the lifecycle pacing deadline".to_owned())?;
     Ok((chunk_bytes, send_at))
@@ -2126,25 +2134,55 @@ mod tests {
     #[test]
     fn large_reliable_bootstrap_shares_the_bounded_video_wire_envelope() {
         const BOOTSTRAP_BYTES: usize = 8 * 1024 * 1024;
-        const CHUNK_BYTES: usize = 1_200;
+        const DATAGRAM_BYTES: usize = 1_200;
         const WIRE_KBPS: u32 = 25_536;
-        let chunks = video_bootstrap_chunk_lengths(BOOTSTRAP_BYTES, CHUNK_BYTES);
+        let chunks =
+            video_bootstrap_chunk_lengths(BOOTSTRAP_BYTES, VIDEO_BOOTSTRAP_WRITE_CHUNK_BYTES);
         assert_eq!(chunks.iter().sum::<usize>(), BOOTSTRAP_BYTES);
-        assert!(chunks.len() > 6_000);
+        assert_eq!(chunks.len(), 128);
 
         let origin = Instant::now();
         let deadline = origin + VIDEO_BOOTSTRAP_RESULT_TIMEOUT;
         let mut pacer = VideoWireRatePacer::default();
         pacer.prepare(77, WIRE_KBPS).unwrap();
         let schedule = pacer
-            .reserve(&chunks, CHUNK_BYTES, origin, deadline)
+            .reserve(&chunks, DATAGRAM_BYTES, origin, deadline)
             .expect("large bootstrap must fit the lifecycle deadline");
 
-        assert_eq!(schedule[0], origin);
-        assert_eq!(schedule[1], origin);
-        assert!(schedule[2] > origin);
+        assert!(schedule[0] > origin);
         assert!(schedule.last().copied().unwrap() < deadline);
         assert!(schedule.last().copied().unwrap() - origin > Duration::from_secs(2));
+    }
+
+    #[test]
+    fn observed_repair_bootstrap_uses_a_bounded_number_of_stream_writes() {
+        const OBSERVED_REPAIR_BYTES: usize = 573_558;
+        const OBSERVED_WIRE_KBPS: u32 = 84_240;
+        let origin = Instant::now();
+        let deadline = origin + VIDEO_BOOTSTRAP_RESULT_TIMEOUT;
+        let mut pacer = VideoWireRatePacer::default();
+        let mut remaining = OBSERVED_REPAIR_BYTES;
+        let mut write_count = 0;
+        let mut final_send_at = origin;
+
+        while remaining > 0 {
+            let (chunk_bytes, send_at) = reserve_video_bootstrap_chunk(
+                &mut pacer,
+                remaining,
+                77,
+                OBSERVED_WIRE_KBPS,
+                1_200,
+                origin,
+                deadline,
+            )
+            .unwrap();
+            remaining -= chunk_bytes;
+            write_count += 1;
+            final_send_at = send_at;
+        }
+
+        assert_eq!(write_count, 9);
+        assert!(final_send_at - origin < Duration::from_millis(100));
     }
 
     #[test]
@@ -2163,8 +2201,8 @@ mod tests {
             reserve_video_bootstrap_chunk(&mut pacer, 1_200, 77, 1_200, 1_200, origin, deadline)
                 .unwrap();
 
-        assert_eq!(first, origin);
-        assert!(second >= origin + Duration::from_millis(7));
+        assert!(first > origin);
+        assert!(second >= origin + Duration::from_millis(16));
         assert!(third >= second + Duration::from_millis(8));
     }
 
