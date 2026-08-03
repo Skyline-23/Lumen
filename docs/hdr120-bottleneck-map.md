@@ -21,6 +21,12 @@ This reproduces the production 101 to 102 frame admission ceiling without the
 production dispatch handoff. Queue depth and dispatch serialization are not the
 dominant limit for this exact format on this host.
 
+The low-latency runtime therefore keeps the ScreenCaptureKit source queue at its
+negotiated depth for callback slack, but permits only one frame inside
+VideoToolbox. While that frame is encoding, admission retains only the newest
+pending source. This does not raise the hardware throughput ceiling; it prevents
+that ceiling from becoming a queue of stale desktop frames.
+
 ## Closed changes
 
 Do not present any of these as a fix for this boundary:

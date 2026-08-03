@@ -89,7 +89,9 @@ final class LumenScreenCaptureVideoRuntime:
         submissionQueue: encoderQueue,
         hasSubmissionCapacity: { [weak self] in
             guard let self else { return false }
-            return self.inflightFrameCount < self.maximumPendingFrameCount
+            return LumenRealtimeVideoEncoderAdmissionPolicy.hasCapacity(
+                inflightFrameCount: self.inflightFrameCount
+            )
         },
         entryHandler: { [weak self] submission in
             self?.willSubmitToVideoToolbox(submission)

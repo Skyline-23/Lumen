@@ -50,6 +50,7 @@ extension LumenScreenCaptureVideoRuntime {
             "videoToolboxStagingMode=direct-cvpixelbuffer",
             "videoToolboxAdmissionMode=serial-offloaded-latest",
             "videoToolboxPendingSourceBound=1",
+            "videoToolboxInflightSourceBound=\(LumenRealtimeVideoEncoderAdmissionPolicy.maximumInflightFrameCount)",
             "videoToolboxConversionCount=0",
             "videoToolboxProfile=\(encodingPlan?.profile ?? "unresolved")",
             "videoToolboxHardwareRequired=true",
