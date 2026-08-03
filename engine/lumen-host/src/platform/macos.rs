@@ -507,15 +507,26 @@ impl MacPlatformSessionControl {
         Ok(display_id)
     }
 
-    fn restart_capture_pair_locked(
+    fn stop_capture_pair_locked(&self, state: &mut MacSessionState) {
+        unsafe {
+            // Stop the ScreenCaptureKit owner first so a following display-mode
+            // mutation is observed as an intentional teardown, not as an
+            // unexpected termination that races the replacement capture.
+            (self.api.stop_video_capture)(state.controller);
+            (self.api.stop_audio_capture)(state.controller);
+        }
+        state.audio_capture_failure = None;
+        state.pcm.clear();
+        state.next_audio_deadline = None;
+    }
+
+    fn start_capture_pair_locked(
         &self,
         state: &mut MacSessionState,
         plan: PlatformSessionPlan,
         display_id: u32,
     ) -> Result<(), String> {
         unsafe {
-            (self.api.stop_audio_capture)(state.controller);
-            (self.api.stop_video_capture)(state.controller);
             (self.api.configure_video_forwarding)(state.controller, 3, 16);
             (self.api.configure_audio_forwarding)(state.controller, 8, 16);
         }
@@ -869,46 +880,82 @@ impl PlatformSessionControl for MacPlatformSessionControl {
             );
         }
 
-        let display_id = match reconfiguration {
-            MacDynamicDisplayReconfigurationMode::RetainedWorkspace => {
-                self.reconfigure_workspace_locked(&state, plan)?
-            }
-            MacDynamicDisplayReconfigurationMode::PhysicalCapture => {
-                if state.display_id == 0 {
-                    return Err(
-                        "macOS physical capture reconfiguration has no retained display".to_owned(),
-                    );
+        let previous_display_id = state.display_id;
+        if matches!(
+            reconfiguration,
+            MacDynamicDisplayReconfigurationMode::PhysicalCapture
+        ) && previous_display_id == 0
+        {
+            return Err(
+                "macOS physical capture reconfiguration has no retained display".to_owned(),
+            );
+        }
+
+        let mut display_id = previous_display_id;
+        for step in mac_capture_reconfiguration_steps(reconfiguration) {
+            match step {
+                MacCaptureReconfigurationStep::StopCapturePair => {
+                    self.stop_capture_pair_locked(&mut state);
                 }
-                state.display_id
-            }
-        };
-        if let Err(error) = self.restart_capture_pair_locked(&mut state, plan, display_id) {
-            return Err(match reconfiguration {
-                MacDynamicDisplayReconfigurationMode::RetainedWorkspace => {
-                    let previous_display_id = state.display_id;
-                    let rollback_display = self.reconfigure_workspace_locked(&state, previous);
-                    let rollback_capture =
-                        self.restart_capture_pair_locked(&mut state, previous, previous_display_id);
-                    match (rollback_display, rollback_capture) {
-                        (Ok(_), Ok(())) => format!(
-                            "dynamic capture reconfiguration failed and was rolled back: {error}"
-                        ),
-                        (display, capture) => format!(
-                            "dynamic capture reconfiguration failed: {error}; rollback display={display:?} capture={capture:?}"
-                        ),
+                MacCaptureReconfigurationStep::ReconfigureWorkspace => {
+                    display_id = match self.reconfigure_workspace_locked(&state, plan) {
+                        Ok(display_id) => display_id,
+                        Err(error) => {
+                            let capture = self.start_capture_pair_locked(
+                                &mut state,
+                                previous,
+                                previous_display_id,
+                            );
+                            return Err(match capture {
+                                Ok(()) => format!(
+                                    "dynamic display reconfiguration failed and previous capture resumed: {error}"
+                                ),
+                                Err(capture) => format!(
+                                    "dynamic display reconfiguration failed: {error}; previous capture restart={capture}"
+                                ),
+                            });
+                        }
+                    };
+                }
+                MacCaptureReconfigurationStep::StartCapturePair => {
+                    if let Err(error) = self.start_capture_pair_locked(&mut state, plan, display_id)
+                    {
+                        return Err(match reconfiguration {
+                            MacDynamicDisplayReconfigurationMode::RetainedWorkspace => {
+                                let rollback_display =
+                                    self.reconfigure_workspace_locked(&state, previous);
+                                let rollback_capture = self.start_capture_pair_locked(
+                                    &mut state,
+                                    previous,
+                                    previous_display_id,
+                                );
+                                match (rollback_display, rollback_capture) {
+                                    (Ok(_), Ok(())) => format!(
+                                        "dynamic capture reconfiguration failed and was rolled back: {error}"
+                                    ),
+                                    (display, capture) => format!(
+                                        "dynamic capture reconfiguration failed: {error}; rollback display={display:?} capture={capture:?}"
+                                    ),
+                                }
+                            }
+                            MacDynamicDisplayReconfigurationMode::PhysicalCapture => {
+                                match self.start_capture_pair_locked(
+                                    &mut state,
+                                    previous,
+                                    previous_display_id,
+                                ) {
+                                    Ok(()) => format!(
+                                        "physical capture reconfiguration failed and was rolled back: {error}"
+                                    ),
+                                    Err(rollback) => format!(
+                                        "physical capture reconfiguration failed: {error}; rollback capture={rollback}"
+                                    ),
+                                }
+                            }
+                        });
                     }
                 }
-                MacDynamicDisplayReconfigurationMode::PhysicalCapture => {
-                    match self.restart_capture_pair_locked(&mut state, previous, display_id) {
-                        Ok(()) => format!(
-                            "physical capture reconfiguration failed and was rolled back: {error}"
-                        ),
-                        Err(rollback) => format!(
-                            "physical capture reconfiguration failed: {error}; rollback capture={rollback}"
-                        ),
-                    }
-                }
-            });
+            }
         }
         state.input_display_bounds = match reconfiguration {
             MacDynamicDisplayReconfigurationMode::RetainedWorkspace => Some(
@@ -1468,6 +1515,29 @@ enum MacDynamicDisplayReconfigurationMode {
     PhysicalCapture,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MacCaptureReconfigurationStep {
+    StopCapturePair,
+    ReconfigureWorkspace,
+    StartCapturePair,
+}
+
+fn mac_capture_reconfiguration_steps(
+    mode: MacDynamicDisplayReconfigurationMode,
+) -> &'static [MacCaptureReconfigurationStep] {
+    match mode {
+        MacDynamicDisplayReconfigurationMode::RetainedWorkspace => &[
+            MacCaptureReconfigurationStep::StopCapturePair,
+            MacCaptureReconfigurationStep::ReconfigureWorkspace,
+            MacCaptureReconfigurationStep::StartCapturePair,
+        ],
+        MacDynamicDisplayReconfigurationMode::PhysicalCapture => &[
+            MacCaptureReconfigurationStep::StopCapturePair,
+            MacCaptureReconfigurationStep::StartCapturePair,
+        ],
+    }
+}
+
 fn dynamic_display_reconfiguration_mode(
     previous_virtual_display: bool,
     next_virtual_display: bool,
@@ -1801,6 +1871,33 @@ mod tests {
                 "dynamic display reconfiguration cannot change the capture topology"
             );
         }
+    }
+
+    #[test]
+    fn retained_workspace_reconfiguration_stops_capture_before_mutating_display() {
+        assert_eq!(
+            mac_capture_reconfiguration_steps(
+                MacDynamicDisplayReconfigurationMode::RetainedWorkspace
+            ),
+            &[
+                MacCaptureReconfigurationStep::StopCapturePair,
+                MacCaptureReconfigurationStep::ReconfigureWorkspace,
+                MacCaptureReconfigurationStep::StartCapturePair,
+            ]
+        );
+    }
+
+    #[test]
+    fn physical_reconfiguration_stops_capture_before_restarting_it() {
+        assert_eq!(
+            mac_capture_reconfiguration_steps(
+                MacDynamicDisplayReconfigurationMode::PhysicalCapture
+            ),
+            &[
+                MacCaptureReconfigurationStep::StopCapturePair,
+                MacCaptureReconfigurationStep::StartCapturePair,
+            ]
+        );
     }
 
     #[test]
