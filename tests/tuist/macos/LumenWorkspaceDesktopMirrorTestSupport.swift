@@ -8,6 +8,30 @@ private struct DesktopMirrorPreparationContext {
     let session: LumenMacWorkspaceSession
 }
 
+private actor DesktopMirrorDisplayIDSequence {
+    private var nextDisplayID: UInt32 = 89
+
+    func take() -> UInt32 {
+        defer { nextDisplayID &+= 1 }
+        return nextDisplayID
+    }
+}
+
+private actor DesktopMirrorCaptureAdmissionSequence {
+    private var outcomes: [DesktopMirrorCaptureAdmissionOutcome]
+
+    init(_ outcomes: [DesktopMirrorCaptureAdmissionOutcome]) {
+        self.outcomes = outcomes
+    }
+
+    func take() -> DesktopMirrorCaptureAdmissionOutcome {
+        guard outcomes.count > 1 else {
+            return outcomes.first ?? .success
+        }
+        return outcomes.removeFirst()
+    }
+}
+
 func runDesktopMirrorPreparation(
     managesCapture: Bool,
     policy: LumenMacWorkspacePolicy,
@@ -65,12 +89,54 @@ func runDesktopMirrorReconfiguration() async throws -> [WorkspaceExecutionEvent]
     return events
 }
 
+func runDesktopMirrorFailedReconfigurationRollback() async throws
+    -> (events: [WorkspaceExecutionEvent], displayID: UInt32) {
+    let context = try makeDesktopMirrorPreparationContext(
+        managesCapture: true,
+        policy: .isolatedWorkspace,
+        captureAdmissionOutcome: .success,
+        captureAdmissionOutcomes: [.success, .failure, .success]
+    )
+    try await context.session.prepare()
+    let replacement = LumenMacWorkspaceSessionRequest(
+        displayKey: context.request.displayKey,
+        policy: context.request.policy,
+        contentSource: context.request.contentSource,
+        displayMode: LumenMacDisplayModeRequest(
+            width: 800,
+            height: 450,
+            scalePercent: 100,
+            dimensionsAreLogical: false,
+            highDensity: false
+        ),
+        refreshRate: context.request.refreshRate,
+        managesCapture: context.request.managesCapture,
+        captureConfiguration: context.request.captureConfiguration
+    )
+    do {
+        try await context.session.reconfigure(replacement)
+        XCTFail("replacement capture admission unexpectedly succeeded")
+    } catch is DesktopMirrorCaptureAdmissionFailure {
+        // Rust owns the policy rollback and submits the previous request next.
+    }
+    try await context.session.reconfigure(context.request)
+    let displayID = try await context.session.displayID()
+    let events = await context.recorder.recordedEvents()
+    try await context.session.stop()
+    return (events, displayID)
+}
+
 private func makeDesktopMirrorPreparationContext(
     managesCapture: Bool,
     policy: LumenMacWorkspacePolicy,
-    captureAdmissionOutcome: DesktopMirrorCaptureAdmissionOutcome
+    captureAdmissionOutcome: DesktopMirrorCaptureAdmissionOutcome,
+    captureAdmissionOutcomes: [DesktopMirrorCaptureAdmissionOutcome]? = nil
 ) throws -> DesktopMirrorPreparationContext {
     let recorder = WorkspaceExecutionRecorder()
+    let displayIDs = DesktopMirrorDisplayIDSequence()
+    let captureAdmissions = DesktopMirrorCaptureAdmissionSequence(
+        captureAdmissionOutcomes ?? [captureAdmissionOutcome]
+    )
     let suspension = captureAdmissionOutcome == .cancellation
         ? WorkspaceRegistrySuspension(honorsCancellation: true)
         : nil
@@ -82,7 +148,8 @@ private func makeDesktopMirrorPreparationContext(
         request: request,
         operations: makeDesktopMirrorOperations(
             recorder: recorder,
-            outcome: captureAdmissionOutcome,
+            displayIDs: displayIDs,
+            captureAdmissions: captureAdmissions,
             cancellationSuspension: suspension
         ),
         displayWorkspace: WorkspaceDisplayMock(recorder: recorder),
@@ -98,13 +165,14 @@ private func makeDesktopMirrorPreparationContext(
 
 private func makeDesktopMirrorOperations(
     recorder: WorkspaceExecutionRecorder,
-    outcome: DesktopMirrorCaptureAdmissionOutcome,
+    displayIDs: DesktopMirrorDisplayIDSequence,
+    captureAdmissions: DesktopMirrorCaptureAdmissionSequence,
     cancellationSuspension: WorkspaceRegistrySuspension?
 ) -> LumenMacWorkspaceNativeOperations {
     LumenMacWorkspaceNativeOperations(
         createVirtualDisplay: { _, geometry in
             await recorder.append(.create(geometry))
-            return 89
+            return await displayIDs.take()
         },
         configureVirtualDisplay: { displayID, geometry in
             await recorder.append(.configure(displayID, geometry))
@@ -121,7 +189,7 @@ private func makeDesktopMirrorOperations(
         prepareCaptureDisplay: { displayID in
             await recorder.append(.prepareCapture(displayID))
             try await performDesktopMirrorCaptureAdmission(
-                outcome: outcome,
+                outcome: await captureAdmissions.take(),
                 cancellationSuspension: cancellationSuspension
             )
             await recorder.append(.capturePrepared(displayID))
@@ -129,7 +197,7 @@ private func makeDesktopMirrorOperations(
         prepareReconfiguredCaptureDisplay: { displayID in
             await recorder.append(.prepareCapture(displayID))
             try await performDesktopMirrorCaptureAdmission(
-                outcome: outcome,
+                outcome: await captureAdmissions.take(),
                 cancellationSuspension: cancellationSuspension
             )
             await recorder.append(.capturePrepared(displayID))

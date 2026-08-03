@@ -18,6 +18,7 @@ struct LumenWorkspaceNativeOperationsFactory: Sendable {
             createVirtualDisplay: createVirtualDisplay,
             configureVirtualDisplay: configureVirtualDisplay,
             reconfigureVirtualDisplay: reconfigureVirtualDisplay,
+            replaceVirtualDisplay: replaceVirtualDisplay,
             verifyVirtualDisplay: verifyVirtualDisplay,
             settleVirtualDisplayMode: settleVirtualDisplayMode,
             stabilizeVirtualDisplay: stabilizeVirtualDisplay,
@@ -64,6 +65,31 @@ struct LumenWorkspaceNativeOperationsFactory: Sendable {
             geometry: geometry,
             refreshRate: refreshRate
         )
+    }
+
+    private func replaceVirtualDisplay(
+        identity: LumenMacVirtualDisplayIdentity,
+        geometry: LumenMacDisplayGeometry,
+        refreshRate: Double
+    ) async throws -> UInt32 {
+        try await displayOwner.destroy(identity: identity)
+        do {
+            let displayID = try await displayOwner.create(
+                identity: identity,
+                geometry: geometry,
+                request: request,
+                refreshRate: refreshRate
+            )
+            try await displayOwner.configure(
+                displayID: displayID,
+                geometry: geometry,
+                refreshRate: refreshRate
+            )
+            return displayID
+        } catch {
+            try? await displayOwner.destroy(identity: identity)
+            throw error
+        }
     }
 
     private func verifyVirtualDisplay(displayID: UInt32) async throws {
