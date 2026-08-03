@@ -13,6 +13,7 @@ pub const NATIVE_FEC_BLOCK_HEADER_BYTES: usize =
 const NATIVE_MAXIMUM_REED_SOLOMON_SHARDS: usize = 256;
 const NATIVE_TARGET_FEC_DATA_SHARDS_PER_BLOCK: usize = 32;
 const NATIVE_MAXIMUM_FEC_BLOCKS: usize = u8::MAX as usize;
+pub const NATIVE_MINIMUM_VIDEO_PARITY_SHARDS: usize = 2;
 
 const NATIVE_MEDIA_ALLOWED_FLAGS: u8 =
     NATIVE_MEDIA_FLAG_KEYFRAME | NATIVE_MEDIA_FLAG_PARITY_SHARD | NATIVE_MEDIA_FLAG_FEC_BLOCK;
@@ -43,8 +44,8 @@ pub fn native_video_packetization_plan(
     let maximum_data_shards = native_maximum_data_shards(parity_percentage)?;
     let base_shard_bytes = maximum_datagram_payload.checked_sub(NATIVE_MEDIA_HEADER_BYTES)?;
     let base_data_shards = payload_bytes.div_ceil(base_shard_bytes);
-    let uses_fec_blocks = base_data_shards
-        .checked_add(native_parity_shards(base_data_shards, parity_percentage))
+    let uses_fec_blocks = native_video_parity_shards(base_data_shards, parity_percentage)
+        .and_then(|parity_shards| base_data_shards.checked_add(parity_shards))
         .is_none_or(|total| total > NATIVE_MAXIMUM_REED_SOLOMON_SHARDS)
         || (parity_percentage != 0 && base_data_shards > NATIVE_TARGET_FEC_DATA_SHARDS_PER_BLOCK);
     let header_bytes = if uses_fec_blocks {
@@ -75,9 +76,8 @@ pub fn native_video_packetization_plan(
             .saturating_sub(block_offset)
             .min(block_payload_bytes);
         let data_shards = block_bytes.div_ceil(shard_bytes);
-        total.checked_add(
-            data_shards.checked_add(native_parity_shards(data_shards, parity_percentage))?,
-        )
+        let parity_shards = native_video_parity_shards(data_shards, parity_percentage)?;
+        total.checked_add(data_shards.checked_add(parity_shards)?)
     })?;
     let total_wire_bytes = total_shards.checked_mul(maximum_datagram_payload)?;
     Some(NativeVideoPacketizationPlan {
@@ -92,20 +92,27 @@ pub fn native_video_packetization_plan(
     })
 }
 
-fn native_parity_shards(data_shards: usize, parity_percentage: u16) -> usize {
-    if parity_percentage == 0 {
-        0
-    } else {
-        data_shards
-            .saturating_mul(usize::from(parity_percentage))
-            .div_ceil(100)
+pub fn native_video_parity_shards(data_shards: usize, parity_percentage: u16) -> Option<usize> {
+    if data_shards == 0 || data_shards > u8::MAX as usize || parity_percentage > 255 {
+        return None;
     }
+    if parity_percentage == 0 {
+        return Some(0);
+    }
+    let parity_shards = data_shards
+        .checked_mul(usize::from(parity_percentage))?
+        .div_ceil(100)
+        .max(NATIVE_MINIMUM_VIDEO_PARITY_SHARDS);
+    data_shards
+        .checked_add(parity_shards)
+        .filter(|total| *total <= NATIVE_MAXIMUM_REED_SOLOMON_SHARDS)
+        .map(|_| parity_shards)
 }
 
 fn native_maximum_data_shards(parity_percentage: u16) -> Option<usize> {
     (1_usize..=255).rev().find(|data_shards| {
-        (*data_shards)
-            .checked_add(native_parity_shards(*data_shards, parity_percentage))
+        native_video_parity_shards(*data_shards, parity_percentage)
+            .and_then(|parity_shards| data_shards.checked_add(parity_shards))
             .is_some_and(|total| total <= NATIVE_MAXIMUM_REED_SOLOMON_SHARDS)
     })
 }

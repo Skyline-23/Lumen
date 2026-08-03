@@ -60,12 +60,12 @@ pub use native_session::{
 pub use native_transport::{
     decode_native_media_datagram, encode_native_media_header,
     encode_native_media_header_with_fec_block, native_video_packetization_plan,
-    DecodedNativeMediaDatagram, NativeFecBlockExtension, NativeMediaHeader, NativeMediaKind,
-    NativeTransportError, NativeVideoPacketizationPlan, NATIVE_AUDIO_STREAM_ID,
-    NATIVE_FEC_BLOCK_EXTENSION_BYTES, NATIVE_FEC_BLOCK_HEADER_BYTES,
+    native_video_parity_shards, DecodedNativeMediaDatagram, NativeFecBlockExtension,
+    NativeMediaHeader, NativeMediaKind, NativeTransportError, NativeVideoPacketizationPlan,
+    NATIVE_AUDIO_STREAM_ID, NATIVE_FEC_BLOCK_EXTENSION_BYTES, NATIVE_FEC_BLOCK_HEADER_BYTES,
     NATIVE_INITIAL_CONFIGURATION_ID, NATIVE_INPUT_MOTION_STREAM_ID, NATIVE_MEDIA_FLAG_FEC_BLOCK,
     NATIVE_MEDIA_FLAG_KEYFRAME, NATIVE_MEDIA_FLAG_PARITY_SHARD, NATIVE_MEDIA_HEADER_BYTES,
-    NATIVE_VIDEO_STREAM_ID,
+    NATIVE_MINIMUM_VIDEO_PARITY_SHARDS, NATIVE_VIDEO_STREAM_ID,
 };
 
 pub use session_offer::{parse_session_offer, LumenSessionOffer};
