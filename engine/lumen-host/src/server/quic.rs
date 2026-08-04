@@ -29,7 +29,7 @@ use super::packet_arrival::PacketArrivalHistory;
 use super::SharedControlRouter;
 use crate::control::{
     NativeConnectionContext, NativeMediaFeedbackDisposition, NativeStartCompletion,
-    NativeStartFinalization, NativeStartReservation,
+    NativeStartFinalization, NativeStartReservation, NativeVideoBootstrapRetryDisposition,
 };
 use crate::native_input::NativeInputSequence;
 use crate::network_ports::NATIVE_QUIC_OFFSET;
@@ -51,6 +51,7 @@ const NATIVE_DISPLAY_RECONFIGURATION_CLEANUP_TIMEOUT: Duration = Duration::from_
 const CODEC_CONFIGURATION_ACK_TIMEOUT: Duration = Duration::from_secs(15);
 const CODEC_CONFIGURATION_ACK_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const VIDEO_BOOTSTRAP_RESULT_TIMEOUT: Duration = Duration::from_secs(15);
+const VIDEO_BOOTSTRAP_RETRY_BACKOFF: Duration = Duration::from_millis(100);
 const VIDEO_BOOTSTRAP_WRITE_CHUNK_BYTES: usize = 64 * 1024;
 const ERROR_TRANSPORT: u32 = 9;
 const PRIORITY_CONTROL: i32 = 100;
@@ -773,6 +774,39 @@ async fn publish_video_bootstraps(
                     "Lumen native QUIC stage=video-bootstrap-obsolete session-epoch={} generation-id={}",
                     bootstrap.session_epoch, bootstrap.generation_id
                 );
+                sleep_for_video_bootstrap_retry(&router, bootstrap.session_epoch).await;
+            }
+            VideoBootstrapWaitOutcome::TimedOut => {
+                let retry = router
+                    .lock()
+                    .map_err(|_| "native control router lock is poisoned".to_owned())?
+                    .retry_native_video_bootstrap(
+                        bootstrap.session_epoch,
+                        bootstrap.generation_id,
+                        "decode result timed out",
+                    );
+                match retry {
+                    NativeVideoBootstrapRetryDisposition::Retried {
+                        generation_id,
+                        attempt,
+                    } => {
+                        eprintln!(
+                            "Lumen native QUIC stage=video-bootstrap-retry-scheduled session-epoch={} retired-generation-id={} generation-id={generation_id} attempt={attempt} reason=timeout",
+                            bootstrap.session_epoch,
+                            bootstrap.generation_id,
+                        );
+                        sleep_for_video_bootstrap_retry(&router, bootstrap.session_epoch).await;
+                    }
+                    NativeVideoBootstrapRetryDisposition::Exhausted { message, .. } => {
+                        return Err(message);
+                    }
+                    NativeVideoBootstrapRetryDisposition::Obsolete => {
+                        eprintln!(
+                            "Lumen native QUIC stage=video-bootstrap-retry-ignored session-epoch={} generation-id={} reason=obsolete",
+                            bootstrap.session_epoch, bootstrap.generation_id
+                        );
+                    }
+                }
             }
             VideoBootstrapWaitOutcome::Stopped => break,
         }
@@ -869,7 +903,23 @@ async fn write_paced_video_bootstrap(
 enum VideoBootstrapWaitOutcome {
     Acknowledged,
     Obsolete,
+    TimedOut,
     Stopped,
+}
+
+async fn sleep_for_video_bootstrap_retry(router: &SharedControlRouter, session_epoch: u32) {
+    let attempt = router
+        .lock()
+        .ok()
+        .and_then(|router| router.native_video_bootstrap_retry_attempt(session_epoch));
+    let Some(attempt) = attempt else {
+        return;
+    };
+    let multiplier = u32::from(attempt.min(3));
+    let delay = VIDEO_BOOTSTRAP_RETRY_BACKOFF
+        .checked_mul(multiplier)
+        .unwrap_or(VIDEO_BOOTSTRAP_RETRY_BACKOFF);
+    tokio::time::sleep(delay).await;
 }
 
 async fn wait_for_video_bootstrap_result(
@@ -879,7 +929,7 @@ async fn wait_for_video_bootstrap_result(
     lifecycle_deadline: Instant,
     stop: &AtomicBool,
 ) -> Result<VideoBootstrapWaitOutcome, String> {
-    tokio::time::timeout_at(lifecycle_deadline.into(), async {
+    let result = tokio::time::timeout_at(lifecycle_deadline.into(), async {
         loop {
             if stop.load(Ordering::Acquire) {
                 return Ok(VideoBootstrapWaitOutcome::Stopped);
@@ -909,13 +959,11 @@ async fn wait_for_video_bootstrap_result(
             tokio::time::sleep(CODEC_CONFIGURATION_ACK_POLL_INTERVAL).await;
         }
     })
-    .await
-    .map_err(|_| {
-        format!(
-            "video bootstrap decode result timed out session-epoch={session_epoch} generation-id={generation_id} timeout-ms={}",
-            VIDEO_BOOTSTRAP_RESULT_TIMEOUT.as_millis()
-        )
-    })?
+    .await;
+    match result {
+        Ok(result) => result,
+        Err(_) => Ok(VideoBootstrapWaitOutcome::TimedOut),
+    }
 }
 
 async fn handle_control_stream(
@@ -2395,11 +2443,11 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(60)).await;
         let wait_started = Instant::now();
 
-        let error = wait_for_video_bootstrap_result(&router, 77, 1, lifecycle_deadline, &stop)
+        let outcome = wait_for_video_bootstrap_result(&router, 77, 1, lifecycle_deadline, &stop)
             .await
-            .unwrap_err();
+            .unwrap();
 
-        assert!(error.contains("video bootstrap decode result timed out"));
+        assert_eq!(outcome, VideoBootstrapWaitOutcome::TimedOut);
         assert!(wait_started.elapsed() < Duration::from_millis(80));
     }
 
