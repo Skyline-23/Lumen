@@ -47,6 +47,7 @@ const SERVER_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(10);
 const SERVER_KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(2);
 const TERMINAL_NATIVE_CLEANUP_MAX_ATTEMPTS: usize = 3;
 const TERMINAL_NATIVE_CLEANUP_RETRY_DELAY: Duration = Duration::from_millis(250);
+const NATIVE_DISPLAY_RECONFIGURATION_CLEANUP_TIMEOUT: Duration = Duration::from_secs(30);
 const CODEC_CONFIGURATION_ACK_TIMEOUT: Duration = Duration::from_secs(15);
 const CODEC_CONFIGURATION_ACK_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const VIDEO_BOOTSTRAP_RESULT_TIMEOUT: Duration = Duration::from_secs(15);
@@ -488,6 +489,7 @@ async fn terminate_native_connection_with_retry(
     router: &SharedControlRouter,
     session_epoch: u32,
 ) -> Result<(), String> {
+    wait_for_native_display_reconfiguration(router, session_epoch).await?;
     let mut last_error = None;
     for attempt in 1..=TERMINAL_NATIVE_CLEANUP_MAX_ATTEMPTS {
         let cleanup_result = match router.lock() {
@@ -522,6 +524,53 @@ async fn terminate_native_connection_with_retry(
          {TERMINAL_NATIVE_CLEANUP_MAX_ATTEMPTS} attempts: {}",
         last_error.unwrap_or_else(|| "unknown cleanup failure".to_owned())
     ))
+}
+
+async fn wait_for_native_display_reconfiguration(
+    router: &SharedControlRouter,
+    session_epoch: u32,
+) -> Result<(), String> {
+    let deadline = Instant::now()
+        .checked_add(NATIVE_DISPLAY_RECONFIGURATION_CLEANUP_TIMEOUT)
+        .ok_or_else(|| "native display reconfiguration cleanup deadline overflowed".to_owned())?;
+    loop {
+        let Some((notify, completed)) = router
+            .lock()
+            .map_err(|_| "native control router lock is poisoned".to_owned())?
+            .native_display_reconfiguration_waiter(session_epoch)
+        else {
+            return Ok(());
+        };
+        if completed {
+            return Ok(());
+        }
+        let notified = notify.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        let still_pending = router
+            .lock()
+            .map_err(|_| "native control router lock is poisoned".to_owned())?
+            .native_display_reconfiguration_waiter(session_epoch)
+            .is_some_and(|(_, completed)| !completed);
+        if !still_pending {
+            continue;
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(format!(
+                "native display reconfiguration did not finish before cleanup deadline ({}s)",
+                NATIVE_DISPLAY_RECONFIGURATION_CLEANUP_TIMEOUT.as_secs()
+            ));
+        }
+        tokio::time::timeout(remaining, notified)
+            .await
+            .map_err(|_| {
+                format!(
+                    "native display reconfiguration did not finish before cleanup deadline ({}s)",
+                    NATIVE_DISPLAY_RECONFIGURATION_CLEANUP_TIMEOUT.as_secs()
+                )
+            })?;
+    }
 }
 
 fn combine_connection_and_cleanup_results(
@@ -720,7 +769,6 @@ async fn publish_video_bootstraps(
         {
             VideoBootstrapWaitOutcome::Acknowledged => (),
             VideoBootstrapWaitOutcome::Obsolete => {
-                let _ = send.reset(VarInt::from_u32(1));
                 eprintln!(
                     "Lumen native QUIC stage=video-bootstrap-obsolete session-epoch={} generation-id={}",
                     bootstrap.session_epoch, bootstrap.generation_id
@@ -836,7 +884,7 @@ async fn wait_for_video_bootstrap_result(
             if stop.load(Ordering::Acquire) {
                 return Ok(VideoBootstrapWaitOutcome::Stopped);
             }
-            let (current_generation, failure, acknowledged) = {
+            let (current_generation, failure, acknowledged, obsolete) = {
                 let router = router
                     .lock()
                     .map_err(|_| "native control router lock is poisoned".to_owned())?;
@@ -844,11 +892,9 @@ async fn wait_for_video_bootstrap_result(
                     router.native_video_bootstrap_generation(session_epoch),
                     router.native_video_bootstrap_failure(session_epoch, generation_id),
                     router.native_video_bootstrap_is_acknowledged(session_epoch, generation_id),
+                    router.native_video_bootstrap_is_obsolete(session_epoch, generation_id),
                 )
             };
-            if current_generation.is_some_and(|current| current != generation_id) {
-                return Ok(VideoBootstrapWaitOutcome::Obsolete);
-            }
             if let Some(message) = failure {
                 return Err(format!(
                     "video bootstrap decoder rejected generation {generation_id}: {message}"
@@ -856,6 +902,9 @@ async fn wait_for_video_bootstrap_result(
             }
             if acknowledged {
                 return Ok(VideoBootstrapWaitOutcome::Acknowledged);
+            }
+            if obsolete || current_generation.is_some_and(|current| current != generation_id) {
+                return Ok(VideoBootstrapWaitOutcome::Obsolete);
             }
             tokio::time::sleep(CODEC_CONFIGURATION_ACK_POLL_INTERVAL).await;
         }
@@ -901,6 +950,41 @@ async fn dispatch_native_control_async(
     context: &NativeConnectionContext,
 ) -> Result<Vec<HostControlEnvelope>, String> {
     let request_id = request.request_id;
+    if matches!(
+        request.payload.as_ref(),
+        Some(lumen_engine::client_control_envelope::Payload::DisplayReconfiguration(_))
+    ) {
+        let Some(lumen_engine::client_control_envelope::Payload::DisplayReconfiguration(
+            display_reconfiguration,
+        )) = request.payload
+        else {
+            unreachable!("display reconfiguration payload was checked above")
+        };
+        let reservation = router
+            .lock()
+            .map_err(|_| "native control router lock is poisoned".to_owned())?
+            .reserve_native_display_reconfiguration(request_id, display_reconfiguration, context);
+        let reservation = match reservation {
+            Ok(reservation) => reservation,
+            Err(responses) => return Ok(responses),
+        };
+        let worker_reservation = reservation.clone();
+        let worker_platform = Arc::clone(&platform);
+        let result = match tokio::task::spawn_blocking(move || {
+            worker_reservation.execute(worker_platform.as_ref())
+        })
+        .await
+        {
+            Ok(result) => result,
+            Err(error) => Err(format!(
+                "display reconfiguration worker ended unexpectedly: {error}"
+            )),
+        };
+        return router
+            .lock()
+            .map_err(|_| "native control router lock is poisoned".to_owned())
+            .map(|mut router| router.complete_native_display_reconfiguration(reservation, result));
+    }
     let Some(lumen_engine::client_control_envelope::Payload::StartSession(start)) = request.payload
     else {
         return router
@@ -1808,13 +1892,14 @@ mod tests {
         decode_host_control_message, decode_host_input_message, encode_client_control_message,
         encode_client_input_message, encode_client_telemetry_message, host_control_envelope,
         host_input_envelope, ClientControlEnvelope, ClientInputEnvelope, ClientTelemetryEnvelope,
-        MediaFeedback, NativeKeyboardInput, SessionStopped, StartSessionAck, StopSession,
-        NATIVE_PROTOCOL_VERSION,
+        CodecConfiguration, CodecConfigurationAck, DisplayReconfigurationRequest, MediaFeedback,
+        NativeKeyboardInput, NativeVideoBootstrapResultCode, SessionStopped, StartSessionAck,
+        StopSession, NATIVE_PROTOCOL_VERSION,
     };
     use quinn::crypto::rustls::QuicClientConfig;
 
     use crate::control::tests::{
-        native_hello, router_with_platform, RecordingPlatformSessionControl,
+        native_hello, router_with_platform, started_native_router, RecordingPlatformSessionControl,
         RetryingCleanupPlatformSessionControl,
     };
     use crate::control::{AdaptiveVideoDecision, CongestionSource};
@@ -1837,6 +1922,45 @@ mod tests {
             .unwrap();
         let application_id = router.authorities().applications().applications().unwrap()[0].id;
         (root, Arc::new(Mutex::new(router)), platform, application_id)
+    }
+
+    fn configured_native_test_router() -> (
+        tempfile::TempDir,
+        SharedControlRouter,
+        Arc<RecordingPlatformSessionControl>,
+        NativeConnectionContext,
+        lumen_engine::HostSessionPlan,
+    ) {
+        let platform = Arc::new(RecordingPlatformSessionControl::default());
+        let (root, mut router, context, plan) = started_native_router(platform.clone());
+        let configuration = CodecConfiguration {
+            session_epoch: context.session_epoch,
+            stream_id: plan.video_stream_id,
+            configuration_id: plan.video_configuration_id,
+            codec: plan.selected_video_format().unwrap().codec,
+            decoder_configuration_record: vec![1, 2, 3],
+        };
+        assert!(router.publish_native_codec_configuration(configuration.clone()));
+        assert_eq!(
+            router.take_native_codec_configuration(context.session_epoch),
+            Some(configuration.clone())
+        );
+        assert!(router
+            .dispatch_native_control(
+                ClientControlEnvelope {
+                    request_id: 3,
+                    payload: Some(client_control_envelope::Payload::CodecConfigurationAck(
+                        CodecConfigurationAck {
+                            session_epoch: context.session_epoch,
+                            stream_id: configuration.stream_id,
+                            configuration_id: configuration.configuration_id,
+                        },
+                    )),
+                },
+                &context,
+            )
+            .is_empty());
+        (root, Arc::new(Mutex::new(router)), platform, context, plan)
     }
 
     fn retrying_native_test_router(
@@ -1952,6 +2076,63 @@ mod tests {
 
         fn stop_session(&self) -> Result<(), String> {
             self.stops.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct BlockingDisplayReconfigurationPlatform {
+        entered: AtomicBool,
+        active: AtomicBool,
+        stop_calls: AtomicUsize,
+        concurrent_stop: AtomicBool,
+        release: (Mutex<bool>, Condvar),
+    }
+
+    impl BlockingDisplayReconfigurationPlatform {
+        async fn wait_until_entered(&self) {
+            tokio::time::timeout(Duration::from_secs(1), async {
+                while !self.entered.load(Ordering::Acquire) {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("display reconfiguration did not enter the blocking boundary");
+        }
+
+        fn release(&self) {
+            let (released, ready) = &self.release;
+            *released.lock().unwrap() = true;
+            ready.notify_all();
+        }
+
+        fn stop_calls(&self) -> usize {
+            self.stop_calls.load(Ordering::Acquire)
+        }
+    }
+
+    impl PlatformSessionControl for BlockingDisplayReconfigurationPlatform {
+        fn start_session(&self, _plan: PlatformSessionPlan) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn stop_session(&self) -> Result<(), String> {
+            self.stop_calls.fetch_add(1, Ordering::AcqRel);
+            if self.active.load(Ordering::Acquire) {
+                self.concurrent_stop.store(true, Ordering::Release);
+            }
+            Ok(())
+        }
+
+        fn reconfigure_session(&self, _plan: PlatformSessionPlan) -> Result<(), String> {
+            self.entered.store(true, Ordering::Release);
+            self.active.store(true, Ordering::Release);
+            let (released, ready) = &self.release;
+            let mut released = released.lock().unwrap();
+            while !*released {
+                released = ready.wait(released).unwrap();
+            }
+            self.active.store(false, Ordering::Release);
             Ok(())
         }
     }
@@ -2223,6 +2404,177 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn retired_bootstrap_decode_wait_finishes_without_consuming_the_timeout() {
+        let platform = Arc::new(RecordingPlatformSessionControl::default());
+        let (_root, mut native_router, context, plan) = started_native_router(platform.clone());
+        let configuration = CodecConfiguration {
+            session_epoch: context.session_epoch,
+            stream_id: plan.video_stream_id,
+            configuration_id: plan.video_configuration_id,
+            codec: plan.selected_video_format().unwrap().codec,
+            decoder_configuration_record: vec![1, 2, 3],
+        };
+        assert!(native_router.publish_native_codec_configuration(configuration.clone()));
+        assert_eq!(
+            native_router.take_native_codec_configuration(context.session_epoch),
+            Some(configuration)
+        );
+        assert!(native_router
+            .dispatch_native_control(
+                ClientControlEnvelope {
+                    request_id: 3,
+                    payload: Some(client_control_envelope::Payload::CodecConfigurationAck(
+                        CodecConfigurationAck {
+                            session_epoch: context.session_epoch,
+                            stream_id: plan.video_stream_id,
+                            configuration_id: plan.video_configuration_id,
+                        },
+                    )),
+                },
+                &context,
+            )
+            .is_empty());
+        let generation_id = native_router
+            .publish_native_video_bootstrap(
+                plan.video_configuration_id,
+                1,
+                900,
+                lumen_engine::NativeVideoBootstrapReason::Initial,
+                true,
+                vec![1, 2, 3],
+            )
+            .unwrap();
+        assert!(native_router
+            .take_native_video_bootstrap(context.session_epoch)
+            .is_some());
+        native_router.dispatch_native_control(
+            ClientControlEnvelope {
+                request_id: 4,
+                payload: Some(client_control_envelope::Payload::DisplayReconfiguration(
+                    DisplayReconfigurationRequest {
+                        session_epoch: context.session_epoch,
+                        revision: 1,
+                        width: 2_160,
+                        height: 3_840,
+                        refresh_millihz: 120_000,
+                        sink_hidpi: true,
+                        sink_scale_explicit: true,
+                        sink_mode_is_logical: true,
+                        sink_scale_percent: 200,
+                    },
+                )),
+            },
+            &context,
+        );
+        let router = Arc::new(Mutex::new(native_router));
+        let stop = AtomicBool::new(false);
+        let started = Instant::now();
+        let outcome = tokio::time::timeout(
+            Duration::from_millis(100),
+            wait_for_video_bootstrap_result(
+                &router,
+                context.session_epoch,
+                generation_id,
+                Instant::now() + Duration::from_secs(15),
+                &stop,
+            ),
+        )
+        .await
+        .expect("retired bootstrap waiter should finish promptly")
+        .unwrap();
+        assert_eq!(outcome, VideoBootstrapWaitOutcome::Obsolete);
+        assert!(started.elapsed() < Duration::from_millis(100));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn acknowledged_bootstrap_wait_wins_over_a_later_display_reconfiguration() {
+        let (_root, router, _platform, context, plan) = configured_native_test_router();
+        let generation_id = router
+            .lock()
+            .unwrap()
+            .publish_native_video_bootstrap(
+                plan.video_configuration_id,
+                1,
+                900,
+                lumen_engine::NativeVideoBootstrapReason::Initial,
+                true,
+                vec![1, 2, 3],
+            )
+            .unwrap();
+        let bootstrap = router
+            .lock()
+            .unwrap()
+            .take_native_video_bootstrap(context.session_epoch)
+            .unwrap();
+        assert!(router
+            .lock()
+            .unwrap()
+            .dispatch_native_control(
+                ClientControlEnvelope {
+                    request_id: 4,
+                    payload: Some(client_control_envelope::Payload::VideoBootstrapResult(
+                        lumen_engine::VideoBootstrapResult {
+                            session_epoch: bootstrap.session_epoch,
+                            stream_id: bootstrap.stream_id,
+                            configuration_id: bootstrap.configuration_id,
+                            generation_id: bootstrap.generation_id,
+                            frame_id: bootstrap.frame_id,
+                            result: NativeVideoBootstrapResultCode::Decoded as i32,
+                            message: String::new(),
+                        },
+                    )),
+                },
+                &context,
+            )
+            .is_empty());
+        assert!(router
+            .lock()
+            .unwrap()
+            .dispatch_native_control(
+                ClientControlEnvelope {
+                    request_id: 5,
+                    payload: Some(client_control_envelope::Payload::DisplayReconfiguration(
+                        DisplayReconfigurationRequest {
+                            session_epoch: context.session_epoch,
+                            revision: 1,
+                            width: 2_160,
+                            height: 3_840,
+                            refresh_millihz: 120_000,
+                            sink_hidpi: true,
+                            sink_scale_explicit: true,
+                            sink_mode_is_logical: true,
+                            sink_scale_percent: 200,
+                        },
+                    )),
+                },
+                &context,
+            )
+            .iter()
+            .any(|response| {
+                matches!(
+                    response.payload,
+                    Some(host_control_envelope::Payload::DisplayReconfiguration(_))
+                )
+            }));
+
+        let stop = AtomicBool::new(false);
+        let outcome = tokio::time::timeout(
+            Duration::from_millis(100),
+            wait_for_video_bootstrap_result(
+                &router,
+                context.session_epoch,
+                generation_id,
+                Instant::now() + Duration::from_secs(15),
+                &stop,
+            ),
+        )
+        .await
+        .expect("acknowledged bootstrap waiter should finish promptly")
+        .unwrap();
+        assert_eq!(outcome, VideoBootstrapWaitOutcome::Acknowledged);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn adaptive_feedback_applies_the_encoder_bitrate_outside_router_state() {
         let platform = Arc::new(RecordingPlatformSessionControl::default());
         let decision = AdaptiveVideoDecision {
@@ -2307,6 +2659,147 @@ mod tests {
             started.elapsed()
         );
         update.await.unwrap().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn display_reconfiguration_bridge_does_not_hold_the_router_or_stall_quic() {
+        let platform = Arc::new(BlockingDisplayReconfigurationPlatform::default());
+        let (_root, mut native_router, context, plan) = started_native_router(platform.clone());
+        let configuration = CodecConfiguration {
+            session_epoch: context.session_epoch,
+            stream_id: plan.video_stream_id,
+            configuration_id: plan.video_configuration_id,
+            codec: plan.selected_video_format().unwrap().codec,
+            decoder_configuration_record: vec![1, 2, 3],
+        };
+        assert!(native_router.publish_native_codec_configuration(configuration.clone()));
+        assert_eq!(
+            native_router.take_native_codec_configuration(context.session_epoch),
+            Some(configuration.clone())
+        );
+        assert!(native_router
+            .dispatch_native_control(
+                ClientControlEnvelope {
+                    request_id: 3,
+                    payload: Some(client_control_envelope::Payload::CodecConfigurationAck(
+                        CodecConfigurationAck {
+                            session_epoch: context.session_epoch,
+                            stream_id: configuration.stream_id,
+                            configuration_id: configuration.configuration_id,
+                        },
+                    )),
+                },
+                &context,
+            )
+            .is_empty());
+        let router = Arc::new(Mutex::new(native_router));
+        let request_context = context.clone();
+        let request_router = Arc::clone(&router);
+        let request_platform: Arc<dyn PlatformSessionControl> = platform.clone();
+        let request = tokio::spawn(async move {
+            dispatch_native_control_async(
+                &request_router,
+                request_platform,
+                ClientControlEnvelope {
+                    request_id: 4,
+                    payload: Some(client_control_envelope::Payload::DisplayReconfiguration(
+                        DisplayReconfigurationRequest {
+                            session_epoch: request_context.session_epoch,
+                            revision: 1,
+                            width: 2_160,
+                            height: 3_840,
+                            refresh_millihz: 120_000,
+                            sink_hidpi: true,
+                            sink_scale_explicit: true,
+                            sink_mode_is_logical: true,
+                            sink_scale_percent: 200,
+                        },
+                    )),
+                },
+                &request_context,
+            )
+            .await
+        });
+
+        platform.wait_until_entered().await;
+        let before = Instant::now();
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        assert!(
+            before.elapsed() < Duration::from_millis(100),
+            "blocking display reconfiguration stalled the current-thread QUIC executor"
+        );
+        assert!(
+            router.lock().unwrap().video_delivery_state().is_some(),
+            "display reconfiguration worker must not hold the router mutex"
+        );
+        platform.release();
+
+        let responses = request.await.unwrap().unwrap();
+        let Some(host_control_envelope::Payload::DisplayReconfiguration(result)) =
+            responses[0].payload.as_ref()
+        else {
+            panic!("expected display reconfiguration response");
+        };
+        assert_eq!(
+            lumen_engine::NativeDisplayReconfigurationResultCode::try_from(result.result).unwrap(),
+            lumen_engine::NativeDisplayReconfigurationResultCode::Applied
+        );
+        assert_eq!(result.revision, 1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn terminal_cleanup_waits_for_display_worker_before_stopping_once() {
+        let platform = Arc::new(BlockingDisplayReconfigurationPlatform::default());
+        let (_root, native_router, context, _plan) = started_native_router(platform.clone());
+        let router = Arc::new(Mutex::new(native_router));
+        let request_router = Arc::clone(&router);
+        let request_context = context.clone();
+        let request_platform: Arc<dyn PlatformSessionControl> = platform.clone();
+        let reconfigure = tokio::spawn(async move {
+            dispatch_native_control_async(
+                &request_router,
+                request_platform,
+                ClientControlEnvelope {
+                    request_id: 4,
+                    payload: Some(client_control_envelope::Payload::DisplayReconfiguration(
+                        DisplayReconfigurationRequest {
+                            session_epoch: request_context.session_epoch,
+                            revision: 1,
+                            width: 2_160,
+                            height: 3_840,
+                            refresh_millihz: 120_000,
+                            sink_hidpi: true,
+                            sink_scale_explicit: true,
+                            sink_mode_is_logical: true,
+                            sink_scale_percent: 200,
+                        },
+                    )),
+                },
+                &request_context,
+            )
+            .await
+        });
+        platform.wait_until_entered().await;
+
+        let cleanup_router = Arc::clone(&router);
+        let cleanup = tokio::spawn(async move {
+            terminate_native_connection_with_retry(&cleanup_router, context.session_epoch).await
+        });
+        for _ in 0..32 {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(platform.stop_calls(), 0);
+        assert!(!platform.concurrent_stop.load(Ordering::Acquire));
+
+        platform.release();
+        let cleanup_result = tokio::time::timeout(Duration::from_secs(1), cleanup)
+            .await
+            .expect("terminal cleanup should finish after the worker completes")
+            .unwrap();
+        assert_eq!(cleanup_result, Ok(()));
+        assert_eq!(platform.stop_calls(), 1);
+        assert!(!platform.concurrent_stop.load(Ordering::Acquire));
+        let _ = reconfigure.await.unwrap();
     }
 
     #[tokio::test(flavor = "current_thread")]
