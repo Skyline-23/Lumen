@@ -114,17 +114,13 @@ extension LumenScreenCaptureVideoRuntime {
             videoBootstrapAdmission.cancelBootstrapSubmission()
             pendingVideoBootstrapSource = nil
         }
-        statistics.droppedFrameCount &+= 1
-        statistics.lastErrorDescription = status == noErr
+        let message = status == noErr
             ? "VideoToolbox dropped frame"
             : "VideoToolbox callback OSStatus \(status)"
-        statisticsHandler(statistics)
-        eventHandler(.init(
-            kind: .droppedFrame,
-            message: statistics.lastErrorDescription,
-            stopStatus: status,
-            sourceDisplayTime: context.displayTime
-        ))
+        recordVideoToolboxDrop(
+            sourceDisplayTime: context.displayTime,
+            message: message
+        )
         encoderAdmission.resumePendingIfPossible()
     }
 

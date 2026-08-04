@@ -69,8 +69,11 @@ extension LumenScreenCaptureVideoRuntime {
         try validateClosedGOP(session)
         try validateHardwareEncoder(session)
         adaptiveVideoDeliveryPolicy.beginRunning(
-            bitrateKbps: configuration.targetVideoBitRateKbps
+            bitrateKbps: configuration.targetVideoBitRateKbps,
+            targetFrameRate: configuration.effectiveTargetFrameRate
         )
+        statistics.adaptiveTargetFrameRate =
+            configuration.effectiveTargetFrameRate
         statistics.exactCaptureAudit.profile = encodingPlan.profile
         statistics.exactCaptureAudit.hardwareUsed = true
     }
@@ -136,10 +139,29 @@ extension LumenScreenCaptureVideoRuntime {
             kVTCompressionPropertyKey_ExpectedFrameRate,
             value: targetFrameRate
         )
-        try setProperty(
-            kVTCompressionPropertyKey_MaxKeyFrameInterval,
+        // ScreenCaptureKit and the Rust cadence controller may lower the
+        // admitted source rate, but neither is allowed to raise the
+        // negotiated ceiling for this compression session.  These keys are
+        // optional across VideoToolbox encoder implementations; an encoder
+        // that does not advertise one keeps the required expected-frame-rate
+        // contract above and continues with source-PTS pacing.
+        try setOptionalProperty(
+            kVTCompressionPropertyKey_MaximumRealTimeFrameRate,
             value: targetFrameRate
         )
+        try setOptionalProperty(
+            kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration,
+            value: LumenAdaptiveVideoFrameTiming
+                .keyFrameIntervalDurationSeconds as CFNumber
+        )
+        try setOptionalProperty(
+            kVTCompressionPropertyKey_MaxFrameDelayCount,
+            value: 1 as CFNumber
+        )
+        // Do not force EnableLowLatencyRateControl here.  Some HEVC Main10
+        // implementations reject it together with the required closed-GOP
+        // contract; real-time mode, frame-reordering disabled, bounded frame
+        // delay, and source-PTS pacing provide the portable low-latency path.
         if let rateControl = LumenVideoToolboxRateControl(
             bitrateKbps: configuration.targetVideoBitRateKbps
         ) {
@@ -375,6 +397,25 @@ extension LumenScreenCaptureVideoRuntime {
         let status = VTSessionSetProperty(compressionSession, key: key, value: value)
         guard status == noErr else {
             throw LumenScreenCaptureError.compressionPropertyFailed(String(describing: key), status)
+        }
+    }
+
+    /// VideoToolbox exposes these latency/ceiling hints on different encoder
+    /// implementations and OS releases.  They must never turn an otherwise
+    /// valid hardware encoder into a terminal capture failure when a property
+    /// is simply unsupported.  Unexpected errors still fail the exact capture
+    /// contract so the caller does not silently run with a broken session.
+    func setOptionalProperty(_ key: CFString, value: CFTypeRef) throws {
+        dispatchPrecondition(condition: .onQueue(encoderQueue))
+        guard let compressionSession else { return }
+        let status = VTSessionSetProperty(compressionSession, key: key, value: value)
+        guard status == noErr
+            || status == kVTPropertyNotSupportedErr
+            || status == kVTParameterErr else {
+            throw LumenScreenCaptureError.compressionPropertyFailed(
+                String(describing: key),
+                status
+            )
         }
     }
 

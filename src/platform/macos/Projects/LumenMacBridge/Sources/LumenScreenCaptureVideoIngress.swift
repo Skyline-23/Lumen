@@ -113,11 +113,19 @@ extension LumenScreenCaptureVideoRuntime {
         entered: @Sendable () -> Bool
     ) -> LumenEncoderSubmissionAttempt<LumenVideoEncoderSubmissionResult> {
         dispatchPrecondition(condition: .onQueue(encoderQueue))
-        guard adaptiveVideoDeliveryPolicy.shouldAdmit(
+        let admission = adaptiveVideoDeliveryPolicy.admit(
+            sourcePresentationTime: submission.source.presentationTime,
             forceKeyFrame: submission.forceKeyFrame
-        ) else {
+        )
+        guard case .admit(let durationSeconds) = admission else {
             queue.async { [weak self] in
-                self?.recordPendingAdmissionDrop(submission.source)
+                guard let self else { return }
+                switch admission {
+                case .drop:
+                    self.recordIntentionalFrameCadenceDrop(submission.source)
+                case .admit:
+                    break
+                }
             }
             return .cancelled
         }
@@ -146,7 +154,9 @@ extension LumenScreenCaptureVideoRuntime {
             compressionSession,
             imageBuffer: source.imageBuffer,
             presentationTimeStamp: source.presentationTime,
-            duration: source.duration,
+            duration: LumenAdaptiveVideoFrameTiming.cmTime(
+                seconds: durationSeconds
+            ),
             frameProperties: properties,
             sourceFrameRefcon: UnsafeMutableRawPointer(
                 bitPattern: UInt(source.sequenceNumber)
@@ -197,14 +207,13 @@ extension LumenScreenCaptureVideoRuntime {
                 videoBootstrapAdmission.cancelBootstrapSubmission()
                 pendingVideoBootstrapSource = nil
             }
-            statistics.droppedFrameCount &+= 1
-            statistics.lastErrorDescription = "VideoToolbox dropped frame during synchronous admission"
-            statisticsHandler(statistics)
-            eventHandler(.init(
-                kind: .droppedFrame,
-                message: statistics.lastErrorDescription,
-                sourceDisplayTime: submission.source.displayTime
-            ))
+            let sourceDisplayTime = submission.source.displayTime
+            queue.async { [weak self] in
+                self?.recordVideoToolboxDrop(
+                    sourceDisplayTime: sourceDisplayTime,
+                    message: "VideoToolbox dropped frame during synchronous admission"
+                )
+            }
         } else {
             statistics.submittedFrameCount &+= 1
             refreshStatisticsNotesIfNeeded()
@@ -214,6 +223,7 @@ extension LumenScreenCaptureVideoRuntime {
     func recordPendingAdmissionDrop(_ source: LumenPendingVideoBootstrapSource) {
         statistics.droppedFrameCount &+= 1
         statistics.pendingAdmissionDropCount &+= 1
+        encoderPendingDropCount &+= 1
         refreshStatisticsNotesIfNeeded()
         if statistics.pendingAdmissionDropCount == 1 || statistics.pendingAdmissionDropCount % 120 == 0 {
             eventHandler(.init(
@@ -222,6 +232,49 @@ extension LumenScreenCaptureVideoRuntime {
                 sourceDisplayTime: source.displayTime
             ))
         }
+    }
+
+    func recordIntentionalFrameCadenceDrop(
+        _ source: LumenPendingVideoBootstrapSource
+    ) {
+        statistics.droppedFrameCount &+= 1
+        statistics.intentionalFrameCadenceDropCount &+= 1
+        refreshStatisticsNotesIfNeeded()
+        if statistics.intentionalFrameCadenceDropCount == 1
+            || statistics.intentionalFrameCadenceDropCount % 120 == 0 {
+            eventHandler(.init(
+                kind: .coalescedFrame,
+                message: "Dropped source frame intentionally to follow adaptive target cadence",
+                sourceDisplayTime: source.displayTime
+            ))
+        }
+    }
+
+    func recordVideoToolboxDrop(
+        _ source: LumenPendingVideoBootstrapSource,
+        message: String
+    ) {
+        recordVideoToolboxDrop(
+            sourceDisplayTime: source.displayTime,
+            message: message
+        )
+    }
+
+    func recordVideoToolboxDrop(
+        sourceDisplayTime: UInt64,
+        message: String
+    ) {
+        statistics.droppedFrameCount &+= 1
+        statistics.pendingAdmissionDropCount &+= 1
+        encoderPendingDropCount &+= 1
+        statistics.lastErrorDescription = message
+        refreshStatisticsNotesIfNeeded()
+        statisticsHandler(statistics)
+        eventHandler(.init(
+            kind: .droppedFrame,
+            message: message,
+            sourceDisplayTime: sourceDisplayTime
+        ))
     }
 
     func stream(_ stream: SCStream, didStopWithError error: any Error) {
