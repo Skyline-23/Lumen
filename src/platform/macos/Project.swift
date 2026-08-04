@@ -329,10 +329,22 @@ let project = Project(
                 "../../../tests/tuist/macos/**/*.mm"
             ],
             dependencies: [
+                // `tuist test` focuses generation to test dependencies, while
+                // `tuist build` reuses that workspace unless it is missing.
+                // Keep both app build roots without linking or hosting tests.
+                .target(name: "LumenApp", status: .none),
+                .target(name: "LumenDisplayDisconnectCanary", status: .none),
                 .target(name: "LumenAppArchitecture"),
                 .target(name: "LumenMacBridge"),
                 .target(name: "LumenMacCaptureAdapter")
-            ]
+            ],
+            settings: .settings(
+                base: [
+                    "BUNDLE_LOADER": "",
+                    "TEST_HOST": "",
+                    "TEST_TARGET_NAME": ""
+                ]
+            )
         )
     ],
     schemes: [
