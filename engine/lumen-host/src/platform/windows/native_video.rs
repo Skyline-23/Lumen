@@ -7,6 +7,11 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use lumen_engine::{
+    LumenAdaptiveFrameCadenceController, LumenAdaptiveFrameCadenceObservation,
+    LumenAdaptiveFrameCadenceRequest,
+};
+
 use windows_api::core::Interface;
 use windows_api::Win32::Graphics::Direct3D11::{ID3D11Device, ID3D11Texture2D};
 use windows_api::Win32::Media::MediaFoundation::{
@@ -47,9 +52,125 @@ const TRANSFORM_EVENT_TIMEOUT: Duration = Duration::from_secs(5);
 const INITIAL_FRAME_TIMEOUT: Duration = Duration::from_secs(5);
 const ACTIVE_CAPTURE_POLL_MILLISECONDS: u32 = 8;
 const MAXIMUM_RETIRED_MEDIA_FOUNDATION_WORKERS: usize = 2;
+const MAX_CAPTURE_TIMESTAMP_STEP_90KHZ: u32 = u32::MAX / 2;
+const MIN_MEDIA_FOUNDATION_FRAME_DURATION_HNS: i64 = 10_000_000 / 240;
+const MAX_MEDIA_FOUNDATION_FRAME_DURATION_HNS: i64 = 10_000_000 / 15;
 
-type NativeVideoSink =
-    Arc<dyn Fn(u32, NativeEncodedVideoSample) -> Result<bool, String> + Send + Sync>;
+type NativeVideoSink = Arc<
+    dyn Fn(u32, NativeEncodedVideoSample) -> Result<NativeVideoSinkResult, String> + Send + Sync,
+>;
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) struct NativeVideoSinkResult {
+    pub(super) request_key_frame: bool,
+    pub(super) pending_drop_count: u64,
+}
+
+struct WindowsAdaptiveFrameCadence {
+    controller: LumenAdaptiveFrameCadenceController,
+    ceiling_frame_rate: u32,
+}
+
+impl WindowsAdaptiveFrameCadence {
+    fn new(ceiling_frame_rate: u32) -> Result<Self, String> {
+        let controller =
+            LumenAdaptiveFrameCadenceController::new(LumenAdaptiveFrameCadenceRequest {
+                requested_frame_rate: ceiling_frame_rate,
+            })
+            .map_err(|status| format!("Windows adaptive frame cadence setup failed: {status:?}"))?;
+        Ok(Self {
+            controller,
+            ceiling_frame_rate,
+        })
+    }
+
+    fn observe(&self, observation: LumenAdaptiveFrameCadenceObservation) -> Result<u32, String> {
+        let decision = self.controller.observe(observation).map_err(|status| {
+            format!("Windows adaptive frame cadence observation failed: {status:?}")
+        })?;
+        Ok(decision.target_frame_rate.clamp(1, self.ceiling_frame_rate))
+    }
+
+    fn target(&self) -> Result<u32, String> {
+        self.controller
+            .target()
+            .map(|target| target.clamp(1, self.ceiling_frame_rate))
+            .map_err(|status| format!("Windows adaptive frame cadence target failed: {status:?}"))
+    }
+}
+
+struct WindowsCadenceAdmission {
+    target_frame_rate: u32,
+    last_admitted_timestamp_90khz: Option<u64>,
+    next_deadline_scaled: Option<u128>,
+}
+
+impl WindowsCadenceAdmission {
+    fn new() -> Self {
+        Self {
+            target_frame_rate: 0,
+            last_admitted_timestamp_90khz: None,
+            next_deadline_scaled: None,
+        }
+    }
+
+    fn reset(&mut self) {
+        *self = Self::new();
+    }
+
+    fn admits(
+        &mut self,
+        source_timestamp_90khz: u64,
+        target_frame_rate: u32,
+        ceiling_frame_rate: u32,
+        force: bool,
+    ) -> bool {
+        const TICKS_PER_SECOND: u128 = 90_000;
+        let target = target_frame_rate.clamp(1, ceiling_frame_rate.max(1));
+        let source_scaled = u128::from(source_timestamp_90khz) * u128::from(target);
+
+        if self.target_frame_rate != target {
+            self.target_frame_rate = target;
+            self.next_deadline_scaled = self
+                .last_admitted_timestamp_90khz
+                .map(|timestamp| u128::from(timestamp) * u128::from(target) + TICKS_PER_SECOND);
+        }
+
+        if force {
+            self.last_admitted_timestamp_90khz = Some(source_timestamp_90khz);
+            self.next_deadline_scaled = Some(source_scaled + TICKS_PER_SECOND);
+            return true;
+        }
+
+        let Some(deadline) = self.next_deadline_scaled else {
+            self.last_admitted_timestamp_90khz = Some(source_timestamp_90khz);
+            self.next_deadline_scaled = Some(source_scaled + TICKS_PER_SECOND);
+            return true;
+        };
+        if source_scaled < deadline {
+            return false;
+        }
+
+        self.last_admitted_timestamp_90khz = Some(source_timestamp_90khz);
+        let elapsed = source_scaled.saturating_sub(deadline);
+        let intervals = elapsed / TICKS_PER_SECOND + 1;
+        self.next_deadline_scaled = Some(deadline + intervals * TICKS_PER_SECOND);
+        true
+    }
+}
+
+fn effective_target_frame_rate(
+    ceiling_frame_rate: u32,
+    adaptive_target_frame_rate: u32,
+    admission_divisor: u8,
+) -> u32 {
+    let ceiling = ceiling_frame_rate.max(1);
+    let divisor = u32::from(admission_divisor.max(1));
+    let client_target = ceiling.div_ceil(divisor);
+    adaptive_target_frame_rate
+        .clamp(1, ceiling)
+        .min(client_target)
+}
 
 pub(super) struct NativeMediaFoundation {
     sink: NativeVideoSink,
@@ -116,11 +237,21 @@ struct NativeVideoRuntime {
     capture: NativeIddCxCapture,
     encoder: NativeVideoEncoderSession,
     plan: NativeVideoEncoderPlan,
-    next_timestamp_hns: i64,
+    last_source_timestamp_90khz: Option<u32>,
+    unwrapped_source_timestamp_90khz: u64,
+    last_admitted_timestamp_hns: Option<i64>,
+    cadence_controller: WindowsAdaptiveFrameCadence,
+    cadence_admission: WindowsCadenceAdmission,
+    effective_target_frame_rate: u32,
+    source_frame_count: u64,
+    output_frame_count: u64,
+    pending_drop_count: u64,
+    last_callback_latency_milliseconds: f64,
+    last_callback_time_seconds: Option<f64>,
+    observation_clock: Instant,
     awaiting_bootstrap_result: bool,
     repair_keyframe_pending: bool,
     admission_divisor: u8,
-    admissions_until_next: u8,
     retirement_gate: Arc<SessionRetirementGate>,
     adaptive_event_publisher: Arc<dyn WindowsServiceEventPublisher>,
 }
@@ -477,18 +608,16 @@ fn run_media_foundation_session(worker: NativeMediaFoundationWorker) {
                 if retirement_gate.is_retired() {
                     return Ok(());
                 }
-                let request_key_frame = sink(session_epoch, sample)?;
+                let sink_result = sink(session_epoch, sample)?;
+                let runtime = runtime
+                    .as_mut()
+                    .expect("encoded frame came from an active runtime");
+                runtime.record_sink_result(sink_result);
                 if pause_for_bootstrap {
-                    runtime
-                        .as_mut()
-                        .expect("encoded frame came from an active runtime")
-                        .pause_after_bootstrap()?;
+                    runtime.pause_after_bootstrap()?;
                 }
-                if request_key_frame {
-                    runtime
-                        .as_mut()
-                        .expect("encoded frame came from an active runtime")
-                        .request_repair_key_frame()?;
+                if sink_result.request_key_frame {
+                    runtime.request_repair_key_frame()?;
                 }
             }
             Ok(())
@@ -535,15 +664,27 @@ fn start_runtime(
 ) -> Result<NativeVideoRuntime, String> {
     let capture = NativeIddCxCapture::open(driver, plan.ten_bit, frame_delivery)?;
     let encoder = catalog.activate(plan, capture.device())?;
+    let cadence_controller = WindowsAdaptiveFrameCadence::new(plan.frames_per_second)?;
+    let effective_target_frame_rate = cadence_controller.target()?;
     let mut runtime = NativeVideoRuntime {
         capture,
         encoder,
         plan,
-        next_timestamp_hns: 0,
+        last_source_timestamp_90khz: None,
+        unwrapped_source_timestamp_90khz: 0,
+        last_admitted_timestamp_hns: None,
+        cadence_controller,
+        cadence_admission: WindowsCadenceAdmission::new(),
+        effective_target_frame_rate,
+        source_frame_count: 0,
+        output_frame_count: 0,
+        pending_drop_count: 0,
+        last_callback_latency_milliseconds: 0.0,
+        last_callback_time_seconds: None,
+        observation_clock: Instant::now(),
         awaiting_bootstrap_result: false,
         repair_keyframe_pending: false,
         admission_divisor: 1,
-        admissions_until_next: 0,
         retirement_gate,
         adaptive_event_publisher,
     };
@@ -563,11 +704,12 @@ fn start_runtime(
             );
         }
         let pause_for_bootstrap = sample_requires_bootstrap_pause(&encoded, true);
-        let request_key_frame = sink(plan.session_epoch, encoded)?;
+        let sink_result = sink(plan.session_epoch, encoded)?;
+        runtime.record_sink_result(sink_result);
         if pause_for_bootstrap {
             runtime.pause_after_bootstrap()?;
         }
-        if request_key_frame {
+        if sink_result.request_key_frame {
             runtime.request_repair_key_frame()?;
         }
         return Ok(runtime);
@@ -725,7 +867,40 @@ impl NativeVideoRuntime {
                 .publish_adaptive_video_apply(event);
         });
         self.admission_divisor = admission_divisor;
-        self.admissions_until_next = 0;
+        self.effective_target_frame_rate = effective_target_frame_rate(
+            self.plan.frames_per_second,
+            self.cadence_controller.target()?,
+            self.admission_divisor,
+        );
+        Ok(())
+    }
+
+    fn record_sink_result(&mut self, result: NativeVideoSinkResult) {
+        self.pending_drop_count = self
+            .pending_drop_count
+            .saturating_add(result.pending_drop_count);
+    }
+
+    fn observe_adaptive_cadence(&mut self) -> Result<(), String> {
+        let elapsed = self.observation_clock.elapsed().as_secs_f64();
+        let callback_latency_milliseconds = self
+            .last_callback_time_seconds
+            .filter(|callback_time| elapsed - callback_time <= 0.20)
+            .map_or(0.0, |_| self.last_callback_latency_milliseconds);
+        let target = self
+            .cadence_controller
+            .observe(LumenAdaptiveFrameCadenceObservation {
+                monotonic_time_seconds: elapsed,
+                source_frame_count: self.source_frame_count,
+                output_frame_count: self.output_frame_count,
+                pending_drop_count: self.pending_drop_count,
+                callback_latency_milliseconds,
+            })?;
+        self.effective_target_frame_rate = effective_target_frame_rate(
+            self.plan.frames_per_second,
+            target,
+            self.admission_divisor,
+        );
         Ok(())
     }
 
@@ -764,16 +939,18 @@ impl NativeVideoRuntime {
             return Ok(None);
         };
         frame.validate()?;
-        let Some(timestamp) = take_admitted_video_timestamp(
-            &mut self.next_timestamp_hns,
-            self.encoder.frame_duration_hns,
-            &mut self.admissions_until_next,
-            self.admission_divisor,
+        self.source_frame_count = self.source_frame_count.saturating_add(1);
+        let source_timestamp_hns = self.source_timestamp_hns(frame.presentation_time_90khz)?;
+        self.observe_adaptive_cadence()?;
+        if !self.cadence_admission.admits(
+            self.unwrapped_source_timestamp_90khz,
+            self.effective_target_frame_rate,
+            self.plan.frames_per_second,
             self.repair_keyframe_pending,
-        )?
-        else {
+        ) {
             return Ok(None);
-        };
+        }
+        let (timestamp, duration_hns) = self.admitted_timestamp_and_duration(source_timestamp_hns);
         let surface = self.capture.convert_frame(
             &frame,
             self.plan.width,
@@ -782,15 +959,72 @@ impl NativeVideoRuntime {
             self.plan.ten_bit,
             self.plan.chroma_subsampling,
         )?;
-        let mut encoded = self.encoder.encode(&surface, timestamp)?;
+        let encode_started = Instant::now();
+        let mut encoded = self.encoder.encode(&surface, timestamp, duration_hns)?;
+        self.last_callback_latency_milliseconds = encode_started.elapsed().as_secs_f64() * 1_000.0;
+        self.last_callback_time_seconds = Some(self.observation_clock.elapsed().as_secs_f64());
+        self.output_frame_count = self.output_frame_count.saturating_add(1);
+        self.observe_adaptive_cadence()?;
         if encoded.key_frame {
             encoded.repair_keyframe = self.repair_keyframe_pending;
             self.repair_keyframe_pending = false;
         }
         Ok(Some(encoded))
     }
+
+    fn source_timestamp_hns(&mut self, source_timestamp_90khz: u32) -> Result<i64, String> {
+        if let Some(previous) = self.last_source_timestamp_90khz {
+            if !capture_timestamp_step_is_forward(previous, source_timestamp_90khz) {
+                // A stale/reset capture timestamp must not turn into a multi-hour
+                // positive duration through wrapping arithmetic. Re-anchor the
+                // capture timeline and force one repair key frame at timestamp zero.
+                self.last_source_timestamp_90khz = Some(source_timestamp_90khz);
+                self.unwrapped_source_timestamp_90khz = 0;
+                self.last_admitted_timestamp_hns = None;
+                self.cadence_admission.reset();
+                self.encoder.force_key_frame()?;
+                self.repair_keyframe_pending = true;
+                return Ok(0);
+            }
+            self.unwrapped_source_timestamp_90khz = self
+                .unwrapped_source_timestamp_90khz
+                .checked_add(u64::from(source_timestamp_90khz.wrapping_sub(previous)))
+                .ok_or_else(|| "Windows capture timestamp accumulator overflowed".to_owned())?;
+        }
+        self.last_source_timestamp_90khz = Some(source_timestamp_90khz);
+        capture_timestamp_hns(self.unwrapped_source_timestamp_90khz)
+    }
+
+    fn admitted_timestamp_and_duration(&mut self, timestamp_hns: i64) -> (i64, i64) {
+        let duration = self
+            .last_admitted_timestamp_hns
+            .and_then(|previous| timestamp_hns.checked_sub(previous))
+            .filter(|duration| *duration > 0)
+            .unwrap_or(self.encoder.frame_duration_hns)
+            .clamp(
+                MIN_MEDIA_FOUNDATION_FRAME_DURATION_HNS,
+                MAX_MEDIA_FOUNDATION_FRAME_DURATION_HNS,
+            );
+        self.last_admitted_timestamp_hns = Some(timestamp_hns);
+        (timestamp_hns, duration)
+    }
 }
 
+fn capture_timestamp_hns(unwrapped_timestamp_90khz: u64) -> Result<i64, String> {
+    let timestamp_hns = u128::from(unwrapped_timestamp_90khz)
+        .checked_mul(10_000_000)
+        .and_then(|value| value.checked_div(90_000))
+        .ok_or_else(|| "Windows capture timestamp conversion overflowed".to_owned())?;
+    i64::try_from(timestamp_hns)
+        .map_err(|_| "Windows capture timestamp exceeds Media Foundation range".to_owned())
+}
+
+fn capture_timestamp_step_is_forward(previous_90khz: u32, current_90khz: u32) -> bool {
+    let step = current_90khz.wrapping_sub(previous_90khz);
+    step > 0 && step <= MAX_CAPTURE_TIMESTAMP_STEP_90KHZ
+}
+
+#[cfg(test)]
 fn take_admitted_video_timestamp(
     next: &mut i64,
     frame_duration_hns: i64,
@@ -807,6 +1041,7 @@ fn take_admitted_video_timestamp(
     Ok(Some(timestamp))
 }
 
+#[cfg(test)]
 fn take_video_timestamp(next: &mut i64, frame_duration_hns: i64) -> Result<i64, String> {
     let timestamp = *next;
     *next = next
@@ -917,9 +1152,10 @@ impl NativeVideoEncoderSession {
         &mut self,
         surface: &NativeEncoderSurface,
         presentation_time_hns: i64,
+        duration_hns: i64,
     ) -> Result<NativeEncodedVideoSample, String> {
         self.wait_for_input_request()?;
-        let sample = create_input_sample(surface, presentation_time_hns, self.frame_duration_hns)?;
+        let sample = create_input_sample(surface, presentation_time_hns, duration_hns)?;
         unsafe { self.transform.ProcessInput(0, &sample, 0) }
             .map_err(|error| format!("Windows hardware encoder rejected a GPU frame: {error}"))?;
         self.wait_for_output_sample()?;
@@ -1517,6 +1753,80 @@ mod tests {
             vec![Some(0), None, Some(333_332), None]
         );
         assert_eq!(next, 666_664);
+    }
+
+    #[test]
+    fn adaptive_target_and_client_divisor_share_one_admission_budget() {
+        assert_eq!(effective_target_frame_rate(120, 120, 1), 120);
+        assert_eq!(effective_target_frame_rate(120, 120, 2), 60);
+        assert_eq!(effective_target_frame_rate(120, 60, 1), 60);
+        assert_eq!(effective_target_frame_rate(120, 60, 2), 60);
+        assert_eq!(effective_target_frame_rate(120, 40, 2), 40);
+        assert_eq!(effective_target_frame_rate(120, 30, 4), 30);
+    }
+
+    #[test]
+    fn cadence_admission_preserves_fractional_variable_rate_without_double_decimation() {
+        let mut admission = WindowsCadenceAdmission::new();
+        let admitted = (0..120)
+            .filter(|index| admission.admits(index * 750, 60, 120, false))
+            .count();
+        assert_eq!(admitted, 60);
+
+        let mut admission = WindowsCadenceAdmission::new();
+        let admitted = (0..120)
+            .filter(|index| admission.admits(index * 750, 58, 120, false))
+            .count();
+        assert_eq!(admitted, 58, "fractional deadlines must preserve 58 fps");
+
+        let mut admission = WindowsCadenceAdmission::new();
+        let admitted = (0..80)
+            .filter(|index| admission.admits(index * 1_125, 58, 120, false))
+            .count();
+        assert_eq!(
+            admitted, 58,
+            "an 80 fps source must not be scaled by the negotiated 120 fps ceiling"
+        );
+    }
+
+    #[test]
+    fn capture_timestamps_wrap_and_duration_stays_vfr_safe() {
+        let previous = u32::MAX - 450;
+        let current: u32 = 450;
+        let step = u64::from(current.wrapping_sub(previous));
+        let first = capture_timestamp_hns(0).unwrap();
+        let second = capture_timestamp_hns(step).unwrap();
+        assert_eq!(first, 0);
+        assert_eq!(second, 100_111);
+
+        let duration = second - first;
+        assert!(duration > 0);
+        assert!(duration < 200_000);
+
+        assert!(capture_timestamp_step_is_forward(previous, current));
+        assert!(!capture_timestamp_step_is_forward(500, 500));
+        assert!(!capture_timestamp_step_is_forward(10_000, 9_000));
+        assert!(!capture_timestamp_step_is_forward(
+            500,
+            500_u32.wrapping_sub(MAX_CAPTURE_TIMESTAMP_STEP_90KHZ + 1),
+        ));
+    }
+
+    #[test]
+    fn media_foundation_duration_clamps_long_capture_gaps_but_keeps_vfr_timestamps() {
+        let long_gap = MAX_MEDIA_FOUNDATION_FRAME_DURATION_HNS * 3;
+        let duration = long_gap.clamp(
+            MIN_MEDIA_FOUNDATION_FRAME_DURATION_HNS,
+            MAX_MEDIA_FOUNDATION_FRAME_DURATION_HNS,
+        );
+        assert_eq!(duration, MAX_MEDIA_FOUNDATION_FRAME_DURATION_HNS);
+        assert_eq!(
+            1_i64.clamp(
+                MIN_MEDIA_FOUNDATION_FRAME_DURATION_HNS,
+                MAX_MEDIA_FOUNDATION_FRAME_DURATION_HNS,
+            ),
+            MIN_MEDIA_FOUNDATION_FRAME_DURATION_HNS
+        );
     }
 
     #[test]

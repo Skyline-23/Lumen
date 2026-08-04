@@ -5,6 +5,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::ptr::NonNull;
 
+mod adaptive_frame_cadence;
 mod application;
 mod audio_ingress;
 mod audio_selection;
@@ -31,6 +32,12 @@ mod video_packetization;
 mod video_rate;
 mod video_timing;
 
+pub use adaptive_frame_cadence::{
+    lumen_engine_adaptive_frame_cadence_create, lumen_engine_adaptive_frame_cadence_destroy,
+    lumen_engine_adaptive_frame_cadence_observe, lumen_engine_adaptive_frame_cadence_target,
+    LumenAdaptiveFrameCadenceController, LumenAdaptiveFrameCadenceDecision,
+    LumenAdaptiveFrameCadenceObservation, LumenAdaptiveFrameCadenceRequest,
+};
 pub use application::{
     ApplicationCatalog, ApplicationCommandPlan, ApplicationDescriptor, ApplicationLaunchPlan,
     CatalogError,
@@ -112,7 +119,7 @@ pub use protocol::{
 };
 pub use video_packetization::{plan_fec_blocks, plan_fec_shards};
 
-pub const ABI_VERSION: u32 = 65;
+pub const ABI_VERSION: u32 = 66;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

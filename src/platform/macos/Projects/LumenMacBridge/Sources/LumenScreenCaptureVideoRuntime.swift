@@ -43,6 +43,15 @@ final class LumenScreenCaptureVideoRuntime:
     var outputContract: LumenExactEncodedOutputContract?
     var sequenceNumber: UInt64 = 0
     var adaptiveVideoDeliveryPolicy = LumenAdaptiveVideoDeliveryPolicyState()
+    /// Rust owns the adaptive decision window; Swift keeps the controller
+    /// alive for the capture runtime and applies changed targets on
+    /// `encoderQueue` only.
+    var adaptiveFrameCadenceController: LumenAdaptiveFrameCadenceController?
+    /// This is deliberately narrower than the public pending-admission
+    /// diagnostic.  Only latest-frame replacement and VideoToolbox drops are
+    /// fed to Rust; source samples skipped by the intentional pacer are not
+    /// encoder pressure.
+    var encoderPendingDropCount: UInt64 = 0
     var lastQueuedEncoderSequenceNumber: UInt64?
     var lastQueuedEncoderPresentationTime: CMTime?
     var videoBootstrapAdmission = LumenVideoBootstrapAdmissionGate()
@@ -119,6 +128,9 @@ final class LumenScreenCaptureVideoRuntime:
         self.statisticsHandler = statisticsHandler
         self.terminationHandler = terminationHandler
         super.init()
+        adaptiveFrameCadenceController = LumenAdaptiveFrameCadenceController(
+            requestedFrameRate: configuration.effectiveTargetFrameRate
+        )
     }
 
 }

@@ -9,7 +9,7 @@ use crate::{PlatformEncodedAudioPacket, PlatformEncodedVideoFrame, PlatformSessi
 use super::media_queue::WindowsMediaPacketQueues;
 use super::native_audio::{self, NativeAudioConfiguration};
 use super::native_display_driver::DriverHandle;
-use super::native_video::{NativeEncodedVideoSample, NativeMediaFoundation};
+use super::native_video::{NativeEncodedVideoSample, NativeMediaFoundation, NativeVideoSinkResult};
 use crate::windows_service_log::WindowsServiceEventLane;
 
 const MAXIMUM_VIDEO_BUFFER_BYTES: usize = 32 * 1024 * 1024;
@@ -80,7 +80,7 @@ impl PacketQueueContext {
         &self,
         session_epoch: u32,
         sample: NativeEncodedVideoSample,
-    ) -> Result<bool, String> {
+    ) -> Result<NativeVideoSinkResult, String> {
         if sample.payload.is_empty() || sample.payload.len() > MAXIMUM_VIDEO_BUFFER_BYTES {
             return Err("Windows native encoder produced an invalid video payload".to_owned());
         }
@@ -89,20 +89,25 @@ impl PacketQueueContext {
             .lock()
             .map_err(|_| "Windows media packet queue is poisoned".to_owned())?;
         if state.video_session_epoch != Some(session_epoch) {
-            return Ok(false);
+            return Ok(NativeVideoSinkResult::default());
         }
-        let request_key_frame = state.queues.push_video(PlatformEncodedVideoFrame {
-            payload: sample.payload,
-            decoder_configuration_record: None,
-            presentation_time_90khz: u64::from(sample.presentation_time_90khz),
-            key_frame: sample.key_frame,
-            // Initial admission pauses explicitly. During steady state only an explicit
-            // repair key frame owns a pause; natural periodic key frames remain in the
-            // acknowledged DATAGRAM generation.
-            requires_bootstrap_acknowledgement: sample.key_frame && sample.repair_keyframe,
-            repair_keyframe: sample.repair_keyframe,
-        });
-        Ok(request_key_frame)
+        let result = state
+            .queues
+            .push_video_with_result(PlatformEncodedVideoFrame {
+                payload: sample.payload,
+                decoder_configuration_record: None,
+                presentation_time_90khz: u64::from(sample.presentation_time_90khz),
+                key_frame: sample.key_frame,
+                // Initial admission pauses explicitly. During steady state only an explicit
+                // repair key frame owns a pause; natural periodic key frames remain in the
+                // acknowledged DATAGRAM generation.
+                requires_bootstrap_acknowledgement: sample.key_frame && sample.repair_keyframe,
+                repair_keyframe: sample.repair_keyframe,
+            });
+        Ok(NativeVideoSinkResult {
+            request_key_frame: result.request_key_frame,
+            pending_drop_count: result.dropped_frames,
+        })
     }
 }
 

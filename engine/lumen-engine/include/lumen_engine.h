@@ -9,7 +9,7 @@
 extern "C" {
 #endif
 
-#define LUMEN_ENGINE_ABI_VERSION 65u
+#define LUMEN_ENGINE_ABI_VERSION 66u
 #define LUMEN_ENCRYPTED_CONTROL_HEADER_SIZE 8u
 #define LUMEN_CONTROL_FEEDBACK_MAX_SIZE 29u
 #define LUMEN_CONTROL_TERMINATION_SIZE 8u
@@ -434,6 +434,32 @@ typedef struct LumenVideoRatePlan {
   int64_t restored_bitrate_kbps;
 } LumenVideoRatePlan;
 
+/*
+ * Adaptive source cadence policy. The requested frame rate is a negotiated
+ * ceiling; the controller may lower the source target temporarily when
+ * encoder backpressure is observed, then slowly probe back to the ceiling.
+ */
+typedef struct LumenAdaptiveFrameCadenceRequest {
+  uint32_t requested_frame_rate;
+} LumenAdaptiveFrameCadenceRequest;
+
+typedef struct LumenAdaptiveFrameCadenceObservation {
+  double monotonic_time_seconds;
+  uint64_t source_frame_count;
+  uint64_t output_frame_count;
+  /* Encoder admission/pending drops only; exclude intentional cadence drops. */
+  uint64_t pending_drop_count;
+  double callback_latency_milliseconds;
+} LumenAdaptiveFrameCadenceObservation;
+
+typedef struct LumenAdaptiveFrameCadenceDecision {
+  uint32_t target_frame_rate;
+  bool changed;
+} LumenAdaptiveFrameCadenceDecision;
+
+typedef struct LumenAdaptiveFrameCadenceController
+    LumenAdaptiveFrameCadenceController;
+
 typedef struct LumenAudioIngressRequest {
   int32_t sample_rate;
   int32_t channel_count;
@@ -780,6 +806,26 @@ LumenEngineStatus lumen_engine_video_ingress_thresholds(
 LumenEngineStatus lumen_engine_resolve_video_rate(
   LumenVideoRateRequest request,
   LumenVideoRatePlan *plan_out
+);
+
+LumenEngineStatus lumen_engine_adaptive_frame_cadence_create(
+  LumenAdaptiveFrameCadenceRequest request,
+  LumenAdaptiveFrameCadenceController **controller_out
+);
+
+void lumen_engine_adaptive_frame_cadence_destroy(
+  LumenAdaptiveFrameCadenceController *controller
+);
+
+LumenEngineStatus lumen_engine_adaptive_frame_cadence_observe(
+  LumenAdaptiveFrameCadenceController *controller,
+  LumenAdaptiveFrameCadenceObservation observation,
+  LumenAdaptiveFrameCadenceDecision *decision_out
+);
+
+LumenEngineStatus lumen_engine_adaptive_frame_cadence_target(
+  const LumenAdaptiveFrameCadenceController *controller,
+  uint32_t *target_out
 );
 
 LumenEngineStatus lumen_engine_resolve_video_colorspace(

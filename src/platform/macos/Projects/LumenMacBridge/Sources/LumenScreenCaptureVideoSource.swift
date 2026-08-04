@@ -9,38 +9,41 @@ import ScreenCaptureKit
 import Synchronization
 import VideoToolbox
 
-struct LumenAdaptiveVideoAdmissionCadence: Equatable, Sendable {
-    private(set) var divisor = 1
-    private var admissionsUntilNext = 0
-
-    mutating func configure(divisor: Int) -> Bool {
-        guard (1 ... 4).contains(divisor) else { return false }
-        self.divisor = divisor
-        admissionsUntilNext = 0
-        return true
-    }
-
-    mutating func shouldAdmit() -> Bool {
-        guard divisor > 1 else { return true }
-        guard admissionsUntilNext > 0 else {
-            admissionsUntilNext = divisor - 1
-            return true
-        }
-        admissionsUntilNext -= 1
-        return false
-    }
-}
-
 struct LumenAdaptiveVideoDeliveryPolicyState: Equatable, Sendable {
     private(set) var appliedBitrateKbps: Int?
-    private(set) var admissionCadence = LumenAdaptiveVideoAdmissionCadence()
+    private(set) var framePacer = LumenAdaptiveVideoFramePacer()
+    /// Target selected by the Rust engine.  This is independent from the
+    /// legacy client admission divisor so both controls compose into one
+    /// source-PTS target instead of running two drop loops.
+    private(set) var engineTargetFrameRate: Int
+    private(set) var clientAdmissionDivisor = 1
     private(set) var acceptsUpdates = false
 
-    var admissionDivisor: Int { admissionCadence.divisor }
+    init() {
+        engineTargetFrameRate = framePacer.frameRateCeiling
+    }
 
-    mutating func beginRunning(bitrateKbps: Int) {
+    var admissionDivisor: Int { clientAdmissionDivisor }
+    var frameRateCeiling: Int { framePacer.frameRateCeiling }
+    var targetFrameRate: Int { framePacer.targetFrameRate }
+
+    private var effectiveTargetFrameRate: Int {
+        min(
+            engineTargetFrameRate,
+            max(frameRateCeiling / clientAdmissionDivisor, 1)
+        )
+    }
+
+    mutating func beginRunning(
+        bitrateKbps: Int,
+        targetFrameRate: Int = 120
+    ) {
         appliedBitrateKbps = bitrateKbps
-        admissionCadence = LumenAdaptiveVideoAdmissionCadence()
+        framePacer = LumenAdaptiveVideoFramePacer(
+            frameRateCeiling: targetFrameRate
+        )
+        engineTargetFrameRate = framePacer.frameRateCeiling
+        clientAdmissionDivisor = 1
         acceptsUpdates = true
     }
 
@@ -51,20 +54,39 @@ struct LumenAdaptiveVideoDeliveryPolicyState: Equatable, Sendable {
     mutating func apply(
         bitrateKbps: Int,
         admissionDivisor: Int,
+        targetFrameRate: Int? = nil,
         applyBitrate: () throws -> Void
     ) -> Bool {
+        let requestedFrameRate = targetFrameRate ?? self.targetFrameRate
         guard acceptsUpdates,
               bitrateKbps > 0,
-              (1 ... 4).contains(admissionDivisor) else {
+              (1 ... 4).contains(admissionDivisor),
+              (1 ... frameRateCeiling).contains(requestedFrameRate) else {
+            return false
+        }
+
+        // Build all value-type policy changes before touching the live state.
+        // This makes invalid target/cadence combinations a true no-op even
+        // when the bitrate application closure is supplied by VideoToolbox.
+        var nextFramePacer = framePacer
+        let nextEngineTargetFrameRate = targetFrameRate ?? engineTargetFrameRate
+        let nextClientAdmissionDivisor = admissionDivisor
+        let nextEffectiveTargetFrameRate = min(
+            nextEngineTargetFrameRate,
+            max(frameRateCeiling / nextClientAdmissionDivisor, 1)
+        )
+        guard nextFramePacer.configure(
+            targetFrameRate: nextEffectiveTargetFrameRate
+        ) else {
             return false
         }
         do {
             if appliedBitrateKbps != bitrateKbps {
                 try applyBitrate()
             }
-            guard admissionCadence.configure(divisor: admissionDivisor) else {
-                return false
-            }
+            framePacer = nextFramePacer
+            engineTargetFrameRate = nextEngineTargetFrameRate
+            clientAdmissionDivisor = nextClientAdmissionDivisor
             appliedBitrateKbps = bitrateKbps
             return true
         } catch {
@@ -72,8 +94,52 @@ struct LumenAdaptiveVideoDeliveryPolicyState: Equatable, Sendable {
         }
     }
 
-    mutating func shouldAdmit(forceKeyFrame: Bool) -> Bool {
-        forceKeyFrame || (acceptsUpdates && admissionCadence.shouldAdmit())
+    /// Applies an engine-selected cadence without changing the negotiated
+    /// ScreenCaptureKit ceiling.  The Rust adaptive controller can call this
+    /// on the encoder queue when a new observation produces a target.
+    @discardableResult
+    mutating func setTargetFrameRate(_ targetFrameRate: Int) -> Bool {
+        guard acceptsUpdates else { return false }
+        guard (1 ... frameRateCeiling).contains(targetFrameRate) else {
+            return false
+        }
+        var nextFramePacer = framePacer
+        let nextEffectiveTargetFrameRate = min(
+            targetFrameRate,
+            max(frameRateCeiling / clientAdmissionDivisor, 1)
+        )
+        guard nextFramePacer.configure(
+            targetFrameRate: nextEffectiveTargetFrameRate
+        ) else {
+            return false
+        }
+        engineTargetFrameRate = targetFrameRate
+        framePacer = nextFramePacer
+        return true
+    }
+
+    mutating func admit(
+        sourcePresentationTime: CMTime,
+        forceKeyFrame: Bool
+    ) -> LumenAdaptiveVideoFrameAdmissionDecision {
+        if forceKeyFrame {
+            return framePacer.admit(
+                sourcePresentationTime: sourcePresentationTime,
+                forceKeyFrame: true
+            )
+        }
+        guard acceptsUpdates else {
+            return .drop
+        }
+
+        // The engine target and client divisor have already been composed
+        // into one effective PTS target.  Do not run the legacy divisor as a
+        // second admission loop: 120 + divisor 2 is 60, while target 60 +
+        // divisor 2 remains 60 rather than becoming 30.
+        return framePacer.admit(
+            sourcePresentationTime: sourcePresentationTime,
+            forceKeyFrame: false
+        )
     }
 }
 
@@ -134,6 +200,48 @@ extension LumenScreenCaptureVideoRuntime {
             sourceMachTime: callbackEntryMachTime
         )
         admitPendingSource(source)
+        observeAdaptiveFrameCadence()
+    }
+
+    /// Records every complete source callback without adding another task to
+    /// the hot encoder queue.  The Rust controller owns its update window;
+    /// only a changed target is handed back to `encoderQueue`, where the
+    /// Swift pacer is mutated alongside VideoToolbox admission.
+    func observeAdaptiveFrameCadence() {
+        guard let controller = adaptiveFrameCadenceController else {
+            return
+        }
+        let decision = controller.observe(
+            monotonicTimeSeconds: ProcessInfo.processInfo.systemUptime,
+            sourceFrameCount: statistics.completeSourceFrameCount,
+            outputFrameCount: statistics.emittedFrameCount,
+            pendingDropCount: encoderPendingDropCount,
+            callbackLatencyMilliseconds:
+                videoToolboxCallbackTiming.latestMilliseconds ?? 0
+        )
+        guard let decision, decision.changed else {
+            return
+        }
+        encoderQueue.async { [weak self] in
+            guard let self,
+                  !self.stopping else {
+                return
+            }
+            guard self.adaptiveVideoDeliveryPolicy.setTargetFrameRate(
+                decision.targetFrameRate
+            ) else {
+                return
+            }
+            let effectiveTargetFrameRate =
+                self.adaptiveVideoDeliveryPolicy.targetFrameRate
+            self.queue.async { [weak self] in
+                guard let self else { return }
+                self.statistics.adaptiveTargetFrameRate =
+                    effectiveTargetFrameRate
+                self.refreshStatisticsNotesIfNeeded()
+                self.statisticsHandler(self.statistics)
+            }
+        }
     }
 
     func acceptOwnedScreenSample(
@@ -191,10 +299,11 @@ extension LumenScreenCaptureVideoRuntime {
             displayTime: LumenMachTime.ticks(for: presentationTime)
                 ?? sourceMachTime,
             duration: CMTime(
-                value: 1,
-                timescale: CMTimeScale(
-                    configuration.effectiveTargetFrameRate
-                )
+                seconds: LumenAdaptiveVideoFrameTiming
+                    .fallbackDurationSeconds(
+                        targetFrameRate: configuration.effectiveTargetFrameRate
+                    ),
+                preferredTimescale: LumenAdaptiveVideoFrameTiming.preferredTimescale
             ),
             sequenceNumber: sequenceNumber
         )

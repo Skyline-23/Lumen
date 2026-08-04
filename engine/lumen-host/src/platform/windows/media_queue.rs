@@ -6,6 +6,12 @@ const VIDEO_PACKET_CAPACITY: usize = 8;
 const DEFAULT_AUDIO_PACKET_CAPACITY: usize = 8;
 const OPUS_PACKET_DURATION_FRAMES: u32 = 240;
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) struct VideoQueuePushResult {
+    pub(super) request_key_frame: bool,
+    pub(super) dropped_frames: u64,
+}
+
 pub(super) struct WindowsMediaPacketQueues {
     video: VecDeque<PlatformEncodedVideoFrame>,
     audio: VecDeque<PlatformEncodedAudioPacket>,
@@ -27,20 +33,39 @@ impl Default for WindowsMediaPacketQueues {
 }
 
 impl WindowsMediaPacketQueues {
+    #[cfg(test)]
     pub(super) fn push_video(&mut self, frame: PlatformEncodedVideoFrame) -> bool {
+        self.push_video_with_result(frame).request_key_frame
+    }
+
+    pub(super) fn push_video_with_result(
+        &mut self,
+        frame: PlatformEncodedVideoFrame,
+    ) -> VideoQueuePushResult {
         if self.awaiting_key_frame && !frame.key_frame {
-            return false;
+            return VideoQueuePushResult {
+                request_key_frame: false,
+                dropped_frames: 1,
+            };
         }
+        let mut dropped_frames = 0;
         if self.video.len() == VIDEO_PACKET_CAPACITY {
+            dropped_frames = self.video.len() as u64;
             self.video.clear();
             if !frame.key_frame {
                 self.awaiting_key_frame = true;
-                return true;
+                return VideoQueuePushResult {
+                    request_key_frame: true,
+                    dropped_frames: dropped_frames + 1,
+                };
             }
         }
         self.awaiting_key_frame = false;
         self.video.push_back(frame);
-        false
+        VideoQueuePushResult {
+            request_key_frame: false,
+            dropped_frames,
+        }
     }
 
     pub(super) fn push_audio(&mut self, payload: Vec<u8>) {
@@ -86,6 +111,29 @@ mod tests {
         assert!(queues.pop_video().is_none());
         assert!(!queues.push_video(frame(11, true)));
         assert_eq!(queues.pop_video().unwrap().payload, vec![11]);
+    }
+
+    #[test]
+    fn video_overflow_reports_only_pending_queue_drops() {
+        let mut queues = WindowsMediaPacketQueues::default();
+        for index in 0..VIDEO_PACKET_CAPACITY {
+            assert_eq!(
+                queues.push_video_with_result(frame(index as u8, index == 0)),
+                VideoQueuePushResult::default()
+            );
+        }
+
+        let overflow = queues.push_video_with_result(frame(9, false));
+        assert_eq!(overflow.dropped_frames, VIDEO_PACKET_CAPACITY as u64 + 1);
+        assert!(overflow.request_key_frame);
+
+        let stale_delta = queues.push_video_with_result(frame(10, false));
+        assert_eq!(stale_delta.dropped_frames, 1);
+        assert!(!stale_delta.request_key_frame);
+
+        let repair = queues.push_video_with_result(frame(11, true));
+        assert_eq!(repair.dropped_frames, 0);
+        assert!(!repair.request_key_frame);
     }
 
     #[test]

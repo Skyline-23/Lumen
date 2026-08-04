@@ -109,11 +109,13 @@ public struct LumenEncodedCaptureSessionStatistics: Equatable, Sendable {
     var incompleteSourceFrameCount: UInt64 = 0
     var submittedFrameCount: UInt64 = 0
     var pendingAdmissionDropCount: UInt64 = 0
+    var intentionalFrameCadenceDropCount: UInt64 = 0
     var maximumInflightFrameCount: Int = 0
     var lastErrorDescription: String?
     var isRunning = false
     var minOutputCallbackLatencyMilliseconds: Double?
     var maxOutputCallbackLatencyMilliseconds: Double?
+    var adaptiveTargetFrameRate: Int?
     var appliedVideoBitRateKbps: Int?
     var estimatedOutputBitrateKbps: Double?
     var notes: [String] = []
@@ -192,6 +194,7 @@ struct LumenCaptureStageTimingAccumulator: Equatable, Sendable {
     private(set) var totalMilliseconds = 0.0
     private(set) var minimumMilliseconds: Double?
     private(set) var maximumMilliseconds: Double?
+    private(set) var latestMilliseconds: Double?
 
     var averageMilliseconds: Double? {
         guard sampleCount > 0 else { return nil }
@@ -204,6 +207,7 @@ struct LumenCaptureStageTimingAccumulator: Equatable, Sendable {
         totalMilliseconds += milliseconds
         minimumMilliseconds = min(minimumMilliseconds ?? milliseconds, milliseconds)
         maximumMilliseconds = max(maximumMilliseconds ?? milliseconds, milliseconds)
+        latestMilliseconds = milliseconds
     }
 }
 
