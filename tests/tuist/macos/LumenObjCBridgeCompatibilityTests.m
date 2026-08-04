@@ -5,7 +5,22 @@
 static BOOL LumenDisplayExistedBeforeModeCreation = NO;
 
 @interface LumenMacVirtualDisplay (LumenModeUpdateTesting)
+- (BOOL)configureWithConfiguration:(LumenMacVirtualDisplayConfiguration *)configuration
+                             error:(NSError **)error;
 - (BOOL)applyVirtualDisplaySettings:(id)settings;
+- (nullable id)createModeWithLogicalWidth:(uint32_t)logicalWidth
+                            logicalHeight:(uint32_t)logicalHeight
+                              refreshRate:(double)refreshRate
+                                 transfer:(LumenMacVirtualDisplayTransfer)transfer
+                               hdrEnabled:(BOOL)hdrEnabled
+                                    error:(NSError **)error;
+@end
+
+@interface LumenVirtualDisplaySettingsProbe : NSObject
+@property(nonatomic, copy) NSArray *modes;
+@end
+
+@implementation LumenVirtualDisplaySettingsProbe
 @end
 
 @interface LumenVirtualDisplayConstructionOrderProbe : LumenMacVirtualDisplay
@@ -45,6 +60,46 @@ static BOOL LumenDisplayExistedBeforeModeCreation = NO;
     return NO;
   }
   return [super applyVirtualDisplaySettings:settings];
+}
+
+@end
+
+@interface LumenVirtualDisplayRejectedStateProbe : LumenVirtualDisplayRejectedUpdateProbe
+@end
+
+@implementation LumenVirtualDisplayRejectedStateProbe
+
+- (BOOL)configureWithConfiguration:(LumenMacVirtualDisplayConfiguration *)configuration
+                             error:(NSError **)error {
+  (void)error;
+  id initialMode = [[NSObject alloc] init];
+  LumenVirtualDisplaySettingsProbe *settings =
+    [[LumenVirtualDisplaySettingsProbe alloc] init];
+  settings.modes = @[initialMode];
+  [self setValue:[[NSObject alloc] init] forKey:@"display"];
+  [self setValue:@(configuration.backingWidth) forKey:@"maximumBackingWidth"];
+  [self setValue:@(configuration.backingHeight) forKey:@"maximumBackingHeight"];
+  [self setValue:@(configuration.logicalWidth) forKey:@"logicalWidth"];
+  [self setValue:@(configuration.logicalHeight) forKey:@"logicalHeight"];
+  [self setValue:@(configuration.refreshRate) forKey:@"refreshRate"];
+  [self setValue:initialMode forKey:@"mode"];
+  [self setValue:settings forKey:@"settings"];
+  return YES;
+}
+
+- (nullable id)createModeWithLogicalWidth:(uint32_t)logicalWidth
+                            logicalHeight:(uint32_t)logicalHeight
+                              refreshRate:(double)refreshRate
+                                 transfer:(LumenMacVirtualDisplayTransfer)transfer
+                               hdrEnabled:(BOOL)hdrEnabled
+                                    error:(NSError **)error {
+  (void)logicalWidth;
+  (void)logicalHeight;
+  (void)refreshRate;
+  (void)transfer;
+  (void)hdrEnabled;
+  (void)error;
+  return [[NSObject alloc] init];
 }
 
 @end
@@ -98,10 +153,6 @@ static BOOL LumenDisplayExistedBeforeModeCreation = NO;
 }
 
 - (void)testRejectedVirtualDisplayModeUpdatePreservesCommittedState {
-  if (![LumenMacVirtualDisplay isSupported]) {
-    XCTSkip(@"CGVirtualDisplay is unavailable on this runtime");
-  }
-
   LumenMacVirtualDisplayConfiguration *configuration =
     [[LumenMacVirtualDisplayConfiguration alloc] init];
   configuration.name = @"Lumen Rejected Mode Update Probe";
@@ -112,15 +163,15 @@ static BOOL LumenDisplayExistedBeforeModeCreation = NO;
   configuration.refreshRate = 60;
 
   NSError *error = nil;
-  LumenVirtualDisplayRejectedUpdateProbe *display =
-    [[LumenVirtualDisplayRejectedUpdateProbe alloc]
+  LumenVirtualDisplayRejectedStateProbe *display =
+    [[LumenVirtualDisplayRejectedStateProbe alloc]
       initWithConfiguration:configuration
                       error:&error];
   XCTAssertNotNil(display);
   XCTAssertNil(error);
 
   id initialMode = [display valueForKey:@"mode"];
-  id settings = [display valueForKey:@"settings"];
+  LumenVirtualDisplaySettingsProbe *settings = [display valueForKey:@"settings"];
   display.rejectNextSettings = YES;
   XCTAssertFalse(
     [display updateLogicalWidth:800
@@ -130,7 +181,7 @@ static BOOL LumenDisplayExistedBeforeModeCreation = NO;
   );
   XCTAssertNotNil(error);
   XCTAssertEqual([display valueForKey:@"mode"], initialMode);
-  XCTAssertEqualObjects([[settings valueForKey:@"modes"] firstObject], initialMode);
+  XCTAssertEqualObjects(settings.modes.firstObject, initialMode);
   XCTAssertEqual([[display valueForKey:@"logicalWidth"] unsignedIntValue], 640u);
   XCTAssertEqual([[display valueForKey:@"logicalHeight"] unsignedIntValue], 360u);
 
