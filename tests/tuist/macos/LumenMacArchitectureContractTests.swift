@@ -75,6 +75,34 @@ struct LumenMacArchitectureContractTests {
         )
     }
 
+    @Test("Exact Tuist test preserves exact Tuist build app roots")
+    func exactTuistTestPreservesAllBuildEntries() throws {
+        let project = try String(
+            contentsOf: repositoryRoot().appendingPathComponent(
+                "src/platform/macos/Project.swift"
+            ),
+            encoding: .utf8
+        )
+        let testTargetStart = try #require(
+            project.range(of: "            name: \"LumenTuistTests\",")
+        )
+        let testTargetTail = project[testTargetStart.lowerBound...]
+        let testTargetEnd = try #require(
+            testTargetTail.range(of: "\n    ],\n    schemes: [")
+        )
+        let testTarget = testTargetTail[..<testTargetEnd.lowerBound]
+
+        #expect(testTarget.contains(#".target(name: "LumenApp", status: .none)"#))
+        #expect(
+            testTarget.contains(
+                #".target(name: "LumenDisplayDisconnectCanary", status: .none)"#
+            )
+        )
+        #expect(testTarget.contains(#""BUNDLE_LOADER": """#))
+        #expect(testTarget.contains(#""TEST_HOST": """#))
+        #expect(testTarget.contains(#""TEST_TARGET_NAME": """#))
+    }
+
     @Test("Release tags stay on their reviewed GitFlow branch")
     func releaseTagsRequireReviewedBranchAncestry() throws {
         let repositoryRoot = try repositoryRoot()
