@@ -1340,12 +1340,6 @@ struct VideoBootstrapClassification {
     requires_encoder_resume: bool,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum VideoKeyframeDelivery {
-    SameGenerationDatagram,
-    ReliableBootstrap(VideoBootstrapClassification),
-}
-
 #[derive(Debug, Eq, PartialEq)]
 enum VideoDatagramDeadlineError {
     InvalidWireBudget,
@@ -1523,20 +1517,13 @@ fn classify_video_keyframe_delivery(
     has_acknowledged_generation: bool,
     repair_keyframe: bool,
     platform_requires_acknowledgement: bool,
-) -> VideoKeyframeDelivery {
-    let bootstrap = classify_video_bootstrap(
+) -> VideoBootstrapClassification {
+    classify_video_bootstrap(
         has_new_configuration,
         has_acknowledged_generation,
         repair_keyframe,
         platform_requires_acknowledgement,
-    );
-    if bootstrap.reason == NativeVideoBootstrapReason::Periodic
-        && !platform_requires_acknowledgement
-    {
-        VideoKeyframeDelivery::SameGenerationDatagram
-    } else {
-        VideoKeyframeDelivery::ReliableBootstrap(bootstrap)
-    }
+    )
 }
 
 impl VideoSenderState {
@@ -1823,55 +1810,46 @@ async fn poll_and_send_video(
         return MediaAttempt::Dropped;
     }
     let frame_id = sender.frame_id;
-    let mut same_generation_periodic_keyframe = false;
     if normalized.frame.key_frame {
-        let delivery_kind = classify_video_keyframe_delivery(
+        let classification = classify_video_keyframe_delivery(
             normalized.new_configuration.is_some(),
             delivery.acknowledged_generation_id.is_some(),
             normalized.frame.repair_keyframe,
             normalized.frame.requires_bootstrap_acknowledgement,
         );
-        match delivery_kind {
-            VideoKeyframeDelivery::SameGenerationDatagram => {
-                same_generation_periodic_keyframe = true;
-                eprintln!(
-                    "Lumen object delivery stage=periodic-keyframe-datagram session-epoch={} generation-id={} frame-id={frame_id}",
-                    delivery.session_epoch,
-                    delivery.acknowledged_generation_id.unwrap_or_default()
-                );
-            }
-            VideoKeyframeDelivery::ReliableBootstrap(classification) => {
-                let published = router.lock().ok().and_then(|mut router| {
-                    router.publish_native_video_bootstrap(
-                        normalized.configuration_id,
-                        frame_id,
-                        timestamp_to_microseconds(normalized.frame.presentation_time_90khz, 90_000),
-                        classification.reason,
-                        classification.requires_encoder_resume,
-                        normalized.frame.payload.clone(),
-                    )
-                });
-                if published.is_none() {
-                    return MediaAttempt::Waiting;
-                }
-                sender.frame_id = match frame_id.checked_add(1) {
-                    Some(next) => next,
-                    None => {
-                        return MediaAttempt::Failed(video_failure(
-                            "packetizer-failed",
-                            "video frame id exhausted".to_owned(),
-                        ))
-                    }
-                };
-                sender.pending_frame = None;
-                sender.pending_since = None;
-                if classification.reason == NativeVideoBootstrapReason::Repair {
-                    sender.repair_required = false;
-                }
-                return MediaAttempt::Waiting;
-            }
+        let published = router.lock().ok().and_then(|mut router| {
+            router.publish_native_video_bootstrap(
+                normalized.configuration_id,
+                frame_id,
+                timestamp_to_microseconds(normalized.frame.presentation_time_90khz, 90_000),
+                classification.reason,
+                classification.requires_encoder_resume,
+                normalized.frame.payload.clone(),
+            )
+        });
+        if published.is_none() {
+            return MediaAttempt::Waiting;
         }
+        sender.frame_id = match frame_id.checked_add(1) {
+            Some(next) => next,
+            None => {
+                return MediaAttempt::Failed(video_failure(
+                    "packetizer-failed",
+                    "video frame id exhausted".to_owned(),
+                ))
+            }
+        };
+        sender.pending_frame = None;
+        sender.pending_since = None;
+        if classification.reason == NativeVideoBootstrapReason::Repair {
+            sender.repair_required = false;
+        }
+        return MediaAttempt::Waiting;
     }
+
+    // Reference frames return through the independent reliable bootstrap
+    // stream above. The DATAGRAM path below therefore carries deltas only.
+    let same_generation_periodic_keyframe = false;
 
     let Some(generation_id) = delivery.acknowledged_generation_id else {
         return MediaAttempt::Waiting;
@@ -2184,8 +2162,8 @@ mod tests {
         DatagramBatchDropReason, DatagramBatchMode, DatagramBatchStatus, DatagramDeadlineElapsed,
         DatagramSendOutcome, PacketArrivalHistoryWarningReporter, PacketArrivalSendObservation,
         SessionDelivery, VideoBootstrapClassification, VideoDatagramCompletion,
-        VideoDatagramDeadlineError, VideoDatagramPacing, VideoKeyframeDelivery, VideoSenderState,
-        VideoWireRatePacer, MAXIMUM_VIDEO_WIRE_BURST_DATAGRAMS, MAXIMUM_VIDEO_WIRE_CREDIT_DURATION,
+        VideoDatagramDeadlineError, VideoDatagramPacing, VideoSenderState, VideoWireRatePacer,
+        MAXIMUM_VIDEO_WIRE_BURST_DATAGRAMS, MAXIMUM_VIDEO_WIRE_CREDIT_DURATION,
     };
     use lumen_engine::{
         native_video_packetization_plan, MediaFeedback, NativeVideoBootstrapReason,
@@ -2871,17 +2849,20 @@ mod tests {
     }
 
     #[test]
-    fn periodic_keyframes_stay_in_generation_while_lifecycle_keyframes_remain_bootstraps() {
+    fn every_keyframe_uses_the_reliable_bootstrap_lane() {
         assert_eq!(
             classify_video_keyframe_delivery(false, true, false, false),
-            VideoKeyframeDelivery::SameGenerationDatagram
+            VideoBootstrapClassification {
+                reason: NativeVideoBootstrapReason::Periodic,
+                requires_encoder_resume: false,
+            }
         );
         assert_eq!(
             classify_video_keyframe_delivery(false, true, false, true),
-            VideoKeyframeDelivery::ReliableBootstrap(VideoBootstrapClassification {
+            VideoBootstrapClassification {
                 reason: NativeVideoBootstrapReason::Periodic,
                 requires_encoder_resume: true,
-            })
+            }
         );
 
         for (actual, expected_reason, expected_resume) in [
@@ -2903,10 +2884,10 @@ mod tests {
         ] {
             assert_eq!(
                 actual,
-                VideoKeyframeDelivery::ReliableBootstrap(VideoBootstrapClassification {
+                VideoBootstrapClassification {
                     reason: expected_reason,
                     requires_encoder_resume: expected_resume,
-                })
+                }
             );
         }
     }
