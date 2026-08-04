@@ -51,6 +51,7 @@ pub(super) struct NativeIddCxCapture {
 pub(super) struct NativeCapturedFrame {
     release: IDXGIKeyedMutex,
     texture: ID3D11Texture2D,
+    pub(super) presentation_time_90khz: u32,
 }
 
 struct NativeSharedSurface {
@@ -178,6 +179,7 @@ impl NativeIddCxCapture {
         let frame = NativeCapturedFrame {
             release: surface.keyed_mutex.clone(),
             texture: surface.texture.clone(),
+            presentation_time_90khz: record.presentation_time_90khz,
         };
         if let Err(error) = frame.validate() {
             drop(frame);

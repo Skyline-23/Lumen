@@ -85,3 +85,31 @@ fn windows_bitrate_updates_are_fenced_by_the_active_session_epoch() {
     assert!(MEDIA.contains("state.video_session_epoch != Some(session_epoch)"));
     assert!(!MEDIA.contains("let session_epoch = lifecycle.session_epoch.take()"));
 }
+
+#[test]
+fn windows_capture_uses_shared_cadence_policy_and_vfr_capture_timestamps() {
+    assert!(VIDEO.contains("LumenAdaptiveFrameCadenceController"));
+    assert!(VIDEO.contains("LumenAdaptiveFrameCadenceObservation"));
+    assert!(VIDEO.contains("effective_target_frame_rate"));
+    assert!(VIDEO.contains("capture_timestamp_hns"));
+    assert!(VIDEO.contains("capture_timestamp_step_is_forward"));
+    assert!(VIDEO.contains("last_source_timestamp_90khz"));
+    assert!(VIDEO.contains("unwrapped_source_timestamp_90khz"));
+    assert!(VIDEO.contains("MAX_MEDIA_FOUNDATION_FRAME_DURATION_HNS"));
+    assert!(VIDEO.contains("admitted_timestamp_and_duration"));
+    assert!(VIDEO.contains("pending_drop_count"));
+    assert!(VIDEO.contains("record_sink_result"));
+
+    let encode = VIDEO
+        .split("fn encode_next(")
+        .nth(1)
+        .expect("Windows adaptive encode loop")
+        .split("fn source_timestamp_hns")
+        .next()
+        .unwrap();
+    assert!(encode.contains("cadence_admission.admits"));
+    assert!(!encode.contains("take_admitted_video_timestamp"));
+
+    assert!(CAPTURE.contains("presentation_time_90khz: record.presentation_time_90khz"));
+    assert!(MEDIA.contains("pending_drop_count: result.dropped_frames"));
+}
