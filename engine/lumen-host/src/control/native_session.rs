@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -13,6 +15,7 @@ use lumen_engine::{
     NativeVideoProfile, SessionStarted, SessionStopped, StartSessionAck, StopSession,
     VideoBootstrap, VideoBootstrapResult, VideoKeyframeRequest, NATIVE_VIDEO_STREAM_ID,
 };
+use tokio::sync::Notify;
 
 use super::{
     AdaptiveVideoDecision, AdaptiveVideoDeliveryController, AudioDeliveryState, ControlRouter,
@@ -33,6 +36,7 @@ const ERROR_SESSION_CONFLICT: u32 = 5;
 const ERROR_PLATFORM: u32 = 7;
 const ERROR_SESSION_STATE: u32 = 8;
 const NATIVE_MEDIA_FEEDBACK_WINDOW_MILLISECONDS: u32 = 250;
+const MAX_RETIRED_VIDEO_BOOTSTRAPS: usize = 8;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct NativeConnectionContext {
@@ -110,6 +114,7 @@ impl NativeMediaFeedbackRejection {
 pub(super) struct NativeSessionState {
     pending: Option<PendingNativeSession>,
     next_start_token: u64,
+    next_display_reconfiguration_token: u64,
 }
 
 #[derive(Debug)]
@@ -118,6 +123,7 @@ struct PendingNativeSession {
     plan: HostSessionPlan,
     active: bool,
     start_reservation: Option<NativeStartReservationState>,
+    display_reconfiguration: Option<NativeDisplayReconfigurationState>,
     session_cleanup_pending: bool,
     application_started: bool,
     codec_configuration: Option<CodecConfiguration>,
@@ -127,6 +133,8 @@ struct PendingNativeSession {
     video_bootstrap_sent: bool,
     video_bootstrap_requires_encoder_resume: bool,
     acknowledged_generation_id: Option<u32>,
+    retired_video_bootstraps: VecDeque<NativeVideoBootstrapIdentity>,
+    retired_video_bootstrap_generation_watermark: u32,
     video_bootstrap_failure: Option<String>,
     last_video_bootstrap_acknowledgement: Option<VideoBootstrapResult>,
     next_generation_id: u32,
@@ -137,6 +145,91 @@ struct PendingNativeSession {
     adaptive_policy_lane: AdaptiveVideoPolicyLane,
     next_feedback_window_id: u64,
     pending_feedback_window: Option<PendingMediaFeedbackWindow>,
+}
+
+#[derive(Debug)]
+struct NativeDisplayReconfigurationState {
+    token: u64,
+    revision: u64,
+    cancelled: Arc<AtomicBool>,
+    completed: Arc<AtomicBool>,
+    completed_notify: Arc<Notify>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct NativeDisplayReconfigurationReservation {
+    request_id: u64,
+    session_epoch: u32,
+    revision: u64,
+    token: u64,
+    hello: ClientSessionHello,
+    plan: HostSessionPlan,
+    adaptive_video: AdaptiveVideoDeliveryController,
+    platform_plan: PlatformSessionPlan,
+    cancelled: Arc<AtomicBool>,
+    completed: Arc<AtomicBool>,
+    completed_notify: Arc<Notify>,
+}
+
+impl NativeDisplayReconfigurationReservation {
+    pub(crate) fn execute(
+        &self,
+        platform: &dyn crate::PlatformSessionControl,
+    ) -> Result<(), String> {
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            platform.reconfigure_session(self.platform_plan)
+        }))
+        .map_err(|_| "platform display reconfiguration panicked".to_owned())
+        .and_then(|result| result);
+        self.completed.store(true, Ordering::Release);
+        self.completed_notify.notify_waiters();
+        result
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct NativeVideoBootstrapIdentity {
+    session_epoch: u32,
+    stream_id: u32,
+    configuration_id: u32,
+    generation_id: u32,
+    frame_id: u32,
+}
+
+impl NativeVideoBootstrapIdentity {
+    fn from_bootstrap(bootstrap: &VideoBootstrap) -> Self {
+        Self {
+            session_epoch: bootstrap.session_epoch,
+            stream_id: bootstrap.stream_id,
+            configuration_id: bootstrap.configuration_id,
+            generation_id: bootstrap.generation_id,
+            frame_id: bootstrap.frame_id,
+        }
+    }
+
+    fn matches_result(self, result: &VideoBootstrapResult) -> bool {
+        self.session_epoch == result.session_epoch
+            && self.stream_id == result.stream_id
+            && self.configuration_id == result.configuration_id
+            && self.generation_id == result.generation_id
+            && self.frame_id == result.frame_id
+    }
+}
+
+impl PendingNativeSession {
+    fn retire_video_bootstrap(&mut self, bootstrap: VideoBootstrap) {
+        let identity = NativeVideoBootstrapIdentity::from_bootstrap(&bootstrap);
+        if self.retired_video_bootstraps.contains(&identity) {
+            return;
+        }
+        self.retired_video_bootstraps.push_back(identity);
+        self.retired_video_bootstrap_generation_watermark = self
+            .retired_video_bootstrap_generation_watermark
+            .max(identity.generation_id);
+        while self.retired_video_bootstraps.len() > MAX_RETIRED_VIDEO_BOOTSTRAPS {
+            self.retired_video_bootstraps.pop_front();
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -393,33 +486,50 @@ impl ControlRouter {
         request: DisplayReconfigurationRequest,
         context: &NativeConnectionContext,
     ) -> Vec<HostControlEnvelope> {
+        let reservation =
+            match self.reserve_native_display_reconfiguration(request_id, request, context) {
+                Ok(reservation) => reservation,
+                Err(responses) => return responses,
+            };
+        let result = self.platform.reconfigure_session(reservation.platform_plan);
+        self.complete_native_display_reconfiguration(reservation, result)
+    }
+
+    pub(crate) fn reserve_native_display_reconfiguration(
+        &mut self,
+        request_id: u64,
+        request: DisplayReconfigurationRequest,
+        context: &NativeConnectionContext,
+    ) -> Result<NativeDisplayReconfigurationReservation, Vec<HostControlEnvelope>> {
         let Some(pending) = self.native.pending.as_ref() else {
-            return vec![native_error(
+            return Err(vec![native_error(
                 request_id,
                 ERROR_SESSION_STATE,
                 "native session has not been negotiated",
-            )];
+            )]);
         };
         if !pending.active
             || request.session_epoch != pending.plan.session_epoch
             || context.session_epoch != pending.plan.session_epoch
             || request.revision == 0
         {
-            return vec![native_error(
+            return Err(vec![native_error(
                 request_id,
                 ERROR_SESSION_STATE,
                 "display reconfiguration does not belong to the active session",
-            )];
+            )]);
         }
-        if request.revision <= pending.last_display_revision {
-            return vec![display_reconfiguration_result(
+        if pending.display_reconfiguration.is_some()
+            || request.revision <= pending.last_display_revision
+        {
+            return Err(vec![display_reconfiguration_result(
                 request_id,
                 request.session_epoch,
                 request.revision,
                 NativeDisplayReconfigurationResultCode::Superseded,
                 pending.plan.clone(),
                 "a newer display reconfiguration revision is already active".to_owned(),
-            )];
+            )]);
         }
 
         let mut hello = pending.hello.clone();
@@ -448,14 +558,14 @@ impl ControlRouter {
         ) {
             Ok(plan) => plan,
             Err(error) => {
-                return vec![display_reconfiguration_result(
+                return Err(vec![display_reconfiguration_result(
                     request_id,
                     request.session_epoch,
                     request.revision,
                     NativeDisplayReconfigurationResultCode::Rejected,
                     pending.plan.clone(),
                     error.message().to_owned(),
-                )]
+                )])
             }
         };
         plan.policy_revision = pending.plan.policy_revision.saturating_add(1);
@@ -482,55 +592,131 @@ impl ControlRouter {
         ) {
             Ok(plan) => plan,
             Err(error) => {
-                return vec![display_reconfiguration_result(
+                return Err(vec![display_reconfiguration_result(
                     request_id,
                     request.session_epoch,
                     request.revision,
                     NativeDisplayReconfigurationResultCode::Rejected,
                     pending.plan.clone(),
                     format!("dynamic platform session plan is invalid: {error}"),
-                )]
+                )])
             }
         };
-        if let Err(error) = self.platform.reconfigure_session(platform_plan) {
-            return vec![display_reconfiguration_result(
-                request_id,
-                request.session_epoch,
-                request.revision,
-                NativeDisplayReconfigurationResultCode::Rejected,
-                pending.plan.clone(),
-                error,
-            )];
+        self.native.next_display_reconfiguration_token = self
+            .native
+            .next_display_reconfiguration_token
+            .wrapping_add(1)
+            .max(1);
+        let token = self.native.next_display_reconfiguration_token;
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let completed = Arc::new(AtomicBool::new(false));
+        let completed_notify = Arc::new(Notify::new());
+        let pending = self
+            .native
+            .pending
+            .as_mut()
+            .expect("validated pending native session");
+        pending.display_reconfiguration = Some(NativeDisplayReconfigurationState {
+            token,
+            revision: request.revision,
+            cancelled: Arc::clone(&cancelled),
+            completed: Arc::clone(&completed),
+            completed_notify: Arc::clone(&completed_notify),
+        });
+        Ok(NativeDisplayReconfigurationReservation {
+            request_id,
+            session_epoch: plan.session_epoch,
+            revision: request.revision,
+            token,
+            hello,
+            plan,
+            adaptive_video,
+            platform_plan,
+            cancelled,
+            completed,
+            completed_notify,
+        })
+    }
+
+    pub(crate) fn complete_native_display_reconfiguration(
+        &mut self,
+        reservation: NativeDisplayReconfigurationReservation,
+        result: Result<(), String>,
+    ) -> Vec<HostControlEnvelope> {
+        let owns_reservation = self.native.pending.as_ref().is_some_and(|pending| {
+            pending.plan.session_epoch == reservation.session_epoch
+                && pending
+                    .display_reconfiguration
+                    .as_ref()
+                    .is_some_and(|state| {
+                        state.token == reservation.token && state.revision == reservation.revision
+                    })
+        });
+        if !owns_reservation {
+            return Vec::new();
         }
         let pending = self
             .native
             .pending
             .as_mut()
             .expect("validated pending native session");
-        pending.hello = hello;
-        pending.plan = plan.clone();
+        pending.display_reconfiguration = None;
+        if reservation.cancelled.load(Ordering::Acquire) || !pending.active {
+            return Vec::new();
+        }
+        if let Err(error) = result {
+            return vec![display_reconfiguration_result(
+                reservation.request_id,
+                reservation.session_epoch,
+                reservation.revision,
+                NativeDisplayReconfigurationResultCode::Rejected,
+                pending.plan.clone(),
+                error,
+            )];
+        }
+        pending.hello = reservation.hello;
+        pending.plan = reservation.plan.clone();
         pending.codec_configuration = None;
         pending.codec_configuration_sent = false;
         pending.acknowledged_configuration_id = None;
-        pending.video_bootstrap = None;
+        if let Some(bootstrap) = pending.video_bootstrap.take() {
+            pending.retire_video_bootstrap(bootstrap);
+        }
         pending.video_bootstrap_sent = false;
         pending.video_bootstrap_requires_encoder_resume = false;
         pending.acknowledged_generation_id = None;
         pending.repair_keyframe = RepairKeyframeState::Idle;
-        pending.adaptive_video = adaptive_video;
+        pending.adaptive_video = reservation.adaptive_video;
         pending.adaptive_policy_lane = AdaptiveVideoPolicyLane {
             revision: pending.adaptive_policy_lane.revision.wrapping_add(1),
             ..AdaptiveVideoPolicyLane::default()
         };
-        pending.last_display_revision = request.revision;
+        pending.last_display_revision = reservation.revision;
         vec![display_reconfiguration_result(
-            request_id,
-            request.session_epoch,
-            request.revision,
+            reservation.request_id,
+            reservation.session_epoch,
+            reservation.revision,
             NativeDisplayReconfigurationResultCode::Applied,
-            plan,
+            reservation.plan,
             String::new(),
         )]
+    }
+
+    pub(crate) fn native_display_reconfiguration_waiter(
+        &self,
+        session_epoch: u32,
+    ) -> Option<(Arc<Notify>, bool)> {
+        self.native.pending.as_ref().and_then(|pending| {
+            (pending.plan.session_epoch == session_epoch)
+                .then_some(pending.display_reconfiguration.as_ref())
+                .flatten()
+                .map(|state| {
+                    (
+                        Arc::clone(&state.completed_notify),
+                        state.completed.load(Ordering::Acquire),
+                    )
+                })
+        })
     }
 
     fn dispatch_native_video_keyframe_request(
@@ -697,6 +883,24 @@ impl ControlRouter {
             eprintln!(
                 "Lumen native media stage=video-bootstrap-result-ignored reason=duplicate-acknowledgement session-epoch={} generation-id={} request-id={request_id}",
                 result.session_epoch, result.generation_id
+            );
+            return Vec::new();
+        }
+        if pending
+            .retired_video_bootstraps
+            .iter()
+            .copied()
+            .any(|identity| identity.matches_result(&result))
+            || (result.session_epoch == pending.plan.session_epoch
+                && result.stream_id == pending.plan.video_stream_id
+                && result.generation_id <= pending.retired_video_bootstrap_generation_watermark)
+        {
+            eprintln!(
+                "Lumen native media stage=video-bootstrap-result-ignored reason=retired-bootstrap session-epoch={} configuration-id={} generation-id={} frame-id={} request-id={request_id}",
+                result.session_epoch,
+                result.configuration_id,
+                result.generation_id,
+                result.frame_id,
             );
             return Vec::new();
         }
@@ -1423,9 +1627,24 @@ impl ControlRouter {
             start.cancelled.store(true, Ordering::Release);
             return Ok(());
         }
+        if let Some(reconfiguration) = pending.display_reconfiguration.as_ref() {
+            // The control task may be aborted while its spawn_blocking worker is still inside
+            // the platform bridge. Do not race stop_session against that worker; the next
+            // bounded cleanup attempt finalizes the session after the worker publishes done.
+            reconfiguration.cancelled.store(true, Ordering::Release);
+            if !reconfiguration.completed.load(Ordering::Acquire) {
+                return Err(
+                    "native display reconfiguration cancellation is still pending".to_owned(),
+                );
+            }
+        }
+        let clear_reconfiguration = pending.display_reconfiguration.is_some();
         let session_cleanup_pending = pending.session_cleanup_pending;
         let application_started = pending.application_started;
         if let Some(pending) = self.native.pending.as_mut() {
+            if clear_reconfiguration {
+                pending.display_reconfiguration = None;
+            }
             pending.active = false;
             pending.adaptive_policy_lane = AdaptiveVideoPolicyLane {
                 revision: pending.adaptive_policy_lane.revision.wrapping_add(1),
@@ -1540,6 +1759,7 @@ impl ControlRouter {
             plan: plan.clone(),
             active: false,
             start_reservation: None,
+            display_reconfiguration: None,
             session_cleanup_pending: false,
             application_started: false,
             codec_configuration: None,
@@ -1549,6 +1769,8 @@ impl ControlRouter {
             video_bootstrap_sent: false,
             video_bootstrap_requires_encoder_resume: false,
             acknowledged_generation_id: None,
+            retired_video_bootstraps: VecDeque::new(),
+            retired_video_bootstrap_generation_watermark: 0,
             video_bootstrap_failure: None,
             last_video_bootstrap_acknowledgement: None,
             next_generation_id: 1,
@@ -1667,6 +1889,9 @@ impl ControlRouter {
         {
             return None;
         }
+        if let Some(bootstrap) = pending.video_bootstrap.take() {
+            pending.retire_video_bootstrap(bootstrap);
+        }
         let generation_id = pending.next_generation_id;
         pending.next_generation_id = generation_id.checked_add(1)?;
         pending.acknowledged_generation_id = None;
@@ -1722,7 +1947,30 @@ impl ControlRouter {
         self.native.pending.as_ref().is_some_and(|pending| {
             pending.active
                 && pending.plan.session_epoch == session_epoch
-                && pending.acknowledged_generation_id == Some(generation_id)
+                && (pending.acknowledged_generation_id == Some(generation_id)
+                    || pending
+                        .last_video_bootstrap_acknowledgement
+                        .as_ref()
+                        .is_some_and(|result| {
+                            result.session_epoch == session_epoch
+                                && result.generation_id == generation_id
+                        }))
+        })
+    }
+
+    pub(crate) fn native_video_bootstrap_is_obsolete(
+        &self,
+        session_epoch: u32,
+        generation_id: u32,
+    ) -> bool {
+        self.native.pending.as_ref().is_some_and(|pending| {
+            pending.plan.session_epoch == session_epoch
+                && (pending.retired_video_bootstrap_generation_watermark != 0
+                    && generation_id <= pending.retired_video_bootstrap_generation_watermark
+                    || pending.retired_video_bootstraps.iter().any(|identity| {
+                        identity.session_epoch == session_epoch
+                            && identity.generation_id == generation_id
+                    }))
         })
     }
 

@@ -1400,6 +1400,321 @@ fn newer_bootstrap_replaces_an_obsolete_unacknowledged_generation() {
 }
 
 #[test]
+fn display_reconfiguration_retires_inflight_bootstrap_and_allows_a_new_generation() {
+    let platform = Arc::new(RecordingPlatformSessionControl::default());
+    let (_root, mut router, context, plan) = configured_native_router(platform.clone());
+    let first_generation = router
+        .publish_native_video_bootstrap(
+            plan.video_configuration_id,
+            1,
+            900,
+            NativeVideoBootstrapReason::Initial,
+            true,
+            vec![1, 2, 3],
+        )
+        .unwrap();
+    let first = router
+        .take_native_video_bootstrap(context.session_epoch)
+        .unwrap();
+
+    let responses = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 9,
+            payload: Some(client_control_envelope::Payload::DisplayReconfiguration(
+                DisplayReconfigurationRequest {
+                    session_epoch: context.session_epoch,
+                    revision: 8,
+                    width: 2_160,
+                    height: 3_840,
+                    refresh_millihz: 120_000,
+                    sink_hidpi: true,
+                    sink_scale_explicit: true,
+                    sink_mode_is_logical: true,
+                    sink_scale_percent: 200,
+                },
+            )),
+        },
+        &context,
+    );
+    let Some(host_control_envelope::Payload::DisplayReconfiguration(reconfigured)) =
+        responses[0].payload.as_ref()
+    else {
+        panic!("expected display reconfiguration result");
+    };
+    assert_eq!(
+        NativeDisplayReconfigurationResultCode::try_from(reconfigured.result).unwrap(),
+        NativeDisplayReconfigurationResultCode::Applied
+    );
+    assert!(router.native_video_bootstrap_is_obsolete(context.session_epoch, first_generation));
+
+    let late = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 10,
+            payload: Some(client_control_envelope::Payload::VideoBootstrapResult(
+                VideoBootstrapResult {
+                    session_epoch: first.session_epoch,
+                    stream_id: first.stream_id,
+                    configuration_id: first.configuration_id,
+                    generation_id: first.generation_id,
+                    frame_id: first.frame_id,
+                    result: NativeVideoBootstrapResultCode::Decoded as i32,
+                    message: String::new(),
+                },
+            )),
+        },
+        &context,
+    );
+    assert!(
+        late.is_empty(),
+        "retired bootstrap results must be harmless"
+    );
+    assert!(
+        platform.control_events.lock().unwrap().is_empty(),
+        "a retired bootstrap must never resume the old encoder"
+    );
+    let stale = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 13,
+            payload: Some(client_control_envelope::Payload::VideoBootstrapResult(
+                VideoBootstrapResult {
+                    session_epoch: first.session_epoch,
+                    stream_id: first.stream_id,
+                    configuration_id: first.configuration_id,
+                    generation_id: first.generation_id,
+                    frame_id: first.frame_id,
+                    result: NativeVideoBootstrapResultCode::Stale as i32,
+                    message: "superseded by display cutover".to_owned(),
+                },
+            )),
+        },
+        &context,
+    );
+    assert!(stale.is_empty(), "retired stale results must be harmless");
+
+    let new_plan = reconfigured.plan.as_ref().unwrap();
+    let configuration = CodecConfiguration {
+        session_epoch: context.session_epoch,
+        stream_id: new_plan.video_stream_id,
+        configuration_id: new_plan.video_configuration_id,
+        codec: new_plan.selected_video_format().unwrap().codec,
+        decoder_configuration_record: vec![4, 5, 6],
+    };
+    assert!(router.publish_native_codec_configuration(configuration.clone()));
+    assert_eq!(
+        router.take_native_codec_configuration(context.session_epoch),
+        Some(configuration.clone())
+    );
+    assert!(router
+        .dispatch_native_control(
+            ClientControlEnvelope {
+                request_id: 11,
+                payload: Some(client_control_envelope::Payload::CodecConfigurationAck(
+                    CodecConfigurationAck {
+                        session_epoch: context.session_epoch,
+                        stream_id: configuration.stream_id,
+                        configuration_id: configuration.configuration_id,
+                    },
+                )),
+            },
+            &context,
+        )
+        .is_empty());
+    let second_generation = router
+        .publish_native_video_bootstrap(
+            new_plan.video_configuration_id,
+            2,
+            1_800,
+            NativeVideoBootstrapReason::Initial,
+            true,
+            vec![7, 8, 9],
+        )
+        .unwrap();
+    let second = router
+        .take_native_video_bootstrap(context.session_epoch)
+        .unwrap();
+    assert!(second_generation > first_generation);
+    assert!(router
+        .dispatch_native_control(
+            ClientControlEnvelope {
+                request_id: 12,
+                payload: Some(client_control_envelope::Payload::VideoBootstrapResult(
+                    VideoBootstrapResult {
+                        session_epoch: second.session_epoch,
+                        stream_id: second.stream_id,
+                        configuration_id: second.configuration_id,
+                        generation_id: second.generation_id,
+                        frame_id: second.frame_id,
+                        result: NativeVideoBootstrapResultCode::Decoded as i32,
+                        message: String::new(),
+                    },
+                )),
+            },
+            &context,
+        )
+        .is_empty());
+    assert_eq!(
+        router
+            .video_delivery_state()
+            .unwrap()
+            .acknowledged_generation_id,
+        Some(second_generation)
+    );
+    assert_eq!(
+        platform
+            .control_events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, event)| {
+                *event == PlatformControlEvent::ResumeVideoEncodingAfterCodecAck
+            })
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn retired_bootstrap_generation_watermark_survives_identity_eviction() {
+    let platform = Arc::new(RecordingPlatformSessionControl::default());
+    let (_root, mut router, context, initial_plan) = configured_native_router(platform.clone());
+    let first_generation = router
+        .publish_native_video_bootstrap(
+            initial_plan.video_configuration_id,
+            1,
+            900,
+            NativeVideoBootstrapReason::Initial,
+            true,
+            vec![1, 2, 3],
+        )
+        .unwrap();
+    let first = router
+        .take_native_video_bootstrap(context.session_epoch)
+        .unwrap();
+    for revision in 1_u64..=12 {
+        let responses = router.dispatch_native_control(
+            ClientControlEnvelope {
+                request_id: revision * 3,
+                payload: Some(client_control_envelope::Payload::DisplayReconfiguration(
+                    DisplayReconfigurationRequest {
+                        session_epoch: context.session_epoch,
+                        revision,
+                        width: 2_160,
+                        height: 3_840,
+                        refresh_millihz: 120_000,
+                        sink_hidpi: true,
+                        sink_scale_explicit: true,
+                        sink_mode_is_logical: true,
+                        sink_scale_percent: 200,
+                    },
+                )),
+            },
+            &context,
+        );
+        let Some(host_control_envelope::Payload::DisplayReconfiguration(result)) =
+            responses[0].payload.as_ref()
+        else {
+            panic!("expected display reconfiguration result");
+        };
+        assert_eq!(
+            NativeDisplayReconfigurationResultCode::try_from(result.result).unwrap(),
+            NativeDisplayReconfigurationResultCode::Applied
+        );
+        let plan = result.plan.clone().unwrap();
+
+        let configuration = CodecConfiguration {
+            session_epoch: context.session_epoch,
+            stream_id: plan.video_stream_id,
+            configuration_id: plan.video_configuration_id,
+            codec: plan.selected_video_format().unwrap().codec,
+            decoder_configuration_record: vec![revision as u8, 5, 6],
+        };
+        assert!(router.publish_native_codec_configuration(configuration.clone()));
+        assert_eq!(
+            router.take_native_codec_configuration(context.session_epoch),
+            Some(configuration.clone())
+        );
+        assert!(router
+            .dispatch_native_control(
+                ClientControlEnvelope {
+                    request_id: revision * 3 + 1,
+                    payload: Some(client_control_envelope::Payload::CodecConfigurationAck(
+                        CodecConfigurationAck {
+                            session_epoch: context.session_epoch,
+                            stream_id: configuration.stream_id,
+                            configuration_id: configuration.configuration_id,
+                        },
+                    )),
+                },
+                &context,
+            )
+            .is_empty());
+        let generation = router
+            .publish_native_video_bootstrap(
+                plan.video_configuration_id,
+                u32::try_from(revision + 1).unwrap(),
+                u32::try_from(900 + revision * 900).unwrap(),
+                NativeVideoBootstrapReason::Initial,
+                true,
+                vec![7, 8, 9],
+            )
+            .unwrap();
+        assert!(generation > first_generation);
+        assert!(router
+            .take_native_video_bootstrap(context.session_epoch)
+            .is_some());
+    }
+
+    assert!(router.native_video_bootstrap_is_obsolete(context.session_epoch, first_generation));
+    let late = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 99,
+            payload: Some(client_control_envelope::Payload::VideoBootstrapResult(
+                VideoBootstrapResult {
+                    session_epoch: first.session_epoch,
+                    stream_id: first.stream_id,
+                    configuration_id: first.configuration_id,
+                    generation_id: first.generation_id,
+                    frame_id: first.frame_id,
+                    result: NativeVideoBootstrapResultCode::Decoded as i32,
+                    message: String::new(),
+                },
+            )),
+        },
+        &context,
+    );
+    assert!(late.is_empty());
+    let wrong_stream = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 100,
+            payload: Some(client_control_envelope::Payload::VideoBootstrapResult(
+                VideoBootstrapResult {
+                    session_epoch: first.session_epoch,
+                    stream_id: first.stream_id.saturating_add(1),
+                    configuration_id: first.configuration_id,
+                    generation_id: first.generation_id,
+                    frame_id: first.frame_id,
+                    result: NativeVideoBootstrapResultCode::Decoded as i32,
+                    message: String::new(),
+                },
+            )),
+        },
+        &context,
+    );
+    assert!(matches!(
+        wrong_stream
+            .first()
+            .and_then(|response| response.payload.as_ref()),
+        Some(host_control_envelope::Payload::Error(_))
+    ));
+    assert!(platform
+        .control_events
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|(_, event)| *event != PlatformControlEvent::ResumeVideoEncodingAfterCodecAck));
+}
+
+#[test]
 fn media_feedback_separates_wire_budget_from_pipeline_admission() {
     let platform = Arc::new(RecordingPlatformSessionControl::default());
     let (_root, mut router, context, plan) = started_native_router(platform);
