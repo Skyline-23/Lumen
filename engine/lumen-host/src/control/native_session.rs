@@ -37,6 +37,7 @@ const ERROR_PLATFORM: u32 = 7;
 const ERROR_SESSION_STATE: u32 = 8;
 const NATIVE_MEDIA_FEEDBACK_WINDOW_MILLISECONDS: u32 = 250;
 const MAX_RETIRED_VIDEO_BOOTSTRAPS: usize = 8;
+pub(crate) const MAX_VIDEO_BOOTSTRAP_RETRY_ATTEMPTS: u8 = 2;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct NativeConnectionContext {
@@ -132,6 +133,7 @@ struct PendingNativeSession {
     video_bootstrap: Option<VideoBootstrap>,
     video_bootstrap_sent: bool,
     video_bootstrap_requires_encoder_resume: bool,
+    video_bootstrap_retry_attempt: u8,
     acknowledged_generation_id: Option<u32>,
     retired_video_bootstraps: VecDeque<NativeVideoBootstrapIdentity>,
     retired_video_bootstrap_generation_watermark: u32,
@@ -196,6 +198,20 @@ struct NativeVideoBootstrapIdentity {
     frame_id: u32,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum NativeVideoBootstrapRetryDisposition {
+    Retried {
+        generation_id: u32,
+        attempt: u8,
+    },
+    Exhausted {
+        generation_id: u32,
+        attempts: u8,
+        message: String,
+    },
+    Obsolete,
+}
+
 impl NativeVideoBootstrapIdentity {
     fn from_bootstrap(bootstrap: &VideoBootstrap) -> Self {
         Self {
@@ -228,6 +244,72 @@ impl PendingNativeSession {
             .max(identity.generation_id);
         while self.retired_video_bootstraps.len() > MAX_RETIRED_VIDEO_BOOTSTRAPS {
             self.retired_video_bootstraps.pop_front();
+        }
+    }
+
+    fn retry_video_bootstrap(
+        &mut self,
+        generation_id: u32,
+        failure: &str,
+    ) -> NativeVideoBootstrapRetryDisposition {
+        let Some(current) = self.video_bootstrap.as_ref() else {
+            return NativeVideoBootstrapRetryDisposition::Obsolete;
+        };
+        if current.generation_id != generation_id {
+            return NativeVideoBootstrapRetryDisposition::Obsolete;
+        }
+        if self.video_bootstrap_retry_attempt >= MAX_VIDEO_BOOTSTRAP_RETRY_ATTEMPTS {
+            self.retire_video_bootstrap(current.clone());
+            let message = format!(
+                "video bootstrap recovery exhausted after {} retries for generation {generation_id}: {failure}",
+                MAX_VIDEO_BOOTSTRAP_RETRY_ATTEMPTS
+            );
+            self.video_bootstrap_failure = Some(message.clone());
+            return NativeVideoBootstrapRetryDisposition::Exhausted {
+                generation_id,
+                attempts: self.video_bootstrap_retry_attempt,
+                message,
+            };
+        }
+
+        let mut retry = current.clone();
+        self.retire_video_bootstrap(current.clone());
+        let next_generation_id = self.next_generation_id;
+        let Some(next_after_generation_id) = next_generation_id.checked_add(1) else {
+            let message = format!(
+                "video bootstrap recovery could not allocate a fresh generation after {generation_id}: generation id exhausted"
+            );
+            self.video_bootstrap_failure = Some(message.clone());
+            return NativeVideoBootstrapRetryDisposition::Exhausted {
+                generation_id,
+                attempts: self.video_bootstrap_retry_attempt,
+                message,
+            };
+        };
+        self.next_generation_id = next_after_generation_id;
+        retry.generation_id = next_generation_id;
+        self.video_bootstrap_retry_attempt += 1;
+        self.video_bootstrap_failure = None;
+        self.video_bootstrap_sent = false;
+        let repair_state = std::mem::replace(&mut self.repair_keyframe, RepairKeyframeState::Idle);
+        self.repair_keyframe = match repair_state {
+            RepairKeyframeState::AwaitingDecodedBootstrap {
+                request,
+                generation_id: pending_generation_id,
+                frame_id,
+            } if pending_generation_id == generation_id => {
+                RepairKeyframeState::AwaitingDecodedBootstrap {
+                    request,
+                    generation_id: next_generation_id,
+                    frame_id,
+                }
+            }
+            other => other,
+        };
+        self.video_bootstrap = Some(retry);
+        NativeVideoBootstrapRetryDisposition::Retried {
+            generation_id: next_generation_id,
+            attempt: self.video_bootstrap_retry_attempt,
         }
     }
 }
@@ -684,6 +766,7 @@ impl ControlRouter {
         }
         pending.video_bootstrap_sent = false;
         pending.video_bootstrap_requires_encoder_resume = false;
+        pending.video_bootstrap_retry_attempt = 0;
         pending.acknowledged_generation_id = None;
         pending.repair_keyframe = RepairKeyframeState::Idle;
         pending.adaptive_video = reservation.adaptive_video;
@@ -944,6 +1027,37 @@ impl ControlRouter {
             } else {
                 result.message.clone()
             };
+            if matches!(
+                result_code,
+                Some(
+                    NativeVideoBootstrapResultCode::DecoderRejected
+                        | NativeVideoBootstrapResultCode::Stale
+                )
+            ) {
+                let retry = pending.retry_video_bootstrap(result.generation_id, &message);
+                return match retry {
+                    NativeVideoBootstrapRetryDisposition::Retried {
+                        generation_id,
+                        attempt,
+                    } => {
+                        self.video_bootstrap_notify.notify_one();
+                        eprintln!(
+                            "Lumen native media stage=video-bootstrap-retry-scheduled session-epoch={} retired-generation-id={} generation-id={generation_id} attempt={attempt} reason={message}",
+                            result.session_epoch,
+                            result.generation_id,
+                        );
+                        Vec::new()
+                    }
+                    NativeVideoBootstrapRetryDisposition::Exhausted { message, .. } => {
+                        eprintln!(
+                            "Lumen native media stage=video-bootstrap-retry-exhausted session-epoch={} generation-id={} error={message}",
+                            result.session_epoch, result.generation_id
+                        );
+                        vec![native_error(request_id, ERROR_PLATFORM, message)]
+                    }
+                    NativeVideoBootstrapRetryDisposition::Obsolete => Vec::new(),
+                };
+            }
             pending.video_bootstrap_failure = Some(message.clone());
             return vec![native_error(request_id, ERROR_PLATFORM, message)];
         }
@@ -966,6 +1080,7 @@ impl ControlRouter {
         pending.video_bootstrap = None;
         pending.video_bootstrap_sent = false;
         pending.video_bootstrap_requires_encoder_resume = false;
+        pending.video_bootstrap_retry_attempt = 0;
         if matches!(
             pending.repair_keyframe,
             RepairKeyframeState::AwaitingDecodedBootstrap {
@@ -1768,6 +1883,7 @@ impl ControlRouter {
             video_bootstrap: None,
             video_bootstrap_sent: false,
             video_bootstrap_requires_encoder_resume: false,
+            video_bootstrap_retry_attempt: 0,
             acknowledged_generation_id: None,
             retired_video_bootstraps: VecDeque::new(),
             retired_video_bootstrap_generation_watermark: 0,
@@ -1897,6 +2013,7 @@ impl ControlRouter {
         pending.acknowledged_generation_id = None;
         pending.video_bootstrap_failure = None;
         pending.video_bootstrap_requires_encoder_resume = requires_encoder_resume;
+        pending.video_bootstrap_retry_attempt = 0;
         if reason == NativeVideoBootstrapReason::Repair {
             let request = match std::mem::take(&mut pending.repair_keyframe) {
                 RepairKeyframeState::Idle => None,
@@ -1937,6 +2054,34 @@ impl ControlRouter {
         let bootstrap = pending.video_bootstrap.clone()?;
         pending.video_bootstrap_sent = true;
         Some(bootstrap)
+    }
+
+    pub(crate) fn retry_native_video_bootstrap(
+        &mut self,
+        session_epoch: u32,
+        generation_id: u32,
+        failure: &str,
+    ) -> NativeVideoBootstrapRetryDisposition {
+        let Some(pending) = self.native.pending.as_mut() else {
+            return NativeVideoBootstrapRetryDisposition::Obsolete;
+        };
+        if pending.plan.session_epoch != session_epoch || !pending.active {
+            return NativeVideoBootstrapRetryDisposition::Obsolete;
+        }
+        let retry = pending.retry_video_bootstrap(generation_id, failure);
+        if matches!(retry, NativeVideoBootstrapRetryDisposition::Retried { .. }) {
+            self.video_bootstrap_notify.notify_one();
+        }
+        retry
+    }
+
+    pub(crate) fn native_video_bootstrap_retry_attempt(&self, session_epoch: u32) -> Option<u8> {
+        self.native.pending.as_ref().and_then(|pending| {
+            (pending.active
+                && pending.plan.session_epoch == session_epoch
+                && pending.video_bootstrap_retry_attempt > 0)
+                .then_some(pending.video_bootstrap_retry_attempt)
+        })
     }
 
     pub(crate) fn native_video_bootstrap_is_acknowledged(

@@ -1,5 +1,6 @@
 use super::native_session::{
     native_media_feedback_expected_datagrams, NativeMediaFeedbackRejection,
+    NativeVideoBootstrapRetryDisposition, MAX_VIDEO_BOOTSTRAP_RETRY_ATTEMPTS,
 };
 use super::*;
 use crate::{
@@ -1210,9 +1211,9 @@ fn decoded_bootstraps_resume_only_the_generation_that_owns_encoder_admission() {
 }
 
 #[test]
-fn decoder_rejected_bootstrap_returns_a_typed_platform_error_and_keeps_deltas_closed() {
+fn decoder_rejected_bootstrap_retries_the_same_idr_without_resuming_encoder() {
     let platform = Arc::new(RecordingPlatformSessionControl::default());
-    let (_root, mut router, context, plan) = configured_native_router(platform);
+    let (_root, mut router, context, plan) = configured_native_router(platform.clone());
     let generation_id = router
         .publish_native_video_bootstrap(
             plan.video_configuration_id,
@@ -1245,11 +1246,20 @@ fn decoder_rejected_bootstrap_returns_a_typed_platform_error_and_keeps_deltas_cl
         &context,
     );
 
-    let Some(host_control_envelope::Payload::Error(error)) = responses[0].payload.as_ref() else {
-        panic!("expected typed bootstrap rejection");
-    };
-    assert_eq!(error.code, 7);
-    assert_eq!(error.message, "hardware decoder rejected bootstrap");
+    assert!(
+        responses.is_empty(),
+        "a retryable decoder rejection is one-way"
+    );
+    let retry = router
+        .take_native_video_bootstrap(context.session_epoch)
+        .expect("decoder rejection must schedule a fresh bootstrap");
+    assert!(retry.generation_id > generation_id);
+    assert_eq!(retry.frame_id, 1);
+    assert_eq!(retry.access_unit, vec![9, 8, 7]);
+    assert_eq!(
+        router.native_video_bootstrap_retry_attempt(context.session_epoch),
+        Some(1)
+    );
     assert_eq!(
         router
             .video_delivery_state()
@@ -1257,6 +1267,220 @@ fn decoder_rejected_bootstrap_returns_a_typed_platform_error_and_keeps_deltas_cl
             .acknowledged_generation_id,
         None
     );
+    assert!(platform.control_events().is_empty());
+}
+
+#[test]
+fn bootstrap_timeout_retires_the_old_identity_and_schedules_a_fresh_generation() {
+    let platform = Arc::new(RecordingPlatformSessionControl::default());
+    let (_root, mut router, context, plan) = configured_native_router(platform);
+    let first_generation = router
+        .publish_native_video_bootstrap(
+            plan.video_configuration_id,
+            7,
+            900,
+            NativeVideoBootstrapReason::Repair,
+            true,
+            vec![1, 2, 3, 4],
+        )
+        .unwrap();
+    let first = router
+        .take_native_video_bootstrap(context.session_epoch)
+        .unwrap();
+
+    let retry = router.retry_native_video_bootstrap(
+        context.session_epoch,
+        first_generation,
+        "decode result timed out",
+    );
+    let NativeVideoBootstrapRetryDisposition::Retried {
+        generation_id: retry_generation,
+        attempt,
+    } = retry
+    else {
+        panic!("timeout must schedule a retry");
+    };
+    assert_eq!(attempt, 1);
+    assert!(retry_generation > first_generation);
+    assert!(router.native_video_bootstrap_is_obsolete(context.session_epoch, first_generation));
+
+    let retry_bootstrap = router
+        .take_native_video_bootstrap(context.session_epoch)
+        .expect("retry bootstrap must be available to the QUIC publisher");
+    assert_eq!(retry_bootstrap.generation_id, retry_generation);
+    assert_eq!(retry_bootstrap.frame_id, first.frame_id);
+    assert_eq!(retry_bootstrap.access_unit, first.access_unit);
+    assert_eq!(
+        router
+            .video_delivery_state()
+            .unwrap()
+            .acknowledged_generation_id,
+        None
+    );
+}
+
+#[test]
+fn decoded_ack_after_retry_wins_and_late_retired_result_is_harmless() {
+    let platform = Arc::new(RecordingPlatformSessionControl::default());
+    let (_root, mut router, context, plan) = configured_native_router(platform.clone());
+    let first_generation = router
+        .publish_native_video_bootstrap(
+            plan.video_configuration_id,
+            7,
+            900,
+            NativeVideoBootstrapReason::Repair,
+            true,
+            vec![4, 5, 6],
+        )
+        .unwrap();
+    let first = router
+        .take_native_video_bootstrap(context.session_epoch)
+        .unwrap();
+    assert!(matches!(
+        router.retry_native_video_bootstrap(
+            context.session_epoch,
+            first_generation,
+            "decode result timed out"
+        ),
+        NativeVideoBootstrapRetryDisposition::Retried { .. }
+    ));
+    let retry = router
+        .take_native_video_bootstrap(context.session_epoch)
+        .unwrap();
+
+    let late = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 4,
+            payload: Some(client_control_envelope::Payload::VideoBootstrapResult(
+                VideoBootstrapResult {
+                    session_epoch: first.session_epoch,
+                    stream_id: first.stream_id,
+                    configuration_id: first.configuration_id,
+                    generation_id: first.generation_id,
+                    frame_id: first.frame_id,
+                    result: NativeVideoBootstrapResultCode::Decoded as i32,
+                    message: String::new(),
+                },
+            )),
+        },
+        &context,
+    );
+    assert!(late.is_empty());
+    assert_eq!(
+        router
+            .video_delivery_state()
+            .unwrap()
+            .acknowledged_generation_id,
+        None
+    );
+    assert!(platform.control_events().is_empty());
+
+    let acknowledged = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 5,
+            payload: Some(client_control_envelope::Payload::VideoBootstrapResult(
+                VideoBootstrapResult {
+                    session_epoch: retry.session_epoch,
+                    stream_id: retry.stream_id,
+                    configuration_id: retry.configuration_id,
+                    generation_id: retry.generation_id,
+                    frame_id: retry.frame_id,
+                    result: NativeVideoBootstrapResultCode::Decoded as i32,
+                    message: String::new(),
+                },
+            )),
+        },
+        &context,
+    );
+    assert!(acknowledged.is_empty());
+    assert_eq!(
+        router
+            .video_delivery_state()
+            .unwrap()
+            .acknowledged_generation_id,
+        Some(retry.generation_id)
+    );
+    assert_eq!(
+        platform
+            .control_events()
+            .iter()
+            .filter(|(_, event)| {
+                *event == PlatformControlEvent::ResumeVideoEncodingAfterCodecAck
+            })
+            .count(),
+        1
+    );
+    assert_eq!(
+        router.native_video_bootstrap_retry_attempt(context.session_epoch),
+        None
+    );
+}
+
+#[test]
+fn retryable_bootstrap_rejection_exhaustion_returns_a_typed_terminal_error() {
+    let platform = Arc::new(RecordingPlatformSessionControl::default());
+    let (_root, mut router, context, plan) = configured_native_router(platform);
+    let mut generation_id = router
+        .publish_native_video_bootstrap(
+            plan.video_configuration_id,
+            1,
+            900,
+            NativeVideoBootstrapReason::Initial,
+            true,
+            vec![9, 8, 7],
+        )
+        .unwrap();
+    let _ = router
+        .take_native_video_bootstrap(context.session_epoch)
+        .unwrap();
+
+    for request_id in 4..(4 + u64::from(MAX_VIDEO_BOOTSTRAP_RETRY_ATTEMPTS)) {
+        let responses = router.dispatch_native_control(
+            ClientControlEnvelope {
+                request_id,
+                payload: Some(client_control_envelope::Payload::VideoBootstrapResult(
+                    VideoBootstrapResult {
+                        session_epoch: context.session_epoch,
+                        stream_id: plan.video_stream_id,
+                        configuration_id: plan.video_configuration_id,
+                        generation_id,
+                        frame_id: 1,
+                        result: NativeVideoBootstrapResultCode::DecoderRejected as i32,
+                        message: "decoder rejected retry".to_owned(),
+                    },
+                )),
+            },
+            &context,
+        );
+        assert!(responses.is_empty());
+        generation_id = router
+            .take_native_video_bootstrap(context.session_epoch)
+            .unwrap()
+            .generation_id;
+    }
+
+    let responses = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 20,
+            payload: Some(client_control_envelope::Payload::VideoBootstrapResult(
+                VideoBootstrapResult {
+                    session_epoch: context.session_epoch,
+                    stream_id: plan.video_stream_id,
+                    configuration_id: plan.video_configuration_id,
+                    generation_id,
+                    frame_id: 1,
+                    result: NativeVideoBootstrapResultCode::Stale as i32,
+                    message: "decoder still stale".to_owned(),
+                },
+            )),
+        },
+        &context,
+    );
+    let Some(host_control_envelope::Payload::Error(error)) = responses[0].payload.as_ref() else {
+        panic!("retry exhaustion must return a typed terminal error");
+    };
+    assert_eq!(error.code, 7);
+    assert!(error.message.contains("video bootstrap recovery exhausted"));
 }
 
 #[test]
