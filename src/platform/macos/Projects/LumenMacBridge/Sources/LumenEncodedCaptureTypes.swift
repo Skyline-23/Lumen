@@ -122,6 +122,99 @@ public struct LumenEncodedCaptureSessionStatistics: Equatable, Sendable {
     var exactCaptureAudit = LumenExactCaptureAuditSnapshot()
 }
 
+/// Decides when high-rate encoder diagnostics need to cross the
+/// runtime/session boundary. Successful outputs and frame-drop updates are
+/// allowed to coalesce for a short interval or bounded event window;
+/// lifecycle, terminal error, and control publications are never delayed.
+struct LumenEncodedCaptureStatisticsPublicationPolicy: Equatable, Sendable {
+    struct Configuration: Equatable, Sendable {
+        static let `default` = Self(
+            minimumIntervalNanoseconds: 250_000_000,
+            maximumHighRateUpdates: 120
+        )
+
+        let minimumIntervalNanoseconds: UInt64
+        let maximumHighRateUpdates: UInt64
+
+        init(
+            minimumIntervalNanoseconds: UInt64 = 250_000_000,
+            maximumHighRateUpdates: UInt64 = 120
+        ) {
+            self.minimumIntervalNanoseconds = max(
+                minimumIntervalNanoseconds,
+                1
+            )
+            self.maximumHighRateUpdates = max(
+                maximumHighRateUpdates,
+                1
+            )
+        }
+    }
+
+    enum PublicationReason: Equatable, Sendable {
+        case highRateUpdate
+        case immediate
+        case forced
+        case terminal
+    }
+
+    private let configuration: Configuration
+    private var highRateUpdatesSincePublication: UInt64 = 0
+    private var lastPublicationUptimeNanoseconds: UInt64?
+
+    init(configuration: Configuration = .default) {
+        self.configuration = configuration
+    }
+
+    /// Returns true when the caller should publish the current statistics.
+    /// The clock is supplied by the caller so this policy remains deterministic
+    /// in tests and does not own a timer or task.
+    mutating func shouldPublish(
+        reason: PublicationReason,
+        atUptimeNanoseconds uptimeNanoseconds: UInt64
+    ) -> Bool {
+        switch reason {
+        case .highRateUpdate:
+            highRateUpdatesSincePublication &+= 1
+            guard let lastPublicationUptimeNanoseconds else {
+                return recordPublication(at: uptimeNanoseconds)
+            }
+            let elapsedNanoseconds =
+                uptimeNanoseconds >= lastPublicationUptimeNanoseconds
+                ? uptimeNanoseconds - lastPublicationUptimeNanoseconds
+                : 0
+            guard highRateUpdatesSincePublication
+                    < configuration.maximumHighRateUpdates,
+                  elapsedNanoseconds < configuration.minimumIntervalNanoseconds else {
+                return recordPublication(at: uptimeNanoseconds)
+            }
+            return false
+        case .immediate, .forced, .terminal:
+            return recordPublication(at: uptimeNanoseconds)
+        }
+    }
+
+    private mutating func recordPublication(at uptimeNanoseconds: UInt64) -> Bool {
+        highRateUpdatesSincePublication = 0
+        lastPublicationUptimeNanoseconds = uptimeNanoseconds
+        return true
+    }
+}
+
+struct LumenEncodedCaptureStatisticsNotesRefreshGate: Equatable, Sendable {
+    private var lastSourceFrameCount: UInt64?
+
+    mutating func shouldRefresh(sourceFrameCount: UInt64) -> Bool {
+        guard sourceFrameCount > 0,
+              sourceFrameCount == 1 || sourceFrameCount % 120 == 0,
+              lastSourceFrameCount != sourceFrameCount else {
+            return false
+        }
+        lastSourceFrameCount = sourceFrameCount
+        return true
+    }
+}
+
 struct LumenEncodedBitrateTelemetry: Equatable, Sendable {
     private static let reportingIntervalNanoseconds: UInt64 = 1_000_000_000
 

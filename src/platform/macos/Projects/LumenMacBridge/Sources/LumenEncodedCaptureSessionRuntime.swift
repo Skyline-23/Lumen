@@ -146,6 +146,9 @@ extension LumenEncodedCaptureSession {
                     callbacks: guardedCallbacks,
                     statisticsHandler: { statistics in
                         guard callbackGate.isOpen() else { return }
+                        // The macOS runtime coalesces successful-output
+                        // diagnostics before this boundary. Lifecycle,
+                        // control, and terminal publications remain immediate.
                         Task {
                             await owner.updateStatistics(statistics)
                         }

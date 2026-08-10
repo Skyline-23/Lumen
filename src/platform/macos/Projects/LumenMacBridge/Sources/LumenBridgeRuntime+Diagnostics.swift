@@ -172,8 +172,6 @@ private extension LumenBridgeRuntime {
         captureStatistics: LumenEncodedCaptureSessionStatistics?
     ) {
         let now = DispatchTime.now().uptimeNanoseconds
-        let sequenceDelta = encodedSequenceDelta(for: frame)
-        let displayDeltaText = encodedDisplayDeltaText(for: frame)
         let shouldLogAnomaly = lastEncodedFrameSourceDisplayTime
             .map { frame.sourceDisplayTime <= $0 } ?? false
         let shouldLogInterval =
@@ -181,6 +179,8 @@ private extension LumenBridgeRuntime {
             now - lastDiagnosticsUptimeNanoseconds >= Self.diagnosticsIntervalNanoseconds
 
         if shouldLogAnomaly || shouldLogInterval {
+            let sequenceDelta = encodedSequenceDelta(for: frame)
+            let displayDeltaText = encodedDisplayDeltaText(for: frame)
             logEncodedFrameDiagnostics(
                 frame,
                 sequenceDelta: sequenceDelta,

@@ -64,7 +64,6 @@ extension LumenScreenCaptureVideoRuntime {
             return
         }
         recordCodecConfigurationAudit(configurationData)
-        statisticsHandler(statistics)
 
         let latency = recordSuccessfulOutput(
             context: context,
@@ -72,13 +71,18 @@ extension LumenScreenCaptureVideoRuntime {
         )
         let isKeyFrame = isKeyFrame(sampleBuffer)
         var promotedBootstrapReason: LumenVideoBootstrapReason?
+        var statisticsPublicationReason =
+            LumenEncodedCaptureStatisticsPublicationPolicy.PublicationReason
+            .highRateUpdate
         if isKeyFrame, context.bootstrapReason == nil {
             switch videoBootstrapAdmission.admitAutomaticKeyFrame() {
             case .promote(let reason):
                 promotedBootstrapReason = reason
+                statisticsPublicationReason = .immediate
                 preservePendingAdmissionSourceForBootstrap()
             case .discard:
                 encoderAdmission.resumePendingIfPossible()
+                publishSuccessfulOutputStatisticsIfNeeded()
                 return
             }
         }
@@ -86,6 +90,11 @@ extension LumenScreenCaptureVideoRuntime {
             return
         }
         encoderAdmission.resumePendingIfPossible()
+        if statisticsPublicationReason == .highRateUpdate {
+            publishSuccessfulOutputStatisticsIfNeeded()
+        } else {
+            publishStatistics(reason: .immediate)
+        }
         deliverEncodedFrame(
             sampleBuffer,
             context: context,
@@ -178,6 +187,9 @@ extension LumenScreenCaptureVideoRuntime {
     }
 
     func recordCodecConfigurationAudit(_ configurationData: Data?) {
+        guard statistics.exactCaptureAudit.configurationAtom == nil else {
+            return
+        }
         switch configuration.codec {
         case .h264:
             let parsed = configurationData.flatMap(

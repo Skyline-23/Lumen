@@ -243,8 +243,7 @@ extension LumenScreenCaptureVideoRuntime {
                 guard let self else { return }
                 self.statistics.adaptiveTargetFrameRate =
                     effectiveTargetFrameRate
-                self.refreshStatisticsNotesIfNeeded()
-                self.statisticsHandler(self.statistics)
+                self.publishStatistics(reason: .immediate)
             }
         }
     }
@@ -262,8 +261,7 @@ extension LumenScreenCaptureVideoRuntime {
             let ownershipError = LumenScreenCaptureError.outputOwnershipLost
             statistics.processingFailureCount &+= 1
             statistics.lastErrorDescription = ownershipError.localizedDescription
-            refreshStatisticsNotes()
-            statisticsHandler(statistics)
+            publishStatistics(reason: .terminal)
             eventHandler(.init(
                 kind: .failed,
                 message: ownershipError.localizedDescription,
@@ -341,6 +339,9 @@ extension LumenScreenCaptureVideoRuntime {
         imageBuffer: CVImageBuffer,
         sampleBuffer: CMSampleBuffer
     ) {
+        guard statistics.exactCaptureAudit.inputFourCC == nil else {
+            return
+        }
         statistics.exactCaptureAudit.inputFourCC = auditFourCC(
             CVPixelBufferGetPixelFormatType(imageBuffer)
         )

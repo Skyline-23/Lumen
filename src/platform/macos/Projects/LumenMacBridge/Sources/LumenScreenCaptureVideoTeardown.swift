@@ -87,8 +87,7 @@ extension LumenScreenCaptureVideoRuntime {
         }
         queue.sync {
             statistics.isRunning = false
-            refreshStatisticsNotes()
-            statisticsHandler(statistics)
+            publishStatistics(reason: .terminal)
             eventHandler(.init(
                 kind: .stopped,
                 message: [
