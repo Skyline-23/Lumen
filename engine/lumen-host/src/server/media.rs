@@ -1643,6 +1643,47 @@ fn finish_video_datagram_delivery(
     Ok(VideoDatagramCompletion::Continue { request_repair })
 }
 
+fn publish_video_keyframe<Publish>(
+    normalized: &NormalizedNativeVideoFrame,
+    frame_id: u32,
+    has_acknowledged_generation: bool,
+    publish: Publish,
+) -> Option<VideoBootstrapClassification>
+where
+    Publish: FnOnce(VideoBootstrapClassification, u32, u32, u32, Vec<u8>) -> Option<u32>,
+{
+    let classification = classify_video_keyframe_delivery(
+        normalized.new_configuration.is_some(),
+        has_acknowledged_generation,
+        normalized.frame.repair_keyframe,
+        normalized.frame.requires_bootstrap_acknowledgement,
+    );
+    publish(
+        classification,
+        normalized.configuration_id,
+        frame_id,
+        timestamp_to_microseconds(normalized.frame.presentation_time_90khz, 90_000),
+        normalized.frame.payload.clone(),
+    )
+    .map(|_| classification)
+}
+
+fn finish_video_keyframe_delivery(
+    sender: &mut VideoSenderState,
+    frame_id: u32,
+    classification: VideoBootstrapClassification,
+) -> Result<(), String> {
+    sender.frame_id = frame_id
+        .checked_add(1)
+        .ok_or_else(|| "video frame id exhausted".to_owned())?;
+    sender.pending_frame = None;
+    sender.pending_since = None;
+    if classification.reason == NativeVideoBootstrapReason::Repair {
+        sender.repair_required = false;
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn poll_and_send_video(
     connection: &quinn::Connection,
@@ -1811,38 +1852,28 @@ async fn poll_and_send_video(
     }
     let frame_id = sender.frame_id;
     if normalized.frame.key_frame {
-        let classification = classify_video_keyframe_delivery(
-            normalized.new_configuration.is_some(),
+        let publication = publish_video_keyframe(
+            normalized,
+            frame_id,
             delivery.acknowledged_generation_id.is_some(),
-            normalized.frame.repair_keyframe,
-            normalized.frame.requires_bootstrap_acknowledgement,
+            |classification, configuration_id, frame_id, capture_timestamp_us, access_unit| {
+                router.lock().ok().and_then(|mut router| {
+                    router.publish_native_video_bootstrap(
+                        configuration_id,
+                        frame_id,
+                        capture_timestamp_us,
+                        classification.reason,
+                        classification.requires_encoder_resume,
+                        access_unit,
+                    )
+                })
+            },
         );
-        let published = router.lock().ok().and_then(|mut router| {
-            router.publish_native_video_bootstrap(
-                normalized.configuration_id,
-                frame_id,
-                timestamp_to_microseconds(normalized.frame.presentation_time_90khz, 90_000),
-                classification.reason,
-                classification.requires_encoder_resume,
-                normalized.frame.payload.clone(),
-            )
-        });
-        if published.is_none() {
+        let Some(classification) = publication else {
             return MediaAttempt::Waiting;
-        }
-        sender.frame_id = match frame_id.checked_add(1) {
-            Some(next) => next,
-            None => {
-                return MediaAttempt::Failed(video_failure(
-                    "packetizer-failed",
-                    "video frame id exhausted".to_owned(),
-                ))
-            }
         };
-        sender.pending_frame = None;
-        sender.pending_since = None;
-        if classification.reason == NativeVideoBootstrapReason::Repair {
-            sender.repair_required = false;
+        if let Err(message) = finish_video_keyframe_delivery(sender, frame_id, classification) {
+            return MediaAttempt::Failed(video_failure("packetizer-failed", message));
         }
         return MediaAttempt::Waiting;
     }
@@ -2154,16 +2185,17 @@ mod tests {
     };
     use super::{
         classify_video_keyframe_delivery, delivery_for_session, finish_video_datagram_delivery,
-        four_refresh_frame_wire_window_us, object_deadline_exceeded,
-        periodic_keyframe_deadline_cap_us, periodic_keyframe_drop_requires_wire_pressure,
+        finish_video_keyframe_delivery, four_refresh_frame_wire_window_us,
+        object_deadline_exceeded, periodic_keyframe_deadline_cap_us,
+        periodic_keyframe_drop_requires_wire_pressure, publish_video_keyframe,
         record_successful_datagram, run_native_media_tasks, send_admitted_datagram,
         send_datagram_batch, send_video_datagram_batch, send_wire_paced_video_datagram_batch,
         video_datagram_deadline_us, wait_for_datagram_deadline, wait_for_datagram_queue_capacity,
         DatagramBatchDropReason, DatagramBatchMode, DatagramBatchStatus, DatagramDeadlineElapsed,
-        DatagramSendOutcome, PacketArrivalHistoryWarningReporter, PacketArrivalSendObservation,
-        SessionDelivery, VideoBootstrapClassification, VideoDatagramCompletion,
-        VideoDatagramDeadlineError, VideoDatagramPacing, VideoSenderState, VideoWireRatePacer,
-        MAXIMUM_VIDEO_WIRE_BURST_DATAGRAMS, MAXIMUM_VIDEO_WIRE_CREDIT_DURATION,
+        DatagramSendOutcome, NormalizedNativeVideoFrame, PacketArrivalHistoryWarningReporter,
+        PacketArrivalSendObservation, SessionDelivery, VideoBootstrapClassification,
+        VideoDatagramCompletion, VideoDatagramDeadlineError, VideoDatagramPacing, VideoSenderState,
+        VideoWireRatePacer, MAXIMUM_VIDEO_WIRE_BURST_DATAGRAMS, MAXIMUM_VIDEO_WIRE_CREDIT_DURATION,
     };
     use lumen_engine::{
         native_video_packetization_plan, MediaFeedback, NativeVideoBootstrapReason,
@@ -2890,6 +2922,67 @@ mod tests {
                 }
             );
         }
+    }
+
+    #[test]
+    fn acknowledged_periodic_keyframe_publishes_bootstrap_without_datagram_delivery() {
+        let normalized = NormalizedNativeVideoFrame {
+            frame: crate::PlatformEncodedVideoFrame {
+                payload: vec![1, 2, 3, 4],
+                decoder_configuration_record: None,
+                presentation_time_90khz: 90_000,
+                key_frame: true,
+                requires_bootstrap_acknowledgement: false,
+                repair_keyframe: false,
+            },
+            configuration_id: 11,
+            new_configuration: None,
+        };
+        let mut sender = VideoSenderState {
+            frame_id: 7,
+            pending_frame: Some(normalized.clone()),
+            ..VideoSenderState::default()
+        };
+        let mut bootstrap_publications = 0;
+
+        let publication = publish_video_keyframe(
+            &normalized,
+            sender.frame_id,
+            true,
+            |classification, configuration_id, frame_id, capture_timestamp_us, access_unit| {
+                bootstrap_publications += 1;
+                assert_eq!(classification.reason, NativeVideoBootstrapReason::Periodic);
+                assert!(!classification.requires_encoder_resume);
+                assert_eq!(configuration_id, 11);
+                assert_eq!(frame_id, 7);
+                assert_eq!(capture_timestamp_us, 1_000_000);
+                assert_eq!(access_unit, normalized.frame.payload);
+                Some(19)
+            },
+        );
+
+        assert_eq!(
+            publication,
+            Some(VideoBootstrapClassification {
+                reason: NativeVideoBootstrapReason::Periodic,
+                requires_encoder_resume: false,
+            })
+        );
+        assert_eq!(
+            finish_video_keyframe_delivery(
+                &mut sender,
+                7,
+                publication.expect("published keyframe classification")
+            ),
+            Ok(())
+        );
+        assert_eq!(bootstrap_publications, 1);
+        assert_eq!(sender.frame_id, 8);
+        assert!(sender.pending_frame.is_none());
+        assert!(
+            sender.packetizer.is_none(),
+            "the keyframe transition must not initialize the video DATAGRAM packetizer"
+        );
     }
 
     #[test]
