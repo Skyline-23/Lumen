@@ -965,6 +965,101 @@ public nonisolated enum Lumen_Streaming_V4_DisplayReconfigurationResultCode: Swi
 
 }
 
+/// Media park/resume keeps the session control, input, and telemetry lanes
+/// alive while suppressing the video and audio media plane. The negotiated
+/// capability is echoed in HostSessionPlan.media_capabilities.
+public nonisolated enum Lumen_Streaming_V4_MediaParkState: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case active // = 1
+  case parking // = 2
+  case parked // = 3
+  case resuming // = 4
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .active
+    case 2: self = .parking
+    case 3: self = .parked
+    case 4: self = .resuming
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .active: return 1
+    case .parking: return 2
+    case .parked: return 3
+    case .resuming: return 4
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Lumen_Streaming_V4_MediaParkState] = [
+    .unspecified,
+    .active,
+    .parking,
+    .parked,
+    .resuming,
+  ]
+
+}
+
+public nonisolated enum Lumen_Streaming_V4_MediaParkResultCode: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case applied // = 1
+  case idempotent // = 2
+  case superseded // = 3
+  case rejected // = 4
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .applied
+    case 2: self = .idempotent
+    case 3: self = .superseded
+    case 4: self = .rejected
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .applied: return 1
+    case .idempotent: return 2
+    case .superseded: return 3
+    case .rejected: return 4
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Lumen_Streaming_V4_MediaParkResultCode] = [
+    .unspecified,
+    .applied,
+    .idempotent,
+    .superseded,
+    .rejected,
+  ]
+
+}
+
 public nonisolated struct Lumen_Streaming_V4_VideoFormat: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -2361,6 +2456,42 @@ public nonisolated struct Lumen_Streaming_V4_DisplayReconfigurationResult: Senda
   fileprivate var _plan: Lumen_Streaming_V4_HostSessionPlan? = nil
 }
 
+public nonisolated struct Lumen_Streaming_V4_MediaParkRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var sessionEpoch: UInt32 = 0
+
+  public var revision: UInt64 = 0
+
+  public var park: Bool = false
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Lumen_Streaming_V4_MediaParkResult: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var sessionEpoch: UInt32 = 0
+
+  public var revision: UInt64 = 0
+
+  public var state: Lumen_Streaming_V4_MediaParkState = .unspecified
+
+  public var result: Lumen_Streaming_V4_MediaParkResultCode = .unspecified
+
+  public var message: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 public nonisolated struct Lumen_Streaming_V4_ClientControlEnvelope: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -2426,6 +2557,14 @@ public nonisolated struct Lumen_Streaming_V4_ClientControlEnvelope: Sendable {
     set {payload = .displayReconfiguration(newValue)}
   }
 
+  public var mediaPark: Lumen_Streaming_V4_MediaParkRequest {
+    get {
+      if case .mediaPark(let v)? = payload {return v}
+      return Lumen_Streaming_V4_MediaParkRequest()
+    }
+    set {payload = .mediaPark(newValue)}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public nonisolated enum OneOf_Payload: Equatable, Sendable {
@@ -2436,6 +2575,7 @@ public nonisolated struct Lumen_Streaming_V4_ClientControlEnvelope: Sendable {
     case videoKeyframeRequest(Lumen_Streaming_V4_VideoKeyframeRequest)
     case videoBootstrapResult(Lumen_Streaming_V4_VideoBootstrapResult)
     case displayReconfiguration(Lumen_Streaming_V4_DisplayReconfigurationRequest)
+    case mediaPark(Lumen_Streaming_V4_MediaParkRequest)
 
   }
 
@@ -2491,6 +2631,14 @@ public nonisolated struct Lumen_Streaming_V4_HostControlEnvelope: Sendable {
     set {payload = .displayReconfiguration(newValue)}
   }
 
+  public var mediaPark: Lumen_Streaming_V4_MediaParkResult {
+    get {
+      if case .mediaPark(let v)? = payload {return v}
+      return Lumen_Streaming_V4_MediaParkResult()
+    }
+    set {payload = .mediaPark(newValue)}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public nonisolated enum OneOf_Payload: Equatable, Sendable {
@@ -2499,6 +2647,7 @@ public nonisolated struct Lumen_Streaming_V4_HostControlEnvelope: Sendable {
     case error(Lumen_Streaming_V4_ProtocolError)
     case sessionStarted(Lumen_Streaming_V4_SessionStarted)
     case displayReconfiguration(Lumen_Streaming_V4_DisplayReconfigurationResult)
+    case mediaPark(Lumen_Streaming_V4_MediaParkResult)
 
   }
 
@@ -2587,6 +2736,14 @@ nonisolated extension Lumen_Streaming_V4_InputFailureCode: SwiftProtobuf._ProtoN
 
 nonisolated extension Lumen_Streaming_V4_DisplayReconfigurationResultCode: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0DISPLAY_RECONFIGURATION_RESULT_CODE_UNSPECIFIED\0\u{1}DISPLAY_RECONFIGURATION_RESULT_CODE_APPLIED\0\u{1}DISPLAY_RECONFIGURATION_RESULT_CODE_REJECTED\0\u{1}DISPLAY_RECONFIGURATION_RESULT_CODE_SUPERSEDED\0")
+}
+
+nonisolated extension Lumen_Streaming_V4_MediaParkState: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0MEDIA_PARK_STATE_UNSPECIFIED\0\u{1}MEDIA_PARK_STATE_ACTIVE\0\u{1}MEDIA_PARK_STATE_PARKING\0\u{1}MEDIA_PARK_STATE_PARKED\0\u{1}MEDIA_PARK_STATE_RESUMING\0")
+}
+
+nonisolated extension Lumen_Streaming_V4_MediaParkResultCode: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0MEDIA_PARK_RESULT_CODE_UNSPECIFIED\0\u{1}MEDIA_PARK_RESULT_CODE_APPLIED\0\u{1}MEDIA_PARK_RESULT_CODE_IDEMPOTENT\0\u{1}MEDIA_PARK_RESULT_CODE_SUPERSEDED\0\u{1}MEDIA_PARK_RESULT_CODE_REJECTED\0")
 }
 
 nonisolated extension Lumen_Streaming_V4_VideoFormat: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
@@ -5405,9 +5562,99 @@ nonisolated extension Lumen_Streaming_V4_DisplayReconfigurationResult: SwiftProt
   }
 }
 
+nonisolated extension Lumen_Streaming_V4_MediaParkRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".MediaParkRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_epoch\0\u{1}revision\0\u{1}park\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt32Field(value: &self.sessionEpoch) }()
+      case 2: try { try decoder.decodeSingularUInt64Field(value: &self.revision) }()
+      case 3: try { try decoder.decodeSingularBoolField(value: &self.park) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.sessionEpoch != 0 {
+      try visitor.visitSingularUInt32Field(value: self.sessionEpoch, fieldNumber: 1)
+    }
+    if self.revision != 0 {
+      try visitor.visitSingularUInt64Field(value: self.revision, fieldNumber: 2)
+    }
+    if self.park != false {
+      try visitor.visitSingularBoolField(value: self.park, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Lumen_Streaming_V4_MediaParkRequest, rhs: Lumen_Streaming_V4_MediaParkRequest) -> Bool {
+    if lhs.sessionEpoch != rhs.sessionEpoch {return false}
+    if lhs.revision != rhs.revision {return false}
+    if lhs.park != rhs.park {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Lumen_Streaming_V4_MediaParkResult: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".MediaParkResult"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_epoch\0\u{1}revision\0\u{1}state\0\u{1}result\0\u{1}message\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt32Field(value: &self.sessionEpoch) }()
+      case 2: try { try decoder.decodeSingularUInt64Field(value: &self.revision) }()
+      case 3: try { try decoder.decodeSingularEnumField(value: &self.state) }()
+      case 4: try { try decoder.decodeSingularEnumField(value: &self.result) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.message) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.sessionEpoch != 0 {
+      try visitor.visitSingularUInt32Field(value: self.sessionEpoch, fieldNumber: 1)
+    }
+    if self.revision != 0 {
+      try visitor.visitSingularUInt64Field(value: self.revision, fieldNumber: 2)
+    }
+    if self.state != .unspecified {
+      try visitor.visitSingularEnumField(value: self.state, fieldNumber: 3)
+    }
+    if self.result != .unspecified {
+      try visitor.visitSingularEnumField(value: self.result, fieldNumber: 4)
+    }
+    if !self.message.isEmpty {
+      try visitor.visitSingularStringField(value: self.message, fieldNumber: 5)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Lumen_Streaming_V4_MediaParkResult, rhs: Lumen_Streaming_V4_MediaParkResult) -> Bool {
+    if lhs.sessionEpoch != rhs.sessionEpoch {return false}
+    if lhs.revision != rhs.revision {return false}
+    if lhs.state != rhs.state {return false}
+    if lhs.result != rhs.result {return false}
+    if lhs.message != rhs.message {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
 nonisolated extension Lumen_Streaming_V4_ClientControlEnvelope: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ClientControlEnvelope"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}request_id\0\u{2}\u{9}hello\0\u{3}start_session\0\u{4}\u{2}stop_session\0\u{3}codec_configuration_ack\0\u{3}video_keyframe_request\0\u{3}video_bootstrap_result\0\u{3}display_reconfiguration\0\u{c}\u{c}\u{1}")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}request_id\0\u{2}\u{9}hello\0\u{3}start_session\0\u{4}\u{2}stop_session\0\u{3}codec_configuration_ack\0\u{3}video_keyframe_request\0\u{3}video_bootstrap_result\0\u{3}display_reconfiguration\0\u{3}media_park\0\u{c}\u{c}\u{1}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -5507,6 +5754,19 @@ nonisolated extension Lumen_Streaming_V4_ClientControlEnvelope: SwiftProtobuf.Me
           self.payload = .displayReconfiguration(v)
         }
       }()
+      case 18: try {
+        var v: Lumen_Streaming_V4_MediaParkRequest?
+        var hadOneofValue = false
+        if let current = self.payload {
+          hadOneofValue = true
+          if case .mediaPark(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.payload = .mediaPark(v)
+        }
+      }()
       default: break
       }
     }
@@ -5549,6 +5809,10 @@ nonisolated extension Lumen_Streaming_V4_ClientControlEnvelope: SwiftProtobuf.Me
       guard case .displayReconfiguration(let v)? = self.payload else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 17)
     }()
+    case .mediaPark?: try {
+      guard case .mediaPark(let v)? = self.payload else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 18)
+    }()
     case nil: break
     }
     try unknownFields.traverse(visitor: &visitor)
@@ -5564,7 +5828,7 @@ nonisolated extension Lumen_Streaming_V4_ClientControlEnvelope: SwiftProtobuf.Me
 
 nonisolated extension Lumen_Streaming_V4_HostControlEnvelope: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".HostControlEnvelope"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}request_id\0\u{4}\u{9}session_plan\0\u{4}\u{2}session_stopped\0\u{1}error\0\u{4}\u{2}session_started\0\u{3}display_reconfiguration\0\u{c}\u{b}\u{1}\u{c}\u{e}\u{1}")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}request_id\0\u{4}\u{9}session_plan\0\u{4}\u{2}session_stopped\0\u{1}error\0\u{4}\u{2}session_started\0\u{3}display_reconfiguration\0\u{3}media_park\0\u{c}\u{b}\u{1}\u{c}\u{e}\u{1}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -5638,6 +5902,19 @@ nonisolated extension Lumen_Streaming_V4_HostControlEnvelope: SwiftProtobuf.Mess
           self.payload = .displayReconfiguration(v)
         }
       }()
+      case 17: try {
+        var v: Lumen_Streaming_V4_MediaParkResult?
+        var hadOneofValue = false
+        if let current = self.payload {
+          hadOneofValue = true
+          if case .mediaPark(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.payload = .mediaPark(v)
+        }
+      }()
       default: break
       }
     }
@@ -5671,6 +5948,10 @@ nonisolated extension Lumen_Streaming_V4_HostControlEnvelope: SwiftProtobuf.Mess
     case .displayReconfiguration?: try {
       guard case .displayReconfiguration(let v)? = self.payload else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 16)
+    }()
+    case .mediaPark?: try {
+      guard case .mediaPark(let v)? = self.payload else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 17)
     }()
     case nil: break
     }

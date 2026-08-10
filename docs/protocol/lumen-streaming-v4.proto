@@ -564,6 +564,39 @@ message DisplayReconfigurationResult {
   string message = 5;
 }
 
+// Media park/resume keeps the session control, input, and telemetry lanes
+// alive while suppressing the video and audio media plane. The negotiated
+// capability is echoed in HostSessionPlan.media_capabilities.
+enum MediaParkState {
+  MEDIA_PARK_STATE_UNSPECIFIED = 0;
+  MEDIA_PARK_STATE_ACTIVE = 1;
+  MEDIA_PARK_STATE_PARKING = 2;
+  MEDIA_PARK_STATE_PARKED = 3;
+  MEDIA_PARK_STATE_RESUMING = 4;
+}
+
+enum MediaParkResultCode {
+  MEDIA_PARK_RESULT_CODE_UNSPECIFIED = 0;
+  MEDIA_PARK_RESULT_CODE_APPLIED = 1;
+  MEDIA_PARK_RESULT_CODE_IDEMPOTENT = 2;
+  MEDIA_PARK_RESULT_CODE_SUPERSEDED = 3;
+  MEDIA_PARK_RESULT_CODE_REJECTED = 4;
+}
+
+message MediaParkRequest {
+  uint32 session_epoch = 1;
+  uint64 revision = 2;
+  bool park = 3;
+}
+
+message MediaParkResult {
+  uint32 session_epoch = 1;
+  uint64 revision = 2;
+  MediaParkState state = 3;
+  MediaParkResultCode result = 4;
+  string message = 5;
+}
+
 message ClientControlEnvelope {
   uint64 request_id = 1;
   reserved 12;
@@ -575,6 +608,7 @@ message ClientControlEnvelope {
     VideoKeyframeRequest video_keyframe_request = 15;
     VideoBootstrapResult video_bootstrap_result = 16;
     DisplayReconfigurationRequest display_reconfiguration = 17;
+    MediaParkRequest media_park = 18;
   }
 }
 
@@ -587,5 +621,6 @@ message HostControlEnvelope {
     ProtocolError error = 13;
     SessionStarted session_started = 15;
     DisplayReconfigurationResult display_reconfiguration = 16;
+    MediaParkResult media_park = 17;
   }
 }

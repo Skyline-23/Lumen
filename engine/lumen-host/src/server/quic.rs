@@ -612,11 +612,31 @@ async fn publish_codec_configurations(
             .map_err(|_| "native control router lock is poisoned".to_owned())?
             .take_native_codec_configuration(session_epoch);
         if let Some(configuration) = configuration {
+            let current = router
+                .lock()
+                .map_err(|_| "native control router lock is poisoned".to_owned())?
+                .native_codec_configuration_send_is_current(
+                    session_epoch,
+                    configuration.configuration_id,
+                );
+            if !current {
+                continue;
+            }
             let encoded = encode_codec_configuration_message(&configuration)
                 .map_err(|error| format!("could not encode codec configuration: {error:?}"))?;
             send.write_all(&encoded)
                 .await
                 .map_err(|error| format!("could not write codec configuration: {error}"))?;
+            if !router
+                .lock()
+                .map_err(|_| "native control router lock is poisoned".to_owned())?
+                .native_codec_configuration_send_is_current(
+                    session_epoch,
+                    configuration.configuration_id,
+                )
+            {
+                continue;
+            }
             eprintln!(
                 "Lumen native QUIC stage=codec-configuration-sent session-epoch={} stream-id={} configuration-id={} codec={} record-bytes={}",
                 configuration.session_epoch,
@@ -634,11 +654,11 @@ async fn publish_codec_configurations(
             ));
             let peer_stream_state = Box::pin(send.stopped());
             match futures_util::future::select(acknowledgement, peer_stream_state).await {
-                futures_util::future::Either::Left((result, _)) => {
-                    if result? == CodecConfigurationAckWaitOutcome::Stopped {
-                        break;
-                    }
-                }
+                futures_util::future::Either::Left((result, _)) => match result? {
+                    CodecConfigurationAckWaitOutcome::Stopped => break,
+                    CodecConfigurationAckWaitOutcome::Obsolete => continue,
+                    CodecConfigurationAckWaitOutcome::Acknowledged => (),
+                },
                 futures_util::future::Either::Right((result, _)) => {
                     let reason = match result {
                         Ok(Some(code)) => format!("peer-stop-code={}", code.into_inner()),
@@ -665,6 +685,7 @@ async fn publish_codec_configurations(
 enum CodecConfigurationAckWaitOutcome {
     Acknowledged,
     Stopped,
+    Obsolete,
 }
 
 async fn wait_for_codec_configuration_ack(
@@ -678,6 +699,13 @@ async fn wait_for_codec_configuration_ack(
         loop {
             if stop.load(Ordering::Acquire) {
                 return Ok(CodecConfigurationAckWaitOutcome::Stopped);
+            }
+            let current = router
+                .lock()
+                .map_err(|_| "native control router lock is poisoned".to_owned())?
+                .native_codec_configuration_send_is_current(session_epoch, configuration_id);
+            if !current {
+                return Ok(CodecConfigurationAckWaitOutcome::Obsolete);
             }
             let acknowledged = router
                 .lock()
@@ -716,6 +744,17 @@ async fn publish_video_bootstraps(
             notify.notified().await;
             continue;
         };
+        let bootstrap_is_current = router
+            .lock()
+            .map_err(|_| "native control router lock is poisoned".to_owned())?
+            .native_video_bootstrap_send_is_current(session_epoch, bootstrap.generation_id);
+        if !bootstrap_is_current {
+            eprintln!(
+                "Lumen native QUIC stage=video-bootstrap-send-cancelled session-epoch={} generation-id={} reason=park-or-superseded",
+                bootstrap.session_epoch, bootstrap.generation_id
+            );
+            continue;
+        }
         let lifecycle_deadline = Instant::now()
             .checked_add(VIDEO_BOOTSTRAP_RESULT_TIMEOUT)
             .ok_or_else(|| "video bootstrap lifecycle deadline overflowed".to_owned())?;
@@ -737,15 +776,28 @@ async fn publish_video_bootstraps(
         let encoded = encode_video_bootstrap_message(&bootstrap)
             .map_err(|error| format!("could not encode video bootstrap: {error:?}"))?;
         let write_started = Instant::now();
-        write_paced_video_bootstrap(
+        let write_completed = write_paced_video_bootstrap(
             &mut send,
             &encoded,
             &router,
             session_epoch,
+            bootstrap.generation_id,
             lifecycle_deadline,
             &wire_pacer,
         )
         .await?;
+        if !write_completed {
+            let _ = send.reset(VarInt::from_u32(0));
+            continue;
+        }
+        let still_current = router
+            .lock()
+            .map_err(|_| "native control router lock is poisoned".to_owned())?
+            .native_video_bootstrap_send_is_current(session_epoch, bootstrap.generation_id);
+        if !still_current {
+            let _ = send.reset(VarInt::from_u32(0));
+            continue;
+        }
         send.finish()
             .map_err(|error| format!("could not finish video bootstrap stream: {error}"))?;
         eprintln!(
@@ -859,14 +911,22 @@ async fn write_paced_video_bootstrap(
     encoded: &[u8],
     router: &SharedControlRouter,
     session_epoch: u32,
+    generation_id: u32,
     lifecycle_deadline: Instant,
     wire_pacer: &Arc<tokio::sync::Mutex<VideoWireRatePacer>>,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     if encoded.is_empty() {
         return Err("video bootstrap is empty".to_owned());
     }
     let mut offset = 0_usize;
     while offset < encoded.len() {
+        let current = router
+            .lock()
+            .map_err(|_| "native control router lock is poisoned".to_owned())?
+            .native_video_bootstrap_send_is_current(session_epoch, generation_id);
+        if !current {
+            return Ok(false);
+        }
         let delivery = router
             .lock()
             .map_err(|_| "native control router lock is poisoned".to_owned())?
@@ -890,13 +950,20 @@ async fn write_paced_video_bootstrap(
             .ok_or_else(|| "video bootstrap chunk offset overflowed".to_owned())?;
         let chunk = &encoded[offset..chunk_end];
         tokio::time::sleep_until(send_at.into()).await;
+        let current = router
+            .lock()
+            .map_err(|_| "native control router lock is poisoned".to_owned())?
+            .native_video_bootstrap_send_is_current(session_epoch, generation_id);
+        if !current {
+            return Ok(false);
+        }
         tokio::time::timeout_at(lifecycle_deadline.into(), send.write_all(chunk))
             .await
             .map_err(|_| "video bootstrap write exceeded the lifecycle deadline".to_owned())?
             .map_err(|error| format!("could not write video bootstrap: {error}"))?;
         offset = chunk_end;
     }
-    Ok(())
+    Ok(true)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

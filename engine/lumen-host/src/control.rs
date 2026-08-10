@@ -51,6 +51,11 @@ pub(crate) struct VideoDeliveryState {
     pub(crate) wire_budget_kbps: u32,
     pub(crate) target_bitrate_kbps: u32,
     pub(crate) admission_divisor: u8,
+    pub(crate) media_park_revision: u64,
+    /// Parked sessions continue polling the platform but must never enqueue
+    /// video or audio media on the QUIC wire. RESUMING is deliberately not
+    /// parked: it admits one reliable bootstrap before deltas are allowed.
+    pub(crate) parked: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -58,6 +63,8 @@ pub(crate) struct AudioDeliveryState {
     pub(crate) session_epoch: u32,
     pub(crate) policy_revision: u16,
     pub(crate) maximum_datagram_payload: usize,
+    pub(crate) media_park_revision: u64,
+    pub(crate) parked: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

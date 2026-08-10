@@ -12,7 +12,7 @@ use super::{
     NativeVideoCapability, NativeVideoCodec, NativeVideoFormat, NativeVideoKeyframeRequestReason,
     NativeVideoProfile, SessionStarted, VideoBootstrapResult, VideoKeyframeRequest,
     NATIVE_FEC_BLOCK_HEADER_BYTES, NATIVE_MEDIA_CAPABILITY_CONTINUOUS_SCROLL,
-    NATIVE_MEDIA_CAPABILITY_FIXED_CADENCE_FEEDBACK,
+    NATIVE_MEDIA_CAPABILITY_FIXED_CADENCE_FEEDBACK, NATIVE_MEDIA_CAPABILITY_MEDIA_PARK_RESUME,
     NATIVE_MEDIA_CAPABILITY_PACKET_ARRIVAL_FEEDBACK,
     NATIVE_MEDIA_CAPABILITY_PAIRED_FEEDBACK_WINDOWS,
     NATIVE_MEDIA_CAPABILITY_SAME_GENERATION_KEYFRAMES, NATIVE_PROTOCOL_VERSION,
@@ -200,6 +200,30 @@ fn packet_arrival_capability_changes_no_delivery_policy() {
     observing_plan.media_capabilities &= !NATIVE_MEDIA_CAPABILITY_PACKET_ARRIVAL_FEEDBACK;
 
     assert_eq!(observing_plan, baseline_plan);
+}
+
+#[test]
+fn media_park_capability_is_optional_and_echoed_only_when_advertised() {
+    let baseline = hello();
+    let baseline_plan = negotiate_native_session(&baseline, &host(), 1).unwrap();
+    assert_eq!(
+        baseline_plan.media_capabilities & NATIVE_MEDIA_CAPABILITY_MEDIA_PARK_RESUME,
+        0
+    );
+
+    let mut park_capable = baseline;
+    park_capable.media_capabilities |= NATIVE_MEDIA_CAPABILITY_MEDIA_PARK_RESUME;
+    let park_plan = negotiate_native_session(&park_capable, &host(), 1).unwrap();
+    assert_eq!(
+        park_plan.media_capabilities & NATIVE_MEDIA_CAPABILITY_MEDIA_PARK_RESUME,
+        NATIVE_MEDIA_CAPABILITY_MEDIA_PARK_RESUME
+    );
+    assert_eq!(
+        park_plan.bitrate_kbps,
+        negotiate_native_session(&hello(), &host(), 1)
+            .unwrap()
+            .bitrate_kbps
+    );
 }
 
 #[test]

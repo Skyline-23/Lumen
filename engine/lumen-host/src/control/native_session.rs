@@ -9,12 +9,13 @@ use lumen_engine::{
     negotiate_native_session, ClientControlEnvelope, ClientSessionHello, CodecConfiguration,
     CodecConfigurationAck, DisplayReconfigurationRequest, DisplayReconfigurationResult,
     HostControlEnvelope, HostSessionCapabilities, HostSessionPlan, LumenSessionOffer,
-    MediaFeedback, NativeChromaSubsampling, NativeColorRange,
-    NativeDisplayReconfigurationResultCode, NativeDynamicRange, NativeNegotiationFailure,
-    NativeProtocolError, NativeSessionError, NativeVideoBootstrapReason,
-    NativeVideoBootstrapResultCode, NativeVideoCodec, NativeVideoKeyframeRequestReason,
-    NativeVideoProfile, SessionStarted, SessionStopped, StartSessionAck, StopSession,
-    VideoBootstrap, VideoBootstrapResult, VideoKeyframeRequest, NATIVE_VIDEO_STREAM_ID,
+    MediaFeedback, MediaParkRequest, MediaParkResult, NativeChromaSubsampling, NativeColorRange,
+    NativeDisplayReconfigurationResultCode, NativeDynamicRange, NativeMediaParkResultCode,
+    NativeMediaParkState, NativeNegotiationFailure, NativeProtocolError, NativeSessionError,
+    NativeVideoBootstrapReason, NativeVideoBootstrapResultCode, NativeVideoCodec,
+    NativeVideoKeyframeRequestReason, NativeVideoProfile, SessionStarted, SessionStopped,
+    StartSessionAck, StopSession, VideoBootstrap, VideoBootstrapResult, VideoKeyframeRequest,
+    NATIVE_MEDIA_CAPABILITY_MEDIA_PARK_RESUME, NATIVE_VIDEO_STREAM_ID,
 };
 use tokio::sync::Notify;
 
@@ -40,6 +41,8 @@ const NATIVE_MEDIA_FEEDBACK_WINDOW_MILLISECONDS: u32 = 250;
 const MAX_RETIRED_VIDEO_BOOTSTRAPS: usize = 8;
 pub(crate) const MAX_VIDEO_BOOTSTRAP_RETRY_ATTEMPTS: u8 = 2;
 const PERIODIC_IDR_INTERVAL: Duration = Duration::from_secs(1);
+const MEDIA_RESUME_BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(15);
+const MAX_MEDIA_RESUME_IDR_RETRIES: u8 = 1;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct NativeConnectionContext {
@@ -150,6 +153,12 @@ struct PendingNativeSession {
     adaptive_policy_lane: AdaptiveVideoPolicyLane,
     next_feedback_window_id: u64,
     pending_feedback_window: Option<PendingMediaFeedbackWindow>,
+    media_park_state: NativeMediaParkState,
+    media_park_revision: u64,
+    resume_bootstrap_revision: Option<u64>,
+    resume_bootstrap_generation: Option<u32>,
+    resume_bootstrap_deadline: Option<Instant>,
+    resume_idr_retry_attempt: u8,
 }
 
 #[derive(Debug)]
@@ -656,6 +665,9 @@ impl ControlRouter {
             Some(client_control_envelope::Payload::DisplayReconfiguration(request)) => {
                 self.dispatch_native_display_reconfiguration(request_id, request, context)
             }
+            Some(client_control_envelope::Payload::MediaPark(request)) => {
+                self.dispatch_native_media_park(request_id, request, context)
+            }
             None => vec![native_error(
                 request_id,
                 ERROR_INVALID_OPERATION,
@@ -677,6 +689,241 @@ impl ControlRouter {
             };
         let result = self.platform.reconfigure_session(reservation.platform_plan);
         self.complete_native_display_reconfiguration(reservation, result)
+    }
+
+    fn dispatch_native_media_park(
+        &mut self,
+        request_id: u64,
+        request: MediaParkRequest,
+        context: &NativeConnectionContext,
+    ) -> Vec<HostControlEnvelope> {
+        let Some(pending) = self.native.pending.as_ref() else {
+            return vec![media_park_result(
+                request_id,
+                request.session_epoch,
+                request.revision,
+                NativeMediaParkState::Unspecified,
+                NativeMediaParkResultCode::Rejected,
+                "native session has not been negotiated",
+            )];
+        };
+        let current_state = pending.media_park_state;
+        let current_revision = pending.media_park_revision;
+        let session_epoch = pending.plan.session_epoch;
+        if context.session_epoch != session_epoch || request.session_epoch != session_epoch {
+            return vec![media_park_result(
+                request_id,
+                session_epoch,
+                request.revision,
+                current_state,
+                NativeMediaParkResultCode::Rejected,
+                "media park request does not belong to the active session",
+            )];
+        }
+        if pending.plan.media_capabilities & NATIVE_MEDIA_CAPABILITY_MEDIA_PARK_RESUME == 0 {
+            return vec![media_park_result(
+                request_id,
+                session_epoch,
+                request.revision,
+                current_state,
+                NativeMediaParkResultCode::Rejected,
+                "media park/resume was not negotiated",
+            )];
+        }
+        if request.revision == 0 {
+            return vec![media_park_result(
+                request_id,
+                session_epoch,
+                request.revision,
+                current_state,
+                NativeMediaParkResultCode::Rejected,
+                "media park revision must be nonzero",
+            )];
+        }
+        let current_target_parked = matches!(
+            current_state,
+            NativeMediaParkState::Parking | NativeMediaParkState::Parked
+        );
+        let current_target_known = matches!(
+            current_state,
+            NativeMediaParkState::Active
+                | NativeMediaParkState::Parking
+                | NativeMediaParkState::Parked
+                | NativeMediaParkState::Resuming
+        );
+        if !current_target_known {
+            return vec![media_park_result(
+                request_id,
+                session_epoch,
+                request.revision,
+                current_state,
+                NativeMediaParkResultCode::Rejected,
+                "media park state is invalid",
+            )];
+        }
+        if request.revision < current_revision {
+            return vec![media_park_result(
+                request_id,
+                session_epoch,
+                request.revision,
+                current_state,
+                NativeMediaParkResultCode::Superseded,
+                "media park revision is older than the committed revision",
+            )];
+        }
+        if request.revision == current_revision {
+            let result = if request.park == current_target_parked {
+                NativeMediaParkResultCode::Idempotent
+            } else {
+                NativeMediaParkResultCode::Superseded
+            };
+            return vec![media_park_result(
+                request_id,
+                session_epoch,
+                current_revision,
+                current_state,
+                result,
+                if result == NativeMediaParkResultCode::Idempotent {
+                    "media park request was already applied"
+                } else {
+                    "media park revision already committed for the opposite state"
+                },
+            )];
+        }
+
+        let result = match (request.park, current_state) {
+            (true, NativeMediaParkState::Parked | NativeMediaParkState::Parking)
+            | (false, NativeMediaParkState::Active) => {
+                let pending = self
+                    .native
+                    .pending
+                    .as_mut()
+                    .expect("validated pending native session");
+                pending.media_park_revision = request.revision;
+                return vec![media_park_result(
+                    request_id,
+                    session_epoch,
+                    request.revision,
+                    current_state,
+                    NativeMediaParkResultCode::Applied,
+                    "media park state already matched the requested target",
+                )];
+            }
+            (true, NativeMediaParkState::Active | NativeMediaParkState::Resuming) => self
+                .enter_media_park(session_epoch, request.revision)
+                .map(|state| (state, "media output parked".to_owned()))
+                .map_err(|message| (current_state, message)),
+            (false, NativeMediaParkState::Parked | NativeMediaParkState::Parking)
+            | (false, NativeMediaParkState::Resuming) => self
+                .resume_media_from_park(session_epoch, request.revision)
+                .map(|state| {
+                    (
+                        state,
+                        "media output is resuming with a fresh bootstrap".to_owned(),
+                    )
+                })
+                .map_err(|message| {
+                    (
+                        self.native_media_park_state(session_epoch)
+                            .unwrap_or(current_state),
+                        message,
+                    )
+                }),
+            (_, NativeMediaParkState::Unspecified) => {
+                Err((current_state, "media park state is invalid".to_owned()))
+            }
+        };
+        vec![match result {
+            Ok((state, message)) => media_park_result(
+                request_id,
+                session_epoch,
+                request.revision,
+                state,
+                NativeMediaParkResultCode::Applied,
+                message,
+            ),
+            Err((state, message)) => media_park_result(
+                request_id,
+                session_epoch,
+                current_revision,
+                state,
+                NativeMediaParkResultCode::Rejected,
+                message,
+            ),
+        }]
+    }
+
+    fn enter_media_park(
+        &mut self,
+        session_epoch: u32,
+        revision: u64,
+    ) -> Result<NativeMediaParkState, String> {
+        let pending = self
+            .native
+            .pending
+            .as_ref()
+            .ok_or_else(|| "native session has not been negotiated".to_owned())?;
+        if !pending.active || pending.plan.session_epoch != session_epoch {
+            return Err("native session is not active".to_owned());
+        }
+        pending
+            .next_generation_id
+            .checked_add(1)
+            .ok_or_else(|| "media park generation exhausted".to_owned())?;
+        // The platform reset is the external boundary. Do it before publishing
+        // PARKING or advancing the revision so a failure can be retried with
+        // the same request without consuming the monotonic revision.
+        self.platform
+            .reset_native_input(session_epoch)
+            .map_err(|error| {
+                format!("native input reset at media park boundary failed: {error}")
+            })?;
+        let pending = self
+            .native
+            .pending
+            .as_mut()
+            .expect("validated pending native session");
+        pending.media_park_state = NativeMediaParkState::Parking;
+        pending.media_park_revision = revision;
+        reset_media_delivery(pending)?;
+        pending.media_park_state = NativeMediaParkState::Parked;
+        Ok(pending.media_park_state)
+    }
+
+    fn resume_media_from_park(
+        &mut self,
+        session_epoch: u32,
+        revision: u64,
+    ) -> Result<NativeMediaParkState, String> {
+        let pending = self
+            .native
+            .pending
+            .as_ref()
+            .ok_or_else(|| "native session has not been negotiated".to_owned())?;
+        if !pending.active || pending.plan.session_epoch != session_epoch {
+            return Err("native session is not active".to_owned());
+        }
+        pending
+            .next_generation_id
+            .checked_add(1)
+            .ok_or_else(|| "media park generation exhausted".to_owned())?;
+        self.platform
+            .handle_control_event(session_epoch, crate::PlatformControlEvent::RequestIdrFrame)
+            .map_err(|error| format!("fresh media bootstrap could not be requested: {error}"))?;
+        let pending = self
+            .native
+            .pending
+            .as_mut()
+            .expect("validated pending native session");
+        pending.media_park_state = NativeMediaParkState::Resuming;
+        pending.media_park_revision = revision;
+        reset_media_delivery(pending)?;
+        pending.resume_bootstrap_revision = Some(revision);
+        pending.resume_bootstrap_deadline =
+            Instant::now().checked_add(MEDIA_RESUME_BOOTSTRAP_TIMEOUT);
+        self.codec_configuration_notify.notify_one();
+        self.video_bootstrap_notify.notify_one();
+        Ok(NativeMediaParkState::Resuming)
     }
 
     pub(crate) fn reserve_native_display_reconfiguration(
@@ -1116,6 +1363,20 @@ impl ControlRouter {
                 && result.generation_id == bootstrap.generation_id
                 && result.frame_id == bootstrap.frame_id
         });
+        if pending.media_park_state == NativeMediaParkState::Resuming
+            && (pending.resume_bootstrap_revision != Some(pending.media_park_revision)
+                || pending.resume_bootstrap_generation != Some(result.generation_id))
+        {
+            eprintln!(
+                "Lumen native media stage=video-bootstrap-result-ignored reason=resume-revision-mismatch session-epoch={} generation-id={} expected-generation-id={} revision={} expected-revision={}",
+                result.session_epoch,
+                result.generation_id,
+                pending.resume_bootstrap_generation.unwrap_or_default(),
+                pending.media_park_revision,
+                pending.resume_bootstrap_revision.unwrap_or_default(),
+            );
+            return Vec::new();
+        }
         if !accepted {
             return vec![native_error(
                 request_id,
@@ -1188,6 +1449,13 @@ impl ControlRouter {
         pending.video_bootstrap_sent = false;
         pending.video_bootstrap_requires_encoder_resume = false;
         pending.video_bootstrap_retry_attempt = 0;
+        if pending.media_park_state == NativeMediaParkState::Resuming {
+            pending.media_park_state = NativeMediaParkState::Active;
+            pending.resume_bootstrap_revision = None;
+            pending.resume_bootstrap_generation = None;
+            pending.resume_bootstrap_deadline = None;
+            pending.resume_idr_retry_attempt = 0;
+        }
         let now = Instant::now();
         if bootstrap_reason == Some(NativeVideoBootstrapReason::Periodic) {
             pending.periodic_idr.acknowledge(now);
@@ -1596,6 +1864,86 @@ impl ControlRouter {
             .as_ref()
             .filter(|pending| pending.plan.session_epoch == session_epoch)
             .map(|pending| pending.plan.media_capabilities)
+    }
+
+    pub(crate) fn native_media_park_state(
+        &self,
+        session_epoch: u32,
+    ) -> Option<NativeMediaParkState> {
+        self.native.pending.as_ref().and_then(|pending| {
+            (pending.plan.session_epoch == session_epoch).then_some(pending.media_park_state)
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn native_media_park_revision(&self, session_epoch: u32) -> Option<u64> {
+        self.native.pending.as_ref().and_then(|pending| {
+            (pending.plan.session_epoch == session_epoch).then_some(pending.media_park_revision)
+        })
+    }
+
+    /// Advances a stalled RESUMING transition without requiring a separate
+    /// host task. The media poll loop calls this watchdog at its bounded
+    /// cadence; one fresh IDR request is retried, then the session fails closed
+    /// back to PARKED while all control/input/telemetry lanes remain alive.
+    pub(crate) fn service_native_media_resume_watchdog(
+        &mut self,
+        session_epoch: u32,
+    ) -> Result<Option<NativeMediaParkState>, String> {
+        let Some(pending) = self.native.pending.as_ref() else {
+            return Ok(None);
+        };
+        if pending.plan.session_epoch != session_epoch
+            || pending.media_park_state != NativeMediaParkState::Resuming
+            || pending
+                .resume_bootstrap_deadline
+                .is_none_or(|deadline| deadline > Instant::now())
+        {
+            return Ok(None);
+        }
+        let revision = pending.media_park_revision;
+        let retry_attempt = pending.resume_idr_retry_attempt;
+        let can_retry = retry_attempt < MAX_MEDIA_RESUME_IDR_RETRIES;
+        if can_retry
+            && self
+                .platform
+                .handle_control_event(session_epoch, crate::PlatformControlEvent::RequestIdrFrame)
+                .is_ok()
+        {
+            let pending = self
+                .native
+                .pending
+                .as_mut()
+                .expect("validated pending native session");
+            reset_media_delivery(pending)?;
+            pending.media_park_state = NativeMediaParkState::Resuming;
+            pending.media_park_revision = revision;
+            pending.resume_bootstrap_revision = Some(revision);
+            pending.resume_bootstrap_deadline =
+                Instant::now().checked_add(MEDIA_RESUME_BOOTSTRAP_TIMEOUT);
+            pending.resume_idr_retry_attempt = retry_attempt.saturating_add(1);
+            return Ok(Some(NativeMediaParkState::Resuming));
+        }
+        let pending = self
+            .native
+            .pending
+            .as_mut()
+            .expect("validated pending native session");
+        reset_media_delivery(pending)?;
+        pending.media_park_state = NativeMediaParkState::Parked;
+        pending.media_park_revision = revision;
+        Ok(Some(NativeMediaParkState::Parked))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn expire_native_media_resume_watchdog_for_test(&mut self, session_epoch: u32) {
+        if let Some(pending) = self.native.pending.as_mut() {
+            if pending.plan.session_epoch == session_epoch
+                && pending.media_park_state == NativeMediaParkState::Resuming
+            {
+                pending.resume_bootstrap_deadline = Some(Instant::now() - Duration::from_millis(1));
+            }
+        }
     }
 
     pub(crate) fn reserve_native_start(
@@ -2081,6 +2429,12 @@ impl ControlRouter {
             adaptive_policy_lane: AdaptiveVideoPolicyLane::default(),
             next_feedback_window_id: 1,
             pending_feedback_window: None,
+            media_park_state: NativeMediaParkState::Active,
+            media_park_revision: 0,
+            resume_bootstrap_revision: None,
+            resume_bootstrap_generation: None,
+            resume_bootstrap_deadline: None,
+            resume_idr_retry_attempt: 0,
         });
         vec![HostControlEnvelope {
             request_id,
@@ -2095,15 +2449,30 @@ impl ControlRouter {
             .is_some_and(|pending| pending.active && pending.plan.session_epoch == session_epoch)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn publish_native_codec_configuration(
         &mut self,
         configuration: CodecConfiguration,
+    ) -> bool {
+        self.publish_native_codec_configuration_for_revision(configuration, None)
+    }
+
+    pub(crate) fn publish_native_codec_configuration_for_revision(
+        &mut self,
+        configuration: CodecConfiguration,
+        expected_media_park_revision: Option<u64>,
     ) -> bool {
         {
             let Some(pending) = self.native.pending.as_mut() else {
                 return false;
             };
             if !pending.active
+                || matches!(
+                    pending.media_park_state,
+                    NativeMediaParkState::Parking | NativeMediaParkState::Parked
+                )
+                || expected_media_park_revision
+                    .is_some_and(|revision| revision != pending.media_park_revision)
                 || configuration.session_epoch != pending.plan.session_epoch
                 || configuration.stream_id != u32::from(NATIVE_VIDEO_STREAM_ID)
                 || configuration.stream_id != pending.plan.video_stream_id
@@ -2134,7 +2503,13 @@ impl ControlRouter {
         session_epoch: u32,
     ) -> Option<CodecConfiguration> {
         let pending = self.native.pending.as_mut()?;
-        if pending.plan.session_epoch != session_epoch || pending.codec_configuration_sent {
+        if pending.plan.session_epoch != session_epoch
+            || pending.codec_configuration_sent
+            || matches!(
+                pending.media_park_state,
+                NativeMediaParkState::Parking | NativeMediaParkState::Parked
+            )
+        {
             return None;
         }
         let configuration = pending.codec_configuration.clone()?;
@@ -2154,6 +2529,27 @@ impl ControlRouter {
         })
     }
 
+    pub(crate) fn native_codec_configuration_send_is_current(
+        &self,
+        session_epoch: u32,
+        configuration_id: u32,
+    ) -> bool {
+        self.native.pending.as_ref().is_some_and(|pending| {
+            pending.active
+                && pending.plan.session_epoch == session_epoch
+                && !matches!(
+                    pending.media_park_state,
+                    NativeMediaParkState::Parking | NativeMediaParkState::Parked
+                )
+                && pending.codec_configuration_sent
+                && pending
+                    .codec_configuration
+                    .as_ref()
+                    .is_some_and(|configuration| configuration.configuration_id == configuration_id)
+        })
+    }
+
+    #[allow(dead_code)]
     pub(crate) fn publish_native_video_bootstrap(
         &mut self,
         configuration_id: u32,
@@ -2163,8 +2559,36 @@ impl ControlRouter {
         requires_encoder_resume: bool,
         access_unit: Vec<u8>,
     ) -> Option<u32> {
+        self.publish_native_video_bootstrap_for_revision(
+            configuration_id,
+            frame_id,
+            capture_timestamp_us,
+            reason,
+            requires_encoder_resume,
+            access_unit,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn publish_native_video_bootstrap_for_revision(
+        &mut self,
+        configuration_id: u32,
+        frame_id: u32,
+        capture_timestamp_us: u32,
+        reason: NativeVideoBootstrapReason,
+        requires_encoder_resume: bool,
+        access_unit: Vec<u8>,
+        expected_media_park_revision: Option<u64>,
+    ) -> Option<u32> {
         let pending = self.native.pending.as_mut()?;
         if !pending.active
+            || matches!(
+                pending.media_park_state,
+                NativeMediaParkState::Parking | NativeMediaParkState::Parked
+            )
+            || expected_media_park_revision
+                .is_some_and(|revision| revision != pending.media_park_revision)
             || pending.acknowledged_configuration_id != Some(configuration_id)
             || frame_id == 0
             || access_unit.is_empty()
@@ -2219,6 +2643,10 @@ impl ControlRouter {
             reason: reason as i32,
             access_unit,
         });
+        if pending.media_park_state == NativeMediaParkState::Resuming {
+            pending.resume_bootstrap_revision = Some(pending.media_park_revision);
+            pending.resume_bootstrap_generation = Some(generation_id);
+        }
         pending.video_bootstrap_sent = false;
         self.video_bootstrap_notify.notify_one();
         Some(generation_id)
@@ -2229,12 +2657,57 @@ impl ControlRouter {
         session_epoch: u32,
     ) -> Option<VideoBootstrap> {
         let pending = self.native.pending.as_mut()?;
-        if pending.plan.session_epoch != session_epoch || pending.video_bootstrap_sent {
+        if pending.plan.session_epoch != session_epoch
+            || pending.video_bootstrap_sent
+            || matches!(
+                pending.media_park_state,
+                NativeMediaParkState::Parking | NativeMediaParkState::Parked
+            )
+        {
             return None;
         }
         let bootstrap = pending.video_bootstrap.clone()?;
         pending.video_bootstrap_sent = true;
         Some(bootstrap)
+    }
+
+    pub(crate) fn native_video_bootstrap_send_is_current(
+        &self,
+        session_epoch: u32,
+        generation_id: u32,
+    ) -> bool {
+        self.native.pending.as_ref().is_some_and(|pending| {
+            pending.active
+                && pending.plan.session_epoch == session_epoch
+                && !matches!(
+                    pending.media_park_state,
+                    NativeMediaParkState::Parking | NativeMediaParkState::Parked
+                )
+                && pending.video_bootstrap_sent
+                && pending
+                    .video_bootstrap
+                    .as_ref()
+                    .is_some_and(|bootstrap| bootstrap.generation_id == generation_id)
+        })
+    }
+
+    pub(crate) fn native_media_datagram_send_is_current(
+        &self,
+        session_epoch: u32,
+        media_park_revision: u64,
+        generation_id: Option<u32>,
+    ) -> bool {
+        self.native.pending.as_ref().is_some_and(|pending| {
+            pending.active
+                && pending.plan.session_epoch == session_epoch
+                && pending.media_park_revision == media_park_revision
+                && !matches!(
+                    pending.media_park_state,
+                    NativeMediaParkState::Parking | NativeMediaParkState::Parked
+                )
+                && generation_id
+                    .is_none_or(|generation| pending.acknowledged_generation_id == Some(generation))
+        })
     }
 
     pub(crate) fn retry_native_video_bootstrap(
@@ -2409,6 +2882,11 @@ impl ControlRouter {
             wire_budget_kbps: adaptive.wire_budget_kbps,
             target_bitrate_kbps: adaptive.encoder_bitrate_kbps,
             admission_divisor: adaptive.admission_divisor,
+            media_park_revision: pending.media_park_revision,
+            parked: matches!(
+                pending.media_park_state,
+                NativeMediaParkState::Parking | NativeMediaParkState::Parked
+            ),
         })
     }
 
@@ -2422,6 +2900,11 @@ impl ControlRouter {
             policy_revision: u16::try_from(pending.plan.policy_revision).ok()?,
             maximum_datagram_payload: usize::try_from(pending.plan.maximum_datagram_payload)
                 .ok()?,
+            media_park_revision: pending.media_park_revision,
+            parked: matches!(
+                pending.media_park_state,
+                NativeMediaParkState::Parking | NativeMediaParkState::Parked
+            ),
         })
     }
 
@@ -2654,6 +3137,62 @@ fn display_reconfiguration_result(
             },
         )),
     }
+}
+
+fn media_park_result(
+    request_id: u64,
+    session_epoch: u32,
+    revision: u64,
+    state: NativeMediaParkState,
+    result: NativeMediaParkResultCode,
+    message: impl Into<String>,
+) -> HostControlEnvelope {
+    HostControlEnvelope {
+        request_id,
+        payload: Some(host_control_envelope::Payload::MediaPark(MediaParkResult {
+            session_epoch,
+            revision,
+            state: state as i32,
+            result: result as i32,
+            message: message.into(),
+        })),
+    }
+}
+
+fn reset_media_delivery(pending: &mut PendingNativeSession) -> Result<(), String> {
+    if let Some(generation_id) = pending.acknowledged_generation_id {
+        pending.retired_video_bootstrap_generation_watermark = pending
+            .retired_video_bootstrap_generation_watermark
+            .max(generation_id);
+    }
+    if let Some(bootstrap) = pending.video_bootstrap.take() {
+        pending.retire_video_bootstrap(bootstrap);
+    }
+    pending.video_bootstrap_sent = false;
+    pending.video_bootstrap_requires_encoder_resume = false;
+    pending.video_bootstrap_retry_attempt = 0;
+    pending.acknowledged_generation_id = None;
+    pending.last_video_bootstrap_acknowledgement = None;
+    pending.video_bootstrap_failure = None;
+    pending.resume_bootstrap_revision = None;
+    pending.resume_bootstrap_generation = None;
+    pending.resume_bootstrap_deadline = None;
+    pending.resume_idr_retry_attempt = 0;
+    pending.repair_keyframe = RepairKeyframeState::Idle;
+    pending.periodic_idr.reset();
+    pending.last_sent_video_frame_id = 0;
+    pending.pending_feedback_window = None;
+    pending.next_generation_id = pending
+        .next_generation_id
+        .checked_add(1)
+        .ok_or_else(|| "media park generation exhausted".to_owned())?;
+    if pending.acknowledged_configuration_id.is_none() {
+        // A configuration that was sent but not acknowledged may be safely
+        // retried after resume. An acknowledged record remains valid across a
+        // park boundary and avoids a quality-changing renegotiation.
+        pending.codec_configuration_sent = false;
+    }
+    Ok(())
 }
 
 fn native_negotiation_error(request_id: u64, error: NativeSessionError) -> HostControlEnvelope {

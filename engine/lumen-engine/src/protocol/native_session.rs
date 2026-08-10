@@ -11,13 +11,15 @@ pub const NATIVE_MEDIA_CAPABILITY_FIXED_CADENCE_FEEDBACK: u64 = 1 << 1;
 pub const NATIVE_MEDIA_CAPABILITY_CONTINUOUS_SCROLL: u64 = 1 << 2;
 pub const NATIVE_MEDIA_CAPABILITY_PAIRED_FEEDBACK_WINDOWS: u64 = 1 << 3;
 pub const NATIVE_MEDIA_CAPABILITY_PACKET_ARRIVAL_FEEDBACK: u64 = 1 << 4;
+pub const NATIVE_MEDIA_CAPABILITY_MEDIA_PARK_RESUME: u64 = 1 << 5;
 pub const NATIVE_REQUIRED_MEDIA_CAPABILITIES: u64 =
     NATIVE_MEDIA_CAPABILITY_SAME_GENERATION_KEYFRAMES
         | NATIVE_MEDIA_CAPABILITY_FIXED_CADENCE_FEEDBACK
         | NATIVE_MEDIA_CAPABILITY_CONTINUOUS_SCROLL
         | NATIVE_MEDIA_CAPABILITY_PAIRED_FEEDBACK_WINDOWS;
-pub const NATIVE_SUPPORTED_MEDIA_CAPABILITIES: u64 =
-    NATIVE_REQUIRED_MEDIA_CAPABILITIES | NATIVE_MEDIA_CAPABILITY_PACKET_ARRIVAL_FEEDBACK;
+pub const NATIVE_SUPPORTED_MEDIA_CAPABILITIES: u64 = NATIVE_REQUIRED_MEDIA_CAPABILITIES
+    | NATIVE_MEDIA_CAPABILITY_PACKET_ARRIVAL_FEEDBACK
+    | NATIVE_MEDIA_CAPABILITY_MEDIA_PARK_RESUME;
 const MINIMUM_DATAGRAM_PAYLOAD: u32 = NATIVE_FEC_BLOCK_HEADER_BYTES as u32 + 1;
 const INITIAL_POLICY_REVISION: u32 = 1;
 const OPUS_PACKET_DURATION_MICROSECONDS: u32 = 5_000;
@@ -717,21 +719,65 @@ pub struct DisplayReconfigurationResult {
     pub message: String,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Enumeration)]
+#[repr(i32)]
+pub enum NativeMediaParkState {
+    Unspecified = 0,
+    Active = 1,
+    Parking = 2,
+    Parked = 3,
+    Resuming = 4,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Enumeration)]
+#[repr(i32)]
+pub enum NativeMediaParkResultCode {
+    Unspecified = 0,
+    Applied = 1,
+    Idempotent = 2,
+    Superseded = 3,
+    Rejected = 4,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct MediaParkRequest {
+    #[prost(uint32, tag = "1")]
+    pub session_epoch: u32,
+    #[prost(uint64, tag = "2")]
+    pub revision: u64,
+    #[prost(bool, tag = "3")]
+    pub park: bool,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct MediaParkResult {
+    #[prost(uint32, tag = "1")]
+    pub session_epoch: u32,
+    #[prost(uint64, tag = "2")]
+    pub revision: u64,
+    #[prost(enumeration = "NativeMediaParkState", tag = "3")]
+    pub state: i32,
+    #[prost(enumeration = "NativeMediaParkResultCode", tag = "4")]
+    pub result: i32,
+    #[prost(string, tag = "5")]
+    pub message: String,
+}
+
 #[derive(Clone, PartialEq, Message)]
 pub struct ClientControlEnvelope {
     #[prost(uint64, tag = "1")]
     pub request_id: u64,
     #[prost(
         oneof = "client_control_envelope::Payload",
-        tags = "10, 11, 13, 14, 15, 16, 17"
+        tags = "10, 11, 13, 14, 15, 16, 17, 18"
     )]
     pub payload: Option<client_control_envelope::Payload>,
 }
 
 pub mod client_control_envelope {
     use super::{
-        ClientSessionHello, CodecConfigurationAck, DisplayReconfigurationRequest, StartSessionAck,
-        StopSession, VideoBootstrapResult, VideoKeyframeRequest,
+        ClientSessionHello, CodecConfigurationAck, DisplayReconfigurationRequest, MediaParkRequest,
+        StartSessionAck, StopSession, VideoBootstrapResult, VideoKeyframeRequest,
     };
     use prost::Oneof;
 
@@ -751,6 +797,8 @@ pub mod client_control_envelope {
         VideoBootstrapResult(VideoBootstrapResult),
         #[prost(message, tag = "17")]
         DisplayReconfiguration(DisplayReconfigurationRequest),
+        #[prost(message, tag = "18")]
+        MediaPark(MediaParkRequest),
     }
 }
 
@@ -758,14 +806,17 @@ pub mod client_control_envelope {
 pub struct HostControlEnvelope {
     #[prost(uint64, tag = "1")]
     pub request_id: u64,
-    #[prost(oneof = "host_control_envelope::Payload", tags = "10, 12, 13, 15, 16")]
+    #[prost(
+        oneof = "host_control_envelope::Payload",
+        tags = "10, 12, 13, 15, 16, 17"
+    )]
     pub payload: Option<host_control_envelope::Payload>,
 }
 
 pub mod host_control_envelope {
     use super::{
-        DisplayReconfigurationResult, HostSessionPlan, NativeProtocolError, SessionStarted,
-        SessionStopped,
+        DisplayReconfigurationResult, HostSessionPlan, MediaParkResult, NativeProtocolError,
+        SessionStarted, SessionStopped,
     };
     use prost::Oneof;
 
@@ -781,6 +832,8 @@ pub mod host_control_envelope {
         SessionStarted(SessionStarted),
         #[prost(message, tag = "16")]
         DisplayReconfiguration(DisplayReconfigurationResult),
+        #[prost(message, tag = "17")]
+        MediaPark(MediaParkResult),
     }
 }
 
@@ -1191,7 +1244,9 @@ pub fn negotiate_native_session(
         }),
         maximum_object_delay_us: maximum_object_delay_us(client.refresh_millihz, policy),
         media_capabilities: NATIVE_REQUIRED_MEDIA_CAPABILITIES
-            | (client.media_capabilities & NATIVE_MEDIA_CAPABILITY_PACKET_ARRIVAL_FEEDBACK),
+            | (client.media_capabilities
+                & (NATIVE_MEDIA_CAPABILITY_PACKET_ARRIVAL_FEEDBACK
+                    | NATIVE_MEDIA_CAPABILITY_MEDIA_PARK_RESUME)),
     })
 }
 

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "contract": {
     "path": "docs/protocol/lumen-contract-v4.json",
-    "sha256": "0174a07ef5e32d4915842f8093095d7a51de3643167677d739564abb0698a00d"
+    "sha256": "b3efc3f6386599632c97bf25bf3b846c55d458e09a3a1f5fd5bf63dd58a6ac60"
   },
   "identity": {
     "name": "lumen-stream",

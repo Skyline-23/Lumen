@@ -67,6 +67,9 @@ client using the older single-report contract cannot enter a paired-window
 session. Packet-arrival feedback (bit 4) is optional. When negotiated, the
 client may attach observation-only receive timing to `MediaFeedback`; it does
 not participate in bitrate, FEC, pacing, resolution, or lifecycle decisions.
+Media park/resume (bit 5) is optional and is usable only when bit 5 is echoed
+by `HostSessionPlan.media_capabilities`; clients and hosts that do not echo it
+must reject `MediaParkRequest` without changing session state.
 
 `MediaFeedback.packet_arrival_reference_time_us` is field 18 and
 `packet_arrival_runs` is field 19. Each run is `first_sequence` as a big-endian
@@ -98,9 +101,45 @@ and explicit-repair keyframes create a new reliable bootstrap generation. A
 decoded bootstrap issues a platform resume only when its encoded frame carries
 that platform's pause ownership.
 
-Encoder-originated periodic keyframes retain the acknowledged generation and
-travel on the DATAGRAM plane with flag `0x01`. They refresh decoder reference
-state without recreating the decoder. An incomplete keyframe object follows the
+### Media park and resume
+
+`MediaParkRequest` is an additive control-lane operation. It never reinterprets
+`ClientSessionHello.resume` and never substitutes for `StopSession`. The
+request carries the connection's `session_epoch`, a nonzero strictly
+monotonic `revision`, and `park=true` to park or `park=false` to resume. The
+host correlates the operation with the existing control-envelope `request_id`
+and returns `MediaParkResult` with the committed revision, state, result code,
+and a bounded diagnostic message.
+
+The host state machine is `ACTIVE -> PARKING -> PARKED -> RESUMING -> ACTIVE`.
+`PARKING` and `RESUMING` are host-owned transition states; a failed platform
+input reset or failed resume IDR request leaves the prior state and revision
+unchanged so the same request can be retried. A request with the current
+revision and the current target is `idempotent`. A lower revision, or a
+same-revision request for the opposite target, is `superseded` and cannot
+mutate state. A newer request while `RESUMING` supersedes the in-flight
+bootstrap and starts a new generation for the newer revision.
+
+While `PARKING` or `PARKED`, the host continues the control, reliable-input,
+telemetry, capture, encoder, and receive tasks, but drains and drops encoded
+audio/video objects before any QUIC media enqueue. No video delta, audio
+datagram, or reliable video bootstrap may be sent. The input state is reset at
+the park boundary; the input and telemetry streams remain open. The host
+preserves the negotiated codec, exact dimensions, refresh, bitrate, parity,
+dynamic range, and quality policy.
+
+Entering `RESUMING` retires the prior video generation and clears pending wire,
+repair, bootstrap, and audio timeline state. Deltas remain fenced until a
+fresh reliable `VideoBootstrap` is decoded. The resume request revision owns
+that bootstrap generation; late ACKs for a retired generation are ignored.
+Only the matching decoded ACK transitions `RESUMING` to `ACTIVE`. Audio
+sequence/timeline counters restart at the resume boundary, and no stale video
+delta from before park may be sent.
+
+Controlled periodic refreshes retain the negotiated format but use the
+reliable `VideoBootstrap` lane when a decoder acknowledgement is required;
+only a same-generation keyframe explicitly admitted as a delta may travel on
+the DATAGRAM plane with flag `0x01`. An incomplete keyframe object follows the
 same deduplicated explicit-repair path as an incomplete delta.
 
 ## QUIC DATAGRAM object plane
@@ -139,10 +178,12 @@ A block contains at most 256 total shards. Data and parity counts are block
 local. Object kind, generation, object id, object bytes, timestamp, and block
 count are object global. Datagram sequence is monotonic for a flow.
 
-Periodic same-configuration video keyframes use DATAGRAM in the current
-generation. Startup, configuration, and explicit-repair keyframes remain
-reliable `VideoBootstrap` records. Audio is one raw 5 ms Opus multistream packet
-per object. A single-data-shard audio object with no parity or FEC block uses
+Periodic same-configuration video keyframes may use DATAGRAM only when the
+current-generation admission does not require decoder acknowledgement.
+Controlled periodic refreshes that require acknowledgement use reliable
+`VideoBootstrap` records, as do startup, configuration, and explicit-repair
+keyframes. Audio is one raw 5 ms Opus multistream packet per object. A
+single-data-shard audio object with no parity or FEC block uses
 the exact Opus payload length and is not padded to the negotiated datagram
 payload size. Input motion carries one `ClientMotionEnvelope`, latest unsent
 sample wins, and it has no FEC.

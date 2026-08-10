@@ -10,13 +10,15 @@ use crate::{
 use lumen_engine::{
     client_control_envelope, host_control_envelope, ClientControlEnvelope, ClientSessionHello,
     CodecConfiguration, CodecConfigurationAck, DisplayReconfigurationRequest,
-    HostSessionCapabilities, HostSessionPlan, MediaFeedback, NativeAudioChannelMode,
-    NativeAudioQuality, NativeChromaSubsampling, NativeColorRange, NativeDisplayGamut,
-    NativeDisplayReconfigurationResultCode, NativeDisplayTransfer, NativeDynamicRange,
-    NativeNegotiationFailure, NativePolicyMode, NativeVideoBootstrapReason,
-    NativeVideoBootstrapResultCode, NativeVideoCapability, NativeVideoCodec, NativeVideoFormat,
-    NativeVideoKeyframeRequestReason, NativeVideoProfile, StartSessionAck, VideoBootstrapResult,
-    VideoKeyframeRequest, NATIVE_PROTOCOL_VERSION, NATIVE_REQUIRED_MEDIA_CAPABILITIES,
+    HostSessionCapabilities, HostSessionPlan, MediaFeedback, MediaParkRequest,
+    NativeAudioChannelMode, NativeAudioQuality, NativeChromaSubsampling, NativeColorRange,
+    NativeDisplayGamut, NativeDisplayReconfigurationResultCode, NativeDisplayTransfer,
+    NativeDynamicRange, NativeMediaParkResultCode, NativeMediaParkState, NativeNegotiationFailure,
+    NativePolicyMode, NativeVideoBootstrapReason, NativeVideoBootstrapResultCode,
+    NativeVideoCapability, NativeVideoCodec, NativeVideoFormat, NativeVideoKeyframeRequestReason,
+    NativeVideoProfile, StartSessionAck, StopSession, VideoBootstrapResult, VideoKeyframeRequest,
+    NATIVE_MEDIA_CAPABILITY_MEDIA_PARK_RESUME, NATIVE_PROTOCOL_VERSION,
+    NATIVE_REQUIRED_MEDIA_CAPABILITIES,
 };
 use serde_json::{json, Value};
 use std::collections::VecDeque;
@@ -433,6 +435,95 @@ pub(crate) fn started_native_router(
         Some(host_control_envelope::Payload::SessionStarted(_))
     ));
     (root, router, context, plan)
+}
+
+fn started_media_park_router(
+    platform: Arc<dyn PlatformSessionControl>,
+) -> (
+    tempfile::TempDir,
+    ControlRouter,
+    NativeConnectionContext,
+    HostSessionPlan,
+) {
+    let (root, mut router) = router_with_platform(platform);
+    router
+        .authorities()
+        .applications()
+        .upsert(r#"{"uuid":"native-desktop","name":"Desktop"}"#)
+        .unwrap();
+    let application_id = router.authorities().applications().applications().unwrap()[0].id;
+    let context = native_context();
+    let mut hello = native_hello(application_id);
+    hello.media_capabilities |= NATIVE_MEDIA_CAPABILITY_MEDIA_PARK_RESUME;
+    let responses = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 1,
+            payload: Some(client_control_envelope::Payload::Hello(hello)),
+        },
+        &context,
+    );
+    let host_control_envelope::Payload::SessionPlan(plan) = responses[0].payload.clone().unwrap()
+    else {
+        panic!("expected media park session plan");
+    };
+    assert_ne!(
+        plan.media_capabilities & NATIVE_MEDIA_CAPABILITY_MEDIA_PARK_RESUME,
+        0
+    );
+    let responses = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 2,
+            payload: Some(client_control_envelope::Payload::StartSession(
+                StartSessionAck {
+                    session_epoch: context.session_epoch,
+                },
+            )),
+        },
+        &context,
+    );
+    assert!(matches!(
+        responses[0].payload,
+        Some(host_control_envelope::Payload::SessionStarted(_))
+    ));
+    (root, router, context, plan)
+}
+
+#[derive(Default)]
+struct MediaParkFailurePlatform {
+    fail_reset_once: std::sync::atomic::AtomicBool,
+    fail_idr_once: std::sync::atomic::AtomicBool,
+}
+
+impl PlatformSessionControl for MediaParkFailurePlatform {
+    fn start_session(&self, _plan: PlatformSessionPlan) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn stop_session(&self) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn reset_native_input(&self, _session_epoch: u32) -> Result<(), String> {
+        if self.fail_reset_once.swap(false, Ordering::AcqRel) {
+            Err("test input reset failure".to_owned())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn handle_control_event(
+        &self,
+        _session_epoch: u32,
+        event: PlatformControlEvent,
+    ) -> Result<(), String> {
+        if matches!(event, PlatformControlEvent::RequestIdrFrame)
+            && self.fail_idr_once.swap(false, Ordering::AcqRel)
+        {
+            Err("test IDR request failure".to_owned())
+        } else {
+            Ok(())
+        }
+    }
 }
 
 fn configured_native_router(
@@ -3079,4 +3170,486 @@ fn serves_a_normalized_automatic_wake_on_lan_target_when_the_active_nic_is_safe(
             "udpPort": 9
         })
     );
+}
+
+#[test]
+fn media_park_transition_failures_do_not_consume_revisions_or_strand_state() {
+    let platform = Arc::new(MediaParkFailurePlatform {
+        fail_reset_once: std::sync::atomic::AtomicBool::new(true),
+        fail_idr_once: std::sync::atomic::AtomicBool::new(true),
+    });
+    let (_root, mut router, context, _plan) = started_media_park_router(platform);
+
+    let park = |router: &mut ControlRouter, request_id: u64, revision: u64, park: bool| {
+        router.dispatch_native_control(
+            ClientControlEnvelope {
+                request_id,
+                payload: Some(client_control_envelope::Payload::MediaPark(
+                    MediaParkRequest {
+                        session_epoch: context.session_epoch,
+                        revision,
+                        park,
+                    },
+                )),
+            },
+            &context,
+        )
+    };
+
+    let response = park(&mut router, 3, 1, true);
+    let host_control_envelope::Payload::MediaPark(result) = response[0].payload.clone().unwrap()
+    else {
+        panic!("expected media park result");
+    };
+    assert_eq!(
+        NativeMediaParkResultCode::try_from(result.result).unwrap(),
+        NativeMediaParkResultCode::Rejected
+    );
+    assert_eq!(
+        router.native_media_park_state(context.session_epoch),
+        Some(NativeMediaParkState::Active)
+    );
+    assert_eq!(
+        router.native_media_park_revision(context.session_epoch),
+        Some(0)
+    );
+
+    let response = park(&mut router, 4, 1, true);
+    let host_control_envelope::Payload::MediaPark(result) = response[0].payload.clone().unwrap()
+    else {
+        panic!("expected media park result");
+    };
+    assert_eq!(
+        NativeMediaParkResultCode::try_from(result.result).unwrap(),
+        NativeMediaParkResultCode::Applied
+    );
+    assert_eq!(
+        router.native_media_park_state(context.session_epoch),
+        Some(NativeMediaParkState::Parked)
+    );
+    assert_eq!(
+        router.native_media_park_revision(context.session_epoch),
+        Some(1)
+    );
+
+    let response = park(&mut router, 5, 2, false);
+    let host_control_envelope::Payload::MediaPark(result) = response[0].payload.clone().unwrap()
+    else {
+        panic!("expected media park result");
+    };
+    assert_eq!(
+        NativeMediaParkResultCode::try_from(result.result).unwrap(),
+        NativeMediaParkResultCode::Rejected
+    );
+    assert_eq!(
+        router.native_media_park_revision(context.session_epoch),
+        Some(1)
+    );
+    assert_eq!(
+        router.native_media_park_state(context.session_epoch),
+        Some(NativeMediaParkState::Parked)
+    );
+
+    let response = park(&mut router, 6, 2, false);
+    let host_control_envelope::Payload::MediaPark(result) = response[0].payload.clone().unwrap()
+    else {
+        panic!("expected media park result");
+    };
+    assert_eq!(
+        NativeMediaParkResultCode::try_from(result.result).unwrap(),
+        NativeMediaParkResultCode::Applied
+    );
+    assert_eq!(
+        router.native_media_park_revision(context.session_epoch),
+        Some(2)
+    );
+    assert_eq!(
+        router.native_media_park_state(context.session_epoch),
+        Some(NativeMediaParkState::Resuming)
+    );
+}
+
+#[test]
+fn media_park_suppresses_bootstrap_and_resumes_with_a_fresh_generation() {
+    let platform = Arc::new(RecordingPlatformSessionControl::default());
+    let (_root, mut router, context, plan) = started_media_park_router(platform);
+    let configuration = CodecConfiguration {
+        session_epoch: context.session_epoch,
+        stream_id: plan.video_stream_id,
+        configuration_id: plan.video_configuration_id,
+        codec: plan.selected_video_format().unwrap().codec,
+        decoder_configuration_record: vec![1, 2, 3],
+    };
+    assert!(router.publish_native_codec_configuration(configuration.clone()));
+    assert_eq!(
+        router.take_native_codec_configuration(context.session_epoch),
+        Some(configuration.clone())
+    );
+    assert!(router
+        .dispatch_native_control(
+            ClientControlEnvelope {
+                request_id: 3,
+                payload: Some(client_control_envelope::Payload::CodecConfigurationAck(
+                    CodecConfigurationAck {
+                        session_epoch: context.session_epoch,
+                        stream_id: configuration.stream_id,
+                        configuration_id: configuration.configuration_id,
+                    },
+                )),
+            },
+            &context,
+        )
+        .is_empty());
+
+    let initial_generation = router
+        .publish_native_video_bootstrap(
+            plan.video_configuration_id,
+            1,
+            900,
+            NativeVideoBootstrapReason::Initial,
+            true,
+            vec![1, 2, 3],
+        )
+        .unwrap();
+    assert!(router
+        .take_native_video_bootstrap(context.session_epoch)
+        .is_some());
+    assert!(router
+        .dispatch_native_control(
+            ClientControlEnvelope {
+                request_id: 4,
+                payload: Some(client_control_envelope::Payload::VideoBootstrapResult(
+                    VideoBootstrapResult {
+                        session_epoch: context.session_epoch,
+                        stream_id: plan.video_stream_id,
+                        configuration_id: plan.video_configuration_id,
+                        generation_id: initial_generation,
+                        frame_id: 1,
+                        result: NativeVideoBootstrapResultCode::Decoded as i32,
+                        message: String::new(),
+                    },
+                )),
+            },
+            &context,
+        )
+        .is_empty());
+
+    let baseline = router.video_delivery_state().unwrap();
+    let park_response = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 5,
+            payload: Some(client_control_envelope::Payload::MediaPark(
+                MediaParkRequest {
+                    session_epoch: context.session_epoch,
+                    revision: 1,
+                    park: true,
+                },
+            )),
+        },
+        &context,
+    );
+    let host_control_envelope::Payload::MediaPark(park_result) =
+        park_response[0].payload.clone().unwrap()
+    else {
+        panic!("expected media park result");
+    };
+    assert_eq!(
+        NativeMediaParkResultCode::try_from(park_result.result).unwrap(),
+        NativeMediaParkResultCode::Applied
+    );
+    assert_eq!(
+        NativeMediaParkState::try_from(park_result.state).unwrap(),
+        NativeMediaParkState::Parked
+    );
+    assert!(router.video_delivery_state().unwrap().parked);
+    assert!(router.audio_delivery_state().unwrap().parked);
+    assert!(router
+        .take_native_video_bootstrap(context.session_epoch)
+        .is_none());
+    let parked = router.video_delivery_state().unwrap();
+    assert_eq!(parked.target_bitrate_kbps, baseline.target_bitrate_kbps);
+    assert_eq!(parked.wire_budget_kbps, baseline.wire_budget_kbps);
+    assert_eq!(parked.refresh_millihz, baseline.refresh_millihz);
+    assert!(!router.publish_native_codec_configuration_for_revision(
+        CodecConfiguration {
+            session_epoch: context.session_epoch,
+            stream_id: plan.video_stream_id,
+            configuration_id: plan.video_configuration_id + 1,
+            codec: plan.selected_video_format().unwrap().codec,
+            decoder_configuration_record: vec![9, 9, 9],
+        },
+        Some(baseline.media_park_revision),
+    ));
+
+    let duplicate = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 6,
+            payload: Some(client_control_envelope::Payload::MediaPark(
+                MediaParkRequest {
+                    session_epoch: context.session_epoch,
+                    revision: 1,
+                    park: true,
+                },
+            )),
+        },
+        &context,
+    );
+    let host_control_envelope::Payload::MediaPark(duplicate_result) =
+        duplicate[0].payload.clone().unwrap()
+    else {
+        panic!("expected idempotent media park result");
+    };
+    assert_eq!(
+        NativeMediaParkResultCode::try_from(duplicate_result.result).unwrap(),
+        NativeMediaParkResultCode::Idempotent
+    );
+
+    let resume_response = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 7,
+            payload: Some(client_control_envelope::Payload::MediaPark(
+                MediaParkRequest {
+                    session_epoch: context.session_epoch,
+                    revision: 2,
+                    park: false,
+                },
+            )),
+        },
+        &context,
+    );
+    let host_control_envelope::Payload::MediaPark(resume_result) =
+        resume_response[0].payload.clone().unwrap()
+    else {
+        panic!("expected resume media park result");
+    };
+    assert_eq!(
+        NativeMediaParkState::try_from(resume_result.state).unwrap(),
+        NativeMediaParkState::Resuming
+    );
+    assert!(!router.video_delivery_state().unwrap().parked);
+    assert_eq!(
+        router
+            .video_delivery_state()
+            .unwrap()
+            .acknowledged_generation_id,
+        None
+    );
+    // A newer idempotent resume supersedes the in-flight bootstrap owner.  The
+    // old revision must not be able to activate the session when its ACK
+    // arrives after the superseding request.
+    let superseding_resume = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 8,
+            payload: Some(client_control_envelope::Payload::MediaPark(
+                MediaParkRequest {
+                    session_epoch: context.session_epoch,
+                    revision: 3,
+                    park: false,
+                },
+            )),
+        },
+        &context,
+    );
+    let host_control_envelope::Payload::MediaPark(superseding_result) =
+        superseding_resume[0].payload.clone().unwrap()
+    else {
+        panic!("expected superseding resume media park result");
+    };
+    assert_eq!(
+        NativeMediaParkResultCode::try_from(superseding_result.result).unwrap(),
+        NativeMediaParkResultCode::Applied
+    );
+    assert_eq!(superseding_result.revision, 3);
+    assert_eq!(
+        router.native_media_park_state(context.session_epoch),
+        Some(NativeMediaParkState::Resuming)
+    );
+    assert_eq!(
+        router.native_media_park_revision(context.session_epoch),
+        Some(3)
+    );
+    assert!(router
+        .publish_native_video_bootstrap_for_revision(
+            plan.video_configuration_id,
+            1,
+            902,
+            NativeVideoBootstrapReason::Initial,
+            true,
+            vec![7, 8, 9],
+            Some(baseline.media_park_revision),
+        )
+        .is_none());
+    let fresh_generation = router
+        .publish_native_video_bootstrap(
+            plan.video_configuration_id,
+            1,
+            901,
+            NativeVideoBootstrapReason::Initial,
+            true,
+            vec![4, 5, 6],
+        )
+        .unwrap();
+    assert!(fresh_generation > initial_generation);
+    assert!(router
+        .take_native_video_bootstrap(context.session_epoch)
+        .is_some());
+
+    let stale = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 9,
+            payload: Some(client_control_envelope::Payload::VideoBootstrapResult(
+                VideoBootstrapResult {
+                    session_epoch: context.session_epoch,
+                    stream_id: plan.video_stream_id,
+                    configuration_id: plan.video_configuration_id,
+                    generation_id: initial_generation,
+                    frame_id: 1,
+                    result: NativeVideoBootstrapResultCode::Decoded as i32,
+                    message: String::new(),
+                },
+            )),
+        },
+        &context,
+    );
+    assert!(stale.is_empty());
+    assert_eq!(
+        router
+            .video_delivery_state()
+            .unwrap()
+            .acknowledged_generation_id,
+        None
+    );
+
+    let _ = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 10,
+            payload: Some(client_control_envelope::Payload::VideoBootstrapResult(
+                VideoBootstrapResult {
+                    session_epoch: context.session_epoch,
+                    stream_id: plan.video_stream_id,
+                    configuration_id: plan.video_configuration_id,
+                    generation_id: fresh_generation,
+                    frame_id: 1,
+                    result: NativeVideoBootstrapResultCode::Decoded as i32,
+                    message: String::new(),
+                },
+            )),
+        },
+        &context,
+    );
+    assert_eq!(
+        router.native_media_park_state(context.session_epoch),
+        Some(NativeMediaParkState::Active)
+    );
+
+    let stop = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 11,
+            payload: Some(client_control_envelope::Payload::StopSession(StopSession {
+                session_epoch: context.session_epoch,
+            })),
+        },
+        &context,
+    );
+    assert!(matches!(
+        stop[0].payload,
+        Some(host_control_envelope::Payload::SessionStopped(_))
+    ));
+    assert!(router
+        .native_media_park_state(context.session_epoch)
+        .is_none());
+}
+
+#[test]
+fn stalled_media_resume_watchdog_retries_then_falls_back_to_parked() {
+    let platform = Arc::new(RecordingPlatformSessionControl::default());
+    let (_root, mut router, context, _plan) = started_media_park_router(platform.clone());
+    for (request_id, revision, park) in [(3, 1, true), (4, 2, false)] {
+        let response = router.dispatch_native_control(
+            ClientControlEnvelope {
+                request_id,
+                payload: Some(client_control_envelope::Payload::MediaPark(
+                    MediaParkRequest {
+                        session_epoch: context.session_epoch,
+                        revision,
+                        park,
+                    },
+                )),
+            },
+            &context,
+        );
+        assert!(matches!(
+            response[0].payload,
+            Some(host_control_envelope::Payload::MediaPark(_))
+        ));
+    }
+    assert_eq!(
+        router.native_media_park_state(context.session_epoch),
+        Some(NativeMediaParkState::Resuming)
+    );
+
+    router.expire_native_media_resume_watchdog_for_test(context.session_epoch);
+    assert_eq!(
+        router
+            .service_native_media_resume_watchdog(context.session_epoch)
+            .unwrap(),
+        Some(NativeMediaParkState::Resuming)
+    );
+    assert_eq!(
+        platform
+            .control_events()
+            .iter()
+            .filter(|(_, event)| matches!(event, PlatformControlEvent::RequestIdrFrame))
+            .count(),
+        2
+    );
+
+    router.expire_native_media_resume_watchdog_for_test(context.session_epoch);
+    assert_eq!(
+        router
+            .service_native_media_resume_watchdog(context.session_epoch)
+            .unwrap(),
+        Some(NativeMediaParkState::Parked)
+    );
+    assert!(router.video_delivery_state().unwrap().parked);
+    assert!(router.audio_delivery_state().unwrap().parked);
+}
+
+#[test]
+fn stop_session_from_parked_keeps_stop_semantics_and_cleans_media_state() {
+    let platform = Arc::new(RecordingPlatformSessionControl::default());
+    let (_root, mut router, context, _plan) = started_media_park_router(platform);
+    let parked = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 3,
+            payload: Some(client_control_envelope::Payload::MediaPark(
+                MediaParkRequest {
+                    session_epoch: context.session_epoch,
+                    revision: 1,
+                    park: true,
+                },
+            )),
+        },
+        &context,
+    );
+    assert!(matches!(
+        parked[0].payload,
+        Some(host_control_envelope::Payload::MediaPark(_))
+    ));
+    let stopped = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 4,
+            payload: Some(client_control_envelope::Payload::StopSession(StopSession {
+                session_epoch: context.session_epoch,
+            })),
+        },
+        &context,
+    );
+    assert!(matches!(
+        stopped[0].payload,
+        Some(host_control_envelope::Payload::SessionStopped(_))
+    ));
+    assert!(router
+        .native_media_park_state(context.session_epoch)
+        .is_none());
 }

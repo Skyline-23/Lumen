@@ -69,6 +69,7 @@ public enum LumenContractTool {
       "syntax = \"proto3\";", "package lumen.streaming.v4;", "reserved 3;", "reserved 8;",
       "reserved 7, 8, 9;", "uint64 media_capabilities = 46;",
       "StopSession stop_session = 13;", "SessionStopped session_stopped = 12;",
+      "MediaParkRequest media_park = 18;", "MediaParkResult media_park = 17;",
     ] {
       try require(
         source.contains(fragment), "protobuf source is missing required boundary: \(fragment)")
@@ -90,7 +91,8 @@ public enum LumenContractTool {
     let capabilities = try dictionary(
       native["mediaCapabilities"], "nativeTransport.mediaCapabilities")
     try require(
-      number(capabilities["requiredMask"]) == 15 && number(capabilities["supportedMask"]) == 31,
+      number(capabilities["requiredMask"]) == 15 && number(capabilities["supportedMask"]) == 63
+        && number(capabilities["mediaParkResume"]) == 32,
       "media capability masks must match protocol v4"
     )
     let dynamicRange = try dictionary(
@@ -131,7 +133,8 @@ public enum LumenContractTool {
     _ = try requireKeys(
       lifecycle,
       [
-        "codecBootstrapSequence", "generation", "sessionStop", "displayReconfiguration", "fallback",
+        "codecBootstrapSequence", "generation", "sessionStop", "displayReconfiguration",
+        "mediaParkResume", "fallback",
       ],
       "lifecycle"
     )
@@ -143,6 +146,18 @@ public enum LumenContractTool {
     try require(
       jsonEqual(lifecycle["fallback"], ["legacyProtocol": false, "silentFormatDowngrade": false]),
       "fallback is forbidden"
+    )
+    let mediaPark = try dictionary(lifecycle["mediaParkResume"], "lifecycle.mediaParkResume")
+    try require(number(mediaPark["capabilityBit"]) == 32, "media park capability bit must be 32")
+    try require(
+      string(mediaPark["request"]) == "MediaParkRequest"
+        && string(mediaPark["response"]) == "MediaParkResult",
+      "media park request/result names must remain additive"
+    )
+    try require(
+      mediaPark["strictlyIncreasingRevision"] as? Bool == true
+        && mediaPark["resumeRequiresFreshBootstrap"] as? Bool == true,
+      "media park revisions and resume bootstrap must remain fenced"
     )
   }
 

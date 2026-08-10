@@ -77,9 +77,9 @@ func generatedAPIReferenceCoversEveryProtobufDeclaration() throws {
   let reference = try apiReference(root: root)
   let inventory = try LumenContractTool.apiReferenceInventory(root: root)
 
-  #expect(inventory.enumNames.count == 20)
-  #expect(inventory.messageNames.count == 40)
-  #expect(inventory.fieldNames.count == 276)
+  #expect(inventory.enumNames.count == 22)
+  #expect(inventory.messageNames.count == 42)
+  #expect(inventory.fieldNames.count == 286)
   #expect(inventory.serviceNames.isEmpty)
   #expect(inventory.explicitOneofNames.count == 6)
   #expect(inventory.syntheticOneofNames.count == 3)
@@ -162,7 +162,7 @@ func generatedAPIReferenceCoversHTTPSAuthoritiesAndLimitations() throws {
     "`verifyAccessToken` has no declared HTTP route",
     "do not declare required fields, nullability, or HTTP status codes",
     "must not infer route mappings",
-    "db39bdfca60d6a5186c57ca9e373e5ec1a8ee2c06a29b4c715eb435b38ca5b0f",
+    "b3efc3f6386599632c97bf25bf3b846c55d458e09a3a1f5fd5bf63dd58a6ac60",
   ] {
     #expect(reference.contains(requiredText), "Missing API reference text: \(requiredText)")
   }

@@ -212,6 +212,7 @@ struct DatagramDeadlineElapsed;
 enum DatagramSendOutcome {
     Sent,
     DeadlineExceeded,
+    Cancelled,
     Failed(String),
 }
 
@@ -345,6 +346,10 @@ where
                 report.sent_datagrams += 1;
             }
             DatagramSendOutcome::DeadlineExceeded => {
+                report.status = DatagramBatchStatus::Dropped(DatagramBatchDropReason::Send);
+                break;
+            }
+            DatagramSendOutcome::Cancelled => {
                 report.status = DatagramBatchStatus::Dropped(DatagramBatchDropReason::Send);
                 break;
             }
@@ -638,6 +643,10 @@ where
                         "committed video object drain reported a local deadline".to_owned(),
                     )
                 };
+                break;
+            }
+            DatagramSendOutcome::Cancelled => {
+                report.status = DatagramBatchStatus::Dropped(DatagramBatchDropReason::Send);
                 break;
             }
             DatagramSendOutcome::Failed(error) => {
@@ -1038,6 +1047,8 @@ struct AudioSenderState {
     identity: Option<AudioSessionIdentity>,
     packetizer: Option<NativeMediaPacketizer>,
     unit_id: u32,
+    parked: bool,
+    media_park_revision: Option<u64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1065,16 +1076,48 @@ fn delivery_for_session<T>(
 }
 
 impl AudioSenderState {
+    fn enter_parked(&mut self) {
+        self.packetizer = None;
+        self.unit_id = 1;
+        self.parked = true;
+        self.media_park_revision = None;
+    }
+
+    fn leave_parked(&mut self) {
+        self.packetizer = None;
+        self.unit_id = 1;
+        self.parked = false;
+        self.media_park_revision = None;
+    }
+
+    fn prepare_media_park_revision(&mut self, media_park_revision: u64) {
+        if self.media_park_revision == Some(media_park_revision) {
+            return;
+        }
+        // A park/resume transition can complete between media polls. Reset the
+        // audio timeline even when no parked poll observed the boundary.
+        self.packetizer = None;
+        self.unit_id = 1;
+        self.media_park_revision = Some(media_park_revision);
+    }
+
     fn prepare(&mut self, delivery: &AudioDeliveryState) -> Result<(), String> {
         let identity = AudioSessionIdentity {
             session_epoch: delivery.session_epoch,
         };
         if self.identity.as_ref() == Some(&identity) {
-            return self
-                .packetizer
-                .as_mut()
-                .ok_or_else(|| "audio packetizer is unavailable".to_owned())?
-                .reconfigure(delivery.maximum_datagram_payload);
+            if let Some(packetizer) = self.packetizer.as_mut() {
+                return packetizer.reconfigure(delivery.maximum_datagram_payload);
+            }
+            self.packetizer = Some(NativeMediaPacketizer::new(
+                NativeMediaPacketizerConfig {
+                    kind: NativeMediaKind::Audio,
+                    maximum_datagram_payload: delivery.maximum_datagram_payload,
+                    generation_id: 0,
+                },
+                0,
+            )?);
+            return Ok(());
         }
         self.packetizer = Some(NativeMediaPacketizer::new(
             NativeMediaPacketizerConfig {
@@ -1127,6 +1170,14 @@ async fn poll_and_send_audio(
             })
         }
     };
+    if delivery.parked {
+        sender.enter_parked();
+        return MediaAttempt::Dropped;
+    }
+    if sender.parked {
+        sender.leave_parked();
+    }
+    sender.prepare_media_park_revision(delivery.media_park_revision);
     let pending_since = Instant::now();
     if let Err(message) = sender.prepare(&delivery) {
         return MediaAttempt::Failed(audio_failure("packetizer-failed", message));
@@ -1149,19 +1200,45 @@ async fn poll_and_send_audio(
             "audio object deadline overflowed".to_owned(),
         ));
     };
+    let current = router.lock().is_ok_and(|router| {
+        router.native_media_datagram_send_is_current(
+            delivery.session_epoch,
+            delivery.media_park_revision,
+            None,
+        )
+    });
+    if !current {
+        sender.unit_id = unit_id.saturating_add(1);
+        return MediaAttempt::Dropped;
+    }
+    let media_router = Arc::clone(router);
     let report = send_datagram_batch(
         packetized.datagrams,
         DatagramBatchMode::DeadlineWait,
         Some(deadline),
         |mode, datagram, deadline| {
-            send_tracked_admitted_connection_datagram(
-                connection,
-                packet_arrival,
-                admission_gate,
-                mode,
-                datagram,
-                deadline,
-            )
+            let media_router = Arc::clone(&media_router);
+            async move {
+                let current = media_router.lock().is_ok_and(|router| {
+                    router.native_media_datagram_send_is_current(
+                        delivery.session_epoch,
+                        delivery.media_park_revision,
+                        None,
+                    )
+                });
+                if !current {
+                    return DatagramSendOutcome::DeadlineExceeded;
+                }
+                send_tracked_admitted_connection_datagram(
+                    connection,
+                    packet_arrival,
+                    admission_gate,
+                    mode,
+                    datagram,
+                    deadline,
+                )
+                .await
+            }
         },
     )
     .await;
@@ -1233,6 +1310,8 @@ struct VideoSenderState {
     frame_id: u32,
     /// Published to the adaptive controller as a wire-budget floor.
     keyframe_wire_rate_requirement_kbps: Option<u32>,
+    parked: bool,
+    pending_media_park_revision: Option<u64>,
 }
 
 #[derive(Clone, Default)]
@@ -1527,6 +1606,30 @@ fn classify_video_keyframe_delivery(
 }
 
 impl VideoSenderState {
+    fn enter_parked(&mut self) {
+        self.packetizer = None;
+        self.pending_frame = None;
+        self.pending_since = None;
+        self.pending_media_park_revision = None;
+        self.repair_required = false;
+        self.repair_after_bootstrap = false;
+        self.frame_id = 1;
+        self.keyframe_wire_rate_requirement_kbps = None;
+        self.parked = true;
+    }
+
+    fn leave_parked(&mut self) {
+        self.packetizer = None;
+        self.pending_frame = None;
+        self.pending_since = None;
+        self.repair_required = false;
+        self.repair_after_bootstrap = false;
+        self.frame_id = 1;
+        self.keyframe_wire_rate_requirement_kbps = None;
+        self.pending_media_park_revision = None;
+        self.parked = false;
+    }
+
     /// Keeps the highest requirement so a small keyframe cannot lower the floor.
     fn record_keyframe_wire_rate_requirement(&mut self, required_wire_kbps: u32) {
         self.keyframe_wire_rate_requirement_kbps = Some(
@@ -1725,6 +1828,26 @@ async fn poll_and_send_video(
     wire_pacer: &Arc<tokio::sync::Mutex<VideoWireRatePacer>>,
     admission_gate: &tokio::sync::Mutex<()>,
 ) -> MediaAttempt {
+    let watchdog = router
+        .lock()
+        .map_err(|_| {
+            video_capture_failure(
+                "resume-watchdog-failed",
+                "native control router lock is poisoned".to_owned(),
+            )
+        })
+        .and_then(|mut router| {
+            router
+                .service_native_media_resume_watchdog(session_epoch)
+                .map_err(|message| video_capture_failure("resume-watchdog-failed", message))
+        });
+    match watchdog {
+        Ok(Some(state)) => eprintln!(
+            "Lumen native media stage=media-resume-watchdog session-epoch={session_epoch} state={state:?}"
+        ),
+        Ok(None) => (),
+        Err(failure) => return MediaAttempt::Terminal(failure),
+    }
     let delivery = router
         .lock()
         .ok()
@@ -1741,6 +1864,39 @@ async fn poll_and_send_video(
                 }
             }
         };
+    if delivery.parked {
+        sender.enter_parked();
+        let frame = match platform.poll_encoded_video() {
+            Ok(frame) => frame,
+            Err(message) => {
+                return MediaAttempt::Failed(MediaFailure {
+                    code: PlatformRuntimeEventCode::NativeVideoCapturePoll,
+                    kind: MediaKind::Video,
+                    stage: "capture-poll-failed",
+                    message,
+                })
+            }
+        };
+        return if frame.is_some() {
+            MediaAttempt::Dropped
+        } else {
+            MediaAttempt::Idle
+        };
+    }
+    if sender.parked {
+        sender.leave_parked();
+    }
+    if sender.pending_frame.is_some()
+        && sender.pending_media_park_revision != Some(delivery.media_park_revision)
+    {
+        sender.pending_frame = None;
+        sender.pending_since = None;
+        sender.packetizer = None;
+        sender.repair_required = false;
+        sender.repair_after_bootstrap = false;
+        sender.frame_id = 1;
+        sender.pending_media_park_revision = None;
+    }
     if let Err(message) = sender.prepare(&delivery) {
         return MediaAttempt::Failed(video_failure("packetizer-failed", message));
     }
@@ -1817,10 +1973,10 @@ async fn poll_and_send_video(
         };
         if let Some(configuration) = normalized.new_configuration.clone() {
             let published = router.lock().is_ok_and(|mut router| {
-                router.publish_native_codec_configuration(codec_configuration(
-                    &delivery,
-                    configuration,
-                ))
+                router.publish_native_codec_configuration_for_revision(
+                    codec_configuration(&delivery, configuration),
+                    Some(delivery.media_park_revision),
+                )
             });
             if !published {
                 return MediaAttempt::Failed(video_failure(
@@ -1831,6 +1987,7 @@ async fn poll_and_send_video(
         }
         sender.pending_frame = Some(normalized);
         sender.pending_since = Some(Instant::now());
+        sender.pending_media_park_revision = Some(delivery.media_park_revision);
     }
 
     let normalized = sender.pending_frame.as_ref().expect("staged video frame");
@@ -1916,13 +2073,14 @@ async fn poll_and_send_video(
             delivery.acknowledged_generation_id.is_some(),
             |classification, configuration_id, frame_id, capture_timestamp_us, access_unit| {
                 router.lock().ok().and_then(|mut router| {
-                    router.publish_native_video_bootstrap(
+                    router.publish_native_video_bootstrap_for_revision(
                         configuration_id,
                         frame_id,
                         capture_timestamp_us,
                         classification.reason,
                         classification.requires_encoder_resume,
                         access_unit,
+                        Some(delivery.media_park_revision),
                     )
                 })
             },
@@ -2010,6 +2168,22 @@ async fn poll_and_send_video(
             "video object deadline overflowed".to_owned(),
         ));
     };
+    let current = router.lock().is_ok_and(|router| {
+        router.native_media_datagram_send_is_current(
+            delivery.session_epoch,
+            delivery.media_park_revision,
+            Some(generation_id),
+        )
+    });
+    if !current {
+        sender.pending_frame = None;
+        sender.pending_since = None;
+        sender.pending_media_park_revision = None;
+        return MediaAttempt::Dropped;
+    }
+    let media_router = Arc::clone(router);
+    let media_session_epoch = delivery.session_epoch;
+    let media_park_revision = delivery.media_park_revision;
     let report = send_wire_paced_video_datagram_batch(
         packetized.datagrams,
         NATIVE_MEDIA_SEND_BUFFER_BYTES,
@@ -2025,7 +2199,27 @@ async fn poll_and_send_video(
         },
         || connection.datagram_send_buffer_space(),
         |mode, datagram, deadline| {
-            send_tracked_connection_datagram(connection, packet_arrival, mode, datagram, deadline)
+            let media_router = Arc::clone(&media_router);
+            async move {
+                let current = media_router.lock().is_ok_and(|router| {
+                    router.native_media_datagram_send_is_current(
+                        media_session_epoch,
+                        media_park_revision,
+                        Some(generation_id),
+                    )
+                });
+                if !current {
+                    return DatagramSendOutcome::Cancelled;
+                }
+                send_tracked_connection_datagram(
+                    connection,
+                    packet_arrival,
+                    mode,
+                    datagram,
+                    deadline,
+                )
+                .await
+            }
         },
     )
     .await;
@@ -2251,11 +2445,12 @@ mod tests {
         record_successful_datagram, run_native_media_tasks, send_admitted_datagram,
         send_datagram_batch, send_video_datagram_batch, send_wire_paced_video_datagram_batch,
         video_datagram_deadline_us, wait_for_datagram_deadline, wait_for_datagram_queue_capacity,
-        DatagramBatchDropReason, DatagramBatchMode, DatagramBatchStatus, DatagramDeadlineElapsed,
-        DatagramSendOutcome, NormalizedNativeVideoFrame, PacketArrivalHistoryWarningReporter,
-        PacketArrivalSendObservation, SessionDelivery, VideoBootstrapClassification,
-        VideoDatagramCompletion, VideoDatagramDeadlineError, VideoDatagramPacing, VideoSenderState,
-        VideoWireRatePacer, MAXIMUM_VIDEO_WIRE_BURST_DATAGRAMS, MAXIMUM_VIDEO_WIRE_CREDIT_DURATION,
+        AudioSenderState, DatagramBatchDropReason, DatagramBatchMode, DatagramBatchStatus,
+        DatagramDeadlineElapsed, DatagramSendOutcome, NormalizedNativeVideoFrame,
+        PacketArrivalHistoryWarningReporter, PacketArrivalSendObservation, SessionDelivery,
+        VideoBootstrapClassification, VideoDatagramCompletion, VideoDatagramDeadlineError,
+        VideoDatagramPacing, VideoSenderState, VideoWireRatePacer,
+        MAXIMUM_VIDEO_WIRE_BURST_DATAGRAMS, MAXIMUM_VIDEO_WIRE_CREDIT_DURATION,
     };
     use lumen_engine::{
         native_video_packetization_plan, MediaFeedback, NativeVideoBootstrapReason,
@@ -3506,6 +3701,21 @@ mod tests {
         assert!(!sender.take_post_bootstrap_repair_request(false, None, false));
         assert!(sender.pending_frame.is_none());
         assert!(sender.pending_since.is_none());
+    }
+
+    #[test]
+    fn audio_timeline_resets_when_park_resume_happens_between_polls() {
+        let mut sender = AudioSenderState {
+            unit_id: 41,
+            media_park_revision: Some(7),
+            ..AudioSenderState::default()
+        };
+
+        sender.prepare_media_park_revision(9);
+
+        assert_eq!(sender.unit_id, 1);
+        assert_eq!(sender.media_park_revision, Some(9));
+        assert!(sender.packetizer.is_none());
     }
 
     #[tokio::test]
