@@ -2,9 +2,9 @@
 //!
 //! The controller treats the negotiated frame rate as a ceiling.  It only
 //! lowers the source target when the source is supplying frames faster than
-//! the encoder is producing them and either pending admission drops or output
-//! callback latency confirms encoder backpressure.  A clean controller slowly
-//! probes back toward the negotiated ceiling.
+//! the encoder is producing them and sustained pending-admission drops prove
+//! encoder backpressure.  A clean controller slowly probes back toward the
+//! negotiated ceiling.
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr::NonNull;
@@ -13,6 +13,8 @@ use std::sync::Mutex;
 use crate::LumenEngineStatus;
 
 const MIN_UPDATE_INTERVAL_SECONDS: f64 = 0.20;
+const STABLE_WARMUP_SECONDS: f64 = 1.0;
+const IDLE_ACTIVITY_REBASE_SECONDS: f64 = 1.0;
 const FRAME_RATE_FLOOR: u32 = 15;
 const RATE_DEADBAND_FPS: f64 = 2.0;
 const RATE_DEADBAND_RATIO: f64 = 0.05;
@@ -20,6 +22,9 @@ const PRESSURE_WINDOWS_BEFORE_DECREASE: u8 = 2;
 const CLEAN_WINDOWS_BEFORE_PROBE: u8 = 8;
 const PROBE_STEP_DIVISOR: u32 = 24;
 const SUSTAINABLE_OUTPUT_MARGIN: f64 = 0.95;
+const MIN_SOURCE_SAMPLES_PER_WINDOW: u64 = 4;
+const MIN_OUTPUT_SAMPLES_FOR_SUSTAINABLE_RATE: u64 = 4;
+const MAX_DECREASE_RATIO: f64 = 0.25;
 
 /// Configuration for one adaptive frame-cadence controller.
 ///
@@ -38,6 +43,9 @@ pub struct LumenAdaptiveFrameCadenceRequest {
 /// not decrease.  `pending_drop_count` must count only encoder admission or
 /// pending-queue drops; intentional source samples skipped because of the
 /// current cadence target are not encoder pressure and must not be included.
+/// `pipeline_stable` must be false while bootstrap admission is closed (or is
+/// otherwise being reconfigured).  Unstable observations rebase the
+/// controller and cannot contribute pressure.
 /// `callback_latency_milliseconds` is the observed encoder output-callback
 /// latency for the current measurement window; pass zero when no callback has
 /// completed in the window.
@@ -48,6 +56,7 @@ pub struct LumenAdaptiveFrameCadenceObservation {
     pub source_frame_count: u64,
     pub output_frame_count: u64,
     pub pending_drop_count: u64,
+    pub pipeline_stable: bool,
     pub callback_latency_milliseconds: f64,
 }
 
@@ -74,6 +83,10 @@ struct AdaptiveFrameCadenceState {
     floor: u32,
     target: u32,
     last: Option<ObservationSnapshot>,
+    stable_since_seconds: Option<f64>,
+    /// Initial bootstrap warmup is one-time.  Later periodic/repair gate
+    /// closures rebase measurements without restarting this warmup.
+    warmup_complete: bool,
     pressure_windows: u8,
     clean_windows: u8,
 }
@@ -91,6 +104,8 @@ impl AdaptiveFrameCadenceState {
             floor,
             target: ceiling,
             last: None,
+            stable_since_seconds: None,
+            warmup_complete: false,
             pressure_windows: 0,
             clean_windows: 0,
         })
@@ -111,6 +126,12 @@ impl AdaptiveFrameCadenceState {
 
         let Some(previous) = self.last else {
             self.last = Some(ObservationSnapshot { observation });
+            self.stable_since_seconds = observation
+                .pipeline_stable
+                .then_some(observation.monotonic_time_seconds);
+            self.warmup_complete = false;
+            self.pressure_windows = 0;
+            self.clean_windows = 0;
             return Ok(self.decision(false));
         };
 
@@ -124,6 +145,66 @@ impl AdaptiveFrameCadenceState {
 
         let elapsed =
             observation.monotonic_time_seconds - previous.observation.monotonic_time_seconds;
+
+        // Bootstrap and reconfiguration windows are not encoder-pressure
+        // windows.  Rebase every unstable observation so that a closed gate
+        // cannot carry source/drop deltas into the first stable window.
+        if !observation.pipeline_stable {
+            self.last = Some(ObservationSnapshot { observation });
+            if !self.warmup_complete {
+                self.stable_since_seconds = None;
+                self.clean_windows = 0;
+            }
+            self.pressure_windows = 0;
+            return Ok(self.decision(false));
+        }
+
+        // The first observation after an unstable interval starts a fresh
+        // stable epoch.  It is deliberately not measured against the last
+        // bootstrap sample, even when the counters advanced while the gate
+        // was closed.
+        if !previous.observation.pipeline_stable || self.stable_since_seconds.is_none() {
+            self.last = Some(ObservationSnapshot { observation });
+            if !self.warmup_complete {
+                self.stable_since_seconds = Some(observation.monotonic_time_seconds);
+                self.clean_windows = 0;
+            }
+            self.pressure_windows = 0;
+            return Ok(self.decision(false));
+        }
+
+        // A static desktop can produce no ScreenCaptureKit callbacks for a
+        // long time.  The first callback after that idle interval is activity,
+        // not a one-second pressure window with zero output.  Restore the
+        // negotiated ceiling immediately and rebase so the burst can enter at
+        // the ceiling without synthesizing any frames during idle.
+        let source_delta = observation
+            .source_frame_count
+            .saturating_sub(previous.observation.source_frame_count);
+        if source_delta > 0 && elapsed >= IDLE_ACTIVITY_REBASE_SECONDS && self.target < self.ceiling
+        {
+            self.target = self.ceiling;
+            self.last = Some(ObservationSnapshot { observation });
+            self.pressure_windows = 0;
+            self.clean_windows = 0;
+            return Ok(self.decision(true));
+        }
+
+        // Initial stable windows are intentionally quiet.  Keep rebasing
+        // during the warmup so bootstrap/idle history cannot be mistaken for
+        // sustained encoder pressure when the first active window begins.
+        let stable_since = self
+            .stable_since_seconds
+            .unwrap_or(observation.monotonic_time_seconds);
+        let stable_elapsed = observation.monotonic_time_seconds - stable_since;
+        if !self.warmup_complete && stable_elapsed < STABLE_WARMUP_SECONDS {
+            self.last = Some(ObservationSnapshot { observation });
+            self.pressure_windows = 0;
+            self.clean_windows = 0;
+            return Ok(self.decision(false));
+        }
+        self.warmup_complete = true;
+
         if elapsed < MIN_UPDATE_INTERVAL_SECONDS {
             return Ok(self.decision(false));
         }
@@ -134,9 +215,6 @@ impl AdaptiveFrameCadenceState {
         // window from ever accumulating.
         self.last = Some(ObservationSnapshot { observation });
 
-        let source_delta = observation
-            .source_frame_count
-            .saturating_sub(previous.observation.source_frame_count);
         let output_delta = observation
             .output_frame_count
             .saturating_sub(previous.observation.output_frame_count);
@@ -145,12 +223,17 @@ impl AdaptiveFrameCadenceState {
             .saturating_sub(previous.observation.pending_drop_count);
         let source_rate = source_delta as f64 / elapsed;
         let output_rate = output_delta as f64 / elapsed;
-        let source_is_ahead =
-            source_rate > output_rate + RATE_DEADBAND_FPS.max(source_rate * RATE_DEADBAND_RATIO);
-        let callback_is_slow = observation.callback_latency_milliseconds
-            > callback_latency_threshold_milliseconds(self.target);
-        let under_encoder_pressure =
-            source_is_ahead && (pending_drop_delta > 0 || callback_is_slow);
+        let enough_source_samples = source_delta >= MIN_SOURCE_SAMPLES_PER_WINDOW;
+        let source_is_ahead = enough_source_samples
+            && source_rate > output_rate + RATE_DEADBAND_FPS.max(source_rate * RATE_DEADBAND_RATIO);
+        // Source callbacks remain at the ScreenCaptureKit ceiling after the
+        // pacer intentionally lowers encoder admission.  Callback latency by
+        // itself would therefore keep interpreting that intentional gap as
+        // pressure and walk every target down to the floor.  Only an actual
+        // encoder pending/admission drop proves that the current target still
+        // exceeds capacity.  Output rate remains the sustainable-rate input
+        // once that pressure is proven.
+        let under_encoder_pressure = source_is_ahead && pending_drop_delta > 0;
 
         let previous_target = self.target;
         if under_encoder_pressure {
@@ -158,18 +241,10 @@ impl AdaptiveFrameCadenceState {
             self.pressure_windows = self.pressure_windows.saturating_add(1);
             if self.pressure_windows >= PRESSURE_WINDOWS_BEFORE_DECREASE {
                 self.pressure_windows = 0;
-                let sustainable_rate = output_rate.max(0.0);
-                let pressure_target = if sustainable_rate > 0.0 {
-                    (sustainable_rate * SUSTAINABLE_OUTPUT_MARGIN).round() as u32
-                } else {
-                    self.floor
-                };
-                self.target = pressure_target.clamp(self.floor, self.target);
-                if self.target == previous_target && self.target > self.floor {
-                    self.target = self.target.saturating_sub(1).max(self.floor);
-                }
+                self.target =
+                    pressure_target(previous_target, self.floor, output_delta, output_rate);
             }
-        } else if pending_drop_delta == 0 && !callback_is_slow {
+        } else if pending_drop_delta == 0 {
             self.pressure_windows = 0;
             self.clean_windows = self.clean_windows.saturating_add(1);
             if self.clean_windows >= CLEAN_WINDOWS_BEFORE_PROBE && self.target < self.ceiling {
@@ -199,8 +274,24 @@ fn validate_observation(
     Ok(())
 }
 
-fn callback_latency_threshold_milliseconds(ceiling: u32) -> f64 {
-    (1_500.0 / f64::from(ceiling)).max(8.0)
+fn pressure_target(current_target: u32, floor: u32, output_delta: u64, output_rate: f64) -> u32 {
+    if current_target <= floor {
+        return floor;
+    }
+
+    // Backpressure can be noisy (and zero output has no sustainable-rate
+    // estimate), so one pressure decision may reduce the target by at most a
+    // quarter of its current value.  A later sustained pressure window may
+    // reduce it again; a large ceiling cannot jump directly to the floor from
+    // one sparse/zero-output window.
+    let maximum_reduction = (f64::from(current_target) * MAX_DECREASE_RATIO).floor() as u32;
+    let bounded_lower_target = current_target.saturating_sub(maximum_reduction).max(floor);
+    let sustainable_target = if output_delta >= MIN_OUTPUT_SAMPLES_FOR_SUSTAINABLE_RATE {
+        (output_rate.max(0.0) * SUSTAINABLE_OUTPUT_MARGIN).round() as u32
+    } else {
+        bounded_lower_target
+    };
+    sustainable_target.clamp(bounded_lower_target, current_target)
 }
 
 /// Opaque, thread-safe adaptive frame-cadence controller.
@@ -350,7 +441,21 @@ mod tests {
             source_frame_count: source,
             output_frame_count: output,
             pending_drop_count: drops,
+            pipeline_stable: true,
             callback_latency_milliseconds: callback_latency,
+        }
+    }
+
+    fn unstable_observation(
+        time: f64,
+        source: u64,
+        output: u64,
+        drops: u64,
+        callback_latency: f64,
+    ) -> LumenAdaptiveFrameCadenceObservation {
+        LumenAdaptiveFrameCadenceObservation {
+            pipeline_stable: false,
+            ..observation(time, source, output, drops, callback_latency)
         }
     }
 
@@ -386,7 +491,7 @@ mod tests {
         state.observe(observation(0.0, 0, 0, 0, 0.0)).unwrap();
 
         let mut changed_at = None;
-        for frame in 1..=64_u64 {
+        for frame in 1..=320_u64 {
             let decision = state
                 .observe(observation(
                     frame as f64 * 0.008,
@@ -403,7 +508,7 @@ mod tests {
             assert_eq!(decision.target_frame_rate, 120);
         }
 
-        assert!(changed_at.expect("two completed pressure windows") >= 49);
+        assert!(changed_at.expect("two completed pressure windows") >= 150);
         assert!(state.target < state.ceiling);
     }
 
@@ -421,58 +526,74 @@ mod tests {
         let mut state = state();
         state.observe(observation(1.0, 0, 0, 0, 0.0)).unwrap();
 
-        let no_encoder_evidence = state.observe(observation(1.3, 36, 30, 0, 0.0)).unwrap();
+        let no_encoder_evidence = state.observe(observation(2.1, 36, 30, 0, 0.0)).unwrap();
         assert_eq!(no_encoder_evidence.target_frame_rate, 120);
 
-        let first_callback_window = state.observe(observation(1.6, 72, 60, 0, 40.0)).unwrap();
+        let first_callback_window = state.observe(observation(2.4, 72, 60, 0, 40.0)).unwrap();
         assert_eq!(first_callback_window.target_frame_rate, 120);
         assert!(!first_callback_window.changed);
 
-        let callback_backpressure = state.observe(observation(1.9, 108, 90, 0, 40.0)).unwrap();
-        assert!(callback_backpressure.target_frame_rate < 120);
-        assert!(callback_backpressure.changed);
+        let callback_latency_only = state.observe(observation(2.7, 108, 90, 0, 40.0)).unwrap();
+        assert_eq!(callback_latency_only.target_frame_rate, 120);
+        assert!(!callback_latency_only.changed);
+
+        let first_drop_window = state.observe(observation(3.0, 144, 108, 1, 40.0)).unwrap();
+        assert_eq!(first_drop_window.target_frame_rate, 120);
+        assert!(!first_drop_window.changed);
+
+        let sustained_admission_pressure =
+            state.observe(observation(3.3, 180, 126, 2, 40.0)).unwrap();
+        assert!(sustained_admission_pressure.target_frame_rate < 120);
+        assert!(sustained_admission_pressure.changed);
     }
 
     #[test]
     fn pressure_moves_fast_toward_sustainable_output_but_respects_floor() {
         let mut state = state();
         state.observe(observation(1.0, 0, 0, 0, 0.0)).unwrap();
-        let first_pressure = state.observe(observation(1.3, 36, 18, 1, 40.0)).unwrap();
+        let first_pressure = state.observe(observation(2.1, 36, 18, 1, 40.0)).unwrap();
         assert_eq!(first_pressure.target_frame_rate, 120);
         assert!(!first_pressure.changed);
 
-        let decision = state.observe(observation(1.6, 72, 36, 2, 40.0)).unwrap();
-        assert_eq!(decision.target_frame_rate, 57);
+        let decision = state.observe(observation(2.4, 72, 36, 2, 40.0)).unwrap();
+        assert_eq!(decision.target_frame_rate, 90);
         assert!(decision.changed);
 
-        let hold_down = state.observe(observation(1.9, 108, 36, 3, 40.0)).unwrap();
-        assert_eq!(hold_down.target_frame_rate, 57);
+        let hold_down = state.observe(observation(2.7, 108, 36, 3, 40.0)).unwrap();
+        assert_eq!(hold_down.target_frame_rate, 90);
         assert!(!hold_down.changed);
 
-        let floor = state.observe(observation(2.2, 144, 36, 4, 40.0)).unwrap();
-        assert_eq!(floor.target_frame_rate, 15);
+        let next_pressure = state.observe(observation(3.0, 144, 36, 4, 40.0)).unwrap();
+        assert_eq!(next_pressure.target_frame_rate, 68);
+        assert!(next_pressure.changed);
+
+        let bounded_again = state.observe(observation(3.3, 180, 36, 5, 40.0)).unwrap();
+        assert_eq!(bounded_again.target_frame_rate, 68);
+
+        let floor = state.observe(observation(3.6, 216, 36, 6, 40.0)).unwrap();
+        assert_eq!(floor.target_frame_rate, 51);
         assert!(floor.changed);
 
-        let floor_stable = state.observe(observation(2.5, 180, 36, 5, 40.0)).unwrap();
-        assert_eq!(floor_stable.target_frame_rate, 15);
+        let floor_stable = state.observe(observation(3.9, 252, 36, 7, 40.0)).unwrap();
+        assert_eq!(floor_stable.target_frame_rate, 51);
     }
 
     #[test]
     fn clean_windows_probe_slowly_back_to_ceiling() {
         let mut state = state();
         state.observe(observation(1.0, 0, 0, 0, 0.0)).unwrap();
-        state.observe(observation(1.3, 36, 18, 1, 40.0)).unwrap();
-        state.observe(observation(1.6, 72, 36, 2, 40.0)).unwrap();
+        state.observe(observation(2.1, 36, 18, 1, 40.0)).unwrap();
+        state.observe(observation(2.4, 72, 36, 2, 40.0)).unwrap();
         assert!(state.target < state.ceiling);
 
-        let first_clean = state.observe(observation(1.9, 90, 54, 2, 0.0)).unwrap();
+        let first_clean = state.observe(observation(2.7, 90, 54, 2, 0.0)).unwrap();
         assert_eq!(first_clean.target_frame_rate, state.target);
         let target_before_probe = state.target;
         for window in 2..CLEAN_WINDOWS_BEFORE_PROBE {
             let offset = u64::from(window) * 18;
             let clean = state
                 .observe(observation(
-                    1.6 + f64::from(window) * 0.3,
+                    2.4 + f64::from(window) * 0.3,
                     72 + offset,
                     36 + offset,
                     2,
@@ -485,7 +606,7 @@ mod tests {
         let probe_offset = u64::from(CLEAN_WINDOWS_BEFORE_PROBE) * 18;
         let probe = state
             .observe(observation(
-                1.6 + f64::from(CLEAN_WINDOWS_BEFORE_PROBE) * 0.3,
+                2.4 + f64::from(CLEAN_WINDOWS_BEFORE_PROBE) * 0.3,
                 72 + probe_offset,
                 36 + probe_offset,
                 2,
@@ -494,6 +615,214 @@ mod tests {
             .unwrap();
         assert_eq!(probe.target_frame_rate, target_before_probe + 5);
         assert!(probe.changed);
+    }
+
+    #[test]
+    fn unstable_bootstrap_windows_rebase_and_get_a_stable_warmup() {
+        let mut state = state();
+        state
+            .observe(unstable_observation(1.0, 0, 0, 0, 80.0))
+            .unwrap();
+        state
+            .observe(unstable_observation(1.3, 100, 0, 20, 80.0))
+            .unwrap();
+
+        // The first stable sample starts a new epoch; bootstrap counters and
+        // stale latency cannot become the first pressure window.
+        let stable_start = state.observe(observation(1.6, 100, 0, 20, 80.0)).unwrap();
+        assert_eq!(stable_start.target_frame_rate, 120);
+        assert!(!stable_start.changed);
+
+        let warmup = state.observe(observation(2.3, 136, 18, 21, 80.0)).unwrap();
+        assert_eq!(warmup.target_frame_rate, 120);
+        assert!(!warmup.changed);
+
+        // Sustained pressure only begins after the one-second stable epoch.
+        let first_pressure = state.observe(observation(2.7, 172, 36, 22, 80.0)).unwrap();
+        assert_eq!(first_pressure.target_frame_rate, 120);
+        assert!(!first_pressure.changed);
+        let second_pressure = state.observe(observation(3.0, 208, 54, 23, 80.0)).unwrap();
+        assert!(second_pressure.changed);
+        assert!(second_pressure.target_frame_rate < 120);
+    }
+
+    #[test]
+    fn sparse_or_zero_output_never_jumps_to_the_floor() {
+        let mut sparse_state = state();
+        sparse_state
+            .observe(observation(1.0, 0, 0, 0, 0.0))
+            .unwrap();
+
+        // Sparse source samples are not enough to establish a pressure
+        // window, even when a drop counter changed.
+        sparse_state
+            .observe(observation(2.1, 1, 0, 1, 80.0))
+            .unwrap();
+        let sparse = sparse_state
+            .observe(observation(2.4, 2, 0, 2, 80.0))
+            .unwrap();
+        assert_eq!(sparse.target_frame_rate, 120);
+        assert!(!sparse.changed);
+
+        // Zero output has no sustainable-rate estimate.  It still takes two
+        // real drop windows to react, and one reaction is bounded to 25%.
+        let mut zero_output = state();
+        zero_output.observe(observation(1.0, 0, 0, 0, 0.0)).unwrap();
+        zero_output
+            .observe(observation(2.1, 36, 0, 1, 80.0))
+            .unwrap();
+        let bounded = zero_output
+            .observe(observation(2.4, 72, 0, 2, 80.0))
+            .unwrap();
+        assert_eq!(bounded.target_frame_rate, 90);
+        assert!(bounded.target_frame_rate > FRAME_RATE_FLOOR);
+        assert!(120 - bounded.target_frame_rate <= 30);
+    }
+
+    #[test]
+    fn stale_latency_without_new_output_allows_clean_recovery() {
+        let mut state = state();
+        state.observe(observation(1.0, 0, 0, 0, 0.0)).unwrap();
+        state.observe(observation(2.1, 36, 18, 1, 80.0)).unwrap();
+        let downshift = state.observe(observation(2.4, 72, 36, 2, 80.0)).unwrap();
+        assert_eq!(downshift.target_frame_rate, 90);
+
+        // The callback latency remains high, but output_delta is zero.  The
+        // value is stale and must not prevent clean-window recovery.
+        let mut decision = LumenAdaptiveFrameCadenceDecision::default();
+        for window in 0..CLEAN_WINDOWS_BEFORE_PROBE {
+            decision = state
+                .observe(observation(
+                    2.7 + f64::from(window) * 0.3,
+                    90 + u64::from(window) * 18,
+                    36,
+                    2,
+                    80.0,
+                ))
+                .unwrap();
+        }
+        assert!(decision.changed);
+        assert_eq!(decision.target_frame_rate, 95);
+    }
+
+    #[test]
+    fn periodic_unstable_rebases_preserve_completed_warmup_and_clean_recovery() {
+        let mut state = state();
+        state.observe(observation(0.0, 0, 0, 0, 0.0)).unwrap();
+        // Complete the one-time stable warmup, then create a lower target.
+        state.observe(observation(1.1, 36, 36, 0, 0.0)).unwrap();
+        state.observe(observation(1.4, 72, 36, 1, 80.0)).unwrap();
+        assert_eq!(
+            state
+                .observe(observation(1.7, 108, 54, 2, 80.0))
+                .unwrap()
+                .target_frame_rate,
+            90
+        );
+
+        let mut source = 108;
+        let mut output = 54;
+        let mut decision = LumenAdaptiveFrameCadenceDecision::default();
+        for window in 0..CLEAN_WINDOWS_BEFORE_PROBE {
+            source += 18;
+            output += 18;
+            let time = 2.0 + f64::from(window) * 0.4;
+            decision = state
+                .observe(observation(time, source, output, 2, 0.0))
+                .unwrap();
+
+            if window + 1 < CLEAN_WINDOWS_BEFORE_PROBE {
+                // A periodic/repair bootstrap briefly closes the gate.  It
+                // rebases the next stable sample but must not restart the
+                // completed warmup or erase clean recovery progress.
+                state
+                    .observe(unstable_observation(time + 0.05, source, output, 2, 0.0))
+                    .unwrap();
+                state
+                    .observe(observation(time + 0.10, source, output, 2, 0.0))
+                    .unwrap();
+            }
+        }
+        assert!(decision.changed);
+        assert_eq!(decision.target_frame_rate, 95);
+    }
+
+    #[test]
+    fn idle_activity_restores_ceiling_without_synthesizing_frames() {
+        let mut state = state();
+        state.observe(observation(1.0, 0, 0, 0, 0.0)).unwrap();
+        state.observe(observation(2.1, 36, 18, 1, 80.0)).unwrap();
+        let downshift = state.observe(observation(2.4, 72, 36, 2, 80.0)).unwrap();
+        assert_eq!(downshift.target_frame_rate, 90);
+
+        // No source callback during the idle interval means no observation and
+        // no synthetic output.  An explicit idle observation still stays at
+        // the lower target.
+        let idle = state.observe(observation(4.0, 72, 36, 2, 80.0)).unwrap();
+        assert_eq!(idle.target_frame_rate, 90);
+        assert!(!idle.changed);
+
+        // The first callback after the long gap immediately restores the
+        // negotiated ceiling, even though this one callback is sparse.
+        let activity = state.observe(observation(6.0, 73, 36, 2, 80.0)).unwrap();
+        assert_eq!(activity.target_frame_rate, 120);
+        assert!(activity.changed);
+    }
+
+    #[test]
+    fn floor_low_ceiling_and_invalid_inputs_are_deterministic() {
+        let mut low_ceiling = AdaptiveFrameCadenceState::new(LumenAdaptiveFrameCadenceRequest {
+            requested_frame_rate: 10,
+        })
+        .unwrap();
+        assert_eq!(low_ceiling.target, 10);
+        low_ceiling.observe(observation(1.0, 0, 0, 0, 0.0)).unwrap();
+        low_ceiling
+            .observe(observation(2.1, 36, 0, 1, 80.0))
+            .unwrap();
+        let floor = low_ceiling
+            .observe(observation(2.4, 72, 0, 2, 80.0))
+            .unwrap();
+        assert_eq!(floor.target_frame_rate, 10);
+        assert!(!floor.changed);
+
+        let mut sparse_low_ceiling =
+            AdaptiveFrameCadenceState::new(LumenAdaptiveFrameCadenceRequest {
+                requested_frame_rate: 20,
+            })
+            .unwrap();
+        sparse_low_ceiling
+            .observe(observation(1.0, 0, 0, 0, 0.0))
+            .unwrap();
+        sparse_low_ceiling
+            .observe(observation(2.1, 36, 0, 1, 80.0))
+            .unwrap();
+        let sparse_floor = sparse_low_ceiling
+            .observe(observation(2.4, 72, 0, 2, 80.0))
+            .unwrap();
+        assert_eq!(sparse_floor.target_frame_rate, 15);
+        assert!(sparse_floor.target_frame_rate >= FRAME_RATE_FLOOR);
+
+        let mut invalid = state();
+        assert_eq!(
+            invalid.observe(observation(f64::NAN, 0, 0, 0, 0.0)),
+            Err(LumenEngineStatus::InvalidArgument)
+        );
+        assert_eq!(
+            invalid.observe(observation(1.0, 0, 0, 0, -1.0)),
+            Err(LumenEngineStatus::InvalidArgument)
+        );
+        assert_eq!(invalid.target, 120);
+    }
+
+    #[test]
+    fn cadence_abi_version_and_observation_layout_stay_in_sync() {
+        assert_eq!(crate::ABI_VERSION, 67);
+        assert_eq!(crate::lumen_engine_abi_version(), 67);
+        assert_eq!(
+            std::mem::size_of::<LumenAdaptiveFrameCadenceObservation>(),
+            48
+        );
     }
 
     #[test]

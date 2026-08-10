@@ -199,8 +199,12 @@ extension LumenScreenCaptureVideoRuntime {
             sampleBuffer: sampleBuffer,
             sourceMachTime: callbackEntryMachTime
         )
-        admitPendingSource(source)
+        // Observe before handing the source to the encoder so an activity
+        // callback after idle can restore a lowered target before this first
+        // frame reaches the pacer.  The observer itself never synthesizes an
+        // idle frame.
         observeAdaptiveFrameCadence()
+        admitPendingSource(source)
     }
 
     /// Records every complete source callback without adding another task to
@@ -216,6 +220,7 @@ extension LumenScreenCaptureVideoRuntime {
             sourceFrameCount: statistics.completeSourceFrameCount,
             outputFrameCount: statistics.emittedFrameCount,
             pendingDropCount: encoderPendingDropCount,
+            pipelineStable: videoBootstrapAdmission.isOpen,
             callbackLatencyMilliseconds:
                 videoToolboxCallbackTiming.latestMilliseconds ?? 0
         )

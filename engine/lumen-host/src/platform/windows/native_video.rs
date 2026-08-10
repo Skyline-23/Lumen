@@ -894,6 +894,7 @@ impl NativeVideoRuntime {
                 source_frame_count: self.source_frame_count,
                 output_frame_count: self.output_frame_count,
                 pending_drop_count: self.pending_drop_count,
+                pipeline_stable: true,
                 callback_latency_milliseconds,
             })?;
         self.effective_target_frame_rate = effective_target_frame_rate(
