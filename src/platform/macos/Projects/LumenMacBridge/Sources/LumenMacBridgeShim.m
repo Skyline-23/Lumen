@@ -523,6 +523,10 @@ void LumenMacBridgeRequestImmediateCaptureKeyFrame(void) {
   [LumenBridgeObjCFacade requestImmediateCaptureKeyFrameSharedSync];
 }
 
+bool LumenMacBridgeRequestPeriodicCaptureKeyFrame(void) {
+  return [LumenBridgeObjCFacade requestPeriodicCaptureKeyFrameSharedSync];
+}
+
 bool LumenMacBridgeResumeVideoEncodingAfterCodecAck(void) {
   return [LumenBridgeObjCFacade resumeVideoEncodingAfterCodecAckSharedSync];
 }

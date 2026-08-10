@@ -95,6 +95,8 @@ typedef enum LumenHostPlatformControlEventKind {
   LumenHostPlatformControlEventKindResetInput = 2,
   LumenHostPlatformControlEventKindResumeVideoEncodingAfterCodecAck = 3,
   LumenHostPlatformControlEventKindSetVideoBitrateKbps = 4,
+  // Arms a controlled periodic IDR gate; repair remains kind 0.
+  LumenHostPlatformControlEventKindRequestPeriodicIdrFrame = 5,
 } LumenHostPlatformControlEventKind;
 
 typedef struct LumenHostPlatformControlEvent {

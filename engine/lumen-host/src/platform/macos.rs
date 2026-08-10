@@ -213,6 +213,7 @@ type PopAudio = unsafe extern "C" fn(
 type PopAudioEvent =
     unsafe extern "C" fn(*mut BridgeController, *mut c_char, usize) -> MacAudioCaptureEventRecord;
 type RequestKeyFrame = unsafe extern "C" fn();
+type RequestPeriodicKeyFrame = unsafe extern "C" fn() -> bool;
 type ResumeVideoEncodingAfterCodecAck = unsafe extern "C" fn() -> bool;
 type SetVideoDeliveryPolicy = unsafe extern "C" fn(u32, u32, u32, u8) -> bool;
 type PrepareWorkspace = unsafe extern "C" fn(MacWorkspaceSessionRequest, *mut c_char, usize) -> u32;
@@ -265,6 +266,7 @@ struct MacBridgeApi {
     pop_audio: PopAudio,
     pop_audio_event: PopAudioEvent,
     request_key_frame: RequestKeyFrame,
+    request_periodic_key_frame: RequestPeriodicKeyFrame,
     resume_video_encoding_after_codec_ack: ResumeVideoEncodingAfterCodecAck,
     set_video_delivery_policy: SetVideoDeliveryPolicy,
     prepare_workspace: PrepareWorkspace,
@@ -347,6 +349,10 @@ impl MacBridgeApi {
                 request_key_frame: load_symbol(
                     handle,
                     b"LumenMacBridgeRequestImmediateCaptureKeyFrame\0",
+                )?,
+                request_periodic_key_frame: load_symbol(
+                    handle,
+                    b"LumenMacBridgeRequestPeriodicCaptureKeyFrame\0",
                 )?,
                 resume_video_encoding_after_codec_ack: load_symbol(
                     handle,
@@ -1128,6 +1134,13 @@ impl PlatformSessionControl for MacPlatformSessionControl {
                 unsafe { (self.api.request_key_frame)() };
                 Ok(())
             }
+            PlatformControlEvent::RequestPeriodicIdrFrame => unsafe {
+                (self.api.request_periodic_key_frame)()
+                    .then_some(())
+                    .ok_or_else(|| {
+                        "macOS video periodic IDR gate could not be armed".to_owned()
+                    })
+            },
             PlatformControlEvent::ResumeVideoEncodingAfterCodecAck => {
                 unsafe { (self.api.resume_video_encoding_after_codec_ack)() }
                     .then_some(())

@@ -981,13 +981,14 @@ fn decoded_bootstraps_resume_only_the_generation_that_owns_encoder_admission() {
         .unwrap();
     assert_eq!(bootstrap.generation_id, generation_id);
     assert_eq!(bootstrap.frame_id, 1);
+    let delivery = router.video_delivery_state().unwrap();
+    assert_eq!(delivery.acknowledged_generation_id, None);
+    assert!(delivery.bootstrap_pending);
     assert_eq!(
-        router
-            .video_delivery_state()
-            .unwrap()
-            .acknowledged_generation_id,
-        None
+        delivery.bootstrap_reason,
+        Some(NativeVideoBootstrapReason::Initial)
     );
+    assert!(delivery.bootstrap_requires_encoder_resume);
 
     assert!(router
         .dispatch_native_control(
@@ -1008,13 +1009,11 @@ fn decoded_bootstraps_resume_only_the_generation_that_owns_encoder_admission() {
             &context,
         )
         .is_empty());
-    assert_eq!(
-        router
-            .video_delivery_state()
-            .unwrap()
-            .acknowledged_generation_id,
-        Some(generation_id)
-    );
+    let delivery = router.video_delivery_state().unwrap();
+    assert_eq!(delivery.acknowledged_generation_id, Some(generation_id));
+    assert!(!delivery.bootstrap_pending);
+    assert_eq!(delivery.bootstrap_reason, None);
+    assert!(!delivery.bootstrap_requires_encoder_resume);
     assert_eq!(
         platform
             .control_events
@@ -1071,6 +1070,12 @@ fn decoded_bootstraps_resume_only_the_generation_that_owns_encoder_admission() {
         NativeVideoBootstrapReason::try_from(periodic.reason),
         Ok(NativeVideoBootstrapReason::Periodic)
     );
+    let delivery = router.video_delivery_state().unwrap();
+    assert_eq!(
+        delivery.bootstrap_reason,
+        Some(NativeVideoBootstrapReason::Periodic)
+    );
+    assert!(!delivery.bootstrap_requires_encoder_resume);
     assert!(router
         .dispatch_native_control(
             ClientControlEnvelope {
@@ -1128,6 +1133,12 @@ fn decoded_bootstraps_resume_only_the_generation_that_owns_encoder_admission() {
         NativeVideoBootstrapReason::try_from(repair.reason),
         Ok(NativeVideoBootstrapReason::Repair)
     );
+    let delivery = router.video_delivery_state().unwrap();
+    assert_eq!(
+        delivery.bootstrap_reason,
+        Some(NativeVideoBootstrapReason::Repair)
+    );
+    assert!(delivery.bootstrap_requires_encoder_resume);
     assert_eq!(
         router.publish_native_video_bootstrap(
             plan.video_configuration_id,

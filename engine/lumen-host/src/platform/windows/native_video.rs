@@ -231,6 +231,7 @@ pub(super) struct NativeEncodedVideoSample {
     pub(super) presentation_time_90khz: u32,
     pub(super) key_frame: bool,
     pub(super) repair_keyframe: bool,
+    pub(super) periodic_keyframe: bool,
 }
 
 struct NativeVideoRuntime {
@@ -251,6 +252,7 @@ struct NativeVideoRuntime {
     observation_clock: Instant,
     awaiting_bootstrap_result: bool,
     repair_keyframe_pending: bool,
+    periodic_keyframe_pending: bool,
     admission_divisor: u8,
     retirement_gate: Arc<SessionRetirementGate>,
     adaptive_event_publisher: Arc<dyn WindowsServiceEventPublisher>,
@@ -258,6 +260,9 @@ struct NativeVideoRuntime {
 
 enum NativeMediaFoundationCommand {
     RequestKeyFrame {
+        response: mpsc::SyncSender<Result<(), String>>,
+    },
+    RequestPeriodicKeyFrame {
         response: mpsc::SyncSender<Result<(), String>>,
     },
     ResumeAfterBootstrap {
@@ -420,6 +425,12 @@ impl NativeMediaFoundation {
         })
     }
 
+    pub(super) fn request_periodic_key_frame(&self) -> Result<(), String> {
+        self.request(None, |response| {
+            NativeMediaFoundationCommand::RequestPeriodicKeyFrame { response }
+        })
+    }
+
     pub(super) fn resume_after_bootstrap(&self) -> Result<(), String> {
         self.request(None, |response| {
             NativeMediaFoundationCommand::ResumeAfterBootstrap { response }
@@ -562,6 +573,24 @@ fn run_media_foundation_session(worker: NativeMediaFoundationWorker) {
                         });
                     let _ = response.send(result);
                 }
+                NativeMediaFoundationCommand::RequestPeriodicKeyFrame { response } => {
+                    let result = runtime
+                        .as_mut()
+                        .ok_or_else(|| "Windows native video session is not running".to_owned())
+                        .and_then(|runtime| {
+                            if runtime.awaiting_bootstrap_result
+                                || runtime.repair_keyframe_pending
+                            {
+                                Err(
+                                    "Windows periodic IDR cannot arm while another bootstrap or repair is pending"
+                                        .to_owned(),
+                                )
+                            } else {
+                                runtime.request_periodic_key_frame()
+                            }
+                        });
+                    let _ = response.send(result);
+                }
                 NativeMediaFoundationCommand::ResumeAfterBootstrap { response } => {
                     let result = runtime
                         .as_mut()
@@ -645,6 +674,7 @@ fn run_media_foundation_session(worker: NativeMediaFoundationWorker) {
 fn reject_retired_command(command: NativeMediaFoundationCommand) {
     let response = match command {
         NativeMediaFoundationCommand::RequestKeyFrame { response }
+        | NativeMediaFoundationCommand::RequestPeriodicKeyFrame { response }
         | NativeMediaFoundationCommand::ResumeAfterBootstrap { response }
         | NativeMediaFoundationCommand::SetBitrate { response, .. } => response,
     };
@@ -684,6 +714,7 @@ fn start_runtime(
         observation_clock: Instant::now(),
         awaiting_bootstrap_result: false,
         repair_keyframe_pending: false,
+        periodic_keyframe_pending: false,
         admission_divisor: 1,
         retirement_gate,
         adaptive_event_publisher,
@@ -717,7 +748,7 @@ fn start_runtime(
 }
 
 fn sample_requires_bootstrap_pause(sample: &NativeEncodedVideoSample, initial: bool) -> bool {
-    sample.key_frame && (initial || sample.repair_keyframe)
+    sample.key_frame && (initial || sample.repair_keyframe || sample.periodic_keyframe)
 }
 
 fn stop_runtime(runtime: &mut Option<NativeVideoRuntime>) -> Result<(), String> {
@@ -913,6 +944,15 @@ impl NativeVideoRuntime {
         Ok(())
     }
 
+    fn request_periodic_key_frame(&mut self) -> Result<(), String> {
+        if self.periodic_keyframe_pending || self.repair_keyframe_pending {
+            return Ok(());
+        }
+        self.encoder.force_key_frame()?;
+        self.periodic_keyframe_pending = true;
+        Ok(())
+    }
+
     fn pause_after_bootstrap(&mut self) -> Result<(), String> {
         if self.awaiting_bootstrap_result {
             return Ok(());
@@ -946,7 +986,7 @@ impl NativeVideoRuntime {
             self.unwrapped_source_timestamp_90khz,
             self.effective_target_frame_rate,
             self.plan.frames_per_second,
-            self.repair_keyframe_pending,
+            self.repair_keyframe_pending || self.periodic_keyframe_pending,
         ) {
             return Ok(None);
         }
@@ -967,7 +1007,9 @@ impl NativeVideoRuntime {
         self.observe_adaptive_cadence()?;
         if encoded.key_frame {
             encoded.repair_keyframe = self.repair_keyframe_pending;
+            encoded.periodic_keyframe = self.periodic_keyframe_pending;
             self.repair_keyframe_pending = false;
+            self.periodic_keyframe_pending = false;
         }
         Ok(Some(encoded))
     }
@@ -1423,6 +1465,7 @@ fn encoded_video_sample(sample: &IMFSample) -> Result<NativeEncodedVideoSample, 
         presentation_time_90khz,
         key_frame,
         repair_keyframe: false,
+        periodic_keyframe: false,
     })
 }
 
@@ -1710,22 +1753,33 @@ mod tests {
     }
 
     #[test]
-    fn only_initial_and_repair_keyframes_pause_for_bootstrap_acknowledgement() {
-        let sample = |key_frame, repair_keyframe| NativeEncodedVideoSample {
+    fn initial_periodic_and_repair_keyframes_pause_for_bootstrap_acknowledgement() {
+        let sample = |key_frame, repair_keyframe, periodic_keyframe| NativeEncodedVideoSample {
             payload: vec![1],
             presentation_time_90khz: 0,
             key_frame,
             repair_keyframe,
+            periodic_keyframe,
         };
 
-        assert!(sample_requires_bootstrap_pause(&sample(true, false), true));
-        assert!(sample_requires_bootstrap_pause(&sample(true, true), false));
-        assert!(!sample_requires_bootstrap_pause(
-            &sample(true, false),
+        assert!(sample_requires_bootstrap_pause(
+            &sample(true, false, false),
+            true
+        ));
+        assert!(sample_requires_bootstrap_pause(
+            &sample(true, true, false),
+            false
+        ));
+        assert!(sample_requires_bootstrap_pause(
+            &sample(true, false, true),
             false
         ));
         assert!(!sample_requires_bootstrap_pause(
-            &sample(false, false),
+            &sample(true, false, false),
+            false
+        ));
+        assert!(!sample_requires_bootstrap_pause(
+            &sample(false, false, true),
             false
         ));
     }

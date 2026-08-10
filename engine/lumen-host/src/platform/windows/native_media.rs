@@ -98,10 +98,11 @@ impl PacketQueueContext {
                 decoder_configuration_record: None,
                 presentation_time_90khz: u64::from(sample.presentation_time_90khz),
                 key_frame: sample.key_frame,
-                // Initial admission pauses explicitly. During steady state only an explicit
-                // repair key frame owns a pause; natural periodic key frames remain in the
-                // acknowledged DATAGRAM generation.
-                requires_bootstrap_acknowledgement: sample.key_frame && sample.repair_keyframe,
+                // Initial, controlled periodic, and explicit repair key frames all pause
+                // admission until their reliable bootstrap is acknowledged. The repair bit
+                // remains exclusively owned by decoder repair.
+                requires_bootstrap_acknowledgement: sample.key_frame
+                    && (sample.repair_keyframe || sample.periodic_keyframe),
                 repair_keyframe: sample.repair_keyframe,
             });
         Ok(NativeVideoSinkResult {
@@ -223,6 +224,13 @@ impl NativeWindowsMedia {
     pub(super) fn request_key_frame(&self) -> Result<(), String> {
         let lifecycle = self.running_session()?;
         let result = self.media_foundation.request_key_frame();
+        drop(lifecycle);
+        result
+    }
+
+    pub(super) fn request_periodic_key_frame(&self) -> Result<(), String> {
+        let lifecycle = self.running_session()?;
+        let result = self.media_foundation.request_periodic_key_frame();
         drop(lifecycle);
         result
     }

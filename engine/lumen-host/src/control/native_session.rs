@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use lumen_engine::{
     client_control_envelope, host_control_envelope, minimum_video_encoder_bitrate_kbps,
@@ -38,6 +39,7 @@ const ERROR_SESSION_STATE: u32 = 8;
 const NATIVE_MEDIA_FEEDBACK_WINDOW_MILLISECONDS: u32 = 250;
 const MAX_RETIRED_VIDEO_BOOTSTRAPS: usize = 8;
 pub(crate) const MAX_VIDEO_BOOTSTRAP_RETRY_ATTEMPTS: u8 = 2;
+const PERIODIC_IDR_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct NativeConnectionContext {
@@ -141,6 +143,7 @@ struct PendingNativeSession {
     last_video_bootstrap_acknowledgement: Option<VideoBootstrapResult>,
     next_generation_id: u32,
     repair_keyframe: RepairKeyframeState,
+    periodic_idr: PeriodicIdrGate,
     last_sent_video_frame_id: u32,
     last_display_revision: u64,
     adaptive_video: AdaptiveVideoDeliveryController,
@@ -306,6 +309,8 @@ impl PendingNativeSession {
             }
             other => other,
         };
+        self.periodic_idr
+            .update_retry_generation(generation_id, next_generation_id);
         self.video_bootstrap = Some(retry);
         NativeVideoBootstrapRetryDisposition::Retried {
             generation_id: next_generation_id,
@@ -515,6 +520,103 @@ impl RepairKeyframeState {
     fn is_active(&self) -> bool {
         !matches!(self, Self::Idle)
     }
+}
+
+/// Host-owned single-flight state for controlled periodic refreshes.  The
+/// deadline is intentionally not advanced when the platform event is sent:
+/// it advances only after the corresponding bootstrap generation is decoded.
+/// This keeps an unproductive/idle capture from creating a timer storm while
+/// still allowing the next real source frame to consume the due intent.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PeriodicIdrState {
+    Idle,
+    Requested,
+    AwaitingDecodedBootstrap { generation_id: u32, frame_id: u32 },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PeriodicIdrGate {
+    state: PeriodicIdrState,
+    next_deadline: Option<Instant>,
+}
+
+impl Default for PeriodicIdrGate {
+    fn default() -> Self {
+        Self {
+            state: PeriodicIdrState::Idle,
+            next_deadline: None,
+        }
+    }
+}
+
+impl PeriodicIdrGate {
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    fn is_outstanding(self) -> bool {
+        !matches!(self.state, PeriodicIdrState::Idle)
+    }
+
+    fn is_due(self, now: Instant) -> bool {
+        matches!(self.state, PeriodicIdrState::Idle)
+            && self.next_deadline.is_some_and(|deadline| now >= deadline)
+    }
+
+    fn mark_requested(&mut self, now: Instant) -> bool {
+        guard_due(self, now)
+    }
+
+    fn mark_generation(&mut self, generation_id: u32, frame_id: u32) {
+        if matches!(self.state, PeriodicIdrState::Requested) {
+            self.state = PeriodicIdrState::AwaitingDecodedBootstrap {
+                generation_id,
+                frame_id,
+            };
+        }
+    }
+
+    fn update_retry_generation(&mut self, old_generation_id: u32, new_generation_id: u32) {
+        if let PeriodicIdrState::AwaitingDecodedBootstrap {
+            generation_id,
+            frame_id,
+        } = self.state
+        {
+            if generation_id == old_generation_id {
+                self.state = PeriodicIdrState::AwaitingDecodedBootstrap {
+                    generation_id: new_generation_id,
+                    frame_id,
+                };
+            }
+        }
+    }
+
+    fn acknowledge(&mut self, now: Instant) {
+        self.state = PeriodicIdrState::Idle;
+        self.next_deadline = Some(now + PERIODIC_IDR_INTERVAL);
+    }
+
+    fn schedule_after_generation_ack(&mut self, now: Instant) {
+        // Initial/configuration/repair ACKs establish a clean baseline for
+        // periodic scheduling. A periodic ACK follows the same path, but is
+        // kept explicit at the call site for the ownership invariant.
+        self.state = PeriodicIdrState::Idle;
+        self.next_deadline = Some(now + PERIODIC_IDR_INTERVAL);
+    }
+
+    fn cancel_request(&mut self) {
+        if matches!(self.state, PeriodicIdrState::Requested) {
+            self.state = PeriodicIdrState::Idle;
+        }
+    }
+}
+
+fn guard_due(gate: &mut PeriodicIdrGate, now: Instant) -> bool {
+    if !gate.is_due(now) {
+        return false;
+    }
+    gate.state = PeriodicIdrState::Requested;
+    true
 }
 
 #[derive(Debug)]
@@ -769,6 +871,7 @@ impl ControlRouter {
         pending.video_bootstrap_retry_attempt = 0;
         pending.acknowledged_generation_id = None;
         pending.repair_keyframe = RepairKeyframeState::Idle;
+        pending.periodic_idr.reset();
         pending.adaptive_video = reservation.adaptive_video;
         pending.adaptive_policy_lane = AdaptiveVideoPolicyLane {
             revision: pending.adaptive_policy_lane.revision.wrapping_add(1),
@@ -1061,6 +1164,10 @@ impl ControlRouter {
             pending.video_bootstrap_failure = Some(message.clone());
             return vec![native_error(request_id, ERROR_PLATFORM, message)];
         }
+        let bootstrap_reason = pending
+            .video_bootstrap
+            .as_ref()
+            .and_then(|bootstrap| NativeVideoBootstrapReason::try_from(bootstrap.reason).ok());
         let requires_encoder_resume = pending.video_bootstrap_requires_encoder_resume;
         if requires_encoder_resume {
             if let Err(error) = self.platform.handle_control_event(
@@ -1081,6 +1188,12 @@ impl ControlRouter {
         pending.video_bootstrap_sent = false;
         pending.video_bootstrap_requires_encoder_resume = false;
         pending.video_bootstrap_retry_attempt = 0;
+        let now = Instant::now();
+        if bootstrap_reason == Some(NativeVideoBootstrapReason::Periodic) {
+            pending.periodic_idr.acknowledge(now);
+        } else {
+            pending.periodic_idr.schedule_after_generation_ack(now);
+        }
         if matches!(
             pending.repair_keyframe,
             RepairKeyframeState::AwaitingDecodedBootstrap {
@@ -1384,7 +1497,10 @@ impl ControlRouter {
         {
             return Err("native video repair does not belong to the active session".to_owned());
         }
-        if pending.repair_keyframe.is_active() || pending.video_bootstrap.is_some() {
+        if pending.repair_keyframe.is_active()
+            || pending.video_bootstrap.is_some()
+            || pending.periodic_idr.is_outstanding()
+        {
             return Ok(false);
         }
         self.platform
@@ -1396,6 +1512,64 @@ impl ControlRouter {
             .repair_keyframe = RepairKeyframeState::Requested { request: None };
         eprintln!(
             "Lumen native media stage=video-repair-requested session-epoch={session_epoch} source={source:?}"
+        );
+        Ok(true)
+    }
+
+    /// Consumes a due periodic intent only when a real encoded source result
+    /// is available. A naturally produced keyframe is accepted as the safe
+    /// fallback without sending a second force request; otherwise the
+    /// platform event arms its periodic gate for the next source frame.
+    pub(crate) fn maybe_request_native_video_periodic(
+        &mut self,
+        session_epoch: u32,
+        frame_is_keyframe: bool,
+    ) -> Result<bool, String> {
+        let now = Instant::now();
+        let Some(pending) = self.native.pending.as_ref() else {
+            return Err("native session has not been negotiated".to_owned());
+        };
+        if !pending.active
+            || pending.plan.session_epoch != session_epoch
+            || pending.acknowledged_configuration_id.is_none()
+            || pending.acknowledged_generation_id.is_none()
+            || pending.video_bootstrap.is_some()
+            || pending.repair_keyframe.is_active()
+            || pending.periodic_idr.is_outstanding()
+            || !pending.periodic_idr.is_due(now)
+        {
+            return Ok(false);
+        }
+
+        let pending = self
+            .native
+            .pending
+            .as_mut()
+            .expect("validated pending native session");
+        if !pending.periodic_idr.mark_requested(now) {
+            return Ok(false);
+        }
+        // Any key frame already produced for this capture instant satisfies
+        // the due refresh. Its own metadata decides whether publication is a
+        // controlled periodic generation or a bounded repair fallback. Never
+        // send a second force request after the key frame already exists.
+        if frame_is_keyframe {
+            return Ok(false);
+        }
+        if let Err(error) = self.platform.handle_control_event(
+            session_epoch,
+            crate::PlatformControlEvent::RequestPeriodicIdrFrame,
+        ) {
+            self.native
+                .pending
+                .as_mut()
+                .expect("validated pending native session")
+                .periodic_idr
+                .cancel_request();
+            return Err(error);
+        }
+        eprintln!(
+            "Lumen native media stage=video-periodic-idr-requested session-epoch={session_epoch}"
         );
         Ok(true)
     }
@@ -1891,6 +2065,7 @@ impl ControlRouter {
             last_video_bootstrap_acknowledgement: None,
             next_generation_id: 1,
             repair_keyframe: RepairKeyframeState::Idle,
+            periodic_idr: PeriodicIdrGate::default(),
             last_sent_video_frame_id: 0,
             last_display_revision: 0,
             adaptive_video: adaptive_video_controller(
@@ -1948,6 +2123,7 @@ impl ControlRouter {
             pending.codec_configuration = Some(configuration);
             pending.codec_configuration_sent = false;
             pending.acknowledged_configuration_id = None;
+            pending.periodic_idr.reset();
         }
         self.codec_configuration_notify.notify_one();
         true
@@ -2014,6 +2190,11 @@ impl ControlRouter {
         pending.video_bootstrap_failure = None;
         pending.video_bootstrap_requires_encoder_resume = requires_encoder_resume;
         pending.video_bootstrap_retry_attempt = 0;
+        if reason == NativeVideoBootstrapReason::Periodic {
+            pending
+                .periodic_idr
+                .mark_generation(generation_id, frame_id);
+        }
         if reason == NativeVideoBootstrapReason::Repair {
             let request = match std::mem::take(&mut pending.repair_keyframe) {
                 RepairKeyframeState::Idle => None,
@@ -2205,6 +2386,14 @@ impl ControlRouter {
             acknowledged_configuration_id: pending.acknowledged_configuration_id,
             acknowledged_generation_id: pending.acknowledged_generation_id,
             bootstrap_pending: pending.video_bootstrap.is_some(),
+            bootstrap_reason: pending
+                .video_bootstrap
+                .as_ref()
+                .and_then(|bootstrap| NativeVideoBootstrapReason::try_from(bootstrap.reason).ok()),
+            bootstrap_requires_encoder_resume: pending
+                .video_bootstrap
+                .as_ref()
+                .is_some_and(|_| pending.video_bootstrap_requires_encoder_resume),
             repair_keyframe_requested: pending.repair_keyframe.is_active(),
             session_epoch: pending.plan.session_epoch,
             policy_revision: u16::try_from(pending.plan.policy_revision).ok()?,
@@ -2475,5 +2664,55 @@ fn native_negotiation_error(request_id: u64, error: NativeSessionError) -> HostC
             message: error.message().to_owned(),
             negotiation_failure: NativeNegotiationFailure::from(error) as i32,
         })),
+    }
+}
+
+#[cfg(test)]
+mod periodic_idr_tests {
+    use super::*;
+
+    #[test]
+    fn periodic_deadline_has_exact_999ms_and_1000ms_boundary() {
+        let origin = Instant::now();
+        let mut gate = PeriodicIdrGate::default();
+        gate.schedule_after_generation_ack(origin);
+
+        assert!(!gate.is_due(origin + Duration::from_millis(999)));
+        assert!(gate.is_due(origin + Duration::from_secs(1)));
+        assert!(gate.mark_requested(origin + Duration::from_secs(1)));
+        assert!(!gate.mark_requested(origin + Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn periodic_ack_resets_deadline_and_retry_keeps_single_flight() {
+        let origin = Instant::now();
+        let mut gate = PeriodicIdrGate::default();
+        gate.schedule_after_generation_ack(origin);
+        let request_time = origin + PERIODIC_IDR_INTERVAL;
+        assert!(gate.mark_requested(request_time));
+        gate.mark_generation(7, 11);
+        gate.update_retry_generation(7, 8);
+        assert_eq!(
+            gate.state,
+            PeriodicIdrState::AwaitingDecodedBootstrap {
+                generation_id: 8,
+                frame_id: 11,
+            }
+        );
+        gate.acknowledge(request_time + Duration::from_millis(3));
+        assert!(!gate.is_due(request_time + Duration::from_millis(999)));
+        assert!(gate.is_due(request_time + Duration::from_millis(1_003)));
+    }
+
+    #[test]
+    fn natural_keyframe_fallback_does_not_rearm_or_duplicate_request() {
+        let origin = Instant::now();
+        let mut gate = PeriodicIdrGate::default();
+        gate.schedule_after_generation_ack(origin);
+        let due = origin + PERIODIC_IDR_INTERVAL;
+        assert!(gate.mark_requested(due));
+        assert!(!gate.mark_requested(due + Duration::from_millis(1)));
+        gate.mark_generation(9, 17);
+        assert!(gate.is_outstanding());
     }
 }

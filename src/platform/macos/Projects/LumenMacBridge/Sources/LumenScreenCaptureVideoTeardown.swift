@@ -140,8 +140,24 @@ extension LumenScreenCaptureVideoRuntime {
     func requestImmediateKeyFrame() {
         queue.async { [weak self] in
             guard let self else { return }
-            if self.videoBootstrapAdmission.beginBootstrapGeneration() {
-                self.pendingVideoBootstrapSource = nil
+            if self.videoBootstrapAdmission.beginBootstrapGeneration(reason: .repair) {
+                self.discardPendingAdmissionSourcesForControlledBootstrap()
+            }
+        }
+    }
+
+    func requestPeriodicKeyFrame() async -> Bool {
+        await withCheckedContinuation { continuation in
+            queue.async { [weak self] in
+                guard let self,
+                      !self.stopping,
+                      self.videoBootstrapAdmission
+                        .beginPeriodicBootstrapGeneration() else {
+                    continuation.resume(returning: false)
+                    return
+                }
+                self.discardPendingAdmissionSourcesForControlledBootstrap()
+                continuation.resume(returning: true)
             }
         }
     }
@@ -159,8 +175,9 @@ extension LumenScreenCaptureVideoRuntime {
                 let pendingSource = self.pendingVideoBootstrapSource
                 self.pendingVideoBootstrapSource = nil
                 if let pendingSource {
-                    self.submitSource(pendingSource, forceKeyFrame: false)
+                    self.submitSource(pendingSource, bootstrapReason: nil)
                 }
+                self.encoderAdmission.resumePendingIfPossible()
                 let message = [
                     "VideoToolbox encoding resumed after codec acknowledgement",
                     "coalesced-source=\(pendingSource != nil)"

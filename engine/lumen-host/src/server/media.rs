@@ -1580,18 +1580,33 @@ impl VideoSenderState {
         repair_keyframe: bool,
         age: Option<Duration>,
         maximum_object_delay_us: u32,
+        bootstrap_reason: Option<NativeVideoBootstrapReason>,
+        bootstrap_requires_encoder_resume: bool,
     ) -> bool {
         if repair_keyframe {
             return false;
         }
         let should_drop = self.repair_after_bootstrap
             || age.is_some_and(|age| object_deadline_exceeded(age, maximum_object_delay_us));
-        self.repair_after_bootstrap |= should_drop;
+        if bootstrap_reason != Some(NativeVideoBootstrapReason::Periodic)
+            || !bootstrap_requires_encoder_resume
+        {
+            self.repair_after_bootstrap |= should_drop;
+        }
         should_drop
     }
 
-    fn take_post_bootstrap_repair_request(&mut self, bootstrap_pending: bool) -> bool {
-        if bootstrap_pending || !self.repair_after_bootstrap {
+    fn take_post_bootstrap_repair_request(
+        &mut self,
+        bootstrap_pending: bool,
+        bootstrap_reason: Option<NativeVideoBootstrapReason>,
+        bootstrap_requires_encoder_resume: bool,
+    ) -> bool {
+        if bootstrap_pending
+            || bootstrap_reason == Some(NativeVideoBootstrapReason::Periodic)
+                && bootstrap_requires_encoder_resume
+            || !self.repair_after_bootstrap
+        {
             return false;
         }
         self.repair_after_bootstrap = false;
@@ -1604,14 +1619,25 @@ impl VideoSenderState {
         frame_id: u32,
         repair_required: bool,
         bootstrap_pending: bool,
+        bootstrap_reason: Option<NativeVideoBootstrapReason>,
+        bootstrap_requires_encoder_resume: bool,
     ) -> Result<bool, String> {
         self.frame_id = frame_id
             .checked_add(1)
             .ok_or_else(|| "video frame id exhausted".to_owned())?;
         self.pending_frame = None;
         self.pending_since = None;
-        if repair_required && bootstrap_pending {
+        if repair_required
+            && bootstrap_pending
+            && (bootstrap_reason != Some(NativeVideoBootstrapReason::Periodic)
+                || !bootstrap_requires_encoder_resume)
+        {
             self.repair_after_bootstrap = true;
+            return Ok(false);
+        }
+        if bootstrap_reason == Some(NativeVideoBootstrapReason::Periodic)
+            && bootstrap_requires_encoder_resume
+        {
             return Ok(false);
         }
         let request_repair = repair_required && !self.repair_required;
@@ -1631,6 +1657,8 @@ fn finish_video_datagram_delivery(
     frame_id: u32,
     status: &DatagramBatchStatus,
     bootstrap_pending: bool,
+    bootstrap_reason: Option<NativeVideoBootstrapReason>,
+    bootstrap_requires_encoder_resume: bool,
 ) -> Result<VideoDatagramCompletion, String> {
     if let DatagramBatchStatus::Terminal(message) = status {
         return Ok(VideoDatagramCompletion::TerminalTransport(message.clone()));
@@ -1639,6 +1667,8 @@ fn finish_video_datagram_delivery(
         frame_id,
         *status != DatagramBatchStatus::Complete,
         bootstrap_pending,
+        bootstrap_reason,
+        bootstrap_requires_encoder_resume,
     )?;
     Ok(VideoDatagramCompletion::Continue { request_repair })
 }
@@ -1714,7 +1744,11 @@ async fn poll_and_send_video(
     if let Err(message) = sender.prepare(&delivery) {
         return MediaAttempt::Failed(video_failure("packetizer-failed", message));
     }
-    if sender.take_post_bootstrap_repair_request(delivery.bootstrap_pending) {
+    if sender.take_post_bootstrap_repair_request(
+        delivery.bootstrap_pending,
+        delivery.bootstrap_reason,
+        delivery.bootstrap_requires_encoder_resume,
+    ) {
         let repair = router.lock().map_err(|_| {
             video_capture_failure(
                 "post-bootstrap-keyframe-request-failed",
@@ -1752,6 +1786,24 @@ async fn poll_and_send_video(
                 })
             }
         };
+        let periodic_request = router.lock().map_err(|_| {
+            video_capture_failure(
+                "periodic-keyframe-request-failed",
+                "native control router lock is poisoned".to_owned(),
+            )
+        });
+        let periodic_request = match periodic_request {
+            Ok(mut router) => {
+                router.maybe_request_native_video_periodic(session_epoch, frame.key_frame)
+            }
+            Err(failure) => return MediaAttempt::Terminal(failure),
+        };
+        if let Err(message) = periodic_request {
+            return MediaAttempt::Terminal(video_capture_failure(
+                "periodic-keyframe-request-failed",
+                message,
+            ));
+        }
         let normalized = match sender
             .normalizer
             .as_mut()
@@ -1807,10 +1859,16 @@ async fn poll_and_send_video(
             repair_keyframe,
             pending_age,
             delivery.maximum_object_delay_us,
+            delivery.bootstrap_reason,
+            delivery.bootstrap_requires_encoder_resume,
         ) {
             sender.pending_frame = None;
             sender.pending_since = None;
-            sender.repair_after_bootstrap = true;
+            if delivery.bootstrap_reason != Some(NativeVideoBootstrapReason::Periodic)
+                || !delivery.bootstrap_requires_encoder_resume
+            {
+                sender.repair_after_bootstrap = true;
+            }
             return MediaAttempt::Dropped;
         }
         return MediaAttempt::Waiting;
@@ -2041,6 +2099,8 @@ async fn poll_and_send_video(
         frame_id,
         &report.status,
         delivery.bootstrap_pending,
+        delivery.bootstrap_reason,
+        delivery.bootstrap_requires_encoder_resume,
     ) {
         Ok(VideoDatagramCompletion::Continue { request_repair }) => request_repair,
         Ok(VideoDatagramCompletion::TerminalTransport(message)) => {
@@ -2870,8 +2930,9 @@ mod tests {
 
         let mut sender = VideoSenderState::default();
         let initial_frame_id = sender.frame_id;
-        let completion = finish_video_datagram_delivery(&mut sender, 41, &report.status, false)
-            .expect("terminal transport classification");
+        let completion =
+            finish_video_datagram_delivery(&mut sender, 41, &report.status, false, None, false)
+                .expect("terminal transport classification");
         assert_eq!(
             completion,
             VideoDatagramCompletion::TerminalTransport("connection lost".to_owned())
@@ -2992,18 +3053,28 @@ mod tests {
             false,
             Some(Duration::from_micros(16_668)),
             16_668,
+            None,
+            false,
         ));
-        assert!(!sender.take_post_bootstrap_repair_request(false));
+        assert!(!sender.take_post_bootstrap_repair_request(false, None, false));
 
         assert!(sender.pending_bootstrap_frame_should_drop(
             false,
             Some(Duration::from_micros(16_669)),
             16_668,
+            None,
+            false,
         ));
-        assert!(sender.pending_bootstrap_frame_should_drop(false, Some(Duration::ZERO), 16_668,));
-        assert!(!sender.take_post_bootstrap_repair_request(true));
-        assert!(sender.take_post_bootstrap_repair_request(false));
-        assert!(!sender.take_post_bootstrap_repair_request(false));
+        assert!(sender.pending_bootstrap_frame_should_drop(
+            false,
+            Some(Duration::ZERO),
+            16_668,
+            None,
+            false,
+        ));
+        assert!(!sender.take_post_bootstrap_repair_request(true, None, false));
+        assert!(sender.take_post_bootstrap_repair_request(false, None, false));
+        assert!(!sender.take_post_bootstrap_repair_request(false, None, false));
         assert!(sender.repair_required);
 
         let mut owned = VideoSenderState::default();
@@ -3011,8 +3082,60 @@ mod tests {
             true,
             Some(Duration::from_secs(1)),
             16_668,
+            None,
+            false,
         ));
-        assert!(!owned.take_post_bootstrap_repair_request(false));
+        assert!(!owned.take_post_bootstrap_repair_request(false, None, false));
+    }
+
+    #[test]
+    fn periodic_bootstrap_drops_leaked_delta_without_post_ack_repair() {
+        let mut sender = VideoSenderState::default();
+        assert!(sender.pending_bootstrap_frame_should_drop(
+            false,
+            Some(Duration::from_micros(16_669)),
+            16_668,
+            Some(NativeVideoBootstrapReason::Periodic),
+            true,
+        ));
+        assert!(!sender.repair_after_bootstrap);
+        assert!(!sender.take_post_bootstrap_repair_request(
+            false,
+            Some(NativeVideoBootstrapReason::Periodic),
+            true,
+        ));
+        assert!(!sender.repair_required);
+
+        assert!(!sender
+            .finish_delta_delivery(
+                1,
+                true,
+                true,
+                Some(NativeVideoBootstrapReason::Periodic),
+                true,
+            )
+            .unwrap());
+        assert!(!sender.repair_after_bootstrap);
+    }
+
+    #[test]
+    fn automatic_periodic_bootstrap_keeps_one_bounded_post_ack_repair() {
+        let mut sender = VideoSenderState::default();
+        assert!(sender.pending_bootstrap_frame_should_drop(
+            false,
+            Some(Duration::from_micros(16_669)),
+            16_668,
+            Some(NativeVideoBootstrapReason::Periodic),
+            false,
+        ));
+        assert!(sender.repair_after_bootstrap);
+        assert!(!sender.take_post_bootstrap_repair_request(
+            true,
+            Some(NativeVideoBootstrapReason::Periodic),
+            false,
+        ));
+        assert!(sender.take_post_bootstrap_repair_request(false, None, false));
+        assert!(!sender.take_post_bootstrap_repair_request(false, None, false));
     }
 
     #[tokio::test]
@@ -3371,14 +3494,16 @@ mod tests {
             ..VideoSenderState::default()
         };
 
-        assert!(!sender.finish_delta_delivery(41, true, true).unwrap());
+        assert!(!sender
+            .finish_delta_delivery(41, true, true, None, false)
+            .unwrap());
 
         assert_eq!(sender.frame_id, 42);
         assert!(!sender.repair_required);
         assert!(sender.repair_after_bootstrap);
-        assert!(!sender.take_post_bootstrap_repair_request(true));
-        assert!(sender.take_post_bootstrap_repair_request(false));
-        assert!(!sender.take_post_bootstrap_repair_request(false));
+        assert!(!sender.take_post_bootstrap_repair_request(true, None, false));
+        assert!(sender.take_post_bootstrap_repair_request(false, None, false));
+        assert!(!sender.take_post_bootstrap_repair_request(false, None, false));
         assert!(sender.pending_frame.is_none());
         assert!(sender.pending_since.is_none());
     }
