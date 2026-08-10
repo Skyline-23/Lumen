@@ -181,6 +181,20 @@ func permitsAdditiveProtobufDeclaration() throws {
 }
 
 @Test
+func permitsAdditiveMediaCapabilityBit() throws {
+  let current = try currentContract()
+  var baseline = current
+  var native = try #require(baseline["nativeTransport"] as? [String: Any])
+  var capabilities = try #require(native["mediaCapabilities"] as? [String: Any])
+  capabilities["supportedMask"] = 31
+  capabilities.removeValue(forKey: "mediaParkResume")
+  native["mediaCapabilities"] = capabilities
+  baseline["nativeTransport"] = native
+
+  try LumenContractTool.checkCompatibility(baseline: baseline, current: current)
+}
+
+@Test
 func rejectsChangedProtobufFieldNumber() throws {
   let contract = try currentContract()
   var candidate = contract

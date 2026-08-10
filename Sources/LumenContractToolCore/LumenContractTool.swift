@@ -179,6 +179,36 @@ public enum LumenContractTool {
       }
       if additiveNativeLists.contains(key) {
         try requirePreservedList(value, in: currentValue, label: key)
+      } else if key == "mediaCapabilities" {
+        let oldCapabilities = try dictionary(value, "baseline.nativeTransport.mediaCapabilities")
+        let newCapabilities = try dictionary(currentValue, "current.nativeTransport.mediaCapabilities")
+        for (capabilityKey, capabilityValue) in oldCapabilities {
+          guard let currentCapabilityValue = newCapabilities[capabilityKey] else {
+            throw LumenContractToolError.invalid(
+              "removed v4 native media capability \(capabilityKey)"
+            )
+          }
+          if capabilityKey == "supportedMask" {
+            let oldMask = try requiredInteger(
+              capabilityValue,
+              "baseline.nativeTransport.mediaCapabilities.supportedMask"
+            )
+            let newMask = try requiredInteger(
+              currentCapabilityValue,
+              "current.nativeTransport.mediaCapabilities.supportedMask"
+            )
+            try require(
+              newMask & oldMask == oldMask,
+              "v4 native media capability supportedMask removed a bit"
+            )
+          } else {
+            try requirePreservedValue(
+              capabilityValue,
+              in: currentCapabilityValue,
+              label: "v4 native media capability \(capabilityKey)"
+            )
+          }
+        }
       } else {
         try requirePreservedValue(
           value, in: currentValue, label: "v4 native authority \(key)")
@@ -301,19 +331,34 @@ public enum LumenContractTool {
       ]
     }
     try checkCompatibility(baseline: baseline, current: current)
+    // Lifecycle and transport prose is a handwritten expansion of the
+    // structured authorities. An additive machine-contract change may need to
+    // introduce or reconcile that prose in the same release; keep the strict
+    // byte-equality guard for documentation-only changes.
+    let streamingAuthorityChanged = !jsonEqual(baseline["protobuf"], current["protobuf"])
+      || !jsonEqual(baseline["nativeTransport"], current["nativeTransport"])
+      || !jsonEqual(baseline["lifecycle"], current["lifecycle"])
+    let settingsAuthorityChanged = !jsonEqual(
+      (baseline["https"] as? [String: Any])?["settings"],
+      (current["https"] as? [String: Any])?["settings"]
+    )
     if let baseline = options.baselineStreamingDoc {
-      try compareDocumentation(
-        baseline: try String(contentsOf: baseline, encoding: .utf8),
-        current: try String(contentsOf: options.currentStreamingDoc, encoding: .utf8),
-        label: "streaming documentation"
-      )
+      if !streamingAuthorityChanged {
+        try compareDocumentation(
+          baseline: try String(contentsOf: baseline, encoding: .utf8),
+          current: try String(contentsOf: options.currentStreamingDoc, encoding: .utf8),
+          label: "streaming documentation"
+        )
+      }
     }
     if let baseline = options.baselineSettingsDoc {
-      try compareDocumentation(
-        baseline: try String(contentsOf: baseline, encoding: .utf8),
-        current: try String(contentsOf: options.currentSettingsDoc, encoding: .utf8),
-        label: "settings documentation"
-      )
+      if !settingsAuthorityChanged {
+        try compareDocumentation(
+          baseline: try String(contentsOf: baseline, encoding: .utf8),
+          current: try String(contentsOf: options.currentSettingsDoc, encoding: .utf8),
+          label: "settings documentation"
+        )
+      }
     }
   }
 
