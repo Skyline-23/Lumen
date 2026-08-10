@@ -75,8 +75,8 @@ struct LumenMacArchitectureContractTests {
         )
     }
 
-    @Test("Exact Tuist Xcode test preserves exact Tuist Xcode build app roots")
-    func exactTuistTestPreservesAllBuildEntries() throws {
+    @Test("Tuist unit tests avoid signed app roots while shared app schemes remain")
+    func tuistUnitTestsAvoidSignedAppRootsWhileSharedSchemesRemain() throws {
         let project = try String(
             contentsOf: repositoryRoot().appendingPathComponent(
                 "src/platform/macos/Project.swift"
@@ -92,15 +92,37 @@ struct LumenMacArchitectureContractTests {
         )
         let testTarget = testTargetTail[..<testTargetEnd.lowerBound]
 
-        #expect(testTarget.contains(#".target(name: "LumenApp", status: .none)"#))
+        #expect(!testTarget.contains(#".target(name: "LumenApp""#))
         #expect(
-            testTarget.contains(
-                #".target(name: "LumenDisplayDisconnectCanary", status: .none)"#
+            !testTarget.contains(
+                #".target(name: "LumenDisplayDisconnectCanary""#
             )
         )
+        #expect(testTarget.contains(#".target(name: "LumenAppArchitecture")"#))
+        #expect(testTarget.contains(#".target(name: "LumenMacBridge")"#))
+        #expect(testTarget.contains(#".target(name: "LumenMacCaptureAdapter")"#))
         #expect(testTarget.contains(#""BUNDLE_LOADER": """#))
         #expect(testTarget.contains(#""TEST_HOST": """#))
         #expect(testTarget.contains(#""TEST_TARGET_NAME": """#))
+
+        let schemesStart = try #require(project.range(of: "    schemes: ["))
+        let schemes = project[schemesStart.lowerBound...]
+        #expect(schemes.contains("name: \"LumenApp\",\n            shared: true"))
+        #expect(
+            schemes.contains(
+                "name: \"LumenDisplayDisconnectCanary\",\n            shared: true"
+            )
+        )
+
+        let testSchemeStart = try #require(
+            schemes.range(of: "            name: \"LumenTuistTests\",")
+        )
+        let testSchemeTail = schemes[testSchemeStart.lowerBound...]
+        let testSchemeEnd = testSchemeTail.dropFirst().range(of: "        .scheme(")?.lowerBound
+            ?? testSchemeTail.endIndex
+        let testScheme = testSchemeTail[..<testSchemeEnd]
+        #expect(!testScheme.contains(#""LumenApp""#))
+        #expect(!testScheme.contains(#""LumenDisplayDisconnectCanary""#))
     }
 
     @Test("Release tags stay on their reviewed GitFlow branch")

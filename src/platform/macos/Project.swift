@@ -329,11 +329,6 @@ let project = Project(
                 "../../../tests/tuist/macos/**/*.mm"
             ],
             dependencies: [
-                // A test-focused generation can otherwise prune application
-                // schemes before the subsequent workspace build. Keep both
-                // app build roots without linking or hosting tests.
-                .target(name: "LumenApp", status: .none),
-                .target(name: "LumenDisplayDisconnectCanary", status: .none),
                 .target(name: "LumenAppArchitecture"),
                 .target(name: "LumenMacBridge"),
                 .target(name: "LumenMacCaptureAdapter")
