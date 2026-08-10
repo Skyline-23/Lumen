@@ -9,7 +9,7 @@
 extern "C" {
 #endif
 
-#define LUMEN_ENGINE_ABI_VERSION 66u
+#define LUMEN_ENGINE_ABI_VERSION 67u
 #define LUMEN_ENCRYPTED_CONTROL_HEADER_SIZE 8u
 #define LUMEN_CONTROL_FEEDBACK_MAX_SIZE 29u
 #define LUMEN_CONTROL_TERMINATION_SIZE 8u
@@ -449,6 +449,8 @@ typedef struct LumenAdaptiveFrameCadenceObservation {
   uint64_t output_frame_count;
   /* Encoder admission/pending drops only; exclude intentional cadence drops. */
   uint64_t pending_drop_count;
+  /* False while bootstrap/reconfiguration admission is unstable. */
+  bool pipeline_stable;
   double callback_latency_milliseconds;
 } LumenAdaptiveFrameCadenceObservation;
 

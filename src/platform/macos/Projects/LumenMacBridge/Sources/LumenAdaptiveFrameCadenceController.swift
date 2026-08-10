@@ -43,6 +43,7 @@ final class LumenAdaptiveFrameCadenceController: @unchecked Sendable {
         sourceFrameCount: UInt64,
         outputFrameCount: UInt64,
         pendingDropCount: UInt64,
+        pipelineStable: Bool,
         callbackLatencyMilliseconds: Double
     ) -> Decision? {
         var decision = LumenAdaptiveFrameCadenceDecision(
@@ -56,6 +57,7 @@ final class LumenAdaptiveFrameCadenceController: @unchecked Sendable {
                 source_frame_count: sourceFrameCount,
                 output_frame_count: outputFrameCount,
                 pending_drop_count: pendingDropCount,
+                pipeline_stable: pipelineStable,
                 callback_latency_milliseconds: callbackLatencyMilliseconds
             ),
             &decision
@@ -67,6 +69,26 @@ final class LumenAdaptiveFrameCadenceController: @unchecked Sendable {
         return Decision(
             targetFrameRate: Int(decision.target_frame_rate),
             changed: decision.changed
+        )
+    }
+
+    /// Compatibility overload for callers that do not have a bootstrap gate
+    /// to report.  Platform capture callers should use the pipeline-aware
+    /// overload above.
+    func observe(
+        monotonicTimeSeconds: Double,
+        sourceFrameCount: UInt64,
+        outputFrameCount: UInt64,
+        pendingDropCount: UInt64,
+        callbackLatencyMilliseconds: Double
+    ) -> Decision? {
+        observe(
+            monotonicTimeSeconds: monotonicTimeSeconds,
+            sourceFrameCount: sourceFrameCount,
+            outputFrameCount: outputFrameCount,
+            pendingDropCount: pendingDropCount,
+            pipelineStable: true,
+            callbackLatencyMilliseconds: callbackLatencyMilliseconds
         )
     }
 
