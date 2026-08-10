@@ -75,7 +75,7 @@ struct LumenMacArchitectureContractTests {
         )
     }
 
-    @Test("Exact Tuist test preserves exact Tuist build app roots")
+    @Test("Exact Tuist Xcode test preserves exact Tuist Xcode build app roots")
     func exactTuistTestPreservesAllBuildEntries() throws {
         let project = try String(
             contentsOf: repositoryRoot().appendingPathComponent(

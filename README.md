@@ -59,9 +59,11 @@ Validate the macOS project through Tuist without launching the app:
 
 ```bash
 cd src/platform/macos
-tuist test --no-selective-testing --no-binary-cache LumenTuistTests
-tuist xcodebuild build -workspace Lumen.xcworkspace \
+tuist generate --no-open
+tuist xcodebuild test -workspace Lumen.xcworkspace \
   -scheme LumenTuistTests -destination 'platform=macOS'
+tuist xcodebuild build -workspace Lumen.xcworkspace \
+  -scheme LumenApp -destination 'generic/platform=macOS'
 ```
 
 Do not use raw `xcodebuild` for project validation. See the

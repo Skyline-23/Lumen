@@ -30,8 +30,18 @@ def build_steps(fast: bool) -> list[QualityStep]:
             QualityStep("cmake configure", ("cmake", "-S", ".", "-B", "/tmp/lumen-quality-cmake")),
             QualityStep("tuist project generation", ("tuist", "generate", "--no-open"), Path("src/platform/macos")),
             QualityStep(
-                "macOS Tuist tests",
-                ("xcodebuild", "test", "-workspace", "Lumen.xcworkspace", "-scheme", "LumenTuistTests"),
+                "macOS Tuist Xcode tests",
+                (
+                    "tuist",
+                    "xcodebuild",
+                    "test",
+                    "-workspace",
+                    "Lumen.xcworkspace",
+                    "-scheme",
+                    "LumenTuistTests",
+                    "-destination",
+                    "platform=macOS",
+                ),
                 Path("src/platform/macos"),
             ),
         ]

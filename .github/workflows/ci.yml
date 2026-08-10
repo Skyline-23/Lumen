@@ -123,13 +123,21 @@ jobs:
           ARCHS=arm64 \
           CURRENT_ARCH=undefined_arch \
             scripts/rust/build_lumen_engine.sh
+      - name: Generate Lumen workspace
+        working-directory: src/platform/macos
+        run: tuist generate --no-open
       - name: Test Lumen app
         working-directory: src/platform/macos
-        run: tuist test --no-selective-testing --no-binary-cache LumenTuistTests
+        run: |
+          tuist xcodebuild test \
+            -workspace Lumen.xcworkspace \
+            -scheme LumenTuistTests \
+            -destination 'platform=macOS' \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES
       - name: Build Lumen app
         working-directory: src/platform/macos
         run: |
-          tuist generate --no-open
           tuist xcodebuild build \
             -workspace Lumen.xcworkspace \
             -scheme LumenApp \
