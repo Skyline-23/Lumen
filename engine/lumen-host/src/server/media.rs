@@ -1898,6 +1898,11 @@ async fn poll_and_send_video(
     wire_pacer: &Arc<tokio::sync::Mutex<VideoWireRatePacer>>,
     admission_gate: &tokio::sync::Mutex<()>,
 ) -> MediaAttempt {
+    // The watchdog can reset the platform queue and retire the current media
+    // generation. Serialize that mutation with the same admission gate used
+    // by every media writer, so a watchdog retry/fallback cannot race a final
+    // sender-side current check and let an obsolete write finish afterward.
+    let _watchdog_admission = admission_gate.lock().await;
     let watchdog = router
         .lock()
         .map_err(|_| {
@@ -1911,6 +1916,7 @@ async fn poll_and_send_video(
                 .service_native_media_resume_watchdog(session_epoch)
                 .map_err(|message| video_capture_failure("resume-watchdog-failed", message))
         });
+    drop(_watchdog_admission);
     match watchdog {
         Ok(Some(state)) => eprintln!(
             "Lumen native media stage=media-resume-watchdog session-epoch={session_epoch} state={state:?}"
@@ -3597,6 +3603,37 @@ mod tests {
 
         assert!(matches!(outcome, DatagramSendOutcome::Sent));
         assert!(admission_gate.try_lock().is_ok());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn watchdog_waits_for_inflight_media_send_admission() {
+        let admission_gate = Arc::new(tokio::sync::Mutex::new(()));
+        let send_started = Arc::new(Notify::new());
+        let send_release = Arc::new(Notify::new());
+        let sender_gate = Arc::clone(&admission_gate);
+        let sender_started = Arc::clone(&send_started);
+        let sender_release = Arc::clone(&send_release);
+        let sender = tokio::spawn(async move {
+            let _admission = sender_gate.lock().await;
+            sender_started.notify_one();
+            sender_release.notified().await;
+        });
+        send_started.notified().await;
+
+        let watchdog_mutated = Arc::new(AtomicBool::new(false));
+        let watchdog_gate = Arc::clone(&admission_gate);
+        let watchdog_state = Arc::clone(&watchdog_mutated);
+        let watchdog = tokio::spawn(async move {
+            let _admission = watchdog_gate.lock().await;
+            watchdog_state.store(true, Ordering::Release);
+        });
+        tokio::task::yield_now().await;
+        assert!(!watchdog_mutated.load(Ordering::Acquire));
+
+        send_release.notify_one();
+        sender.await.unwrap();
+        watchdog.await.unwrap();
+        assert!(watchdog_mutated.load(Ordering::Acquire));
     }
 
     #[tokio::test(flavor = "current_thread")]
