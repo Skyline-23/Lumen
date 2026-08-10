@@ -148,6 +148,14 @@ public enum LumenContractTool {
       "fallback is forbidden"
     )
     let mediaPark = try dictionary(lifecycle["mediaParkResume"], "lifecycle.mediaParkResume")
+    _ = try requireKeys(
+      mediaPark,
+      [
+        "capabilityBit", "request", "response", "states", "strictlyIncreasingRevision",
+        "idempotentCurrentTarget", "staleResult", "resumeRequiresFreshBootstrap", "stopFromParked",
+      ],
+      "lifecycle.mediaParkResume"
+    )
     try require(number(mediaPark["capabilityBit"]) == 32, "media park capability bit must be 32")
     try require(
       string(mediaPark["request"]) == "MediaParkRequest"
@@ -351,10 +359,16 @@ public enum LumenContractTool {
     let currentNative = current["nativeTransport"] as? [String: Any]
     let baselineLifecycle = baseline["lifecycle"] as? [String: Any]
     let currentLifecycle = current["lifecycle"] as? [String: Any]
+    let baselineMediaCapabilities = baselineNative?["mediaCapabilities"] as? [String: Any]
+    let currentMediaCapabilities = currentNative?["mediaCapabilities"] as? [String: Any]
     let streamingAuthorityChanged = protobufAuthorityChanged
       || !jsonEqual(
-        baselineNative?["mediaCapabilities"],
-        currentNative?["mediaCapabilities"]
+        baselineMediaCapabilities?["supportedMask"],
+        currentMediaCapabilities?["supportedMask"]
+      )
+      || !jsonEqual(
+        baselineMediaCapabilities?["mediaParkResume"],
+        currentMediaCapabilities?["mediaParkResume"]
       )
       || !jsonEqual(
         baselineLifecycle?["mediaParkResume"],

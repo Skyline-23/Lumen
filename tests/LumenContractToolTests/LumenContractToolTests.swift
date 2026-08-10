@@ -196,6 +196,28 @@ func permitsAdditiveMediaCapabilityBit() throws {
 
 @Test
 func rejectsDocumentationMutationForProtobufCommentOnlyChange() throws {
+  try assertStreamingDocumentationMutationIsRejected { current in
+    var protobuf = try #require(current["protobuf"] as? [String: Any])
+    protobuf["source"] = try #require(protobuf["source"] as? String)
+      + "\n// source-only compatibility comment\n"
+    current["protobuf"] = protobuf
+  }
+}
+
+@Test
+func rejectsDocumentationMutationForUnknownMediaCapability() throws {
+  try assertStreamingDocumentationMutationIsRejected { current in
+    var native = try #require(current["nativeTransport"] as? [String: Any])
+    var mediaCapabilities = try #require(native["mediaCapabilities"] as? [String: Any])
+    mediaCapabilities["futureMediaCapability"] = 64
+    native["mediaCapabilities"] = mediaCapabilities
+    current["nativeTransport"] = native
+  }
+}
+
+private func assertStreamingDocumentationMutationIsRejected(
+  _ mutate: (inout [String: Any]) throws -> Void
+) throws {
   let sourceRoot = repositoryRoot()
   let fileManager = FileManager.default
   let temporaryRoot = fileManager.temporaryDirectory.appending(
@@ -228,10 +250,7 @@ func rejectsDocumentationMutationForProtobufCommentOnlyChange() throws {
       with: Data(contentsOf: currentProtocolRoot.appending(path: contractName))
     ) as? [String: Any]
   )
-  var protobuf = try #require(current["protobuf"] as? [String: Any])
-  protobuf["source"] = try #require(protobuf["source"] as? String)
-    + "\n// source-only compatibility comment\n"
-  current["protobuf"] = protobuf
+  try mutate(&current)
   try JSONSerialization.data(
     withJSONObject: current,
     options: [.prettyPrinted, .sortedKeys]
