@@ -195,6 +195,68 @@ func permitsAdditiveMediaCapabilityBit() throws {
 }
 
 @Test
+func rejectsDocumentationMutationForProtobufCommentOnlyChange() throws {
+  let sourceRoot = repositoryRoot()
+  let fileManager = FileManager.default
+  let temporaryRoot = fileManager.temporaryDirectory.appending(
+    path: "lumen-contract-compatibility-\(UUID().uuidString)"
+  )
+  defer { try? fileManager.removeItem(at: temporaryRoot) }
+  let currentProtocolRoot = temporaryRoot.appending(path: "docs/protocol")
+  let baselineRoot = temporaryRoot.appending(path: "baseline")
+  try fileManager.createDirectory(at: currentProtocolRoot, withIntermediateDirectories: true)
+  try fileManager.createDirectory(at: baselineRoot, withIntermediateDirectories: true)
+
+  let contractName = "lumen-contract-v4.json"
+  let schemaName = "lumen-contract-v4.schema.json"
+  let streamingName = "lumen-streaming-protocol.md"
+  let settingsName = "lumen-settings-protocol.md"
+  for name in [contractName, schemaName, streamingName, settingsName] {
+    let source = sourceRoot.appending(path: "docs/protocol/\(name)")
+    try fileManager.copyItem(
+      at: source,
+      to: baselineRoot.appending(path: name)
+    )
+    try fileManager.copyItem(
+      at: source,
+      to: currentProtocolRoot.appending(path: name)
+    )
+  }
+
+  var current = try #require(
+    JSONSerialization.jsonObject(
+      with: Data(contentsOf: currentProtocolRoot.appending(path: contractName))
+    ) as? [String: Any]
+  )
+  var protobuf = try #require(current["protobuf"] as? [String: Any])
+  protobuf["source"] = try #require(protobuf["source"] as? String)
+    + "\n// source-only compatibility comment\n"
+  current["protobuf"] = protobuf
+  try JSONSerialization.data(
+    withJSONObject: current,
+    options: [.prettyPrinted, .sortedKeys]
+  ).write(to: currentProtocolRoot.appending(path: contractName))
+  let currentStreaming = currentProtocolRoot.appending(path: streamingName)
+  try Data(
+    (try String(contentsOf: currentStreaming, encoding: .utf8) + "\ncompatibility-only prose\n")
+      .utf8
+  ).write(to: currentStreaming)
+
+  #expect(throws: LumenContractToolError.self) {
+    try LumenContractTool.run(
+      arguments: [
+        "compatibility",
+        "--baseline", baselineRoot.appending(path: contractName).path,
+        "--baseline-schema", baselineRoot.appending(path: schemaName).path,
+        "--baseline-streaming-doc", baselineRoot.appending(path: streamingName).path,
+        "--baseline-settings-doc", baselineRoot.appending(path: settingsName).path,
+      ],
+      root: temporaryRoot
+    )
+  }
+}
+
+@Test
 func rejectsChangedProtobufFieldNumber() throws {
   let contract = try currentContract()
   var candidate = contract

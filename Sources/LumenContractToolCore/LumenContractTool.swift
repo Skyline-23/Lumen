@@ -165,7 +165,7 @@ public enum LumenContractTool {
     try require(jsonEqual(baseline["identity"], current["identity"]), "v4 identity cannot change")
     let oldProto = try dictionary(baseline["protobuf"], "baseline.protobuf")
     let newProto = try dictionary(current["protobuf"], "current.protobuf")
-    try compareProtobuf(
+    _ = try compareProtobuf(
       baseline: try requiredString(oldProto["source"], "baseline protobuf source"),
       current: try requiredString(newProto["source"], "current protobuf source")
     )
@@ -330,14 +330,36 @@ public enum LumenContractTool {
         ],
       ]
     }
+    let baselineProto = try requiredString(
+      (baseline["protobuf"] as? [String: Any])?["source"],
+      "baseline protobuf source"
+    )
+    let currentProto = try requiredString(
+      (current["protobuf"] as? [String: Any])?["source"],
+      "current protobuf source"
+    )
+    let protobufAuthorityChanged = try compareProtobuf(
+      baseline: baselineProto,
+      current: currentProto
+    )
     try checkCompatibility(baseline: baseline, current: current)
     // Lifecycle and transport prose is a handwritten expansion of the
     // structured authorities. An additive machine-contract change may need to
     // introduce or reconcile that prose in the same release; keep the strict
     // byte-equality guard for documentation-only changes.
-    let streamingAuthorityChanged = !jsonEqual(baseline["protobuf"], current["protobuf"])
-      || !jsonEqual(baseline["nativeTransport"], current["nativeTransport"])
-      || !jsonEqual(baseline["lifecycle"], current["lifecycle"])
+    let baselineNative = baseline["nativeTransport"] as? [String: Any]
+    let currentNative = current["nativeTransport"] as? [String: Any]
+    let baselineLifecycle = baseline["lifecycle"] as? [String: Any]
+    let currentLifecycle = current["lifecycle"] as? [String: Any]
+    let streamingAuthorityChanged = protobufAuthorityChanged
+      || !jsonEqual(
+        baselineNative?["mediaCapabilities"],
+        currentNative?["mediaCapabilities"]
+      )
+      || !jsonEqual(
+        baselineLifecycle?["mediaParkResume"],
+        currentLifecycle?["mediaParkResume"]
+      )
     let settingsAuthorityChanged = !jsonEqual(
       (baseline["https"] as? [String: Any])?["settings"],
       (current["https"] as? [String: Any])?["settings"]
@@ -584,8 +606,9 @@ public enum LumenContractTool {
       """ + "\n"
   }
 
-  private static func compareProtobuf(baseline: String, current: String) throws {
-    guard baseline != current else { return }
+  @discardableResult
+  private static func compareProtobuf(baseline: String, current: String) throws -> Bool {
+    guard baseline != current else { return false }
     let old = try compileProtobufDescriptor(source: baseline, label: "baseline")
     let new = try compileProtobufDescriptor(source: current, label: "current")
     try require(old.syntax == new.syntax, "changed protobuf syntax")
@@ -597,6 +620,7 @@ public enum LumenContractTool {
     try compareMessages(old.messageType, with: new.messageType, scope: old.package)
     try compareEnums(old.enumType, with: new.enumType, scope: old.package)
     try compareServices(old.service, with: new.service, scope: old.package)
+    return try old.serializedData() != new.serializedData()
   }
 
   private static func compileProtobufDescriptor(source: String, label: String) throws
