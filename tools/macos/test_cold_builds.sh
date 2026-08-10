@@ -19,29 +19,28 @@ git -C "${CLONE_ROOT}" submodule update --init --recursive
 
 MACOS_ROOT="${CLONE_ROOT}/src/platform/macos"
 rm -rf "${CLONE_ROOT}/build" "${MACOS_ROOT}/Derived"
-tuist generate --no-open --path "${MACOS_ROOT}"
+cd "${MACOS_ROOT}"
+tuist generate --no-open
 
-xcodebuild test \
-  -workspace "${MACOS_ROOT}/Lumen.xcworkspace" \
+tuist xcodebuild test \
+  -workspace Lumen.xcworkspace \
   -scheme LumenTuistTests \
   -destination 'platform=macOS' \
   -derivedDataPath "${SCRATCH}/test-derived" \
   -only-testing:LumenTuistTests/LumenPrivateDisplayControlTests \
   ARCHS=arm64 \
-  ONLY_ACTIVE_ARCH=YES \
-  CODE_SIGNING_ALLOWED=NO
+  ONLY_ACTIVE_ARCH=YES
 
 rm -rf "${CLONE_ROOT}/build" "${SCRATCH}/canary-derived"
 
-xcodebuild build \
-  -workspace "${MACOS_ROOT}/Lumen.xcworkspace" \
+tuist xcodebuild build \
+  -workspace Lumen.xcworkspace \
   -scheme LumenDisplayDisconnectCanary \
   -configuration Debug \
   -destination 'platform=macOS' \
   -derivedDataPath "${SCRATCH}/canary-derived" \
   ARCHS=arm64 \
-  ONLY_ACTIVE_ARCH=YES \
-  CODE_SIGNING_ALLOWED=NO
+  ONLY_ACTIVE_ARCH=YES
 
 printf 'cold_focused_test_build=passed commit=%s\n' "${COMMIT}"
 printf 'cold_canary_build=passed commit=%s\n' "${COMMIT}"

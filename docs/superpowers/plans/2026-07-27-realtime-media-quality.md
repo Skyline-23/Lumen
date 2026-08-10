@@ -292,9 +292,12 @@ XCTAssertEqual(factory.makeCount, 1)
 ```bash
 cargo test -p lumen-host platform::tests -- --nocapture
 cd src/platform/macos
-tuist test --no-selective-testing --no-binary-cache \
-  --test-targets 'LumenTuistTests/LumenCaptureSessionLifecycleTests' \
-  LumenTuistTests
+tuist generate --no-open
+tuist xcodebuild test \
+  -workspace Lumen.xcworkspace \
+  -scheme LumenTuistTests \
+  -destination 'platform=macOS' \
+  -only-testing:LumenTuistTests/LumenCaptureSessionLifecycleTests
 ```
 
 Expected: FAIL because the event and bridge operation do not exist.
@@ -393,9 +396,13 @@ assert the audio feedback contains:
 - [ ] **Step 2: Run and observe RED**
 
 ```bash
-tuist test --no-selective-testing --no-binary-cache \
-  --test-targets 'ShadowClientStreamingTransportTests/ShadowClientLumenV4SessionRuntimeTests' \
-  ShadowClientStreamingTransportTests
+cd /Users/skyline23/code/shadow-client
+tuist generate --no-open
+tuist xcodebuild test \
+  -workspace shadow-client.xcworkspace \
+  -scheme ShadowClientStreamingTransportTests \
+  -destination 'platform=macOS,arch=arm64' \
+  -only-testing:ShadowClientStreamingTransportTests/ShadowClientLumenV4SessionRuntimeTests
 ```
 
 - [ ] **Step 3: Count consumer-visible audio drops**
@@ -413,10 +420,16 @@ send.
 - [ ] **Step 5: Run both focused suites**
 
 ```bash
-tuist test --no-selective-testing --no-binary-cache \
-  ShadowClientStreamingTransportTests
-tuist test --no-selective-testing --no-binary-cache \
-  ShadowClientLumenRealtimeSessionTests
+cd /Users/skyline23/code/shadow-client
+tuist generate --no-open
+tuist xcodebuild test \
+  -workspace shadow-client.xcworkspace \
+  -scheme ShadowClientStreamingTransportTests \
+  -destination 'platform=macOS,arch=arm64'
+tuist xcodebuild test \
+  -workspace shadow-client.xcworkspace \
+  -scheme ShadowClientLumenRealtimeSessionTests \
+  -destination 'platform=macOS,arch=arm64'
 ```
 
 Expected: PASS with stream-specific feedback.
@@ -459,8 +472,11 @@ cadence.
 ```bash
 cargo test -p lumen-host repair_cadence -- --nocapture
 cd /Users/skyline23/code/shadow-client
-tuist test --no-selective-testing --no-binary-cache \
-  ShadowClientStreamingTransportTests
+tuist generate --no-open
+tuist xcodebuild test \
+  -workspace shadow-client.xcworkspace \
+  -scheme ShadowClientStreamingTransportTests \
+  -destination 'platform=macOS,arch=arm64'
 ```
 
 - [ ] **Step 3: Implement repair-only cooldown**
@@ -580,12 +596,16 @@ with repository-specific bullet bodies.
 ```bash
 cargo test --workspace
 cd src/platform/macos
-tuist test --no-selective-testing --no-binary-cache LumenTuistTests
+tuist generate --no-open
+tuist xcodebuild test \
+  -workspace Lumen.xcworkspace \
+  -scheme LumenTuistTests \
+  -destination 'platform=macOS'
 ```
 
 - [ ] **Step 2: Run complete Shadow verification**
 
-Use the repository's complete Tuist test command, then run:
+Use the repository's complete `tuist xcodebuild test` command, then run:
 
 ```bash
 Scripts/verify-lumen-audio-fidelity.sh \

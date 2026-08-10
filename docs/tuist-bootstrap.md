@@ -19,19 +19,16 @@ projects and workspaces are build artifacts, not authorities.
 
 ## Commands
 
-Generate without opening Xcode:
-
-```bash
-tuist generate --path src/platform/macos --no-open
-```
-
-Run tests and build without launching Lumen or requesting permissions:
+Generate without opening Xcode, then use the generated workspace for every
+build and test:
 
 ```bash
 cd src/platform/macos
-tuist test --no-selective-testing --no-binary-cache LumenTuistTests
-tuist xcodebuild build -workspace Lumen.xcworkspace \
+tuist generate --no-open
+tuist xcodebuild test -workspace Lumen.xcworkspace \
   -scheme LumenTuistTests -destination 'platform=macOS'
+tuist xcodebuild build -workspace Lumen.xcworkspace \
+  -scheme LumenApp -destination 'generic/platform=macOS'
 ```
 
 Do not call raw `xcodebuild` for repository validation.

@@ -41,6 +41,23 @@ python3 tools/autoresearch/eval_host_stream.py --workspace src/platform/macos/Lu
 - Runtime warning UI must use stable typed codes, deduplicate repeated events, and keep retained warning state bounded. Do not parse log strings in the application UI.
 - Cross-process warnings must preserve severity, stable code, and a localized presentation boundary. The host emits machine-readable events; the application owns localized user-facing copy and presentation.
 
+## Local Tuist Rules
+
+- The authoritative macOS workspace is `src/platform/macos/Lumen.xcworkspace`.
+  Run commands from `src/platform/macos` and generate it with
+  `tuist generate --no-open` before any build or test.
+- Use only Tuist's Xcode wrapper with an explicit workspace, scheme, and
+  destination. The test scheme is `LumenTuistTests`, the application scheme is
+  `LumenApp`, and the canary scheme is `LumenDisplayDisconnectCanary`.
+  Canonical invocations are:
+  `tuist xcodebuild test -workspace Lumen.xcworkspace -scheme LumenTuistTests -destination 'platform=macOS'`,
+  `tuist xcodebuild build -workspace Lumen.xcworkspace -scheme LumenApp -destination 'generic/platform=macOS'`,
+  and
+  `tuist xcodebuild build -workspace Lumen.xcworkspace -scheme LumenDisplayDisconnectCanary -destination 'platform=macOS'`.
+- Do not use the direct `tuist build` or `tuist test` commands, or invoke raw
+  `xcodebuild` for project validation. Do not disable code signing in test
+  commands.
+
 ## Git Flow Rules
 
 - Start each feature from the current `develop` branch on a short-lived `feat/<unit>` branch. Keep `main` release-only.

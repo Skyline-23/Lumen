@@ -9,7 +9,7 @@ release tag.
 
 | Trigger | Output | Signing | Publication |
 | --- | --- | --- | --- |
-| Push or pull request to `develop` | Rust tests and lint, macOS Tuist tests, unsigned Windows MSI package check | None | None |
+| Push or pull request to `develop` | Rust tests and lint, macOS Tuist Xcode tests, unsigned Windows MSI package check | None | None |
 | Push `v<version>-beta.N` | macOS DMG and Windows MSI installer | Developer ID + notarization, Authenticode + timestamp | GitHub Pre-release; no Homebrew update |
 | Push `v<version>` | macOS DMG and Windows MSI installer | Developer ID + notarization, Authenticode + timestamp | GitHub Release, then `Skyline-23/homebrew-lumen` |
 
@@ -363,9 +363,9 @@ the workflow advance the Homebrew cask to that immutable release.
 ## Local release smoke test
 
 Before merging to `main`, build the Apple Silicon macOS application from the
-pinned SwiftOpus package and verify that the staged worker is arm64-only.
-Signing, DMG creation, notarization, and stapling remain owned by the release
-workflow.
+pinned SwiftOpus package, retain Xcode's local code signing, and verify both the
+application signature and the staged worker architecture. Developer ID signing,
+DMG creation, notarization, and stapling remain owned by the release workflow.
 
 ```bash
 CONFIGURATION=Release ARCHS=arm64 CURRENT_ARCH=arm64 \
@@ -379,9 +379,10 @@ tuist xcodebuild build \
   -destination 'generic/platform=macOS' \
   -derivedDataPath ../../../build/release-smoke \
   ARCHS=arm64 \
-  ONLY_ACTIVE_ARCH=YES \
-  CODE_SIGNING_ALLOWED=NO
+  ONLY_ACTIVE_ARCH=YES
 cd ../../..
+codesign --verify --deep --strict --verbose=2 \
+  build/release-smoke/Build/Products/Release/Lumen.app
 lipo -archs \
   build/release-smoke/Build/Products/Release/Lumen.app/Contents/MacOS/LumenHostWorker
 ```
