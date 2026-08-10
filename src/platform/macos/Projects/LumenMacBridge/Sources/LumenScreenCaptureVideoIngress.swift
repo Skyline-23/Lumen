@@ -13,7 +13,7 @@ extension LumenScreenCaptureVideoRuntime {
     @discardableResult
     func submitSource(
         _ source: LumenPendingVideoBootstrapSource,
-        forceKeyFrame: Bool
+        bootstrapReason: LumenVideoBootstrapReason?
     ) -> Bool {
         guard !stopping else {
             return false
@@ -35,7 +35,8 @@ extension LumenScreenCaptureVideoRuntime {
         sourceColorContractStatus = "verified"
         let submission = LumenVideoEncoderSubmission(
             source: source,
-            forceKeyFrame: forceKeyFrame,
+            forceKeyFrame: bootstrapReason != nil,
+            bootstrapReason: bootstrapReason,
             offeredMachTime: mach_absolute_time()
         )
         if let replacedSubmission = encoderAdmission.offer(submission) {
@@ -98,7 +99,7 @@ extension LumenScreenCaptureVideoRuntime {
                 sequenceNumber: source.sequenceNumber,
                 displayTime: source.displayTime,
                 submissionMachTime: submissionMachTime,
-                requiresBootstrapAcknowledgement: submission.forceKeyFrame
+                bootstrapReason: submission.bootstrapReason
             )
         )
         inflightFrameCount += 1
@@ -141,7 +142,7 @@ extension LumenScreenCaptureVideoRuntime {
         }
 
         let source = submission.source
-        let properties = submission.forceKeyFrame
+        let properties = submission.bootstrapReason != nil
             ? [kVTEncodeFrameOptionKey_ForceKeyFrame: true] as CFDictionary
             : nil
 
@@ -184,7 +185,7 @@ extension LumenScreenCaptureVideoRuntime {
             ) != nil {
                 inflightFrameCount = max(inflightFrameCount - 1, 0)
             }
-            if submission.forceKeyFrame {
+            if submission.bootstrapReason != nil {
                 videoBootstrapAdmission.cancelBootstrapSubmission()
                 pendingVideoBootstrapSource = nil
             }
@@ -203,8 +204,8 @@ extension LumenScreenCaptureVideoRuntime {
             ) != nil {
                 inflightFrameCount = max(inflightFrameCount - 1, 0)
             }
-            if submission.forceKeyFrame {
-                videoBootstrapAdmission.cancelBootstrapSubmission()
+            if submission.bootstrapReason != nil {
+                _ = videoBootstrapAdmission.retryBootstrapSubmission()
                 pendingVideoBootstrapSource = nil
             }
             let sourceDisplayTime = submission.source.displayTime

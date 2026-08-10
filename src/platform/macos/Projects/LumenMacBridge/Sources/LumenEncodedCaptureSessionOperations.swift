@@ -75,6 +75,11 @@ extension LumenEncodedCaptureSession {
         runtime?.requestImmediateKeyFrame()
     }
 
+    func requestPeriodicKeyFrame() async -> Bool {
+        guard let runtime else { return false }
+        return await runtime.requestPeriodicKeyFrame()
+    }
+
     func resumeVideoEncodingAfterCodecAck() async -> Bool {
         guard let runtime else { return false }
         return await runtime.resumeVideoEncodingAfterCodecAck()

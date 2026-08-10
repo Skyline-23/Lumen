@@ -194,8 +194,7 @@ final class LumenVideoCaptureForwarder: Sendable {
             value.lastFrame = frame
             if value.awaitingRecoveryKeyFrame {
                 guard isKeyFrame,
-                      requiresBootstrapAcknowledgement,
-                      isRepairKeyFrame else {
+                      requiresBootstrapAcknowledgement else {
                     value.droppedFrameCount &+= 1
                     return .waitingForRecoveryKeyFrame
                 }

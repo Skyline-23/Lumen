@@ -38,7 +38,9 @@ enum LumenAdaptiveVideoFrameTiming {
     static let preferredTimescale: CMTimeScale = 60_000
     static let minimumDurationSeconds = 1.0 / 240.0
     static let maximumDurationSeconds = 1.0 / 15.0
-    static let keyFrameIntervalDurationSeconds = 1.0
+    // Rust owns the one-second activity-driven periodic refresh. VideoToolbox
+    // retains only a watchdog interval so it cannot race every controlled IDR.
+    static let keyFrameIntervalDurationSeconds = 10.0
 
     static func fallbackDurationSeconds(targetFrameRate: Int) -> Double {
         1.0 / Double(max(targetFrameRate, 1))

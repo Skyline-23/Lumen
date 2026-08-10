@@ -36,6 +36,10 @@ public final class LumenBridgeObjCFacade: NSObject {
         }
     }
 
+    public static func requestPeriodicCaptureKeyFrameSharedSync() -> Bool {
+        LumenBridgeObjCFacade().requestPeriodicCaptureKeyFrameSync()
+    }
+
     public static func resumeVideoEncodingAfterCodecAckSharedSync() -> Bool {
         LumenBridgeObjCFacade().resumeVideoEncodingAfterCodecAckSync()
     }
@@ -138,6 +142,13 @@ public final class LumenBridgeObjCFacade: NSObject {
         try? blockingRun {
             await runtime.requestImmediateCaptureKeyFrame()
         }
+    }
+
+    public func requestPeriodicCaptureKeyFrameSync() -> Bool {
+        let runtime = runtime
+        return (try? blockingRun {
+            await runtime.requestPeriodicCaptureKeyFrame()
+        }) ?? false
     }
 
     public func resumeVideoEncodingAfterCodecAckSync() -> Bool {

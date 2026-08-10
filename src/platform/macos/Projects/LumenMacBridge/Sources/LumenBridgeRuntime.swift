@@ -136,6 +136,10 @@ public actor LumenBridgeRuntime {
         await requestImmediateCaptureKeyFrameImpl()
     }
 
+    public func requestPeriodicCaptureKeyFrame() async -> Bool {
+        await requestPeriodicCaptureKeyFrameImpl()
+    }
+
     public func resumeVideoEncodingAfterCodecAck() async -> Bool {
         await resumeVideoEncodingAfterCodecAckImpl()
     }

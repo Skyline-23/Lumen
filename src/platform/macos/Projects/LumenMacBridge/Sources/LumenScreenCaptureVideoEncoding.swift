@@ -442,7 +442,7 @@ extension LumenScreenCaptureVideoRuntime {
         statistics.droppedFrameCount &+= UInt64(cancelledContexts.count)
         statistics.processingFailureCount &+= 1
         statistics.lastErrorDescription = error.localizedDescription
-        if cancelledContexts.contains(where: \.requiresBootstrapAcknowledgement) {
+        if cancelledContexts.contains(where: { $0.bootstrapReason != nil }) {
             videoBootstrapAdmission.cancelBootstrapSubmission()
             pendingVideoBootstrapSource = nil
         }

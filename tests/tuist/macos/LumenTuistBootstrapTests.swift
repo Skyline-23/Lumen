@@ -60,10 +60,99 @@ final class LumenCapturePipelineTests: XCTestCase {
         XCTAssertFalse(gate.beginBootstrapGeneration())
         XCTAssertFalse(gate.isOpen)
         XCTAssertFalse(gate.isAwaitingAcknowledgement)
-        XCTAssertEqual(gate.admitSourceFrame(), .submitInitialKeyFrame)
+        XCTAssertEqual(
+            gate.admitSourceFrame(),
+            .submitControlledKeyFrame(.repair)
+        )
         gate.cancelBootstrapSubmission()
         XCTAssertFalse(gate.isAwaitingAcknowledgement)
+        XCTAssertTrue(gate.isOpen)
+        XCTAssertEqual(gate.admitSourceFrame(), .submit)
+    }
+
+    func testPeriodicGateCoalescesLatestSourceAndResumesOnceAfterAck() {
+        var gate = LumenVideoBootstrapAdmissionGate()
         XCTAssertEqual(gate.admitSourceFrame(), .submitInitialKeyFrame)
+        XCTAssertTrue(gate.acknowledgeConfiguration())
+        XCTAssertTrue(gate.beginPeriodicBootstrapGeneration())
+        XCTAssertFalse(gate.isAwaitingAcknowledgement)
+        XCTAssertEqual(
+            gate.admitSourceFrame(),
+            .submitControlledKeyFrame(.periodic)
+        )
+        XCTAssertEqual(
+            gate.admitSourceFrame(),
+            .coalesceControlledKeyFrame(.periodic)
+        )
+        XCTAssertTrue(gate.isAwaitingPeriodicAcknowledgement)
+        XCTAssertTrue(gate.acknowledgeConfiguration())
+        XCTAssertEqual(gate.admitSourceFrame(), .submit)
+        XCTAssertFalse(gate.acknowledgeConfiguration())
+    }
+
+    func testAutomaticKeyFrameConsumesArmedPeriodicGenerationWithoutSecondForce() {
+        var gate = LumenVideoBootstrapAdmissionGate()
+        XCTAssertEqual(gate.admitSourceFrame(), .submitInitialKeyFrame)
+        XCTAssertTrue(gate.acknowledgeConfiguration())
+        XCTAssertTrue(gate.beginPeriodicBootstrapGeneration())
+        XCTAssertEqual(
+            gate.admitAutomaticKeyFrame(),
+            .promote(.periodic)
+        )
+        XCTAssertTrue(gate.isAwaitingPeriodicAcknowledgement)
+        XCTAssertFalse(gate.beginPeriodicBootstrapGeneration())
+        XCTAssertTrue(gate.acknowledgeConfiguration())
+    }
+
+    func testSpontaneousAutomaticKeyFrameUsesBoundedRepairFallback() {
+        var gate = LumenVideoBootstrapAdmissionGate()
+        XCTAssertEqual(gate.admitSourceFrame(), .submitInitialKeyFrame)
+        XCTAssertTrue(gate.acknowledgeConfiguration())
+
+        XCTAssertEqual(
+            gate.admitAutomaticKeyFrame(),
+            .promote(.repair)
+        )
+        XCTAssertFalse(gate.isOpen)
+        XCTAssertTrue(gate.isAwaitingAcknowledgement)
+    }
+
+    func testAutomaticKeyFrameRacingSubmittedPeriodicFrameIsDiscarded() {
+        var gate = LumenVideoBootstrapAdmissionGate()
+        XCTAssertEqual(gate.admitSourceFrame(), .submitInitialKeyFrame)
+        XCTAssertTrue(gate.acknowledgeConfiguration())
+        XCTAssertTrue(gate.beginPeriodicBootstrapGeneration())
+        XCTAssertEqual(
+            gate.admitSourceFrame(),
+            .submitControlledKeyFrame(.periodic)
+        )
+        XCTAssertEqual(gate.admitAutomaticKeyFrame(), .discard)
+        XCTAssertTrue(gate.isAwaitingPeriodicAcknowledgement)
+    }
+
+    func testDroppedControlledKeyFrameRetriesTheSameBootstrapReason() {
+        var gate = LumenVideoBootstrapAdmissionGate()
+        XCTAssertEqual(gate.admitSourceFrame(), .submitInitialKeyFrame)
+        XCTAssertTrue(gate.acknowledgeConfiguration())
+        XCTAssertTrue(gate.beginPeriodicBootstrapGeneration())
+        XCTAssertEqual(
+            gate.admitSourceFrame(),
+            .submitControlledKeyFrame(.periodic)
+        )
+        XCTAssertTrue(gate.retryBootstrapSubmission())
+        XCTAssertFalse(gate.isAwaitingAcknowledgement)
+        XCTAssertEqual(
+            gate.admitSourceFrame(),
+            .submitControlledKeyFrame(.periodic)
+        )
+    }
+
+    func testControlledBootstrapReasonMetadataMatrix() {
+        let reasons: [LumenVideoBootstrapReason] = [.initial, .periodic, .repair]
+        XCTAssertTrue(reasons.allSatisfy(\.requiresAcknowledgement))
+        XCTAssertFalse(LumenVideoBootstrapReason.initial.isRepair)
+        XCTAssertFalse(LumenVideoBootstrapReason.periodic.isRepair)
+        XCTAssertTrue(LumenVideoBootstrapReason.repair.isRepair)
     }
 
     func testRealtimeEncoderAdmissionKeepsTwoFramePipelineBound() {

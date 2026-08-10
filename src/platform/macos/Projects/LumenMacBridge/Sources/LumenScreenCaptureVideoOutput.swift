@@ -10,6 +10,28 @@ import Synchronization
 import VideoToolbox
 
 extension LumenScreenCaptureVideoRuntime {
+    func preservePendingAdmissionSourceForBootstrap() {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard let submission = encoderAdmission.takePendingSource() else {
+            return
+        }
+        let source = submission.source
+        if pendingVideoBootstrapSource.map(
+            { $0.sequenceNumber > source.sequenceNumber }
+        ) != true {
+            pendingVideoBootstrapSource = source
+        }
+    }
+
+    func discardPendingAdmissionSourcesForControlledBootstrap() {
+        dispatchPrecondition(condition: .onQueue(queue))
+        pendingVideoBootstrapSource = nil
+        guard let submission = encoderAdmission.takePendingSource() else {
+            return
+        }
+        recordPendingAdmissionDrop(submission.source)
+    }
+
     func didEncode(
         status: OSStatus,
         infoFlags: VTEncodeInfoFlags,
@@ -49,6 +71,17 @@ extension LumenScreenCaptureVideoRuntime {
             sampleBuffer: sampleBuffer
         )
         let isKeyFrame = isKeyFrame(sampleBuffer)
+        var promotedBootstrapReason: LumenVideoBootstrapReason?
+        if isKeyFrame, context.bootstrapReason == nil {
+            switch videoBootstrapAdmission.admitAutomaticKeyFrame() {
+            case .promote(let reason):
+                promotedBootstrapReason = reason
+                preservePendingAdmissionSourceForBootstrap()
+            case .discard:
+                encoderAdmission.resumePendingIfPossible()
+                return
+            }
+        }
         guard acceptRequiredKeyFrame(isKeyFrame, context: context) else {
             return
         }
@@ -57,7 +90,8 @@ extension LumenScreenCaptureVideoRuntime {
             sampleBuffer,
             context: context,
             latency: latency,
-            isKeyFrame: isKeyFrame
+            isKeyFrame: isKeyFrame,
+            promotedBootstrapReason: promotedBootstrapReason
         )
     }
 
@@ -110,9 +144,12 @@ extension LumenScreenCaptureVideoRuntime {
         status: OSStatus,
         context: LumenEncodedFrameContext
     ) {
-        if context.requiresBootstrapAcknowledgement {
-            videoBootstrapAdmission.cancelBootstrapSubmission()
-            pendingVideoBootstrapSource = nil
+        if context.bootstrapReason != nil {
+            _ = videoBootstrapAdmission.retryBootstrapSubmission()
+            if let pendingSource = pendingVideoBootstrapSource {
+                pendingVideoBootstrapSource = nil
+                admitPendingSource(pendingSource)
+            }
         }
         let message = status == noErr
             ? "VideoToolbox dropped frame"
@@ -209,7 +246,7 @@ extension LumenScreenCaptureVideoRuntime {
         _ isKeyFrame: Bool,
         context: LumenEncodedFrameContext
     ) -> Bool {
-        if context.requiresBootstrapAcknowledgement, !isKeyFrame {
+        if context.bootstrapReason != nil, !isKeyFrame {
             videoBootstrapAdmission.cancelBootstrapSubmission()
             pendingVideoBootstrapSource = nil
             reportTerminalContractFailure(
@@ -225,7 +262,8 @@ extension LumenScreenCaptureVideoRuntime {
         _ sampleBuffer: CMSampleBuffer,
         context: LumenEncodedFrameContext,
         latency: Double,
-        isKeyFrame: Bool
+        isKeyFrame: Bool,
+        promotedBootstrapReason: LumenVideoBootstrapReason? = nil
     ) {
         let hdr = configuration.encodedColorConfiguration
         let formatExtensions = sampleBuffer.formatDescription.flatMap {
@@ -240,8 +278,10 @@ extension LumenScreenCaptureVideoRuntime {
                 sourceDisplayTime: context.displayTime,
                 outputCallbackLatencyMilliseconds: latency,
                 isKeyFrame: isKeyFrame,
-                requiresBootstrapAcknowledgement: context.requiresBootstrapAcknowledgement,
-                isRepairKeyFrame: context.requiresBootstrapAcknowledgement,
+                requiresBootstrapAcknowledgement:
+                    context.bootstrapReason != nil || promotedBootstrapReason != nil,
+                isRepairKeyFrame:
+                    (context.bootstrapReason ?? promotedBootstrapReason)?.isRepair ?? false,
                 isHDRSignaled: hdr.map { $0.transferFunction != .ituR709 } ?? false,
                 hdrValidationReport: makeHDRValidationReport(
                     formatExtensions: formatExtensions,

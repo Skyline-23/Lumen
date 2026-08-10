@@ -65,6 +65,30 @@ extension LumenBridgeRuntime {
         await encodedCaptureSession.requestImmediateKeyFrame()
     }
 
+    func requestPeriodicCaptureKeyFrameImpl() async -> Bool {
+        guard await captureLifecycle.shouldRequestImmediateKeyFrame else {
+            logger.debug(
+                "Ignoring periodic ScreenCaptureKit keyframe request because capture is not running"
+            )
+            return false
+        }
+
+        guard let encodedCaptureSession else {
+            logger.debug(
+                "Ignoring periodic ScreenCaptureKit keyframe request because no capture session is active"
+            )
+            return false
+        }
+
+        let armed = await encodedCaptureSession.requestPeriodicKeyFrame()
+        if !armed {
+            logger.debug(
+                "Periodic ScreenCaptureKit keyframe request was coalesced by the bootstrap gate"
+            )
+        }
+        return armed
+    }
+
     func resumeVideoEncodingAfterCodecAckImpl() async -> Bool {
         guard await captureLifecycle.shouldRequestImmediateKeyFrame,
               let encodedCaptureSession else {

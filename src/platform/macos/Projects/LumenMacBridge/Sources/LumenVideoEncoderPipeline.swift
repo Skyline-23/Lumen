@@ -13,27 +13,69 @@ struct LumenEncodedFrameContext: Sendable {
     let sequenceNumber: UInt64
     let displayTime: UInt64
     let submissionMachTime: UInt64
-    let requiresBootstrapAcknowledgement: Bool
+    let bootstrapReason: LumenVideoBootstrapReason?
+}
+
+/// Internal ownership only; the public frame ABI intentionally remains the
+/// two existing booleans (`requiresBootstrapAcknowledgement` and
+/// `isRepairKeyFrame`).
+enum LumenVideoBootstrapReason: Equatable, Sendable {
+    case initial
+    case periodic
+    case repair
+
+    var requiresAcknowledgement: Bool { true }
+    var isRepair: Bool { self == .repair }
 }
 
 enum LumenVideoBootstrapAdmissionDecision: Equatable, Sendable {
     case submitInitialKeyFrame
     case coalesceUntilAcknowledged
+    case submitControlledKeyFrame(LumenVideoBootstrapReason)
+    case coalesceControlledKeyFrame(LumenVideoBootstrapReason)
     case submit
+}
+
+enum LumenAutomaticKeyFrameAdmissionDecision: Equatable, Sendable {
+    case promote(LumenVideoBootstrapReason)
+    case discard
 }
 
 struct LumenVideoBootstrapAdmissionGate: Equatable, Sendable {
     private(set) var isAwaitingAcknowledgement = false
     private(set) var isOpen = false
+    private(set) var pendingReason: LumenVideoBootstrapReason?
+
+    var isAwaitingPeriodicAcknowledgement: Bool {
+        isAwaitingAcknowledgement && pendingReason == .periodic
+    }
+
+    var hasPeriodicGenerationPending: Bool {
+        pendingReason == .periodic
+    }
 
     mutating func admitSourceFrame() -> LumenVideoBootstrapAdmissionDecision {
         if isOpen {
             return .submit
         }
         if isAwaitingAcknowledgement {
+            if let pendingReason {
+                if pendingReason == .initial {
+                    return .coalesceUntilAcknowledged
+                }
+                return .coalesceControlledKeyFrame(pendingReason)
+            }
             return .coalesceUntilAcknowledged
         }
+        if let pendingReason {
+            isAwaitingAcknowledgement = true
+            if pendingReason == .initial {
+                return .submitInitialKeyFrame
+            }
+            return .submitControlledKeyFrame(pendingReason)
+        }
         isAwaitingAcknowledgement = true
+        pendingReason = .initial
         return .submitInitialKeyFrame
     }
 
@@ -41,19 +83,66 @@ struct LumenVideoBootstrapAdmissionGate: Equatable, Sendable {
         guard isAwaitingAcknowledgement, !isOpen else { return false }
         isOpen = true
         isAwaitingAcknowledgement = false
+        pendingReason = nil
         return true
     }
 
     mutating func beginBootstrapGeneration() -> Bool {
+        beginBootstrapGeneration(reason: .repair)
+    }
+
+    mutating func beginBootstrapGeneration(
+        reason: LumenVideoBootstrapReason
+    ) -> Bool {
         guard isOpen else { return false }
         isOpen = false
+        pendingReason = reason
+        isAwaitingAcknowledgement = false
+        return true
+    }
+
+    mutating func beginPeriodicBootstrapGeneration() -> Bool {
+        beginBootstrapGeneration(reason: .periodic)
+    }
+
+    /// VideoToolbox can still emit a watchdog IDR without a host request. If
+    /// no controlled generation owns the gate, classify it as repair so any
+    /// already-encoded dependent delta causes one bounded post-ACK recovery.
+    /// If a controlled generation is armed but not yet submitted, the IDR may
+    /// satisfy that exact reason. Once a controlled submission is in flight,
+    /// a second automatic IDR is discarded and the forced IDR remains owner.
+    mutating func admitAutomaticKeyFrame()
+        -> LumenAutomaticKeyFrameAdmissionDecision
+    {
+        if isOpen {
+            isOpen = false
+            isAwaitingAcknowledgement = true
+            pendingReason = .repair
+            return .promote(.repair)
+        }
+        if let pendingReason, !isAwaitingAcknowledgement {
+            isAwaitingAcknowledgement = true
+            return .promote(pendingReason)
+        }
+        return .discard
+    }
+
+    mutating func retryBootstrapSubmission() -> Bool {
+        guard !isOpen, pendingReason != nil else { return false }
         isAwaitingAcknowledgement = false
         return true
     }
 
     mutating func cancelBootstrapSubmission() {
-        guard isAwaitingAcknowledgement, !isOpen else { return }
+        guard !isOpen else { return }
+        let wasInitial = pendingReason == .initial
         isAwaitingAcknowledgement = false
+        pendingReason = nil
+        if wasInitial {
+            isOpen = false
+        } else {
+            isOpen = true
+        }
     }
 }
 
@@ -172,6 +261,17 @@ final class LumenLatestFrameSerialEncoderAdmission<Source: Sendable, Result: Sen
     func resumePendingIfPossible() {
         dispatchPrecondition(condition: .onQueue(ownerQueue))
         promotePendingIfPossible()
+    }
+
+    /// Removes a not-yet-submitted source from the encoder admission slot.
+    /// Callers decide whether an automatic fallback must preserve it or a
+    /// controlled request must discard it as older than the requested IDR.
+    @discardableResult
+    func takePendingSource() -> Source? {
+        dispatchPrecondition(condition: .onQueue(ownerQueue))
+        let source = pendingSource
+        pendingSource = nil
+        return source
     }
 
     private func startSubmission(_ source: Source) {
@@ -344,6 +444,7 @@ final class LumenVideoToolboxOutputLifecycle<Context: Sendable>: @unchecked Send
 struct LumenVideoEncoderSubmission: Sendable {
     let source: LumenPendingVideoBootstrapSource
     let forceKeyFrame: Bool
+    let bootstrapReason: LumenVideoBootstrapReason?
     let offeredMachTime: UInt64
 }
 

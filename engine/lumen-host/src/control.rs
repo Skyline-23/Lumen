@@ -32,6 +32,15 @@ pub(crate) struct VideoDeliveryState {
     pub(crate) acknowledged_configuration_id: Option<u32>,
     pub(crate) acknowledged_generation_id: Option<u32>,
     pub(crate) bootstrap_pending: bool,
+    /// The reason for the generation currently waiting for a decoder result.
+    /// Periodic refreshes are reliable but must never inherit repair-after-
+    /// bootstrap ownership from initial/configuration/repair recovery.
+    pub(crate) bootstrap_reason: Option<lumen_engine::NativeVideoBootstrapReason>,
+    /// True only when capture admission was closed before this generation was
+    /// encoded. An automatic key frame discovered after encoding cannot make
+    /// the same dependency guarantee and still needs one bounded repair if a
+    /// dependent delta leaks while the bootstrap is pending.
+    pub(crate) bootstrap_requires_encoder_resume: bool,
     pub(crate) repair_keyframe_requested: bool,
     pub(crate) session_epoch: u32,
     pub(crate) policy_revision: u16,

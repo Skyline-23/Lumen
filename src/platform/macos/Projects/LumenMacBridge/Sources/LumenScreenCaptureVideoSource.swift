@@ -317,15 +317,23 @@ extension LumenScreenCaptureVideoRuntime {
     func admitPendingSource(_ source: LumenPendingVideoBootstrapSource) {
         switch videoBootstrapAdmission.admitSourceFrame() {
         case .submitInitialKeyFrame:
-            if !submitSource(source, forceKeyFrame: true) {
+            if !submitSource(source, bootstrapReason: .initial) {
                 videoBootstrapAdmission.cancelBootstrapSubmission()
             }
         case .coalesceUntilAcknowledged:
             pendingVideoBootstrapSource = source
             statistics.pendingAdmissionDropCount &+= 1
             refreshStatisticsNotesIfNeeded()
+        case .submitControlledKeyFrame(let reason):
+            if !submitSource(source, bootstrapReason: reason) {
+                videoBootstrapAdmission.cancelBootstrapSubmission()
+            }
+        case .coalesceControlledKeyFrame:
+            pendingVideoBootstrapSource = source
+            statistics.pendingAdmissionDropCount &+= 1
+            refreshStatisticsNotesIfNeeded()
         case .submit:
-            submitSource(source, forceKeyFrame: false)
+            submitSource(source, bootstrapReason: nil)
         }
     }
 

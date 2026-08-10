@@ -437,6 +437,7 @@ void LumenMacBridgeControllerStopCapture(
 );
 
 void LumenMacBridgeRequestImmediateCaptureKeyFrame(void);
+bool LumenMacBridgeRequestPeriodicCaptureKeyFrame(void);
 bool LumenMacBridgeResumeVideoEncodingAfterCodecAck(void);
 bool LumenMacBridgeSetVideoBitrateKbps(uint32_t bitrate_kbps);
 bool LumenMacBridgeSetVideoDeliveryPolicy(

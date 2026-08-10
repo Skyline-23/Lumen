@@ -158,6 +158,10 @@ pub struct PlatformEncodedAudioPacket {
 #[derive(Clone, Debug, PartialEq)]
 pub enum PlatformControlEvent {
     RequestIdrFrame,
+    /// Arms a controlled periodic IDR gate. This remains separate from the
+    /// repair-owned `RequestIdrFrame` path so platform metadata cannot mark a
+    /// periodic refresh as decoder repair.
+    RequestPeriodicIdrFrame,
     InvalidateReferenceFrames {
         first_frame: i64,
         last_frame: i64,
@@ -414,6 +418,7 @@ pub enum LumenHostPlatformControlEventKind {
     ResetInput = 2,
     ResumeVideoEncodingAfterCodecAck = 3,
     SetVideoBitrateKbps = 4,
+    RequestPeriodicIdrFrame = 5,
 }
 
 #[repr(C)]
@@ -748,6 +753,13 @@ impl PlatformSessionControl for CallbackPlatformSessionControl {
                     video_bitrate_kbps: *bitrate_kbps,
                 }
             }
+            PlatformControlEvent::RequestPeriodicIdrFrame => LumenHostPlatformControlEvent {
+                kind: LumenHostPlatformControlEventKind::RequestPeriodicIdrFrame,
+                control_connect_data,
+                first_frame: 0,
+                last_frame: 0,
+                video_bitrate_kbps: 0,
+            },
             PlatformControlEvent::ResetInput => LumenHostPlatformControlEvent {
                 kind: LumenHostPlatformControlEventKind::ResetInput,
                 control_connect_data,
@@ -1353,6 +1365,9 @@ mod tests {
             .handle_control_event(66_051, PlatformControlEvent::RequestIdrFrame)
             .unwrap();
         adapter
+            .handle_control_event(66_051, PlatformControlEvent::RequestPeriodicIdrFrame)
+            .unwrap();
+        adapter
             .handle_control_event(
                 66_051,
                 PlatformControlEvent::InvalidateReferenceFrames {
@@ -1375,7 +1390,7 @@ mod tests {
             )
             .unwrap();
         let events = CONTROL_EVENTS.lock().unwrap();
-        assert_eq!(events.len(), 4);
+        assert_eq!(events.len(), 5);
         assert!(events
             .iter()
             .all(|event| event.control_connect_data == 66_051));
@@ -1383,17 +1398,21 @@ mod tests {
             events[0].kind,
             LumenHostPlatformControlEventKind::RequestIdrFrame
         );
-        assert_eq!(events[1].first_frame, 7);
-        assert_eq!(events[1].last_frame, 11);
         assert_eq!(
-            events[2].kind,
+            events[1].kind,
+            LumenHostPlatformControlEventKind::RequestPeriodicIdrFrame
+        );
+        assert_eq!(events[2].first_frame, 7);
+        assert_eq!(events[2].last_frame, 11);
+        assert_eq!(
+            events[3].kind,
             LumenHostPlatformControlEventKind::ResetInput
         );
         assert_eq!(
-            events[3].kind,
+            events[4].kind,
             LumenHostPlatformControlEventKind::SetVideoBitrateKbps
         );
-        assert_eq!(events[3].video_bitrate_kbps, 48_000);
+        assert_eq!(events[4].video_bitrate_kbps, 48_000);
         drop(events);
         FEEDBACK_READY.store(true, Ordering::Release);
         assert_eq!(
