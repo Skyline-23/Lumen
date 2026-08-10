@@ -223,6 +223,15 @@ public actor LumenBridgeRuntime {
         )
     }
 
+    public nonisolated func resetMediaQueues() {
+        let semaphore = DispatchSemaphore(value: 0)
+        Task { [self] in
+            await resetMediaQueuesOnActor()
+            semaphore.signal()
+        }
+        semaphore.wait()
+    }
+
     public nonisolated func drainNextVideoForwardedFrame() -> LumenBridgeDrainedVideoFrame? {
         drainNextVideoForwardedFrameImpl()
     }
@@ -276,6 +285,11 @@ public actor LumenBridgeRuntime {
     var lastEncodedFrameSourceDisplayTime: UInt64?
     var lastRestartUptimeNanoseconds: UInt64 = 0
     var activeCaptureGeneration: UInt64?
+
+    func resetMediaQueuesOnActor() async {
+        resetMediaQueuesImpl()
+        await encodedCaptureSession?.resetMediaEpoch()
+    }
 
     init(
         systemAudioPlaybackSuppression:

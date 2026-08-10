@@ -10,6 +10,10 @@ import Synchronization
 import VideoToolbox
 
 extension LumenEncodedCaptureSession {
+    func resetMediaEpoch() async {
+        runtime?.resetMediaEpoch()
+    }
+
     func start(callbacks: LumenEncodedCaptureCallbacks) async throws {
         guard runtime == nil,
               startFlight == nil,

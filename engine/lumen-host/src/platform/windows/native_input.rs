@@ -263,6 +263,10 @@ impl PlatformSessionControl for WindowsPlatformSessionControl {
         self.media.poll_audio()
     }
 
+    fn reset_media_queue(&self, session_epoch: u32) -> Result<(), String> {
+        self.media.reset_media_queue(session_epoch)
+    }
+
     fn handle_control_event(
         &self,
         control_connect_data: u32,

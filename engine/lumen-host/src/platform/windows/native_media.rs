@@ -76,6 +76,20 @@ impl PacketQueueContext {
         Ok(())
     }
 
+    fn reset_media_queue(&self, session_epoch: u32) -> Result<(), String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "Windows media packet queue is poisoned".to_owned())?;
+        if state.video_session_epoch != Some(session_epoch) {
+            return Err(format!(
+                "Windows media queue reset does not belong to session epoch {session_epoch}"
+            ));
+        }
+        state.queues.reset_media_epoch();
+        Ok(())
+    }
+
     fn push_video(
         &self,
         session_epoch: u32,
@@ -226,6 +240,12 @@ impl NativeWindowsMedia {
         let result = self.media_foundation.request_key_frame();
         drop(lifecycle);
         result
+    }
+
+    pub(super) fn reset_media_queue(&self, session_epoch: u32) -> Result<(), String> {
+        self.require_running_session_epoch(session_epoch)?;
+        self.media_foundation.reset_media_epoch(session_epoch)?;
+        self.packets.reset_media_queue(session_epoch)
     }
 
     pub(super) fn request_periodic_key_frame(&self) -> Result<(), String> {
@@ -416,7 +436,7 @@ fn combine_errors<const N: usize>(errors: [Option<String>; N]) -> Result<(), Str
 
 #[cfg(test)]
 mod tests {
-    use super::{require_running_session_epoch, MediaLifecycle};
+    use super::{require_running_session_epoch, MediaLifecycle, PacketQueueContext};
     use std::sync::{mpsc, Arc, RwLock};
 
     #[test]
@@ -445,5 +465,19 @@ mod tests {
         assert!(require_running_session_epoch(&lifecycle, 7).is_err());
         release_send.send(()).unwrap();
         policy.join().unwrap();
+    }
+
+    #[test]
+    fn media_queue_reset_is_epoch_bound_and_discards_audio() {
+        let packets = PacketQueueContext::default();
+        assert!(packets.reset_media_queue(7).is_err());
+
+        packets.activate_video_session(7).unwrap();
+        packets.push_audio(vec![1]).unwrap();
+        assert!(packets.reset_media_queue(8).is_err());
+        assert!(packets.reset_media_queue(7).is_ok());
+
+        let mut state = packets.state.lock().unwrap();
+        assert!(state.queues.pop_audio().is_none());
     }
 }

@@ -155,6 +155,7 @@ struct PendingNativeSession {
     pending_feedback_window: Option<PendingMediaFeedbackWindow>,
     media_park_state: NativeMediaParkState,
     media_park_revision: u64,
+    media_delivery_generation: u64,
     resume_bootstrap_revision: Option<u64>,
     resume_bootstrap_generation: Option<u32>,
     resume_bootstrap_deadline: Option<Instant>,
@@ -870,6 +871,10 @@ impl ControlRouter {
             .next_generation_id
             .checked_add(1)
             .ok_or_else(|| "media park generation exhausted".to_owned())?;
+        pending
+            .media_delivery_generation
+            .checked_add(1)
+            .ok_or_else(|| "media delivery generation exhausted".to_owned())?;
         // The platform reset is the external boundary. Do it before publishing
         // PARKING or advancing the revision so a failure can be retried with
         // the same request without consuming the monotonic revision.
@@ -878,6 +883,9 @@ impl ControlRouter {
             .map_err(|error| {
                 format!("native input reset at media park boundary failed: {error}")
             })?;
+        self.platform
+            .reset_media_queue(session_epoch)
+            .map_err(|error| format!("media queue reset at park boundary failed: {error}"))?;
         let pending = self
             .native
             .pending
@@ -907,6 +915,13 @@ impl ControlRouter {
             .next_generation_id
             .checked_add(1)
             .ok_or_else(|| "media park generation exhausted".to_owned())?;
+        pending
+            .media_delivery_generation
+            .checked_add(1)
+            .ok_or_else(|| "media delivery generation exhausted".to_owned())?;
+        self.platform
+            .reset_media_queue(session_epoch)
+            .map_err(|error| format!("media queue reset before resume failed: {error}"))?;
         self.platform
             .handle_control_event(session_epoch, crate::PlatformControlEvent::RequestIdrFrame)
             .map_err(|error| format!("fresh media bootstrap could not be requested: {error}"))?;
@@ -1882,6 +1897,13 @@ impl ControlRouter {
         })
     }
 
+    pub(crate) fn native_media_delivery_generation(&self, session_epoch: u32) -> Option<u64> {
+        self.native.pending.as_ref().and_then(|pending| {
+            (pending.plan.session_epoch == session_epoch)
+                .then_some(pending.media_delivery_generation)
+        })
+    }
+
     /// Advances a stalled RESUMING transition without requiring a separate
     /// host task. The media poll loop calls this watchdog at its bounded
     /// cadence; one fresh IDR request is retried, then the session fails closed
@@ -1905,6 +1927,7 @@ impl ControlRouter {
         let retry_attempt = pending.resume_idr_retry_attempt;
         let can_retry = retry_attempt < MAX_MEDIA_RESUME_IDR_RETRIES;
         if can_retry
+            && self.platform.reset_media_queue(session_epoch).is_ok()
             && self
                 .platform
                 .handle_control_event(session_epoch, crate::PlatformControlEvent::RequestIdrFrame)
@@ -2431,6 +2454,7 @@ impl ControlRouter {
             pending_feedback_window: None,
             media_park_state: NativeMediaParkState::Active,
             media_park_revision: 0,
+            media_delivery_generation: 0,
             resume_bootstrap_revision: None,
             resume_bootstrap_generation: None,
             resume_bootstrap_deadline: None,
@@ -2462,6 +2486,19 @@ impl ControlRouter {
         configuration: CodecConfiguration,
         expected_media_park_revision: Option<u64>,
     ) -> bool {
+        self.publish_native_codec_configuration_for_revision_and_generation(
+            configuration,
+            expected_media_park_revision,
+            None,
+        )
+    }
+
+    pub(crate) fn publish_native_codec_configuration_for_revision_and_generation(
+        &mut self,
+        configuration: CodecConfiguration,
+        expected_media_park_revision: Option<u64>,
+        expected_media_delivery_generation: Option<u64>,
+    ) -> bool {
         {
             let Some(pending) = self.native.pending.as_mut() else {
                 return false;
@@ -2473,6 +2510,8 @@ impl ControlRouter {
                 )
                 || expected_media_park_revision
                     .is_some_and(|revision| revision != pending.media_park_revision)
+                || expected_media_delivery_generation
+                    .is_some_and(|generation| generation != pending.media_delivery_generation)
                 || configuration.session_epoch != pending.plan.session_epoch
                 || configuration.stream_id != u32::from(NATIVE_VIDEO_STREAM_ID)
                 || configuration.stream_id != pending.plan.video_stream_id
@@ -2533,6 +2572,7 @@ impl ControlRouter {
         &self,
         session_epoch: u32,
         configuration_id: u32,
+        media_delivery_generation: u64,
     ) -> bool {
         self.native.pending.as_ref().is_some_and(|pending| {
             pending.active
@@ -2541,6 +2581,7 @@ impl ControlRouter {
                     pending.media_park_state,
                     NativeMediaParkState::Parking | NativeMediaParkState::Parked
                 )
+                && pending.media_delivery_generation == media_delivery_generation
                 && pending.codec_configuration_sent
                 && pending
                     .codec_configuration
@@ -2581,6 +2622,30 @@ impl ControlRouter {
         access_unit: Vec<u8>,
         expected_media_park_revision: Option<u64>,
     ) -> Option<u32> {
+        self.publish_native_video_bootstrap_for_revision_and_generation(
+            configuration_id,
+            frame_id,
+            capture_timestamp_us,
+            reason,
+            requires_encoder_resume,
+            access_unit,
+            expected_media_park_revision,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn publish_native_video_bootstrap_for_revision_and_generation(
+        &mut self,
+        configuration_id: u32,
+        frame_id: u32,
+        capture_timestamp_us: u32,
+        reason: NativeVideoBootstrapReason,
+        requires_encoder_resume: bool,
+        access_unit: Vec<u8>,
+        expected_media_park_revision: Option<u64>,
+        expected_media_delivery_generation: Option<u64>,
+    ) -> Option<u32> {
         let pending = self.native.pending.as_mut()?;
         if !pending.active
             || matches!(
@@ -2589,6 +2654,8 @@ impl ControlRouter {
             )
             || expected_media_park_revision
                 .is_some_and(|revision| revision != pending.media_park_revision)
+            || expected_media_delivery_generation
+                .is_some_and(|generation| generation != pending.media_delivery_generation)
             || pending.acknowledged_configuration_id != Some(configuration_id)
             || frame_id == 0
             || access_unit.is_empty()
@@ -2675,6 +2742,7 @@ impl ControlRouter {
         &self,
         session_epoch: u32,
         generation_id: u32,
+        media_delivery_generation: u64,
     ) -> bool {
         self.native.pending.as_ref().is_some_and(|pending| {
             pending.active
@@ -2683,6 +2751,7 @@ impl ControlRouter {
                     pending.media_park_state,
                     NativeMediaParkState::Parking | NativeMediaParkState::Parked
                 )
+                && pending.media_delivery_generation == media_delivery_generation
                 && pending.video_bootstrap_sent
                 && pending
                     .video_bootstrap
@@ -2695,12 +2764,14 @@ impl ControlRouter {
         &self,
         session_epoch: u32,
         media_park_revision: u64,
+        media_delivery_generation: u64,
         generation_id: Option<u32>,
     ) -> bool {
         self.native.pending.as_ref().is_some_and(|pending| {
             pending.active
                 && pending.plan.session_epoch == session_epoch
                 && pending.media_park_revision == media_park_revision
+                && pending.media_delivery_generation == media_delivery_generation
                 && !matches!(
                     pending.media_park_state,
                     NativeMediaParkState::Parking | NativeMediaParkState::Parked
@@ -2883,6 +2954,7 @@ impl ControlRouter {
             target_bitrate_kbps: adaptive.encoder_bitrate_kbps,
             admission_divisor: adaptive.admission_divisor,
             media_park_revision: pending.media_park_revision,
+            media_delivery_generation: pending.media_delivery_generation,
             parked: matches!(
                 pending.media_park_state,
                 NativeMediaParkState::Parking | NativeMediaParkState::Parked
@@ -2901,6 +2973,7 @@ impl ControlRouter {
             maximum_datagram_payload: usize::try_from(pending.plan.maximum_datagram_payload)
                 .ok()?,
             media_park_revision: pending.media_park_revision,
+            media_delivery_generation: pending.media_delivery_generation,
             parked: matches!(
                 pending.media_park_state,
                 NativeMediaParkState::Parking | NativeMediaParkState::Parked
@@ -3160,6 +3233,10 @@ fn media_park_result(
 }
 
 fn reset_media_delivery(pending: &mut PendingNativeSession) -> Result<(), String> {
+    let next_media_delivery_generation = pending
+        .media_delivery_generation
+        .checked_add(1)
+        .ok_or_else(|| "media delivery generation exhausted".to_owned())?;
     if let Some(generation_id) = pending.acknowledged_generation_id {
         pending.retired_video_bootstrap_generation_watermark = pending
             .retired_video_bootstrap_generation_watermark
@@ -3182,6 +3259,7 @@ fn reset_media_delivery(pending: &mut PendingNativeSession) -> Result<(), String
     pending.periodic_idr.reset();
     pending.last_sent_video_frame_id = 0;
     pending.pending_feedback_window = None;
+    pending.media_delivery_generation = next_media_delivery_generation;
     pending.next_generation_id = pending
         .next_generation_id
         .checked_add(1)

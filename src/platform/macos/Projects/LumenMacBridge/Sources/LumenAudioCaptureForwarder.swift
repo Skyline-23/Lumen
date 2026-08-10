@@ -32,6 +32,17 @@ final class LumenAudioCaptureForwarder: Sendable {
         }
     }
 
+    /// Drops queued PCM frames and capture events at a media park/resume
+    /// boundary without disabling the active capture producer.
+    func resetForMediaEpoch() {
+        state.withLock { value in
+            value.droppedFrameCount &+= UInt64(value.frames.count)
+            value.droppedEventCount &+= UInt64(value.events.count)
+            value.frames.removeAll()
+            value.events.removeAll()
+        }
+    }
+
     func setFrameCapacity(_ capacity: Int) {
         state.withLock { value in
             let droppedCount = value.frames.resize(to: capacity)

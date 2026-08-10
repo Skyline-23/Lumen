@@ -454,6 +454,133 @@ func rejectsBooleanIntegerAuthority() throws {
 }
 
 @Test
+func rejectsUnknownLifecycleAuthorityKeys() throws {
+  try assertContractValidationRejects { contract in
+    contract["futureTopLevelAuthority"] = true
+  }
+
+  try assertContractValidationRejects { contract in
+    var lifecycle = try #require(contract["lifecycle"] as? [String: Any])
+    lifecycle["futureLifecycleAuthority"] = true
+    contract["lifecycle"] = lifecycle
+  }
+
+  try assertContractValidationRejects { contract in
+    var lifecycle = try #require(contract["lifecycle"] as? [String: Any])
+    var mediaPark = try #require(lifecycle["mediaParkResume"] as? [String: Any])
+    mediaPark["futureMediaParkAuthority"] = true
+    lifecycle["mediaParkResume"] = mediaPark
+    contract["lifecycle"] = lifecycle
+  }
+
+  try assertContractValidationRejects { contract in
+    var native = try #require(contract["nativeTransport"] as? [String: Any])
+    var capabilities = try #require(native["mediaCapabilities"] as? [String: Any])
+    capabilities["futureMediaCapability"] = 64
+    native["mediaCapabilities"] = capabilities
+    contract["nativeTransport"] = native
+  }
+}
+
+@Test
+func rejectsInvalidMediaParkLifecycleSemantics() throws {
+  try assertContractValidationRejects { contract in
+    try mutateLifecycleSection(&contract, "mediaParkResume") { mediaPark in
+      mediaPark["capabilityBit"] = 16
+    }
+  }
+  try assertContractValidationRejects { contract in
+    try mutateLifecycleSection(&contract, "mediaParkResume") { mediaPark in
+      mediaPark["request"] = "StartSessionAck"
+    }
+  }
+  try assertContractValidationRejects { contract in
+    try mutateLifecycleSection(&contract, "mediaParkResume") { mediaPark in
+      mediaPark["response"] = "SessionStarted"
+    }
+  }
+  try assertContractValidationRejects { contract in
+    try mutateLifecycleSection(&contract, "mediaParkResume") { mediaPark in
+      mediaPark["states"] = ["active", "parked"]
+    }
+  }
+  try assertContractValidationRejects { contract in
+    try mutateLifecycleSection(&contract, "mediaParkResume") { mediaPark in
+      mediaPark["strictlyIncreasingRevision"] = false
+    }
+  }
+  try assertContractValidationRejects { contract in
+    try mutateLifecycleSection(&contract, "mediaParkResume") { mediaPark in
+      mediaPark["idempotentCurrentTarget"] = false
+    }
+  }
+  try assertContractValidationRejects { contract in
+    try mutateLifecycleSection(&contract, "mediaParkResume") { mediaPark in
+      mediaPark["staleResult"] = "ignored"
+    }
+  }
+  try assertContractValidationRejects { contract in
+    try mutateLifecycleSection(&contract, "mediaParkResume") { mediaPark in
+      mediaPark["resumeRequiresFreshBootstrap"] = false
+    }
+  }
+  try assertContractValidationRejects { contract in
+    try mutateLifecycleSection(&contract, "mediaParkResume") { mediaPark in
+      mediaPark["stopFromParked"] = "MediaParkResult"
+    }
+  }
+}
+
+@Test
+func rejectsInvalidStopAndLifecycleValues() throws {
+  try assertContractValidationRejects { contract in
+    var lifecycle = try #require(contract["lifecycle"] as? [String: Any])
+    lifecycle["codecBootstrapSequence"] = ["host-video-bootstrap"]
+    contract["lifecycle"] = lifecycle
+  }
+  try assertContractValidationRejects { contract in
+    try mutateLifecycleSection(&contract, "generation") { generation in
+      generation["initial"] = 2
+    }
+  }
+  try assertContractValidationRejects { contract in
+    try mutateLifecycleSection(&contract, "generation") { generation in
+      generation["staleRepairRequest"] = "reject"
+    }
+  }
+  try assertContractValidationRejects { contract in
+    try mutateLifecycleSection(&contract, "sessionStop") { sessionStop in
+      sessionStop["request"] = "MediaParkRequest"
+    }
+  }
+  try assertContractValidationRejects { contract in
+    try mutateLifecycleSection(&contract, "sessionStop") { sessionStop in
+      sessionStop["response"] = "MediaParkResult"
+    }
+  }
+  try assertContractValidationRejects { contract in
+    try mutateLifecycleSection(&contract, "sessionStop") { sessionStop in
+      sessionStop["matchingSessionEpochRequired"] = false
+    }
+  }
+  try assertContractValidationRejects { contract in
+    try mutateLifecycleSection(&contract, "sessionStop") { sessionStop in
+      sessionStop["responseRequiredBeforeClientCompletion"] = false
+    }
+  }
+  try assertContractValidationRejects { contract in
+    try mutateLifecycleSection(&contract, "displayReconfiguration") { display in
+      display["resultCodes"] = ["applied", "superseded"]
+    }
+  }
+  try assertContractValidationRejects { contract in
+    try mutateLifecycleSection(&contract, "fallback") { fallback in
+      fallback["legacyProtocol"] = "false"
+    }
+  }
+}
+
+@Test
 func reportsProtobufCompilerFailure() throws {
   let contract = try currentContract()
   var candidate = contract
@@ -475,6 +602,28 @@ func reportsProtobufCompilerFailure() throws {
 
 private func currentContract() throws -> [String: Any] {
   try LumenContractTool.loadValidatedContract(root: repositoryRoot())
+}
+
+private func assertContractValidationRejects(
+  _ mutate: (inout [String: Any]) throws -> Void
+) throws {
+  var contract = try currentContract()
+  try mutate(&contract)
+  #expect(throws: LumenContractToolError.self) {
+    try LumenContractTool.validate(contract)
+  }
+}
+
+private func mutateLifecycleSection(
+  _ contract: inout [String: Any],
+  _ section: String,
+  _ mutate: (inout [String: Any]) throws -> Void
+) throws {
+  var lifecycle = try #require(contract["lifecycle"] as? [String: Any])
+  var value = try #require(lifecycle[section] as? [String: Any])
+  try mutate(&value)
+  lifecycle[section] = value
+  contract["lifecycle"] = lifecycle
 }
 
 private func repositoryRoot() -> URL {

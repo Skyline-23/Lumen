@@ -122,8 +122,10 @@ bootstrap and starts a new generation for the newer revision.
 
 While `PARKING` or `PARKED`, the host continues the control, reliable-input,
 telemetry, capture, encoder, and receive tasks, but drains and drops encoded
-audio/video objects before any QUIC media enqueue. No video delta, audio
-datagram, or reliable video bootstrap may be sent. The input state is reset at
+audio/video objects before any new QUIC media admission. Once the park gate
+commits, no new video delta, audio datagram, or reliable video bootstrap may be
+admitted. A bounded write admitted immediately before the gate may complete;
+subsequent chunks and sends are generation-fenced. The input state is reset at
 the park boundary; the input and telemetry streams remain open. The host
 preserves the negotiated codec, exact dimensions, refresh, bitrate, parity,
 dynamic range, and quality policy.

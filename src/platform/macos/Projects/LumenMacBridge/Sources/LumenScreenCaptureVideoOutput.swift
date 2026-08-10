@@ -48,6 +48,12 @@ extension LumenScreenCaptureVideoRuntime {
         }
         inflightFrameCount = max(inflightFrameCount - 1, 0)
 
+        // A callback can arrive after the queue reset has retired its source
+        // epoch. Do not let that old key frame satisfy the new bootstrap gate.
+        guard context.mediaEpoch == mediaEpoch else {
+            return
+        }
+
         guard let sampleBuffer = validatedCompressionOutput(
             status: status,
             infoFlags: infoFlags,

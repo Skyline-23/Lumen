@@ -491,6 +491,7 @@ fn started_media_park_router(
 #[derive(Default)]
 struct MediaParkFailurePlatform {
     fail_reset_once: std::sync::atomic::AtomicBool,
+    fail_media_queue_once: std::sync::atomic::AtomicBool,
     fail_idr_once: std::sync::atomic::AtomicBool,
 }
 
@@ -506,6 +507,14 @@ impl PlatformSessionControl for MediaParkFailurePlatform {
     fn reset_native_input(&self, _session_epoch: u32) -> Result<(), String> {
         if self.fail_reset_once.swap(false, Ordering::AcqRel) {
             Err("test input reset failure".to_owned())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn reset_media_queue(&self, _session_epoch: u32) -> Result<(), String> {
+        if self.fail_media_queue_once.swap(false, Ordering::AcqRel) {
+            Err("test media queue reset failure".to_owned())
         } else {
             Ok(())
         }
@@ -3176,6 +3185,7 @@ fn serves_a_normalized_automatic_wake_on_lan_target_when_the_active_nic_is_safe(
 fn media_park_transition_failures_do_not_consume_revisions_or_strand_state() {
     let platform = Arc::new(MediaParkFailurePlatform {
         fail_reset_once: std::sync::atomic::AtomicBool::new(true),
+        fail_media_queue_once: std::sync::atomic::AtomicBool::new(false),
         fail_idr_once: std::sync::atomic::AtomicBool::new(true),
     });
     let (_root, mut router, context, _plan) = started_media_park_router(platform);
@@ -3266,6 +3276,69 @@ fn media_park_transition_failures_do_not_consume_revisions_or_strand_state() {
     assert_eq!(
         router.native_media_park_state(context.session_epoch),
         Some(NativeMediaParkState::Resuming)
+    );
+}
+
+#[test]
+fn media_queue_reset_failure_is_transactional_and_retryable() {
+    let platform = Arc::new(MediaParkFailurePlatform {
+        fail_reset_once: std::sync::atomic::AtomicBool::new(false),
+        fail_media_queue_once: std::sync::atomic::AtomicBool::new(true),
+        fail_idr_once: std::sync::atomic::AtomicBool::new(false),
+    });
+    let (_root, mut router, context, _plan) = started_media_park_router(platform);
+
+    let request = |router: &mut ControlRouter, request_id: u64| {
+        router.dispatch_native_control(
+            ClientControlEnvelope {
+                request_id,
+                payload: Some(client_control_envelope::Payload::MediaPark(
+                    MediaParkRequest {
+                        session_epoch: context.session_epoch,
+                        revision: 1,
+                        park: true,
+                    },
+                )),
+            },
+            &context,
+        )
+    };
+
+    let response = request(&mut router, 3);
+    let host_control_envelope::Payload::MediaPark(result) = response[0].payload.clone().unwrap()
+    else {
+        panic!("expected media park result");
+    };
+    assert_eq!(
+        NativeMediaParkResultCode::try_from(result.result).unwrap(),
+        NativeMediaParkResultCode::Rejected
+    );
+    assert_eq!(result.revision, 0);
+    assert_eq!(
+        router.native_media_park_state(context.session_epoch),
+        Some(NativeMediaParkState::Active)
+    );
+    assert_eq!(
+        router.native_media_park_revision(context.session_epoch),
+        Some(0)
+    );
+
+    let response = request(&mut router, 4);
+    let host_control_envelope::Payload::MediaPark(result) = response[0].payload.clone().unwrap()
+    else {
+        panic!("expected media park result");
+    };
+    assert_eq!(
+        NativeMediaParkResultCode::try_from(result.result).unwrap(),
+        NativeMediaParkResultCode::Applied
+    );
+    assert_eq!(
+        router.native_media_park_state(context.session_epoch),
+        Some(NativeMediaParkState::Parked)
+    );
+    assert_eq!(
+        router.native_media_park_revision(context.session_epoch),
+        Some(1)
     );
 }
 
@@ -3370,6 +3443,7 @@ fn media_park_suppresses_bootstrap_and_resumes_with_a_fresh_generation() {
     assert_eq!(parked.target_bitrate_kbps, baseline.target_bitrate_kbps);
     assert_eq!(parked.wire_budget_kbps, baseline.wire_budget_kbps);
     assert_eq!(parked.refresh_millihz, baseline.refresh_millihz);
+    assert!(parked.media_delivery_generation > baseline.media_delivery_generation);
     assert!(!router.publish_native_codec_configuration_for_revision(
         CodecConfiguration {
             session_epoch: context.session_epoch,
@@ -3467,6 +3541,13 @@ fn media_park_suppresses_bootstrap_and_resumes_with_a_fresh_generation() {
     assert_eq!(
         router.native_media_park_revision(context.session_epoch),
         Some(3)
+    );
+    assert!(
+        router
+            .video_delivery_state()
+            .unwrap()
+            .media_delivery_generation
+            > parked.media_delivery_generation
     );
     assert!(router
         .publish_native_video_bootstrap_for_revision(

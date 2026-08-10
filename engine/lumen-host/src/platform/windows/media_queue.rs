@@ -17,6 +17,7 @@ pub(super) struct WindowsMediaPacketQueues {
     audio: VecDeque<PlatformEncodedAudioPacket>,
     audio_capacity: usize,
     awaiting_key_frame: bool,
+    awaiting_bootstrap_acknowledgement: bool,
     next_audio_timestamp: u32,
 }
 
@@ -27,12 +28,24 @@ impl Default for WindowsMediaPacketQueues {
             audio: VecDeque::new(),
             audio_capacity: DEFAULT_AUDIO_PACKET_CAPACITY,
             awaiting_key_frame: false,
+            awaiting_bootstrap_acknowledgement: false,
             next_audio_timestamp: 0,
         }
     }
 }
 
 impl WindowsMediaPacketQueues {
+    /// Starts a new platform media epoch without changing the negotiated audio
+    /// queue capacity. Any encoded media admitted before this boundary is
+    /// discarded, and video remains fenced until the next key frame arrives.
+    pub(super) fn reset_media_epoch(&mut self) {
+        self.video.clear();
+        self.audio.clear();
+        self.awaiting_key_frame = true;
+        self.awaiting_bootstrap_acknowledgement = true;
+        self.next_audio_timestamp = 0;
+    }
+
     #[cfg(test)]
     pub(super) fn push_video(&mut self, frame: PlatformEncodedVideoFrame) -> bool {
         self.push_video_with_result(frame).request_key_frame
@@ -42,7 +55,11 @@ impl WindowsMediaPacketQueues {
         &mut self,
         frame: PlatformEncodedVideoFrame,
     ) -> VideoQueuePushResult {
-        if self.awaiting_key_frame && !frame.key_frame {
+        if self.awaiting_key_frame
+            && (!frame.key_frame
+                || self.awaiting_bootstrap_acknowledgement
+                    && !frame.requires_bootstrap_acknowledgement)
+        {
             return VideoQueuePushResult {
                 request_key_frame: false,
                 dropped_frames: 1,
@@ -54,6 +71,7 @@ impl WindowsMediaPacketQueues {
             self.video.clear();
             if !frame.key_frame {
                 self.awaiting_key_frame = true;
+                self.awaiting_bootstrap_acknowledgement = false;
                 return VideoQueuePushResult {
                     request_key_frame: true,
                     dropped_frames: dropped_frames + 1,
@@ -61,6 +79,7 @@ impl WindowsMediaPacketQueues {
             }
         }
         self.awaiting_key_frame = false;
+        self.awaiting_bootstrap_acknowledgement = false;
         self.video.push_back(frame);
         VideoQueuePushResult {
             request_key_frame: false,
@@ -157,13 +176,75 @@ mod tests {
         assert_eq!(last.payload, vec![4]);
     }
 
+    #[test]
+    fn media_epoch_reset_discards_queued_media_and_requires_a_fresh_key_frame() {
+        let mut queues = WindowsMediaPacketQueues::default();
+        queues.configure_audio_capacity(4);
+        queues.push_video(frame(1, true));
+        queues.push_audio(vec![1]);
+
+        queues.reset_media_epoch();
+
+        assert!(queues.pop_video().is_none());
+        assert!(queues.pop_audio().is_none());
+        assert_eq!(
+            queues.push_video_with_result(frame(2, false)),
+            VideoQueuePushResult {
+                request_key_frame: false,
+                dropped_frames: 1,
+            }
+        );
+        assert!(queues.pop_video().is_none());
+        assert_eq!(
+            queues.push_video_with_result(frame(3, true)),
+            VideoQueuePushResult {
+                request_key_frame: false,
+                dropped_frames: 1,
+            }
+        );
+        assert!(queues.pop_video().is_none());
+        assert_eq!(
+            queues.push_video_with_result(frame_with_bootstrap_ack(4)),
+            VideoQueuePushResult::default()
+        );
+        assert_eq!(queues.pop_video().unwrap().payload, vec![4]);
+    }
+
+    #[test]
+    fn media_epoch_reset_preserves_negotiated_audio_capacity() {
+        let mut queues = WindowsMediaPacketQueues::default();
+        queues.configure_audio_capacity(2);
+        queues.push_audio(vec![1]);
+        queues.push_audio(vec![2]);
+        queues.reset_media_epoch();
+
+        queues.push_audio(vec![3]);
+        queues.push_audio(vec![4]);
+        queues.push_audio(vec![5]);
+        assert_eq!(queues.pop_audio().unwrap().payload, vec![4]);
+        assert_eq!(queues.pop_audio().unwrap().payload, vec![5]);
+        assert!(queues.pop_audio().is_none());
+    }
+
     fn frame(value: u8, key_frame: bool) -> PlatformEncodedVideoFrame {
+        frame_with_metadata(value, key_frame, false)
+    }
+
+    fn frame_with_bootstrap_ack(value: u8) -> PlatformEncodedVideoFrame {
+        frame_with_metadata(value, true, true)
+    }
+
+    fn frame_with_metadata(
+        value: u8,
+        key_frame: bool,
+        requires_bootstrap_acknowledgement: bool,
+    ) -> PlatformEncodedVideoFrame {
         PlatformEncodedVideoFrame {
             payload: vec![value],
             decoder_configuration_record: None,
             presentation_time_90khz: u64::from(value),
             key_frame,
-            requires_bootstrap_acknowledgement: false,
+            requires_bootstrap_acknowledgement,
             repair_keyframe: false,
         }
     }

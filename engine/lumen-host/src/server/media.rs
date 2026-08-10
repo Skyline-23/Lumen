@@ -518,6 +518,7 @@ async fn send_wire_paced_video_datagram_batch<Barrier, BarrierFuture, Space, Sen
     admission_gate: &tokio::sync::Mutex<()>,
     wire_pacer: &Arc<tokio::sync::Mutex<VideoWireRatePacer>>,
     session_epoch: u32,
+    media_delivery_generation: u64,
     wire_budget_kbps: u32,
     maximum_datagram_payload: usize,
     mut wait_for_capacity: Barrier,
@@ -562,7 +563,10 @@ where
     let datagram_bytes = datagrams.iter().map(Vec::len).collect::<Vec<_>>();
     let reservation = {
         let mut pacer = wire_pacer.lock().await;
-        if pacer.prepare(session_epoch, wire_budget_kbps).is_err() {
+        if pacer
+            .prepare(session_epoch, media_delivery_generation, wire_budget_kbps)
+            .is_err()
+        {
             None
         } else {
             let before = pacer.clone();
@@ -1049,6 +1053,7 @@ struct AudioSenderState {
     unit_id: u32,
     parked: bool,
     media_park_revision: Option<u64>,
+    media_delivery_generation: Option<u64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1081,6 +1086,7 @@ impl AudioSenderState {
         self.unit_id = 1;
         self.parked = true;
         self.media_park_revision = None;
+        self.media_delivery_generation = None;
     }
 
     fn leave_parked(&mut self) {
@@ -1088,6 +1094,7 @@ impl AudioSenderState {
         self.unit_id = 1;
         self.parked = false;
         self.media_park_revision = None;
+        self.media_delivery_generation = None;
     }
 
     fn prepare_media_park_revision(&mut self, media_park_revision: u64) {
@@ -1099,6 +1106,15 @@ impl AudioSenderState {
         self.packetizer = None;
         self.unit_id = 1;
         self.media_park_revision = Some(media_park_revision);
+    }
+
+    fn prepare_media_delivery_generation(&mut self, media_delivery_generation: u64) {
+        if self.media_delivery_generation == Some(media_delivery_generation) {
+            return;
+        }
+        self.packetizer = None;
+        self.unit_id = 1;
+        self.media_delivery_generation = Some(media_delivery_generation);
     }
 
     fn prepare(&mut self, delivery: &AudioDeliveryState) -> Result<(), String> {
@@ -1178,6 +1194,7 @@ async fn poll_and_send_audio(
         sender.leave_parked();
     }
     sender.prepare_media_park_revision(delivery.media_park_revision);
+    sender.prepare_media_delivery_generation(delivery.media_delivery_generation);
     let pending_since = Instant::now();
     if let Err(message) = sender.prepare(&delivery) {
         return MediaAttempt::Failed(audio_failure("packetizer-failed", message));
@@ -1204,6 +1221,7 @@ async fn poll_and_send_audio(
         router.native_media_datagram_send_is_current(
             delivery.session_epoch,
             delivery.media_park_revision,
+            delivery.media_delivery_generation,
             None,
         )
     });
@@ -1223,6 +1241,7 @@ async fn poll_and_send_audio(
                     router.native_media_datagram_send_is_current(
                         delivery.session_epoch,
                         delivery.media_park_revision,
+                        delivery.media_delivery_generation,
                         None,
                     )
                 });
@@ -1312,11 +1331,13 @@ struct VideoSenderState {
     keyframe_wire_rate_requirement_kbps: Option<u32>,
     parked: bool,
     pending_media_park_revision: Option<u64>,
+    pending_media_delivery_generation: Option<u64>,
 }
 
 #[derive(Clone, Default)]
 pub(super) struct VideoWireRatePacer {
     session_epoch: Option<u32>,
+    media_delivery_generation: Option<u64>,
     wire_budget_kbps: u32,
     next_send_at: Option<Instant>,
     wire_credit_bits: u64,
@@ -1326,13 +1347,17 @@ impl VideoWireRatePacer {
     pub(super) fn prepare(
         &mut self,
         session_epoch: u32,
+        media_delivery_generation: u64,
         wire_budget_kbps: u32,
     ) -> Result<(), String> {
         if wire_budget_kbps == 0 {
             return Err("native video wire budget is zero".to_owned());
         }
-        if self.session_epoch != Some(session_epoch) {
+        if self.session_epoch != Some(session_epoch)
+            || self.media_delivery_generation != Some(media_delivery_generation)
+        {
             self.session_epoch = Some(session_epoch);
+            self.media_delivery_generation = Some(media_delivery_generation);
             self.next_send_at = None;
             self.wire_credit_bits = 0;
         } else if self.wire_budget_kbps != wire_budget_kbps {
@@ -1404,6 +1429,7 @@ impl VideoWireRatePacer {
 
     fn rollback_reservation_if_current(&mut self, before: Self, reserved: &Self) {
         if self.session_epoch == reserved.session_epoch
+            && self.media_delivery_generation == reserved.media_delivery_generation
             && self.wire_budget_kbps == reserved.wire_budget_kbps
             && self.next_send_at == reserved.next_send_at
             && self.wire_credit_bits == reserved.wire_credit_bits
@@ -1611,6 +1637,7 @@ impl VideoSenderState {
         self.pending_frame = None;
         self.pending_since = None;
         self.pending_media_park_revision = None;
+        self.pending_media_delivery_generation = None;
         self.repair_required = false;
         self.repair_after_bootstrap = false;
         self.frame_id = 1;
@@ -1627,6 +1654,7 @@ impl VideoSenderState {
         self.frame_id = 1;
         self.keyframe_wire_rate_requirement_kbps = None;
         self.pending_media_park_revision = None;
+        self.pending_media_delivery_generation = None;
         self.parked = false;
     }
 
@@ -1645,6 +1673,20 @@ impl VideoSenderState {
         self.frame_id = 1;
         self.keyframe_wire_rate_requirement_kbps = None;
         self.pending_media_park_revision = Some(media_park_revision);
+    }
+
+    fn prepare_media_delivery_generation(&mut self, media_delivery_generation: u64) {
+        if self.pending_media_delivery_generation == Some(media_delivery_generation) {
+            return;
+        }
+        self.packetizer = None;
+        self.pending_frame = None;
+        self.pending_since = None;
+        self.repair_required = false;
+        self.repair_after_bootstrap = false;
+        self.frame_id = 1;
+        self.keyframe_wire_rate_requirement_kbps = None;
+        self.pending_media_delivery_generation = Some(media_delivery_generation);
     }
 
     /// Keeps the highest requirement so a small keyframe cannot lower the floor.
@@ -1904,6 +1946,7 @@ async fn poll_and_send_video(
         sender.leave_parked();
     }
     sender.prepare_media_park_revision(delivery.media_park_revision);
+    sender.prepare_media_delivery_generation(delivery.media_delivery_generation);
     if let Err(message) = sender.prepare(&delivery) {
         return MediaAttempt::Failed(video_failure("packetizer-failed", message));
     }
@@ -1980,9 +2023,10 @@ async fn poll_and_send_video(
         };
         if let Some(configuration) = normalized.new_configuration.clone() {
             let published = router.lock().is_ok_and(|mut router| {
-                router.publish_native_codec_configuration_for_revision(
+                router.publish_native_codec_configuration_for_revision_and_generation(
                     codec_configuration(&delivery, configuration),
                     Some(delivery.media_park_revision),
+                    Some(delivery.media_delivery_generation),
                 )
             });
             if !published {
@@ -1995,6 +2039,7 @@ async fn poll_and_send_video(
         sender.pending_frame = Some(normalized);
         sender.pending_since = Some(Instant::now());
         sender.pending_media_park_revision = Some(delivery.media_park_revision);
+        sender.pending_media_delivery_generation = Some(delivery.media_delivery_generation);
     }
 
     let normalized = sender.pending_frame.as_ref().expect("staged video frame");
@@ -2080,7 +2125,7 @@ async fn poll_and_send_video(
             delivery.acknowledged_generation_id.is_some(),
             |classification, configuration_id, frame_id, capture_timestamp_us, access_unit| {
                 router.lock().ok().and_then(|mut router| {
-                    router.publish_native_video_bootstrap_for_revision(
+                    router.publish_native_video_bootstrap_for_revision_and_generation(
                         configuration_id,
                         frame_id,
                         capture_timestamp_us,
@@ -2088,6 +2133,7 @@ async fn poll_and_send_video(
                         classification.requires_encoder_resume,
                         access_unit,
                         Some(delivery.media_park_revision),
+                        Some(delivery.media_delivery_generation),
                     )
                 })
             },
@@ -2179,6 +2225,7 @@ async fn poll_and_send_video(
         router.native_media_datagram_send_is_current(
             delivery.session_epoch,
             delivery.media_park_revision,
+            delivery.media_delivery_generation,
             Some(generation_id),
         )
     });
@@ -2186,11 +2233,13 @@ async fn poll_and_send_video(
         sender.pending_frame = None;
         sender.pending_since = None;
         sender.pending_media_park_revision = None;
+        sender.pending_media_delivery_generation = None;
         return MediaAttempt::Dropped;
     }
     let media_router = Arc::clone(router);
     let media_session_epoch = delivery.session_epoch;
     let media_park_revision = delivery.media_park_revision;
+    let media_delivery_generation = delivery.media_delivery_generation;
     let report = send_wire_paced_video_datagram_batch(
         packetized.datagrams,
         NATIVE_MEDIA_SEND_BUFFER_BYTES,
@@ -2199,6 +2248,7 @@ async fn poll_and_send_video(
         admission_gate,
         wire_pacer,
         delivery.session_epoch,
+        delivery.media_delivery_generation,
         delivery.wire_budget_kbps,
         delivery.maximum_datagram_payload,
         |required_capacity, deadline| {
@@ -2212,6 +2262,7 @@ async fn poll_and_send_video(
                     router.native_media_datagram_send_is_current(
                         media_session_epoch,
                         media_park_revision,
+                        media_delivery_generation,
                         Some(generation_id),
                     )
                 });
@@ -2665,7 +2716,7 @@ mod tests {
         .expect("observed periodic keyframe fits a sixty-hertz four-frame deadline")
         .deadline_us;
         let mut pacer = VideoWireRatePacer::default();
-        pacer.prepare(42, 66_269).unwrap();
+        pacer.prepare(42, 0, 66_269).unwrap();
 
         let schedule = pacer
             .reserve(
@@ -2769,7 +2820,7 @@ mod tests {
     fn non_empty_pacer_wire_rejection_raises_rate_instead_of_failing() {
         let origin = Instant::now();
         let mut pacer = VideoWireRatePacer::default();
-        pacer.prepare(42, 66_269).unwrap();
+        pacer.prepare(42, 0, 66_269).unwrap();
         pacer
             .reserve(
                 &vec![1_170; 200],
@@ -2893,7 +2944,7 @@ mod tests {
         let origin = Instant::now();
         let deadline = origin + Duration::from_secs(1);
         let mut pacer = VideoWireRatePacer::default();
-        pacer.prepare(7, 1_200).unwrap();
+        pacer.prepare(7, 0, 1_200).unwrap();
 
         assert_eq!(
             pacer.reserve(&[1_200, 1_200], 1_200, origin, deadline),
@@ -2911,13 +2962,30 @@ mod tests {
     }
 
     #[test]
+    fn wire_pacer_resets_credit_and_deadline_on_delivery_generation_change() {
+        let origin = Instant::now();
+        let deadline = origin + Duration::from_secs(1);
+        let mut pacer = VideoWireRatePacer::default();
+        pacer.prepare(7, 4, 1_200).unwrap();
+        assert!(pacer
+            .reserve(&[1_200, 1_200], 1_200, origin, deadline)
+            .is_some());
+        assert!(pacer.next_send_at.is_some());
+
+        pacer.prepare(7, 5, 1_200).unwrap();
+        assert_eq!(pacer.media_delivery_generation, Some(5));
+        assert_eq!(pacer.next_send_at, None);
+        assert_eq!(pacer.wire_credit_bits, 0);
+    }
+
+    #[test]
     fn variable_frame_sizes_never_exceed_the_actual_byte_token_envelope() {
         const MTU: usize = 1_200;
         const WIRE_KBPS: u32 = 25_536;
         let origin = Instant::now();
         let deadline = origin + Duration::from_secs(5);
         let mut pacer = VideoWireRatePacer::default();
-        pacer.prepare(9, WIRE_KBPS).unwrap();
+        pacer.prepare(9, 0, WIRE_KBPS).unwrap();
         let mut cumulative_bytes = 0_u64;
 
         for payload_bytes in [1, 37_504, 37_505, 200_070, 7_777, 291_330] {
@@ -2945,7 +3013,7 @@ mod tests {
         const WIRE_KBPS: u32 = 32_000;
         let origin = Instant::now();
         let mut pacer = VideoWireRatePacer::default();
-        pacer.prepare(9, WIRE_KBPS).unwrap();
+        pacer.prepare(9, 0, WIRE_KBPS).unwrap();
 
         for frame in 0..4_u64 {
             let now = origin + Duration::from_millis(frame * 16);
@@ -2975,7 +3043,7 @@ mod tests {
         const WIRE_KBPS: u32 = 32_000;
         let origin = Instant::now();
         let mut pacer = VideoWireRatePacer::default();
-        pacer.prepare(11, WIRE_KBPS).unwrap();
+        pacer.prepare(11, 0, WIRE_KBPS).unwrap();
         pacer
             .reserve(&[MTU], MTU, origin, origin + Duration::from_millis(2))
             .unwrap();
@@ -3018,6 +3086,7 @@ mod tests {
             &admission_gate,
             &pacer,
             7,
+            0,
             1_200,
             1_200,
             |_, _| async {
@@ -3057,6 +3126,7 @@ mod tests {
             &admission_gate,
             &pacer,
             7,
+            0,
             48_000,
             1_200,
             |_, _| async { Ok(Duration::ZERO) },
@@ -3103,6 +3173,7 @@ mod tests {
             &admission_gate,
             &pacer,
             7,
+            0,
             48_000,
             1_200,
             |_, _| async { Ok(Duration::ZERO) },
@@ -3533,6 +3604,7 @@ mod tests {
             &admission_gate,
             &pacer,
             7,
+            0,
             48_000,
             4,
             |required_capacity, _| {

@@ -216,6 +216,7 @@ type RequestKeyFrame = unsafe extern "C" fn();
 type RequestPeriodicKeyFrame = unsafe extern "C" fn() -> bool;
 type ResumeVideoEncodingAfterCodecAck = unsafe extern "C" fn() -> bool;
 type SetVideoDeliveryPolicy = unsafe extern "C" fn(u32, u32, u32, u8) -> bool;
+type ResetMediaQueues = unsafe extern "C" fn(*mut BridgeController);
 type PrepareWorkspace = unsafe extern "C" fn(MacWorkspaceSessionRequest, *mut c_char, usize) -> u32;
 type ReconfigureWorkspace =
     unsafe extern "C" fn(MacWorkspaceSessionRequest, *mut c_char, usize) -> u32;
@@ -269,6 +270,7 @@ struct MacBridgeApi {
     request_periodic_key_frame: RequestPeriodicKeyFrame,
     resume_video_encoding_after_codec_ack: ResumeVideoEncodingAfterCodecAck,
     set_video_delivery_policy: SetVideoDeliveryPolicy,
+    reset_media_queues: ResetMediaQueues,
     prepare_workspace: PrepareWorkspace,
     reconfigure_workspace: ReconfigureWorkspace,
     activate_workspace: ActivateWorkspace,
@@ -361,6 +363,10 @@ impl MacBridgeApi {
                 set_video_delivery_policy: load_symbol(
                     handle,
                     b"LumenMacBridgeSetVideoDeliveryPolicy\0",
+                )?,
+                reset_media_queues: load_symbol(
+                    handle,
+                    b"LumenMacBridgeControllerResetMediaQueues\0",
                 )?,
                 prepare_workspace: load_symbol(handle, b"LumenMacWorkspacePrepareSession\0")?,
                 reconfigure_workspace: load_symbol(
@@ -1121,6 +1127,25 @@ impl PlatformSessionControl for MacPlatformSessionControl {
             presentation_time_48khz: timestamp,
             duration_frames: AUDIO_FRAME_COUNT as u32,
         }))
+    }
+
+    fn reset_media_queue(&self, session_epoch: u32) -> Result<(), String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "macOS media state is unavailable".to_owned())?;
+        if state.plan.as_ref().map(|plan| plan.session_epoch) != Some(session_epoch) {
+            return Err(format!(
+                "macOS media queue reset does not belong to session epoch {session_epoch}"
+            ));
+        }
+        unsafe { (self.api.reset_media_queues)(state.controller) };
+        // The bridge queues contain source PCM, not Opus packets. Drop the
+        // partially accumulated packet too so a resume cannot encode samples
+        // that crossed the park boundary.
+        state.pcm.clear();
+        state.next_audio_deadline = Some(Instant::now());
+        Ok(())
     }
 
     fn handle_control_event(

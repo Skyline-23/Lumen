@@ -612,12 +612,18 @@ async fn publish_codec_configurations(
             .map_err(|_| "native control router lock is poisoned".to_owned())?
             .take_native_codec_configuration(session_epoch);
         if let Some(configuration) = configuration {
+            let media_delivery_generation = router
+                .lock()
+                .map_err(|_| "native control router lock is poisoned".to_owned())?
+                .native_media_delivery_generation(session_epoch)
+                .ok_or_else(|| "native media delivery generation is unavailable".to_owned())?;
             let current = router
                 .lock()
                 .map_err(|_| "native control router lock is poisoned".to_owned())?
                 .native_codec_configuration_send_is_current(
                     session_epoch,
                     configuration.configuration_id,
+                    media_delivery_generation,
                 );
             if !current {
                 continue;
@@ -633,6 +639,7 @@ async fn publish_codec_configurations(
                 .native_codec_configuration_send_is_current(
                     session_epoch,
                     configuration.configuration_id,
+                    media_delivery_generation,
                 )
             {
                 continue;
@@ -649,6 +656,7 @@ async fn publish_codec_configurations(
                 &router,
                 configuration.session_epoch,
                 configuration.configuration_id,
+                media_delivery_generation,
                 CODEC_CONFIGURATION_ACK_TIMEOUT,
                 &stop,
             ));
@@ -692,6 +700,7 @@ async fn wait_for_codec_configuration_ack(
     router: &SharedControlRouter,
     session_epoch: u32,
     configuration_id: u32,
+    media_delivery_generation: u64,
     timeout: Duration,
     stop: &AtomicBool,
 ) -> Result<CodecConfigurationAckWaitOutcome, String> {
@@ -703,7 +712,11 @@ async fn wait_for_codec_configuration_ack(
             let current = router
                 .lock()
                 .map_err(|_| "native control router lock is poisoned".to_owned())?
-                .native_codec_configuration_send_is_current(session_epoch, configuration_id);
+                .native_codec_configuration_send_is_current(
+                    session_epoch,
+                    configuration_id,
+                    media_delivery_generation,
+                );
             if !current {
                 return Ok(CodecConfigurationAckWaitOutcome::Obsolete);
             }
@@ -744,10 +757,19 @@ async fn publish_video_bootstraps(
             notify.notified().await;
             continue;
         };
+        let media_delivery_generation = router
+            .lock()
+            .map_err(|_| "native control router lock is poisoned".to_owned())?
+            .native_media_delivery_generation(session_epoch)
+            .ok_or_else(|| "native media delivery generation is unavailable".to_owned())?;
         let bootstrap_is_current = router
             .lock()
             .map_err(|_| "native control router lock is poisoned".to_owned())?
-            .native_video_bootstrap_send_is_current(session_epoch, bootstrap.generation_id);
+            .native_video_bootstrap_send_is_current(
+                session_epoch,
+                bootstrap.generation_id,
+                media_delivery_generation,
+            );
         if !bootstrap_is_current {
             eprintln!(
                 "Lumen native QUIC stage=video-bootstrap-send-cancelled session-epoch={} generation-id={} reason=park-or-superseded",
@@ -782,6 +804,7 @@ async fn publish_video_bootstraps(
             &router,
             session_epoch,
             bootstrap.generation_id,
+            media_delivery_generation,
             lifecycle_deadline,
             &wire_pacer,
         )
@@ -793,7 +816,11 @@ async fn publish_video_bootstraps(
         let still_current = router
             .lock()
             .map_err(|_| "native control router lock is poisoned".to_owned())?
-            .native_video_bootstrap_send_is_current(session_epoch, bootstrap.generation_id);
+            .native_video_bootstrap_send_is_current(
+                session_epoch,
+                bootstrap.generation_id,
+                media_delivery_generation,
+            );
         if !still_current {
             let _ = send.reset(VarInt::from_u32(0));
             continue;
@@ -880,10 +907,12 @@ fn video_bootstrap_chunk_lengths(encoded_bytes: usize, maximum_chunk_bytes: usiz
     chunks
 }
 
+#[allow(clippy::too_many_arguments)]
 fn reserve_video_bootstrap_chunk(
     pacer: &mut VideoWireRatePacer,
     remaining_bytes: usize,
     session_epoch: u32,
+    media_delivery_generation: u64,
     wire_budget_kbps: u32,
     maximum_datagram_payload: usize,
     now: Instant,
@@ -893,7 +922,7 @@ fn reserve_video_bootstrap_chunk(
     if chunk_bytes == 0 || maximum_datagram_payload == 0 {
         return Err("video bootstrap chunk is empty".to_owned());
     }
-    pacer.prepare(session_epoch, wire_budget_kbps)?;
+    pacer.prepare(session_epoch, media_delivery_generation, wire_budget_kbps)?;
     let send_at = pacer
         .reserve(
             &[chunk_bytes],
@@ -906,12 +935,14 @@ fn reserve_video_bootstrap_chunk(
     Ok((chunk_bytes, send_at))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn write_paced_video_bootstrap(
     send: &mut quinn::SendStream,
     encoded: &[u8],
     router: &SharedControlRouter,
     session_epoch: u32,
     generation_id: u32,
+    media_delivery_generation: u64,
     lifecycle_deadline: Instant,
     wire_pacer: &Arc<tokio::sync::Mutex<VideoWireRatePacer>>,
 ) -> Result<bool, String> {
@@ -923,7 +954,11 @@ async fn write_paced_video_bootstrap(
         let current = router
             .lock()
             .map_err(|_| "native control router lock is poisoned".to_owned())?
-            .native_video_bootstrap_send_is_current(session_epoch, generation_id);
+            .native_video_bootstrap_send_is_current(
+                session_epoch,
+                generation_id,
+                media_delivery_generation,
+            );
         if !current {
             return Ok(false);
         }
@@ -939,6 +974,7 @@ async fn write_paced_video_bootstrap(
                 &mut pacer,
                 encoded.len() - offset,
                 session_epoch,
+                media_delivery_generation,
                 delivery.wire_budget_kbps,
                 delivery.maximum_datagram_payload,
                 Instant::now(),
@@ -953,7 +989,11 @@ async fn write_paced_video_bootstrap(
         let current = router
             .lock()
             .map_err(|_| "native control router lock is poisoned".to_owned())?
-            .native_video_bootstrap_send_is_current(session_epoch, generation_id);
+            .native_video_bootstrap_send_is_current(
+                session_epoch,
+                generation_id,
+                media_delivery_generation,
+            );
         if !current {
             return Ok(false);
         }
@@ -2440,7 +2480,7 @@ mod tests {
         let origin = Instant::now();
         let deadline = origin + VIDEO_BOOTSTRAP_RESULT_TIMEOUT;
         let mut pacer = VideoWireRatePacer::default();
-        pacer.prepare(77, WIRE_KBPS).unwrap();
+        pacer.prepare(77, 0, WIRE_KBPS).unwrap();
         let schedule = pacer
             .reserve(&chunks, DATAGRAM_BYTES, origin, deadline)
             .expect("large bootstrap must fit the lifecycle deadline");
@@ -2466,6 +2506,7 @@ mod tests {
                 &mut pacer,
                 remaining,
                 77,
+                0,
                 OBSERVED_WIRE_KBPS,
                 1_200,
                 origin,
@@ -2487,14 +2528,15 @@ mod tests {
         let deadline = origin + Duration::from_secs(1);
         let mut pacer = VideoWireRatePacer::default();
 
-        let (_, first) =
-            reserve_video_bootstrap_chunk(&mut pacer, 3_600, 77, 48_000, 1_200, origin, deadline)
-                .unwrap();
+        let (_, first) = reserve_video_bootstrap_chunk(
+            &mut pacer, 3_600, 77, 0, 48_000, 1_200, origin, deadline,
+        )
+        .unwrap();
         let (_, second) =
-            reserve_video_bootstrap_chunk(&mut pacer, 2_400, 77, 1_200, 1_200, origin, deadline)
+            reserve_video_bootstrap_chunk(&mut pacer, 2_400, 77, 0, 1_200, 1_200, origin, deadline)
                 .unwrap();
         let (_, third) =
-            reserve_video_bootstrap_chunk(&mut pacer, 1_200, 77, 1_200, 1_200, origin, deadline)
+            reserve_video_bootstrap_chunk(&mut pacer, 1_200, 77, 0, 1_200, 1_200, origin, deadline)
                 .unwrap();
 
         assert!(first > origin);

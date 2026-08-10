@@ -43,6 +43,11 @@ public enum LumenContractTool {
   }
 
   public static func validate(_ contract: [String: Any]) throws {
+    _ = try requireKeys(
+      contract,
+      ["$schema", "schemaVersion", "identity", "protobuf", "nativeTransport", "https", "lifecycle", "rendering"],
+      "contract"
+    )
     try require(number(contract["schemaVersion"]) == 1, "schemaVersion must be 1")
     try require(
       string(contract["$schema"]) == "https://lumen.skyline23.com/schemas/contract-v1.json",
@@ -90,6 +95,15 @@ public enum LumenContractTool {
     )
     let capabilities = try dictionary(
       native["mediaCapabilities"], "nativeTransport.mediaCapabilities")
+    _ = try requireKeys(
+      capabilities,
+      [
+        "sameGenerationKeyframes", "fixedCadenceFeedback", "continuousScroll",
+        "pairedFeedbackWindows", "packetArrivalFeedback", "requiredMask", "supportedMask",
+        "mediaParkResume",
+      ],
+      "nativeTransport.mediaCapabilities"
+    )
     try require(
       number(capabilities["requiredMask"]) == 15 && number(capabilities["supportedMask"]) == 63
         && number(capabilities["mediaParkResume"]) == 32,
@@ -138,15 +152,139 @@ public enum LumenContractTool {
       ],
       "lifecycle"
     )
+    let bootstrapSequence = try requiredStringArray(
+      lifecycle["codecBootstrapSequence"], "lifecycle.codecBootstrapSequence")
+    try require(
+      bootstrapSequence == [
+        "host-codec-configuration",
+        "client-codec-configuration-ack",
+        "host-video-bootstrap",
+        "client-hardware-decode",
+        "client-video-bootstrap-result-decoded",
+        "host-video-delta-admission",
+      ],
+      "lifecycle.codecBootstrapSequence must preserve the v4 ordering"
+    )
+
+    let generation = try dictionary(lifecycle["generation"], "lifecycle.generation")
+    _ = try requireKeys(
+      generation,
+      [
+        "initial", "configurationChangeCreatesGeneration", "explicitRepairCreatesGeneration",
+        "periodicKeyframeRetainsGeneration", "staleRepairRequest",
+      ],
+      "lifecycle.generation"
+    )
+    try require(
+      number(generation["initial"]) == 1,
+      "lifecycle.generation.initial must be 1"
+    )
+    let configurationChangeCreatesGeneration = try requiredBool(
+      generation["configurationChangeCreatesGeneration"],
+      "lifecycle.generation.configurationChangeCreatesGeneration"
+    )
+    try require(configurationChangeCreatesGeneration, "configuration changes must create a generation")
+    let explicitRepairCreatesGeneration = try requiredBool(
+      generation["explicitRepairCreatesGeneration"],
+      "lifecycle.generation.explicitRepairCreatesGeneration"
+    )
+    try require(explicitRepairCreatesGeneration, "explicit repairs must create a generation")
+    let periodicKeyframeRetainsGeneration = try requiredBool(
+      generation["periodicKeyframeRetainsGeneration"],
+      "lifecycle.generation.periodicKeyframeRetainsGeneration"
+    )
+    try require(periodicKeyframeRetainsGeneration, "periodic keyframes must retain their generation")
+    let staleRepairRequest = try requiredString(
+      generation["staleRepairRequest"],
+      "lifecycle.generation.staleRepairRequest"
+    )
+    try require(staleRepairRequest == "ignore", "stale repair requests must be ignored")
+
     let sessionStop = try dictionary(lifecycle["sessionStop"], "lifecycle.sessionStop")
-    try require(
-      sessionStop["responseRequiredBeforeClientCompletion"] as? Bool == true,
-      "StopSession completion requires SessionStopped"
+    _ = try requireKeys(
+      sessionStop,
+      [
+        "request", "response", "matchingSessionEpochRequired",
+        "responseRequiredBeforeClientCompletion",
+      ],
+      "lifecycle.sessionStop"
+    )
+    let sessionStopRequest = try requiredString(
+      sessionStop["request"],
+      "lifecycle.sessionStop.request"
+    )
+    try require(sessionStopRequest == "StopSession", "lifecycle.sessionStop.request must be StopSession")
+    let sessionStopResponse = try requiredString(
+      sessionStop["response"],
+      "lifecycle.sessionStop.response"
+    )
+    try require(sessionStopResponse == "SessionStopped", "lifecycle.sessionStop.response must be SessionStopped")
+    let matchingSessionEpochRequired = try requiredBool(
+      sessionStop["matchingSessionEpochRequired"],
+      "lifecycle.sessionStop.matchingSessionEpochRequired"
+    )
+    try require(matchingSessionEpochRequired, "StopSession must match the active session epoch")
+    let responseRequiredBeforeClientCompletion = try requiredBool(
+      sessionStop["responseRequiredBeforeClientCompletion"],
+      "lifecycle.sessionStop.responseRequiredBeforeClientCompletion"
+    )
+    try require(responseRequiredBeforeClientCompletion, "StopSession completion requires SessionStopped")
+
+    let displayReconfiguration = try dictionary(
+      lifecycle["displayReconfiguration"], "lifecycle.displayReconfiguration")
+    _ = try requireKeys(
+      displayReconfiguration,
+      ["request", "response", "strictlyIncreasingRevision", "resultCodes"],
+      "lifecycle.displayReconfiguration"
+    )
+    let displayReconfigurationRequest = try requiredString(
+      displayReconfiguration["request"],
+      "lifecycle.displayReconfiguration.request"
     )
     try require(
-      jsonEqual(lifecycle["fallback"], ["legacyProtocol": false, "silentFormatDowngrade": false]),
-      "fallback is forbidden"
+      displayReconfigurationRequest == "DisplayReconfigurationRequest",
+      "display reconfiguration request must be DisplayReconfigurationRequest"
     )
+    let displayReconfigurationResponse = try requiredString(
+      displayReconfiguration["response"],
+      "lifecycle.displayReconfiguration.response"
+    )
+    try require(
+      displayReconfigurationResponse == "DisplayReconfigurationResult",
+      "display reconfiguration response must be DisplayReconfigurationResult"
+    )
+    let strictlyIncreasingDisplayRevision = try requiredBool(
+      displayReconfiguration["strictlyIncreasingRevision"],
+      "lifecycle.displayReconfiguration.strictlyIncreasingRevision"
+    )
+    try require(
+      strictlyIncreasingDisplayRevision,
+      "display reconfiguration revisions must be strictly increasing"
+    )
+    let displayReconfigurationResultCodes = try requiredStringArray(
+      displayReconfiguration["resultCodes"],
+      "lifecycle.displayReconfiguration.resultCodes"
+    )
+    try require(
+      displayReconfigurationResultCodes == ["applied", "rejected", "superseded"],
+      "display reconfiguration result codes must preserve the v4 values"
+    )
+
+    let fallback = try dictionary(lifecycle["fallback"], "lifecycle.fallback")
+    _ = try requireKeys(
+      fallback,
+      ["legacyProtocol", "silentFormatDowngrade"],
+      "lifecycle.fallback"
+    )
+    let legacyProtocol = try requiredBool(
+      fallback["legacyProtocol"],
+      "lifecycle.fallback.legacyProtocol"
+    )
+    let silentFormatDowngrade = try requiredBool(
+      fallback["silentFormatDowngrade"],
+      "lifecycle.fallback.silentFormatDowngrade"
+    )
+    try require(!legacyProtocol && !silentFormatDowngrade, "fallback is forbidden")
     let mediaPark = try dictionary(lifecycle["mediaParkResume"], "lifecycle.mediaParkResume")
     _ = try requireKeys(
       mediaPark,
@@ -156,16 +294,57 @@ public enum LumenContractTool {
       ],
       "lifecycle.mediaParkResume"
     )
-    try require(number(mediaPark["capabilityBit"]) == 32, "media park capability bit must be 32")
     try require(
-      string(mediaPark["request"]) == "MediaParkRequest"
-        && string(mediaPark["response"]) == "MediaParkResult",
-      "media park request/result names must remain additive"
+      number(mediaPark["capabilityBit"]) == 32,
+      "media park capability bit must be 32"
+    )
+    let mediaParkRequest = try requiredString(
+      mediaPark["request"],
+      "lifecycle.mediaParkResume.request"
+    )
+    try require(mediaParkRequest == "MediaParkRequest", "media park request must remain additive")
+    let mediaParkResponse = try requiredString(
+      mediaPark["response"],
+      "lifecycle.mediaParkResume.response"
+    )
+    try require(mediaParkResponse == "MediaParkResult", "media park response must remain additive")
+    let mediaParkStates = try requiredStringArray(
+      mediaPark["states"],
+      "lifecycle.mediaParkResume.states"
     )
     try require(
-      mediaPark["strictlyIncreasingRevision"] as? Bool == true
-        && mediaPark["resumeRequiresFreshBootstrap"] as? Bool == true,
-      "media park revisions and resume bootstrap must remain fenced"
+      mediaParkStates == ["active", "parking", "parked", "resuming"],
+      "media park states must preserve the v4 state machine"
+    )
+    let mediaParkStrictlyIncreasingRevision = try requiredBool(
+      mediaPark["strictlyIncreasingRevision"],
+      "lifecycle.mediaParkResume.strictlyIncreasingRevision"
+    )
+    let mediaParkIdempotentCurrentTarget = try requiredBool(
+      mediaPark["idempotentCurrentTarget"],
+      "lifecycle.mediaParkResume.idempotentCurrentTarget"
+    )
+    try require(
+      mediaParkStrictlyIncreasingRevision && mediaParkIdempotentCurrentTarget,
+      "media park revisions and idempotency must remain fenced"
+    )
+    let mediaParkStaleResult = try requiredString(
+      mediaPark["staleResult"],
+      "lifecycle.mediaParkResume.staleResult"
+    )
+    try require(mediaParkStaleResult == "superseded", "stale media park revisions must be superseded")
+    let mediaParkFreshBootstrap = try requiredBool(
+      mediaPark["resumeRequiresFreshBootstrap"],
+      "lifecycle.mediaParkResume.resumeRequiresFreshBootstrap"
+    )
+    try require(mediaParkFreshBootstrap, "media park revisions and resume bootstrap must remain fenced")
+    let mediaParkStopFromParked = try requiredString(
+      mediaPark["stopFromParked"],
+      "lifecycle.mediaParkResume.stopFromParked"
+    )
+    try require(
+      mediaParkStopFromParked == "SessionStopped",
+      "stopping from PARKED must use SessionStopped"
     )
   }
 
@@ -307,15 +486,26 @@ public enum LumenContractTool {
 
   private static func runCompatibility(arguments: [String], root: URL) throws {
     let options = try CompatibilityOptions(arguments: arguments, root: root)
-    let current = try object(from: Data(contentsOf: options.current))
+    let currentData = try Data(contentsOf: options.current)
+    let current = try object(from: currentData)
+    let newSchema = try object(from: Data(contentsOf: options.currentSchema))
+    try validateSchemaDocument(newSchema)
+    try validateSchema(instance: current, schema: newSchema, path: "$")
+    try validate(current)
     let baseline: [String: Any]
     if let baselineURL = options.baseline {
+      guard options.baselineStreamingDoc != nil,
+        options.baselineSettingsDoc != nil
+      else {
+        throw LumenContractToolError.invalid(
+          "structured v4 baseline requires streaming and settings documentation"
+        )
+      }
       baseline = try object(from: Data(contentsOf: baselineURL))
       guard let baselineSchema = options.baselineSchema else {
         throw LumenContractToolError.invalid("missing v4 baseline meta-schema")
       }
       let oldSchema = try object(from: Data(contentsOf: baselineSchema))
-      let newSchema = try object(from: Data(contentsOf: options.currentSchema))
       try require(jsonEqual(oldSchema, newSchema), "v4 meta-schema cannot change")
     } else {
       guard let proto = options.baselineProto,
@@ -1081,6 +1271,11 @@ public enum LumenContractTool {
   {
     let missing = keys.subtracting(value.keys)
     try require(missing.isEmpty, "\(label) is missing: \(missing.sorted().joined(separator: ", "))")
+    let unexpected = Set(value.keys).subtracting(keys)
+    try require(
+      unexpected.isEmpty,
+      "\(label) contains unknown keys: \(unexpected.sorted().joined(separator: ", "))"
+    )
     return value
   }
 
@@ -1098,6 +1293,22 @@ public enum LumenContractTool {
       throw LumenContractToolError.invalid("\(label) must be an integer")
     }
     return value
+  }
+
+  private static func requiredBool(_ value: Any?, _ label: String) throws -> Bool {
+    guard let value = value as? Bool else {
+      throw LumenContractToolError.invalid("\(label) must be a boolean")
+    }
+    return value
+  }
+
+  private static func requiredStringArray(_ value: Any?, _ label: String) throws -> [String] {
+    guard let values = value as? [Any] else {
+      throw LumenContractToolError.invalid("\(label) must be an array of strings")
+    }
+    return try values.enumerated().map { index, value in
+      try requiredString(value, "\(label)[\(index)]")
+    }
   }
 
   private static func number(_ value: Any?) -> Int? {
@@ -1118,8 +1329,8 @@ public enum LumenContractTool {
     try OrderedJSON.string(value).rendered()
   }
 
-  private static func require(_ condition: @autoclosure () -> Bool, _ message: String) throws {
-    if !condition() { throw LumenContractToolError.invalid(message) }
+  private static func require(_ condition: @autoclosure () throws -> Bool, _ message: String) throws {
+    if try !condition() { throw LumenContractToolError.invalid(message) }
   }
 
   private static func jsonEqual(_ lhs: Any?, _ rhs: Any?) -> Bool {

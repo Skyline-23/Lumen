@@ -50,6 +50,11 @@ extension LumenBridgeRuntime {
         audioForwarder.setEventCapacity(eventCapacity)
     }
 
+    nonisolated func resetMediaQueuesImpl() {
+        videoForwarder.resetForMediaEpoch()
+        audioForwarder.resetForMediaEpoch()
+    }
+
     nonisolated func drainNextVideoForwardedFrameImpl() -> LumenBridgeDrainedVideoFrame? {
         videoForwarder.popNextFrame()
     }
@@ -331,6 +336,10 @@ private extension LumenBridgeRuntime {
 extension LumenBridgeRuntime {
     func debugResetVideoForwarding() {
         videoForwarder.reset()
+    }
+
+    func debugResetMediaQueues() async {
+        await resetMediaQueuesOnActor()
     }
 
     func debugSetVideoForwardingCapacities(

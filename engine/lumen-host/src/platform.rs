@@ -243,6 +243,16 @@ pub trait PlatformSessionControl: Send + Sync {
         Ok(None)
     }
 
+    /// Drops encoded audio/video admitted before a media park/resume boundary.
+    ///
+    /// Capture and encode workers are intentionally allowed to keep running
+    /// while the host is parked; this seam only fences the platform-owned
+    /// forwarding queues. Implementations must reject the queued pre-boundary
+    /// media before a caller requests the resume IDR frame.
+    fn reset_media_queue(&self, _session_epoch: u32) -> Result<(), String> {
+        Ok(())
+    }
+
     fn handle_control_event(
         &self,
         _control_connect_data: u32,
