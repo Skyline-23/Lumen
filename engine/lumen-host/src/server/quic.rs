@@ -1137,7 +1137,7 @@ async fn dispatch_native_control_async(
     context: &NativeConnectionContext,
 ) -> Result<Vec<HostControlEnvelope>, String> {
     let request_id = request.request_id;
-    let _media_admission_guard = if matches!(
+    let media_admission_guard = if matches!(
         request.payload.as_ref(),
         Some(lumen_engine::client_control_envelope::Payload::MediaPark(_))
     ) {
@@ -1189,7 +1189,17 @@ async fn dispatch_native_control_async(
         return router
             .lock()
             .map_err(|_| "native control router lock is poisoned".to_owned())
-            .map(|mut router| router.dispatch_native_control(request, context));
+            .map(|mut router| {
+                if let Some(media_admission_guard) = media_admission_guard {
+                    router.dispatch_native_control_with_media_admission(
+                        request,
+                        context,
+                        media_admission_guard,
+                    )
+                } else {
+                    router.dispatch_native_control(request, context)
+                }
+            });
     };
     let reservation = match router
         .lock()

@@ -501,6 +501,29 @@ func rejectsUnknownNestedAuthorityDuringCompatibility() throws {
 }
 
 @Test
+func rejectsUnknownNativeAndHTTPSAuthorityKeys() throws {
+  try assertContractValidationRejects { contract in
+    var native = try #require(contract["nativeTransport"] as? [String: Any])
+    native["futureNativeAuthority"] = true
+    contract["nativeTransport"] = native
+  }
+  try assertContractValidationRejects { contract in
+    var https = try #require(contract["https"] as? [String: Any])
+    var authentication = try #require(https["authentication"] as? [String: Any])
+    authentication["futureAuthenticationAuthority"] = true
+    https["authentication"] = authentication
+    contract["https"] = https
+  }
+  try assertContractValidationRejects { contract in
+    var https = try #require(contract["https"] as? [String: Any])
+    var settings = try #require(https["settings"] as? [String: Any])
+    settings["futureSettingsAuthority"] = true
+    https["settings"] = settings
+    contract["https"] = https
+  }
+}
+
+@Test
 func rejectsInvalidMediaParkLifecycleSemantics() throws {
   try assertContractValidationRejects { contract in
     try mutateLifecycleSection(&contract, "mediaParkResume") { mediaPark in

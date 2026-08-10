@@ -185,6 +185,10 @@ impl WindowsPlatformSessionControl {
 }
 
 impl PlatformSessionControl for WindowsPlatformSessionControl {
+    fn supports_media_park_resume(&self) -> bool {
+        true
+    }
+
     fn start_application(&self, plan: PlatformApplicationPlan) -> Result<(), String> {
         self.display.start(&plan)?;
         if let Err(error) = self.application.start(plan) {

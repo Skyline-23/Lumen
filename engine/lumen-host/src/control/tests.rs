@@ -105,6 +105,10 @@ impl RecordingPlatformSessionControl {
 }
 
 impl PlatformSessionControl for RecordingPlatformSessionControl {
+    fn supports_media_park_resume(&self) -> bool {
+        true
+    }
+
     fn start_application(&self, _plan: PlatformApplicationPlan) -> Result<(), String> {
         self.application_starts.fetch_add(1, Ordering::Relaxed);
         Ok(())
@@ -122,6 +126,10 @@ impl PlatformSessionControl for RecordingPlatformSessionControl {
 
     fn stop_session(&self) -> Result<(), String> {
         self.stops.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+
+    fn reset_media_queue(&self, _session_epoch: u32) -> Result<(), String> {
         Ok(())
     }
 
@@ -496,6 +504,10 @@ struct MediaParkFailurePlatform {
 }
 
 impl PlatformSessionControl for MediaParkFailurePlatform {
+    fn supports_media_park_resume(&self) -> bool {
+        true
+    }
+
     fn start_session(&self, _plan: PlatformSessionPlan) -> Result<(), String> {
         Ok(())
     }
@@ -3339,6 +3351,71 @@ fn media_queue_reset_failure_is_transactional_and_retryable() {
     assert_eq!(
         router.native_media_park_revision(context.session_epoch),
         Some(1)
+    );
+}
+
+#[test]
+fn media_park_transition_reports_busy_while_admission_gate_is_held() {
+    let platform = Arc::new(MediaParkFailurePlatform::default());
+    let (_root, mut router, context, _plan) = started_media_park_router(platform);
+    let admission_gate = router.native_media_admission_gate();
+    let _admission = admission_gate.try_lock().expect("test owns admission gate");
+
+    let response = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 91,
+            payload: Some(client_control_envelope::Payload::MediaPark(
+                MediaParkRequest {
+                    session_epoch: context.session_epoch,
+                    revision: 1,
+                    park: true,
+                },
+            )),
+        },
+        &context,
+    );
+    let host_control_envelope::Payload::MediaPark(result) = response[0].payload.clone().unwrap()
+    else {
+        panic!("expected media park result");
+    };
+    assert_eq!(
+        NativeMediaParkResultCode::try_from(result.result).unwrap(),
+        NativeMediaParkResultCode::Rejected
+    );
+    assert_eq!(result.revision, 0);
+    assert_eq!(
+        NativeMediaParkState::try_from(result.state).unwrap(),
+        NativeMediaParkState::Active
+    );
+}
+
+#[test]
+fn media_park_capability_requires_platform_epoch_reset() {
+    let (_root, mut router) = router_with_platform(Arc::new(IdlePlatformSessionControl));
+    router
+        .authorities()
+        .applications()
+        .upsert(r#"{"uuid":"native-desktop","name":"Desktop"}"#)
+        .unwrap();
+    let application_id = router.authorities().applications().applications().unwrap()[0].id;
+    let context = native_context();
+    let mut hello = native_hello(application_id);
+    hello.media_capabilities |= NATIVE_MEDIA_CAPABILITY_MEDIA_PARK_RESUME;
+
+    let responses = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 92,
+            payload: Some(client_control_envelope::Payload::Hello(hello)),
+        },
+        &context,
+    );
+    let host_control_envelope::Payload::SessionPlan(plan) = responses[0].payload.clone().unwrap()
+    else {
+        panic!("expected native session plan");
+    };
+    assert_eq!(
+        plan.media_capabilities & NATIVE_MEDIA_CAPABILITY_MEDIA_PARK_RESUME,
+        0
     );
 }
 

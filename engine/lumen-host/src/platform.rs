@@ -250,7 +250,13 @@ pub trait PlatformSessionControl: Send + Sync {
     /// forwarding queues. Implementations must reject the queued pre-boundary
     /// media before a caller requests the resume IDR frame.
     fn reset_media_queue(&self, _session_epoch: u32) -> Result<(), String> {
-        Ok(())
+        Err("media queue reset is unavailable on this platform adapter".to_owned())
+    }
+
+    /// Returns true only when the platform adapter implements the media queue
+    /// epoch fence used by the negotiated media park/resume capability.
+    fn supports_media_park_resume(&self) -> bool {
+        false
     }
 
     fn handle_control_event(

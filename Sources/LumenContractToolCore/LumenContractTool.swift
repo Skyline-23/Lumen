@@ -90,6 +90,19 @@ public enum LumenContractTool {
     }
 
     let native = try dictionary(contract["nativeTransport"], "nativeTransport")
+    _ = try requireKeys(
+      native,
+      [
+        "protocol", "transportName", "version", "alpn", "sessionProtocolVersion",
+        "controlTransport", "mediaPlane", "applicationMediaEncryption", "directMediaUdp",
+        "clientBidirectionalStreams", "hostUnidirectionalStreams", "messageLimits",
+        "hostSessionPlan", "videoBootstrap", "mediaDatagramHeader", "mediaKinds", "flags",
+        "fecBlockExtension", "fec", "telemetry", "forbiddenCompatibilityProtocols",
+        "mediaCapabilities", "dynamicRangeTransport", "validation", "transportErrors",
+        "packetArrivalFeedbackErrors",
+      ],
+      "nativeTransport"
+    )
     let flags = try dictionary(native["flags"], "nativeTransport.flags")
     try require(number(flags["keyframe"]) == 1, "keyframe flag must be 0x01")
     let bootstrap = try dictionary(native["videoBootstrap"], "nativeTransport.videoBootstrap")
@@ -131,7 +144,18 @@ public enum LumenContractTool {
     )
 
     let https = try dictionary(contract["https"], "https")
+    _ = try requireKeys(https, ["authentication", "settings"], "https")
     let authentication = try dictionary(https["authentication"], "https.authentication")
+    _ = try requireKeys(
+      authentication,
+      [
+        "schemaVersion", "protocolName", "transport", "networkTransport",
+        "accessRequestAuthentication", "conditionalRoutes", "protectedRoutes",
+        "credentialPolicy", "deviceEnrollmentPolicy", "idempotency", "possessionProof",
+        "operations", "envelopes", "errorCodes",
+      ],
+      "https.authentication"
+    )
     let protectedRoutes = try dictionary(
       authentication["protectedRoutes"], "authentication.protectedRoutes")
     let actualProtectedRoutes = Set(try nestedRoutes(protectedRoutes).keys)
@@ -148,6 +172,15 @@ public enum LumenContractTool {
       "authentication conformance must preserve every v4 protected route"
     )
     let settings = try dictionary(https["settings"], "https.settings")
+    _ = try requireKeys(
+      settings,
+      [
+        "schemaVersion", "protocol", "networkTransport", "envelopes", "applyStates",
+        "applyClasses", "requires", "errorCodes", "requestId", "retention",
+        "commandContract", "forbiddenRemoteKeys", "platformCapabilities", "fields",
+      ],
+      "https.settings"
+    )
     _ = try indexedFields(settings["fields"])
     let rendering = try dictionary(contract["rendering"], "rendering")
     try validateRendering(rendering["settingsConformance"], equals: settings, label: "settings")
@@ -500,6 +533,45 @@ public enum LumenContractTool {
     return ContractDocument(data: data, object: contract)
   }
 
+  private static func validateLegacyBaselineAuthorities(
+    native: [String: Any],
+    authentication: [String: Any],
+    settings: [String: Any]
+  ) throws {
+    _ = try requireKeys(
+      native,
+      [
+        "protocol", "transportName", "version", "alpn", "sessionProtocolVersion",
+        "controlTransport", "mediaPlane", "applicationMediaEncryption", "directMediaUdp",
+        "clientBidirectionalStreams", "hostUnidirectionalStreams", "messageLimits",
+        "hostSessionPlan", "videoBootstrap", "mediaDatagramHeader", "mediaKinds", "flags",
+        "fecBlockExtension", "fec", "telemetry", "forbiddenCompatibilityProtocols",
+        "mediaCapabilities", "dynamicRangeTransport", "validation", "transportErrors",
+        "packetArrivalFeedbackErrors",
+      ],
+      "legacy native transport"
+    )
+    _ = try requireKeys(
+      authentication,
+      [
+        "schemaVersion", "protocolName", "transport", "networkTransport",
+        "accessRequestAuthentication", "conditionalRoutes", "protectedRoutes",
+        "credentialPolicy", "deviceEnrollmentPolicy", "idempotency", "possessionProof",
+        "operations", "envelopes", "errorCodes",
+      ],
+      "legacy authentication"
+    )
+    _ = try requireKeys(
+      settings,
+      [
+        "schemaVersion", "protocol", "networkTransport", "envelopes", "applyStates",
+        "applyClasses", "requires", "errorCodes", "requestId", "retention",
+        "commandContract", "forbiddenRemoteKeys", "platformCapabilities", "fields",
+      ],
+      "legacy settings"
+    )
+  }
+
   private static func runCompatibility(arguments: [String], root: URL) throws {
     let options = try CompatibilityOptions(arguments: arguments, root: root)
     let currentData = try Data(contentsOf: options.current)
@@ -526,6 +598,10 @@ public enum LumenContractTool {
       try validateSchema(instance: baseline, schema: oldSchema, path: "$")
       try require(jsonEqual(oldSchema, newSchema), "v4 meta-schema cannot change")
     } else {
+      try require(
+        options.baselineStreamingDoc == nil && options.baselineSettingsDoc == nil,
+        "legacy compatibility baselines do not carry structured lifecycle or settings documentation"
+      )
       guard let proto = options.baselineProto,
         let native = options.baselineNative,
         let auth = options.baselineAuth,
@@ -535,16 +611,27 @@ public enum LumenContractTool {
           "missing legacy baseline: protobuf, native transport, authentication, settings"
         )
       }
+      let legacyNative = try object(from: Data(contentsOf: native))
+      let legacyAuthentication = try object(from: Data(contentsOf: auth))
+      let legacySettings = try object(from: Data(contentsOf: settings))
+      try validateLegacyBaselineAuthorities(
+        native: legacyNative,
+        authentication: legacyAuthentication,
+        settings: legacySettings
+      )
       let identity = try dictionary(current["identity"], "current.identity")
       baseline = [
         "identity": identity,
         "protobuf": ["source": try String(contentsOf: proto, encoding: .utf8)],
-        "nativeTransport": try object(from: Data(contentsOf: native)),
+        "nativeTransport": legacyNative,
         "https": [
-          "authentication": try object(from: Data(contentsOf: auth)),
-          "settings": try object(from: Data(contentsOf: settings)),
+          "authentication": legacyAuthentication,
+          "settings": legacySettings,
         ],
       ]
+      // Legacy baselines intentionally carry only the pre-v4 protobuf/native/
+      // authentication/settings authorities. Their identity, lifecycle, and
+      // handwritten documentation are not part of this compatibility path.
     }
     let baselineProto = try requiredString(
       (baseline["protobuf"] as? [String: Any])?["source"],

@@ -646,6 +646,10 @@ fn stop_workspace(
 }
 
 impl PlatformSessionControl for MacPlatformSessionControl {
+    fn supports_media_park_resume(&self) -> bool {
+        true
+    }
+
     fn start_application(&self, plan: PlatformApplicationPlan) -> Result<(), String> {
         let source_display_id = desktop_mirror_source_candidate_display_id(
             plan.application.captures_desktop(),

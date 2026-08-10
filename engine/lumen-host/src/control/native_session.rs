@@ -638,7 +638,49 @@ struct PendingMediaFeedbackWindow {
 }
 
 impl ControlRouter {
+    fn apply_platform_capability_gates(&self, plan: &mut HostSessionPlan) {
+        if !self.platform.supports_media_park_resume() {
+            plan.media_capabilities &= !NATIVE_MEDIA_CAPABILITY_MEDIA_PARK_RESUME;
+        }
+    }
+
     pub(crate) fn dispatch_native_control(
+        &mut self,
+        envelope: ClientControlEnvelope,
+        context: &NativeConnectionContext,
+    ) -> Vec<HostControlEnvelope> {
+        if let Some(request) = envelope.payload.as_ref().and_then(|payload| match payload {
+            client_control_envelope::Payload::MediaPark(request) => Some(request),
+            _ => None,
+        }) {
+            let media_admission_gate = Arc::clone(&self.media_admission_gate);
+            let media_admission_guard = match media_admission_gate.try_lock() {
+                Ok(guard) => guard,
+                Err(_) => {
+                    return self.reject_native_media_park_admission(envelope.request_id, request)
+                }
+            };
+            let responses = self.dispatch_native_control_inner(envelope, context);
+            drop(media_admission_guard);
+            return responses;
+        }
+        self.dispatch_native_control_inner(envelope, context)
+    }
+
+    /// Dispatches a media-park operation from an async QUIC task that already
+    /// owns the shared admission gate. The owned guard spans platform reset,
+    /// state/revision publication, and the correlated result, making the
+    /// transition atomic with every media sender's final admission check.
+    pub(crate) fn dispatch_native_control_with_media_admission(
+        &mut self,
+        envelope: ClientControlEnvelope,
+        context: &NativeConnectionContext,
+        _media_admission_guard: tokio::sync::OwnedMutexGuard<()>,
+    ) -> Vec<HostControlEnvelope> {
+        self.dispatch_native_control_inner(envelope, context)
+    }
+
+    fn dispatch_native_control_inner(
         &mut self,
         envelope: ClientControlEnvelope,
         context: &NativeConnectionContext,
@@ -675,6 +717,31 @@ impl ControlRouter {
                 "native session operation is not valid in the current state",
             )],
         }
+    }
+
+    fn reject_native_media_park_admission(
+        &self,
+        request_id: u64,
+        request: &MediaParkRequest,
+    ) -> Vec<HostControlEnvelope> {
+        let pending = self.native.pending.as_ref();
+        let session_epoch = pending
+            .map(|pending| pending.plan.session_epoch)
+            .unwrap_or(request.session_epoch);
+        let state = pending
+            .map(|pending| pending.media_park_state)
+            .unwrap_or(NativeMediaParkState::Unspecified);
+        let revision = pending
+            .map(|pending| pending.media_park_revision)
+            .unwrap_or_default();
+        vec![media_park_result(
+            request_id,
+            session_epoch,
+            revision,
+            state,
+            NativeMediaParkResultCode::Rejected,
+            "media park transition is busy; retry the same revision",
+        )]
     }
 
     fn dispatch_native_display_reconfiguration(
@@ -1014,6 +1081,7 @@ impl ControlRouter {
                 )])
             }
         };
+        self.apply_platform_capability_gates(&mut plan);
         plan.policy_revision = pending.plan.policy_revision.saturating_add(1);
         plan.video_configuration_id = pending
             .codec_configuration
@@ -2406,7 +2474,7 @@ impl ControlRouter {
                 return vec![native_error(request_id, ERROR_PLATFORM, message)];
             }
         }
-        let plan = match negotiate_native_session(
+        let mut plan = match negotiate_native_session(
             &hello,
             &context.host_capabilities,
             context.session_epoch,
@@ -2414,6 +2482,7 @@ impl ControlRouter {
             Ok(plan) => plan,
             Err(error) => return vec![native_negotiation_error(request_id, error)],
         };
+        self.apply_platform_capability_gates(&mut plan);
         self.native.pending = Some(PendingNativeSession {
             hello,
             plan: plan.clone(),
