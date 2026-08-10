@@ -1630,6 +1630,23 @@ impl VideoSenderState {
         self.parked = false;
     }
 
+    fn prepare_media_park_revision(&mut self, media_park_revision: u64) {
+        if self.pending_media_park_revision == Some(media_park_revision) {
+            return;
+        }
+        // A park/resume transition can complete between media polls. Fence all
+        // sender-local generation, repair, and staged-frame state even when no
+        // parked poll observed the boundary.
+        self.packetizer = None;
+        self.pending_frame = None;
+        self.pending_since = None;
+        self.repair_required = false;
+        self.repair_after_bootstrap = false;
+        self.frame_id = 1;
+        self.keyframe_wire_rate_requirement_kbps = None;
+        self.pending_media_park_revision = Some(media_park_revision);
+    }
+
     /// Keeps the highest requirement so a small keyframe cannot lower the floor.
     fn record_keyframe_wire_rate_requirement(&mut self, required_wire_kbps: u32) {
         self.keyframe_wire_rate_requirement_kbps = Some(
@@ -1886,17 +1903,7 @@ async fn poll_and_send_video(
     if sender.parked {
         sender.leave_parked();
     }
-    if sender.pending_frame.is_some()
-        && sender.pending_media_park_revision != Some(delivery.media_park_revision)
-    {
-        sender.pending_frame = None;
-        sender.pending_since = None;
-        sender.packetizer = None;
-        sender.repair_required = false;
-        sender.repair_after_bootstrap = false;
-        sender.frame_id = 1;
-        sender.pending_media_park_revision = None;
-    }
+    sender.prepare_media_park_revision(delivery.media_park_revision);
     if let Err(message) = sender.prepare(&delivery) {
         return MediaAttempt::Failed(video_failure("packetizer-failed", message));
     }
@@ -3716,6 +3723,25 @@ mod tests {
         assert_eq!(sender.unit_id, 1);
         assert_eq!(sender.media_park_revision, Some(9));
         assert!(sender.packetizer.is_none());
+    }
+
+    #[test]
+    fn video_sender_resets_generation_and_repair_state_between_park_polls() {
+        let mut sender = VideoSenderState {
+            frame_id: 41,
+            repair_required: true,
+            repair_after_bootstrap: true,
+            pending_media_park_revision: Some(7),
+            ..VideoSenderState::default()
+        };
+
+        sender.prepare_media_park_revision(9);
+
+        assert_eq!(sender.frame_id, 1);
+        assert!(!sender.repair_required);
+        assert!(!sender.repair_after_bootstrap);
+        assert_eq!(sender.pending_media_park_revision, Some(9));
+        assert!(sender.pending_frame.is_none());
     }
 
     #[tokio::test]
