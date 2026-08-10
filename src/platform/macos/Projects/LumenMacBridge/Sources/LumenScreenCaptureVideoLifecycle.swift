@@ -331,7 +331,7 @@ extension LumenScreenCaptureVideoRuntime {
         publication: LumenCaptureStartPublication
     ) {
         queue.sync {
-            statisticsHandler(statistics)
+            publishStatistics(reason: .immediate)
             eventHandler(.init(
                 kind: .started,
                 message: captureStartedMessage(

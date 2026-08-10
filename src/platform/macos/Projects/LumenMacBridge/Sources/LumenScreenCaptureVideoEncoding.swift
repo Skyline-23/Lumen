@@ -286,8 +286,7 @@ extension LumenScreenCaptureVideoRuntime {
                 self.statistics.appliedVideoBitRateKbps =
                     appliedBitrateKbps
             }
-            self.refreshStatisticsNotes()
-            self.statisticsHandler(self.statistics)
+            self.publishStatistics(reason: .immediate)
         }
     }
 
@@ -378,8 +377,7 @@ extension LumenScreenCaptureVideoRuntime {
         statistics.processingFailureCount &+= 1
         sourceColorContractStatus = "rejected:\(error.localizedDescription)"
         statistics.lastErrorDescription = error.localizedDescription
-        refreshStatisticsNotes()
-        statisticsHandler(statistics)
+        publishStatistics(reason: .terminal)
         guard !terminalContractFailureReported else { return }
         terminalContractFailureReported = true
         sourceColorContractFailureReported = true
@@ -446,8 +444,7 @@ extension LumenScreenCaptureVideoRuntime {
             videoBootstrapAdmission.cancelBootstrapSubmission()
             pendingVideoBootstrapSource = nil
         }
-        refreshStatisticsNotes()
-        statisticsHandler(statistics)
+        publishStatistics(reason: .terminal)
         eventHandler(.init(
             kind: .failed,
             message: error.localizedDescription,

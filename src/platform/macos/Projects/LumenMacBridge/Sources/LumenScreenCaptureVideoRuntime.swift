@@ -82,6 +82,12 @@ final class LumenScreenCaptureVideoRuntime:
     var sourceColorContractFailureReported = false
     var terminalContractFailureReported = false
     var statistics = LumenEncodedCaptureSessionStatistics()
+    var statisticsPublicationPolicy =
+        LumenEncodedCaptureStatisticsPublicationPolicy()
+    var dropEventPublicationPolicy =
+        LumenEncodedCaptureStatisticsPublicationPolicy()
+    var statisticsNotesRefreshGate =
+        LumenEncodedCaptureStatisticsNotesRefreshGate()
     var outputOwnership = LumenScreenCaptureOutputOwnership()
     var displayAdmissionMode = LumenScreenCaptureDisplayAdmissionMode.shareableContentEnumeration
     var displayAdmissionDurationMilliseconds = 0.0

@@ -28,6 +28,171 @@ final class LumenMacBridgePresentationTests: XCTestCase {
         XCTAssertNil(utilization.videoToolboxOutputPercent)
     }
 
+    func testSuccessfulOutputStatisticsPublicationIsBoundedAndTerminalFlushIsFresh() {
+        var policy = LumenEncodedCaptureStatisticsPublicationPolicy()
+        var statistics = LumenEncodedCaptureSessionStatistics()
+        var publicationCount = 0
+        var publishedOutputCounts: [UInt64] = []
+        var deliveredFrameCount: UInt64 = 0
+
+        if policy.shouldPublish(reason: .immediate, atUptimeNanoseconds: 0) {
+            publishedOutputCounts.append(statistics.emittedFrameCount)
+        }
+        for output in 1...1_000 {
+            statistics.emittedFrameCount = UInt64(output)
+            deliveredFrameCount &+= 1
+            if policy.shouldPublish(
+                reason: .highRateUpdate,
+                atUptimeNanoseconds: 1
+            ) {
+                publicationCount += 1
+                publishedOutputCounts.append(statistics.emittedFrameCount)
+            }
+        }
+
+        XCTAssertEqual(deliveredFrameCount, 1_000)
+        XCTAssertEqual(publicationCount, 8)
+        XCTAssertEqual(
+            Array(publishedOutputCounts.dropFirst()),
+            [120, 240, 360, 480, 600, 720, 840, 960]
+        )
+        XCTAssertNotEqual(publishedOutputCounts.last, statistics.emittedFrameCount)
+
+        if policy.shouldPublish(reason: .terminal, atUptimeNanoseconds: 2) {
+            publishedOutputCounts.append(statistics.emittedFrameCount)
+        }
+
+        XCTAssertEqual(publishedOutputCounts.last, 1_000)
+    }
+
+    func testForcedStatisticsPublicationFlushesPendingSuccessfulOutputCounters() {
+        var policy = LumenEncodedCaptureStatisticsPublicationPolicy()
+        var statistics = LumenEncodedCaptureSessionStatistics()
+        var publishedOutputCounts: [UInt64] = []
+        if policy.shouldPublish(reason: .immediate, atUptimeNanoseconds: 0) {
+            publishedOutputCounts.append(statistics.emittedFrameCount)
+        }
+
+        for output in 1...7 {
+            statistics.emittedFrameCount = UInt64(output)
+            XCTAssertFalse(
+                policy.shouldPublish(
+                    reason: .highRateUpdate,
+                    atUptimeNanoseconds: 1
+                )
+            )
+        }
+
+        if policy.shouldPublish(reason: .forced, atUptimeNanoseconds: 2) {
+            publishedOutputCounts.append(statistics.emittedFrameCount)
+        }
+        XCTAssertEqual(publishedOutputCounts.last, 7)
+    }
+
+    func testSuccessfulOutputStatisticsPublicationHonorsTimeBoundary() {
+        var policy = LumenEncodedCaptureStatisticsPublicationPolicy(
+            configuration: .init(
+                minimumIntervalNanoseconds: 250,
+                maximumHighRateUpdates: 120
+            )
+        )
+
+        XCTAssertTrue(
+            policy.shouldPublish(
+                reason: .immediate,
+                atUptimeNanoseconds: 0
+            )
+        )
+        XCTAssertFalse(
+            policy.shouldPublish(
+                reason: .highRateUpdate,
+                atUptimeNanoseconds: 249
+            )
+        )
+        XCTAssertTrue(
+            policy.shouldPublish(
+                reason: .highRateUpdate,
+                atUptimeNanoseconds: 250
+            )
+        )
+    }
+
+    func testDropEventPublicationIsIndependentFromOutputStatistics() {
+        let configuration =
+            LumenEncodedCaptureStatisticsPublicationPolicy.Configuration(
+                minimumIntervalNanoseconds: 250,
+                maximumHighRateUpdates: 3
+            )
+        var outputPolicy = LumenEncodedCaptureStatisticsPublicationPolicy(
+            configuration: configuration
+        )
+        var dropEventPolicy = LumenEncodedCaptureStatisticsPublicationPolicy(
+            configuration: configuration
+        )
+
+        XCTAssertTrue(
+            outputPolicy.shouldPublish(
+                reason: .highRateUpdate,
+                atUptimeNanoseconds: 0
+            )
+        )
+        XCTAssertTrue(
+            dropEventPolicy.shouldPublish(
+                reason: .highRateUpdate,
+                atUptimeNanoseconds: 1
+            )
+        )
+        XCTAssertFalse(
+            dropEventPolicy.shouldPublish(
+                reason: .highRateUpdate,
+                atUptimeNanoseconds: 2
+            )
+        )
+        XCTAssertFalse(
+            dropEventPolicy.shouldPublish(
+                reason: .highRateUpdate,
+                atUptimeNanoseconds: 3
+            )
+        )
+        XCTAssertTrue(
+            dropEventPolicy.shouldPublish(
+                reason: .highRateUpdate,
+                atUptimeNanoseconds: 4
+            )
+        )
+        XCTAssertTrue(
+            dropEventPolicy.shouldPublish(
+                reason: .highRateUpdate,
+                atUptimeNanoseconds: 254
+            )
+        )
+        XCTAssertTrue(
+            dropEventPolicy.shouldPublish(
+                reason: .terminal,
+                atUptimeNanoseconds: 255
+            )
+        )
+        XCTAssertFalse(
+            dropEventPolicy.shouldPublish(
+                reason: .highRateUpdate,
+                atUptimeNanoseconds: 256
+            )
+        )
+    }
+
+    func testStatisticsNotesRefreshGatePublishesEachBoundaryOnce() {
+        var gate = LumenEncodedCaptureStatisticsNotesRefreshGate()
+
+        XCTAssertFalse(gate.shouldRefresh(sourceFrameCount: 0))
+        XCTAssertTrue(gate.shouldRefresh(sourceFrameCount: 1))
+        XCTAssertFalse(gate.shouldRefresh(sourceFrameCount: 1))
+        XCTAssertFalse(gate.shouldRefresh(sourceFrameCount: 119))
+        XCTAssertTrue(gate.shouldRefresh(sourceFrameCount: 120))
+        XCTAssertFalse(gate.shouldRefresh(sourceFrameCount: 120))
+        XCTAssertFalse(gate.shouldRefresh(sourceFrameCount: 121))
+        XCTAssertTrue(gate.shouldRefresh(sourceFrameCount: 240))
+    }
+
     func testRecommendedVideoForwardingFrameCapacityStaysLowLatency() {
         let cases = [
             LumenForwardingCapacityTestCase(.q2, 120, 2),

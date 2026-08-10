@@ -125,11 +125,43 @@ extension LumenScreenCaptureVideoRuntime {
     }
 
     func refreshStatisticsNotesIfNeeded() {
-        if statistics.sourceFrameCount == 1
-            || statistics.sourceFrameCount % 120 == 0 {
-            refreshStatisticsNotes()
-            statisticsHandler(statistics)
+        guard statisticsNotesRefreshGate.shouldRefresh(
+            sourceFrameCount: statistics.sourceFrameCount
+        ) else {
+            return
         }
+        publishStatistics(reason: .forced)
+    }
+
+    @discardableResult
+    func publishStatistics(
+        reason: LumenEncodedCaptureStatisticsPublicationPolicy.PublicationReason,
+        rebuildingNotes: Bool = true,
+        atUptimeNanoseconds uptimeNanoseconds: UInt64 =
+            DispatchTime.now().uptimeNanoseconds
+    ) -> Bool {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard statisticsPublicationPolicy.shouldPublish(
+            reason: reason,
+            atUptimeNanoseconds: uptimeNanoseconds
+        ) else {
+            return false
+        }
+        if rebuildingNotes {
+            refreshStatisticsNotes()
+        }
+        statisticsHandler(statistics)
+        return true
+    }
+
+    func publishSuccessfulOutputStatisticsIfNeeded(
+        atUptimeNanoseconds uptimeNanoseconds: UInt64 =
+            DispatchTime.now().uptimeNanoseconds
+    ) {
+        publishStatistics(
+            reason: .highRateUpdate,
+            atUptimeNanoseconds: uptimeNanoseconds
+        )
     }
 
     func refreshStatisticsNotes() {

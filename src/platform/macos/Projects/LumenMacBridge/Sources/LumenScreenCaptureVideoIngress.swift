@@ -191,7 +191,7 @@ extension LumenScreenCaptureVideoRuntime {
             }
             statistics.processingFailureCount &+= 1
             statistics.lastErrorDescription = "VTCompressionSessionEncodeFrame failed with OSStatus \(result.status)"
-            statisticsHandler(statistics)
+            publishStatistics(reason: .terminal)
             eventHandler(.init(
                 kind: .failed,
                 message: statistics.lastErrorDescription,
@@ -269,8 +269,18 @@ extension LumenScreenCaptureVideoRuntime {
         statistics.pendingAdmissionDropCount &+= 1
         encoderPendingDropCount &+= 1
         statistics.lastErrorDescription = message
-        refreshStatisticsNotesIfNeeded()
-        statisticsHandler(statistics)
+        let publicationUptimeNanoseconds = DispatchTime.now().uptimeNanoseconds
+        publishStatistics(
+            reason: .highRateUpdate,
+            rebuildingNotes: false,
+            atUptimeNanoseconds: publicationUptimeNanoseconds
+        )
+        guard dropEventPublicationPolicy.shouldPublish(
+            reason: .highRateUpdate,
+            atUptimeNanoseconds: publicationUptimeNanoseconds
+        ) else {
+            return
+        }
         eventHandler(.init(
             kind: .droppedFrame,
             message: message,
@@ -283,8 +293,7 @@ extension LumenScreenCaptureVideoRuntime {
             guard let self, !self.stopping else { return }
             self.statistics.isRunning = false
             self.statistics.lastErrorDescription = error.localizedDescription
-            self.refreshStatisticsNotes()
-            self.statisticsHandler(self.statistics)
+            self.publishStatistics(reason: .terminal)
             self.eventHandler(.init(kind: .failed, message: error.localizedDescription))
             self.terminationHandler(error)
         }
