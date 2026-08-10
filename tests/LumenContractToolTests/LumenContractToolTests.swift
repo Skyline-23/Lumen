@@ -483,6 +483,24 @@ func rejectsUnknownLifecycleAuthorityKeys() throws {
 }
 
 @Test
+func rejectsUnknownNestedAuthorityDuringCompatibility() throws {
+  let baseline = try currentContract()
+  var candidate = baseline
+  var native = try #require(candidate["nativeTransport"] as? [String: Any])
+  var capabilities = try #require(native["mediaCapabilities"] as? [String: Any])
+  capabilities["futureMediaCapability"] = 64
+  native["mediaCapabilities"] = capabilities
+  candidate["nativeTransport"] = native
+
+  #expect(throws: LumenContractToolError.self) {
+    try LumenContractTool.checkCompatibility(
+      baseline: baseline,
+      current: candidate
+    )
+  }
+}
+
+@Test
 func rejectsInvalidMediaParkLifecycleSemantics() throws {
   try assertContractValidationRejects { contract in
     try mutateLifecycleSection(&contract, "mediaParkResume") { mediaPark in

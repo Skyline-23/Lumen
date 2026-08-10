@@ -40,20 +40,25 @@ extension LumenBridgeRuntime {
         generation: UInt64
     ) -> LumenAudioCaptureCallbacks {
         let runtime = self
+        let mediaEpochToken = audioMediaEpochToken
         return LumenAudioCaptureCallbacks(
             frameHandler: { frame in
+                let mediaEpoch = mediaEpochToken.load()
                 Task {
                     await runtime.recordAudioFrame(
                         frame,
-                        generation: generation
+                        generation: generation,
+                        mediaEpoch: mediaEpoch
                     )
                 }
             },
             eventHandler: { event in
+                let mediaEpoch = mediaEpochToken.load()
                 Task {
                     await runtime.recordAudioCaptureEvent(
                         event,
-                        generation: generation
+                        generation: generation,
+                        mediaEpoch: mediaEpoch
                     )
                 }
             }
@@ -88,9 +93,11 @@ extension LumenBridgeRuntime {
 
     func recordAudioCaptureEvent(
         _ event: LumenAudioCaptureSessionEvent,
-        generation: UInt64
+        generation: UInt64,
+        mediaEpoch: UInt64
     ) {
         guard generation == audioCaptureGeneration,
+              mediaEpoch == audioMediaEpochToken.load(),
               audioCaptureSession != nil || audioCaptureIsHostedByEncodedSession else {
             return
         }
@@ -254,7 +261,8 @@ private extension LumenBridgeRuntime {
                     .systemAudioPlaybackSuppressionCleanupFailed(cleanupFailures)
                     .localizedDescription
             ),
-            generation: audioCaptureGeneration
+            generation: audioCaptureGeneration,
+            mediaEpoch: audioMediaEpochToken.load()
         )
         audioForwarder.setProducerActive(false)
     }
@@ -283,7 +291,8 @@ private extension LumenBridgeRuntime {
                 kind: .failed,
                 message: error.localizedDescription
             ),
-            generation: audioCaptureGeneration
+            generation: audioCaptureGeneration,
+            mediaEpoch: audioMediaEpochToken.load()
         )
         if cleanupFailures.isEmpty {
             audioCaptureSession = nil
@@ -301,9 +310,11 @@ private extension LumenBridgeRuntime {
 
     func recordAudioFrame(
         _ frame: LumenAudioFrame,
-        generation: UInt64
+        generation: UInt64,
+        mediaEpoch: UInt64
     ) {
         guard generation == audioCaptureGeneration,
+              mediaEpoch == audioMediaEpochToken.load(),
               audioCaptureSession != nil || audioCaptureIsHostedByEncodedSession else {
             return
         }

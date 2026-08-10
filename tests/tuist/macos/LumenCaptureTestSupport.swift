@@ -264,6 +264,8 @@ final class LumenReentrantTerminationRuntime:
         await factory.stop(runtimeID: runtimeID)
     }
 
+    func resetMediaEpoch() {}
+
     func requestImmediateKeyFrame() {}
 
     func resumeVideoEncodingAfterCodecAck() async -> Bool {

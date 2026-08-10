@@ -192,6 +192,15 @@ final class LumenMacBridgeForwardingTests: XCTestCase {
         XCTAssertEqual(forwarder.popNextFrame()?.sequenceNumber, 2)
     }
 
+    func testAudioMediaEpochTokenRejectsDelayedCallbackAfterReset() {
+        let token = LumenAudioMediaEpochToken()
+        let callbackEpoch = token.load()
+
+        token.advance()
+
+        XCTAssertNotEqual(callbackEpoch, token.load())
+    }
+
     func testBridgeForwardingDropsDependentsUntilRecoveryKeyFrame() async throws {
         let runtime = Self.makeBridgeRuntime()
         await runtime.debugResetVideoForwarding()

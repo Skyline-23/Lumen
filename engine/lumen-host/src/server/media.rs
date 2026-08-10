@@ -440,14 +440,18 @@ where
     Ok((started.elapsed(), outcome))
 }
 
-async fn send_tracked_admitted_connection_datagram(
+async fn send_tracked_admitted_connection_datagram<Current>(
     connection: &quinn::Connection,
     packet_arrival: &PacketArrivalSendObservation,
     admission_gate: &tokio::sync::Mutex<()>,
+    current: Current,
     mode: DatagramBatchMode,
     datagram: Vec<u8>,
     deadline: Option<Instant>,
-) -> DatagramSendOutcome {
+) -> DatagramSendOutcome
+where
+    Current: Fn() -> bool,
+{
     let admission = match deadline {
         Some(deadline) => match wait_for_datagram_deadline(deadline, admission_gate.lock()).await {
             Ok(admission) => admission,
@@ -455,6 +459,10 @@ async fn send_tracked_admitted_connection_datagram(
         },
         None => admission_gate.lock().await,
     };
+    if !current() {
+        drop(admission);
+        return DatagramSendOutcome::Cancelled;
+    }
     let outcome =
         send_tracked_connection_datagram(connection, packet_arrival, mode, datagram, deadline)
             .await;
@@ -632,6 +640,7 @@ where
                 }
             }
         } else {
+            let _admission = admission_gate.lock().await;
             send(DatagramBatchMode::CommittedDrain, datagram, None).await
         };
         if mode == DatagramBatchMode::DeadlineWait || index != 0 {
@@ -807,7 +816,10 @@ pub(super) async fn run_native_media_loop(
         history: packet_arrival_history,
         warning_reporter: packet_arrival_warning_reporter,
     };
-    let admission_gate = Arc::new(tokio::sync::Mutex::new(()));
+    let admission_gate = router
+        .lock()
+        .map_err(|_| "native control router lock is poisoned".to_owned())?
+        .native_media_admission_gate();
     run_native_media_tasks(
         run_native_audio_sender(
             connection.clone(),
@@ -1235,23 +1247,22 @@ async fn poll_and_send_audio(
         DatagramBatchMode::DeadlineWait,
         Some(deadline),
         |mode, datagram, deadline| {
-            let media_router = Arc::clone(&media_router);
+            let validation_router = Arc::clone(&media_router);
             async move {
-                let current = media_router.lock().is_ok_and(|router| {
-                    router.native_media_datagram_send_is_current(
-                        delivery.session_epoch,
-                        delivery.media_park_revision,
-                        delivery.media_delivery_generation,
-                        None,
-                    )
-                });
-                if !current {
-                    return DatagramSendOutcome::DeadlineExceeded;
-                }
                 send_tracked_admitted_connection_datagram(
                     connection,
                     packet_arrival,
                     admission_gate,
+                    move || {
+                        validation_router.lock().is_ok_and(|router| {
+                            router.native_media_datagram_send_is_current(
+                                delivery.session_epoch,
+                                delivery.media_park_revision,
+                                delivery.media_delivery_generation,
+                                None,
+                            )
+                        })
+                    },
                     mode,
                     datagram,
                     deadline,

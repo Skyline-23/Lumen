@@ -362,12 +362,17 @@ async fn handle_connection(
     let task_stop = Arc::new(AtomicBool::new(false));
     let packet_arrival_history = PacketArrivalHistory::spawn();
     let video_wire_pacer = Arc::new(tokio::sync::Mutex::new(VideoWireRatePacer::default()));
+    let media_admission_gate = router
+        .lock()
+        .map_err(|_| "native control router lock is poisoned".to_owned())?
+        .native_media_admission_gate();
     // Client streams 4 and 8 are not peer-visible until a STREAM frame is transmitted. Do not
     // make either idle stream a prerequisite for returning the session plan on control stream 0.
     let first_control_response_notify = Arc::new(Notify::new());
     let configuration_router = Arc::clone(&router);
     let configuration_task_stop = Arc::clone(&task_stop);
     let configuration_task_notify = Arc::clone(&configuration_notify);
+    let configuration_admission_gate = Arc::clone(&media_admission_gate);
     let mut configuration_task = tokio::spawn(async move {
         publish_codec_configurations(
             configuration_send,
@@ -375,6 +380,7 @@ async fn handle_connection(
             configuration_router,
             configuration_task_stop,
             configuration_task_notify,
+            configuration_admission_gate,
         )
         .await
     });
@@ -383,6 +389,7 @@ async fn handle_connection(
     let bootstrap_stop = Arc::clone(&task_stop);
     let bootstrap_task_notify = Arc::clone(&bootstrap_notify);
     let bootstrap_wire_pacer = Arc::clone(&video_wire_pacer);
+    let bootstrap_admission_gate = Arc::clone(&media_admission_gate);
     let mut bootstrap_task = tokio::spawn(async move {
         publish_video_bootstraps(
             bootstrap_connection,
@@ -391,6 +398,7 @@ async fn handle_connection(
             bootstrap_stop,
             bootstrap_task_notify,
             bootstrap_wire_pacer,
+            bootstrap_admission_gate,
         )
         .await
     });
@@ -605,6 +613,7 @@ async fn publish_codec_configurations(
     router: SharedControlRouter,
     stop: Arc<AtomicBool>,
     notify: Arc<Notify>,
+    admission_gate: Arc<tokio::sync::Mutex<()>>,
 ) -> Result<(), String> {
     while !stop.load(Ordering::Acquire) {
         let configuration = router
@@ -630,9 +639,23 @@ async fn publish_codec_configurations(
             }
             let encoded = encode_codec_configuration_message(&configuration)
                 .map_err(|error| format!("could not encode codec configuration: {error:?}"))?;
-            send.write_all(&encoded)
-                .await
-                .map_err(|error| format!("could not write codec configuration: {error}"))?;
+            {
+                let _admission = admission_gate.lock().await;
+                let current = router
+                    .lock()
+                    .map_err(|_| "native control router lock is poisoned".to_owned())?
+                    .native_codec_configuration_send_is_current(
+                        session_epoch,
+                        configuration.configuration_id,
+                        media_delivery_generation,
+                    );
+                if !current {
+                    continue;
+                }
+                send.write_all(&encoded)
+                    .await
+                    .map_err(|error| format!("could not write codec configuration: {error}"))?;
+            }
             if !router
                 .lock()
                 .map_err(|_| "native control router lock is poisoned".to_owned())?
@@ -746,6 +769,7 @@ async fn publish_video_bootstraps(
     stop: Arc<AtomicBool>,
     notify: Arc<Notify>,
     wire_pacer: Arc<tokio::sync::Mutex<VideoWireRatePacer>>,
+    admission_gate: Arc<tokio::sync::Mutex<()>>,
 ) -> Result<(), String> {
     let mut expected_stream_index = 1_u64;
     while !stop.load(Ordering::Acquire) {
@@ -807,26 +831,30 @@ async fn publish_video_bootstraps(
             media_delivery_generation,
             lifecycle_deadline,
             &wire_pacer,
+            &admission_gate,
         )
         .await?;
         if !write_completed {
             let _ = send.reset(VarInt::from_u32(0));
             continue;
         }
-        let still_current = router
-            .lock()
-            .map_err(|_| "native control router lock is poisoned".to_owned())?
-            .native_video_bootstrap_send_is_current(
-                session_epoch,
-                bootstrap.generation_id,
-                media_delivery_generation,
-            );
-        if !still_current {
-            let _ = send.reset(VarInt::from_u32(0));
-            continue;
+        {
+            let _admission = admission_gate.lock().await;
+            let still_current = router
+                .lock()
+                .map_err(|_| "native control router lock is poisoned".to_owned())?
+                .native_video_bootstrap_send_is_current(
+                    session_epoch,
+                    bootstrap.generation_id,
+                    media_delivery_generation,
+                );
+            if !still_current {
+                let _ = send.reset(VarInt::from_u32(0));
+                continue;
+            }
+            send.finish()
+                .map_err(|error| format!("could not finish video bootstrap stream: {error}"))?;
         }
-        send.finish()
-            .map_err(|error| format!("could not finish video bootstrap stream: {error}"))?;
         eprintln!(
             "Lumen native QUIC stage=video-bootstrap-sent session-epoch={} stream-id={} configuration-id={} generation-id={} frame-id={} reason={} access-unit-bytes={} write-duration-us={}",
             bootstrap.session_epoch,
@@ -945,6 +973,7 @@ async fn write_paced_video_bootstrap(
     media_delivery_generation: u64,
     lifecycle_deadline: Instant,
     wire_pacer: &Arc<tokio::sync::Mutex<VideoWireRatePacer>>,
+    admission_gate: &Arc<tokio::sync::Mutex<()>>,
 ) -> Result<bool, String> {
     if encoded.is_empty() {
         return Err("video bootstrap is empty".to_owned());
@@ -986,21 +1015,24 @@ async fn write_paced_video_bootstrap(
             .ok_or_else(|| "video bootstrap chunk offset overflowed".to_owned())?;
         let chunk = &encoded[offset..chunk_end];
         tokio::time::sleep_until(send_at.into()).await;
-        let current = router
-            .lock()
-            .map_err(|_| "native control router lock is poisoned".to_owned())?
-            .native_video_bootstrap_send_is_current(
-                session_epoch,
-                generation_id,
-                media_delivery_generation,
-            );
-        if !current {
-            return Ok(false);
+        {
+            let _admission = admission_gate.lock().await;
+            let current = router
+                .lock()
+                .map_err(|_| "native control router lock is poisoned".to_owned())?
+                .native_video_bootstrap_send_is_current(
+                    session_epoch,
+                    generation_id,
+                    media_delivery_generation,
+                );
+            if !current {
+                return Ok(false);
+            }
+            tokio::time::timeout_at(lifecycle_deadline.into(), send.write_all(chunk))
+                .await
+                .map_err(|_| "video bootstrap write exceeded the lifecycle deadline".to_owned())?
+                .map_err(|error| format!("could not write video bootstrap: {error}"))?;
         }
-        tokio::time::timeout_at(lifecycle_deadline.into(), send.write_all(chunk))
-            .await
-            .map_err(|_| "video bootstrap write exceeded the lifecycle deadline".to_owned())?
-            .map_err(|error| format!("could not write video bootstrap: {error}"))?;
         offset = chunk_end;
     }
     Ok(true)
@@ -1105,6 +1137,18 @@ async fn dispatch_native_control_async(
     context: &NativeConnectionContext,
 ) -> Result<Vec<HostControlEnvelope>, String> {
     let request_id = request.request_id;
+    let _media_admission_guard = if matches!(
+        request.payload.as_ref(),
+        Some(lumen_engine::client_control_envelope::Payload::MediaPark(_))
+    ) {
+        let gate = router
+            .lock()
+            .map_err(|_| "native control router lock is poisoned".to_owned())?
+            .native_media_admission_gate();
+        Some(gate.lock_owned().await)
+    } else {
+        None
+    };
     if matches!(
         request.payload.as_ref(),
         Some(lumen_engine::client_control_envelope::Payload::DisplayReconfiguration(_))

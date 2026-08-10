@@ -31,6 +31,7 @@ pub(super) struct PacketQueueContext {
 struct PacketQueueState {
     queues: WindowsMediaPacketQueues,
     video_session_epoch: Option<u32>,
+    media_epoch: u64,
 }
 
 impl PacketQueueContext {
@@ -43,13 +44,24 @@ impl PacketQueueContext {
         Ok(())
     }
 
-    pub(super) fn push_audio(&self, payload: Vec<u8>) -> Result<(), String> {
-        self.state
+    pub(super) fn current_media_epoch(&self) -> Result<u64, String> {
+        Ok(self
+            .state
             .lock()
             .map_err(|_| "Windows media packet queue is poisoned".to_owned())?
-            .queues
-            .push_audio(payload);
-        Ok(())
+            .media_epoch)
+    }
+
+    pub(super) fn push_audio(&self, media_epoch: u64, payload: Vec<u8>) -> Result<bool, String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "Windows media packet queue is poisoned".to_owned())?;
+        if state.video_session_epoch.is_none() || state.media_epoch != media_epoch {
+            return Ok(false);
+        }
+        state.queues.push_audio(payload);
+        Ok(true)
     }
 
     fn activate_video_session(&self, session_epoch: u32) -> Result<(), String> {
@@ -71,6 +83,7 @@ impl PacketQueueContext {
             .map_err(|_| "Windows media packet queue is poisoned".to_owned())?;
         if state.video_session_epoch == Some(session_epoch) {
             state.video_session_epoch = None;
+            state.media_epoch = state.media_epoch.wrapping_add(1);
             state.queues = WindowsMediaPacketQueues::default();
         }
         Ok(())
@@ -86,6 +99,7 @@ impl PacketQueueContext {
                 "Windows media queue reset does not belong to session epoch {session_epoch}"
             ));
         }
+        state.media_epoch = state.media_epoch.wrapping_add(1);
         state.queues.reset_media_epoch();
         Ok(())
     }
@@ -473,11 +487,30 @@ mod tests {
         assert!(packets.reset_media_queue(7).is_err());
 
         packets.activate_video_session(7).unwrap();
-        packets.push_audio(vec![1]).unwrap();
+        let media_epoch = packets.current_media_epoch().unwrap();
+        assert!(packets.push_audio(media_epoch, vec![1]).unwrap());
         assert!(packets.reset_media_queue(8).is_err());
         assert!(packets.reset_media_queue(7).is_ok());
 
         let mut state = packets.state.lock().unwrap();
+        assert!(state.queues.pop_audio().is_none());
+    }
+
+    #[test]
+    fn media_queue_reset_rejects_audio_captured_before_boundary() {
+        let packets = PacketQueueContext::default();
+        packets.activate_video_session(7).unwrap();
+        let before_reset = packets.current_media_epoch().unwrap();
+        assert!(packets.push_audio(before_reset, vec![1]).unwrap());
+
+        packets.reset_media_queue(7).unwrap();
+        let after_reset = packets.current_media_epoch().unwrap();
+        assert_ne!(before_reset, after_reset);
+        assert!(!packets.push_audio(before_reset, vec![2]).unwrap());
+        assert!(packets.push_audio(after_reset, vec![3]).unwrap());
+
+        let mut state = packets.state.lock().unwrap();
+        assert_eq!(state.queues.pop_audio().unwrap().payload, vec![3]);
         assert!(state.queues.pop_audio().is_none());
     }
 }

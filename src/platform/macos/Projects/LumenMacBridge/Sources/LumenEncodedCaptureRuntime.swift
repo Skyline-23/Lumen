@@ -70,8 +70,6 @@ protocol LumenEncodedCaptureRuntime: AnyObject, Sendable {
 }
 
 extension LumenEncodedCaptureRuntime {
-    func resetMediaEpoch() {}
-
     func requestPeriodicKeyFrame() async -> Bool {
         false
     }

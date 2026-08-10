@@ -1,6 +1,25 @@
 import Foundation
 import Synchronization
 
+/// A callback-safe media epoch token. Audio callbacks capture the token value
+/// before hopping to the bridge actor, so callbacks admitted before a reset
+/// cannot enqueue after the reset has advanced the epoch.
+final class LumenAudioMediaEpochToken: Sendable {
+    private let value = Mutex(UInt64(0))
+
+    func load() -> UInt64 {
+        value.withLock { $0 }
+    }
+
+    @discardableResult
+    func advance() -> UInt64 {
+        value.withLock { value in
+            value &+= 1
+            return value
+        }
+    }
+}
+
 private struct LumenAudioIngressState: Sendable {
     var frames = LumenFixedCapacityRingBuffer<LumenBridgeDrainedAudioFrame>(
         capacity: 8

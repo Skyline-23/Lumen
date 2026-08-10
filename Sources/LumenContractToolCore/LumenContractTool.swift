@@ -43,6 +43,13 @@ public enum LumenContractTool {
   }
 
   public static func validate(_ contract: [String: Any]) throws {
+    try validate(contract, validateProtobufSource: true)
+  }
+
+  private static func validate(
+    _ contract: [String: Any],
+    validateProtobufSource: Bool
+  ) throws {
     _ = try requireKeys(
       contract,
       ["$schema", "schemaVersion", "identity", "protobuf", "nativeTransport", "https", "lifecycle", "rendering"],
@@ -70,14 +77,16 @@ public enum LumenContractTool {
     try require(string(protobuf["syntax"]) == "proto3", "protobuf syntax must be proto3")
     try require(string(protobuf["package"]) == "lumen.streaming.v4", "invalid protobuf package")
     let source = try requiredString(protobuf["source"], "protobuf.source")
-    for fragment in [
-      "syntax = \"proto3\";", "package lumen.streaming.v4;", "reserved 3;", "reserved 8;",
-      "reserved 7, 8, 9;", "uint64 media_capabilities = 46;",
-      "StopSession stop_session = 13;", "SessionStopped session_stopped = 12;",
-      "MediaParkRequest media_park = 18;", "MediaParkResult media_park = 17;",
-    ] {
-      try require(
-        source.contains(fragment), "protobuf source is missing required boundary: \(fragment)")
+    if validateProtobufSource {
+      for fragment in [
+        "syntax = \"proto3\";", "package lumen.streaming.v4;", "reserved 3;", "reserved 8;",
+        "reserved 7, 8, 9;", "uint64 media_capabilities = 46;",
+        "StopSession stop_session = 13;", "SessionStopped session_stopped = 12;",
+        "MediaParkRequest media_park = 18;", "MediaParkResult media_park = 17;",
+      ] {
+        try require(
+          source.contains(fragment), "protobuf source is missing required boundary: \(fragment)")
+      }
     }
 
     let native = try dictionary(contract["nativeTransport"], "nativeTransport")
@@ -349,6 +358,13 @@ public enum LumenContractTool {
   }
 
   public static func checkCompatibility(baseline: [String: Any], current: [String: Any]) throws {
+    // Compatibility callers must not bypass the current-authority shape
+    // checks; additive comparison is only meaningful for a valid v4 current
+    // contract with recognized nested authority keys.
+    // Validate the authority shape before comparing additive fields, but leave
+    // protobuf parsing to compareProtobuf so malformed source reports the
+    // compiler diagnostic and cannot be mistaken for an authority rejection.
+    try validate(current, validateProtobufSource: false)
     try require(jsonEqual(baseline["identity"], current["identity"]), "v4 identity cannot change")
     let oldProto = try dictionary(baseline["protobuf"], "baseline.protobuf")
     let newProto = try dictionary(current["protobuf"], "current.protobuf")
@@ -506,6 +522,8 @@ public enum LumenContractTool {
         throw LumenContractToolError.invalid("missing v4 baseline meta-schema")
       }
       let oldSchema = try object(from: Data(contentsOf: baselineSchema))
+      try validateSchemaDocument(oldSchema)
+      try validateSchema(instance: baseline, schema: oldSchema, path: "$")
       try require(jsonEqual(oldSchema, newSchema), "v4 meta-schema cannot change")
     } else {
       guard let proto = options.baselineProto,

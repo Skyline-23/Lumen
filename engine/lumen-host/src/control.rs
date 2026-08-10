@@ -144,6 +144,7 @@ pub struct ControlRouter {
     native: native_session::NativeSessionState,
     codec_configuration_notify: Arc<Notify>,
     video_bootstrap_notify: Arc<Notify>,
+    media_admission_gate: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl ControlRouter {
@@ -163,6 +164,7 @@ impl ControlRouter {
             native: native_session::NativeSessionState::default(),
             codec_configuration_notify: Arc::new(Notify::new()),
             video_bootstrap_notify: Arc::new(Notify::new()),
+            media_admission_gate: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
@@ -172,6 +174,10 @@ impl ControlRouter {
 
     pub(crate) fn native_video_bootstrap_notify(&self) -> Arc<Notify> {
         Arc::clone(&self.video_bootstrap_notify)
+    }
+
+    pub(crate) fn native_media_admission_gate(&self) -> Arc<tokio::sync::Mutex<()>> {
+        Arc::clone(&self.media_admission_gate)
     }
 
     pub fn authorities(&self) -> &HostAuthorities {

@@ -260,6 +260,7 @@ public actor LumenBridgeRuntime {
 
     nonisolated let videoForwarder = LumenVideoCaptureForwarder()
     nonisolated let audioForwarder = LumenAudioCaptureForwarder()
+    nonisolated let audioMediaEpochToken = LumenAudioMediaEpochToken()
     let logger = Logger(subsystem: "dev.skyline23.lumen", category: "MacBridgeRuntime")
     let captureLifecycle = LumenBridgeCaptureLifecycle()
     let encodedFrameReadiness = LumenFirstEncodedFrameGate()
@@ -287,8 +288,13 @@ public actor LumenBridgeRuntime {
     var activeCaptureGeneration: UInt64?
 
     func resetMediaQueuesOnActor() async {
-        resetMediaQueuesImpl()
+        // Advance producer fences before clearing forwarding queues. Any
+        // callback already admitted to the old epoch is rejected after this
+        // point; newly admitted frames racing the clear are dropped by the
+        // final queue reset and begin after the next media poll.
+        audioMediaEpochToken.advance()
         await encodedCaptureSession?.resetMediaEpoch()
+        resetMediaQueuesImpl()
     }
 
     init(
