@@ -26,6 +26,7 @@ pub mod settings;
 mod settings_ffi;
 mod stream_fleet;
 mod stream_session;
+mod unchanged_content_cadence;
 mod video_codec;
 mod video_colorspace;
 mod video_packetization;
@@ -118,9 +119,15 @@ pub use protocol::{
     NATIVE_VIDEO_BOOTSTRAP_MESSAGE_LIMIT, NATIVE_VIDEO_STREAM_ID, TRANSPORT_FRAME_GATED_HDR,
     TRANSPORT_FULL_FRAME_HDR,
 };
+pub use unchanged_content_cadence::{
+    lumen_engine_content_cadence_create, lumen_engine_content_cadence_destroy,
+    lumen_engine_content_cadence_observe, lumen_engine_content_cadence_target,
+    lumen_engine_content_cadence_wake, LumenContentCadenceController, LumenContentCadenceDecision,
+    LumenContentCadenceObservation, LumenContentCadenceRequest,
+};
 pub use video_packetization::{plan_fec_blocks, plan_fec_shards};
 
-pub const ABI_VERSION: u32 = 67;
+pub const ABI_VERSION: u32 = 68;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

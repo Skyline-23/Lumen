@@ -149,6 +149,13 @@ impl Default for FrameDeliveryOwnership {
 }
 
 impl FrameDeliveryOwnership {
+    pub(super) fn is_running(&self) -> Result<bool, String> {
+        self.state
+            .lock()
+            .map(|state| *state == FrameDeliveryState::Running)
+            .map_err(|_| "frame delivery ownership is poisoned".to_owned())
+    }
+
     pub(super) fn start_with(
         &self,
         start: impl FnOnce() -> Result<(), String>,
@@ -174,6 +181,13 @@ impl FrameDeliveryOwnership {
         &self,
         stop: impl FnOnce() -> Result<(), String>,
     ) -> Result<(), String> {
+        self.pause_with_state(stop).map(|_| ())
+    }
+
+    pub(super) fn pause_with_state(
+        &self,
+        stop: impl FnOnce() -> Result<(), String>,
+    ) -> Result<bool, String> {
         let mut state = self
             .state
             .lock()
@@ -181,8 +195,9 @@ impl FrameDeliveryOwnership {
         if *state == FrameDeliveryState::Running {
             stop()?;
             *state = FrameDeliveryState::Paused;
+            return Ok(true);
         }
-        Ok(())
+        Ok(false)
     }
 
     pub(super) fn retire_with(

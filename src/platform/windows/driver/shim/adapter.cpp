@@ -8,6 +8,12 @@
 namespace {
   using Microsoft::WRL::ComPtr;
 
+  // Keep IDD presenting the static desktop long enough for the host cadence
+  // controller to confirm one second of unchanged metadata at the negotiated
+  // 120 Hz ceiling. The value is deliberately finite: once confirmation has
+  // completed, stopping redundant presents is the desired idle behavior.
+  constexpr UINT kStaticDesktopReencodeFrameCount = 240;
+
   GUID unpack_monitor_container_id(uint64_t high, uint64_t low) {
     GUID value {};
     value.Data1 = static_cast<uint32_t>(high >> 32u);
@@ -210,6 +216,7 @@ namespace {
 void LumenEvtAdapterChangeWorkItem(WDFWORKITEM work_item) {
   auto *work_item_context = LumenGetAdapterChangeWorkItemContext(work_item);
   auto *context = LumenGetDeviceContext(work_item_context->device);
+  LumenCoreStateGuard core_state_guard(context);
   if (InterlockedCompareExchange(&context->adapter_monitoring, 1, 1) == 0) {
     return;
   }
@@ -352,6 +359,7 @@ NTSTATUS LumenInitializeAdapter(WDFDEVICE device, LumenDeviceContext *context) {
   IDDCX_ADAPTER_CAPS caps {};
   caps.Size = sizeof(caps);
   caps.MaxMonitorsSupported = 1;
+  caps.StaticDesktopReencodeFrameCount = kStaticDesktopReencodeFrameCount;
   caps.EndPointDiagnostics.Size = sizeof(caps.EndPointDiagnostics);
   caps.EndPointDiagnostics.GammaSupport =
     IDDCX_FEATURE_IMPLEMENTATION_NONE;
@@ -385,6 +393,7 @@ NTSTATUS LumenEvtIddCxAdapterInitFinished(
 ) {
   auto *adapter_context = LumenGetAdapterContext(adapter);
   auto *context = LumenGetDeviceContext(adapter_context->device);
+  LumenCoreStateGuard core_state_guard(context);
   if (!NT_SUCCESS(input->AdapterInitStatus)) {
     const auto failed = dispatch_internal(
       context,

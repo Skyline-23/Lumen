@@ -154,6 +154,13 @@ typedef struct LumenDriverVideoSignalMode {
 #define LUMEN_EDID_STATUS_BUFFER_TOO_SMALL 2u
 #define LUMEN_EDID_STATUS_UNREPRESENTABLE 3u
 
+// The frame record's reserved word carries only validated presentation
+// metadata. It is deliberately additive and does not alter the fixed record
+// size or driver ABI generation. Unknown values fail open in the host.
+#define LUMEN_DRIVER_CONTENT_SIGNAL_UNKNOWN 0u
+#define LUMEN_DRIVER_CONTENT_SIGNAL_CHANGED 1u
+#define LUMEN_DRIVER_CONTENT_SIGNAL_UNCHANGED 2u
+
 typedef struct LumenDriverMonitorEdidMode {
   uint32_t width;
   uint32_t height;

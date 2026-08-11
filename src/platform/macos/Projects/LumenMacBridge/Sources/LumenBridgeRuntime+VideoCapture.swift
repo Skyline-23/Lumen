@@ -101,6 +101,9 @@ private extension LumenBridgeRuntime {
         )
 
         activeCaptureConfiguration = configuration
+        unchangedContentCadenceWakeRelay.activate(
+            sessionEpoch: configuration.sessionEpoch
+        )
         activePreconfiguredSystemAudio = preconfiguredSystemAudio
         encodedCaptureSession = session
         publishStatusDidChange(immediate: true)
@@ -296,6 +299,7 @@ private extension LumenBridgeRuntime {
     }
 
     func clearActiveCaptureConfiguration() {
+        unchangedContentCadenceWakeRelay.deactivate()
         activeCaptureConfiguration = nil
         activePreconfiguredSystemAudio = nil
         resetEncodedFrameDiagnostics()

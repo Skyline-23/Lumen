@@ -67,6 +67,9 @@ protocol LumenEncodedCaptureRuntime: AnyObject, Sendable {
         bitrateKbps: Int,
         admissionDivisor: Int
     ) async -> Bool
+    /// Reopen unchanged-content cadence after validated host input or motion.
+    /// This is a source-pacer target update, not a codec/configuration reset.
+    func wakeUnchangedContentCadence(sessionEpoch: UInt32) -> Bool
 }
 
 extension LumenEncodedCaptureRuntime {
@@ -82,6 +85,10 @@ extension LumenEncodedCaptureRuntime {
         bitrateKbps _: Int,
         admissionDivisor _: Int
     ) async -> Bool {
+        false
+    }
+
+    func wakeUnchangedContentCadence(sessionEpoch _: UInt32) -> Bool {
         false
     }
 }

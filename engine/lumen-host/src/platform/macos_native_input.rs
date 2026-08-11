@@ -1,22 +1,31 @@
 use std::collections::{HashMap, HashSet};
-use std::ffi::{c_char, c_void};
-use std::mem::transmute;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use core_graphics::display::CGDisplay;
-use core_graphics::event::{
-    CGEvent, CGEventFlags, CGEventTapLocation, CGEventType, CGMouseButton, EventField,
-    ScrollEventUnit,
-};
-use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+use core_graphics::event::{CGEvent, CGEventTapLocation, EventField, ScrollEventUnit};
 use core_graphics::geometry::{CGPoint, CGRect, CGSize};
 use lumen_engine::{NativePointerMotionMode, NativeScrollPhase};
 
 use crate::{PlatformNativeInputEvent, PlatformNativeMotionEvent};
 
-static POST_EVENT_ACCESS_REQUESTED: AtomicBool = AtomicBool::new(false);
+#[path = "macos_native_input_events.rs"]
+mod events;
+#[path = "macos_native_input_motion.rs"]
+mod motion;
+#[cfg(test)]
+#[path = "macos_native_input_tests.rs"]
+mod tests;
+
+use events::{
+    event_source, post_text, system_double_click_interval, CoreGraphicsMacInputEventPoster,
+    MacInputEventPoster,
+};
+#[cfg(test)]
+use events::{mac_key_code, mac_modifier_flags};
+#[cfg(test)]
+use motion::{pointer_target, preferred_pointer_bounds, remap_preserved_capture_position};
+use motion::{post_pointer_motion, MacPointerMotionInput};
+
 const MAX_NATIVE_INPUT_RESET_ATTEMPTS: usize = 2;
 #[cfg(test)]
 const DEFAULT_DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
@@ -26,22 +35,6 @@ const DEFAULT_DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
 const CLICK_LOCATION_TOLERANCE_POINTS: f64 = 5.0;
 const SCROLL_WHEEL_EVENT_SCROLL_PHASE: u32 = 99;
 const SCROLL_WHEEL_EVENT_MOMENTUM_PHASE: u32 = 123;
-
-#[link(name = "AppKit", kind = "framework")]
-unsafe extern "C" {}
-
-#[link(name = "objc")]
-unsafe extern "C" {
-    fn objc_getClass(name: *const c_char) -> *const c_void;
-    fn sel_registerName(name: *const c_char) -> *const c_void;
-    fn objc_msgSend();
-}
-
-#[link(name = "ApplicationServices", kind = "framework")]
-unsafe extern "C" {
-    fn CGPreflightPostEventAccess() -> bool;
-    fn CGRequestPostEventAccess() -> bool;
-}
 
 #[derive(Debug, Default)]
 struct MacInputState {
@@ -135,62 +128,6 @@ struct MacComposition {
     selection_length_utf8: usize,
 }
 
-#[derive(Clone, Copy, Debug)]
-struct MacPointerMotionInput {
-    mode: NativePointerMotionMode,
-    delta_x: i32,
-    delta_y: i32,
-    normalized_x: f32,
-    normalized_y: f32,
-}
-
-trait MacInputEventPoster: Send + Sync {
-    fn post_key(
-        &self,
-        hid_usage: u16,
-        pressed: bool,
-        modifiers: u8,
-        repeat: bool,
-    ) -> Result<(), String>;
-    fn pointer_location(&self) -> Result<CGPoint, String>;
-    fn post_button(
-        &self,
-        button: u8,
-        pressed: bool,
-        click_state: u32,
-        location: CGPoint,
-    ) -> Result<(), String>;
-}
-
-#[derive(Default)]
-struct CoreGraphicsMacInputEventPoster;
-
-impl MacInputEventPoster for CoreGraphicsMacInputEventPoster {
-    fn post_key(
-        &self,
-        hid_usage: u16,
-        pressed: bool,
-        modifiers: u8,
-        repeat: bool,
-    ) -> Result<(), String> {
-        post_key_event(hid_usage, pressed, modifiers, repeat)
-    }
-
-    fn pointer_location(&self) -> Result<CGPoint, String> {
-        current_pointer_location()
-    }
-
-    fn post_button(
-        &self,
-        button: u8,
-        pressed: bool,
-        click_state: u32,
-        location: CGPoint,
-    ) -> Result<(), String> {
-        post_button_event(button, pressed, click_state, location)
-    }
-}
-
 pub(crate) struct MacNativeInput {
     state: Mutex<HashMap<u32, MacInputState>>,
     poster: Arc<dyn MacInputEventPoster>,
@@ -267,6 +204,14 @@ impl MacNativeInput {
         session_epoch: u32,
         event: PlatformNativeInputEvent,
     ) -> Result<(), String> {
+        self.handle_activity(session_epoch, event).map(|_| ())
+    }
+
+    pub(crate) fn handle_activity(
+        &self,
+        session_epoch: u32,
+        event: PlatformNativeInputEvent,
+    ) -> Result<bool, String> {
         let mut states = self
             .state
             .lock()
@@ -281,7 +226,7 @@ impl MacNativeInput {
             } => {
                 let was_pressed = state.pressed_keys.contains(&hid_usage);
                 if (pressed && was_pressed && !repeat) || (!pressed && !was_pressed) {
-                    return Ok(());
+                    return Ok(false);
                 }
                 self.poster
                     .post_key(hid_usage, pressed, modifiers, repeat)?;
@@ -290,7 +235,7 @@ impl MacNativeInput {
                 } else {
                     state.pressed_keys.remove(&hid_usage);
                 }
-                Ok(())
+                Ok(true)
             }
             PlatformNativeInputEvent::Text {
                 text,
@@ -302,9 +247,9 @@ impl MacNativeInput {
                 if commit {
                     state.compositions.remove(&composition_id);
                     if text.is_empty() {
-                        Ok(())
+                        Ok(false)
                     } else {
-                        post_text(&text)
+                        post_text(&text).map(|_| true)
                     }
                 } else {
                     let composition = MacComposition {
@@ -315,7 +260,7 @@ impl MacNativeInput {
                     if state.compositions.get(&composition_id) != Some(&composition) {
                         state.compositions.insert(composition_id, composition);
                     }
-                    Ok(())
+                    Ok(false)
                 }
             }
             PlatformNativeInputEvent::PointerButton {
@@ -324,7 +269,7 @@ impl MacNativeInput {
                 pressed,
                 absolute_position: _,
             } => self.handle_pointer_button(state, button, pressed, None),
-            PlatformNativeInputEvent::RumbleAcknowledged { .. } => Ok(()),
+            PlatformNativeInputEvent::RumbleAcknowledged { .. } => Ok(false),
             PlatformNativeInputEvent::GamepadConnection { .. }
             | PlatformNativeInputEvent::GamepadButton { .. } => {
                 Err("macOS virtual gamepad injection is not implemented".to_owned())
@@ -343,7 +288,7 @@ impl MacNativeInput {
         planned_bounds: Option<MacInputDisplayBounds>,
         capture_viewport: Option<MacInputCaptureViewport>,
         event: PlatformNativeMotionEvent,
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         let mut states = self
             .state
             .lock()
@@ -357,20 +302,25 @@ impl MacNativeInput {
                 delta_y,
                 normalized_x,
                 normalized_y,
-            } => post_pointer_motion(
-                display_id,
-                planned_bounds,
-                capture_viewport,
-                state,
-                MacPointerMotionInput {
-                    mode,
-                    delta_x,
-                    delta_y,
-                    normalized_x,
-                    normalized_y,
-                },
-            )
-            .map(|_| ()),
+            } => {
+                if mode == NativePointerMotionMode::Relative && delta_x == 0 && delta_y == 0 {
+                    return Ok(false);
+                }
+                post_pointer_motion(
+                    display_id,
+                    planned_bounds,
+                    capture_viewport,
+                    state,
+                    MacPointerMotionInput {
+                        mode,
+                        delta_x,
+                        delta_y,
+                        normalized_x,
+                        normalized_y,
+                    },
+                )
+                .map(|_| true)
+            }
             PlatformNativeMotionEvent::Scroll {
                 pointer_id: _,
                 delta_x_1024_points,
@@ -407,7 +357,7 @@ impl MacNativeInput {
                 event.set_integer_value_field(SCROLL_WHEEL_EVENT_SCROLL_PHASE, scroll_phase);
                 event.set_integer_value_field(SCROLL_WHEEL_EVENT_MOMENTUM_PHASE, momentum_phase);
                 event.post(CGEventTapLocation::HID);
-                Ok(())
+                Ok(true)
             }
             PlatformNativeMotionEvent::Touch { .. } | PlatformNativeMotionEvent::Pen { .. } => {
                 Err("macOS native touch and pen motion injection is not implemented".to_owned())
@@ -426,6 +376,24 @@ impl MacNativeInput {
         capture_viewport: Option<MacInputCaptureViewport>,
         input: MacPositionedButtonInput,
     ) -> Result<(), String> {
+        self.handle_positioned_button_activity(
+            session_epoch,
+            display_id,
+            planned_bounds,
+            capture_viewport,
+            input,
+        )
+        .map(|_| ())
+    }
+
+    pub(crate) fn handle_positioned_button_activity(
+        &self,
+        session_epoch: u32,
+        display_id: u32,
+        planned_bounds: Option<MacInputDisplayBounds>,
+        capture_viewport: Option<MacInputCaptureViewport>,
+        input: MacPositionedButtonInput,
+    ) -> Result<bool, String> {
         let mut states = self
             .state
             .lock()
@@ -445,7 +413,8 @@ impl MacNativeInput {
             },
         )?;
         let _ = input.pointer_id;
-        self.handle_pointer_button(state, input.button, input.pressed, Some(location))
+        self.handle_pointer_button(state, input.button, input.pressed, Some(location))?;
+        Ok(true)
     }
 
     fn handle_pointer_button(
@@ -454,10 +423,10 @@ impl MacNativeInput {
         button: u8,
         pressed: bool,
         exact_location: Option<CGPoint>,
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         let was_pressed = state.pressed_buttons.contains(&button);
         if pressed == was_pressed {
-            Ok(())
+            Ok(false)
         } else if pressed {
             let location = exact_location.map_or_else(|| self.poster.pointer_location(), Ok)?;
             let click_state = state.click_tracker.begin(
@@ -471,7 +440,7 @@ impl MacNativeInput {
                 return Err(error);
             }
             state.pressed_buttons.insert(button);
-            Ok(())
+            Ok(true)
         } else {
             let location = exact_location.map_or_else(|| self.poster.pointer_location(), Ok)?;
             let click_state = state.click_tracker.pending(button).ok_or_else(|| {
@@ -481,7 +450,7 @@ impl MacNativeInput {
                 .post_button(button, false, click_state, location)?;
             state.pressed_buttons.remove(&button);
             state.click_tracker.finish(button, click_state);
-            Ok(())
+            Ok(true)
         }
     }
 
@@ -596,1249 +565,5 @@ fn mac_scroll_phases(phase: NativeScrollPhase) -> (i64, i64) {
         NativeScrollPhase::MomentumChanged => (0, 2),
         NativeScrollPhase::MomentumEnded => (0, 3),
         NativeScrollPhase::Unspecified => (0, 0),
-    }
-}
-
-fn post_pointer_motion(
-    display_id: u32,
-    planned_bounds: Option<MacInputDisplayBounds>,
-    capture_viewport: Option<MacInputCaptureViewport>,
-    state: &MacInputState,
-    input: MacPointerMotionInput,
-) -> Result<CGPoint, String> {
-    let source = event_source()?;
-    let current = CGEvent::new(source.clone())
-        .map_err(|_| "could not inspect the macOS pointer location".to_owned())?
-        .location();
-    let bounds = preferred_pointer_bounds(
-        display_id,
-        CGDisplay::new(display_id).bounds(),
-        planned_bounds,
-    )?;
-    let input = if input.mode == NativePointerMotionMode::Absolute {
-        capture_viewport
-            .and_then(|viewport| {
-                let display = CGDisplay::new(display_id);
-                remap_preserved_capture_position(
-                    input.normalized_x,
-                    input.normalized_y,
-                    CGSize::new(display.pixels_wide() as f64, display.pixels_high() as f64),
-                    CGSize::new(viewport.width, viewport.height),
-                )
-            })
-            .map_or(input, |(normalized_x, normalized_y)| {
-                MacPointerMotionInput {
-                    normalized_x,
-                    normalized_y,
-                    ..input
-                }
-            })
-    } else {
-        input
-    };
-    let target = pointer_target(
-        current,
-        bounds,
-        input.mode,
-        input.delta_x,
-        input.delta_y,
-        input.normalized_x,
-        input.normalized_y,
-    )?;
-    let (event_type, button) = drag_event(state);
-    let event = CGEvent::new_mouse_event(source, event_type, target, button)
-        .map_err(|_| "could not create macOS pointer motion event".to_owned())?;
-    event.set_integer_value_field(EventField::MOUSE_EVENT_DELTA_X, i64::from(input.delta_x));
-    event.set_integer_value_field(EventField::MOUSE_EVENT_DELTA_Y, i64::from(input.delta_y));
-    event.post(CGEventTapLocation::HID);
-    Ok(target)
-}
-
-fn remap_preserved_capture_position(
-    normalized_x: f32,
-    normalized_y: f32,
-    source_size: CGSize,
-    output_size: CGSize,
-) -> Option<(f32, f32)> {
-    if source_size.width <= 0.0
-        || source_size.height <= 0.0
-        || output_size.width <= 1.0
-        || output_size.height <= 1.0
-    {
-        return None;
-    }
-
-    // Lumen configures ScreenCaptureKit with preservesAspectRatio=true and
-    // scalesToFit=false. The source can scale down, but it is never enlarged.
-    let scale = 1.0_f64
-        .min(output_size.width / source_size.width)
-        .min(output_size.height / source_size.height);
-    let content_width = source_size.width * scale;
-    let content_height = source_size.height * scale;
-    let origin_x = (output_size.width - content_width) * 0.5;
-    let origin_y = (output_size.height - content_height) * 0.5;
-    let output_x = f64::from(normalized_x) * (output_size.width - 1.0);
-    let output_y = f64::from(normalized_y) * (output_size.height - 1.0);
-    let mapped_x = ((output_x - origin_x) / (content_width - 1.0)).clamp(0.0, 1.0);
-    let mapped_y = ((output_y - origin_y) / (content_height - 1.0)).clamp(0.0, 1.0);
-    Some((mapped_x as f32, mapped_y as f32))
-}
-
-fn preferred_pointer_bounds(
-    display_id: u32,
-    published_bounds: CGRect,
-    planned_bounds: Option<MacInputDisplayBounds>,
-) -> Result<CGRect, String> {
-    // Input targets the active session display. Its published bounds must win over the planned
-    // virtual geometry whenever CoreGraphics has them available.
-    if published_bounds.size.width > 0.0 && published_bounds.size.height > 0.0 {
-        return Ok(published_bounds);
-    }
-    planned_bounds
-        .and_then(MacInputDisplayBounds::rect)
-        .ok_or_else(|| {
-            format!("macOS native motion display {display_id} has no published or planned bounds")
-        })
-}
-
-fn pointer_target(
-    current: CGPoint,
-    bounds: CGRect,
-    mode: NativePointerMotionMode,
-    delta_x: i32,
-    delta_y: i32,
-    normalized_x: f32,
-    normalized_y: f32,
-) -> Result<CGPoint, String> {
-    match mode {
-        NativePointerMotionMode::Relative => {
-            let origin = if point_in_rect(current, bounds) {
-                current
-            } else {
-                CGPoint::new(
-                    bounds.origin.x + bounds.size.width / 2.0,
-                    bounds.origin.y + bounds.size.height / 2.0,
-                )
-            };
-            Ok(CGPoint::new(
-                (origin.x + f64::from(delta_x))
-                    .clamp(bounds.origin.x, bounds.origin.x + bounds.size.width - 1.0),
-                (origin.y + f64::from(delta_y))
-                    .clamp(bounds.origin.y, bounds.origin.y + bounds.size.height - 1.0),
-            ))
-        }
-        NativePointerMotionMode::Absolute => Ok(CGPoint::new(
-            bounds.origin.x + f64::from(normalized_x) * (bounds.size.width - 1.0),
-            bounds.origin.y + f64::from(normalized_y) * (bounds.size.height - 1.0),
-        )),
-        NativePointerMotionMode::Unspecified => {
-            Err("macOS native pointer motion mode is unspecified".to_owned())
-        }
-    }
-}
-
-fn point_in_rect(point: CGPoint, bounds: core_graphics::geometry::CGRect) -> bool {
-    point.x >= bounds.origin.x
-        && point.x < bounds.origin.x + bounds.size.width
-        && point.y >= bounds.origin.y
-        && point.y < bounds.origin.y + bounds.size.height
-}
-
-fn drag_event(state: &MacInputState) -> (CGEventType, CGMouseButton) {
-    if state.pressed_buttons.contains(&1) {
-        (CGEventType::LeftMouseDragged, CGMouseButton::Left)
-    } else if state.pressed_buttons.contains(&3) {
-        (CGEventType::RightMouseDragged, CGMouseButton::Right)
-    } else if state
-        .pressed_buttons
-        .iter()
-        .any(|button| (2..=5).contains(button))
-    {
-        (CGEventType::OtherMouseDragged, CGMouseButton::Center)
-    } else {
-        (CGEventType::MouseMoved, CGMouseButton::Left)
-    }
-}
-
-fn post_key_event(
-    hid_usage: u16,
-    pressed: bool,
-    modifiers: u8,
-    repeat: bool,
-) -> Result<(), String> {
-    let key_code = mac_key_code(hid_usage)
-        .ok_or_else(|| format!("unsupported macOS USB HID keyboard usage {hid_usage:#x}"))?;
-    let event = CGEvent::new_keyboard_event(event_source()?, key_code, pressed)
-        .map_err(|_| "could not create macOS keyboard event".to_owned())?;
-    event.set_flags(mac_modifier_flags(modifiers));
-    event.set_integer_value_field(EventField::KEYBOARD_EVENT_AUTOREPEAT, i64::from(repeat));
-    event.post(CGEventTapLocation::HID);
-    Ok(())
-}
-
-fn post_text(text: &str) -> Result<(), String> {
-    let down = CGEvent::new_keyboard_event(event_source()?, 0, true)
-        .map_err(|_| "could not create macOS Unicode key-down event".to_owned())?;
-    down.set_string(text);
-    down.post(CGEventTapLocation::HID);
-    let up = CGEvent::new_keyboard_event(event_source()?, 0, false)
-        .map_err(|_| "could not create macOS Unicode key-up event".to_owned())?;
-    up.post(CGEventTapLocation::HID);
-    Ok(())
-}
-
-fn current_pointer_location() -> Result<CGPoint, String> {
-    let source = event_source()?;
-    let location = CGEvent::new(source)
-        .map_err(|_| "could not inspect the macOS pointer location".to_owned())?
-        .location();
-    Ok(location)
-}
-
-fn post_button_event(
-    button: u8,
-    pressed: bool,
-    click_state: u32,
-    location: CGPoint,
-) -> Result<(), String> {
-    let source = event_source()?;
-    let (event_type, mouse_button, button_number) = match (button, pressed) {
-        (1, true) => (CGEventType::LeftMouseDown, CGMouseButton::Left, 0),
-        (1, false) => (CGEventType::LeftMouseUp, CGMouseButton::Left, 0),
-        (2, true) => (CGEventType::OtherMouseDown, CGMouseButton::Center, 2),
-        (2, false) => (CGEventType::OtherMouseUp, CGMouseButton::Center, 2),
-        (3, true) => (CGEventType::RightMouseDown, CGMouseButton::Right, 1),
-        (3, false) => (CGEventType::RightMouseUp, CGMouseButton::Right, 1),
-        (4 | 5, true) => (
-            CGEventType::OtherMouseDown,
-            CGMouseButton::Center,
-            button - 1,
-        ),
-        (4 | 5, false) => (CGEventType::OtherMouseUp, CGMouseButton::Center, button - 1),
-        _ => return Err(format!("unsupported macOS pointer button {button}")),
-    };
-    let event = CGEvent::new_mouse_event(source, event_type, location, mouse_button)
-        .map_err(|_| "could not create macOS pointer button event".to_owned())?;
-    event.set_integer_value_field(
-        EventField::MOUSE_EVENT_BUTTON_NUMBER,
-        i64::from(button_number),
-    );
-    event.set_integer_value_field(EventField::MOUSE_EVENT_CLICK_STATE, i64::from(click_state));
-    event.post(CGEventTapLocation::HID);
-    Ok(())
-}
-
-fn system_double_click_interval() -> Result<Duration, String> {
-    const NSEVENT_CLASS: &[u8] = b"NSEvent\0";
-    const DOUBLE_CLICK_INTERVAL_SELECTOR: &[u8] = b"doubleClickInterval\0";
-    type DoubleClickIntervalMessage = unsafe extern "C" fn(*const c_void, *const c_void) -> f64;
-
-    // SAFETY: Category 8 (FFI boundary). This invokes AppKit's documented class property
-    // `+[NSEvent doubleClickInterval]`, which returns the current system double-click interval.
-    let class = unsafe { objc_getClass(NSEVENT_CLASS.as_ptr().cast()) };
-    let selector = unsafe { sel_registerName(DOUBLE_CLICK_INTERVAL_SELECTOR.as_ptr().cast()) };
-    if class.is_null() || selector.is_null() {
-        return Err("could not resolve AppKit double-click interval".to_owned());
-    }
-    // SAFETY: Category 8 (FFI boundary). `objc_msgSend` is called with the NSEvent class and a
-    // zero-argument selector whose ABI returns NSTimeInterval (a C double).
-    let send: DoubleClickIntervalMessage = unsafe { transmute(objc_msgSend as *const ()) };
-    let seconds = unsafe { send(class, selector) };
-    if !seconds.is_finite() || seconds <= 0.0 {
-        return Err("AppKit returned an invalid double-click interval".to_owned());
-    }
-    Duration::try_from_secs_f64(seconds)
-        .map_err(|_| "AppKit returned an unrepresentable double-click interval".to_owned())
-}
-
-fn event_source() -> Result<CGEventSource, String> {
-    ensure_post_event_access()?;
-    CGEventSource::new(CGEventSourceStateID::HIDSystemState)
-        .map_err(|_| "could not create macOS HID event source".to_owned())
-}
-
-fn ensure_post_event_access() -> Result<(), String> {
-    // SAFETY: Category 8 (FFI boundary). These CoreGraphics functions take no pointers and
-    // return the current process' event-synthesis authorization state.
-    if unsafe { CGPreflightPostEventAccess() } {
-        return Ok(());
-    }
-    if !POST_EVENT_ACCESS_REQUESTED.swap(true, Ordering::AcqRel) {
-        // SAFETY: Category 8 (FFI boundary). The function has no arguments and may present the
-        // system authorization prompt for this signed helper process.
-        if unsafe { CGRequestPostEventAccess() } {
-            return Ok(());
-        }
-    }
-    Err(
-        "macOS event synthesis is not authorized; allow LumenHostWorker in Privacy & Security > Accessibility"
-            .to_owned(),
-    )
-}
-
-fn mac_modifier_flags(modifiers: u8) -> CGEventFlags {
-    let mut flags = CGEventFlags::CGEventFlagNull;
-    if modifiers & 0x22 != 0 {
-        flags.insert(CGEventFlags::CGEventFlagShift);
-    }
-    if modifiers & 0x11 != 0 {
-        flags.insert(CGEventFlags::CGEventFlagControl);
-    }
-    if modifiers & 0x44 != 0 {
-        flags.insert(CGEventFlags::CGEventFlagAlternate);
-    }
-    if modifiers & 0x88 != 0 {
-        flags.insert(CGEventFlags::CGEventFlagCommand);
-    }
-    flags
-}
-
-fn mac_key_code(hid_usage: u16) -> Option<u16> {
-    let key_code = match hid_usage {
-        0x04 => 0x00,
-        0x05 => 0x0b,
-        0x06 => 0x08,
-        0x07 => 0x02,
-        0x08 => 0x0e,
-        0x09 => 0x03,
-        0x0a => 0x05,
-        0x0b => 0x04,
-        0x0c => 0x22,
-        0x0d => 0x26,
-        0x0e => 0x28,
-        0x0f => 0x25,
-        0x10 => 0x2e,
-        0x11 => 0x2d,
-        0x12 => 0x1f,
-        0x13 => 0x23,
-        0x14 => 0x0c,
-        0x15 => 0x0f,
-        0x16 => 0x01,
-        0x17 => 0x11,
-        0x18 => 0x20,
-        0x19 => 0x09,
-        0x1a => 0x0d,
-        0x1b => 0x07,
-        0x1c => 0x10,
-        0x1d => 0x06,
-        0x1e => 0x12,
-        0x1f => 0x13,
-        0x20 => 0x14,
-        0x21 => 0x15,
-        0x22 => 0x17,
-        0x23 => 0x16,
-        0x24 => 0x1a,
-        0x25 => 0x1c,
-        0x26 => 0x19,
-        0x27 => 0x1d,
-        0x28 => 0x24,
-        0x29 => 0x35,
-        0x2a => 0x33,
-        0x2b => 0x30,
-        0x2c => 0x31,
-        0x2d => 0x1b,
-        0x2e => 0x18,
-        0x2f => 0x21,
-        0x30 => 0x1e,
-        0x31 | 0x32 => 0x2a,
-        0x33 => 0x29,
-        0x34 => 0x27,
-        0x35 => 0x32,
-        0x36 => 0x2b,
-        0x37 => 0x2f,
-        0x38 => 0x2c,
-        0x39 => 0x39,
-        0x3a => 0x7a,
-        0x3b => 0x78,
-        0x3c => 0x63,
-        0x3d => 0x76,
-        0x3e => 0x60,
-        0x3f => 0x61,
-        0x40 => 0x62,
-        0x41 => 0x64,
-        0x42 => 0x65,
-        0x43 => 0x6d,
-        0x44 => 0x67,
-        0x45 => 0x6f,
-        0x49 => 0x72,
-        0x4a => 0x73,
-        0x4b => 0x74,
-        0x4c => 0x75,
-        0x4d => 0x77,
-        0x4e => 0x79,
-        0x4f => 0x7c,
-        0x50 => 0x7b,
-        0x51 => 0x7d,
-        0x52 => 0x7e,
-        0x53 => 0x47,
-        0x54 => 0x4b,
-        0x55 => 0x43,
-        0x56 => 0x4e,
-        0x57 => 0x45,
-        0x58 => 0x4c,
-        0x59 => 0x53,
-        0x5a => 0x54,
-        0x5b => 0x55,
-        0x5c => 0x56,
-        0x5d => 0x57,
-        0x5e => 0x58,
-        0x5f => 0x59,
-        0x60 => 0x5b,
-        0x61 => 0x5c,
-        0x62 => 0x52,
-        0x63 => 0x41,
-        0xe0 => 0x3b,
-        0xe1 => 0x38,
-        0xe2 => 0x3a,
-        0xe3 => 0x37,
-        0xe4 => 0x3e,
-        0xe5 => 0x3c,
-        0xe6 => 0x3d,
-        0xe7 => 0x36,
-        _ => return None,
-    };
-    Some(key_code)
-}
-
-#[cfg(test)]
-mod tests {
-    use std::collections::VecDeque;
-    use std::sync::{Arc, Mutex};
-    use std::time::{Duration, Instant};
-
-    use super::*;
-
-    #[derive(Clone, Debug, Eq, PartialEq)]
-    enum PostedEvent {
-        Key {
-            hid_usage: u16,
-            pressed: bool,
-            modifiers: u8,
-            repeat: bool,
-        },
-        Button {
-            button: u8,
-            pressed: bool,
-            click_state: u32,
-        },
-    }
-
-    struct RecordingPoster {
-        outcomes: Mutex<VecDeque<Result<(), String>>>,
-        events: Mutex<Vec<PostedEvent>>,
-        button_locations: Mutex<Vec<(f64, f64)>>,
-    }
-
-    impl RecordingPoster {
-        fn new(outcomes: impl IntoIterator<Item = Result<(), String>>) -> Self {
-            Self {
-                outcomes: Mutex::new(outcomes.into_iter().collect()),
-                events: Mutex::new(Vec::new()),
-                button_locations: Mutex::new(Vec::new()),
-            }
-        }
-
-        fn events(&self) -> Vec<PostedEvent> {
-            self.events.lock().unwrap().clone()
-        }
-
-        fn button_locations(&self) -> Vec<(f64, f64)> {
-            self.button_locations.lock().unwrap().clone()
-        }
-
-        fn record(&self, event: PostedEvent) -> Result<(), String> {
-            self.events.lock().unwrap().push(event);
-            self.outcomes.lock().unwrap().pop_front().unwrap_or(Ok(()))
-        }
-    }
-
-    impl MacInputEventPoster for RecordingPoster {
-        fn post_key(
-            &self,
-            hid_usage: u16,
-            pressed: bool,
-            modifiers: u8,
-            repeat: bool,
-        ) -> Result<(), String> {
-            self.record(PostedEvent::Key {
-                hid_usage,
-                pressed,
-                modifiers,
-                repeat,
-            })
-        }
-
-        fn pointer_location(&self) -> Result<CGPoint, String> {
-            Ok(CGPoint::new(120.0, 80.0))
-        }
-
-        fn post_button(
-            &self,
-            button: u8,
-            pressed: bool,
-            click_state: u32,
-            location: CGPoint,
-        ) -> Result<(), String> {
-            self.button_locations
-                .lock()
-                .unwrap()
-                .push((location.x, location.y));
-            self.record(PostedEvent::Button {
-                button,
-                pressed,
-                click_state,
-            })
-        }
-    }
-
-    #[test]
-    fn positioned_button_uses_exact_motion_target_without_pointer_requery() {
-        let poster = Arc::new(RecordingPoster::new([]));
-        let input = MacNativeInput::with_poster(poster.clone());
-        let mut state = MacInputState::default();
-
-        input
-            .handle_pointer_button(&mut state, 1, true, Some(CGPoint::new(321.0, 654.0)))
-            .unwrap();
-
-        assert_eq!(poster.button_locations(), [(321.0, 654.0)]);
-    }
-
-    #[test]
-    fn click_tracker_marks_two_matching_pairs_as_single_then_double_clicks() {
-        let mut tracker = MacClickTracker::default();
-        let start = Instant::now();
-        let location = CGPoint::new(120.0, 80.0);
-        let interval = Duration::from_millis(500);
-
-        let first = tracker.begin(1, location, start, interval);
-        tracker.finish(1, first);
-        let second = tracker.begin(1, location, start + Duration::from_millis(100), interval);
-        tracker.finish(1, second);
-
-        assert_eq!(first, 1);
-        assert_eq!(second, 2);
-    }
-
-    #[test]
-    fn click_tracker_resets_after_interval_or_pointer_movement() {
-        let mut tracker = MacClickTracker::default();
-        let start = Instant::now();
-        let location = CGPoint::new(120.0, 80.0);
-        let interval = Duration::from_millis(500);
-
-        let first = tracker.begin(1, location, start, interval);
-        tracker.finish(1, first);
-        let late = tracker.begin(1, location, start + Duration::from_millis(700), interval);
-        tracker.finish(1, late);
-        let moved = tracker.begin(
-            1,
-            CGPoint::new(128.0, 80.0),
-            start + Duration::from_millis(800),
-            interval,
-        );
-
-        assert_eq!(late, 1);
-        assert_eq!(moved, 1);
-    }
-
-    #[test]
-    fn click_location_policy_applies_tolerance_per_axis() {
-        let origin = CGPoint::new(120.0, 80.0);
-
-        assert!(click_locations_match(origin, CGPoint::new(125.0, 85.0)));
-        assert!(!click_locations_match(origin, CGPoint::new(125.01, 80.0)));
-        assert!(!click_locations_match(origin, CGPoint::new(120.0, 85.01)));
-    }
-
-    #[test]
-    fn click_tracker_keeps_button_sequences_independent() {
-        let mut tracker = MacClickTracker::default();
-        let start = Instant::now();
-        let location = CGPoint::new(120.0, 80.0);
-        let interval = Duration::from_millis(500);
-
-        let left = tracker.begin(1, location, start, interval);
-        tracker.finish(1, left);
-        let right = tracker.begin(3, location, start + Duration::from_millis(30), interval);
-        tracker.finish(3, right);
-        let left_again = tracker.begin(1, location, start + Duration::from_millis(100), interval);
-
-        assert_eq!(left, 1);
-        assert_eq!(right, 1);
-        assert_eq!(left_again, 2);
-    }
-
-    #[test]
-    fn continuous_scroll_maps_gesture_and_momentum_phases_without_quantization_state() {
-        assert_eq!(mac_scroll_phases(NativeScrollPhase::Began), (1, 0));
-        assert_eq!(mac_scroll_phases(NativeScrollPhase::Changed), (2, 0));
-        assert_eq!(mac_scroll_phases(NativeScrollPhase::Ended), (4, 0));
-        assert_eq!(mac_scroll_phases(NativeScrollPhase::Cancelled), (8, 0));
-        assert_eq!(mac_scroll_phases(NativeScrollPhase::MomentumBegan), (0, 1));
-        assert_eq!(
-            mac_scroll_phases(NativeScrollPhase::MomentumChanged),
-            (0, 2)
-        );
-        assert_eq!(mac_scroll_phases(NativeScrollPhase::MomentumEnded), (0, 3));
-    }
-
-    #[test]
-    fn rapid_left_pairs_emit_matching_click_state_on_down_and_up() {
-        let poster = Arc::new(RecordingPoster::new([Ok(()), Ok(()), Ok(()), Ok(())]));
-        let input = MacNativeInput::with_poster_and_click_interval(
-            poster.clone(),
-            Duration::from_millis(500),
-        );
-        let press = PlatformNativeInputEvent::PointerButton {
-            pointer_id: 0,
-            button: 1,
-            pressed: true,
-            absolute_position: None,
-        };
-        let release = PlatformNativeInputEvent::PointerButton {
-            pointer_id: 0,
-            button: 1,
-            pressed: false,
-            absolute_position: None,
-        };
-
-        input.handle(21, press.clone()).unwrap();
-        input.handle(21, release.clone()).unwrap();
-        input.handle(21, press).unwrap();
-        input.handle(21, release).unwrap();
-
-        assert_eq!(
-            poster.events(),
-            vec![
-                PostedEvent::Button {
-                    button: 1,
-                    pressed: true,
-                    click_state: 1,
-                },
-                PostedEvent::Button {
-                    button: 1,
-                    pressed: false,
-                    click_state: 1,
-                },
-                PostedEvent::Button {
-                    button: 1,
-                    pressed: true,
-                    click_state: 2,
-                },
-                PostedEvent::Button {
-                    button: 1,
-                    pressed: false,
-                    click_state: 2,
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn system_double_click_interval_is_available_from_appkit() {
-        let interval = system_double_click_interval().expect("AppKit double-click interval");
-        assert!(!interval.is_zero());
-    }
-
-    #[test]
-    fn reset_discards_click_sequence_for_reused_session_epoch() {
-        let poster = Arc::new(RecordingPoster::new([
-            Ok(()),
-            Ok(()),
-            Ok(()),
-            Ok(()),
-            Ok(()),
-        ]));
-        let input = MacNativeInput::with_poster_and_click_interval(
-            poster.clone(),
-            Duration::from_millis(500),
-        );
-        let press = PlatformNativeInputEvent::PointerButton {
-            pointer_id: 0,
-            button: 1,
-            pressed: true,
-            absolute_position: None,
-        };
-        let release = PlatformNativeInputEvent::PointerButton {
-            pointer_id: 0,
-            button: 1,
-            pressed: false,
-            absolute_position: None,
-        };
-
-        input.handle(22, press.clone()).unwrap();
-        input.handle(22, release.clone()).unwrap();
-        input.reset(22).unwrap();
-        input.handle(22, press).unwrap();
-
-        assert_eq!(
-            poster.events(),
-            vec![
-                PostedEvent::Button {
-                    button: 1,
-                    pressed: true,
-                    click_state: 1,
-                },
-                PostedEvent::Button {
-                    button: 1,
-                    pressed: false,
-                    click_state: 1,
-                },
-                PostedEvent::Button {
-                    button: 1,
-                    pressed: true,
-                    click_state: 1,
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn failed_left_release_remains_pressed_for_reset_retry() {
-        let poster = Arc::new(RecordingPoster::new([
-            Ok(()),
-            Err("left-up failed".to_owned()),
-            Err("reset attempt one failed".to_owned()),
-            Ok(()),
-        ]));
-        let input = MacNativeInput::with_poster(poster.clone());
-        let press = PlatformNativeInputEvent::PointerButton {
-            pointer_id: 0,
-            button: 1,
-            pressed: true,
-            absolute_position: None,
-        };
-        let release = PlatformNativeInputEvent::PointerButton {
-            pointer_id: 0,
-            button: 1,
-            pressed: false,
-            absolute_position: None,
-        };
-
-        input.handle(7, press).unwrap();
-        assert_eq!(input.handle(7, release), Err("left-up failed".to_owned()));
-        input.reset(7).unwrap();
-        input.reset(7).unwrap();
-
-        assert_eq!(
-            poster.events(),
-            vec![
-                PostedEvent::Button {
-                    button: 1,
-                    pressed: true,
-                    click_state: 1,
-                },
-                PostedEvent::Button {
-                    button: 1,
-                    pressed: false,
-                    click_state: 1,
-                },
-                PostedEvent::Button {
-                    button: 1,
-                    pressed: false,
-                    click_state: 1,
-                },
-                PostedEvent::Button {
-                    button: 1,
-                    pressed: false,
-                    click_state: 1,
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn repeated_key_down_preserves_the_native_autorepeat_marker() {
-        let poster = Arc::new(RecordingPoster::new([Ok(()), Ok(()), Ok(())]));
-        let input = MacNativeInput::with_poster(poster.clone());
-
-        input
-            .handle(
-                8,
-                PlatformNativeInputEvent::Keyboard {
-                    hid_usage: 0x04,
-                    pressed: true,
-                    modifiers: 0,
-                    repeat: false,
-                },
-            )
-            .unwrap();
-        input
-            .handle(
-                8,
-                PlatformNativeInputEvent::Keyboard {
-                    hid_usage: 0x04,
-                    pressed: true,
-                    modifiers: 0,
-                    repeat: true,
-                },
-            )
-            .unwrap();
-        input
-            .handle(
-                8,
-                PlatformNativeInputEvent::Keyboard {
-                    hid_usage: 0x04,
-                    pressed: false,
-                    modifiers: 0,
-                    repeat: false,
-                },
-            )
-            .unwrap();
-
-        assert_eq!(
-            poster.events(),
-            vec![
-                PostedEvent::Key {
-                    hid_usage: 0x04,
-                    pressed: true,
-                    modifiers: 0,
-                    repeat: false,
-                },
-                PostedEvent::Key {
-                    hid_usage: 0x04,
-                    pressed: true,
-                    modifiers: 0,
-                    repeat: true,
-                },
-                PostedEvent::Key {
-                    hid_usage: 0x04,
-                    pressed: false,
-                    modifiers: 0,
-                    repeat: false,
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn failed_key_release_remains_pressed_for_reset_retry() {
-        let poster = Arc::new(RecordingPoster::new([
-            Ok(()),
-            Err("key-up failed".to_owned()),
-            Err("reset attempt one failed".to_owned()),
-            Ok(()),
-        ]));
-        let input = MacNativeInput::with_poster(poster.clone());
-        let press = PlatformNativeInputEvent::Keyboard {
-            hid_usage: 0x04,
-            pressed: true,
-            modifiers: 0x88,
-            repeat: false,
-        };
-        let release = PlatformNativeInputEvent::Keyboard {
-            hid_usage: 0x04,
-            pressed: false,
-            modifiers: 0,
-            repeat: false,
-        };
-
-        input.handle(9, press).unwrap();
-        assert_eq!(input.handle(9, release), Err("key-up failed".to_owned()));
-        input.reset(9).unwrap();
-        input.reset(9).unwrap();
-
-        assert_eq!(
-            poster.events(),
-            vec![
-                PostedEvent::Key {
-                    hid_usage: 0x04,
-                    pressed: true,
-                    modifiers: 0x88,
-                    repeat: false,
-                },
-                PostedEvent::Key {
-                    hid_usage: 0x04,
-                    pressed: false,
-                    modifiers: 0,
-                    repeat: false,
-                },
-                PostedEvent::Key {
-                    hid_usage: 0x04,
-                    pressed: false,
-                    modifiers: 0,
-                    repeat: false,
-                },
-                PostedEvent::Key {
-                    hid_usage: 0x04,
-                    pressed: false,
-                    modifiers: 0,
-                    repeat: false,
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn failed_button_press_does_not_leave_a_pressed_ledger_entry() {
-        let poster = Arc::new(RecordingPoster::new([Err("left-down failed".to_owned())]));
-        let input = MacNativeInput::with_poster(poster.clone());
-        let press = PlatformNativeInputEvent::PointerButton {
-            pointer_id: 0,
-            button: 1,
-            pressed: true,
-            absolute_position: None,
-        };
-
-        assert_eq!(input.handle(11, press), Err("left-down failed".to_owned()));
-        input.reset(11).unwrap();
-
-        assert_eq!(
-            poster.events(),
-            vec![PostedEvent::Button {
-                button: 1,
-                pressed: true,
-                click_state: 1,
-            }]
-        );
-    }
-
-    #[test]
-    fn failed_reset_retains_one_retry_then_discards_the_epoch_after_final_failure() {
-        let poster = Arc::new(RecordingPoster::new([
-            Ok(()),
-            Err("left-up failed".to_owned()),
-            Err("reset attempt one failed".to_owned()),
-            Err("reset attempt two failed".to_owned()),
-        ]));
-        let input = MacNativeInput::with_poster(poster.clone());
-        let press = PlatformNativeInputEvent::PointerButton {
-            pointer_id: 0,
-            button: 1,
-            pressed: true,
-            absolute_position: None,
-        };
-        let release = PlatformNativeInputEvent::PointerButton {
-            pointer_id: 0,
-            button: 1,
-            pressed: false,
-            absolute_position: None,
-        };
-
-        input.handle(12, press).unwrap();
-        assert!(input.handle(12, release).is_err());
-        assert!(input.reset(12).is_err());
-        input.reset(12).unwrap();
-
-        assert_eq!(
-            poster.events(),
-            vec![
-                PostedEvent::Button {
-                    button: 1,
-                    pressed: true,
-                    click_state: 1,
-                },
-                PostedEvent::Button {
-                    button: 1,
-                    pressed: false,
-                    click_state: 1,
-                },
-                PostedEvent::Button {
-                    button: 1,
-                    pressed: false,
-                    click_state: 1,
-                },
-                PostedEvent::Button {
-                    button: 1,
-                    pressed: false,
-                    click_state: 1,
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn reset_retries_only_failed_items_after_partial_release() {
-        let poster = Arc::new(RecordingPoster::new([
-            Ok(()),
-            Ok(()),
-            Ok(()),
-            Err("button-up failed".to_owned()),
-            Ok(()),
-        ]));
-        let input = MacNativeInput::with_poster(poster.clone());
-        let key_press = PlatformNativeInputEvent::Keyboard {
-            hid_usage: 0x04,
-            pressed: true,
-            modifiers: 0,
-            repeat: false,
-        };
-        let button_press = PlatformNativeInputEvent::PointerButton {
-            pointer_id: 0,
-            button: 1,
-            pressed: true,
-            absolute_position: None,
-        };
-
-        input.handle(13, key_press).unwrap();
-        input.handle(13, button_press).unwrap();
-        input.reset(13).unwrap();
-
-        assert_eq!(
-            poster.events(),
-            vec![
-                PostedEvent::Key {
-                    hid_usage: 0x04,
-                    pressed: true,
-                    modifiers: 0,
-                    repeat: false,
-                },
-                PostedEvent::Button {
-                    button: 1,
-                    pressed: true,
-                    click_state: 1,
-                },
-                PostedEvent::Key {
-                    hid_usage: 0x04,
-                    pressed: false,
-                    modifiers: 0,
-                    repeat: false,
-                },
-                PostedEvent::Button {
-                    button: 1,
-                    pressed: false,
-                    click_state: 1,
-                },
-                PostedEvent::Button {
-                    button: 1,
-                    pressed: false,
-                    click_state: 1,
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn reset_all_releases_command_and_buttons_across_abrupt_session_stop() {
-        let poster = Arc::new(RecordingPoster::new([
-            Ok(()),
-            Ok(()),
-            Ok(()),
-            Ok(()),
-            Ok(()),
-            Ok(()),
-        ]));
-        let input = MacNativeInput::with_poster(poster.clone());
-
-        input
-            .handle(
-                31,
-                PlatformNativeInputEvent::Keyboard {
-                    hid_usage: 0xE3,
-                    pressed: true,
-                    modifiers: 0x08,
-                    repeat: false,
-                },
-            )
-            .unwrap();
-        input
-            .handle(
-                31,
-                PlatformNativeInputEvent::PointerButton {
-                    pointer_id: 0,
-                    button: 1,
-                    pressed: true,
-                    absolute_position: None,
-                },
-            )
-            .unwrap();
-
-        input.reset_all().unwrap();
-        input.reset(31).unwrap();
-
-        assert_eq!(
-            poster.events(),
-            vec![
-                PostedEvent::Key {
-                    hid_usage: 0xE3,
-                    pressed: true,
-                    modifiers: 0x08,
-                    repeat: false,
-                },
-                PostedEvent::Button {
-                    button: 1,
-                    pressed: true,
-                    click_state: 1,
-                },
-                PostedEvent::Key {
-                    hid_usage: 0xE3,
-                    pressed: false,
-                    modifiers: 0,
-                    repeat: false,
-                },
-                PostedEvent::Button {
-                    button: 1,
-                    pressed: false,
-                    click_state: 1,
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn stale_release_from_reset_epoch_cannot_change_new_generation_state() {
-        let poster = Arc::new(RecordingPoster::new([
-            Ok(()),
-            Ok(()),
-            Ok(()),
-            Ok(()),
-            Ok(()),
-        ]));
-        let input = MacNativeInput::with_poster(poster.clone());
-        let command_down = |session_epoch| {
-            input
-                .handle(
-                    session_epoch,
-                    PlatformNativeInputEvent::Keyboard {
-                        hid_usage: 0xE3,
-                        pressed: true,
-                        modifiers: 0x08,
-                        repeat: false,
-                    },
-                )
-                .unwrap();
-        };
-
-        command_down(41);
-        input.reset(41).unwrap();
-        command_down(42);
-        input
-            .handle(
-                41,
-                PlatformNativeInputEvent::Keyboard {
-                    hid_usage: 0xE3,
-                    pressed: false,
-                    modifiers: 0,
-                    repeat: false,
-                },
-            )
-            .unwrap();
-        input.reset(42).unwrap();
-
-        assert_eq!(
-            poster.events(),
-            vec![
-                PostedEvent::Key {
-                    hid_usage: 0xE3,
-                    pressed: true,
-                    modifiers: 0x08,
-                    repeat: false,
-                },
-                PostedEvent::Key {
-                    hid_usage: 0xE3,
-                    pressed: false,
-                    modifiers: 0,
-                    repeat: false,
-                },
-                PostedEvent::Key {
-                    hid_usage: 0xE3,
-                    pressed: true,
-                    modifiers: 0x08,
-                    repeat: false,
-                },
-                PostedEvent::Key {
-                    hid_usage: 0xE3,
-                    pressed: false,
-                    modifiers: 0,
-                    repeat: false,
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn usb_hid_mapping_preserves_physical_keys_and_multilingual_modifiers() {
-        assert_eq!(mac_key_code(0x04), Some(0x00));
-        assert_eq!(mac_key_code(0xe4), Some(0x3e));
-        assert_eq!(mac_key_code(0x48), None);
-        assert!(mac_modifier_flags(0xff).contains(CGEventFlags::CGEventFlagCommand));
-    }
-
-    #[test]
-    fn planned_virtual_bounds_map_relative_and_absolute_pointer_motion() {
-        let bounds = MacInputDisplayBounds {
-            width: 2340.0,
-            height: 1612.0,
-        }
-        .rect()
-        .expect("planned bounds");
-        let relative = pointer_target(
-            CGPoint::new(4000.0, 4000.0),
-            bounds,
-            NativePointerMotionMode::Relative,
-            10,
-            -12,
-            0.0,
-            0.0,
-        )
-        .expect("relative target");
-        assert_eq!(relative.x, 1180.0);
-        assert_eq!(relative.y, 794.0);
-        let absolute = pointer_target(
-            CGPoint::new(0.0, 0.0),
-            bounds,
-            NativePointerMotionMode::Absolute,
-            0,
-            0,
-            1.0,
-            1.0,
-        )
-        .expect("absolute target");
-        assert_eq!(absolute.x, 2339.0);
-        assert_eq!(absolute.y, 1611.0);
-    }
-
-    #[test]
-    fn preserved_physical_capture_viewport_remaps_absolute_pointer_position() {
-        let source = CGSize::new(2560.0, 1440.0);
-        let output = CGSize::new(3600.0, 2260.0);
-        let left = 520.0 / 3599.0;
-        let top = 410.0 / 2259.0;
-        let right = 3079.0 / 3599.0;
-        let bottom = 1849.0 / 2259.0;
-
-        let top_left = remap_preserved_capture_position(left as f32, top as f32, source, output)
-            .expect("top-left mapping");
-        let bottom_right =
-            remap_preserved_capture_position(right as f32, bottom as f32, source, output)
-                .expect("bottom-right mapping");
-
-        assert!(top_left.0.abs() < 0.000_01);
-        assert!(top_left.1.abs() < 0.000_01);
-        assert!((bottom_right.0 - 1.0).abs() < 0.000_01);
-        assert!((bottom_right.1 - 1.0).abs() < 0.000_01);
-    }
-
-    #[test]
-    fn preserved_physical_capture_viewport_accounts_for_downscale_letterbox() {
-        let source = CGSize::new(2560.0, 1440.0);
-        let output = CGSize::new(1280.0, 800.0);
-        let top = 40.0 / 799.0;
-        let bottom = 759.0 / 799.0;
-
-        let top_center = remap_preserved_capture_position(0.5, top as f32, source, output)
-            .expect("top-center mapping");
-        let bottom_center = remap_preserved_capture_position(0.5, bottom as f32, source, output)
-            .expect("bottom-center mapping");
-
-        assert!((top_center.0 - 0.5).abs() < 0.001);
-        assert!(top_center.1.abs() < 0.000_01);
-        assert!((bottom_center.0 - 0.5).abs() < 0.001);
-        assert!((bottom_center.1 - 1.0).abs() < 0.000_01);
-    }
-
-    #[test]
-    fn published_session_bounds_take_precedence_over_planned_virtual_bounds() {
-        let published = CGRect::new(&CGPoint::new(1440.0, 0.0), &CGSize::new(2560.0, 1440.0));
-        let planned = MacInputDisplayBounds {
-            width: 960.0,
-            height: 540.0,
-        };
-        let selected = preferred_pointer_bounds(76, published, Some(planned))
-            .expect("published session bounds");
-        assert_eq!(selected.origin.x, 1440.0);
-        assert_eq!(selected.size.width, 2560.0);
-        assert_eq!(selected.size.height, 1440.0);
     }
 }

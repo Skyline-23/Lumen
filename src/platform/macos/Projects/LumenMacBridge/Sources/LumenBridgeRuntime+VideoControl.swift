@@ -162,4 +162,32 @@ extension LumenBridgeRuntime {
             admissionDivisor: admissionDivisor
         )
     }
+
+    func wakeUnchangedContentCadenceImpl(
+        sessionEpoch: UInt32,
+        expectedRelayGeneration: UInt64? = nil
+    ) async -> Bool {
+        guard await captureLifecycle.shouldRequestImmediateKeyFrame else {
+            return false
+        }
+        if let expectedRelayGeneration,
+           !unchangedContentCadenceWakeRelay.isActive(
+               generation: expectedRelayGeneration,
+               sessionEpoch: sessionEpoch
+           ) {
+            return false
+        }
+        guard
+              let configuration = activeCaptureConfiguration,
+              configuration.sessionEpoch == sessionEpoch,
+              let encodedCaptureSession else {
+            logger.notice(
+                "Rejecting stale unchanged-content cadence wake session-epoch=\(sessionEpoch, privacy: .public)"
+            )
+            return false
+        }
+        return await encodedCaptureSession.wakeUnchangedContentCadence(
+            sessionEpoch: sessionEpoch
+        )
+    }
 }

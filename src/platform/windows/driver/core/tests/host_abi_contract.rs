@@ -31,6 +31,12 @@ fn host_and_driver_share_the_first_party_guid_layout_and_control_codes() {
     assert!(HOST_ABI.contains("ABI_RESPONSE_SIZE: u32 = 48"));
     assert!(DRIVER_HEADER.contains("sizeof(LumenDriverCoreRequest) == 80"));
     assert!(DRIVER_HEADER.contains("sizeof(LumenDriverCoreResponse) == 48"));
+    assert!(HOST_ABI.contains("DRIVER_CONTENT_SIGNAL_UNKNOWN: u32 = 0"));
+    assert!(HOST_ABI.contains("DRIVER_CONTENT_SIGNAL_CHANGED: u32 = 1"));
+    assert!(HOST_ABI.contains("DRIVER_CONTENT_SIGNAL_UNCHANGED: u32 = 2"));
+    assert!(DRIVER_HEADER.contains("LUMEN_DRIVER_CONTENT_SIGNAL_UNKNOWN 0u"));
+    assert!(DRIVER_HEADER.contains("LUMEN_DRIVER_CONTENT_SIGNAL_CHANGED 1u"));
+    assert!(DRIVER_HEADER.contains("LUMEN_DRIVER_CONTENT_SIGNAL_UNCHANGED 2u"));
     assert!(HOST_DRIVER.contains("CreateFileW"));
     assert!(HOST_DRIVER.contains("IOCTL_QUERY_CAPABILITIES"));
     assert!(HOST_DRIVER.contains("IOCTL_QUERY_HEALTH"));

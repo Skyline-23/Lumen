@@ -8,6 +8,10 @@ pub(super) const ABI_REQUEST_SIZE: u32 = 80;
 pub(super) const ABI_RESPONSE_SIZE: u32 = 48;
 pub(super) const ABI_FRAME_SIZE: u32 = 80;
 
+pub(super) const DRIVER_CONTENT_SIGNAL_UNKNOWN: u32 = 0;
+pub(super) const DRIVER_CONTENT_SIGNAL_CHANGED: u32 = 1;
+pub(super) const DRIVER_CONTENT_SIGNAL_UNCHANGED: u32 = 2;
+
 const FILE_DEVICE_UNKNOWN: u32 = 0x22;
 const METHOD_BUFFERED: u32 = 0;
 const METHOD_OUT_DIRECT: u32 = 2;
@@ -168,6 +172,10 @@ mod tests {
         let request = CoreRequest::new(OPERATION_CREATE_MONITOR, 7);
         assert_eq!(size_of::<CoreRequest>(), 80);
         assert_eq!(size_of::<CoreResponse>(), 48);
+        assert_eq!(size_of::<FrameRecord>(), 80);
+        assert_eq!(DRIVER_CONTENT_SIGNAL_UNKNOWN, 0);
+        assert_eq!(DRIVER_CONTENT_SIGNAL_CHANGED, 1);
+        assert_eq!(DRIVER_CONTENT_SIGNAL_UNCHANGED, 2);
         assert_eq!(request.header.structure_size, 80);
         assert_eq!(request.header.operation, 4);
         assert_eq!(IOCTL_QUERY_CAPABILITIES, 0x0022_6400);

@@ -125,7 +125,9 @@ extension LumenScreenCaptureVideoRuntime {
                 guard let self else { return }
                 switch admission {
                 case .drop:
-                    self.recordIntentionalFrameCadenceDrop(submission.source)
+                    self.recordIntentionalFrameCadenceDrop(
+                        sourceDisplayTime: submission.source.displayTime
+                    )
                 case .admit:
                     break
                 }
@@ -244,9 +246,7 @@ extension LumenScreenCaptureVideoRuntime {
         }
     }
 
-    func recordIntentionalFrameCadenceDrop(
-        _ source: LumenPendingVideoBootstrapSource
-    ) {
+    func recordIntentionalFrameCadenceDrop(sourceDisplayTime: UInt64) {
         statistics.droppedFrameCount &+= 1
         statistics.intentionalFrameCadenceDropCount &+= 1
         refreshStatisticsNotesIfNeeded()
@@ -254,8 +254,8 @@ extension LumenScreenCaptureVideoRuntime {
             || statistics.intentionalFrameCadenceDropCount % 120 == 0 {
             eventHandler(.init(
                 kind: .coalescedFrame,
-                message: "Dropped source frame intentionally to follow adaptive target cadence",
-                sourceDisplayTime: source.displayTime
+                message: "Dropped source frame intentionally to follow adaptive host cadence",
+                sourceDisplayTime: sourceDisplayTime
             ))
         }
     }

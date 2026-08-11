@@ -14,6 +14,8 @@ struct LumenFrameProcessor;
 
 struct LumenDeviceContext {
   LumenDriverCoreState core_state;
+  CRITICAL_SECTION core_state_lock;
+  volatile LONG core_state_lock_initialized;
   WDFQUEUE frame_queue;
   WDFQUEUE event_queue;
   IDDCX_ADAPTER adapter;
@@ -41,6 +43,39 @@ struct LumenDeviceContext {
 };
 
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(LumenDeviceContext, LumenGetDeviceContext);
+
+// IddCx invokes some monitor callbacks reentrantly from arrival/departure.
+// A recursive critical section serializes the value-state machine without
+// imposing KMDF device-wide automatic serialization on class-extension
+// objects. The uncontended frame-completion path stays entirely user-mode.
+class LumenCoreStateGuard final {
+ public:
+  explicit LumenCoreStateGuard(LumenDeviceContext *context)
+      : context_(context), locked_(false) {
+    if (context_ != nullptr &&
+        InterlockedCompareExchange(
+          &context_->core_state_lock_initialized,
+          1,
+          1
+        ) != 0) {
+      EnterCriticalSection(&context_->core_state_lock);
+      locked_ = true;
+    }
+  }
+
+  ~LumenCoreStateGuard() {
+    if (locked_) {
+      LeaveCriticalSection(&context_->core_state_lock);
+    }
+  }
+
+  LumenCoreStateGuard(const LumenCoreStateGuard &) = delete;
+  LumenCoreStateGuard &operator=(const LumenCoreStateGuard &) = delete;
+
+ private:
+  LumenDeviceContext *context_;
+  bool locked_;
+};
 
 struct LumenAdapterContext {
   WDFDEVICE device;

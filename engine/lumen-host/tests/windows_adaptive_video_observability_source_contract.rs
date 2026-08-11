@@ -5,6 +5,7 @@ const SERVICE_LOG: &str = include_str!("../src/windows_service_log.rs");
 const SESSION_SLOT: &str = include_str!("../src/platform/session_slot.rs");
 const MEDIA: &str = include_str!("../src/platform/windows/native_media.rs");
 const VIDEO: &str = include_str!("../src/platform/windows/native_video.rs");
+const VIDEO_ENCODER: &str = include_str!("../src/platform/windows/native_video_encoder.rs");
 const WINDOWS_PACKAGE: &str = include_str!("../../../packaging/windows/Package.wxs");
 const WINDOWS_CMAKE: &str = include_str!("../../../cmake/packaging/windows.cmake");
 const COMMON_CMAKE: &str = include_str!("../../../cmake/packaging/common.cmake");
@@ -88,7 +89,7 @@ fn windows_service_event_file_uses_flush_compatible_append_only_access() {
 
 #[test]
 fn windows_adaptive_apply_is_committed_after_readback_and_before_retirement() {
-    let encoder_apply = VIDEO
+    let encoder_apply = VIDEO_ENCODER
         .split("fn set_bitrate")
         .nth(1)
         .expect("Media Foundation bitrate apply");

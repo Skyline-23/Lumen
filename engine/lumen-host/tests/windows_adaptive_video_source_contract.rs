@@ -1,6 +1,11 @@
 const INPUT: &str = include_str!("../src/platform/windows/native_input.rs");
 const MEDIA: &str = include_str!("../src/platform/windows/native_media.rs");
-const VIDEO: &str = include_str!("../src/platform/windows/native_video.rs");
+const VIDEO: &str = concat!(
+    include_str!("../src/platform/windows/native_video.rs"),
+    include_str!("../src/platform/windows/native_video_cadence.rs"),
+    include_str!("../src/platform/windows/native_video_encoder.rs"),
+    include_str!("../src/platform/windows/native_video_worker.rs"),
+);
 const CAPTURE: &str = include_str!("../src/platform/windows/native_capture.rs");
 
 #[test]
@@ -108,6 +113,12 @@ fn windows_capture_uses_shared_cadence_policy_and_vfr_capture_timestamps() {
         .next()
         .unwrap();
     assert!(encode.contains("cadence_admission.admits"));
+    assert!(encode.contains("observe_unchanged_content_cadence"));
+    assert!(encode.contains("content_signal"));
+    assert!(
+        encode.find("cadence_admission.admits").unwrap()
+            < encode.find("self.capture.convert_frame").unwrap()
+    );
     assert!(!encode.contains("take_admitted_video_timestamp"));
 
     assert!(CAPTURE.contains("presentation_time_90khz: record.presentation_time_90khz"));
