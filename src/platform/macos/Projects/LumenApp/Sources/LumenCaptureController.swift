@@ -612,13 +612,13 @@ final class LumenCaptureController: NSObject, ObservableObject {
     }
 
     func openAccessibilitySettings() {
+        permissionDragPanelController.close()
         openPrivacySettings(anchor: "Privacy_Accessibility")
-        presentPermissionPanel(.accessibility)
     }
 
     func openScreenRecordingSettings() {
+        permissionDragPanelController.close()
         openPrivacySettings(anchor: "Privacy_ScreenCapture")
-        presentPermissionPanel(.screenRecording)
     }
 
     func prepareForTermination() {
