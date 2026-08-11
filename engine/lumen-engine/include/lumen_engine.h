@@ -9,7 +9,7 @@
 extern "C" {
 #endif
 
-#define LUMEN_ENGINE_ABI_VERSION 67u
+#define LUMEN_ENGINE_ABI_VERSION 68u
 #define LUMEN_ENCRYPTED_CONTROL_HEADER_SIZE 8u
 #define LUMEN_CONTROL_FEEDBACK_MAX_SIZE 29u
 #define LUMEN_CONTROL_TERMINATION_SIZE 8u
@@ -827,6 +827,65 @@ LumenEngineStatus lumen_engine_adaptive_frame_cadence_observe(
 
 LumenEngineStatus lumen_engine_adaptive_frame_cadence_target(
   const LumenAdaptiveFrameCadenceController *controller,
+  uint32_t *target_out
+);
+
+/*
+ * Unchanged-content host cadence policy. The negotiated frame rate remains
+ * the ceiling; trusted idle/unchanged content may lower the host source target
+ * to two frames per second after one second of confirmation. Unknown metadata
+ * is fail-open and validated host input/motion reopens the ceiling.
+ */
+typedef enum LumenContentCadenceSignal {
+  LumenContentCadenceSignalUnknown = 0,
+  LumenContentCadenceSignalChanged = 1,
+  LumenContentCadenceSignalUnchanged = 2,
+  LumenContentCadenceSignalIdle = 3
+} LumenContentCadenceSignal;
+
+typedef struct LumenContentCadenceRequest {
+  uint32_t requested_frame_rate;
+} LumenContentCadenceRequest;
+
+typedef struct LumenContentCadenceObservation {
+  double monotonic_time_seconds;
+  // Raw discriminant; unknown/future values fail open at the Rust boundary.
+  uint32_t signal;
+  bool pipeline_stable;
+} LumenContentCadenceObservation;
+
+typedef struct LumenContentCadenceDecision {
+  uint32_t target_frame_rate;
+  bool changed;
+  bool low_rate_active;
+} LumenContentCadenceDecision;
+
+typedef struct LumenContentCadenceController
+    LumenContentCadenceController;
+
+LumenEngineStatus lumen_engine_content_cadence_create(
+  LumenContentCadenceRequest request,
+  LumenContentCadenceController **controller_out
+);
+
+void lumen_engine_content_cadence_destroy(
+  LumenContentCadenceController *controller
+);
+
+LumenEngineStatus lumen_engine_content_cadence_observe(
+  LumenContentCadenceController *controller,
+  LumenContentCadenceObservation observation,
+  LumenContentCadenceDecision *decision_out
+);
+
+LumenEngineStatus lumen_engine_content_cadence_wake(
+  LumenContentCadenceController *controller,
+  double monotonic_time_seconds,
+  LumenContentCadenceDecision *decision_out
+);
+
+LumenEngineStatus lumen_engine_content_cadence_target(
+  const LumenContentCadenceController *controller,
   uint32_t *target_out
 );
 

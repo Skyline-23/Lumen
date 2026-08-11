@@ -817,8 +817,8 @@ mod tests {
 
     #[test]
     fn cadence_abi_version_and_observation_layout_stay_in_sync() {
-        assert_eq!(crate::ABI_VERSION, 67);
-        assert_eq!(crate::lumen_engine_abi_version(), 67);
+        assert_eq!(crate::ABI_VERSION, 68);
+        assert_eq!(crate::lumen_engine_abi_version(), 68);
         assert_eq!(
             std::mem::size_of::<LumenAdaptiveFrameCadenceObservation>(),
             48
