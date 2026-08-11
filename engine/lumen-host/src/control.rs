@@ -51,6 +51,12 @@ pub(crate) struct VideoDeliveryState {
     pub(crate) wire_budget_kbps: u32,
     pub(crate) target_bitrate_kbps: u32,
     pub(crate) admission_divisor: u8,
+    pub(crate) media_park_revision: u64,
+    pub(crate) media_delivery_generation: u64,
+    /// Parked sessions continue polling the platform but must never enqueue
+    /// video or audio media on the QUIC wire. RESUMING is deliberately not
+    /// parked: it admits one reliable bootstrap before deltas are allowed.
+    pub(crate) parked: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -58,6 +64,9 @@ pub(crate) struct AudioDeliveryState {
     pub(crate) session_epoch: u32,
     pub(crate) policy_revision: u16,
     pub(crate) maximum_datagram_payload: usize,
+    pub(crate) media_park_revision: u64,
+    pub(crate) media_delivery_generation: u64,
+    pub(crate) parked: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -135,6 +144,7 @@ pub struct ControlRouter {
     native: native_session::NativeSessionState,
     codec_configuration_notify: Arc<Notify>,
     video_bootstrap_notify: Arc<Notify>,
+    media_admission_gate: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl ControlRouter {
@@ -154,6 +164,7 @@ impl ControlRouter {
             native: native_session::NativeSessionState::default(),
             codec_configuration_notify: Arc::new(Notify::new()),
             video_bootstrap_notify: Arc::new(Notify::new()),
+            media_admission_gate: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
@@ -163,6 +174,10 @@ impl ControlRouter {
 
     pub(crate) fn native_video_bootstrap_notify(&self) -> Arc<Notify> {
         Arc::clone(&self.video_bootstrap_notify)
+    }
+
+    pub(crate) fn native_media_admission_gate(&self) -> Arc<tokio::sync::Mutex<()>> {
+        Arc::clone(&self.media_admission_gate)
     }
 
     pub fn authorities(&self) -> &HostAuthorities {

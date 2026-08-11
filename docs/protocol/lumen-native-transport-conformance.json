@@ -185,7 +185,8 @@
     "pairedFeedbackWindows": 8,
     "packetArrivalFeedback": 16,
     "requiredMask": 15,
-    "supportedMask": 31
+    "supportedMask": 63,
+    "mediaParkResume": 32
   },
   "dynamicRangeTransport": {
     "unknown": 0,

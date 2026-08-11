@@ -223,6 +223,15 @@ public actor LumenBridgeRuntime {
         )
     }
 
+    public nonisolated func resetMediaQueues() {
+        let semaphore = DispatchSemaphore(value: 0)
+        Task { [self] in
+            await resetMediaQueuesOnActor()
+            semaphore.signal()
+        }
+        semaphore.wait()
+    }
+
     public nonisolated func drainNextVideoForwardedFrame() -> LumenBridgeDrainedVideoFrame? {
         drainNextVideoForwardedFrameImpl()
     }
@@ -251,6 +260,7 @@ public actor LumenBridgeRuntime {
 
     nonisolated let videoForwarder = LumenVideoCaptureForwarder()
     nonisolated let audioForwarder = LumenAudioCaptureForwarder()
+    nonisolated let audioMediaEpochToken = LumenAudioMediaEpochToken()
     let logger = Logger(subsystem: "dev.skyline23.lumen", category: "MacBridgeRuntime")
     let captureLifecycle = LumenBridgeCaptureLifecycle()
     let encodedFrameReadiness = LumenFirstEncodedFrameGate()
@@ -276,6 +286,16 @@ public actor LumenBridgeRuntime {
     var lastEncodedFrameSourceDisplayTime: UInt64?
     var lastRestartUptimeNanoseconds: UInt64 = 0
     var activeCaptureGeneration: UInt64?
+
+    func resetMediaQueuesOnActor() async {
+        // Advance producer fences before clearing forwarding queues. Any
+        // callback already admitted to the old epoch is rejected after this
+        // point; newly admitted frames racing the clear are dropped by the
+        // final queue reset and begin after the next media poll.
+        audioMediaEpochToken.advance()
+        await encodedCaptureSession?.resetMediaEpoch()
+        resetMediaQueuesImpl()
+    }
 
     init(
         systemAudioPlaybackSuppression:

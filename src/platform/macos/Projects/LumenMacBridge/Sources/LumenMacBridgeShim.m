@@ -701,6 +701,16 @@ void LumenMacBridgeControllerConfigureAudioForwarding(
                                                       eventCapacity:(NSInteger) (event_capacity)];
 }
 
+void LumenMacBridgeControllerResetMediaQueues(
+  LumenMacBridgeController *controller
+) {
+  if (!controller) {
+    return;
+  }
+
+  [LumenMacBridgeFacade(controller) resetMediaQueuesSync];
+}
+
 LumenMacBridgeAudioForwardingSnapshot LumenMacBridgeControllerCopyAudioForwardingSnapshot(
   LumenMacBridgeController *controller
 ) {

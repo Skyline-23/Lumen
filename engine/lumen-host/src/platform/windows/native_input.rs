@@ -185,6 +185,10 @@ impl WindowsPlatformSessionControl {
 }
 
 impl PlatformSessionControl for WindowsPlatformSessionControl {
+    fn supports_media_park_resume(&self) -> bool {
+        true
+    }
+
     fn start_application(&self, plan: PlatformApplicationPlan) -> Result<(), String> {
         self.display.start(&plan)?;
         if let Err(error) = self.application.start(plan) {
@@ -261,6 +265,10 @@ impl PlatformSessionControl for WindowsPlatformSessionControl {
 
     fn poll_encoded_audio(&self) -> Result<Option<PlatformEncodedAudioPacket>, String> {
         self.media.poll_audio()
+    }
+
+    fn reset_media_queue(&self, session_epoch: u32) -> Result<(), String> {
+        self.media.reset_media_queue(session_epoch)
     }
 
     fn handle_control_event(

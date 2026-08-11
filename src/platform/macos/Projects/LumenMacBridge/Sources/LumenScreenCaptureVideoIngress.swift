@@ -37,6 +37,7 @@ extension LumenScreenCaptureVideoRuntime {
             source: source,
             forceKeyFrame: bootstrapReason != nil,
             bootstrapReason: bootstrapReason,
+            mediaEpoch: mediaEpoch,
             offeredMachTime: mach_absolute_time()
         )
         if let replacedSubmission = encoderAdmission.offer(submission) {
@@ -99,6 +100,7 @@ extension LumenScreenCaptureVideoRuntime {
                 sequenceNumber: source.sequenceNumber,
                 displayTime: source.displayTime,
                 submissionMachTime: submissionMachTime,
+                mediaEpoch: submission.mediaEpoch,
                 bootstrapReason: submission.bootstrapReason
             )
         )
@@ -179,6 +181,13 @@ extension LumenScreenCaptureVideoRuntime {
         result: LumenVideoEncoderSubmissionResult
     ) {
         encoderInvocationTiming.observe(result.invocationMilliseconds)
+        guard submission.mediaEpoch == mediaEpoch else {
+            if result.status != noErr || result.infoFlags.contains(.frameDropped),
+               outputLifecycle.cancelSubmission(id: submission.source.sequenceNumber) != nil {
+                inflightFrameCount = max(inflightFrameCount - 1, 0)
+            }
+            return
+        }
         if result.status != noErr {
             if outputLifecycle.cancelSubmission(
                 id: submission.source.sequenceNumber

@@ -492,6 +492,10 @@ void LumenMacBridgeControllerConfigureAudioForwarding(
   size_t event_capacity
 );
 
+void LumenMacBridgeControllerResetMediaQueues(
+  LumenMacBridgeController *controller
+);
+
 LumenMacBridgeAudioForwardingSnapshot LumenMacBridgeControllerCopyAudioForwardingSnapshot(
   LumenMacBridgeController *controller
 );

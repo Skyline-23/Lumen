@@ -322,7 +322,8 @@ private extension LumenBridgeRuntime {
                     .systemAudioPlaybackSuppressionCleanupFailed(cleanupFailures)
                     .localizedDescription
             ),
-            generation: audioCaptureGeneration
+            generation: audioCaptureGeneration,
+            mediaEpoch: audioMediaEpochToken.load()
         )
         audioForwarder.setProducerActive(false)
     }

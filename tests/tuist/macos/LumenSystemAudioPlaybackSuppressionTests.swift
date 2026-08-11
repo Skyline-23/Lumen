@@ -1414,6 +1414,8 @@ private final class RecordingEncodedCaptureRuntime:
         trace?.append("video-stop")
     }
 
+    func resetMediaEpoch() {}
+
     func requestImmediateKeyFrame() {}
 
     func resumeVideoEncodingAfterCodecAck() async -> Bool {

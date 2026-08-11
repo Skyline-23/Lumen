@@ -2,7 +2,7 @@
 
 > Generated file. Do not edit it directly. Change `docs/protocol/lumen-contract-v4.json` and run `lumen-contract-tool generate`.
 
-- Contract SHA-256: `0174a07ef5e32d4915842f8093095d7a51de3643167677d739564abb0698a00d`
+- Contract SHA-256: `b3efc3f6386599632c97bf25bf3b846c55d458e09a3a1f5fd5bf63dd58a6ac60`
 - Contract schema version: `1`
 - Protobuf source: `docs/protocol/lumen-streaming-v4.proto`
 - Descriptor source name: `lumen-streaming-v4.proto`
@@ -33,11 +33,11 @@ The following declarations are read from the compiled descriptor, not parsed fro
 
 | Declaration kind | Count |
 | --- | ---: |
-| Enums | 20 |
-| Enum values | 105 |
-| Messages | 40 |
+| Enums | 22 |
+| Enum values | 115 |
+| Messages | 42 |
 | Services | 0 |
-| Message fields | 276 |
+| Message fields | 286 |
 | Explicit oneofs | 6 |
 | Synthetic optional oneofs | 3 |
 
@@ -247,6 +247,26 @@ Reserved numbers: <code>2...2</code>.
 | <code>lumen.streaming.v4.DisplayReconfigurationResultCode.DISPLAY_RECONFIGURATION_RESULT_CODE_APPLIED</code> | 1 |
 | <code>lumen.streaming.v4.DisplayReconfigurationResultCode.DISPLAY_RECONFIGURATION_RESULT_CODE_REJECTED</code> | 2 |
 | <code>lumen.streaming.v4.DisplayReconfigurationResultCode.DISPLAY_RECONFIGURATION_RESULT_CODE_SUPERSEDED</code> | 3 |
+
+### enum `lumen.streaming.v4.MediaParkState`
+
+| Name | Number |
+| --- | ---: |
+| <code>lumen.streaming.v4.MediaParkState.MEDIA_PARK_STATE_UNSPECIFIED</code> | 0 |
+| <code>lumen.streaming.v4.MediaParkState.MEDIA_PARK_STATE_ACTIVE</code> | 1 |
+| <code>lumen.streaming.v4.MediaParkState.MEDIA_PARK_STATE_PARKING</code> | 2 |
+| <code>lumen.streaming.v4.MediaParkState.MEDIA_PARK_STATE_PARKED</code> | 3 |
+| <code>lumen.streaming.v4.MediaParkState.MEDIA_PARK_STATE_RESUMING</code> | 4 |
+
+### enum `lumen.streaming.v4.MediaParkResultCode`
+
+| Name | Number |
+| --- | ---: |
+| <code>lumen.streaming.v4.MediaParkResultCode.MEDIA_PARK_RESULT_CODE_UNSPECIFIED</code> | 0 |
+| <code>lumen.streaming.v4.MediaParkResultCode.MEDIA_PARK_RESULT_CODE_APPLIED</code> | 1 |
+| <code>lumen.streaming.v4.MediaParkResultCode.MEDIA_PARK_RESULT_CODE_IDEMPOTENT</code> | 2 |
+| <code>lumen.streaming.v4.MediaParkResultCode.MEDIA_PARK_RESULT_CODE_SUPERSEDED</code> | 3 |
+| <code>lumen.streaming.v4.MediaParkResultCode.MEDIA_PARK_RESULT_CODE_REJECTED</code> | 4 |
 
 ### message `lumen.streaming.v4.VideoFormat`
 
@@ -743,6 +763,24 @@ Oneof declarations:
 | 4 | <code>lumen.streaming.v4.DisplayReconfigurationResult.plan</code> | <code>plan</code> | singular | <code>message</code> | <code>lumen.streaming.v4.HostSessionPlan</code> | — | no |
 | 5 | <code>lumen.streaming.v4.DisplayReconfigurationResult.message</code> | <code>message</code> | singular | <code>string</code> | — | — | no |
 
+### message `lumen.streaming.v4.MediaParkRequest`
+
+| Tag | Protobuf field | JSON field | Label | Type kind | Type name | Oneof | Proto3 optional |
+| ---: | --- | --- | --- | --- | --- | --- | --- |
+| 1 | <code>lumen.streaming.v4.MediaParkRequest.session_epoch</code> | <code>sessionEpoch</code> | singular | <code>uint32</code> | — | — | no |
+| 2 | <code>lumen.streaming.v4.MediaParkRequest.revision</code> | <code>revision</code> | singular | <code>uint64</code> | — | — | no |
+| 3 | <code>lumen.streaming.v4.MediaParkRequest.park</code> | <code>park</code> | singular | <code>bool</code> | — | — | no |
+
+### message `lumen.streaming.v4.MediaParkResult`
+
+| Tag | Protobuf field | JSON field | Label | Type kind | Type name | Oneof | Proto3 optional |
+| ---: | --- | --- | --- | --- | --- | --- | --- |
+| 1 | <code>lumen.streaming.v4.MediaParkResult.session_epoch</code> | <code>sessionEpoch</code> | singular | <code>uint32</code> | — | — | no |
+| 2 | <code>lumen.streaming.v4.MediaParkResult.revision</code> | <code>revision</code> | singular | <code>uint64</code> | — | — | no |
+| 3 | <code>lumen.streaming.v4.MediaParkResult.state</code> | <code>state</code> | singular | <code>enum</code> | <code>lumen.streaming.v4.MediaParkState</code> | — | no |
+| 4 | <code>lumen.streaming.v4.MediaParkResult.result</code> | <code>result</code> | singular | <code>enum</code> | <code>lumen.streaming.v4.MediaParkResultCode</code> | — | no |
+| 5 | <code>lumen.streaming.v4.MediaParkResult.message</code> | <code>message</code> | singular | <code>string</code> | — | — | no |
+
 ### message `lumen.streaming.v4.ClientControlEnvelope`
 
 | Tag | Protobuf field | JSON field | Label | Type kind | Type name | Oneof | Proto3 optional |
@@ -755,12 +793,13 @@ Oneof declarations:
 | 15 | <code>lumen.streaming.v4.ClientControlEnvelope.video_keyframe_request</code> | <code>videoKeyframeRequest</code> | singular | <code>message</code> | <code>lumen.streaming.v4.VideoKeyframeRequest</code> | <code>payload</code> | no |
 | 16 | <code>lumen.streaming.v4.ClientControlEnvelope.video_bootstrap_result</code> | <code>videoBootstrapResult</code> | singular | <code>message</code> | <code>lumen.streaming.v4.VideoBootstrapResult</code> | <code>payload</code> | no |
 | 17 | <code>lumen.streaming.v4.ClientControlEnvelope.display_reconfiguration</code> | <code>displayReconfiguration</code> | singular | <code>message</code> | <code>lumen.streaming.v4.DisplayReconfigurationRequest</code> | <code>payload</code> | no |
+| 18 | <code>lumen.streaming.v4.ClientControlEnvelope.media_park</code> | <code>mediaPark</code> | singular | <code>message</code> | <code>lumen.streaming.v4.MediaParkRequest</code> | <code>payload</code> | no |
 
 Oneof declarations:
 
 | Name | Kind | Members |
 | --- | --- | --- |
-| <code>lumen.streaming.v4.ClientControlEnvelope.payload</code> | explicit | <code>lumen.streaming.v4.ClientControlEnvelope.hello</code>, <code>lumen.streaming.v4.ClientControlEnvelope.start_session</code>, <code>lumen.streaming.v4.ClientControlEnvelope.stop_session</code>, <code>lumen.streaming.v4.ClientControlEnvelope.codec_configuration_ack</code>, <code>lumen.streaming.v4.ClientControlEnvelope.video_keyframe_request</code>, <code>lumen.streaming.v4.ClientControlEnvelope.video_bootstrap_result</code>, <code>lumen.streaming.v4.ClientControlEnvelope.display_reconfiguration</code> |
+| <code>lumen.streaming.v4.ClientControlEnvelope.payload</code> | explicit | <code>lumen.streaming.v4.ClientControlEnvelope.hello</code>, <code>lumen.streaming.v4.ClientControlEnvelope.start_session</code>, <code>lumen.streaming.v4.ClientControlEnvelope.stop_session</code>, <code>lumen.streaming.v4.ClientControlEnvelope.codec_configuration_ack</code>, <code>lumen.streaming.v4.ClientControlEnvelope.video_keyframe_request</code>, <code>lumen.streaming.v4.ClientControlEnvelope.video_bootstrap_result</code>, <code>lumen.streaming.v4.ClientControlEnvelope.display_reconfiguration</code>, <code>lumen.streaming.v4.ClientControlEnvelope.media_park</code> |
 
 Reserved tags: <code>12..&lt;13</code>.
 
@@ -774,12 +813,13 @@ Reserved tags: <code>12..&lt;13</code>.
 | 13 | <code>lumen.streaming.v4.HostControlEnvelope.error</code> | <code>error</code> | singular | <code>message</code> | <code>lumen.streaming.v4.ProtocolError</code> | <code>payload</code> | no |
 | 15 | <code>lumen.streaming.v4.HostControlEnvelope.session_started</code> | <code>sessionStarted</code> | singular | <code>message</code> | <code>lumen.streaming.v4.SessionStarted</code> | <code>payload</code> | no |
 | 16 | <code>lumen.streaming.v4.HostControlEnvelope.display_reconfiguration</code> | <code>displayReconfiguration</code> | singular | <code>message</code> | <code>lumen.streaming.v4.DisplayReconfigurationResult</code> | <code>payload</code> | no |
+| 17 | <code>lumen.streaming.v4.HostControlEnvelope.media_park</code> | <code>mediaPark</code> | singular | <code>message</code> | <code>lumen.streaming.v4.MediaParkResult</code> | <code>payload</code> | no |
 
 Oneof declarations:
 
 | Name | Kind | Members |
 | --- | --- | --- |
-| <code>lumen.streaming.v4.HostControlEnvelope.payload</code> | explicit | <code>lumen.streaming.v4.HostControlEnvelope.session_plan</code>, <code>lumen.streaming.v4.HostControlEnvelope.session_stopped</code>, <code>lumen.streaming.v4.HostControlEnvelope.error</code>, <code>lumen.streaming.v4.HostControlEnvelope.session_started</code>, <code>lumen.streaming.v4.HostControlEnvelope.display_reconfiguration</code> |
+| <code>lumen.streaming.v4.HostControlEnvelope.payload</code> | explicit | <code>lumen.streaming.v4.HostControlEnvelope.session_plan</code>, <code>lumen.streaming.v4.HostControlEnvelope.session_stopped</code>, <code>lumen.streaming.v4.HostControlEnvelope.error</code>, <code>lumen.streaming.v4.HostControlEnvelope.session_started</code>, <code>lumen.streaming.v4.HostControlEnvelope.display_reconfiguration</code>, <code>lumen.streaming.v4.HostControlEnvelope.media_park</code> |
 
 Reserved tags: <code>11..&lt;12</code>, <code>14..&lt;15</code>.
 
@@ -928,11 +968,12 @@ Extension bytes: <code>8</code>.
 {
   "continuousScroll" : 4,
   "fixedCadenceFeedback" : 2,
+  "mediaParkResume" : 32,
   "packetArrivalFeedback" : 16,
   "pairedFeedbackWindows" : 8,
   "requiredMask" : 15,
   "sameGenerationKeyframes" : 1,
-  "supportedMask" : 31
+  "supportedMask" : 63
 }
 ```
 
@@ -1099,11 +1140,12 @@ Extension bytes: <code>8</code>.
   "mediaCapabilities" : {
     "continuousScroll" : 4,
     "fixedCadenceFeedback" : 2,
+    "mediaParkResume" : 32,
     "packetArrivalFeedback" : 16,
     "pairedFeedbackWindows" : 8,
     "requiredMask" : 15,
     "sameGenerationKeyframes" : 1,
-    "supportedMask" : 31
+    "supportedMask" : 63
   },
   "mediaDatagramHeader" : {
     "byteOrder" : "network",
@@ -2219,6 +2261,22 @@ Response shape:
     "initial" : 1,
     "periodicKeyframeRetainsGeneration" : true,
     "staleRepairRequest" : "ignore"
+  },
+  "mediaParkResume" : {
+    "capabilityBit" : 32,
+    "idempotentCurrentTarget" : true,
+    "request" : "MediaParkRequest",
+    "response" : "MediaParkResult",
+    "resumeRequiresFreshBootstrap" : true,
+    "staleResult" : "superseded",
+    "states" : [
+      "active",
+      "parking",
+      "parked",
+      "resuming"
+    ],
+    "stopFromParked" : "SessionStopped",
+    "strictlyIncreasingRevision" : true
   },
   "sessionStop" : {
     "matchingSessionEpochRequired" : true,

@@ -296,6 +296,10 @@ extension LumenBridgeObjCFacade {
         )
     }
 
+    public func resetMediaQueuesSync() {
+        runtime.resetMediaQueues()
+    }
+
     public func copyAudioForwardingSnapshotSync() -> LumenBridgeAudioForwardingSnapshotBox {
         LumenBridgeAudioForwardingSnapshotBox(
             snapshot: runtime.audioForwardingSnapshot()

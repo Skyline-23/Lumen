@@ -13,6 +13,7 @@ struct LumenEncodedFrameContext: Sendable {
     let sequenceNumber: UInt64
     let displayTime: UInt64
     let submissionMachTime: UInt64
+    let mediaEpoch: UInt64
     let bootstrapReason: LumenVideoBootstrapReason?
 }
 
@@ -144,6 +145,18 @@ struct LumenVideoBootstrapAdmissionGate: Equatable, Sendable {
             isOpen = true
         }
     }
+
+    /// Retire all ownership from the previous media epoch. The next controlled
+    /// request can claim a fresh bootstrap even when a previous request was
+    /// still awaiting its codec acknowledgement.
+    mutating func resetForMediaEpoch() {
+        isAwaitingAcknowledgement = false
+        // Leave the fresh epoch open for the next controlled IDR request;
+        // beginBootstrapGeneration(.repair) closes it and becomes the new
+        // acknowledgement owner before VideoToolbox emits that key frame.
+        isOpen = true
+        pendingReason = nil
+    }
 }
 
 struct LumenPendingVideoBootstrapSource: @unchecked Sendable {
@@ -251,6 +264,33 @@ final class LumenLatestFrameSerialEncoderAdmission<Source: Sendable, Result: Sen
             self.pendingSource = nil
         }
         return cancelledSources
+    }
+
+    /// Fences all sources that have not entered VideoToolbox at a media epoch
+    /// boundary. A source already inside VideoToolbox is retired by its epoch
+    /// token when the callback returns.
+    @discardableResult
+    func resetForMediaEpoch() -> [Source] {
+        dispatchPrecondition(condition: .onQueue(ownerQueue))
+        stopping = true
+
+        var cancelledSources: [Source] = []
+        if let activeSource,
+           !activeSourceEnteredSubmission {
+            cancelledSources.append(activeSource)
+            clearActiveSubmission()
+        }
+        if let pendingSource {
+            cancelledSources.append(pendingSource)
+            self.pendingSource = nil
+        }
+        return cancelledSources
+    }
+
+    func resumeAfterMediaEpoch() {
+        dispatchPrecondition(condition: .onQueue(ownerQueue))
+        stopping = false
+        promotePendingIfPossible()
     }
 
     func waitUntilSubmissionReturns() {
@@ -445,6 +485,7 @@ struct LumenVideoEncoderSubmission: Sendable {
     let source: LumenPendingVideoBootstrapSource
     let forceKeyFrame: Bool
     let bootstrapReason: LumenVideoBootstrapReason?
+    let mediaEpoch: UInt64
     let offeredMachTime: UInt64
 }
 

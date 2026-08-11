@@ -56,6 +56,9 @@ enum LumenScreenCaptureOutputOwnershipError: Error, Equatable {
 protocol LumenEncodedCaptureRuntime: AnyObject, Sendable {
     func start() async throws
     func stop() async
+    /// Retire queued media and bootstrap admission ownership at a park/resume
+    /// boundary while leaving capture and encoding alive.
+    func resetMediaEpoch()
     func requestImmediateKeyFrame()
     func requestPeriodicKeyFrame() async -> Bool
     func resumeVideoEncodingAfterCodecAck() async -> Bool

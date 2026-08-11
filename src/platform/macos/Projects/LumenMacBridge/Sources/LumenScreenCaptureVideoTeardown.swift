@@ -10,6 +10,16 @@ import Synchronization
 import VideoToolbox
 
 extension LumenScreenCaptureVideoRuntime {
+    func resetMediaEpoch() {
+        queue.sync { [self] in
+            mediaEpoch &+= 1
+            mediaEpochAdmissionReset = true
+            videoBootstrapAdmission.resetForMediaEpoch()
+            pendingVideoBootstrapSource = nil
+            _ = encoderAdmission.resetForMediaEpoch()
+        }
+    }
+
     func stop() async {
         await prepareCaptureStop()
         let stoppedStreamIdentity = await stopActiveCaptureStream()
@@ -141,6 +151,10 @@ extension LumenScreenCaptureVideoRuntime {
             guard let self else { return }
             if self.videoBootstrapAdmission.beginBootstrapGeneration(reason: .repair) {
                 self.discardPendingAdmissionSourcesForControlledBootstrap()
+                if self.mediaEpochAdmissionReset {
+                    self.mediaEpochAdmissionReset = false
+                    self.encoderAdmission.resumeAfterMediaEpoch()
+                }
             }
         }
     }

@@ -202,6 +202,8 @@ final class LumenMac444CaptureRuntime:
         await factory.stop(runtimeID: runtimeID)
     }
 
+    func resetMediaEpoch() {}
+
     func requestImmediateKeyFrame() {}
 
     func resumeVideoEncodingAfterCodecAck() async -> Bool {

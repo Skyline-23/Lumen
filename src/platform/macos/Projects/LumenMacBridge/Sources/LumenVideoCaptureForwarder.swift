@@ -109,6 +109,20 @@ final class LumenVideoCaptureForwarder: Sendable {
         }
     }
 
+    /// Fences the forwarding queue at a media park/resume boundary while
+    /// keeping the capture producer active. The next admitted key frame must
+    /// carry bootstrap acknowledgement metadata; dependent frames that raced
+    /// the boundary are rejected until then.
+    func resetForMediaEpoch() {
+        state.withLock { value in
+            value.droppedFrameCount &+= UInt64(value.frames.count)
+            value.droppedEventCount &+= UInt64(value.events.count)
+            value.frames.removeAll()
+            value.events.removeAll()
+            value.awaitingRecoveryKeyFrame = true
+        }
+    }
+
     func setFrameCapacity(_ capacity: Int) {
         state.withLock { value in
             let droppedCount = value.frames.resize(to: capacity)

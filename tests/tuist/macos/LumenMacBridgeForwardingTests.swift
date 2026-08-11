@@ -4,6 +4,21 @@ import Foundation
 import XCTest
 
 final class LumenMacBridgeForwardingTests: XCTestCase {
+    func testMediaEpochResetRetiresAwaitingBootstrapBeforeFreshControlledRequest() {
+        var gate = LumenVideoBootstrapAdmissionGate()
+        XCTAssertEqual(gate.admitSourceFrame(), .submitInitialKeyFrame)
+        XCTAssertTrue(gate.isAwaitingAcknowledgement)
+
+        gate.resetForMediaEpoch()
+        XCTAssertFalse(gate.isAwaitingAcknowledgement)
+        XCTAssertTrue(gate.isOpen)
+        XCTAssertTrue(gate.beginBootstrapGeneration(reason: .repair))
+        XCTAssertFalse(gate.isAwaitingAcknowledgement)
+        XCTAssertEqual(gate.admitSourceFrame(), .submitControlledKeyFrame(.repair))
+        XCTAssertTrue(gate.isAwaitingAcknowledgement)
+        XCTAssertEqual(gate.pendingReason, .repair)
+    }
+
     func testBridgeForwardsSyntheticSampleBufferIntoSwiftIngress() async throws {
         let runtime = Self.makeBridgeRuntime()
         await runtime.debugResetVideoForwarding()
@@ -91,6 +106,101 @@ final class LumenMacBridgeForwardingTests: XCTestCase {
         XCTAssertEqual(drainedEvent?.kind, .droppedFrame)
         XCTAssertEqual(drainedEvent?.message, "core-forwarder-overflow")
         XCTAssertEqual(drainedEvent?.sourceDisplayTime, 10)
+    }
+
+    func testMediaEpochResetDropsQueuedVideoUntilFreshBootstrap() async throws {
+        let runtime = Self.makeBridgeRuntime()
+        await runtime.debugResetVideoForwarding()
+        await runtime.configureVideoForwarding(frameCapacity: 2, eventCapacity: 2)
+
+        await runtime.debugForwardSyntheticFrame(
+            sampleBuffer: try Self.makeEncodedSampleBuffer(
+                payload: Data([0x01]),
+                codecType: kCMVideoCodecType_HEVC
+            ),
+            codec: .hevc,
+            sourceSequenceNumber: 1,
+            sourceDisplayTime: 10,
+            isKeyFrame: true,
+            requiresBootstrapAcknowledgement: true,
+            isHDRSignaled: false
+        )
+        await runtime.debugResetMediaQueues()
+
+        let drainedAfterReset = await runtime.drainNextVideoForwardedFrame()
+        XCTAssertNil(drainedAfterReset)
+
+        await runtime.debugForwardSyntheticFrame(
+            sampleBuffer: try Self.makeEncodedSampleBuffer(
+                payload: Data([0x02]),
+                codecType: kCMVideoCodecType_HEVC
+            ),
+            codec: .hevc,
+            sourceSequenceNumber: 2,
+            sourceDisplayTime: 20,
+            isKeyFrame: false,
+            isHDRSignaled: false
+        )
+        let drainedDependent = await runtime.drainNextVideoForwardedFrame()
+        XCTAssertNil(drainedDependent)
+
+        await runtime.debugForwardSyntheticFrame(
+            sampleBuffer: try Self.makeEncodedSampleBuffer(
+                payload: Data([0x03]),
+                codecType: kCMVideoCodecType_HEVC
+            ),
+            codec: .hevc,
+            sourceSequenceNumber: 3,
+            sourceDisplayTime: 30,
+            isKeyFrame: true,
+            requiresBootstrapAcknowledgement: true,
+            isRepairKeyFrame: true,
+            isHDRSignaled: false
+        )
+        let freshFrame = await runtime.drainNextVideoForwardedFrame()
+        let fresh = try XCTUnwrap(freshFrame)
+        XCTAssertEqual(fresh.sourceSequenceNumber, 3)
+        XCTAssertTrue(fresh.isKeyFrame)
+        XCTAssertTrue(fresh.requiresBootstrapAcknowledgement)
+    }
+
+    func testAudioMediaEpochResetDropsQueuedFramesWithoutDisablingProducer() {
+        let forwarder = LumenAudioCaptureForwarder()
+        forwarder.setProducerActive(true)
+        forwarder.consume(
+            frame: LumenAudioFrame(
+                sequenceNumber: 1,
+                hostTimeNanoseconds: 10,
+                sampleRate: 48_000,
+                channelCount: 2,
+                frameCount: 240,
+                pcmFloat32LE: Data(repeating: 0, count: 8)
+            )
+        )
+
+        forwarder.resetForMediaEpoch()
+        XCTAssertNil(forwarder.popNextFrame())
+
+        forwarder.consume(
+            frame: LumenAudioFrame(
+                sequenceNumber: 2,
+                hostTimeNanoseconds: 20,
+                sampleRate: 48_000,
+                channelCount: 2,
+                frameCount: 240,
+                pcmFloat32LE: Data(repeating: 1, count: 8)
+            )
+        )
+        XCTAssertEqual(forwarder.popNextFrame()?.sequenceNumber, 2)
+    }
+
+    func testAudioMediaEpochTokenRejectsDelayedCallbackAfterReset() {
+        let token = LumenAudioMediaEpochToken()
+        let callbackEpoch = token.load()
+
+        token.advance()
+
+        XCTAssertNotEqual(callbackEpoch, token.load())
     }
 
     func testBridgeForwardingDropsDependentsUntilRecoveryKeyFrame() async throws {
@@ -203,9 +313,10 @@ private extension LumenMacBridgeForwardingTests {
         XCTAssertEqual(status, noErr)
         let unwrappedBlockBuffer = try XCTUnwrap(blockBuffer)
 
-        let appendStatus = bytes.withUnsafeBytes { rawBuffer in
-            CMBlockBufferReplaceDataBytes(
-                with: rawBuffer.baseAddress!,
+        let appendStatus = try bytes.withUnsafeBytes { rawBuffer in
+            let baseAddress = try XCTUnwrap(rawBuffer.baseAddress)
+            return CMBlockBufferReplaceDataBytes(
+                with: baseAddress,
                 blockBuffer: unwrappedBlockBuffer,
                 offsetIntoDestination: 0,
                 dataLength: bytes.count
@@ -308,12 +419,13 @@ private extension LumenMacBridgeForwardingTests {
 
         let length = CMBlockBufferGetDataLength(blockBuffer)
         var bytes = Data(count: length)
-        let status = bytes.withUnsafeMutableBytes { rawBuffer in
-            CMBlockBufferCopyDataBytes(
+        let status = try bytes.withUnsafeMutableBytes { rawBuffer in
+            let baseAddress = try XCTUnwrap(rawBuffer.baseAddress)
+            return CMBlockBufferCopyDataBytes(
                 blockBuffer,
                 atOffset: 0,
                 dataLength: length,
-                destination: rawBuffer.baseAddress!
+                destination: baseAddress
             )
         }
         XCTAssertEqual(status, kCMBlockBufferNoErr)

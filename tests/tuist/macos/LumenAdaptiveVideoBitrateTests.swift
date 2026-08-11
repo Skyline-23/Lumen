@@ -635,6 +635,8 @@ private final class RecordingAdaptiveBitrateRuntime:
         state.withLock { $0.stopCount += 1 }
     }
 
+    func resetMediaEpoch() {}
+
     func requestImmediateKeyFrame() {}
 
     func resumeVideoEncodingAfterCodecAck() async -> Bool {

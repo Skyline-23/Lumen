@@ -42,6 +42,10 @@ final class LumenScreenCaptureVideoRuntime:
     var sourceContract: LumenExactCaptureSourceContract?
     var outputContract: LumenExactEncodedOutputContract?
     var sequenceNumber: UInt64 = 0
+    /// Internal capture epoch used to retire VideoToolbox callbacks that were
+    /// admitted before a park/resume queue boundary.
+    var mediaEpoch: UInt64 = 0
+    var mediaEpochAdmissionReset = false
     var adaptiveVideoDeliveryPolicy = LumenAdaptiveVideoDeliveryPolicyState()
     /// Rust owns the adaptive decision window; Swift keeps the controller
     /// alive for the capture runtime and applies changed targets on

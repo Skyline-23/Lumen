@@ -133,10 +133,14 @@ fn run_session(
         .map_err(|_| "Windows audio readiness receiver was dropped".to_owned())?;
 
     loop {
+        // Capture the media epoch before entering the platform callback. A park/resume
+        // reset advances this token under the same queue lock, so a sample that was
+        // already in flight cannot be admitted into the new audio timeline.
+        let media_epoch = packets.current_media_epoch()?;
         match capture.sample(&mut samples)? {
             WasapiSampleResult::Ready => {
                 let packet = encoder.encode(&samples, stream.frame_count)?;
-                packets.push_audio(packet)?;
+                let _ = packets.push_audio(media_epoch, packet)?;
             }
             WasapiSampleResult::Timeout => {}
             WasapiSampleResult::Reinitialize => {

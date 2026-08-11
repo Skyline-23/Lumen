@@ -259,6 +259,9 @@ struct NativeVideoRuntime {
 }
 
 enum NativeMediaFoundationCommand {
+    ResetMediaEpoch {
+        response: mpsc::SyncSender<Result<(), String>>,
+    },
     RequestKeyFrame {
         response: mpsc::SyncSender<Result<(), String>>,
     },
@@ -425,6 +428,12 @@ impl NativeMediaFoundation {
         })
     }
 
+    pub(super) fn reset_media_epoch(&self, session_epoch: u32) -> Result<(), String> {
+        self.request(Some(session_epoch), |response| {
+            NativeMediaFoundationCommand::ResetMediaEpoch { response }
+        })
+    }
+
     pub(super) fn request_periodic_key_frame(&self) -> Result<(), String> {
         self.request(None, |response| {
             NativeMediaFoundationCommand::RequestPeriodicKeyFrame { response }
@@ -560,6 +569,13 @@ fn run_media_foundation_session(worker: NativeMediaFoundationWorker) {
         };
         if let Some(command) = command {
             match command {
+                NativeMediaFoundationCommand::ResetMediaEpoch { response } => {
+                    let result = runtime
+                        .as_mut()
+                        .ok_or_else(|| "Windows native video session is not running".to_owned())
+                        .and_then(NativeVideoRuntime::reset_media_epoch);
+                    let _ = response.send(result);
+                }
                 NativeMediaFoundationCommand::RequestKeyFrame { response } => {
                     let result = runtime
                         .as_mut()
@@ -673,7 +689,8 @@ fn run_media_foundation_session(worker: NativeMediaFoundationWorker) {
 
 fn reject_retired_command(command: NativeMediaFoundationCommand) {
     let response = match command {
-        NativeMediaFoundationCommand::RequestKeyFrame { response }
+        NativeMediaFoundationCommand::ResetMediaEpoch { response }
+        | NativeMediaFoundationCommand::RequestKeyFrame { response }
         | NativeMediaFoundationCommand::RequestPeriodicKeyFrame { response }
         | NativeMediaFoundationCommand::ResumeAfterBootstrap { response }
         | NativeMediaFoundationCommand::SetBitrate { response, .. } => response,
@@ -870,6 +887,23 @@ impl NativeVideoEncoderCatalog {
 }
 
 impl NativeVideoRuntime {
+    fn reset_media_epoch(&mut self) -> Result<(), String> {
+        // A park boundary retires any decoder-bootstrap pause owner. Capture
+        // and encoding remain alive; the next controlled IDR owns a fresh
+        // reliable bootstrap acknowledgement.
+        if self.awaiting_bootstrap_result {
+            self.capture.resume_frame_delivery()?;
+        }
+        self.awaiting_bootstrap_result = false;
+        self.repair_keyframe_pending = false;
+        self.periodic_keyframe_pending = false;
+        self.cadence_admission.reset();
+        self.last_source_timestamp_90khz = None;
+        self.unwrapped_source_timestamp_90khz = 0;
+        self.last_admitted_timestamp_hns = None;
+        Ok(())
+    }
+
     fn set_video_delivery_policy(
         &mut self,
         session_epoch: u32,
