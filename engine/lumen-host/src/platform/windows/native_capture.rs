@@ -32,7 +32,7 @@ use windows_api::Win32::Graphics::Dxgi::{
 use crate::platform::session_slot::FrameDeliveryOwnership;
 use crate::PlatformChromaSubsampling;
 
-use super::native_display_driver::{shared_frame_name, DriverHandle};
+use super::native_display_driver::{shared_frame_name, DriverFrameDequeue, DriverHandle};
 
 pub(super) struct NativeIddCxCapture {
     driver: DriverHandle,
@@ -52,6 +52,9 @@ pub(super) struct NativeCapturedFrame {
     release: IDXGIKeyedMutex,
     texture: ID3D11Texture2D,
     pub(super) presentation_time_90khz: u32,
+    /// Driver-derived IDD content metadata. Unknown values fail open in the
+    /// host cadence controller; no pixel hashing is performed here.
+    pub(super) content_signal: u32,
 }
 
 struct NativeSharedSurface {
@@ -128,7 +131,19 @@ impl NativeIddCxCapture {
         &mut self,
         timeout_milliseconds: u32,
     ) -> Result<Option<NativeCapturedFrame>, String> {
-        let record = self.driver.dequeue_frame()?;
+        let record = match self.driver.dequeue_frame()? {
+            DriverFrameDequeue::Frame(record) => record,
+            DriverFrameDequeue::Interrupted => return Ok(None),
+            DriverFrameDequeue::NotReady => {
+                if self.frame_delivery.is_running()? {
+                    return Err(
+                        "Windows driver frame dequeue became unavailable while delivery was running"
+                            .to_owned(),
+                    );
+                }
+                return Ok(None);
+            }
+        };
         let format_value = i32::try_from(record.format)
             .map_err(|_| "Windows IDD frame format is out of range".to_owned())?;
         let format = DXGI_FORMAT(format_value);
@@ -180,6 +195,7 @@ impl NativeIddCxCapture {
             release: surface.keyed_mutex.clone(),
             texture: surface.texture.clone(),
             presentation_time_90khz: record.presentation_time_90khz,
+            content_signal: record.reserved,
         };
         if let Err(error) = frame.validate() {
             drop(frame);

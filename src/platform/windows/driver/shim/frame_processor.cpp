@@ -12,6 +12,13 @@ using Microsoft::WRL::ComPtr;
 
 constexpr DWORD kSharedFrameTimeoutMilliseconds = 2'000;
 
+constexpr uint32_t kContentSignalUnknown =
+  LUMEN_DRIVER_CONTENT_SIGNAL_UNKNOWN;
+constexpr uint32_t kContentSignalChanged =
+  LUMEN_DRIVER_CONTENT_SIGNAL_CHANGED;
+constexpr uint32_t kContentSignalUnchanged =
+  LUMEN_DRIVER_CONTENT_SIGNAL_UNCHANGED;
+
 struct LumenFrameProcessorState {
   LumenDeviceContext *context;
   uint64_t generation;
@@ -67,6 +74,44 @@ uint32_t presentation_time_90khz(
   return static_cast<uint32_t>(
     whole * 90'000u + remainder * 90'000u / processor->qpc_frequency
   );
+}
+
+uint32_t content_signal(
+  IDDCX_SWAPCHAIN swapchain,
+  uint32_t dirty_rect_count,
+  uint32_t move_region_count
+) {
+  // A move or more than one dirty rectangle is unambiguously changed. Keep
+  // the exact one-empty-rectangle case below so malformed/unsupported
+  // metadata remains unknown and the host policy fails open.
+  if (move_region_count != 0 || dirty_rect_count > 1) {
+    return kContentSignalChanged;
+  }
+  // IDDCX documents only one all-zero dirty rectangle as unchanged. A zero
+  // count is not that sentinel, so keep it unknown and let the host fail open.
+  if (dirty_rect_count == 0) {
+    return kContentSignalUnknown;
+  }
+  if (dirty_rect_count != 1) {
+    return kContentSignalUnknown;
+  }
+
+  RECT dirty_rect {};
+  IDARG_IN_GETDIRTYRECTS input {};
+  input.DirtyRectInCount = 1;
+  input.pDirtyRects = &dirty_rect;
+  IDARG_OUT_GETDIRTYRECTS output {};
+  const HRESULT result = IddCxSwapChainGetDirtyRects(
+    swapchain,
+    &input,
+    &output
+  );
+  if (FAILED(result) || output.DirtyRectOutCount != 1) {
+    return kContentSignalUnknown;
+  }
+  const bool empty = dirty_rect.left == 0 && dirty_rect.top == 0 &&
+    dirty_rect.right == 0 && dirty_rect.bottom == 0;
+  return empty ? kContentSignalUnchanged : kContentSignalChanged;
 }
 
 void signal_frame_request_if_pending(LumenDeviceContext *context) {
@@ -191,7 +236,8 @@ NTSTATUS copy_frame(
   LumenFrameProcessorState *processor,
   ID3D11Texture2D *source,
   uint32_t color_space,
-  uint64_t qpc_time
+  uint64_t qpc_time,
+  uint32_t content_signal
 ) {
   D3D11_TEXTURE2D_DESC description {};
   source->GetDesc(&description);
@@ -228,6 +274,7 @@ NTSTATUS copy_frame(
   record.format = static_cast<uint32_t>(description.Format);
   record.color_space = color_space;
   record.surface_revision = processor->surface_revision;
+  record.reserved = content_signal;
   publish_frame(processor, record, STATUS_SUCCESS);
   return STATUS_SUCCESS;
 }
@@ -276,7 +323,12 @@ NTSTATUS acquire_d3d12_frame(LumenFrameProcessorState *processor) {
     processor,
     wrapped.Get(),
     static_cast<uint32_t>(output.MetaData.SurfaceColorSpace),
-    output.MetaData.PresentDisplayQPCTime
+    output.MetaData.PresentDisplayQPCTime,
+    content_signal(
+      processor->swapchain,
+      output.MetaData.DirtyRectCount,
+      0
+    )
   );
   processor->d3d11_on_12->ReleaseWrappedResources(resources, ARRAYSIZE(resources));
   processor->d3d11_context->Flush();
@@ -313,7 +365,12 @@ NTSTATUS acquire_d3d11_frame(LumenFrameProcessorState *processor) {
     processor,
     source.Get(),
     static_cast<uint32_t>(DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709),
-    output.MetaData.PresentDisplayQPCTime
+    output.MetaData.PresentDisplayQPCTime,
+    content_signal(
+      processor->swapchain,
+      output.MetaData.DirtyRectCount,
+      output.MetaData.MoveRegionCount
+    )
   );
 }
 

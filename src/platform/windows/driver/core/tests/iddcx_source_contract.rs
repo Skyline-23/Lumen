@@ -133,6 +133,12 @@ fn iddcx_device_uses_framework_default_synchronization() {
     let adapter = fs::read_to_string(driver_root().join("shim/adapter.cpp"))
         .expect("adapter initialization source must exist");
     assert!(adapter.contains("work_item_config.AutomaticSerialization = FALSE;"));
+    let driver_header = fs::read_to_string(driver_root().join("shim/driver.h"))
+        .expect("driver context source must exist");
+    let io = fs::read_to_string(driver_root().join("shim/io.cpp"))
+        .expect("driver I/O source must exist");
+    assert!(driver_header.contains("CRITICAL_SECTION core_state_lock;"));
+    assert!(io.contains("LumenCoreStateGuard core_state_guard(context);"));
     assert!(adapter.contains("LumenReportInitializationFailure("));
     assert!(adapter.contains("L\"start_adapter_monitoring\""));
     assert!(driver.contains(
@@ -310,6 +316,27 @@ fn swapchain_callback_owns_d3d12_frames_and_rolls_back_failed_assignment() {
     assert!(processor.contains("IddCxSwapChainSetDevice2"));
     assert!(processor.contains("IddCxSwapChainReleaseAndAcquireBuffer2"));
     assert!(processor.contains("D3D11On12CreateDevice"));
+}
+
+#[test]
+fn frame_metadata_preserves_abi_and_requests_a_bounded_static_window() {
+    let header = fs::read_to_string(driver_root().join("include/lumen_driver_abi.h"))
+        .expect("driver ABI header must exist");
+    let processor = fs::read_to_string(driver_root().join("shim/frame_processor.cpp"))
+        .expect("frame processor must exist");
+    let adapter = fs::read_to_string(driver_root().join("shim/adapter.cpp"))
+        .expect("adapter source must exist");
+
+    assert!(header.contains("sizeof(LumenDriverFrameRecord) == 80"));
+    assert!(processor.contains("IddCxSwapChainGetDirtyRects"));
+    assert!(processor.contains("record.reserved = content_signal"));
+    assert!(processor.contains("kContentSignalUnknown"));
+    assert!(adapter.contains("kStaticDesktopReencodeFrameCount = 240"));
+    assert!(
+        adapter.contains("caps.StaticDesktopReencodeFrameCount = kStaticDesktopReencodeFrameCount")
+    );
+    assert!(adapter.contains("host cadence"));
+    assert!(adapter.contains("one second of unchanged metadata"));
 }
 
 #[test]

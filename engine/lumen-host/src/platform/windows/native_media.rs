@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard};
 use std::thread;
 use std::time::Duration;
 
@@ -148,6 +148,35 @@ struct MediaLifecycle {
     audio_worker: Option<thread::JoinHandle<i32>>,
 }
 
+pub(super) struct WindowsContentCadenceWakeReservation<'a> {
+    _lifecycle: RwLockReadGuard<'a, MediaLifecycle>,
+    media_foundation: &'a NativeMediaFoundation,
+    session_epoch: u32,
+    completed: bool,
+}
+
+impl WindowsContentCadenceWakeReservation<'_> {
+    pub(super) fn commit(mut self) -> Result<(), String> {
+        let result = self
+            .media_foundation
+            .commit_unchanged_content_cadence_wake(self.session_epoch);
+        if result.is_ok() {
+            self.completed = true;
+        }
+        result
+    }
+}
+
+impl Drop for WindowsContentCadenceWakeReservation<'_> {
+    fn drop(&mut self) {
+        if !self.completed {
+            let _ = self
+                .media_foundation
+                .cancel_unchanged_content_cadence_wake(self.session_epoch);
+        }
+    }
+}
+
 impl NativeWindowsMedia {
     pub(super) fn new(arguments: &crate::HostArguments) -> Result<Self, String> {
         let audio_configuration = NativeAudioConfiguration::from_arguments(arguments)?;
@@ -274,6 +303,29 @@ impl NativeWindowsMedia {
         let result = self.media_foundation.resume_after_bootstrap();
         drop(lifecycle);
         result
+    }
+
+    pub(super) fn reserve_unchanged_content_cadence_wake(
+        &self,
+        session_epoch: u32,
+    ) -> Result<WindowsContentCadenceWakeReservation<'_>, String> {
+        let lifecycle = self
+            .lifecycle
+            .read()
+            .map_err(|_| "Windows media lifecycle lock is poisoned".to_owned())?;
+        if !lifecycle.running || lifecycle.session_epoch != Some(session_epoch) {
+            return Err(
+                "Windows adaptive video policy does not belong to the running session".to_owned(),
+            );
+        }
+        self.media_foundation
+            .reserve_unchanged_content_cadence_wake(session_epoch)?;
+        Ok(WindowsContentCadenceWakeReservation {
+            _lifecycle: lifecycle,
+            media_foundation: &self.media_foundation,
+            session_epoch,
+            completed: false,
+        })
     }
 
     pub(super) fn set_video_delivery_policy(

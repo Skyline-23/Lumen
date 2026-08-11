@@ -333,8 +333,36 @@ impl PlatformSessionControl for WindowsPlatformSessionControl {
         let actions = next
             .apply_native(session_epoch, event)
             .map_err(|error| error.to_string())?;
-        self.execute_actions(session_epoch, &actions)?;
+        if actions.is_empty() {
+            *state = next;
+            return Ok(());
+        }
+        // Reserve the cadence wake before native injection.  The injected input
+        // can synchronously cause IDD to publish a changed frame; reserving first
+        // ensures that frame cannot race a still-parked two-FPS target.  Failed
+        // injection cancels the reservation so invalid input does not wake video.
+        let wake_reservation = self
+            .media
+            .reserve_unchanged_content_cadence_wake(session_epoch)?;
+        if let Err(error) = self.execute_actions(session_epoch, &actions) {
+            return Err(error);
+        }
         *state = next;
+        // Keep the input-state transaction held through the wake commit. A
+        // second input must not coalesce onto this reservation and then cancel
+        // it if its own native injection fails before the first commit runs.
+        let wake_commit = wake_reservation.commit();
+        drop(state);
+        if let Err(error) = wake_commit {
+            let _ = self.publish_runtime_event(PlatformRuntimeEvent {
+                disposition: crate::PlatformRuntimeEventDisposition::Raised,
+                severity: crate::PlatformRuntimeEventSeverity::Warning,
+                code: crate::PlatformRuntimeEventCode::NativeVideoAdaptiveControl,
+                message: Some(format!(
+                    "Native input was applied, but unchanged-content cadence wake failed: {error}"
+                )),
+            });
+        }
         Ok(())
     }
 

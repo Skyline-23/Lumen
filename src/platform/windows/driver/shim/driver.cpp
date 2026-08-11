@@ -199,12 +199,21 @@ NTSTATUS LumenEvtDeviceAdd(WDFDRIVER, PWDFDEVICE_INIT device_init) {
     return LumenReportInitializationFailure(L"WdfDeviceCreate", status);
   }
 
+  auto *context = LumenGetDeviceContext(device);
+  context->core_state_lock_initialized = 0;
+  if (!InitializeCriticalSectionEx(&context->core_state_lock, 0, 0)) {
+    return LumenReportInitializationFailure(
+      L"InitializeCriticalSectionEx.CoreState",
+      STATUS_INSUFFICIENT_RESOURCES
+    );
+  }
+  InterlockedExchange(&context->core_state_lock_initialized, 1);
+
   status = IddCxDeviceInitialize(device);
   if (!NT_SUCCESS(status)) {
     return LumenReportInitializationFailure(L"IddCxDeviceInitialize", status);
   }
 
-  auto *context = LumenGetDeviceContext(device);
   context->core_state = lumen_driver_core_initial_state();
   context->frame_queue = nullptr;
   context->event_queue = nullptr;
@@ -240,6 +249,7 @@ NTSTATUS LumenEvtDeviceD0Entry(
   if (!NT_SUCCESS(status)) {
     return status;
   }
+  LumenCoreStateGuard core_state_guard(context);
   status = LumenInitializeAdapter(device, context);
   return NT_SUCCESS(status) ? status : LumenReportInitializationFailure(L"LumenInitializeAdapter", status);
 }
@@ -255,15 +265,20 @@ void LumenEvtDeviceContextCleanup(WDFOBJECT object) {
     context->frame_request_event = nullptr;
   }
   LumenStopAdapterMonitoring(context);
-  if (context->core_state.render_adapter_luid == 0) {
-    return;
+  {
+    LumenCoreStateGuard core_state_guard(context);
+    if (context->core_state.render_adapter_luid != 0) {
+      auto request = LumenRequest(
+        LumenDriverOperationAdapterRemoved,
+        0,
+        context->core_state.generation
+      );
+      request.arguments[0] = context->core_state.render_adapter_luid;
+      context->core_state =
+        lumen_driver_core_dispatch(context->core_state, request).state;
+    }
   }
-  auto request = LumenRequest(
-    LumenDriverOperationAdapterRemoved,
-    0,
-    context->core_state.generation
-  );
-  request.arguments[0] = context->core_state.render_adapter_luid;
-  context->core_state =
-    lumen_driver_core_dispatch(context->core_state, request).state;
+  if (InterlockedExchange(&context->core_state_lock_initialized, 0) != 0) {
+    DeleteCriticalSection(&context->core_state_lock);
+  }
 }

@@ -11,8 +11,9 @@ use windows_sys::Win32::Devices::DeviceAndDriverInstallation::{
     SP_DEVICE_INTERFACE_DATA, SP_DEVICE_INTERFACE_DETAIL_DATA_W,
 };
 use windows_sys::Win32::Foundation::{
-    CloseHandle, DuplicateHandle, GetLastError, DUPLICATE_SAME_ACCESS, GENERIC_READ, GENERIC_WRITE,
-    HANDLE, INVALID_HANDLE_VALUE,
+    CloseHandle, DuplicateHandle, GetLastError, DUPLICATE_SAME_ACCESS, ERROR_CANCELLED,
+    ERROR_NOT_READY, ERROR_OPERATION_ABORTED, GENERIC_READ, GENERIC_WRITE, HANDLE,
+    INVALID_HANDLE_VALUE,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
@@ -44,6 +45,12 @@ pub(super) enum MonitorState {
 pub(super) struct MonitorArrivalIdentity {
     pub(super) adapter_luid: u64,
     pub(super) target_id: u32,
+}
+
+pub(super) enum DriverFrameDequeue {
+    Frame(FrameRecord),
+    Interrupted,
+    NotReady,
 }
 
 pub(super) struct DriverHandle {
@@ -227,7 +234,7 @@ impl DriverHandle {
         }
     }
 
-    pub(super) fn dequeue_frame(&mut self) -> Result<FrameRecord, String> {
+    pub(super) fn dequeue_frame(&mut self) -> Result<DriverFrameDequeue, String> {
         let request_id = self.next_request_id;
         self.next_request_id = self.next_request_id.checked_add(1).unwrap_or(1);
         let mut request = CoreRequest::new(OPERATION_DEQUEUE_FRAME, self.generation);
@@ -249,9 +256,18 @@ impl DriverHandle {
             )
         };
         if succeeded == 0 {
-            return Err(format!("Windows driver frame dequeue failed: {}", unsafe {
-                GetLastError()
-            }));
+            let error = unsafe { GetLastError() };
+            // STOP_ENCODER intentionally cancels a pending dequeue so a control
+            // request can be serviced even when IDD has stopped presenting a
+            // static desktop. Treat that cancellation as a poll miss; all other
+            // driver failures remain terminal.
+            if matches!(error, ERROR_OPERATION_ABORTED | ERROR_CANCELLED) {
+                return Ok(DriverFrameDequeue::Interrupted);
+            }
+            if error == ERROR_NOT_READY {
+                return Ok(DriverFrameDequeue::NotReady);
+            }
+            return Err(format!("Windows driver frame dequeue failed: {error}"));
         }
         if returned != ABI_FRAME_SIZE
             || frame.header.magic != super::driver_abi::ABI_MAGIC
@@ -269,7 +285,7 @@ impl DriverHandle {
         {
             return Err("Windows driver returned an invalid shared frame record".to_owned());
         }
-        Ok(frame)
+        Ok(DriverFrameDequeue::Frame(frame))
     }
 
     fn request(

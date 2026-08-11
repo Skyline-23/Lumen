@@ -291,6 +291,7 @@ NTSTATUS LumenEvtIddCxMonitorAssignSwapChain(
 ) {
   auto *monitor_context = LumenGetMonitorContext(monitor);
   auto *context = LumenGetDeviceContext(monitor_context->device);
+  LumenCoreStateGuard core_state_guard(context);
   auto assignment = LumenRequest(
     LumenDriverOperationAssignSwapchain,
     0,
@@ -314,5 +315,6 @@ NTSTATUS LumenEvtIddCxMonitorAssignSwapChain(
 NTSTATUS LumenEvtIddCxMonitorUnassignSwapChain(IDDCX_MONITOR monitor) {
   auto *monitor_context = LumenGetMonitorContext(monitor);
   auto *context = LumenGetDeviceContext(monitor_context->device);
+  LumenCoreStateGuard core_state_guard(context);
   return LumenUnassignSwapChain(context, monitor_context->monitor_id);
 }

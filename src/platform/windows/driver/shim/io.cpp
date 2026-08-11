@@ -173,6 +173,7 @@ NTSTATUS LumenCompletePendingEvent(LumenDeviceContext *context) {
 void LumenEvtFrameWorkItem(WDFWORKITEM work_item) {
   auto *work_item_context = LumenGetFrameWorkItemContext(work_item);
   auto *context = LumenGetDeviceContext(work_item_context->device);
+  LumenCoreStateGuard core_state_guard(context);
   if (InterlockedCompareExchange(&context->pending_frame_ready, 1, 1) == 0) {
     return;
   }
@@ -304,6 +305,7 @@ NTSTATUS LumenStatusToNtStatus(uint32_t status) {
 
 void LumenEvtDeviceFileCreate(WDFDEVICE device, WDFREQUEST request, WDFFILEOBJECT file_object) {
   auto *context = LumenGetDeviceContext(device);
+  LumenCoreStateGuard core_state_guard(context);
   const auto claim = LumenRequest(LumenDriverOperationClaimOwner, LumenOwnerId(file_object), context->core_state.generation);
   const auto transition =
     lumen_driver_core_dispatch(context->core_state, claim);
@@ -317,6 +319,7 @@ void LumenEvtDeviceFileCreate(WDFDEVICE device, WDFREQUEST request, WDFFILEOBJEC
 
 void LumenEvtFileCleanup(WDFFILEOBJECT file_object) {
   auto *context = LumenGetDeviceContext(WdfFileObjectGetDevice(file_object));
+  LumenCoreStateGuard core_state_guard(context);
   const uint64_t owner_id = LumenOwnerId(file_object);
   if (context->core_state.owner_id != owner_id) {
     return;
@@ -371,6 +374,7 @@ void LumenEvtIddCxDeviceIoControl(
   }
 
   auto *context = LumenGetDeviceContext(device);
+  LumenCoreStateGuard core_state_guard(context);
   auto transition =
     lumen_driver_core_dispatch(context->core_state, core_request);
   if (transition.response.status == LumenDriverStatusOk &&
@@ -436,6 +440,7 @@ void LumenEvtIddCxDeviceIoControl(
 
 void LumenEvtIoCancelledOnQueue(WDFQUEUE queue, WDFREQUEST request) {
   auto *context = LumenGetDeviceContext(WdfIoQueueGetDevice(queue));
+  LumenCoreStateGuard core_state_guard(context);
   cancel_core_read(context, request, queue == context->frame_queue ? 1 : 2);
   WdfRequestComplete(request, STATUS_CANCELLED);
 }
