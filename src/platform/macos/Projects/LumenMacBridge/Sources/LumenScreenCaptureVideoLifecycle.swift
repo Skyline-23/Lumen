@@ -183,6 +183,14 @@ extension LumenScreenCaptureVideoRuntime {
         )
         streamConfiguration.width = width
         streamConfiguration.height = height
+        // Keep ScreenCaptureKit's source callback interval at the negotiated
+        // ceiling. `updateConfiguration` does not promise that a dirty/idle
+        // attachment is delivered immediately after a throttling update, so
+        // lowering this interval would make changed-content wake depend on an
+        // unbounded platform delay. The host-owned ingress pacer still drops
+        // unchanged samples before the pending encoder queue, while this
+        // ceiling preserves prompt metadata-driven wake without a capture or
+        // codec reset.
         streamConfiguration.minimumFrameInterval = CMTime(
             value: 1,
             timescale: CMTimeScale(configuration.effectiveTargetFrameRate)

@@ -64,6 +64,14 @@ public final class LumenBridgeObjCFacade: NSObject {
         )
     }
 
+    public static func wakeUnchangedContentCadenceShared(
+        _ sessionEpoch: UInt32
+    ) -> Bool {
+        LumenBridgeRuntime.shared.scheduleUnchangedContentCadenceWake(
+            sessionEpoch: sessionEpoch
+        )
+    }
+
     public static func restartCaptureSharedSync(_ reason: String) {
         let semaphore = DispatchSemaphore(value: 0)
         Task {

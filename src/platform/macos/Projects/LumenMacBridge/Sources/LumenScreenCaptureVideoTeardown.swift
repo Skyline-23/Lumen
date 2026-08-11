@@ -15,8 +15,21 @@ extension LumenScreenCaptureVideoRuntime {
             mediaEpoch &+= 1
             mediaEpochAdmissionReset = true
             videoBootstrapAdmission.resetForMediaEpoch()
+            if let decision = unchangedContentCadenceController?.wake(
+                monotonicTimeSeconds: ProcessInfo.processInfo.systemUptime
+            ) {
+                unchangedContentTargetFrameRate = decision.targetFrameRate
+                _ = unchangedContentIngressPacer.configure(
+                    targetFrameRate: decision.targetFrameRate
+                )
+            }
             pendingVideoBootstrapSource = nil
             _ = encoderAdmission.resetForMediaEpoch()
+            // Enqueue the encoder target while the capture queue still owns
+            // the lifecycle boundary. A stop cannot overtake this update and
+            // no encoder-queue read of the queue-owned `stopping` flag is
+            // required.
+            scheduleAdaptiveFrameCadenceTargetUpdate()
         }
     }
 

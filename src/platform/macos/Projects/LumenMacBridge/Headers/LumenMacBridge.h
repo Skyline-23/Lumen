@@ -446,6 +446,7 @@ bool LumenMacBridgeSetVideoDeliveryPolicy(
   uint32_t bitrate_kbps,
   uint8_t admission_divisor
 );
+bool LumenMacBridgeWakeUnchangedContentCadence(uint32_t session_epoch);
 void LumenMacBridgeRestartCapture(const char *reason);
 
 bool LumenMacBridgeControllerStartAudioCapture(

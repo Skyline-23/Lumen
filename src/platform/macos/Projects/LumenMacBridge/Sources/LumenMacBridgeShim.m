@@ -548,6 +548,11 @@ bool LumenMacBridgeSetVideoDeliveryPolicy(
     admissionDivisor:admission_divisor];
 }
 
+bool LumenMacBridgeWakeUnchangedContentCadence(uint32_t session_epoch) {
+  return [LumenBridgeObjCFacade
+    wakeUnchangedContentCadenceShared:session_epoch];
+}
+
 void LumenMacBridgeRestartCapture(const char *reason) {
   NSString *restartReason =
     reason != NULL ?

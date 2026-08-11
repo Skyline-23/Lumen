@@ -125,8 +125,9 @@ struct LumenAdaptiveVideoFramePacer: Equatable, Sendable {
             let delta = lastAdmittedPresentationTimeSeconds.map {
                 sourceSeconds - $0
             }
-            if lastAdmittedPresentationTimeSeconds == nil ||
-                sourceSeconds > lastAdmittedPresentationTimeSeconds! {
+            if lastAdmittedPresentationTimeSeconds.map({
+                sourceSeconds > $0
+            }) ?? true {
                 lastAdmittedPresentationTimeSeconds = sourceSeconds
                 nextAdmissionDeadlineSeconds = sourceSeconds
                     + LumenAdaptiveVideoFrameTiming

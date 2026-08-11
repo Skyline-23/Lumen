@@ -139,7 +139,7 @@ extension LumenScreenCaptureVideoRuntime {
             kVTCompressionPropertyKey_ExpectedFrameRate,
             value: targetFrameRate
         )
-        // ScreenCaptureKit and the Rust cadence controller may lower the
+        // ScreenCaptureKit and the Rust cadence controllers may lower the
         // admitted source rate, but neither is allowed to raise the
         // negotiated ceiling for this compression session.  These keys are
         // optional across VideoToolbox encoder implementations; an encoder

@@ -162,6 +162,38 @@ public actor LumenBridgeRuntime {
         )
     }
 
+    /// Reopens the host source cadence after a validated reliable input or
+    /// motion event without requesting a key frame or resetting media state.
+    public func wakeUnchangedContentCadence(sessionEpoch: UInt32) async -> Bool {
+        await wakeUnchangedContentCadenceImpl(sessionEpoch: sessionEpoch)
+    }
+
+    public nonisolated func scheduleUnchangedContentCadenceWake(
+        sessionEpoch: UInt32
+    ) -> Bool {
+        unchangedContentCadenceWakeRelay.schedule(
+            sessionEpoch: sessionEpoch
+        ) { [weak self] generation, sessionEpoch in
+            guard let self else {
+                return
+            }
+            _ = await self.wakeScheduledUnchangedContentCadence(
+                generation: generation,
+                sessionEpoch: sessionEpoch
+            )
+        }
+    }
+
+    private func wakeScheduledUnchangedContentCadence(
+        generation: UInt64,
+        sessionEpoch: UInt32
+    ) async -> Bool {
+        return await wakeUnchangedContentCadenceImpl(
+            sessionEpoch: sessionEpoch,
+            expectedRelayGeneration: generation
+        )
+    }
+
     public func makeDefaultMicrophoneAudioConfiguration()
         -> LumenMacAudioCaptureConfiguration {
         makeDefaultMicrophoneAudioConfigurationImpl()
@@ -261,6 +293,8 @@ public actor LumenBridgeRuntime {
     nonisolated let videoForwarder = LumenVideoCaptureForwarder()
     nonisolated let audioForwarder = LumenAudioCaptureForwarder()
     nonisolated let audioMediaEpochToken = LumenAudioMediaEpochToken()
+    nonisolated let unchangedContentCadenceWakeRelay =
+        LumenUnchangedContentCadenceWakeRelay()
     let logger = Logger(subsystem: "dev.skyline23.lumen", category: "MacBridgeRuntime")
     let captureLifecycle = LumenBridgeCaptureLifecycle()
     let encodedFrameReadiness = LumenFirstEncodedFrameGate()

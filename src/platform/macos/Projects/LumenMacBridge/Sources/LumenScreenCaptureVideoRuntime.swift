@@ -47,10 +47,23 @@ final class LumenScreenCaptureVideoRuntime:
     var mediaEpoch: UInt64 = 0
     var mediaEpochAdmissionReset = false
     var adaptiveVideoDeliveryPolicy = LumenAdaptiveVideoDeliveryPolicyState()
+    /// A capture-queue gate for unchanged-content cadence. It drops stale
+    /// source samples before they enter the pending encoder queue; the
+    /// VideoToolbox pacer remains the authoritative second boundary for
+    /// encoder-pressure and client-divisor targets.
+    var unchangedContentIngressPacer = LumenAdaptiveVideoFramePacer()
     /// Rust owns the adaptive decision window; Swift keeps the controller
     /// alive for the capture runtime and applies changed targets on
     /// `encoderQueue` only.
     var adaptiveFrameCadenceController: LumenAdaptiveFrameCadenceController?
+    /// Rust owns the metadata-driven unchanged-content confirmation window.
+    /// The target is composed with encoder-pressure adaptation at the pacer;
+    /// no capture/configuration or decoder generation is restarted on a wake.
+    var unchangedContentCadenceController:
+        LumenUnchangedContentCadenceController?
+    /// Queue-owned mirror of the last Rust content target. This avoids taking
+    /// the controller mutex for every already-parked static callback.
+    var unchangedContentTargetFrameRate = 0
     /// This is deliberately narrower than the public pending-admission
     /// diagnostic.  Only latest-frame replacement and VideoToolbox drops are
     /// fed to Rust; source samples skipped by the intentional pacer are not
@@ -138,9 +151,18 @@ final class LumenScreenCaptureVideoRuntime:
         self.statisticsHandler = statisticsHandler
         self.terminationHandler = terminationHandler
         super.init()
+        unchangedContentIngressPacer = LumenAdaptiveVideoFramePacer(
+            frameRateCeiling: configuration.effectiveTargetFrameRate
+        )
         adaptiveFrameCadenceController = LumenAdaptiveFrameCadenceController(
             requestedFrameRate: configuration.effectiveTargetFrameRate
         )
+        unchangedContentCadenceController =
+            LumenUnchangedContentCadenceController(
+                requestedFrameRate: configuration.effectiveTargetFrameRate
+            )
+        unchangedContentTargetFrameRate =
+            configuration.effectiveTargetFrameRate
     }
 
 }

@@ -111,6 +111,10 @@ extension LumenEncodedCaptureSession {
         )
     }
 
+    func wakeUnchangedContentCadence(sessionEpoch: UInt32) -> Bool {
+        runtime?.wakeUnchangedContentCadence(sessionEpoch: sessionEpoch) ?? false
+    }
+
     func attachSystemAudio(
         configuration: LumenMacAudioCaptureConfiguration,
         callbacks: LumenAudioCaptureCallbacks

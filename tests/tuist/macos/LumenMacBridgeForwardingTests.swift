@@ -13,6 +13,8 @@ final class LumenMacBridgeForwardingTests: XCTestCase {
         XCTAssertFalse(gate.isAwaitingAcknowledgement)
         XCTAssertTrue(gate.isOpen)
         XCTAssertTrue(gate.beginBootstrapGeneration(reason: .repair))
+        XCTAssertFalse(gate.isAwaitingAcknowledgement)
+        XCTAssertEqual(gate.admitSourceFrame(), .submitControlledKeyFrame(.repair))
         XCTAssertTrue(gate.isAwaitingAcknowledgement)
         XCTAssertEqual(gate.pendingReason, .repair)
     }
@@ -311,9 +313,10 @@ private extension LumenMacBridgeForwardingTests {
         XCTAssertEqual(status, noErr)
         let unwrappedBlockBuffer = try XCTUnwrap(blockBuffer)
 
-        let appendStatus = bytes.withUnsafeBytes { rawBuffer in
-            CMBlockBufferReplaceDataBytes(
-                with: rawBuffer.baseAddress!,
+        let appendStatus = try bytes.withUnsafeBytes { rawBuffer in
+            let baseAddress = try XCTUnwrap(rawBuffer.baseAddress)
+            return CMBlockBufferReplaceDataBytes(
+                with: baseAddress,
                 blockBuffer: unwrappedBlockBuffer,
                 offsetIntoDestination: 0,
                 dataLength: bytes.count
@@ -416,12 +419,13 @@ private extension LumenMacBridgeForwardingTests {
 
         let length = CMBlockBufferGetDataLength(blockBuffer)
         var bytes = Data(count: length)
-        let status = bytes.withUnsafeMutableBytes { rawBuffer in
-            CMBlockBufferCopyDataBytes(
+        let status = try bytes.withUnsafeMutableBytes { rawBuffer in
+            let baseAddress = try XCTUnwrap(rawBuffer.baseAddress)
+            return CMBlockBufferCopyDataBytes(
                 blockBuffer,
                 atOffset: 0,
                 dataLength: length,
-                destination: rawBuffer.baseAddress!
+                destination: baseAddress
             )
         }
         XCTAssertEqual(status, kCMBlockBufferNoErr)
