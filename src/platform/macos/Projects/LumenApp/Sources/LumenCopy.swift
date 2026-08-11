@@ -88,12 +88,12 @@ enum LumenCopy {
         static var systemAccess: String { localized("System access") }
         static var screenRecording: String { localized("Screen Recording") }
         static var accessibility: String { localized("Accessibility") }
-        static var dragPanelTitle: String { localized("Add Lumen to System Settings") }
-        static var accessibilityDragDetail: String { localized("In System Settings, open Accessibility and drag Lumen into the app list below.") }
-        static var screenRecordingDragDetail: String { localized("In System Settings, open Screen & System Audio Recording and drag Lumen into the app list below.") }
+        static var accessibilityDragTitle: String { localized("Drag Lumen into Accessibility") }
+        static var screenRecordingDragTitle: String { localized("Drag Lumen into Screen Recording") }
+        static var dragPanelDetail: String { localized("Drop Lumen into the open System Settings list, then switch it on.") }
         static var dragInstruction: String { localized("Drag this app into the permission list") }
         static var dragHint: String { localized("After adding Lumen, enable its switch and check again.") }
-        static var stillRequired: String { localized("The permission is still disabled. Enable Lumen in System Settings, then check again.") }
+        static var notEnabled: String { localized("Lumen is not enabled yet.") }
         static var dragAccessibilityHelp: String { localized("Drag the Lumen application into the open System Settings permission list.") }
     }
 

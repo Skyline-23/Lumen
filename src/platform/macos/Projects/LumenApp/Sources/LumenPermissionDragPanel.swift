@@ -25,12 +25,12 @@ enum LumenPermissionKind {
         }
     }
 
-    var detail: String {
+    var dragTitle: String {
         switch self {
         case .accessibility:
-            LumenCopy.Permission.accessibilityDragDetail
+            LumenCopy.Permission.accessibilityDragTitle
         case .screenRecording:
-            LumenCopy.Permission.screenRecordingDragDetail
+            LumenCopy.Permission.screenRecordingDragTitle
         }
     }
 }
@@ -61,7 +61,7 @@ final class LumenPermissionDragPanelController: NSObject, NSWindowDelegate {
         let panel = panel ?? makePanel()
         panel.title = permission.title
         panel.contentViewController = hostingController
-        panel.setContentSize(NSSize(width: 390, height: 300))
+        panel.setContentSize(NSSize(width: 430, height: 324))
         position(panel)
         panel.orderFrontRegardless()
         self.panel = panel
@@ -103,7 +103,7 @@ final class LumenPermissionDragPanelController: NSObject, NSWindowDelegate {
 
     private func makePanel() -> NSPanel {
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 390, height: 300),
+            contentRect: NSRect(x: 0, y: 0, width: 430, height: 324),
             styleMask: [.titled, .closable, .utilityWindow, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -116,6 +116,8 @@ final class LumenPermissionDragPanelController: NSObject, NSWindowDelegate {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
         return panel
     }
 
@@ -127,9 +129,27 @@ final class LumenPermissionDragPanelController: NSObject, NSWindowDelegate {
             return
         }
 
+        let margin: CGFloat = 18
+        let availableSize = NSSize(
+            width: max(1, visibleFrame.width - margin * 2),
+            height: max(1, visibleFrame.height - margin * 2)
+        )
+        if panel.frame.width > availableSize.width || panel.frame.height > availableSize.height {
+            let availableContentSize = panel.contentRect(
+                forFrameRect: NSRect(origin: .zero, size: availableSize)
+            ).size
+            panel.setContentSize(
+                NSSize(
+                    width: min(430, availableContentSize.width),
+                    height: min(324, availableContentSize.height)
+                )
+            )
+        }
+        let maxOriginX = visibleFrame.maxX - panel.frame.width - margin
+        let maxOriginY = visibleFrame.maxY - panel.frame.height - margin
         let origin = NSPoint(
-            x: visibleFrame.maxX - panel.frame.width - 28,
-            y: visibleFrame.midY - panel.frame.height / 2
+            x: min(max(visibleFrame.minX + margin, visibleFrame.maxX - panel.frame.width - 28), maxOriginX),
+            y: min(max(visibleFrame.minY + margin, visibleFrame.midY - panel.frame.height / 2), maxOriginY)
         )
         panel.setFrameOrigin(origin)
     }
@@ -140,75 +160,153 @@ private struct LumenPermissionDragPanel: View {
     let onCheck: () -> Bool
     let onDragEnded: () -> Void
     let onClose: () -> Void
+    @Environment(\.colorScheme) private var colorScheme
     @State private var permissionStillRequired = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(LumenCopy.Permission.dragPanelTitle)
-                    .font(.title2.weight(.semibold))
-                Text(permission.detail)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+        ZStack {
+            background
 
-            draggableApplication
-
-            if permissionStillRequired {
-                Text(LumenCopy.Permission.stillRequired)
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-            } else {
-                Label {
-                    Text(LumenCopy.Permission.dragHint)
-                } icon: {
-                    LumenAssetIconView(.drag)
-                        .frame(width: 15, height: 15)
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 14) {
+                header
+                draggableApplication
+                status
+                footer
             }
-
-            HStack {
-                Button(LumenCopy.Action.close, action: onClose)
-                Spacer()
-                Button(LumenCopy.Action.checkAgain) {
-                    permissionStillRequired = !onCheck()
-                }
-                .buttonStyle(.borderedProminent)
-            }
+            .padding(24)
         }
-        .padding(22)
-        .frame(width: 390, height: 300, alignment: .topLeading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .strokeBorder(borderColor, lineWidth: 1)
+        }
+        .tint(mintAccent)
+        .preferredColorScheme(colorScheme)
+    }
+
+    private var background: some View {
+        LinearGradient(
+            colors: colorScheme == .dark
+                ? [
+                    Color(red: 0.025, green: 0.105, blue: 0.17),
+                    Color(red: 0.055, green: 0.19, blue: 0.22),
+                    Color(red: 0.055, green: 0.13, blue: 0.13)
+                ]
+                : [
+                    Color(red: 0.88, green: 0.95, blue: 0.97),
+                    Color(red: 0.86, green: 0.96, blue: 0.92),
+                    Color(red: 0.98, green: 0.96, blue: 0.88)
+                ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+        .overlay {
+            RadialGradient(
+                colors: [palette.mintGlow.opacity(colorScheme == .dark ? 1.0 : 0.9), .clear],
+                center: .topTrailing,
+                startRadius: 0,
+                endRadius: 280
+            )
+        }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(permission.dragTitle)
+                .font(.title2.weight(.bold))
+                .foregroundStyle(primaryText)
+                .lineLimit(1)
+            Text(LumenCopy.Permission.dragPanelDetail)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+                .lineLimit(2)
+        }
+    }
+
+    @ViewBuilder
+    private var status: some View {
+        HStack(spacing: 9) {
+            LumenAssetIconView(permissionStillRequired ? .attention : .drag)
+                .frame(width: 18, height: 18)
+                .foregroundStyle(permissionStillRequired ? Color.orange : mintAccent)
+            Text(permissionStillRequired ? LumenCopy.Permission.notEnabled : LumenCopy.Permission.dragHint)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(permissionStillRequired ? Color.orange : secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+                .lineLimit(2)
+        }
+    }
+
+    private var footer: some View {
+        HStack(spacing: 12) {
+            Button(LumenCopy.Action.close, action: onClose)
+                .buttonStyle(.plain)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(primaryText)
+            Spacer(minLength: 8)
+            Button(LumenCopy.Action.checkAgain) {
+                permissionStillRequired = !onCheck()
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+        }
+    }
+
+    private var primaryText: Color {
+        palette.primaryText
+    }
+
+    private var secondaryText: Color {
+        palette.secondaryText
+    }
+
+    private var borderColor: Color {
+        colorScheme == .dark ? mintAccent.opacity(0.42) : Color.black.opacity(0.16)
+    }
+
+    private var mintAccent: Color {
+        colorScheme == .dark
+            ? Color(red: 0.31, green: 0.86, blue: 0.78)
+            : Color(red: 0.05, green: 0.56, blue: 0.48)
+    }
+
+    private var palette: LumenAuthenticationPalette {
+        LumenAuthenticationPalette(colorScheme: colorScheme)
     }
 
     private var draggableApplication: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color.accentColor.opacity(0.08))
+                .fill(mintAccent.opacity(colorScheme == .dark ? 0.10 : 0.08))
                 .overlay {
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .strokeBorder(Color.accentColor.opacity(0.28), style: StrokeStyle(lineWidth: 1.5, dash: [6, 5]))
+                        .strokeBorder(
+                            mintAccent.opacity(colorScheme == .dark ? 0.52 : 0.42),
+                            style: StrokeStyle(lineWidth: 1.5, dash: [7, 5])
+                        )
                 }
 
-            HStack(spacing: 14) {
-                Image(nsImage: LumenApplicationIcon.image(size: NSSize(width: 52, height: 52)))
+            HStack(spacing: 15) {
+                Image(nsImage: LumenApplicationIcon.image(size: NSSize(width: 58, height: 58)))
                     .resizable()
-                    .frame(width: 52, height: 52)
+                    .frame(width: 58, height: 58)
+                    .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
                 VStack(alignment: .leading, spacing: 3) {
                     Text(LumenCopy.productName)
-                        .font(.headline)
+                        .font(.headline.weight(.bold))
+                        .foregroundStyle(primaryText)
                     Text(LumenCopy.Permission.dragInstruction)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(secondaryText)
                 }
                 Spacer()
                 LumenAssetIconView(.drag)
-                    .frame(width: 22, height: 22)
-                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 24, height: 24)
+                    .foregroundStyle(mintAccent)
             }
-            .padding(.horizontal, 18)
+            .padding(.horizontal, 20)
             .allowsHitTesting(false)
 
             LumenDraggableApplicationView(
@@ -216,7 +314,7 @@ private struct LumenPermissionDragPanel: View {
                 onDragEnded: onDragEnded
             )
         }
-        .frame(height: 86)
+        .frame(height: 88)
     }
 }
 

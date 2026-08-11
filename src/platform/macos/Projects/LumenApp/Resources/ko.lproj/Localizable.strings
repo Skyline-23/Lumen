@@ -6,7 +6,9 @@
 "Account" = "계정";
 "Active" = "활성";
 "Add" = "추가";
-"Add Lumen to System Settings" = "시스템 설정에 Lumen 추가";
+"Drag Lumen into Accessibility" = "Lumen을 손쉬운 사용으로 드래그하세요";
+"Drag Lumen into Screen Recording" = "Lumen을 화면 기록으로 드래그하세요";
+"Drop Lumen into the open System Settings list, then switch it on." = "열린 시스템 설정 목록에 Lumen을 놓은 다음 스위치를 켜세요.";
 "Add a desktop or application entry for remote clients." = "원격 클라이언트가 실행할 데스크톱 또는 앱을 추가하세요.";
 "Add application" = "앱 추가";
 "Address family" = "주소 체계";
@@ -92,8 +94,6 @@
 "IPv4 and IPv6" = "IPv4 및 IPv6";
 "Identity" = "정보";
 "Idle" = "대기";
-"In System Settings, open Accessibility and drag Lumen into the app list below." = "시스템 설정에서 손쉬운 사용을 열고 Lumen을 아래 앱 목록으로 드래그하세요.";
-"In System Settings, open Screen & System Audio Recording and drag Lumen into the app list below." = "시스템 설정에서 화면 및 시스템 오디오 기록을 열고 Lumen을 아래 앱 목록으로 드래그하세요.";
 "Info" = "정보";
 "Input" = "입력";
 "Isolate stream display" = "스트림 디스플레이 격리";
@@ -105,6 +105,7 @@
 "Last error" = "최근 오류";
 "Last runtime event" = "최근 런타임 이벤트";
 "Launch" = "실행";
+"Lumen is not enabled yet." = "Lumen이 아직 활성화되지 않았습니다.";
 "Uses the audio device selected by the host." = "호스트에서 선택한 오디오 기기를 사용합니다.";
 "Lifecycle commands and host process automation" = "수명 주기 명령 및 호스트 프로세스 자동화";
 "Live state from the native host runtime" = "네이티브 호스트 런타임의 실시간 상태";
@@ -183,7 +184,6 @@
 "Terminate when paused" = "일시 정지 시 종료";
 "The password confirmation does not match." = "암호 확인이 일치하지 않습니다.";
 "The password is stored only as an Argon2id hash on this computer." = "암호는 이 컴퓨터에 Argon2id 해시로만 저장됩니다.";
-"The permission is still disabled. Enable Lumen in System Settings, then check again." = "권한이 아직 꺼져 있습니다. 시스템 설정에서 Lumen을 활성화한 후 다시 확인하세요.";
 "This account controls this host, enrolled devices, and remote settings." = "이 계정으로 호스트, 등록된 기기 및 원격 설정을 관리합니다.";
 "This removes the owner account, enrolled devices, applications, streaming settings, host certificates, display state, and cached covers. Logs are kept for diagnostics." = "소유자 계정, 등록된 기기, 앱, 스트리밍 설정, 호스트 인증서, 디스플레이 상태 및 캐시된 커버를 제거합니다. 진단 로그는 유지됩니다.";
 "Touch ID authentication did not complete." = "Touch ID 인증이 완료되지 않았습니다.";

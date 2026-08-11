@@ -6,7 +6,9 @@
 "Account" = "アカウント";
 "Active" = "アクティブ";
 "Add" = "追加";
-"Add Lumen to System Settings" = "Lumenをシステム設定に追加";
+"Drag Lumen into Accessibility" = "Lumenをアクセシビリティにドラッグしてください";
+"Drag Lumen into Screen Recording" = "Lumenを画面収録にドラッグしてください";
+"Drop Lumen into the open System Settings list, then switch it on." = "開いているシステム設定のリストにLumenをドロップしてから、スイッチをオンにしてください。";
 "Add a desktop or application entry for remote clients." = "リモートクライアントが起動できるデスクトップまたはアプリを追加してください。";
 "Add application" = "アプリを追加";
 "Address family" = "アドレスファミリ";
@@ -92,8 +94,6 @@
 "IPv4 and IPv6" = "IPv4とIPv6";
 "Identity" = "情報";
 "Idle" = "待機中";
-"In System Settings, open Accessibility and drag Lumen into the app list below." = "システム設定でアクセシビリティを開き、Lumenを下のアプリ一覧へドラッグしてください。";
-"In System Settings, open Screen & System Audio Recording and drag Lumen into the app list below." = "システム設定で画面とシステムオーディオ録音を開き、Lumenを下のアプリ一覧へドラッグしてください。";
 "Info" = "情報";
 "Input" = "入力";
 "Isolate stream display" = "ストリームディスプレイを分離";
@@ -105,6 +105,7 @@
 "Last error" = "直近のエラー";
 "Last runtime event" = "直近のランタイムイベント";
 "Launch" = "起動";
+"Lumen is not enabled yet." = "Lumenはまだ有効になっていません。";
 "Uses the audio device selected by the host." = "ホストで選択されたオーディオデバイスを使用します。";
 "Lifecycle commands and host process automation" = "ライフサイクルコマンドとホストプロセスの自動化";
 "Live state from the native host runtime" = "ネイティブホストランタイムの現在の状態";
@@ -183,7 +184,6 @@
 "Terminate when paused" = "一時停止時に終了";
 "The password confirmation does not match." = "確認用パスワードが一致しません。";
 "The password is stored only as an Argon2id hash on this computer." = "パスワードはこのコンピュータにArgon2idハッシュとしてのみ保存されます。";
-"The permission is still disabled. Enable Lumen in System Settings, then check again." = "許可がまだ無効です。システム設定でLumenを有効にしてから再確認してください。";
 "This account controls this host, enrolled devices, and remote settings." = "このアカウントでホスト、登録済みデバイス、リモート設定を管理します。";
 "This removes the owner account, enrolled devices, applications, streaming settings, host certificates, display state, and cached covers. Logs are kept for diagnostics." = "所有者アカウント、登録済みデバイス、アプリ、ストリーミング設定、ホスト証明書、ディスプレイ状態、キャッシュ済みカバーを削除します。診断ログは保持されます。";
 "Touch ID authentication did not complete." = "Touch ID認証が完了しませんでした。";

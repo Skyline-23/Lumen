@@ -6,7 +6,9 @@
 "Account" = "Account";
 "Active" = "Active";
 "Add" = "Add";
-"Add Lumen to System Settings" = "Add Lumen to System Settings";
+"Drag Lumen into Accessibility" = "Drag Lumen into Accessibility";
+"Drag Lumen into Screen Recording" = "Drag Lumen into Screen Recording";
+"Drop Lumen into the open System Settings list, then switch it on." = "Drop Lumen into the open System Settings list, then switch it on.";
 "Add a desktop or application entry for remote clients." = "Add a desktop or application entry for remote clients.";
 "Add application" = "Add application";
 "Address family" = "Address family";
@@ -92,8 +94,6 @@
 "IPv4 and IPv6" = "IPv4 and IPv6";
 "Identity" = "Identity";
 "Idle" = "Idle";
-"In System Settings, open Accessibility and drag Lumen into the app list below." = "In System Settings, open Accessibility and drag Lumen into the app list below.";
-"In System Settings, open Screen & System Audio Recording and drag Lumen into the app list below." = "In System Settings, open Screen & System Audio Recording and drag Lumen into the app list below.";
 "Info" = "Info";
 "Input" = "Input";
 "Isolate stream display" = "Isolate stream display";
@@ -105,6 +105,7 @@
 "Last error" = "Last error";
 "Last runtime event" = "Last runtime event";
 "Launch" = "Launch";
+"Lumen is not enabled yet." = "Lumen is not enabled yet.";
 "Uses the audio device selected by the host." = "Uses the audio device selected by the host.";
 "Lifecycle commands and host process automation" = "Lifecycle commands and host process automation";
 "Live state from the native host runtime" = "Live state from the native host runtime";
@@ -183,7 +184,6 @@
 "Terminate when paused" = "Terminate when paused";
 "The password confirmation does not match." = "The password confirmation does not match.";
 "The password is stored only as an Argon2id hash on this computer." = "The password is stored only as an Argon2id hash on this computer.";
-"The permission is still disabled. Enable Lumen in System Settings, then check again." = "The permission is still disabled. Enable Lumen in System Settings, then check again.";
 "This account controls this host, enrolled devices, and remote settings." = "This account controls this host, enrolled devices, and remote settings.";
 "This removes the owner account, enrolled devices, applications, streaming settings, host certificates, display state, and cached covers. Logs are kept for diagnostics." = "This removes the owner account, enrolled devices, applications, streaming settings, host certificates, display state, and cached covers. Logs are kept for diagnostics.";
 "Touch ID authentication did not complete." = "Touch ID authentication did not complete.";
