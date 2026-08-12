@@ -1171,6 +1171,20 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
                 probe: probe,
                 physicalDisplays: physicalDisplays
             )
+            if let mirroredDisplayIDs {
+                guard mirroredDisplayIDs.sessionSourceDisplayID == displayID,
+                      physicalDisplays.contains(where: {
+                          $0.displayID == mirroredDisplayIDs.physicalTargetDisplayID
+                      }) else {
+                    throw LumenPhysicalDisplayControlFailure(
+                        code: .physicalDisplayDisconnectUnverified
+                    )
+                }
+                try await releaseDesktopMirror(
+                    targetDisplayID: mirroredDisplayIDs.physicalTargetDisplayID,
+                    topology: snapshot.topology
+                )
+            }
             let confirmedDisplays = try lumenCurrentPhysicalDisplays(
                 snapshot: snapshot.topology,
                 current: try await topologyController.capture(),

@@ -198,7 +198,7 @@ fn external_capture_isolates_after_the_typed_first_frame_boundary() {
 }
 
 #[test]
-fn unavailable_physical_isolation_is_nonfatal_after_virtual_main_promotion() {
+fn unavailable_physical_isolation_recovers_the_promoted_workspace() {
     let mut engine = WorkspaceEngine::default();
     assert_eq!(
         engine.begin_session(LumenWorkspaceSessionRequest {
@@ -239,11 +239,28 @@ fn unavailable_physical_isolation_is_nonfatal_after_virtual_main_promotion() {
             isolate,
             WorkspaceCommandCompletion::physical_mutation_applied(false),
         ),
-        LumenEngineStatus::Ok
+        LumenEngineStatus::CommandFailed
     );
     assert!(engine.resources.physical_mutation_applied);
-    assert_eq!(engine.next_command(), Err(LumenEngineStatus::NoCommand));
-    assert_eq!(engine.state, LumenWorkspaceState::Active);
+    assert_eq!(engine.state, LumenWorkspaceState::Stopping);
+
+    let mut recovery = Vec::new();
+    while let Ok(command) = engine.next_command() {
+        recovery.push(command.kind);
+        assert_eq!(
+            engine.complete_command(command, true),
+            LumenEngineStatus::Ok
+        );
+    }
+    assert_eq!(
+        recovery,
+        vec![
+            LumenWorkspaceCommandKind::RestoreWorkspace,
+            LumenWorkspaceCommandKind::VerifyPhysicalDisplays,
+            LumenWorkspaceCommandKind::DestroyVirtualDisplay,
+        ]
+    );
+    assert_eq!(engine.state, LumenWorkspaceState::Idle);
 }
 
 #[test]

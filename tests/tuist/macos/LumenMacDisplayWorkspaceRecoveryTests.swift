@@ -102,6 +102,7 @@ private actor DisplayMirrorProbe: LumenMacDisplayMirrorControlling {
     private let reportedMirrorSourceAfterApply: UInt32?
     private let mirroredSourceBounds: CGRect?
     private let mirroredTargetIsActive: Bool
+    private let unmirrorHandler: @Sendable () -> Void
     private var applied = false
     private var staged = false
     private var targetBounds: CGRect = .zero
@@ -122,7 +123,8 @@ private actor DisplayMirrorProbe: LumenMacDisplayMirrorControlling {
         boundsByDisplayID: [UInt32: CGRect] = [:],
         ownerToken: UInt? = 0xCAFE,
         mirroredSourceBounds: CGRect? = nil,
-        mirroredTargetIsActive: Bool = true
+        mirroredTargetIsActive: Bool = true,
+        unmirrorHandler: @escaping @Sendable () -> Void = {}
     ) {
         self.sourceDisplayID = sourceDisplayID
         self.targetDisplayID = targetDisplayID
@@ -137,6 +139,7 @@ private actor DisplayMirrorProbe: LumenMacDisplayMirrorControlling {
         self.reportedMirrorSourceAfterApply = reportedMirrorSourceAfterApply
         self.mirroredSourceBounds = mirroredSourceBounds
         self.mirroredTargetIsActive = mirroredTargetIsActive
+        self.unmirrorHandler = unmirrorHandler
         self.boundsByDisplayID = boundsByDisplayID
         self.ownerToken = ownerToken
         targetBounds = initialTargetBounds
@@ -246,6 +249,7 @@ private actor DisplayMirrorProbe: LumenMacDisplayMirrorControlling {
 
     func unmirror(targetDisplayID: UInt32) {
         events.append(.unmirror(target: targetDisplayID))
+        unmirrorHandler()
         applied = false
         currentMainDisplayID = sourceDisplayID
     }
@@ -1600,6 +1604,62 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         )
     }
 
+    func testMirroredPhysicalTargetIsReleasedBeforeIsolationMutation() async throws {
+        let topology = isolationPhysicalTopology()
+        let physicalDisplayID = try XCTUnwrap(
+            topology.displays.first.flatMap { UInt32($0.id) }
+        )
+        let virtualDisplayID: UInt32 = 117
+        let fixture = IsolationDisplayFixture(physicalTopology: topology)
+        let orderingProbe = DisplayIsolationOrderingProbe()
+        let mirrorProbe = DisplayMirrorProbe(
+            sourceDisplayID: physicalDisplayID,
+            targetDisplayID: virtualDisplayID,
+            reportedMirrorSourceAfterApply: virtualDisplayID,
+            initialTargetIsOnline: true,
+            initialTargetIsActive: true,
+            initialTargetBounds: CGRect(x: 5_120, y: 0, width: 960, height: 540),
+            configuredTargetSize: CGSize(width: 960, height: 540),
+            mirroredTargetIsActive: false,
+            unmirrorHandler: { orderingProbe.recordUnmirror() }
+        )
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: IsolationTopologyController(fixture: fixture),
+            mirrorController: mirrorProbe,
+            physicalDisplayController: UnmirroredFirstPhysicalDisplayController(
+                fixture: fixture,
+                orderingProbe: orderingProbe
+            ),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier()
+        )
+        _ = try await workspace.snapshotWorkspace(targetProcessIdentifiers: [])
+        fixture.publishVirtualDisplay(virtualDisplayID)
+
+        try await workspace.mirrorOwnedVirtualDisplay(
+            virtualDisplayID,
+            sourceDisplayID: physicalDisplayID
+        )
+        try await workspace.isolateVirtualDisplay(virtualDisplayID)
+
+        let mirrorEvents = await mirrorProbe.recordedEvents()
+        XCTAssertEqual(
+            mirrorEvents,
+            [
+                .mirror(target: physicalDisplayID, source: virtualDisplayID),
+                .unmirror(target: physicalDisplayID),
+            ]
+        )
+        XCTAssertEqual(
+            fixture.controlCalls(),
+            topology.displays.compactMap { display in
+                UInt32(display.id).map {
+                    PhysicalControlCall(displayID: $0, enabled: false)
+                }
+            }
+        )
+        XCTAssertTrue(orderingProbe.didUnmirrorBeforeMutation())
+    }
+
     func testDurableIsolationRecoveryReenablesRenumberedOfflineDisplay() async throws {
         let topology = LumenMacPhysicalDisplayTopology(
             displays: [
@@ -2525,6 +2585,33 @@ private struct PhysicalControlCall: Equatable {
     let enabled: Bool
 }
 
+private final class DisplayIsolationOrderingProbe: Sendable {
+    private struct State: Sendable {
+        var didUnmirror = false
+        var physicalMutationPrecededUnmirror = false
+    }
+
+    private let state = Mutex(State())
+
+    func recordUnmirror() {
+        state.withLock { $0.didUnmirror = true }
+    }
+
+    func recordPhysicalMutation() {
+        state.withLock { state in
+            if !state.didUnmirror {
+                state.physicalMutationPrecededUnmirror = true
+            }
+        }
+    }
+
+    func didUnmirrorBeforeMutation() -> Bool {
+        state.withLock {
+            $0.didUnmirror && !$0.physicalMutationPrecededUnmirror
+        }
+    }
+}
+
 private final class IsolationDisplayFixture: Sendable {
     private struct State: Sendable {
         var topology: LumenMacPhysicalDisplayTopology
@@ -3144,6 +3231,35 @@ private struct RecordingPhysicalDisplayController: LumenPhysicalDisplayControlli
             )
         }
         fixture?.setEnabled(enabled, displayID: displayID)
+        return LumenPhysicalDisplayControlReceipt(
+            displayID: displayID,
+            enabled: enabled,
+            source: .skyLightSLS,
+            symbolName: "SLSConfigureDisplayEnabled"
+        )
+    }
+}
+
+private struct UnmirroredFirstPhysicalDisplayController:
+    LumenPhysicalDisplayControlling {
+    let fixture: IsolationDisplayFixture
+    let orderingProbe: DisplayIsolationOrderingProbe
+
+    func probe() -> LumenDisplayEnabledSymbolProbe {
+        LumenDisplayEnabledSymbolProbe(
+            source: .skyLightSLS,
+            symbolName: "SLSConfigureDisplayEnabled"
+        )
+    }
+
+    func setEnabled(
+        _ enabled: Bool,
+        for displayID: CGDirectDisplayID
+    ) -> LumenPhysicalDisplayControlReceipt {
+        if !enabled {
+            orderingProbe.recordPhysicalMutation()
+        }
+        fixture.setEnabled(enabled, displayID: displayID)
         return LumenPhysicalDisplayControlReceipt(
             displayID: displayID,
             enabled: enabled,
