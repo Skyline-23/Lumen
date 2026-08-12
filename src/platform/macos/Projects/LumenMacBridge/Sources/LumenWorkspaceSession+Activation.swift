@@ -140,6 +140,7 @@ extension LumenMacWorkspaceSession {
         _ isolationError: any Error,
         command: LumenMacWorkspaceCommand?
     ) async {
+        let platformIsolationStatus = await executor.physicalIsolationStatus()
         if let command {
             _ = try? await coordinator.complete(command, result: .failed)
         }
@@ -154,6 +155,12 @@ extension LumenMacWorkspaceSession {
         phase = cleanupError == nil && ownershipCleanupError == nil
             ? .idle
             : .recoveryPending
+        if cleanupError == nil,
+           ownershipCleanupError == nil,
+           case .unavailable = platformIsolationStatus {
+            await isolationStatusHandler(platformIsolationStatus)
+            return
+        }
         let failures = [isolationError, cleanupError, ownershipCleanupError]
             .compactMap { $0 }
             .map { String(describing: $0) }

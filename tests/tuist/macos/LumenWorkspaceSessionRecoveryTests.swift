@@ -19,7 +19,7 @@ final class LumenWorkspaceSessionRecoveryTests: XCTestCase {
         XCTAssertEqual(point.y, CGFloat(geometry.logicalHeight) / 2)
     }
 
-    func testUnavailablePhysicalIsolationDoesNotBlockOrStopTheStreamSession() async throws {
+    func testUnavailablePhysicalIsolationStopsAndRecoversTheStreamSession() async throws {
         let recorder = WorkspaceExecutionRecorder()
         let statusRecorder = IsolationStatusRecorder()
         let journalPath = temporaryRecoveryJournalPath()
@@ -45,19 +45,14 @@ final class LumenWorkspaceSessionRecoveryTests: XCTestCase {
         XCTAssertEqual(outcome.isolationStatus, .pending)
         let statuses = await statusRecorder.waitForStatusCount(1)
         XCTAssertEqual(statuses, [expectedIsolationStatus])
-        let activeState = try await session.state()
-        XCTAssertEqual(activeState, .active)
-        let activeEvents = await recorder.recordedEvents()
-        XCTAssertTrue(activeEvents.contains(.firstFrameBarrier))
-        XCTAssertTrue(activeEvents.contains(.isolate(114)))
-        XCTAssertFalse(activeEvents.contains(.restore))
-        XCTAssertFalse(activeEvents.contains(.destroy))
-
-        try await session.stop()
-        let stoppedEvents = await recorder.recordedEvents()
-        XCTAssertTrue(stoppedEvents.contains(.restore))
-        XCTAssertTrue(stoppedEvents.contains(.verify))
-        XCTAssertTrue(stoppedEvents.contains(.destroy))
+        let recoveredState = try await session.state()
+        XCTAssertEqual(recoveredState, .idle)
+        let recoveredEvents = await recorder.recordedEvents()
+        XCTAssertTrue(recoveredEvents.contains(.firstFrameBarrier))
+        XCTAssertTrue(recoveredEvents.contains(.isolate(114)))
+        XCTAssertTrue(recoveredEvents.contains(.restore))
+        XCTAssertTrue(recoveredEvents.contains(.verify))
+        XCTAssertTrue(recoveredEvents.contains(.destroy))
         XCTAssertFalse(FileManager.default.fileExists(atPath: journalPath))
     }
 
