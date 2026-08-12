@@ -80,7 +80,15 @@ impl WorkspaceEngine {
                 if applied {
                     self.record_physical_mutation(RecoveryPhase::Isolated)
                 } else {
-                    LumenEngineStatus::Ok
+                    // `ApplyIsolation` is emitted only for an isolated
+                    // workspace.  A platform adapter may report that the
+                    // physical disable could not be applied (for example,
+                    // because WindowServer did not publish the owned display
+                    // yet).  Treat that receipt as a startup failure so the
+                    // engine cannot enter `Active` while the physical target
+                    // remains online.  `complete_command_with_payload` then
+                    // schedules the normal durable cleanup transaction.
+                    LumenEngineStatus::CommandFailed
                 }
             }
             (LumenWorkspaceCommandKind::StartCapture, WorkspaceCommandPayload::None) => {
