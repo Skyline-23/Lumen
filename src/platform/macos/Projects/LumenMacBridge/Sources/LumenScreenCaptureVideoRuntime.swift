@@ -61,6 +61,8 @@ final class LumenScreenCaptureVideoRuntime:
     var compressionSessionAvailable = false
     var appliedVideoBitRateKbps: Int?
     var encodingPlan: LumenVideoToolboxEncodingPlan?
+    var prioritizesEncodingSpeedOverQuality = false
+    var configuredThroughputMode: Int?
     var sourceContract: LumenExactCaptureSourceContract?
     var outputContract: LumenExactEncodedOutputContract?
     var sequenceNumber: UInt64 = 0

@@ -224,6 +224,48 @@ final class LumenVideoCaptureBackendTests: XCTestCase {
         )
     }
 
+    func testAdvertisedTurboThroughputModeUsesRuntimeModeID() {
+        let supportedModes: NSDictionary = [
+            "turbo": [
+                ["ThroughputModeID": 17, "ThroughputModePerformance": 123],
+                ["ThroughputModeID": 17, "ThroughputModePerformance": 123],
+            ] as NSArray
+        ]
+
+        XCTAssertEqual(
+            LumenVideoToolboxThroughputModeResolver.advertisedTurboModeID(
+                from: supportedModes
+            ),
+            17
+        )
+    }
+
+    func testAdvertisedTurboThroughputModeRejectsIncompleteOrInconsistentIDs() {
+        let inconsistentModes: NSDictionary = [
+            "turbo": [
+                ["ThroughputModeID": 5],
+                ["ThroughputModeID": 7],
+            ] as NSArray
+        ]
+        let incompleteModes: NSDictionary = [
+            "turbo": [
+                ["ThroughputModeID": 5],
+                ["ThroughputModePerformance": 7],
+            ] as NSArray
+        ]
+
+        XCTAssertNil(
+            LumenVideoToolboxThroughputModeResolver.advertisedTurboModeID(
+                from: inconsistentModes
+            )
+        )
+        XCTAssertNil(
+            LumenVideoToolboxThroughputModeResolver.advertisedTurboModeID(
+                from: incompleteModes
+            )
+        )
+    }
+
     func testScreenCaptureKitMapsFullLogicalDisplayIntoHiDPIBackingSurface() {
         let configuration = SCStreamConfiguration()
 

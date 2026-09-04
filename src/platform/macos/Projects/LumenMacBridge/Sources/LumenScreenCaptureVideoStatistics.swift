@@ -78,6 +78,8 @@ extension LumenScreenCaptureVideoRuntime {
             "videoToolboxProfile=\(encodingPlan?.profile ?? "unresolved")",
             "videoToolboxHardwareRequired=true",
             "videoToolboxAllowOpenGOP=\(statistics.exactCaptureAudit.allowOpenGOP.map { String($0) } ?? "n/a")",
+            "videoToolboxConfiguredPrioritizeEncodingSpeedOverQuality=\(prioritizesEncodingSpeedOverQuality)",
+            "videoToolboxConfiguredThroughputMode=\(configuredThroughputMode.map(String.init) ?? "n/a")",
             "videoToolboxConfiguredSourceFrameCount=\(width)x\(height)",
             "videoToolboxSubmittedFrameCount=\(statistics.submittedFrameCount)",
             "videoToolboxSubmissionWindowFrameRate=\(submissionApproxFrameRate)",
