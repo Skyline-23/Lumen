@@ -13,10 +13,10 @@ use lumen_engine::{
     decode_client_telemetry_message, encode_codec_configuration_message,
     encode_host_control_message, encode_host_input_message, encode_video_bootstrap_message,
     host_control_envelope, host_input_envelope, HostControlEnvelope, HostInputEnvelope,
-    HostSessionCapabilities, NativeInputAck, NativeInputFailure, NativeInputFailureCode,
-    NativeNegotiationFailure, NativeProtocolError, LUMEN_STREAMING_PROTOCOL_ALPN,
-    NATIVE_AUDIO_STREAM_ID, NATIVE_CONTROL_MESSAGE_LIMIT, NATIVE_INPUT_MESSAGE_LIMIT,
-    NATIVE_MEDIA_CAPABILITY_PACKET_ARRIVAL_FEEDBACK,
+    HostSessionCapabilities, MediaFeedback, NativeInputAck, NativeInputFailure,
+    NativeInputFailureCode, NativeNegotiationFailure, NativeProtocolError,
+    LUMEN_STREAMING_PROTOCOL_ALPN, NATIVE_AUDIO_STREAM_ID, NATIVE_CONTROL_MESSAGE_LIMIT,
+    NATIVE_INPUT_MESSAGE_LIMIT, NATIVE_MEDIA_CAPABILITY_PACKET_ARRIVAL_FEEDBACK,
 };
 use quinn::crypto::rustls::QuicServerConfig;
 use quinn::{Endpoint, RecvStream, ServerConfig, TransportConfig, VarInt};
@@ -1263,6 +1263,8 @@ async fn accept_native_telemetry_stream(
     );
     let mut expected_sequence = 1_u64;
     let mut logged_audio_feedback = false;
+    let mut last_video_feedback_log = None;
+    let mut last_video_feedback = None;
     loop {
         let frame =
             read_length_delimited_frame(&mut receive, NATIVE_CONTROL_MESSAGE_LIMIT, "telemetry")
@@ -1295,6 +1297,10 @@ async fn accept_native_telemetry_stream(
         else {
             return Err("QUIC telemetry envelope has no payload".to_owned());
         };
+        let is_video_feedback = feedback.stream_id != u32::from(NATIVE_AUDIO_STREAM_ID);
+        if is_video_feedback {
+            last_video_feedback = Some((envelope.sequence, feedback.clone()));
+        }
         let packet_arrival_fields_present = feedback.packet_arrival_reference_time_us != 0
             || !feedback.packet_arrival_runs.is_empty();
         if packet_arrival_fields_present {
@@ -1329,6 +1335,12 @@ async fn accept_native_telemetry_stream(
             .observe_native_media_feedback(&feedback, session_epoch);
         match disposition {
             Ok(disposition) => {
+                let pipeline_pressure_triggered = matches!(
+                    &disposition,
+                    NativeMediaFeedbackDisposition::Applied(proposal)
+                        if proposal.decision.admission_divisor
+                            > proposal.base.admission_divisor
+                );
                 apply_adaptive_video_decision(
                     &router,
                     Arc::clone(&platform),
@@ -1336,7 +1348,25 @@ async fn accept_native_telemetry_stream(
                     disposition,
                 )
                 .await?;
-                if feedback.stream_id != u32::from(NATIVE_AUDIO_STREAM_ID) {
+                let now = Instant::now();
+                if pipeline_pressure_triggered {
+                    if let Some((video_sequence, video_feedback)) = &last_video_feedback {
+                        log_native_video_feedback(
+                            session_epoch,
+                            *video_sequence,
+                            video_feedback,
+                            true,
+                        );
+                        last_video_feedback_log = Some(now);
+                    }
+                } else if is_video_feedback
+                    && last_video_feedback_log
+                        .is_none_or(|last| now.duration_since(last) >= Duration::from_secs(1))
+                {
+                    log_native_video_feedback(session_epoch, envelope.sequence, &feedback, false);
+                    last_video_feedback_log = Some(now);
+                }
+                if is_video_feedback {
                     continue;
                 }
                 if !logged_audio_feedback {
@@ -1386,6 +1416,32 @@ async fn accept_native_telemetry_stream(
         "Lumen native QUIC stage=telemetry-peer-send-closed session-epoch={session_epoch} response-lane=held"
     );
     hold_native_auxiliary_response_until_session_end(send).await
+}
+
+fn log_native_video_feedback(
+    session_epoch: u32,
+    telemetry_sequence: u64,
+    feedback: &MediaFeedback,
+    pipeline_pressure_triggered: bool,
+) {
+    eprintln!(
+        "Lumen native QUIC stage=media-feedback-accepted-video session-epoch={session_epoch} telemetry-sequence={telemetry_sequence} feedback-window-id={} stream-id={} received-datagrams={} recovered-shards={} unrecoverable-objects={} late-objects={} reordered-datagrams={} jitter-us={} decoder-queue-depth={} presentation-drops={} decoder-submissions={} decoded-frames={} presented-frames={} decoder-drops={} window-ms={} pipeline-pressure-triggered={pipeline_pressure_triggered}",
+        feedback.feedback_window_id,
+        feedback.stream_id,
+        feedback.received_datagrams,
+        feedback.recovered_shards,
+        feedback.unrecoverable_objects,
+        feedback.late_objects,
+        feedback.reordered_datagrams,
+        feedback.estimated_jitter_us,
+        feedback.decoder_queue_depth,
+        feedback.presentation_drops,
+        feedback.decoder_submissions,
+        feedback.decoded_frames,
+        feedback.presented_frames,
+        feedback.decoder_drops,
+        feedback.window_milliseconds,
+    );
 }
 
 async fn apply_adaptive_video_decision(

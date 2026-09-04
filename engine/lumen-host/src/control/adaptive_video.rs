@@ -90,6 +90,11 @@ impl AdaptiveVideoDeliveryController {
     const TRANSPORT_LOSS_PARTS_PER_MILLION: u64 = 20_000;
     /// Drops below this share of a window are jitter, not sustained pressure.
     const DECODER_DROP_PRESSURE_PARTS_PER_MILLION: u64 = 50_000;
+    /// The Shadow receive lane intentionally absorbs a single fresh-frame
+    /// burst while VideoToolbox callbacks complete. Treating that transient
+    /// slot as sustained decoder congestion halves 120 Hz admission after one
+    /// otherwise healthy feedback window and causes a 120/60 fps sawtooth.
+    const DECODER_QUEUE_BURST_ALLOWANCE: u32 = 1;
     const HIGH_JITTER_MICROSECONDS: u32 = 10_000;
     /// Late objects below this share of a window are pacing, not congestion.
     const LATE_OBJECT_PRESSURE_PARTS_PER_MILLION: u64 = 50_000;
@@ -397,7 +402,10 @@ impl AdaptiveVideoDeliveryController {
         let submissions = sample.decoder_submissions.max(1);
         let drop_parts_per_million =
             u64::from(sample.decoder_drops) * 1_000_000 / u64::from(submissions);
-        if sample.decoder_queue_depth > self.maximum_decoder_queue_depth
+        let congested_queue_depth = self
+            .maximum_decoder_queue_depth
+            .saturating_add(Self::DECODER_QUEUE_BURST_ALLOWANCE);
+        if sample.decoder_queue_depth > congested_queue_depth
             || drop_parts_per_million >= Self::DECODER_DROP_PRESSURE_PARTS_PER_MILLION
         {
             return PipelinePressureSeverity::Congested;
@@ -755,13 +763,31 @@ mod tests {
     fn decoder_queue_backlog_still_reduces_admission_without_drops() {
         let mut controller = AdaptiveVideoDeliveryController::new(100_000, 80_000, 5, 3);
         let decision = controller.observe(MediaFeedbackSample {
-            decoder_queue_depth: 4,
+            decoder_queue_depth: 5,
             decoder_drops: 0,
             ..clean(FeedbackStream::Video)
         });
 
         assert_eq!(decision.admission_divisor, 2);
         assert_eq!(decision.congestion_source, CongestionSource::VideoPipeline);
+    }
+
+    #[test]
+    fn one_transient_queue_slot_above_capacity_preserves_full_admission() {
+        let mut controller = AdaptiveVideoDeliveryController::new(100_000, 80_000, 5, 1);
+        let decision = controller.observe(MediaFeedbackSample {
+            decoder_queue_depth: 2,
+            decoder_submissions: 20,
+            decoded_frames: 16,
+            presented_frames: 14,
+            decoder_drops: 0,
+            presentation_drops: 0,
+            ..clean(FeedbackStream::Video)
+        });
+
+        assert_eq!(decision.admission_divisor, 1);
+        assert_eq!(decision.congestion_source, CongestionSource::None);
+        assert!(!decision.changed);
     }
 
     #[test]
