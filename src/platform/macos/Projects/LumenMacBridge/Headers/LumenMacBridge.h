@@ -3,6 +3,8 @@
 
 #include <CoreGraphics/CoreGraphics.h>
 #include <CoreMedia/CoreMedia.h>
+#include <CoreVideo/CoreVideo.h>
+#include <dispatch/dispatch.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -45,6 +47,75 @@ NS_SWIFT_NAME(LumenMacVirtualDisplayConfiguration)
 @property(nonatomic) double potentialPeakLuminanceNits;
 @end
 
+typedef void (^LumenMacSkyLightDisplayStreamFrameHandler)(
+  CGDisplayStreamFrameStatus status,
+  uint64_t displayTime,
+  CVPixelBufferRef _Nullable pixelBuffer,
+  CVReturn pixelBufferStatus
+);
+
+// Holds a compositor IOSurface beyond the display-stream callback. The
+// callback-owned surface must keep both its Core Foundation retain and
+// IOSurface use-count lease until VideoToolbox has consumed (or cancelled)
+// the corresponding frame.
+NS_SWIFT_NAME(LumenMacSkyLightDisplayStreamFrameLease)
+@interface LumenMacSkyLightDisplayStreamFrameLease : NSObject
++ (nullable instancetype)leaseWithPixelBuffer:(CVPixelBufferRef)pixelBuffer
+    NS_SWIFT_NAME(lease(withPixelBuffer:));
+
+- (instancetype)init NS_UNAVAILABLE;
+@end
+
+// Runtime-resolved SkyLight display stream. The public Swift-facing wrapper
+// prefers SLContentFilter/SLContentStream only when its restricted entitlement
+// is genuinely present; otherwise it binds the entitlement-free raw
+// SLDisplayStream ABI. Both paths deliver the compositor-owned IOSurface
+// through a zero-copy CVPixelBuffer wrapper on the supplied serial queue.
+NS_SWIFT_NAME(LumenSkyLightDisplayStream)
+@interface LumenMacSkyLightDisplayStream : NSObject
+@property(nonatomic, readonly, getter=isRunning) BOOL running;
+@property(nonatomic, readonly, copy, nonnull) NSString *backendName;
+@property(nonatomic, readonly, copy, nullable) NSString *contentStreamClassName;
+@property(nonatomic, readonly, copy, nullable) NSString *contentStreamSessionClassName;
+@property(nonatomic, readonly) BOOL underlyingDisplayStreamAvailable;
+@property(nonatomic, readonly) uint64_t underlyingDisplayStreamTypeID;
+@property(nonatomic, readonly) uint64_t firstFrameDropCount;
+@property(nonatomic, readonly) uint64_t cumulativeDropCount;
+// Preserves the last NSError returned by the private start:/stop: calls so
+// callers can distinguish entitlement, TCC, and format failures from a plain
+// boolean/status failure.
+@property(nonatomic, readonly, copy, nullable) NSError *lastError;
+
++ (BOOL)isSupported;
+- (instancetype)initWithDisplayID:(uint32_t)displayID
+                       outputWidth:(size_t)outputWidth
+                      outputHeight:(size_t)outputHeight
+                       pixelFormat:(OSType)pixelFormat
+                  minimumFrameTime:(double)minimumFrameTime
+                        queueDepth:(NSInteger)queueDepth
+                        showCursor:(BOOL)showCursor
+                       yCbCrMatrix:(nullable NSString *)yCbCrMatrix
+                     dynamicRangeMode:(NSInteger)dynamicRangeMode
+                       colorSpaceName:(nullable NSString *)colorSpaceName
+                       callbackQueue:(dispatch_queue_t)callbackQueue
+                      frameHandler:(LumenMacSkyLightDisplayStreamFrameHandler)frameHandler
+    NS_DESIGNATED_INITIALIZER;
+- (instancetype)initWithDisplayID:(uint32_t)displayID
+                       outputWidth:(size_t)outputWidth
+                      outputHeight:(size_t)outputHeight
+                       pixelFormat:(OSType)pixelFormat
+                  minimumFrameTime:(double)minimumFrameTime
+                        queueDepth:(NSInteger)queueDepth
+                        showCursor:(BOOL)showCursor
+                       yCbCrMatrix:(nullable NSString *)yCbCrMatrix
+                      callbackQueue:(dispatch_queue_t)callbackQueue
+                       frameHandler:(LumenMacSkyLightDisplayStreamFrameHandler)frameHandler;
+- (BOOL)startWithError:(NSError **)error NS_SWIFT_NAME(start());
+- (int32_t)stop;
+
+- (instancetype)init NS_UNAVAILABLE;
+@end
+
 NS_SWIFT_NAME(LumenMacVirtualDisplay)
 @interface LumenMacVirtualDisplay : NSObject
 @property(nonatomic, readonly) uint32_t displayID;
@@ -53,6 +124,7 @@ NS_SWIFT_NAME(LumenMacVirtualDisplay)
 @property(nonatomic, readonly) uint32_t logicalWidth;
 @property(nonatomic, readonly) uint32_t logicalHeight;
 @property(nonatomic, readonly) double refreshRate;
+@property(nonatomic, readonly) BOOL usesSkyLightBackend;
 
 + (BOOL)isSupported;
 + (instancetype)createRegisteredDisplayForKey:(NSString *)key
@@ -71,6 +143,8 @@ NS_SWIFT_NAME(LumenMacVirtualDisplay)
              logicalHeight:(uint32_t)logicalHeight
                refreshRate:(double)refreshRate
                       error:(NSError **)error;
+- (BOOL)selectPublishedHiDPIModeWithError:(NSError **)error
+    NS_SWIFT_NAME(selectPublishedHiDPIMode());
 - (void)destroy;
 
 - (instancetype)init NS_UNAVAILABLE;

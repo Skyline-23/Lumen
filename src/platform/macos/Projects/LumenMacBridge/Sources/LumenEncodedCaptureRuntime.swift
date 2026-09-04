@@ -204,7 +204,8 @@ struct LumenProductionCaptureRuntimeFactory:
     }
 }
 
-/// Safety: ScreenCaptureKit and VideoToolbox callbacks enter through `queue`.
+/// Safety: ScreenCaptureKit, AVFoundation, and VideoToolbox callbacks enter
+/// through `queue`.
 /// Mutable encode state is initialized before capture starts and is otherwise
 /// read or mutated only on that serial queue. The separate `encoderQueue` owns
 /// ordered synchronous C/VideoToolbox admission calls, which can block in XPC;

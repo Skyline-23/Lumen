@@ -47,7 +47,7 @@ enum LumenExactCaptureError: Error, Equatable, LocalizedError {
         case .requiredKeyFrameNotProduced:
             return "VideoToolbox did not produce the required repair key frame."
         case .sourceContractMismatch(let mismatch):
-            return "ScreenCaptureKit source contract mismatch: \(mismatch)."
+            return "Capture source contract mismatch: \(mismatch)."
         case .encodedOutputContractMismatch(let mismatch):
             return "VideoToolbox encoded output contract mismatch: \(mismatch)."
         }

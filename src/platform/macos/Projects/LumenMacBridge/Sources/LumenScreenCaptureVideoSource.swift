@@ -83,8 +83,213 @@ extension LumenScreenCaptureVideoRuntime {
         didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
         of type: SCStreamOutputType
     ) {
-        guard type == .screen,
-              !stopping,
+        guard type == .screen else {
+            return
+        }
+        processCapturedSampleBuffer(
+            sampleBuffer,
+            screenCaptureStream: stream
+        )
+    }
+
+    func captureOutput(
+        _ output: AVCaptureOutput,
+        didOutput sampleBuffer: CMSampleBuffer,
+        from _: AVCaptureConnection
+    ) {
+        guard let avCaptureHandle,
+              avCaptureHandle.output === output else {
+            return
+        }
+        processCapturedSampleBuffer(
+            sampleBuffer,
+            screenCaptureStream: nil
+        )
+    }
+
+    func captureOutput(
+        _ output: AVCaptureOutput,
+        didDrop _: CMSampleBuffer,
+        from _: AVCaptureConnection
+    ) {
+        guard let avCaptureHandle,
+              avCaptureHandle.output === output else {
+            return
+        }
+        statistics.droppedFrameCount &+= 1
+        refreshStatisticsNotesIfNeeded()
+    }
+
+    func processSkyLightFrame(
+        status: CGDisplayStreamFrameStatus,
+        displayTime: UInt64,
+        pixelBuffer: CVPixelBuffer?,
+        pixelBufferStatus: CVReturn
+    ) {
+        guard !stopping,
+              compressionSessionAvailable else {
+            return
+        }
+
+        let callbackEntryMachTime = mach_absolute_time()
+        defer {
+            finishSourceCallback(startedAt: callbackEntryMachTime)
+        }
+        captureIngressTimings.observe(
+            displayedMachTime: displayTime,
+            callbackMachTime: callbackEntryMachTime
+        )
+
+        if status == .stopped {
+            reportSkyLightCaptureFailure(
+                .skyLightStreamStopped(configuration.displayID),
+                sourceDisplayTime: displayTime
+            )
+            return
+        }
+        // FrameIdle and FrameBlank carry no fresh compositor surface. They are
+        // the desired cheap path for a static display, not dropped video.
+        guard status == .frameComplete else {
+            return
+        }
+
+        guard pixelBufferStatus == kCVReturnSuccess,
+              let pixelBuffer else {
+            reportSkyLightCaptureFailure(
+                .skyLightFrameUnavailable(
+                    configuration.displayID,
+                    Int32(pixelBufferStatus)
+                ),
+                sourceDisplayTime: displayTime
+            )
+            return
+        }
+
+        // CGDisplayStream's IOSurface is only callback-owned by default. Take
+        // a retained surface/use-count lease before handing the pixel buffer
+        // to the asynchronous VideoToolbox admission path; the lease is then
+        // carried by LumenEncodedFrameContext until output or cancellation.
+        guard let sourceSurfaceLease =
+                LumenMacSkyLightDisplayStreamFrameLease
+                    .lease(withPixelBuffer: pixelBuffer) else {
+            reportSkyLightCaptureFailure(
+                .skyLightFrameUnavailable(
+                    configuration.displayID,
+                    Int32(kCVReturnInvalidArgument)
+                ),
+                sourceDisplayTime: displayTime
+            )
+            return
+        }
+
+        guard let streamIdentity = skyLightDisplayStreamIdentity else {
+            return
+        }
+
+        if !didLogSkyLightFirstFrame {
+            didLogSkyLightFirstFrame = true
+            Self.startupLogger.notice(
+                "stage=skylight-first-frame status=complete display-time=\(displayTime, privacy: .public) surface=\(CVPixelBufferGetWidth(pixelBuffer), privacy: .public)x\(CVPixelBufferGetHeight(pixelBuffer), privacy: .public) pixel-format=\(auditFourCC(CVPixelBufferGetPixelFormatType(pixelBuffer)), privacy: .public) zero-copy-wrap-status=\(pixelBufferStatus, privacy: .public)"
+            )
+        }
+        do {
+            try outputOwnership.recordScreenSample(
+                streamIdentity: streamIdentity
+            )
+        } catch {
+            reportSkyLightCaptureFailure(
+                .outputOwnershipLost,
+                sourceDisplayTime: displayTime
+            )
+            return
+        }
+
+        applySkyLightSourceColorAttachments(to: pixelBuffer)
+        recordSourceTiming(callbackEntryMachTime)
+
+        if let mismatch = sourceContract?.mismatchDescription(
+            for: pixelBuffer
+        ) {
+            reportTerminalContractFailure(
+                .sourceContractMismatch(mismatch),
+                sourceDisplayTime: displayTime
+            )
+            return
+        }
+        recordSourceAudit(
+            imageBuffer: pixelBuffer,
+            sampleBuffer: nil
+        )
+        statistics.completeSourceFrameCount &+= 1
+
+        let source = makePendingSource(
+            imageBuffer: pixelBuffer,
+            displayTime: displayTime,
+            sourceMachTime: callbackEntryMachTime,
+            sourceSurfaceLease: sourceSurfaceLease
+        )
+        admitPendingSource(source)
+    }
+
+    func applySkyLightSourceColorAttachments(to imageBuffer: CVImageBuffer) {
+        guard configuration.dynamicRange == .hdr10,
+              let color = configuration.encodedColorConfiguration else {
+            return
+        }
+        CVBufferSetAttachment(
+            imageBuffer,
+            kCVImageBufferColorPrimariesKey,
+            color.colorPrimaries.imageBufferValue,
+            .shouldPropagate
+        )
+        CVBufferSetAttachment(
+            imageBuffer,
+            kCVImageBufferTransferFunctionKey,
+            color.transferFunction.imageBufferValue,
+            .shouldPropagate
+        )
+        CVBufferSetAttachment(
+            imageBuffer,
+            kCVImageBufferYCbCrMatrixKey,
+            color.yCbCrMatrix.imageBufferValue,
+            .shouldPropagate
+        )
+    }
+
+    func reportSkyLightCaptureFailure(
+        _ error: LumenScreenCaptureError,
+        sourceDisplayTime: UInt64
+    ) {
+        guard !skyLightCaptureFailureReported else {
+            return
+        }
+        skyLightCaptureFailureReported = true
+        // Fence callback and queued admission immediately. The asynchronous
+        // owner teardown may not run until after this callback returns, and
+        // no later compositor surface may enter VideoToolbox once the private
+        // source has reported a terminal failure.
+        stopping = true
+        compressionSessionAvailable = false
+        pendingVideoBootstrapSource = nil
+        encoderAdmission.beginStopping()
+        statistics.isRunning = false
+        statistics.processingFailureCount &+= 1
+        statistics.lastErrorDescription = error.localizedDescription
+        refreshStatisticsNotes()
+        statisticsHandler(statistics)
+        eventHandler(.init(
+            kind: .failed,
+            message: error.localizedDescription,
+            sourceDisplayTime: sourceDisplayTime
+        ))
+        terminationHandler(error)
+    }
+
+    func processCapturedSampleBuffer(
+        _ sampleBuffer: CMSampleBuffer,
+        screenCaptureStream: SCStream?
+    ) {
+        guard !stopping,
               CMSampleBufferIsValid(sampleBuffer),
               let imageBuffer = sampleBuffer.imageBuffer,
               compressionSessionAvailable else {
@@ -96,11 +301,17 @@ extension LumenScreenCaptureVideoRuntime {
             finishSourceCallback(startedAt: callbackEntryMachTime)
         }
 
-        guard acceptOwnedScreenSample(
-            stream: stream,
-            sampleBuffer: sampleBuffer
-        ) else {
-            return
+        if let screenCaptureStream {
+            guard acceptOwnedScreenSample(
+                stream: screenCaptureStream,
+                sampleBuffer: sampleBuffer
+            ) else {
+                return
+            }
+            logScreenFrameGeometryIfNeeded(
+                sampleBuffer,
+                imageBuffer: imageBuffer
+            )
         }
 
         recordSourceTiming(callbackEntryMachTime)
@@ -165,17 +376,6 @@ extension LumenScreenCaptureVideoRuntime {
 
     func recordSourceTiming(_ sourceMachTime: UInt64) {
         statistics.sourceFrameCount &+= 1
-        if firstSourceMachTime == nil {
-            firstSourceMachTime = sourceMachTime
-        }
-        if let lastSourceMachTime {
-            sourceIntervalTotalMilliseconds += LumenMachTime.milliseconds(
-                from: lastSourceMachTime,
-                to: sourceMachTime
-            )
-            sourceIntervalSampleCount &+= 1
-        }
-        lastSourceMachTime = sourceMachTime
     }
 
     func makePendingSource(
@@ -185,18 +385,50 @@ extension LumenScreenCaptureVideoRuntime {
     ) -> LumenPendingVideoBootstrapSource {
         sequenceNumber &+= 1
         let presentationTime = resolvedPresentationTime(sampleBuffer)
-        return LumenPendingVideoBootstrapSource(
+        return makePendingSource(
             imageBuffer: imageBuffer,
             presentationTime: presentationTime,
             displayTime: LumenMachTime.ticks(for: presentationTime)
-                ?? sourceMachTime,
+                ?? sourceMachTime
+        )
+    }
+
+    func makePendingSource(
+        imageBuffer: CVImageBuffer,
+        displayTime: UInt64,
+        sourceMachTime _: UInt64,
+        sourceSurfaceLease: LumenMacSkyLightDisplayStreamFrameLease? = nil
+    ) -> LumenPendingVideoBootstrapSource {
+        sequenceNumber &+= 1
+        let presentationTime = resolvedSkyLightPresentationTime(
+            displayTime: displayTime
+        )
+        return makePendingSource(
+            imageBuffer: imageBuffer,
+            presentationTime: presentationTime,
+            displayTime: displayTime,
+            sourceSurfaceLease: sourceSurfaceLease
+        )
+    }
+
+    func makePendingSource(
+        imageBuffer: CVImageBuffer,
+        presentationTime: CMTime,
+        displayTime: UInt64,
+        sourceSurfaceLease: LumenMacSkyLightDisplayStreamFrameLease? = nil
+    ) -> LumenPendingVideoBootstrapSource {
+        return LumenPendingVideoBootstrapSource(
+            imageBuffer: imageBuffer,
+            presentationTime: presentationTime,
+            displayTime: displayTime,
             duration: CMTime(
                 value: 1,
                 timescale: CMTimeScale(
                     configuration.effectiveTargetFrameRate
                 )
             ),
-            sequenceNumber: sequenceNumber
+            sequenceNumber: sequenceNumber,
+            sourceSurfaceLease: sourceSurfaceLease
         )
     }
 
@@ -217,7 +449,7 @@ extension LumenScreenCaptureVideoRuntime {
 
     func recordSourceAudit(
         imageBuffer: CVImageBuffer,
-        sampleBuffer: CMSampleBuffer
+        sampleBuffer: CMSampleBuffer?
     ) {
         statistics.exactCaptureAudit.inputFourCC = auditFourCC(
             CVPixelBufferGetPixelFormatType(imageBuffer)
@@ -230,7 +462,7 @@ extension LumenScreenCaptureVideoRuntime {
             CVPixelBufferGetWidthOfPlane(imageBuffer, 1)
         statistics.exactCaptureAudit.chromaPlaneHeight =
             CVPixelBufferGetHeightOfPlane(imageBuffer, 1)
-        let extensions = sampleBuffer.formatDescription.flatMap {
+        let extensions = sampleBuffer?.formatDescription.flatMap {
             CMFormatDescriptionGetExtensions($0) as? [CFString: Any]
         }
         statistics.exactCaptureAudit.colorPrimaries = sourceAttachment(
@@ -249,6 +481,55 @@ extension LumenScreenCaptureVideoRuntime {
             imageBuffer,
             key: kCVImageBufferYCbCrMatrixKey,
             fallback: extensions?[kCMFormatDescriptionExtension_YCbCrMatrix]
+        )
+    }
+
+    func logScreenFrameGeometryIfNeeded(
+        _ sampleBuffer: CMSampleBuffer,
+        imageBuffer: CVImageBuffer
+    ) {
+        guard !didLogScreenFrameGeometry else { return }
+        didLogScreenFrameGeometry = true
+        guard let attachmentArray = CMSampleBufferGetSampleAttachmentsArray(
+            sampleBuffer,
+            createIfNecessary: false
+        ) as? [[SCStreamFrameInfo: Any]],
+        let attachment = attachmentArray.first else {
+            Self.startupLogger.notice(
+                "stage=first-frame-geometry attachments=missing"
+            )
+            return
+        }
+        let rawContentRect = attachment[.contentRect]
+        let contentRect = LumenScreenCaptureGeometry.contentRect(
+            from: rawContentRect
+        )
+        let contentScale = (attachment[.contentScale] as? NSNumber)?.doubleValue
+        let scaleFactor = (attachment[.scaleFactor] as? NSNumber)?.doubleValue
+        let rectDescription = contentRect.map {
+            "\($0.origin.x),\($0.origin.y),\($0.size.width)x\($0.size.height)"
+        } ?? "missing"
+        let contentScaleDescription = contentScale.map {
+            String(describing: $0)
+        } ?? "missing"
+        let scaleFactorDescription = scaleFactor.map {
+            String(describing: $0)
+        } ?? "missing"
+        Self.startupLogger.notice(
+            "stage=first-frame-geometry content-rect=\(rectDescription, privacy: .public) content-scale=\(contentScaleDescription, privacy: .public) scale-factor=\(scaleFactorDescription, privacy: .public) surface=\(CVPixelBufferGetWidth(imageBuffer), privacy: .public)x\(CVPixelBufferGetHeight(imageBuffer), privacy: .public)"
+        )
+        let attachmentKeys = attachment.keys
+            .map(\.rawValue)
+            .sorted()
+            .joined(separator: ",")
+        let rawContentRectType = rawContentRect.map {
+            String(reflecting: type(of: $0))
+        } ?? "missing"
+        let rawContentRectDescription = rawContentRect.map {
+            String(reflecting: $0)
+        } ?? "missing"
+        Self.startupLogger.notice(
+            "stage=first-frame-attachments keys=\(attachmentKeys, privacy: .public) content-rect-type=\(rawContentRectType, privacy: .public) content-rect-raw=\(rawContentRectDescription, privacy: .public)"
         )
     }
 
@@ -273,5 +554,34 @@ extension LumenScreenCaptureVideoRuntime {
             )
         }
         return sampleBuffer.presentationTimeStamp
+    }
+
+    func resolvedSkyLightPresentationTime(displayTime: UInt64) -> CMTime {
+        let fallbackStep = CMTime(
+            value: 1,
+            timescale: CMTimeScale(configuration.effectiveTargetFrameRate)
+        )
+
+        guard let firstDisplayTime = skyLightFirstDisplayTime else {
+            skyLightFirstDisplayTime = displayTime
+            let firstPresentationTime = CMTime.zero
+            skyLightLastPresentationTime = firstPresentationTime
+            return firstPresentationTime
+        }
+
+        let actualPresentationTime = LumenMachTime.relativeTime(
+            from: firstDisplayTime,
+            to: displayTime
+        )
+        let presentationTime: CMTime
+        if let lastPresentationTime = skyLightLastPresentationTime,
+           !actualPresentationTime.isValid ||
+            CMTimeCompare(actualPresentationTime, lastPresentationTime) <= 0 {
+            presentationTime = CMTimeAdd(lastPresentationTime, fallbackStep)
+        } else {
+            presentationTime = actualPresentationTime
+        }
+        skyLightLastPresentationTime = presentationTime
+        return presentationTime
     }
 }

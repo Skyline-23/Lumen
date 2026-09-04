@@ -62,3 +62,27 @@ Host-initiated format ladders, layered video, multi-link delivery, and
 authoritative delay-control semantics require a new atomic protocol generation.
 Their required negotiation boundaries are recorded in
 `docs/protocol/post-v4-performance-evolution.md`.
+
+## macOS 27 private display-stream cross-check
+
+The private SkyLight backend materially improves source cadence over the prior
+ScreenCaptureKit route, but it does not yet sustain 120 fps through the complete
+capture-to-VideoToolbox path. On display 3 (`3008 x 1692 @ 240 Hz`), an internal
+Core Animation stimulus and requested `3024 x 1964` output produced:
+
+| Path | SDR HEVC | HDR Main10 | Stream drops |
+| --- | ---: | ---: | ---: |
+| Raw SkyLight IOSurface | 107.58 fps | 102.56 fps | 0 / 0 |
+| Production SkyLight to VT | 92.37 fps | 90.75 fps | 303 / 301 |
+
+The production runs had zero inferred admission-sequence gaps and zero
+forwarding drops. VT output callback latency was `18.75 / 21.94 ms` p50/p95 in
+SDR and `18.79 / 22.05 ms` in HDR. This places the remaining loss at the
+IOSurface-to-VideoToolbox ownership boundary: the compositor can deliver above
+100 fps raw, but two leased surfaces remain held long enough for the private
+producer to accumulate drops.
+
+Increasing the private queue from two to four is closed. It reduced output to
+72.49 fps, raised VT callback p95 to 57.50 ms, and raised cumulative stream
+drops to 440. More buffering makes frames stale without raising encoder
+throughput.

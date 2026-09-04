@@ -1,4 +1,5 @@
 #import <AppKit/AppKit.h>
+#import <CoreGraphics/CoreGraphics.h>
 #import <CoreVideo/CoreVideo.h>
 #import <Foundation/Foundation.h>
 #import <objc/message.h>
@@ -16,6 +17,7 @@ typedef NS_ENUM(NSInteger, LumenMacVirtualDisplayErrorCode) {
   LumenMacVirtualDisplayErrorObjectCreationFailed = 3,
   LumenMacVirtualDisplayErrorSettingsRejected = 4,
   LumenMacVirtualDisplayErrorMissingDisplayID = 5,
+  LumenMacVirtualDisplayErrorModeSelectionFailed = 6,
 };
 
 static void LumenAssignVirtualDisplayError(
@@ -54,6 +56,318 @@ static NSSize LumenPhysicalDisplaySize(uint32_t width, uint32_t height) {
   const double widthMM = fmin(fmax(((double)MAX(width, 1u) / pixelsPerInch) * millimetersPerInch, 120.0), 1200.0);
   const double heightMM = fmin(fmax(((double)MAX(height, 1u) / pixelsPerInch) * millimetersPerInch, 80.0), 900.0);
   return NSMakeSize(widthMM, heightMM);
+}
+
+// SkyLight's private virtual-display API is intentionally resolved at runtime.
+// These are the ABI shapes used by macOS 27's SLVirtualDisplay classes; keeping
+// them local avoids making the private framework part of the public build SDK.
+typedef struct {
+  float width;
+  float height;
+} LumenSkyLightSize;
+
+typedef struct {
+  unsigned int width;
+  unsigned int height;
+} LumenSkyLightPixels;
+
+typedef struct {
+  float x;
+  float y;
+} LumenSkyLightPoint;
+
+typedef struct {
+  LumenSkyLightPoint red;
+  LumenSkyLightPoint green;
+  LumenSkyLightPoint blue;
+  LumenSkyLightPoint white;
+} LumenSkyLightChromaticities;
+
+static BOOL LumenSkyLightClassesAvailable(void) {
+  return NSClassFromString(@"SLVirtualDisplay") != nil &&
+         NSClassFromString(@"SLVirtualDisplayMode") != nil &&
+         NSClassFromString(@"SLVirtualDisplaySettings") != nil &&
+         NSClassFromString(@"SLVirtualDisplayConfiguration") != nil;
+}
+
+static BOOL LumenCGVirtualDisplayClassesAvailable(void) {
+  return NSClassFromString(@"CGVirtualDisplayDescriptor") != nil &&
+         NSClassFromString(@"CGVirtualDisplayMode") != nil &&
+         NSClassFromString(@"CGVirtualDisplaySettings") != nil &&
+         NSClassFromString(@"CGVirtualDisplay") != nil;
+}
+
+static NSUInteger LumenSkyLightEOTF(
+  LumenMacVirtualDisplayConfiguration *configuration
+) {
+  return configuration.hdrEnabled ||
+         configuration.transfer != LumenMacVirtualDisplayTransferSDR
+    ? 1u
+    : 0u;
+}
+
+static uint32_t LumenEvenPointsForScale(uint32_t backingDimension, double scale) {
+  if (backingDimension == 0 || scale <= 0.0) {
+    return 0;
+  }
+  uint64_t points = (uint64_t)llround((double)backingDimension / scale);
+  points = MAX(points, 2u);
+  if (points > UINT32_MAX) {
+    points = UINT32_MAX;
+  }
+  return (uint32_t)points & ~1u;
+}
+
+static id LumenCreateSkyLightMode(
+  Class modeClass,
+  uint32_t pixelWidth,
+  uint32_t pixelHeight,
+  uint32_t logicalWidth,
+  uint32_t logicalHeight,
+  double refreshRate,
+  NSUInteger eotf,
+  NSError **error
+) {
+  if (modeClass == Nil) {
+    LumenAssignVirtualDisplayError(
+      error,
+      LumenMacVirtualDisplayErrorUnsupportedRuntime,
+      @"SLVirtualDisplayMode is unavailable."
+    );
+    return nil;
+  }
+
+  SEL selector = sel_registerName(
+    "initWithSizeInPixels:sizeInPoints:refreshRate:error:"
+  );
+  if (![modeClass instancesRespondToSelector:selector]) {
+    LumenAssignVirtualDisplayError(
+      error,
+      LumenMacVirtualDisplayErrorUnsupportedRuntime,
+      @"SLVirtualDisplayMode does not expose its size-in-pixels initializer."
+    );
+    return nil;
+  }
+
+  typedef id (*LumenSkyLightModeInitializer)(
+    id,
+    SEL,
+    LumenSkyLightPixels,
+    LumenSkyLightPixels,
+    float,
+    NSError **
+  );
+  LumenSkyLightModeInitializer initializer =
+    (LumenSkyLightModeInitializer)objc_msgSend;
+  const LumenSkyLightPixels sizeInPixels = {
+    pixelWidth,
+    pixelHeight
+  };
+  const LumenSkyLightPixels sizeInPoints = {
+    MAX(logicalWidth, 1u),
+    MAX(logicalHeight, 1u)
+  };
+  id mode = initializer(
+    [modeClass alloc],
+    selector,
+    sizeInPixels,
+    sizeInPoints,
+    (float)refreshRate,
+    error
+  );
+  if (mode != nil) {
+    SEL eotfSelector = sel_registerName("setEotf:");
+    if ([mode respondsToSelector:eotfSelector]) {
+      typedef void (*LumenSkyLightEOTFSetter)(id, SEL, NSUInteger);
+      ((LumenSkyLightEOTFSetter)objc_msgSend)(mode, eotfSelector, eotf);
+    }
+  }
+  return mode;
+}
+
+static NSArray *LumenCreateSkyLightOptionalModes(
+  Class modeClass,
+  uint32_t pixelWidth,
+  uint32_t pixelHeight,
+  uint32_t preferredWidth,
+  uint32_t preferredHeight,
+  double refreshRate,
+  NSUInteger eotf
+) {
+  NSMutableArray *modes = [NSMutableArray array];
+  NSMutableSet<NSString *> *emitted = [NSMutableSet set];
+  const double scaleSteps[] = {1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0};
+
+  void (^appendMode)(uint32_t, uint32_t) = ^(uint32_t logicalWidth, uint32_t logicalHeight) {
+    if (logicalWidth == 0 || logicalHeight == 0 ||
+        logicalWidth > pixelWidth || logicalHeight > pixelHeight) {
+      return;
+    }
+    const double backingAspect = (double)pixelWidth / (double)pixelHeight;
+    const double logicalAspect = (double)logicalWidth / (double)logicalHeight;
+    const double aspectDelta = fabs(logicalAspect - backingAspect) / backingAspect;
+    if (aspectDelta > 0.02) {
+      return;
+    }
+    NSString *key = [NSString stringWithFormat:@"%u:%u", logicalWidth, logicalHeight];
+    if ([emitted containsObject:key]) {
+      return;
+    }
+    id mode = LumenCreateSkyLightMode(
+      modeClass,
+      pixelWidth,
+      pixelHeight,
+      logicalWidth,
+      logicalHeight,
+      refreshRate,
+      eotf,
+      NULL
+    );
+    if (mode != nil) {
+      [modes addObject:mode];
+      [emitted addObject:key];
+    }
+  };
+
+  for (NSUInteger index = 0;
+       index < sizeof(scaleSteps) / sizeof(scaleSteps[0]);
+       index++) {
+    appendMode(
+      LumenEvenPointsForScale(pixelWidth, scaleSteps[index]),
+      LumenEvenPointsForScale(pixelHeight, scaleSteps[index])
+    );
+  }
+  appendMode(preferredWidth, preferredHeight);
+  return modes;
+}
+
+static BOOL LumenDisplayModeMatches(
+  CGDisplayModeRef mode,
+  uint32_t logicalWidth,
+  uint32_t logicalHeight,
+  uint32_t backingWidth,
+  uint32_t backingHeight,
+  double refreshRate
+) {
+  if (mode == NULL) {
+    return NO;
+  }
+  const double candidateRefreshRate = CGDisplayModeGetRefreshRate(mode);
+  const BOOL refreshMatches = candidateRefreshRate <= 0 ||
+    fabs(candidateRefreshRate - refreshRate) < 0.5;
+  return CGDisplayModeGetWidth(mode) == logicalWidth &&
+         CGDisplayModeGetHeight(mode) == logicalHeight &&
+         CGDisplayModeGetPixelWidth(mode) == backingWidth &&
+         CGDisplayModeGetPixelHeight(mode) == backingHeight &&
+         refreshMatches;
+}
+
+static BOOL LumenSelectPublishedHiDPIMode(
+  CGDirectDisplayID displayID,
+  uint32_t logicalWidth,
+  uint32_t logicalHeight,
+  uint32_t backingWidth,
+  uint32_t backingHeight,
+  double refreshRate,
+  NSError **error
+) {
+  const void *keys[] = {kCGDisplayShowDuplicateLowResolutionModes};
+  const void *values[] = {kCFBooleanTrue};
+  CFDictionaryRef options = CFDictionaryCreate(
+    kCFAllocatorDefault,
+    keys,
+    values,
+    1,
+    &kCFTypeDictionaryKeyCallBacks,
+    &kCFTypeDictionaryValueCallBacks
+  );
+  CGDisplayModeRef selectedMode = NULL;
+  NSMutableArray<NSString *> *observedModes = [NSMutableArray array];
+  CFArrayRef modes = CGDisplayCopyAllDisplayModes(displayID, options);
+  if (modes != NULL) {
+    const CFIndex count = CFArrayGetCount(modes);
+    for (CFIndex index = 0; index < count; index++) {
+      CGDisplayModeRef mode = (CGDisplayModeRef)CFArrayGetValueAtIndex(
+        modes,
+        index
+      );
+      const double candidateRefreshRate = CGDisplayModeGetRefreshRate(mode);
+      [observedModes addObject:[NSString stringWithFormat:
+        @"%zux%zu pixels=%zux%zu refresh=%.3f flags=0x%08x",
+        CGDisplayModeGetWidth(mode),
+        CGDisplayModeGetHeight(mode),
+        CGDisplayModeGetPixelWidth(mode),
+        CGDisplayModeGetPixelHeight(mode),
+        candidateRefreshRate,
+        (unsigned int)CGDisplayModeGetIOFlags(mode)
+      ]];
+      if (LumenDisplayModeMatches(
+        mode,
+        logicalWidth,
+        logicalHeight,
+        backingWidth,
+        backingHeight,
+        refreshRate
+      )) {
+        selectedMode = CGDisplayModeRetain(mode);
+        break;
+      }
+    }
+    CFRelease(modes);
+  }
+  if (options != NULL) {
+    CFRelease(options);
+  }
+  if (selectedMode == NULL) {
+    LumenAssignVirtualDisplayError(
+      error,
+      LumenMacVirtualDisplayErrorModeSelectionFailed,
+      [NSString stringWithFormat:
+        @"The published HiDPI mode %ux%u (pixels %ux%u) @ %.0fHz was not available. Observed modes: %@",
+        logicalWidth,
+        logicalHeight,
+        backingWidth,
+        backingHeight,
+        refreshRate,
+        observedModes.count == 0
+          ? @"none"
+          : [observedModes componentsJoinedByString:@"; "]]
+    );
+    return NO;
+  }
+  const CGError result = CGDisplaySetDisplayMode(displayID, selectedMode, NULL);
+  CGDisplayModeRelease(selectedMode);
+  if (result != kCGErrorSuccess) {
+    LumenAssignVirtualDisplayError(
+      error,
+      LumenMacVirtualDisplayErrorModeSelectionFailed,
+      [NSString stringWithFormat:
+        @"Failed to select the published HiDPI display mode (%d).",
+        result]
+    );
+    return NO;
+  }
+  CGDisplayModeRef appliedMode = CGDisplayCopyDisplayMode(displayID);
+  const BOOL applied = LumenDisplayModeMatches(
+    appliedMode,
+    logicalWidth,
+    logicalHeight,
+    backingWidth,
+    backingHeight,
+    refreshRate
+  );
+  if (appliedMode != NULL) {
+    CGDisplayModeRelease(appliedMode);
+  }
+  if (!applied) {
+    LumenAssignVirtualDisplayError(
+      error,
+      LumenMacVirtualDisplayErrorModeSelectionFailed,
+      @"The selected HiDPI display mode has not settled yet."
+    );
+    return NO;
+  }
+  return YES;
 }
 
 static void LumenColorPrimaries(
@@ -139,7 +453,7 @@ static void LumenConfigureHDRDisplayInfo(
   }
 
   NSDictionary *displayInfo = ((id (*)(id, SEL))objc_msgSend)(descriptor, displayInfoSelector);
-  if (![displayInfo isKindOfClass:NSDictionary.class] || displayInfo.count == 0) {
+  if (![displayInfo isKindOfClass:NSDictionary.class]) {
     return;
   }
 
@@ -155,7 +469,7 @@ static void LumenConfigureHDRDisplayInfo(
   [values enumerateKeysAndObjectsUsingBlock:^(NSString *symbol, NSNumber *value, BOOL *stop) {
     (void)stop;
     NSString *key = LumenMacDisplayStringConstant(symbol.UTF8String);
-    if (key != nil && displayInfo[key] != nil) {
+    if (key != nil) {
       setDisplayInfo(descriptor, setterSelector, value, key);
     }
   }];
@@ -190,8 +504,10 @@ static void LumenConfigureHDRDisplayInfo(
 @property(nonatomic) uint32_t logicalHeight;
 @property(nonatomic) double refreshRate;
 @property(nonatomic) BOOL highDensity;
+@property(nonatomic) BOOL usesSkyLightBackend;
 @property(nonatomic, strong) id descriptor;
 @property(nonatomic, strong) id mode;
+@property(nonatomic, strong) id nativeMode;
 @property(nonatomic, strong) id settings;
 @property(nonatomic, strong) id display;
 @property(nonatomic, strong) dispatch_queue_t callbackQueue;
@@ -204,6 +520,20 @@ static void LumenConfigureHDRDisplayInfo(
                                  transfer:(LumenMacVirtualDisplayTransfer)transfer
                                hdrEnabled:(BOOL)hdrEnabled
                                     error:(NSError **)error;
+- (BOOL)configureCGVirtualDisplayWithConfiguration:(LumenMacVirtualDisplayConfiguration *)configuration
+                                maximumBackingWidth:(uint32_t)maximumBackingWidth
+                               maximumBackingHeight:(uint32_t)maximumBackingHeight
+                                               error:(NSError **)error;
+- (BOOL)configureSkyLightVirtualDisplayWithConfiguration:(LumenMacVirtualDisplayConfiguration *)configuration
+                                      maximumBackingWidth:(uint32_t)maximumBackingWidth
+                                     maximumBackingHeight:(uint32_t)maximumBackingHeight
+                                                     error:(NSError **)error;
+- (BOOL)updateSkyLightModeWithLogicalWidth:(uint32_t)logicalWidth
+                              logicalHeight:(uint32_t)logicalHeight
+                                refreshRate:(double)refreshRate
+                         requiredBackingWidth:(uint32_t)requiredBackingWidth
+                        requiredBackingHeight:(uint32_t)requiredBackingHeight
+                                       error:(NSError **)error;
 - (BOOL)configureWithConfiguration:(LumenMacVirtualDisplayConfiguration *)configuration
                              error:(NSError **)error;
 - (BOOL)applyVirtualDisplaySettings:(id)settings;
@@ -242,10 +572,8 @@ static void LumenConfigureHDRDisplayInfo(
 }
 
 + (BOOL)isSupported {
-  return NSClassFromString(@"CGVirtualDisplayDescriptor") != nil &&
-         NSClassFromString(@"CGVirtualDisplayMode") != nil &&
-         NSClassFromString(@"CGVirtualDisplaySettings") != nil &&
-         NSClassFromString(@"CGVirtualDisplay") != nil;
+  return LumenSkyLightClassesAvailable() ||
+         LumenCGVirtualDisplayClassesAvailable();
 }
 
 + (nullable instancetype)createRegisteredDisplayForKey:(NSString *)key
@@ -385,6 +713,381 @@ static void LumenConfigureHDRDisplayInfo(
   return configured ? self : nil;
 }
 
+- (BOOL)configureCGVirtualDisplayWithConfiguration:(LumenMacVirtualDisplayConfiguration *)configuration
+                                maximumBackingWidth:(uint32_t)maximumBackingWidth
+                               maximumBackingHeight:(uint32_t)maximumBackingHeight
+                                               error:(NSError **)error {
+  Class descriptorClass = NSClassFromString(@"CGVirtualDisplayDescriptor");
+  Class displayClass = NSClassFromString(@"CGVirtualDisplay");
+  Class settingsClass = NSClassFromString(@"CGVirtualDisplaySettings");
+  _descriptor = [[descriptorClass alloc] init];
+  _callbackQueue = dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0);
+  if (_descriptor == nil || _callbackQueue == nil) {
+    LumenAssignVirtualDisplayError(
+      error,
+      LumenMacVirtualDisplayErrorObjectCreationFailed,
+      @"Failed to allocate the CG virtual display descriptor."
+    );
+    return NO;
+  }
+
+  NSPoint red;
+  NSPoint green;
+  NSPoint blue;
+  NSPoint white;
+  LumenColorPrimaries(configuration.gamut, &red, &green, &blue, &white);
+  [_descriptor setValue:@(configuration.vendorID) forKey:@"vendorID"];
+  [_descriptor setValue:@(configuration.productID) forKey:@"productID"];
+  BOOL assignedSerial = NO;
+  SEL serialNumberSelector = sel_registerName("setSerialNumber:");
+  if ([_descriptor respondsToSelector:serialNumberSelector]) {
+    ((void (*)(id, SEL, unsigned int))objc_msgSend)(
+      _descriptor,
+      serialNumberSelector,
+      configuration.serialNumber
+    );
+    assignedSerial = YES;
+  }
+  SEL serialNumSelector = sel_registerName("setSerialNum:");
+  if ([_descriptor respondsToSelector:serialNumSelector]) {
+    ((void (*)(id, SEL, unsigned int))objc_msgSend)(
+      _descriptor,
+      serialNumSelector,
+      configuration.serialNumber
+    );
+    assignedSerial = YES;
+  }
+  if (!assignedSerial) {
+    [_descriptor setValue:@(configuration.serialNumber) forKey:@"serialNumber"];
+  }
+  [_descriptor setValue:configuration.name forKey:@"name"];
+  [_descriptor setValue:[NSValue valueWithSize:LumenPhysicalDisplaySize(
+    configuration.backingWidth,
+    configuration.backingHeight
+  )] forKey:@"sizeInMillimeters"];
+  [_descriptor setValue:@(maximumBackingWidth) forKey:@"maxPixelsWide"];
+  [_descriptor setValue:@(maximumBackingHeight) forKey:@"maxPixelsHigh"];
+  [_descriptor setValue:[NSValue valueWithPoint:red] forKey:@"redPrimary"];
+  [_descriptor setValue:[NSValue valueWithPoint:green] forKey:@"greenPrimary"];
+  [_descriptor setValue:[NSValue valueWithPoint:blue] forKey:@"bluePrimary"];
+  [_descriptor setValue:[NSValue valueWithPoint:white] forKey:@"whitePoint"];
+  BOOL assignedQueue = NO;
+  SEL queueSelector = sel_registerName("setQueue:");
+  if ([_descriptor respondsToSelector:queueSelector]) {
+    ((void (*)(id, SEL, dispatch_queue_t))objc_msgSend)(
+      _descriptor,
+      queueSelector,
+      _callbackQueue
+    );
+    assignedQueue = YES;
+  }
+  SEL dispatchQueueSelector = sel_registerName("setDispatchQueue:");
+  if ([_descriptor respondsToSelector:dispatchQueueSelector]) {
+    ((void (*)(id, SEL, dispatch_queue_t))objc_msgSend)(
+      _descriptor,
+      dispatchQueueSelector,
+      _callbackQueue
+    );
+    assignedQueue = YES;
+  }
+  if (!assignedQueue) {
+    [_descriptor setValue:_callbackQueue forKey:@"queue"];
+  }
+  SEL terminationSelector = sel_registerName("setTerminationHandler:");
+  if ([_descriptor respondsToSelector:terminationSelector]) {
+    void (^terminationHandler)(id, id) = ^(__unused id reason, __unused id display) {};
+    ((void (*)(id, SEL, id))objc_msgSend)(
+      _descriptor,
+      terminationSelector,
+      terminationHandler
+    );
+  }
+  LumenConfigureHDRDisplayInfo(_descriptor, configuration);
+
+  _display = ((id (*)(id, SEL, id))objc_msgSend)(
+    [displayClass alloc],
+    sel_registerName("initWithDescriptor:"),
+    _descriptor
+  );
+  if (_display == nil) {
+    LumenAssignVirtualDisplayError(
+      error,
+      LumenMacVirtualDisplayErrorObjectCreationFailed,
+      @"Failed to create the CG virtual display instance."
+    );
+    return NO;
+  }
+
+  _settings = [[settingsClass alloc] init];
+  if (_settings == nil) {
+    LumenAssignVirtualDisplayError(
+      error,
+      LumenMacVirtualDisplayErrorObjectCreationFailed,
+      @"Failed to allocate the CG virtual display settings."
+    );
+    return NO;
+  }
+
+  id backingMode = [self createModeWithLogicalWidth:configuration.backingWidth
+                                      logicalHeight:configuration.backingHeight
+                                        refreshRate:configuration.refreshRate
+                                           transfer:configuration.transfer
+                                         hdrEnabled:configuration.hdrEnabled
+                                              error:error];
+  if (backingMode == nil) {
+    return NO;
+  }
+  id initialMode = [self createModeWithLogicalWidth:configuration.logicalWidth
+                                       logicalHeight:configuration.logicalHeight
+                                         refreshRate:configuration.refreshRate
+                                            transfer:configuration.transfer
+                                          hdrEnabled:configuration.hdrEnabled
+                                               error:error];
+  if (initialMode == nil) {
+    return NO;
+  }
+  // CGVirtualDisplay does not infer the backing pixel geometry from the
+  // logical mode on macOS 27. Publish the logical mode first and its native
+  // backing-pixel peer second, matching the mode pair consumed by WindowServer
+  // when hiDPI is enabled.
+  NSArray *publishedModes = @[initialMode, backingMode];
+  [_settings setValue:publishedModes forKey:@"modes"];
+  [_settings setValue:@(configuration.highDensity) forKey:@"hiDPI"];
+  [_settings setValue:@0 forKey:@"rotation"];
+  [_settings setValue:@(configuration.hdrEnabled) forKey:@"isReference"];
+  if ([_settings respondsToSelector:sel_registerName("setRefreshDeadline:")]) {
+    ((void (*)(id, SEL, double))objc_msgSend)(
+      _settings,
+      sel_registerName("setRefreshDeadline:"),
+      0.0
+    );
+  }
+  if (![self applyVirtualDisplaySettings:_settings]) {
+    LumenAssignVirtualDisplayError(
+      error,
+      LumenMacVirtualDisplayErrorSettingsRejected,
+      @"macOS rejected the CG virtual display settings."
+    );
+    return NO;
+  }
+  _mode = initialMode;
+  _nativeMode = backingMode;
+  _usesSkyLightBackend = NO;
+  return YES;
+}
+
+- (BOOL)configureSkyLightVirtualDisplayWithConfiguration:(LumenMacVirtualDisplayConfiguration *)configuration
+                                      maximumBackingWidth:(uint32_t)maximumBackingWidth
+                                     maximumBackingHeight:(uint32_t)maximumBackingHeight
+                                                     error:(NSError **)error {
+  Class descriptorClass = NSClassFromString(@"SLVirtualDisplayConfiguration");
+  Class modeClass = NSClassFromString(@"SLVirtualDisplayMode");
+  Class settingsClass = NSClassFromString(@"SLVirtualDisplaySettings");
+  Class displayClass = NSClassFromString(@"SLVirtualDisplay");
+  SEL configurationSelector = sel_registerName(
+    "initWithName:vendorID:productID:serialNumber:sizeInMillimeters:maximumSizeInPixels:chromaticities:error:"
+  );
+  if (![descriptorClass instancesRespondToSelector:configurationSelector]) {
+    LumenAssignVirtualDisplayError(
+      error,
+      LumenMacVirtualDisplayErrorUnsupportedRuntime,
+      @"SLVirtualDisplayConfiguration does not expose its initializer."
+    );
+    return NO;
+  }
+
+  NSPoint red;
+  NSPoint green;
+  NSPoint blue;
+  NSPoint white;
+  LumenColorPrimaries(configuration.gamut, &red, &green, &blue, &white);
+  const NSSize physicalSize = LumenPhysicalDisplaySize(
+    configuration.backingWidth,
+    configuration.backingHeight
+  );
+  const LumenSkyLightSize millimeters = {
+    (float)physicalSize.width,
+    (float)physicalSize.height
+  };
+  const LumenSkyLightPixels maximumPixels = {
+    maximumBackingWidth,
+    maximumBackingHeight
+  };
+  const LumenSkyLightChromaticities chromaticities = {
+    {(float)red.x, (float)red.y},
+    {(float)green.x, (float)green.y},
+    {(float)blue.x, (float)blue.y},
+    {(float)white.x, (float)white.y}
+  };
+  typedef id (*LumenSkyLightConfigurationInitializer)(
+    id,
+    SEL,
+    id,
+    unsigned long long,
+    unsigned long long,
+    unsigned long long,
+    LumenSkyLightSize,
+    LumenSkyLightPixels,
+    LumenSkyLightChromaticities,
+    NSError **
+  );
+  NSError *skyLightError = nil;
+  _descriptor = ((LumenSkyLightConfigurationInitializer)objc_msgSend)(
+    [descriptorClass alloc],
+    configurationSelector,
+    configuration.name,
+    (unsigned long long)configuration.vendorID,
+    (unsigned long long)configuration.productID,
+    (unsigned long long)configuration.serialNumber,
+    millimeters,
+    maximumPixels,
+    chromaticities,
+    &skyLightError
+  );
+  if (_descriptor == nil) {
+    LumenAssignVirtualDisplayError(
+      error,
+      LumenMacVirtualDisplayErrorObjectCreationFailed,
+      skyLightError.localizedDescription ?: @"Failed to create the SkyLight virtual display configuration."
+    );
+    return NO;
+  }
+
+  const NSUInteger eotf = LumenSkyLightEOTF(configuration);
+  id preferredMode = LumenCreateSkyLightMode(
+    modeClass,
+    configuration.backingWidth,
+    configuration.backingHeight,
+    configuration.logicalWidth,
+    configuration.logicalHeight,
+    configuration.refreshRate,
+    eotf,
+    &skyLightError
+  );
+  if (preferredMode == nil) {
+    if (error != NULL && skyLightError != nil) {
+      *error = skyLightError;
+    }
+    return NO;
+  }
+  id nativeMode = LumenCreateSkyLightMode(
+    modeClass,
+    configuration.backingWidth,
+    configuration.backingHeight,
+    configuration.backingWidth,
+    configuration.backingHeight,
+    configuration.refreshRate,
+    eotf,
+    &skyLightError
+  );
+  if (nativeMode == nil) {
+    if (error != NULL && skyLightError != nil) {
+      *error = skyLightError;
+    }
+    return NO;
+  }
+  NSArray *optionalModes = LumenCreateSkyLightOptionalModes(
+    modeClass,
+    configuration.backingWidth,
+    configuration.backingHeight,
+    configuration.logicalWidth,
+    configuration.logicalHeight,
+    configuration.refreshRate,
+    eotf
+  );
+
+  SEL settingsSelector = sel_registerName(
+    "initWithNativeMode:preferredMode:optionalModes:rotations:error:"
+  );
+  if (![settingsClass instancesRespondToSelector:settingsSelector]) {
+    LumenAssignVirtualDisplayError(
+      error,
+      LumenMacVirtualDisplayErrorUnsupportedRuntime,
+      @"SLVirtualDisplaySettings does not expose its initializer."
+    );
+    return NO;
+  }
+  typedef id (*LumenSkyLightSettingsInitializer)(
+    id,
+    SEL,
+    id,
+    id,
+    id,
+    unsigned long long,
+    NSError **
+  );
+  _settings = ((LumenSkyLightSettingsInitializer)objc_msgSend)(
+    [settingsClass alloc],
+    settingsSelector,
+    nativeMode,
+    preferredMode,
+    optionalModes,
+    0ULL,
+    &skyLightError
+  );
+  if (_settings == nil) {
+    LumenAssignVirtualDisplayError(
+      error,
+      LumenMacVirtualDisplayErrorObjectCreationFailed,
+      skyLightError.localizedDescription ?: @"Failed to create the SkyLight virtual display settings."
+    );
+    return NO;
+  }
+
+  SEL displaySelector = sel_registerName("initWithConfiguration:error:");
+  if (![displayClass instancesRespondToSelector:displaySelector]) {
+    LumenAssignVirtualDisplayError(
+      error,
+      LumenMacVirtualDisplayErrorUnsupportedRuntime,
+      @"SLVirtualDisplay does not expose its configuration initializer."
+    );
+    return NO;
+  }
+  typedef id (*LumenSkyLightDisplayInitializer)(id, SEL, id, NSError **);
+  _display = ((LumenSkyLightDisplayInitializer)objc_msgSend)(
+    [displayClass alloc],
+    displaySelector,
+    _descriptor,
+    &skyLightError
+  );
+  if (_display == nil) {
+    LumenAssignVirtualDisplayError(
+      error,
+      LumenMacVirtualDisplayErrorObjectCreationFailed,
+      skyLightError.localizedDescription ?: @"Failed to create the SkyLight virtual display."
+    );
+    return NO;
+  }
+
+  SEL applySelector = sel_registerName("applySettings:error:");
+  if (![self->_display respondsToSelector:applySelector]) {
+    LumenAssignVirtualDisplayError(
+      error,
+      LumenMacVirtualDisplayErrorUnsupportedRuntime,
+      @"SLVirtualDisplay does not expose applySettings:error:."
+    );
+    return NO;
+  }
+  typedef BOOL (*LumenSkyLightSettingsApplier)(id, SEL, id, NSError **);
+  if (!((LumenSkyLightSettingsApplier)objc_msgSend)(
+    _display,
+    applySelector,
+    _settings,
+    &skyLightError
+  )) {
+    LumenAssignVirtualDisplayError(
+      error,
+      LumenMacVirtualDisplayErrorSettingsRejected,
+      skyLightError.localizedDescription ?: @"macOS rejected the SkyLight virtual display settings."
+    );
+    return NO;
+  }
+  _mode = preferredMode;
+  _nativeMode = nativeMode;
+  _usesSkyLightBackend = YES;
+  return YES;
+}
+
 - (BOOL)configureWithConfiguration:(LumenMacVirtualDisplayConfiguration *)configuration
                              error:(NSError **)error {
   if (configuration.backingWidth == 0 || configuration.backingHeight == 0 ||
@@ -405,157 +1108,32 @@ static void LumenConfigureHDRDisplayInfo(
     );
     return NO;
   }
-  uint32_t maximumBackingWidth = MAX(
+  const uint32_t maximumBackingWidth = MAX(
     configuration.maximumBackingWidth,
     configuration.backingWidth
   );
-  uint32_t maximumBackingHeight = MAX(
+  const uint32_t maximumBackingHeight = MAX(
     configuration.maximumBackingHeight,
     configuration.backingHeight
   );
+  // The CG backend exposes the same retained virtual-display primitive used by
+  // MacVirtualDisplay and permits selecting its published HiDPI mode through
+  // CoreGraphics. macOS 27's newer SLVirtualDisplay publishes the pair but
+  // rejects CGDisplaySetDisplayMode for that display class.
+  const BOOL useSkyLightBackend =
+    !LumenCGVirtualDisplayClassesAvailable() && LumenSkyLightClassesAvailable();
 
   @try {
-    Class descriptorClass = NSClassFromString(@"CGVirtualDisplayDescriptor");
-    _descriptor = [[descriptorClass alloc] init];
-    _callbackQueue = dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0);
-    if (_descriptor == nil || _callbackQueue == nil) {
-      LumenAssignVirtualDisplayError(
-        error,
-        LumenMacVirtualDisplayErrorObjectCreationFailed,
-        @"Failed to allocate the virtual display descriptor."
-      );
-      return NO;
-    }
-
-    NSPoint red;
-    NSPoint green;
-    NSPoint blue;
-    NSPoint white;
-    LumenColorPrimaries(configuration.gamut, &red, &green, &blue, &white);
-    [_descriptor setValue:@(configuration.vendorID) forKey:@"vendorID"];
-    [_descriptor setValue:@(configuration.productID) forKey:@"productID"];
-    BOOL assignedSerial = NO;
-    SEL serialNumberSelector = sel_registerName("setSerialNumber:");
-    if ([_descriptor respondsToSelector:serialNumberSelector]) {
-      ((void (*)(id, SEL, unsigned int))objc_msgSend)(
-        _descriptor,
-        serialNumberSelector,
-        configuration.serialNumber
-      );
-      assignedSerial = YES;
-    }
-    SEL serialNumSelector = sel_registerName("setSerialNum:");
-    if ([_descriptor respondsToSelector:serialNumSelector]) {
-      ((void (*)(id, SEL, unsigned int))objc_msgSend)(
-        _descriptor,
-        serialNumSelector,
-        configuration.serialNumber
-      );
-      assignedSerial = YES;
-    }
-    if (!assignedSerial) {
-      [_descriptor setValue:@(configuration.serialNumber) forKey:@"serialNumber"];
-    }
-    [_descriptor setValue:configuration.name forKey:@"name"];
-    [_descriptor setValue:[NSValue valueWithSize:LumenPhysicalDisplaySize(
-      configuration.backingWidth,
-      configuration.backingHeight
-    )] forKey:@"sizeInMillimeters"];
-    [_descriptor setValue:@(maximumBackingWidth) forKey:@"maxPixelsWide"];
-    [_descriptor setValue:@(maximumBackingHeight) forKey:@"maxPixelsHigh"];
-    [_descriptor setValue:[NSValue valueWithPoint:red] forKey:@"redPrimary"];
-    [_descriptor setValue:[NSValue valueWithPoint:green] forKey:@"greenPrimary"];
-    [_descriptor setValue:[NSValue valueWithPoint:blue] forKey:@"bluePrimary"];
-    [_descriptor setValue:[NSValue valueWithPoint:white] forKey:@"whitePoint"];
-    BOOL assignedQueue = NO;
-    SEL queueSelector = sel_registerName("setQueue:");
-    if ([_descriptor respondsToSelector:queueSelector]) {
-      ((void (*)(id, SEL, dispatch_queue_t))objc_msgSend)(
-        _descriptor,
-        queueSelector,
-        _callbackQueue
-      );
-      assignedQueue = YES;
-    }
-    SEL dispatchQueueSelector = sel_registerName("setDispatchQueue:");
-    if ([_descriptor respondsToSelector:dispatchQueueSelector]) {
-      ((void (*)(id, SEL, dispatch_queue_t))objc_msgSend)(
-        _descriptor,
-        dispatchQueueSelector,
-        _callbackQueue
-      );
-      assignedQueue = YES;
-    }
-    if (!assignedQueue) {
-      [_descriptor setValue:_callbackQueue forKey:@"queue"];
-    }
-    SEL terminationSelector = sel_registerName("setTerminationHandler:");
-    if ([_descriptor respondsToSelector:terminationSelector]) {
-      void (^terminationHandler)(id, id) = ^(__unused id reason, __unused id display) {};
-      ((void (*)(id, SEL, id))objc_msgSend)(
-        _descriptor,
-        terminationSelector,
-        terminationHandler
-      );
-    }
-    LumenConfigureHDRDisplayInfo(_descriptor, configuration);
-
-    Class displayClass = NSClassFromString(@"CGVirtualDisplay");
-    _display = ((id (*)(id, SEL, id))objc_msgSend)(
-      [displayClass alloc],
-      sel_registerName("initWithDescriptor:"),
-      _descriptor
-    );
-    if (_display == nil) {
-      LumenAssignVirtualDisplayError(
-        error,
-        LumenMacVirtualDisplayErrorObjectCreationFailed,
-        @"Failed to create the virtual display instance."
-      );
-      return NO;
-    }
-
-    Class settingsClass = NSClassFromString(@"CGVirtualDisplaySettings");
-    _settings = [[settingsClass alloc] init];
-    if (_settings == nil) {
-      LumenAssignVirtualDisplayError(
-        error,
-        LumenMacVirtualDisplayErrorObjectCreationFailed,
-        @"Failed to allocate the virtual display settings."
-      );
-      [self destroy];
-      return NO;
-    }
-
-    id initialMode = [self createModeWithLogicalWidth:configuration.logicalWidth
-                                        logicalHeight:configuration.logicalHeight
-                                          refreshRate:configuration.refreshRate
-                                             transfer:configuration.transfer
-                                           hdrEnabled:configuration.hdrEnabled
-                                                error:error];
-    if (initialMode == nil) {
-      [self destroy];
-      return NO;
-    }
-    [_settings setValue:@[initialMode] forKey:@"modes"];
-    [_settings setValue:@(configuration.highDensity) forKey:@"hiDPI"];
-    [_settings setValue:@0 forKey:@"rotation"];
-    [_settings setValue:@(configuration.hdrEnabled) forKey:@"isReference"];
-    if ([_settings respondsToSelector:sel_registerName("setRefreshDeadline:")]) {
-      ((void (*)(id, SEL, double))objc_msgSend)(
-        _settings,
-        sel_registerName("setRefreshDeadline:"),
-        0.0
-      );
-    }
-
-    BOOL applied = [self applyVirtualDisplaySettings:_settings];
-    if (!applied) {
-      LumenAssignVirtualDisplayError(
-        error,
-        LumenMacVirtualDisplayErrorSettingsRejected,
-        @"macOS rejected the virtual display settings."
-      );
+    const BOOL configured = useSkyLightBackend
+      ? [self configureSkyLightVirtualDisplayWithConfiguration:configuration
+                                            maximumBackingWidth:maximumBackingWidth
+                                           maximumBackingHeight:maximumBackingHeight
+                                                           error:error]
+      : [self configureCGVirtualDisplayWithConfiguration:configuration
+                                     maximumBackingWidth:maximumBackingWidth
+                                    maximumBackingHeight:maximumBackingHeight
+                                                    error:error];
+    if (!configured) {
       [self destroy];
       return NO;
     }
@@ -579,7 +1157,6 @@ static void LumenConfigureHDRDisplayInfo(
     _logicalHeight = configuration.logicalHeight;
     _refreshRate = configuration.refreshRate;
     _highDensity = configuration.highDensity;
-    _mode = initialMode;
     _transfer = configuration.transfer;
     _hdrEnabled = configuration.hdrEnabled;
   } @catch (NSException *exception) {
@@ -592,6 +1169,52 @@ static void LumenConfigureHDRDisplayInfo(
     return NO;
   }
   return YES;
+}
+
+- (BOOL)selectPublishedHiDPIModeWithError:(NSError **)error {
+  if (![NSThread isMainThread]) {
+    __block BOOL selected = NO;
+    __block NSError *mainThreadError = nil;
+    dispatch_sync(dispatch_get_main_queue(), ^{
+      selected = [self selectPublishedHiDPIModeWithError:&mainThreadError];
+    });
+    if (!selected && error != NULL) {
+      *error = mainThreadError;
+    }
+    return selected;
+  }
+  if (_display == nil || _displayID == 0 || !_highDensity) {
+    LumenAssignVirtualDisplayError(
+      error,
+      LumenMacVirtualDisplayErrorInvalidConfiguration,
+      @"The retained HiDPI display is unavailable for mode selection."
+    );
+    return NO;
+  }
+  CGDisplayModeRef currentMode = CGDisplayCopyDisplayMode(_displayID);
+  const BOOL currentModeMatches = LumenDisplayModeMatches(
+    currentMode,
+    _logicalWidth,
+    _logicalHeight,
+    _backingWidth,
+    _backingHeight,
+    _refreshRate
+  );
+  if (currentMode != NULL) {
+    CGDisplayModeRelease(currentMode);
+  }
+  if (currentModeMatches) {
+    return YES;
+  }
+  return LumenSelectPublishedHiDPIMode(
+    _displayID,
+    _logicalWidth,
+    _logicalHeight,
+    _backingWidth,
+    _backingHeight,
+    _refreshRate,
+    error
+  );
 }
 
 - (nullable id)createModeWithLogicalWidth:(uint32_t)logicalWidth
@@ -647,6 +1270,129 @@ static void LumenConfigureHDRDisplayInfo(
   );
 }
 
+- (BOOL)updateSkyLightModeWithLogicalWidth:(uint32_t)logicalWidth
+                              logicalHeight:(uint32_t)logicalHeight
+                                refreshRate:(double)refreshRate
+                         requiredBackingWidth:(uint32_t)requiredBackingWidth
+                        requiredBackingHeight:(uint32_t)requiredBackingHeight
+                                       error:(NSError **)error {
+  Class modeClass = NSClassFromString(@"SLVirtualDisplayMode");
+  Class settingsClass = NSClassFromString(@"SLVirtualDisplaySettings");
+  SEL settingsSelector = sel_registerName(
+    "initWithNativeMode:preferredMode:optionalModes:rotations:error:"
+  );
+  if (modeClass == Nil || settingsClass == Nil ||
+      ![settingsClass instancesRespondToSelector:settingsSelector]) {
+    LumenAssignVirtualDisplayError(
+      error,
+      LumenMacVirtualDisplayErrorUnsupportedRuntime,
+      @"The SkyLight virtual display mode update API is unavailable."
+    );
+    return NO;
+  }
+
+  LumenMacVirtualDisplayConfiguration *modeConfiguration =
+    [LumenMacVirtualDisplayConfiguration new];
+  modeConfiguration.transfer = _transfer;
+  modeConfiguration.hdrEnabled = _hdrEnabled;
+  const NSUInteger eotf = LumenSkyLightEOTF(modeConfiguration);
+  NSError *skyLightError = nil;
+  id preferredMode = LumenCreateSkyLightMode(
+    modeClass,
+    requiredBackingWidth,
+    requiredBackingHeight,
+    logicalWidth,
+    logicalHeight,
+    refreshRate,
+    eotf,
+    &skyLightError
+  );
+  if (preferredMode == nil) {
+    if (error != NULL && skyLightError != nil) {
+      *error = skyLightError;
+    }
+    return NO;
+  }
+  id nativeMode = LumenCreateSkyLightMode(
+    modeClass,
+    requiredBackingWidth,
+    requiredBackingHeight,
+    requiredBackingWidth,
+    requiredBackingHeight,
+    refreshRate,
+    eotf,
+    &skyLightError
+  );
+  if (nativeMode == nil) {
+    if (error != NULL && skyLightError != nil) {
+      *error = skyLightError;
+    }
+    return NO;
+  }
+  NSArray *optionalModes = LumenCreateSkyLightOptionalModes(
+    modeClass,
+    requiredBackingWidth,
+    requiredBackingHeight,
+    logicalWidth,
+    logicalHeight,
+    refreshRate,
+    eotf
+  );
+
+  typedef id (*LumenSkyLightSettingsInitializer)(
+    id,
+    SEL,
+    id,
+    id,
+    id,
+    unsigned long long,
+    NSError **
+  );
+  id newSettings = ((LumenSkyLightSettingsInitializer)objc_msgSend)(
+    [settingsClass alloc],
+    settingsSelector,
+    nativeMode,
+    preferredMode,
+    optionalModes,
+    0ULL,
+    &skyLightError
+  );
+  if (newSettings == nil) {
+    LumenAssignVirtualDisplayError(
+      error,
+      LumenMacVirtualDisplayErrorObjectCreationFailed,
+      skyLightError.localizedDescription ?: @"Failed to create the updated SkyLight settings."
+    );
+    return NO;
+  }
+
+  SEL applySelector = sel_registerName("applySettings:error:");
+  typedef BOOL (*LumenSkyLightSettingsApplier)(id, SEL, id, NSError **);
+  if (!((LumenSkyLightSettingsApplier)objc_msgSend)(
+    _display,
+    applySelector,
+    newSettings,
+    &skyLightError
+  )) {
+    LumenAssignVirtualDisplayError(
+      error,
+      LumenMacVirtualDisplayErrorSettingsRejected,
+      skyLightError.localizedDescription ?: @"macOS rejected the updated SkyLight virtual display settings."
+    );
+    return NO;
+  }
+
+  _nativeMode = nativeMode;
+  _mode = preferredMode;
+  _settings = newSettings;
+  _backingWidth = requiredBackingWidth;
+  _backingHeight = requiredBackingHeight;
+  _logicalWidth = logicalWidth;
+  _logicalHeight = logicalHeight;
+  _refreshRate = refreshRate;
+  return YES;
+}
+
 - (BOOL)updateLogicalWidth:(uint32_t)logicalWidth
              logicalHeight:(uint32_t)logicalHeight
                refreshRate:(double)refreshRate
@@ -696,6 +1442,14 @@ static void LumenConfigureHDRDisplayInfo(
     );
     return NO;
   }
+  if (_usesSkyLightBackend) {
+    return [self updateSkyLightModeWithLogicalWidth:logicalWidth
+                                      logicalHeight:logicalHeight
+                                        refreshRate:refreshRate
+                                 requiredBackingWidth:(uint32_t)requiredBackingWidth
+                                requiredBackingHeight:(uint32_t)requiredBackingHeight
+                                               error:error];
+  }
   id previousMode = _mode;
   id previousModes = [_settings valueForKey:@"modes"];
   id restoreModes = previousModes;
@@ -703,6 +1457,15 @@ static void LumenConfigureHDRDisplayInfo(
     restoreModes = @[previousMode];
   }
   @try {
+    id candidateBackingMode = [self createModeWithLogicalWidth:(uint32_t)requiredBackingWidth
+                                                  logicalHeight:(uint32_t)requiredBackingHeight
+                                                    refreshRate:refreshRate
+                                                       transfer:_transfer
+                                                     hdrEnabled:_hdrEnabled
+                                                          error:error];
+    if (candidateBackingMode == nil) {
+      return NO;
+    }
     id candidateMode = [self createModeWithLogicalWidth:logicalWidth
                                           logicalHeight:logicalHeight
                                             refreshRate:refreshRate
@@ -712,7 +1475,13 @@ static void LumenConfigureHDRDisplayInfo(
     if (candidateMode == nil) {
       return NO;
     }
-    [_settings setValue:@[candidateMode] forKey:@"modes"];
+    NSArray *candidateModes =
+      _highDensity &&
+      (requiredBackingWidth != logicalWidth || requiredBackingHeight != logicalHeight)
+        ? @[candidateMode, candidateBackingMode]
+        : @[candidateMode];
+    [_settings setValue:candidateModes forKey:@"modes"];
+    [_settings setValue:@(_highDensity) forKey:@"hiDPI"];
     BOOL applied = [self applyVirtualDisplaySettings:_settings];
     if (!applied) {
       if (restoreModes != nil) {
@@ -726,6 +1495,7 @@ static void LumenConfigureHDRDisplayInfo(
       return NO;
     }
     _mode = candidateMode;
+    _nativeMode = candidateBackingMode;
     _backingWidth = (uint32_t)requiredBackingWidth;
     _backingHeight = (uint32_t)requiredBackingHeight;
     _logicalWidth = logicalWidth;
@@ -767,12 +1537,14 @@ static void LumenConfigureHDRDisplayInfo(
   _logicalHeight = 0;
   _refreshRate = 0;
   _highDensity = NO;
+  _usesSkyLightBackend = NO;
   _hdrEnabled = NO;
   if (display != nil && [display respondsToSelector:sel_registerName("destroy")]) {
     ((void (*)(id, SEL))objc_msgSend)(display, sel_registerName("destroy"));
   }
   _settings = nil;
   _mode = nil;
+  _nativeMode = nil;
   _descriptor = nil;
   _callbackQueue = nil;
 }

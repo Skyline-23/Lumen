@@ -219,9 +219,12 @@ enum LumenCaptureStreamConfigurationFactory {
         let configuration: SCStreamConfiguration
         if !usesHDRTransport {
             configuration = SCStreamConfiguration()
-        } else if #available(macOS 26.0, *) {
-            configuration = SCStreamConfiguration(preset: .captureHDRRecordingPreservedSDRHDR10)
         } else if #available(macOS 15.0, *) {
+            // This runtime forwards live frames and owns HDR10 metadata on the
+            // encoded stream. The recording preset adds recording-oriented
+            // preservation work that is unnecessary on this path. Keep the
+            // live canonical-display preset so ScreenCaptureKit can service
+            // the requested high-refresh stream directly.
             let result = SCStreamConfiguration(preset: .captureHDRStreamCanonicalDisplay)
             result.captureDynamicRange = .hdrCanonicalDisplay
             result.pixelFormat = kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange

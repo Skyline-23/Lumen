@@ -143,10 +143,10 @@ final class LumenMacBridgeConfigurationTests: XCTestCase {
         )
     }
 
-    func testHDRCaptureUsesSDRPreservingHDR10OutputContract() throws {
-        guard #available(macOS 26.0, *) else {
+    func testHDRCaptureUsesCanonicalLiveStreamOutputContract() throws {
+        guard #available(macOS 15.0, *) else {
             throw XCTSkip(
-                "The SDR-preserving HDR10 ScreenCaptureKit preset requires macOS 26"
+                "Canonical HDR ScreenCaptureKit streaming requires macOS 15"
             )
         }
 

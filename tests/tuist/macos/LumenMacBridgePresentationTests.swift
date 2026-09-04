@@ -5,6 +5,64 @@ import ScreenCaptureKit
 import XCTest
 
 final class LumenMacBridgePresentationTests: XCTestCase {
+    func testCaptureCadenceTelemetrySeparatesOneSecondPipelineRates() throws {
+        var telemetry = LumenCaptureCadenceTelemetry()
+        var statistics = LumenEncodedCaptureSessionStatistics()
+        statistics.sourceFrameCount = 1
+
+        XCTAssertFalse(
+            telemetry.observe(
+                statistics: statistics,
+                atUptimeNanoseconds: 10
+            )
+        )
+
+        statistics.sourceFrameCount = 121
+        statistics.submittedFrameCount = 100
+        statistics.emittedFrameCount = 50
+        statistics.pendingAdmissionDropCount = 20
+
+        XCTAssertTrue(
+            telemetry.observe(
+                statistics: statistics,
+                atUptimeNanoseconds: 1_000_000_010
+            )
+        )
+        XCTAssertEqual(telemetry.windowDurationMilliseconds, 1_000)
+        XCTAssertEqual(telemetry.sourceCallbacksPerSecond, 120)
+        XCTAssertEqual(telemetry.videoToolboxSubmissionsPerSecond, 100)
+        XCTAssertEqual(telemetry.videoToolboxOutputsPerSecond, 50)
+        XCTAssertEqual(telemetry.pendingAdmissionDropsPerSecond, 20)
+    }
+
+    func testCaptureCadenceTelemetryKeepsLatestWindowUntilNextSecond() throws {
+        var telemetry = LumenCaptureCadenceTelemetry()
+        var statistics = LumenEncodedCaptureSessionStatistics()
+
+        XCTAssertFalse(
+            telemetry.observe(
+                statistics: statistics,
+                atUptimeNanoseconds: 100
+            )
+        )
+        statistics.sourceFrameCount = 60
+        XCTAssertTrue(
+            telemetry.observe(
+                statistics: statistics,
+                atUptimeNanoseconds: 1_000_000_100
+            )
+        )
+
+        statistics.sourceFrameCount = 90
+        XCTAssertFalse(
+            telemetry.observe(
+                statistics: statistics,
+                atUptimeNanoseconds: 1_500_000_100
+            )
+        )
+        XCTAssertEqual(telemetry.sourceCallbacksPerSecond, 60)
+    }
+
     func testCapturePipelineUtilizationSeparatesSCKAdmissionAndEncoderOutput() {
         var statistics = LumenEncodedCaptureSessionStatistics()
         statistics.sourceFrameCount = 125
@@ -62,8 +120,8 @@ final class LumenMacBridgePresentationTests: XCTestCase {
         )
         XCTAssertEqual(configuration.effectiveTargetFrameRate, 120)
         XCTAssertEqual(configuration.effectivePreprocessStrategy, .none)
-        XCTAssertEqual(configuration.negotiatedQueueProfile, .q3)
-        XCTAssertEqual(configuration.negotiatedQueueProfile.queueDepthHint, 3)
+        XCTAssertEqual(configuration.negotiatedQueueProfile, .q4)
+        XCTAssertEqual(configuration.negotiatedQueueProfile.queueDepthHint, 4)
         XCTAssertEqual(configuration.forwardingQueueDepthReserve, 2)
         XCTAssertEqual(configuration.effectiveTargetFrameRate, 120)
         XCTAssertEqual(configuration.requestedWidth, 3512)

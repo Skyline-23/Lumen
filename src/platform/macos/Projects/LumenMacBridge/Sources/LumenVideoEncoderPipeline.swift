@@ -9,11 +9,16 @@ import ScreenCaptureKit
 import Synchronization
 import VideoToolbox
 
-struct LumenEncodedFrameContext: Sendable {
+struct LumenEncodedFrameContext: @unchecked Sendable {
     let sequenceNumber: UInt64
     let displayTime: UInt64
     let submissionMachTime: UInt64
     let requiresBootstrapAcknowledgement: Bool
+    // The SkyLight callback's IOSurface use-count lease must remain alive
+    // until VideoToolbox emits (or cancels) this submission. Keeping it in the
+    // output lifecycle context prevents the compositor surface from being
+    // recycled while the hardware encoder still reads it.
+    let sourceSurfaceLease: LumenMacSkyLightDisplayStreamFrameLease?
 }
 
 enum LumenVideoBootstrapAdmissionDecision: Equatable, Sendable {
@@ -63,6 +68,7 @@ struct LumenPendingVideoBootstrapSource: @unchecked Sendable {
     let displayTime: UInt64
     let duration: CMTime
     let sequenceNumber: UInt64
+    let sourceSurfaceLease: LumenMacSkyLightDisplayStreamFrameLease?
 }
 
 enum LumenEncoderSubmissionAttempt<Result: Sendable>: Sendable {

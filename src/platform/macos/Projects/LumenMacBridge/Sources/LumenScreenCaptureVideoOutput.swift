@@ -171,15 +171,6 @@ extension LumenScreenCaptureVideoRuntime {
             from: context.submissionMachTime,
             to: mach_absolute_time()
         )
-        let outputMachTime = mach_absolute_time()
-        if let lastOutputMachTime {
-            outputIntervalTotalMilliseconds += LumenMachTime.milliseconds(
-                from: lastOutputMachTime,
-                to: outputMachTime
-            )
-            outputIntervalSampleCount &+= 1
-        }
-        lastOutputMachTime = outputMachTime
         statistics.emittedFrameCount &+= 1
         encodedBitrateTelemetry.observe(
             encodedByteCount: CMSampleBufferGetTotalSampleSize(sampleBuffer),

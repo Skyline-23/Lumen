@@ -21,6 +21,12 @@ struct LumenCaptureStartPublication {
     let streamStartMilliseconds: Double
 }
 
+struct LumenPreparedVideoCapture {
+    let width: Int
+    let height: Int
+    let plan: LumenVideoToolboxEncodingPlan
+}
+
 extension LumenScreenCaptureVideoRuntime {
     func start() async throws {
         guard beginLifecycleStart() else {
@@ -36,12 +42,31 @@ extension LumenScreenCaptureVideoRuntime {
     }
 
     func startCapture() async throws {
+        switch captureBackend {
+        case .avFoundationScreenInput:
+            try await startAVFoundationCapture()
+            return
+        case .skyLightDisplayStream:
+            try await startSkyLightDisplayStreamCapture()
+            return
+        case .screenCaptureKit:
+            break
+        }
+
         let display = try await resolveCaptureDisplay()
+        let filter = SCContentFilter(
+            display: display,
+            excludingApplications: [],
+            exceptingWindows: []
+        )
         let streamConfiguration = try await prepareCaptureStreamConfiguration(
             for: display
         )
+        Self.startupLogger.notice(
+            "stage=stream-geometry display-id=\(display.displayID, privacy: .public) display-bounds=\(self.filterGeometryDescription(CGDisplayBounds(display.displayID)), privacy: .public) display-mode=\(self.displayModeGeometryDescription(display.displayID), privacy: .public) filter-content=\(self.filterGeometryDescription(filter.contentRect), privacy: .public) output=\(streamConfiguration.width, privacy: .public)x\(streamConfiguration.height, privacy: .public) explicit-scaling=true"
+        )
         let registeredStream = try registerCaptureStream(
-            display: display,
+            filter: filter,
             configuration: streamConfiguration
         )
         guard try await startRegisteredCapture(
@@ -151,6 +176,49 @@ extension LumenScreenCaptureVideoRuntime {
     ) async throws -> SCStreamConfiguration {
         let sourceWidth = configuration.requestedWidth ?? display.width
         let sourceHeight = configuration.requestedHeight ?? display.height
+        let prepared = try await prepareVideoCapture(
+            sourceWidth: sourceWidth,
+            sourceHeight: sourceHeight
+        )
+
+        let streamConfiguration = LumenCaptureStreamConfigurationFactory.make(
+            configuration: configuration
+        )
+        streamConfiguration.width = prepared.width
+        streamConfiguration.height = prepared.height
+        streamConfiguration.minimumFrameInterval =
+            LumenScreenCaptureCadence.minimumFrameInterval(
+                targetFrameRate: configuration.effectiveTargetFrameRate
+            )
+        streamConfiguration.queueDepth =
+            configuration.negotiatedQueueProfile.queueDepthHint
+        streamConfiguration.pixelFormat = prepared.plan.pixelFormat
+        configureSDRColorSpaceIfNeeded(streamConfiguration)
+        LumenScreenCaptureGeometry.applyFullDisplayMapping(
+            to: streamConfiguration,
+            sourceWidth: CGFloat(display.width),
+            sourceHeight: CGFloat(display.height),
+            outputWidth: prepared.width,
+            outputHeight: prepared.height
+        )
+        return streamConfiguration
+    }
+
+    func filterGeometryDescription(_ rect: CGRect) -> String {
+        "\(rect.origin.x),\(rect.origin.y),\(rect.width)x\(rect.height)"
+    }
+
+    func displayModeGeometryDescription(_ displayID: CGDirectDisplayID) -> String {
+        guard let mode = CGDisplayCopyDisplayMode(displayID) else {
+            return "missing"
+        }
+        return "logical=\(mode.width)x\(mode.height),pixel=\(mode.pixelWidth)x\(mode.pixelHeight),hz=\(mode.refreshRate)"
+    }
+
+    func prepareVideoCapture(
+        sourceWidth: Int,
+        sourceHeight: Int
+    ) async throws -> LumenPreparedVideoCapture {
         let strategy = configuration.effectivePreprocessStrategy
         let width = strategy == .downscale2x
             ? max(sourceWidth / 2, 1)
@@ -178,21 +246,6 @@ extension LumenScreenCaptureVideoRuntime {
             outputContract = encodedContract
         }
 
-        let streamConfiguration = LumenCaptureStreamConfigurationFactory.make(
-            configuration: configuration
-        )
-        streamConfiguration.width = width
-        streamConfiguration.height = height
-        streamConfiguration.minimumFrameInterval = CMTime(
-            value: 1,
-            timescale: CMTimeScale(configuration.effectiveTargetFrameRate)
-        )
-        streamConfiguration.queueDepth =
-            configuration.negotiatedQueueProfile.queueDepthHint
-        streamConfiguration.pixelFormat = plan.pixelFormat
-        configureSDRColorSpaceIfNeeded(streamConfiguration)
-        streamConfiguration.scalesToFit = false
-        streamConfiguration.preservesAspectRatio = true
         try encoderQueue.sync {
             try createCompressionSession(width: width, height: height)
         }
@@ -201,7 +254,166 @@ extension LumenScreenCaptureVideoRuntime {
             statistics.appliedVideoBitRateKbps =
                 configuration.targetVideoBitRateKbps
         }
-        return streamConfiguration
+        return LumenPreparedVideoCapture(
+            width: width,
+            height: height,
+            plan: plan
+        )
+    }
+
+    func startSkyLightDisplayStreamCapture() async throws {
+        let displayID = configuration.displayID
+        let displayMode = CGDisplayCopyDisplayMode(displayID)
+        let sourceWidth = configuration.requestedWidth ?? displayMode?.pixelWidth ?? 0
+        let sourceHeight = configuration.requestedHeight ?? displayMode?.pixelHeight ?? 0
+        guard sourceWidth > 0, sourceHeight > 0 else {
+            throw LumenScreenCaptureError
+                .skyLightDisplayModeUnavailable(displayID)
+        }
+
+        let prepared = try await prepareVideoCapture(
+            sourceWidth: sourceWidth,
+            sourceHeight: sourceHeight
+        )
+        let requestedMatrix = configuration.encodedColorConfiguration.map {
+            $0.yCbCrMatrix.imageBufferValue as String
+        }
+        let requestedColorSpace: String? = configuration.usesHDRTransport
+            ? CGColorSpace.itur_2100_PQ as String
+            : nil
+        guard let stream = LumenSkyLightDisplayStream(
+            displayID: displayID,
+            outputWidth: prepared.width,
+            outputHeight: prepared.height,
+            pixelFormat: prepared.plan.pixelFormat,
+            minimumFrameTime: 0,
+            // Keep the private compositor queue shallow. Auto/q4 is useful
+            // for SCK admission experiments but recreates the stale-surface
+            // backlog that this raw path is meant to remove.
+            queueDepth: min(
+                configuration.negotiatedQueueProfile.queueDepthHint,
+                2
+            ),
+            showCursor: true,
+            yCbCrMatrix: requestedMatrix,
+            dynamicRangeMode: configuration.usesHDRTransport ? 2 : 0,
+            colorSpaceName: requestedColorSpace,
+            callbackQueue: queue,
+            frameHandler: { [weak self] status, displayTime, pixelBuffer, pixelBufferStatus in
+                self?.processSkyLightFrame(
+                    status: status,
+                    displayTime: displayTime,
+                    pixelBuffer: pixelBuffer,
+                    pixelBufferStatus: pixelBufferStatus
+                )
+            }
+        ) else {
+            throw LumenScreenCaptureError.skyLightStartFailed(
+                displayID,
+                "Unable to create the raw SkyLight display stream."
+            )
+        }
+
+        let streamIdentity = UInt(bitPattern: ObjectIdentifier(stream))
+        queue.sync {
+            skyLightDisplayStream = stream
+            skyLightDisplayStreamIdentity = streamIdentity
+            skyLightCaptureFailureReported = false
+            skyLightStopStatus = nil
+            skyLightFirstDisplayTime = nil
+            skyLightLastPresentationTime = nil
+            didLogSkyLightFirstFrame = false
+            outputOwnership.registerScreenOutput(
+                streamIdentity: streamIdentity
+            )
+        }
+
+        let startedAt = DispatchTime.now().uptimeNanoseconds
+        do {
+            try stream.start()
+        } catch {
+            await discardSkyLightDisplayStream(stream, streamIdentity: streamIdentity)
+            // Keep the private API's original NSError domain/code intact. The
+            // caller needs the entitlement/TCC/format reason to classify this
+            // fail-closed path; reducing it to a localized string loses that
+            // evidence.
+            throw error
+        }
+
+        let duration = Self.elapsedMilliseconds(since: startedAt)
+        let stopRequested = queue.sync {
+            streamStartDurationMilliseconds = duration
+            return lifecycleStopRequested
+        }
+        Self.startupLogger.notice(
+            "stage=skylight-stream-start-complete backend=\(stream.backendName, privacy: .public) display-id=\(displayID, privacy: .public) stream=\(streamIdentity, privacy: .public) output=\(prepared.width, privacy: .public)x\(prepared.height, privacy: .public) pixel-format=\(auditFourCC(prepared.plan.pixelFormat), privacy: .public) matrix=\(requestedMatrix ?? "unset", privacy: .public) target-fps=\(self.configuration.effectiveTargetFrameRate, privacy: .public) elapsed-ms=\(duration, privacy: .public)"
+        )
+        guard !stopRequested else {
+            await discardSkyLightDisplayStream(stream, streamIdentity: streamIdentity)
+            return
+        }
+
+        queue.sync {
+            try? outputOwnership.markCaptureStarted(
+                streamIdentity: streamIdentity
+            )
+            statistics.isRunning = true
+            statistics.notes = makeStatisticsNotes(
+                width: outputWidth,
+                height: outputHeight
+            )
+            statisticsHandler(statistics)
+            eventHandler(.init(
+                kind: .started,
+                message: skyLightCaptureStartedMessage(
+                    stream: stream,
+                    streamIdentity: streamIdentity,
+                    startMilliseconds: duration,
+                    requestedMatrix: requestedMatrix
+                )
+            ))
+        }
+    }
+
+    func skyLightCaptureStartedMessage(
+        stream: LumenSkyLightDisplayStream,
+        streamIdentity: UInt,
+        startMilliseconds: Double,
+        requestedMatrix: String?
+    ) -> String {
+        [
+            "SkyLight private display stream capture started",
+            "private-content-stream=true",
+            "backend=\(stream.backendName)",
+            "content-stream-class=\(stream.contentStreamClassName ?? "unavailable")",
+            "sharing-session-class=\(stream.contentStreamSessionClassName ?? "unavailable")",
+            "underlying-cg-display-stream=\(stream.underlyingDisplayStreamAvailable)",
+            "underlying-cg-display-stream-type-id=\(stream.underlyingDisplayStreamTypeID)",
+            "stream=\(streamIdentity)",
+            "output-registration=\(outputOwnership.stage.rawValue)",
+            "output=\(outputWidth)x\(outputHeight)",
+            "pixel-format=\(auditFourCC(capturePixelFormat))",
+            "matrix=\(requestedMatrix ?? "unset")",
+            "target-fps=\(configuration.effectiveTargetFrameRate)",
+            "stream-start-ms=\(startMilliseconds)"
+        ].joined(separator: " ")
+    }
+
+    func discardSkyLightDisplayStream(
+        _ stream: LumenSkyLightDisplayStream,
+        streamIdentity: UInt
+    ) async {
+        let stopStatus = stream.stop()
+        queue.sync {
+            skyLightStopStatus = stopStatus
+            if skyLightDisplayStream === stream {
+                skyLightDisplayStream = nil
+                skyLightDisplayStreamIdentity = nil
+            }
+            skyLightFirstDisplayTime = nil
+            skyLightLastPresentationTime = nil
+            try? outputOwnership.stop(streamIdentity: streamIdentity)
+        }
     }
 
     func configureSDRColorSpaceIfNeeded(
@@ -217,14 +429,9 @@ extension LumenScreenCaptureVideoRuntime {
     }
 
     func registerCaptureStream(
-        display: SCDisplay,
+        filter: SCContentFilter,
         configuration: SCStreamConfiguration
     ) throws -> LumenRegisteredCaptureStream {
-        let filter = SCContentFilter(
-            display: display,
-            excludingApplications: [],
-            exceptingWindows: []
-        )
         let stream = SCStream(
             filter: filter,
             configuration: configuration,

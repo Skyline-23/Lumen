@@ -151,8 +151,12 @@ struct LumenCoreGraphicsDisplayMirrorController:
             sourceBounds: CGDisplayBounds(sourceDisplayID),
             sourceConfiguredSize: sourceDisplay.map {
                 CGSize(
-                    width: CGFloat($0.logicalWidth),
-                    height: CGFloat($0.logicalHeight)
+                    // CGDisplayBounds and ScreenCaptureKit expose the
+                    // capture surface in backing pixels for a HiDPI virtual
+                    // display. The logical mode is still used for window and
+                    // input geometry, but it cannot validate source admission.
+                    width: CGFloat($0.backingWidth),
+                    height: CGFloat($0.backingHeight)
                 )
             },
             sourceOwnerToken: sourceDisplay.map {

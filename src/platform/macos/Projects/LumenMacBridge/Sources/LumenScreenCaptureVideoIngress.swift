@@ -98,7 +98,8 @@ extension LumenScreenCaptureVideoRuntime {
                 sequenceNumber: source.sequenceNumber,
                 displayTime: source.displayTime,
                 submissionMachTime: submissionMachTime,
-                requiresBootstrapAcknowledgement: submission.forceKeyFrame
+                requiresBootstrapAcknowledgement: submission.forceKeyFrame,
+                sourceSurfaceLease: source.sourceSurfaceLease
             )
         )
         inflightFrameCount += 1
@@ -255,14 +256,16 @@ extension LumenScreenCaptureVideoRuntime {
     }
 
     func screenFrameDisplayTime(_ sampleBuffer: CMSampleBuffer) -> UInt64? {
-        guard let attachments = CMSampleBufferGetSampleAttachmentsArray(
+        if let attachments = CMSampleBufferGetSampleAttachmentsArray(
             sampleBuffer,
             createIfNecessary: false
         ) as? [[SCStreamFrameInfo: Any]],
-        let displayTime = attachments.first?[.displayTime] as? NSNumber else {
-            return nil
+           let displayTime = attachments.first?[.displayTime] as? NSNumber {
+            return displayTime.uint64Value
         }
-        return displayTime.uint64Value
+        return LumenMachTime.ticks(
+            for: CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        )
     }
 
     func isCompleteScreenFrame(_ sampleBuffer: CMSampleBuffer) -> Bool {
