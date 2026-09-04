@@ -1576,7 +1576,33 @@ fn media_feedback_separates_wire_budget_from_pipeline_admission() {
     let adapted = router.video_delivery_state().unwrap();
     assert_eq!(adapted.fec_percentage, 30);
     assert!(adapted.target_bitrate_kbps < audio_adapted.target_bitrate_kbps);
-    assert_eq!(adapted.admission_divisor, 2);
+    assert_eq!(adapted.admission_divisor, 1);
+
+    // Decoder pressure is only actionable after it persists into a second
+    // feedback window; the first congested window also carried transport loss.
+    let repeated_pipeline_feedback = MediaFeedback {
+        highest_datagram_sequence: 3,
+        received_datagrams: 3,
+        unrecoverable_objects: 0,
+        first_datagram_sequence: 1,
+        feedback_window_id: 3,
+        ..congested_feedback.clone()
+    };
+    let repeated_clean_audio_feedback = MediaFeedback {
+        feedback_window_id: 3,
+        ..clean_audio_feedback.clone()
+    };
+    assert!(matches!(
+        router
+            .observe_native_media_feedback(&repeated_pipeline_feedback, context.session_epoch)
+            .unwrap(),
+        NativeMediaFeedbackDisposition::AwaitingPair { .. }
+    ));
+    let repeated_video_decision = router
+        .observe_native_media_feedback(&repeated_clean_audio_feedback, context.session_epoch)
+        .unwrap();
+    _ = commit_adaptive_proposal(&mut router, context.session_epoch, repeated_video_decision);
+    assert_eq!(router.video_delivery_state().unwrap().admission_divisor, 2);
 
     let wrong_stream = MediaFeedback {
         stream_id: u32::MAX,
@@ -1808,8 +1834,29 @@ fn coalesced_clean_feedback_recovers_pipeline_by_elapsed_base_windows() {
             .unwrap(),
         NativeMediaFeedbackDisposition::AwaitingPair { .. }
     ));
+    assert_eq!(
+        router
+            .observe_native_media_feedback(&clean_audio, context.session_epoch)
+            .unwrap(),
+        NativeMediaFeedbackDisposition::Unchanged
+    );
+
+    let repeated_congested_video = MediaFeedback {
+        feedback_window_id: 2,
+        ..congested_video.clone()
+    };
+    let repeated_clean_audio = MediaFeedback {
+        feedback_window_id: 2,
+        ..clean_audio.clone()
+    };
+    assert!(matches!(
+        router
+            .observe_native_media_feedback(&repeated_congested_video, context.session_epoch)
+            .unwrap(),
+        NativeMediaFeedbackDisposition::AwaitingPair { .. }
+    ));
     let degraded_proposal = router
-        .observe_native_media_feedback(&clean_audio, context.session_epoch)
+        .observe_native_media_feedback(&repeated_clean_audio, context.session_epoch)
         .unwrap();
     _ = commit_adaptive_proposal(&mut router, context.session_epoch, degraded_proposal);
     let degraded = router.video_delivery_state().unwrap();
@@ -1818,13 +1865,13 @@ fn coalesced_clean_feedback_recovers_pipeline_by_elapsed_base_windows() {
     let clean_video = MediaFeedback {
         decoder_drops: 0,
         window_milliseconds: 2_000,
-        feedback_window_id: 2,
-        ..congested_video
+        feedback_window_id: 3,
+        ..congested_video.clone()
     };
     let coalesced_audio = MediaFeedback {
         window_milliseconds: 2_000,
-        feedback_window_id: 2,
-        ..clean_audio
+        feedback_window_id: 3,
+        ..clean_audio.clone()
     };
     assert!(matches!(
         router
@@ -1880,13 +1927,34 @@ fn separate_clean_feedback_windows_restore_video_admission() {
             .unwrap(),
         NativeMediaFeedbackDisposition::AwaitingPair { .. }
     ));
+    assert_eq!(
+        router
+            .observe_native_media_feedback(&clean_audio, context.session_epoch)
+            .unwrap(),
+        NativeMediaFeedbackDisposition::Unchanged
+    );
+
+    let repeated_pressured_video = MediaFeedback {
+        feedback_window_id: 2,
+        ..pressured_video.clone()
+    };
+    let repeated_clean_audio = MediaFeedback {
+        feedback_window_id: 2,
+        ..clean_audio.clone()
+    };
+    assert!(matches!(
+        router
+            .observe_native_media_feedback(&repeated_pressured_video, context.session_epoch)
+            .unwrap(),
+        NativeMediaFeedbackDisposition::AwaitingPair { .. }
+    ));
     let degraded = router
-        .observe_native_media_feedback(&clean_audio, context.session_epoch)
+        .observe_native_media_feedback(&repeated_clean_audio, context.session_epoch)
         .unwrap();
     _ = commit_adaptive_proposal(&mut router, context.session_epoch, degraded);
     assert_eq!(router.video_delivery_state().unwrap().admission_divisor, 2);
 
-    for feedback_window_id in 2..=9 {
+    for feedback_window_id in 3..=10 {
         let clean_video = MediaFeedback {
             received_datagrams: 0,
             first_datagram_sequence: 0,
@@ -1914,7 +1982,7 @@ fn separate_clean_feedback_windows_restore_video_admission() {
         let disposition = router
             .observe_native_media_feedback(&audio, context.session_epoch)
             .unwrap();
-        if feedback_window_id < 9 {
+        if feedback_window_id < 10 {
             assert_eq!(disposition, NativeMediaFeedbackDisposition::Unchanged);
         } else {
             _ = commit_adaptive_proposal(&mut router, context.session_epoch, disposition);
