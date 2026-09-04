@@ -512,6 +512,70 @@ fn native_v4_hello_negotiates_without_a_direct_udp_path_exchange() {
 }
 
 #[test]
+fn compatible_native_clients_share_one_platform_session_until_last_disconnect() {
+    let platform = Arc::new(RecordingPlatformSessionControl::default());
+    let (_root, mut router, first_context, first_plan) = started_native_router(platform.clone());
+    let application_id = router.authorities().applications().applications().unwrap()[0].id;
+    let second_context = NativeConnectionContext {
+        session_epoch: first_context.session_epoch + 1,
+        host_capabilities: first_context.host_capabilities.clone(),
+    };
+
+    let hello_responses = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 3,
+            payload: Some(client_control_envelope::Payload::Hello(native_hello(
+                application_id,
+            ))),
+        },
+        &second_context,
+    );
+    let Some(host_control_envelope::Payload::SessionPlan(second_plan)) =
+        hello_responses[0].payload.as_ref()
+    else {
+        panic!("expected the second client to attach to the shared workspace");
+    };
+    assert_eq!(second_plan.session_epoch, second_context.session_epoch);
+    assert_eq!(second_plan.encoded_width, first_plan.encoded_width);
+    assert_eq!(second_plan.encoded_height, first_plan.encoded_height);
+
+    let start_responses = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 4,
+            payload: Some(client_control_envelope::Payload::StartSession(
+                StartSessionAck {
+                    session_epoch: second_context.session_epoch,
+                },
+            )),
+        },
+        &second_context,
+    );
+    assert!(matches!(
+        start_responses[0].payload,
+        Some(host_control_envelope::Payload::SessionStarted(_))
+    ));
+    assert_eq!(platform.starts.lock().unwrap().len(), 1);
+    assert!(router.native_input_is_active(first_context.session_epoch));
+    assert!(router.native_input_is_active(second_context.session_epoch));
+
+    assert_eq!(
+        router.terminate_native_connection(first_context.session_epoch),
+        Ok(())
+    );
+    assert_eq!(platform.stop_count(), 0);
+    assert_eq!(platform.application_stop_count(), 0);
+    assert!(!router.native_input_is_active(first_context.session_epoch));
+    assert!(router.native_input_is_active(second_context.session_epoch));
+
+    assert_eq!(
+        router.terminate_native_connection(second_context.session_epoch),
+        Ok(())
+    );
+    assert_eq!(platform.stop_count(), 1);
+    assert_eq!(platform.application_stop_count(), 1);
+}
+
+#[test]
 fn native_v4_reconfigures_display_without_stopping_the_active_session() {
     let platform = Arc::new(RecordingPlatformSessionControl::default());
     let (_root, mut router, context, initial) = started_native_router(platform.clone());

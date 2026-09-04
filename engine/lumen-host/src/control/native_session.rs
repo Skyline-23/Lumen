@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -117,6 +118,8 @@ struct PendingNativeSession {
     hello: ClientSessionHello,
     plan: HostSessionPlan,
     active: bool,
+    owner_connected: bool,
+    clients: HashMap<u32, AttachedNativeSession>,
     start_reservation: Option<NativeStartReservationState>,
     session_cleanup_pending: bool,
     application_started: bool,
@@ -140,6 +143,47 @@ struct PendingNativeSession {
 }
 
 #[derive(Debug)]
+struct AttachedNativeSession {
+    hello: ClientSessionHello,
+    plan: HostSessionPlan,
+    active: bool,
+    start_reservation: Option<NativeStartReservationState>,
+}
+
+impl PendingNativeSession {
+    fn owner_epoch(&self) -> u32 {
+        self.plan.session_epoch
+    }
+
+    fn client_is_known(&self, session_epoch: u32) -> bool {
+        session_epoch == self.owner_epoch() || self.clients.contains_key(&session_epoch)
+    }
+
+    fn client_is_active(&self, session_epoch: u32) -> bool {
+        if session_epoch == self.owner_epoch() {
+            return self.active && self.owner_connected;
+        }
+        self.active
+            && self
+                .clients
+                .get(&session_epoch)
+                .is_some_and(|client| client.active)
+    }
+
+    fn has_active_clients(&self) -> bool {
+        (self.active && self.owner_connected) || self.clients.values().any(|client| client.active)
+    }
+
+    fn plan_for_client(&self, session_epoch: u32) -> Option<&HostSessionPlan> {
+        if session_epoch == self.owner_epoch() {
+            Some(&self.plan)
+        } else {
+            self.clients.get(&session_epoch).map(|client| &client.plan)
+        }
+    }
+}
+
+#[derive(Debug)]
 struct NativeStartReservationState {
     token: u64,
     cancelled: Arc<AtomicBool>,
@@ -152,9 +196,10 @@ pub(crate) struct NativeStartReservation {
     token: u64,
     application_id: u32,
     application_uuid: String,
-    application_plan: PlatformApplicationPlan,
-    session_plan: PlatformSessionPlan,
+    application_plan: Option<PlatformApplicationPlan>,
+    session_plan: Option<PlatformSessionPlan>,
     starts_application: bool,
+    attaches_to_workspace: bool,
     cancelled: Arc<AtomicBool>,
 }
 
@@ -186,6 +231,7 @@ pub(crate) struct NativeStartRollback {
     token: u64,
     session_cleanup_pending: bool,
     application_started: bool,
+    attaches_to_workspace: bool,
     error_code: u32,
     message: String,
     publish_platform_error: bool,
@@ -211,9 +257,23 @@ impl NativeStartReservation {
                 error: None,
             };
         }
+        if self.attaches_to_workspace {
+            return NativeStartExecution {
+                started: true,
+                session_cleanup_pending: false,
+                application_started: false,
+                error: None,
+            };
+        }
+        let Some(application_plan) = self.application_plan.clone() else {
+            return self.worker_failed("platform application plan is unavailable");
+        };
+        let Some(session_plan) = self.session_plan else {
+            return self.worker_failed("platform session plan is unavailable");
+        };
         let mut application_started = false;
         if self.starts_application {
-            if let Err(error) = platform.start_application(self.application_plan.clone()) {
+            if let Err(error) = platform.start_application(application_plan) {
                 return NativeStartExecution {
                     started: false,
                     session_cleanup_pending: false,
@@ -233,7 +293,7 @@ impl NativeStartReservation {
                 error: None,
             };
         }
-        match platform.start_session(self.session_plan) {
+        match platform.start_session(session_plan) {
             Ok(()) => NativeStartExecution {
                 started: true,
                 session_cleanup_pending: true,
@@ -254,8 +314,8 @@ impl NativeStartReservation {
     pub(crate) fn worker_failed(&self, error: impl std::fmt::Display) -> NativeStartExecution {
         NativeStartExecution {
             started: false,
-            session_cleanup_pending: true,
-            application_started: self.starts_application,
+            session_cleanup_pending: !self.attaches_to_workspace,
+            application_started: self.starts_application && !self.attaches_to_workspace,
             error: Some(format!("platform session start worker failed: {error}")),
         }
     }
@@ -266,16 +326,16 @@ impl NativeStartRollback {
         &self,
         platform: &dyn crate::PlatformSessionControl,
     ) -> NativeStartRollbackResult {
-        let session_error = self
-            .session_cleanup_pending
+        let session_error = (self.session_cleanup_pending && !self.attaches_to_workspace)
             .then(|| platform.stop_session())
             .and_then(Result::err);
-        let application_error = self
-            .application_started
+        let application_error = (self.application_started && !self.attaches_to_workspace)
             .then(|| platform.stop_application())
             .and_then(Result::err);
-        let session_cleanup_pending = self.session_cleanup_pending && session_error.is_some();
-        let application_started = self.application_started && application_error.is_some();
+        let session_cleanup_pending =
+            self.session_cleanup_pending && !self.attaches_to_workspace && session_error.is_some();
+        let application_started =
+            self.application_started && !self.attaches_to_workspace && application_error.is_some();
         let error = match (session_error, application_error) {
             (None, None) => None,
             (Some(session), None) => Some(session),
@@ -1101,8 +1161,8 @@ impl ControlRouter {
         self.native
             .pending
             .as_ref()
-            .filter(|pending| pending.plan.session_epoch == session_epoch)
-            .map(|pending| pending.plan.media_capabilities)
+            .and_then(|pending| pending.plan_for_client(session_epoch))
+            .map(|plan| plan.media_capabilities)
     }
 
     pub(crate) fn reserve_native_start(
@@ -1118,11 +1178,67 @@ impl ControlRouter {
                 "native session has not been negotiated",
             )]);
         };
-        if start.session_epoch != pending.plan.session_epoch
-            || context.session_epoch != pending.plan.session_epoch
-            || pending.active
-            || pending.start_reservation.is_some()
-        {
+        if start.session_epoch != context.session_epoch {
+            return Err(vec![native_error(
+                request_id,
+                ERROR_SESSION_STATE,
+                "native session start does not match the connection",
+            )]);
+        }
+
+        if context.session_epoch != pending.owner_epoch() {
+            let Some(client) = pending.clients.get(&context.session_epoch) else {
+                return Err(vec![native_error(
+                    request_id,
+                    ERROR_SESSION_STATE,
+                    "native session client has not been attached",
+                )]);
+            };
+            if client.plan.session_epoch != context.session_epoch
+                || client.hello.device_id != pending.hello.device_id
+                || client.hello.application_id != pending.hello.application_id
+                || !pending.active
+                || client.active
+                || client.start_reservation.is_some()
+            {
+                return Err(vec![native_error(
+                    request_id,
+                    ERROR_SESSION_STATE,
+                    "native session client cannot start in the current state",
+                )]);
+            }
+            let application_id = pending.hello.application_id;
+            self.native.next_start_token = self.native.next_start_token.wrapping_add(1).max(1);
+            let token = self.native.next_start_token;
+            let cancelled = Arc::new(AtomicBool::new(false));
+            let pending = self
+                .native
+                .pending
+                .as_mut()
+                .expect("validated pending native session");
+            pending
+                .clients
+                .get_mut(&context.session_epoch)
+                .expect("validated attached native session")
+                .start_reservation = Some(NativeStartReservationState {
+                token,
+                cancelled: Arc::clone(&cancelled),
+            });
+            return Ok(NativeStartReservation {
+                request_id,
+                session_epoch: context.session_epoch,
+                token,
+                application_id,
+                application_uuid: String::new(),
+                application_plan: None,
+                session_plan: None,
+                starts_application: false,
+                attaches_to_workspace: true,
+                cancelled,
+            });
+        }
+
+        if !pending.owner_connected || pending.active || pending.start_reservation.is_some() {
             return Err(vec![native_error(
                 request_id,
                 ERROR_SESSION_STATE,
@@ -1206,9 +1322,10 @@ impl ControlRouter {
             token,
             application_id: application.id,
             application_uuid: application.uuid.clone(),
-            application_plan,
-            session_plan,
+            application_plan: Some(application_plan),
+            session_plan: Some(session_plan),
             starts_application: !hello.resume,
+            attaches_to_workspace: false,
             cancelled,
         })
     }
@@ -1219,27 +1336,60 @@ impl ControlRouter {
         execution: NativeStartExecution,
     ) -> NativeStartCompletion {
         let owns_reservation = self.native.pending.as_ref().is_some_and(|pending| {
-            pending.plan.session_epoch == reservation.session_epoch
-                && pending
+            if pending.owner_epoch() == reservation.session_epoch {
+                pending
                     .start_reservation
                     .as_ref()
                     .is_some_and(|state| state.token == reservation.token)
+            } else {
+                pending
+                    .clients
+                    .get(&reservation.session_epoch)
+                    .and_then(|client| client.start_reservation.as_ref())
+                    .is_some_and(|state| state.token == reservation.token)
+            }
         });
         let cancelled = reservation.cancelled.load(Ordering::Acquire);
-        if owns_reservation && execution.started && !cancelled && execution.error.is_none() {
+        let can_finalize = self.native.pending.as_ref().is_some_and(|pending| {
+            owns_reservation
+                && execution.started
+                && !cancelled
+                && execution.error.is_none()
+                && if reservation.attaches_to_workspace {
+                    pending.active
+                } else {
+                    pending.owner_connected
+                }
+        });
+        if can_finalize {
             let pending = self
                 .native
                 .pending
                 .as_mut()
                 .expect("validated pending native session");
-            pending.active = true;
-            pending.session_cleanup_pending = execution.session_cleanup_pending;
-            pending.application_started = execution.application_started;
-            pending.start_reservation = None;
-            self.discovery.set_running_application(
-                reservation.application_id,
-                reservation.application_uuid.clone(),
-            );
+            if reservation.attaches_to_workspace {
+                pending
+                    .clients
+                    .get_mut(&reservation.session_epoch)
+                    .expect("validated attached native session")
+                    .active = true;
+                pending
+                    .clients
+                    .get_mut(&reservation.session_epoch)
+                    .expect("validated attached native session")
+                    .start_reservation = None;
+            } else {
+                pending.active = true;
+                pending.session_cleanup_pending = execution.session_cleanup_pending;
+                pending.application_started = execution.application_started;
+                pending.start_reservation = None;
+            }
+            if !reservation.attaches_to_workspace {
+                self.discovery.set_running_application(
+                    reservation.application_id,
+                    reservation.application_uuid.clone(),
+                );
+            }
             return NativeStartCompletion::Finalized(NativeStartFinalization {
                 responses: vec![HostControlEnvelope {
                     request_id: reservation.request_id,
@@ -1267,6 +1417,7 @@ impl ControlRouter {
             token: reservation.token,
             session_cleanup_pending: execution.session_cleanup_pending,
             application_started: execution.application_started,
+            attaches_to_workspace: reservation.attaches_to_workspace,
             error_code: if publish_platform_error {
                 ERROR_PLATFORM
             } else {
@@ -1290,23 +1441,52 @@ impl ControlRouter {
             None => rollback.message,
         };
         let owns_reservation = self.native.pending.as_ref().is_some_and(|pending| {
-            pending.plan.session_epoch == rollback.session_epoch
-                && pending
+            if pending.owner_epoch() == rollback.session_epoch {
+                pending
                     .start_reservation
                     .as_ref()
                     .is_some_and(|state| state.token == rollback.token)
+            } else {
+                pending
+                    .clients
+                    .get(&rollback.session_epoch)
+                    .and_then(|client| client.start_reservation.as_ref())
+                    .is_some_and(|state| state.token == rollback.token)
+            }
         });
         if owns_reservation {
-            let pending = self
+            if self
                 .native
                 .pending
-                .as_mut()
-                .expect("validated pending native session");
-            pending.start_reservation = None;
-            pending.session_cleanup_pending = result.session_cleanup_pending;
-            pending.application_started = result.application_started;
-            if !pending.session_cleanup_pending && !pending.application_started {
-                self.native.pending = None;
+                .as_ref()
+                .is_some_and(|pending| pending.owner_epoch() == rollback.session_epoch)
+            {
+                let pending = self
+                    .native
+                    .pending
+                    .as_mut()
+                    .expect("validated pending native session");
+                pending.start_reservation = None;
+                pending.session_cleanup_pending = result.session_cleanup_pending;
+                pending.application_started = result.application_started;
+                if !pending.session_cleanup_pending
+                    && !pending.application_started
+                    && !pending.has_active_clients()
+                {
+                    self.native.pending = None;
+                }
+            } else {
+                let pending = self
+                    .native
+                    .pending
+                    .as_mut()
+                    .expect("validated pending native session");
+                if let Some(client) = pending.clients.get_mut(&rollback.session_epoch) {
+                    client.start_reservation = None;
+                    if !client.active {
+                        pending.clients.remove(&rollback.session_epoch);
+                    }
+                }
             }
         }
         NativeStartFinalization {
@@ -1357,7 +1537,8 @@ impl ControlRouter {
         let Some(pending) = self.native.pending.as_ref() else {
             return Ok(());
         };
-        if pending.plan.session_epoch != session_epoch {
+        let known_client = pending.client_is_known(session_epoch);
+        if !known_client {
             return Ok(());
         }
         self.cleanup_native_session(session_epoch)
@@ -1387,8 +1568,8 @@ impl ControlRouter {
                 "native session is not running",
             )];
         };
-        if stop.session_epoch != pending.plan.session_epoch
-            || context.session_epoch != pending.plan.session_epoch
+        if stop.session_epoch != context.session_epoch
+            || !pending.client_is_active(context.session_epoch)
         {
             return vec![native_error(
                 request_id,
@@ -1396,7 +1577,7 @@ impl ControlRouter {
                 "native session stop does not match the active session",
             )];
         }
-        let session_epoch = pending.plan.session_epoch;
+        let session_epoch = context.session_epoch;
         if self.cleanup_native_session(session_epoch).is_err() {
             return vec![native_error(
                 request_id,
@@ -1416,17 +1597,84 @@ impl ControlRouter {
         let Some(pending) = self.native.pending.as_ref() else {
             return Ok(());
         };
-        if pending.plan.session_epoch != session_epoch {
+        if !pending.client_is_known(session_epoch) {
             return Ok(());
         }
+
+        if session_epoch == pending.owner_epoch() {
+            if let Some(start) = pending.start_reservation.as_ref() {
+                start.cancelled.store(true, Ordering::Release);
+                if let Some(pending) = self.native.pending.as_mut() {
+                    pending.owner_connected = false;
+                }
+                return Ok(());
+            }
+            if let Some(pending) = self.native.pending.as_mut() {
+                pending.owner_connected = false;
+            }
+        } else {
+            let pending = self
+                .native
+                .pending
+                .as_mut()
+                .expect("validated pending native session");
+            let Some(client) = pending.clients.get_mut(&session_epoch) else {
+                return Ok(());
+            };
+            if let Some(start) = client.start_reservation.take() {
+                start.cancelled.store(true, Ordering::Release);
+            }
+            client.active = false;
+            // Keep the disconnected client as a cleanup owner when it is the last
+            // participant. A failed platform stop must be retried by that same
+            // connection epoch; an unrelated epoch must not gain cleanup authority.
+            if pending.clients.values().any(|client| client.active)
+                || (pending.active && pending.owner_connected)
+            {
+                pending.clients.remove(&session_epoch);
+            }
+        }
+        if self
+            .native
+            .pending
+            .as_ref()
+            .is_some_and(PendingNativeSession::has_active_clients)
+        {
+            return Ok(());
+        }
+        self.cleanup_native_platform_session()
+    }
+
+    fn cleanup_native_platform_session(&mut self) -> Result<(), String> {
+        let Some(pending) = self.native.pending.as_ref() else {
+            return Ok(());
+        };
         if let Some(start) = pending.start_reservation.as_ref() {
             start.cancelled.store(true, Ordering::Release);
+            if let Some(pending) = self.native.pending.as_mut() {
+                pending.owner_connected = false;
+                pending.active = false;
+                for client in pending.clients.values_mut() {
+                    if let Some(start) = client.start_reservation.as_ref() {
+                        start.cancelled.store(true, Ordering::Release);
+                    }
+                    client.active = false;
+                }
+                pending.clients.clear();
+            }
             return Ok(());
         }
         let session_cleanup_pending = pending.session_cleanup_pending;
         let application_started = pending.application_started;
         if let Some(pending) = self.native.pending.as_mut() {
             pending.active = false;
+            pending.owner_connected = false;
+            for client in pending.clients.values_mut() {
+                if let Some(start) = client.start_reservation.take() {
+                    start.cancelled.store(true, Ordering::Release);
+                }
+                client.active = false;
+            }
             pending.adaptive_policy_lane = AdaptiveVideoPolicyLane {
                 revision: pending.adaptive_policy_lane.revision.wrapping_add(1),
                 ..AdaptiveVideoPolicyLane::default()
@@ -1511,6 +1759,48 @@ impl ControlRouter {
                     "native session cleanup belongs to another owner",
                 )];
             }
+            if pending.active {
+                if pending.client_is_known(context.session_epoch) {
+                    return vec![native_error(
+                        request_id,
+                        ERROR_SESSION_CONFLICT,
+                        "native session connection is already attached",
+                    )];
+                }
+                let plan = match negotiate_native_session(
+                    &hello,
+                    &context.host_capabilities,
+                    context.session_epoch,
+                ) {
+                    Ok(plan) => plan,
+                    Err(error) => return vec![native_negotiation_error(request_id, error)],
+                };
+                if !native_sessions_compatible(&pending.hello, &pending.plan, &hello, &plan) {
+                    return vec![native_error(
+                        request_id,
+                        ERROR_SESSION_CONFLICT,
+                        "native session client is incompatible with the active workspace",
+                    )];
+                }
+                let pending = self
+                    .native
+                    .pending
+                    .as_mut()
+                    .expect("validated pending native session");
+                pending.clients.insert(
+                    context.session_epoch,
+                    AttachedNativeSession {
+                        hello,
+                        plan: plan.clone(),
+                        active: false,
+                        start_reservation: None,
+                    },
+                );
+                return vec![HostControlEnvelope {
+                    request_id,
+                    payload: Some(host_control_envelope::Payload::SessionPlan(plan)),
+                }];
+            }
             let cleanup_epoch = (!pending.active
                 && (pending.session_cleanup_pending || pending.application_started))
                 .then_some(pending.plan.session_epoch);
@@ -1539,6 +1829,8 @@ impl ControlRouter {
             hello,
             plan: plan.clone(),
             active: false,
+            owner_connected: true,
+            clients: HashMap::new(),
             start_reservation: None,
             session_cleanup_pending: false,
             application_started: false,
@@ -1579,7 +1871,7 @@ impl ControlRouter {
         self.native
             .pending
             .as_ref()
-            .is_some_and(|pending| pending.active && pending.plan.session_epoch == session_epoch)
+            .is_some_and(|pending| pending.client_is_active(session_epoch))
     }
 
     pub(crate) fn publish_native_codec_configuration(
@@ -1844,15 +2136,10 @@ impl ControlRouter {
     }
 
     pub(super) fn cleanup_current_native_session(&mut self) -> Result<(), String> {
-        let Some(session_epoch) = self
-            .native
-            .pending
-            .as_ref()
-            .map(|pending| pending.plan.session_epoch)
-        else {
+        if self.native.pending.is_none() {
             return Ok(());
-        };
-        self.cleanup_native_session(session_epoch)
+        }
+        self.cleanup_native_platform_session()
     }
 
     fn native_application_plan(
@@ -1897,6 +2184,25 @@ pub(super) fn native_media_feedback_expected_datagrams(feedback: &MediaFeedback)
         .highest_datagram_sequence
         .saturating_sub(feedback.first_datagram_sequence)
         .saturating_add(1)
+}
+
+fn native_session_plans_compatible(owner: &HostSessionPlan, client: &HostSessionPlan) -> bool {
+    let mut owner = owner.clone();
+    let mut client = client.clone();
+    owner.session_epoch = 0;
+    client.session_epoch = 0;
+    owner == client
+}
+
+fn native_sessions_compatible(
+    owner_hello: &ClientSessionHello,
+    owner_plan: &HostSessionPlan,
+    client_hello: &ClientSessionHello,
+    client_plan: &HostSessionPlan,
+) -> bool {
+    native_session_plans_compatible(owner_plan, client_plan)
+        && owner_hello.play_audio_on_host == client_hello.play_audio_on_host
+        && owner_hello.virtual_display == client_hello.virtual_display
 }
 
 fn native_platform_session_plan(
