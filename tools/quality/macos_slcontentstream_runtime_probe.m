@@ -35,11 +35,27 @@
 - (instancetype)initWithDisplayID:(CGDirectDisplayID)displayID;
 - (void)start;
 - (void)stop;
+- (NSDictionary<NSString *, id> *)metrics;
 @end
 
 @implementation LumenProbeStimulus {
   NSWindow *_window;
   CALayer *_movingLayer;
+  CADisplayLink *_displayLink;
+  uint64_t _tickCount;
+  uint64_t _firstTickNanos;
+  uint64_t _lastTickNanos;
+  CGFloat _phase;
+}
+
+static NSScreen *LumenProbeScreenForDisplayID(CGDirectDisplayID displayID) {
+  for (NSScreen *screen in NSScreen.screens) {
+    NSNumber *screenNumber = screen.deviceDescription[@"NSScreenNumber"];
+    if (screenNumber.unsignedIntValue == displayID) {
+      return screen;
+    }
+  }
+  return nil;
 }
 
 - (instancetype)initWithDisplayID:(CGDirectDisplayID)displayID {
@@ -48,12 +64,20 @@
     return nil;
   }
 
-  CGRect displayBounds = CGDisplayBounds(displayID);
-  CGFloat width = MIN(800.0, MAX(320.0, displayBounds.size.width * 0.45));
-  CGFloat height = MIN(480.0, MAX(240.0, displayBounds.size.height * 0.35));
+  NSScreen *screen = LumenProbeScreenForDisplayID(displayID);
+  NSRect screenFrame = screen == nil
+    ? NSMakeRect(
+        CGRectGetMinX(CGDisplayBounds(displayID)),
+        CGRectGetMinY(CGDisplayBounds(displayID)),
+        CGRectGetWidth(CGDisplayBounds(displayID)),
+        CGRectGetHeight(CGDisplayBounds(displayID))
+      )
+    : screen.frame;
+  CGFloat width = MIN(800.0, MAX(320.0, screenFrame.size.width * 0.45));
+  CGFloat height = MIN(480.0, MAX(240.0, screenFrame.size.height * 0.35));
   NSRect frame = NSMakeRect(
-    CGRectGetMidX(displayBounds) - width * 0.5,
-    CGRectGetMidY(displayBounds) - height * 0.5,
+    NSMidX(screenFrame) - width * 0.5,
+    NSMidY(screenFrame) - height * 0.5,
     width,
     height
   );
@@ -61,7 +85,8 @@
     initWithContentRect:frame
               styleMask:NSWindowStyleMaskBorderless
                 backing:NSBackingStoreBuffered
-                  defer:NO];
+                  defer:NO
+                 screen:screen];
   _window.backgroundColor = [NSColor blackColor];
   _window.opaque = YES;
   _window.hasShadow = YES;
@@ -86,28 +111,76 @@
   _movingLayer.cornerRadius = 8.0;
   [contentView.layer addSublayer:_movingLayer];
 
-  CAKeyframeAnimation *animation =
-    [CAKeyframeAnimation animationWithKeyPath:@"position.x"];
-  animation.values = @[@(96.0), @(width - 96.0), @(96.0)];
-  animation.keyTimes = @[@0.0, @0.5, @1.0];
-  animation.duration = 0.75;
-  animation.calculationMode = kCAAnimationLinear;
-  animation.timingFunction =
-    [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionLinear];
-  animation.repeatCount = HUGE_VALF;
-  animation.removedOnCompletion = NO;
-  [_movingLayer addAnimation:animation forKey:@"lumen_probe_motion"];
   return self;
 }
 
 - (void)start {
   [_window orderFrontRegardless];
   [_window displayIfNeeded];
+  [NSApp activateIgnoringOtherApps:YES];
+  _displayLink = [_window displayLinkWithTarget:self
+                                       selector:@selector(displayLinkTick:)];
+  _displayLink.preferredFrameRateRange = CAFrameRateRangeMake(
+    120.0,
+    120.0,
+    120.0
+  );
+  [_displayLink addToRunLoop:[NSRunLoop mainRunLoop]
+                     forMode:NSRunLoopCommonModes];
+  [self displayLinkTick:_displayLink];
 }
 
 - (void)stop {
+  [_displayLink invalidate];
+  _displayLink = nil;
   [_movingLayer removeAllAnimations];
   [_window orderOut:nil];
+}
+
+- (void)displayLinkTick:(CADisplayLink *)displayLink {
+  (void)displayLink;
+  uint64_t now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+  if (_firstTickNanos == 0) {
+    _firstTickNanos = now;
+  }
+  _lastTickNanos = now;
+  _tickCount += 1;
+  _phase = fmod(_phase + 0.03125, 1.0);
+
+  CGFloat width = _window.contentView.bounds.size.width;
+  CGFloat height = _window.contentView.bounds.size.height;
+  CGFloat x = 96.0 + _phase * MAX(width - 192.0, 1.0);
+  CGFloat y = height * (0.30 + 0.40 * _phase);
+  CGFloat red = 0.20 + 0.80 * _phase;
+  CGFloat green = 0.80 - 0.60 * _phase;
+  CGColorRef color = [NSColor colorWithCalibratedRed:red
+                                                green:green
+                                                 blue:1.0 - _phase
+                                                alpha:1.0].CGColor;
+  [CATransaction begin];
+  [CATransaction setDisableActions:YES];
+  _movingLayer.position = CGPointMake(x, y);
+  _movingLayer.backgroundColor = color;
+  [CATransaction commit];
+}
+
+- (NSDictionary<NSString *, id> *)metrics {
+  static const double requestedFPS = 120.0;
+  double durationSeconds = _lastTickNanos > _firstTickNanos
+    ? (double)(_lastTickNanos - _firstTickNanos) / 1e9
+    : 0.0;
+  double tickFPS = durationSeconds > 0.0 && _tickCount > 1
+    ? (double)(_tickCount - 1) / durationSeconds
+    : 0.0;
+  return @{
+    @"stimulusMode": @"cadisplaylink-dirty-layer",
+    @"stimulusRequestedFPS": @(requestedFPS),
+    @"stimulusTickCount": @(_tickCount),
+    @"stimulusTickFPS": @(tickFPS),
+    // Preserve slow runs as diagnostic evidence, but do not let a throttled
+    // compositor stimulus count as a valid 120 FPS performance comparison.
+    @"stimulusCadenceValid": @(tickFPS >= requestedFPS * 0.90)
+  };
 }
 @end
 
@@ -512,6 +585,9 @@ static int LumenProbeRunProductionPipeline(
   );
   NSDictionary<NSString *, NSString *> *finalDiagnostics =
     LumenProbeParseDiagnostics(finalDiagnosticsBuffer);
+  NSDictionary<NSString *, id> *stimulusMetrics = stimulusWindow == nil
+    ? @{}
+    : [stimulusWindow metrics];
   [stimulusWindow stop];
   LumenMacBridgeControllerStopCapture(controller);
   LumenMacBridgeControllerDestroy(controller);
@@ -527,14 +603,14 @@ static int LumenProbeRunProductionPipeline(
       ? finalSnapshot.dropped_frame_count - initialSnapshot.dropped_frame_count
       : 0;
 
-  LumenProbePrintJSON(@{
+  NSMutableDictionary<NSString *, id> *result = [@{
     @"mode": @"production-pipeline",
     @"displayID": @(displayID),
     @"requestedWidth": @(outputWidth),
     @"requestedHeight": @(outputHeight),
     @"hdr": @(hdr),
     @"stimulus": @(stimulus),
-    @"stimulusMode": stimulus ? @"appkit-core-animation" : @"none",
+    @"stimulusMode": stimulus ? @"cadisplaylink-dirty-layer" : @"none",
     @"targetFPS": @120,
     @"codecAcknowledged": @(acknowledged),
     @"startupToFirstFrameMilliseconds": @(
@@ -558,7 +634,9 @@ static int LumenProbeRunProductionPipeline(
     @"outputFPS": @(outputDelta / MAX(measuredSeconds, 0.000001)),
     @"pipelineDiagnostics": LumenProbeSelectedDiagnostics(finalDiagnostics),
     @"onlineDisplays": onlineDisplays
-  });
+  } mutableCopy];
+  [result addEntriesFromDictionary:stimulusMetrics];
+  LumenProbePrintJSON(result);
   return acknowledged ? 0 : 9;
 }
 
@@ -744,6 +822,9 @@ int main(int argc, const char *argv[]) {
       }
     }
     int32_t stopStatus = [stream stop];
+    NSDictionary<NSString *, id> *stimulusMetrics = stimulusWindow == nil
+      ? @{}
+      : [stimulusWindow metrics];
     [stimulusWindow stop];
 
     uint64_t callbackCount = 0;
@@ -795,7 +876,7 @@ int main(int argc, const char *argv[]) {
       ? (double)(firstCallbackNanos - startNanos) / 1e6
       : 0;
 
-    LumenProbePrintJSON(@{
+    NSMutableDictionary<NSString *, id> *result = [@{
       @"backend": stream.backendName,
       @"contentStreamClass": stream.contentStreamClassName ?: @"unavailable",
       @"sharingSessionClass": stream.contentStreamSessionClassName ?: @"unavailable",
@@ -807,7 +888,7 @@ int main(int argc, const char *argv[]) {
       @"requestedPixelFormat": LumenProbeFourCC(pixelFormat),
       @"hdr": @(hdr),
       @"stimulus": @(stimulus),
-      @"stimulusMode": stimulus ? @"appkit-core-animation" : @"none",
+      @"stimulusMode": stimulus ? @"cadisplaylink-dirty-layer" : @"none",
       @"firstFrameReceived": @(firstFrameWait == 0),
       @"firstFrameMilliseconds": @(firstFrameMilliseconds),
       @"callbackCount": @(callbackCount),
@@ -831,7 +912,9 @@ int main(int argc, const char *argv[]) {
       @"cumulativeDropCount": @(stream.cumulativeDropCount),
       @"stopStatus": @(stopStatus),
       @"onlineDisplays": onlineDisplays
-    });
+    } mutableCopy];
+    [result addEntriesFromDictionary:stimulusMetrics];
+    LumenProbePrintJSON(result);
     return firstFrameWait == 0 && wrapFailureCount == 0 ? 0 : 5;
   }
 }
