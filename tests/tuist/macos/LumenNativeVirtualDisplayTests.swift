@@ -133,6 +133,17 @@ final class LumenNativeVirtualDisplayTests: XCTestCase {
         XCTAssertEqual(mode.height, Int(configuration.logicalHeight))
         XCTAssertEqual(mode.pixelWidth, Int(configuration.backingWidth))
         XCTAssertEqual(mode.pixelHeight, Int(configuration.backingHeight))
+
+        let owner = LumenRetainedVirtualDisplayReference(display: display)
+        let readiness = LumenScreenCaptureDisplayReadiness.snapshot(
+            displayID: display.displayID,
+            owner: owner
+        )
+        XCTAssertEqual(readiness.pixelWidth, Int(configuration.backingWidth))
+        XCTAssertEqual(readiness.pixelHeight, Int(configuration.backingHeight))
+        XCTAssertTrue(
+            readiness.isModeReady(for: .retained(ownerToken: owner.ownerToken))
+        )
     }
 
     func testPublicationStabilizerRestartsContinuousReadyWindowAfterStateChange() async throws {

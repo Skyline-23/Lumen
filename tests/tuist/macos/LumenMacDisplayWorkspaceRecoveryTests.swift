@@ -98,9 +98,11 @@ private actor DisplayMirrorProbe: LumenMacDisplayMirrorControlling {
     private let initialTargetIsOnline: Bool
     private let initialTargetIsActive: Bool
     private let configuredTargetSize: CGSize
+    private let sourcePixelSize: CGSize?
     private var postMirrorReadinessSequence: [(online: Bool, active: Bool)]
     private let reportedMirrorSourceAfterApply: UInt32?
     private let mirroredSourceBounds: CGRect?
+    private let mirroredSourcePixelSize: CGSize?
     private let mirroredTargetIsActive: Bool
     private var applied = false
     private var staged = false
@@ -122,6 +124,8 @@ private actor DisplayMirrorProbe: LumenMacDisplayMirrorControlling {
         boundsByDisplayID: [UInt32: CGRect] = [:],
         ownerToken: UInt? = 0xCAFE,
         mirroredSourceBounds: CGRect? = nil,
+        sourcePixelSize: CGSize? = nil,
+        mirroredSourcePixelSize: CGSize? = nil,
         mirroredTargetIsActive: Bool = true
     ) {
         self.sourceDisplayID = sourceDisplayID
@@ -131,11 +135,14 @@ private actor DisplayMirrorProbe: LumenMacDisplayMirrorControlling {
         self.initialSourceIsActive = initialSourceIsActive
         self.initialTargetIsOnline = initialTargetIsOnline
         self.initialTargetIsActive = initialTargetIsActive
-        self.configuredTargetSize = configuredTargetSize
+        let resolvedConfiguredTargetSize = configuredTargetSize
             ?? initialTargetBounds.size
+        self.configuredTargetSize = resolvedConfiguredTargetSize
         self.postMirrorReadinessSequence = postMirrorReadinessSequence
         self.reportedMirrorSourceAfterApply = reportedMirrorSourceAfterApply
         self.mirroredSourceBounds = mirroredSourceBounds
+        self.sourcePixelSize = sourcePixelSize ?? resolvedConfiguredTargetSize
+        self.mirroredSourcePixelSize = mirroredSourcePixelSize
         self.mirroredTargetIsActive = mirroredTargetIsActive
         self.boundsByDisplayID = boundsByDisplayID
         self.ownerToken = ownerToken
@@ -195,6 +202,11 @@ private actor DisplayMirrorProbe: LumenMacDisplayMirrorControlling {
                 (sourceIsOwnedVirtualDisplay && ownedDisplayReadiness.active),
             sourceIsOwnedVirtualDisplay: sourceIsOwnedVirtualDisplay,
             sourceBounds: sourceBounds,
+            sourcePixelSize: sourceIsOwnedVirtualDisplay
+                ? applied
+                    ? mirroredSourcePixelSize ?? sourcePixelSize
+                    : sourcePixelSize
+                : nil,
             sourceConfiguredSize: sourceIsOwnedVirtualDisplay
                 ? configuredTargetSize
                 : nil,
@@ -963,6 +975,188 @@ final class LumenMacDisplayWorkspaceRecoveryTests: XCTestCase {
         ])
         let restoredTopologies = await topologyProbe.restoredTopologies()
         XCTAssertTrue(restoredTopologies.isEmpty)
+    }
+
+    func testHiDPIDesktopMirrorAcceptsLogicalBoundsAgainstBackingConfiguration() async throws {
+        let topology = displayTopology()
+        let sourceDisplayID = try XCTUnwrap(
+            topology.displays.first.flatMap { UInt32($0.id) }
+        )
+        let targetDisplayID: UInt32 = 122
+        let logicalSize = CGSize(width: 1_407, height: 970)
+        let backingSize = CGSize(width: 2_814, height: 1_940)
+        let topologyProbe = DisplayTopologyProbe(topology: topology)
+        let mirrorProbe = DisplayMirrorProbe(
+            sourceDisplayID: sourceDisplayID,
+            targetDisplayID: targetDisplayID,
+            reportedMirrorSourceAfterApply: targetDisplayID,
+            initialTargetBounds: CGRect(
+                origin: CGPoint(x: -1_407, y: 0),
+                size: logicalSize
+            ),
+            configuredTargetSize: backingSize,
+            mirroredSourceBounds: CGRect(origin: .zero, size: logicalSize),
+            sourcePixelSize: backingSize
+        )
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: topologyProbe,
+            mirrorController: mirrorProbe,
+            physicalDisplayController: RecordingPhysicalDisplayController(),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier()
+        )
+        _ = try await workspace.snapshotWorkspace(targetProcessIdentifiers: [])
+        await topologyProbe.allowVerification()
+
+        try await workspace.mirrorOwnedVirtualDisplay(
+            targetDisplayID,
+            sourceDisplayID: sourceDisplayID
+        )
+
+        let events = await mirrorProbe.recordedEvents()
+        XCTAssertEqual(events, [
+            .mirror(target: sourceDisplayID, source: targetDisplayID),
+        ])
+    }
+
+    func testHiDPIDesktopMirrorRejectsWrongBackingPixelsBeforeMutation() async throws {
+        let topology = displayTopology()
+        let sourceDisplayID = try XCTUnwrap(
+            topology.displays.first.flatMap { UInt32($0.id) }
+        )
+        let targetDisplayID: UInt32 = 124
+        let logicalSize = CGSize(width: 1_407, height: 970)
+        let backingSize = CGSize(width: 2_814, height: 1_940)
+        let topologyProbe = DisplayTopologyProbe(topology: topology)
+        let mirrorProbe = DisplayMirrorProbe(
+            sourceDisplayID: sourceDisplayID,
+            targetDisplayID: targetDisplayID,
+            reportedMirrorSourceAfterApply: targetDisplayID,
+            initialTargetBounds: CGRect(
+                origin: CGPoint(x: -1_407, y: 0),
+                size: logicalSize
+            ),
+            configuredTargetSize: backingSize,
+            sourcePixelSize: CGSize(
+                width: backingSize.width - 2,
+                height: backingSize.height
+            )
+        )
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: topologyProbe,
+            mirrorController: mirrorProbe,
+            physicalDisplayController: RecordingPhysicalDisplayController(),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier()
+        )
+        _ = try await workspace.snapshotWorkspace(targetProcessIdentifiers: [])
+        await topologyProbe.allowVerification()
+
+        do {
+            try await workspace.mirrorOwnedVirtualDisplay(
+                targetDisplayID,
+                sourceDisplayID: sourceDisplayID
+            )
+            XCTFail("wrong backing pixels must fail before mirror mutation")
+        } catch LumenMacDisplayWorkspaceError.virtualDisplayMirrorUnavailable(
+            targetDisplayID,
+            sourceDisplayID
+        ) {
+        }
+
+        let events = await mirrorProbe.recordedEvents()
+        XCTAssertTrue(events.isEmpty)
+    }
+
+    func testDesktopMirrorRejectsBoundsLargerThanBackingBeforeMutation() async throws {
+        let topology = displayTopology()
+        let sourceDisplayID = try XCTUnwrap(
+            topology.displays.first.flatMap { UInt32($0.id) }
+        )
+        let targetDisplayID: UInt32 = 125
+        let configuredSize = CGSize(width: 1_800, height: 1_077)
+        let topologyProbe = DisplayTopologyProbe(topology: topology)
+        let mirrorProbe = DisplayMirrorProbe(
+            sourceDisplayID: sourceDisplayID,
+            targetDisplayID: targetDisplayID,
+            reportedMirrorSourceAfterApply: targetDisplayID,
+            initialTargetBounds: CGRect(
+                origin: CGPoint(x: -3_600, y: 0),
+                size: CGSize(width: 3_600, height: 2_154)
+            ),
+            configuredTargetSize: configuredSize,
+            sourcePixelSize: configuredSize
+        )
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: topologyProbe,
+            mirrorController: mirrorProbe,
+            physicalDisplayController: RecordingPhysicalDisplayController(),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier()
+        )
+        _ = try await workspace.snapshotWorkspace(targetProcessIdentifiers: [])
+        await topologyProbe.allowVerification()
+
+        do {
+            try await workspace.mirrorOwnedVirtualDisplay(
+                targetDisplayID,
+                sourceDisplayID: sourceDisplayID
+            )
+            XCTFail("bounds larger than backing pixels must fail closed")
+        } catch LumenMacDisplayWorkspaceError.virtualDisplayMirrorUnavailable(
+            targetDisplayID,
+            sourceDisplayID
+        ) {
+        }
+
+        let events = await mirrorProbe.recordedEvents()
+        XCTAssertTrue(events.isEmpty)
+    }
+
+    func testHiDPIDesktopMirrorRejectsAspectDriftAfterMutation() async throws {
+        let topology = displayTopology()
+        let sourceDisplayID = try XCTUnwrap(
+            topology.displays.first.flatMap { UInt32($0.id) }
+        )
+        let targetDisplayID: UInt32 = 123
+        let logicalSize = CGSize(width: 1_407, height: 970)
+        let backingSize = CGSize(width: 2_814, height: 1_940)
+        let topologyProbe = DisplayTopologyProbe(topology: topology)
+        let mirrorProbe = DisplayMirrorProbe(
+            sourceDisplayID: sourceDisplayID,
+            targetDisplayID: targetDisplayID,
+            reportedMirrorSourceAfterApply: targetDisplayID,
+            initialTargetBounds: CGRect(origin: .zero, size: logicalSize),
+            configuredTargetSize: backingSize,
+            mirroredSourceBounds: CGRect(
+                origin: .zero,
+                size: CGSize(width: logicalSize.width, height: logicalSize.height + 1)
+            ),
+            sourcePixelSize: backingSize
+        )
+        let workspace = LumenMacDisplayWorkspace(
+            topologyController: topologyProbe,
+            mirrorController: mirrorProbe,
+            physicalDisplayController: RecordingPhysicalDisplayController(),
+            disconnectCapabilityVerifier: AllowingDisplayDisconnectCapabilityVerifier()
+        )
+        _ = try await workspace.snapshotWorkspace(targetProcessIdentifiers: [])
+        await topologyProbe.allowVerification()
+
+        do {
+            try await workspace.mirrorOwnedVirtualDisplay(
+                targetDisplayID,
+                sourceDisplayID: sourceDisplayID
+            )
+            XCTFail("aspect-ratio drift must fail closed after mirror mutation")
+        } catch LumenMacDisplayWorkspaceError.virtualDisplayMirrorUnavailable(
+            targetDisplayID,
+            sourceDisplayID
+        ) {
+        }
+
+        let events = await mirrorProbe.recordedEvents()
+        XCTAssertEqual(events, [
+            .mirror(target: sourceDisplayID, source: targetDisplayID),
+            .unmirror(target: sourceDisplayID),
+        ])
     }
 
     func testRestoreSkipsCoreGraphicsMutationWhenPhysicalTopologyAlreadyConverged() async throws {

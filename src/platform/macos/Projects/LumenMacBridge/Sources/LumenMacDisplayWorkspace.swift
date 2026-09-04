@@ -91,6 +91,7 @@ struct LumenMacDisplayMirrorState: Equatable, Sendable {
     let sourceIsActive: Bool
     let sourceIsOwnedVirtualDisplay: Bool
     let sourceBounds: CGRect
+    let sourcePixelSize: CGSize?
     let sourceConfiguredSize: CGSize?
     let sourceOwnerToken: UInt?
     let targetIsOnline: Bool
@@ -140,6 +141,7 @@ struct LumenCoreGraphicsDisplayMirrorController:
         let sourceDisplay = LumenMacVirtualDisplay.registeredDisplay(
             forDisplayID: sourceDisplayID
         )
+        let sourceMode = CGDisplayCopyDisplayMode(sourceDisplayID)
         return LumenMacDisplayMirrorState(
             mainDisplayID: CGMainDisplayID(),
             mirrorSourceDisplayID: mirroredDisplayID == kCGNullDirectDisplay
@@ -149,12 +151,14 @@ struct LumenCoreGraphicsDisplayMirrorController:
             sourceIsActive: CGDisplayIsActive(sourceDisplayID) != 0,
             sourceIsOwnedVirtualDisplay: sourceDisplay != nil,
             sourceBounds: CGDisplayBounds(sourceDisplayID),
+            sourcePixelSize: sourceDisplay.map { _ in
+                CGSize(
+                    width: CGFloat(sourceMode?.pixelWidth ?? 0),
+                    height: CGFloat(sourceMode?.pixelHeight ?? 0)
+                )
+            },
             sourceConfiguredSize: sourceDisplay.map {
                 CGSize(
-                    // CGDisplayBounds and ScreenCaptureKit expose the
-                    // capture surface in backing pixels for a HiDPI virtual
-                    // display. The logical mode is still used for window and
-                    // input geometry, but it cannot validate source admission.
                     width: CGFloat($0.backingWidth),
                     height: CGFloat($0.backingHeight)
                 )
@@ -799,11 +803,10 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             state.sourceIsOnline &&
             state.sourceIsActive &&
             state.sourceIsOwnedVirtualDisplay &&
-            Self.hasUsableDisplayBounds(state.sourceBounds) &&
-            state.sourceBounds.size == expectedSourceSize &&
-            state.sourceConfiguredSize == expectedSourceSize &&
-            expectedSourceSize.width > 0 &&
-            expectedSourceSize.height > 0 &&
+            Self.hasValidDesktopMirrorSourceGeometry(
+                state,
+                expectedSourceSize: expectedSourceSize
+            ) &&
             state.sourceOwnerToken == expectedOwnerToken &&
             state.targetIsOnline &&
             state.targetIsActive &&
@@ -822,12 +825,43 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             state.sourceIsOnline &&
             state.sourceIsActive &&
             state.sourceIsOwnedVirtualDisplay &&
-            Self.hasUsableDisplayBounds(state.sourceBounds) &&
-            state.sourceBounds.size == expectedSourceSize &&
-            state.sourceConfiguredSize == expectedSourceSize &&
+            Self.hasValidDesktopMirrorSourceGeometry(
+                state,
+                expectedSourceSize: expectedSourceSize
+            ) &&
             state.sourceOwnerToken == expectedOwnerToken &&
             state.targetIsOnline &&
             state.targetOwnerToken == nil
+    }
+
+    nonisolated private static func hasValidDesktopMirrorSourceGeometry(
+        _ state: LumenMacDisplayMirrorState,
+        expectedSourceSize: CGSize
+    ) -> Bool {
+        guard expectedSourceSize.width > 0,
+              expectedSourceSize.height > 0,
+              state.sourceConfiguredSize == expectedSourceSize,
+              state.sourcePixelSize == expectedSourceSize,
+              hasUsableDisplayBounds(state.sourceBounds) else {
+            return false
+        }
+
+        // CGDisplayBounds is a global logical-coordinate rectangle for some
+        // virtual-display modes and a backing-sized rectangle for others. The
+        // current mode's pixel dimensions are authoritative for capture; bounds
+        // only need the same aspect ratio at a positive, uniform scale.
+        let widthScale = expectedSourceSize.width / state.sourceBounds.width
+        let heightScale = expectedSourceSize.height / state.sourceBounds.height
+        let scale = max(widthScale, heightScale)
+        let tolerance = scale * 0.000_001
+        guard widthScale.isFinite,
+              heightScale.isFinite,
+              scale.isFinite,
+              widthScale >= 1 - tolerance,
+              heightScale >= 1 - tolerance else {
+            return false
+        }
+        return abs(widthScale - heightScale) <= tolerance
     }
 
     public func stageVirtualDisplayUnmirrored(
@@ -1634,6 +1668,9 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
         let mirrorSource = state.mirrorSourceDisplayID.map(String.init) ?? "none"
         let sourceOwnerToken = state.sourceOwnerToken.map(String.init) ?? "none"
         let targetOwnerToken = state.targetOwnerToken.map(String.init) ?? "none"
+        let sourcePixelSize = state.sourcePixelSize.map {
+            "\(Int($0.width.rounded()))x\(Int($0.height.rounded()))"
+        } ?? "none"
         let configuredSourceSize = state.sourceConfiguredSize.map {
             "\(Int($0.width.rounded()))x\(Int($0.height.rounded()))"
         } ?? "none"
@@ -1651,6 +1688,7 @@ public actor LumenMacDisplayWorkspace: LumenMacDisplayWorkspaceManaging {
             "\(Int(state.sourceBounds.origin.y.rounded())) " +
             "session-size=\(Int(state.sourceBounds.width.rounded()))x" +
             "\(Int(state.sourceBounds.height.rounded())) " +
+            "session-pixel-size=\(sourcePixelSize) " +
             "session-configured-size=\(configuredSourceSize) " +
             "session-owner-token=\(sourceOwnerToken) " +
             "physical-target-online=\(state.targetIsOnline) " +
