@@ -48,7 +48,16 @@ struct LumenCaptureDisplayReadinessSnapshot: Equatable, Sendable {
         switch authority {
         case .retained:
             if hasCurrentMode, pixelWidth > 0, pixelHeight > 0 {
-                return true
+                // A retained display always carries the requested backing
+                // geometry. A visible 1x mode must not be accepted as ready
+                // merely because it has a current mode; on macOS 27 that
+                // masks a failed HiDPI publication.
+                let hasConfiguredGeometry =
+                    configuredPixelWidth > 0 || configuredPixelHeight > 0
+                return !hasConfiguredGeometry || (
+                    pixelWidth == configuredPixelWidth &&
+                        pixelHeight == configuredPixelHeight
+                )
             }
             guard isActive else {
                 return false

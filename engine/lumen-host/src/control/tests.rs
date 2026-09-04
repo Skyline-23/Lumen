@@ -625,6 +625,70 @@ fn native_v4_hello_negotiates_without_a_direct_udp_path_exchange() {
 }
 
 #[test]
+fn compatible_native_clients_share_one_platform_session_until_last_disconnect() {
+    let platform = Arc::new(RecordingPlatformSessionControl::default());
+    let (_root, mut router, first_context, first_plan) = started_native_router(platform.clone());
+    let application_id = router.authorities().applications().applications().unwrap()[0].id;
+    let second_context = NativeConnectionContext {
+        session_epoch: first_context.session_epoch + 1,
+        host_capabilities: first_context.host_capabilities.clone(),
+    };
+
+    let hello_responses = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 3,
+            payload: Some(client_control_envelope::Payload::Hello(native_hello(
+                application_id,
+            ))),
+        },
+        &second_context,
+    );
+    let Some(host_control_envelope::Payload::SessionPlan(second_plan)) =
+        hello_responses[0].payload.as_ref()
+    else {
+        panic!("expected the second client to attach to the shared workspace");
+    };
+    assert_eq!(second_plan.session_epoch, second_context.session_epoch);
+    assert_eq!(second_plan.encoded_width, first_plan.encoded_width);
+    assert_eq!(second_plan.encoded_height, first_plan.encoded_height);
+
+    let start_responses = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 4,
+            payload: Some(client_control_envelope::Payload::StartSession(
+                StartSessionAck {
+                    session_epoch: second_context.session_epoch,
+                },
+            )),
+        },
+        &second_context,
+    );
+    assert!(matches!(
+        start_responses[0].payload,
+        Some(host_control_envelope::Payload::SessionStarted(_))
+    ));
+    assert_eq!(platform.starts.lock().unwrap().len(), 1);
+    assert!(router.native_input_is_active(first_context.session_epoch));
+    assert!(router.native_input_is_active(second_context.session_epoch));
+
+    assert_eq!(
+        router.terminate_native_connection(first_context.session_epoch),
+        Ok(())
+    );
+    assert_eq!(platform.stop_count(), 0);
+    assert_eq!(platform.application_stop_count(), 0);
+    assert!(!router.native_input_is_active(first_context.session_epoch));
+    assert!(router.native_input_is_active(second_context.session_epoch));
+
+    assert_eq!(
+        router.terminate_native_connection(second_context.session_epoch),
+        Ok(())
+    );
+    assert_eq!(platform.stop_count(), 1);
+    assert_eq!(platform.application_stop_count(), 1);
+}
+
+#[test]
 fn native_v4_reconfigures_display_without_stopping_the_active_session() {
     let platform = Arc::new(RecordingPlatformSessionControl::default());
     let (_root, mut router, context, initial) = started_native_router(platform.clone());
@@ -2174,7 +2238,33 @@ fn media_feedback_separates_wire_budget_from_pipeline_admission() {
     let adapted = router.video_delivery_state().unwrap();
     assert_eq!(adapted.fec_percentage, 30);
     assert!(adapted.target_bitrate_kbps < audio_adapted.target_bitrate_kbps);
-    assert_eq!(adapted.admission_divisor, 2);
+    assert_eq!(adapted.admission_divisor, 1);
+
+    // Decoder pressure is only actionable after it persists into a second
+    // feedback window; the first congested window also carried transport loss.
+    let repeated_pipeline_feedback = MediaFeedback {
+        highest_datagram_sequence: 3,
+        received_datagrams: 3,
+        unrecoverable_objects: 0,
+        first_datagram_sequence: 1,
+        feedback_window_id: 3,
+        ..congested_feedback.clone()
+    };
+    let repeated_clean_audio_feedback = MediaFeedback {
+        feedback_window_id: 3,
+        ..clean_audio_feedback.clone()
+    };
+    assert!(matches!(
+        router
+            .observe_native_media_feedback(&repeated_pipeline_feedback, context.session_epoch)
+            .unwrap(),
+        NativeMediaFeedbackDisposition::AwaitingPair { .. }
+    ));
+    let repeated_video_decision = router
+        .observe_native_media_feedback(&repeated_clean_audio_feedback, context.session_epoch)
+        .unwrap();
+    _ = commit_adaptive_proposal(&mut router, context.session_epoch, repeated_video_decision);
+    assert_eq!(router.video_delivery_state().unwrap().admission_divisor, 2);
 
     let wrong_stream = MediaFeedback {
         stream_id: u32::MAX,
@@ -2406,8 +2496,29 @@ fn coalesced_clean_feedback_recovers_pipeline_by_elapsed_base_windows() {
             .unwrap(),
         NativeMediaFeedbackDisposition::AwaitingPair { .. }
     ));
+    assert_eq!(
+        router
+            .observe_native_media_feedback(&clean_audio, context.session_epoch)
+            .unwrap(),
+        NativeMediaFeedbackDisposition::Unchanged
+    );
+
+    let repeated_congested_video = MediaFeedback {
+        feedback_window_id: 2,
+        ..congested_video.clone()
+    };
+    let repeated_clean_audio = MediaFeedback {
+        feedback_window_id: 2,
+        ..clean_audio.clone()
+    };
+    assert!(matches!(
+        router
+            .observe_native_media_feedback(&repeated_congested_video, context.session_epoch)
+            .unwrap(),
+        NativeMediaFeedbackDisposition::AwaitingPair { .. }
+    ));
     let degraded_proposal = router
-        .observe_native_media_feedback(&clean_audio, context.session_epoch)
+        .observe_native_media_feedback(&repeated_clean_audio, context.session_epoch)
         .unwrap();
     _ = commit_adaptive_proposal(&mut router, context.session_epoch, degraded_proposal);
     let degraded = router.video_delivery_state().unwrap();
@@ -2416,13 +2527,13 @@ fn coalesced_clean_feedback_recovers_pipeline_by_elapsed_base_windows() {
     let clean_video = MediaFeedback {
         decoder_drops: 0,
         window_milliseconds: 2_000,
-        feedback_window_id: 2,
-        ..congested_video
+        feedback_window_id: 3,
+        ..congested_video.clone()
     };
     let coalesced_audio = MediaFeedback {
         window_milliseconds: 2_000,
-        feedback_window_id: 2,
-        ..clean_audio
+        feedback_window_id: 3,
+        ..clean_audio.clone()
     };
     assert!(matches!(
         router
@@ -2478,13 +2589,34 @@ fn separate_clean_feedback_windows_restore_video_admission() {
             .unwrap(),
         NativeMediaFeedbackDisposition::AwaitingPair { .. }
     ));
+    assert_eq!(
+        router
+            .observe_native_media_feedback(&clean_audio, context.session_epoch)
+            .unwrap(),
+        NativeMediaFeedbackDisposition::Unchanged
+    );
+
+    let repeated_pressured_video = MediaFeedback {
+        feedback_window_id: 2,
+        ..pressured_video.clone()
+    };
+    let repeated_clean_audio = MediaFeedback {
+        feedback_window_id: 2,
+        ..clean_audio.clone()
+    };
+    assert!(matches!(
+        router
+            .observe_native_media_feedback(&repeated_pressured_video, context.session_epoch)
+            .unwrap(),
+        NativeMediaFeedbackDisposition::AwaitingPair { .. }
+    ));
     let degraded = router
-        .observe_native_media_feedback(&clean_audio, context.session_epoch)
+        .observe_native_media_feedback(&repeated_clean_audio, context.session_epoch)
         .unwrap();
     _ = commit_adaptive_proposal(&mut router, context.session_epoch, degraded);
     assert_eq!(router.video_delivery_state().unwrap().admission_divisor, 2);
 
-    for feedback_window_id in 2..=9 {
+    for feedback_window_id in 3..=10 {
         let clean_video = MediaFeedback {
             received_datagrams: 0,
             first_datagram_sequence: 0,
@@ -2512,7 +2644,7 @@ fn separate_clean_feedback_windows_restore_video_admission() {
         let disposition = router
             .observe_native_media_feedback(&audio, context.session_epoch)
             .unwrap();
-        if feedback_window_id < 9 {
+        if feedback_window_id < 10 {
             assert_eq!(disposition, NativeMediaFeedbackDisposition::Unchanged);
         } else {
             _ = commit_adaptive_proposal(&mut router, context.session_epoch, disposition);

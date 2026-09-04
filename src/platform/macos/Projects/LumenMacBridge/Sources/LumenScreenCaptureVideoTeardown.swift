@@ -36,8 +36,16 @@ extension LumenScreenCaptureVideoRuntime {
     func stop() async {
         await prepareCaptureStop()
         let stoppedStreamIdentity = await stopActiveCaptureStream()
+        let stoppedAVFoundationCapture =
+            await stopActiveAVFoundationCapture()
+        let stoppedSkyLightDisplayStream =
+            await stopActiveSkyLightDisplayStream()
         await completeCaptureOutputLifecycle()
-        finishCaptureStop(stoppedStreamIdentity: stoppedStreamIdentity)
+        finishCaptureStop(
+            stoppedStreamIdentity: stoppedStreamIdentity,
+            stoppedAVFoundationCapture: stoppedAVFoundationCapture,
+            stoppedSkyLightDisplayStream: stoppedSkyLightDisplayStream
+        )
     }
 
     func prepareCaptureStop() async {
@@ -78,6 +86,43 @@ extension LumenScreenCaptureVideoRuntime {
         return streamIdentity
     }
 
+    func stopActiveAVFoundationCapture() async -> Bool {
+        let handle = queue.sync { () -> LumenAVCaptureSessionHandle? in
+            let handle = avCaptureHandle
+            avCaptureHandle = nil
+            return handle
+        }
+        guard let handle else {
+            return false
+        }
+        await stopAVFoundationCaptureSession(handle)
+        return true
+    }
+
+    func stopActiveSkyLightDisplayStream() async -> Bool {
+        let streamAndIdentity = queue.sync {
+            () -> (LumenSkyLightDisplayStream, UInt)? in
+            guard let stream = skyLightDisplayStream,
+                  let identity = skyLightDisplayStreamIdentity else {
+                return nil
+            }
+            skyLightDisplayStream = nil
+            skyLightDisplayStreamIdentity = nil
+            return (stream, identity)
+        }
+        guard let (stream, identity) = streamAndIdentity else {
+            return false
+        }
+        let stopStatus = stream.stop()
+        queue.sync {
+            skyLightStopStatus = stopStatus
+            skyLightFirstDisplayTime = nil
+            skyLightLastPresentationTime = nil
+            try? outputOwnership.stop(streamIdentity: identity)
+        }
+        return true
+    }
+
     func completeCaptureOutputLifecycle() async {
         await outputLifecycle.completeAndInvalidate(
             completeFrames: { [self] in
@@ -101,8 +146,14 @@ extension LumenScreenCaptureVideoRuntime {
         )
     }
 
-    func finishCaptureStop(stoppedStreamIdentity: UInt?) {
-        guard stoppedStreamIdentity != nil else {
+    func finishCaptureStop(
+        stoppedStreamIdentity: UInt?,
+        stoppedAVFoundationCapture: Bool,
+        stoppedSkyLightDisplayStream: Bool
+    ) {
+        guard stoppedStreamIdentity != nil ||
+                stoppedAVFoundationCapture ||
+                stoppedSkyLightDisplayStream else {
             queue.sync {
                 lifecycleStopRequested = false
             }
@@ -114,11 +165,11 @@ extension LumenScreenCaptureVideoRuntime {
             eventHandler(.init(
                 kind: .stopped,
                 message: [
-                    "ScreenCaptureKit capture stopped",
+                    "\(captureBackend.rawValue) capture stopped",
                     "output-registration=\(outputOwnership.stage.rawValue)",
-                    "source-samples=\(outputOwnership.screenSampleCount)"
+                    "source-samples=\(statistics.sourceFrameCount)"
                 ].joined(separator: " "),
-                stopStatus: 0
+                stopStatus: skyLightStopStatus ?? 0
             ))
             lifecycleStopRequested = false
         }
@@ -128,7 +179,9 @@ extension LumenScreenCaptureVideoRuntime {
         queue.sync {
             guard !lifecycleStartInFlight,
                   !lifecycleStopRequested,
-                  stream == nil else {
+                  stream == nil,
+                  avCaptureHandle == nil,
+                  skyLightDisplayStream == nil else {
                 return false
             }
             lifecycleStartInFlight = true

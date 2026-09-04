@@ -34,6 +34,9 @@ actor LumenMacVirtualDisplayOwner {
         )
         let owner = LumenRetainedVirtualDisplayReference(display: display)
         do {
+            if configuration.highDensity {
+                try await selectPublishedHiDPIMode(display)
+            }
             try await ownershipRegistry.register(owner, forKey: identity.id)
         } catch {
             _ = LumenMacVirtualDisplay.removeRegisteredDisplay(
@@ -60,6 +63,10 @@ actor LumenMacVirtualDisplayOwner {
             logicalHeight: geometry.logicalHeight,
             refreshRate: refreshRate
         )
+        if display.backingWidth != display.logicalWidth ||
+            display.backingHeight != display.logicalHeight {
+            try await selectPublishedHiDPIMode(display)
+        }
     }
 
     func reconfigure(
@@ -228,6 +235,30 @@ actor LumenMacVirtualDisplayOwner {
             throw LumenMacWorkspaceSessionError.virtualDisplayOwnershipMismatch
         }
         return LumenRetainedVirtualDisplayReference(display: display)
+    }
+
+    private func selectPublishedHiDPIMode(
+        _ display: LumenMacVirtualDisplay
+    ) async throws {
+        let deadline = DispatchTime.now().uptimeNanoseconds + 3_000_000_000
+        var lastError: (any Error)?
+        while true {
+            try Task.checkCancellation()
+            do {
+                try display.selectPublishedHiDPIMode()
+                return
+            } catch {
+                lastError = error
+            }
+            let now = DispatchTime.now().uptimeNanoseconds
+            guard now < deadline else {
+                throw lastError ?? LumenMacWorkspaceSessionError
+                    .virtualDisplayModeSettlementUnavailable(display.displayID)
+            }
+            try await Task.sleep(
+                nanoseconds: min(100_000_000, deadline - now)
+            )
+        }
     }
 
     private func waitForModeSettlement(

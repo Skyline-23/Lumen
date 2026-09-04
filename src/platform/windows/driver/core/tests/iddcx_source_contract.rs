@@ -252,16 +252,47 @@ fn monitor_creation_supplies_default_and_target_modes() {
             .count(),
         2
     );
-    assert!(adapter.contains("edid_status != LUMEN_EDID_STATUS_UNREPRESENTABLE"));
-    assert!(adapter.contains("monitor_info.MonitorDescription.DataSize = 0"));
-    assert!(adapter.contains("monitor_info.MonitorDescription.pData = nullptr"));
+    assert!(adapter.contains("edid_status != LUMEN_EDID_STATUS_OK"));
+    assert!(adapter.contains("MonitorDescription.DataSize = LUMEN_MONITOR_EDID_BYTES"));
+    assert!(adapter.contains("MonitorDescription.pData = context->monitor_edid"));
+    assert!(!adapter.contains("LUMEN_EDID_STATUS_UNREPRESENTABLE"));
     assert!(callbacks.contains("lumen_driver_core_parse_monitor_edid"));
+    assert!(callbacks.contains("parsed_mode.hdr_capable != 0"));
     assert!(!callbacks.contains("refresh_millihertz * height"));
     assert!(!callbacks.contains("refresh_millihertz) * width"));
     assert!(callbacks.contains("DefaultMonitorModeBufferOutputCount = kLumenModeCount"));
     assert!(callbacks.contains("TargetModeBufferOutputCount = kLumenModeCount"));
     assert!(callbacks.contains("input->pDefaultMonitorModes[0] = make_monitor_mode"));
     assert!(callbacks.contains("input->pTargetModes[0] = make_target_mode"));
+}
+
+#[test]
+fn hdr_monitor_advertises_fp16_ten_bit_modes_and_surface_color_space() {
+    // Given: the adapter, mode, and swap-chain boundaries for the first-party IDD.
+    let adapter = fs::read_to_string(driver_root().join("shim/adapter.cpp"))
+        .expect("adapter boundary must exist");
+    let callbacks = fs::read_to_string(driver_root().join("shim/iddcx_callbacks.cpp"))
+        .expect("monitor callback boundary must exist");
+    let processor = fs::read_to_string(driver_root().join("shim/frame_processor.cpp"))
+        .expect("frame processor must exist");
+
+    // Then: the HDR EDID flag reaches Windows' FP16 and 10-bpc contracts, while both
+    // D3D12 metadata and D3D11 texture format preserve the actual surface color space.
+    assert!(adapter.contains("IDDCX_ADAPTER_FLAGS_CAN_PROCESS_FP16"));
+    assert!(adapter.contains("LUMEN_MONITOR_FLAG_HDR_CAPABLE"));
+    assert!(adapter.contains("hdr_capable ? 1u : 0u"));
+    assert!(callbacks.contains("IDDCX_BITS_PER_COMPONENT_10"));
+    assert!(callbacks.contains("monitor_context->hdr_capable"));
+    assert!(callbacks.contains("parsed_mode.hdr_capable != 0"));
+    assert!(callbacks.contains(
+        "input->pMonitorModes[0] = make_monitor_mode(\n    parsed_mode.width,\n    parsed_mode.height,\n    parsed_mode.refresh_millihertz,\n    IDDCX_MONITOR_MODE_ORIGIN_MONITORDESCRIPTOR\n  );"
+    ));
+    assert!(callbacks.contains(
+        "input->pMonitorModes[0] = make_monitor_mode2(\n    parsed_mode.width,\n    parsed_mode.height,\n    parsed_mode.refresh_millihertz,\n    parsed_mode.hdr_capable != 0,\n    IDDCX_MONITOR_MODE_ORIGIN_MONITORDESCRIPTOR\n  );"
+    ));
+    assert!(processor.contains("DXGI_FORMAT_R16G16B16A16_FLOAT"));
+    assert!(processor.contains("DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709"));
+    assert!(processor.contains("output.MetaData.SurfaceColorSpace"));
 }
 
 #[test]

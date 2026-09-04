@@ -74,6 +74,7 @@ pub(crate) struct AdaptiveVideoDeliveryController {
     clean_network_windows: u32,
     clean_fec_windows: u32,
     clean_pipeline_windows: u32,
+    pipeline_pressure_windows: u32,
     pipeline_pressure_armed: bool,
     keyframe_wire_rate_requirement_kbps: Option<u32>,
 }
@@ -88,11 +89,19 @@ impl AdaptiveVideoDeliveryController {
     /// parity below the level required to protect the next video object.
     const CLEAN_WINDOWS_BEFORE_FEC_RECOVERY: u32 = 32;
     const TRANSPORT_LOSS_PARTS_PER_MILLION: u64 = 20_000;
+    /// A single feedback window can contain a compositor/decode burst even
+    /// when the receive lane is healthy. Require the burst to persist before
+    /// reducing admission, otherwise one arrival-draw burst toggles the 120 Hz
+    /// producer to divisor two.
+    const PIPELINE_PRESSURE_WINDOWS_BEFORE_REDUCTION: u32 = 2;
     /// Drops below this share of a window are jitter, not sustained pressure.
     const DECODER_DROP_PRESSURE_PARTS_PER_MILLION: u64 = 50_000;
+    /// The Shadow receive lane intentionally absorbs a single fresh-frame
+    /// burst while VideoToolbox callbacks complete. Treating that transient
+    /// slot as sustained decoder congestion halves 120 Hz admission after one
+    /// otherwise healthy feedback window and causes a 120/60 fps sawtooth.
+    const DECODER_QUEUE_BURST_ALLOWANCE: u32 = 1;
     const HIGH_JITTER_MICROSECONDS: u32 = 10_000;
-    /// Late objects below this share of a window are pacing, not congestion.
-    const LATE_OBJECT_PRESSURE_PARTS_PER_MILLION: u64 = 50_000;
 
     #[cfg(test)]
     pub(crate) fn new(
@@ -155,6 +164,7 @@ impl AdaptiveVideoDeliveryController {
             clean_network_windows: 0,
             clean_fec_windows: 0,
             clean_pipeline_windows: 0,
+            pipeline_pressure_windows: 0,
             pipeline_pressure_armed: true,
             keyframe_wire_rate_requirement_kbps: None,
         }
@@ -316,18 +326,32 @@ impl AdaptiveVideoDeliveryController {
         }
 
         match pipeline_severity {
-            PipelinePressureSeverity::Neutral => {}
+            PipelinePressureSeverity::Neutral => {
+                // An idle/empty video window does not prove recovery, but it also
+                // cannot prove that pressure persisted across the gap. Break the
+                // consecutive-pressure streak without changing admission.
+                self.pipeline_pressure_windows = 0;
+            }
             PipelinePressureSeverity::Presentation => {
                 self.clean_pipeline_windows = 0;
+                self.pipeline_pressure_windows = 0;
             }
             PipelinePressureSeverity::Congested => {
                 self.clean_pipeline_windows = 0;
-                if self.pipeline_pressure_armed {
+                self.pipeline_pressure_windows = self
+                    .pipeline_pressure_windows
+                    .saturating_add(1)
+                    .min(Self::PIPELINE_PRESSURE_WINDOWS_BEFORE_REDUCTION);
+                if self.pipeline_pressure_armed
+                    && self.pipeline_pressure_windows
+                        >= Self::PIPELINE_PRESSURE_WINDOWS_BEFORE_REDUCTION
+                {
                     self.pipeline_pressure_armed = false;
                     self.admission_divisor = 2;
                 }
             }
             PipelinePressureSeverity::Clean => {
+                self.pipeline_pressure_windows = 0;
                 let accumulated = self
                     .clean_pipeline_windows
                     .saturating_add(clean_window_units);
@@ -365,16 +389,13 @@ impl AdaptiveVideoDeliveryController {
     }
 
     fn classify_network(&self, sample: MediaFeedbackSample) -> NetworkCongestionSeverity {
-        // An unrecoverable object is real data loss and is always severe. A late
-        // object is not: at high resolution a keyframe legitimately paces across
-        // several refresh periods, so isolated lateness must not drive FEC to its
-        // ceiling and spend the wire budget on parity instead of picture.
+        // An unrecoverable object is real data loss and is always severe. Late
+        // objects are receiver-side bookkeeping for datagrams that arrived after
+        // their object was already delivered (or were duplicate sequence slots).
+        // They are not comparable to packet loss and must not drive FEC or wire
+        // backoff. Packet-arrival loss and unrecoverable objects are the transport
+        // evidence used by this controller.
         if sample.unrecoverable_objects > 0 {
-            return NetworkCongestionSeverity::Severe;
-        }
-        if Self::late_object_parts_per_million(sample)
-            >= Self::LATE_OBJECT_PRESSURE_PARTS_PER_MILLION
-        {
             return NetworkCongestionSeverity::Severe;
         }
         if Self::loss_parts_per_million(sample) >= Self::TRANSPORT_LOSS_PARTS_PER_MILLION
@@ -397,7 +418,10 @@ impl AdaptiveVideoDeliveryController {
         let submissions = sample.decoder_submissions.max(1);
         let drop_parts_per_million =
             u64::from(sample.decoder_drops) * 1_000_000 / u64::from(submissions);
-        if sample.decoder_queue_depth > self.maximum_decoder_queue_depth
+        let congested_queue_depth = self
+            .maximum_decoder_queue_depth
+            .saturating_add(Self::DECODER_QUEUE_BURST_ALLOWANCE);
+        if sample.decoder_queue_depth > congested_queue_depth
             || drop_parts_per_million >= Self::DECODER_DROP_PRESSURE_PARTS_PER_MILLION
         {
             return PipelinePressureSeverity::Congested;
@@ -462,12 +486,6 @@ impl AdaptiveVideoDeliveryController {
             self.wire_budget_kbps = raised;
             self.clean_network_windows = 0;
         }
-    }
-
-    /// Late objects as a share of the window's decoder submissions.
-    fn late_object_parts_per_million(sample: MediaFeedbackSample) -> u64 {
-        let submissions = sample.decoder_submissions.max(1);
-        u64::from(sample.late_objects).saturating_mul(1_000_000) / u64::from(submissions)
     }
 
     fn loss_parts_per_million(sample: MediaFeedbackSample) -> u64 {
@@ -578,27 +596,31 @@ mod tests {
     }
 
     #[test]
-    fn one_feedback_window_applies_only_one_pipeline_reduction_for_two_lanes() {
+    fn two_feedback_windows_apply_only_one_pipeline_reduction_for_two_lanes() {
         let mut controller = AdaptiveVideoDeliveryController::new(100_000, 80_000, 5, 3);
-        let decision = controller.observe_window(
-            MediaFeedbackSample {
-                decoder_submissions: 100,
-                decoder_drops: 5,
-                ..clean(FeedbackStream::Video)
-            },
-            MediaFeedbackSample {
-                decoder_submissions: 100,
-                decoder_drops: 5,
-                ..clean(FeedbackStream::Audio)
-            },
-            1,
-        );
+        let video_pressure = MediaFeedbackSample {
+            decoder_submissions: 100,
+            decoder_drops: 5,
+            ..clean(FeedbackStream::Video)
+        };
+        let audio_pressure = MediaFeedbackSample {
+            decoder_submissions: 100,
+            decoder_drops: 5,
+            ..clean(FeedbackStream::Audio)
+        };
+        let first = controller.observe_window(video_pressure, audio_pressure, 1);
 
-        assert_eq!(decision.wire_budget_kbps, 80_000);
-        assert_eq!(decision.encoder_bitrate_kbps, 71_516);
-        assert_eq!(decision.admission_divisor, 2);
-        assert_eq!(decision.congestion_source, CongestionSource::VideoPipeline);
-        assert!(decision.changed);
+        assert_eq!(first.admission_divisor, 1);
+        assert_eq!(first.congestion_source, CongestionSource::None);
+        assert!(!first.changed);
+
+        let second = controller.observe_window(video_pressure, audio_pressure, 1);
+
+        assert_eq!(second.wire_budget_kbps, 80_000);
+        assert_eq!(second.encoder_bitrate_kbps, 71_516);
+        assert_eq!(second.admission_divisor, 2);
+        assert_eq!(second.congestion_source, CongestionSource::VideoPipeline);
+        assert!(second.changed);
     }
 
     #[test]
@@ -688,21 +710,25 @@ mod tests {
     fn sustained_processing_only_decoder_failure_reduces_admission_without_changing_delivery_budget(
     ) {
         let mut controller = AdaptiveVideoDeliveryController::new(100_000, 80_000, 5, 3);
-        let decision = controller.observe_window(
-            MediaFeedbackSample {
-                expected_datagrams: 0,
-                received_datagrams: 0,
-                decoder_submissions: 100,
-                decoder_drops: 5,
-                ..clean(FeedbackStream::Video)
-            },
-            MediaFeedbackSample {
-                expected_datagrams: 0,
-                received_datagrams: 0,
-                ..clean(FeedbackStream::Audio)
-            },
-            1,
-        );
+        let video_pressure = MediaFeedbackSample {
+            expected_datagrams: 0,
+            received_datagrams: 0,
+            decoder_submissions: 100,
+            decoder_drops: 5,
+            ..clean(FeedbackStream::Video)
+        };
+        let audio = MediaFeedbackSample {
+            expected_datagrams: 0,
+            received_datagrams: 0,
+            ..clean(FeedbackStream::Audio)
+        };
+        let first = controller.observe_window(video_pressure, audio, 1);
+
+        assert!(!first.changed);
+        assert_eq!(first.admission_divisor, 1);
+        assert_eq!(first.congestion_source, CongestionSource::None);
+
+        let decision = controller.observe_window(video_pressure, audio, 1);
 
         assert!(decision.changed);
         assert_eq!(decision.wire_budget_kbps, 80_000);
@@ -734,6 +760,46 @@ mod tests {
         );
     }
 
+    #[test]
+    fn late_objects_without_packet_loss_do_not_back_off_delivery() {
+        let mut controller = AdaptiveVideoDeliveryController::new(100_000, 80_000, 5, 3);
+        let paced = MediaFeedbackSample {
+            late_objects: 44,
+            ..clean(FeedbackStream::Video)
+        };
+
+        let decision = controller.observe(paced);
+
+        assert_eq!(decision.wire_budget_kbps, 80_000);
+        assert_eq!(decision.fec_percentage, 5);
+        assert_eq!(decision.admission_divisor, 1);
+        assert_eq!(decision.congestion_source, CongestionSource::None);
+        assert!(!decision.changed);
+    }
+
+    #[test]
+    fn an_idle_window_breaks_a_partial_pipeline_pressure_streak() {
+        let mut controller = AdaptiveVideoDeliveryController::new(100_000, 80_000, 5, 3);
+        let pressure = MediaFeedbackSample {
+            decoder_submissions: 100,
+            decoder_drops: 5,
+            ..clean(FeedbackStream::Video)
+        };
+        let idle = MediaFeedbackSample {
+            expected_datagrams: 0,
+            received_datagrams: 0,
+            decoder_submissions: 0,
+            decoded_frames: 0,
+            presented_frames: 0,
+            ..clean(FeedbackStream::Video)
+        };
+
+        assert_eq!(controller.observe(pressure).admission_divisor, 1);
+        assert_eq!(controller.observe(idle).admission_divisor, 1);
+        assert_eq!(controller.observe(pressure).admission_divisor, 1);
+        assert_eq!(controller.observe(pressure).admission_divisor, 2);
+    }
+
     /// Regression: halving admission on one drop starved presented frame rate.
     #[test]
     fn isolated_decoder_drop_preserves_full_frame_admission() {
@@ -752,28 +818,60 @@ mod tests {
     }
 
     #[test]
-    fn decoder_queue_backlog_still_reduces_admission_without_drops() {
+    fn sustained_decoder_queue_backlog_reduces_admission_without_drops() {
         let mut controller = AdaptiveVideoDeliveryController::new(100_000, 80_000, 5, 3);
-        let decision = controller.observe(MediaFeedbackSample {
-            decoder_queue_depth: 4,
+        let queue_pressure = MediaFeedbackSample {
+            decoder_queue_depth: 5,
             decoder_drops: 0,
+            ..clean(FeedbackStream::Video)
+        };
+        let first = controller.observe(queue_pressure);
+
+        assert_eq!(first.admission_divisor, 1);
+        assert_eq!(first.congestion_source, CongestionSource::None);
+        assert!(!first.changed);
+
+        let second = controller.observe(queue_pressure);
+        assert_eq!(second.admission_divisor, 2);
+        assert_eq!(second.congestion_source, CongestionSource::VideoPipeline);
+        assert!(second.changed);
+    }
+
+    #[test]
+    fn one_transient_queue_slot_above_capacity_preserves_full_admission() {
+        let mut controller = AdaptiveVideoDeliveryController::new(100_000, 80_000, 5, 1);
+        let decision = controller.observe(MediaFeedbackSample {
+            decoder_queue_depth: 2,
+            decoder_submissions: 20,
+            decoded_frames: 16,
+            presented_frames: 14,
+            decoder_drops: 0,
+            presentation_drops: 0,
             ..clean(FeedbackStream::Video)
         });
 
-        assert_eq!(decision.admission_divisor, 2);
-        assert_eq!(decision.congestion_source, CongestionSource::VideoPipeline);
+        assert_eq!(decision.admission_divisor, 1);
+        assert_eq!(decision.congestion_source, CongestionSource::None);
+        assert!(!decision.changed);
     }
 
     #[test]
     fn sustained_decoder_drops_reduce_admission_without_mutating_network_state() {
         let mut controller = AdaptiveVideoDeliveryController::new(100_000, 80_000, 5, 3);
-        let decision = controller.observe(MediaFeedbackSample {
+        let decoder_pressure = MediaFeedbackSample {
             decoder_submissions: 100,
             decoded_frames: 95,
             presented_frames: 95,
             decoder_drops: 5,
             ..clean(FeedbackStream::Video)
-        });
+        };
+        let first = controller.observe(decoder_pressure);
+
+        assert_eq!(first.admission_divisor, 1);
+        assert_eq!(first.congestion_source, CongestionSource::None);
+        assert!(!first.changed);
+
+        let decision = controller.observe(decoder_pressure);
 
         assert_eq!(decision.wire_budget_kbps, 80_000);
         assert_eq!(decision.encoder_bitrate_kbps, 71_516);
@@ -795,8 +893,14 @@ mod tests {
         let first = controller.observe(decoder_pressure);
         assert_eq!(first.wire_budget_kbps, 48_000);
         assert_eq!(first.encoder_bitrate_kbps, 43_021);
-        assert_eq!(first.admission_divisor, 2);
-        assert!(first.changed);
+        assert_eq!(first.admission_divisor, 1);
+        assert_eq!(first.congestion_source, CongestionSource::None);
+        assert!(!first.changed);
+
+        let second = controller.observe(decoder_pressure);
+        assert_eq!(second.admission_divisor, 2);
+        assert_eq!(second.congestion_source, CongestionSource::VideoPipeline);
+        assert!(second.changed);
 
         for _ in 0..16 {
             let repeated = controller.observe(decoder_pressure);
@@ -812,10 +916,16 @@ mod tests {
         assert_eq!(controller.snapshot().encoder_bitrate_kbps, 43_021);
         assert_eq!(controller.snapshot().admission_divisor, 1);
 
+        let new_epoch_first = controller.observe(decoder_pressure);
+        assert_eq!(new_epoch_first.admission_divisor, 1);
+        assert_eq!(new_epoch_first.congestion_source, CongestionSource::None);
+        assert!(!new_epoch_first.changed);
+
         let new_epoch = controller.observe(decoder_pressure);
         assert_eq!(new_epoch.wire_budget_kbps, 48_000);
         assert_eq!(new_epoch.encoder_bitrate_kbps, 43_021);
         assert_eq!(new_epoch.admission_divisor, 2);
+        assert_eq!(new_epoch.congestion_source, CongestionSource::VideoPipeline);
         assert!(new_epoch.changed);
     }
 
@@ -880,11 +990,16 @@ mod tests {
     #[test]
     fn one_coalesced_clean_window_recovers_by_its_base_window_duration() {
         let mut controller = AdaptiveVideoDeliveryController::new(80_000, 80_000, 5, 3);
-        let congested = controller.observe(MediaFeedbackSample {
+        let decoder_pressure = MediaFeedbackSample {
             decoder_submissions: 100,
             decoder_drops: 5,
             ..clean(FeedbackStream::Video)
-        });
+        };
+        let first_pressure = controller.observe(decoder_pressure);
+        assert_eq!(first_pressure.admission_divisor, 1);
+        assert!(!first_pressure.changed);
+
+        let congested = controller.observe(decoder_pressure);
         assert_eq!(congested.wire_budget_kbps, 80_000);
         assert_eq!(congested.encoder_bitrate_kbps, 71_516);
         assert_eq!(congested.admission_divisor, 2);
@@ -941,6 +1056,7 @@ mod tests {
             decoder_drops: 5,
             ..clean(FeedbackStream::Video)
         };
+        assert_eq!(controller.observe(decoder_pressure).admission_divisor, 1);
         assert_eq!(controller.observe(decoder_pressure).admission_divisor, 2);
 
         let audio_playback_pressure = MediaFeedbackSample {

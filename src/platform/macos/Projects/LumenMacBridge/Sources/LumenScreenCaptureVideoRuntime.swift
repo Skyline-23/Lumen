@@ -11,6 +11,7 @@ import VideoToolbox
 
 final class LumenScreenCaptureVideoRuntime:
     NSObject,
+    AVCaptureVideoDataOutputSampleBufferDelegate,
     SCStreamOutput,
     SCStreamDelegate,
     LumenEncodedCaptureRuntime,
@@ -19,7 +20,12 @@ final class LumenScreenCaptureVideoRuntime:
         subsystem: "dev.skyline23.lumen",
         category: "ScreenCaptureStartup"
     )
+    static let pipelineLogger = Logger(
+        subsystem: "dev.skyline23.lumen",
+        category: "CapturePipeline"
+    )
     let configuration: LumenMacCaptureConfiguration
+    let captureBackend: LumenVideoCaptureBackend
     let frameHandler: @Sendable (LumenEncodedFrame) -> Void
     let eventHandler: @Sendable (LumenEncodedCaptureSessionEvent) -> Void
     let statisticsHandler: @Sendable (LumenEncodedCaptureSessionStatistics) -> Void
@@ -29,9 +35,25 @@ final class LumenScreenCaptureVideoRuntime:
         label: "dev.skyline23.lumen.sck.video.vt-admission",
         qos: .userInteractive
     )
+    let captureControlQueue = DispatchQueue(
+        label: "dev.skyline23.lumen.avfoundation.video.session",
+        qos: .userInteractive
+    )
     var stream: SCStream?
-    // Lifecycle transitions are fenced on `queue` because `startCapture` and
-    // `stopCapture` suspend at the ScreenCaptureKit callback boundary.
+    var avCaptureHandle: LumenAVCaptureSessionHandle?
+    var skyLightDisplayStream: LumenSkyLightDisplayStream?
+    var skyLightDisplayStreamIdentity: UInt?
+    var skyLightStopStatus: Int32?
+    var skyLightCaptureFailureReported = false
+    // CGDisplayStream supplies compositor display times in mach ticks. Keep a
+    // per-stream origin and the last emitted PTS so raw frames preserve real
+    // display cadence while still satisfying VideoToolbox's strict ordering
+    // contract when the private callback repeats or regresses a timestamp.
+    var skyLightFirstDisplayTime: UInt64?
+    var skyLightLastPresentationTime: CMTime?
+    var didLogSkyLightFirstFrame = false
+    // Lifecycle transitions are fenced on `queue` because capture start and
+    // stop can suspend while either backend still owns callback delivery.
     var lifecycleStartInFlight = false
     var lifecycleStopRequested = false
     var lifecycleSettlementWaiters: [CheckedContinuation<Void, Never>] = []
@@ -75,13 +97,7 @@ final class LumenScreenCaptureVideoRuntime:
     var pendingVideoBootstrapSource: LumenPendingVideoBootstrapSource?
     var inflightFrameCount = 0
     var stopping = false
-    var firstSourceMachTime: UInt64?
-    var lastSourceMachTime: UInt64?
-    var lastOutputMachTime: UInt64?
-    var sourceIntervalTotalMilliseconds = 0.0
-    var sourceIntervalSampleCount: UInt64 = 0
-    var outputIntervalTotalMilliseconds = 0.0
-    var outputIntervalSampleCount: UInt64 = 0
+    var captureCadenceTelemetry = LumenCaptureCadenceTelemetry()
     var captureIngressTimings = LumenCaptureIngressTimings()
     var sourceCallbackServiceTiming = LumenCaptureStageTimingAccumulator()
     var encoderAdmissionWaitTiming = LumenCaptureStageTimingAccumulator()
@@ -109,6 +125,7 @@ final class LumenScreenCaptureVideoRuntime:
     var displayAdmissionMode = LumenScreenCaptureDisplayAdmissionMode.shareableContentEnumeration
     var displayAdmissionDurationMilliseconds = 0.0
     var streamStartDurationMilliseconds = 0.0
+    var didLogScreenFrameGeometry = false
     lazy var outputLifecycle =
         LumenVideoToolboxOutputLifecycle<LumenEncodedFrameContext>(
             ownerQueue: queue
@@ -146,6 +163,10 @@ final class LumenScreenCaptureVideoRuntime:
         terminationHandler: @escaping @Sendable (Error) -> Void
     ) throws {
         self.configuration = configuration
+        captureBackend = LumenVideoCaptureBackend.preferred(
+            for: configuration,
+            skyLightDisplayStreamAvailable: LumenSkyLightDisplayStream.isSupported()
+        )
         self.frameHandler = callbacks.frameHandler
         self.eventHandler = { callbacks.eventHandler?($0) }
         self.statisticsHandler = statisticsHandler

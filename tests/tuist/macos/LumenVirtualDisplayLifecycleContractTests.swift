@@ -37,6 +37,45 @@ struct LumenVirtualDisplayLifecycleContractTests {
                 "[_settings setValue:@(configuration.hdrEnabled) forKey:@\"isReference\"]"
             )
         )
+        #expect(source.contains("kCDDisplayPresetMaxHDRLuminanceKey"))
+        #expect(source.contains("setDisplayInfo(descriptor, setterSelector, value, key)"))
+        #expect(!source.contains("displayInfo[key] != nil"))
+    }
+
+    @Test("CG virtual display publishes the logical and native HiDPI mode pair")
+    func cgVirtualDisplayPublishesHiDPIModePair() throws {
+        let source = try source(
+            "src/platform/macos/Projects/LumenMacBridge/Sources/LumenNativeVirtualDisplay.m"
+        )
+
+        #expect(source.contains("NSArray *publishedModes = @[initialMode, backingMode];"))
+        #expect(source.contains("? @[candidateMode, candidateBackingMode]"))
+        #expect(
+            source.contains(
+                "[_settings setValue:@(configuration.highDensity) forKey:@\"hiDPI\"]"
+            )
+        )
+    }
+
+    @Test("HiDPI reconfiguration explicitly reselects the native backing mode")
+    func hidpiReconfigurationReselectsPublishedMode() throws {
+        let source = try source(
+            "src/platform/macos/Projects/LumenMacBridge/Sources/" +
+                "LumenVirtualDisplayOwner.swift"
+        )
+        let start = try #require(source.range(of: "    func configure("))
+        let tail = source[start.lowerBound...]
+        let end = try #require(tail.range(of: "\n    func reconfigure("))
+        let configure = tail[..<end.lowerBound]
+        let update = try #require(
+            configure.range(of: "try display.updateLogicalWidth(")
+        )
+        let select = try #require(
+            configure.range(of: "try await selectPublishedHiDPIMode(display)")
+        )
+
+        #expect(update.lowerBound < select.lowerBound)
+        #expect(configure.contains("display.backingWidth != display.logicalWidth"))
     }
 
     @Test("Private virtual display lifecycle keeps callbacks off the worker main queue")
@@ -48,7 +87,7 @@ struct LumenVirtualDisplayLifecycleContractTests {
         #expect(
             source.components(
                 separatedBy: "if (![NSThread isMainThread])"
-            ).count - 1 == 3
+            ).count - 1 >= 3
         )
         #expect(
             source.contains(

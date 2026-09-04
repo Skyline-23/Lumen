@@ -167,10 +167,11 @@ extension LumenMacCaptureConfiguration {
         }
 
         if effectiveTargetFrameRate >= 120 {
-            // ScreenCaptureKit needs one surface in delivery, one potentially
-            // retained by VideoToolbox, and one free surface for WindowServer.
-            // A two-surface pool can freeze after the first frame at 120 Hz.
-            return .q3
+            // Two surfaces can be retained by pipelined VideoToolbox work and
+            // one latest source can wait for admission. Keep a fourth surface
+            // free so WindowServer can deliver the next 120 Hz frame instead
+            // of coupling ScreenCaptureKit cadence to encoder completion.
+            return .q4
         }
 
         if negotiatedDynamicRangeTransport ==
@@ -202,8 +203,8 @@ extension LumenMacCaptureConfiguration {
         }
 
         // ScreenCaptureKit source surfaces and the downstream freshness mailbox
-        // have different ownership constraints. Keep the source pool at three for
-        // 120 Hz, while the forwarding side stays shallow unless large/HDR frames
+        // have different ownership constraints. Keep the forwarding side shallow
+        // even though the 120 Hz source pool needs four surfaces, unless large/HDR frames
         // need one additional metadata slot.
         return usesHighResolutionWorkload || prefersRealtimeHDRMetadata ? 2 : 1
     }

@@ -2,6 +2,36 @@ import XCTest
 @testable import LumenMacBridge
 
 final class LumenScreenCaptureDisplayReadinessTests: XCTestCase {
+    func testRetainedReadinessRejectsVisibleModeWithWrongBackingPixels() {
+        let authority = LumenScreenCaptureDisplayAuthority.retained(
+            ownerToken: 7
+        )
+        let oneXMode = LumenCaptureDisplayReadinessSnapshot(
+            ownerToken: 7,
+            isOnline: true,
+            isActive: true,
+            hasCurrentMode: true,
+            pixelWidth: 1_920,
+            pixelHeight: 1_080,
+            configuredPixelWidth: 3_840,
+            configuredPixelHeight: 2_160
+        )
+        let twoXMode = LumenCaptureDisplayReadinessSnapshot(
+            ownerToken: 7,
+            isOnline: true,
+            isActive: true,
+            hasCurrentMode: true,
+            pixelWidth: 3_840,
+            pixelHeight: 2_160,
+            configuredPixelWidth: 3_840,
+            configuredPixelHeight: 2_160
+        )
+
+        XCTAssertFalse(oneXMode.isModeReady(for: authority))
+        XCTAssertFalse(oneXMode.isPreparedHandleReady(for: authority))
+        XCTAssertTrue(twoXMode.isModeReady(for: authority))
+    }
+
     func testActiveReconfigurationUsesPromptAdmissionDeadline() {
         XCTAssertEqual(
             LumenScreenCaptureDisplayReadinessTiming.reconfiguration

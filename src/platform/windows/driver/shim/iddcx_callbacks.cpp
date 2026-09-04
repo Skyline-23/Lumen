@@ -3,6 +3,12 @@
 namespace {
 constexpr UINT kLumenModeCount = 1;
 
+UINT bits_per_component(bool hdr_capable) {
+  return hdr_capable
+    ? IDDCX_BITS_PER_COMPONENT_8 | IDDCX_BITS_PER_COMPONENT_10
+    : IDDCX_BITS_PER_COMPONENT_8;
+}
+
 void fill_signal_info(
   DISPLAYCONFIG_VIDEO_SIGNAL_INFO *signal,
   const LumenDriverVideoSignalMode &mode
@@ -86,6 +92,7 @@ IDDCX_MONITOR_MODE2 make_monitor_mode2(
   uint32_t width,
   uint32_t height,
   uint32_t refresh_millihertz,
+  bool hdr_capable,
   IDDCX_MONITOR_MODE_ORIGIN origin
 ) {
   IDDCX_MONITOR_MODE2 mode {};
@@ -98,7 +105,7 @@ IDDCX_MONITOR_MODE2 make_monitor_mode2(
     0
   );
   fill_signal_info(&mode.MonitorVideoSignalInfo, signal);
-  mode.BitsPerComponent.Rgb = IDDCX_BITS_PER_COMPONENT_8;
+  mode.BitsPerComponent.Rgb = bits_per_component(hdr_capable);
   return mode;
 }
 
@@ -114,7 +121,7 @@ IDDCX_TARGET_MODE2 make_target_mode2(
     1
   );
   fill_signal_info(&mode.TargetVideoSignalInfo.targetVideoSignalInfo, signal);
-  mode.BitsPerComponent.Rgb = IDDCX_BITS_PER_COMPONENT_8;
+  mode.BitsPerComponent.Rgb = bits_per_component(monitor_context->hdr_capable);
   return mode;
 }
 }
@@ -228,6 +235,7 @@ NTSTATUS LumenEvtIddCxParseMonitorDescription2(
     parsed_mode.width,
     parsed_mode.height,
     parsed_mode.refresh_millihertz,
+    parsed_mode.hdr_capable != 0,
     IDDCX_MONITOR_MODE_ORIGIN_MONITORDESCRIPTOR
   );
   return STATUS_SUCCESS;

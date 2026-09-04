@@ -104,7 +104,11 @@ extension LumenBridgeRuntime {
             generation: generation,
             sequenceNumber: frame.sourceSequenceNumber
         )
-        logEncodedFrameDiagnosticsIfNeeded(frame, captureStatistics: nil)
+        let captureStatistics = await encodedCaptureSession?.statisticsSnapshot()
+        logEncodedFrameDiagnosticsIfNeeded(
+            frame,
+            captureStatistics: captureStatistics
+        )
     }
 
     func recordEncodedCaptureEvent(

@@ -258,6 +258,89 @@ struct LumenEncodedBitrateTelemetry: Equatable, Sendable {
     }
 }
 
+struct LumenCaptureCadenceTelemetry: Equatable, Sendable {
+    private static let reportingIntervalNanoseconds: UInt64 = 1_000_000_000
+
+    private(set) var windowDurationMilliseconds: Double?
+    private(set) var sourceCallbacksPerSecond: Double?
+    private(set) var videoToolboxSubmissionsPerSecond: Double?
+    private(set) var videoToolboxOutputsPerSecond: Double?
+    private(set) var pendingAdmissionDropsPerSecond: Double?
+
+    private var windowStartUptimeNanoseconds: UInt64?
+    private var sourceFrameCount: UInt64 = 0
+    private var submittedFrameCount: UInt64 = 0
+    private var emittedFrameCount: UInt64 = 0
+    private var pendingAdmissionDropCount: UInt64 = 0
+
+    mutating func observe(
+        statistics: LumenEncodedCaptureSessionStatistics,
+        atUptimeNanoseconds uptimeNanoseconds: UInt64
+    ) -> Bool {
+        guard let windowStartUptimeNanoseconds,
+              uptimeNanoseconds >= windowStartUptimeNanoseconds else {
+            beginWindow(
+                statistics: statistics,
+                atUptimeNanoseconds: uptimeNanoseconds
+            )
+            return false
+        }
+
+        let elapsedNanoseconds =
+            uptimeNanoseconds - windowStartUptimeNanoseconds
+        guard elapsedNanoseconds >= Self.reportingIntervalNanoseconds else {
+            return false
+        }
+
+        windowDurationMilliseconds = Double(elapsedNanoseconds) / 1_000_000
+        sourceCallbacksPerSecond = rate(
+            current: statistics.sourceFrameCount,
+            previous: sourceFrameCount,
+            elapsedNanoseconds: elapsedNanoseconds
+        )
+        videoToolboxSubmissionsPerSecond = rate(
+            current: statistics.submittedFrameCount,
+            previous: submittedFrameCount,
+            elapsedNanoseconds: elapsedNanoseconds
+        )
+        videoToolboxOutputsPerSecond = rate(
+            current: statistics.emittedFrameCount,
+            previous: emittedFrameCount,
+            elapsedNanoseconds: elapsedNanoseconds
+        )
+        pendingAdmissionDropsPerSecond = rate(
+            current: statistics.pendingAdmissionDropCount,
+            previous: pendingAdmissionDropCount,
+            elapsedNanoseconds: elapsedNanoseconds
+        )
+        beginWindow(
+            statistics: statistics,
+            atUptimeNanoseconds: uptimeNanoseconds
+        )
+        return true
+    }
+
+    private mutating func beginWindow(
+        statistics: LumenEncodedCaptureSessionStatistics,
+        atUptimeNanoseconds uptimeNanoseconds: UInt64
+    ) {
+        windowStartUptimeNanoseconds = uptimeNanoseconds
+        sourceFrameCount = statistics.sourceFrameCount
+        submittedFrameCount = statistics.submittedFrameCount
+        emittedFrameCount = statistics.emittedFrameCount
+        pendingAdmissionDropCount = statistics.pendingAdmissionDropCount
+    }
+
+    private func rate(
+        current: UInt64,
+        previous: UInt64,
+        elapsedNanoseconds: UInt64
+    ) -> Double {
+        let delta = current >= previous ? current - previous : 0
+        return Double(delta) * 1_000_000_000 / Double(elapsedNanoseconds)
+    }
+}
+
 struct LumenCapturePipelineUtilization: Equatable, Sendable {
     let videoToolboxAdmissionPercent: Double?
     let videoToolboxOutputPercent: Double?

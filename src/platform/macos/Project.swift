@@ -139,6 +139,8 @@ let project = Project(
                 .sdk(name: "AVFoundation", type: .framework),
                 .sdk(name: "CoreAudio", type: .framework),
                 .sdk(name: "CoreVideo", type: .framework),
+                .sdk(name: "IOSurface", type: .framework),
+                .sdk(name: "Security", type: .framework),
                 .sdk(name: "ScreenCaptureKit", type: .framework),
                 .sdk(name: "VideoToolbox", type: .framework)
             ],
@@ -317,6 +319,29 @@ let project = Project(
             )
         ),
         .target(
+            name: "LumenSLContentStreamProbe",
+            destinations: .macOS,
+            product: .commandLineTool,
+            bundleId: "dev.skyline23.lumen.slcontentstreamprobe",
+            deploymentTargets: .macOS("15.0"),
+            infoPlist: .default,
+            sources: [
+                "../../../tools/quality/macos_slcontentstream_runtime_probe.m"
+            ],
+            dependencies: [
+                .target(name: "LumenMacBridge"),
+                .sdk(name: "AppKit", type: .framework)
+            ],
+            settings: .settings(
+                base: [
+                    "PRODUCT_NAME": "LumenSLContentStreamProbe",
+                    "CODE_SIGN_STYLE": "Automatic",
+                    "CODE_SIGN_IDENTITY": "Apple Development",
+                    "DEVELOPMENT_TEAM": "Q23JLSJCCV"
+                ]
+            )
+        ),
+        .target(
             name: "LumenTuistTests",
             destinations: .macOS,
             product: .unitTests,
@@ -361,6 +386,13 @@ let project = Project(
             ]),
             testAction: .targets([
                 .testableTarget(target: "LumenTuistTests")
+            ])
+        ),
+        .scheme(
+            name: "LumenSLContentStreamProbe",
+            shared: true,
+            buildAction: .buildAction(targets: [
+                "LumenSLContentStreamProbe"
             ])
         ),
         .scheme(

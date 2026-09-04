@@ -14,13 +14,20 @@ extension LumenScreenCaptureVideoRuntime {
         let utilization = LumenCapturePipelineUtilization(
             statistics: statistics
         )
-        let sourceApproxFrameRate = averageFrameRate(
-            intervalTotalMilliseconds: sourceIntervalTotalMilliseconds,
-            sampleCount: sourceIntervalSampleCount
+        let sourceApproxFrameRate = formattedRate(
+            captureCadenceTelemetry.sourceCallbacksPerSecond
         )
-        let outputApproxFrameRate = averageFrameRate(
-            intervalTotalMilliseconds: outputIntervalTotalMilliseconds,
-            sampleCount: outputIntervalSampleCount
+        let submissionApproxFrameRate = formattedRate(
+            captureCadenceTelemetry.videoToolboxSubmissionsPerSecond
+        )
+        let outputApproxFrameRate = formattedRate(
+            captureCadenceTelemetry.videoToolboxOutputsPerSecond
+        )
+        let pendingAdmissionDropRate = formattedRate(
+            captureCadenceTelemetry.pendingAdmissionDropsPerSecond
+        )
+        let cadenceWindowMilliseconds = formattedRate(
+            captureCadenceTelemetry.windowDurationMilliseconds
         )
         let appliedBitrateKbps = statistics.appliedVideoBitRateKbps
         let appliedBitrateDescription =
@@ -31,8 +38,21 @@ extension LumenScreenCaptureVideoRuntime {
                 target > 0 ? output * 100 / Double(target) : nil
             }
         }
+        let contentStream = skyLightDisplayStream
         var notes = [
-            "captureBackend=screen-capture-kit",
+            "captureBackend=\(captureBackend.rawValue)",
+            "sourceBackend=\(captureBackend.rawValue)",
+            "privateContentStream=\(captureBackend == .skyLightDisplayStream)",
+            "privateContentStreamBackend=\(contentStream?.backendName ?? "unavailable")",
+            "privateContentStreamClass=\(contentStream?.contentStreamClassName ?? "unavailable")",
+            "privateContentStreamSessionClass=\(contentStream?.contentStreamSessionClassName ?? "unavailable")",
+            "privateContentStreamUnderlyingCGDisplayStream=\(contentStream?.underlyingDisplayStreamAvailable ?? false)",
+            "privateContentStreamUnderlyingCGDisplayStreamTypeID=\(contentStream?.underlyingDisplayStreamTypeID ?? 0)",
+            "privateContentStreamFirstFrameDropCount=\(contentStream?.firstFrameDropCount ?? 0)",
+            "privateContentStreamCumulativeDropCount=\(contentStream?.cumulativeDropCount ?? 0)",
+            "privateContentStreamRequestedPixelFormat=\(auditFourCC(capturePixelFormat))",
+            "privateContentStreamRequestedMatrix=\(configuration.encodedColorConfiguration.map { $0.yCbCrMatrix.imageBufferValue as String } ?? "unset")",
+            "privateContentStreamDynamicRangeMode=\(configuration.usesHDRTransport ? 2 : 0)",
             "screenCaptureOutputRegistrationStage=\(outputOwnership.stage.rawValue)",
             "screenCaptureDisplayAdmissionMode=\(displayAdmissionMode.rawValue)",
             "screenCaptureDisplayAdmissionMilliseconds=\(displayAdmissionDurationMilliseconds)",
@@ -43,6 +63,8 @@ extension LumenScreenCaptureVideoRuntime {
             "screenCaptureIncompleteFrameCount=\(statistics.incompleteSourceFrameCount)",
             "sourceApproxFrameRate=\(sourceApproxFrameRate)",
             "sourceCallbackApproxFrameRate=\(sourceApproxFrameRate)",
+            "sourceCallbackWindowFrameRate=\(sourceApproxFrameRate)",
+            "captureCadenceWindowMilliseconds=\(cadenceWindowMilliseconds)",
             "videoToolboxTargetFrameRateHint=\(configuration.effectiveTargetFrameRate)",
             "videoToolboxAdaptiveTargetFrameRate=\(statistics.adaptiveTargetFrameRate.map(String.init) ?? "n/a")",
             "videoToolboxEncoderInputPixelFormat=\(capturePixelFormat)",
@@ -58,10 +80,12 @@ extension LumenScreenCaptureVideoRuntime {
             "videoToolboxAllowOpenGOP=\(statistics.exactCaptureAudit.allowOpenGOP.map { String($0) } ?? "n/a")",
             "videoToolboxConfiguredSourceFrameCount=\(width)x\(height)",
             "videoToolboxSubmittedFrameCount=\(statistics.submittedFrameCount)",
+            "videoToolboxSubmissionWindowFrameRate=\(submissionApproxFrameRate)",
             "videoToolboxAdmissionUtilizationPercent=\(formattedPercent(utilization.videoToolboxAdmissionPercent))",
             "videoToolboxOutputUtilizationPercent=\(formattedPercent(utilization.videoToolboxOutputPercent))",
             "videoToolboxPendingAdmissionDropCount=\(statistics.pendingAdmissionDropCount)",
             "videoToolboxIntentionalFrameCadenceDropCount=\(statistics.intentionalFrameCadenceDropCount)",
+            "videoToolboxPendingAdmissionDropWindowRate=\(pendingAdmissionDropRate)",
             "videoToolboxAppliedBitrateKbps=\(appliedBitrateDescription)",
             "videoToolboxEncodedByteCount=\(statistics.encodedByteCount)",
             "videoToolboxEstimatedOutputBitrateKbps=\(formattedPercent(outputBitrateKbps))",
@@ -70,13 +94,18 @@ extension LumenScreenCaptureVideoRuntime {
             "videoToolboxBootstrapPendingSource=\(pendingVideoBootstrapSource != nil)",
             "videoToolboxCurrentInflightStagingSlots=\(inflightFrameCount)",
             "videoToolboxMaxInflightStagingSlots=\(statistics.maximumInflightFrameCount)",
-            "videoToolboxOutputApproxFrameRate=\(outputApproxFrameRate)"
+            "videoToolboxOutputApproxFrameRate=\(outputApproxFrameRate)",
+            "videoToolboxOutputWindowFrameRate=\(outputApproxFrameRate)"
         ]
         notes.append(contentsOf: captureStageTimingNotes())
         return notes
     }
 
     static func identity(of stream: SCStream) -> UInt {
+        UInt(bitPattern: Unmanaged.passUnretained(stream).toOpaque())
+    }
+
+    static func identity(of stream: LumenSkyLightDisplayStream) -> UInt {
         UInt(bitPattern: Unmanaged.passUnretained(stream).toOpaque())
     }
 
@@ -125,12 +154,19 @@ extension LumenScreenCaptureVideoRuntime {
     }
 
     func refreshStatisticsNotesIfNeeded() {
-        guard statisticsNotesRefreshGate.shouldRefresh(
+        let didCompleteCadenceWindow = captureCadenceTelemetry.observe(
+            statistics: statistics,
+            atUptimeNanoseconds: DispatchTime.now().uptimeNanoseconds
+        )
+        let shouldRefreshNotes = statisticsNotesRefreshGate.shouldRefresh(
             sourceFrameCount: statistics.sourceFrameCount
-        ) else {
-            return
+        )
+        if shouldRefreshNotes || didCompleteCadenceWindow {
+            publishStatistics(reason: .forced)
         }
-        publishStatistics(reason: .forced)
+        if didCompleteCadenceWindow {
+            logCompactPipelineTiming()
+        }
     }
 
     @discardableResult
@@ -164,6 +200,38 @@ extension LumenScreenCaptureVideoRuntime {
         )
     }
 
+    func logCompactPipelineTiming() {
+        let sourceFrameRate = formattedRate(
+            captureCadenceTelemetry.sourceCallbacksPerSecond
+        )
+        let submissionFrameRate = formattedRate(
+            captureCadenceTelemetry.videoToolboxSubmissionsPerSecond
+        )
+        let outputFrameRate = formattedRate(
+            captureCadenceTelemetry.videoToolboxOutputsPerSecond
+        )
+        let pendingDropFrameRate = formattedRate(
+            captureCadenceTelemetry.pendingAdmissionDropsPerSecond
+        )
+        let displayToCallback = compactTiming(
+            captureIngressTimings.displayToCallback
+        )
+        let sourceService = compactTiming(sourceCallbackServiceTiming)
+        let admissionWait = compactTiming(encoderAdmissionWaitTiming)
+        let encodeCall = compactTiming(encoderInvocationTiming)
+        let encodeCallback = compactTiming(videoToolboxCallbackTiming)
+        let outputQueueWait = compactTiming(outputOwnerQueueWaitTiming)
+        let outputService = compactTiming(outputServiceTiming)
+        let frameHandler = compactTiming(frameHandlerTiming)
+        Self.pipelineLogger.notice(
+            "stage=window src-fps=\(sourceFrameRate, privacy: .public) submit-fps=\(submissionFrameRate, privacy: .public) output-fps=\(outputFrameRate, privacy: .public) pending-drop-fps=\(pendingDropFrameRate, privacy: .public) display-callback-ms=\(displayToCallback, privacy: .public) source-service-ms=\(sourceService, privacy: .public) admission-wait-ms=\(admissionWait, privacy: .public) encode-call-ms=\(encodeCall, privacy: .public) encode-callback-ms=\(encodeCallback, privacy: .public) output-queue-ms=\(outputQueueWait, privacy: .public) output-service-ms=\(outputService, privacy: .public) frame-handler-ms=\(frameHandler, privacy: .public)"
+        )
+    }
+
+    func compactTiming(_ timing: LumenCaptureStageTimingAccumulator) -> String {
+        "\(formattedRate(timing.averageMilliseconds))/\(formattedRate(timing.maximumMilliseconds))"
+    }
+
     func refreshStatisticsNotes() {
         statistics.notes = makeStatisticsNotes(
             width: outputWidth,
@@ -171,17 +239,9 @@ extension LumenScreenCaptureVideoRuntime {
         )
     }
 
-    func averageFrameRate(
-        intervalTotalMilliseconds: Double,
-        sampleCount: UInt64
-    ) -> String {
-        guard sampleCount > 0, intervalTotalMilliseconds > 0 else {
-            return "0.0"
-        }
-        return String(
-            format: "%.2f",
-            Double(sampleCount) * 1_000 / intervalTotalMilliseconds
-        )
+    func formattedRate(_ value: Double?) -> String {
+        guard let value else { return "n/a" }
+        return String(format: "%.2f", value)
     }
 
     func formattedPercent(_ value: Double?) -> String {

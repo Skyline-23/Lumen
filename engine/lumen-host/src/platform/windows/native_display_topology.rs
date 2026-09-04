@@ -1,12 +1,13 @@
 use std::ptr::null_mut;
 
 use windows_sys::Win32::Devices::Display::{
-    DisplayConfigGetDeviceInfo, GetDisplayConfigBufferSizes, QueryDisplayConfig, SetDisplayConfig,
-    DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO, DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO,
+    DisplayConfigGetDeviceInfo, DisplayConfigSetDeviceInfo, GetDisplayConfigBufferSizes,
+    QueryDisplayConfig, SetDisplayConfig, DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO,
+    DISPLAYCONFIG_DEVICE_INFO_SET_ADVANCED_COLOR_STATE, DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO,
     DISPLAYCONFIG_MODE_INFO, DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE,
     DISPLAYCONFIG_MODE_INFO_TYPE_TARGET, DISPLAYCONFIG_PATH_INFO, DISPLAYCONFIG_RATIONAL,
-    QDC_ONLY_ACTIVE_PATHS, SDC_APPLY, SDC_NO_OPTIMIZATION, SDC_SAVE_TO_DATABASE,
-    SDC_USE_SUPPLIED_DISPLAY_CONFIG,
+    DISPLAYCONFIG_SET_ADVANCED_COLOR_STATE, QDC_ONLY_ACTIVE_PATHS, SDC_APPLY, SDC_NO_OPTIMIZATION,
+    SDC_SAVE_TO_DATABASE, SDC_USE_SUPPLIED_DISPLAY_CONFIG,
 };
 use windows_sys::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_SUCCESS, LUID};
 use windows_sys::Win32::Graphics::Gdi::DISPLAYCONFIG_PATH_MODE_IDX_INVALID;
@@ -127,6 +128,68 @@ pub(super) fn verify_topology(expected: &WindowsDisplayConfigSnapshot) -> Result
     (actual == expected)
         .then_some(())
         .ok_or_else(|| "Windows display topology verification did not match the journal".to_owned())
+}
+
+pub(super) fn enable_advanced_color(adapter_luid: u64, target_id: u32) -> Result<(), String> {
+    let adapter_id = LUID {
+        LowPart: adapter_luid as u32,
+        HighPart: (adapter_luid >> 32) as u32 as i32,
+    };
+    let mut info = DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO::default();
+    info.header.r#type = DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO;
+    info.header.size = std::mem::size_of::<DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO>() as u32;
+    info.header.adapterId = adapter_id;
+    info.header.id = target_id;
+    // SAFETY: Category 8 (FFI boundary). The header identifies the monitor target returned by
+    // IddCxMonitorArrival and the structure remains live and exclusively writable for the call.
+    let query_status = unsafe { DisplayConfigGetDeviceInfo(&mut info.header) };
+    if query_status != ERROR_SUCCESS as i32 {
+        return Err(format!(
+            "Windows Advanced Color query failed for target {target_id}: {query_status}"
+        ));
+    }
+    // SAFETY: Category 5 (union validity). GET_ADVANCED_COLOR_INFO selects the documented
+    // bitfield value: bit 0 is support and bit 1 is the current enabled state.
+    let flags = unsafe { info.Anonymous.value };
+    if flags & 1 == 0 {
+        return Err(format!(
+            "Windows target {target_id} does not report Advanced Color support"
+        ));
+    }
+    if flags & (1 << 1) != 0 {
+        return Ok(());
+    }
+
+    let mut requested = DISPLAYCONFIG_SET_ADVANCED_COLOR_STATE::default();
+    requested.header.r#type = DISPLAYCONFIG_DEVICE_INFO_SET_ADVANCED_COLOR_STATE;
+    requested.header.size = std::mem::size_of::<DISPLAYCONFIG_SET_ADVANCED_COLOR_STATE>() as u32;
+    requested.header.adapterId = adapter_id;
+    requested.header.id = target_id;
+    requested.Anonymous.value = 1;
+    // SAFETY: Category 8 (FFI boundary). The initialized SET packet remains live and immutable
+    // for the call, and value 1 requests the documented enableAdvancedColorState bit.
+    let set_status = unsafe { DisplayConfigSetDeviceInfo(&requested.header) };
+    if set_status != ERROR_SUCCESS as i32 {
+        return Err(format!(
+            "Windows Advanced Color enable failed for target {target_id}: {set_status}"
+        ));
+    }
+
+    let mut verified = DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO::default();
+    verified.header.r#type = DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO;
+    verified.header.size = std::mem::size_of::<DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO>() as u32;
+    verified.header.adapterId = adapter_id;
+    verified.header.id = target_id;
+    // SAFETY: Category 8 (FFI boundary). This is the same bounded target query as above.
+    let verify_status = unsafe { DisplayConfigGetDeviceInfo(&mut verified.header) };
+    // SAFETY: Category 5 (union validity). A successful advanced-color query selects value.
+    let verified_flags = unsafe { verified.Anonymous.value };
+    if verify_status != ERROR_SUCCESS as i32 || verified_flags & (1 << 1) == 0 {
+        return Err(format!(
+            "Windows did not confirm Advanced Color for target {target_id}: {verify_status}"
+        ));
+    }
+    Ok(())
 }
 
 fn path_record(

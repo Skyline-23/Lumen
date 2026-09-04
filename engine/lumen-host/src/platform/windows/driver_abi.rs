@@ -3,7 +3,7 @@ use std::mem::size_of;
 pub(super) const DEVICE_INTERFACE_GUID: u128 = 0xf04b8b5a_a603_4d32_96f8_5f8c2108a1d0;
 pub(super) const ABI_MAGIC: u32 = 0x4C55_4D4E;
 pub(super) const ABI_MAJOR: u16 = 1;
-pub(super) const ABI_MINOR: u16 = 4;
+pub(super) const ABI_MINOR: u16 = 6;
 pub(super) const ABI_REQUEST_SIZE: u32 = 80;
 pub(super) const ABI_RESPONSE_SIZE: u32 = 48;
 pub(super) const ABI_FRAME_SIZE: u32 = 80;
@@ -60,6 +60,7 @@ pub(super) const STATUS_NOT_READY: u32 = 10;
 pub(super) const STATE_MONITOR_ACTIVE: u32 = 1 << 0;
 pub(super) const STATE_MONITOR_ORPHANED: u32 = 1 << 3;
 pub(super) const STATE_SWAPCHAIN_ASSIGNED: u32 = 1 << 4;
+pub(super) const MONITOR_FLAG_HDR_CAPABLE: u32 = 1 << 0;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

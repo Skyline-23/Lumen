@@ -12,6 +12,7 @@ use windows_sys::core::GUID;
 use windows_sys::Win32::System::Com::CoCreateGuid;
 
 use crate::{HostArguments, HostAuthorityPaths, PlatformApplicationPlan};
+use lumen_engine::TRANSPORT_FULL_FRAME_HDR;
 
 use super::display_isolation::{
     first_frame_timed_out, monitor_required, DisplayIsolationLifecycle, FIRST_FRAME_TIMEOUT,
@@ -19,7 +20,8 @@ use super::display_isolation::{
 use super::display_topology::{AdapterLuid, WindowsPathIdentity};
 use super::native_display_driver::{DriverHandle, MonitorArrivalIdentity, MonitorState};
 use super::native_display_topology::{
-    apply_topology, query_active_topology, query_active_topology_if_available, verify_topology,
+    apply_topology, enable_advanced_color, query_active_topology,
+    query_active_topology_if_available, verify_topology,
 };
 
 pub(super) struct NativeWindowsDisplay {
@@ -64,6 +66,7 @@ impl NativeWindowsDisplay {
             .unwrap_or_else(unavailable_physical_topology);
         let guid = create_guid()?;
         let monitor_id = monitor_id(guid);
+        let hdr_capable = plan.session_offer.requested_transport == TRANSPORT_FULL_FRAME_HDR;
         let now = timestamp_millis()?;
         let journal = WorkspaceRecoveryJournal::new(
             WorkspaceRecoveryMetadata {
@@ -88,6 +91,7 @@ impl NativeWindowsDisplay {
             plan.width,
             plan.height,
             refresh_millihertz,
+            hdr_capable,
         ) {
             Ok(arrival) => arrival,
             Err(error) => {
@@ -95,6 +99,12 @@ impl NativeWindowsDisplay {
                 return Err(combine_error(error, recovery));
             }
         };
+        if hdr_capable {
+            if let Err(error) = wait_for_advanced_color(arrival) {
+                let recovery = recover_persisted_topology(&self.recovery_store, &driver).err();
+                return Err(combine_error(error, recovery));
+            }
+        }
         let mut display = ActiveDisplay {
             driver,
             monitor_id,
@@ -635,4 +645,26 @@ fn wait_for_swapchain(
         identity.target_id,
         FIRST_FRAME_TIMEOUT.as_millis()
     ))
+}
+
+fn wait_for_advanced_color(arrival: MonitorArrivalIdentity) -> Result<(), String> {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let error = match enable_advanced_color(arrival.adapter_luid, arrival.target_id) {
+            Ok(()) => return Ok(()),
+            Err(error) => error,
+        };
+        let now = Instant::now();
+        if now >= deadline {
+            return Err(format!(
+                "{error} after waiting {} ms",
+                Duration::from_secs(2).as_millis()
+            ));
+        }
+        thread::sleep(
+            deadline
+                .saturating_duration_since(now)
+                .min(Duration::from_millis(50)),
+        );
+    }
 }

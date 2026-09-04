@@ -67,6 +67,24 @@ enum LumenMachTime {
         let nanoseconds = time.seconds * 1_000_000_000
         return UInt64(nanoseconds * Double(timebase.denom) / Double(timebase.numer))
     }
+
+    static func relativeTime(from start: UInt64, to end: UInt64) -> CMTime {
+        guard end >= start,
+              timebase.denom != 0 else {
+            return .invalid
+        }
+        let elapsedSeconds = Double(end - start)
+            * Double(timebase.numer)
+            / Double(timebase.denom)
+            / 1_000_000_000
+        guard elapsedSeconds.isFinite else {
+            return .invalid
+        }
+        return CMTime(
+            seconds: elapsedSeconds,
+            preferredTimescale: 1_000_000_000
+        )
+    }
 }
 
 enum LumenScreenCaptureError: Error, LocalizedError {
@@ -76,6 +94,16 @@ enum LumenScreenCaptureError: Error, LocalizedError {
     case captureAlreadyRunning
     case captureNotRunning
     case outputOwnershipLost
+    case avFoundationDisplayModeUnavailable(UInt32)
+    case avFoundationScreenInputUnavailable(UInt32)
+    case avFoundationInputRejected(UInt32)
+    case avFoundationOutputRejected
+    case avFoundationStartFailed(UInt32)
+    case avFoundationRuntimeFailed(String)
+    case skyLightDisplayModeUnavailable(UInt32)
+    case skyLightStartFailed(UInt32, String)
+    case skyLightStreamStopped(UInt32)
+    case skyLightFrameUnavailable(UInt32, Int32)
     case compressionSessionCreationFailed(OSStatus)
     case compressionSessionPreparationFailed(OSStatus)
     case compressionFrameCompletionFailed(OSStatus)
@@ -93,14 +121,34 @@ enum LumenScreenCaptureError: Error, LocalizedError {
         case .shareableContentUnavailable:
             return "ScreenCaptureKit returned neither shareable content nor an error."
         case .captureAlreadyRunning:
-            return "ScreenCaptureKit video stream is already starting or running."
+            return "Video capture is already starting or running."
         case .captureNotRunning:
-            return "ScreenCaptureKit video stream is not running."
+            return "Video capture is not running."
         case .outputOwnershipLost:
             return [
                 "ScreenCaptureKit delivered a sample from a stream",
                 "that no longer owns the registered video output."
             ].joined(separator: " ")
+        case .avFoundationDisplayModeUnavailable(let displayID):
+            return "AVFoundation could not resolve display mode \(displayID)."
+        case .avFoundationScreenInputUnavailable(let displayID):
+            return "AVCaptureScreenInput could not capture display \(displayID)."
+        case .avFoundationInputRejected(let displayID):
+            return "AVCaptureSession rejected display input \(displayID)."
+        case .avFoundationOutputRejected:
+            return "AVCaptureSession rejected the screen video output."
+        case .avFoundationStartFailed(let displayID):
+            return "AVCaptureSession did not start for display \(displayID)."
+        case .avFoundationRuntimeFailed(let description):
+            return "AVCaptureSession runtime failed: \(description)"
+        case .skyLightDisplayModeUnavailable(let displayID):
+            return "SkyLight could not resolve a pixel display mode for display \(displayID)."
+        case .skyLightStartFailed(let displayID, let description):
+            return "SkyLight display stream failed to start for display \(displayID): \(description)"
+        case .skyLightStreamStopped(let displayID):
+            return "SkyLight display stream stopped unexpectedly for display \(displayID)."
+        case .skyLightFrameUnavailable(let displayID, let status):
+            return "SkyLight display stream did not provide a pixel buffer for display \(displayID) (CVReturn \(status))."
         case .compressionSessionCreationFailed(let status):
             return "Unable to create VideoToolbox compression session (OSStatus \(status))."
         case .compressionSessionPreparationFailed(let status):
@@ -129,7 +177,7 @@ enum LumenEncodedCaptureStartupError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .runtimeTerminated(let error):
-            return "ScreenCaptureKit runtime terminated during startup: \(error.localizedDescription)"
+            return "Video capture runtime terminated during startup: \(error.localizedDescription)"
         }
     }
 }

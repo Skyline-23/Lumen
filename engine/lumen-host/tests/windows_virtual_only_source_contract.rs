@@ -111,6 +111,34 @@ fn startup_waits_for_os_owned_idd_swapchain_without_mutating_session_topology() 
 }
 
 #[test]
+fn hdr_session_enables_advanced_color_before_waiting_for_the_swapchain() {
+    // Given: the negotiated full-frame HDR application plan and IddCx arrival identity.
+    let start = DISPLAY
+        .split("pub(super) fn start")
+        .nth(1)
+        .expect("display start")
+        .split("pub(super) fn capture_driver")
+        .next()
+        .expect("bounded display start");
+
+    // Then: HDR is packed into the fixed driver request, Windows Advanced Color is
+    // enabled and verified for the returned target, and only then may capture start.
+    assert!(start.contains("TRANSPORT_FULL_FRAME_HDR"));
+    assert!(DRIVER_ABI.contains("MONITOR_FLAG_HDR_CAPABLE"));
+    assert!(DRIVER_HEADER.contains("LUMEN_MONITOR_FLAG_HDR_CAPABLE"));
+    let advanced_color = start
+        .find("wait_for_advanced_color(arrival)")
+        .expect("HDR Advanced Color gate");
+    let swapchain = start
+        .find("wait_for_swapchain(&display.driver, monitor_id, arrival)")
+        .expect("swapchain gate");
+    assert!(advanced_color < swapchain);
+    assert!(TOPOLOGY.contains("DisplayConfigSetDeviceInfo"));
+    assert!(TOPOLOGY.contains("DISPLAYCONFIG_DEVICE_INFO_SET_ADVANCED_COLOR_STATE"));
+    assert!(TOPOLOGY.contains("verified.Anonymous.value"));
+}
+
+#[test]
 fn qdc_access_denied_does_not_close_a_driver_owned_virtual_session() {
     // Given: startup, first-frame, and cleanup paths for disconnected sessions.
     let start = DISPLAY

@@ -6,7 +6,7 @@
 
 #define LUMEN_DRIVER_ABI_MAGIC 0x4C554D4Eu
 #define LUMEN_DRIVER_ABI_MAJOR 1u
-#define LUMEN_DRIVER_ABI_MINOR 4u
+#define LUMEN_DRIVER_ABI_MINOR 6u
 #define LUMEN_METHOD_BUFFERED 0u
 #define LUMEN_METHOD_OUT_DIRECT 2u
 #define LUMEN_FILE_READ_ACCESS 1u
@@ -26,6 +26,8 @@
 #define LUMEN_STATE_KEYFRAME_PENDING (1u << 2u)
 #define LUMEN_STATE_MONITOR_ORPHANED (1u << 3u)
 #define LUMEN_STATE_SWAPCHAIN_ASSIGNED (1u << 4u)
+#define LUMEN_MONITOR_FLAG_HDR_CAPABLE (1u << 0u)
+#define LUMEN_MONITOR_FLAG_MASK LUMEN_MONITOR_FLAG_HDR_CAPABLE
 #define LUMEN_DEVICE_INTERFACE_GUID_INIT \
   {0xf04b8b5a, 0xa603, 0x4d32, {0x96, 0xf8, 0x5f, 0x8c, 0x21, 0x08, 0xa1, 0xd0}}
 
@@ -148,11 +150,10 @@ typedef struct LumenDriverVideoSignalMode {
   int32_t scan_line_ordering;
 } LumenDriverVideoSignalMode;
 
-#define LUMEN_MONITOR_EDID_BYTES 128u
+#define LUMEN_MONITOR_EDID_BYTES 384u
 #define LUMEN_EDID_STATUS_OK 0u
 #define LUMEN_EDID_STATUS_INVALID 1u
 #define LUMEN_EDID_STATUS_BUFFER_TOO_SMALL 2u
-#define LUMEN_EDID_STATUS_UNREPRESENTABLE 3u
 
 // The frame record's reserved word carries only validated presentation
 // metadata. It is deliberately additive and does not alter the fixed record
@@ -165,6 +166,7 @@ typedef struct LumenDriverMonitorEdidMode {
   uint32_t width;
   uint32_t height;
   uint32_t refresh_millihertz;
+  uint32_t hdr_capable;
 } LumenDriverMonitorEdidMode;
 
 typedef struct LumenDriverFrameRecord {
@@ -224,6 +226,7 @@ extern "C" {
     uint32_t width,
     uint32_t height,
     uint32_t refresh_millihertz,
+    uint32_t hdr_capable,
     uint8_t *output,
     uint32_t output_len
   );
@@ -242,7 +245,7 @@ static_assert(sizeof(LumenDriverAbiHeader) == 16, "LumenDriverAbiHeader layout c
 static_assert(sizeof(LumenDriverCoreRequest) == 80, "LumenDriverCoreRequest layout changed");
 static_assert(sizeof(LumenDriverCoreResponse) == 48, "LumenDriverCoreResponse layout changed");
 static_assert(sizeof(LumenDriverVideoSignalMode) == 48, "LumenDriverVideoSignalMode layout changed");
-static_assert(sizeof(LumenDriverMonitorEdidMode) == 12, "LumenDriverMonitorEdidMode layout changed");
+static_assert(sizeof(LumenDriverMonitorEdidMode) == 16, "LumenDriverMonitorEdidMode layout changed");
 static_assert(sizeof(LumenDriverFrameRecord) == 80, "LumenDriverFrameRecord layout changed");
 static_assert(sizeof(LumenDriverCoreState) == 152, "LumenDriverCoreState layout changed");
 static_assert(sizeof(LumenDriverCoreTransition) == 200, "LumenDriverCoreTransition layout changed");

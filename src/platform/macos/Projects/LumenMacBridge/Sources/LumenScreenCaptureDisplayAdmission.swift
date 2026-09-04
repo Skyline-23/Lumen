@@ -110,13 +110,17 @@ enum LumenScreenCaptureDisplayReadiness {
             }
             configuredOwner = currentOwner
         }
+        let currentMode = CGDisplayCopyDisplayMode(displayID)
         return LumenCaptureDisplayReadinessSnapshot(
             ownerToken: ownerToken,
             isOnline: CGDisplayIsOnline(displayID) != 0,
             isActive: CGDisplayIsActive(displayID) != 0,
-            hasCurrentMode: CGDisplayCopyDisplayMode(displayID) != nil,
-            pixelWidth: CGDisplayPixelsWide(displayID),
-            pixelHeight: CGDisplayPixelsHigh(displayID),
+            hasCurrentMode: currentMode != nil,
+            // CGDisplayPixelsWide/High can expose the logical dimensions of
+            // an explicitly selected HiDPI mode on macOS 27. Read the mode's
+            // pixel dimensions for the retained backing-geometry contract.
+            pixelWidth: currentMode?.pixelWidth ?? 0,
+            pixelHeight: currentMode?.pixelHeight ?? 0,
             configuredPixelWidth: Int(configuredOwner?.backingWidth ?? 0),
             configuredPixelHeight: Int(configuredOwner?.backingHeight ?? 0)
         )

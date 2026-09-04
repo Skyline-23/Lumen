@@ -97,6 +97,55 @@ final class LumenNativeVirtualDisplayTests: XCTestCase {
         XCTAssertEqual(display.backingHeight, 2_260)
     }
 
+    func testPublishedHiDPIModeSelectsLogicalAndBackingGeometry() async throws {
+        guard LumenMacVirtualDisplay.isSupported() else {
+            throw XCTSkip("Virtual displays are unavailable on this runtime")
+        }
+        let configuration = LumenMacVirtualDisplayConfiguration()
+        configuration.name = "Lumen HiDPI Selection Contract Test"
+        configuration.backingWidth = 2_420
+        configuration.backingHeight = 1_668
+        configuration.maximumBackingWidth = 3_840
+        configuration.maximumBackingHeight = 2_400
+        configuration.logicalWidth = 1_210
+        configuration.logicalHeight = 834
+        configuration.refreshRate = 120
+        configuration.highDensity = true
+
+        let display = try LumenMacVirtualDisplay(configuration: configuration)
+        defer { display.destroy() }
+        let deadline = DispatchTime.now().uptimeNanoseconds + 3_000_000_000
+        while true {
+            do {
+                try display.selectPublishedHiDPIMode()
+                break
+            } catch {
+                let now = DispatchTime.now().uptimeNanoseconds
+                guard now < deadline else { throw error }
+                try await Task.sleep(
+                    nanoseconds: min(100_000_000, deadline - now)
+                )
+            }
+        }
+
+        let mode = try XCTUnwrap(CGDisplayCopyDisplayMode(display.displayID))
+        XCTAssertEqual(mode.width, Int(configuration.logicalWidth))
+        XCTAssertEqual(mode.height, Int(configuration.logicalHeight))
+        XCTAssertEqual(mode.pixelWidth, Int(configuration.backingWidth))
+        XCTAssertEqual(mode.pixelHeight, Int(configuration.backingHeight))
+
+        let owner = LumenRetainedVirtualDisplayReference(display: display)
+        let readiness = LumenScreenCaptureDisplayReadiness.snapshot(
+            displayID: display.displayID,
+            owner: owner
+        )
+        XCTAssertEqual(readiness.pixelWidth, Int(configuration.backingWidth))
+        XCTAssertEqual(readiness.pixelHeight, Int(configuration.backingHeight))
+        XCTAssertTrue(
+            readiness.isModeReady(for: .retained(ownerToken: owner.ownerToken))
+        )
+    }
+
     func testPublicationStabilizerRestartsContinuousReadyWindowAfterStateChange() async throws {
         let clock = LumenVirtualDisplayPublicationClock()
         let ownerToken: UInt = 41

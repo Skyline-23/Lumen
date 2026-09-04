@@ -25,11 +25,12 @@ use super::driver_abi::{
     CoreRequest, CoreResponse, FrameRecord, ABI_FRAME_SIZE, DEVICE_INTERFACE_GUID,
     IOCTL_ADOPT_MONITOR, IOCTL_CREATE_MONITOR, IOCTL_DEQUEUE_FRAME, IOCTL_QUERY_BACKEND_CAPABILITY,
     IOCTL_QUERY_CAPABILITIES, IOCTL_QUERY_HEALTH, IOCTL_QUERY_MONITOR, IOCTL_REMOVE_MONITOR,
-    IOCTL_START_ENCODER, IOCTL_STOP_ENCODER, OPERATION_ADOPT_MONITOR, OPERATION_CREATE_MONITOR,
-    OPERATION_DEQUEUE_FRAME, OPERATION_QUERY_BACKEND_CAPABILITY, OPERATION_QUERY_CAPABILITIES,
-    OPERATION_QUERY_HEALTH, OPERATION_QUERY_MONITOR, OPERATION_REMOVE_MONITOR,
-    OPERATION_START_ENCODER, OPERATION_STOP_ENCODER, STATE_MONITOR_ACTIVE, STATE_MONITOR_ORPHANED,
-    STATE_SWAPCHAIN_ASSIGNED, STATUS_NOT_READY, STATUS_OK,
+    IOCTL_START_ENCODER, IOCTL_STOP_ENCODER, MONITOR_FLAG_HDR_CAPABLE, OPERATION_ADOPT_MONITOR,
+    OPERATION_CREATE_MONITOR, OPERATION_DEQUEUE_FRAME, OPERATION_QUERY_BACKEND_CAPABILITY,
+    OPERATION_QUERY_CAPABILITIES, OPERATION_QUERY_HEALTH, OPERATION_QUERY_MONITOR,
+    OPERATION_REMOVE_MONITOR, OPERATION_START_ENCODER, OPERATION_STOP_ENCODER,
+    STATE_MONITOR_ACTIVE, STATE_MONITOR_ORPHANED, STATE_SWAPCHAIN_ASSIGNED, STATUS_NOT_READY,
+    STATUS_OK,
 };
 
 const DRIVER_INTERFACE_GUID: GUID = GUID::from_u128(DEVICE_INTERFACE_GUID);
@@ -90,6 +91,7 @@ impl DriverHandle {
         width: u32,
         height: u32,
         refresh_millihertz: u32,
+        hdr_capable: bool,
     ) -> Result<MonitorArrivalIdentity, String> {
         let container_id_high = (u64::from(monitor_container_id.data1) << 32)
             | (u64::from(monitor_container_id.data2) << 16)
@@ -101,7 +103,12 @@ impl DriverHandle {
             [
                 monitor_id,
                 (u64::from(width) << 32) | u64::from(height),
-                u64::from(refresh_millihertz),
+                u64::from(refresh_millihertz)
+                    | (u64::from(if hdr_capable {
+                        MONITOR_FLAG_HDR_CAPABLE
+                    } else {
+                        0
+                    }) << 32),
                 container_id_high,
                 container_id_low,
             ],

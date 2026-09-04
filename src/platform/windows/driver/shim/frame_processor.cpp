@@ -19,6 +19,12 @@ constexpr uint32_t kContentSignalChanged =
 constexpr uint32_t kContentSignalUnchanged =
   LUMEN_DRIVER_CONTENT_SIGNAL_UNCHANGED;
 
+DXGI_COLOR_SPACE_TYPE color_space_for_format(DXGI_FORMAT format) {
+  return format == DXGI_FORMAT_R16G16B16A16_FLOAT
+    ? DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709
+    : DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709;
+}
+
 struct LumenFrameProcessorState {
   LumenDeviceContext *context;
   uint64_t generation;
@@ -361,10 +367,12 @@ NTSTATUS acquire_d3d11_frame(LumenFrameProcessorState *processor) {
   if (FAILED(query_result)) {
     return STATUS_NOT_SUPPORTED;
   }
+  D3D11_TEXTURE2D_DESC description {};
+  source->GetDesc(&description);
   return copy_frame(
     processor,
     source.Get(),
-    static_cast<uint32_t>(DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709),
+    static_cast<uint32_t>(color_space_for_format(description.Format)),
     output.MetaData.PresentDisplayQPCTime,
     content_signal(
       processor->swapchain,
