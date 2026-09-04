@@ -24,6 +24,7 @@ final class LumenScreenCaptureVideoRuntime:
         subsystem: "dev.skyline23.lumen",
         category: "CapturePipeline"
     )
+    static let captureQueueSpecificKey = DispatchSpecificKey<Void>()
     let configuration: LumenMacCaptureConfiguration
     let captureBackend: LumenVideoCaptureBackend
     let frameHandler: @Sendable (LumenEncodedFrame) -> Void
@@ -52,6 +53,26 @@ final class LumenScreenCaptureVideoRuntime:
     var skyLightFirstDisplayTime: UInt64?
     var skyLightLastPresentationTime: CMTime?
     var didLogSkyLightFirstFrame = false
+    // The private SkyLight callback submits at most two asynchronous Metal
+    // blits. These resources and counters are queue-owned; no extra
+    // coordination primitive is needed at the C callback boundary.
+    var skyLightMetalStagingResources:
+        LumenSkyLightMetalStagingResources?
+    var skyLightMetalStagingAdmission =
+        LumenSkyLightMetalStagingAdmission()
+    var skyLightMetalStagingGeneration =
+        LumenSkyLightMetalStagingGeneration()
+    var skyLightMetalStagingReleaseRequested = false
+    var skyLightMetalCopyDrainWaiters: [CheckedContinuation<Void, Never>] = []
+    var skyLightMetalStageSubmissionCount: UInt64 = 0
+    var skyLightMetalStageCompletionCount: UInt64 = 0
+    var skyLightMetalStageBusyDropCount: UInt64 = 0
+    var skyLightMetalStagePoolAllocationFailureCount: UInt64 = 0
+    var skyLightMetalStageTextureFailureCount: UInt64 = 0
+    var skyLightMetalStageCommandBufferFailureCount: UInt64 = 0
+    var skyLightMetalStageValidationFailureCount: UInt64 = 0
+    var skyLightMetalStageTiming = LumenCaptureStageTimingAccumulator()
+    var skyLightMetalStageLastError: String?
     // Lifecycle transitions are fenced on `queue` because capture start and
     // stop can suspend while either backend still owns callback delivery.
     var lifecycleStartInFlight = false
@@ -174,6 +195,7 @@ final class LumenScreenCaptureVideoRuntime:
         self.statisticsHandler = statisticsHandler
         self.terminationHandler = terminationHandler
         super.init()
+        queue.setSpecific(key: Self.captureQueueSpecificKey, value: ())
         unchangedContentIngressPacer = LumenAdaptiveVideoFramePacer(
             frameRateCeiling: configuration.effectiveTargetFrameRate
         )

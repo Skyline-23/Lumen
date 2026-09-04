@@ -70,7 +70,21 @@ extension LumenScreenCaptureVideoRuntime {
             "videoToolboxEncoderInputPixelFormat=\(capturePixelFormat)",
             "videoToolboxSourcePixelFormat=\(capturePixelFormat)",
             "sourceColorContract=\(sourceColorContractStatus)",
-            "videoToolboxStagingMode=direct-cvpixelbuffer",
+            "videoToolboxStagingMode=\(captureBackend == .skyLightDisplayStream ? "async-metal-blit" : "direct-cvpixelbuffer")",
+            "videoToolboxStagedSourceReleaseMode=\(captureBackend == .skyLightDisplayStream ? "gpu-completion" : "callback")",
+            "videoToolboxMetalStagePoolCapacity=\(LumenSkyLightMetalStagingPolicy.poolCapacity)",
+            "videoToolboxMetalStageGPUCopyInFlight=\(skyLightMetalStagingAdmission.isCopyInFlight)",
+            "videoToolboxMetalStageGPUCopyInFlightCount=\(skyLightMetalStagingAdmission.inFlightCopyCount)",
+            "videoToolboxMetalStageGeneration=\(skyLightMetalStagingGeneration.value)",
+            "videoToolboxMetalStageReleaseRequested=\(skyLightMetalStagingReleaseRequested)",
+            "videoToolboxMetalStageSubmissionCount=\(skyLightMetalStageSubmissionCount)",
+            "videoToolboxMetalStageCompletionCount=\(skyLightMetalStageCompletionCount)",
+            "videoToolboxMetalStageBusyDropCount=\(skyLightMetalStageBusyDropCount)",
+            "videoToolboxMetalStagePoolAllocationFailureCount=\(skyLightMetalStagePoolAllocationFailureCount)",
+            "videoToolboxMetalStageTextureFailureCount=\(skyLightMetalStageTextureFailureCount)",
+            "videoToolboxMetalStageCommandBufferFailureCount=\(skyLightMetalStageCommandBufferFailureCount)",
+            "videoToolboxMetalStageValidationFailureCount=\(skyLightMetalStageValidationFailureCount)",
+            "videoToolboxMetalStageLastError=\(skyLightMetalStageLastError ?? "none")",
             "videoToolboxAdmissionMode=serial-offloaded-latest",
             "videoToolboxPendingSourceBound=1",
             "videoToolboxInflightSourceBound=\(LumenRealtimeVideoEncoderAdmissionPolicy.maximumInflightFrameCount)",
@@ -128,6 +142,10 @@ extension LumenScreenCaptureVideoRuntime {
             + lumenCaptureTimingNotes(
                 prefix: "videoToolboxEncodeInvocation",
                 timing: encoderInvocationTiming
+            )
+            + lumenCaptureTimingNotes(
+                prefix: "videoToolboxMetalStage",
+                timing: skyLightMetalStageTiming
             )
             + lumenCaptureTimingNotes(
                 prefix: "videoToolboxEncodeToCallback",
@@ -220,13 +238,14 @@ extension LumenScreenCaptureVideoRuntime {
         )
         let sourceService = compactTiming(sourceCallbackServiceTiming)
         let admissionWait = compactTiming(encoderAdmissionWaitTiming)
+        let metalStage = compactTiming(skyLightMetalStageTiming)
         let encodeCall = compactTiming(encoderInvocationTiming)
         let encodeCallback = compactTiming(videoToolboxCallbackTiming)
         let outputQueueWait = compactTiming(outputOwnerQueueWaitTiming)
         let outputService = compactTiming(outputServiceTiming)
         let frameHandler = compactTiming(frameHandlerTiming)
         Self.pipelineLogger.notice(
-            "stage=window src-fps=\(sourceFrameRate, privacy: .public) submit-fps=\(submissionFrameRate, privacy: .public) output-fps=\(outputFrameRate, privacy: .public) pending-drop-fps=\(pendingDropFrameRate, privacy: .public) display-callback-ms=\(displayToCallback, privacy: .public) source-service-ms=\(sourceService, privacy: .public) admission-wait-ms=\(admissionWait, privacy: .public) encode-call-ms=\(encodeCall, privacy: .public) encode-callback-ms=\(encodeCallback, privacy: .public) output-queue-ms=\(outputQueueWait, privacy: .public) output-service-ms=\(outputService, privacy: .public) frame-handler-ms=\(frameHandler, privacy: .public)"
+            "stage=window src-fps=\(sourceFrameRate, privacy: .public) submit-fps=\(submissionFrameRate, privacy: .public) output-fps=\(outputFrameRate, privacy: .public) pending-drop-fps=\(pendingDropFrameRate, privacy: .public) display-callback-ms=\(displayToCallback, privacy: .public) source-service-ms=\(sourceService, privacy: .public) metal-stage-ms=\(metalStage, privacy: .public) admission-wait-ms=\(admissionWait, privacy: .public) encode-call-ms=\(encodeCall, privacy: .public) encode-callback-ms=\(encodeCallback, privacy: .public) output-queue-ms=\(outputQueueWait, privacy: .public) output-service-ms=\(outputService, privacy: .public) frame-handler-ms=\(frameHandler, privacy: .public)"
         )
     }
 

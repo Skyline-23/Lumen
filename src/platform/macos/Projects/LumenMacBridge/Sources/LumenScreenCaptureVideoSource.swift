@@ -4,6 +4,7 @@ import CoreMedia
 import CoreVideo
 import Darwin
 import Foundation
+import Metal
 import OSLog
 import ScreenCaptureKit
 import Synchronization
@@ -293,10 +294,9 @@ extension LumenScreenCaptureVideoRuntime {
             return
         }
 
-        // CGDisplayStream's IOSurface is only callback-owned by default. Take
-        // a retained surface/use-count lease before handing the pixel buffer
-        // to the asynchronous VideoToolbox admission path; the lease is then
-        // carried by LumenEncodedFrameContext until output or cancellation.
+        // CGDisplayStream's IOSurface is only callback-owned by default.  The
+        // lease below is held by the Metal completion context until the GPU
+        // reports completion, never through a CPU copy or a VT queue wait.
         guard let sourceSurfaceLease =
                 LumenMacSkyLightDisplayStreamFrameLease
                     .lease(withPixelBuffer: pixelBuffer) else {
@@ -335,29 +335,332 @@ extension LumenScreenCaptureVideoRuntime {
         applySkyLightSourceColorAttachments(to: pixelBuffer)
         recordSourceTiming(callbackEntryMachTime)
 
-        if let mismatch = sourceContract?.mismatchDescription(
-            for: pixelBuffer
+        guard let resources = skyLightMetalStagingResources else {
+            recordSkyLightMetalStagingDrop(
+                sourceDisplayTime: displayTime,
+                reason: "resources-missing"
+            )
+            return
+        }
+        if let mismatch = resources.format.mismatchDescription(
+            for: pixelBuffer,
+            width: outputWidth,
+            height: outputHeight
         ) {
+            skyLightMetalStageValidationFailureCount &+= 1
+            recordSkyLightMetalStagingValidationFailure(
+                sourceDisplayTime: displayTime,
+                reason: "source-shape-\(mismatch)"
+            )
             reportTerminalContractFailure(
                 .sourceContractMismatch(mismatch),
                 sourceDisplayTime: displayTime
             )
             return
         }
+
+        let presentationTime = resolvedSkyLightPresentationTime(
+            displayTime: displayTime
+        )
+        guard skyLightMetalStagingAdmission.beginCopy() else {
+            // The queue is serial, but keep the admission helper as the
+            // authoritative bounded in-flight guard for future callback paths.
+            recordSkyLightMetalStagingDrop(
+                sourceDisplayTime: displayTime,
+                reason: "busy"
+            )
+            return
+        }
+        let metalStageStartedMachTime = mach_absolute_time()
+
+        let (destination, allocationStatus) = resources.allocateDestination()
+        guard allocationStatus == kCVReturnSuccess,
+              let destination else {
+            _ = skyLightMetalStagingAdmission.completeCopy()
+            skyLightMetalStagePoolAllocationFailureCount &+= 1
+            recordSkyLightMetalStagingDrop(
+                sourceDisplayTime: displayTime,
+                reason: "pool-allocation-status-\(allocationStatus)"
+            )
+            return
+        }
+
+        // Attachments are metadata-only and do not touch the pixel planes.
+        // Propagate them before the blit so the completion-side exact contract
+        // sees the same HDR/source description as the compositor buffer.
+        CVBufferPropagateAttachments(pixelBuffer, destination)
+
+        let (sourceLumaTexture, sourceLumaStatus) = resources.makeTexture(
+            from: pixelBuffer,
+            plane: 0
+        )
+        let (sourceChromaTexture, sourceChromaStatus) = resources.makeTexture(
+            from: pixelBuffer,
+            plane: 1
+        )
+        let (destinationLumaTexture, destinationLumaStatus) = resources.makeTexture(
+            from: destination,
+            plane: 0
+        )
+        let (destinationChromaTexture, destinationChromaStatus) = resources.makeTexture(
+            from: destination,
+            plane: 1
+        )
+        guard let sourceLumaTexture,
+              let sourceChromaTexture,
+              let destinationLumaTexture,
+              let destinationChromaTexture else {
+            _ = skyLightMetalStagingAdmission.completeCopy()
+            skyLightMetalStageTextureFailureCount &+= 1
+            let status = [
+                sourceLumaStatus,
+                sourceChromaStatus,
+                destinationLumaStatus,
+                destinationChromaStatus
+            ].first(where: { $0 != kCVReturnSuccess }) ?? kCVReturnInvalidArgument
+            recordSkyLightMetalStagingDrop(
+                sourceDisplayTime: displayTime,
+                reason: "texture-creation-status-\(status)"
+            )
+            return
+        }
+
+        guard let commandBuffer = resources.commandQueue.makeCommandBuffer(),
+              let blit = commandBuffer.makeBlitCommandEncoder() else {
+            _ = skyLightMetalStagingAdmission.completeCopy()
+            skyLightMetalStageCommandBufferFailureCount &+= 1
+            recordSkyLightMetalStagingDrop(
+                sourceDisplayTime: displayTime,
+                reason: "command-buffer-creation"
+            )
+            return
+        }
+
+        guard let sourceLumaMetalTexture = CVMetalTextureGetTexture(
+                  sourceLumaTexture
+              ),
+              let sourceChromaMetalTexture = CVMetalTextureGetTexture(
+                  sourceChromaTexture
+              ),
+              let destinationLumaMetalTexture = CVMetalTextureGetTexture(
+                  destinationLumaTexture
+              ),
+              let destinationChromaMetalTexture = CVMetalTextureGetTexture(
+                  destinationChromaTexture
+              ) else {
+            blit.endEncoding()
+            _ = skyLightMetalStagingAdmission.completeCopy()
+            skyLightMetalStageTextureFailureCount &+= 1
+            recordSkyLightMetalStagingDrop(
+                sourceDisplayTime: displayTime,
+                reason: "texture-resolution"
+            )
+            return
+        }
+
+        // Copy the two bi-planar planes without locking the source or waiting
+        // for the GPU.  The command buffer owns the actual transfer lifetime.
+        blit.copy(
+            from: sourceLumaMetalTexture,
+            to: destinationLumaMetalTexture
+        )
+        blit.copy(
+            from: sourceChromaMetalTexture,
+            to: destinationChromaMetalTexture
+        )
+        blit.endEncoding()
+
+        let copyContext = LumenSkyLightMetalCopyContext(
+            destination: destination,
+            presentationTime: presentationTime,
+            sourceDisplayTime: displayTime,
+            streamIdentity: streamIdentity,
+            mediaEpoch: mediaEpoch,
+            stagingGeneration: skyLightMetalStagingGeneration.value,
+            startedMachTime: metalStageStartedMachTime,
+            sourceSurfaceLease: sourceSurfaceLease,
+            sourceLumaTexture: sourceLumaTexture,
+            sourceChromaTexture: sourceChromaTexture,
+            destinationLumaTexture: destinationLumaTexture,
+            destinationChromaTexture: destinationChromaTexture
+        )
+        commandBuffer.addCompletedHandler { [self, copyContext] buffer in
+            let status = buffer.status
+            let errorDescription = buffer.error?.localizedDescription
+            self.queue.async { [self, copyContext] in
+                self.completeSkyLightMetalStaging(
+                    copyContext,
+                    status: status,
+                    errorDescription: errorDescription
+                )
+            }
+        }
+        skyLightMetalStageSubmissionCount &+= 1
+        commandBuffer.commit()
+    }
+
+    func completeSkyLightMetalStaging(
+        _ copyContext: LumenSkyLightMetalCopyContext,
+        status: MTLCommandBufferStatus,
+        errorDescription: String?
+    ) {
+        dispatchPrecondition(condition: .onQueue(queue))
+
+        // Metal has finished reading the compositor surface.  Release its
+        // use-count lease and source texture wrappers before inspecting the
+        // encoder-owned destination or entering VideoToolbox admission.
+        copyContext.releaseGPUOwnedSourceResources()
+        guard skyLightMetalStagingGeneration.accepts(
+            copyContext.stagingGeneration
+        ) else {
+            skyLightMetalStageLastError = "stale-staging-generation"
+            Self.pipelineLogger.notice(
+                "stage=skylight-metal-staging-completion-retired copy-generation=\(copyContext.stagingGeneration, privacy: .public) current-generation=\(self.skyLightMetalStagingGeneration.value, privacy: .public) stream=\(copyContext.streamIdentity, privacy: .public)"
+            )
+            return
+        }
+        _ = skyLightMetalStagingAdmission.completeCopy()
+        skyLightMetalStageCompletionCount &+= 1
+        skyLightMetalStageTiming.observe(
+            LumenMachTime.milliseconds(
+                from: copyContext.startedMachTime,
+                to: mach_absolute_time()
+            )
+        )
+        defer {
+            resumeSkyLightMetalStagingDrainWaitersIfNeeded()
+            if skyLightMetalStagingReleaseRequested,
+               skyLightMetalStagingAdmission.canDrain {
+                releaseSkyLightMetalStaging()
+            }
+        }
+
+        guard status == .completed else {
+            skyLightMetalStageCommandBufferFailureCount &+= 1
+            recordSkyLightMetalStagingDrop(
+                sourceDisplayTime: copyContext.sourceDisplayTime,
+                reason: "command-buffer-status-\(status)-\(errorDescription ?? "none")"
+            )
+            return
+        }
+        guard !stopping,
+              compressionSessionAvailable,
+              copyContext.mediaEpoch == mediaEpoch,
+              copyContext.streamIdentity == skyLightDisplayStreamIdentity else {
+            return
+        }
+
+        guard let resources = skyLightMetalStagingResources else {
+            recordSkyLightMetalStagingDrop(
+                sourceDisplayTime: copyContext.sourceDisplayTime,
+                reason: "resources-missing-at-completion"
+            )
+            return
+        }
+        guard resources.format.mismatchDescription(
+            for: copyContext.destination,
+            width: outputWidth,
+            height: outputHeight
+        ) == nil else {
+            let mismatch = resources.format.mismatchDescription(
+                for: copyContext.destination,
+                width: outputWidth,
+                height: outputHeight
+            ) ?? "unknown"
+            skyLightMetalStageValidationFailureCount &+= 1
+            recordSkyLightMetalStagingValidationFailure(
+                sourceDisplayTime: copyContext.sourceDisplayTime,
+                reason: "destination-shape-\(mismatch)"
+            )
+            reportTerminalContractFailure(
+                .sourceContractMismatch(mismatch),
+                sourceDisplayTime: copyContext.sourceDisplayTime
+            )
+            return
+        }
+        if let mismatch = sourceContract?.mismatchDescription(
+            for: copyContext.destination
+        ) {
+            skyLightMetalStageValidationFailureCount &+= 1
+            recordSkyLightMetalStagingValidationFailure(
+                sourceDisplayTime: copyContext.sourceDisplayTime,
+                reason: "destination-contract-\(mismatch)"
+            )
+            reportTerminalContractFailure(
+                .sourceContractMismatch(mismatch),
+                sourceDisplayTime: copyContext.sourceDisplayTime
+            )
+            return
+        }
+
         recordSourceAudit(
-            imageBuffer: pixelBuffer,
+            imageBuffer: copyContext.destination,
             sampleBuffer: nil
         )
         statistics.completeSourceFrameCount &+= 1
-
-        let source = makePendingSource(
-            imageBuffer: pixelBuffer,
-            displayTime: displayTime,
-            sourceMachTime: callbackEntryMachTime,
-            sourceSurfaceLease: sourceSurfaceLease
+        admitPendingSource(
+            makePendingSource(
+                imageBuffer: copyContext.destination,
+                presentationTime: copyContext.presentationTime,
+                sourceDisplayTime: copyContext.sourceDisplayTime
+            )
         )
-        admitPendingSource(source)
     }
+
+    func recordSkyLightMetalStagingDrop(
+        sourceDisplayTime: UInt64,
+        reason: String
+    ) {
+        skyLightMetalStageLastError = reason
+        let isPressureDrop = reason == "busy"
+        if isPressureDrop {
+            skyLightMetalStageBusyDropCount &+= 1
+        }
+        statistics.droppedFrameCount &+= 1
+        if isPressureDrop {
+            statistics.pendingAdmissionDropCount &+= 1
+            encoderPendingDropCount &+= 1
+        }
+        refreshStatisticsNotesIfNeeded()
+        let count = statistics.pendingAdmissionDropCount
+        guard count == 1 || count % 120 == 0 else { return }
+        Self.pipelineLogger.notice(
+            "stage=skylight-metal-staging-drop source-display-time=\(sourceDisplayTime, privacy: .public) reason=\(reason, privacy: .public) gpu-copy-inflight=\(self.skyLightMetalStagingAdmission.isCopyInFlight, privacy: .public) pool-capacity=\(LumenSkyLightMetalStagingPolicy.poolCapacity, privacy: .public)"
+        )
+    }
+
+    func recordSkyLightMetalStagingValidationFailure(
+        sourceDisplayTime: UInt64,
+        reason: String
+    ) {
+        skyLightMetalStageLastError = reason
+        Self.pipelineLogger.error(
+            "stage=skylight-metal-staging-validation-failure source-display-time=\(sourceDisplayTime, privacy: .public) reason=\(reason, privacy: .public)"
+        )
+    }
+
+    func resumeSkyLightMetalStagingDrainWaitersIfNeeded() {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard skyLightMetalStagingAdmission.canDrain,
+              !skyLightMetalCopyDrainWaiters.isEmpty else {
+            return
+        }
+        let waiters = skyLightMetalCopyDrainWaiters
+        skyLightMetalCopyDrainWaiters.removeAll(keepingCapacity: false)
+        // Resume after this queue block has returned.  The continuation then
+        // cannot race the tail of completionSkyLightMetalStaging, where the
+        // destination is audited and handed to the normal admission path.
+        queue.async {
+            waiters.forEach { $0.resume() }
+        }
+    }
+
+    /*
+     * The remainder of this extension intentionally stays below the hot-path
+     * helpers.  The previous source-contract check/admission block is removed
+     * from the callback: it now runs in completeSkyLightMetalStaging after the
+     * destination has been filled by Metal.
+     */
 
     func applySkyLightSourceColorAttachments(to imageBuffer: CVImageBuffer) {
         guard configuration.dynamicRange == .hdr10,
