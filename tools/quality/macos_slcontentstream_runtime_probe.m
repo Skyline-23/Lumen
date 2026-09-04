@@ -384,6 +384,7 @@ static NSDictionary<NSString *, NSString *> *LumenProbeSelectedDiagnostics(
     @"videoToolboxPendingAdmissionDropCount",
     @"videoToolboxPendingAdmissionDropWindowRate",
     @"videoToolboxAppliedBitrateKbps",
+    @"videoToolboxConfiguredPrioritizeEncodingSpeedOverQuality",
     @"videoToolboxEstimatedOutputBitrateKbps",
     @"videoToolboxMaxInflightStagingSlots",
     @"videoToolboxOutputWindowFrameRate",
@@ -453,6 +454,7 @@ static int LumenProbeRunProductionPipeline(
   CGDirectDisplayID displayID,
   size_t outputWidth,
   size_t outputHeight,
+  int32_t targetBitrateKbps,
   double duration,
   BOOL hdr,
   BOOL stimulus,
@@ -489,6 +491,7 @@ static int LumenProbeRunProductionPipeline(
   configuration.preprocess_strategy = LumenMacBridgePreprocessStrategyNone;
   configuration.queue_profile = LumenMacBridgeQueueProfileAuto;
   configuration.target_frame_rate = 120;
+  configuration.target_video_bitrate_kbps = targetBitrateKbps;
   configuration.requested_width = (int32_t)outputWidth;
   configuration.requested_height = (int32_t)outputHeight;
   configuration.sink_request.capability.gamut = hdr ? 3 : 1;
@@ -608,6 +611,7 @@ static int LumenProbeRunProductionPipeline(
     @"displayID": @(displayID),
     @"requestedWidth": @(outputWidth),
     @"requestedHeight": @(outputHeight),
+    @"targetBitrateKbps": @(targetBitrateKbps),
     @"hdr": @(hdr),
     @"stimulus": @(stimulus),
     @"stimulusMode": stimulus ? @"cadisplaylink-dirty-layer" : @"none",
@@ -671,6 +675,14 @@ int main(int argc, const char *argv[]) {
     double duration = durationArgument == nil
       ? 8.0
       : MAX(durationArgument.doubleValue, 1.0);
+    NSString *bitrateArgument = LumenProbeArgument(
+      argc,
+      argv,
+      @"--bitrate-kbps"
+    );
+    int32_t targetBitrateKbps = bitrateArgument == nil
+      ? 0
+      : (int32_t)MAX(MIN(bitrateArgument.longLongValue, INT32_MAX), 0);
     BOOL hdr = LumenProbeHasFlag(argc, argv, @"--hdr");
     BOOL stimulus = LumenProbeHasFlag(argc, argv, @"--stimulus");
     OSType pixelFormat = hdr
@@ -688,6 +700,7 @@ int main(int argc, const char *argv[]) {
         displayID,
         outputWidth,
         outputHeight,
+        targetBitrateKbps,
         duration,
         hdr,
         stimulus,
