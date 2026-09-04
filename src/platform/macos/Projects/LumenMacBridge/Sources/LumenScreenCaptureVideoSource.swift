@@ -749,7 +749,8 @@ extension LumenScreenCaptureVideoRuntime {
                 preferredTimescale: LumenAdaptiveVideoFrameTiming.preferredTimescale
             ),
             sequenceNumber: sequenceNumber,
-            sourceSurfaceLease: sourceSurfaceLease
+            sourceSurfaceLease: sourceSurfaceLease,
+            hasValidatedEncoderOrdering: false
         )
     }
 

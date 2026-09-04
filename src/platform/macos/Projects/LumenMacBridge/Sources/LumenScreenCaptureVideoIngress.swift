@@ -28,13 +28,12 @@ extension LumenScreenCaptureVideoRuntime {
             return false
         }
 
-        guard validateEncoderSourceOrdering(source) else {
-            return false
-        }
+        guard let orderedSource = validatedEncoderSourceForSubmission(source)
+        else { return false }
 
         sourceColorContractStatus = "verified"
         let submission = LumenVideoEncoderSubmission(
-            source: source,
+            source: orderedSource,
             forceKeyFrame: bootstrapReason != nil,
             bootstrapReason: bootstrapReason,
             mediaEpoch: mediaEpoch,
@@ -44,6 +43,18 @@ extension LumenScreenCaptureVideoRuntime {
             recordPendingAdmissionDrop(replacedSubmission.source)
         }
         return true
+    }
+
+    func validatedEncoderSourceForSubmission(
+        _ source: LumenPendingVideoBootstrapSource
+    ) -> LumenPendingVideoBootstrapSource? {
+        if source.hasValidatedEncoderOrdering {
+            return source
+        }
+        guard validateEncoderSourceOrdering(source) else {
+            return nil
+        }
+        return source.markingEncoderOrderingValidated()
     }
 
     func validateEncoderSourceOrdering(
